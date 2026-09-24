@@ -251,6 +251,58 @@ def test_generate_refuse_une_reponse_hors_dialecte(endpoint):
         _run(_provider(endpoint).generate("Bonjour", model="m"))
 
 
+def test_une_image_part_en_partie_image_url_du_dialecte(endpoint):
+    # #1163 : le texte puis chaque image en URL `data:` — la forme vision du dialecte,
+    # que l'endpoint juge seul (aucune liste de modèles « qui voient » ici).
+    import base64
+
+    from maestro.providers.base import ImageJointe
+
+    texte = _run(
+        _provider(endpoint).generate_with_images(
+            "Décris-la.",
+            images=[ImageJointe(octets=b"\xff\xd8\xff-jpeg", type_media="image/jpeg")],
+            model="qwen2.5vl",
+            system_prompt="Tu regardes.",
+        )
+    )
+
+    assert texte == "PONG"
+    (requete,) = endpoint.requetes
+    systeme, utilisateur = requete["corps"]["messages"]
+    assert systeme == {"role": "system", "content": "Tu regardes."}
+    assert utilisateur["content"] == [
+        {"type": "text", "text": "Décris-la."},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/jpeg;base64,"
+                + base64.b64encode(b"\xff\xd8\xff-jpeg").decode("ascii")
+            },
+        },
+    ]
+
+
+def test_un_endpoint_qui_refuse_l_image_leve_avec_sa_raison(endpoint):
+    # Un modèle qui ne voit pas : l'erreur de l'endpoint remonte, citée — c'est elle
+    # que la lecture des sources nommera au rapport.
+    from maestro.providers.base import ImageJointe
+
+    endpoint.reponse_pour = lambda corps: (
+        400,
+        {"error": {"message": "model does not support image input"}},
+    )
+
+    with pytest.raises(OpenAICompatError, match="does not support image"):
+        _run(
+            _provider(endpoint).generate_with_images(
+                "Décris-la.",
+                images=[ImageJointe(octets=b"x", type_media="image/png")],
+                model="llama3:8b",
+            )
+        )
+
+
 def test_generate_refuse_un_endpoint_injoignable():
     # Port fermé : l'erreur réseau est enveloppée avec l'endpoint fautif.
     provider = OpenAICompatProvider(Credentials(), base_url="http://127.0.0.1:9/v1")

@@ -724,4 +724,67 @@ describe("la réponse de l'orchestrateur s'écrit, et sa carte suit", () => {
     });
     expect(within(fil).getByText("run-42")).toBeInTheDocument();
   });
+
+  it("ne récite plus l'équipe créée : elle se lit sous la bulle (#1262)", () => {
+    // Le fil disait « Équipe créée : Développeur — 1 agent. Je reprends votre
+    // demande : « … ». Je lance ? », tout entier écrit par le code. Les mots sont
+    // désormais ceux du modèle, et l'équipe créée est un **fait** du message
+    // (`equipe`), rendu par la suite de la bulle comme le run qu'une réponse a
+    // ouvert — avec son renvoi vers l'écran des agents.
+    poserFilAssistance({
+      messages: [
+        messageFactice({ contenu: "Je valide cette équipe : Développeur ×2 · QA." }),
+        messageFactice({
+          agent: AGENT_ORCHESTRATION,
+          auteur: AGENT_ORCHESTRATION,
+          contenu: "Votre équipe est prête : je vous repropose le travail juste en dessous.",
+          horodatage: "2026-09-24T10:01:00Z",
+          equipe: {
+            projet_id: "prj-depensio",
+            roles: [
+              { role: "Développeur", instances: 2 },
+              { role: "QA", instances: 1 },
+            ],
+            instances_total: 3,
+          },
+        }),
+      ],
+    });
+    monterLeChat();
+
+    const fil = screen.getByRole("list", {
+      name: `Messages échangés avec ${INTERLOCUTEUR_ORCHESTRATION}`,
+    });
+    const reponse = within(fil)
+      .getByText(/Votre équipe est prête/)
+      .closest("li");
+    if (reponse === null) throw new Error("bulle de la réponse introuvable");
+    expect(
+      within(reponse).getByText("Équipe créée : Développeur ×2 · QA — 3 agents"),
+    ).toBeInTheDocument();
+    expect(
+      within(reponse).getByRole("link", { name: /Voir les agents/ }),
+    ).toHaveAttribute("href", "/agents");
+    // Le fait n'est dit qu'une fois : la bulle porte les mots du modèle, et la
+    // phrase que le code écrivait n'est nulle part.
+    expect(screen.queryByText(/Je reprends votre demande/)).toBeNull();
+  });
+
+  it("ne rend aucune équipe sous une bulle qui n'en a créé aucune", () => {
+    // L'échantillon qui prouve que la sonde précédente ne voit pas tout : un
+    // message ordinaire ne laisse aucune ligne « Équipe créée ».
+    poserFilAssistance({
+      messages: [
+        messageFactice({
+          agent: AGENT_ORCHESTRATION,
+          auteur: AGENT_ORCHESTRATION,
+          contenu: "Aucun run en cours.",
+        }),
+      ],
+    });
+    monterLeChat();
+
+    expect(screen.queryByText(/Équipe créée/)).toBeNull();
+    expect(screen.queryByRole("link", { name: /Voir les agents/ })).toBeNull();
+  });
 });

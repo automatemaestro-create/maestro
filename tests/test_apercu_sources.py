@@ -91,11 +91,12 @@ def test_un_apercu_ne_laisse_rien_derriere_lui(tmp_path: Path) -> None:
     assert apres == avant
 
 
-def test_un_format_non_gere_est_signale_jamais_refuse() -> None:
+def test_une_image_est_annoncee_pour_le_lancement_jamais_refusee() -> None:
     """« Rien à lire ici » n'est pas « je refuse de lire ça » (critère 3).
 
-    Un `.png` déposé au milieu d'un dossier de maquettes ne doit faire échouer
-    aucun aperçu : il ressort **ligne du rapport**, avec son motif.
+    Un `.png` déposé ne doit faire échouer aucun aperçu : il ressort **ligne du
+    rapport**, avec son motif. Depuis #1163 ce motif dit que le lancement le
+    montrera au modèle — l'aperçu, gratuit, ne paie pas ce regard d'avance.
     """
     contenu = b"\x89PNG\r\n\x1a\n binaire"
     rapport = apercu_sources(
@@ -104,7 +105,7 @@ def test_un_format_non_gere_est_signale_jamais_refuse() -> None:
     )
     (lecture,) = rapport.lectures
     assert lecture.etat == "ignore"
-    assert lecture.motif == "format-non-gere"
+    assert lecture.motif == "vue-au-lancement"
     assert lecture.tokens == 0
 
 
@@ -154,7 +155,7 @@ def test_un_dossier_de_references_rend_une_ligne_par_fichier(maison: Path) -> No
     references = maison / "references"
     references.mkdir()
     (references / "specification.md").write_text("# Spec\n\nDeux phrases.", encoding="utf-8")
-    (references / "logo.png").write_bytes(b"\x89PNG\r\n")
+    (references / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 
     rapport = apercu_sources([{"type": "dossier", "chemin": str(references)}])
 

@@ -43,12 +43,25 @@ prise ici mais une propriété du périmètre qu'on hérite.
   plus proche de la racine gagne (`PROFONDEUR_MARQUEURS`), et son chemin voyage
   dans le constat. Lire quarante `package.json` rendrait quarante fois la même
   commande, et l'analyse ne saurait pas laquelle recommander.
+
+## Des indices, plus un plafond (#1158)
+
+Ce module ne reconnaît que ce que ses tables connaissent : une solution .NET, un
+`justfile` ou un `gleam.toml` en sortaient **sans commande**, et l'erreur se
+propageait jusqu'à l'équipe. Ce qu'il rend est désormais un **premier relevé** —
+les indices —, que `maestro.outillage.exploration` confie au modèle : celui-ci lit
+le projet par deux verbes bornés, et ce qu'il en tire **complète** les constats
+par `completer`, sans jamais en retirer un. Deux choses restent ici pour lui
+servir : `Parcours.extensions`, qui compte **toutes** les extensions vues et non
+plus seulement celles d'une table, et la règle d'ordre des commandes
+(`_ordonner`), qui vaut pour les deux provenances.
 """
 
 from __future__ import annotations
 
 import os
 from collections import Counter
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -85,6 +98,7 @@ from maestro.outillage.modele import (
     Forge,
     Gestionnaire,
     Langage,
+    Lecture,
     Parcours,
     Piece,
     nouvel_id,
@@ -109,6 +123,11 @@ LANGAGES_MAX = 8
 #: Maestro lui-même en porte des dizaines ; l'analyse en montre assez pour que
 #: la recommandation reconnaisse les usages, pas l'inventaire complet.
 SCRIPTS_MAX = 40
+
+#: Nombre d'extensions rendues dans `Parcours.extensions`. Assez pour qu'une
+#: pile inconnue des tables s'y voie (`.csproj`, `.sln`, `.gleam`), pas au point
+#: de faire de l'indice un inventaire.
+EXTENSIONS_MAX = 40
 
 #: Nom du dossier de tests, quand c'est lui qui justifie `pytest`.
 DOSSIERS_TESTS: tuple[str, ...] = ("tests", "test")
@@ -187,6 +206,73 @@ def resume(constats: Constats) -> str:
     return " ; ".join(morceaux)
 
 
+def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
+    """L'analyse des tables **complétée** par ce que le modèle a lu — jamais amputée (#1158).
+
+    `lecture.retenus` porte des constats déjà confrontés au disque
+    (`maestro.outillage.exploration`) : ils s'**ajoutent** aux indices, un
+    doublon (même langage, même gestionnaire, même commande pour le même usage,
+    même CI) n'entrant pas deux fois. Rien de ce que les tables ont lu n'est
+    retiré — elles ont ouvert le fichier qu'elles citent, et un modèle qui ne le
+    mentionne pas n'en fait pas une erreur.
+
+    L'ordre des commandes reste celui de `_ordonner`, **une** règle pour les deux
+    provenances : ce qu'un projet déclare passe devant la convention d'un outil,
+    qu'il ait été lu par une table ou par le modèle. Le résumé, la forge et la
+    recommandation sont refaits sur les constats complétés, par les mêmes
+    fonctions que l'analyse — `recommander` ne sait pas d'où vient un constat.
+
+    Une lecture qui n'a rien retenu (le modèle muet, ou qui n'a rien trouvé de
+    plus) rend l'analyse telle quelle, à sa `lecture` près : c'est elle qui dit
+    ce qui s'est passé.
+    """
+    indices = analyse.constats
+    retenus = lecture.retenus
+    noms_langages = {langage.nom.casefold() for langage in indices.langages}
+    noms_gestionnaires = {g.nom.casefold() for g in indices.gestionnaires}
+    commandes_vues = {(c.usage, c.commande) for c in indices.commandes}
+    ci_vues = {piece.chemin for piece in indices.ci}
+    ci = indices.ci + tuple(p for p in retenus.ci if p.chemin not in ci_vues)
+    ajoutes = tuple(lg for lg in retenus.langages if lg.nom.casefold() not in noms_langages)
+    constats = replace(
+        indices,
+        langages=_langages_completes(indices.langages + ajoutes) if ajoutes else indices.langages,
+        gestionnaires=indices.gestionnaires
+        + tuple(g for g in retenus.gestionnaires if g.nom.casefold() not in noms_gestionnaires),
+        commandes=_ordonner(
+            indices.commandes
+            + tuple(c for c in retenus.commandes if (c.usage, c.commande) not in commandes_vues)
+        ),
+        ci=ci,
+        forge=_forge(indices.vcs, ci),
+    )
+    return replace(
+        analyse,
+        resume=resume(constats),
+        constats=constats,
+        recommandation=recommander(constats),
+        lecture=lecture,
+    )
+
+
+def _langages_completes(langages: tuple[Langage, ...]) -> tuple[Langage, ...]:
+    """Les langages réunis, leurs parts recalculées sur l'ensemble, les plus présents d'abord.
+
+    Un langage que le modèle nomme porte le compte de son extension dans le
+    parcours (`Parcours.extensions`) : la part se recalcule donc sur la même
+    base que celle des tables, fichiers **de code** vus, et un langage ajouté ne
+    fausse pas celle des autres.
+    """
+    total = sum(langage.fichiers for langage in langages)
+    if not total:
+        return langages[:LANGAGES_MAX]
+    classes = sorted(langages, key=lambda langage: (-langage.fichiers, langage.nom))
+    return tuple(
+        replace(langage, part=round(langage.fichiers / total, 3))
+        for langage in classes[:LANGAGES_MAX]
+    )
+
+
 class _Releve:
     """Ce que le parcours accumule — mutable, et confiné à ce module.
 
@@ -198,6 +284,8 @@ class _Releve:
 
     def __init__(self) -> None:
         self.extensions: Counter[str] = Counter()
+        #: Toutes les extensions vues, connues d'une table ou non (#1158).
+        self.toutes: Counter[str] = Counter()
         self.exemples: dict[str, str] = {}
         self.fichiers = 0
         self.dossiers = 0
@@ -228,6 +316,11 @@ class _Releve:
             profondeur_atteinte=self.profondeur,
             troncatures=tuple(self.troncatures),
             ignores_rencontres=tuple(sorted(self.ignores)),
+            extensions=tuple(
+                sorted(self.toutes.items(), key=lambda paire: (-paire[1], paire[0]))[
+                    :EXTENSIONS_MAX
+                ]
+            ),
         )
 
 
@@ -309,8 +402,11 @@ def _parcourir(base: Path, perimetre: Perimetre, bornes: Bornes) -> _Releve:
 
 
 def _noter_fichier(releve: _Releve, nom: str, relatif: str, profondeur: int) -> None:
-    """Range un fichier vu : son langage, et le marqueur qu'il est peut-être."""
-    langage = LANGAGE_PAR_EXTENSION.get(Path(nom).suffix.lower())
+    """Range un fichier vu : son extension, son langage, et le marqueur qu'il est peut-être."""
+    extension = Path(nom).suffix.lower()
+    if extension:
+        releve.toutes[extension] += 1
+    langage = LANGAGE_PAR_EXTENSION.get(extension)
     if langage is not None:
         releve.extensions[langage] += 1
         releve.exemples.setdefault(langage, relatif)

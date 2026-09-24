@@ -52,9 +52,10 @@ from maestro.agents.playbook_du_code import playbook_du_code, registre, roles_du
 from maestro.controltower.assistance import _PROMPT_ASSISTANCE
 from maestro.controltower.chat import _CADRE_CONVERSATION
 from maestro.controltower.generation_agent import _CADRE_GENERATION
-from maestro.controltower.orchestration import _PROMPT_ORCHESTRATION
+from maestro.controltower.orchestration import _PROMPT_ORCHESTRATION, _PROMPT_REDACTION
 from maestro.controltower.outillage import _PROMPT_COMPREHENSION
 from maestro.controltower.recit import SYSTEME as _SYSTEME_RECIT
+from maestro.equipe.composition import CADRE_COMPOSITION
 from maestro.providers.base import ModelProvider
 
 #: Les prompts **conversationnels** de la Control Tower : ceux qui parlent à un humain sans
@@ -64,6 +65,10 @@ CONVERSATIONNELS = {
     "orchestration (#685)": _PROMPT_ORCHESTRATION,
     "cadre de conversation d'un agent (#85)": _CADRE_CONVERSATION,
     "récit de fin d'un run (#1224)": _SYSTEME_RECIT,
+    "parole du fil sur un geste (#1262)": _PROMPT_REDACTION,
+    # Les raisons des rôles et la réponse à une correction sont lues telles quelles
+    # à l'étape d'équipe (#1159).
+    "composition d'équipe (#1159)": CADRE_COMPOSITION,
     # Ses intitulés, ses options et leurs raisons s'affichent tels quels sur la carte
     # de la question d'outillage : ils parlent à la personne.
     "compréhension d'un projet neuf (#1147)": _PROMPT_COMPREHENSION,
@@ -193,8 +198,10 @@ APPELS_CONVERSATIONNELS = {
     "chat.py::RepondeurModele.repondre": "cadre de conversation d'un agent (#85)",
     "chat.py::RepondeurModele.produire": "cadre de conversation d'un agent (#85)",
     "orchestration.py::RepondeurOrchestration._juger": "orchestration (#685)",
+    "orchestration.py::RepondeurOrchestration.rediger": "parole du fil sur un geste (#1262)",
     "outillage.py::ComprehensionModele.comprendre": "compréhension d'un projet neuf (#1147)",
     "recit.py::RedacteurModele.rediger": "récit de fin d'un run (#1224)",
+    "equipe.py::CompositeurEquipe.ecrire": "composition d'équipe (#1159)",
 }
 
 #: Les appels au modèle dont ce qu'ils font écrire ne s'adresse **pas** à la personne, chacun

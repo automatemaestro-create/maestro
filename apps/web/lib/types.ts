@@ -1323,6 +1323,8 @@ export type MessageChat = {
   comprehension?: ChoixOutillage[];
   /** L'équipe que ce message demande de valider (#1146) — `null` : aucune. */
   recrutement?: DemandeRecrutement | null;
+  /** L'équipe qu'un geste a créée, portée par la réponse (#1262) — `null` : aucune. */
+  equipe?: EquipeRecrutee | null;
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
@@ -2749,11 +2751,46 @@ export type PropositionEquipe = {
   faite_le: string;
   resume: string;
   source: Record<string, unknown> | null;
+  /**
+   * Qui a composé l'équipe (#1159) : `modele` — le modèle, pour le besoin du
+   * projet ; `regles` — les règles des cinq gabarits, le repli quand le modèle
+   * n'a pas abouti, `raison` disant pourquoi. Absent d'une proposition servie
+   * avant #1159.
+   */
+  composition?: { origine: string; raison: string };
   roles: RoleEquipe[];
   ecartes: RoleEcarteEquipe[];
   instances_total: number;
   cree: boolean;
   validation: string;
+};
+
+/**
+ * Un rôle de l'équipe **telle que l'étape la montre**, envoyé avec une demande
+ * de correction (`MembreEquipeRequete`, #1159) : ce que la personne a pu régler.
+ */
+export type MembreEquipe = {
+  nom: string;
+  role: string;
+  retenu: boolean;
+  instances: number;
+};
+
+/**
+ * Ce qu'une demande en langage naturel change à l'équipe montrée
+ * (`POST /api/projets/{id}/equipe/correction`, #1159) — rien n'est créé.
+ *
+ * `ajouts` sont des rôles proposés de plein droit (playbook écrit pour ce
+ * projet) ; `retraits`, `remis` et `instances` ne nomment que des rôles de
+ * l'équipe montrée ; `reponse` est la phrase à afficher à la personne.
+ */
+export type CorrectionEquipe = {
+  reponse: string;
+  ajouts: RoleEquipe[];
+  retraits: string[];
+  remis: string[];
+  instances: Record<string, number>;
+  cree: boolean;
 };
 
 /**
@@ -2782,6 +2819,21 @@ export type DemandeRecrutement = {
   raison?: string;
   /** Les tâches du plan qu'il prendrait, par leur intitulé (#1227). */
   taches?: string[];
+};
+
+/**
+ * Ce qu'un geste de recrutement a **créé** (`EquipeRecrutee.to_dict`, #1262).
+ *
+ * Le pendant de `DemandeRecrutement` après le geste, et un **fait** : le fil le
+ * récitait dans une phrase du code (« Équipe créée : Développeur — 1 agent. »), il
+ * voyage désormais sur la réponse et se lit sous sa bulle, comme le run qu'une
+ * réponse a ouvert (`run_id`). Lu dans le rapport de création, jamais dans ce qui
+ * a été demandé : c'est ce qui existe désormais dans le projet.
+ */
+export type EquipeRecrutee = {
+  projet_id: string;
+  roles: { role: string; instances: number }[];
+  instances_total: number;
 };
 
 /** Un rôle validé, tel qu'il repart à la création (`RoleEquipeRequete`, #1040). */

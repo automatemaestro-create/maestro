@@ -115,10 +115,14 @@ frontières à tenir d'accord — exactement ce que `POST /api/projets/racine`
 deux gisements de secrets d'un dépôt d'utilisateur, et ce n'est pas une
 précaution prise ici mais une propriété de ce qui est déclaré.
 
-**L'analyse n'écrit rien** : deux appels sur un projet inchangé rendent le même
-contenu — seuls l'`id` et l'horodatage diffèrent, parce qu'ils datent la lecture
-et non le projet. **La génération, elle, écrit** (#1033) — et c'est ici que le
-régime d'écriture de docs/24 §2.4 se referme :
+**L'analyse n'écrit rien.** Depuis #1158 elle **lit** : les tables ne rendent plus
+que des indices, et le modèle lit le projet (`maestro.outillage.exploration`) —
+deux verbes servis dans le périmètre, chaque constat confronté à ce qu'il a lu. Un
+modèle ne répondant pas deux fois pareil, la dernière lecture réussie d'un projet
+est **gardée** tant qu'il n'a pas bougé : deux appels sur un projet inchangé
+rendent alors la même analyse, `id` compris — c'est la même lecture —, et la
+génération écrit ce que l'écran a montré. **La génération, elle, écrit** (#1033) —
+et c'est ici que le régime d'écriture de docs/24 §2.4 se referme :
 
 - un projet **non versionné** reçoit son outillage **en place**, dans sa racine :
   il n'y a pas de moment de fusion où accrocher un accord, et ce qui garde est la
@@ -140,7 +144,10 @@ racine — jamais l'inverse.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
@@ -161,8 +168,10 @@ from maestro.outillage import (
     Bornes,
     analyser,
     generer_outillage,
+    lire_le_projet,
+    sans_lecture,
 )
-from maestro.outillage.modele import Recommandation
+from maestro.outillage.modele import Lecture, Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
     Comprehension,
@@ -501,6 +510,61 @@ def _joint(prelude: str, corps: str) -> str:
     return "\n\n".join(morceau for morceau in (prelude, corps) if morceau)
 
 
+def _empreinte(indices: Analyse) -> str:
+    """Ce qui, du relevé des tables, change quand le projet change — ni l'id ni la date."""
+    return json.dumps(
+        {
+            "racine": indices.racine,
+            "bornes": indices.bornes.to_dict(),
+            "parcours": indices.parcours.to_dict(),
+            "constats": indices.constats.to_dict(),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def _temoins(racine: Path, lecture: Lecture) -> tuple[tuple[str, int, int], ...]:
+    """Taille et date de ce que la lecture a ouvert ou listé — bloquant, jamais d'exception.
+
+    Le relevé des tables ne voit pas le **contenu** d'un fichier qu'il ne sait
+    pas lire : un `.csproj` modifié sans changer de nom laisse l'empreinte
+    intacte. Ce que le modèle a lu, lui, a une date — et un dossier listé en a
+    une qui bouge quand une entrée y naît ou disparaît. Un chemin devenu
+    illisible compte comme changé.
+    """
+    temoins: list[tuple[str, int, int]] = []
+    for chemin in (*lecture.lus, *lecture.listes):
+        try:
+            etat = os.stat(racine / chemin, follow_symlinks=False)
+        except OSError:
+            temoins.append((chemin, -1, -1))
+            continue
+        temoins.append((chemin, etat.st_size, etat.st_mtime_ns))
+    return tuple(temoins)
+
+
+class _LectureGardee:
+    """La dernière lecture **réussie** d'un projet, et de quoi savoir si elle vaut encore."""
+
+    def __init__(self, empreinte: str, analyse: Analyse, temoins: tuple[Any, ...]) -> None:
+        self.empreinte = empreinte
+        self.analyse = analyse
+        self.temoins = temoins
+
+    @classmethod
+    def de(cls, empreinte: str, analyse: Analyse, lecture: Lecture) -> _LectureGardee:
+        """La lecture gardée, témoins relevés maintenant — bloquant."""
+        return cls(empreinte, analyse, _temoins(Path(analyse.racine), lecture))
+
+    def vaut_pour(self, empreinte: str) -> bool:
+        """Le projet est-il celui qui a été lu ? Même relevé, mêmes fichiers — bloquant."""
+        lecture = self.analyse.lecture
+        if empreinte != self.empreinte or lecture is None:
+            return False
+        return _temoins(Path(self.analyse.racine), lecture) == self.temoins
+
+
 class ServiceOutillage:
     """L'outillage d'un projet déclaré, servi par l'API : analysé, choisi, puis écrit.
 
@@ -522,6 +586,21 @@ class ServiceOutillage:
     validateur ne doit pas écrire chez quelqu'un parce que personne n'a été
     câblé pour dire non.
 
+    `provider` est le modèle qui **lit** un projet existant (#1158) — résolu
+    **paresseusement** comme le générateur d'agent (#257) : construire le service
+    ne coûte rien et ne lève aucune erreur de configuration, ce dont `create_app`
+    dépend. Sans fournisseur résolu, l'analyse reste celle des tables et le dit
+    (`lecture.etat == "indisponible"`) : un projet se relit toujours, modèle ou
+    pas.
+
+    **Une lecture réussie est gardée** tant que le projet n'a pas bougé
+    (`_LectureGardee`). C'est ce qui fait que la génération écrit ce que l'écran
+    a montré : relire le projet entre l'analyse et l'écriture, c'est redemander
+    au modèle, et un modèle n'est pas tenu de répondre deux fois pareil — les
+    skills que l'écran a lus disparaîtraient à l'écriture, exactement le défaut
+    de #1100. Une lecture **manquée** n'est jamais gardée : le prochain appel
+    retente.
+
     `comprehension` (#1147) est ce qui comprend un projet neuf — le modèle, derrière
     `ComprehensionModele`. `None` en construit un qui résout le fournisseur configuré
     au premier usage ; seule la voie du questionnaire l'appelle.
@@ -533,14 +612,19 @@ class ServiceOutillage:
         *,
         bornes: Bornes | None = None,
         validateur: Validateur | None = None,
+        provider: ModelProvider | None = None,
+        modele: str = MODELE_EXECUTANT_DEFAUT,
         comprehension: ComprehensionModele | None = None,
     ) -> None:
         self._projets = projets
         self._bornes = bornes
         self._validateur = validateur
+        self._provider = provider
+        self._modele = modele
+        self._lues: dict[str, _LectureGardee] = {}
         self._comprehension = comprehension or ComprehensionModele()
 
-    def analyser(self, id_projet: str) -> dict[str, Any]:
+    async def analyser(self, id_projet: str) -> dict[str, Any]:
         """Analyse le projet `id_projet` et rend l'outillage recommandé (docs/38).
 
         Lève `ProjetInconnu`/`ProjetIllisible` **avant de toucher au disque** —
@@ -550,11 +634,12 @@ class ServiceOutillage:
         `motif` : c'est ce que `statut_http`/`detail_refus` traduisent, jamais
         un 500.
 
-        Appelée **hors de la boucle d'événements** par la route : parcourir un
-        projet réel prend des secondes, et une route qui bloquerait la boucle
-        figerait les flux SSE des autres écrans.
+        Le parcours des tables et chaque lecture servie au modèle sont joués
+        **hors de la boucle d'événements** : parcourir un projet réel prend des
+        secondes, et une route qui bloquerait la boucle figerait les flux SSE
+        des autres écrans.
         """
-        return self._analyse(self._projet(id_projet)).to_dict()
+        return (await self._analyse(self._projet(id_projet))).to_dict()
 
     async def generer(
         self,
@@ -616,7 +701,7 @@ class ServiceOutillage:
             recommandee = recommandation_depuis_choix(acquis)
             source = source_manifeste_des_choix(projet.id, acquis)
         else:
-            analyse = await asyncio.to_thread(self._analyse, projet)
+            analyse = await self._analyse(projet)
             reference = analyse.id
             constats, recommandee = analyse.constats, analyse.recommandation
             source = analyse.source_manifeste()
@@ -645,14 +730,55 @@ class ServiceOutillage:
         reponse["application"] = resultat.to_dict()
         return reponse
 
-    def _analyse(self, projet: Projet) -> Analyse:
-        """L'analyse du projet — **bloquante**, et le seul lecteur du disque de ce module."""
+    async def _analyse(self, projet: Projet) -> Analyse:
+        """L'analyse du projet : les indices des tables, puis la lecture par le modèle.
+
+        Le seul lecteur du disque de ce module. La lecture gardée est rendue
+        telle quelle si le projet n'a pas bougé depuis — même relevé des tables,
+        mêmes fichiers lus et dossiers listés, à la taille et à la date près.
+        """
+        indices = await asyncio.to_thread(self._indices, projet)
+        empreinte = _empreinte(indices)
+        gardee = self._lues.get(projet.id)
+        if gardee is not None and await asyncio.to_thread(gardee.vaut_pour, empreinte):
+            return gardee.analyse
+        try:
+            fournisseur = self._fournisseur()
+        except Exception as exc:  # noqa: BLE001 — sans fournisseur, les tables seules
+            return sans_lecture(indices, f"aucun fournisseur de modèle n'est utilisable : {exc}")
+        analyse = await lire_le_projet(
+            indices, perimetre=projet.perimetre, provider=fournisseur, modele=self._modele
+        )
+        if analyse.lecture is not None and analyse.lecture.etat == "lue":
+            self._lues[projet.id] = await asyncio.to_thread(
+                _LectureGardee.de, empreinte, analyse, analyse.lecture
+            )
+        return analyse
+
+    def _indices(self, projet: Projet) -> Analyse:
+        """Le relevé des tables — **bloquant**, joué hors de la boucle d'événements."""
         return analyser(
             projet.racine_chemin,
             projet_id=projet.id,
             perimetre=projet.perimetre,
             bornes=self._bornes,
         )
+
+    def _fournisseur(self) -> ModelProvider:
+        """Le fournisseur de la lecture, résolu au premier usage (import local, comme #257).
+
+        Le modèle suit le fournisseur configuré (#1173) : le défaut de ce canal
+        est un nom Claude, qui n'a de sens que chez Claude. Résolu **avant** de
+        retenir le fournisseur, pour qu'un échec laisse tout à résoudre au
+        prochain appel plutôt qu'un fournisseur sans son modèle.
+        """
+        if self._provider is None:
+            from maestro.providers.factory import modele_du_canal, provider_from_settings
+
+            fournisseur = provider_from_settings()
+            self._modele = modele_du_canal(self._modele, fournisseur)
+            self._provider = fournisseur
+        return self._provider
 
     async def question(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
         """La prochaine question du questionnaire, vu les réponses données (#1031, #1147).

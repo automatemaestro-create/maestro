@@ -250,9 +250,13 @@ toi-même.
    Il ouvre une console indépendante, imprime le run-id, le journal et la commande de reprise, et
    rend la main immédiatement. Rappelle les options utiles, qui se combinent avec `--detach` :
    `--max <n>` pour borner le run, `--modele <modèle>`, `--effort <niveau>` (`low`…`max`). Ces deux
-   derniers ont un **défaut épinglé par le dépôt** — `claude-opus-5` et `xhigh` (#206, #217) — et la
-   ligne `plan :` les annonce : ne les passe que si l'utilisateur demande explicitement un autre
-   régime, et dis lequel s'il le fait. `--budget <usd>` (#286) et `--timeout <durée>` (#326)
+   derniers ont un **défaut épinglé par le dépôt** — la dernière version d'Opus et `xhigh` (#206,
+   #1269, #217) — et la ligne `plan :` les annonce en toutes lettres : ne les passe que si
+   l'utilisateur demande explicitement un autre régime, et dis lequel s'il le fait (`--modele` prend
+   une famille — `opus`, `sonnet`, `fable` — ou un identifiant complet). Un modèle que le CLI
+   installé ne sert pas fait **refuser le lancement** (code `2`, avant toute console, aucun run
+   arrêté) : relaie la réponse et ce qui débloque — mettre le CLI à jour est le geste de
+   l'utilisateur, pas le tien. `--budget <usd>` (#286) et `--timeout <durée>` (#326)
    existent aussi, mais **ne les propose pas** : aucun des deux ne s'applique par défaut, et
    atteints ils coupent la session en plein travail — sans commit ni PR, comptée en échec, lots
    suivants du parent sabordés. Ne les passe que si l'utilisateur le demande, et dis-le alors.

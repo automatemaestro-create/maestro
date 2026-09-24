@@ -78,7 +78,7 @@ def enregistre_secrets_du_projet(projet: Projet) -> int:
     for fichier in fichiers_exclus(racine, projet.perimetre):
         if lus >= _FICHIERS_MAX or enregistrees >= _VALEURS_MAX:
             break
-        if not _porte_des_secrets(fichier, racine):
+        if not porte_des_secrets(fichier, racine):
             continue
         lus += 1
         for valeur in _valeurs(fichier):
@@ -89,13 +89,19 @@ def enregistre_secrets_du_projet(projet: Projet) -> int:
     return enregistrees
 
 
-def _porte_des_secrets(fichier: Path, racine: Path) -> bool:
+def porte_des_secrets(fichier: Path, racine: Path) -> bool:
     """`fichier` est-il d'un genre dont les valeurs méritent d'être masquées ?
 
     Trois signes, dans l'ordre où on les rencontre : un **nom** de gisement
     connu (`.env`, `.env.local`, `.npmrc`…), un **suffixe** de matériel
     cryptographique (`.pem`, `.key`…), ou un **dossier `secrets/`** quelque part
     au-dessus — celui que `EXCLUS_DEFAUT` retire d'office.
+
+    Publique depuis #1163 : la lecture des sources (`maestro.sources.extraction`)
+    lit désormais tout fichier dont les octets sont du texte, et c'est **cette**
+    règle, la même que celle du masquage, qui lui interdit d'en faire entrer un
+    porteur de secrets dans le contexte d'un modèle. Deux listes finiraient par
+    diverger, et c'est un secret qui passerait par l'écart.
     """
     nom = fichier.name
     if nom in _NOMS_PORTEURS or nom.startswith(".env"):

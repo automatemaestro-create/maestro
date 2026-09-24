@@ -594,9 +594,9 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
    *
    * Il emprunte `envoi` — c'est un tour comme un autre, et l'écran a besoin de
    * la même chose qu'à l'envoi : savoir qu'un échange est en vol pour désarmer
-   * les boutons. Il ne passe **pas** par le flux : rien ne s'écrit au fil de
-   * l'eau ici, la réponse est exécutée et non rédigée, et le REST rend la paire
-   * d'un coup.
+   * les boutons. Il ne passe **pas** par le flux : la décision est exécutée, puis
+   * le modèle rédige sa réponse d'un bloc (#1262), et le REST rend la paire d'un
+   * coup.
    */
   const trancherCadrage = useCallback(
     async (
@@ -657,8 +657,8 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
    * Le geste qui valide — ou décline — l'équipe proposée (#1146).
    *
    * Le troisième jumeau de `trancherCadrage` : il emprunte `envoi`, ne passe pas
-   * par le flux (la suite s'exécute, elle ne se rédige pas) et laisse le
-   * rechargement rendre l'écran juste socket coupée.
+   * par le flux (la suite s'exécute, puis le modèle en parle d'un bloc — #1262)
+   * et laisse le rechargement rendre l'écran juste socket coupée.
    */
   const recruter = useCallback(
     async (

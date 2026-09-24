@@ -1785,6 +1785,20 @@ def test_la_demande_d_un_run_detache_parait_dans_le_fil_et_la_decision_lui_revie
     from maestro.controltower.app import create_app
     from maestro.controltower.chat import ChatStore, MessageChat, recrutement_en_attente
     from maestro.controltower.orchestration import NOM_ORCHESTRATION, RepondeurOrchestration
+    from maestro.providers.base import ModelProvider
+
+    class ModeleQuiRedige(ModelProvider):
+        """La parole du fil (#1262) : la demande et le refus sont rédigés par le modèle."""
+
+        name = "modele-qui-redige"
+
+        def supports(self, model: str) -> bool:
+            return True
+
+        async def generate(
+            self, prompt: str, *, model: str, system_prompt: str | None = None
+        ) -> str:
+            return "Rédigé par le modèle."
 
     bus = BusPartage()
     arbitre = deroule(monkeypatch, bus, tmp_path)["arbitre_renfort"]
@@ -1799,7 +1813,9 @@ def test_la_demande_d_un_run_detache_parait_dans_le_fil_et_la_decision_lui_revie
         )
     )
     app = create_app(
-        bus=bus, chat_store=depot, orchestration_repondeur=RepondeurOrchestration()
+        bus=bus,
+        chat_store=depot,
+        orchestration_repondeur=RepondeurOrchestration(provider=ModeleQuiRedige()),
     )
     with TestClient(app) as client:
         attente = client.portal.start_task_soon(arbitre, _demande_renfort())
@@ -1818,6 +1834,8 @@ def test_la_demande_d_un_run_detache_parait_dans_le_fil_et_la_decision_lui_revie
     assert pose.recrutement.run_id == RUN
     assert pose.recrutement.role == "Designer"
     assert pose.recrutement.taches == ("Dessiner le logo stylisé",)
+    # La demande est dite par le répondeur du fil, pas par une phrase du relais.
+    assert pose.contenu == "Rédigé par le modèle."
     assert reponse.status_code == 201, reponse.text
     # Décliné — une décision, pas un silence : le run repart avec l'équipe actuelle.
     assert decision.approuve is False

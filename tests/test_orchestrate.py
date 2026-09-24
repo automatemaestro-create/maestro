@@ -66,6 +66,9 @@ SCRIPTS = (
     # refus n'a plus de `matche()` et retombe en « inclassé » — un vert qui ne garderait plus rien.
     "scripts/orchestrate/permissions.sh",
     "scripts/orchestrate/permissions.awk",
+    # La dernière version de chaque famille de modèles (#1269) : sans elle, le défaut `opus` n'a
+    # plus de quoi se résoudre et le run refuse de partir.
+    "maestro/providers/familles-claude.tsv",
 )
 
 # Le bouchon `gh`. Il ne cherche pas à imiter GitHub : il répond au strict nécessaire, en lisant
@@ -706,6 +709,12 @@ def depot(tmp_path: Path) -> Depot:
         # explicitement (voir « La file de merge » plus bas) ; sa couverture complète — un merge qui
         # RÉUSSIT — est le lot 7 du chantier (#414), qui apporte le bouchon capable de le jouer.
         "MAESTRO_ORCHESTRATE_MERGE": "0",
+        # La sonde du modèle (#1269) est ÉTEINTE par défaut, pour la même raison que la file de
+        # merge : un vrai run pose d'abord une question au CLI, et les bouchons de `claude` de ce
+        # fichier jouent des scénarios de TICKET — ils noteraient la sonde comme une session, ou
+        # la feraient échouer comme ils font échouer un ticket. Les tests qui la visent la
+        # rallument (voir « Le modèle du run » plus bas).
+        "MAESTRO_ORCHESTRATE_SONDE_MODELE": "0",
         "GL_GQL_RETRIES": "1",
         "GL_GQL_RETRY_DELAY": "0",
     }
@@ -1422,6 +1431,319 @@ def test_l_effort_traverse_le_lancement_detache(depot: Depot) -> None:
     corps = lanceur.read_text(encoding="utf-8")
     commande = next(ligne for ligne in corps.splitlines() if ligne.startswith("bash "))
     assert "--effort max" in commande
+
+
+# =====================================================================================
+# Le modèle du run : la dernière version de sa famille, vérifiée auprès du CLI (#1269)
+# =====================================================================================
+#
+# Deux provenances à protéger. La VERSION : `claude-opus-5` a continué de servir après la sortie
+# d'Opus 5.5 sans que rien ne le dise — le dépôt tient donc la dernière version de chaque famille
+# dans `maestro/providers/familles-claude.tsv`, et c'est lui, jamais l'alias du CLI (#206), qui
+# résout `opus`. Le SERVICE : un modèle que le CLI installé ne sert pas faisait échouer la première
+# session et sauter les lots suivants de son parent (mesuré le 2026-09-04 et le 2026-09-24) — une
+# sonde le refuse désormais avant le premier ticket.
+
+FAMILLES = RACINE / "maestro/providers/familles-claude.tsv"
+
+
+def _familles_de_modeles() -> dict[str, str]:
+    """Famille → identifiant, tels que le dépôt les tient — lus, jamais recopiés : ces tests
+    doivent passer la prochaine version d'Opus sans qu'on les touche."""
+    familles = {}
+    for ligne in FAMILLES.read_text(encoding="utf-8").splitlines():
+        champs = ligne.split("\t")
+        if not ligne.startswith("#") and len(champs) >= 2:
+            familles[champs[0]] = champs[1]
+    return familles
+
+
+OPUS = _familles_de_modeles()["opus"]
+SONNET = _familles_de_modeles()["sonnet"]
+FABLE = _familles_de_modeles()["fable"]
+
+#: Ce que le CLI 2.1.260 a répondu le 2026-09-24 à `--model claude-opus-5-5`, mot pour mot.
+REFUS_DU_24_SEPTEMBRE = (
+    "API Error: 400 Claude Code 2.1.260 does not support this model; version 2.1.280 or newer is"
+    " required. Run 'claude update'"
+)
+SONDE_REFUSEE = (
+    "printf '%s' '{\"is_error\":true,\"api_error_status\":400,\"result\":\""
+    + REFUS_DU_24_SEPTEMBRE.replace("'", "'\\''")
+    + "\"}'; exit 1"
+)
+SONDE_SERVIE = (
+    "printf '%s' '{\"is_error\":false,\"result\":\"ok\",\"modelUsage\":{\"" + OPUS
+    + "\":{\"inputTokens\":10}}}'; exit 0"
+)
+SONDE_A_LA_LIMITE = (
+    "printf '%s' '{\"is_error\":true,\"result\":\"Claude AI usage limit reached|1900000000\"}';"
+    " exit 1"
+)
+
+
+def _claude_sonde(depot: Depot, journal: Path, sonde: str, version: str = "2.1.281") -> str:
+    """Bouchon qui distingue la sonde d'une session de ticket.
+
+    La sonde se reconnaît à `--no-session-persistence`, qu'aucune session de ticket ne porte (elle
+    doit rester reprenable). Chaque appel est noté dans `journal` — « sonde … » ou « session … » —,
+    `sonde` est la réponse à la sonde (une ligne shell qui sort), et une session livre le ticket
+    130 comme /ticket-ship l'aurait fait.
+    """
+    # Un appel = UNE ligne : le prompt d'une session tient sur plusieurs, d'où le `tr`.
+    return _claude_stub(depot, f"""
+        if [ "$1" = "--version" ]; then echo "{version} (Claude Code)"; exit 0; fi
+        appel="$(printf '%s ' "$@" | tr '\\n' ' ')"
+        if printf '%s\\n' "$@" | grep -qx -- '--no-session-persistence'; then
+          printf 'sonde %s\\n' "$appel" >> "{journal}"
+          {sonde}
+        fi
+        printf 'session %s\\n' "$appel" >> "{journal}"
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":1}}'
+        exit 0
+    """)
+
+
+def _appels(journal: Path) -> list[str]:
+    return journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []
+
+
+#: La sonde rallumée, et le modèle du poste neutralisé : un `MAESTRO_ORCHESTRATE_MODELE` posé sur
+#: la machine changerait sinon ce que « sans --modele » veut dire.
+SONDE = {"MAESTRO_ORCHESTRATE_SONDE_MODELE": "1", "MAESTRO_ORCHESTRATE_MODELE": ""}
+
+
+def test_chaque_famille_nomme_un_identifiant_de_sa_famille() -> None:
+    """Une ligne `opus` qui porterait un Sonnet ferait tourner les runs sur le mauvais modèle sans
+    que rien ne le dise : l'identifiant est complet, et c'est celui de sa famille."""
+    familles = _familles_de_modeles()
+    assert {"opus", "sonnet", "fable"} <= set(familles), "les trois familles que le ticket nomme"
+    for famille, identifiant in familles.items():
+        assert identifiant.startswith(f"claude-{famille}-"), (famille, identifiant)
+
+
+def test_sans_modele_le_run_part_sur_la_derniere_version_d_opus(depot: Depot) -> None:
+    """Le défaut du dépôt : la famille `opus`, résolue par le fichier — en toutes lettres au CLI et
+    dans la ligne `plan :`."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / "args-modele"
+    claude = _claude_note_les_arguments(depot, journal)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "modele",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_MODELE": ""})
+    assert r.returncode == 0, r.stdout + r.stderr
+    recus = journal.read_text(encoding="utf-8").splitlines()
+    assert recus[recus.index("--model") + 1] == OPUS, "jamais l'alias `opus`, résolu par le CLI"
+    assert f"modèle {OPUS} (dernière version de la famille opus)" in r.stdout
+
+
+@pytest.mark.parametrize(
+    "args, env, attendu",
+    [
+        (["--modele", "sonnet"], {}, SONNET),
+        (["--modele", "fable"], {}, FABLE),
+        (["--modele", "Opus"], {}, OPUS),
+        ([], {"MAESTRO_ORCHESTRATE_MODELE": "fable"}, FABLE),
+        # L'option gagne sur la variable, comme pour l'effort.
+        (["--modele", "sonnet"], {"MAESTRO_ORCHESTRATE_MODELE": "fable"}, SONNET),
+        # Un identifiant complet passe tel quel — y compris une version qui n'est plus la dernière.
+        (["--modele", "claude-opus-5"], {}, "claude-opus-5"),
+    ],
+)
+def test_une_famille_se_resout_en_sa_derniere_version(
+    depot: Depot, args: list[str], env: dict[str, str], attendu: str
+) -> None:
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, *args,
+                    env={"MAESTRO_ORCHESTRATE_MODELE": "", **env})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"· modèle {attendu}" in r.stdout
+    assert f"--model {attendu} --effort" in r.stdout, "l'aperçu de la commande de session aussi"
+
+
+def test_un_nom_hors_des_familles_part_tel_quel_et_le_plan_le_dit(depot: Depot) -> None:
+    """La liberté d'un alias reste, en connaissance de cause : le CLI le résout, et la ligne
+    `plan :` le dit plutôt que de le faire passer pour un choix du dépôt."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--modele", "opusplan")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "--model opusplan --effort" in r.stdout
+    assert "modèle opusplan (résolu par le CLI" in r.stdout
+
+
+def test_sans_le_fichier_des_familles_seul_un_identifiant_complet_part(depot: Depot) -> None:
+    """Sans le fichier, le défaut `opus` partirait au CLI comme alias : ce que #206 a retiré. Un
+    identifiant complet, lui, n'a besoin de personne."""
+    (depot.racine / "maestro/providers/familles-claude.tsv").unlink()
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, env={"MAESTRO_ORCHESTRATE_MODELE": ""})
+    assert r.returncode == 2
+    assert "familles-claude.tsv introuvable" in r.stderr
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--modele", "claude-opus-5")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "--model claude-opus-5 --effort" in r.stdout
+
+
+def test_le_fichier_des_familles_se_lit_encore_extrait_en_crlf(depot: Depot) -> None:
+    """Sous Windows, `core.autocrlf` peut l'extraire en CRLF : un `\\r` collé à l'identifiant
+    ferait refuser chaque session par le CLI."""
+    fichier = depot.racine / "maestro/providers/familles-claude.tsv"
+    fichier.write_bytes(fichier.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, env={"MAESTRO_ORCHESTRATE_MODELE": ""})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"--model {OPUS} --effort" in r.stdout
+
+
+def test_un_modele_que_le_cli_ne_sert_pas_est_refuse_avant_le_premier_ticket(
+    depot: Depot,
+) -> None:
+    """Le cas du 2026-09-24, rejoué : refusé avec la version requise et ce qui débloque, et
+    rien derrière — aucune session, aucun journal de run, donc aucun lot sauté."""
+    depot.ticket(130, "Premier lot")
+    depot.ticket(131, "Second lot")
+    journal = depot.racine.parent / "appels-refus"
+    claude = _claude_sonde(depot, journal, SONDE_REFUSEE, version="2.1.260")
+    plan = _plan(depot, [(1, 130, "140", "moyenne"), (2, 131, "140", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "refus",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert f"le modèle {OPUS} est refusé par le CLI installé" in r.stderr
+    assert "Claude Code 2.1.260" in r.stderr, "la version installée"
+    assert "version requise   2.1.280" in r.stderr, "la version requise, lue dans la réponse"
+    assert "claude update" in r.stderr, "la commande qui débloque"
+    assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session lancée"
+    assert not (depot.racine / ".maestro/orchestrate/refus").exists(), "aucun run, aucun lot sauté"
+
+
+def test_la_sonde_joue_sous_le_regime_des_sessions(depot: Depot) -> None:
+    """Même modèle et même effort que les sessions qu'elle précède : un modèle servi à un effort
+    qu'il refuse ne l'est pas pour le run."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / "appels-servi"
+    claude = _claude_sonde(depot, journal, SONDE_SERVIE)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "servi", "--effort", "max",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 0, r.stdout + r.stderr
+    appels = _appels(journal)
+    assert [a.split()[0] for a in appels] == ["sonde", "session"], "la sonde d'abord, une fois"
+    for appel in appels:
+        assert f"--model {OPUS} " in appel and "--effort max" in appel, appel
+    assert f"modèle : {OPUS} servi par le CLI installé (Claude Code 2.1.281)" in r.stdout
+    assert "130\tOK" in (depot.racine / ".maestro/orchestrate/servi/resume.tsv").read_text(
+        encoding="utf-8")
+
+
+def test_une_reprise_verifie_aussi_le_modele(depot: Depot) -> None:
+    """`--resume` rejoue un plan, pas une vérification : le CLI a pu changer depuis la coupure — et
+    c'est justement en reprise que le run du 2026-09-24 a été relancé."""
+    depot.ticket(130, "Reste a faire")
+    source = _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")], resume=[], age=4000)
+    avant = sorted(p.name for p in source.iterdir())
+    journal = depot.racine.parent / "appels-reprise"
+    claude = _claude_sonde(depot, journal, SONDE_REFUSEE, version="2.1.260")
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "version requise   2.1.280" in r.stderr
+    assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session lancée"
+    assert not (depot.racine / ".maestro/orchestrate/suite").exists()
+    assert sorted(p.name for p in source.iterdir()) == avant, "le run repris reste reprenable"
+
+
+def test_un_run_refuse_n_arrete_aucun_run_en_vol(depot: Depot) -> None:
+    """La sonde passe AVANT la place nette (#213) : un run qui ne partira pas n'a aucune raison de
+    couper celui qui travaille."""
+    dossier = _run_dir(depot, "20260803-171434", [(1, 130, "-", "haute")], resume=[],
+                       sessions=(130,))
+    proc = _pilote_factice(depot, dossier)
+    try:
+        claude = _claude_sonde(depot, depot.racine.parent / "appels-en-vol", SONDE_REFUSEE)
+        plan = _plan(depot, [(1, 131, "-", "moyenne")])
+        r = depot.lance("run.sh", "--plan", plan, "--run-id", "refuse",
+                        env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "Un seul run à la fois" not in r.stdout
+        assert proc.poll() is None, "le run en vol tourne toujours"
+    finally:
+        proc.kill()
+
+
+def test_une_limite_d_usage_a_la_sonde_ne_refuse_pas_le_run(depot: Depot) -> None:
+    """Ce n'est pas un verdict sur le modèle : le run part, et attendra le reset comme un ticket."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / "appels-limite"
+    claude = _claude_sonde(depot, journal, SONDE_A_LA_LIMITE)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "limite",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"modèle : {OPUS} non vérifié" in r.stdout
+    assert "session" in [a.split()[0] for a in _appels(journal)]
+
+
+def test_un_dry_run_ne_sonde_rien(depot: Depot) -> None:
+    """`--dry-run` n'exécute rien — pas même une requête minimale — et dit ce qu'un vrai run
+    vérifierait."""
+    journal = depot.racine.parent / "appels-dry"
+    claude = _claude_sonde(depot, journal, SONDE_REFUSEE)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan,
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _appels(journal) == []
+    assert f"demande d'abord au CLI installé s'il sert {OPUS}" in r.stdout
+
+
+def test_le_lancement_detache_sonde_avant_d_ouvrir_la_console(depot: Depot) -> None:
+    """Le refus doit revenir à celui qui lance — une console déjà ouverte le cacherait. Le modèle
+    vu servi passe au run détaché par l'environnement, jamais par le lanceur, qui reste rejouable
+    tel quel (et revérifie donc)."""
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    spawn = _spawn_stub(
+        depot,
+        'printf "%s\\n" "${MAESTRO_ORCHESTRATE_MODELE_SONDE:-}" > "$MAESTRO_FIXTURES/vu.txt"\n',
+    )
+    claude = _claude_sonde(depot, depot.racine.parent / "appels-detache-refus", SONDE_REFUSEE)
+    r = depot.lance("run.sh", "--detach", "--plan", plan, "--run-id", "detache-refus",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_SPAWN": spawn, **SONDE})
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "claude update" in r.stderr
+    assert not (depot.fixtures / "spawn.txt").exists(), "aucune console ouverte"
+    assert not (depot.racine / ".maestro/orchestrate/detache-refus").exists()
+
+    claude = _claude_sonde(depot, depot.racine.parent / "appels-detache-servi", SONDE_SERVIE)
+    r = depot.lance("run.sh", "--detach", "--plan", plan, "--run-id", "detache-servi",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_SPAWN": spawn, **SONDE})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (depot.fixtures / "vu.txt").read_text(encoding="utf-8").strip() == OPUS
+    lanceur = depot.racine / ".maestro/orchestrate/detache-servi/lancer.sh"
+    assert "MAESTRO_ORCHESTRATE_MODELE_SONDE" not in lanceur.read_text(encoding="utf-8")
+
+
+def test_le_run_detache_ne_repose_pas_la_question(depot: Depot) -> None:
+    """Ce que l'appelant vient de voir servi ne se redemande pas — mais seulement pour CE modèle."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    journal = depot.racine.parent / "appels-enfant"
+    claude = _claude_sonde(depot, journal, SONDE_REFUSEE)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "enfant",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE,
+                         "MAESTRO_ORCHESTRATE_MODELE_SONDE": OPUS})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "vérifié au lancement, avant le détachement" in r.stdout
+    assert [a.split()[0] for a in _appels(journal)] == ["session"]
+
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "enfant-autre", "--modele", "fable",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE,
+                         "MAESTRO_ORCHESTRATE_MODELE_SONDE": OPUS})
+    assert r.returncode == 2, "un autre modèle que celui vu servi est sondé, et ici refusé"
 
 
 # =====================================================================================

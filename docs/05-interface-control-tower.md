@@ -318,6 +318,17 @@ introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vid
 confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
 choix retenu reprend dès que l'API répond).
 
+> ⚠ **Renversé le 2026-09-24** ([docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md),
+> #1293), à la demande de la personne. Le projet actif n'est plus *relu au démarrage*.
+> - Chaque démarrage arrive sur le choix du projet, avec « Reprendre *le dernier projet* » en tête,
+>   atteint en un geste.
+> - La colonne de conversation y est ouverte ; la fermer vaut pour la session.
+>
+> Un réglage ancien (projet retenu, colonne fermée) ramenait sinon la Control Tower d'avant l'atelier.
+> Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
+> projet au sélecteur dans une session. Ce paragraphe décrit l'état **présent** jusqu'à ce que #1293
+> le réécrive.
+
 **Le sélecteur** (#280) tient dans la barre supérieure, contre le titre de page — on lit « ce
 projet-ci, cette page-là ». Il affiche le projet actif **et sa racine** (deux clones d'un même
 dépôt portent volontiers le même nom ; c'est le chemin qui dit sur lequel on travaille), et
@@ -2837,15 +2848,72 @@ s'annonce toujours **dans les deux sens** — c'est la règle de la ligne `plan 
 run d'outillage (#286) —, mais **au moment de lancer**, sur la carte de cadrage qui
 le récapitule sans rien ouvrir (§2.7.5). Le redire une fois le run parti n'était plus
 un choix affiché : c'était un gabarit, arrivé quand plus personne ne peut rien en
-faire. Reste la seule phrase que le code écrive encore sur un lancement réussi —
-« C'est parti. » sur le chemin du **geste**, où aucun modèle n'a parlé et où le fil
-ne se persiste pas vide : elle n'est accolée à rien.
+faire. Restait une phrase sur un lancement réussi — « C'est parti. » sur le chemin
+du **geste** —, et #1262 a tranché son sort ci-dessous : **remplacée**.
 
 Couverture : `tests/test_chat_global.py` (④bis — plusieurs incréments pour une
 phrase, le marqueur jamais affiché *prouvé sur un échantillon fautif*, la carte qui
-suit la prose, le lancement qui n'ajoute rien, et le projet sans équipe dont le flux
-n'est **pas même ouvert**), `tests/test_openai_provider.py` (le dialecte en flux, son
-usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
+suit la prose, le lancement qui n'ajoute rien), `tests/test_openai_provider.py` (le
+dialecte en flux, son usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
+
+##### Sur les chemins du geste aussi, le modèle parle et les cartes portent les faits (#1262)
+
+#1222 avait retiré le récital qui **suivait** un lancement. Il restait, sur les
+chemins où la personne agit d'un **geste** plutôt que d'une phrase, des textes que
+le code écrivait **à la place** du modèle — vus sur le réel au passage du banc du
+2026-09-24 (S3) : « C'est parti. » après un accord au bouton ; la proposition
+d'équipe d'un projet sans agent (« Avant de lancer « … », il faut une équipe : ce
+projet n'a encore aucun agent… Rien n'est créé sans votre validation. »), qui
+*remplaçait* la réponse du modèle ; « Équipe créée : Développeur — 1 agent. Je
+reprends votre demande : « … ». Je lance ? » ; trois refus (« Entendu, je n'ouvre
+rien… », « Entendu : je ne recrute personne… » avant et pendant un run) ; et, côté
+renfort (#1227), la demande posée par un run et son échéance passée. Dans une même
+conversation, la personne lisait deux voix : celle du modèle, qui s'adapte, et
+celle du code, qui récite.
+
+Le partage est désormais le même partout dans le fil de l'orchestrateur :
+
+- les **faits** sont des champs du message, donc des cartes — le run ouvert
+  (`run_id`, sous la bulle), la demande reproposée (`proposition`, la carte de
+  cadrage), l'équipe à valider (`recrutement`, `EquipeDansLeFil`) et, nouveau,
+  l'**équipe créée** (`equipe`, `chat.EquipeRecrutee`) : « Équipe créée : Développeur
+  ×2 · QA — 3 agents » se lit **sous la bulle**, dans la suite du message, comme le
+  run qu'une réponse a ouvert, avec son renvoi vers l'écran des agents ;
+- la **parole** est celle du modèle. Sur un geste, le canal lui donne *ce qui vient
+  de se passer* et il écrit la réponse (`RepondeurOrchestration.rediger`,
+  `_PROMPT_REDACTION`, registre compris) ; le renfort d'un run passe par le même
+  verbe (`ServiceChat.proposer_recrutement` transmet des faits, le répondeur du fil
+  rédige). Sur une demande tapée pour un projet sans agent, le modèle **reçoit le
+  fait** avant de répondre et écrit lui-même qu'il faut d'abord une équipe —
+  **en direct** : sa réponse n'est plus retenue pour être remplacée, et le projet
+  sans agent cesse d'être la seule exception au direct de #1222 ;
+- les **empêchements** restent au code — objectif perdu, rien de branché, moteur ou
+  création qui refusent, modèle qui ne peut pas rédiger (« Je ne peux pas rédiger
+  mon message pour l'instant : … », la cause et rien d'autre) : rien ne s'est fait,
+  et lui seul le sait. Un modèle muet **ne défait aucun geste** — le run reste
+  ouvert, l'équipe créée — et rien n'est fabriqué à la place de ses mots (la règle
+  du récit de fin, #1224).
+
+**Le sort de « C'est parti. » : remplacée par la parole du modèle.** Elle avait
+été gardée par #1222 pour une raison juste — sur un accord au bouton, aucun modèle
+n'avait parlé, et le fil ne se persiste pas vide — et cette raison tombe dès que le
+geste a sa rédaction : le modèle accuse réception lui-même, sur un run **déjà
+ouvert** (le lanceur passe d'abord : le clic est l'accord, et rien n'attend un
+modèle pour l'honorer), sans en recopier l'identifiant qui se lit sous la bulle.
+La garder aurait fait d'elle la dernière phrase identique à chaque lancement, dans
+un fil où tout le reste est dit par l'orchestrateur ; la question du rendu attendu
+— *chaque message se lit-il comme écrit par l'orchestrateur ?* — n'admettait pas
+d'exception. Le prix est écrit : un appel modèle court par geste, qui ne retarde
+rien de ce que le geste décide.
+
+Couverture : `tests/test_chat_global.py` (⑫ — sur chaque chemin du geste, ce que
+le fil dit **est** ce que le modèle a rédigé, à la lettre, et le modèle a reçu les
+faits ; un lancement empêché ne le fait pas parler ; un rédacteur muet ne défait
+rien ; la demande d'un projet sans agent s'écrit en direct), `tests/test_equipe_au_plan.py`
+(③ le relais du renfort transmet des faits, ④ la décision publiée au run porte ce
+qui a été recruté, pas les mots), `tests/test_registre_de_langue.py` (la consigne de
+rédaction porte le registre, et son appel est rangé), `apps/web/tests/chat-global.test.tsx`
+(l'équipe créée se lit sous la bulle, sans phrase du code).
 
 #### Le fil se lit — Markdown, blocs de code, journées (#697)
 
@@ -3002,6 +3070,45 @@ l'équipe, les attentes), `maestro/controltower/chat.py` (`EtapeFil`, le canal
 `Etapeur`, la trame `etape`), `apps/web/components/chat/EtapesDuFil.tsx`,
 `apps/web/lib/useChat.ts`. Gardé par `tests/test_consultation_orchestrateur.py`,
 `tests/test_chat_global.py` et `apps/web/tests/etapes-du-fil.test.tsx`.
+
+#### Il lit le livrable, et la lecture d'un run dit ce que ses tâches ont rendu (#1263) — **livré**
+
+Au bouclage du 2026-09-24, dans une conversation neuve sur le projet de S5 (un
+`app.py` et un `README.md` livrés par un run), « Comment je fais pour tester ce
+projet ? » a reçu `python app.py` et le nom du README, puis *« je n'ai toutefois
+pas lu son contenu exact ni celui d'app.py […] il faudra ouvrir ces fichiers »*. Le
+README était lisible. L'orchestrateur n'avait lu que le run, et cette lecture ne
+disait de chaque tâche soldée que « détail : démarrage de la tâche ».
+
+- **Ce qu'une tâche a rendu voyage jusqu'à la lecture.** Le moteur consigne depuis
+  toujours le texte que l'agent lui remet (`sortie`) ; le pont le jetait, et le
+  dernier détail vu restait celui du début. Il voyage désormais dans son propre
+  champ, `resultat`, porté par le seul `tache.statut` de l'issue — **à côté** de
+  `detail`, qui reste l'erreur d'une issue ou la phrase d'un début, et que la frise
+  affiche tel quel. Un événement émis avant ce lot n'en porte pas, et se relit
+  comme avant.
+- **Le dernier `tache.statut` d'une tâche parle pour elle, vide compris** : une
+  tâche réussie ne se raconte plus par son démarrage.
+- **La lecture `detail` rend le résultat de chaque tâche soldée**, en retrait sous
+  sa tâche, et chacune y garde sa part : les résultats partagent les deux tiers de
+  la borne de la lecture (12 000 caractères), avec un plancher par tâche, et une
+  part atteinte se dit (« … (résultat coupé à … caractères sur …) »). Une coupe en
+  fin de texte aurait fait disparaître les dernières tâches derrière un premier
+  compte rendu bavard. Les **faits** que chaque prompt reçoit en gardent 300
+  caractères, comme d'un détail : c'est ce qui permet au premier tour de lecture de
+  voir nommés les fichiers livrés.
+- **Le tour de lecture sait qu'une question sur le livré se répond avec le
+  livrable** — le README, le point d'entrée —, qu'un fichier nommé se demande tout
+  de suite, et qu'il ne s'arrête pas sur une lecture qui nomme un fichier sans en
+  donner le contenu. Ce qu'il lit reste son jugement ; la matière qu'on lui donne,
+  elle, est un fait.
+
+Gardé par `tests/test_consultation_orchestrateur.py` §⑦ : le run rejoué par son
+**journal** et par le pont (poser les champs à la main laisserait passer le pont
+qui jetait la sortie), et la question du bouclage posée à un faux fournisseur **qui
+suit la piste** — il ne demande à lire que les fichiers que le canal lui montre
+nommés, et ne répond qu'avec ce qu'il a lu : sans le résultat des tâches, il rend
+l'aveu du bouclage mot pour mot.
 
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
@@ -4363,10 +4470,12 @@ fournisseur au registre suffit à l'y faire apparaître.
   "fournisseurs": [
     {
       "nom": "claude",                       // la clé du REGISTRE, à écrire dans `fournisseur`
-      "modeles": [                           // la gamme ANNONCÉE (peut être vide)
+      "modeles": [                           // la gamme ANNONCÉE (peut être vide) ; chez Claude, la
+                                             // dernière version de chaque famille, lue dans
+                                             // maestro/providers/familles-claude.tsv (#1270)
         {
-          "nom": "claude-opus-5",            // la chaîne exacte attendue par le fournisseur
-          "libelle": "Opus 5",               // repli sur `nom` s'il n'y en a pas
+          "nom": "claude-opus-5-5",          // la chaîne exacte attendue par le fournisseur
+          "libelle": "Opus 5.5",             // repli sur `nom` s'il n'y en a pas
           "efforts": ["low", "medium", "high", "xhigh", "max"]
                                              // VIDE = « ce modèle ne se règle pas en effort »,
                                              // jamais « on ne sait pas » ; vide aussi hors gamme
@@ -5061,7 +5170,7 @@ personne n'a lu.
       "type": "fichier",             // fichier | dossier | url
       "etat": "lu",                  // lu | tronque | ignore
       "tokens": 4200,
-      "motif": "",                   // `ignore` : code stable (format-non-gere, source-absente…)
+      "motif": "",                   // `ignore` : code stable (binaire-opaque, source-absente, secret…)
       "message": "",                 // `ignore` : la phrase lisible
       "limite": "",                  // `tronque` : la limite atteinte (« 20000 tokens (plafond par source) »)
       "entrees": []                  // `dossier` : une lecture **par fichier** parcouru
@@ -5078,14 +5187,37 @@ jamais comme consigne (`contexte_markdown`, ENF-13), et c'est le brief (#318) qu
 
 Le régime des deux étapes est **opposé, à dessein** : la résolution **refuse** (une saisie se
 corrige avant de dépenser), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
-encore connu de qui l'a joint). C'est pourquoi un `.png` déposé au milieu d'un dossier de maquettes
+encore connu de qui l'a joint). C'est pourquoi un binaire déposé au milieu d'un dossier de maquettes
 ne fait échouer aucun lancement et apparaît quand même, ligne à ligne, dans `entrees`.
+
+**Ce qui se lit, depuis #1163 : tout ce qui se lit.** Aucune liste d'extensions — c'est le
+**contenu** qui décide. Des octets de texte se lisent comme du texte (Markdown, JSON, YAML, CSV,
+code, fichier sans extension, UTF-16 compris) ; une page `.html` est ramenée à son texte ; un
+`.docx`, un `.pdf` et un classeur `.xlsx` passent par leur convertisseur (une section par feuille,
+une rangée par ligne) ; une **image** (PNG, JPEG, GIF, WebP, reconnue à sa signature) est
+**regardée par le modèle** du poste, qui en rend le texte, la structure et les données — ce que le
+brief lit est cette transcription, annoncée comme telle. Ce qui reste se nomme avec sa raison :
+
+| motif | ce qui s'est passé |
+|---|---|
+| `binaire-opaque` | ni texte, ni image, ni document convertible (un octet nul en tête) |
+| `secret` | un porteur de secrets (`.env*`, `.npmrc`, `.pem`, `.key`…, la règle du masquage du projet) : jamais ouvert, même joint à la main |
+| `trop-volumineux` | une image au-delà des octets lus (`octets_max_lus`) : une image ne se lit pas en partie |
+| `vision-indisponible` | aucun modèle capable de voir : le fournisseur configuré ne sait pas montrer une image (nommé), ou aucun n'a pu être résolu |
+| `vision-en-echec` | le modèle a échoué en regardant (un endpoint qui refuse l'image, par exemple) — sa cause, en une ligne |
+| `images-plafond` | au-delà de `images_max` images montrées au modèle pour une même lecture (20 par défaut) : chacune est un appel payé avant que le run n'ait de budget |
+| `vue-au-lancement` | l'**aperçu** (§6.9), gratuit, ne montre pas l'image au modèle : le lancement la regardera |
+
+`format-non-gere` n'est plus émis ; un rapport persisté qui le porte se relit tel quel, avec la
+phrase de son époque.
 
 Implémentation : [`maestro/sources/`](../maestro/sources/) — `modele` (la forme), `resolution`
 (#315 : ce qu'une déclaration devient, et ce qui la fait refuser), `extraction` (#316 : tout ramené
-au Markdown) et `televersement` (#317 : le dépôt des octets reçus). Couverture :
-[`tests/test_sources.py`](../tests/test_sources.py) et
-[`tests/test_extraction_sources.py`](../tests/test_extraction_sources.py) pour le socle ; les tests
+au Markdown), `images` (#1163 : l'image regardée par le modèle, `ModelProvider.generate_with_images`)
+et `televersement` (#317 : le dépôt des octets reçus). Couverture :
+[`tests/test_sources.py`](../tests/test_sources.py),
+[`tests/test_extraction_sources.py`](../tests/test_extraction_sources.py) et
+[`tests/test_sources_tous_formats.py`](../tests/test_sources_tous_formats.py) pour le socle ; les tests
 propres aux **routes** de ce §6.8 sont différés au lot final de la phase (#323), comme ceux des
 autres lots.
 
@@ -5435,11 +5567,12 @@ laisse donc pas un demi-tour de conversation derrière lui. L'`index` est ce qui
 rendre le refus **sur la source fautive** plutôt qu'en bloc.
 
 **Ce qui est refusé et ce qui est seulement dit** — même partage qu'au §6.9, et il compte
-particulièrement ici : une **image** se joint comme n'importe quel fichier (le critère l'exige), mais
-l'extraction ne lit aujourd'hui que le texte, le Markdown, le `.docx` et le `.pdf`. Une image
-ressort donc `ignore` / `format-non-gere` **dans le rapport**, en `201` — un constat, pas une faute.
-C'est exactement ce que le rapport existe pour dire, et c'est pourquoi l'écran ne promet nulle part
-qu'une image sera lue.
+particulièrement ici : une **image** se joint comme n'importe quel fichier (le critère l'exige).
+Depuis #1163 elle est **regardée par le modèle** du poste à l'envoi, et ce qu'il y voit entre au
+contexte du message — donc au brief d'un run lancé depuis le fil. Ce qui reste illisible (un
+binaire opaque, une image qu'aucun modèle configuré ne voit) ressort `ignore` **dans le rapport**,
+avec son motif (§6.8), en `201` — un constat, pas une faute. C'est exactement ce que le rapport
+existe pour dire, et c'est pourquoi l'écran ne promet nulle part d'avance ce qui sera lu.
 
 **Un message sans texte mais avec des sources est accepté** : déposer un cahier des charges *est* le
 message. Sans texte **ni** sources, c'est toujours un `422` (« message vide »).
@@ -6188,8 +6321,22 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   **analysé** (#1030) — le cas d'un projet existant. Corps portant les `choix` du questionnaire
   d'outillage (#1031) : l'équipe se dérive de ces **réponses**, sans qu'aucun fichier soit ouvert —
   le cas d'un projet neuf. Même dérivation dans les deux cas, et `source` dit laquelle a servi.
+  **Depuis #1159** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)), c'est le **modèle**
+  qui compose l'équipe pour le besoin réel du projet — ses constats, ce que la personne a répondu,
+  les cinq gabarits comme matière et non comme liste fermée —, puis l'exécution **vérifie** ce qu'il
+  a écrit (raison obligatoire, gabarit et skills confrontés à ce qui existe, preuve confrontée à ce
+  que l'analyse a lu, instances bornées, orchestrateur jamais recruté). Un modèle qui ne répond pas
+  fait retomber sur les **règles** des gabarits, et `composition` le dit, avec sa cause.
+- `POST /api/projets/{id}/equipe/correction` → `CorrectionEquipe` (#1159). La personne corrige
+  l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis l'étape
+  d'équipe. Corps : `demande` (une phrase, 500 caractères au plus), `equipe` (l'équipe **telle que
+  l'écran la montre** : `nom`, `role`, `retenu`, `instances`) et les `choix` d'un projet neuf. Rien
+  n'est créé : l'écran applique la correction à ce qu'il montre, et la création reste la route
+  suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
+  modèle ne répond pas — une correction n'a pas de repli, aucune règle ne comprend une phrase.
 - `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
-  que l'API l'a servie**, rôles retirés ou instances ajustées.
+  que l'API l'a servie**, rôles retirés ou instances ajustées, rôles ajoutés par une correction
+  compris.
 
 `404` si le projet est inconnu, `422` motivé s'il est illisible, si sa racine ne l'est plus, ou si
 l'équipe est refusée — jamais un `500`.
@@ -6203,11 +6350,17 @@ l'équipe est refusée — jamais un `500`.
   "faite_le": "2026-09-21T10:12:44+00:00",
   "resume": "Développeur ×2, QA / Testeur — 2 rôle(s), 3 instance(s) ; 4 rôle(s) écarté(s)",
   "source": { "origine": "analyse", "analyse_id": "ana-4c21" },  // repris tel quel
+  // QUI a composé l'équipe (#1159) : "modele" — pour le besoin de CE projet —, ou
+  // "regles" — les cinq gabarits, le repli quand le modèle n'a pas abouti, `raison`
+  // disant pourquoi. Vide sur un renfort (#1227), dont le poste vient du plan.
+  "composition": { "origine": "modele", "raison": "" },
   "roles": [
     { "nom": "dev",                    // le slug de la FICHE qui sera créée…
       "role": "Développeur",
       "gabarit": "developpeur",        // …jamais celui du gabarit : le playbook du
-                                       // code le masquerait (docs/04 §2)
+                                       // code le masquerait (docs/04 §2). Vide pour
+                                       // un rôle composé HORS des gabarits (#1159) —
+                                       // mobile, apprentissage, sécurité…
       "competences": ["api", "backend", "frontend", "refactor"],
       "raison": "le projet est écrit en Python (62 % des fichiers de code vus) : …",
       // L'ENDROIT du projet qui le justifie — le fichier lu, pas une phrase. `null`
@@ -6217,9 +6370,11 @@ l'équipe est refusée — jamais un `500`.
       "raison_instances": "2 langages substantiels (Python 62 %, TypeScript 31 %) : …",
       "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "TodoWrite"],
       "playbook": "…",                 // celui qu'on lit à l'écran, et qui sera écrit
-      "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257) ou
-                                       // "gabarit" (la rédaction n'a pas abouti) :
-                                       // les deux ne valent pas la même chose
+      "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257),
+                                       // "gabarit" (la rédaction n'a pas abouti) ou
+                                       // "esquisse" (idem, pour un rôle hors gabarit :
+                                       // son libellé, sa raison et le socle, #1159) —
+                                       // ils ne valent pas la même chose
       "playbook_raison": "…", "intention": "Un agent « Développeur » pour un projet …",
       "skills": [ { "nom": "mettre-en-route", "chemin": ".agents/skills/mettre-en-route/SKILL.md",
                     "etat": "a-generer",   // un skill que l'outillage n'a pas encore
@@ -6243,17 +6398,33 @@ l'équipe est refusée — jamais un `500`.
   ],
   // Ce qui n'est PAS proposé, avec sa raison : sans cette liste, « pas de rôle base
   // de données » se lirait comme un oubli de Maestro plutôt que comme un fait du
-  // projet. L'orchestrateur y figure PAR DÉCISION (docs/37 §4.2).
+  // projet. L'orchestrateur y figure PAR DÉCISION (docs/37 §4.2). La raison dit le
+  // FAIT seulement, jamais un geste (#1159) : elle sert deux surfaces qui n'offrent
+  // pas les mêmes contrôles, et c'est l'écran qui nomme le sien.
   "ecartes": [
     { "nom": "orchestrateur", "role": "Orchestrateur",
       "raison": "l'orchestrateur n'est pas un membre de l'équipe : c'est Maestro, …" },
     { "nom": "donnees", "role": "Base de données",
-      "raison": "rien dans les bornes de l'analyse ne justifie un rôle « Base de données » : aucun fichier SQL n'a été vu, … Vous pouvez l'ajouter à la validation si le projet en a besoin" }
+      "raison": "l'application ne stocke rien côté serveur d'après vos réponses" }
   ],
   "instances_total": 3,
   // LES DEUX PROMESSES DU TICKET, rendues lisibles par l'appelant — pas des
   // réglages : aucun appel ne peut les changer.
   "cree": false, "validation": "requise"
+}
+```
+
+```jsonc
+// CorrectionEquipe — POST …/equipe/correction (#1159)
+{
+  "reponse": "J'ai ajouté un rôle Sécurité à votre équipe, chargé de l'audit des dépendances…",
+  // Des rôles proposés DE PLEIN DROIT : même forme qu'un rôle de la proposition,
+  // playbook écrit pour ce projet, autorisations avec leur raison.
+  "ajouts": [ { "nom": "securite", "role": "Sécurité", "gabarit": "", "…": "…" } ],
+  "retraits": [],                     // des noms de l'équipe MONTRÉE, et eux seuls
+  "remis": [],
+  "instances": {},                    // { "dev": 2 }
+  "cree": false
 }
 ```
 
@@ -6312,6 +6483,17 @@ des skills au format Agent Skills dans `.agents/skills/`, et un **manifeste**
 `.maestro/outillage/manifeste.json` — et ce que ça change au chantier des projets locaux est à
 [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md). Ici : les routes, et les trois règles
 qu'elles portent.
+
+> ⚠ **Le chemin de création change** ([docs/43 §2.2 et §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
+> 2026-09-24), à la demande de la personne.
+> - Un projet **naît dans la conversation** (#1294), et son outillage s'y construit **pièce par
+>   pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` du formulaire quitte le chemin
+>   de création.
+> - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
+>   qui ne le lit pas nativement (#1295).
+>
+> Cette section décrit l'état **présent** jusqu'à ce que ces lots la réécrivent. Les routes et leurs
+> trois règles restent la matière des deux chemins.
 
 **Six routes, deux voies, une seule recommandation.** Un projet **existant** est analysé, un projet
 **neuf** est questionné — et les deux aboutissent à la *même* forme `recommandation`, produite par
@@ -6387,10 +6569,41 @@ regarde aucun fichier. Seule `…/generation` écrit dans le dossier de quelqu'u
     // comme un fait du projet. Les commandes y sont par DÉCISION (docs/38 §3.5).
     "ecartes": [{ "type": "commande", "nom": "toutes", "raison": "aucun format de commande…" }]
   },
+  // LA LECTURE DU PROJET PAR LE MODÈLE (#1158) — la provenance de ce que les
+  // tables ne connaissaient pas. `etat` : `lue` | `inachevee` (tours épuisés) |
+  // `indisponible` (le modèle n'a pas répondu : les constats restent ceux des
+  // tables, `motif` dit pourquoi). `retenus` est ce qu'elle a AJOUTÉ aux constats,
+  // `ecartes` ce que le modèle a rendu sans le fichier lu qui le prouve.
+  "lecture": { "etat": "lue", "motif": "", "tours": 2,
+               "lus": ["Depensio.sln", "tests/Api.Tests/Api.Tests.csproj"], "listes": ["."],
+               "refus": [{ "demande": "LIRE", "chemin": ".env", "motif": "hors-perimetre" }],
+               "tronque": false, "troncatures": [], "tronques": [],
+               "retenus": { "langages": [], "gestionnaires": [{ "nom": "dotnet", "…": "…" }],
+                            "commandes": [{ "usage": "tester", "commande": "dotnet test",
+                                            "chemin": "tests/Api.Tests/Api.Tests.csproj", "…": "…" }],
+                            "ci": [] },
+               "ecartes": [] },
   "source_manifeste": { "type": "analyse", "projet_id": "prj-7f3a",
                         "reference": "ana-3c9f0011", "resume": "Python, TypeScript ; …" }
 }
 ```
+
+**Les tables ne sont que des indices** (#1158, [docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
+Le parcours ci-dessus ne reconnaît que ce qu'il connaît — une solution .NET, un `justfile` ou un
+`gleam.toml` en sortaient sans commande. Le **modèle lit** ensuite le projet
+([`maestro/outillage/exploration.py`](../maestro/outillage/exploration.py)) par deux verbes,
+`LISTER` et `LIRE`, que Maestro sert lui-même : dans le périmètre déclaré (préfixe par préfixe, et
+sous la casse réelle du chemin), sans suivre aucun lien, sans rien exécuter, et bornés par
+`lectures_max`, `octets_par_lecture_max`, `entrees_par_liste_max` et `tours_max` — qui voyagent dans
+`bornes`. Chaque constat qu'il rend est **confronté** à ce qu'il a lu avant d'entrer dans `constats` :
+il s'**ajoute** aux indices, n'en retire aucun, et `recommandation` est refaite sur l'ensemble. Une
+lecture coupée le dit au modèle et dans `lecture.troncatures`. `parcours.extensions` compte
+**toutes** les extensions vues — l'indice qui montre au modèle qu'il y a des `.csproj` avant qu'il
+ouvre quoi que ce soit. La dernière lecture **réussie** est gardée tant que le projet n'a pas bougé
+(même relevé, mêmes fichiers lus à la taille et à la date près) : la génération écrit ce que l'écran
+a montré au lieu de redemander au modèle. Gardé par
+[`tests/test_outillage_lecture.py`](../tests/test_outillage_lecture.py) et
+[`tests/test_projet_outille_http.py`](../tests/test_projet_outille_http.py).
 
 **Lecture seule, bornée, et sans jamais exécuter le projet.** Les trois promesses sont dans la
 réponse plutôt que dans une docstring, et elles sont mesurées **sur les appels** par

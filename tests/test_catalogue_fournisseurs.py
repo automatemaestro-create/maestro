@@ -28,6 +28,7 @@ import pytest
 
 from maestro.agents.store import AgentDefinition, AgentStore, catalogue
 from maestro.engine import OrchestrationEngine
+from maestro.familles_claude import derniere_version, familles_claude
 from maestro.orchestrator import Orchestrator
 from maestro.providers import (
     available_providers,
@@ -42,6 +43,11 @@ from maestro.providers.base import (
 )
 from maestro.providers.claude import EFFORTS, ClaudeProvider
 from maestro.providers.openai_compat import OpenAICompatProvider
+
+#: Un modèle **de la gamme**, lu dans la source unique (#1270) plutôt qu'écrit ici :
+#: écrit en dur, il aurait quitté la gamme à la prochaine version d'Opus, et les
+#: tests de l'effort auraient jugé un modèle hors gamme sans le savoir.
+OPUS = derniere_version("opus")
 
 
 class ConstantProvider(ModelProvider):
@@ -257,8 +263,8 @@ def test_la_fiche_de_claude_est_serialisable_telle_quelle():
 
     assert charge["nom"] == "claude"
     assert charge["modeles_libres"] is True
-    premier = charge["modeles"][0]
-    assert premier["nom"] == "claude-opus-5" and premier["libelle"] == "Opus 5"
+    premier, ligne = charge["modeles"][0], familles_claude()[0]
+    assert premier["nom"] == ligne.identifiant and premier["libelle"] == ligne.libelle
     assert premier["efforts"] == list(EFFORTS)
     # JSON-sérialisable sans encodeur maison : c'est le contrat de la route.
     assert json.loads(json.dumps(charge)) == charge
@@ -268,7 +274,7 @@ def test_la_fiche_de_claude_est_serialisable_telle_quelle():
 
 
 def test_les_efforts_se_lisent_sur_le_modele_et_non_sur_le_fournisseur():
-    assert ClaudeProvider.efforts_admis("claude-opus-5") == EFFORTS
+    assert ClaudeProvider.efforts_admis(OPUS) == EFFORTS
     # Hors gamme : on ne sait rien de ce qu'il admet, et supposer serait le seul
     # moyen d'envoyer un réglage qu'un endpoint refuserait.
     assert ClaudeProvider.efforts_admis("claude-modele-de-demain") == ()
@@ -277,15 +283,15 @@ def test_les_efforts_se_lisent_sur_le_modele_et_non_sur_le_fournisseur():
 
 
 def test_un_effort_admis_passe_et_lui_seul():
-    assert ClaudeProvider.effort_admis("claude-opus-5", "xhigh") == "xhigh"
+    assert ClaudeProvider.effort_admis(OPUS, "xhigh") == "xhigh"
     # Valeur obsolète restée sur la définition d'un agent : écartée sans erreur —
     # le réglage est un conseil, jamais une condition d'exécution.
-    assert ClaudeProvider.effort_admis("claude-opus-5", "delirant") is None
+    assert ClaudeProvider.effort_admis(OPUS, "delirant") is None
     # Modèle changé depuis : même chemin, même silence.
     assert ClaudeProvider.effort_admis("claude-modele-de-demain", "high") is None
     # Ni effort demandé, ni chaîne vide qui vaudrait « pas de réglage ».
-    assert ClaudeProvider.effort_admis("claude-opus-5", None) is None
-    assert ClaudeProvider.effort_admis("claude-opus-5", "") is None
+    assert ClaudeProvider.effort_admis(OPUS, None) is None
+    assert ClaudeProvider.effort_admis(OPUS, "") is None
 
 
 def test_un_fournisseur_sans_gamme_n_admet_aucun_effort():

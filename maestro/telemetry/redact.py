@@ -6,8 +6,8 @@ journal. Trois filets complémentaires :
 
 1. les **valeurs** des variables d'environnement sensibles (clé API, tokens, URLs
    de connexion) sont remplacées où qu'elles apparaissent ;
-2. les **motifs** de clés connus (`sk-ant-…`, `sk-…`) sont masqués même si la
-   valeur ne vient pas de l'environnement courant ;
+2. les **motifs** de clés connus (`sk-ant-…`, `sk-…`, blocs de clé privée —
+   #1264) sont masqués même si la valeur ne vient pas de l'environnement courant ;
 3. les **secrets servis** (#109) : toute valeur ayant transité par le coffre par
    agent (`maestro.agents.secrets.SecretStore`) ou résolue depuis une référence
    `${VAR}` d'une déclaration MCP est enregistrée ici (`enregistre_secret`) et
@@ -68,6 +68,19 @@ def enregistre_secret(valeur: str) -> None:
 #: `ghp_…`/`github_pat_…` — serveur MCP de forge #412 — et tokens Slack
 #: `xoxb-…`/`xoxp-…` — pilote MCP Slack #105).
 _MOTIFS_SECRETS: tuple[re.Pattern[str], ...] = (
+    # Une clé privée (SSH, TLS, PGP), bloc entier, en tête : elle ne se reconnaît
+    # pas à un préfixe mais à son encadrement, et le motif la masque d'un seul
+    # tenant avant que les autres n'y mordent. Depuis que la lecture des sources se
+    # fait par le contenu (#1163), un `id_rsa` sans extension — qu'aucun nom de
+    # `porte_des_secrets` ne signale — entre comme du texte : c'est ici qu'il
+    # s'arrête (#1264). Un bloc coupé avant son `END` (lecture tronquée) est masqué
+    # jusqu'au bout. Certificats et clés publiques restent lisibles : ils ne sont
+    # pas secrets, et un livrable les publie à dessein.
+    re.compile(
+        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----.*?"
+        r"(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----|\Z)",
+        re.DOTALL,
+    ),
     re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     re.compile(r"glpat-[A-Za-z0-9_-]{8,}"),

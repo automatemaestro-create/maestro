@@ -240,7 +240,7 @@ from maestro.sources import (
     Source,
     composer_sources,
     contexte_markdown,
-    extraire_sources,
+    lecteur_par_defaut,
 )
 from maestro.telemetry import LOGGER_NAME, RunJournal, redact_secrets
 
@@ -257,7 +257,8 @@ FabriqueMoteur = Callable[..., "OrchestrationEngine"]
 #: source `url` part sur le réseau, et `tests/conftest.py` (#195) exige qu'aucun
 #: test n'en ait besoin. Un seul point d'injection plutôt que trois réglages :
 #: desserrer les plafonds d'extraction se fait par un
-#: `partial(extraire_sources, garde_fous=…)`.
+#: `partial(extraire_sources, garde_fous=…)`. Le défaut est `lecteur_par_defaut()`,
+#: qui montre les images au modèle du poste (#1163).
 LecteurSources = Callable[[Sequence[Source]], RapportLecture]
 
 #: Délai laissé à un run annulé pour s'éteindre avant que la requête d'annulation
@@ -390,7 +391,7 @@ class ServiceExecutions:
             if televersements is not None
             else DepotTeleversements.default(garde_fous=self._ingestion)
         )
-        self._lecteur = lecteur_sources if lecteur_sources is not None else extraire_sources
+        self._lecteur = lecteur_sources if lecteur_sources is not None else lecteur_par_defaut()
         self._battements = (
             battements if battements is not None else RegistreBattementsMemoire()
         )

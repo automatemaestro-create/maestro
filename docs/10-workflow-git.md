@@ -5936,7 +5936,8 @@ faire, aucun fatal, et aucun joué en `--dry-run` : `main` remise à niveau sur 
 (plus bas). Même justification pour les trois : un run tourne la nuit, personne n'est derrière, et
 ce qui n'est pas fait là ne le sera pas. L'ordre compte pour les deux premiers — le ramassage
 mesure le travail non sauvegardé contre `origin/main`, que le `fetch` de `sync-main` vient de
-rafraîchir.
+rafraîchir. Avant eux, et avant même d'arrêter les runs en vol, une vérification qui, elle, est
+fatale : le CLI installé sert-il le modèle du run (#1269, plus bas) ?
 
 Pour chaque ticket : `scripts/git/worktree.sh <iid>` (§9) monte son répertoire de travail et ses
 ports, puis une session dédiée est lancée en mode `-p`, avec un `--session-id` fixe — la clé de la
@@ -5949,7 +5950,7 @@ troisième n'y étant passé que si on le demande :
 
 | réglage | défaut | surcharge |
 | --- | --- | --- |
-| modèle (#206) | `claude-opus-5` | `--modele`, `MAESTRO_ORCHESTRATE_MODELE` |
+| modèle (#206, #1269) | dernière version de la famille `opus` | `--modele`, `MAESTRO_ORCHESTRATE_MODELE` : une famille ou un identifiant complet |
 | effort (#217) | `xhigh` | `--effort`, `MAESTRO_ORCHESTRATE_EFFORT` |
 | plafond de dépense (#286) | **aucun** | `--budget`, `MAESTRO_ORCHESTRATE_BUDGET` |
 
@@ -5969,6 +5970,44 @@ tourné), et un niveau inconnu est **refusé avant le premier ticket**. L'effort
 fermé de cinq valeurs — `low`, `medium`, `high`, `xhigh`, `max` — contrairement à un nom de modèle
 qui est une chaîne ouverte, une faute de frappe se détecte : sans ce contrôle, le CLI refuserait la
 valeur à **chaque** session et le run brûlerait son plan en échecs jumeaux.
+
+**Le modèle est la dernière version de sa famille, et le CLI installé doit le servir (#1269).**
+Épingler un identifiant figé avait son revers : `claude-opus-5` a continué de servir après la sortie
+d'Opus 5.5 sans que rien ne le dise. Le dépôt tient donc la **dernière version de chaque famille**
+dans une source unique, [`maestro/providers/familles-claude.tsv`](../maestro/providers/familles-claude.tsv)
+(`famille`, `identifiant`, `libellé`), que le produit lit aussi depuis #1270 (`maestro.familles_claude` :
+défaut du Chef de projet et des agents, gamme du choix du modèle, classifieur ; docs/04 §2) plutôt
+que de tenir une seconde liste. Une version sort : on y remplace l'identifiant de sa famille,
+nulle part ailleurs.
+
+- **Résolution.** Le défaut est la famille `opus` ; `--modele opus|sonnet|fable|haiku` (casse
+  indifférente) se résout de même ; un identifiant complet (`claude-…`) passe tel quel, y compris
+  une version qui n'est plus la dernière. C'est **toujours le dépôt** qui résout une famille, jamais
+  l'alias du CLI (#206) — d'où un refus, code `2`, si le fichier manque et que le modèle demandé
+  n'est pas un identifiant complet. Un autre nom court (`opusplan`…) part tel quel au CLI, qui le
+  résout lui-même : la ligne `plan :` le dit (« résolu par le CLI »). L'identifiant résolu est
+  annoncé **en toutes lettres**, avec son origine — `modèle claude-opus-5-5 (dernière version de la
+  famille opus)` —, dans la ligne `plan :` comme dans l'aperçu de `--dry-run`.
+- **Vérification avant le premier ticket.** Un modèle que le CLI installé ne sert pas faisait échouer
+  la première session en quelques secondes, et l'échec sautait les lots suivants de son parent
+  (§11.5) — mesuré deux fois : le 2026-09-04 (#858, CLI 2.1.215, `claude-fable-5-1` exige 2.1.251)
+  et le 2026-09-24 (CLI 2.1.260, `claude-opus-5-5` exige 2.1.280). Aucune table « modèle → version
+  minimale » ne le dirait mieux que le CLI lui-même, et elle vieillirait comme l'identifiant figé :
+  `run.sh` lui **pose la question** par une requête minimale — même modèle, même effort, réglages du
+  poste, aucun outil, aucun serveur MCP, depuis un répertoire neutre (quelques milliers de jetons).
+  Elle se joue **avant** d'arrêter les runs en vol (§11.9), de résoudre `--resume` et de détacher
+  la console : un refus revient à celui qui lance, et n'a coupé personne. Trois issues :
+  **servi** — le run part, la ligne dit par quel CLI et, pour un nom que le CLI a résolu, quel
+  modèle il sert ; **limite d'usage** — ce n'est pas un verdict sur le modèle, le run part et
+  attendra le reset ; **tout autre échec** — refusé, code `2`, **aucune session lancée, aucun run
+  arrêté, aucun lot sauté**, avec la réponse du CLI, sa version installée, la version requise quand
+  sa réponse en nomme une autre, et ce qui débloque (`claude update`, ou un autre `--modele`).
+  Un run neuf comme une reprise y passent ; `--dry-run` n'y passe pas (il le dit). Le run détaché
+  ne repose pas la question : l'appelant lui transmet le modèle vu servi **par l'environnement**
+  (`MAESTRO_ORCHESTRATE_MODELE_SONDE`), jamais par le lanceur, qui reste rejouable tel quel et
+  revérifie donc. `MAESTRO_ORCHESTRATE_SONDE_MODELE=0` éteint la sonde — ce que fait le harnais de
+  [`tests/test_orchestrate.py`](../tests/test_orchestrate.py), dont les bouchons de `claude` jouent
+  des scénarios de ticket ; `MAESTRO_ORCHESTRATE_SONDE_DELAI` (120 s) borne son attente.
 
 **Le plafond de dépense, lui, ne s'applique plus par défaut (#286).** `run.sh` passait
 `--max-budget-usd 15` à chaque session — le garde-fou d'une boucle neuve, quand on craignait

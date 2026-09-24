@@ -1,0 +1,21 @@
+# La dernière version de chaque famille de modèles Claude — source unique (#1269).
+#
+# Lue par les runs /orchestrate (`scripts/orchestrate/run.sh`) : `--modele opus` s'y résout en
+# l'identifiant complet de la ligne `opus`, et le défaut d'un run est cette même ligne.
+#
+# Lue par le produit (`maestro.familles_claude`, #1270) : la ligne `opus` est le modèle par défaut
+# du Chef de projet (`ANTHROPIC_MODEL` vide) et de tout agent qu'aucun réglage ne fixe, la ligne
+# `haiku` celui du classifieur, et chaque ligne une entrée du choix du modèle d'un agent
+# (`ClaudeProvider.MODELES`).
+#
+# Une nouvelle version sort : on remplace l'identifiant de sa famille, ici et nulle part ailleurs.
+# L'identifiant est celui que le CLI et l'API acceptent en toutes lettres (jamais un alias : #206).
+# Le sert-on vraiment ? `run.sh` le vérifie auprès du CLI installé avant son premier ticket ; le
+# produit, lui, passe par le CLI qu'embarque `claude-agent-sdk` — son plancher dans `pyproject.toml`
+# se relève si la nouvelle version l'exige.
+#
+# famille	identifiant	libellé
+opus	claude-opus-5-5	Opus 5.5
+sonnet	claude-sonnet-5	Sonnet 5
+fable	claude-fable-5-1	Fable 5.1
+haiku	claude-haiku-4-5	Haiku 4.5

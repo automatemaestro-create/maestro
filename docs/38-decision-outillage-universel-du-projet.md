@@ -25,6 +25,11 @@ vérification :
 | Les commandes | **aucune** | Trois clients, trois formats, aucun commun — et un skill s'appelle déjà par son nom (§3.5) |
 | Le manifeste | `.maestro/outillage/manifeste.json` | La mémoire de ce qui a été généré, d'où, et par quelle version (§4) |
 
+> ⚠ **La deuxième ligne est renversée le 2026-09-24** ([docs/43 §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
+> #1295), à la demande de la personne. Les deux ponts ne s'écrivent plus d'office : `AGENTS.md`
+> suffit. Un pont ne s'écrit que pour un client **que la personne utilise** et qui ne lit pas
+> `AGENTS.md` nativement à sa version. Le reste du tableau ne bouge pas.
+
 Et une frontière, qui est l'autre moitié de la décision (§5) : **l'outillage voyage dans un seul
 sens.** Maestro l'écrit dans le projet ; rien de ce qui est dans le projet ne s'impose de lui-même à
 son runtime. Ce chantier est précisément celui qui rend cette règle difficile à tenir, parce que
@@ -98,6 +103,14 @@ C'est ce tableau, et lui seul, qui justifie les deux fichiers d'une ligne de §3
 l'outillage d'un projet serait invisible pour deux des quatre clients — dont celui que Maestro
 utilise lui-même.
 
+> ⚠ **Relu le 2026-09-24** ([docs/43 §2.3](./43-decision-un-projet-nait-dans-la-conversation.md)).
+> Les agents de Maestro reçoivent `AGENTS.md` explicitement (§5) : les ponts ne servent donc qu'à une
+> personne qui ouvre le projet dans ces clients.
+> - Claude Code ≥ 2.1.277 lit `AGENTS.md` nativement. Un pont `CLAUDE.md` n'y sert qu'aux versions
+>   antérieures, et, écrit sans raison, il masque la lecture native.
+> - Le tableau justifie donc un pont **par client utilisé qui ne lit pas `AGENTS.md`**, pas deux
+>   ponts d'office (#1295).
+
 ### 2.3 Les commandes : aucun format commun
 
 | Client | Fichier | Format |
@@ -148,6 +161,16 @@ interdit aussi les **mesures** dont le projet neuf n'a pas la matière : une par
 plutôt que d'annoncer « 100 % » de zéro fichier.
 
 ### 3.2 Deux ponts d'une ligne, jamais une copie
+
+> ⚠ **Renversé en partie le 2026-09-24** ([docs/43 §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
+> #1295), à la demande de la personne : *« pourquoi trois fichiers ? »*. Les deux ponts ne s'écrivent
+> plus **d'office**. Un pont ne s'écrit que pour un client que la personne utilise (dit dans la
+> conversation, ou trouvé sur le poste avec sa version) et qui ne lit pas `AGENTS.md` à cette
+> version. Maestro dit pourquoi.
+>
+> Ne bougent pas : **un pont, jamais une copie** ; ne jamais écraser un fichier que Maestro n'a pas
+> écrit ; et, tant que #1295 ne l'a pas retranché sur pièce, l'écart de `.gemini/settings.json`
+> ci-dessous.
 
 À côté d'`AGENTS.md`, Maestro écrit deux fichiers d'**une ligne** :
 
@@ -608,6 +631,11 @@ constate, pas une propriété acquise.
 >
 > Les commandes écrites sans exécution sont vérifiées avant d'être écrites (#1160). Le format
 > arrêté par cette note (§3 à §5) ne bouge pas, ni le `recommander` commun aux deux chemins.
+>
+> ⚠ **Renversé en partie le 2026-09-24** ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)).
+> La ligne #1034 ne tient plus : l'outillage n'est plus une étape du parcours de création. Un projet
+> naît dans la conversation (#1294), et son outillage s'y construit pièce par pièce, chaque pièce sur
+> accord (#1161). Les deux ponts de §3.2 ne s'écrivent plus d'office (#1295).
 
 Les six lots sont **livrés** (2026-09-21). Le tableau dit ce que chacun a pris ici et par quel
 code il l'applique : c'est le chemin que prend quelqu'un qui conteste une décision de cette note —
@@ -616,6 +644,7 @@ de la règle à la ligne qui l'exécute, et à la suite qui la garde.
 | Lot | Ce qu'il prend ici | Où il l'applique |
 | --- | --- | --- |
 | #1030 — analyse d'un projet existant | Le dossier de scripts se **constate** (§3.4) ; ce qu'elle recommande remplit `source` du manifeste (§4.1) | [`maestro/outillage/analyse.py`](../maestro/outillage/analyse.py), `detection.py`, `modele.py`, `recommandation.py` ; `GET /api/projets/{id}/outillage/analyse` ([docs/05 §6.20](./05-interface-control-tower.md)) |
+| #1158 — le projet se lit (renverse les tables de #1030) | Les tables deviennent des **indices** : le modèle lit le projet par deux verbes servis dans le périmètre, et chaque constat qu'il rend est confronté à ce qu'il a lu. Le format de §3 à §5 et `recommander` ne bougent pas | [`maestro/outillage/exploration.py`](../maestro/outillage/exploration.py), `analyse.completer`, `modele.Lecture` ; [`tests/test_outillage_lecture.py`](../tests/test_outillage_lecture.py) |
 | #1031 — choix d'un projet neuf | Les choix remplissent `source` de la même façon ; l'arbre de §3.6 est la cible | [`maestro/outillage/questionnaire.py`](../maestro/outillage/questionnaire.py) — ce que le modèle a compris des réponses (#1147, `ComprehensionModele` dans `maestro/controltower/outillage.py`) devient des `Constats`, et c'est le `recommander` de #1030 qui tranche : **pas deux chemins** |
 | #1032 — les agents lisent l'outillage | §5 en entier, et `setting_sources=[]` comme condition (§5.3). **Fait**, mesuré en §5.4 | [`maestro/outillage/contexte.py`](../maestro/outillage/contexte.py) (ce qui est transmis), [`maestro/providers/claude.py`](../maestro/providers/claude.py) (ce qui n'entre pas), `maestro/agents/runtime.py` (le message de la tâche) |
 | #1033 — génération | §3.6 pour l'arbre, §4.2 pour les quatre cas, et le nom d'atelier réservé (§4.3) | [`maestro/outillage/redaction.py`](../maestro/outillage/redaction.py) (le texte), `generation.py` (les quatre cas), `ecriture.py` (le régime de [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) ; `POST …/outillage/generation` |

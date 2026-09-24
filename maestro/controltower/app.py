@@ -165,7 +165,10 @@ Endpoints :
   commandes de construction/test/lint, la CI, la forge et les conventions déjà
   écrites — puis chaque skill, script ou fichier d'instructions recommandé avec
   sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
-  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. N'écrit rien :
+  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. Depuis #1158
+  les tables n'en sont que les indices : le **modèle lit** le projet (lister,
+  lire — dans le périmètre, sans lien suivi) et ce qu'il tire des fichiers lus
+  complète les constats ; `lecture` en dit la provenance. N'écrit rien :
   la génération est #1033 ;
 - `POST /api/projets/{id}/outillage/report` — le « **plus tard** » de l'étape
   d'outillage (#1034, docs/37 §4.6) : sans corps, idempotent, il n'écrit rien
@@ -185,7 +188,15 @@ Endpoints :
   l'équipe n'a pas, justifié par ce plan et non par un constat — sans quoi il
   serait `ecarte`, aucun constat d'un projet en Python ne désignant un designer.
   **Rien n'est créé** (`cree`, `validation`) : valider et créer est la route
-  suivante ;
+  suivante. Depuis #1159 l'équipe est **composée par le modèle** pour le besoin
+  réel du projet — les cinq gabarits n'en sont plus qu'une matière —, et
+  `composition` dit qui l'a composée : le modèle, ou les règles des gabarits en
+  repli, avec la cause ;
+- `POST /api/projets/{id}/equipe/correction` — la personne corrige l'équipe
+  proposée **avec ses mots** (#1159) : « ajoute quelqu'un pour la sécurité ». Le
+  modèle rend les rôles à ajouter (playbooks écrits pour ce projet), à retirer, à
+  remettre, les instances à changer, et une phrase qui lui répond. Rien n'est
+  créé ; 502 si le modèle ne répond pas — une phrase n'a pas de règle de repli ;
 - `POST /api/projets/{id}/equipe` — **crée** dans le projet l'équipe validée
   (#1040, docs/37) : par rôle gardé, sa fiche et son playbook (les skills
   branchés y sont nommés), sa politique d'autorisations et sa capacité. Le corps
@@ -420,7 +431,7 @@ from maestro.controltower.chat import (
 )
 from maestro.controltower.consultation import Consultations, Demande, Lecture
 from maestro.controltower.decisions import decisions_du_run
-from maestro.controltower.equipe import EquipeRefusee, ServiceEquipe
+from maestro.controltower.equipe import CompositeurEquipe, EquipeRefusee, ServiceEquipe
 from maestro.controltower.events import (
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
@@ -528,6 +539,7 @@ from maestro.controltower.state import (
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.equipe import GABARITS, RoleManquant, RoleValide, SkillRetenu
+from maestro.equipe.composition import MembreActuel
 from maestro.espace import espace_courant
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
@@ -543,6 +555,7 @@ from maestro.projets import (
     valider_racine,
 )
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
+from maestro.providers.base import ModelProvider
 from maestro.providers.blocage import OUTIL_BLOCAGE
 from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.providers.decision import OUTIL_DECISION
@@ -1098,6 +1111,38 @@ class PropositionEquipeRequete(QuestionnaireOutillageRequete):
     renfort: RenfortRequete | None = None
 
 
+class MembreEquipeRequete(BaseModel):
+    """Un rôle de l'équipe **telle que l'écran la montre** au moment d'une demande (#1159).
+
+    Le nom, le libellé, et les deux choses que la personne a pu ajuster : la case
+    (`retenu`) et le nombre d'instances. Ni playbook ni politique : la correction
+    ne les lit pas, et ce qui repart à la création reste ce que l'écran tient.
+    """
+
+    nom: str
+    role: str = ""
+    retenu: bool = True
+    instances: int = 1
+
+
+class CorrectionEquipeRequete(QuestionnaireOutillageRequete):
+    """Le corps de `POST …/equipe/correction` — la demande, l'équipe montrée, les réponses.
+
+    `choix` a le sens qu'il a sur la proposition : vide, le projet est analysé ;
+    renseigné (un projet neuf), l'équipe se corrige sur ses réponses.
+    """
+
+    demande: str = ""
+    equipe: list[MembreEquipeRequete] = []
+
+    def membres(self) -> list[MembreActuel]:
+        """L'équipe montrée en objets du domaine."""
+        return [
+            MembreActuel(nom=m.nom, role=m.role, retenu=m.retenu, instances=m.instances)
+            for m in self.equipe
+        ]
+
+
 class GenerationOutillageRequete(BaseModel):
     """Corps — facultatif — de la génération d'outillage (#1034, #1100).
 
@@ -1552,6 +1597,8 @@ def create_app(
     analyseur: AnalyseurEchecs | None = None,
     redacteur_playbook: RedacteurPlaybook | None = None,
     generateur_agent: GenerateurDefinitionAgent | None = None,
+    compositeur_equipe: CompositeurEquipe | None = None,
+    lecteur_outillage: ModelProvider | None = None,
     capacites: CapacityStore | None = None,
     mcp: McpStore | None = None,
     registre_mcp: RegistreMcp | None = None,
@@ -1639,6 +1686,18 @@ def create_app(
     enregistré**, la proposition est un brouillon que le formulaire reçoit et que
     l'utilisateur crée par le `POST /api/catalogue` ordinaire. Par défaut il
     résout son fournisseur par config ; les tests en injectent un factice.
+
+    `compositeur_equipe` (#1159) compose l'équipe d'un projet pour son besoin
+    réel (`POST …/equipe/proposition`) et la corrige en langage naturel
+    (`POST …/equipe/correction`). Par défaut il résout son fournisseur par
+    config ; les tests en injectent un factice.
+
+    `lecteur_outillage` (#1158) est le fournisseur de modèle qui **lit** un projet
+    existant pour `GET /api/projets/{id}/outillage/analyse` et la génération qui
+    en découle : il demande à lister et lire, dans le périmètre du projet, et
+    ses constats sont confrontés à ce qu'il a lu. Par défaut il est résolu par
+    config au premier usage ; sans fournisseur, l'analyse reste celle des tables
+    et le dit. Les tests en injectent un factice.
 
     `capacites` (#86) est le dépôt du contrôle de capacité servi par
     `POST /api/agents/{nom}/capacite` — par défaut celui de la config
@@ -1733,9 +1792,10 @@ def create_app(
     écrire dix mégaoctets sur le disque de qui joue la suite.
 
     `lecteur_sources` (#316) lit la matière d'un objectif et rend son rapport de
-    lecture — par défaut `extraire_sources`. Injectable parce qu'une source `url`
-    part sur le réseau : `tests/conftest.py` (#195) exige qu'aucun test n'en ait
-    besoin.
+    lecture — par défaut `lecteur_par_defaut()`, qui montre en plus les images au
+    modèle du poste (#1163). Injectable parce qu'une source `url` part sur le
+    réseau et qu'une image part au modèle : `tests/conftest.py` (#195, #782) exige
+    qu'aucun test n'ait besoin ni de l'un ni de l'autre.
 
     `sonde_poste` (#487) est ce qui répond à « qu'est-ce qui est déjà installé
     ici ? » pour `GET /api/fournisseurs` — par défaut `SondePoste()`, qui lit le
@@ -1826,6 +1886,7 @@ def create_app(
     outillage = ServiceOutillage(
         projets,
         validateur=ValidateurControlTower(bus),
+        provider=lecteur_outillage,
         comprehension=comprehension,
     )
     # La projection part du catalogue **hors projet** : les agents rangés à la
@@ -1874,7 +1935,14 @@ def create_app(
     # endroit qui sait cadrer les six dépôts sur le projet visé, et le séparer en
     # deux services obligerait à tenir deux fois d'accord ce qui est proposé et
     # ce qui est écrit.
-    equipe = ServiceEquipe(projets, gabarits, generateur=generateur_agent)
+    equipe = ServiceEquipe(
+        projets,
+        gabarits,
+        generateur=generateur_agent,
+        compositeur=(
+            compositeur_equipe if compositeur_equipe is not None else CompositeurEquipe()
+        ),
+    )
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
     chat_store = chat_store if chat_store is not None else ChatStore.default()
     # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets et
@@ -5108,16 +5176,23 @@ def create_app(
         chemin, jamais dupliqué. `ecartes` nomme ce qui n'est pas recommandé et
         pourquoi — les commandes le sont par décision (docs/38 §3.5).
 
+        **Les tables ne sont que des indices** (#1158) : le modèle lit ensuite le
+        projet — deux verbes, lister et lire, servis dans le périmètre, sans lien
+        suivi ni rien d'exécuté — et ce qu'il en tire complète les constats, chacun
+        avec le fichier qu'il a lu. `lecture` dit ce qu'il a ouvert, ce qui lui a
+        été refusé, ce qui a été coupé et ce qui a été écarté ; un modèle qui ne
+        répond pas laisse l'analyse aux tables, `lecture.etat` le dit.
+
         **Rien n'est écrit** : la génération est #1033. 404 si le projet est
         inconnu, 422 motivé si sa fiche est illisible ou si sa racine n'est plus
         un dossier lisible — jamais un 500.
 
-        Joué **hors de la boucle d'événements** : parcourir un projet réel prend
-        des secondes, et une route qui bloquerait la boucle figerait les flux
-        SSE des autres écrans.
+        Le parcours est joué **hors de la boucle d'événements** : parcourir un
+        projet réel prend des secondes, et une route qui bloquerait la boucle
+        figerait les flux SSE des autres écrans.
         """
         try:
-            return await asyncio.to_thread(outillage.analyser, id_projet)
+            return await outillage.analyser(id_projet)
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
@@ -5795,10 +5870,12 @@ def create_app(
         le même que partout ici — le fil d'abord, la diffusion ensuite : un run qui
         repartirait avant que sa trace soit écrite laisserait le fil en retard sur
         ce qui se passe. L'issue est **dérivée du fil** et non du corps de la
-        requête : l'équipe est créée si le geste l'approuvait *et* que la réponse
-        ne repose pas la demande — c'est ce que fait le répondeur quand la création
-        échoue, et un run relancé sur une équipe qui n'existe pas serait le pire des
-        deux mondes.
+        requête : l'équipe est recrutée si la réponse porte l'équipe **créée**
+        (`MessageChat.equipe`, #1262) — une création refusée repose la demande sans
+        rien créer, et un run relancé sur une équipe qui n'existe pas serait le pire
+        des deux mondes. Le `detail` de la décision est ce fait-là, la composition,
+        et non les mots de la réponse : il finit au journal du run, où l'on relit
+        ce qui a été recruté, pas ce que l'orchestrateur en a dit.
 
         `422` sur une validation sans rôle (« ne pas recruter » se dit en
         déclinant) ou une conversation mal formée, `409` quand rien n'attend —
@@ -5835,15 +5912,15 @@ def create_app(
         except ReponseIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         if en_attente is not None and en_attente.pendant_un_run:
-            recrutee = requete.approuve and reponse.recrutement is None
+            creee = reponse.equipe
             await bus.publish(
                 Event(
                     type=EVENEMENT_RENFORT_DECISION,
                     run_id=en_attente.run_id,
                     projet_id=en_attente.projet_id,
                     titre=en_attente.role,
-                    statut=RENFORT_ACCORDE if recrutee else RENFORT_DECLINE,
-                    detail=reponse.contenu,
+                    statut=RENFORT_ACCORDE if creee is not None else RENFORT_DECLINE,
+                    detail=f"recruté : {creee.composition()}" if creee is not None else "",
                 )
             )
         return {
@@ -6034,6 +6111,38 @@ def create_app(
                 renfort=renfort.role_manquant() if renfort is not None else None,
                 raison=renfort.raison if renfort is not None else "",
             )
+        except (ValueError, ProjetInconnu) as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.post("/api/projets/{id_projet}/equipe/correction")
+    async def correction_equipe(
+        id_projet: str, requete: CorrectionEquipeRequete
+    ) -> dict[str, Any]:
+        """Ce que la personne demande de changer à l'équipe proposée, **compris** (#1159).
+
+        « Ajoute quelqu'un pour la sécurité », « retire le designer », « deux
+        développeurs » : la demande, en langage naturel, et l'équipe **telle que
+        l'étape d'équipe la montre** (retraits et instances compris). Le modèle rend
+        les rôles à **ajouter** — vérifiés comme une composition, playbooks écrits
+        pour ce projet —, ceux à **retirer** ou à **remettre**, les **instances** à
+        changer, et une phrase qui répond à la personne (`reponse`).
+
+        **Rien n'est créé** (`cree: False`) : l'écran applique la correction à ce
+        qu'il montre, et la création reste la validation (#1040). Retraits, remises
+        et instances ne nomment que des rôles de l'équipe montrée.
+
+        422 si la demande est vide ou plus longue qu'une phrase — refusée avant
+        tout appel —, 404/422 motivés sur le projet, **502** si le modèle ne répond
+        pas ou répond hors contrat : une correction n'a pas de repli, aucune règle
+        ne comprend une phrase. L'équipe montrée reste intacte, et l'appel se
+        rejoue sans conséquence.
+        """
+        try:
+            return await equipe.corriger(
+                id_projet, requete.demande, requete.membres(), requete.choix_acquis()
+            )
+        except GenerationIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 

@@ -25,6 +25,7 @@ import type {
   ChoixSelecteur,
   ConversationChat,
   ConversationsChat,
+  CorrectionEquipe,
   DecisionBrief,
   DeclarationProjet,
   DecisionsRun,
@@ -44,6 +45,7 @@ import type {
   JournalAdmissionsMcp,
   LancementExecution,
   LexiquePlaybook,
+  MembreEquipe,
   MessageChat,
   MigrationMcp,
   PageExplorateur,
@@ -1954,6 +1956,31 @@ export function proposerEquipe(
     `/api/projets/${encodeURIComponent(id)}/equipe/proposition`,
     renfort === undefined ? { choix } : { choix, renfort },
     "proposition d'équipe indisponible",
+  );
+}
+
+/**
+ * Ce que la personne demande de changer à l'équipe montrée, **compris**
+ * (`POST /api/projets/{id}/equipe/correction`, #1159) — rien n'est créé.
+ *
+ * `equipe` est l'équipe **telle que l'étape la montre**, cases et instances
+ * comprises : « remets les tests » n'a de sens que si l'on sait qu'ils ont été
+ * retirés. La réponse porte les rôles à ajouter (playbooks écrits pour ce
+ * projet), ceux à retirer ou à remettre, les instances à changer, et la phrase
+ * qui répond à la personne. 502 si le modèle ne répond pas : l'équipe montrée
+ * reste intacte, et la demande se rejoue.
+ */
+export function corrigerEquipe(
+  id: string,
+  demande: string,
+  equipe: MembreEquipe[],
+  choix: ChoixOutillage[] = [],
+): Promise<CorrectionEquipe> {
+  return ecrireProjet<CorrectionEquipe>(
+    `/api/projets/${encodeURIComponent(id)}/equipe/correction`,
+    { demande, equipe, choix },
+    "demande sur l'équipe non comprise",
+    "POST",
   );
 }
 

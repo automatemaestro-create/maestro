@@ -265,7 +265,8 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       c'est tout leur objet — mais sous un type que les lecteurs comptables du
       flux ne comptent pas, parce qu'elle est un cumul et non une part ;
     - toute autre étape est l'issue d'une **tâche** : événement `tache.statut`
-      portant statut, agent, rôle et coût rapporté (#8).
+      portant statut, agent, rôle et coût rapporté (#8), son erreur en `detail`
+      et, depuis #1263, ce qu'elle a **rendu** en `resultat`.
 
     L'étape `planification` est la seule à produire **deux** événements (#490) :
     son `agent.activite`, inchangé, et — quand elle porte un plan — un
@@ -305,6 +306,9 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     est_decision = etape.endswith(_SUFFIXE_DECISION)
     est_usage = etape.endswith(_SUFFIXE_USAGE)
     est_activite = etape in _ETAPES_RUN or etape.endswith(_SUFFIXES_ACTIVITE)
+    # Ce que la tâche a rendu (#1263) : seule son **issue** en porte, les autres
+    # étapes n'ont rien rendu — leur `sortie` est déjà leur `detail`.
+    resultat = ""
     if est_reference:
         type_evenement = EVENEMENT_TACHE_REFERENCE
         tache_id = etape.removesuffix(_SUFFIXE_REFERENCE)
@@ -379,6 +383,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
         type_evenement = EVENEMENT_TACHE_STATUT
         tache_id = etape
         detail = str(record.get("erreur") or "")
+        # Le texte que l'agent a remis au moteur, que le journal consigne en
+        # `sortie` depuis toujours et que ce pont jetait : la lecture d'un run ne
+        # savait donc dire d'une tâche soldée que son démarrage (bouclage du
+        # 2026-09-24). Il voyage à côté de `detail`, qui reste l'erreur.
+        resultat = str(record.get("sortie") or "")
     # Le graphe du plan (#490) : lu **avant** de construire quoi que ce soit,
     # parce qu'il décide s'il y a un ou deux événements. Une liste vide n'est pas
     # un plan — annoncer un graphe sans nœud ferait remplacer, dans la
@@ -418,6 +427,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             # run en mode `auto`, c'est ainsi que la projection l'apprend, et
             # qu'elle peut le relancer dessus. Ailleurs, rien — donc None.
             brief=brief_depuis(record.get("brief")) if etape == _ETAPE_BRIEF else None,
+            resultat=resultat,
             horodatage=str(record.get("horodatage", "")),
         ),
         *(

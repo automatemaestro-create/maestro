@@ -34,6 +34,8 @@ L'analyse complète, avec ce qui existait, les standards vérifiés et chaque ar
 **Après.** Un agent **appartient à un projet** : sa définition, son playbook, ses autorisations, ses serveurs MCP et sa capacité y sont rangés (#1038). Le catalogue figé devient un catalogue de **gabarits de rôle** que l'analyse d'équipe consulte (#1039) et qu'aucun projet n'instancie d'office (#1042).
 
 > ⚠ **Renversé en partie le 2026-09-21** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md), #1159). L'analyse d'équipe ne choisit plus parmi cinq gabarits **par des règles fixes** (un designer sur des fichiers `.css`, le rôle données sur des fichiers `.sql`…). Le modèle propose les rôles dont le projet a besoin, quels qu'ils soient, et la personne en ajoute un avec ses mots. Les gabarits restent une matière, comme le §7 l'avait prévu. L'appartenance d'un agent à son projet ne bouge pas.
+>
+> **Livré par #1159** (2026-09-24). Le modèle compose l'équipe (`maestro.equipe.composition`), l'exécution vérifie ce qu'il écrit, et un rôle hors gabarit porte une esquisse de playbook jusqu'à ce que #257 en écrive un pour le projet. Les règles des gabarits ne sont plus que le **repli** d'un modèle qui ne répond pas, et la proposition le dit (`composition`). À l'étape d'équipe, la personne corrige avec ses mots (`POST …/equipe/correction`, [docs/05 §6.19](./05-interface-control-tower.md)) ; la forme de ce geste a été choisie sur pièces, et la veille comme le choix sont consignés sur le ticket. Les seuils de la dérivation par règles (15 % de fichiers, trois instances au plus) ne valent plus que pour ce repli : composée par le modèle, une équipe porte le nombre d'instances qu'il propose, avec sa raison, dans les bornes de la création (1 à 20).
 
 **Livré par #1038** (docs/05 §2.0, §2.3, §6.0quater) : deux niveaux par dépôt — la racine pour les gabarits, `_projets/<projet_id>/` pour un projet —, l'API cadrée par `?projet=`, l'exécution qui lit ceux du projet de la tâche, et une **reprise** idempotente qui rattache sans perte ce qu'un poste portait déjà. Une règle et une exception nommée : *le projet recouvre le gabarit, et ce qu'il ne règle pas il l'hérite* — sauf l'**existence** d'un agent, qui ne s'hérite pas (un agent rangé à la racine est un gabarit, pas un membre d'équipe). Sans ce repli, ranger les autorisations par projet aurait fait d'un projet neuf un projet « tout permis ».
 
@@ -88,6 +90,10 @@ Sa règle centrale, elle, disparaît : *une hypothèse énoncée vaut mieux qu'u
 
    ✅ **Tranché** le 2026-09-20 par [docs/38](./38-decision-outillage-universel-du-projet.md) (#1029) : les skills vont dans `.agents/skills/`, le seul chemin projet lu par plus d'un client — trois sur quatre. Aucun chemin n'est lu par les quatre : `AGENTS.md` désigne le dossier pour le quatrième, et deux ponts d'une ligne (`CLAUDE.md`, `GEMINI.md` contenant `@AGENTS.md`) le joignent, parce qu'`AGENTS.md` seul ne les atteint pas tous. Aucun fichier de commande n'est généré, faute de format commun.
 6. **L'étape d'outillage est première et proposée d'office, mais reportable** (#1034). Importer un projet pour le regarder ne doit pas imposer une génération. Un projet non outillé le **dit**.
+
+   > ⚠ **Renversé le 2026-09-24** ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)), à la demande de la personne : l'outillage n'est plus une **étape de formulaire**. Un projet naît dans la conversation (#1294), et son outillage s'y construit **pièce par pièce**, chaque pièce proposée puis écrite sur accord (#1161). Le principe 2 (« l'outillage d'abord ») perd son sens d'étape, mais le reste ne bouge pas : l'outillage se propose, se reporte, et un projet non outillé le dit.
+   >
+   > Les deux ponts du point 5 ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé qui ne le lit pas nativement ([docs/43 §2.3](./43-decision-un-projet-nait-dans-la-conversation.md), #1295).
 7. **Le répertoire proposé par défaut** est un dossier `Maestro` sous le dossier personnel, créé à la première utilisation (#1022). La racine nue du dossier personnel reste refusée par `valider_racine`, alors qu'un sous-dossier est admis.
 
 ## 5. Le découpage
@@ -152,6 +158,8 @@ Les lots 1 à 6 ont livré **sans tests**, par la convention de découpage ([doc
 ⚠ **« Jamais pendant un run » ne tient plus** ([docs/42](./42-decision-equipe-ajustee-au-plan.md), #1227) : la même carte sert un second moment, celui où le plan appelle un rôle que l'équipe n'a pas, et l'équipe se **complète** avant l'exécution. Ce qui n'a pas bougé est ce que cette phrase protégeait — c'est l'orchestrateur qui propose et la personne qui décide.
 
 **Différé, et pourquoi.** L'**exécution outillée par un fournisseur non-Anthropic dans Maestro** reste hors du jalon. Le format de l'outillage est universel, et un autre agent le lit sur le poste de l'utilisateur. Mais dans Maestro, seuls les modèles Claude ont des outils : `openai_compat.py` ne fait que du texte. C'est l'objectif O7 ([docs/00](./00-cahier-des-charges.md)), un chantier à lui seul, noté dans [docs/06](./06-roadmap.md) « Au-delà ».
+
+> ⚠ **Plus différé depuis le 2026-09-24** ([docs/44](./44-decision-maestro-possede-ses-contrats.md)). L'exécution outillée hors Claude a son jalon, « Indépendant du modèle », et son chantier, #1307 : un vocabulaire d'outils propre à Maestro, une boucle et des outils servis par Maestro, un client MCP, la configuration d'un fournisseur.
 
 ## 6. La place dans la file
 

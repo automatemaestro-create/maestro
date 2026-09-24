@@ -5,15 +5,18 @@ parent #314) : un lancement ne portait qu'un objectif texte, il porte désormais
 ce que cet objectif embarque — fichiers téléversés, dossier de références, URL
 (EF-39, entité SOURCE de [docs/03](../../docs/03-modele-de-donnees.md)).
 
-Six modules, six responsabilités qui ne se mélangent pas :
+Sept modules, sept responsabilités qui ne se mélangent pas :
 
 - `modele` — la **forme** (`Source`, `SourceRefusee`), module feuille, relue
   sans jamais être rejugée : un journal durable rejoué ne se refuse pas ;
 - `resolution` (#315) — ce qu'une déclaration **devient** face au disque, au
   réseau et aux plafonds du run, et ce qui la fait refuser **avec son motif** ;
-- `extraction` (#316) — ce qu'une source **dit** : tout ramené au Markdown, avec
-  son rapport de lecture et son coût en tokens, et encadré comme **donnée** avant
-  d'entrer dans un contexte ;
+- `extraction` (#316) — ce qu'une source **dit** : tout ramené au Markdown, quel
+  qu'en soit le format (#1163), avec son rapport de lecture et son coût en tokens,
+  et encadré comme **donnée** avant d'entrer dans un contexte ;
+- `images` (#1163) — ce qu'une image **montre** : reconnue à ses octets, regardée
+  par le modèle du poste, et rendue en Markdown à l'extraction — ou nommée avec
+  la raison pour laquelle personne ne l'a regardée ;
 - `televersement` (#317) — où des octets reçus **attendent** leur run, et comment
   ils lui sont rattachés. Un navigateur ne livre pas de chemin, il livre des
   octets : c'est le seul moyen qu'une source `fichier` en désigne de vrais ;
@@ -43,13 +46,23 @@ from maestro.sources.extraction import (
     ETAT_TRONQUE,
     ETATS,
     EXTENSIONS_CONVERTIES,
-    EXTENSIONS_TEXTE,
+    EXTENSIONS_HTML,
     GardeFousExtraction,
     Lecture,
     RapportLecture,
     contexte_markdown,
     estimer_tokens,
     extraire_sources,
+    lecteur_par_defaut,
+)
+from maestro.sources.images import (
+    MOTIF_VISION_INDISPONIBLE,
+    MOTIF_VUE_AU_LANCEMENT,
+    ImageNonVue,
+    LecteurImagesModele,
+    LireImage,
+    lire_image_en_apercu,
+    type_image,
 )
 from maestro.sources.modele import (
     LONGUEUR_MAX_NOM,
@@ -85,11 +98,13 @@ __all__ = [
     "ETAT_LU",
     "ETAT_TRONQUE",
     "EXTENSIONS_CONVERTIES",
-    "EXTENSIONS_TEXTE",
+    "EXTENSIONS_HTML",
     "ID_RUN",
     "ID_TELEVERSEMENT",
     "LONGUEUR_MAX_NOM",
     "LONGUEUR_MAX_URL",
+    "MOTIF_VISION_INDISPONIBLE",
+    "MOTIF_VUE_AU_LANCEMENT",
     "RUN_APERCU",
     "TYPES_SOURCE",
     "TYPE_DOSSIER",
@@ -97,7 +112,10 @@ __all__ = [
     "TYPE_URL",
     "DepotTeleversements",
     "GardeFousExtraction",
+    "ImageNonVue",
+    "LecteurImagesModele",
     "Lecture",
+    "LireImage",
     "RapportLecture",
     "Source",
     "SourceRefusee",
@@ -109,9 +127,12 @@ __all__ = [
     "emplacement_ingestion",
     "estimer_tokens",
     "extraire_sources",
+    "lecteur_par_defaut",
+    "lire_image_en_apercu",
     "nom_de_fichier",
     "racine_ingestion",
     "resoudre_sources",
     "sources_depuis",
     "sources_en_liste",
+    "type_image",
 ]

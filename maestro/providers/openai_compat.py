@@ -15,9 +15,11 @@ sur un effort s'exécute ici sans erreur ni réglage. C'est la démonstration du
 contrat de `ModelProvider.effort_admis` : ignorer proprement n'est pas une bonne
 volonté d'implémentation, c'est ce que la déclaration produit.
 
-Capacités : `generate` (texte) seulement — l'exécution *agentique outillée*
-(`run_agent`) reste refusée (`UnsupportedCapability`, comportement de la base) et
-le moteur replie alors sur le livrable texte. Sans boucle agentique, **aucun
+Capacités : `generate` (texte), et depuis #1163 `generate_with_images` — les
+images d'une source en parties `image_url` du dialecte, l'endpoint jugeant seul si
+son modèle les voit. L'exécution *agentique outillée* (`run_agent`) reste refusée
+(`UnsupportedCapability`, comportement de la base) et le moteur replie alors sur
+le livrable texte. Sans boucle agentique, **aucun
 plafond de tours ne s'applique ici** (#239) : le `tours=1` remonté à la télémétrie
 mesure l'aller-retour HTTP (un appel = un tour), il ne borne rien.
 
@@ -46,15 +48,22 @@ clé absente répond 401, signalé tel quel.
 
 from __future__ import annotations
 
+import base64
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from time import perf_counter
 from typing import Any, ClassVar
 
 import httpx2
 
 from maestro.config import Settings
-from maestro.providers.base import AuthMode, Credentials, ModeleDisponible, ModelProvider
+from maestro.providers.base import (
+    AuthMode,
+    Credentials,
+    ImageJointe,
+    ModeleDisponible,
+    ModelProvider,
+)
 from maestro.providers.registry import register
 from maestro.telemetry import StepUsage, report_usage
 
@@ -160,12 +169,52 @@ class OpenAICompatProvider(ModelProvider):
         non, et un champ inconnu se solde par un 400 — envoyer au hasard
         casserait l'usage nominal (un Ollama local) pour servir l'exception.
         """
+        return await self._appeler(self._corps(prompt, model, system_prompt), model)
+
+    async def generate_with_images(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageJointe],
+        model: str,
+        system_prompt: str | None = None,
+    ) -> str:
+        """`generate`, les images jointes au message : le dialecte les porte en `image_url` (#1163).
+
+        Le contenu du message utilisateur devient une liste de parties — le texte,
+        puis chaque image en URL `data:` —, forme que le dialecte chat completions
+        définit pour la vision et que reprennent les endpoints compatibles qui la
+        servent (Ollama, vLLM, OpenRouter…). **Aucune liste de modèles « qui
+        voient »** n'est tenue ici : ce fournisseur fédère des endpoints dont il ne
+        peut préjuger (cf. `supports`), et c'est l'endpoint qui juge. Un modèle
+        qui ne voit pas répond en erreur, et cette erreur remonte telle quelle —
+        la lecture des sources la nomme au rapport, avec l'extrait que l'endpoint
+        a rendu.
+        """
+        corps = self._corps(prompt, model, system_prompt)
+        corps["messages"][-1]["content"] = [
+            {"type": "text", "text": prompt},
+            *(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{image.type_media};base64,"
+                        + base64.b64encode(image.octets).decode("ascii")
+                    },
+                }
+                for image in images
+            ),
+        ]
+        return await self._appeler(corps, model)
+
+    async def _appeler(self, corps: Mapping[str, Any], model: str) -> str:
+        """Un tour de chat completions sans flux : la réponse, et son usage rapporté."""
         debut = perf_counter()
         async with httpx2.AsyncClient(timeout=_TIMEOUT_S) as client:
             try:
                 reponse = await client.post(
                     f"{self._base_url}/chat/completions",
-                    json=self._corps(prompt, model, system_prompt),
+                    json=dict(corps),
                     headers=self._entetes(),
                 )
                 reponse.raise_for_status()
@@ -280,8 +329,8 @@ class OpenAICompatProvider(ModelProvider):
     def _corps(
         self, prompt: str, model: str, system_prompt: str | None
     ) -> dict[str, Any]:
-        """Le corps commun aux deux appels — un seul endroit où le dialecte s'écrit."""
-        messages: list[dict[str, str]] = []
+        """Le corps commun aux appels — un seul endroit où le dialecte s'écrit."""
+        messages: list[dict[str, Any]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
