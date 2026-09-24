@@ -679,7 +679,7 @@ vient de **l'état du dernier vrai passage du banc**, rejoué à la demande. La 
 
 ---
 
-## « Rien de figé » — Maestro comprend le projet, propose, vérifie (2026-09-21)
+## « Rien de figé » (2026-09-21)
 
 Ce jalon est né d'une demande du 2026-09-21, instruite par [`/idee`](../.claude/commands/idee.md)
 (#1013) et consignée par #1169. La personne venait de créer un projet qu'aucune des quatre natures
@@ -918,7 +918,7 @@ Ne bougent pas : les garde-fous, l'abonnement Claude, et les standards ouverts (
 
 ---
 
-## « Le fil, un vrai interlocuteur » — il sait tout, répond en direct, ne dérange que pour trancher (2026-09-23)
+## « Le fil, un vrai interlocuteur » (2026-09-23)
 
 Ce jalon est né d'un retour d'expérience de la personne, le 2026-09-22. Elle venait de demander à
 Maestro, sur le projet `p1`, *« une petite animation du logo Maestro »* (run `96d0c3482649`).
@@ -1018,7 +1018,7 @@ pendant le run et jamais recrutée sans accord. Elle renverse les deux dernière
 
 ---
 
-## « Le run tient parole » — il vérifie, se rattrape, et le fil agit (2026-09-21)
+## « Le run tient parole » (2026-09-21)
 
 Ce jalon est né le 2026-09-21 d'un balayage « rien de figé » du moteur, de l'API et de l'interface.
 La personne avait demandé d'**anticiper le besoin** et de faire sauter les bridages. Il complète

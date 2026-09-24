@@ -18,21 +18,41 @@ réseau :
   l'accord, lire un run. C'est ici que vivent les chemins et les formes de corps,
   une seule fois, et c'est tout ce que les scénarios connaissent de l'API.
 
+## Deux façons de recevoir une réponse du fil (#1265)
+
+`envoyer` lit la paire que rend `POST …/messages` : **ce qui** a été répondu,
+jamais **comment** c'est arrivé. C'est suffisant pour tout oracle qui porte sur
+une réponse ; ce ne l'est pas pour le direct (#1222), qui est une propriété de
+l'arrivée elle-même. `envoyer_en_direct` emprunte donc la route de l'écran
+(`POST …/flux`, `apps/web/lib/useChat.ts`) et rend un `Echange` : chaque trame
+SSE, datée **à sa réception** par le transport. Le produit sert les deux routes
+par le même échange (`ServiceChat.envoyer`/`diffuser`) : ce qui change entre elles
+est le rendu, jamais la réponse.
+
 ⚠ **Aucun nom de canal n'est recopié.** Le fil de l'orchestration s'adresse par
-`NOM_ORCHESTRATION`, le port par `port_api` de la purge : la leçon de #830 est
-qu'une constante recopiée de l'autre côté d'une frontière finit par désigner
-autre chose sans que rien ne le dise.
+`NOM_ORCHESTRATION`, le port par `port_api` de la purge, les types de trame par
+les `FRAGMENT_CHAT_*` du canal : la leçon de #830 est qu'une constante recopiée
+de l'autre côté d'une frontière finit par désigner autre chose sans que rien ne
+le dise.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from maestro.controltower.acces import entetes_client
+from maestro.controltower.chat import (
+    FRAGMENT_CHAT_DELTA,
+    FRAGMENT_CHAT_ERREUR,
+    FRAGMENT_CHAT_ETAPE,
+    FRAGMENT_CHAT_FIN,
+    FRAGMENT_CHAT_INTERROMPU,
+)
 from maestro.controltower.orchestration import NOM_ORCHESTRATION
 from maestro.controltower.purge import port_api
 from maestro.controltower.state import (
@@ -71,6 +91,17 @@ DELAI_RUN_S = 2400.0
 #: mesure.
 INTERVALLE_SUIVI_S = 1.0
 
+#: La durée d'une image d'écran, à 60 Hz — le grain auquel une personne **voit**
+#: une réponse s'écrire (#1265). Deux incréments reçus dans la même image
+#: s'affichent ensemble : pour qui regarde, ils n'en font qu'un. C'est ce qui
+#: sépare le direct d'un bloc débité en rafale — un transport qui a tout tamponné
+#: rend ses trames à quelques microsecondes d'écart, un modèle qui rédige les
+#: espace de dizaines de millisecondes (seize incréments visibles en 3,1 s au
+#: bouclage du 2026-09-24). Ce n'est pas un seuil choisi pour le banc : c'est
+#: l'écran de la personne, au rafraîchissement le plus courant — et le plus
+#: indulgent pour une rafale.
+IMAGE_S = 1 / 60
+
 
 class ErreurAPI(RuntimeError):
     """L'API a refusé, ou n'a pas répondu ce que le banc attendait.
@@ -100,12 +131,137 @@ class Reponse:
         return 200 <= self.statut < 300
 
 
+@dataclass(frozen=True)
+class Trame:
+    """Une trame du flux d'une réponse, et l'instant où le banc l'a **reçue** (#1265).
+
+    `donnees` est le `FragmentChat` tel que l'API l'a sérialisé (`data: <json>`),
+    sans rien rejuger. `instant` est lu à la réception, sur l'horloge du
+    transport : c'est ce que ni la paire de `POST …/messages` ni le fil relu ne
+    donnent, et c'est tout ce qui distingue une réponse écrite sous les yeux d'une
+    réponse posée d'un coup.
+    """
+
+    instant: float
+    donnees: Mapping[str, Any]
+
+    @property
+    def type(self) -> str:
+        """Le type de la trame — un des `FRAGMENT_CHAT_*` du canal."""
+        return str(self.donnees.get("type") or "")
+
+
+@dataclass(frozen=True)
+class Echange:
+    """Une réponse reçue **par le flux**, trame par trame — ce que l'écran voit venir (#1265).
+
+    `envoi` est l'instant où la requête est partie, sur la même horloge que les
+    trames : l'attente se mesure de là. `statut` et `texte` portent un refus —
+    un 422 part avant la première trame, en statut HTTP comme sur toute route.
+
+    Les mesures sont **structurelles** et ne lisent aucun mot (#746) : des trames
+    `fragment` qui portent du texte, des trames `etape`, et leurs instants.
+    """
+
+    statut: int
+    envoi: float = 0.0
+    trames: tuple[Trame, ...] = ()
+    texte: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """Le flux s'est-il ouvert (2xx) ?"""
+        return 200 <= self.statut < 300
+
+    @property
+    def cloture(self) -> Trame | None:
+        """La dernière trame — celle qui dit comment l'échange s'est terminé."""
+        return self.trames[-1] if self.trames else None
+
+    @property
+    def reponse(self) -> dict[str, Any]:
+        """Le message de l'agent, tel que la trame `fin` le porte — `{}` sans elle.
+
+        C'est le message **persisté** (`ServiceChat._repondre`) : le même que la
+        seconde moitié de la paire de `POST …/messages`.
+        """
+        cloture = self.cloture
+        if cloture is None or cloture.type != FRAGMENT_CHAT_FIN:
+            return {}
+        message = cloture.donnees.get("message")
+        return dict(message) if isinstance(message, Mapping) else {}
+
+    @property
+    def increments(self) -> tuple[Trame, ...]:
+        """Les trames qui **ajoutent du texte** à l'écran — un `fragment` vide n'en ajoute pas."""
+        return tuple(
+            trame
+            for trame in self.trames
+            if trame.type == FRAGMENT_CHAT_DELTA and str(trame.donnees.get("delta") or "")
+        )
+
+    @property
+    def etapes(self) -> tuple[dict[str, str], ...]:
+        """Les étapes publiées en direct (#1223) — celles qui portent un libellé.
+
+        Une étape sans libellé n'aurait rien à afficher, et l'écran la saute
+        (`etapes_depuis` fait de même au rechargement) : la compter dirait « il a
+        lu » d'une lecture que personne n'a vue.
+        """
+        vues: list[dict[str, str]] = []
+        for trame in self.trames:
+            etape = trame.donnees.get("etape")
+            if trame.type != FRAGMENT_CHAT_ETAPE or not isinstance(etape, Mapping):
+                continue
+            libelle = str(etape.get("libelle") or "")
+            if libelle:
+                vues.append({"libelle": libelle, "detail": str(etape.get("detail") or "")})
+        return tuple(vues)
+
+    @property
+    def images(self) -> int:
+        """En combien d'images d'écran le texte de la réponse est apparu — 0 sans incrément.
+
+        Chaque incrément tombe dans l'image que son instant désigne, comptée depuis
+        le **premier** : ancrer là, et non sur une horloge absolue, fait qu'une
+        rafale de quelques microsecondes ne chevauche jamais deux images par
+        hasard. Le rang est arrondi à la microseconde d'image avant d'être tronqué :
+        en flottants, « une image plus tard » vaut 0,999… image, et retomberait
+        dans la précédente.
+        """
+        instants = [trame.instant for trame in self.increments]
+        if not instants:
+            return 0
+        premier = instants[0]
+        return len({math.floor(round((i - premier) / IMAGE_S, 6)) for i in instants})
+
+    @property
+    def attente_s(self) -> float | None:
+        """De l'envoi au premier incrément — ce que couvre l'indicateur d'attente.
+
+        `None` quand aucun texte n'est venu : il n'y a pas eu de fin d'attente.
+        """
+        increments = self.increments
+        return increments[0].instant - self.envoi if increments else None
+
+    @property
+    def ecriture_s(self) -> float:
+        """Du premier incrément au dernier — le temps pendant lequel le texte s'écrit."""
+        increments = self.increments
+        return increments[-1].instant - increments[0].instant if increments else 0.0
+
+
 class Transport(Protocol):
     """Ce que le banc demande à un transport HTTP — et rien de plus.
 
     Un protocole plutôt qu'un client concret, pour la raison qui a fait celui de
     `maestro.controltower.purge` : c'est ce qui permet aux tests de jouer le
     déroulé entier contre une fausse API, sans réseau ni serveur.
+
+    Deux gestes : une requête dont on attend la réponse entière (`demander`), et
+    une requête dont on **écoute** la réponse venir (`flux`, #1265). Le second
+    n'est pas un détail du premier : c'est le transport qui date chaque trame, et
+    une date prise après coup ne dirait plus rien du direct.
     """
 
     def demander(
@@ -118,6 +274,16 @@ class Transport(Protocol):
         delai_s: float | None = None,
     ) -> Reponse:
         """Joue la requête — `delai_s` la borne, `None` laissant le délai du transport."""
+        ...
+
+    def flux(
+        self,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        delai_s: float | None = None,
+    ) -> Echange:
+        """Poste `corps` sur une route SSE et rend l'échange, chaque trame datée à sa réception."""
         ...
 
 
@@ -185,6 +351,81 @@ class TransportHTTP:
             corps_decode = None
         return Reponse(statut=brute.status_code, corps=corps_decode, texte=texte)
 
+    def flux(
+        self,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        delai_s: float | None = None,
+    ) -> Echange:
+        """Poste sur une route SSE et **écoute** la réponse venir (#1265).
+
+        Le corps est lu ligne à ligne pendant qu'il arrive, et chaque événement
+        est daté quand sa ligne vide le clôt — l'instant où un `EventSource` le
+        remettrait à l'écran. `time.perf_counter` et non `time.monotonic` : sous
+        Windows, le second avance par pas de ~16 ms, c'est-à-dire d'une image
+        entière, et ne séparerait plus une rafale d'un direct.
+
+        `delai_s` borne l'attente **entre deux lectures**, pas l'échange entier :
+        c'est le silence d'une API figée qu'on veut arrêter, jamais une réponse
+        longue qui continue de s'écrire.
+        """
+        import httpx2
+
+        delai = self._delai_s if delai_s is None else delai_s
+        trames: list[Trame] = []
+        donnees: list[str] = []
+        envoi = time.perf_counter()
+        try:
+            with (
+                httpx2.Client(timeout=delai) as client,
+                client.stream(
+                    "POST",
+                    f"{self._base}{chemin}",
+                    json=None if corps is None else dict(corps),
+                    headers={**dict(self._entetes), "Accept": "text/event-stream"},
+                ) as brute,
+            ):
+                if not 200 <= brute.status_code < 300:
+                    brute.read()
+                    return Echange(statut=brute.status_code, envoi=envoi, texte=brute.text)
+                for ligne in brute.iter_lines():
+                    if ligne.startswith("data:"):
+                        donnees.append(ligne[len("data:") :].removeprefix(" "))
+                        continue
+                    if ligne.strip() or not donnees:
+                        continue
+                    trame = _trame(time.perf_counter(), donnees)
+                    donnees = []
+                    if trame is not None:
+                        trames.append(trame)
+                statut = brute.status_code
+        except httpx2.TimeoutException as echec:
+            raise ErreurAPI(
+                f"l'API n'a plus rien envoyé en {delai:g} s (POST {chemin})", chemin=chemin
+            ) from echec
+        except httpx2.HTTPError as echec:  # pragma: no cover - API éteinte, flux coupé
+            raise ErreurAPI(f"flux interrompu ({echec})", chemin=chemin) from echec
+        # Un flux clos sans ligne vide finale laisse son dernier événement en suspens.
+        derniere = _trame(time.perf_counter(), donnees) if donnees else None
+        if derniere is not None:
+            trames.append(derniere)
+        return Echange(statut=statut, envoi=envoi, trames=tuple(trames))
+
+
+def _trame(instant: float, donnees: Sequence[str]) -> Trame | None:
+    """L'événement SSE fait de ces lignes `data:` — `None` s'il n'est pas un objet JSON.
+
+    Une trame illisible est **sautée** : elle ne dirait rien au banc, et la
+    compter fausserait le décompte des incréments. Les trames du canal sont des
+    objets (`FragmentChat.to_dict`) ; tout le reste est du bruit de transport.
+    """
+    try:
+        objet = json.loads("\n".join(donnees))
+    except ValueError:
+        return None
+    return Trame(instant=instant, donnees=objet) if isinstance(objet, Mapping) else None
+
 
 def base_locale(environnement: Mapping[str, str] | None = None) -> str:
     """L'adresse de l'API locale — le port de la purge, jamais un second réglage."""
@@ -198,15 +439,16 @@ class ClientAPI:
     ## Deux délais, selon qui rédige la réponse (#1232)
 
     La plupart des routes répondent sans le modèle, et le délai ordinaire du
-    transport leur suffit. Deux ne le peuvent pas : `envoyer` (le fil juge le
-    message et rédige sa réponse) et `proposition_equipe` (un playbook rédigé par
+    transport leur suffit. Trois ne le peuvent pas : `envoyer` et
+    `envoyer_en_direct` (le fil juge le message et rédige sa réponse, rendue
+    d'un coup ou au fil de l'eau) et `proposition_equipe` (un playbook rédigé par
     rôle, #257). Elles durent ce que dure le modèle, et **l'écran ne les borne
     pas** : un banc qui les coupait à 30 s jugeait un produit plus pressé que
     celui qu'un utilisateur a sous les yeux. Mesuré le 2026-09-23 : la proposition
     d'équipe a tenu en 17 s, puis ≈ 26 s, puis a dépassé 30 s sur la première
     requête d'une API qui venait de démarrer — et S1 n'a jamais envoyé sa demande.
 
-    Ces deux verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
+    Ces trois verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
     déjà au modèle pour un run (`--delai`, `DELAI_RUN_S`) : une borne contre une
     API figée, pas une attente. Le classement se fait **ici, sur le code des
     routes** — `trancher_cadrage` et `recruter` n'appellent aucun modèle et
@@ -330,6 +572,50 @@ class ClientAPI:
             delai_s=self._delai_modele_s,
         )
         return _reponse_de(corps, chemin=f"{FIL}/messages")
+
+    def envoyer_en_direct(
+        self, contenu: str, *, projet_id: str, conversation: str
+    ) -> Echange:
+        """Envoie un message **par le flux que l'écran emprunte**, et rend l'échange reçu (#1265).
+
+        `POST …/flux`, même corps que `envoyer` : c'est le même échange côté
+        produit, rendu au fil de l'eau. Le banc en garde chaque trame datée, parce
+        que le direct (#1222) ne se voit que là.
+
+        Le modèle rédige la réponse : la marge du modèle, comme `envoyer`. Trois
+        issues ne rendent aucune réponse, et chacune lève `ErreurAPI` — c'est-à-dire
+        un **empêchement**, jamais un rouge du fil : un refus avant la première
+        trame (statut HTTP), une trame `erreur` (aucune réponse ne viendra — le
+        pendant du 502 de `POST …/messages`), un flux clos sans sa trame `fin`.
+        """
+        chemin = f"{FIL}/flux"
+        echange = self._transport.flux(
+            chemin,
+            corps={"contenu": contenu, "projet_id": projet_id, "conversation": conversation},
+            delai_s=self._delai_modele_s,
+        )
+        if not echange.ok:
+            raise ErreurAPI(
+                f"POST {chemin} → {echange.statut} : {echange.texte[:400]}",
+                statut=echange.statut,
+                chemin=chemin,
+            )
+        cloture = echange.cloture
+        if cloture is not None and cloture.type == FRAGMENT_CHAT_ERREUR:
+            raise ErreurAPI(
+                f"le fil n'a pas pu répondre (POST {chemin}) : "
+                f"{str(cloture.donnees.get('delta') or '')[:400]}",
+                chemin=chemin,
+            )
+        if cloture is None or cloture.type != FRAGMENT_CHAT_FIN:
+            vu = cloture.type if cloture is not None else "aucune trame"
+            arret = " (arrêté)" if vu == FRAGMENT_CHAT_INTERROMPU else ""
+            raise ErreurAPI(
+                f"le flux de POST {chemin} s'est clos sans sa trame de fin "
+                f"(dernière : {vu}{arret})",
+                chemin=chemin,
+            )
+        return echange
 
     def fil(self, conversation: str) -> list[dict[str, Any]]:
         """Les messages **persistés** d'une conversation, dans l'ordre d'écriture (#1224).
