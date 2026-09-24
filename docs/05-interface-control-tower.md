@@ -318,6 +318,17 @@ introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vid
 confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
 choix retenu reprend dès que l'API répond).
 
+> ⚠ **Renversé le 2026-09-24** ([docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md),
+> #1293), à la demande de la personne. Le projet actif n'est plus *relu au démarrage*.
+> - Chaque démarrage arrive sur le choix du projet, avec « Reprendre *le dernier projet* » en tête,
+>   atteint en un geste.
+> - La colonne de conversation y est ouverte ; la fermer vaut pour la session.
+>
+> Un réglage ancien (projet retenu, colonne fermée) ramenait sinon la Control Tower d'avant l'atelier.
+> Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
+> projet au sélecteur dans une session. Ce paragraphe décrit l'état **présent** jusqu'à ce que #1293
+> le réécrive.
+
 **Le sélecteur** (#280) tient dans la barre supérieure, contre le titre de page — on lit « ce
 projet-ci, cette page-là ». Il affiche le projet actif **et sa racine** (deux clones d'un même
 dépôt portent volontiers le même nom ; c'est le chemin qui dit sur lequel on travaille), et
@@ -6374,6 +6385,17 @@ des skills au format Agent Skills dans `.agents/skills/`, et un **manifeste**
 `.maestro/outillage/manifeste.json` — et ce que ça change au chantier des projets locaux est à
 [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md). Ici : les routes, et les trois règles
 qu'elles portent.
+
+> ⚠ **Le chemin de création change** ([docs/43 §2.2 et §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
+> 2026-09-24), à la demande de la personne.
+> - Un projet **naît dans la conversation** (#1294), et son outillage s'y construit **pièce par
+>   pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` du formulaire quitte le chemin
+>   de création.
+> - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
+>   qui ne le lit pas nativement (#1295).
+>
+> Cette section décrit l'état **présent** jusqu'à ce que ces lots la réécrivent. Les routes et leurs
+> trois règles restent la matière des deux chemins.
 
 **Six routes, deux voies, une seule recommandation.** Un projet **existant** est analysé, un projet
 **neuf** est questionné — et les deux aboutissent à la *même* forme `recommandation`, produite par

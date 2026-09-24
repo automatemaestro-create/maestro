@@ -359,6 +359,15 @@ tels qu'ils sont, et un **manifeste** `.maestro/outillage/manifeste.json` qui di
 écrit, depuis quelle analyse ou quels choix, et par quelle version. Les formats sont ouverts : un
 autre agent que Claude sait les lire.
 
+> ⚠ **Deux points changent le 2026-09-24** ([docs/43](./43-decision-un-projet-nait-dans-la-conversation.md)),
+> à la demande de la personne :
+> - les deux ponts ne s'écrivent plus d'office. `AGENTS.md` suffit, et un pont ne s'écrit que pour
+>   un client utilisé qui ne le lit pas nativement (#1295) ;
+> - créer un projet ne commence plus par une étape d'outillage : le projet naît dans la conversation,
+>   et son outillage s'y construit pièce par pièce (#1294, #1161).
+>
+> Ce paragraphe décrit l'état **présent** jusqu'à ce que ces lots le réécrivent.
+
 **D'où il sort — deux voies, une seule recommandation.** Un projet **existant** est *analysé*
 (#1030) : sa racine est parcourue en lecture seule, bornes explicites et aucune exécution du code du
 projet, et l'analyse rend ce qu'elle recommande avec, pour chaque entrée, le fichier du projet qui
