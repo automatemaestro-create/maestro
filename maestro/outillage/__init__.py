@@ -42,7 +42,7 @@ critère de #1031 : les réponses de l'utilisateur deviennent des `Constats`
 donc **pas deux chemins** de « ce qu'il faut à ce projet » à tenir d'accord — ce
 que #1033 génère vient de la même fonction, quelle que soit sa provenance.
 
-Dix modules, et la frontière entre eux est celle du disque :
+Onze modules, et la frontière entre eux est celle du disque :
 
 - `maestro.outillage.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
@@ -75,20 +75,28 @@ Dix modules, et la frontière entre eux est celle du disque :
 - `maestro.outillage.ecriture` — **où** cela s'écrit : le régime du projet
   (docs/24 §2.4), worktree à fusionner sous accord ou racine en place. Il
   prépare ; l'accord et la fusion restent à
-  `maestro.controltower.validation`.
+  `maestro.controltower.validation` ;
+- `maestro.outillage.verification` — **ce que valent les commandes qu'on écrit**
+  (#1160) : chacune est jouée avant d'être écrite, dans une copie de l'arbre
+  outillé, et son verdict — vérifiée, échouée avec sa sortie, ou à vérifier avec
+  sa raison — va au texte, au manifeste et au rapport.
 
 **Les promesses du paquet, et où elles tiennent.** *Lecture seule partout sauf
 là où c'est le sujet* : seuls `generation` et `ecriture` ouvrent un fichier en
 écriture, et uniquement sous la cible qu'on leur nomme, chaque chemin confronté
 à la **frontière d'écriture** de `maestro.sandbox.en_place` — la même que celle
-des agents (#839), jamais une seconde. *Aucune exécution du code du projet* :
-aucun module n'importe `subprocess` — le VCS lui-même est lu dans `.git/HEAD` et
+des agents (#839), jamais une seconde. *L'analyse n'exécute rien* : aucun module
+n'importe `subprocess` — le VCS lui-même est lu dans `.git/HEAD` et
 `.git/config` (`maestro.projets.racine.detecter_vcs`, #221) plutôt qu'obtenu
-d'un `git remote`, et le seul Git de ce paquet est celui que
-`maestro.sandbox.projet` lance pour monter un worktree. *Aucun lien symbolique
-suivi*, et le **périmètre déclaré du projet s'applique** des trois côtés : ni
-`.env` ni `**/secrets/**` ne sont ouverts, qu'on analyse, qu'on écrive ou qu'on
-transmette.
+d'un `git remote`. Les processus que ce paquet fait lancer le sont par
+`maestro.sandbox`, et à **l'écriture** seulement, après le geste qui la
+déclenche : le Git qui monte un worktree (`maestro.sandbox.projet`), et depuis
+#1160 les commandes du projet, jouées dans une **copie** de vérification
+(`maestro.sandbox.verification`) — jamais dans la racine, jamais pendant une
+analyse, et jamais une commande que la portée « projet » renvoie à une personne.
+*Aucun lien symbolique suivi*, et le **périmètre déclaré du projet s'applique**
+des quatre côtés : ni `.env` ni `**/secrets/**` ne sont ouverts, qu'on analyse,
+qu'on écrive, qu'on transmette ou qu'on vérifie.
 
 Ce que l'analyse rend est **servi par l'API** —
 `GET /api/projets/{id}/outillage/analyse` — et sert de `source` au manifeste que

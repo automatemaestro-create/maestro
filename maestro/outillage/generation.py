@@ -52,6 +52,14 @@ périmètre : refusé, avec son motif. Ce n'est pas une précaution ajoutée ici
 le mécanisme que le régime en place arme déjà pour les agents (#839) : deux
 orthographes de « où a-t-on le droit d'écrire » auraient fini par ne pas refuser
 les mêmes chemins.
+
+## Le verdict de chaque commande (#1160)
+
+Les commandes que l'outillage écrit ont été **jouées avant** (`maestro.outillage.
+verification`). Ce module ne les joue pas — il garde leurs verdicts là où ils se
+relisent : dans le **manifeste** (`verifications`, à côté des `entrees`), où ils
+disent six mois plus tard ce qui marchait le jour de l'écriture, et dans le
+**rapport**, où la personne les lit commande par commande, sortie comprise.
 """
 
 from __future__ import annotations
@@ -68,6 +76,7 @@ from typing import Any
 from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN, VERSION_MANIFESTE
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
 from maestro.outillage.redaction import GENERE_PAR, PORTEE_BLOC, Fichier, bloc
+from maestro.outillage.verification import Verification
 from maestro.sandbox.en_place import FrontiereEcriture
 
 #: Où va une version neuve qu'on a refusé d'écraser (docs/38 §3.6). L'arborescence
@@ -133,6 +142,10 @@ class Rapport:
     `refus` porte le motif d'un refus **global** (manifeste illisible dans une
     version inconnue) : le rapport est alors vide de toute écriture, et c'est la
     seule forme sous laquelle la génération renonce entièrement.
+
+    `verifications` (#1160) est le verdict de chaque commande que l'outillage
+    écrit, dans l'ordre où elles ont été jouées — y compris sur un refus global :
+    elles l'ont été, et le taire ferait croire qu'on n'a rien tenté.
     """
 
     cible: str = ""
@@ -141,6 +154,7 @@ class Rapport:
     genere_le: str = ""
     ecritures: tuple[Ecriture, ...] = ()
     refus: str = ""
+    verifications: tuple[Verification, ...] = ()
 
     @property
     def ecrits(self) -> tuple[Ecriture, ...]:
@@ -175,6 +189,7 @@ class Rapport:
             "refuses": [ecriture.chemin for ecriture in self.refuses],
             "ignores": [ecriture.chemin for ecriture in self.ignores],
             "retires": [ecriture.chemin for ecriture in self.retires],
+            "verifications": [v.to_dict() for v in self.verifications],
         }
 
 
@@ -199,6 +214,7 @@ def generer(
     source: Mapping[str, Any],
     frontiere: FrontiereEcriture | None = None,
     horodatage: str = "",
+    verifications: Sequence[Verification] = (),
 ) -> Rapport:
     """Écrit `fichiers` dans `cible` selon les quatre cas de docs/38 §4.2.
 
@@ -217,6 +233,11 @@ def generer(
     manifeste —, parce qu'un contenu qui change à chaque appel rendrait le cas
     « empreinte identique » inatteignable.
 
+    `verifications` sont les verdicts des commandes, jouées avant (#1160) : ils
+    vont tels quels au manifeste et au rapport. Vides, le manifeste n'en porte pas
+    moins la clé — une liste vide dit « rien n'était à jouer », une clé absente ne
+    dirait rien.
+
     Ne lève pas : un chemin refusé, un fichier illisible, un disque en écriture
     seule sont des **lignes du rapport**, jamais une exception — il ne doit pas y
     avoir d'état où une partie de l'outillage est posée et où l'appelant ne sait
@@ -225,6 +246,7 @@ def generer(
     racine = Path(cible)
     quand = horodatage or datetime.now(UTC).isoformat(timespec="seconds")
     garde = frontiere or FrontiereEcriture(racine=racine.resolve(), exclus=())
+    verdicts = tuple(verifications)
     etat = _lire_manifeste(racine)
     if etat.version_lue is not None and etat.version_lue != VERSION_MANIFESTE:
         return Rapport(
@@ -235,6 +257,7 @@ def generer(
                 f"{etat.version_lue!r}, attendue {VERSION_MANIFESTE} — rien n'a été "
                 "écrit, pour ne pas effacer ce qu'une autre version y a déclaré."
             ),
+            verifications=verdicts,
         )
 
     ecritures: list[Ecriture] = []
@@ -245,7 +268,7 @@ def generer(
         if entree is not None:
             gardees[fichier.chemin] = entree
     ecritures.extend(_retirees(etat, gardees))
-    manifeste = _ecrire_manifeste(racine, gardees, dict(source), quand, garde)
+    manifeste = _ecrire_manifeste(racine, gardees, dict(source), quand, garde, verdicts)
     if manifeste:
         ecritures.append(
             Ecriture(
@@ -256,7 +279,9 @@ def generer(
                 raison=manifeste,
             )
         )
-    return Rapport(cible=str(racine), genere_le=quand, ecritures=tuple(ecritures))
+    return Rapport(
+        cible=str(racine), genere_le=quand, ecritures=tuple(ecritures), verifications=verdicts
+    )
 
 
 def portees_declarees(cible: Path | str) -> dict[str, str]:
@@ -591,6 +616,7 @@ def _ecrire_manifeste(
     source: dict[str, Any],
     quand: str,
     garde: FrontiereEcriture,
+    verifications: Sequence[Verification] = (),
 ) -> str:
     """Écrit `.maestro/outillage/manifeste.json` — rend "" ou le motif de l'échec.
 
@@ -598,6 +624,12 @@ def _ecrire_manifeste(
     premier, une écriture qui échoue ensuite laisserait un manifeste qui déclare
     des fichiers absents, et la génération suivante les réécrirait en croyant
     réparer une suppression volontaire.
+
+    `verifications` (#1160) est une clé **ajoutée** à la version 1 et non une
+    version 2 : un lecteur de la version 1 l'ignore sans rien perdre de ce qu'il
+    lisait (`_lire_manifeste` ne lit que `manifeste`, `source` et `entrees`), et
+    monter la version ferait refuser toute régénération par une version antérieure
+    de Maestro (`REFUS_VERSION`) pour une information qu'elle n'a pas besoin de lire.
     """
     refus = garde.refus_chemin(CHEMIN_MANIFESTE, ecriture=True)
     if refus is not None:
@@ -608,6 +640,7 @@ def _ecrire_manifeste(
         "genere_le": quand,
         "source": source,
         "entrees": list(entrees.values()),
+        "verifications": [v.to_dict() for v in verifications],
     }
     texte = json.dumps(donnees, ensure_ascii=False, indent=2) + "\n"
     return _ecrire_fichier(racine / PurePosixPath(CHEMIN_MANIFESTE), texte)

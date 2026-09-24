@@ -40,6 +40,15 @@ branche) : l'outillage proposé reste consultable et se récupère d'un `git mer
 Sur un projet non versionné, ce qui est écrit est écrit — et ce qui garde est
 alors ce qui garde déjà les agents : la **frontière d'écriture**, le manifeste
 qui refuse d'écraser, et le rapport qui nomme chaque geste.
+
+**Chaque commande est jouée avant d'être écrite** (#1160). Entre la lecture du
+manifeste de la cible et la rédaction, le `Verificateur`
+(`maestro.outillage.verification`) joue dans une **copie** de la cible les commandes
+que la rédaction va écrire, et leurs verdicts entrent dans le texte, dans le
+manifeste et dans le rapport. C'est ici et pas plus tôt parce que c'est le seul
+moment où l'on sait **quel arbre** sera outillé — le worktree frais d'un projet
+versionné, la racine d'un projet non versionné —, et parce que l'analyse, elle,
+n'exécute rien (docs/38).
 """
 
 from __future__ import annotations
@@ -53,6 +62,7 @@ from typing import Any
 from maestro.outillage.generation import Rapport, generer, portees_declarees
 from maestro.outillage.modele import Constats, Recommandation
 from maestro.outillage.redaction import rediger
+from maestro.outillage.verification import Verificateur
 from maestro.projets.modele import Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import FrontiereEcriture
@@ -111,6 +121,7 @@ def generer_outillage(
     source: Mapping[str, Any],
     tache_id: str = "",
     horodatage: str = "",
+    verificateur: Verificateur | None = None,
 ) -> Preparation:
     """Écrit l'outillage que `recommandation` retient dans `projet`, au régime de docs/24 §2.4.
 
@@ -121,8 +132,15 @@ def generer_outillage(
     arbre on va écrire, et une régénération y perdrait l'idempotence — c'est le
     défaut que le banc du 2026-09-20 a montré.
 
-    **Bloquant** : parcours du disque, et sous-processus Git sur un projet
-    versionné. Un appelant asynchrone le joue hors de sa boucle d'événements.
+    **Bloquant** : parcours du disque, sous-processus Git sur un projet versionné,
+    et les commandes du projet jouées dans leur copie de vérification — jusqu'aux
+    délais de `verificateur` (`Delais`). Un appelant asynchrone le joue hors de sa
+    boucle d'événements.
+
+    `verificateur` joue les commandes avant qu'elles ne soient écrites (#1160).
+    `None` vaut le vérificateur **réel** : il n'y a pas de génération sans
+    vérification, et c'est la suite de tests qui neutralise l'exécution d'un seul
+    endroit (`tests/conftest.py`), jamais un appelant qui l'oublierait.
 
     La racine est **revalidée** (`valider_racine`, EF-38) et pas seulement à la
     déclaration : le dépôt des projets est un dossier de fichiers JSON qu'on peut
@@ -137,10 +155,13 @@ def generer_outillage(
     l'outillage est posée et où personne ne sait laquelle.
     """
     racine = valider_racine(projet.racine)
+    verifie = verificateur if verificateur is not None else Verificateur()
     if not projet.versionne:
         return Preparation(
             regime=REGIME_EN_PLACE,
-            rapport=_ecrire(racine, projet, constats, recommandation, source, horodatage),
+            rapport=_ecrire(
+                racine, projet, constats, recommandation, source, horodatage, verifie
+            ),
         )
 
     tache = tache_id or nouvel_id_de_generation()
@@ -150,7 +171,9 @@ def generer_outillage(
     # fusion — exactement le déroulé d'une tâche soldée (#705), et c'est pourquoi
     # rien de Git n'est réécrit ici.
     with espace_de_travail(projet, tache_id=tache) as espace:
-        rapport = _ecrire(espace.path, projet, constats, recommandation, source, horodatage)
+        rapport = _ecrire(
+            espace.path, projet, constats, recommandation, source, horodatage, verifie
+        )
     return Preparation(
         regime=REGIME_BRANCHE,
         rapport=rapport,
@@ -166,8 +189,14 @@ def _ecrire(
     recommandation: Recommandation,
     source: Mapping[str, Any],
     horodatage: str,
+    verificateur: Verificateur,
 ) -> Rapport:
-    """Rédige contre le manifeste de `cible`, puis écrit — le même geste dans les deux régimes.
+    """Vérifie, rédige contre le manifeste de `cible`, puis écrit — même geste, deux régimes.
+
+    Les commandes sont jouées **avant** la rédaction, dans une copie de `cible`
+    (#1160) : leurs verdicts font partie du texte, donc ils doivent être connus
+    quand on le rend. La copie est faite avant toute écriture — ce qu'on vérifie
+    est le projet, pas l'outillage qu'on s'apprête à y poser.
 
     La **frontière d'écriture** est armée sur la cible et le périmètre du projet
     (`maestro.sandbox.en_place`, #839) : hors de l'arbre, à travers un lien
@@ -176,8 +205,16 @@ def _ecrire(
     de « où a-t-on le droit d'écrire » auraient fini par ne pas refuser les mêmes
     chemins.
     """
+    portees = portees_declarees(cible)
+    verifications = verificateur.verifier(
+        cible, constats, recommandation, perimetre=projet.perimetre, portees=portees
+    )
     fichiers = rediger(
-        constats, recommandation, portees=portees_declarees(cible), source=source
+        constats,
+        recommandation,
+        portees=portees,
+        source=source,
+        verifications=verifications,
     )
     return generer(
         cible,
@@ -185,4 +222,5 @@ def _ecrire(
         source=source,
         frontiere=FrontiereEcriture.pour(cible, projet.perimetre),
         horodatage=horodatage,
+        verifications=verifications,
     )
