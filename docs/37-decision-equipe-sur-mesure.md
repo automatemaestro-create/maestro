@@ -90,6 +90,10 @@ Sa règle centrale, elle, disparaît : *une hypothèse énoncée vaut mieux qu'u
 
    ✅ **Tranché** le 2026-09-20 par [docs/38](./38-decision-outillage-universel-du-projet.md) (#1029) : les skills vont dans `.agents/skills/`, le seul chemin projet lu par plus d'un client — trois sur quatre. Aucun chemin n'est lu par les quatre : `AGENTS.md` désigne le dossier pour le quatrième, et deux ponts d'une ligne (`CLAUDE.md`, `GEMINI.md` contenant `@AGENTS.md`) le joignent, parce qu'`AGENTS.md` seul ne les atteint pas tous. Aucun fichier de commande n'est généré, faute de format commun.
 6. **L'étape d'outillage est première et proposée d'office, mais reportable** (#1034). Importer un projet pour le regarder ne doit pas imposer une génération. Un projet non outillé le **dit**.
+
+   > ⚠ **Renversé le 2026-09-24** ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)), à la demande de la personne : l'outillage n'est plus une **étape de formulaire**. Un projet naît dans la conversation (#1294), et son outillage s'y construit **pièce par pièce**, chaque pièce proposée puis écrite sur accord (#1161). Le principe 2 (« l'outillage d'abord ») perd son sens d'étape, mais le reste ne bouge pas : l'outillage se propose, se reporte, et un projet non outillé le dit.
+   >
+   > Les deux ponts du point 5 ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé qui ne le lit pas nativement ([docs/43 §2.3](./43-decision-un-projet-nait-dans-la-conversation.md), #1295).
 7. **Le répertoire proposé par défaut** est un dossier `Maestro` sous le dossier personnel, créé à la première utilisation (#1022). La racine nue du dossier personnel reste refusée par `valider_racine`, alors qu'un sous-dossier est admis.
 
 ## 5. Le découpage
