@@ -210,6 +210,7 @@ from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.question import ArbitreQuestionControlTower
+from maestro.controltower.renfort import ArbitreRenfortControlTower
 from maestro.controltower.souffrance import SEUIL_SOUFFRANCE_S, en_souffrance
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
@@ -232,7 +233,6 @@ from maestro.engine.brief import (
 from maestro.engine.executor import STATUT_ECHEC
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.engine.pause import PorteExecution
-from maestro.engine.renfort import ArbitreRenfort
 from maestro.references import ReferenceTicket
 from maestro.sources import (
     DepotTeleversements,
@@ -378,16 +378,9 @@ class ServiceExecutions:
         seuil_souffrance_s: float = SEUIL_SOUFFRANCE_S,
         periode_battement_s: float = PERIODE_BATTEMENT_S,
         hote: HoteRun | None = None,
-        arbitre_renfort: ArbitreRenfort | None = None,
     ) -> None:
         self._bus = bus
         self._state = state
-        # À qui proposer de compléter l'équipe d'un run dont le plan appelle un
-        # rôle absent (#1227). Injecté et non construit ici : il écrit dans le
-        # **fil de l'orchestration**, que ce service ne connaît pas — c'est
-        # `create_app` qui tient les deux bouts (cf. `maestro.controltower.renfort`).
-        # None : le manque est nommé au journal du run et l'exécution continue.
-        self._arbitre_renfort = arbitre_renfort
         self._fabrique = fabrique_moteur if fabrique_moteur is not None else moteur_par_defaut
         self._ingestion = (
             garde_fous_ingestion if garde_fous_ingestion is not None else GardeFousIngestion()
@@ -1614,12 +1607,13 @@ class ServiceExecutions:
                 # plafond d'allers-retours de clarification juste au-dessus.
                 questionneur=ArbitreQuestionControlTower(self._bus),
                 # La proposition de renfort (#1227) : même règle que les trois
-                # au-dessus — *où* elle est posée est un choix de déploiement,
-                # ici le fil de l'orchestration de cette app. Elle arrive
-                # **injectée** parce que ce service ne connaît pas le fil ; sa
-                # borne, elle, ne passe pas par l'ordre : c'est le même temps
-                # humain qu'un arbitrage, et il n'a qu'un réglage.
-                arbitre_renfort=self._arbitre_renfort,
+                # au-dessus, et depuis #1260 **même bus** — la demande y est
+                # publiée et l'API la relaie dans le fil (`RelaisRenfort`).
+                # L'hôte détaché câble le même arbitre de son côté : un chemin
+                # propre à ce process est ce qui avait laissé l'autre sans rien.
+                # Sa borne ne passe pas par l'ordre : c'est le même temps humain
+                # qu'un arbitrage, et il n'a qu'un réglage.
+                arbitre_renfort=ArbitreRenfortControlTower(self._bus),
             )
             rapport = await moteur.run(
                 ordre.objectif,

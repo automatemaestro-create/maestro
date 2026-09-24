@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
 from time import monotonic, perf_counter
@@ -553,6 +553,30 @@ class TaskExecutor(ABC):
         """Exécute `task` et renvoie son issue (échec consigné, jamais levé)."""
         raise NotImplementedError
 
+    def continuer_avec_l_equipe(self, run_id: str) -> None:  # noqa: B027 — défaut assumé
+        """Le run `run_id` fait son travail avec l'équipe telle qu'elle est (#1260).
+
+        Dit par la boucle dès que la confrontation de l'équipe au plan a constaté
+        un manque, quelle qu'en soit l'issue (refus, silence, personne à qui le
+        proposer, ou un second métier qu'on n'a pas proposé) : une tâche dont
+        personne n'a le métier va alors au rôle le plus proche au lieu de partir
+        « à assigner » (`Router.route`, `au_plus_proche`).
+
+        Sans effet par défaut, et c'est une limite **dite** : un exécuteur distribué
+        (`maestro.queue.CeleryExecutor`) route côté worker, où cette décision ne
+        voyage pas encore — ses tâches gardent le repli de #42.
+        """
+
+    def equipe_completee(  # noqa: B027 — défaut assumé
+        self, run_id: str, competences: Collection[str]
+    ) -> None:
+        """Le run `run_id` a recruté un rôle pour ces `competences` (#1260).
+
+        L'autre issue de la confrontation : une tâche qui demande l'une d'elles va
+        à un rôle qui la couvre (`Router.route`, `recrutees`) — la promesse que le
+        fil fait en recrutant. Même limite dite que `continuer_avec_l_equipe`.
+        """
+
 
 class LocalExecutor(TaskExecutor):
     """Exécution en process : routage, garde-fous, production du livrable.
@@ -642,6 +666,15 @@ class LocalExecutor(TaskExecutor):
         # plusieurs runs ne fait pas hériter à l'un l'accord de l'autre. Jamais
         # purgé, comme `MemoireArbitrage` : deux chaînes et un booléen par run.
         self._accords_fusion: dict[tuple[str, str], _AccordFusion] = {}
+        # Les runs qui travaillent avec l'équipe telle qu'elle est (#1260) : la
+        # boucle l'a dit après avoir confronté l'équipe au plan sans rien
+        # recruter. Indexé par `run_id` pour la raison des accords de fusion — un
+        # exécuteur qui sert plusieurs runs ne fait pas hériter à l'un la décision
+        # de l'autre —, et jamais purgé non plus : un identifiant par run.
+        self._equipe_actuelle: set[str] = set()
+        # Et l'autre issue (#1260) : les compétences pour lesquelles un rôle a été
+        # recruté pendant le run, par `run_id`, même régime.
+        self._recrutees: dict[str, frozenset[str]] = {}
         # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
         # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
         # par la couche SDK sur les exécutions outillées de l'agent. None :
@@ -802,6 +835,12 @@ class LocalExecutor(TaskExecutor):
                     task,
                     exclus=self._desactives(task.projet_id),
                     agents=self._equipe(task.projet_id),
+                    # Le métier manque et personne ne l'a recruté (#1260) : la
+                    # tâche va au rôle le plus proche plutôt qu'« à assigner ».
+                    au_plus_proche=journal.run_id in self._equipe_actuelle,
+                    # Un rôle recruté pour ce plan prend les tâches qui
+                    # demandaient son métier — ce que le fil a promis (#1260).
+                    recrutees=self._recrutees.get(journal.run_id, frozenset()),
                 )
                 if decision.agent is None:
                     # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
@@ -939,6 +978,27 @@ class LocalExecutor(TaskExecutor):
             description=task.description,
         )
         return result
+
+    def continuer_avec_l_equipe(self, run_id: str) -> None:
+        """Retient que `run_id` travaille avec l'équipe telle qu'elle est (#1260).
+
+        Relu à chaque routage de ce run (`execute`) : une tâche dont personne n'a
+        le métier y va au rôle le plus proche. C'est ce qui manquait à la voie
+        « décliner / pas de réponse » de #1227 — le run continuait, mais ses tâches
+        de conception partaient « à assigner » et le reste du plan se bloquait
+        derrière elles.
+        """
+        self._equipe_actuelle.add(run_id)
+
+    def equipe_completee(self, run_id: str, competences: Collection[str]) -> None:
+        """Retient les compétences pour lesquelles `run_id` a recruté un rôle (#1260).
+
+        Relues à chaque routage de ce run : une tâche qui en demande une va à un
+        rôle qui la couvre. Le run `2f7aae8437f4` (S6, 2026-09-24) a recruté un
+        Designer pour une tâche `ui` + `frontend`, puis l'a vue partir au
+        développeur sur un ex æquo — alors que le fil venait de dire le contraire.
+        """
+        self._recrutees[run_id] = frozenset(competences)
 
     def _equipe(self, projet_id: str | None) -> tuple[Agent, ...] | None:
         """Les agents candidats pour une tâche de `projet_id` — None : ceux du câblage.

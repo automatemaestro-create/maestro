@@ -18,6 +18,15 @@ Implémente la transition `prete → assignee` de la machine à états des tâch
 (`RoutingDecision.agent is None`) plutôt que mal routée — l'assignation revient
 alors à un humain (réassignation manuelle, Control Tower).
 
+**Au plus proche** (#1260) : le repli ci-dessus cède sur **une** décision, celle de
+faire le travail avec l'équipe qu'on a. L'orchestrateur a confronté l'équipe au
+plan (#1227) et constaté un manque ; ce que personne n'y couvre après la
+proposition — refusée, restée sans réponse, sans personne à qui la faire, ou
+portant sur un autre métier — ne part plus « à assigner » : la tâche va au
+candidat le plus proche, désigné par le classifieur à qui l'on pose cette
+question-là (`plus_proche`). Sans cette décision, rien ne change — c'est
+l'appelant qui la porte (`au_plus_proche`).
+
 `assign` reste la règle pure historique (#6) : meilleur score gagne, l'ordre du
 catalogue départage les ex æquo, `RoutingError` si aucune compétence couverte.
 """
@@ -25,6 +34,7 @@ catalogue départage les ex æquo, `RoutingError` si aucune compétence couverte
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 
 from maestro.agents.catalog import Agent
@@ -36,6 +46,9 @@ from maestro.router.classifier import TaskClassifier
 METHODE_COMPETENCES = "competences"
 METHODE_CLASSIFIEUR = "classifieur"
 METHODE_REPLI = "repli"
+#: La tâche va au rôle le plus proche parce que l'équipe est restée telle qu'elle
+#: est (#1260) — ni une compétence couverte, ni un départage entre compétents.
+METHODE_PLUS_PROCHE = "plus_proche"
 
 #: Confiance minimale exigée du classifieur pour assigner (en deçà : « à assigner »).
 SEUIL_CONFIANCE_DEFAUT = 0.6
@@ -117,6 +130,8 @@ class Router:
         *,
         exclus: Collection[str] = frozenset(),
         agents: Sequence[Agent] | None = None,
+        au_plus_proche: bool = False,
+        recrutees: Collection[str] = frozenset(),
     ) -> RoutingDecision:
         """Route `task` : agent assigné, ou décision « à assigner » — sans jamais lever.
 
@@ -140,6 +155,26 @@ class Router:
         projet n'a aucun agent », et la tâche part en repli « à assigner » —
         laquelle est la réponse juste à *un projet naît sans agent* : personne ne
         peut la prendre, et c'est un fait à montrer, pas à combler.
+
+        `au_plus_proche` (#1260) porte la décision de faire ce travail avec
+        l'équipe telle qu'elle est. Elle ne change qu'un cas : **personne ne
+        couvre aucune compétence** de la tâche (un métier manque, `non_couvertes`
+        non vide). La tâche va alors au candidat actif le plus proche au lieu de
+        partir en repli. Les autres cas n'en sont pas touchés — une compétence
+        couverte reste la règle, un ex æquo reste au classifieur ordinaire, et un
+        catalogue vide ou tout désactivé reste « à assigner » : il n'y a alors
+        personne de proche.
+
+        `recrutees` (#1260) porte l'autre issue de la même confrontation : les
+        compétences pour lesquelles un rôle vient d'être **recruté pour ce plan**.
+        Une tâche qui en demande une va à un candidat qui la couvre, même si un
+        autre couvre autant ou plus de ses compétences — c'est ce que le fil a
+        promis en recrutant (« les tâches qui demandaient ces compétences iront au
+        nouveau rôle »), et c'est la raison même du recrutement. Sans quoi un ex
+        æquo entre le développeur (`frontend`) et le designer recruté (`ui`) se
+        tranchait pour le premier, et l'équipe complétée ne servait à rien — vu
+        une fois sur deux sur la vraie stack. Si personne ne les couvre (le rôle a
+        été désactivé entre-temps), la règle ordinaire reprend.
         """
         catalogue = self._agents if agents is None else tuple(agents)
         candidats_actifs = tuple(a for a in catalogue if a.nom not in exclus)
@@ -155,6 +190,13 @@ class Router:
                 ),
             )
         required = frozenset(task.competences_requises)
+        vises = frozenset(recrutees) & required
+        if vises:
+            # Le métier recruté pour ce plan prend les tâches qui le demandaient
+            # (#1260) : les candidats se réduisent à ceux qui le couvrent, puis la
+            # règle ordinaire départage parmi eux.
+            recrues = tuple(a for a in candidats_actifs if a.competences & vises)
+            candidats_actifs = recrues or candidats_actifs
         couvertures = [(agent, agent.couverture(required)) for agent in candidats_actifs]
         meilleur_score = max(score for _, score in couvertures)
         ex_aequo = tuple(agent for agent, score in couvertures if score == meilleur_score)
@@ -181,7 +223,90 @@ class Router:
             if meilleur_score == 0
             else ()
         )
+        if au_plus_proche and non_couvertes:
+            return await self._plus_proche(task, candidats_actifs, non_couvertes)
         return await self._departage(task, candidats, required, non_couvertes)
+
+    async def _plus_proche(
+        self,
+        task: Task,
+        candidats: tuple[Agent, ...],
+        non_couvertes: tuple[str, ...],
+    ) -> RoutingDecision:
+        """Confie `task` au candidat le plus proche du métier qui manque (#1260).
+
+        **Un seul candidat** : il n'y a rien à demander, c'est lui — le cas de
+        l'essai, un projet qui n'a qu'un développeur. **Plusieurs** : le
+        classifieur désigne, à la question qui n'admet pas l'abstention
+        (`plus_proche`) ; c'est le modèle qui juge de la proximité, jamais l'ordre
+        du catalogue. Ce n'est que s'il ne désigne toujours personne — absent, en
+        panne, ou hors des candidats — que l'ordre du catalogue départage, et la
+        raison le dit : un choix par défaut qui ne se dirait pas se lirait comme un
+        jugement.
+
+        `non_couvertes` voyage sur la décision comme sur un repli : c'est le fait
+        que le routage a constaté, et il reste vrai une fois la tâche confiée.
+        """
+        manque = ", ".join(non_couvertes)
+        if len(candidats) == 1:
+            return self._au_plus_proche(
+                task,
+                candidats[0],
+                confiance=0.0,
+                raison=(
+                    f"aucun rôle de l'équipe ne couvre {manque} ; l'équipe reste telle "
+                    f"qu'elle est, et {candidats[0].nom} est son seul rôle en place"
+                ),
+                non_couvertes=non_couvertes,
+            )
+        noms = {a.nom: a for a in candidats}
+        verdict = None
+        if self._classifier is not None:
+            with suppress(Exception):  # une panne ne fait pas échouer ce qui a été décidé
+                verdict = await self._classifier.classify(task, candidats, plus_proche=True)
+        if verdict is not None and verdict.agent in noms:
+            return self._au_plus_proche(
+                task,
+                noms[verdict.agent],
+                confiance=verdict.confiance,
+                raison=(
+                    f"aucun rôle de l'équipe ne couvre {manque} ; l'équipe reste telle "
+                    f"qu'elle est, et le classifieur désigne {verdict.agent} comme le "
+                    "plus proche"
+                ),
+                non_couvertes=non_couvertes,
+            )
+        return self._au_plus_proche(
+            task,
+            candidats[0],
+            confiance=0.0,
+            raison=(
+                f"aucun rôle de l'équipe ne couvre {manque} ; l'équipe reste telle "
+                f"qu'elle est, le classifieur n'a désigné personne, et {candidats[0].nom} "
+                "est le premier rôle de l'équipe"
+            ),
+            non_couvertes=non_couvertes,
+        )
+
+    @staticmethod
+    def _au_plus_proche(
+        task: Task,
+        agent: Agent,
+        *,
+        confiance: float,
+        raison: str,
+        non_couvertes: tuple[str, ...],
+    ) -> RoutingDecision:
+        """La décision « au plus proche » : un agent, sans compétence couverte, et pourquoi."""
+        return RoutingDecision(
+            task=task,
+            agent=agent,
+            score=0,
+            confiance=confiance,
+            methode=METHODE_PLUS_PROCHE,
+            raison=f"au plus proche : {raison}.",
+            non_couvertes=non_couvertes,
+        )
 
     async def _departage(
         self,

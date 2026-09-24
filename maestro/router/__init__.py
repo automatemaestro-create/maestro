@@ -23,6 +23,7 @@ POC (#6). La précision du routage est mesurée sur le jeu versionné
 from __future__ import annotations
 
 from maestro.router.classifier import (
+    CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT,
     MODELE_CLASSIFIEUR,
     Classification,
     TaskClassifier,
@@ -38,6 +39,7 @@ from maestro.router.evaluation import (
 from maestro.router.router import (
     METHODE_CLASSIFIEUR,
     METHODE_COMPETENCES,
+    METHODE_PLUS_PROCHE,
     METHODE_REPLI,
     SEUIL_CONFIANCE_DEFAUT,
     Assignment,
@@ -48,9 +50,11 @@ from maestro.router.router import (
 )
 
 __all__ = [
+    "CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT",
     "DATASET_PATH",
     "METHODE_CLASSIFIEUR",
     "METHODE_COMPETENCES",
+    "METHODE_PLUS_PROCHE",
     "METHODE_REPLI",
     "MODELE_CLASSIFIEUR",
     "SEUIL_CONFIANCE_DEFAUT",

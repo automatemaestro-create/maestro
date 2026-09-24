@@ -428,6 +428,7 @@ from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_RENFORT_DECISION,
+    EVENEMENT_RENFORT_DEMANDE,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
     EVENEMENT_VALIDATION_DECISION,
@@ -503,6 +504,7 @@ from maestro.controltower.projets import (
     statut_http,
 )
 from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
+from maestro.controltower.renfort import RelaisRenfort
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
     BRIEF_REFUSE,
@@ -521,7 +523,6 @@ from maestro.controltower.state import (
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
-from maestro.engine.renfort import DecisionRenfort, DemandeRenfort
 from maestro.equipe import GABARITS, RoleManquant, RoleValide, SkillRetenu
 from maestro.espace import espace_courant
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
@@ -1414,6 +1415,7 @@ async def _pompe(
     reprise_s: float = REPRISE_POMPE_S,
     reprise_max_s: float = REPRISE_POMPE_MAX_S,
     sur_fin_de_run: Callable[[str], None] | None = None,
+    sur_demande_de_renfort: Callable[[Event], None] | None = None,
 ) -> None:
     """Le seul consommateur du bus : projette sur l'état, indexe, puis rediffuse.
 
@@ -1449,6 +1451,14 @@ async def _pompe(
     main tout de suite (le travail part dans une tâche), et **ne peut pas
     arrêter la pompe** — une fin de run qui ne se raconte pas ne doit pas
     interrompre le flux temps réel de tout le monde.
+
+    `sur_demande_de_renfort` (#1260) suit le même régime, pour la même raison :
+    le relais qui pose dans le fil la demande de renfort d'un run
+    (`maestro.controltower.renfort.RelaisRenfort`). Il reçoit l'événement
+    entier — la demande y est composée —, rend la main tout de suite et ne peut
+    pas arrêter la pompe. Le **rejeu** du journal ne le rappelle pas : une
+    demande d'avant le redémarrage a déjà sa trace dans le fil, et le run qui
+    l'attendait tient sa propre borne.
     """
     attente = reprise_s
     en_panne = False
@@ -1475,6 +1485,16 @@ async def _pompe(
                     except Exception:  # noqa: BLE001 — le flux passe avant le récit
                         _LOGGER.exception(
                             "Fin du run %s non racontée dans son fil.", event.run_id
+                        )
+                if (
+                    sur_demande_de_renfort is not None
+                    and event.type == EVENEMENT_RENFORT_DEMANDE
+                ):
+                    try:
+                        sur_demande_de_renfort(event)
+                    except Exception:  # noqa: BLE001 — le flux passe avant le relais
+                        _LOGGER.exception(
+                            "Demande de renfort du run %s non relayée.", event.run_id
                         )
             return
         except asyncio.CancelledError:
@@ -1866,21 +1886,6 @@ def create_app(
     )
     diffusion = Diffusion()
 
-    async def proposer_un_renfort(demande: DemandeRenfort) -> DecisionRenfort:
-        """Propose au fil de compléter l'équipe d'un run, et attend (#1227).
-
-        Un arbitre **construit à l'appel**, et c'est le nœud que ce lot dénoue :
-        il écrit dans `orchestration`, le fil global, qui se construit plus bas
-        parce qu'il tient son lanceur du service d'exécutions… qui reçoit cet
-        arbitre. Même liaison tardive que `ouvrir_un_run` juste en dessous, et
-        elle est sûre pour la même raison : rien n'est appelé avant qu'un run
-        n'ait un plan, c'est-à-dire longtemps après que `create_app` a fini.
-        """
-        from maestro.controltower.renfort import ArbitreRenfortControlTower
-
-        arbitre = ArbitreRenfortControlTower(bus, orchestration, AGENT_ORCHESTRATION)
-        return await arbitre(demande)
-
     # Pilotage des exécutions (#185) : lance sur le bus et la projection de
     # cette app — le run est donc suivi par les mêmes rouages que n'importe
     # quelle orchestration observée.
@@ -1892,7 +1897,6 @@ def create_app(
         lecteur_sources=lecteur_sources,
         battements=battements,
         hote=hote_run,
-        arbitre_renfort=proposer_un_renfort,
     )
 
     async def ouvrir_un_run(
@@ -2086,6 +2090,11 @@ def create_app(
     # référence faible, et une tâche ramassée en cours de route perdrait le
     # message sans rien dire.
     recits: set[asyncio.Task[Any]] = set()
+    # Le relais du renfort (#1260) : il pose dans le fil ci-dessus la demande
+    # qu'un run a publiée sur le bus — quel que soit l'hôte du run, en process
+    # ou détaché. Même patron que le récit : rien ne l'abonne, la pompe lui passe
+    # la main une fois la projection à jour.
+    relais_renfort = RelaisRenfort(bus, orchestration, AGENT_ORCHESTRATION)
 
     def raconter_la_fin(run_id: str) -> None:
         """Lance le récit de `run_id` — sans faire attendre la pompe (#1224).
@@ -2158,6 +2167,7 @@ def create_app(
                 magasin=magasin,
                 rejouer=rejouer,
                 sur_fin_de_run=raconter_la_fin,
+                sur_demande_de_renfort=relais_renfort,
             )
         )
         try:
@@ -2171,6 +2181,9 @@ def create_app(
             # pompe les événements.
             for recit in list(recits):
                 recit.cancel()
+            # Les relais de renfort aussi : un run détaché qui attend encore tient
+            # sa propre borne, et repart avec l'équipe actuelle à l'échéance.
+            relais_renfort.fermer()
             pompe.cancel()
             with suppress(asyncio.CancelledError):
                 await pompe

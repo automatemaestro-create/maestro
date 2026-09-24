@@ -20,8 +20,10 @@ from maestro.agents.catalog import Agent
 from maestro.orchestrator import Task
 from maestro.providers.base import ModelProvider
 from maestro.router import (
+    CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT,
     METHODE_CLASSIFIEUR,
     METHODE_COMPETENCES,
+    METHODE_PLUS_PROCHE,
     METHODE_REPLI,
     MODELE_CLASSIFIEUR,
     Router,
@@ -308,3 +310,185 @@ def test_aucune_equipe_donnee_retombe_sur_le_catalogue_du_cablage():
     decision = asyncio.run(_router().route(_task(), agents=None))
 
     assert decision.agent is not None and decision.agent.nom == "bdd"
+
+
+# --- Au plus proche : l'équipe reste telle qu'elle est (#1260) ------------------------
+#
+# Le repli « à assigner » cède sur une seule décision : faire le travail avec
+# l'équipe actuelle, quand le métier manque et que personne ne l'a recruté. Ces
+# cas éprouvent le routeur seul ; le chemin complet (boucle, exécuteur) vit dans
+# `tests/test_equipe_au_plan.py`.
+
+
+def _equipe_sans_designer() -> tuple[Agent, ...]:
+    """Deux rôles en place, aucun ne couvre `ui` — le cas de l'essai, élargi."""
+    return (
+        Agent(
+            nom="dev",
+            role="Développeur",
+            competences=frozenset({"backend"}),
+            modele="m",
+            prompt_systeme="…",
+        ),
+        Agent(
+            nom="redaction",
+            role="Rédacteur",
+            competences=frozenset({"documentation"}),
+            modele="m",
+            prompt_systeme="…",
+        ),
+    )
+
+
+def test_sans_la_decision_une_tache_que_personne_ne_couvre_reste_a_assigner():
+    """Le témoin de #42 : sans `au_plus_proche`, le classifieur qui s'abstient
+    laisse la tâche à assigner — rien de ce lot ne change le routage ordinaire."""
+    provider = ScriptedProvider('{"agent": null, "confiance": 0.1}')
+    router = Router(_equipe_sans_designer(), classifier=TaskClassifier(provider))
+
+    decision = asyncio.run(router.route(_task(competences_requises=("ui",))))
+
+    assert decision.a_assigner
+    assert decision.methode == METHODE_REPLI
+    assert decision.non_couvertes == ("ui",)
+
+
+def test_au_plus_proche_pose_la_question_qui_n_admet_pas_l_abstention():
+    """Plusieurs candidats : le modèle désigne, à la seconde question — jamais
+    l'ordre du catalogue quand il a répondu."""
+    provider = ScriptedProvider('{"agent": "redaction", "confiance": 0.3}')
+    router = Router(_equipe_sans_designer(), classifier=TaskClassifier(provider))
+
+    decision = asyncio.run(
+        router.route(_task(competences_requises=("ui",)), au_plus_proche=True)
+    )
+
+    assert decision.agent is not None and decision.agent.nom == "redaction"
+    assert decision.methode == METHODE_PLUS_PROCHE
+    assert decision.non_couvertes == ("ui",)
+    assert provider.calls[0]["system_prompt"] == CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT
+    assert "classifieur désigne redaction" in decision.raison
+
+
+def test_au_plus_proche_un_seul_candidat_ne_demande_rien_au_modele():
+    """L'essai : un projet qui n'a qu'un développeur. Il n'y a rien à départager."""
+    provider = ScriptedProvider()
+    router = Router(_equipe_sans_designer()[:1], classifier=TaskClassifier(provider))
+
+    decision = asyncio.run(
+        router.route(_task(competences_requises=("ui",)), au_plus_proche=True)
+    )
+
+    assert decision.agent is not None and decision.agent.nom == "dev"
+    assert provider.calls == []
+    assert "seul rôle en place" in decision.raison
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        pytest.param(None, id="sans-classifieur"),
+        pytest.param(BrokenProvider(), id="classifieur-en-panne"),
+        pytest.param(
+            ScriptedProvider('{"agent": "inconnu", "confiance": 0.9}'), id="hors-candidats"
+        ),
+    ],
+)
+def test_au_plus_proche_sans_designation_l_ordre_departage_et_le_dit(provider):
+    """Ce qui a été décidé ne fait pas échouer la tâche pour une panne : l'ordre
+    du catalogue départage, et la raison dit que ce n'est pas un jugement."""
+    router = Router(
+        _equipe_sans_designer(),
+        classifier=TaskClassifier(provider) if provider is not None else None,
+    )
+
+    decision = asyncio.run(
+        router.route(_task(competences_requises=("ui",)), au_plus_proche=True)
+    )
+
+    assert decision.agent is not None and decision.agent.nom == "dev"
+    assert "n'a désigné personne" in decision.raison
+
+
+def test_au_plus_proche_ne_touche_pas_une_competence_couverte():
+    """Une tâche que quelqu'un couvre reste à la règle de compétences."""
+    provider = ScriptedProvider()
+    router = Router(_equipe_sans_designer(), classifier=TaskClassifier(provider))
+
+    decision = asyncio.run(
+        router.route(_task(competences_requises=("documentation",)), au_plus_proche=True)
+    )
+
+    assert decision.agent is not None and decision.agent.nom == "redaction"
+    assert decision.methode == METHODE_COMPETENCES
+    assert provider.calls == []
+
+
+def _equipe_completee() -> tuple[Agent, ...]:
+    """Le développeur de l'essai, puis le designer recruté pour le plan."""
+    return (
+        Agent(
+            nom="dev",
+            role="Développeur",
+            competences=frozenset({"backend", "frontend", "api"}),
+            modele="m",
+            prompt_systeme="…",
+        ),
+        Agent(
+            nom="interface",
+            role="Designer",
+            competences=frozenset({"ui", "ux"}),
+            modele="m",
+            prompt_systeme="…",
+        ),
+    )
+
+
+def test_le_role_recrute_prend_la_tache_qui_demandait_son_metier():
+    """Run `2f7aae8437f4` : une tâche `ui` + `frontend` + `api` — le développeur en
+    couvre deux, le designer recruté une. Sans `recrutees`, le développeur gagne ;
+    avec, c'est le rôle recruté pour ce plan, comme le fil l'a promis."""
+    tache = _task(competences_requises=("ui", "frontend", "api"))
+    router = Router(_equipe_completee())
+
+    sans = asyncio.run(router.route(tache))
+    avec = asyncio.run(router.route(tache, recrutees={"ui"}))
+
+    assert sans.agent is not None and sans.agent.nom == "dev"
+    assert avec.agent is not None and avec.agent.nom == "interface"
+    assert avec.methode == METHODE_COMPETENCES
+
+
+def test_les_competences_recrutees_ne_touchent_pas_une_tache_qui_ne_les_demande_pas():
+    tache = _task(competences_requises=("backend",))
+
+    decision = asyncio.run(Router(_equipe_completee()).route(tache, recrutees={"ui"}))
+
+    assert decision.agent is not None and decision.agent.nom == "dev"
+
+
+def test_un_role_recrute_desactive_rend_la_main_a_la_regle_ordinaire():
+    """Personne ne couvre plus le métier recruté : la règle ordinaire reprend, sans
+    router vers un désactivé ni replier une tâche que le développeur peut prendre."""
+    tache = _task(competences_requises=("ui", "frontend"))
+
+    decision = asyncio.run(
+        Router(_equipe_completee()).route(tache, exclus={"interface"}, recrutees={"ui"})
+    )
+
+    assert decision.agent is not None and decision.agent.nom == "dev"
+
+
+def test_au_plus_proche_ne_fabrique_personne_quand_tous_sont_desactives():
+    """Personne de proche n'est personne : un catalogue tout désactivé reste à assigner."""
+    router = Router(_equipe_sans_designer())
+
+    decision = asyncio.run(
+        router.route(
+            _task(competences_requises=("ui",)),
+            exclus={"dev", "redaction"},
+            au_plus_proche=True,
+        )
+    )
+
+    assert decision.a_assigner

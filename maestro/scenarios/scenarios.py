@@ -1,4 +1,4 @@
-"""Les cinq scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
+"""Les six scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
 
 | | Scénario | Ce qui le rend vert |
 |---|---|---|
@@ -7,8 +7,9 @@
 | S3 | Reprendre un projet sans équipe | L'équipe est proposée avant de dépenser, puis ça part |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause de l'API, jugée par un modèle |
 | S5 | « Comment j'essaie le livrable ? » | La fin se raconte, lie un fichier réel, dit quoi taper |
+| S6 | Le plan appelle un métier absent | Le rôle se propose dans le fil ; accepté, il travaille |
 
-## Trois règles que ces cinq scénarios suivent
+## Trois règles que ces scénarios suivent
 
 **La porte d'entrée est le fil, toujours.** Une demande passe par
 `POST /api/chat/orchestrateur/messages`, l'accord par le geste de cadrage. C'est la
@@ -16,8 +17,8 @@ seule porte qu'un écran offre depuis #666, donc la seule dont l'état vaut quel
 chose : un banc qui appellerait `POST /api/executions` vérifierait un chemin que
 personne n'emprunte.
 
-**Ce que le scénario mesure n'est pas ce qu'il prépare.** S1, S2, S4 et S5 dotent
-leur projet d'une équipe **avant** de demander quoi que ce soit, par la route
+**Ce que le scénario mesure n'est pas ce qu'il prépare.** S1, S2, S4, S5 et S6
+dotent leur projet d'une équipe **avant** de demander quoi que ce soit, par la route
 d'équipe du projet (#1039/#1040). C'est du montage, et le faire passer par le fil
 ferait de chacun une copie de S3 — quatre scénarios qui échouent ensemble au
 premier défaut de recrutement, et plus aucun qui parle de vider un dossier. S3,
@@ -31,13 +32,14 @@ Et même là, ce qui peut se constater se constate : S5 vérifie **sur le disque
 que le fichier mis en lien par le récit existe, avant de demander à qui que ce
 soit ce qu'il pense du texte.
 
-## Ce que ces scénarios coûtent, et pourquoi S2, S4 et S5 se rejouent
+## Ce que ces scénarios coûtent, et pourquoi S2, S4, S5 et S6 se rejouent
 
 Un passage coûte du vrai modèle (le run du retex du 2026-09-11 a coûté ~10 $),
-d'où le banc hors CI. S2, S4 et S5 ne sont pas déterministes — écrire du code qui
-s'exécute, reconnaître une cause dans une phrase, dire comment essayer un
-livrable — donc un rouge se rejoue **une** fois avant d'être cru, et le rapport
-dit s'il l'a été (`Scenario.rejouable`, appliqué par `maestro.scenarios.banc`).
+d'où le banc hors CI. S2, S4, S5 et S6 ne sont pas déterministes — écrire du code
+qui s'exécute, reconnaître une cause dans une phrase, dire comment essayer un
+livrable, nommer dans le plan le métier qui manque — donc un rouge se rejoue
+**une** fois avant d'être cru, et le rapport dit s'il l'a été (`Scenario.rejouable`,
+appliqué par `maestro.scenarios.banc`).
 """
 
 from __future__ import annotations
@@ -51,11 +53,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from maestro.controltower.events import EVENEMENT_TACHE_STATUT
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_TERMINEE,
     STATUTS_EXECUTION_TERMINAUX,
 )
+from maestro.engine.executor import STATUT_ROLE_MANQUANT, STATUT_TERMINEE
 from maestro.lecture import OUTIL_SHELL
 from maestro.scenarios.api import (
     DELAI_RUN_S,
@@ -98,6 +102,38 @@ INTERVALLE_RECIT_S = 2.0
 #: s'arrête donc à sa première mesure — l'échec est provoqué pour presque rien,
 #: ce qui compte sur un banc qui paie du vrai modèle.
 PLAFOND_TOKENS_S4 = 1
+
+#: La demande de S6 : l'animation du logo du bouclage du 2026-09-24 (#1260), sur un
+#: projet qui n'a qu'un développeur — et **dite comme un travail de design**.
+#:
+#: La phrase du bouclage (« un M stylisé qui s'anime en boucle, soigné
+#: visuellement ») laisse au plan le soin de juger si un développeur suffit, et il
+#: l'a jugé une fois sur deux le 2026-09-24 (trois essais sur six). Ce jugement est
+#: l'autre moitié de #1227 — planifier pour le besoin —, et il se mesure au bouclage.
+#: S6, lui, mesure la chaîne **après** que le plan a nommé le besoin : proposée dans
+#: le fil, acceptée, au travail. La demande dit donc le besoin, comme le dit quelqu'un
+#: qui le veut. Un plan qui ne le nomme toujours pas reste un rouge, et son motif le
+#: dit.
+DEMANDE_S6 = (
+    "Crée dans ce projet une petite animation du logo Maestro, dans un fichier "
+    "logo-anime.svg : un M stylisé qui s'anime en boucle. C'est d'abord un travail "
+    "de design — le tracé du M, sa palette, le rythme de l'animation — et le rendu "
+    "doit être soigné visuellement."
+)
+
+#: Le seul rôle que S6 garde de ce que l'analyse propose : celui du développeur.
+#: C'est le champ `gabarit` d'un rôle proposé — l'agent du code dont il dérive
+#: (`maestro.equipe.gabarits`, `Gabarit.gabarit`) —, et non son slug `dev` : le
+#: premier passage réel de S6 l'a appris, son montage cherchait le slug et ne
+#: trouvait rien. Une équipe à qui manque l'interface.
+GABARIT_SEUL_S6 = "developpeur"
+
+#: Ce qu'on laisse à la proposition de renfort pour paraître dans le fil, et
+#: l'intervalle entre deux lectures (#1260). Elle vient **après** le cadrage et la
+#: décomposition — deux appels modèle sur un contexte borné — et avant toute
+#: tâche : c'est la marge de deux appels, pas celle d'un run.
+ATTENTE_RENFORT_S = 300.0
+INTERVALLE_RENFORT_S = 3.0
 
 
 @dataclass
@@ -177,7 +213,7 @@ def lancer_application(racine: Path, point_d_entree: str) -> tuple[int, str]:
     return fini.returncode, sortie.strip()
 
 
-# --- Les gestes que les quatre scénarios partagent --------------------------
+# --- Les gestes que les scénarios partagent --------------------------------
 
 
 def _declarer(ctx: Contexte, nom: str, racine: Path, *, origine: str) -> str:
@@ -785,6 +821,191 @@ def _fichiers_lies(recit: str, racine: Path) -> list[str]:
     return trouves
 
 
+# --- S6 — le plan appelle un métier que l'équipe n'a pas --------------------
+
+
+def s6_completer_l_equipe(ctx: Contexte) -> Issue:
+    """Le rôle qui manque au plan **se propose dans le fil**, avant d'exécuter (#1260).
+
+    Le cas du retex et de #1227, mot pour mot : une animation du logo, demandée sur
+    un projet dont l'équipe n'a qu'un développeur. Le bouclage du 2026-09-24 l'a
+    rejoué sur la vraie stack et n'a rien vu paraître — l'hôte détaché n'avait pas
+    d'arbitre de renfort, le manque était consigné au journal et nulle part
+    ailleurs, et le run finissait en échec 0/3. Les tests de #1227 étaient verts :
+    ils exerçaient le seul chemin qui marchait. C'est pour cela que ce scénario
+    existe, sur la vraie stack et par le fil.
+
+    Trois choses à constater, dans cet ordre, et l'ordre est l'oracle :
+
+    1. **la proposition paraît dans le fil qui a lancé le run** — un message qui
+       porte une demande de recrutement rattachée à **ce** run. C'est un fait
+       structurel, jamais une phrase reconnue ;
+    2. **l'accepter recrute** le rôle proposé, par les deux gestes de la carte du
+       fil : la proposition de ce seul rôle, puis sa validation ;
+    3. **le run s'exécute avec l'équipe complétée** : il aboutit, et au moins une
+       tâche est allée au rôle recruté — sans quoi on aurait recruté pour rien.
+
+    Le montage réduit l'équipe au seul `dev` que l'analyse propose : c'est la
+    situation qu'on veut mesurer, pas une retouche de ce que l'analyse recommande.
+
+    ⚠ Que le plan **nomme** le métier absent est un jugement du modèle (#1227, le
+    playbook planifie pour le besoin) : le bouclage l'a vu une fois sur deux. Un
+    rouge se rejoue donc une fois, et son motif dit lequel des deux défauts il a
+    vu — un plan qui ne nomme rien, ou un manque constaté que personne n'a
+    proposé.
+    """
+    racine = ctx.atelier.dossier("s6-renfort")
+    semer_projet_existant(racine)
+    projet_id = _declarer(ctx, "banc-s6-renfort", racine, origine="existant")
+    if not _doter_d_un_seul_developpeur(ctx, projet_id):
+        return empeche(
+            f"l'analyse du projet ne propose aucun rôle de gabarit `{GABARIT_SEUL_S6}` : l'équipe "
+            "d'un seul développeur que S6 mesure ne peut pas être montée",
+            cout_usd=None,
+        )
+
+    conversation = ctx.client.ouvrir_conversation()
+    reponse = _demander(ctx, conversation, projet_id, DEMANDE_S6)
+    if not reponse.get("proposition"):
+        return rouge("le fil n'a proposé aucun run pour cette demande", cout_usd=None)
+    accord = _accorder(ctx, conversation, projet_id)
+    run_id = _run_de(accord)
+    if not run_id:
+        return rouge("l'accord n'a ouvert aucun run", cout_usd=None)
+
+    demande = _renfort_propose(ctx, conversation, run_id, projet_id)
+    if demande is None:
+        detail = ctx.client.execution(run_id, projet_id=projet_id)
+        return rouge(_sans_proposition(detail), run_id=run_id, cout_usd=_cout(detail))
+    ctx.note(
+        "renfort proposé dans le fil",
+        f"rôle « {demande.get('role')} » (gabarit `{demande.get('gabarit')}`) — "
+        f"tâches : {', '.join(str(t) for t in demande.get('taches') or []) or '—'}",
+    )
+
+    proposition = ctx.client.proposition_equipe(
+        projet_id,
+        renfort={"gabarit": demande.get("gabarit"), "raison": demande.get("raison")},
+    )
+    validee = equipe_validee(proposition)
+    if not validee["roles"]:
+        return rouge(
+            "la proposition du rôle de renfort est vide : il n'y a rien à recruter",
+            run_id=run_id,
+            cout_usd=None,
+        )
+    suite = ctx.client.recruter(conversation=conversation, validee=validee)
+    recrues = {str(role["nom"]) for role in validee["roles"]}
+    ctx.note("renfort accepté dans le fil", f"{', '.join(sorted(recrues))} — {_extrait(suite)}")
+
+    detail = _suivre(ctx, run_id, projet_id)
+    cout = _cout(detail)
+    if str(detail.get("statut")) != EXECUTION_TERMINEE:
+        return rouge(
+            f"le renfort accepté, le run s'est soldé « {detail.get('statut')} » "
+            f"(cause « {detail.get('cause') or '—'} ») au lieu d'aboutir",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    faites = _taches_terminees_par(detail, recrues)
+    if not faites:
+        return rouge(
+            f"le run a abouti, mais aucune tâche n'est allée au rôle recruté "
+            f"({', '.join(sorted(recrues))}) : l'équipe complétée n'a pas servi",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    return vert(
+        f"le rôle « {demande.get('role')} » s'est proposé dans le fil avant la "
+        f"première tâche ; accepté, il a pris {len(faites)} tâche(s) "
+        f"({', '.join(faites[:3])}) et le run a abouti",
+        run_id=run_id,
+        cout_usd=cout,
+    )
+
+
+def _doter_d_un_seul_developpeur(ctx: Contexte, projet_id: str) -> bool:
+    """Crée l'équipe d'un seul développeur — le rôle `dev` que l'analyse propose.
+
+    Du **montage**, comme `_doter_d_une_equipe` : le rôle est repris tel que
+    l'analyse l'a écrit, playbook compris. Ce qui est retiré, ce sont les autres
+    rôles — c'est la situation que S6 mesure, celle d'un projet qui n'a recruté
+    qu'un développeur. `False` quand l'analyse n'en propose aucun.
+    """
+    validee = equipe_validee(ctx.client.proposition_equipe(projet_id))
+    seuls = [role for role in validee["roles"] if role.get("gabarit") == GABARIT_SEUL_S6]
+    if not seuls:
+        return False
+    ctx.client.creer_equipe(projet_id, {**validee, "roles": seuls[:1]})
+    ctx.note("équipe créée", f"1 rôle : {seuls[0]['nom']} — le seul développeur")
+    return True
+
+
+def _renfort_propose(
+    ctx: Contexte, conversation: str, run_id: str, projet_id: str
+) -> dict[str, Any] | None:
+    """La demande de renfort que le fil porte pour `run_id` — `None` si elle n'y vient pas.
+
+    Reconnue à sa **structure** : un message du fil dont la demande de recrutement
+    est rattachée à ce run. Il faut l'attendre — le cadrage et la décomposition
+    sont deux appels modèle —, mais pas au-delà d'`ATTENTE_RENFORT_S`, et pas
+    au-delà de la fin du run : un run soldé n'attend plus personne.
+    """
+    limite = ctx.horloge() + ATTENTE_RENFORT_S
+    while True:
+        for message in ctx.client.fil(conversation):
+            demande = message.get("recrutement")
+            if isinstance(demande, Mapping) and str(demande.get("run_id") or "") == run_id:
+                return dict(demande)
+        statut = str(ctx.client.execution(run_id, projet_id=projet_id).get("statut") or "")
+        if statut in STATUTS_EXECUTION_TERMINAUX or ctx.horloge() >= limite:
+            return None
+        ctx.dormir(INTERVALLE_RENFORT_S)
+
+
+def _sans_proposition(detail: Mapping[str, Any]) -> str:
+    """Pourquoi rien ne s'est proposé — et lequel des deux défauts on a vu.
+
+    Deux causes ne se corrigent pas du tout pareil, et le rapport doit les
+    distinguer : le moteur a **constaté** le manque (sa ligne « L'équipe confrontée
+    au plan » est dans la trace) sans que rien n'atteigne le fil — la panne de
+    #1260 —, ou le plan n'a **nommé** aucun métier absent, et il n'y avait rien à
+    proposer. La ligne se reconnaît à son statut, jamais à son texte.
+    """
+    statut = str(detail.get("statut") or "")
+    constats = [
+        str(evenement.get("detail") or "").strip()
+        for evenement in detail.get("evenements") or []
+        if str(evenement.get("statut") or "") == STATUT_ROLE_MANQUANT
+        and not str(evenement.get("tache_id") or "")
+    ]
+    fin = f" ; le run s'est soldé « {statut} »" if statut in STATUTS_EXECUTION_TERMINAUX else ""
+    if constats:
+        return (
+            f"le moteur a constaté le manque ({constats[0][:200]}) mais rien ne s'est "
+            f"proposé dans le fil qui a lancé le run{fin}"
+        )
+    return (
+        "aucun renfort proposé : le plan n'a nommé aucun métier que l'équipe d'un "
+        f"seul développeur n'a pas{fin}"
+    )
+
+
+def _taches_terminees_par(detail: Mapping[str, Any], agents: set[str]) -> list[str]:
+    """Les tâches du run terminées par l'un des `agents` — lues dans la trace de l'API."""
+    faites: list[str] = []
+    for evenement in detail.get("evenements") or []:
+        if (
+            str(evenement.get("type") or "") == EVENEMENT_TACHE_STATUT
+            and str(evenement.get("statut") or "") == STATUT_TERMINEE
+            and str(evenement.get("agent") or "") in agents
+        ):
+            titre = str(evenement.get("titre") or evenement.get("tache_id") or "")
+            if titre and titre not in faites:
+                faites.append(titre)
+    return faites
+
+
 # --- Le catalogue ----------------------------------------------------------
 
 
@@ -806,7 +1027,7 @@ class Scenario:
     rejouable: bool = False
 
 
-#: Les quatre scénarios, dans l'ordre où le banc les joue. Cet ordre est celui de
+#: Les scénarios, dans l'ordre où le banc les joue. Cet ordre est celui de
 #: docs/40 §5 et il ne porte aucune dépendance : chacun déclare son propre projet
 #: jetable, si bien que `--scenario S3` joue exactement ce que le passage complet
 #: joue en troisième.
@@ -819,6 +1040,12 @@ SCENARIOS: tuple[Scenario, ...] = (
         "S5",
         "Comment j'essaie ce que le run a livré ?",
         s5_comment_essayer_le_livrable,
+        True,
+    ),
+    Scenario(
+        "S6",
+        "Le plan appelle un métier que l'équipe n'a pas",
+        s6_completer_l_equipe,
         True,
     ),
 )

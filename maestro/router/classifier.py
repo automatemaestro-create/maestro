@@ -44,6 +44,30 @@ vaut laisser la tâche à assigner qu'un mauvais routage.
 
 Aucun texte hors de l'objet JSON."""
 
+#: La **seconde** question du classifieur (#1260) : non plus *qui est compétent ?*
+#: mais *qui s'en approche le plus ?* Elle n'est posée qu'une fois la décision
+#: prise de faire ce travail avec l'équipe telle qu'elle est — le plan appelait un
+#: métier qu'aucun candidat n'a, et la personne n'a pas recruté (décliné, pas
+#: répondu, ou personne à qui le proposer). S'abstenir y serait répondre à côté :
+#: l'abstention est ce qui faisait partir la tâche « à assigner » et échouer le run
+#: que la personne avait laissé continuer.
+CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT = """\
+Tu es le routeur de Maestro. La tâche qu'on te soumet demande un métier \
+qu'aucun des agents candidats n'a : l'équipe a été confrontée au plan, et la \
+décision a été prise de faire ce travail avec l'équipe telle qu'elle est.
+
+Désigne le candidat dont les compétences s'approchent le plus de ce que la \
+tâche demande — celui qui la fera le moins mal.
+
+Réponds UNIQUEMENT par un objet JSON de la forme :
+{"agent": "<nom d'un candidat>", "confiance": <nombre entre 0 et 1>}
+
+- "agent" doit être exactement l'un des noms candidats ; null n'est pas une \
+réponse admise ici, la tâche sera faite par l'un d'eux.
+- "confiance" exprime à quel point ce candidat est proche du métier demandé.
+
+Aucun texte hors de l'objet JSON."""
+
 # Bloc de code Markdown éventuel autour du JSON (même tolérance que l'orchestrateur).
 _FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
@@ -63,17 +87,26 @@ class TaskClassifier:
         self._provider = provider
         self._model = model
 
-    async def classify(self, task: Task, candidats: Sequence[Agent]) -> Classification:
+    async def classify(
+        self, task: Task, candidats: Sequence[Agent], *, plus_proche: bool = False
+    ) -> Classification:
         """Classe `task` parmi `candidats` et renvoie le verdict du modèle.
 
         Une réponse illisible, ou désignant un agent hors des candidats, vaut
         abstention (`agent=None`, confiance nulle). Les erreurs du fournisseur
         remontent telles quelles : c'est au routeur de décider du repli.
+
+        `plus_proche` (#1260) pose la seconde question — *qui s'en approche le
+        plus ?* — sur une tâche dont personne n'a le métier et que la décision de
+        continuer avec l'équipe actuelle confie à l'un d'eux. Même contrat de
+        réponse, même lecture : un nom hors des candidats reste une abstention.
         """
         reponse = await self._provider.generate(
             build_classifier_prompt(task, candidats),
             model=self._model,
-            system_prompt=CLASSIFIER_SYSTEM_PROMPT,
+            system_prompt=(
+                CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT if plus_proche else CLASSIFIER_SYSTEM_PROMPT
+            ),
         )
         return _parse_classification(reponse, frozenset(a.nom for a in candidats))
 

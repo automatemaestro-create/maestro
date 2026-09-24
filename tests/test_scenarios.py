@@ -577,10 +577,10 @@ def _scenario(identifiant: str) -> Scenario:
 # --- ① Le déroulé -----------------------------------------------------------
 
 
-def test_les_cinq_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
-    """Cinq scénarios, S1 à S5, et seuls S2, S4 et S5 se rejouent (docs/40 §5)."""
-    assert [s.identifiant for s in SCENARIOS] == ["S1", "S2", "S3", "S4", "S5"]
-    assert {s.identifiant for s in SCENARIOS if s.rejouable} == {"S2", "S4", "S5"}
+def test_les_six_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
+    """Six scénarios, S1 à S6, et seuls S2, S4, S5 et S6 se rejouent (docs/40 §5)."""
+    assert [s.identifiant for s in SCENARIOS] == ["S1", "S2", "S3", "S4", "S5", "S6"]
+    assert {s.identifiant for s in SCENARIOS if s.rejouable} == {"S2", "S4", "S5", "S6"}
 
 
 def test_chaque_scenario_declare_son_propre_projet_jetable(tmp_path: Path) -> None:
@@ -1333,6 +1333,222 @@ def test_un_lien_vers_un_fichier_hors_de_la_racine_n_est_pas_du_livrable(
 
     assert _fichiers_lies(dedans, racine) == ["app.py"]
     assert _fichiers_lies(dehors, racine) == []
+
+
+# --- S6 — le plan appelle un métier que l'équipe n'a pas (#1260) --------------
+
+
+def _role_de(nom: str, role: str, gabarit: str) -> dict[str, Any]:
+    """Un rôle proposé, avec le gabarit dont il sort — ce que S6 filtre."""
+    return {**_role(nom), "role": role, "gabarit": gabarit}
+
+
+class ApiQuiConfronte(FausseAPI):
+    """La fausse API de S6 : un projet d'un seul dev, et un run qui confronte son plan.
+
+    Trois conduites du produit, et le test choisit la sienne :
+
+    - `propose` — le produit de #1260 : la demande de renfort paraît dans le fil
+      au bout de quelques lectures (le cadrage et le plan sont deux appels modèle),
+      rattachée au run ; l'accepter fait finir le run ;
+    - `constate` sans `propose` — la panne du bouclage : le moteur consigne le
+      manque (la ligne de run « L'équipe confrontée au plan ») et rien n'arrive
+      dans le fil ; le run finit en échec ;
+    - ni l'un ni l'autre — le plan n'a nommé aucun métier absent.
+
+    `recrue_travaille` dit si l'équipe complétée prend ses tâches : sans quoi on
+    aurait recruté pour rien, et S6 doit le voir.
+    """
+
+    def __init__(
+        self,
+        *,
+        propose: bool = True,
+        constate: bool = True,
+        recrue_travaille: bool = True,
+        gabarits: tuple[str, ...] = ("developpeur", "qa"),
+        proposition_apres: int = 2,
+    ) -> None:
+        super().__init__()
+        self._propose_renfort = propose
+        self._constate = constate
+        self._recrue_travaille = recrue_travaille
+        self._gabarits = gabarits
+        self._proposition_apres = proposition_apres
+        self._lectures_du_run = 0
+        self.traces: list[dict[str, Any]] = []
+        self.propositions: list[dict[str, Any]] = []
+        self.creations: list[list[dict[str, Any]]] = []
+
+    def demander(
+        self,
+        methode: str,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
+    ) -> Reponse:
+        if chemin.endswith("/equipe/proposition"):
+            self.appels.append((methode, chemin))
+            self.propositions.append(dict(corps or {}))
+            if corps and corps.get("renfort"):
+                roles = [_role_de("interface", "Designer", "designer")]
+            else:
+                roles = [_role_de(f"{g}-1", g, g) for g in self._gabarits]
+            return Reponse(statut=200, corps={"id": "prop", "roles": roles})
+        if chemin.endswith("/equipe") and chemin.startswith("/api/projets/"):
+            self.creations.append(list((corps or {}).get("roles") or []))
+        if chemin == FIL and methode == "GET":
+            self._poser_la_demande()
+        return super().demander(methode, chemin, corps=corps, params=params, delai_s=delai_s)
+
+    def _cadrer(self, corps: Mapping[str, Any]) -> Reponse:
+        paire = super()._cadrer(corps)
+        run = self.runs[-1]
+        # Le run attend la décision : il ne se solde que si l'on recrute, ou —
+        # sans proposition — au bout de quelques lectures.
+        run.lectures_avant_la_fin = 10**6 if self._propose_renfort else 3
+        if not self._propose_renfort and self._constate:
+            run.statut = EXECUTION_ECHEC
+            self.traces.append(
+                {
+                    "type": "agent.activite",
+                    "statut": "role_manquant",
+                    "tache_id": "",
+                    "detail": "aucun rôle de l'équipe ne couvre : ui — il manque un rôle "
+                    "« Designer » (gabarit `interface`).",
+                }
+            )
+        return paire
+
+    def _poser_la_demande(self) -> None:
+        """La demande de renfort paraît dans le fil du run, après quelques lectures."""
+        if not self._propose_renfort or not self.runs:
+            return
+        self._lectures_du_run += 1
+        if self._lectures_du_run != self._proposition_apres:
+            return
+        run = self.runs[-1]
+        self.fils.setdefault(self._conversation, []).append(
+            {
+                "auteur": "orchestrateur",
+                "contenu": "Avant d'exécuter, une chose : le plan appelle un Designer.",
+                "run_id": "",
+                "recrutement": {
+                    "objectif": run.objectif,
+                    "projet_id": run.projet_id,
+                    "run_id": run.run_id,
+                    "role": "Designer",
+                    "gabarit": "interface",
+                    "raison": "le plan de ce travail demande ui, et aucun rôle ne le couvre.",
+                    "taches": ["Dessiner le logo stylisé"],
+                },
+            }
+        )
+
+    def _recruter(self, corps: Mapping[str, Any]) -> Reponse:
+        paire = super()._recruter(corps)
+        run = self.runs[-1]
+        run.lectures_avant_la_fin = run.lectures
+        agent = "interface" if self._recrue_travaille else "developpeur-1"
+        self.traces.append(
+            {
+                "type": "tache.statut",
+                "statut": "terminee",
+                "agent": agent,
+                "tache_id": "logo",
+                "titre": "Dessiner le logo stylisé",
+            }
+        )
+        return paire
+
+    def _execution(self, run_id: str) -> Reponse:
+        reponse = super()._execution(run_id)
+        corps = dict(reponse.corps)
+        corps["evenements"] = list(corps.get("evenements") or []) + self.traces
+        return Reponse(statut=reponse.statut, corps=corps)
+
+
+def test_s6_est_vert_quand_le_renfort_se_propose_puis_travaille(tmp_path: Path) -> None:
+    """Le produit de #1260 : la demande paraît dans le fil du run, l'accepter recrute
+    le rôle proposé — lui seul —, et le run aboutit avec lui."""
+    api = ApiQuiConfronte()
+    issue, ctx = _banc(tmp_path, api).jouer(_scenario("S6"))
+
+    assert issue.vert, issue.motif
+    assert "Designer" in issue.motif
+    # Le rôle demandé à la route est celui que le fil a proposé, avec sa raison.
+    assert api.propositions[-1] == {
+        "renfort": {
+            "gabarit": "interface",
+            "raison": "le plan de ce travail demande ui, et aucun rôle ne le couvre.",
+        }
+    }
+    assert [r["nom"] for r in api.recrutements[-1]["roles"]] == ["interface"]
+
+
+def test_s6_monte_une_equipe_d_un_seul_developpeur(tmp_path: Path) -> None:
+    """Le montage : de ce que l'analyse propose, S6 ne garde que le développeur — la
+    situation qu'il mesure. Le rôle est repris tel quel."""
+    api = ApiQuiConfronte(gabarits=("qa", "developpeur", "designer"))
+    _banc(tmp_path, api).jouer(_scenario("S6"))
+
+    assert [[r["gabarit"] for r in roles] for roles in api.creations] == [["developpeur"]]
+
+
+def test_s6_cherche_le_developpeur_dans_le_vocabulaire_de_la_proposition() -> None:
+    """Le premier passage réel de S6 s'est empêché lui-même : son montage cherchait
+    le slug `dev`, alors qu'un rôle proposé porte l'agent du code dont il dérive
+    (`Gabarit.gabarit`). Le double de l'API parlait la même langue fausse, et ses
+    tests étaient verts. D'où ce témoin, lu sur le produit et non sur le double."""
+    from maestro.equipe import GABARITS
+    from maestro.scenarios.scenarios import GABARIT_SEUL_S6
+
+    assert GABARIT_SEUL_S6 in {gabarit.gabarit for gabarit in GABARITS}
+
+
+def test_s6_est_rouge_quand_le_manque_est_constate_sans_rien_proposer(tmp_path: Path) -> None:
+    """La panne du bouclage du 2026-09-24, que S6 existe pour voir : le moteur a
+    constaté le manque, rien n'a paru dans le fil. Le motif le dit — c'est ce qui le
+    distingue d'un plan qui n'a rien nommé."""
+    api = ApiQuiConfronte(propose=False, constate=True)
+    issue, _ = _banc(tmp_path, api).jouer(_scenario("S6"))
+
+    assert issue.verdict == "rouge"
+    assert "a constaté le manque" in issue.motif
+    assert "Designer" in issue.motif
+    assert "rien ne s'est proposé" in issue.motif
+
+
+def test_s6_est_rouge_quand_le_plan_ne_nomme_aucun_metier_absent(tmp_path: Path) -> None:
+    """L'autre cause, qui ne se corrige pas pareil : le plan a tout confié au
+    développeur, il n'y avait rien à proposer."""
+    api = ApiQuiConfronte(propose=False, constate=False)
+    issue, _ = _banc(tmp_path, api).jouer(_scenario("S6"))
+
+    assert issue.verdict == "rouge"
+    assert "le plan n'a nommé aucun métier" in issue.motif
+
+
+def test_s6_est_rouge_quand_la_recrue_n_a_rien_fait(tmp_path: Path) -> None:
+    """Recruter pour rien n'est pas compléter l'équipe : le run a abouti, mais sans
+    le rôle qu'on vient d'accepter."""
+    api = ApiQuiConfronte(recrue_travaille=False)
+    issue, _ = _banc(tmp_path, api).jouer(_scenario("S6"))
+
+    assert issue.verdict == "rouge"
+    assert "aucune tâche n'est allée au rôle recruté" in issue.motif
+
+
+def test_s6_est_un_empechement_quand_l_analyse_ne_propose_aucun_dev(tmp_path: Path) -> None:
+    """Sans développeur à garder, l'équipe que S6 mesure ne se monte pas : ce n'est pas un
+    rouge du produit, et aucun run n'est ouvert pour rien."""
+    api = ApiQuiConfronte(gabarits=("qa",))
+    issue, _ = _banc(tmp_path, api).jouer(_scenario("S6"))
+
+    assert issue.empechement
+    assert api.runs == []
 
 
 # --- Le périmètre exclu, sur le disque --------------------------------------

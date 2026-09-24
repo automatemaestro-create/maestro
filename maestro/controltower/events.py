@@ -212,14 +212,24 @@ EVENEMENT_BRIEF_DECISION = "brief.decision"
 EVENEMENT_BRIEF_QUESTIONS = "brief.questions"
 EVENEMENT_BRIEF_REPONSES = "brief.reponses"
 
-#: `renfort.decision` (#1227) porte la **décision de compléter l'équipe** d'un run
-#: suspendu entre son plan et sa première tâche. Un seul type et non un couple
-#: `demande`/`decision` comme les trois canaux d'attente ci-dessus, et c'est une
-#: propriété du dispositif plutôt qu'une économie : la demande, elle, ne voyage pas
-#: sur le bus — elle est **écrite dans le fil** (`ServiceChat.proposer_recrutement`),
-#: où la carte d'équipe de #1146 la montre déjà et où le geste de validation sait
-#: déjà y répondre. Il n'y avait donc rien à publier, seulement à apprendre au run
-#: ce qui a été décidé de lui.
+#: `renfort.demande` et `renfort.decision` (#1227, #1260) portent la **proposition
+#: de compléter l'équipe** d'un run suspendu entre son plan et sa première tâche.
+#:
+#: ⚠ **La demande voyage sur le bus depuis #1260**, et c'est un renversement. #1227
+#: l'écrivait directement dans le fil, depuis l'arbitre — ce qui ne marchait que
+#: dans le process de l'API. Or la vraie stack confie ses runs à l'**hôte détaché**
+#: (#446), qui n'a pas de fil : il ne recevait donc aucun arbitre, le manque était
+#: consigné, et rien n'arrivait nulle part. Le couple `demande`/`decision` est
+#: désormais celui des trois autres canaux d'attente, et pour leur raison : le bus
+#: est la seule chose que les deux hôtes partagent. La demande est **relayée dans
+#: le fil** par l'API (`maestro.controltower.renfort.RelaisRenfort`), seul
+#: écrivain du fil — la carte d'équipe de #1146 la montre, le geste de validation
+#: y répond, rien de cela ne change.
+#:
+#: `renfort.demande` porte la demande sous la forme exacte que le fil lui donne
+#: (`recrutement`, cf. `DemandeRecrutement`), la phrase à écrire (`detail`), le
+#: rôle proposé (`titre`) et la borne (`echeance`), à laquelle le relais dit dans
+#: le fil que le run est reparti sans renfort.
 #:
 #: `run_id` est la clé : un run n'a **qu'une** demande de renfort en vol (la
 #: confrontation a lieu une fois, après la décomposition), donc il n'y a pas
@@ -228,6 +238,7 @@ EVENEMENT_BRIEF_REPONSES = "brief.reponses"
 #: qui en pose plusieurs. `statut` porte l'issue (`RENFORT_ACCORDE`/
 #: `RENFORT_DECLINE`) et `detail` la phrase écrite au fil, qui devient la ligne du
 #: journal du run.
+EVENEMENT_RENFORT_DEMANDE = "renfort.demande"
 EVENEMENT_RENFORT_DECISION = "renfort.decision"
 
 #: `run.plan` (#490) porte le **graphe du run** — un nœud par tâche, ses
@@ -531,6 +542,13 @@ class Event:
     # phrase.
     echeance: str = ""
     etape_run: str = ""
+    # La **demande de renfort** d'un run (#1260), portée par le seul
+    # `renfort.demande` : la forme de `DemandeRecrutement.to_dict`, c'est-à-dire
+    # exactement ce que le fil écrira sur son message. Un dict et non la classe,
+    # parce que `maestro.controltower.chat` importe ce module ; une seconde
+    # définition de la même forme ici serait deux contrats à tenir d'accord pour
+    # une seule carte. None partout ailleurs, pour la raison d'`etapes`/`liens`.
+    recrutement: dict[str, Any] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -578,6 +596,7 @@ class Event:
             "choix": list(self.choix) if self.choix is not None else None,
             "echeance": self.echeance,
             "etape_run": self.etape_run,
+            "recrutement": dict(self.recrutement) if self.recrutement is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -691,6 +710,14 @@ class Event:
             # restera compté en planification, et c'est juste : rien ne permet
             # après coup de dire ce qu'il était.
             etape_run=str(data.get("etape_run") or ""),
+            # Relecture tolérante (#1260) : c'est `DemandeRecrutement.from_dict`
+            # qui la lira, et il sait retomber sur ses défauts. Ce qui n'est pas un
+            # objet n'est pas une demande.
+            recrutement=(
+                dict(data["recrutement"])
+                if isinstance(data.get("recrutement"), Mapping)
+                else None
+            ),
             horodatage=data.get("horodatage", ""),
         )
 
