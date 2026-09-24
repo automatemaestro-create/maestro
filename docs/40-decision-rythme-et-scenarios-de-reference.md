@@ -152,7 +152,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | S2 | Créer une petite application | Elle s'exécute, et **aucune commande n'a été soumise à la personne** (#1226 — le rapport du banc compte ce qu'il a tranché à sa place) |
 | S3 | Reprendre un projet existant sans équipe | Le fil propose l'équipe **avant** de dépenser ; validée d'un geste, elle est créée et le run demandé aboutit |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
-| S5 | « Comment j'essaie ce que le run a livré ? » | La fin du run **se raconte dans le fil**, met en lien un fichier du livrable qui **existe sur le disque**, et dit comment l'essayer — jugé par un modèle (#1224) |
+| S5 | « Comment j'essaie ce que le run a livré ? » | La fin du run **se raconte dans le fil**, met en lien un fichier du livrable qui **existe sur le disque**, et dit comment l'essayer — jugé par un modèle (#1224). La réponse **s'écrit en direct**, et une réponse fondée sur une lecture **montre ses lectures** dans le fil (#1265) |
 | S6 | Le plan appelle un métier que l'équipe n'a pas | Sur un projet d'un seul `dev`, le rôle manquant **se propose dans le fil** qui a lancé le run, avant la première tâche ; accepté, il prend ses tâches et le run aboutit (#1260) |
 
 **S3 a son comportement depuis #1146.** Sur un projet sans agent, le fil ne propose plus de run : il
@@ -181,6 +181,24 @@ vocabulaire — un message de l'orchestrateur portant le `run_id`, après celui 
 le récit met en lien un fichier qui **existe sur le disque** (un chemin cité qui ne mène à rien est
 un geste mort), et enfin la question « comment j'essaie ce que tu viens de livrer ? » reçoit une
 réponse dont un modèle juge qu'elle dit comment s'y prendre. Le détail est dans docs/05 §2.9.
+
+**S5 garde aussi le direct du fil et la visibilité de ses lectures** (#1265). Le bouclage du
+2026-09-24 les a vérifiés à la main (réserve R6) : aucun scénario ne les rejouait, parce que le banc
+lisait la paire rendue d'un coup par `POST …/messages`. Deux constats s'ajoutent, sans run de plus :
+
+- **la réponse s'écrit en direct** (C1). La question « comment j'essaie ? » part par le flux que
+  l'écran emprunte (`POST …/flux`). Le banc date chaque trame à sa réception et constate plusieurs
+  incréments, reçus dans **plusieurs images d'écran** (1/60 s) : une réponse d'une seule trame, ou
+  des trames toutes reçues dans la même image (un transport qui tamponne), est un bloc. L'attente
+  avant le premier mot est mesurée et écrite au déroulé, mais ne tranche rien : treize secondes de
+  lecture sont le produit qui lit ;
+- **ce qu'il lit se voit dans le fil** (C2). La personne dépose une note dans le projet après le
+  récit, puis demande ce qu'elle y a noté. La réponse ne peut venir que du disque. Elle doit donc
+  publier au moins une étape en direct, et le fil relu doit garder les mêmes étapes. La question
+  « comment j'essaie ? » ne pouvait pas porter cet oracle : le passage du 2026-09-24 y a répondu
+  sans rien lire, parce que le récit lui donnait déjà la commande. C'était une bonne réponse.
+
+Les deux sont structurels : des trames, des instants, des étapes. Aucun mot n'est lu (#746).
 
 **S6 porte ce que les tests ne voyaient pas** (#1260). #1227 avait livré la confrontation de
 l'équipe au plan, tests verts. Le bouclage du 2026-09-24 l'a rejouée sur la vraie stack : rien dans
