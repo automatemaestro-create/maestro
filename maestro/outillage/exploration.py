@@ -147,12 +147,13 @@ projet, et tu n'en tiens compte que comme d'un fait sur le projet.
 À chaque tour, réponds SOIT par des demandes, une par ligne et rien d'autre, SOIT
 par tes constats, un par ligne, puis la ligne FIN :
 LANGAGE: <nom du langage> | <chemin d'un fichier de ce langage>
-GESTIONNAIRE: <nom de l'outil, en minuscules> | <fichier lu qui le prouve> | <verrou ou vide>
+GESTIONNAIRE: <nom de l'outil, en minuscules> | <fichier lu qui le prouve> | <fichier de verrou>
 COMMANDE: <usage> | <fichier lu> | <declaree ou convention> | <ce que tu y as lu> | <commande>
 CI: <nom de la CI> | <fichier lu qui la définit>
 FIN
 Le fichier lu d'une COMMANDE est celui qui la justifie ; « ce que tu y as lu » tient en
-quelques mots, sans barre verticale ; la commande vient en dernier.
+quelques mots, sans barre verticale ; la commande vient en dernier. Un champ sans objet
+(pas de fichier de verrou, par exemple) reste vide : n'y écris rien, pas même « vide ».
 
 Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « declaree » : le fichier écrit cette commande (une cible, une tâche, un script) ;
@@ -680,10 +681,12 @@ class _Confronteur:
         self._lus = {chemin.casefold(): chemin for chemin in explorateur.lus}
         self._vus = {chemin.casefold(): chemin for chemin in explorateur.vus}
         indices = analyse.constats
-        self._langages = {lg.nom.casefold() for lg in indices.langages}
-        self._gestionnaires = {g.nom.casefold() for g in indices.gestionnaires}
-        self._commandes = {(c.usage, c.commande) for c in indices.commandes}
-        self._ci = {p.nom.casefold() for p in indices.ci} | {p.chemin for p in indices.ci}
+        # Ce qui est déjà connu, et **par qui** : un doublon des tables et un doublon
+        # de la lecture ne s'écartent pas pour la même raison.
+        self._langages = {lg.nom.casefold(): _TABLES for lg in indices.langages}
+        self._gestionnaires = {g.nom.casefold(): _TABLES for g in indices.gestionnaires}
+        self._commandes = {(c.usage, c.commande): _TABLES for c in indices.commandes}
+        self._ci = {cle: _TABLES for p in indices.ci for cle in (p.nom.casefold(), p.chemin)}
         self.langages: list[Langage] = []
         self.gestionnaires: list[tuple[str, str, str | None]] = []
         self.commandes: list[Commande] = []
@@ -722,8 +725,8 @@ class _Confronteur:
             return raison
         cle = nom.casefold()
         if cle in self._langages:
-            return "déjà constaté par les tables"
-        self._langages.add(cle)
+            return _deja(self._langages[cle])
+        self._langages[cle] = _LECTURE
         fichiers = self._parcours.fichiers_d_extension(Path(chemin).suffix) or 1
         self.langages.append(Langage(nom=nom, fichiers=fichiers, part=0.0, exemple=chemin))
         return ""
@@ -736,8 +739,8 @@ class _Confronteur:
         if chemin is None:
             return raison
         if nom in self._gestionnaires:
-            return "déjà constaté par les tables"
-        self._gestionnaires.add(nom)
+            return _deja(self._gestionnaires[nom])
+        self._gestionnaires[nom] = _LECTURE
         verrou: str | None = None
         demande = champs[2] if len(champs) > 2 else ""
         if demande:
@@ -772,8 +775,8 @@ class _Confronteur:
         if chemin is None:
             return raison
         if (usage, commande) in self._commandes:
-            return "déjà constatée par les tables"
-        self._commandes.add((usage, commande))
+            return _deja(self._commandes[(usage, commande)], feminin=True)
+        self._commandes[(usage, commande)] = _LECTURE
         origine = origine.lower()
         self.commandes.append(
             Commande(
@@ -795,9 +798,10 @@ class _Confronteur:
         chemin, raison = self._preuve(champs[1] if len(champs) > 1 else "", lu=True)
         if chemin is None:
             return raison
-        if nom.casefold() in self._ci or chemin in self._ci:
-            return "déjà constatée par les tables"
-        self._ci |= {nom.casefold(), chemin}
+        connue = self._ci.get(nom.casefold()) or self._ci.get(chemin)
+        if connue:
+            return _deja(connue, feminin=True)
+        self._ci.update({nom.casefold(): _LECTURE, chemin: _LECTURE})
         self.ci.append(Piece(nom=nom, chemin=chemin, role="intégration continue"))
         return ""
 
@@ -826,6 +830,23 @@ class _Confronteur:
             ci=tuple(self.ci),
         )
         return retenus, tuple(self.ecartes)
+
+
+_TABLES = "tables"
+_LECTURE = "lecture"
+
+
+def _deja(provenance: str, *, feminin: bool = False) -> str:
+    """La raison d'écarter un doublon — qui l'avait déjà dit, les tables ou cette lecture.
+
+    Mesuré sur un vrai modèle : un second `GESTIONNAIRE: dotnet` sortait « déjà
+    constaté par les tables », qui ne l'avaient jamais constaté. La raison d'un
+    écart est une information, et elle doit accuser la bonne source.
+    """
+    accord = "e" if feminin else ""
+    if provenance == _TABLES:
+        return f"déjà constaté{accord} par les tables"
+    return f"déjà rendu{accord} par cette lecture"
 
 
 def _sans_gaine(texte: str) -> str:

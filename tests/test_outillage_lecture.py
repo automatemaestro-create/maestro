@@ -380,6 +380,32 @@ def test_ce_que_les_tables_ont_lu_n_est_ni_repete_ni_retire(tmp_path: Path) -> N
     assert [e.raison for e in analyse.lecture.ecartes] == ["déjà constatée par les tables"]
 
 
+def test_un_doublon_de_la_lecture_ne_se_dit_pas_constate_par_les_tables(tmp_path: Path) -> None:
+    """Mesuré sur un vrai modèle : deux `GESTIONNAIRE: dotnet`, le second écarté « par les tables ».
+
+    La raison d'un écart est une information — celle-ci accusait les tables d'un
+    constat qu'elles n'avaient pas fait. Un doublon de la lecture se dit tel.
+    """
+    ecrire(tmp_path, "global.json", '{ "sdk": { "version": "8.0.400" } }\n')
+    lecteur = _Lecteur(
+        (
+            "LIRE: Depensio.sln\nLIRE: global.json",
+            "GESTIONNAIRE: dotnet | global.json |\n"
+            "GESTIONNAIRE: dotnet | Depensio.sln |\n"
+            "COMMANDE: construire | Depensio.sln | convention | solution | dotnet build\n"
+            "COMMANDE: construire | global.json | convention | sdk épinglé | dotnet build\n"
+            "FIN",
+        )
+    )
+
+    analyse = lire(analyser(projet_dotnet(tmp_path)), lecteur)
+
+    assert analyse.lecture is not None
+    raisons = [ecarte.raison for ecarte in analyse.lecture.ecartes]
+    assert raisons == ["déjà rendu par cette lecture", "déjà rendue par cette lecture"]
+    assert [g.chemin for g in analyse.constats.gestionnaires] == ["global.json"]
+
+
 def test_ce_qu_un_projet_declare_passe_devant_la_convention_d_un_outil(tmp_path: Path) -> None:
     """Une règle d'ordre pour les deux provenances : un `justfile` lu bat la convention de cargo."""
     ecrire(tmp_path, "Cargo.toml", '[package]\nname = "depensio"\n')
