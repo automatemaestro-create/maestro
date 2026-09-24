@@ -5781,10 +5781,12 @@ def create_app(
         le même que partout ici — le fil d'abord, la diffusion ensuite : un run qui
         repartirait avant que sa trace soit écrite laisserait le fil en retard sur
         ce qui se passe. L'issue est **dérivée du fil** et non du corps de la
-        requête : l'équipe est créée si le geste l'approuvait *et* que la réponse
-        ne repose pas la demande — c'est ce que fait le répondeur quand la création
-        échoue, et un run relancé sur une équipe qui n'existe pas serait le pire des
-        deux mondes.
+        requête : l'équipe est recrutée si la réponse porte l'équipe **créée**
+        (`MessageChat.equipe`, #1262) — une création refusée repose la demande sans
+        rien créer, et un run relancé sur une équipe qui n'existe pas serait le pire
+        des deux mondes. Le `detail` de la décision est ce fait-là, la composition,
+        et non les mots de la réponse : il finit au journal du run, où l'on relit
+        ce qui a été recruté, pas ce que l'orchestrateur en a dit.
 
         `422` sur une validation sans rôle (« ne pas recruter » se dit en
         déclinant) ou une conversation mal formée, `409` quand rien n'attend —
@@ -5821,15 +5823,15 @@ def create_app(
         except ReponseIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         if en_attente is not None and en_attente.pendant_un_run:
-            recrutee = requete.approuve and reponse.recrutement is None
+            creee = reponse.equipe
             await bus.publish(
                 Event(
                     type=EVENEMENT_RENFORT_DECISION,
                     run_id=en_attente.run_id,
                     projet_id=en_attente.projet_id,
                     titre=en_attente.role,
-                    statut=RENFORT_ACCORDE if recrutee else RENFORT_DECLINE,
-                    detail=reponse.contenu,
+                    statut=RENFORT_ACCORDE if creee is not None else RENFORT_DECLINE,
+                    detail=f"recruté : {creee.composition()}" if creee is not None else "",
                 )
             )
         return {

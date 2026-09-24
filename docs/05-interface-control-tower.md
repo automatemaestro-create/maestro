@@ -2837,15 +2837,72 @@ s'annonce toujours **dans les deux sens** — c'est la règle de la ligne `plan 
 run d'outillage (#286) —, mais **au moment de lancer**, sur la carte de cadrage qui
 le récapitule sans rien ouvrir (§2.7.5). Le redire une fois le run parti n'était plus
 un choix affiché : c'était un gabarit, arrivé quand plus personne ne peut rien en
-faire. Reste la seule phrase que le code écrive encore sur un lancement réussi —
-« C'est parti. » sur le chemin du **geste**, où aucun modèle n'a parlé et où le fil
-ne se persiste pas vide : elle n'est accolée à rien.
+faire. Restait une phrase sur un lancement réussi — « C'est parti. » sur le chemin
+du **geste** —, et #1262 a tranché son sort ci-dessous : **remplacée**.
 
 Couverture : `tests/test_chat_global.py` (④bis — plusieurs incréments pour une
 phrase, le marqueur jamais affiché *prouvé sur un échantillon fautif*, la carte qui
-suit la prose, le lancement qui n'ajoute rien, et le projet sans équipe dont le flux
-n'est **pas même ouvert**), `tests/test_openai_provider.py` (le dialecte en flux, son
-usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
+suit la prose, le lancement qui n'ajoute rien), `tests/test_openai_provider.py` (le
+dialecte en flux, son usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
+
+##### Sur les chemins du geste aussi, le modèle parle et les cartes portent les faits (#1262)
+
+#1222 avait retiré le récital qui **suivait** un lancement. Il restait, sur les
+chemins où la personne agit d'un **geste** plutôt que d'une phrase, des textes que
+le code écrivait **à la place** du modèle — vus sur le réel au passage du banc du
+2026-09-24 (S3) : « C'est parti. » après un accord au bouton ; la proposition
+d'équipe d'un projet sans agent (« Avant de lancer « … », il faut une équipe : ce
+projet n'a encore aucun agent… Rien n'est créé sans votre validation. »), qui
+*remplaçait* la réponse du modèle ; « Équipe créée : Développeur — 1 agent. Je
+reprends votre demande : « … ». Je lance ? » ; trois refus (« Entendu, je n'ouvre
+rien… », « Entendu : je ne recrute personne… » avant et pendant un run) ; et, côté
+renfort (#1227), la demande posée par un run et son échéance passée. Dans une même
+conversation, la personne lisait deux voix : celle du modèle, qui s'adapte, et
+celle du code, qui récite.
+
+Le partage est désormais le même partout dans le fil de l'orchestrateur :
+
+- les **faits** sont des champs du message, donc des cartes — le run ouvert
+  (`run_id`, sous la bulle), la demande reproposée (`proposition`, la carte de
+  cadrage), l'équipe à valider (`recrutement`, `EquipeDansLeFil`) et, nouveau,
+  l'**équipe créée** (`equipe`, `chat.EquipeRecrutee`) : « Équipe créée : Développeur
+  ×2 · QA — 3 agents » se lit **sous la bulle**, dans la suite du message, comme le
+  run qu'une réponse a ouvert, avec son renvoi vers l'écran des agents ;
+- la **parole** est celle du modèle. Sur un geste, le canal lui donne *ce qui vient
+  de se passer* et il écrit la réponse (`RepondeurOrchestration.rediger`,
+  `_PROMPT_REDACTION`, registre compris) ; le renfort d'un run passe par le même
+  verbe (`ServiceChat.proposer_recrutement` transmet des faits, le répondeur du fil
+  rédige). Sur une demande tapée pour un projet sans agent, le modèle **reçoit le
+  fait** avant de répondre et écrit lui-même qu'il faut d'abord une équipe —
+  **en direct** : sa réponse n'est plus retenue pour être remplacée, et le projet
+  sans agent cesse d'être la seule exception au direct de #1222 ;
+- les **empêchements** restent au code — objectif perdu, rien de branché, moteur ou
+  création qui refusent, modèle qui ne peut pas rédiger (« Je ne peux pas rédiger
+  mon message pour l'instant : … », la cause et rien d'autre) : rien ne s'est fait,
+  et lui seul le sait. Un modèle muet **ne défait aucun geste** — le run reste
+  ouvert, l'équipe créée — et rien n'est fabriqué à la place de ses mots (la règle
+  du récit de fin, #1224).
+
+**Le sort de « C'est parti. » : remplacée par la parole du modèle.** Elle avait
+été gardée par #1222 pour une raison juste — sur un accord au bouton, aucun modèle
+n'avait parlé, et le fil ne se persiste pas vide — et cette raison tombe dès que le
+geste a sa rédaction : le modèle accuse réception lui-même, sur un run **déjà
+ouvert** (le lanceur passe d'abord : le clic est l'accord, et rien n'attend un
+modèle pour l'honorer), sans en recopier l'identifiant qui se lit sous la bulle.
+La garder aurait fait d'elle la dernière phrase identique à chaque lancement, dans
+un fil où tout le reste est dit par l'orchestrateur ; la question du rendu attendu
+— *chaque message se lit-il comme écrit par l'orchestrateur ?* — n'admettait pas
+d'exception. Le prix est écrit : un appel modèle court par geste, qui ne retarde
+rien de ce que le geste décide.
+
+Couverture : `tests/test_chat_global.py` (⑫ — sur chaque chemin du geste, ce que
+le fil dit **est** ce que le modèle a rédigé, à la lettre, et le modèle a reçu les
+faits ; un lancement empêché ne le fait pas parler ; un rédacteur muet ne défait
+rien ; la demande d'un projet sans agent s'écrit en direct), `tests/test_equipe_au_plan.py`
+(③ le relais du renfort transmet des faits, ④ la décision publiée au run porte ce
+qui a été recruté, pas les mots), `tests/test_registre_de_langue.py` (la consigne de
+rédaction porte le registre, et son appel est rangé), `apps/web/tests/chat-global.test.tsx`
+(l'équipe créée se lit sous la bulle, sans phrase du code).
 
 #### Le fil se lit — Markdown, blocs de code, journées (#697)
 

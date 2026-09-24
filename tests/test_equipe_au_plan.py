@@ -1004,25 +1004,44 @@ def _demande_de_renfort(run_id: str = "run-1", *, attente_s: float = 30.0) -> De
     )
 
 
-def _fil_dorchestration(tmp_path: Path, bus: Any) -> Any:
+class _RepondeurQuiRedige:
+    """La parole du fil, réduite à ce que le relais en attend (#1262).
+
+    Le relais ne compose plus de phrase : il transmet des **faits**, et c'est le
+    répondeur du fil qui rédige (`RepondeurChat.rediger`). Ce double note les
+    faits reçus et rend une phrase qu'aucun gabarit ne contient — si bien que
+    `contenu == "Message rédigé n°1."` prouve qu'aucun texte du code ne s'y est
+    glissé.
+    """
+
+    def __init__(self) -> None:
+        self.faits: list[str] = []
+
+    async def rediger(self, agent: Any, fil: Any, *, faits: str) -> str:
+        self.faits.append(faits)
+        return f"Message rédigé n°{len(self.faits)}."
+
+
+def _fil_dorchestration(tmp_path: Path, bus: Any, repondeur: Any = None) -> Any:
     """Un `ServiceChat` du fil global, sur un dépôt jetable et le bus donné."""
     from maestro.controltower.chat import ChatStore, RepondeurScripte, ServiceChat
     from maestro.messaging import InMemoryMailbox
 
     return ServiceChat(
         store=ChatStore(tmp_path / "chat"),
-        repondeur=RepondeurScripte(),
+        repondeur=repondeur if repondeur is not None else RepondeurScripte(),
         mailbox=InMemoryMailbox(),
         bus=bus,
     )
 
 
-def test_l_arbitre_publie_la_demande_avec_ce_que_le_fil_ecrira(tmp_path: Path) -> None:
+def test_l_arbitre_publie_la_demande_avec_ce_que_le_fil_montrera(tmp_path: Path) -> None:
     """La demande traverse le bus **déjà composée** : le relais n'a rien à juger.
 
-    Quatre choses dans la phrase, parce qu'il en faut quatre pour décider : ce qui
-    a été demandé, le rôle, pourquoi, et ce qui se passe sans réponse. La borne
-    voyage en date, la même que l'arbitre tient de son côté.
+    Ce qu'il faut pour décider voyage sur la demande que la carte lira — le rôle,
+    pourquoi, les tâches, et ce qui a été demandé — et la borne en date, la même
+    que l'arbitre tient de son côté. `detail` ne porte plus de phrase du fil
+    (#1262) : c'est le manque en une ligne, pour le journal.
     """
     from maestro.controltower.events import EVENEMENT_RENFORT_DEMANDE, InMemoryEventBus
     from maestro.controltower.renfort import ArbitreRenfortControlTower
@@ -1056,20 +1075,23 @@ def test_l_arbitre_publie_la_demande_avec_ce_que_le_fil_ecrira(tmp_path: Path) -
     assert publiee.recrutement["run_id"] == "run-1"
     assert publiee.recrutement["gabarit"] == "interface"
     assert publiee.recrutement["taches"] == ["Dessiner le logo stylisé"]
-    assert OBJECTIF in publiee.detail
-    assert "ui" in publiee.detail
-    assert "0.05 s" in publiee.detail
+    assert publiee.recrutement["objectif"] == OBJECTIF
+    assert publiee.detail == _demande_de_renfort().manque.phrase()
     assert publiee.echeance
     # Personne n'a répondu : le run reprend, et ce n'est pas un refus.
     assert decision.sans_reponse and not decision.approuve
 
 
 def test_le_relais_pose_la_demande_dans_le_fil_puis_dit_l_echeance(tmp_path: Path) -> None:
-    """Le message porte la demande **et** la phrase : la carte de #1146 la voit.
+    """Le message porte la demande — la carte de #1146 la voit — et la parole du fil.
 
     Personne ne répond : à l'échéance, le fil le **dit**, et la demande ne s'y
     repose pas — un bouton « Créer l'équipe » promettrait de faire reprendre un
     run déjà parti.
+
+    Depuis #1262, les deux messages sont **rédigés par le répondeur du fil** sur
+    les faits que le relais lui passe : ce que le fil dit est ce qu'il a rédigé, à
+    la lettre, et c'est lui qui a reçu le rôle, la raison, les tâches, l'échéance.
     """
     from maestro.controltower.chat import recrutement_en_attente
     from maestro.controltower.events import InMemoryEventBus
@@ -1077,7 +1099,8 @@ def test_le_relais_pose_la_demande_dans_le_fil_puis_dit_l_echeance(tmp_path: Pat
     from maestro.controltower.renfort import RelaisRenfort, evenement_demande
 
     bus = InMemoryEventBus()
-    fil = _fil_dorchestration(tmp_path, bus)
+    repondeur = _RepondeurQuiRedige()
+    fil = _fil_dorchestration(tmp_path, bus, repondeur)
     relais = RelaisRenfort(bus, fil, AGENT_ORCHESTRATION)
 
     asyncio.run(relais.relayer(evenement_demande(_demande_de_renfort(attente_s=0.05))))
@@ -1090,10 +1113,15 @@ def test_le_relais_pose_la_demande_dans_le_fil_puis_dit_l_echeance(tmp_path: Pat
     assert pose.recrutement.role == "Designer"
     assert pose.recrutement.gabarit == "interface"
     assert pose.recrutement.taches == ("Dessiner le logo stylisé",)
-    assert OBJECTIF in pose.contenu
+    assert pose.contenu == "Message rédigé n°1."
+    proposee, echue = repondeur.faits
+    assert OBJECTIF in proposee
+    assert "Designer" in proposee
+    assert "Dessiner le logo stylisé" in proposee
     assert len(messages) == 2
-    assert "Personne n'a répondu" in messages[1].contenu
-    assert "Designer" in messages[1].contenu
+    assert messages[1].contenu == "Message rédigé n°2."
+    assert "Designer" in echue
+    assert "avant l'échéance" in echue
     assert messages[1].recrutement is None
     assert recrutement_en_attente(messages) is None
 
@@ -1392,6 +1420,23 @@ class _BusEspion:
         return [e for e in self.publies if e.type == EVENEMENT_RENFORT_DECISION]
 
 
+class _ModeleQuiRedige(ModelProvider):
+    """Le fournisseur du fil pour ces routes : il ne sert qu'à rédiger la réponse au geste.
+
+    Depuis #1262, le geste de recrutement fait parler le modèle ; sans fournisseur
+    injecté, le répondeur résoudrait celui du poste (#782). Ce qui se garde ici
+    est la décision publiée au run, jamais les mots.
+    """
+
+    name = "modele-qui-redige"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
+        return "Rédigé par le modèle."
+
+
 def _poser_la_demande(depot: Any, *, run_id: str) -> None:
     """Écrit dans le fil la demande qu'un run suspendu y aurait posée.
 
@@ -1421,20 +1466,24 @@ def _poser_la_demande(depot: Any, *, run_id: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("approuve", "statut_attendu"),
+    ("approuve", "statut_attendu", "detail_attendu"),
     [
-        pytest.param(True, "recrute", id="accepter"),
-        pytest.param(False, "decline", id="decliner"),
+        pytest.param(True, "recrute", "recruté : Designer — 1 agent", id="accepter"),
+        pytest.param(False, "decline", "", id="decliner"),
     ],
 )
 def test_le_geste_du_fil_publie_la_decision_au_run_qui_attend(
-    tmp_path: Path, approuve: bool, statut_attendu: str
+    tmp_path: Path, approuve: bool, statut_attendu: str, detail_attendu: str
 ) -> None:
     """Le second critère, côté API : le run apprend ce qui a été décidé de lui.
 
     L'ordre compte et c'est celui de tout le module : le fil d'abord (les deux
     messages du geste), la diffusion ensuite — un run qui repartirait avant que sa
     trace soit écrite laisserait le fil en retard sur ce qui se passe.
+
+    Le `detail` est le **fait** — ce qui a été recruté —, et non les mots de la
+    réponse (#1262) : il finit au journal du run, où l'on relit ce qui a été
+    recruté, pas ce que l'orchestrateur en a dit.
     """
     from fastapi.testclient import TestClient
 
@@ -1456,7 +1505,9 @@ def test_le_geste_du_fil_publie_la_decision_au_run_qui_attend(
     app = create_app(
         bus=bus,
         chat_store=depot,
-        orchestration_repondeur=RepondeurOrchestration(recruteur=recruter),
+        orchestration_repondeur=RepondeurOrchestration(
+            recruteur=recruter, provider=_ModeleQuiRedige()
+        ),
     )
     with TestClient(app) as client:
         reponse = client.post(
@@ -1485,7 +1536,8 @@ def test_le_geste_du_fil_publie_la_decision_au_run_qui_attend(
     assert decisions[0].run_id == "run-42"
     assert decisions[0].statut == statut_attendu
     assert decisions[0].projet_id == PROJET
-    assert decisions[0].detail == reponse.json()["messages"][1]["contenu"]
+    assert decisions[0].detail == detail_attendu
+    assert reponse.json()["messages"][1]["contenu"] == "Rédigé par le modèle."
 
 
 def test_un_recrutement_sans_run_ne_publie_aucune_decision(tmp_path: Path) -> None:
@@ -1512,7 +1564,9 @@ def test_un_recrutement_sans_run_ne_publie_aucune_decision(tmp_path: Path) -> No
     )
 
     app = create_app(
-        bus=bus, chat_store=depot, orchestration_repondeur=RepondeurOrchestration()
+        bus=bus,
+        chat_store=depot,
+        orchestration_repondeur=RepondeurOrchestration(provider=_ModeleQuiRedige()),
     )
     with TestClient(app) as client:
         reponse = client.post(

@@ -711,6 +711,76 @@ class DemandeRecrutement:
 
 
 @dataclass(frozen=True)
+class EquipeRecrutee:
+    """Ce qu'un recrutement a **créé** — le fait qu'une réponse porte sous sa bulle (#1262).
+
+    Le pendant de `DemandeRecrutement` après le geste : la demande dit ce qu'on
+    propose, celle-ci ce qui existe désormais dans le projet. Le fil l'écrivait
+    en toutes lettres (« Équipe créée : Développeur ×2 · QA — 3 agents. »), dans
+    une phrase du code accolée à la réponse ; c'est un **fait**, et il a
+    retrouvé la place des faits — un champ du message, que l'écran rend sous la
+    bulle comme il y rend le run ouvert (`run_id`, #268). Les mots, eux, sont
+    ceux du modèle, qui reçoit la composition pour en parler s'il y a lieu.
+
+    `roles` est lu dans le **rapport de création** (`EquipeCreee.to_dict`) et non
+    dans ce qui a été demandé : on dit ce qui existe, comme l'étape d'équipe du
+    parcours de création (« la liste, jamais un ok »). Chaque rôle y est une paire
+    `(libellé, instances)` — tout ce que la bulle affiche, et rien de ce que la
+    fiche d'un agent dit déjà mieux (skills, politique).
+    """
+
+    projet_id: str
+    roles: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def instances_total(self) -> int:
+        """Combien d'agents sont nés — instances comprises."""
+        return sum(instances for _, instances in self.roles)
+
+    def composition(self) -> str:
+        """L'équipe en une ligne — « Développeur ×2 · QA — 3 agents »."""
+        roles = " · ".join(
+            f"{role} ×{instances}" if instances > 1 else role
+            for role, instances in self.roles
+        )
+        total = self.instances_total
+        return f"{roles} — {total} {'agent' if total <= 1 else 'agents'}"
+
+    @classmethod
+    def du_rapport(cls, rapport: Mapping[str, Any], projet_id: str) -> EquipeRecrutee:
+        """Le fait tiré du rapport de création — ce qui existe, pas ce qui a été demandé."""
+        agents = [a for a in rapport.get("agents") or () if isinstance(a, Mapping)]
+        return cls(
+            projet_id=str(rapport.get("projet_id") or projet_id),
+            roles=tuple(
+                (str(a.get("role") or a.get("nom") or ""), int(a.get("instances") or 1))
+                for a in agents
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le fait en JSON — la forme du REST et du stockage."""
+        return {
+            "projet_id": self.projet_id,
+            "roles": [{"role": role, "instances": n} for role, n in self.roles],
+            "instances_total": self.instances_total,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> EquipeRecrutee:
+        """Relit un fait persisté, sans rien rejuger (même règle que `MessageChat`)."""
+        roles = data.get("roles")
+        return cls(
+            projet_id=str(data.get("projet_id") or ""),
+            roles=tuple(
+                (str(r.get("role") or ""), int(r.get("instances") or 1))
+                for r in (roles if isinstance(roles, list) else [])
+                if isinstance(r, Mapping)
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class EtapeFil:
     """Une chose que l'interlocuteur a **faite** en répondant — une lecture (#1223).
 
@@ -837,6 +907,11 @@ class MessageChat:
     écrite avant ce lot ; elle est persistée pour la raison qui fait persister
     `sources` — ce qui a nourri un message se relit avec lui, sans quoi le fil
     rouvert demain ne dirait plus sur quoi la réponse s'appuyait.
+
+    `equipe` (#1262) est ce qu'un geste de recrutement a **créé** — le pendant de
+    `run_id` pour une équipe : un fait que la bulle porte, et que le fil récitait
+    auparavant dans une phrase du code. `None` partout ailleurs et sur une ligne
+    écrite avant ce lot.
     """
 
     agent: str
@@ -848,6 +923,7 @@ class MessageChat:
     proposition: str = ""
     question: QuestionOutillage | None = None
     recrutement: DemandeRecrutement | None = None
+    equipe: EquipeRecrutee | None = None
     choix: Choix | None = None
     sources: tuple[Source, ...] = ()
     rapport: RapportLecture | None = None
@@ -876,6 +952,7 @@ class MessageChat:
             "recrutement": (
                 self.recrutement.to_dict() if self.recrutement is not None else None
             ),
+            "equipe": self.equipe.to_dict() if self.equipe is not None else None,
             "choix": self.choix.to_dict() if self.choix is not None else None,
             "sources": sources_en_liste(self.sources),
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
@@ -922,6 +999,7 @@ class MessageChat:
         rapport = data.get("rapport")
         question = data.get("question")
         recrutement = data.get("recrutement")
+        equipe = data.get("equipe")
         choix = data.get("choix")
         return cls(
             agent=data["agent"],
@@ -944,6 +1022,7 @@ class MessageChat:
                 if isinstance(recrutement, Mapping)
                 else None
             ),
+            equipe=EquipeRecrutee.from_dict(equipe) if isinstance(equipe, Mapping) else None,
             choix=Choix.from_dict(choix) if isinstance(choix, Mapping) else None,
             sources=tuple(sources_depuis(data.get("sources"))),
             rapport=rapport_depuis(rapport) if isinstance(rapport, Mapping) else None,
@@ -1026,6 +1105,9 @@ class ReponseChat:
     faites pour écrire cette réponse. Elles ont déjà été **diffusées** au fil de
     l'eau quand un `Etapeur` était branché ; les porter ici est ce qui les fait
     **persister** sur le message, et les deux chemins partent du même répondeur.
+
+    `equipe` (#1262) ne demande rien non plus : c'est ce qu'un geste de
+    recrutement a créé, porté comme `run_id` porte ce qu'un accord a ouvert.
     """
 
     contenu: str
@@ -1034,6 +1116,7 @@ class ReponseChat:
     proposition: str = ""
     question: QuestionOutillage | None = None
     recrutement: DemandeRecrutement | None = None
+    equipe: EquipeRecrutee | None = None
     etapes: tuple[EtapeFil, ...] = ()
 
 
@@ -1547,6 +1630,29 @@ class RepondeurChat(ABC):
             f"le fil {agent.nom} ne propose pas d'équipe : rien à valider."
         )
 
+    async def rediger(
+        self, agent: Agent, fil: Sequence[MessageChat], *, faits: str
+    ) -> str:
+        """Le message que ce fil adresse à la personne **sur des faits** (#1262).
+
+        Le quatrième point d'extension, et le seul qui ne réponde à rien de tapé :
+        un geste vient d'avoir ses suites, ou le travail en cours fait prendre la
+        parole au fil (le renfort d'un run, #1227). Ce qui s'est passé arrive en
+        `faits` — du réel, déjà accompli —, et ce qui revient est **la parole** de
+        l'interlocuteur : jamais une phrase que le code aurait composée à sa place,
+        ce qui faisait lire deux voix dans une même conversation.
+
+        `fil` est la conversation telle qu'elle est, geste compris ; vide quand
+        personne n'a parlé (le renfort), où seuls les faits comptent.
+
+        Par défaut, un répondeur **ne rédige rien sur des faits** : il le dit
+        plutôt que de le laisser deviner. Seul celui qui écrit de lui-même dans
+        son fil a cette méthode à écrire.
+        """
+        raise NotImplementedError(
+            f"le fil {agent.nom} ne rédige pas de message sur des faits."
+        )
+
     async def ouvrir_questionnaire(
         self, agent: Agent, fil: Sequence[MessageChat]
     ) -> ReponseChat:
@@ -1685,6 +1791,12 @@ class RepondeurScripte(RepondeurChat):
             f"(compétences : {', '.join(sorted(agent.competences))}) — réponse "
             "scriptée, aucun modèle n'a été appelé."
         )
+
+    async def rediger(
+        self, agent: Agent, fil: Sequence[MessageChat], *, faits: str
+    ) -> str:
+        """Le même reflet que `repondre`, sur les faits reçus (#1262) — aucun modèle."""
+        return f"Faits reçus : « {faits} » — message scripté, aucun modèle n'a été appelé."
 
     async def ouvrir_questionnaire(
         self, agent: Agent, fil: Sequence[MessageChat]
@@ -2076,7 +2188,7 @@ class ServiceChat:
         self,
         agent: Agent,
         *,
-        contenu: str,
+        faits: str,
         demande: DemandeRecrutement | None = None,
         conversation: str | None = None,
     ) -> MessageChat:
@@ -2085,15 +2197,23 @@ class ServiceChat:
         Le pendant de `poser_question` sur l'autre demande qu'un fil peut recevoir
         **sans que personne n'ait parlé** : la décomposition vient de constater
         qu'un rôle manque au plan, et le run attend. Aucun message d'utilisateur
-        n'est écrit — personne n'a rien demandé —, et **aucun appel modèle** :
-        `contenu` et `demande` sont composés par l'appelant, qui est le seul à
-        connaître le manque (`maestro.controltower.renfort`).
+        n'est écrit — personne n'a rien demandé. `faits` et `demande` sont
+        composés par l'appelant, qui est le seul à connaître le manque
+        (`maestro.controltower.renfort`).
 
-        `demande=None` écrit la **même** phrase sans offrir de geste, et c'est le
-        second usage : à l'échéance, le run est reparti sans renfort et il faut le
-        dire là où la demande avait été posée. Reposer la demande au lieu de la
-        clore laisserait au pied du fil un bouton « Créer l'équipe » qui
-        promettrait de faire reprendre un run déjà parti.
+        **Les mots sont ceux du répondeur du fil** (#1262, `RepondeurChat.rediger`),
+        et non une phrase de l'appelant : c'est la voix qui parle partout ailleurs
+        dans cette conversation, et la demande de renfort était la dernière à y
+        faire entendre celle du code. Ce que l'écran doit pouvoir lire sans phrase
+        — le rôle, sa raison, les tâches — voyage sur la demande, donc sur la carte
+        (`EquipeDansLeFil`). Les faits ne partent qu'au répondeur : le fil n'en
+        garde que la parole, pas une seconde fois la même chose.
+
+        `demande=None` dit l'issue sans offrir de geste, et c'est le second usage :
+        à l'échéance, le run est reparti sans renfort et il faut le dire là où la
+        demande avait été posée. Reposer la demande au lieu de la clore laisserait
+        au pied du fil un bouton « Créer l'équipe » qui promettrait de faire
+        reprendre un run déjà parti.
 
         Le message part par le chemin unique des réponses d'agent
         (`_persister_reponse`) : persisté, posté dans la messagerie, diffusé sur
@@ -2104,8 +2224,19 @@ class ServiceChat:
 
         Le fil visé est celui de l'**orchestration** : c'est l'appelant qui le
         choisit en passant sa fiche, comme pour tout ce module.
+
+        La conversation n'est **pas** passée au répondeur : personne n'y a parlé
+        en dernier, et une transcription qui finit sur « réponds au dernier
+        message » ferait répondre une seconde fois à l'accord qui a lancé le run.
+        Les faits suffisent, comme pour le récit de fin (#1224).
         """
         fil = self._resoudre(agent, conversation)
+        try:
+            contenu = await self._repondeur.rediger(agent, (), faits=faits)
+        except Exception as exc:
+            raise ReponseIndisponible(
+                f"l'agent {agent.nom} n'a pas pu rédiger la demande de renfort : {exc}"
+            ) from exc
         return await self._persister_reponse(
             agent,
             conversation=fil,
@@ -2484,9 +2615,9 @@ class ServiceChat:
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
         réponse exécutée, #943), `repondre_question` (#1031) et `recruter`
         (#1146) : ce qu'un répondeur rend se persiste, s'achemine et se diffuse
-        toujours de la même façon, et c'est ici que les six champs du contrat
+        toujours de la même façon, et c'est ici que les sept champs du contrat
         (`run_id`, `tache_id`, `proposition`, `question`, `recrutement`,
-        `etapes`) passent du répondeur au message.
+        `equipe`, `etapes`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -2504,6 +2635,7 @@ class ServiceChat:
             proposition=reponse.proposition,
             question=reponse.question,
             recrutement=reponse.recrutement,
+            equipe=reponse.equipe,
             etapes=reponse.etapes,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)

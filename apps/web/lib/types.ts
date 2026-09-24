@@ -1308,6 +1308,8 @@ export type MessageChat = {
   choix?: ChoixOutillage | null;
   /** L'équipe que ce message demande de valider (#1146) — `null` : aucune. */
   recrutement?: DemandeRecrutement | null;
+  /** L'équipe qu'un geste a créée, portée par la réponse (#1262) — `null` : aucune. */
+  equipe?: EquipeRecrutee | null;
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
@@ -2765,6 +2767,21 @@ export type DemandeRecrutement = {
   raison?: string;
   /** Les tâches du plan qu'il prendrait, par leur intitulé (#1227). */
   taches?: string[];
+};
+
+/**
+ * Ce qu'un geste de recrutement a **créé** (`EquipeRecrutee.to_dict`, #1262).
+ *
+ * Le pendant de `DemandeRecrutement` après le geste, et un **fait** : le fil le
+ * récitait dans une phrase du code (« Équipe créée : Développeur — 1 agent. »), il
+ * voyage désormais sur la réponse et se lit sous sa bulle, comme le run qu'une
+ * réponse a ouvert (`run_id`). Lu dans le rapport de création, jamais dans ce qui
+ * a été demandé : c'est ce qui existe désormais dans le projet.
+ */
+export type EquipeRecrutee = {
+  projet_id: string;
+  roles: { role: string; instances: number }[];
+  instances_total: number;
 };
 
 /** Un rôle validé, tel qu'il repart à la création (`RoleEquipeRequete`, #1040). */
