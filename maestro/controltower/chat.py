@@ -177,6 +177,17 @@ l'objectif qui attend une équipe et le projet qui en manque. Mêmes pièces, m�
 règle : `recrutement_en_attente` dit si elle tient encore, et
 `ServiceChat.recruter` est le geste qui y répond — il écrit l'acte au fil, puis
 le répondeur crée l'équipe validée et reprend la demande d'origine.
+
+## …et ce qu'il demande peut être un projet (#1294)
+
+Un projet **naît dans la conversation** (docs/43 §2.2) : l'orchestration comprend
+ce que la personne veut faire, puis propose un nom, un dossier et le
+versionnement. La proposition vit sur le message comme les trois autres —
+`projet_propose` (`DemandeProjet`), déjà vérifiée par le code — et l'accord la
+déclare : `projet_en_attente` dit si elle tient encore, `ServiceChat.declarer_projet`
+est le geste qui y répond. Ce que l'accord a déclaré est un **fait** porté par la
+réponse (`projet_cree`, `ProjetCree`), comme `run_id` porte le run qu'un accord a
+ouvert.
 """
 
 from __future__ import annotations
@@ -449,6 +460,21 @@ def recrutement_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
     return dernier
 
 
+def projet_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """La **proposition de projet** que ce fil porte encore, `None` sinon (#1294).
+
+    La quatrième demande du canal, et la même règle que les trois autres : le
+    dernier message, et lui seul. Une proposition de projet attend tant que rien ne
+    l'a suivie ; ce qui la solde est qu'on y ait répondu — un clic, un « oui »
+    tapé, ou une correction (« appelle-le racines »), qui appelle une proposition
+    nouvelle au lieu de déclarer l'ancienne.
+    """
+    dernier = fil[-1] if fil else None
+    if dernier is None or dernier.projet_propose is None:
+        return None
+    return dernier
+
+
 def choix_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
     """Les réponses d'outillage acquises sur ce fil, dans l'ordre où elles sont venues.
 
@@ -559,6 +585,18 @@ def _geste_de_recrutement(approuve: bool, roles: Sequence[RoleValide]) -> str:
     return f"Je valide cette équipe : {composition}."
 
 
+def _geste_de_declaration(approuve: bool) -> str:
+    """Ce que le geste écrit dans le fil — le message que le clic vaut (#1294).
+
+    Même règle que `_geste_de_cadrage` : le fil est la seule mémoire du canal, et
+    le tour suivant relit ce clic comme une personne l'aurait écrit. Rien n'est
+    recopié de la proposition — elle est juste au-dessus, sur la carte, et le
+    geste ne l'amende pas : une correction se **dit** dans la conversation, et
+    appelle une proposition nouvelle.
+    """
+    return "Oui, crée ce projet." if approuve else "Non, ne crée pas ce projet."
+
+
 def normaliser(texte: str) -> str:
     """Le texte réduit pour la comparaison : minuscules, sans accents ni ponctuation.
 
@@ -642,6 +680,17 @@ class RecrutementIntrouvable(RuntimeError):
     reçu sa réponse (un message a suivi), ou le répondeur de ce fil n'en propose
     pas. L'API la traduit en `409` — c'est ce qui empêche un double clic de créer
     deux fois la même équipe.
+    """
+
+
+class DeclarationIntrouvable(RuntimeError):
+    """Ce fil n'a **aucune proposition de projet en attente** à trancher (#1294).
+
+    Le quatrième pendant de `CadrageIntrouvable`, pour les mêmes trois façons de
+    n'avoir rien à trancher : aucun projet n'a été proposé, la dernière
+    proposition a déjà reçu sa réponse (un message a suivi), ou le répondeur de ce
+    fil n'en fait pas. L'API la traduit en `409` — c'est ce qui empêche un double
+    clic de déclarer deux fois le même projet.
     """
 
 
@@ -800,6 +849,133 @@ class EquipeRecrutee:
         )
 
 
+#: Les deux origines d'un projet proposé — les deux valeurs de
+#: `maestro.projets.ORIGINES`, nommées ici pour le fil : un dossier **neuf**, que la
+#: déclaration crée, ou un dossier **existant**, qu'elle importe.
+ORIGINE_NOUVEAU = "nouveau"
+ORIGINE_EXISTANT = "existant"
+
+
+@dataclass(frozen=True)
+class DemandeProjet:
+    """Le projet que l'orchestration propose de déclarer, vérifié par le code (#1294).
+
+    Ce que la carte montre et ce que l'accord déclare, **tel quel** : `nom`,
+    `racine` (le dossier, absolu, en POSIX comme toute racine servie par l'API),
+    `origine` (`nouveau` ou `existant`) et `versionner` — la mise sous Git que la
+    déclaration fera suivre, proposée et jamais imposée (docs/43 §3).
+
+    Chaque choix porte **sa raison**, écrite par le modèle pour ce projet-là : c'est
+    ce qui fait de la carte une proposition qu'on accepte en connaissance de cause,
+    et non un formulaire prérempli.
+
+    `deja_versionne` est **constaté** sur le disque (un dossier existant qui a son
+    `.git`) : la carte le dit au lieu de proposer ce qui est déjà fait.
+
+    `ajustements` est ce que la **vérification** a changé à la proposition du
+    modèle, en phrases — un nom déjà pris, un dossier déjà occupé, et l'alternative
+    retenue. C'est un fait du code, pas une parole : il vit sur la carte, là où le
+    changement se voit, et le modèle le relit au tour suivant (`transcription`).
+    """
+
+    nom: str
+    racine: str
+    origine: str
+    versionner: bool = False
+    deja_versionne: bool = False
+    raison_nom: str = ""
+    raison_dossier: str = ""
+    raison_versionnement: str = ""
+    ajustements: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """La proposition en JSON — la forme du REST et du stockage."""
+        return {
+            "nom": self.nom,
+            "racine": self.racine,
+            "origine": self.origine,
+            "versionner": self.versionner,
+            "deja_versionne": self.deja_versionne,
+            "raison_nom": self.raison_nom,
+            "raison_dossier": self.raison_dossier,
+            "raison_versionnement": self.raison_versionnement,
+            "ajustements": list(self.ajustements),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> DemandeProjet:
+        """Relit une proposition persistée, sans rien rejuger (même règle que `MessageChat`)."""
+        ajustements = data.get("ajustements")
+        return cls(
+            nom=str(data.get("nom") or ""),
+            racine=str(data.get("racine") or ""),
+            origine=str(data.get("origine") or ORIGINE_NOUVEAU),
+            versionner=bool(data.get("versionner")),
+            deja_versionne=bool(data.get("deja_versionne")),
+            raison_nom=str(data.get("raison_nom") or ""),
+            raison_dossier=str(data.get("raison_dossier") or ""),
+            raison_versionnement=str(data.get("raison_versionnement") or ""),
+            ajustements=(
+                tuple(str(a) for a in ajustements) if isinstance(ajustements, list) else ()
+            ),
+        )
+
+    def en_phrase(self) -> str:
+        """La proposition en une ligne — ce que le modèle relit de la carte au tour suivant."""
+        if self.deja_versionne:
+            git = "déjà sous Git"
+        else:
+            git = "mise sous Git" if self.versionner else "sans versionnement"
+        quoi = "dossier neuf" if self.origine == ORIGINE_NOUVEAU else "dossier existant importé"
+        return f"nom « {self.nom} », {quoi} {self.racine}, {git}"
+
+
+@dataclass(frozen=True)
+class ProjetCree:
+    """Ce qu'un accord a **déclaré** — le fait qu'une réponse porte sous sa bulle (#1294).
+
+    Le pendant de `DemandeProjet` après le geste, comme `EquipeRecrutee` l'est de
+    `DemandeRecrutement` : on dit ce qui existe désormais, relu de la fiche que la
+    déclaration a rendue (racine canonicalisée, VCS constaté), et non ce qui a été
+    demandé. C'est ce champ que l'écran lit pour **ouvrir** le projet qui vient de
+    naître.
+
+    `versionnement_refuse` porte la cause quand la mise sous Git proposée a échoué
+    alors que le projet, lui, est déclaré : les deux faits sont vrais ensemble, et
+    taire le second ferait croire à un projet versionné.
+    """
+
+    id: str
+    nom: str
+    racine: str
+    origine: str
+    versionne: bool = False
+    versionnement_refuse: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le fait en JSON — la forme du REST et du stockage."""
+        return {
+            "id": self.id,
+            "nom": self.nom,
+            "racine": self.racine,
+            "origine": self.origine,
+            "versionne": self.versionne,
+            "versionnement_refuse": self.versionnement_refuse,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ProjetCree:
+        """Relit un fait persisté, sans rien rejuger (même règle que `MessageChat`)."""
+        return cls(
+            id=str(data.get("id") or ""),
+            nom=str(data.get("nom") or ""),
+            racine=str(data.get("racine") or ""),
+            origine=str(data.get("origine") or ORIGINE_NOUVEAU),
+            versionne=bool(data.get("versionne")),
+            versionnement_refuse=str(data.get("versionnement_refuse") or ""),
+        )
+
+
 @dataclass(frozen=True)
 class EtapeFil:
     """Une chose que l'interlocuteur a **faite** en répondant — une lecture (#1223).
@@ -939,6 +1115,13 @@ class MessageChat:
     c'est elle que la conclusion relit pour écrire l'outillage : rappeler le modèle
     à ce moment-là pourrait comprendre autre chose que ce que l'écran a montré.
     Vide partout ailleurs et sur une ligne écrite avant ce lot.
+
+    `projet_propose` (#1294) est la quatrième chose qu'un message d'agent peut
+    demander : la déclaration d'un **projet**, avec son nom, son dossier et son
+    versionnement. Même patron que `recrutement` — `None` partout ailleurs et sur
+    une ligne écrite avant ce lot, l'attente énoncée une fois (`projet_en_attente`)
+    — et jamais sur le même message qu'une autre demande. `projet_cree` est ce que
+    l'accord a **déclaré** : le pendant de `run_id` et d'`equipe` pour un projet.
     """
 
     agent: str
@@ -958,6 +1141,8 @@ class MessageChat:
     conversation: str = CONVERSATION_ORIGINE
     etapes: tuple[EtapeFil, ...] = ()
     comprehension: tuple[Choix, ...] = ()
+    projet_propose: DemandeProjet | None = None
+    projet_cree: ProjetCree | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -986,6 +1171,10 @@ class MessageChat:
             "rapport": self.rapport.to_dict() if self.rapport is not None else None,
             "etapes": [etape.to_dict() for etape in self.etapes],
             "comprehension": [c.to_dict() for c in self.comprehension],
+            "projet_propose": (
+                self.projet_propose.to_dict() if self.projet_propose is not None else None
+            ),
+            "projet_cree": self.projet_cree.to_dict() if self.projet_cree is not None else None,
         }
 
     @property
@@ -1030,6 +1219,8 @@ class MessageChat:
         recrutement = data.get("recrutement")
         equipe = data.get("equipe")
         choix = data.get("choix")
+        propose = data.get("projet_propose")
+        cree = data.get("projet_cree")
         return cls(
             agent=data["agent"],
             # Une ligne d'avant #694 n'en porte pas : elle vient forcément du
@@ -1062,6 +1253,10 @@ class MessageChat:
                 for c in data.get("comprehension") or ()
                 if isinstance(c, Mapping)
             ),
+            projet_propose=(
+                DemandeProjet.from_dict(propose) if isinstance(propose, Mapping) else None
+            ),
+            projet_cree=ProjetCree.from_dict(cree) if isinstance(cree, Mapping) else None,
         )
 
 
@@ -1145,6 +1340,10 @@ class ReponseChat:
 
     `comprehension` (#1147) ne demande rien non plus : ce que le questionnaire a
     compris du projet à ce tour, qui voyage jusqu'au message (`MessageChat`).
+
+    `projet_propose` (#1294) est la quatrième demande — un projet à déclarer —, et
+    elle ne cohabite avec aucune autre ; `projet_cree` est ce que l'accord a
+    déclaré, porté comme `run_id` porte ce qu'un accord a ouvert.
     """
 
     contenu: str
@@ -1156,6 +1355,8 @@ class ReponseChat:
     equipe: EquipeRecrutee | None = None
     etapes: tuple[EtapeFil, ...] = ()
     comprehension: tuple[Choix, ...] = ()
+    projet_propose: DemandeProjet | None = None
+    projet_cree: ProjetCree | None = None
 
 
 @dataclass(frozen=True)
@@ -1665,6 +1866,31 @@ class RepondeurChat(ABC):
         """
         raise RecrutementIntrouvable(
             f"le fil {agent.nom} ne propose pas d'équipe : rien à valider."
+        )
+
+    async def declarer_projet(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: DemandeProjet,
+        approuve: bool,
+    ) -> ReponseChat:
+        """La réponse au **geste** qui accepte — ou refuse — le projet proposé (#1294).
+
+        Le quatrième point d'extension « acte » du canal. Aucun juge : la décision
+        est un clic, et ce qu'il y a à faire se déduit — déclarer le projet tel que
+        la carte l'a montré, le mettre sous Git si c'était proposé, puis en parler.
+
+        `demande` est celle que le fil portait, **relue du fil** : c'est celle
+        qu'on a eue sous les yeux.
+
+        Par défaut, un répondeur **ne propose aucun projet** : il le dit plutôt que
+        de le laisser deviner. Seul celui qui pose un `ReponseChat.projet_propose` a
+        cette méthode à écrire.
+        """
+        raise DeclarationIntrouvable(
+            f"le fil {agent.nom} ne propose pas de projet : rien à déclarer."
         )
 
     async def rediger(
@@ -2214,6 +2440,53 @@ class ServiceChat:
             agent, conversation=fil, reponse=reponse
         )
 
+    async def declarer_projet(
+        self,
+        agent: Agent,
+        *,
+        approuve: bool,
+        conversation: str | None = None,
+    ) -> tuple[MessageChat, MessageChat]:
+        """Accepte — ou refuse — le projet proposé ; rend la paire (geste, réponse) (#1294).
+
+        Le quatrième geste du canal, et **la même forme qu'`envoyer`** : un message
+        d'utilisateur, puis la réponse. La proposition à laquelle on répond est
+        **lue du fil**, jamais passée par l'appelant — nom, dossier et versionnement
+        compris : c'est ce qui fait qu'un double clic ou un geste tardif tombe sur
+        `DeclarationIntrouvable` (le `409` de l'API) au lieu de déclarer un second
+        projet, et que ce qui naît est exactement ce que la carte a montré.
+
+        Le corps ne porte **aucun amendement** : une correction se dit dans la
+        conversation (« appelle-le racines »), et appelle une proposition nouvelle,
+        revérifiée. Un champ d'édition dans le geste serait le formulaire de
+        création remis dans une carte (veille de #1294).
+        """
+        fil = self._resoudre(agent, conversation)
+        attente = projet_en_attente(self._store.fil(agent.nom, fil))
+        if attente is None or attente.projet_propose is None:
+            raise DeclarationIntrouvable(
+                f"aucun projet proposé en attente sur le fil {agent.nom}."
+            )
+        geste = await self._deposer(agent, _geste_de_declaration(approuve), conversation=fil)
+        try:
+            reponse = await self._repondeur.declarer_projet(
+                agent,
+                self._store.fil(agent.nom, fil),
+                demande=attente.projet_propose,
+                approuve=approuve,
+            )
+        except DeclarationIntrouvable:
+            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+            # manque — un 409, comme pour le cadrage, jamais un 502.
+            raise
+        except Exception as exc:
+            raise ReponseIndisponible(
+                f"l'agent {agent.nom} n'a pas pu donner suite au projet proposé : {exc}"
+            ) from exc
+        return geste, await self._persister_reponse(
+            agent, conversation=fil, reponse=reponse
+        )
+
     async def poser_question(
         self,
         agent: Agent,
@@ -2709,11 +2982,12 @@ class ServiceChat:
         """Écrit une `ReponseChat` au fil — la moitié commune des deux voies.
 
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
-        réponse exécutée, #943), `repondre_question` (#1031) et `recruter`
-        (#1146) : ce qu'un répondeur rend se persiste, s'achemine et se diffuse
-        toujours de la même façon, et c'est ici que les huit champs du contrat
-        (`run_id`, `tache_id`, `proposition`, `question`, `recrutement`,
-        `equipe`, `etapes`, `comprehension`) passent du répondeur au message.
+        réponse exécutée, #943), `repondre_question` (#1031), `recruter` (#1146)
+        et `declarer_projet` (#1294) : ce qu'un répondeur rend se persiste,
+        s'achemine et se diffuse toujours de la même façon, et c'est ici que les
+        dix champs du contrat (`run_id`, `tache_id`, `proposition`, `question`,
+        `recrutement`, `equipe`, `etapes`, `comprehension`, `projet_propose`,
+        `projet_cree`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -2734,6 +3008,8 @@ class ServiceChat:
             equipe=reponse.equipe,
             etapes=reponse.etapes,
             comprehension=reponse.comprehension,
+            projet_propose=reponse.projet_propose,
+            projet_cree=reponse.projet_cree,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message
@@ -2842,6 +3118,19 @@ def transcription(fil: Sequence[MessageChat]) -> str:
         # oublié.
         if message.contexte:
             lignes.append(message.contexte)
+        # Ce que la carte d'un projet a **montré** (#1294), et non seulement ce que
+        # la phrase en disait : la vérification a pu ajuster la proposition (un nom
+        # pris, un dossier occupé), et une correction tapée au tour suivant
+        # (« appelle-le racines ») doit partir de ce que la personne a eu sous les
+        # yeux. Même règle pour le projet déclaré, dont l'identifiant n'est dans
+        # aucune phrase.
+        if message.projet_propose is not None:
+            demande = message.projet_propose
+            lignes.append(f"[Projet proposé sur la carte : {demande.en_phrase()}]")
+            lignes.extend(f"[Ajustement : {a}]" for a in demande.ajustements)
+        if message.projet_cree is not None:
+            cree = message.projet_cree
+            lignes.append(f"[Projet déclaré : « {cree.nom} » ({cree.id}), {cree.racine}]")
     return (
         "Fil de conversation avec l'utilisateur :\n\n"
         + "\n".join(lignes)

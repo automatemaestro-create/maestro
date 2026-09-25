@@ -25,12 +25,14 @@
  *   (docs/24 §2.4) — d'où une confirmation, là où déclarer ou modifier n'en
  *   demandent pas. Le `vcs` n'est pas envoyé : il est **constaté** au retour
  *   (EF-38), et la liste se relit comme après toute écriture ;
- * - **déclarer un projet ne s'arrête plus à sa racine** (#1034, docs/37 §4.6) :
- *   l'**étape d'outillage** (`EtapeOutillage`) prend la place du formulaire dès
- *   qu'il a rendu un projet, et c'est elle qui se ferme — générée ou reportée.
- *   Un projet reporté le **dit** sur sa carte (`outillage.a_faire`) et offre d'y
- *   revenir, sauf pendant que l'étape est ouverte sur lui : le report se dit
- *   après le choix, pas pendant ;
+ * - **un projet ne se crée plus ici** (#1294, docs/43 §2.2) : il **naît dans la
+ *   conversation**, sur la porte d'entrée (`NaissanceProjet`). « Nouveau projet »
+ *   y ramène, et cet écran garde la **gestion** — modifier une déclaration (le
+ *   formulaire ne sert plus qu'à cela), la retirer, la mettre sous Git ;
+ * - **l'étape d'outillage reste offerte aux projets déjà déclarés** (#1034) : un
+ *   projet reporté le **dit** sur sa carte (`outillage.a_faire`) et offre d'y
+ *   revenir, sauf pendant que l'étape est ouverte sur lui. Elle quitte le chemin
+ *   de création avec le formulaire ; son pendant dans la conversation est #1161 ;
  * - **et l'outillage généré enchaîne sur l'équipe** (#1040, docs/37 §4.6) :
  *   `EtapeEquipe` prend la suite, parce que c'est elle qui *branche* les skills
  *   qu'on vient d'écrire. Un « outiller plus tard », lui, referme le parcours —
@@ -50,7 +52,6 @@ import { IconeDossier, IconePlus } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte, EtatVide } from "@/components/Primitives";
 import {
   chargerProjets,
-  creerProjet,
   modifierProjet,
   panneDe,
   supprimerProjet,
@@ -307,13 +308,20 @@ type Props = {
    * fournisseur.
    */
   apresEcriture?: () => void;
+  /**
+   * « Nouveau projet » : un projet **naît dans la conversation** (#1294, docs/43
+   * §2.2), sur la porte d'entrée et hors du cadre d'un autre — l'écran le
+   * demande, le shell quitte le projet ouvert. Le formulaire à étapes n'est plus
+   * sur le chemin de création ; il ne sert ici qu'à **modifier** une déclaration.
+   * Sans ce rappel (l'écran testé seul), pas de bouton.
+   */
+  nouveauProjet?: () => void;
 };
 
-export function ListeProjets({ apresEcriture }: Props = {}) {
+export function ListeProjets({ apresEcriture, nouveauProjet }: Props = {}) {
   const [projets, setProjets] = useState<Projet[]>([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<PanneApi | null>(null);
-  const [creationOuverte, setCreationOuverte] = useState(false);
   const [editionId, setEditionId] = useState<string | null>(null);
   // Le projet qui vient d'être déclaré et dont l'outillage se décide : l'étape
   // suivante du parcours, pas un écran à part (#1034).
@@ -353,15 +361,6 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
     await recharger();
     apresEcriture?.();
   }, [recharger, apresEcriture]);
-
-  const declarer = async (declaration: DeclarationProjet) => {
-    const projet = await creerProjet(declaration);
-    setCreationOuverte(false);
-    // Le choix de la racine n'est plus la fin du parcours : l'outillage est
-    // l'étape suivante, proposée d'office (#1034, docs/37 §4.6).
-    setAOutiller(projet);
-    await rechargerApresEcriture();
-  };
 
   const finirOutillage = (
     suite: "equipe" | "fin",
@@ -414,14 +413,8 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
             l&apos;explorateur servi par le backend — sans jamais avoir à taper
             un chemin.
           </p>
-          {!creationOuverte && (
-            <Bouton
-              icone={IconePlus}
-              onClick={() => {
-                setCreationOuverte(true);
-                setEditionId(null);
-              }}
-            >
+          {nouveauProjet !== undefined && (
+            <Bouton icone={IconePlus} onClick={nouveauProjet}>
               Nouveau projet
             </Bouton>
           )}
@@ -436,13 +429,6 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
             projet={aRecruter}
             choix={choixOutillage}
             onTermine={finirEquipe}
-          />
-        )}
-
-        {creationOuverte && (
-          <FormulaireProjet
-            enregistrer={declarer}
-            onAnnuler={() => setCreationOuverte(false)}
           />
         )}
 
@@ -482,15 +468,11 @@ export function ListeProjets({ apresEcriture }: Props = {}) {
                 <CarteProjet
                   key={projet.id}
                   projet={projet}
-                  onModifier={() => {
-                    setEditionId(projet.id);
-                    setCreationOuverte(false);
-                  }}
+                  onModifier={() => setEditionId(projet.id)}
                   onSupprime={rechargerApresEcriture}
                   onVersionne={rechargerApresEcriture}
                   onOutiller={() => {
                     setAOutiller(projet);
-                    setCreationOuverte(false);
                     setEditionId(null);
                   }}
                   outillageOuvert={aOutiller?.id === projet.id}

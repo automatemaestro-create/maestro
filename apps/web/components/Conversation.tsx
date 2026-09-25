@@ -303,6 +303,7 @@ import {
   IconeArret,
   IconeEnvoyer,
   IconeFlecheBas,
+  IconeProjets,
   IconeRuns,
   IconeTache,
   IconeValidations,
@@ -325,7 +326,7 @@ import { ascenseurDe, estEnBas, positionEnBas } from "@/lib/defilement";
 import { equipeCreeeEnUneLigne } from "@/lib/equipe";
 import { estSolde } from "@/lib/execution";
 import { issuesDuFil } from "@/lib/issueRun";
-import { useEtatGlobal } from "@/lib/etatGlobal";
+import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { useHorloge } from "@/lib/horloge";
 import { jourDe, libelleDuJour } from "@/lib/journees";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
@@ -1697,11 +1698,19 @@ function Bulle({
  * l'écran des agents, où l'équipe se relit.
  */
 function Suite({ message }: { message: MessageChat }) {
-  const { taches, validations, executions } = useEtatGlobal();
+  // Facultatif depuis #1294 : le fil est aussi posé sur la porte d'entrée, avant
+  // tout projet, où il n'y a ni run, ni tâche, ni validation à compter.
+  const etat = useEtatGlobalFacultatif();
+  const taches = etat?.taches ?? [];
+  const validations = etat?.validations ?? [];
+  const executions = etat?.executions ?? [];
   const runId = message.run_id ?? "";
   const tacheId = message.tache_id ?? "";
   const equipe = message.equipe ?? null;
-  if (runId === "" && tacheId === "" && equipe === null) return null;
+  const projetCree = message.projet_cree ?? null;
+  if (runId === "" && tacheId === "" && equipe === null && projetCree === null) {
+    return null;
+  }
 
   // Un run **soldé** ne porte plus de tâches « ouvertes » (#928) : le compte
   // restait affiché tel quel après la fin, et « 2 tâches ouvertes » sous un run
@@ -1747,6 +1756,23 @@ function Suite({ message }: { message: MessageChat }) {
   return (
     <div className="mt-2 flex flex-col gap-1 border-t border-bord pt-2">
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-texte-secondaire">
+        {/* Le projet qu'un accord a déclaré (#1294) : un fait, sur la même ligne
+            que le run ouvert et l'équipe créée, et pour la même raison — ce que
+            le modèle en dit est dans la bulle, ce qui existe est ici. */}
+        {projetCree !== null && (
+          <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
+            <IconeProjets className="size-3.5 shrink-0" />
+            {projetCree.origine === "existant" ? "Projet importé :" : "Projet créé :"}
+            <strong className="font-medium text-texte">{projetCree.nom}</strong>
+            <span className="font-mono break-all">{projetCree.racine}</span>
+            {projetCree.versionne && <span>· versionné</span>}
+          </span>
+        )}
+        {projetCree !== null && projetCree.versionnement_refuse !== "" && (
+          <span className="text-attention-texte">
+            Mise sous versionnement refusée : {projetCree.versionnement_refuse}
+          </span>
+        )}
         {equipe !== null && (
           <span className="inline-flex items-center gap-1">
             <IconeAgents className="size-3.5 shrink-0" />
@@ -1818,8 +1844,10 @@ function Suite({ message }: { message: MessageChat }) {
  *   la colonne de droite comme sur `/chat`.
  */
 function IssuesDesRunsDuFil({ messages }: { messages: MessageChat[] }) {
-  const { executions, projet } = useEtatGlobal();
-  const issues = issuesDuFil(messages, executions, projet);
+  // Hors du shell (la porte d'entrée, #1294), aucun run n'a pu finir : rien à dire.
+  const etat = useEtatGlobalFacultatif();
+  if (etat === null) return null;
+  const issues = issuesDuFil(messages, etat.executions, etat.projet);
   if (issues.length === 0) return null;
   return (
     <>

@@ -439,16 +439,18 @@ class ClientAPI:
     ## Deux délais, selon qui rédige la réponse (#1232)
 
     La plupart des routes répondent sans le modèle, et le délai ordinaire du
-    transport leur suffit. Trois ne le peuvent pas : `envoyer` et
+    transport leur suffit. Quatre ne le peuvent pas : `envoyer` et
     `envoyer_en_direct` (le fil juge le message et rédige sa réponse, rendue
-    d'un coup ou au fil de l'eau) et `proposition_equipe` (un playbook rédigé par
-    rôle, #257). Elles durent ce que dure le modèle, et **l'écran ne les borne
-    pas** : un banc qui les coupait à 30 s jugeait un produit plus pressé que
-    celui qu'un utilisateur a sous les yeux. Mesuré le 2026-09-23 : la proposition
-    d'équipe a tenu en 17 s, puis ≈ 26 s, puis a dépassé 30 s sur la première
-    requête d'une API qui venait de démarrer — et S1 n'a jamais envoyé sa demande.
+    d'un coup ou au fil de l'eau), `proposition_equipe` (un playbook rédigé par
+    rôle, #257) et `declarer_par_le_fil` (la réponse rédigée sur le projet
+    déclaré, et la lecture d'un dossier importé, #1294). Elles durent ce que dure
+    le modèle, et **l'écran ne les borne pas** : un banc qui les coupait à 30 s
+    jugeait un produit plus pressé que celui qu'un utilisateur a sous les yeux.
+    Mesuré le 2026-09-23 : la proposition d'équipe a tenu en 17 s, puis ≈ 26 s,
+    puis a dépassé 30 s sur la première requête d'une API qui venait de démarrer
+    — et S1 n'a jamais envoyé sa demande.
 
-    Ces trois verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
+    Ces quatre verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
     déjà au modèle pour un run (`--delai`, `DELAI_RUN_S`) : une borne contre une
     API figée, pas une attente. Le classement se fait **ici, sur le code des
     routes** — `trancher_cadrage` et `recruter` n'appellent aucun modèle et
@@ -518,6 +520,11 @@ class ClientAPI:
     def retirer_projet(self, projet_id: str) -> None:
         """Oublie la déclaration — le dossier sur le disque, lui, reste (#221)."""
         self._appel("DELETE", f"/api/projets/{projet_id}", attendus=(200, 404))
+
+    def projets(self) -> list[dict[str, Any]]:
+        """Les projets déclarés, tels que l'API les sert — racine canonicalisée, VCS constaté."""
+        fiches: list[dict[str, Any]] = list(self._appel("GET", "/api/projets") or [])
+        return fiches
 
     # --- L'équipe -------------------------------------------------------
 
@@ -660,6 +667,20 @@ class ClientAPI:
             },
         )
         return _reponse_de(corps, chemin=f"{FIL}/cadrage")
+
+    def declarer_par_le_fil(self, *, conversation: str, approuve: bool = True) -> dict[str, Any]:
+        """Accepte — ou refuse — le projet que le fil propose (#1294), et rend la réponse.
+
+        Le modèle rédige ce qui suit la déclaration, et lit un dossier importé
+        (#1158) : la marge du modèle, pas le délai ordinaire.
+        """
+        corps = self._appel(
+            "POST",
+            f"{FIL}/projet",
+            corps={"approuve": approuve, "conversation": conversation},
+            delai_s=self._delai_modele_s,
+        )
+        return _reponse_de(corps, chemin=f"{FIL}/projet")
 
     # --- Les runs -------------------------------------------------------
 

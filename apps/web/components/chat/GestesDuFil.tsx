@@ -21,6 +21,15 @@
  * n'est écrit tant que vous ne l'avez pas validé » et le pied redevenait vide :
  * la promesse n'avait aucune surface.
  *
+ * ⚠ Une quatrième demande est venue avec #1294 : la **proposition de projet**
+ * (`DemandeDeProjet`), qui fait naître un projet dans la conversation. Elle vit
+ * sur le message comme les autres et ne cohabite avec aucune — on ne propose pas
+ * un run dans un projet qui n'existe pas encore —, donc elle prend elle aussi le
+ * dernier rang, au plus près de la saisie, où une correction se tape. Elle est
+ * surtout posée **sur la porte d'entrée**, avant tout projet : ce hook se passe
+ * donc du shell quand il n'y en a pas (`useEtatGlobalFacultatif`) — sans projet,
+ * il n'y a ni question d'agent ni outillage à conclure, et rien d'autre ne manque.
+ *
  * ⚠ La demande de cadrage a, elle aussi, une remplaçante depuis #1146 : sur un
  * projet **sans agent**, l'orchestration ne propose pas de run, elle propose
  * l'équipe (`EquipeDansLeFil`). Les deux vivent sur le message et ne cohabitent
@@ -79,16 +88,24 @@ import { useMemo, type ReactNode } from "react";
 
 import { useConclusionOutillage } from "@/components/chat/ConclusionOutillage";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
+import { DemandeDeProjet } from "@/components/chat/DemandeDeProjet";
 import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { propositionEnAttente } from "@/lib/brief";
 import { recrutementEnAttente } from "@/lib/equipe";
-import { useEtatGlobal } from "@/lib/etatGlobal";
+import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
+import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { questionEnAttente } from "@/lib/outillage";
 import { questionsDuFil } from "@/lib/questions";
 import type { Chat } from "@/lib/useChat";
+
+/** Aucune question d'agent : ce que vaut le fil hors du shell (#1294). */
+const AUCUNE_QUESTION: never[] = [];
+
+/** Rien à répondre hors du shell — aucune question n'y est jamais montrée. */
+async function sansQuestion(): Promise<void> {}
 
 /**
  * Ce qui attend un geste sur ce fil, prêt à passer en `pied` de `Conversation` —
@@ -106,8 +123,11 @@ export function useGestesDuFil(
   fil: Chat,
   destinataire: string,
 ): ReactNode | undefined {
-  const { questions: toutesLesQuestions, repondreAUneQuestion } =
-    useEtatGlobal();
+  // Sans shell — la porte d'entrée, où un projet naît (#1294) — il n'y a aucune
+  // question d'agent à montrer : elles sont celles des runs d'un projet.
+  const etat = useEtatGlobalFacultatif();
+  const toutesLesQuestions = etat?.questions ?? AUCUNE_QUESTION;
+  const repondreAUneQuestion = etat?.repondreAUneQuestion ?? sansQuestion;
   const global = destinataire === AGENT_ORCHESTRATION;
 
   const questions = useMemo(
@@ -122,6 +142,7 @@ export function useGestesDuFil(
   const outillage = global ? questionEnAttente(fil.messages) : null;
   const messageRecrutement = global ? recrutementEnAttente(fil.messages) : null;
   const recrutement = messageRecrutement?.recrutement ?? null;
+  const projetPropose = global ? projetEnAttente(fil.messages) : null;
 
   // Le second moment du questionnaire (#1104) : il a conclu, et ce qu'il a
   // décidé attend d'être écrit. Le hook est appelé **sans condition** — les
@@ -133,6 +154,7 @@ export function useGestesDuFil(
     questions.length === 0 &&
     proposition === null &&
     recrutement === null &&
+    projetPropose === null &&
     !outillage?.question &&
     conclusion === undefined
   ) {
@@ -180,6 +202,13 @@ export function useGestesDuFil(
           demande={recrutement}
           cle={`${recrutement.projet_id}|${messageRecrutement?.horodatage ?? ""}`}
           recruter={fil.recruter}
+          enCours={fil.envoi}
+        />
+      )}
+      {projetPropose !== null && (
+        <DemandeDeProjet
+          demande={projetPropose}
+          declarer={fil.declarerProjet}
           enCours={fil.envoi}
         />
       )}

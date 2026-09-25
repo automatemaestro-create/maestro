@@ -494,6 +494,7 @@ reste relève du prompt, et se mesure en usage.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -513,16 +514,20 @@ from maestro.controltower.causes import (
     cause_lisible,
 )
 from maestro.controltower.chat import (
+    ORIGINE_EXISTANT,
     UTILISATEUR,
+    DemandeProjet,
     DemandeRecrutement,
     EquipeRecrutee,
     EtapeFil,
     Etapeur,
     Incrementeur,
     MessageChat,
+    ProjetCree,
     Redaction,
     RepondeurChat,
     ReponseChat,
+    projet_en_attente,
     transcription,
 )
 from maestro.controltower.consultation import (
@@ -540,6 +545,7 @@ from maestro.controltower.events import (
     ROLE_RUN,
     Event,
 )
+from maestro.controltower.naissance import NaissanceRefusee, ServiceNaissance
 from maestro.controltower.outillage import ComprehensionModele, ConducteurOutillage
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 
@@ -599,11 +605,17 @@ VERDICT_PROPOSITION = "proposition"
 VERDICT_ACCORD = "accord"
 VERDICT_ECHANGE = "echange"
 
+#: Le quatrième verdict (#1294) : la personne veut **commencer un projet** — neuf,
+#: ou d'un dossier qu'elle a déjà —, et le modèle en propose la déclaration. Il
+#: n'ouvre rien de plus qu'une proposition : c'est l'accord qui déclare, comme pour
+#: un run (`RepondeurOrchestration.declarer_projet`).
+VERDICT_PROJET = "projet"
+
 #: Les seuls verdicts admis. Tout autre mot — comme toute réponse hors contrat —
 #: retombe sur `VERDICT_ECHANGE` : la liste est **blanche**, jamais noire, parce
 #: qu'on ne maîtrise pas ce qu'un modèle peut écrire dans ce champ et qu'un mot
 #: inattendu ne doit jamais pouvoir valoir un accord.
-VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE})
+VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE, VERDICT_PROJET})
 
 #: Le **marqueur de fin** : ce qui sépare la réponse affichée de la décision
 #: machine (#1222). Tout ce qui le précède est du texte pour l'utilisateur, tout
@@ -658,7 +670,7 @@ qu'il lit.
 
 Puis termine par une DERNIÈRE LIGNE, et une seule, de cette forme exacte :
 
-%%MAESTRO%% {"verdict": "proposition|accord|echange", "objectif": "..."}
+%%MAESTRO%% {"verdict": "proposition|accord|echange|projet", "objectif": "..."}
 
 Cette ligne n'est jamais affichée : elle dit à l'interface quoi faire de ce que
 tu viens d'écrire. Elle vient en dernier, après le dernier mot de ta réponse, et
@@ -666,6 +678,17 @@ rien ne la suit. Ne la mets jamais en tête, ni au milieu d'une phrase, ni dans 
 bloc de code, et n'écris nulle part ailleurs la suite de caractères %%MAESTRO%%.
 
 Le verdict :
+- "projet" — la personne veut COMMENCER un projet : en créer un nouveau ("je veux
+  un site vitrine pour mon kombucha"), ou faire d'un dossier qu'elle a déjà un
+  projet de Maestro ("j'ai déjà un dossier E:/sites/racines"). C'est le verdict
+  quand la conversation ne travaille encore sur aucun projet et qu'on te dit ce
+  qu'on veut construire, ou quand on te demande explicitement un nouveau projet.
+  Tu proposes alors de le déclarer, dès que tu en sais assez pour choisir son nom
+  et son dossier ; tant qu'il te manque ce qui les décide, c'est un "echange" où
+  tu poses LA question qui manque, une seule, celle que CE projet appelle — jamais
+  une liste de choix posée d'avance. Une correction de la proposition que tu
+  viens de faire ("appelle-le racines", "mets-le plutôt dans D:/sites", "pas de
+  Git") est un nouveau "projet", corrigé — jamais un accord.
 - "proposition" — le dernier message de l'utilisateur est une demande de travail,
   sous n'importe quelle forme : impératif, question, souhait, subordonnée
   ("génère-moi une application d'agenda", "j'aimerai que tu ajoutes la
@@ -676,8 +699,9 @@ Le verdict :
   Sois large : un run proposé de trop coûte un "non", une demande légitime non
   reconnue coûte à l'utilisateur de se reformuler sans savoir pourquoi.
 - "accord" — le dernier message approuve une proposition que TU viens de faire
-  dans ce fil ("oui", "vas-y", "ok lance"). Sans proposition juste avant, ce
-  n'est jamais un accord — et dans le doute non plus.
+  dans ce fil — un run ou un projet ("oui", "vas-y", "ok lance", "crée-le").
+  Sans proposition juste avant, ce n'est jamais un accord — et dans le doute non
+  plus.
 - "echange" — tout le reste : question sur l'outil ou sur le travail, demande
   d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
   pas.
@@ -700,17 +724,45 @@ L'objectif :
 - sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
   autonome, qui reformule la demande sans rien inventer ;
 - sur "accord", recopie MOT POUR MOT l'objectif de la proposition que
-  l'utilisateur vient d'approuver ;
-- vide sur "echange".
+  l'utilisateur vient d'approuver — vide quand c'est un projet qu'il approuve ;
+- vide sur "echange" et sur "projet".
+
+Sur "projet", ajoute à l'objet de la dernière ligne une clé "projet" :
+
+"projet": {"nom": "...", "dossier": "...", "origine": "nouveau|existant",
+           "versionner": true,
+           "raisons": {"nom": "...", "dossier": "...", "versionnement": "..."}}
+
+- "nom" : court et parlant, avec les mots de la personne ;
+- "origine" : "existant" quand la personne a nommé un dossier qu'elle a déjà,
+  "nouveau" sinon ;
+- "dossier" : un chemin ABSOLU. Pour un dossier existant, celui que la personne a
+  donné, tel quel. Pour un projet neuf, un sous-dossier encore libre du
+  répertoire des projets que les faits te donnent, nommé d'après le projet — ou
+  celui que la personne a demandé ;
+- "versionner" : true pour proposer la mise sous Git d'un dossier qui ne l'est
+  pas déjà, quand Git est disponible sur le poste (chaque tâche travaille sur sa
+  branche, les diffs se lisent, on revient en arrière, et plusieurs tâches
+  avancent en parallèle) ; false si la personne n'en veut pas. C'est une
+  proposition, jamais une obligation ;
+- "raisons" : pour chacun des trois, une phrase courte qui dit ce qui, dans CE
+  projet, le justifie.
+
+Le code vérifie ta proposition avant de la montrer : un nom ou un dossier déjà
+pris est remplacé par une variante, et la carte le dit. Rien n'est créé tant que
+la personne n'a pas accepté.
 
 La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "proposition", il énonce l'objectif et demande explicitement l'accord. Sur
 "accord", il confirme que le run part — et c'est TOUT ce qui sera dit : rien
 n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les tâches
 apparaîtront ». L'identifiant du run et ce qu'il a ouvert s'affichent d'eux-mêmes
-sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur "echange",
-il répond — en s'appuyant sur l'état de l'orchestration quand la question porte
-dessus.
+sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur un "accord"
+qui approuve un projet, il dit que tu le déclares, rien de plus. Sur "projet", il
+dit en une ou deux phrases ce que tu as compris du projet, puis que ta
+proposition est juste en dessous, à accepter ou à corriger en quelques mots : ne
+la recopie pas champ par champ, la carte les montre. Sur "echange", il répond —
+en s'appuyant sur l'état de l'orchestration quand la question porte dessus.
 
 Avant la conversation, tu reçois DES FAITS : l'état de l'orchestration, puis les
 runs de ce fil et de ce projet — statut, cause d'arrêt, issue, et chaque tâche
@@ -720,6 +772,12 @@ un écran chercher ce que tu as déjà sous les yeux. À « pourquoi le run a
 échoué ? », nomme le run, son statut et la cause telle qu'elle est écrite là — le
 détail d'une tâche la porte souvent mieux que l'issue du run, qui n'est parfois
 qu'un décompte — puis dis le geste qui y répond.
+
+Tu reçois aussi LES PROJETS DE CE POSTE : le répertoire où naît un projet neuf,
+Git s'il est là, les projets déjà déclarés et le projet de cette fenêtre. C'est
+avec eux que tu proposes un projet — un dossier encore libre, un nom qu'aucun
+projet ne porte — et qu'un projet déjà déclaré se reconnaît au lieu de se
+proposer une seconde fois.
 
 Cette lecture est BORNÉE : seulement les runs les plus récents, un nombre limité
 de tâches, des détails tronqués, et elle le signale quand elle coupe. Ce qui n'y
@@ -895,6 +953,23 @@ en clair, bref — une à trois phrases —, sans JSON, sans balise, sans titre.
 #: vide, donc ce qui s'écrit est la **cause** du silence. Les faits, eux, restent
 #: où ils sont : sur la carte (le run ouvert, l'équipe créée, la demande reposée).
 _PHRASE_SANS_REDACTION = "Je ne peux pas rédiger mon message pour l'instant : {cause}."
+
+#: Les **empêchements** de la naissance d'un projet (#1294) — les seules phrases que
+#: ce chemin laisse au code, pour la raison de `_PHRASE_SANS_REDACTION` : rien ne
+#: s'est fait, et le modèle ne peut pas le savoir. Tout ce qui s'est fait, lui, est
+#: dit par le modèle sur les faits (`_faits_d_un_projet_declare`).
+_PHRASE_SANS_NAISSANCE = (
+    "Aucune déclaration de projet n'est branchée sur ce fil : je peux en parler, pas "
+    "encore le créer."
+)
+_PHRASE_PROPOSITION_REFUSEE = (
+    "Je ne peux pas vous proposer ce projet tel quel : {cause}. Dites-moi quel "
+    "dossier prendre à la place."
+)
+_PHRASE_DECLARATION_EMPECHEE = (
+    "Je n'ai créé aucun projet : {cause}. La proposition est reposée ci-dessous : "
+    "corrigez-la en quelques mots, ou acceptez-la à nouveau."
+)
 
 
 def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
@@ -1211,6 +1286,67 @@ def _faits_d_une_equipe_creee(
         f"{creee} Sa demande d'origine lui est reproposée juste en dessous, sur : "
         f"« {demande.objectif} » ; il peut la lancer, l'amender ou la borner d'un "
         "geste. Aucun run n'est encore ouvert."
+    )
+
+
+def _faits_d_un_projet_refuse(demande: DemandeProjet) -> str:
+    """Le projet proposé a été refusé d'un geste — rien n'est créé (#1294)."""
+    return (
+        f"L'utilisateur a refusé, d'un geste, le projet que tu lui proposais : "
+        f"{demande.en_phrase()}. Rien n'a été créé, ni dossier ni déclaration. La "
+        "conversation continue : il peut dire ce qui ne lui convenait pas, et tu lui "
+        "proposeras autre chose."
+    )
+
+
+def _faits_d_un_projet_declare(
+    cree: ProjetCree, *, compris: str, mis_sous_git: bool = False
+) -> str:
+    """Le projet accepté est déclaré — et, importé, il a été lu (#1294, #1158).
+
+    La suite est dite telle qu'elle est **aujourd'hui** : le projet n'a ni
+    outillage ni équipe, et c'est à la première demande de travail que l'équipe se
+    propose (#1146). Promettre une étape qui n'existe pas encore serait écrire sur
+    le réel ce que le produit ne fait pas.
+
+    `mis_sous_git` dit que **cette** déclaration a versionné le dossier. Pour un
+    dossier importé, c'est la seule écriture, et elle se dit : la vraie stack a
+    montré un fil qui affirmait « rien n'y a été écrit » juste après y avoir créé
+    `.git` et un premier commit.
+    """
+    if cree.origine != ORIGINE_EXISTANT:
+        quoi = "Son dossier a été créé, vide."
+    elif mis_sous_git:
+        quoi = (
+            "Son dossier existant est importé tel quel, à sa mise sous Git près : un "
+            "dossier .git et un premier commit de ce qui s'y trouvait. Rien d'autre n'y "
+            "a été écrit."
+        )
+    else:
+        quoi = "Son dossier existant est importé tel quel : rien n'y a été écrit."
+    if cree.versionnement_refuse:
+        git = f"La mise sous Git proposée a échoué : {cree.versionnement_refuse}."
+    elif cree.versionne:
+        git = "Il est versionné sous Git."
+    else:
+        git = "Il n'est pas versionné."
+    lu = (
+        f"Tu viens de lire ce dossier ; voici ce que la lecture en a compris :\n{compris}"
+        if compris
+        else ""
+    )
+    return "\n".join(
+        morceau
+        for morceau in (
+            f"L'utilisateur a accepté, d'un geste ou d'un mot, le projet que tu lui "
+            f"proposais : « {cree.nom} » est déclaré, dans {cree.racine}. {quoi} {git} "
+            "C'est désormais le projet ouvert, et cette conversation continue avec lui ; "
+            "sa fiche s'affiche juste sous ton message.",
+            lu,
+            "Il n'a encore ni outillage ni équipe : c'est en disant ce qu'il veut faire "
+            "en premier que l'équipe lui sera proposée.",
+        )
+        if morceau
     )
 
 
@@ -1754,6 +1890,11 @@ class _Verdict:
     nom: str
     reponse: str
     objectif: str = ""
+    #: La proposition de projet **brute**, telle que le modèle l'a écrite (#1294) —
+    #: `None` hors du verdict `projet`. Brute à dessein : c'est
+    #: `ServiceNaissance.verifier` qui en fait une `DemandeProjet`, confrontée au
+    #: disque, et le lecteur du contrat n'a pas à savoir ce qu'est un projet.
+    projet: Mapping[str, Any] | None = None
 
 
 def _objet_json(texte: str) -> Any:
@@ -1794,6 +1935,7 @@ def _verdict_depuis(texte: str) -> _Verdict:
     if not isinstance(charge, Mapping):
         return _Verdict(nom=VERDICT_ECHANGE, reponse=texte.strip())
     nom = str(charge.get("verdict") or "").strip().lower()
+    projet = charge.get("projet")
     return _Verdict(
         nom=nom if nom in VERDICTS else VERDICT_ECHANGE,
         # Le texte brut en repli : un objet bien formé mais sans phrase à
@@ -1801,6 +1943,7 @@ def _verdict_depuis(texte: str) -> _Verdict:
         # vide (502). Mieux vaut montrer ce que le modèle a écrit.
         reponse=str(charge.get("reponse") or "").strip() or texte.strip(),
         objectif=str(charge.get("objectif") or "").strip(),
+        projet=projet if isinstance(projet, Mapping) else None,
     )
 
 
@@ -1842,6 +1985,21 @@ def _signature(demande: Demande) -> tuple[str, tuple[tuple[str, str], ...]]:
     return (demande.outil, tuple(sorted(demande.arguments.items())))
 
 
+def _projet_approuve(fil: Sequence[MessageChat]) -> DemandeProjet | None:
+    """Le projet qu'un « oui » **tapé** approuve — `None` s'il n'en approuve aucun (#1294).
+
+    Lu **structurellement** : le dernier message est de la personne, et celui
+    d'avant portait une proposition de projet que rien d'autre n'a suivie. C'est
+    ce qui fait déclarer ce que la carte montrait, et jamais ce qu'un modèle
+    aurait recopié dans son verdict ; c'est aussi ce qui tient la règle « sans
+    proposition juste avant, ce n'est jamais un accord » côté code.
+    """
+    if len(fil) < 2 or fil[-1].auteur != UTILISATEUR:
+        return None
+    attente = projet_en_attente(fil[:-1])
+    return attente.projet_propose if attente is not None else None
+
+
 def _avec_etapes(reponse: ReponseChat, etapes: tuple[EtapeFil, ...]) -> ReponseChat:
     """La même réponse, portant les étapes du tour — sans toucher au reste.
 
@@ -1869,6 +2027,10 @@ class _Contexte:
     lui-même qu'il faut d'abord une équipe, au lieu de voir sa réponse remplacée
     par une phrase du canal. Il n'est qu'un texte de prompt — la décision de
     proposer l'équipe se prend sur `_sans_equipe`, jamais sur cette chaîne.
+
+    `projets` (#1294) est le sixième : les projets du poste (répertoire des projets,
+    Git, projets déclarés, projet de la fenêtre), ce que le modèle doit savoir
+    pour proposer un projet sans inventer ni reprendre un nom ou un dossier.
     """
 
     etat: str = ""
@@ -1876,6 +2038,7 @@ class _Contexte:
     attentes: str = ""
     faits: str = ""
     recrutement: str = ""
+    projets: str = ""
 
 
 class _LectureDuFlux:
@@ -1977,6 +2140,7 @@ class _LectureDuFlux:
             # contrat, et c'est aussi ce qui a déjà été publié.
             reponse=avant.strip(),
             objectif=lu.objectif,
+            projet=lu.projet,
         )
 
 
@@ -2031,6 +2195,9 @@ def _prompt(
         bloc
         for bloc in (
             f"État de l'orchestration : {contexte.etat}" if contexte.etat else "",
+            # Les projets du poste (#1294) en tête des faits sus : c'est le cadre
+            # des autres — l'état, l'équipe et les runs sont ceux d'un projet.
+            contexte.projets,
             contexte.equipe,
             contexte.recrutement,
             contexte.attentes,
@@ -2078,6 +2245,11 @@ class RepondeurOrchestration(RepondeurChat):
     `consultation`, aucun tour de lecture n'a lieu et le canal répond sur son
     seul contexte — c'est-à-dire exactement ce qu'il faisait avant ce lot ; sans
     `roles` ni `attentes`, les blocs correspondants disparaissent du prompt.
+
+    `naissance` (#1294) est ce qui fait **naître** un projet dans la conversation :
+    les faits du poste que le modèle reçoit, la vérification de ce qu'il propose,
+    puis la déclaration sur accord. Sans elle, le verdict `projet` ne montre aucune
+    carte et le fil dit qu'il ne peut pas déclarer de projet.
     """
 
     def __init__(
@@ -2094,7 +2266,9 @@ class RepondeurOrchestration(RepondeurChat):
         consultation: Consultation | None = None,
         roles: EquipeDuFil | None = None,
         attentes: AttentesEnCours | None = None,
+        naissance: ServiceNaissance | None = None,
     ) -> None:
+        self._naissance = naissance
         self._lanceur = lanceur
         self._apercu = apercu
         self._faits = faits
@@ -2182,6 +2356,19 @@ class RepondeurOrchestration(RepondeurChat):
             # Le flux l'a déjà écrite quand il a servi ; sinon, elle part d'un
             # bloc — un modèle qui a répondu en JSON.
             await redaction.ecrire(verdict.reponse)
+        if verdict.nom == VERDICT_PROJET:
+            # La personne veut commencer un projet (#1294) : la proposition du
+            # modèle passe par la vérification avant de devenir une carte.
+            return _avec_etapes(await self._proposer_projet(redaction, verdict), etapes)
+        approuve = _projet_approuve(fil) if verdict.nom == VERDICT_ACCORD else None
+        if approuve is not None:
+            # Un « oui » tapé sur une carte de projet vaut le clic : il déclare
+            # **ce que la carte montrait** — relu du fil, jamais d'un objectif que
+            # le modèle aurait recopié. Avant tout le reste, parce qu'un projet qui
+            # naît n'a ni équipe à recruter ni run à ouvrir.
+            return _avec_etapes(
+                await self._faire_naitre(agent, fil, redaction, approuve), etapes
+            )
         if (
             verdict.nom in (VERDICT_PROPOSITION, VERDICT_ACCORD)
             and verdict.objectif
@@ -2384,6 +2571,115 @@ class RepondeurOrchestration(RepondeurChat):
             equipe=equipe,
         )
 
+    async def declarer_projet(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: DemandeProjet,
+        approuve: bool,
+    ) -> ReponseChat:
+        """Déclare — ou non — le projet que la carte proposait, puis en parle (#1294).
+
+        Aucun juge : la décision est un clic. Deux issues, et une troisième qui
+        n'en est pas une :
+
+        - **refusé** — rien n'est créé, et le modèle le dit : la conversation
+          continue, la personne dira ce qui ne lui convenait pas ;
+        - **accepté** — le projet est déclaré tel que la carte le montrait, mis
+          sous Git si c'était proposé, **lu** s'il est importé (#1158) ; le fait
+          voyage sur le message (`projet_cree`), et le modèle parle depuis lui —
+          ce que la lecture a compris compris ;
+        - **empêché** — la déclaration refuse (le dossier a disparu, il vient
+          d'être déclaré ailleurs…) : rien n'est créé, la cause est dite par ce
+          code, seul à le savoir, et la proposition est **reposée** pour qu'on la
+          corrige ou la réaccepte sans rien retaper.
+        """
+        if not approuve:
+            return ReponseChat(
+                contenu=await self.rediger(agent, fil, faits=_faits_d_un_projet_refuse(demande))
+            )
+        if self._naissance is None:
+            return ReponseChat(contenu=_PHRASE_SANS_NAISSANCE)
+        try:
+            cree, compris = await self._declarer(demande)
+        except Exception as echec:  # noqa: BLE001 — un refus se raconte, cf. docstring
+            return ReponseChat(
+                contenu=_PHRASE_DECLARATION_EMPECHEE.format(cause=echec),
+                projet_propose=demande,
+            )
+        faits = _faits_d_un_projet_declare(
+            cree, compris=compris, mis_sous_git=demande.versionner and cree.versionne
+        )
+        return ReponseChat(
+            contenu=await self.rediger(agent, fil, faits=faits), projet_cree=cree
+        )
+
+    async def _proposer_projet(self, redaction: Redaction, verdict: _Verdict) -> ReponseChat:
+        """La proposition du modèle, vérifiée, en carte — ou l'empêchement, dit (#1294).
+
+        La vérification touche le disque (le dossier existe-t-il, est-il vide ?) :
+        elle se joue hors de la boucle d'événements, comme les lectures du fil.
+        Ce qu'elle refuse ne devient pas une carte — aucun accord ne pourrait
+        l'honorer —, et la cause s'écrit derrière les mots du modèle, qui
+        n'avait aucun moyen de la connaître.
+        """
+        if self._naissance is None:
+            await redaction.ecrire(f" ⚠ {_PHRASE_SANS_NAISSANCE}")
+            return ReponseChat(contenu=redaction.texte)
+        try:
+            demande = await asyncio.to_thread(self._naissance.verifier, verdict.projet or {})
+        except Exception as refus:  # noqa: BLE001 — NaissanceRefusee et le disque qui résiste
+            cause = refus if isinstance(refus, NaissanceRefusee) else cause_lisible(refus)
+            await redaction.ecrire(f" {_PHRASE_PROPOSITION_REFUSEE.format(cause=cause)}")
+            return ReponseChat(contenu=redaction.texte)
+        return ReponseChat(contenu=redaction.texte, projet_propose=demande)
+
+    async def _faire_naitre(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        redaction: Redaction,
+        demande: DemandeProjet,
+    ) -> ReponseChat:
+        """Le « oui » **tapé** sur une carte de projet : la déclaration, derrière les mots du juge.
+
+        Le juge a déjà écrit, en direct, qu'il déclare le projet. Ce qui s'ajoute
+        derrière est ce que lui ne pouvait pas savoir : l'empêchement si la
+        déclaration refuse, ou — pour un dossier importé — ce que sa lecture en a
+        compris, rédigé par le modèle sur les faits. Un projet neuf n'a rien à
+        ajouter : sa fiche s'affiche sous le message.
+        """
+        if self._naissance is None:
+            await redaction.ecrire(f" {_PHRASE_SANS_NAISSANCE}")
+            return ReponseChat(contenu=redaction.texte)
+        try:
+            cree, compris = await self._declarer(demande)
+        except Exception as echec:  # noqa: BLE001 — un refus se raconte, cf. `declarer_projet`
+            await redaction.ecrire(f" {_PHRASE_DECLARATION_EMPECHEE.format(cause=echec)}")
+            return ReponseChat(contenu=redaction.texte, projet_propose=demande)
+        if compris:
+            faits = _faits_d_un_projet_declare(
+                cree, compris=compris, mis_sous_git=demande.versionner and cree.versionne
+            )
+            await redaction.ecrire("\n\n" + await self.rediger(agent, fil, faits=faits))
+        return ReponseChat(contenu=redaction.texte, projet_cree=cree)
+
+    async def _declarer(self, demande: DemandeProjet) -> tuple[ProjetCree, str]:
+        """Déclare le projet accordé, et lit un dossier importé — ce qu'on en a compris.
+
+        La lecture ne se fait qu'**après** la déclaration (docs/43 §2.2) : on ne
+        parcourt pas un dossier que la personne n'a pas encore confié.
+        """
+        assert self._naissance is not None  # appelé derrière la garde de chaque chemin
+        cree = await self._naissance.declarer(demande)
+        compris = (
+            await self._naissance.comprendre(cree.id)
+            if demande.origine == ORIGINE_EXISTANT
+            else ""
+        )
+        return cree, compris
+
     async def ouvrir_questionnaire(
         self, agent: Agent, fil: Sequence[MessageChat]
     ) -> ReponseChat:
@@ -2520,13 +2816,19 @@ class RepondeurOrchestration(RepondeurChat):
         # Les quatre sondes sont liées à des variables locales avant d'être
         # appelées : c'est ce qui permet de les passer à `_sans_echec` sans
         # refaire le test d'existence à l'intérieur de chaque lambda.
-        apercu, roles, attentes, faits = (
+        apercu, roles, attentes, faits, naissance = (
             self._apercu,
             self._roles,
             self._attentes,
             self._faits,
+            self._naissance,
         )
         return _Contexte(
+            # Les projets du poste (#1294) : ce qu'il faut pour proposer un projet
+            # sans inventer son dossier ni reprendre un nom déjà pris.
+            projets=(
+                _sans_echec(lambda: naissance.contexte(projet_id)) if naissance else ""
+            ),
             etat=_sans_echec(lambda: apercu(projet_id)) if apercu else "",
             equipe=_sans_echec(lambda: roles(projet_id)) if roles else "",
             attentes=_sans_echec(lambda: attentes(projet_id)) if attentes else "",

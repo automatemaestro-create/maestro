@@ -70,7 +70,7 @@ import {
   recommandationOutillage,
   reporterOutillage,
 } from "@/lib/api";
-import { useEtatGlobal } from "@/lib/etatGlobal";
+import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import {
   choixAValider,
   comptesParNature,
@@ -111,7 +111,11 @@ export function useConclusionOutillage(
   fil: Chat,
   actif: boolean,
 ): ReactNode | undefined {
-  const { projet } = useEtatGlobal();
+  // Facultatif depuis #1294 : le fil est aussi monté sur la porte d'entrée, où
+  // un projet naît et où il n'y a encore rien à outiller. Sans projet, pas de
+  // conclusion — c'est tout.
+  const projet = useEtatGlobalFacultatif()?.projet ?? null;
+  const projetId = projet?.id ?? null;
   const idCarte = useId();
 
   // Les réponses que le fil porte alors que plus aucune question n'attend. La
@@ -119,15 +123,15 @@ export function useConclusionOutillage(
   // « où en est ce questionnaire ? » finiraient par ne plus désigner le même
   // moment.
   const choix = useMemo(
-    () => (actif ? choixAValider(fil.messages) : null),
-    [actif, fil.messages],
+    () => (actif && projetId !== null ? choixAValider(fil.messages) : null),
+    [actif, projetId, fil.messages],
   );
 
   // Un projet dont l'outillage est **déjà écrit** n'a rien à valider : la carte
   // se retire, et c'est la fiche du projet qui fait foi — pas un souvenir de
   // session. Un projet servi avant que la fiche ne porte l'outillage (#1034) est
   // traité comme non généré : proposer est récupérable, taire ne l'est pas.
-  const dejaOutille = projet.outillage?.genere === true;
+  const dejaOutille = projet?.outillage?.genere === true;
 
   const [matiere, setMatiere] = useState<MatiereOutillage | null>(null);
   const [retenus, setRetenus] = useState<Set<string>>(new Set());
@@ -140,7 +144,7 @@ export function useConclusionOutillage(
   const [refus, setRefus] = useState<string | null>(null);
 
   useEffect(() => {
-    if (choix === null || dejaOutille) return;
+    if (choix === null || dejaOutille || projetId === null) return;
     // `vivant` plutôt qu'un `AbortController`, comme l'étape d'outillage : ce
     // qu'on protège n'est pas la requête (la laisser finir ne coûte rien) mais
     // l'écriture d'état sur un composant démonté — on bascule de fil d'un clic.
@@ -154,10 +158,10 @@ export function useConclusionOutillage(
         // il comprendrait une seconde fois, et pourrait comprendre autre chose.
         // Ce qui part est ce qui a été compris, et la recommandation n'appelle
         // pas le modèle : ce qu'on écrira est ce qu'on montre.
-        const reco = await recommandationOutillage(projet.id, choix);
+        const reco = await recommandationOutillage(projetId, choix);
         if (!vivant) return;
         setMatiere({
-          projetId: projet.id,
+          projetId,
           choix,
           recommandation: reco.recommandation,
         });
@@ -182,7 +186,7 @@ export function useConclusionOutillage(
     return () => {
       vivant = false;
     };
-  }, [choix, dejaOutille, projet.id]);
+  }, [choix, dejaOutille, projetId]);
 
   // La matière **encore valable** : celle servie pour ces réponses-là et ce
   // projet-là. Dérivée au rendu plutôt que remise à `null` dans l'effet : une
@@ -190,11 +194,11 @@ export function useConclusionOutillage(
   // c'est ce que le lint refuse à raison. Ce qui est périmé est simplement
   // ignoré — l'effet le remplacera, ou personne ne montrera rien.
   const courante =
-    matiere !== null && matiere.choix === choix && matiere.projetId === projet.id
+    matiere !== null && matiere.choix === choix && matiere.projetId === projetId
       ? matiere
       : null;
 
-  if (courante === null || dejaOutille) return undefined;
+  if (courante === null || dejaOutille || projet === null) return undefined;
 
   const basculer = (chemin: string) =>
     setRetenus((avant) => {

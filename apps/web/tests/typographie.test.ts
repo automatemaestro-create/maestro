@@ -536,9 +536,12 @@ const RESIDU = new Map<string, number>([
   ["components/parametres/ParametresGeneral.tsx", 4],
   ["components/parametres/ParametresNotifications.tsx", 1],
   ["components/parametres/SectionParametres.tsx", 2],
-  ["components/projets/ChoixProjet.tsx", 10],
+  // Une de moins depuis #1294 : la phrase « aucun projet déclaré » est partie.
+  ["components/projets/ChoixProjet.tsx", 9],
   ["components/projets/ExplorateurDossiers.tsx", 8],
-  ["components/projets/FormulaireProjet.tsx", 9],
+  // Quatre de moins depuis #1294 : le formulaire ne crée plus (origine, dossier
+  // parent prérempli, nom du dossier à créer), il ne fait que modifier.
+  ["components/projets/FormulaireProjet.tsx", 5],
   ["components/projets/ListeProjets.tsx", 5],
   ["components/projets/SelecteurProjet.tsx", 5],
   ["components/runs/ListeRuns.tsx", 1],
@@ -546,7 +549,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 163;
+const TOTAL_ANNONCE = 158;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

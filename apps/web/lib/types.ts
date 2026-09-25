@@ -1301,6 +1301,47 @@ export type EtapeFil = {
   detail: string;
 };
 
+/**
+ * Le projet que l'orchestration propose de déclarer (`chat.DemandeProjet`, #1294),
+ * **déjà vérifié** par l'API : la carte le montre tel quel, et l'accord déclare
+ * exactement ceci.
+ *
+ * `racine` est le dossier, absolu et en POSIX comme toute racine servie.
+ * `deja_versionne` est constaté sur le disque — un dossier importé qui a déjà son
+ * `.git` —, `versionner` est la mise sous Git proposée, jamais imposée. Chaque
+ * choix porte sa raison, écrite par le modèle pour ce projet-là.
+ *
+ * `ajustements` est ce que la vérification a changé à la proposition (un nom
+ * pris, un dossier occupé, Git absent), en phrases : c'est un fait du code, à
+ * montrer tel quel sur la carte.
+ */
+export type DemandeProjet = {
+  nom: string;
+  racine: string;
+  origine: string;
+  versionner: boolean;
+  deja_versionne: boolean;
+  raison_nom: string;
+  raison_dossier: string;
+  raison_versionnement: string;
+  ajustements: string[];
+};
+
+/**
+ * Ce qu'un accord a **déclaré** (`chat.ProjetCree`, #1294) — relu de la fiche que
+ * la déclaration a rendue. C'est lui que la porte lit pour **ouvrir** le projet
+ * qui vient de naître. `versionnement_refuse` porte la cause quand la mise sous
+ * Git proposée a échoué alors que le projet, lui, est déclaré.
+ */
+export type ProjetCree = {
+  id: string;
+  nom: string;
+  racine: string;
+  origine: string;
+  versionne: boolean;
+  versionnement_refuse: string;
+};
+
 export type MessageChat = {
   agent: string;
   auteur: string;
@@ -1325,6 +1366,10 @@ export type MessageChat = {
   recrutement?: DemandeRecrutement | null;
   /** L'équipe qu'un geste a créée, portée par la réponse (#1262) — `null` : aucune. */
   equipe?: EquipeRecrutee | null;
+  /** Le projet que ce message propose de déclarer (#1294) — `null` : aucun. */
+  projet_propose?: DemandeProjet | null;
+  /** Le projet qu'un accord a déclaré, porté par la réponse (#1294) — `null` : aucun. */
+  projet_cree?: ProjetCree | null;
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */

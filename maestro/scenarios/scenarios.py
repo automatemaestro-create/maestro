@@ -1,4 +1,4 @@
-"""Les six scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
+"""Les sept scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
 
 | | Scénario | Ce qui le rend vert |
 |---|---|---|
@@ -9,6 +9,7 @@
 | S5 | « Comment j'essaie le livrable ? » | La fin se raconte, lie un fichier réel, dit quoi taper |
 | | (et depuis #1265) | La réponse s'écrit en direct ; ce qu'il lit se voit dans le fil |
 | S6 | Le plan appelle un métier absent | Le rôle se propose dans le fil ; accepté, il travaille |
+| S7 | Un projet naît dans la conversation | Proposé, corrigé en mots, déclaré sur accord |
 
 ## Trois règles que ces scénarios suivent
 
@@ -1185,6 +1186,151 @@ def _taches_terminees_par(detail: Mapping[str, Any], agents: set[str]) -> list[s
     return faites
 
 
+# --- S7 — un projet naît dans la conversation -------------------------------
+
+#: Ce que la personne dit en arrivant, mot pour mot : c'est la phrase du critère
+#: de #1294, et celle du retour d'expérience du 2026-09-24 (docs/43 §1).
+DEMANDE_S7 = "Je veux un site vitrine pour mon kombucha."
+
+#: La réponse de la personne à une question du fil : elle ne sait rien de plus, et
+#: laisse Maestro choisir. Un scénario ne peut pas deviner ce qu'on lui demandera ;
+#: il peut dire ce que dirait quelqu'un qui n'a pas d'avis.
+REPONSE_S7 = (
+    "Je n'ai pas d'autre précision : choisissez ce qui vous paraît le mieux et "
+    "proposez-moi le projet."
+)
+
+#: Le nom que la correction demande — l'exemple du critère de #1294.
+NOM_S7 = "racines"
+
+#: Combien de tours le fil a pour arriver à une proposition — la première, puis la
+#: corrigée. « Au plus les questions qui manquent » (#1294) : trois tours, c'est
+#: déjà deux questions pour un site vitrine ; au-delà, le fil ne propose pas, il
+#: interroge.
+TOURS_S7 = 3
+
+
+def _proposition_du_fil(
+    ctx: Contexte, conversation: str, reponse: dict[str, Any]
+) -> dict[str, Any] | None:
+    """La carte de projet que le fil pose, en répondant à ses questions — `None` sinon."""
+    for tour in range(TOURS_S7):
+        proposee = reponse.get("projet_propose")
+        if isinstance(proposee, Mapping) and proposee.get("racine"):
+            return dict(proposee)
+        if tour + 1 >= TOURS_S7:
+            break
+        reponse = _demander(ctx, conversation, "", REPONSE_S7)
+    return None
+
+
+def _meme_dossier(a: str, b: Path) -> bool:
+    """Deux écritures du même dossier se reconnaissent — l'API rend du POSIX canonique."""
+    try:
+        return Path(a).resolve() == b.resolve()
+    except OSError:  # pragma: no cover - chemin illisible pour l'OS
+        return False
+
+
+def s7_un_projet_nait_dans_la_conversation(ctx: Contexte) -> Issue:
+    """Un projet naît dans la conversation : compris, proposé, corrigé, déclaré sur accord (#1294).
+
+    Le parcours de la personne, par la seule porte qu'elle a — le fil, **sans
+    projet** : elle dit ce qu'elle veut construire ; le fil pose au plus les
+    questions qui manquent, puis propose un nom, un dossier et le versionnement ;
+    elle **corrige en langage naturel** (le nom, et le dossier, rangé dans
+    l'atelier du passage) ; elle accepte d'un geste.
+
+    L'oracle regarde le monde, pas la prose :
+
+    - **rien n'est déclaré avant l'accord** — ni à la proposition, ni à la
+      correction : la liste des projets de l'API ne connaît pas le dossier ;
+    - la correction est **prise** : la proposition suivante porte le nom demandé
+      et le dossier demandé, vérifiés par l'API ;
+    - après l'accord, le projet **existe** : servi par `GET /api/projets` sur ce
+      dossier, dossier présent sur le disque, sous Git si la mise sous Git était
+      proposée.
+
+    Rejouable : que le modèle propose au premier tour ou pose une question de plus
+    dépend de lui, et une correction mal comprise une fois ne dit pas encore que
+    le produit ne la prend pas.
+    """
+    racine = ctx.atelier.dossier("s7-kombucha")
+    conversation = ctx.client.ouvrir_conversation()
+
+    premiere = _proposition_du_fil(
+        ctx, conversation, _demander(ctx, conversation, "", DEMANDE_S7)
+    )
+    if premiere is None:
+        return rouge(
+            f"le fil n'a proposé aucun projet en {TOURS_S7} tours pour « {DEMANDE_S7} »",
+            cout_usd=None,
+        )
+    ctx.note(
+        "projet proposé",
+        f"« {premiere.get('nom')} » — {premiere.get('racine')} — "
+        f"versionner : {premiere.get('versionner')}",
+    )
+
+    correction = (
+        f"Appelle-le « {NOM_S7} », et mets-le plutôt dans le dossier "
+        f"{racine.as_posix()}."
+    )
+    corrigee = _proposition_du_fil(
+        ctx, conversation, _demander(ctx, conversation, "", correction)
+    )
+    if corrigee is None:
+        return rouge("la correction n'a amené aucune proposition nouvelle", cout_usd=None)
+    ctx.note(
+        "proposition corrigée",
+        f"« {corrigee.get('nom')} » — {corrigee.get('racine')} — "
+        f"versionner : {corrigee.get('versionner')}",
+    )
+    if any(_meme_dossier(str(f.get("racine") or ""), racine) for f in ctx.client.projets()):
+        return rouge("un projet a été déclaré avant l'accord", cout_usd=None)
+    if not _meme_dossier(str(corrigee.get("racine") or ""), racine):
+        return rouge(
+            f"la correction du dossier n'a pas été prise : proposé "
+            f"{corrigee.get('racine')} au lieu de {racine.as_posix()}",
+            cout_usd=None,
+        )
+    if NOM_S7 not in str(corrigee.get("nom") or "").casefold():
+        return rouge(
+            f"la correction du nom n'a pas été prise : proposé « {corrigee.get('nom')} »",
+            cout_usd=None,
+        )
+
+    accord = ctx.client.declarer_par_le_fil(conversation=conversation)
+    ctx.note("accord donné", _extrait(accord))
+    cree = accord.get("projet_cree")
+    if not isinstance(cree, Mapping) or not cree.get("id"):
+        return rouge(
+            f"l'accord n'a déclaré aucun projet : {_extrait(accord)}", cout_usd=None
+        )
+    ctx.projet_id, ctx.racine = str(cree["id"]), racine
+    fiche = next((f for f in ctx.client.projets() if f.get("id") == cree["id"]), None)
+    if fiche is None:
+        return rouge(f"le projet {cree['id']} n'est pas servi par l'API", cout_usd=None)
+    if not _meme_dossier(str(fiche.get("racine") or ""), racine) or not racine.is_dir():
+        return rouge(
+            f"le projet {cree['id']} est déclaré sur {fiche.get('racine')}, "
+            f"pas sur {racine.as_posix()}",
+            cout_usd=None,
+        )
+    if corrigee.get("versionner") and not (racine / ".git").exists():
+        return rouge(
+            "la mise sous Git était proposée et acceptée, mais le dossier n'est pas "
+            f"versionné (refus : {cree.get('versionnement_refuse') or '—'})",
+            cout_usd=None,
+        )
+    git = "sous Git" if (racine / ".git").exists() else "sans versionnement"
+    return vert(
+        f"« {fiche.get('nom')} » est né dans la conversation : proposé, corrigé en "
+        f"langage naturel, déclaré sur accord seulement ({racine.as_posix()}, {git})",
+        cout_usd=None,
+    )
+
+
 # --- Le catalogue ----------------------------------------------------------
 
 
@@ -1225,6 +1371,12 @@ SCENARIOS: tuple[Scenario, ...] = (
         "S6",
         "Le plan appelle un métier que l'équipe n'a pas",
         s6_completer_l_equipe,
+        True,
+    ),
+    Scenario(
+        "S7",
+        "Un projet naît dans la conversation",
+        s7_un_projet_nait_dans_la_conversation,
         True,
     ),
 )

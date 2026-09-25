@@ -91,3 +91,16 @@ export function useEtatGlobal(): EtatGlobal {
   }
   return etat;
 }
+
+/**
+ * L'état du shell **s'il y en a un** — `null` hors de tout projet (#1294).
+ *
+ * Un seul appelant légitime : la conversation posée **avant** le shell, sur la
+ * porte d'entrée, où un projet naît dans le fil (`NaissanceProjet`). Il n'y a là
+ * ni projet, ni tâches, ni runs — rien à montrer sous une bulle qui ne soit sur
+ * le message lui-même. Partout ailleurs, `useEtatGlobal` reste la règle : son
+ * erreur explicite est ce qui dit qu'un écran a quitté le cadre d'un projet.
+ */
+export function useEtatGlobalFacultatif(): EtatGlobal | null {
+  return useContext(ContexteEtatGlobal);
+}

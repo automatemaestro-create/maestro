@@ -421,6 +421,7 @@ from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
     CadrageIntrouvable,
     ChatStore,
+    DeclarationIntrouvable,
     QuestionIntrouvable,
     RecrutementIntrouvable,
     RepondeurChat,
@@ -481,6 +482,7 @@ from maestro.controltower.journal import (
     ServiceJournal,
 )
 from maestro.controltower.magasin import GardeMagasin, Magasin
+from maestro.controltower.naissance import ServiceNaissance
 from maestro.controltower.orchestration import (
     AGENT_ORCHESTRATION,
     NOM_ORCHESTRATION,
@@ -1273,6 +1275,20 @@ class RecrutementDecisionRequete(EquipeValideeRequete):
     Ni projet ni objectif : les deux sont sur la demande que le fil porte
     (`DemandeRecrutement`), et un corps qui les redirait ouvrirait une seconde
     façon de décider où l'équipe naît.
+    """
+
+    approuve: bool
+    conversation: str | None = None
+
+
+class DeclarationProjetRequete(BaseModel):
+    """Corps du geste qui accepte — ou refuse — le projet que le fil propose (#1294).
+
+    `approuve`, et rien d'autre de fond : nom, dossier et versionnement sont sur la
+    proposition que le fil porte (`DemandeProjet`), et c'est elle qui fait foi. Une
+    correction ne passe pas par ici — elle se dit dans la conversation et appelle
+    une proposition nouvelle, revérifiée (veille de #1294). `conversation` a le
+    sens qu'elle a partout ailleurs sur ce canal.
     """
 
     approuve: bool
@@ -2158,6 +2174,10 @@ def create_app(
                 roles=roles_du_projet,
                 attentes=attentes_de(state),
                 conducteur=ConducteurOutillage(comprehension),
+                # Un projet naît dans la conversation (#1294) : déclaré par le
+                # **même** service que `POST /api/projets`, et un dossier importé
+                # lu par la lecture de l'outillage (#1158) — une fois accordé.
+                naissance=ServiceNaissance(projets, lecteur=outillage.analyser),
             )
         ),
         mailbox=mailbox,
@@ -5923,6 +5943,46 @@ def create_app(
                     detail=f"recruté : {creee.composition()}" if creee is not None else "",
                 )
             )
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
+        }
+
+    @app.post("/api/chat/{agent}/projet", status_code=201)
+    async def declarer_projet_chat(
+        agent: str, requete: DeclarationProjetRequete
+    ) -> dict[str, Any]:
+        """Accepte — ou refuse — le projet que le fil propose, et rend la paire (#1294).
+
+        Le geste qui fait **naître** un projet dans la conversation : nom, dossier
+        et versionnement sont ceux de la proposition que le fil porte, déjà
+        vérifiés, et c'est elle qui est déclarée — par le chemin de
+        `POST /api/projets`, puis de `POST …/versionner` si la mise sous Git était
+        proposée. La réponse porte ce qui a été déclaré (`projet_cree`) : c'est ce
+        que l'écran lit pour ouvrir le projet.
+
+        Même forme et même réponse que `POST …/cadrage`. Une déclaration refusée
+        par le disque se **raconte** dans le fil (rien n'est créé, la proposition
+        est reposée), parce que le geste, lui, a bien eu lieu.
+
+        `409` quand rien n'attend — le double clic ne déclare pas deux projets —,
+        `404` hors catalogue, `422` sur une conversation mal formée, `502` si la
+        suite n'a pas pu être produite.
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.declarer_projet(
+                fiche, approuve=requete.approuve, conversation=fil
+            )
+        except DeclarationIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
             "agent": fiche.nom,
             "role": fiche.role,

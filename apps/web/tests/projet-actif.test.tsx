@@ -20,40 +20,42 @@
  *    pu lire, et on n'oublie pas le choix retenu pour autant ;
  * 4. **la porte défile** (#306) — être rendue *au-dessus* du cadre applicatif
  *    la prive du conteneur défilant du shell, et le `<body>` en `overflow-hidden`
- *    de #248 rognait alors le bas du formulaire de création. jsdom ne calcule
+ *    de #248 rognait alors le bas de ce qu'elle montre. jsdom ne calcule
  *    aucune mise en page : ce qui se teste est la **chaîne de classes** qui rend
- *    le défilement possible, comme pour le Kanban (`kanban.test.tsx`).
- *
- * Les tests Python et la doc de la vague sont différés au lot 6 (#282).
+ *    le défilement possible, comme pour le Kanban (`kanban.test.tsx`) ;
+ * 5. **un projet naît dans la conversation** (#1294, docs/43 §2.2) — « Nouveau
+ *    projet » ouvre le fil de l'orchestration **sans projet**, jamais un
+ *    formulaire ; la proposition se tranche sur une carte ; et le projet que le
+ *    fil fait naître est ouvert, la conversation continuant dans sa colonne.
+ *    `useChat` est le double de `setup.ts` : le fil rendu est celui qu'on pose,
+ *    et ce qu'on lui demande (canal, projet) s'observe.
  */
 
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EcranOuverture } from "@/components/projets/ChoixProjet";
 import { Shell } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
+import { demanderNaissance } from "@/lib/naissance";
+import { lireConversationOuverte } from "@/lib/preferences";
 import { ecrireProjetActifId, lireProjetActifId } from "@/lib/projetActif";
+import type { DemandeProjet, Projet, ProjetCree } from "@/lib/types";
 
 import {
+  canalCourant,
   cheminCourant,
-  dossierFactice,
+  messageFactice,
   navigations,
-  pageExplorateurFactice,
   poserChemin,
+  poserFilAssistance,
+  projetDuFilCourant,
   projetFactice,
 } from "./aides";
 
 const chargerProjets = vi.fn();
-const chargerExplorateur = vi.fn();
 const creerProjet = vi.fn();
-// L'étape d'outillage s'intercale entre la déclaration et l'entrée (#1034) : la
-// porte en dépend désormais, donc ses deux appels sont ici. `analyserOutillage`
-// est ce qu'elle lit, `reporterOutillage` l'issue qui ouvre le projet sans rien
-// écrire dans le dossier.
-const analyserOutillage = vi.fn();
-const reporterOutillage = vi.fn();
 
 // `importOriginal`, et non un objet nu : `ErreurProjet` doit rester **la**
 // classe du module (voir `projets.test.tsx`). Cette déclaration prend le pas sur
@@ -63,10 +65,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...reel,
     chargerProjets: () => chargerProjets(),
-    chargerExplorateur: (chemin: string | null) => chargerExplorateur(chemin),
     creerProjet: (declaration: unknown) => creerProjet(declaration),
-    analyserOutillage: (id: string) => analyserOutillage(id),
-    reporterOutillage: (id: string) => reporterOutillage(id),
   };
 });
 
@@ -83,61 +82,46 @@ const monter = () =>
 /** La porte d'entrée, une fois la première lecture des projets tranchée. */
 const porte = () => screen.findByRole("main", { name: "Choix du projet" });
 
+/** La porte en mode création (#1294) : la question, puis la conversation. */
+const creation = () => screen.findByRole("main", { name: "Nouveau projet" });
+
+/** La proposition qu'une réponse de l'orchestration porte, déjà vérifiée. */
+function demandeProjet(partiel: Partial<DemandeProjet> = {}): DemandeProjet {
+  return {
+    nom: "kombucha-vitrine",
+    racine: "C:/Users/moi/Maestro/kombucha-vitrine",
+    origine: "nouveau",
+    versionner: true,
+    deja_versionne: false,
+    raison_nom: "Ce qu'il est, en deux mots.",
+    raison_dossier: "Un dossier neuf, dans votre répertoire des projets.",
+    raison_versionnement: "Chaque tâche sur sa branche.",
+    ajustements: [],
+    ...partiel,
+  };
+}
+
+/** Le projet qu'un accord a déclaré, tel que la réponse le porte. */
+function projetCree(partiel: Partial<ProjetCree> = {}): ProjetCree {
+  return {
+    id: "prj-neuf",
+    nom: "kombucha-vitrine",
+    racine: "C:/Users/moi/Maestro/kombucha-vitrine",
+    origine: "nouveau",
+    versionne: true,
+    versionnement_refuse: "",
+    ...partiel,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // Sans cela la visite guidée s'ouvrirait par-dessus le shell une fois entré.
   marquerGuideVu();
   chargerProjets.mockResolvedValue([]);
-  chargerExplorateur.mockResolvedValue(
-    pageExplorateurFactice({
-      chemin: "D:/projets",
-      dossiers: [
-        dossierFactice({
-          nom: "depensio",
-          chemin: "D:/projets/depensio",
-          depot_git: true,
-        }),
-      ],
-    }),
-  );
   creerProjet.mockResolvedValue(projetFactice());
-  analyserOutillage.mockResolvedValue({
-    analyse: 1,
-    id: "ana-1",
-    projet_id: "prj-neuf",
-    racine: "D:/projets/depensio",
-    faite_le: "2026-09-20T10:00:00+00:00",
-    resume: "TypeScript ; npm ; tests : npm run test",
-    parcours: {
-      fichiers_vus: 12,
-      dossiers_vus: 3,
-      profondeur_atteinte: 2,
-      tronque: false,
-      troncatures: [],
-      ignores_rencontres: [],
-    },
-    recommandation: {
-      entrees: [
-        {
-          type: "instructions",
-          nom: "AGENTS.md",
-          chemin: "AGENTS.md",
-          etat: "a-generer",
-          raison: "le fichier d'instructions que tous les clients lisent",
-          justification: {
-            nom: "README.md",
-            chemin: "README.md",
-            role: "présentation",
-          },
-          commandes: [],
-        },
-      ],
-      ecartes: [],
-    },
-  });
-  reporterOutillage.mockImplementation((id: string) =>
-    Promise.resolve(projetFactice({ id })),
-  );
+  poserFilAssistance();
+  window.sessionStorage.clear();
 });
 
 describe("l'écran de choix du projet", () => {
@@ -156,62 +140,240 @@ describe("l'écran de choix du projet", () => {
       screen.queryByRole("navigation", { name: "Navigation principale" }),
     ).toBeNull();
   });
+});
 
-  it("propose d'en créer un plutôt que d'afficher un vide", async () => {
+describe("un projet naît dans la conversation (#1294)", () => {
+  it("ouvre la conversation, sans formulaire, quand il n'y a rien à choisir", async () => {
     monter();
-    const ecran = await porte();
+    const ecran = await creation();
 
-    // Le formulaire de #225 est déjà ouvert : un écran qui n'a rien à lister
-    // n'a qu'une chose à proposer, et l'ouvrir d'office épargne un clic sans
-    // alternative.
+    // Un poste sans projet n'a qu'une chose à proposer : la question, et le fil
+    // de l'orchestration dessous — plus aucun formulaire à étapes.
     expect(
-      await screen.findByRole("button", { name: "Déclarer le projet" }),
+      within(ecran).getByRole("heading", {
+        level: 1,
+        name: "Que voulez-vous construire ?",
+      }),
     ).toBeInTheDocument();
-    expect(ecran).toHaveTextContent(/Aucun projet déclaré/);
+    expect(within(ecran).getByRole("region", { name: "Nouveau projet" })).toBeInTheDocument();
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Déclarer le projet" })).toBeNull();
+    // Le fil demandé est celui de l'orchestration, **sans projet** : c'est celui
+    // qu'il fera naître qui lui en donnera un.
+    expect(canalCourant()).toBe("orchestrateur");
+    expect(projetDuFilCourant()).toBeNull();
+    // Rien à choisir : aucun retour vers une liste vide.
+    expect(
+      screen.queryByRole("button", { name: "Choisir un projet existant" }),
+    ).toBeNull();
   });
 
-  it("entre dans le projet déclaré sur place, une fois son outillage tranché", async () => {
+  it("s'ouvre sur « Nouveau projet », et se referme sur la liste", async () => {
     const utilisateur = userEvent.setup();
-    creerProjet.mockResolvedValue(projetFactice({ id: "prj-neuf", nom: "Neuf" }));
+    chargerProjets.mockResolvedValue([projetFactice()]);
     monter();
     await porte();
 
+    await utilisateur.click(screen.getByRole("button", { name: "Nouveau projet" }));
+    await creation();
+
     await utilisateur.click(
-      await screen.findByRole("button", { name: /Choisir un dossier/ }),
+      screen.getByRole("button", { name: "Choisir un projet existant" }),
     );
-    const explorateur = await screen.findByRole("region", {
-      name: "Explorateur de dossiers",
+    expect(await porte()).toBeInTheDocument();
+  });
+
+  it("s'ouvre d'office quand « Nouveau projet » a été demandé depuis un projet", async () => {
+    // L'écran Projets quitte le projet ouvert pour venir créer ici : la porte
+    // l'apprend par la mémoire de session, et une seule fois.
+    chargerProjets.mockResolvedValue([projetFactice()]);
+    demanderNaissance();
+    monter();
+
+    expect(await creation()).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("maestro.porte.naissance")).toBeNull();
+  });
+
+  it("pose la proposition sur une carte, et l'accord part d'un geste", async () => {
+    const utilisateur = userEvent.setup();
+    const declarerProjet = vi.fn().mockResolvedValue(undefined);
+    poserFilAssistance({
+      messages: [
+        messageFactice({ agent: "orchestrateur", contenu: "je veux un site vitrine pour mon kombucha" }),
+        messageFactice({
+          agent: "orchestrateur",
+          auteur: "orchestrateur",
+          contenu: "Un site vitrine : je vous le propose ci-dessous.",
+          projet_propose: demandeProjet({
+            ajustements: ["Le nom « kombucha » est déjà celui d'un projet : proposé « kombucha-vitrine »."],
+          }),
+        }),
+      ],
+      declarerProjet,
     });
-    await utilisateur.click(
-      await within(explorateur).findByRole("button", {
-        name: "Choisir depensio",
-      }),
-    );
-    await utilisateur.click(
-      screen.getByRole("button", { name: "Déclarer le projet" }),
-    );
+    monter();
+    await creation();
 
-    // Déclarer ne fait plus entrer (#1034) : l'outillage est l'étape suivante,
-    // proposée d'office, et c'est elle qui ouvre le projet. On reste donc devant
-    // la porte, et la page demandée n'est toujours pas là.
-    const etape = await screen.findByRole("region", {
-      name: "Outillage de Neuf",
+    const carte = await screen.findByRole("region", { name: "Proposition de projet" });
+    expect(within(carte).getByRole("heading", { name: "Créer ce projet ?" })).toBeInTheDocument();
+    expect(carte).toHaveTextContent("kombucha-vitrine");
+    expect(carte).toHaveTextContent("C:/Users/moi/Maestro/kombucha-vitrine");
+    expect(carte).toHaveTextContent("Git, en local");
+    // Chaque choix avec sa raison, et ce que la vérification a changé, dit.
+    expect(carte).toHaveTextContent("Chaque tâche sur sa branche.");
+    expect(
+      within(carte).getByRole("list", { name: "Ce que la vérification a changé" }),
+    ).toHaveTextContent("déjà celui d'un projet");
+    // Aucun champ : une correction se dit dans la conversation.
+    expect(within(carte).queryByRole("textbox")).toBeNull();
+
+    await utilisateur.click(within(carte).getByRole("button", { name: "Créer le projet" }));
+    expect(declarerProjet).toHaveBeenCalledWith(true);
+    expect(creerProjet).not.toHaveBeenCalled();
+  });
+
+  it("dit un import pour un dossier existant, et refuse d'un geste", async () => {
+    const utilisateur = userEvent.setup();
+    const declarerProjet = vi.fn().mockResolvedValue(undefined);
+    poserFilAssistance({
+      messages: [
+        messageFactice({
+          agent: "orchestrateur",
+          auteur: "orchestrateur",
+          contenu: "Je l'importe ?",
+          projet_propose: demandeProjet({
+            nom: "racines",
+            racine: "E:/sites/racines",
+            origine: "existant",
+            versionner: false,
+            deja_versionne: true,
+          }),
+        }),
+      ],
+      declarerProjet,
     });
-    expect(analyserOutillage).toHaveBeenCalledWith("prj-neuf");
-    expect(screen.queryByText(CONTENU)).toBeNull();
+    monter();
 
-    // « Plus tard » est une issue à part entière : on entre sans avoir rien
-    // écrit dans le dossier.
-    await utilisateur.click(
-      within(etape).getByRole("button", { name: "Outiller plus tard" }),
-    );
+    const carte = await screen.findByRole("region", { name: "Proposition de projet" });
+    expect(within(carte).getByRole("heading", { name: "Importer ce projet ?" })).toBeInTheDocument();
+    expect(carte).toHaveTextContent("Déjà sous Git");
+    expect(carte).toHaveTextContent("rien n'y sera écrit à l'import");
 
-    // Le projet **relu** par le backend devient l'actif sans relecture de la
-    // liste, dont l'échec laisserait devant la porte qu'on vient d'ouvrir.
+    await utilisateur.click(within(carte).getByRole("button", { name: "Pas maintenant" }));
+    expect(declarerProjet).toHaveBeenCalledWith(false);
+  });
+
+  it("ne promet pas un import intouché quand la mise sous Git y écrira", async () => {
+    // Relu sur la vraie stack : « rien n'y sera écrit » au-dessus d'une mise sous
+    // Git, qui crée `.git` et un premier commit dans le dossier de la personne.
+    poserFilAssistance({
+      messages: [
+        messageFactice({
+          agent: "orchestrateur",
+          auteur: "orchestrateur",
+          contenu: "Je l'importe ?",
+          projet_propose: demandeProjet({
+            nom: "atelier-savons",
+            racine: "E:/sites/atelier-savons",
+            origine: "existant",
+            versionner: true,
+            deja_versionne: false,
+          }),
+        }),
+      ],
+    });
+    monter();
+
+    const carte = await screen.findByRole("region", { name: "Proposition de projet" });
+    expect(carte).toHaveTextContent("l'import n'y écrit que sa mise sous Git");
+    expect(carte).not.toHaveTextContent("rien n'y sera écrit");
+  });
+
+  it("entre dans le projet né dans la conversation, qui continue dans sa colonne", async () => {
+    const neuf = projetFactice({ id: "prj-neuf", nom: "kombucha-vitrine" });
+    // La porte lit la liste une première fois (vide), puis la relit pour
+    // ouvrir la fiche du projet né : racine canonicalisée, VCS constaté.
+    chargerProjets.mockResolvedValueOnce([]).mockResolvedValue([neuf]);
+    poserFilAssistance({
+      messages: [
+        messageFactice({
+          agent: "orchestrateur",
+          auteur: "orchestrateur",
+          contenu: "Le projet est déclaré.",
+          projet_cree: projetCree(),
+        }),
+      ],
+    });
+    monter();
+
     expect(await screen.findByText(CONTENU)).toBeInTheDocument();
     expect(lireProjetActifId()).toBe("prj-neuf");
-    expect(reporterOutillage).toHaveBeenCalledWith("prj-neuf");
-    expect(chargerProjets).toHaveBeenCalledTimes(1);
+    // Le relais : la conversation où il est né est ouverte dans le projet.
+    expect(lireConversationOuverte()).toBe(true);
+    // Rien n'a été déclaré par l'écran : c'est l'accord, dans le fil, qui l'a fait.
+    expect(creerProjet).not.toHaveBeenCalled();
+  });
+
+  it("entre dans le projet né même si le fil se relit pendant qu'on l'ouvre", async () => {
+    // Constaté sur la vraie stack : après le geste, `useChat` relit le fil, et
+    // chaque relecture rend des messages **neufs** portant le même fait. La porte
+    // annulait alors la lecture de la liste en vol et ne la relançait jamais —
+    // le projet était déclaré, et on restait devant la porte.
+    const neuf = projetFactice({ id: "prj-neuf", nom: "kombucha-vitrine" });
+    let livrer: (projets: Projet[]) => void = () => {};
+    chargerProjets
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(
+        () =>
+          new Promise<Projet[]>((resoudre) => {
+            livrer = resoudre;
+          }),
+      )
+      .mockResolvedValue([neuf]);
+    const reponse = () =>
+      messageFactice({
+        agent: "orchestrateur",
+        auteur: "orchestrateur",
+        contenu: "Le projet est déclaré.",
+        projet_cree: projetCree(),
+      });
+    poserFilAssistance({ messages: [reponse()] });
+    const { rerender } = monter();
+    await creation();
+    await waitFor(() => expect(chargerProjets).toHaveBeenCalledTimes(2));
+
+    // Le fil se relit : les mêmes faits, dans des objets neufs.
+    poserFilAssistance({ messages: [reponse()] });
+    rerender(
+      <Shell>
+        <p>{CONTENU}</p>
+      </Shell>,
+    );
+    await act(async () => livrer([neuf]));
+
+    expect(await screen.findByText(CONTENU)).toBeInTheDocument();
+    expect(lireProjetActifId()).toBe("prj-neuf");
+  });
+
+  it("montre, sous la réponse, le projet que l'accord a déclaré", async () => {
+    poserFilAssistance({
+      messages: [
+        messageFactice({
+          agent: "orchestrateur",
+          auteur: "orchestrateur",
+          contenu: "Le projet est déclaré.",
+          projet_cree: projetCree({ id: "prj-introuvable" }),
+        }),
+      ],
+    });
+    monter();
+
+    // Le fait est sous la bulle, qu'on puisse ou non ouvrir le projet ensuite.
+    expect(await screen.findByText("Projet créé :")).toBeInTheDocument();
+    // Et une fiche introuvable se dit, au lieu d'une porte figée.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "je ne le retrouve pas dans la liste",
+    );
   });
 });
 
@@ -298,24 +460,24 @@ describe("le défilement de la porte (#306)", () => {
     return ecran.parentElement as HTMLElement;
   };
 
-  it("donne un ascenseur au choix du projet, formulaire de création compris", async () => {
+  it("donne un ascenseur à la création, où la conversation déborde", async () => {
+    // Depuis #1294 ce qui déborde n'est plus un formulaire mais le fil de la
+    // création, ouvert d'office sur un poste sans projet : il s'allonge à chaque
+    // tour, et son composeur doit rester atteignable au bas du défilement.
     monter();
-    const ecran = await porte();
-    // Le formulaire est bien là, ouvert d'office : c'est lui qui déborde.
-    expect(
-      await screen.findByRole("button", { name: "Déclarer le projet" }),
-    ).toBeInTheDocument();
+    const ecran = await creation();
 
     const defilant = conteneur(ecran);
     expect(defilant.className).toContain("overflow-y-auto");
     // `min-h-0` + `flex-1` : sans eux le conteneur se dimensionne sur le
-    // formulaire au lieu de rétrécir sous lui, et l'`overflow-y-auto` n'a
-    // jamais rien à faire défiler (même chaîne qu'au #248).
+    // fil au lieu de rétrécir sous lui, et l'`overflow-y-auto` n'a jamais rien
+    // à faire défiler (même chaîne qu'au #248).
     expect(defilant.className).toContain("min-h-0");
     expect(defilant.className).toContain("flex-1");
   });
 
   it("met l'ascenseur au bord de l'écran, pas au bord de la colonne", async () => {
+    chargerProjets.mockResolvedValue([projetFactice()]);
     monter();
     const ecran = await porte();
     // La colonne reste centrée et bornée…

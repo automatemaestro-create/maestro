@@ -11,11 +11,13 @@
  *    cadre d'un projet qu'on n'a pas encore choisi serait exactement ce que le
  *    chantier corrige : « personne ne voit la Control Tower sans savoir de quel
  *    projet elle parle » ;
- * 2. **la création est proposée sur place**, avec le formulaire de l'écran
- *    Projets (#225) — ce lot ne réécrit pas la déclaration d'un projet, il la
- *    place au bon endroit du parcours. Aucun projet déclaré : le formulaire est
- *    déjà ouvert, parce qu'un écran qui n'a rien à lister n'a qu'une chose à
- *    proposer, et l'ouvrir d'office évite un clic qui n'a pas d'alternative ;
+ * 2. **la création est proposée sur place** — depuis #1294, **dans la
+ *    conversation** (`NaissanceProjet`, docs/43 §2.2) et non plus par le
+ *    formulaire de l'écran Projets : « Nouveau projet » fait passer la porte en
+ *    mode création, une question en titre et le fil de l'orchestration dessous.
+ *    Aucun projet déclaré : ce mode est déjà ouvert, parce qu'un écran qui n'a
+ *    rien à lister n'a qu'une chose à proposer, et l'ouvrir d'office évite un
+ *    clic qui n'a pas d'alternative ;
  * 3. **on n'invente jamais l'absence** : une API muette dit sa panne et offre de
  *    réessayer, elle ne se lit pas « aucun projet » (même règle que la liste de
  *    #225, pour la même raison — inviter à re-déclarer des projets déjà là) ;
@@ -23,12 +25,11 @@
  *    donc l'URL ne bouge pas. Le dire à l'écran fait de cette propriété quelque
  *    chose qui se voit — on sait où l'on retombe avant de choisir.
  *
- * Un cinquième depuis #1034 : **déclarer ne fait plus entrer**. La porte enchaîne
- * sur l'**étape d'outillage** (`EtapeOutillage`, docs/37 §4.6), qui occupe tout
- * le cadre comme le formulaire avant elle, et c'est elle qui ouvre le projet —
- * une fois l'outillage généré, ou la question reportée. La même étape, le même
- * composant et le même verdict que sur l'écran Projets : deux parcours qui
- * déclarent le même objet n'ont pas à en décider différemment.
+ * ⚠ Le cinquième de #1034 — « déclarer ne fait plus entrer », l'étape
+ * d'outillage en second écran de la porte — est **renversé** par #1294 (docs/43
+ * §2.2, qui renverse docs/37 §4 point 6) : le projet né dans la conversation est
+ * ouvert tout de suite, et son outillage se construit dans la même conversation
+ * (#1161), pièce par pièce, au lieu d'une étape de formulaire.
  */
 
 import { usePathname } from "next/navigation";
@@ -38,15 +39,14 @@ import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconePlus } from "@/components/Icones";
 import { LogoMaestro } from "@/components/Logo";
 import { BadgeEtat, Bouton, classesCarte } from "@/components/Primitives";
-import { creerProjet } from "@/lib/api";
 import { useProjetActif } from "@/lib/etatProjetActif";
+import { naissanceDemandee } from "@/lib/naissance";
 import { entreeCourante } from "@/lib/navigation";
 import { libelleOrigine } from "@/lib/projets";
-import type { DeclarationProjet, Projet } from "@/lib/types";
+import type { Projet } from "@/lib/types";
 
-import { EtapeOutillage } from "./EtapeOutillage";
 import { RefusMotive } from "./ExplorateurDossiers";
-import { FormulaireProjet } from "./FormulaireProjet";
+import { NaissanceProjet } from "./NaissanceProjet";
 
 const CLASSE_CADRE =
   "mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10 sm:py-16";
@@ -183,68 +183,39 @@ function CarteChoix({
 export function ChoixProjet() {
   const { projets, chargement, erreur, perdu, choisir, recharger } =
     useProjetActif();
-  // `null` : personne n'a encore tranché, c'est la liste qui décide. Une fois
-  // le formulaire ouvert ou refermé à la main, le choix de l'utilisateur tient —
-  // sans quoi « Annuler » serait sans effet sur une liste vide.
-  const [creationDemandee, setCreationDemandee] = useState<boolean | null>(null);
-  // Le projet déclaré dont l'outillage se décide avant d'entrer (#1034). Tant
-  // qu'il est là, la porte montre **cette** étape et rien d'autre : ouvrir la
-  // Control Tower derrière elle reviendrait à faire du choix d'outillage une
-  // option qu'on saute d'un clic ailleurs.
-  const [aOutiller, setAOutiller] = useState<Projet | null>(null);
+  // `null` : personne n'a encore tranché, c'est la liste qui décide. Une fois la
+  // création ouverte ou refermée à la main, le choix de l'utilisateur tient —
+  // sans quoi le retour à la liste serait sans effet sur une liste vide.
+  //
+  // « Nouveau projet » demandé **depuis un projet** (l'écran Projets, #1294) a
+  // quitté le projet pour revenir ici : la demande voyage par la mémoire de
+  // session (`naissanceDemandee`), lue une fois au montage.
+  const [creationDemandee, setCreationDemandee] = useState<boolean | null>(() =>
+    naissanceDemandee() ? true : null,
+  );
   const chemin = usePathname();
 
-  // Rien à lister et rien qui l'explique : le formulaire s'ouvre de lui-même.
+  // Rien à lister et rien qui l'explique : la création s'ouvre d'elle-même.
   const listeVide = !chargement && erreur === null && projets.length === 0;
   const creation = creationDemandee ?? listeVide;
-
-  const declarer = async (declaration: DeclarationProjet) => {
-    // `creerProjet` rend le projet **relu** par le backend (racine
-    // canonicalisée, VCS constaté) : c'est celui-là qu'on ouvre, pas ce qui a
-    // été envoyé. Un refus remonte au formulaire, qui l'affiche avec son motif.
-    //
-    // Depuis #1034 on n'entre pas tout de suite : l'outillage est l'étape
-    // suivante, ici comme sur l'écran Projets, et c'est elle qui ouvre le projet
-    // — générée ou reportée.
-    setAOutiller(await creerProjet(declaration));
-  };
 
   // La garde ne redirige pas : la page demandée est toujours celle de l'URL, on
   // se contente de la nommer. `undefined` sur une page hors menu — on ne promet
   // alors rien qu'on ne sache dire.
   const destination = entreeCourante(chemin);
 
-  // Le projet vient d'être déclaré : la porte ne propose plus de choisir, elle
-  // finit ce qu'on a commencé. C'est l'« étape 2 sur 2 » du parcours, et elle
-  // remplace la liste comme le formulaire remplaçait déjà le reste.
-  if (aOutiller !== null) {
+  // Le mode création (#1294) : la porte ne liste plus, elle pose la question —
+  // « Que voulez-vous construire ? » — et la conversation dessous. Le projet qui
+  // y naît est ouvert par `NaissanceProjet` lui-même, dès que le fil le porte.
+  if (creation) {
     return (
-      <CadrePorte etiquette="Outillage du projet">
-        <EnTetePorte>
-          {/* `text-page` et non `text-xl` : même pas (1,25 rem), nommé par son
-              rôle — le titre d'un écran. Sa voisine reste `text-xl` parce que la
-              migrer n'est pas ce lot. */}
-          <h1 className="text-page font-semibold tracking-tight">
-            Outiller le projet
-          </h1>
-          {/* Les tokens, pas les couleurs brutes de ses voisines : ce qui
-              s'écrit aujourd'hui se choisit une fois (docs/30 §2.4), et le
-              résidu de cet écran ne peut que décroître. */}
-          <p className="text-corps text-texte-secondaire">
-            « {aOutiller.nom} » est déclaré. Dernière étape avant d&apos;entrer :
-            l&apos;outillage que ses agents liront — ou le report de cette
-            question.
-          </p>
-        </EnTetePorte>
-        <EtapeOutillage
-          projet={aOutiller}
-          onTermine={() => {
-            // On entre sur le projet **relu** : `choisir` prend la fiche telle
-            // que la déclaration l'a rendue, et rien de ce que l'étape a fait
-            // (manifeste écrit, report noté) ne change la racine ni le VCS.
-            choisir(aOutiller);
-            setAOutiller(null);
-          }}
+      <CadrePorte etiquette="Nouveau projet">
+        <EnTetePorte />
+        <NaissanceProjet
+          retour={
+            projets.length > 0 ? () => setCreationDemandee(false) : undefined
+          }
+          parUnGeste={creationDemandee === true}
         />
       </CadrePorte>
     );
@@ -305,28 +276,14 @@ export function ChoixProjet() {
         </ul>
       )}
 
-      {listeVide && (
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
-          Aucun projet déclaré pour l&apos;instant — en déclarer un, c&apos;est
-          donner une adresse aux exécutions.
-        </p>
-      )}
-
-      {creation ? (
-        <FormulaireProjet
-          enregistrer={declarer}
-          onAnnuler={() => setCreationDemandee(false)}
-        />
-      ) : (
-        <div>
-          {/* L'émoji part avec la migration : il apportait sa propre graisse et
-              son propre rendu par plateforme, ce que le jeu d'icônes a retiré
-              partout ailleurs (#245). */}
-          <Bouton icone={IconePlus} onClick={() => setCreationDemandee(true)}>
-            Nouveau projet
-          </Bouton>
-        </div>
-      )}
+      <div>
+        {/* L'émoji part avec la migration : il apportait sa propre graisse et
+            son propre rendu par plateforme, ce que le jeu d'icônes a retiré
+            partout ailleurs (#245). */}
+        <Bouton icone={IconePlus} onClick={() => setCreationDemandee(true)}>
+          Nouveau projet
+        </Bouton>
+      </div>
     </CadrePorte>
   );
 }

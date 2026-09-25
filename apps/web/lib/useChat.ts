@@ -116,6 +116,7 @@ import {
   diffuserMessageChat,
   ErreurReponse,
   ouvrirConversationChat,
+  declarerProjetDuFil,
   recruterDansLeFil,
   repondreQuestionOutillage,
   trancherCadrageChat,
@@ -289,6 +290,14 @@ export type Chat = {
     roles?: RoleValideEquipe[],
     propositionId?: string,
   ) => Promise<void>;
+  /**
+   * Accepte — ou refuse — le projet que le fil propose de déclarer (#1294).
+   *
+   * Rien d'autre ne part : ce qui est déclaré est la proposition que le fil porte,
+   * relue par l'API. Le geste et la suite — le projet déclaré, dont la réponse
+   * porte la fiche (`projet_cree`) — rejoignent le fil comme un tour ordinaire.
+   */
+  declarerProjet: (approuve: boolean) => Promise<void>;
   /**
    * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
    * `""` tant que l'API n'a pas répondu : personne ne peut la nommer avant.
@@ -683,6 +692,24 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     [agent, conversation, recharger],
   );
 
+  /**
+   * Le quatrième jumeau de `trancherCadrage` (#1294) : même emprunt d'`envoi`,
+   * même paire rendue d'un bloc, même relecture en sortie.
+   */
+  const declarerProjet = useCallback(
+    async (approuve: boolean) => {
+      setEnvoi(true);
+      try {
+        const paire = await declarerProjetDuFil(agent, { approuve, conversation });
+        setDirects((gardes) => [...gardes, ...paire]);
+      } finally {
+        setEnvoi(false);
+        await recharger();
+      }
+    },
+    [agent, conversation, recharger],
+  );
+
   const interrompre = useCallback(() => {
     const vol = enVol.current;
     if (vol === null) return;
@@ -739,6 +766,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     trancherCadrage,
     repondreQuestion,
     recruter,
+    declarerProjet,
     conversation,
     conversations,
     nouvelleConversation,
