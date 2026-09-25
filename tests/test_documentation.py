@@ -37,6 +37,18 @@ qui se cite.
 **Le cache se compte, il ne se chronomètre pas** (`TestCacheEtInvalidation`) : on
 compte les constructions, jamais des millisecondes — une durée en CI mesure la charge
 de la machine, un compteur mesure la règle.
+
+**Deux niveaux, et rien de perdu entre eux** (`TestDeuxNiveaux`, #1316) : le sommaire
+ne montre que les niveaux 1 et 2, et ce qu'il tait se montre au détail du titre qui
+le porte. La propriété qui compte est celle de la carte à plat, gardée : tout ce que
+l'index porte se lit à l'un des deux niveaux, et tout ce qui s'y lit se résout.
+
+**Un trimestre de croissance, rejoué** (`TestCroissanceDUnTrimestre`, #1316) : la
+carte à plat a franchi son budget le 2026-09-24, à 14 tokens de marge une fois des
+titres raccourcis. La sonde rejoue le rythme mesuré sur le corpus réel, et elle est
+**prouvée fautive d'abord** : la carte à plat ne tient pas ce trimestre, le sommaire
+le tient — et une année de croissance le fait encore lever, parce qu'un budget qui
+ne lèverait jamais ne bornerait plus rien.
 """
 
 from __future__ import annotations
@@ -115,6 +127,36 @@ def titres_naifs(texte: str) -> list[str]:
     ]
 
 
+def lignes_de_carte(markdown: str) -> list[tuple[str, str, str]]:
+    """Ce qu'un modèle lit sur un niveau de la carte : `(fichier, marque, clé du titre)`.
+
+    Relue comme le modèle la lira — le fichier vient de l'en-tête `## `, le titre de
+    la ligne, la marque (`-` ou `+`) de sa puce —, et non depuis les objets qui l'ont
+    rendue : c'est ce qui est **écrit** qui doit se résoudre.
+    """
+    lues: list[tuple[str, str, str]] = []
+    fichier = ""
+    for ligne in markdown.splitlines():
+        if ligne.startswith("## "):
+            fichier = ligne[3:].strip()
+            continue
+        nu = ligne.lstrip()
+        if fichier and nu[:2] in ("- ", "+ "):
+            lues.append((fichier, nu[0], nu[2:]))
+    return lues
+
+
+def carte_a_plat(carte: CarteDocumentation) -> str:
+    """La carte d'avant #1316 — tous les titres H1-H3 sur une page — rendue sur `carte`.
+
+    Elle n'entre plus dans aucun prompt : elle sert à **mesurer** ce que la forme
+    abandonnée coûterait, c'est-à-dire l'échantillon fautif de la sonde de croissance.
+    Le rendu est celui du module, sans ouverture, jamais une copie de sa logique.
+    """
+    par_fichier = {relatif: carte.sections_du_fichier(relatif) for relatif in carte.fichiers}
+    return documentation._rendre_carte(carte.fichiers, par_fichier, len(carte.sections), {})
+
+
 class TestCarteDuCorpusReel:
     """Ce que la carte couvre, et ce qu'elle coûte — sur le corpus du dépôt."""
 
@@ -144,10 +186,12 @@ class TestCarteDuCorpusReel:
         """Le budget est annoncé (`BUDGET_CARTE_TOKENS`) et le corpus réel passe dessous.
 
         Le plancher n'est pas décoratif : une carte quasi vide passerait le plafond
-        sans rien prouver. Mesurée à 11 869 tokens pour 639 sections le 2026-08-28.
+        sans rien prouver. Mesurée à 11 869 tokens pour 639 sections le 2026-08-28,
+        à plat ; depuis #1316 c'est le sommaire qui est borné — 6 779 tokens pour 842
+        sections le 2026-09-26. La marge, elle, se tient par la sonde de croissance.
         """
         assert corpus_reel.tokens <= BUDGET_CARTE_TOKENS
-        assert corpus_reel.tokens > 5_000
+        assert corpus_reel.tokens > 3_000
         assert len(corpus_reel.sections) > 500
 
     def test_le_budget_porte_sur_ce_qui_entre_dans_le_prompt(
@@ -387,21 +431,27 @@ class TestIdentiteStable:
         C'est ce dont le lot 2 dépendra — un modèle ne peut citer que ce qu'il voit,
         donc ce qu'il voit doit être exactement ce qui se cite. Le test relit la carte
         comme le modèle la lira : le fichier vient de son en-tête, le titre de la ligne.
+
+        Depuis #1316 la carte a deux niveaux, et la relecture suit le modèle : le
+        sommaire, puis le détail de chaque titre marqué `+`. Ce qui s'y lit, **les
+        deux niveaux réunis**, est exactement l'index — pas une section de moins,
+        sans quoi le modèle ne pourrait plus la choisir, et pas une de plus.
         """
-        fichier = ""
-        lus = 0
-        for ligne in corpus_reel.markdown.splitlines():
-            if ligne.startswith("## "):
-                fichier = ligne[3:].strip()
-                continue
-            nu = ligne.lstrip()
-            if not fichier or not nu.startswith("- "):
-                continue
-            section = corpus_reel.section(f"{fichier}#{nu[2:]}")
-            assert section is not None, f"{fichier} / {nu[2:]!r}"
+        lues: list[SectionDoc] = []
+        for fichier, marque, titre in lignes_de_carte(corpus_reel.markdown):
+            section = corpus_reel.section(f"{fichier}#{titre}")
+            assert section is not None, f"{fichier} / {titre!r}"
             assert section.fichier == fichier
-            lus += 1
-        assert lus == len(corpus_reel.sections)
+            lues.append(section)
+            if marque == "+":
+                detail = corpus_reel.detail([section.identifiant])
+                for sous_fichier, _marque, sous_titre in lignes_de_carte(detail)[1:]:
+                    sous = corpus_reel.section(f"{sous_fichier}#{sous_titre}")
+                    assert sous is not None, f"{sous_fichier} / {sous_titre!r}"
+                    lues.append(sous)
+        assert sorted(section.identifiant for section in lues) == sorted(
+            section.identifiant for section in corpus_reel.sections
+        )
 
     def test_le_chemin_porte_les_ancetres_pour_un_lecteur(
         self, corpus_reel: CarteDocumentation
@@ -526,6 +576,253 @@ class TestIdentiteStable:
                 brute = lignes[section.ligne - 1]
                 assert brute.startswith("#" * section.niveau + " ")
                 assert section.titre in brute
+
+
+class TestDeuxNiveaux:
+    """Le sommaire montre les niveaux 1 et 2, le détail ce qu'un titre choisi porte (#1316)."""
+
+    #: Un document à deux chapitres : l'un porte deux sous-sections, l'autre aucune.
+    CONTENU = (
+        "# Guide\n\nintro\n\n"
+        "## Les écrans\n\nchapeau\n\n"
+        "### L'écran Runs\n\ncorps runs\n\n"
+        "### L'écran Agents\n\ncorps agents\n\n"
+        "## Le glossaire\n\ncorps glossaire\n"
+    )
+
+    @pytest.fixture()
+    def carte(self, tmp_path: Path) -> CarteDocumentation:
+        return construire_carte(ecrire_corpus(tmp_path, {"docs/00-a.md": self.CONTENU}))
+
+    def test_le_sommaire_tait_le_niveau_3_et_marque_qui_le_porte(
+        self, carte: CarteDocumentation
+    ) -> None:
+        """Le `+` dit au modèle qu'en choisissant ce titre il en verra davantage."""
+        assert lignes_de_carte(carte.markdown) == [
+            ("docs/00-a.md", "-", "Guide"),
+            ("docs/00-a.md", "+", "Les écrans"),
+            ("docs/00-a.md", "-", "Le glossaire"),
+        ]
+        assert "L'écran Runs" not in carte.markdown
+
+    def test_le_sommaire_se_dit_tel_dans_sa_legende(self, carte: CarteDocumentation) -> None:
+        """Une marque qu'aucune ligne n'explique serait lue comme une puce de plus."""
+        assert "niveaux 1 et 2" in carte.markdown
+        assert "`+`" in carte.markdown
+
+    def test_le_detail_montre_le_titre_choisi_puis_ce_qu_il_porte(
+        self, carte: CarteDocumentation
+    ) -> None:
+        """Le chapeau garde sa ligne : il reste un passage qu'on peut vouloir lire."""
+        detail = carte.detail(["docs/00-a.md#Les écrans"])
+
+        assert lignes_de_carte(detail) == [
+            ("docs/00-a.md", "-", "Les écrans"),
+            ("docs/00-a.md", "-", "L'écran Runs"),
+            ("docs/00-a.md", "-", "L'écran Agents"),
+        ]
+        assert [s.titre for s in carte.sous_sections("docs/00-a.md#Les écrans")] == [
+            "L'écran Runs",
+            "L'écran Agents",
+        ]
+
+    def test_ce_qui_se_lit_au_detail_s_extrait_comme_le_reste(
+        self, carte: CarteDocumentation
+    ) -> None:
+        """Le second niveau n'est qu'une autre page de la même carte : même index."""
+        assert carte.texte("docs/00-a.md#L'écran Runs") == "### L'écran Runs\n\ncorps runs"
+        assert carte.texte("docs/00-a.md#Les écrans") == "## Les écrans\n\nchapeau"
+
+    @pytest.mark.parametrize(
+        "identifiants",
+        [
+            pytest.param([], id="rien-de-choisi"),
+            pytest.param(["docs/00-a.md#Le glossaire"], id="un-titre-qui-ne-porte-rien"),
+            pytest.param(["docs/00-a.md#Inventé", "n'importe quoi"], id="rien-ne-resout"),
+        ],
+    )
+    def test_rien_a_ouvrir_rend_un_detail_vide(
+        self, carte: CarteDocumentation, identifiants: list[str]
+    ) -> None:
+        """Le vide est le signal : le répondeur lit alors sans détour, en deux appels."""
+        assert carte.detail(identifiants) == ""
+
+    def test_un_titre_qui_ne_porte_rien_reste_au_detail_s_il_accompagne(
+        self, carte: CarteDocumentation
+    ) -> None:
+        """Le détail reprend **tous** les titres choisis, dans l'ordre du modèle.
+
+        Sa liste est la sélection finale : un titre qui ne s'ouvre pas mais que le
+        modèle avait choisi doit pouvoir y être gardé, donc y être lu.
+        """
+        detail = carte.detail(["docs/00-a.md#Le glossaire", "docs/00-a.md#Les écrans"])
+
+        assert [titre for _f, _m, titre in lignes_de_carte(detail)] == [
+            "Le glossaire",
+            "Les écrans",
+            "L'écran Runs",
+            "L'écran Agents",
+        ]
+
+    def test_le_plafond_compte_les_titres_qui_resolvent(
+        self, carte: CarteDocumentation
+    ) -> None:
+        """Une clé de travers ne prend pas la place d'un titre réel."""
+        detail = carte.detail(
+            ["docs/00-a.md#Inventé", "docs/00-a.md#Les écrans", "docs/00-a.md#Le glossaire"],
+            maximum=1,
+        )
+
+        assert [titre for _f, _m, titre in lignes_de_carte(detail)] == [
+            "Les écrans",
+            "L'écran Runs",
+            "L'écran Agents",
+        ]
+
+    def test_un_document_qui_saute_un_niveau_s_ouvre_depuis_son_titre(
+        self, tmp_path: Path
+    ) -> None:
+        """Un `###` sous un `#` se range sous son plus proche ancêtre **visible**."""
+        contenu = "# Guide\n\n### Directement\n\nx\n\n## Chapitre\n\ny\n"
+        carte = construire_carte(ecrire_corpus(tmp_path, {"docs/00-a.md": contenu}))
+
+        assert lignes_de_carte(carte.markdown) == [
+            ("docs/00-a.md", "+", "Guide"),
+            ("docs/00-a.md", "-", "Chapitre"),
+        ]
+        assert [s.titre for s in carte.sous_sections("docs/00-a.md#Guide")] == ["Directement"]
+
+    def test_une_section_sans_ancetre_visible_reste_au_sommaire(self, tmp_path: Path) -> None:
+        """Sans ancêtre visible, aucun des deux niveaux ne la montrerait : elle monte.
+
+        Un fichier qui ouvre sur des `###` n'existe pas dans le corpus d'aujourd'hui ;
+        le jour où il existe, ses sections doivent rester choisissables.
+        """
+        contenu = "### Un\n\nx\n\n### Deux\n\ny\n"
+        carte = construire_carte(ecrire_corpus(tmp_path, {"docs/00-a.md": contenu}))
+
+        assert [titre for _f, _m, titre in lignes_de_carte(carte.markdown)] == ["Un", "Deux"]
+
+    def test_les_deux_niveaux_coutent_moins_que_la_carte_a_plat(
+        self, corpus_reel: CarteDocumentation
+    ) -> None:
+        """Le troisième appel se paie en allers, pas en tokens — mesuré sur le corpus réel.
+
+        Le pire détail est celui des six chapitres qui portent le plus : réunis au
+        sommaire, ils coûtent encore moins que la carte à plat qu'on payait à chaque
+        question.
+        """
+        porteurs = sorted(
+            (
+                section
+                for section in corpus_reel.sections
+                if corpus_reel.sous_sections(section.identifiant)
+            ),
+            key=lambda section: estimer_tokens(corpus_reel.detail([section.identifiant])),
+            reverse=True,
+        )
+        pire = corpus_reel.detail([section.identifiant for section in porteurs[:6]])
+
+        assert len(porteurs) >= 6
+        assert corpus_reel.tokens + estimer_tokens(pire) < estimer_tokens(
+            carte_a_plat(corpus_reel)
+        )
+
+
+class TestCroissanceDUnTrimestre:
+    """La sonde de #1316 : la carte ne se retrouve plus à la merci d'un titre de plus.
+
+    Le rythme est celui de `main` : 641 sections le 2026-08-29, 842 le 2026-09-26 —
+    **≈ 200 par mois**. La croissance est rejouée sur le corpus réel lui-même, et la
+    sonde est prouvée fautive avant d'être crue.
+    """
+
+    SECTIONS_PAR_MOIS = 200
+
+    @staticmethod
+    def corpus_gonfle(
+        reel: CarteDocumentation, racine: Path, sections_en_plus: int
+    ) -> CarteDocumentation:
+        """La carte du corpus réel réécrit en titres seuls, plus `sections_en_plus` sections.
+
+        **Titres seuls** : la carte ne lit que les titres, et c'est ce qui rend la copie
+        fidèle (vérifié ci-dessous) sans relire 1,6 Mio par test. La croissance
+        **rejoue les fichiers du corpus** sous un autre nom, dans l'ordre, jusqu'au
+        compte : mêmes titres, mêmes niveaux, un `#` par document. C'est la forme de
+        ce qui s'écrit, plutôt qu'un titre inventé dont la longueur serait un choix.
+
+        La borne est levée à la construction : la sonde mesure, c'est le test qui juge.
+        """
+        assert reel.sections, "un corpus sans section ne se rejoue pas"
+
+        def ecrire(relatif: str, sections: tuple[SectionDoc, ...]) -> None:
+            titres = "".join(f"{'#' * section.niveau} {section.titre}\n\n" for section in sections)
+            ecrire_corpus(racine, {relatif: titres})
+
+        for relatif in reel.fichiers:
+            ecrire(relatif, reel.sections_du_fichier(relatif))
+        reste, tour = sections_en_plus, 0
+        while reste > 0:
+            for relatif in reel.fichiers:
+                if reste <= 0:
+                    break
+                sections = reel.sections_du_fichier(relatif)[:reste]
+                ecrire(f"docs/zz-croissance-{tour:02d}-{Path(relatif).stem}.md", sections)
+                reste -= len(sections)
+            tour += 1
+        return construire_carte(racine, budget_tokens=None)
+
+    def test_la_copie_en_titres_seuls_est_fidele(
+        self, corpus_reel: CarteDocumentation, tmp_path: Path
+    ) -> None:
+        """Sans croissance, la copie rend **exactement** le sommaire du dépôt.
+
+        Sans cette moitié, la sonde mesurerait un corpus qui n'est pas le nôtre.
+        """
+        copie = self.corpus_gonfle(corpus_reel, tmp_path, 0)
+
+        assert copie.markdown == corpus_reel.markdown
+
+    def test_la_sonde_mord_sur_la_carte_a_plat(
+        self, corpus_reel: CarteDocumentation, tmp_path: Path
+    ) -> None:
+        """L'échantillon fautif d'abord : la forme d'avant #1316 ne tient pas le trimestre.
+
+        27 469 tokens rejoués contre un budget de 16 000 — et c'est sur le corpus
+        d'aujourd'hui qu'elle cassait déjà, à 14 tokens près. Une sonde qui ne
+        verrait pas ce défaut-là ne prouverait rien du sommaire.
+        """
+        gonfle = self.corpus_gonfle(corpus_reel, tmp_path, 3 * self.SECTIONS_PAR_MOIS)
+
+        assert len(gonfle.sections) == len(corpus_reel.sections) + 3 * self.SECTIONS_PAR_MOIS
+        assert estimer_tokens(carte_a_plat(gonfle)) > BUDGET_CARTE_TOKENS
+
+    def test_un_trimestre_de_croissance_tient_sous_le_budget(
+        self, corpus_reel: CarteDocumentation, tmp_path: Path
+    ) -> None:
+        """Le critère de #1316 : le sommaire absorbe trois mois au rythme mesuré.
+
+        11 280 tokens rejoués le 2026-09-26 : la construction passe **avec le budget
+        du module**, celui que le répondeur applique.
+        """
+        racine = tmp_path / "trimestre"
+        self.corpus_gonfle(corpus_reel, racine, 3 * self.SECTIONS_PAR_MOIS)
+
+        assert construire_carte(racine).tokens <= BUDGET_CARTE_TOKENS
+
+    def test_une_annee_de_croissance_leve_encore(
+        self, corpus_reel: CarteDocumentation, tmp_path: Path
+    ) -> None:
+        """Le budget reste une borne : un sommaire qui quadruplerait n'est plus petit.
+
+        Sans cette moitié, on aurait pu « réparer » en relevant le budget sans fin —
+        et la carte ne serait plus « assez petite pour tenir dans un prompt ».
+        """
+        racine = tmp_path / "annee"
+        self.corpus_gonfle(corpus_reel, racine, 12 * self.SECTIONS_PAR_MOIS)
+
+        with pytest.raises(CarteTropGrande):
+            construire_carte(racine)
 
 
 class TestPerimetreDuCorpus:

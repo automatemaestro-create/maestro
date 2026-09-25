@@ -5,7 +5,9 @@ ticket, et la nommer évite de croire garde ce qui ne l'est pas :
 
 - **elle tient la plomberie** : les deux appels ont bien lieu, la carte entre dans le
   premier, le *texte* des sections choisies dans le second, les sources citées sont
-  celles qui y sont entrées, et aucune façon d'être privé de modèle ne rend un 502 ;
+  celles qui y sont entrées, et aucune façon d'être privé de modèle ne rend un 502 —
+  et depuis #1316, quand un titre choisi sur le sommaire porte des sous-sections, un
+  appel de détail entre les deux, dont la liste fait la sélection (`TestDetail`) ;
 - **elle ne tient pas la qualité du jugement** — que le modèle choisisse les bonnes
   sections et sache s'abstenir relève du prompt, se mesure en usage, et l'échantillon
   hors périmètre qui l'éprouve est le lot 3 (#765). Ici le modèle est un double
@@ -130,6 +132,27 @@ SECTION_PIEGEE = (
     "docs/24-projets.md#2.7 Projets et composition d'un objectif "
     "*(retenu — [docs/24](./24-projets.md), **Phase 7**)*"
 )
+
+#: Un corpus à **deux niveaux** (#1316) : « Les écrans » porte deux sous-sections que
+#: le sommaire tait, « Le glossaire » n'en porte aucune. La phrase de l'écran Runs est
+#: celle qui prouve, quand elle atteint le dernier appel, que le détail a servi.
+CORPUS_CHAPITRES = {
+    "docs/00-guide.md": (
+        "# Guide\n\n"
+        "## Les écrans\n\n"
+        "Chaque écran a sa page.\n\n"
+        "### L'écran Runs\n\n"
+        "Le bouton « Reprendre » vit sur la carte du run.\n\n"
+        "### L'écran Agents\n\n"
+        "La fiche d'un agent s'ouvre au clic.\n\n"
+        "## Le glossaire\n\n"
+        "Un run est une exécution.\n"
+    ),
+}
+
+ECRANS = "docs/00-guide.md#Les écrans"
+ECRAN_RUNS = "docs/00-guide.md#L'écran Runs"
+GLOSSAIRE = "docs/00-guide.md#Le glossaire"
 
 
 class ModeleScripte(ModelProvider):
@@ -533,6 +556,108 @@ class TestDeuxAppels:
         assert "AUCUN dans ta réponse" in _CONSIGNE_DOCUMENTEE
 
 
+# ── ③bis le détail : un titre choisi qui porte des sous-sections (#1316) ─────
+#
+# La carte a deux niveaux : le sommaire (titres de niveaux 1 et 2) entre dans le
+# premier appel, et ce qu'un titre choisi porte se montre à un appel de détail. Le
+# double scripté rougit de lui-même si un appel de trop part — c'est ce qui rend
+# vérifiable qu'un choix sans chapitre à ouvrir reste à deux appels.
+
+
+class TestDetail:
+    def test_un_chapitre_choisi_s_ouvre_avant_la_reponse(self, tmp_path: Path) -> None:
+        """Trois appels, et chacun reçoit ce qui lui revient — ni plus, ni moins.
+
+        Le sommaire tait la sous-section, le détail la montre sans son corps, et seul
+        le dernier appel reçoit le texte : un répondeur qui montrerait tout d'emblée
+        rendrait la même réponse et serait pourtant faux.
+        """
+        racine = ecrire_corpus(tmp_path, CORPUS_CHAPITRES)
+        repondeur, modele = _monte(racine, ECRANS, ECRAN_RUNS, "Par « Reprendre ».")
+
+        reponse = _repondre(repondeur, QUESTION_684)
+
+        sommaire, detail, finale = modele.prompts
+        assert "+ Les écrans" in sommaire
+        assert "L'écran Runs" not in sommaire
+        assert "L'écran Runs" in detail
+        assert "Le bouton « Reprendre » vit sur la carte du run." not in detail
+        assert "Le bouton « Reprendre » vit sur la carte du run." in finale
+        assert all(QUESTION_684 in prompt for prompt in modele.prompts)
+        assert "Guide › Les écrans › L'écran Runs" in reponse.split(_TITRE_SOURCES)[1]
+
+    def test_le_detail_a_son_cadre_et_le_meme_contrat_de_sortie(self, tmp_path: Path) -> None:
+        """Un tri reste un tri : même contrat qu'au premier appel, sur l'autre niveau."""
+        racine = ecrire_corpus(tmp_path, CORPUS_CHAPITRES)
+        repondeur, modele = _monte(racine, ECRANS, ECRAN_RUNS, "Par « Reprendre ».")
+
+        _repondre(repondeur, QUESTION_684)
+
+        cadre_sommaire, cadre_detail, cadre_reponse = modele.systemes
+        assert "SOMMAIRE" in (cadre_sommaire or "")
+        assert "DÉTAIL" in (cadre_detail or "")
+        assert "Ta seule tâche : choisir les sections" in (cadre_detail or "")
+        assert "à partir d'EUX SEULS" in (cadre_reponse or "")
+
+    def test_un_titre_qui_ne_porte_rien_se_lit_sans_detour(self, tmp_path: Path) -> None:
+        """Rien à ouvrir, pas de détail : deux appels, comme avant la carte à deux niveaux.
+
+        Le double lèverait au troisième appel — c'est lui qui tient l'économie.
+        """
+        racine = ecrire_corpus(tmp_path, CORPUS_CHAPITRES)
+        repondeur, modele = _monte(racine, GLOSSAIRE, "Une exécution.")
+
+        reponse = _repondre(repondeur, "Qu'est-ce qu'un run ?")
+
+        assert len(modele.prompts) == 2
+        assert "Un run est une exécution." in modele.prompts[1]
+        assert "Guide › Le glossaire" in reponse
+
+    def test_la_liste_du_detail_fait_la_selection(self, tmp_path: Path) -> None:
+        """Le titre choisi au sommaire n'est pas gardé d'office : le détail a le dernier mot.
+
+        Le glossaire, choisi au premier appel, est remontré au détail ; le modèle ne
+        l'y reprend pas, donc il n'est ni lu ni cité.
+        """
+        racine = ecrire_corpus(tmp_path, CORPUS_CHAPITRES)
+        repondeur, modele = _monte(
+            racine, f"{GLOSSAIRE}\n{ECRANS}", ECRAN_RUNS, "Par « Reprendre »."
+        )
+
+        reponse = _repondre(repondeur, QUESTION_684)
+
+        _sommaire, detail, finale = modele.prompts
+        assert "Le glossaire" in detail
+        assert "Un run est une exécution." not in finale
+        assert "Le glossaire" not in reponse.split(_TITRE_SOURCES)[1]
+
+    def test_un_detail_sans_choix_vaut_un_aveu(self, tmp_path: Path) -> None:
+        """Le modèle a vu le détail et dit « rien ici » : c'est un verdict, pas une panne."""
+        racine = ecrire_corpus(tmp_path, CORPUS_CHAPITRES)
+        repondeur, modele = _monte(racine, ECRANS, "Rien dans ce détail.")
+
+        reponse = _repondre(repondeur, "Comment créer une pipeline Jenkins ?")
+
+        assert len(modele.prompts) == 2
+        assert "Je n'ai rien trouvé dans la documentation" in reponse
+        assert _TITRE_SOURCES not in reponse
+
+    def test_un_detail_rendu_vide_replie_en_le_disant(self, tmp_path: Path) -> None:
+        """Le détail est un appel comme un autre : muet, il replie et nomme la panne."""
+        racine = ecrire_corpus(tmp_path, CORPUS_CHAPITRES)
+        repondeur, modele = _monte(racine, ECRANS, "   \n")
+
+        reponse = _repondre(repondeur, QUESTION_684)
+
+        # C'est bien le détail qui s'est tu, et non un appel de réponse parti trop tôt.
+        _sommaire, muet = modele.prompts
+        assert "Détail des titres choisis" in muet
+        assert "Extraits de la documentation" not in muet
+        assert "réponse vide" in reponse
+        assert repondre_assistance(QUESTION_684) in reponse
+        assert _TITRE_SOURCES not in reponse
+
+
 # ── ④ les sources citées sont celles qui ont été passées ─────────────────────
 #
 # Le critère 2, et la seule façon de le tenir : le bloc est **construit** à partir
@@ -791,6 +916,38 @@ def test_une_question_hors_table_est_servie_par_le_contenu_du_corpus_reel(
     assert section.citation in reponse
     # La réponse ne vient pas de la table : celle-ci répondrait tout autre chose.
     assert repondre_assistance(QUESTION_684) not in reponse
+
+
+def test_une_sous_section_du_corpus_reel_se_joint_par_le_detail(
+    corpus_reel: CarteDocumentation,
+) -> None:
+    """Le chemin de #1316 sur le vrai corpus : sommaire, détail, puis le texte lu.
+
+    Le chapitre est pris **dans la carte réelle** — le premier titre qui porte des
+    sous-sections — et sa première sous-section avec lui : rien n'est recopié ici,
+    donc rien ne mourra au prochain ticket qui retouche un titre.
+    """
+    chapitre = next(s for s in corpus_reel.sections if corpus_reel.sous_sections(s.identifiant))
+    sous = corpus_reel.sous_sections(chapitre.identifiant)[0]
+    modele = ModeleScripte(chapitre.identifiant, sous.identifiant, "Voici ce que dit la doc.")
+    repondeur = RepondeurAssistanceDocumentee(provider=modele, racine=RACINE)
+
+    reponse = _repondre(repondeur, QUESTION_684)
+
+    sommaire, detail, finale = modele.prompts
+    # Relu comme le modèle le lit : le fichier vient de l'en-tête, le titre de la ligne.
+    visibles: set[str] = set()
+    fichier = ""
+    for ligne in sommaire.splitlines():
+        if ligne.startswith("## "):
+            fichier = ligne[3:]
+        elif ligne.lstrip()[:2] in ("- ", "+ "):
+            visibles.add(f"{fichier}#{ligne.lstrip()[2:]}")
+    assert chapitre.identifiant in visibles
+    assert sous.identifiant not in visibles
+    assert f"- {sous.cle_titre}" in detail
+    assert corpus_reel.texte(sous.identifiant) in finale
+    assert sous.citation in reponse
 
 
 def test_la_carte_du_corpus_reel_tient_dans_le_premier_prompt(

@@ -23,6 +23,22 @@ question cherche : c'est exactement le classement lexical que le chantier suppri
 comparé à la question par du code — c'est le modèle qui choisit, sur une carte qu'il
 lit en entier.
 
+## Et un troisième quand un chapitre s'ouvre (#1316)
+
+Depuis que la carte a deux niveaux, le premier appel choisit sur le **sommaire**
+(titres de niveaux 1 et 2). Quand un titre choisi porte des sous-sections, le choix
+se fait en deux temps : un appel de **détail** reçoit ces titres et ce qu'ils portent
+(`CarteDocumentation.detail`, `_PROMPT_DETAIL`), et c'est **sa** liste qui fait la
+sélection. Aucun titre choisi ne porte rien : le détail est vide, et l'on répond
+directement, en deux appels comme avant.
+
+Le troisième appel coûte un aller, et c'est le prix de la carte qui ne casse plus :
+à la place d'une carte à plat de ~16 000 tokens payée à chaque question, un sommaire
+de ~6 800 et un détail d'au plus ~2 200 — moins de tokens en tout, et un sommaire
+qui tient cinq mois de croissance au lieu d'un titre de plus. Le modèle choisit
+toujours tout : ce que le code fait entre les deux appels est une recherche dans
+l'index, pas un tri.
+
 ## Les citations sont construites, jamais recopiées
 
 Le critère demande que « les sections citées soient celles qui lui ont réellement été
@@ -118,28 +134,56 @@ SECTIONS_MAX = 6
 #:   voir refuser la seule section qui y répond ;
 #: - elle tient même **accompagnée** de cinq sections moyennes (18 696).
 #:
-#: Au pire, une question coûte donc la carte (11 869) plus ce budget, soit ~36 000
-#: tokens — quinze fois moins que le corpus entier.
+#: Au pire, une question coûte donc le sommaire (≤ 16 000, 6 779 au 2026-09-26), son
+#: détail (≤ ~2 200) et ce budget, soit ~42 000 tokens — plus de vingt fois moins
+#: que le corpus entier, qui pèse 938 530 tokens estimés ce jour-là (#1316).
 BUDGET_SECTIONS_TOKENS = 24_000
 
 #: Le cadre du **premier** appel : choisir, et rien d'autre. Il ne porte pas
-#: l'identité de l'assistant (c'est le second qui répond à l'utilisateur) mais un
+#: l'identité de l'assistant (c'est le dernier qui répond à l'utilisateur) mais un
 #: contrat de sortie, et il le porte seul — deux consignes dans un prompt de tri
 #: rendent un tri commenté.
 _PROMPT_CHOIX = f"""\
-Tu prépares la réponse de l'assistant de la Control Tower de Maestro. On te donne la
-CARTE de la documentation du produit — un bloc par fichier, une ligne par section,
-l'indentation donnant la hiérarchie des titres — puis le fil de conversation.
+Tu prépares la réponse de l'assistant de la Control Tower de Maestro. On te donne le
+SOMMAIRE de la carte de la documentation du produit — un bloc par fichier, une ligne
+par titre de niveau 1 ou 2, l'indentation donnant la hiérarchie des titres — puis le
+fil de conversation.
 
 Ta seule tâche : choisir les sections à lire pour répondre au dernier message de
 l'utilisateur. Tu ne réponds pas à sa question ici.
 
+Un titre marqué `+` porte des sous-sections que le sommaire ne montre pas : choisis-le
+quand le sujet y est, et elles te seront montrées pour que tu y prennes les passages
+à lire. Un titre marqué `-` est lui-même un passage.
+
 Rends la liste des identifiants choisis, UN PAR LIGNE, recopiés exactement comme la
-carte les écrit (`<fichier>#<titre>`). Rien d'autre : ni phrase, ni puce, ni
+carte les écrit (`<fichier>#<titre>`, sans la marque `+` ou `-`). Rien d'autre : ni
+phrase, ni puce, ni numérotation, ni commentaire. Au plus {SECTIONS_MAX} identifiants,
+du plus utile au moins utile.
+
+Si la carte ne porte rien qui réponde au message, rends une liste vide."""
+
+#: Le cadre de l'appel de **détail** (#1316) — le même contrat de sortie que le
+#: premier, sur le second niveau de la carte. Sa liste est la sélection **finale** :
+#: les titres choisis y sont remontrés avec leurs sous-sections, et c'est au modèle
+#: de garder un chapeau, de le remplacer par ses parties, ou de ne rien garder.
+_PROMPT_DETAIL = f"""\
+Tu prépares la réponse de l'assistant de la Control Tower de Maestro. Sur le sommaire
+de la documentation du produit, tu as choisi des titres ; on te donne maintenant leur
+DÉTAIL — chaque titre choisi, puis les sous-sections qu'il porte, l'indentation
+donnant la hiérarchie — puis le fil de conversation.
+
+Ta seule tâche : choisir les sections à lire pour répondre au dernier message de
+l'utilisateur. Tu ne réponds pas à sa question ici. Un titre choisi reste un passage
+à part entière : garde-le s'il répond, prends plutôt ses sous-sections si ce sont
+elles qui répondent.
+
+Rends la liste finale des identifiants, UN PAR LIGNE, recopiés exactement comme le
+détail les écrit (`<fichier>#<titre>`). Rien d'autre : ni phrase, ni puce, ni
 numérotation, ni commentaire. Au plus {SECTIONS_MAX} identifiants, du plus utile au
 moins utile.
 
-Si la carte ne porte rien qui réponde au message, rends une liste vide."""
+Si rien de ce détail ne répond au message, rends une liste vide."""
 
 #: Ce qui s'ajoute au cadre de la fiche pour le **second** appel. Il dit les deux
 #: choses que le cadre ne peut pas dire, parce qu'elles ne valent que pour ce
@@ -466,9 +510,12 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
             return await self._replier(agent, fil, str(injoignable))
 
     async def _documentee(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
-        """Les deux appels, et la citation de ce qui est entré dans le second.
+        """Le choix — en un ou deux temps —, la réponse, et la citation de ce qui y est entré.
 
-        Le second n'a **pas lieu** quand rien n'a été retenu : le modèle vient de dire
+        Le détail n'a lieu que si un titre choisi porte des sous-sections (#1316) :
+        c'est `CarteDocumentation.detail` qui le dit, en rendant un texte vide sinon.
+
+        La réponse n'a **pas lieu** quand rien n'a été retenu : le modèle vient de dire
         que la carte ne porte pas la réponse, et lui redemander à vide coûterait un
         appel pour lui faire répéter. L'aveu est alors une phrase à nous — ce qui est
         aussi ce qui le rend éprouvable au lot 3.
@@ -487,6 +534,16 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
                 f"{carte.markdown}\n{transcription(fil)}",
             )
         )
+        detail = carte.detail(choisis, maximum=self._sections_max)
+        if detail:
+            choisis = identifiants_choisis(
+                await self._appeler(
+                    fournisseur,
+                    agent,
+                    _PROMPT_DETAIL,
+                    f"{detail}\n{transcription(fil)}",
+                )
+            )
         selection = selection_sections(
             carte,
             choisis,
