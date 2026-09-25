@@ -43,7 +43,11 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   répondait avec aplomb sur un écran dès qu'un mot y traînait (« pipeline Jenkins »
   ramenait la page Runs). Elle a cessé d'être un juge : le modèle **lit la
   documentation du produit** (`docs/`, ce README) et répond à partir des seules
-  sections qu'il a demandées. Trois conséquences à l'écran — les réponses portent
+  sections qu'il a demandées — choisies en deux temps depuis #1316, sur le
+  **sommaire** de la documentation (titres de niveaux 1 et 2) puis sur le détail des
+  chapitres qu'il y a retenus, ce qui laisse la carte tenir la croissance du corpus
+  au lieu de cesser de répondre au premier document de trop. Trois conséquences à
+  l'écran — les réponses portent
   un bloc **« Sources lues »**, construit à partir de ce qui lui a été passé et
   jamais recopié de sa réponse ; il **dit qu'il ne sait pas** quand la
   documentation ne porte rien, au lieu d'orienter vers l'écran le plus proche ; et

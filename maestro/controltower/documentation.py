@@ -106,6 +106,43 @@ et l'aveu d'ignorance du lot 3 porterait sur une absence qu'on aurait fabriquée
 carte qui déborde est une décision à prendre (relever le budget en connaissant le coût
 par question, ou resserrer le corpus), pas un réglage à faire au passage.
 
+## Deux niveaux : ce que la mesure du 2026-09-25 a décidé (#1316)
+
+La carte à plat — les 842 titres H1-H3 sur une seule page — a franchi son budget le
+2026-09-24. On l'a ramenée à **15 986 / 16 000** en raccourcissant des titres, ce qui
+ne répare rien : l'assistant allait cesser de répondre au prochain document. La
+mesure, sur l'historique de `main` (641 → 842 sections du 2026-08-29 au 2026-09-26,
+soit **≈ 200 sections par mois**) :
+
+| forme de la carte                  | 2026-08-29 | 2026-09-26 | par mois  |
+|------------------------------------|-----------:|-----------:|----------:|
+| à plat, titres H1-H3               |     11 935 |     15 982 | ≈ + 4 340 |
+| **sommaire**, titres H1-H2         |      5 121 |      6 779 | ≈ + 1 780 |
+
+La carte a donc **deux niveaux**. Le premier prompt reçoit le **sommaire**
+(`CarteDocumentation.markdown`, niveaux 1 et 2) ; un titre qui porte des
+sous-sections y est marqué `+`, et ce qu'il porte se montre **à la demande** par
+`CarteDocumentation.detail`, pour les seuls titres que le modèle a choisis. Le
+sommaire absorbe un trimestre de croissance (≈ 12 000 tokens au bout de trois mois)
+et en tient cinq au rythme mesuré — la sonde de `tests/test_documentation.py` rejoue
+le trimestre —, et le détail pèse au plus **2 188** tokens, les six plus gros
+chapitres du corpus réunis.
+
+Deux pistes écartées, sur la même mesure :
+
+- **resserrer le corpus seul** : la croissance vient des notes de décision, qui sont
+  celles du **produit** (l'équipe sur mesure, le projet né dans la conversation…) —
+  les retirer ôterait à l'assistant ce qu'il doit savoir, et la carte à plat de ce
+  qui resterait (≈ 9 000 tokens) regagnerait sa limite avant un trimestre ;
+- **une carte réduite aux documents** (titres H1 seuls, 1 580 tokens) : elle
+  tiendrait des années, mais le modèle choisirait sur quarante-six titres, sans voir
+  les chapitres qu'un document porte. Le sommaire est la table des matières qu'on
+  lit, pas la liste des livres.
+
+Le budget reste une **borne** : un sommaire qui doublerait ne serait plus « assez
+petit pour tenir dans un prompt », et une année de croissance au même rythme le
+ferait lever — la sonde le prouve aussi.
+
 ## Le cache
 
 `carte_documentation` ne recalcule pas la carte à chaque appel — analyser 1,58 Mio pour
@@ -138,11 +175,17 @@ MOTIFS_CORPUS: tuple[str, ...] = ("docs/*.md", "apps/web/README.md")
 #: est du **corps** : il ne se cite pas et ne coupe pas la section qui le contient.
 NIVEAU_MAX = 3
 
-#: Le budget de la carte, **en tokens estimés**. Mesurée à 11 869 le 2026-08-28 sur
-#: 639 sections : la marge tient ~230 sections de plus, de quoi absorber la croissance
-#: ordinaire du corpus sans laisser passer un changement de nature (une carte qui
-#: doublerait n'est plus « assez petite pour tenir dans un prompt »). Le dépassement
-#: lève `CarteTropGrande` — voir le docstring du module.
+#: Le niveau de titre le plus profond que le **sommaire** montre (#1316). Au-delà, une
+#: section reste dans l'index et se montre au **détail** du titre qui la porte, quand
+#: le modèle a choisi ce titre — voir « Deux niveaux » dans le docstring du module.
+NIVEAU_SOMMAIRE = 2
+
+#: Le budget du sommaire, **en tokens estimés** — ce qui entre à chaque question dans
+#: le premier prompt. Posé le 2026-08-28 sur la carte à plat (11 869 pour 639
+#: sections), il borne depuis #1316 le sommaire : 6 779 le 2026-09-26 pour 842
+#: sections, et ≈ + 1 780 par mois au rythme mesuré — de quoi tenir cinq mois, sans
+#: laisser passer un changement de nature (un sommaire qui doublerait n'est plus
+#: « assez petit pour tenir dans un prompt »). Le dépassement lève `CarteTropGrande`.
 BUDGET_CARTE_TOKENS = 16_000
 
 #: Ce qui sépare les titres dans le chemin lisible d'une section (`SectionDoc.chemin`).
@@ -421,11 +464,13 @@ class SectionDoc:
 class CarteDocumentation:
     """Le corpus indexé : sa carte pour un prompt, ses sections, et leur texte.
 
-    `markdown` est **l'artefact mesuré** : c'est lui qui entre dans un prompt et lui
-    dont `tokens` donne le coût, borné par `BUDGET_CARTE_TOKENS`. `fichiers` vient du
-    corpus et non des sections — un fichier sans titre reste dans la carte, et c'est
-    ce qui permet de dire que la carte **couvre** le corpus plutôt que ce qu'elle a su
-    y lire.
+    `markdown` est **l'artefact mesuré** : le **sommaire** (niveaux 1 et 2, #1316),
+    c'est-à-dire ce qui entre à chaque question dans le premier prompt, et `tokens` en
+    donne le coût, borné par `BUDGET_CARTE_TOKENS`. Le second niveau n'a pas de champ :
+    il se rend à la demande (`detail`), pour les titres que le modèle a choisis.
+    `fichiers` vient du corpus et non des sections — un fichier sans titre reste dans
+    la carte, et c'est ce qui permet de dire que la carte **couvre** le corpus plutôt
+    que ce qu'elle a su y lire.
     """
 
     markdown: str
@@ -435,6 +480,9 @@ class CarteDocumentation:
     textes: Mapping[str, str]
     empreinte: tuple[tuple[str, int, int], ...]
     _index: Mapping[str, SectionDoc] = field(init=False, repr=False, compare=False)
+    _ouvertures: Mapping[str, tuple[SectionDoc, ...]] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         # Les clés exactes d'abord, **toutes**, avant la moindre clé normalisée : une
@@ -443,6 +491,7 @@ class CarteDocumentation:
         for section in self.sections:
             index.setdefault(_cle(section.identifiant), section)
         object.__setattr__(self, "_index", MappingProxyType(index))
+        object.__setattr__(self, "_ouvertures", MappingProxyType(_ouvertures(self.sections)))
 
     def section(self, identifiant: str) -> SectionDoc | None:
         """La section désignée par `identifiant`, ou `None` s'il n'en désigne aucune.
@@ -475,6 +524,56 @@ class CarteDocumentation:
     def sections_du_fichier(self, fichier: str) -> tuple[SectionDoc, ...]:
         """Les sections d'un fichier du corpus, dans l'ordre du document."""
         return tuple(section for section in self.sections if section.fichier == fichier)
+
+    def sous_sections(self, identifiant: str) -> tuple[SectionDoc, ...]:
+        """Ce que le sommaire tait sous ce titre — vide pour un titre qui ne porte rien.
+
+        C'est ce qui fait marquer le titre `+` au sommaire, et ce que son détail
+        montre. Un identifiant qui ne résout rien ne porte rien, comme ailleurs :
+        c'est une réponse nominale, pas une panne.
+        """
+        section = self.section(identifiant)
+        return () if section is None else self._ouvertures.get(section.identifiant, ())
+
+    def detail(self, identifiants: Sequence[str], *, maximum: int | None = None) -> str:
+        """Le second niveau de la carte : les titres choisis, et ce qu'ils portent (#1316).
+
+        Chaque titre choisi garde sa ligne — il reste un passage qu'on peut lire pour
+        lui-même, le chapeau d'un chapitre répondant parfois mieux que ses parties —,
+        et ses sous-sections suivent, indentées sous lui. L'ordre est celui du modèle :
+        c'est lui qui a dit ce qui compte d'abord.
+
+        Rend `""` quand **aucun** titre choisi n'a de sous-section : il n'y a rien à
+        ouvrir, et c'est ce vide qui dit au répondeur de lire sans détour. Un
+        identifiant qui ne résout rien est passé, comme à la sélection ; `maximum`
+        borne le nombre de titres montrés, comptés parmi ceux qui résolvent.
+        """
+        choisies: list[SectionDoc] = []
+        for identifiant in identifiants:
+            section = self.section(identifiant)
+            if section is None or section in choisies:
+                continue
+            if maximum is not None and len(choisies) >= maximum:
+                break
+            choisies.append(section)
+        if not any(section.identifiant in self._ouvertures for section in choisies):
+            return ""
+        lignes = [
+            "# Détail des titres choisis dans la carte de la documentation",
+            "",
+            "Chaque titre choisi, puis les sous-sections qu'il porte ; l'indentation "
+            "donne la hiérarchie des titres. Une section se désigne toujours par "
+            "`<fichier>#<titre>`, recopié tel quel.",
+        ]
+        fichier = ""
+        for section in choisies:
+            if section.fichier != fichier:
+                fichier = section.fichier
+                lignes.extend(["", f"## {fichier}"])
+            lignes.append(f"- {section.cle_titre}")
+            for sous in self._ouvertures.get(section.identifiant, ()):
+                lignes.append(f"{'  ' * (sous.niveau - section.niveau)}- {sous.cle_titre}")
+        return "\n".join(lignes) + "\n"
 
 
 def fichiers_corpus(racine: Path | str | None = None) -> tuple[tuple[str, Path], ...]:
@@ -547,13 +646,13 @@ def construire_carte(
         for section, corps in trouvees:
             sections.append(section)
             textes[section.identifiant] = corps
-    markdown = _rendre_carte(fichiers, par_fichier, len(sections))
+    markdown = _rendre_carte(fichiers, par_fichier, len(sections), _ouvertures(sections))
     tokens = estimer_tokens(markdown)
     if budget_tokens is not None and tokens > budget_tokens:
         raise CarteTropGrande(
-            f"La carte du corpus de documentation pèse {tokens} tokens estimés, au-delà "
-            f"du budget annoncé de {budget_tokens} ({len(fichiers)} fichiers, "
-            f"{len(sections)} sections). Elle n'est pas tronquée : une carte amputée "
+            f"Le sommaire de la carte du corpus de documentation pèse {tokens} tokens "
+            f"estimés, au-delà du budget annoncé de {budget_tokens} ({len(fichiers)} "
+            f"fichiers, {len(sections)} sections). Il n'est pas tronqué : une carte amputée "
             "ferait choisir le modèle parmi des sections qu'elle ne montre plus. "
             "Relever BUDGET_CARTE_TOKENS se décide en connaissant le coût par question, "
             "ou bien c'est le corpus qu'il faut resserrer."
@@ -695,12 +794,46 @@ def _titres(lignes: Sequence[str]) -> Iterator[tuple[int, int, str]]:
             yield index, len(titre.group(1)), titre.group(2).strip()
 
 
+def _ouvertures(sections: Sequence[SectionDoc]) -> dict[str, tuple[SectionDoc, ...]]:
+    """Les sections que le sommaire tait, rangées sous le titre qui les porte (#1316).
+
+    Une section plus profonde que `NIVEAU_SOMMAIRE` se range sous son plus proche
+    ancêtre **visible** — son `##` le plus souvent, son `#` quand le document saute un
+    niveau. Celle qui n'a aucun ancêtre visible (un fichier qui ouvre sur un `###`)
+    reste au sommaire : sans quoi aucun des deux niveaux ne la montrerait, et le
+    modèle ne pourrait jamais la choisir. C'est la propriété que les deux niveaux
+    doivent à la carte à plat — **tout** ce que l'index porte se voit quelque part.
+
+    La règle vit ici une fois : le sommaire s'en sert pour marquer ses titres, et
+    `CarteDocumentation` pour rendre leur détail.
+    """
+    ouvertures: dict[str, list[SectionDoc]] = {}
+    visibles: list[SectionDoc] = []
+    fichier = ""
+    for section in sections:
+        if section.fichier != fichier:
+            fichier, visibles = section.fichier, []
+        while visibles and visibles[-1].niveau >= section.niveau:
+            visibles.pop()
+        if section.niveau > NIVEAU_SOMMAIRE and visibles:
+            ouvertures.setdefault(visibles[-1].identifiant, []).append(section)
+        else:
+            visibles.append(section)
+    return {identifiant: tuple(portees) for identifiant, portees in ouvertures.items()}
+
+
 def _rendre_carte(
     fichiers: Sequence[str],
     par_fichier: Mapping[str, Sequence[SectionDoc]],
     nb_sections: int,
+    ouvertures: Mapping[str, Sequence[SectionDoc]],
 ) -> str:
-    """La carte en Markdown : un bloc par fichier, une ligne indentée par section.
+    """Le sommaire en Markdown : un bloc par fichier, une ligne indentée par titre visible.
+
+    Une section rangée dans `ouvertures` n'y a pas de ligne — elle se montre au
+    détail du titre qui la porte, et ce titre est marqué `+` pour que le modèle sache
+    qu'en le choisissant il en verra davantage. Sans `ouvertures`, c'est la carte à
+    plat d'avant #1316, que les tests rendent encore pour mesurer ce qu'elle coûterait.
 
     L'indentation **est** le chemin de titres : la porter en toutes lettres sur chaque
     ligne ferait plus que doubler le coût de la carte sans rien apprendre (décision 3
@@ -708,6 +841,7 @@ def _rendre_carte(
     qu'écrit ici — un exemple recopié survit à la section qu'il cite, et enseigne alors
     une clé qui n'existe plus.
     """
+    tues = {sous.identifiant for portees in ouvertures.values() for sous in portees}
     premiere = next(
         (sections[0] for sections in par_fichier.values() if sections),
         None,
@@ -715,9 +849,15 @@ def _rendre_carte(
     lignes = [
         "# Carte de la documentation de Maestro",
         "",
-        f"{len(fichiers)} fichiers, {nb_sections} sections. Une ligne par section ; "
+        f"{len(fichiers)} fichiers, {nb_sections} sections. Une ligne par titre ; "
         "l'indentation donne la hiérarchie des titres.",
     ]
+    if tues:
+        lignes.append(
+            "Ce sommaire montre les titres de niveaux 1 et 2. Un titre marqué `+` porte "
+            "des sous-sections, montrées à part quand on le choisit ; un titre marqué "
+            "`-` n'en porte pas."
+        )
     if premiere is not None:
         lignes.append(
             "Une section se désigne par `<fichier>#<titre>`, recopié tel quel — par "
@@ -726,7 +866,10 @@ def _rendre_carte(
     for relatif in fichiers:
         lignes.extend(["", f"## {relatif}"])
         for section in par_fichier.get(relatif, ()):
-            lignes.append(f"{'  ' * (section.niveau - 1)}- {section.cle_titre}")
+            if section.identifiant in tues:
+                continue
+            puce = "+" if section.identifiant in ouvertures else "-"
+            lignes.append(f"{'  ' * (section.niveau - 1)}{puce} {section.cle_titre}")
     return "\n".join(lignes) + "\n"
 
 
