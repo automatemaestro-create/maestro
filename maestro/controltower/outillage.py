@@ -165,6 +165,7 @@ from maestro.controltower.chat import (
     ReponseChat,
     acquis_du_fil,
     choix_du_fil,
+    fil_du_projet,
     piece_en_attente,
     projet_du_fil,
     transcription,
@@ -615,13 +616,21 @@ class ConducteurOutillage:
         return _outille(await self._tour_de(fil, projet), projet)
 
     async def _tour_de(self, fil: Sequence[MessageChat], projet: str | None) -> ReponseChat:
-        """Le tour lui-même, pour `projet` s'il est connu — voir `_tour`."""
-        reponses = choix_du_fil(fil)
+        """Le tour lui-même, pour `projet` s'il est connu — voir `_tour`.
+
+        Les réponses et ce qui a été compris se lisent sur le fil **de ce projet**
+        (`fil_du_projet`) : vu sur la vraie stack, un projet importé outillé après un
+        projet neuf, dans la même conversation, recevait les réponses du premier. La
+        conversation que le modèle lit pour comprendre un projet neuf reste, elle,
+        entière : ce qui l'a fait naître précède sa déclaration.
+        """
+        propre = fil_du_projet(fil, projet)
+        reponses = choix_du_fil(propre)
         if (
             self._pieces is not None
             and projet
             and not reponses
-            and not acquis_du_fil(fil)
+            and not acquis_du_fil(propre)
             and await self._pieces.a_ses_fichiers(projet)
         ):
             return await self._piece(fil, projet)
@@ -684,7 +693,12 @@ class ConducteurOutillage:
         suivante = await pieces.prochaine(
             projet_id, fil, acquis=acquis, corrections=corrections, tranchees=tranchees
         )
-        if suivante is not None and phrase and not suivante.correction and _touchee(suivante, fil):
+        if (
+            suivante is not None
+            and phrase
+            and not suivante.correction
+            and _touchee(suivante, fil_du_projet(fil, projet_id))
+        ):
             suivante = replace(suivante, correction=phrase)
         comprehension = tuple(acquis) if acquis else ()
         if suivante is None:
@@ -834,9 +848,10 @@ class ConducteurOutillage:
         (#1100).
         """
         pieces = self._exige_pieces()
+        propre = fil_du_projet(fil, projet_id)
         if (
-            not acquis_du_fil(fil)
-            and not choix_du_fil(fil)
+            not acquis_du_fil(propre)
+            and not choix_du_fil(propre)
             and not await pieces.a_ses_fichiers(projet_id)
         ):
             return await self._tour(fil, projet_id)
@@ -853,7 +868,7 @@ class ConducteurOutillage:
                 piece=reposee,
                 projet_outille=projet_id,
             )
-        if lue.corrections and pieces.sans_effet(lue.corrections, fil):
+        if lue.corrections and pieces.sans_effet(lue.corrections, propre):
             sujets = ", ".join(sujet_de(c.cle) for c in lue.corrections)
             return ReponseChat(
                 contenu=(

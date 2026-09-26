@@ -512,15 +512,50 @@ def projet_du_fil(fil: Sequence[MessageChat]) -> str | None:
     portent pas de périmètre ; ceux-là, si — ce sont des faits de ce projet-là.
     """
     for message in reversed(fil):
-        if message.projet_outille:
-            return message.projet_outille
-        if message.piece is not None:
-            return message.piece.projet_id
-        if message.piece_ecrite is not None:
-            return message.piece_ecrite.projet_id
-        if message.projet_cree is not None and message.projet_cree.id:
-            return message.projet_cree.id
+        nomme = _projet_nomme(message)
+        if nomme:
+            return nomme
     return None
+
+
+def _projet_nomme(message: MessageChat) -> str:
+    """Le projet qu'un message nomme lui-même — vide s'il n'en nomme aucun."""
+    if message.projet_outille:
+        return message.projet_outille
+    if message.piece is not None:
+        return message.piece.projet_id
+    if message.piece_ecrite is not None:
+        return message.piece_ecrite.projet_id
+    if message.projet_cree is not None:
+        return message.projet_cree.id
+    return ""
+
+
+def fil_du_projet(fil: Sequence[MessageChat], projet: str | None) -> list[MessageChat]:
+    """Les messages de ce fil qui parlent de l'outillage de `projet` — ou d'aucun (#1161).
+
+    Le fil est transverse (#281) : deux projets peuvent s'y outiller l'un après l'autre.
+    Vu sur la vraie stack, le second recevait alors les réponses, la compréhension, les
+    corrections et les verdicts du premier — des tests et une CI qu'il n'avait pas. Les
+    lecteurs de l'outillage (`choix_du_fil`, `acquis_du_fil`, `corrections_du_fil`,
+    `pieces_tranchees`, les verdicts connus) lisent donc **ce** fil-là.
+
+    Chaque message se rattache au dernier projet que le fil nommait quand il a été
+    écrit (`_projet_nomme` : le tour marqué, la pièce, le fait, le projet né) ; une
+    réponse ou une correction de la personne, qui n'en nomme aucun, suit celui de la
+    question qu'elle tranche. Ce qui ne se rattache à aucun projet reste : un
+    questionnaire ouvert sans projet s'applique au premier qui le reprend. Sans
+    `projet`, le fil entier.
+    """
+    if not projet:
+        return list(fil)
+    courant = ""
+    propres: list[MessageChat] = []
+    for message in fil:
+        courant = _projet_nomme(message) or courant
+        if courant in ("", projet):
+            propres.append(message)
+    return propres
 
 
 def corrections_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:

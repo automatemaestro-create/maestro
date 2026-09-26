@@ -1026,6 +1026,44 @@ def test_une_correction_qui_retire_une_commande_porte_sa_phrase_sur_la_carte(
     assert piece.correction == phrase
 
 
+def test_deux_projets_outilles_dans_le_meme_fil_ne_se_melangent_pas(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu sur la vraie stack : un projet neuf outillé d'abord, puis un projet importé dans
+    la même conversation — le second a reçu les réponses du premier (des tests et une CI
+    qu'il n'a pas). Le fil est transverse : ce qu'il sait d'un projet ne vaut pas pour
+    un autre."""
+    joueur = _Joueur()
+    modele = _Modele(comprehension=COMPRIS_FLUTTER)
+    service = _service(projets, joueur, modele)
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    neuf = str(
+        projets.creer("padel", str(_maison / "Maestro" / "padel"), origine=ORIGINE_NOUVEAU)["id"]
+    )
+    demande = _message(UTILISATEUR, "Une application mobile Flutter")
+    ouverture = asyncio.run(conducteur.ouvrir([demande], projet_id=neuf))
+    assert ouverture.piece is not None and "flutter test" in ouverture.piece.contenu
+    fil = [
+        demande,
+        _message(
+            NOM_ORCHESTRATION,
+            ouverture.contenu,
+            piece=ouverture.piece,
+            comprehension=ouverture.comprehension,
+            projet_outille=ouverture.projet_outille,
+        ),
+    ]
+    importe = _importe(projets, _maison)
+
+    reponse = asyncio.run(conducteur.ouvrir(fil, projet_id=importe))
+
+    piece = reponse.piece
+    assert piece is not None and piece.projet_id == importe
+    assert "flutter" not in piece.contenu.lower() and "npm run test" in piece.contenu
+    # Le second projet se lit (#1158) : il ne se questionne pas avec les réponses du premier.
+    assert len(modele.appels["comprehension"]) == 1
+
+
 def test_une_question_posee_pendant_une_piece_ne_la_retire_pas(
     projets: ServiceProjets, _maison: Path
 ) -> None:

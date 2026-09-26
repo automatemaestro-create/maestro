@@ -77,6 +77,7 @@ from maestro.controltower.chat import (
     PieceProposee,
     acquis_du_fil,
     corrections_du_fil,
+    fil_du_projet,
     pieces_tranchees,
 )
 from maestro.controltower.outillage import ServiceOutillage
@@ -313,7 +314,12 @@ class ServicePieces:
 
         Bloquant par morceaux — la vérification joue des commandes : joué hors de la
         boucle d'événements.
+
+        Le fil lu est celui **de ce projet** (`fil_du_projet`) : ce qu'une conversation
+        sait d'un autre projet — réponses, corrections, verdicts, pièces tranchées — ne
+        vaut pas pour lui.
         """
+        fil = fil_du_projet(fil, projet_id)
         matiere = await self._matiere(projet_id, fil, acquis=acquis, corrections=corrections)
         # La dernière décision par chemin (`pieces_tranchees`) — le geste en cours après
         # celles du fil, puisqu'il est la plus récente.
@@ -327,7 +333,7 @@ class ServicePieces:
         self, projet_id: str, fil: Sequence[MessageChat], phrase: str
     ) -> CorrectionLue:
         """Ce que `phrase` corrige de l'outillage — le modèle comprend, le code vérifie."""
-        matiere = await self._matiere(projet_id, fil)
+        matiere = await self._matiere(projet_id, fil_du_projet(fil, projet_id))
         return await self._correction.comprendre(
             projet=matiere.projet.nom,
             constats=constats_en_texte(matiere.constats),
