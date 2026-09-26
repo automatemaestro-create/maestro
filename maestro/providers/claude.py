@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import shutil
+import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
@@ -33,6 +35,7 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
+import claude_agent_sdk
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -98,6 +101,7 @@ from maestro.providers.base import (
     TurnLimitReached,
     attache_stderr,
 )
+from maestro.sandbox.confinement import ReleveConfinement, SessionConfinee
 from maestro.sandbox.container import IsolationConfig
 from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
 
@@ -508,6 +512,7 @@ class ClaudeProvider(ModelProvider):
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: courrier.Courrier | None = None,
         on_question: question.Questionneur | None = None,
+        on_processus: Callable[[ReleveConfinement], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
@@ -727,6 +732,22 @@ class ClaudeProvider(ModelProvider):
         Ce que ce fournisseur fait de `None` est donc une réponse servie à l'agent
         — « reprends sur ton hypothèse » — et jamais un refus.
 
+        `on_processus` (#1279, `maestro.sandbox.confinement`) reçoit ce que la
+        session a laissé derrière elle à sa clôture. Hors mode isolé, le CLI n'est
+        plus lancé par le SDK mais par le **lanceur du confinement**, pointé en
+        `cli_path` — la couture du mode isolé, et la seule que le SDK expose : il
+        ne rend ni le processus ni le pid du CLI. Le lanceur range la session dans
+        un arbre (Job Object, groupe de processus), l'arrête tout entier quand elle
+        se ferme — succès, échec, annulation — et rend un relevé : les processus
+        qui lui survivaient et qu'il a arrêtés, ceux qui ont **résisté** (nom et
+        pid), ou pourquoi la session n'a pas pu être confinée. Il arrive ici **une
+        fois la session fermée**, dans le `finally` : c'est justement d'une tâche en
+        échec qu'on veut savoir ce qu'elle laissait tourner. Rien n'est appelé
+        quand il n'y a rien à dire, et un callback qui lève ne casse jamais
+        l'exécution observée. Le CLI confiné est celui que le SDK aurait pris
+        (`_commande_du_cli`). En mode isolé, le conteneur jetable tient déjà ce
+        rôle : la session n'a rien de plus à confiner.
+
         `effort` (#253) alimente l'option homonyme du SDK (`--effort` du CLI),
         après le même tamis que sur `generate` : c'est un **conseil de dépense**,
         au même titre que le modèle, et pas une borne — à la différence de
@@ -745,9 +766,16 @@ class ClaudeProvider(ModelProvider):
         """
         env = self._auth_env()
         cli_path: Path | None = None
+        confinement: SessionConfinee | None = None
         if self._isolation is not None:
             cli_path = self._isolation.shim
             env |= self._isolation.env_sandbox(workspace, projet=projet)
+        else:
+            # Hors du conteneur jetable, plus rien n'emporte ce que la session
+            # lance en arrière-plan : le lanceur du confinement s'en charge (#1279).
+            confinement = SessionConfinee.preparer(_commande_du_cli())
+            cli_path = confinement.lanceur
+            env |= confinement.env
         # La frontière d'écriture du régime en place (#839) : armée si et
         # seulement si `workspace` **est** la racine du projet — un projet non
         # versionné se remplit dans sa racine, et ce que la copie garantissait
@@ -763,9 +791,18 @@ class ClaudeProvider(ModelProvider):
         # contrôle ne démarre pas tant qu'on ne sait pas qu'un refus y tient.
         # Sans politique ni frontière, Maestro ne pose aucun refus — rien à sonder.
         if politique is not None or frontiere is not None:
-            await self._point_de_controle_verifie(
-                model=model, env=env, cli_path=cli_path, workspace=workspace
-            )
+            try:
+                # La sonde passe par le même lanceur que l'agent (#1279) : confinée
+                # comme lui, et son relevé — elle ne lance rien — est remplacé par
+                # celui de l'agent à sa clôture.
+                await self._point_de_controle_verifie(
+                    model=model, env=env, cli_path=cli_path, workspace=workspace
+                )
+            except BaseException:
+                # Aucune session d'agent ne suivra : le dossier du relevé part ici.
+                if confinement is not None:
+                    confinement.solder()
+                raise
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
@@ -848,6 +885,8 @@ class ClaudeProvider(ModelProvider):
         finally:
             if regulateur is not None:
                 regulateur.vider()
+            if confinement is not None:
+                _rendre_compte(confinement.solder(), on_processus)
 
     async def _point_de_controle_verifie(
         self,
@@ -1020,6 +1059,41 @@ def _absorbe_sonde(sonde: asyncio.Task[None]) -> None:
     """
     if not sonde.cancelled():
         sonde.exception()
+
+
+def _commande_du_cli() -> tuple[str, ...] | None:
+    """Le CLI que la session confinée lance (#1279) — celui que le SDK aurait pris.
+
+    Le SDK ne lance plus lui-même le CLI d'une session outillée : il lance le
+    lanceur du confinement, à qui il faut nommer la commande à confiner. C'est le
+    choix que le SDK faisait sans `cli_path`, et celui qu'il documente — le CLI
+    **embarqué** dans son paquet, utilisé par défaut —, sinon le `claude` du PATH
+    (`claude.exe` sous Windows : le SDK y refuse le `claude.cmd` de npm). Repris
+    ici parce que le SDK n'expose pas le sien ; `None` quand il n'y a ni l'un ni
+    l'autre, et la session tourne alors sans confinement — en le disant.
+    """
+    nom = "claude.exe" if sys.platform == "win32" else "claude"
+    embarque = Path(claude_agent_sdk.__file__).resolve().parent / "_bundled" / nom
+    if embarque.is_file():
+        return (str(embarque),)
+    trouve = shutil.which(nom)
+    return (trouve,) if trouve else None
+
+
+def _rendre_compte(
+    releve: ReleveConfinement, on_processus: Callable[[ReleveConfinement], None] | None
+) -> None:
+    """Remet le relevé du confinement à l'appelant — rien quand il n'y a rien à dire.
+
+    Best-effort, comme les autres canaux d'observation : un callback qui lève ne
+    doit ni casser la tâche, ni masquer l'exception qu'elle propage peut-être.
+    """
+    if on_processus is None or releve.vide:
+        return
+    try:
+        on_processus(releve)
+    except Exception:  # noqa: BLE001 — l'observation ne casse jamais l'observé
+        return
 
 
 def _outil_arbitrage(

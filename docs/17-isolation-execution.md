@@ -165,3 +165,47 @@ consigné au journal, comme les autres échecs.
   pas. Ce que cela **implique** est écrit une fois et une seule, dans
   [docs/19 §2.4](./19-securite-modele-de-menace.md) : le filet y est alors le
   **périmètre du projet**, pas le conteneur ([docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md)).
+
+## 6. Hors mode isolé : la session d'un agent est confinée (#1279)
+
+En mode isolé, le conteneur jetable emporte avec lui tout ce que le CLI y a lancé.
+Hors mode isolé — le défaut —, rien ne le faisait : le run `3fe501fc0878`
+(2026-09-24) a laissé tourner un Edge headless que l'agent avait lancé en arrière-plan
+pour vérifier sa maquette, **son port de débogage ouvert** à tout processus du poste,
+rattaché à un `bash.exe` déjà mort. Le SDK ferme **son** sous-processus, le CLI ; ce que
+le CLI a lancé n'est l'enfant de personne.
+
+**La règle.** Ce qu'un agent lance pendant une tâche ne survit pas à cette tâche : à la
+clôture de sa session — succès, échec, relance (chaque tentative est une session),
+annulation —, tout ce qui en est né est arrêté, et le journal du run le dit (étape
+`<tâche>:processus`) : ce qui lui survivait et a été arrêté, ce qui a **résisté**, nommé
+avec son pid, ou une session qui n'a pas pu être confinée. Pendant la tâche, l'agent
+lance ce qu'il veut sous sa politique : c'est un garde-fou, pas une bride
+([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
+
+**La couture est la même qu'au §2.** Le SDK n'expose ni le processus ni le pid du CLI, et
+lire ses internes serait dépendre d'un outil tiers ([docs/44](./44-decision-maestro-possede-ses-contrats.md)).
+Le fournisseur passe donc en `cli_path` le **lanceur** `maestro-confinement`
+(`maestro/sandbox/confinement.py`), qui lance le vrai CLI — celui que le SDK aurait
+pris : l'embarqué, sinon celui du PATH — avec les flux du SDK hérités tels quels, dans
+un arbre de processus (`maestro/sandbox/arbre.py`) :
+
+| Plateforme | L'arbre | Ce qui s'en échappe, et comment on le rattrape |
+|---|---|---|
+| Windows | un **Job Object** « tué à la fermeture », où le CLI naît suspendu | un **alias d'application** (le `python` du Microsoft Store) fait naître son processus hors du job — mesuré ; le **veilleur** tient une poignée sur chaque membre, voit ses enfants nés dehors et les **adopte** dans un job à lui |
+| Linux | le **groupe** de processus du CLI | un `setsid` ; le lanceur se déclare *subreaper* : l'orphelin lui revient, il est arrêté comme descendant |
+| macOS | le groupe de processus | un `setsid` reste hors d'atteinte |
+
+À la fin de la session, le lanceur arrête l'arbre et écrit son relevé, que le
+fournisseur lit une fois la session fermée. Si le SDK doit le terminer (le CLI ne sort
+pas dans son délai de grâce), le signal est intercepté sous POSIX ; sous Windows, le job
+« tué à la fermeture » emporte l'arbre quand le système ferme la poignée du lanceur
+mort — sans relevé, et rien n'est alors affirmé.
+
+**Ce qui n'est pas confiné, et le dit** : un poste dont le paquet n'a pas été réinstallé
+(lanceur absent) ou sans CLI trouvable fait tourner la session comme avant, avec une
+ligne « session non confinée » au journal. Reste hors d'atteinte, sous Windows, un
+processus né d'un évadé mort avant d'avoir été vu : plus rien ne le relie à l'arbre.
+Tests : `tests/test_confinement.py` — la chaîne réelle (fournisseur, transport du SDK,
+lanceur, faux CLI) en succès, échec et annulation, le `sleep &` de `bash`, l'alias du
+Store, le lanceur terminé en pleine session, et la ligne du journal.

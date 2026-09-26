@@ -38,6 +38,7 @@ from maestro.providers.courrier import Courrier
 from maestro.providers.decision import Consigneur
 from maestro.providers.question import Questionneur
 from maestro.sandbox import ProducedFile, espace_de_travail
+from maestro.sandbox.confinement import ReleveConfinement
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
 #: explorer, shell. Volontairement restreint (docs/02 §7 : permissions scopées) —
@@ -222,6 +223,7 @@ class AgentRuntime:
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         on_question: Questionneur | None = None,
+        on_processus: Callable[[ReleveConfinement], None] | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
         effort: str | None = None,
@@ -331,6 +333,15 @@ class AgentRuntime:
         trois, et il n'a surtout rien à décider de la borne : elle vit avec le
         journal. None : le verbe n'est pas servi du tout.
 
+        `on_processus` (#1279) est le neuvième, et le seul qui ne parte ni de
+        l'agent ni vers lui : il part de sa **session**, une fois fermée. Le
+        fournisseur arrête à la clôture tout ce que la session a lancé
+        (`maestro.sandbox.confinement`) et dit ce qui vivait encore, ce qui a
+        résisté, ou pourquoi il n'a pas pu confiner ; l'appelant l'écrit au journal
+        du run. Le runtime ne fait que relier les deux — il ne voit ni les
+        processus, ni le journal. None : rien n'est dit, et l'arrêt a lieu quand
+        même — il n'a jamais dépendu de ce qu'on en raconte.
+
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
         `maestro/<tache_id>` hors de la racine si le projet est versionné, **la
@@ -435,6 +446,7 @@ class AgentRuntime:
                 credit_arbitrage=credit_arbitrage,
                 on_courrier=on_courrier,
                 on_question=on_question,
+                on_processus=on_processus,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
                 **reglage_effort,

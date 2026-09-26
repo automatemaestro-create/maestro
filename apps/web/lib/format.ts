@@ -350,6 +350,12 @@ const LIBELLES_STATUT: Record<string, string> = {
   ecriture_en_place: "Projet écrit en place",
   ecriture_sans_objet: "Rien d'écrit dans le projet",
   projet_introuvable: "Projet introuvable",
+  // Ce que la session de l'agent laissait tourner à la clôture de la tâche
+  // (#1279) : arrêté, arrêté sauf ce qui a résisté — nommé avec son pid —, ou une
+  // session qui n'a pas pu être confinée. La phrase du moteur porte les processus.
+  processus_arretes: "Processus arrêtés",
+  processus_survivants: "Processus non arrêtés",
+  session_non_confinee: "Session non confinée",
 };
 
 /** Le libellé d'un statut, ou le statut brut si le flux s'est enrichi. */

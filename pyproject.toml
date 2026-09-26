@@ -119,6 +119,12 @@ maestro-durable-worker = "maestro.durable.worker:main"
 # MAESTRO_ISOLATION=conteneur, il relaie le lancement du CLI vers `docker run`
 # durci. Invoqué par le fournisseur, pas à la main.
 maestro-sandbox-shim = "maestro.sandbox.shim:main"
+# Lanceur du confinement (ticket #1279) : passé en `cli_path` à l'Agent SDK hors mode
+# isolé, il lance le CLI dans un arbre de processus (Job Object, groupe) et l'arrête
+# tout entier à la clôture de la session — ce qu'un agent lance ne survit pas à sa
+# tâche. Invoqué par le fournisseur, pas à la main ; absent, la session tourne sans
+# confinement et le journal du run le dit.
+maestro-confinement = "maestro.sandbox.confinement:main"
 
 [tool.setuptools.packages.find]
 # Inclut `maestro` et ses sous-paquets (ex. `maestro.providers`).

@@ -340,6 +340,7 @@ un projet local **déplace la frontière** ; il faut le consigner plutôt que le
 | Exfiltration du code de l'utilisateur | `git push` vers un distant tiers, appel réseau depuis un `Bash` | Politique d'outils par agent (#110) ; l'égress non filtré reste la limite connue ([docs/19 §5](./19-securite-modele-de-menace.md)) — un filtrage par domaine devient plus urgent qu'avant |
 | **Prompt injection par le contenu du projet** | un `README`, un commentaire ou une dépendance qui contient des instructions | Le contenu lu est **une donnée, pas une consigne** : à porter dans les prompts systèmes ; les actions sensibles restent derrière la validation, ce qui borne les dégâts |
 | Fuite de secrets du projet | `.env`, clés, tokens présents dans le dépôt de l'utilisateur | Exclusions par défaut au périmètre (`.env`, `**/secrets/**`) ; rédaction existante (#109) élargie aux valeurs lues dans le projet |
+| **Un processus d'agent survit à sa tâche** (#1279) | un serveur ou un navigateur headless lancé en arrière-plan par `Bash` — un port de débogage resté ouvert au poste | Session **confinée** hors mode isolé : tout ce qu'elle lance est arrêté à sa clôture, ce qui résiste est nommé au journal du run ([docs/17 §6](./17-isolation-execution.md)) |
 
 **Le poste hôte reste l'actif à protéger** ([docs/19 §1](./19-securite-modele-de-menace.md)) —
 il gagne simplement un voisin : **le projet de l'utilisateur**. En mode isolé, le conteneur

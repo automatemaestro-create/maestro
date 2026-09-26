@@ -31,6 +31,7 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.agents.permissions import PolitiqueOutils
     from maestro.detail_tache import EtapeTache
     from maestro.projets.modele import Projet
+    from maestro.sandbox.confinement import ReleveConfinement
 
 #: Borne appliquée à une exécution agentique dont l'appelant n'en fixe pas — depuis
 #: #494 il n'y en a plus : le défaut est **l'absence de borne**, et c'est un choix,
@@ -571,6 +572,7 @@ class ModelProvider(ABC):
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         on_question: Questionneur | None = None,
+        on_processus: Callable[[ReleveConfinement], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
@@ -807,6 +809,22 @@ class ModelProvider(ABC):
 
         Capacité optionnelle comme les précédentes : sans ce canal, le verbe n'est
         pas exposé du tout — plutôt qu'exposé sans aboutir.
+
+        `on_processus` (#1279, `maestro.sandbox.confinement`) ne part pas de
+        l'agent : il part de sa **session**, une fois fermée. Ce qu'un agent lance
+        pendant sa tâche — un serveur, un navigateur headless qui ouvre un port de
+        débogage — ne doit pas survivre à cette tâche, qu'elle réussisse, échoue,
+        soit relancée ou annulée : un fournisseur qui honore `run_agent` range
+        tout ce que sa session lance dans un même arbre et l'arrête à la clôture.
+        Il rend alors sur ce canal un `ReleveConfinement` — ce qui vivait encore et
+        qu'il a arrêté, ce qui a **résisté** (nom et pid, que le journal du run
+        doit dire), ou pourquoi la session n'a pas pu être confinée —, et rien
+        quand il n'y a rien à dire.
+
+        Un fournisseur dont la session ne lance aucun processus (un endpoint
+        distant sans outils locaux) n'a rien à confiner et n'appelle jamais ce
+        canal. Même règle que les canaux d'observation sur les échecs : un
+        callback qui lève ne casse jamais l'exécution observée.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de
