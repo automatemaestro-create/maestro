@@ -19,8 +19,10 @@
  * ticket), d'après v0, Lovable et ChatGPT : **une question en titre et un seul
  * composeur**. Ce que l'implémentation reprend des manques qu'il a relevés :
  *
- * - le retour à la liste est un **vrai bouton**, et il n'est là que s'il y a une
- *   liste — sur un poste neuf, il n'y a rien à choisir ;
+ * - le retour à la liste est un **vrai bouton**, et il n'est absent que si la
+ *   liste est **vide** — sur un poste neuf, il n'y a rien à choisir. Une liste
+ *   illisible (API coupée) n'est pas vide : le retour y reste, pour retrouver la
+ *   panne et son « Réessayer » ;
  * - importer un dossier est un **second chemin de la même conversation**, d'après
  *   Bolt : une amorce, pas un onglet ;
  * - **un seul geste principal à la fois** : quand une carte attend, c'est elle qui
@@ -43,6 +45,7 @@ import { Conversation } from "@/components/Conversation";
 import { IconeFlecheGauche } from "@/components/Icones";
 import { Bouton } from "@/components/Primitives";
 import { chargerProjets } from "@/lib/api";
+import { lireConversationOuverte as lireConversationDuFil } from "@/lib/conversationOuverte";
 import { useProjetActif } from "@/lib/etatProjetActif";
 import { projetNeDuFil } from "@/lib/naissance";
 import {
@@ -68,10 +71,17 @@ export const AMORCE_IMPORT = "J'ai déjà un dossier à importer";
 
 export function NaissanceProjet({
   retour,
+  panne = null,
   parUnGeste = false,
 }: {
   /** Revenir à la liste des projets — `undefined` quand il n'y en a aucun. */
   retour?: () => void;
+  /**
+   * La panne de l'API et de quoi relire, **sous** la question : placée au-dessus,
+   * elle la faisait tomber au quatrième rang, et son « Réessayer » s'empilait
+   * contre le retour, du même dessin (relecture de clôture).
+   */
+  panne?: React.ReactNode;
   /**
    * Ouverte par « Nouveau projet » plutôt que d'office (poste sans projet) : la
    * saisie prend alors le focus, comme un panneau qu'on vient de demander. Ouverte
@@ -89,21 +99,30 @@ export function NaissanceProjet({
   // conversation d'un autre. L'API rend la conversation vierge déjà en tête plutôt
   // que d'en empiler une (#696), donc revenir ici n'en fabrique pas une série.
   const { nouvelleConversation } = fil;
-  const [ouverte, setOuverte] = useState(false);
+  // La conversation ouverte ici : `null` tant qu'elle n'est pas née, `""` si l'API
+  // n'a pas pu en ouvrir une (on reste alors sur la courante).
+  const [neuve, setNeuve] = useState<string | null>(null);
   useEffect(() => {
     let vivant = true;
     void nouvelleConversation()
+      .then(() => {
+        if (vivant) setNeuve(lireConversationDuFil(AGENT_ORCHESTRATION));
+      })
       .catch(() => {
         // Sans conversation neuve, on reste sur la courante : la création y
         // marche aussi, elle y est seulement mêlée à ce qui précède.
-      })
-      .finally(() => {
-        if (vivant) setOuverte(true);
+        if (vivant) setNeuve("");
       });
     return () => {
       vivant = false;
     };
   }, [nouvelleConversation]);
+  // ⚠ Le fil ne se relit sur la conversation neuve qu'**après** sa naissance :
+  // entre les deux, il sert encore la précédente, et un projet né là-bas ouvrait
+  // ce projet-là (vu sur la vraie stack : « Nouveau projet » juste après un import
+  // rentrait dans le projet importé). Seul compte le fil de la conversation neuve.
+  const ouverte =
+    neuve !== null && (neuve === "" || fil.conversation === neuve);
 
   // Le projet né **dans cette conversation** : on l'ouvre. Relu de la fiche que
   // l'API sert (racine canonicalisée, VCS constaté), jamais reconstruit.
@@ -147,8 +166,11 @@ export function NaissanceProjet({
     <div className="flex flex-col gap-4">
       {retour !== undefined && (
         <div>
+          {/* À contour, pas discret : la relecture de clôture a vu le discret se
+              lire comme un lien pâle, en retrait du bord de la colonne — ce que
+              la variante retenue écartait. */}
           <Bouton
-            variante="discret"
+            variante="contour"
             ton="neutre"
             icone={IconeFlecheGauche}
             onClick={retour}
@@ -167,6 +189,7 @@ export function NaissanceProjet({
           créé sans votre accord.
         </p>
       </div>
+      {panne}
       {refus !== null && (
         <p className="text-annexe text-alerte-texte" role="alert">
           {refus}

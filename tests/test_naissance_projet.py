@@ -186,6 +186,40 @@ def test_un_nom_deja_pris_est_remplace_par_une_variante_dite(
     assert any("est déjà celui d'un projet" in a for a in demande.ajustements)
 
 
+def test_un_dossier_neuf_nomme_d_apres_un_nom_pris_suit_sa_variante(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    # Vu sur la vraie stack à la relecture : « banc 2 » proposé dans « …/banc », sous
+    # une raison du modèle qui disait le dossier « qui porte son nom ».
+    ailleurs = _maison / "ailleurs"
+    ailleurs.mkdir()
+    projets.creer("Kombucha-Vitrine", str(ailleurs))
+
+    demande = _naissance(projets).verifier(_brute())
+
+    assert demande.nom == "kombucha-vitrine 2"
+    assert demande.racine == (_repertoire(_maison) / "kombucha-vitrine-2").as_posix()
+    assert any(
+        "Le dossier suit le nom" in a and "kombucha-vitrine-2" in a
+        for a in demande.ajustements
+    )
+    assert not (_repertoire(_maison) / "kombucha-vitrine-2").exists()
+
+
+def test_un_dossier_neuf_nomme_autrement_reste_quand_le_nom_change(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    ailleurs = _maison / "ailleurs"
+    ailleurs.mkdir()
+    projets.creer("Kombucha-Vitrine", str(ailleurs))
+
+    demande = _naissance(projets).verifier(_brute(dossier="atelier"))
+
+    assert demande.nom == "kombucha-vitrine 2"
+    assert demande.racine == (_repertoire(_maison) / "atelier").as_posix()
+    assert len(demande.ajustements) == 1
+
+
 def test_git_absent_du_poste_retire_le_versionnement_et_le_dit(
     projets: ServiceProjets,
 ) -> None:
@@ -664,6 +698,41 @@ def test_la_route_sans_proposition_en_attente_rend_409(client_fil) -> None:
     client, _ = client_fil
     reponse = client.post(f"/api/chat/{NOM_ORCHESTRATION}/projet", json={"approuve": True})
     assert reponse.status_code == 409
+
+
+def test_le_geste_sur_un_import_dit_importer_pas_creer(
+    projets: ServiceProjets, tmp_path: Path, _maison: Path
+) -> None:
+    # Vu à la relecture : « Importer le projet » s'écrivait « Oui, crée ce projet. »
+    # dans le fil, juste au-dessus de la trace « Projet importé ».
+    racines = _maison / "racines"
+    racines.mkdir()
+    modele = ModeleScripte(
+        _dicte(
+            "Je l'importe ?",
+            VERDICT_PROJET,
+            projet=_brute(nom="racines", dossier=str(racines), origine=ORIGINE_EXISTANT),
+        )
+    )
+    app = create_app(
+        bus=InMemoryEventBus(),
+        state=ControlTowerState(),
+        chat_store=ChatStore(tmp_path / "chat"),
+        projets=projets,
+        orchestration_repondeur=_repondeur(projets, modele),
+    )
+    with TestClient(app) as client:
+        envoi = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": "J'ai déjà racines."}
+        )
+        assert envoi.json()["messages"][1]["projet_propose"]["origine"] == ORIGINE_EXISTANT
+
+        refus = client.post(f"/api/chat/{NOM_ORCHESTRATION}/projet", json={"approuve": False})
+
+    assert refus.status_code == 201
+    geste, _ = refus.json()["messages"]
+    assert geste["contenu"] == "Non, n'importe pas ce projet."
+    assert projets.lister() == []
 
 
 # ── ⑤ le message ─────────────────────────────────────────────────────────────

@@ -92,6 +92,19 @@ export function DemandeDeProjet({
       icone={IconeProjets}
       titre={importe ? "Importer ce projet ?" : "Créer ce projet ?"}
     >
+      {/* Ce que la vérification a changé, **avant** les lignes : placé dessous,
+          il arrivait après « banc 2 » et sa raison « le nom que vous avez
+          demandé », loin du nom qu'il corrige (relecture de clôture). */}
+      {demande.ajustements.length > 0 && (
+        <ul
+          aria-label="Ce que la vérification a changé"
+          className="mb-3 flex flex-col gap-1 text-annexe text-attention-texte"
+        >
+          {demande.ajustements.map((ajustement) => (
+            <li key={ajustement}>{ajustement}</li>
+          ))}
+        </ul>
+      )}
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-corps">
         <Choix terme="Nom" raison={demande.raison_nom}>
           <span className="font-medium text-texte">{demande.nom}</span>
@@ -114,25 +127,23 @@ export function DemandeDeProjet({
             </span>
           )}
         </Choix>
+        {/* Déjà sous Git : la raison est un fait du code, pas celle du modèle —
+            qui a pu proposer une mise sous Git que la vérification a retirée.
+            Sans raison, la ligne était la seule de la carte à n'en pas porter
+            (relecture de clôture). */}
         <Choix
           terme="Versionnement"
-          raison={demande.deja_versionne ? "" : demande.raison_versionnement}
+          raison={
+            demande.deja_versionne
+              ? "Son dépôt Git est constaté tel quel : l'import n'y crée rien."
+              : demande.raison_versionnement
+          }
         >
           <span className="font-medium text-texte">
             {versionnementEnMots(demande)}
           </span>
         </Choix>
       </dl>
-      {demande.ajustements.length > 0 && (
-        <ul
-          aria-label="Ce que la vérification a changé"
-          className="mt-3 flex flex-col gap-1 text-annexe text-attention-texte"
-        >
-          {demande.ajustements.map((ajustement) => (
-            <li key={ajustement}>{ajustement}</li>
-          ))}
-        </ul>
-      )}
       <p className="mt-3 text-annexe text-texte-secondaire">
         Quelque chose ne va pas ? Dites-le juste en dessous, avec vos mots — je
         vous proposerai la version corrigée.

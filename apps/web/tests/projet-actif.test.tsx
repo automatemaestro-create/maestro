@@ -37,6 +37,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EcranOuverture } from "@/components/projets/ChoixProjet";
 import { Shell } from "@/components/Shell";
+import { ecrireConversationOuverte as ecrireConversationDuFil } from "@/lib/conversationOuverte";
 import { marquerGuideVu } from "@/lib/guide";
 import { demanderNaissance } from "@/lib/naissance";
 import { lireConversationOuverte } from "@/lib/preferences";
@@ -183,6 +184,36 @@ describe("un projet naît dans la conversation (#1294)", () => {
     expect(await porte()).toBeInTheDocument();
   });
 
+  it("garde le retour quand la liste est illisible, qui n'est pas vide", async () => {
+    // Vu à la relecture, API coupée : la création ouverte depuis la panne perdait
+    // son retour, et plus rien ne ramenait à la liste ni à son « Réessayer ».
+    const utilisateur = userEvent.setup();
+    chargerProjets.mockRejectedValue(new Error("fetch failed"));
+    monter();
+    await screen.findByRole("alert");
+
+    await utilisateur.click(screen.getByRole("button", { name: "Nouveau projet" }));
+    const ecran = await creation();
+    // La panne se dit aussi en création, avec de quoi relire — pas seulement par
+    // le fil illisible dessous (relecture de clôture).
+    const panne = within(ecran).getAllByRole("alert")[0];
+    expect(panne).toHaveTextContent("fetch failed");
+    expect(within(ecran).getByRole("button", { name: "Réessayer" })).toBeInTheDocument();
+    // Sous la question, qui reste la première chose lue.
+    const question = within(ecran).getByRole("heading", {
+      level: 1,
+      name: "Que voulez-vous construire ?",
+    });
+    expect(
+      question.compareDocumentPosition(panne) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await utilisateur.click(
+      screen.getByRole("button", { name: "Choisir un projet existant" }),
+    );
+    expect(await screen.findByRole("button", { name: "Réessayer" })).toBeInTheDocument();
+  });
+
   it("s'ouvre d'office quand « Nouveau projet » a été demandé depuis un projet", async () => {
     // L'écran Projets quitte le projet ouvert pour venir créer ici : la porte
     // l'apprend par la mémoire de session, et une seule fois.
@@ -221,9 +252,15 @@ describe("un projet naît dans la conversation (#1294)", () => {
     expect(carte).toHaveTextContent("Git, en local");
     // Chaque choix avec sa raison, et ce que la vérification a changé, dit.
     expect(carte).toHaveTextContent("Chaque tâche sur sa branche.");
+    const changements = within(carte).getByRole("list", {
+      name: "Ce que la vérification a changé",
+    });
+    expect(changements).toHaveTextContent("déjà celui d'un projet");
+    // Dit **avant** les lignes, pour qu'on le lise avant le nom qu'il corrige.
     expect(
-      within(carte).getByRole("list", { name: "Ce que la vérification a changé" }),
-    ).toHaveTextContent("déjà celui d'un projet");
+      changements.compareDocumentPosition(within(carte).getByText("Nom")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     // Aucun champ : une correction se dit dans la conversation.
     expect(within(carte).queryByRole("textbox")).toBeNull();
 
@@ -257,6 +294,8 @@ describe("un projet naît dans la conversation (#1294)", () => {
     const carte = await screen.findByRole("region", { name: "Proposition de projet" });
     expect(within(carte).getByRole("heading", { name: "Importer ce projet ?" })).toBeInTheDocument();
     expect(carte).toHaveTextContent("Déjà sous Git");
+    // Sa raison est un fait du code : la seule ligne qui n'en portait pas.
+    expect(carte).toHaveTextContent("Son dépôt Git est constaté tel quel");
     expect(carte).toHaveTextContent("rien n'y sera écrit à l'import");
 
     await utilisateur.click(within(carte).getByRole("button", { name: "Pas maintenant" }));
@@ -353,6 +392,39 @@ describe("un projet naît dans la conversation (#1294)", () => {
 
     expect(await screen.findByText(CONTENU)).toBeInTheDocument();
     expect(lireProjetActifId()).toBe("prj-neuf");
+  });
+
+  it("n'entre pas dans le projet né d'une conversation précédente", async () => {
+    // Vu sur la vraie stack à la relecture : « Nouveau projet » juste après une
+    // naissance relisait un instant la conversation précédente, y trouvait son
+    // projet né, et y entrait — la création s'ouvrait sur un autre projet.
+    chargerProjets.mockResolvedValue([
+      projetFactice(),
+      projetFactice({ id: "prj-neuf", nom: "kombucha-vitrine" }),
+    ]);
+    poserFilAssistance({
+      conversation: "conv-precedente",
+      messages: [
+        messageFactice({
+          agent: "orchestrateur",
+          auteur: "orchestrateur",
+          contenu: "Le projet est déclaré.",
+          projet_cree: projetCree(),
+        }),
+      ],
+      nouvelleConversation: async () => {
+        ecrireConversationDuFil("orchestrateur", "conv-neuve");
+      },
+    });
+    demanderNaissance();
+    monter();
+    await creation();
+    await act(async () => {
+      await new Promise((resoudre) => setTimeout(resoudre, 50));
+    });
+
+    expect(lireProjetActifId()).toBeNull();
+    expect(screen.queryByText(CONTENU)).toBeNull();
   });
 
   it("montre, sous la réponse, le projet que l'accord a déclaré", async () => {

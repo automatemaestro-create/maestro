@@ -585,7 +585,7 @@ def _geste_de_recrutement(approuve: bool, roles: Sequence[RoleValide]) -> str:
     return f"Je valide cette équipe : {composition}."
 
 
-def _geste_de_declaration(approuve: bool) -> str:
+def _geste_de_declaration(approuve: bool, origine: str) -> str:
     """Ce que le geste écrit dans le fil — le message que le clic vaut (#1294).
 
     Même règle que `_geste_de_cadrage` : le fil est la seule mémoire du canal, et
@@ -593,7 +593,13 @@ def _geste_de_declaration(approuve: bool) -> str:
     recopié de la proposition — elle est juste au-dessus, sur la carte, et le
     geste ne l'amende pas : une correction se **dit** dans la conversation, et
     appelle une proposition nouvelle.
+
+    Le verbe suit l'origine, comme le bouton de la carte : « Importer le projet »
+    qui s'écrivait « Oui, crée ce projet. » contredisait la trace « Projet
+    importé » juste dessous (relecture de clôture de #1294).
     """
+    if origine == ORIGINE_EXISTANT:
+        return "Oui, importe ce projet." if approuve else "Non, n'importe pas ce projet."
     return "Oui, crée ce projet." if approuve else "Non, ne crée pas ce projet."
 
 
@@ -2467,7 +2473,11 @@ class ServiceChat:
             raise DeclarationIntrouvable(
                 f"aucun projet proposé en attente sur le fil {agent.nom}."
             )
-        geste = await self._deposer(agent, _geste_de_declaration(approuve), conversation=fil)
+        geste = await self._deposer(
+            agent,
+            _geste_de_declaration(approuve, attente.projet_propose.origine),
+            conversation=fil,
+        )
         try:
             reponse = await self._repondeur.declarer_projet(
                 agent,

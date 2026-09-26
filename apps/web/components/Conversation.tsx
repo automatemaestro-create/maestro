@@ -1697,6 +1697,25 @@ function Bulle({
  * à côté des mots du modèle. Même ligne, même jeton, même renvoi — ici vers
  * l'écran des agents, où l'équipe se relit.
  */
+/**
+ * Un chemin qui ne se coupe qu'à ses séparateurs : une occasion de coupure
+ * (`<wbr>`) après chaque `/`, et `break-words` en dernier recours pour un nom de
+ * dossier plus large que la colonne entière.
+ */
+function cheminASesSeparateurs(chemin: string): ReactNode {
+  const segments = chemin.split("/");
+  return segments.map((segment, rang) => (
+    <Fragment key={rang}>
+      {segment}
+      {rang < segments.length - 1 && (
+        <>
+          /<wbr />
+        </>
+      )}
+    </Fragment>
+  ));
+}
+
 function Suite({ message }: { message: MessageChat }) {
   // Facultatif depuis #1294 : le fil est aussi posé sur la porte d'entrée, avant
   // tout projet, où il n'y a ni run, ni tâche, ni validation à compter.
@@ -1759,13 +1778,25 @@ function Suite({ message }: { message: MessageChat }) {
         {/* Le projet qu'un accord a déclaré (#1294) : un fait, sur la même ligne
             que le run ouvert et l'équipe créée, et pour la même raison — ce que
             le modèle en dit est dans la bulle, ce qui existe est ici. */}
+        {/* Le nom et son versionnement sur une ligne, le chemin sur la suivante,
+            coupé à ses séparateurs : dans la colonne étroite, `break-all` le
+            coupait en plein nom de dossier et laissait « · versionné » seul sur
+            sa ligne (relecture de clôture de #1294). */}
         {projetCree !== null && (
-          <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
-            <IconeProjets className="size-3.5 shrink-0" />
-            {projetCree.origine === "existant" ? "Projet importé :" : "Projet créé :"}
-            <strong className="font-medium text-texte">{projetCree.nom}</strong>
-            <span className="font-mono break-all">{projetCree.racine}</span>
-            {projetCree.versionne && <span>· versionné</span>}
+          <span className="inline-flex min-w-0 flex-col gap-0.5">
+            <span className="inline-flex flex-wrap items-center gap-1">
+              <IconeProjets className="size-3.5 shrink-0" />
+              {projetCree.origine === "existant" ? "Projet importé :" : "Projet créé :"}
+              {/* Un seul élément de texte : « · versionné » suit le nom à la
+                  ligne plutôt que de s'y retrouver seul. */}
+              <span className="min-w-0">
+                <strong className="font-medium text-texte">{projetCree.nom}</strong>
+                {projetCree.versionne && " · versionné"}
+              </span>
+            </span>
+            <span className="font-mono break-words">
+              {cheminASesSeparateurs(projetCree.racine)}
+            </span>
           </span>
         )}
         {projetCree !== null && projetCree.versionnement_refuse !== "" && (

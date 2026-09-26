@@ -39,6 +39,7 @@ import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconePlus } from "@/components/Icones";
 import { LogoMaestro } from "@/components/Logo";
 import { BadgeEtat, Bouton, classesCarte } from "@/components/Primitives";
+import type { PanneApi } from "@/lib/api";
 import { useProjetActif } from "@/lib/etatProjetActif";
 import { naissanceDemandee } from "@/lib/naissance";
 import { entreeCourante } from "@/lib/navigation";
@@ -180,6 +181,38 @@ function CarteChoix({
   );
 }
 
+/**
+ * La panne de la liste, et de quoi la relire — la même dans les deux modes de la
+ * porte : la liste, et la création qu'on y a ouverte (#1294).
+ */
+function PanneDeLaListe({
+  erreur,
+  chargement,
+  recharger,
+}: {
+  erreur: PanneApi | null;
+  chargement: boolean;
+  recharger: () => Promise<void>;
+}) {
+  return (
+    <>
+      <BanniereErreurApi erreur={erreur} />
+      {erreur !== null && (
+        <div>
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            occupe={chargement}
+            onClick={() => void recharger()}
+          >
+            {chargement ? "Relecture…" : "Réessayer"}
+          </Bouton>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function ChoixProjet() {
   const { projets, chargement, erreur, perdu, choisir, recharger } =
     useProjetActif();
@@ -212,9 +245,20 @@ export function ChoixProjet() {
       <CadrePorte etiquette="Nouveau projet">
         <EnTetePorte />
         <NaissanceProjet
-          retour={
-            projets.length > 0 ? () => setCreationDemandee(false) : undefined
+          // La même panne qu'en liste : sans elle, la création ouverte sur une
+          // API coupée ne disait sa panne que par le fil illisible, sans rien
+          // pour relire (relecture de clôture de #1294).
+          panne={
+            <PanneDeLaListe
+              erreur={erreur}
+              chargement={chargement}
+              recharger={recharger}
+            />
           }
+          // Absent sur une liste **vide** seulement : une liste illisible (API
+          // coupée) n'est pas vide, et le retour y ramène à la panne et à son
+          // « Réessayer » — on n'invente jamais l'absence (point 3).
+          retour={listeVide ? undefined : () => setCreationDemandee(false)}
           parUnGeste={creationDemandee === true}
         />
       </CadrePorte>
@@ -244,19 +288,11 @@ export function ChoixProjet() {
         <RefusMotive refus={perdu} titre="Retour au choix du projet" />
       )}
 
-      <BanniereErreurApi erreur={erreur} />
-      {erreur !== null && (
-        <div>
-          <Bouton
-            variante="contour"
-            ton="neutre"
-            occupe={chargement}
-            onClick={() => void recharger()}
-          >
-            {chargement ? "Relecture…" : "Réessayer"}
-          </Bouton>
-        </div>
-      )}
+      <PanneDeLaListe
+        erreur={erreur}
+        chargement={chargement}
+        recharger={recharger}
+      />
 
       {chargement && (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">

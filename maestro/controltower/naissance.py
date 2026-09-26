@@ -175,7 +175,10 @@ class ServiceNaissance:
             nom = nom or racine.name
             deja_versionne = False
 
-        nom = self._nom_libre(nom, declares, ajustements)
+        nom_libre = self._nom_libre(nom, declares, ajustements)
+        if origine == ORIGINE_NOUVEAU and nom_libre != nom:
+            racine = _dossier_qui_suit(racine, nom, nom_libre, declares, ajustements)
+        nom = nom_libre
         versionner = bool(brute.get("versionner")) and not deja_versionne
         if versionner and not self._git():
             versionner = False
@@ -405,6 +408,32 @@ def _admissible(candidat: Path) -> Path:
         if refus.motif == "dossier-absent":
             return canonique(candidat)
         raise NaissanceRefusee(refus.motif, str(refus)) from refus
+
+
+def _dossier_qui_suit(
+    racine: Path,
+    nom: str,
+    nouveau: str,
+    declares: Sequence[Mapping[str, Any]],
+    ajustements: list[str],
+) -> Path:
+    """Le dossier neuf nommé d'après un nom pris suit la variante de ce nom.
+
+    Sans quoi la carte montrerait « banc 2 » dans « …/banc » — vu sur la vraie stack
+    à la relecture de #1294 —, sous une raison du modèle qui dit le dossier « qui
+    porte son nom ». Un dossier nommé autrement, ou dont la variante n'est pas libre,
+    reste tel quel : il est valide, seul le nom devait changer.
+    """
+    if racine.name.casefold() != _nom_de_dossier(nom):
+        return racine
+    try:
+        suivant = _admissible(racine.with_name(_nom_de_dossier(nouveau)))
+    except NaissanceRefusee:
+        return racine
+    if _occupe(suivant) or _declare_sur(suivant, declares) is not None:
+        return racine
+    ajustements.append(f"Le dossier suit le nom : proposé {suivant.as_posix()}.")
+    return suivant
 
 
 def _occupe(chemin: Path) -> bool:

@@ -364,7 +364,8 @@ quitte le projet ouvert, car un projet naît hors du cadre d'un autre.
 La forme a été tranchée sur pièces (veille et « Variante retenue » de #1294), d'après v0, Lovable
 et ChatGPT : une question et un seul composeur, sans tuile de type ni catégorie à cliquer. Importer
 un dossier est un **second chemin de la même conversation**, d'après Bolt : l'amorce « J'ai déjà un
-dossier à importer ». Le retour à la liste est un bouton, présent seulement s'il y a une liste.
+dossier à importer ». Le retour à la liste est un bouton, absent seulement quand la liste est vide :
+une liste illisible (API coupée) n'est pas vide, et le retour y ramène à la panne.
 
 **L'orchestrateur comprend, pose au plus les questions qui manquent, puis propose.** Son juge a un
 quatrième verdict, `projet` (`maestro/controltower/orchestration.py`). Il le rend quand la
@@ -377,7 +378,8 @@ raison**.
 **Le code vérifie avant de montrer** (`maestro/controltower/naissance.py`, `ServiceNaissance`). Un
 dossier relatif se range sous le répertoire des projets, et les frontières d'EF-38 s'appliquent.
 Un dossier neuf déjà occupé, un nom ou un dossier déjà déclarés sont remplacés par une variante
-numérotée, et **la carte le dit** (`ajustements`). Git absent retire la mise sous Git, et le dit
+numérotée, et **la carte le dit** (`ajustements`). Un dossier neuf nommé d'après un nom pris suit
+la variante du nom, s'il est libre. Git absent retire la mise sous Git, et le dit
 aussi. Ce qui ne se corrige pas n'est pas montré : un dossier à importer introuvable, ou déjà un
 projet. Le fil en dit la cause derrière les mots du modèle.
 
