@@ -393,6 +393,35 @@ def test_la_suite_ne_lit_pas_les_clients_du_poste() -> None:
     assert clients_du_poste.detecter() == ()
 
 
+# --- ③bis Ce que la note de décision en garde --------------------------------------------------
+
+_DOCS_38 = Path(__file__).resolve().parents[1] / "docs/38-decision-outillage-universel-du-projet.md"
+
+
+def _section(texte: str, debut: str, fin: str) -> str:
+    """Le texte d'une section de la note, de son titre au titre suivant."""
+    return texte.split(debut, 1)[1].split(fin, 1)[0]
+
+
+def test_docs_38_renvoie_a_la_decision_et_dit_ce_qui_l_a_fait_bouger() -> None:
+    """Critère 3 : §3.2 porte le renvoi ⚠ vers la note de décision, §7 la condition qui a joué.
+
+    Une note qui décrirait encore deux ponts d'office, sans renvoi, ferait relire la règle
+    d'avant à qui conteste celle-ci ; et §7 perdrait la seule condition dont on sait qu'elle a
+    déjà rouvert la décision — la lecture native d'`AGENTS.md` par Claude Code.
+    """
+    texte = _DOCS_38.read_text(encoding="utf-8")
+    ponts = _section(texte, "### 3.2 ", "### 3.3 ")
+    rouvrir = _section(texte, "## 7. ", "## 8. ")
+
+    # Le renvoi ouvre la section : c'est la première chose que lit qui y arrive.
+    assert ponts.split("\n", 1)[1].lstrip().startswith("> ⚠")
+    assert "43-decision-un-projet-nait-dans-la-conversation.md" in ponts
+    assert "#1295" in ponts and "GEMINI.md" in ponts
+    assert "Claude Code lit `AGENTS.md` de lui-même" in rouvrir
+    assert "2.1.277" in rouvrir and "test_outillage_clients.py" in rouvrir
+
+
 # --- ④ Le contrat, sur le vrai CLI ------------------------------------------------------------
 #
 # Ce que la règle affirme de Claude Code — il lit `AGENTS.md` de lui-même depuis la v2.1.277,
