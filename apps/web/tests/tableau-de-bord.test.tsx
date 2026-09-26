@@ -26,6 +26,11 @@ import TableauDeBord from "@/app/page";
 import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import { PanneauCouts } from "@/components/PanneauCouts";
+import {
+  MENTION_COUT_NON_TARIFE,
+  MENTION_COUT_PARTIEL,
+  RAISON_COUT_PARTIEL,
+} from "@/lib/format";
 import { entreeParLibelle, MENU } from "@/lib/navigation";
 
 import {
@@ -266,6 +271,39 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
   it("distingue « rien de rapporté » de « zéro dollar »", () => {
     monter({ couts: [coutExecutionFactice()] });
     expect(tuile("Dépense")).toHaveTextContent("—");
+  });
+
+  it("dit une dépense partielle, collée au chiffre, quand un grand livre porte des tokens sans prix (#1280)", () => {
+    // La même source que la barre supérieure (`coutCumule`), la même règle
+    // (`coutCumulePartiel`). L'état suit le chiffre en petit, comme une unité :
+    // relégué en fin de légende, il arrivait après qu'on avait lu le montant
+    // comme un solde (relecture visuelle de #1280).
+    monter({
+      couts: [
+        coutExecutionFactice({
+          run_id: "run-1",
+          total: usageFactice({ cout_usd: 1.17, tokens_non_tarifes: 2_092_911 }),
+        }),
+        coutExecutionFactice({ run_id: "run-2", total: usageFactice({ cout_usd: 0.25 }) }),
+      ],
+    });
+    expect(tuile("Dépense")).toHaveTextContent(`1,42 $US · ${MENTION_COUT_PARTIEL}`);
+    expect(tuile("Dépense")).toHaveTextContent("2 exécution(s), planification comprise");
+    // La raison, atteignable au clavier par l'infobulle de la tuile.
+    expect(within(tuile("Dépense")).getByRole("tooltip")).toHaveTextContent(
+      RAISON_COUT_PARTIEL,
+    );
+  });
+
+  it("dit « coût non tarifé » à la place du chiffre quand des tokens n'ont eu aucun prix (#1280)", () => {
+    monter({
+      couts: [coutExecutionFactice({ total: usageFactice({ tokens_non_tarifes: 12 }) })],
+    });
+    // La valeur qui suit le libellé : « coût non tarifé », et non « — » (qui
+    // dirait « rien rapporté ») — le tiret de la raison, dans l'infobulle, n'est
+    // pas celui-là.
+    expect(tuile("Dépense")).toHaveTextContent(`Dépense${MENTION_COUT_NON_TARIFE}`);
+    expect(tuile("Dépense")).not.toHaveTextContent(/Dépense\s*—/);
   });
 
   it("renvoie vers la page de ce qu'il résume", () => {

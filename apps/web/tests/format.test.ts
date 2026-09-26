@@ -16,6 +16,12 @@ import { describe, expect, it } from "vitest";
 import {
   formatCout,
   formatCoutAxe,
+  formatCoutPartiel,
+  MENTION_COUT_NON_TARIFE,
+  MENTION_COUT_NON_TARIFE_COURTE,
+  MENTION_COUT_PARTIEL,
+  MENTION_COUT_PARTIEL_COURTE,
+  partiesCoutPartiel,
   formatDuree,
   formatDureeRun,
   formatHeure,
@@ -58,6 +64,42 @@ describe("les montants à deux décimales (#247)", () => {
     // montant honnête et le « < » n'a plus lieu d'être.
     expect(formatCout(0.005)).not.toContain("<");
     expect(chiffresDe(formatCout(0.005))).toBe("0,01");
+  });
+
+  it("nomme l'état d'un montant qui n'est qu'un plancher, sans toucher au montant (#1280)", () => {
+    // Le montant reste ce qui a été tarifé : Maestro n'invente aucun prix.
+    const partiel = formatCoutPartiel(0.2051, true);
+    expect(chiffresDe(partiel)).toBe("0,21");
+    expect(partiel).toContain(MENTION_COUT_PARTIEL);
+    // Sans aucun prix mais avec des tokens consommés, « — » dirait « rien
+    // rapporté » : on lit que le coût n'est pas tarifé.
+    expect(formatCoutPartiel(null, true)).toBe(MENTION_COUT_NON_TARIFE);
+    // Un montant complet se rend exactement comme avant — les trois verdicts
+    // de `formatCout` ne bougent pas.
+    expect(formatCoutPartiel(0.2051, false)).toBe(formatCout(0.2051));
+    expect(formatCoutPartiel(null, false)).toBe("—");
+  });
+
+  it("rend le montant et son état en deux parties, pour que chaque surface garde son ton (#1280)", () => {
+    // La relecture visuelle a vu le qualificatif prendre le gras ou la taille
+    // du montant là où il était rendu d'une seule chaîne.
+    expect(partiesCoutPartiel(0.2051, true)).toEqual({
+      montant: formatCout(0.2051),
+      mention: MENTION_COUT_PARTIEL,
+    });
+    expect(partiesCoutPartiel(null, true)).toEqual({
+      montant: null,
+      mention: MENTION_COUT_NON_TARIFE,
+    });
+    expect(partiesCoutPartiel(0.2051, false)).toEqual({
+      montant: formatCout(0.2051),
+      mention: null,
+    });
+    // La forme courte, là où le libellé porte déjà le mot « coût ».
+    expect(partiesCoutPartiel(0.2051, true, { court: true }).mention).toBe(
+      MENTION_COUT_PARTIEL_COURTE,
+    );
+    expect(formatCoutPartiel(null, true, { court: true })).toBe(MENTION_COUT_NON_TARIFE_COURTE);
   });
 
   it("laisse les graduations d'axe à leur précision, exception assumée", () => {

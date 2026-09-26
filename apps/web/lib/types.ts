@@ -37,6 +37,13 @@ export type Usage = {
   duree_execution_ms?: number | null;
   tours: number;
   outils: string[];
+  /**
+   * La part de `tokens_total` qu'**aucun coût ne couvre** (#1280) : tous les
+   * tokens d'une mesure sans coût, ceux d'une session tuée avant son résultat
+   * même quand une relance a fini tarifée. Au-dessus de zéro, `cout_usd` n'est
+   * qu'un plancher. Optionnel : une mesure servie avant #1280 n'en porte pas.
+   */
+  tokens_non_tarifes?: number;
 };
 
 /**
@@ -95,6 +102,8 @@ export type Tache = {
    * `cout_partiel: true` une tâche en cours dont le fournisseur n'a **pas
    * encore tarifé** la dépense (les tokens sont dans `usage`), `null` avec
    * `cout_partiel: false` un coût **inconnu** — aucune télémétrie, jamais.
+   * Depuis #1280, une tâche **soldée** reste partielle quand son issue a porté
+   * des tokens sans prix (`usage.tokens_non_tarifes`) : soldé n'est pas complet.
    * Optionnel parce qu'une carte servie avant ce lot n'en porte pas.
    */
   cout_partiel?: boolean;
@@ -1936,11 +1945,13 @@ export type ResumeExecution = {
   progression?: Progression;
   cout_usd: number | null;
   /**
-   * Le cumul ci-dessus comprend-il un **relevé en cours** (#835) ? `true` tant
-   * qu'une tâche du run tourne avec un coût partiel — le montant bouge alors
-   * pendant qu'il se dépense, et il est un plancher, pas un solde. `false` quand
-   * tout ce qui a été dépensé est soldé. Optionnel : un résumé servi avant ce
-   * lot n'en porte pas.
+   * Le cumul ci-dessus n'est-il qu'un **plancher** ? `true` tant qu'une tâche du
+   * run tourne avec un coût partiel (#835) — le montant bouge alors pendant
+   * qu'il se dépense —, **et** pour de bon quand une tâche a consommé des tokens
+   * que rien n'a tarifés (#1280 : session tuée avant son résultat, fournisseur
+   * sans tarif). `false` quand tout ce qui a été consommé est soldé à un prix.
+   * L'écran le dit par `formatCoutPartiel` (« coût partiel »). Optionnel : un
+   * résumé servi avant #835 n'en porte pas.
    */
   cout_partiel?: boolean;
   ticket: ReferenceTicket | null;

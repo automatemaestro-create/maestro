@@ -74,8 +74,9 @@ import {
   IconeStatutTerminee,
 } from "@/components/Icones";
 import { Bouton, CIBLE_MINIMALE, LienRenvoi } from "@/components/Primitives";
+import { MontantDuRun } from "@/components/runs/EtatRun";
 import { nomDuRun } from "@/lib/execution";
-import { formatCout, formatDateHeure, formatHeureCourte } from "@/lib/format";
+import { formatDateHeure, formatHeureCourte } from "@/lib/format";
 import {
   libelleIssue,
   raisonSansLivrable,
@@ -146,7 +147,12 @@ export function AnnonceIssueRun({
           : `${issue.execution.nb_taches} tâches`}
       </span>
       <Separateur />
-      <span className="chiffre">{formatCout(issue.execution.cout_usd)}</span>
+      {/* Le coût du run, et « coût partiel » s'il n'est qu'un plancher (#1280) :
+          une fin de run annoncée avec un montant complet qui ne l'est pas
+          était précisément le constat du ticket. */}
+      <span className="chiffre">
+        <MontantDuRun run={issue.execution} />
+      </span>
       {!compacte && run !== undefined && (
         <>
           <Separateur />

@@ -56,6 +56,11 @@ import {
   type IssueRun,
 } from "@/lib/issueRun";
 import {
+  MENTION_COUT_NON_TARIFE,
+  MENTION_COUT_PARTIEL,
+  RAISON_COUT_PARTIEL,
+} from "@/lib/format";
+import {
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
   EXECUTION_EN_COURS,
@@ -337,6 +342,29 @@ describe("l'annonce de fin", () => {
     expect(
       screen.queryByRole("button", { name: /Copier le chemin/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("n'annonce pas complet un coût qui ne l'est pas (#1280)", () => {
+    // Le constat du ticket, à l'endroit où il se lisait le plus : la fin d'un
+    // run dont une tâche est morte avant son résultat annonçait 1,17 $ comme
+    // un solde. Le fil et la cloche disent désormais ce que la carte dit.
+    render(
+      <AnnonceIssueRun
+        issue={issueFactice({ statut: EXECUTION_ECHEC, cout_usd: 1.17, cout_partiel: true })}
+      />,
+    );
+    const montant = screen.getByText(new RegExp(MENTION_COUT_PARTIEL));
+    expect(montant).toHaveTextContent("1,17");
+    expect(montant).toHaveAccessibleDescription(RAISON_COUT_PARTIEL);
+
+    // La cloche (rendu compact) le dit aussi.
+    render(
+      <AnnonceIssueRun
+        issue={issueFactice({ cout_usd: null, cout_partiel: true })}
+        compacte
+      />,
+    );
+    expect(screen.getByText(MENTION_COUT_NON_TARIFE)).toBeInTheDocument();
   });
 
   it("ne fait pas du chemin un lien", () => {

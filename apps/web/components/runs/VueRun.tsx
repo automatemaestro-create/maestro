@@ -93,6 +93,7 @@ import {
   LigneCause,
   LigneInterruption,
   LignePause,
+  MontantDuRun,
 } from "@/components/runs/EtatRun";
 import { FriseRun } from "@/components/runs/FriseRun";
 import { JournalRun } from "@/components/runs/JournalRun";
@@ -110,7 +111,7 @@ import {
   REGIME_SUSPENDU,
   type CauseAttente,
 } from "@/lib/execution";
-import { formatCout, formatHeureRelative } from "@/lib/format";
+import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import {
   entreeParLibelle,
@@ -484,7 +485,10 @@ function EnTeteRun({
           ? ` · démarré ${formatHeureRelative(run.debut, maintenant)}`
           : ""}
         {run.fin ? ` · terminé ${formatHeureRelative(run.fin, maintenant)}` : ""}
-        {` · ${formatCout(run.cout_usd)}`}
+        {/* Le coût, et « coût partiel » s'il n'est qu'un plancher (#1280) :
+            la même forme que la carte du run et l'annonce de sa fin. */}
+        {" · "}
+        <MontantDuRun run={run} />
       </p>
 
       {/* Un run qui en reprend un autre (#349) le dit, et y mène : sans ce
