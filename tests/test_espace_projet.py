@@ -441,10 +441,17 @@ def test_la_frontiere_laisse_passer_une_ecriture_ordinaire(tmp_path: Path) -> No
     assert frontiere.refus("Write", {"file_path": "src/nouveau.py", "content": ""}) is None
     assert frontiere.refus("Edit", {"file_path": str(racine / "README.md")}) is None
     assert frontiere.refus("Read", {"file_path": "src/app.py"}) is None
-    # Un outil sans chemin, ou un appel sans l'argument attendu, n'a rien à confronter.
+    # Un outil sans chemin n'a rien à confronter.
     assert frontiere.refus("Bash", {"command": "cat .env"}) is None
-    assert frontiere.refus("Write", {}) is None
-    assert frontiere.refus("Write", "pas un objet") is None
+
+
+def test_un_appel_sans_l_argument_de_chemin_est_refuse(tmp_path: Path) -> None:
+    # Renversé par #1304 : « rien à confronter, donc passe » était le trou par
+    # lequel un CLI qui renommerait l'argument ouvrait la frontière entière.
+    _, frontiere = _frontiere(tmp_path)
+    for entree in ({}, "pas un objet"):
+        motif = frontiere.refus("Write", entree)
+        assert motif is not None and "illisible" in motif, entree
 
 
 @pytest.mark.parametrize("chemin", ["../dehors.txt", "src/../../evasion.py"])

@@ -301,34 +301,47 @@ Implémentation : `apps/web/lib/etatGlobal.tsx` (le projet et sa portée diffus�
 de remontage). Couverture : `apps/web/tests/projet-cadre.test.tsx`, et côté API
 [`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py) (#282).
 
-#### 2.0.1 On entre par un projet, et on en change au shell (#279, #280) — **livré**
+#### 2.0.1 On entre par un projet, et on en change au shell (#279, #280, #1293) — **livré**
 
 Le cadre du §2.0 a deux gestes : y **entrer**, et en **changer**. Ils forment la réponse au
 reproche du bilan de la Phase 7 — « le projet devrait être choisi avant d'entrer », « surtout pas
 un menu pour les projets ».
 
 **La porte d'entrée** (#279) est une **garde de shell**, pas une redirection de page. La nuance
-est tout le mécanisme : une page atteinte directement — lien, signet, rechargement — passe par le
-choix du projet **puis rend la page demandée**, sans que l'URL ait bougé entre-temps. Une
-redirection l'aurait perdue, et aurait ajouté deux entrées à l'historique du navigateur pour un
-geste qui n'est pas une navigation. Ce que l'écran présente : la liste des projets déclarés et la
-**création sur place** — aucun projet déclaré n'ouvre pas un vide mais propose d'en créer un, dans
-la conversation depuis #1294 (§2.0.2). Le
-projet actif est **retenu d'une visite à l'autre**, relu au démarrage, et un projet devenu
-introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vides à ne pas
-confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
-choix retenu reprend dès que l'API répond).
+est tout le mécanisme : une page atteinte directement — lien, signet — passe par le choix du
+projet **puis rend la page demandée**, sans que l'URL ait bougé entre-temps. Une redirection
+l'aurait perdue, et aurait ajouté deux entrées à l'historique du navigateur pour un geste qui
+n'est pas une navigation. Un projet devenu introuvable ramène à la porte **avec son motif** au lieu
+d'échouer. Trois vides à ne pas confondre, ici encore : une API muette n'est pas une absence de
+projet (on laisse réessayer, et le choix retenu reprend dès que l'API répond).
 
-> ⚠ **Renversé le 2026-09-24** ([docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md),
-> #1293), à la demande de la personne. Le projet actif n'est plus *relu au démarrage*.
-> - Chaque démarrage arrive sur le choix du projet, avec « Reprendre *le dernier projet* » en tête,
->   atteint en un geste.
-> - La colonne de conversation y est ouverte ; la fermer vaut pour la session.
->
-> Un réglage ancien (projet retenu, colonne fermée) ramenait sinon la Control Tower d'avant l'atelier.
-> Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
-> projet au sélecteur dans une session. Ce paragraphe décrit l'état **présent** jusqu'à ce que #1293
-> le réécrive.
+**Chaque démarrage arrive sur la porte** (#1293), décidé par
+[docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md) à la demande de la personne.
+Il renverse l'atterrissage de #279, où le projet actif était *retenu d'une visite à l'autre, relu
+au démarrage* et passait la porte sans s'arrêter. Ajouté à une colonne de conversation fermée une
+fois pour toutes, ce réglage ramenait à chaque démarrage le tableau de bord d'avant l'atelier, sous
+un titre qui disait encore « Control Tower ».
+- **Démarrer, c'est ouvrir une session neuve** : la coque qu'on rouvre, ou un onglet neuf. Un repère
+  de session (`sessionStorage`, `lib/projetActif.ts`) distingue le démarrage d'une navigation
+  interne et d'un **rechargement**, qui garde sa session et retrouve sa page sans repasser par la
+  porte. Il n'y a aucun embranchement propre à la coque (ENF-12) : les deux ont une session.
+- **Le dernier projet se propose, il ne s'impose plus.** Il reste retenu d'une visite à l'autre
+  (`localStorage`), mais seulement pour être proposé : **« Reprendre *nom* »** est en tête de la
+  porte, en bouton plein, et reprend d'un geste. Sa racine en est la description, car deux clones
+  d'un même dépôt portent le même nom (#280). À côté, en contour, **« Nouveau projet »** a une place
+  fixe au lieu du bout de la liste. Viennent ensuite tous les projets, le dernier ouvert d'abord et
+  marqué « Dernier ouvert ». Sans dernier projet, « Nouveau projet » prend le plein. Un dernier
+  projet disparu ne se propose pas : son motif est en tête. La forme a été tranchée sur pièces, par
+  la veille et la « Variante retenue » de #1293, d'après les écrans d'accueil de PyCharm, VS Code et
+  Visual Studio.
+- **La conversation est ouverte au démarrage.** Fermer la colonne vaut pour la session : ce choix
+  vit dans le `sessionStorage` (`lib/preferences.ts`), et le démarrage suivant retrouve le défaut
+  de #1107, ouverte au large. L'ancienne valeur du `localStorage` n'est plus lue, donc un `"0"`
+  ancien ne ferme plus rien.
+- **La fenêtre s'appelle « Maestro »**, dans la coque comme dans l'onglet (`app/layout.tsx`).
+
+Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
+projet au sélecteur pendant une session.
 
 **Le sélecteur** (#280) tient dans la barre supérieure, contre le titre de page — on lit « ce
 projet-ci, cette page-là ». Il affiche le projet actif **et sa racine** (deux clones d'un même
@@ -344,9 +357,10 @@ titre (`HORS_MENU`, §1) et s'atteint depuis le sélecteur (« Gérer les projet
 dans `next.config.ts`, contrairement aux pages fusionnées du §1.1 : celle-ci n'a pas changé
 d'adresse, elle a seulement quitté le menu.
 
-Implémentation : `apps/web/lib/etatProjetActif.tsx`, `components/projets/ChoixProjet.tsx` et
-`SelecteurProjet.tsx`, `lib/navigation.ts` (`MENU` / `HORS_MENU`). Couverture :
-`apps/web/tests/projet-actif.test.tsx` et `selecteur-projet.test.tsx`.
+Implémentation : `apps/web/lib/etatProjetActif.tsx` et `lib/projetActif.ts`,
+`components/projets/ChoixProjet.tsx` et `SelecteurProjet.tsx`, `lib/navigation.ts` (`MENU` /
+`HORS_MENU`). Couverture : `apps/web/tests/projet-actif.test.tsx`, `demarrage.test.tsx` (#1293)
+et `selecteur-projet.test.tsx`.
 
 #### 2.0.2 Un projet naît dans la conversation (#1294)
 

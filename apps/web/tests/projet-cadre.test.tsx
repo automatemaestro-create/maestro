@@ -37,7 +37,7 @@ import { Kanban } from "@/components/Kanban";
 import { Shell } from "@/components/Shell";
 import { PORTEE_TOUS, urlEvenements } from "@/lib/api";
 import { marquerGuideVu } from "@/lib/guide";
-import { ecrireProjetActifId } from "@/lib/projetActif";
+import { ecrireProjetActifId, marquerEntreeDeSession } from "@/lib/projetActif";
 
 import {
   agentFactice,
@@ -96,6 +96,8 @@ beforeEach(() => {
 async function entrerDans(projet = DEPENSIO, page = <p>page</p>) {
   poserProjets([DEPENSIO, AUTRE]);
   ecrireProjetActifId(projet.id);
+  // Une session déjà entrée (#1293) : sans elle, le démarrage s'arrête au choix.
+  marquerEntreeDeSession();
   const rendu = render(<Shell>{page}</Shell>);
   // La résolution du projet actif est différée d'un tick (#279) : rien du cadre
   // n'existe avant, pas même la barre supérieure.

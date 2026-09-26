@@ -360,7 +360,10 @@ describe("le shell applicatif (Shell)", () => {
     expect(colonne.className).toContain("lg:sticky");
   });
 
-  it("restitue la colonne ouverte d'une session à l'autre", async () => {
+  it("restitue la colonne ouverte d'un rechargement à l'autre, dans la session", async () => {
+    // Plus « d'une session à l'autre » depuis #1293 : le choix de la colonne vit
+    // le temps de la session, et chaque démarrage retrouve le défaut
+    // (`demarrage.test.tsx`).
     ecrireConversationOuverte(true);
     await monterShell();
     await waitFor(() =>
