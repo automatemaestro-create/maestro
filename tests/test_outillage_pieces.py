@@ -893,6 +893,41 @@ def test_sans_ecriture_branchee_le_verdict_outillage_le_dit() -> None:
     assert reponse.piece is None
 
 
+def test_une_conclusion_sans_projet_nomme_un_geste_qui_existe(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Ouvert sans projet, le questionnaire conclut sur le geste réel : dire d'outiller.
+
+    Il disait « Aucune écriture n'est branchée sur ce fil » alors qu'elle l'était —
+    c'est le projet qui manquait. La phrase nomme le geste, et le geste mène à la
+    première pièce, rédigée de ce qui vient d'être compris, sans reposer de question.
+    """
+    modele = _Modele(
+        _dicte("J'outille ce projet.", VERDICT_OUTILLAGE), comprehension=COMPRIS_FLUTTER
+    )
+    repondeur = _repondeur(projets, modele)
+    racine = _maison / "Maestro" / "padel"
+    projet_id = str(projets.creer("padel", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+    fil = [_message(UTILISATEUR, "Une application mobile Flutter")]
+
+    conclusion = asyncio.run(repondeur.ouvrir_questionnaire(AGENT_ORCHESTRATION, fil))
+
+    assert conclusion.piece is None
+    assert "ouvrez-le et dites-moi de l'outiller" in conclusion.contenu
+    assert "Aucune écriture n'est branchée" not in conclusion.contenu
+    fil += [
+        _message(NOM_ORCHESTRATION, conclusion.contenu, comprehension=conclusion.comprehension),
+        _message(UTILISATEUR, "Outille ce projet."),
+    ]
+
+    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, fil, projet_id=projet_id))
+
+    assert reponse.piece is not None and reponse.piece.chemin == "AGENTS.md"
+    assert reponse.piece.projet_id == projet_id and "flutter test" in reponse.piece.contenu
+    assert len(modele.appels["comprehension"]) == 1
+    assert not racine.exists() or list(racine.iterdir()) == []
+
+
 # --------------------------------------------------------------------------- #
 # ④ La route : le geste, le double clic, le report                              #
 # --------------------------------------------------------------------------- #

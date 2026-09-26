@@ -406,8 +406,8 @@ def _phrase_de_la_question(question: QuestionOutillage) -> str:
     )
 
 
-def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
-    """Ce que le fil dit quand il n'y a plus de question **et rien pour écrire** (#1031, #1161).
+def _phrase_de_conclusion(acquis: Sequence[Choix], *, ecrit: bool) -> str:
+    """Ce que le fil dit quand il n'y a plus de question **et pas de pièce à montrer** (#1031, #1161).
 
     Le questionnaire ne s'arrête pas sur un silence. Il rend **ce qu'il a produit** —
     le résumé du manifeste à venir et le compte des entrées —, parce que c'est la
@@ -417,18 +417,29 @@ def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
     ⚠ **Ce que la phrase promet doit exister** (#1104) : elle nommait le geste « au
     pied de cette conversation », la carte qui écrivait tout en une fois
     (`ConclusionOutillage`). Depuis #1161 l'outillage s'écrit **pièce par pièce**
-    (`_piece`), et cette conclusion ne se lit plus que sur un conducteur **sans**
-    service de pièces branché — donc sans rien pour écrire. Elle le dit, au lieu de
-    promettre un geste qui n'existe plus.
+    (`_piece`), et cette conclusion ne se lit plus que dans deux cas, qu'elle
+    distingue au lieu de promettre un geste qui n'existe plus :
+
+    - **aucun service de pièces branché** (`ecrit` faux) — rien pour écrire, et elle
+      le dit ;
+    - **un service branché, mais aucun projet nommé** — le questionnaire ouvert par
+      l'API sur un fil qui n'en a vu naître aucun. Le geste existe : dire, projet
+      ouvert, de l'outiller (le verdict `outillage` du juge), et la première pièce
+      vient de ce qui vient d'être compris, sans reposer une question.
     """
     reco = recommandation_depuis_choix(acquis)
     skills = sum(1 for e in reco.entrees if e.type == "skill")
+    suite = (
+        "Je ne sais pas encore quel projet outiller : ouvrez-le et dites-moi de "
+        "l'outiller — j'écrirai son outillage pièce par pièce, chacune sur votre accord."
+        if ecrit
+        else "Aucune écriture n'est branchée sur ce fil : je ne peux pas l'écrire d'ici."
+    )
     return (
         f"C'est tout ce qu'il me fallait — {resume_des_choix(acquis)}.\n"
         f"L'outillage recommandé : {len(reco.entrees)} entrée(s), dont {skills} skill(s), "
         "chacune avec la raison qui la justifie. Rien n'est écrit dans le projet tant "
-        "que vous ne l'avez pas validé.\n"
-        "Aucune écriture n'est branchée sur ce fil : je ne peux pas l'écrire d'ici."
+        f"que vous ne l'avez pas validé.\n{suite}"
     )
 
 
@@ -560,7 +571,9 @@ class ConducteurOutillage:
             return await self._piece(fil, projet, acquis=acquis, prelude=comprise.message)
         if suivante is None:
             return ReponseChat(
-                contenu=_joint(comprise.message, _phrase_de_conclusion(acquis)),
+                contenu=_joint(
+                    comprise.message, _phrase_de_conclusion(acquis, ecrit=self.ecrit)
+                ),
                 comprehension=acquis,
             )
         return ReponseChat(
