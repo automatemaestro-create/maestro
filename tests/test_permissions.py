@@ -82,6 +82,7 @@ import re
 from pathlib import Path
 
 import pytest
+from double_cli_claude import DoubleCli
 
 from maestro.agents import QA_PROFILE, AgentRuntime
 from maestro.agents.catalog import GABARITS_DU_CODE
@@ -1043,14 +1044,18 @@ class _FakeAssistantMessage:
 
 
 def _run_agent_capture_options(monkeypatch, *, politique, arbitrage=None):
-    """Lance `run_agent` sur un `query` factice et capture les options SDK."""
-    vu: dict[str, object] = {}
+    """Lance `run_agent` sur un CLI factice et capture les options SDK de la session.
 
-    async def fake_query(*, prompt, options):
-        vu["hooks"] = options.hooks
+    Le CLI est le double partagé (`tests/double_cli_claude.py`) : sous politique,
+    la session est précédée de la sonde du point de contrôle (#1304), qu'il
+    satisfait en appliquant le refus. Ce sont les options de la session **de
+    l'agent** qui sont rendues, pas celles de la sonde.
+    """
+
+    async def session(*, prompt, options):
         yield _FakeAssistantMessage([_FakeTextBlock("Livré.")])
 
-    monkeypatch.setattr(claude_mod, "query", fake_query)
+    cli = DoubleCli(monkeypatch, session=session)
     monkeypatch.setattr(claude_mod, "AssistantMessage", _FakeAssistantMessage)
     monkeypatch.setattr(claude_mod, "TextBlock", _FakeTextBlock)
     provider = ClaudeProvider(Credentials(), arbitrage=arbitrage)
@@ -1060,7 +1065,7 @@ def _run_agent_capture_options(monkeypatch, *, politique, arbitrage=None):
             politique=politique,
         )
     )
-    return vu
+    return {"hooks": cli.sessions[-1].hooks}
 
 
 def test_run_agent_arme_le_hook_quand_une_politique_est_fournie(monkeypatch, tmp_path):

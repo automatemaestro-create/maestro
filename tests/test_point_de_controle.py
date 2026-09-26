@@ -26,14 +26,30 @@ portent le marqueur `cli_reel` et ne se jouent que sur demande (voir
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
+from claude_agent_sdk import AssistantMessage, TextBlock
+from double_cli_claude import DoubleCli
 
-from maestro.agents.permissions import PolitiqueOutils
+from maestro.agents.permissions import PermissionStore, PolitiqueOutils
+from maestro.engine import STATUT_ECHEC, OrchestrationEngine
+from maestro.engine.retry import est_transitoire
+from maestro.orchestrator import Orchestrator
 from maestro.projets.modele import Projet
+from maestro.providers import (
+    ClaudeProvider,
+    Credentials,
+    GardeFouInoperant,
+    ModelProvider,
+    SondeNonConcluante,
+    TurnLimitReached,
+    controle,
+)
 from maestro.providers import claude as claude_mod
 from maestro.sandbox import FrontiereEcriture
+from maestro.telemetry import RunJournal
 
 
 @pytest.fixture(autouse=True)
@@ -143,7 +159,8 @@ def test_une_entree_illisible_est_refusee(entree: object) -> None:
 def test_un_appel_lisible_et_permis_passe_toujours() -> None:
     # Fermer par défaut ne ferme que ce qu'on ne sait pas lire.
     hook = claude_mod._hook_permissions(PolitiqueOutils(deny=("Bash",)), None)
-    assert asyncio.run(hook({"tool_name": "Read", "tool_input": {"file_path": "a"}}, "t", None)) == {}
+    appel = {"tool_name": "Read", "tool_input": {"file_path": "a"}}
+    assert asyncio.run(hook(appel, "t", None)) == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -327,3 +344,352 @@ def test_un_contenu_exclu_ne_sort_par_aucun_outil_de_lecture_ou_de_recherche(
 
     assert SECRET not in motif
     assert traces == [(outil, motif)]
+
+
+# --------------------------------------------------------------------------- #
+# ③ La sonde de démarrage : un refus de Maestro tient-il chez le fournisseur ?
+# --------------------------------------------------------------------------- #
+
+
+async def _livre(*, prompt: object, options: object):
+    """La session d'un agent qui livre, telle que le CLI la rendrait."""
+    yield AssistantMessage(content=[TextBlock(text="Livré.")], model="claude-double")
+
+
+#: La politique des sessions lancées ici : un refus, donc un point de contrôle armé.
+POLITIQUE = PolitiqueOutils(deny=("Bash",))
+
+
+def _lance(
+    provider: ClaudeProvider,
+    workspace: Path,
+    *,
+    politique: PolitiqueOutils | None = POLITIQUE,
+    projet: Projet | None = None,
+) -> str:
+    return asyncio.run(
+        provider.run_agent(
+            "Fais",
+            model="claude-double",
+            workspace=workspace,
+            tools=("Read", "Grep"),
+            politique=politique,
+            projet=projet,
+        )
+    )
+
+
+def test_la_session_demarre_quand_le_refus_tient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = DoubleCli(monkeypatch, session=_livre)
+
+    assert _lance(ClaudeProvider(Credentials()), tmp_path) == "Livré."
+
+    assert len(cli.sondes) == 1 and len(cli.sessions) == 1
+
+
+def test_la_sonde_joue_la_vraie_politique_sur_la_session_de_l_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ce que la sonde éprouve doit être ce que l'agent aura : même modèle, même
+    # environnement, même CLI, même répertoire, même mode de permissions.
+    cli = DoubleCli(monkeypatch, session=_livre)
+    _lance(ClaudeProvider(Credentials()), tmp_path)
+    (sonde,) = cli.sondes
+    (session,) = cli.sessions
+
+    for option in ("model", "env", "cli_path", "cwd", "permission_mode"):
+        assert getattr(sonde, option) == getattr(session, option), option
+    assert sonde.permission_mode == "bypassPermissions"
+    # Aucun outil du CLI : seul l'outil de la sonde est à portée de son agent.
+    assert sonde.tools == []
+    # Le refus est celui de la politique de Maestro, motif compris.
+    (decision,) = cli.decisions
+    motif = _refus(decision)
+    assert controle.nom_complet_sonde() in motif
+
+
+def test_un_refus_qui_ne_tient_pas_empeche_la_session_de_demarrer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = DoubleCli(monkeypatch, applique_les_refus=False, session=_livre)
+
+    with pytest.raises(GardeFouInoperant, match="exécuté l'outil de la sonde") as echec:
+        _lance(ClaudeProvider(Credentials()), tmp_path)
+
+    # L'agent n'a jamais reçu sa tâche, et ce n'est pas un aléa à relancer.
+    assert cli.sessions == []
+    assert not est_transitoire(echec.value)
+
+
+def test_un_point_de_controle_qui_ne_lit_pas_le_nom_empeche_la_session_de_demarrer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Le cas d'un CLI qui déplacerait `tool_name` : le point de contrôle, fermé
+    # par défaut, refuserait tout — l'agent se heurterait à des refus sans nom.
+    cli = DoubleCli(monkeypatch, nomme_l_outil=False, session=_livre)
+
+    with pytest.raises(GardeFouInoperant, match="sans lire") as echec:
+        _lance(ClaudeProvider(Credentials()), tmp_path)
+
+    assert controle.OUTIL_SANS_NOM in str(echec.value)
+    assert cli.sessions == []
+
+
+def test_une_sonde_non_concluante_empeche_la_session_et_se_rejoue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = DoubleCli(monkeypatch, appelle=False, session=_livre)
+    provider = ClaudeProvider(Credentials())
+
+    with pytest.raises(SondeNonConcluante) as echec:
+        _lance(provider, tmp_path)
+
+    assert cli.sessions == []
+    # Rien n'a été prouvé : c'est la relance du moteur qui rejoue la sonde.
+    assert est_transitoire(echec.value)
+    cli.appelle = True
+    assert _lance(provider, tmp_path) == "Livré."
+    assert len(cli.sondes) == 2 and len(cli.sessions) == 1
+
+
+def test_le_verdict_se_garde_le_temps_du_fournisseur(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = DoubleCli(monkeypatch, session=_livre)
+    provider = ClaudeProvider(Credentials())
+
+    _lance(provider, tmp_path)
+    _lance(provider, tmp_path)
+
+    assert len(cli.sondes) == 1 and len(cli.sessions) == 2
+    # Un autre fournisseur — un autre run — sonde à nouveau.
+    _lance(ClaudeProvider(Credentials()), tmp_path)
+    assert len(cli.sondes) == 2
+
+
+def test_un_garde_fou_inoperant_se_garde_aussi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = DoubleCli(monkeypatch, applique_les_refus=False, session=_livre)
+    provider = ClaudeProvider(Credentials())
+
+    for _ in range(2):
+        with pytest.raises(GardeFouInoperant):
+            _lance(provider, tmp_path)
+
+    assert len(cli.sondes) == 1 and cli.sessions == []
+
+
+def test_des_sessions_qui_demarrent_ensemble_attendent_la_meme_sonde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli = DoubleCli(monkeypatch, session=_livre)
+    provider = ClaudeProvider(Credentials())
+
+    async def trois() -> list[str]:
+        return list(
+            await asyncio.gather(
+                *(
+                    provider.run_agent(
+                        "Fais", model="claude-double", workspace=tmp_path, tools=("Read",),
+                        politique=PolitiqueOutils(deny=("Bash",)),
+                    )
+                    for _ in range(3)
+                )
+            )
+        )
+
+    assert asyncio.run(trois()) == ["Livré."] * 3
+    assert len(cli.sondes) == 1 and len(cli.sessions) == 3
+
+
+def test_sans_politique_ni_frontiere_aucune_sonde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Maestro ne pose alors aucun refus : il n'y a rien à éprouver, et le hook
+    # n'est même pas monté.
+    cli = DoubleCli(monkeypatch, applique_les_refus=False, session=_livre)
+
+    assert _lance(ClaudeProvider(Credentials()), tmp_path, politique=None) == "Livré."
+
+    assert cli.sondes == [] and len(cli.sessions) == 1
+
+
+def test_la_frontiere_seule_arme_la_sonde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Le régime en place (#839) : sans politique, la frontière est le seul
+    # garde-fou de la session — et le plus précieux, puisqu'elle tient les secrets.
+    cli = DoubleCli(monkeypatch, applique_les_refus=False, session=_livre)
+    projet = _projet(tmp_path)
+
+    with pytest.raises(GardeFouInoperant):
+        _lance(ClaudeProvider(Credentials()), Path(projet.racine), politique=None, projet=projet)
+
+    assert len(cli.sondes) == 1 and cli.sessions == []
+
+
+class _Planificateur(ModelProvider):
+    """Planificateur factice : une tâche unique, routée vers le développeur."""
+
+    name = "planificateur-1304"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None, effort=None):
+        return json.dumps(
+            [
+                {
+                    "id": "tache-unique",
+                    "titre": "Tâche unique",
+                    "description": "Réaliser la tâche.",
+                    "competences_requises": ["backend"],
+                    "format_sortie": "Texte",
+                    "dependances": [],
+                }
+            ]
+        )
+
+
+def test_l_echec_de_la_sonde_se_dit_au_journal_et_la_tache_ne_demarre_pas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le critère vu du moteur : la tâche échoue avant que son agent ne travaille.
+
+    Une vraie boucle d'orchestration, un vrai `ClaudeProvider` et un agent outillé
+    sous politique : seul le CLI est un double, et c'est lui qui n'applique pas
+    le refus. L'échec est consigné avec la cause que la sonde a constatée, une
+    seule fois — jamais relancé.
+    """
+    cli = DoubleCli(monkeypatch, applique_les_refus=False, session=_livre)
+    permissions = PermissionStore(tmp_path / "permissions")
+    permissions.racine.mkdir(parents=True)
+    (permissions.racine / "developpeur.json").write_text(
+        json.dumps({"deny": ["WebFetch"]}), encoding="utf-8"
+    )
+    moteur = OrchestrationEngine(
+        ClaudeProvider(Credentials()),
+        Orchestrator(_Planificateur(), model="claude-double"),
+        permissions=permissions,
+    )
+    journal = RunJournal()
+
+    rapport = asyncio.run(moteur.run("Objectif", journal=journal))
+
+    (resultat,) = rapport.resultats
+    assert resultat.statut == STATUT_ECHEC
+    assert "Garde-fou inopérant" in (resultat.erreur or "")
+    assert cli.sessions == [] and len(cli.sondes) == 1
+    consignes = [r for r in journal.records if "Garde-fou inopérant" in (r.erreur or "")]
+    assert consignes and all(r.statut == STATUT_ECHEC for r in consignes)
+
+
+# --------------------------------------------------------------------------- #
+# ④ Sur le vrai CLI : ce que les doubles ne peuvent pas prouver
+# --------------------------------------------------------------------------- #
+#
+# Sautés sauf `MAESTRO_TESTS_CLI_REEL=1` (tests/conftest.py) : ils lancent le CLI
+# qu'embarque l'Agent SDK et appellent un vrai modèle, par l'accès du poste. Le
+# modèle est le plus économe de la gamme, lu dans `familles-claude.tsv` — jamais
+# écrit ici.
+
+
+def _modele_econome() -> str:
+    from maestro.familles_claude import derniere_version
+
+    return derniere_version("haiku")
+
+
+@pytest.mark.cli_reel
+def test_sur_le_vrai_cli_un_refus_de_maestro_tient(tmp_path: Path) -> None:
+    """La sonde, jouée sur le CLI réel : il consulte le point de contrôle, lui passe le
+    nom de l'outil, et n'exécute pas ce que Maestro refuse."""
+    provider = ClaudeProvider(Credentials())
+    temoin = controle.TemoinSonde()
+
+    asyncio.run(
+        claude_mod._joue_sonde(
+            temoin,
+            model=_modele_econome(),
+            env=provider._auth_env(),
+            cli_path=None,
+            workspace=tmp_path,
+        )
+    )
+
+    assert temoin.vus and set(temoin.vus) == {controle.nom_complet_sonde()}
+    assert temoin.executions == 0
+    temoin.verdict()
+
+
+@pytest.mark.cli_reel
+def test_sur_le_vrai_cli_la_sonde_voit_un_refus_qui_ne_tient_pas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La sonde n'est pas vide : sans refus posé, le CLI réel exécute l'outil, et elle le dit.
+
+    C'est le cas d'un fournisseur qui n'appliquerait plus un refus, rejoué de la
+    seule façon qu'on puisse le rejouer sur le CLI réel — en ne posant pas le refus.
+    """
+    monkeypatch.setattr(controle, "POLITIQUE_SONDE", {"deny": ()})
+    provider = ClaudeProvider(Credentials())
+    temoin = controle.TemoinSonde()
+
+    asyncio.run(
+        claude_mod._joue_sonde(
+            temoin,
+            model=_modele_econome(),
+            env=provider._auth_env(),
+            cli_path=None,
+            workspace=tmp_path,
+        )
+    )
+
+    assert temoin.executions >= 1
+    with pytest.raises(GardeFouInoperant):
+        temoin.verdict()
+
+
+@pytest.mark.cli_reel
+def test_sur_le_vrai_cli_un_secret_exclu_ne_sort_par_aucune_recherche(tmp_path: Path) -> None:
+    """L'étape de reproduction du ticket, jouée de bout en bout sur le CLI réel.
+
+    Un projet non versionné dont le `.env` porte une clé ; un agent qui n'a que
+    des outils de lecture et de recherche, et à qui l'on demande de trouver cette
+    clé. La sonde passe, la session démarre, et la valeur ne sort pas : le point
+    de contrôle a refusé ce qui l'aurait lue.
+    """
+    projet = _projet(tmp_path)
+    racine = Path(projet.racine)
+    refus: list[tuple[str, str]] = []
+
+    try:
+        sortie = asyncio.run(
+            ClaudeProvider(Credentials()).run_agent(
+                "Trouve la valeur de la variable CLE dans ce projet, en cherchant avec "
+                "l'outil Grep dans tout le projet, puis donne cette valeur telle quelle. "
+                "Si un outil te la refuse, n'insiste pas : réponds INTROUVABLE.",
+                model=_modele_econome(),
+                workspace=racine,
+                tools=("Read", "Grep", "Glob"),
+                on_refus=lambda outil, motif: refus.append((outil, motif)),
+                projet=projet,
+                plafond_tours=12,
+            )
+        )
+    except Exception as exc:
+        # Un agent qui insiste contre les refus jusqu'au plafond n'a rien lu de
+        # plus : ce qui se prouve ici est que les refus ont eu lieu. Le plafond se
+        # reconnaît à son type, ou au champ typé de l'erreur du SDK — le
+        # fournisseur ne le mue plus en `TurnLimitReached` depuis le SDK 0.2.159,
+        # qui a changé le texte qu'il lisait (#1305).
+        if not isinstance(exc, TurnLimitReached) and (
+            getattr(exc, "subtype", None) != "error_max_turns"
+        ):
+            raise
+        sortie = ""
+
+    assert SECRET not in sortie
+    assert any(outil == "Grep" for outil, _ in refus), refus
+    assert all(SECRET not in motif for _, motif in refus)

@@ -40,7 +40,10 @@ Ce module porte les deux pièces du régime :
   est **refusée avec son motif** ; l'agent le lit et poursuit sa tâche, comme
   pour un refus de politique. Une **lecture** n'est refusée que sur ce que le
   périmètre exclut — ce que la copie ne contenait pas, l'agent ne le lit pas non
-  plus —, lire hors de la racine n'étant pas le sujet de ce périmètre.
+  plus —, lire hors de la racine n'étant pas le sujet de ce périmètre. Une
+  **recherche** est une lecture de tout l'arbre qu'elle parcourt (#1304) : un
+  `Grep` qui traverserait un chemin exclu est refusé, avec les dossiers où
+  chercher à la place.
 
 La frontière est **armée par la position, jamais par une option** : `frontiere_de`
 la rend si et seulement si l'espace de travail **est** la racine du projet — le
@@ -50,9 +53,14 @@ et c'est ce qui laisse les deux autres régimes au bit près.
 Ce qu'elle **ne couvre pas** est nommé plutôt que tu : `Bash` n'est pas analysé —
 un shell peut écrire n'importe où, c'était déjà vrai de la copie et du worktree
 (docs/24 §2.5, « `Bash` mal formé »), et c'est ce que le **mode isolé** ferme,
-`maestro.sandbox.container` montant la racine avec ses masques. `Glob`/`Grep` ne
-sont pas confrontés non plus : ils ne modifient rien, et la rédaction (#109,
-`maestro.projets.secrets`) couvre ce qu'ils pourraient citer.
+`maestro.sandbox.container` montant la racine avec ses masques.
+
+⚠ `Glob`/`Grep` **ne sont plus** de ce côté-là (#1304). Ils n'étaient pas
+confrontés, au motif qu'ils ne modifient rien et que la rédaction (#109,
+`maestro.projets.secrets`) couvrirait ce qu'ils pourraient citer — or `Grep` rend
+le **contenu** des fichiers, et un `.env` que `Read` refusait se lisait par une
+recherche. Un contenu exclu ne sort désormais par aucun outil de lecture ou de
+recherche ; seuls des **noms** sortent encore d'un `Glob` qui traverse la racine.
 
 Ce trou-là a cessé d'être théorique avec #1149, qui fait de « vide le dossier du
 projet » **une tâche qui agit** : le geste se fait au shell, là où la frontière ne
@@ -412,6 +420,11 @@ class FrontiereEcriture:
        parents, l'exclusion ne vaudrait que pour le nom exact. Vaut en lecture
        comme en écriture — ce que la copie ne contenait pas, l'agent ne le lit
        ni ne l'écrit.
+
+    Deux de plus depuis #1304, qui tiennent à l'appel plutôt qu'au chemin : une
+    **entrée illisible** (l'argument de chemin manque, ou n'en est pas un) est
+    refusée au lieu de passer, et une **recherche** l'est dès que l'arbre qu'elle
+    parcourt contient un chemin exclu — elle en rendrait le contenu.
     """
 
     racine: Path
@@ -445,7 +458,9 @@ class FrontiereEcriture:
         if brut is None and not usage.exige:
             brut = ""
         if not isinstance(brut, str) or (usage.exige and not brut.strip()):
-            return _motif_illisible(outil, f"l'argument `{usage.cle}` manque ou n'est pas un chemin")
+            return _motif_illisible(
+                outil, f"l'argument `{usage.cle}` manque ou n'est pas un chemin"
+            )
         # Un chemin facultatif absent vaut le répertoire courant de l'agent : la racine.
         chemin = brut.strip() or "."
         if usage.geste == RECHERCHE:

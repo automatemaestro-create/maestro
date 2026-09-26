@@ -131,6 +131,12 @@ verification.interprete` rend `None`) : chaque commande sort « à vérifier » 
 raison du poste sans bash — un vrai chemin du produit, instantané, le même partout.
 Un test qui veut un verdict passe son propre `joueur` au `Verificateur` ; un test qui
 veut **vraiment** jouer une commande le dit avec `@pytest.mark.commandes_jouees`.
+
+Dixième garde-fou (#1304) : **aucun test ne lance le vrai CLI du fournisseur sans qu'on le
+demande**. Ce que les doubles ne prouvent pas — que le CLI applique un refus de Maestro — se
+prouve sur le CLI réel, avec un vrai modèle : un tel test porte `@pytest.mark.cli_reel` et
+reste **sauté**, raison dite, sauf `MAESTRO_TESTS_CLI_REEL=1`. Même verdict sur tous les
+postes, et ce qu'il coûte n'est payé que par qui le demande.
 """
 
 from __future__ import annotations
@@ -229,6 +235,16 @@ CAUSE_FOURNISSEUR_DU_POSTE = (
 #: une copie de vérification (#1160) — la garde qui retire l'interpréteur s'efface alors.
 MARQUEUR_COMMANDES_JOUEES = "commandes_jouees"
 
+#: Le marqueur d'un test qui lance le **vrai** CLI du fournisseur, donc un vrai modèle (#1304).
+#: Ce que les doubles ne peuvent pas prouver — que le CLI applique un refus de Maestro — ne se
+#: prouve que là. Un tel test coûte un appel de modèle et dépend de l'accès du poste : il est
+#: **sauté** sauf demande explicite (`CLE_CLI_REEL`), en le disant, pour que le verdict de la
+#: suite reste celui de la CI sur tous les postes (docs/10 §8.7).
+MARQUEUR_CLI_REEL = "cli_reel"
+
+#: La variable qui demande ces tests : `1` les joue, toute autre valeur les saute.
+CLE_CLI_REEL = "MAESTRO_TESTS_CLI_REEL"
+
 
 class FournisseurDuPosteRefuse(RuntimeError):
     """Levée par la garde à la place de la lecture des réglages du poste par la fabrique (#782).
@@ -285,6 +301,11 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{MARQUEUR_COMMANDES_JOUEES}: ce test joue VOLONTAIREMENT des commandes dans une copie "
         "de vérification de l'outillage (#1160) — la garde de tests/conftest.py qui retire "
         "l'interpréteur s'efface.",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{MARQUEUR_CLI_REEL}: ce test lance le VRAI CLI du fournisseur et appelle un vrai modèle "
+        f"(#1304) — sauté sauf `{CLE_CLI_REEL}=1`.",
     )
     # Poste sans git : le `skipif` de chaque module reste la bonne réponse.
     if not git_manquant_en_ci(dict(os.environ), shutil.which("git")):
@@ -556,6 +577,23 @@ def _pas_de_fournisseur_du_poste(request: pytest.FixtureRequest, monkeypatch: py
         f"{CAUSE_FOURNISSEUR_DU_POSTE}",
         pytrace=False,
     )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Saute les tests `cli_reel` sauf demande explicite (#1304) — et dit comment les demander.
+
+    Un saut, pas une sélection : le test reste dans le compte rendu, avec sa raison, là où un
+    `-m "not cli_reel"` le ferait disparaître. C'est la même exigence que la garde de git en CI
+    (#333) dans l'autre sens : ce qui ne joue pas doit se voir.
+    """
+    if os.environ.get(CLE_CLI_REEL) == "1":
+        return
+    saut = pytest.mark.skip(
+        reason=f"lance le vrai CLI et appelle un vrai modèle (#1304) : `{CLE_CLI_REEL}=1` le joue"
+    )
+    for item in items:
+        if item.get_closest_marker(MARQUEUR_CLI_REEL) is not None:
+            item.add_marker(saut)
 
 
 @pytest.fixture(autouse=True)

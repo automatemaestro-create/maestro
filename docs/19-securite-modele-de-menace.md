@@ -86,7 +86,12 @@ vigueur**, et non plus ce qui l'attend. Où chaque contre-mesure vit dans le cod
   (#839, D2 révisée — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) : une tâche à
   la fois, derrière la frontière d'écriture de `maestro.sandbox.en_place` (hors racine, lien
   symbolique, exclusion du périmètre — refusés avec leur motif), et en mode isolé sa racine est
-  montée **avec ses masques** ;
+  montée **avec ses masques**. Depuis #1304 la frontière juge aussi les **recherches** : un
+  `Grep` dont la portée contient un chemin exclu est refusé, puisqu'il en rendrait le contenu,
+  et un `Glob` qui vise un chemin exclu aussi. Le point de contrôle qui la consulte **ferme par
+  défaut** (appel sans nom lisible, entrée illisible : refusés), et une **sonde** vérifie au
+  démarrage d'une session, sur le fournisseur réel, qu'un refus de Maestro y est appliqué
+  (`maestro.providers.controle`) ;
 - **application sous accord humain** — `maestro.controltower.validation.appliquer_sous_validation`
   (#227, EF-37) soumet « appliquer ce travail ? » au **même** validateur que les autres actions
   sensibles (EF-08), diff en pièce jointe ; depuis #706 la fusion continue d'un run passe par ce
