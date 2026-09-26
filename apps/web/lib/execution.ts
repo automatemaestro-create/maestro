@@ -194,6 +194,25 @@ export function estSolde(execution: ResumeExecution): boolean {
 }
 
 /**
+ * Combien de tâches de ce run sont **encore ouvertes** — celles qui ne sont pas
+ * soldées (#1290).
+ *
+ * Le pied d'un message du fil comptait toutes les tâches du run, terminées
+ * comprises : « 3 tâches ouvertes » sous un run dont la vue disait « 3/3
+ * soldées ». Le compte se lit sur la **progression** que le backend tient sur la
+ * machine à états (#473) — `total - soldees` —, jamais redéduit des statuts ici,
+ * ce qui serait la machine à états réécrite en TypeScript.
+ *
+ * `0` pour un run soldé (#928 : ce qu'il a produit se lit dans son annonce de
+ * fin), et `0` pour un résumé servi sans progression : un chiffre qu'on ne sait
+ * pas tenir ne s'affiche pas plutôt que de revenir au compte faux.
+ */
+export function tachesOuvertes(execution: ResumeExecution): number {
+  if (estSolde(execution) || execution.progression === undefined) return 0;
+  return execution.progression.total - execution.progression.soldees;
+}
+
+/**
  * Ce run est-il **suspendu par quelqu'un** (#477) ?
  *
  * À ne pas confondre avec `REGIME_SUSPENDU` ci-dessous, qui dit « ce run attend un

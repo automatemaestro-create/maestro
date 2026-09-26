@@ -3187,9 +3187,14 @@ prévient personne, et ne dit pas où est le livrable*. Le run avait duré
 53 minutes et coûté 12,51 $ ; le livrable fonctionnait ; on ne l'a su qu'en
 allant regarder le disque.
 
-L'annonce paraît **à la fin du fil qui a demandé le travail** — un `<li>` du même
-`<ol>` que les messages, donc elle défile avec eux, dans la colonne de droite
-comme sur `/chat` — et **dans la cloche**, où les fins récentes sont rappelées.
+L'annonce paraît **dans le fil qui a demandé le travail, à l'heure de la fin** —
+un `<li>` du même `<ol>` que les messages, donc elle défile avec eux, dans la
+colonne de droite comme sur `/chat` — et **dans la cloche**, où les fins récentes
+sont rappelées. Depuis #1290 sa place est son heure (`lib/issueRun`,
+`rangDeLaFin`) : après le dernier message écrit avant la fin, puis sous le **récit**
+de son run (#1224) quand il y en a un. Empilées au pied du fil, les fins de deux
+runs d'une même conversation se lisaient sous le récit du dernier — la carte
+« Run en échec » d'un run passé sous le récit d'un run qui venait de réussir.
 Le rendu est partagé (`components/runs/AnnonceIssueRun`) : deux recopies auraient
 fini par annoncer deux choses différentes de la même fin. Quatre décisions la
 portent :
@@ -3215,6 +3220,19 @@ non sur l'horloge — une fin qui arrive pendant que le panneau est ouvert reste
 neuve. Couverture :
 [`apps/web/tests/issue-de-run.test.tsx`](../apps/web/tests/issue-de-run.test.tsx).
 
+**La fin atteint la vue de son projet** (#1290). L'écran d'un projet relit son
+état sur chaque trame du flux, et ce flux est cadré sur le projet (#277). Or
+l'issue d'un run — comme sa pause, sa reprise et le récit de fin — part **sans
+projet** de l'hôte qui l'émet : la vue ne la recevait jamais, et un run fini
+restait « En cours » jusqu'au rechargement suivant. La pompe de l'API rattache
+désormais tout événement sans projet au projet **de son run**, lu dans la
+projection (`ControlTowerState.au_projet_de_son_run`), avant de le consigner au
+journal et de le diffuser — un seul endroit pour tous les émetteurs, et un run
+sans projet n'en reçoit aucun. Sous chaque message, « tâches ouvertes » ne compte
+plus que les tâches **non soldées**, lues sur la progression du run (#473) :
+« 3 tâches ouvertes » sous un run à « 3/3 soldées » était faux. Couverture :
+[`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py) (§ ⑨).
+
 ##### …et elle se **raconte** : ce qui a été produit, comment l'essayer (#1224) — **livré**
 
 L'annonce ci-dessus dit *où* est le livrable. Elle ne dit ni ce qu'il contient, ni
@@ -3227,7 +3245,7 @@ message rédigé : ce que le run a produit, **comment l'essayer** avec la comman
 lue dans le livrable, ce qui reste éventuellement à faire, et les fichiers qui
 comptent en **liens qui s'ouvrent d'un geste**. C'est un message ordinaire du fil —
 même bulle, même Markdown —, et il **s'ajoute** à l'annonce de #928, qui ne bouge
-pas (elle reste la ligne d'événement en fin de fil, avec ses deux gestes).
+pas (elle reste la ligne d'événement qui le **suit**, avec ses deux gestes — #1290).
 
 Quatre décisions, et les trois premières sont des refus :
 

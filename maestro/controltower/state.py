@@ -1438,6 +1438,32 @@ class ControlTowerState:
         """Le détail de l'exécution `run_id`, ou None si aucune trace reçue."""
         return self._executions.get(run_id)
 
+    def au_projet_de_son_run(self, event: Event) -> Event:
+        """`event`, rattaché au projet de son run quand il n'en porte pas (#1290).
+
+        Un run appartient à un projet ; ses événements ne le disent pas tous.
+        L'issue qu'un hôte publie en partant (`bridge.solder_le_run`, la fin de
+        l'hôte en process), les ordres de pause et de reprise, le récit de fin
+        posé dans le fil (#1224) : chacun porte son `run_id` et rien d'autre. La
+        portée d'une vue de projet ne retenant que l'égalité stricte
+        (`PorteeProjet.retient`), ces événements n'atteignaient jamais la vue
+        du projet dont le run relève — un run fini restait « En cours » à
+        l'écran jusqu'au rechargement suivant.
+
+        Le projet se lit ici, dans la projection, parce que c'est le seul
+        endroit qui le connaît pour **tous** les émetteurs : le lancement l'y a
+        posé, ou à défaut la première étape du run (`appliquer`). Rien n'est
+        deviné pour autant : un événement qui porte déjà un projet le garde, et
+        celui d'un run sans projet reste sans projet — il n'entre toujours dans
+        aucune vue filtrée (#222).
+        """
+        if event.projet_id is not None or not event.run_id:
+            return event
+        execution = self._executions.get(event.run_id)
+        if execution is None or execution.projet_id is None:
+            return event
+        return replace(event, projet_id=execution.projet_id)
+
     def executions(self, portee: PorteeProjet | None = None) -> list[EtatExecution]:
         """Les exécutions connues, dans l'ordre de première apparition (#87).
 

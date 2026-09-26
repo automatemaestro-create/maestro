@@ -5,8 +5,8 @@
  * travail est fini, et le geste qui mène à ce qu'il a produit.
  *
  * Deux surfaces la montent, et c'est pourquoi elle vit ici plutôt que dans
- * l'une des deux : le **fil** (`components/Conversation`, à la place
- * chronologique du message qui a ouvert le run) et la **cloche**
+ * l'une des deux : le **fil** (`components/Conversation`, à l'heure de la fin,
+ * sous le récit du run quand il y en a un — `rangDeLaFin`, #1290) et la **cloche**
  * (`components/CentreNotifications`, la liste des runs récemment soldés). Deux
  * rendus recopiés auraient fini par annoncer deux choses différentes de la même
  * fin — c'est la recopie que docs/30 §2.2 a mesurée, et la raison d'être des
@@ -40,7 +40,9 @@
  *    « Ouvrir ».
  *
  * Le **choix de variante** (commentaire de #928) a retenu la forme A — une
- * ligne à la fin du fil — contre deux autres, et le regard neuf qui l'a rendu
+ * ligne à la fin du fil — contre deux autres. Sa forme n'a pas bougé ; sa place
+ * est devenue **l'heure de la fin** (#1290), qui revient au pied du fil tant
+ * qu'il n'a ouvert qu'un run, mais plus au second. Le regard neuf qui l'a rendu
  * a relevé sur sa propre capture cinq corrections, toutes appliquées ici :
  * l'annonce **porte son heure** (celle de la fin, pas celle du lancement — le
  * défaut qui a écarté la variante B), son **icône dit l'issue** (deux glyphes
