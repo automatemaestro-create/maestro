@@ -63,7 +63,7 @@ from maestro.detail_tache import EtapeTache
 from maestro.familles_claude import familles_claude
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
-from maestro.providers import blocage, checklist, courrier, decision, question
+from maestro.providers import blocage, checklist, controle, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -89,6 +89,7 @@ from maestro.providers.base import (
     AuthMode,
     CollecteurStderr,
     Credentials,
+    GardeFouInoperant,
     ImageJointe,
     McpServerUnavailable,
     ModeleDisponible,
@@ -291,6 +292,13 @@ class ClaudeProvider(ModelProvider):
         # tranche, et ce qu'on annonce au runtime comme durée max du hook. None :
         # les défauts du module — jamais ceux du SDK, qu'on ne choisit pas.
         self._arbitrage = arbitrage or BornesArbitrage()
+        # Le verdict de la sonde du point de contrôle (#1304), gardé le temps de
+        # ce fournisseur : ce qu'elle éprouve — le CLI qu'il lance, le SDK qui
+        # lui sert le hook — ne change pas d'une session à l'autre. Une sonde
+        # **non concluante** n'est pas gardée : rien n'y a été prouvé.
+        self._point_de_controle_tenu = False
+        self._garde_fou_inoperant: GardeFouInoperant | None = None
+        self._sonde_en_vol: asyncio.Task[None] | None = None
 
     @property
     def credentials(self) -> Credentials:
@@ -725,6 +733,15 @@ class ClaudeProvider(ModelProvider):
         `plafond_tours`, un effort mal réglé ne tue aucune tâche, il la rend
         seulement plus ou moins fouillée. À `None` — le défaut — rien n'est passé
         et le CLI garde le régime qu'il aurait eu sans ce lot.
+
+        **La session ne démarre qu'une fois le point de contrôle éprouvé** (#1304).
+        Dès qu'elle arme le hook — une politique ou une frontière —, une sonde
+        (`maestro.providers.controle`) vérifie sur ce fournisseur réel qu'un refus
+        de Maestro y est appliqué : un garde-fou qui ne tient plus est pire qu'un
+        garde-fou absent, puisqu'on le croit en place. Son échec lève
+        `GardeFouInoperant` (jamais relancé) ou `SondeNonConcluante` (relancée
+        par le moteur) **avant** que l'agent ne reçoive sa tâche, et c'est la
+        cause que le journal consigne. Voir `_point_de_controle_verifie`.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -742,6 +759,13 @@ class ClaudeProvider(ModelProvider):
         # il n'y a ni fusion ni diff pour le rattraper. Rendue dans les trois
         # régimes — un cran borné doit être évaluable partout où il est écrit.
         portee = portee_de(workspace, projet)
+        # La sonde de démarrage (#1304) : une session qui arme le point de
+        # contrôle ne démarre pas tant qu'on ne sait pas qu'un refus y tient.
+        # Sans politique ni frontière, Maestro ne pose aucun refus — rien à sonder.
+        if politique is not None or frontiere is not None:
+            await self._point_de_controle_verifie(
+                model=model, env=env, cli_path=cli_path, workspace=workspace
+            )
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
@@ -824,6 +848,178 @@ class ClaudeProvider(ModelProvider):
         finally:
             if regulateur is not None:
                 regulateur.vider()
+
+    async def _point_de_controle_verifie(
+        self,
+        *,
+        model: str,
+        env: dict[str, str],
+        cli_path: Path | None,
+        workspace: Path,
+    ) -> None:
+        """Rend la main si un refus de Maestro tient chez ce fournisseur — lève sinon (#1304).
+
+        Le verdict se **garde le temps de ce fournisseur** : ce que la sonde
+        éprouve — le CLI qu'il lance, le SDK qui lui sert le hook — ne change pas
+        d'une session à l'autre, et un run partage son fournisseur entre ses
+        tâches. Chaque session consulte donc ce verdict à son démarrage, et la
+        sonde ne se joue qu'à la première : payer un appel de modèle par tâche
+        pour reprouver la même chose serait une dépense sans information.
+
+        Ce qui est gardé, et ce qui ne l'est pas :
+
+        - un refus qui **tient** : gardé ;
+        - un garde-fou **inopérant** : gardé aussi, et relevé à chaque session —
+          c'est une propriété du fournisseur, et le reprouver à chaque tâche ne
+          ferait que payer le même constat ;
+        - une sonde **non concluante**, ou une panne du fournisseur pendant la
+          sonde : rien n'a été prouvé, donc rien n'est gardé, et la session
+          suivante — ou la relance de celle-ci — la rejoue.
+
+        Des sessions qui démarrent **ensemble** attendent la même sonde plutôt
+        que d'en lancer une chacune. Elle court dans sa propre tâche, protégée
+        (`shield`) : une session annulée pendant qu'elle l'attend ne l'annule pas
+        pour les autres.
+        """
+        if self._garde_fou_inoperant is not None:
+            raise GardeFouInoperant(str(self._garde_fou_inoperant))
+        if self._point_de_controle_tenu:
+            return
+        boucle = asyncio.get_running_loop()
+        en_vol = self._sonde_en_vol
+        if en_vol is None or en_vol.done() or en_vol.get_loop() is not boucle:
+            en_vol = boucle.create_task(
+                self._sonde(model=model, env=env, cli_path=cli_path, workspace=workspace)
+            )
+            en_vol.add_done_callback(_absorbe_sonde)
+            self._sonde_en_vol = en_vol
+        await asyncio.shield(en_vol)
+
+    async def _sonde(
+        self,
+        *,
+        model: str,
+        env: dict[str, str],
+        cli_path: Path | None,
+        workspace: Path,
+    ) -> None:
+        """Joue la sonde une fois, en lit le verdict sur son témoin, et le garde s'il est acquis.
+
+        La session de sonde est montée **comme celle de l'agent** là où c'est ce
+        qu'on éprouve — même modèle, même environnement (authentification, mode
+        isolé), même CLI, même répertoire, même mode de permissions — et réduite
+        au reste : aucun outil du CLI, un seul outil à elle, la vraie politique
+        de Maestro qui le refuse, et le hook de production (`_hook_permissions`)
+        comme point de contrôle. Le témoin (`controle.TemoinSonde`) relève ce que
+        le point de contrôle a lu et ce que l'outil a subi ; la prose de l'agent
+        de la sonde n'est pas lue.
+
+        Une panne du fournisseur pendant la sonde remonte telle quelle — avec son
+        stderr, et donc sa classification transitoire —, **sauf** si le témoin a
+        déjà vu l'appel : ce qui a été constaté l'a été, et vaut verdict. Le
+        plafond de tours de la sonde n'est pas une panne : il borne un agent qui
+        insisterait après le refus, et le témoin a alors tout ce qu'il faut.
+        """
+        temoin = controle.TemoinSonde()
+        erreur: Exception | None = None
+        try:
+            await _joue_sonde(
+                temoin, model=model, env=env, cli_path=cli_path, workspace=workspace
+            )
+        except TurnLimitReached:
+            pass
+        except Exception as exc:  # noqa: BLE001 — jugé sur le témoin juste en dessous
+            erreur = exc
+        if erreur is not None and not temoin.vus and not temoin.executions:
+            raise erreur
+        try:
+            temoin.verdict()
+        except GardeFouInoperant as exc:
+            self._garde_fou_inoperant = exc
+            raise
+        self._point_de_controle_tenu = True
+
+
+#: Le plafond de tours de la session de sonde : l'appel, puis le mot de la fin — et
+#: un tour de marge pour un agent qui rappellerait l'outil une fois refusé.
+TOURS_SONDE = 3
+
+
+async def _joue_sonde(
+    temoin: controle.TemoinSonde,
+    *,
+    model: str,
+    env: dict[str, str],
+    cli_path: Path | None,
+    workspace: Path,
+) -> None:
+    """La session de sonde du point de contrôle, jouée sur le fournisseur réel (#1304).
+
+    Rendue **à part** de `ClaudeProvider._sonde` pour que ce qui décide — le
+    témoin et son verdict — se lise sans monter de session, et que ce qui monte
+    la session tienne ici, en une fonction : les options du SDK, le serveur de la
+    sonde et son hook.
+
+    Le hook est **celui de production** (`_hook_permissions`), appliqué à une
+    vraie `PolitiqueOutils` : la sonde éprouve le chemin par lequel passe tout
+    refus de Maestro, pas un double écrit pour elle. Il est seulement précédé du
+    relevé du témoin, qui voit l'appel **tel que le point de contrôle le lit**.
+    """
+    # Import différé, comme dans `_hook_permissions` : `maestro.providers` ne
+    # dépend pas de `maestro.agents` à l'exécution.
+    from maestro.agents.permissions import PolitiqueOutils
+
+    politique = PolitiqueOutils(deny=tuple(controle.POLITIQUE_SONDE["deny"]))
+    point_de_controle = _hook_permissions(politique, None)
+
+    async def hook_sonde(
+        input_data: HookInput, tool_use_id: str | None, context: HookContext
+    ) -> HookJSONOutput:
+        temoin.voit(input_data)
+        sortie: HookJSONOutput = await point_de_controle(input_data, tool_use_id, context)
+        return sortie
+
+    @tool(controle.NOM_OUTIL_SONDE, controle.DESCRIPTION_OUTIL_SONDE, {})
+    async def sonder(args: dict[str, Any]) -> dict[str, Any]:
+        return {"content": [{"type": "text", "text": temoin.execute()}]}
+
+    stderr = CollecteurStderr()
+    options = ClaudeAgentOptions(
+        model=model,
+        system_prompt=controle.CONSIGNE_SONDE,
+        env=env,
+        cwd=workspace,
+        cli_path=cli_path,
+        stderr=stderr,
+        tools=[],
+        permission_mode="bypassPermissions",
+        max_turns=TOURS_SONDE,
+        mcp_servers={
+            controle.NOM_SERVEUR_SONDE: create_sdk_mcp_server(
+                name=controle.NOM_SERVEUR_SONDE, tools=[sonder]
+            )
+        },
+        strict_mcp_config=True,
+        setting_sources=sans_reglages_du_poste(),
+        skills=sans_skills_du_poste(),
+        max_buffer_size=PLAFOND_FLUX_OCTETS,
+        hooks={"PreToolUse": [HookMatcher(hooks=[hook_sonde])]},
+    )
+    await _collect_response(
+        controle.PROMPT_SONDE, options, plafond_tours=TOURS_SONDE, stderr=stderr
+    )
+
+
+def _absorbe_sonde(sonde: asyncio.Task[None]) -> None:
+    """Relève l'issue d'une sonde que plus personne n'attendait (#1304).
+
+    Même raison que `_absorbe_arbitrage_tardif` : une session annulée pendant
+    qu'elle attendait la sonde la laisse finir (`shield`), et une issue en échec
+    que personne ne relève serait signalée par asyncio comme une exception jamais
+    lue. Le verdict, lui, est déjà gardé par le fournisseur — rien n'est perdu.
+    """
+    if not sonde.cancelled():
+        sonde.exception()
 
 
 def _outil_arbitrage(
@@ -1368,6 +1564,13 @@ def _hook_permissions(
     qui lève l'est aussi (bus en panne — même règle que
     `Guardrails.demande_validation` depuis #9).
 
+    Et un troisième **en amont de tout** (#1304) : un appel dont le nom ne se lit
+    pas, ou dont l'entrée n'est pas un objet, est **refusé avec son motif**
+    (`maestro.providers.controle`). Il rendait `{}` jusque-là — « laisser
+    passer » —, si bien qu'un CLI qui aurait déplacé ces champs ouvrait la
+    frontière, la politique et la portée d'un seul coup, sans un mot. Le hook ne
+    devine plus rien de ce qu'il ne sait pas lire.
+
     Le hook ne lève jamais : un traçage en échec est avalé — l'observation ne
     casse pas l'exécution observée.
     """
@@ -1470,11 +1673,19 @@ def _hook_permissions(
     async def hook(
         input_data: HookInput, tool_use_id: str | None, context: HookContext
     ) -> HookJSONOutput:
-        outil = str(input_data.get("tool_name") or "")
-        if not outil:
-            return {}
+        # Fermé par défaut (#1304) : un appel qu'on ne sait pas nommer, ou dont
+        # l'entrée n'est pas un objet, est refusé — jamais laissé au flux normal.
+        # Tout ce qui suit repose sur ces deux lectures, et un CLI qui les
+        # déplacerait ouvrirait sinon la frontière, la politique et la portée
+        # d'un coup, sans un mot. La sonde de démarrage le dit avant l'agent.
+        outil = controle.nom_outil(input_data)
+        if outil is None:
+            return refuse(controle.OUTIL_SANS_NOM, controle.motif_sans_nom())
+        entree = controle.entree_outil(input_data)
+        if entree is None:
+            return refuse(outil, controle.motif_entree_illisible(outil))
         if frontiere is not None:
-            motif_frontiere = frontiere.refus(outil, input_data.get("tool_input"))
+            motif_frontiere = frontiere.refus(outil, entree)
             if motif_frontiere is not None:
                 return refuse(outil, motif_frontiere)
         if politique is None:
@@ -1489,9 +1700,7 @@ def _hook_permissions(
         # ailleurs, parce que c'est ici, et seulement ici, que les arguments de
         # l'appel existent. Sans portée déclarée, `hors_de_portee` rend "" et
         # tout ce qui suit est au bit près le régime d'avant ce lot.
-        sortie = hors_de_portee(
-            decision.portee, portee, outil, input_data.get("tool_input")
-        )
+        sortie = hors_de_portee(decision.portee, portee, outil, entree)
         decideur = DECIDEUR_DEFAUT if sortie else decision.decideur
         motif = motif_hors_portee(decision.motif, sortie) if sortie else decision.motif
         if decideur is Decideur.AUTO:
@@ -1504,12 +1713,12 @@ def _hook_permissions(
             # le distingue d'un `allow`.
             trace(outil, motif_auto(outil))
             return {}
-        if dispense_de_lecture(outil, input_data.get("tool_input")):
+        if dispense_de_lecture(outil, entree):
             # Rien n'est tracé, et c'est la même règle que `Verdict.PASSE` : il
             # n'y a pas d'acte à consigner. Ce que l'agent a fait reste visible
             # au fil temps réel, qui rend ses appels d'outils (#479).
             return {}
-        return await arbitre(outil, motif, input_data.get("tool_input"))
+        return await arbitre(outil, motif, entree)
 
     return hook
 

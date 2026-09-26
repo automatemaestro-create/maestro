@@ -114,6 +114,34 @@ class PlafondFluxDepasse(RuntimeError):
     """
 
 
+class GardeFouInoperant(RuntimeError):
+    """Levée quand la sonde de démarrage prouve qu'un refus de Maestro ne tient pas (#1304).
+
+    Un fournisseur qui honore `run_agent` sous une politique ou une frontière
+    applique les refus de Maestro à chaque appel d'outil. La sonde
+    (`maestro.providers.controle`) le vérifie sur le fournisseur réel avant que
+    l'agent ne travaille : si l'outil qu'elle fait refuser est exécuté quand même,
+    ou si le point de contrôle n'en lit pas le nom, les garde-fous de la session
+    ne tiendraient pas — et la tâche ne démarre pas.
+
+    Non transitoire par nature : c'est une propriété du fournisseur (son CLI, son
+    SDK), qu'une relance reproduirait à l'identique. Jamais relancée (ENF-06). Le
+    message dit ce que la sonde a constaté ; c'est la cause de l'échec de la
+    tâche, telle que le journal la lira.
+    """
+
+
+class SondeNonConcluante(RuntimeError):
+    """Levée quand la sonde de démarrage n'a rien pu prouver (#1304).
+
+    L'agent de la sonde n'a pas appelé l'outil qu'on lui demandait d'appeler :
+    le refus n'a donc été ni appliqué, ni contredit. La tâche ne démarre pas pour
+    autant — un garde-fou dont on ignore s'il tient ne se présume pas tenu —,
+    mais l'échec est **transitoire** : c'est un aléa du modèle, pas une propriété
+    du fournisseur, et la relance du moteur (ENF-06) rejoue la sonde.
+    """
+
+
 #: Nombre de lignes de stderr conservées d'un CLI fournisseur en échec (#346) :
 #: les **dernières**, celles qui portent la cause immédiate. Un stderr de CLI peut
 #: faire des milliers de lignes ; le journal d'un run est relu à l'écran, pas archivé.

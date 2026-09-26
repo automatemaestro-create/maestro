@@ -82,6 +82,7 @@ import re
 from pathlib import Path
 
 import pytest
+from double_cli_claude import DoubleCli
 
 from maestro.agents import QA_PROFILE, AgentRuntime
 from maestro.agents.catalog import GABARITS_DU_CODE
@@ -989,7 +990,7 @@ def _hook(politique, on_refus=None):
 
 def test_le_hook_laisse_passer_un_appel_permis():
     hook = _hook(PolitiqueOutils(deny=("Bash",)))
-    assert asyncio.run(hook({"tool_name": "Read"}, None, None)) == {}
+    assert asyncio.run(hook({"tool_name": "Read", "tool_input": {}}, None, None)) == {}
 
 
 def test_le_hook_refuse_un_appel_interdit_avec_son_motif():
@@ -999,7 +1000,9 @@ def test_le_hook_refuse_un_appel_interdit_avec_son_motif():
         lambda outil, raison: vu.append((outil, raison)),
     )
 
-    sortie = asyncio.run(hook({"tool_name": "mcp__slack__chat_delete"}, "tu-1", None))
+    sortie = asyncio.run(
+        hook({"tool_name": "mcp__slack__chat_delete", "tool_input": {}}, "tu-1", None)
+    )
 
     decision = sortie["hookSpecificOutput"]
     assert decision["permissionDecision"] == "deny"
@@ -1016,14 +1019,18 @@ def test_un_tracage_en_echec_n_empeche_pas_le_refus():
 
     hook = _hook(PolitiqueOutils(deny=("Bash",)), _tracage_casse)
 
-    sortie = asyncio.run(hook({"tool_name": "Bash"}, None, None))
+    sortie = asyncio.run(hook({"tool_name": "Bash", "tool_input": {}}, None, None))
 
     assert sortie["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-def test_un_appel_sans_nom_d_outil_est_laisse_au_flux_normal():
+def test_un_appel_sans_nom_d_outil_est_refuse():
+    # Renversé par #1304 : il était « laissé au flux normal », c'est-à-dire
+    # laissé passer. Ce que le point de contrôle ne sait pas nommer, il le refuse
+    # (le détail vit dans tests/test_point_de_controle.py).
     hook = _hook(PolitiqueOutils(deny=("Bash",)))
-    assert asyncio.run(hook({}, None, None)) == {}
+    sortie = asyncio.run(hook({}, None, None))
+    assert sortie["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 class _FakeTextBlock:
@@ -1037,14 +1044,18 @@ class _FakeAssistantMessage:
 
 
 def _run_agent_capture_options(monkeypatch, *, politique, arbitrage=None):
-    """Lance `run_agent` sur un `query` factice et capture les options SDK."""
-    vu: dict[str, object] = {}
+    """Lance `run_agent` sur un CLI factice et capture les options SDK de la session.
 
-    async def fake_query(*, prompt, options):
-        vu["hooks"] = options.hooks
+    Le CLI est le double partagé (`tests/double_cli_claude.py`) : sous politique,
+    la session est précédée de la sonde du point de contrôle (#1304), qu'il
+    satisfait en appliquant le refus. Ce sont les options de la session **de
+    l'agent** qui sont rendues, pas celles de la sonde.
+    """
+
+    async def session(*, prompt, options):
         yield _FakeAssistantMessage([_FakeTextBlock("Livré.")])
 
-    monkeypatch.setattr(claude_mod, "query", fake_query)
+    cli = DoubleCli(monkeypatch, session=session)
     monkeypatch.setattr(claude_mod, "AssistantMessage", _FakeAssistantMessage)
     monkeypatch.setattr(claude_mod, "TextBlock", _FakeTextBlock)
     provider = ClaudeProvider(Credentials(), arbitrage=arbitrage)
@@ -1054,7 +1065,7 @@ def _run_agent_capture_options(monkeypatch, *, politique, arbitrage=None):
             politique=politique,
         )
     )
-    return vu
+    return {"hooks": cli.sessions[-1].hooks}
 
 
 def test_run_agent_arme_le_hook_quand_une_politique_est_fournie(monkeypatch, tmp_path):
@@ -1321,8 +1332,8 @@ def test_l_arbitrage_ne_change_rien_aux_deux_autres_crans():
     hook = claude_mod._hook_permissions(
         PolitiqueOutils(ask=("Bash",), deny=("Write",)), None, None
     )
-    assert asyncio.run(hook({"tool_name": "Read"}, None, None)) == {}
-    refus = asyncio.run(hook({"tool_name": "Write"}, None, None))
+    assert asyncio.run(hook({"tool_name": "Read", "tool_input": {}}, None, None)) == {}
+    refus = asyncio.run(hook({"tool_name": "Write", "tool_input": {}}, None, None))
     assert "deny" in refus["hookSpecificOutput"]["permissionDecision"]
 
 
