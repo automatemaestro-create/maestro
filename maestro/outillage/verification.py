@@ -247,6 +247,7 @@ class Verificateur:
         *,
         perimetre: Perimetre,
         portees: Mapping[str, str] | None = None,
+        connues: Mapping[str, Verification] | None = None,
     ) -> tuple[Verification, ...]:
         """Les verdicts des commandes que cet outillage écrira, dans l'ordre des usages.
 
@@ -254,15 +255,30 @@ class Verificateur:
         versionné, le worktree d'un projet versionné : c'est lui qui est **copié**,
         jamais lui qui est joué. Ne lève pas : ce qui empêche de jouer devient la
         raison d'un `a-verifier`.
+
+        `connues` (#1161) — commande → verdict — sont les commandes **déjà jouées**
+        pour ce projet : quand l'outillage s'écrit pièce par pièce, la commande de
+        tests qu'`AGENTS.md` a fait jouer est celle que le skill de tests écrira, et la
+        rejouer paierait une seconde fois une installation ou une suite entière. Seul
+        un verdict **joué** (`verifiee`, `echouee`) est repris : un `a-verifier` dit
+        qu'on n'a pas pu jouer, et c'est peut-être possible maintenant. Une commande
+        **corrigée** a un autre texte, donc n'est jamais connue : elle est jouée.
         """
         commandes = commandes_ecrites(constats, recommandation, portees=portees)
         if not commandes:
             return ()
-        verdicts: dict[str, Verification] = {}
+        verdicts: dict[str, Verification] = {
+            c.commande: connue
+            for c in commandes
+            if (connue := (connues or {}).get(c.commande)) is not None
+            and connue.etat in (VERIFIEE, ECHOUEE)
+        }
         interprete = self.interprete if self.interprete is not None else execution.interprete()
         vide = _projet_vide(racine, perimetre, frozenset((portees or {}).keys()))
         jouables: list[CommandeEcrite] = []
         for commande in commandes:
+            if commande.commande in verdicts:
+                continue
             raison = _injouable(racine, commande, vide=vide, interprete=interprete)
             if raison:
                 verdicts[commande.commande] = _a_verifier(commande, raison)

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from maestro.outillage.detection import DOSSIERS_SKILLS
 from maestro.outillage.modele import (
+    ORIGINE_DITE,
     Commande,
     Constats,
     Ecarte,
@@ -239,7 +240,15 @@ def _usages_du_skill(usage: str) -> tuple[str, ...]:
 
 
 def _justification(commande: Commande) -> Piece:
-    """L'endroit du projet qui justifie un skill : le fichier lu, et ce qu'on y a vu."""
+    """L'endroit du projet qui justifie un skill : le fichier lu, et ce qu'on y a vu.
+
+    Une commande **dite par la personne** (#1161, `ORIGINE_DITE`) n'a pas d'endroit
+    dans le projet : ce qui la justifie est sa phrase. La pièce n'a alors **pas de
+    chemin** — la rédaction dit « dite par la personne », jamais « constaté dans »
+    un fichier qu'on n'a pas lu pour ça.
+    """
+    if commande.origine == ORIGINE_DITE:
+        return Piece(nom="la personne", chemin="", role=commande.extrait)
     return Piece(nom=commande.chemin, chemin=commande.chemin, role=commande.extrait)
 
 

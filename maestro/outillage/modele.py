@@ -76,6 +76,15 @@ USAGES: tuple[str, ...] = (
 #: sans le dire ferait passer une supposition pour une lecture.
 ORIGINES_COMMANDE: frozenset[str] = frozenset({"declaree", "convention"})
 
+#: La troisième provenance, et la seule qu'**aucune lecture** ne produit (#1161) : la
+#: commande a été **dite par la personne** — « nos tests tournent avec `dotnet test` »
+#: —, comprise, puis jouée avant d'être écrite. Son `extrait` porte la phrase, entre
+#: guillemets : c'est la justification qui s'écrit à côté de la commande. Elle reste
+#: hors d'`ORIGINES_COMMANDE`, que la lecture du projet par le modèle confronte à ce
+#: qu'elle rend (`exploration`) : un modèle qui lit un dépôt ne peut pas prétendre
+#: qu'une commande lui a été dite.
+ORIGINE_DITE = "dite"
+
 #: L'état d'une entrée recommandée. `deja-present` est celui qui compte : c'est
 #: la forme que prend « ce que le projet porte déjà est reconnu plutôt que
 #: dupliqué » — l'entrée reste dans la réponse, avec le chemin de ce qui existe,

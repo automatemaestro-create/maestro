@@ -65,7 +65,7 @@ from typing import Any
 from maestro import __version__
 from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN
 from maestro.outillage.detection import CHEMIN_MANIFESTE
-from maestro.outillage.modele import Commande, Constats, Entree, Recommandation
+from maestro.outillage.modele import ORIGINE_DITE, Commande, Constats, Entree, Recommandation
 from maestro.outillage.questionnaire import SOURCE_CHOIX
 from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, USAGES_VERIFICATION
 from maestro.outillage.verification import ECHOUEE, VERIFIEE, Verification
@@ -669,6 +669,12 @@ def _provenance(commande: Commande, implique: bool = False) -> str:
     dans `package.json` » y désignerait un fichier absent ; « attendue une fois
     `package.json` créé » dit la même chose sans l'affirmation de lecture.
     """
+    if commande.origine == ORIGINE_DITE:
+        # Dite par la personne (#1161) : sa phrase est la justification, quel que soit
+        # le registre — elle ne se lit ni dans un fichier, ni dans une convention.
+        return f"dite par la personne ({commande.extrait})" if commande.extrait else (
+            "dite par la personne"
+        )
     if implique:
         precision = f" ({commande.extrait})" if commande.extrait else ""
         endroit = f"`{commande.chemin}`" if commande.chemin else "le manifeste du projet"
@@ -725,7 +731,15 @@ def texte_skill(
         *(entree.commandes or ("# aucune commande constatée pour ce skill",)),
         "```",
     ]
-    if entree.justification is not None:
+    if entree.justification is not None and not entree.justification.chemin:
+        # Dite par la personne (#1161) : aucun fichier ne la justifie, sa phrase si.
+        phrase = f" : {entree.justification.role}" if entree.justification.role else ""
+        lignes += [
+            "",
+            f"Dite par la personne qui a outillé ce projet{phrase}. Si le projet a changé "
+            "depuis, c'est lui qui fait foi, pas ce fichier.",
+        ]
+    elif entree.justification is not None:
         role = f" ({entree.justification.role})" if entree.justification.role else ""
         endroit = f"`{entree.justification.chemin}`{role}"
         lignes += [

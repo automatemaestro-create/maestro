@@ -60,6 +60,22 @@ verification`). Ce module ne les joue pas — il garde leurs verdicts là où il
 relisent : dans le **manifeste** (`verifications`, à côté des `entrees`), où ils
 disent six mois plus tard ce qui marchait le jour de l'écriture, et dans le
 **rapport**, où la personne les lit commande par commande, sortie comprise.
+
+## Une pièce à la fois (#1161)
+
+L'outillage se construit désormais **dans la conversation, pièce par pièce** : chaque
+fichier est montré avec son diff, puis écrit sur accord. Deux verbes servent ce
+régime, et aucun ne décide autre chose que ce que `generer` décide déjà :
+
+- `prevoir` dit ce qu'écrire **ferait** d'un fichier — les quatre cas du tableau, le
+  texte d'aujourd'hui et celui d'après — **sans rien écrire**. C'est la même décision
+  que celle de l'écriture (`_prevision`, appelée par les deux), pas une seconde
+  lecture des règles : le diff montré est celui de ce qui sera posé ;
+- `poser_piece` écrit **un** fichier et **fusionne** le manifeste. `generer` retire du
+  manifeste toute entrée qu'on ne lui repasse pas (une pièce que l'analyse ne
+  recommande plus) : lui confier une pièce seule effacerait de la comptabilité celles
+  écrites avant elle. Ici, les autres entrées restent telles quelles, et les verdicts
+  des commandes s'ajoutent à ceux déjà déclarés.
 """
 
 from __future__ import annotations
@@ -200,11 +216,53 @@ class _EtatManifeste:
     version_lue: Any = None
     entrees: dict[str, dict[str, Any]] = field(default_factory=dict)
     source: dict[str, Any] = field(default_factory=dict)
+    verifications: tuple[Verification, ...] = ()
 
     def empreinte_de(self, chemin: str) -> str:
         """L'empreinte que Maestro a **écrite** pour `chemin`, "" s'il ne le possède pas."""
         entree = self.entrees.get(chemin)
         return str(entree.get("empreinte") or "") if entree is not None else ""
+
+
+#: Les cas de `_prevision` — la décision que prend l'écriture, nommée une fois.
+#: `frontiere` : le chemin est refusé par la frontière d'écriture. `ignore` : le
+#: fichier (ou le bloc) est au projet, pas à Maestro. `modifie` : Maestro l'a écrit et
+#: quelqu'un l'a changé depuis — jamais écrasé. `inchange` : déjà exactement celui-là.
+#: `ecrit` : posé (créé, ou réécrit parce que Maestro le possède et que rien n'a bougé).
+_CAS_FRONTIERE = "frontiere"
+_CAS_IGNORE = "ignore"
+_CAS_MODIFIE = "modifie"
+_CAS_INCHANGE = "inchange"
+_CAS_ECRIT = "ecrit"
+
+
+@dataclass(frozen=True)
+class Prevision:
+    """Ce qu'écrire un fichier **ferait**, sans rien écrire (#1161).
+
+    `etat` est celui que le rapport porterait (`ecrit`, `inchange`, `refuse`,
+    `ignore`) et `raison` la phrase qui l'accompagnerait. `avant` est le texte que le
+    disque porte aujourd'hui (`None` : le fichier n'existe pas) et `apres` celui qu'il
+    porterait une fois écrit — le fichier **entier**, bloc fusionné compris : c'est ce
+    que le diff d'une carte compare. `apres` vaut `None` quand rien ne s'écrirait à ce
+    chemin.
+
+    `cas` est la décision elle-même (`_CAS_*`), celle que `_poser` exécute : la
+    prévision et l'écriture la tiennent **du même calcul**.
+    """
+
+    chemin: str
+    etat: str
+    raison: str
+    avant: str | None = None
+    apres: str | None = None
+    cas: str = _CAS_ECRIT
+    bloc: bool = False
+
+    @property
+    def ecrirait(self) -> bool:
+        """Écrire ce fichier changerait-il le disque ?"""
+        return self.etat == "ecrit"
 
 
 def generer(
@@ -248,17 +306,9 @@ def generer(
     garde = frontiere or FrontiereEcriture(racine=racine.resolve(), exclus=())
     verdicts = tuple(verifications)
     etat = _lire_manifeste(racine)
-    if etat.version_lue is not None and etat.version_lue != VERSION_MANIFESTE:
-        return Rapport(
-            cible=str(racine),
-            genere_le=quand,
-            refus=(
-                f"{REFUS_VERSION} : {CHEMIN_MANIFESTE} déclare la version "
-                f"{etat.version_lue!r}, attendue {VERSION_MANIFESTE} — rien n'a été "
-                "écrit, pour ne pas effacer ce qu'une autre version y a déclaré."
-            ),
-            verifications=verdicts,
-        )
+    refus = _refus_de_version(racine, etat, quand, verdicts)
+    if refus is not None:
+        return refus
 
     ecritures: list[Ecriture] = []
     gardees: dict[str, dict[str, Any]] = {}
@@ -284,6 +334,111 @@ def generer(
     )
 
 
+def poser_piece(
+    cible: Path | str,
+    fichier: Fichier,
+    *,
+    source: Mapping[str, Any],
+    frontiere: FrontiereEcriture | None = None,
+    horodatage: str = "",
+    verifications: Sequence[Verification] = (),
+) -> Rapport:
+    """Écrit **une** pièce de l'outillage dans `cible`, et **fusionne** le manifeste (#1161).
+
+    Les quatre cas de docs/38 §4.2 sont ceux de `generer`, décidés par la même
+    fonction : un fichier du projet n'est pas touché, un fichier modifié n'est jamais
+    écrasé. Ce qui change est le manifeste : les **autres** entrées y restent telles
+    quelles. `generer` les en retirerait — il tient la recommandation entière et lit
+    une absence comme « ne régénère plus ça » —, et une pièce écrite seule effacerait
+    ainsi de la comptabilité celles écrites avant elle, que la génération suivante
+    prendrait pour des fichiers du projet.
+
+    L'entrée de cette pièce suit `_poser` : la neuve quand elle est posée, l'ancienne
+    quand on refuse d'écraser, aucune pour un fichier qui n'est pas à Maestro.
+
+    `verifications` sont les verdicts des commandes que cette pièce écrit : ils
+    **s'ajoutent** à ceux déjà déclarés, et remplacent ceux d'une même commande — le
+    dernier verdict d'une commande est celui qui vaut. `source` remplace celle du
+    manifeste : c'est la provenance de ce qui vient d'être écrit.
+
+    Ne lève pas, comme `generer` : tout empêchement est une ligne du rapport.
+    """
+    racine = Path(cible)
+    quand = horodatage or datetime.now(UTC).isoformat(timespec="seconds")
+    garde = frontiere or FrontiereEcriture(racine=racine.resolve(), exclus=())
+    etat = _lire_manifeste(racine)
+    verdicts = _verdicts_fusionnes(etat.verifications, verifications)
+    refus = _refus_de_version(racine, etat, quand, tuple(verifications))
+    if refus is not None:
+        return refus
+    ecriture, entree = _poser(racine, fichier, etat, garde, quand)
+    entrees = dict(etat.entrees)
+    if entree is not None:
+        entrees[fichier.chemin] = entree
+    else:
+        entrees.pop(fichier.chemin, None)
+    ecritures = [ecriture]
+    manifeste = _ecrire_manifeste(racine, entrees, dict(source), quand, garde, verdicts)
+    if manifeste:
+        ecritures.append(
+            Ecriture(
+                chemin=CHEMIN_MANIFESTE,
+                role="manifeste",
+                portee="fichier",
+                etat="refuse",
+                raison=manifeste,
+            )
+        )
+    return Rapport(
+        cible=str(racine),
+        genere_le=quand,
+        ecritures=tuple(ecritures),
+        verifications=tuple(verifications),
+    )
+
+
+def verifications_declarees(cible: Path | str) -> tuple[Verification, ...]:
+    """Les verdicts de commandes que le manifeste de `cible` garde — `()` s'il n'y en a pas.
+
+    C'est ce que Maestro sait déjà des commandes qu'il a écrites (#1160) : une pièce
+    réécrite avec les mêmes verdicts rend le même texte, donc se reconnaît « déjà à
+    jour » sans rejouer une installation. Lecture pure, comme `portees_declarees`.
+    """
+    return _lire_manifeste(Path(cible)).verifications
+
+
+def _refus_de_version(
+    racine: Path, etat: _EtatManifeste, quand: str, verdicts: tuple[Verification, ...]
+) -> Rapport | None:
+    """Le refus global d'un manifeste d'une version inconnue — `None` s'il se lit.
+
+    **Rien n'est écrit** — ni fichier, ni manifeste. Écraser un manifeste qu'on ne
+    comprend pas reviendrait à effacer ce qu'une version future y a déclaré.
+    """
+    if etat.version_lue is None or etat.version_lue == VERSION_MANIFESTE:
+        return None
+    return Rapport(
+        cible=str(racine),
+        genere_le=quand,
+        refus=(
+            f"{REFUS_VERSION} : {CHEMIN_MANIFESTE} déclare la version "
+            f"{etat.version_lue!r}, attendue {VERSION_MANIFESTE} — rien n'a été "
+            "écrit, pour ne pas effacer ce qu'une autre version y a déclaré."
+        ),
+        verifications=verdicts,
+    )
+
+
+def _verdicts_fusionnes(
+    declares: Sequence[Verification], neufs: Sequence[Verification]
+) -> tuple[Verification, ...]:
+    """Les verdicts déclarés, ceux d'une même commande remplacés par les neufs — dans l'ordre."""
+    par_commande = {verdict.commande: verdict for verdict in declares}
+    for verdict in neufs:
+        par_commande[verdict.commande] = verdict
+    return tuple(par_commande.values())
+
+
 def portees_declarees(cible: Path | str) -> dict[str, str]:
     """`chemin → portée` de ce que le manifeste de `cible` déclare — vide s'il n'y en a pas.
 
@@ -305,67 +460,79 @@ def portees_declarees(cible: Path | str) -> dict[str, str]:
     }
 
 
-def _poser(
-    racine: Path,
+def prevoir(
+    cible: Path | str,
     fichier: Fichier,
-    etat: _EtatManifeste,
-    garde: FrontiereEcriture,
-    quand: str,
-) -> tuple[Ecriture, dict[str, Any] | None]:
-    """Décide, puis écrit — et rend l'entrée de manifeste à conserver, s'il y en a une.
+    *,
+    frontiere: FrontiereEcriture | None = None,
+) -> Prevision:
+    """Ce qu'écrire `fichier` dans `cible` ferait — **sans rien écrire** (#1161).
 
-    L'entrée rendue est celle qui décrit **ce que Maestro a écrit** : celle du
-    contenu neuf quand il a été posé, celle d'avant quand on a refusé d'écraser.
-    Garder l'ancienne dans ce second cas n'est pas un détail : la retirer ferait
-    que la génération suivante lirait « présent, absent du manifeste » et
-    n'oserait plus jamais toucher au fichier, y compris une fois la personne
-    revenue à la version de Maestro.
+    La décision est celle de `generer` et de `poser_piece`, prise par la même
+    fonction (`_prevision`) sur le même manifeste : c'est ce qui fait que le diff
+    qu'une carte montre est celui de ce qui sera posé, et non une seconde lecture
+    des quatre cas de docs/38 §4.2. `frontiere` comme pour `generer` — `None` la
+    dérive de la cible seule.
+
+    Lecture pure : ni écriture, ni dossier créé, ni exception pour un fichier
+    illisible (il compte comme présent, cf. `_texte_existant`).
+    """
+    racine = Path(cible)
+    garde = frontiere or FrontiereEcriture(racine=racine.resolve(), exclus=())
+    return _prevision(racine, fichier, _lire_manifeste(racine), garde)
+
+
+def _prevision(
+    racine: Path, fichier: Fichier, etat: _EtatManifeste, garde: FrontiereEcriture
+) -> Prevision:
+    """La décision d'écriture d'un fichier, prise une fois pour ses deux lecteurs.
+
+    `_poser` l'exécute, `prevoir` la montre. Les raisons ici sont celles que le
+    rapport porte — à une exception, le fichier modifié, dont la raison écrite dit
+    aussi où la version neuve a été déposée, ce qu'on ne sait qu'après avoir essayé.
     """
     refus = garde.refus_chemin(fichier.chemin, ecriture=True)
     if refus is not None:
-        return _ecriture(fichier, "refuse", refus), etat.entrees.get(fichier.chemin)
-
-    cible = racine / PurePosixPath(fichier.chemin)
-    present = _texte_existant(cible)
+        return Prevision(fichier.chemin, "refuse", refus, cas=_CAS_FRONTIERE)
+    present = _texte_existant(racine / PurePosixPath(fichier.chemin))
     connue = etat.empreinte_de(fichier.chemin)
-
     if fichier.portee == PORTEE_BLOC:
-        return _poser_bloc(racine, cible, fichier, present, connue, quand)
-
+        return _prevision_bloc(fichier, present, connue)
     if present is not None and not connue:
-        return (
-            _ecriture(
-                fichier,
-                "ignore",
-                "le projet porte déjà ce fichier et Maestro ne l'a pas écrit : "
-                "il n'y touche pas.",
-            ),
-            None,
+        return Prevision(
+            fichier.chemin,
+            "ignore",
+            "le projet porte déjà ce fichier et Maestro ne l'a pas écrit : il n'y touche pas.",
+            avant=present,
+            cas=_CAS_IGNORE,
         )
     if present is not None and _empreinte(present) != connue:
-        return _refuser(racine, fichier, etat)
-    if present == fichier.contenu:
-        return (
-            _ecriture(fichier, "inchange", "déjà à jour — rien n'a été réécrit."),
-            _entree(fichier, _empreinte(fichier.contenu), _quand_connu(etat, fichier, quand)),
+        return Prevision(
+            fichier.chemin,
+            "refuse",
+            "modifié depuis que Maestro l'a écrit : jamais écrasé.",
+            avant=present,
+            cas=_CAS_MODIFIE,
         )
-    erreur = _ecrire_fichier(cible, fichier.contenu, executable=fichier.executable)
-    if erreur:
-        return _ecriture(fichier, "refuse", erreur), etat.entrees.get(fichier.chemin)
-    raison = (
-        "écrit" if present is None else "réécrit : le fichier était celui que Maestro avait posé."
+    if present == fichier.contenu:
+        return Prevision(
+            fichier.chemin,
+            "inchange",
+            "déjà à jour — rien n'a été réécrit.",
+            avant=present,
+            apres=present,
+            cas=_CAS_INCHANGE,
+        )
+    return Prevision(
+        fichier.chemin,
+        "ecrit",
+        "écrit" if present is None else "réécrit : le fichier était celui que Maestro avait posé.",
+        avant=present,
+        apres=fichier.contenu,
     )
-    return _ecriture(fichier, "ecrit", raison), _entree(fichier, _empreinte(fichier.contenu), quand)
 
 
-def _poser_bloc(
-    racine: Path,
-    cible: Path,
-    fichier: Fichier,
-    present: str | None,
-    connue: str,
-    quand: str,
-) -> tuple[Ecriture, dict[str, Any] | None]:
+def _prevision_bloc(fichier: Fichier, present: str | None, connue: str) -> Prevision:
     """La portée `bloc` : Maestro ne possède qu'un bloc délimité d'un fichier d'autrui.
 
     Le fichier est **conservé tel quel** autour du bloc, dans tous les cas. Quatre
@@ -382,35 +549,101 @@ def _poser_bloc(
     """
     existant = _bloc_existant(present or "")
     if present is not None and existant is not None and not connue:
-        return (
-            _ecriture(
-                fichier,
-                "ignore",
-                f"`{fichier.chemin}` porte déjà un bloc `maestro-outillage` que Maestro "
-                "n'a pas écrit : il n'y touche pas.",
-            ),
-            None,
+        return Prevision(
+            fichier.chemin,
+            "ignore",
+            f"`{fichier.chemin}` porte déjà un bloc `maestro-outillage` que Maestro "
+            "n'a pas écrit : il n'y touche pas.",
+            avant=present,
+            cas=_CAS_IGNORE,
+            bloc=True,
         )
     if existant is not None and _empreinte(existant) != connue:
-        return _refuser_bloc(racine, fichier)
-    if existant == fichier.contenu.strip():
-        return (
-            _ecriture(fichier, "inchange", "le bloc était déjà à jour."),
-            _entree(fichier, _empreinte(fichier.contenu.strip()), quand),
+        return Prevision(
+            fichier.chemin,
+            "refuse",
+            f"le bloc `maestro-outillage` de `{fichier.chemin}` a été modifié depuis : "
+            "jamais écrasé.",
+            avant=present,
+            cas=_CAS_MODIFIE,
+            bloc=True,
         )
-    fusionne = _fusionner_bloc(present, fichier.contenu)
-    erreur = _ecrire_fichier(cible, fusionne, executable=False)
-    if erreur:
-        return _ecriture(fichier, "refuse", erreur), None
-    raison = (
+    if existant == fichier.contenu.strip():
+        return Prevision(
+            fichier.chemin,
+            "inchange",
+            "le bloc était déjà à jour.",
+            avant=present,
+            apres=present,
+            cas=_CAS_INCHANGE,
+            bloc=True,
+        )
+    return Prevision(
+        fichier.chemin,
+        "ecrit",
         "bloc `maestro-outillage` ajouté à la fin du fichier existant — rien d'autre "
         "n'a été touché."
         if existant is None
-        else "bloc `maestro-outillage` réécrit ; le reste du fichier est intact."
+        else "bloc `maestro-outillage` réécrit ; le reste du fichier est intact.",
+        avant=present,
+        apres=_fusionner_bloc(present, fichier.contenu),
+        bloc=True,
     )
-    return _ecriture(fichier, "ecrit", raison), _entree(
-        fichier, _empreinte(fichier.contenu.strip()), quand
+
+
+def _poser(
+    racine: Path,
+    fichier: Fichier,
+    etat: _EtatManifeste,
+    garde: FrontiereEcriture,
+    quand: str,
+) -> tuple[Ecriture, dict[str, Any] | None]:
+    """Décide (`_prevision`), puis écrit — et rend l'entrée de manifeste à conserver.
+
+    L'entrée rendue est celle qui décrit **ce que Maestro a écrit** : celle du
+    contenu neuf quand il a été posé, celle d'avant quand on a refusé d'écraser.
+    Garder l'ancienne dans ce second cas n'est pas un détail : la retirer ferait
+    que la génération suivante lirait « présent, absent du manifeste » et
+    n'oserait plus jamais toucher au fichier, y compris une fois la personne
+    revenue à la version de Maestro.
+
+    Deux nuances de la portée `bloc`, tenues depuis #1033 : un bloc modifié ou une
+    écriture de bloc en échec ne gardent **aucune** entrée — un bloc que Maestro ne
+    peut plus réécrire n'est plus à lui.
+    """
+    prevision = _prevision(racine, fichier, etat, garde)
+    ancienne = etat.entrees.get(fichier.chemin)
+    if prevision.cas == _CAS_FRONTIERE:
+        return _ecriture(fichier, "refuse", prevision.raison), ancienne
+    if prevision.cas == _CAS_IGNORE:
+        return _ecriture(fichier, "ignore", prevision.raison), None
+    if prevision.cas == _CAS_MODIFIE:
+        if prevision.bloc:
+            return _refuser_bloc(racine, fichier)
+        return _refuser(racine, fichier, etat)
+    if prevision.bloc:
+        empreinte = _empreinte(fichier.contenu.strip())
+        if prevision.cas == _CAS_INCHANGE:
+            return _ecriture(fichier, "inchange", prevision.raison), _entree(
+                fichier, empreinte, quand
+            )
+        erreur = _ecrire_fichier(
+            racine / PurePosixPath(fichier.chemin), prevision.apres or "", executable=False
+        )
+        if erreur:
+            return _ecriture(fichier, "refuse", erreur), None
+        return _ecriture(fichier, "ecrit", prevision.raison), _entree(fichier, empreinte, quand)
+    empreinte = _empreinte(fichier.contenu)
+    if prevision.cas == _CAS_INCHANGE:
+        return _ecriture(fichier, "inchange", prevision.raison), _entree(
+            fichier, empreinte, _quand_connu(etat, fichier, quand)
+        )
+    erreur = _ecrire_fichier(
+        racine / PurePosixPath(fichier.chemin), fichier.contenu, executable=fichier.executable
     )
+    if erreur:
+        return _ecriture(fichier, "refuse", erreur), ancienne
+    return _ecriture(fichier, "ecrit", prevision.raison), _entree(fichier, empreinte, quand)
 
 
 def _refuser(
@@ -505,6 +738,16 @@ def _quand_connu(etat: _EtatManifeste, fichier: Fichier, defaut: str) -> str:
     """La date déjà déclarée pour ce fichier — un contenu inchangé n'a pas été regénéré."""
     entree = etat.entrees.get(fichier.chemin)
     return str(entree.get("genere_le") or defaut) if entree is not None else defaut
+
+
+def empreinte(texte: str) -> str:
+    """L'empreinte d'un contenu, celle du manifeste — publique pour qui compare une pièce (#1161).
+
+    Une carte d'outillage garde l'empreinte de ce que le disque portait quand elle a
+    été montrée : à l'accord, un fichier qui a bougé entre-temps ne s'écrit pas sur la
+    foi d'un diff périmé. Même calcul que le manifeste, jamais un second.
+    """
+    return _empreinte(texte)
 
 
 def _empreinte(texte: str) -> str:
@@ -603,10 +846,16 @@ def _lire_manifeste(racine: Path) -> _EtatManifeste:
             if isinstance(entree, dict) and isinstance(entree.get("chemin"), str):
                 entrees[entree["chemin"]] = entree
     source = donnees.get("source")
+    verifications = donnees.get("verifications")
     return _EtatManifeste(
         version_lue=donnees.get("manifeste"),
         entrees=entrees,
         source=source if isinstance(source, dict) else {},
+        verifications=tuple(
+            Verification.from_dict(v)
+            for v in (verifications if isinstance(verifications, list) else ())
+            if isinstance(v, dict) and v.get("commande")
+        ),
     )
 
 

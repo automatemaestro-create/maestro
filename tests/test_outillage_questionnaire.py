@@ -652,22 +652,34 @@ def test_on_s_arrete_quand_plus_rien_ne_manque_et_il_n_y_a_pas_de_plafond() -> N
     assert reponse.contenu.startswith("C'est tout ce qu'il me fallait")
 
 
-def test_la_conclusion_porte_la_comprehension_et_dit_ou_valider() -> None:
+def test_la_conclusion_porte_la_comprehension_et_ne_promet_aucun_geste_absent() -> None:
+    """Sans écriture branchée, la conclusion dit qu'elle ne peut pas écrire (#1161).
+
+    Elle nommait « le geste au pied de cette conversation », la carte qui écrivait
+    tout en une fois : elle a quitté le fil avec #1161, où l'outillage s'écrit pièce
+    par pièce (`test_outillage_pieces.py`). Une phrase qui promettrait encore ce geste
+    mentirait sur l'écran.
+    """
     faux = FauxModele(FLUTTER_FINI)
     fil = [_message(UTILISATEUR, c.valeur, choix=c) for c in _flutter_acquis() if not c.deduit]
 
     reponse = asyncio.run(_conducteur(faux).ouvrir(fil))
 
-    assert reponse.question is None
+    assert reponse.question is None and reponse.piece is None
     assert {c.cle for c in reponse.comprehension} >= {"langages", "tester", "forge", "ci"}
     reco = recommandation_depuis_choix(reponse.comprehension)
     assert f"{len(reco.entrees)} entrée(s)" in reponse.contenu
-    assert "au pied de cette conversation" in reponse.contenu
+    assert "au pied de cette conversation" not in reponse.contenu
+    assert "je ne peux pas l'écrire d'ici" in reponse.contenu
 
 
 def test_le_conducteur_ne_garde_aucun_etat_du_questionnaire() -> None:
-    """Son seul attribut est celui qui comprend : jamais une réponse ni un tour."""
-    assert set(vars(ConducteurOutillage())) == {"_comprehension"}
+    """Ses seuls attributs sont ses collaborateurs : jamais une réponse ni un tour.
+
+    Celui qui comprend, et depuis #1161 celui qui écrit les pièces — qui ne garde pas
+    d'état de conversation non plus (`maestro.controltower.pieces`).
+    """
+    assert set(vars(ConducteurOutillage())) == {"_comprehension", "_pieces"}
 
 
 # --- ④ Les routes du fil -------------------------------------------------------------
