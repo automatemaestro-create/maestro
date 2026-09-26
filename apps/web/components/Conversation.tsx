@@ -301,6 +301,7 @@ import { RefusSource } from "@/components/composer/RefusSource";
 import {
   IconeAgents,
   IconeArret,
+  IconeDossier,
   IconeEnvoyer,
   IconeFlecheBas,
   IconeProjets,
@@ -334,6 +335,7 @@ import {
   CHAT_AUTEUR_UTILISATEUR,
   VALIDATION_EN_ATTENTE,
   type MessageChat,
+  type PieceEcrite,
 } from "@/lib/types";
 import type { Chat, ReponseEnCours } from "@/lib/useChat";
 import { useSourcesComposees } from "@/lib/useSourcesComposees";
@@ -1716,6 +1718,21 @@ function cheminASesSeparateurs(chemin: string): ReactNode {
   ));
 }
 
+/**
+ * Le sort d'une pièce d'outillage, en mots — la fin de sa trace sous la bulle (#1161).
+ *
+ * `ecrit` et `inchange` disent qu'elle est dans le projet, `ecartee` qu'on l'a passée ;
+ * tout autre état dit qu'elle n'a **pas** été écrite, avec la raison que l'écriture a
+ * donnée — une non-écriture qui se lirait comme une écriture est ce que le rapport de
+ * génération refusait déjà (#1034).
+ */
+function pieceEcriteEnMots(piece: PieceEcrite): string {
+  if (piece.etat === "ecrit") return "écrit.";
+  if (piece.etat === "inchange") return "déjà à jour.";
+  if (piece.etat === "ecartee") return "passé : rien n'a été écrit.";
+  return `pas écrit : ${piece.raison}`;
+}
+
 function Suite({ message }: { message: MessageChat }) {
   // Facultatif depuis #1294 : le fil est aussi posé sur la porte d'entrée, avant
   // tout projet, où il n'y a ni run, ni tâche, ni validation à compter.
@@ -1727,7 +1744,16 @@ function Suite({ message }: { message: MessageChat }) {
   const tacheId = message.tache_id ?? "";
   const equipe = message.equipe ?? null;
   const projetCree = message.projet_cree ?? null;
-  if (runId === "" && tacheId === "" && equipe === null && projetCree === null) {
+  const pieceEcrite = message.piece_ecrite ?? null;
+  const corrections = message.corrections ?? [];
+  if (
+    runId === "" &&
+    tacheId === "" &&
+    equipe === null &&
+    projetCree === null &&
+    pieceEcrite === null &&
+    corrections.length === 0
+  ) {
     return null;
   }
 
@@ -1810,6 +1836,42 @@ function Suite({ message }: { message: MessageChat }) {
             Équipe créée : {equipeCreeeEnUneLigne(equipe)}
           </span>
         )}
+        {/* Ce qu'un geste a fait d'une pièce d'outillage (#1161) : une trace d'une
+            ligne, d'après la carte de checkpoint de Replit (veille du ticket) — le
+            fichier et son sort, jamais un « ok ». Une pièce pas écrite dit
+            pourquoi, en couleur d'attention : elle n'est pas dans le projet. */}
+        {pieceEcrite !== null && (
+          <span
+            className={
+              "inline-flex min-w-0 items-center gap-1 " +
+              (pieceEcrite.ecrite || pieceEcrite.etat === "ecartee"
+                ? ""
+                : "text-attention-texte")
+            }
+          >
+            <IconeDossier className="size-3.5 shrink-0" />
+            <span className="min-w-0 break-words">
+              <span className="font-mono">{pieceEcrite.chemin}</span>{" "}
+              {pieceEcriteEnMots(pieceEcrite)}
+            </span>
+          </span>
+        )}
+        {/* Ce qu'une phrase a corrigé de l'outillage (#1161) : le sujet et sa
+            nouvelle valeur, la phrase elle-même étant juste au-dessus. */}
+        {corrections.map((correction) => (
+          <span
+            key={`${correction.cle}|${correction.valeur}`}
+            className="inline-flex min-w-0 items-center gap-1"
+          >
+            <IconeDossier className="size-3.5 shrink-0" />
+            <span className="min-w-0 break-words">
+              Correction prise — {correction.sujet ?? correction.cle} :{" "}
+              <span className={correction.commande ? "font-mono" : ""}>
+                {correction.valeur}
+              </span>
+            </span>
+          </span>
+        ))}
         {runId !== "" && (
           <span className="inline-flex items-center gap-1">
             <IconeRuns className="size-3.5 shrink-0" />

@@ -93,6 +93,7 @@ import {
   IconeHistorique,
   IconePlaybooks,
 } from "@/components/Icones";
+import { LignesDiff } from "@/components/LignesDiff";
 import {
   BadgeEtat,
   Bouton,
@@ -1037,35 +1038,11 @@ function Differentiel({
       <div
         role="region"
         aria-label="Différentiel de la réécriture proposée"
-        className="mt-2 max-h-80 overflow-auto rounded-md border border-bord bg-surface font-mono text-annexe"
+        className="mt-2 max-h-80 overflow-auto rounded-md border border-bord bg-surface"
       >
-        {entrees.map((entree, i) =>
-          entree.type === "repli" ? (
-            <p
-              key={`r${i}`}
-              className="bg-surface-creuse px-2 py-0.5 text-center text-texte-secondaire"
-            >
-              ⋯ {entree.lignes} lignes inchangées
-            </p>
-          ) : (
-            <p
-              key={`l${i}`}
-              className={
-                "whitespace-pre-wrap px-2 py-0.5 " +
-                (entree.type === "ajout"
-                  ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-                  : entree.type === "retrait"
-                    ? "bg-rose-50 text-rose-900 dark:bg-rose-950 dark:text-rose-200"
-                    : "text-texte-secondaire")
-              }
-            >
-              <span aria-hidden className="mr-2 select-none opacity-60">
-                {entree.type === "ajout" ? "+" : entree.type === "retrait" ? "−" : " "}
-              </span>
-              {entree.texte || " "}
-            </p>
-          ),
-        )}
+        {/* Le rendu ligne à ligne est partagé avec la carte d'une pièce
+            d'outillage (#1161) : une seule écriture des lignes et de leurs tons. */}
+        <LignesDiff entrees={entrees} />
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Bouton disabled={inchange} onClick={appliquer}>

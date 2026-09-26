@@ -12,14 +12,13 @@
  * fait que les **composer** dans l'ordre que #1025 a posé et que #1031 a étendu
  * d'un cran.
  *
- * ⚠ La question d'outillage a **deux moments**, et le second est arrivé avec
- * #1104 : tant qu'une question attend, c'est `QuestionDOutillage` ; une fois le
- * questionnaire conclu, c'est `ConclusionOutillage` — la carte qui écrit. Les
- * deux ne cohabitent **jamais** (des réponses sans question en attente est
- * exactement ce que la seconde lit, `choixAValider`), donc elles occupent le même
- * rang dans l'ordre ci-dessous. Sans la seconde, le fil concluait sur « rien
- * n'est écrit tant que vous ne l'avez pas validé » et le pied redevenait vide :
- * la promesse n'avait aucune surface.
+ * ⚠ L'outillage a **deux moments**, et le second a changé de forme avec #1161 :
+ * tant qu'une question attend, c'est `QuestionDOutillage` ; ensuite, ce sont les
+ * **pièces**, une à la fois — `PieceDOutillage`, le fichier montré avec ce qui
+ * changera, puis écrit sur accord. Elle remplace la carte qui concluait le
+ * questionnaire en écrivant tout d'un coup (`ConclusionOutillage`, #1104), partie
+ * avec lui : l'outillage ne s'écrit plus en une fois. Question et pièce vivent sur le
+ * message et ne cohabitent **jamais**, donc elles occupent le même rang ci-dessous.
  *
  * ⚠ Une quatrième demande est venue avec #1294 : la **proposition de projet**
  * (`DemandeDeProjet`), qui fait naître un projet dans la conversation. Elle vit
@@ -86,10 +85,10 @@
 
 import { useMemo, type ReactNode } from "react";
 
-import { useConclusionOutillage } from "@/components/chat/ConclusionOutillage";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { DemandeDeProjet } from "@/components/chat/DemandeDeProjet";
 import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
+import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { propositionEnAttente } from "@/lib/brief";
@@ -97,7 +96,7 @@ import { recrutementEnAttente } from "@/lib/equipe";
 import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
-import { questionEnAttente } from "@/lib/outillage";
+import { pieceEnAttente, questionEnAttente } from "@/lib/outillage";
 import { questionsDuFil } from "@/lib/questions";
 import type { Chat } from "@/lib/useChat";
 
@@ -143,12 +142,7 @@ export function useGestesDuFil(
   const messageRecrutement = global ? recrutementEnAttente(fil.messages) : null;
   const recrutement = messageRecrutement?.recrutement ?? null;
   const projetPropose = global ? projetEnAttente(fil.messages) : null;
-
-  // Le second moment du questionnaire (#1104) : il a conclu, et ce qu'il a
-  // décidé attend d'être écrit. Le hook est appelé **sans condition** — les
-  // règles de React l'exigent, et il rend `undefined` de lui-même quand il n'y a
-  // rien à valider, y compris sur un aparté `@agent`.
-  const conclusion = useConclusionOutillage(fil, global);
+  const piece = global ? (pieceEnAttente(fil.messages)?.piece ?? null) : null;
 
   if (
     questions.length === 0 &&
@@ -156,7 +150,7 @@ export function useGestesDuFil(
     recrutement === null &&
     projetPropose === null &&
     !outillage?.question &&
-    conclusion === undefined
+    piece === null
   ) {
     return undefined;
   }
@@ -181,7 +175,17 @@ export function useGestesDuFil(
           enCours={fil.envoi}
         />
       )}
-      {conclusion}
+      {piece !== null && (
+        /* La `key` est l'**empreinte** de la version montrée : une pièce corrigée
+           revient au même chemin, et la carte doit repartir repliée sur son
+           nouveau diff plutôt que garder le dépli de la version d'avant. */
+        <PieceDOutillage
+          key={piece.empreinte}
+          piece={piece}
+          trancher={fil.trancherPiece}
+          enCours={fil.envoi}
+        />
+      )}
       {proposition !== null && (
         <DemandeDeCadrage
           demande={proposition}

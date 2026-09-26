@@ -162,7 +162,8 @@ Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code 
 
 {"comprise": true, "corrections": [{"cle": "...", "valeur": "..."}], "message": "..."}
 
-- "message" : une phrase à la personne, facultative sauf quand "comprise" vaut false.
+- "message" : une phrase à la personne quand "comprise" vaut false ; vide sinon —
+  Maestro lui a déjà répondu, et la correction se lira sur ce qu'il écrit.
 
 """
     + registre()

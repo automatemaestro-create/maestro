@@ -47,6 +47,7 @@ import type {
   ConversationChat,
   CouloirFrise,
   Decision,
+  DecisionPiece,
   DecisionsRun,
   DossierExplorateur,
   EntreeFrise,
@@ -222,6 +223,8 @@ export type FilFactice = {
   ) => Promise<void>;
   /** Le geste qui accepte ou refuse le projet proposé (#1294). */
   declarerProjet: (approuve: boolean) => Promise<void>;
+  /** Le geste qui écrit, passe ou reporte une pièce d'outillage (#1161). */
+  trancherPiece: (decision: DecisionPiece, empreinte: string) => Promise<void>;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -251,6 +254,7 @@ function filParDefaut(): FilFactice {
     repondreQuestion: async () => {},
     recruter: async () => {},
     declarerProjet: async () => {},
+    trancherPiece: async () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},

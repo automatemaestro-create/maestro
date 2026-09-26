@@ -3,6 +3,13 @@
 /**
  * L'étape d'équipe : ce qui suit immédiatement l'outillage (#1040, docs/37 §4.6).
  *
+ * ⚠ **Plus montée depuis #1161.** Elle n'était atteinte que derrière l'étape
+ * d'outillage à cocher (`EtapeOutillage`), retirée quand l'outillage est passé dans
+ * la conversation, pièce par pièce. L'équipe se propose dans le fil
+ * (`chat/EquipeDansLeFil`, #1146), qui reprend `LigneRole` d'ici ; la demande en
+ * mots de #1159 (`DemandeSurLEquipe`) n'y est pas encore, et c'est #1331 qui l'y
+ * porte, puis retire ce composant.
+ *
  * « Après l'outillage, le parcours du projet présente l'équipe proposée. » Un
  * projet naît sans agent ; son analyse lui propose des rôles (#1039), et c'est
  * ici qu'on les relit, qu'on en retire, qu'on ajuste leurs instances — puis

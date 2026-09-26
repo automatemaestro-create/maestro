@@ -36,8 +36,9 @@
  *
  * Ce ticket **applique** deux décisions consignées, et ne décide d'aucune forme :
  *
- * - **la carte qui écrit au pied du fil** est celle de `ConclusionOutillage`
- *   (#1104, variante retenue B) — le récapitulatif chiffré se lit sans rien
+ * - **la carte qui écrit au pied du fil** était celle de `ConclusionOutillage`
+ *   (#1104, variante retenue B, retirée par #1161 avec l'écriture de l'outillage en
+ *   une fois ; sa forme tient ici) — le récapitulatif chiffré se lit sans rien
  *   ouvrir, le détail se déplie sur place avec son contrôle **à gauche** (au bord
  *   droit, il passerait sous « ↓ Dernier message », #990), tout arrive retenu et
  *   corriger c'est décocher, le projet visé est nommé, et les deux issues sont
@@ -268,7 +269,7 @@ export function EquipeDansLeFil({
             className="mt-3"
           >
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {/* Le contrôle **à gauche**, comme dans `ConclusionOutillage` : au
+              {/* Le contrôle **à gauche**, comme dans `PieceDOutillage` : au
                   bord droit il passerait sous le bouton flottant du fil (#990). */}
               <Bouton
                 variante="discret"

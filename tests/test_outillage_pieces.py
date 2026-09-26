@@ -850,7 +850,11 @@ def test_le_verdict_outillage_comprend_la_correction_sans_rien_ecrire(
     joueur = _Joueur()
     modele = _Modele(
         _dicte("Vos tests tournent avec dotnet test : je revérifie.", VERDICT_OUTILLAGE),
-        correction={"comprise": True, "corrections": [{"cle": "tester", "valeur": "dotnet test"}]},
+        correction={
+            "comprise": True,
+            "corrections": [{"cle": "tester", "valeur": "dotnet test"}],
+            "message": "J'ai remplacé npm test par dotnet test.",
+        },
     )
     projet_id, racine, service, fil, _ = _apres_agents_ecrit(projets, _maison, joueur, modele)
     repondeur = RepondeurOrchestration(
@@ -868,6 +872,9 @@ def test_le_verdict_outillage_comprend_la_correction_sans_rien_ecrire(
 
     assert reponse.contenu.startswith("Vos tests tournent avec dotnet test : je revérifie.")
     assert "corrigée d'après vous" in reponse.contenu
+    # Le juge a dit ce qu'il a compris : le message du modèle de correction ne le
+    # redit pas en dessous (la relecture de #1161 l'avait vu deux fois).
+    assert "J'ai remplacé" not in reponse.contenu
     assert reponse.piece is not None and reponse.piece.correction == DOTNET
     assert corrections_du_fil([_message(NOM_ORCHESTRATION, "x", corrections=reponse.corrections)])
     assert (racine / "AGENTS.md").read_text(encoding="utf-8") == ecrit_avant

@@ -435,10 +435,12 @@ def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
 def _phrase_de_la_piece(piece: PieceProposee) -> str:
     """Le texte du message qui porte une pièce — ce qu'on lit si la carte ne s'affiche pas (#1161).
 
-    Même rôle que `_phrase_de_la_question` : la carte rend le diff, la raison et les
-    verdicts ; ce texte-ci est ce qui reste quand on relit le fil ailleurs. Il nomme
-    la pièce et le projet, et dit **comment y répondre** — y compris avec ses mots,
-    ce qui n'est écrit nulle part ailleurs.
+    Même rôle que `_phrase_de_la_question` : la carte rend le diff, la raison, les
+    verdicts, les gestes et l'invitation à corriger avec ses mots ; ce texte-ci est ce
+    qui reste quand on relit le fil ailleurs. Il nomme donc la pièce et le projet, et
+    **rien de ce que la carte dit déjà** — la relecture l'a vu répété mot pour mot
+    juste au-dessus d'elle. Seul l'échec s'y redit : rien n'a été écrit, et cela doit
+    se lire même sans la carte.
     """
     rang = f"Pièce {piece.rang} sur {piece.total}" if piece.total > 1 else "Une pièce"
     ouverture = (
@@ -447,14 +449,8 @@ def _phrase_de_la_piece(piece: PieceProposee) -> str:
         else f"{rang} pour « {piece.projet_nom} » : {piece.chemin}."
     )
     if piece.echec:
-        return (
-            f"{ouverture}\n⚠ {piece.echec} Rien n'est écrit : dites-moi la bonne "
-            "commande, ou passez cette pièce."
-        )
-    return (
-        f"{ouverture}\nCe qui changera est juste en dessous : écrivez-la, passez-la, ou "
-        "corrigez-la avec vos mots."
-    )
+        return f"{ouverture}\n⚠ {piece.echec} Rien n'est écrit."
+    return ouverture
 
 
 def _phrase_de_fin(projet_nom: str) -> str:
@@ -716,7 +712,9 @@ class ConducteurOutillage:
         - **comprise** — les corrections voyagent sur le message (`corrections`, la
           phrase pour cause), et la pièce suivante est recalculée : celle que la
           correction a touchée revient, **revérifiée par l'exécution** — une commande
-          corrigée a un autre texte, elle n'est jamais un verdict connu.
+          corrigée a un autre texte, elle n'est jamais un verdict connu. Le `message`
+          du modèle n'y est pas repris : le juge a déjà dit, en direct, ce qu'il a
+          compris, et la relecture l'a vu redit juste en dessous.
 
         Une correction peut aussi ne rien corriger et demander d'avancer (« outille
         ce projet ») : c'est la pièce suivante qui vient. Sur un dossier **encore
@@ -756,12 +754,7 @@ class ConducteurOutillage:
                 piece=reposee,
                 projet_outille=projet_id,
             )
-        return await self._piece(
-            fil,
-            projet_id,
-            prelude=lue.message,
-            corrections=lue.corrections,
-        )
+        return await self._piece(fil, projet_id, corrections=lue.corrections)
 
     async def repondre(
         self, fil: Sequence[MessageChat], question: QuestionOutillage, valeur: str
