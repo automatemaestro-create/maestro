@@ -18,12 +18,12 @@
  * devenu asynchrone — la garde ne tranche qu'après la lecture des projets.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Shell } from "@/components/Shell";
-import { MENTION_COUT_PARTIEL } from "@/lib/format";
+import { MENTION_COUT_PARTIEL, MENTION_COUT_PARTIEL_COURTE } from "@/lib/format";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
 import {
@@ -136,8 +136,12 @@ describe("le shell applicatif (Shell)", () => {
     const cumul = screen.getByText(/Coût cumulé/, {
       selector: "[data-guide='cout-cumule']",
     });
-    expect(cumul).toHaveTextContent("0,21");
-    expect(cumul).toHaveTextContent(MENTION_COUT_PARTIEL);
+    // Forme courte — le libellé dit déjà « Coût » — et hors du gras du montant :
+    // la relecture visuelle l'a vu peser autant que le chiffre, et tronquer le
+    // titre de la page à côté de la pastille « Reconnexion… ».
+    expect(cumul).toHaveTextContent(`0,21 $US · ${MENTION_COUT_PARTIEL_COURTE}`);
+    expect(cumul).not.toHaveTextContent(MENTION_COUT_PARTIEL);
+    expect(within(cumul).getByText(/0,21/)).not.toHaveTextContent(MENTION_COUT_PARTIEL_COURTE);
   });
 
   it("restitue la sidebar repliée d'une session à l'autre", async () => {

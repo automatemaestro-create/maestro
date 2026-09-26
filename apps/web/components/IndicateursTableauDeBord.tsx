@@ -39,11 +39,7 @@ import {
 import { type Icone, type Renvoi, TuileChiffre } from "@/components/Primitives";
 import { coutCumule, coutCumulePartiel } from "@/lib/etatGlobal";
 import { estEnDecomposition } from "@/lib/execution";
-import {
-  formatCout,
-  MENTION_COUT_NON_TARIFE,
-  MENTION_COUT_PARTIEL,
-} from "@/lib/format";
+import { formatCout, partiesCoutPartiel, RAISON_COUT_PARTIEL } from "@/lib/format";
 import { entreeParLibelle } from "@/lib/navigation";
 import {
   AGENT_OCCUPE,
@@ -197,14 +193,24 @@ export function IndicateursTableauDeBord({
   // les deux montants s'accordent désormais au lieu d'afficher un écart à
   // expliquer. Aucun coût rapporté ≠ coût nul : `formatCout` rend « — ».
   const depense = coutCumule(couts);
-  // Un cumul qui n'est qu'un plancher le dit (#1280), dans la ligne de faits de
-  // la tuile — son chiffre garde sa typographie de tête, et l'état nommé en mots
-  // est celui du run (`formatCoutPartiel`) : « coût partiel », ou « coût non
-  // tarifé » quand aucun prix n'a été rapporté.
+  // Un cumul qui n'est qu'un plancher le dit (#1280), **collé au chiffre**,
+  // en petit comme une unité : relégué en fin de légende, il arrivait après
+  // qu'on avait déjà lu le montant comme un solde (relecture visuelle). Sans
+  // aucun prix, « coût non tarifé » prend la place du chiffre, comme « Aucun »
+  // prend celle d'un run. La raison va dans l'infobulle de la tuile.
   const partiel = coutCumulePartiel(couts);
-  const etatDepense = !partiel
-    ? ""
-    : ` · ${depense === null ? MENTION_COUT_NON_TARIFE : MENTION_COUT_PARTIEL}`;
+  const etatDepense = partiesCoutPartiel(depense, partiel);
+  const valeurDepense =
+    etatDepense.mention === null ? (
+      formatCout(depense)
+    ) : etatDepense.montant === null ? (
+      etatDepense.mention
+    ) : (
+      <>
+        {etatDepense.montant}
+        <span className={STYLE_UNITE}> · {etatDepense.mention}</span>
+      </>
+    );
 
   const pageAgents = entreeParLibelle("Agents");
   const pageCouts = entreeParLibelle("Coûts & analytics");
@@ -258,8 +264,9 @@ export function IndicateursTableauDeBord({
     {
       libelle: "Dépense",
       icone: IconeMonnaie,
-      valeur: formatCout(depense),
-      detail: `${couts.length} exécution(s), planification comprise${etatDepense}`,
+      valeur: valeurDepense,
+      titre: partiel ? RAISON_COUT_PARTIEL : undefined,
+      detail: `${couts.length} exécution(s), planification comprise`,
       renvoi: pageCouts && {
         href: pageCouts.href,
         libelle: "Détail par période",

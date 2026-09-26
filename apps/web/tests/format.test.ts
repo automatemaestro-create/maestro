@@ -18,7 +18,10 @@ import {
   formatCoutAxe,
   formatCoutPartiel,
   MENTION_COUT_NON_TARIFE,
+  MENTION_COUT_NON_TARIFE_COURTE,
   MENTION_COUT_PARTIEL,
+  MENTION_COUT_PARTIEL_COURTE,
+  partiesCoutPartiel,
   formatDuree,
   formatDureeRun,
   formatHeure,
@@ -75,6 +78,28 @@ describe("les montants à deux décimales (#247)", () => {
     // de `formatCout` ne bougent pas.
     expect(formatCoutPartiel(0.2051, false)).toBe(formatCout(0.2051));
     expect(formatCoutPartiel(null, false)).toBe("—");
+  });
+
+  it("rend le montant et son état en deux parties, pour que chaque surface garde son ton (#1280)", () => {
+    // La relecture visuelle a vu le qualificatif prendre le gras ou la taille
+    // du montant là où il était rendu d'une seule chaîne.
+    expect(partiesCoutPartiel(0.2051, true)).toEqual({
+      montant: formatCout(0.2051),
+      mention: MENTION_COUT_PARTIEL,
+    });
+    expect(partiesCoutPartiel(null, true)).toEqual({
+      montant: null,
+      mention: MENTION_COUT_NON_TARIFE,
+    });
+    expect(partiesCoutPartiel(0.2051, false)).toEqual({
+      montant: formatCout(0.2051),
+      mention: null,
+    });
+    // La forme courte, là où le libellé porte déjà le mot « coût ».
+    expect(partiesCoutPartiel(0.2051, true, { court: true }).mention).toBe(
+      MENTION_COUT_PARTIEL_COURTE,
+    );
+    expect(formatCoutPartiel(null, true, { court: true })).toBe(MENTION_COUT_NON_TARIFE_COURTE);
   });
 
   it("laisse les graduations d'axe à leur précision, exception assumée", () => {

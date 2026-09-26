@@ -33,18 +33,21 @@
 
 import { LienRenvoi } from "@/components/Primitives";
 import { useEtatGlobal } from "@/lib/etatGlobal";
-import { formatCoutPartiel, RAISON_COUT_PARTIEL } from "@/lib/format";
+import { partiesCoutPartiel, RAISON_COUT_PARTIEL } from "@/lib/format";
 
 import { LigneReglage } from "./SectionParametres";
 
 export function ParametresCouts() {
   const { coutTotal, coutPartiel, projet } = useEtatGlobal();
+  const cumul = partiesCoutPartiel(coutTotal, coutPartiel);
 
   return (
     <div className="flex flex-col">
       {/* Le cumul partiel se dit comme partout (#1280) : « coût partiel »
           collé au montant, et l'aide de la ligne dit pourquoi — ici, l'aide
-          est visible, l'infobulle n'aurait rien à ajouter. */}
+          est visible, l'infobulle n'aurait rien à ajouter. Le montant garde sa
+          taille de valeur ; l'état prend celle du texte courant, en gris : à
+          la taille du montant, il pesait autant que lui (relecture visuelle). */}
       <LigneReglage
         libelle="Dépense cumulée"
         aide={
@@ -53,8 +56,16 @@ export function ParametresCouts() {
             : `Somme des grands livres des exécutions de ${projet.nom}, planification comprise. « — » tant qu'aucun coût n'a été rapporté (inconnu n'est pas nul).`
         }
       >
-        <span className="text-lg font-semibold tabular-nums">
-          {formatCoutPartiel(coutTotal, coutPartiel)}
+        <span className="whitespace-nowrap">
+          {cumul.montant !== null && (
+            <span className="text-lg font-semibold tabular-nums">{cumul.montant}</span>
+          )}
+          {cumul.mention !== null && (
+            <span className="text-corps text-texte-secondaire">
+              {cumul.montant !== null ? " · " : ""}
+              {cumul.mention}
+            </span>
+          )}
         </span>
       </LigneReglage>
 

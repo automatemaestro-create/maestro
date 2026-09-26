@@ -61,6 +61,51 @@ export const MENTION_COUT_PARTIEL = "coût partiel";
 export const MENTION_COUT_NON_TARIFE = "coût non tarifé";
 
 /**
+ * Les mêmes états, **sans le mot « coût »**, là où le libellé le porte déjà —
+ * « Coût cumulé : 0,21 $US · partiel ». Nés de la relecture visuelle de #1280 :
+ * dans la barre supérieure, la forme longue redisait « coût » et, à côté de la
+ * pastille « Reconnexion… », faisait tronquer le titre de la page.
+ */
+export const MENTION_COUT_PARTIEL_COURTE = "partiel";
+export const MENTION_COUT_NON_TARIFE_COURTE = "non tarifé";
+
+/** Un montant et son état, séparés pour que chaque surface garde son ton (#1280). */
+export type PartiesCout = {
+  /** Le montant tarifé (`formatCout`) — `null` quand aucun n'est à montrer. */
+  montant: string | null;
+  /** L'état du montant, en mots — `null` quand il est complet. */
+  mention: string | null;
+};
+
+/**
+ * Le montant et l'état d'un coût partiel, en deux parties (#1280).
+ *
+ * La règle vit ici et une seule fois ; ce que l'appelant en fait n'est que du
+ * ton : la relecture visuelle de #1280 a vu le qualificatif prendre le **gras**
+ * du montant dans la barre supérieure et sa **taille** dans les Paramètres —
+ * c'est-à-dire peser autant que le chiffre, là où il doit se lire au ton de la
+ * ligne. Une chaîne unique ne laissait pas d'autre choix ; deux parties, si.
+ * `court` retire le mot « coût » quand le libellé le porte déjà.
+ */
+export function partiesCoutPartiel(
+  cout: number | null,
+  partiel: boolean,
+  { court = false }: { court?: boolean } = {},
+): PartiesCout {
+  if (!partiel) return { montant: formatCout(cout), mention: null };
+  if (cout === null) {
+    return {
+      montant: null,
+      mention: court ? MENTION_COUT_NON_TARIFE_COURTE : MENTION_COUT_NON_TARIFE,
+    };
+  }
+  return {
+    montant: formatCout(cout),
+    mention: court ? MENTION_COUT_PARTIEL_COURTE : MENTION_COUT_PARTIEL,
+  };
+}
+
+/**
  * Pourquoi un montant n'est que partiel — ce que l'infobulle du qualificatif dit.
  * Deux causes, et la phrase les couvre toutes les deux parce que le drapeau du
  * backend ne les distingue pas : un relevé en cours (#835) et des tokens restés
@@ -85,13 +130,18 @@ export const RAISON_COUT_PARTIEL =
  * de la même référence.
  *
  * Une chaîne et non un composant : elle se lit à l'identique dans une ligne de
- * faits, une tuile ou une annonce, et c'est l'appelant qui l'enveloppe de
- * l'infobulle (`RAISON_COUT_PARTIEL`) là où la raison doit être atteignable.
+ * faits ou une annonce, et c'est l'appelant qui l'enveloppe de l'infobulle
+ * (`RAISON_COUT_PARTIEL`) là où la raison doit être atteignable. Une surface
+ * qui donne au montant un autre ton que sa ligne (une tuile, une valeur de
+ * réglage, la barre supérieure) prend les deux parties (`partiesCoutPartiel`).
  */
-export function formatCoutPartiel(cout: number | null, partiel: boolean): string {
-  if (!partiel) return formatCout(cout);
-  if (cout === null) return MENTION_COUT_NON_TARIFE;
-  return `${formatCout(cout)} · ${MENTION_COUT_PARTIEL}`;
+export function formatCoutPartiel(
+  cout: number | null,
+  partiel: boolean,
+  options: { court?: boolean } = {},
+): string {
+  const { montant, mention } = partiesCoutPartiel(cout, partiel, options);
+  return [montant, mention].filter((partie) => partie !== null).join(" · ");
 }
 
 /**

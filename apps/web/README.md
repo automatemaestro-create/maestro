@@ -2050,6 +2050,15 @@ n'est jamais recalculé ici. Le **run** le dit dans ses trois lignes de faits
 Paramètres) par `coutCumulePartiel`. Le coût **par tâche** et la vue
 analytique de `/couts` ne le disent pas encore.
 
+Deux gestes nés de la relecture visuelle de #1280, et la règle ne vit toujours
+qu'une fois : `partiesCoutPartiel` rend le montant et l'état **séparés**, pour
+qu'une surface qui donne au montant un autre ton que sa ligne ne lui prête pas
+son gras ou sa taille (la tuile colle l'état au chiffre en style d'unité, les
+Paramètres le mettent au corps courant en gris) ; et `{ court: true }` retire le
+mot « coût » là où le libellé le porte déjà — « Coût cumulé : 0,21 $US ·
+partiel » —, sans quoi la barre supérieure faisait tronquer le titre de la page
+à côté de la pastille « Reconnexion… ».
+
 Le troisième existe parce que le cas est **courant** sur un fournisseur local
 (#113), où un appel coûte quelques dix-millièmes de dollar : arrondi à
 « 0,00 $US », il ferait passer un fournisseur bon marché pour un fournisseur
