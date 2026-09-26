@@ -68,15 +68,39 @@ jeton y voyage donc en paramètre d'URL (`?jeton=`). C'est le prix du protocole,
 et il est borné — l'URL ne quitte pas la boucle locale, et le paramètre n'est
 accepté **que** sur le WebSocket : une route REST qui l'admettrait ferait
 voyager le secret dans des journaux d'accès et des historiques de navigation.
+
+## Les journaux, où l'URL s'écrit entière (#1292)
+
+La boucle locale ne suffisait pas : le serveur consigne l'URL de chaque
+poignée de main, et `api.log` gardait le jeton en clair. C'est un garde-fou
+« secrets », pas une bride : **aucun journal de l'API ne porte le jeton**.
+`FiltreDuJeton` se pose sur chaque gestionnaire du serveur (`maestro-api` le
+câble, `maestro.controltower.cli`) et masque, dans le message, ses arguments et
+la trace d'une exception, deux choses : la valeur de **tout** paramètre
+`jeton=` — un jeton faux ou périmé reste un secret tenté — et **le jeton
+lui-même**, où qu'il paraisse. Le reste de la ligne ne bouge pas : chemin,
+autres paramètres, code de la réponse, ce qu'on vient y lire pour comprendre un
+refus. Le masque (`MASQUE_JETON`) est hors de l'alphabet du jeton, si bien
+qu'un journal masqué ne se confond jamais avec un journal fautif.
+
+Le paramètre d'URL reste, lui : c'est le prix du protocole (voir plus haut), et
+le masquer à l'écriture couvre tout client — le front, un outil du poste, un
+script — là où un autre transport ne couvrirait que celui qu'on réécrit. Les
+journaux écrits avant ce masquage ne sont **pas réécrits** : le lanceur de
+développement (`scripts/controltower/start.sh`) nomme ceux qui portent encore
+le jeton, et c'est à la personne de les supprimer.
 """
 
 from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
+import re
 import secrets
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -95,6 +119,18 @@ PREFIXE_JETON = "Bearer "
 
 #: Le paramètre d'URL du jeton, **réservé au WebSocket** (voir l'en-tête).
 PARAM_JETON = "jeton"
+
+#: Ce qui remplace le jeton dans un journal (#1292). Hors de l'alphabet du jeton
+#: (base64 URL-safe) : un balayage distingue un journal masqué d'un journal fautif.
+MASQUE_JETON = "***"
+
+#: La valeur d'un paramètre `jeton=` dans un texte — l'URL d'une ligne de
+#: journal. Le nom ne se lit qu'en entier (`monjeton=` n'en est pas un), la
+#: casse est ignorée (un client qui l'écrit mal y a quand même mis le secret), et
+#: la valeur court jusqu'au paramètre suivant, à la fin de l'URL ou du guillemet.
+_VALEUR_DU_PARAMETRE = re.compile(
+    rf"(?<![\w.~%-])({re.escape(PARAM_JETON)}=)[^&\s\"'#]+", re.IGNORECASE
+)
 
 #: Le port du front quand rien ne le dit — celui de `scripts/controltower/start.sh`.
 PORT_UI_DEFAUT = 3000
@@ -289,6 +325,70 @@ async def _refus_websocket(receive: Any, send: Any) -> None:
     """
     await receive()
     await send({"type": "websocket.close", "code": CODE_FERMETURE})
+
+
+def masquer_le_jeton(texte: str, jeton: str | None = None) -> str:
+    """Le texte sans secret : tout paramètre `jeton=` masqué, et le jeton lui-même.
+
+    Idempotente — un texte masqué le reste —, si bien que deux gestionnaires qui
+    filtrent le même enregistrement ne se gênent pas. Le jeton se masque **par
+    sa valeur** en plus du paramètre : c'est ce qui permet de promettre qu'il
+    n'est nulle part, et pas seulement là où on l'attendait.
+    """
+    masque = _VALEUR_DU_PARAMETRE.sub(rf"\g<1>{MASQUE_JETON}", texte)
+    if jeton:
+        masque = masque.replace(jeton, MASQUE_JETON)
+    return masque
+
+
+class FiltreDuJeton(logging.Filter):
+    """Le filtre de journalisation qui tient le jeton hors des journaux (#1292).
+
+    Il se pose sur un **gestionnaire**, pas sur un logger : le filtre d'un
+    logger ne voit pas les enregistrements que ses enfants lui propagent, et
+    celui d'un gestionnaire voit tout ce qu'il écrit. Il **réécrit** et ne
+    retient rien — une ligne masquée sert encore le diagnostic, une ligne
+    supprimée ne sert plus personne.
+
+    Les arguments sont masqués **un à un** plutôt que la ligne rendue : le
+    formateur d'un journal d'accès les relit par position (client, méthode,
+    chemin, version, code), et les fondre dans le message le casserait. Un
+    argument qui n'est pas du texte n'est remplacé que si sa forme écrite
+    portait un secret — sinon un `%d` recevrait une chaîne.
+    """
+
+    def __init__(self, jeton: str | None = None) -> None:
+        super().__init__()
+        self._jeton = jeton
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - API de logging
+        if isinstance(record.msg, str):
+            record.msg = self._masquer(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(self._masquer_argument(argument) for argument in record.args)
+        elif isinstance(record.args, Mapping):
+            record.args = {
+                cle: self._masquer_argument(valeur) for cle, valeur in record.args.items()
+            }
+        # La trace d'une exception est rendue ici, masquée, puis gardée : le
+        # formateur réutilise `exc_text` au lieu de la recalculer en clair.
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = self._masquer(record.exc_text)
+        if record.stack_info:
+            record.stack_info = self._masquer(record.stack_info)
+        return True
+
+    def _masquer(self, texte: str) -> str:
+        return masquer_le_jeton(texte, self._jeton)
+
+    def _masquer_argument(self, argument: Any) -> Any:
+        if isinstance(argument, str):
+            return self._masquer(argument)
+        ecrit = str(argument)
+        masque = self._masquer(ecrit)
+        return argument if masque == ecrit else masque
 
 
 def chemin_du_jeton(settings: Settings | None = None) -> Path:

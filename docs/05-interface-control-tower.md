@@ -6980,7 +6980,10 @@ menace en tire les conséquences en
 | préflight `OPTIONS` | rien | tranché par CORS, **jamais** `401` : un navigateur ne porte pas d'`Authorization` sur un préflight |
 
 Le paramètre d'URL est **réservé au WebSocket** : une route REST qui l'admettrait ferait voyager le
-secret dans les journaux d'accès et les historiques de navigation. Le refus se juge avant toute
+secret dans les journaux d'accès et les historiques de navigation. Sur le WebSocket lui-même, le
+serveur consigne l'URL de chaque poignée de main : `maestro-api` masque donc le paramètre dans son
+journal (#1292, `jeton=***`, chemin et code gardés), et `start.sh` nomme les journaux écrits avant
+qui portent encore le jeton, sans les réécrire. Le refus se juge avant toute
 route, en middleware ASGI, et **sans exemption** — `/api/sante` comprise : une sonde de vitalité
 exemptée serait le premier précédent, et un `401` dit déjà « quelque chose sert ce port », qui est
 ce qu'une sonde cherche à savoir.
