@@ -63,7 +63,7 @@ from maestro.detail_tache import EtapeTache
 from maestro.familles_claude import familles_claude
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
-from maestro.providers import blocage, checklist, courrier, decision, question
+from maestro.providers import blocage, checklist, controle, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -1368,6 +1368,13 @@ def _hook_permissions(
     qui lève l'est aussi (bus en panne — même règle que
     `Guardrails.demande_validation` depuis #9).
 
+    Et un troisième **en amont de tout** (#1304) : un appel dont le nom ne se lit
+    pas, ou dont l'entrée n'est pas un objet, est **refusé avec son motif**
+    (`maestro.providers.controle`). Il rendait `{}` jusque-là — « laisser
+    passer » —, si bien qu'un CLI qui aurait déplacé ces champs ouvrait la
+    frontière, la politique et la portée d'un seul coup, sans un mot. Le hook ne
+    devine plus rien de ce qu'il ne sait pas lire.
+
     Le hook ne lève jamais : un traçage en échec est avalé — l'observation ne
     casse pas l'exécution observée.
     """
@@ -1470,11 +1477,19 @@ def _hook_permissions(
     async def hook(
         input_data: HookInput, tool_use_id: str | None, context: HookContext
     ) -> HookJSONOutput:
-        outil = str(input_data.get("tool_name") or "")
-        if not outil:
-            return {}
+        # Fermé par défaut (#1304) : un appel qu'on ne sait pas nommer, ou dont
+        # l'entrée n'est pas un objet, est refusé — jamais laissé au flux normal.
+        # Tout ce qui suit repose sur ces deux lectures, et un CLI qui les
+        # déplacerait ouvrirait sinon la frontière, la politique et la portée
+        # d'un coup, sans un mot. La sonde de démarrage le dit avant l'agent.
+        outil = controle.nom_outil(input_data)
+        if outil is None:
+            return refuse(controle.OUTIL_SANS_NOM, controle.motif_sans_nom())
+        entree = controle.entree_outil(input_data)
+        if entree is None:
+            return refuse(outil, controle.motif_entree_illisible(outil))
         if frontiere is not None:
-            motif_frontiere = frontiere.refus(outil, input_data.get("tool_input"))
+            motif_frontiere = frontiere.refus(outil, entree)
             if motif_frontiere is not None:
                 return refuse(outil, motif_frontiere)
         if politique is None:
@@ -1489,9 +1504,7 @@ def _hook_permissions(
         # ailleurs, parce que c'est ici, et seulement ici, que les arguments de
         # l'appel existent. Sans portée déclarée, `hors_de_portee` rend "" et
         # tout ce qui suit est au bit près le régime d'avant ce lot.
-        sortie = hors_de_portee(
-            decision.portee, portee, outil, input_data.get("tool_input")
-        )
+        sortie = hors_de_portee(decision.portee, portee, outil, entree)
         decideur = DECIDEUR_DEFAUT if sortie else decision.decideur
         motif = motif_hors_portee(decision.motif, sortie) if sortie else decision.motif
         if decideur is Decideur.AUTO:
@@ -1504,12 +1517,12 @@ def _hook_permissions(
             # le distingue d'un `allow`.
             trace(outil, motif_auto(outil))
             return {}
-        if dispense_de_lecture(outil, input_data.get("tool_input")):
+        if dispense_de_lecture(outil, entree):
             # Rien n'est tracé, et c'est la même règle que `Verdict.PASSE` : il
             # n'y a pas d'acte à consigner. Ce que l'agent a fait reste visible
             # au fil temps réel, qui rend ses appels d'outils (#479).
             return {}
-        return await arbitre(outil, motif, input_data.get("tool_input"))
+        return await arbitre(outil, motif, entree)
 
     return hook
 

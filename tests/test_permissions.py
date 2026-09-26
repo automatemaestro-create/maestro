@@ -989,7 +989,7 @@ def _hook(politique, on_refus=None):
 
 def test_le_hook_laisse_passer_un_appel_permis():
     hook = _hook(PolitiqueOutils(deny=("Bash",)))
-    assert asyncio.run(hook({"tool_name": "Read"}, None, None)) == {}
+    assert asyncio.run(hook({"tool_name": "Read", "tool_input": {}}, None, None)) == {}
 
 
 def test_le_hook_refuse_un_appel_interdit_avec_son_motif():
@@ -999,7 +999,9 @@ def test_le_hook_refuse_un_appel_interdit_avec_son_motif():
         lambda outil, raison: vu.append((outil, raison)),
     )
 
-    sortie = asyncio.run(hook({"tool_name": "mcp__slack__chat_delete"}, "tu-1", None))
+    sortie = asyncio.run(
+        hook({"tool_name": "mcp__slack__chat_delete", "tool_input": {}}, "tu-1", None)
+    )
 
     decision = sortie["hookSpecificOutput"]
     assert decision["permissionDecision"] == "deny"
@@ -1016,14 +1018,18 @@ def test_un_tracage_en_echec_n_empeche_pas_le_refus():
 
     hook = _hook(PolitiqueOutils(deny=("Bash",)), _tracage_casse)
 
-    sortie = asyncio.run(hook({"tool_name": "Bash"}, None, None))
+    sortie = asyncio.run(hook({"tool_name": "Bash", "tool_input": {}}, None, None))
 
     assert sortie["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-def test_un_appel_sans_nom_d_outil_est_laisse_au_flux_normal():
+def test_un_appel_sans_nom_d_outil_est_refuse():
+    # Renversé par #1304 : il était « laissé au flux normal », c'est-à-dire
+    # laissé passer. Ce que le point de contrôle ne sait pas nommer, il le refuse
+    # (le détail vit dans tests/test_point_de_controle.py).
     hook = _hook(PolitiqueOutils(deny=("Bash",)))
-    assert asyncio.run(hook({}, None, None)) == {}
+    sortie = asyncio.run(hook({}, None, None))
+    assert sortie["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 class _FakeTextBlock:
@@ -1321,8 +1327,8 @@ def test_l_arbitrage_ne_change_rien_aux_deux_autres_crans():
     hook = claude_mod._hook_permissions(
         PolitiqueOutils(ask=("Bash",), deny=("Write",)), None, None
     )
-    assert asyncio.run(hook({"tool_name": "Read"}, None, None)) == {}
-    refus = asyncio.run(hook({"tool_name": "Write"}, None, None))
+    assert asyncio.run(hook({"tool_name": "Read", "tool_input": {}}, None, None)) == {}
+    refus = asyncio.run(hook({"tool_name": "Write", "tool_input": {}}, None, None))
     assert "deny" in refus["hookSpecificOutput"]["permissionDecision"]
 
 
