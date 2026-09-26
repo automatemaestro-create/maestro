@@ -43,6 +43,7 @@ const TON_RETRAIT = "bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose
 export function LignesDiff({
   entrees,
   aplatDesAjouts = true,
+  repliInchange = true,
 }: {
   /** Les lignes et les plages repliées, dans l'ordre (`differencier` puis `condenser`). */
   entrees: EntreeDiff[];
@@ -51,6 +52,11 @@ export function LignesDiff({
    * et la teinte n'apprend rien que le signe ne dise déjà.
    */
   aplatDesAjouts?: boolean;
+  /**
+   * Dire d'une plage repliée qu'elle est « inchangée ». `false` pour un fichier
+   * **neuf**, dont on replie des lignes qu'il ajoute (`apercuDeLaPiece`).
+   */
+  repliInchange?: boolean;
 }) {
   return (
     <div className="font-mono text-annexe">
@@ -60,7 +66,7 @@ export function LignesDiff({
             key={`r${i}`}
             className="bg-surface-creuse px-2 py-0.5 text-center text-texte-secondaire"
           >
-            ⋯ {entree.lignes} lignes inchangées
+            {`⋯ ${entree.lignes} lignes${repliInchange ? " inchangées" : ""}`}
           </p>
         ) : (
           <p

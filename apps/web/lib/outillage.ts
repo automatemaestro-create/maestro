@@ -28,6 +28,7 @@
 import {
   compter,
   condenser,
+  CONTEXTE,
   differencier,
   type EntreeDiff,
   type LigneDiff,
@@ -157,6 +158,35 @@ export function diffDeLaPiece(piece: PieceProposee): DiffDePiece {
   const lignes = differencier(sansFinDeLigne(piece.texte_avant), apres);
   const { ajouts, retraits } = compter(lignes);
   return { entrees: condenser(lignes), ajouts, retraits, neuf: false };
+}
+
+/**
+ * Ce que la carte montre **avant** qu'on déplie : les premières lignes du diff — sauf
+ * pour un fichier neuf **corrigé**, qui s'ouvre sur le passage qui porte la commande
+ * dite (#1161).
+ *
+ * Constat du regard neuf, cinquième relecture : un `AGENTS.md` neuf corrigé par « Nos
+ * tests tournent avec `dotnet test` » montrait ses douze premières lignes — titre,
+ * langages, gestionnaires —, et la ligne corrigée n'y était pas : pour lire ce que la
+ * correction allait écrire, il fallait déplier le fichier. Une modification n'a pas ce
+ * défaut, son diff est déjà condensé autour de ce qui change ; le fichier neuf l'est
+ * ici de la même façon (`condenser`), autour des lignes qui nomment une commande
+ * corrigée, et ses lignes restent des ajouts. Corrigé dans ses premières lignes, il se
+ * montre comme avant.
+ */
+export function apercuDeLaPiece(piece: PieceProposee, diff: DiffDePiece): EntreeDiff[] {
+  const debut = diff.entrees.slice(0, LIGNES_OUVERTES);
+  const dites = piece.corrigees ?? [];
+  if (!diff.neuf || dites.length === 0) return debut;
+  const lignes = diff.entrees as LigneDiff[];
+  const touchee = (l: LigneDiff) => dites.some((commande) => l.texte.includes(commande));
+  const cachee = lignes.some((l, i) => touchee(l) && i + CONTEXTE >= LIGNES_OUVERTES);
+  if (!cachee) return debut;
+  return condenser(
+    lignes.map((l): LigneDiff => ({ type: touchee(l) ? "ajout" : "commun", texte: l.texte })),
+  )
+    .map((e): EntreeDiff => (e.type === "repli" ? e : { type: "ajout", texte: e.texte }))
+    .slice(0, LIGNES_OUVERTES);
 }
 
 /** Le texte sans son dernier saut de ligne — celui qui n'ouvre aucune ligne. */

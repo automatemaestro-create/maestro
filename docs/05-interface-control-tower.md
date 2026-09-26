@@ -6883,7 +6883,10 @@ pied du fil, montée par `GestesDuFil` à côté des autres gestes, donc aussi d
 En tête `chemin · ce que le geste fera · +N −M` ; dessous le pourquoi en une ligne, ou la phrase de
 la personne après une correction ; le **diff ouvert**, borné à 12 lignes (un fichier neuf se lit
 comme un texte, sans aplat ; une modification est condensée autour de ce qui change — lignes
-partagées avec l'éditeur de playbook, `components/LignesDiff.tsx`) ; le verdict des commandes,
+partagées avec l'éditeur de playbook, `components/LignesDiff.tsx` ; un fichier neuf **corrigé**
+s'ouvre sur le passage qui porte la commande dite, le reste replié, et la borne de hauteur ne coupe
+jamais cette ligne — `apercuDeLaPiece`, vu par la relecture : ses douze premières lignes ne
+montraient pas ce que la correction écrivait) ; le verdict des commandes,
 déplié quand une correction les a rejouées ou que l'une échoue ; et trois gestes nommés à leur
 portée : « Écrire ce fichier », « Pas cette pièce », « Remettre l'outillage à plus tard ». Écartées :
 le diff derrière un clic (B), et deux grammaires sans compte de lignes (C).

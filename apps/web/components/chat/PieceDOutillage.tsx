@@ -47,7 +47,10 @@
  *   de la vue. Coupé, il le dit par le même contrôle, « Voir tout le changement » ;
  * - **la commande corrigée se lit avec son verdict juste sous la légende** (`corrigees`),
  *   sans déplier la liste — elle était sous la ligne de flottaison ; la liste entière
- *   se déplie à la demande, et d'elle-même sur un échec.
+ *   se déplie à la demande, et d'elle-même sur un échec ;
+ * - **un fichier neuf corrigé s'ouvre sur le passage corrigé** (`apercuDeLaPiece`),
+ *   pas sur son début : ses douze premières lignes ne montraient pas ce que la
+ *   correction allait écrire.
  *
  * ⚠ **Le projet visé est nommé**, dans l'`aside` qui ne transforme pas la casse :
  * le fil est transverse (#281), et c'est ce qui empêche d'écrire dans un dossier qu'on
@@ -76,7 +79,12 @@ import {
   TexteAvecCode,
 } from "@/components/projets/VerificationsOutillage";
 import { ErreurApi } from "@/lib/api";
-import { diffDeLaPiece, LIGNES_OUVERTES, SORTS_DE_PIECE } from "@/lib/outillage";
+import {
+  apercuDeLaPiece,
+  diffDeLaPiece,
+  LIGNES_OUVERTES,
+  SORTS_DE_PIECE,
+} from "@/lib/outillage";
 import type { DecisionPiece, PieceEcrite, PieceProposee } from "@/lib/types";
 
 export function PieceDOutillage({
@@ -98,18 +106,26 @@ export function PieceDOutillage({
   const [refus, setRefus] = useState<string | null>(null);
   const cadre = useRef<HTMLDivElement>(null);
   const diff = diffDeLaPiece(piece);
-  const montrees = ouvert ? diff.entrees : diff.entrees.slice(0, LIGNES_OUVERTES);
+  const montrees = ouvert ? diff.entrees : apercuDeLaPiece(piece, diff);
   const repliees = diff.entrees.length - LIGNES_OUVERTES;
   const corrigee = piece.correction !== "";
   const echouee = piece.verifications.some((v) => v.etat === "echouee");
   const dites = piece.verifications.filter((v) => piece.corrigees?.includes(v.commande));
+  // La première ligne montrée qui porte une commande corrigée : la borne ne la coupe pas.
+  const focale = ouvert
+    ? -1
+    : montrees.findIndex(
+        (e) => e.type !== "repli" && (piece.corrigees ?? []).some((c) => e.texte.includes(c)),
+      );
 
   // Le diff replié est borné en hauteur aussi, et **coupé à une ligne entière** : la
   // seconde relecture l'avait vu tranché à mi-hauteur d'une ligne, à 320 px comme sur un
   // téléphone. La borne est plus basse quand la boîte est étroite — les lignes s'y
   // replient, et la carte entière doit tenir au-dessus du composeur. Ce qui dépasse se
-  // dit par le contrôle qui déplie. jsdom ne mesure rien : la carte y reste bornée en
-  // lignes, et rien n'y est coupé.
+  // dit par le contrôle qui déplie. Elle s'allonge jusqu'à la ligne **corrigée** quand il
+  // y en a une : sur un téléphone, repliée huit fois, elle tombait sous la borne, et la
+  // carte redevenait muette sur ce que la correction écrit. jsdom ne mesure rien : la
+  // carte y reste bornée en lignes, et rien n'y est coupé.
   const [hauteur, setHauteur] = useState<number | null>(null);
   useLayoutEffect(() => {
     const el = cadre.current;
@@ -120,9 +136,13 @@ export function PieceDOutillage({
     }
     const mesurer = () => {
       const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-      const limite = (el.clientWidth < 360 ? 12 : 18) * rem;
       const lignes = Array.from(el.firstElementChild?.children ?? []) as HTMLElement[];
       const fin = (ligne: HTMLElement) => ligne.offsetTop + ligne.offsetHeight;
+      const ligneCorrigee = focale >= 0 ? lignes[focale] : undefined;
+      const limite = Math.max(
+        (el.clientWidth < 360 ? 12 : 18) * rem,
+        ligneCorrigee !== undefined ? fin(ligneCorrigee) : 0,
+      );
       if (lignes.every((ligne) => fin(ligne) <= limite)) {
         setCoupe(false);
         setHauteur(null);
@@ -137,7 +157,7 @@ export function PieceDOutillage({
     const observateur = new ResizeObserver(mesurer);
     observateur.observe(el);
     return () => observateur.disconnect();
-  }, [ouvert, montrees.length]);
+  }, [ouvert, montrees.length, focale]);
 
   const agir = async (decision: DecisionPiece) => {
     setRefus(null);
@@ -186,7 +206,7 @@ export function PieceDOutillage({
         className="relative mt-3 overflow-hidden rounded-controle border border-bord bg-surface"
         style={coupe && hauteur !== null ? { maxHeight: hauteur } : undefined}
       >
-        <LignesDiff entrees={montrees} aplatDesAjouts={!diff.neuf} />
+        <LignesDiff entrees={montrees} aplatDesAjouts={!diff.neuf} repliInchange={!diff.neuf} />
       </div>
       {(repliees > 0 || coupe || ouvert) && (
         <Bouton

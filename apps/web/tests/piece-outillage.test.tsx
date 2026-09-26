@@ -31,7 +31,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PieceDOutillage, TraceDePiece } from "@/components/chat/PieceDOutillage";
 import { ErreurApi } from "@/lib/api";
-import { diffDeLaPiece, LIGNES_OUVERTES } from "@/lib/outillage";
+import { apercuDeLaPiece, diffDeLaPiece, LIGNES_OUVERTES } from "@/lib/outillage";
 import type { PieceEcrite, PieceProposee, VerificationOutillage } from "@/lib/types";
 
 /** Un `AGENTS.md` de 20 lignes, terminé par un saut de ligne comme tout fichier écrit. */
@@ -156,6 +156,38 @@ describe("la carte d'une pièce d'outillage", () => {
     expect(listes).toHaveLength(1);
     expect(within(listes[0]).getAllByRole("listitem")).toHaveLength(1);
     expect(listes[0]).toHaveTextContent("vérifiéedotnet test");
+  });
+
+  it("② un fichier neuf corrigé s'ouvre sur le passage corrigé, pas sur son début", async () => {
+    // Vu par le regard neuf (cinquième relecture) : sur un AGENTS.md neuf corrigé par
+    // « Nos tests tournent avec `dotnet test` », les 12 premières lignes ne contenaient
+    // pas la ligne corrigée — il fallait déplier le fichier pour lire la correction.
+    const apres = AGENTS.replace(
+      "ligne 17",
+      `- **Tests** : \`dotnet test\` — dite par la personne (« ${DOTNET} »)`,
+    );
+    render(
+      <PieceDOutillage
+        piece={piece({ texte_apres: apres, correction: DOTNET, corrigees: ["dotnet test"] })}
+        trancher={vi.fn()}
+      />,
+    );
+    const region = carte();
+
+    expect(within(region).getByText(/`dotnet test` — dite par la personne/)).toBeInTheDocument();
+    // Son contexte, et le reste replié — sans « inchangées » : tout y est neuf.
+    expect(within(region).getByText("ligne 15")).toBeInTheDocument();
+    expect(within(region).getByText("ligne 19")).toBeInTheDocument();
+    expect(within(region).queryByText("ligne 1")).toBeNull();
+    expect(within(region).getByText("⋯ 14 lignes")).toBeInTheDocument();
+    expect(within(region).queryByText(/inchangées/)).toBeNull();
+
+    await userEvent.click(
+      within(region).getByRole("button", { name: "Voir le fichier entier (20 lignes)" }),
+    );
+
+    expect(within(region).getByText("ligne 1")).toBeInTheDocument();
+    expect(within(region).queryByText(/⋯/)).toBeNull();
   });
 
   it("② la liste entière des commandes se déplie à la demande", async () => {
@@ -318,5 +350,45 @@ describe("diffDeLaPiece", () => {
     expect([diff.ajouts, diff.retraits]).toEqual([1, 1]);
     expect(diff.entrees.some((e) => e.type === "repli")).toBe(true);
     expect(diff.entrees.length).toBeLessThan(LIGNES_OUVERTES);
+  });
+});
+
+describe("apercuDeLaPiece", () => {
+  const avecTests = (ligne: string) =>
+    AGENTS.replace(ligne, "- **Tests** : `dotnet test` — dite par la personne");
+
+  it("⑤ sans correction, ou corrigé dans le début : les premières lignes, telles quelles", () => {
+    for (const p of [
+      piece({ texte_apres: avecTests("ligne 17") }),
+      piece({ texte_apres: avecTests("ligne 4"), corrigees: ["dotnet test"] }),
+    ]) {
+      const diff = diffDeLaPiece(p);
+      expect(apercuDeLaPiece(p, diff)).toEqual(diff.entrees.slice(0, LIGNES_OUVERTES));
+    }
+  });
+
+  it("⑤ un fichier neuf corrigé plus bas : le passage, son contexte, le reste replié", () => {
+    const p = piece({ texte_apres: avecTests("ligne 17"), corrigees: ["dotnet test"] });
+
+    const apercu = apercuDeLaPiece(p, diffDeLaPiece(p));
+
+    expect(apercu[0]).toEqual({ type: "repli", lignes: 14 });
+    // Le passage reste un ajout : un fichier neuf n'a pas de ligne « commune ».
+    expect(apercu.slice(1).every((e) => e.type === "ajout")).toBe(true);
+    expect(apercu.slice(1).map((e) => (e.type === "repli" ? "" : e.texte))).toEqual([
+      "ligne 15",
+      "ligne 16",
+      "- **Tests** : `dotnet test` — dite par la personne",
+      "ligne 18",
+      "ligne 19",
+      "ligne 20",
+    ]);
+  });
+
+  it("⑤ une modification garde son diff condensé, correction ou non", () => {
+    const p = pieceCorrigee();
+    const diff = diffDeLaPiece(p);
+
+    expect(apercuDeLaPiece(p, diff)).toEqual(diff.entrees.slice(0, LIGNES_OUVERTES));
   });
 });
