@@ -23,13 +23,22 @@
  * « positif », un retrait n'est pas une « alerte » : `tests/couleurs.test.ts` les
  * inscrit comme résidu, ici et nulle part ailleurs. Le manque est nommé par la veille
  * de #1161 (« La palette porte les tons d'un diff »), pas comblé au passage.
+ *
+ * Deux reprises de la relecture de #1161, sur la vraie stack :
+ *
+ * - **une ligne qui se replie reste sous son texte**, jamais sous le signe : le signe
+ *   a sa colonne. Sans elle, à 320 px, une ligne logique repliée cinq fois mêlait ses
+ *   suites à la gouttière et les signes se perdaient dans le texte ;
+ * - **en sombre, l'aplat est estompé** (`/40`) : plein, le cramoisi d'un retrait
+ *   dominait l'écran dans une carte déjà teintée, là où le clair reste pâle.
  */
 
 import type { EntreeDiff } from "@/lib/diff";
 
 /** La teinte d'une ligne selon ce qu'elle devient. */
-const TON_AJOUT = "bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200";
-const TON_RETRAIT = "bg-rose-50 text-rose-900 dark:bg-rose-950 dark:text-rose-200";
+const TON_AJOUT =
+  "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200";
+const TON_RETRAIT = "bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-200";
 
 export function LignesDiff({
   entrees,
@@ -57,7 +66,7 @@ export function LignesDiff({
           <p
             key={`l${i}`}
             className={
-              "whitespace-pre-wrap break-words px-2 py-0.5 " +
+              "flex px-2 py-0.5 " +
               (entree.type === "ajout"
                 ? aplatDesAjouts
                   ? TON_AJOUT
@@ -67,10 +76,12 @@ export function LignesDiff({
                   : "text-texte-secondaire")
             }
           >
-            <span aria-hidden className="mr-2 select-none opacity-60">
+            <span aria-hidden className="w-4 shrink-0 select-none whitespace-pre opacity-60">
               {entree.type === "ajout" ? "+" : entree.type === "retrait" ? "−" : " "}
             </span>
-            {entree.texte || " "}
+            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+              {entree.texte || " "}
+            </span>
           </p>
         ),
       )}

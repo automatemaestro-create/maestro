@@ -242,6 +242,8 @@ describe("les gestes du fil, dans la colonne", () => {
     // dans le fil — le chemin et ce qui lui est arrivé, puis la correction.
     poserFilAssistance({
       messages: [
+        // La carte qui proposait la pièce : la trace y relit ce qui a été écrit.
+        messageFactice({ ...pieceDOutillageFactice(), horodatage: "2026-07-28T09:59:00Z" }),
         messageFactice({
           horodatage: "2026-07-28T10:00:00Z",
           agent: AGENT_ORCHESTRATION,
@@ -280,6 +282,9 @@ describe("les gestes du fil, dans la colonne", () => {
     const fil = await filDeLaColonne();
 
     expect(fil).toHaveTextContent("AGENTS.md écrit.");
+    expect(
+      within(fil).getByRole("button", { name: "Voir ce qui a été écrit" }),
+    ).toBeInTheDocument();
     expect(fil).toHaveTextContent("Correction prise — Commande de test : dotnet test");
     expect(gestesDe(fil)).toEqual([]);
   });

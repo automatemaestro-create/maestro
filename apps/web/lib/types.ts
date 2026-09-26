@@ -1375,6 +1375,8 @@ export type PieceProposee = {
   rang: number;
   total: number;
   regime: string;
+  /** Les commandes de cette version que la personne a **dites** — absent : aucune. */
+  corrigees?: string[];
 };
 
 /**

@@ -66,6 +66,27 @@ export function pieceEnAttente(messages: MessageChat[]): MessageChat | null {
 }
 
 /**
+ * Les versions de pièces que ce fil a proposées, par chemin **et** empreinte — de quoi
+ * rendre à la trace d'une pièce tranchée ce que sa carte montrait (#1161).
+ *
+ * Le fait (`piece_ecrite`) ne porte que l'empreinte du contenu proposé : le diff et
+ * les verdicts sont déjà persistés sur le message qui proposait cette version, et le
+ * fil est la seule mémoire du canal — on les y relit plutôt que de les recopier.
+ */
+export function piecesDuFil(messages: MessageChat[]): Map<string, PieceProposee> {
+  const vues = new Map<string, PieceProposee>();
+  for (const message of messages) {
+    if (message.piece) vues.set(cleDePiece(message.piece.chemin, message.piece.empreinte), message.piece);
+  }
+  return vues;
+}
+
+/** La clé d'une version de pièce : son chemin et l'empreinte de son contenu. */
+export function cleDePiece(chemin: string, empreinte: string): string {
+  return `${chemin}|${empreinte}`;
+}
+
+/**
  * Les réponses d'outillage données sur ce fil, dans l'ordre où elles sont venues —
  * cliquées ou tapées (#1147).
  *

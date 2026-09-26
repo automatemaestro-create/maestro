@@ -38,8 +38,16 @@
  * Et ce que le regard neuf a relevé sur le brouillon retenu, repris ici : le verdict
  * porte sa légende « Commandes » ; `+N −M` et « Voir … » comptent les mêmes lignes
  * (`diffDeLaPiece`) ; un fichier neuf se lit comme un texte, le « + » en gouttière et
- * sans aplat ; après une correction, la liste des commandes se déplie, et la commande
- * revérifiée s'y lit avec son verdict.
+ * sans aplat.
+ *
+ * Puis ce que la relecture a vu sur la vraie stack :
+ *
+ * - **le diff est borné en hauteur aussi**, pas seulement en lignes : dans la colonne
+ *   de 320 px, douze lignes repliées chacune plusieurs fois poussaient les gestes hors
+ *   de la vue. Coupé, il le dit par le même contrôle, « Voir tout le changement » ;
+ * - **la commande corrigée se lit avec son verdict juste sous la légende** (`corrigees`),
+ *   sans déplier la liste — elle était sous la ligne de flottaison ; la liste entière
+ *   se déplie à la demande, et d'elle-même sur un échec.
  *
  * ⚠ **Le projet visé est nommé**, dans l'`aside` qui ne transforme pas la casse :
  * le fil est transverse (#281), et c'est ce qui empêche d'écrire dans un dossier qu'on
@@ -49,10 +57,16 @@
  * des messages (`pieceEnAttente`, `lib/outillage`). Il reçoit la pièce, ou rien.
  */
 
-import { useId, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
-import { IconeChevronBas, IconeDossier } from "@/components/Icones";
+import {
+  IconeChevronBas,
+  IconeDossier,
+  IconeStatutAFaire,
+  IconeStatutEchec,
+  IconeStatutTerminee,
+} from "@/components/Icones";
 import { LignesDiff } from "@/components/LignesDiff";
 import { BadgeEtat, Bouton } from "@/components/Primitives";
 import {
@@ -62,7 +76,7 @@ import {
   TexteAvecCode,
 } from "@/components/projets/VerificationsOutillage";
 import { diffDeLaPiece, LIGNES_OUVERTES, SORTS_DE_PIECE } from "@/lib/outillage";
-import type { DecisionPiece, PieceProposee } from "@/lib/types";
+import type { DecisionPiece, PieceEcrite, PieceProposee } from "@/lib/types";
 
 export function PieceDOutillage({
   piece,
@@ -78,12 +92,32 @@ export function PieceDOutillage({
 }) {
   const id = useId();
   const [ouvert, setOuvert] = useState(false);
+  const [commandesOuvertes, setCommandesOuvertes] = useState(false);
+  const [coupe, setCoupe] = useState(false);
   const [refus, setRefus] = useState<string | null>(null);
+  const cadre = useRef<HTMLDivElement>(null);
   const diff = diffDeLaPiece(piece);
   const montrees = ouvert ? diff.entrees : diff.entrees.slice(0, LIGNES_OUVERTES);
   const repliees = diff.entrees.length - LIGNES_OUVERTES;
   const corrigee = piece.correction !== "";
   const echouee = piece.verifications.some((v) => v.etat === "echouee");
+  const dites = piece.verifications.filter((v) => piece.corrigees?.includes(v.commande));
+
+  // Le diff replié est borné en hauteur : ce qui dépasse est **mesuré**, et se dit par
+  // le contrôle qui déplie. jsdom ne mesure rien — la carte y reste bornée en lignes.
+  useLayoutEffect(() => {
+    const el = cadre.current;
+    if (el === null || ouvert) {
+      setCoupe(false);
+      return;
+    }
+    const mesurer = () => setCoupe(el.scrollHeight > el.clientHeight + 1);
+    mesurer();
+    if (typeof ResizeObserver === "undefined") return;
+    const observateur = new ResizeObserver(mesurer);
+    observateur.observe(el);
+    return () => observateur.disconnect();
+  }, [ouvert, montrees.length]);
 
   const agir = async (decision: DecisionPiece) => {
     setRefus(null);
@@ -126,10 +160,17 @@ export function PieceDOutillage({
         <p className="mt-1 text-annexe text-texte-secondaire">{enPhrase(piece.raison)}</p>
       )}
 
-      <div id={`${id}-diff`} className="mt-3 rounded-controle border border-bord bg-surface">
+      <div
+        id={`${id}-diff`}
+        ref={cadre}
+        className={
+          "mt-3 overflow-hidden rounded-controle border border-bord bg-surface" +
+          (ouvert ? "" : " max-h-72")
+        }
+      >
         <LignesDiff entrees={montrees} aplatDesAjouts={!diff.neuf} />
       </div>
-      {repliees > 0 && (
+      {(repliees > 0 || coupe || ouvert) && (
         <Bouton
           variante="discret"
           ton="neutre"
@@ -156,12 +197,33 @@ export function PieceDOutillage({
             </span>
             <RecapitulatifVerifications verifications={piece.verifications} />
           </div>
-          {/* Dépliée d'elle-même quand elle a quelque chose à apprendre : un échec
-              (sa sortie), ou une correction (la commande revérifiée, son verdict). */}
-          {(echouee || corrigee) && (
-            <div className="border-t border-bord pt-2">
+          {/* La commande corrigée, avec son verdict, sans rien déplier : c'est elle
+              que la correction a fait rejouer. */}
+          {dites.length > 0 && !echouee && <ListeVerifications verifications={dites} />}
+          {/* La liste entière : dépliée d'elle-même sur un échec (sa sortie), à la
+              demande sinon. */}
+          {(echouee || commandesOuvertes) && (
+            <div id={`${id}-commandes`} className="border-t border-bord pt-2">
               <ListeVerifications verifications={piece.verifications} />
             </div>
+          )}
+          {!echouee && piece.verifications.length > dites.length && (
+            <Bouton
+              variante="discret"
+              ton="neutre"
+              taille="petite"
+              icone={IconeChevronBas}
+              aria-expanded={commandesOuvertes}
+              aria-controls={`${id}-commandes`}
+              className="self-start"
+              onClick={() => setCommandesOuvertes((o) => !o)}
+            >
+              {commandesOuvertes
+                ? "Replier les commandes"
+                : piece.verifications.length === 1
+                  ? "Voir la commande"
+                  : `Voir les ${piece.verifications.length} commandes`}
+            </Bouton>
           )}
         </div>
       )}
@@ -209,5 +271,93 @@ export function PieceDOutillage({
         </p>
       )}
     </CarteDuFil>
+  );
+}
+
+/**
+ * Le sort d'une pièce, en mots — la fin de sa trace sous la bulle.
+ *
+ * `ecrit` et `inchange` disent qu'elle est dans le projet, `ecartee` qu'on l'a passée ;
+ * tout autre état dit qu'elle n'a **pas** été écrite, avec la raison que l'écriture a
+ * donnée — une non-écriture qui se lirait comme une écriture est ce que le rapport de
+ * génération refusait déjà (#1034).
+ */
+export function pieceEcriteEnMots(fait: PieceEcrite): string {
+  if (fait.etat === "ecrit") return "écrit.";
+  if (fait.etat === "inchange") return "déjà à jour.";
+  if (fait.etat === "ecartee") return "passé : rien n'a été écrit.";
+  return `pas écrit : ${fait.raison}`;
+}
+
+/**
+ * **La trace d'une pièce tranchée**, sous la bulle de la réponse (#1161).
+ *
+ * Le parti pris 4 de la veille, d'après la carte de checkpoint de *Replit* : une fois
+ * faite, la pièce quitte le pied du fil et laisse **une ligne** — un glyphe et un mot
+ * qui disent son sort (écrite, passée, pas écrite), les verdicts de ses commandes, et
+ * ce qui a été écrit **derrière un clic** (« Voir ce qui a été écrit »). La relecture
+ * l'avait vue réduite au chemin et à un mot, la même icône de dossier pour tous les
+ * sorts.
+ *
+ * `piece` est la version que la carte montrait — relue du fil par son empreinte
+ * (`piecesDuFil`) : le fait ne recopie ni le diff ni les verdicts, ils sont déjà
+ * persistés sur le message qui la proposait. Sans elle (un fil tronqué), la ligne se
+ * réduit au sort.
+ */
+export function TraceDePiece({
+  fait,
+  piece,
+}: {
+  fait: PieceEcrite;
+  piece?: PieceProposee;
+}) {
+  const id = useId();
+  const [ouvert, setOuvert] = useState(false);
+  const dansLeProjet = fait.etat === "ecrit" || fait.etat === "inchange";
+  const IconeDuSort = dansLeProjet
+    ? IconeStatutTerminee
+    : fait.etat === "ecartee"
+      ? IconeStatutAFaire
+      : IconeStatutEchec;
+  const diff = piece !== undefined && fait.etat === "ecrit" ? diffDeLaPiece(piece) : null;
+  return (
+    <div className="flex flex-col gap-1">
+      <p
+        className={
+          "flex flex-wrap items-center gap-x-2 gap-y-1 text-micro " +
+          (dansLeProjet || fait.etat === "ecartee"
+            ? "text-texte-secondaire"
+            : "text-attention-texte")
+        }
+      >
+        <span className="inline-flex min-w-0 items-center gap-1">
+          <IconeDuSort className="size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">
+            <span className="font-mono">{fait.chemin}</span> {pieceEcriteEnMots(fait)}
+          </span>
+        </span>
+        {piece !== undefined && dansLeProjet && piece.verifications.length > 0 && (
+          <RecapitulatifVerifications verifications={piece.verifications} />
+        )}
+        {diff !== null && (
+          <Bouton
+            variante="discret"
+            ton="neutre"
+            taille="petite"
+            icone={IconeChevronBas}
+            aria-expanded={ouvert}
+            aria-controls={`${id}-ecrit`}
+            onClick={() => setOuvert((o) => !o)}
+          >
+            {ouvert ? "Replier" : "Voir ce qui a été écrit"}
+          </Bouton>
+        )}
+      </p>
+      {diff !== null && ouvert && (
+        <div id={`${id}-ecrit`} className="rounded-controle border border-bord bg-surface">
+          <LignesDiff entrees={diff.entrees} aplatDesAjouts={!diff.neuf} />
+        </div>
+      )}
+    </div>
   );
 }

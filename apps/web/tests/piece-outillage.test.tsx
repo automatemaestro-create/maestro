@@ -29,9 +29,9 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
+import { PieceDOutillage, TraceDePiece } from "@/components/chat/PieceDOutillage";
 import { diffDeLaPiece, LIGNES_OUVERTES } from "@/lib/outillage";
-import type { PieceProposee, VerificationOutillage } from "@/lib/types";
+import type { PieceEcrite, PieceProposee, VerificationOutillage } from "@/lib/types";
 
 /** Un `AGENTS.md` de 20 lignes, terminé par un saut de ligne comme tout fichier écrit. */
 const AGENTS = Array.from({ length: 20 }, (_, i) => `ligne ${i + 1}`).join("\n") + "\n";
@@ -88,7 +88,12 @@ function pieceCorrigee(partiel: Partial<PieceProposee> = {}): PieceProposee {
     sort: "reecrit",
     correction: DOTNET,
     empreinte: "sha256:bbbb",
-    verifications: [verdict({ commande: "dotnet test" })],
+    verifications: [
+      verdict({ usage: "installer", commande: "npm ci" }),
+      verdict({ commande: "dotnet test" }),
+      verdict({ usage: "lint", commande: "npx eslint ." }),
+    ],
+    corrigees: ["dotnet test"],
     ...partiel,
   });
 }
@@ -141,11 +146,29 @@ describe("la carte d'une pièce d'outillage", () => {
     // Le changement, entouré de son contexte ; le reste replié.
     expect(within(region).getAllByText(/lignes inchangées/).length).toBeGreaterThan(0);
     expect(within(region).getByText(/`npm test`/)).toBeInTheDocument();
-    // La revérification se voit : la liste est dépliée, la commande corrigée y est.
+    // La revérification se voit sans rien déplier : la commande corrigée, seule, avec
+    // son verdict, juste sous la légende (relecture de #1161).
     expect(
       within(region).getByText("Commandes, rejouées après votre correction"),
     ).toBeInTheDocument();
-    expect(within(region).getAllByText("dotnet test").length).toBeGreaterThan(0);
+    const listes = within(region).getAllByRole("list", { name: "Verdict de chaque commande" });
+    expect(listes).toHaveLength(1);
+    expect(within(listes[0]).getAllByRole("listitem")).toHaveLength(1);
+    expect(listes[0]).toHaveTextContent("vérifiéedotnet test");
+  });
+
+  it("② la liste entière des commandes se déplie à la demande", async () => {
+    render(<PieceDOutillage piece={pieceCorrigee()} trancher={vi.fn()} />);
+    const region = carte();
+    expect(within(region).queryByText("npm ci")).toBeNull();
+
+    await userEvent.click(within(region).getByRole("button", { name: "Voir les 3 commandes" }));
+
+    expect(within(region).getByText("npm ci")).toBeInTheDocument();
+    expect(within(region).getByText("npx eslint .")).toBeInTheDocument();
+    expect(
+      within(region).getByRole("button", { name: "Replier les commandes" }),
+    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it("③ une correction en échec ne s'offre pas à l'écriture, et le dit", () => {
@@ -215,6 +238,52 @@ describe("la carte d'une pièce d'outillage", () => {
     expect(carte()).toHaveTextContent(
       "Ce projet est versionné : la pièce s'écrit sur une branche, fusionnée à votre accord.",
     );
+  });
+});
+
+describe("la trace d'une pièce tranchée (parti pris 4 de la veille)", () => {
+  function fait(partiel: Partial<PieceEcrite> = {}): PieceEcrite {
+    return {
+      projet_id: "prj-7f3a1c2b",
+      chemin: "AGENTS.md",
+      nom: "AGENTS.md",
+      etat: "ecrit",
+      raison: "",
+      cible: "D:/projets/depensio",
+      regime: "en-place",
+      empreinte: "sha256:aaaa",
+      ecrite: true,
+      ...partiel,
+    };
+  }
+
+  it("dit le sort et les verdicts, et montre ce qui a été écrit derrière un clic", async () => {
+    render(<TraceDePiece fait={fait()} piece={piece()} />);
+
+    expect(screen.getByText(/écrit\./)).toBeInTheDocument();
+    expect(screen.getByText("1 vérifiée")).toBeInTheDocument();
+    expect(screen.queryByText("ligne 1")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Voir ce qui a été écrit" }));
+
+    expect(screen.getByText("ligne 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Replier" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("une pièce passée ne montre rien à déplier, et ne se lit pas comme écrite", () => {
+    render(
+      <TraceDePiece
+        fait={fait({ etat: "ecartee", ecrite: false, raison: "écartée à votre demande" })}
+        piece={piece()}
+      />,
+    );
+
+    expect(screen.getByText(/passé : rien n'a été écrit\./)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByText("1 vérifiée")).toBeNull();
   });
 });
 
