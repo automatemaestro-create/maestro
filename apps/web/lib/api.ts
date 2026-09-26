@@ -994,6 +994,44 @@ export async function trancherCadrageChat(
 }
 
 /**
+ * Accepte — ou refuse — le projet que le fil propose de déclarer
+ * (`POST /api/chat/{agent}/projet`, #1294) et rend la paire (geste, réponse).
+ *
+ * Seul `approuve` part : nom, dossier et versionnement sont sur la proposition que
+ * le fil porte, et c'est elle que l'API déclare — ce que la carte a montré. Une
+ * correction ne passe pas par ici, elle se dit dans la conversation. La réponse
+ * porte le projet déclaré (`projet_cree`), que la porte lit pour l'ouvrir.
+ *
+ * Un `409` n'est pas une panne, comme sur le cadrage : le projet a été accepté ou
+ * refusé entre-temps, ou la conversation a repris.
+ */
+export async function declarerProjetDuFil(
+  agent: string,
+  decision: { approuve: boolean; conversation?: string },
+): Promise<MessageChat[]> {
+  const reponse = await appel(
+    `${API_URL}/api/chat/${encodeURIComponent(agent)}/projet`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approuve: decision.approuve,
+        conversation: decision.conversation,
+      }),
+    },
+  );
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "ce projet n'attend plus de réponse — la conversation a repris."
+        : `déclaration du projet refusée (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
  * Valide — ou décline — l'équipe que le fil propose à un projet sans agent
  * (`POST /api/chat/{agent}/recrutement`, #1146) et rend la paire (geste, réponse).
  *

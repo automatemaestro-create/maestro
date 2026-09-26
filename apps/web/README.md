@@ -1183,7 +1183,11 @@ l'unique témoin. Et **640** depuis #1228, qui a fait de la carte d'une demande
 de validation **un** composant : la recopie resserrée de la cloche portait
 trois paires de son côté, et le lien « Trancher → » ambre du nœud de pipeline
 une quatrième — les quatre sont parties avec les deux recopies, les cinq paires
-du diff ayant seulement changé de fichier. Ce ticket ne les
+du diff ayant seulement changé de fichier. Puis **636** depuis #1294, qui a
+retiré le formulaire de création du chemin de création (un projet naît dans la
+conversation) : le choix de l'origine et le dossier parent prérempli du
+formulaire, et la phrase « aucun projet déclaré » de la porte, emportaient
+quatre paires. Ce ticket ne les
 migre pas — il pose le compte et **refuse la suivante** (`tests/couleurs.test.ts`),
 comme #832 l'a fait pour les contrôles de saisie et #534 pour le contraste. La
 689ᵉ est arrivée pendant l'attente de merge de ce lot (#894, une cinquième
@@ -1413,8 +1417,11 @@ Ce qui reste, mesuré le **2026-09-20** : **165 tailles hors de l'échelle dans
 37 fichiers** — 150 jumelles (`text-xs` 85, `text-sm` 65), 6 pas que l'échelle
 n'a pas (`text-lg`, `text-base`, `text-xl`) et 9 valeurs arbitraires ; **164**
 depuis #996, qui a sorti la bannière d'erreur du tableau (son `text-sm` unique)
-en la réécrivant sur `text-corps` et `text-annexe`, et **163** depuis #939, dont
-le bloc de commande retiré emportait un `text-xs`. Le compte
+en la réécrivant sur `text-corps` et `text-annexe`, **163** depuis #939, dont
+le bloc de commande retiré emportait un `text-xs`, et **158** depuis #1294, dont
+le formulaire de création retiré (origine, dossier parent, nom du dossier à
+créer) et la phrase « aucun projet déclaré » de la porte emportaient cinq tailles.
+Le compte
 est **exact et non un plafond** : une taille de plus rougit, une taille de
 **moins** rougit aussi tant que la ligne n'est pas mise à jour — si bien que le
 résidu ne peut que décroître, et que chaque décroissance est un geste **écrit**.

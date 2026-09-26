@@ -2337,7 +2337,13 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # quelqu'un). Aucun ne retient quoi que ce soit d'un message à l'autre — ce
     # qu'un tour a lu voyage sur **la réponse** (`ReponseChat.etapes`), donc sur
     # le message persisté, jamais dans le répondeur.
+    #
+    # #1294 en ajoute un, `_naissance` : la vérification et la déclaration d'un
+    # projet proposé. Il ne garde rien non plus — le projet proposé voyage sur le
+    # message (`MessageChat.projet_propose`), et c'est le fil qui le rend au geste
+    # comme au « oui » tapé (`_projet_approuve`).
     assert set(vars(repondeur)) == {
+        "_naissance",
         "_lanceur",
         "_apercu",
         "_faits",
@@ -2352,6 +2358,7 @@ def test_le_silence_n_est_pas_un_accord() -> None:
         "_attentes",
     }
     assert repondeur._equipe is None and repondeur._recruteur is None
+    assert repondeur._naissance is None
     # #1147 donne au conducteur un collaborateur, et un seul : celui qui comprend
     # le projet (le modèle). La garantie est poussée d'un cran de plus : il ne
     # porte que son fournisseur — **le même** que celui du juge —, jamais une

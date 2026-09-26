@@ -220,6 +220,8 @@ export type FilFactice = {
     roles?: RoleValideEquipe[],
     propositionId?: string,
   ) => Promise<void>;
+  /** Le geste qui accepte ou refuse le projet proposé (#1294). */
+  declarerProjet: (approuve: boolean) => Promise<void>;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -248,6 +250,7 @@ function filParDefaut(): FilFactice {
     trancherCadrage: async () => {},
     repondreQuestion: async () => {},
     recruter: async () => {},
+    declarerProjet: async () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},

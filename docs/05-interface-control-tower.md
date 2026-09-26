@@ -312,7 +312,8 @@ est tout le mécanisme : une page atteinte directement — lien, signet, recharg
 choix du projet **puis rend la page demandée**, sans que l'URL ait bougé entre-temps. Une
 redirection l'aurait perdue, et aurait ajouté deux entrées à l'historique du navigateur pour un
 geste qui n'est pas une navigation. Ce que l'écran présente : la liste des projets déclarés et la
-**création sur place** — aucun projet déclaré n'ouvre pas un vide mais propose d'en créer un. Le
+**création sur place** — aucun projet déclaré n'ouvre pas un vide mais propose d'en créer un, dans
+la conversation depuis #1294 (§2.0.2). Le
 projet actif est **retenu d'une visite à l'autre**, relu au démarrage, et un projet devenu
 introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vides à ne pas
 confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
@@ -346,6 +347,66 @@ d'adresse, elle a seulement quitté le menu.
 Implémentation : `apps/web/lib/etatProjetActif.tsx`, `components/projets/ChoixProjet.tsx` et
 `SelecteurProjet.tsx`, `lib/navigation.ts` (`MENU` / `HORS_MENU`). Couverture :
 `apps/web/tests/projet-actif.test.tsx` et `selecteur-projet.test.tsx`.
+
+#### 2.0.2 Un projet naît dans la conversation (#1294)
+
+Décidé par [docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md) : créer un projet
+ne passe plus par un **formulaire à étapes** (nom, origine, dossier, périmètre, puis l'outillage,
+puis l'équipe). La personne avait trouvé ce parcours « très mécanique » : il posait des choix
+avant d'avoir compris le projet.
+
+**« Nouveau projet » ouvre la conversation.** Sur la porte d'entrée (§2.0.1), la porte passe en
+**mode création** : « Que voulez-vous construire ? » en titre, et dessous le fil de
+l'orchestration, **sans projet**, sur une conversation neuve. Un poste sans aucun projet s'ouvre
+directement dans ce mode. L'écran Projets (`/projets`) y renvoie aussi : son « Nouveau projet »
+quitte le projet ouvert, car un projet naît hors du cadre d'un autre.
+
+La forme a été tranchée sur pièces (veille et « Variante retenue » de #1294), d'après v0, Lovable
+et ChatGPT : une question et un seul composeur, sans tuile de type ni catégorie à cliquer. Importer
+un dossier est un **second chemin de la même conversation**, d'après Bolt : l'amorce « J'ai déjà un
+dossier à importer ». Le retour à la liste est un bouton, absent seulement quand la liste est vide :
+une liste illisible (API coupée) n'est pas vide, et le retour y ramène à la panne.
+
+**L'orchestrateur comprend, pose au plus les questions qui manquent, puis propose.** Son juge a un
+quatrième verdict, `projet` (`maestro/controltower/orchestration.py`). Il le rend quand la
+personne veut commencer un projet, neuf ou importé. Tant qu'il lui manque de quoi choisir le nom et
+le dossier, il pose **une** question, celle que ce projet appelle. Il reçoit les **faits du poste**
+: le répertoire des projets (#1022), Git s'il est là, les projets déclarés et le projet de la
+fenêtre. Il propose alors un **nom**, un **dossier** et le **versionnement**, chacun avec **sa
+raison**.
+
+**Le code vérifie avant de montrer** (`maestro/controltower/naissance.py`, `ServiceNaissance`). Un
+dossier relatif se range sous le répertoire des projets, et les frontières d'EF-38 s'appliquent.
+Un dossier neuf déjà occupé, un nom ou un dossier déjà déclarés sont remplacés par une variante
+numérotée, et **la carte le dit** (`ajustements`). Un dossier neuf nommé d'après un nom pris suit
+la variante du nom, s'il est libre. Git absent retire la mise sous Git, et le dit
+aussi. Ce qui ne se corrige pas n'est pas montré : un dossier à importer introuvable, ou déjà un
+projet. Le fil en dit la cause derrière les mots du modèle.
+
+**La carte d'accord** (`components/chat/DemandeDeProjet.tsx`) est une carte du pied du fil, comme
+la demande de cadrage (§2.9). Elle porte le titre « Créer ce projet ? » ou « Importer ce
+projet ? », les trois choix avec leurs raisons, et ce que la vérification a changé. Un seul geste
+principal. **Aucun champ** : une correction se **dit** (« appelle-le racines »), et appelle une
+proposition nouvelle, revérifiée.
+
+**Rien n'est créé sans accord.** L'accord, d'un clic ou d'un « oui » tapé, déclare **ce que la
+carte montrait**, relu du fil. La déclaration passe par la voie de `POST /api/projets`, puis par
+celle de `POST …/versionner` si la mise sous Git était proposée. Un dossier **importé** est ensuite
+**lu** (#1158), et ce que la lecture en a compris nourrit la réponse. La réponse porte le projet
+déclaré (`projet_cree`), affiché sous la bulle. La porte l'ouvre alors : il devient le projet actif,
+et **la même conversation continue** dans la colonne de droite du projet. Un refus ne crée rien,
+et la conversation continue. Une déclaration refusée par le disque se dit, et la proposition est
+reposée.
+
+**Ce qui reste à l'écran Projets** : la **gestion**. On y modifie une déclaration (le formulaire
+ne sert plus qu'à cela), on la retire, on la met sous Git. Rien n'y crée plus de projet.
+L'outillage d'un projet se construit dans la même conversation, pièce par pièce (#1161).
+
+Implémentation : `components/projets/NaissanceProjet.tsx`, `components/chat/DemandeDeProjet.tsx`,
+`lib/naissance.ts`, `lib/useChat.ts` (`declarerProjet`) ; côté API §6.15.1. Couverture :
+`apps/web/tests/projet-actif.test.tsx`, `projets.test.tsx`,
+[`tests/test_naissance_projet.py`](../tests/test_naissance_projet.py), et le scénario de référence
+S7 ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)).
 
 ### 2.1 🏠 Tableau de bord (vue d'accueil)
 
@@ -2084,9 +2145,18 @@ reste l'écran Projets et n'ira jamais aux Paramètres. Le **répertoire des pro
 projet neuf*, un dossier par défaut commun à tous — est une autre question, et celle-là est bien un
 réglage de cette installation-ci : il ne dit rien d'un projet déclaré, il dit dans quel dossier le
 **prochain** sera créé. Il vit donc dans une section « Projets » des Paramètres, sous la famille
-« Le poste », et le formulaire de déclaration s'en sert pour **remplir d'office** le dossier parent
-d'un projet neuf. La ligne de partage : ce qui décrit un projet est sur l'écran Projets, ce qui
-décrit ce poste-ci est dans les Paramètres.
+« Le poste ». Depuis #1294, c'est l'**orchestration** qui s'en sert : il est dans les faits qu'elle
+reçoit pour proposer le dossier d'un projet neuf (§2.0.2). Le formulaire ne crée plus. La ligne de
+partage : ce qui décrit un projet est sur l'écran Projets, ce qui décrit ce poste-ci est dans les
+Paramètres.
+
+⚠ **Depuis #1294, cet écran ne crée plus de projet** (§2.0.2, docs/43 §2.2). Un projet naît dans la
+conversation, sur la porte d'entrée : « Nouveau projet » y ramène en quittant le projet ouvert. Le
+formulaire décrit ci-dessous ne sert plus qu'à **modifier** une déclaration. Tout ce qui ne servait
+qu'à créer est parti avec la création : le choix de l'origine, le dossier parent prérempli, le nom du
+dossier à créer, et l'étape d'outillage enchaînée après la déclaration. L'étape d'outillage reste
+offerte aux projets déjà déclarés (« Outiller maintenant »), jusqu'à ce que #1161 la mette dans la
+conversation.
 
 **Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
 le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS
@@ -6025,6 +6095,53 @@ Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.
 [`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑨ et
 `apps/web/tests/demande-cadrage.test.tsx`.
 
+#### 6.15.1 Déclarer un projet depuis le fil (#1294)
+
+Le pendant, pour un **projet**, de la demande de cadrage ci-dessus (§2.0.2 pour l'écran). Le juge
+de l'orchestration rend un quatrième verdict, `projet`, dont la dernière ligne porte la proposition
+brute :
+
+```json
+{"verdict": "projet", "objectif": "",
+ "projet": {"nom": "…", "dossier": "…", "origine": "nouveau|existant", "versionner": true,
+            "raisons": {"nom": "…", "dossier": "…", "versionnement": "…"}}}
+```
+
+Elle est **vérifiée par le code** avant de voyager (`ServiceNaissance.verifier`). La réponse porte
+alors `projet_propose`, qui ne cohabite avec aucune autre demande :
+
+```json
+{"nom": "kombucha-vitrine", "racine": "C:/Users/moi/Maestro/kombucha-vitrine",
+ "origine": "nouveau", "versionner": true, "deja_versionne": false,
+ "raison_nom": "…", "raison_dossier": "…", "raison_versionnement": "…",
+ "ajustements": ["Le dossier … existe déjà et n'est pas vide : proposé …-2 à la place."]}
+```
+
+**La route.** `POST /api/chat/{agent}/projet` → `201` + la même paire qu'un envoi. Son corps est
+`{approuve, conversation}`, **rien d'autre** : ce qui est déclaré est la proposition que le fil
+porte, relue du fil. Une correction se dit dans la conversation, jamais dans ce corps. Un accord
+déclare par la voie de `POST /api/projets`, puis par celle de `POST …/versionner` si c'était
+proposé ; un dossier importé est ensuite lu (#1158). La réponse porte `projet_cree`
+(`{id, nom, racine, origine, versionne, versionnement_refuse}`), que l'écran lit pour ouvrir le
+projet. Un refus ne crée rien. Le geste s'écrit dans le fil (« Oui, crée ce projet. », « Non, ne
+crée pas ce projet. »).
+
+**Un « oui » tapé vaut le clic.** Sur le verdict `accord`, si le message d'avant portait une
+proposition de projet que rien d'autre n'a suivie, c'est **elle** qui est déclarée
+(`_projet_approuve`), et non ce que le modèle aurait recopié.
+
+**`409` quand rien n'attend** (`DeclarationIntrouvable`), pour les mêmes trois raisons que le
+cadrage : le double clic ne déclare pas deux projets. Une déclaration refusée par le disque ne lève
+pas : elle se raconte, et la proposition est reposée.
+
+Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.py)
+(`DemandeProjet`, `ProjetCree`, `projet_en_attente`, `ServiceChat.declarer_projet`),
+[`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`VERDICT_PROJET`, `RepondeurOrchestration.declarer_projet`),
+[`maestro/controltower/naissance.py`](../maestro/controltower/naissance.py) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`tests/test_naissance_projet.py`](../tests/test_naissance_projet.py).
+
 ### 6.16 Borner un run depuis le chat (#990) — **livré**
 
 Le moteur sait arrêter un run sur quatre garde-fous depuis #9 — `plafond_cout_usd`,
@@ -6486,9 +6603,10 @@ qu'elles portent.
 
 > ⚠ **Le chemin de création change** ([docs/43 §2.2 et §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
 > 2026-09-24), à la demande de la personne.
-> - Un projet **naît dans la conversation** (#1294), et son outillage s'y construit **pièce par
->   pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` du formulaire quitte le chemin
->   de création.
+> - Un projet **naît dans la conversation** (#1294, **livré** — §2.0.2), et son outillage s'y
+>   construit **pièce par pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` a
+>   quitté le chemin de création avec le formulaire ; elle reste offerte, depuis l'écran Projets, à
+>   un projet déjà déclaré.
 > - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
 >   qui ne le lit pas nativement (#1295).
 >

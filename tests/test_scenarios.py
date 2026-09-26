@@ -676,10 +676,16 @@ def _scenario(identifiant: str) -> Scenario:
 # --- ① Le déroulé -----------------------------------------------------------
 
 
-def test_les_six_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
-    """Six scénarios, S1 à S6, et seuls S2, S4, S5 et S6 se rejouent (docs/40 §5)."""
-    assert [s.identifiant for s in SCENARIOS] == ["S1", "S2", "S3", "S4", "S5", "S6"]
-    assert {s.identifiant for s in SCENARIOS if s.rejouable} == {"S2", "S4", "S5", "S6"}
+def test_les_sept_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
+    """Sept scénarios, S1 à S7, et seuls S2, S4, S5, S6 et S7 se rejouent (docs/40 §5)."""
+    assert [s.identifiant for s in SCENARIOS] == ["S1", "S2", "S3", "S4", "S5", "S6", "S7"]
+    assert {s.identifiant for s in SCENARIOS if s.rejouable} == {
+        "S2",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+    }
 
 
 def test_chaque_scenario_declare_son_propre_projet_jetable(tmp_path: Path) -> None:
@@ -1967,6 +1973,161 @@ def test_s6_est_un_empechement_quand_l_analyse_ne_propose_aucun_dev(tmp_path: Pa
 
     assert issue.empechement
     assert api.runs == []
+
+
+# --- S7 — un projet naît dans la conversation (#1294) --------------------------
+
+
+class ApiQuiFaitNaitre(FausseAPI):
+    """Le fil **sans projet** qui fait naître un projet : il propose, se laisse corriger, déclare.
+
+    Ce qu'elle modélise est ce dont l'oracle de S7 dépend, et rien d'autre : la
+    proposition voyage sur la réponse (`projet_propose`), une correction en mots
+    **repropose** avec le nom et le dossier demandés, et seul le geste de
+    `POST …/projet` déclare. Chacun de ses paramètres fait le défaut qu'un rouge
+    doit voir : un fil qui interroge sans fin, une correction ignorée, un projet
+    déclaré dès la proposition.
+    """
+
+    def __init__(
+        self,
+        repertoire: Path,
+        *,
+        questions: int = 0,
+        prend_la_correction: bool = True,
+        declare_a_la_proposition: bool = False,
+        versionne: bool = True,
+    ) -> None:
+        super().__init__()
+        # Où le fil range sa première proposition — le répertoire des projets du
+        # poste, jamais un vrai dossier de l'utilisateur dans un test.
+        self._repertoire = repertoire
+        self._questions = questions
+        self._prend = prend_la_correction
+        self._declare_tot = declare_a_la_proposition
+        self._versionne = versionne
+        self._proposee: dict[str, Any] | None = None
+        self.messages: list[dict[str, Any]] = []
+        self.declares: list[dict[str, Any]] = []
+
+    def demander(
+        self,
+        methode: str,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
+    ) -> Reponse:
+        if chemin == "/api/projets" and methode == "GET":
+            self.appels.append((methode, chemin))
+            return Reponse(statut=200, corps=list(self.declares))
+        if chemin == f"{FIL}/projet":
+            self.appels.append((methode, chemin))
+            return self._accord(corps or {})
+        return super().demander(methode, chemin, corps=corps, params=params, delai_s=delai_s)
+
+    def _message(self, corps: Mapping[str, Any]) -> Reponse:
+        contenu = str(corps.get("contenu") or "")
+        self.messages.append(dict(corps))
+        if self._questions > 0:
+            self._questions -= 1
+            return self._paire(contenu, {"contenu": "Pour qui est ce site ?", "run_id": ""})
+        dossier = _dossier_dit(contenu)
+        if self._proposee is None or dossier is None or not self._prend:
+            proposee = {
+                "nom": "kombucha-vitrine",
+                "racine": (self._repertoire / "kombucha-vitrine").as_posix(),
+                "origine": "nouveau",
+                "versionner": self._versionne,
+            }
+            if self._proposee is not None:
+                proposee = dict(self._proposee)
+        else:
+            proposee = {
+                "nom": "racines",
+                "racine": dossier,
+                "origine": "nouveau",
+                "versionner": self._versionne,
+            }
+        self._proposee = proposee
+        if self._declare_tot:
+            self._declarer_sur(proposee)
+        return self._paire(
+            contenu, {"contenu": "Je vous le propose.", "run_id": "", "projet_propose": proposee}
+        )
+
+    def _accord(self, corps: Mapping[str, Any]) -> Reponse:
+        if self._proposee is None:
+            return Reponse(statut=409, corps={}, texte="rien à déclarer")
+        cree = self._declarer_sur(self._proposee)
+        return self._paire(
+            "Oui, crée ce projet.",
+            {"contenu": "C'est fait.", "run_id": "", "projet_cree": cree},
+        )
+
+    def _declarer_sur(self, proposee: Mapping[str, Any]) -> dict[str, Any]:
+        racine = Path(str(proposee["racine"]))
+        racine.mkdir(parents=True, exist_ok=True)
+        if proposee.get("versionner"):
+            (racine / ".git").mkdir(exist_ok=True)
+        fiche = {
+            "id": f"prj-{len(self.declares) + 1}",
+            "nom": proposee["nom"],
+            "racine": racine.as_posix(),
+            "origine": proposee["origine"],
+            "versionne": bool(proposee.get("versionner")),
+        }
+        self.declares.append(fiche)
+        return fiche
+
+
+def _dossier_dit(contenu: str) -> str | None:
+    """Le dossier qu'une correction nomme — la fausse API n'a pas de modèle pour le comprendre."""
+    marque = "dans le dossier "
+    if marque not in contenu:
+        return None
+    return contenu.split(marque, 1)[1].rstrip(".")
+
+
+def test_s7_est_vert_quand_la_correction_est_prise_et_l_accord_declare(tmp_path: Path) -> None:
+    api = ApiQuiFaitNaitre(tmp_path / "Maestro", questions=1)
+    issue, ctx = _banc(tmp_path, api).jouer(_scenario("S7"))
+
+    assert issue.vert, issue.motif
+    # Le fil **sans projet**, du premier mot à l'accord.
+    assert {str(m.get("projet_id") or "") for m in api.messages} == {""}
+    # Une question du fil a reçu une réponse, puis la correction est partie.
+    assert len(api.messages) == 3
+    assert ctx.racine is not None and ctx.racine.is_relative_to(ctx.atelier.racine)
+    assert ctx.projet_id == "prj-1"
+    assert (ctx.racine / ".git").exists()
+
+
+def test_s7_est_rouge_quand_le_fil_interroge_sans_jamais_proposer(tmp_path: Path) -> None:
+    api = ApiQuiFaitNaitre(tmp_path / "Maestro", questions=10)
+    issue, _ = _banc(tmp_path, api).jouer(_scenario("S7"))
+
+    assert not issue.vert
+    assert "aucun projet" in issue.motif
+
+
+def test_s7_est_rouge_quand_la_correction_est_ignoree(tmp_path: Path) -> None:
+    api = ApiQuiFaitNaitre(tmp_path / "Maestro", prend_la_correction=False)
+    issue, _ = _banc(tmp_path, api).jouer(_scenario("S7"))
+
+    assert not issue.vert
+    assert "correction du dossier n'a pas été prise" in issue.motif
+    # Rien n'est accordé sur une proposition que la personne a corrigée.
+    assert api.declares == []
+
+
+def test_s7_est_rouge_quand_un_projet_est_declare_avant_l_accord(tmp_path: Path) -> None:
+    api = ApiQuiFaitNaitre(tmp_path / "Maestro", declare_a_la_proposition=True)
+    issue, _ = _banc(tmp_path, api).jouer(_scenario("S7"))
+
+    assert not issue.vert
+    assert "avant l'accord" in issue.motif
 
 
 # --- Le périmètre exclu, sur le disque --------------------------------------

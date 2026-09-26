@@ -3,7 +3,7 @@
     .venv/Scripts/python.exe -m maestro.scenarios [--scenario S1[,S3]] [--delai <s>]
                                                   [--nettoyer] [--liste]
 
-Six scénarios joués de bout en bout contre la **vraie stack** et le **vrai
+Sept scénarios joués de bout en bout contre la **vraie stack** et le **vrai
 modèle**, par la porte d'entrée réelle — le fil de l'orchestrateur, proposition
 puis accord —, avec un verdict, un coût, une durée et un `run_id` par scénario
 (docs/40 §5). Il n'est **pas en CI** : un passage coûte du vrai modèle.

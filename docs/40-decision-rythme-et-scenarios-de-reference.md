@@ -154,6 +154,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
 | S5 | « Comment j'essaie ce que le run a livré ? » | La fin du run **se raconte dans le fil**, met en lien un fichier du livrable qui **existe sur le disque**, et dit comment l'essayer — jugé par un modèle (#1224). La réponse **s'écrit en direct**, et une réponse fondée sur une lecture **montre ses lectures** dans le fil (#1265) |
 | S6 | Le plan appelle un métier que l'équipe n'a pas | Sur un projet d'un seul `dev`, le rôle manquant **se propose dans le fil** qui a lancé le run, avant la première tâche ; accepté, il prend ses tâches et le run aboutit (#1260) |
+| S7 | Un projet naît dans la conversation | Sur le fil **sans projet**, « je veux un site vitrine pour mon kombucha » amène une proposition (nom, dossier, versionnement) ; une correction **en mots** est prise ; **rien n'est déclaré avant l'accord**, et l'accord déclare le projet sur le dossier demandé (#1294) |
 
 **S3 a son comportement depuis #1146.** Sur un projet sans agent, le fil ne propose plus de run : il
 dit pourquoi (personne pour prendre les tâches) et propose l'équipe que l'analyse du projet appelle
@@ -199,6 +200,15 @@ lisait la paire rendue d'un coup par `POST …/messages`. Deux constats s'ajoute
   sans rien lire, parce que le récit lui donnait déjà la commande. C'était une bonne réponse.
 
 Les deux sont structurels : des trames, des instants, des étapes. Aucun mot n'est lu (#746).
+
+**S7 joue la création d'un projet par la conversation** (#1294, docs/43 §2.2). Il part d'une
+conversation neuve, **sans projet**, et dit la phrase du retour du 2026-09-24. Le fil a trois tours
+pour proposer : le banc répond à ses questions comme quelqu'un qui n'a pas d'avis. Puis il corrige
+en mots, le nom (« racines », l'exemple du critère) et le dossier, qu'il range dans l'atelier du
+passage pour ne rien laisser dans le répertoire des projets du poste. Il constate que la liste des
+projets de l'API ne connaît pas encore ce dossier, que la proposition corrigée porte le nom et le
+dossier demandés, puis que l'accord déclare le projet sur ce dossier, sous Git si c'était proposé.
+Tout est lu dans l'API et sur le disque : aucun mot de la réponse n'est jugé.
 
 **S6 porte ce que les tests ne voyaient pas** (#1260). #1227 avait livré la confrontation de
 l'équipe au plan, tests verts. Le bouclage du 2026-09-24 l'a rejouée sur la vraie stack : rien dans

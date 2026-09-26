@@ -14,12 +14,26 @@
  * projet **pendant** qu'on gère la liste. La coquille branche donc les écritures
  * de l'écran sur la relecture du projet actif — supprimer la racine courante
  * ramène ainsi à la porte d'entrée (#279) au lieu de laisser un cadre vide.
+ *
+ * Et depuis #1294, « Nouveau projet » **quitte** le projet ouvert : un projet
+ * naît dans la conversation, sur la porte d'entrée, hors du cadre d'un autre
+ * (docs/43 §2.2). La demande de création voyage jusqu'à la porte par la mémoire
+ * de session (`demanderNaissance`).
  */
 
 import { ListeProjets } from "@/components/projets/ListeProjets";
 import { useProjetActif } from "@/lib/etatProjetActif";
+import { demanderNaissance } from "@/lib/naissance";
 
 export default function PageProjets() {
-  const { recharger } = useProjetActif();
-  return <ListeProjets apresEcriture={() => void recharger()} />;
+  const { recharger, quitter } = useProjetActif();
+  return (
+    <ListeProjets
+      apresEcriture={() => void recharger()}
+      nouveauProjet={() => {
+        demanderNaissance();
+        quitter();
+      }}
+    />
+  );
 }

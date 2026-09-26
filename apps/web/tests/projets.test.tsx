@@ -4,9 +4,14 @@
  * Ce que ces tests protègent en propre, au-delà du rendu :
  *
  * 1. **aucun chemin absolu ne se tape** — la racine vient toujours d'un chemin
- *    énuméré par l'API, y compris pour un dossier à créer (où l'utilisateur ne
- *    saisit qu'un *nom*). Un champ de saisie libre pour la racine ferait
+ *    énuméré par l'API. Un champ de saisie libre pour la racine ferait
  *    tomber le critère sans qu'aucun autre test s'en aperçoive ;
+ *
+ * ⚠ Depuis #1294 **un projet ne se crée plus ici** : il naît dans la
+ * conversation, sur la porte d'entrée (`tests/projet-actif.test.tsx`).
+ * « Nouveau projet » y renvoie (`nouveauProjet`), et le formulaire ne sert plus
+ * qu'à **modifier** — c'est donc par « Modifier » que ces tests atteignent
+ * l'explorateur, le dialogue du poste et les refus motivés, qui n'ont pas bougé.
  * 2. **un refus s'affiche avec son motif et ne casse rien** (EF-38) — ni la
  *    liste, ni la navigation de l'explorateur, ni la saisie en cours ;
  * 3. **un dossier vide n'est pas un refus** — la distinction que docs/05 §6.7
@@ -44,20 +49,17 @@ import { ErreurProjet } from "@/lib/api";
 import type {
   ChoixSelecteur,
   DisponibiliteSelecteur,
+  Projet,
   RepertoireProjets,
 } from "@/lib/types";
-import {
-  cheminEnfant,
-  motifsDepuisTexte,
-  nomDossierValide,
-  texteDepuisMotifs,
-} from "@/lib/projets";
+import { motifsDepuisTexte, texteDepuisMotifs } from "@/lib/projets";
 
 import { dossierFactice, pageExplorateurFactice, projetFactice } from "./aides";
 
 const chargerProjets = vi.fn();
 const chargerExplorateur = vi.fn();
 const creerProjet = vi.fn();
+const nouveauProjet = vi.fn();
 const modifierProjet = vi.fn();
 const supprimerProjet = vi.fn();
 const versionnerProjet = vi.fn();
@@ -147,16 +149,31 @@ beforeEach(() => {
 
 /** La page rendue, une fois le premier chargement passé. */
 async function page() {
-  render(<ListeProjets />);
+  render(<ListeProjets nouveauProjet={nouveauProjet} />);
   return await screen.findByRole("region", { name: "Projets déclarés" });
 }
 
-/** Le formulaire de création, explorateur ouvert sur « D:/projets ». */
-async function formulaireAvecExplorateur(utilisateur: ReturnType<typeof userEvent.setup>) {
+/**
+ * Le projet qu'on modifie pour atteindre l'explorateur : sa racine n'est **pas**
+ * dans la page que l'explorateur montre, pour que choisir « depensio » soit un
+ * vrai changement.
+ */
+const ANCIEN = projetFactice({ nom: "Ancien", racine: "D:/anciens/ancien" });
+
+/**
+ * Le formulaire de modification d'« Ancien », explorateur ouvert — les `autres`
+ * projets restant listés à côté.
+ */
+async function formulaireAvecExplorateur(
+  utilisateur: ReturnType<typeof userEvent.setup>,
+  autres: Projet[] = [],
+) {
+  chargerProjets.mockResolvedValue([ANCIEN, ...autres]);
   await page();
-  await utilisateur.click(screen.getByRole("button", { name: /Nouveau projet/ }));
+  const carte = await screen.findByRole("listitem", { name: "Projet Ancien" });
+  await utilisateur.click(within(carte).getByRole("button", { name: "Modifier" }));
   await utilisateur.click(
-    screen.getByRole("button", { name: /Choisir un dossier/ }),
+    screen.getByRole("button", { name: /Changer de dossier/ }),
   );
   return await screen.findByRole("region", {
     name: "Explorateur de dossiers",
@@ -208,8 +225,30 @@ describe("la liste des projets", () => {
   });
 });
 
+describe("la création quitte l'écran Projets (#1294)", () => {
+  it("« Nouveau projet » renvoie à la conversation, sans formulaire ni déclaration", async () => {
+    const utilisateur = userEvent.setup();
+    await page();
+
+    await utilisateur.click(screen.getByRole("button", { name: /Nouveau projet/ }));
+
+    // C'est l'appelant qui quitte le projet ouvert pour la porte d'entrée : ici,
+    // rien ne s'ouvre, et rien ne se déclare.
+    expect(nouveauProjet).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(creerProjet).not.toHaveBeenCalled();
+    expect(chargerRepertoireProjets).not.toHaveBeenCalled();
+  });
+
+  it("n'offre pas de « Nouveau projet » sans chemin vers la conversation", async () => {
+    render(<ListeProjets />);
+    await screen.findByRole("region", { name: "Projets déclarés" });
+    expect(screen.queryByRole("button", { name: /Nouveau projet/ })).toBeNull();
+  });
+});
+
 describe("le choix de la racine (explorateur servi par l'API)", () => {
-  it("déclare un projet sur un dossier énuméré, sans qu'un chemin soit saisi", async () => {
+  it("change la racine pour un dossier énuméré, sans qu'un chemin soit saisi", async () => {
     const utilisateur = userEvent.setup();
     const explorateur = await formulaireAvecExplorateur(utilisateur);
 
@@ -221,22 +260,22 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
       within(explorateur).getByRole("button", { name: "Choisir depensio" }),
     );
 
-    // Le nom du dossier fait un premier jet de nom de projet.
-    expect(screen.getByLabelText("Nom du projet")).toHaveValue("depensio");
     // Aucun champ de saisie ne porte la racine : elle n'est qu'affichée.
     expect(screen.queryByRole("textbox", { name: /[Rr]acine/ })).toBeNull();
+    expect(screen.getByText("D:/projets/depensio")).toBeInTheDocument();
 
     await utilisateur.click(
-      screen.getByRole("button", { name: "Déclarer le projet" }),
+      screen.getByRole("button", { name: "Enregistrer les modifications" }),
     );
 
-    expect(creerProjet).toHaveBeenCalledWith({
-      nom: "depensio",
-      racine: "D:/projets/depensio",
-      origine: "existant",
-      inclus: null,
-      exclus: null,
-    });
+    expect(modifierProjet).toHaveBeenCalledWith(
+      ANCIEN.id,
+      expect.objectContaining({
+        nom: "Ancien",
+        racine: "D:/projets/depensio",
+        origine: "existant",
+      }),
+    );
     // La liste se relit : la racine canonicalisée et le VCS viennent du backend.
     await waitFor(() => expect(chargerProjets).toHaveBeenCalledTimes(2));
   });
@@ -245,7 +284,8 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
     const utilisateur = userEvent.setup();
     const explorateur = await formulaireAvecExplorateur(utilisateur);
 
-    expect(chargerExplorateur).toHaveBeenCalledWith(null);
+    // L'explorateur s'ouvre sur la racine du projet modifié.
+    expect(chargerExplorateur).toHaveBeenCalledWith("D:/anciens/ancien");
     await utilisateur.click(
       await within(explorateur).findByRole("button", { name: "Ouvrir depensio" }),
     );
@@ -271,241 +311,6 @@ describe("le choix de la racine (explorateur servi par l'API)", () => {
       }),
     ).toBeDisabled();
   });
-
-  it("compose la racine d'un nouveau dossier à partir d'un parent énuméré", async () => {
-    // Le cas que l'explorateur ne peut pas montrer — le dossier n'existe pas
-    // encore. La saisie se réduit alors à un **nom**, jamais à un chemin.
-    //
-    // Le bouton dit « Changer » et non « Choisir » depuis #1022 : le parent est
-    // déjà rempli par le répertoire des projets, et le choisir soi-même est
-    // désormais un **remplacement**.
-    const utilisateur = userEvent.setup();
-    await page();
-    await utilisateur.click(
-      screen.getByRole("button", { name: /Nouveau projet/ }),
-    );
-    await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
-    await utilisateur.click(
-      await screen.findByRole("button", { name: /Changer de dossier/ }),
-    );
-    const explorateur = await screen.findByRole("region", {
-      name: "Explorateur de dossiers",
-    });
-    await utilisateur.click(
-      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
-    );
-
-    await utilisateur.type(
-      screen.getByLabelText("Nom du dossier à créer"),
-      "depensio",
-    );
-    await utilisateur.type(screen.getByLabelText("Nom du projet"), "Dépensio");
-    await utilisateur.click(
-      screen.getByRole("button", { name: "Déclarer le projet" }),
-    );
-
-    expect(creerProjet).toHaveBeenCalledWith({
-      nom: "Dépensio",
-      racine: "D:/projets/depensio",
-      origine: "nouveau",
-      inclus: null,
-      exclus: null,
-    });
-  });
-
-  it("barre un nom de dossier qui serait en fait un chemin", async () => {
-    const utilisateur = userEvent.setup();
-    await page();
-    await utilisateur.click(
-      screen.getByRole("button", { name: /Nouveau projet/ }),
-    );
-    await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
-    await utilisateur.click(
-      await screen.findByRole("button", { name: /Changer de dossier/ }),
-    );
-    const explorateur = await screen.findByRole("region", {
-      name: "Explorateur de dossiers",
-    });
-    await utilisateur.click(
-      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
-    );
-
-    await utilisateur.type(screen.getByLabelText("Nom du projet"), "Dépensio");
-    await utilisateur.type(
-      screen.getByLabelText("Nom du dossier à créer"),
-      "../ailleurs",
-    );
-
-    expect(
-      screen.getByRole("button", { name: "Déclarer le projet" }),
-    ).toBeDisabled();
-    expect(screen.getByText(/pas un chemin/)).toBeInTheDocument();
-  });
-});
-
-describe("le répertoire des projets (#1022)", () => {
-  /** Le formulaire de création, basculé sur « Nouveau dossier ». */
-  async function formulaireNouveauDossier(
-    utilisateur: ReturnType<typeof userEvent.setup>,
-  ) {
-    await page();
-    await utilisateur.click(
-      screen.getByRole("button", { name: /Nouveau projet/ }),
-    );
-    await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
-  }
-
-  it("remplit d'office le dossier parent d'un projet neuf", async () => {
-    const utilisateur = userEvent.setup();
-    await formulaireNouveauDossier(utilisateur);
-
-    // Le chemin est là **sans qu'on ait choisi** — deux fois : le parent, et la
-    // racine déclarée qui s'en compose (vide, elle vaut le parent).
-    expect(await screen.findAllByText("D:/projets")).toHaveLength(2);
-    await utilisateur.type(
-      screen.getByLabelText("Nom du dossier à créer"),
-      "depensio",
-    );
-    expect(screen.getByText("D:/projets/depensio")).toBeInTheDocument();
-  });
-
-  it("dit d'où vient la valeur, et que la changer ici n'engage que ce projet", async () => {
-    // La variante retenue sur pièces : ce que la veille reproche à IntelliJ, à
-    // GitHub Desktop et à Unity Hub est qu'aucun ne dit *pourquoi ce chemin-là*.
-    const utilisateur = userEvent.setup();
-    await formulaireNouveauDossier(utilisateur);
-
-    expect(
-      await screen.findByText(/ne vaut que pour ce projet/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "Paramètres" }),
-    ).toHaveAttribute("href", "/parametres#projets");
-  });
-
-  it("laisse choisir un autre dossier pour ce projet, sans rien régler", async () => {
-    const utilisateur = userEvent.setup();
-    chargerExplorateur.mockResolvedValue(
-      pageExplorateurFactice({
-        chemin: "D:/ailleurs",
-        parent: null,
-        dossiers: [],
-      }),
-    );
-    await formulaireNouveauDossier(utilisateur);
-    await utilisateur.click(
-      await screen.findByRole("button", { name: /Changer de dossier/ }),
-    );
-    const explorateur = await screen.findByRole("region", {
-      name: "Explorateur de dossiers",
-    });
-    await utilisateur.click(
-      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
-    );
-
-    // Le chemin a changé, la ligne le dit — et rien n'a été écrit côté réglage :
-    // le formulaire ne connaît que la lecture.
-    expect(
-      await screen.findByText(/Hors de votre répertoire des projets/),
-    ).toBeInTheDocument();
-    await utilisateur.type(
-      screen.getByLabelText("Nom du dossier à créer"),
-      "depensio",
-    );
-    expect(screen.getByText("D:/ailleurs/depensio")).toBeInTheDocument();
-
-    // Et le retour au répertoire des projets, qui est la seconde moitié de
-    // « modifiable » : un choix qu'on ne peut pas défaire n'en est pas un.
-    await utilisateur.click(
-      screen.getByRole("button", { name: /Revenir au répertoire des projets/ }),
-    );
-    expect(screen.getByText("D:/projets/depensio")).toBeInTheDocument();
-  });
-
-  it("ne dit « hors du répertoire » que d'un dossier qui l'est vraiment", async () => {
-    // Constat de la relecture visuelle : choisir soi-même, dans l'explorateur,
-    // le dossier qui EST le répertoire des projets faisait dire à l'écran le
-    // contraire de ce qu'il montrait. Les deux chemins viennent de la même API,
-    // canonicalisés de la même façon : l'égalité suffit à les reconnaître.
-    const utilisateur = userEvent.setup();
-    chargerExplorateur.mockResolvedValue(
-      pageExplorateurFactice({ chemin: "D:/projets", parent: null, dossiers: [] }),
-    );
-    await formulaireNouveauDossier(utilisateur);
-    await utilisateur.click(
-      await screen.findByRole("button", { name: /Changer de dossier/ }),
-    );
-    const explorateur = await screen.findByRole("region", {
-      name: "Explorateur de dossiers",
-    });
-    await utilisateur.click(
-      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
-    );
-
-    expect(
-      await screen.findByText(/ne vaut que pour ce projet/),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/Hors de votre répertoire des projets/),
-    ).not.toBeInTheDocument();
-  });
-
-  it("n'impose rien à l'import d'un projet existant", async () => {
-    // Le troisième critère du ticket, et la seule chose que GitHub Desktop
-    // vérifie de la même façon : *Add Local Repository* ne préremplit rien.
-    const utilisateur = userEvent.setup();
-    await page();
-    await utilisateur.click(
-      screen.getByRole("button", { name: /Nouveau projet/ }),
-    );
-
-    expect(await screen.findByText("aucun dossier choisi")).toBeInTheDocument();
-    expect(screen.queryByText("D:/projets")).not.toBeInTheDocument();
-
-    // Et le réglage ne s'impose pas davantage au retour : ce qu'il avait posé
-    // pour « nouveau dossier » se retire avec lui.
-    await utilisateur.click(screen.getByLabelText("Nouveau dossier"));
-    expect(await screen.findAllByText("D:/projets")).toHaveLength(2);
-    await utilisateur.click(screen.getByLabelText("Dossier existant"));
-    expect(await screen.findByText("aucun dossier choisi")).toBeInTheDocument();
-    expect(screen.queryByText("D:/projets")).not.toBeInTheDocument();
-  });
-
-  it("dit un répertoire devenu indisponible au lieu de le taire", async () => {
-    const utilisateur = userEvent.setup();
-    chargerRepertoireProjets.mockResolvedValue(
-      repertoireFactice({
-        chemin: "E:/disparu",
-        par_defaut: false,
-        existe: false,
-        refus: {
-          motif: "dossier-absent",
-          message: "Racine introuvable : E:/disparu n'existe pas.",
-        },
-      }),
-    );
-    await formulaireNouveauDossier(utilisateur);
-
-    expect(
-      await screen.findByText(/répertoire des projets est indisponible/),
-    ).toBeInTheDocument();
-    // Rien n'est prérempli d'un chemin qu'on sait refusé : le dossier se choisit
-    // comme avant, et le formulaire n'est pas en panne pour autant.
-    expect(screen.getByText("aucun dossier choisi")).toBeInTheDocument();
-  });
-
-  it("n'appelle pas le réglage quand on modifie un projet", async () => {
-    // Modifier un projet ne le déplace pas : le répertoire n'a rien à y dire.
-    const utilisateur = userEvent.setup();
-    chargerProjets.mockResolvedValue([projetFactice()]);
-    await page();
-    await utilisateur.click(
-      await screen.findByRole("button", { name: "Modifier" }),
-    );
-
-    await screen.findByRole("form", { name: "Modifier Dépensio" });
-    expect(chargerRepertoireProjets).not.toHaveBeenCalled();
-  });
 });
 
 describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
@@ -513,8 +318,8 @@ describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
    * Le formulaire **prêt à partir** (nom + racine), explorateur rouvert.
    *
    * C'est la seule mise en scène où une soumission fautive se voit : tant que
-   * la racine manque, « Déclarer le projet » est désactivé et une `Entrée`
-   * égarée ne prouverait rien — le bug de #312 passerait au vert.
+   * le formulaire ne peut pas partir, une `Entrée` égarée ne prouverait rien —
+   * le bug de #312 passerait au vert.
    */
   async function formulairePretExplorateurOuvert(
     utilisateur: ReturnType<typeof userEvent.setup>,
@@ -526,7 +331,7 @@ describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
       }),
     );
     expect(
-      screen.getByRole("button", { name: "Déclarer le projet" }),
+      screen.getByRole("button", { name: "Enregistrer les modifications" }),
     ).toBeEnabled();
     await utilisateur.click(
       screen.getByRole("button", { name: /Changer de dossier/ }),
@@ -547,17 +352,17 @@ describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
     expect(document.querySelectorAll("form")).toHaveLength(1);
   });
 
-  it("ouvre le chemin saisi sur Entrée, sans déclarer le projet", async () => {
+  it("ouvre le chemin saisi sur Entrée, sans enregistrer le projet", async () => {
     const utilisateur = userEvent.setup();
     const barre = await formulairePretExplorateurOuvert(utilisateur);
 
     await utilisateur.type(barre, "D:/depots{Enter}");
 
     expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/depots");
-    expect(creerProjet).not.toHaveBeenCalled();
+    expect(modifierProjet).not.toHaveBeenCalled();
   });
 
-  it("ne déclare rien non plus sur une Entrée à vide", async () => {
+  it("n'enregistre rien non plus sur une Entrée à vide", async () => {
     // La soumission implicite du navigateur est coupée *avant* de regarder la
     // saisie : sinon un champ vide laisserait passer `Entrée` jusqu'au
     // formulaire porteur — le geste le plus banal des deux.
@@ -567,7 +372,7 @@ describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
 
     await utilisateur.type(barre, "{Enter}");
 
-    expect(creerProjet).not.toHaveBeenCalled();
+    expect(modifierProjet).not.toHaveBeenCalled();
     expect(chargerExplorateur).toHaveBeenCalledTimes(lectures);
   });
 
@@ -579,7 +384,7 @@ describe("l'explorateur rendu dans le formulaire de projet (#312)", () => {
     await utilisateur.click(screen.getByRole("button", { name: "Aller" }));
 
     expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/depots");
-    expect(creerProjet).not.toHaveBeenCalled();
+    expect(modifierProjet).not.toHaveBeenCalled();
   });
 });
 
@@ -645,9 +450,9 @@ describe("le sélecteur de dossier natif (#278)", () => {
 
     await utilisateur.click(bouton()!);
 
-    expect(await screen.findByText(/Racine déclarée/)).toHaveTextContent(
-      "D:/projets/depensio",
-    );
+    // Le dossier choisi remplace la racine du projet, explorateur refermé.
+    expect(await screen.findByText("D:/projets/depensio")).toBeInTheDocument();
+    expect(screen.queryByText("D:/anciens/ancien")).toBeNull();
   });
 
   it("ouvre l'explorateur sur un dossier lisible mais non déclarable, motif affiché", async () => {
@@ -689,8 +494,9 @@ describe("le sélecteur de dossier natif (#278)", () => {
 
     await utilisateur.click(bouton()!);
 
-    expect(screen.queryByText(/Racine déclarée/)).toBeNull();
-    expect(screen.getByText("aucun dossier choisi")).toBeInTheDocument();
+    // La racine du projet est restée la sienne.
+    expect(screen.getAllByText("D:/anciens/ancien").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(chargerExplorateur).toHaveBeenCalledTimes(lectures);
   });
 
@@ -776,22 +582,25 @@ describe("les points d'entrée de l'explorateur (#278)", () => {
 
 describe("un refus motivé (EF-38)", () => {
   it("montre le motif d'une racine refusée sans perdre la saisie ni la liste", async () => {
-    chargerProjets.mockResolvedValue([projetFactice()]);
-    creerProjet.mockRejectedValue(
+    modifierProjet.mockRejectedValue(
       new ErreurProjet(
         "chemin-sensible",
         "Zone sensible : C:/Users/moi/.ssh est protégé",
       ),
     );
     const utilisateur = userEvent.setup();
-    const explorateur = await formulaireAvecExplorateur(utilisateur);
+    const explorateur = await formulaireAvecExplorateur(utilisateur, [
+      projetFactice({ id: "prj-autre", nom: "Dépensio" }),
+    ]);
     await utilisateur.click(
       await within(explorateur).findByRole("button", {
         name: "Choisir depensio",
       }),
     );
+    await utilisateur.clear(screen.getByLabelText("Nom du projet"));
+    await utilisateur.type(screen.getByLabelText("Nom du projet"), "Ancien revu");
     await utilisateur.click(
-      screen.getByRole("button", { name: "Déclarer le projet" }),
+      screen.getByRole("button", { name: "Enregistrer les modifications" }),
     );
 
     const refus = await screen.findByRole("alert");
@@ -805,7 +614,7 @@ describe("un refus motivé (EF-38)", () => {
     expect(
       screen.getByRole("listitem", { name: "Projet Dépensio" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Nom du projet")).toHaveValue("depensio");
+    expect(screen.getByLabelText("Nom du projet")).toHaveValue("Ancien revu");
   });
 
   it("garde la navigation de l'explorateur quand un dossier est refusé", async () => {
@@ -1084,18 +893,17 @@ describe("le texte de l'écran (#946)", () => {
     expect(region).not.toHaveTextContent("jamais en tapant un chemin");
   });
 
-  it("donne un nom accessible au titre du formulaire de création", async () => {
+  it("donne un nom accessible au titre du formulaire", async () => {
+    chargerProjets.mockResolvedValue([projetFactice()]);
     const utilisateur = userEvent.setup();
     await page();
 
-    await utilisateur.click(
-      screen.getByRole("button", { name: /Nouveau projet/ }),
-    );
+    await utilisateur.click(await screen.findByRole("button", { name: "Modifier" }));
 
     // Le `aria-label` du `<form>` ne dispense pas le titre d'un nom : sans lui,
     // la carte n'a pas de tête dans l'arbre d'accessibilité (C12).
     expect(
-      screen.getByRole("heading", { level: 3, name: "Nouveau projet" }),
+      screen.getByRole("heading", { level: 3, name: "Modifier « Dépensio »" }),
     ).toBeInTheDocument();
   });
 });
@@ -1113,33 +921,4 @@ describe("le vocabulaire du périmètre (lib/projets)", () => {
     );
   });
 
-  it("compose un chemin d'enfant sans doubler le séparateur", () => {
-    expect(cheminEnfant("D:/projets", "depensio")).toBe("D:/projets/depensio");
-    expect(cheminEnfant("D:/projets/", "depensio")).toBe("D:/projets/depensio");
-    expect(cheminEnfant("D:/projets", "  ")).toBe("D:/projets");
-  });
-
-  it("garde le séparateur du parent, sans en mélanger deux (#1022)", () => {
-    // Un parent rendu par le dialogue du poste porte des antislashs, et la
-    // ligne « Racine déclarée » le montre : `C:\Users\moi\Maestro/depensio` ne
-    // ressemble à un chemin d'aucun poste. Relevé par le regard neuf sur les
-    // variantes de #1022 — c'était déjà vrai avant le préremplissage.
-    expect(cheminEnfant("C:\\Users\\moi\\Maestro", "depensio")).toBe(
-      "C:\\Users\\moi\\Maestro\\depensio",
-    );
-    expect(cheminEnfant("C:\\Users\\moi\\Maestro\\", "depensio")).toBe(
-      "C:\\Users\\moi\\Maestro\\depensio",
-    );
-    // Un chemin mixte reste en POSIX : c'est la forme que l'API rend, et la
-    // seule dont on soit sûr qu'elle vienne d'elle.
-    expect(cheminEnfant("C:/Users\\moi", "depensio")).toBe("C:/Users\\moi/depensio");
-  });
-
-  it("ne prend pour nom de dossier qu'un nom de dossier", () => {
-    expect(nomDossierValide("depensio")).toBe(true);
-    expect(nomDossierValide("a/b")).toBe(false);
-    expect(nomDossierValide("a\\b")).toBe(false);
-    expect(nomDossierValide("..")).toBe(false);
-    expect(nomDossierValide(" ")).toBe(false);
-  });
 });
