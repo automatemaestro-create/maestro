@@ -169,8 +169,28 @@ plutôt que d'annoncer « 100 % » de zéro fichier.
 > version. Maestro dit pourquoi.
 >
 > Ne bougent pas : **un pont, jamais une copie** ; ne jamais écraser un fichier que Maestro n'a pas
-> écrit ; et, tant que #1295 ne l'a pas retranché sur pièce, l'écart de `.gemini/settings.json`
-> ci-dessous.
+> écrit ; et l'écart de `.gemini/settings.json` ci-dessous, **retranché sur pièce par #1295** (voir
+> plus bas).
+>
+> **Ce que #1295 applique**, dans `recommander` (`maestro/outillage/recommandation.py`), commun
+> au projet importé et au projet neuf :
+>
+> | Le client | Ce que Maestro propose |
+> | --- | --- |
+> | Aucun client trouvé ni nommé | `AGENTS.md` seul. Les deux ponts sont **écartés**, avec leur raison |
+> | Claude Code ≥ 2.1.277 | Aucun pont : il lit `AGENTS.md`, et un `CLAUDE.md` masquerait cette lecture |
+> | Claude Code < 2.1.277, ou de version illisible | `CLAUDE.md` d'une ligne. Une version inconnue n'est pas supposée récente |
+> | Gemini CLI | `GEMINI.md` d'une ligne |
+> | Un client qui lit `AGENTS.md` (Codex, Cursor, opencode, Copilot) | Aucun pont. Sa raison le nomme sur `AGENTS.md` |
+> | Un client que Maestro ne connaît pas | Aucun pont, et il le dit : il ne sait pas ce que ce client lit |
+> | Un pont **déjà présent** dans un projet importé | Gardé tel quel, jamais retiré. S'il masque la lecture d'un client utilisé, Maestro n'y écrit qu'un bloc `@AGENTS.md` (§4.2) |
+>
+> Les clients sont ceux **du poste**, résolus sur le `PATH` avec leur `--version`
+> (`maestro/clients_du_poste.py`), et ceux que la personne **nomme** : « j'utilise aussi Gemini
+> CLI », compris par le questionnaire sous le sujet `clients`. Un client introuvable n'est pas
+> supposé présent. La table de ce que chaque client lit (`maestro/outillage/clients.py`) est
+> faite de faits datés et sourcés ; celui qui dépend d'une version se rejoue sur le vrai CLI
+> ([`tests/test_outillage_clients.py`](../tests/test_outillage_clients.py), marqué `cli_reel`).
 
 À côté d'`AGENTS.md`, Maestro écrit deux fichiers d'**une ligne** :
 
@@ -193,6 +213,20 @@ réglages du client, pas un fichier du projet ; le toucher reviendrait à config
 quelqu'un pour lui, là où `GEMINI.md` est un fichier de texte comme les deux autres. Si la personne
 préfère le réglage, l'import ne la gêne pas.
 
+> **Retranché sur pièce le 2026-09-27** (#1295), et l'écart tient. Les deux formes sont vérifiées :
+> `GEMINI.md` importe par `@file.md`
+> ([gemini-md.md](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md)),
+> et [agents.md](https://agents.md/) documente `{"context": {"fileName": "AGENTS.md"}}` dans le
+> `.gemini/settings.json` **du projet**. Trois faits départagent, et ils vont tous vers
+> `GEMINI.md` :
+> - **un JSON n'a pas de bloc délimité.** Dans un `.gemini/settings.json` qui existe déjà, Maestro
+>   ne pourrait ni insérer sa ligne sans réécrire le fichier, ni la retrouver pour la régénérer
+>   (§4.2). Un `GEMINI.md` existant reçoit un bloc `@AGENTS.md`, comme un `CLAUDE.md` ;
+> - **`context.fileName` remplace le nom par défaut** : un `GEMINI.md` que la personne tient déjà
+>   cesserait d'être lu, sauf à le recopier dans la liste. L'import, lui, n'ôte rien ;
+> - **c'est un réglage du client, pas un fichier du projet** — la frontière de §5, qui ne laisse
+>   pas l'outillage configurer un outil à la place de la personne.
+
 Si le projet **possède déjà** l'un de ces fichiers, Maestro ne l'écrase pas — il n'en possède aucun
 qu'il n'ait écrit (§4.2). Il y insère un bloc délimité, ou le signale ; c'est le même mécanisme, et
 il est décrit avec le manifeste.
@@ -208,8 +242,9 @@ et la seconde compte autant que la première :
    à déménager son outillage.
 
 Reste Claude Code, qui ne balaie pas `.agents/skills/`. Il n'est pas joint par une copie, il l'est
-par la **désignation** — la section `## L'outillage de ce projet` d'`AGENTS.md`, qu'il lit par le
-pont de §3.2, nomme le dossier, donne l'index des skills et dit quoi en faire :
+par la **désignation** — la section `## L'outillage de ce projet` d'`AGENTS.md`, qu'il lit de
+lui-même depuis la v2.1.277 et par le pont de §3.2 avant, nomme le dossier, donne l'index des
+skills et dit quoi en faire :
 
 > Les skills de ce projet sont dans `.agents/skills/`. Si ton agent ne les charge pas de lui-même,
 > lis le `SKILL.md` de celui qui correspond à ta tâche avant de commencer.
@@ -264,9 +299,9 @@ ce n'est pas le défaut.
 
 ```
 <racine du projet>/
-├── AGENTS.md                          # les instructions — la source
-├── CLAUDE.md                          # @AGENTS.md
-├── GEMINI.md                          # @AGENTS.md
+├── AGENTS.md                          # les instructions — la source, et le seul fichier d'instructions
+├── CLAUDE.md                          # @AGENTS.md — seulement si un client le demande (#1295)
+├── GEMINI.md                          # @AGENTS.md — idem
 ├── .agents/
 │   └── skills/
 │       └── lancer-les-tests/
@@ -609,7 +644,8 @@ reste entière — *seules les commandes que personne n'a décidées d'avance at
 | Une **seconde copie** des skills pour Claude Code | Un skill est un arbre avec ses scripts : deux copies, c'est deux scripts, donc un correctif sur un seul (§3.3) |
 | Un **lien symbolique** `.claude/skills` | Non vérifié côté Claude Code, et privilégié sous Windows — il échouerait sans le dire (§3.3) |
 | Recopier `AGENTS.md` dans `CLAUDE.md` et `GEMINI.md` | Trois sources pour une instruction. Le pont d'une ligne fait le même travail sans dériver (§3.2) |
-| Écrire `.gemini/settings.json` | C'est le réglage du client, pas un fichier du projet (§3.2) |
+| Écrire `.gemini/settings.json` | C'est le réglage du client, pas un fichier du projet ; un JSON n'a pas de bloc délimité, et `context.fileName` ferait taire un `GEMINI.md` existant — retranché sur pièce par #1295 (§3.2) |
+| Écrire les ponts **d'office** | Un pont pour un client que personne n'utilise est une supposition, et un `CLAUDE.md` masque la lecture native de Claude Code ≥ 2.1.277 — renversé par #1295 (§3.2, §7) |
 | Générer les trois formats de commande | Aucun format commun, et le skill rend déjà le service dans deux clients sur quatre (§3.5) |
 | Le manifeste dans `.agents/` | Il finirait lu comme une consigne par les trois clients qui balaient ce dossier (§4.3) |
 | Honorer `allowed-tools` d'un skill du projet | Une permission se déclare par une personne, jamais par un fichier — fût-il écrit par Maestro (§5.1) |
@@ -629,6 +665,19 @@ se **revérifie**, jamais ne se suppose :
 - **La spécification Agent Skills fixe un emplacement.** Elle ne le fait pas aujourd'hui ; si elle
   le faisait, elle l'emporterait sur ce choix, qui n'existe que pour combler son silence.
 - **Un format de commande commun apparaît.** §3.5 redeviendrait un arbitrage plutôt qu'un constat.
+
+Et une a **déjà** fait bouger la décision, ce qui prouve que la liste n'est pas décorative :
+
+- **Claude Code lit `AGENTS.md` de lui-même** — depuis la v2.1.277, et seulement si aucun
+  `CLAUDE.md` ne le masque ([code.claude.com](https://code.claude.com/docs/en/memory), vérifié le
+  2026-09-24). Le pont `CLAUDE.md` de §3.2 ne sert plus qu'aux versions antérieures, et écrit
+  sans raison il **masque** la lecture native. D'où le renversement de §3.2 : un pont ne s'écrit
+  plus d'office, mais pour un client utilisé qui ne lit pas `AGENTS.md` à sa version (#1295,
+  [docs/43 §2.3](./43-decision-un-projet-nait-dans-la-conversation.md)). Ce fait dépend d'une
+  **version**, donc il se rejoue : un test de contrat interroge le vrai CLI installé, sur un
+  dossier qui n'a qu'un `AGENTS.md` puis sur le même masqué par un `CLAUDE.md`
+  ([`tests/test_outillage_clients.py`](../tests/test_outillage_clients.py), `cli_reel`).
+  Le jour où **Gemini CLI lira `AGENTS.md` par défaut**, son pont disparaîtra de la même façon.
 
 Et une qui tient au dépôt : **la frontière de §5.3 se mesure, elle ne se décrète pas**. La mesure a
 été faite (§5.4) et elle a confirmé §5.3 — un `CLAUDE.md` de projet entrait bien dans le contexte.
@@ -669,6 +718,7 @@ de la règle à la ligne qui l'exécute, et à la suite qui la garde.
 | #1033 — génération | §3.6 pour l'arbre, §4.2 pour les quatre cas, et le nom d'atelier réservé (§4.3) | [`maestro/outillage/redaction.py`](../maestro/outillage/redaction.py) (le texte), `generation.py` (les quatre cas), `ecriture.py` (le régime de [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) ; `POST …/outillage/generation` |
 | #1160 — vérifier en exécutant (renverse la « convention » écrite sans être jouée) | Chaque commande écrite est jouée avant, dans une copie de l'arbre outillé, sous la portée « projet » (`maestro.portee`) ; son verdict va au texte, à `verifications` (§4.1) et au rapport | [`maestro/outillage/verification.py`](../maestro/outillage/verification.py) (quelles commandes, quel verdict), [`maestro/sandbox/verification.py`](../maestro/sandbox/verification.py) (la copie, bash, l'arrêt de l'arbre) ; [`tests/test_outillage_verification.py`](../tests/test_outillage_verification.py) ; l'écran : [`VerificationsOutillage.tsx`](../apps/web/components/projets/VerificationsOutillage.tsx) |
 | #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) | `apps/web/components/projets/EtapeOutillage.tsx` ; `POST …/outillage/report`, et `outillage.a_faire` sur la fiche du projet |
+| #1295 — un seul `AGENTS.md` (renverse les deux ponts d'office de §3.2) | Un pont ne s'écrit que pour un client utilisé — trouvé sur le poste avec sa version, ou nommé — qui ne lit pas `AGENTS.md` à cette version ; sinon il est écarté avec sa raison. La forme Gemini reste `GEMINI.md` (§3.2) | [`maestro/outillage/recommandation.py`](../maestro/outillage/recommandation.py) (`_ponts`), [`clients.py`](../maestro/outillage/clients.py) (ce que chaque client lit), [`maestro/clients_du_poste.py`](../maestro/clients_du_poste.py) (le `PATH` et `--version`) ; le sujet `clients` du questionnaire ; [`tests/test_outillage_clients.py`](../tests/test_outillage_clients.py) |
 | #1035 — tests + doc | Les faits de §2 se revérifient ; §7 dit lesquels | [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py), [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py), [`test_outillage_generation.py`](../tests/test_outillage_generation.py), [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py), [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) ; [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md) et [docs/05 §6.20](./05-interface-control-tower.md) |
 
 **Ce que les tests gardent de cette note, et pas ailleurs** (#1035) : les trois promesses de

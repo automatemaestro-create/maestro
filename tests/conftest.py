@@ -137,6 +137,14 @@ demande**. Ce que les doubles ne prouvent pas — que le CLI applique un refus d
 prouve sur le CLI réel, avec un vrai modèle : un tel test porte `@pytest.mark.cli_reel` et
 reste **sauté**, raison dite, sauf `MAESTRO_TESTS_CLI_REEL=1`. Même verdict sur tous les
 postes, et ce qu'il coûte n'est payé que par qui le demande.
+
+Onzième garde-fou (#1295) : **aucun test ne lit les clients d'agents du poste sans le dire**.
+Les ponts de l'outillage (`CLAUDE.md`, `GEMINI.md`) suivent les clients installés et leur
+version : une analyse jouée par l'API recommanderait autre chose sur un poste qui a Claude Code
+que sur la CI, et lancerait `claude --version` à chaque test. La garde ferme la porte du `PATH`
+(`maestro.clients_du_poste.resoudre` ne trouve rien) : un poste nu, celui de la CI. Un test qui
+veut des clients les passe en double ; un test qui veut **vraiment** ceux du poste le dit avec
+`@pytest.mark.clients_du_poste`.
 """
 
 from __future__ import annotations
@@ -245,6 +253,10 @@ MARQUEUR_CLI_REEL = "cli_reel"
 #: La variable qui demande ces tests : `1` les joue, toute autre valeur les saute.
 CLE_CLI_REEL = "MAESTRO_TESTS_CLI_REEL"
 
+#: Le marqueur d'un test qui lit VRAIMENT les clients d'agents du poste (#1295) — la garde qui
+#: ferme la résolution sur le `PATH` s'efface alors.
+MARQUEUR_CLIENTS_DU_POSTE = "clients_du_poste"
+
 
 class FournisseurDuPosteRefuse(RuntimeError):
     """Levée par la garde à la place de la lecture des réglages du poste par la fabrique (#782).
@@ -306,6 +318,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         f"{MARQUEUR_CLI_REEL}: ce test lance le VRAI CLI du fournisseur et appelle un vrai modèle "
         f"(#1304) — sauté sauf `{CLE_CLI_REEL}=1`.",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{MARQUEUR_CLIENTS_DU_POSTE}: ce test lit VOLONTAIREMENT les clients d'agents installés "
+        "sur le poste (#1295) — la garde de tests/conftest.py qui ferme le `PATH` s'efface.",
     )
     # Poste sans git : le `skipif` de chaque module reste la bonne réponse.
     if not git_manquant_en_ci(dict(os.environ), shutil.which("git")):
@@ -612,3 +629,19 @@ def _pas_de_commande_du_projet_jouee(
     if request.node.get_closest_marker(MARQUEUR_COMMANDES_JOUEES) is not None:
         return
     monkeypatch.setattr("maestro.sandbox.verification.interprete", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _clients_du_poste_fermes(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un poste nu pour les clients d'agents, sauf au test qui les demande (#1295).
+
+    Ce qui est remplacé est `maestro.clients_du_poste.resoudre`, que `detecter` relit **à
+    chaque appel** : aucun client trouvé, donc aucune version lue, aucun processus lancé — un
+    vrai chemin du produit, celui d'un poste sans client, et le même partout. Un test qui passe
+    à `detecter` son propre `resolveur`, ou au service son propre détecteur, n'est pas concerné.
+    """
+    if request.node.get_closest_marker(MARQUEUR_CLIENTS_DU_POSTE) is not None:
+        return
+    monkeypatch.setattr("maestro.clients_du_poste.resoudre", lambda commande: None)

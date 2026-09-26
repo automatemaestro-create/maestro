@@ -778,7 +778,8 @@ dans le code et **vérifiée sur l'état réel** des runs, lu par l'API.
   - **#1161**, recadré, lot 6/7 : l'outillage **se construit dans la conversation**, pièce par
     pièce, chaque pièce sur accord, et se corrige en langage naturel ;
   - **#1295** : un projet n'a qu'un `AGENTS.md`. Un pont ne s'écrit que pour un client utilisé qui ne
-    le lit pas nativement (Claude Code le lit depuis sa v2.1.277).
+    le lit pas nativement (Claude Code le lit depuis sa v2.1.277). **Livré** : les clients du poste
+    avec leur version, et ceux que la conversation nomme ; un pont écarté dit pourquoi (docs/38 §3.2).
 - Le jalon gagne un critère **C5** : *un projet naît dans la conversation, et son outillage s'y écrit
   au fur et à mesure, chaque pièce sur accord.*
 

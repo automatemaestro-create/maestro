@@ -19,7 +19,8 @@ admissibles. Il tient deux choses, et seulement elles :
 
 - **le schéma de ce qui fait un outillage** (`SUJETS`) : la sorte de projet, son
   langage, le fichier où vivront ses commandes, son gestionnaire, la commande de chaque
-  usage (`USAGES` du modèle), sa forge, sa CI, sa convention de commit. Ce n'est pas un
+  usage (`USAGES` du modèle), sa forge, sa CI, sa convention de commit — et, depuis #1295, les
+  outils d'agent que la personne dit utiliser, qui décident des ponts. Ce n'est pas un
   catalogue de projets : c'est la forme des `Constats` que `recommander` lit, et les
   **valeurs** y sont libres — `flutter test`, `terraform validate`, `pubspec.yaml`.
   Un sujet hors de ce schéma est gardé (il se lit dans le fil) sans nourrir aucun
@@ -84,6 +85,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from maestro.outillage.clients import Client, clients_depuis_texte, reunir
 from maestro.outillage.modele import (
     USAGES,
     Commande,
@@ -111,6 +113,11 @@ AUCUN = "aucun"
 #: qu'est le projet, dit avec les mots de la personne.
 SUJET_NATURE = "nature"
 
+#: Le sujet des outils d'agent que la personne utilise (#1295) — « j'utilise aussi Gemini
+#: CLI ». Sa valeur est une liste séparée par des virgules, lue par
+#: `maestro.outillage.clients.clients_depuis_texte`.
+SUJET_CLIENTS = "clients"
+
 #: Le **schéma** de ce qui fait l'outillage d'un projet — les sujets qu'une
 #: compréhension renseigne, avec le nom qu'on leur donne à l'écran. Ce n'est pas un
 #: catalogue de réponses : les valeurs sont libres. C'est la forme des `Constats` que
@@ -133,6 +140,9 @@ SUJETS: dict[str, str] = {
     "forge": "forge",
     "ci": "intégration continue",
     "conventions": "convention de commit",
+    # Les clients d'agents que la personne **dit** utiliser (#1295) : ils décident des ponts,
+    # avec ceux que le poste révèle (`recommandation_depuis_choix`). Pas une commande.
+    SUJET_CLIENTS: "outils d'agent",
 }
 
 #: La longueur au-delà de laquelle un **constat** est tronqué. Un constat est une
@@ -718,14 +728,26 @@ def source_manifeste_des_choix(projet_id: str, choix: Sequence[Choix]) -> dict[s
     }
 
 
-def recommandation_depuis_choix(choix: Sequence[Choix]) -> Recommandation:
+def clients_depuis_choix(choix: Sequence[Choix]) -> tuple[Client, ...]:
+    """Les outils d'agent que la personne a nommés — le sujet `clients` acquis (#1295)."""
+    acquis = {c.cle: c for c in acquis_de(choix)}
+    nommes = acquis.get(SUJET_CLIENTS)
+    if nommes is None or _est_aucun(nommes.valeur):
+        return ()
+    return clients_depuis_texte(nommes.valeur)
+
+
+def recommandation_depuis_choix(
+    choix: Sequence[Choix], *, poste: Sequence[Client] = ()
+) -> Recommandation:
     """L'outillage que ces constats recommandent — **la recommandation du lot 2**.
 
-    Une ligne de corps : `recommander` est la fonction de
-    `maestro.outillage.recommandation`, appelée sans copie ni variante. Ce que cette
-    fonction ajoute est **uniquement** la mue des constats (`constats_depuis_choix`).
+    `recommander` est la fonction de `maestro.outillage.recommandation`, appelée sans
+    copie ni variante. Ce que cette fonction ajoute est **uniquement** la mue des
+    constats (`constats_depuis_choix`) et, depuis #1295, les clients d'agents : ceux que
+    `poste` a trouvés, réunis à ceux que la personne a nommés (`clients_depuis_choix`).
     """
-    return recommander(constats_depuis_choix(choix))
+    return recommander(constats_depuis_choix(choix), reunir(poste, clients_depuis_choix(choix)))
 
 
 def schema_en_texte() -> str:

@@ -2359,11 +2359,13 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     }
     assert repondeur._equipe is None and repondeur._recruteur is None
     assert repondeur._naissance is None
-    # #1147 donne au conducteur un collaborateur, et un seul : celui qui comprend
-    # le projet (le modèle). La garantie est poussée d'un cran de plus : il ne
-    # porte que son fournisseur — **le même** que celui du juge —, jamais une
-    # réponse, un tour ou une question en cours.
-    assert set(vars(repondeur._conducteur)) == {"_comprehension"}
+    # #1147 donne au conducteur un collaborateur : celui qui comprend le projet (le
+    # modèle) ; #1295 un second, celui qui trouve les clients du poste — le détecteur
+    # par défaut ici. La garantie est poussée d'un cran de plus : il ne porte que son
+    # fournisseur — **le même** que celui du juge —, jamais une réponse, un tour ou
+    # une question en cours.
+    assert set(vars(repondeur._conducteur)) == {"_comprehension", "_clients"}
+    assert repondeur._conducteur._clients is None
     assert vars(repondeur._conducteur._comprehension) == {"_provider": juge}
     assert repondeur._modele is None
 
