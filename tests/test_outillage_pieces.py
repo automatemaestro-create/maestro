@@ -735,11 +735,10 @@ def test_une_correction_incomprise_le_dit_et_la_piece_reste_proposee(
         )
     )
 
-    # La phrase du modèle suit les deux-points : sa majuscule tombe (vu sur la vraie stack).
-    assert reponse.contenu.startswith(
-        "Je n'ai rien changé à l'outillage : je ne vois pas quelle commande changer."
-    )
-    assert "Rien n'a été écrit" in reponse.contenu
+    # Le fait, et la raison du modèle — une fois : le juge a déjà dit, en ses mots, ce
+    # qu'il n'a pas compris (la seconde relecture l'avait lu deux fois de suite). La
+    # phrase du modèle suit les deux-points : sa majuscule tombe.
+    assert reponse.contenu == "Rien n'a été écrit : je ne vois pas quelle commande changer."
     assert reponse.piece == en_attente and reponse.corrections == ()
     assert not (racine / ".agents").exists()
 
@@ -1229,6 +1228,10 @@ def test_la_route_ouvre_l_outillage_d_un_projet_ecrit_la_piece_et_refuse_le_doub
     piece = message["piece"]
     assert piece["chemin"] == "AGENTS.md" and piece["ecrivable"] is True
     assert piece["texte_apres"] and piece["empreinte"]
+    # Le texte dit ce que la carte ne dit pas — le projet a été lu —, jamais la pièce
+    # qu'elle montre déjà (seconde relecture de #1161).
+    assert message["contenu"].startswith("J'ai lu « Dépensio »")
+    assert "AGENTS.md" not in message["contenu"]
 
     geste = client.post(
         f"/api/chat/{NOM_ORCHESTRATION}/outillage/piece",

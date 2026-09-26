@@ -104,15 +104,34 @@ export function PieceDOutillage({
   const echouee = piece.verifications.some((v) => v.etat === "echouee");
   const dites = piece.verifications.filter((v) => piece.corrigees?.includes(v.commande));
 
-  // Le diff replié est borné en hauteur : ce qui dépasse est **mesuré**, et se dit par
-  // le contrôle qui déplie. jsdom ne mesure rien — la carte y reste bornée en lignes.
+  // Le diff replié est borné en hauteur aussi, et **coupé à une ligne entière** : la
+  // seconde relecture l'avait vu tranché à mi-hauteur d'une ligne, à 320 px comme sur un
+  // téléphone. La borne est plus basse quand la boîte est étroite — les lignes s'y
+  // replient, et la carte entière doit tenir au-dessus du composeur. Ce qui dépasse se
+  // dit par le contrôle qui déplie. jsdom ne mesure rien : la carte y reste bornée en
+  // lignes, et rien n'y est coupé.
+  const [hauteur, setHauteur] = useState<number | null>(null);
   useLayoutEffect(() => {
     const el = cadre.current;
     if (el === null || ouvert) {
       setCoupe(false);
+      setHauteur(null);
       return;
     }
-    const mesurer = () => setCoupe(el.scrollHeight > el.clientHeight + 1);
+    const mesurer = () => {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const limite = (el.clientWidth < 360 ? 12 : 18) * rem;
+      const lignes = Array.from(el.firstElementChild?.children ?? []) as HTMLElement[];
+      const fin = (ligne: HTMLElement) => ligne.offsetTop + ligne.offsetHeight;
+      if (lignes.every((ligne) => fin(ligne) <= limite)) {
+        setCoupe(false);
+        setHauteur(null);
+        return;
+      }
+      const entieres = lignes.filter((ligne) => fin(ligne) <= limite);
+      setCoupe(true);
+      setHauteur(entieres.length > 0 ? Math.max(...entieres.map(fin)) : limite);
+    };
     mesurer();
     if (typeof ResizeObserver === "undefined") return;
     const observateur = new ResizeObserver(mesurer);
@@ -164,10 +183,8 @@ export function PieceDOutillage({
       <div
         id={`${id}-diff`}
         ref={cadre}
-        className={
-          "mt-3 overflow-hidden rounded-controle border border-bord bg-surface" +
-          (ouvert ? "" : " max-h-72")
-        }
+        className="relative mt-3 overflow-hidden rounded-controle border border-bord bg-surface"
+        style={coupe && hauteur !== null ? { maxHeight: hauteur } : undefined}
       >
         <LignesDiff entrees={montrees} aplatDesAjouts={!diff.neuf} />
       </div>

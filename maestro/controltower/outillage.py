@@ -493,14 +493,19 @@ def _texte_de_la_piece(
     - la version est **en échec** — rien n'a été écrit, et cela doit se lire même
       sans la carte.
 
-    Sinon, le prélude seul ; sans prélude, la phrase de la pièce — un message ne se
-    persiste pas vide —, sauf derrière le juge (`apres_le_juge`), qui a déjà parlé.
+    Sinon, le prélude seul ; derrière le juge (`apres_le_juge`), rien — il a déjà parlé.
+    Sans prélude ni juge — l'ouverture de l'outillage d'un projet qui se **lit** —, ce
+    que la carte ne dit pas : que le projet a été lu, et comment l'outillage va venir.
+    Un message ne se persiste pas vide.
     """
     if faits or piece.echec:
         return _joint(prelude, _phrase_de_la_piece(piece))
     if prelude or apres_le_juge:
         return prelude
-    return _phrase_de_la_piece(piece)
+    return (
+        f"J'ai lu « {piece.projet_nom} » : son outillage se propose pièce par pièce, "
+        "chacune sur votre accord."
+    )
 
 
 def _en_suite(phrase: str) -> str:
@@ -859,12 +864,12 @@ class ConducteurOutillage:
         reposee = attente.piece if attente is not None else None
         lue = await pieces.comprendre_correction(projet_id, fil, phrase)
         if not lue.comprise:
+            # Le fait et la raison du modèle, une fois : le juge a déjà dit, en ses mots,
+            # ce qu'il n'a pas compris et comment le redire (la seconde relecture l'avait
+            # lu deux fois de suite dans la même bulle).
             raison = _en_suite(lue.message) or "je n'ai pas compris ce qu'il faut changer."
             return ReponseChat(
-                contenu=(
-                    f"Je n'ai rien changé à l'outillage : {raison} Rien n'a été écrit — "
-                    "dites-le autrement, ou continuez."
-                ),
+                contenu=f"Rien n'a été écrit : {raison}",
                 piece=reposee,
                 projet_outille=projet_id,
             )
