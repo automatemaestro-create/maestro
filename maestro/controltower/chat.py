@@ -512,6 +512,8 @@ def projet_du_fil(fil: Sequence[MessageChat]) -> str | None:
     portent pas de périmètre ; ceux-là, si — ce sont des faits de ce projet-là.
     """
     for message in reversed(fil):
+        if message.projet_outille:
+            return message.projet_outille
         if message.piece is not None:
             return message.piece.projet_id
         if message.piece_ecrite is not None:
@@ -1472,6 +1474,12 @@ class MessageChat:
     phrase pour cause : deux faits que le tour suivant relit sans rappeler le modèle.
     Un même message peut porter le fait de la pièce d'avant **et** la suivante — comme
     `equipe` et `proposition` après un recrutement (#1146).
+
+    `projet_outille` (#1161) est le projet dont ce message **conduit l'outillage** — une
+    question, une pièce, la fin. Le fil est transverse (#281) et un outillage ouvert
+    pour un projet nommé (« Outiller maintenant ») n'a ni projet né ni pièce pour le
+    dire à la question suivante : vu sur la vraie stack, la réponse ne savait plus quel
+    projet outiller. Vide partout ailleurs et sur une ligne écrite avant ce lot.
     """
 
     agent: str
@@ -1496,6 +1504,7 @@ class MessageChat:
     piece: PieceProposee | None = None
     piece_ecrite: PieceEcrite | None = None
     corrections: tuple[Choix, ...] = ()
+    projet_outille: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -1533,6 +1542,7 @@ class MessageChat:
                 self.piece_ecrite.to_dict() if self.piece_ecrite is not None else None
             ),
             "corrections": [c.to_dict() for c in self.corrections],
+            "projet_outille": self.projet_outille,
         }
 
     @property
@@ -1626,6 +1636,7 @@ class MessageChat:
                 for c in data.get("corrections") or ()
                 if isinstance(c, Mapping)
             ),
+            projet_outille=str(data.get("projet_outille") or ""),
         )
 
 
@@ -1717,6 +1728,7 @@ class ReponseChat:
     `piece` (#1161) est la cinquième — une pièce d'outillage à écrire —, et elle ne
     cohabite avec aucune autre demande ; `piece_ecrite` et `corrections` sont des
     faits : ce qu'un geste a fait de la pièce d'avant, ce qu'une phrase a corrigé.
+    `projet_outille` dit de quel projet ce tour conduit l'outillage.
     """
 
     contenu: str
@@ -1733,6 +1745,7 @@ class ReponseChat:
     piece: PieceProposee | None = None
     piece_ecrite: PieceEcrite | None = None
     corrections: tuple[Choix, ...] = ()
+    projet_outille: str = ""
 
 
 @dataclass(frozen=True)
@@ -3515,6 +3528,7 @@ class ServiceChat:
             piece=reponse.piece,
             piece_ecrite=reponse.piece_ecrite,
             corrections=reponse.corrections,
+            projet_outille=reponse.projet_outille,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message

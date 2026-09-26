@@ -147,6 +147,7 @@ import asyncio
 import json
 import os
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -535,9 +536,14 @@ class ConducteurOutillage:
 
         Avec un service de pièces (#1161) et un projet connu, ce qui suit le
         questionnaire est la **première pièce**, et un projet qui a déjà ses fichiers
-        n'a pas de questionnaire du tout : il se lit.
+        n'a pas de questionnaire du tout : il se lit. Le projet est **posé sur le
+        tour** (`projet_outille`), pour que le suivant sache encore lequel outiller.
         """
         projet = projet_id or projet_du_fil(fil)
+        return _outille(await self._tour_de(fil, projet), projet)
+
+    async def _tour_de(self, fil: Sequence[MessageChat], projet: str | None) -> ReponseChat:
+        """Le tour lui-même, pour `projet` s'il est connu — voir `_tour`."""
         reponses = choix_du_fil(fil)
         if (
             self._pieces is not None
@@ -597,6 +603,7 @@ class ConducteurOutillage:
                 comprehension=comprehension,
                 piece_ecrite=fait,
                 corrections=tuple(corrections),
+                projet_outille=projet_id,
             )
         return ReponseChat(
             contenu=_joint(prelude, _phrase_de_la_piece(suivante)),
@@ -604,6 +611,7 @@ class ConducteurOutillage:
             comprehension=comprehension,
             piece_ecrite=fait,
             corrections=tuple(corrections),
+            projet_outille=projet_id,
         )
 
     def _nom_du_projet(self, projet_id: str) -> str:
@@ -662,7 +670,8 @@ class ConducteurOutillage:
                     f"Noté : je n'écris rien de plus dans « {piece.projet_nom} » pour "
                     "l'instant. Son outillage vous sera rappelé sur la fiche du projet, et "
                     "vous pourrez le reprendre ici quand vous voudrez."
-                )
+                ),
+                projet_outille=piece.projet_id,
             )
         if decision == DECISION_PASSER:
             fait = piece_ecartee(piece)
@@ -679,9 +688,12 @@ class ConducteurOutillage:
                         f"Je n'ai rien écrit : {echec}. La pièce reste proposée ci-dessous."
                     ),
                     piece=piece,
+                    projet_outille=piece.projet_id,
                 )
         if not fait.ecrite and fait.etat != PIECE_ECARTEE:
-            return ReponseChat(contenu=_phrase_du_fait(fait), piece_ecrite=fait)
+            return ReponseChat(
+                contenu=_phrase_du_fait(fait), piece_ecrite=fait, projet_outille=piece.projet_id
+            )
         return await self._piece(
             fil,
             piece.projet_id,
@@ -731,6 +743,7 @@ class ConducteurOutillage:
                     "dites-le autrement, ou continuez."
                 ),
                 piece=reposee,
+                projet_outille=projet_id,
             )
         if lue.corrections and pieces.sans_effet(lue.corrections, fil):
             sujets = ", ".join(sujet_de(c.cle) for c in lue.corrections)
@@ -741,6 +754,7 @@ class ConducteurOutillage:
                 ),
                 corrections=lue.corrections,
                 piece=reposee,
+                projet_outille=projet_id,
             )
         return await self._piece(
             fil,
@@ -767,6 +781,11 @@ class ConducteurOutillage:
 def _joint(prelude: str, corps: str) -> str:
     """Colle le prélude au corps — sans ligne vide inutile quand l'un des deux manque."""
     return "\n\n".join(morceau for morceau in (prelude, corps) if morceau)
+
+
+def _outille(reponse: ReponseChat, projet: str | None) -> ReponseChat:
+    """Le tour, marqué du projet dont il conduit l'outillage (#1161) — tel quel sans projet."""
+    return replace(reponse, projet_outille=projet) if projet else reponse
 
 
 def _empreinte(indices: Analyse) -> str:

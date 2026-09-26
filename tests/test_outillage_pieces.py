@@ -941,6 +941,38 @@ def test_la_route_ouvre_l_outillage_d_un_projet_ecrit_la_piece_et_refuse_le_doub
     assert not (racine / "CLAUDE.md").exists()
 
 
+def test_un_outillage_ouvert_pour_un_projet_le_retient_d_une_question_a_l_autre(
+    projets: ServiceProjets, tmp_path: Path, _maison: Path
+) -> None:
+    """Vu sur la vraie stack : ouvert par `?projet=` sur un dossier vide, l'outillage posait
+    la question ouverte, puis concluait « aucune écriture n'est branchée » — le projet
+    nommé à l'ouverture n'était écrit nulle part dans le fil, et la réponse ne savait
+    plus quel projet outiller."""
+    racine = _maison / "Maestro" / "api"
+    projet_id = str(projets.creer("api", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+    app = create_app(
+        bus=InMemoryEventBus(),
+        state=ControlTowerState(),
+        chat_store=ChatStore(tmp_path / "chat"),
+        projets=projets,
+        orchestration_repondeur=_repondeur(projets, _Modele(comprehension=COMPRIS_FLUTTER)),
+    )
+    with TestClient(app) as client:
+        ouverture = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/outillage/questionnaire", params={"projet": projet_id}
+        )
+        question = ouverture.json()["messages"][0]
+        reponse = client.post(
+            f"/api/chat/{NOM_ORCHESTRATION}/outillage",
+            json={"valeur": "Une application mobile Flutter", "libre": True},
+        )
+
+    assert question["question"]["cle"] == "nature" and question["projet_outille"] == projet_id
+    suite = reponse.json()["messages"][1]
+    assert suite["piece"] is not None and suite["piece"]["projet_id"] == projet_id
+    assert "Aucune écriture n'est branchée" not in suite["contenu"]
+
+
 def test_la_route_passe_une_piece_sans_l_ecrire(
     client_pieces: tuple[TestClient, str, Path],
 ) -> None:
