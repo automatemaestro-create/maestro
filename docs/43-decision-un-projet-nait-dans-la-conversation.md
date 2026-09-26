@@ -83,7 +83,7 @@ Dans le code, créer un projet est un **formulaire en trois étapes** : `Formula
 
 **Après** (#1295) :
 - un projet a **`AGENTS.md` seul**, et ses skills ;
-- un pont ne s'écrit que pour un client **que la personne utilise** (dit dans la conversation, ou trouvé sur le poste avec sa version) et qui **ne lit pas `AGENTS.md`** à cette version. Il prend alors la forme la plus légère **vérifiée**. Le choix entre `GEMINI.md` et `.gemini/settings.json` reste celui de §3.2 tant que #1295 ne l'a pas retranché sur pièce ;
+- un pont ne s'écrit que pour un client **que la personne utilise** (dit dans la conversation, ou trouvé sur le poste avec sa version) et qui **ne lit pas `AGENTS.md`** à cette version. Il prend alors la forme la plus légère **vérifiée**. Pour Gemini CLI, #1295 l'a retranché sur pièce : c'est `GEMINI.md` d'une ligne, pas `.gemini/settings.json` ([docs/38 §3.2](./38-decision-outillage-universel-du-projet.md)) ;
 - Maestro dit pourquoi il n'y a qu'un fichier, ou pourquoi il ajoute un pont. « J'utilise aussi Gemini » l'ajoute ;
 - un projet importé qui a déjà ses ponts les garde. Maestro ne retire jamais ce qu'il n'a pas écrit (§4.2 de docs/38).
 

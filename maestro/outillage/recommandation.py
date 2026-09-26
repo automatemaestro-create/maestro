@@ -18,9 +18,15 @@ constats fabriqués, sans projet réel.
    délimité. Rien ne disparaît de la réponse : « déjà là » est une information,
    et une entrée qui s'efface se lirait comme un oubli.
 3. **Ce qui n'est pas recommandé est nommé, avec sa raison.** `ecartes` porte
-   les commandes — que docs/38 §3.5 écarte par décision — et chaque usage
-   qu'aucun constat ne justifie. Sans cette liste, « pas de skill de tests » se
-   lirait comme une défaillance de Maestro plutôt que comme un fait du projet.
+   les commandes — que docs/38 §3.5 écarte par décision —, chaque usage
+   qu'aucun constat ne justifie, et depuis #1295 chaque **pont** qu'aucun client
+   ne demande. Sans cette liste, « pas de skill de tests » se lirait comme une
+   défaillance de Maestro plutôt que comme un fait du projet, et « pas de
+   `CLAUDE.md` » comme un oubli.
+
+Et une quatrième depuis #1295 : **un pont suit un client, jamais une liste**. Un
+`CLAUDE.md` ou un `GEMINI.md` ne se propose que pour un client que la personne
+utilise et qui ne lit pas `AGENTS.md` à sa version (`_ponts`).
 
 ## Ce que ce module ne décide pas
 
@@ -36,6 +42,9 @@ pour éviter.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from maestro.outillage.clients import CLIENTS_CONNUS, Client, ClientConnu, par_cle
 from maestro.outillage.detection import DOSSIERS_SKILLS
 from maestro.outillage.modele import (
     Commande,
@@ -95,31 +104,55 @@ RAISON_AUCUNE_COMMANDE = (
 )
 
 
-def recommander(constats: Constats) -> Recommandation:
+def recommander(constats: Constats, clients: Sequence[Client] = ()) -> Recommandation:
     """L'outillage que `constats` justifie, et ce qui a été écarté.
 
-    L'ordre des entrées est celui de docs/38 §3.6 — les instructions, les deux
-    ponts, puis les skills : c'est l'ordre de lecture d'un projet outillé, et
-    c'est celui dans lequel #1033 les écrira.
+    L'ordre des entrées est celui de docs/38 §3.6 — les instructions, les ponts
+    qu'il faut, puis les skills : c'est l'ordre de lecture d'un projet outillé,
+    et c'est celui dans lequel #1033 les écrira.
+
+    `clients` (#1295) sont les clients d'agents que la personne utilise — trouvés
+    sur le poste avec leur version (`maestro.clients_du_poste`), ou nommés dans la
+    conversation (`maestro.outillage.clients.clients_depuis_texte`). Ils décident
+    des **ponts**, et d'eux seuls : aucun client, aucun pont — un client
+    introuvable n'est pas supposé présent. La règle vit **ici**, une fois, pour
+    le projet importé comme pour le projet neuf (docs/43 §2.3).
     """
     presents = {piece.chemin: piece for piece in constats.outillage_present}
-    entrees: list[Entree] = [_instructions(constats, presents)]
-    entrees.extend(_ponts(presents))
+    utilises = par_cle(clients)
+    ponts, ponts_ecartes = _ponts(presents, utilises)
+    entrees: list[Entree] = [_instructions(constats, presents, utilises)]
+    entrees.extend(ponts)
     entrees.extend(_skills(constats))
-    return Recommandation(entrees=tuple(entrees), ecartes=tuple(_ecartes(constats)))
+    ecartes = _ecartes(constats)
+    return Recommandation(
+        entrees=tuple(entrees), ecartes=(*ecartes[:1], *ponts_ecartes, *ecartes[1:])
+    )
 
 
-def _instructions(constats: Constats, presents: dict[str, Piece]) -> Entree:
-    """`AGENTS.md` — toujours recommandé, jamais écrasé.
+def _instructions(
+    constats: Constats, presents: dict[str, Piece], utilises: dict[str, Client]
+) -> Entree:
+    """`AGENTS.md` — toujours recommandé, jamais écrasé, et le **seul** fichier d'instructions.
 
     C'est la seule entrée qui ne dépend d'aucun constat : un projet sans
     gestionnaire, sans CI et sans test a quand même besoin qu'on dise ce qu'il
     est. Sa **justification** est en revanche bien constatée — le `README` s'il
     y en a un, le dossier de scripts sinon —, parce que c'est de là que son
-    contenu sortira.
+    contenu sortira. Sa raison nomme les clients de la personne qui le lisent de
+    **eux-mêmes** (#1295) : c'est la moitié de « pourquoi un seul fichier ».
     """
     deja = "AGENTS.md" in presents
     readme = next((piece for piece in constats.conventions if piece.nom == "README.md"), None)
+    lecteurs = [
+        client.nomme()
+        for client in utilises.values()
+        if (connu := client.connu) is not None
+        and connu.lit_agents_md(
+            client.version, pont_present=connu.pont is not None and connu.pont in presents
+        )
+    ]
+    lu_par = f" — lu tel quel par {', '.join(lecteurs)}" if lecteurs else ""
     return Entree(
         type="instructions",
         nom="AGENTS.md",
@@ -127,10 +160,10 @@ def _instructions(constats: Constats, presents: dict[str, Piece]) -> Entree:
         etat="a-completer" if deja else "a-generer",
         raison=(
             "le projet porte déjà un AGENTS.md : Maestro n'y écrirait qu'un bloc délimité, "
-            "sans toucher au reste"
+            f"sans toucher au reste{lu_par}"
             if deja
-            else "le fichier d'instructions que tous les clients lisent, et celui qui désigne "
-            "où sont les skills du projet"
+            else "le seul fichier d'instructions du projet, au format ouvert que lisent la "
+            f"plupart des clients d'agents, et celui qui désigne où sont les skills{lu_par}"
         ),
         justification=readme
         or Piece(
@@ -141,28 +174,127 @@ def _instructions(constats: Constats, presents: dict[str, Piece]) -> Entree:
     )
 
 
-def _ponts(presents: dict[str, Piece]) -> list[Entree]:
-    """`CLAUDE.md` et `GEMINI.md` — une ligne chacun, jamais une copie (docs/38 §3.2).
+def _ponts(
+    presents: dict[str, Piece], utilises: dict[str, Client]
+) -> tuple[list[Entree], list[Ecarte]]:
+    """Les ponts qu'il faut — et, pour chacun qu'il ne faut pas, pourquoi (#1295, docs/43 §2.3).
 
-    Les deux clients qui ne lisent pas `AGENTS.md` par défaut. Un pont, pas une
-    copie : recopier le texte donnerait trois sources pour une instruction, et
-    la première correction faite à l'une des trois créerait l'écart.
+    Un pont est un fichier d'**une ligne** qui importe `AGENTS.md` (`@AGENTS.md`),
+    jamais une copie : recopier le texte donnerait deux sources pour une
+    instruction (docs/38 §3.2). Il ne s'écrit que pour un client que la personne
+    **utilise** et qui ne lit pas `AGENTS.md` de lui-même à sa version. Trois cas
+    pour chaque client à qui un pont peut manquer (`ClientConnu.pont`) :
+
+    - **il le faut** — le client est utilisé et ne lit pas `AGENTS.md` (Gemini
+      CLI ; Claude Code avant la v2.1.277, ou de version inconnue ; ou un pont
+      déjà présent qui masque sa lecture native) : une entrée, `a-completer` si
+      le fichier existe (Maestro n'y écrit qu'un bloc délimité, docs/38 §4.2) ;
+    - **le projet le porte déjà, sans qu'il le faille** — le projet importé garde
+      ses ponts : une entrée `deja-present`, jamais retirée ni réécrite ;
+    - **il ne le faut pas** — un écarté, avec sa raison : c'est l'autre moitié de
+      « pourquoi un seul fichier ».
+
+    Un client que la table ne connaît pas est nommé en écarté : Maestro ne sait
+    pas ce qu'il lit, et n'écrit pas un pont au hasard.
     """
-    return [
-        Entree(
-            type="pont",
-            nom=nom,
-            chemin=nom,
-            etat="a-completer" if nom in presents else "a-generer",
-            raison=(
-                f"{client} ne lit pas AGENTS.md par défaut : {nom} l'importe en une ligne "
-                "(@AGENTS.md), sans dupliquer son texte"
-            ),
-            justification=Piece(nom="AGENTS.md", chemin="AGENTS.md", role="instructions"),
-            commandes=(),
+    entrees: list[Entree] = []
+    ecartes: list[Ecarte] = []
+    for connu in CLIENTS_CONNUS:
+        if connu.pont is None:
+            continue
+        client = utilises.get(connu.cle)
+        present = connu.pont in presents
+        lit = (
+            connu.lit_agents_md(client.version, pont_present=present)
+            if client is not None
+            else None
         )
-        for nom, client in (("CLAUDE.md", "Claude Code"), ("GEMINI.md", "Gemini CLI"))
-    ]
+        if client is not None and lit is not True:
+            entrees.append(_pont(connu, _raison_du_pont(connu, client, present, lit), present))
+        elif present:
+            entrees.append(
+                _pont(
+                    connu,
+                    f"le projet porte déjà {connu.pont} : il est gardé tel quel — "
+                    f"{_absent(connu)}, et Maestro ne retire jamais ce qu'il n'a pas écrit",
+                    present,
+                    etat="deja-present",
+                )
+            )
+        else:
+            ecartes.append(Ecarte(type="pont", nom=connu.pont, raison=_pas_de_pont(connu, client)))
+    for client in utilises.values():
+        if client.connu is None:
+            ecartes.append(
+                Ecarte(
+                    type="pont",
+                    nom=client.libelle,
+                    raison=(
+                        f"{client.nomme()} : Maestro ne sait pas s'il lit AGENTS.md, ni quel "
+                        "fichier il lirait à la place — aucun pont n'est écrit sans le savoir"
+                    ),
+                )
+            )
+    return entrees, ecartes
+
+
+def _pont(connu: ClientConnu, raison: str, present: bool, *, etat: str = "") -> Entree:
+    """L'entrée d'un pont — son état suit le disque, sauf à le dire."""
+    chemin = connu.pont or ""
+    return Entree(
+        type="pont",
+        nom=chemin,
+        chemin=chemin,
+        etat=etat or ("a-completer" if present else "a-generer"),
+        raison=raison,
+        justification=Piece(nom="AGENTS.md", chemin="AGENTS.md", role="instructions"),
+        commandes=(),
+    )
+
+
+def _raison_du_pont(connu: ClientConnu, client: Client, present: bool, lit: bool | None) -> str:
+    """Pourquoi ce pont — le client, sa version, et ce qu'il ne lit pas (#1295)."""
+    qui = client.nomme()
+    pont = connu.pont
+    if present:
+        return (
+            f"le projet porte déjà {pont}, que {connu.libelle} lit à la place d'AGENTS.md "
+            f"({qui}) : Maestro n'y écrirait qu'un bloc délimité d'une ligne (@AGENTS.md), "
+            "sans toucher au reste"
+        )
+    if connu.natif_depuis is None:
+        return (
+            f"{qui} lit {pont} par défaut, pas AGENTS.md : {pont} l'importe en une ligne "
+            "(@AGENTS.md), sans dupliquer son texte"
+        )
+    if lit is None:
+        return (
+            f"{qui}, version inconnue : {connu.libelle} ne lit AGENTS.md de lui-même qu'à partir "
+            f"de la v{connu.natif_depuis} — {pont} l'importe en une ligne (@AGENTS.md), ce qui "
+            "vaut pour toutes ses versions sans jamais le faire lire deux fois"
+        )
+    return (
+        f"{qui} ne lit AGENTS.md de lui-même qu'à partir de la v{connu.natif_depuis} : "
+        f"{pont} l'importe en une ligne (@AGENTS.md), sans dupliquer son texte"
+    )
+
+
+def _absent(connu: ClientConnu) -> str:
+    """« Gemini CLI n'est ni trouvé sur ce poste ni nommé dans la conversation »."""
+    return f"{connu.libelle} n'est ni trouvé sur ce poste ni nommé dans la conversation"
+
+
+def _pas_de_pont(connu: ClientConnu, client: Client | None) -> str:
+    """Pourquoi ce pont ne s'écrit pas : personne n'utilise ce client, ou il lit `AGENTS.md`."""
+    if client is None:
+        return (
+            f"{_absent(connu)} : un pont pour un client que personne n'utilise serait une "
+            "supposition"
+        )
+    return (
+        f"{client.nomme()} lit AGENTS.md de lui-même depuis la v{connu.natif_depuis}, et un "
+        f"{connu.pont} masquerait cette lecture : aucun pont"
+    )
 
 
 def _skills(constats: Constats) -> list[Entree]:

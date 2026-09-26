@@ -27,7 +27,11 @@ qu'il envoie**, puis on regarde le **disque** — jamais seulement la réponse :
    du même bouclage. Cette section-là rouvre l'API sur les mêmes dépôts, parce que
    c'est le seul moyen de voir la moitié du défaut qu'un process ne montre pas ;
 ⑧ **le fil propose l'équipe** d'un projet qui n'en a pas (#1146), la crée au geste
-   par la même voie que ⑥, puis le run demandé aboutit — l'oracle du scénario S3.
+   par la même voie que ⑥, puis le run demandé aboutit — l'oracle du scénario S3 ;
+⑨ **un seul `AGENTS.md`** (#1295) : les ponts suivent les clients d'agents du poste,
+   doublé à ses deux portes (le `PATH`, `--version`) — Claude Code récent seul, rien
+   d'autre ; Gemini CLI présent, son pont écrit ; un projet importé garde les siens ;
+   et « j'utilise aussi Gemini CLI » compris dans les réponses ajoute le pont.
 
 Ni réseau ni modèle : les playbooks d'équipe passent par un générateur « hors
 ligne », qui fait retomber chaque rôle sur le playbook de son gabarit — le repli
@@ -1196,3 +1200,128 @@ def test_s3_un_projet_equipe_se_voit_proposer_le_run_directement(
     demande = envoi.json()["messages"][1]
     assert demande["proposition"] == OBJECTIF_S3
     assert demande["recrutement"] is None
+
+
+# --- ⑨ Un seul AGENTS.md : les ponts suivent les clients du poste (#1295) ----------
+
+
+def _poste(monkeypatch: pytest.MonkeyPatch, **versions: str) -> None:
+    """Le poste, doublé à ses deux portes : les commandes trouvées, et ce que rend `--version`.
+
+    `claude="2.1.281"` pose un Claude Code 2.1.281 sur le `PATH`. C'est la porte que la
+    garde de `tests/conftest.py` ferme, rouverte ici sur un poste décrit — jamais le vrai.
+    """
+    chemins = {commande: f"/poste/{commande}" for commande in versions}
+    monkeypatch.setattr("maestro.clients_du_poste.resoudre", chemins.get)
+    monkeypatch.setattr(
+        "maestro.clients_du_poste.lire_version",
+        lambda chemin: versions[chemin.rsplit("/", 1)[-1]],
+    )
+
+
+def _ponts(recommandation: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {e["chemin"]: e for e in recommandation["entrees"] if e["type"] == "pont"}
+
+
+def _generer_ce_que_l_ecran_retient(
+    client: TestClient, projet: str, analyse: dict[str, Any]
+) -> dict[str, Any]:
+    """La génération, avec ce que l'écran coche d'office : tout sauf ce qui est déjà là."""
+    retenus = [
+        e["chemin"] for e in analyse["recommandation"]["entrees"] if e["etat"] != "deja-present"
+    ]
+    reponse = client.post(f"/api/projets/{projet}/outillage/generation", json={"retenus": retenus})
+    assert reponse.status_code == 200, reponse.text
+    return reponse.json()
+
+
+def test_claude_code_recent_seul_client_le_projet_ne_recoit_qu_agents_md(
+    client: TestClient, atelier: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Critère 1, par la route de l'écran puis sur le disque : ni `CLAUDE.md` ni `GEMINI.md`."""
+    _poste(monkeypatch, claude="2.1.281")
+    projet, racine = _projet_existant(client, atelier)
+
+    analyse = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+
+    assert _ponts(analyse["recommandation"]) == {}
+    ecartes = {e["nom"]: e["raison"] for e in analyse["recommandation"]["ecartes"]}
+    assert "Claude Code 2.1.281 (trouvé sur ce poste)" in ecartes["CLAUDE.md"]
+    assert "Gemini CLI n'est ni trouvé" in ecartes["GEMINI.md"]
+    _generer_ce_que_l_ecran_retient(client, projet, analyse)
+    assert (racine / "AGENTS.md").is_file()
+    assert not (racine / "CLAUDE.md").exists()
+    assert not (racine / "GEMINI.md").exists()
+
+
+def test_gemini_cli_sur_le_poste_recoit_son_pont_ecrit_en_une_ligne(
+    client: TestClient, atelier: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _poste(monkeypatch, claude="2.1.281", gemini="0.9.0")
+    projet, racine = _projet_existant(client, atelier)
+
+    analyse = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+
+    pont = _ponts(analyse["recommandation"])["GEMINI.md"]
+    assert "Gemini CLI 0.9.0 (trouvé sur ce poste)" in pont["raison"]
+    corps = _generer_ce_que_l_ecran_retient(client, projet, analyse)
+    assert "GEMINI.md" in corps["rapport"]["ecrits"]
+    assert (racine / "GEMINI.md").read_text(encoding="utf-8") == "@AGENTS.md"
+    assert not (racine / "CLAUDE.md").exists()
+
+
+def test_claude_code_ancien_recoit_le_pont_claude_md(
+    client: TestClient, atelier: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _poste(monkeypatch, claude="2.1.200")
+    projet, _ = _projet_existant(client, atelier)
+
+    analyse = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+
+    assert "2.1.277" in _ponts(analyse["recommandation"])["CLAUDE.md"]["raison"]
+
+
+def test_un_projet_importe_garde_ses_ponts_sans_accord_pour_les_retirer(
+    client: TestClient, atelier: Path
+) -> None:
+    """État « projet importé qui a déjà ses `CLAUDE.md`/`GEMINI.md` » : ni retirés, ni réécrits."""
+    projet, racine = _projet_existant(client, atelier)
+    a_nous = "@AGENTS.md\n\nNos règles à nous.\n"
+    (racine / "CLAUDE.md").write_text(a_nous, encoding="utf-8")
+    (racine / "GEMINI.md").write_text("@AGENTS.md\n", encoding="utf-8")
+
+    analyse = client.get(f"/api/projets/{projet}/outillage/analyse").json()
+
+    ponts = _ponts(analyse["recommandation"])
+    assert {chemin: e["etat"] for chemin, e in ponts.items()} == {
+        "CLAUDE.md": "deja-present",
+        "GEMINI.md": "deja-present",
+    }
+    _generer_ce_que_l_ecran_retient(client, projet, analyse)
+    assert (racine / "CLAUDE.md").read_text(encoding="utf-8") == a_nous
+    assert (racine / "GEMINI.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+
+
+def test_j_utilise_aussi_gemini_cli_compris_des_reponses_ajoute_le_pont(
+    client: TestClient, atelier: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Critère 2, par la route sans état de l'écran : le sujet compris nourrit la règle."""
+    _poste(monkeypatch, claude="2.1.281")
+    projet, racine = _projet_neuf(client, atelier)
+    choix = [
+        *_repondre_au_questionnaire(client, projet),
+        {"cle": "clients", "valeur": "Gemini CLI", "deduit": True, "parce_que": "vous l'avez dit"},
+    ]
+
+    reco = client.post(
+        f"/api/projets/{projet}/outillage/recommandation", json={"choix": choix}
+    ).json()["recommandation"]
+
+    assert list(_ponts(reco)) == ["GEMINI.md"]
+    reponse = client.post(
+        f"/api/projets/{projet}/outillage/generation",
+        json={"retenus": [e["chemin"] for e in reco["entrees"]], "choix": choix},
+    )
+    assert reponse.status_code == 200, reponse.text
+    assert (racine / "GEMINI.md").read_text(encoding="utf-8") == "@AGENTS.md"
+    assert not (racine / "CLAUDE.md").exists()

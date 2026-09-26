@@ -666,8 +666,9 @@ def test_la_conclusion_porte_la_comprehension_et_dit_ou_valider() -> None:
 
 
 def test_le_conducteur_ne_garde_aucun_etat_du_questionnaire() -> None:
-    """Son seul attribut est celui qui comprend : jamais une réponse ni un tour."""
-    assert set(vars(ConducteurOutillage())) == {"_comprehension"}
+    """Ses seuls attributs sont ses collaborateurs — celui qui comprend, et celui qui trouve
+    les clients du poste (#1295) : jamais une réponse ni un tour."""
+    assert set(vars(ConducteurOutillage())) == {"_comprehension", "_clients"}
 
 
 # --- ④ Les routes du fil -------------------------------------------------------------

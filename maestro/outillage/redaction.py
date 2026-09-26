@@ -193,7 +193,7 @@ def rediger(
     """Les fichiers à écrire pour l'outillage que `recommandation` retient.
 
     L'ordre est celui de la recommandation, donc celui de docs/38 §3.6 : les
-    instructions, les deux ponts, puis les skills. C'est l'ordre de lecture d'un
+    instructions, les ponts qu'il faut (#1295), puis les skills. C'est l'ordre de lecture d'un
     projet outillé, et c'est celui dans lequel le manifeste les déclarera.
 
     `portees` est **la mémoire de ce que Maestro possède**, relue du manifeste
