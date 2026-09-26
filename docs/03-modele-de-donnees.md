@@ -201,10 +201,13 @@ donne à lire, et à quel moment.
 
 **La décision est donc : ossature au plan, complétée et cochée par l'agent.** Chacun
 répond de ce qu'il sait, et aucun des deux ne répond de ce qu'il ignore. Le plan porte
-`etapes` (libellés seuls) ; l'agent rapporte sa liste **là où il la tient déjà** —
-l'entrée de ses appels `TodoWrite`, lue par `maestro/providers/checklist.py` : aucun
-protocole n'a été inventé, aucun second transport ouvert, et un fournisseur sans
-checklist observable n'appelle simplement jamais le canal.
+`etapes` (libellés seuls) ; l'agent rapporte sa liste par un **verbe de Maestro**,
+`tenir_checklist(etapes)`, servi par le serveur in-process `maestro` et dont le contrat
+entier vit dans `maestro/providers/checklist.py` (#1291). Il la rapportait d'abord dans
+l'outil de liste du CLI Claude (`TodoWrite`), lu au passage ; le CLI a changé d'outil et
+toutes les checklists sont restées à 0/N. Maestro ne dépend plus d'aucun outil interne
+d'un CLI pour savoir où en est un agent ([docs/44](./44-decision-maestro-possede-ses-contrats.md)),
+et un fournisseur qui ne sert pas d'outils n'appelle simplement jamais le canal.
 
 La couture des deux (`maestro.detail_tache.SuiviChecklist`) porte quatre règles, et
 chacune a son motif :
@@ -229,8 +232,10 @@ chacune a son motif :
   une checklist inchangée ne produit ni ligne de journal, ni événement de bus.
 
 ⚠ **Ce qui existait avant reste vrai** : une tâche sans ossature, un fournisseur sans
-checklist, un rôle dont la politique de permissions refuse l'outil, un repli texte — aucun
+outils, un rôle dont la politique de permissions refuse le verbe, un repli texte — aucun
 ne produit de checklist vide ni de bloc qui promette un contenu absent (règle de #246).
+Et un repli texte **le dit** à la clôture (#1291) : aucun relevé n'était possible, plutôt
+qu'un écart qui ferait porter le manque à l'agent.
 
 Le motif complet vit en tête de [`maestro/detail_tache.py`](../maestro/detail_tache.py) et
 de [`maestro/providers/checklist.py`](../maestro/providers/checklist.py) ; l'écran est en

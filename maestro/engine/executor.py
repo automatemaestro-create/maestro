@@ -71,6 +71,7 @@ from maestro.detail_tache import (
     EtapeTache,
     SuiviChecklist,
     consigne_detail,
+    phrase_checklist_sans_releve,
     phrase_ecart_checklist,
 )
 from maestro.engine.guardrails import (
@@ -2736,8 +2737,22 @@ class LocalExecutor(TaskExecutor):
         `<tache>:ecart` deviendrait une tâche fantôme de plus dans les comptes —
         le défaut C8 du même retex, corrigé par #924, qu'on ne va pas rouvrir
         pour une ligne de texte.
+
+        Un cas n'est pas un écart, et se dit autrement (#1291) : la tâche s'est
+        exécutée en **texte seul**, sans verbe pour cocher quoi que ce soit.
+        L'ossature du plan y reste entière « à faire » ; « non cochée(s) par
+        l'agent » lui ferait porter un manque qui n'est pas le sien. La ligne dit
+        alors qu'aucun relevé n'était possible, et quel fournisseur en décide.
         """
         if agent is None or result.statut != STATUT_TERMINEE:
+            return
+        if suivi.releve_impossible and not suivi.vide:
+            self._consigne_activite(
+                task,
+                agent,
+                phrase_checklist_sans_releve(suivi.releve_impossible, len(suivi.etapes())),
+                journal,
+            )
             return
         restantes = suivi.inachevees()
         if not restantes:
@@ -2832,11 +2847,13 @@ class LocalExecutor(TaskExecutor):
         son issue. Le repli texte (`generate`) n'en émet aucune — un appel texte
         n'a pas d'étapes à raconter, et il ne dure pas.
 
-        La **checklist** (#489) suit le même chemin et pour la même raison : un
-        appel texte n'a pas de liste de travail à tenir. L'ossature du plan, elle,
-        a déjà été posée par l'appelant — donc une tâche traitée en repli texte
-        garde la checklist que le plan annonçait, sans jamais la voir se cocher.
-        C'est exact et c'est dit : personne n'a rapporté d'avancement.
+        La **checklist** (#489) suit le même chemin et pour la même raison : son
+        verbe (`tenir_checklist`, #1291) est servi comme un outil, et un appel
+        texte n'en a pas. L'ossature du plan, elle, a déjà été posée par
+        l'appelant — donc une tâche traitée en repli texte garde la checklist que
+        le plan annonçait, sans jamais la voir se cocher. C'est exact et c'est
+        **dit** : le repli marque le suivi (`SuiviChecklist.sans_releve`), et la
+        clôture consigne qu'aucun relevé n'était possible au lieu d'un écart.
 
         L'**arbitrage demandé par l'agent** (#582) n'équipe lui aussi que le
         chemin outillé, et la raison est plus forte que pour les trois autres :
@@ -2976,6 +2993,11 @@ class LocalExecutor(TaskExecutor):
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
                 pass  # fournisseur texte-seul : repli sur le livrable texte
+        # Le chemin texte ne sert aucun verbe à l'agent (#1291) : personne ne
+        # pourra cocher la checklist, et la clôture le dira au lieu de rapporter
+        # un écart que l'agent n'avait aucun moyen de combler.
+        if suivi is not None:
+            suivi.sans_releve(self._provider.name)
         # Le mot-clé ne part que s'il a quelque chose à dire (#253) : sur un
         # fournisseur qui n'annonce aucun effort — le cas de tout adaptateur
         # texte-seul — l'appel est au bit près celui d'avant ce lot.

@@ -766,7 +766,8 @@ dans le code et **vérifiée sur l'état réel** des runs, lu par l'API.
     d'avant. L'événement de fin de run partait **sans projet**, et la diffusion par projet l'écartait ;
   - **#1291** : les checklists restaient à « 0/N · relevé incomplet ». Le CLI embarqué par le SDK
     ne monte plus `TodoWrite` par défaut, il le remplace par `TaskCreate`/`TaskUpdate`, et les agents
-    n'avaient plus d'outil pour cocher ;
+    n'avaient plus d'outil pour cocher. La checklist devient un **verbe de Maestro**
+    (`tenir_checklist`), qui ne dépend d'aucun outil du CLI (docs/44), et S2 garde N/N sur le banc ;
   - **#1292** : le jeton d'API s'écrivait en clair dans le journal d'accès.
 - **Le démarrage et la création** :
   - **#1293** : chaque démarrage arrive sur le choix du projet, « Reprendre » en tête, conversation

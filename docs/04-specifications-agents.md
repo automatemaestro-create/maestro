@@ -111,13 +111,13 @@ Le canal ci-dessus **soumet un acte** ; cinq autres ne soumettent rien — ils *
 | L'agent écrit… | Verbe | Ce qu'il en obtient |
 | --- | --- | --- |
 | ce qu'il **découvre** | `consigne_ticket` (#187) | une étape `<tache>:ticket` |
-| ce qu'il **prévoit** | sa checklist (#489), via `TodoWrite` | une étape `<tache>:detail` |
+| ce qu'il **prévoit** | `mcp__maestro__tenir_checklist(etapes)` (#489, #1291) | une étape `<tache>:detail`, réconciliée par `SuiviChecklist` |
 | ce qu'il **subit** | `mcp__maestro__signaler_blocage(raison)` (#719) | une étape `<tache>:blocage`, et **rien d'autre** |
 | ce qu'il veut **transmettre** | `mcp__maestro__ecrire_a_un_pair(destinataire, message)` (#720) | une étape `<tache>:message`, notifiée en best-effort |
 | ce qu'il a **tranché seul** | `mcp__maestro__consigner_decision(decision, raison)` (#1024) | une étape `<tache>:decision`, lue dans la vue du run (docs/05 §6.18) |
 | ce qu'il **ne sait pas** | `mcp__maestro__poser_une_question(question, hypothese, choix)` (#1023) | une **attente bornée**, puis une étape `<tache>:question` — la réponse, ou l'hypothèse qu'il avait annoncée |
 
-Les quatre derniers sont servis par le **même serveur MCP in-process** que `demander_arbitrage` (nom réservé `maestro`), donc gouvernés par la **même** politique de permissions : une liste `allow` fermée qui ne les cite pas, ou un `deny` dessus, retire à l'agent la possibilité de les appeler, et le refus est tracé comme les autres. C'est la distinction à retenir face aux produits qui font tenir ce genre de garde-fou par le prompt : **chez nous la description règle l'usage normal, le droit est tenu ailleurs** — un modèle qui n'obéit pas à la description ne franchit rien.
+Tous sauf le premier sont servis par le **même serveur MCP in-process** que `demander_arbitrage` (nom réservé `maestro`) — la checklist depuis #1291, qui l'a sortie de l'outil de liste du CLI Claude (docs/44) —, donc gouvernés par la **même** politique de permissions : une liste `allow` fermée qui ne les cite pas, ou un `deny` dessus, retire à l'agent la possibilité de les appeler, et le refus est tracé comme les autres. C'est la distinction à retenir face aux produits qui font tenir ce genre de garde-fou par le prompt : **chez nous la description règle l'usage normal, le droit est tenu ailleurs** — un modèle qui n'obéit pas à la description ne franchit rien.
 
 ⚠ **Le dernier, lui, attend** (#1023, [docs/05 §6.17](./05-interface-control-tower.md)) : `poser_une_question` **suspend** l'agent jusqu'à la réponse, ou jusqu'à une **borne** — après quoi il reprend sur l'**hypothèse** qu'il avait écrite dans son appel, et cette hypothèse est consignée. C'est le canal que #647 puis #354 se sont renvoyé sans jamais le construire ; la frontière qu'ils avaient écrite tient au mot près (docs/32 §5.3) : *poser une question attend une réponse, déclarer un blocage n'attend rien*. Il réutilise les trois pièces de **suspension** de l'arbitrage — bornes, crédit de délai, mémoire d'une réponse tardive — et **aucune** de ses pièces de décision : une réponse n'approuve rien, et un acte classé `ask` reste refusé sans validateur (EF-08).
 

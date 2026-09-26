@@ -103,9 +103,7 @@ def sdk(monkeypatch):
 def _absorbeur(compteur):
     parts: list[str] = []
     outils: list[str] = []
-    return lambda message: claude_mod._absorbe(
-        message, parts, outils, None, None, compteur=compteur
-    )
+    return lambda message: claude_mod._absorbe(message, parts, outils, None, compteur=compteur)
 
 
 _TOUR_1 = {"input_tokens": 100, "cache_read_input_tokens": 50, "output_tokens": 10}
