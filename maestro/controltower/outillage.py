@@ -407,7 +407,7 @@ def _phrase_de_la_question(question: QuestionOutillage) -> str:
 
 
 def _phrase_de_conclusion(acquis: Sequence[Choix], *, ecrit: bool) -> str:
-    """Ce que le fil dit quand il n'y a plus de question **et pas de pièce à montrer** (#1031, #1161).
+    """Ce que le fil dit sans plus de question **ni pièce à montrer** (#1031, #1161).
 
     Le questionnaire ne s'arrête pas sur un silence. Il rend **ce qu'il a produit** —
     le résumé du manifeste à venir et le compte des entrées —, parce que c'est la
