@@ -149,7 +149,7 @@ class ReleveConfinement:
         """Ce que le journal du run en dit — une phrase entière, vide s'il n'y a rien à dire."""
         if self.non_confinee:
             return (
-                f"Session de l'agent non confinée — {self.non_confinee} : ce qu'elle a "
+                f"Session de l'agent non confinée : {self.non_confinee}. Ce qu'elle a "
                 "lancé en arrière-plan peut survivre à la tâche."
             )
         morceaux: list[str] = []
@@ -235,7 +235,7 @@ class SessionConfinee:
             return cls(
                 None,
                 non_confinee=(
-                    f"le lanceur {NOM_LANCEUR!r} est introuvable : l'installation de "
+                    f"le lanceur {NOM_LANCEUR!r} est introuvable — l'installation de "
                     "Maestro est incomplète et doit être refaite"
                 ),
             )
