@@ -329,6 +329,33 @@ def test_poser_une_piece_garde_au_manifeste_les_pieces_deja_ecrites(tmp_path: Pa
     assert {v["commande"] for v in manifeste["verifications"]} == {"npm test", "npm run build"}
 
 
+def test_une_piece_remise_en_crlf_reste_a_maestro_et_garde_ses_fins_de_ligne(
+    tmp_path: Path,
+) -> None:
+    """Vu sur la vraie stack sous Windows : ce que Maestro écrit en LF, `core.autocrlf` le
+    remet en CRLF au checkout. Compté comme une modification, le fichier n'était plus à
+    Maestro, et la pièce corrigée ne revenait jamais — sans un mot."""
+    racine = tmp_path / "p"
+    racine.mkdir()
+    source = {"type": "analyse", "projet_id": "p", "reference": "ana-1", "resume": ""}
+    ecrit = Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n\nnpm\n")
+    corrige = Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n\nuv\n")
+    poser_piece(racine, ecrit, source=source)
+    (racine / "AGENTS.md").write_bytes(b"# A\r\n\r\nnpm\r\n")
+
+    prevision = prevoir(racine, corrige)
+
+    assert prevision.etat == "ecrit" and prevision.ecrirait
+    # Le diff qu'une carte montre compare des lignes, pas des fins de ligne.
+    assert prevision.avant == "# A\n\nnpm\n"
+    assert prevoir(racine, ecrit).etat == "inchange"
+    rapport = poser_piece(racine, corrige, source=source)
+    assert [e.etat for e in rapport.ecritures] == ["ecrit"]
+    # La réécriture garde les fins de ligne du fichier en place : rien ne défait ce choix.
+    assert (racine / "AGENTS.md").read_bytes() == b"# A\r\n\r\nuv\r\n"
+    assert prevoir(racine, corrige).etat == "inchange"
+
+
 def test_une_commande_deja_jouee_ne_se_rejoue_pas_mais_un_a_verifier_si(tmp_path: Path) -> None:
     racine = tmp_path / "p"
     racine.mkdir()
@@ -698,6 +725,50 @@ def test_sur_un_projet_versionne_la_piece_se_fusionne_sous_l_accord_de_la_carte(
         ["git", "log", "--oneline", "-3"], cwd=racine, check=True, capture_output=True, text=True
     )
     assert journal.stdout.count("\n") >= 2  # la fusion a laissé sa trace dans l'historique
+
+
+@avec_git
+@pytest.mark.usefixtures("_git_isole")
+def test_sur_un_depot_en_autocrlf_une_piece_ecrite_se_corrige_et_se_reecrit(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Critère 2 sur un projet versionné dont Git remet les fichiers en CRLF (Windows).
+
+    Vu sur la vraie stack : `AGENTS.md` écrit puis fusionné revenait en CRLF du checkout,
+    et « Nos tests tournent avec `dotnet test` », bien compris, ne le reproposait
+    jamais — la pièce suivante venait à sa place.
+    """
+    racine = _projet_node(_maison)
+    subprocess.run(["git", "init", "-q"], cwd=racine, check=True)
+    subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=racine, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=racine, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "départ"], cwd=racine, check=True)
+    projet_id = str(projets.creer("Dépensio", str(racine))["id"])
+    modele = _Modele(
+        correction={"comprise": True, "corrections": [{"cle": "tester", "valeur": "dotnet test"}]}
+    )
+    service = _service(projets, _Joueur(), modele)
+    agents = asyncio.run(service.prochaine(projet_id, []))
+    assert agents is not None and agents.regime == "branche"
+    fait = asyncio.run(service.ecrire(agents))
+    assert fait.ecrite and b"\r\n" in (racine / "AGENTS.md").read_bytes()
+    fil = [
+        _message(NOM_ORCHESTRATION, "AGENTS.md ?", piece=agents),
+        _message(UTILISATEUR, "Oui, écris AGENTS.md."),
+        _message(NOM_ORCHESTRATION, "Écrit.", piece_ecrite=fait),
+        _message(UTILISATEUR, DOTNET),
+    ]
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+
+    reponse = asyncio.run(conducteur.corriger(fil, projet_id=projet_id, phrase=DOTNET))
+
+    piece = reponse.piece
+    assert piece is not None and piece.chemin == "AGENTS.md" and piece.sort == "reecrit"
+    assert "\r" not in piece.texte_avant  # le diff montré ne compte pas les fins de ligne
+    fait = asyncio.run(service.ecrire(piece))
+    assert fait.ecrite
+    ecrit = (racine / "AGENTS.md").read_bytes()
+    assert b"dotnet test" in ecrit and b"\r\n" in ecrit
 
 
 # --------------------------------------------------------------------------- #

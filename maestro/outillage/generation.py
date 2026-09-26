@@ -84,7 +84,7 @@ import hashlib
 import json
 import stat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -249,6 +249,10 @@ class Prevision:
 
     `cas` est la décision elle-même (`_CAS_*`), celle que `_poser` exécute : la
     prévision et l'écriture la tiennent **du même calcul**.
+
+    `avant` et `apres` sont en fins de ligne `\\n`, quel que soit le disque (#1161,
+    `_texte_en_place`) ; `crlf` dit que le fichier en place est en `\\r\\n`, et que sa
+    réécriture les gardera.
     """
 
     chemin: str
@@ -258,6 +262,7 @@ class Prevision:
     apres: str | None = None
     cas: str = _CAS_ECRIT
     bloc: bool = False
+    crlf: bool = False
 
     @property
     def ecrirait(self) -> bool:
@@ -494,8 +499,12 @@ def _prevision(
     refus = garde.refus_chemin(fichier.chemin, ecriture=True)
     if refus is not None:
         return Prevision(fichier.chemin, "refuse", refus, cas=_CAS_FRONTIERE)
-    present = _texte_existant(racine / PurePosixPath(fichier.chemin))
-    connue = etat.empreinte_de(fichier.chemin)
+    present, crlf = _texte_en_place(racine / PurePosixPath(fichier.chemin))
+    return replace(_decision(fichier, present, etat.empreinte_de(fichier.chemin)), crlf=crlf)
+
+
+def _decision(fichier: Fichier, present: str | None, connue: str) -> Prevision:
+    """Les quatre cas de docs/38 §4.2, sur le texte en place (fins de ligne `\\n`)."""
     if fichier.portee == PORTEE_BLOC:
         return _prevision_bloc(fichier, present, connue)
     if present is not None and not connue:
@@ -628,7 +637,9 @@ def _poser(
                 fichier, empreinte, quand
             )
         erreur = _ecrire_fichier(
-            racine / PurePosixPath(fichier.chemin), prevision.apres or "", executable=False
+            racine / PurePosixPath(fichier.chemin),
+            _aux_fins_de(prevision, prevision.apres or ""),
+            executable=False,
         )
         if erreur:
             return _ecriture(fichier, "refuse", erreur), None
@@ -639,7 +650,9 @@ def _poser(
             fichier, empreinte, _quand_connu(etat, fichier, quand)
         )
     erreur = _ecrire_fichier(
-        racine / PurePosixPath(fichier.chemin), fichier.contenu, executable=fichier.executable
+        racine / PurePosixPath(fichier.chemin),
+        _aux_fins_de(prevision, fichier.contenu),
+        executable=fichier.executable,
     )
     if erreur:
         return _ecriture(fichier, "refuse", erreur), ancienne
@@ -754,11 +767,36 @@ def _empreinte(texte: str) -> str:
     """L'empreinte d'un contenu, telle qu'elle voyage dans le manifeste (`sha256:…`).
 
     Sur les **octets UTF-8** du texte et non sur le fichier lu tel quel : c'est le
-    contenu que Maestro a écrit qui est déclaré, et une différence de fin de ligne
-    introduite par un éditeur est une modification comme une autre — qu'on veut
-    justement voir.
+    contenu que Maestro a écrit qui est déclaré. Le texte d'un fichier en place lui
+    arrive en fins de ligne `\\n` (`_texte_en_place`) : une différence de fins de ligne
+    n'est pas une modification du contenu (#1161).
     """
     return "sha256:" + hashlib.sha256(texte.encode("utf-8")).hexdigest()
+
+
+def _texte_en_place(cible: Path) -> tuple[str | None, bool]:
+    """Le texte du fichier en fins de ligne `\\n`, et s'il était en `\\r\\n` sur le disque.
+
+    ⚠ **Une différence de fins de ligne n'est pas une modification** (#1161) — elle
+    l'était, et la vraie stack a montré ce que ça coûtait. Sous Windows, un dépôt en
+    `core.autocrlf` remet en `\\r\\n`, à **chaque checkout**, ce que Maestro a écrit en
+    `\\n` : dans le dossier de la personne après la fusion d'une écriture versionnée,
+    et dans le worktree de l'écriture suivante. Compté comme une modification, le
+    fichier cessait d'être à Maestro dès sa première fusion — une pièce déjà écrite ne
+    se corrigeait plus, et la génération suivante l'aurait refusée. Aucun caractère du
+    contenu n'a changé : on compare le texte, pas ses fins de ligne. Et le choix de
+    quiconque les a mises (Git, un éditeur) n'est pas défait : la réécriture les garde
+    (`_aux_fins_de`).
+    """
+    texte = _texte_existant(cible)
+    if texte is None:
+        return None, False
+    return texte.replace("\r\n", "\n"), "\r\n" in texte
+
+
+def _aux_fins_de(prevision: Prevision, texte: str) -> str:
+    """`texte` (en `\\n`) aux fins de ligne du fichier qu'il remplace — cf. `_texte_en_place`."""
+    return texte.replace("\n", "\r\n") if prevision.crlf else texte
 
 
 def _texte_existant(cible: Path) -> str | None:
