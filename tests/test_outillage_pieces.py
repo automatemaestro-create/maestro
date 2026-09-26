@@ -54,6 +54,7 @@ from maestro.controltower.chat import (
 from maestro.controltower.naissance import ServiceNaissance
 from maestro.controltower.orchestration import (
     _MARQUEUR_VERDICT,
+    _PROMPT_ORCHESTRATION,
     _PROMPT_REDACTION,
     AGENT_ORCHESTRATION,
     NOM_ORCHESTRATION,
@@ -737,12 +738,31 @@ def test_une_correction_incomprise_le_dit_et_la_piece_reste_proposee(
         )
     )
 
-    # Le fait, et la raison du modèle — une fois : le juge a déjà dit, en ses mots, ce
-    # qu'il n'a pas compris (la seconde relecture l'avait lu deux fois de suite). La
-    # phrase du modèle suit les deux-points : sa majuscule tombe.
+    # Le fait, et la raison du modèle — une fois : c'est ici, et nulle part ailleurs,
+    # que se dit ce qui n'a pas été compris (la seconde relecture l'avait lu deux fois
+    # de suite). La phrase du modèle suit les deux-points : sa majuscule tombe.
     assert reponse.contenu == "Rien n'a été écrit : je ne vois pas quelle commande changer."
     assert reponse.piece == en_attente and reponse.corrections == ()
     assert not (racine / ".agents").exists()
+
+
+def test_sur_l_outillage_le_juge_redit_la_demande_sans_la_deviner() -> None:
+    """Le juge parle **avant** la correction : il ne sait pas encore si elle est comprise.
+
+    Vu sur la vraie stack (quatrième relecture) : sur « Change le truc de l'outillage,
+    tu vois lequel », le juge écrivait « J'ai compris que vous voulez modifier la
+    réécriture d'AGENTS.md… précisez », puis la correction ajoutait « Rien n'a été
+    écrit : je ne vois pas de quel élément vous parlez… » — deux paragraphes qui
+    demandaient chacun une précision, et dont le premier prétendait avoir compris ce
+    que le second n'avait pas compris. Ce qui a été compris ou non, et la question qui
+    en découle, sont à la correction seule ; le juge redit la demande, rien de plus.
+    """
+    prompt = " ".join(_PROMPT_ORCHESTRATION.split())
+
+    assert "ce que tu as compris de la demande ou de la correction" not in prompt
+    assert "redit en une phrase ce que la personne demande" in prompt
+    assert "sans rien y deviner" in prompt
+    assert "Ne demande aucune précision" in prompt
 
 
 def test_accord_de_la_carte_ne_vaut_que_pour_le_diff_montre() -> None:

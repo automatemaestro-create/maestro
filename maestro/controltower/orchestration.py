@@ -786,11 +786,13 @@ n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les t
 apparaîtront ». L'identifiant du run et ce qu'il a ouvert s'affichent d'eux-mêmes
 sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur un "accord"
 qui approuve un projet, il dit que tu le déclares, rien de plus ; qui approuve une
-pièce d'outillage, il dit que tu l'écris, rien de plus. Sur "outillage", il dit en
-une phrase ce que tu as compris de la demande ou de la correction : ce qui en sort —
-la pièce revérifiée par l'exécution, ou ce qui n'a pas été compris — s'affiche
-juste en dessous, et rien n'est écrit sans l'accord de la personne ; ne dis donc
-jamais que c'est écrit ni que la commande marche. Sur "projet", il
+pièce d'outillage, il dit que tu l'écris, rien de plus. Sur "outillage", il redit
+en une phrase ce que la personne demande, avec ses mots et sans rien y deviner : tu
+parles avant la correction, et c'est elle qui dit juste en dessous ce qui en sort —
+la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la question
+qui en découle. Ne demande aucune précision, et ne dis jamais que c'est écrit ni
+que la commande marche : rien n'est écrit sans l'accord de la personne. Sur
+"projet", il
 dit en une ou deux phrases ce que tu as compris du projet, puis que ta
 proposition est juste en dessous, à accepter ou à corriger en quelques mots : ne
 la recopie pas champ par champ, la carte les montre. Sur "echange", il répond —
@@ -2868,10 +2870,10 @@ class RepondeurOrchestration(RepondeurChat):
     ) -> ReponseChat:
         """Le verdict `outillage` : outiller, reprendre, ou corriger avec des mots (#1161).
 
-        Le juge a écrit, en direct, ce qu'il a compris. Ce qui s'ajoute derrière est
-        ce qu'il ne pouvait pas savoir : ce que la correction a donné — la pièce
-        revérifiée, ou ce qui n'a pas été compris —, dit par le conducteur. Un
-        empêchement se dit ici, et la pièce qui attendait reste proposée.
+        Le juge a redit la demande, en direct, sans la deviner. Ce qui s'ajoute
+        derrière est ce qu'il ne pouvait pas savoir : ce que la correction a donné — la
+        pièce revérifiée, ou ce qui n'a pas été compris —, dit par le conducteur, seul à
+        le dire. Un empêchement se dit ici, et la pièce qui attendait reste proposée.
 
         Le projet est celui de la fenêtre, sinon celui que le fil outille déjà.
         """

@@ -6859,7 +6859,10 @@ double clic), `422` sur une décision inconnue ou sur l'écriture d'une version 
 pendant qu'une pièce attend vaut le clic, par le juge (verdict `accord`).
 
 **Corriger avec ses mots.** « Nos tests tournent avec `dotnet test` », tapé dans le fil : le juge
-rend le verdict `outillage` et dit, en direct, ce qu'il a compris. Le modèle de correction
+rend le verdict `outillage` et **redit** la demande, en direct, sans rien y deviner ni demander de
+précision : il parle avant la correction, et c'est elle seule qui dit ce qu'elle a compris ou non
+(vu sur la vraie stack : un juge qui « avait compris » au-dessus d'une correction qui n'avait pas
+compris faisait deux paragraphes contradictoires, chacun avec sa question). Le modèle de correction
 (`CorrectionModele`, prompt au registre #945) traduit la phrase en sujets et valeurs
 (`maestro/outillage/correction.py` — une commande par usage, le gestionnaire, la forge, la CI) ; le
 code l'applique aux constats, la commande corrigée prend l'origine **`dite`** et la phrase de la
@@ -6867,8 +6870,8 @@ personne pour justification (« dite par la personne (« … ») », écrite tel
 et le skill), et la pièce touchée revient, **revérifiée par l'exécution** — une commande corrigée n'a
 jamais de verdict connu. La correction voyage sur le message (`corrections`, rendue sous la bulle :
 « Correction prise — … ») et reste acquise aux tours suivants. **Rien n'est écrit** avant l'accord.
-Trois issues ne corrigent rien, et le disent : une phrase **incomprise** (« Je n'ai rien changé à
-l'outillage : … Rien n'a été écrit »), la pièce qui attendait restant proposée ; une correction
+Trois issues ne corrigent rien, et le disent : une phrase **incomprise** (« Rien n'a été écrit : »
+suivi de ce que le modèle de correction n'a pas compris), la pièce qui attendait restant proposée ; une correction
 **sans effet** sur ce qui s'écrit ; et une commande corrigée qui **échoue** à l'exécution — la
 pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
 l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
