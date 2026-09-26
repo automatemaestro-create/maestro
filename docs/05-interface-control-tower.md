@@ -2160,7 +2160,8 @@ dossier à créer, et l'étape d'outillage enchaînée après la déclaration. D
 d'outillage est partie tout à fait, et l'étape d'équipe qu'elle enchaînait avec elle (§6.19). Un
 projet dont l'outillage a été reporté le **dit** sur sa carte (« Outillage reporté »), et **« Outiller
 dans la conversation »** ouvre la colonne de droite et y pose, pour ce projet, sa première question
-ou sa première pièce (§6.20) ; la carte dit alors où regarder.
+ou sa première pièce (§6.20). Reprendre l'outillage **lève le report** (`reprendre_outillage`) : la
+carte cesse de le rappeler, au geste comme au rechargement, et un nouveau « plus tard » le repose.
 
 **Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
 le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS

@@ -177,7 +177,7 @@ describe("la carte d'une pièce d'outillage", () => {
       <PieceDOutillage
         piece={pieceCorrigee({
           ecrivable: false,
-          echec: "`dotnet test` a échoué à l'exécution (elle a rendu la main en erreur (code 1)).",
+          echec: "`dotnet test` a échoué à l'exécution : elle a rendu la main en erreur (code 1).",
           verifications: [
             verdict({
               commande: "dotnet test",

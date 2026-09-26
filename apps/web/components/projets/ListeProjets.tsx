@@ -106,8 +106,11 @@ function CarteProjet({
   const [geste, setGeste] = useState<GesteArme | null>(null);
   const [enCours, setEnCours] = useState(false);
   const [refus, setRefus] = useState<RefusCarte | null>(null);
-  // L'outillage a été ouvert dans la conversation depuis cette carte : elle le dit,
-  // pour qu'on sache où regarder — la question ou la pièce est dans la colonne.
+  // L'outillage a été repris dans la conversation depuis cette carte : le rappel du
+  // report s'efface tout de suite, comme il s'effacerait au rechargement (l'API lève le
+  // report à la reprise). La carte n'ajoute rien — la colonne qui s'ouvre sur la
+  // question est le retour du geste ; une ligne « il vous attend » disparaissait au
+  // rechargement, et la troisième relecture lisait deux cartes pour un même état.
   const [outillageOuvert, setOutillageOuvert] = useState(false);
 
   /** Joue un geste armé : la carte se fige, un refus revient à son titre. */
@@ -186,12 +189,6 @@ function CarteProjet({
         {formatDateHeure(projet.modifie_le)}
       </p>
       {refus && <RefusMotive refus={refus.detail} titre={refus.titre} />}
-      {outillageOuvert && (
-        <p className="text-annexe text-texte-secondaire" role="status">
-          Son outillage vous attend dans la conversation : chaque pièce s&apos;y écrit
-          sur votre accord.
-        </p>
-      )}
       {geste === "versionner" ? (
         <Carte
           balise="div"

@@ -691,7 +691,9 @@ def test_une_correction_en_echec_le_dit_et_ne_s_ecrit_pas(
 
     piece = reponse.piece
     assert piece is not None and not piece.ecrivable
-    assert "`dotnet test` a échoué à l'exécution" in piece.echec and "code 1" in piece.echec
+    assert piece.echec == (
+        "`dotnet test` a échoué à l'exécution : elle a rendu la main en erreur (code 1)."
+    )
     assert "Rien n'est écrit" in reponse.contenu
     assert (racine / "AGENTS.md").read_text(encoding="utf-8") == ecrit_avant
     # Et le geste d'écrire est refusé, avant toute écriture — pas seulement caché.

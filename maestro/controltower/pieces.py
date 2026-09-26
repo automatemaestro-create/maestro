@@ -646,9 +646,9 @@ def _echec_de_correction(constats: Constats, verdicts: Sequence[Verification]) -
     dites = {c.commande for c in constats.commandes if c.origine == ORIGINE_DITE}
     for verdict in verdicts:
         if verdict.etat == ECHOUEE and verdict.commande in dites:
-            return (
-                f"`{verdict.commande}` a échoué à l'exécution ({verdict.raison.rstrip('.')})."
-            )
+            # Deux-points et non parenthèses : la raison en porte déjà (« (code 1) »), et
+            # la troisième relecture a lu « (… (code 1)) ».
+            return f"`{verdict.commande}` a échoué à l'exécution : {verdict.raison.rstrip('.')}."
     return ""
 
 

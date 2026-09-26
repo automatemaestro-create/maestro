@@ -916,13 +916,13 @@ describe("un outillage reporté se reprend dans la conversation (#1161)", () => 
       ),
     );
     expect(lireConversationOuverte()).toBe(true);
-    expect(await within(carte).findByRole("status")).toHaveTextContent(
-      "Son outillage vous attend dans la conversation",
-    );
-    expect(within(carte).queryByText("Outillage reporté")).toBeNull();
+    // Le rappel du report s'efface tout de suite — comme au rechargement, l'API ayant
+    // levé le report — et la carte n'ajoute rien : la colonne est le retour du geste.
+    await waitFor(() => expect(within(carte).queryByText("Outillage reporté")).toBeNull());
     expect(
       within(carte).queryByRole("button", { name: "Outiller dans la conversation" }),
     ).toBeNull();
+    expect(within(carte).queryByRole("status")).toBeNull();
   });
 
   it("ne propose rien à un projet déjà outillé", async () => {
