@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Guide de démarrage — Maestro
 
 **Version :** 0.1

@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 43 — Un projet naît dans la conversation : on le choisit au démarrage, son outillage s'y construit, et `AGENTS.md` suffit
 
 **Date :** 2026-09-24. **Instruite par :** `/idee` (#1013). **Consignée par :** #1300.

@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Pilote MCP Figma — l'agent designer crée dans un fichier (ticket #115)
 
 **Version :** 0.3 — bascule sur le serveur MCP officiel (§7, ticket #128)

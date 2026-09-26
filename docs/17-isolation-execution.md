@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Isolation d'exécution des agents — mode isolé en conteneur durci (ticket #108)
 
 **Version :** 0.1

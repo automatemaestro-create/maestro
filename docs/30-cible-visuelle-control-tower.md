@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # 30 — La cible visuelle de la Control Tower, et l'outillage qui la tient
 
 > Version 0.1 — recherche du ticket **#471**, mesures du **2026-08-25**.

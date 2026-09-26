@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Run réel sur fournisseur non-Anthropic — rapport (ticket #99)
 
 **Version :** 0.1

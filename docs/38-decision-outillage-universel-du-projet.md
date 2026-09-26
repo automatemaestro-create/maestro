@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 38 — L'outillage universel d'un projet : le format, sa place, et la frontière
 
 **Date :** 2026-09-20. **Consignée par :** #1029, lot 1/7 de #1020.

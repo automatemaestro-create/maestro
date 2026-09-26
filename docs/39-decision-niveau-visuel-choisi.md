@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # 39 — Le niveau visuel se choisit une fois, par une personne
 
 **Date :** 2026-09-21. **Instruite par :** `/idee` (#1013). **Consignée par :** #1134.

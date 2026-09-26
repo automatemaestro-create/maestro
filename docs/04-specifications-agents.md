@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Spécifications des agents — Maestro
 
 **Version :** 0.1

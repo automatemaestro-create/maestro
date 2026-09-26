@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # L'interface de la Control Tower
 
 Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #47,
@@ -42,7 +43,10 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   que pour servir une réponse écrite d'avance — une **table de mots-clés**, qui
   répondait avec aplomb sur un écran dès qu'un mot y traînait (« pipeline Jenkins »
   ramenait la page Runs). Elle a cessé d'être un juge : le modèle **lit la
-  documentation du produit** (`docs/`, ce README) et répond à partir des seules
+  documentation du produit** — les documents qui se déclarent du produit en première
+  ligne (#1321), dont ce README pour ses écrans ; ses chapitres écrits pour qui code
+  l'interface (langage visuel, lancement local, modèle de données, vérifications) se
+  déclarent du développement et n'en sont pas — et répond à partir des seules
   sections qu'il a demandées — choisies en deux temps depuis #1316, sur le
   **sommaire** de la documentation (titres de niveaux 1 et 2) puis sur le détail des
   chapitres qu'il y a retenus, ce qui laisse la carte tenir la croissance du corpus
@@ -581,6 +585,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 
 ## Le langage visuel
+<!-- documentation: développement -->
 
 Posé par #245 (lot 1 de #242), étendu par #533 (lot 1 de #532) qui lui a donné sa
 palette sémantique, il tient en trois fichiers. Ce qui suit n'est pas
@@ -2157,6 +2162,7 @@ scénario `erreur` de la démo (#978), qui fabriquait ces 500, est parti avec el
 (#1168).
 
 ## Lancer en local
+<!-- documentation: développement -->
 
 1. **Backend** (API REST + WebSocket, ticket #46) — Redis du docker-compose requis
    pour le flux temps réel multi-process :
@@ -2189,6 +2195,7 @@ NEXT_PUBLIC_MAESTRO_API_URL=http://mon-hote:8000 npm run dev
 ```
 
 ## Modèle de données
+<!-- documentation: développement -->
 
 Un client charge l'état courant par le REST (`/api/taches`, `/api/agents`) puis
 suit les événements (`/ws/evenements`). Le backend projette chaque événement sur
@@ -2198,6 +2205,7 @@ la projection en TypeScript (`lib/useControlTower.ts`). La connexion WebSocket s
 rétablit seule et chaque reconnexion recharge l'état.
 
 ## Vérifications
+<!-- documentation: développement -->
 
 ```bash
 npm run lint        # ESLint

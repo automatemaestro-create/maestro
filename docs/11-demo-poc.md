@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Démo de bout en bout du POC — Maestro
 
 > ⚠ **Archive.** La commande `maestro-demo` décrite ici quitte le produit avec le mode démo

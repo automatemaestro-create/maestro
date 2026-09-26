@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 37 — L'équipe sur mesure : chaque projet s'outille et recrute ses agents
 
 **Date :** 2026-09-19. **Instruite par :** `/idee` (#1013). **Consignée par :** #1044.

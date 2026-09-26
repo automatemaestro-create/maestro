@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Démo V2 : fiabilité et durabilité sur pièces — Maestro
 
 **Version :** 0.1

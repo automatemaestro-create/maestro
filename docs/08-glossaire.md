@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Glossaire — Maestro
 
 Vocabulaire du projet, par ordre alphabétique.

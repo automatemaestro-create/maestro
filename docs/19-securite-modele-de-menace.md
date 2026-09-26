@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Renforcement sécurité — modèle de menace, activation, vérification (parent #102)
 
 **Version :** 0.1

@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # 25 — Audit des commandes Claude Code : économie de tokens et efficacité
 
 > Ticket #304. Audit daté du **2026-08-07**, sur `origin/main` à `7a64a21`.

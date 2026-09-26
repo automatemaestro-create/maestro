@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # 27 — Migration GitLab → GitHub : note de décision
 
 > ## ⚠ Verdict renversé — la migration a eu lieu

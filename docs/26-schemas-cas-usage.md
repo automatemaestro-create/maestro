@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Cas d'usage et vues fonctionnelles — Maestro
 
 **Version :** 1.0
