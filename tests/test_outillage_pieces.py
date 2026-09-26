@@ -536,6 +536,37 @@ def test_passer_une_piece_ne_l_ecrit_pas_et_elle_ne_revient_pas_telle_quelle(
     assert not (racine / "AGENTS.md").exists()
 
 
+def test_revenir_a_une_version_deja_ecrite_puis_remplacee_la_repropose(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu sur la vraie stack : « retire dotnet test » ramenait `AGENTS.md` à sa version
+    d'avant, déjà écrite une fois — et la pièce ne revenait pas : `(chemin, empreinte)`
+    comptait comme tranché, quoi qu'on ait écrit depuis à ce chemin."""
+    projet_id = _importe(projets, _maison)
+    racine = projets.entite(projet_id).racine_chemin
+    service = _service(projets, _Joueur())
+    v1 = asyncio.run(service.prochaine(projet_id, []))
+    assert v1 is not None and v1.chemin == "AGENTS.md"
+    ecrit_v1 = asyncio.run(service.ecrire(v1))
+    dotnet = lire_correction(
+        json.dumps({"comprise": True, "corrections": [{"cle": "tester", "valeur": "dotnet test"}]}),
+        DOTNET,
+    ).corrections
+    fil = _fil_d_une_piece(v1, _message(NOM_ORCHESTRATION, "Écrit.", piece_ecrite=ecrit_v1))
+    v2 = asyncio.run(service.prochaine(projet_id, fil, corrections=dotnet))
+    assert v2 is not None and v2.chemin == "AGENTS.md" and v2.empreinte != v1.empreinte
+    ecrit_v2 = asyncio.run(service.ecrire(v2))
+    fil.append(_message(NOM_ORCHESTRATION, "Corrigé, écrit.", piece_ecrite=ecrit_v2))
+
+    retour = asyncio.run(service.prochaine(projet_id, fil))
+
+    assert retour is not None and retour.chemin == "AGENTS.md" and retour.sort == "reecrit"
+    assert retour.empreinte == v1.empreinte
+    assert "dotnet test" in (racine / "AGENTS.md").read_text(encoding="utf-8")
+    # Ce qui compte d'un chemin est la **dernière** décision prise sur lui.
+    assert pieces_tranchees(fil) == {("AGENTS.md", ecrit_v2.empreinte)}
+
+
 def test_une_piece_dont_le_fichier_a_bouge_depuis_la_carte_ne_s_ecrit_pas(
     projets: ServiceProjets, _maison: Path
 ) -> None:

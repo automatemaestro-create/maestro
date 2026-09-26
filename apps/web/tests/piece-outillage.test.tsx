@@ -134,7 +134,10 @@ describe("la carte d'une pièce d'outillage", () => {
     // La phrase de la personne a le poids du corps de texte : c'est la justification.
     const phrase = within(region).getByText(/Corrigée d'après votre demande/);
     expect(phrase.className).toMatch(/text-corps/);
-    expect(phrase.textContent).toContain("Nos tests tournent avec dotnet test");
+    // La phrase entre ses guillemets, une espace insécable de chaque côté, rien de plus.
+    expect(phrase.textContent).toBe(
+      "Corrigée d'après votre demande : « Nos tests tournent avec dotnet test »",
+    );
     // Le changement, entouré de son contexte ; le reste replié.
     expect(within(region).getAllByText(/lignes inchangées/).length).toBeGreaterThan(0);
     expect(within(region).getByText(/`npm test`/)).toBeInTheDocument();

@@ -552,12 +552,17 @@ def pieces_tranchees(fil: Sequence[MessageChat]) -> frozenset[tuple[str, str]]:
     Écrite ou écartée, une pièce ne se repropose pas **telle quelle** : c'est ce qui
     fait avancer la conversation d'une pièce à la suivante. Une pièce dont le contenu a
     changé depuis — une correction l'a touchée — n'est plus la même, et se repropose.
+
+    ⚠ **Seule la dernière décision prise sur un chemin compte** : une version écrite
+    puis remplacée par une autre redevient une proposition, parce qu'y revenir change
+    le disque. Vu sur la vraie stack : « retire dotnet test » ramenait `AGENTS.md` à sa
+    version d'avant, déjà écrite une fois, et la pièce ne revenait jamais.
     """
-    return frozenset(
-        (m.piece_ecrite.chemin, m.piece_ecrite.empreinte)
-        for m in fil
-        if m.piece_ecrite is not None and m.piece_ecrite.empreinte
-    )
+    dernieres: dict[str, str] = {}
+    for m in fil:
+        if m.piece_ecrite is not None and m.piece_ecrite.empreinte:
+            dernieres[m.piece_ecrite.chemin] = m.piece_ecrite.empreinte
+    return frozenset(dernieres.items())
 
 
 def choix_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:

@@ -315,7 +315,11 @@ class ServicePieces:
         boucle d'événements.
         """
         matiere = await self._matiere(projet_id, fil, acquis=acquis, corrections=corrections)
-        deja = set(pieces_tranchees(fil)) | set(tranchees)
+        # La dernière décision par chemin (`pieces_tranchees`) — le geste en cours après
+        # celles du fil, puisqu'il est la plus récente.
+        dernieres = dict(pieces_tranchees(fil))
+        dernieres.update(tranchees)
+        deja = set(dernieres.items())
         connues = _verdicts_du_fil(fil)
         return await asyncio.to_thread(self._chercher, matiere, deja, connues)
 

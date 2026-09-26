@@ -116,9 +116,11 @@ export function PieceDOutillage({
       </div>
       {corrigee ? (
         <p className="mt-1 text-corps text-texte">
-          Corrigée d&apos;après votre demande : «&nbsp;
+          {/* Les espaces insécables en chaînes : une entité `&nbsp;` en fin de ligne
+              laissait l'indentation suivante dans le texte servi (vu sur la vraie stack). */}
+          {"Corrigée d'après votre demande : « "}
           <TexteAvecCode texte={piece.correction} />
-          &nbsp;»
+          {" »"}
         </p>
       ) : (
         <p className="mt-1 text-annexe text-texte-secondaire">{enPhrase(piece.raison)}</p>
