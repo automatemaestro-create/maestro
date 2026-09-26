@@ -169,8 +169,9 @@ class EtatNoeud:
     role: str = ""
     cout_usd: float | None = None
     # Le coût ci-dessus est-il **partiel** (#835) — celui d'une tâche qui tourne
-    # encore, relevé pendant qu'il se dépense — ou soldé par l'issue de la
-    # tâche ? Posé par la projection, qui seule sait ce qui a été relevé.
+    # encore, relevé pendant qu'il se dépense, ou d'une issue qui a laissé des
+    # tokens sans prix (#1280) — ou soldé et complet ? Posé par la projection,
+    # qui seule sait ce qui a été relevé.
     cout_partiel: bool = False
     duree_ms: int | None = None
     # Le **travail** de la tâche (#989) : sa durée horloge moins ses attentes
@@ -232,7 +233,8 @@ class NoeudGraphe:
             "cout_usd": self.cout_usd,
             # Le même coût que la carte de la tâche, avec la même réserve
             # (#835) : `true` tant que la tâche tourne et que le montant est un
-            # relevé en cours, `false` dès que son issue l'a soldé.
+            # relevé en cours, `false` dès que son issue l'a soldé — sauf si
+            # cette issue a laissé des tokens sans prix (#1280).
             "cout_partiel": self.cout_partiel,
             "duree_ms": self.duree_ms,
             # Le travail, à côté de l'horloge (#989) : un client qui ignore la

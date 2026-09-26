@@ -452,8 +452,15 @@ def test_un_releve_ne_deplace_aucune_carte_et_se_rejoue_a_l_identique():
     assert dev is not None and dev.cout_usd is None  # rien de soldé sur sa fiche
 
 
-def test_une_issue_sans_cout_tarife_solde_quand_meme_le_releve():
-    """Un fournisseur sans tarification (Ollama) : la tâche finit, le partiel s'éteint."""
+def test_une_issue_sans_cout_tarife_solde_le_releve_sans_rendre_le_run_complet():
+    """Un fournisseur sans tarification (Ollama) : la tâche finit, et le montant reste partiel.
+
+    Renversé par #1280. Ce test disait « le partiel s'éteint » : l'issue soldait le
+    relevé, et le run se déclarait complet avec des tokens que rien n'avait
+    tarifés — c'est exactement le défaut du run `3fe501fc0878`, où la tâche
+    n'avait pas de prix parce qu'elle était morte avant son résultat. Le relevé,
+    lui, est bien soldé : il ne compte plus, rien n'est compté deux fois.
+    """
     state = ControlTowerState()
     _applique(state, _ligne(f"t1{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, StepUsage(tokens_entree=10)))
     assert state.execution(RUN).cout_partiel is True
@@ -461,9 +468,10 @@ def test_une_issue_sans_cout_tarife_solde_quand_meme_le_releve():
     _applique(state, _ligne("t1", STATUT_TERMINEE, StepUsage(appels=1, tokens_entree=12)))
 
     t1 = state.tache("t1")
-    assert t1 is not None and t1.cout_usd is None and t1.cout_partiel is False
+    assert t1 is not None and t1.cout_usd is None and t1.cout_partiel is True
     assert state.execution(RUN).cout_usd is None
-    assert state.execution(RUN).cout_partiel is False
+    assert state.execution(RUN).cout_partiel is True
+    assert state.execution(RUN).cout.total.tokens_non_tarifes == 12
 
 
 def test_la_frise_et_le_kanban_ne_confondent_pas_un_releve_avec_un_statut():

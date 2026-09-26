@@ -1882,7 +1882,9 @@ def _absorbe(
     - une session **coupée avant son résultat** (CLI mort, plafond crevé) garde
       désormais les tokens de ses tours dans le collecteur, là où elle n'y
       laissait rien : c'est ce que les relances agrègent, et ce qui donne prise
-      au plafond en tokens **pendant** une tâche au lieu d'après.
+      au plafond en tokens **pendant** une tâche au lieu d'après. Elle les garde
+      **non tarifés** (#1280) : aucun résultat n'est venu les couvrir, et le
+      grand livre le dit au lieu de les compter pour rien.
 
     Sans `compteur`, le comportement est celui d'avant ce lot — un seul
     signalement, au résultat.
@@ -2055,12 +2057,22 @@ class _CompteurTours:
         return ajout if (ajout.tokens_total or ajout.tours) else None
 
     def reste(self, resultat: StepUsage) -> StepUsage:
-        """Ce que `resultat` porte en plus des tours déjà signalés (tours + reste = résultat)."""
+        """Ce que `resultat` porte en plus des tours déjà signalés (tours + reste = résultat).
+
+        La part **non tarifée** suit la même soustraction (#1280), et c'est ce qui
+        fait du résultat le seul geste qui tarifie après coup : les tours, signalés
+        sans coût, en ont chacun une égale à leurs tokens ; un résultat tarifé n'en
+        a aucune, donc son reste retire exactement celle des tours de **cette**
+        session. Une session tuée avant son résultat garde la sienne, et le
+        résultat d'une relance ne couvre pas la session d'avant — chaque tentative
+        a son compteur.
+        """
         return replace(
             resultat,
             tokens_entree=resultat.tokens_entree - self.total.tokens_entree,
             tokens_sortie=resultat.tokens_sortie - self.total.tokens_sortie,
             tours=resultat.tours - self.total.tours,
+            tokens_non_tarifes=resultat.tokens_non_tarifes - self.total.tokens_non_tarifes,
         )
 
 
