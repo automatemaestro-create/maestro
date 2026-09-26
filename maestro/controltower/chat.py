@@ -1136,7 +1136,10 @@ class PieceProposee:
     (critère du ticket, « une correction en échec le dit, sans rien écrire »), et
     `echec` dit pourquoi. Une commande que le projet déclarait et qui échoue, elle,
     s'écrit avec son verdict, comme depuis #1160 — c'est la correction qu'on ne
-    laisse pas passer sans preuve.
+    laisse pas passer sans preuve. `corrigees` nomme, parmi les commandes vérifiées,
+    celles que la personne a **dites** : la carte les montre avec leur verdict juste
+    sous la légende, pour que la revérification se lise sans déplier la liste (vu à
+    la relecture de #1161 : la commande corrigée était sous la ligne de flottaison).
 
     `rang` et `total` situent la pièce dans l'outillage de ce projet (les fichiers que
     la recommandation rédige, dans leur ordre). `source` est la provenance que le
@@ -1166,6 +1169,7 @@ class PieceProposee:
     total: int = 1
     source: Mapping[str, Any] = field(default_factory=dict)
     regime: str = "en-place"
+    corrigees: tuple[str, ...] = ()
 
     @property
     def ecrivable(self) -> bool:
@@ -1209,6 +1213,7 @@ class PieceProposee:
             "total": self.total,
             "source": dict(self.source),
             "regime": self.regime,
+            "corrigees": list(self.corrigees),
         }
 
     @classmethod
@@ -1216,6 +1221,7 @@ class PieceProposee:
         """Relit une pièce persistée, sans rien rejuger (même règle que `MessageChat`)."""
         verifications = data.get("verifications")
         source = data.get("source")
+        corrigees = data.get("corrigees")
         return cls(
             projet_id=str(data.get("projet_id") or ""),
             projet_nom=str(data.get("projet_nom") or ""),
@@ -1243,6 +1249,9 @@ class PieceProposee:
             total=int(data.get("total") or 1),
             source=dict(source) if isinstance(source, Mapping) else {},
             regime=str(data.get("regime") or "en-place"),
+            corrigees=tuple(
+                str(c) for c in (corrigees if isinstance(corrigees, list) else ()) if c
+            ),
         )
 
     def en_phrase(self) -> str:

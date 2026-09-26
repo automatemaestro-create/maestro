@@ -2532,7 +2532,21 @@ class RepondeurOrchestration(RepondeurChat):
             if verdict.nom == VERDICT_PROPOSITION and self._lanceur is not None
             else ""
         )
-        return ReponseChat(contenu=redaction.texte, proposition=propose, etapes=etapes)
+        # Un **échange** pendant qu'une pièce d'outillage attend ne la retire pas
+        # (#1161) : une carte ne tient qu'au dernier message, et une question posée
+        # entre-temps — « laquelle voulez-vous changer ? » — ne l'a pas tranchée. Vu sur
+        # la vraie stack : le fil parlait de « la pièce proposée juste en dessous »…
+        # qui n'y était plus. Une nouvelle demande de travail, elle, prend la place ;
+        # l'outillage reprend quand on le demande.
+        attente = piece_en_attente(fil[:-1]) if verdict.nom == VERDICT_ECHANGE else None
+        gardee = attente.piece if attente is not None else None
+        return ReponseChat(
+            contenu=redaction.texte,
+            proposition=propose,
+            piece=gardee,
+            projet_outille=gardee.projet_id if gardee is not None else "",
+            etapes=etapes,
+        )
 
     async def trancher_cadrage(
         self,
@@ -2875,7 +2889,11 @@ class RepondeurOrchestration(RepondeurChat):
                 "\n\n" + _PHRASE_OUTILLAGE_EMPECHE.format(cause=cause_lisible(echec))
             )
             return ReponseChat(contenu=redaction.texte, piece=reposee)
-        await redaction.ecrire("\n\n" + reponse.contenu)
+        if reponse.contenu:
+            # Une pièce comprise et montrée n'ajoute rien : le juge a parlé, la carte
+            # dit le reste (`_texte_de_la_piece`). Ce qui s'ajoute est ce que lui ne
+            # savait pas — incomprise, sans effet, en échec, plus rien à écrire.
+            await redaction.ecrire("\n\n" + reponse.contenu)
         return replace(reponse, contenu=redaction.texte)
 
     async def _ecrire_la_piece(
@@ -2895,13 +2913,16 @@ class RepondeurOrchestration(RepondeurChat):
             )
             return ReponseChat(contenu=redaction.texte, piece=piece)
         try:
-            reponse = await self._conducteur.trancher(fil, piece=piece, decision=DECISION_ECRIRE)
+            reponse = await self._conducteur.trancher(
+                fil, piece=piece, decision=DECISION_ECRIRE, faits=False
+            )
         except Exception as echec:  # noqa: BLE001 — un empêchement se raconte
             await redaction.ecrire(
                 "\n\n" + _PHRASE_OUTILLAGE_EMPECHE.format(cause=cause_lisible(echec))
             )
             return ReponseChat(contenu=redaction.texte, piece=piece)
-        await redaction.ecrire("\n\n" + reponse.contenu)
+        if reponse.contenu:
+            await redaction.ecrire("\n\n" + reponse.contenu)
         return replace(reponse, contenu=redaction.texte)
 
     async def _declarer(self, demande: DemandeProjet) -> tuple[ProjetCree, str]:

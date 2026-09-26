@@ -464,6 +464,60 @@ def _phrase_de_la_piece(piece: PieceProposee) -> str:
     return ouverture
 
 
+def _phrase_de_transition(acquis: Sequence[Choix]) -> str:
+    """Ce que le fil dit quand le questionnaire s'achève sur la première pièce (#1161).
+
+    Le code, et pas le dernier mot du modèle : ce mot-là, écrit pour conclure un
+    questionnaire, invitait à passer à autre chose (« dites-moi par quoi commencer »)
+    au-dessus de pièces qui attendaient toutes un geste. Il dit ce qui a été compris,
+    puis ce qui vient — la carte, juste en dessous, dit laquelle.
+    """
+    return (
+        f"C'est tout ce qu'il me fallait — {resume_des_choix(acquis)}. L'outillage "
+        "s'écrit maintenant pièce par pièce, chacune sur votre accord."
+    )
+
+
+def _texte_de_la_piece(
+    prelude: str, piece: PieceProposee, *, faits: bool, apres_le_juge: bool
+) -> str:
+    """Ce que le texte d'un message dit d'une pièce que la carte montre (#1161).
+
+    La carte dit la pièce — son chemin, son rang, son projet, ses gestes : le texte ne
+    la redit pas (la relecture de #1161 l'a vue redite juste au-dessus d'elle). Il ne
+    la nomme que dans deux cas :
+
+    - `faits` — le texte n'est pas montré, il nourrit la rédaction du modèle (#1262),
+      qui a besoin de savoir ce qui vient ;
+    - la version est **en échec** — rien n'a été écrit, et cela doit se lire même
+      sans la carte.
+
+    Sinon, le prélude seul ; sans prélude, la phrase de la pièce — un message ne se
+    persiste pas vide —, sauf derrière le juge (`apres_le_juge`), qui a déjà parlé.
+    """
+    if faits or piece.echec:
+        return _joint(prelude, _phrase_de_la_piece(piece))
+    if prelude or apres_le_juge:
+        return prelude
+    return _phrase_de_la_piece(piece)
+
+
+def _touchee(piece: PieceProposee, fil: Sequence[MessageChat]) -> bool:
+    """`piece` est-elle une version neuve d'un chemin déjà proposé ou tranché sur ce fil ?
+
+    C'est ce qu'une correction qu'on vient de comprendre a touché : le même chemin,
+    un autre contenu. Lu sur la structure du fil (les pièces et leurs faits), jamais
+    sur le texte.
+    """
+    vues = {(m.piece.chemin, m.piece.empreinte) for m in fil if m.piece is not None}
+    vues |= {
+        (m.piece_ecrite.chemin, m.piece_ecrite.empreinte)
+        for m in fil
+        if m.piece_ecrite is not None
+    }
+    return any(chemin == piece.chemin and vue != piece.empreinte for chemin, vue in vues)
+
+
 def _phrase_de_fin(projet_nom: str) -> str:
     """Ce que le fil dit quand plus aucune pièce n'est à écrire (#1161)."""
     return (
@@ -568,7 +622,12 @@ class ConducteurOutillage:
         acquis = acquis_de([*reponses, *comprise.constats])
         suivante = comprise.question_suivante(rang=len(donnees(reponses)) + 1)
         if suivante is None and self._pieces is not None and projet:
-            return await self._piece(fil, projet, acquis=acquis, prelude=comprise.message)
+            # La transition est celle du code, pas le dernier mot du modèle : vu sur la
+            # vraie stack, il invitait à « commencer par la page d'accueil » au-dessus
+            # de la première des sept pièces qui attendaient un geste.
+            return await self._piece(
+                fil, projet, acquis=acquis, prelude=_phrase_de_transition(acquis)
+            )
         if suivante is None:
             return ReponseChat(
                 contenu=_joint(
@@ -592,6 +651,9 @@ class ConducteurOutillage:
         corrections: Sequence[Choix] = (),
         tranchees: Sequence[tuple[str, str]] = (),
         fait: PieceEcrite | None = None,
+        phrase: str = "",
+        faits: bool = False,
+        apres_le_juge: bool = False,
     ) -> ReponseChat:
         """La pièce suivante — ou la fin de l'outillage —, avec ce qui la précède (#1161).
 
@@ -600,11 +662,19 @@ class ConducteurOutillage:
         projet neuf sans rappeler le modèle. `fait` et `corrections` sont les faits
         du tour — la pièce d'avant, ce qu'une phrase a corrigé —, portés par le même
         message que la suivante.
+
+        `phrase` est celle d'une correction qu'on vient de comprendre : la pièce
+        qu'elle a **touchée** — une version neuve d'un chemin déjà proposé ou tranché
+        sur ce fil (`_touchee`) — la porte, même quand la correction a **retiré** une
+        commande et que le texte n'en garde aucune trace. `faits` et `apres_le_juge`
+        disent qui lit le texte du message (`_texte_de_la_piece`).
         """
         pieces = self._exige_pieces()
         suivante = await pieces.prochaine(
             projet_id, fil, acquis=acquis, corrections=corrections, tranchees=tranchees
         )
+        if suivante is not None and phrase and not suivante.correction and _touchee(suivante, fil):
+            suivante = replace(suivante, correction=phrase)
         comprehension = tuple(acquis) if acquis else ()
         if suivante is None:
             return ReponseChat(
@@ -615,7 +685,9 @@ class ConducteurOutillage:
                 projet_outille=projet_id,
             )
         return ReponseChat(
-            contenu=_joint(prelude, _phrase_de_la_piece(suivante)),
+            contenu=_texte_de_la_piece(
+                prelude, suivante, faits=faits, apres_le_juge=apres_le_juge
+            ),
             piece=suivante,
             comprehension=comprehension,
             piece_ecrite=fait,
@@ -650,14 +722,27 @@ class ConducteurOutillage:
         n'a pas à l'être une seconde fois.
 
         `projet_id` (#1161) nomme le projet quand le fil ne le dit pas encore — c'est
-        « Outiller maintenant » sur la carte d'un projet.
+        « Outiller dans la conversation » sur la carte d'un projet. L'ouvrir pour lui,
+        c'est le **reprendre** : un « plus tard » d'avant est levé, et la fiche cesse
+        de le rappeler (`ServicePieces.reprendre`) — un nouveau « plus tard » le repose.
         """
+        if projet_id and self._pieces is not None:
+            self._pieces.reprendre(projet_id)
         return await self._tour(fil, projet_id)
 
     async def trancher(
-        self, fil: Sequence[MessageChat], *, piece: PieceProposee, decision: str
+        self,
+        fil: Sequence[MessageChat],
+        *,
+        piece: PieceProposee,
+        decision: str,
+        faits: bool = True,
     ) -> ReponseChat:
         """La suite d'un geste sur une pièce : l'écrire, la passer, ou tout remettre à plus tard.
+
+        `faits` (par défaut) : le texte rendu nourrit la rédaction du modèle (#1262), et
+        nomme donc la pièce suivante. Faux derrière un « oui » tapé : le juge a parlé,
+        le texte ne dit que ce qui s'est fait, et la carte dit la suite.
 
         - **plus tard** — rien n'est écrit, le report est enregistré sur le projet
           (docs/37 §4.6), et le fil s'arrête là : la fiche du projet le rappellera ;
@@ -709,6 +794,7 @@ class ConducteurOutillage:
             prelude=_phrase_du_fait(fait),
             tranchees=((fait.chemin, fait.empreinte),),
             fait=fait,
+            faits=faits,
         )
 
     async def corriger(
@@ -767,7 +853,9 @@ class ConducteurOutillage:
                 piece=reposee,
                 projet_outille=projet_id,
             )
-        return await self._piece(fil, projet_id, corrections=lue.corrections)
+        return await self._piece(
+            fil, projet_id, corrections=lue.corrections, phrase=phrase, apres_le_juge=True
+        )
 
     async def repondre(
         self, fil: Sequence[MessageChat], question: QuestionOutillage, valeur: str

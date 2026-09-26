@@ -396,6 +396,10 @@ class ServicePieces:
         """L'outillage entier remis à plus tard — le report de docs/37 §4.6, lu sur la fiche."""
         self._projets.reporter_outillage(projet_id)
 
+    def reprendre(self, projet_id: str) -> None:
+        """L'outillage repris : le report est levé, la fiche cesse de le rappeler."""
+        self._projets.reprendre_outillage(projet_id)
+
     async def _ecrire_sur_branche(
         self, projet: Projet, racine: Path, fichier: Fichier, piece: PieceProposee
     ) -> PieceEcrite:
@@ -593,7 +597,14 @@ def _proposee(
         total=total,
         source=matiere.source,
         regime=REGIME_BRANCHE if projet.versionne else REGIME_EN_PLACE,
+        corrigees=_commandes_dites(matiere.constats, verdicts),
     )
+
+
+def _commandes_dites(constats: Constats, verdicts: Sequence[Verification]) -> tuple[str, ...]:
+    """Les commandes de cette pièce que la personne a **dites**, dans l'ordre joué."""
+    dites = {c.commande for c in constats.commandes if c.origine == ORIGINE_DITE}
+    return tuple(v.commande for v in verdicts if v.commande in dites)
 
 
 def _phrase_portee(corrections: Sequence[Choix], contenu: str) -> str:

@@ -630,11 +630,15 @@ def test_une_correction_comprise_repropose_la_piece_revérifiee_avec_la_phrase(
     # Revérifiée : la commande corrigée a été jouée, et son verdict est sur la carte.
     assert "dotnet test" in joueur.joues
     assert {v.commande: v.etat for v in piece.verifications}["dotnet test"] == VERIFIEE
+    # …et nommée comme la commande corrigée : la carte la montre sous sa légende.
+    assert piece.corrigees == ("dotnet test",)
     # La correction voyage sur le message, la phrase pour cause — le tour suivant la relit.
     assert [(c.cle, c.valeur, c.parce_que) for c in reponse.corrections] == [
         ("tester", "dotnet test", DOTNET)
     ]
-    assert "corrigée d'après vous" in reponse.contenu
+    # Le juge a dit ce qu'il a compris ; la carte porte la pièce et la phrase : le texte
+    # du conducteur ne les redit pas (relecture de #1161).
+    assert reponse.contenu == ""
     # Et rien n'est écrit tant qu'on n'a pas accepté.
     assert (racine / "AGENTS.md").read_text(encoding="utf-8") == ecrit_avant
     # Le modèle a relu ce qu'on sait, et la phrase telle quelle.
@@ -922,6 +926,104 @@ def test_un_projet_neuf_s_outille_piece_par_piece_jusqu_au_bout(
     assert "il n'y a plus rien à écrire" in modele.appels["redaction"][-1]
 
 
+def test_reprendre_l_outillage_d_un_projet_reporte_leve_le_report(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu à la relecture : repris dans la conversation, l'outillage restait « reporté » sur la
+    carte du projet — badge et bouton — pendant que sa question attendait dans la colonne.
+    Le reprendre, c'est ne plus le remettre à plus tard ; « plus tard » le repose."""
+    racine = _maison / "Maestro" / "api"
+    projet_id = str(projets.creer("api", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+    projets.reporter_outillage(projet_id)
+    assert projets.entite(projet_id).outillage.reporte
+    repondeur = _repondeur(projets, _Modele(comprehension=COMPRIS_FLUTTER))
+
+    ouverture = asyncio.run(repondeur._conducteur.ouvrir([], projet_id=projet_id))
+
+    assert ouverture.question is not None or ouverture.piece is not None
+    assert not projets.entite(projet_id).outillage.reporte
+    piece = asyncio.run(
+        repondeur._conducteur.ouvrir(
+            [_message(UTILISATEUR, "Une application mobile Flutter")], projet_id=projet_id
+        )
+    ).piece
+    assert piece is not None
+    asyncio.run(repondeur._conducteur.trancher([], piece=piece, decision="plus-tard"))
+    assert projets.entite(projet_id).outillage.reporte
+
+
+def test_la_fin_du_questionnaire_annonce_les_pieces_et_rien_d_autre(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu sur la vraie stack : le dernier mot du modèle (« Dites-moi par quoi commencer,
+    par exemple la page d'accueil ») précédait la première pièce, alors que sept
+    attendaient un geste. La transition est celle du code : ce qui a été compris, puis
+    l'outillage qui s'écrit — la carte dit la pièce."""
+    compris = {**COMPRIS_FLUTTER, "message": "Tout est décidé. Dites-moi par quoi commencer."}
+    repondeur = _repondeur(projets, _Modele(comprehension=compris))
+    racine = _maison / "Maestro" / "padel"
+    projet_id = str(projets.creer("padel", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+
+    reponse = asyncio.run(
+        repondeur._conducteur.ouvrir(
+            [_message(UTILISATEUR, "Une application mobile Flutter")], projet_id=projet_id
+        )
+    )
+
+    assert reponse.piece is not None and reponse.piece.chemin == "AGENTS.md"
+    assert reponse.contenu.startswith("C'est tout ce qu'il me fallait")
+    assert "pièce par pièce" in reponse.contenu
+    assert "par quoi commencer" not in reponse.contenu and "AGENTS.md" not in reponse.contenu
+
+
+def test_une_correction_qui_retire_une_commande_porte_sa_phrase_sur_la_carte(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu sur la vraie stack : « retire dotnet test » ramenait `AGENTS.md` sans la phrase
+    sur la carte — elle ne s'y lisait que si le texte la portait (une commande dite).
+    Une version neuve d'un chemin déjà proposé est ce que la correction a touché."""
+    joueur = _Joueur()
+    modele = _Modele(
+        correction={"comprise": True, "corrections": [{"cle": "tester", "valeur": "aucun"}]}
+    )
+    projet_id, _, service, fil, _ = _apres_agents_ecrit(projets, _maison, joueur, modele)
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    phrase = "Pas de tests pour l'instant."
+
+    reponse = asyncio.run(
+        conducteur.corriger([*fil, _message(UTILISATEUR, phrase)], projet_id=projet_id, phrase=phrase)
+    )
+
+    piece = reponse.piece
+    assert piece is not None and piece.chemin == "AGENTS.md" and piece.sort == "reecrit"
+    assert "npm run test" not in piece.texte_apres
+    assert piece.correction == phrase
+
+
+def test_une_question_posee_pendant_une_piece_ne_la_retire_pas(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu sur la vraie stack : une phrase vague pendant qu'une pièce attendait — le fil a
+    demandé une précision en parlant de « la pièce proposée juste en dessous »… qui n'y
+    était plus : une carte ne tient qu'au dernier message. Un échange la garde."""
+    modele = _Modele(_dicte("Laquelle voulez-vous changer ?", VERDICT_ECHANGE))
+    repondeur = _repondeur(projets, modele)
+    projet_id = _importe(projets, _maison)
+    agents = asyncio.run(repondeur._conducteur.ouvrir([], projet_id=projet_id)).piece
+    assert agents is not None
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION,
+            _fil_d_une_piece(agents, _message(UTILISATEUR, "Change le truc de l'outillage.")),
+            projet_id=projet_id,
+        )
+    )
+
+    assert reponse.contenu.startswith("Laquelle voulez-vous changer ?")
+    assert reponse.piece == agents and reponse.proposition == ""
+
+
 def test_un_oui_tape_sur_une_piece_l_ecrit_comme_le_clic(
     projets: ServiceProjets, _maison: Path
 ) -> None:
@@ -972,11 +1074,10 @@ def test_le_verdict_outillage_comprend_la_correction_sans_rien_ecrire(
         )
     )
 
-    assert reponse.contenu.startswith("Vos tests tournent avec dotnet test : je revérifie.")
-    assert "corrigée d'après vous" in reponse.contenu
-    # Le juge a dit ce qu'il a compris : le message du modèle de correction ne le
-    # redit pas en dessous (la relecture de #1161 l'avait vu deux fois).
-    assert "J'ai remplacé" not in reponse.contenu
+    # Le juge a dit ce qu'il a compris, et c'est tout ce que le message dit : ni le
+    # message du modèle de correction, ni la pièce — la carte la porte, phrase comprise
+    # (la relecture de #1161 avait vu chacun redit en dessous).
+    assert reponse.contenu == "Vos tests tournent avec dotnet test : je revérifie."
     assert reponse.piece is not None and reponse.piece.correction == DOTNET
     assert corrections_du_fil([_message(NOM_ORCHESTRATION, "x", corrections=reponse.corrections)])
     assert (racine / "AGENTS.md").read_text(encoding="utf-8") == ecrit_avant
@@ -1199,7 +1300,7 @@ def _piece(**champs: Any) -> PieceProposee:
 
 
 def test_la_piece_son_fait_et_la_correction_se_relisent_a_l_identique() -> None:
-    piece = _piece()
+    piece = _piece(correction=DOTNET, corrigees=("dotnet test",))
     fait = PieceEcrite(projet_id="p-1", chemin="AGENTS.md", nom="AGENTS.md", etat="ecrit")
     correction = Choix(cle="tester", valeur="dotnet test", deduit=True, parce_que=DOTNET)
     message = _message(
