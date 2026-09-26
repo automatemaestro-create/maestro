@@ -789,17 +789,14 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > (`etapes` de [`task.schema.json`](../packages/shared/schemas/task.schema.json),
 > libellés seuls, jamais d'avancement), ce qui rend la tâche lisible **avant**
 > qu'elle démarre ; l'agent rapporte où il en est **pendant** qu'elle tourne, et
-> son premier relevé supplante l'ossature. Il le fait là où il tient déjà sa
-> liste de travail — l'entrée de ses appels `TodoWrite`, lue par
-> `maestro/providers/checklist.py` : aucun protocole n'a été inventé, aucun
-> second transport ouvert. `SuiviChecklist` réconcilie les deux et garantit que
+> son premier relevé supplante l'ossature. Il le fait par un **verbe de
+> Maestro** depuis #1291 (encadré suivant). `SuiviChecklist` réconcilie les deux et garantit que
 > **rien ne recule** — un état ne redescend pas, une étape connue ne disparaît
 > pas d'un relevé qui l'oublie, y compris à travers une relance. Le
 > **dénominateur, lui, peut grandir**, et c'est pourquoi la jauge du panneau est
 > une **case par étape** et non un pourcentage : ce qui est acquis reste allumé,
-> la rangée s'allonge. Un fournisseur sans checklist observable, un rôle dont la
-> politique refuse l'outil, un plan sans ossature : la tâche reste exactement ce
-> qu'elle est aujourd'hui. Le **motif complet de l'arbitrage**, avec les deux
+> la rangée s'allonge. Un rôle dont la politique refuse le verbe, un plan sans
+> ossature : la tâche reste exactement ce qu'elle est aujourd'hui. Le **motif complet de l'arbitrage**, avec les deux
 > options écartées, vit en [docs/03 § TASK](./03-modele-de-donnees.md) — c'est
 > une décision de modèle avant d'être un écran. Vérification :
 > [`tests/test_checklist_tache.py`](../tests/test_checklist_tache.py) côté moteur
@@ -808,6 +805,47 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > [`apps/web/tests/pipeline.test.tsx`](../apps/web/tests/pipeline.test.tsx) pour
 > la rangée de cases — dont le contrôle qui compte : le dénominateur grandit sans
 > que le numérateur bouge.
+
+> **La checklist est un verbe de Maestro (#1291).** L'agent la tient par
+> `tenir_checklist(etapes)`, servi par le serveur MCP in-process `maestro` à côté
+> de `consigner_decision` et des autres verbes (nom complet pour une politique :
+> `mcp__maestro__tenir_checklist`). Chaque appel porte la liste **complète** —
+> des objets `{libelle, etat}`, `etat` valant `a_faire`, `en_cours` ou `faite` —
+> et alimente le canal `on_etapes` avec cet état ; `SuiviChecklist` en décide
+> comme avant. Une entrée invalide (liste absente ou vide, étape sans libellé,
+> état hors du contrat) ne relève **rien**, et l'agent lit ce qui cloche, rang
+> compris ; un canal en panne lui est dit aussi, et aucun des deux ne tue la
+> tâche. Le contrat entier — nom, schéma, textes servis à l'agent, et `servir`,
+> qui fait d'un appel un relevé — vit dans
+> [`maestro/providers/checklist.py`](../maestro/providers/checklist.py), sans rien
+> d'un fournisseur : l'adaptateur Claude l'enveloppe, un autre fournisseur outillé
+> servirait le même. Le socle des playbooks le nomme
+> (`maestro/agents/playbooks_defaut/_cadre_outille.md`).
+>
+> **Pourquoi un verbe.** La checklist se lisait jusque-là dans les appels à
+> `TodoWrite`, un **outil interne du CLI Claude**. Le CLI embarqué par le SDK
+> 0.2.159 l'a remplacé par `TaskCreate`/`TaskUpdate`, et depuis le 2026-09-22
+> toutes les tâches se soldaient à « 0/N · relevé incomplet » sans que rien ne
+> rougisse. Lire le nouvel outil, forcer l'ancien par une variable du CLI ou
+> épingler le SDK auraient gardé la même dépendance. La règle est celle de
+> [docs/44](./44-decision-maestro-possede-ses-contrats.md) : ce dont Maestro a
+> besoin, il le possède, et **il ne dépend d'aucun outil interne d'un CLI**.
+> Aucun outil de liste du CLI n'est plus confié à l'agent (`DEFAULT_TOOLS`) : il
+> n'a qu'une liste à tenir, celle de Maestro.
+>
+> **Un fournisseur sans outils le dit.** Une tâche exécutée en texte seul — un
+> fournisseur compatible OpenAI, par exemple — n'a reçu aucun verbe : personne ne
+> pouvait cocher l'ossature du plan. À la clôture, le moteur consigne donc
+> qu'**aucun relevé n'était possible**, en nommant le fournisseur
+> (`phrase_checklist_sans_releve`), et non un écart qui ferait porter le manque à
+> l'agent. Vérification :
+> [`tests/test_checklist_tache.py`](../tests/test_checklist_tache.py) — le verbe
+> appelé comme le SDK l'appelle, sans CLI ni quota (patron de
+> `tests/test_decisions_autonomes.py`), aucun `TodoWrite`/`TaskCreate`/`TaskUpdate`
+> du flux qui coche quoi que ce soit, et le chemin entier jusqu'à la carte que sert
+> l'API. Sur la vraie stack, c'est le scénario **S2** du banc
+> (`python -m maestro.scenarios`) qui le garde : sa tâche doit finir à N/N par ce
+> verbe.
 
 > **Ce qui reste non coché à la clôture se dit (#944).** Un agent conclut souvent
 > sans cocher sa dernière ligne : la tâche 4 du run du
@@ -6503,7 +6541,7 @@ l'équipe est refusée — jamais un `500`.
       "justification": { "nom": "Python", "chemin": "src/app.py", "role": "48 fichier(s) Python" },
       "instances": 2,
       "raison_instances": "2 langages substantiels (Python 62 %, TypeScript 31 %) : …",
-      "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "TodoWrite"],
+      "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
       "playbook": "…",                 // celui qu'on lit à l'écran, et qui sera écrit
       "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257),
                                        // "gabarit" (la rédaction n'a pas abouti) ou

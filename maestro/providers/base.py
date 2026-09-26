@@ -629,20 +629,24 @@ class ModelProvider(ABC):
         jamais casser l'exécution observée.
 
         `on_etapes` (#489) est le canal de la **checklist** de la tâche : le
-        fournisseur l'appelle avec l'état complet de la liste de travail de
-        l'agent, tel qu'il vient de l'observer, chaque fois que celui-ci la pose
-        ou la met à jour. L'état **complet** et non un delta, à dessein — c'est
-        `maestro.detail_tache.SuiviChecklist` qui décide de ce qui progresse, et
-        lui confier des deltas l'obligerait à reconstituer un état que le
-        fournisseur a déjà sous les yeux.
+        fournisseur l'appelle avec l'état complet de la liste de l'agent chaque
+        fois que celui-ci la pose ou la met à jour. L'état **complet** et non un
+        delta, à dessein — c'est `maestro.detail_tache.SuiviChecklist` qui décide
+        de ce qui progresse, et lui confier des deltas l'obligerait à
+        reconstituer un état que l'agent vient de donner en entier.
+
+        Depuis #1291, un fournisseur qui l'honore expose à l'agent le **verbe de
+        Maestro** `tenir_checklist(etapes)` et en sert le contrat tel quel
+        (`maestro.providers.checklist.servir` : entrée, fautes dites à l'agent,
+        accusé) — il ne **lit** plus la liste dans un outil qui lui serait propre.
+        C'était le cas du fournisseur Claude, qui la lisait dans l'outil
+        `TodoWrite` de son CLI, et c'est ce qui a laissé toutes les checklists à
+        0/N le jour où le CLI a changé d'outil (docs/44).
 
         Capacité **optionnelle au second degré** : un fournisseur peut honorer
-        `run_agent` sans jamais appeler ce canal, s'il n'a pas d'endroit où
-        observer une checklist. La tâche reste alors exactement ce qu'elle est
-        sans lui — pas de checklist vide, pas de bloc qui promette un contenu
-        absent (règle de #246). C'est ce qui permet au couplage à l'outil
-        d'exister d'un seul côté (`maestro.providers.checklist`) sans remonter
-        jusqu'au moteur.
+        `run_agent` sans jamais appeler ce canal, s'il ne sert pas d'outils. La
+        tâche reste alors exactement ce qu'elle est sans lui — pas de checklist
+        vide, pas de bloc qui promette un contenu absent (règle de #246).
 
         Même règle que les deux autres canaux sur les échecs : un callback qui
         lève ne casse jamais l'exécution observée.

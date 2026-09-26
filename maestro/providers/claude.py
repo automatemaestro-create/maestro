@@ -63,7 +63,7 @@ from maestro.detail_tache import EtapeTache
 from maestro.familles_claude import familles_claude
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
-from maestro.providers import blocage, courrier, decision, question
+from maestro.providers import blocage, checklist, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -97,7 +97,6 @@ from maestro.providers.base import (
     TurnLimitReached,
     attache_stderr,
 )
-from maestro.providers.checklist import est_checklist, etapes_depuis_outil
 from maestro.sandbox.container import IsolationConfig
 from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
 
@@ -615,15 +614,18 @@ class ClaudeProvider(ModelProvider):
         que de les emporter — c'est justement d'une tâche en échec qu'on veut
         savoir ce qu'elle faisait juste avant.
 
-        `on_etapes` (#489) reçoit la **checklist** de l'agent, lue là où il la
-        tient déjà : l'entrée de ses appels `TodoWrite`
-        (`maestro.providers.checklist`). Elle passe par le même `_absorbe`, pour
-        la même raison qu'en #479 — c'est le seul endroit où le flux est observé.
-        Elle n'est en revanche **pas régulée** : un agent pose sa liste et la
-        recoche, pas plus d'une poignée de fois par tâche, et son appelant ne
-        republie que ce qui a changé (`SuiviChecklist.rapporte`). Un régulateur y
-        ajouterait une latence sur l'information qu'on veut la plus fraîche, pour
-        borner un débit qui ne déborde pas.
+        `on_etapes` (#489) reçoit la **checklist** de l'agent, et depuis #1291
+        par un verbe de Maestro : le serveur in-process `maestro` sert
+        `tenir_checklist(etapes)` (`maestro.providers.checklist`, le contrat
+        entier), et chaque appel alimente ce canal avec l'état complet de la
+        liste. Ce fournisseur ne lit **plus aucun outil du CLI** : la checklist
+        se lisait dans les appels `TodoWrite`, et elle est restée à 0/N le jour
+        où le CLI a remplacé cet outil par `TaskCreate`/`TaskUpdate` (docs/44).
+        Le canal n'est **pas régulé** : un agent pose sa liste et la recoche, pas
+        plus d'une poignée de fois par tâche, et son appelant ne republie que ce
+        qui a changé (`SuiviChecklist.rapporte`). Un régulateur y ajouterait une
+        latence sur l'information qu'on veut la plus fraîche, pour borner un
+        débit qui ne déborde pas.
 
         `on_arbitrage` (#582) fait porter au **serveur MCP in-process** `maestro`
         (`maestro.providers.arbitrage`) l'outil `demander_arbitrage(raison)` :
@@ -750,6 +752,7 @@ class ClaudeProvider(ModelProvider):
                 credit=credit_arbitrage,
                 on_courrier=on_courrier,
                 on_question=on_question,
+                on_etapes=on_etapes,
             ),
         )
         options = ClaudeAgentOptions(
@@ -809,7 +812,6 @@ class ClaudeProvider(ModelProvider):
                     plafond_tours=plafond_tours,
                     stderr=stderr,
                     regulateur=regulateur,
-                    on_etapes=on_etapes,
                 )
             return await _collect_response_pilotee(
                 prompt,
@@ -818,7 +820,6 @@ class ClaudeProvider(ModelProvider):
                 plafond_tours=plafond_tours,
                 stderr=stderr,
                 regulateur=regulateur,
-                on_etapes=on_etapes,
             )
         finally:
             if regulateur is not None:
@@ -1120,6 +1121,34 @@ def _outil_decision(on_decision: decision.Consigneur) -> SdkMcpTool[Any]:
     return consigner_decision
 
 
+def _outil_checklist(on_etapes: checklist.Releveur) -> SdkMcpTool[Any]:
+    """L'outil `tenir_checklist(etapes)` servi à l'agent (#1291).
+
+    Le plus mince des verbes du serveur, et c'est voulu : tout ce qu'il fait —
+    lire l'entrée, dire une faute, alimenter le canal, accuser réception — vit
+    dans `maestro.providers.checklist.servir`, qui ne sait rien du SDK. Ce qui
+    reste ici est la seule chose propre à ce fournisseur : l'enveloppe `@tool` et
+    la forme de la réponse MCP. Un autre fournisseur outillé servirait le même
+    contrat en changeant d'enveloppe, et c'est tout l'objet de #1291 — la
+    checklist ne dépend plus d'un outil du CLI, qu'une version nouvelle retire ou
+    renomme sans prévenir (docs/44).
+
+    Jumeau de `_outil_decision` sur le reste : **aucun `await`**, l'agent n'est
+    jamais suspendu, et aucune issue n'est rendue en **erreur d'outil** — une
+    entrée invalide se récrit, un canal en panne ne se rejoue pas.
+
+    Rendu **séparément de son serveur** comme ses voisins : il s'éprouve en
+    l'appelant comme le ferait le SDK, sans CLI ni quota
+    (`tests/test_checklist_tache.py`).
+    """
+
+    @tool(checklist.NOM_OUTIL, checklist.DESCRIPTION_OUTIL, checklist.SCHEMA_ENTREE)
+    async def tenir_checklist(args: dict[str, Any]) -> dict[str, Any]:
+        return {"content": [{"type": "text", "text": checklist.servir(args, on_etapes)}]}
+
+    return tenir_checklist
+
+
 @contextmanager
 def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
     """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
@@ -1144,6 +1173,7 @@ def _outils_maestro(
     credit: CreditArbitrage | None = None,
     on_courrier: courrier.Courrier | None = None,
     on_question: question.Questionneur | None = None,
+    on_etapes: checklist.Releveur | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 
@@ -1165,6 +1195,11 @@ def _outils_maestro(
     `on_question` (#1023) est le cinquième, et il prend le `credit` comme le
     premier : ce sont les deux seuls verbes qui **suspendent** l'agent, donc les
     deux seuls dont l'attente ne doit pas être facturée au délai de la tâche.
+
+    `on_etapes` (#1291) est le sixième, la checklist de la tâche. Il était le
+    seul canal de `run_agent` à ne pas avoir de verbe : on le remplissait en
+    lisant l'outil de liste du CLI. C'est cette lecture que ce verbe remplace, et
+    il suit la règle commune — sans canal, pas de verbe.
     """
     outils: list[SdkMcpTool[Any]] = []
     if on_arbitrage is not None:
@@ -1177,6 +1212,8 @@ def _outils_maestro(
         outils.append(_outil_courrier(on_courrier))
     if on_question is not None:
         outils.append(_outil_question(on_question, credit))
+    if on_etapes is not None:
+        outils.append(_outil_checklist(on_etapes))
     return outils
 
 
@@ -1589,7 +1626,6 @@ async def _collect_response(
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
     regulateur: RegulateurActivite | None = None,
-    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
 ) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
@@ -1612,7 +1648,9 @@ async def _collect_response(
     que personne n'a lu.
 
     `regulateur` (#479) publie l'activité au fil du flux — None quand personne
-    n'écoute. `on_etapes` (#489) reçoit la checklist de l'agent, même régime.
+    n'écoute. La checklist de l'agent n'en part plus depuis #1291 : elle arrive
+    par son verbe, servi par le serveur `maestro`, et le flux n'est plus lu pour
+    elle.
 
     L'usage est signalé **tour par tour** depuis #835 (`_CompteurTours`), et non
     plus une fois au `ResultMessage` : c'est ce qui permet au moteur de relever
@@ -1624,7 +1662,7 @@ async def _collect_response(
     compteur = _CompteurTours()
     try:
         async for message in query(prompt=prompt, options=options):
-            _absorbe(message, parts, outils, regulateur, on_etapes, compteur=compteur)
+            _absorbe(message, parts, outils, regulateur, compteur=compteur)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
@@ -1705,8 +1743,8 @@ def _delta_texte(evenement: object) -> str:
     texte et ne rend donc rien.
 
     La lecture est **tolérante par construction** plutôt que gardée par un
-    schéma, et c'est la même règle que `maestro.providers.checklist` : un
-    événement d'une forme qu'on ne connaît pas encore vaut « rien à publier »,
+    schéma, et c'est la même règle que `maestro.providers.activite.cible_depuis` :
+    un événement d'une forme qu'on ne connaît pas encore vaut « rien à publier »,
     jamais une exception au milieu d'une réponse. Une frontière qui casserait sur
     un champ inattendu ferait d'une nouveauté d'API une panne de chat.
     """
@@ -1727,7 +1765,6 @@ async def _collect_response_pilotee(
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
     regulateur: RegulateurActivite | None = None,
-    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
 ) -> str:
     """Comme `_collect_response`, mais en session pilotée : serveurs MCP connectés d'abord.
 
@@ -1755,7 +1792,7 @@ async def _collect_response_pilotee(
             await _attend_serveurs_mcp(client, attendus)
             await client.query(prompt)
             async for message in client.receive_response():
-                _absorbe(message, parts, outils, regulateur, on_etapes, compteur=compteur)
+                _absorbe(message, parts, outils, regulateur, compteur=compteur)
                 if isinstance(message, ResultMessage) and message.is_error:
                     detail = message.result or message.subtype
                     if _MARQUEUR_MAX_TURNS in message.subtype:
@@ -1818,7 +1855,6 @@ def _absorbe(
     parts: list[str],
     outils: list[str],
     regulateur: RegulateurActivite | None = None,
-    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
     *,
     compteur: _CompteurTours | None = None,
 ) -> None:
@@ -1857,11 +1893,12 @@ def _absorbe(
     constat du ticket — la matière traversait cette fonction et personne ne la
     publiait.
 
-    Et c'est pour la même raison que la **checklist** de l'agent part d'ici
-    (#489) : elle est l'entrée d'un appel d'outil comme un autre, et cet appel
-    passait déjà là. `on_etapes` la reçoit **en plus** du régulateur, jamais à sa
-    place — poser une case à cocher est aussi un geste, et le taire au fil
-    d'activité ferait un trou dans la séquence que #479 existe pour reconstituer.
+    ⚠ La **checklist** de l'agent n'en part plus (#1291). Elle se lisait ici,
+    dans l'entrée des appels `TodoWrite` du CLI (#489), et c'est ce couplage à un
+    outil interne du CLI qui l'a laissée à 0/N quand le CLI en a changé : elle
+    arrive désormais par son verbe (`_outil_checklist`). Aucun nom d'outil n'est
+    donc plus lu ici — l'appel au verbe, comme n'importe quel autre, reste un
+    geste pour le régulateur et un outil employé pour le grand livre.
 
     ⚠ Les deux comptes ne sont **pas** le même et ne doivent pas être fusionnés.
     `outils` reste **dédupliqué** parce qu'il alimente `StepUsage.outils`, dont
@@ -1881,8 +1918,6 @@ def _absorbe(
             elif isinstance(block, ToolUseBlock):
                 if regulateur is not None:
                     regulateur.note(Geste.outil_appele(block.name, block.input))
-                if on_etapes is not None and est_checklist(block.name):
-                    _publie_etapes(on_etapes, block.input)
                 if block.name not in outils:
                     outils.append(block.name)
         if compteur is not None:
@@ -1892,25 +1927,6 @@ def _absorbe(
     elif isinstance(message, ResultMessage):
         total = _usage_from_result(message, tuple(outils))
         report_usage(total if compteur is None else compteur.reste(total))
-
-
-def _publie_etapes(
-    on_etapes: Callable[[Sequence[EtapeTache]], None], entree: object
-) -> None:
-    """Lit la checklist de l'agent dans l'entrée de l'outil et la signale (#489).
-
-    Ne lève jamais, aux deux étages : ni la lecture (tolérante par construction,
-    `maestro.providers.checklist`), ni le callback — même règle que `on_refus` et
-    que le régulateur d'activité. Une liste vide n'est pas signalée : un appel
-    illisible dirait « l'agent n'a plus rien à faire » là où il ne dit rien du
-    tout, et `SuiviChecklist` effacerait une checklist en place.
-    """
-    try:
-        etapes = etapes_depuis_outil(entree)
-        if etapes:
-            on_etapes(etapes)
-    except Exception:  # noqa: BLE001 — observer ne casse jamais l'observé
-        pass
 
 
 def _config_mcp_sdk(serveur: ServeurMcp) -> McpServerConfig:

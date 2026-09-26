@@ -287,6 +287,27 @@ def phrase_ecart_checklist(restantes: Sequence[EtapeTache], total: int) -> str:
     )
 
 
+def phrase_checklist_sans_releve(fournisseur: str, total: int) -> str:
+    """La ligne qui dit qu'aucun relevé n'était possible (#1291, règle de #246).
+
+    Une tâche exécutée en **texte seul** — un fournisseur qui ne sert pas d'outils
+    à ses agents, comme un endpoint compatible OpenAI — n'a reçu aucun verbe de
+    checklist : personne ne pouvait cocher l'ossature du plan. Lui appliquer la
+    phrase de l'écart (#944) ferait porter à l'agent un manque qui n'est pas le
+    sien, et prétendrait un relevé que la tâche ne pouvait pas tenir. Celle-ci dit
+    ce qui s'est passé, et nomme le fournisseur, puisque c'est lui qui en décide.
+
+    Elle vit à côté de sa voisine, pour la même raison (#1112) : une seule
+    adresse, que le moteur consigne et que les tests relisent.
+    """
+    return (
+        f"Checklist non relevée : la tâche s'est exécutée en texte seul (fournisseur "
+        f"« {fournisseur} »), sans outils, donc sans verbe pour cocher ses {total} "
+        "étape(s). Elles restent celles que le plan annonçait, et personne ne les a "
+        "rapportées comme faites."
+    )
+
+
 #: Rang d'avancement des trois états connus — ce qui permet de dire qu'une étape
 #: a **progressé**, et donc de refuser qu'elle recule. Un état inconnu n'y figure
 #: pas à dessein : on ne sait pas le classer, donc on ne le laisse pas défaire un
@@ -360,6 +381,13 @@ class SuiviChecklist:
     une checklist à 14/15 sans que rien ne dise pourquoi (retex du 2026-09-11,
     G12). `inachevees` rend l'écart ; le forcer à 15/15 serait mentir, et le
     taire est ce qu'on corrige.
+
+    Et un fait que le suivi porte sans en rien déduire (#1291) : **personne ne
+    pouvait relever** la checklist, parce que la tâche s'est exécutée en texte
+    seul, sans verbe pour la cocher. `sans_releve` le pose, l'appelant le lit à la
+    clôture pour dire *pourquoi* rien n'est coché. Les trois règles ci-dessus n'en
+    dépendent pas : un relevé qui arriverait quand même serait intégré comme les
+    autres.
     """
 
     def __init__(self, ossature: Sequence[str] = ()) -> None:
@@ -368,6 +396,9 @@ class SuiviChecklist:
         # et c'est ce drapeau, pas le contenu, qui dit si le prochain relevé
         # supplante : une ossature vide se remplace aussi bien qu'une pleine.
         self._ossature = True
+        # Le fournisseur qui n'a servi aucun verbe à l'agent (#1291) — vide tant
+        # qu'on ne sait pas qu'un relevé était impossible.
+        self._sans_releve = ""
         for libelle in ossature:
             etape = EtapeTache(libelle=libelle).valide()
             if not etape.vide:
@@ -377,6 +408,19 @@ class SuiviChecklist:
     def vide(self) -> bool:
         """La checklist n'a-t-elle rien à montrer (règle de #246) ?"""
         return not self._etapes
+
+    def sans_releve(self, fournisseur: str) -> None:
+        """Pose que personne ne peut relever cette checklist : `fournisseur` n'a servi aucun verbe.
+
+        Posé par l'appelant quand la tâche part en texte seul (#1291). Idempotent :
+        une relance du même repli ne dit rien de plus.
+        """
+        self._sans_releve = fournisseur or "?"
+
+    @property
+    def releve_impossible(self) -> str:
+        """Le fournisseur qui n'a servi aucun verbe à l'agent — `""` si un relevé était possible."""
+        return self._sans_releve
 
     def etapes(self) -> list[EtapeTache]:
         """La checklist courante, dans l'ordre où elle se lit."""

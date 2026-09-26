@@ -22,14 +22,18 @@ Six volets, dans l'ordre où la donnée descend — du plan jusqu'à la carte se
    qui n'est pas dans les critères mais paie le prix des trois autres :
    `rapporte` rend `None` quand rien n'a changé.
 
-③ **La lecture de l'outil** (`maestro.providers.checklist`) — le seul point du
-   dispositif qui connaisse `TodoWrite`. Tolérante de bout en bout : le pire cas
-   d'une lecture ratée doit être qu'il ne se passe **rien**.
+③ **Le verbe** (`maestro.providers.checklist`, #1291) — la checklist est un
+   verbe de Maestro, `tenir_checklist`, et non plus la lecture d'un outil du CLI
+   Claude : c'est cette lecture qui a laissé toutes les checklists à 0/N le jour
+   où le CLI a changé d'outil (docs/44). L'appeler alimente `on_etapes` avec
+   l'état complet ; une entrée invalide est **dite** à l'agent, jamais relevée à
+   moitié, et un canal en panne ne tue pas la tâche.
 
-④ **Le fournisseur** (`ClaudeProvider._absorbe`) — la checklist part du seul
-   endroit où le flux du SDK est observé (#479), *en plus* du régulateur et
-   jamais à sa place. Observer ne casse pas l'observé : ni une entrée illisible,
-   ni un callback qui lève.
+④ **Le fournisseur** (`ClaudeProvider`) — il sert le verbe par le serveur
+   in-process `maestro`, comme `consigner_decision`, et **ne lit plus aucun
+   outil du CLI** : un `TodoWrite`, un `TaskCreate` ou un `TaskUpdate` dans le
+   flux ne cochent rien. Le socle des playbooks nomme le verbe, et aucun outil de
+   liste du CLI n'est plus confié à l'agent.
 
 ⑤ **Le moteur** (`LocalExecutor`) — l'ossature part **avant** la première
    tentative, les relevés se consignent par `consigne_detail`, et le suivi vit à
@@ -41,9 +45,10 @@ Six volets, dans l'ordre où la donnée descend — du plan jusqu'à la carte se
    ci-dessus éprouvent chacun leur maillon ; celui-ci est le seul qui rougirait
    si un maillon du **milieu** se taisait.
 
-**Ni réseau, ni appel modèle, ni SDK** : le fournisseur est un double, le flux
-SDK est simulé par des blocs factices substitués aux types du module (le même
-harnais que `tests/test_providers.py`), et l'app du volet ⑥ est la vraie
+**Ni réseau, ni appel modèle, ni CLI** : le fournisseur est un double, le verbe
+est appelé comme le ferait le SDK (patron de `tests/test_decisions_autonomes.py`),
+le flux SDK est simulé par des blocs factices substitués aux types du module (le
+même harnais que `tests/test_providers.py`), et l'app du volet ⑥ est la vraie
 (`create_app`) sur bus mémoire.
 """
 
@@ -57,6 +62,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from maestro.agents import DEVELOPER_PROFILE, AgentRuntime
+from maestro.agents.playbook_du_code import cadre_outille
 from maestro.agents.runtime import DEFAULT_TOOLS
 from maestro.controltower import (
     ControlTowerState,
@@ -77,6 +83,7 @@ from maestro.detail_tache import (
     SUFFIXE_ETAPE_DETAIL,
     EtapeTache,
     SuiviChecklist,
+    phrase_checklist_sans_releve,
     phrase_ecart_checklist,
 )
 from maestro.engine.executor import (
@@ -86,13 +93,11 @@ from maestro.engine.executor import (
 )
 from maestro.engine.retry import PolitiqueRelance
 from maestro.orchestrator.schema import Task
+from maestro.providers import checklist as checklist_mod
 from maestro.providers import claude as claude_mod
-from maestro.providers.base import ModelProvider
-from maestro.providers.checklist import (
-    OUTIL_CHECKLIST,
-    est_checklist,
-    etapes_depuis_outil,
-)
+from maestro.providers.arbitrage import NOM_SERVEUR
+from maestro.providers.base import Credentials, ModelProvider, UnsupportedCapability
+from maestro.providers.claude import ClaudeProvider, _outil_checklist, _outils_maestro
 from maestro.telemetry.journal import RunJournal
 
 # ------------------------------------------------------------------ harnais
@@ -116,8 +121,29 @@ def _releve(*paires: tuple[str, str]) -> list[EtapeTache]:
     return [EtapeTache(libelle=libelle, etat=etat) for libelle, etat in paires]
 
 
+def _entree_verbe(*paires: tuple[str, str]) -> dict[str, object]:
+    """L'entrée d'un appel au verbe `tenir_checklist`, telle que le SDK la fait passer."""
+    return {"etapes": [{"libelle": libelle, "etat": etat} for libelle, etat in paires]}
+
+
+def _appelle_verbe(on_etapes, entree: object) -> str:
+    """Appelle le verbe comme le ferait le SDK, et rend le texte servi à l'agent.
+
+    Le patron de `tests/test_decisions_autonomes.py` : l'outil est rendu
+    séparément de son serveur, donc il s'éprouve sans CLI, sans sous-processus et
+    sans quota.
+    """
+    reponse = asyncio.run(_outil_checklist(on_etapes).handler(entree))
+    (bloc,) = reponse["content"]
+    assert bloc["type"] == "text"
+    # Jamais une erreur d'outil : une erreur inviterait l'agent à rejouer le même
+    # appel, or une entrée invalide se corrige, et un canal en panne ne se rejoue pas.
+    assert not reponse.get("isError")
+    return bloc["text"]
+
+
 def _todos(*paires: tuple[str, str]) -> dict[str, object]:
-    """L'entrée d'un appel `TodoWrite`, telle que le SDK la fait passer."""
+    """L'entrée qu'un outil de liste du CLI Claude (`TodoWrite`) portait — **plus lue**."""
     return {
         "todos": [
             {"content": contenu, "activeForm": f"{contenu}…", "status": statut}
@@ -473,75 +499,129 @@ def test_une_ossature_jamais_relevee_est_entierement_inachevee():
     assert len(suivi.inachevees()) == 2
 
 
-# ------------------------- ③ La lecture de l'outil : le pire cas est qu'il ne se passe rien
+# ---------------- ③ Le verbe : un contrat de Maestro, que n'importe quel fournisseur sert
 
 
-def test_seul_l_outil_de_liste_de_travail_porte_une_checklist():
-    assert est_checklist(OUTIL_CHECKLIST)
-    assert not est_checklist("Bash")
-    assert not est_checklist("")
+def test_le_verbe_porte_le_nom_sous_lequel_une_politique_le_designe():
+    """Le nom complet est un **contrat** (docs/04 §1.4ter), comme celui des quatre
+    autres verbes du serveur `maestro` : une politique de permissions (#110) le
+    cite pour l'autoriser ou le refuser, et un renommage de `NOM_OUTIL` qui
+    emporterait `OUTIL_CHECKLIST` en silence la ferait désigner un outil qui
+    n'existe plus."""
+    assert checklist_mod.OUTIL_CHECKLIST == f"mcp__{NOM_SERVEUR}__{checklist_mod.NOM_OUTIL}"
+    assert checklist_mod.OUTIL_CHECKLIST == "mcp__maestro__tenir_checklist"
 
 
-def test_les_avancements_de_l_outil_se_traduisent_dans_les_etats_du_contrat():
-    etapes = etapes_depuis_outil(
-        _todos(
-            ("Lire l'existant", "completed"),
-            ("Écrire le code", "in_progress"),
-            ("Lancer les tests", "pending"),
-        )
+def test_appeler_le_verbe_alimente_on_etapes_avec_l_etat_complet():
+    """Le premier critère de #1291, et le canal de #489 inchangé : l'état
+    **complet** de la liste, dans l'ordre, traduit dans les états du contrat —
+    `SuiviChecklist` en décide ensuite, comme avant."""
+    vus: list[list[EtapeTache]] = []
+
+    servi = _appelle_verbe(
+        vus.append,
+        _entree_verbe(
+            ("Lire l'existant", ETAPE_FAITE),
+            ("Écrire le code", ETAPE_EN_COURS),
+            ("Lancer les tests", ETAPE_A_FAIRE),
+        ),
     )
 
-    assert [(e.libelle, e.etat) for e in etapes] == [
+    (releve,) = vus
+    assert [(e.libelle, e.etat) for e in releve] == [
         ("Lire l'existant", ETAPE_FAITE),
         ("Écrire le code", ETAPE_EN_COURS),
         ("Lancer les tests", ETAPE_A_FAIRE),
     ]
+    # L'accusé dit où en est la liste, et que **personne ne répondra** : sans
+    # cette phrase, un agent peut attendre un tour de plus une réponse qui ne
+    # viendra jamais (même raison qu'en #719).
+    assert servi == checklist_mod.CHECKLIST_RELEVEE.format(faites=1, total=3)
+    assert "Personne ne va te répondre" in servi
 
 
-def test_un_avancement_hors_table_passe_tel_quel():
-    """La table dit ce qu'on sait **traduire**, pas ce qu'on accepte de recevoir."""
-    (etape,) = etapes_depuis_outil(_todos(("Déployer", "cancelled")))
+def test_l_etat_se_lit_sans_egard_a_la_casse_ni_aux_blancs():
+    """La forme se tolère, le vocabulaire non : « Faite » est « faite »."""
+    vus: list[list[EtapeTache]] = []
 
-    assert etape.etat == "cancelled"
+    _appelle_verbe(vus.append, {"etapes": [{"libelle": "  Écrire   le code ", "etat": " Faite "}]})
+
+    assert [(e.libelle, e.etat) for e in vus[0]] == [("Écrire le code", ETAPE_FAITE)]
 
 
-def test_la_forme_en_cours_d_action_sert_de_repli_au_libelle():
-    """Mieux vaut une ligne au gérondif qu'une ligne écartée faute d'énoncé."""
-    (etape,) = etapes_depuis_outil(
-        {"todos": [{"activeForm": "Rédaction de la migration", "status": "in_progress"}]}
-    )
+def test_une_etape_sans_etat_est_a_faire():
+    """C'est l'état qu'une étape a quand on la pose (`EtapeTache`) — pas un défaut
+    inventé ici."""
+    vus: list[list[EtapeTache]] = []
 
-    assert etape.libelle == "Rédaction de la migration"
+    _appelle_verbe(vus.append, {"etapes": [{"libelle": "Écrire le code"}]})
+
+    assert vus[0][0].etat == ETAPE_A_FAIRE
 
 
 @pytest.mark.parametrize(
-    "entree",
+    ("entree", "faute"),
     [
-        None,
-        "todos",
-        42,
-        {},
-        {"todos": None},
-        {"todos": "Écrire le code"},
-        {"todos": [None, 7, "texte"]},
-        {"todos": [{"status": "completed"}]},
+        (None, "n'est pas un objet"),
+        ({}, "« etapes » manque"),
+        ({"etapes": "Écrire le code"}, "« etapes » n'est pas une liste"),
+        ({"etapes": []}, "« etapes » est vide"),
+        ({"etapes": [None]}, "l'étape 1 n'est pas un objet"),
+        ({"etapes": [{"etat": ETAPE_FAITE}]}, "l'étape 1 n'a pas de libellé"),
+        (
+            {"etapes": [{"libelle": "A", "etat": "faite"}, {"libelle": "B", "etat": "cancelled"}]},
+            "l'étape 2 (« B ») a l'état « cancelled »",
+        ),
+        ({"etapes": [{"libelle": "A", "etat": 3}]}, "l'étape 1 (« A ») a l'état « 3 »"),
     ],
 )
-def test_une_entree_illisible_rend_une_liste_vide_sans_lever(entree):
-    """Une entrée d'outil vient du modèle : tronquée, mal typée, ou porteuse de
-    clés inconnues. Observer ne doit pas casser l'observé."""
-    assert etapes_depuis_outil(entree) == []
+def test_une_entree_invalide_est_dite_a_l_agent_sans_rien_relever(entree, faute):
+    """Une entrée invalide le dit à l'agent **sans tuer la tâche** (critère 1).
+
+    Rien n'est relevé, pas même les lignes lisibles d'une liste fautive : une
+    checklist à moitié relevée ferait dire à l'écran ce que l'agent n'a pas dit,
+    et le rappel qu'on lui demande donne de toute façon la liste complète. La
+    faute est **nommée**, rang compris — un « entrée invalide » sans plus
+    l'enverrait deviner.
+    """
+    vus: list[list[EtapeTache]] = []
+
+    servi = _appelle_verbe(vus.append, entree)
+
+    assert vus == []
+    assert servi.startswith("Checklist NON relevée")
+    assert faute in servi
+    # Et ce qu'il faut écrire à la place : les trois états admis, en toutes lettres.
+    for etat in (ETAPE_A_FAIRE, ETAPE_EN_COURS, ETAPE_FAITE):
+        assert f"« {etat} »" in servi
 
 
-def test_une_ligne_illisible_ne_fait_pas_perdre_les_autres():
-    etapes = etapes_depuis_outil(
-        {"todos": [{"content": "Écrire le code", "status": "pending"}, "cassé", {}]}
-    )
+def test_un_canal_en_erreur_est_dit_a_l_agent_et_ne_tue_rien():
+    """Le callback a levé : on le **dit** — l'agent croirait sinon sa liste à jour à
+    l'extérieur — et l'exception ne remonte pas, elle tuerait la tâche à l'instant
+    précis où l'agent rend compte de son avancement."""
 
-    assert [e.libelle for e in etapes] == ["Écrire le code"]
+    def explose(_etapes):
+        raise RuntimeError("journal injoignable")
+
+    servi = _appelle_verbe(explose, _entree_verbe(("Écrire le code", ETAPE_FAITE)))
+
+    assert servi.startswith("Checklist NON relevée")
+    assert "journal injoignable" in servi
+    assert "compte-rendu" in servi
 
 
-# -------------------------- ④ Le fournisseur : la checklist part d'où le flux est observé
+def test_le_verbe_n_est_monte_que_si_un_canal_lui_est_cable():
+    """Règle du porte-outils (#718) : sans `on_etapes`, personne n'est au bout du
+    fil, et servir un verbe qui n'aboutit nulle part serait pire que ne pas le
+    servir."""
+    assert _outils_maestro() == []
+    assert [outil.name for outil in _outils_maestro(on_etapes=lambda _etapes: None)] == [
+        checklist_mod.NOM_OUTIL
+    ]
+
+
+# -------------- ④ Le fournisseur : il sert le verbe, et ne lit plus aucun outil du CLI
 
 
 class _BlocTexte:
@@ -568,76 +648,113 @@ def flux_sdk(monkeypatch):
     monkeypatch.setattr(claude_mod, "ToolUseBlock", _BlocOutil)
 
 
-def _absorbe(bloc, on_etapes=None, outils=None):
-    """Passe un bloc par le seul endroit où le flux du SDK est observé."""
+#: Les outils de liste de travail qu'a portés le CLI Claude : `TodoWrite` jusqu'au
+#: SDK 0.2.159, `TaskCreate`/`TaskUpdate` depuis. Ils ne servent ici qu'à prouver
+#: qu'**aucun** n'est plus lu — la prochaine version du CLI en nommera un autre, et
+#: c'est précisément pourquoi la checklist ne dépend plus d'aucun (docs/44).
+OUTILS_DE_LISTE_DU_CLI = ("TodoWrite", "TaskCreate", "TaskUpdate")
+
+
+def _run_agent(provider: ClaudeProvider, workspace: Path, **canaux) -> str:
+    """`run_agent` sur le chemin one-shot, sans serveur déclaré — celui d'un run ordinaire."""
+    return asyncio.run(
+        provider.run_agent(
+            "Fais la tâche.",
+            model="claude-sonnet-5",
+            workspace=workspace,
+            tools=DEFAULT_TOOLS,
+            **canaux,
+        )
+    )
+
+
+def _flux_qui_appelle(monkeypatch, vu: dict[str, object], *blocs) -> None:
+    """Un `query` factice : relève les options de la session, puis rend `blocs`."""
+
+    async def fake_query(*, prompt, options):
+        vu["mcp_servers"] = dict(options.mcp_servers)
+        vu["tools"] = list(options.tools)
+        yield _MessageAssistant(list(blocs))
+
+    monkeypatch.setattr(claude_mod, "query", fake_query)
+
+
+@pytest.mark.parametrize("outil", OUTILS_DE_LISTE_DU_CLI)
+def test_un_outil_de_liste_du_cli_ne_coche_rien(flux_sdk, monkeypatch, tmp_path, outil):
+    """Le défaut de #1291, et sa garde : **plus aucun outil interne du CLI** n'est
+    lu comme source de la checklist.
+
+    Le 2026-09-22, le CLI a remplacé `TodoWrite` par `TaskCreate`/`TaskUpdate`,
+    et toutes les checklists sont restées à 0/N sans que rien ne rougisse. Lire le
+    nouvel outil aurait remplacé une dépendance par une autre ; le flux peut donc
+    porter n'importe lequel des trois, avec une entrée qui ressemble à une liste,
+    et rien ne doit être coché.
+    """
+    vus: list[list[EtapeTache]] = []
+    vu: dict[str, object] = {}
+    entree = _todos(("Écrire le code", "completed")) | {
+        "subject": "Écrire le code",
+        "status": "completed",
+    }
+    _flux_qui_appelle(monkeypatch, vu, _BlocOutil(outil, entree), _BlocTexte("Livré."))
+
+    assert _run_agent(ClaudeProvider(Credentials()), tmp_path, on_etapes=vus.append) == "Livré."
+
+    assert vus == []
+
+
+def test_le_serveur_maestro_sert_le_verbe_des_qu_un_canal_l_attend(
+    flux_sdk, monkeypatch, tmp_path
+):
+    """Le verbe passe par le serveur in-process `maestro`, comme `consigner_decision`.
+
+    Avec `on_etapes`, le serveur est monté même quand l'agent ne déclare aucun
+    serveur — c'est le cas de presque tous les runs. Sans aucun canal, rien n'est
+    monté : un serveur vide serait une surface qui promet sans servir (#718).
+    """
+    vu: dict[str, object] = {}
+    _flux_qui_appelle(monkeypatch, vu, _BlocTexte("Livré."))
+    provider = ClaudeProvider(Credentials())
+
+    _run_agent(provider, tmp_path, on_etapes=lambda _etapes: None)
+    assert list(vu["mcp_servers"]) == [NOM_SERVEUR]
+
+    _run_agent(provider, tmp_path)
+    assert vu["mcp_servers"] == {}
+
+
+def test_un_appel_d_outil_reste_un_geste_compte_au_grand_livre(flux_sdk):
+    """Ne plus lire un outil n'est pas le taire : `outils` compte toujours ce que
+    l'agent a employé, verbe de checklist compris (`StepUsage.outils`)."""
+    outils: list[str] = []
+
     claude_mod._absorbe(
-        _MessageAssistant([bloc]), [], outils if outils is not None else [], None, on_etapes
+        _MessageAssistant([_BlocOutil(checklist_mod.OUTIL_CHECKLIST, _entree_verbe())]),
+        [],
+        outils,
     )
 
-
-def test_un_appel_de_liste_de_travail_publie_la_checklist(flux_sdk):
-    """Il n'y avait ni protocole à inventer ni transport à ouvrir : seulement un
-    appel d'outil qu'on jetait."""
-    vus: list[list[EtapeTache]] = []
-
-    _absorbe(_BlocOutil(OUTIL_CHECKLIST, _todos(("Écrire le code", "in_progress"))), vus.append)
-
-    assert [(e.libelle, e.etat) for e in vus[0]] == [("Écrire le code", ETAPE_EN_COURS)]
+    assert outils == [checklist_mod.OUTIL_CHECKLIST]
 
 
-def test_la_checklist_reste_un_appel_d_outil_comme_un_autre(flux_sdk):
-    """`outils` continue de le compter : le grand livre voit ce que l'agent a employé."""
-    outils: list[str] = []
+def test_aucun_outil_de_liste_du_cli_n_est_confie_a_l_agent():
+    """L'agent n'a qu'une liste à tenir, celle de Maestro.
 
-    _absorbe(_BlocOutil(OUTIL_CHECKLIST, _todos(("Écrire le code", "pending"))), None, outils)
-
-    assert outils == [OUTIL_CHECKLIST]
-
-
-def test_un_autre_outil_ne_publie_aucune_checklist(flux_sdk):
-    vus: list[list[EtapeTache]] = []
-
-    _absorbe(_BlocOutil("Bash", {"command": "pytest"}), vus.append)
-
-    assert vus == []
-
-
-def test_une_entree_vide_ne_publie_rien(flux_sdk):
-    """Un appel illisible dirait « l'agent n'a plus rien à faire » là où il ne dit
-    rien du tout — et `SuiviChecklist` effacerait une checklist en place."""
-    vus: list[list[EtapeTache]] = []
-
-    _absorbe(_BlocOutil(OUTIL_CHECKLIST, {"todos": []}), vus.append)
-
-    assert vus == []
-
-
-def test_un_rappel_qui_leve_ne_casse_pas_l_execution_observee(flux_sdk):
-    """Même règle que `on_refus` et que le régulateur d'activité.
-
-    Et le flux **continue** : l'outil est relevé après coup, ce qui distingue
-    « l'exception a été absorbée » de « le bloc n'a jamais été traité ».
+    Lui confier aussi celle du CLI le ferait tenir deux listes — dont une que
+    personne ne lit —, et la seconde d'un outil que la prochaine version du CLI
+    renommera. Les outils confiés sont ceux qui **agissent** : lire, écrire,
+    explorer, exécuter.
     """
-    outils: list[str] = []
-
-    def explose(_etapes):
-        raise RuntimeError("le consommateur a lâché")
-
-    _absorbe(
-        _BlocOutil(OUTIL_CHECKLIST, _todos(("Écrire le code", "pending"))), explose, outils
-    )
-
-    assert outils == [OUTIL_CHECKLIST]
+    assert not set(OUTILS_DE_LISTE_DU_CLI) & set(DEFAULT_TOOLS)
 
 
-def test_l_outil_de_liste_de_travail_est_confie_aux_roles_outilles():
-    """Le seul outil de la liste qui n'agisse sur rien : il ne lit, n'écrit ni
-    n'exécute — il **dit** où l'agent en est.
+def test_le_socle_des_playbooks_nomme_le_verbe():
+    """Le cadre d'exécution outillée dit à l'agent **par où** tenir sa checklist :
+    le verbe de Maestro, et plus l'outil d'un CLI."""
+    cadre = cadre_outille()
 
-    Sans lui dans les outils confiés, le canal existe et personne ne le remplit :
-    exactement le défaut que #489 est venu fermer.
-    """
-    assert OUTIL_CHECKLIST in DEFAULT_TOOLS
+    assert checklist_mod.NOM_OUTIL in cadre
+    assert not any(outil in cadre for outil in OUTILS_DE_LISTE_DU_CLI)
 
 
 # ------------------- ⑤ Le moteur : l'ossature d'abord, puis ce que l'agent en fait
@@ -725,6 +842,58 @@ def test_le_repli_texte_garde_l_ossature_sans_jamais_la_cocher():
 
     assert provider.generate_calls  # le chemin texte a bien été pris
     assert _details(journal) == [[("Lire l'existant", ETAPE_A_FAIRE)]]
+
+
+class FournisseurSansOutils(FournisseurChecklist):
+    """Un fournisseur texte seul : il refuse l'exécution outillée, comme `openai_compat`."""
+
+    name = "texte-seul"
+
+    async def run_agent(self, prompt, **kw):
+        raise UnsupportedCapability("pas d'exécution outillée ici")
+
+
+def _lignes_checklist(journal: RunJournal) -> list[str]:
+    """Ce que le journal dit de la checklist à la clôture — écart ou relevé impossible."""
+    return [
+        record.sortie
+        for record in journal.records
+        if record.etape.endswith(SUFFIXE_ETAPE_ACTIVITE)
+        and record.sortie.startswith("Checklist")
+    ]
+
+
+def test_un_fournisseur_sans_outils_dit_qu_il_ne_pouvait_rien_cocher():
+    """#1291, règle de #246 : la tâche **dit** qu'aucun relevé n'était possible.
+
+    Un fournisseur texte seul ne sert aucun verbe à son agent, donc personne ne
+    pouvait cocher l'ossature du plan. Dire « non cochée(s) par l'agent » lui
+    ferait porter un manque qui n'est pas le sien, et prétendrait un relevé que la
+    tâche ne pouvait pas tenir : la ligne dit ce qui s'est passé, et nomme le
+    fournisseur, puisque c'est lui qui en décide.
+    """
+    provider = FournisseurSansOutils()
+
+    journal = _joue(
+        _executeur(provider), _tache(etapes=("Lire l'existant", "Écrire le code"))
+    )
+
+    assert provider.generate_calls  # le repli texte a bien été pris
+    assert _lignes_checklist(journal) == [phrase_checklist_sans_releve("texte-seul", 2)]
+    (ligne,) = _lignes_checklist(journal)
+    assert "texte-seul" in ligne
+    assert "non cochée(s) par l'agent" not in ligne
+    # L'ossature reste ce que le plan annonçait : rien n'est coché à sa place.
+    assert _details(journal) == [
+        [("Lire l'existant", ETAPE_A_FAIRE), ("Écrire le code", ETAPE_A_FAIRE)]
+    ]
+
+
+def test_un_fournisseur_sans_outils_ne_dit_rien_d_une_tache_sans_checklist():
+    """Pas de checklist, rien à dire : la règle de #246 vaut dans les deux sens."""
+    journal = _joue(_executeur(FournisseurSansOutils()), _tache())
+
+    assert _lignes_checklist(journal) == []
 
 
 def test_a_travers_une_relance_l_avancement_acquis_ne_recule_pas():
@@ -862,6 +1031,30 @@ def test_l_ecart_ne_cree_aucune_tache_fantome():
     assert event.cout_usd is None  # rien au grand livre
 
 
+def test_une_tache_cochee_par_le_verbe_finit_a_n_sur_n_sans_ecart():
+    """Le comportement attendu de #1291 : un agent qui a tout fait finit à N/N.
+
+    Posée au départ, recochée au fil de l'eau, soldée avant de conclure — par le
+    verbe et lui seul. « relevé incomplet » ne reste alors que pour un écart réel
+    (#1112), et ici il n'y en a pas.
+    """
+    provider = FournisseurQuiCoche(
+        [
+            _entree_verbe(("Lire le schéma", ETAPE_EN_COURS), ("Écrire les routes", ETAPE_A_FAIRE)),
+            _entree_verbe(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_EN_COURS)),
+            _entree_verbe(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_FAITE)),
+        ]
+    )
+
+    journal = _joue(_executeur(provider), _tache(etapes=("Étape annoncée",)))
+
+    assert _details(journal)[-1] == [
+        ("Lire le schéma", ETAPE_FAITE),
+        ("Écrire les routes", ETAPE_FAITE),
+    ]
+    assert _lignes_checklist(journal) == []
+
+
 def test_la_phrase_de_l_ecart_a_une_seule_source():
     """Une formulation, tenue en un seul endroit (#1112).
 
@@ -881,19 +1074,48 @@ def test_la_phrase_de_l_ecart_a_une_seule_source():
 # ------------------- ⑥ De bout en bout : ce que l'agent coche ressort par l'API
 
 
+class FournisseurQuiCoche(FournisseurChecklist):
+    """Exécutant outillé factice dont l'agent tient sa checklist **par le verbe**.
+
+    Chaque appel passe par l'outil que le fournisseur Claude sert
+    (`_outil_checklist`), appelé comme le SDK l'appelle : c'est le chemin réel de
+    #1291, du verbe jusqu'à la carte, sans CLI ni quota.
+    """
+
+    name = "qui-coche"
+
+    def __init__(self, appels: list[dict[str, object]]) -> None:
+        super().__init__()
+        self._appels = appels
+        self.servis: list[str] = []
+
+    async def run_agent(self, prompt, *, workspace, on_etapes=None, **kw):
+        if on_etapes is not None:
+            outil = _outil_checklist(on_etapes)
+            for entree in self._appels:
+                reponse = await outil.handler(entree)
+                self.servis.append(reponse["content"][0]["text"])
+        (Path(workspace) / "livrable.txt").write_text("fait", encoding="utf-8")
+        return "OUTILLE"
+
+
 def test_la_checklist_de_l_agent_ressort_sur_la_carte_servie_par_l_api():
     """Le chantier n'existe que si la case cochée arrive **jusqu'à l'écran**.
 
-    Le chemin entier, sans raccourci : l'agent rapporte, l'exécuteur réconcilie et
-    consigne, le pont (#46) mue la ligne en `tache.detail`, la projection la pose
-    sur la carte, et `GET /api/taches?run=` la rend. C'est le seul contrôle du
-    fichier qui rougirait si un maillon du milieu se taisait — les autres
-    l'éprouvent chacun de son côté.
+    Le chemin entier, sans raccourci : l'agent appelle le verbe (#1291),
+    l'exécuteur réconcilie et consigne, le pont (#46) mue la ligne en
+    `tache.detail`, la projection la pose sur la carte, et `GET /api/taches?run=`
+    la rend. C'est le seul contrôle du fichier qui rougirait si un maillon du
+    milieu se taisait — les autres l'éprouvent chacun de son côté.
     """
-    provider = FournisseurChecklist(
-        [[_releve(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_EN_COURS))]]
+    provider = FournisseurQuiCoche(
+        [
+            _entree_verbe(("Lire le schéma", ETAPE_EN_COURS), ("Écrire les routes", ETAPE_A_FAIRE)),
+            _entree_verbe(("Lire le schéma", ETAPE_FAITE), ("Écrire les routes", ETAPE_EN_COURS)),
+        ]
     )
     journal = _joue(_executeur(provider), _tache(etapes=("Étape annoncée",)))
+    assert all(servi.startswith("Checklist relevée") for servi in provider.servis)
 
     log = InMemoryEventLog()
     asyncio.run(

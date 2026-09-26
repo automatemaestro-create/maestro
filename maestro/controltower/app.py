@@ -559,6 +559,7 @@ from maestro.projets import (
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.base import ModelProvider
 from maestro.providers.blocage import OUTIL_BLOCAGE
+from maestro.providers.checklist import OUTIL_CHECKLIST
 from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.providers.decision import OUTIL_DECISION
 from maestro.providers.question import OUTIL_QUESTION
@@ -4050,8 +4051,8 @@ def create_app(
         générique d'une fiche sert depuis #1037 : tout agent du catalogue est
         outillé, seules ses consignes de métier lui sont propres), les verbes du serveur
         in-process **maestro** (arbitrage, blocage, courrier, décision
-        consignée, question — leurs constantes existent précisément pour qu'une
-        politique les désigne, #805, #1023) et les
+        consignée, question, checklist — leurs constantes existent précisément
+        pour qu'une politique les désigne, #805, #1023, #1291) et les
         **serveurs MCP** effectivement montés pour lui, cités en entier
         (`mcp__<serveur>`, qui couvre tous leurs outils).
 
@@ -4082,6 +4083,7 @@ def create_app(
                 "libelle": "consigner une décision tranchée seul",
             },
             {"nom": OUTIL_QUESTION, "origine": "maestro", "libelle": "poser une question"},
+            {"nom": OUTIL_CHECKLIST, "origine": "maestro", "libelle": "tenir sa checklist"},
         ]
         try:
             serveurs = cfg.mcp.lire(nom)

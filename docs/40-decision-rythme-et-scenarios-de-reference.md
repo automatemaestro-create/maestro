@@ -149,7 +149,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | | Scénario | Ce qui le rend vert |
 | --- | --- | --- |
 | S1 | Vider un dossier | Le dossier est vide hors périmètre exclu, sans outil écrit |
-| S2 | Créer une petite application | Elle s'exécute, et **aucune commande n'a été soumise à la personne** (#1226 — le rapport du banc compte ce qu'il a tranché à sa place) |
+| S2 | Créer une petite application | Elle s'exécute, et **aucune commande n'a été soumise à la personne** (#1226 — le rapport du banc compte ce qu'il a tranché à sa place) ; **une tâche terminée finit à N/N**, cochée par le verbe de checklist (#1291 — lu sur la carte que sert l'API) |
 | S3 | Reprendre un projet existant sans équipe | Le fil propose l'équipe **avant** de dépenser ; validée d'un geste, elle est créée et le run demandé aboutit |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause réelle, jugée par un modèle, jamais par un lexique (#746) |
 | S5 | « Comment j'essaie ce que le run a livré ? » | La fin du run **se raconte dans le fil**, met en lien un fichier du livrable qui **existe sur le disque**, et dit comment l'essayer — jugé par un modèle (#1224). La réponse **s'écrit en direct**, et une réponse fondée sur une lecture **montre ses lectures** dans le fil (#1265) |

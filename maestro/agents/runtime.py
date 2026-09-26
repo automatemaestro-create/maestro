@@ -40,16 +40,18 @@ from maestro.providers.question import Questionneur
 from maestro.sandbox import ProducedFile, espace_de_travail
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
-#: explorer, shell, **tenir sa liste de travail**. Volontairement restreint
-#: (docs/02 §7 : permissions scopées) — pas d'outils réseau ni MCP au POC.
+#: explorer, shell. Volontairement restreint (docs/02 §7 : permissions scopées) —
+#: pas d'outils réseau ni MCP au POC.
 #:
-#: `TodoWrite` (#489) est le seul de la liste qui n'agisse sur rien : il ne lit,
-#: n'écrit ni n'exécute quoi que ce soit, il **dit** où l'agent en est. C'est ce
-#: qui en fait le canal de la checklist d'une tâche (`maestro.providers.checklist`)
-#: — la moitié « cochée par l'agent » de l'arbitrage de #489 — sans rien lui
-#: demander qu'il ne fasse déjà, et sans élargir d'un pouce ce qu'il peut faire.
-#: Un rôle dont la politique de permissions le refuse (#110) travaille comme
-#: avant : sa tâche n'a simplement pas de checklist.
+#: ⚠ **Aucun outil de liste de travail du CLI** (#1291). `TodoWrite` y figurait
+#: depuis #489, comme source de la checklist d'une tâche, et le CLI l'a remplacé
+#: par `TaskCreate`/`TaskUpdate` sans prévenir : toutes les checklists sont restées
+#: à 0/N. La checklist est désormais un verbe de Maestro, `tenir_checklist`
+#: (`maestro.providers.checklist`), servi par le serveur `maestro` avec les autres
+#: verbes : il n'a rien à faire dans cette liste, et y remettre l'outil d'un CLI
+#: ferait tenir à l'agent deux listes, dont une que personne ne lit. Un rôle dont
+#: la politique de permissions refuse le verbe (#110) travaille comme avant : sa
+#: tâche n'a simplement pas de checklist cochée.
 DEFAULT_TOOLS: tuple[str, ...] = (
     "Read",
     "Write",
@@ -57,7 +59,6 @@ DEFAULT_TOOLS: tuple[str, ...] = (
     "Glob",
     "Grep",
     "Bash",
-    "TodoWrite",
 )
 
 
@@ -276,11 +277,12 @@ class AgentRuntime:
         `on_refus`.
 
         `on_etapes` (#489) est le troisième, et il traverse ce runtime pour la
-        même raison : la **checklist** de l'agent est observée par le fournisseur
-        (dans l'entrée de ses appels `TodoWrite`) et réconciliée par l'appelant,
-        seul à connaître l'ossature que le plan avait annoncée. Le runtime ne
-        tient aucun état de checklist — il n'en verrait qu'une exécution, et
-        l'avancement doit survivre aux relances.
+        même raison : la **checklist** de l'agent arrive par le fournisseur — qui
+        lui sert le verbe `tenir_checklist` depuis #1291, et ne lit plus aucun
+        outil du CLI — et elle est réconciliée par l'appelant, seul à connaître
+        l'ossature que le plan avait annoncée. Le runtime ne tient aucun état de
+        checklist — il n'en verrait qu'une exécution, et l'avancement doit
+        survivre aux relances.
 
         `on_arbitrage` (#582) est le quatrième et traverse de même — mais dans
         l'autre sens : c'est l'agent qui **demande** l'arbitrage, le fournisseur
