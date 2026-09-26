@@ -1131,14 +1131,19 @@ export async function trancherPieceDuFil(
   agent: string,
   decision: { decision: DecisionPiece; piece: string; conversation?: string },
 ): Promise<MessageChat[]> {
-  const reponse = await appel(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage/piece`,
-    {
+  const chemin = `/api/chat/${encodeURIComponent(agent)}/outillage/piece`;
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(decision),
-    },
-  );
+    });
+  } catch {
+    // Rien n'a répondu : la panne est typée à la source (#996), jamais un « Failed to
+    // fetch » brut sur la carte (vu à la relecture de #1161, l'API coupée).
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) {
     if (reponse.status === 409) {
       throw new Error("cette pièce n'attend plus de réponse — la conversation a repris.");

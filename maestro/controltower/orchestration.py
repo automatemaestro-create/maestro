@@ -720,11 +720,15 @@ Le verdict :
   CORRIGE avec ses mots ("nos tests tournent avec dotnet test", "on utilise pnpm,
   pas npm", "pas de CI pour l'instant"). Quand une pièce d'outillage est proposée
   sur la carte juste avant, ce qui la corrige est un "outillage" — jamais une
-  proposition de run.
+  proposition de run —, et une demande d'y CHANGER quelque chose sans dire quoi
+  ("change le truc", "modifie ça") aussi : la correction dira ce qu'elle n'a pas
+  compris, sans rien écrire.
 - "accord" — le dernier message approuve une proposition que TU viens de faire
   dans ce fil — un run, un projet ou une pièce d'outillage ("oui", "vas-y", "ok
   lance", "crée-le", "écris-la"). Sans proposition juste avant, ce n'est jamais un
-  accord — et dans le doute non plus.
+  accord — et dans le doute non plus. Une demande de changement, même vague,
+  n'approuve rien : un accord écrit dans le projet de la personne, il doit être
+  sans équivoque.
 - "echange" — tout le reste : question sur l'outil ou sur le travail, demande
   d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
   pas.

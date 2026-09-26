@@ -30,6 +30,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { PieceDOutillage, TraceDePiece } from "@/components/chat/PieceDOutillage";
+import { ErreurApi } from "@/lib/api";
 import { diffDeLaPiece, LIGNES_OUVERTES } from "@/lib/outillage";
 import type { PieceEcrite, PieceProposee, VerificationOutillage } from "@/lib/types";
 
@@ -230,6 +231,19 @@ describe("la carte d'une pièce d'outillage", () => {
     expect(await within(carte()).findByRole("alert")).toHaveTextContent(
       "cette pièce n'attend plus de réponse",
     );
+  });
+
+  it("④ une API qui ne répond pas se dit en mots, jamais « Failed to fetch »", async () => {
+    const trancher = vi.fn(() =>
+      Promise.reject(ErreurApi.injoignable("/api/chat/orchestrateur/outillage/piece")),
+    );
+    render(<PieceDOutillage piece={piece()} trancher={trancher} />);
+
+    await userEvent.click(within(carte()).getByRole("button", { name: "Pas cette pièce" }));
+
+    const refus = await within(carte()).findByRole("alert");
+    expect(refus).toHaveTextContent("L'API n'a pas répondu : rien n'a été écrit.");
+    expect(refus).not.toHaveTextContent("Failed to fetch");
   });
 
   it("dit qu'un projet versionné reçoit la pièce sur une branche fusionnée à l'accord", () => {
