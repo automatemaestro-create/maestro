@@ -16,6 +16,25 @@
  * projets réellement déclarés est le travail de `lib/etatProjetActif`, et c'est
  * ce qui le garde sans dépendance — les tests peuvent poser un projet retenu
  * sans embarquer le client REST.
+ *
+ * ── Ce que #1293 y change : retenu n'est plus ouvert ─────────────────────────
+ *
+ * Jusqu'ici l'identifiant retenu **faisait entrer** : relu au démarrage, il
+ * passait la porte sans s'arrêter. C'est ce qui ramenait, à chaque démarrage, le
+ * tableau de bord d'avant l'atelier (docs/43 §2.1). Il reste retenu d'une visite
+ * à l'autre, mais il ne sert plus qu'à **proposer** : c'est le « Reprendre » de la
+ * porte d'entrée. Entrer est un geste de la **session**, et c'est le second
+ * repère de ce module — dans le `sessionStorage`, parce qu'une session est
+ * exactement ce qu'il distingue :
+ *
+ * - un **démarrage** (la coque qu'on rouvre, un onglet neuf) trouve la session
+ *   vide, donc la porte ;
+ * - une navigation interne ne recharge rien, et un **rechargement** garde sa
+ *   session — la page revient sans repasser par la porte, ce que la garde de
+ *   #279 promettait déjà (« un rechargement retrouve sa page »).
+ *
+ * Aucun `if (electron)` ici ni ailleurs (ENF-12) : la coque et l'onglet ont l'un
+ * et l'autre une session qui naît à l'ouverture et meurt à la fermeture.
  */
 
 /** Clé localStorage — même espace de noms que le thème et la sidebar (#118). */
@@ -46,6 +65,36 @@ export function ecrireProjetActifId(id: string | null): void {
   // La valeur voyage dans l'événement : les abonnés suivent même quand le
   // stockage est indisponible et qu'une relecture rendrait l'ancienne.
   window.dispatchEvent(new CustomEvent(EVENEMENT_PROJET_ACTIF, { detail: id }));
+}
+
+/**
+ * Clé sessionStorage — cette session est entrée dans un projet (#1293). Même
+ * espace de noms que le reste ; la valeur ne dit **pas** lequel : le projet ouvert
+ * reste celui de `CLE_PROJET_ACTIF`, que le sélecteur du shell change en cours de
+ * session. Le repère ne dit qu'une chose, qu'on a déjà passé la porte.
+ */
+export const CLE_ENTREE_SESSION = "maestro.session.entree";
+
+/**
+ * Vrai si cette session a déjà passé la porte — un rechargement, pas un
+ * démarrage. Stockage refusé : faux, donc la porte à chaque chargement ; c'est
+ * le prix d'une fenêtre qui ne retient rien, et il se paie d'un geste.
+ */
+export function lireEntreeDeSession(): boolean {
+  try {
+    return window.sessionStorage.getItem(CLE_ENTREE_SESSION) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Note que cette session est entrée dans un projet. Silencieux si le stockage refuse. */
+export function marquerEntreeDeSession(): void {
+  try {
+    window.sessionStorage.setItem(CLE_ENTREE_SESSION, "1");
+  } catch {
+    // Voir `lireEntreeDeSession` : l'entrée vaut pour la page, pas au-delà.
+  }
 }
 
 /**

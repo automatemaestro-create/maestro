@@ -97,15 +97,16 @@ function CadrePorte({
   );
 }
 
-/** L'en-tête commun à la porte et à l'écran d'ouverture — la marque, seule. */
+/**
+ * L'en-tête commun à la porte et à l'écran d'ouverture — la marque, seule, et
+ * sous le nom de la fenêtre (#1293) : « Maestro », plus « Control Tower ».
+ */
 function EnTetePorte({ children }: { children?: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2 text-neutral-900 dark:text-neutral-100">
         <LogoMaestro className="h-7 w-7" />
-        <span className="text-lg font-semibold tracking-tight">
-          Maestro — Control Tower
-        </span>
+        <span className="text-lg font-semibold tracking-tight">Maestro</span>
       </div>
       {children}
     </div>
@@ -119,7 +120,7 @@ function EnTetePorte({ children }: { children?: React.ReactNode }) {
  */
 export function EcranOuverture() {
   return (
-    <CadrePorte etiquette="Ouverture de la Control Tower">
+    <CadrePorte etiquette="Ouverture de Maestro">
       <EnTetePorte>
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Lecture des projets déclarés…

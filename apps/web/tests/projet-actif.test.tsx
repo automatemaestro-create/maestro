@@ -41,7 +41,11 @@ import { ecrireConversationOuverte as ecrireConversationDuFil } from "@/lib/conv
 import { marquerGuideVu } from "@/lib/guide";
 import { demanderNaissance } from "@/lib/naissance";
 import { lireConversationOuverte } from "@/lib/preferences";
-import { ecrireProjetActifId, lireProjetActifId } from "@/lib/projetActif";
+import {
+  ecrireProjetActifId,
+  lireProjetActifId,
+  marquerEntreeDeSession,
+} from "@/lib/projetActif";
 import type { DemandeProjet, Projet, ProjetCree } from "@/lib/types";
 
 import {
@@ -450,9 +454,26 @@ describe("un projet naît dans la conversation (#1294)", () => {
 });
 
 describe("la mémoire du projet actif", () => {
-  it("retrouve le projet retenu d'une visite à l'autre", async () => {
+  it("s'arrête au choix au démarrage, même avec un projet retenu (#1293)", async () => {
+    // Le renversement de docs/43 §2.1 : retenu d'une visite à l'autre, le projet
+    // ne fait plus entrer — c'est ce qui ramenait l'écran d'avant l'atelier à
+    // chaque démarrage. Un démarrage est une session vide.
     chargerProjets.mockResolvedValue([projetFactice()]);
     ecrireProjetActifId("prj-7f3a1c2b");
+    monter();
+
+    expect(await porte()).toBeInTheDocument();
+    expect(screen.queryByText(CONTENU)).toBeNull();
+    // Retenu, et pas oublié : c'est lui que la porte propose de reprendre.
+    expect(lireProjetActifId()).toBe("prj-7f3a1c2b");
+  });
+
+  it("retrouve sa page à un rechargement, dans la même session", async () => {
+    // Un rechargement n'est pas un démarrage : la session est entrée, la page
+    // revient sans repasser par la porte — la promesse de #279 tient.
+    chargerProjets.mockResolvedValue([projetFactice()]);
+    ecrireProjetActifId("prj-7f3a1c2b");
+    marquerEntreeDeSession();
     monter();
 
     expect(await screen.findByText(CONTENU)).toBeInTheDocument();
@@ -497,10 +518,13 @@ describe("la mémoire du projet actif", () => {
   });
 
   it("laisse réessayer, et le choix retenu reprend dès que l'API répond", async () => {
+    // Un rechargement en pleine session, API coupée : la session est entrée,
+    // donc l'API revenue rend la page, pas la porte.
     const utilisateur = userEvent.setup();
     chargerProjets.mockRejectedValueOnce(new Error("fetch failed"));
     chargerProjets.mockResolvedValue([projetFactice()]);
     ecrireProjetActifId("prj-7f3a1c2b");
+    marquerEntreeDeSession();
     monter();
     await screen.findByRole("alert");
 
@@ -511,6 +535,7 @@ describe("la mémoire du projet actif", () => {
   it("repasse par la porte quand le projet actif est relâché depuis ailleurs", async () => {
     chargerProjets.mockResolvedValue([projetFactice()]);
     ecrireProjetActifId("prj-7f3a1c2b");
+    marquerEntreeDeSession();
     monter();
     await screen.findByText(CONTENU);
 
@@ -566,7 +591,7 @@ describe("le défilement de la porte (#306)", () => {
     // cadre : les séparer ferait revenir le défaut sur celui qu'on oublierait.
     render(<EcranOuverture />);
     const ecran = screen.getByRole("main", {
-      name: "Ouverture de la Control Tower",
+      name: "Ouverture de Maestro",
     });
     expect(conteneur(ecran).className).toContain("overflow-y-auto");
   });
