@@ -68,6 +68,7 @@ from maestro.outillage import (
     recommander,
     resume,
 )
+from maestro.outillage.clients import Client
 from maestro.outillage.detection import IGNORES_DEFAUT
 from maestro.projets.modele import Perimetre
 from maestro.projets.racine import RacineRefusee
@@ -677,8 +678,18 @@ def test_chaque_entree_recommandee_porte_sa_raison_et_son_endroit(tmp_path: Path
 
 
 def test_l_ordre_des_entrees_est_celui_de_l_arbre_de_docs_38(tmp_path: Path) -> None:
-    """Instructions, les deux ponts, puis les skills : l'ordre de lecture d'un projet outillé."""
-    entrees = analyser(projet_node(tmp_path)).recommandation.entrees
+    """Instructions, les ponts qu'il faut, puis les skills : l'ordre de lecture d'un projet outillé.
+
+    Depuis #1295 un pont ne s'écrit que pour un client qui en a besoin : les deux sont
+    demandés ici par deux clients qui ne lisent pas `AGENTS.md` d'eux-mêmes.
+    """
+    constats = analyser(projet_node(tmp_path)).constats
+    clients = (
+        Client(cle="claude", libelle="Claude Code", version="2.1.200"),
+        Client(cle="gemini", libelle="Gemini CLI", version="0.9.0"),
+    )
+
+    entrees = recommander(constats, clients).entrees
 
     assert [entree.chemin for entree in entrees[:3]] == [
         "AGENTS.md",
@@ -686,6 +697,17 @@ def test_l_ordre_des_entrees_est_celui_de_l_arbre_de_docs_38(tmp_path: Path) -> 
         "GEMINI.md",
     ]
     assert all(entree.type == "skill" for entree in entrees[3:] if entree.type != "script")
+
+
+def test_sans_client_qui_le_demande_l_analyse_ne_recommande_aucun_pont(tmp_path: Path) -> None:
+    """#1295 : `AGENTS.md` seul, et les deux ponts écartés avec leur raison — jamais d'office."""
+    recommandation = analyser(projet_node(tmp_path)).recommandation
+
+    assert not any(entree.type == "pont" for entree in recommandation.entrees)
+    assert {e.nom for e in recommandation.ecartes if e.type == "pont"} == {
+        "CLAUDE.md",
+        "GEMINI.md",
+    }
 
 
 def test_un_agents_md_deja_ecrit_est_a_completer_pas_a_ecraser(tmp_path: Path) -> None:
@@ -779,5 +801,5 @@ def test_recommander_ne_touche_pas_au_disque_et_se_juge_sur_des_constats() -> No
     assert sonde.ecritures == []
     assert sonde.lectures == []
     noms = [entree.nom for entree in recommandation.entrees]
-    assert noms[:3] == ["AGENTS.md", "CLAUDE.md", "GEMINI.md"]
+    assert noms[0] == "AGENTS.md"
     assert "lancer-les-tests" in noms

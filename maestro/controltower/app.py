@@ -5256,7 +5256,8 @@ def create_app(
         """Écrit dans le projet l'outillage que son analyse recommande (#1033, docs/38).
 
         Le second geste du chantier, et celui qui touche au dossier de
-        quelqu'un : `AGENTS.md`, les deux ponts d'une ligne, les skills dans
+        quelqu'un : `AGENTS.md`, un pont d'une ligne par client du poste qui ne
+        le lit pas (#1295), les skills dans
         `.agents/skills/` et le manifeste `.maestro/outillage/manifeste.json`,
         qui dit ce qui vient de Maestro.
 
@@ -6118,7 +6119,7 @@ def create_app(
         une proposition, et la génération est le lot 5 (#1033).
         """
         try:
-            return outillage.recommandation(id_projet, requete.choix_acquis())
+            return await outillage.recommandation(id_projet, requete.choix_acquis())
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 

@@ -354,8 +354,9 @@ projet commence par son outillage**. Le format est arrêté par
 [docs/38](./38-decision-outillage-universel-du-projet.md), qui le justifie et le date ; cette
 section dit ce que ça change **ici**, dans le chantier des projets locaux.
 
-**Ce que c'est, en une ligne** : un `AGENTS.md` à la racine, deux ponts d'une ligne (`CLAUDE.md`,
-`GEMINI.md`), des skills au format Agent Skills dans `.agents/skills/<nom>/`, les scripts du projet
+**Ce que c'est, en une ligne** : un `AGENTS.md` à la racine, un pont d'une ligne (`CLAUDE.md`,
+`GEMINI.md`) pour chaque client utilisé qui ne le lit pas (#1295), des skills au format Agent Skills
+dans `.agents/skills/<nom>/`, les scripts du projet
 tels qu'ils sont, et un **manifeste** `.maestro/outillage/manifeste.json` qui dit ce que Maestro a
 écrit, depuis quelle analyse ou quels choix, et par quelle version. Les formats sont ouverts : un
 autre agent que Claude sait les lire.
@@ -363,7 +364,8 @@ autre agent que Claude sait les lire.
 > ⚠ **Deux points changent le 2026-09-24** ([docs/43](./43-decision-un-projet-nait-dans-la-conversation.md)),
 > à la demande de la personne :
 > - les deux ponts ne s'écrivent plus d'office. `AGENTS.md` suffit, et un pont ne s'écrit que pour
->   un client utilisé qui ne le lit pas nativement (#1295) ;
+>   un client utilisé qui ne le lit pas nativement (#1295, **livré** — la règle et sa table en
+>   [docs/38 §3.2](./38-decision-outillage-universel-du-projet.md)) ;
 > - créer un projet ne commence plus par une étape d'outillage : le projet naît dans la conversation,
 >   et son outillage s'y construit pièce par pièce (#1294, #1161).
 >

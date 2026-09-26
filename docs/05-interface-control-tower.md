@@ -6665,8 +6665,9 @@ aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.p
 ### 6.20 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
 
 Le chantier #1020 : **créer ou importer un projet commence par son outillage**. Le format est arrêté
-par [docs/38](./38-decision-outillage-universel-du-projet.md) — `AGENTS.md`, deux ponts d'une ligne,
-des skills au format Agent Skills dans `.agents/skills/`, et un **manifeste**
+par [docs/38](./38-decision-outillage-universel-du-projet.md) — `AGENTS.md`, un pont d'une ligne
+pour chaque client utilisé qui ne le lit pas (#1295), des skills au format Agent Skills dans
+`.agents/skills/`, et un **manifeste**
 `.maestro/outillage/manifeste.json` — et ce que ça change au chantier des projets locaux est à
 [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md). Ici : les routes, et les trois règles
 qu'elles portent.
@@ -6678,7 +6679,10 @@ qu'elles portent.
 >   quitté le chemin de création avec le formulaire ; elle reste offerte, depuis l'écran Projets, à
 >   un projet déjà déclaré.
 > - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
->   qui ne le lit pas nativement (#1295).
+>   qui ne le lit pas nativement (#1295, **livré**). Les clients sont ceux du poste — relus à chaque
+>   analyse, recommandation et génération, avec leur `--version` — et ceux que les réponses nomment
+>   (sujet `clients`). Un pont écarté l'est dans `recommandation.ecartes`, avec sa raison ; la route
+>   `POST …/outillage/recommandation` est devenue asynchrone pour les lire hors de la boucle.
 >
 > Cette section décrit l'état **présent** jusqu'à ce que ces lots la réécrivent. Les routes et leurs
 > trois règles restent la matière des deux chemins.
