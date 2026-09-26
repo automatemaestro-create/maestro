@@ -403,7 +403,8 @@ async function nouveauContexte(navigateur, projet, extra = {}) {
     ...extra,
   });
   await contexte.addInitScript(
-    ([cleTheme, cleProjet, cleGuide, cleEntree, projetId]) => {
+    // `projetId` reste le 4ᵉ argument : `tests/test_presentation.py` le lit à ce rang.
+    ([cleTheme, cleProjet, cleGuide, projetId, cleEntree]) => {
       try {
         window.localStorage.setItem(cleTheme, "clair");
         // Sans projet que l'API déclare, on ne pose rien : la porte d'entrée
@@ -422,7 +423,7 @@ async function nouveauContexte(navigateur, projet, extra = {}) {
         // et la porte d'entrée dira elle-même qu'aucun projet n'est ouvert.
       }
     },
-    [CLE_THEME, CLE_PROJET_ACTIF, CLE_GUIDE_VU, CLE_ENTREE_SESSION, projet?.id ?? null],
+    [CLE_THEME, CLE_PROJET_ACTIF, CLE_GUIDE_VU, projet?.id ?? null, CLE_ENTREE_SESSION],
   );
   const refusees = await gardeLectureSeule(contexte);
   return { contexte, refusees };

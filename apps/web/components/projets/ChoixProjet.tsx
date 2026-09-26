@@ -25,6 +25,13 @@
  *    donc l'URL ne bouge pas. Le dire à l'écran fait de cette propriété quelque
  *    chose qui se voit — on sait où l'on retombe avant de choisir.
  *
+ * Depuis #1293 (docs/43 §2.1), la porte tient **chaque démarrage**, même quand un
+ * projet est retenu de la visite d'avant : elle le propose en tête —
+ * « Reprendre *nom* », un geste — à côté de « Nouveau projet », puis liste tous
+ * les projets, le dernier ouvert d'abord. La forme a été tranchée sur pièces
+ * (veille et « ## Variante retenue » du ticket : B, d'après les écrans d'accueil
+ * de PyCharm, VS Code et Visual Studio).
+ *
  * ⚠ Le cinquième de #1034 — « déclarer ne fait plus entrer », l'étape
  * d'outillage en second écran de la porte — est **renversé** par #1294 (docs/43
  * §2.2, qui renverse docs/37 §4 point 6) : le projet né dans la conversation est
@@ -33,7 +40,7 @@
  */
 
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { BanniereErreurApi } from "@/components/BanniereErreurApi";
 import { IconePlus } from "@/components/Icones";
@@ -130,13 +137,22 @@ export function EcranOuverture() {
   );
 }
 
-/** Une entrée de la liste : ce qu'il faut pour reconnaître un projet, et y entrer. */
+/**
+ * Une entrée de la liste : ce qu'il faut pour reconnaître un projet, et y entrer.
+ *
+ * `idRacine` n'est donné qu'au **dernier** projet (#1293) : la carte se marque
+ * « Dernier ouvert », et sa racine devient la description du « Reprendre » d'en
+ * tête — deux clones d'un même dépôt portent volontiers le même nom (#280), c'est
+ * le chemin qui dit lequel on reprend.
+ */
 function CarteChoix({
   projet,
   onOuvrir,
+  idRacine,
 }: {
   projet: Projet;
   onOuvrir: () => void;
+  idRacine?: string;
 }) {
   return (
     <li>
@@ -154,6 +170,11 @@ function CarteChoix({
       >
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold">{projet.nom}</span>
+          {/* Neutre et en aplat (réserve du regard neuf, « ## Variante retenue »
+              de #1293) : en bleu, il se confondait avec le contour bleu du VCS
+              voisin — deux bleus pour deux sens. L'aplat le distingue par la
+              forme des pastilles à contour qui qualifient le projet. */}
+          {idRacine !== undefined && <BadgeEtat>Dernier ouvert</BadgeEtat>}
           <span className="rounded-full border border-neutral-300 px-2 py-0.5 text-[11px] font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
             {libelleOrigine(projet.origine)}
           </span>
@@ -174,7 +195,10 @@ function CarteChoix({
             </BadgeEtat>
           )}
         </span>
-        <code className="font-mono text-xs break-all text-neutral-500 dark:text-neutral-400">
+        <code
+          id={idRacine}
+          className="font-mono text-xs break-all text-neutral-500 dark:text-neutral-400"
+        >
           {projet.racine}
         </code>
       </button>
@@ -215,8 +239,15 @@ function PanneDeLaListe({
 }
 
 export function ChoixProjet() {
-  const { projets, chargement, erreur, perdu, choisir, recharger } =
+  const { projets, dernier, chargement, erreur, perdu, choisir, recharger } =
     useProjetActif();
+  // Le dernier projet ouvert d'abord (#1293), comme les projets récents d'un
+  // éditeur ; les autres dans l'ordre que l'API sert. Maestro ne date pas
+  // l'ouverture de chaque projet : on ne prétend pas trier ce qu'on ne sait pas.
+  const ordonnes = dernier
+    ? [dernier, ...projets.filter((projet) => projet.id !== dernier.id)]
+    : projets;
+  const idRacineDernier = useId();
   // `null` : personne n'a encore tranché, c'est la liste qui décide. Une fois la
   // création ouverte ou refermée à la main, le choix de l'utilisateur tient —
   // sans quoi le retour à la liste serait sans effet sur une liste vide.
@@ -274,7 +305,7 @@ export function ChoixProjet() {
         </h1>
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Un projet est une <strong>racine sur le disque</strong> : tout ce que
-          la Control Tower montre — tâches, agents, coûts, validations — lui
+          Maestro montre — tâches, agents, coûts, validations — lui
           appartient. {destination && destination.href !== "/" ? (
             <>
               Une fois choisi, retour à <strong>{destination.libelle}</strong>.
@@ -295,32 +326,66 @@ export function ChoixProjet() {
         recharger={recharger}
       />
 
+      {/* Les actions en tête, au-dessus de la liste (#1293, « ## Variante
+          retenue » : B, d'après PyCharm, VS Code et Visual Studio) — ce qu'on
+          vient faire avant ce parmi quoi on choisit. « Reprendre » est la seule
+          action pleine quand il y a un dernier projet ; sans lui, c'est
+          « Nouveau projet » qui la prend (un bouton plein par zone, docs/30).
+          « Nouveau projet » a ainsi une place fixe : il ne descend plus au bout
+          d'une liste qui s'allonge. Présent pendant une panne aussi — la
+          création n'attend pas la liste, et `NaissanceProjet` redit la panne. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {dernier && (
+          <Bouton
+            onClick={() => choisir(dernier)}
+            // La racine en description, et en infobulle (#280) : le nom seul ne
+            // départage pas deux clones du même dépôt.
+            aria-describedby={idRacineDernier}
+            title={dernier.racine}
+            // Un nom de projet est souvent un seul mot à tirets : mesuré à 390 px,
+            // « Reprendre » + 46 caractères affleure le bord. Borné à la colonne,
+            // le libellé passe à la ligne au lieu de faire défiler la porte.
+            className="max-w-full text-left wrap-anywhere"
+          >
+            Reprendre {dernier.nom}
+          </Bouton>
+        )}
+        {/* L'émoji part avec la migration : il apportait sa propre graisse et
+            son propre rendu par plateforme, ce que le jeu d'icônes a retiré
+            partout ailleurs (#245). */}
+        <Bouton
+          icone={IconePlus}
+          variante={dernier ? "contour" : "plein"}
+          ton={dernier ? "neutre" : "accent"}
+          onClick={() => setCreationDemandee(true)}
+        >
+          Nouveau projet
+        </Bouton>
+      </div>
+
       {chargement && (
         <p className="text-sm text-neutral-500 dark:text-neutral-400">
           Lecture des projets…
         </p>
       )}
 
-      {projets.length > 0 && (
-        <ul aria-label="Projets déclarés" className="flex flex-col gap-3">
-          {projets.map((projet) => (
-            <CarteChoix
-              key={projet.id}
-              projet={projet}
-              onOuvrir={() => choisir(projet)}
-            />
-          ))}
-        </ul>
+      {ordonnes.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <h2 className="text-annexe font-medium text-texte-secondaire">
+            Projets
+          </h2>
+          <ul aria-label="Projets déclarés" className="flex flex-col gap-3">
+            {ordonnes.map((projet) => (
+              <CarteChoix
+                key={projet.id}
+                projet={projet}
+                idRacine={projet.id === dernier?.id ? idRacineDernier : undefined}
+                onOuvrir={() => choisir(projet)}
+              />
+            ))}
+          </ul>
+        </div>
       )}
-
-      <div>
-        {/* L'émoji part avec la migration : il apportait sa propre graisse et
-            son propre rendu par plateforme, ce que le jeu d'icônes a retiré
-            partout ailleurs (#245). */}
-        <Bouton icone={IconePlus} onClick={() => setCreationDemandee(true)}>
-          Nouveau projet
-        </Bouton>
-      </div>
     </CadrePorte>
   );
 }

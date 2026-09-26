@@ -289,7 +289,12 @@ Deux choses constatées ici, et utiles au lot 2 (#932) :
   **casse du lecteur compte** (`e:/…` refusé, `E:/…` accepté). Un nom **relatif** est le geste sûr.
 - **Sans projet actif, l'écran rend « Choisir le projet »**, pas le tableau de bord (#279). Le
   geste est de poser `maestro.projet.actif` dans le `localStorage` sur un projet **que l'API
-  déclare** — ce que fait `scripts/presentation/captures.mjs` sur la vraie stack depuis #1166. Du
+  déclare**, **et**, depuis #1293, `maestro.session.entree = "1"` dans le `sessionStorage` : un
+  navigateur neuf est un **démarrage**, qui s'arrête sur la porte et son « Reprendre » même avec
+  un projet retenu (docs/05 §2.0.1). C'est ce que fait `scripts/presentation/captures.mjs` sur la
+  vraie stack depuis #1166. Avec le MCP, qui n'a pas d'`addInitScript`, les deux clés se posent à
+  la première passe, **dans le même onglet** que la seconde : le `sessionStorage` est celui de
+  l'onglet. Du
   temps du mode démo, retiré par #1168 ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md)),
   il fallait en plus déclarer à la main le projet `prj-demo` qu'il estampillait.
 
