@@ -105,6 +105,34 @@ describe("le résumé d'un événement (lib/evenements)", () => {
     ).toContain("Vous avez refusé");
   });
 
+  it("nomme le processus qu'une session laissait tourner et qui a résisté (#1279)", () => {
+    // La phrase est le `detail` du moteur, coiffé de son libellé : le titre ne
+    // dirait que le nom de la tâche, et tairait le pid qu'on doit pouvoir tuer.
+    expect(
+      resumeEvenement(
+        evenementFactice({
+          type: EVENEMENT_AGENT_ACTIVITE,
+          statut: "processus_survivants",
+          detail:
+            "1 processus lancé pendant la tâche n’a pas pu être arrêté à sa clôture : " +
+            "msedge.exe (PID 37484).",
+        }),
+      ),
+    ).toBe(
+      "Processus non arrêtés — 1 processus lancé pendant la tâche n’a pas pu être " +
+        "arrêté à sa clôture : msedge.exe (PID 37484).",
+    );
+    expect(
+      resumeEvenement(
+        evenementFactice({
+          type: EVENEMENT_AGENT_ACTIVITE,
+          statut: "processus_arretes",
+          detail: "msedge.exe (PID 37484) arrêté.",
+        }),
+      ),
+    ).toMatch(/^Processus arrêtés — /);
+  });
+
   it("se rabat sur le tache_id quand l'événement n'a pas de titre", () => {
     expect(
       resumeEvenement(

@@ -123,6 +123,14 @@ _SUFFIXE_ACTIVITE = ":activite"
 #: verdict de la tâche.
 _SUFFIXE_FUSION = ":fusion"
 
+#: Suffixe des étapes qui disent ce que la **session d'un agent a laissé derrière
+#: elle** à sa clôture (#1279 — cf. `maestro.engine.executor`,
+#: `SUFFIXE_ETAPE_PROCESSUS`) : les processus arrêtés, ceux qui ont résisté, ou une
+#: session non confinée. Rangé avec `:fusion` — même nature (un fait rattaché à la
+#: tâche au moment où elle se solde, qui ne la fait pas changer de colonne) et donc
+#: même traitement. Recopié plutôt qu'importé, comme les autres suffixes du moteur.
+_SUFFIXE_PROCESSUS = ":processus"
+
 #: Suffixe des étapes de **question posée par l'agent** (#1023 — cf.
 #: `maestro.engine.executor`, `SUFFIXE_ETAPE_QUESTION`). Recopié plutôt
 #: qu'importé, comme les autres suffixes du moteur : ce pont est la couche basse
@@ -200,6 +208,7 @@ _SUFFIXES_ACTIVITE = (
     _SUFFIXE_REFUS,
     _SUFFIXE_ACTIVITE,
     _SUFFIXE_FUSION,
+    _SUFFIXE_PROCESSUS,
     _SUFFIXE_QUESTION,
 )
 
@@ -225,13 +234,14 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
       inter-agents** (entité AGENT_MESSAGE — handoff, notification…) ;
     - les étapes `planification`, `brief` (#318) et `reprise` (#96) et les étapes
       `<tache>:validation`, `<tache>:relance` (#91), `<tache>:refus-outil`
-      (#110), `<tache>:activite` (#479), `<tache>:fusion` (#705) et
-      `<tache>:question` (#1023) deviennent des **activités d'agent**
-      (l'orchestrateur cadre puis planifie, le moteur reprend un run interrompu,
-      un humain tranche, le moteur relance, la politique de permissions refuse un
-      outil, l'agent travaille, le travail soldé rejoint le projet, l'agent a posé
-      une question et sait ce qu'il en est sorti — la raison voyage dans
-      `detail`) ;
+      (#110), `<tache>:activite` (#479), `<tache>:fusion` (#705),
+      `<tache>:processus` (#1279) et `<tache>:question` (#1023) deviennent des
+      **activités d'agent** (l'orchestrateur cadre puis planifie, le moteur
+      reprend un run interrompu, un humain tranche, le moteur relance, la
+      politique de permissions refuse un outil, l'agent travaille, le travail
+      soldé rejoint le projet, ce que la session laissait tourner est arrêté,
+      l'agent a posé une question et sait ce qu'il en est sorti — la raison
+      voyage dans `detail`) ;
       `planification`, `brief` et `reprise` portent sur le run entier, donc sans
       `tache_id` ;
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :

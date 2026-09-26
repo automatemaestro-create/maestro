@@ -20,7 +20,9 @@ procédure manuelle est documentée dans docs/19, §Vérification) :
    lancée, arguments du CLI relayés, code de sortie remonté inchangé ;
 ④ **câblage fournisseur Claude** : en mode isolé, `run_agent` pointe le SDK
    sur le shim (`cli_path`) et pose le protocole `MAESTRO_SANDBOX_*` ; hors
-   mode isolé, rien ne change ; `from_settings` valide l'isolation au câblage ;
+   mode isolé, c'est le lanceur du confinement qui prend `cli_path` (#1279,
+   `tests/test_confinement.py`), jamais le shim ; `from_settings` valide
+   l'isolation au câblage ;
 ⑤ **second montage du projet** (#226, Phase 7 — tests différés au lot #220) :
    le seul endroit du contrat de [docs/17 §3](../docs/17-isolation-execution.md)
    que la Phase 7 déplace. Une tâche rattachée à un projet monte l'espace
@@ -45,7 +47,7 @@ from maestro.config import ConfigError, Settings
 from maestro.projets.modele import Perimetre, Projet, Vcs
 from maestro.providers import ClaudeProvider, Credentials
 from maestro.providers import claude as claude_mod
-from maestro.sandbox import container
+from maestro.sandbox import confinement, container
 from maestro.sandbox import shim as shim_mod
 from maestro.sandbox.container import (
     ENV_IMAGE,
@@ -314,13 +316,33 @@ def test_en_mode_isole_le_sdk_pointe_le_shim_et_recoit_le_protocole(monkeypatch,
     assert vu["env"][ENV_WORKSPACE] == str(tmp_path)
 
 
-def test_hors_mode_isole_rien_ne_change(monkeypatch, tmp_path):
+def test_hors_mode_isole_le_sdk_pointe_le_lanceur_du_confinement(monkeypatch, tmp_path):
+    # Hors du conteneur, plus rien n'emporte ce que la session lance : c'est le
+    # lanceur du confinement qui prend `cli_path` (#1279) — jamais le shim, et
+    # aucun protocole `MAESTRO_SANDBOX_*`.
+    monkeypatch.setattr(confinement, "chemin_lanceur", lambda: Path("maestro-confinement"))
     provider = ClaudeProvider(Credentials())
 
     vu = _run_agent_capture_options(monkeypatch, provider, tmp_path)
 
-    assert vu["cli_path"] is None
+    assert vu["cli_path"] == Path("maestro-confinement")
+    assert confinement.ENV_COMMANDE in vu["env"]
     assert ENV_IMAGE not in vu["env"]
+
+
+def test_en_mode_isole_le_conteneur_confine_deja_la_session(monkeypatch, tmp_path):
+    # Le conteneur jetable emporte tout ce que le CLI y lance : pas de lanceur en plus.
+    monkeypatch.setattr(confinement, "chemin_lanceur", lambda: Path("maestro-confinement"))
+    isolation = IsolationConfig(
+        image="maestro-sandbox:latest", reseau="bridge", shim=Path("maestro-sandbox-shim")
+    )
+
+    vu = _run_agent_capture_options(
+        monkeypatch, ClaudeProvider(Credentials(), isolation=isolation), tmp_path
+    )
+
+    assert vu["cli_path"] == Path("maestro-sandbox-shim")
+    assert confinement.ENV_COMMANDE not in vu["env"]
 
 
 def test_from_settings_valide_l_isolation_au_cablage():

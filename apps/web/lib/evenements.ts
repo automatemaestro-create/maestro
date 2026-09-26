@@ -185,6 +185,12 @@ function phraseEtapeAgent(evenement: Evenement): string {
     case "ecriture_en_place":
     case "ecriture_sans_objet":
     case "projet_introuvable":
+    // Et #1279 ce que la session de l'agent laissait tourner à sa clôture : la
+    // même règle, parce que c'est le même genre de fait — il arrive à la tâche
+    // quand elle se solde, et le `detail` nomme les processus (pid compris).
+    case "processus_arretes":
+    case "processus_survivants":
+    case "session_non_confinee":
       return `${libelleStatut(evenement.statut)}${
         evenement.detail ? ` — ${evenement.detail}` : ` : ${quoi}`
       }`;
