@@ -994,7 +994,7 @@ class EtatExecution:
 
     @property
     def cout_partiel(self) -> bool:
-        """Le cumul n'est-il qu'un **plancher** — un relevé en cours (#835), ou des tokens sans prix (#1280) ?
+        """Le cumul n'est-il qu'un **plancher** — relevé en vol (#835), tokens sans prix (#1280) ?
 
         Deux raisons pour un même drapeau, parce qu'elles disent la même chose à
         qui lit le montant : il ne couvre pas tout ce que le run a consommé. La
