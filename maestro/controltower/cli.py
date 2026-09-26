@@ -5,7 +5,11 @@ Fine couche autour d'uvicorn : sert l'app FastAPI de production
 lancé (infra/docker-compose.yml) est requis pour le flux temps réel ; côté
 moteur, `maestro-run --publier` (ou un worker #41) alimente le canal.
 
-Équivalent direct : `uvicorn --factory maestro.controltower.app:create_default_app`.
+Équivalent direct : `uvicorn --factory maestro.controltower.app:create_default_app`,
+**au journal près** : `maestro-api` passe à uvicorn une configuration de journal
+qui masque le jeton d'API (#1292, `config_du_journal`), là où uvicorn lancé seul
+écrit en clair l'URL de chaque poignée de main WebSocket, jeton compris. Les
+lanceurs du dépôt passent tous par ici.
 
 `--verifier-redis` (ticket #186) ne démarre rien : il dit si ce bus répond, et
 sinon le geste exact pour le lancer. C'est le **préflight** du lanceur local
@@ -44,6 +48,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
+from typing import Any
 
 # Le geste et le point de connexion vivent avec la panne de l'API (#1206) : le
 # préflight et l'API en marche les disent avec les mêmes mots. Réexportés ici,
@@ -64,6 +69,10 @@ PORT_DEFAUT = 8000
 #: injoignable (URL distante, VPN coupé) ferait autrement patienter le lanceur
 #: le temps du time-out TCP du système.
 DELAI_PING_S = 3.0
+
+#: Le nom du filtre qui tient le jeton d'API hors du journal (#1292), dans la
+#: configuration passée à uvicorn (`config_du_journal`).
+FILTRE_DU_JETON = "maestro_sans_jeton"
 
 
 def verifier_redis() -> int:
@@ -183,7 +192,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # dès que l'API est démarrée. Une config fautive casse ici, avant le port.
     from maestro.controltower.acces import politique_depuis
 
-    print(politique_depuis().annonce())
+    politique = politique_depuis()
+    print(politique.annonce())
 
     # Import local : le CLI est le seul module à dépendre du serveur uvicorn.
     import uvicorn
@@ -193,8 +203,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         factory=True,
         host=hote,
         port=port,
+        log_config=config_du_journal(politique.jeton),
     )
     return 0
+
+
+def config_du_journal(jeton: str | None) -> dict[str, Any]:
+    """La configuration de journal du serveur, **sans le jeton d'API** (#1292).
+
+    Celle d'uvicorn (`LOGGING_CONFIG`, sa valeur par défaut), à un filtre près :
+    `FiltreDuJeton` sur **chacun** de ses gestionnaires, sans en nommer aucun —
+    le journal d'accès comme celui des poignées de main WebSocket, qui passent
+    l'URL entière, et tout gestionnaire qu'une version suivante ajouterait. Les
+    formats, niveaux et destinations restent ceux d'uvicorn : `api.log` garde
+    ses lignes, le secret en moins.
+
+    Le jeton est passé au filtre pour qu'il le masque **aussi par sa valeur** ;
+    `None` (régime ouvert) masque encore tout paramètre `jeton=`.
+    """
+    # Imports locaux : le serveur n'est chargé que pour servir (voir `main`).
+    import copy
+
+    from uvicorn.config import LOGGING_CONFIG
+
+    from maestro.controltower.acces import FiltreDuJeton
+
+    config = copy.deepcopy(LOGGING_CONFIG)
+    config.setdefault("filters", {})[FILTRE_DU_JETON] = {"()": FiltreDuJeton, "jeton": jeton}
+    for gestionnaire in config.get("handlers", {}).values():
+        gestionnaire.setdefault("filters", []).append(FILTRE_DU_JETON)
+    return config
 
 
 if __name__ == "__main__":  # pragma: no cover

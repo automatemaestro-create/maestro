@@ -397,8 +397,13 @@ navigateur.
   sur la boucle locale, qui ne sort pas de la machine. Un mode serveur exposé sur le réseau exige
   du TLS devant l'API : c'est une décision de déploiement, pas un réglage de ce lot ;
 - **le jeton du WebSocket voyage dans l'URL**, faute d'en-tête possible sur une poignée de main
-  navigateur. Il peut donc apparaître dans un journal d'accès local. C'est le prix du protocole, et
-  il est borné : le paramètre n'est accepté **que** sur le WebSocket, jamais sur une route REST ;
+  navigateur. C'est le prix du protocole, et il est borné : le paramètre n'est accepté **que** sur
+  le WebSocket, jamais sur une route REST. Il **ne s'écrit plus dans le journal** de l'API (#1292) :
+  le serveur consigne l'URL de chaque poignée de main, et `maestro-api` pose sur chacun de ses
+  gestionnaires un filtre qui masque tout paramètre `jeton=` et la valeur du jeton, en gardant le
+  chemin et le code (`maestro.controltower.acces.FiltreDuJeton`). Le masquer à l'écriture couvre
+  tout client, là où un autre transport ne couvrirait que celui qu'on réécrit. Les journaux écrits
+  avant ne sont pas réécrits : `scripts/controltower/start.sh` nomme ceux qui le portent encore ;
 - **le régime `ouvert` reste disponible** (`MAESTRO_API_AUTH=ouvert`) pour un usage de
   développement. Il se **nomme**, et l'API **annonce son régime au démarrage** : une API grande
   ouverte ne doit jamais être ce qu'on obtient en se taisant, ni ce qu'on découvre après coup.
@@ -465,7 +470,13 @@ un mauvais jeton, et depuis une origine tierce ; préflight `OPTIONS` laissé
 passer ; aucune en-tête CORS pour une origine hors liste. Côté front,
 `apps/web/tests/jeton-api.test.ts` : l'en-tête part sur une lecture, une écriture
 JSON et un téléversement, le flux le porte par l'URL — et rien de tout cela en
-régime ouvert.
+régime ouvert. Le jeton **hors des journaux** (#1292), `tests/test_jeton_hors_des_journaux.py` :
+le vrai serveur, sous la configuration de journal que `maestro-api` lui passe,
+reçoit une poignée de main WebSocket authentifiée et une requête REST qui porte
+le jeton en paramètre, puis son journal est lu — la sonde prouvée d'abord sur la
+configuration nue d'uvicorn, qui l'écrit en clair ; le masque, ce qu'il garde
+(chemin, code, arguments d'un journal d'accès) ; et `start.sh`, qui nomme un
+journal d'avant sans le réécrire.
 
 ### Smoke test manuel du mode isolé (Docker requis)
 
@@ -520,4 +531,5 @@ Chaque page de lot garde le détail ; l'essentiel, assumé au POC :
   deux, et le régime durci est le défaut. Ce qui reste assumé est écrit là-bas — le poste est
   toujours réputé de confiance (qui lit `~/.maestro/jeton-api` a le jeton), le transport local
   reste **en clair** (pas de TLS sur `127.0.0.1`), et le jeton du WebSocket voyage dans l'URL
-  faute d'en-tête possible sur une poignée de main navigateur.
+  faute d'en-tête possible sur une poignée de main navigateur — sans plus s'écrire dans le journal
+  de l'API (#1292).
