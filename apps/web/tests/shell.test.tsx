@@ -23,6 +23,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Shell } from "@/components/Shell";
+import { MENTION_COUT_PARTIEL } from "@/lib/format";
 import { marquerGuideVu } from "@/lib/guide";
 import { MENU } from "@/lib/navigation";
 import {
@@ -119,6 +120,24 @@ describe("le shell applicatif (Shell)", () => {
         selector: "[data-guide='cout-cumule']",
       }),
     ).toHaveTextContent("1,25");
+  });
+
+  it("dit un coût cumulé partiel quand un grand livre porte des tokens sans prix (#1280)", async () => {
+    // Sans quoi « 0,21 $US » restait nu au-dessus d'un run qui se disait
+    // partiel — la contradiction relevée par le regard neuf sur la vraie stack.
+    poserEtatGlobal({
+      couts: [
+        coutExecutionFactice({
+          total: usageFactice({ cout_usd: 0.2051, tokens_total: 153021, tokens_non_tarifes: 130079 }),
+        }),
+      ],
+    });
+    await monterShell();
+    const cumul = screen.getByText(/Coût cumulé/, {
+      selector: "[data-guide='cout-cumule']",
+    });
+    expect(cumul).toHaveTextContent("0,21");
+    expect(cumul).toHaveTextContent(MENTION_COUT_PARTIEL);
   });
 
   it("restitue la sidebar repliée d'une session à l'autre", async () => {

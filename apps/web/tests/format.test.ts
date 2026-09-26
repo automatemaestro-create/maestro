@@ -16,6 +16,9 @@ import { describe, expect, it } from "vitest";
 import {
   formatCout,
   formatCoutAxe,
+  formatCoutPartiel,
+  MENTION_COUT_NON_TARIFE,
+  MENTION_COUT_PARTIEL,
   formatDuree,
   formatDureeRun,
   formatHeure,
@@ -58,6 +61,20 @@ describe("les montants à deux décimales (#247)", () => {
     // montant honnête et le « < » n'a plus lieu d'être.
     expect(formatCout(0.005)).not.toContain("<");
     expect(chiffresDe(formatCout(0.005))).toBe("0,01");
+  });
+
+  it("nomme l'état d'un montant qui n'est qu'un plancher, sans toucher au montant (#1280)", () => {
+    // Le montant reste ce qui a été tarifé : Maestro n'invente aucun prix.
+    const partiel = formatCoutPartiel(0.2051, true);
+    expect(chiffresDe(partiel)).toBe("0,21");
+    expect(partiel).toContain(MENTION_COUT_PARTIEL);
+    // Sans aucun prix mais avec des tokens consommés, « — » dirait « rien
+    // rapporté » : on lit que le coût n'est pas tarifé.
+    expect(formatCoutPartiel(null, true)).toBe(MENTION_COUT_NON_TARIFE);
+    // Un montant complet se rend exactement comme avant — les trois verdicts
+    // de `formatCout` ne bougent pas.
+    expect(formatCoutPartiel(0.2051, false)).toBe(formatCout(0.2051));
+    expect(formatCoutPartiel(null, false)).toBe("—");
   });
 
   it("laisse les graduations d'axe à leur précision, exception assumée", () => {

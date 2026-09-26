@@ -45,6 +45,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VueRun } from "@/components/runs/VueRun";
 import { ErreurApi } from "@/lib/api";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import { MENTION_COUT_PARTIEL, RAISON_COUT_PARTIEL } from "@/lib/format";
 import { evenementDepuisEntree, fusionnerJournal } from "@/lib/journal";
 import {
   ARETE_FRANCHIE,
@@ -118,6 +119,41 @@ const versLeKanban = () =>
 /** Bascule sur le journal — un onglet comme les autres depuis #516. */
 const versLeJournal = () =>
   userEvent.click(screen.getByRole("button", { name: "Journal" }));
+
+// ------------------------- Le coût de l'en-tête (#1280)
+
+describe("le coût du run dans son en-tête", () => {
+  it("dit « coût partiel » quand des tokens sont restés sans prix", async () => {
+    // L'en-tête lit le même composant que la carte et l'annonce de fin : un
+    // montant partiel ici et complet là contredirait l'écran.
+    monter({
+      executions: [
+        runFactice({
+          run_id: RUN,
+          objectif: "Prototyper un mini-CRM",
+          statut: EXECUTION_ECHEC,
+          cout_usd: 0.2051,
+          cout_partiel: true,
+        }),
+      ],
+    });
+
+    const montant = await screen.findByText(new RegExp(MENTION_COUT_PARTIEL));
+    expect(montant).toHaveTextContent("0,21");
+    expect(montant).toHaveAccessibleDescription(RAISON_COUT_PARTIEL);
+  });
+
+  it("garde un coût complet tel qu'il était", async () => {
+    monter({
+      executions: [
+        runFactice({ run_id: RUN, objectif: "Prototyper un mini-CRM", cout_usd: 0.2051 }),
+      ],
+    });
+
+    expect(await screen.findByText(/0,21/)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(MENTION_COUT_PARTIEL))).not.toBeInTheDocument();
+  });
+});
 
 // ------------------------- ① L'appartenance au run vient de l'API
 

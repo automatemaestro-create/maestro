@@ -26,6 +26,7 @@ import TableauDeBord from "@/app/page";
 import { FilActivite } from "@/components/FilActivite";
 import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import { PanneauCouts } from "@/components/PanneauCouts";
+import { MENTION_COUT_NON_TARIFE, MENTION_COUT_PARTIEL } from "@/lib/format";
 import { entreeParLibelle, MENU } from "@/lib/navigation";
 
 import {
@@ -266,6 +267,33 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
   it("distingue « rien de rapporté » de « zéro dollar »", () => {
     monter({ couts: [coutExecutionFactice()] });
     expect(tuile("Dépense")).toHaveTextContent("—");
+  });
+
+  it("dit une dépense partielle quand un grand livre porte des tokens sans prix (#1280)", () => {
+    // La même source que la barre supérieure (`coutCumule`), la même règle
+    // (`coutCumulePartiel`) : la tuile garde son chiffre de tête, et sa ligne de
+    // faits nomme l'état en mots.
+    monter({
+      couts: [
+        coutExecutionFactice({
+          run_id: "run-1",
+          total: usageFactice({ cout_usd: 1.17, tokens_non_tarifes: 2_092_911 }),
+        }),
+        coutExecutionFactice({ run_id: "run-2", total: usageFactice({ cout_usd: 0.25 }) }),
+      ],
+    });
+    expect(tuile("Dépense")).toHaveTextContent(/1,42/);
+    expect(tuile("Dépense")).toHaveTextContent(
+      `2 exécution(s), planification comprise · ${MENTION_COUT_PARTIEL}`,
+    );
+  });
+
+  it("dit « coût non tarifé » quand des tokens n'ont eu aucun prix (#1280)", () => {
+    monter({
+      couts: [coutExecutionFactice({ total: usageFactice({ tokens_non_tarifes: 12 }) })],
+    });
+    expect(tuile("Dépense")).toHaveTextContent("—");
+    expect(tuile("Dépense")).toHaveTextContent(MENTION_COUT_NON_TARIFE);
   });
 
   it("renvoie vers la page de ce qu'il résume", () => {

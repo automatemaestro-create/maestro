@@ -54,6 +54,46 @@ export function formatCout(cout: number | null): string {
   return FORMAT_COUT.format(cout);
 }
 
+/** Le qualificatif d'un montant qui ne couvre pas tout ce qui a été consommé (#1280). */
+export const MENTION_COUT_PARTIEL = "coût partiel";
+
+/** Ce qu'on lit à la place de « — » quand des tokens ont été consommés sans aucun prix (#1280). */
+export const MENTION_COUT_NON_TARIFE = "coût non tarifé";
+
+/**
+ * Pourquoi un montant n'est que partiel — ce que l'infobulle du qualificatif dit.
+ * Deux causes, et la phrase les couvre toutes les deux parce que le drapeau du
+ * backend ne les distingue pas : un relevé en cours (#835) et des tokens restés
+ * sans prix (#1280).
+ */
+export const RAISON_COUT_PARTIEL =
+  "Le montant ne compte que ce qui a été tarifé : des tokens consommés n'ont pas de prix — une tâche encore en cours, ou une session interrompue avant d'être facturée.";
+
+/**
+ * Un montant, avec l'**état** qui dit qu'il n'est qu'un plancher (#1280).
+ *
+ * Le quatrième verdict des montants, à côté des trois de `formatCout` : le
+ * montant **reste** ce qui a été tarifé — Maestro n'invente aucun prix —, et
+ * l'état est **nommé en mots**, collé au montant, dans la même ligne de faits :
+ * « 0,21 $US · coût partiel ». C'est la variante B de #1280, retenue par le
+ * regard neuf contre le signe « ≥ » (un glyphe qu'on manque au coup d'œil) et
+ * contre une icône seule (qui se lisait comme l'alerte de l'échec) — d'après le
+ * « PARTIAL COST » de Datadog LLM Observability.
+ *
+ * Sans aucun montant tarifé mais des tokens consommés, « — » mentirait : il dit
+ * « rien rapporté ». On lit alors « coût non tarifé » — le « COST UNAVAILABLE »
+ * de la même référence.
+ *
+ * Une chaîne et non un composant : elle se lit à l'identique dans une ligne de
+ * faits, une tuile ou une annonce, et c'est l'appelant qui l'enveloppe de
+ * l'infobulle (`RAISON_COUT_PARTIEL`) là où la raison doit être atteignable.
+ */
+export function formatCoutPartiel(cout: number | null, partiel: boolean): string {
+  if (!partiel) return formatCout(cout);
+  if (cout === null) return MENTION_COUT_NON_TARIFE;
+  return `${formatCout(cout)} · ${MENTION_COUT_PARTIEL}`;
+}
+
 /**
  * Les graduations d'un axe de coûts vivent ici aussi, bien qu'elles ne suivent
  * pas la règle des deux décimales : c'est le seul endroit où elle ne tient pas —

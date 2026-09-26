@@ -2030,6 +2030,25 @@ de le lire. Trois verdicts qu'on ne confond jamais :
 | `—` | rien n'a été rapporté — **inconnu n'est pas nul** |
 | `0,00 $US` | zéro rapporté, une vraie mesure |
 | `< 0,01 $US` | une dépense réelle, mais sous le centime |
+| `0,21 $US · coût partiel` / `coût non tarifé` | un **plancher** : des tokens ont été consommés sans prix (#1280) |
+
+Le quatrième verdict vient de #1280 (`formatCoutPartiel`) : un run dont une
+tâche est morte avant son résultat — session tuée, relances épuisées — avait
+consommé des tokens que rien n'avait tarifés, et l'écran affichait le reste
+comme un solde (1,17 $ pour un run dont 75 % des tokens n'avaient pas de prix).
+Le montant **reste** ce qui a été tarifé — Maestro n'invente aucun prix — et
+l'état est **nommé en mots**, collé au montant, au ton de la ligne (ni teinte
+d'attention ni graisse : un montant partiel n'est pas une panne). Sans aucun
+montant tarifé, « — » mentirait (il dit « rien rapporté ») : on lit « coût non
+tarifé ». La raison va dans une `Infobulle` (`RAISON_COUT_PARTIEL`). C'est la
+variante B, retenue par le regard neuf contre le signe « ≥ » et contre une
+icône seule, d'après le « PARTIAL COST » de Datadog LLM Observability
+(commentaire « Variante retenue » de #1280). Le drapeau vient du backend —
+`cout_partiel` d'un résumé de run, `tokens_non_tarifes` d'un grand livre — et
+n'est jamais recalculé ici. Le **run** le dit dans ses trois lignes de faits
+(`MontantDuRun`) ; le **cumul** du projet (barre supérieure, tuile « Dépense »,
+Paramètres) par `coutCumulePartiel`. Le coût **par tâche** et la vue
+analytique de `/couts` ne le disent pas encore.
 
 Le troisième existe parce que le cas est **courant** sur un fournisseur local
 (#113), où un appel coûte quelques dix-millièmes de dollar : arrondi à

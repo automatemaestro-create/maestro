@@ -1345,6 +1345,33 @@ soldé identique au token près, relevé jamais compté deux fois) et, depuis #8
 tâche en vol restée `null` comme **échantillon fautif**, les trois lectures prouvées
 distinctes deux à deux, le cumul du run qui bouge entre deux lectures (§6.13bis).
 
+**Ce qui n'a jamais eu de prix** (#1280). Soldé ne veut pas dire complet. Une tâche
+morte avant son résultat — session tuée par le SDK, relances épuisées, plafond
+franchi en plein tour — laisse ses tokens au grand livre **sans coût**, et l'issue
+soldait le relevé : le run redevenait `cout_partiel: false`. Mesuré sur le run
+`3fe501fc0878` (2026-09-24) : 1,17 $ affichés « complets » pour 2 794 675 tokens, dont
+2 092 911 sans prix. La mesure porte désormais la part que le coût ne couvre pas,
+`StepUsage.tokens_non_tarifes` : **tous** les tokens d'une mesure sans coût, posé à la
+construction — un fournisseur qui ne tarife pas, un tour signalé avant son résultat
+ou une ligne de journal plus ancienne le disent sans rien déclarer. La fusion la
+**somme** (1,17 $ tarifés plus 2 M de tokens sans prix font un coût de 1,17 $ **et**
+2 M de tokens non tarifés), et un seul geste la retire : le reste du `ResultMessage`
+Claude, qui tarifie après coup les tours de **sa** session et d'elle seule — une
+session tuée garde les siens, une relance qui aboutit ne couvre pas celle d'avant.
+La projection en tire deux choses, par une seule règle (`_laisse_des_tokens_sans_cout`) :
+le run reste `cout_partiel: true` dès qu'une issue a laissé des tokens sans prix, et la
+carte de la tâche aussi ; l'issue **remplace** le coût de la carte, même par `null`,
+au lieu de laisser le zéro mesuré d'un relevé d'ouverture (« rien consommé encore »)
+sur une tâche morte qui avait consommé. Le grand livre (`/cout`) porte la part dans
+chaque usage, total compris. **Aucun prix n'est inventé** : le montant reste ce qui a
+été tarifé, et c'est le drapeau qui dit qu'il n'est qu'un plancher. L'écran le dit en
+mots, collé au montant — « 0,21 $US · coût partiel », « coût non tarifé » sans aucun
+prix — dans les lignes de faits du run et le cumul du projet (variante B, commentaire
+« Variante retenue » de #1280 ; `apps/web/README.md`, « Le rendu des montants »).
+Couverture : [`tests/test_cout_non_tarife.py`](../tests/test_cout_non_tarife.py), du
+moteur aux routes avec un fournisseur dont la session meurt trois fois sans résultat,
+et l'ancien « le partiel s'éteint » de `tests/test_usage_en_vol.py`, renversé.
+
 **Pourquoi il s'est arrêté.** Un run soldé en échec porte désormais sa **cause
 nommée**, lue à l'identique dans la liste (§2.4.1) et dans la vue (`LigneCause`,
 montée aux deux endroits). Le moteur les connaissait — plafond de tours (#91),
