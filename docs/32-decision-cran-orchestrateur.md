@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 32 — Le cran « orchestrateur » de l'arbitrage : note de décision
 
 > Ticket #647. Décision datée du **2026-08-28**, sur `origin/main` à `1bef04a`.

@@ -66,6 +66,16 @@ def numeros_par_fichier(repertoire: Path) -> dict[str, list[str]]:
     return dict(groupes)
 
 
+def titre_de_niveau_1(texte: str) -> str:
+    """La première ligne qui ouvre un titre de niveau 1 — `""` s'il n'y en a pas.
+
+    Pas la première ligne du fichier : depuis #1321, un document ouvre sur la
+    déclaration de son public (`<!-- documentation: produit -->`), et son titre vient
+    juste après. Lire la ligne 1 ferait taire l'invariant sur tout `docs/`.
+    """
+    return next((ligne for ligne in texte.splitlines() if ligne.startswith("# ")), "")
+
+
 def doublons(groupes: dict[str, list[str]]) -> dict[str, list[str]]:
     return {numero: noms for numero, noms in groupes.items() if len(noms) > 1}
 
@@ -153,9 +163,11 @@ class TestTitreEtNumeroDaccord:
     def test_la_sonde_voit_le_titre_reste_en_arriere(self, tmp_path: Path) -> None:
         """C'est la dérive qu'un renommage crée : le fichier suit, le titre reste."""
         reste = tmp_path / "32-decision-cran-orchestrateur.md"
-        reste.write_text("# 31 — Le cran « orchestrateur »\n", encoding="utf-8")
+        reste.write_text(
+            "<!-- documentation: produit -->\n# 31 — Le cran « orchestrateur »\n", encoding="utf-8"
+        )
 
-        capture = TITRE_NUMEROTE.match(reste.read_text(encoding="utf-8").splitlines()[0])
+        capture = TITRE_NUMEROTE.match(titre_de_niveau_1(reste.read_text(encoding="utf-8")))
 
         assert capture is not None
         assert capture.group(1) != "32"
@@ -164,7 +176,7 @@ class TestTitreEtNumeroDaccord:
         verifies = 0
         for chemin in sorted(DOCS.glob("*.md")):
             prefixe = PREFIXE.match(chemin.name)
-            premiere = chemin.read_text(encoding="utf-8").splitlines()[0]
+            premiere = titre_de_niveau_1(chemin.read_text(encoding="utf-8"))
             titre = TITRE_NUMEROTE.match(premiere)
             if not prefixe or not titre:
                 continue

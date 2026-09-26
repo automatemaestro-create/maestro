@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 31 — La surface d'écriture des agents pendant un run : note de décision
 
 > Ticket #354. Décision datée du **2026-08-28**, sur `origin/main` à `1bef04a`.

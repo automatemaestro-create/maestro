@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Architecture technique — Maestro
 
 **Version :** 0.1

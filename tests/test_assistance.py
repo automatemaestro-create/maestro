@@ -127,11 +127,15 @@ def _cache_neuf() -> Iterator[None]:
 
 
 def ecrire_corpus(racine: Path, fichiers: Mapping[str, str]) -> Path:
-    """Monte un corpus jetable — mêmes emplacements que le vrai, contenu au choix."""
+    """Monte un corpus jetable — mêmes emplacements que le vrai, contenu au choix.
+
+    Chaque document s'y déclare du produit en première ligne : c'est ce qui le fait
+    entrer au corpus (#1321), comme les documents du dépôt.
+    """
     for relatif, contenu in fichiers.items():
         chemin = racine / relatif
         chemin.parent.mkdir(parents=True, exist_ok=True)
-        chemin.write_text(contenu, encoding="utf-8")
+        chemin.write_text("<!-- documentation: produit -->\n" + contenu, encoding="utf-8")
     return racine
 
 
@@ -500,10 +504,10 @@ class TestBancHorsPerimetre:
 
         Tout le banc ci-dessus monte un corpus jetable de deux fichiers, où
         n'importe quelle question serait hors périmètre : l'échantillon n'y prouve
-        que la plomberie. Rejoué une fois sur `docs/` et `apps/web/README.md` — la
-        documentation que le produit sert vraiment —, il dit que ces questions-là
-        sont sans réponse **dans Maestro**, et que le canal le reconnaît à cette
-        échelle comme à l'autre.
+        que la plomberie. Rejoué une fois sur les documents de `docs/` qui se
+        déclarent du produit — la documentation que le produit sert vraiment
+        (#1321) —, il dit que ces questions-là sont sans réponse **dans Maestro**, et
+        que le canal le reconnaît à cette échelle comme à l'autre.
 
         Une seule construction de carte pour les douze : le cache de
         `carte_documentation` n'est vidé qu'aux bornes du test, et c'est ce qui rend
@@ -520,7 +524,7 @@ class TestBancHorsPerimetre:
             # La carte passée est bien celle du dépôt, et pas une carte vide : sur
             # un `docs/` introuvable, tout serait hors périmètre et le test rendrait
             # un ✓ sur une question jamais posée.
-            assert "apps/web/README.md" in modele.prompts[0]
+            assert "docs/00-cahier-des-charges.md" in modele.prompts[0]
             assert "docs/05-interface-control-tower.md" in modele.prompts[0]
             assert est_un_aveu(reponse), f"réponse fabriquée sur « {question} » : {reponse!r}"
 

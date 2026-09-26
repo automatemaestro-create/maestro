@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 42 — L'équipe s'ajuste au plan : proposée pendant le run, jamais recrutée sans accord
 
 **Date :** 2026-09-23. **Instruite par :** `/idee` (#1013). **Consignée par :** #1229.

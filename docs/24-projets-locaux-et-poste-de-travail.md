@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Projets, ressources locales et poste de travail — cadrage (ticket #215)
 
 **Version :** 1.2

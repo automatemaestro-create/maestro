@@ -16,8 +16,9 @@ ticket, et la nommer évite de croire garde ce qui ne l'est pas :
 
 Le corpus est **jetable** partout où l'assertion porte sur un contenu : écrire les
 attentes contre la documentation réelle les ferait rougir au prochain ticket qui
-retouche un titre. Deux tests font exception et le disent — ceux du critère 1, qui
-ne valent que sur le vrai corpus.
+retouche un titre. Quelques tests font exception et le disent — ceux du critère 1,
+qui ne valent que sur le vrai corpus, et celui de #1321, qui porte sur ce que ce
+corpus ne contient plus.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from maestro.controltower.assistance_documentee import (
 from maestro.controltower.chat import ChatStore, MessageChat, RepondeurChat
 from maestro.controltower.documentation import (
     CarteDocumentation,
+    SectionDoc,
     construire_carte,
     oublier_carte,
 )
@@ -87,11 +89,13 @@ def ecrire_corpus(racine: Path, fichiers: Mapping[str, str]) -> Path:
     fixture (deux écritures), et faire dépendre une suite d'une autre créerait un lien
     que rien ne déclare. Ce qui ne doit exister qu'une fois est la **règle** — elle
     est dans `maestro.controltower.documentation`, et les deux suites l'interrogent.
+    Chaque document s'y déclare du produit en première ligne : c'est ce qui le fait
+    entrer au corpus (#1321), comme les documents du dépôt.
     """
     for relatif, contenu in fichiers.items():
         chemin = racine / relatif
         chemin.parent.mkdir(parents=True, exist_ok=True)
-        chemin.write_text(contenu, encoding="utf-8")
+        chemin.write_text("<!-- documentation: produit -->\n" + contenu, encoding="utf-8")
     return racine
 
 
@@ -882,17 +886,36 @@ class TestRepli:
 
 # ── ⑥ le critère 1, sur le corpus réel ───────────────────────────────────────
 #
-# Les deux seuls tests de la suite qui lisent la documentation du dépôt, parce
-# qu'ils portent précisément sur elle : « à partir du contenu de `docs/` et
-# `apps/web/README.md` ». Ils ne fixent aucun titre par cœur — un identifiant
-# recopié ici mourrait au premier ticket qui retouche la doc —, ils prennent une
-# section **réelle** telle que la carte la rend aujourd'hui.
+# Les seuls tests de la suite qui lisent la documentation du dépôt, parce qu'ils
+# portent précisément sur elle : les documents de `docs/` qui se déclarent du
+# produit (#1321). Ils ne fixent aucun titre par cœur — un identifiant recopié ici
+# mourrait au premier ticket qui retouche la doc —, ils prennent une section
+# **réelle** telle que la carte la rend aujourd'hui. Seul celui de #1321 nomme ses
+# deux sections : l'une est l'échantillon fautif, figé, et l'autre la réponse que
+# la question du 2026-09-25 doit garder.
+
+#: Le document qui décrit l'interface à qui s'en sert — celui où les écrans vivent.
+INTERFACE = "docs/05-interface-control-tower.md"
 
 
 @pytest.fixture(scope="module")
 def corpus_reel() -> CarteDocumentation:
     """La carte du corpus du dépôt, construite une fois pour toute la suite."""
     return construire_carte(RACINE)
+
+
+def section_sans_detail(carte: CarteDocumentation) -> SectionDoc:
+    """La première section réelle de l'interface qui ne porte aucune sous-section.
+
+    Choisie ainsi, elle se lit en deux appels — choix, réponse — sans détail entre
+    eux : c'est le chemin que ces tests exercent, et le modèle scripté n'a que deux
+    réponses à rendre.
+    """
+    return next(
+        section
+        for section in carte.sections_du_fichier(INTERFACE)
+        if not carte.sous_sections(section.identifiant)
+    )
 
 
 def test_une_question_hors_table_est_servie_par_le_contenu_du_corpus_reel(
@@ -904,7 +927,7 @@ def test_une_question_hors_table_est_servie_par_le_contenu_du_corpus_reel(
     vérifié est que le texte de cette section-là — les octets du fichier — atteint le
     modèle, et que la citation la nomme.
     """
-    section = corpus_reel.sections_du_fichier("apps/web/README.md")[0]
+    section = section_sans_detail(corpus_reel)
     repondeur = RepondeurAssistanceDocumentee(
         provider=ModeleScripte(section.identifiant, "Voici ce que dit la doc."),
         racine=RACINE,
@@ -959,7 +982,58 @@ def test_la_carte_du_corpus_reel_tient_dans_le_premier_prompt(
     tokens estimés au 2026-08-28 — et le chantier n'aurait pas de forme.
     """
     assert corpus_reel.tokens < BUDGET_SECTIONS_TOKENS
-    assert "apps/web/README.md" in corpus_reel.markdown
+    assert INTERFACE in corpus_reel.markdown
+
+
+#: La question du 2026-09-25 (#1321), telle qu'elle a été posée sur la vraie stack.
+QUESTION_1321 = (
+    "Comment ouvrir une nouvelle conversation avec l'orchestrateur, et retrouver les "
+    "précédentes ?"
+)
+
+#: L'échantillon fautif, figé : la source du développement que l'assistant a citée ce
+#: jour-là, et la citation telle qu'il l'a montrée.
+ROADMAP_1321 = "docs/06-roadmap.md#« Le fil, un vrai interlocuteur » (2026-09-23)"
+CITATION_ROADMAP_1321 = "Roadmap — Maestro › « Le fil, un vrai interlocuteur » (2026-09-23)"
+
+#: Le passage qui y répond, dans le document de l'interface.
+CONVERSATIONS_1321 = (
+    f"{INTERFACE}#2.11 💬 Conversations — en ouvrir une neuve, retrouver les précédentes "
+    "*(#696 — **livré**)*"
+)
+
+
+def test_la_question_du_2026_09_25_ne_cite_plus_la_roadmap(
+    corpus_reel: CarteDocumentation,
+) -> None:
+    """#1321, critère 1 au niveau du répondeur : le modèle nomme la Roadmap, rien ne suit.
+
+    Le modèle scripté refait ce que le vrai a fait ce jour-là — il nomme la Roadmap
+    à côté de l'écran des conversations, au sommaire puis au détail. L'identifiant ne
+    désigne plus rien : la Roadmap n'atteint aucun prompt, et la réponse ne cite que
+    le produit. Ce qui est vérifié est donc ce qui **entre** et ce qui **sort**, pas la
+    phrase que le modèle aurait pu écrire.
+    """
+    reponse_conversations = corpus_reel.section(CONVERSATIONS_1321)
+    assert reponse_conversations is not None
+    chapitre = f"{INTERFACE}#{reponse_conversations.ancetres[-1]}"
+    modele = ModeleScripte(
+        f"{chapitre}\n{ROADMAP_1321}",
+        f"{CONVERSATIONS_1321}\n{ROADMAP_1321}",
+        "Par « Nouvelle conversation », en tête de la carte Conversations.",
+    )
+    repondeur = RepondeurAssistanceDocumentee(provider=modele, racine=RACINE)
+
+    reponse = _repondre(repondeur, QUESTION_1321)
+
+    sommaire, detail, finale = modele.prompts
+    assert "docs/06-roadmap.md" not in sommaire
+    assert "docs/06-roadmap.md" not in detail
+    assert CITATION_ROADMAP_1321 not in finale
+    assert corpus_reel.texte(CONVERSATIONS_1321) in finale
+    assert reponse_conversations.citation in reponse
+    assert CITATION_ROADMAP_1321 not in reponse
+    assert "Roadmap" not in reponse
 
 
 # ── ⑦ le câblage : c'est ce répondeur que `create_app` sert ──────────────────
@@ -1044,7 +1118,7 @@ def test_le_cablage_va_jusqu_aux_sources_quand_un_modele_repond(
     production**, par la factory : c'est ce qui distingue ce test d'un test de
     répondeur.
     """
-    section = corpus_reel.sections_du_fichier("apps/web/README.md")[0]
+    section = section_sans_detail(corpus_reel)
     modele = ModeleScripte(section.identifiant, "D'après la documentation : oui.")
     monkeypatch.setattr("maestro.providers.factory.provider_from_settings", lambda: modele)
     with TestClient(

@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 40 — Le produit se juge sur ce qu'on lui demande, et le processus s'allège
 
 **Date :** 2026-09-21. **Instruite par :** `/idee` (#1013). **Consignée par :** #1153.

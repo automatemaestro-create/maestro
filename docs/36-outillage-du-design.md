@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # 36 — Outillage du design : l'inventaire, et sur quelle preuve
 
 > Lot 1/6 de **#930** — *Outillage du design : viser, regarder, tenir*.

@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Exemple concret & estimation de coûts — Maestro
 
 **Version :** 0.1
