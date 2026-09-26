@@ -110,6 +110,14 @@ def recommander(constats: Constats) -> Recommandation:
     return Recommandation(entrees=tuple(entrees), ecartes=tuple(_ecartes(constats)))
 
 
+#: Pourquoi `AGENTS.md` — la raison du fichier lui-même, qui ne dépend pas de ce que le
+#: projet porte déjà (`redaction.raison_stable`, #1161).
+RAISON_AGENTS = (
+    "le fichier d'instructions que tous les clients lisent, et celui qui désigne où sont "
+    "les skills du projet"
+)
+
+
 def _instructions(constats: Constats, presents: dict[str, Piece]) -> Entree:
     """`AGENTS.md` — toujours recommandé, jamais écrasé.
 
@@ -130,8 +138,7 @@ def _instructions(constats: Constats, presents: dict[str, Piece]) -> Entree:
             "le projet porte déjà un AGENTS.md : Maestro n'y écrirait qu'un bloc délimité, "
             "sans toucher au reste"
             if deja
-            else "le fichier d'instructions que tous les clients lisent, et celui qui désigne "
-            "où sont les skills du projet"
+            else RAISON_AGENTS
         ),
         justification=readme
         or Piece(

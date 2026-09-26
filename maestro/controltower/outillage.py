@@ -502,6 +502,17 @@ def _texte_de_la_piece(
     return _phrase_de_la_piece(piece)
 
 
+def _en_suite(phrase: str) -> str:
+    """Une phrase du modèle posée après deux-points : sa majuscule initiale tombe.
+
+    « Je n'ai rien changé à l'outillage : Je ne vois pas… » — vu sur la vraie stack.
+    Seule une majuscule suivie d'une minuscule tombe : un sigle (« AGENTS.md ») reste.
+    """
+    if len(phrase) > 1 and phrase[0].isupper() and phrase[1].islower():
+        return phrase[0].lower() + phrase[1:]
+    return phrase
+
+
 def _touchee(piece: PieceProposee, fil: Sequence[MessageChat]) -> bool:
     """`piece` est-elle une version neuve d'un chemin déjà proposé ou tranché sur ce fil ?
 
@@ -833,7 +844,7 @@ class ConducteurOutillage:
         reposee = attente.piece if attente is not None else None
         lue = await pieces.comprendre_correction(projet_id, fil, phrase)
         if not lue.comprise:
-            raison = lue.message or "je n'ai pas compris ce qu'il faut changer."
+            raison = _en_suite(lue.message) or "je n'ai pas compris ce qu'il faut changer."
             return ReponseChat(
                 contenu=(
                     f"Je n'ai rien changé à l'outillage : {raison} Rien n'a été écrit — "

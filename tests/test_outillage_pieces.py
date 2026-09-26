@@ -83,6 +83,7 @@ from maestro.outillage.correction import corriger, lire_correction
 from maestro.outillage.generation import poser_piece, prevoir
 from maestro.outillage.modele import ORIGINE_DITE
 from maestro.outillage.questionnaire import Choix
+from maestro.outillage.recommandation import RAISON_AGENTS
 from maestro.outillage.redaction import Fichier, rediger
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, VERIFIEE, Verificateur, Verification
 from maestro.projets import ProjetStore
@@ -567,6 +568,30 @@ def test_revenir_a_une_version_deja_ecrite_puis_remplacee_la_repropose(
     assert pieces_tranchees(fil) == {("AGENTS.md", ecrit_v2.empreinte)}
 
 
+def test_une_piece_deja_ecrite_par_maestro_dit_la_raison_de_ce_que_le_geste_fera(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu sur la vraie stack, sur un projet repris : la carte disait « le projet porte déjà
+    un AGENTS.md : Maestro n'y écrirait qu'un bloc délimité » à côté de « fichier de
+    Maestro modifié ». La raison de l'analyse suit l'état du projet ; celle de la carte
+    dit ce que le geste fera."""
+    projet_id = _importe(projets, _maison)
+    service = _service(projets, _Joueur())
+    agents = asyncio.run(service.prochaine(projet_id, []))
+    assert agents is not None
+    asyncio.run(service.ecrire(agents))
+    reprise = _service(projets, _Joueur())  # une conversation neuve : le projet se relit
+    dotnet = lire_correction(
+        json.dumps({"comprise": True, "corrections": [{"cle": "tester", "valeur": "dotnet test"}]}),
+        DOTNET,
+    ).corrections
+
+    piece = asyncio.run(reprise.prochaine(projet_id, [], corrections=dotnet))
+
+    assert piece is not None and piece.chemin == "AGENTS.md" and piece.sort == "reecrit"
+    assert piece.raison == RAISON_AGENTS
+
+
 def test_une_piece_dont_le_fichier_a_bouge_depuis_la_carte_ne_s_ecrit_pas(
     projets: ServiceProjets, _maison: Path
 ) -> None:
@@ -710,8 +735,9 @@ def test_une_correction_incomprise_le_dit_et_la_piece_reste_proposee(
         )
     )
 
+    # La phrase du modèle suit les deux-points : sa majuscule tombe (vu sur la vraie stack).
     assert reponse.contenu.startswith(
-        "Je n'ai rien changé à l'outillage : Je ne vois pas quelle commande changer."
+        "Je n'ai rien changé à l'outillage : je ne vois pas quelle commande changer."
     )
     assert "Rien n'a été écrit" in reponse.contenu
     assert reponse.piece == en_attente and reponse.corrections == ()

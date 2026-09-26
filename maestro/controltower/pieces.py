@@ -110,7 +110,7 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
 )
 from maestro.outillage.recommandation import recommander
-from maestro.outillage.redaction import Fichier, rediger
+from maestro.outillage.redaction import Fichier, raison_stable, rediger
 from maestro.outillage.verification import ECHOUEE, VERIFIEE, Verificateur, Verification
 from maestro.projets import Projet
 from maestro.projets.perimetre import motifs_compiles
@@ -575,7 +575,7 @@ def _proposee(
         chemin=fichier.chemin,
         nom=entree.nom,
         nature=entree.type,
-        raison=entree.raison,
+        raison=_raison_de_la_piece(entree, prevision),
         role=fichier.role,
         portee=fichier.portee,
         contenu=fichier.contenu,
@@ -605,6 +605,21 @@ def _commandes_dites(constats: Constats, verdicts: Sequence[Verification]) -> tu
     """Les commandes de cette pièce que la personne a **dites**, dans l'ordre joué."""
     dites = {c.commande for c in constats.commandes if c.origine == ORIGINE_DITE}
     return tuple(v.commande for v in verdicts if v.commande in dites)
+
+
+def _raison_de_la_piece(entree: Entree, prevision: Prevision) -> str:
+    """Pourquoi cette pièce, dit pour **ce que le geste fera** — pas pour l'analyse.
+
+    `Entree.raison` est écrite pour qui lit l'analyse, et suit l'état du projet : un
+    fichier que Maestro a déjà posé s'y lit « le projet porte déjà un AGENTS.md :
+    Maestro n'y écrirait qu'un bloc », ou « repris tel quel » pour un skill. Sur une
+    carte qui propose de le **réécrire**, c'est faux — vu sur la vraie stack, à côté
+    du badge « fichier de Maestro modifié ». La raison est alors celle de la pièce
+    elle-même (`raison_stable`) ; un fichier neuf ou un bloc gardent la leur.
+    """
+    if prevision.bloc or prevision.avant is None:
+        return entree.raison
+    return raison_stable(entree)
 
 
 def _phrase_portee(corrections: Sequence[Choix], contenu: str) -> str:
