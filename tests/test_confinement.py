@@ -36,8 +36,11 @@ import time
 from pathlib import Path
 
 import pytest
+from claude_agent_sdk import AssistantMessage, TextBlock
 from claude_agent_sdk._internal.transport import subprocess_cli
+from double_cli_claude import DoubleCli
 
+from maestro.agents.permissions import PolitiqueOutils
 from maestro.controltower.bridge import evenements_depuis_step
 from maestro.controltower.events import EVENEMENT_AGENT_ACTIVITE
 from maestro.engine import OrchestrationEngine
@@ -48,7 +51,7 @@ from maestro.engine.executor import (
     SUFFIXE_ETAPE_PROCESSUS,
 )
 from maestro.orchestrator import Orchestrator
-from maestro.providers import ClaudeProvider, Credentials
+from maestro.providers import ClaudeProvider, Credentials, GardeFouInoperant
 from maestro.providers import claude as claude_mod
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import confinement
@@ -376,6 +379,53 @@ def test_sans_lanceur_installe_la_session_tourne_et_le_dit(monkeypatch, tmp_path
     (releve,) = releves
     assert "maestro-confinement" in releve.non_confinee
     assert releve.phrase().startswith("Session de l'agent non confinée")
+
+
+async def _livre(*, prompt, options):
+    """La session d'un agent qui livre, telle que le double du CLI la rend (#1304)."""
+    yield AssistantMessage(content=[TextBlock(text="Livré.")], model="claude-double")
+
+
+def _sous_politique(provider: ClaudeProvider, workspace: Path) -> str:
+    return asyncio.run(
+        provider.run_agent(
+            "Fais",
+            model="claude-double",
+            workspace=workspace,
+            tools=("Read",),
+            politique=PolitiqueOutils(deny=("Bash",)),
+        )
+    )
+
+
+def test_la_sonde_du_point_de_controle_passe_par_le_meme_lanceur(monkeypatch, tmp_path):
+    # La sonde de démarrage (#1304) est une session du CLI comme une autre : elle
+    # est confinée comme celle de l'agent — même lanceur, même protocole.
+    monkeypatch.setattr(confinement, "chemin_lanceur", lambda: Path("maestro-confinement"))
+    cli = DoubleCli(monkeypatch, session=_livre)
+
+    assert _sous_politique(ClaudeProvider(Credentials()), tmp_path) == "Livré."
+
+    (sonde,) = cli.sondes
+    (session,) = cli.sessions
+    assert sonde.cli_path == session.cli_path == Path("maestro-confinement")
+    assert ENV_COMMANDE in sonde.env
+    # Le dossier du relevé est parti avec la session soldée.
+    assert not Path(session.env[ENV_RELEVE]).parent.exists()
+
+
+def test_une_sonde_qui_leve_ne_laisse_pas_le_dossier_du_releve(monkeypatch, tmp_path):
+    # Le garde-fou ne tient pas : aucune session d'agent ne suivra, et le dossier
+    # préparé pour son relevé ne doit pas attendre le ramassage.
+    monkeypatch.setattr(confinement, "chemin_lanceur", lambda: Path("maestro-confinement"))
+    cli = DoubleCli(monkeypatch, applique_les_refus=False, session=_livre)
+
+    with pytest.raises(GardeFouInoperant):
+        _sous_politique(ClaudeProvider(Credentials()), tmp_path)
+
+    (sonde,) = cli.sondes
+    assert cli.sessions == []
+    assert not Path(sonde.env[ENV_RELEVE]).parent.exists()
 
 
 # --- ① Le lanceur seul ------------------------------------------------------------------

@@ -791,9 +791,18 @@ class ClaudeProvider(ModelProvider):
         # contrôle ne démarre pas tant qu'on ne sait pas qu'un refus y tient.
         # Sans politique ni frontière, Maestro ne pose aucun refus — rien à sonder.
         if politique is not None or frontiere is not None:
-            await self._point_de_controle_verifie(
-                model=model, env=env, cli_path=cli_path, workspace=workspace
-            )
+            try:
+                # La sonde passe par le même lanceur que l'agent (#1279) : confinée
+                # comme lui, et son relevé — elle ne lance rien — est remplacé par
+                # celui de l'agent à sa clôture.
+                await self._point_de_controle_verifie(
+                    model=model, env=env, cli_path=cli_path, workspace=workspace
+                )
+            except BaseException:
+                # Aucune session d'agent ne suivra : le dossier du relevé part ici.
+                if confinement is not None:
+                    confinement.solder()
+                raise
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
@@ -878,41 +887,6 @@ class ClaudeProvider(ModelProvider):
                 regulateur.vider()
             if confinement is not None:
                 _rendre_compte(confinement.solder(), on_processus)
-
-
-def _commande_du_cli() -> tuple[str, ...] | None:
-    """Le CLI que la session confinée lance (#1279) — celui que le SDK aurait pris.
-
-    Le SDK ne lance plus lui-même le CLI d'une session outillée : il lance le
-    lanceur du confinement, à qui il faut nommer la commande à confiner. C'est le
-    choix que le SDK faisait sans `cli_path`, et celui qu'il documente — le CLI
-    **embarqué** dans son paquet, utilisé par défaut —, sinon le `claude` du PATH
-    (`claude.exe` sous Windows : le SDK y refuse le `claude.cmd` de npm). Repris
-    ici parce que le SDK n'expose pas le sien ; `None` quand il n'y a ni l'un ni
-    l'autre, et la session tourne alors sans confinement — en le disant.
-    """
-    nom = "claude.exe" if sys.platform == "win32" else "claude"
-    embarque = Path(claude_agent_sdk.__file__).resolve().parent / "_bundled" / nom
-    if embarque.is_file():
-        return (str(embarque),)
-    trouve = shutil.which(nom)
-    return (trouve,) if trouve else None
-
-
-def _rendre_compte(
-    releve: ReleveConfinement, on_processus: Callable[[ReleveConfinement], None] | None
-) -> None:
-    """Remet le relevé du confinement à l'appelant — rien quand il n'y a rien à dire.
-
-    Best-effort, comme les autres canaux d'observation : un callback qui lève ne
-    doit ni casser la tâche, ni masquer l'exception qu'elle propage peut-être.
-    """
-    if on_processus is None or releve.vide:
-        return
-    try:
-        on_processus(releve)
-    except Exception:  # noqa: BLE001 — l'observation ne casse jamais l'observé
-        return
 
     async def _point_de_controle_verifie(
         self,
@@ -1085,6 +1059,41 @@ def _absorbe_sonde(sonde: asyncio.Task[None]) -> None:
     """
     if not sonde.cancelled():
         sonde.exception()
+
+
+def _commande_du_cli() -> tuple[str, ...] | None:
+    """Le CLI que la session confinée lance (#1279) — celui que le SDK aurait pris.
+
+    Le SDK ne lance plus lui-même le CLI d'une session outillée : il lance le
+    lanceur du confinement, à qui il faut nommer la commande à confiner. C'est le
+    choix que le SDK faisait sans `cli_path`, et celui qu'il documente — le CLI
+    **embarqué** dans son paquet, utilisé par défaut —, sinon le `claude` du PATH
+    (`claude.exe` sous Windows : le SDK y refuse le `claude.cmd` de npm). Repris
+    ici parce que le SDK n'expose pas le sien ; `None` quand il n'y a ni l'un ni
+    l'autre, et la session tourne alors sans confinement — en le disant.
+    """
+    nom = "claude.exe" if sys.platform == "win32" else "claude"
+    embarque = Path(claude_agent_sdk.__file__).resolve().parent / "_bundled" / nom
+    if embarque.is_file():
+        return (str(embarque),)
+    trouve = shutil.which(nom)
+    return (trouve,) if trouve else None
+
+
+def _rendre_compte(
+    releve: ReleveConfinement, on_processus: Callable[[ReleveConfinement], None] | None
+) -> None:
+    """Remet le relevé du confinement à l'appelant — rien quand il n'y a rien à dire.
+
+    Best-effort, comme les autres canaux d'observation : un callback qui lève ne
+    doit ni casser la tâche, ni masquer l'exception qu'elle propage peut-être.
+    """
+    if on_processus is None or releve.vide:
+        return
+    try:
+        on_processus(releve)
+    except Exception:  # noqa: BLE001 — l'observation ne casse jamais l'observé
+        return
 
 
 def _outil_arbitrage(
