@@ -1557,6 +1557,9 @@ async def _pompe(
                     en_panne = False
                 attente = reprise_s
                 state.appliquer(event)
+                # Rattaché **après** la projection, qui vient d'apprendre le
+                # projet du run si c'est cet événement qui le porte (#1290).
+                event = state.au_projet_de_son_run(event)
                 journal.consigner(event)
                 diffusion.diffuser(event)
                 if (
@@ -2239,7 +2242,9 @@ def create_app(
             raise
         for event in evenements:
             state.appliquer(event)
-            journal.consigner(event)
+            # Le même rattachement que la pompe (#1290) : le journal durable
+            # garde l'issue d'un run telle qu'elle a été publiée, sans projet.
+            journal.consigner(state.au_projet_de_son_run(event))
         magasin.rejeu_abouti()
 
     @asynccontextmanager
@@ -6440,7 +6445,9 @@ def create_app(
         filtré puis suit le flux voit deux fois le même périmètre, et un
         événement d'un autre projet n'arrive jamais dans une vue filtrée. Un
         événement **sans** projet n'entre pas non plus dans une vue de projet,
-        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré.
+        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré —
+        une fois la pompe passée : celui d'un run qui relève d'un projet y a été
+        rattaché (`ControlTowerState.au_projet_de_son_run`, #1290).
 
         Le refus se dit **sur la socket** avant de la fermer : la connexion est
         acceptée, le motif part en une trame `{"erreur": {motif, message}}`,

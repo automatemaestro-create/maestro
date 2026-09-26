@@ -324,8 +324,8 @@ import { ErreurReponse, ErreurSource } from "@/lib/api";
 import { useBrouillon } from "@/lib/brouillons";
 import { ascenseurDe, estEnBas, positionEnBas } from "@/lib/defilement";
 import { equipeCreeeEnUneLigne } from "@/lib/equipe";
-import { estSolde } from "@/lib/execution";
-import { issuesDuFil } from "@/lib/issueRun";
+import { tachesOuvertes } from "@/lib/execution";
+import { issuesApres } from "@/lib/issueRun";
 import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { useHorloge } from "@/lib/horloge";
 import { jourDe, libelleDuJour } from "@/lib/journees";
@@ -954,6 +954,14 @@ export function Conversation({
                 message={message}
                 ouvreUnTour={!continuations[index]}
               />
+              {/* **Ce que le travail a rendu** (#928), posé **à l'heure de sa
+                  fin** (#1290) : sous le message qui la précède — le récit du
+                  run quand il y en a un —, et non plus empilé au pied du fil,
+                  où la carte d'un run passé se lisait sous le récit du
+                  suivant. Monté **seulement** si un message de ce fil a ouvert
+                  un run, ce qui se lit sur les messages sans rien consulter :
+                  un fil qui n'a rien lancé n'a rien à annoncer. */}
+              {ouvreDesRuns && <FinsDesRuns messages={messages} apres={index} />}
             </Fragment>
           );
         })}
@@ -1009,17 +1017,6 @@ export function Conversation({
             Fil illisible : {erreur}
           </li>
         )}
-        {/* **Ce que le travail a rendu** (#928) — à la fin du fil, après le
-            dernier message, parce qu'une fin de run est un événement de cette
-            conversation et qu'elle arrive après tout ce qui s'y est dit. Elle
-            vient **avant** les deux fautes ci-dessous : celles-là parlent de
-            l'envoi qu'on vient de tenter, donc du présent.
-
-            Monté **seulement** si un message de ce fil a ouvert un run, ce qui
-            se lit sur les messages sans rien consulter. Même règle que `Suite`
-            plus bas — un fil qui n'a rien lancé n'a rien à annoncer, et il n'y a
-            pas de raison d'aller lire l'état du projet pour l'apprendre. */}
-        {ouvreDesRuns && <IssuesDesRunsDuFil messages={messages} />}
         {echecEnvoi !== null && (
           <li className="text-annexe text-alerte-texte" role="alert">
             {echecEnvoi.cause}
@@ -1720,7 +1717,6 @@ function Suite({ message }: { message: MessageChat }) {
   // Facultatif depuis #1294 : le fil est aussi posé sur la porte d'entrée, avant
   // tout projet, où il n'y a ni run, ni tâche, ni validation à compter.
   const etat = useEtatGlobalFacultatif();
-  const taches = etat?.taches ?? [];
   const validations = etat?.validations ?? [];
   const executions = etat?.executions ?? [];
   const runId = message.run_id ?? "";
@@ -1731,15 +1727,13 @@ function Suite({ message }: { message: MessageChat }) {
     return null;
   }
 
-  // Un run **soldé** ne porte plus de tâches « ouvertes » (#928) : le compte
-  // restait affiché tel quel après la fin, et « 2 tâches ouvertes » sous un run
-  // terminé était simplement faux. Ce que ce run a produit se lit désormais dans
-  // son annonce de fin, au pied du fil — le redire ici en donnerait deux
-  // versions, dont une périmée.
-  const solde = executions.some(
-    (execution) => execution.run_id === runId && estSolde(execution),
-  );
-  const duRun = solde ? [] : taches.filter((tache) => tache.run_id === runId);
+  // Les tâches **encore ouvertes** du run, et elles seules (#1290) : ni celles
+  // qui sont finies — « 3 tâches ouvertes » sous « 3/3 soldées » —, ni aucune
+  // une fois le run soldé (#928), dont ce qu'il a produit se lit dans son
+  // annonce de fin. Le compte vient de la progression du backend
+  // (`tachesOuvertes`), pas des cartes chargées.
+  const execution = executions.find((candidat) => candidat.run_id === runId);
+  const ouvertes = execution === undefined ? 0 : tachesOuvertes(execution);
   const enAttente = validations.filter(
     (validation) =>
       validation.statut === VALIDATION_EN_ATTENTE &&
@@ -1816,13 +1810,13 @@ function Suite({ message }: { message: MessageChat }) {
             Run <span className="font-mono">{runId}</span>
           </span>
         )}
-        {duRun.length > 0 && (
+        {ouvertes > 0 && (
           <span className="inline-flex items-center gap-1">
             <IconeTache className="size-3.5 shrink-0" />
-            {duRun.length === 1 ? "1 tâche ouverte" : `${duRun.length} tâches ouvertes`}
+            {ouvertes === 1 ? "1 tâche ouverte" : `${ouvertes} tâches ouvertes`}
           </span>
         )}
-        {tacheId !== "" && duRun.length === 0 && (
+        {tacheId !== "" && ouvertes === 0 && (
           <span className="inline-flex items-center gap-1">
             <IconeTache className="size-3.5 shrink-0" />
             Tâche <span className="font-mono">{tacheId}</span>
@@ -1849,8 +1843,8 @@ function Suite({ message }: { message: MessageChat }) {
 }
 
 /**
- * **Les runs de ce fil qui ont fini** (#928, lot 7 de #921), en fin de
- * conversation.
+ * **Les runs de ce fil qui ont fini** (#928, lot 7 de #921), chacun à l'heure
+ * de sa fin (#1290) : ceux qui se posent après le message de rang `apres`.
  *
  * Le constat du retex du 2026-09-11 (G1) tient en une phrase : *un run qui se
  * termine ne prévient personne, et ne dit pas où est le livrable*. Le dernier
@@ -1873,12 +1867,24 @@ function Suite({ message }: { message: MessageChat }) {
  *   bloc posé dessous : c'est le parti pris 1 de la veille (un événement, pas
  *   une bulle) et c'est aussi ce qui la fait défiler avec la conversation, dans
  *   la colonne de droite comme sur `/chat`.
+ *
+ * Et depuis #1290, **sa place est son heure** : c'est `rangDeLaFin` qui la
+ * décide (`lib/issueRun`), une seule fois pour les deux surfaces qui rendent un
+ * fil. Empilées au pied de la conversation, les fins de deux runs d'un même fil
+ * se lisaient sous le récit du dernier — la carte d'un échec passé sous le récit
+ * d'une réussite.
  */
-function IssuesDesRunsDuFil({ messages }: { messages: MessageChat[] }) {
+function FinsDesRuns({
+  messages,
+  apres,
+}: {
+  messages: MessageChat[];
+  apres: number;
+}) {
   // Hors du shell (la porte d'entrée, #1294), aucun run n'a pu finir : rien à dire.
   const etat = useEtatGlobalFacultatif();
   if (etat === null) return null;
-  const issues = issuesDuFil(messages, etat.executions, etat.projet);
+  const issues = issuesApres(messages, etat.executions, etat.projet, apres);
   if (issues.length === 0) return null;
   return (
     <>

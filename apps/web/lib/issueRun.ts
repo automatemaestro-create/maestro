@@ -163,6 +163,68 @@ export function issuesDuFil(
 }
 
 /**
+ * **Où se pose la fin d'un run dans son fil** (#1290) : le rang du message
+ * après lequel son annonce se lit.
+ *
+ * Les annonces s'empilaient au pied du fil, après le dernier message. Tant
+ * qu'un fil n'ouvrait qu'un run, cela revenait au même ; au second, la carte
+ * « Run en échec » du premier se lisait sous le récit du second, qui venait de
+ * réussir — le retex du 2026-09-24. Une fin est un événement de la
+ * conversation : elle se pose **à son heure**, entre ce qui a été dit avant
+ * elle et ce qui l'a été après.
+ *
+ * Deux temps, et l'ordre est la règle :
+ *
+ * 1. **l'heure de la fin** — après le dernier message écrit à cette heure-là ou
+ *    avant ;
+ * 2. **son récit** (#1224) — le premier message de ce run écrit après cette
+ *    heure, s'il y en a un : c'est le message qui raconte la fin, rédigé
+ *    quelques secondes après elle. La carte le **suit**, comme elle l'a
+ *    toujours suivi : le récit dit ce que c'est, la carte dit où c'est, et
+ *    « Ouvrir le dossier » vient après l'explication.
+ *
+ * Sans heure de fin lisible (un journal rejoué, un producteur minimaliste), la
+ * carte suit le dernier message du run : c'est la meilleure borne qu'on ait,
+ * et la perdre tairait une fin.
+ */
+export function rangDeLaFin(
+  messages: MessageChat[],
+  execution: ResumeExecution,
+): number {
+  const siens = messages.flatMap((message, rang) =>
+    (message.run_id ?? "") === execution.run_id ? [rang] : [],
+  );
+  const fin = Date.parse(execution.fin ?? "");
+  if (Number.isNaN(fin)) {
+    return siens.length > 0 ? siens[siens.length - 1] : messages.length - 1;
+  }
+  let avant = -1;
+  messages.forEach((message, rang) => {
+    if (Date.parse(message.horodatage) <= fin) avant = rang;
+  });
+  return siens.find((rang) => rang > avant) ?? avant;
+}
+
+/**
+ * Les fins à poser **juste après** le message de rang `rang` — dans l'ordre où
+ * elles sont arrivées.
+ *
+ * Deux runs peuvent finir entre les deux mêmes messages (deux runs lancés d'une
+ * seule réponse, un fil resté muet pendant qu'ils tournaient) : ils se lisent
+ * alors dans l'ordre de leurs fins, pas dans celui de leurs lancements.
+ */
+export function issuesApres(
+  messages: MessageChat[],
+  executions: ResumeExecution[],
+  projet: Projet,
+  rang: number,
+): IssueRun[] {
+  return issuesDuFil(messages, executions, projet)
+    .filter((issue) => rangDeLaFin(messages, issue.execution) === rang)
+    .sort((a, b) => (a.execution.fin ?? "").localeCompare(b.execution.fin ?? ""));
+}
+
+/**
  * Les runs soldés **les plus récemment finis**, pour la cloche.
  *
  * Triés sur `fin` et non sur l'ordre de la liste : ce que la cloche doit dire

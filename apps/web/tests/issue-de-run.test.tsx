@@ -22,7 +22,10 @@
  *    fait que la même page sert dans un onglet et dans la fenêtre ;
  * ⑤ **la cloche marque d'un POINT, pas d'un second chiffre** — la pastille
  *    répond « combien de choses m'attendent » (#322), une fin de run n'attend
- *    rien, et deux compteurs côte à côte obligeraient à en faire la somme.
+ *    rien, et deux compteurs côte à côte obligeraient à en faire la somme ;
+ * ⑥ **chaque fin à son heure** (#1290) — la carte suit le récit de son run, et
+ *    non le pied du fil, où celle d'un échec passé se lisait sous le récit d'un
+ *    run réussi ; et « tâches ouvertes » ne compte que ce qui n'est pas soldé.
  *
  * ⚠ Ce qui n'est **pas** mesuré ici : des pixels (#308). La place des deux
  * gestes sur la ligne du chemin, la respiration du `pe-2`, le repli à 320 px —
@@ -42,10 +45,12 @@ import {
   aDesIssuesNonLues,
   CLE_ISSUES_VUES,
   issueDuRun,
+  issuesApres,
   issuesDuFil,
   issuesRecentes,
   libelleIssue,
   raisonSansLivrable,
+  rangDeLaFin,
   SANS_LIVRABLE_HORS_CADRE,
   SANS_LIVRABLE_HORS_PROJET,
   type IssueRun,
@@ -55,6 +60,7 @@ import {
   EXECUTION_ECHEC,
   EXECUTION_EN_COURS,
   EXECUTION_TERMINEE,
+  type Progression,
 } from "@/lib/types";
 
 import {
@@ -63,10 +69,35 @@ import {
   projetFactice,
   rendreAvecEtat,
   runFactice,
+  tacheFactice,
   validationFactice,
 } from "./aides";
 
 const PROJET = projetFactice({ id: "prj-1", nom: "Dépensio", racine: "D:/w/depensio" });
+
+/** La progression d'un run telle que le backend la sert (#473) : `soldees` et `total` compris. */
+function progressionDe(compte: Partial<Progression>): Progression {
+  const base = {
+    a_faire: 0,
+    en_cours: 0,
+    bloquees: 0,
+    terminees: 0,
+    echecs: 0,
+    autres: 0,
+    ...compte,
+  };
+  const soldees = base.terminees + base.echecs + base.bloquees;
+  return {
+    ...base,
+    soldees,
+    total: soldees + base.a_faire + base.en_cours + base.autres,
+  };
+}
+
+/** `a` se lit-il avant `b` dans le document ? */
+function precede(a: Element, b: Element): boolean {
+  return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
 
 /** Un run soldé de ce projet — le cas nominal, avec son heure de fin. */
 function runSolde(partiel: Partial<ReturnType<typeof runFactice>> = {}) {
@@ -356,6 +387,70 @@ describe("le fil qui a demandé le travail", () => {
     expect(screen.queryByText("Run terminé")).not.toBeInTheDocument();
   });
 
+  it("ne compte en « ouvertes » que les tâches qui ne sont pas soldées (#1290)", async () => {
+    // Le retex du 2026-09-24 : « Run b08b1b165627 · 3 tâches ouvertes » sous un
+    // run dont la vue disait « 3/3 soldées ». Le compte prenait **toutes** les
+    // tâches du run ; il se lit désormais sur la progression que le backend
+    // compte sur la machine à états (#473), jamais redéduite ici.
+    poserFilAssistance({
+      messages: [
+        messageFactice({ auteur: "agent", contenu: "C'est parti", run_id: "run-1" }),
+      ],
+    });
+    rendreAvecEtat(
+      <PageChat />,
+      {
+        taches: [
+          tacheFactice({ id: "T-1", statut: "terminee" }),
+          tacheFactice({ id: "T-2", statut: "terminee" }),
+          tacheFactice({ id: "T-3", statut: "en_cours" }),
+        ],
+        executions: [
+          runSolde({
+            statut: EXECUTION_EN_COURS,
+            fin: null,
+            nb_taches: 3,
+            progression: progressionDe({ terminees: 2, en_cours: 1 }),
+          }),
+        ],
+      },
+      PROJET,
+    );
+
+    expect(await screen.findByText("1 tâche ouverte")).toBeInTheDocument();
+    expect(screen.queryByText(/3 tâches ouvertes/)).not.toBeInTheDocument();
+  });
+
+  it("ne dit plus rien d'ouvert quand toutes les tâches sont soldées", async () => {
+    // L'instant du retex : les trois tâches sont finies, le run n'a pas encore
+    // publié son issue. « 3 tâches ouvertes » y était faux.
+    poserFilAssistance({
+      messages: [
+        messageFactice({ auteur: "agent", contenu: "C'est parti", run_id: "run-1" }),
+      ],
+    });
+    rendreAvecEtat(
+      <PageChat />,
+      {
+        taches: ["T-1", "T-2", "T-3"].map((id) =>
+          tacheFactice({ id, statut: "terminee" }),
+        ),
+        executions: [
+          runSolde({
+            statut: EXECUTION_EN_COURS,
+            fin: null,
+            nb_taches: 3,
+            progression: progressionDe({ terminees: 3 }),
+          }),
+        ],
+      },
+      PROJET,
+    );
+
+    await screen.findByText("C'est parti");
+    expect(screen.queryByText(/tâches? ouvertes?/)).not.toBeInTheDocument();
+  });
+
   it("la retrouve alors que rien n'est passé en temps réel", async () => {
     // ① Le troisième critère du ticket, et le seul qui ne se voie pas à
     // l'écran : `evenements` est **vide** — c'est l'état d'un chargement de
@@ -372,6 +467,129 @@ describe("le fil qui a demandé le travail", () => {
     );
 
     expect(await screen.findByText("Run terminé")).toBeInTheDocument();
+  });
+});
+
+describe("la place de chaque fin dans le fil (#1290)", () => {
+  // Le fil du retex du 2026-09-24 : un premier run en échec, puis un second
+  // lancé dans la même conversation, qui réussit. Chaque run a son récit de fin
+  // (#1224), écrit quelques secondes **après** sa fin — le temps de lire le
+  // livrable et de rédiger.
+  const filDeDeuxRuns = () => [
+    messageFactice({
+      contenu: "Crée un site vitrine",
+      horodatage: "2026-09-24T15:00:00Z",
+    }),
+    messageFactice({
+      auteur: "agent",
+      contenu: "Je lance le premier run.",
+      run_id: "run-echec",
+      horodatage: "2026-09-24T15:00:05Z",
+    }),
+    messageFactice({
+      auteur: "agent",
+      contenu: "Récit du premier run.",
+      run_id: "run-echec",
+      horodatage: "2026-09-24T15:10:06Z",
+    }),
+    messageFactice({
+      contenu: "Reprends le site vitrine",
+      horodatage: "2026-09-24T15:20:00Z",
+    }),
+    messageFactice({
+      auteur: "agent",
+      contenu: "Je lance le second run.",
+      run_id: "run-reussi",
+      horodatage: "2026-09-24T15:20:05Z",
+    }),
+    messageFactice({
+      auteur: "agent",
+      contenu: "Récit du second run.",
+      run_id: "run-reussi",
+      horodatage: "2026-09-24T15:30:27Z",
+    }),
+  ];
+  const deuxRuns = () => [
+    runSolde({
+      run_id: "run-echec",
+      statut: EXECUTION_ECHEC,
+      fin: "2026-09-24T15:10:00Z",
+    }),
+    runSolde({ run_id: "run-reussi", fin: "2026-09-24T15:30:21Z" }),
+  ];
+
+  it("pose chaque carte sous le récit de son run, et non en bas du fil", async () => {
+    // Le défaut : les cartes s'empilaient au pied du fil, si bien que la carte
+    // « Run en échec » du run d'avant se lisait sous le récit du run réussi.
+    poserFilAssistance({ messages: filDeDeuxRuns() });
+    rendreAvecEtat(<PageChat />, { executions: deuxRuns() }, PROJET);
+
+    const echec = await screen.findByText("Run en échec");
+    const reussite = screen.getByText("Run terminé");
+    const ordre = [
+      screen.getByText("Récit du premier run."),
+      echec,
+      screen.getByText("Reprends le site vitrine"),
+      screen.getByText("Récit du second run."),
+      reussite,
+    ];
+    for (let rang = 1; rang < ordre.length; rang += 1) {
+      expect(precede(ordre[rang - 1], ordre[rang])).toBe(true);
+    }
+  });
+
+  it("pose la carte à l'heure de la fin quand aucun récit n'a été écrit", async () => {
+    // Un modèle injoignable n'écrit pas de récit (#1224, « rien n'est
+    // fabriqué ») : la carte se pose alors entre ce qui a été dit avant la fin
+    // et ce qui l'a été après.
+    poserFilAssistance({
+      messages: filDeDeuxRuns().filter(
+        (message) => message.contenu !== "Récit du premier run.",
+      ),
+    });
+    rendreAvecEtat(<PageChat />, { executions: deuxRuns() }, PROJET);
+
+    const echec = await screen.findByText("Run en échec");
+    expect(precede(screen.getByText("Je lance le premier run."), echec)).toBe(true);
+    expect(precede(echec, screen.getByText("Reprends le site vitrine"))).toBe(true);
+  });
+
+  it("sans heure de fin, pose la carte sous le dernier message de son run", () => {
+    const messages = filDeDeuxRuns();
+    const [sansHeure] = issuesDuFil(
+      messages,
+      [runSolde({ run_id: "run-echec", statut: EXECUTION_ECHEC, fin: null })],
+      PROJET,
+    );
+    // Rang 2 : « Récit du premier run. », le dernier message qui nomme ce run.
+    expect(rangDeLaFin(messages, sansHeure.execution)).toBe(2);
+  });
+
+  it("range par heure de fin deux runs finis entre les deux mêmes messages", () => {
+    const messages = [
+      messageFactice({
+        auteur: "agent",
+        contenu: "Deux runs",
+        run_id: "run-long",
+        horodatage: "2026-09-24T15:00:00Z",
+      }),
+      messageFactice({
+        auteur: "agent",
+        contenu: "et un second",
+        run_id: "run-court",
+        horodatage: "2026-09-24T15:00:01Z",
+      }),
+      messageFactice({ contenu: "Merci", horodatage: "2026-09-24T16:00:00Z" }),
+    ];
+    const runs = [
+      runSolde({ run_id: "run-long", fin: "2026-09-24T15:40:00Z" }),
+      runSolde({ run_id: "run-court", fin: "2026-09-24T15:05:00Z" }),
+    ];
+
+    expect(
+      issuesApres(messages, runs, PROJET, 1).map((issue) => issue.execution.run_id),
+    ).toEqual(["run-court", "run-long"]);
+    expect(issuesApres(messages, runs, PROJET, 2)).toEqual([]);
   });
 });
 
