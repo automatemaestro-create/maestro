@@ -993,6 +993,12 @@ function ChiffresDuGraphe({ graphe }: { graphe: GrapheRun }) {
  * jamais publié son plan rend forcément un graphe plat, et dire « aucune
  * dépendance déclarée » là où la vraie phrase est « on ne les connaît pas »
  * serait exactement l'erreur que deux booléens existent pour éviter.
+ *
+ * Et depuis #1298, un graphe plat dont les tâches passent **quand même** une à
+ * une ne dit plus « elles peuvent toutes partir en même temps » juste sous la
+ * mention qui explique pourquoi elles ne le font pas : la relecture l'a lu comme
+ * une contradiction. La note parle alors de ce que le **plan** laisserait faire,
+ * et renvoie à la cause, dite au-dessus.
  */
 function NoteDeLecture({ graphe }: { graphe: GrapheRun }) {
   if (!graphe.plan_connu) {
@@ -1005,10 +1011,13 @@ function NoteDeLecture({ graphe }: { graphe: GrapheRun }) {
     );
   }
   if (graphe.plat) {
+    const retenues = (graphe.cadence ?? []).some((cause) => cause.mention !== "");
     return (
       <p className="mt-2 text-annexe text-neutral-500 dark:text-neutral-400">
-        Aucune dépendance déclarée : ces tâches peuvent toutes partir en même
-        temps. C&apos;est un graphe plat, pas un graphe vide.
+        {retenues
+          ? "Aucune dépendance déclarée : le plan les laisserait toutes partir en même temps, et ce qui les retient est dit juste au-dessus."
+          : "Aucune dépendance déclarée : ces tâches peuvent toutes partir en même temps."}{" "}
+        C&apos;est un graphe plat, pas un graphe vide.
       </p>
     );
   }

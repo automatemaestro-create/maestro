@@ -961,6 +961,34 @@ describe("pourquoi les tâches passent une à une (#1298)", () => {
     ).toBe(`Une tâche à la fois — ${NON_VERSIONNE.phrase}`);
   });
 
+  it("ne dit plus d'un graphe plat retenu que ses tâches « peuvent toutes partir en même temps »", async () => {
+    // Vu à la relecture sur la vraie stack : la note, juste sous la mention, se
+    // lisait comme une contradiction. Elle parle alors du plan, et renvoie à la cause.
+    lecture.graphe = grapheFactice({
+      run_id: RUN,
+      noeuds: [
+        noeudGrapheFactice({ id: "a", titre: "Schéma SQL", niveau: 0 }),
+        noeudGrapheFactice({ id: "b", titre: "API CRUD", niveau: 0 }),
+      ],
+      cadence: [NON_VERSIONNE],
+    });
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(
+      within(pipeline).getByText(/le plan les laisserait toutes partir en même temps/),
+    ).toHaveTextContent("ce qui les retient est dit juste au-dessus");
+    expect(within(pipeline).queryByText(/peuvent toutes partir/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["en_attente", "En attente de réponse"],
+    ["repondue", "Répondue"],
+    ["retiree", "Retirée sans réponse"],
+  ])("dit en toutes lettres l'issue d'une question du fil — %s", (statut, libelle) => {
+    expect(libelleStatut(statut)).toBe(libelle);
+  });
+
   it("se tait quand les tâches partent de front, ou d'un graphe servi avant ce lot", async () => {
     lecture.graphe = grapheDeReference({ cadence: [] });
     monter();

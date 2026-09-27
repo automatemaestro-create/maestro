@@ -461,7 +461,12 @@ const LIBELLES_STATUT: Record<string, string> = {
   versionnement_sans_reponse: "Versionnement sans réponse",
   versionnement_echoue: "Versionnement en échec",
   versionnement_sans_suite: "Versionnement sans suite",
-  // Une question que le run a retirée du fil, faute de réponse à temps (#1298).
+  // Les issues d'une question posée dans le fil (#1023), qu'un journal de run
+  // montrait brutes (« en_attente », « repondue ») — plus visibles depuis que le
+  // run lui-même y pose une proposition (#1298) —, et celle qu'il a retirée du
+  // fil faute de réponse à temps.
+  en_attente: "En attente de réponse",
+  repondue: "Répondue",
   retiree: "Retirée sans réponse",
 };
 
