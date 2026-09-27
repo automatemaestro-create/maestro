@@ -1361,6 +1361,17 @@ export type ProjetCree = {
 };
 
 /**
+ * Le projet d'une proposition de run (`chat.ProjetVise`, #1180) — son identifiant,
+ * que l'exécution suit, et le nom et le dossier que la carte affiche, lus sur la
+ * fiche au moment de proposer.
+ */
+export type ProjetVise = {
+  id: string;
+  nom: string;
+  racine: string;
+};
+
+/**
  * Une pièce d'outillage que le fil propose d'écrire (`chat.PieceProposee`, #1161),
  * **déjà vérifiée** : ses commandes ont été jouées avant la carte.
  *
@@ -1525,6 +1536,12 @@ export type MessageChat = {
   etapes?: EtapeFil[];
   /** L'objectif soumis à l'accord par ce message (#943) — vide : aucune demande. */
   proposition?: string;
+  /**
+   * Le projet où travaillera le run proposé (#1180), écrit au moment de proposer —
+   * c'est là que l'accord l'ouvre, quelle que soit la fenêtre du clic. `null` ou
+   * absent : aucune proposition, ou une proposition écrite avant ce ticket.
+   */
+  projet_vise?: ProjetVise | null;
   /** La question d'outillage que ce message pose (#1031) — `null` : aucune. */
   question?: QuestionOutillage | null;
   /** La réponse d'outillage que ce message porte (#1031) — `null` : aucune. */

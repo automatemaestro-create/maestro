@@ -261,10 +261,13 @@ Endpoints :
   global** : on y adresse une demande à l'orchestration, qui répond et **ouvre
   un run** quand c'en est une (`maestro.controltower.orchestration`). Le corps
   porte le `projet_id` de la fenêtre (#683) : le run ouvert **appartient** au
-  projet actif, donc il figure dans sa liste de runs et s'ouvre en détail ;
+  projet actif, donc il figure dans sa liste de runs et s'ouvre en détail. Sans
+  projet, le fil ne propose ni n'ouvre aucun run (#1180) ;
 - `POST /api/chat/{agent}/cadrage` — **tranche** la demande de cadrage que le
   fil porte (#943) : accepter, refuser, ou accepter un objectif **amendé**, sans
-  repasser par la zone de saisie ni par le juge. Même paire rendue qu'un envoi ;
+  repasser par la zone de saisie ni par le juge. Le run s'ouvre dans le projet
+  **de la proposition** (`projet_vise`, #1180), et non dans celui de la fenêtre
+  du clic. Même paire rendue qu'un envoi ;
   `409` quand rien n'attend. Le corps porte aussi les quatre **bornes** du run
   (#990) — coût, tokens, délai par tâche, parallélisme —, aux mêmes noms que sur
   `POST /api/executions` : c'est par ce geste qu'un run lancé depuis l'interface
@@ -427,6 +430,7 @@ from maestro.controltower.chat import (
     DeclarationIntrouvable,
     GesteRunIntrouvable,
     PieceIntrouvable,
+    ProjetVise,
     QuestionIntrouvable,
     RecrutementIntrouvable,
     ReglementIntrouvable,
@@ -498,6 +502,7 @@ from maestro.controltower.orchestration import (
     attentes_de,
     detail_du_run,
     faits_des_runs,
+    outillage_en_clair,
 )
 from maestro.controltower.outillage import (
     ComprehensionModele,
@@ -558,6 +563,7 @@ from maestro.espace import espace_courant
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
+from maestro.outillage.contexte import outillage_du_projet
 from maestro.outillage.questionnaire import Choix, ComprehensionIllisible
 from maestro.poste import SondePoste
 from maestro.projets import (
@@ -980,7 +986,10 @@ class CadrageDecisionRequete(BaseModel):
     lancement qui échoue (`orchestration._ouvrir_un_run`).
 
     `objectif` et les bornes sont ignorés sur un refus : il n'y a rien à lancer.
-    `projet_id` et `conversation` ont exactement le sens qu'ils ont sur un envoi.
+    `projet_id` et `conversation` ont exactement le sens qu'ils ont sur un envoi —
+    à ceci près que le run suit le projet **de la proposition** quand elle en porte
+    un (#1180) : le fil est transverse, et la fenêtre du clic n'est pas forcément
+    celle où la proposition a été faite.
     """
 
     approuve: bool
@@ -2131,12 +2140,13 @@ def create_app(
         couperait le fil en deux. Le run part donc, brief rédigé sans attendre ;
         l'écran des exécutions reste la voie de celui qui veut le valider avant.
 
-        `projet_id` (#683) est le projet de la fenêtre, transmis par le message
-        et **normalisé à la frontière** (`envoyer_chat`). Il est passé à `lancer`
-        exactement comme le fait `POST /api/executions` — même paramètre, même
-        validation de forme (`projet_id_valide`), donc une seule règle pour les
-        deux portes d'entrée. Sans projet, le run part sans projet : le
-        rattachement est une donnée, jamais une condition du lancement (#222).
+        `projet_id` (#683) est le projet du run — celui de la proposition
+        approuvée (#1180), à défaut celui de la fenêtre, **normalisé à la
+        frontière** (`envoyer_chat`). Il est passé à `lancer` exactement comme le
+        fait `POST /api/executions` — même paramètre, même validation de forme
+        (`projet_id_valide`), donc une seule règle pour les deux portes d'entrée.
+        Le fil ne l'appelle jamais sans projet (#1180, `_ouvrir_un_run`) ; l'écran
+        des exécutions, lui, garde le rattachement pour une donnée (#222).
 
         `bornes` (#990) achève le rapprochement des deux portes : les quatre
         garde-fous que `POST /api/executions` transmettait depuis #185 passent
@@ -2245,6 +2255,30 @@ def create_app(
 
     consultations = Consultations(projet=projet_du_fil, detail=detail_du_run(state))
 
+    def projet_nomme(projet_id: str) -> ProjetVise | None:
+        """Le projet de la fenêtre tel que le fil le nomme — `None` s'il n'est pas déclaré (#1180).
+
+        Le même lecteur que les lectures du fil (`projet_du_fil`, `ServiceProjets`) :
+        un projet que l'API ne déclare pas n'est pas un projet où un run peut partir,
+        et c'est la seule réponse qui ferme la porte. Ce qu'il rend est ce qu'une
+        proposition écrit sur elle (`ProjetVise`) : l'identifiant que l'accord suit,
+        et le nom et le dossier que la carte affiche.
+        """
+        projet = projet_du_fil(projet_id)
+        if projet is None:
+            return None
+        return ProjetVise(id=projet.id, nom=projet.nom, racine=projet.racine)
+
+    def outillage_du_fil(projet_id: str) -> str:
+        """L'outillage du projet pour le fil, lu **comme un agent le reçoit** (#1180).
+
+        `outillage_du_projet` est la lecture qui part dans le message de chaque
+        tâche : le fil dit donc de l'outillage exactement ce que l'équipe en
+        recevra, et rien qu'une seconde analyse du disque pourrait inventer.
+        """
+        projet = projet_du_fil(projet_id)
+        return outillage_en_clair(outillage_du_projet(projet)) if projet is not None else ""
+
     async def consulter(demande: Demande, projet_id: str | None) -> Lecture:
         """Exécute une lecture du fil, **hors boucle** — elle touche le disque (#1223).
 
@@ -2309,6 +2343,10 @@ def create_app(
                 # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
                 # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
                 regime=regime_du_projet,
+                # Le projet de la conversation (#1180) : nommé par sa fiche, avec son
+                # outillage — et sans lui, aucun run ne part du fil.
+                projet=projet_nomme,
+                outillage=outillage_du_fil,
                 conducteur=conducteur,
                 # Un projet naît dans la conversation (#1294) : déclaré par le
                 # **même** service que `POST /api/projets`, et un dossier importé
@@ -5919,7 +5957,8 @@ def create_app(
                 approuve=requete.approuve,
                 objectif=requete.objectif,
                 # Normalisé **ici**, à la frontière, comme sur un envoi : c'est
-                # le projet de la fenêtre, et c'est lui qui rattachera le run.
+                # le projet de la fenêtre. Il ne rattache le run que si la
+                # proposition n'a pas de projet à elle (#1180, écrite avant ce lot).
                 projet_id=projet_id_valide(requete.projet_id),
                 bornes=requete.bornes_posees(),
                 conversation=fil,

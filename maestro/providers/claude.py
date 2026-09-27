@@ -79,6 +79,8 @@ from maestro.providers.arbitrage import (
     ArbitreActe,
     BornesArbitrage,
     TraceOutil,
+    acte_trace,
+    avec_acte,
     motif_approbation,
     motif_attente,
     motif_auto,
@@ -89,6 +91,10 @@ from maestro.providers.arbitrage import (
     reponse,
 )
 from maestro.providers.base import (
+    MCP_A_AUTHENTIFIER,
+    MCP_DESACTIVE,
+    MCP_EN_ECHEC,
+    MCP_SANS_REPONSE,
     PLAFOND_TOURS_DEFAUT,
     AuthMode,
     CollecteurStderr,
@@ -99,6 +105,7 @@ from maestro.providers.base import (
     ModeleDisponible,
     ModelProvider,
     PlafondFluxDepasse,
+    ServeurInjoignable,
     TurnLimitReached,
     attache_stderr,
 )
@@ -123,6 +130,17 @@ _MARQUEUR_MAX_TURNS = "error_max_turns"
 #: « pending » n'en fait pas partie : c'est l'état transitoire du démarrage
 #: (npx qui télécharge, endpoint lent), attendu jusqu'à `_MCP_CONNEXION_MAX_S`.
 _MCP_STATUTS_ECHEC = frozenset({"failed", "needs-auth", "disabled"})
+
+#: Ces mêmes statuts du CLI, dits avec les mots de Maestro (#1181) : c'est la
+#: traduction que tout adaptateur doit à `McpServerUnavailable.serveurs`, pour que
+#: le moteur suspende la tâche et propose la procédure du registre sans jamais
+#: lire le vocabulaire d'un CLI. Elle vit ici et nulle part ailleurs — le jour où
+#: le CLI renomme un statut, c'est la seule ligne à changer.
+_MCP_ETATS_MAESTRO: dict[str, str] = {
+    "needs-auth": MCP_A_AUTHENTIFIER,
+    "failed": MCP_EN_ECHEC,
+    "disabled": MCP_DESACTIVE,
+}
 
 #: Délai maximal accordé à la connexion des serveurs MCP déclarés avant l'échec
 #: propre (`McpServerUnavailable`). Large : le premier `npx -y` d'un serveur
@@ -1637,6 +1655,16 @@ def _hook_permissions(
     humain doit laisser la même trace qu'un acte écarté : c'est le seul endroit
     où le run dira plus tard *qui* a laissé passer *quoi*.
 
+    Le *quoi* est écrit en toutes lettres depuis #1282 : la trace de **tout** appel
+    arbitré — passé par `auto`, accordé, refusé, écarté, ou refusé faute de canal —
+    porte son **acte**, l'outil et ses arguments rédigés puis bornés
+    (`arbitrage.acte_trace`). Sans lui, le run `3fe501fc0878` disait « appel de
+    l'outil 'Bash' laissé passer » une douzaine de fois, sans qu'on sache qu'un de
+    ces appels écrivait dans `/tmp`. L'acte va à la **trace** et pas au motif servi
+    à l'agent, qui sait ce qu'il vient d'appeler. Les refus de politique et de
+    frontière n'en portent pas : aucun arbitrage ne s'y est joué, et leur motif
+    nomme déjà ce qui les a déclenchés.
+
     Deux **fail-safe**, dans l'esprit d'EF-08/ENF-04 : un outil classé `ask` sans
     canal d'arbitrage câblé est refusé (jamais approuvé par défaut), et un canal
     qui lève l'est aussi (bus en panne — même règle que
@@ -1676,9 +1704,14 @@ def _hook_permissions(
         except Exception:  # noqa: BLE001 — le traçage ne casse jamais l'exécution
             pass
 
-    def refuse(outil: str, motif: str, decideur: Decideur | None = None) -> HookJSONOutput:
-        """Compose le `deny` du hook après l'avoir tracé — le seul chemin de refus."""
-        trace(outil, motif, decideur)
+    def refuse(
+        outil: str, motif: str, decideur: Decideur | None = None, acte: str = ""
+    ) -> HookJSONOutput:
+        """Compose le `deny` du hook après l'avoir tracé — le seul chemin de refus.
+
+        `acte` (#1282) ne va qu'à la trace : l'agent lit le motif seul.
+        """
+        trace(outil, avec_acte(motif, acte), decideur)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -1694,9 +1727,14 @@ def _hook_permissions(
 
         `decideur` part avec la demande (#1278) : c'est celui que ce hook a
         retenu, portée comprise, et l'appelant n'a pas à le redemander.
+
+        `acte` (#1282) est composé une fois, depuis l'entrée **brute** : les
+        arguments de la demande sont déjà bornés, et une rédaction qui passerait
+        après la borne pourrait laisser un fragment de secret en clair.
         """
+        acte = acte_trace(outil, entree)
         if on_arbitrage_acte is None:
-            return refuse(outil, motif_sans_arbitre(outil), decideur)
+            return refuse(outil, motif_sans_arbitre(outil), decideur, acte)
         attente = asyncio.ensure_future(
             on_arbitrage_acte(outil, arguments_depuis(entree), motif, decideur)
         )
@@ -1716,17 +1754,17 @@ def _hook_permissions(
             # l'une pour l'autre enverrait chercher une décision humaine là où
             # c'est un transport qui est tombé.
             if attente.done() and not attente.cancelled() and attente.exception():
-                return refuse(outil, motif_panne(outil, attente.exception()), decideur)
+                return refuse(outil, motif_panne(outil, attente.exception()), decideur, acte)
             attente.add_done_callback(_absorbe_arbitrage_tardif)
-            return refuse(outil, motif_attente(outil, bornes.attente_effective), decideur)
+            return refuse(outil, motif_attente(outil, bornes.attente_effective), decideur, acte)
         except Exception as exc:  # noqa: BLE001 — fail-safe : un canal en panne ne passe pas
-            return refuse(outil, motif_panne(outil, exc), decideur)
+            return refuse(outil, motif_panne(outil, exc), decideur, acte)
         if not approuve:
-            return refuse(outil, motif_refus(outil, detail), decideur)
+            return refuse(outil, motif_refus(outil, detail), decideur, acte)
         # Approuvé : on trace, et on rend la sortie vide plutôt qu'un `allow`
         # explicite — l'appel n'a pas besoin d'être *forcé*, il a besoin de ne
         # plus être suspendu, et sous `bypassPermissions` il n'y a rien à lever.
-        trace(outil, motif_approbation(outil, detail), decideur)
+        trace(outil, avec_acte(motif_approbation(outil, detail), acte), decideur)
         return {}
 
     def dispense_de_lecture(outil: str, entree: object) -> bool:
@@ -1804,8 +1842,9 @@ def _hook_permissions(
             # appelant qui exécute hors de la Control Tower, c'est-à-dire
             # refuser un acte dont la politique dit qu'il n'a personne à
             # déranger. Il laisse quand même sa trace : c'est la seule chose qui
-            # le distingue d'un `allow`.
-            trace(outil, motif_auto(outil))
+            # le distingue d'un `allow` — et depuis #1282 elle dit **ce qui** est
+            # passé, pas seulement que quelque chose est passé.
+            trace(outil, avec_acte(motif_auto(outil), acte_trace(outil, entree)))
             return {}
         if dispense_de_lecture(outil, entree):
             # Rien n'est tracé, et c'est la même règle que `Verdict.PASSE` : il
@@ -2119,6 +2158,11 @@ async def _attend_serveurs_mcp(client: ClaudeSDKClient, attendus: frozenset[str]
     encore en attente à l'échéance (`_MCP_CONNEXION_MAX_S`) → idem, un
     « pending » sans fin est un serveur qui ne viendra pas. C'est la garantie
     du contrat #104 : l'agent ne travaille jamais amputé de ses capacités.
+
+    Chaque serveur en cause voyage aussi **en donnée** sur l'exception (#1181,
+    `ServeurInjoignable`), son statut traduit dans les mots de Maestro
+    (`_MCP_ETATS_MAESTRO`) : c'est ce que le moteur lit pour suspendre la tâche
+    et proposer la procédure du registre. Le message, lui, ne change pas.
     """
     echeance = monotonic() + _MCP_CONNEXION_MAX_S
     while True:
@@ -2130,25 +2174,38 @@ async def _attend_serveurs_mcp(client: ClaudeSDKClient, attendus: frozenset[str]
         }
         echecs: list[str] = []
         en_attente: list[str] = []
+        injoignables: list[ServeurInjoignable] = []
+        attente: list[ServeurInjoignable] = []
         for nom in sorted(attendus):
             etat = etats.get(nom)
             if etat is None:
                 en_attente.append(f"{nom} : absent de la session")
+                attente.append(ServeurInjoignable(nom, MCP_SANS_REPONSE, "absent de la session"))
             elif etat.get("status") in _MCP_STATUTS_ECHEC:
                 cause = etat.get("error") or f"état « {etat.get('status')} »"
                 echecs.append(f"{nom} : {cause}")
+                injoignables.append(
+                    ServeurInjoignable(
+                        nom,
+                        _MCP_ETATS_MAESTRO[str(etat.get("status"))],
+                        str(etat.get("error") or ""),
+                    )
+                )
             elif etat.get("status") != "connected":
                 en_attente.append(f"{nom} : connexion en cours")
+                attente.append(ServeurInjoignable(nom, MCP_SANS_REPONSE, "connexion en cours"))
         if echecs:
             raise McpServerUnavailable(
-                "serveur(s) MCP indisponible(s) — " + " ; ".join(echecs) + "."
+                "serveur(s) MCP indisponible(s) — " + " ; ".join(echecs) + ".",
+                injoignables,
             )
         if not en_attente:
             return
         if monotonic() >= echeance:
             raise McpServerUnavailable(
                 "serveur(s) MCP indisponible(s) — toujours pas connecté(s) après "
-                f"{_MCP_CONNEXION_MAX_S:g} s : " + " ; ".join(en_attente) + "."
+                f"{_MCP_CONNEXION_MAX_S:g} s : " + " ; ".join(en_attente) + ".",
+                attente,
             )
         await asyncio.sleep(_MCP_SONDAGE_S)
 

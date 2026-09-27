@@ -1142,7 +1142,8 @@ def test_s3_le_fil_propose_l_equipe_puis_le_run_aboutit(
     assert envoi.status_code == 201, envoi.text
     demande = envoi.json()["messages"][1]
     # Les quatre champs de #1227 sont vides : aucun run n'attend cette demande —
-    # c'est un projet sans agent, pas un plan qui appelle un rôle absent.
+    # c'est un projet sans agent, pas un plan qui appelle un rôle absent. Et aucune
+    # tâche d'un run n'est suspendue sur elle (`tache`, #1181).
     assert demande["recrutement"] == {
         "objectif": OBJECTIF_S3,
         "projet_id": projet,
@@ -1151,6 +1152,7 @@ def test_s3_le_fil_propose_l_equipe_puis_le_run_aboutit(
         "gabarit": "",
         "raison": "",
         "taches": [],
+        "tache": "",
     }
     assert demande["proposition"] == ""
     assert moteur.runs == []

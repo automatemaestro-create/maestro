@@ -68,12 +68,41 @@
  * Les champs n'ont **pas** de `placeholder` gris disant « aucun » : le regard
  * neuf a relevé qu'à l'œil c'est un champ vide, pas une valeur. Ce que vaut
  * l'absence est écrit dans l'aide du champ, en toutes lettres.
+ *
+ * ## Et elle dit sur quel projet le run travaillera (#1180)
+ *
+ * Le fil est **transverse** : la même conversation se lit d'un projet à l'autre,
+ * et une proposition faite sur A, approuvée en regardant B, s'exécutait dans B.
+ * Elle porte désormais son projet (`projet_vise`), c'est là que l'API l'ouvre, et
+ * la carte le **dit** — la question du rendu attendu du ticket : *sur quel projet
+ * ce run va-t-il travailler ?* La forme vient d'une veille et d'un choix rendu
+ * sur pièces (commentaires « Veille de conception » et « Variante retenue » de
+ * #1180), et on ne la défait pas sans rejouer le même geste :
+ *
+ * - **la cible se lit avant l'objectif**, en première ligne du corps — d'après
+ *   Linear, où l'équipe visée précède le titre de l'issue. La variante qui la
+ *   mettait dans le titre a été écartée : l'en-tête des cartes le passe en
+ *   capitales, et le nom du projet n'y avait plus sa casse ;
+ * - **icône et nom, puis le dossier en second plan** — d'après le panneau des
+ *   agents de GitHub Copilot (icône de dépôt et nom). Le dossier est ce qui
+ *   sépare deux projets aux noms voisins ; la variante en pastille d'en-tête,
+ *   sans lui, a été écartée, et sa pastille collée à l'heure se lisait comme une
+ *   métadonnée ;
+ * - **l'écart se dit en toutes lettres** quand la fenêtre n'est pas sur le projet
+ *   de la proposition : une pastille sur la ligne du nom, puis une phrase qui
+ *   nomme les deux projets — jamais par la couleur seule ;
+ * - **aucun sélecteur** : changer de projet se dit dans la conversation, où
+ *   l'orchestrateur repropose.
+ *
+ * Sans projet du tout — une proposition d'avant ce ticket relue sur la porte
+ * « Nouveau projet » —, la carte le dit et « Lancer » est désarmé : aucun run ne
+ * part sans projet depuis le fil, et l'API le refuserait.
  */
 
 import { useState } from "react";
 
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
-import { IconeChevronBas, IconeObjectif } from "@/components/Icones";
+import { IconeChevronBas, IconeObjectif, IconeProjets } from "@/components/Icones";
 import {
   BadgeEtat,
   Bouton,
@@ -90,9 +119,11 @@ import {
   type BornesRun,
   type SaisieBornes,
 } from "@/lib/bornes";
+import { cheminASesSeparateurs } from "@/lib/chemin";
+import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
-import type { MessageChat } from "@/lib/types";
+import type { MessageChat, Projet, ProjetVise } from "@/lib/types";
 
 /**
  * Ce qu'un champ de borne dit quand il est rempli sans porter de borne — une
@@ -105,6 +136,34 @@ import type { MessageChat } from "@/lib/types";
  * sans borne — l'exact défaut que ce ticket corrige.
  */
 const FAUTE = "Un nombre supérieur à zéro, ou rien.";
+
+/**
+ * Ce que la carte dit quand elle ne sait pas où le run travaillerait (#1180) :
+ * une proposition écrite avant que le fil ne l'enregistre, relue d'une fenêtre
+ * sans projet — la porte « Nouveau projet ». L'API n'ouvre aucun run sans
+ * projet ; la carte le dit, et désarme « Lancer » plutôt que d'offrir un geste
+ * que l'API refuserait.
+ */
+export const SANS_PROJET =
+  "Aucun projet n'est ouvert, et cette proposition ne dit pas où travailler : aucun run ne part sans projet. Ouvrez celui où ce travail doit se faire, ou décrivez celui à créer.";
+
+/**
+ * Le projet où le run de cette proposition travaillera — `null` : aucun (#1180).
+ *
+ * Celui que la proposition **porte** (`projet_vise`), écrit au moment où elle a
+ * été faite : c'est là que l'API l'ouvrira, quelle que soit la fenêtre du clic.
+ * Une proposition écrite avant #1180 n'en porte pas ; l'API retombe alors sur le
+ * projet de la fenêtre, et la carte dit donc celui-là — jamais un projet qu'elle
+ * aurait deviné.
+ */
+export function cibleDuRun(
+  demande: MessageChat,
+  ouvert: Projet | null,
+): ProjetVise | null {
+  if (demande.projet_vise) return demande.projet_vise;
+  if (ouvert === null) return null;
+  return { id: ouvert.id, nom: ouvert.nom, racine: ouvert.racine };
+}
 
 export function DemandeDeCadrage({
   demande,
@@ -127,6 +186,15 @@ export function DemandeDeCadrage({
   enCours?: boolean;
 }) {
   const maintenant = useHorloge();
+  // Le projet de la fenêtre, celui que le fil envoie avec chaque geste (`useChat`) :
+  // l'état du shell le porte, et la porte « Nouveau projet », hors du shell, n'en a
+  // aucun — la règle de `GestesDuFil`.
+  const ouvert = useEtatGlobalFacultatif()?.projet ?? null;
+  const cible = cibleDuRun(demande, ouvert);
+  // L'écart ne se lit que sur une proposition qui **porte** son projet : celle
+  // d'avant #1180 part dans la fenêtre, et n'a donc jamais d'ailleurs.
+  const ailleurs =
+    demande.projet_vise != null && ouvert !== null && ouvert.id !== cible?.id;
   const propose = demande.proposition ?? "";
   const [edite, setEdite] = useState(propose);
   const [refus, setRefus] = useState<string | null>(null);
@@ -180,6 +248,43 @@ export function DemandeDeCadrage({
         ) : undefined
       }
     >
+      {/* Où le run travaillera (#1180, variante B) : la réponse avant l'objectif,
+          le nom avec sa casse, le dossier en second plan — c'est lui qui sépare
+          deux projets aux noms voisins. */}
+      {cible !== null ? (
+        <div className="mb-3 flex flex-col gap-1">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-corps text-texte">
+            <IconeProjets className="size-4 shrink-0 text-texte-secondaire" />
+            <span className="text-texte-secondaire">Dans le projet</span>
+            <strong className="font-semibold">{cible.nom || cible.id}</strong>
+            {/* Contour sur la surface, et non l'aplat : au ton `attention` sur le
+                fond `attention` de la carte, l'aplat ne s'en détachait pas
+                (manque 2 relevé par le regard neuf). */}
+            {ailleurs && (
+              <BadgeEtat ton="attention" contour className="bg-surface">
+                Pas le projet ouvert
+              </BadgeEtat>
+            )}
+          </p>
+          {cible.racine !== "" && (
+            <p className="font-mono text-annexe break-words text-texte-secondaire">
+              {cheminASesSeparateurs(cible.racine)}
+            </p>
+          )}
+          {/* L'écart en toutes lettres, les deux projets nommés (manque 1) : la
+              pastille le signale, la phrase dit où le run partira et pourquoi. */}
+          {ailleurs && (
+            <p className="text-annexe text-attention-texte">
+              Ce run partira dans « {cible.nom || cible.id} », là où il a été
+              proposé — pas dans le projet ouvert, « {ouvert?.nom} ».
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mb-3 text-annexe text-attention-texte" role="note">
+          {SANS_PROJET}
+        </p>
+      )}
       <p className="mb-3 text-annexe text-texte-secondaire">
         Relisez, corrigez si besoin : <strong>c&apos;est cet objectif</strong>{" "}
         qui sera cadré puis décomposé en tâches. Rien ne part avant votre
@@ -275,8 +380,10 @@ export function DemandeDeCadrage({
         )}
       </Carte>
       <div className="mt-4 flex flex-wrap gap-2">
+        {/* Sans projet où travailler, rien ne part (#1180) : l'API refuserait de
+            toute façon, et offrir le geste promettrait ce qu'elle refusera. */}
         <Bouton
-          disabled={vide || bornesFautives}
+          disabled={vide || bornesFautives || cible === null}
           occupe={enCours}
           onClick={() => void surDecision(true)}
         >

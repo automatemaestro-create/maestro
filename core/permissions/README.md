@@ -123,6 +123,14 @@ hook le court-circuite) : le journal est **rejoué**, et des étapes déjà écr
 nomment le cran retiré. Ce qui a été supprimé est le routage, jamais la mémoire
 de ce qui a été décidé.
 
+Et elle dit **ce qui** a été tranché (#1282) : l'issue est suivie de l'**acte** —
+« … personne n'a été sollicité. Acte : Bash · command="cd /tmp && mkdir -p
+edge-shot" » —, l'outil et chacun de ses arguments, rédigés (#109) **puis**
+bornés, sur une ligne. C'est ce qui fait d'un `auto` un cran qu'on *voit* : sans
+la commande, un `Bash` laissé passer disait qu'il était passé, jamais ce qu'il
+avait lancé. L'acte ne va qu'à la trace, pas au motif que lit l'agent ; un refus
+de `deny` ou de frontière n'en porte pas, aucun arbitrage ne s'y étant joué.
+
 ## Ce que le dépôt classe, et pourquoi (#716)
 
 Jusqu'à #716 ce dossier ne portait **aucune** entrée `ask` — pas une. La chaîne
