@@ -19,12 +19,15 @@ ici est ce qui doit rester vrai demain.
 
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import socket
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +39,7 @@ from maestro.lanceur import session as etat_session
 from maestro.lanceur.emplacement import Emplacement, Front
 from maestro.lanceur.lanceur import Options
 from maestro.lanceur.session import Service, Session
-from maestro.lanceur.systeme import Processus, Sortie, Systeme
+from maestro.lanceur.systeme import Processus, Reponse, Sortie, Systeme
 
 # --------------------------------------------------------------------- les doubles
 
@@ -63,6 +66,7 @@ class SystemeDouble(Systeme):
         codes_sortie: dict[str, int] | None = None,
         lignes: dict[int, str | None] | None = None,
         reponse_post: str | None = '{"runs": [], "nb": 0}',
+        statut_post: int = 200,
         morts_immediates: bool = True,
         journaux: dict[str, str] | None = None,
     ) -> None:
@@ -71,12 +75,14 @@ class SystemeDouble(Systeme):
         self.codes_sortie = dict(codes_sortie or {})
         self.lignes_forcees = dict(lignes or {})
         self.reponse_post = reponse_post
+        self.statut_post = statut_post
         self.morts_immediates = morts_immediates
         self.journaux = dict(journaux or {})
 
         self.demarrages: list[tuple[tuple[str, ...], Path, Path]] = []
         self.eteints: list[int] = []
         self.postes: list[str] = []
+        self.entetes_postes: list[dict[str, str]] = []
         self.navigateurs: list[str] = []
         self.vivants: set[int] = set()
         self.marqueurs: dict[int, str] = {}
@@ -132,9 +138,14 @@ class SystemeDouble(Systeme):
     def sonder(self, url: str, delai: float) -> bool:
         return url not in self.sondes_muettes
 
-    def poster(self, url: str, delai: float) -> str | None:
+    def poster(
+        self, url: str, delai: float, entetes: Mapping[str, str] | None = None
+    ) -> Reponse | None:
         self.postes.append(url)
-        return self.reponse_post
+        self.entetes_postes.append(dict(entetes or {}))
+        if self.reponse_post is None:
+            return None
+        return Reponse(statut=self.statut_post, corps=self.reponse_post)
 
     def ouvrir_navigateur(self, url: str) -> bool:
         self.navigateurs.append(url)
@@ -641,15 +652,94 @@ def test_une_api_muette_n_empeche_pas_l_arret(emplacement: Emplacement) -> None:
     assert systeme.eteints == [22, 11]
 
 
-def test_une_reponse_d_extinction_illisible_ne_fabrique_aucun_run(
-    emplacement: Emplacement,
+#: Le jeton que ces tests imposent à l'API (`MAESTRO_API_JETON`, #638) — jamais celui du poste.
+JETON_DE_TEST = "jeton-1355-de-test"
+
+
+def test_l_extinction_part_avec_le_jeton_de_l_api(
+    emplacement: Emplacement, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """L'API sert durcie depuis #638 : sans jeton, la porte répond `401` (#1355).
+
+    Le jeton est celui que tout outil local porte (`entetes_client`) — une seule façon
+    de le résoudre et de l'écrire, jamais un en-tête réécrit ici.
+    """
+    monkeypatch.setenv("MAESTRO_API_AUTH", "jeton")
+    monkeypatch.setenv("MAESTRO_API_JETON", JETON_DE_TEST)
     _stack_inscrite(emplacement)
-    systeme = SystemeDouble(reponse_post="<html>502</html>")
+    systeme = SystemeDouble()
     _stack_vivante(systeme)
     sortie = SortieDouble()
+
     assert _arreter(emplacement, systeme, sortie) == 0
+    assert systeme.entetes_postes == [{"Authorization": f"Bearer {JETON_DE_TEST}"}]
     assert "aucun run en vol" in sortie.tout
+
+
+def test_en_regime_ouvert_l_extinction_part_sans_en_tete(
+    emplacement: Emplacement, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MAESTRO_API_AUTH", "ouvert")
+    _stack_inscrite(emplacement)
+    systeme = SystemeDouble()
+    _stack_vivante(systeme)
+    sortie = SortieDouble()
+
+    assert _arreter(emplacement, systeme, sortie) == 0
+    assert systeme.entetes_postes == [{}]
+    assert "illisible" not in sortie.tout
+
+
+@pytest.mark.parametrize(
+    ("reponse", "statut", "attendu"),
+    [
+        ('{"detail": "jeton requis"}', 401, "refusée : HTTP 401"),
+        ("<html>Internal Server Error</html>", 500, "refusée : HTTP 500"),
+        ("<html>502</html>", 200, "réponse illisible"),
+        ('{"runs": "?"}', 200, "réponse illisible"),
+    ],
+    ids=["jeton-refuse", "panne-de-l-api", "reponse-illisible", "runs-illisibles"],
+)
+def test_un_refus_d_extinction_n_est_jamais_lu_comme_aucun_run(
+    emplacement: Emplacement, reponse: str, statut: int, attendu: str
+) -> None:
+    """Un refus, une panne ou une réponse illisible ne disent rien des runs (#1355).
+
+    Le `401` de #1355 ne portait aucun `run_id`, et c'était tout ce que l'arrêt
+    regardait : il concluait « aucun run en vol » pendant que les runs continuaient
+    sur leur hôte détaché. Ce qui se dit désormais est ce qu'on sait — ils peuvent
+    rester en vol —, sans fabriquer d'identifiant, et l'arrêt va au bout.
+    """
+    _stack_inscrite(emplacement)
+    systeme = SystemeDouble(reponse_post=reponse, statut_post=statut)
+    _stack_vivante(systeme)
+    sortie = SortieDouble()
+
+    assert _arreter(emplacement, systeme, sortie) == 0
+    assert "aucun run en vol" not in sortie.tout
+    assert "interrompu" not in sortie.tout
+    assert attendu in sortie.tout
+    assert "des runs peuvent rester en vol" in sortie.tout
+    assert systeme.eteints == [22, 11]
+
+
+def test_un_jeton_illisible_se_dit_et_l_extinction_part_quand_meme(
+    emplacement: Emplacement, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un régime inconnu empêche de résoudre le jeton : on le dit, et on frappe quand même.
+
+    L'API dira si elle le voulait — et son refus sera nommé à son tour.
+    """
+    monkeypatch.setenv("MAESTRO_API_AUTH", "regime-inconnu")
+    _stack_inscrite(emplacement)
+    systeme = SystemeDouble(reponse_post='{"detail": "jeton requis"}', statut_post=401)
+    _stack_vivante(systeme)
+    sortie = SortieDouble()
+
+    assert _arreter(emplacement, systeme, sortie) == 0
+    assert "jeton de l'API illisible" in sortie.tout
+    assert systeme.entetes_postes == [{}]
+    assert "refusée : HTTP 401" in sortie.tout
 
 
 def test_un_pid_recycle_n_est_pas_tue(emplacement: Emplacement) -> None:
@@ -941,6 +1031,45 @@ def test_une_sonde_sur_le_vide_ne_repond_pas() -> None:
     prise.close()
     assert systeme.sonder(f"http://127.0.0.1:{port}/api/sante", 0.5) is False
     assert systeme.poster(f"http://127.0.0.1:{port}/api/extinction", 0.5) is None
+
+
+def test_poster_porte_ses_en_tetes_et_rend_le_statut() -> None:
+    """Le vrai `poster`, contre un vrai serveur local : l'en-tête arrive, un refus reste un refus.
+
+    Avant #1355, un `401` revenait comme un corps parmi d'autres — le statut était
+    perdu à la frontière, et l'arrêt ne pouvait plus distinguer un refus d'un « rien
+    à solder ». Le serveur répond `401` sans le bon jeton et `200` avec, ce qui
+    prouve les deux moitiés d'un coup.
+    """
+    recus: list[str | None] = []
+
+    class Porte(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - nom imposé par http.server
+            recus.append(self.headers.get("Authorization"))
+            accepte = self.headers.get("Authorization") == "Bearer bon"
+            corps = b'{"runs": [], "nb": 0}' if accepte else b'{"detail": "jeton requis"}'
+            self.send_response(200 if accepte else 401)
+            self.send_header("Content-Length", str(len(corps)))
+            self.end_headers()
+            self.wfile.write(corps)
+
+        def log_message(self, *args: Any) -> None:
+            return
+
+    serveur = http.server.HTTPServer(("127.0.0.1", 0), Porte)
+    fil = threading.Thread(target=serveur.serve_forever, daemon=True)
+    fil.start()
+    try:
+        url = f"http://127.0.0.1:{serveur.server_address[1]}/api/extinction"
+        refus = Systeme().poster(url, 5.0)
+        accord = Systeme().poster(url, 5.0, {"Authorization": "Bearer bon"})
+    finally:
+        serveur.shutdown()
+        serveur.server_close()
+
+    assert refus == Reponse(statut=401, corps='{"detail": "jeton requis"}')
+    assert accord == Reponse(statut=200, corps='{"runs": [], "nb": 0}')
+    assert recus == [None, "Bearer bon"]
 
 
 def test_la_vitalite_se_lit_sans_tuer_personne() -> None:

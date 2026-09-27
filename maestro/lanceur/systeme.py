@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,14 @@ class Processus:
         if self._process is None:
             return None
         return self._process.poll()
+
+
+@dataclass(frozen=True)
+class Reponse:
+    """Ce qu'un serveur a répondu à un `POST` : son statut HTTP, et son corps tel quel."""
+
+    statut: int
+    corps: str
 
 
 class Sortie:
@@ -304,14 +313,23 @@ class Systeme:
         except (OSError, urllib.error.URLError):
             return False
 
-    def poster(self, url: str, delai: float) -> str | None:
-        """POST sans corps, la réponse rendue telle quelle — ou `None` si personne n'a parlé."""
-        requete = urllib.request.Request(url, data=b"", method="POST")  # noqa: S310
+    def poster(
+        self, url: str, delai: float, entetes: Mapping[str, str] | None = None
+    ) -> Reponse | None:
+        """POST sans corps, avec `entetes` : statut et réponse — `None` si personne n'a parlé.
+
+        Le **statut** voyage avec le corps (#1355) : un refus (`401`, `5xx`) n'est pas
+        une réponse comme une autre, et le perdre ici faisait lire un `401` sans
+        `run_id` comme « aucun run en vol ».
+        """
+        requete = urllib.request.Request(  # noqa: S310 - boucle locale
+            url, data=b"", method="POST", headers=dict(entetes or {})
+        )
         try:
             with urllib.request.urlopen(requete, timeout=delai) as reponse:  # noqa: S310
-                return str(reponse.read().decode("utf-8", "replace"))
+                return Reponse(reponse.status, reponse.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as erreur:
-            return str(erreur.read().decode("utf-8", "replace"))
+            return Reponse(erreur.code, erreur.read().decode("utf-8", "replace"))
         except (OSError, urllib.error.URLError):
             return None
 

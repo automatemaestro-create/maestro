@@ -713,6 +713,28 @@ reste le sujet de #699, et la reprise **à l'endroit exact** de l'interruption r
 > #700 est encore celle de #349. Le §12.7 reprend ce dernier point, qui est le prix assumé de cette
 > section jusqu'au chantier de reprise.
 
+### 11.3 La porte est gardée comme le reste de l'API (2026-09-27)
+
+> Écrit au ticket **#1355**. Rien de la décision ne bouge ; ce qui est réparé est le chemin par
+> lequel on frappe à la porte.
+
+Depuis #638, l'API exige son jeton local sur **chaque** requête, et la porte de l'extinction n'y fait
+pas exception. `start.sh` la poussait pourtant **sans en-tête** : l'API répondait `401`, et le script,
+qui ne cherchait que des `run_id` dans la réponse, concluait « aucun run en vol ». Constaté le
+2026-09-27 pendant un run d'orchestration : un run mis en pause a continué de battre après l'arrêt,
+jusqu'à ce que son battement vieillisse en orphelin — l'accident de #486, revenu en silence derrière
+un message rassurant. Le lanceur du produit (`maestro/lanceur`) portait le même défaut.
+
+Deux règles, et les deux appelants les tiennent :
+
+- **L'extinction part avec le jeton**, résolu par le chemin de tous les outils locaux —
+  `maestro-api --jeton` côté `start.sh`, `entetes_client` côté lanceur —, jamais relu en shell. Un
+  jeton qu'on ne sait pas résoudre se dit, et la porte est poussée quand même : l'API dira si elle
+  le voulait.
+- **Un refus n'est pas un « aucun run »**. Seul un `200` qui porte la liste des runs dit ce qui a été
+  soldé ; un `401`, un `5xx` ou une réponse illisible se nomment comme tels — « des runs peuvent
+  rester en vol » —, et l'arrêt va au bout.
+
 ---
 
 ## 12. La porte n° 4 est franchie — la reprise exacte (2026-08-28)
