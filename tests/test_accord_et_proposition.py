@@ -281,7 +281,7 @@ def test_le_contrat_du_juge_porte_les_bornes_de_l_accord() -> None:
 
 
 def test_une_question_sur_la_proposition_la_garde_acceptable() -> None:
-    """« Combien ça coûtera ? » répond **et** garde la carte : le juge dit que la proposition tient."""
+    """« Combien ça coûtera ? » répond **et** garde la carte : le juge dit qu'elle tient."""
     repondeur, _ = _repondeur(
         _dicte(
             "Autour de 5 à 10 $ en ordre de grandeur.",
@@ -413,7 +413,9 @@ def test_un_accord_tape_apres_des_questions_ouvre_le_run_de_la_proposition() -> 
         estimation=estimer_run(5),
     )
     repondeur, _ = _repondeur(
-        _dicte("C'est parti, plafond 8 $.", VERDICT_ACCORD, OBJECTIF, bornes={"plafond_cout_usd": 8}),
+        _dicte(
+            "C'est parti, plafond 8 $.", VERDICT_ACCORD, OBJECTIF, bornes={"plafond_cout_usd": 8}
+        ),
         lanceur=lanceur,
     )
 
@@ -461,7 +463,7 @@ def test_une_proposition_porte_l_estimation_des_taches_que_le_modele_compte() ->
 
 
 def test_sans_estimation_du_modele_c_est_le_plancher_et_il_le_dit() -> None:
-    """Un modèle qui n'estime rien laisse le plancher — nommé comme tel, jamais comme une estimation."""
+    """Un modèle qui n'estime rien laisse le plancher — nommé tel, pas comme une estimation."""
     repondeur, _ = _repondeur(_dicte("Je lance ?", VERDICT_PROPOSITION, OBJECTIF))
 
     reponse = _produire(repondeur, [_message(UTILISATEUR, "Ajoute la pagination")])
