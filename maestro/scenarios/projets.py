@@ -213,6 +213,53 @@ def semer_projet_existant(racine: Path) -> None:
     )
 
 
+#: Les quatre sections du site que S11 fait maquetter (#1299), dans l'ordre du README.
+SECTIONS_DU_SITE = ("accueil", "créations", "ateliers", "contact")
+
+
+def semer_site_vitrine(racine: Path) -> None:
+    """Un site vitrine à maquetter, section par section — la matière de S11 (#1299).
+
+    Le README décrit **quatre sections** qui se livrent séparément, et une charte
+    commune (`styles.css`) qu'elles reprennent toutes : c'est la forme d'objectif
+    que le ticket nomme (« maquetter les 4 sections d'un site »), où le plan a de
+    quoi dégager du travail indépendant — et une raison de ne pas enchaîner les
+    sections, ce qu'elles partagent étant déjà écrit. Rien n'y est versionné ici :
+    le scénario le fait par le geste de l'écran Projets.
+    """
+    racine.mkdir(parents=True, exist_ok=True)
+    (racine / "README.md").write_text(
+        "# Terre & Feu\n\n"
+        "Site vitrine d'un atelier de céramique, en HTML et CSS statiques, sans "
+        "framework ni étape de construction.\n\n"
+        "## Les sections\n\n"
+        "- **Accueil** — qui est l'atelier, en trois phrases et une photo d'ambiance.\n"
+        "- **Créations** — une galerie de six pièces, chacune avec son nom et son prix.\n"
+        "- **Ateliers** — les cours proposés : initiation, tournage, émaillage, avec "
+        "leurs horaires.\n"
+        "- **Contact** — l'adresse, les horaires d'ouverture et un formulaire de "
+        "message.\n\n"
+        "Chaque section est une page autonome à la racine, qui reprend la charte de "
+        "`styles.css` et un même menu vers les trois autres.\n",
+        encoding="utf-8",
+    )
+    (racine / "styles.css").write_text(
+        ":root {\n"
+        "  --terre: #8a4b2a;\n"
+        "  --argile: #f3e6d8;\n"
+        "  --encre: #2b2118;\n"
+        "  --police: Georgia, serif;\n"
+        "}\n\n"
+        "body {\n"
+        "  margin: 0;\n"
+        "  background: var(--argile);\n"
+        "  color: var(--encre);\n"
+        "  font-family: var(--police);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+
 #: Le type d'un projet C# « SDK » dans une solution — la valeur que `dotnet sln add`
 #: écrit. Les deux identifiants de projet, eux, sont arbitraires et fixes : un semis
 #: qui changerait à chaque passage ferait lire deux dépôts différents au même scénario.

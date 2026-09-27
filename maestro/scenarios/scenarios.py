@@ -1,4 +1,4 @@
-"""Les dix scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
+"""Les onze scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
 
 | | Scénario | Ce qui le rend vert |
 |---|---|---|
@@ -15,6 +15,8 @@
 | S9 | Un projet neuf hors de toute liste | Né, outillé et doté dans le fil, le run abouti : |
 | | | ses commandes écrites passent, et un modèle juge outillage et équipe pertinents |
 | S10 | Un dépôt d'une pile hors des tables | Le même oracle, sur une solution .NET reprise |
+| S11 | Des tâches indépendantes, de front | Sur un projet versionné, deux tâches au travail |
+| | | ensemble ; le plafond dérivé du plan s'annonce (#1299) |
 
 ## Trois règles que ces scénarios suivent
 
@@ -34,22 +36,23 @@ lui, **part** d'un projet sans équipe : c'est son sujet.
 **L'oracle regarde le monde, pas la prose.** Le disque pour S1, l'application
 lancée pour S2, l'équipe écrite et le run soldé pour S3, la file des validations
 et le disque hors de la racine pour S8, les commandes écrites **rejouées** pour S9
-et S10. Les oracles qui portent sur une phrase ou une pertinence — S4, S5, S9 et
-S10 — passent par un modèle (`maestro.scenarios.juge`, #746) : un lexique se
-tromperait dans les deux sens. Et même là, ce qui peut se constater se constate :
-S5 vérifie **sur le disque** que le fichier mis en lien par le récit existe, et
-**sur le transport** que la réponse arrive en direct (#1265), S9 et S10 que les
-commandes écrites passent, avant de demander à qui que ce soit ce qu'il pense du
-texte.
+et S10, la trace datée des tâches pour S11. Les oracles qui portent sur une phrase
+ou une pertinence — S4, S5, S9 et S10 — passent par un modèle
+(`maestro.scenarios.juge`, #746) : un lexique se tromperait dans les deux sens. Et
+même là, ce qui peut se constater se constate : S5 vérifie **sur le disque** que le
+fichier mis en lien par le récit existe, et **sur le transport** que la réponse
+arrive en direct (#1265), S9 et S10 que les commandes écrites passent, avant de
+demander à qui que ce soit ce qu'il pense du texte.
 
-## Ce que ces scénarios coûtent, et pourquoi S2 et S4 à S10 se rejouent
+## Ce que ces scénarios coûtent, et pourquoi S2 et S4 à S11 se rejouent
 
 Un passage coûte du vrai modèle (le run du retex du 2026-09-11 a coûté ~10 $),
-d'où le banc hors CI. S2 et S4 à S10 ne sont pas déterministes — écrire du code qui
+d'où le banc hors CI. S2 et S4 à S11 ne sont pas déterministes — écrire du code qui
 s'exécute, reconnaître une cause dans une phrase, dire comment essayer un livrable,
 nommer dans le plan le métier qui manque, proposer un projet en peu de tours,
 tenter en chemin l'acte que le projet décrit, comprendre un projet qu'aucune liste
-ne prévoyait — donc un rouge se rejoue **une** fois avant d'être cru, et le rapport
+ne prévoyait, dégager du plan le travail indépendant — donc un rouge se rejoue
+**une** fois avant d'être cru, et le rapport
 dit s'il l'a été (`Scenario.rejouable`, appliqué par `maestro.scenarios.banc`).
 """
 
@@ -64,9 +67,11 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from maestro.agents.capacity import STATUT_INSTANCES_DERIVEES
 from maestro.controltower.chat import DECISION_ECRIRE, DECISION_PASSER
 from maestro.controltower.events import EVENEMENT_RUN_PLAN, EVENEMENT_TACHE_STATUT
 from maestro.controltower.state import (
@@ -76,10 +81,11 @@ from maestro.controltower.state import (
 )
 from maestro.decideur import Decideur
 from maestro.detail_tache import ETAPE_FAITE
-from maestro.engine.executor import STATUT_ROLE_MANQUANT, STATUT_TERMINEE
+from maestro.engine.executor import STATUT_EN_COURS, STATUT_ROLE_MANQUANT, STATUT_TERMINEE
 from maestro.lecture import OUTIL_SHELL
 from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.verification import ECHOUEE, USAGE_DEMARRER, Delais
+from maestro.plan_run import largeur_du_plan, noeuds_depuis
 from maestro.portee import PorteeProjet
 from maestro.projets.modele import EXCLUS_DEFAUT
 from maestro.projets.perimetre import motifs_compiles
@@ -106,8 +112,10 @@ from maestro.scenarios.projets import (
     semer_a_vider,
     semer_hors_du_projet,
     semer_projet_existant,
+    semer_site_vitrine,
     semer_solution_dotnet,
 )
+from maestro.telemetry import ETAPE_EQUIPE
 
 #: Le nom du fichier que S2 demande. L'oracle de S2 est « elle s'exécute », et une
 #: application dont personne ne sait comment la lancer n'est pas exécutable :
@@ -2394,6 +2402,221 @@ def _lire_borne(chemin: Path, caracteres: int) -> str:
     return texte if len(texte) <= caracteres else f"{texte[:caracteres]}…"
 
 
+# --- S11 — des tâches indépendantes tournent de front -----------------------
+
+#: La demande de S11 (#1299) : l'exemple du ticket, « maquetter les 4 sections d'un
+#: site », sur le site que le README du projet décrit. Elle dit ce que la personne
+#: veut — quatre pages — et **rien du découpage** : que le plan dégage le travail
+#: indépendant est justement ce qui se mesure.
+DEMANDE_S11 = (
+    "Maquette les quatre sections du site décrit dans le README : accueil, créations, "
+    "ateliers et contact. Chaque section est une page HTML statique à la racine "
+    "(accueil.html, creations.html, ateliers.html, contact.html) qui reprend la charte "
+    "de styles.css."
+)
+
+#: Le dossier du projet de S11 dans l'atelier du passage.
+DOSSIER_S11 = "s11-de-front"
+
+
+def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
+    """Sur un projet versionné, des tâches indépendantes sont **au travail en même temps** (#1299).
+
+    Le retex du 2026-09-24, mot pour mot : *« je n'ai jamais remarqué un parallélisme
+    dans le traitement des tâches jusqu'ici »*. Deux choses sérialisaient un run :
+    le plan s'écrivait en chaîne, et un agent jamais réglé ne prenait qu'une tâche à
+    la fois. Ce scénario rejoue les deux sur la vraie stack, par le fil.
+
+    Le montage : un site vitrine dont le README décrit quatre sections et une charte
+    commune (`semer_site_vitrine`), **versionné par le geste de l'écran Projets**
+    (`POST …/versionner`, #855) — c'est le régime où chaque tâche travaille dans sa
+    copie —, puis doté de l'équipe que l'analyse propose. Un versionnement que le
+    poste refuse (pas de Git) est un empêchement, jamais un rouge du produit.
+
+    L'oracle lit la **trace** du run, jamais une phrase (#746), dans cet ordre :
+
+    1. **le run aboutit** — des tâches menées de front ne doivent rien casser ; les
+       aléas du fournisseur sous concurrence (~15 % sans relance à la démo V1, #88)
+       sont ce que la relance (#91) absorbe, et le scénario le rejoue ;
+    2. **le plafond dérivé s'annonce** au journal du run : l'étape de run `equipe`,
+       au statut `instances_derivees`, avant la première tâche ;
+    3. **au moins deux tâches sont au travail en même temps** : entre leur `en_cours`
+       — consigné une fois le créneau de l'agent obtenu, donc attendre son tour ne
+       compte pas — et le statut qui le clôt (`_au_travail_ensemble`).
+
+    Le motif d'un rouge dit lequel des deux défauts on a vu, parce qu'ils ne se
+    corrigent pas au même endroit : un plan **en chaîne** (sa largeur, lue sur
+    l'événement `run.plan`, vaut 1 — c'est le playbook), ou un plan large dont les
+    tâches ont **quand même** passé une à une (c'est l'exécution).
+    """
+    racine = ctx.atelier.dossier(DOSSIER_S11)
+    semer_site_vitrine(racine)
+    projet_id = _declarer(ctx, "banc-s11-de-front", racine, origine="existant")
+    fiche = ctx.client.versionner_projet(projet_id)
+    if not fiche.get("vcs"):
+        return empeche(
+            "le projet n'a pas pu être versionné par le geste de l'écran Projets : S11 "
+            "mesure les tâches d'un projet versionné",
+            cout_usd=None,
+        )
+    ctx.note("projet versionné", "par `POST /api/projets/{id}/versionner`")
+    _doter_d_une_equipe(ctx, projet_id)
+
+    conversation = ctx.client.ouvrir_conversation()
+    reponse = _demander(ctx, conversation, projet_id, DEMANDE_S11)
+    if not reponse.get("proposition"):
+        return rouge("le fil n'a proposé aucun run pour cette demande", cout_usd=None)
+    accord = _accorder(ctx, conversation, projet_id)
+    run_id = _run_de(accord)
+    if not run_id:
+        return rouge("l'accord n'a ouvert aucun run", cout_usd=None)
+    detail = _suivre(ctx, run_id, projet_id)
+    cout = _cout(detail)
+
+    if str(detail.get("statut")) != EXECUTION_TERMINEE:
+        return rouge(
+            f"le run s'est soldé « {detail.get('statut')} » "
+            f"(cause « {detail.get('cause') or '—'} ») au lieu d'aboutir",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    evenements = [e for e in detail.get("evenements") or [] if isinstance(e, Mapping)]
+    annonce = _annonce_du_plafond(evenements)
+    largeur = _largeur_publiee(evenements)
+    pic, ensemble = _au_travail_ensemble(evenements)
+    ctx.note(
+        "tâches de front",
+        f"plan de largeur {'inconnue' if largeur is None else largeur} ; au travail "
+        f"ensemble : {pic} ({', '.join(ensemble) or '—'}) ; annonce : "
+        f"« {annonce if annonce is not None else 'aucune'} »",
+    )
+    if annonce is None:
+        return rouge(
+            "le run n'a pas annoncé son plafond d'instances, alors que son projet est "
+            "versionné : l'étape de run `equipe` « instances_derivees » manque à la trace",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    if pic < 2:
+        if largeur is not None and largeur <= 1:
+            return rouge(
+                "le plan n'a dégagé aucun travail de front (largeur 1) : ses tâches "
+                "s'enchaînent, alors que les quatre sections se livrent séparément",
+                run_id=run_id,
+                cout_usd=cout,
+            )
+        return rouge(
+            f"le plan en laissait partir {largeur if largeur is not None else '?'} de "
+            "front, mais jamais deux tâches n'ont été au travail ensemble — annonce du "
+            f"run : « {annonce} »",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    return vert(
+        f"{pic} tâches au travail en même temps ({', '.join(ensemble)}) sur un plan de "
+        f"largeur {largeur if largeur is not None else '?'} ; le run a annoncé : "
+        f"« {annonce} »",
+        run_id=run_id,
+        cout_usd=cout,
+    )
+
+
+def _annonce_du_plafond(evenements: Sequence[Mapping[str, Any]]) -> str | None:
+    """Ce que le run a annoncé de son plafond d'instances — `None` s'il n'a rien annoncé.
+
+    Reconnue à sa **place** — une étape de run `equipe`, au statut
+    `instances_derivees` —, jamais à ses mots ; le texte n'est rendu que pour le
+    rapport.
+    """
+    for evenement in evenements:
+        if (
+            str(evenement.get("etape_run") or "") == ETAPE_EQUIPE
+            and str(evenement.get("statut") or "") == STATUT_INSTANCES_DERIVEES
+        ):
+            return str(evenement.get("detail") or "").strip()
+    return None
+
+
+def _largeur_publiee(evenements: Sequence[Mapping[str, Any]]) -> int | None:
+    """La largeur du plan publié (`run.plan`) — `None` quand le run n'en a publié aucun.
+
+    Par la mesure du produit (`largeur_du_plan`), celle de « jusqu'à N de front » :
+    le banc ne recompte pas les niveaux à sa façon.
+    """
+    for evenement in evenements:
+        if str(evenement.get("type") or "") == EVENEMENT_RUN_PLAN:
+            noeuds = noeuds_depuis(evenement.get("plan"))
+            if noeuds:
+                return largeur_du_plan(noeuds)
+    return None
+
+
+def _au_travail_ensemble(
+    evenements: Sequence[Mapping[str, Any]],
+) -> tuple[int, tuple[str, ...]]:
+    """Le plus grand nombre de tâches **au travail en même temps**, et lesquelles (#1299).
+
+    Une tâche est au travail entre un `tache.statut` « en_cours » — l'étape `:debut`,
+    que le moteur consigne une fois son créneau et son atelier obtenus — et le statut
+    suivant qui n'en est plus un (terminée, en échec, suspendue). Une relance rouvre
+    un intervalle ; une tâche jamais close l'est au dernier instant de la trace. Deux
+    intervalles qui se **touchent** ne se chevauchent pas : à instant égal, une fin
+    passe avant un début.
+
+    Rend les tâches du pic par leur titre, suivi de leur agent — c'est ce qui dit, au
+    rapport, si le même agent en a mené plusieurs de front.
+    """
+    ouverts: dict[str, datetime] = {}
+    noms: dict[str, str] = {}
+    intervalles: list[tuple[datetime, datetime, str]] = []
+    dernier: datetime | None = None
+    for evenement in evenements:
+        instant = _instant(evenement.get("horodatage"))
+        if instant is not None and (dernier is None or instant > dernier):
+            dernier = instant
+        if str(evenement.get("type") or "") != EVENEMENT_TACHE_STATUT:
+            continue
+        tache = str(evenement.get("tache_id") or "")
+        if not tache or instant is None:
+            continue
+        if str(evenement.get("statut") or "") == STATUT_EN_COURS:
+            ouverts.setdefault(tache, instant)
+            titre = str(evenement.get("titre") or tache)
+            agent = str(evenement.get("agent") or "")
+            noms[tache] = f"« {titre} » ({agent})" if agent else f"« {titre} »"
+        elif tache in ouverts:
+            intervalles.append((ouverts.pop(tache), instant, tache))
+    if dernier is not None:
+        intervalles.extend((debut, dernier, tache) for tache, debut in ouverts.items())
+    bornes = sorted(
+        [(debut, 1, tache) for debut, fin, tache in intervalles if fin > debut]
+        + [(fin, -1, tache) for debut, fin, tache in intervalles if fin > debut],
+        key=lambda borne: (borne[0], borne[1]),
+    )
+    en_vol: dict[str, int] = {}
+    pic: tuple[str, ...] = ()
+    for _instant_borne, sens, tache in bornes:
+        en_vol[tache] = en_vol.get(tache, 0) + sens
+        if en_vol[tache] <= 0:
+            del en_vol[tache]
+        if sens > 0 and len(en_vol) > len(pic):
+            pic = tuple(sorted(en_vol))
+    return len(pic), tuple(noms.get(tache, tache) for tache in pic)
+
+
+def _instant(valeur: Any) -> datetime | None:
+    """Un horodatage ISO 8601 de la trace — `None` s'il ne se lit pas.
+
+    Un horodatage sans fuseau est lu en UTC, celui des producteurs de la trace :
+    comparer un instant daté à un instant qui ne l'est pas lèverait.
+    """
+    try:
+        instant = datetime.fromisoformat(str(valeur or ""))
+    except ValueError:
+        return None
+    return instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
+
+
 # --- Le catalogue ----------------------------------------------------------
 
 
@@ -2458,6 +2681,12 @@ SCENARIOS: tuple[Scenario, ...] = (
         "S10",
         "Un dépôt d'une pile qu'aucune table ne connaissait",
         s10_un_depot_d_une_pile_hors_de_toute_table,
+        True,
+    ),
+    Scenario(
+        "S11",
+        "Des tâches indépendantes tournent de front",
+        s11_des_taches_independantes_tournent_de_front,
         True,
     ),
 )

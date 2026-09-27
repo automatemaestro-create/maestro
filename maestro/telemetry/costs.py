@@ -130,8 +130,9 @@ ETAPE_BRIEF = "brief"
 ETAPE_REPRISE = "reprise"
 
 #: Étape du journal qui n'appartient à aucune tâche : la **confrontation de
-#: l'équipe au plan** (#1227), entre la décomposition et la première tâche. Usage
-#: nul par construction — confronter des tags à des fiches ne sollicite aucun
+#: l'équipe au plan** (#1227), entre la décomposition et la première tâche — le
+#: rôle qui manque, et depuis #1299 combien de tâches chaque rôle prendra de front.
+#: Usage nul par construction — confronter des tags à des fiches ne sollicite aucun
 #: modèle —, mais **comptée dans le temps du run** (contrairement à
 #: `ETAPE_REPRISE`) : l'attente de qui décide occupe le run comme le reste, et un
 #: run suspendu quatre minutes sur un recrutement n'a pas duré quatre minutes de

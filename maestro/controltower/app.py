@@ -3562,6 +3562,12 @@ def create_app(
                         if requete.instances is None
                         else requete.instances
                     ),
+                    # Des instances posées ici sont un **choix** de la personne, et le
+                    # run le garde au lieu d'en dériver un de son plan (#1299) — une
+                    # seule instance comprise. Régler seulement `actif` ne fixe rien.
+                    instances_fixees=(
+                        courante.fixe_ses_instances if requete.instances is None else True
+                    ),
                 )
             )
         except ValueError as exc:

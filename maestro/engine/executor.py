@@ -46,7 +46,7 @@ from dataclasses import dataclass, replace
 from time import monotonic, perf_counter
 from typing import Any, Protocol
 
-from maestro.agents.capacity import CapacityStore, JaugeInstances
+from maestro.agents.capacity import CapacityStore, InstancesDerivees, JaugeInstances
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.fiche_outillee import runtime_outille
 from maestro.agents.mcp import McpStore, ServeurMcp
@@ -701,6 +701,21 @@ class TaskExecutor(ABC):
         fil fait en recrutant. Même limite dite que `continuer_avec_l_equipe`.
         """
 
+    def derive_les_instances(
+        self, run_id: str, projet_id: str, largeur: int
+    ) -> InstancesDerivees | None:
+        """Arme pour `run_id` le plafond d'instances dérivé de la largeur du plan (#1299).
+
+        Dit par la boucle une fois, entre le plan et la première tâche. Rend ce qui
+        s'appliquera — à annoncer au journal —, ou None quand rien ne change : pas
+        de jauge, ou un projet dont les tâches ne peuvent pas partir de front.
+
+        None par défaut, et c'est une limite **dite** : un exécuteur distribué borne
+        ses instances côté worker (`JaugeInstances`, une jauge par boucle), où ce
+        plafond ne voyage pas encore — ses agents gardent leur réglage.
+        """
+        return None
+
     def suspendue(self, result: TaskResult) -> bool:
         """L'étape de ce résultat a-t-elle été consignée « suspendue » plutôt qu'échouée ? (#1181)
 
@@ -875,6 +890,11 @@ class LocalExecutor(TaskExecutor):
         # (comportement historique — tests et câblages sans Control Tower).
         self._capacites = capacites
         self._jauge = JaugeInstances()
+        # Le plafond d'instances que chaque run a dérivé de son plan (#1299), par
+        # `run_id` — la raison des accords de fusion : un exécuteur qui sert
+        # plusieurs runs ne fait pas hériter à l'un la largeur de l'autre. Jamais
+        # purgé non plus : un entier et un tuple par run.
+        self._instances_derivees: dict[str, InstancesDerivees] = {}
         # Routage combiné (#42) : règles de compétences + classifieur léger adossé
         # au même fournisseur. Un routeur injecté remplace `agents` pour le routage.
         # Le classifieur suit `MAESTRO_MODEL` quand il est posé (#1173), comme les
@@ -1089,7 +1109,7 @@ class LocalExecutor(TaskExecutor):
                         # pas attendu n'est pas ne pas savoir.
                         debut_creneau = perf_counter()
                         async with self._creneau_capacite(
-                            decision.agent.nom, task.projet_id
+                            decision.agent.nom, task.projet_id, task=task, journal=journal
                         ):
                             attente_creneau_ms = _ecoule_ms(debut_creneau)
                             debut_atelier = perf_counter()
@@ -1201,6 +1221,35 @@ class LocalExecutor(TaskExecutor):
         self._recrutees[run_id] = self._recrutees.get(run_id, frozenset()) | frozenset(
             competences
         )
+
+    def derive_les_instances(
+        self, run_id: str, projet_id: str, largeur: int
+    ) -> InstancesDerivees | None:
+        """Cf. `TaskExecutor.derive_les_instances` — ici, sur la jauge de cet exécuteur (#1299).
+
+        Le plafond est retenu pour le run **dès qu'une jauge est câblée**, quel que
+        soit le régime du projet au départ : il ne s'applique qu'aux prises faites sur
+        un projet versionné (`_plafond_instances`, relu à chaque prise), donc un projet
+        versionné pendant le run en profite pour ses tâches suivantes. Il n'est
+        **annoncé** — rendu — que si le projet l'est déjà : sur un projet non versionné,
+        l'atelier de #839 fait passer les tâches une à une, et dire « jusqu'à trois de
+        front » serait faux.
+
+        Les agents qui ont fixé leurs instances sont nommés dans ce qui est rendu : ils
+        gardent leur réglage, et l'annonce doit expliquer la file qu'ils imposent.
+        """
+        if self._capacites is None:
+            return None
+        depot = self._capacites.pour_projet(projet_id)
+        derivees = InstancesDerivees(
+            largeur=largeur,
+            reglees=tuple(c for c in depot.lister() if c.actif and c.fixe_ses_instances),
+        )
+        self._instances_derivees[run_id] = derivees
+        projet = self._projets.lire(projet_id) if self._projets is not None else None
+        if projet is None or not projet.versionne:
+            return None
+        return derivees
 
     def suspendue(self, result: TaskResult) -> bool:
         """Cf. `TaskExecutor.suspendue` — ici, dès qu'on a dit à l'exécuteur de suspendre."""
@@ -1316,8 +1365,47 @@ class LocalExecutor(TaskExecutor):
             return frozenset()
         return self._capacites.pour_projet(projet_id).inactifs()
 
+    def _plafond_instances(
+        self,
+        depot: CapacityStore,
+        nom: str,
+        task: Task | None,
+        journal: RunJournal | None,
+    ) -> int:
+        """Le plafond d'instances de `nom` pour cette prise — relu à chacune (#86, #1299).
+
+        Trois régimes, dans cet ordre, et l'ordre est la décision :
+
+        1. **un réglage explicite** de la personne l'emporte toujours
+           (`CapaciteAgent.fixe_ses_instances`) — `instances_max = 1` reste 1 ;
+        2. sinon, sur un projet **versionné**, le plafond que le run a dérivé de la
+           largeur de son plan (`derive_les_instances`) : chaque tâche y travaille dans
+           son worktree, et rien n'oblige deux tâches indépendantes à s'attendre ;
+        3. sinon, le défaut du dépôt — une instance. C'est le cas d'un projet non
+           versionné, où l'atelier de #839 sérialise de toute façon, et de toute prise
+           hors d'un run qui a dérivé quelque chose (exécution directe, tests).
+
+        Le projet est relu ici plutôt que retenu : versionné pendant le run, il libère
+        les prises suivantes — la règle de l'application à chaud.
+        """
+        capacite = depot.lire(nom)
+        if capacite.fixe_ses_instances or task is None or journal is None:
+            return capacite.instances
+        derivees = self._instances_derivees.get(journal.run_id)
+        if derivees is None:
+            return capacite.instances
+        projet = self._projet(task)
+        if projet is None or not projet.versionne:
+            return capacite.instances
+        return derivees.instances
+
     def _creneau_capacite(
-        self, nom: str, projet_id: str | None = None
+        self,
+        nom: str,
+        projet_id: str | None = None,
+        *,
+        task: Task | None = None,
+        journal: RunJournal | None = None,
     ) -> AbstractAsyncContextManager[None]:
         """Un créneau d'exécution de l'agent `nom`, borné à son plafond d'instances (#86).
 
@@ -1335,7 +1423,9 @@ class LocalExecutor(TaskExecutor):
         if capacites is None:
             return nullcontext()
         depot = capacites.pour_projet(projet_id)
-        return self._jauge.creneau(nom, lambda: depot.lire(nom).instances)
+        return self._jauge.creneau(
+            nom, lambda: self._plafond_instances(depot, nom, task, journal)
+        )
 
     def _atelier_projet(self, task: Task) -> AbstractAsyncContextManager[None]:
         """L'atelier de `task` : la racine d'un projet non versionné, une tâche à la fois (#839).

@@ -29,8 +29,8 @@ n'est donc pas un défaut d'outillage — c'est la mesure.
 **Un rouge non déterministe se rejoue une fois, et le rapport le dit.** S2 demande
 au modèle d'écrire du code qui s'exécute, S4 de reconnaître une cause dans une
 phrase, S5 de dire comment essayer un livrable, S6 de nommer dans son plan le
-métier qui manque, S9 et S10 de comprendre un projet qu'aucune liste ne prévoyait :
-tous échouent parfois sans
+métier qui manque, S9 et S10 de comprendre un projet qu'aucune liste ne prévoyait,
+S11 de dégager de son plan le travail indépendant : tous échouent parfois sans
 que le produit ait changé (docs/40 §5). Le
 second passage fait foi, et `rejoue` reste écrit au rapport — un rejeu tu ferait
 lire deux runs comme un seul. La tentative rouge est **oubliée** avant le rejeu —

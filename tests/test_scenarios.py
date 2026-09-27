@@ -765,8 +765,8 @@ def _scenario(identifiant: str) -> Scenario:
 # --- ① Le déroulé -----------------------------------------------------------
 
 
-def test_les_dix_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
-    """Dix scénarios, S1 à S10, et seuls S1 et S3 ne se rejouent pas (docs/40 §5)."""
+def test_les_onze_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
+    """Onze scénarios, S1 à S11, et seuls S1 et S3 ne se rejouent pas (docs/40 §5)."""
     assert [s.identifiant for s in SCENARIOS] == [
         "S1",
         "S2",
@@ -778,6 +778,7 @@ def test_les_dix_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
         "S8",
         "S9",
         "S10",
+        "S11",
     ]
     assert {s.identifiant for s in SCENARIOS if s.rejouable} == {
         "S2",
@@ -788,6 +789,7 @@ def test_les_dix_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
         "S8",
         "S9",
         "S10",
+        "S11",
     }
 
 
@@ -3510,6 +3512,205 @@ def test_s10_est_rouge_quand_le_fil_propose_de_reprendre_un_autre_dossier(tmp_pa
     assert api.declares == []
 
 
+# --- S11 — des tâches indépendantes tournent de front (#1299) ------------------
+
+
+def _statut(tache: str, statut: str, instant: str, *, agent: str = "dev-1") -> dict[str, Any]:
+    """Un `tache.statut` de la trace, daté — la seule matière de l'oracle de S11."""
+    return {
+        "type": "tache.statut",
+        "tache_id": tache,
+        "titre": f"Maquetter {tache}",
+        "agent": agent,
+        "statut": statut,
+        "horodatage": f"2026-09-27T10:{instant}+00:00",
+    }
+
+
+def _plan_publie(*noeuds: dict[str, Any]) -> dict[str, Any]:
+    """L'événement `run.plan`, tel que le pont le publie."""
+    return {"type": "run.plan", "tache_id": "", "plan": list(noeuds)}
+
+
+def _annonce_publiee(detail: str = "Jusqu'à 3 tâches de front par agent.") -> dict[str, Any]:
+    """La ligne de run qui annonce le plafond dérivé — étape `equipe`, sans tâche."""
+    return {
+        "type": "agent.activite",
+        "tache_id": "",
+        "etape_run": "equipe",
+        "statut": "instances_derivees",
+        "detail": detail,
+    }
+
+
+#: Le plan de S11 que le produit de #1299 écrit : quatre sections, aucune dépendance.
+_QUATRE_SECTIONS = tuple(
+    {"id": nom, "titre": f"Maquetter {nom}", "dependances": []}
+    for nom in ("accueil", "creations", "ateliers", "contact")
+)
+
+#: Une trace où trois sections sont au travail ensemble (10:01 → 10:03), la quatrième
+#: après — le plafond dérivé tenu à trois.
+_TRACE_DE_FRONT = (
+    _plan_publie(*_QUATRE_SECTIONS),
+    _annonce_publiee(),
+    _statut("accueil", "en_cours", "01:00"),
+    _statut("creations", "en_cours", "01:05"),
+    _statut("ateliers", "en_cours", "01:10"),
+    _statut("accueil", "terminee", "03:00"),
+    _statut("contact", "en_cours", "03:01"),
+    _statut("creations", "terminee", "03:10"),
+    _statut("ateliers", "terminee", "03:20"),
+    _statut("contact", "terminee", "05:00"),
+)
+
+#: La même, une section après l'autre — ce que faisait le produit d'avant #1299. Une
+#: fin et le début suivant au même instant se **touchent** sans se chevaucher.
+_TRACE_UNE_A_UNE = (
+    _plan_publie(*_QUATRE_SECTIONS),
+    _annonce_publiee(),
+    _statut("accueil", "en_cours", "01:00"),
+    _statut("accueil", "terminee", "02:00"),
+    _statut("creations", "en_cours", "02:00"),
+    _statut("creations", "terminee", "03:00"),
+    _statut("ateliers", "en_cours", "03:00"),
+    _statut("ateliers", "terminee", "04:00"),
+    _statut("contact", "en_cours", "04:00"),
+    _statut("contact", "terminee", "05:00"),
+)
+
+
+class ApiDeFront(FausseAPI):
+    """La fausse API de S11 : le geste qui versionne, et la trace datée du run.
+
+    `versionne` dit si le poste sait mettre le projet sous Git (le produit rend alors
+    une fiche avec son `vcs`) ; `trace` est ce que `GET /api/executions/{run}` sert
+    en plus de ce que la fausse API y met déjà.
+    """
+
+    def __init__(self, *, trace: Sequence[dict[str, Any]], versionne: bool = True) -> None:
+        super().__init__()
+        self._trace = list(trace)
+        self._versionne = versionne
+        self.versionnes: list[str] = []
+
+    def demander(
+        self,
+        methode: str,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
+    ) -> Reponse:
+        if chemin.startswith("/api/projets/") and chemin.endswith("/versionner"):
+            self.appels.append((methode, chemin))
+            projet_id = chemin.split("/")[3]
+            self.versionnes.append(projet_id)
+            vcs = {"type": "git", "branche_base": "main"} if self._versionne else None
+            return Reponse(statut=200, corps={"id": projet_id, "vcs": vcs})
+        return super().demander(methode, chemin, corps=corps, params=params, delai_s=delai_s)
+
+    def _execution(self, run_id: str) -> Reponse:
+        reponse = super()._execution(run_id)
+        corps = dict(reponse.corps)
+        corps["evenements"] = list(corps.get("evenements") or []) + self._trace
+        return Reponse(statut=reponse.statut, corps=corps)
+
+
+def test_s11_est_vert_quand_des_sections_sont_au_travail_ensemble(tmp_path: Path) -> None:
+    """Le produit de #1299 : plan large, trois sections au travail ensemble, plafond annoncé."""
+    api = ApiDeFront(trace=_TRACE_DE_FRONT)
+    issue, ctx = _banc(tmp_path, api).jouer(_scenario("S11"))
+
+    assert issue.vert, issue.motif
+    assert "3 tâches au travail en même temps" in issue.motif
+    assert "largeur 4" in issue.motif
+    assert "Jusqu'à 3 tâches de front" in issue.motif
+    # Le montage : un site semé, versionné par le geste de l'écran Projets — jamais
+    # par le banc lui-même —, doté d'une équipe avant la demande.
+    assert api.versionnes == [ctx.projet_id]
+    assert ctx.racine is not None and (ctx.racine / "README.md").is_file()
+    assert (ctx.racine / "styles.css").is_file()
+    chemins = [chemin for _methode, chemin in api.appels]
+    assert chemins.index(f"/api/projets/{ctx.projet_id}/versionner") < chemins.index(
+        f"{FIL}/messages"
+    )
+
+
+def test_s11_est_rouge_quand_les_sections_passent_une_a_une(tmp_path: Path) -> None:
+    """Le produit d'avant #1299 : un plan large, et pourtant jamais deux tâches ensemble.
+
+    Deux intervalles qui se touchent ne se chevauchent pas — sans quoi une file
+    passerait pour du parallélisme.
+    """
+    issue, _ctx = _banc(tmp_path, ApiDeFront(trace=_TRACE_UNE_A_UNE)).jouer(_scenario("S11"))
+
+    assert issue.verdict == "rouge"
+    assert "le plan en laissait partir 4 de front" in issue.motif
+    assert "jamais deux tâches n'ont été au travail ensemble" in issue.motif
+
+
+def test_s11_dit_quand_c_est_le_plan_qui_s_enchaine(tmp_path: Path) -> None:
+    """L'autre défaut, qui se corrige ailleurs (le playbook) : un plan en chaîne."""
+    chaine = (
+        _plan_publie(
+            {"id": "a", "titre": "Tout maquetter", "dependances": []},
+            {"id": "b", "titre": "Intégrer", "dependances": ["a"]},
+        ),
+        _annonce_publiee("Une tâche à la fois par agent."),
+        _statut("a", "en_cours", "01:00"),
+        _statut("a", "terminee", "02:00"),
+        _statut("b", "en_cours", "02:00"),
+        _statut("b", "terminee", "03:00"),
+    )
+    issue, _ctx = _banc(tmp_path, ApiDeFront(trace=chaine)).jouer(_scenario("S11"))
+
+    assert issue.verdict == "rouge"
+    assert "le plan n'a dégagé aucun travail de front (largeur 1)" in issue.motif
+
+
+def test_s11_est_rouge_quand_le_plafond_n_est_pas_annonce(tmp_path: Path) -> None:
+    """Le second critère : le plafond dérivé et son origine s'annoncent dans le journal."""
+    sans_annonce = tuple(e for e in _TRACE_DE_FRONT if e.get("etape_run") != "equipe")
+    issue, _ctx = _banc(tmp_path, ApiDeFront(trace=sans_annonce)).jouer(_scenario("S11"))
+
+    assert issue.verdict == "rouge"
+    assert "n'a pas annoncé son plafond d'instances" in issue.motif
+
+
+def test_s11_est_un_empechement_quand_le_poste_ne_versionne_pas(tmp_path: Path) -> None:
+    """Sans Git sur le poste, S11 ne mesure rien : dit, jamais un rouge, et rien de demandé."""
+    api = ApiDeFront(trace=_TRACE_DE_FRONT, versionne=False)
+    issue, _ctx = _banc(tmp_path, api).jouer(_scenario("S11"))
+
+    assert issue.empechement
+    assert api.conversations == [] and api.runs == []
+
+
+def test_s11_une_relance_rouvre_l_intervalle_de_sa_tache() -> None:
+    """Un échec clôt l'intervalle d'une tâche, sa relance en rouvre un autre.
+
+    Entre les deux, la tâche n'est pas au travail : seul le second intervalle croise
+    celui de `b`, et le pic le dit — deux, par leur titre et leur agent.
+    """
+    from maestro.scenarios.scenarios import _au_travail_ensemble
+
+    trace = [
+        _statut("a", "en_cours", "01:00", agent="dev-1"),
+        _statut("a", "echec", "01:30", agent="dev-1"),
+        _statut("a", "en_cours", "02:00", agent="dev-1"),
+        _statut("b", "en_cours", "02:10", agent="dev-1"),
+        _statut("a", "terminee", "03:00", agent="dev-1"),
+        _statut("b", "terminee", "03:30", agent="dev-1"),
+    ]
+
+    pic, ensemble = _au_travail_ensemble(trace)
+
+    assert pic == 2
+    assert ensemble == ("« Maquetter a » (dev-1)", "« Maquetter b » (dev-1)")
+
+
 def test_le_juge_de_pertinence_encadre_le_projet_l_outillage_et_l_equipe() -> None:
     """ENF-13 : ce que la personne a dit, ce que Maestro a écrit et l'équipe recrutée
     entrent encadrés comme données — aucun des trois ne peut passer pour une consigne."""
@@ -3938,10 +4139,10 @@ def test_plusieurs_scenarios_se_jouent_dans_l_ordre_du_catalogue(tmp_path: Path)
 
 
 def test_un_scenario_inconnu_est_un_usage(tmp_path: Path) -> None:
-    code, _sortie, erreur = _main(["--scenario", "S11"], FausseAPI(), tmp_path)
+    code, _sortie, erreur = _main(["--scenario", "S99"], FausseAPI(), tmp_path)
 
     assert code == banc.CODE_USAGE
-    assert "S11" in erreur.texte
+    assert "S99" in erreur.texte
 
 
 def test_un_argument_inconnu_est_un_usage(tmp_path: Path) -> None:

@@ -138,12 +138,22 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    la première pour être faite — pas parce qu'elle « vient après » dans ton récit. Une dépendance
    de confort sérialise le plan sans raison : ce qui peut se faire en parallèle garde
    `dependances` vide. Le graphe doit rester acyclique.
-4. **Les risques et les inconnues.** Nomme ce qui peut faire échouer le plan : ce que l'objectif
+4. **Le travail qui se fait de front.** Cherche-le, ne te contente pas de ne pas l'empêcher : des
+   tâches indépendantes tournent en même temps, chacune dans sa copie du projet, **même confiées
+   au même rôle**. Quand l'objectif porte sur plusieurs éléments de même nature qui se livrent
+   séparément — les sections d'un site, les pages d'une application, les points d'entrée d'une
+   API, les chapitres d'un document —, fais **une tâche par élément**, sans dépendance entre
+   elles, plutôt qu'une tâche qui les traite tous l'un après l'autre : « maquetter les quatre
+   sections du site » est quatre tâches. Ce qu'ils partagent — une charte, une structure commune
+   — se décide dans une tâche amont dont ils dépendent tous, ou s'écrit dans chacune de leurs
+   descriptions ; ne les enchaîne jamais pour qu'ils se le transmettent. Ce qui les réunit
+   ensuite — l'intégration, l'assemblage — est une tâche qui dépend d'eux tous.
+5. **Les risques et les inconnues.** Nomme ce qui peut faire échouer le plan : ce que l'objectif
    ne dit pas, ce qui dépend d'un existant que tu ne connais pas, ce qui est techniquement
    incertain. Chaque risque atterrit quelque part — une tâche d'investigation placée en tête, ou
    une limite écrite dans la description de la tâche exposée. Un risque que tu ne nommes pas
    devient une tâche en échec.
-5. **La granularité.** Une tâche = un livrable cohérent, délégable à **un seul** agent et
+6. **La granularité.** Une tâche = un livrable cohérent, délégable à **un seul** agent et
    vérifiable seul. Le nombre de tâches est une **conséquence** du découpage, jamais un quota à
    remplir : n'ajoute pas une tâche pour atteindre un compte, ne fonds pas deux livrables
    distincts pour ne pas le dépasser.
@@ -152,10 +162,11 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    as peut-être agrégé des livrables qui se délèguent séparément. **Ce n'est pas un plancher** :
    un objectif d'**action** rend **une** tâche, et un objectif de construction qui n'a réellement
    qu'un livrable en rend une aussi. Ce qui ne se fait jamais, c'est inventer une tâche pour
-   remplir la fourchette.
-6. **Relis ton plan** avant de le rendre : chaque livrable a sa tâche, chaque tâche porte les
+   remplir la fourchette. Un objectif qui porte sur plus d'éléments indépendants qu'elle n'en
+   compte en rend autant, un par élément : c'est la fourchette qui se relit, pas le découpage.
+7. **Relis ton plan** avant de le rendre : chaque livrable a sa tâche, chaque tâche porte les
    quatre sections ci-dessous, les identifiants sont uniques, les dépendances existent, le graphe
-   est acyclique.
+   est acyclique, et aucune tâche n'en attend une autre dont elle n'utilise pas le livrable.
 
 ## Ce que porte chaque tâche
 
