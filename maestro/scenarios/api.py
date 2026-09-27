@@ -439,18 +439,20 @@ class ClientAPI:
     ## Deux délais, selon qui rédige la réponse (#1232)
 
     La plupart des routes répondent sans le modèle, et le délai ordinaire du
-    transport leur suffit. Quatre ne le peuvent pas : `envoyer` et
+    transport leur suffit. Six ne le peuvent pas : `envoyer` et
     `envoyer_en_direct` (le fil juge le message et rédige sa réponse, rendue
     d'un coup ou au fil de l'eau), `proposition_equipe` (un playbook rédigé par
-    rôle, #257) et `declarer_par_le_fil` (la réponse rédigée sur le projet
-    déclaré, et la lecture d'un dossier importé, #1294). Elles durent ce que dure
+    rôle, #257), `declarer_par_le_fil` (la réponse rédigée sur le projet
+    déclaré, et la lecture d'un dossier importé, #1294), `repondre_question` et
+    `trancher_piece` (la suite comprise par le modèle, et la pièce suivante
+    vérifiée par l'exécution, #1161). Elles durent ce que dure
     le modèle, et **l'écran ne les borne pas** : un banc qui les coupait à 30 s
     jugeait un produit plus pressé que celui qu'un utilisateur a sous les yeux.
     Mesuré le 2026-09-23 : la proposition d'équipe a tenu en 17 s, puis ≈ 26 s,
     puis a dépassé 30 s sur la première requête d'une API qui venait de démarrer
     — et S1 n'a jamais envoyé sa demande.
 
-    Ces quatre verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
+    Ces six verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
     déjà au modèle pour un run (`--delai`, `DELAI_RUN_S`) : une borne contre une
     API figée, pas une attente. Le classement se fait **ici, sur le code des
     routes** — `trancher_cadrage` et `recruter` n'appellent aucun modèle et
@@ -681,6 +683,42 @@ class ClientAPI:
             delai_s=self._delai_modele_s,
         )
         return _reponse_de(corps, chemin=f"{FIL}/projet")
+
+    def repondre_question(
+        self, *, conversation: str, valeur: str, libre: bool = False
+    ) -> dict[str, Any]:
+        """Répond d'un geste à la question d'outillage que le fil porte (#1031, #1147).
+
+        `valeur` est une option de la carte, ou — `libre` — une réponse avec ses mots.
+        La suite est comprise par le modèle, puis la première pièce vérifiée par
+        l'exécution (#1161) : la marge du modèle, pas le délai ordinaire.
+        """
+        corps = self._appel(
+            "POST",
+            f"{FIL}/outillage",
+            corps={"valeur": valeur, "libre": libre, "conversation": conversation},
+            delai_s=self._delai_modele_s,
+        )
+        return _reponse_de(corps, chemin=f"{FIL}/outillage")
+
+    def trancher_piece(
+        self, *, conversation: str, decision: str, piece: str = ""
+    ) -> dict[str, Any]:
+        """Tranche d'un geste la pièce d'outillage que le fil propose (#1161), et rend la suite.
+
+        `piece` est l'**empreinte** de la version que la carte montrait, comme l'écran
+        la rend : un double geste tombe sur le `409` au lieu d'écrire la pièce
+        suivante. La réponse porte ce qui a été fait (`piece_ecrite`) et la pièce
+        d'après, **déjà vérifiée par l'exécution**, rédigée par le modèle : la marge du
+        modèle, pas le délai ordinaire.
+        """
+        corps = self._appel(
+            "POST",
+            f"{FIL}/outillage/piece",
+            corps={"decision": decision, "piece": piece, "conversation": conversation},
+            delai_s=self._delai_modele_s,
+        )
+        return _reponse_de(corps, chemin=f"{FIL}/outillage/piece")
 
     # --- Les runs -------------------------------------------------------
 

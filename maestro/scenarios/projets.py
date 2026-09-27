@@ -171,6 +171,135 @@ def semer_projet_existant(racine: Path) -> None:
     )
 
 
+#: Le type d'un projet C# « SDK » dans une solution — la valeur que `dotnet sln add`
+#: écrit. Les deux identifiants de projet, eux, sont arbitraires et fixes : un semis
+#: qui changerait à chaque passage ferait lire deux dépôts différents au même scénario.
+TYPE_PROJET_CSHARP = "{9A19103F-16F7-4668-BE54-9A1E7A4F7556}"
+_PROJETS_DE_LA_SOLUTION = (
+    ("Depensio", "src\\Depensio\\Depensio.csproj", "{8C3F2A51-6B0E-4D0A-9F43-1E2B3C4D5E61}"),
+    (
+        "Depensio.Tests",
+        "tests\\Depensio.Tests\\Depensio.Tests.csproj",
+        "{2B7D9E14-3A5C-4F68-8B21-7C9D0E1F2A43}",
+    ),
+)
+
+
+def cadre_dotnet(version: str) -> str:
+    """Le cadre cible que le SDK du poste construit et fait tourner — `9.0.203` → `net9.0`.
+
+    Lu sur le poste (`dotnet --version`) et jamais écrit en dur : une solution qui
+    viserait un autre cadre que celui du SDK installé ne se testerait pas faute de
+    runtime, et S10 serait rouge pour une raison qui ne dit rien du produit. Lève
+    `ValueError` sur une version illisible.
+    """
+    premiere = (version or "").strip().splitlines()[0].strip() if (version or "").strip() else ""
+    morceaux = premiere.split(".")
+    if len(morceaux) < 2 or not morceaux[0].isdigit() or not morceaux[1].isdigit():
+        raise ValueError(f"version de dotnet illisible : {version!r}")
+    return f"net{int(morceaux[0])}.{int(morceaux[1])}"
+
+
+def semer_solution_dotnet(racine: Path, *, cadre: str) -> None:
+    """Une solution .NET réelle — ce que S10 **reprend** : une bibliothèque et ses tests.
+
+    La pile que #1158 prend pour exemple, et c'est la condition du scénario : **aucune
+    table** de `maestro.outillage.detection` ne la connaît — ni `.sln` ni `.csproj`
+    n'y sont des marqueurs de gestionnaire, et aucune commande .NET n'y est écrite
+    (gardé par `test_s10_seme_une_pile_qu_aucune_table_ne_connait`). Le README ne dit
+    pas comment construire ni tester : c'est à la lecture du projet de le comprendre.
+
+    Les tests passent par xunit, comme ceux d'un dépôt .NET ordinaire — donc par
+    NuGet, et le premier passage d'un poste télécharge ses paquets.
+    """
+    projet, tests = racine / "src" / "Depensio", racine / "tests" / "Depensio.Tests"
+    projet.mkdir(parents=True, exist_ok=True)
+    tests.mkdir(parents=True, exist_ok=True)
+    (racine / "Depensio.sln").write_text(_solution(), encoding="utf-8")
+    (racine / ".gitignore").write_text("bin/\nobj/\n", encoding="utf-8")
+    (racine / "README.md").write_text(
+        "# Dépensio\n\nSuivi de dépenses personnelles, en C#.\n", encoding="utf-8"
+    )
+    (projet / "Depensio.csproj").write_text(
+        '<Project Sdk="Microsoft.NET.Sdk">\n'
+        "  <PropertyGroup>\n"
+        f"    <TargetFramework>{cadre}</TargetFramework>\n"
+        "    <Nullable>enable</Nullable>\n"
+        "    <ImplicitUsings>enable</ImplicitUsings>\n"
+        "  </PropertyGroup>\n"
+        "</Project>\n",
+        encoding="utf-8",
+    )
+    (projet / "Depenses.cs").write_text(
+        "namespace Depensio;\n\n"
+        "public static class Depenses\n{\n"
+        "    public static decimal Total(IEnumerable<decimal> montants) => montants.Sum();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tests / "Depensio.Tests.csproj").write_text(
+        '<Project Sdk="Microsoft.NET.Sdk">\n'
+        "  <PropertyGroup>\n"
+        f"    <TargetFramework>{cadre}</TargetFramework>\n"
+        "    <Nullable>enable</Nullable>\n"
+        "    <ImplicitUsings>enable</ImplicitUsings>\n"
+        "    <IsPackable>false</IsPackable>\n"
+        "  </PropertyGroup>\n"
+        "  <ItemGroup>\n"
+        '    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />\n'
+        '    <PackageReference Include="xunit" Version="2.9.2" />\n'
+        '    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />\n'
+        "  </ItemGroup>\n"
+        "  <ItemGroup>\n"
+        '    <ProjectReference Include="..\\..\\src\\Depensio\\Depensio.csproj" />\n'
+        "  </ItemGroup>\n"
+        "</Project>\n",
+        encoding="utf-8",
+    )
+    (tests / "DepensesTests.cs").write_text(
+        "using Xunit;\n\n"
+        "namespace Depensio.Tests;\n\n"
+        "public class DepensesTests\n{\n"
+        "    [Fact]\n"
+        "    public void Le_total_additionne_les_montants() =>\n"
+        "        Assert.Equal(6m, Depenses.Total(new[] { 1m, 2m, 3m }));\n\n"
+        "    [Fact]\n"
+        "    public void Le_total_d_une_liste_vide_est_nul() =>\n"
+        "        Assert.Equal(0m, Depenses.Total(Array.Empty<decimal>()));\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+
+def _solution() -> str:
+    """Le `.sln` des deux projets, dans la forme que `dotnet new sln` puis `sln add` écrivent."""
+    lignes = [
+        "",
+        "Microsoft Visual Studio Solution File, Format Version 12.00",
+        "# Visual Studio Version 17",
+        "VisualStudioVersion = 17.0.31903.59",
+        "MinimumVisualStudioVersion = 10.0.40219.1",
+    ]
+    for nom, chemin, guid in _PROJETS_DE_LA_SOLUTION:
+        lignes += [f'Project("{TYPE_PROJET_CSHARP}") = "{nom}", "{chemin}", "{guid}"', "EndProject"]
+    lignes += [
+        "Global",
+        "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution",
+        "\t\tDebug|Any CPU = Debug|Any CPU",
+        "\t\tRelease|Any CPU = Release|Any CPU",
+        "\tEndGlobalSection",
+        "\tGlobalSection(ProjectConfigurationPlatforms) = postSolution",
+    ]
+    for _nom, _chemin, guid in _PROJETS_DE_LA_SOLUTION:
+        for config in ("Debug", "Release"):
+            lignes += [
+                f"\t\t{guid}.{config}|Any CPU.ActiveCfg = {config}|Any CPU",
+                f"\t\t{guid}.{config}|Any CPU.Build.0 = {config}|Any CPU",
+            ]
+    lignes += ["\tEndGlobalSection", "EndGlobal", ""]
+    return "\n".join(lignes)
+
+
 def semer_hors_du_projet(racine: Path, dehors: Path) -> Path:
     """Le projet de S8, et le registre **hors de sa racine** qu'il tiendra (#1324).
 
