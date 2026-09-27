@@ -332,8 +332,7 @@ class DemandeValidation:
 #: plus qu'un oui ou un non : la **consigne** d'un refus, que l'agent lira, ou
 #: l'**étendue** d'une approbation. Un booléen reste une réponse entière.
 Validateur = Callable[
-    [DemandeValidation],
-    bool | DecisionHumaine | Awaitable[bool] | Awaitable[DecisionHumaine],
+    [DemandeValidation], bool | DecisionHumaine | Awaitable[bool | DecisionHumaine]
 ]
 
 

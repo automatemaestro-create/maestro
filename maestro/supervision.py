@@ -55,6 +55,7 @@ from maestro.agents.mcp import McpStore
 from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
 from maestro.config import ConfigError, Settings, load_settings
+from maestro.decision_humaine import DecisionHumaine
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
 from maestro.engine.guardrails import DemandeValidation, Validateur
 from maestro.telemetry import RunJournal, collect_usage
@@ -195,18 +196,28 @@ class NotificateurRun:
         prévient l'équipe que le run est en pause — et son échec éventuel est
         consigné sans altérer la décision : celle-ci reste entièrement celle du
         validateur enveloppé (fail-safe des garde-fous compris).
+
+        Entièrement, y compris ce qu'elle dit **de plus** qu'un oui ou un non
+        (#1185) : une `DecisionHumaine` — la consigne d'un refus, l'étendue d'une
+        approbation — est rendue telle quelle. La ramener à un booléen ferait
+        perdre à l'agent ce qu'on lui a dit de faire à la place, dès qu'une
+        supervision est câblée.
         """
 
-        async def _valide(demande: DemandeValidation) -> bool:
+        async def _valide(demande: DemandeValidation) -> bool | DecisionHumaine:
             await self._notifie(
                 journal,
                 etape=f"{demande.task_id}{SUFFIXE_ETAPE_NOTIFICATION}",
                 nom=f"Notification de supervision — validation en attente : {demande.titre}",
                 message=_message_validation(demande),
             )
-            decision: bool | Awaitable[bool] = validateur(demande)
+            decision: bool | DecisionHumaine | Awaitable[bool | DecisionHumaine] = validateur(
+                demande
+            )
             if inspect.isawaitable(decision):
                 decision = await decision
+            if isinstance(decision, DecisionHumaine):
+                return decision
             return bool(decision)
 
         return _valide

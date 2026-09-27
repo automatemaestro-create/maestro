@@ -40,6 +40,7 @@ from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import AgentDefinition, AgentStore
 from maestro.config import ConfigError, Settings
+from maestro.decision_humaine import DecisionHumaine
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
     STATUT_ECHEC,
@@ -459,6 +460,25 @@ def test_un_validateur_asynchrone_est_attendu(store):
     valide = _notificateur(store, Publieur()).validateur_notifiant(valideur, RunJournal())
 
     assert asyncio.run(valide(_demande())) is True
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        DecisionHumaine(approuve=False, motif="archive au lieu de supprimer"),
+        DecisionHumaine(approuve=True, etendue="run"),
+    ],
+)
+def test_la_consigne_et_l_etendue_traversent_l_enveloppe(store, decision):
+    # #1185 : une décision qui dit plus qu'un oui ou un non passe telle quelle. La
+    # ramener à un booléen ferait perdre à l'agent la consigne d'un refus — et à la
+    # personne l'accord qu'elle vient d'étendre — dès qu'une supervision est câblée.
+    async def valideur(demande: DemandeValidation) -> DecisionHumaine:
+        return decision
+
+    valide = _notificateur(store, Publieur()).validateur_notifiant(valideur, RunJournal())
+
+    assert asyncio.run(valide(_demande())) == decision
 
 
 # --- ③ Best-effort : l'échec est consigné, il n'altère ni le run ni la décision -----------
