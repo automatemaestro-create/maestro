@@ -32,3 +32,16 @@ class BriefParsingError(OrchestratorError):
 
 class BriefValidationError(OrchestratorError):
     """Le brief enfreint la JSON Schema partagée `brief.schema.json` (#318)."""
+
+
+class RattrapageParsingError(OrchestratorError):
+    """La réponse du modèle n'a pas pu être décodée en un objet JSON de rattrapage (#1178)."""
+
+
+class RattrapageValidationError(OrchestratorError):
+    """Le rattrapage proposé enfreint ce que l'exécution exige (#1178).
+
+    Rejouer à l'identique un échec non passager, retenter sans rien changer,
+    ajouter un acte accordé, abandonner sans réponse de l'utilisateur : le
+    message dit lequel, et il est consigné au journal.
+    """

@@ -45,6 +45,8 @@ Pas un nombre de tentatives : un **fait**.
 
 Le nombre de critères est fini et chaque tour doit en gagner un, donc la boucle **finit toujours**, budget posé ou non. Un échec motivé dit combien de critères tiennent, après combien de livraisons, pourquoi la boucle s'est arrêtée, et chaque preuve. **Ce n'est jamais un vert.**
 
+**Puis le rattrapage** (#1178, [docs/04 §3.1](./04-specifications-agents.md), `maestro/engine/rattrapage.py`) : un échec motivé est un échec comme un autre pour le Chef de projet. Il le juge, motif et preuves en main, et peut le retenter autrement (autre approche, autre agent, tâche redécoupée), ou le demander dans le fil. La tentative différente repasse par la même vérification. Seul le **budget dépensé** ne se rattrape pas : c'est une borne, pas un échec.
+
 ## 4. La QA dans la même boucle
 
 Le vérificateur d'une tâche qui dépend d'autres tâches dit aussi si son livrable **rend un verdict « non conforme »** sur l'une d'elles. C'est le modèle qui le lit, jamais un lexique (#746). La boucle du run (`maestro/engine/loop.py`) enchaîne alors trois gestes :

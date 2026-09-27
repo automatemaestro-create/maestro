@@ -103,6 +103,14 @@ def est_transitoire(erreur: BaseException) -> bool:
     plus : la boucle de vérification s'est arrêtée sur un fait — la correction
     n'a rien fait gagner, ou ce qui reste ne se vérifie pas —, et relancer la
     tâche rejouerait la même boucle sur les mêmes critères.
+
+    ⚠ Depuis #1178, la présomption n'est plus le dernier mot quand le rattrapage
+    est armé (`maestro.engine.rattrapage`) : ce qu'elle dit transitoire est encore
+    **jugé** par le Chef de projet avant chaque relance, et seul ce qu'il dit
+    passager se rejoue. Elle reste la règle quand il n'y a pas de juge (worker,
+    moteur sans rattrapage) ou quand il n'a rien pu dire. Ce qu'elle exclut, elle,
+    n'est jamais relancé à l'identique — et n'atteint le juge qu'à l'étage de la
+    tâche, pour une tentative différente.
     """
     return not isinstance(
         erreur,

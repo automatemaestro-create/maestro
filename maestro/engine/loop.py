@@ -44,6 +44,14 @@ statut explicite `bloquee`, jamais transmises à l'exécuteur (donc jamais mises
 file), blocage propagé en cascade — pas d'exécution orpheline. Le rapport agrège
 réussites, échecs et blocages.
 
+Depuis #1178, un échec **se rattrape** avant de bloquer quoi que ce soit, quand le
+rattrapage est armé (`maestro.engine.rattrapage`, armé sur `default()`) : le Chef
+de projet juge la cause, une tentative différente part — la tâche reprise
+autrement, confiée à un autre agent, ou redécoupée —, les tâches aval sont
+ajustées et repartent dès qu'elle aboutit, sans relancer le run. Ce qu'il ne sait
+pas lever devient une question dans le fil, et le run attend la réponse. Le
+blocage de #43 reste l'issue de ce qui n'a pas pu être rattrapé.
+
 Chaque étape (planification comprise) est **journalisée et mesurée** (#8) : durée
 horloge chronométrée, tokens/coût/outils récoltés auprès du fournisseur via
 `maestro.telemetry.collect_usage`, le tout consigné dans un `RunJournal` (une ligne
@@ -97,6 +105,7 @@ from maestro.agents.store import (
     catalogue_hors_projet,
 )
 from maestro.config import Settings, load_settings
+from maestro.deliberation import cle_acte
 from maestro.engine.brief import (
     MODE_BRIEF_AUTO,
     MODE_BRIEF_HUMAIN,
@@ -124,7 +133,20 @@ from maestro.engine.executor import (
 )
 from maestro.engine.guardrails import Guardrails
 from maestro.engine.pause import PorteExecution
-from maestro.engine.questions import ArbitreQuestion
+from maestro.engine.questions import ArbitreQuestion, DemandeQuestion, identifiant_question
+from maestro.engine.rattrapage import (
+    RATTRAPAGE_DEFAUT,
+    VERBE_RATTRAPAGE,
+    Dossier,
+    JugeDesEchecs,
+    PolitiqueRattrapage,
+    Refus,
+    Verdict,
+    consigne_issue,
+    consigne_question,
+    hypothese_du_rattrapage,
+    question_du_rattrapage,
+)
 from maestro.engine.renfort import (
     STATUT_RENFORT_DECLINE,
     STATUT_RENFORT_RECRUTE,
@@ -139,13 +161,20 @@ from maestro.engine.verification import (
     SUFFIXE_ETAPE_VERIFICATION,
     Constat,
     Renvoi,
-    Verdict,
     VerificateurTaches,
 )
+from maestro.engine.verification import Verdict as VerdictVerification
 from maestro.equipe.manque import ManqueAuPlan, manque_au_plan
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
+from maestro.orchestrator.rattrapage import (
+    GESTE_ABANDONNER,
+    Rattrapage,
+    Tentative,
+    tache_reprise,
+    taches_redecoupees,
+)
 from maestro.orchestrator.schema import Brief, Clarification, Task, topological_order
 from maestro.plan_run import noeuds_du_plan
 from maestro.projets.store import ProjetStore
@@ -172,6 +201,10 @@ __all__ = [
     "RunReport",
     "TaskResult",
 ]
+
+#: Le passage d'une tâche vers l'exécuteur, porte de pause et plafond compris —
+#: celui qu'une tentative de rattrapage emprunte comme une tâche du plan (#1178).
+_Executer = Callable[[Task, Sequence[TaskResult]], Awaitable[TaskResult]]
 
 
 @dataclass(frozen=True)
@@ -434,6 +467,7 @@ class OrchestrationEngine:
         bornes_question: BornesArbitrage | None = None,
         arbitre_renfort: ArbitreRenfort | None = None,
         verificateur: VerificateurTaches | None = None,
+        rattrapage: PolitiqueRattrapage | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -486,6 +520,23 @@ class OrchestrationEngine:
         # agent adresse à un pair : là non plus, None ne retire rien d'essentiel
         # — le journal reste la livraison, et il n'y a alors personne à prévenir.
         self._mailbox = mailbox
+        # Le rattrapage d'une tâche en échec (#1178) — None : l'échec barre son
+        # aval, la conduite d'avant. Armé, le Chef de projet juge chaque échec aux
+        # deux étages où l'on retente (`maestro.engine.rattrapage`) : l'exécuteur
+        # lui demande avant chaque relance, la boucle exécute la tentative
+        # différente qu'il décide, et pose dans le fil ce qu'il ne sait pas lever.
+        # La question part par le même canal qu'une question d'agent (#1023) —
+        # d'où le `questionneur` et sa borne, retenus ici aussi —, et un rejeu
+        # jugé passager attend le backoff de la relance.
+        self._rattrapage = rattrapage
+        self._relance = relance
+        self._questionneur = questionneur
+        self._bornes_question = bornes_question or BornesArbitrage()
+        self._juge = (
+            JugeDesEchecs(orchestrator, self._equipe, self._guardrails)
+            if rattrapage is not None
+            else None
+        )
         # Frontière d'exécution (#41) : en process par défaut ; un exécuteur injecté
         # (ex. `maestro.queue.CeleryExecutor`) distribue les tâches à des workers.
         # `playbooks` (#78), `capacites` (#86), `mcp` (#104) et `projets` (#224) :
@@ -532,6 +583,11 @@ class OrchestrationEngine:
                 # l'exécuteur qui tient l'espace de travail où ses contrôles se
                 # jouent. Ignoré si un exécuteur est injecté, qui câble le sien.
                 verificateur=verificateur,
+                # Le juge des relances (#1178) : la relance d'une tentative n'est
+                # plus présumée, le Chef de projet la juge. Ignoré si un exécuteur
+                # est injecté — un worker ne voit pas le plan du run, et garde la
+                # présomption ; la boucle rattrape quand même ce qu'il rend.
+                juge=self._juge,
             )
         )
 
@@ -550,6 +606,7 @@ class OrchestrationEngine:
         questionneur: ArbitreQuestion | None = None,
         arbitre_renfort: ArbitreRenfort | None = None,
         verification: bool = True,
+        rattrapage: PolitiqueRattrapage | None = RATTRAPAGE_DEFAUT,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -640,6 +697,13 @@ class OrchestrationEngine:
         fournisseur du run, avec le modèle de `MAESTRO_MODEL` s'il est posé, celui
         de l'agent vérifié sinon. `verification=False` l'éteint — un choix qu'on
         fait en le disant, jamais un défaut.
+
+        Le **rattrapage** d'une tâche en échec (#1178) est **armé par défaut**
+        (`RATTRAPAGE_DEFAUT`), comme la relance : sur les vrais runs, un échec est
+        jugé par le Chef de projet, retenté autrement, et ce qu'il ne sait pas
+        lever est demandé dans le fil — par le `questionneur`, sous la même borne
+        qu'une question d'agent. `rattrapage=None` rend la conduite d'avant :
+        l'échec barre son aval.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -674,6 +738,7 @@ class OrchestrationEngine:
             verificateur=(
                 VerificateurTaches(provider, modele=settings.model) if verification else None
             ),
+            rattrapage=rattrapage,
         )
 
     async def run(
@@ -800,6 +865,14 @@ class OrchestrationEngine:
         await self._confronte_equipe(objective, tasks, projet_id, journal)
         ordered = topological_order(tasks)
         dependants = _dependants_directs(ordered)
+        # Le juge des échecs apprend l'objectif et le plan (#1178) : c'est de là
+        # qu'il lit ce qui attend une tâche en échec, aux deux étages.
+        if self._juge is not None:
+            self._juge.suit(journal.run_id, objective, ordered)
+        # Les tâches aval dont un rattrapage a ajusté la description (#1178) : lues
+        # juste avant leur exécution, donc après celle qu'elles attendaient — c'est
+        # le seul moment où les ajuster ne réécrit rien qui ait déjà tourné.
+        ajustements: dict[str, str] = {}
         # Boîte de diffusion ouverte avant toute exécution (pub/sub sans rejeu :
         # aucune annonce ne peut être manquée) — None sans messagerie (#44).
         relais = (
@@ -825,10 +898,18 @@ class OrchestrationEngine:
                 return refaits[tache_id]
             return en_vol[tache_id].result()
 
-        async def executer(task: Task, dependances: Sequence[TaskResult]) -> TaskResult:
-            # Une exécution engagée — la première comme une reprise demandée par
-            # la QA : la porte de pause (#477) d'abord, le créneau ensuite.
+        async def _executer(task: Task, dependances: Sequence[TaskResult]) -> TaskResult:
+            # Le seul passage vers l'exécuteur, pour une tâche du plan comme pour
+            # une tentative de rattrapage (#1178) ou une reprise demandée par la QA
+            # (#1177) : la porte de pause et le plafond d'exécutions simultanées
+            # valent pour toutes.
             if porte is not None:
+                # La pause (#477), et elle est **ici** : la dernière ligne
+                # avant que quoi que ce soit ne soit engagé. Franchie avant le
+                # sémaphore, pour la raison qui vaut déjà des dépendances —
+                # une tâche qui attend n'occupe pas un créneau. Une tâche déjà
+                # passée n'a plus de porte devant elle : elle finit, et c'est
+                # ce qui distingue une pause d'une annulation.
                 await porte.franchir()
             if semaphore is None:
                 return await self._executor.execute(task, dependances, journal)
@@ -856,24 +937,39 @@ class OrchestrationEngine:
                 # d'un run figé — l'aval d'un échec doit se lire tout de suite.
                 result = _consigne_blocage(task, insatisfaites, journal)
             else:
-                # La pause (#477) est franchie dans `executer`, et elle est **là**
-                # : la dernière ligne avant que quoi que ce soit ne soit engagé.
-                # Franchie avant le sémaphore, pour la raison qui vaut déjà des
-                # dépendances — une tâche qui attend n'occupe pas un créneau. Une
-                # tâche déjà passée n'a plus de porte devant elle : elle finit, et
-                # c'est ce qui distingue une pause d'une annulation.
-                result = await executer(task, dependances)
+                if task.id in ajustements:
+                    # Un rattrapage en amont a changé ce que cette tâche reçoit
+                    # (#1178) : elle part sur la description qui en tient compte.
+                    task = replace(task, description=ajustements[task.id])
+                result = await _executer(task, dependances)
+                if not result.ok:
+                    # Une tâche en échec se rattrape (#1178) : jugée, retentée
+                    # autrement, ou demandée dans le fil. L'aval l'attend — c'est
+                    # son `await` ci-dessus —, donc il repart sur ce qu'elle rend,
+                    # sans que rien d'autre ne soit relancé.
+                    result = await self._rattrape(
+                        task, result, dependances, journal, _executer, ajustements
+                    )
                 if result.ok and result.renvois:
                     # Le verdict « non conforme » d'une QA (#1177) : les livrables
-                    # visés repartent à leur rôle producteur, puis la QA rejuge.
+                    # visés repartent à leur rôle producteur, puis la QA rejuge. Un
+                    # producteur repart sur la description qu'il a reçue, ajustement
+                    # d'un rattrapage compris (#1178).
                     result = await self._renvoie_aux_producteurs(
                         task,
                         result,
                         dependances,
                         journal,
-                        par_id=par_id,
+                        par_id={
+                            tache_id: (
+                                replace(tache, description=ajustements[tache_id])
+                                if tache_id in ajustements
+                                else tache
+                            )
+                            for tache_id, tache in par_id.items()
+                        },
                         resultat_de=resultat_de,
-                        executer=executer,
+                        executer=_executer,
                         refaits=refaits,
                     )
             if relais is not None and dependants[task.id]:
@@ -1378,6 +1474,322 @@ class OrchestrationEngine:
             or self._agents
         )
 
+    async def _rattrape(
+        self,
+        task: Task,
+        echec: TaskResult,
+        dependances: Sequence[TaskResult],
+        journal: RunJournal,
+        executer: _Executer,
+        ajustements: dict[str, str],
+    ) -> TaskResult:
+        """Rattrape une tâche en échec : jugée, retentée autrement, ou demandée (#1178).
+
+        Rend le résultat qui **tient lieu** de celui de la tâche du plan — son
+        identifiant, son titre, et l'usage de tout ce qui a été dépensé pour elle
+        (tentatives et diagnostics) : c'est lui que l'aval reçoit, et lui que le
+        rapport agrège.
+
+        La boucle, dans cet ordre :
+
+        1. le **budget** d'abord — un plafond atteint n'engage plus rien ;
+        2. le **jugement** du Chef de projet : celui que l'exécuteur a rendu avant
+           de renoncer à relancer (`JugeDesEchecs.retenu`), sinon un nouveau, sur
+           toute l'histoire de la tâche ;
+        3. son **geste** : rejouer ou retenter — la tentative part, et si elle
+           aboutit les tâches aval sont ajustées puis repartent —, abandonner sur
+           la réponse de l'utilisateur, ou **demander** ;
+        4. une **question** dans le fil, quand le Chef de projet la pose, quand sa
+           proposition est refusée ou illisible, ou quand les tentatives sont
+           épuisées : la cause et les tentatives faites y sont écrites, et le run
+           attend la réponse, sous la borne d'une question d'agent. Une réponse
+           ouvre une nouvelle série de tentatives.
+
+        Rien ici ne lève : ce qui n'aboutit pas rend l'échec, avec ce qui l'a
+        arrêté, et l'aval se bloque comme avant (#43).
+        """
+        juge, politique = self._juge, self._rattrapage
+        if (
+            juge is None
+            or politique is None
+            or echec.statut != STATUT_ECHEC
+            or not echec.rattrapable
+        ):
+            return echec
+        dossier = juge.ouvre(journal.run_id, task)
+        dossier.tentatives.append(
+            Tentative(
+                taches=(task,),
+                agent=echec.agent,
+                role=echec.role,
+                erreur=echec.erreur or "",
+            )
+        )
+        usage = echec.usage
+        dernier = echec
+        essais = questions = tours = 0
+        diagnostic = issue = ""
+        budget_depense = "le budget du run est dépensé, aucune tentative de plus n'est engagée"
+        try:
+            while True:
+                if juge.budget_epuise(journal):
+                    issue = budget_depense
+                    break
+                retenu = juge.retenu(journal.run_id, task.id)
+                verdict: Verdict | None = None
+                if essais < politique.max_tentatives:
+                    verdict = retenu
+                    if verdict is None:
+                        verdict, cout = await juge.juge(dossier, journal)
+                        usage = usage.fusion(cout)
+                elif isinstance(retenu, Rattrapage):
+                    # Les tentatives sont épuisées : ce que le juge proposait ne
+                    # part pas, mais ce qu'il a compris va dans la question.
+                    diagnostic = retenu.diagnostic
+                question = ""
+                # Pourquoi on en vient à demander — c'est ce que l'issue dira si
+                # la question ne peut pas partir, ou ne reçoit pas de réponse.
+                if essais >= politique.max_tentatives:
+                    motif = f"{essais} tentative(s) sans succès"
+                elif isinstance(verdict, Refus):
+                    motif = f"la proposition du Chef de projet est refusée ({verdict.raison})"
+                elif verdict is None:
+                    motif = "le Chef de projet n'a pas pu juger l'échec"
+                else:
+                    motif = "il faut une réponse de l'utilisateur"
+                if isinstance(verdict, Rattrapage):
+                    diagnostic = verdict.diagnostic
+                    if verdict.execute:
+                        essais += 1
+                        tours += 1
+                        resultat, executees, geste = await self._retente(
+                            task, verdict, dependances, journal, executer, tours, dossier
+                        )
+                        usage = usage.fusion(resultat.usage)
+                        if resultat.ok:
+                            ajustements.update(verdict.ajustements)
+                            return replace(resultat, usage=usage)
+                        dossier.tentatives.append(
+                            Tentative(
+                                taches=executees,
+                                agent=resultat.agent,
+                                role=resultat.role,
+                                erreur=resultat.erreur or "",
+                                geste=geste,
+                                diagnostic=verdict.diagnostic,
+                            )
+                        )
+                        dernier = resultat
+                        continue
+                    if verdict.geste == GESTE_ABANDONNER:
+                        issue = (
+                            "abandonnée sur la réponse de l'utilisateur — "
+                            f"« {(dossier.reponse or '').strip()} »"
+                        )
+                        break
+                    question = verdict.question
+                if juge.budget_epuise(journal):
+                    # Le diagnostic a pu dépenser le reste du budget : une réponse
+                    # n'engagerait plus rien, et la question serait posée pour rien.
+                    issue = budget_depense
+                    break
+                if questions >= politique.max_questions:
+                    issue = f"{motif}, et plus aucune question ne peut être posée"
+                    break
+                if self._questionneur is None:
+                    issue = (
+                        f"{motif}, et personne n'est branché sur ce run pour le demander"
+                    )
+                    break
+                texte = question_du_rattrapage(task, dossier, question, diagnostic)
+                reponse = await self._demande(task, texte, journal)
+                questions += 1
+                if reponse is None:
+                    issue = "la question posée dans le fil est restée sans réponse"
+                    break
+                dossier.question, dossier.reponse = texte, reponse
+                essais = 0
+        finally:
+            juge.ferme(journal.run_id, task.id)
+        consigne_issue(journal, task, dernier.erreur or "", issue)
+        return replace(
+            dernier,
+            task_id=task.id,
+            titre=task.titre,
+            statut=STATUT_ECHEC,
+            erreur=f"{dernier.erreur} — rattrapage : {issue}.",
+            usage=usage,
+        )
+
+    async def _retente(
+        self,
+        task: Task,
+        verdict: Rattrapage,
+        dependances: Sequence[TaskResult],
+        journal: RunJournal,
+        executer: _Executer,
+        tour: int,
+        dossier: Dossier,
+    ) -> tuple[TaskResult, tuple[Task, ...], str]:
+        """Exécute la tentative que le verdict décide, et rend son issue.
+
+        Trois formes, et c'est le verdict qui choisit : la tâche **rejouée** telle
+        quelle (échec passager), la tâche **reprise** autrement — sous son propre
+        identifiant, pour que sa carte repasse « en cours » —, ou la tâche
+        **redécoupée** en plusieurs. Rend aussi ce qui a été exécuté et comment,
+        pour la ligne d'histoire d'un nouvel échec.
+        """
+        if verdict.rejoue:
+            dossier.en_cours = "rejouée à l'identique (jugée passagère)"
+            if self._relance is not None:
+                await asyncio.sleep(self._relance.attente_s(tour))
+            return await executer(task, dependances), (task,), dossier.en_cours
+        if len(verdict.taches) == 1:
+            dossier.en_cours = "reprise autrement"
+            reprise = tache_reprise(task, verdict.taches[0])
+            return await executer(reprise, dependances), (reprise,), dossier.en_cours
+        sous = taches_redecoupees(task, verdict.taches, tour)
+        dossier.en_cours = f"redécoupée en {len(sous)} tâches"
+        resultat = await self._redecoupe(task, sous, dependances, journal, executer)
+        return resultat, sous, dossier.en_cours
+
+    async def _redecoupe(
+        self,
+        task: Task,
+        sous: Sequence[Task],
+        dependances: Sequence[TaskResult],
+        journal: RunJournal,
+        executer: _Executer,
+    ) -> TaskResult:
+        """Exécute un redécoupage comme un petit plan ; rend le résultat de la tâche remplacée.
+
+        Même régime que la boucle principale, en plus court : chaque tâche attend
+        les siennes, un échec bloque ce qui en dépend (#43), et ce qui ne s'attend
+        pas s'exécute de front. Chacune reçoit ce que la tâche d'origine avait
+        reçu de ses dépendances du plan, plus les livrables des tâches du
+        redécoupage dont elle dépend.
+
+        Tout abouti : les livrables sont **rassemblés** sous l'identifiant de la
+        tâche du plan, et sa ligne au journal la dit terminée — à usage nul,
+        chaque tâche du redécoupage ayant consigné le sien. Sinon : un échec qui
+        cite celles qui ont échoué.
+        """
+        issues: dict[str, asyncio.Task[TaskResult]] = {}
+
+        async def une(sous_tache: Task) -> TaskResult:
+            propres = [await issues[dep] for dep in sous_tache.dependances]
+            insatisfaites = [dep for dep in propres if not dep.ok]
+            if insatisfaites:
+                return _consigne_blocage(sous_tache, insatisfaites, journal)
+            return await executer(sous_tache, [*dependances, *propres])
+
+        ordre = topological_order(sous)
+        try:
+            async with asyncio.TaskGroup() as tg:
+                for sous_tache in ordre:
+                    issues[sous_tache.id] = tg.create_task(une(sous_tache))
+        finally:
+            if self._juge is not None:
+                # Un verdict rendu sur une tâche du redécoupage, à l'étage de sa
+                # tentative, ne sert à personne ensuite : c'est la tâche du plan
+                # que la boucle rejuge. On ne le garde pas.
+                for sous_tache in ordre:
+                    self._juge.ferme(journal.run_id, sous_tache.id)
+        resultats = [issues[sous_tache.id].result() for sous_tache in ordre]
+        usage = StepUsage()
+        for resultat in resultats:
+            usage = usage.fusion(resultat.usage)
+        echecs = [resultat for resultat in resultats if not resultat.ok]
+        derniere = resultats[-1]
+        if echecs:
+            return TaskResult(
+                task_id=task.id,
+                titre=task.titre,
+                agent=echecs[0].agent,
+                role=echecs[0].role,
+                competences_requises=task.competences_requises,
+                score=echecs[0].score,
+                statut=STATUT_ECHEC,
+                sortie="",
+                erreur="; ".join(
+                    f"{r.task_id} ({r.statut}) : {r.erreur}" for r in echecs
+                ),
+                usage=usage,
+            )
+        sortie = "\n\n".join(f"— [{r.titre}]\n{r.sortie}" for r in resultats)
+        journal.consigne(
+            etape=task.id,
+            nom=task.titre,
+            agent=derniere.agent,
+            role=derniere.role,
+            statut=STATUT_TERMINEE,
+            entree=task.description,
+            sortie=sortie,
+            usage=StepUsage(),
+            ticket=task.ticket,
+            projet_id=task.projet_id,
+            description=task.description,
+        )
+        return TaskResult(
+            task_id=task.id,
+            titre=task.titre,
+            agent=derniere.agent,
+            role=derniere.role,
+            competences_requises=task.competences_requises,
+            score=derniere.score,
+            statut=STATUT_TERMINEE,
+            sortie=sortie,
+            fichiers=tuple(f for r in resultats for f in r.fichiers),
+            usage=usage,
+        )
+
+    async def _demande(self, task: Task, texte: str, journal: RunJournal) -> str | None:
+        """Pose dans le fil la question d'un échec, et attend la réponse — bornée (#1178).
+
+        Le canal est celui d'une question d'agent (#1023, `ArbitreQuestion`) : la
+        carte existe déjà au pied du fil de l'orchestration, avec son champ de
+        réponse et ce qui se passera sans réponse. Seul change qui demande — le
+        Chef de projet, pas un agent — et ce qui se passe à la borne : la tâche
+        reste en échec, et l'aval ne part pas. La borne est **la même** qu'une
+        question d'agent (`BornesArbitrage.attente_s`) : c'est le même temps
+        humain, et il n'a qu'un réglage.
+
+        Rend la réponse, ou None — personne n'a répondu, ou la question n'a pas
+        pu partir. Les deux issues sont consignées, comme une question d'agent.
+        """
+        questionneur = self._questionneur
+        if questionneur is None:  # pragma: no cover — l'appelant l'a vérifié
+            return None
+        attente_s = self._bornes_question.attente_s
+        hypothese = hypothese_du_rattrapage(
+            self._juge.aval(journal.run_id, task.id) if self._juge is not None else ()
+        )
+        cle = cle_acte(VERBE_RATTRAPAGE, {"run": journal.run_id, "question": texte})
+        demande = DemandeQuestion(
+            question_id=identifiant_question(task.id, cle),
+            question=texte,
+            hypothese=hypothese,
+            tache_id=task.id,
+            titre=task.titre,
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            run_id=journal.run_id,
+            projet_id=task.projet_id,
+            attente_s=attente_s,
+        )
+        reponse: str | None = None
+        try:
+            reponse = await asyncio.wait_for(questionneur(demande), attente_s)
+            motif = f"réponse reçue à : {texte}"
+        except TimeoutError:
+            motif = f"aucune réponse après {attente_s:g} s à : {texte}"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — un canal muet ne condamne rien de plus
+            motif = f"la question n'a pas pu être posée ({exc}) : {texte}"
+        consigne_question(journal, demande, task, reponse, motif)
+        return reponse
+
     async def etape_brief(
         self,
         objectif: str,
@@ -1494,9 +1906,9 @@ def _retour_qa(juge: Task, renvoi: Renvoi) -> str:
     )
 
 
-def _verdict_de_renvoi(juge: Task, renvoi: Renvoi) -> Verdict:
+def _verdict_de_renvoi(juge: Task, renvoi: Renvoi) -> VerdictVerification:
     """Le renvoi, sous la forme d'un verdict de vérification — ce que le détail de la tâche lit."""
-    return Verdict(
+    return VerdictVerification(
         constats=(
             Constat(
                 critere=CRITERE_QA,

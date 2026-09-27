@@ -32,13 +32,20 @@ from typing import Any
 
 from maestro.agents.catalog import Agent
 from maestro.config import Settings, load_settings
-from maestro.orchestrator.errors import BriefParsingError, PlanParsingError
+from maestro.orchestrator.errors import (
+    BriefParsingError,
+    PlanParsingError,
+    RattrapageParsingError,
+)
 from maestro.orchestrator.prompt import (
     BRIEF_SYSTEM_PROMPT,
     build_brief_user_prompt,
+    build_rattrapage_user_prompt,
     build_user_prompt,
     prompt_orchestrateur,
+    prompt_rattrapage,
 )
+from maestro.orchestrator.rattrapage import EchecDeTache, Rattrapage, valide_rattrapage
 from maestro.orchestrator.schema import (
     Brief,
     Clarification,
@@ -156,6 +163,36 @@ class Orchestrator:
         validate_brief(donnees)
         return Brief.from_dict(donnees)
 
+    async def rattrapage(
+        self,
+        echec: EchecDeTache,
+        *,
+        equipe: Sequence[Agent] | None = None,
+    ) -> Rattrapage:
+        """Juge l'échec d'une tâche et décide de la suite (#1178).
+
+        Le troisième geste du Chef de projet, après le cadrage et le découpage :
+        une tâche de son plan a échoué, il lit la cause (`echec.tentatives`), dit
+        ce qui s'est passé — passager, configuration ou approche — et ce qu'on
+        change avant de retenter. `equipe` est celle du projet, pour la même raison
+        qu'au découpage : changer d'agent se fait en nommant les compétences de
+        quelqu'un qui est là.
+
+        La méthode est sans état, comme `brief` : un nouveau tour — après un nouvel
+        échec, ou après la réponse de l'utilisateur — est un appel de plus avec une
+        histoire plus longue.
+
+        Lève `RattrapageParsingError` si la réponse n'est pas un objet JSON
+        exploitable, `RattrapageValidationError` si elle enfreint ce que
+        l'exécution exige (`valide_rattrapage`).
+        """
+        response = await self._provider.generate(
+            build_rattrapage_user_prompt(echec),
+            model=self._model,
+            system_prompt=prompt_rattrapage(equipe),
+        )
+        return valide_rattrapage(_extract_rattrapage_object(response), echec)
+
 
 def _extract_task_array(text: str) -> list[dict[str, Any]]:
     """Extrait le tableau de tâches de la réponse brute du modèle.
@@ -195,6 +232,28 @@ def _extract_brief_object(text: str) -> dict[str, Any]:
     if not isinstance(brief, dict):
         raise BriefParsingError("La réponse du modèle ne contient pas un objet JSON de brief.")
     return brief
+
+
+def _extract_rattrapage_object(text: str) -> dict[str, Any]:
+    """Extrait l'objet de rattrapage de la réponse brute du modèle (#1178).
+
+    Même parsing tolérant que le plan et le brief. L'objet se reconnaît à sa clé
+    `geste`, requise ; à défaut on cherche une enveloppe (clé `rattrapage`, ou
+    unique valeur objet) — même règle que `_unwrap_brief` avec sa clé `objectif`.
+    """
+    payload = _loads_first_json(text, erreur=RattrapageParsingError)
+    if isinstance(payload, dict) and "geste" not in payload:
+        if isinstance(payload.get("rattrapage"), dict):
+            payload = payload["rattrapage"]
+        else:
+            objets = [v for v in payload.values() if isinstance(v, dict)]
+            if len(objets) == 1:
+                payload = objets[0]
+    if not isinstance(payload, dict):
+        raise RattrapageParsingError(
+            "La réponse du modèle ne contient pas un objet JSON de rattrapage."
+        )
+    return payload
 
 
 def _loads_first_json(text: str, *, erreur: type[Exception]) -> Any:

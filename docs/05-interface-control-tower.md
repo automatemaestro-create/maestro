@@ -3381,6 +3381,57 @@ une politique illisible dite avec sa cause, puis le rendu du régime agent par a
 et les bornes à travers l'événement, le journal et la projection. Le texte que le
 modèle tire de ces faits n'est jugé par aucun motif.
 
+#### Il agit sur les runs : pause, reprise, interruption, relance — proposées, puis confirmées (#1179) — **livré**
+
+« Mets-le en pause », « annule », « reprends celui qui s'est arrêté », « relance-le avec 5 $ de
+plus » repartaient en **proposition de run neuf**, ou en renvoi vers un écran : le fil ne savait
+qu'ouvrir. Les quatre verbes existaient pourtant, derrière les boutons des écrans des runs (#185,
+#349, #477). Le fil les emprunte désormais — **les mêmes services**, jamais une copie — et chaque
+geste qui a un effet se **propose** puis se **confirme** : l'orchestrateur ne décide rien de
+lui-même (docs/33 ②).
+
+- **Le juge reconnaît la demande**, en langage naturel — « le dernier », « celui d'hier »,
+  « celui du tri » —, et rend un sixième verdict, `geste` (§6.15.2), qui nomme l'action et le
+  ou les runs que la demande peut désigner. Il désigne à partir des faits des runs, qui portent
+  désormais l'**heure de lancement** et, pour un run suspendu, l'**heure de sa pause**.
+- **Une carte à confirmer** (`components/chat/GesteSurUnRun.tsx`), au pied du fil comme les
+  autres (`useGestesDuFil`) : la **question** au verbe des écrans (« Mettre ce run en pause ? »,
+  « Reprendre ce run ? », « Interrompre ce run ? », « Relancer ce run ? »), le **run à ses
+  faits** — le badge des écrans des runs, son titre, son identifiant, « Voir le run » —, ce que le
+  geste **va faire** dans la phrase que les écrans des runs disent aussi (`lib/gestesRun`), les
+  bornes du nouveau run pour une relance (« aucune » comprise), puis un geste principal et « Pas
+  maintenant ». « Interrompre », seul geste sans retour, est en ton d'alerte. Aucun champ :
+  « plutôt 10 $ » se dit dans le composeur, et appelle une carte nouvelle.
+- **Confirmé, le geste passe par le service, et le run est relu** : sous la réponse, une ligne
+  **cochée** dit ce qui a été fait et l'état relu — « ✓ Mis en pause · en pause depuis 14:02 » —,
+  avec le renvoi vers le run ; le modèle en parle depuis ce fait. Une relance rattache le nouveau
+  run au message, comme un lancement.
+- **Une demande ambiguë nomme ses candidats au lieu d'agir** : aucune carte, la question dans les
+  mots du modèle, et les runs possibles listés sous la bulle, chacun à ses faits et **sans
+  bouton** — on répond en mots, et la carte suit.
+- **Un geste que l'état du run refuse se dit**, avec la raison du service : **avant** la carte
+  quand l'état le rend certain (on ne propose pas de reprendre un run qui travaille), **après** le
+  clic quand le temps l'a fait naître (un run soldé entre la carte et la confirmation). Dans les
+  deux cas la trace porte le glyphe d'arrêt et la raison, et rien n'a été fait ; avant la carte, une
+  phrase revient d'abord sur ce que le modèle venait d'annoncer. Le statut y est dit au libellé
+  des écrans (« Échec »), jamais par l'identifiant de la machine à états.
+- **La conséquence d'une interruption suit l'état du run** : sur un run en pause, la carte ne
+  lui prête pas de tâches en vol — celles qui attendaient ne partiront plus, et seule une tâche
+  partie avant la pause, si elle tourne encore, perd son travail. Une fois faite, sa coche est à
+  la couleur du texte, jamais au vert : le récit de fin juste au-dessus dit « Run interrompu » au
+  ton d'alerte, et le même état ne se lit pas en deux tons.
+
+La forme a été tranchée sur pièces (veille et « Variante retenue » de #1179) : la question qui
+nomme le geste et sa cible puis dit ce qui va se passer, d'après l'approbation d'outil de VS Code ;
+la cible reconnue à ses faits, d'après le retour arrière de Replit ; la ligne cochée une fois
+fait, d'après la trace de VS Code. Une carte compacte (la cible dans le titre) et une transition
+« avant → après » ont été écartées par le regard neuf.
+
+Gardé par `tests/test_gestes_du_fil.py` (le juge et le service en double, puis l'app entière sur
+le vrai `ServiceExecutions`, pour les quatre gestes, l'ambiguïté et les deux refus) et par
+`apps/web/tests/geste-sur-un-run.test.tsx` (la carte, la trace, les candidats, et leur montage
+dans le fil de chaque écran).
+
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
 Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne
@@ -6361,6 +6412,67 @@ Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.
 [`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
 [`tests/test_naissance_projet.py`](../tests/test_naissance_projet.py).
 
+#### 6.15.2 Agir sur un run depuis le fil (#1179)
+
+Le pendant, pour un run **déjà ouvert**, de la demande de cadrage (§2.9 pour l'écran). Le juge rend
+un sixième verdict, `geste`, dont la dernière ligne porte l'action et les runs désignés :
+
+```json
+{"verdict": "geste", "objectif": "",
+ "geste": {"action": "pause|reprise|annulation|relance", "runs": ["8a15f78f45d3"],
+           "bornes": {"plafond_cout_usd": 15}}}
+```
+
+Les `bornes` ne valent que pour une relance, le seul geste qui ouvre un run. Le code confronte la
+désignation à la projection : un run inconnu ne pose rien et se dit ; **plusieurs** runs connus ne
+posent aucune carte et voyagent sur la réponse (`runs_candidats`) ; un seul run pose la carte
+(`geste_run`) — si le service l'accepterait, ce que `ServiceExecutions.refus_du_geste` dit, sinon
+une correction s'écrit derrière les mots du modèle et le refus voyage en `geste_fait`, comme celui
+d'un clic (ci-dessous). La carte :
+
+```json
+{"action": "pause", "bornes": null,
+ "run": {"run_id": "8a15f78f45d3", "titre": "…", "statut": "en_cours", "en_pause": false,
+         "pause_depuis": null, "etat": "En cours"}}
+```
+
+**La route.** `POST /api/chat/{agent}/geste` → `201` + la même paire qu'un envoi. Son corps est
+`{approuve, conversation}`, **rien d'autre** : ce qui s'exécute est la carte que le fil porte, relue
+du fil. L'accord passe par `ServiceExecutions.agir` — les verbes des boutons (`mettre_en_pause`,
+`reprendre`, `annuler`, `relancer`) —, et la réponse porte ce qui en est sorti, `geste_fait` :
+`{action, run, nouveau, refus}`, où `run` est le run **relu** juste après le geste (`pause_depuis`
+compris), `nouveau` le run qu'une relance a ouvert (rattaché aussi en `run_id`), et `refus` la
+phrase du service quand l'état du run a refusé le geste — alors rien n'a été fait. Un refus ne crée
+rien. Le geste s'écrit dans le fil (« Oui, mets ce run en pause. », « Non, laisse ce run tel
+quel. », les bornes d'une relance à la suite).
+
+**Un « oui » tapé vaut le clic.** Sur le verdict `accord`, si le message d'avant portait une carte de
+geste que rien d'autre n'a suivie, c'est **elle** qui s'exécute (`_geste_approuve`) ; un refus du
+service corrige alors les mots du juge, qui avait annoncé le geste avant de savoir.
+
+**Les règles de refus vivent une fois**, dans le service (`refus_du_geste`) : les routes
+`…/pause`, `…/reprendre` et `…/annuler` les appellent aussi, et n'en gardent que le code HTTP
+(`404` inconnu, `409` soldé, déjà suspendu ou pas suspendu). La relance garde les siens (#349),
+à un élargissement près : un run soldé par une **borne** — plafond de dépense, plafond de tours,
+limite d'usage — se relance, comme celui que l'extinction a emporté (`CAUSES_RELANCABLES`),
+parce qu'un plafond atteint n'a pas jugé le travail ; et `relancer` accepte les bornes du nouveau
+run.
+
+**`409` quand rien n'attend** (`GesteRunIntrouvable`), pour les mêmes trois raisons que le cadrage :
+le double clic n'interrompt pas deux fois, et ne relance pas deux runs.
+
+Le résumé d'un run porte `pause_depuis` (#1179), l'ancienneté de `en_pause`.
+
+Implémentation : [`maestro/controltower/gestes.py`](../maestro/controltower/gestes.py) (le
+vocabulaire et `GesteRefuse`),
+[`maestro/controltower/executions.py`](../maestro/controltower/executions.py) (`refus_du_geste`,
+`agir`), [`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`GesteRunPropose`,
+`GesteRunFait`, `RunVise`, `geste_run_en_attente`, `ServiceChat.trancher_geste`),
+[`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`VERDICT_GESTE`, `PiloteDesRuns`, `RepondeurOrchestration.trancher_geste`) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`tests/test_gestes_du_fil.py`](../tests/test_gestes_du_fil.py).
+
 ### 6.16 Borner un run depuis le chat (#990) — **livré**
 
 Le moteur sait arrêter un run sur quatre garde-fous depuis #9 — `plafond_cout_usd`,
@@ -6538,6 +6650,25 @@ d'un arbitrage. Les identifiants (`question_id`, `tache_id`, `run_id`, `projet_i
 nôtres et ne le sont pas. La **réponse humaine** ne l'est pas non plus : elle ne voyage pas pour être
 affichée mais pour **atteindre l'agent**, et un `[REDACTED]` au milieu lui ferait lire autre chose
 que ce qu'on a écrit — c'est la raison qui vaut déjà pour les réponses de clarification (§6.10).
+
+**Une question peut aussi venir du Chef de projet, sur une tâche en échec (#1178).** Quand une tâche
+échoue et que le Chef de projet ne sait pas la faire aboutir seul — ce qui manque, seul
+l'utilisateur peut le donner (un accès, un secret, une décision), sa proposition a été refusée, ou
+ses tentatives sont épuisées —, le moteur pose la question **par ce canal-ci**, sans en ouvrir un
+autre : même événement `question.demande`, même carte au pied du fil de l'orchestration, même route
+de réponse. `agent` vaut `orchestrateur`, `tache_id` la tâche en échec, et `question` porte d'abord
+ce que le Chef de projet attend, puis les **faits** — la tâche, chaque tentative faite avec son
+erreur, le diagnostic —, écrits par le moteur et non par le modèle : une question qui oublierait la
+cause ferait répondre à l'aveugle. `hypothese` dit ce qui se passe sans réponse : la tâche reste en
+échec, et celles qui l'attendent ne s'exécutent pas. Le run **attend** : l'aval de la tâche ne part
+pas pendant la question, les tâches indépendantes continuent. La borne est la même
+(`MAESTRO_ARBITRAGE_ATTENTE`), l'issue est consignée de la même façon (étape `<tache>:question`), et
+la réponse revient au Chef de projet, qui la tient pour **autorité** — une nouvelle tentative qui en
+tient compte, ou l'abandon s'il le demande. ⚠ Une limite, dite plutôt que tue : passé la borne, la
+carte dit qu'une réponse « sert encore » — vrai pour un agent qui rejouera le même appel, pas pour
+une tâche en échec, dont le run est déjà reparti. Moteur :
+[`maestro/engine/rattrapage.py`](../maestro/engine/rattrapage.py), gardé par
+[`tests/test_rattrapage.py`](../tests/test_rattrapage.py).
 
 Implémentation : [`maestro/providers/question.py`](../maestro/providers/question.py) (le vocabulaire
 du verbe `mcp__maestro__poser_une_question` et ses deux frontières),

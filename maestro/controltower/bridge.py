@@ -154,6 +154,14 @@ _SUFFIXE_QUESTION = ":question"
 #: la projection en garde le dernier sur la tâche, pour son panneau de détail.
 _SUFFIXE_VERIFICATION = ":verification"
 
+#: Suffixe des étapes du **rattrapage** d'une tâche en échec (#1178 — cf.
+#: `maestro.engine.rattrapage`, `SUFFIXE_ETAPE_RATTRAPAGE`). Recopié comme les
+#: autres suffixes du moteur. Rangé avec `:relance` et pour la même raison : le
+#: Chef de projet juge l'échec et dit la suite — un fait rattaché à la tâche, qui
+#: ne la fait changer d'aucune colonne. Sans cette entrée, la règle par défaut en
+#: ferait l'issue d'une tâche nommée `<tache>:rattrapage`, une carte fantôme.
+_SUFFIXE_RATTRAPAGE = ":rattrapage"
+
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
@@ -221,6 +229,7 @@ _SUFFIXES_ACTIVITE = (
     _SUFFIXE_PROCESSUS,
     _SUFFIXE_QUESTION,
     _SUFFIXE_VERIFICATION,
+    _SUFFIXE_RATTRAPAGE,
 )
 
 

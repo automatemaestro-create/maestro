@@ -205,6 +205,34 @@ STATUTS_EXECUTION_TERMINAUX = frozenset(
     {EXECUTION_TERMINEE, EXECUTION_ANNULEE, EXECUTION_ECHEC}
 )
 
+#: Ce que le fil dit d'un statut d'exécution (#946, C7 du retex du 2026-09-11) :
+#: l'ouverture d'un run annonçait « statut « en_cours » », c'est-à-dire
+#: l'identifiant de la machine à états rendu tel quel dans une conversation.
+#:
+#: Les libellés sont ceux de `libelleStatutExecution` (`apps/web/lib/format.ts`)
+#: **au mot près** — c'est la règle de #571, et le même run lu dans le fil puis
+#: sur son écran ne doit pas paraître dans deux états. Un statut absent de la
+#: table se dit brut plutôt que traduit à l'aveugle.
+#:
+#: Déclarée à côté des statuts depuis #1179 : les refus des gestes sur un run
+#: (`ServiceExecutions.refus_du_geste`) les nomment aussi, et s'affichent sous la
+#: bulle du fil comme sous les boutons des écrans — « déjà soldée (echec) » y
+#: rendait l'identifiant brut que #946 avait retiré de la conversation.
+_LIBELLES_STATUT_EXECUTION = {
+    EXECUTION_EN_COURS: "En cours",
+    EXECUTION_TERMINEE: "Terminée",
+    EXECUTION_ANNULEE: "Annulée",
+    EXECUTION_ECHEC: "Échec",
+    EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
+    EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
+    EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
+}
+
+
+def libelle_statut_execution(statut: str) -> str:
+    """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
+    return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
+
 #: Les deux **ordres de pause** d'un run (#477), portés par `execution.statut` —
 #: le canal de l'annulation (#444), et surtout pas un second transport : le guet
 #: du process détaché est déjà branché là, et un run qui vit des heures n'a pas à
@@ -854,6 +882,12 @@ class EtatExecution:
     # run suspendu pendant l'attente de son brief doit continuer de montrer qu'il
     # attend ce brief — c'est ce qu'on regarde pour décider de le reprendre.
     en_pause: bool = False
+    # **Depuis quand** ce run est suspendu (#1179) — l'horodatage de l'ordre de
+    # pause, None dès qu'il est repris ou soldé : exactement le régime du drapeau
+    # ci-dessus, dont il est l'ancienneté. C'est ce qui fait dire au fil « en pause
+    # depuis 14:02 » après le geste, et non un simple « en pause » dont on ne sait
+    # s'il date d'une minute ou d'hier.
+    pause_depuis: str | None = None
     # Le **graphe du plan** (#490), posé une fois par `run.plan` et jamais
     # retiré : nœuds, arêtes, ossatures de checklist, tels que la décomposition
     # les a écrits. Vide pour un run qui n'en a pas publié — moteur antérieur à
@@ -997,6 +1031,8 @@ class EtatExecution:
             # ne le remplace pas — un run suspendu reste `en_cours`, ou
             # `en_attente_brief`, ou ce qu'il était.
             "en_pause": self.en_pause,
+            # Et depuis quand (#1179), à côté du drapeau dont il est l'ancienneté.
+            "pause_depuis": self.pause_depuis,
             # La cause d'arrêt (#479) dans le **résumé**, et c'est le critère du
             # ticket : « dans la liste comme dans sa vue ». Un run en échec dont
             # il faut ouvrir la page pour savoir s'il a manqué de budget ou
@@ -2051,6 +2087,13 @@ class ControlTowerState:
             return
         if event.statut in ORDRES_PAUSE:
             execution.en_pause = event.statut == ORDRE_PAUSE
+            # L'ancienneté de la pause (#1179) suit le drapeau : posée par l'ordre,
+            # retirée par la reprise. Une pause réappliquée (la pompe rediffuse
+            # l'événement que le service a déjà appliqué) garde sa première heure.
+            if not execution.en_pause:
+                execution.pause_depuis = None
+            elif execution.pause_depuis is None:
+                execution.pause_depuis = event.horodatage or None
             return
         # L'objectif **entier** est dans `description` depuis #991 (défaut S12),
         # `titre` ne portant plus que sa forme courte. Le repli sur `titre` n'est
@@ -2115,6 +2158,7 @@ class ControlTowerState:
             # « Reprendre » sur un run annulé pendant sa pause — le cas exact,
             # puisque `en_pause` n'empêche pas l'annulation.
             execution.en_pause = False
+            execution.pause_depuis = None
         # Le run n'attend plus dès qu'il n'est plus dans un état d'attente (#321) —
         # au premier chef l'**annulation en pleine attente**, qui est le cas que la
         # troisième exigence du ticket protège. Laisser l'ancienneté derrière soi

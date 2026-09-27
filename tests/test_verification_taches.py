@@ -304,6 +304,9 @@ def test_une_correction_sans_gain_laisse_la_tache_en_echec_motive():
     assert "aucun critère de plus" in salut.erreur
     assert _COMMANDE in salut.erreur
     assert "bonjour.txt contient : Au revoir" in salut.erreur
+    # Un échec motivé n'est pas une décision : le Chef de projet peut le
+    # rattraper autrement (#1178), preuves en main — l'agent n'en a rien tiré.
+    assert salut.rattrapable
     # Jamais un vert : l'aval ne part pas sur un livrable non tenu.
     assert suite.statut == STATUT_BLOQUEE
     # L'issue consignée au journal porte le même motif (le détail de la tâche le lit).
@@ -360,6 +363,8 @@ def test_le_budget_atteint_pendant_une_correction_garde_les_preuves():
     # …et les preuves de la dernière vérification la suivent : jamais un vert muet.
     assert "non vérifiée — 0/1 critère(s) tenu(s) après 1 livraison(s)" in resultat.erreur
     assert "bonjour.txt contient : Au revoir" in resultat.erreur
+    # Le budget dépensé est une borne, pas un échec à rattraper (#1178).
+    assert not resultat.rattrapable
 
 
 def test_une_verification_illisible_n_est_jamais_un_vert():
