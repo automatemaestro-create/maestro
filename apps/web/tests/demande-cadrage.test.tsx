@@ -26,12 +26,12 @@
  * posée deux fois sur le même écran.
  */
 
-import { screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import PageChat from "@/app/chat/page";
-import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
+import { DemandeDeCadrage, SANS_PROJET } from "@/components/chat/DemandeDeCadrage";
 import { FilDeCadrage } from "@/components/chat/FilDeCadrage";
 import { ParametresCouts } from "@/components/parametres/ParametresCouts";
 import { AUCUNE_BORNE, phraseDesBornes } from "@/lib/bornes";
@@ -40,12 +40,13 @@ import {
   AGENT_ORCHESTRATION,
   ROLE_ORCHESTRATION,
 } from "@/lib/orchestration";
-import type { MessageChat } from "@/lib/types";
+import type { MessageChat, ProjetVise } from "@/lib/types";
 
 import {
   agentFactice,
   messageFactice,
   poserFilAssistance,
+  projetFactice,
   rendreAvecEtat,
 } from "./aides";
 
@@ -359,5 +360,104 @@ describe("⑤ borner le run, là où on le lance", () => {
     expect(
       screen.getByRole("link", { name: /Aller à la conversation/ }),
     ).toBeTruthy();
+  });
+});
+
+/**
+ * ⑥ **la carte dit sur quel projet le run travaillera** (#1180).
+ *
+ * Le fil est transverse : une proposition faite sur A se relit depuis B, et le
+ * geste partait avec le projet de la fenêtre du clic. Elle porte désormais son
+ * projet (`projet_vise`), c'est là que l'API l'ouvre, et la carte le dit. La
+ * **forme** est un choix rendu sur pièces (« Variante retenue » de #1180) ; ce
+ * qui se garde ici, ce sont les propriétés dont elle découle :
+ *
+ * - la cible est **nommée**, aussi quand c'est le projet ouvert, avec son dossier ;
+ * - un **écart** avec la fenêtre se dit en mots, les deux projets nommés — et le
+ *   geste reste offert : c'est la proposition qui décide où le run part ;
+ * - **sans projet**, « Lancer » est désarmé, et la carte dit pourquoi : aucun run
+ *   ne part sans projet depuis le fil.
+ */
+describe("⑥ la carte dit sur quel projet le run travaillera", () => {
+  const OUVERT = projetFactice();
+  const AUTRE: ProjetVise = {
+    id: "prj-5c0ffee1",
+    nom: "carnet-de-recettes",
+    racine: "D:/projets/carnet-de-recettes",
+  };
+  const ICI: ProjetVise = { id: OUVERT.id, nom: OUVERT.nom, racine: OUVERT.racine };
+
+  function monter(demande: MessageChat, trancher = vi.fn().mockResolvedValue(undefined)) {
+    rendreAvecEtat(<DemandeDeCadrage demande={demande} trancher={trancher} />);
+    return trancher;
+  }
+
+  function carte() {
+    return screen.getByRole("region", { name: "Décision sur le cadrage" });
+  }
+
+  it("nomme le projet de la proposition et son dossier, même quand c'est le projet ouvert", () => {
+    monter(demandeFactice({ projet_vise: ICI }));
+
+    const decision = carte();
+    expect(within(decision).getByText("Dans le projet")).toBeTruthy();
+    expect(within(decision).getByText("Dépensio").tagName).toBe("STRONG");
+    // Le dossier, coupé à ses séparateurs : son texte se lit en entier.
+    expect(decision.textContent).toContain("D:/projets/depensio");
+    expect(within(decision).queryByText("Pas le projet ouvert")).toBeNull();
+  });
+
+  it("dit l'écart en toutes lettres quand la fenêtre est sur un autre projet", async () => {
+    const trancher = monter(demandeFactice({ projet_vise: AUTRE }));
+
+    const decision = carte();
+    expect(within(decision).getByText("carnet-de-recettes").tagName).toBe("STRONG");
+    expect(within(decision).getByText("Pas le projet ouvert")).toBeTruthy();
+    expect(decision.textContent).toMatch(
+      /Ce run partira dans « carnet-de-recettes », là où il a été\s+proposé — pas dans le projet ouvert, « Dépensio »\./,
+    );
+    // Le geste reste offert : ce n'est pas la fenêtre qui décide, c'est la
+    // proposition — et l'API l'ouvrira dans son projet à elle.
+    await userEvent.click(within(decision).getByRole("button", { name: "Lancer" }));
+    expect(trancher).toHaveBeenCalledWith(true, null, AUCUNE_BORNE);
+  });
+
+  it("une proposition d'avant ce ticket nomme le projet de la fenêtre, où l'API la lancera", () => {
+    monter(demandeFactice());
+
+    expect(within(carte()).getByText("Dépensio")).toBeTruthy();
+    expect(within(carte()).queryByText("Pas le projet ouvert")).toBeNull();
+  });
+
+  it("sans aucun projet, « Lancer » est désarmé et la carte dit pourquoi", async () => {
+    // La porte « Nouveau projet » : hors du shell, aucun projet ouvert — et une
+    // proposition qui n'en porte pas. L'échantillon fautif est le run qui
+    // partait sans projet, et n'apparaissait dans la liste d'aucun.
+    const trancher = vi.fn().mockResolvedValue(undefined);
+    render(<DemandeDeCadrage demande={demandeFactice()} trancher={trancher} />);
+
+    expect(screen.getByText(SANS_PROJET)).toBeTruthy();
+    const lancer = screen.getByRole("button", { name: "Lancer" }) as HTMLButtonElement;
+    expect(lancer.disabled).toBe(true);
+    await userEvent.click(lancer);
+    expect(trancher).not.toHaveBeenCalled();
+    // Refuser, lui, reste possible : il n'ouvre rien.
+    expect(
+      (screen.getByRole("button", { name: "Ne pas lancer" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("sur /chat, la carte au pied du fil nomme le projet de la proposition", async () => {
+    poserFilAssistance({
+      messages: [messageFactice({ contenu: "un minuteur" }), demandeFactice({ projet_vise: AUTRE })],
+    });
+    rendreAvecEtat(<PageChat />, {
+      agents: [agentFactice({ nom: AGENT_ORCHESTRATION, role: ROLE_ORCHESTRATION })],
+      executions: [],
+    });
+
+    const decision = await screen.findByRole("region", { name: "Décision sur le cadrage" });
+    expect(within(decision).getByText("carnet-de-recettes")).toBeTruthy();
+    expect(within(decision).getByText("Pas le projet ouvert")).toBeTruthy();
   });
 });

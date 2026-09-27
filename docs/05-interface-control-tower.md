@@ -5060,9 +5060,12 @@ défaut était un cas de bord tant que « Composer un objectif » existait ; dep
 Trois décisions le tiennent :
 
 - **Le projet vient de la fenêtre, il n'est pas deviné.** Le backend n'a aucune notion de « projet
-  actif » — c'est un réglage du poste (`lib/projetActif`) —, donc l'écran l'envoie. Absent, le run
-  part sans projet comme avant : le rattachement est une **donnée** (#222), jamais une condition du
-  lancement, et un identifiant mal formé vaut « aucun projet » plutôt qu'un message refusé.
+  actif » — c'est un réglage du poste (`lib/projetActif`) —, donc l'écran l'envoie. Un identifiant
+  mal formé vaut « aucun projet » plutôt qu'un message refusé. ⚠ **#1180 a renversé la suite de
+  cette règle** : absent, le run *partait sans projet* — le rattachement tenu pour une simple donnée
+  (#222) —, et sur une installation neuve il n'apparaissait dans la liste d'aucun projet. Depuis le
+  fil, **aucun run ne part sans projet** (voir plus bas) ; l'écran des exécutions garde, lui, le
+  rattachement pour une donnée.
 - **`projet_id`, et surtout pas `projet`.** Ce dernier désigne partout ailleurs une **portée** de
   lecture, avec ses mots réservés `tous`/`aucun` (§6.0bis) ; deux contrats sous un même nom seraient
   la première façon de les confondre.
@@ -5077,7 +5080,36 @@ monte l'app **entière** — vrai répondeur, vrai service d'exécutions, deux p
 le résultat par la route que l'écran interroge ; il est doublé de son **échantillon fautif** (une
 demande sans projet, dont le run n'est atteignable que sous `?projet=aucun`, portée qu'aucun
 sélecteur de l'UI ne propose), sans quoi rien ne dirait que le premier ne passerait pas de toute
-façon.
+façon. Depuis #1180, cet échantillon **n'ouvre plus rien** — c'est ce que le test garde désormais.
+
+##### Le fil sait sur quel projet il travaille, et une proposition garde son projet (#1180)
+
+Le fil ne disait à l'orchestrateur que des compteurs ; le projet dont on lui parlait — son nom, son
+dossier, son outillage — n'entrait pas dans son contexte. Et comme la conversation est commune à
+tous les projets, le bouton « Lancer » partait avec le projet **affiché au moment du clic** : une
+proposition faite sur A, approuvée en regardant B, s'exécutait dans B. Trois décisions :
+
+- **Le contexte du fil porte le projet de la conversation** : nom, dossier et outillage — le chemin
+  des instructions et l'index des skills, lus exactement comme un agent les reçoit
+  (`outillage_du_projet`) ; leur contenu se lit par le tour de lecture quand la question en dépend.
+  L'équipe réelle suit dans son propre bloc (#1223), et les runs récents dans les faits (#1157).
+- **Une proposition garde son projet.** Il est écrit sur elle au moment où elle est faite
+  (`MessageChat.projet_vise` : identifiant, nom, dossier), et c'est **dans ce projet** que le geste —
+  ou un « oui » tapé — ouvre le run, quelle que soit la fenêtre d'où il part. La carte « Lancer ce
+  run ? » le dit en première ligne, avant l'objectif (« Dans le projet **…** », puis le dossier), et
+  une fenêtre passée sur un autre projet le lit en toutes lettres : « Ce run partira dans « … », là
+  où il a été proposé — pas dans le projet ouvert, « … » ». La forme vient d'une veille et d'un choix
+  rendu sur pièces (commentaires « Veille de conception » et « Variante retenue » du ticket).
+- **Sans projet, aucun run ne part du fil.** L'orchestrateur reçoit le fait — la conversation n'a
+  aucun projet — et propose d'en **créer** un (la carte de projet de #1294) ou de travailler dans
+  l'un de ceux **déjà déclarés**, qu'il nomme (le choix de projet de #1293). Le canal, lui, tient la
+  structure : aucune carte de run ne se pose, le lanceur n'est jamais appelé, et une proposition
+  d'avant ce ticket approuvée sans projet reçoit l'empêchement en toutes lettres. La carte, de son
+  côté, désarme « Lancer » quand elle ne sait pas où le run travaillerait.
+
+Couverture : [`tests/test_projet_du_fil.py`](../tests/test_projet_du_fil.py) (l'app entière, deux
+projets déclarés, un moteur muet — ce que le moteur a reçu et ce que la liste de chaque projet rend)
+et [`apps/web/tests/demande-cadrage.test.tsx`](../apps/web/tests/demande-cadrage.test.tsx) §⑥.
 
 La reconnaissance a été **délibérément conservatrice** jusqu'à #685 — la demande devait commencer,
 politesses retirées, par un verbe d'une liste — au nom de l'asymétrie des deux erreurs : ne pas
@@ -6301,7 +6333,12 @@ que le même objet porte, après ce qu'il **embarque** (`sources`, §6.12) et ce
   "auteur": "orchestrateur",
   "contenu": "J'ouvrirais un run sur : « … ». Je lance ?",
   "run_id": "",                  // rien n'est ouvert : proposer n'est pas lancer (#685)
-  "proposition": "Développer …"  // ce qu'il DEMANDE — vide sur tout autre message
+  "proposition": "Développer …", // ce qu'il DEMANDE — vide sur tout autre message
+  "projet_vise": {               // OÙ le run travaillera (#1180), écrit en proposant ;
+    "id": "prj-…",               // null sans proposition, ou sur une ligne d'avant #1180
+    "nom": "depensio",
+    "racine": "D:/projets/depensio"
+  }
 }
 
 // CadrageDecisionRequete (corps de …/cadrage)
@@ -6312,7 +6349,8 @@ que le même objet porte, après ce qu'il **embarque** (`sources`, §6.12) et ce
   "plafond_tokens": null,
   "timeout_tache_s": null,
   "parallelisme": 2,
-  "projet_id": "prj-…",    // le projet de la fenêtre — il rattachera le run, comme à l'envoi
+  "projet_id": "prj-…",    // le projet de la fenêtre — le run suit celui de la PROPOSITION
+                           // (projet_vise, #1180) ; celui-ci ne sert qu'à une ligne d'avant
   "conversation": null
 }
 ```
