@@ -1359,6 +1359,10 @@ async function ciblesDesFleches(pipeline: HTMLElement) {
   });
 }
 
+/** La ligne sous le dessin qui nomme la flèche regardée — ou, au repos, invite à en regarder une. */
+const ligneDuLien = (pipeline: HTMLElement) =>
+  pipeline.querySelector("[data-lien-nomme]") as HTMLElement;
+
 /** Les tracés visibles, dans l'ordre des arêtes — le groupe masqué aux lecteurs d'écran. */
 const traces = (pipeline: HTMLElement) =>
   [...pipeline.querySelectorAll("svg > g[aria-hidden='true'] > path")] as SVGPathElement[];
@@ -1467,17 +1471,55 @@ describe("une flèche qu'on regarde se nomme (#1297)", () => {
 
     await userEvent.hover(versUi);
 
-    expect(
-      within(pipeline).getByText("UI liste attend le livrable de Schéma SQL — franchie"),
-    ).toBeInTheDocument();
-    expect(within(pipeline).queryByText(/Survolez une flèche/)).not.toBeInTheDocument();
+    expect(ligneDuLien(pipeline)).toHaveTextContent(
+      /^UI liste attend le livrable de Schéma SQL — franchie$/,
+    );
     const [versApi, versUiTrace] = traces(pipeline);
     expect(versUiTrace).toHaveClass("opacity-100");
     expect(versUiTrace).toHaveAttribute("stroke-width", "2.5");
     expect(versApi).toHaveClass("opacity-20");
 
     await userEvent.unhover(versUi);
-    expect(within(pipeline).getByText(/Survolez une flèche/)).toBeInTheDocument();
+    expect(ligneDuLien(pipeline)).toHaveTextContent(/^Survolez une flèche/);
+  });
+
+  it("détache les deux tâches et l'état des mots de liaison", async () => {
+    // Un titre de tâche commence souvent par un verbe : d'une seule graisse, on
+    // ne voyait pas où finit une tâche et où commence l'autre (regard neuf, #1297).
+    lecture.graphe = grapheDeReference();
+    monter();
+
+    const pipeline = await pipelineCharge();
+    const [, versUi] = await ciblesDesFleches(pipeline);
+    await userEvent.hover(versUi);
+
+    const ligne = ligneDuLien(pipeline);
+    for (const relief of ["UI liste", "Schéma SQL", "franchie"]) {
+      expect(within(ligne).getByText(relief)).toHaveClass("font-medium");
+    }
+    expect(within(ligne).getByText(/attend le livrable de/)).not.toHaveClass("font-medium");
+  });
+
+  it("ne cache aucune cible aux lecteurs d'écran, et donne à chacune un rôle et un nom", async () => {
+    // Deux fautes axe `serious` que ces cibles rendraient possibles : un élément
+    // focalisable sous `aria-hidden` (`aria-hidden-focus`) et un `aria-label` sur
+    // un élément SVG sans rôle (`aria-prohibited-attr`). ⚠ axe ne les voit pas
+    // ici : sous jsdom, sans géométrie, il ne tient pas ces tracés pour
+    // focalisables — mesuré en remettant `aria-hidden` sur tout le `<svg>`, que
+    // l'audit laissait passer. D'où le contrôle direct de leurs deux conditions.
+    lecture.graphe = grapheRedondant();
+    monter();
+    await screen.findByText("Contenu produit");
+    const pipeline = screen.getByRole("region", { name: "Pipeline du run" });
+    await waitFor(() =>
+      expect(pipeline.querySelectorAll("path[tabindex='0']")).toHaveLength(3),
+    );
+
+    for (const cible of pipeline.querySelectorAll("path[tabindex='0']")) {
+      expect(cible.closest("[aria-hidden='true']")).toBeNull();
+      expect(cible).toHaveAttribute("role", "img");
+      expect(cible.getAttribute("aria-label")).toMatch(/attend le livrable de/);
+    }
   });
 
   it("nomme la flèche focalisée au clavier, et se tait sur Échap", async () => {
@@ -1488,14 +1530,12 @@ describe("une flèche qu'on regarde se nomme (#1297)", () => {
     const [, , apiVersRecette] = await ciblesDesFleches(pipeline);
     act(() => apiVersRecette.focus());
 
-    expect(
-      within(pipeline).getByText("Recette attend le livrable de API CRUD — en attente"),
-    ).toBeInTheDocument();
+    expect(ligneDuLien(pipeline)).toHaveTextContent(
+      /^Recette attend le livrable de API CRUD — en attente$/,
+    );
 
     await userEvent.keyboard("{Escape}");
-    expect(
-      within(pipeline).queryByText("Recette attend le livrable de API CRUD — en attente"),
-    ).not.toBeInTheDocument();
+    expect(ligneDuLien(pipeline)).toHaveTextContent(/^Survolez une flèche/);
   });
 });
 
@@ -1522,11 +1562,9 @@ describe("une dépendance redondante (#1297)", () => {
     const cible = cibles.find((c) => /déjà impliquée/.test(c.getAttribute("aria-label") ?? ""));
     await userEvent.hover(cible as Element);
     expect(redondante).toHaveClass("opacity-100");
-    expect(
-      within(pipeline).getByText(
-        "Intégration front attend le livrable de Contenu produit — franchie · déjà impliquée par la chaîne via Maquette des sections",
-      ),
-    ).toBeInTheDocument();
+    expect(ligneDuLien(pipeline)).toHaveTextContent(
+      "Intégration front attend le livrable de Contenu produit — franchie · déjà impliquée par la chaîne via Maquette des sections",
+    );
   });
 
   it("reste nommée en toutes lettres, avec la chaîne qui l'implique", async () => {

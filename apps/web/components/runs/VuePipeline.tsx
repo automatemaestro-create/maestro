@@ -642,7 +642,10 @@ function GraphePipeline({
           tracé actif la relie à la flèche qu'on regarde. Pas de région vivante :
           au clavier, la cible porte déjà la même phrase pour nom accessible. */}
       {aretes.length > 0 && (
-        <p className="mt-1.5 flex min-h-8 items-start gap-1.5 text-annexe text-texte-secondaire">
+        <p
+          data-lien-nomme=""
+          className="mt-1.5 flex min-h-8 items-start gap-1.5 text-annexe text-texte-secondaire"
+        >
           {areteActive !== null ? (
             <>
               <EchantillonFleche
@@ -650,7 +653,7 @@ function GraphePipeline({
                 pale={areteActive.redondante === true}
                 className="mt-1"
               />
-              <span className="text-texte">{phraseDuLien(areteActive, titre)}</span>
+              <LienNomme arete={areteActive} titre={titre} />
             </>
           ) : (
             "Survolez une flèche, ou parcourez-les au clavier, pour lire le lien qu'elle porte."
@@ -1207,6 +1210,33 @@ function BasculeCadrage({
         )}
       </button>
     </div>
+  );
+}
+
+/**
+ * La phrase d'un lien, **mise en page** : les deux tâches et l'état en relief,
+ * les mots de liaison en retrait. C'est `phraseDuLien` mot pour mot — le nom
+ * accessible de la cible —, mais un titre de tâche commence souvent par un verbe
+ * (« Écrire… attend le livrable de Concevoir… ») : d'une seule graisse, on ne
+ * voyait pas où finit une tâche et où commence l'autre (constat du regard neuf à
+ * la relecture de #1297).
+ */
+function LienNomme({
+  arete,
+  titre,
+}: {
+  arete: AreteGraphe;
+  titre: (id: string) => string;
+}) {
+  return (
+    <span>
+      <span className="font-medium text-texte">{titre(arete.vers)}</span>
+      {" attend le livrable de "}
+      <span className="font-medium text-texte">{titre(arete.de)}</span>
+      {" — "}
+      <span className="font-medium text-texte">{apparenceArete(arete.etat).phrase}</span>
+      {viaEnToutesLettres(arete, titre)}
+    </span>
   );
 }
 
