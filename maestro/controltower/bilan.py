@@ -1205,6 +1205,9 @@ Tu rends des CONSTATS, chacun dans l'une de ces rubriques :
 - "recommandation" : ce qu'il faut CHANGER, dans l'ordre où le faire, en commençant
   par ce qui débloque. Une recommandation qui porte sur le playbook d'un agent
   nomme cet agent dans "agent".
+Une rubrique où il n'y a rien à dire ne reçoit aucun constat : un run sans échec n'a
+pas de constat « aucun échec », ni de « aucune consommation sans résultat » — la
+rubrique qui se tait le dit déjà.
 
 Ce qui fonde ton jugement :
 - Juge la nature d'un échec sur sa CAUSE, telle que les pièces la donnent. Le moteur

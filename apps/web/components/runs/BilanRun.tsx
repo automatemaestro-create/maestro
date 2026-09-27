@@ -388,7 +388,12 @@ function LigneConstat({
 }) {
   const pieces = piecesDuConstat(bilan, constat);
   const nature = constat.rubrique === RUBRIQUE_ECHEC ? NATURES_BILAN[constat.nature] : undefined;
-  const tache = constat.tache ? (titresTaches.get(constat.tache) ?? constat.tache) : "";
+  // Un run d'une seule tâche ne la renomme pas sous chaque constat : la même ligne
+  // neuf fois n'apprend rien (relevé par le regard neuf, d'après ce que la veille
+  // laissait à GitHub Actions). Elle ne dit quelque chose que s'il y a à choisir.
+  const seule = titresTaches.size === 1 && titresTaches.has(constat.tache);
+  const tache =
+    constat.tache && !seule ? (titresTaches.get(constat.tache) ?? constat.tache) : "";
   const toutes = entreesDesPieces(pieces);
   const nombre = pieces.length;
   const [ouvert, setOuvert] = useState(false);
@@ -520,28 +525,33 @@ function LignePiece({
 
   return (
     <li className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-      <div className="min-w-0 flex-1">
-        <p className="break-words text-texte">
-          {/* L'identifiant que le constat cite (« P9 ») : la poignée par laquelle
-              le journal, une fois ouvert, dit de quelle pièce il montre les
-              entrées. */}
-          <span className="chiffre mr-2 font-mono text-micro text-texte-secondaire">
-            {piece.id}
-          </span>
+      {/* L'identifiant et l'heure en **colonnes de largeur fixe**, l'heure laissée
+          vide pour une synthèse (elle n'est pas une ligne du journal) : d'une pièce à
+          l'autre, la phrase part du même bord — relevé par le regard neuf, quand une
+          pièce sans heure commençait sa phrase plus à gauche que ses voisines. */}
+      <div className="flex min-w-60 flex-1 items-baseline gap-x-2">
+        {/* L'identifiant que le constat cite (« P9 ») : la poignée par laquelle le
+            journal, une fois ouvert, dit de quelle pièce il montre les entrées. */}
+        <span className="chiffre w-8 shrink-0 font-mono text-micro text-texte-secondaire">
+          {piece.id}
+        </span>
+        <span className="w-18 shrink-0">
           {entree && (
             <time
               dateTime={entree.horodatage}
               title={formatDateHeure(entree.horodatage)}
-              className="chiffre mr-2 font-mono text-texte-secondaire"
+              className="chiffre font-mono text-texte-secondaire"
             >
               {formatHeure(entree.horodatage)}
             </time>
           )}
-          {phrase}
-        </p>
-        {detail && (
-          <p className="mt-0.5 line-clamp-3 break-words text-texte-secondaire">{detail}</p>
-        )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="break-words text-texte">{phrase}</p>
+          {detail && (
+            <p className="mt-0.5 line-clamp-3 break-words text-texte-secondaire">{detail}</p>
+          )}
+        </div>
       </div>
       {/* Une colonne de largeur fixe, calée à droite, le journal toujours en
           dernier : d'une pièce à l'autre, « Journal » tombe au même endroit, que la

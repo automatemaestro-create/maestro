@@ -1368,16 +1368,30 @@ class ControlTowerState:
         le porte préfixé (« Décision de l'agent — … ») : découper ce préfixe
         reviendrait à deviner par la forme ce que la projection sait déjà.
 
+        Le **plan du run** nomme d'abord, la carte ensuite (#1285) : un identifiant
+        se réemploie d'un run à l'autre (`rediger-notes-md`), et la projection n'en
+        tient qu'une carte, au titre du **dernier** run qui l'a portée — un run
+        antérieur se verrait prêter le titre d'un autre. Le plan est figé par run,
+        comme dans `graphe` ; la carte ne nomme que ce qu'il n'annonçait pas.
+
         Une tâche sans titre n'entre pas dans la table — l'absence y vaut « je ne
         sais pas », et `decisions.decisions_du_run` rend alors l'identifiant, qui
         reste un renvoi valable.
         """
         vues = self.taches_du_run(run_id)
-        return {
+        titres = {
             tache.id: tache.titre
             for tache in self._taches.values()
             if tache.id in vues and tache.titre
         }
+        execution = self._executions.get(run_id)
+        if execution is not None:
+            titres.update(
+                (noeud.id, noeud.titre)
+                for noeud in execution.plan
+                if noeud.id in vues and noeud.titre
+            )
+        return titres
 
     def signes_de_vie_du_run(self, run_id: str) -> dict[str, SigneDeVie]:
         """Le signe de vie de chaque agent du run `run_id` (agent → signe) — #836.

@@ -83,6 +83,7 @@ import { BLOCS_MAX, placesDe } from "./places";
 
 const RUN = "a76cdf2bbd2b";
 const TACHE = "rediger-notes-md";
+const AUTRE_TACHE = "relire-notes-md";
 
 /** Ce que les fausses lectures rendront, et ce qu'on leur a demandé. */
 const lecture = vi.hoisted(() => ({
@@ -269,12 +270,14 @@ beforeEach(() => {
       }),
     ],
   });
+  // Deux tâches : la ligne « Tâche : » ne se montre que s'il y a à choisir.
   lecture.taches = [
     tacheFactice({
       id: TACHE,
       titre: "Créer NOTES.md : le projet décrit en trois lignes",
       run_id: RUN,
     }),
+    tacheFactice({ id: AUTRE_TACHE, titre: "Relire NOTES.md", run_id: RUN }),
   ];
 });
 
@@ -674,12 +677,32 @@ describe("les états du bilan", () => {
       run_id: RUN,
       etat: ETAT_BILAN_RENDU,
       bilan: bilanEchec(),
-      taches: { [TACHE]: "Créer NOTES.md : le projet décrit en trois lignes" },
+      taches: {
+        [TACHE]: "Créer NOTES.md : le projet décrit en trois lignes",
+        [AUTRE_TACHE]: "Relire NOTES.md",
+      },
     });
     const { region } = await ouvrirLeBilan();
 
     expect(region.getAllByText(/Tâche : Créer NOTES\.md/)[0]).toBeInTheDocument();
     expect(region.queryByText(/Tâche : rediger-notes-md/)).not.toBeInTheDocument();
+  });
+
+  it("ne renomme pas l'unique tâche d'un run sous chaque constat", async () => {
+    // Relevé par le regard neuf : sur un run d'une tâche, la même ligne « Tâche : … »
+    // se répétait sous chacun des neuf constats, sans rien apprendre.
+    lecture.taches = [lecture.taches[0]];
+    lecture.bilan = reponseBilanFactice({
+      run_id: RUN,
+      etat: ETAT_BILAN_RENDU,
+      bilan: bilanEchec(),
+      taches: { [TACHE]: "Créer NOTES.md : le projet décrit en trois lignes" },
+    });
+    const { region } = await ouvrirLeBilan();
+
+    expect(region.queryByText(/^Tâche :/)).not.toBeInTheDocument();
+    // Le constat, lui, reste entier.
+    expect(region.getByText(/limite de tokens fixée au lancement/)).toBeInTheDocument();
   });
 
   it("retombe sur l'identifiant quand aucun titre n'est connu, plutôt que de taire la tâche", async () => {

@@ -79,6 +79,8 @@ from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_RUN_PLAN,
+    EVENEMENT_TACHE_STATUT,
     Event,
     InMemoryEventBus,
 )
@@ -105,6 +107,7 @@ from maestro.engine.executor import (
 )
 from maestro.engine.rattrapage import statut_du_geste
 from maestro.engine.verification import STATUT_VERIFICATION_NON_TENUE
+from maestro.plan_run import NoeudPlan
 from maestro.telemetry import ETAPE_BILAN, StepUsage
 
 RUN = "3fe501fc0878"
@@ -1038,9 +1041,10 @@ def test_une_synthese_se_lit_en_mots_d_interface_sans_code_du_moteur() -> None:
     assert (_agent_en_mots("—"), _agent_en_mots(""), _agent_en_mots("dev")) == ("", "", ", dev")
     # Le format de l'écran (« 0,43 $US »), jamais le point décimal ni « tour(s) ».
     assert _montant(0.2199) == "0,2199 $US"
-    assert _usage_en_mots(
-        StepUsage(tokens_entree=40_000, tokens_sortie=720, cout_usd=0.2199, tours=2, duree_ms=31_000)
-    ) == "40 720 tokens, coût 0,2199 $US, 2 tours, 31 s"
+    usage = StepUsage(
+        tokens_entree=40_000, tokens_sortie=720, cout_usd=0.2199, tours=2, duree_ms=31_000
+    )
+    assert _usage_en_mots(usage) =="40 720 tokens, coût 0,2199 $US, 2 tours, 31 s"
     assert "1 tour," in _usage_en_mots(StepUsage(tokens_entree=10, tours=1, duree_ms=1_000))
     dossier = _dossier(rejouer_p3(total=60))
     tentatives = next(p for p in dossier.pieces if p.texte.startswith("Tentatives de la tâche"))
@@ -1067,6 +1071,16 @@ def test_la_consigne_fait_nommer_une_tache_par_son_titre() -> None:
     """
     assert "par son titre" in SYSTEME
     assert "jamais par son" in SYSTEME and "identifiant" in SYSTEME
+
+
+def test_la_consigne_laisse_se_taire_une_rubrique_sans_rien_a_dire() -> None:
+    """Une rubrique vide ne s'affiche pas (parti pris 1 de la veille) : pas de constat « aucun ».
+
+    Relevé sur la vraie stack (#1285) : « Aucune consommation sans résultat : l'unique tâche
+    a abouti… » occupait une carte d'un run sans défaut. Rien ne le filtre au texte (#746) —
+    la consigne le dit au modèle.
+    """
+    assert "rien à dire ne reçoit aucun constat" in SYSTEME
 
 
 def test_la_ligne_du_journal_s_accorde() -> None:
@@ -1180,3 +1194,53 @@ def test_l_api_sert_l_etat_du_bilan_avec_le_bilan(tmp_path: Path) -> None:
     assert all("synthese" in piece for piece in servi["bilan"]["pieces"])
     # Les tâches nommées par leur titre, servies avec le bilan.
     assert servi["taches"][MAQUETTE] == "Maquetter les sections"
+
+
+def test_une_tache_se_nomme_par_le_titre_que_son_run_lui_a_donne() -> None:
+    """Deux runs qui partagent un identifiant de tâche ne se prêtent pas leur titre.
+
+    Un identifiant se réemploie d'un run à l'autre (`rediger-notes-md`, vu sur le banc) :
+    la projection n'en tient qu'une carte, au titre du dernier run qui l'a portée. Le plan,
+    lui, est celui de chaque run — c'est lui qui nomme, comme dans le graphe ; la carte ne
+    nomme que ce que le plan n'annonçait pas.
+    """
+    premier, second, notes, hors_plan = "run-a", "run-b", "rediger-notes-md", "relire"
+    state = ControlTowerState()
+
+    def tache(run_id: str, tache_id: str, titre: str) -> Event:
+        return Event(
+            type=EVENEMENT_TACHE_STATUT,
+            run_id=run_id,
+            tache_id=tache_id,
+            titre=titre,
+            agent="dev",
+            statut=STATUT_TERMINEE,
+            projet_id=PROJET,
+        )
+
+    for run_id, titre in ((premier, "Rédiger NOTES.md"), (second, "Créer NOTES.md")):
+        state.appliquer(
+            Event(
+                type=EVENEMENT_EXECUTION_STATUT,
+                run_id=run_id,
+                statut=EXECUTION_EN_COURS,
+                titre="Objectif",
+                projet_id=PROJET,
+            )
+        )
+        state.appliquer(
+            Event(
+                type=EVENEMENT_RUN_PLAN,
+                run_id=run_id,
+                plan=[NoeudPlan(id=notes, titre=titre)],
+                projet_id=PROJET,
+            )
+        )
+        state.appliquer(tache(run_id, notes, titre))
+    state.appliquer(tache(premier, hors_plan, "Relire les notes"))
+
+    assert state.titres_du_run(premier) == {
+        notes: "Rédiger NOTES.md",
+        hors_plan: "Relire les notes",
+    }
+    assert state.titres_du_run(second) == {notes: "Créer NOTES.md"}
