@@ -4227,7 +4227,10 @@ décrit le comportement réel, pas une fixture.
   gestes d'arrêt — `--stop` et la **fermeture de la fenêtre** du navigateur (chien de garde #149,
   #700). L'arrêt **subi** (démarrage qui remplace la session précédente, plantage, `SIGTERM`) passe,
   lui, par le `lifespan`, qui ne touche à rien. La distinction ne se déduit d'aucun signal, elle
-  **descend** de l'appelant.
+  **descend** de l'appelant. La porte est gardée par le jeton comme toute l'API (§6.21) : l'appelant
+  la pousse **avec** lui, et seul un `200` dit ce qui a été soldé — un `401`, un `5xx` ou une réponse
+  illisible se disent « des runs peuvent rester en vol », jamais « aucun run » (#1355,
+  [docs/28 §11.3](./28-decision-frontiere-execution-run.md)).
 
 ⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage :
 `reprendre` rouvre la porte d'un run **vivant** qu'on avait suspendu — même `run_id`, même plan,

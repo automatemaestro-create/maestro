@@ -53,7 +53,9 @@ l'utilisateur n'a pas — et sous Windows, `bash` nu est le lanceur WSL
 2. **L'arrêt est propre et complet** (`lanceur.arreter`). Il **solde les runs en vol**
    avant de libérer quoi que ce soit (`POST /api/extinction`, #486, #700, docs/28 §11) :
    un arrêt volontaire consigne ses runs « annulée » au lieu de les laisser « en cours »
-   sans écran pour les suivre. Il éteint ensuite **chaque service avec sa descendance**
+   sans écran pour les suivre. La porte se pousse **avec le jeton** de l'API (#638), et
+   un refus se dit comme tel — jamais comme « aucun run en vol » (#1355). Il éteint ensuite
+   **chaque service avec sa descendance**
    (la leçon de #291, déjà écrite dans `maestro/controltower/hote_detache.py` : tuer un
    père avant ses enfants est ce qui fabrique l'orphelin qu'on veut éviter), puis
    **vérifie** qu'ils sont partis au lieu de le supposer. Un démarrage qui échoue à
