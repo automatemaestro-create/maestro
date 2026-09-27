@@ -459,6 +459,16 @@ Le prix est écrit : un appel modèle court par geste. Il ne retarde rien de ce
 que le geste décide — le run part, l'équipe est créée **avant** que le modèle
 n'écrive —, et un modèle muet ne défait aucun geste.
 
+**La parole ne redit pas les gestes d'une carte** (#1339). La consigne disait,
+pour tout ce qui s'affiche sous le message, « dis ce qu'il peut faire ensuite » ;
+quand la suite est une carte avec ses gestes, le modèle les redisait juste
+au-dessus d'elle (relecture de #1161, sur le réel). La règle se partage
+désormais : une carte qui attend sa réponse porte ses gestes, et la parole dit ce
+qui a changé ; sans carte qui attende, elle dit aussi la suite. Le modèle sait
+dans quel cas il est par un fait **dérivé** de la réponse qu'il va porter
+(`_parole_sur`, `chat.faits_pour_la_redaction`, `ReponseChat.porte_une_demande`)
+— les faits d'un geste ne décrivent plus les boutons d'une carte.
+
 ## Ce que Maestro fera, il le lit aussi (#1323)
 
 Le fil savait ce que le projet contient et ce que ses runs ont fait ; il ne
@@ -554,6 +564,7 @@ from maestro.controltower.chat import (
     Redaction,
     RepondeurChat,
     ReponseChat,
+    faits_pour_la_redaction,
     piece_en_attente,
     projet_du_fil,
     projet_en_attente,
@@ -989,6 +1000,16 @@ _TOURS_DE_LECTURE = 2
 #: ⚠ Concaténée comme `_PROMPT_ORCHESTRATION`, et elle finit par le **registre**
 #: (#945) : c'est un prompt qui parle à la personne, et `test_registre_de_langue`
 #: range son appel parmi les conversationnels.
+#:
+#: ⚠ **« Ce qu'il peut faire ensuite » se dit sous condition** (#1339). La règle
+#: était sans condition, et elle défaisait la précédente quand la suite est une
+#: carte avec ses gestes : vu sur le réel à la relecture de #1161, « vous pouvez la
+#: valider telle quelle, me dire ce qu'il faut y changer ou l'écarter » juste
+#: au-dessus des boutons qui le disent. Elle ne vaut donc que lorsqu'aucune carte
+#: n'attend ; quand une carte attend, ses gestes ne se redisent pas. Le modèle sait
+#: dans quel cas il est par un fait que le canal **dérive** de la réponse qu'il va
+#: porter (`chat.faits_pour_la_redaction`), jamais par une phrase écrite chemin par
+#: chemin.
 _PROMPT_REDACTION = (
     """\
 Tu es l'orchestrateur de Maestro : tu reçois les demandes de l'utilisateur, tu les
@@ -1009,8 +1030,14 @@ en clair, bref — une à trois phrases —, sans JSON, sans balise, sans titre.
   disent que depuis les faits qui le décrivent (« Ce qu'un run fera », les bornes
   de ce run) ; ce qu'ils ne disent pas, tu ne le sais pas.
 - Ce que les faits disent affiché sous ton message (une carte, une équipe, un
-  run) s'y lit déjà : ne le recopie pas, dis ce que cela change pour lui et ce
-  qu'il peut faire ensuite.
+  run) s'y lit déjà : ne le recopie pas, dis ce que cela change pour lui.
+- Quand les faits disent qu'une carte attend sa réponse juste sous ton message,
+  c'est elle qui lui montre quoi faire, et ses gestes sont sous ses yeux : ne les
+  redis pas, pas même en résumé — ni ce qu'il peut y accepter, valider, écrire,
+  écarter ou corriger, ni qu'il peut te dire ce qu'il faut y changer. Dis ce qui
+  vient de changer, et ce que la carte ne dit pas.
+- Quand aucune carte n'attend sa réponse, dis aussi ce qu'il peut faire
+  ensuite : rien sous ton message ne le lui montre.
 - Tu parles dans une conversation déjà ouverte : pas de salutation, pas de
   formule de politesse finale, pas de phrase toute faite.
 
@@ -1279,9 +1306,14 @@ def _accord(nombre: int, singulier: str, pluriel: str) -> str:
 # --- Ce que la rédaction reçoit : les faits d'un geste (#1262) ---------------
 #
 # Du texte **pour le modèle**, jamais pour le fil : chaque fonction dit ce qui
-# vient de se passer, ce que l'écran affiche déjà sous la réponse, et ce que la
-# personne peut faire ensuite. Le modèle en tire sa phrase ; rien de ce qui suit
-# n'est écrit tel quel dans la conversation.
+# vient de se passer, ce que l'écran affiche déjà sous la réponse, et — quand
+# aucune carte ne le montre — ce que la personne peut faire ensuite. Le modèle en
+# tire sa phrase ; rien de ce qui suit n'est écrit tel quel dans la conversation.
+#
+# ⚠ **Les gestes d'une carte ne s'y décrivent pas** (#1339) : qu'une carte attende
+# sa réponse, la rédaction l'apprend du message lui-même (`_parole_sur`), et la
+# consigne en tire la règle. Écrire ici « il peut la lancer, l'amender ou la
+# borner » était lui faire redire, juste au-dessus des boutons, ce qu'ils disent.
 
 
 def _faits_du_refus(objectif: str) -> str:
@@ -1317,10 +1349,9 @@ def _faits_du_lancement(objectif: str, bornes: BornesRun = AUCUNE_BORNE) -> str:
 def _faits_sans_equipe(objectif: str, *, recrutable: bool) -> str:
     """L'accord est tombé sur un projet sans agent : pas de run, l'équipe d'abord."""
     suite = (
-        "À la place, l'équipe que l'analyse du projet appelle lui est proposée "
-        "juste sous ton message : il peut la relire, l'ajuster puis la valider "
-        "d'un geste — rien n'est créé sans sa validation —, et ce run lui sera "
-        "alors reproposé sans qu'il ait à le redire."
+        "À la place, l'équipe que l'analyse du projet appelle lui est proposée : "
+        "rien n'est créé sans sa validation, et, l'équipe créée, ce run lui sera "
+        "reproposé sans qu'il ait à le redire."
         if recrutable
         else "Aucun recrutement n'est branché sur ce fil : l'équipe se crée depuis "
         "les écrans d'agents du projet, après quoi il pourra redire sa demande."
@@ -1374,9 +1405,8 @@ def _faits_d_une_equipe_creee(
             f"« {demande.objectif} », ne peut pas y être ouvert."
         )
     return (
-        f"{creee} Sa demande d'origine lui est reproposée juste en dessous, sur : "
-        f"« {demande.objectif} » ; il peut la lancer, l'amender ou la borner d'un "
-        "geste. Aucun run n'est encore ouvert."
+        f"{creee} Sa demande d'origine lui est reproposée, sur : "
+        f"« {demande.objectif} ». Aucun run n'est encore ouvert."
     )
 
 
@@ -1408,7 +1438,7 @@ def _faits_de_l_outillage(ouverture: ReponseChat | None, empechement: str) -> st
             "Son outillage commence, pièce par pièce : la première, "
             f"{ouverture.piece.chemin}, est proposée sur la carte sous ton message, avec "
             "ce qu'elle changera dans le projet et le verdict de ses commandes, jouées "
-            "avant. Rien n'est écrit sans son accord, et il peut la corriger avec ses mots."
+            "avant. Rien n'est écrit sans son accord."
         )
     if ouverture.question is not None:
         return (
@@ -2682,8 +2712,8 @@ class RepondeurOrchestration(RepondeurChat):
         """
         objectif = objectif.strip()
         if not approuve:
-            return ReponseChat(
-                contenu=await self.rediger(agent, fil, faits=_faits_du_refus(objectif))
+            return await self._parole_sur(
+                agent, fil, ReponseChat(contenu=""), faits=_faits_du_refus(objectif)
             )
         if self._sans_equipe(projet_id):
             # L'équipe a pu disparaître entre la proposition et le clic, ou la
@@ -2692,8 +2722,8 @@ class RepondeurOrchestration(RepondeurChat):
             # pourquoi.
             demande = self._demande_d_equipe(objectif, projet_id)
             faits = _faits_sans_equipe(objectif, recrutable=demande is not None)
-            return ReponseChat(
-                contenu=await self.rediger(agent, fil, faits=faits), recrutement=demande
+            return await self._parole_sur(
+                agent, fil, ReponseChat(contenu="", recrutement=demande), faits=faits
             )
         lance = await self._ouvrir_un_run(
             Redaction(None), objectif, projet_id, bornes, contexte_du_fil(fil)
@@ -2701,7 +2731,7 @@ class RepondeurOrchestration(RepondeurChat):
         if not lance.run_id:
             return lance
         faits = self._avec_regime(_faits_du_lancement(objectif, bornes), projet_id)
-        return replace(lance, contenu=await self.rediger(agent, fil, faits=faits))
+        return await self._parole_sur(agent, fil, lance, faits=faits)
 
     async def recruter(
         self,
@@ -2749,10 +2779,8 @@ class RepondeurOrchestration(RepondeurChat):
         savoir plus — il écrit dans le fil, comme pour les deux autres issues.
         """
         if not approuve:
-            return ReponseChat(
-                contenu=await self.rediger(
-                    agent, fil, faits=_faits_d_une_equipe_declinee(demande)
-                )
+            return await self._parole_sur(
+                agent, fil, ReponseChat(contenu=""), faits=_faits_d_une_equipe_declinee(demande)
             )
         redaction = Redaction(None)
         if self._recruteur is None:
@@ -2783,10 +2811,8 @@ class RepondeurOrchestration(RepondeurChat):
         # aucun moyen de savoir qu'il ferait double emploi. Sans lanceur non plus :
         # le geste mènerait à un lancement impossible.
         propose = demande.objectif if lancable and not demande.pendant_un_run else ""
-        return ReponseChat(
-            contenu=await self.rediger(agent, fil, faits=faits),
-            proposition=propose,
-            equipe=equipe,
+        return await self._parole_sur(
+            agent, fil, ReponseChat(contenu="", proposition=propose, equipe=equipe), faits=faits
         )
 
     async def declarer_projet(
@@ -2815,8 +2841,8 @@ class RepondeurOrchestration(RepondeurChat):
           corrige ou la réaccepte sans rien retaper.
         """
         if not approuve:
-            return ReponseChat(
-                contenu=await self.rediger(agent, fil, faits=_faits_d_un_projet_refuse(demande))
+            return await self._parole_sur(
+                agent, fil, ReponseChat(contenu=""), faits=_faits_d_un_projet_refuse(demande)
             )
         if self._naissance is None:
             return ReponseChat(contenu=_PHRASE_SANS_NAISSANCE)
@@ -2834,10 +2860,11 @@ class RepondeurOrchestration(RepondeurChat):
             mis_sous_git=demande.versionner and cree.versionne,
             outillage=_faits_de_l_outillage(ouverture, empechement),
         )
-        return ReponseChat(
-            contenu=await self.rediger(agent, fil, faits=faits),
-            projet_cree=cree,
-            **_demandes_de(ouverture),
+        return await self._parole_sur(
+            agent,
+            fil,
+            ReponseChat(contenu="", projet_cree=cree, **_demandes_de(ouverture)),
+            faits=faits,
         )
 
     async def _proposer_projet(self, redaction: Redaction, verdict: _Verdict) -> ReponseChat:
@@ -2886,6 +2913,7 @@ class RepondeurOrchestration(RepondeurChat):
             return ReponseChat(contenu=redaction.texte, projet_propose=demande)
         ouverture, empechement = await self._ouvrir_outillage(fil, cree)
         outillage = _faits_de_l_outillage(ouverture, empechement)
+        reponse = ReponseChat(contenu="", projet_cree=cree, **_demandes_de(ouverture))
         if compris or outillage:
             faits = _faits_d_un_projet_declare(
                 cree,
@@ -2893,10 +2921,11 @@ class RepondeurOrchestration(RepondeurChat):
                 mis_sous_git=demande.versionner and cree.versionne,
                 outillage=outillage,
             )
-            await redaction.ecrire("\n\n" + await self.rediger(agent, fil, faits=faits))
-        return ReponseChat(
-            contenu=redaction.texte, projet_cree=cree, **_demandes_de(ouverture)
-        )
+            parole = await self.rediger(
+                agent, fil, faits=faits_pour_la_redaction(faits, reponse)
+            )
+            await redaction.ecrire("\n\n" + parole)
+        return replace(reponse, contenu=redaction.texte)
 
     async def _ouvrir_outillage(
         self, fil: Sequence[MessageChat], cree: ProjetCree
@@ -2941,7 +2970,7 @@ class RepondeurOrchestration(RepondeurChat):
         )
         if not abouti:
             return reponse
-        return replace(reponse, contenu=await self.rediger(agent, fil, faits=reponse.contenu))
+        return await self._parole_sur(agent, fil, reponse, faits=reponse.contenu)
 
     async def _outiller(
         self, fil: Sequence[MessageChat], redaction: Redaction, projet_id: str | None
@@ -3423,6 +3452,26 @@ class RepondeurOrchestration(RepondeurChat):
         return redige or _PHRASE_SANS_REDACTION.format(
             cause="le fournisseur de modèle a rendu une réponse vide"
         )
+
+    async def _parole_sur(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        reponse: ReponseChat,
+        *,
+        faits: str,
+    ) -> ReponseChat:
+        """`reponse`, sa parole rédigée sur `faits` — sachant ce qu'elle porte (#1339).
+
+        Chaque chemin du geste compose **d'abord** sa réponse — le run ouvert, la
+        demande reproposée, la pièce suivante —, puis fait parler le modèle : c'est
+        ce qui laisse la rédaction apprendre, des champs du message et non d'une
+        phrase écrite chemin par chemin, qu'une carte y attend sa réponse
+        (`faits_pour_la_redaction`). Sans ce fait, la consigne ne peut pas lui dire
+        de taire les gestes que la carte porte déjà.
+        """
+        parole = await self.rediger(agent, fil, faits=faits_pour_la_redaction(faits, reponse))
+        return replace(reponse, contenu=parole)
 
     async def _ouvrir_un_run(
         self,

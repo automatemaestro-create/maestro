@@ -39,6 +39,8 @@ from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.chat import (
     DECISION_ECRIRE,
     DECISION_PASSER,
+    DECISION_PLUS_TARD,
+    FAIT_DE_LA_DEMANDE,
     ORIGINE_NOUVEAU,
     UTILISATEUR,
     ChatStore,
@@ -1023,6 +1025,129 @@ def test_un_projet_neuf_s_outille_piece_par_piece_jusqu_au_bout(
     assert piece_en_attente(fil) is None
     assert {e["chemin"] for e in _manifeste(racine)["entrees"]} == set(ecrites)
     assert "il n'y a plus rien à écrire" in modele.appels["redaction"][-1]
+
+
+def _ouvre_padel(projets: ServiceProjets, maison: Path, modele: _Modele) -> tuple[
+    RepondeurOrchestration, list[MessageChat], PieceProposee
+]:
+    """Un projet neuf compris, son outillage ouvert : le fil tel que la première pièce le laisse."""
+    repondeur = _repondeur(projets, modele)
+    racine = maison / "Maestro" / "padel"
+    projet_id = str(projets.creer("padel", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+    fil: list[MessageChat] = [_message(UTILISATEUR, "Une application mobile Flutter")]
+    ouverture = asyncio.run(
+        repondeur.ouvrir_questionnaire(AGENT_ORCHESTRATION, fil, projet_id=projet_id)
+    )
+    assert ouverture.piece is not None
+    fil.append(
+        _message(
+            NOM_ORCHESTRATION,
+            ouverture.contenu,
+            piece=ouverture.piece,
+            comprehension=ouverture.comprehension,
+        )
+    )
+    return repondeur, fil, ouverture.piece
+
+
+def test_apres_un_geste_sur_une_piece_la_redaction_sait_si_la_suivante_attend(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """#1339 : la pièce suivante est sur sa carte, avec ses gestes — la parole le sait.
+
+    Vu sur la vraie stack à la relecture de #1161 : après « Écrire ce fichier », puis
+    après « Pas cette pièce », le fil redisait les gestes de la pièce suivante juste
+    au-dessus de la carte qui les porte. Le modèle ne pouvait pas savoir qu'une carte
+    les montrait ; il l'apprend désormais, et seulement quand c'est vrai — après la
+    dernière pièce, plus rien n'attend, et c'est à lui de dire la suite.
+    """
+    modele = _Modele(comprehension=COMPRIS_FLUTTER)
+    repondeur, fil, premiere = _ouvre_padel(projets, _maison, modele)
+
+    ecrite = asyncio.run(
+        repondeur.trancher_piece(AGENT_ORCHESTRATION, fil, piece=premiere, decision=DECISION_ECRIRE)
+    )
+    assert ecrite.piece is not None and ecrite.contenu == REDIGE
+    assert FAIT_DE_LA_DEMANDE in modele.appels["redaction"][-1]
+    fil.append(
+        _message(
+            NOM_ORCHESTRATION, ecrite.contenu, piece=ecrite.piece, piece_ecrite=ecrite.piece_ecrite
+        )
+    )
+
+    passee = asyncio.run(
+        repondeur.trancher_piece(
+            AGENT_ORCHESTRATION, fil, piece=ecrite.piece, decision=DECISION_PASSER
+        )
+    )
+    assert passee.piece is None and passee.contenu == REDIGE
+    assert "il n'y a plus rien à écrire" in modele.appels["redaction"][-1]
+    assert FAIT_DE_LA_DEMANDE not in modele.appels["redaction"][-1]
+
+
+def test_passer_une_piece_qui_a_une_suivante_le_dit_aussi_a_la_redaction(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """« Pas cette pièce », le second geste de la relecture de #1161 : la suivante attend."""
+    modele = _Modele(comprehension=COMPRIS_FLUTTER)
+    repondeur, fil, premiere = _ouvre_padel(projets, _maison, modele)
+
+    passee = asyncio.run(
+        repondeur.trancher_piece(
+            AGENT_ORCHESTRATION, fil, piece=premiere, decision=DECISION_PASSER
+        )
+    )
+
+    assert passee.piece is not None and passee.contenu == REDIGE
+    assert FAIT_DE_LA_DEMANDE in modele.appels["redaction"][-1]
+
+
+def test_remettre_l_outillage_a_plus_tard_ne_laisse_aucune_carte_qui_attende(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Plus rien n'attend sous la parole : la suite est à dire, pas à taire."""
+    modele = _Modele(comprehension=COMPRIS_FLUTTER)
+    repondeur, fil, premiere = _ouvre_padel(projets, _maison, modele)
+
+    reportee = asyncio.run(
+        repondeur.trancher_piece(
+            AGENT_ORCHESTRATION, fil, piece=premiere, decision=DECISION_PLUS_TARD
+        )
+    )
+
+    assert reportee.piece is None and reportee.contenu == REDIGE
+    assert FAIT_DE_LA_DEMANDE not in modele.appels["redaction"][-1]
+
+
+def test_un_projet_declare_dont_l_outillage_commence_le_dit_a_la_redaction(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """La naissance d'un projet (#1294) : sa première pièce attend — refusé, rien n'attend."""
+    naissance = ServiceNaissance(projets, git_disponible=lambda: True)
+    demande = naissance.verifier(
+        {"nom": "padel", "dossier": "", "origine": ORIGINE_NOUVEAU, "versionner": False}
+    )
+    fil = [
+        _message(UTILISATEUR, "Une application mobile Flutter pour réserver des terrains"),
+        _message(NOM_ORCHESTRATION, "Je vous propose ce projet.", projet_propose=demande),
+    ]
+    refuse, accepte = _Modele(comprehension=COMPRIS_FLUTTER), _Modele(comprehension=COMPRIS_FLUTTER)
+
+    non = asyncio.run(
+        _repondeur(projets, refuse).declarer_projet(
+            AGENT_ORCHESTRATION, fil, demande=demande, approuve=False
+        )
+    )
+    oui = asyncio.run(
+        _repondeur(projets, accepte).declarer_projet(
+            AGENT_ORCHESTRATION, fil, demande=demande, approuve=True
+        )
+    )
+
+    assert not non.porte_une_demande
+    assert FAIT_DE_LA_DEMANDE not in refuse.appels["redaction"][-1]
+    assert oui.piece is not None
+    assert FAIT_DE_LA_DEMANDE in accepte.appels["redaction"][-1]
 
 
 def test_reprendre_l_outillage_d_un_projet_reporte_leve_le_report(
