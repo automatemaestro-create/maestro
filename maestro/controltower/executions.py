@@ -186,6 +186,7 @@ from maestro.controltower.battement import (
     RegistreBattementsMemoire,
     vitalite,
 )
+from maestro.controltower.bornes import BornesRun
 from maestro.controltower.bridge import JournalEventHandler
 from maestro.controltower.brief import (
     ArbitreBriefControlTower,
@@ -741,6 +742,15 @@ class ServiceExecutions:
             sources=matiere,
             mode_brief=regime_brief,
             reprise_de=reprise_de,
+            # Les bornes de **ce** run (#1323), telles qu'elles ont été admises
+            # juste au-dessus — « aucune » comprise : c'est un fait de ce run, que
+            # le fil raconte, et non un réglage que le suivant hériterait.
+            bornes=BornesRun(
+                plafond_cout_usd=plafond_cout_usd,
+                plafond_tokens=plafond_tokens,
+                timeout_tache_s=timeout_tache_s,
+                parallelisme=parallelisme,
+            ),
         )
         # Premier battement **avant** le départ chez l'hôte, pour la même raison que
         # l'événement de lancement l'a précédée : entre le moment où le run entre
@@ -1669,6 +1679,7 @@ class ServiceExecutions:
         mode_brief: str = "",
         reprise_de: str = "",
         cause: str = "",
+        bornes: BornesRun | None = None,
     ) -> None:
         """Émet le cycle de vie du run : projection d'abord, bus ensuite.
 
@@ -1678,8 +1689,9 @@ class ServiceExecutions:
         détail sont expurgés des secrets avant de partir — ce qui va sur le bus
         est montrable, même filet que le journal (#8). Seul le **lancement**
         porte une référence externe (#187), un projet (#222), des sources
-        (#315), le régime du brief (#320) et le run repris (#349) : la projection
-        ne les retire pas aux événements suivants, qui n'en savent rien. Un
+        (#315), le régime du brief (#320), le run repris (#349) et les bornes
+        (#1323) : la projection ne les retire pas aux événements suivants, qui
+        n'en savent rien. Un
         lancement **sans** source émet `sources=None` et non une liste vide —
         l'événement reste alors celui d'avant ce lot.
 
@@ -1720,6 +1732,7 @@ class ServiceExecutions:
                 # masquer, et un masquage le rendrait illisible pour l'écran qui
                 # doit le ranger.
                 cause=cause,
+                bornes=bornes,
             )
         )
 

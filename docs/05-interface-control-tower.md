@@ -3260,6 +3260,59 @@ suit la piste** — il ne demande à lire que les fichiers que le canal lui mont
 nommés, et ne répond qu'avec ce qu'il a lu : sans le résultat des tâches, il rend
 l'aveu du bouclage mot pour mot.
 
+#### Il sait ce que Maestro fera d'un run : la politique de l'équipe, les bornes de chaque run (#1323) — **livré**
+
+Au bouclage du 2026-09-25 (`main` à `aa390ca`, vraie stack, vrai modèle),
+l'orchestrateur a affirmé deux fois sur deux une chose fausse sur la **suite** d'un
+run. Après la validation de l'équipe de S3 : *« Comme le rangement va déplacer des
+fichiers, le run vous demandera votre accord avant de commencer »* — le run n'a
+posé aucune demande de validation. Puis, sur le projet de S4 dont le run précédent
+avait reçu à son accord la borne « s'interrompt à 1 tokens », la proposition
+suivante : *« Si ce réglage n'a pas changé, ce nouveau run a toutes les chances de
+s'arrêter pareil. Je ne sais pas où ce plafond a été défini »* — alors que la carte
+de la même proposition affichait « Aucune borne », et que le run est allé au bout.
+Le modèle devinait parce qu'aucun de ces faits n'était dans ce qu'il recevait.
+
+- **Ce qu'un run fera est un bloc de faits** (`maestro/controltower/regime.py`),
+  lu à chaque message : le **cadrage** (un run du fil rédige son brief sans rien
+  soumettre à personne — l'accord de la carte est le seul qu'il attend pour
+  démarrer), les **actes de chaque agent** selon sa politique réelle, l'**acte que
+  l'objectif accepté nomme** (accordé avec le run : ses commandes shell passent
+  sans nouvelle demande), **ce qui revient** à la personne et où, **ce qui ne se
+  prévoit pas** (une question ou un arbitrage qu'un agent pose de lui-même, un
+  renfort), et la **règle des bornes**. Il entre dans le prompt du juge et dans
+  les faits des deux gestes qui mettent un run devant la personne — le lancement,
+  et l'équipe créée qui repropose la demande. Un refus n'en reçoit pas.
+- **La politique est lue là où l'exécution la lira** : l'équipe par
+  `catalogue_du_projet` (la règle du routeur), chaque politique par
+  `PermissionStore.pour_projet(…).lire` (l'appel de l'exécuteur), à chaque
+  message. Le régime se dit avec les phrases de l'intention d'un rôle
+  (`REGIME_EXECUTION`, `REGIME_PORTEE` de `maestro/equipe/proposition.py`) : le fil
+  et le playbook décrivent le même régime avec les mêmes mots. Une politique
+  **illisible** se dit avec sa cause — l'exécution en ferait un échec de tâche —,
+  jamais remplacée par un régime supposé ; un projet sans agent dit qu'il n'a pas
+  encore de politique à lire.
+- **Les bornes sont un fait du run qui les a reçues.** L'événement de lancement
+  porte un champ `bornes` (`{plafond_cout_usd, plafond_tokens, timeout_tache_s,
+  parallelisme}`, `null` hors du lancement) ; la projection les garde
+  (`EtatExecution.bornes`), l'issue ne les efface pas, et la fiche de chaque run
+  les dit — « aucune borne : le run ira jusqu'au bout » comprise, et « non
+  consignées » pour un run lancé avant ce lot. Les faits d'un lancement disent
+  celles que le geste vient de poser. La règle du bloc dit le reste : une borne se
+  pose sur la carte, ne vaut que pour son run, et aucun run n'en hérite.
+- **Le cadre dit la règle qu'on en tire, et rien d'autre** : ce que le fil dit de
+  la suite d'un run s'appuie sur ces faits, ce qu'ils ne disent pas se dit comme
+  non su, une borne passée n'annonce rien du run suivant. Aucune phrase interdite,
+  aucun lexique : le modèle reçoit les faits et juge.
+
+Gardé par `tests/test_regime_du_run.py` : les deux situations du bouclage
+**rejouées sur l'app entière** (vraie création d'équipe, vraie politique écrite sur
+le disque, vrai service d'exécutions ; modèle et moteur en doubles qui **notent
+leurs prompts**), une politique réglée entre deux messages qui se dit au second,
+une politique illisible dite avec sa cause, puis le rendu du régime agent par agent
+et les bornes à travers l'événement, le journal et la projection. Le texte que le
+modèle tire de ces faits n'est jugé par aucun motif.
+
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
 Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne

@@ -2342,8 +2342,14 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # projet proposé. Il ne garde rien non plus — le projet proposé voyage sur le
     # message (`MessageChat.projet_propose`), et c'est le fil qui le rend au geste
     # comme au « oui » tapé (`_projet_approuve`).
+    #
+    # #1323 en ajoute un, `_regime` : ce qu'un run du projet fera, lu dans la
+    # politique de l'équipe **à chaque message**, comme l'équipe et les attentes.
+    # Il ne retient rien d'un tour à l'autre — une politique réglée entre deux
+    # messages se dit au second, ce que `tests/test_regime_du_run.py` prouve.
     assert set(vars(repondeur)) == {
         "_naissance",
+        "_regime",
         "_lanceur",
         "_apercu",
         "_faits",

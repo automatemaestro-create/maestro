@@ -31,6 +31,7 @@ from typing import Any
 
 from maestro.agents.capacity import INSTANCES_DEFAUT, CapaciteAgent
 from maestro.agents.catalog import Agent
+from maestro.controltower.bornes import BornesRun
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
@@ -808,6 +809,13 @@ class EtatExecution:
     # runs décomposent le même objectif, donc une relance (#349) volerait ses
     # arêtes au run qu'elle reprend.
     plan: list[NoeudPlan] = field(default_factory=list)
+    # Les **bornes que ce run a reçues à son accord** (#1323), posées par
+    # l'événement de lancement et jamais retirées — la règle de `ticket`,
+    # `projet_id` ou `mode_brief`. None pour un run dont le lancement n'en disait
+    # rien (antérieur à ce lot, ou publié hors de l'API) : on ne les connaît pas,
+    # et c'est ce que le fil en dira. Elles appartiennent à **ce** run : aucun
+    # run suivant n'en hérite, et c'est ce que le fil ignorait.
+    bornes: BornesRun | None = None
 
     @property
     def debut(self) -> str:
@@ -2003,6 +2011,10 @@ class ControlTowerState:
             # Le régime du brief (#320) : même règle une fois de plus — annoncé par
             # le lancement, jamais retiré par l'issue, qui ne le porte pas.
             execution.mode_brief = event.mode_brief
+        if event.bornes is not None:
+            # Les bornes du run (#1323) : même règle — le lancement les porte,
+            # l'issue n'en sait rien et ne les efface pas.
+            execution.bornes = event.bornes
         if event.reprise_de:
             # Le run repris (#349) : même règle, une dernière fois. Seul le lancement
             # d'une relance en porte un ; l'issue du run, qui n'en sait rien, ne doit

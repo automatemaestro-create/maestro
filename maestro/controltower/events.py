@@ -33,6 +33,7 @@ from typing import Any
 
 from maestro.acte import arguments_depuis
 from maestro.appartenance import projet_id_valide
+from maestro.controltower.bornes import BornesRun
 from maestro.detail_tache import EtapeTache as EtapeTache  # ré-export explicite
 from maestro.detail_tache import LienUtile as LienUtile  # ré-export explicite
 from maestro.detail_tache import etapes_depuis, liens_depuis
@@ -561,6 +562,14 @@ class Event:
     # lignes n'en est pas une. Avant lui, le pont le jetait, et la lecture d'un run
     # ne savait dire d'une tâche soldée que son démarrage.
     resultat: str = ""
+    # Les **bornes que ce run a reçues à son accord** (#1323) — coût, tokens, délai
+    # par tâche, parallélisme —, portées par le seul événement de **lancement**,
+    # comme le ticket, le projet ou le régime du brief. None partout ailleurs, et
+    # c'est un fait distinct de `AUCUNE_BORNE` : None dit « cet événement n'en
+    # apprend rien » (une issue, un run lancé avant ce lot), `AUCUNE_BORNE` dit
+    # « ce run est parti sans borne ». Le fil prenait la borne d'un run passé pour
+    # un réglage qui dure, faute de savoir qu'elle appartenait à ce run-là.
+    bornes: BornesRun | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -610,6 +619,7 @@ class Event:
             "etape_run": self.etape_run,
             "recrutement": dict(self.recrutement) if self.recrutement is not None else None,
             "resultat": self.resultat,
+            "bornes": self.bornes.to_dict() if self.bornes is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -735,6 +745,15 @@ class Event:
             # événement émis avant ce lot n'en porte pas, et sa tâche se relit
             # comme avant — sans rien dire de ce qu'elle a rendu.
             resultat=str(data.get("resultat") or ""),
+            # Relecture tolérante (#1323) : `BornesRun.depuis` écarte ce qui n'est
+            # pas un nombre, sans rejuger ce que `lancer` a déjà admis. Absentes →
+            # None : un lancement d'avant ce lot n'en dit rien, et c'est ce qu'on
+            # en dira.
+            bornes=(
+                BornesRun.depuis(data["bornes"])
+                if isinstance(data.get("bornes"), Mapping)
+                else None
+            ),
             horodatage=data.get("horodatage", ""),
         )
 

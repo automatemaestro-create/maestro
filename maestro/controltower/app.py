@@ -521,6 +521,7 @@ from maestro.controltower.projets import (
     statut_http,
 )
 from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
+from maestro.controltower.regime import MembreDeLEquipe, regime_d_un_run
 from maestro.controltower.renfort import RelaisRenfort
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
@@ -2021,6 +2022,12 @@ def create_app(
         hote=hote_run,
     )
 
+    # Le régime de brief des runs ouverts depuis le fil — **une** valeur, lue par
+    # le lanceur qui l'applique et par le régime qui le dit (#1323) : deux
+    # écritures du même choix finiraient par faire annoncer au fil un autre
+    # cadrage que celui du run.
+    mode_brief_du_fil = MODE_BRIEF_AUTO
+
     async def ouvrir_un_run(
         objectif: str,
         projet_id: str | None = None,
@@ -2060,7 +2067,7 @@ def create_app(
             timeout_tache_s=bornes.timeout_tache_s,
             parallelisme=bornes.parallelisme,
             projet_id=projet_id,
-            mode_brief=MODE_BRIEF_AUTO,
+            mode_brief=mode_brief_du_fil,
             contexte_sources=contexte_sources,
         )
 
@@ -2105,6 +2112,34 @@ def create_app(
                 ligne += f" — compétences : {competences}"
             lignes.append(ligne)
         return "\n".join(lignes)
+
+    def regime_du_projet(projet_id: str | None) -> str:
+        """Ce qu'un run de ce projet fera, pour le fil — lu, jamais deviné (#1323).
+
+        L'équipe par la règle unique du routeur (`catalogue_du_projet`), comme
+        `roles_du_projet`, et la politique de chaque agent par l'appel exact de
+        l'exécution (`permissions.pour_projet(…).lire`, relu à chaque message
+        comme l'exécuteur le relit à chaque tâche) : le fil dit ce que la tâche
+        appliquera. Une politique que la lecture refuse n'est pas tue —
+        l'exécution en ferait un échec de tâche, et c'est ce que le fil en dira.
+        Sans projet, ou sur un projet inconnu, le bloc ne parle que de ce qui ne
+        dépend d'aucune équipe : le cadrage et les bornes.
+        """
+        if not projet_id or not projets.existe(projet_id):
+            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+        agents = catalogue_du_projet(agents_store, projet_id)
+        if agents is None:
+            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+        politiques = permissions.pour_projet(projet_id)
+        membres: list[MembreDeLEquipe] = []
+        for agent in agents:
+            try:
+                politique = politiques.lire(agent.nom)
+            except ValueError as refus:
+                membres.append(MembreDeLEquipe(agent.role, agent.nom, illisible=str(refus)))
+            else:
+                membres.append(MembreDeLEquipe(agent.role, agent.nom, politique))
+        return regime_d_un_run(membres, mode_brief=mode_brief_du_fil)
 
     def projet_du_fil(projet_id: str) -> Projet | None:
         """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.
@@ -2177,6 +2212,9 @@ def create_app(
                 consultation=consulter,
                 roles=roles_du_projet,
                 attentes=attentes_de(state),
+                # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
+                # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
+                regime=regime_du_projet,
                 conducteur=ConducteurOutillage(comprehension),
                 # Un projet naît dans la conversation (#1294) : déclaré par le
                 # **même** service que `POST /api/projets`, et un dossier importé
