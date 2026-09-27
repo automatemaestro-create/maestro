@@ -10,9 +10,11 @@ livrable, faire la revue) dans un espace de travail isolé.
 
 Particularité du QA (docs/04 §3.6, playbook `agents/qa/README.md`) : il **évalue** les
 livrables des tâches dont il dépend (le tableau noir), il ne les réécrit pas — et son
-compte-rendu rend un **verdict explicite** (« conforme » / « non conforme »). Au POC,
-« bloquer et renvoyer au Développeur » se matérialise par ce verdict étayé : la boucle
-n'a pas encore de rétro-boucle automatique, le verdict éclaire la décision humaine.
+compte-rendu rend un **verdict explicite** (« conforme » / « non conforme »).
+« Bloquer et renvoyer au Développeur » n'est plus seulement un verdict étayé qui
+éclaire une décision humaine (#1177) : un livrable jugé non conforme **repart** à son
+rôle producteur avec les défauts de la QA, puis revient à elle — c'est la boucle du
+run qui le renvoie (`maestro.engine.loop`), jamais la QA qui le réécrit.
 """
 
 from __future__ import annotations

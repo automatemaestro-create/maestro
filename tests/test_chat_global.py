@@ -2356,9 +2356,15 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # politique de l'équipe **à chaque message**, comme l'équipe et les attentes.
     # Il ne retient rien d'un tour à l'autre — une politique réglée entre deux
     # messages se dit au second, ce que `tests/test_regime_du_run.py` prouve.
+    #
+    # #1179 en ajoute un, `_pilote` : le service des boutons, par lequel le fil
+    # agit sur les runs. Il ne garde rien non plus — le geste proposé voyage sur le
+    # message (`MessageChat.geste_run`), et c'est le fil qui le rend au clic comme
+    # au « oui » tapé (`_geste_approuve`).
     assert set(vars(repondeur)) == {
         "_naissance",
         "_regime",
+        "_pilote",
         "_lanceur",
         "_apercu",
         "_faits",
@@ -4113,6 +4119,8 @@ _FAITS_DE_LA_REPONSE = {
     "piece_ecrite": "ce qu'un geste a fait de la pièce d'avant",
     "corrections": "ce qu'une phrase a corrigé de l'outillage",
     "projet_outille": "le projet dont le tour conduit l'outillage",
+    "geste_fait": "ce qu'une confirmation a fait d'un run, relu ensuite (#1179)",
+    "runs_candidats": "les runs qu'une demande ambiguë pouvait viser, à nommer (#1179)",
 }
 
 

@@ -492,6 +492,39 @@ Le cadre dit la règle qu'on en tire — s'appuyer sur ces faits, avouer ce qu'i
 ne disent pas, tenir une borne pour celle de son run — et rien d'autre : aucune
 phrase interdite, aucun lexique (#1169). Ce qu'il en dit reste son jugement.
 
+## Il agit sur les runs, et c'est la personne qui confirme (#1179)
+
+« Mets-le en pause », « annule », « reprends celui qui s'est arrêté », « relance-le
+avec 5 $ de plus » : chacune de ces demandes repartait en **proposition de run
+neuf**, ou en renvoi vers un écran — le canal ne savait qu'ouvrir. Les verbes
+existaient pourtant tous, derrière les boutons des écrans (#185, #349, #477).
+
+Un sixième verdict, `geste`, porte la demande d'**agir sur un run existant** : son
+action (`pause`, `reprise`, `annulation`, `relance`), le ou les runs qu'elle peut
+désigner — par leurs identifiants, que les faits des runs donnent — et, pour une
+relance, ses nouvelles bornes. Trois propriétés, et chacune a sa raison :
+
+- **rien ne s'exécute sans confirmation.** Le verdict pose une **carte**
+  (`ReponseChat.geste_run`) ; c'est le clic (`trancher_geste`) ou un « oui » tapé
+  juste après qui exécute — la règle de tout run depuis #685, et celle de docs/33
+  ② : l'orchestrateur ne décide rien de lui-même ;
+- **une demande ambiguë nomme ses candidats au lieu d'agir.** Plusieurs runs
+  désignés : pas de carte, les runs sur la réponse (`runs_candidats`, un fait sous
+  la bulle) et la question dans les mots du modèle. C'est lui qui juge qu'une
+  demande est ambiguë — « celui d'hier » quand deux runs sont d'hier — ; le code,
+  lui, garantit qu'une désignation multiple n'agit jamais ;
+- **les gestes passent par le service des boutons**, jamais par une copie
+  (`PiloteDesRuns`, satisfait par `ServiceExecutions`) : ses refus sont ceux des
+  routes (`refus_du_geste`), dits **avant** de poser la carte quand l'état les
+  rend certains, et **après** le clic quand le temps les a fait naître. Ce que le
+  geste a donné est un fait (`geste_fait`) : l'état **relu** — « en pause depuis
+  14:02 » —, le nouveau run d'une relance, ou le refus et sa phrase. Un refus dit
+  avant la carte est le **même** fait qu'un refus au clic, et s'affiche de même :
+  une prose seule le laissait lire comme une réponse de plus (relecture de #1179).
+
+Le modèle voit ce dont il a besoin pour désigner : chaque run des faits porte
+désormais son heure de lancement et, suspendu, l'heure de sa pause.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -532,7 +565,8 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT, Agent
 from maestro.agents.playbook_du_code import registre
@@ -552,11 +586,14 @@ from maestro.controltower.chat import (
     ORIGINE_EXISTANT,
     PIECE_ECARTEE,
     UTILISATEUR,
+    VERBES_DE_GESTE,
     DemandeProjet,
     DemandeRecrutement,
     EquipeRecrutee,
     EtapeFil,
     Etapeur,
+    GesteRunFait,
+    GesteRunPropose,
     Incrementeur,
     MessageChat,
     PieceProposee,
@@ -564,7 +601,9 @@ from maestro.controltower.chat import (
     Redaction,
     RepondeurChat,
     ReponseChat,
+    RunVise,
     faits_pour_la_redaction,
+    geste_run_en_attente,
     piece_en_attente,
     projet_du_fil,
     projet_en_attente,
@@ -585,6 +624,14 @@ from maestro.controltower.events import (
     ROLE_RUN,
     Event,
 )
+from maestro.controltower.gestes import (
+    GESTE_ANNULATION,
+    GESTE_PAUSE,
+    GESTE_RELANCE,
+    GESTE_REPRISE,
+    GESTES_RUN,
+    GesteRefuse,
+)
 from maestro.controltower.naissance import NaissanceRefusee, ServiceNaissance
 from maestro.controltower.outillage import ComprehensionModele, ConducteurOutillage
 from maestro.controltower.pieces import ServicePieces
@@ -603,18 +650,16 @@ from maestro.controltower.progression import (
 )
 from maestro.controltower.regime import bornes_du_run
 from maestro.controltower.state import (
-    EXECUTION_ANNULEE,
-    EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
-    EXECUTION_TERMINEE,
     ControlTowerState,
     EtatExecution,
     EtatQuestion,
     EtatTache,
     EtatValidation,
+    libelle_statut_execution,
 )
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -659,12 +704,25 @@ VERDICT_PROJET = "projet"
 #: la pièce qu'elle touche revient **revérifiée**, et c'est un geste qui l'écrit.
 VERDICT_OUTILLAGE = "outillage"
 
+#: Le sixième verdict (#1179) : la personne demande d'**agir sur un run existant** —
+#: le mettre en pause, le reprendre, l'annuler, le relancer. Il n'exécute rien : il
+#: pose la carte du geste, et c'est la confirmation qui l'exécute
+#: (`RepondeurOrchestration.trancher_geste`).
+VERDICT_GESTE = "geste"
+
 #: Les seuls verdicts admis. Tout autre mot — comme toute réponse hors contrat —
 #: retombe sur `VERDICT_ECHANGE` : la liste est **blanche**, jamais noire, parce
 #: qu'on ne maîtrise pas ce qu'un modèle peut écrire dans ce champ et qu'un mot
 #: inattendu ne doit jamais pouvoir valoir un accord.
 VERDICTS = frozenset(
-    {VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE, VERDICT_PROJET, VERDICT_OUTILLAGE}
+    {
+        VERDICT_PROPOSITION,
+        VERDICT_ACCORD,
+        VERDICT_ECHANGE,
+        VERDICT_PROJET,
+        VERDICT_OUTILLAGE,
+        VERDICT_GESTE,
+    }
 )
 
 #: Le **marqueur de fin** : ce qui sépare la réponse affichée de la décision
@@ -720,7 +778,7 @@ qu'il lit.
 
 Puis termine par une DERNIÈRE LIGNE, et une seule, de cette forme exacte :
 
-%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage", "objectif": "..."}
+%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage|geste", "objectif": "..."}
 
 Cette ligne n'est jamais affichée : elle dit à l'interface quoi faire de ce que
 tu viens d'écrire. Elle vient en dernier, après le dernier mot de ta réponse, et
@@ -747,7 +805,16 @@ Le verdict :
   qu'une demande d'écrire ("vide le dossier de ce projet", "supprime les
   fichiers de log", "renomme src en app", "déplace les images dans assets").
   Sois large : un run proposé de trop coûte un "non", une demande légitime non
-  reconnue coûte à l'utilisateur de se reformuler sans savoir pourquoi.
+  reconnue coûte à l'utilisateur de se reformuler sans savoir pourquoi. Une
+  demande sur un run DÉJÀ OUVERT — le suspendre, le reprendre, l'annuler, le
+  relancer — n'en est pas une : c'est un "geste".
+- "geste" — la personne demande d'AGIR sur un run déjà ouvert, que les faits te
+  montrent : le mettre en pause ("mets-le en pause", "arrête-le un moment"), le
+  reprendre ("reprends celui qui est en pause"), l'annuler ("annule-le", "arrête
+  tout pour de bon") ou le relancer ("relance celui qui s'est arrêté", "relance-le
+  avec 5 $ de plus"). Le run se désigne par ce que les faits en disent — le dernier,
+  celui d'hier, celui du tri, celui qui a échoué. Tu ne l'exécutes pas : une carte
+  le proposera sous ta réponse, et c'est la personne qui confirmera.
 - "outillage" — la personne parle de l'OUTILLAGE du projet : ce que Maestro écrit
   dans le projet pour ses agents (AGENTS.md, les skills, les commandes qui
   installent, construisent, testent, lancent). Elle demande de l'outiller ou de
@@ -759,11 +826,11 @@ Le verdict :
   ("change le truc", "modifie ça") aussi : la correction dira ce qu'elle n'a pas
   compris, sans rien écrire.
 - "accord" — le dernier message approuve une proposition que TU viens de faire
-  dans ce fil — un run, un projet ou une pièce d'outillage ("oui", "vas-y", "ok
-  lance", "crée-le", "écris-la"). Sans proposition juste avant, ce n'est jamais un
-  accord — et dans le doute non plus. Une demande de changement, même vague,
-  n'approuve rien : un accord écrit dans le projet de la personne, il doit être
-  sans équivoque.
+  dans ce fil — un run, un projet, une pièce d'outillage ou un geste sur un run
+  ("oui", "vas-y", "ok lance", "crée-le", "écris-la", "oui, annule-le"). Sans
+  proposition juste avant, ce n'est jamais un accord — et dans le doute non plus.
+  Une demande de changement, même vague, n'approuve rien : un accord écrit dans le
+  projet de la personne, il doit être sans équivoque.
 - "echange" — tout le reste : question sur l'outil ou sur le travail, demande
   d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
   pas.
@@ -786,8 +853,33 @@ L'objectif :
 - sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
   autonome, qui reformule la demande sans rien inventer ;
 - sur "accord", recopie MOT POUR MOT l'objectif de la proposition que
-  l'utilisateur vient d'approuver — vide quand c'est un projet qu'il approuve ;
-- vide sur "echange" et sur "projet".
+  l'utilisateur vient d'approuver — vide quand c'est un projet ou un geste sur un
+  run qu'il approuve ;
+- vide sur "echange", sur "projet" et sur "geste".
+
+Sur "geste", ajoute à l'objet de la dernière ligne une clé "geste" :
+
+"geste": {"action": "pause|reprise|annulation|relance", "runs": ["<identifiant>"],
+          "bornes": {"plafond_cout_usd": 5}}
+
+- "action" : "pause" suspend un run qui travaille — ce qui est parti va à son
+  terme, ce qui ne l'est pas attend ; "reprise" remet en route un run EN PAUSE, le
+  même, là où il en était ; "annulation" interrompt un run qui n'est pas soldé, et
+  ses tâches en vol perdent leur travail — l'écran nomme ce geste « Interrompre » :
+  dis-le avec ce verbe ; "relance" rejoue un run ARRÊTÉ
+  (orphelin, arrêté sur une borne, emporté par l'extinction de Maestro) dans un
+  NOUVEAU run, sur son brief approuvé, sans repayer le cadrage. Un run en pause se
+  reprend, il ne se relance pas ;
+- "runs" : les identifiants, tels que les faits les écrivent, du ou des runs que
+  la demande peut désigner. UN seul quand elle est sans ambiguïté. Quand plusieurs
+  runs peuvent lui correspondre, mets-les TOUS : aucune carte ne sera posée, ta
+  réponse les nomme (identifiant, objectif, statut) et demande lequel — rien n'est
+  proposé tant que la personne n'a pas choisi. Aucun quand aucun run des faits ne
+  correspond : ta réponse le dit ;
+- "bornes" : seulement sur une relance, et seulement celles que la personne demande
+  (plafond_cout_usd, plafond_tokens, timeout_tache_s, parallelisme). « 5 $ de
+  plus » se calcule depuis les bornes que les faits donnent au run. Omets la clé
+  sinon.
 
 Sur "projet", ajoute à l'objet de la dernière ligne une clé "projet" :
 
@@ -821,7 +913,13 @@ n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les t
 apparaîtront ». L'identifiant du run et ce qu'il a ouvert s'affichent d'eux-mêmes
 sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur un "accord"
 qui approuve un projet, il dit que tu le déclares, rien de plus ; qui approuve une
-pièce d'outillage, il dit que tu l'écris, rien de plus. Sur "outillage", il redit
+pièce d'outillage, il dit que tu l'écris, rien de plus ; qui approuve un geste sur
+un run, il dit que tu le fais, rien de plus — l'état du run, relu après le geste,
+s'affiche de lui-même juste en dessous. Sur "geste", il dit en une phrase ce que tu
+proposes de faire, à quel run, et ce que cela fera ; ne dis jamais que c'est fait.
+N'annonce pas de carte et ne dis pas comment confirmer : le code vérifie ta
+proposition après toi, pose la carte et ses boutons quand l'état du run l'accepte,
+et dit sinon pourquoi il n'y en aura pas. Sur "outillage", il redit
 en une phrase ce que la personne demande, avec ses mots et sans rien y deviner : tu
 parles avant la correction, et c'est elle qui dit juste en dessous ce qui en sort —
 la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la question
@@ -834,7 +932,8 @@ la recopie pas champ par champ, la carte les montre. Sur "echange", il répond �
 en s'appuyant sur l'état de l'orchestration quand la question porte dessus.
 
 Avant la conversation, tu reçois DES FAITS : l'état de l'orchestration, puis les
-runs de ce fil et de ce projet — statut, cause d'arrêt, issue, et chaque tâche
+runs de ce fil et de ce projet — identifiant, statut, heure de lancement (heure
+locale du poste), pause, cause d'arrêt, bornes, issue, et chaque tâche
 avec son détail et, une fois soldée, ce qu'elle a rendu (ce qu'elle a fait, les
 fichiers qu'elle dit avoir écrits). Réponds AVEC ces faits ; n'envoie jamais vers
 un écran chercher ce que tu as déjà sous les yeux. À « pourquoi le run a
@@ -1084,6 +1183,35 @@ _PHRASE_PIECE_EN_ECHEC = (
     "ou passez cette pièce."
 )
 
+#: Les **empêchements** des gestes sur un run (#1179) — même règle que ceux de la
+#: naissance : rien ne s'est fait, et seul ce code le sait. Un refus **motivé** du
+#: service après une confirmation n'en est pas un : c'est un fait (`geste_fait`),
+#: et le modèle le dit (`_faits_du_geste`).
+_PHRASE_SANS_PILOTE = (
+    "Aucun pilotage des runs n'est branché sur ce fil : je peux en parler, pas agir "
+    "dessus."
+)
+_PHRASE_RUN_INTROUVABLE = (
+    "Je ne connais aucun run {runs} : je ne peux rien vous proposer sur lui. Dites-moi "
+    "lequel, par son objectif ou son heure de lancement."
+)
+#: Le modèle a déjà écrit sa proposition quand la vérification la refuse : la phrase
+#: la **corrige** (« finalement »), sans quoi la bulle annoncerait une carte qui ne
+#: vient pas — vu sur la vraie stack, « Confirmez-la sur la carte juste en dessous »
+#: suivi d'un refus qui ne disait pas qu'il revenait sur ces mots. La raison n'y est
+#: pas : elle est le **fait** du refus (`geste_fait`), marqué sous la bulle comme un
+#: refus au clic — un second paragraphe de prose se lisait comme une réponse de plus.
+#: Elle dit aussi qu'**aucune carte ne suivra** : le modèle l'annonçait presque
+#: toujours (« confirmez sur la carte ci-dessous »), et deux réponses contraires se
+#: lisaient d'un coup d'œil. La consigne lui dit désormais de ne pas l'annoncer ; la
+#: phrase le dit quand même, parce qu'une consigne n'est pas une garantie.
+_PHRASE_GESTE_IMPOSSIBLE = (
+    "Vérification faite, aucune carte ne suivra : je ne peux finalement pas vous "
+    "proposer de {verbe} ce run — la raison est juste en dessous."
+)
+_PHRASE_GESTE_REFUSE = "Ce geste n'a pas eu lieu : {cause}"
+_PHRASE_GESTE_EMPECHE = "Je n'ai pas pu {verbe} le run {run_id} : {cause}."
+
 
 def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
     """Les sources que la conversation a jointes, déjà lues et encadrées (#1172).
@@ -1126,29 +1254,6 @@ _STATUTS_ACTIFS = frozenset(
         EXECUTION_EN_ATTENTE_ARBITRAGE,
     }
 )
-
-#: Ce que le fil dit d'un statut d'exécution (#946, C7 du retex du 2026-09-11) :
-#: l'ouverture d'un run annonçait « statut « en_cours » », c'est-à-dire
-#: l'identifiant de la machine à états rendu tel quel dans une conversation.
-#:
-#: Les libellés sont ceux de `libelleStatutExecution` (`apps/web/lib/format.ts`)
-#: **au mot près** — c'est la règle de #571, et le même run lu dans le fil puis
-#: sur son écran ne doit pas paraître dans deux états. Un statut absent de la
-#: table se dit brut plutôt que traduit à l'aveugle.
-_LIBELLES_STATUT_EXECUTION = {
-    EXECUTION_EN_COURS: "En cours",
-    EXECUTION_TERMINEE: "Terminée",
-    EXECUTION_ANNULEE: "Annulée",
-    EXECUTION_ECHEC: "Échec",
-    EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
-    EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
-    EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
-}
-
-
-def libelle_statut_execution(statut: str) -> str:
-    """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
-    return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
 
 
 #: Ce que le fil dit d'un statut de **tâche** (#1157) — les libellés de
@@ -1205,6 +1310,50 @@ def libelle_cause(cause: str) -> str:
     de l'issue, lui, reste rapporté juste à côté.
     """
     return _LIBELLES_CAUSE.get(cause, "") if cause else ""
+
+
+def heure_locale(horodatage: str | None) -> str:
+    """Un horodatage du journal (UTC, ISO-8601) à l'heure **du poste** — « 2026-09-27 14:02 ».
+
+    La Control Tower est locale : le poste qui la sert est celui de la personne, et
+    « en pause depuis 14:02 » doit se lire à sa montre, pas en UTC (#1179). La
+    minute suffit — c'est ce qu'on se dit d'un run. `""` sur un horodatage vide ou
+    illisible : rien plutôt qu'une heure fausse.
+    """
+    if not horodatage:
+        return ""
+    try:
+        instant = datetime.fromisoformat(horodatage)
+    except ValueError:
+        return ""
+    return instant.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def etat_du_run(resume: Mapping[str, Any]) -> str:
+    """L'état d'un run **en mots**, tel qu'on le relit après un geste (#1179).
+
+    Les libellés de l'écran (#571), la pause et son heure, la cause d'un arrêt :
+    « En cours — en pause depuis 2026-09-27 14:02 », « Échec — Plafond de dépense
+    atteint ». C'est ce que le fil dit du run qu'une carte vise et de celui qu'un
+    geste vient de toucher, sans jamais écrire un code de la machine à états.
+    """
+    etat = libelle_statut_execution(str(resume.get("statut") or ""))
+    if resume.get("en_pause"):
+        depuis = heure_locale(str(resume.get("pause_depuis") or ""))
+        etat += f" — en pause depuis {depuis}" if depuis else " — en pause"
+    # La cause d'une annulation (« Interrompu ») redit le statut « Annulée » : vu sur
+    # la vraie stack, le fil citait « Annulée — Interrompu » mot pour mot. Les autres
+    # causes, elles, disent pourquoi (un plafond, l'extinction de Maestro).
+    code = str(resume.get("cause") or "")
+    cause = libelle_cause(code) if code != CAUSE_ANNULATION else ""
+    if cause:
+        etat += f" — {cause}"
+    return etat
+
+
+def _run_vise(resume: Mapping[str, Any]) -> RunVise:
+    """Le run d'un résumé, son état **en mots** compris — ce qu'une carte et un fait portent."""
+    return RunVise.du_resume(resume, etat=etat_du_run(resume))
 
 
 #: Un bloc de code Markdown, que les modèles posent volontiers autour d'un JSON
@@ -1523,6 +1672,68 @@ def _faits_d_un_projet_declare(
     )
 
 
+#: Ce que chaque geste **fait** au run, une fois exécuté (#1179) — des faits du
+#: service, dits une fois : c'est ce qui sépare la pause de l'annulation, et la
+#: reprise de la relance, et le modèle ne doit pas avoir à le deviner.
+_CE_QUE_FAIT_LE_GESTE = {
+    GESTE_PAUSE: (
+        "Ce qui était parti va à son terme ; ce qui ne l'était pas attend qu'on le "
+        "reprenne. Le run continue de battre, et rien de son travail n'est perdu."
+    ),
+    GESTE_REPRISE: (
+        "Les tâches qui attendaient repartent là où le run en était : rien n'est "
+        "rejoué, rien n'est repayé."
+    ),
+    GESTE_ANNULATION: (
+        "Ses tâches en vol ont été interrompues là où elles en étaient, et le run est "
+        "soldé : il ne reprendra pas."
+    ),
+}
+
+
+def _faits_du_geste_ecarte(demande: GesteRunPropose) -> str:
+    """Le geste proposé a été écarté d'un geste — rien n'est fait (#1179)."""
+    verbe = VERBES_DE_GESTE.get(demande.action, demande.action)
+    return (
+        f"L'utilisateur a écarté, d'un geste, ta proposition de {verbe} le "
+        f"{demande.run.en_phrase()}. Rien n'a été fait : le run est tel qu'il était."
+    )
+
+
+def _faits_du_geste(demande: GesteRunPropose, fait: GesteRunFait) -> str:
+    """Le geste confirmé a été exécuté — ou refusé par le service —, et le run relu (#1179).
+
+    L'état **relu** est donné tel quel, heure de pause comprise : c'est ce que le
+    fil doit dire (« en pause depuis 14:02 »), et il n'existe nulle part ailleurs
+    que dans ce que le service vient de rendre. Un refus y est un fait parmi les
+    autres — le service a dit non, et pourquoi —, et c'est le modèle qui le dit à
+    la personne, avec ce qu'elle peut faire à la place.
+    """
+    verbe = VERBES_DE_GESTE.get(demande.action, demande.action)
+    confirme = (
+        f"L'utilisateur a confirmé, d'un geste, de {verbe} le {demande.run.en_phrase()}."
+    )
+    if fait.refus:
+        return (
+            f"{confirme} Le service l'a REFUSÉ, et rien n'a été fait : {fait.refus} "
+            f"Relu à l'instant : {fait.run.en_phrase()}."
+        )
+    if fait.nouveau is not None:
+        bornes = demande.bornes if demande.bornes is not None else AUCUNE_BORNE
+        return (
+            f"{confirme} C'est fait : le run {demande.run.run_id} est soldé, et un "
+            f"NOUVEAU run en porte la suite — {fait.nouveau.en_phrase()} —, reparti de son "
+            "brief approuvé sans repayer le cadrage : il redécoupe le travail en tâches, "
+            "celles déjà faites comprises. Son identifiant et son avancement s'affichent "
+            "d'eux-mêmes juste sous ton message. Les bornes de ce nouveau run, posées à "
+            f"la confirmation : {bornes.en_phrase()}."
+        )
+    return (
+        f"{confirme} C'est fait, et le run a été relu juste après : "
+        f"{fait.run.en_phrase()}. {_CE_QUE_FAIT_LE_GESTE.get(demande.action, '')}"
+    ).strip()
+
+
 def _fait_sans_equipe(*, recrutable: bool) -> str:
     """Le bloc de contexte du juge sur un projet sans agent (#1146, #1262).
 
@@ -1722,6 +1933,15 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     if execution.objectif:
         entete += f" — « {_borne(execution.objectif)} »"
     lignes = [entete]
+    # Quand il est parti, et s'il est suspendu (#1179) : c'est ce qui laisse
+    # désigner « celui d'hier » ou « celui qui est en pause » par ses faits, au
+    # lieu de deviner un identifiant.
+    lance = heure_locale(execution.debut)
+    if lance:
+        lignes.append(f"  lancé : {lance}")
+    if execution.en_pause:
+        depuis = heure_locale(execution.pause_depuis)
+        lignes.append(f"  en pause depuis {depuis}" if depuis else "  en pause")
     cause = libelle_cause(execution.cause)
     if cause:
         lignes.append(f"  cause : {cause}")
@@ -1901,6 +2121,12 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
         ]
         if execution.objectif:
             lignes.append(f"objectif : {execution.objectif}")
+        lance = heure_locale(execution.debut)
+        if lance:
+            lignes.append(f"lancé : {lance}")
+        if execution.en_pause:
+            depuis = heure_locale(execution.pause_depuis)
+            lignes.append(f"en pause depuis {depuis}" if depuis else "en pause")
         cause = libelle_cause(execution.cause)
         if cause:
             lignes.append(f"cause : {cause}")
@@ -1963,6 +2189,62 @@ AttentesEnCours = Callable[[str | None], str]
 #: demandera. Sans lui, le modèle devinait — un accord qu'aucun run ne demande,
 #: une borne passée prise pour un réglage.
 RegimeDuProjet = Callable[[str | None], str]
+
+
+class PiloteDesRuns(Protocol):
+    """Ce que le fil demande au pilotage des runs pour **agir** sur eux (#1179).
+
+    Trois verbes, et `ServiceExecutions` les a tels quels — c'est ce qui fait passer
+    les gestes du fil par les **mêmes** services que les boutons des écrans, sans
+    copie : relire un run (`resume`), savoir si un geste serait refusé et pourquoi
+    (`refus_du_geste`), l'exécuter et rendre l'état relu (`agir`, qui lève
+    `GesteRefuse`). Un protocole plutôt qu'une importation, pour la raison du
+    `LanceurRun` : ce module reste jouable sans moteur, et ses tests sans exécution.
+    """
+
+    def resume(self, run_id: str) -> Mapping[str, Any] | None:
+        """Le résumé du run tel que la projection le porte, `None` s'il est inconnu."""
+        ...
+
+    async def refus_du_geste(self, geste: str, run_id: str) -> Exception | None:
+        """Le refus que ce geste recevrait maintenant, `None` s'il passe."""
+        ...
+
+    async def agir(
+        self, geste: str, run_id: str, *, bornes: BornesRun = AUCUNE_BORNE
+    ) -> Mapping[str, Any]:
+        """Exécute le geste et rend le résumé relu — lève `GesteRefuse` sur un refus."""
+        ...
+
+
+def _geste_approuve(fil: Sequence[MessageChat]) -> GesteRunPropose | None:
+    """Le geste qu'un « oui » **tapé** confirme — `None` s'il n'en confirme aucun (#1179).
+
+    La règle de `_projet_approuve` et de `_piece_approuvee`, sur la sixième carte :
+    le dernier message est de la personne, et celui d'avant proposait un geste que
+    rien d'autre n'a suivi. C'est ce qui fait exécuter ce que la carte montrait —
+    ce run-là, cette action-là —, jamais ce qu'un modèle aurait recopié.
+    """
+    if len(fil) < 2 or fil[-1].auteur != UTILISATEUR:
+        return None
+    attente = geste_run_en_attente(fil[:-1])
+    return attente.geste_run if attente is not None else None
+
+
+def _identifiants(brut: Any) -> list[str]:
+    """Les identifiants de runs que le modèle a désignés, dédoublonnés et dans l'ordre.
+
+    Une chaîne seule vaut une liste d'un élément : le contrat demande une liste,
+    et un modèle qui n'en écrit qu'une ne désigne pas moins ce run-là.
+    """
+    valeurs = [brut] if isinstance(brut, str) else brut if isinstance(brut, list) else []
+    vus: list[str] = []
+    for valeur in valeurs:
+        identifiant = str(valeur).strip() if isinstance(valeur, str | int) else ""
+        if identifiant and identifiant not in vus:
+            vus.append(identifiant)
+    return vus
+
 
 #: Combien d'attentes le fil raconte, et sur quelle longueur. Mêmes raisons que
 #: les bornes des runs (#1157), et elles se **disent** de la même façon.
@@ -2082,6 +2364,10 @@ class _Verdict:
     #: `ServiceNaissance.verifier` qui en fait une `DemandeProjet`, confrontée au
     #: disque, et le lecteur du contrat n'a pas à savoir ce qu'est un projet.
     projet: Mapping[str, Any] | None = None
+    #: Le geste sur un run **brut** (#1179) — `None` hors du verdict `geste`. Brut
+    #: pour la même raison : c'est le répondeur qui confronte ses runs à la
+    #: projection et son action au service, jamais le lecteur du contrat.
+    geste: Mapping[str, Any] | None = None
 
 
 def _objet_json(texte: str) -> Any:
@@ -2123,6 +2409,7 @@ def _verdict_depuis(texte: str) -> _Verdict:
         return _Verdict(nom=VERDICT_ECHANGE, reponse=texte.strip())
     nom = str(charge.get("verdict") or "").strip().lower()
     projet = charge.get("projet")
+    geste = charge.get("geste")
     return _Verdict(
         nom=nom if nom in VERDICTS else VERDICT_ECHANGE,
         # Le texte brut en repli : un objet bien formé mais sans phrase à
@@ -2131,6 +2418,7 @@ def _verdict_depuis(texte: str) -> _Verdict:
         reponse=str(charge.get("reponse") or "").strip() or texte.strip(),
         objectif=str(charge.get("objectif") or "").strip(),
         projet=projet if isinstance(projet, Mapping) else None,
+        geste=geste if isinstance(geste, Mapping) else None,
     )
 
 
@@ -2359,6 +2647,7 @@ class _LectureDuFlux:
             reponse=avant.strip(),
             objectif=lu.objectif,
             projet=lu.projet,
+            geste=lu.geste,
         )
 
 
@@ -2483,6 +2772,11 @@ class RepondeurOrchestration(RepondeurChat):
     du juge et dans les faits des deux gestes qui ouvrent ou reproposent un run
     (lancement, équipe créée) : ce sont les trois endroits où le fil parle de la
     suite. Sans lui, le bloc disparaît, et le fil dit ce qu'il disait avant.
+
+    `pilote` (#1179) est ce qui fait **agir** le fil sur les runs existants —
+    pause, reprise, annulation, relance —, par le service des boutons
+    (`PiloteDesRuns`). Sans lui, le verdict `geste` ne pose aucune carte et le fil
+    dit qu'il ne peut pas agir.
     """
 
     def __init__(
@@ -2502,9 +2796,11 @@ class RepondeurOrchestration(RepondeurChat):
         naissance: ServiceNaissance | None = None,
         pieces: ServicePieces | None = None,
         regime: RegimeDuProjet | None = None,
+        pilote: PiloteDesRuns | None = None,
     ) -> None:
         self._naissance = naissance
         self._regime = regime
+        self._pilote = pilote
         self._lanceur = lanceur
         self._apercu = apercu
         self._faits = faits
@@ -2603,6 +2899,15 @@ class RepondeurOrchestration(RepondeurChat):
             # corriger avec ses mots. La correction est comprise, la pièce qu'elle
             # touche revient revérifiée — rien ne s'écrit ici.
             return _avec_etapes(await self._outiller(fil, redaction, projet_id), etapes)
+        if verdict.nom == VERDICT_GESTE:
+            # La personne veut agir sur un run existant (#1179) : le geste devient
+            # une carte à confirmer — ou, sur plusieurs runs possibles, leurs noms.
+            return _avec_etapes(await self._proposer_geste(redaction, verdict), etapes)
+        geste = _geste_approuve(fil) if verdict.nom == VERDICT_ACCORD else None
+        if geste is not None:
+            # Un « oui » tapé sur une carte de geste vaut le clic : il exécute **ce
+            # que la carte montrait**, relu du fil (#1179).
+            return _avec_etapes(await self._confirmer_geste_tape(redaction, geste), etapes)
         piece = _piece_approuvee(fil) if verdict.nom == VERDICT_ACCORD else None
         if piece is not None:
             # Un « oui » tapé sur une pièce vaut le clic : il écrit **ce que la carte
@@ -2988,6 +3293,202 @@ class RepondeurOrchestration(RepondeurChat):
         if not abouti:
             return reponse
         return await self._parole_sur(agent, fil, reponse, faits=reponse.contenu)
+
+    async def trancher_geste(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: GesteRunPropose,
+        approuve: bool,
+    ) -> ReponseChat:
+        """Exécute — ou écarte — le geste sur un run que la carte proposait, puis en parle (#1179).
+
+        Aucun juge : la décision est un clic. Trois issues, et la troisième n'en est
+        pas une :
+
+        - **écarté** — rien n'est fait, et le modèle le dit ;
+        - **confirmé** — le geste passe par le service des boutons (`agir`), le run
+          est **relu**, et ce qui en sort est un fait sur la réponse
+          (`geste_fait`) : l'état relu, le nouveau run d'une relance — ou le
+          **refus** motivé du service, si l'état du run a changé entre la carte et
+          le clic. Le modèle parle depuis ce fait ;
+        - **empêché** — rien de branché, ou un service qui casse sans motif : la
+          cause est dite par ce code, seul à la connaître.
+
+        Une relance met un run devant la personne : ses faits sont suivis de ce
+        qu'un run de ce projet fera (#1323), comme ceux d'un lancement.
+        """
+        if not approuve:
+            return await self._parole_sur(
+                agent, fil, ReponseChat(contenu=""), faits=_faits_du_geste_ecarte(demande)
+            )
+        if self._pilote is None:
+            return ReponseChat(contenu=_PHRASE_SANS_PILOTE)
+        reponse = await self._executer_geste(demande)
+        fait = reponse.geste_fait
+        if fait is None:
+            return reponse
+        faits = _faits_du_geste(demande, fait)
+        if fait.nouveau is not None:
+            relu = self._lire_run(fait.nouveau.run_id) or {}
+            projet = relu.get("projet_id")
+            faits = self._avec_regime(faits, str(projet) if projet else None)
+        return await self._parole_sur(agent, fil, reponse, faits=faits)
+
+    async def _proposer_geste(self, redaction: Redaction, verdict: _Verdict) -> ReponseChat:
+        """Le verdict `geste` : la carte à confirmer, les candidats — ou pourquoi rien (#1179).
+
+        Le modèle a dit, en direct, ce qu'il propose ; ce qui s'ajoute derrière est
+        ce qu'il ne pouvait pas savoir, et la **structure** de ce que le message
+        demande :
+
+        - **un run désigné, que le service accepterait** — la carte
+          (`geste_run`), avec le run tel que la projection le montre à cet
+          instant et, pour une relance, ses nouvelles bornes ;
+        - **plusieurs runs** — aucune carte : les candidats voyagent sur la réponse
+          (`runs_candidats`) et la question est celle du modèle. Une désignation
+          multiple n'agit jamais, quoi que le modèle ait écrit ;
+        - **un run inconnu, un geste que l'état du run refuse** — aucune carte, et
+          la correction s'écrit derrière les mots du modèle (la règle de
+          `_proposer_projet`) : rien ne sera proposé qu'aucune confirmation ne
+          pourrait honorer. Le refus du service est le fait de la réponse
+          (`geste_fait`), comme celui qu'un clic aurait reçu.
+
+        Une action hors des quatre, ou aucun run désigné, n'ajoute rien : le modèle
+        a parlé, et ce qu'on ne comprend pas ne pose jamais de carte.
+        """
+        charge = verdict.geste or {}
+        action = str(charge.get("action") or "").strip().lower()
+        if self._pilote is None:
+            await redaction.ecrire(f" ⚠ {_PHRASE_SANS_PILOTE}")
+            return ReponseChat(contenu=redaction.texte)
+        if action not in GESTES_RUN:
+            return ReponseChat(contenu=redaction.texte)
+        designes = _identifiants(charge.get("runs"))
+        connus = [
+            (run_id, resume)
+            for run_id in designes
+            if (resume := self._lire_run(run_id)) is not None
+        ]
+        if len(connus) > 1:
+            return ReponseChat(
+                contenu=redaction.texte,
+                runs_candidats=tuple(_run_vise(resume) for _, resume in connus),
+            )
+        if not connus:
+            if designes:
+                runs = ", ".join(f"« {run_id} »" for run_id in designes)
+                await redaction.ecrire("\n\n" + _PHRASE_RUN_INTROUVABLE.format(runs=runs))
+            return ReponseChat(contenu=redaction.texte)
+        run_id, resume = connus[0]
+        refus = await self._refus_du_geste(action, run_id)
+        if refus:
+            verbe = VERBES_DE_GESTE.get(action, action)
+            await redaction.ecrire("\n\n" + _PHRASE_GESTE_IMPOSSIBLE.format(verbe=verbe))
+            return ReponseChat(
+                contenu=redaction.texte,
+                geste_fait=GesteRunFait(action, run=_run_vise(resume), refus=refus),
+            )
+        bornes = charge.get("bornes")
+        posees = (
+            BornesRun.depuis(bornes)
+            if action == GESTE_RELANCE and isinstance(bornes, Mapping)
+            else AUCUNE_BORNE
+        )
+        return ReponseChat(
+            contenu=redaction.texte,
+            geste_run=GesteRunPropose(
+                action=action,
+                run=_run_vise(resume),
+                bornes=None if posees.aucune else posees,
+            ),
+        )
+
+    async def _confirmer_geste_tape(
+        self, redaction: Redaction, demande: GesteRunPropose
+    ) -> ReponseChat:
+        """Le « oui » **tapé** sur une carte de geste : l'exécution, derrière les mots du juge.
+
+        Le juge a déjà écrit, en direct, qu'il le fait ; l'état relu s'affiche sous
+        la bulle (`geste_fait`). Ce qui s'ajoute derrière ses mots est ce qu'il ne
+        pouvait pas savoir, et qui les contredit : un refus du service, ou un
+        empêchement — sans quoi la bulle dirait fait ce qui ne l'est pas.
+        """
+        if self._pilote is None:
+            await redaction.ecrire(f" {_PHRASE_SANS_PILOTE}")
+            return ReponseChat(contenu=redaction.texte)
+        reponse = await self._executer_geste(demande)
+        fait = reponse.geste_fait
+        if fait is None:
+            await redaction.ecrire("\n\n" + reponse.contenu)
+            return replace(reponse, contenu=redaction.texte)
+        if fait.refus:
+            await redaction.ecrire("\n\n" + _PHRASE_GESTE_REFUSE.format(cause=fait.refus))
+        return replace(reponse, contenu=redaction.texte)
+
+    async def _executer_geste(self, demande: GesteRunPropose) -> ReponseChat:
+        """Le geste passé au service, et le run **relu** — un fait, un refus ou un empêchement.
+
+        La réponse rendue est **muette** (`contenu` vide) quand un fait en sort : la
+        parole vient ensuite, du modèle ou du juge. Elle ne porte une phrase que sur
+        un empêchement, qui n'a pas de fait à montrer. Une relance rattache le run
+        qu'elle ouvre (`run_id`) : c'est ce fil qui l'a ouvert, et c'est de lui que la
+        conversation parlera ensuite.
+        """
+        assert self._pilote is not None  # appelé derrière la garde de chaque chemin
+        run_id = demande.run.run_id
+        bornes = demande.bornes if demande.bornes is not None else AUCUNE_BORNE
+        try:
+            resume = await self._pilote.agir(demande.action, run_id, bornes=bornes)
+        except GesteRefuse as refus:
+            relu = self._lire_run(run_id)
+            vu = _run_vise(relu) if relu is not None else demande.run
+            return ReponseChat(
+                contenu="", geste_fait=GesteRunFait(demande.action, run=vu, refus=str(refus))
+            )
+        except Exception as echec:  # noqa: BLE001 — un empêchement se raconte, cf. docstring
+            verbe = VERBES_DE_GESTE.get(demande.action, demande.action)
+            return ReponseChat(
+                contenu=_PHRASE_GESTE_EMPECHE.format(
+                    verbe=verbe, run_id=run_id, cause=cause_lisible(echec)
+                )
+            )
+        if demande.action == GESTE_RELANCE:
+            nouveau = _run_vise(resume)
+            relu = self._lire_run(run_id)
+            ancien = _run_vise(relu) if relu is not None else demande.run
+            return ReponseChat(
+                contenu="",
+                run_id=nouveau.run_id,
+                geste_fait=GesteRunFait(demande.action, run=ancien, nouveau=nouveau),
+            )
+        return ReponseChat(
+            contenu="", geste_fait=GesteRunFait(demande.action, run=_run_vise(resume))
+        )
+
+    def _lire_run(self, run_id: str) -> Mapping[str, Any] | None:
+        """Le résumé d'un run, `None` s'il est inconnu **ou illisible** — jamais une levée."""
+        pilote = self._pilote
+        if pilote is None:
+            return None
+        try:
+            return pilote.resume(run_id)
+        except Exception:  # noqa: BLE001 — une lecture qui casse ne désigne rien
+            return None
+
+    async def _refus_du_geste(self, action: str, run_id: str) -> str:
+        """Le refus que le service opposerait **maintenant** au geste — `""` s'il passe.
+
+        Une vérification qui casse (un registre injoignable) ne bride pas le geste :
+        la carte est posée, et c'est l'exécution, au clic, qui dira ce qu'il en est.
+        """
+        assert self._pilote is not None  # appelé derrière la garde de `_proposer_geste`
+        try:
+            refus = await self._pilote.refus_du_geste(action, run_id)
+        except Exception:  # noqa: BLE001 — la vérification éclaire, elle ne décide pas
+            return ""
+        return str(refus) if refus is not None else ""
 
     async def _outiller(
         self, fil: Sequence[MessageChat], redaction: Redaction, projet_id: str | None

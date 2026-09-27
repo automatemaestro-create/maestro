@@ -225,6 +225,8 @@ export type FilFactice = {
   declarerProjet: (approuve: boolean) => Promise<void>;
   /** Le geste qui écrit, passe ou reporte une pièce d'outillage (#1161). */
   trancherPiece: (decision: DecisionPiece, empreinte: string) => Promise<void>;
+  /** Le geste qui confirme ou écarte un geste sur un run (#1179). */
+  trancherGeste: (approuve: boolean) => Promise<void>;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -255,6 +257,7 @@ function filParDefaut(): FilFactice {
     recruter: async () => {},
     declarerProjet: async () => {},
     trancherPiece: async () => {},
+    trancherGeste: async () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},

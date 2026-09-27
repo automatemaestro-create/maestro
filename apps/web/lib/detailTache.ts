@@ -18,12 +18,18 @@
 
 import { lienExterneSur } from "@/lib/liens";
 import {
+  CONSTAT_NON_JOUE,
+  CONSTAT_NON_TENU,
+  CONSTAT_TENU,
   ETAPE_A_FAIRE,
   ETAPE_EN_COURS,
   ETAPE_FAITE,
   LIEN_DEPOT,
   LIEN_MAQUETTE,
   LIEN_TICKET,
+  VERIFICATION_IMPOSSIBLE,
+  VERIFICATION_NON_TENUE,
+  VERIFICATION_TENUE,
   type Tache,
 } from "@/lib/types";
 
@@ -57,6 +63,33 @@ export type AttenteAffichee = {
   dureeMs: number;
 };
 
+/** Un contrôle d'une vérification (#1177), prêt à rendre : état ramené aux trois connus. */
+export type ConstatAffiche = {
+  critere: string;
+  etat: typeof CONSTAT_TENU | typeof CONSTAT_NON_TENU | typeof CONSTAT_NON_JOUE;
+  preuve: string;
+  commande: string;
+  code: number | null;
+};
+
+/**
+ * La dernière vérification d'une tâche (#1177), prête à rendre. `statut` est
+ * ramené aux trois issues connues ; `tenus` est le numérateur du compteur ;
+ * `livraison` vaut `null` quand le flux ne la numérote pas (un renvoi de QA).
+ */
+export type VerificationAffichee = {
+  statut:
+    | typeof VERIFICATION_TENUE
+    | typeof VERIFICATION_NON_TENUE
+    | typeof VERIFICATION_IMPOSSIBLE;
+  resume: string;
+  empechement: string;
+  livraison: number | null;
+  renvoi: string;
+  constats: ConstatAffiche[];
+  tenus: number;
+};
+
 /** Le détail complet d'une tâche, normalisé. `vide` : il n'y a rien à ouvrir. */
 export type DetailTache = {
   description: string;
@@ -81,6 +114,12 @@ export type DetailTache = {
    * (GitLab CI met « Durée » et « En file d'attente » dans le même bloc).
    */
   travailMs: number | null;
+  /**
+   * La dernière vérification de la tâche (#1177) — `null` tant qu'aucune n'a eu
+   * lieu, et le panneau n'en dit alors rien. À elle seule, elle ouvre le
+   * panneau : « a-t-elle tenu ? » est la question qu'on lui pose d'abord.
+   */
+  verification: VerificationAffichee | null;
   vide: boolean;
 };
 
@@ -190,6 +229,7 @@ export function detailDe(tache: Tache): DetailTache {
   const etapes = etapesDe(tache);
   const liens = liensDe(tache);
   const attentes = attentesDe(tache);
+  const verification = verificationDe(tache);
   return {
     description,
     etapes,
@@ -197,11 +237,67 @@ export function detailDe(tache: Tache): DetailTache {
     faites: etapes.filter((etape) => etape.etat === ETAPE_FAITE).length,
     attentes,
     travailMs: tache.usage?.duree_execution_ms ?? tache.usage?.duree_ms ?? null,
+    verification,
     vide:
       description === "" &&
       etapes.length === 0 &&
       liens.length === 0 &&
-      attentes.length === 0,
+      attentes.length === 0 &&
+      verification === null,
+  };
+}
+
+const ETATS_CONSTAT = new Set<string>([CONSTAT_TENU, CONSTAT_NON_TENU, CONSTAT_NON_JOUE]);
+
+/**
+ * La dernière vérification de la tâche (#1177), normalisée — `null` sans
+ * vérification lisible.
+ *
+ * Même règle que les étapes : un contrôle sans critère est retiré (il n'y a rien
+ * à lire), un état inconnu retombe sur « non joué » — ni tenu, ni non tenu :
+ * ce qu'on ne sait pas lire ne vaut jamais un vert. L'issue est celle du flux
+ * quand il en porte une connue, **déduite des constats** sinon, par la règle du
+ * moteur : tout tient, ou un critère ne tient pas, ou rien n'est vérifié en
+ * entier.
+ */
+export function verificationDe(tache: Tache): VerificationAffichee | null {
+  const brute = tache.verification;
+  if (!brute || typeof brute !== "object") return null;
+  const constats: ConstatAffiche[] = (Array.isArray(brute.constats) ? brute.constats : [])
+    .map((constat) => {
+      const etat = texte(constat?.etat);
+      return {
+        critere: texte(constat?.critere),
+        etat: (ETATS_CONSTAT.has(etat) ? etat : CONSTAT_NON_JOUE) as ConstatAffiche["etat"],
+        preuve: typeof constat?.preuve === "string" ? constat.preuve.trim() : "",
+        commande: texte(constat?.commande),
+        code: typeof constat?.code === "number" ? constat.code : null,
+      };
+    })
+    .filter((constat) => constat.critere !== "");
+  const empechement = texte(brute.empechement);
+  if (constats.length === 0 && empechement === "") return null;
+  const tenus = constats.filter((c) => c.etat === CONSTAT_TENU).length;
+  const statutBrut = texte(brute.statut);
+  const statut: VerificationAffichee["statut"] =
+    statutBrut === VERIFICATION_TENUE ||
+    statutBrut === VERIFICATION_NON_TENUE ||
+    statutBrut === VERIFICATION_IMPOSSIBLE
+      ? statutBrut
+      : !empechement && constats.length > 0 && tenus === constats.length
+        ? VERIFICATION_TENUE
+        : constats.some((c) => c.etat === CONSTAT_NON_TENU)
+          ? VERIFICATION_NON_TENUE
+          : VERIFICATION_IMPOSSIBLE;
+  return {
+    statut,
+    resume: texte(brute.resume),
+    empechement,
+    livraison:
+      typeof brute.livraison === "number" && brute.livraison > 0 ? brute.livraison : null,
+    renvoi: texte(brute.renvoi),
+    constats,
+    tenus,
   };
 }
 

@@ -69,6 +69,7 @@ from maestro.engine.executor import (
 from maestro.engine.guardrails import Guardrails
 from maestro.engine.loop import _consigne_blocage
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
+from maestro.engine.verification import VerificateurTaches
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task, validate_task
 from maestro.projets.store import ProjetStore
@@ -105,6 +106,12 @@ _guardrails: Guardrails | None = None
 #: comme sur `OrchestrationEngine.default()`. C'est la **seule** couche de relance
 #: (le retry Temporal des activités est neutralisé, cf. workflow).
 _relance: PolitiqueRelance = RELANCE_DEFAUT
+#: La vérification des livraisons (#1177) — armée par défaut, comme la relance :
+#: une activité d'agent n'est « Terminée » qu'une fois ses critères vérifiés en
+#: l'exécutant. Le **renvoi par la QA**, lui, vit dans la boucle en process
+#: (`maestro.engine.loop`) et pas dans le workflow durable, qui ordonnance ses
+#: activités lui-même : limite dite dans docs/45 §4.
+_verification: bool = True
 _executor: LocalExecutor | None = None
 
 
@@ -113,6 +120,7 @@ def configurer_worker(
     provider_factory: ProviderFactory | None = None,
     guardrails: Guardrails | None = None,
     relance: PolitiqueRelance | None = None,
+    verification: bool | None = None,
 ) -> None:
     """Configure l'exécution de CE process worker (fournisseur, garde-fous, relance).
 
@@ -121,23 +129,28 @@ def configurer_worker(
     que le process courant. L'exécuteur courant est invalidé — reconstruit au
     prochain message. `relance` (#91) remplace la politique par défaut ; la
     neutraliser se fait via `PolitiqueRelance(max_tentatives=1)` (None : inchangée).
+    `verification` (#1177) arme ou éteint la vérification des livraisons
+    (None : inchangée).
     """
-    global _provider_factory, _guardrails, _relance, _executor
+    global _provider_factory, _guardrails, _relance, _verification, _executor
     if provider_factory is not None:
         _provider_factory = provider_factory
     if guardrails is not None:
         _guardrails = guardrails
     if relance is not None:
         _relance = relance
+    if verification is not None:
+        _verification = verification
     _executor = None
 
 
 def reinitialiser_worker() -> None:
     """Rétablit la configuration par défaut du worker (fabrique configurée, garde-fous défaut)."""
-    global _provider_factory, _guardrails, _relance, _executor
+    global _provider_factory, _guardrails, _relance, _verification, _executor
     _provider_factory = _fabrique_configuree
     _guardrails = None
     _relance = RELANCE_DEFAUT
+    _verification = True
     _executor = None
 
 
@@ -176,6 +189,11 @@ def _executeur() -> LocalExecutor:
             agents_store=agents_store,
             modele=settings.model,
             relance=_relance,
+            verificateur=(
+                VerificateurTaches(provider, modele=settings.model)
+                if _verification
+                else None
+            ),
         )
     return _executor
 
