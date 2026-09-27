@@ -1029,6 +1029,48 @@ export async function declarerProjetDuFil(
 }
 
 /**
+ * Confirme — ou écarte — le geste sur un run que le fil propose
+ * (`POST /api/chat/{agent}/geste`, #1179) et rend la paire (geste, réponse).
+ *
+ * Seul `approuve` part : l'action, le run et les bornes d'une relance sont sur la
+ * carte que le fil porte, et c'est elle que l'API exécute — par le service des
+ * boutons des écrans. La réponse porte l'état relu du run (`geste_fait`), ou le
+ * refus du service quand l'état du run a changé depuis la carte.
+ *
+ * Un `409` n'est pas une panne, comme sur le cadrage : le geste a été confirmé ou
+ * écarté entre-temps, ou la conversation a repris.
+ */
+export async function trancherGesteDuFil(
+  agent: string,
+  decision: { approuve: boolean; conversation?: string },
+): Promise<MessageChat[]> {
+  const chemin = `/api/chat/${encodeURIComponent(agent)}/geste`;
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approuve: decision.approuve,
+        conversation: decision.conversation,
+      }),
+    });
+  } catch {
+    // Rien n'a répondu : la panne est typée à la source (#996), comme pour une pièce.
+    throw ErreurApi.injoignable(chemin);
+  }
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "ce geste n'attend plus de réponse — la conversation a repris."
+        : `geste sur le run refusé (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
  * Valide — ou décline — l'équipe que le fil propose à un projet sans agent
  * (`POST /api/chat/{agent}/recrutement`, #1146) et rend la paire (geste, réponse).
  *
