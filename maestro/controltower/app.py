@@ -1936,6 +1936,10 @@ def create_app(
     pieces = ServicePieces(
         outillage, projets, correction=CorrectionModele(lecteur_outillage)
     )
+    # Un seul conducteur pour les deux moments où l'outillage se propose : pendant la
+    # conversation (#1161), et à la fin d'un run, quand le projet construit fait changer
+    # ce que ses commandes rendent (#1343, `ConteurDeFin`).
+    conducteur = ConducteurOutillage(comprehension, pieces=pieces)
     # La projection part du catalogue **hors projet** : les agents rangés à la
     # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
     # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
@@ -2241,7 +2245,7 @@ def create_app(
                 # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
                 # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
                 regime=regime_du_projet,
-                conducteur=ConducteurOutillage(comprehension, pieces=pieces),
+                conducteur=conducteur,
                 # Un projet naît dans la conversation (#1294) : déclaré par le
                 # **même** service que `POST /api/projets`, et un dossier importé
                 # lu par la lecture de l'outillage (#1158) — une fois accordé.
@@ -2278,6 +2282,9 @@ def create_app(
         agent=AGENT_ORCHESTRATION,
         projet=projet_du_run,
         redacteur=recit_redacteur,
+        # La fin d'un run revoit aussi l'outillage de son projet (#1343) : ce qui ne
+        # pouvait pas se jouer sur un dossier vide se joue sur le projet construit.
+        outillage=conducteur,
     )
     # Les récits en vol, tenus par l'app : `asyncio.create_task` ne garde qu'une
     # référence faible, et une tâche ramassée en cours de route perdrait le

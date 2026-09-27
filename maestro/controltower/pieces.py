@@ -323,6 +323,7 @@ class ServicePieces:
         acquis: Sequence[Choix] | None = None,
         corrections: Sequence[Choix] = (),
         tranchees: Iterable[tuple[str, str]] = (),
+        revoir: bool = False,
     ) -> PieceProposee | None:
         """La prochaine pièce à proposer — vérifiée, avec son diff —, `None` s'il n'y en a plus.
 
@@ -331,6 +332,10 @@ class ServicePieces:
         le fil a compris (le tour qui conclut le questionnaire ne l'a pas encore
         écrit), `corrections` s'ajoute à celles du fil (la correction qu'on vient de
         comprendre), `tranchees` à ce que le fil a tranché (le geste en cours).
+
+        `revoir` (#1343) est la revue d'après un run : le projet a changé, donc seul un
+        verdict **vérifié** est repris — tout ce qui avait échoué ou n'avait pas pu se
+        jouer est rejoué sur le projet tel qu'il est maintenant.
 
         Bloquant par morceaux — la vérification joue des commandes : joué hors de la
         boucle d'événements.
@@ -346,8 +351,32 @@ class ServicePieces:
         dernieres = dict(pieces_tranchees(fil))
         dernieres.update(tranchees)
         deja = set(dernieres.items())
-        connues = _verdicts_du_fil(fil)
-        return await asyncio.to_thread(self._chercher, matiere, deja, connues)
+        connues = {} if revoir else _verdicts_du_fil(fil)
+        return await asyncio.to_thread(self._chercher, matiere, deja, connues, revoir=revoir)
+
+    async def a_revoir(self, projet_id: str, fil: Sequence[MessageChat]) -> bool:
+        """L'outillage de ce projet a-t-il, **maintenant**, des commandes à rejouer ? (#1343)
+
+        Trois conditions, et chacune a sa raison :
+
+        - **ce fil l'a écrit** — une pièce de ce projet y a été écrite : c'est lui que
+          la revue relit (ce qu'il a compris, ce qu'il a tranché). Un outillage écrit
+          ailleurs se revoit là où il s'est écrit, à la prochaine ouverture ;
+        - **une commande n'a pas passé** — le manifeste garde un verdict qui n'est pas
+          « vérifiée » : échouée, ou pas encore jouable. Tout vérifié, il n'y a rien à
+          revoir, et un run ne coûte pas une seconde vérification ;
+        - **le projet a ses fichiers** — un dossier encore vide ne jouerait rien de plus
+          qu'à l'écriture.
+        """
+        if not any(
+            m.piece_ecrite is not None
+            and m.piece_ecrite.ecrite
+            and m.piece_ecrite.projet_id == projet_id
+            for m in fil_du_projet(fil, projet_id)
+        ):
+            return False
+        projet = self._outillage.entite(projet_id)
+        return await asyncio.to_thread(_a_revoir, projet)
 
     async def comprendre_correction(
         self, projet_id: str, fil: Sequence[MessageChat], phrase: str
@@ -547,18 +576,26 @@ class ServicePieces:
         matiere: _Matiere,
         deja: set[tuple[str, str]],
         connues: dict[str, Verification],
+        *,
+        revoir: bool = False,
     ) -> PieceProposee | None:
         """La première pièce qui changerait le disque et n'a pas été tranchée — **bloquant**.
 
         Les verdicts connus sont ceux que le manifeste déclare (une pièce déjà écrite
         se reconnaît « à jour » sans rien rejouer) puis ceux que le fil a vus : une
         commande qu'`AGENTS.md` a fait jouer n'est pas rejouée pour le skill qui
-        l'écrit. Une commande **corrigée** a un autre texte : elle est jouée.
+        l'écrit. Une commande **corrigée** a un autre texte : elle est jouée. En revue
+        d'après un run (`revoir`, #1343), seuls les verdicts vérifiés du manifeste
+        valent : le reste se rejoue sur le projet construit.
         """
         racine, projet = matiere.racine, matiere.projet
         portees = portees_declarees(racine)
         frontiere = FrontiereEcriture.pour(racine, projet.perimetre)
-        verdicts_connus = {v.commande: v for v in verifications_declarees(racine)}
+        verdicts_connus = {
+            v.commande: v
+            for v in verifications_declarees(racine)
+            if not revoir or v.etat == VERIFIEE
+        }
         verdicts_connus.update(connues)
         entrees = {e.chemin: e for e in matiere.recommandation.entrees}
         plan = rediger(
@@ -746,6 +783,14 @@ def _verdicts_du_fil(fil: Sequence[MessageChat]) -> dict[str, Verification]:
             if verdict.etat in _JOUES:
                 verdicts[verdict.commande] = verdict
     return verdicts
+
+
+def _a_revoir(projet: Projet) -> bool:
+    """Une commande de l'outillage n'a pas passé, et le projet a ses fichiers — bloquant (#1343)."""
+    racine = valider_racine(projet.racine)
+    if all(v.etat == VERIFIEE for v in verifications_declarees(racine)):
+        return False
+    return _a_ses_fichiers(projet)
 
 
 def _a_ses_fichiers(projet: Projet) -> bool:

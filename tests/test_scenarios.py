@@ -71,7 +71,7 @@ from maestro.detail_tache import ETAPE_A_FAIRE, ETAPE_EN_COURS, ETAPE_FAITE
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
 from maestro.outillage.analyse import analyser
 from maestro.outillage.detection import CHEMIN_MANIFESTE
-from maestro.outillage.verification import A_VERIFIER, ECHOUEE, USAGE_DEMARRER
+from maestro.outillage.verification import A_VERIFIER, ECHOUEE, USAGE_DEMARRER, VERIFIEE
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 from maestro.sandbox.verification import Execution
 from maestro.scenarios import banc, etat
@@ -2778,6 +2778,10 @@ class ApiQuiOutille(FausseAPI):
     (`pieces=()`), des pièces qui ne s'écrivent pas (`ecrit_les_pieces`), une
     conversation qui ne finit pas (`pieces_sans_fin`), un autre dossier proposé
     (`dossier_propose`).
+
+    `revue` (#1343) sont les pièces que **la fin du run** propose : l'outillage revu sur
+    le projet construit. La première voyage sur le message du récit — le dernier du
+    fil —, les suivantes viennent geste après geste, comme avant le run.
     """
 
     def __init__(
@@ -2792,8 +2796,11 @@ class ApiQuiOutille(FausseAPI):
         ecrit_les_pieces: bool = True,
         pieces_sans_fin: bool = False,
         propose_une_equipe: bool = True,
+        recit: str | None = None,
+        revue: Sequence[Mapping[str, Any]] = (),
     ) -> None:
-        super().__init__(moteur=moteur, propose_une_equipe=propose_une_equipe)
+        super().__init__(moteur=moteur, propose_une_equipe=propose_une_equipe, recit=recit)
+        self._revue = [dict(p) for p in revue]
         self._repertoire = repertoire
         self._questions = [dict(q) for q in questions]
         self._pieces = [dict(p) for p in pieces]
@@ -2945,7 +2952,11 @@ class ApiQuiOutille(FausseAPI):
         )
 
     def _ecrire(self, piece: Mapping[str, Any]) -> None:
-        """La pièce sur le disque, et ses verdicts fusionnés au manifeste — comme `poser_piece`."""
+        """La pièce sur le disque, et ses verdicts fusionnés au manifeste — comme `poser_piece`.
+
+        Le dernier verdict d'une commande est celui qui vaut : c'est ce qui fait qu'une
+        pièce revue après le run (#1343) remplace ce que l'écriture d'avant disait.
+        """
         racine = self.projets[self._projet]
         cible = racine / str(piece["chemin"])
         cible.parent.mkdir(parents=True, exist_ok=True)
@@ -2957,12 +2968,21 @@ class ApiQuiOutille(FausseAPI):
             else {"manifeste": 1, "entrees": [], "verifications": []}
         )
         donnees["entrees"].append({"chemin": piece["chemin"]})
-        connues = {v["commande"] for v in donnees["verifications"]}
-        donnees["verifications"] += [
-            v for v in piece.get("verifications") or [] if v["commande"] not in connues
-        ]
+        par_commande = {v["commande"]: v for v in donnees["verifications"]}
+        par_commande.update({v["commande"]: v for v in piece.get("verifications") or []})
+        donnees["verifications"] = list(par_commande.values())
         manifeste.parent.mkdir(parents=True, exist_ok=True)
         manifeste.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
+
+    def _raconter_la_fin(self, run: RunFactice, racine: Path) -> None:
+        """Le récit — et, sur le même message, la première pièce que la fin du run revoit."""
+        super()._raconter_la_fin(run, racine)
+        if not self._revue or self._recit is None:
+            return
+        self._pieces, self._revue = self._revue, []
+        # Le récit vient d'être posé — au fil, ou en attente de sa publication.
+        fin = self._en_attente[-1][1] if self._en_attente else self.fils[self._conversation][-1]
+        fin.update({"piece": self._prochaine_piece(), "projet_outille": self._projet})
 
 
 def _moteur_qui_construit(run: RunFactice, racine: Path) -> None:
@@ -3160,6 +3180,65 @@ def test_s9_rejoue_apres_le_run_ce_qu_aucun_projet_vide_ne_pouvait_jouer(tmp_pat
     assert issue.verdict == "rouge"
     assert "code 127" in issue.motif
     assert [commande for commande, _d, _s in joueur.joues] == [COMMANDE_VERIFIER]
+
+
+#: Ce que l'outillage d'un projet neuf prescrivait, sur un poste qui ne l'avait pas (#1343).
+COMMANDE_TYPST = "typst compile carnet.typ"
+
+
+def test_s9_tranche_la_piece_que_la_fin_du_run_revoit_avant_de_rejouer(tmp_path: Path) -> None:
+    """#1343 : « à vérifier » se vérifie quand le projet le permet — à la fin du run, qui
+    propose l'outillage revu. Le banc le tranche comme une personne sans avis, puis rejoue
+    ce que le manifeste dit **maintenant** : la commande dite échouée n'est plus rejouée,
+    celle qui passe l'est."""
+    avant = _piece("AGENTS.md", _verification(COMMANDE_TYPST, usage="construire"), _verification())
+    revue = _piece(
+        "AGENTS.md",
+        _verification(COMMANDE_TYPST, usage="construire", etat=ECHOUEE),
+        _verification(etat=VERIFIEE),
+    )
+    api = ApiQuiOutille(
+        tmp_path / "Maestro",
+        moteur=_moteur_qui_construit,
+        pieces=(avant,),
+        recit="Voilà votre carnet.",
+        revue=(revue,),
+    )
+    montage, _api, joueur = _banc_s9(
+        tmp_path, api, joueur=JoueurFactice(codes={COMMANDE_TYPST: 127})
+    )
+    issue, ctx = montage.jouer(_scenario("S9"))
+
+    assert issue.vert, issue.motif
+    assert api.gestes == [
+        {"decision": "ecrire", "piece": "emp-1"},
+        {"decision": "ecrire", "piece": "emp-2"},
+    ]
+    assert [commande for commande, _d, _s in joueur.joues] == [COMMANDE_VERIFIER]
+    revus = [e.detail for e in ctx.journal.etapes if e.libelle == "outillage revu après le run"]
+    assert revus == ["AGENTS.md"]
+
+
+def test_s9_sans_revue_a_la_fin_du_run_rejoue_ce_que_l_outillage_disait_avant(
+    tmp_path: Path,
+) -> None:
+    """La fin du run ne propose rien (tout était déjà vérifié, ou rien n'a changé) : le banc
+    rejoue le manifeste tel quel — et la commande « à vérifier » qui échoue est un rouge."""
+    avant = _piece("AGENTS.md", _verification(COMMANDE_TYPST, usage="construire"), _verification())
+    api = ApiQuiOutille(
+        tmp_path / "Maestro",
+        moteur=_moteur_qui_construit,
+        pieces=(avant,),
+        recit="Voilà votre carnet.",
+    )
+    montage, _api, _joueur = _banc_s9(
+        tmp_path, api, joueur=JoueurFactice(codes={COMMANDE_TYPST: 127})
+    )
+    issue, _ctx = montage.jouer(_scenario("S9"))
+
+    assert issue.verdict == "rouge"
+    assert COMMANDE_TYPST in issue.motif
+    assert [g["piece"] for g in api.gestes] == ["emp-1"]
 
 
 def test_s9_est_rouge_quand_l_outillage_n_ecrit_aucune_commande(tmp_path: Path) -> None:

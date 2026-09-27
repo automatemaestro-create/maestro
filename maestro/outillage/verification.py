@@ -52,19 +52,40 @@ processus — la mécanique est dans `maestro.sandbox`, qui lance déjà Git.
 ⚠ **Le code de retour fait foi, jamais le texte de la sortie** (#1315) : un `npm
 test` qui échoue parce que les tests sont rouges et un `npm test` sans script ne se
 distinguent pas ici, et c'est voulu — la sortie gardée le dit à qui la lit.
+
+## Ce que le poste répond, même quand le projet ne peut rien jouer (#1343)
+
+Une commande que le projet ne peut **pas encore** jouer — un dossier neuf, le fichier
+où elle vivra pas encore écrit — n'en appelle pas moins des **programmes**, et leur
+présence ne dépend pas du projet : `uv --version` se joue sur un dossier vide. Le
+banc de #1162 l'a montré sur la vraie stack : `uv`, `ruff`, `typst` et `pandoc`,
+absents du poste, étaient écrits « à vérifier » parce que le dossier était vide, et
+`AGENTS.md` prescrivait aux agents des commandes qui ne pouvaient qu'échouer.
+
+Ces commandes-là sont donc **sondées** : chaque programme qu'elles appellent
+(`programmes`, lu sur la découpe de la portée, jamais sur un catalogue) est demandé
+au bash des agents (`sonde` : `type`), dans la copie. Un programme introuvable rend
+la commande **échouée**, avec le code et la sortie de la sonde — ce que l'exécution
+dit déjà, et le texte la nomme sans jamais l'écrire comme la marche à suivre. Un
+programme présent la laisse **à vérifier**, avec la raison du projet : c'est lui qui
+manque encore. La portée passe avant : ce qu'une personne tranche n'est ni joué ni
+sondé. Le même verbe répond au questionnaire d'un projet neuf, qui n'a pas encore
+de dossier (`Verificateur.sonder`).
 """
 
 from __future__ import annotations
 
+import re
+import shlex
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from maestro.outillage.modele import USAGES, Constats, Entree, Recommandation
 from maestro.outillage.recommandation import SKILL_PAR_USAGE
-from maestro.portee import PorteeProjet
+from maestro.portee import PorteeProjet, decoupe
 from maestro.projets.modele import Perimetre
 from maestro.projets.perimetre import motifs_compiles
 from maestro.sandbox import verification as execution
@@ -85,6 +106,68 @@ USAGE_DEMARRER = "demarrer"
 
 #: Nom de skill → usage, dérivé de la table de la recommandation (jamais recopié).
 _USAGE_DU_SKILL: dict[str, str] = {nom: usage for usage, (nom, _) in SKILL_PAR_USAGE.items()}
+
+#: Une affectation de variable en tête d'une commande simple (`CI=1 npm test`) : ce
+#: n'est pas le programme appelé, c'est son environnement.
+_AFFECTATION = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+#: Ce qui fait d'un nom un **programme à chercher sur le poste** plutôt qu'un fichier du
+#: projet ou une phrase : un seul mot, sans séparateur de chemin. `./gradlew` est un
+#: fichier du projet — il existera, ou pas, avec lui.
+_PROGRAMME = re.compile(r"^[^\s/\\\-][^\s/\\]{0,99}$")
+
+_SANS_BASH = (
+    "aucun bash n'a été trouvé sur ce poste pour jouer les commandes — celui que "
+    "les agents utilisent (Git Bash sous Windows)"
+)
+
+
+def sonde(programme: str) -> str:
+    """La commande qui demande au bash des agents s'il trouve `programme` (#1343).
+
+    `type` et non `--version` : il répond pour tout programme, sans le lancer ni rien
+    supposer de ses options, et il connaît ce que bash connaît — une fonction, un
+    intégré comme `cd`. Son **code** fait foi ; sa sortie (« bash: type: uv: not
+    found ») est gardée pour être montrée.
+    """
+    return f"type -- {shlex.quote(programme)}"
+
+
+def sondable(nom: str) -> bool:
+    """`nom` est-il un programme qu'on peut chercher sur le poste — un mot, sans chemin ?"""
+    return bool(_PROGRAMME.match(nom))
+
+
+def programmes(commande: str) -> tuple[str, ...]:
+    """Les programmes que `commande` appelle, dans l'ordre, chacun une fois (#1343).
+
+    Lus sur la **découpe de la portée** (`maestro.portee.decoupe`), la seule lecture
+    d'une commande du dépôt : le verbe de chaque commande simple, ses affectations de
+    tête et un `env` retirés. Un verbe qui est un chemin (`./gradlew`) est un fichier
+    du projet, pas un outil du poste ; une commande que la découpe ne sait pas lire
+    (une substitution) ne rend rien — ce qu'elle exécute n'est pas dans son texte.
+    """
+    simples = decoupe(commande)
+    if simples is None:
+        return ()
+    vus: dict[str, None] = {}
+    for simple in simples:
+        verbe = _verbe_appele(simple.jetons)
+        if sondable(verbe):
+            vus.setdefault(verbe, None)
+    return tuple(vus)
+
+
+def _verbe_appele(jetons: Sequence[str]) -> str:
+    """Le programme qu'une commande simple lance — `CI=1 env LANG=C npm test` → `npm`."""
+    reste = list(jetons)
+    while reste and _AFFECTATION.match(reste[0]):
+        reste.pop(0)
+    if reste and reste[0] == "env":
+        reste.pop(0)
+        while reste and (reste[0].startswith("-") or _AFFECTATION.match(reste[0])):
+            reste.pop(0)
+    return reste[0] if reste else ""
 
 
 @dataclass(frozen=True)
@@ -144,12 +227,15 @@ class Delais:
     une à deux minutes, une suite de tests autant. `total_s` borne l'ensemble,
     puisque la génération attend la vérification. `demarrage_s` est la fenêtre
     d'observation d'un démarrage : un serveur qui tourne encore au bout de ce temps
-    a démarré — il est alors arrêté, et c'est une réussite.
+    a démarré — il est alors arrêté, et c'est une réussite. `sonde_s` borne la
+    question posée au poste sur un programme (#1343) : `type` répond en une fraction
+    de seconde, et une sonde qui ne répond pas ne dit rien — ni présent, ni absent.
     """
 
     commande_s: float = 300.0
     total_s: float = 900.0
     demarrage_s: float = 15.0
+    sonde_s: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -275,29 +361,71 @@ class Verificateur:
         }
         interprete = self.interprete if self.interprete is not None else execution.interprete()
         vide = _projet_vide(racine, perimetre, frozenset((portees or {}).keys()))
-        jouables: list[CommandeEcrite] = []
+        # Chaque commande à jouer, avec ce qui l'empêche **encore** — `""` si rien : le
+        # projet peut la jouer. Les autres ne se jouent pas, mais leurs programmes se
+        # sondent (#1343) : le poste répond même quand le projet ne peut rien jouer.
+        a_jouer: list[tuple[CommandeEcrite, str]] = []
         for commande in commandes:
             if commande.commande in verdicts:
                 continue
-            raison = _injouable(racine, commande, vide=vide, interprete=interprete)
-            if raison:
-                verdicts[commande.commande] = _a_verifier(commande, raison)
+            pas_encore = _pas_encore(racine, commande, vide=vide)
+            if interprete is None:
+                # Dans l'ordre où la personne veut le lire : le projet d'abord (ce qui
+                # changera de lui-même quand il sera écrit), le poste ensuite.
+                verdicts[commande.commande] = _a_verifier(commande, pas_encore or _SANS_BASH)
             else:
-                jouables.append(commande)
-        if jouables and interprete is not None:
-            verdicts.update(self._jouer(racine, jouables, perimetre, interprete))
+                a_jouer.append((commande, pas_encore))
+        if a_jouer and interprete is not None:
+            verdicts.update(self._jouer(racine, a_jouer, perimetre, interprete))
         return tuple(verdicts[c.commande] for c in commandes)
+
+    def sonder(self, noms: Iterable[str]) -> dict[str, bool]:
+        """Ce que le poste répond de chaque programme : présent (`True`), absent (`False`).
+
+        La question que pose le questionnaire d'un projet neuf, qui n'a pas encore de
+        dossier (#1343) : les outils qu'une option demande sont-ils sur le poste ? Posée
+        au bash des agents (`sonde`), dans un dossier vide et jetable. Un programme sur
+        lequel le poste **ne répond pas** — aucun bash, une sonde qui n'a pas rendu la
+        main, un interpréteur qui ne se lance pas — est **absent du résultat** : ne pas
+        savoir n'est pas « absent », et le dire ferait écarter un outil qui est là.
+        """
+        uniques = tuple(dict.fromkeys(nom for nom in noms if sondable(nom)))
+        interprete = self.interprete if self.interprete is not None else execution.interprete()
+        if not uniques or interprete is None:
+            return {}
+        joueur = self.joueur if self.joueur is not None else execution.jouer
+        poste: dict[str, bool] = {}
+        try:
+            with execution.dossier_de_sonde() as dossier:
+                for nom in uniques:
+                    try:
+                        resultat = joueur(
+                            sonde(nom), dossier, interprete=interprete, delai_s=self.delais.sonde_s
+                        )
+                    except OSError:
+                        continue
+                    if not resultat.expiree and resultat.code is not None:
+                        poste[nom] = resultat.code == 0
+        except execution.CopieImpossible:
+            return poste
+        return poste
 
     def _jouer(
         self,
         racine: Path,
-        commandes: Sequence[CommandeEcrite],
+        commandes: Sequence[tuple[CommandeEcrite, str]],
         perimetre: Perimetre,
         interprete: tuple[str, ...],
     ) -> dict[str, Verification]:
-        """Joue `commandes` dans **une** copie de `racine`, l'une après l'autre."""
+        """Joue `commandes` dans **une** copie de `racine`, l'une après l'autre.
+
+        Une commande que le projet ne peut pas encore jouer (sa raison non vide) n'y est
+        pas jouée : ses programmes y sont sondés (`_en_attente`), une fois chacun pour
+        toute la vérification.
+        """
         joueur = self.joueur if self.joueur is not None else execution.jouer
         verdicts: dict[str, Verification] = {}
+        sondes: dict[str, execution.Execution] = {}
         try:
             with execution.copie_de_verification(
                 racine,
@@ -306,15 +434,65 @@ class Verificateur:
             ) as copie:
                 portee = PorteeProjet(racine=copie)
                 debut = time.monotonic()
-                for commande in commandes:
-                    verdicts[commande.commande] = self._une(
-                        commande, copie, portee, joueur, interprete, debut
-                    )
+                for commande, pas_encore in commandes:
+                    if pas_encore:
+                        verdicts[commande.commande] = self._en_attente(
+                            commande, pas_encore, copie, portee, joueur, interprete, debut, sondes
+                        )
+                    else:
+                        verdicts[commande.commande] = self._une(
+                            commande, copie, portee, joueur, interprete, debut
+                        )
         except execution.CopieImpossible as exc:
             raison = f"la copie de vérification n'a pas pu être faite — {exc}"
-            for commande in commandes:
-                verdicts.setdefault(commande.commande, _a_verifier(commande, raison))
+            for commande, pas_encore in commandes:
+                verdicts.setdefault(commande.commande, _a_verifier(commande, pas_encore or raison))
         return verdicts
+
+    def _en_attente(
+        self,
+        commande: CommandeEcrite,
+        pas_encore: str,
+        copie: Path,
+        portee: PorteeProjet,
+        joueur: Joueur,
+        interprete: tuple[str, ...],
+        debut: float,
+        sondes: dict[str, execution.Execution],
+    ) -> Verification:
+        """Le verdict d'une commande que le projet ne peut pas encore jouer (#1343).
+
+        La portée d'abord, comme pour une commande jouée : ce qu'une personne tranche
+        n'est ni joué ni sondé. Puis chaque programme qu'elle appelle est demandé au
+        poste — **par son code** : un programme introuvable la rend échouée, avec ce que
+        la sonde a répondu. Une sonde sans réponse (délai, interpréteur qui ne se lance
+        pas, temps alloué épuisé) ne dit rien, et la commande reste à vérifier.
+        """
+        motif = portee.commande_hors_portee(commande.commande).replace(f" ({copie})", "")
+        if motif:
+            return _a_verifier(commande, f"pas jouée — {motif}")
+        absents: list[tuple[str, execution.Execution]] = []
+        for programme in programmes(commande.commande):
+            resultat = sondes.get(programme)
+            if resultat is None:
+                reste = self.delais.total_s - (time.monotonic() - debut)
+                if reste <= 0:
+                    break
+                try:
+                    resultat = joueur(
+                        sonde(programme),
+                        copie,
+                        interprete=interprete,
+                        delai_s=min(self.delais.sonde_s, reste),
+                    )
+                except OSError:
+                    continue
+                sondes[programme] = resultat
+            if not resultat.expiree and resultat.code not in (None, 0):
+                absents.append((programme, resultat))
+        if absents:
+            return _outils_absents(commande, absents)
+        return _a_verifier(commande, pas_encore)
 
     def _une(
         self,
@@ -367,13 +545,12 @@ def _projet_vide(racine: Path, perimetre: Perimetre, declares: frozenset[str]) -
     return all(relatif in declares for relatif in fichiers)
 
 
-def _injouable(
-    racine: Path, commande: CommandeEcrite, *, vide: bool, interprete: tuple[str, ...] | None
-) -> str:
-    """Pourquoi cette commande ne peut pas se jouer **ici et maintenant** — `""` si elle peut.
+def _pas_encore(racine: Path, commande: CommandeEcrite, *, vide: bool) -> str:
+    """Pourquoi le **projet** ne peut pas encore jouer cette commande — `""` s'il le peut.
 
-    Dans l'ordre où la personne veut le lire : le projet d'abord (ce qui changera de
-    lui-même quand il sera écrit), le poste ensuite.
+    Ce qui changera de lui-même quand le projet sera écrit : un dossier sans fichier à
+    lui, le fichier où la commande vit pas encore là. Le poste, lui, se sonde
+    (`Verificateur._en_attente`, #1343).
     """
     if vide:
         # « Le dossier est vide » se lisait juste sous « 7 fichiers écrits dans … » et
@@ -391,11 +568,6 @@ def _injouable(
             f"`{commande.chemin}` n'existe pas encore dans le projet : à jouer quand il "
             "existera, à la prochaine écriture de l'outillage"
         )
-    if interprete is None:
-        return (
-            "aucun bash n'a été trouvé sur ce poste pour jouer les commandes — celui que "
-            "les agents utilisent (Git Bash sous Windows)"
-        )
     return ""
 
 
@@ -403,6 +575,43 @@ def _a_verifier(commande: CommandeEcrite, raison: str) -> Verification:
     """Un verdict « pas jouée », avec sa raison."""
     return Verification(
         usage=commande.usage, commande=commande.commande, etat=A_VERIFIER, raison=raison
+    )
+
+
+def _outils_absents(
+    commande: CommandeEcrite, absents: Sequence[tuple[str, execution.Execution]]
+) -> Verification:
+    """Le verdict d'une commande dont un programme est introuvable sur le poste (#1343).
+
+    **Échouée**, et non « à vérifier » : l'exécution l'a déjà dit — la sonde a rendu la
+    main en erreur —, et c'est tout ce qui compte pour ne jamais l'écrire comme la
+    marche à suivre. Le code et la sortie sont ceux de la sonde (la première, puis les
+    sorties mises bout à bout) : c'est ce que bash a répondu, montré tel quel.
+
+    La raison est **déterministe** et **neutre en nombre de commandes** — l'écran la
+    dit une fois pour toutes celles qu'elle touche —, et elle nomme l'outil : c'est
+    lui qu'une personne installera, ou qu'une correction remplacera.
+    """
+    noms = [f"`{programme}`" for programme, _ in absents]
+    if len(noms) == 1:
+        raison = (
+            f"{noms[0]} est introuvable sur ce poste, et rien de ce qui l'appelle ne "
+            "passera tant qu'il n'y sera pas installé"
+        )
+    else:
+        raison = (
+            f"{', '.join(noms[:-1])} et {noms[-1]} sont introuvables sur ce poste, et rien "
+            "de ce qui les appelle ne passera tant qu'ils n'y seront pas installés"
+        )
+    premier = absents[0][1]
+    return Verification(
+        usage=commande.usage,
+        commande=commande.commande,
+        etat=ECHOUEE,
+        raison=raison,
+        code=premier.code,
+        sortie="\n".join(resultat.sortie for _, resultat in absents if resultat.sortie),
+        duree_s=round(sum(resultat.duree_s for _, resultat in absents), 2),
     )
 
 
