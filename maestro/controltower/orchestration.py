@@ -561,6 +561,7 @@ from maestro.controltower.chat import (
     MessageChat,
     PieceProposee,
     ProjetCree,
+    ProjetVise,
     Redaction,
     RepondeurChat,
     ReponseChat,
@@ -568,6 +569,7 @@ from maestro.controltower.chat import (
     piece_en_attente,
     projet_du_fil,
     projet_en_attente,
+    proposition_en_attente,
     transcription,
 )
 from maestro.controltower.consultation import (
@@ -623,6 +625,7 @@ from maestro.engine.executor import (
     STATUT_TERMINEE,
 )
 from maestro.equipe import RoleValide
+from maestro.outillage.contexte import OutillageDuProjet
 from maestro.outillage.questionnaire import QuestionOutillage
 from maestro.providers.base import ModelProvider
 
@@ -738,7 +741,10 @@ Le verdict :
   tu poses LA question qui manque, une seule, celle que CE projet appelle — jamais
   une liste de choix posée d'avance. Une correction de la proposition que tu
   viens de faire ("appelle-le racines", "mets-le plutôt dans D:/sites", "pas de
-  Git") est un nouveau "projet", corrigé — jamais un accord.
+  Git") est un nouveau "projet", corrigé — jamais un accord. Dans une conversation
+  sans projet, une demande de travail n'est donc jamais une "proposition" : c'est
+  un "projet" quand elle dit ce qu'on veut construire, sinon un "echange" (plus
+  bas, ce qu'il faut alors dire).
 - "proposition" — le dernier message de l'utilisateur est une demande de travail,
   sous n'importe quelle forme : impératif, question, souhait, subordonnée
   ("génère-moi une application d'agenda", "j'aimerai que tu ajoutes la
@@ -781,6 +787,15 @@ son objectif : c'est l'équipe, et non le run, qui sera proposée à la place. M
 ta réponse ne propose pas le run et n'annonce pas qu'il part : elle dit qu'il
 faut d'abord une équipe et pourquoi, puis ce que les faits disent de la suite. Le
 travail sera reproposé une fois l'équipe là, sans rien à retaper.
+
+Un run travaille toujours dans UN projet : celui de cette conversation, que les
+faits nomment. Il est écrit sur ta proposition, et c'est là que le run partira,
+même si l'accord vient plus tard d'un autre projet. Quand les faits disent que la
+conversation n'a AUCUN projet, aucun run ne peut partir d'ici : ne propose pas de
+run et n'annonce jamais qu'il part, même sur un accord. Ta réponse dit qu'il faut
+d'abord un projet, puis propose d'en créer un pour ce travail (verdict "projet"
+dès que tu en sais assez, sinon la question qui manque) ou de travailler dans un
+projet déjà déclaré, que tu nommes parmi ceux des faits.
 
 L'objectif :
 - sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
@@ -847,6 +862,11 @@ Git s'il est là, les projets déjà déclarés et le projet de cette fenêtre. 
 avec eux que tu proposes un projet — un dossier encore libre, un nom qu'aucun
 projet ne porte — et qu'un projet déjà déclaré se reconnaît au lieu de se
 proposer une seconde fois.
+
+Tu reçois aussi LE PROJET DE CETTE CONVERSATION — son nom, son dossier et son
+outillage (ce que Maestro y a écrit pour ses agents) —, puis son équipe. C'est de
+lui que tu parles quand on te dit « ce projet », et c'est lui que tu nommes quand
+tu proposes un run.
 
 Tu reçois aussi CE QU'UN RUN FERA : comment il démarre, ce que la politique de
 chaque agent de l'équipe laisse passer sans personne et ce qu'elle renvoie à
@@ -940,8 +960,9 @@ AGENT_ORCHESTRATION = Agent(
 #: Ouvrir un run sur un objectif, et rendre son résumé (dont `run_id`) — le seul
 #: geste que le canal demande à la couche d'exécution. `ServiceExecutions.lancer`
 #: le satisfait tel quel, une fois ses réglages liés par l'appelant. Le second
-#: argument est le **projet de la fenêtre** d'où part la demande (#683), `None`
-#: quand il n'y en a pas : le run part alors sans projet, comme avant ce lot.
+#: argument est le **projet du run** — celui de la proposition approuvée (#1180), à
+#: défaut celui de la fenêtre (#683). Le fil ne l'appelle jamais sans projet : le
+#: type garde `None` parce que la porte de l'écran des exécutions, elle, l'admet.
 #:
 #: Le troisième porte les **bornes** que l'écran a posées au moment de lancer
 #: (#990) : coût, tokens, délai par tâche, parallélisme. Elles voyagent d'un bloc
@@ -962,6 +983,17 @@ LanceurRun = Callable[[str, str | None, BornesRun, str], Awaitable[Mapping[str, 
 #: que le fil compte exactement les agents vers lesquels le routeur enverra les
 #: tâches.
 EquipeDuProjet = Callable[[str], int | None]
+
+#: Le projet `projet_id` tel que le fil le nomme (#1180) — son nom et son dossier,
+#: `None` quand il n'est pas déclaré. C'est ce qu'une proposition écrit sur elle
+#: (`ReponseChat.projet_vise`), et ce qui dit au canal qu'une conversation a un
+#: projet où un run peut partir. Sans lui, le canal ne sait nommer le projet de la
+#: fenêtre que par son identifiant, et n'en déduit rien.
+ProjetDuFil = Callable[[str], ProjetVise | None]
+
+#: L'outillage du projet `projet_id` en clair pour le fil (#1180,
+#: `outillage_en_clair`) — `""` quand il n'y a rien à en dire.
+OutillageDuFil = Callable[[str], str]
 
 #: Crée dans le projet l'équipe validée et rend son rapport (`EquipeCreee.to_dict`)
 #: — le seul geste de recrutement que le canal demande, par la voie de #1040.
@@ -1525,6 +1557,107 @@ def _fait_sans_equipe(*, recrutable: bool) -> str:
         "branché sur ce fil : l'équipe se crée depuis les écrans d'agents du projet, "
         "après quoi l'utilisateur pourra redire sa demande."
     )
+
+
+# --- Le projet de la conversation (#1180) -----------------------------------
+
+#: Ce que le juge sait d'une conversation **sans projet** (#1180) — un fait, et la
+#: règle qui en découle vit dans `_PROMPT_ORCHESTRATION`, comme pour un projet sans
+#: équipe (`_fait_sans_equipe`). Il ne dit pas *comment* répondre : il dit ce qui ne
+#: partira pas, et ce qui débloque.
+FAIT_SANS_PROJET = (
+    "Le projet de cette conversation : AUCUN. Un run travaille toujours dans un "
+    "projet, et aucun ne part d'une conversation qui n'en a pas : ni proposition de "
+    "run, ni lancement, même sur un accord. Ce qui débloque est un projet — en créer "
+    "un pour ce travail, ou travailler dans l'un de ceux déjà déclarés, qui s'ouvre "
+    "depuis la liste des projets."
+)
+
+#: L'**empêchement** d'un lancement sans projet (#1180) — la phrase que le code
+#: écrit seul, parce que rien ne s'est ouvert et que lui seul le sait (la règle de
+#: `_PHRASE_SANS_REDACTION`). Elle dit ce qui n'a pas eu lieu, puis ce qui débloque.
+PHRASE_RUN_SANS_PROJET = (
+    "Je n'ai ouvert aucun run : il n'a aucun projet où travailler. Ouvrez le projet "
+    "où ce travail doit se faire, ou dites-moi ce que vous voulez construire pour que "
+    "je vous en propose un, puis redemandez-le."
+)
+
+#: Combien de skills l'outillage montre au fil, au plus, et combien de caractères
+#: de leur description : un **index** — ce qui dit qu'un skill existe et à quoi il
+#: sert —, pas le contenu, qui se lit quand la question en dépend (#1223).
+SKILLS_DANS_LE_FIL = 12
+DESCRIPTION_DANS_LE_FIL = 160
+
+#: Combien de déclarations non transmises le fil nomme, au plus.
+NON_TRANSMIS_DANS_LE_FIL = 5
+
+
+def outillage_en_clair(outillage: OutillageDuProjet) -> str:
+    """L'outillage d'un projet pour le fil (#1180) — ce que ses agents reçoivent, en index.
+
+    La même lecture que celle qui part dans le message d'une tâche
+    (`maestro.outillage.contexte.outillage_du_projet`), et non une seconde analyse
+    du disque : l'orchestrateur dit de l'outillage exactement ce que les agents en
+    recevront. Le **contenu** n'entre pas — un `AGENTS.md` est vaste et ne sert qu'à
+    certaines questions, que le tour de lecture sait servir (#1223) —, mais son
+    chemin et l'index des skills, petits et toujours utiles, y sont.
+
+    Trois situations, et aucune ne se tait : **pas outillé** (aucun manifeste — le
+    cas le plus courant, qui n'est pas une panne), **outillé** (les instructions et
+    les skills transmis), **outillé mais rien de lisible** (le manifeste existe, ce
+    qu'il déclare n'est pas transmis, et la raison est nommée).
+    """
+    if not outillage.manifeste:
+        return (
+            "Outillage du projet : aucun — Maestro n'y a encore rien écrit pour ses "
+            "agents (ni instructions ni skill déclarés)."
+        )
+    lignes = [
+        "Outillage du projet (ce que ses agents reçoivent, déclaré par "
+        f"{outillage.manifeste}) :"
+    ]
+    if outillage.instructions:
+        tronque = " — tronquées à la transmission" if outillage.instructions_tronquees else ""
+        lignes.append(f"- instructions : {outillage.chemin_instructions}{tronque}")
+    for skill in outillage.skills[:SKILLS_DANS_LE_FIL]:
+        description = " ".join(skill.description.split())
+        if len(description) > DESCRIPTION_DANS_LE_FIL:
+            description = f"{description[:DESCRIPTION_DANS_LE_FIL].rstrip()}…"
+        lignes.append(
+            f"- skill « {skill.nom} » — {description or '(sans description)'} → {skill.chemin}"
+        )
+    if len(outillage.skills) > SKILLS_DANS_LE_FIL:
+        lignes.append(f"- … et {len(outillage.skills) - SKILLS_DANS_LE_FIL} autre(s) skill(s)")
+    if outillage.vide:
+        lignes.append("- rien de ce qu'il déclare n'est transmis aujourd'hui")
+    for ecarte in outillage.non_transmis[:NON_TRANSMIS_DANS_LE_FIL]:
+        lignes.append(f"- non transmis : {ecarte.chemin} — {ecarte.raison}")
+    if not outillage.vide:
+        lignes.append(
+            "Leur contenu n'est pas recopié ici : il se lit dans le projet quand la "
+            "question en dépend."
+        )
+    return "\n".join(lignes)
+
+
+def bloc_du_projet(vise: ProjetVise | None, outillage: str = "") -> str:
+    """Le projet de la conversation, en un bloc du contexte du juge (#1180).
+
+    Le nom et le dossier, puis l'outillage — l'équipe suit dans son propre bloc
+    (`roles`, #1223), lue par la règle du routeur. Sans projet, c'est le fait qui le
+    dit (`FAIT_SANS_PROJET`) : une conversation sans projet n'est pas une
+    conversation dont on ne sait rien, c'est une conversation où aucun run ne part.
+    """
+    if vise is None:
+        return FAIT_SANS_PROJET
+    ligne = f"Le projet de cette conversation : « {vise.nom or vise.id} »"
+    if vise.racine:
+        ligne += f" — dossier {vise.racine}"
+    ligne += (
+        ". C'est dans ce projet que travaillera tout run que tu proposes ici, et la "
+        "carte de ta proposition le nomme."
+    )
+    return f"{ligne}\n{outillage}" if outillage else ligne
 
 
 def _prompt_de_redaction(fil: Sequence[MessageChat], faits: str) -> str:
@@ -2170,6 +2303,23 @@ def _projet_approuve(fil: Sequence[MessageChat]) -> DemandeProjet | None:
     return attente.projet_propose if attente is not None else None
 
 
+def _projet_de_l_accord(
+    fil: Sequence[MessageChat], conversation: ProjetVise | None
+) -> ProjetVise | None:
+    """Le projet où un « oui » **tapé** ouvre son run (#1180).
+
+    Celui de la proposition qu'il approuve, relu du fil — le message d'avant, s'il
+    porte une demande de cadrage avec son projet —, et non celui de la fenêtre où
+    on le tape : la conversation se lit d'un projet à l'autre, et c'est de ce
+    projet-là que la proposition parlait. Une proposition écrite avant ce lot n'a
+    pas de projet à elle : c'est alors celui de la conversation, comme avant.
+    """
+    attente = proposition_en_attente(fil[:-1]) if fil else None
+    if attente is not None and attente.projet_vise is not None:
+        return attente.projet_vise
+    return conversation
+
+
 def _piece_approuvee(fil: Sequence[MessageChat]) -> PieceProposee | None:
     """La pièce d'outillage qu'un « oui » **tapé** approuve — `None` sinon (#1161).
 
@@ -2231,6 +2381,11 @@ class _Contexte:
     l'objectif, bornes. C'est ce que le modèle devinait quand il annonçait un
     accord que le run ne demanderait pas, ou prédisait l'arrêt d'un run sur la
     borne d'un autre.
+
+    `projet` (#1180) est le huitième : **le** projet de la conversation — nom,
+    dossier, outillage (`bloc_du_projet`) —, ou le fait qu'elle n'en a aucun. Le
+    modèle ne recevait que des compteurs et répondait sans savoir de quel projet on
+    lui parlait ; sans projet, il proposait un run qui partait n'importe où.
     """
 
     etat: str = ""
@@ -2240,6 +2395,7 @@ class _Contexte:
     recrutement: str = ""
     projets: str = ""
     regime: str = ""
+    projet: str = ""
 
 
 class _LectureDuFlux:
@@ -2402,6 +2558,8 @@ def _prompt(
             # Les projets du poste (#1294) en tête des faits sus : c'est le cadre
             # des autres — l'état, l'équipe et les runs sont ceux d'un projet.
             contexte.projets,
+            # Puis **le** projet de la conversation (#1180), juste avant son équipe.
+            contexte.projet,
             contexte.equipe,
             contexte.recrutement,
             contexte.regime,
@@ -2466,6 +2624,14 @@ class RepondeurOrchestration(RepondeurChat):
     du juge et dans les faits des deux gestes qui ouvrent ou reproposent un run
     (lancement, équipe créée) : ce sont les trois endroits où le fil parle de la
     suite. Sans lui, le bloc disparaît, et le fil dit ce qu'il disait avant.
+
+    `projet` et `outillage` (#1180) disent **sur quel projet** la conversation
+    travaille : son nom, son dossier et son outillage entrent dans le prompt, et
+    une proposition écrit ce projet sur elle (`ReponseChat.projet_vise`) pour que
+    l'accord l'exécute là. Sans `projet`, le canal nomme le projet de la fenêtre
+    par son seul identifiant et le tient pour déclaré — « je ne sais pas » ne
+    bloque rien. Sans projet **du tout**, en revanche, aucun run ne part : ce n'est
+    pas une sonde qui le dit, c'est l'absence même de projet.
     """
 
     def __init__(
@@ -2485,9 +2651,13 @@ class RepondeurOrchestration(RepondeurChat):
         naissance: ServiceNaissance | None = None,
         pieces: ServicePieces | None = None,
         regime: RegimeDuProjet | None = None,
+        projet: ProjetDuFil | None = None,
+        outillage: OutillageDuFil | None = None,
     ) -> None:
         self._naissance = naissance
         self._regime = regime
+        self._projet = projet
+        self._outillage = outillage
         self._lanceur = lanceur
         self._apercu = apercu
         self._faits = faits
@@ -2561,10 +2731,19 @@ class RepondeurOrchestration(RepondeurChat):
         jamais sur ce que le modèle a écrit. Tout le reste s'**ajoute** derrière
         la réponse (l'avertissement d'un fil sans exécution, la cause d'un
         lancement en échec) et ne demande rien.
+
+        **Le fil sait sur quel projet il travaille** (#1180) : le projet de la
+        fenêtre, résolu une fois (`_projet_vise`), entre dans le contexte avec son
+        outillage, et une proposition l'écrit sur elle. Un **accord tapé** ouvre le
+        run dans le projet de la proposition qu'il approuve, pas dans la fenêtre où
+        on le tape. Et **sans projet, aucun run** : ni proposition ni lancement —
+        la même structure que le projet sans équipe (le modèle a reçu le fait et
+        l'écrit lui-même ; le canal ne pose aucune carte de run).
         """
+        vise = self._projet_vise(projet_id)
         sans_equipe = self._sans_equipe(projet_id)
         redaction = Redaction(incrementer)
-        contexte = self._contexte(fil, projet_id, sans_equipe=sans_equipe)
+        contexte = self._contexte(fil, projet_id, sans_equipe=sans_equipe, vise=vise)
         lectures, etapes = await self._consulter(agent, fil, contexte, projet_id, etapeur)
         try:
             verdict = await self._juger(agent, fil, contexte, lectures, redaction)
@@ -2600,19 +2779,29 @@ class RepondeurOrchestration(RepondeurChat):
             return _avec_etapes(
                 await self._faire_naitre(agent, fil, redaction, approuve), etapes
             )
-        if (
-            verdict.nom in (VERDICT_PROPOSITION, VERDICT_ACCORD)
-            and verdict.objectif
-            and self._lanceur is not None
-            and sans_equipe
-        ):
+        travail = verdict.nom in (VERDICT_PROPOSITION, VERDICT_ACCORD) and bool(verdict.objectif)
+        # Le projet où le travail partirait (#1180) : celui de la proposition qu'un
+        # accord approuve — écrit sur elle, quelle que soit la fenêtre d'aujourd'hui
+        # —, sinon celui de la conversation.
+        du_run = _projet_de_l_accord(fil, vise) if verdict.nom == VERDICT_ACCORD else vise
+        if travail and self._lanceur is not None and du_run is None:
+            # Aucun projet où travailler (#1180) : ni la proposition ni l'accord ne
+            # tiennent, et rien ne se pose sous la réponse. Le modèle a reçu le fait
+            # (`FAIT_SANS_PROJET`) et a proposé de créer ou de choisir un projet ; le
+            # canal, lui, tient la structure — aucune carte de run, aucun lanceur.
+            return ReponseChat(contenu=redaction.texte, etapes=etapes)
+        if du_run is not None and du_run.id != projet_id:
+            sans_equipe = self._sans_equipe(du_run.id)
+        if travail and self._lanceur is not None and sans_equipe:
             # Personne pour prendre les tâches (#1146) : ni la proposition ni
             # l'accord ne tiennent. Le modèle le savait et l'a dit ; ce qui change
             # ici est ce que le message **demande** — l'équipe, pas le run —, et
             # rien de ce qu'il dit.
             return ReponseChat(
                 contenu=redaction.texte,
-                recrutement=self._demande_d_equipe(verdict.objectif, projet_id),
+                recrutement=self._demande_d_equipe(
+                    verdict.objectif, du_run.id if du_run is not None else None
+                ),
                 etapes=etapes,
             )
         if verdict.nom == VERDICT_ACCORD:
@@ -2621,7 +2810,11 @@ class RepondeurOrchestration(RepondeurChat):
             # (`trancher_cadrage`), seul chemin où un écran a pu les poser.
             return _avec_etapes(
                 await self._ouvrir_un_run(
-                    redaction, verdict.objectif, projet_id, AUCUNE_BORNE, contexte_du_fil(fil)
+                    redaction,
+                    verdict.objectif,
+                    du_run.id if du_run is not None else None,
+                    AUCUNE_BORNE,
+                    contexte_du_fil(fil),
                 ),
                 etapes,
             )
@@ -2654,6 +2847,9 @@ class RepondeurOrchestration(RepondeurChat):
         return ReponseChat(
             contenu=redaction.texte,
             proposition=propose,
+            # La proposition **garde son projet** (#1180) : c'est lui que l'accord
+            # exécutera, même donné depuis un autre projet.
+            projet_vise=vise if propose else None,
             piece=gardee,
             projet_outille=gardee.projet_id if gardee is not None else "",
             etapes=etapes,
@@ -2811,8 +3007,14 @@ class RepondeurOrchestration(RepondeurChat):
         # aucun moyen de savoir qu'il ferait double emploi. Sans lanceur non plus :
         # le geste mènerait à un lancement impossible.
         propose = demande.objectif if lancable and not demande.pendant_un_run else ""
+        # Le run reproposé travaillera dans le projet où l'équipe vient de naître
+        # (#1180) — celui de la demande, jamais la fenêtre.
+        vise = self._projet_vise(demande.projet_id) if propose else None
         return await self._parole_sur(
-            agent, fil, ReponseChat(contenu="", proposition=propose, equipe=equipe), faits=faits
+            agent,
+            fil,
+            ReponseChat(contenu="", proposition=propose, projet_vise=vise, equipe=equipe),
+            faits=faits,
         )
 
     async def declarer_projet(
@@ -3171,7 +3373,12 @@ class RepondeurOrchestration(RepondeurChat):
         return verdict
 
     def _contexte(
-        self, fil: Sequence[MessageChat], projet_id: str | None, *, sans_equipe: bool
+        self,
+        fil: Sequence[MessageChat],
+        projet_id: str | None,
+        *,
+        sans_equipe: bool,
+        vise: ProjetVise | None,
     ) -> _Contexte:
         """Ce que le canal sait de l'orchestration, lu **une fois par message** (#1223).
 
@@ -3188,6 +3395,10 @@ class RepondeurOrchestration(RepondeurChat):
         par l'appelant : il décide de ce que le message demandera, et le même
         compte doit donc dire au modèle ce qu'il en est — deux lectures de la sonde
         pourraient se contredire d'un appel à l'autre.
+
+        `vise` (#1180) est le projet de la conversation, résolu une fois par
+        l'appelant pour la même raison : c'est lui qui décide si un run peut partir,
+        et le modèle doit lire le même verdict.
         """
         # Les quatre sondes sont liées à des variables locales avant d'être
         # appelées : c'est ce qui permet de les passer à `_sans_echec` sans
@@ -3200,6 +3411,9 @@ class RepondeurOrchestration(RepondeurChat):
             self._naissance,
         )
         return _Contexte(
+            # Le projet de la conversation (#1180) : nom, dossier, outillage — ou le
+            # fait qu'elle n'en a aucun, et qu'aucun run n'y part.
+            projet=bloc_du_projet(vise, self._outillage_de(vise)),
             # Ce qu'un run fera (#1323), lu sur le même projet que l'équipe : le
             # modèle parle de la suite d'un run avec la politique réelle et la
             # règle des bornes sous les yeux, au lieu de les supposer.
@@ -3378,6 +3592,32 @@ class RepondeurOrchestration(RepondeurChat):
         regime = self._regime_de(projet_id)
         return f"{faits}\n\n{regime}" if regime else faits
 
+    def _projet_vise(self, projet_id: str | None) -> ProjetVise | None:
+        """Le projet `projet_id` tel que le fil le nomme — `None` : **aucun projet** (#1180).
+
+        `None` sur deux faits, et deux seulement : la fenêtre n'a pas de projet, ou
+        la sonde dit qu'il n'est pas déclaré (un projet retiré que la fenêtre montre
+        encore). Tout le reste est un « je ne sais pas » qui ne bloque rien — la
+        règle de `_sans_equipe` : sans sonde, ou quand elle lève, le projet est
+        nommé par son identifiant et le run peut partir, comme avant ce lot. Une
+        sonde aveugle qui fermerait la porte aux runs serait une bride.
+        """
+        if not projet_id:
+            return None
+        if self._projet is None:
+            return ProjetVise(id=projet_id)
+        try:
+            return self._projet(projet_id)
+        except Exception:  # noqa: BLE001 — la sonde éclaire, elle ne décide de rien
+            return ProjetVise(id=projet_id)
+
+    def _outillage_de(self, vise: ProjetVise | None) -> str:
+        """L'outillage du projet en clair, `""` sans lecture branchée — jamais une levée."""
+        outillage = self._outillage
+        if vise is None or outillage is None:
+            return ""
+        return _sans_echec(lambda: outillage(vise.id))
+
     def _sans_equipe(self, projet_id: str | None) -> bool:
         """Le projet de la fenêtre n'a **personne** pour prendre les tâches (#1146).
 
@@ -3497,8 +3737,16 @@ class RepondeurOrchestration(RepondeurChat):
         la liste des runs de ce projet et s'ouvre en détail, là où un run sans
         projet n'entrait dans la vue d'aucun (`PorteeProjet.retient`) — c'est-à-dire
         nulle part, le chat étant depuis #666 la seule porte d'entrée. Rien n'est
-        deviné : `projet_id` est ce que la fenêtre a envoyé, `None` quand elle n'a
-        pas de projet, et le run part alors sans projet comme avant ce lot.
+        deviné : `projet_id` est celui de la proposition approuvée (#1180), à défaut
+        celui de la fenêtre.
+
+        ⚠ **Sans projet, rien ne part** (#1180) : c'était la dernière porte par où
+        un run sans projet sortait du fil — sur une installation neuve, il
+        n'apparaissait dans la liste d'aucun. `produire` ne propose plus de run sans
+        projet ; cette garde-ci couvre ce qu'il ne voit pas, une proposition écrite
+        avant ce lot et approuvée d'une fenêtre sans projet. Le lanceur n'est alors
+        jamais appelé, et la phrase dit l'empêchement — c'est le code seul qui sait
+        que rien ne s'est ouvert.
 
         **Un lancement qui réussit n'ajoute plus un mot** (#1222). Ce qui s'y
         écrivait — « Run X ouvert, statut « En cours » — aucune borne : le run ira
@@ -3532,6 +3780,9 @@ class RepondeurOrchestration(RepondeurChat):
                 " Je ne peux pas ouvrir de run depuis ce fil : aucune exécution n'y "
                 "est branchée. La demande est bien enregistrée ici."
             )
+            return ReponseChat(contenu=redaction.texte)
+        if not projet_id:
+            await redaction.ecrire(f" {PHRASE_RUN_SANS_PROJET}")
             return ReponseChat(contenu=redaction.texte)
 
         try:

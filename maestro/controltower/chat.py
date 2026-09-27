@@ -167,6 +167,11 @@ Deux pièces vont avec, et aucune ne juge un texte :
   accord au bouton n'est pas un texte à reconnaître, c'est un acte ; et un
   objectif amendé ne survivrait pas à un tour de jugement de plus.
 
+Une proposition **garde son projet** (#1180) : `projet_vise` (`ProjetVise`) est
+écrit avec elle, et c'est dans ce projet-là que l'accord ouvre le run — la même
+conversation se lisant d'un projet à l'autre, la fenêtre du clic n'est pas celle
+dont la proposition parlait.
+
 ## …et ce qu'il demande peut être une équipe (#1146)
 
 Un projet sans agent ne peut rien faire d'un run : chaque tâche part en repli
@@ -947,6 +952,46 @@ class DemandeRecrutement:
 
 
 @dataclass(frozen=True)
+class ProjetVise:
+    """Le projet où travaillera le run qu'une proposition soumet à l'accord (#1180).
+
+    Le fil est **transverse** (#281) : la même conversation se lit d'un projet à
+    l'autre, et le geste qui tranche une proposition part de la fenêtre où l'on est
+    au moment du clic. Tant que le run héritait de cette fenêtre-là, une proposition
+    faite sur le projet A, approuvée en regardant B, s'exécutait dans B. Le projet
+    est donc **écrit sur la proposition**, au moment où elle est faite — comme
+    `DemandeRecrutement.projet_id` l'est sur une demande d'équipe, et pour la même
+    raison : c'est de lui que la phrase parle.
+
+    `nom` et `racine` sont ceux de la fiche au moment de proposer : c'est ce que la
+    carte affiche (« sur quel projet ce run va-t-il travailler ? »), et ce que le
+    modèle relit au tour suivant. L'exécution, elle, ne suit que `id`.
+    """
+
+    id: str
+    nom: str = ""
+    racine: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le projet visé en JSON — la forme du REST et du stockage."""
+        return {"id": self.id, "nom": self.nom, "racine": self.racine}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ProjetVise:
+        """Relit un projet visé persisté, sans rien rejuger (même règle que `MessageChat`)."""
+        return cls(
+            id=str(data.get("id") or ""),
+            nom=str(data.get("nom") or ""),
+            racine=str(data.get("racine") or ""),
+        )
+
+    def en_phrase(self) -> str:
+        """Le projet en quelques mots — « « racines » (E:/sites/racines) »."""
+        nom = self.nom or self.id
+        return f"« {nom} » ({self.racine})" if self.racine else f"« {nom} »"
+
+
+@dataclass(frozen=True)
 class EquipeRecrutee:
     """Ce qu'un recrutement a **créé** — le fait qu'une réponse porte sous sa bulle (#1262).
 
@@ -1485,6 +1530,11 @@ class MessageChat:
     encore est une propriété de la *suite* des messages, pas de l'un d'eux, et
     elle s'énonce une fois (`proposition_en_attente`).
 
+    `projet_vise` (#1180) accompagne `proposition` : le projet où le run proposé
+    travaillera, écrit au moment de proposer (`ProjetVise`). C'est lui, et non la
+    fenêtre du clic, qui décide où le run s'ouvre. `None` partout ailleurs et sur
+    une proposition écrite avant ce lot, qui garde alors la conduite d'avant.
+
     `question` et `choix` (#1031) sont la **quatrième** question que le même objet
     porte, et elle est double parce qu'un questionnaire a deux moitiés : ce qu'un
     message **demande** (`question`, sur un message d'agent) et ce qu'un message
@@ -1554,6 +1604,7 @@ class MessageChat:
     run_id: str = ""
     tache_id: str = ""
     proposition: str = ""
+    projet_vise: ProjetVise | None = None
     question: QuestionOutillage | None = None
     recrutement: DemandeRecrutement | None = None
     equipe: EquipeRecrutee | None = None
@@ -1588,6 +1639,7 @@ class MessageChat:
             "run_id": self.run_id,
             "tache_id": self.tache_id,
             "proposition": self.proposition,
+            "projet_vise": self.projet_vise.to_dict() if self.projet_vise is not None else None,
             "question": self.question.to_dict() if self.question is not None else None,
             "recrutement": (
                 self.recrutement.to_dict() if self.recrutement is not None else None
@@ -1656,6 +1708,7 @@ class MessageChat:
         cree = data.get("projet_cree")
         piece = data.get("piece")
         piece_ecrite = data.get("piece_ecrite")
+        vise = data.get("projet_vise")
         return cls(
             agent=data["agent"],
             # Une ligne d'avant #694 n'en porte pas : elle vient forcément du
@@ -1667,6 +1720,7 @@ class MessageChat:
             run_id=data.get("run_id", ""),
             tache_id=data.get("tache_id", ""),
             proposition=str(data.get("proposition") or ""),
+            projet_vise=ProjetVise.from_dict(vise) if isinstance(vise, Mapping) else None,
             question=(
                 QuestionOutillage.from_dict(question)
                 if isinstance(question, Mapping)
@@ -1765,6 +1819,10 @@ class ReponseChat:
     c'est ce qui donne à la demande une existence ailleurs que dans la phrase
     qui la formule, donc un geste pour y répondre.
 
+    `projet_vise` (#1180) dit **où** ce run travaillera : le projet de la
+    conversation au moment de proposer, écrit sur la demande pour que l'accord
+    l'exécute là, quelle que soit la fenêtre du clic.
+
     `question` (#1031) est l'autre chose qu'il peut demander : la question
     d'outillage à laquelle un geste répond. Même patron, et pour la même raison —
     une question qui n'existerait que dans le texte d'une réponse ne pourrait pas
@@ -1800,6 +1858,7 @@ class ReponseChat:
     run_id: str = ""
     tache_id: str = ""
     proposition: str = ""
+    projet_vise: ProjetVise | None = None
     question: QuestionOutillage | None = None
     recrutement: DemandeRecrutement | None = None
     equipe: EquipeRecrutee | None = None
@@ -2799,6 +2858,12 @@ class ServiceChat:
 
         `CadrageIntrouvable` quand rien n'attend — c'est le `409` de l'API, et
         il couvre le double geste comme le geste tardif.
+
+        ⚠ **Le run s'ouvre dans le projet de la proposition** (#1180), lu sur la
+        demande (`MessageChat.projet_vise`) et jamais sur `projet_id` : le fil est
+        transverse, et la fenêtre du clic n'est pas forcément celle où la
+        proposition a été faite. `projet_id` — la fenêtre — ne sert plus qu'à une
+        proposition écrite avant ce lot, qui n'a pas de projet à elle.
         """
         fil = self._resoudre(agent, conversation)
         demande = proposition_en_attente(self._store.fil(agent.nom, fil))
@@ -2806,6 +2871,8 @@ class ServiceChat:
             raise CadrageIntrouvable(
                 f"aucune demande de cadrage en attente sur le fil {agent.nom}."
             )
+        if demande.projet_vise is not None:
+            projet_id = demande.projet_vise.id
         retenu = (objectif or "").strip() or demande.proposition
         geste = await self._deposer(
             agent,
@@ -3614,10 +3681,10 @@ class ServiceChat:
         réponse exécutée, #943), `repondre_question` (#1031), `recruter` (#1146)
         `declarer_projet` (#1294) et `trancher_piece` (#1161) : ce qu'un répondeur
         rend se persiste, s'achemine et se diffuse toujours de la même façon, et
-        c'est ici que les treize champs du contrat (`run_id`, `tache_id`,
-        `proposition`, `question`, `recrutement`, `equipe`, `etapes`,
+        c'est ici que les champs du contrat (`run_id`, `tache_id`, `proposition`
+        et son `projet_vise`, `question`, `recrutement`, `equipe`, `etapes`,
         `comprehension`, `projet_propose`, `projet_cree`, `piece`, `piece_ecrite`,
-        `corrections`) passent du répondeur au message.
+        `corrections`, `projet_outille`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -3633,6 +3700,9 @@ class ServiceChat:
             run_id=reponse.run_id,
             tache_id=reponse.tache_id,
             proposition=reponse.proposition,
+            # Le projet ne voyage qu'avec une proposition (#1180) : sans demande de
+            # cadrage, il n'y a aucun run dont il dirait où il travaillera.
+            projet_vise=reponse.projet_vise if reponse.proposition else None,
             question=reponse.question,
             recrutement=reponse.recrutement,
             equipe=reponse.equipe,
@@ -3752,6 +3822,13 @@ def transcription(fil: Sequence[MessageChat]) -> str:
         # oublié.
         if message.contexte:
             lignes.append(message.contexte)
+        # Où le run proposé travaillera (#1180) : la carte le nomme, la phrase pas
+        # forcément — et un « oui » tapé plus tard, depuis un autre projet, approuve
+        # le run de **ce** projet-là.
+        if message.proposition and message.projet_vise is not None:
+            lignes.append(
+                f"[Run proposé sur la carte, dans le projet {message.projet_vise.en_phrase()}]"
+            )
         # Ce que la carte d'un projet a **montré** (#1294), et non seulement ce que
         # la phrase en disait : la vérification a pu ajuster la proposition (un nom
         # pris, un dossier occupé), et une correction tapée au tour suivant
