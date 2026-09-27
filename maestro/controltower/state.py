@@ -337,6 +337,40 @@ def _pose_debut(tache: EtatTache, statut: str, horodatage: str) -> None:
         tache.debut = horodatage
 
 
+def _retient_l_anterieur(tache: EtatTache, event: Event) -> None:
+    """Retient ce que la tâche a déjà soldé quand elle **repart dans le même run** (#1177).
+
+    Une tâche que la QA renvoie à son rôle producteur ne se solde plus une fois :
+    elle repart (`en_cours`, sa reprise) puis se solde à nouveau — ou se solde
+    une seconde fois sans repartir, quand la QA la déclare non conforme. Dans les
+    deux cas, ce qu'elle portait est retenu pour que sa carte **cumule**
+    (`_avec_anterieur`), là où le grand livre du run, qui additionne les issues,
+    le fait déjà. Un autre run qui reprendrait le même identifiant de tâche ne
+    cumule pas : la retenue est oubliée à son premier événement.
+    """
+    if event.run_id and tache.run_id and event.run_id != tache.run_id:
+        tache.usage_anterieure = None
+        return
+    repart = event.statut == STATUT_EN_COURS or _solde_le_cout(event)
+    if repart and tache.statut in STATUTS_TACHE_TERMINAUX and tache.usage is not None:
+        tache.usage_anterieure = tache.usage
+
+
+def _avec_anterieur(tache: EtatTache, usage: StepUsage) -> StepUsage:
+    """`usage` augmenté de ce que les exécutions précédentes du run ont soldé (#1177)."""
+    if tache.usage_anterieure is None:
+        return usage
+    return tache.usage_anterieure.fusion(usage)
+
+
+def _cout_avec_anterieur(tache: EtatTache, cout: float | None) -> float | None:
+    """Le coût de la carte, cumulé comme son usage (#1177) — inconnu ne s'ajoute pas."""
+    anterieur = tache.usage_anterieure.cout_usd if tache.usage_anterieure else None
+    if anterieur is None:
+        return cout
+    return anterieur if cout is None else anterieur + cout
+
+
 @dataclass
 class EtatTache:
     """La ligne « tâche » de la projection : de quoi peupler une carte Kanban.
@@ -384,6 +418,16 @@ class EtatTache:
     `usage.duree_ms` n'existe qu'à l'issue — un relevé en cours (#835) porte des
     tokens et un coût, jamais une durée. Servi, lui aussi, par le seul
     `signe_de_vie`.
+    `verification` (#1177) est la **dernière vérification** de la tâche — son
+    verdict et chaque contrôle avec sa preuve, tels que l'étape `:verification`
+    les porte. None tant qu'aucune n'a eu lieu (tâche en cours, run sans
+    vérificateur) : le panneau de détail n'en montre alors rien.
+    `usage_anterieure` (#1177) est ce que les exécutions **précédentes** de la
+    tâche ont soldé **dans ce run** : une tâche renvoyée par la QA à son rôle
+    producteur repart et se solde une seconde fois, et sa carte doit dire ce
+    qu'elle a coûté en tout — pas seulement sa dernière reprise. None dans le cas
+    courant, une tâche qui ne se solde qu'une fois. Jamais servi : c'est une
+    retenue de calcul, pas une information.
     """
 
     id: str
@@ -403,6 +447,8 @@ class EtatTache:
     horodatage: str = ""
     activite: SigneDeVie | None = None
     debut: str = ""
+    verification: dict[str, Any] | None = None
+    usage_anterieure: StepUsage | None = None
 
     @property
     def signe_de_vie(self) -> SigneDeVie | None:
@@ -451,6 +497,9 @@ class EtatTache:
             # Servi sur la carte parce que c'est d'elle que le graphe tire
             # l'état de son nœud, et que le Kanban lit la même carte.
             "activite": signe.to_dict() if signe is not None else None,
+            # La dernière vérification (#1177) : `null` tant qu'aucune n'a eu
+            # lieu — le panneau de détail ne montre alors rien de plus qu'avant.
+            "verification": self.verification,
         }
 
 
@@ -1646,6 +1695,7 @@ class ControlTowerState:
     def _applique_statut_tache(self, event: Event) -> None:
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
+        _retient_l_anterieur(tache, event)
         _pose_debut(tache, event.statut, event.horodatage)
         tache.statut = event.statut or tache.statut
         tache.titre = event.titre or tache.titre
@@ -1654,7 +1704,7 @@ class ControlTowerState:
         tache.run_id = event.run_id or tache.run_id
         tache.horodatage = event.horodatage or tache.horodatage
         if event.usage is not None:
-            tache.usage = event.usage
+            tache.usage = _avec_anterieur(tache, event.usage)
         if _solde_le_cout(event):
             # L'issue de la tâche solde ce que ses relevés (#835) montraient en
             # cours de route : le montant n'est plus un « jusqu'ici ». Il est
@@ -1663,10 +1713,11 @@ class ControlTowerState:
             # sans tarif, sans quoi une tâche morte afficherait 0,00 $. Et il
             # reste **partiel** si des tokens de l'issue n'ont pas de prix :
             # soldé ne veut pas dire complet.
-            tache.cout_usd = (
+            tache.cout_usd = _cout_avec_anterieur(
+                tache,
                 event.cout_usd
                 if event.cout_usd is not None or event.usage is None
-                else event.usage.cout_usd
+                else event.usage.cout_usd,
             )
             tache.cout_partiel = _laisse_des_tokens_sans_cout(event)
         if event.ticket is not None:
@@ -1797,9 +1848,12 @@ class ControlTowerState:
         if not event.tache_id:
             return
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
-        tache.cout_usd = event.cout_usd
+        # Le relevé d'une **reprise** (#1177) s'ajoute à ce que ses exécutions
+        # précédentes ont soldé dans ce run — sinon la carte reculerait au zéro
+        # d'ouverture de la reprise, alors que la tâche a déjà coûté.
+        tache.cout_usd = _cout_avec_anterieur(tache, event.cout_usd)
         if event.usage is not None:
-            tache.usage = event.usage
+            tache.usage = _avec_anterieur(tache, event.usage)
         tache.cout_partiel = True
         if event.projet_id is not None:
             # Même raison qu'en `_applique_reference` : l'appartenance au projet
@@ -1852,6 +1906,11 @@ class ControlTowerState:
             tache = self._taches.get(event.tache_id)
             if tache is not None:
                 tache.activite = SigneDeVie.depuis(event)
+                if event.verification is not None:
+                    # La dernière vérification de la tâche (#1177) — son verdict,
+                    # contrôle par contrôle : la suivante la remplace, comme une
+                    # livraison corrigée remplace la précédente.
+                    tache.verification = dict(event.verification)
         if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(

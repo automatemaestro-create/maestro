@@ -79,7 +79,7 @@ visible dans le flux d'événements de la Control Tower (#46). Sans messagerie
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
@@ -134,6 +134,14 @@ from maestro.engine.renfort import (
     DemandeRenfort,
 )
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
+from maestro.engine.verification import (
+    CONSTAT_NON_TENU,
+    SUFFIXE_ETAPE_VERIFICATION,
+    Constat,
+    Renvoi,
+    Verdict,
+    VerificateurTaches,
+)
 from maestro.equipe.manque import ManqueAuPlan, manque_au_plan
 from maestro.messaging.handoff import HandoffRelais
 from maestro.messaging.mailbox import Mailbox
@@ -425,6 +433,7 @@ class OrchestrationEngine:
         questionneur: ArbitreQuestion | None = None,
         bornes_question: BornesArbitrage | None = None,
         arbitre_renfort: ArbitreRenfort | None = None,
+        verificateur: VerificateurTaches | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -519,6 +528,10 @@ class OrchestrationEngine:
                 # si un exécuteur est injecté, qui câble le sien.
                 questionneur=questionneur,
                 bornes_question=bornes_question,
+                # Le vérificateur des livraisons (#1177) descend lui aussi : c'est
+                # l'exécuteur qui tient l'espace de travail où ses contrôles se
+                # jouent. Ignoré si un exécuteur est injecté, qui câble le sien.
+                verificateur=verificateur,
             )
         )
 
@@ -536,6 +549,7 @@ class OrchestrationEngine:
         tours_clarification: int | None = None,
         questionneur: ArbitreQuestion | None = None,
         arbitre_renfort: ArbitreRenfort | None = None,
+        verification: bool = True,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -618,6 +632,14 @@ class OrchestrationEngine:
         le manque est nommé au journal et le run continue avec l'équipe actuelle.
         Sa **borne** ne passe pas par ici non plus : c'est le même temps humain que
         celui d'un arbitrage, et il n'a qu'un réglage.
+
+        La **vérification des livraisons** (#1177) est **armée par défaut**, comme
+        la relance et pour la même raison : ce moteur est celui des vrais runs, et
+        une tâche n'y est « Terminée » qu'une fois ses critères vérifiés en
+        l'exécutant (`maestro.engine.verification`). Le vérificateur parle au
+        fournisseur du run, avec le modèle de `MAESTRO_MODEL` s'il est posé, celui
+        de l'agent vérifié sinon. `verification=False` l'éteint — un choix qu'on
+        fait en le disant, jamais un défaut.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -649,6 +671,9 @@ class OrchestrationEngine:
             questionneur=questionneur,
             bornes_question=BornesArbitrage.from_settings(settings),
             arbitre_renfort=arbitre_renfort,
+            verificateur=(
+                VerificateurTaches(provider, modele=settings.model) if verification else None
+            ),
         )
 
     async def run(
@@ -788,6 +813,27 @@ class OrchestrationEngine:
             asyncio.Semaphore(self._max_parallele) if self._max_parallele else None
         )
         en_vol: dict[str, asyncio.Task[TaskResult]] = {}
+        # Les livrables **refaits** à la demande d'une QA (#1177) : la dernière
+        # issue d'une tâche renvoyée à son rôle producteur. Ce qui est lu d'une
+        # tâche, par la QA qui la rejuge comme par le rapport, passe par
+        # `resultat_de` — jamais par `en_vol` seul, qui garde la première issue.
+        refaits: dict[str, TaskResult] = {}
+        par_id = {task.id: task for task in ordered}
+
+        def resultat_de(tache_id: str) -> TaskResult:
+            if tache_id in refaits:
+                return refaits[tache_id]
+            return en_vol[tache_id].result()
+
+        async def executer(task: Task, dependances: Sequence[TaskResult]) -> TaskResult:
+            # Une exécution engagée — la première comme une reprise demandée par
+            # la QA : la porte de pause (#477) d'abord, le créneau ensuite.
+            if porte is not None:
+                await porte.franchir()
+            if semaphore is None:
+                return await self._executor.execute(task, dependances, journal)
+            async with semaphore:
+                return await self._executor.execute(task, dependances, journal)
 
         async def _des_que_prete(task: Task) -> TaskResult:
             # Attend ses seules dépendances : chaque exécution ne voit que le
@@ -810,21 +856,26 @@ class OrchestrationEngine:
                 # d'un run figé — l'aval d'un échec doit se lire tout de suite.
                 result = _consigne_blocage(task, insatisfaites, journal)
             else:
-                if porte is not None:
-                    # La pause (#477), et elle est **ici** : la dernière ligne
-                    # avant que quoi que ce soit ne soit engagé. Franchie avant le
-                    # sémaphore, pour la raison qui vaut déjà des dépendances —
-                    # une tâche qui attend n'occupe pas un créneau. Une tâche déjà
-                    # passée n'a plus de porte devant elle : elle finit, et c'est
-                    # ce qui distingue une pause d'une annulation.
-                    await porte.franchir()
-                if semaphore is None:
-                    result = await self._executor.execute(task, dependances, journal)
-                else:
-                    async with semaphore:
-                        result = await self._executor.execute(
-                            task, dependances, journal
-                        )
+                # La pause (#477) est franchie dans `executer`, et elle est **là**
+                # : la dernière ligne avant que quoi que ce soit ne soit engagé.
+                # Franchie avant le sémaphore, pour la raison qui vaut déjà des
+                # dépendances — une tâche qui attend n'occupe pas un créneau. Une
+                # tâche déjà passée n'a plus de porte devant elle : elle finit, et
+                # c'est ce qui distingue une pause d'une annulation.
+                result = await executer(task, dependances)
+                if result.ok and result.renvois:
+                    # Le verdict « non conforme » d'une QA (#1177) : les livrables
+                    # visés repartent à leur rôle producteur, puis la QA rejuge.
+                    result = await self._renvoie_aux_producteurs(
+                        task,
+                        result,
+                        dependances,
+                        journal,
+                        par_id=par_id,
+                        resultat_de=resultat_de,
+                        executer=executer,
+                        refaits=refaits,
+                    )
             if relais is not None and dependants[task.id]:
                 # L'agent qui termine annonce l'issue à l'aval (handoff ou
                 # notification) — publication journalisée, résiliente.
@@ -844,7 +895,7 @@ class OrchestrationEngine:
 
         return RunReport(
             objectif=objective,
-            resultats=tuple(en_vol[task.id].result() for task in ordered),
+            resultats=tuple(resultat_de(task.id) for task in ordered),
             run_id=journal.run_id,
             planification=plan_usage,
             plafond_cout_usd=self._guardrails.plafond_cout_usd,
@@ -854,6 +905,92 @@ class OrchestrationEngine:
             cadrage=cadrage,
             tours_clarification=tours_clarification,
         )
+
+    async def _renvoie_aux_producteurs(
+        self,
+        task: Task,
+        result: TaskResult,
+        dependances: Sequence[TaskResult],
+        journal: RunJournal,
+        *,
+        par_id: Mapping[str, Task],
+        resultat_de: Callable[[str], TaskResult],
+        executer: Callable[[Task, Sequence[TaskResult]], Awaitable[TaskResult]],
+        refaits: dict[str, TaskResult],
+    ) -> TaskResult:
+        """Le verdict « non conforme » d'une QA renvoie le livrable à son rôle producteur (#1177).
+
+        Renverse « sans rétro-boucle automatique » (docs/04 §QA) : au POC, le
+        verdict de la QA éclairait une décision humaine et ne changeait rien au
+        run — une tâche jugée non conforme restait verte. Maestro n'est pas un POC.
+
+        `task` est la tâche qui juge (en pratique une QA), `result` son issue, qui
+        nomme les livrables amont qu'elle juge non conformes (`TaskResult.renvois`,
+        lu par le vérificateur de la tâche — le modèle, jamais un lexique). Pour
+        chacun, dans cet ordre :
+
+        1. le renvoi est **consigné** sur la tâche productrice
+           (`:verification`, non tenue, les preuves de la QA en constat) — c'est
+           ce que son détail montre, et ce que le fil dit ;
+        2. la tâche productrice est **réexécutée**, sa description suivie des
+           défauts et de leurs preuves : par son rôle, sous ses propres
+           vérifications, dans la même branche ou la même racine ;
+        3. la QA **rejuge**, sur le livrable refait.
+
+        La QA évalue toujours et ne réécrit jamais : elle **renvoie**. Ce qui
+        arrête la boucle est un fait, comme pour la vérification d'une tâche
+        (`maestro.engine.verification`) : la QA juge conforme, le budget du run
+        refuse une exécution de plus, un producteur échoue sa propre reprise, ou
+        la correction **n'a rien fait gagner** — autant de défauts bloquants ou
+        plus que la meilleure revue précédente. Dans ce dernier cas, la tâche
+        productrice finit en **échec motivé** (`_consigne_non_conforme`) : jamais
+        un vert sur un livrable qu'une QA déclare non conforme.
+
+        Limite dite : une tâche qui dépendait du livrable renvoyé **sans** passer
+        par la QA a pu partir sur la première version — la boucle ne rejoue que la
+        paire producteur → QA. Le cas courant (une QA en bout de chaîne) n'en a pas.
+        """
+        dependances = list(dependances)
+        meilleur: int | None = None
+        while result.ok and result.renvois:
+            amont = {dep.task_id: dep for dep in dependances}
+            renvois = [
+                r for r in result.renvois if r.tache_id in amont and amont[r.tache_id].ok
+            ]
+            if not renvois:
+                break
+            defauts = sum(r.defauts for r in renvois)
+            if meilleur is not None and defauts >= meilleur:
+                for renvoi in renvois:
+                    refaits[renvoi.tache_id] = _consigne_non_conforme(
+                        par_id[renvoi.tache_id], amont[renvoi.tache_id], task, renvoi, journal
+                    )
+                break
+            meilleur = defauts
+            for renvoi in renvois:
+                producteur = par_id[renvoi.tache_id]
+                _consigne_renvoi(producteur, amont[renvoi.tache_id], task, renvoi, journal)
+                refait = await executer(
+                    replace(
+                        producteur,
+                        description=producteur.description + _retour_qa(task, renvoi),
+                    ),
+                    [resultat_de(dep) for dep in producteur.dependances],
+                )
+                # L'usage d'une reprise **s'ajoute** à celui des exécutions
+                # précédentes : le rapport garde une issue par tâche, et il ne
+                # doit pas perdre ce que la première a coûté.
+                refaits[producteur.id] = replace(
+                    refait, usage=amont[renvoi.tache_id].usage.fusion(refait.usage)
+                )
+            dependances = [refaits.get(dep.task_id, dep) for dep in dependances]
+            if not all(dep.ok for dep in dependances):
+                # Un producteur a échoué sa reprise — son issue le dit, motivée par
+                # ses propres vérifications ; la QA n'a plus rien à rejuger.
+                break
+            rejuge = await executer(task, dependances)
+            result = replace(rejuge, usage=result.usage.fusion(rejuge.usage))
+        return result
 
     async def _cadrage(
         self,
@@ -1338,6 +1475,113 @@ def _dependants_directs(tasks: Sequence[Task]) -> dict[str, list[str]]:
         for dep in task.dependances:
             dependants[dep].append(task.id)
     return dependants
+
+
+#: Le critère que porte le constat d'un renvoi de QA (#1177) : c'est ce que la
+#: QA a jugé, et c'est ce que la tâche productrice doit tenir à sa reprise.
+CRITERE_QA = "la QA juge ce livrable conforme"
+
+
+def _retour_qa(juge: Task, renvoi: Renvoi) -> str:
+    """Ce qui suit la description d'une tâche renvoyée par la QA — les défauts, et la consigne."""
+    return (
+        "\n\n## Renvoyé par la QA\n\n"
+        f"La tâche « {juge.titre} » a jugé ton livrable NON CONFORME "
+        f"({renvoi.defauts} défaut(s) bloquant(s)). Ses constats, preuves à l'appui :\n\n"
+        f"{renvoi.motif}\n\n"
+        "Corrige ton livrable pour lever ces défauts. La QA évalue, elle ne réécrit "
+        "pas ton travail : c'est à toi de le reprendre, puis elle le rejugera."
+    )
+
+
+def _verdict_de_renvoi(juge: Task, renvoi: Renvoi) -> Verdict:
+    """Le renvoi, sous la forme d'un verdict de vérification — ce que le détail de la tâche lit."""
+    return Verdict(
+        constats=(
+            Constat(
+                critere=CRITERE_QA,
+                etat=CONSTAT_NON_TENU,
+                preuve=(
+                    f"« {juge.titre} » : {renvoi.defauts} défaut(s) bloquant(s) — "
+                    f"{renvoi.motif}"
+                ),
+            ),
+        )
+    )
+
+
+def _consigne_renvoi(
+    producteur: Task, dernier: TaskResult, juge: Task, renvoi: Renvoi, journal: RunJournal
+) -> None:
+    """Consigne sur la tâche productrice qu'une QA renvoie son livrable (#1177).
+
+    Une étape `:verification` comme les autres : c'est une vérification qui ne
+    tient pas, rendue par la QA au lieu du vérificateur. Le fil la dit, et le
+    détail de la tâche la montre jusqu'à la vérification de sa reprise.
+    """
+    verdict = _verdict_de_renvoi(juge, renvoi)
+    journal.consigne(
+        etape=f"{producteur.id}{SUFFIXE_ETAPE_VERIFICATION}",
+        nom=f"Vérification — {producteur.titre}",
+        agent=dernier.agent,
+        role=dernier.role,
+        statut=verdict.statut,
+        entree=f"verdict de « {juge.titre} »",
+        sortie=f"non conforme selon « {juge.titre} » — renvoyée à {dernier.role}",
+        description=verdict.preuves(),
+        usage=StepUsage(),
+        projet_id=producteur.projet_id,
+        verification={**verdict.to_dict(), "renvoi": juge.id},
+    )
+
+
+def _consigne_non_conforme(
+    producteur: Task, dernier: TaskResult, juge: Task, renvoi: Renvoi, journal: RunJournal
+) -> TaskResult:
+    """L'échec motivé d'une tâche que la QA juge encore non conforme, sans progrès (#1177).
+
+    La tâche productrice s'était soldée verte sur ses propres critères ; la QA en
+    dit autrement, et la dernière reprise n'a levé aucun défaut de plus. Son issue
+    est donc **reconsignée en échec** — le dernier mot au journal fait foi pour la
+    carte comme pour le grand livre — avec la revue en motif. Usage nul : ce qui
+    a été dépensé est déjà porté par ses exécutions, et le recompter ici le
+    compterait deux fois.
+    """
+    verdict = _verdict_de_renvoi(juge, renvoi)
+    erreur = (
+        f"non conforme selon « {juge.titre} » — {renvoi.defauts} défaut(s) bloquant(s), "
+        "et la dernière reprise n'en a levé aucun de plus.\n"
+        f"{verdict.preuves()}"
+    )
+    journal.consigne(
+        etape=f"{producteur.id}{SUFFIXE_ETAPE_VERIFICATION}",
+        nom=f"Vérification — {producteur.titre}",
+        agent=dernier.agent,
+        role=dernier.role,
+        statut=verdict.statut,
+        entree=f"verdict de « {juge.titre} »",
+        sortie=f"non conforme selon « {juge.titre} » — aucun défaut levé de plus",
+        description=verdict.preuves(),
+        usage=StepUsage(),
+        projet_id=producteur.projet_id,
+        verification={**verdict.to_dict(), "renvoi": juge.id},
+    )
+    echec = replace(dernier, statut=STATUT_ECHEC, sortie="", erreur=erreur, renvois=())
+    journal.consigne(
+        etape=producteur.id,
+        nom=producteur.titre,
+        agent=echec.agent,
+        role=echec.role,
+        statut=echec.statut,
+        entree=producteur.description,
+        sortie="",
+        erreur=erreur,
+        usage=StepUsage(),
+        ticket=producteur.ticket,
+        projet_id=producteur.projet_id,
+        description=producteur.description,
+    )
+    return echec
 
 
 def _consigne_blocage(

@@ -289,12 +289,17 @@ stateDiagram-v2
     en_cours --> en_attente_validation: appel d'outil classé « ask »
     en_attente_validation --> en_cours: approuvée
     en_attente_validation --> echec: refusée
-    en_cours --> terminee: objectif atteint
-    en_cours --> echec: erreur
+    en_cours --> en_cours: critère non tenu — la preuve revient à l'agent
+    en_cours --> terminee: critères vérifiés en l'exécutant
+    en_cours --> echec: erreur, ou vérification non tenue (échec motivé)
+    terminee --> en_cours: renvoyée par la QA (non conforme)
+    terminee --> echec: non conforme selon la QA, sans progrès
     echec --> prete: relance / re-routage
     bloquee --> prete: dépendance relancée avec succès
     terminee --> [*]
 ```
+
+Depuis #1177, `terminee` veut dire **vérifiée** : les critères de réussite de la tâche ont été confrontés à son livrable en l'exécutant ([docs/45](./45-decision-une-tache-verifiee-en-l-executant.md)). La vérification et sa preuve n'ajoutent **aucun statut** : une livraison qui ne tient pas revient à l'agent sans que la tâche quitte `en_cours`, et chaque vérification se consigne à côté (étape `<tâche>:verification`), comme la fusion dans le projet.
 
 ---
 

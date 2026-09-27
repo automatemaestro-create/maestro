@@ -207,8 +207,9 @@ GABARITS_DU_CODE: tuple[Agent, ...] = (
             "livrables et rends un verdict priorisé.",
             "tu évalues, tu ne réécris pas le livrable d'un autre rôle — un défaut se "
             "signale avec la correction que tu proposes, l'appliquer revient au rôle "
-            "producteur ; ton verdict éclaire une décision humaine, sans rétro-boucle "
-            "automatique, donc ce que tu n'écris pas est perdu.",
+            "producteur ; un verdict non conforme renvoie le livrable à ce rôle avec tes "
+            "défauts bloquants et leurs preuves, puis tu le rejuges — ce que tu "
+            "n'écris pas est donc perdu.",
             "pars du risque — ce qui casse le plus probablement, et ce qui coûte le "
             "plus cher si ça casse ; retiens pour chacun le niveau de test le moins "
             "cher qui l'attrape vraiment (unitaire, intégration, bout en bout) et écris "

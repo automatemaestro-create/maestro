@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from maestro.engine.verification import LivraisonNonTenue
 from maestro.providers.base import (
     GardeFouInoperant,
     McpServerUnavailable,
@@ -97,6 +98,11 @@ def est_transitoire(erreur: BaseException) -> bool:
     Le plafond du flux (#1277) est la leçon de la présomption : un dépassement
     passait pour un « crash du sous-processus », donc pour un aléa, alors que
     le message trop gros venait d'un fichier que chaque tentative relisait.
+
+    Une livraison **non tenue** (#1177, `LivraisonNonTenue`) ne l'est pas non
+    plus : la boucle de vérification s'est arrêtée sur un fait — la correction
+    n'a rien fait gagner, ou ce qui reste ne se vérifie pas —, et relancer la
+    tâche rejouerait la même boucle sur les mêmes critères.
     """
     return not isinstance(
         erreur,
@@ -105,5 +111,6 @@ def est_transitoire(erreur: BaseException) -> bool:
         | PlafondFluxDepasse
         | UnsupportedCapability
         | McpServerUnavailable
-        | GardeFouInoperant,
+        | GardeFouInoperant
+        | LivraisonNonTenue,
     )
