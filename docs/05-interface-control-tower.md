@@ -413,6 +413,14 @@ et **la même conversation continue** dans la colonne de droite du projet. Un re
 et la conversation continue. Une déclaration refusée par le disque se dit, et la proposition est
 reposée.
 
+**Né dans le fil d'un projet déjà ouvert** (#1340) — « J'ai déjà un projet dans C:/…, importe-le »,
+tapé sur `/chat` ou dans la colonne —, le projet né devient lui aussi le projet actif : l'en-tête le
+nomme, la page reste celle où l'on était, et la conversation continue avec lui. C'est ce que le fil
+vient de dire, et c'est ce qui envoie la demande suivante — un run, une correction de son
+outillage — au projet dont on parle, le projet de la fenêtre partant avec chaque message (#683).
+Le fil n'entre que dans une naissance **à laquelle il assiste** : une conversation garde ses
+naissances, et la rouvrir, ou revenir d'un choix sur le projet d'avant, ne change pas de projet.
+
 **Ce qui reste à l'écran Projets** : la **gestion**. On y modifie une déclaration (le formulaire
 ne sert plus qu'à cela), on la retire, on la met sous Git. Rien n'y crée plus de projet.
 L'outillage d'un projet se construit dans la même conversation, pièce par pièce (#1161, §6.20
@@ -420,8 +428,9 @@ L'outillage d'un projet se construit dans la même conversation, pièce par piè
 question — un dossier neuf se décrit — ou sa première pièce — un dossier importé se lit.
 
 Implémentation : `components/projets/NaissanceProjet.tsx`, `components/chat/DemandeDeProjet.tsx`,
-`lib/naissance.ts`, `lib/useChat.ts` (`declarerProjet`) ; côté API §6.15.1. Couverture :
-`apps/web/tests/projet-actif.test.tsx`, `projets.test.tsx`,
+`lib/naissance.ts`, `lib/entreeProjetNe.ts`, `lib/useChat.ts` (`declarerProjet`) ; côté API
+§6.15.1. Couverture : `apps/web/tests/projet-actif.test.tsx`, `naissance-dans-le-fil.test.tsx`,
+`projets.test.tsx`,
 [`tests/test_naissance_projet.py`](../tests/test_naissance_projet.py), et le scénario de référence
 S7 ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)).
 

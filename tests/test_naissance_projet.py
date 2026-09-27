@@ -578,6 +578,60 @@ def test_un_dossier_importe_est_lu_apres_l_accord_et_ce_qu_on_en_a_compris_nourr
     assert "Langages : HTML" in faits
 
 
+def test_un_import_tape_dans_le_fil_d_un_projet_ouvert_dit_le_projet_ne_ouvert(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """#1340 : la naissance ne part pas que de la porte. Tapée dans le fil d'un projet
+    déjà ouvert, elle déclare le projet que la carte montrait — pas celui de la fenêtre
+    —, et le fait dit ce que l'écran fera : le projet né devient le projet ouvert,
+    la conversation continue avec lui. C'est `projet_cree` que l'écran lit pour y
+    entrer (`lib/entreeProjetNe`, `naissance-dans-le-fil.test.tsx`)."""
+    ouvert = asyncio.run(
+        _naissance(projets).declarer(
+            _naissance(projets).verifier(_brute(nom="projet-neuf", versionner=False))
+        )
+    )
+    carnet = _maison / "carnet-recettes"
+    carnet.mkdir()
+
+    async def lecteur(projet_id: str) -> Mapping[str, Any]:
+        return {"resume": "Un carnet de recettes en Markdown", "constats": {}}
+
+    fil = [
+        _message(UTILISATEUR, f"J'ai déjà un projet dans {carnet}, importe-le"),
+        _propose(
+            projets,
+            nom="carnet-recettes",
+            dossier=str(carnet),
+            origine=ORIGINE_EXISTANT,
+            versionner=False,
+        ),
+        _message(UTILISATEUR, "oui"),
+    ]
+    modele = ModeleScripte(_dicte("J'importe votre carnet.", VERDICT_ACCORD))
+
+    reponse = asyncio.run(
+        _repondeur(projets, modele, lecteur=lecteur).produire(
+            AGENT_ORCHESTRATION, fil, projet_id=ouvert.id
+        )
+    )
+
+    # Le juge savait d'où l'on parlait : la fenêtre du projet ouvert.
+    assert "projet de cette fenêtre : « projet-neuf »" in modele.prompts[0]
+    # Ce qui naît est le carnet — la fiche que l'écran relira pour y entrer.
+    assert reponse.projet_cree is not None
+    assert reponse.projet_cree.id != ouvert.id
+    assert reponse.projet_cree.nom == "carnet-recettes"
+    assert sorted(f["id"] for f in projets.lister()) == sorted(
+        [ouvert.id, reponse.projet_cree.id]
+    )
+    # Et le fait d'où le modèle parle dit ce qui aura lieu à l'écran.
+    faits = modele.redactions[0]
+    assert "« carnet-recettes » est déclaré" in faits
+    assert "C'est désormais le projet ouvert, et cette conversation continue avec lui" in faits
+    assert "projet-neuf" not in faits
+
+
 @avec_git
 @pytest.mark.usefixtures("_git_isole")
 def test_un_import_mis_sous_git_ne_se_dit_pas_intouche(
