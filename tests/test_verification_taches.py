@@ -236,6 +236,9 @@ def test_un_livrable_faux_revient_a_son_agent_avec_la_preuve():
     assert _CRITERE in retour
     assert f"`{_COMMANDE}` a rendu le code 1" in retour
     assert "bonjour.txt contient : Au revoir" in retour
+    # Et de la garde que le banc a rendue nécessaire (S6) : on ne conforme jamais
+    # le projet à un contrôle — on dit en quoi il se trompe.
+    assert "Ne supprime, ne déplace et ne modifie JAMAIS ce qui existait avant" in retour
     # Une vérification par livraison, au journal : non tenue, puis tenue.
     etapes = _verifications(journal, "salut")
     assert [e.statut for e in etapes] == [
@@ -493,6 +496,40 @@ def test_un_controle_faux_est_reecrit_par_la_contre_expertise(tmp_path):
     # Le vérificateur a relu la commande, son code et ce qu'elle a rendu.
     assert f"`{faux}` a rendu le code 1" in provider.prompts[1]
     assert "Ne l'assouplis jamais" in provider.prompts[1]
+
+
+def test_un_controle_conteste_par_l_agent_est_reexamine_a_la_livraison_suivante(tmp_path):
+    """Le contrôle faux survit à l'établissement ; l'agent le conteste ; le vérificateur le révise."""
+    faux = "ls | grep -vx logo.svg | wc -l | grep -qx 0"
+    juste = "test -f logo.svg"
+    provider = _Reponses(
+        json.dumps({"controles": [{"critere": "le logo est livré", "commande": faux}]}),
+        json.dumps({"commandes": []}),  # contre-expertise n° 1 : gardé
+        json.dumps({"commandes": [{"n": 1, "commande": juste}]}),  # n° 2 : révisé
+    )
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        return Execution(code=1 if commande == faux else 0, sortie="README.md", duree_s=0.0)
+
+    verificateur = VerificateurTaches(provider, joueur=joueur, interprete=_INTERPRETE)
+    livraison = Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path))
+    controles, premier = asyncio.run(verificateur.verifier(_TACHE, livraison, modele="m"))
+    assert not premier.tenue
+
+    objection = Livraison(
+        sortie="Le contrôle exige de supprimer README.md, qui existait avant : je n'y touche pas.",
+        espace=tmp_path,
+        portee=PorteeProjet(racine=tmp_path),
+    )
+    controles, second = asyncio.run(
+        verificateur.verifier(_TACHE, objection, modele="m", etablis=controles)
+    )
+
+    assert second.tenue
+    assert controles[0].commande == juste
+    # Le vérificateur a lu l'objection de l'agent avec la commande qui ne tenait pas.
+    assert "je n'y touche pas" in provider.prompts[2]
+    assert "<non_tenues>" in provider.prompts[2]
 
 
 def test_la_contre_expertise_garde_un_controle_juste(tmp_path):

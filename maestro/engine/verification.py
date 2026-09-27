@@ -524,10 +524,12 @@ class VerificateurTaches:
                         preuve="le vérificateur n'a pas rendu de jugement sur cette lecture",
                     )
                 )
-        if etablis is None:
-            controles = await self._contre_expertiser(
-                tache, livraison, controles, constats, modele
-            )
+        # À chaque livraison, et pas seulement à la première : une commande encore
+        # rouge est relue avec le compte-rendu de l'agent, qui a pu dire, preuve à
+        # l'appui, en quoi elle se trompe (voir `Recette.retour`).
+        controles = await self._contre_expertiser(
+            tache, livraison, controles, constats, modele
+        )
         return controles, Verdict(constats=tuple(constats), renvois=renvois)
 
     async def _contre_expertiser(
@@ -546,12 +548,16 @@ class VerificateurTaches:
         livrable — et sans ceci, il aurait renvoyé l'agent corriger ce qui était
         juste, puis rendu rouge une tâche tenue.
 
-        Le vérificateur relit donc, **à l'établissement**, chaque commande qui n'a
-        pas tenu, avec ce qu'elle a rendu : il la garde si c'est le livrable qui est
-        en défaut, et ne la réécrit que si elle ne constate pas ce que dit son
-        critère — jamais pour qu'elle passe, ce que son prompt interdit en toutes
-        lettres. La réécriture est rejouée tout de suite, et c'est elle qui reste
-        établie. Un seul appel, et seulement quand quelque chose n'a pas tenu.
+        Pire : trompé par ce contrôle, l'agent de QA a **déplacé les fichiers du
+        projet** pour le faire tenir. D'où deux gardes qui se complètent — le retour
+        à l'agent interdit de conformer le projet à un contrôle (`Recette.retour`),
+        et le vérificateur relit, **à chaque livraison**, chaque commande qui n'a
+        pas tenu, avec ce qu'elle a rendu et ce que l'agent en dit : il la garde si
+        c'est le livrable qui est en défaut, et ne la réécrit que si elle ne
+        constate pas ce que dit son critère — jamais pour qu'elle passe, ce que son
+        prompt interdit en toutes lettres. La réécriture est rejouée tout de suite,
+        et c'est elle qui reste établie. Un appel, et seulement quand quelque chose
+        n'a pas tenu.
 
         `constats` est mis à jour sur place ; rend les contrôles, révisés ou non.
         """
@@ -707,7 +713,9 @@ def _prompt_contre_expertise(
         "exige plus ou autre chose, confond l'état d'avant la tâche avec ce que la tâche a "
         "changé, lit le mauvais fichier) — alors seulement, réécris-la pour qu'elle "
         "constate exactement le critère. Ne l'assouplis jamais pour qu'elle passe : un "
-        "contrôle qui ne peut plus échouer ne vérifie rien.\n"
+        "contrôle qui ne peut plus échouer ne vérifie rien. Le compte-rendu de l'agent "
+        "peut dire en quoi un contrôle se trompe : lis-le, mais ce sont le critère et ce "
+        "que la commande a rendu qui tranchent, jamais ce que l'agent affirme.\n"
         f"<non_tenues>\n{lignes}\n</non_tenues>\n\n"
         "Forme de la réponse — seules les commandes réécrites y figurent :\n"
         '{"commandes": [{"n": 1, "commande": "...", "raison": "ce qui était faux dans le '
@@ -1164,7 +1172,14 @@ class Recette:
             "Corrige ton travail pour que ces critères tiennent. Tes fichiers sont dans "
             "ton espace de travail, tels que tu les as laissés. C'est le critère qu'il "
             "faut tenir, pas la commande qu'il faut faire passer : ne contourne pas un "
-            "contrôle. Les mêmes contrôles seront rejoués à ta prochaine livraison. Rends "
-            "ensuite ton compte-rendu final, comme la première fois.",
+            "contrôle.",
+            "",
+            "Ne supprime, ne déplace et ne modifie JAMAIS ce qui existait avant ta tâche "
+            "pour faire tenir un contrôle. Un contrôle peut se tromper : s'il te semble "
+            "exiger cela, ou autre chose que ce que dit son critère, ne touche à rien de "
+            "ce qu'il vise — dis dans ton compte-rendu en quoi il se trompe, preuve à "
+            "l'appui : il sera réexaminé à ta prochaine livraison.",
+            "",
+            "Rends ensuite ton compte-rendu final, comme la première fois.",
         ]
         return "\n".join(lignes)
