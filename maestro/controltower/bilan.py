@@ -514,6 +514,11 @@ def _compte(nombre: int, mot: str) -> str:
     return f"{nombre} {mot}{'s' if nombre > 1 else ''}"
 
 
+def _tokens(nombre: int) -> str:
+    """`40 874 tokens`, `0 token` — le nombre au format de l'écran, et l'accord."""
+    return f"{_nombre(nombre)} token{'s' if nombre > 1 else ''}"
+
+
 def _agent_entre_parentheses(agent: str) -> str:
     """` (dev)` — l'agent qui a porté la tâche, rien pour le repère « — »."""
     return f" ({agent})" if agent and agent != AGENT_ABSENT else ""
@@ -525,7 +530,7 @@ def _usage_en_phrase(usage: StepUsage) -> str:
     `40 874 tokens pour 0,1415 $US, en 2 tours et 31 s` : une phrase, et non la suite
     de champs que le modèle lit (`_usage_en_mots`).
     """
-    texte = f"{_nombre(usage.tokens_total)} tokens"
+    texte = _tokens(usage.tokens_total)
     if usage.tokens_non_tarifes:
         texte += f" (dont {_nombre(usage.tokens_non_tarifes)} sans prix)"
     texte += f" pour {_montant(usage.cout_usd)}" if usage.cout_usd is not None else ", coût inconnu"
@@ -545,7 +550,7 @@ def _usage_en_mots(usage: StepUsage) -> str:
     En format d'interface (#1285) — la vue du run montre ce texte tel quel, et le
     modèle lit le même : `40 720 tokens, coût 0,2199 $US, 2 tours, 31 s`.
     """
-    morceaux = [f"{_nombre(usage.tokens_total)} tokens"]
+    morceaux = [_tokens(usage.tokens_total)]
     if usage.tokens_non_tarifes:
         morceaux.append(f"dont {_nombre(usage.tokens_non_tarifes)} sans prix")
     morceaux.append(

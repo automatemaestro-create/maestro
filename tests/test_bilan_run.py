@@ -1046,6 +1046,7 @@ def test_une_synthese_se_lit_en_mots_d_interface_sans_code_du_moteur() -> None:
     )
     assert _usage_en_mots(usage) =="40 720 tokens, coût 0,2199 $US, 2 tours, 31 s"
     assert "1 tour," in _usage_en_mots(StepUsage(tokens_entree=10, tours=1, duree_ms=1_000))
+    assert _usage_en_mots(StepUsage(duree_ms=0)).startswith("0 token, coût inconnu")
     dossier = _dossier(rejouer_p3(total=60))
     tentatives = next(p for p in dossier.pieces if p.texte.startswith("Tentatives de la tâche"))
     assert tentatives.texte.endswith("issue : Échec")
