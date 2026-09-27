@@ -56,7 +56,13 @@ import {
   type DemandePlafond,
 } from "@/lib/types";
 
-import { poserChemin, poserFilAssistance, rendreAvecEtat, runFactice } from "./aides";
+import {
+  poserChemin,
+  poserFilAssistance,
+  questionFactice,
+  rendreAvecEtat,
+  runFactice,
+} from "./aides";
 import { auditerLaPage, bloquantes, raconter } from "./axe";
 
 /** La question telle que le vrai run du 2026-09-27 l'a posée (0,22 $ sur 0,01 $). */
@@ -156,6 +162,23 @@ describe("la question au plafond", () => {
       "Sans réponse, le run reste suspendu : rien ne se dépense.",
     );
     expect(carte.textContent).toContain("a pu dépasser un peu le plafond");
+  });
+
+  it("se lit aussi depuis son pied : le plafond franchi, la dépense et le haut de l'estimation", () => {
+    // Relecture de #1182 : dans la colonne de 320 px, le fil colle à son bas et
+    // la carte s'ouvre sur ses gestes — titre et tuiles sont au-dessus, hors de
+    // vue. Ce qu'on lit là doit suffire à comprendre ce que le bouton engage.
+    const { carte } = monter();
+    const champ = within(carte).getByLabelText("Nouveau plafond, en $US");
+    const aide = document.getElementById(champ.getAttribute("aria-describedby") ?? "");
+
+    expect(aide?.textContent).toContain(`${formatCout(0.2213166)} dépensés`);
+    expect(aide?.textContent).toContain(
+      `plus ${formatCout(estimerReste(3).haut)}, le haut de l'estimation pour 3 tâches`,
+    );
+    expect(carte.textContent).toContain(
+      `Le plafond de ${formatCout(0.01)} est atteint. Sans réponse`,
+    );
   });
 
   it("reprend l'estimation du brief, sans en inventer une autre", () => {
@@ -386,7 +409,26 @@ describe("les règles du plafond", () => {
 // ===========================================================================
 
 describe("au pied du fil", () => {
-  it("la carte est posée au pied du fil de /chat, en premier, et agit de là", async () => {
+  it("se pose sous les questions d'agents, au plus près de l'œil", () => {
+    // Mesuré sur la vraie stack (#1182) : le fil colle à son bas, et une question
+    // d'agent — déjà repartie sans réponse — y occupait la vue pendant que la
+    // décision qui retient le run entier restait au-dessus, hors de l'écran.
+    poserChemin("/chat");
+    poserFilAssistance({ messages: [] });
+    rendreAvecEtat(<PageChat />, {
+      executions: [runAuPlafond()],
+      questions: [questionFactice({ projet_id: null })],
+    });
+
+    const fil = screen.getByRole("region", { name: "Chat global" });
+    const question = within(fil).getByRole("region", { name: "Question de l'agent bdd" });
+    const carte = within(fil).getByRole("region", { name: "Budget du run atteint" });
+    expect(
+      question.compareDocumentPosition(carte) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("la carte est posée au pied du fil de /chat, et agit de là", async () => {
     const trancherPlafond = vi.fn(async () => {});
     poserChemin("/chat");
     poserFilAssistance({ messages: [] });

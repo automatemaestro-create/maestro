@@ -82,6 +82,7 @@ from maestro.engine.executor import (
     STATUT_EN_COURS,
     STATUT_TERMINEE,
 )
+from maestro.engine.plafond import STATUT_TACHE_SUSPENDUE
 from maestro.plan_run import NoeudPlan
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
@@ -330,9 +331,28 @@ def _solde_le_cout(event: Event) -> bool:
     carte de la tâche (`cout_partiel`) et le cumul du run (`EtatExecution.cout_usd`) —
     et qu'un relevé tenu pour soldé d'un côté et en cours de l'autre ferait
     diverger la carte et la tuile du même écran.
+
+    La **mise de côté** au plafond (#1182) solde elle aussi, sans être une issue :
+    son étape porte la dépense **complète** de la tentative interrompue, dont le
+    dernier relevé n'était qu'un « jusqu'ici ». Garder l'un et l'autre comptait
+    la tentative deux fois — 0,386 $ affichés pour 0,282 $ dépensés, run
+    `5b4717cc6b38`, là où la question au plafond, qui lit le grand livre, disait
+    juste.
     """
-    return event.type == EVENEMENT_TACHE_STATUT and (
-        event.usage is not None or event.cout_usd is not None
+    porte_une_mesure = event.usage is not None or event.cout_usd is not None
+    return porte_une_mesure and (event.type == EVENEMENT_TACHE_STATUT or _met_de_cote(event))
+
+
+def _met_de_cote(event: Event) -> bool:
+    """Cet événement dit-il qu'une tâche est **mise de côté** au plafond de dépense (#1182) ?
+
+    C'est l'étape annexe `<tâche>:plafond`, que le pont range en activité : la
+    tâche ne change pas de colonne, elle reprendra ou sera soldée sur la décision.
+    """
+    return (
+        event.type == EVENEMENT_AGENT_ACTIVITE
+        and event.statut == STATUT_TACHE_SUSPENDUE
+        and bool(event.tache_id)
     )
 
 
@@ -415,6 +435,26 @@ def _cout_avec_anterieur(tache: EtatTache, cout: float | None) -> float | None:
     if anterieur is None:
         return cout
     return anterieur if cout is None else anterieur + cout
+
+
+def _met_la_tentative_de_cote(tache: EtatTache, event: Event) -> None:
+    """La carte d'une tâche mise de côté au plafond (#1182) : ce que la tentative a coûté.
+
+    La tentative interrompue devient l'**antérieur** de la tâche, comme une
+    exécution soldée avant un renvoi de QA (#1177) : sa reprise relève depuis
+    zéro, et la carte cumule par-dessus au lieu de reculer. Le montant reste
+    **partiel** — la tâche n'a pas d'issue, elle attend une décision. Un autre run
+    qui reprendrait le même identifiant de tâche ne cumule pas, pour la raison de
+    `_retient_l_anterieur`.
+    """
+    if event.usage is None:
+        return
+    if event.run_id and tache.run_id and event.run_id != tache.run_id:
+        tache.usage_anterieure = None
+    tache.usage = _avec_anterieur(tache, event.usage)
+    tache.usage_anterieure = tache.usage
+    tache.cout_usd = tache.usage.cout_usd
+    tache.cout_partiel = True
 
 
 @dataclass
@@ -1979,6 +2019,8 @@ class ControlTowerState:
                     # contrôle par contrôle : la suivante la remplace, comme une
                     # livraison corrigée remplace la précédente.
                     tache.verification = dict(event.verification)
+                if _met_de_cote(event):
+                    _met_la_tentative_de_cote(tache, event)
         if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(

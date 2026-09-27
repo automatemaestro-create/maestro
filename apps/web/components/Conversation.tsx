@@ -671,6 +671,26 @@ export function Conversation({
     if (suit.current) collerEnBas();
   }, [messages, envoi, reponseEnCours?.texte, collerEnBas]);
 
+  // Même règle pour ce qui arrive **au pied** sans passer par un message (#1182) :
+  // une carte tirée de l'état du shell — la question d'un agent, la décision au
+  // plafond d'un run — naît quand cet état arrive, souvent après les messages.
+  // Sans ce second déclencheur, le fil restait collé au bas des messages et la
+  // carte, sous le pli, ne se voyait pas, sans geste « Dernier message » pour
+  // le dire (mesuré sur la vraie stack). Observée par sa **taille** et non par
+  // son contenu, qu'un `ReactNode` ne permet pas de comparer ; absent (jsdom),
+  // l'observateur manque et rien ne change.
+  const piedDuFil = useRef<HTMLDivElement | null>(null);
+  const avecPied = pied !== undefined;
+  useEffect(() => {
+    const cible = piedDuFil.current;
+    if (cible === null || typeof ResizeObserver === "undefined") return;
+    const observateur = new ResizeObserver(() => {
+      if (suit.current) collerEnBas();
+    });
+    observateur.observe(cible);
+    return () => observateur.disconnect();
+  }, [avecPied, collerEnBas]);
+
   // La mise au point à l'ouverture, quand l'appelant la demande (#945, voir
   // `focusAuMontage`). Par un effet et **non** par `autoFocus` : la règle
   // `jsx-a11y/no-autofocus` refuse l'attribut, et elle a raison de le refuser —
@@ -1058,7 +1078,11 @@ export function Conversation({
           jusqu'au geste et non jusqu'au message qui le précède ; la promesse
           est **plus forte** depuis #941, qui vise le bas de la section entière
           (composeur compris) : ce geste-ci est dedans par construction. */}
-      {pied !== undefined && <div className="mt-3">{pied}</div>}
+      {pied !== undefined && (
+        <div ref={piedDuFil} className="mt-3">
+          {pied}
+        </div>
+      )}
       {/* La sentinelle de fin de fil a disparu avec #941 : elle ne rendait rien
           et ne servait qu'à **désigner** l'ascenseur en remontant ses ancêtres,
           ce que la `ref` de la section fait aussi bien — et elle, en plus, sait

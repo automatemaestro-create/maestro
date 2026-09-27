@@ -2733,8 +2733,9 @@ fil de l'orchestration porte toutes les questions là où un aparté ne porte qu
 
 Quand un run atteint son plafond de dépense, il se **suspend** au lieu d'échouer (§6.1) : sa tâche
 coupée est mise de côté, son travail conservé, et rien ne se dépense d'ici la réponse. La question
-arrive **au pied du fil de l'orchestration**, en premier — c'est le run entier qui attend —, sur une
-carte « Budget du run atteint » :
+arrive **au pied du fil de l'orchestration**, juste sous les questions d'agents — c'est le run entier
+qui attend, et le fil colle à son bas : la carte la plus basse est la première vue —, sur une carte
+« Budget du run atteint » :
 
 - **trois chiffres au même rang** : *Dépensé*, lu contre le plafond (« 0,22 $US — sur un plafond de
   0,01 $US ») ; *Reste à faire*, en tâches ; *Coût estimé du reste*, en fourchette — **l'estimation du
@@ -2743,16 +2744,23 @@ carte « Budget du run atteint » :
 - **ce qui reste, nommé** tâche par tâche, en cases à cocher — cochée = gardée ; la tâche coupée y
   porte « mise de côté — travail conservé ». **Décocher, c'est réduire** : l'estimation et le plafond
   proposé se recalculent sur ce qui est gardé ;
-- **le nouveau plafond**, prérempli (la dépense plus le haut de l'estimation de ce qui est gardé),
-  modifiable, et vérifié avant de partir : un plafond qui ne couvre pas ce qui est déjà dépensé ne se
-  soumet pas. En tokens — le fournisseur ne tarifie pas —, rien n'est proposé : l'estimation est en
-  dollars, le plafond s'écrit ;
+- **le nouveau plafond**, prérempli (la dépense plus le haut de l'estimation de ce qui est gardé,
+  les deux montants écrits sous le champ), modifiable, et vérifié avant de partir : un plafond qui ne
+  couvre pas ce qui est déjà dépensé ne se soumet pas. En tokens — le fournisseur ne tarifie pas —,
+  rien n'est proposé : l'estimation est en dollars, le plafond s'écrit ;
 - **deux boutons qui disent ce qu'ils engagent** : « Relever à X et reprendre », qui devient « Reprendre
   sans N tâches — plafond X » dès qu'on décoche, et « Arrêter le run ». Rien ne relève le plafond sans
   qu'un montant ait été lu sur le bouton ;
-- une ligne pour **ce qui se passe sans réponse** — le run reste suspendu, rien ne se dépense — et la
-  **franchise** : ce qui était engagé au franchissement a pu dépasser un peu le plafond, un appel
-  modèle ne se tarifant qu'une fois fait.
+- une ligne pour **ce qui se passe sans réponse**, ouverte par le plafond atteint — le run reste
+  suspendu, rien ne se dépense — et la **franchise** : ce qui était engagé au franchissement a pu
+  dépasser un peu le plafond, un appel modèle ne se tarifant qu'une fois fait.
+
+Le **pied de la carte se suffit** : dans la colonne de conversation, le fil colle à son bas et la
+carte, plus haute que la colonne, s'y ouvre sur ses gestes — titre et tuiles au-dessus, hors de vue.
+L'aide du champ et la dernière ligne redisent donc le plafond franchi, la dépense et le haut de
+l'estimation (relecture de #1182). Et le fil **se recolle quand son pied grandit**, s'il suivait : une
+carte tirée de l'état du shell (celle-ci, la question d'un agent) arrive souvent après les messages, et
+restait sinon sous le pli, sans geste « Dernier message » pour le dire.
 
 Ailleurs, le statut se lit « **Budget atteint** » (liste des runs, vue d'un run, fil), avec la phrase
 « Le run attend une décision sur son budget » et un renvoi « Décider » vers le fil — la quatrième

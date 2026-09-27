@@ -30,6 +30,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, Event, InMemoryEventBus, create_app
+from maestro.controltower.bridge import evenements_depuis_step
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_PLAFOND_DECISION,
@@ -49,17 +50,30 @@ from maestro.controltower.state import (
     libelle_statut_execution,
 )
 from maestro.engine import OrchestrationEngine
+from maestro.engine.executor import (
+    STATUT_EN_COURS,
+    STATUT_TERMINEE,
+    STATUT_USAGE,
+    SUFFIXE_ETAPE_DEBUT,
+)
 from maestro.engine.plafond import (
     GESTE_ARRETER,
     GESTE_REDUIRE,
     GESTE_RELEVER,
+    STATUT_TACHE_SUSPENDUE,
+    SUFFIXE_ETAPE_PLAFOND,
     DecisionPlafond,
     DemandePlafond,
     TacheRestante,
 )
 from maestro.orchestrator import Orchestrator
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import StepUsage, report_usage
+from maestro.telemetry import (
+    ETAPE_PLANIFICATION,
+    SUFFIXE_ETAPE_USAGE,
+    StepUsage,
+    report_usage,
+)
 
 RUN = "run-au-plafond"
 PROJET = "prj-plafond"
@@ -207,6 +221,66 @@ def test_une_issue_du_run_retire_la_question():
 def test_le_fil_dit_le_statut_avec_les_mots_de_l_ecran():
     """Le libellé est celui de `libelleStatutExecution` (apps/web/lib/format.ts), au mot près."""
     assert libelle_statut_execution(EXECUTION_EN_ATTENTE_PLAFOND) == "Budget atteint"
+
+
+def _ligne(etape: str, statut: str, cout_usd: float | None = None) -> dict[str, Any]:
+    """Une ligne de journal telle que le moteur l'écrit — le pont en fait les événements."""
+    return {
+        "run_id": RUN,
+        "etape": etape,
+        "nom": "Écrire l'API",
+        "agent": "developpeur",
+        "role": "Développeur",
+        "statut": statut,
+        "entree": "",
+        "sortie": "",
+        "erreur": None,
+        "usage": StepUsage(appels=1, cout_usd=cout_usd).to_dict(),
+        "projet_id": PROJET,
+    }
+
+
+def _journalise(state: ControlTowerState, ligne: dict[str, Any]) -> None:
+    for event in evenements_depuis_step(ligne):
+        state.appliquer(event)
+
+
+def test_la_depense_d_une_tache_mise_de_cote_ne_compte_qu_une_fois():
+    """Mesuré sur la vraie stack (run 5b4717cc6b38) : 0,386 $ affichés pour 0,282 $ dépensés.
+
+    La tâche mise de côté a laissé derrière elle son dernier **relevé** en vol
+    (0,10 $), et l'étape `:plafond` porte la dépense **complète** de la tentative
+    (0,23 $) : additionnés, le run montrait plus que la question au plafond, qui lit
+    le grand livre. La mise de côté solde les relevés de sa tentative comme une
+    issue le ferait, et la carte de la tâche cumule sa reprise par-dessus.
+    """
+    state = ControlTowerState()
+    _journalise(state, _ligne(ETAPE_PLANIFICATION, STATUT_TERMINEE, 0.05))
+    _journalise(state, _ligne(f"api{SUFFIXE_ETAPE_DEBUT}", STATUT_EN_COURS))
+    _journalise(state, _ligne(f"api{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, 0.10))
+
+    # Au plafond : la tentative est mise de côté, avec tout ce qu'elle a dépensé.
+    _journalise(state, _ligne(f"api{SUFFIXE_ETAPE_PLAFOND}", STATUT_TACHE_SUSPENDUE, 0.23))
+    run = state.execution(RUN)
+    tache = state.tache("api")
+    assert run is not None and tache is not None
+    assert run.cout_usd == pytest.approx(0.28)
+    assert run.cout_usd == pytest.approx(run.cout.total.cout_usd)
+    assert tache.cout_usd == pytest.approx(0.23)
+    assert tache.cout_partiel is True  # mise de côté n'est pas soldée
+
+    # La reprise relève depuis zéro : la carte cumule, le run aussi.
+    _journalise(state, _ligne(f"api{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, 0.04))
+    assert run.cout_usd == pytest.approx(0.32)
+    assert tache.cout_usd == pytest.approx(0.27)
+
+    # L'issue solde la reprise : rien n'est compté deux fois, ni oublié.
+    _journalise(state, _ligne("api", STATUT_TERMINEE, 0.06))
+    assert run.cout_usd == pytest.approx(0.34)
+    assert run.cout_usd == pytest.approx(run.cout.total.cout_usd)
+    assert run.cout_partiel is False
+    assert tache.cout_usd == pytest.approx(0.29)
+    assert tache.cout_partiel is False
 
 
 # --------------------------------------------------------------------------- #

@@ -313,7 +313,7 @@ export function PlafondDansLeFil({
             <Champ
               key={unite}
               id={`plafond-${idCarte}-${unite}`}
-              className="w-full max-w-56"
+              className="w-full max-w-80"
               libelle={LIBELLE_CHAMP[unite]}
               inputMode="decimal"
               value={valeurs[unite]}
@@ -322,8 +322,13 @@ export function PlafondDansLeFil({
               }
               disabled={enCours !== null}
               aide={
+                // Les deux montants que la proposition additionne, en chiffres :
+                // dans la colonne de conversation, le fil colle à son bas et la
+                // carte s'ouvre ici, tuiles hors de vue (relecture de #1182).
                 unite === "usd"
-                  ? `Proposé : ce qui est dépensé, plus le haut de l'estimation pour ${taches(nbGardees)}.`
+                  ? demande.depense_usd === null
+                    ? `Proposé : ce qui est dépensé, plus le haut de l'estimation pour ${taches(nbGardees)}.`
+                    : `Proposé : ${formatCout(demande.depense_usd)} dépensés, plus ${formatCout(reste.haut)}, le haut de l'estimation pour ${taches(nbGardees)}.`
                   : `Au-delà des ${formatTokens(demande.depense_tokens)} tokens déjà dépensés — l'estimation est en dollars, le plafond en tokens s'écrit.`
               }
               erreur={erreurs[unite] ?? undefined}
@@ -360,6 +365,9 @@ export function PlafondDansLeFil({
       </div>
 
       <p className="mt-3 text-annexe text-attention-texte">
+        {/* Le pourquoi redit au pied, pour la même raison que l'aide du champ. */}
+        {plafondActuel !== null &&
+          `Le plafond de ${enUnite(plafondActuel, uniteAffichee)} est atteint. `}
         Sans réponse, le run reste suspendu : rien ne se dépense. Ce qui était déjà
         engagé au franchissement a pu dépasser un peu le plafond — un appel modèle
         ne se tarife qu&apos;une fois fait.

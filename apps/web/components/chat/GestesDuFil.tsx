@@ -46,8 +46,9 @@
  * ⚠ Une septième est venue avec #1182 : la **décision au plafond de dépense**
  * (`PlafondDansLeFil`) — un run qui a atteint son budget et attend qu'on relève,
  * réduise ou arrête. Elle ne vit pas sur un message mais sur le **run** (la liste
- * des exécutions du shell), et elle prend le **premier** rang : c'est le run entier
- * qui attend, rien d'autre n'y bougera tant qu'elle n'est pas tranchée.
+ * des exécutions du shell), et elle se pose **juste sous les questions d'agents** :
+ * c'est le run entier qui attend, et le fil collant à son bas, la carte la plus
+ * basse est la première vue — mais au-dessus de ce que porte le dernier message.
  *
  * ## Pourquoi il existe — le défaut que #1106 corrige
  *
@@ -191,12 +192,16 @@ export function useGestesDuFil(
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Le plafond de dépense d'abord (#1182) : c'est le **run entier** qui
-          attend, là où une question d'agent n'en retient qu'une tâche — et rien
-          d'autre ne bougera dans ce run tant qu'il n'est pas tranché. La `key`
-          est le run **et** le début de l'attente : une seconde question sur le
-          même run (plafond relevé trop court) repart d'une carte neuve, pas des
-          cases et du montant de la précédente. */}
+      <QuestionsDuFil questions={questions} repondre={repondreAUneQuestion} />
+      {/* Le plafond de dépense **sous** les questions d'agents (#1182) : c'est le
+          run entier qui attend, là où une question n'en retient qu'une tâche, et
+          le fil colle à son bas — la carte la plus basse est celle qu'on voit.
+          Posée au-dessus, elle restait hors de l'écran derrière une question
+          déjà repartie sans réponse (mesuré sur la vraie stack). Au-dessus, en
+          revanche, de ce que porte le dernier message, qui répond à ce qu'on
+          vient de taper. La `key` est le run **et** le début de l'attente : une
+          seconde question sur le même run (plafond relevé trop court) repart
+          d'une carte neuve, pas des cases et du montant de la précédente. */}
       {auPlafond.map((run) => (
         <PlafondDansLeFil
           key={`${run.run_id}|${run.attente_depuis ?? ""}`}
@@ -204,7 +209,6 @@ export function useGestesDuFil(
           trancher={trancherPlafond}
         />
       ))}
-      <QuestionsDuFil questions={questions} repondre={repondreAUneQuestion} />
       {outillage?.question && (
         /* La `key` remet la carte à zéro d'une question à la suivante — même
            geste et même raison que `FilDeCadrage` d'un tour de clarification au
