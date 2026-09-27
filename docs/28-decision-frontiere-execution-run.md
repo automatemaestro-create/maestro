@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 28 — Frontière d'exécution d'un run : note de décision
 
 > Ticket #350 (lot 3/4 du parent #347). Décision datée du **2026-08-23**, sur `origin/main` à

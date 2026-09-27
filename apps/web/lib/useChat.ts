@@ -120,6 +120,7 @@ import {
   recruterDansLeFil,
   repondreQuestionOutillage,
   trancherCadrageChat,
+  trancherPieceDuFil,
   urlEvenements,
   PORTEE_TOUS,
 } from "./api";
@@ -136,6 +137,7 @@ import {
   FRAGMENT_CHAT_FIN,
   FRAGMENT_CHAT_INTERROMPU,
   type ConversationChat,
+  type DecisionPiece,
   type EtapeFil,
   type Evenement,
   type MessageChat,
@@ -298,6 +300,14 @@ export type Chat = {
    * porte la fiche (`projet_cree`) — rejoignent le fil comme un tour ordinaire.
    */
   declarerProjet: (approuve: boolean) => Promise<void>;
+  /**
+   * Tranche la pièce d'outillage que le fil propose (#1161) : l'écrire, la passer,
+   * ou remettre l'outillage à plus tard. `empreinte` désigne la version que la carte
+   * montrait — l'API la compare à celle qui attend, et un double clic tombe sur un
+   * refus au lieu d'écrire la pièce suivante. Le geste et la suite — la pièce écrite,
+   * puis la suivante — rejoignent le fil comme un tour ordinaire.
+   */
+  trancherPiece: (decision: DecisionPiece, empreinte: string) => Promise<void>;
   /**
    * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
    * `""` tant que l'API n'a pas répondu : personne ne peut la nommer avant.
@@ -710,6 +720,28 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     [agent, conversation, recharger],
   );
 
+  /**
+   * Le cinquième jumeau de `trancherCadrage` (#1161) : même emprunt d'`envoi`, même
+   * paire rendue d'un bloc, même relecture en sortie.
+   */
+  const trancherPiece = useCallback(
+    async (decision: DecisionPiece, empreinte: string) => {
+      setEnvoi(true);
+      try {
+        const paire = await trancherPieceDuFil(agent, {
+          decision,
+          piece: empreinte,
+          conversation,
+        });
+        setDirects((gardes) => [...gardes, ...paire]);
+      } finally {
+        setEnvoi(false);
+        await recharger();
+      }
+    },
+    [agent, conversation, recharger],
+  );
+
   const interrompre = useCallback(() => {
     const vol = enVol.current;
     if (vol === null) return;
@@ -767,6 +799,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     repondreQuestion,
     recruter,
     declarerProjet,
+    trancherPiece,
     conversation,
     conversations,
     nouvelleConversation,

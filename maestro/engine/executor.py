@@ -71,6 +71,7 @@ from maestro.detail_tache import (
     EtapeTache,
     SuiviChecklist,
     consigne_detail,
+    phrase_checklist_sans_releve,
     phrase_ecart_checklist,
 )
 from maestro.engine.guardrails import (
@@ -114,6 +115,7 @@ from maestro.providers.question import Questionneur
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
 from maestro.sandbox import ProducedFile, branche_de_tache
+from maestro.sandbox.confinement import ReleveConfinement
 from maestro.telemetry import (
     PlafondDepense,
     PlafondDepenseDepasse,
@@ -368,6 +370,29 @@ SUFFIXE_ETAPE_DECISION = ":decision"
 #: que la projection n'utilise que pour rafraîchir la dernière activité de
 #: l'agent — jamais le statut d'une tâche (docs/31 §3.4).
 STATUT_DECISION_AUTONOME = "decision_autonome"
+
+#: Suffixe des étapes qui disent **ce que la session d'un agent a laissé derrière
+#: elle** (#1279) : `<task.id>:processus`, une par tentative qui a quelque chose à
+#: en dire — le pont Control Tower les mue en activités d'agent, comme `:fusion`.
+#:
+#: Étape annexe et non statut de tâche, pour la raison de `:fusion` : ce qui arrive
+#: aux processus de la session ne décide pas de l'issue de la tâche. Une tâche
+#: réussie qui laissait tourner un navigateur a réussi ; ce qui change, c'est que
+#: le navigateur ne lui survit plus — et que le journal le **dit**, surtout quand
+#: un processus a résisté à l'arrêt (le critère du ticket : son nom et son pid).
+SUFFIXE_ETAPE_PROCESSUS = ":processus"
+
+#: Statuts d'une étape `:processus` (#1279) — les trois cas, et il en faut trois.
+#:
+#: `processus_arretes` : la session laissait des processus à sa clôture, tous
+#: arrêtés. `processus_survivants` : au moins un a **résisté** — la ligne les
+#: nomme tous, avec leur pid, parce qu'un port de débogage ouvert sur le poste est
+#: exactement ce qu'on ne doit pas découvrir par hasard. `session_non_confinee` :
+#: la session a tourné sans confinement (lanceur absent, CLI introuvable) — ce qui
+#: empêche de lire l'absence de ligne comme « rien n'a survécu ».
+STATUT_PROCESSUS_ARRETES = "processus_arretes"
+STATUT_PROCESSUS_SURVIVANTS = "processus_survivants"
+STATUT_SESSION_NON_CONFINEE = "session_non_confinee"
 
 #: Suffixe des étapes de fusion dans le projet (#705) : `<task.id>:fusion`, une
 #: par tâche soldée en succès sur un projet **versionné** — le pont Control Tower
@@ -2673,6 +2698,49 @@ class LocalExecutor(TaskExecutor):
             projet_id=task.projet_id,
         )
 
+    def _consigne_processus(
+        self,
+        task: Task,
+        agent: Agent,
+        releve: ReleveConfinement,
+        journal: RunJournal,
+    ) -> None:
+        """Écrit au journal du run ce que la session de l'agent a laissé derrière elle (#1279).
+
+        Étape dédiée `<task.id>:processus` (même modèle que `:fusion`), que le pont
+        (`maestro.controltower.bridge`) mue en activité d'agent. `sortie` porte la
+        phrase du relevé (`ReleveConfinement.phrase`) — les processus arrêtés à la
+        clôture, et **nommément, pid compris**, ceux qui ont résisté —, et le
+        statut dit lequel des trois cas c'est (cf. `STATUT_PROCESSUS_*`).
+
+        Une ligne **par tentative** qui a quelque chose à en dire : chaque
+        tentative est une session, et une relance qui laisse derrière elle ce que
+        la précédente avait déjà laissé serait un fait de plus, pas un doublon.
+
+        Usage nul, comme `:blocage` et `:decision` : l'arrêt ne dépense rien. La
+        tâche ne change pas de colonne : le sort des processus de la session n'est
+        pas le verdict de la tâche.
+        """
+        if releve.vide:
+            return
+        if releve.non_confinee:
+            statut = STATUT_SESSION_NON_CONFINEE
+        elif releve.survivants:
+            statut = STATUT_PROCESSUS_SURVIVANTS
+        else:
+            statut = STATUT_PROCESSUS_ARRETES
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_PROCESSUS}",
+            nom=f"Processus de la session — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut=statut,
+            entree="",
+            sortie=releve.phrase(),
+            usage=StepUsage(),
+            projet_id=task.projet_id,
+        )
+
     def _consigne_etapes(
         self,
         task: Task,
@@ -2742,8 +2810,22 @@ class LocalExecutor(TaskExecutor):
         `<tache>:ecart` deviendrait une tâche fantôme de plus dans les comptes —
         le défaut C8 du même retex, corrigé par #924, qu'on ne va pas rouvrir
         pour une ligne de texte.
+
+        Un cas n'est pas un écart, et se dit autrement (#1291) : la tâche s'est
+        exécutée en **texte seul**, sans verbe pour cocher quoi que ce soit.
+        L'ossature du plan y reste entière « à faire » ; « non cochée(s) par
+        l'agent » lui ferait porter un manque qui n'est pas le sien. La ligne dit
+        alors qu'aucun relevé n'était possible, et quel fournisseur en décide.
         """
         if agent is None or result.statut != STATUT_TERMINEE:
+            return
+        if suivi.releve_impossible and not suivi.vide:
+            self._consigne_activite(
+                task,
+                agent,
+                phrase_checklist_sans_releve(suivi.releve_impossible, len(suivi.etapes())),
+                journal,
+            )
             return
         restantes = suivi.inachevees()
         if not restantes:
@@ -2838,11 +2920,13 @@ class LocalExecutor(TaskExecutor):
         son issue. Le repli texte (`generate`) n'en émet aucune — un appel texte
         n'a pas d'étapes à raconter, et il ne dure pas.
 
-        La **checklist** (#489) suit le même chemin et pour la même raison : un
-        appel texte n'a pas de liste de travail à tenir. L'ossature du plan, elle,
-        a déjà été posée par l'appelant — donc une tâche traitée en repli texte
-        garde la checklist que le plan annonçait, sans jamais la voir se cocher.
-        C'est exact et c'est dit : personne n'a rapporté d'avancement.
+        La **checklist** (#489) suit le même chemin et pour la même raison : son
+        verbe (`tenir_checklist`, #1291) est servi comme un outil, et un appel
+        texte n'en a pas. L'ossature du plan, elle, a déjà été posée par
+        l'appelant — donc une tâche traitée en repli texte garde la checklist que
+        le plan annonçait, sans jamais la voir se cocher. C'est exact et c'est
+        **dit** : le repli marque le suivi (`SuiviChecklist.sans_releve`), et la
+        clôture consigne qu'aucun relevé n'était possible au lieu d'un écart.
 
         L'**arbitrage demandé par l'agent** (#582) n'équipe lui aussi que le
         chemin outillé, et la raison est plus forte que pour les trois autres :
@@ -2867,6 +2951,12 @@ class LocalExecutor(TaskExecutor):
         câblages plutôt qu'un : un canal (à qui porter la question) et un journal
         (où écrire ce qui en est sorti). L'un sans l'autre suspendrait l'agent
         pour personne, ou le ferait reprendre sans trace.
+
+        Le **relevé des processus** de la session (#1279) suit ce chemin-là, et
+        pour la raison la plus simple : seul le chemin outillé lance des
+        processus. Le fournisseur arrête à la clôture tout ce que la session a
+        laissé tourner ; ce canal ne fait que l'**écrire** (étape `:processus`),
+        donc sans `journal` il n'est pas câblé — l'arrêt, lui, a lieu quand même.
 
         Le **projet** de la tâche (#224) n'équipe lui aussi que le chemin
         outillé : c'est de lui qu'est dérivé l'espace de travail (worktree ou
@@ -2973,6 +3063,16 @@ class LocalExecutor(TaskExecutor):
                         if journal is None or self._questionneur is None
                         else self._question(task, agent, journal, deliberation.memoire)
                     ),
+                    # Sans journal, rien à dire (#1279) — mais l'arrêt a lieu
+                    # quand même : il vit chez le fournisseur et n'a jamais
+                    # dépendu de ce qu'on en raconte.
+                    on_processus=(
+                        None
+                        if journal is None
+                        else lambda releve: self._consigne_processus(
+                            task, agent, releve, journal
+                        )
+                    ),
                     projet=self._projet(task),
                     tache_id=task.id,
                     effort=agent.effort,
@@ -2980,6 +3080,11 @@ class LocalExecutor(TaskExecutor):
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
                 pass  # fournisseur texte-seul : repli sur le livrable texte
+        # Le chemin texte ne sert aucun verbe à l'agent (#1291) : personne ne
+        # pourra cocher la checklist, et la clôture le dira au lieu de rapporter
+        # un écart que l'agent n'avait aucun moyen de combler.
+        if suivi is not None:
+            suivi.sans_releve(self._provider.name)
         # Le mot-clé ne part que s'il a quelque chose à dire (#253) : sur un
         # fournisseur qui n'annonce aucun effort — le cas de tout adaptateur
         # texte-seul — l'appel est au bit près celui d'avant ce lot.

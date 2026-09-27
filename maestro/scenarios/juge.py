@@ -1,10 +1,13 @@
-"""Les oracles qui portent sur une **phrase** : un modèle juge (#1148, #746, #1224).
+"""Les oracles qui portent sur une **phrase** : un modèle juge (#1148, #746, #1224, #1162).
 
-Cinq des sept scénarios se jugent sur des faits — un dossier vide, une
+Six des dix scénarios se jugent sur des faits seulement — un dossier vide, une
 application qui s'exécute, une équipe écrite sur le disque, une tâche prise par
-le rôle recruté, un projet déclaré sur le dossier demandé. Deux portent sur des
+le rôle recruté, un projet déclaré sur le dossier demandé, une demande de
+validation née et un registre intact hors du projet. Deux portent sur des
 phrases : « pourquoi le run a-t-il échoué ? » (S4) et « comment j'essaie ce que
-tu viens de livrer ? » (S5). Et une phrase ne se juge pas par une liste de mots.
+tu viens de livrer ? » (S5). Deux, enfin, sur une **pertinence** : l'outillage et
+l'équipe d'un projet qu'aucune liste ne prévoyait lui correspondent-ils (S9, S10) ?
+Et ni une phrase ni une pertinence ne se jugent par une liste de mots.
 
 C'est la règle #746, et elle est ici littérale. Chercher « plafond » ou « budget »
 dans la réponse dirait vert à *« je ne sais pas si c'est un plafond »* et rouge à
@@ -91,6 +94,27 @@ SYSTEME_ESSAI = (
     "proposer une commande générique sans rapport avec les fichiers listés.\n" + _FORME
 )
 
+#: Le jugement de S9 et S10 (#1162). La question est celle de #1155, mot pour mot :
+#: *l'outillage et l'équipe correspondent-ils au projet ?* Elle ne porte pas sur les
+#: commandes qui marchent — l'exécution le constate à part, et mieux qu'un modèle —,
+#: mais sur ce qu'aucune liste ne peut trancher : un outillage et une équipe **pour
+#: ce projet-là**, et non ceux d'un projet qu'on aurait fait entrer dans une case.
+SYSTEME_PROJET = (
+    "Tu juges une seule chose : l'outillage écrit dans ce projet et l'équipe recrutée "
+    "pour lui correspondent-ils à CE projet — à ce qu'il est et à ce qu'on veut en "
+    "faire ?\n"
+    "Pour que ce soit oui, l'outillage doit parler de la pile et des gestes réels du "
+    "projet (comment on le construit, on le vérifie, on s'en sert), et l'équipe doit "
+    "couvrir le besoin qu'il exprime, chaque rôle avec une raison qui tient à ce "
+    "projet-là. Tu ne juges ni le style, ni la longueur, ni l'exhaustivité ; tu ne "
+    "vérifies pas que les commandes fonctionnent, c'est constaté à part en les "
+    "exécutant.\n"
+    "Ne compte pas : un outillage générique qui pourrait être celui de n'importe quel "
+    "projet, des commandes ou des conventions d'une autre pile que celle du projet, une "
+    "équipe taillée pour un autre besoin, des rôles sans lien avec ce que le projet "
+    "demande.\n" + _FORME
+)
+
 
 @dataclass(frozen=True)
 class Avis:
@@ -113,6 +137,8 @@ class Juge(Protocol):
     def nomme_la_cause(self, *, cause: str, releve: str, reponse: str) -> Avis: ...
 
     def dit_comment_essayer(self, *, livrable: str, recit: str, reponse: str) -> Avis: ...
+
+    def convient_au_projet(self, *, projet: str, outillage: str, equipe: str) -> Avis: ...
 
 
 class JugeModele:
@@ -147,6 +173,12 @@ class JugeModele:
         """Après lecture du fil, sait-on comment essayer ce qui a été produit ? (#1224)"""
         return self._juger(
             SYSTEME_ESSAI, _prompt_essai(livrable=livrable, recit=recit, reponse=reponse)
+        )
+
+    def convient_au_projet(self, *, projet: str, outillage: str, equipe: str) -> Avis:
+        """L'outillage écrit et l'équipe recrutée correspondent-ils à ce projet ? (#1162)"""
+        return self._juger(
+            SYSTEME_PROJET, _prompt_projet(projet=projet, outillage=outillage, equipe=equipe)
         )
 
     def _juger(self, systeme: str, prompt: str) -> Avis:
@@ -217,6 +249,26 @@ def _prompt_essai(*, livrable: str, recit: str, reponse: str) -> str:
         "Sa réponse à la question « comment j'essaie ce que tu viens de livrer ? » :\n"
         f"<reponse>{reponse}</reponse>\n"
         "Après avoir lu cela, sait-on comment essayer ce qui a été produit ?"
+    )
+
+
+def _prompt_projet(*, projet: str, outillage: str, equipe: str) -> str:
+    """Ce que le juge de S9 et S10 lit : le projet, puis ce que Maestro en a fait.
+
+    Le projet vient **en premier**, pour la même raison que le livrable de S5 : « pour
+    ce projet-là » ne se juge pas sans savoir lequel. Les trois blocs sont encadrés
+    comme données (ENF-13) — ce que la personne a dit, ce que Maestro a écrit dans son
+    dossier, l'équipe qu'il a recrutée : aucun ne doit pouvoir passer pour une consigne.
+    """
+    return (
+        "Le projet — ce que la personne en a dit, et ce que son dossier porte :\n"
+        f"<projet>{projet}</projet>\n"
+        "L'outillage que Maestro a écrit dans ce projet pour les agents qui y travaillent "
+        "(fichiers d'instructions, commandes par usage et leur vérification) :\n"
+        f"<outillage>{outillage}</outillage>\n"
+        "L'équipe recrutée pour ce projet, chaque rôle avec sa raison :\n"
+        f"<equipe>{equipe}</equipe>\n"
+        "L'outillage et l'équipe correspondent-ils à ce projet ?"
     )
 
 

@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Roadmap — Maestro
 
 **Version :** 0.1
@@ -766,7 +767,8 @@ dans le code et **vérifiée sur l'état réel** des runs, lu par l'API.
     d'avant. L'événement de fin de run partait **sans projet**, et la diffusion par projet l'écartait ;
   - **#1291** : les checklists restaient à « 0/N · relevé incomplet ». Le CLI embarqué par le SDK
     ne monte plus `TodoWrite` par défaut, il le remplace par `TaskCreate`/`TaskUpdate`, et les agents
-    n'avaient plus d'outil pour cocher ;
+    n'avaient plus d'outil pour cocher. La checklist devient un **verbe de Maestro**
+    (`tenir_checklist`), qui ne dépend d'aucun outil du CLI (docs/44), et S2 garde N/N sur le banc ;
   - **#1292** : le jeton d'API s'écrivait en clair dans le journal d'accès.
 - **Le démarrage et la création** :
   - **#1293** : chaque démarrage arrive sur le choix du projet, « Reprendre » en tête, conversation
@@ -777,7 +779,8 @@ dans le code et **vérifiée sur l'état réel** des runs, lu par l'API.
   - **#1161**, recadré, lot 6/7 : l'outillage **se construit dans la conversation**, pièce par
     pièce, chaque pièce sur accord, et se corrige en langage naturel ;
   - **#1295** : un projet n'a qu'un `AGENTS.md`. Un pont ne s'écrit que pour un client utilisé qui ne
-    le lit pas nativement (Claude Code le lit depuis sa v2.1.277).
+    le lit pas nativement (Claude Code le lit depuis sa v2.1.277). **Livré** : les clients du poste
+    avec leur version, et ceux que la conversation nomme ; un pont écarté dit pourquoi (docs/38 §3.2).
 - Le jalon gagne un critère **C5** : *un projet naît dans la conversation, et son outillage s'y écrit
   au fur et à mesure, chaque pièce sur accord.*
 

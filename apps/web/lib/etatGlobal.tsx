@@ -32,6 +32,8 @@ export type EtatGlobal = ControlTower & {
   portee: PorteeProjet;
   /** Dépense cumulée **du projet actif** (null si rien n'a été rapporté). */
   coutTotal: number | null;
+  /** Ce cumul n'est-il qu'un plancher — des tokens y sont-ils restés sans prix (#1280) ? */
+  coutPartiel: boolean;
 };
 
 /**
@@ -56,6 +58,19 @@ export function coutCumule(couts: CoutExecution[]): number | null {
   return montants.length > 0 ? montants.reduce((somme, c) => somme + c, 0) : null;
 }
 
+/**
+ * Le cumul ci-dessus n'est-il qu'un **plancher** (#1280) ? Oui dès qu'un grand
+ * livre porte des tokens qu'aucun coût ne couvre (`total.tokens_non_tarifes`,
+ * posé par le backend) — une tâche morte avant son résultat, un fournisseur qui
+ * ne tarife pas. Les trois lecteurs de `coutCumule` le lisent ici, pour la même
+ * raison qu'elle : un cumul partiel dans la barre et complet dans la tuile
+ * se contrediraient d'un écran à l'autre, et au-dessus d'un run qui se dit
+ * partiel, un cumul nu se contredirait sur le même.
+ */
+export function coutCumulePartiel(couts: CoutExecution[]): boolean {
+  return couts.some((c) => (c.total.tokens_non_tarifes ?? 0) > 0);
+}
+
 const ContexteEtatGlobal = createContext<EtatGlobal | null>(null);
 
 export function FournisseurEtatGlobal({
@@ -74,6 +89,7 @@ export function FournisseurEtatGlobal({
         projet,
         portee: projet.id,
         coutTotal: coutCumule(etat.couts),
+        coutPartiel: coutCumulePartiel(etat.couts),
       }}
     >
       {children}

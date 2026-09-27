@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 35 — Le poste de travail de bureau : la coque, et la disposition à trois zones
 
 **Date :** 2026-09-11 · **Chantier :** #921 (11 lots — 8 au cadrage, §5) · **Jalon :** *L'atelier — le

@@ -28,6 +28,14 @@ Trois propriétés, et la troisième est celle que la réserve nomme :
 ③ les réponses du fil écrivent **le même outillage** que celles de l'écran de
    création. Deux voies, un seul résultat — sans quoi la voie qu'on emprunte
    déciderait de ce qu'on reçoit.
+
+⚠ **Depuis #1161, l'écran de création n'a plus d'étape d'outillage**, et le fil
+n'écrit plus tout d'un coup : un projet nommé s'outille **pièce par pièce**, chacune
+sur accord — c'est `tests/test_outillage_pieces.py` qui le joue jusqu'au disque.
+Cette suite garde ce qui reste vrai : la voie **sans état** et celle du fil tiennent
+les mêmes réponses et dérivent le même outillage (①, ③), et un questionnaire ouvert
+**sans projet** — il n'a alors aucune pièce à montrer — ne promet pas un geste absent
+(②).
 """
 
 from __future__ import annotations
@@ -212,7 +220,7 @@ def test_le_fil_conduit_le_questionnaire_et_porte_ses_reponses(
 # --- ② La promesse de la conclusion dit où se donne la validation ---------------
 
 
-def test_la_conclusion_du_fil_dit_ou_se_valide_ce_qu_elle_annonce(
+def test_la_conclusion_du_fil_ne_promet_pas_un_geste_absent(
     client: TestClient, atelier: Path
 ) -> None:
     """Le défaut que la réserve nomme : une promesse sans surface.
@@ -220,13 +228,19 @@ def test_la_conclusion_du_fil_dit_ou_se_valide_ce_qu_elle_annonce(
     « Rien n'est écrit dans le projet tant que vous ne l'avez pas validé » était
     vraie et pourtant trompeuse — le pied du fil redevenait vide dès que le
     dernier message ne portait plus de question, et rien ne validait nulle part.
+    #1104 y avait répondu par une carte au pied du fil (`ConclusionOutillage`), que
+    #1161 a retirée : l'outillage s'écrit pièce par pièce. Ouvert sans projet, comme
+    ici, le fil n'a pas de pièce à montrer, et sa conclusion nomme le geste qui y
+    mène — dire, projet ouvert, de l'outiller — au lieu de renvoyer au pied de la
+    conversation.
     """
     _projet_neuf(client, atelier)
 
     conclusion = _repondre_dans_le_fil(client)
 
     assert "Rien n'est écrit dans le projet tant que vous ne l'avez pas validé." in conclusion
-    assert "au pied de cette conversation" in conclusion
+    assert "ouvrez-le et dites-moi de l'outiller" in conclusion
+    assert "au pied de cette conversation" not in conclusion
 
 
 # --- ③ Les réponses du fil écrivent, et écrivent la même chose ------------------

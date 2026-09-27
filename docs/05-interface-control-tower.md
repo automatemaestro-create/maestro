@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Interface — Control Tower — Maestro
 
 **Version :** 0.1
@@ -301,34 +302,47 @@ Implémentation : `apps/web/lib/etatGlobal.tsx` (le projet et sa portée diffus�
 de remontage). Couverture : `apps/web/tests/projet-cadre.test.tsx`, et côté API
 [`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py) (#282).
 
-#### 2.0.1 On entre par un projet, et on en change au shell (#279, #280) — **livré**
+#### 2.0.1 On entre par un projet, et on en change au shell (#279, #280, #1293) — **livré**
 
 Le cadre du §2.0 a deux gestes : y **entrer**, et en **changer**. Ils forment la réponse au
 reproche du bilan de la Phase 7 — « le projet devrait être choisi avant d'entrer », « surtout pas
 un menu pour les projets ».
 
 **La porte d'entrée** (#279) est une **garde de shell**, pas une redirection de page. La nuance
-est tout le mécanisme : une page atteinte directement — lien, signet, rechargement — passe par le
-choix du projet **puis rend la page demandée**, sans que l'URL ait bougé entre-temps. Une
-redirection l'aurait perdue, et aurait ajouté deux entrées à l'historique du navigateur pour un
-geste qui n'est pas une navigation. Ce que l'écran présente : la liste des projets déclarés et la
-**création sur place** — aucun projet déclaré n'ouvre pas un vide mais propose d'en créer un, dans
-la conversation depuis #1294 (§2.0.2). Le
-projet actif est **retenu d'une visite à l'autre**, relu au démarrage, et un projet devenu
-introuvable ramène à la porte **avec son motif** au lieu d'échouer. Trois vides à ne pas
-confondre, ici encore : une API muette n'est pas une absence de projet (on laisse réessayer, et le
-choix retenu reprend dès que l'API répond).
+est tout le mécanisme : une page atteinte directement — lien, signet — passe par le choix du
+projet **puis rend la page demandée**, sans que l'URL ait bougé entre-temps. Une redirection
+l'aurait perdue, et aurait ajouté deux entrées à l'historique du navigateur pour un geste qui
+n'est pas une navigation. Un projet devenu introuvable ramène à la porte **avec son motif** au lieu
+d'échouer. Trois vides à ne pas confondre, ici encore : une API muette n'est pas une absence de
+projet (on laisse réessayer, et le choix retenu reprend dès que l'API répond).
 
-> ⚠ **Renversé le 2026-09-24** ([docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md),
-> #1293), à la demande de la personne. Le projet actif n'est plus *relu au démarrage*.
-> - Chaque démarrage arrive sur le choix du projet, avec « Reprendre *le dernier projet* » en tête,
->   atteint en un geste.
-> - La colonne de conversation y est ouverte ; la fermer vaut pour la session.
->
-> Un réglage ancien (projet retenu, colonne fermée) ramenait sinon la Control Tower d'avant l'atelier.
-> Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
-> projet au sélecteur dans une session. Ce paragraphe décrit l'état **présent** jusqu'à ce que #1293
-> le réécrive.
+**Chaque démarrage arrive sur la porte** (#1293), décidé par
+[docs/43 §2.1](./43-decision-un-projet-nait-dans-la-conversation.md) à la demande de la personne.
+Il renverse l'atterrissage de #279, où le projet actif était *retenu d'une visite à l'autre, relu
+au démarrage* et passait la porte sans s'arrêter. Ajouté à une colonne de conversation fermée une
+fois pour toutes, ce réglage ramenait à chaque démarrage le tableau de bord d'avant l'atelier, sous
+un titre qui disait encore « Control Tower ».
+- **Démarrer, c'est ouvrir une session neuve** : la coque qu'on rouvre, ou un onglet neuf. Un repère
+  de session (`sessionStorage`, `lib/projetActif.ts`) distingue le démarrage d'une navigation
+  interne et d'un **rechargement**, qui garde sa session et retrouve sa page sans repasser par la
+  porte. Il n'y a aucun embranchement propre à la coque (ENF-12) : les deux ont une session.
+- **Le dernier projet se propose, il ne s'impose plus.** Il reste retenu d'une visite à l'autre
+  (`localStorage`), mais seulement pour être proposé : **« Reprendre *nom* »** est en tête de la
+  porte, en bouton plein, et reprend d'un geste. Sa racine en est la description, car deux clones
+  d'un même dépôt portent le même nom (#280). À côté, en contour, **« Nouveau projet »** a une place
+  fixe au lieu du bout de la liste. Viennent ensuite tous les projets, le dernier ouvert d'abord et
+  marqué « Dernier ouvert ». Sans dernier projet, « Nouveau projet » prend le plein. Un dernier
+  projet disparu ne se propose pas : son motif est en tête. La forme a été tranchée sur pièces, par
+  la veille et la « Variante retenue » de #1293, d'après les écrans d'accueil de PyCharm, VS Code et
+  Visual Studio.
+- **La conversation est ouverte au démarrage.** Fermer la colonne vaut pour la session : ce choix
+  vit dans le `sessionStorage` (`lib/preferences.ts`), et le démarrage suivant retrouve le défaut
+  de #1107, ouverte au large. L'ancienne valeur du `localStorage` n'est plus lue, donc un `"0"`
+  ancien ne ferme plus rien.
+- **La fenêtre s'appelle « Maestro »**, dans la coque comme dans l'onglet (`app/layout.tsx`).
+
+Ce qui ne bouge pas : la garde de shell, le motif d'un projet introuvable, et le changement de
+projet au sélecteur pendant une session.
 
 **Le sélecteur** (#280) tient dans la barre supérieure, contre le titre de page — on lit « ce
 projet-ci, cette page-là ». Il affiche le projet actif **et sa racine** (deux clones d'un même
@@ -344,9 +358,10 @@ titre (`HORS_MENU`, §1) et s'atteint depuis le sélecteur (« Gérer les projet
 dans `next.config.ts`, contrairement aux pages fusionnées du §1.1 : celle-ci n'a pas changé
 d'adresse, elle a seulement quitté le menu.
 
-Implémentation : `apps/web/lib/etatProjetActif.tsx`, `components/projets/ChoixProjet.tsx` et
-`SelecteurProjet.tsx`, `lib/navigation.ts` (`MENU` / `HORS_MENU`). Couverture :
-`apps/web/tests/projet-actif.test.tsx` et `selecteur-projet.test.tsx`.
+Implémentation : `apps/web/lib/etatProjetActif.tsx` et `lib/projetActif.ts`,
+`components/projets/ChoixProjet.tsx` et `SelecteurProjet.tsx`, `lib/navigation.ts` (`MENU` /
+`HORS_MENU`). Couverture : `apps/web/tests/projet-actif.test.tsx`, `demarrage.test.tsx` (#1293)
+et `selecteur-projet.test.tsx`.
 
 #### 2.0.2 Un projet naît dans la conversation (#1294)
 
@@ -400,7 +415,9 @@ reposée.
 
 **Ce qui reste à l'écran Projets** : la **gestion**. On y modifie une déclaration (le formulaire
 ne sert plus qu'à cela), on la retire, on la met sous Git. Rien n'y crée plus de projet.
-L'outillage d'un projet se construit dans la même conversation, pièce par pièce (#1161).
+L'outillage d'un projet se construit dans la même conversation, pièce par pièce (#1161, §6.20
+« Pièce par pièce, dans le fil ») : à la naissance du projet, le fil enchaîne sur sa première
+question — un dossier neuf se décrit — ou sa première pièce — un dossier importé se lit.
 
 Implémentation : `components/projets/NaissanceProjet.tsx`, `components/chat/DemandeDeProjet.tsx`,
 `lib/naissance.ts`, `lib/useChat.ts` (`declarerProjet`) ; côté API §6.15.1. Couverture :
@@ -789,17 +806,14 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > (`etapes` de [`task.schema.json`](../packages/shared/schemas/task.schema.json),
 > libellés seuls, jamais d'avancement), ce qui rend la tâche lisible **avant**
 > qu'elle démarre ; l'agent rapporte où il en est **pendant** qu'elle tourne, et
-> son premier relevé supplante l'ossature. Il le fait là où il tient déjà sa
-> liste de travail — l'entrée de ses appels `TodoWrite`, lue par
-> `maestro/providers/checklist.py` : aucun protocole n'a été inventé, aucun
-> second transport ouvert. `SuiviChecklist` réconcilie les deux et garantit que
+> son premier relevé supplante l'ossature. Il le fait par un **verbe de
+> Maestro** depuis #1291 (encadré suivant). `SuiviChecklist` réconcilie les deux et garantit que
 > **rien ne recule** — un état ne redescend pas, une étape connue ne disparaît
 > pas d'un relevé qui l'oublie, y compris à travers une relance. Le
 > **dénominateur, lui, peut grandir**, et c'est pourquoi la jauge du panneau est
 > une **case par étape** et non un pourcentage : ce qui est acquis reste allumé,
-> la rangée s'allonge. Un fournisseur sans checklist observable, un rôle dont la
-> politique refuse l'outil, un plan sans ossature : la tâche reste exactement ce
-> qu'elle est aujourd'hui. Le **motif complet de l'arbitrage**, avec les deux
+> la rangée s'allonge. Un rôle dont la politique refuse le verbe, un plan sans
+> ossature : la tâche reste exactement ce qu'elle est aujourd'hui. Le **motif complet de l'arbitrage**, avec les deux
 > options écartées, vit en [docs/03 § TASK](./03-modele-de-donnees.md) — c'est
 > une décision de modèle avant d'être un écran. Vérification :
 > [`tests/test_checklist_tache.py`](../tests/test_checklist_tache.py) côté moteur
@@ -808,6 +822,47 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > [`apps/web/tests/pipeline.test.tsx`](../apps/web/tests/pipeline.test.tsx) pour
 > la rangée de cases — dont le contrôle qui compte : le dénominateur grandit sans
 > que le numérateur bouge.
+
+> **La checklist est un verbe de Maestro (#1291).** L'agent la tient par
+> `tenir_checklist(etapes)`, servi par le serveur MCP in-process `maestro` à côté
+> de `consigner_decision` et des autres verbes (nom complet pour une politique :
+> `mcp__maestro__tenir_checklist`). Chaque appel porte la liste **complète** —
+> des objets `{libelle, etat}`, `etat` valant `a_faire`, `en_cours` ou `faite` —
+> et alimente le canal `on_etapes` avec cet état ; `SuiviChecklist` en décide
+> comme avant. Une entrée invalide (liste absente ou vide, étape sans libellé,
+> état hors du contrat) ne relève **rien**, et l'agent lit ce qui cloche, rang
+> compris ; un canal en panne lui est dit aussi, et aucun des deux ne tue la
+> tâche. Le contrat entier — nom, schéma, textes servis à l'agent, et `servir`,
+> qui fait d'un appel un relevé — vit dans
+> [`maestro/providers/checklist.py`](../maestro/providers/checklist.py), sans rien
+> d'un fournisseur : l'adaptateur Claude l'enveloppe, un autre fournisseur outillé
+> servirait le même. Le socle des playbooks le nomme
+> (`maestro/agents/playbooks_defaut/_cadre_outille.md`).
+>
+> **Pourquoi un verbe.** La checklist se lisait jusque-là dans les appels à
+> `TodoWrite`, un **outil interne du CLI Claude**. Le CLI embarqué par le SDK
+> 0.2.159 l'a remplacé par `TaskCreate`/`TaskUpdate`, et depuis le 2026-09-22
+> toutes les tâches se soldaient à « 0/N · relevé incomplet » sans que rien ne
+> rougisse. Lire le nouvel outil, forcer l'ancien par une variable du CLI ou
+> épingler le SDK auraient gardé la même dépendance. La règle est celle de
+> [docs/44](./44-decision-maestro-possede-ses-contrats.md) : ce dont Maestro a
+> besoin, il le possède, et **il ne dépend d'aucun outil interne d'un CLI**.
+> Aucun outil de liste du CLI n'est plus confié à l'agent (`DEFAULT_TOOLS`) : il
+> n'a qu'une liste à tenir, celle de Maestro.
+>
+> **Un fournisseur sans outils le dit.** Une tâche exécutée en texte seul — un
+> fournisseur compatible OpenAI, par exemple — n'a reçu aucun verbe : personne ne
+> pouvait cocher l'ossature du plan. À la clôture, le moteur consigne donc
+> qu'**aucun relevé n'était possible**, en nommant le fournisseur
+> (`phrase_checklist_sans_releve`), et non un écart qui ferait porter le manque à
+> l'agent. Vérification :
+> [`tests/test_checklist_tache.py`](../tests/test_checklist_tache.py) — le verbe
+> appelé comme le SDK l'appelle, sans CLI ni quota (patron de
+> `tests/test_decisions_autonomes.py`), aucun `TodoWrite`/`TaskCreate`/`TaskUpdate`
+> du flux qui coche quoi que ce soit, et le chemin entier jusqu'à la carte que sert
+> l'API. Sur la vraie stack, c'est le scénario **S2** du banc
+> (`python -m maestro.scenarios`) qui le garde : sa tâche doit finir à N/N par ce
+> verbe.
 
 > **Ce qui reste non coché à la clôture se dit (#944).** Un agent conclut souvent
 > sans cocher sa dernière ligne : la tâche 4 du run du
@@ -1292,6 +1347,33 @@ soldé identique au token près, relevé jamais compté deux fois) et, depuis #8
 [`tests/test_run_qui_travaille.py`](../tests/test_run_qui_travaille.py) — la carte d'une
 tâche en vol restée `null` comme **échantillon fautif**, les trois lectures prouvées
 distinctes deux à deux, le cumul du run qui bouge entre deux lectures (§6.13bis).
+
+**Ce qui n'a jamais eu de prix** (#1280). Soldé ne veut pas dire complet. Une tâche
+morte avant son résultat — session tuée par le SDK, relances épuisées, plafond
+franchi en plein tour — laisse ses tokens au grand livre **sans coût**, et l'issue
+soldait le relevé : le run redevenait `cout_partiel: false`. Mesuré sur le run
+`3fe501fc0878` (2026-09-24) : 1,17 $ affichés « complets » pour 2 794 675 tokens, dont
+2 092 911 sans prix. La mesure porte désormais la part que le coût ne couvre pas,
+`StepUsage.tokens_non_tarifes` : **tous** les tokens d'une mesure sans coût, posé à la
+construction — un fournisseur qui ne tarife pas, un tour signalé avant son résultat
+ou une ligne de journal plus ancienne le disent sans rien déclarer. La fusion la
+**somme** (1,17 $ tarifés plus 2 M de tokens sans prix font un coût de 1,17 $ **et**
+2 M de tokens non tarifés), et un seul geste la retire : le reste du `ResultMessage`
+Claude, qui tarifie après coup les tours de **sa** session et d'elle seule — une
+session tuée garde les siens, une relance qui aboutit ne couvre pas celle d'avant.
+La projection en tire deux choses, par une seule règle (`_laisse_des_tokens_sans_cout`) :
+le run reste `cout_partiel: true` dès qu'une issue a laissé des tokens sans prix, et la
+carte de la tâche aussi ; l'issue **remplace** le coût de la carte, même par `null`,
+au lieu de laisser le zéro mesuré d'un relevé d'ouverture (« rien consommé encore »)
+sur une tâche morte qui avait consommé. Le grand livre (`/cout`) porte la part dans
+chaque usage, total compris. **Aucun prix n'est inventé** : le montant reste ce qui a
+été tarifé, et c'est le drapeau qui dit qu'il n'est qu'un plancher. L'écran le dit en
+mots, collé au montant — « 0,21 $US · coût partiel », « coût non tarifé » sans aucun
+prix — dans les lignes de faits du run et le cumul du projet (variante B, commentaire
+« Variante retenue » de #1280 ; `apps/web/README.md`, « Le rendu des montants »).
+Couverture : [`tests/test_cout_non_tarife.py`](../tests/test_cout_non_tarife.py), du
+moteur aux routes avec un fournisseur dont la session meurt trois fois sans résultat,
+et l'ancien « le partiel s'éteint » de `tests/test_usage_en_vol.py`, renversé.
 
 **Pourquoi il s'est arrêté.** Un run soldé en échec porte désormais sa **cause
 nommée**, lue à l'identique dans la liste (§2.4.1) et dans la vue (`LigneCause`,
@@ -2154,9 +2236,12 @@ Paramètres.
 conversation, sur la porte d'entrée : « Nouveau projet » y ramène en quittant le projet ouvert. Le
 formulaire décrit ci-dessous ne sert plus qu'à **modifier** une déclaration. Tout ce qui ne servait
 qu'à créer est parti avec la création : le choix de l'origine, le dossier parent prérempli, le nom du
-dossier à créer, et l'étape d'outillage enchaînée après la déclaration. L'étape d'outillage reste
-offerte aux projets déjà déclarés (« Outiller maintenant »), jusqu'à ce que #1161 la mette dans la
-conversation.
+dossier à créer, et l'étape d'outillage enchaînée après la déclaration. Depuis #1161, l'étape
+d'outillage est partie tout à fait, et l'étape d'équipe qu'elle enchaînait avec elle (§6.19). Un
+projet dont l'outillage a été reporté le **dit** sur sa carte (« Outillage reporté »), et **« Outiller
+dans la conversation »** ouvre la colonne de droite et y pose, pour ce projet, sa première question
+ou sa première pièce (§6.20). Reprendre l'outillage **lève le report** (`reprendre_outillage`) : la
+carte cesse de le rappeler, au geste comme au rechargement, et un nouveau « plus tard » le repose.
 
 **Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
 le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS
@@ -3180,6 +3265,59 @@ suit la piste** — il ne demande à lire que les fichiers que le canal lui mont
 nommés, et ne répond qu'avec ce qu'il a lu : sans le résultat des tâches, il rend
 l'aveu du bouclage mot pour mot.
 
+#### Il sait ce que Maestro fera d'un run : la politique de l'équipe, les bornes de chaque run (#1323) — **livré**
+
+Au bouclage du 2026-09-25 (`main` à `aa390ca`, vraie stack, vrai modèle),
+l'orchestrateur a affirmé deux fois sur deux une chose fausse sur la **suite** d'un
+run. Après la validation de l'équipe de S3 : *« Comme le rangement va déplacer des
+fichiers, le run vous demandera votre accord avant de commencer »* — le run n'a
+posé aucune demande de validation. Puis, sur le projet de S4 dont le run précédent
+avait reçu à son accord la borne « s'interrompt à 1 tokens », la proposition
+suivante : *« Si ce réglage n'a pas changé, ce nouveau run a toutes les chances de
+s'arrêter pareil. Je ne sais pas où ce plafond a été défini »* — alors que la carte
+de la même proposition affichait « Aucune borne », et que le run est allé au bout.
+Le modèle devinait parce qu'aucun de ces faits n'était dans ce qu'il recevait.
+
+- **Ce qu'un run fera est un bloc de faits** (`maestro/controltower/regime.py`),
+  lu à chaque message : le **cadrage** (un run du fil rédige son brief sans rien
+  soumettre à personne — l'accord de la carte est le seul qu'il attend pour
+  démarrer), les **actes de chaque agent** selon sa politique réelle, l'**acte que
+  l'objectif accepté nomme** (accordé avec le run : ses commandes shell passent
+  sans nouvelle demande), **ce qui revient** à la personne et où, **ce qui ne se
+  prévoit pas** (une question ou un arbitrage qu'un agent pose de lui-même, un
+  renfort), et la **règle des bornes**. Il entre dans le prompt du juge et dans
+  les faits des deux gestes qui mettent un run devant la personne — le lancement,
+  et l'équipe créée qui repropose la demande. Un refus n'en reçoit pas.
+- **La politique est lue là où l'exécution la lira** : l'équipe par
+  `catalogue_du_projet` (la règle du routeur), chaque politique par
+  `PermissionStore.pour_projet(…).lire` (l'appel de l'exécuteur), à chaque
+  message. Le régime se dit avec les phrases de l'intention d'un rôle
+  (`REGIME_EXECUTION`, `REGIME_PORTEE` de `maestro/equipe/proposition.py`) : le fil
+  et le playbook décrivent le même régime avec les mêmes mots. Une politique
+  **illisible** se dit avec sa cause — l'exécution en ferait un échec de tâche —,
+  jamais remplacée par un régime supposé ; un projet sans agent dit qu'il n'a pas
+  encore de politique à lire.
+- **Les bornes sont un fait du run qui les a reçues.** L'événement de lancement
+  porte un champ `bornes` (`{plafond_cout_usd, plafond_tokens, timeout_tache_s,
+  parallelisme}`, `null` hors du lancement) ; la projection les garde
+  (`EtatExecution.bornes`), l'issue ne les efface pas, et la fiche de chaque run
+  les dit — « aucune borne : le run ira jusqu'au bout » comprise, et « non
+  consignées » pour un run lancé avant ce lot. Les faits d'un lancement disent
+  celles que le geste vient de poser. La règle du bloc dit le reste : une borne se
+  pose sur la carte, ne vaut que pour son run, et aucun run n'en hérite.
+- **Le cadre dit la règle qu'on en tire, et rien d'autre** : ce que le fil dit de
+  la suite d'un run s'appuie sur ces faits, ce qu'ils ne disent pas se dit comme
+  non su, une borne passée n'annonce rien du run suivant. Aucune phrase interdite,
+  aucun lexique : le modèle reçoit les faits et juge.
+
+Gardé par `tests/test_regime_du_run.py` : les deux situations du bouclage
+**rejouées sur l'app entière** (vraie création d'équipe, vraie politique écrite sur
+le disque, vrai service d'exécutions ; modèle et moteur en doubles qui **notent
+leurs prompts**), une politique réglée entre deux messages qui se dit au second,
+une politique illisible dite avec sa cause, puis le rendu du régime agent par agent
+et les bornes à travers l'événement, le journal et la projection. Le texte que le
+modèle tire de ces faits n'est jugé par aucun motif.
+
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
 Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne
@@ -3187,9 +3325,14 @@ prévient personne, et ne dit pas où est le livrable*. Le run avait duré
 53 minutes et coûté 12,51 $ ; le livrable fonctionnait ; on ne l'a su qu'en
 allant regarder le disque.
 
-L'annonce paraît **à la fin du fil qui a demandé le travail** — un `<li>` du même
-`<ol>` que les messages, donc elle défile avec eux, dans la colonne de droite
-comme sur `/chat` — et **dans la cloche**, où les fins récentes sont rappelées.
+L'annonce paraît **dans le fil qui a demandé le travail, à l'heure de la fin** —
+un `<li>` du même `<ol>` que les messages, donc elle défile avec eux, dans la
+colonne de droite comme sur `/chat` — et **dans la cloche**, où les fins récentes
+sont rappelées. Depuis #1290 sa place est son heure (`lib/issueRun`,
+`rangDeLaFin`) : après le dernier message écrit avant la fin, puis sous le **récit**
+de son run (#1224) quand il y en a un. Empilées au pied du fil, les fins de deux
+runs d'une même conversation se lisaient sous le récit du dernier — la carte
+« Run en échec » d'un run passé sous le récit d'un run qui venait de réussir.
 Le rendu est partagé (`components/runs/AnnonceIssueRun`) : deux recopies auraient
 fini par annoncer deux choses différentes de la même fin. Quatre décisions la
 portent :
@@ -3215,6 +3358,19 @@ non sur l'horloge — une fin qui arrive pendant que le panneau est ouvert reste
 neuve. Couverture :
 [`apps/web/tests/issue-de-run.test.tsx`](../apps/web/tests/issue-de-run.test.tsx).
 
+**La fin atteint la vue de son projet** (#1290). L'écran d'un projet relit son
+état sur chaque trame du flux, et ce flux est cadré sur le projet (#277). Or
+l'issue d'un run — comme sa pause, sa reprise et le récit de fin — part **sans
+projet** de l'hôte qui l'émet : la vue ne la recevait jamais, et un run fini
+restait « En cours » jusqu'au rechargement suivant. La pompe de l'API rattache
+désormais tout événement sans projet au projet **de son run**, lu dans la
+projection (`ControlTowerState.au_projet_de_son_run`), avant de le consigner au
+journal et de le diffuser — un seul endroit pour tous les émetteurs, et un run
+sans projet n'en reçoit aucun. Sous chaque message, « tâches ouvertes » ne compte
+plus que les tâches **non soldées**, lues sur la progression du run (#473) :
+« 3 tâches ouvertes » sous un run à « 3/3 soldées » était faux. Couverture :
+[`tests/test_appartenance_projet.py`](../tests/test_appartenance_projet.py) (§ ⑨).
+
 ##### …et elle se **raconte** : ce qui a été produit, comment l'essayer (#1224) — **livré**
 
 L'annonce ci-dessus dit *où* est le livrable. Elle ne dit ni ce qu'il contient, ni
@@ -3227,7 +3383,7 @@ message rédigé : ce que le run a produit, **comment l'essayer** avec la comman
 lue dans le livrable, ce qui reste éventuellement à faire, et les fichiers qui
 comptent en **liens qui s'ouvrent d'un geste**. C'est un message ordinaire du fil —
 même bulle, même Markdown —, et il **s'ajoute** à l'annonce de #928, qui ne bouge
-pas (elle reste la ligne d'événement en fin de fil, avec ses deux gestes).
+pas (elle reste la ligne d'événement qui le **suit**, avec ses deux gestes — #1290).
 
 Quatre décisions, et les trois premières sont des refus :
 
@@ -6485,7 +6641,7 @@ l'équipe est refusée — jamais un `500`.
       "justification": { "nom": "Python", "chemin": "src/app.py", "role": "48 fichier(s) Python" },
       "instances": 2,
       "raison_instances": "2 langages substantiels (Python 62 %, TypeScript 31 %) : …",
-      "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "TodoWrite"],
+      "outils": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
       "playbook": "…",                 // celui qu'on lit à l'écran, et qui sera écrit
       "playbook_origine": "genere",    // "genere" (écrit pour CE projet, #257),
                                        // "gabarit" (la rédaction n'a pas abouti) ou
@@ -6592,11 +6748,17 @@ aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.p
 [`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py) et
 [`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043).
 
+⚠ **`EtapeEquipe` n'est plus montée depuis #1161.** Elle n'était atteinte que derrière l'étape
+d'outillage de l'écran Projets, retirée quand l'outillage est passé dans la conversation. L'équipe se
+propose et se valide dans le fil (`chat/EquipeDansLeFil`, #1146), qui reprend sa ligne de rôle ; la
+correction en mots de #1159 (`…/equipe/correction`) n'y est pas encore, et c'est #1331 qui l'y porte.
+
 ### 6.20 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
 
 Le chantier #1020 : **créer ou importer un projet commence par son outillage**. Le format est arrêté
-par [docs/38](./38-decision-outillage-universel-du-projet.md) — `AGENTS.md`, deux ponts d'une ligne,
-des skills au format Agent Skills dans `.agents/skills/`, et un **manifeste**
+par [docs/38](./38-decision-outillage-universel-du-projet.md) — `AGENTS.md`, un pont d'une ligne
+pour chaque client utilisé qui ne le lit pas (#1295), des skills au format Agent Skills dans
+`.agents/skills/`, et un **manifeste**
 `.maestro/outillage/manifeste.json` — et ce que ça change au chantier des projets locaux est à
 [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md). Ici : les routes, et les trois règles
 qu'elles portent.
@@ -6604,14 +6766,18 @@ qu'elles portent.
 > ⚠ **Le chemin de création change** ([docs/43 §2.2 et §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
 > 2026-09-24), à la demande de la personne.
 > - Un projet **naît dans la conversation** (#1294, **livré** — §2.0.2), et son outillage s'y
->   construit **pièce par pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` a
->   quitté le chemin de création avec le formulaire ; elle reste offerte, depuis l'écran Projets, à
->   un projet déjà déclaré.
+>   construit **pièce par pièce**, chaque pièce sur accord (#1161, **livré** — « Pièce par pièce,
+>   dans le fil » ci-dessous). L'étape `EtapeOutillage` de l'écran Projets et la carte qui écrivait
+>   tout en une fois au pied du fil (`ConclusionOutillage`) sont retirées.
 > - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
->   qui ne le lit pas nativement (#1295).
+>   qui ne le lit pas nativement (#1295, **livré**). Les clients sont ceux du poste — relus à chaque
+>   analyse, recommandation et génération, avec leur `--version` — et ceux que les réponses nomment
+>   (sujet `clients`). Un pont écarté l'est dans `recommandation.ecartes`, avec sa raison ; la route
+>   `POST …/outillage/recommandation` est devenue asynchrone pour les lire hors de la boucle.
 >
-> Cette section décrit l'état **présent** jusqu'à ce que ces lots la réécrivent. Les routes et leurs
-> trois règles restent la matière des deux chemins.
+> Les routes ci-dessous restent servies et gardent leurs trois règles : l'analyse, le questionnaire,
+> la génération et le report sont la matière de l'écriture pièce par pièce. Aucun écran n'appelle plus
+> `…/recommandation` ni `…/generation`.
 
 **Six routes, deux voies, une seule recommandation.** Un projet **existant** est analysé, un projet
 **neuf** est questionné — et les deux aboutissent à la *même* forme `recommandation`, produite par
@@ -6624,11 +6790,14 @@ la même fonction. Il n'y a pas deux idées de « ce qu'il faut à ce projet » 
 | `POST /api/projets/{id}/outillage/recommandation` | Ce que ces réponses recommandent — **la forme de l'analyse** (#1031) | non |
 | `POST /api/chat/{agent}/outillage/questionnaire` | Pose (ou reprend) le questionnaire **dans le fil** (#1031) | le fil |
 | `POST /api/chat/{agent}/outillage` | Répond d'un **geste** à la question que le fil porte (#1031) | le fil |
+| `POST /api/chat/{agent}/outillage/piece` | Écrit, passe ou reporte d'un **geste** la pièce que le fil propose (#1161) | **oui** — une pièce |
 | `POST /api/projets/{id}/outillage/generation` | Écrit l'outillage dans le projet, au régime de docs/24 §2.4 (#1033) | **oui** |
 | `POST /api/projets/{id}/outillage/report` | Enregistre le « plus tard » de l'étape d'outillage (#1034) | la fiche |
 
 Les cinq premières **ne touchent à rien** : l'analyse est en lecture seule et le questionnaire ne
-regarde aucun fichier. Seule `…/generation` écrit dans le dossier de quelqu'un.
+regarde aucun fichier. Seules `…/generation` et `…/outillage/piece` écrivent dans le dossier de
+quelqu'un — la première tout d'un coup, la seconde une pièce à la fois, sur l'accord donné à la
+carte qui la montrait.
 
 #### L'analyse — `GET /api/projets/{id}/outillage/analyse`
 
@@ -6779,13 +6948,17 @@ question qui n'en a pas. **Une phrase tapée dans la zone de saisie** (`POST …
 un `choix` libre sur son sujet, et la suite vient du questionnaire, pas du juge. Chaque message qui
 pose une question — et la conclusion — porte `comprehension` : ce que Maestro a compris à ce tour.
 
+> ⚠ **Renversé par #1161** : la voie du fil n'écrit plus tout en une fois. La fin du questionnaire
+> est la **première pièce**, et `ConclusionOutillage` est retirée — voir « Pièce par pièce, dans le
+> fil » ci-dessous. Le paragraphe suivant reste pour l'histoire du partage entre les routes.
+
 **Et la voie du fil écrit** (#1104). Elle conduisait le questionnaire, le concluait sur « rien n'est
 écrit tant que vous ne l'avez pas validé »… et rien ne validait : le pied du fil redevenait vide dès
 que le dernier message ne portait plus de question. Aucune route n'a été ajoutée pour y remédier, et
 c'est le signe que le partage était bon — la conclusion se valide par **la génération ci-dessous**,
 avec le corps de l'étape de création (`{retenus, choix}`), parce que cette route ne sait pas de
 quelle surface viennent les réponses. Ce qui a changé tient en deux choses : une carte au pied de la
-conversation ([`ConclusionOutillage`](../apps/web/components/chat/ConclusionOutillage.tsx), montée
+conversation (`ConclusionOutillage`, montée
 comme les trois autres gestes par `GestesDuFil`, donc aussi dans la colonne de conversation), et une
 phrase de conclusion qui dit **où** se donne la validation qu'elle promet. Les réponses se relisent
 là où elles vivent — le champ `choix` des messages, et depuis #1147 la `comprehension` de la
@@ -6793,6 +6966,93 @@ conclusion, qui part avec elles —, et le **projet visé est
 celui de la fenêtre** : le fil est transverse (#281), ses messages n'en portent aucun, d'où une carte
 qui le nomme avant d'écrire. Joué de bout en bout par
 [`tests/test_outillage_voie_du_fil.py`](../tests/test_outillage_voie_du_fil.py).
+
+#### Pièce par pièce, dans le fil (#1161) — **livré**
+
+Décidé par [docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md) : l'outillage n'est
+plus une étape de formulaire, ni une carte qui écrit tout d'un coup. Il se construit **dans la
+conversation**, une **pièce** à la fois — `AGENTS.md`, un pont, un skill —, chacune montrée,
+justifiée et déjà vérifiée, puis écrite sur accord.
+
+**D'où viennent les pièces.** Le même conducteur que le questionnaire
+(`ConducteurOutillage`, `maestro/controltower/outillage.py`), avec un second collaborateur,
+`ServicePieces` (`maestro/controltower/pieces.py`). Un dossier **importé**, qui a déjà ses fichiers,
+se **lit** (#1158) et sa première pièce vient tout de suite ; un dossier **neuf** se décrit d'abord,
+et la fin du questionnaire est la première pièce, rédigée de ce qui a été compris. Le fil enchaîne
+ainsi dès la naissance d'un projet (§2.0.2), et « Outiller dans la conversation » sur la carte d'un
+projet reporté (§2.7.1) passe le projet par `POST …/outillage/questionnaire?projet=<id>`. Le projet
+voyage ensuite sur chaque message du tour (`projet_outille`) : c'est lui que le tour suivant outille,
+même quand le fil ne l'a jamais vu naître.
+
+**Ce qu'une pièce porte** (`PieceProposee`, le champ `piece` du message) : son chemin, sa nature,
+sa raison, le texte **avant** et **après**, ce que le geste fera (`sort` : `cree`, `reecrit`, `bloc`),
+les verdicts de ses commandes (#1160), son rang dans l'outillage, le régime d'écriture du projet, et
+son **empreinte** — celle du contenu montré. Une pièce que l'écriture ne toucherait pas (à jour, pas
+à Maestro, fichier modifié à la main) ne se propose pas : les quatre cas de docs/38 §4.2 décident, par
+`prevoir`, avant qu'on la montre. Une commande dont le verdict est déjà connu — au manifeste ou plus
+haut dans le fil — n'est pas rejouée.
+
+**Le geste** — `POST /api/chat/{agent}/outillage/piece`, corps
+`{"decision": "ecrire" | "passer" | "plus-tard", "piece": "<empreinte>", "conversation": "…"}` :
+
+- **écrire** écrit la pièce **telle que la carte la montrait** (`poser_piece`) : un fichier, et le
+  manifeste **fusionné** — les pièces déjà écrites y restent, là où `…/generation` retire ce qu'on ne
+  lui repasse pas. Un fichier qui a bougé depuis la carte n'est pas écrit : la pièce revient, diff à
+  jour. Sur un projet **versionné**, l'écriture passe par une branche et `appliquer_sous_validation`,
+  et **l'accord donné à la carte est la validation** — borné aux chemins du diff montré (la pièce et
+  le manifeste) : un diff qui en toucherait un autre est refusé (`AccordDeLaCarte`) ;
+- **passer** n'écrit rien, et la pièce ne revient pas **telle quelle** ;
+- **plus tard** n'écrit rien, enregistre le report (`…/outillage/report`) et arrête le fil ; la carte
+  du projet le rappellera.
+
+La réponse porte ce qui s'est passé (`piece_ecrite`, rendu sous la bulle : « écrit », « déjà à
+jour », « passé : rien n'a été écrit », ou la raison d'une non-écriture) et la pièce suivante — ou
+la fin de l'outillage, dite. La pièce visée n'est pas nommée par un index : c'est celle qui attend,
+et l'empreinte doit être celle qu'on a vue. `409` quand rien n'attend ou que la pièce a changé (un
+double clic), `422` sur une décision inconnue ou sur l'écriture d'une version **en échec** (ci-dessous),
+`502` si la suite n'a pas pu être produite — le geste, lui, reste acquis au fil. Un « oui » tapé
+pendant qu'une pièce attend vaut le clic, par le juge (verdict `accord`).
+
+**Corriger avec ses mots.** « Nos tests tournent avec `dotnet test` », tapé dans le fil : le juge
+rend le verdict `outillage` et **redit** la demande, en direct, sans rien y deviner ni demander de
+précision : il parle avant la correction, et c'est elle seule qui dit ce qu'elle a compris ou non
+(vu sur la vraie stack : un juge qui « avait compris » au-dessus d'une correction qui n'avait pas
+compris faisait deux paragraphes contradictoires, chacun avec sa question). Le modèle de correction
+(`CorrectionModele`, prompt au registre #945) traduit la phrase en sujets et valeurs
+(`maestro/outillage/correction.py` — une commande par usage, le gestionnaire, la forge, la CI) ; le
+code l'applique aux constats, la commande corrigée prend l'origine **`dite`** et la phrase de la
+personne pour justification (« dite par la personne (« … ») », écrite telle quelle dans `AGENTS.md`
+et le skill), et la pièce touchée revient, **revérifiée par l'exécution** — une commande corrigée n'a
+jamais de verdict connu. La correction voyage sur le message (`corrections`, rendue sous la bulle :
+« Correction prise — … ») et reste acquise aux tours suivants. **Rien n'est écrit** avant l'accord.
+Trois issues ne corrigent rien, et le disent : une phrase **incomprise** (« Rien n'a été écrit : »
+suivi de ce que le modèle de correction n'a pas compris), la pièce qui attendait restant proposée ; une correction
+**sans effet** sur ce qui s'écrit ; et une commande corrigée qui **échoue** à l'exécution — la
+pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
+l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
+
+**La carte** (`components/chat/PieceDOutillage.tsx`, variante A retenue par le regard neuf — veille
+et « Variante retenue » de #1161, d'après la suggestion de revue de GitHub, le mode agent de VS Code
+et l'onboarding de Renovate) : une carte du
+pied du fil, montée par `GestesDuFil` à côté des autres gestes, donc aussi dans la colonne de 320 px.
+En tête `chemin · ce que le geste fera · +N −M` ; dessous le pourquoi en une ligne, ou la phrase de
+la personne après une correction ; le **diff ouvert**, borné à 12 lignes (un fichier neuf se lit
+comme un texte, sans aplat ; une modification est condensée autour de ce qui change — lignes
+partagées avec l'éditeur de playbook, `components/LignesDiff.tsx` ; un fichier neuf **corrigé**
+s'ouvre sur le passage qui porte la commande dite, le reste replié, et la borne de hauteur ne coupe
+jamais cette ligne — `apercuDeLaPiece`, vu par la relecture : ses douze premières lignes ne
+montraient pas ce que la correction écrivait ; une boîte coupée par sa borne de hauteur finit sur un
+« ⋯ », à la façon de ses replis) ; le verdict des commandes,
+déplié quand une correction les a rejouées ou que l'une échoue ; et trois gestes nommés à leur
+portée : « Écrire ce fichier », « Pas cette pièce », « Remettre l'outillage à plus tard ». Écartées :
+le diff derrière un clic (B), et deux grammaires sans compte de lignes (C).
+
+Gardé par [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) (prévision,
+écriture d'une pièce et fusion du manifeste, correction comprise, incomprise, en échec, accord de la
+carte sur un projet versionné, canal de bout en bout, routes), et côté écran par
+`apps/web/tests/piece-outillage.test.tsx`, `gestes-en-colonne.test.tsx` (la carte agit depuis la
+colonne, parité avec `/chat`, trace sous la bulle) et `projets.test.tsx` (« Outiller dans la
+conversation »).
 
 #### La génération — `POST /api/projets/{id}/outillage/generation`
 
@@ -6895,9 +7155,10 @@ contexte au même agent.
 
 Implémentation : [`maestro/outillage/`](../maestro/outillage/) (le domaine),
 [`maestro/controltower/outillage.py`](../maestro/controltower/outillage.py) (le service et le
-conducteur du fil), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (les routes),
-`apps/web/components/projets/EtapeOutillage.tsx` et `apps/web/components/chat/QuestionDOutillage.tsx`
-(les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
+conducteur du fil), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) (les
+pièces et leur correction, #1161), [`maestro/controltower/app.py`](../maestro/controltower/app.py)
+(les routes), `apps/web/components/chat/QuestionDOutillage.tsx` et
+`apps/web/components/chat/PieceDOutillage.tsx` (les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
 [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),
 [`test_outillage_generation.py`](../tests/test_outillage_generation.py),
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
@@ -6924,7 +7185,10 @@ menace en tire les conséquences en
 | préflight `OPTIONS` | rien | tranché par CORS, **jamais** `401` : un navigateur ne porte pas d'`Authorization` sur un préflight |
 
 Le paramètre d'URL est **réservé au WebSocket** : une route REST qui l'admettrait ferait voyager le
-secret dans les journaux d'accès et les historiques de navigation. Le refus se juge avant toute
+secret dans les journaux d'accès et les historiques de navigation. Sur le WebSocket lui-même, le
+serveur consigne l'URL de chaque poignée de main : `maestro-api` masque donc le paramètre dans son
+journal (#1292, `jeton=***`, chemin et code gardés), et `start.sh` nomme les journaux écrits avant
+qui portent encore le jeton, sans les réécrire. Le refus se juge avant toute
 route, en middleware ASGI, et **sans exemption** — `/api/sante` comprise : une sonde de vitalité
 exemptée serait le premier précédent, et un `401` dit déjà « quelque chose sert ce port », qui est
 ce qu'une sonde cherche à savoir.

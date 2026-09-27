@@ -1,0 +1,289 @@
+"""L'outillage se **corrige en langage naturel** (#1161).
+
+« Nos tests tournent avec `dotnet test` », « on utilise pnpm, pas npm » : la personne dit
+ce qui est faux avec ses mots, dans la conversation où l'outillage se construit. Le modèle
+comprend la phrase (son appel vit côté Control Tower, `maestro.controltower.pieces`, là
+où le registre de langue s'applique) ; ce module tient les deux moitiés qui ne demandent
+ni réseau ni modèle, donc se testent sur du texte :
+
+- **lire ce que le modèle a compris** (`lire_correction`) — sans rien croire sans le
+  vérifier : un sujet hors du schéma de l'outillage (`questionnaire.SUJETS`) est écarté,
+  une valeur tient sur une ligne et elle est bornée ;
+- **appliquer la correction aux constats** (`corriger`) — la matière que `recommander`
+  lit, celle d'une analyse (#1158) comme celle d'un questionnaire (#1147). Ce qui en sort
+  passe ensuite par le même chemin que tout outillage : recommandé, rédigé, **joué avant
+  d'être écrit** (#1160), montré avec son diff, écrit sur accord.
+
+## La phrase est la justification, et c'est le code qui l'écrit
+
+Une commande corrigée a pour provenance `ORIGINE_DITE`, et pour extrait **la phrase de la
+personne**, entre guillemets, telle qu'elle l'a tapée. Ce n'est pas le modèle qui la
+recopie : il rend la clé et la valeur qu'il a comprises, le code pose la phrase. Une
+justification réécrite par le modèle serait une paraphrase — et c'est précisément ce que
+`AGENTS.md` ne doit jamais présenter comme les mots de quelqu'un.
+
+## Trois issues, et aucune n'écrit
+
+- **comprise, avec des corrections** — les constats changent, les pièces qu'elles
+  touchent sont reproposées ;
+- **comprise, sans correction** — la personne a parlé de l'outillage sans rien y changer
+  (« continue », « outille ce projet ») : on reprend où l'on en était ;
+- **incomprise** — le modèle ne sait pas traduire la phrase en sujets de l'outillage : il
+  le dit, et rien ne change. Ce qu'on ne comprend pas ne s'écrit jamais dans le projet.
+
+## Ce qui se corrige, et ce qui ne se corrige pas ici
+
+`corriger` porte sur ce qu'un outillage **écrit** à partir des constats : la commande de
+chaque usage, le gestionnaire, la forge, l'intégration continue (`CLES_CORRIGEABLES`). La
+sorte de projet, le langage ou le manifeste d'un projet **lu** ne se corrigent pas ici :
+la part d'un langage est une mesure, et la remplacer par ce qu'on nous dit la
+falsifierait. Sur un projet neuf, ces sujets-là passent par le questionnaire, dont ils
+sont des réponses comme les autres. Une correction qui ne touche aucun sujet corrigeable
+se dit « comprise, sans effet sur l'outillage » — elle n'est ni perdue ni appliquée en
+silence.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+
+from maestro.outillage.modele import (
+    ORIGINE_DITE,
+    USAGES,
+    Commande,
+    Constats,
+    Forge,
+    Gestionnaire,
+    Piece,
+)
+from maestro.outillage.questionnaire import (
+    SUJETS,
+    VALEUR_MAX,
+    Choix,
+    _cle,
+    _est_aucun,
+    _objet_json,
+    _une_ligne,
+)
+
+#: Les sujets qu'une correction change **dans les constats** d'un projet, lu ou décrit.
+#: Ce sont ceux que la rédaction écrit : une commande par usage, le gestionnaire, la
+#: forge, l'intégration continue (voir le module pour ce qui n'y est pas).
+CLES_CORRIGEABLES: frozenset[str] = frozenset({*USAGES, "gestionnaire", "forge", "ci"})
+
+#: La longueur au-delà de laquelle la phrase d'une correction est tronquée **dans la
+#: justification** : elle finit écrite à côté d'une commande, dans `AGENTS.md` et dans
+#: un `SKILL.md`. La phrase entière, elle, reste dans le fil.
+PHRASE_MAX = VALEUR_MAX
+
+
+@dataclass(frozen=True)
+class CorrectionLue:
+    """Ce que le modèle a compris d'une correction, **lu et vérifié**.
+
+    `comprise` dit si la phrase a pu être traduite en sujets de l'outillage ;
+    `corrections` porte ce qu'elle change, chaque sujet en `Choix` **déduit** dont la
+    cause (`parce_que`) est la phrase de la personne ; `message` est ce que le modèle a à
+    lui dire — ce qu'il n'a pas compris, ou ce qu'il retient.
+    """
+
+    comprise: bool
+    corrections: tuple[Choix, ...] = ()
+    message: str = ""
+
+
+def lire_correction(texte: str, phrase: str) -> CorrectionLue:
+    """Ce que le modèle a compris de `phrase`, lu dans `texte` — la frontière avec le fil.
+
+    Le contrat du modèle : un objet JSON `{"comprise": bool, "corrections": [{"cle",
+    "valeur"}], "message": str}`. Une correction sur un sujet **hors du schéma** est
+    écartée ; la dernière d'un même sujet l'emporte. `comprise: false` rend une lecture
+    **sans** correction, quoi que le modèle ait mis à côté : ce qu'il dit ne pas avoir
+    compris, il ne l'a pas compris à moitié.
+
+    La **phrase** est posée ici, par le code, comme cause de chaque correction : elle
+    est la justification que le ticket demande, jamais une paraphrase du modèle.
+
+    Lève `ComprehensionIllisible` (de `questionnaire`) sur un texte sans objet JSON.
+    """
+    objet = _objet_json(texte)
+    message = _une_ligne(objet.get("message") or "", 2 * VALEUR_MAX)
+    if objet.get("comprise") is False:
+        return CorrectionLue(comprise=False, message=message)
+    cause = _une_ligne(phrase, PHRASE_MAX)
+    lues: dict[str, Choix] = {}
+    brutes = objet.get("corrections")
+    for entree in brutes if isinstance(brutes, list) else ():
+        if not isinstance(entree, dict):
+            continue
+        cle = _cle(entree.get("cle"))
+        valeur = _une_ligne(entree.get("valeur") or "", VALEUR_MAX)
+        if cle not in SUJETS or not valeur:
+            continue
+        lues[cle] = Choix(cle=cle, valeur=valeur, deduit=True, parce_que=cause)
+    return CorrectionLue(comprise=True, corrections=tuple(lues.values()), message=message)
+
+
+def corrections_en_texte(corrections: Sequence[Choix]) -> str:
+    """Les corrections déjà prises, telles que le modèle les relit — une par ligne."""
+    lignes = [
+        f"- {SUJETS.get(c.cle, c.cle)} ({c.cle}) : « {c.valeur} » — dit : « {c.parce_que} »"
+        for c in corrections
+    ]
+    return "\n".join(lignes) if lignes else "(aucune correction pour l'instant)"
+
+
+def constats_en_texte(constats: Constats) -> str:
+    """Ce que les constats disent des sujets corrigeables — ce que le modèle corrige.
+
+    Seuls les sujets qu'une correction peut changer y figurent, avec leur valeur et d'où
+    elle vient : le modèle ne peut corriger que ce qu'il voit, et lui montrer une part de
+    langage l'inviterait à la « corriger ».
+    """
+    lignes: list[str] = []
+    for usage in USAGES:
+        commande = constats.commande_de(usage)
+        if commande is not None:
+            lignes.append(f'- clé "{usage}" ({SUJETS[usage]}) : {commande.commande}')
+    if constats.gestionnaires:
+        noms = ", ".join(g.nom for g in constats.gestionnaires)
+        lignes.append(f'- clé "gestionnaire" ({SUJETS["gestionnaire"]}) : {noms}')
+    if constats.forge is not None:
+        lignes.append(f'- clé "forge" ({SUJETS["forge"]}) : {constats.forge.nom}')
+    if constats.ci:
+        chemins = ", ".join(piece.chemin for piece in constats.ci)
+        lignes.append(f'- clé "ci" ({SUJETS["ci"]}) : {chemins}')
+    return "\n".join(lignes) if lignes else "(rien n'est encore établi)"
+
+
+def corriger(constats: Constats, corrections: Sequence[Choix]) -> Constats:
+    """Les `constats`, corrigés par ce que la personne a dit — la dernière correction l'emporte.
+
+    Une commande corrigée **remplace** celle de son usage, quelle qu'en soit la
+    provenance — déclarée par le projet, conventionnelle, ou dite plus tôt : c'est la
+    personne qui sait comment son projet se teste. Elle garde l'endroit de la commande
+    qu'elle remplace (le fichier où vivent les commandes du projet), et prend pour
+    extrait la phrase, entre guillemets (`ORIGINE_DITE`). « aucun » retire la commande
+    de l'usage : « pas de tests pour l'instant » est une correction comme une autre, et
+    `recommander` écartera le skill avec sa raison.
+
+    Les sujets hors de `CLES_CORRIGEABLES` sont ignorés ici (voir le module).
+    """
+    derniers: dict[str, Choix] = {}
+    for choisi in corrections:
+        if choisi.cle in CLES_CORRIGEABLES and choisi.valeur:
+            derniers[choisi.cle] = choisi
+    if not derniers:
+        return constats
+    commandes = _commandes_corrigees(constats, derniers)
+    return replace(
+        constats,
+        commandes=commandes,
+        gestionnaires=_gestionnaires_corriges(constats, derniers, commandes),
+        forge=_forge_corrigee(constats, derniers),
+        ci=_ci_corrigee(constats, derniers),
+    )
+
+
+def _extrait(choisi: Choix) -> str:
+    """La phrase de la personne, entre guillemets — la justification écrite."""
+    return f"« {choisi.parce_que} »" if choisi.parce_que else ""
+
+
+def _commandes_corrigees(constats: Constats, derniers: dict[str, Choix]) -> tuple[Commande, ...]:
+    """Chaque usage corrigé ne garde qu'une commande : celle qui a été dite."""
+    commandes: list[Commande] = []
+    poses: set[str] = set()
+    for commande in constats.commandes:
+        choisi = derniers.get(commande.usage)
+        if choisi is None:
+            commandes.append(commande)
+            continue
+        if commande.usage in poses:
+            continue
+        poses.add(commande.usage)
+        if not _est_aucun(choisi.valeur):
+            commandes.append(_dite(commande.usage, choisi, commande.chemin))
+    for usage in USAGES:
+        choisi = derniers.get(usage)
+        if choisi is not None and usage not in poses and not _est_aucun(choisi.valeur):
+            commandes.append(_dite(usage, choisi, _chemin_des_commandes(constats)))
+    return tuple(commandes)
+
+
+def _dite(usage: str, choisi: Choix, chemin: str) -> Commande:
+    """La commande dite pour `usage`, justifiée par la phrase."""
+    return Commande(
+        usage=usage,
+        commande=_une_ligne(choisi.valeur, VALEUR_MAX),
+        chemin=chemin,
+        extrait=_extrait(choisi),
+        origine=ORIGINE_DITE,
+    )
+
+
+def _chemin_des_commandes(constats: Constats) -> str:
+    """Où vivent les commandes du projet — le fichier de son gestionnaire, s'il en a un."""
+    if constats.gestionnaires:
+        return constats.gestionnaires[0].chemin
+    return constats.commandes[0].chemin if constats.commandes else ""
+
+
+def _gestionnaires_corriges(
+    constats: Constats, derniers: dict[str, Choix], commandes: Sequence[Commande]
+) -> tuple[Gestionnaire, ...]:
+    """Le gestionnaire dit remplace ceux constatés ; son installation suit la commande dite."""
+    choisi = derniers.get("gestionnaire")
+    if choisi is None:
+        return constats.gestionnaires
+    if _est_aucun(choisi.valeur):
+        return ()
+    ancien = constats.gestionnaires[0] if constats.gestionnaires else None
+    installer = next((c.commande for c in commandes if c.usage == "installer"), None)
+    return (
+        Gestionnaire(
+            nom=_une_ligne(choisi.valeur, VALEUR_MAX),
+            chemin=ancien.chemin if ancien is not None else _chemin_des_commandes(constats),
+            # Le verrou d'un autre gestionnaire ne dit rien de celui-ci : on ne le garde pas.
+            verrou=None,
+            installer=installer,
+        ),
+    )
+
+
+def _forge_corrigee(constats: Constats, derniers: dict[str, Choix]) -> Forge | None:
+    """La forge dite, ou aucune."""
+    choisi = derniers.get("forge")
+    if choisi is None:
+        return constats.forge
+    if _est_aucun(choisi.valeur):
+        return None
+    return Forge(nom=_une_ligne(choisi.valeur, VALEUR_MAX))
+
+
+def _ci_corrigee(constats: Constats, derniers: dict[str, Choix]) -> tuple[Piece, ...]:
+    """L'intégration continue dite — un chemin de fichier —, ou aucune."""
+    choisi = derniers.get("ci")
+    if choisi is None:
+        return constats.ci
+    if _est_aucun(choisi.valeur):
+        return ()
+    chemin = _une_ligne(choisi.valeur, VALEUR_MAX)
+    return (
+        Piece(
+            nom=chemin.rsplit("/", 1)[-1],
+            chemin=chemin,
+            role=f"intégration continue — dite par la personne ({_extrait(choisi)})",
+        ),
+    )
+
+
+def a_effet(corrections: Sequence[Choix]) -> bool:
+    """Au moins une correction porte-t-elle sur un sujet que `corriger` change ?"""
+    return any(c.cle in CLES_CORRIGEABLES for c in corrections)
+
+
+def cles_de(corrections: Sequence[Choix]) -> tuple[str, ...]:
+    """Les sujets corrigés, dans l'ordre — pour dire ce qui a changé."""
+    return tuple(dict.fromkeys(c.cle for c in corrections))

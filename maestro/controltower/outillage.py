@@ -146,17 +146,29 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from maestro import clients_du_poste
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.playbook_du_code import registre
 from maestro.controltower.chat import (
+    DECISION_PASSER,
+    DECISION_PLUS_TARD,
+    PIECE_ECARTEE,
     UTILISATEUR,
     MessageChat,
+    PieceEcrite,
+    PieceProposee,
+    QuestionIntrouvable,
     ReponseChat,
+    acquis_du_fil,
     choix_du_fil,
+    fil_du_projet,
+    piece_en_attente,
+    projet_du_fil,
     transcription,
 )
 from maestro.controltower.projets import ServiceProjets
@@ -169,8 +181,10 @@ from maestro.outillage import (
     analyser,
     generer_outillage,
     lire_le_projet,
+    recommander,
     sans_lecture,
 )
+from maestro.outillage.clients import Client, noms_en_texte
 from maestro.outillage.modele import Lecture, Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
@@ -186,9 +200,13 @@ from maestro.outillage.questionnaire import (
     resume_des_choix,
     schema_en_texte,
     source_manifeste_des_choix,
+    sujet_de,
 )
 from maestro.projets import Projet
 from maestro.providers.base import ModelProvider
+
+if TYPE_CHECKING:  # `pieces` importe ce module : cycle à l'exécution seulement
+    from maestro.controltower.pieces import ServicePieces
 
 #: Ce que le modèle lit de la conversation, au plus — les **derniers** caractères.
 #: Le fil de l'orchestration porte tout ce qu'on y a dit, runs compris ; la
@@ -229,6 +247,12 @@ chemin de fichier relatif au projet. La valeur "aucun" dit explicitement qu'il n
 pas (« pas de tests pour l'instant ») : ce n'est pas un manque. Un constat ne s'écrit que
 sous l'une de ces clés : hors d'elles, il ne nourrirait aucune entrée de l'outillage.
 
+Pour "clients", la valeur liste les outils d'agent avec lesquels la personne dit
+travailler, séparés par des virgules, chacun par son nom — par exemple """
+    + noms_en_texte()
+    + """ — suivi de sa version si elle l'a dite. N'en ajoute aucun qu'elle n'a pas nommé, et ne
+pose jamais de question sur ce sujet : Maestro trouve lui-même ceux qui sont installés.
+
 Les réponses de la personne font foi. Une réponse CLIQUÉE vaut telle quelle, sauf si une
 réponse tapée plus tard la corrige. Une réponse TAPÉE est dite avec ses mots : comprends-la
 et traduis-la en constats. Si elle ne répond pas à la question — une question en retour,
@@ -261,6 +285,22 @@ Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code 
 """
     + registre()
 )
+
+
+#: Ce qui trouve les clients d'agents du poste (#1295). `None` vaut
+#: `maestro.clients_du_poste.detecter`, relu **à chaque appel** plutôt que retenu à la
+#: construction : c'est la porte que `tests/conftest.py` ferme pour toute la suite.
+DetecteurClients = Callable[[], Sequence[Client]]
+
+
+async def _clients_du_poste(detecteur: DetecteurClients | None) -> tuple[Client, ...]:
+    """Les clients d'agents du poste, lus **hors de la boucle** : `--version` lance un processus.
+
+    Relus à chaque recommandation, jamais gardés : une mise à jour de Claude Code change la
+    réponse (la lecture native d'`AGENTS.md` dépend de sa version), et une réponse périmée
+    écrirait un pont de trop, ou en oublierait un.
+    """
+    return tuple(await asyncio.to_thread(detecteur or clients_du_poste.detecter))
 
 
 class ComprehensionModele:
@@ -392,34 +432,155 @@ def _phrase_de_la_question(question: QuestionOutillage) -> str:
     )
 
 
-def _phrase_de_conclusion(acquis: Sequence[Choix]) -> str:
-    """Ce que le fil dit quand il n'y a plus de question : l'outillage recommandé.
+def _phrase_de_conclusion(
+    acquis: Sequence[Choix], poste: Sequence[Client] = (), *, ecrit: bool
+) -> str:
+    """Ce que le fil dit sans plus de question **ni pièce à montrer** (#1031, #1161).
 
     Le questionnaire ne s'arrête pas sur un silence. Il rend **ce qu'il a produit** —
     le résumé du manifeste à venir et le compte des entrées —, parce que c'est la
     seule chose qui donne rétrospectivement un sens aux questions qu'on vient de
-    répondre. Le détail, lui, se sert par l'API (`POST …/outillage/recommandation`)
-    et s'affiche là où on le valide (#1034) : le redire ici en entier ferait du fil un
-    second écran de recommandation.
+    répondre.
 
-    ⚠ **La dernière phrase promet un geste, donc elle le nomme** (#1104). « Rien
-    n'est écrit tant que vous ne l'avez pas validé » était vraie et pourtant
-    trompeuse : jusqu'à ce lot, aucune surface n'offrait de quoi valider — le pied
-    du fil redevenait vide dès que le dernier message ne portait plus de question.
-    Le geste existe désormais (`ConclusionOutillage`, au pied de la conversation),
-    et la phrase dit où il est. C'est la règle du canal, pas une politesse : ce
-    qu'un message annonce doit se trouver là où il dit qu'il est.
+    ⚠ **Ce que la phrase promet doit exister** (#1104) : elle nommait le geste « au
+    pied de cette conversation », la carte qui écrivait tout en une fois
+    (`ConclusionOutillage`). Depuis #1161 l'outillage s'écrit **pièce par pièce**
+    (`_piece`), et cette conclusion ne se lit plus que dans deux cas, qu'elle
+    distingue au lieu de promettre un geste qui n'existe plus :
+
+    - **aucun service de pièces branché** (`ecrit` faux) — rien pour écrire, et elle
+      le dit ;
+    - **un service branché, mais aucun projet nommé** — le questionnaire ouvert par
+      l'API sur un fil qui n'en a vu naître aucun. Le geste existe : dire, projet
+      ouvert, de l'outiller (le verdict `outillage` du juge), et la première pièce
+      vient de ce qui vient d'être compris, sans reposer une question.
+
+    `poste` (#1295) sont les clients d'agents du poste : le compte est celui de la liste que
+    l'écran montrera (`POST …/outillage/recommandation` les lit aussi), ponts compris.
     """
-    reco = recommandation_depuis_choix(acquis)
+    reco = recommandation_depuis_choix(acquis, poste=poste)
     skills = sum(1 for e in reco.entrees if e.type == "skill")
+    suite = (
+        "Je ne sais pas encore quel projet outiller : ouvrez-le et dites-moi de "
+        "l'outiller — j'écrirai son outillage pièce par pièce, chacune sur votre accord."
+        if ecrit
+        else "Aucune écriture n'est branchée sur ce fil : je ne peux pas l'écrire d'ici."
+    )
     return (
         f"C'est tout ce qu'il me fallait — {resume_des_choix(acquis)}.\n"
         f"L'outillage recommandé : {len(reco.entrees)} entrée(s), dont {skills} skill(s), "
         "chacune avec la raison qui la justifie. Rien n'est écrit dans le projet tant "
-        "que vous ne l'avez pas validé.\n"
-        "Le geste est au pied de cette conversation : il dit ce qui sera écrit, "
-        "et dans quel dossier."
+        f"que vous ne l'avez pas validé.\n{suite}"
     )
+
+
+def _phrase_de_la_piece(piece: PieceProposee) -> str:
+    """Le texte du message qui porte une pièce — ce qu'on lit si la carte ne s'affiche pas (#1161).
+
+    Même rôle que `_phrase_de_la_question` : la carte rend le diff, la raison, les
+    verdicts, les gestes et l'invitation à corriger avec ses mots ; ce texte-ci est ce
+    qui reste quand on relit le fil ailleurs. Il nomme donc la pièce et le projet, et
+    **rien de ce que la carte dit déjà** — la relecture l'a vu répété mot pour mot
+    juste au-dessus d'elle. Seul l'échec s'y redit : rien n'a été écrit, et cela doit
+    se lire même sans la carte.
+    """
+    rang = f"Pièce {piece.rang} sur {piece.total}" if piece.total > 1 else "Une pièce"
+    ouverture = (
+        f"{rang} pour « {piece.projet_nom} » : {piece.chemin}, corrigée d'après vous."
+        if piece.correction
+        else f"{rang} pour « {piece.projet_nom} » : {piece.chemin}."
+    )
+    if piece.echec:
+        return f"{ouverture}\n⚠ {piece.echec} Rien n'est écrit."
+    return ouverture
+
+
+def _phrase_de_transition(acquis: Sequence[Choix]) -> str:
+    """Ce que le fil dit quand le questionnaire s'achève sur la première pièce (#1161).
+
+    Le code, et pas le dernier mot du modèle : ce mot-là, écrit pour conclure un
+    questionnaire, invitait à passer à autre chose (« dites-moi par quoi commencer »)
+    au-dessus de pièces qui attendaient toutes un geste. Il dit ce qui a été compris,
+    puis ce qui vient — la carte, juste en dessous, dit laquelle.
+    """
+    return (
+        f"C'est tout ce qu'il me fallait — {resume_des_choix(acquis)}. L'outillage "
+        "s'écrit maintenant pièce par pièce, chacune sur votre accord."
+    )
+
+
+def _texte_de_la_piece(
+    prelude: str, piece: PieceProposee, *, faits: bool, apres_le_juge: bool
+) -> str:
+    """Ce que le texte d'un message dit d'une pièce que la carte montre (#1161).
+
+    La carte dit la pièce — son chemin, son rang, son projet, ses gestes : le texte ne
+    la redit pas (la relecture de #1161 l'a vue redite juste au-dessus d'elle). Il ne
+    la nomme que dans deux cas :
+
+    - `faits` — le texte n'est pas montré, il nourrit la rédaction du modèle (#1262),
+      qui a besoin de savoir ce qui vient ;
+    - la version est **en échec** — rien n'a été écrit, et cela doit se lire même
+      sans la carte.
+
+    Sinon, le prélude seul ; derrière le juge (`apres_le_juge`), rien — il a déjà parlé.
+    Sans prélude ni juge — l'ouverture de l'outillage d'un projet qui se **lit** —, ce
+    que la carte ne dit pas : que le projet a été lu, et comment l'outillage va venir.
+    Un message ne se persiste pas vide.
+    """
+    if faits or piece.echec:
+        return _joint(prelude, _phrase_de_la_piece(piece))
+    if prelude or apres_le_juge:
+        return prelude
+    return (
+        f"J'ai lu « {piece.projet_nom} » : son outillage se propose pièce par pièce, "
+        "chacune sur votre accord."
+    )
+
+
+def _en_suite(phrase: str) -> str:
+    """Une phrase du modèle posée après deux-points : sa majuscule initiale tombe.
+
+    « Je n'ai rien changé à l'outillage : Je ne vois pas… » — vu sur la vraie stack.
+    Seule une majuscule suivie d'une minuscule tombe : un sigle (« AGENTS.md ») reste.
+    """
+    if len(phrase) > 1 and phrase[0].isupper() and phrase[1].islower():
+        return phrase[0].lower() + phrase[1:]
+    return phrase
+
+
+def _touchee(piece: PieceProposee, fil: Sequence[MessageChat]) -> bool:
+    """`piece` est-elle une version neuve d'un chemin déjà proposé ou tranché sur ce fil ?
+
+    C'est ce qu'une correction qu'on vient de comprendre a touché : le même chemin,
+    un autre contenu. Lu sur la structure du fil (les pièces et leurs faits), jamais
+    sur le texte.
+    """
+    vues = {(m.piece.chemin, m.piece.empreinte) for m in fil if m.piece is not None}
+    vues |= {
+        (m.piece_ecrite.chemin, m.piece_ecrite.empreinte)
+        for m in fil
+        if m.piece_ecrite is not None
+    }
+    return any(chemin == piece.chemin and vue != piece.empreinte for chemin, vue in vues)
+
+
+def _phrase_de_fin(projet_nom: str) -> str:
+    """Ce que le fil dit quand plus aucune pièce n'est à écrire (#1161)."""
+    return (
+        f"L'outillage de « {projet_nom} » est à jour : il n'y a plus rien à écrire. "
+        "Dites-moi si quelque chose doit changer — une commande, un gestionnaire —, "
+        "je le revérifierai avant de le réécrire."
+    )
+
+
+def _phrase_du_fait(fait: PieceEcrite) -> str:
+    """Ce qu'un geste a fait d'une pièce, en une phrase — le prélude de la suivante."""
+    if fait.etat == PIECE_ECARTEE:
+        return f"{fait.chemin} n'est pas écrit."
+    if fait.ecrite:
+        return f"{fait.chemin} est écrit."
+    return f"{fait.chemin} n'a pas été écrit : {fait.raison}"
 
 
 class ConducteurOutillage:
@@ -433,17 +594,44 @@ class ConducteurOutillage:
     garantie que `RepondeurOrchestration` tient pour une proposition de run (« aucun
     état de session », #685).
 
-    Le **projet** n'y est pas non plus : la recommandation ne dépend que des constats
-    (`recommandation_depuis_choix`), et le projet ne sert qu'à dater la provenance
-    dans le manifeste (`source_manifeste_des_choix`, appelé par l'API qui, elle, sait
-    de quel projet il s'agit).
+    Le **projet** n'y est pas non plus : il se lit sur le fil (`projet_du_fil` — le
+    projet né dans la conversation, la pièce en cours), ou il est nommé par l'appelant.
+
+    Un autre collaborateur, `clients` (#1295), trouve les clients d'agents du poste —
+    relu à la conclusion seulement, pour que la phrase compte la liste que l'écran
+    montrera, ponts compris. Pas plus un état que celui qui comprend.
+
+    ## Et depuis #1161, il écrit **pièce par pièce**
+
+    Son collaborateur `pieces` (`maestro.controltower.pieces.ServicePieces`) fait de la
+    fin du questionnaire le **début de l'écriture** : plus de conclusion qui liste
+    tout, mais la première pièce, montrée avec son diff et déjà vérifiée. Un projet qui
+    a déjà ses fichiers — un dossier importé — n'a pas de questionnaire : il se
+    **lit** (#1158), et sa première pièce vient tout de suite. Le geste sur une pièce
+    (`trancher`) et une correction dite avec des mots (`corriger`) donnent la
+    suivante. Sans ce collaborateur, le conducteur conclut comme avant, et le dit.
     """
 
-    def __init__(self, comprehension: ComprehensionModele | None = None) -> None:
+    def __init__(
+        self,
+        comprehension: ComprehensionModele | None = None,
+        clients: DetecteurClients | None = None,
+        *,
+        pieces: ServicePieces | None = None,
+    ) -> None:
         self._comprehension = comprehension or ComprehensionModele()
+        self._clients = clients
+        self._pieces = pieces
 
-    async def _tour(self, fil: Sequence[MessageChat]) -> ReponseChat:
-        """Le tour suivant : la question à poser, ou la conclusion. Jamais rien.
+    @property
+    def ecrit(self) -> bool:
+        """Ce conducteur sait-il écrire l'outillage — un service de pièces est-il branché ?"""
+        return self._pieces is not None
+
+    async def _tour(
+        self, fil: Sequence[MessageChat], projet_id: str | None = None
+    ) -> ReponseChat:
+        """Le tour suivant : la question à poser, ou la pièce à écrire. Jamais rien.
 
         Sur un fil où la personne n'a **rien dit**, la question ouverte, sans appeler
         le modèle. Sinon le modèle comprend ce qui a été dit, et sa compréhension
@@ -459,8 +647,34 @@ class ConducteurOutillage:
         message, et la carte le rend en tête de la question, une entrée par constat.
         La relecture de #1147 l'a montré recopié en entier dans chaque bulle du fil,
         un flot de clés qui noyait la question.
+
+        Avec un service de pièces (#1161) et un projet connu, ce qui suit le
+        questionnaire est la **première pièce**, et un projet qui a déjà ses fichiers
+        n'a pas de questionnaire du tout : il se lit. Le projet est **posé sur le
+        tour** (`projet_outille`), pour que le suivant sache encore lequel outiller.
         """
-        reponses = choix_du_fil(fil)
+        projet = projet_id or projet_du_fil(fil)
+        return _outille(await self._tour_de(fil, projet), projet)
+
+    async def _tour_de(self, fil: Sequence[MessageChat], projet: str | None) -> ReponseChat:
+        """Le tour lui-même, pour `projet` s'il est connu — voir `_tour`.
+
+        Les réponses et ce qui a été compris se lisent sur le fil **de ce projet**
+        (`fil_du_projet`) : vu sur la vraie stack, un projet importé outillé après un
+        projet neuf, dans la même conversation, recevait les réponses du premier. La
+        conversation que le modèle lit pour comprendre un projet neuf reste, elle,
+        entière : ce qui l'a fait naître précède sa déclaration.
+        """
+        propre = fil_du_projet(fil, projet)
+        reponses = choix_du_fil(propre)
+        if (
+            self._pieces is not None
+            and projet
+            and not reponses
+            and not acquis_du_fil(propre)
+            and await self._pieces.a_ses_fichiers(projet)
+        ):
+            return await self._piece(fil, projet)
         conversation = _conversation_de(fil)
         if not conversation and not reponses:
             ouverte = question_ouverte()
@@ -468,9 +682,19 @@ class ConducteurOutillage:
         comprise = await self._comprehension.comprendre(conversation, reponses)
         acquis = acquis_de([*reponses, *comprise.constats])
         suivante = comprise.question_suivante(rang=len(donnees(reponses)) + 1)
+        if suivante is None and self._pieces is not None and projet:
+            # La transition est celle du code, pas le dernier mot du modèle : vu sur la
+            # vraie stack, il invitait à « commencer par la page d'accueil » au-dessus
+            # de la première des sept pièces qui attendaient un geste.
+            return await self._piece(
+                fil, projet, acquis=acquis, prelude=_phrase_de_transition(acquis)
+            )
         if suivante is None:
+            poste = await _clients_du_poste(self._clients)
             return ReponseChat(
-                contenu=_joint(comprise.message, _phrase_de_conclusion(acquis)),
+                contenu=_joint(
+                    comprise.message, _phrase_de_conclusion(acquis, poste, ecrit=self.ecrit)
+                ),
                 comprehension=acquis,
             )
         return ReponseChat(
@@ -479,16 +703,227 @@ class ConducteurOutillage:
             comprehension=acquis,
         )
 
-    async def ouvrir(self, fil: Sequence[MessageChat]) -> ReponseChat:
-        """Ouvre — ou **reprend** — le questionnaire sur ce fil.
+    async def _piece(
+        self,
+        fil: Sequence[MessageChat],
+        projet_id: str,
+        *,
+        acquis: Sequence[Choix] | None = None,
+        prelude: str = "",
+        corrections: Sequence[Choix] = (),
+        tranchees: Sequence[tuple[str, str]] = (),
+        fait: PieceEcrite | None = None,
+        phrase: str = "",
+        faits: bool = False,
+        apres_le_juge: bool = False,
+    ) -> ReponseChat:
+        """La pièce suivante — ou la fin de l'outillage —, avec ce qui la précède (#1161).
+
+        `acquis` voyage sur le message quand il vient d'être compris : c'est ce que
+        les tours suivants relisent (`acquis_du_fil`) pour rédiger les pièces d'un
+        projet neuf sans rappeler le modèle. `fait` et `corrections` sont les faits
+        du tour — la pièce d'avant, ce qu'une phrase a corrigé —, portés par le même
+        message que la suivante.
+
+        `phrase` est celle d'une correction qu'on vient de comprendre : la pièce
+        qu'elle a **touchée** — une version neuve d'un chemin déjà proposé ou tranché
+        sur ce fil (`_touchee`) — la porte, même quand la correction a **retiré** une
+        commande et que le texte n'en garde aucune trace. `faits` et `apres_le_juge`
+        disent qui lit le texte du message (`_texte_de_la_piece`).
+        """
+        pieces = self._exige_pieces()
+        suivante = await pieces.prochaine(
+            projet_id, fil, acquis=acquis, corrections=corrections, tranchees=tranchees
+        )
+        if (
+            suivante is not None
+            and phrase
+            and not suivante.correction
+            and _touchee(suivante, fil_du_projet(fil, projet_id))
+        ):
+            suivante = replace(suivante, correction=phrase)
+        comprehension = tuple(acquis) if acquis else ()
+        if suivante is None:
+            return ReponseChat(
+                contenu=_joint(prelude, _phrase_de_fin(self._nom_du_projet(projet_id))),
+                comprehension=comprehension,
+                piece_ecrite=fait,
+                corrections=tuple(corrections),
+                projet_outille=projet_id,
+            )
+        return ReponseChat(
+            contenu=_texte_de_la_piece(
+                prelude, suivante, faits=faits, apres_le_juge=apres_le_juge
+            ),
+            piece=suivante,
+            comprehension=comprehension,
+            piece_ecrite=fait,
+            corrections=tuple(corrections),
+            projet_outille=projet_id,
+        )
+
+    def _nom_du_projet(self, projet_id: str) -> str:
+        """Le nom du projet, pour la phrase de fin — son identifiant s'il ne se relit plus."""
+        try:
+            return self._exige_pieces().nom(projet_id)
+        except Exception:  # noqa: BLE001 — une phrase ne vaut pas une panne
+            return projet_id
+
+    def _exige_pieces(self) -> ServicePieces:
+        """Le service de pièces — `QuestionIntrouvable` s'il n'est pas branché (le `409`)."""
+        if self._pieces is None:
+            raise QuestionIntrouvable(
+                "aucune écriture d'outillage n'est branchée sur ce fil : rien à écrire."
+            )
+        return self._pieces
+
+    async def ouvrir(
+        self, fil: Sequence[MessageChat], projet_id: str | None = None
+    ) -> ReponseChat:
+        """Ouvre — ou **reprend** — l'outillage sur ce fil.
 
         Aucune différence entre les deux, et c'est la propriété qu'on veut : ouvrir
         un questionnaire déjà commencé repose la question là où il en est. Elle
         découle du fil comme seule mémoire, elle n'est pas gardée. Ce qui a déjà été
         dit dans la conversation compte : un projet décrit trois messages plus haut
         n'a pas à l'être une seconde fois.
+
+        `projet_id` (#1161) nomme le projet quand le fil ne le dit pas encore — c'est
+        « Outiller dans la conversation » sur la carte d'un projet. L'ouvrir pour lui,
+        c'est le **reprendre** : un « plus tard » d'avant est levé, et la fiche cesse
+        de le rappeler (`ServicePieces.reprendre`) — un nouveau « plus tard » le repose.
         """
-        return await self._tour(fil)
+        if projet_id and self._pieces is not None:
+            self._pieces.reprendre(projet_id)
+        return await self._tour(fil, projet_id)
+
+    async def trancher(
+        self,
+        fil: Sequence[MessageChat],
+        *,
+        piece: PieceProposee,
+        decision: str,
+        faits: bool = True,
+    ) -> ReponseChat:
+        """La suite d'un geste sur une pièce : l'écrire, la passer, ou tout remettre à plus tard.
+
+        `faits` (par défaut) : le texte rendu nourrit la rédaction du modèle (#1262), et
+        nomme donc la pièce suivante. Faux derrière un « oui » tapé : le juge a parlé,
+        le texte ne dit que ce qui s'est fait, et la carte dit la suite.
+
+        - **plus tard** — rien n'est écrit, le report est enregistré sur le projet
+          (docs/37 §4.6), et le fil s'arrête là : la fiche du projet le rappellera ;
+        - **passer** — rien n'est écrit, et la pièce ne se repropose pas **telle
+          quelle** (`piece_ecartee`) ; la suivante vient ;
+        - **écrire** — la pièce s'écrit telle que la carte la montrait
+          (`ServicePieces.ecrire`), puis la suivante vient. Un fichier qui a bougé
+          depuis la carte n'est pas écrit : la pièce est reproposée, diff à jour. Une
+          écriture empêchée se dit, et la pièce reste proposée.
+        """
+        # Import différé : `pieces` importe ce module (il lit par `ServiceOutillage`).
+        from maestro.controltower.pieces import PieceChangee, piece_ecartee
+
+        pieces = self._exige_pieces()
+        if decision == DECISION_PLUS_TARD:
+            pieces.reporter(piece.projet_id)
+            return ReponseChat(
+                contenu=(
+                    f"Noté : je n'écris rien de plus dans « {piece.projet_nom} » pour "
+                    "l'instant. Son outillage vous sera rappelé sur la fiche du projet, et "
+                    "vous pourrez le reprendre ici quand vous voudrez."
+                ),
+                projet_outille=piece.projet_id,
+            )
+        if decision == DECISION_PASSER:
+            fait = piece_ecartee(piece)
+        else:
+            try:
+                fait = await pieces.ecrire(piece)
+            except PieceChangee as changee:
+                return await self._piece(
+                    fil, piece.projet_id, prelude=f"Je n'ai rien écrit : {changee}"
+                )
+            except Exception as echec:  # noqa: BLE001 — un refus se raconte, la pièce reste
+                return ReponseChat(
+                    contenu=(
+                        f"Je n'ai rien écrit : {echec}. La pièce reste proposée ci-dessous."
+                    ),
+                    piece=piece,
+                    projet_outille=piece.projet_id,
+                )
+        if not fait.ecrite and fait.etat != PIECE_ECARTEE:
+            return ReponseChat(
+                contenu=_phrase_du_fait(fait), piece_ecrite=fait, projet_outille=piece.projet_id
+            )
+        return await self._piece(
+            fil,
+            piece.projet_id,
+            prelude=_phrase_du_fait(fait),
+            tranchees=((fait.chemin, fait.empreinte),),
+            fait=fait,
+            faits=faits,
+        )
+
+    async def corriger(
+        self, fil: Sequence[MessageChat], *, projet_id: str, phrase: str
+    ) -> ReponseChat:
+        """Une phrase sur l'outillage — comprise, appliquée, **revérifiée** ; ou dite incomprise.
+
+        Le fil reçu se termine par la phrase de la personne. Trois issues
+        (`maestro.outillage.correction`), et aucune n'écrit :
+
+        - **incomprise** — rien ne change, le modèle dit ce qu'il n'a pas compris, et
+          la pièce qui attendait **reste proposée** telle quelle ;
+        - **comprise, sans effet** sur ce que l'outillage écrit — dit, pas tu ;
+        - **comprise** — les corrections voyagent sur le message (`corrections`, la
+          phrase pour cause), et la pièce suivante est recalculée : celle que la
+          correction a touchée revient, **revérifiée par l'exécution** — une commande
+          corrigée a un autre texte, elle n'est jamais un verdict connu. Le `message`
+          du modèle n'y est pas repris : le juge a déjà dit, en direct, ce qu'il a
+          compris, et la relecture l'a vu redit juste en dessous.
+
+        Une correction peut aussi ne rien corriger et demander d'avancer (« outille
+        ce projet ») : c'est la pièce suivante qui vient. Sur un dossier **encore
+        vide** dont rien n'a été compris, il n'y a rien à corriger : c'est le
+        questionnaire qui s'ouvre, la phrase comprise avec le reste de la conversation
+        — l'outillage d'un projet neuf ne se tire pas d'une analyse de dossier vide
+        (#1100).
+        """
+        pieces = self._exige_pieces()
+        propre = fil_du_projet(fil, projet_id)
+        if (
+            not acquis_du_fil(propre)
+            and not choix_du_fil(propre)
+            and not await pieces.a_ses_fichiers(projet_id)
+        ):
+            return await self._tour(fil, projet_id)
+        attente = piece_en_attente(fil[:-1])
+        reposee = attente.piece if attente is not None else None
+        lue = await pieces.comprendre_correction(projet_id, fil, phrase)
+        if not lue.comprise:
+            # Le fait et la raison du modèle, une fois : le juge a déjà dit, en ses mots,
+            # ce qu'il n'a pas compris et comment le redire (la seconde relecture l'avait
+            # lu deux fois de suite dans la même bulle).
+            raison = _en_suite(lue.message) or "je n'ai pas compris ce qu'il faut changer."
+            return ReponseChat(
+                contenu=f"Rien n'a été écrit : {raison}",
+                piece=reposee,
+                projet_outille=projet_id,
+            )
+        if lue.corrections and pieces.sans_effet(lue.corrections, propre):
+            sujets = ", ".join(sujet_de(c.cle) for c in lue.corrections)
+            return ReponseChat(
+                contenu=(
+                    f"C'est noté ({sujets}), mais cela ne change rien à ce que l'outillage "
+                    "écrit : un projet lu garde ce qu'on y a constaté. Rien n'a été écrit."
+                ),
+                corrections=lue.corrections,
+                piece=reposee,
+                projet_outille=projet_id,
+            )
+        return await self._piece(
+            fil, projet_id, corrections=lue.corrections, phrase=phrase, apres_le_juge=True
+        )
 
     async def repondre(
         self, fil: Sequence[MessageChat], question: QuestionOutillage, valeur: str
@@ -505,9 +940,24 @@ class ConducteurOutillage:
         return await self._tour(fil)
 
 
+def _pour_le_poste(analyse: Analyse, poste: Sequence[Client]) -> Analyse:
+    """L'analyse, sa recommandation refaite avec les clients d'agents du poste (#1295).
+
+    La lecture gardée d'un projet (`_LectureGardee`) ne porte **pas** les clients : elle
+    dit ce que le projet est, eux disent qui l'ouvrira. La recommandation se refait donc
+    à chaque appel, par la même fonction que l'analyse, sur les mêmes constats.
+    """
+    return replace(analyse, recommandation=recommander(analyse.constats, poste))
+
+
 def _joint(prelude: str, corps: str) -> str:
     """Colle le prélude au corps — sans ligne vide inutile quand l'un des deux manque."""
     return "\n\n".join(morceau for morceau in (prelude, corps) if morceau)
+
+
+def _outille(reponse: ReponseChat, projet: str | None) -> ReponseChat:
+    """Le tour, marqué du projet dont il conduit l'outillage (#1161) — tel quel sans projet."""
+    return replace(reponse, projet_outille=projet) if projet else reponse
 
 
 def _empreinte(indices: Analyse) -> str:
@@ -604,6 +1054,11 @@ class ServiceOutillage:
     `comprehension` (#1147) est ce qui comprend un projet neuf — le modèle, derrière
     `ComprehensionModele`. `None` en construit un qui résout le fournisseur configuré
     au premier usage ; seule la voie du questionnaire l'appelle.
+
+    `clients` (#1295) trouve les clients d'agents du poste, qui décident des **ponts**
+    (`recommander`) : relus à chaque recommandation — analyse, réponses, génération —,
+    jamais gardés avec la lecture du projet. Ce qu'on garde d'un projet est ce que le
+    modèle en a lu ; un Claude Code mis à jour entre-temps est un autre poste.
     """
 
     def __init__(
@@ -615,6 +1070,7 @@ class ServiceOutillage:
         provider: ModelProvider | None = None,
         modele: str = MODELE_EXECUTANT_DEFAUT,
         comprehension: ComprehensionModele | None = None,
+        clients: DetecteurClients | None = None,
     ) -> None:
         self._projets = projets
         self._bornes = bornes
@@ -623,6 +1079,7 @@ class ServiceOutillage:
         self._modele = modele
         self._lues: dict[str, _LectureGardee] = {}
         self._comprehension = comprehension or ComprehensionModele()
+        self._clients = clients
 
     async def analyser(self, id_projet: str) -> dict[str, Any]:
         """Analyse le projet `id_projet` et rend l'outillage recommandé (docs/38).
@@ -638,8 +1095,20 @@ class ServiceOutillage:
         **hors de la boucle d'événements** : parcourir un projet réel prend des
         secondes, et une route qui bloquerait la boucle figerait les flux SSE
         des autres écrans.
+
+        La recommandation rendue est celle **du poste** (#1295) : les ponts suivent les
+        clients d'agents qui y sont installés, à leur version.
         """
-        return (await self._analyse(self._projet(id_projet))).to_dict()
+        analyse = await self._analyse(self._projet(id_projet))
+        return _pour_le_poste(analyse, await self.clients_du_poste()).to_dict()
+
+    async def clients_du_poste(self) -> tuple[Client, ...]:
+        """Les clients d'agents du poste, relus à chaque appel (#1295) — ceux des pièces aussi.
+
+        Une seule porte sur le poste pour l'analyse et pour l'écriture pièce par pièce
+        (#1161, `ServicePieces`) : les deux recommandent les mêmes ponts.
+        """
+        return await _clients_du_poste(self._clients)
 
     async def generer(
         self,
@@ -695,13 +1164,14 @@ class ServiceOutillage:
         """
         projet = self._projet(id_projet)
         acquis = list(choix)
+        poste = await _clients_du_poste(self._clients)
         if acquis:
             reference = ""
             constats = constats_depuis_choix(acquis)
-            recommandee = recommandation_depuis_choix(acquis)
+            recommandee = recommandation_depuis_choix(acquis, poste=poste)
             source = source_manifeste_des_choix(projet.id, acquis)
         else:
-            analyse = await self._analyse(projet)
+            analyse = _pour_le_poste(await self._analyse(projet), poste)
             reference = analyse.id
             constats, recommandee = analyse.constats, analyse.recommandation
             source = analyse.source_manifeste()
@@ -822,7 +1292,7 @@ class ServiceOutillage:
             "message": comprise.message,
         }
 
-    def recommandation(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
+    async def recommandation(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
         """L'outillage que ces réponses recommandent — **la forme de l'analyse** (#1031).
 
         La même `Recommandation` que `analyser` rend, produite par la **même**
@@ -843,15 +1313,35 @@ class ServiceOutillage:
         `source` est le fragment de provenance du manifeste (docs/38 §4.1), le jumeau
         de celui qu'`Analyse.source_manifeste()` rend : c'est lui qui dira, six mois
         plus tard, que cet outillage vient de réponses et lesquelles.
+
+        Les clients d'agents du poste (#1295) s'y ajoutent à ceux que les réponses nomment :
+        les mêmes que la génération relira, donc les mêmes ponts.
         """
         projet = self._projet(id_projet)
         acquis = acquis_de(choix)
+        poste = await _clients_du_poste(self._clients)
         return {
             "projet_id": projet.id,
             "source": source_manifeste_des_choix(projet.id, acquis),
             "choix": [c.to_dict() for c in acquis],
-            "recommandation": recommandation_depuis_choix(acquis).to_dict(),
+            "recommandation": recommandation_depuis_choix(acquis, poste=poste).to_dict(),
         }
+
+    def entite(self, id_projet: str) -> Projet:
+        """Le projet déclaré — la porte que l'outillage pièce par pièce emprunte (#1161).
+
+        Publique pour `maestro.controltower.pieces`, qui écrit dans le **même** projet
+        que celui qu'on analyse ici : une seule résolution, les mêmes refus motivés.
+        """
+        return self._projet(id_projet)
+
+    async def analyse_de(self, projet: Projet) -> Analyse:
+        """L'analyse de `projet` — la lecture gardée tant qu'il n'a pas bougé (#1158, #1161).
+
+        La même que `analyser` rend à l'écran, sous sa forme d'objet : l'outillage
+        pièce par pièce en tire ses constats sans la sérialiser pour la relire.
+        """
+        return await self._analyse(projet)
 
     def _projet(self, id_projet: str) -> Projet:
         """Le projet déclaré, relu par le service des projets — jamais un second lecteur.

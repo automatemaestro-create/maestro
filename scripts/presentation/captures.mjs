@@ -135,6 +135,13 @@ const MARQUEUR_CHARGEMENT = "Chargement";
 const CLE_THEME = "maestro.theme";
 const CLE_PROJET_ACTIF = "maestro.projet.actif";
 const CLE_GUIDE_VU = "maestro.guide.vu";
+/**
+ * Clé `sessionStorage` de `lib/projetActif.ts` (#1293) : depuis que chaque
+ * démarrage arrive sur le choix du projet, un projet retenu ne fait plus entrer —
+ * il faut que la session soit **déjà entrée**. Un contexte neuf est un démarrage :
+ * sans ce repère, chaque capture serait celle de la porte et son « Reprendre ».
+ */
+const CLE_ENTREE_SESSION = "maestro.session.entree";
 
 /**
  * Les méthodes qu'une série sur le réel laisse passer vers l'API : les lectures.
@@ -396,12 +403,16 @@ async function nouveauContexte(navigateur, projet, extra = {}) {
     ...extra,
   });
   await contexte.addInitScript(
-    ([cleTheme, cleProjet, cleGuide, projetId]) => {
+    // `projetId` reste le 4ᵉ argument : `tests/test_presentation.py` le lit à ce rang.
+    ([cleTheme, cleProjet, cleGuide, projetId, cleEntree]) => {
       try {
         window.localStorage.setItem(cleTheme, "clair");
         // Sans projet que l'API déclare, on ne pose rien : la porte d'entrée
         // rend alors ce qu'elle rend à tout le monde, et le manifeste dit pourquoi.
-        if (projetId) window.localStorage.setItem(cleProjet, projetId);
+        if (projetId) {
+          window.localStorage.setItem(cleProjet, projetId);
+          window.sessionStorage.setItem(cleEntree, "1");
+        }
         // La visite guidée s'ouvre au premier passage (#116) : sa fenêtre et son
         // voile `fixed inset-0` recouvrent l'application — ils masquent les
         // captures et **interceptent les clics** des parcours, qui échouaient
@@ -412,7 +423,7 @@ async function nouveauContexte(navigateur, projet, extra = {}) {
         // et la porte d'entrée dira elle-même qu'aucun projet n'est ouvert.
       }
     },
-    [CLE_THEME, CLE_PROJET_ACTIF, CLE_GUIDE_VU, projet?.id ?? null],
+    [CLE_THEME, CLE_PROJET_ACTIF, CLE_GUIDE_VU, projet?.id ?? null, CLE_ENTREE_SESSION],
   );
   const refusees = await gardeLectureSeule(contexte);
   return { contexte, refusees };

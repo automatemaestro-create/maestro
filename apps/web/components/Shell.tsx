@@ -90,6 +90,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
  * Le cadre entier est **sous** la garde, `FournisseurEtatGlobal` compris : la
  * porte d'entrée n'ouvre donc ni WebSocket ni lecture d'API globale, alors que
  * la portée projet de ces lectures (#277) n'est pas encore connue.
+ *
+ * Depuis #1293 (docs/43 §2.1), elle tient **chaque démarrage** : un projet retenu
+ * de la visite d'avant ne fait plus entrer, il se propose (« Reprendre ») — le
+ * `projet` du contexte n'existe qu'une fois la session entrée. La garde, elle,
+ * n'a pas changé d'une ligne.
  */
 function PorteProjet({ children }: { children: React.ReactNode }) {
   const { projet, pret } = useProjetActif();

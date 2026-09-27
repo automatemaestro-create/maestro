@@ -18,7 +18,7 @@ import type { ReactNode } from "react";
 
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
-import { ecrireProjetActifId } from "@/lib/projetActif";
+import { ecrireProjetActifId, marquerEntreeDeSession } from "@/lib/projetActif";
 // `import type` et pas autrement : `lib/useChat` importe `lib/api`, dont ce
 // fichier ne doit **jamais** provoquer l'évaluation (voir l'avertissement de
 // `tests/setup.ts` — un module déjà évalué rend les mocks locaux inopérants).
@@ -47,6 +47,7 @@ import type {
   ConversationChat,
   CouloirFrise,
   Decision,
+  DecisionPiece,
   DecisionsRun,
   DossierExplorateur,
   EntreeFrise,
@@ -222,6 +223,8 @@ export type FilFactice = {
   ) => Promise<void>;
   /** Le geste qui accepte ou refuse le projet proposé (#1294). */
   declarerProjet: (approuve: boolean) => Promise<void>;
+  /** Le geste qui écrit, passe ou reporte une pièce d'outillage (#1161). */
+  trancherPiece: (decision: DecisionPiece, empreinte: string) => Promise<void>;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -251,6 +254,7 @@ function filParDefaut(): FilFactice {
     repondreQuestion: async () => {},
     recruter: async () => {},
     declarerProjet: async () => {},
+    trancherPiece: async () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},
@@ -633,14 +637,18 @@ export function entreeJournalFactice(
 }
 
 /**
- * Le projet retenu d'une visite à l'autre : **déclaré** et **mémorisé**, les
- * deux conditions pour que la garde du shell laisse entrer (#279). Sans lui,
- * tout rendu du `Shell` s'arrête à la porte — ce qui est le comportement voulu,
- * mais pas ce que la plupart des tests observent.
+ * Le projet ouvert dans cette session : **déclaré**, **mémorisé** et **entré**,
+ * les trois conditions pour que la garde du shell laisse entrer (#279, #1293).
+ * Sans lui, tout rendu du `Shell` s'arrête à la porte — ce qui est le
+ * comportement voulu au démarrage, mais pas ce que la plupart des tests
+ * observent : ils regardent un écran **pendant** une session, comme un
+ * rechargement le retrouve. Le démarrage lui-même est couvert par
+ * `projet-actif.test.tsx` et `demarrage.test.tsx`.
  */
 export function poserProjetActif(projet: Projet = projetFactice()): Projet {
   poserProjets([projet]);
   ecrireProjetActifId(projet.id);
+  marquerEntreeDeSession();
   return projet;
 }
 

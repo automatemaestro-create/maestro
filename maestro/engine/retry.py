@@ -17,7 +17,11 @@ indépendante du fournisseur :
   #104 — déclaration, secret ou serveur à corriger : relancer coûterait sans
   rien changer), message du flux fournisseur au-delà de son plafond de lecture
   (`PlafondFluxDepasse`, #1277 — le fichier trop gros que l'agent a lu est
-  encore sur le disque à la tentative suivante).
+  encore sur le disque à la tentative suivante), garde-fou que la sonde de
+  démarrage a prouvé inopérant (`GardeFouInoperant`, #1304 — une propriété du
+  fournisseur, que la tentative suivante retrouverait). Sa voisine
+  `SondeNonConcluante` reste transitoire, à dessein : rien n'y est prouvé, et
+  c'est la relance qui rejoue la sonde.
 
 Les deux autres échecs *jamais relancés* du cahier des charges n'atteignent pas
 cette classification par construction : le **time-out d'échéance ferme** (#64)
@@ -35,6 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from maestro.providers.base import (
+    GardeFouInoperant,
     McpServerUnavailable,
     PlafondFluxDepasse,
     TurnLimitReached,
@@ -99,5 +104,6 @@ def est_transitoire(erreur: BaseException) -> bool:
         | TurnLimitReached
         | PlafondFluxDepasse
         | UnsupportedCapability
-        | McpServerUnavailable,
+        | McpServerUnavailable
+        | GardeFouInoperant,
     )

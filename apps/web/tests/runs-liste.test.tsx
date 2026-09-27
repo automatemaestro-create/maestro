@@ -55,7 +55,14 @@ import {
   type CauseAttente,
 } from "@/lib/execution";
 import { ErreurApi } from "@/lib/api";
-import { libelleCause, libelleStatutExecution } from "@/lib/format";
+import {
+  formatCout,
+  libelleCause,
+  libelleStatutExecution,
+  MENTION_COUT_NON_TARIFE,
+  MENTION_COUT_PARTIEL,
+  RAISON_COUT_PARTIEL,
+} from "@/lib/format";
 import { entreeParLibelle, hrefRun, PAGE_DU_FIL } from "@/lib/navigation";
 import {
   CAUSE_ANNULATION,
@@ -300,6 +307,36 @@ describe("la carte d'un run — la même sur les trois écrans", () => {
       </ul>,
     );
     expect(screen.queryByText(/Reprise de/)).not.toBeInTheDocument();
+  });
+
+  it("dit que son coût n'est qu'un plancher, et pourquoi, sans toucher au montant (#1280)", () => {
+    // Le run réel de la relecture : 0,21 $ tarifés, 130 079 tokens sans prix.
+    // Le montant reste ce qui a été tarifé — Maestro n'invente aucun prix — et
+    // l'état est nommé en mots, collé au montant (variante B retenue).
+    carte(runFactice({ statut: EXECUTION_ECHEC, cout_usd: 0.2051, cout_partiel: true }));
+
+    const montant = screen.getByText(new RegExp(MENTION_COUT_PARTIEL));
+    expect(montant).toHaveTextContent("0,21");
+    // La raison est atteignable au clavier, pas seulement au survol.
+    expect(montant).toHaveAccessibleDescription(RAISON_COUT_PARTIEL);
+  });
+
+  it("dit « coût non tarifé » plutôt que « — » quand rien n'a de prix (#1280)", () => {
+    // « — » dit « rien n'a été rapporté » ; ici des tokens l'ont été, sans prix.
+    carte(runFactice({ cout_usd: null, cout_partiel: true }));
+
+    expect(screen.getByText(MENTION_COUT_NON_TARIFE)).toBeInTheDocument();
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
+  });
+
+  it("rend un coût complet exactement comme avant (#1280)", () => {
+    carte(runFactice({ cout_usd: 0.2051, cout_partiel: false }));
+
+    expect(screen.queryByText(new RegExp(MENTION_COUT_PARTIEL))).not.toBeInTheDocument();
+    // Le montant nu, sans infobulle : exactement le rendu d'avant.
+    const montant = screen.getByText(/0,21/);
+    expect(montant).toHaveTextContent(formatCout(0.2051).replace(/\s/gu, " "));
+    expect(montant).not.toHaveAttribute("aria-describedby");
   });
 
   it("teinte le fond d'un run qui attend, et lui seul", () => {

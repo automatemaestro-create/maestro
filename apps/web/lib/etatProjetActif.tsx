@@ -17,6 +17,12 @@
  * actif, pas de Control Tower — `components/Shell`). Le lot 4 (#280) exposera ce
  * même contexte dans un sélecteur et le lot 5 (#281) le consommera écran par
  * écran ; tous deux passent par `useProjetActif`.
+ *
+ * Depuis #1293 (docs/43 §2.1), deux projets se distinguent ici, qui étaient le
+ * même : le **dernier** — retenu d'une visite à l'autre, confirmé par la liste,
+ * ce que la porte propose de reprendre — et l'**actif**, celui où cette session
+ * est entrée. Au démarrage, le premier existe et le second pas encore : c'est ce
+ * qui fait arriver chaque démarrage sur le choix du projet.
  */
 
 import {
@@ -31,13 +37,25 @@ import { chargerProjets, panneDe, type PanneApi } from "@/lib/api";
 import {
   ecouterProjetActif,
   ecrireProjetActifId,
+  lireEntreeDeSession,
   lireProjetActifId,
+  marquerEntreeDeSession,
 } from "@/lib/projetActif";
 import type { Projet, RefusProjet } from "@/lib/types";
 
 export type ProjetActif = {
-  /** Le projet actif — `null` tant qu'aucun choix confirmé ne tient. */
+  /**
+   * Le projet actif — celui où **cette session** est entrée. `null` tant qu'elle
+   * n'a pas choisi, même quand un dernier projet est retenu (#1293) : c'est ce
+   * qui tient la porte d'entrée devant chaque démarrage.
+   */
   projet: Projet | null;
+  /**
+   * Le dernier projet ouvert, retenu d'une visite à l'autre et **confirmé par la
+   * liste** — ce que la porte propose de reprendre (#1293). `null` sans mémoire,
+   * ou quand il a disparu : `perdu` dit alors pourquoi.
+   */
+  dernier: Projet | null;
   /** Les projets déclarés, tels que la dernière lecture les a rendus. */
   projets: Projet[];
   /**
@@ -69,6 +87,9 @@ export function FournisseurProjetActif({
 }) {
   const [projets, setProjets] = useState<Projet[]>([]);
   const [idActif, setIdActif] = useState<string | null>(null);
+  // Faux au rendu serveur comme au premier rendu client : la session se lit dans
+  // le même tick que l'identifiant retenu, pour la même raison (hydratation).
+  const [entree, setEntree] = useState(false);
   const [pret, setPret] = useState(false);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<PanneApi | null>(null);
@@ -112,6 +133,7 @@ export function FournisseurProjetActif({
     // autre onglet.
     const tick = setTimeout(() => {
       setIdActif(lireProjetActifId());
+      setEntree(lireEntreeDeSession());
       void recharger();
     }, 0);
     const detacher = ecouterProjetActif(setIdActif);
@@ -129,6 +151,10 @@ export function FournisseurProjetActif({
       liste.some((connu) => connu.id === projet.id) ? liste : [...liste, projet],
     );
     setPerdu(null);
+    // Choisir, c'est entrer (#1293) : depuis la porte comme depuis le sélecteur,
+    // où la session l'est déjà et où le marquer de nouveau ne change rien.
+    marquerEntreeDeSession();
+    setEntree(true);
     // Le stockage tranche : on écrit, l'abonnement ci-dessus met l'état à jour —
     // ici comme depuis le sélecteur du lot 4, un seul chemin de bascule.
     ecrireProjetActifId(projet.id);
@@ -141,12 +167,16 @@ export function FournisseurProjetActif({
 
   // Dérivé, et non recopié : l'identifiant mémorisé n'est un projet que si la
   // liste le confirme. Rien d'autre ne peut le rendre valide.
-  const projet = projets.find((connu) => connu.id === idActif) ?? null;
+  const dernier = projets.find((connu) => connu.id === idActif) ?? null;
+  // Et il n'est **ouvert** que si cette session est entrée (#1293) : un projet
+  // retenu se propose au démarrage, il ne s'impose plus.
+  const projet = entree ? dernier : null;
 
   return (
     <ContexteProjetActif
       value={{
         projet,
+        dernier,
         projets,
         pret,
         chargement,

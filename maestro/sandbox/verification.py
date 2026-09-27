@@ -64,8 +64,9 @@ parents Windows, parce que l'émulation de `fork`/`exec` de MSYS en rompt la
 filiation ; ils survivaient à l'arrêt et tenaient la sortie ouverte. La commande
 naît donc **suspendue**, est placée dans un **Job Object** avant son premier
 instant de vie, puis relâchée : tout ce qu'elle lancera y naît aussi, et c'est le
-job qu'on termine (`_Arbre`). Sous POSIX, le groupe de processus fait la même chose
-(`start_new_session`, puis `killpg`).
+job qu'on termine. Sous POSIX, le groupe de processus fait la même chose
+(`start_new_session`, puis `killpg`). La mécanique vit dans `maestro.sandbox.arbre`
+depuis #1279 : le confinement de la session d'un agent en a besoin telle quelle.
 
 **On attend le processus, pas la fin de sa sortie.** Un `dotnet build` laisse un
 serveur de compilation, un `gradle` son démon : ils héritent de la sortie et la
@@ -84,7 +85,6 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -97,6 +97,7 @@ from pathlib import Path
 from typing import IO
 
 from maestro.fichiers import retirer_arbre
+from maestro.sandbox.arbre import Arbre
 from maestro.sandbox.ramassage import marquer, racine_des_espaces
 
 #: Le préfixe d'une copie de vérification — sous le préfixe commun des espaces de
@@ -302,8 +303,8 @@ def jouer(
     un verdict.
     """
     debut = time.monotonic()
-    arbre = _Arbre.lancer(
-        [*interprete, commande], cwd, env={**os.environ, **ENVIRONNEMENT_AJOUTE}
+    arbre = Arbre.lancer(
+        [*interprete, commande], cwd=cwd, env={**os.environ, **ENVIRONNEMENT_AJOUTE}
     )
     tampon = bytearray()
     assert arbre.process.stdout is not None
@@ -354,204 +355,3 @@ def _fin(texte: str, caracteres: int) -> str:
     if len(propre) <= caracteres:
         return propre
     return "…" + propre[-(caracteres - 1) :]
-
-
-class _Arbre:
-    """La commande et tout ce qu'elle lancera — de quoi l'arrêter d'un seul geste.
-
-    Sous POSIX, le **groupe** de processus dont elle est le chef
-    (`start_new_session`) ; sous Windows, un **Job Object** où elle naît suspendue
-    (voir l'en-tête du module). Le job est créé « tué à la fermeture » : si ce
-    process mourait avant d'arrêter la commande, fermer sa poignée — ce que le
-    système fait alors pour lui — emporterait encore l'arbre.
-    """
-
-    def __init__(self, process: subprocess.Popen[bytes], job: int | None) -> None:
-        self.process = process
-        self._job = job
-
-    @classmethod
-    def lancer(cls, argv: Sequence[str], cwd: Path, *, env: dict[str, str]) -> _Arbre:
-        """Lance `argv` dans `cwd`, sortie en tube, déjà rangé dans son arbre."""
-        if sys.platform != "win32":
-            process = subprocess.Popen(  # noqa: S603 - argv construit ici
-                list(argv),
-                cwd=cwd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                start_new_session=True,
-            )
-            return cls(process, None)
-        else:
-            # Le `else` explicite : mypy n'écarte une branche de plateforme que dans
-            # un `if`/`else`, jamais après un `return` — sous Linux, ces noms n'existent pas.
-            process = subprocess.Popen(  # noqa: S603 - argv construit ici
-                list(argv),
-                cwd=cwd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                creationflags=(
-                    subprocess.CREATE_NO_WINDOW
-                    | subprocess.CREATE_NEW_PROCESS_GROUP
-                    | _CREATE_SUSPENDED
-                ),
-            )
-            try:
-                job = _ranger_puis_reprendre(process.pid)
-            except OSError:
-                # Une commande qu'on ne peut pas relâcher ne rendrait jamais la main :
-                # elle est arrêtée tout de suite, et l'appelant en fait un verdict.
-                process.kill()
-                process.wait()
-                raise
-            return cls(process, job)
-
-    def arreter(self) -> None:
-        """Arrête la commande **et sa descendance** — jamais elle seule (#291)."""
-        if sys.platform != "win32":
-            try:
-                os.killpg(self.process.pid, signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                pass
-            return
-        else:
-            if self._job is not None and _terminer_job(self._job):
-                return
-            # Sans job (refusé par le système) : l'arbre des parents, faute de mieux.
-            subprocess.run(  # noqa: S603 - argv fixe, aucun shell
-                ["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-
-    def fermer(self) -> None:
-        """Rend la poignée du job et le tube de sortie — ce qui vit encore meurt avec."""
-        if self.process.stdout is not None:
-            self.process.stdout.close()
-        if sys.platform == "win32" and self._job is not None:
-            _fermer_poignee(self._job)
-            self._job = None
-
-
-#: `CREATE_SUSPENDED` : la commande naît sans avoir exécuté une instruction, le
-#: temps d'être rangée dans son job.
-_CREATE_SUSPENDED = 0x00000004
-
-if sys.platform == "win32":
-    import ctypes
-    from ctypes import wintypes
-
-    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _ntdll = ctypes.WinDLL("ntdll")
-
-    #: `JobObjectExtendedLimitInformation` et `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
-    _INFO_LIMITES_ETENDUES = 9
-    _TUER_A_LA_FERMETURE = 0x00002000
-
-    #: Les droits qu'il faut sur la commande : la ranger dans un job
-    #: (`PROCESS_SET_QUOTA | PROCESS_TERMINATE`), puis la relâcher
-    #: (`PROCESS_SUSPEND_RESUME`).
-    _DROITS = 0x0100 | 0x0001 | 0x0800
-
-    class _CompteursIo(ctypes.Structure):
-        _fields_ = [
-            (nom, ctypes.c_ulonglong)
-            for nom in (
-                "ReadOperationCount",
-                "WriteOperationCount",
-                "OtherOperationCount",
-                "ReadTransferCount",
-                "WriteTransferCount",
-                "OtherTransferCount",
-            )
-        ]
-
-    class _LimitesDeBase(ctypes.Structure):
-        _fields_ = [
-            ("PerProcessUserTimeLimit", ctypes.c_longlong),
-            ("PerJobUserTimeLimit", ctypes.c_longlong),
-            ("LimitFlags", wintypes.DWORD),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", wintypes.DWORD),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", wintypes.DWORD),
-            ("SchedulingClass", wintypes.DWORD),
-        ]
-
-    class _LimitesEtendues(ctypes.Structure):
-        _fields_ = [
-            ("BasicLimitInformation", _LimitesDeBase),
-            ("IoInfo", _CompteursIo),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
-    _kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
-    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
-    _kernel32.SetInformationJobObject.argtypes = (
-        wintypes.HANDLE,
-        ctypes.c_int,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-    )
-    _kernel32.SetInformationJobObject.restype = wintypes.BOOL
-    _kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
-    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-    _kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
-    _kernel32.TerminateJobObject.restype = wintypes.BOOL
-    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    _kernel32.CloseHandle.restype = wintypes.BOOL
-    _kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-    _kernel32.OpenProcess.restype = wintypes.HANDLE
-    _ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
-    _ntdll.NtResumeProcess.restype = ctypes.c_long
-
-    def _ranger_puis_reprendre(pid: int) -> int | None:
-        """Range la commande suspendue `pid` dans un job, puis la relâche — rend le job.
-
-        Rend `None` si le système refuse le job (l'arrêt retombera alors sur
-        `taskkill /T`) ; lève `OSError` si la commande ne peut pas être relâchée,
-        seul cas où elle ne rendrait jamais la main.
-        """
-        processus = _kernel32.OpenProcess(_DROITS, False, pid)
-        if not processus:
-            raise OSError(ctypes.get_last_error(), "la commande n'a pas pu être relâchée")
-        try:
-            job = _job_pour(processus)
-            if _ntdll.NtResumeProcess(processus) != 0:
-                if job is not None:
-                    _kernel32.CloseHandle(job)
-                raise OSError("la commande n'a pas pu être relâchée")
-            return job
-        finally:
-            _kernel32.CloseHandle(processus)
-
-    def _job_pour(processus: int) -> int | None:
-        """Un job « tué à la fermeture » où `processus` est rangé — `None` si refusé."""
-        job = _kernel32.CreateJobObjectW(None, None)
-        if not job:
-            return None
-        limites = _LimitesEtendues()
-        limites.BasicLimitInformation.LimitFlags = _TUER_A_LA_FERMETURE
-        pose = _kernel32.SetInformationJobObject(
-            job, _INFO_LIMITES_ETENDUES, ctypes.byref(limites), ctypes.sizeof(limites)
-        )
-        if not pose or not _kernel32.AssignProcessToJobObject(job, processus):
-            _kernel32.CloseHandle(job)
-            return None
-        return int(job)
-
-    def _terminer_job(job: int) -> bool:
-        """Termine tout ce que le job porte — vrai si le système l'a fait."""
-        return bool(_kernel32.TerminateJobObject(job, 1))
-
-    def _fermer_poignee(job: int) -> None:
-        _kernel32.CloseHandle(job)

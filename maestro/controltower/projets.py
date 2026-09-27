@@ -435,6 +435,15 @@ class ServiceProjets:
         self._lire(id_)  # 404/422 avant toute écriture.
         return self._fiche(self._store.reporter_outillage(id_))
 
+    def reprendre_outillage(self, id_: str) -> dict[str, Any]:
+        """Lève le « plus tard » d'un outillage repris dans la conversation (#1161).
+
+        Le pendant de `reporter_outillage`, appelé quand l'outillage d'un projet
+        s'ouvre pour lui : la fiche cesse de dire « reporté ». Idempotente.
+        """
+        self._lire(id_)
+        return self._fiche(self._store.reprendre_outillage(id_))
+
     # --- Explorateur de dossiers -----------------------------------------
 
     def racines(self) -> tuple[Path, ...]:

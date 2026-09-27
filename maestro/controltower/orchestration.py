@@ -459,6 +459,29 @@ Le prix est écrit : un appel modèle court par geste. Il ne retarde rien de ce
 que le geste décide — le run part, l'équipe est créée **avant** que le modèle
 n'écrive —, et un modèle muet ne défait aucun geste.
 
+## Ce que Maestro fera, il le lit aussi (#1323)
+
+Le fil savait ce que le projet contient et ce que ses runs ont fait ; il ne
+savait pas ce que **Maestro** ferait du suivant. Au bouclage du 2026-09-25 il a
+donc comblé, deux fois sur deux : « le run vous demandera votre accord avant de
+commencer » (S3, aucun accord demandé), puis la borne d'un run passé prise pour
+un réglage qui dure (P8, « ce nouveau run a toutes les chances de s'arrêter
+pareil »). Deux faits manquaient, et ils sont désormais **lus** :
+
+- **ce qu'un run fera** (`RegimeDuProjet`, `maestro.controltower.regime`) — le
+  cadrage, les actes de chaque agent selon la politique que l'exécution relira,
+  l'acte que l'objectif accorde, ce qui revient à la personne et ce qui ne se
+  prévoit pas, la règle des bornes. Il entre dans le prompt du juge et dans les
+  faits des deux gestes qui mettent un run devant la personne (lancement, équipe
+  créée) ;
+- **les bornes de chaque run** — portées par l'événement de lancement
+  (`Event.bornes`), gardées par la projection, dites dans la fiche du run
+  (`bornes_du_run`) et dans les faits d'un lancement.
+
+Le cadre dit la règle qu'on en tire — s'appuyer sur ces faits, avouer ce qu'ils
+ne disent pas, tenir une borne pour celle de son run — et rien d'autre : aucune
+phrase interdite, aucun lexique (#1169). Ce qu'il en dit reste son jugement.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -514,7 +537,10 @@ from maestro.controltower.causes import (
     cause_lisible,
 )
 from maestro.controltower.chat import (
+    DECISION_ECRIRE,
+    DECISION_PLUS_TARD,
     ORIGINE_EXISTANT,
+    PIECE_ECARTEE,
     UTILISATEUR,
     DemandeProjet,
     DemandeRecrutement,
@@ -523,10 +549,13 @@ from maestro.controltower.chat import (
     Etapeur,
     Incrementeur,
     MessageChat,
+    PieceProposee,
     ProjetCree,
     Redaction,
     RepondeurChat,
     ReponseChat,
+    piece_en_attente,
+    projet_du_fil,
     projet_en_attente,
     transcription,
 )
@@ -547,6 +576,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.naissance import NaissanceRefusee, ServiceNaissance
 from maestro.controltower.outillage import ComprehensionModele, ConducteurOutillage
+from maestro.controltower.pieces import ServicePieces
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 
 # Les statuts de tâche viennent de leurs **deux** définitions, comme partout
@@ -560,6 +590,7 @@ from maestro.controltower.progression import (
     STATUT_EN_ATTENTE_VALIDATION,
     STATUT_PRETE,
 )
+from maestro.controltower.regime import bornes_du_run
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -611,11 +642,19 @@ VERDICT_ECHANGE = "echange"
 #: un run (`RepondeurOrchestration.declarer_projet`).
 VERDICT_PROJET = "projet"
 
+#: Le cinquième verdict (#1161) : la personne parle de l'**outillage** du projet — elle
+#: demande de l'outiller, de le reprendre, ou elle le corrige avec ses mots (« nos
+#: tests tournent avec `dotnet test` »). Il n'écrit rien : la correction est comprise,
+#: la pièce qu'elle touche revient **revérifiée**, et c'est un geste qui l'écrit.
+VERDICT_OUTILLAGE = "outillage"
+
 #: Les seuls verdicts admis. Tout autre mot — comme toute réponse hors contrat —
 #: retombe sur `VERDICT_ECHANGE` : la liste est **blanche**, jamais noire, parce
 #: qu'on ne maîtrise pas ce qu'un modèle peut écrire dans ce champ et qu'un mot
 #: inattendu ne doit jamais pouvoir valoir un accord.
-VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE, VERDICT_PROJET})
+VERDICTS = frozenset(
+    {VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE, VERDICT_PROJET, VERDICT_OUTILLAGE}
+)
 
 #: Le **marqueur de fin** : ce qui sépare la réponse affichée de la décision
 #: machine (#1222). Tout ce qui le précède est du texte pour l'utilisateur, tout
@@ -670,7 +709,7 @@ qu'il lit.
 
 Puis termine par une DERNIÈRE LIGNE, et une seule, de cette forme exacte :
 
-%%MAESTRO%% {"verdict": "proposition|accord|echange|projet", "objectif": "..."}
+%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage", "objectif": "..."}
 
 Cette ligne n'est jamais affichée : elle dit à l'interface quoi faire de ce que
 tu viens d'écrire. Elle vient en dernier, après le dernier mot de ta réponse, et
@@ -698,10 +737,22 @@ Le verdict :
   fichiers de log", "renomme src en app", "déplace les images dans assets").
   Sois large : un run proposé de trop coûte un "non", une demande légitime non
   reconnue coûte à l'utilisateur de se reformuler sans savoir pourquoi.
+- "outillage" — la personne parle de l'OUTILLAGE du projet : ce que Maestro écrit
+  dans le projet pour ses agents (AGENTS.md, les skills, les commandes qui
+  installent, construisent, testent, lancent). Elle demande de l'outiller ou de
+  reprendre son outillage ("outille ce projet", "écris son AGENTS.md"), ou elle le
+  CORRIGE avec ses mots ("nos tests tournent avec dotnet test", "on utilise pnpm,
+  pas npm", "pas de CI pour l'instant"). Quand une pièce d'outillage est proposée
+  sur la carte juste avant, ce qui la corrige est un "outillage" — jamais une
+  proposition de run —, et une demande d'y CHANGER quelque chose sans dire quoi
+  ("change le truc", "modifie ça") aussi : la correction dira ce qu'elle n'a pas
+  compris, sans rien écrire.
 - "accord" — le dernier message approuve une proposition que TU viens de faire
-  dans ce fil — un run ou un projet ("oui", "vas-y", "ok lance", "crée-le").
-  Sans proposition juste avant, ce n'est jamais un accord — et dans le doute non
-  plus.
+  dans ce fil — un run, un projet ou une pièce d'outillage ("oui", "vas-y", "ok
+  lance", "crée-le", "écris-la"). Sans proposition juste avant, ce n'est jamais un
+  accord — et dans le doute non plus. Une demande de changement, même vague,
+  n'approuve rien : un accord écrit dans le projet de la personne, il doit être
+  sans équivoque.
 - "echange" — tout le reste : question sur l'outil ou sur le travail, demande
   d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
   pas.
@@ -758,7 +809,14 @@ La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les tâches
 apparaîtront ». L'identifiant du run et ce qu'il a ouvert s'affichent d'eux-mêmes
 sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur un "accord"
-qui approuve un projet, il dit que tu le déclares, rien de plus. Sur "projet", il
+qui approuve un projet, il dit que tu le déclares, rien de plus ; qui approuve une
+pièce d'outillage, il dit que tu l'écris, rien de plus. Sur "outillage", il redit
+en une phrase ce que la personne demande, avec ses mots et sans rien y deviner : tu
+parles avant la correction, et c'est elle qui dit juste en dessous ce qui en sort —
+la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la question
+qui en découle. Ne demande aucune précision, et ne dis jamais que c'est écrit ni
+que la commande marche : rien n'est écrit sans l'accord de la personne. Sur
+"projet", il
 dit en une ou deux phrases ce que tu as compris du projet, puis que ta
 proposition est juste en dessous, à accepter ou à corriger en quelques mots : ne
 la recopie pas champ par champ, la carte les montre. Sur "echange", il répond —
@@ -778,6 +836,16 @@ Git s'il est là, les projets déjà déclarés et le projet de cette fenêtre. 
 avec eux que tu proposes un projet — un dossier encore libre, un nom qu'aucun
 projet ne porte — et qu'un projet déjà déclaré se reconnaît au lieu de se
 proposer une seconde fois.
+
+Tu reçois aussi CE QU'UN RUN FERA : comment il démarre, ce que la politique de
+chaque agent de l'équipe laisse passer sans personne et ce qu'elle renvoie à
+l'utilisateur, l'acte que l'objectif accepté couvre, et les bornes. C'est ce que
+Maestro applique réellement. Tout ce que tu dis de la suite d'un run — ce qui
+passera sans l'utilisateur, ce qui lui reviendra, ce qui l'arrêtera — s'appuie
+sur ces faits ; ce qu'ils ne disent pas, tu ne le sais pas, et tu le dis plutôt
+que d'inventer une règle. Une borne appartient au run qui l'a reçue à son
+accord : un run passé arrêté sur sa borne n'annonce rien du suivant, dont les
+bornes sont celles que la carte de ta proposition posera.
 
 Cette lecture est BORNÉE : seulement les runs les plus récents, un nombre limité
 de tâches, des détails tronqués, et elle le signale quand elle coupe. Ce qui n'y
@@ -813,9 +881,9 @@ Tu prépares la réponse de l'orchestrateur de Maestro. Tu ne réponds PAS à
 l'utilisateur : tu décides ce qu'il faut LIRE pour pouvoir lui répondre avec des
 faits plutôt qu'avec des généralités.
 
-On te donne l'état de l'orchestration, l'équipe du projet, ce qui attend un
-arbitrage, les runs récents et la conversation. Tout cela, tu l'as déjà : ne le
-redemande pas.
+On te donne l'état de l'orchestration, l'équipe du projet, ce qu'un run y fera,
+ce qui attend un arbitrage, les runs récents et la conversation. Tout cela, tu
+l'as déjà : ne le redemande pas.
 
 """
     + catalogue()
@@ -937,6 +1005,9 @@ en clair, bref — une à trois phrases —, sans JSON, sans balise, sans titre.
 
 - Parle depuis ces faits et depuis eux seuls : n'invente ni identifiant, ni
   nombre, ni suite qui n'y soit pas, et ne dis jamais fait ce qui ne l'est pas.
+- Ce qui passera sans lui, ce qui lui reviendra et ce qui arrêtera le run ne se
+  disent que depuis les faits qui le décrivent (« Ce qu'un run fera », les bornes
+  de ce run) ; ce qu'ils ne disent pas, tu ne le sais pas.
 - Ce que les faits disent affiché sous ton message (une carte, une équipe, un
   run) s'y lit déjà : ne le recopie pas, dis ce que cela change pour lui et ce
   qu'il peut faire ensuite.
@@ -969,6 +1040,21 @@ _PHRASE_PROPOSITION_REFUSEE = (
 _PHRASE_DECLARATION_EMPECHEE = (
     "Je n'ai créé aucun projet : {cause}. La proposition est reposée ci-dessous : "
     "corrigez-la en quelques mots, ou acceptez-la à nouveau."
+)
+
+#: Les **empêchements** de l'outillage dans la conversation (#1161) — même règle que
+#: ceux de la naissance : rien ne s'est fait, et seul ce code le sait.
+_PHRASE_SANS_OUTILLAGE = (
+    "Aucune écriture d'outillage n'est branchée sur ce fil : je peux en parler, pas "
+    "l'écrire."
+)
+_PHRASE_SANS_PROJET_A_OUTILLER = (
+    "Je ne sais pas quel projet outiller : ouvrez-en un, ou dites-moi lequel."
+)
+_PHRASE_OUTILLAGE_EMPECHE = "Je n'ai rien changé à l'outillage : {cause}. Rien n'a été écrit."
+_PHRASE_PIECE_EN_ECHEC = (
+    "Cette version de {chemin} ne s'écrit pas : {echec} Dites-moi la bonne commande, "
+    "ou passez cette pièce."
 )
 
 
@@ -1207,19 +1293,24 @@ def _faits_du_refus(objectif: str) -> str:
     )
 
 
-def _faits_du_lancement(objectif: str) -> str:
+def _faits_du_lancement(objectif: str, bornes: BornesRun = AUCUNE_BORNE) -> str:
     """Le run proposé a été accepté d'un geste — et il est ouvert.
 
     Ce qu'un run fait **d'abord** est dit en toutes lettres : sans lui, le modèle
     comblait — « le développeur a commencé à rédiger le fichier », écrit sur le
     réel (passage du banc du 2026-09-24) alors que le run cadrait encore.
+
+    Ses **bornes** aussi (#1323), celles que le geste vient de poser, « aucune »
+    comprise : ce sont celles de ce run-là, et le modèle n'a plus à les déduire
+    d'un run passé.
     """
     return (
         f"L'utilisateur a accepté, d'un geste, de lancer le run sur : « {objectif} ». "
         "Le run est ouvert : il commence par cadrer le travail et le découper en "
         "tâches, que l'équipe prendra ensuite — rien n'est encore écrit dans le "
         "projet. Son identifiant et son avancement s'affichent d'eux-mêmes juste "
-        "sous ton message."
+        "sous ton message. Les bornes de ce run, posées sur la carte au moment "
+        f"d'accepter : {bornes.en_phrase()}."
     )
 
 
@@ -1299,15 +1390,45 @@ def _faits_d_un_projet_refuse(demande: DemandeProjet) -> str:
     )
 
 
+def _faits_de_l_outillage(ouverture: ReponseChat | None, empechement: str) -> str:
+    """Ce que l'ouverture de l'outillage d'un projet né a produit — en faits (#1161).
+
+    Le modèle en parle ; la carte, elle, porte la question ou la pièce. Rien quand
+    aucune écriture d'outillage n'est branchée : il n'y a alors rien à en dire.
+    """
+    if empechement:
+        return (
+            f"Son outillage n'a pas pu commencer ({empechement}) : il se reprendra quand "
+            "l'utilisateur le demandera dans cette conversation. Rien n'a été écrit."
+        )
+    if ouverture is None:
+        return ""
+    if ouverture.piece is not None:
+        return (
+            "Son outillage commence, pièce par pièce : la première, "
+            f"{ouverture.piece.chemin}, est proposée sur la carte sous ton message, avec "
+            "ce qu'elle changera dans le projet et le verdict de ses commandes, jouées "
+            "avant. Rien n'est écrit sans son accord, et il peut la corriger avec ses mots."
+        )
+    if ouverture.question is not None:
+        return (
+            "Son outillage commence par une question, posée sur la carte sous ton "
+            f"message : « {ouverture.question.intitule} ». Chaque pièce lui sera ensuite "
+            "proposée, et écrite sur son accord."
+        )
+    return "Son outillage est déjà à jour : il n'y a rien à y écrire."
+
+
 def _faits_d_un_projet_declare(
-    cree: ProjetCree, *, compris: str, mis_sous_git: bool = False
+    cree: ProjetCree, *, compris: str, mis_sous_git: bool = False, outillage: str = ""
 ) -> str:
     """Le projet accepté est déclaré — et, importé, il a été lu (#1294, #1158).
 
-    La suite est dite telle qu'elle est **aujourd'hui** : le projet n'a ni
-    outillage ni équipe, et c'est à la première demande de travail que l'équipe se
-    propose (#1146). Promettre une étape qui n'existe pas encore serait écrire sur
-    le réel ce que le produit ne fait pas.
+    La suite est dite telle qu'elle est **aujourd'hui** : le projet n'a pas
+    d'équipe, et c'est à la première demande de travail qu'elle se propose (#1146).
+    Promettre une étape qui n'existe pas encore serait écrire sur le réel ce que le
+    produit ne fait pas. Son **outillage**, lui, commence dans la même conversation
+    (#1161) : `outillage` dit ce qui en est proposé (`_faits_de_l_outillage`).
 
     `mis_sous_git` dit que **cette** déclaration a versionné le dossier. Pour un
     dossier importé, c'est la seule écriture, et elle se dit : la vraie stack a
@@ -1343,8 +1464,13 @@ def _faits_d_un_projet_declare(
             "C'est désormais le projet ouvert, et cette conversation continue avec lui ; "
             "sa fiche s'affiche juste sous ton message.",
             lu,
-            "Il n'a encore ni outillage ni équipe : c'est en disant ce qu'il veut faire "
-            "en premier que l'équipe lui sera proposée.",
+            (
+                f"{outillage} Il n'a pas encore d'équipe : c'est en disant ce qu'il veut "
+                "faire en premier qu'elle lui sera proposée."
+                if outillage
+                else "Il n'a encore ni outillage ni équipe : c'est en disant ce qu'il veut "
+                "faire en premier que l'équipe lui sera proposée."
+            ),
         )
         if morceau
     )
@@ -1552,6 +1678,10 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     cause = libelle_cause(execution.cause)
     if cause:
         lignes.append(f"  cause : {cause}")
+    # Les bornes que **ce** run a reçues (#1323), juste avant l'issue qu'elles
+    # expliquent parfois : sans elles, un arrêt sur « plafond de 1 » se lisait
+    # comme un réglage qui dure, et le fil prédisait le même arrêt au run suivant.
+    lignes.append(f"  {bornes_du_run(execution.bornes)}")
     issue = _borne(_issue_du_run(execution))
     if issue:
         lignes.append(f"  issue : {issue}")
@@ -1727,6 +1857,7 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
         cause = libelle_cause(execution.cause)
         if cause:
             lignes.append(f"cause : {cause}")
+        lignes.append(bornes_du_run(execution.bornes))
         issue = _issue_du_run(execution)
         if issue:
             lignes.append(f"issue : {issue}")
@@ -1776,6 +1907,15 @@ EquipeDuFil = Callable[[str | None], str]
 #: demandé. Rend `""` quand rien n'attend — le bloc disparaît plutôt que
 #: d'annoncer un vide que l'aperçu dit déjà.
 AttentesEnCours = Callable[[str | None], str]
+
+#: Ce qu'un run du projet `projet_id` **fera** (#1323) — ce qui passera sans
+#: personne, ce qui reviendra à la personne, ce qui l'arrêtera —, lu dans ce que
+#: Maestro applique : la politique de chaque agent de l'équipe, le régime de brief
+#: du lanceur, la règle des bornes (`maestro.controltower.regime`). Distinct de
+#: `EquipeDuFil`, qui dit **qui** travaille : celui-ci dit ce que le travail
+#: demandera. Sans lui, le modèle devinait — un accord qu'aucun run ne demande,
+#: une borne passée prise pour un réglage.
+RegimeDuProjet = Callable[[str | None], str]
 
 #: Combien d'attentes le fil raconte, et sur quelle longueur. Mêmes raisons que
 #: les bornes des runs (#1157), et elles se **disent** de la même façon.
@@ -2000,6 +2140,30 @@ def _projet_approuve(fil: Sequence[MessageChat]) -> DemandeProjet | None:
     return attente.projet_propose if attente is not None else None
 
 
+def _piece_approuvee(fil: Sequence[MessageChat]) -> PieceProposee | None:
+    """La pièce d'outillage qu'un « oui » **tapé** approuve — `None` sinon (#1161).
+
+    La règle de `_projet_approuve`, sur l'autre carte : le dernier message est de la
+    personne, et celui d'avant portait une pièce que rien d'autre n'a suivie. C'est ce
+    qui fait écrire ce que la carte montrait, et jamais ce qu'un modèle aurait compris.
+    """
+    if len(fil) < 2 or fil[-1].auteur != UTILISATEUR:
+        return None
+    attente = piece_en_attente(fil[:-1])
+    return attente.piece if attente is not None else None
+
+
+def _demandes_de(ouverture: ReponseChat | None) -> dict[str, Any]:
+    """Ce que l'ouverture de l'outillage **demande**, à reporter sur la réponse qui la porte."""
+    if ouverture is None:
+        return {}
+    return {
+        "question": ouverture.question,
+        "piece": ouverture.piece,
+        "comprehension": ouverture.comprehension,
+    }
+
+
 def _avec_etapes(reponse: ReponseChat, etapes: tuple[EtapeFil, ...]) -> ReponseChat:
     """La même réponse, portant les étapes du tour — sans toucher au reste.
 
@@ -2031,6 +2195,12 @@ class _Contexte:
     `projets` (#1294) est le sixième : les projets du poste (répertoire des projets,
     Git, projets déclarés, projet de la fenêtre), ce que le modèle doit savoir
     pour proposer un projet sans inventer ni reprendre un nom ou un dossier.
+
+    `regime` (#1323) est le septième : ce qu'un run de ce projet **fera** —
+    cadrage, actes de chaque agent selon sa politique, acte accordé par
+    l'objectif, bornes. C'est ce que le modèle devinait quand il annonçait un
+    accord que le run ne demanderait pas, ou prédisait l'arrêt d'un run sur la
+    borne d'un autre.
     """
 
     etat: str = ""
@@ -2039,6 +2209,7 @@ class _Contexte:
     faits: str = ""
     recrutement: str = ""
     projets: str = ""
+    regime: str = ""
 
 
 class _LectureDuFlux:
@@ -2190,6 +2361,9 @@ def _prompt(
     d'aller chercher, #1223). Les quatre premiers sont sus, le dernier est allé
     se chercher : il vient donc en dernier, au plus près de la conversation qu'il
     sert.
+
+    Le **régime** d'un run (#1323) suit l'équipe : après qui travaille, ce que
+    le travail demandera — qui en passe par une personne, et ce qui l'arrête.
     """
     entete = [
         bloc
@@ -2200,6 +2374,7 @@ def _prompt(
             contexte.projets,
             contexte.equipe,
             contexte.recrutement,
+            contexte.regime,
             contexte.attentes,
             contexte.faits,
             lectures,
@@ -2250,6 +2425,17 @@ class RepondeurOrchestration(RepondeurChat):
     les faits du poste que le modèle reçoit, la vérification de ce qu'il propose,
     puis la déclaration sur accord. Sans elle, le verdict `projet` ne montre aucune
     carte et le fil dit qu'il ne peut pas déclarer de projet.
+
+    `pieces` (#1161) est ce qui **écrit** l'outillage dans la conversation, pièce par
+    pièce : le conducteur du questionnaire le reçoit, et un projet qui naît voit son
+    outillage commencer dans la même réponse. Sans lui, le questionnaire conclut sans
+    rien écrire, et le verdict `outillage` dit qu'il ne peut pas écrire.
+
+    `regime` (#1323) dit ce qu'un run de ce projet **fera** — lu dans la politique
+    de l'équipe et le régime du lanceur, jamais deviné. Il entre dans le prompt
+    du juge et dans les faits des deux gestes qui ouvrent ou reproposent un run
+    (lancement, équipe créée) : ce sont les trois endroits où le fil parle de la
+    suite. Sans lui, le bloc disparaît, et le fil dit ce qu'il disait avant.
     """
 
     def __init__(
@@ -2267,8 +2453,11 @@ class RepondeurOrchestration(RepondeurChat):
         roles: EquipeDuFil | None = None,
         attentes: AttentesEnCours | None = None,
         naissance: ServiceNaissance | None = None,
+        pieces: ServicePieces | None = None,
+        regime: RegimeDuProjet | None = None,
     ) -> None:
         self._naissance = naissance
+        self._regime = regime
         self._lanceur = lanceur
         self._apercu = apercu
         self._faits = faits
@@ -2284,8 +2473,10 @@ class RepondeurOrchestration(RepondeurChat):
         self._modele: str | None = None
         # Le questionnaire comprend par le **même** fournisseur que le fil (#1147) :
         # un fournisseur injecté ici l'est pour les deux, et sans lui chacun résout
-        # celui du poste au premier usage.
-        self._conducteur = conducteur or ConducteurOutillage(ComprehensionModele(provider))
+        # celui du poste au premier usage. Il écrit par les pièces (#1161).
+        self._conducteur = conducteur or ConducteurOutillage(
+            ComprehensionModele(provider), pieces=pieces
+        )
         self._sonde = sonde
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
@@ -2360,6 +2551,16 @@ class RepondeurOrchestration(RepondeurChat):
             # La personne veut commencer un projet (#1294) : la proposition du
             # modèle passe par la vérification avant de devenir une carte.
             return _avec_etapes(await self._proposer_projet(redaction, verdict), etapes)
+        if verdict.nom == VERDICT_OUTILLAGE:
+            # La personne parle de l'outillage (#1161) : l'outiller, le reprendre, le
+            # corriger avec ses mots. La correction est comprise, la pièce qu'elle
+            # touche revient revérifiée — rien ne s'écrit ici.
+            return _avec_etapes(await self._outiller(fil, redaction, projet_id), etapes)
+        piece = _piece_approuvee(fil) if verdict.nom == VERDICT_ACCORD else None
+        if piece is not None:
+            # Un « oui » tapé sur une pièce vaut le clic : il écrit **ce que la carte
+            # montrait**, relu du fil (#1161).
+            return _avec_etapes(await self._ecrire_la_piece(fil, redaction, piece), etapes)
         approuve = _projet_approuve(fil) if verdict.nom == VERDICT_ACCORD else None
         if approuve is not None:
             # Un « oui » tapé sur une carte de projet vaut le clic : il déclare
@@ -2412,7 +2613,21 @@ class RepondeurOrchestration(RepondeurChat):
             if verdict.nom == VERDICT_PROPOSITION and self._lanceur is not None
             else ""
         )
-        return ReponseChat(contenu=redaction.texte, proposition=propose, etapes=etapes)
+        # Un **échange** pendant qu'une pièce d'outillage attend ne la retire pas
+        # (#1161) : une carte ne tient qu'au dernier message, et une question posée
+        # entre-temps — « laquelle voulez-vous changer ? » — ne l'a pas tranchée. Vu sur
+        # la vraie stack : le fil parlait de « la pièce proposée juste en dessous »…
+        # qui n'y était plus. Une nouvelle demande de travail, elle, prend la place ;
+        # l'outillage reprend quand on le demande.
+        attente = piece_en_attente(fil[:-1]) if verdict.nom == VERDICT_ECHANGE else None
+        gardee = attente.piece if attente is not None else None
+        return ReponseChat(
+            contenu=redaction.texte,
+            proposition=propose,
+            piece=gardee,
+            projet_outille=gardee.projet_id if gardee is not None else "",
+            etapes=etapes,
+        )
 
     async def trancher_cadrage(
         self,
@@ -2485,9 +2700,8 @@ class RepondeurOrchestration(RepondeurChat):
         )
         if not lance.run_id:
             return lance
-        return replace(
-            lance, contenu=await self.rediger(agent, fil, faits=_faits_du_lancement(objectif))
-        )
+        faits = self._avec_regime(_faits_du_lancement(objectif, bornes), projet_id)
+        return replace(lance, contenu=await self.rediger(agent, fil, faits=faits))
 
     async def recruter(
         self,
@@ -2559,7 +2773,11 @@ class RepondeurOrchestration(RepondeurChat):
             return ReponseChat(contenu=redaction.texte, recrutement=demande)
         equipe = EquipeRecrutee.du_rapport(rapport, demande.projet_id)
         lancable = self._lanceur is not None
-        faits = _faits_d_une_equipe_creee(demande, equipe, lancable=lancable)
+        # Le régime est lu **après** la création : c'est la politique que l'équipe
+        # vient de recevoir qui dira ce que le run reproposé fera (#1323).
+        faits = self._avec_regime(
+            _faits_d_une_equipe_creee(demande, equipe, lancable=lancable), demande.projet_id
+        )
         # Pendant un run, rien à reproposer : lui rendre son propre objectif
         # ouvrirait un second run sur le même travail — et `trancher_cadrage` n'a
         # aucun moyen de savoir qu'il ferait double emploi. Sans lanceur non plus :
@@ -2589,7 +2807,8 @@ class RepondeurOrchestration(RepondeurChat):
         - **accepté** — le projet est déclaré tel que la carte le montrait, mis
           sous Git si c'était proposé, **lu** s'il est importé (#1158) ; le fait
           voyage sur le message (`projet_cree`), et le modèle parle depuis lui —
-          ce que la lecture a compris compris ;
+          ce que la lecture a compris compris. Son **outillage commence** dans la
+          même réponse (#1161) : la question qui manque, ou la première pièce ;
         - **empêché** — la déclaration refuse (le dossier a disparu, il vient
           d'être déclaré ailleurs…) : rien n'est créé, la cause est dite par ce
           code, seul à le savoir, et la proposition est **reposée** pour qu'on la
@@ -2608,11 +2827,17 @@ class RepondeurOrchestration(RepondeurChat):
                 contenu=_PHRASE_DECLARATION_EMPECHEE.format(cause=echec),
                 projet_propose=demande,
             )
+        ouverture, empechement = await self._ouvrir_outillage(fil, cree)
         faits = _faits_d_un_projet_declare(
-            cree, compris=compris, mis_sous_git=demande.versionner and cree.versionne
+            cree,
+            compris=compris,
+            mis_sous_git=demande.versionner and cree.versionne,
+            outillage=_faits_de_l_outillage(ouverture, empechement),
         )
         return ReponseChat(
-            contenu=await self.rediger(agent, fil, faits=faits), projet_cree=cree
+            contenu=await self.rediger(agent, fil, faits=faits),
+            projet_cree=cree,
+            **_demandes_de(ouverture),
         )
 
     async def _proposer_projet(self, redaction: Redaction, verdict: _Verdict) -> ReponseChat:
@@ -2646,9 +2871,10 @@ class RepondeurOrchestration(RepondeurChat):
 
         Le juge a déjà écrit, en direct, qu'il déclare le projet. Ce qui s'ajoute
         derrière est ce que lui ne pouvait pas savoir : l'empêchement si la
-        déclaration refuse, ou — pour un dossier importé — ce que sa lecture en a
-        compris, rédigé par le modèle sur les faits. Un projet neuf n'a rien à
-        ajouter : sa fiche s'affiche sous le message.
+        déclaration refuse ; pour un dossier importé, ce que sa lecture en a compris ;
+        et le début de l'outillage (#1161) — rédigés par le modèle sur les faits. Un
+        projet neuf sans outillage branché n'a rien à ajouter : sa fiche s'affiche
+        sous le message.
         """
         if self._naissance is None:
             await redaction.ecrire(f" {_PHRASE_SANS_NAISSANCE}")
@@ -2658,12 +2884,130 @@ class RepondeurOrchestration(RepondeurChat):
         except Exception as echec:  # noqa: BLE001 — un refus se raconte, cf. `declarer_projet`
             await redaction.ecrire(f" {_PHRASE_DECLARATION_EMPECHEE.format(cause=echec)}")
             return ReponseChat(contenu=redaction.texte, projet_propose=demande)
-        if compris:
+        ouverture, empechement = await self._ouvrir_outillage(fil, cree)
+        outillage = _faits_de_l_outillage(ouverture, empechement)
+        if compris or outillage:
             faits = _faits_d_un_projet_declare(
-                cree, compris=compris, mis_sous_git=demande.versionner and cree.versionne
+                cree,
+                compris=compris,
+                mis_sous_git=demande.versionner and cree.versionne,
+                outillage=outillage,
             )
             await redaction.ecrire("\n\n" + await self.rediger(agent, fil, faits=faits))
-        return ReponseChat(contenu=redaction.texte, projet_cree=cree)
+        return ReponseChat(
+            contenu=redaction.texte, projet_cree=cree, **_demandes_de(ouverture)
+        )
+
+    async def _ouvrir_outillage(
+        self, fil: Sequence[MessageChat], cree: ProjetCree
+    ) -> tuple[ReponseChat | None, str]:
+        """L'outillage du projet qui vient de naître — ce qu'il demande, ou pourquoi rien (#1161).
+
+        Le **même** conducteur que partout : un dossier neuf se décrit (la question
+        qui manque, comprise de la conversation qui vient de le faire naître), un
+        dossier importé se lit (la première pièce). Rendu **à côté** de l'empêchement
+        plutôt que levé : le projet, lui, est déclaré, et une ouverture qui échoue ne
+        défait pas un geste réussi — elle se dit, et l'outillage se reprend en le
+        demandant. `(None, "")` quand aucune écriture d'outillage n'est branchée.
+        """
+        if not self._conducteur.ecrit:
+            return None, ""
+        try:
+            return await self._conducteur.ouvrir(fil, projet_id=cree.id), ""
+        except Exception as echec:  # noqa: BLE001 — cf. docstring : le projet est né
+            return None, cause_lisible(echec)
+
+    async def trancher_piece(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        piece: PieceProposee,
+        decision: str,
+    ) -> ReponseChat:
+        """Exécute la décision prise **au geste** sur une pièce, puis en parle (#1161).
+
+        Aucun juge : la décision est un clic. Le conducteur écrit (ou passe, ou
+        reporte) et propose la pièce suivante ; ce qui s'est passé devient les
+        **faits** d'où le modèle parle (#1262), et les cartes portent le reste — la
+        pièce écrite sous la bulle, la suivante au pied du fil. Un **empêchement**
+        (un fichier qui a bougé, une écriture refusée) garde les mots du code : rien
+        ne s'est fait, et lui seul le sait.
+        """
+        reponse = await self._conducteur.trancher(fil, piece=piece, decision=decision)
+        fait = reponse.piece_ecrite
+        abouti = decision == DECISION_PLUS_TARD or (
+            fait is not None and (fait.ecrite or fait.etat == PIECE_ECARTEE)
+        )
+        if not abouti:
+            return reponse
+        return replace(reponse, contenu=await self.rediger(agent, fil, faits=reponse.contenu))
+
+    async def _outiller(
+        self, fil: Sequence[MessageChat], redaction: Redaction, projet_id: str | None
+    ) -> ReponseChat:
+        """Le verdict `outillage` : outiller, reprendre, ou corriger avec des mots (#1161).
+
+        Le juge a redit la demande, en direct, sans la deviner. Ce qui s'ajoute
+        derrière est ce qu'il ne pouvait pas savoir : ce que la correction a donné — la
+        pièce revérifiée, ou ce qui n'a pas été compris —, dit par le conducteur, seul à
+        le dire. Un empêchement se dit ici, et la pièce qui attendait reste proposée.
+
+        Le projet est celui de la fenêtre, sinon celui que le fil outille déjà.
+        """
+        attente = piece_en_attente(fil[:-1])
+        reposee = attente.piece if attente is not None else None
+        projet = projet_id or projet_du_fil(fil)
+        if not self._conducteur.ecrit:
+            await redaction.ecrire(f" {_PHRASE_SANS_OUTILLAGE}")
+            return ReponseChat(contenu=redaction.texte, piece=reposee)
+        if not projet:
+            await redaction.ecrire(f" {_PHRASE_SANS_PROJET_A_OUTILLER}")
+            return ReponseChat(contenu=redaction.texte)
+        try:
+            reponse = await self._conducteur.corriger(
+                fil, projet_id=projet, phrase=fil[-1].contenu if fil else ""
+            )
+        except Exception as echec:  # noqa: BLE001 — un empêchement se raconte, cf. docstring
+            await redaction.ecrire(
+                "\n\n" + _PHRASE_OUTILLAGE_EMPECHE.format(cause=cause_lisible(echec))
+            )
+            return ReponseChat(contenu=redaction.texte, piece=reposee)
+        if reponse.contenu:
+            # Une pièce comprise et montrée n'ajoute rien : le juge a parlé, la carte
+            # dit le reste (`_texte_de_la_piece`). Ce qui s'ajoute est ce que lui ne
+            # savait pas — incomprise, sans effet, en échec, plus rien à écrire.
+            await redaction.ecrire("\n\n" + reponse.contenu)
+        return replace(reponse, contenu=redaction.texte)
+
+    async def _ecrire_la_piece(
+        self, fil: Sequence[MessageChat], redaction: Redaction, piece: PieceProposee
+    ) -> ReponseChat:
+        """Le « oui » **tapé** sur une pièce : l'écriture, derrière les mots du juge (#1161).
+
+        La même règle que le geste : une version dont la correction a échoué ne
+        s'écrit pas, et la carte reste proposée ; un empêchement se dit.
+        """
+        if not self._conducteur.ecrit:
+            await redaction.ecrire(f" {_PHRASE_SANS_OUTILLAGE}")
+            return ReponseChat(contenu=redaction.texte, piece=piece)
+        if not piece.ecrivable:
+            await redaction.ecrire(
+                "\n\n" + _PHRASE_PIECE_EN_ECHEC.format(chemin=piece.chemin, echec=piece.echec)
+            )
+            return ReponseChat(contenu=redaction.texte, piece=piece)
+        try:
+            reponse = await self._conducteur.trancher(
+                fil, piece=piece, decision=DECISION_ECRIRE, faits=False
+            )
+        except Exception as echec:  # noqa: BLE001 — un empêchement se raconte
+            await redaction.ecrire(
+                "\n\n" + _PHRASE_OUTILLAGE_EMPECHE.format(cause=cause_lisible(echec))
+            )
+            return ReponseChat(contenu=redaction.texte, piece=piece)
+        if reponse.contenu:
+            await redaction.ecrire("\n\n" + reponse.contenu)
+        return replace(reponse, contenu=redaction.texte)
 
     async def _declarer(self, demande: DemandeProjet) -> tuple[ProjetCree, str]:
         """Déclare le projet accordé, et lit un dossier importé — ce qu'on en a compris.
@@ -2681,9 +3025,9 @@ class RepondeurOrchestration(RepondeurChat):
         return cree, compris
 
     async def ouvrir_questionnaire(
-        self, agent: Agent, fil: Sequence[MessageChat]
+        self, agent: Agent, fil: Sequence[MessageChat], *, projet_id: str | None = None
     ) -> ReponseChat:
-        """Ouvre — ou reprend — le questionnaire d'outillage d'un projet neuf (#1031).
+        """Ouvre — ou reprend — l'outillage d'un projet (#1031, #1161).
 
         Ce fil-ci le porte, et pas un autre, parce que c'est la seule porte d'entrée
         du produit (#666) : un questionnaire posé dans un second fil demanderait de
@@ -2695,8 +3039,11 @@ class RepondeurOrchestration(RepondeurChat):
         (#1147, `ConducteurOutillage`) — celui qui comprend le projet à partir de ce
         qui a été dit, conversation comprise — et il n'a lieu que si quelque chose
         a été dit : un fil muet reçoit la question ouverte sans appel.
+
+        `projet_id` (#1161) nomme le projet à outiller — « Outiller maintenant » sur
+        sa carte ; ce qui en sort est sa première question ou sa première pièce.
         """
-        return await self._conducteur.ouvrir(fil)
+        return await self._conducteur.ouvrir(fil, projet_id=projet_id)
 
     async def repondre_question(
         self,
@@ -2824,6 +3171,10 @@ class RepondeurOrchestration(RepondeurChat):
             self._naissance,
         )
         return _Contexte(
+            # Ce qu'un run fera (#1323), lu sur le même projet que l'équipe : le
+            # modèle parle de la suite d'un run avec la politique réelle et la
+            # règle des bornes sous les yeux, au lieu de les supposer.
+            regime=self._regime_de(projet_id),
             # Les projets du poste (#1294) : ce qu'il faut pour proposer un projet
             # sans inventer son dossier ni reprendre un nom déjà pris.
             projets=(
@@ -2974,6 +3325,29 @@ class RepondeurOrchestration(RepondeurChat):
             self._modele = modele_du_canal(agent.modele, fournisseur)
             self._provider = fournisseur
         return self._provider
+
+    def _regime_de(self, projet_id: str | None) -> str:
+        """Ce qu'un run de `projet_id` fera, `""` sans lecture branchée — jamais une levée.
+
+        La règle de `_sans_echec` : une politique illisible ou un dépôt disparu
+        coûtent un bloc de prompt, jamais la réponse. Le régime, lui, sait déjà
+        dire une politique illisible — ce qui lève ici est une lecture qui n'a
+        pas abouti du tout.
+        """
+        regime = self._regime
+        return _sans_echec(lambda: regime(projet_id)) if regime is not None else ""
+
+    def _avec_regime(self, faits: str, projet_id: str | None) -> str:
+        """Les faits d'un geste, suivis de ce qu'un run de ce projet fera (#1323).
+
+        Réservé aux deux gestes qui mettent un run devant la personne — celui qui
+        l'ouvre, et l'équipe créée qui le repropose : c'est derrière eux que le
+        fil parle de la suite, et c'est là que S3 a annoncé un accord que le run
+        ne demanderait pas. Les faits du geste viennent d'abord ; le régime les
+        complète, il ne les remplace pas.
+        """
+        regime = self._regime_de(projet_id)
+        return f"{faits}\n\n{regime}" if regime else faits
 
     def _sans_equipe(self, projet_id: str | None) -> bool:
         """Le projet de la fenêtre n'a **personne** pour prendre les tâches (#1146).

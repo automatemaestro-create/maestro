@@ -21,16 +21,20 @@ bouclage d'un jalon (#1152) ou à la demande.
 
 **Un rouge est un résultat, pas une panne du banc.** Ce banc peut être livré avant
 que tous les scénarios soient verts : c'est son rôle de montrer les rouges. S1
-passe au vert avec #1149, S4 avec #1157, S5 avec #1224, S6 avec #1260. Un code de sortie non nul
+passe au vert avec #1149, S4 avec #1157, S5 avec #1224, S6 avec #1260 ; S9 attend
+#1343. Un code de sortie non nul
 n'est donc pas un défaut d'outillage — c'est la mesure.
 
 **Un rouge non déterministe se rejoue une fois, et le rapport le dit.** S2 demande
 au modèle d'écrire du code qui s'exécute, S4 de reconnaître une cause dans une
 phrase, S5 de dire comment essayer un livrable, S6 de nommer dans son plan le
-métier qui manque : les quatre échouent parfois sans
+métier qui manque, S9 et S10 de comprendre un projet qu'aucune liste ne prévoyait :
+tous échouent parfois sans
 que le produit ait changé (docs/40 §5). Le
 second passage fait foi, et `rejoue` reste écrit au rapport — un rejeu tu ferait
-lire deux runs comme un seul.
+lire deux runs comme un seul. La tentative rouge est **oubliée** avant le rejeu —
+sa déclaration, jamais son dossier —, pour qu'un projet né dans la conversation
+ne se retrouve pas lui-même au second essai.
 
 ## L'état qu'un passage laisse (#1164)
 
@@ -135,10 +139,16 @@ def jouer(
     resultats: list[Resultat] = []
     for scenario in scenarios:
         trace(f"— {scenario.identifiant} · {scenario.titre}")
-        resultat = _une_tentative(scenario, fabrique, horloge=horloge)
+        resultat, tentative = _une_tentative(scenario, fabrique, horloge=horloge)
         if not resultat.vert and scenario.rejouable:
             trace(f"  rouge non déterministe : {scenario.identifiant} rejoué une fois")
-            resultat = _une_tentative(scenario, fabrique, horloge=horloge, rejoue=True)
+            # La tentative rouge est **oubliée** avant le rejeu — sa déclaration, pas
+            # son dossier, qui reste une pièce. Sans cela, un projet né dans la
+            # conversation se retrouvait lui-même : rejoué au passage
+            # `20260927-043104`, S9 s'est entendu répondre « ce projet existe déjà
+            # sur ce poste », et le rejeu mesurait sa propre trace.
+            nettoyer(tentative)
+            resultat, _ = _une_tentative(scenario, fabrique, horloge=horloge, rejoue=True)
         trace(f"  {'vert' if resultat.vert else 'rouge'} — {resultat.motif}")
         resultats.append(resultat)
     return Rapport(horodatage=horodatage, resultats=tuple(resultats))
@@ -150,8 +160,8 @@ def _une_tentative(
     *,
     horloge: Callable[[], float],
     rejoue: bool = False,
-) -> Resultat:
-    """Joue un scénario une fois, et rend son résultat — même si l'API a refusé."""
+) -> tuple[Resultat, Contexte]:
+    """Joue un scénario une fois : son résultat — même si l'API a refusé —, et son contexte."""
     ctx = fabrique()
     debut = horloge()
     try:
@@ -161,7 +171,7 @@ def _une_tentative(
     except OSError as echec:  # disque, projet jetable devenu illisible
         issue = empeche(f"le banc n'a pas pu jouer : {echec}")
     duree = horloge() - debut
-    return Resultat(
+    resultat = Resultat(
         identifiant=scenario.identifiant,
         titre=scenario.titre,
         verdict=issue.verdict,
@@ -176,6 +186,7 @@ def _une_tentative(
         etapes=tuple(ctx.journal.etapes),
         arbitrages=tuple(ctx.arbitrages),
     )
+    return resultat, ctx
 
 
 def main(

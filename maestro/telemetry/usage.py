@@ -92,6 +92,22 @@ class StepUsage:
     un atelier qui bloque est le régime de sérialisation d'un projet non versionné,
     qu'on ne change pas à la légère (#839). Les fondre dans un « temps d'attente »
     unique rendrait le chiffre inactionnable.
+
+    `tokens_non_tarifes` (#1280) est la part de `tokens_total` qu'**aucun coût ne
+    couvre** — une part, comme les attentes le sont de la durée, jamais des tokens
+    de plus. Une mesure sans coût (`cout_usd` None) a **tous** ses tokens non
+    tarifés, et c'est posé à la construction (`__post_init__`) : un producteur n'a
+    rien à déclarer pour dire « je n'ai pas de prix ». La fusion **somme** cette
+    part comme les autres compteurs, et c'est tout ce qui la rend juste là où la
+    seule règle sur le coût ne l'était pas : 1,17 $ tarifés plus 2 M de tokens sans
+    prix fusionnent en un coût de 1,17 $ — `_somme_optionnelle` garde le connu —
+    **et** 2 M de tokens non tarifés, là où l'on ne voyait plus qu'un total
+    « complet ». Une seule mesure peut **retirer** de cette part : celle d'un
+    fournisseur dont le résultat tarifie après coup des tours déjà signalés (le
+    reste du `ResultMessage` Claude, `maestro.providers.claude._CompteurTours`),
+    qui porte alors une part négative, exactement celle de ses tours. Une session
+    tuée avant son résultat garde donc la sienne, et une relance qui aboutit ne
+    couvre que ses propres tours.
     """
 
     appels: int = 0
@@ -105,6 +121,17 @@ class StepUsage:
     duree_attente_atelier_ms: int | None = None
     tours: int = 0
     outils: tuple[str, ...] = ()
+    tokens_non_tarifes: int = 0
+
+    def __post_init__(self) -> None:
+        # Sans coût, rien de ce que la mesure a consommé n'a de prix (#1280). Posé
+        # ici plutôt que demandé à chaque producteur : un fournisseur qui ne
+        # tarife pas (#113), un tour signalé avant son résultat (#835) ou une
+        # ligne de journal d'avant ce ticket le disent tous sans le savoir. Zéro
+        # vaut « non renseigné » parce qu'une mesure sans coût ne peut pas, en
+        # vérité, avoir moins de tokens non tarifés que de tokens.
+        if self.cout_usd is None and not self.tokens_non_tarifes:
+            object.__setattr__(self, "tokens_non_tarifes", self.tokens_total)
 
     @property
     def tokens_total(self) -> int:
@@ -173,6 +200,7 @@ class StepUsage:
             ),
             tours=self.tours + autre.tours,
             outils=self.outils + tuple(o for o in autre.outils if o not in self.outils),
+            tokens_non_tarifes=self.tokens_non_tarifes + autre.tokens_non_tarifes,
         )
 
     def avec_duree(
@@ -223,6 +251,10 @@ class StepUsage:
         if not self.appels:
             return f"aucun usage fournisseur rapporté · durée {duree}"
         cout = "n/d" if self.cout_usd is None else f"{self.cout_usd:.4f} $"
+        if self.cout_usd is not None and self.tokens_non_tarifes > 0:
+            # Un montant qui ne couvre pas tout ce qui a été consommé (#1280) ne
+            # s'écrit pas comme un solde : c'est un plancher, et il le dit.
+            cout = f"≥ {cout} ({self.tokens_non_tarifes} tokens sans coût)"
         return (
             f"{self.appels} appel(s) modèle · {self.tokens_total} tokens "
             f"({self.tokens_entree} entrée / {self.tokens_sortie} sortie) · "
@@ -250,6 +282,9 @@ class StepUsage:
             "duree_execution_ms": self.duree_execution_ms,
             "tours": self.tours,
             "outils": list(self.outils),
+            # La part que le coût ne couvre pas (#1280) : c'est par elle que le
+            # grand livre et l'écran savent qu'un montant n'est qu'un plancher.
+            "tokens_non_tarifes": self.tokens_non_tarifes,
         }
 
     @classmethod
@@ -259,7 +294,9 @@ class StepUsage:
         `tokens_total`, `duree_attente_ms` et `duree_execution_ms` (dérivés) sont
         ignorés ; les clés absentes retombent sur les défauts — la mesure d'un
         worker qui ne rapporte rien reste valide, et une ligne de journal écrite
-        avant #989 se relit sans attentes mesurées (inconnu, pas zéro).
+        avant #989 se relit sans attentes mesurées (inconnu, pas zéro). Une ligne
+        d'avant #1280 se relit avec la part non tarifée que son coût dit : tous
+        ses tokens s'il est inconnu, aucun s'il est connu.
         """
         return cls(
             appels=data.get("appels", 0),
@@ -273,6 +310,7 @@ class StepUsage:
             duree_attente_atelier_ms=data.get("duree_attente_atelier_ms"),
             tours=data.get("tours", 0),
             outils=tuple(data.get("outils", ())),
+            tokens_non_tarifes=data.get("tokens_non_tarifes", 0),
         )
 
 

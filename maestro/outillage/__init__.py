@@ -16,7 +16,8 @@ travaillent dans le projet :
     analyse = analyser("D:/projets/depensio", projet_id="prj-7f3a")
     analyse.resume                     # "Python, TypeScript ; uv, npm ; tests : pytest ; …"
     analyse.constats.commande_de("tester")
-    analyse.recommandation.entrees     # AGENTS.md, les deux ponts, les skills justifiés
+    analyse.recommandation.entrees     # AGENTS.md, les skills justifiés — et un pont par
+                                       # client qui en a besoin (`recommander(…, clients)`, #1295)
     analyse.source_manifeste()         # le fragment `source` du manifeste (docs/38 §4.1)
 
     preparation = generer_outillage(
@@ -42,7 +43,7 @@ critère de #1031 : les réponses de l'utilisateur deviennent des `Constats`
 donc **pas deux chemins** de « ce qu'il faut à ce projet » à tenir d'accord — ce
 que #1033 génère vient de la même fonction, quelle que soit sa provenance.
 
-Onze modules, et la frontière entre eux est celle du disque :
+Douze modules, et la frontière entre eux est celle du disque :
 
 - `maestro.outillage.modele` — les formes, **inertes** : elles décrivent et
   sérialisent, elles ne touchent à rien ;
@@ -63,6 +64,10 @@ Onze modules, et la frontière entre eux est celle du disque :
   Un modèle qui ne répond pas laisse l'analyse aux indices, et le dit ;
 - `maestro.outillage.recommandation` — des constats à l'outillage proposé,
   chaque entrée avec sa raison et l'endroit du projet qui la justifie ;
+- `maestro.outillage.clients` — ce que chaque client d'agents fait d'`AGENTS.md`
+  (#1295), des faits datés et sourcés, et les clients que la conversation nomme :
+  ils décident des **ponts**. Ceux du poste se trouvent hors du paquet
+  (`maestro.clients_du_poste`), parce que lire une version lance un processus ;
 - `maestro.outillage.contexte` — ce qu'un agent en reçoit, **dérivé du manifeste
   et borné à ce qu'il déclare** (docs/38 §5). C'est la moitié « transmis
   explicitement » de la frontière ; l'autre moitié, la porte qu'on ferme sur la

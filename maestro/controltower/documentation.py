@@ -143,14 +143,71 @@ Le budget reste une **borne** : un sommaire qui doublerait ne serait plus « ass
 petit pour tenir dans un prompt », et une année de croissance au même rythme le
 ferait lever — la sonde le prouve aussi.
 
+## Le corpus est déclaré, jamais deviné (#1321)
+
+Le 2026-09-25, à une question d'usage — « Comment ouvrir une nouvelle conversation
+avec l'orchestrateur, et retrouver les précédentes ? » —, l'assistant a répondu juste,
+mais en citant la **Roadmap** parmi ses sources : un document du développement du
+dépôt. Les citations avaient été assainies (#939, #1199) ; ce que l'assistant **lit**
+ne l'avait pas été. `docs/*.md` portait tout le dépôt documentaire — workflow git,
+roadmap, audit des commandes, migration de forge, démos datées, outillage du design —
+et quelqu'un qui a *installé* Maestro n'a rien à faire de ces pages.
+
+Le corpus est donc la part de la documentation qui sert à **se servir** de Maestro, et
+cette part est **déclarée** : chaque document dit son public en première ligne, par un
+commentaire que le rendu ne montre pas — `<!-- documentation: produit -->` ou
+`<!-- documentation: développement -->`. Seul le premier entre. Un document du
+produit peut en outre écarter un **chapitre** écrit pour qui construit Maestro : la
+même déclaration, sur la première ligne non vide qui suit son titre, le fait sortir
+avec tout ce qu'il porte (`_sections_du_produit`).
+
+- **Pourquoi une marque dans le document, et pas une liste ici.** Pour la raison qui
+  fait dériver le nom d'un document de son titre (#939) : une table tenue à côté du
+  corpus finit par nommer un fichier renommé ou oublier un fichier ajouté, alors que
+  la déclaration voyage avec le document qu'elle qualifie, et que son auteur la pose
+  au moment où il sait ce qu'il écrit. C'est aussi une forme que le dépôt connaît
+  déjà : le rail d'un jalon est une ligne déclarée, jamais dérivée de ses labels.
+- **Pourquoi aucun défaut.** Un document qui se tait reste **dehors**, et
+  `tests/test_documentation.py` fait rougir le dépôt tant qu'il se tait. Le faire
+  entrer faute de mieux serait deviner à la place de son auteur ; le laisser sortir
+  sans rien dire ferait perdre en silence une note de décision du produit. Aucun
+  mot-clé ne sert de critère (#746) : la déclaration est une **forme**, reconnue comme
+  un en-tête de format connu, et une ligne presque juste ne déclare rien.
+- **Où passe la frontière** (jugée le 2026-09-27 sur les 46 documents). Du produit,
+  ce qui dit ce que Maestro fait, montre ou décide pour qui s'en sert : le cahier des
+  charges, l'architecture, le modèle de données, les agents, l'interface, le
+  glossaire, l'exemple chiffré, la sécurité, la configuration MCP, les projets et le
+  poste, les cas d'usage, et les notes de décision qui fixent un comportement — même
+  quand elles portent aussi, en passant, du processus. Du développement, ce qui dit
+  comment le dépôt se construit, s'outille et se vérifie, ou raconte une étape datée
+  de son histoire : la stack recommandée au cadrage, la roadmap, le guide du POC, le
+  workflow git, les démos et pilotes, l'audit des commandes, la migration de forge,
+  la cible visuelle et l'outillage du design, le choix du niveau visuel.
+- **Pourquoi un chapitre peut sortir seul.** Le README de l'interface est les deux à
+  la fois : son premier chapitre décrit les écrans — et il est le seul à dire, par
+  exemple, comment passer l'interface en thème sombre —, ses derniers disent comment
+  la coder, la lancer en local et la vérifier. Le sortir en entier ferait perdre des
+  réponses d'usage ; le garder en entier ferait répondre « `npm run dev` » à qui
+  demande comment lancer Maestro. Le document se déclare donc du produit, et ses
+  chapitres « Le langage visuel », « Lancer en local », « Modèle de données » et
+  « Vérifications » se déclarent du développement. La règle ne va que dans ce sens :
+  un document du développement n'est pas lu, ses chapitres non plus.
+
+#1316 avait écarté le resserrement du corpus **comme remède à la taille** de la carte ;
+il est fait ici pour la **qualité** des réponses, et la taille n'en est que l'effet de
+bord : 46 documents et 843 sections, soit 6 803 tokens de sommaire, deviennent 29
+documents et 489 sections, soit 4 204 tokens, le 2026-09-27.
+
 ## Le cache
 
 `carte_documentation` ne recalcule pas la carte à chaque appel — analyser 1,58 Mio pour
 répondre à un message le ferait payer à chaque question. Elle la **reconstruit quand un
-fichier change** : l'empreinte du corpus (chemin, date de modification, taille de
-chaque fichier) est relue à chaque appel — 36 `stat`, quelques microsecondes — et
-c'est sa comparaison qui décide. Un fichier ajouté, retiré ou réécrit change
-l'empreinte, donc la carte.
+fichier change** : l'empreinte (chemin, date de modification, taille de chaque
+document du dépôt) est relue à chaque appel — un `stat` par document, quelques
+microsecondes — et c'est sa comparaison qui décide. Un fichier ajouté, retiré ou
+réécrit change l'empreinte, donc la carte. Elle porte sur **tous** les documents, et
+pas sur le seul corpus : c'est ce qui fait qu'un document qui change de déclaration
+refait la carte, qu'il entre ou qu'il sorte, sans qu'on lise une ligne pour le savoir.
 """
 
 from __future__ import annotations
@@ -165,11 +222,34 @@ from typing import Any
 
 from maestro.sources.extraction import estimer_tokens
 
-#: Ce qui **fait** le corpus, relatif à la racine du dépôt, dans l'ordre où la carte
-#: le présente. `docs/*.md` ne descend pas : c'est ce qui laisse dehors
+#: Où la documentation du dépôt **vit**, relatif à sa racine, dans l'ordre où la carte
+#: la présente. `docs/*.md` ne descend pas : c'est ce qui laisse dehors
 #: `docs/presentations/` (les présentations de milestone, du HTML autonome et daté)
 #: et `docs/assets/`, sans avoir à les nommer.
-MOTIFS_CORPUS: tuple[str, ...] = ("docs/*.md", "apps/web/README.md")
+#:
+#: ⚠ Ces motifs disent où **chercher**, jamais ce qui **entre** (#1321) : un document
+#: n'entre au corpus qu'en se déclarant du produit — voir « Le corpus est déclaré »
+#: dans le docstring du module.
+MOTIFS_DOCUMENTATION: tuple[str, ...] = ("docs/*.md", "apps/web/README.md")
+
+#: Le public d'un document qui sert à **se servir** de Maestro — ce qu'il fait, montre
+#: et décide pour qui l'utilise. C'est le seul qui entre au corpus.
+PUBLIC_PRODUIT = "produit"
+
+#: Le public d'un document qui sert à **construire** Maestro — comment le dépôt se
+#: développe, s'outille et se vérifie, ou une étape datée de son histoire.
+PUBLIC_DEVELOPPEMENT = "développement"
+
+#: Les publics qu'un document peut déclarer. Il en déclare un, et un seul (#1321).
+PUBLICS: tuple[str, ...] = (PUBLIC_PRODUIT, PUBLIC_DEVELOPPEMENT)
+
+#: La déclaration d'un document, en **première ligne** : un commentaire HTML, que le
+#: rendu Markdown ne montre pas — `<!-- documentation: produit -->`. Une forme et non
+#: un lexique : elle se reconnaît comme l'en-tête d'un format connu, et une ligne qui
+#: n'a pas exactement cette forme ne déclare rien. La valeur est rendue telle quelle,
+#: sans casse ni orthographe rattrapées : un public qu'on aurait « compris » serait un
+#: public deviné.
+_DECLARATION = re.compile(r"^<!--\s*documentation\s*:\s*(\S+)\s*-->\s*$")
 
 #: Le niveau de titre le plus profond que la carte porte. Au-delà (`####`), un titre
 #: est du **corps** : il ne se cite pas et ne coupe pas la section qui le contient.
@@ -183,7 +263,8 @@ NIVEAU_SOMMAIRE = 2
 #: Le budget du sommaire, **en tokens estimés** — ce qui entre à chaque question dans
 #: le premier prompt. Posé le 2026-08-28 sur la carte à plat (11 869 pour 639
 #: sections), il borne depuis #1316 le sommaire : 6 779 le 2026-09-26 pour 842
-#: sections, et ≈ + 1 780 par mois au rythme mesuré — de quoi tenir cinq mois, sans
+#: sections, 4 204 le 2026-09-27 pour 489 une fois le corpus réduit aux documents
+#: du produit (#1321), et ≈ + 1 780 par mois au rythme mesuré — de quoi tenir, sans
 #: laisser passer un changement de nature (un sommaire qui doublerait n'est plus
 #: « assez petit pour tenir dans un prompt »). Le dépassement lève `CarteTropGrande`.
 BUDGET_CARTE_TOKENS = 16_000
@@ -576,36 +657,78 @@ class CarteDocumentation:
         return "\n".join(lignes) + "\n"
 
 
-def fichiers_corpus(racine: Path | str | None = None) -> tuple[tuple[str, Path], ...]:
-    """Les fichiers du corpus : `(chemin relatif POSIX, chemin absolu)`, dans l'ordre.
+def public_declare(chemin: Path) -> str:
+    """Le public que le document déclare en première ligne — `""` s'il n'en déclare aucun.
 
-    L'ordre est celui de `MOTIFS_CORPUS`, trié à l'intérieur de chaque motif : il est
-    donc déterministe, ce dont dépendent la carte (qu'on relit d'une version à l'autre)
-    et l'empreinte (qu'on compare telle quelle).
+    Seule la première ligne est lue : la déclaration est à la place où un lecteur la
+    cherche, et elle coûte une ligne à lire, pas un document. Plus bas, une ligne de
+    même forme n'est plus une déclaration — elle peut être un exemple, un bloc de
+    code, une citation. Un fichier illisible ne déclare rien, et reste donc dehors.
+    """
+    try:
+        # `utf-8-sig` : un éditeur qui pose une marque d'ordre des octets ne doit pas
+        # suffire à faire taire un document.
+        with chemin.open(encoding="utf-8-sig", errors="replace") as flux:
+            premiere = flux.readline().rstrip("\r\n")
+    except OSError:  # pragma: no cover - le fichier vient de disparaître
+        return ""
+    capture = _DECLARATION.match(premiere)
+    return capture.group(1) if capture is not None else ""
+
+
+def documents_du_depot(racine: Path | str | None = None) -> tuple[tuple[str, Path], ...]:
+    """Les documents aux emplacements de la documentation — du produit **comme** du reste.
+
+    `(chemin relatif POSIX, chemin absolu)`, dans l'ordre de `MOTIFS_DOCUMENTATION`,
+    trié à l'intérieur de chaque motif : il est donc déterministe, ce dont dépendent
+    la carte (qu'on relit d'une version à l'autre) et l'empreinte (qu'on compare telle
+    quelle). C'est parmi eux que le corpus se choisit (`fichiers_corpus`), et ce sont
+    eux que l'empreinte surveille.
     """
     base = _racine(racine)
     vus: dict[str, Path] = {}
-    for motif in MOTIFS_CORPUS:
+    for motif in MOTIFS_DOCUMENTATION:
         for chemin in sorted(base.glob(motif)):
             if chemin.is_file():
                 vus.setdefault(chemin.relative_to(base).as_posix(), chemin)
     return tuple(vus.items())
 
 
+def fichiers_corpus(racine: Path | str | None = None) -> tuple[tuple[str, Path], ...]:
+    """Les fichiers du corpus : les documents du dépôt qui se déclarent du produit (#1321).
+
+    Même forme et même ordre que `documents_du_depot`. Un document qui se déclare du
+    développement reste dehors, et celui qui ne se déclare pas aussi : se taire n'est
+    pas une déclaration, et le ranger d'un côté faute de mieux serait deviner à la
+    place de son auteur. `tests/test_documentation.py` fait rougir le dépôt tant
+    qu'un de ses documents se tait.
+    """
+    return tuple(
+        (relatif, chemin)
+        for relatif, chemin in documents_du_depot(racine)
+        if public_declare(chemin) == PUBLIC_PRODUIT
+    )
+
+
 def empreinte_corpus(racine: Path | str | None = None) -> tuple[tuple[str, int, int], ...]:
-    """L'empreinte du corpus : `(chemin, date de modification en ns, taille)` par fichier.
+    """L'empreinte du corpus : `(chemin, date de modification en ns, taille)` par document.
 
     C'est ce qui décide qu'une carte est **périmée**. Trois signaux dans un seul objet :
     la liste elle-même (un fichier ajouté ou retiré change l'empreinte), la date et la
     taille. Aucun des trois ne se lit sans l'autre — une réécriture de même taille dans
     la même seconde changerait quand même `st_mtime_ns`, qui est en nanosecondes.
 
+    Elle porte sur **tous** les documents du dépôt (`documents_du_depot`), pas sur le
+    seul corpus (#1321) : un document qui change de déclaration a changé de date, donc
+    il refait la carte, qu'il y entre ou qu'il en sorte — et l'empreinte reste un
+    `stat` par fichier, sans une ligne lue.
+
     Un fichier disparu entre le parcours et la mesure est simplement absent de
     l'empreinte, donc l'empreinte change, donc la carte se refait : le cas se répare
     tout seul plutôt que de lever.
     """
     empreinte: list[tuple[str, int, int]] = []
-    for relatif, chemin in fichiers_corpus(racine):
+    for relatif, chemin in documents_du_depot(racine):
         try:
             infos = chemin.stat()
         except OSError:  # pragma: no cover - le fichier vient de disparaître
@@ -641,7 +764,7 @@ def construire_carte(
         # octet invalide est un fichier abîmé — qui ne doit pas emporter l'assistance
         # tout entière, et se verra au caractère de remplacement dans la citation.
         texte = chemin.read_text(encoding="utf-8", errors="replace")
-        trouvees = _sections_du_fichier(relatif, texte)
+        trouvees = _sections_du_produit(_sections_du_fichier(relatif, texte))
         par_fichier[relatif] = [section for section, _corps in trouvees]
         for section, corps in trouvees:
             sections.append(section)
@@ -674,9 +797,9 @@ def carte_documentation(
 ) -> CarteDocumentation:
     """La carte du corpus, **construite une fois** et refaite quand un fichier change.
 
-    L'empreinte est relue à chaque appel (36 `stat`) et comparée à celle de la carte en
-    cache : c'est bien moins que de réanalyser 1,58 Mio, et c'est ce qui fait que le
-    dispositif suit le dépôt sans qu'on ait à le prévenir.
+    L'empreinte est relue à chaque appel (un `stat` par document du dépôt) et comparée
+    à celle de la carte en cache : c'est bien moins que de réanalyser le corpus, et
+    c'est ce qui fait que le dispositif suit le dépôt sans qu'on ait à le prévenir.
     """
     base = _racine(racine)
     empreinte = empreinte_corpus(base)
@@ -727,8 +850,9 @@ def _sections_du_fichier(relatif: str, texte: str) -> tuple[tuple[SectionDoc, st
 
     Les sections **partitionnent** le fichier : chacune court de son titre jusqu'au
     titre suivant de niveau 1 à 3, exclu (décision 1 du module). Ce qui précède le
-    premier titre — aucun fichier du corpus n'en porte — n'est dans aucune section :
-    une section se cite par son titre, et un préambule n'en a pas.
+    premier titre — la déclaration du document (#1321), et rien d'autre dans le
+    corpus — n'est dans aucune section : une section se cite par son titre, et un
+    préambule n'en a pas.
     """
     lignes = texte.splitlines()
     titres = [
@@ -763,6 +887,47 @@ def _sections_du_fichier(relatif: str, texte: str) -> tuple[tuple[SectionDoc, st
         trouvees.append((section, "\n".join(lignes[index:fin]).rstrip()))
         pile.append((niveau, titre))
     return tuple(trouvees)
+
+
+def _sections_du_produit(
+    trouvees: Sequence[tuple[SectionDoc, str]],
+) -> tuple[tuple[SectionDoc, str], ...]:
+    """Les sections d'un document du produit, moins ses chapitres qui ne le sont pas (#1321).
+
+    Un document du produit peut porter un chapitre écrit pour qui **construit**
+    Maestro — le README de l'interface dit aussi comment la lancer en local et la
+    vérifier. Ce chapitre se déclare du développement sur la première ligne non vide
+    qui suit son titre, et sort du corpus **avec tout ce qu'il porte** : ses
+    sous-sections n'ont pas à le redire, et ne peuvent pas le démentir — une section
+    sortie ne fait pas rentrer ce qu'elle porte. Une section qui ne déclare rien a le
+    public de celle qui la porte, et la première, celui du document — qui est du
+    produit, puisqu'on ne lit pas les autres.
+    """
+    gardees: list[tuple[SectionDoc, str]] = []
+    ouvertes: list[tuple[int, str]] = []
+    for section, corps in trouvees:
+        while ouvertes and ouvertes[-1][0] >= section.niveau:
+            ouvertes.pop()
+        herite = ouvertes[-1][1] if ouvertes else PUBLIC_PRODUIT
+        public = herite if herite != PUBLIC_PRODUIT else (_public_de_section(corps) or herite)
+        ouvertes.append((section.niveau, public))
+        if public == PUBLIC_PRODUIT:
+            gardees.append((section, corps))
+    return tuple(gardees)
+
+
+def _public_de_section(corps: str) -> str:
+    """Le public qu'une section déclare — `""` si elle n'en déclare aucun.
+
+    La déclaration est la **première ligne non vide** après le titre, et rien d'autre :
+    plus bas, une ligne de même forme est du corps (un exemple, une citation). Le
+    titre est la première ligne de `corps`, par construction de la section.
+    """
+    for ligne in corps.splitlines()[1:]:
+        if ligne.strip():
+            capture = _DECLARATION.match(ligne)
+            return capture.group(1) if capture is not None else ""
+    return ""
 
 
 def _titres(lignes: Sequence[str]) -> Iterator[tuple[int, int, str]]:

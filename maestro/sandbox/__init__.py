@@ -37,6 +37,12 @@ l'espace d'une tâche vivante, jamais un worktree porteur de travail non commit�
     from maestro.sandbox import ramasser
 
     ramasser()  # best-effort, muet quand il n'y a rien à retirer
+
+Ce que la **session** d'un agent lance ne lui survit pas non plus depuis #1279
+(`maestro.sandbox.confinement`) : hors mode isolé, le fournisseur lance son CLI par
+le lanceur `maestro-confinement`, qui le range dans un arbre de processus
+(`maestro.sandbox.arbre` — Job Object, groupe) et l'arrête tout entier à la clôture
+de la tâche, en nommant ce qui a résisté. Voir docs/17 §6.
 """
 
 from __future__ import annotations

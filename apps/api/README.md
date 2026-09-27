@@ -16,6 +16,10 @@ maestro-api                                              # http://127.0.0.1:8000
 # équivalent : uvicorn --factory maestro.controltower.app:create_default_app
 ```
 
+L'équivalent l'est **au journal près** (#1292) : `maestro-api` passe à uvicorn une
+configuration de journal qui masque le jeton d'API (paramètre `jeton=` du WebSocket
+compris), là où uvicorn lancé seul écrit en clair l'URL de chaque poignée de main.
+
 Côté producteur, les événements sont **sourcés depuis la télémétrie** (#8) :
 
 ```bash

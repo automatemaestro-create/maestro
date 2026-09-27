@@ -38,18 +38,21 @@ from maestro.providers.courrier import Courrier
 from maestro.providers.decision import Consigneur
 from maestro.providers.question import Questionneur
 from maestro.sandbox import ProducedFile, espace_de_travail
+from maestro.sandbox.confinement import ReleveConfinement
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
-#: explorer, shell, **tenir sa liste de travail**. Volontairement restreint
-#: (docs/02 §7 : permissions scopées) — pas d'outils réseau ni MCP au POC.
+#: explorer, shell. Volontairement restreint (docs/02 §7 : permissions scopées) —
+#: pas d'outils réseau ni MCP au POC.
 #:
-#: `TodoWrite` (#489) est le seul de la liste qui n'agisse sur rien : il ne lit,
-#: n'écrit ni n'exécute quoi que ce soit, il **dit** où l'agent en est. C'est ce
-#: qui en fait le canal de la checklist d'une tâche (`maestro.providers.checklist`)
-#: — la moitié « cochée par l'agent » de l'arbitrage de #489 — sans rien lui
-#: demander qu'il ne fasse déjà, et sans élargir d'un pouce ce qu'il peut faire.
-#: Un rôle dont la politique de permissions le refuse (#110) travaille comme
-#: avant : sa tâche n'a simplement pas de checklist.
+#: ⚠ **Aucun outil de liste de travail du CLI** (#1291). `TodoWrite` y figurait
+#: depuis #489, comme source de la checklist d'une tâche, et le CLI l'a remplacé
+#: par `TaskCreate`/`TaskUpdate` sans prévenir : toutes les checklists sont restées
+#: à 0/N. La checklist est désormais un verbe de Maestro, `tenir_checklist`
+#: (`maestro.providers.checklist`), servi par le serveur `maestro` avec les autres
+#: verbes : il n'a rien à faire dans cette liste, et y remettre l'outil d'un CLI
+#: ferait tenir à l'agent deux listes, dont une que personne ne lit. Un rôle dont
+#: la politique de permissions refuse le verbe (#110) travaille comme avant : sa
+#: tâche n'a simplement pas de checklist cochée.
 DEFAULT_TOOLS: tuple[str, ...] = (
     "Read",
     "Write",
@@ -57,7 +60,6 @@ DEFAULT_TOOLS: tuple[str, ...] = (
     "Glob",
     "Grep",
     "Bash",
-    "TodoWrite",
 )
 
 
@@ -221,6 +223,7 @@ class AgentRuntime:
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         on_question: Questionneur | None = None,
+        on_processus: Callable[[ReleveConfinement], None] | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
         effort: str | None = None,
@@ -276,11 +279,12 @@ class AgentRuntime:
         `on_refus`.
 
         `on_etapes` (#489) est le troisième, et il traverse ce runtime pour la
-        même raison : la **checklist** de l'agent est observée par le fournisseur
-        (dans l'entrée de ses appels `TodoWrite`) et réconciliée par l'appelant,
-        seul à connaître l'ossature que le plan avait annoncée. Le runtime ne
-        tient aucun état de checklist — il n'en verrait qu'une exécution, et
-        l'avancement doit survivre aux relances.
+        même raison : la **checklist** de l'agent arrive par le fournisseur — qui
+        lui sert le verbe `tenir_checklist` depuis #1291, et ne lit plus aucun
+        outil du CLI — et elle est réconciliée par l'appelant, seul à connaître
+        l'ossature que le plan avait annoncée. Le runtime ne tient aucun état de
+        checklist — il n'en verrait qu'une exécution, et l'avancement doit
+        survivre aux relances.
 
         `on_arbitrage` (#582) est le quatrième et traverse de même — mais dans
         l'autre sens : c'est l'agent qui **demande** l'arbitrage, le fournisseur
@@ -328,6 +332,15 @@ class AgentRuntime:
         borne l'attente et consigne les deux issues. Le runtime n'est aucun des
         trois, et il n'a surtout rien à décider de la borne : elle vit avec le
         journal. None : le verbe n'est pas servi du tout.
+
+        `on_processus` (#1279) est le neuvième, et le seul qui ne parte ni de
+        l'agent ni vers lui : il part de sa **session**, une fois fermée. Le
+        fournisseur arrête à la clôture tout ce que la session a lancé
+        (`maestro.sandbox.confinement`) et dit ce qui vivait encore, ce qui a
+        résisté, ou pourquoi il n'a pas pu confiner ; l'appelant l'écrit au journal
+        du run. Le runtime ne fait que relier les deux — il ne voit ni les
+        processus, ni le journal. None : rien n'est dit, et l'arrêt a lieu quand
+        même — il n'a jamais dépendu de ce qu'on en raconte.
 
         `projet` (#224, EF-36) est le **projet dans lequel la tâche travaille** :
         l'espace de travail en est alors dérivé — worktree Git sur la branche
@@ -433,6 +446,7 @@ class AgentRuntime:
                 credit_arbitrage=credit_arbitrage,
                 on_courrier=on_courrier,
                 on_question=on_question,
+                on_processus=on_processus,
                 plafond_tours=self._plafond_tours,
                 projet=projet,
                 **reglage_effort,

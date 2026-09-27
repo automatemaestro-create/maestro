@@ -31,6 +31,7 @@ from typing import Any
 
 from maestro.agents.capacity import INSTANCES_DEFAUT, CapaciteAgent
 from maestro.agents.catalog import Agent
+from maestro.controltower.bornes import BornesRun
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
@@ -295,6 +296,20 @@ def _solde_le_cout(event: Event) -> bool:
     )
 
 
+def _laisse_des_tokens_sans_cout(event: Event) -> bool:
+    """Cet événement porte-t-il des tokens qu'aucun coût ne couvre (#1280) ?
+
+    La part vient de la mesure (`StepUsage.tokens_non_tarifes`) : tous les tokens
+    d'une mesure sans coût, ceux d'une session tuée avant son résultat même quand
+    une relance a fini tarifée. Écrite une fois pour les deux lecteurs de
+    `_solde_le_cout` — la carte de la tâche et le cumul du run —, et pour la même
+    raison : une tâche marquée partielle sur sa carte et un run complet sur sa
+    tuile se contrediraient sur le même écran. C'est le constat du ticket : un run
+    à 1,17 $ se déclarait complet avec 2 M de tokens sans prix.
+    """
+    return event.usage is not None and event.usage.tokens_non_tarifes > 0
+
+
 def _pose_debut(tache: EtatTache, statut: str, horodatage: str) -> None:
     """Pose le départ d'une tâche qui **se met** à travailler (#894).
 
@@ -338,6 +353,10 @@ class EtatTache:
     en cours qui n'a **rien consommé encore** (mesuré) ; `None` partiel, une
     tâche en cours dont le fournisseur n'a **pas encore tarifé** la dépense
     (les tokens sont dans `usage`) ; `None` non partiel, un coût **inconnu**.
+    Depuis #1280, une tâche **soldée** peut rester partielle : son issue a porté
+    des tokens qu'aucun coût ne couvre (`usage.tokens_non_tarifes`) — session
+    tuée avant son résultat, relances comprises, ou fournisseur qui ne tarife
+    pas. Soldé ne veut pas dire complet, et la carte ne le prétend plus.
     La ventilation par exécution
     reste du côté du grand livre du run (`EtatExecution.cout`). `ticket` porte
     la référence du ticket externe dont relève la tâche (#187, contrat #183) —
@@ -790,6 +809,13 @@ class EtatExecution:
     # runs décomposent le même objectif, donc une relance (#349) volerait ses
     # arêtes au run qu'elle reprend.
     plan: list[NoeudPlan] = field(default_factory=list)
+    # Les **bornes que ce run a reçues à son accord** (#1323), posées par
+    # l'événement de lancement et jamais retirées — la règle de `ticket`,
+    # `projet_id` ou `mode_brief`. None pour un run dont le lancement n'en disait
+    # rien (antérieur à ce lot, ou publié hors de l'API) : on ne les connaît pas,
+    # et c'est ce que le fil en dira. Elles appartiennent à **ce** run : aucun
+    # run suivant n'en hérite, et c'est ce que le fil ignorait.
+    bornes: BornesRun | None = None
 
     @property
     def debut(self) -> str:
@@ -927,8 +953,9 @@ class EtatExecution:
             "fin": self.fin,
         }
 
-    def _couts(self) -> tuple[list[float], dict[str, float | None]]:
-        """Les coûts **soldés** du run, et le dernier **relevé** de chaque tâche en cours (#835).
+    def _couts(self) -> tuple[list[float], dict[str, float | None], bool]:
+        """Les coûts **soldés** du run, le dernier **relevé** de chaque tâche en cours (#835),
+        et si du soldé a laissé des tokens **sans coût** (#1280).
 
         Un relevé (`tache.usage`) porte un cumul, jamais une part : on ne
         l'additionne pas, on garde le **dernier** par tâche, et on l'oublie dès
@@ -937,9 +964,15 @@ class EtatExecution:
         compterait deux fois. Un relevé qui reste sans issue (hôte mort en plein
         travail) reste compté : c'est le meilleur état connu de ce que ce run a
         dépensé, et il reste marqué partiel, ce qui est la vérité.
+
+        Oublier le relevé ne veut pas dire que le montant est complet : l'issue
+        d'une tâche morte avant son résultat solde sans prix des tokens bien
+        consommés. Avant #1280 le run redevenait « complet » à cet instant précis,
+        et affichait 1,17 $ pour un run dont 75 % des tokens n'étaient pas tarifés.
         """
         soldes: list[float] = []
         releves: dict[str, float | None] = {}
+        sans_cout = False
         for event in self.evenements:
             if event.type == EVENEMENT_TACHE_USAGE:
                 if event.tache_id:
@@ -947,9 +980,10 @@ class EtatExecution:
                 continue
             if event.cout_usd is not None:
                 soldes.append(event.cout_usd)
+            sans_cout = sans_cout or _laisse_des_tokens_sans_cout(event)
             if event.tache_id and _solde_le_cout(event):
                 releves.pop(event.tache_id, None)
-        return soldes, releves
+        return soldes, releves, sans_cout
 
     @property
     def cout_usd(self) -> float | None:
@@ -962,15 +996,22 @@ class EtatExecution:
         deux lectures pendant qu'une tâche travaille, là où il restait figé sur
         la fin de la tâche précédente.
         """
-        soldes, releves = self._couts()
+        soldes, releves, _ = self._couts()
         connus = soldes + [cout for cout in releves.values() if cout is not None]
         return sum(connus) if connus else None
 
     @property
     def cout_partiel(self) -> bool:
-        """Le cumul comprend-il un relevé en cours (#835) — donc un montant encore en mouvement ?"""
-        _, releves = self._couts()
-        return bool(releves)
+        """Le cumul n'est-il qu'un **plancher** — relevé en vol (#835), tokens sans prix (#1280) ?
+
+        Deux raisons pour un même drapeau, parce qu'elles disent la même chose à
+        qui lit le montant : il ne couvre pas tout ce que le run a consommé. La
+        première passe avec l'issue de la tâche ; la seconde, jamais — une tâche
+        morte avant son résultat ne sera pas tarifée plus tard, et Maestro
+        n'invente aucun prix (`maestro.telemetry.costs`).
+        """
+        _, releves, sans_cout = self._couts()
+        return bool(releves) or sans_cout
 
     @property
     def cout(self) -> RunCost:
@@ -1438,6 +1479,32 @@ class ControlTowerState:
         """Le détail de l'exécution `run_id`, ou None si aucune trace reçue."""
         return self._executions.get(run_id)
 
+    def au_projet_de_son_run(self, event: Event) -> Event:
+        """`event`, rattaché au projet de son run quand il n'en porte pas (#1290).
+
+        Un run appartient à un projet ; ses événements ne le disent pas tous.
+        L'issue qu'un hôte publie en partant (`bridge.solder_le_run`, la fin de
+        l'hôte en process), les ordres de pause et de reprise, le récit de fin
+        posé dans le fil (#1224) : chacun porte son `run_id` et rien d'autre. La
+        portée d'une vue de projet ne retenant que l'égalité stricte
+        (`PorteeProjet.retient`), ces événements n'atteignaient jamais la vue
+        du projet dont le run relève — un run fini restait « En cours » à
+        l'écran jusqu'au rechargement suivant.
+
+        Le projet se lit ici, dans la projection, parce que c'est le seul
+        endroit qui le connaît pour **tous** les émetteurs : le lancement l'y a
+        posé, ou à défaut la première étape du run (`appliquer`). Rien n'est
+        deviné pour autant : un événement qui porte déjà un projet le garde, et
+        celui d'un run sans projet reste sans projet — il n'entre toujours dans
+        aucune vue filtrée (#222).
+        """
+        if event.projet_id is not None or not event.run_id:
+            return event
+        execution = self._executions.get(event.run_id)
+        if execution is None or execution.projet_id is None:
+            return event
+        return replace(event, projet_id=execution.projet_id)
+
     def executions(self, portee: PorteeProjet | None = None) -> list[EtatExecution]:
         """Les exécutions connues, dans l'ordre de première apparition (#87).
 
@@ -1586,14 +1653,22 @@ class ControlTowerState:
         tache.role = event.role or tache.role
         tache.run_id = event.run_id or tache.run_id
         tache.horodatage = event.horodatage or tache.horodatage
-        if event.cout_usd is not None:
-            tache.cout_usd = event.cout_usd
         if event.usage is not None:
             tache.usage = event.usage
         if _solde_le_cout(event):
             # L'issue de la tâche solde ce que ses relevés (#835) montraient en
-            # cours de route : le montant n'est plus un « jusqu'ici ».
-            tache.cout_partiel = False
+            # cours de route : le montant n'est plus un « jusqu'ici ». Il est
+            # **remplacé**, même par un coût inconnu (#1280) — le zéro mesuré
+            # d'un relevé d'ouverture ne survit pas à une issue qui a consommé
+            # sans tarif, sans quoi une tâche morte afficherait 0,00 $. Et il
+            # reste **partiel** si des tokens de l'issue n'ont pas de prix :
+            # soldé ne veut pas dire complet.
+            tache.cout_usd = (
+                event.cout_usd
+                if event.cout_usd is not None or event.usage is None
+                else event.usage.cout_usd
+            )
+            tache.cout_partiel = _laisse_des_tokens_sans_cout(event)
         if event.ticket is not None:
             tache.ticket = event.ticket
         self._pose_detail(tache, event)
@@ -1936,6 +2011,10 @@ class ControlTowerState:
             # Le régime du brief (#320) : même règle une fois de plus — annoncé par
             # le lancement, jamais retiré par l'issue, qui ne le porte pas.
             execution.mode_brief = event.mode_brief
+        if event.bornes is not None:
+            # Les bornes du run (#1323) : même règle — le lancement les porte,
+            # l'issue n'en sait rien et ne les efface pas.
+            execution.bornes = event.bornes
         if event.reprise_de:
             # Le run repris (#349) : même règle, une dernière fois. Seul le lancement
             # d'une relance en porte un ; l'issue du run, qui n'en sait rien, ne doit

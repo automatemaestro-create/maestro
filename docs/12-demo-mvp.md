@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Démo de bout en bout du MVP — Maestro
 
 **Version :** 0.1

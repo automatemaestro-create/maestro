@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 31 — La surface d'écriture des agents pendant un run : note de décision
 
 > Ticket #354. Décision datée du **2026-08-28**, sur `origin/main` à `1bef04a`.
@@ -33,7 +34,7 @@ l'agent**, et le ticket n'en cite aucune.
 | Quoi | Depuis | Le geste | À l'initiative de |
 | --- | --- | --- | --- |
 | Un **ticket externe** posé sur sa tâche | #187 | `consigne_ticket` → étape `<tache>:ticket` | **l'agent**, via le MCP de son outil |
-| Sa **checklist** d'avancement | #489 | `consigne_detail`, via `on_etapes` | **l'agent**, via ses `TodoWrite` |
+| Sa **checklist** d'avancement | #489 | `consigne_detail`, via `on_etapes` | **l'agent**, via ses `TodoWrite` — le verbe `tenir_checklist` depuis #1291 |
 | Une **demande d'arbitrage** sur un acte | #582 | outil MCP `demander_arbitrage(raison)` | **l'agent**, et l'appel attend la réponse |
 | Un **message** inter-agents | #44 | `consigne_message` → étape `<tache>:message` | la **machinerie** — handoff ou chat |
 

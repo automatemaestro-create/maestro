@@ -38,6 +38,10 @@
  * second clic, la liste se **relit** après (le `vcs` est constaté, jamais
  * recopié de la réponse), et un refus s'affiche **sur la carte** avec son motif
  * et le conseil qui va avec.
+ *
+ * Le `describe` « outillage reporté » est #1161 : l'outillage ne s'écrit plus sur
+ * cet écran, il se reprend **dans la conversation** — le geste ouvre la colonne et y
+ * pose, pour ce projet, la première question ou la première pièce.
  */
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -46,6 +50,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ListeProjets } from "@/components/projets/ListeProjets";
 import { ErreurProjet } from "@/lib/api";
+import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
+import {
+  ecrireConversationOuverte,
+  lireConversationOuverte,
+} from "@/lib/preferences";
 import type {
   ChoixSelecteur,
   DisponibiliteSelecteur,
@@ -66,6 +75,7 @@ const versionnerProjet = vi.fn();
 const chargerDisponibiliteSelecteur = vi.fn();
 const ouvrirSelecteurNatif = vi.fn();
 const chargerRepertoireProjets = vi.fn();
+const ouvrirQuestionnaireOutillage = vi.fn();
 
 // `importOriginal` plutôt qu'un objet nu : `ErreurProjet` doit rester **la**
 // classe du module, sinon le `instanceof` qui distingue un refus motivé d'une
@@ -85,6 +95,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     chargerDisponibiliteSelecteur: () => chargerDisponibiliteSelecteur(),
     ouvrirSelecteurNatif: (depart: string | null) => ouvrirSelecteurNatif(depart),
     chargerRepertoireProjets: () => chargerRepertoireProjets(),
+    ouvrirQuestionnaireOutillage: (
+      agent: string,
+      conversation?: string,
+      projet?: string,
+    ) => ouvrirQuestionnaireOutillage(agent, conversation, projet),
   };
 });
 
@@ -872,6 +887,73 @@ describe("la mise sous Git d'un projet non versionné (#855)", () => {
     // geste se repropose, et rien n'a été relu (rien n'a été écrit).
     expect(bouton()).toBeInTheDocument();
     expect(chargerProjets).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("un outillage reporté se reprend dans la conversation (#1161)", () => {
+  const REPORTE = { reporte_le: "2026-09-20T10:00:00Z", genere: false, a_faire: true };
+
+  it("le dit sur la carte, et l'ouvre dans la colonne pour ce projet", async () => {
+    // L'étape à cocher qui écrivait tout en une fois sur cet écran est partie :
+    // le geste ouvre le fil de l'orchestration, où chaque pièce s'écrit sur accord.
+    ouvrirQuestionnaireOutillage.mockResolvedValue({});
+    chargerProjets.mockResolvedValue([projetFactice({ outillage: REPORTE })]);
+    ecrireConversationOuverte(false);
+    const utilisateur = userEvent.setup();
+    await page();
+    const carte = await screen.findByRole("listitem", { name: "Projet Dépensio" });
+    expect(carte).toHaveTextContent("Outillage reporté");
+
+    await utilisateur.click(
+      within(carte).getByRole("button", { name: "Outiller dans la conversation" }),
+    );
+
+    await waitFor(() =>
+      expect(ouvrirQuestionnaireOutillage).toHaveBeenCalledWith(
+        AGENT_ORCHESTRATION,
+        undefined,
+        "prj-7f3a1c2b",
+      ),
+    );
+    expect(lireConversationOuverte()).toBe(true);
+    // Le rappel du report s'efface tout de suite — comme au rechargement, l'API ayant
+    // levé le report — et la carte n'ajoute rien : la colonne est le retour du geste.
+    await waitFor(() => expect(within(carte).queryByText("Outillage reporté")).toBeNull());
+    expect(
+      within(carte).queryByRole("button", { name: "Outiller dans la conversation" }),
+    ).toBeNull();
+    expect(within(carte).queryByRole("status")).toBeNull();
+  });
+
+  it("ne propose rien à un projet déjà outillé", async () => {
+    chargerProjets.mockResolvedValue([
+      projetFactice({ outillage: { ...REPORTE, genere: true, a_faire: false } }),
+    ]);
+    await page();
+    const carte = await screen.findByRole("listitem", { name: "Projet Dépensio" });
+
+    expect(
+      within(carte).queryByRole("button", { name: "Outiller dans la conversation" }),
+    ).toBeNull();
+    expect(carte).not.toHaveTextContent("Outillage reporté");
+  });
+
+  it("montre un refus sur la carte, et garde le geste", async () => {
+    ouvrirQuestionnaireOutillage.mockRejectedValue(new Error("API injoignable"));
+    chargerProjets.mockResolvedValue([projetFactice({ outillage: REPORTE })]);
+    const utilisateur = userEvent.setup();
+    await page();
+    const carte = await screen.findByRole("listitem", { name: "Projet Dépensio" });
+
+    await utilisateur.click(
+      within(carte).getByRole("button", { name: "Outiller dans la conversation" }),
+    );
+
+    const refus = await within(carte).findByRole("alert");
+    expect(refus).toHaveTextContent("Outillage non ouvert");
+    expect(
+      within(carte).getByRole("button", { name: "Outiller dans la conversation" }),
+    ).toBeInTheDocument();
   });
 });
 

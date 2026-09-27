@@ -54,6 +54,7 @@ from maestro.controltower.chat import _CADRE_CONVERSATION
 from maestro.controltower.generation_agent import _CADRE_GENERATION
 from maestro.controltower.orchestration import _PROMPT_ORCHESTRATION, _PROMPT_REDACTION
 from maestro.controltower.outillage import _PROMPT_COMPREHENSION
+from maestro.controltower.pieces import _PROMPT_CORRECTION
 from maestro.controltower.recit import SYSTEME as _SYSTEME_RECIT
 from maestro.equipe.composition import CADRE_COMPOSITION
 from maestro.providers.base import ModelProvider
@@ -72,6 +73,9 @@ CONVERSATIONNELS = {
     # Ses intitulés, ses options et leurs raisons s'affichent tels quels sur la carte
     # de la question d'outillage : ils parlent à la personne.
     "compréhension d'un projet neuf (#1147)": _PROMPT_COMPREHENSION,
+    # Son `message` — ce qui n'a pas été compris d'une correction — s'écrit tel quel
+    # dans le fil : il parle à la personne.
+    "correction de l'outillage (#1161)": _PROMPT_CORRECTION,
 }
 
 
@@ -200,6 +204,7 @@ APPELS_CONVERSATIONNELS = {
     "orchestration.py::RepondeurOrchestration._juger": "orchestration (#685)",
     "orchestration.py::RepondeurOrchestration.rediger": "parole du fil sur un geste (#1262)",
     "outillage.py::ComprehensionModele.comprendre": "compréhension d'un projet neuf (#1147)",
+    "pieces.py::CorrectionModele.comprendre": "correction de l'outillage (#1161)",
     "recit.py::RedacteurModele.rediger": "récit de fin d'un run (#1224)",
     "equipe.py::CompositeurEquipe.ecrire": "composition d'équipe (#1159)",
 }
@@ -349,10 +354,11 @@ def test_le_contrat_json_de_l_orchestration_reste_intact():
     """
     # Le quatrième verdict, `projet`, est venu avec #1294 : un projet qui naît dans la
     # conversation. Son objet (`"projet": {…}`) porte d'autres accolades littérales,
-    # que le même `+` protège.
+    # que le même `+` protège. Le cinquième, `outillage`, avec #1161 : l'outillage
+    # corrigé avec des mots — il n'ajoute pas d'objet, seulement un mot au contrat.
     assert (
-        '%%MAESTRO%% {"verdict": "proposition|accord|echange|projet", "objectif": "..."}'
-        in _PROMPT_ORCHESTRATION
+        '%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage", '
+        '"objectif": "..."}' in _PROMPT_ORCHESTRATION
     )
     assert '"raisons": {"nom": "...", "dossier": "...", "versionnement": "..."}' in (
         _PROMPT_ORCHESTRATION

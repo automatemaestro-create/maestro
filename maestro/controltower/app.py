@@ -422,6 +422,7 @@ from maestro.controltower.chat import (
     CadrageIntrouvable,
     ChatStore,
     DeclarationIntrouvable,
+    PieceIntrouvable,
     QuestionIntrouvable,
     RecrutementIntrouvable,
     RepondeurChat,
@@ -505,6 +506,7 @@ from maestro.controltower.persistence import (
     journal_configure,
     support_persistance,
 )
+from maestro.controltower.pieces import CorrectionModele, ServicePieces
 from maestro.controltower.portee import (
     PorteeProjet,
     PorteeRefusee,
@@ -521,6 +523,7 @@ from maestro.controltower.projets import (
     statut_http,
 )
 from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
+from maestro.controltower.regime import MembreDeLEquipe, regime_d_un_run
 from maestro.controltower.renfort import RelaisRenfort
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
@@ -559,6 +562,7 @@ from maestro.projets import (
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.base import ModelProvider
 from maestro.providers.blocage import OUTIL_BLOCAGE
+from maestro.providers.checklist import OUTIL_CHECKLIST
 from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.providers.decision import OUTIL_DECISION
 from maestro.providers.question import OUTIL_QUESTION
@@ -1295,6 +1299,23 @@ class DeclarationProjetRequete(BaseModel):
     conversation: str | None = None
 
 
+class DecisionPieceRequete(BaseModel):
+    """Corps du geste qui tranche la pièce d'outillage que le fil propose (#1161).
+
+    `decision` — `ecrire`, `passer` ou `plus-tard` —, et rien d'autre de fond : le
+    chemin, le contenu et le diff sont sur la pièce que le fil porte
+    (`PieceProposee`), et c'est elle qui s'écrit. `piece` est l'**empreinte** de la
+    version que la carte montrait : une désignation, qui fait tomber sur le `409` le
+    double clic qui écrirait sinon la pièce suivante, déjà proposée. Une correction
+    ne passe pas par ici : elle se **dit** dans la conversation, et appelle une pièce
+    revérifiée.
+    """
+
+    decision: str
+    piece: str = ""
+    conversation: str | None = None
+
+
 class SecretPoolRequete(BaseModel):
     """Une valeur de secret saisie pour une intégration du pool (#133).
 
@@ -1557,6 +1578,9 @@ async def _pompe(
                     en_panne = False
                 attente = reprise_s
                 state.appliquer(event)
+                # Rattaché **après** la projection, qui vient d'apprendre le
+                # projet du run si c'est cet événement qui le porte (#1290).
+                event = state.au_projet_de_son_run(event)
                 journal.consigner(event)
                 diffusion.diffuser(event)
                 if (
@@ -1905,6 +1929,13 @@ def create_app(
         provider=lecteur_outillage,
         comprehension=comprehension,
     )
+    # L'outillage s'écrit **pièce par pièce dans la conversation** (#1161) : le même
+    # service d'outillage lit le projet, les mêmes verdicts de commandes sont joués
+    # avant chaque carte, et une correction dite avec des mots est comprise par le
+    # modèle du poste — celui du lecteur d'outillage quand il est injecté.
+    pieces = ServicePieces(
+        outillage, projets, correction=CorrectionModele(lecteur_outillage)
+    )
     # La projection part du catalogue **hors projet** : les agents rangés à la
     # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
     # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
@@ -2017,6 +2048,12 @@ def create_app(
         hote=hote_run,
     )
 
+    # Le régime de brief des runs ouverts depuis le fil — **une** valeur, lue par
+    # le lanceur qui l'applique et par le régime qui le dit (#1323) : deux
+    # écritures du même choix finiraient par faire annoncer au fil un autre
+    # cadrage que celui du run.
+    mode_brief_du_fil = MODE_BRIEF_AUTO
+
     async def ouvrir_un_run(
         objectif: str,
         projet_id: str | None = None,
@@ -2056,7 +2093,7 @@ def create_app(
             timeout_tache_s=bornes.timeout_tache_s,
             parallelisme=bornes.parallelisme,
             projet_id=projet_id,
-            mode_brief=MODE_BRIEF_AUTO,
+            mode_brief=mode_brief_du_fil,
             contexte_sources=contexte_sources,
         )
 
@@ -2101,6 +2138,34 @@ def create_app(
                 ligne += f" — compétences : {competences}"
             lignes.append(ligne)
         return "\n".join(lignes)
+
+    def regime_du_projet(projet_id: str | None) -> str:
+        """Ce qu'un run de ce projet fera, pour le fil — lu, jamais deviné (#1323).
+
+        L'équipe par la règle unique du routeur (`catalogue_du_projet`), comme
+        `roles_du_projet`, et la politique de chaque agent par l'appel exact de
+        l'exécution (`permissions.pour_projet(…).lire`, relu à chaque message
+        comme l'exécuteur le relit à chaque tâche) : le fil dit ce que la tâche
+        appliquera. Une politique que la lecture refuse n'est pas tue —
+        l'exécution en ferait un échec de tâche, et c'est ce que le fil en dira.
+        Sans projet, ou sur un projet inconnu, le bloc ne parle que de ce qui ne
+        dépend d'aucune équipe : le cadrage et les bornes.
+        """
+        if not projet_id or not projets.existe(projet_id):
+            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+        agents = catalogue_du_projet(agents_store, projet_id)
+        if agents is None:
+            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+        politiques = permissions.pour_projet(projet_id)
+        membres: list[MembreDeLEquipe] = []
+        for agent in agents:
+            try:
+                politique = politiques.lire(agent.nom)
+            except ValueError as refus:
+                membres.append(MembreDeLEquipe(agent.role, agent.nom, illisible=str(refus)))
+            else:
+                membres.append(MembreDeLEquipe(agent.role, agent.nom, politique))
+        return regime_d_un_run(membres, mode_brief=mode_brief_du_fil)
 
     def projet_du_fil(projet_id: str) -> Projet | None:
         """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.
@@ -2173,11 +2238,16 @@ def create_app(
                 consultation=consulter,
                 roles=roles_du_projet,
                 attentes=attentes_de(state),
-                conducteur=ConducteurOutillage(comprehension),
+                # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
+                # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
+                regime=regime_du_projet,
+                conducteur=ConducteurOutillage(comprehension, pieces=pieces),
                 # Un projet naît dans la conversation (#1294) : déclaré par le
                 # **même** service que `POST /api/projets`, et un dossier importé
                 # lu par la lecture de l'outillage (#1158) — une fois accordé.
                 naissance=ServiceNaissance(projets, lecteur=outillage.analyser),
+                # Et son outillage s'y construit, pièce par pièce (#1161).
+                pieces=pieces,
             )
         ),
         mailbox=mailbox,
@@ -2239,7 +2309,9 @@ def create_app(
             raise
         for event in evenements:
             state.appliquer(event)
-            journal.consigner(event)
+            # Le même rattachement que la pompe (#1290) : le journal durable
+            # garde l'issue d'un run telle qu'elle a été publiée, sans projet.
+            journal.consigner(state.au_projet_de_son_run(event))
         magasin.rejeu_abouti()
 
     @asynccontextmanager
@@ -4045,8 +4117,8 @@ def create_app(
         générique d'une fiche sert depuis #1037 : tout agent du catalogue est
         outillé, seules ses consignes de métier lui sont propres), les verbes du serveur
         in-process **maestro** (arbitrage, blocage, courrier, décision
-        consignée, question — leurs constantes existent précisément pour qu'une
-        politique les désigne, #805, #1023) et les
+        consignée, question, checklist — leurs constantes existent précisément
+        pour qu'une politique les désigne, #805, #1023, #1291) et les
         **serveurs MCP** effectivement montés pour lui, cités en entier
         (`mcp__<serveur>`, qui couvre tous leurs outils).
 
@@ -4077,6 +4149,7 @@ def create_app(
                 "libelle": "consigner une décision tranchée seul",
             },
             {"nom": OUTIL_QUESTION, "origine": "maestro", "libelle": "poser une question"},
+            {"nom": OUTIL_CHECKLIST, "origine": "maestro", "libelle": "tenir sa checklist"},
         ]
         try:
             serveurs = cfg.mcp.lire(nom)
@@ -5249,7 +5322,8 @@ def create_app(
         """Écrit dans le projet l'outillage que son analyse recommande (#1033, docs/38).
 
         Le second geste du chantier, et celui qui touche au dossier de
-        quelqu'un : `AGENTS.md`, les deux ponts d'une ligne, les skills dans
+        quelqu'un : `AGENTS.md`, un pont d'une ligne par client du poste qui ne
+        le lit pas (#1295), les skills dans
         `.agents/skills/` et le manifeste `.maestro/outillage/manifeste.json`,
         qui dit ce qui vient de Maestro.
 
@@ -5990,16 +6064,52 @@ def create_app(
             "messages": [geste.to_dict(), reponse.to_dict()],
         }
 
+    @app.post("/api/chat/{agent}/outillage/piece", status_code=201)
+    async def trancher_piece_chat(agent: str, requete: DecisionPieceRequete) -> dict[str, Any]:
+        """Tranche d'un **geste** la pièce d'outillage que le fil propose (#1161).
+
+        Le jumeau de `POST …/projet` sur la cinquième demande du canal, et la même
+        réponse : l'acte est écrit au fil, la suite vient derrière — la pièce écrite
+        (`piece_ecrite`, sous la bulle), puis la suivante, déjà vérifiée. La pièce
+        visée n'est pas dans le corps : c'est celle qui attend, si bien qu'un double
+        clic tombe sur le `409` au lieu d'écrire deux fois.
+
+        `422` sur une décision inconnue, et sur l'écriture d'une version dont la
+        **correction a échoué à l'exécution** — elle ne s'écrit pas, et le fil le
+        dit. `409` quand rien n'attend, `404` hors catalogue, `502` si la suite n'a
+        pas pu être produite (le geste, lui, reste acquis au fil).
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.trancher_piece(
+                fiche, decision=requete.decision, piece=requete.piece, conversation=fil
+            )
+        except PieceIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
+        }
+
     @app.post("/api/chat/{agent}/outillage/questionnaire", status_code=201)
     async def ouvrir_questionnaire_chat(
-        agent: str, conversation: str | None = None
+        agent: str, conversation: str | None = None, projet: str | None = None
     ) -> dict[str, Any]:
-        """Pose la première question d'outillage dans le fil — ou reprend (#1031).
+        """Ouvre l'outillage d'un projet dans le fil — ou le reprend (#1031, #1161).
 
-        L'entrée du questionnaire d'un projet neuf : c'est elle qu'appellera le
-        parcours de création (#1034) après le choix de la racine. Elle n'écrit
-        **aucun message d'utilisateur** — personne n'a rien demandé —, seulement la
-        question, par la même voie que n'importe quelle réponse d'agent.
+        Elle n'écrit **aucun message d'utilisateur** — personne n'a rien demandé —,
+        seulement ce qui vient : la question qui manque, ou la première pièce, par la
+        même voie que n'importe quelle réponse d'agent. `projet` nomme le projet à
+        outiller quand le fil ne le dit pas : « Outiller maintenant » sur la carte
+        d'un projet dont l'outillage a été reporté (#1161) — l'outillage se construit
+        dans la conversation, plus dans une étape de formulaire.
 
         **Idempotente** : rappelée sur un questionnaire en cours, elle repose la
         question là où il en est plutôt que d'en recommencer un second. La propriété
@@ -6012,7 +6122,7 @@ def create_app(
         fiche, service = _canal_chat(agent)
         fil = _conversation_demandee(service, fiche, conversation)
         try:
-            message = await service.poser_question(fiche, conversation=fil)
+            message = await service.poser_question(fiche, conversation=fil, projet_id=projet)
         except QuestionIntrouvable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
@@ -6111,7 +6221,7 @@ def create_app(
         une proposition, et la génération est le lot 5 (#1033).
         """
         try:
-            return outillage.recommandation(id_projet, requete.choix_acquis())
+            return await outillage.recommandation(id_projet, requete.choix_acquis())
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
@@ -6440,7 +6550,9 @@ def create_app(
         filtré puis suit le flux voit deux fois le même périmètre, et un
         événement d'un autre projet n'arrive jamais dans une vue filtrée. Un
         événement **sans** projet n'entre pas non plus dans une vue de projet,
-        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré.
+        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré —
+        une fois la pompe passée : celui d'un run qui relève d'un projet y a été
+        rattaché (`ControlTowerState.au_projet_de_son_run`, #1290).
 
         Le refus se dit **sur la socket** avant de la fermer : la connexion est
         acceptée, le motif part en une trame `{"erreur": {motif, message}}`,

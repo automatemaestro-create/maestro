@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 34 — Brancher un agent CLI tiers comme exécuteur de tâche (ACP) : note de décision
 
 > Ticket #356. Décision datée du **2026-08-28**. Faits mesurés sur `origin/main` à `bc837c2`.

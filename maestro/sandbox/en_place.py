@@ -40,7 +40,10 @@ Ce module porte les deux pièces du régime :
   est **refusée avec son motif** ; l'agent le lit et poursuit sa tâche, comme
   pour un refus de politique. Une **lecture** n'est refusée que sur ce que le
   périmètre exclut — ce que la copie ne contenait pas, l'agent ne le lit pas non
-  plus —, lire hors de la racine n'étant pas le sujet de ce périmètre.
+  plus —, lire hors de la racine n'étant pas le sujet de ce périmètre. Une
+  **recherche** est une lecture de tout l'arbre qu'elle parcourt (#1304) : un
+  `Grep` qui traverserait un chemin exclu est refusé, avec les dossiers où
+  chercher à la place.
 
 La frontière est **armée par la position, jamais par une option** : `frontiere_de`
 la rend si et seulement si l'espace de travail **est** la racine du projet — le
@@ -50,9 +53,14 @@ et c'est ce qui laisse les deux autres régimes au bit près.
 Ce qu'elle **ne couvre pas** est nommé plutôt que tu : `Bash` n'est pas analysé —
 un shell peut écrire n'importe où, c'était déjà vrai de la copie et du worktree
 (docs/24 §2.5, « `Bash` mal formé »), et c'est ce que le **mode isolé** ferme,
-`maestro.sandbox.container` montant la racine avec ses masques. `Glob`/`Grep` ne
-sont pas confrontés non plus : ils ne modifient rien, et la rédaction (#109,
-`maestro.projets.secrets`) couvre ce qu'ils pourraient citer.
+`maestro.sandbox.container` montant la racine avec ses masques.
+
+⚠ `Glob`/`Grep` **ne sont plus** de ce côté-là (#1304). Ils n'étaient pas
+confrontés, au motif qu'ils ne modifient rien et que la rédaction (#109,
+`maestro.projets.secrets`) couvrirait ce qu'ils pourraient citer — or `Grep` rend
+le **contenu** des fichiers, et un `.env` que `Read` refusait se lisait par une
+recherche. Un contenu exclu ne sort désormais par aucun outil de lecture ou de
+recherche ; seuls des **noms** sortent encore d'un `Glob` qui traverse la racine.
 
 Ce trou-là a cessé d'être théorique avec #1149, qui fait de « vide le dossier du
 projet » **une tâche qui agit** : le geste se fait au shell, là où la frontière ne
@@ -125,21 +133,79 @@ from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import RacineRefusee, canonique, chemin_dans_racine
 from maestro.sandbox.workspace import Workspace
 
-#: Les outils dont un argument est un chemin de fichier, et le nom de cet
-#: argument — ceux du CLI Claude Code (`maestro.agents.runtime.DEFAULT_TOOLS` en
-#: expose une partie). Un outil absent d'ici n'est pas confronté à la frontière.
-OUTILS_A_CHEMIN: Mapping[str, str] = {
-    "Read": "file_path",
-    "Write": "file_path",
-    "Edit": "file_path",
-    "MultiEdit": "file_path",
-    "NotebookRead": "notebook_path",
-    "NotebookEdit": "notebook_path",
+#: Les quatre gestes qu'un outil fait sur un chemin — ce que la frontière y juge.
+#:
+#: - **écrire** : la frontière entière — racine, liens, exclusions ;
+#: - **lire** un fichier : les liens et les exclusions — lire hors de la racine
+#:   n'est pas le sujet du périmètre ;
+#: - **chercher** dans un arbre (`Grep`) : c'est une lecture, et de **tout** ce
+#:   que l'arbre porte — la recherche rend le contenu des fichiers, et même en
+#:   ne rendant que des noms elle dit si un motif y est. L'arbre ne doit donc
+#:   contenir aucun chemin exclu (#1304) ;
+#: - **lister** (`Glob`) : ne rend que des **noms**, jamais un contenu. Ce qu'il
+#:   vise en toutes lettres est confronté comme une lecture ; ce qu'un joker
+#:   traverse ne l'est pas — ce qui en sort n'est pas ce que le périmètre protège.
+ECRITURE = "écriture"
+LECTURE = "lecture"
+RECHERCHE = "recherche"
+LISTE = "liste"
+
+
+@dataclass(frozen=True)
+class OutilAChemin:
+    """Comment un outil touche un chemin : l'argument qui le porte, et son geste.
+
+    `exige` dit si l'argument est obligatoire. Un argument **exigé** qui manque
+    ou ne se lit pas fait refuser l'appel (#1304) : deviner « rien à confronter »
+    était le trou par lequel un CLI qui renommerait l'argument aurait ouvert la
+    frontière entière. Un argument facultatif absent vaut le répertoire courant
+    de l'agent — la racine —, qui est ce que l'outil parcourt alors.
+    """
+
+    cle: str
+    geste: str
+    exige: bool = True
+
+
+#: Les outils dont un argument est un chemin, et comment ils le touchent — ceux du
+#: CLI Claude Code, que `maestro.agents.runtime.DEFAULT_TOOLS` monte en partie.
+#: Un outil absent d'ici n'est pas confronté à la frontière : c'est pourquoi
+#: `Grep` et `Glob`, montés par défaut, y sont depuis #1304 — `Grep` lisait un
+#: `.env` que `Read` refusait.
+#:
+#: ⚠ La liste est écrite dans les noms du CLI, et c'est ce qui la rend fragile :
+#: un outil nouveau qui lirait un fichier n'y serait pas. Le chantier « Maestro
+#: possède ses contrats » (#1315, docs/44) la fera porter par le vocabulaire
+#: d'outils de Maestro ; d'ici là, un nom de trop ne coûte rien et un nom de
+#: moins rouvre une lecture — `NotebookRead`, que les CLI récents n'exposent
+#: plus (`Read` lit les notebooks), y reste pour ceux qui l'exposent encore.
+OUTILS_A_CHEMIN: Mapping[str, OutilAChemin] = {
+    "Read": OutilAChemin("file_path", LECTURE),
+    "Write": OutilAChemin("file_path", ECRITURE),
+    "Edit": OutilAChemin("file_path", ECRITURE),
+    "MultiEdit": OutilAChemin("file_path", ECRITURE),
+    "NotebookRead": OutilAChemin("notebook_path", LECTURE),
+    "NotebookEdit": OutilAChemin("notebook_path", ECRITURE),
+    "Grep": OutilAChemin("path", RECHERCHE, exige=False),
+    "Glob": OutilAChemin("path", LISTE, exige=False),
 }
 
 #: Ceux des outils ci-dessus qui **écrivent** : pour eux la frontière est entière
 #: (racine, liens, exclusions) ; pour les autres seules les exclusions valent.
-OUTILS_ECRITURE: frozenset[str] = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+OUTILS_ECRITURE: frozenset[str] = frozenset(
+    nom for nom, usage in OUTILS_A_CHEMIN.items() if usage.geste == ECRITURE
+)
+
+#: L'argument de `Glob` qui porte le motif — ce qu'il vise en toutes lettres.
+CLE_MOTIF_LISTE = "pattern"
+
+#: Les caractères qui font d'un segment de motif un joker, et non un nom.
+JOKERS = frozenset("*?[{")
+
+#: Combien de chemins un refus de recherche nomme, de chaque côté : ce qu'elle
+#: atteindrait d'exclu, et où chercher à la place. Au-delà, le motif dit combien
+#: il en tait — une adresse se lit, une liste de quarante entrées non.
+NOMMES_MAX = 6
 
 #: Le dossier qui porte les **ateliers** des tâches dans la racine d'un projet
 #: (#944) — un sous-dossier par tâche. Le nom est celui que le dépôt s'est donné
@@ -354,6 +420,11 @@ class FrontiereEcriture:
        parents, l'exclusion ne vaudrait que pour le nom exact. Vaut en lecture
        comme en écriture — ce que la copie ne contenait pas, l'agent ne le lit
        ni ne l'écrit.
+
+    Deux de plus depuis #1304, qui tiennent à l'appel plutôt qu'au chemin : une
+    **entrée illisible** (l'argument de chemin manque, ou n'en est pas un) est
+    refusée au lieu de passer, et une **recherche** l'est dès que l'arbre qu'elle
+    parcourt contient un chemin exclu — elle en rendrait le contenu.
     """
 
     racine: Path
@@ -367,21 +438,155 @@ class FrontiereEcriture:
     def refus(self, outil: str, arguments: Any) -> str | None:
         """Le motif qui interdit l'appel `outil(arguments)`, ou `None` s'il passe.
 
-        `arguments` est le `tool_input` brut du SDK : ce qui n'est pas un objet, ou
-        n'a pas l'argument de chemin attendu, passe — un outil sans chemin n'a
-        rien à confronter, et deviner en ferait refuser à tort.
+        `arguments` est le `tool_input` brut du SDK. Un outil qui ne touche aucun
+        chemin (`OUTILS_A_CHEMIN`) n'a rien à confronter et passe ; un outil qui
+        en touche un est jugé selon son geste (`OutilAChemin`).
+
+        ⚠ Depuis #1304, une entrée qui **ne se lit pas** — pas un objet, argument
+        de chemin exigé absent, vide ou d'un autre type — est **refusée**. Elle
+        passait : « deviner en ferait refuser à tort », disait la règle d'avant,
+        et c'est l'inverse qui s'est révélé vrai — un CLI qui renommerait
+        l'argument ouvrait la frontière entière, sans un mot. Refuser à tort se
+        voit et se corrige ; laisser passer à tort ne se voit pas.
         """
-        cle = OUTILS_A_CHEMIN.get(outil)
-        if cle is None or not isinstance(arguments, Mapping):
+        usage = OUTILS_A_CHEMIN.get(outil)
+        if usage is None:
             return None
-        brut = arguments.get(cle)
-        if not isinstance(brut, str) or not brut.strip():
-            return None
-        return self.refus_chemin(brut, ecriture=outil in OUTILS_ECRITURE)
+        if not isinstance(arguments, Mapping):
+            return _motif_illisible(outil, "son entrée n'est pas un objet")
+        brut = arguments.get(usage.cle)
+        if brut is None and not usage.exige:
+            brut = ""
+        if not isinstance(brut, str) or (usage.exige and not brut.strip()):
+            return _motif_illisible(
+                outil, f"l'argument `{usage.cle}` manque ou n'est pas un chemin"
+            )
+        # Un chemin facultatif absent vaut le répertoire courant de l'agent : la racine.
+        chemin = brut.strip() or "."
+        if usage.geste == RECHERCHE:
+            return self._refus_recherche(chemin)
+        if usage.geste == LISTE:
+            return self._refus_liste(outil, chemin, arguments.get(CLE_MOTIF_LISTE))
+        return self.refus_chemin(brut, ecriture=usage.geste == ECRITURE)
 
     def refus_chemin(self, brut: str, *, ecriture: bool) -> str | None:
         """Le motif qui interdit d'atteindre `brut`, ou `None` — `ecriture` dit le geste."""
-        geste = "Écriture" if ecriture else "Lecture"
+        return self._refus_atteinte(brut, "Écriture" if ecriture else "Lecture", ecriture=ecriture)
+
+    def _refus_recherche(self, chemin: str) -> str | None:
+        """Le motif qui interdit de chercher sous `chemin`, ou `None` (#1304).
+
+        Une recherche **lit** : elle est d'abord confrontée comme une lecture de
+        `chemin` (un fichier exclu, un dossier exclu, un lien). Puis, parce qu'elle
+        lit tout ce que l'arbre porte, elle est refusée dès que cet arbre contient
+        un chemin exclu — le `.env` de la racine suffit. On ne sait pas lui retirer
+        ce qu'elle ne doit pas lire : l'outil est celui du CLI, et le filtrer
+        dépendrait de sa façon de le faire. Le refus nomme donc **où chercher** à la
+        place, ce qui, sous la même portée, ne contient rien d'exclu.
+
+        Un chemin hors de la racine n'est pas le sujet du périmètre, sauf s'il la
+        **contient** : chercher depuis le dossier parent traverse le projet entier.
+        """
+        motif = self._refus_atteinte(chemin, "Recherche", ecriture=False)
+        if motif is not None:
+            return motif
+        base = self._base_de_recherche(chemin)
+        if base is None:
+            return None
+        atteints, propres = self._exclus_atteints(base)
+        if not atteints:
+            return None
+        return _motif_recherche(chemin, atteints, propres)
+
+    def _refus_liste(self, outil: str, chemin: str, motif: object) -> str | None:
+        """Le motif qui interdit de lister `motif` sous `chemin`, ou `None` (#1304).
+
+        Une liste ne rend que des **noms** : ce qu'un joker traverse n'en sort pas
+        plus lu. Ce qu'elle vise **en toutes lettres** — son dossier, et la partie
+        de son motif qui précède le premier joker — est confronté comme une
+        lecture : lister `secrets/*` ou `node_modules/**`, c'est parcourir ce que
+        le périmètre retire.
+        """
+        if not isinstance(motif, str) or not motif.strip():
+            return _motif_illisible(outil, f"l'argument `{CLE_MOTIF_LISTE}` manque ou est vide")
+        refus = self._refus_atteinte(chemin, "Recherche", ecriture=False)
+        if refus is not None:
+            return refus
+        prefixe = _prefixe_litteral(motif)
+        if not prefixe:
+            return None
+        return self._refus_atteinte(str(Path(chemin) / prefixe), "Recherche", ecriture=False)
+
+    def _base_de_recherche(self, chemin: str) -> str | None:
+        """Ce que la recherche parcourt de la racine, relatif (POSIX) — `None` si rien.
+
+        `""` désigne la racine entière : une recherche lancée depuis la racine, ou
+        depuis un dossier qui la contient. Un fichier ne se parcourt pas — il a
+        été jugé comme une lecture —, et un chemin disjoint du projet non plus.
+        """
+        candidat = self._candidat(chemin)
+        try:
+            cible = chemin_dans_racine(self.racine, candidat)
+        except RacineRefusee:
+            try:
+                resolu = candidat.resolve()
+            except OSError:  # chemin illisible : la recherche ne lira rien non plus
+                return None
+            return "" if _sous(self.racine, resolu) else None
+        if not cible.is_dir():
+            return None
+        relatif = cible.relative_to(self.racine).as_posix()
+        return "" if relatif == "." else relatif
+
+    def _exclus_atteints(self, base: str) -> tuple[list[str], list[str]]:
+        """Ce qu'une recherche lancée sur `base` atteindrait d'exclu, et où chercher à la place.
+
+        Parcours du même régime que le recensement (`fichiers_du_perimetre`) —
+        itératif, trié, sans descendre dans un chemin exclu —, qui **relève** les
+        exclusions au lieu de les sauter. Un **lien symbolique** qui mène dans la
+        racine en est aussi : on ne sait pas si l'outil le suivra, et une frontière
+        qui ne suit aucun lien ne parie pas qu'il ne le fera pas. Un lien qui mène
+        dehors, lui, ne lit rien du projet.
+
+        Rend les chemins atteints (relatifs à la racine) et les entrées de `base`
+        qui n'en contiennent aucun — les **adresses** que le refus donne.
+        """
+        atteints: list[str] = []
+        souillees: set[str] = set()
+        premieres: list[str] = []
+        pile: list[tuple[str, str]] = [(base, "")]
+        while pile:
+            relatif_dossier, tete = pile.pop()
+            dossier = self.racine / relatif_dossier if relatif_dossier else self.racine
+            try:
+                with os.scandir(dossier) as entrees:
+                    triees = sorted(entrees, key=lambda entree: entree.name)
+            except OSError:  # dossier devenu illisible : la recherche n'y lira rien
+                continue
+            for entree in triees:
+                relatif = f"{relatif_dossier}/{entree.name}" if relatif_dossier else entree.name
+                premiere = tete or relatif
+                lien = entree.is_symlink()
+                if not tete and not lien:
+                    premieres.append(relatif)
+                if _correspond(relatif, self.exclus) or (lien and self._lien_interieur(entree)):
+                    atteints.append(relatif)
+                    souillees.add(premiere)
+                elif not lien and entree.is_dir():
+                    pile.append((relatif, premiere))
+        propres = [entree for entree in premieres if entree not in souillees]
+        return sorted(atteints), propres
+
+    def _lien_interieur(self, entree: os.DirEntry[str]) -> bool:
+        """Le lien `entree` mène-t-il dans la racine ? Un lien cassé ne mène nulle part."""
+        try:
+            cible = Path(entree.path).resolve(strict=True)
+        except (OSError, RuntimeError):  # lien cassé ou en boucle : rien à lire
+            return False
+        return _sous(cible, self.racine)
+
+    def _refus_atteinte(self, brut: str, geste: str, *, ecriture: bool) -> str | None:
+        """Le motif qui interdit d'atteindre `brut` pour `geste`, ou `None`."""
         candidat = self._candidat(brut)
         try:
             cible = chemin_dans_racine(self.racine, candidat)
@@ -498,6 +703,66 @@ def portee_de(workspace: Path | str, projet: Projet | None) -> PorteeProjet:
 def _meme_chemin(un: Path, autre: Path) -> bool:
     """`un` et `autre` désignent-ils le même chemin, à la casse près (comparaison de l'OS) ?"""
     return os.path.normcase(str(un)) == os.path.normcase(str(autre))
+
+
+def _sous(chemin: Path, parent: Path) -> bool:
+    """`chemin` est-il `parent` ou l'un de ses descendants, à la casse près ?"""
+    enfant, ancetre = os.path.normcase(str(chemin)), os.path.normcase(str(parent))
+    try:
+        return os.path.commonpath([enfant, ancetre]) == ancetre
+    except ValueError:  # deux disques différents : rien en commun
+        return False
+
+
+def _prefixe_litteral(motif: str) -> str:
+    """Les segments d'un motif de liste qui précèdent le premier joker — `""` s'il commence par un.
+
+    `src/**/*.py` vise `src`, `secrets/*` vise `secrets`, `.env` se vise
+    lui-même ; `**/*.py` ne nomme rien. C'est ce que la liste **nomme**, donc ce
+    que la frontière peut confronter sans deviner ce que le joker recouvrira.
+    """
+    segments = motif.strip().replace("\\", "/").split("/")
+    litteraux: list[str] = []
+    for segment in segments:
+        if any(caractere in JOKERS for caractere in segment):
+            break
+        litteraux.append(segment)
+    prefixe = "/".join(litteraux)
+    # Un motif absolu garde sa racine (`/`), que la jointure a mangée.
+    if motif.strip().startswith("/") and not prefixe.startswith("/"):
+        prefixe = "/" + prefixe
+    return prefixe.strip() if prefixe.strip("/") else ""
+
+
+def _motif_illisible(outil: str, raison: str) -> str:
+    """Le motif d'un outil de fichiers dont l'entrée ne se lit pas (#1304)."""
+    return (
+        f"Appel de `{outil}` refusé : entrée illisible pour la frontière du projet — "
+        f"{raison}. Ce qu'elle ne sait pas situer, elle ne le laisse pas passer."
+    )
+
+
+def _motif_recherche(chemin: str, atteints: list[str], propres: list[str]) -> str:
+    """Le motif d'une recherche refusée : ce qu'elle lirait d'exclu, et où chercher (#1304)."""
+    exclus = _enumere(atteints)
+    motif = (
+        f"Recherche refusée : sous « {chemin} », elle lirait des chemins exclus du "
+        f"périmètre du projet ({exclus}), et ce que le périmètre retire n'est lu par "
+        "aucun outil. "
+    )
+    if propres:
+        return motif + (
+            f"Cherche dans ce qui n'en contient pas : {_enumere(propres)} — ou vise "
+            "un fichier précis."
+        )
+    return motif + "Vise un fichier précis, ou un dossier qui n'en contient pas."
+
+
+def _enumere(chemins: list[str]) -> str:
+    """`chemins` en liste lisible, bornée à `NOMMES_MAX` — ce qu'elle tait est compté."""
+    nommes = ", ".join(f"`{chemin}`" for chemin in chemins[:NOMMES_MAX])
+    reste = len(chemins) - NOMMES_MAX
+    return nommes + (f" et {reste} autre(s)" if reste > 0 else "")
 
 
 def _correspond(relatif: str, motifs: tuple[re.Pattern[str], ...]) -> bool:

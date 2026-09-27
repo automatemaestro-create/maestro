@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Gestion fine des secrets par agent et intégration (ticket #109)
 
 **Version :** 0.1

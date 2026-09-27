@@ -31,6 +31,7 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.agents.permissions import PolitiqueOutils
     from maestro.detail_tache import EtapeTache
     from maestro.projets.modele import Projet
+    from maestro.sandbox.confinement import ReleveConfinement
 
 #: Borne appliquée à une exécution agentique dont l'appelant n'en fixe pas — depuis
 #: #494 il n'y en a plus : le défaut est **l'absence de borne**, et c'est un choix,
@@ -111,6 +112,34 @@ class PlafondFluxDepasse(RuntimeError):
 
     Le message dit ce qui a débordé et de combien : c'est la cause de l'échec de
     la tâche, telle que le journal, l'écran et le récit de fin la liront.
+    """
+
+
+class GardeFouInoperant(RuntimeError):
+    """Levée quand la sonde de démarrage prouve qu'un refus de Maestro ne tient pas (#1304).
+
+    Un fournisseur qui honore `run_agent` sous une politique ou une frontière
+    applique les refus de Maestro à chaque appel d'outil. La sonde
+    (`maestro.providers.controle`) le vérifie sur le fournisseur réel avant que
+    l'agent ne travaille : si l'outil qu'elle fait refuser est exécuté quand même,
+    ou si le point de contrôle n'en lit pas le nom, les garde-fous de la session
+    ne tiendraient pas — et la tâche ne démarre pas.
+
+    Non transitoire par nature : c'est une propriété du fournisseur (son CLI, son
+    SDK), qu'une relance reproduirait à l'identique. Jamais relancée (ENF-06). Le
+    message dit ce que la sonde a constaté ; c'est la cause de l'échec de la
+    tâche, telle que le journal la lira.
+    """
+
+
+class SondeNonConcluante(RuntimeError):
+    """Levée quand la sonde de démarrage n'a rien pu prouver (#1304).
+
+    L'agent de la sonde n'a pas appelé l'outil qu'on lui demandait d'appeler :
+    le refus n'a donc été ni appliqué, ni contredit. La tâche ne démarre pas pour
+    autant — un garde-fou dont on ignore s'il tient ne se présume pas tenu —,
+    mais l'échec est **transitoire** : c'est un aléa du modèle, pas une propriété
+    du fournisseur, et la relance du moteur (ENF-06) rejoue la sonde.
     """
 
 
@@ -543,6 +572,7 @@ class ModelProvider(ABC):
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: Courrier | None = None,
         on_question: Questionneur | None = None,
+        on_processus: Callable[[ReleveConfinement], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
@@ -632,20 +662,24 @@ class ModelProvider(ABC):
         jamais casser l'exécution observée.
 
         `on_etapes` (#489) est le canal de la **checklist** de la tâche : le
-        fournisseur l'appelle avec l'état complet de la liste de travail de
-        l'agent, tel qu'il vient de l'observer, chaque fois que celui-ci la pose
-        ou la met à jour. L'état **complet** et non un delta, à dessein — c'est
-        `maestro.detail_tache.SuiviChecklist` qui décide de ce qui progresse, et
-        lui confier des deltas l'obligerait à reconstituer un état que le
-        fournisseur a déjà sous les yeux.
+        fournisseur l'appelle avec l'état complet de la liste de l'agent chaque
+        fois que celui-ci la pose ou la met à jour. L'état **complet** et non un
+        delta, à dessein — c'est `maestro.detail_tache.SuiviChecklist` qui décide
+        de ce qui progresse, et lui confier des deltas l'obligerait à
+        reconstituer un état que l'agent vient de donner en entier.
+
+        Depuis #1291, un fournisseur qui l'honore expose à l'agent le **verbe de
+        Maestro** `tenir_checklist(etapes)` et en sert le contrat tel quel
+        (`maestro.providers.checklist.servir` : entrée, fautes dites à l'agent,
+        accusé) — il ne **lit** plus la liste dans un outil qui lui serait propre.
+        C'était le cas du fournisseur Claude, qui la lisait dans l'outil
+        `TodoWrite` de son CLI, et c'est ce qui a laissé toutes les checklists à
+        0/N le jour où le CLI a changé d'outil (docs/44).
 
         Capacité **optionnelle au second degré** : un fournisseur peut honorer
-        `run_agent` sans jamais appeler ce canal, s'il n'a pas d'endroit où
-        observer une checklist. La tâche reste alors exactement ce qu'elle est
-        sans lui — pas de checklist vide, pas de bloc qui promette un contenu
-        absent (règle de #246). C'est ce qui permet au couplage à l'outil
-        d'exister d'un seul côté (`maestro.providers.checklist`) sans remonter
-        jusqu'au moteur.
+        `run_agent` sans jamais appeler ce canal, s'il ne sert pas d'outils. La
+        tâche reste alors exactement ce qu'elle est sans lui — pas de checklist
+        vide, pas de bloc qui promette un contenu absent (règle de #246).
 
         Même règle que les deux autres canaux sur les échecs : un callback qui
         lève ne casse jamais l'exécution observée.
@@ -778,6 +812,22 @@ class ModelProvider(ABC):
 
         Capacité optionnelle comme les précédentes : sans ce canal, le verbe n'est
         pas exposé du tout — plutôt qu'exposé sans aboutir.
+
+        `on_processus` (#1279, `maestro.sandbox.confinement`) ne part pas de
+        l'agent : il part de sa **session**, une fois fermée. Ce qu'un agent lance
+        pendant sa tâche — un serveur, un navigateur headless qui ouvre un port de
+        débogage — ne doit pas survivre à cette tâche, qu'elle réussisse, échoue,
+        soit relancée ou annulée : un fournisseur qui honore `run_agent` range
+        tout ce que sa session lance dans un même arbre et l'arrête à la clôture.
+        Il rend alors sur ce canal un `ReleveConfinement` — ce qui vivait encore et
+        qu'il a arrêté, ce qui a **résisté** (nom et pid, que le journal du run
+        doit dire), ou pourquoi la session n'a pas pu être confinée —, et rien
+        quand il n'y a rien à dire.
+
+        Un fournisseur dont la session ne lance aucun processus (un endpoint
+        distant sans outils locaux) n'a rien à confiner et n'appelle jamais ce
+        canal. Même règle que les canaux d'observation sur les échecs : un
+        callback qui lève ne casse jamais l'exécution observée.
 
         `plafond_tours` (#239) borne la boucle agentique — dépassé ⇒
         `TurnLimitReached`. Il est **fourni par l'appelant** (le profil de

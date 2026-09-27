@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # L'interface de la Control Tower
 
 Interface web de supervision (le poste de pilotage, docs/05) — v1 du ticket #47,
@@ -42,7 +43,10 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   que pour servir une réponse écrite d'avance — une **table de mots-clés**, qui
   répondait avec aplomb sur un écran dès qu'un mot y traînait (« pipeline Jenkins »
   ramenait la page Runs). Elle a cessé d'être un juge : le modèle **lit la
-  documentation du produit** (`docs/`, ce README) et répond à partir des seules
+  documentation du produit** — les documents qui se déclarent du produit en première
+  ligne (#1321), dont ce README pour ses écrans ; ses chapitres écrits pour qui code
+  l'interface (langage visuel, lancement local, modèle de données, vérifications) se
+  déclarent du développement et n'en sont pas — et répond à partir des seules
   sections qu'il a demandées — choisies en deux temps depuis #1316, sur le
   **sommaire** de la documentation (titres de niveaux 1 et 2) puis sur le détail des
   chapitres qu'il y a retenus, ce qui laisse la carte tenir la croissance du corpus
@@ -581,6 +585,7 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
 Stack (docs/02 §5) : **Next.js + React + TypeScript + Tailwind**.
 
 ## Le langage visuel
+<!-- documentation: développement -->
 
 Posé par #245 (lot 1 de #242), étendu par #533 (lot 1 de #532) qui lui a donné sa
 palette sémantique, il tient en trois fichiers. Ce qui suit n'est pas
@@ -2030,6 +2035,34 @@ de le lire. Trois verdicts qu'on ne confond jamais :
 | `—` | rien n'a été rapporté — **inconnu n'est pas nul** |
 | `0,00 $US` | zéro rapporté, une vraie mesure |
 | `< 0,01 $US` | une dépense réelle, mais sous le centime |
+| `0,21 $US · coût partiel` / `coût non tarifé` | un **plancher** : des tokens ont été consommés sans prix (#1280) |
+
+Le quatrième verdict vient de #1280 (`formatCoutPartiel`) : un run dont une
+tâche est morte avant son résultat — session tuée, relances épuisées — avait
+consommé des tokens que rien n'avait tarifés, et l'écran affichait le reste
+comme un solde (1,17 $ pour un run dont 75 % des tokens n'avaient pas de prix).
+Le montant **reste** ce qui a été tarifé — Maestro n'invente aucun prix — et
+l'état est **nommé en mots**, collé au montant, au ton de la ligne (ni teinte
+d'attention ni graisse : un montant partiel n'est pas une panne). Sans aucun
+montant tarifé, « — » mentirait (il dit « rien rapporté ») : on lit « coût non
+tarifé ». La raison va dans une `Infobulle` (`RAISON_COUT_PARTIEL`). C'est la
+variante B, retenue par le regard neuf contre le signe « ≥ » et contre une
+icône seule, d'après le « PARTIAL COST » de Datadog LLM Observability
+(commentaire « Variante retenue » de #1280). Le drapeau vient du backend —
+`cout_partiel` d'un résumé de run, `tokens_non_tarifes` d'un grand livre — et
+n'est jamais recalculé ici. Le **run** le dit dans ses trois lignes de faits
+(`MontantDuRun`) ; le **cumul** du projet (barre supérieure, tuile « Dépense »,
+Paramètres) par `coutCumulePartiel`. Le coût **par tâche** et la vue
+analytique de `/couts` ne le disent pas encore.
+
+Deux gestes nés de la relecture visuelle de #1280, et la règle ne vit toujours
+qu'une fois : `partiesCoutPartiel` rend le montant et l'état **séparés**, pour
+qu'une surface qui donne au montant un autre ton que sa ligne ne lui prête pas
+son gras ou sa taille (la tuile colle l'état au chiffre en style d'unité, les
+Paramètres le mettent au corps courant en gris) ; et `{ court: true }` retire le
+mot « coût » là où le libellé le porte déjà — « Coût cumulé : 0,21 $US ·
+partiel » —, sans quoi la barre supérieure faisait tronquer le titre de la page
+à côté de la pastille « Reconnexion… ».
 
 Le troisième existe parce que le cas est **courant** sur un fournisseur local
 (#113), où un appel coûte quelques dix-millièmes de dollar : arrondi à
@@ -2129,6 +2162,7 @@ scénario `erreur` de la démo (#978), qui fabriquait ces 500, est parti avec el
 (#1168).
 
 ## Lancer en local
+<!-- documentation: développement -->
 
 1. **Backend** (API REST + WebSocket, ticket #46) — Redis du docker-compose requis
    pour le flux temps réel multi-process :
@@ -2161,6 +2195,7 @@ NEXT_PUBLIC_MAESTRO_API_URL=http://mon-hote:8000 npm run dev
 ```
 
 ## Modèle de données
+<!-- documentation: développement -->
 
 Un client charge l'état courant par le REST (`/api/taches`, `/api/agents`) puis
 suit les événements (`/ws/evenements`). Le backend projette chaque événement sur
@@ -2170,6 +2205,7 @@ la projection en TypeScript (`lib/useControlTower.ts`). La connexion WebSocket s
 rétablit seule et chaque reconnexion recharge l'état.
 
 ## Vérifications
+<!-- documentation: développement -->
 
 ```bash
 npm run lint        # ESLint

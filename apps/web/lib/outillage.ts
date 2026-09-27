@@ -15,21 +15,25 @@
  * côté moteur (`maestro/outillage/questionnaire.py` et le modèle depuis #1147),
  * parce qu'elle décide de fichiers qu'on écrira dans le projet de quelqu'un.
  *
- * ## Et comment on **nomme** ce que l'outillage contient (#1104)
+ * ## Et depuis #1161, la **pièce** qui attend, et comment elle se lit
  *
- * Les natures de docs/38 — un fichier d'instructions, un pont, un skill, un script —
- * s'écrivaient dans l'étape d'outillage du parcours de création, et elles s'écrivent
- * désormais aussi au pied du fil. Deux tables de libellés finiraient par ne plus
- * accorder les mêmes pluriels, et la même liste se lirait « 4 skills » ici et
- * « 4 skill » là. Elles vivent donc ici, avec le reste de ce que les deux surfaces
- * partagent, et aucune des deux ne les recopie.
+ * L'outillage ne s'écrit plus en une fois — ni à l'étape d'un formulaire, ni par la
+ * carte qui concluait le questionnaire : il se construit **pièce par pièce** dans la
+ * conversation, chaque fichier montré avec ce qui changera, puis écrit sur accord.
+ * `pieceEnAttente` est la cinquième règle d'attente du canal, `diffDeLaPiece` ce que
+ * sa carte montre. Les natures et leurs comptes (« 1 fichier d'instructions · 4
+ * skills ») sont partis avec la liste à cocher qui les additionnait.
  */
 
-import type {
-  ChoixOutillage,
-  EntreeOutillage,
-  MessageChat,
-} from "@/lib/types";
+import {
+  compter,
+  condenser,
+  CONTEXTE,
+  differencier,
+  type EntreeDiff,
+  type LigneDiff,
+} from "@/lib/diff";
+import type { ChoixOutillage, MessageChat, PieceProposee } from "@/lib/types";
 
 /**
  * La **question d'outillage** que ce fil porte encore — `null` s'il n'y en a pas.
@@ -47,6 +51,40 @@ export function questionEnAttente(messages: MessageChat[]): MessageChat | null {
   const dernier = messages[messages.length - 1];
   if (dernier === undefined) return null;
   return dernier.question ? dernier : null;
+}
+
+/**
+ * La **pièce d'outillage** que ce fil propose encore — `null` s'il n'y en a pas (#1161).
+ *
+ * La même règle que la question, sur la cinquième demande du canal : le dernier
+ * message, et lui seul, quand il porte une `piece`. Le miroir de `piece_en_attente`
+ * (`maestro/controltower/chat.py`), jamais recopié ailleurs.
+ */
+export function pieceEnAttente(messages: MessageChat[]): MessageChat | null {
+  const dernier = messages[messages.length - 1];
+  if (dernier === undefined) return null;
+  return dernier.piece ? dernier : null;
+}
+
+/**
+ * Les versions de pièces que ce fil a proposées, par chemin **et** empreinte — de quoi
+ * rendre à la trace d'une pièce tranchée ce que sa carte montrait (#1161).
+ *
+ * Le fait (`piece_ecrite`) ne porte que l'empreinte du contenu proposé : le diff et
+ * les verdicts sont déjà persistés sur le message qui proposait cette version, et le
+ * fil est la seule mémoire du canal — on les y relit plutôt que de les recopier.
+ */
+export function piecesDuFil(messages: MessageChat[]): Map<string, PieceProposee> {
+  const vues = new Map<string, PieceProposee>();
+  for (const message of messages) {
+    if (message.piece) vues.set(cleDePiece(message.piece.chemin, message.piece.empreinte), message.piece);
+  }
+  return vues;
+}
+
+/** La clé d'une version de pièce : son chemin et l'empreinte de son contenu. */
+export function cleDePiece(chemin: string, empreinte: string): string {
+  return `${chemin}|${empreinte}`;
 }
 
 /**
@@ -68,89 +106,90 @@ export function choixDuFil(messages: MessageChat[]): ChoixOutillage[] {
 }
 
 /**
- * Les réponses d'un questionnaire **conclu**, et ce qui en a été compris — `null`
- * tant qu'il ne l'est pas (#1104, #1147).
+ * Ce que le geste fera au chemin d'une pièce, en mots — le badge de sa carte (#1161).
  *
- * C'est le troisième état du même questionnaire, à côté des deux que ce module
- * énonçait déjà : une question **attend** (`questionEnAttente`), des réponses ont
- * été **données** (`choixDuFil`)… et il arrive un moment où le questionnaire est
- * fini. Ce moment se **lit** sur le fil depuis #1147 : le dernier message d'agent qui
- * porte une compréhension ne pose plus de question. C'est la conclusion — et la
- * compréhension qu'elle porte est ce qu'on écrit, sans redemander au moteur de
- * comprendre une seconde fois (il pourrait comprendre autre chose que ce que
- * l'écran a montré).
- *
- * Un geste dont la suite n'a pas pu être produite (502 après l'écriture du geste)
- * laisse des réponses sans conclusion : le dernier message compris pose encore sa
- * question, donc rien n'est à valider — « interrompu » ne se lit plus comme
- * « conclu ».
+ * Trois cas, et le troisième est celui qu'on veut savoir avant de laisser écrire chez
+ * soi : un fichier qui est **au projet** ne reçoit que le bloc que Maestro y possède,
+ * rien d'autre n'y est touché (docs/38 §4.2).
  */
-export function choixAValider(messages: MessageChat[]): ChoixOutillage[] | null {
-  if (questionEnAttente(messages) !== null) return null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    const compris = message.comprehension;
-    if (compris === undefined || compris.length === 0) continue;
-    if (message.question) return null;
-    return [...choixDuFil(messages), ...compris];
-  }
-  return null;
-}
-
-/**
- * Ce qu'une entrée vaut **par défaut** : tout ce qu'il y a à écrire est retenu
- * d'avance — le parti pris n° 1 de l'étape d'outillage (#1034), d'après Vercel
- * (« sets the best settings for you »), repris tel quel au pied du fil (#1104).
- *
- * `deja-present` fait exception, et ce n'est pas un oubli : le projet le porte
- * déjà, il n'y a rien à faire. L'entrée reste **dans la liste** (c'est ce que #1030
- * a voulu en la gardant plutôt qu'en la supprimant) et sa case se coche — c'est ce
- * qu'*ajouter* veut dire : demander que Maestro reprenne un fichier qu'on croyait
- * acquis.
- */
-export function retenueParDefaut(entree: EntreeOutillage): boolean {
-  return entree.etat !== "deja-present";
-}
-
-/** Le nom d'une nature (docs/38 §3), au singulier et au pluriel. */
-const NATURES: Record<string, { un: string; des: string }> = {
-  instructions: { un: "fichier d'instructions", des: "fichiers d'instructions" },
-  pont: { un: "pont", des: "ponts" },
-  skill: { un: "skill", des: "skills" },
-  script: { un: "script", des: "scripts" },
+export const SORTS_DE_PIECE: Record<string, string> = {
+  cree: "nouveau fichier",
+  reecrit: "fichier de Maestro modifié",
+  bloc: "bloc ajouté à votre fichier",
 };
 
-/** L'ordre des natures — celui de docs/38 §3.6, jamais l'ordre alphabétique. */
-export const ORDRE_NATURES = ["instructions", "pont", "skill", "script"];
+/** Combien de lignes d'un diff se lisent sans rien déplier — le reste se déplie sur place. */
+export const LIGNES_OUVERTES = 12;
 
-/** « 2 ponts », « 1 skill » — le compte et sa nature, accordés. */
-export function compte(type: string, nombre: number): string {
-  const nature = NATURES[type];
-  if (nature === undefined) return `${nombre} ${type}`;
-  return `${nombre} ${nombre > 1 ? nature.des : nature.un}`;
-}
+/** Le diff d'une pièce, prêt à lire, et ses comptes — accordés entre eux. */
+export type DiffDePiece = {
+  /** Les lignes et plages repliées à montrer, dans l'ordre. */
+  entrees: EntreeDiff[];
+  ajouts: number;
+  retraits: number;
+  /** Un fichier neuf : tout est ajout, et la carte se lit comme un texte. */
+  neuf: boolean;
+};
 
-/** Le badge de nature d'une ligne — toujours au singulier, il qualifie une entrée. */
-export function libelleNature(type: string): string {
-  const nature = NATURES[type];
-  if (nature === undefined) return type;
-  return nature.un.charAt(0).toUpperCase() + nature.un.slice(1);
+/**
+ * Le diff d'une pièce, **des textes qu'elle porte** — la même comparaison que
+ * l'éditeur de playbook (`lib/diff`), réglée pour qu'un coup d'œil ne mente pas (#1161).
+ *
+ * Deux réglages, et ce sont deux constats du regard neuf sur la vraie stack :
+ *
+ * - **la fin de ligne finale ne compte pas.** Un fichier de 55 lignes se termine par
+ *   un saut de ligne ; découpé tel quel, il en rendait 56, et la carte disait « +55 »
+ *   à côté de « Voir les 56 lignes » ;
+ * - **un fichier neuf n'a pas d'« avant ».** Comparé au texte vide, sa première ligne
+ *   vide passait pour commune — une bande blanche sans signe au milieu des ajouts.
+ *   Un fichier qu'on crée est tout entier ajouté, et il se dit comme tel.
+ *
+ * Une modification, elle, est **condensée** : le contexte autour de ce qui change, le
+ * reste replié — ce qui fait qu'une correction d'une ligne se voit d'une ligne.
+ */
+export function diffDeLaPiece(piece: PieceProposee): DiffDePiece {
+  const apres = sansFinDeLigne(piece.texte_apres);
+  if (piece.sort === "cree" || piece.texte_avant === "") {
+    const lignes: LigneDiff[] = apres
+      .split("\n")
+      .map((texte) => ({ type: "ajout", texte }));
+    return { entrees: lignes, ajouts: lignes.length, retraits: 0, neuf: true };
+  }
+  const lignes = differencier(sansFinDeLigne(piece.texte_avant), apres);
+  const { ajouts, retraits } = compter(lignes);
+  return { entrees: condenser(lignes), ajouts, retraits, neuf: false };
 }
 
 /**
- * « 1 fichier d'instructions · 2 ponts · 4 skills » — ce que des entrées pèsent,
- * dans l'ordre des natures, les natures absentes tues.
+ * Ce que la carte montre **avant** qu'on déplie : les premières lignes du diff — sauf
+ * pour un fichier neuf **corrigé**, qui s'ouvre sur le passage qui porte la commande
+ * dite (#1161).
  *
- * Écrit ici et pas dans l'un des deux appelants : l'étape d'outillage le rend dans
- * son en-tête de liste, la conclusion du fil dans sa phrase de compte, et c'est la
- * même phrase.
+ * Constat du regard neuf, cinquième relecture : un `AGENTS.md` neuf corrigé par « Nos
+ * tests tournent avec `dotnet test` » montrait ses douze premières lignes — titre,
+ * langages, gestionnaires —, et la ligne corrigée n'y était pas : pour lire ce que la
+ * correction allait écrire, il fallait déplier le fichier. Une modification n'a pas ce
+ * défaut, son diff est déjà condensé autour de ce qui change ; le fichier neuf l'est
+ * ici de la même façon (`condenser`), autour des lignes qui nomment une commande
+ * corrigée, et ses lignes restent des ajouts. Corrigé dans ses premières lignes, il se
+ * montre comme avant.
  */
-export function comptesParNature(entrees: EntreeOutillage[]): string {
-  return ORDRE_NATURES.map((type) => ({
-    type,
-    nombre: entrees.filter((e) => e.type === type).length,
-  }))
-    .filter((n) => n.nombre > 0)
-    .map((n) => compte(n.type, n.nombre))
-    .join(" · ");
+export function apercuDeLaPiece(piece: PieceProposee, diff: DiffDePiece): EntreeDiff[] {
+  const debut = diff.entrees.slice(0, LIGNES_OUVERTES);
+  const dites = piece.corrigees ?? [];
+  if (!diff.neuf || dites.length === 0) return debut;
+  const lignes = diff.entrees as LigneDiff[];
+  const touchee = (l: LigneDiff) => dites.some((commande) => l.texte.includes(commande));
+  const cachee = lignes.some((l, i) => touchee(l) && i + CONTEXTE >= LIGNES_OUVERTES);
+  if (!cachee) return debut;
+  return condenser(
+    lignes.map((l): LigneDiff => ({ type: touchee(l) ? "ajout" : "commun", texte: l.texte })),
+  )
+    .map((e): EntreeDiff => (e.type === "repli" ? e : { type: "ajout", texte: e.texte }))
+    .slice(0, LIGNES_OUVERTES);
+}
+
+/** Le texte sans son dernier saut de ligne — celui qui n'ouvre aucune ligne. */
+function sansFinDeLigne(texte: string): string {
+  return texte.endsWith("\n") ? texte.slice(0, -1) : texte;
 }

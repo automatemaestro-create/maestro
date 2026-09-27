@@ -17,7 +17,6 @@ import { lireProjetActifId } from "./projetActif";
 import type {
   AgentCatalogue,
   AgentCatalogueDetail,
-  AnalyseOutillage,
   AnalyticsCouts,
   CatalogueFournisseurs,
   ChoixOutillage,
@@ -27,6 +26,7 @@ import type {
   ConversationsChat,
   CorrectionEquipe,
   DecisionBrief,
+  DecisionPiece,
   DeclarationProjet,
   DecisionsRun,
   DefinitionAgent,
@@ -34,7 +34,6 @@ import type {
   DetailExecution,
   DisponibiliteSelecteur,
   EntreeRegistreMcp,
-  EtapeQuestionnaireOutillage,
   EtatAgent,
   EtatMagasin,
   FilChat,
@@ -62,10 +61,8 @@ import type {
   ProvenanceRegistreMcp,
   Question,
   RapportCreationEquipe,
-  RapportGenerationOutillage,
   RapportLecture,
   RedactionPlaybook,
-  ReponseRecommandationOutillage,
   RefusProjet,
   ReglagesModele,
   RepertoireProjets,
@@ -1121,19 +1118,64 @@ export async function repondreQuestionOutillage(
 }
 
 /**
- * Ouvre — ou reprend — le questionnaire d'outillage sur le fil
- * (`POST /api/chat/{agent}/outillage/questionnaire`, #1031).
+ * Tranche d'un geste la pièce d'outillage que le fil propose
+ * (`POST /api/chat/{agent}/outillage/piece`, #1161) et rend la paire (geste, réponse).
  *
- * N'écrit **aucun message d'utilisateur** : personne n'a rien demandé, seulement la
- * question est posée. Idempotente — rappelée sur un questionnaire en cours, elle
- * repose la question là où il en est.
+ * `piece` est l'**empreinte** de la version que la carte montrait : la réponse à un
+ * geste porte déjà la pièce suivante, et un double clic sans elle écrirait une pièce
+ * qu'on n'a pas vue. Un `409` n'est donc pas une panne : la pièce a été tranchée
+ * entre-temps, ou la conversation a repris. Un `422` dit pourquoi cette version ne
+ * s'écrit pas (une commande corrigée en échec).
+ */
+export async function trancherPieceDuFil(
+  agent: string,
+  decision: { decision: DecisionPiece; piece: string; conversation?: string },
+): Promise<MessageChat[]> {
+  const chemin = `/api/chat/${encodeURIComponent(agent)}/outillage/piece`;
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(decision),
+    });
+  } catch {
+    // Rien n'a répondu : la panne est typée à la source (#996), jamais un « Failed to
+    // fetch » brut sur la carte (vu à la relecture de #1161, l'API coupée).
+    throw ErreurApi.injoignable(chemin);
+  }
+  if (!reponse.ok) {
+    if (reponse.status === 409) {
+      throw new Error("cette pièce n'attend plus de réponse — la conversation a repris.");
+    }
+    const corps = (await reponse.json().catch(() => null)) as { detail?: unknown } | null;
+    throw new Error(
+      typeof corps?.detail === "string"
+        ? corps.detail
+        : `décision sur la pièce refusée (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
+ * Ouvre — ou reprend — l'outillage d'un projet dans le fil
+ * (`POST /api/chat/{agent}/outillage/questionnaire`, #1031, #1161).
+ *
+ * N'écrit **aucun message d'utilisateur** : personne n'a rien demandé, seulement ce
+ * qui vient est posé — la question qui manque, ou la première pièce. `projet` nomme
+ * le projet à outiller quand le fil ne le dit pas encore (« Outiller maintenant »).
+ * Idempotente — rappelée sur un outillage en cours, elle le reprend là où il en est.
  */
 export async function ouvrirQuestionnaireOutillage(
   agent: string,
   conversation?: string,
+  projet?: string,
 ): Promise<MessageChat[]> {
   const requete = new URLSearchParams();
   if (conversation) requete.set("conversation", conversation);
+  if (projet) requete.set("projet", projet);
   const suffixe = requete.toString() ? `?${requete}` : "";
   const reponse = await appel(
     `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage/questionnaire${suffixe}`,
@@ -1833,130 +1875,6 @@ export function versionnerProjet(id: string): Promise<Projet> {
     `/api/projets/${encodeURIComponent(id)}/versionner`,
     undefined,
     "mise sous Git refusée",
-    "POST",
-  );
-}
-
-// --- L'outillage d'un projet (#1034, routes #1030/#1031/#1033) -------------
-//
-// Quatre clients pour une seule étape du parcours de création, et c'est leur
-// **origine** qui les sépare, jamais leur forme : un projet *existant* est
-// analysé (#1030), un projet *neuf* répond à des questions (#1031), et les deux
-// rendent la **même** `RecommandationOutillage` — c'est le second critère de
-// #1031, tenu côté moteur par une fonction unique. L'écran n'a donc qu'un rendu
-// à tenir, et les deux branches du parcours partagent leur étape.
-//
-// Ils passent par `lireProjets`/`ecrireProjet` comme le reste : leurs refus sont
-// ceux des routes projets (`{motif, message}`), donc affichables **à l'endroit du
-// geste** par le même `RefusMotive`.
-
-/**
- * L'analyse d'un projet existant et l'outillage qu'elle recommande
- * (`GET /api/projets/{id}/outillage/analyse`, #1030, docs/38).
- *
- * La racine est lue **en lecture seule** et le code du projet n'est jamais
- * exécuté ; l'appel prend des secondes sur un projet réel, ce que l'écran
- * annonce plutôt que de figer. Rien n'est écrit : la génération est un geste
- * séparé (`genererOutillage`).
- */
-export function analyserOutillage(id: string): Promise<AnalyseOutillage> {
-  return lireProjets<AnalyseOutillage>(
-    `/api/projets/${encodeURIComponent(id)}/outillage/analyse`,
-    "analyse impossible",
-  );
-}
-
-/**
- * La prochaine question qui décide de l'outillage d'un projet neuf
- * (`POST /api/projets/{id}/outillage/questionnaire`, #1031).
- *
- * **Sans état côté serveur** : l'écran dit ce qu'il a, l'API dit ce qui en
- * découle. C'est ce qui lui permet de servir du même questionnaire que le fil de
- * conversation sans partager de session — et c'est pourquoi il renvoie **toutes**
- * les réponses acquises à chaque appel, plutôt qu'un identifiant de parcours.
- *
- * `deductions` porte les réponses que ces choix **entraînent**, chacune avec sa
- * cause : une question qu'on ne pose pas n'est pas une question qu'on cache.
- */
-export function questionOutillage(
-  id: string,
-  choix: ChoixOutillage[],
-): Promise<EtapeQuestionnaireOutillage> {
-  return ecrireProjet<EtapeQuestionnaireOutillage>(
-    `/api/projets/${encodeURIComponent(id)}/outillage/questionnaire`,
-    { choix },
-    "questionnaire indisponible",
-  );
-}
-
-/**
- * L'outillage que ces réponses recommandent, dans la forme de l'analyse
- * (`POST /api/projets/{id}/outillage/recommandation`, #1031).
- *
- * Rendue à **tout moment**, questionnaire fini ou non : ce qui n'a pas été
- * répondu ne justifie simplement aucune entrée, et `ecartes` le dit avec sa
- * raison. Rien n'est écrit — c'est une proposition.
- */
-export function recommandationOutillage(
-  id: string,
-  choix: ChoixOutillage[],
-): Promise<ReponseRecommandationOutillage> {
-  return ecrireProjet<ReponseRecommandationOutillage>(
-    `/api/projets/${encodeURIComponent(id)}/outillage/recommandation`,
-    { choix },
-    "recommandation indisponible",
-  );
-}
-
-/**
- * Écrit dans le projet l'outillage retenu
- * (`POST /api/projets/{id}/outillage/generation`, #1033, docs/38 §4.2).
- *
- * `retenus` est la liste des **chemins** que l'écran a gardés cochés : rien de
- * plus, parce que le reste — quoi écrire, où, avec quel contenu — se rederive
- * côté serveur. L'omettre revient à tout générer.
- *
- * `choix` sont les réponses d'un projet **neuf** (#1100) : c'est d'elles, et non
- * de l'analyse d'une racine encore vide, que le serveur rederive l'outillage —
- * celui que `recommandationOutillage` a montré. Sans elles, la génération d'un
- * projet neuf n'écrivait aucun des skills recommandés. Un projet existant ne les
- * passe pas : son outillage se dérive de son analyse.
- *
- * ⚠ **L'appel peut être long, et pour deux raisons différentes** : la racine est
- * ré-analysée, et, sur un projet **versionné**, la requête **attend l'accord
- * humain** sur la fusion de la branche `maestro/outillage-…`, sans time-out. Un
- * refus laisse la branche intacte et lève avec son motif.
- */
-export function genererOutillage(
-  id: string,
-  retenus?: string[],
-  choix?: ChoixOutillage[],
-): Promise<RapportGenerationOutillage> {
-  return ecrireProjet<RapportGenerationOutillage>(
-    `/api/projets/${encodeURIComponent(id)}/outillage/generation`,
-    {
-      ...(retenus === undefined ? {} : { retenus }),
-      ...(choix === undefined ? {} : { choix }),
-    },
-    "génération refusée",
-    "POST",
-  );
-}
-
-/**
- * Enregistre le « plus tard » de l'étape d'outillage
- * (`POST /api/projets/{id}/outillage/report`, #1034, docs/37 §4.6).
- *
- * **Sans corps** et idempotent, comme `versionnerProjet` — et, contrairement à
- * lui, il n'écrit **rien** dans le dossier de l'utilisateur : reporter, c'est
- * justement ne pas y écrire. La fiche relue porte `outillage.a_faire`, que la
- * carte du projet affiche tant que l'outillage n'est pas généré.
- */
-export function reporterOutillage(id: string): Promise<Projet> {
-  return ecrireProjet<Projet>(
-    `/api/projets/${encodeURIComponent(id)}/outillage/report`,
-    undefined,
-    "report refusé",
     "POST",
   );
 }
