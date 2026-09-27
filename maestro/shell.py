@@ -53,6 +53,7 @@ s'éprouver sans rien monter.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 #: Les genres d'une partie de mot. Un mot est une suite de morceaux : du texte, et
@@ -253,6 +254,32 @@ class Script:
 def lis(commande: str) -> Script:
     """La forme de `commande`, telle que bash la lit — `Illisible` si elle lui échappe."""
     return _Lecteur(commande).script()
+
+
+def simples(script: Script) -> Iterator[Simple]:
+    """Les commandes simples de `script`, dans l'ordre, blocs, boucles et branches compris.
+
+    Pas celles qu'une substitution ou un heredoc exécute : elles vivent dans les mots
+    (`Mot.scripts`), et qui les veut les y cherche.
+    """
+    for commande in script.commandes:
+        if isinstance(commande, Simple):
+            yield commande
+        elif isinstance(commande, Groupe):
+            yield from simples(commande.corps)
+        elif isinstance(commande, Boucle):
+            if commande.condition is not None:
+                yield from simples(commande.condition)
+            yield from simples(commande.corps)
+        elif isinstance(commande, Si):
+            for condition, corps in commande.branches:
+                yield from simples(condition)
+                yield from simples(corps)
+            if commande.sinon is not None:
+                yield from simples(commande.sinon)
+        else:
+            for branche in commande.branches:
+                yield from simples(branche)
 
 
 def affectation(mot: Mot) -> tuple[str, Mot] | None:
