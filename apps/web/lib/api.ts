@@ -1706,20 +1706,31 @@ async function lireProjets<T>(
   return (await reponse.json()) as T;
 }
 
-/** Écriture d'une route projets (corps optionnel : un DELETE n'en porte pas). */
+/**
+ * Écriture d'une route projets (corps optionnel : un DELETE n'en porte pas).
+ *
+ * Une API qui ne répond pas lève `ErreurApi.injoignable`, comme en lecture
+ * (`lireProjets`) : sans quoi le navigateur remontait son « Failed to fetch »
+ * jusqu'à l'écran — vu à la relecture de #1331, sous la correction d'une équipe.
+ */
 async function ecrireProjet<T>(
   chemin: string,
   corps: unknown,
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<T> {
-  const reponse = await appel(`${API_URL}${chemin}`, {
-    method: methode,
-    ...(corps !== undefined && {
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(corps),
-    }),
-  });
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
+      method: methode,
+      ...(corps !== undefined && {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corps),
+      }),
+    });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) throw await refusProjet(reponse, refusParDefaut);
   return (await reponse.json()) as T;
 }
@@ -1919,9 +1930,10 @@ export function proposerEquipe(
  * Ce que la personne demande de changer à l'équipe montrée, **compris**
  * (`POST /api/projets/{id}/equipe/correction`, #1159) — rien n'est créé.
  *
- * `equipe` est l'équipe **telle que l'étape la montre**, cases et instances
- * comprises : « remets les tests » n'a de sens que si l'on sait qu'ils ont été
- * retirés. La réponse porte les rôles à ajouter (playbooks écrits pour ce
+ * `equipe` est l'équipe **telle que la carte d'équipe du fil la montre** (#1331),
+ * cases et instances comprises : « remets les tests » n'a de sens que si l'on sait
+ * qu'ils ont été retirés. `choix` ne sert qu'aux réponses d'un questionnaire
+ * d'outillage ; sans elles, l'équipe se dérive de l'analyse du projet. La réponse porte les rôles à ajouter (playbooks écrits pour ce
  * projet), ceux à retirer ou à remettre, les instances à changer, et la phrase
  * qui répond à la personne. 502 si le modèle ne répond pas : l'équipe montrée
  * reste intacte, et la demande se rejoue.

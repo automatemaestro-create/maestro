@@ -350,6 +350,10 @@ par quelle version :
       "raison": "elle a rendu la main en erreur (code 1)", "code": 1, "sortie": "…2 failed", "duree_s": 9.8 },
     { "usage": "lint", "commande": "pip install -e .", "etat": "a-verifier",
       "raison": "pas jouée — commande hors de la portée « projet » : …", "code": null, "sortie": "", "duree_s": 0 }
+  ],
+  "corrections": [                             // #1334 : ce que la personne a dit, repris d'une conversation à l'autre
+    { "cle": "tester", "valeur": "node --test",
+      "phrase": "Nos tests tournent avec `node --test`", "prise_le": "2026-09-27T10:04:12+00:00" }
   ]
 }
 ```
@@ -362,6 +366,29 @@ commande absent, commande que la portée « projet » renvoie à une personne, d
 sans bash). Elle est jouée **dans une copie** de l'arbre outillé, jamais dans la racine ni dans le
 worktree qu'on commite ([`maestro/sandbox/verification.py`](../maestro/sandbox/verification.py)), et le
 même verdict se lit à côté de la commande dans `AGENTS.md` et dans son `SKILL.md`.
+
+`corrections` (#1334) est la seconde clé ajoutée à la version 1, pour la même raison. L'outillage se
+corrige avec des mots dans la conversation (#1161, [`maestro/outillage/correction.py`](../maestro/outillage/correction.py)) :
+« Nos tests tournent avec `node --test` » change la commande de tests, qui s'écrit dans `AGENTS.md` avec
+la phrase pour justification. Le fichier garde la commande ; le manifeste garde **la correction
+elle-même** — le sujet (`cle`, un de ceux que la correction change : une commande par usage, le
+gestionnaire, la forge, la CI), la `valeur` dite, la `phrase` de la personne telle qu'elle l'a tapée, et
+`prise_le`, quand Maestro l'a prise. Sans elle, l'outillage du même projet rouvert dans une **autre
+conversation** se redérivait de l'analyse, et proposait de remplacer la commande dite par celle que le
+projet déclare. Avec elle :
+
+- **où elle entre** : chaque pièce écrite (`poser_piece`) porte les corrections dont elle a été rédigée,
+  et le manifeste les **fusionne** — une par sujet, **la plus récente** l'emportant sur `prise_le` ;
+  `generer`, qui n'en reçoit pas, garde celles déjà déclarées : régénérer ne fait rien oublier ;
+- **comment elle se relit** : à chaque tour, les corrections du manifeste se rejouent par `corriger`
+  avant celles du fil, et entre les deux **la plus récente l'emporte** — une conversation plus ancienne,
+  reprise, ne défait pas ce qu'une plus récente a écrit, et une correction redite dans le fil remplace
+  celle du manifeste. La pièce qu'elle touche la porte comme une autre : sa phrase d'origine sur la
+  carte, sa commande revérifiée si son verdict n'est pas déjà connu ;
+- **ce qu'on n'y croit pas** : le manifeste vit dans le projet, et n'importe qui peut l'avoir touché.
+  Une entrée hors de ces sujets, ou sans valeur, est écartée ; valeur et phrase tiennent sur une ligne,
+  bornées comme celles que le modèle rend. Ce qui passe n'est qu'une commande de plus à jouer avant
+  d'être montrée, jamais une commande crue.
 
 Trois propriétés à ne pas défaire :
 
@@ -699,7 +726,10 @@ constate, pas une propriété acquise.
 > Les commandes écrites sans exécution sont vérifiées avant d'être écrites (#1160, **livré**) :
 > chacune est jouée dans une copie du projet, et son verdict va au texte, au manifeste (§4.1) et
 > au rapport. Le format arrêté par cette note (§3 à §5) ne bouge pas, ni le `recommander` commun
-> aux deux chemins.
+> aux deux chemins. Depuis #1343, un projet neuf ne se contente plus de « à vérifier » : les
+> outils que ses commandes appellent sont demandés au poste (absents, la commande est échouée),
+> sa recommandation en tient compte, et à la fin d'un run l'outillage est rejoué sur le projet
+> construit, la pièce qui change proposée dans le fil ([docs/05 §6.20](./05-interface-control-tower.md)).
 >
 > ⚠ **Renversé en partie le 2026-09-24** ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)).
 > La ligne #1034 ne tient plus : l'outillage n'est plus une étape du parcours de création. Un projet

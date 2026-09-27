@@ -32,6 +32,17 @@ changerait le disque et n'a pas encore été tranchée **telle quelle**. C'est c
 qu'une correction qui touche `AGENTS.md` déjà écrit le fait **reproposer** — son
 contenu a changé, ce n'est plus la pièce tranchée — sans qu'aucune règle ne le prévoie.
 
+## Ce que le projet a retenu d'une correction (#1334)
+
+Une correction n'est pas un état de conversation : c'est ce que la personne a dit de
+**son projet**. Une pièce écrite la porte au manifeste (`PieceProposee.corrections_prises`,
+docs/38 §4.1), et la matière de chaque tour la rejoue par `corriger` **avant** celles du
+fil — la plus récente de chaque sujet l'emportant (`retenir`). Sans elle, l'outillage
+rouvert dans une autre conversation se redérivait de l'analyse, et la carte proposait de
+remplacer la commande dite par celle que le projet déclare. La pièce qu'une correction
+reprise touche la porte comme une autre : sa phrase sur la carte, et elle se corrige
+encore avec des mots.
+
 Une seule chose est gardée, et elle n'est pas un état de conversation : **la lecture
 d'un projet importé**, épinglée pour la conversation (`_lues`). Écrire `AGENTS.md`
 change le projet, et l'analyse — qui se relit dès qu'un fichier bouge — relirait tout
@@ -65,6 +76,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -76,7 +88,6 @@ from maestro.controltower.chat import (
     PieceEcrite,
     PieceProposee,
     acquis_du_fil,
-    corrections_du_fil,
     fil_du_projet,
     pieces_tranchees,
 )
@@ -88,15 +99,18 @@ from maestro.outillage.clients import reunir
 from maestro.outillage.correction import (
     CLES_CORRIGEABLES,
     CorrectionLue,
+    CorrectionPrise,
     constats_en_texte,
     corrections_en_texte,
     corriger,
     lire_correction,
+    retenir,
 )
 from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.ecriture import REGIME_BRANCHE, REGIME_EN_PLACE, nouvel_id_de_generation
 from maestro.outillage.generation import (
     Prevision,
+    corrections_declarees,
     empreinte,
     portees_declarees,
     poser_piece,
@@ -245,14 +259,18 @@ class AccordDeLaCarte:
 
 @dataclass(frozen=True)
 class _Matiere:
-    """Ce qu'on sait d'un projet à ce tour : ses constats corrigés, et ce qu'ils recommandent."""
+    """Ce qu'on sait d'un projet à ce tour : ses constats corrigés, et ce qu'ils recommandent.
+
+    `corrections` sont celles qui ont corrigé les constats — reprises du manifeste, puis
+    dites sur le fil, la plus récente de chaque sujet (`retenir`).
+    """
 
     projet: Projet
     racine: Path
     constats: Constats
     recommandation: Recommandation
     source: dict[str, Any]
-    corrections: tuple[Choix, ...] = ()
+    corrections: tuple[CorrectionPrise, ...] = ()
 
 
 class ServicePieces:
@@ -305,6 +323,7 @@ class ServicePieces:
         acquis: Sequence[Choix] | None = None,
         corrections: Sequence[Choix] = (),
         tranchees: Iterable[tuple[str, str]] = (),
+        revoir: bool = False,
     ) -> PieceProposee | None:
         """La prochaine pièce à proposer — vérifiée, avec son diff —, `None` s'il n'y en a plus.
 
@@ -313,6 +332,10 @@ class ServicePieces:
         le fil a compris (le tour qui conclut le questionnaire ne l'a pas encore
         écrit), `corrections` s'ajoute à celles du fil (la correction qu'on vient de
         comprendre), `tranchees` à ce que le fil a tranché (le geste en cours).
+
+        `revoir` (#1343) est la revue d'après un run : le projet a changé, donc seul un
+        verdict **vérifié** est repris — tout ce qui avait échoué ou n'avait pas pu se
+        jouer est rejoué sur le projet tel qu'il est maintenant.
 
         Bloquant par morceaux — la vérification joue des commandes : joué hors de la
         boucle d'événements.
@@ -328,8 +351,32 @@ class ServicePieces:
         dernieres = dict(pieces_tranchees(fil))
         dernieres.update(tranchees)
         deja = set(dernieres.items())
-        connues = _verdicts_du_fil(fil)
-        return await asyncio.to_thread(self._chercher, matiere, deja, connues)
+        connues = {} if revoir else _verdicts_du_fil(fil)
+        return await asyncio.to_thread(self._chercher, matiere, deja, connues, revoir=revoir)
+
+    async def a_revoir(self, projet_id: str, fil: Sequence[MessageChat]) -> bool:
+        """L'outillage de ce projet a-t-il, **maintenant**, des commandes à rejouer ? (#1343)
+
+        Trois conditions, et chacune a sa raison :
+
+        - **ce fil l'a écrit** — une pièce de ce projet y a été écrite : c'est lui que
+          la revue relit (ce qu'il a compris, ce qu'il a tranché). Un outillage écrit
+          ailleurs se revoit là où il s'est écrit, à la prochaine ouverture ;
+        - **une commande n'a pas passé** — le manifeste garde un verdict qui n'est pas
+          « vérifiée » : échouée, ou pas encore jouable. Tout vérifié, il n'y a rien à
+          revoir, et un run ne coûte pas une seconde vérification ;
+        - **le projet a ses fichiers** — un dossier encore vide ne jouerait rien de plus
+          qu'à l'écriture.
+        """
+        if not any(
+            m.piece_ecrite is not None
+            and m.piece_ecrite.ecrite
+            and m.piece_ecrite.projet_id == projet_id
+            for m in fil_du_projet(fil, projet_id)
+        ):
+            return False
+        projet = self._outillage.entite(projet_id)
+        return await asyncio.to_thread(_a_revoir, projet)
 
     async def comprendre_correction(
         self, projet_id: str, fil: Sequence[MessageChat], phrase: str
@@ -339,7 +386,7 @@ class ServicePieces:
         return await self._correction.comprendre(
             projet=matiere.projet.nom,
             constats=constats_en_texte(matiere.constats),
-            corrections=corrections_en_texte(matiere.corrections),
+            corrections=corrections_en_texte([c.en_choix() for c in matiere.corrections]),
             phrase=phrase,
         )
 
@@ -393,6 +440,7 @@ class ServicePieces:
                 source=piece.source,
                 frontiere=frontiere,
                 verifications=piece.verifications,
+                corrections=piece.corrections_prises,
             )
             ecriture = rapport.ecritures[0] if rapport.ecritures else None
             if rapport.refus or ecriture is None:
@@ -422,6 +470,7 @@ class ServicePieces:
                     source=piece.source,
                     frontiere=FrontiereEcriture.pour(espace.path, projet.perimetre),
                     verifications=piece.verifications,
+                    corrections=piece.corrections_prises,
                 )
             ecriture = rapport.ecritures[0] if rapport.ecritures else None
             if rapport.refus or ecriture is None or ecriture.etat != "ecrit":
@@ -474,13 +523,22 @@ class ServicePieces:
         deux cas, les corrections s'appliquent ensuite par `corriger`, et c'est
         `recommander` — le même pour les deux — qui tranche.
 
+        Les corrections sont celles que le manifeste a retenues d'une conversation
+        passée (#1334), puis celles du fil, puis celle qu'on vient de comprendre — la
+        plus récente de chaque sujet l'emportant (`retenir`).
+
         Ses ponts suivent les clients d'agents (#1295) : ceux du poste, relus à chaque
         tour, et pour un projet décrit ceux que la personne a nommés — les mêmes que
         l'analyse et le questionnaire recommandent.
         """
         projet = self._outillage.entite(projet_id)
         racine = await asyncio.to_thread(valider_racine, projet.racine)
-        prises = (*corrections_du_fil(fil), *corrections)
+        retenues = retenir(
+            await asyncio.to_thread(corrections_declarees, racine),
+            _corrections_du_fil_datees(fil),
+            tuple(CorrectionPrise.de(c, _maintenant()) for c in corrections),
+        )
+        prises = tuple(c.en_choix() for c in retenues)
         compris = tuple(acquis) if acquis is not None else acquis_du_fil(fil)
         clients = await self._outillage.clients_du_poste()
         if compris:
@@ -499,7 +557,7 @@ class ServicePieces:
             constats=constats,
             recommandation=recommander(constats, clients),
             source=source,
-            corrections=prises,
+            corrections=retenues,
         )
 
     async def _analyse(self, projet: Projet, fil: Sequence[MessageChat]) -> Analyse:
@@ -518,18 +576,26 @@ class ServicePieces:
         matiere: _Matiere,
         deja: set[tuple[str, str]],
         connues: dict[str, Verification],
+        *,
+        revoir: bool = False,
     ) -> PieceProposee | None:
         """La première pièce qui changerait le disque et n'a pas été tranchée — **bloquant**.
 
         Les verdicts connus sont ceux que le manifeste déclare (une pièce déjà écrite
         se reconnaît « à jour » sans rien rejouer) puis ceux que le fil a vus : une
         commande qu'`AGENTS.md` a fait jouer n'est pas rejouée pour le skill qui
-        l'écrit. Une commande **corrigée** a un autre texte : elle est jouée.
+        l'écrit. Une commande **corrigée** a un autre texte : elle est jouée. En revue
+        d'après un run (`revoir`, #1343), seuls les verdicts vérifiés du manifeste
+        valent : le reste se rejoue sur le projet construit.
         """
         racine, projet = matiere.racine, matiere.projet
         portees = portees_declarees(racine)
         frontiere = FrontiereEcriture.pour(racine, projet.perimetre)
-        verdicts_connus = {v.commande: v for v in verifications_declarees(racine)}
+        verdicts_connus = {
+            v.commande: v
+            for v in verifications_declarees(racine)
+            if not revoir or v.etat == VERIFIEE
+        }
         verdicts_connus.update(connues)
         entrees = {e.chemin: e for e in matiere.recommandation.entrees}
         plan = rediger(
@@ -612,6 +678,7 @@ def _proposee(
         source=matiere.source,
         regime=REGIME_BRANCHE if projet.versionne else REGIME_EN_PLACE,
         corrigees=_commandes_dites(matiere.constats, verdicts),
+        corrections_prises=tuple(c for c in matiere.corrections if c.cle in CLES_CORRIGEABLES),
     )
 
 
@@ -636,17 +703,33 @@ def _raison_de_la_piece(entree: Entree, prevision: Prevision) -> str:
     return raison_stable(entree)
 
 
-def _phrase_portee(corrections: Sequence[Choix], contenu: str) -> str:
+def _phrase_portee(corrections: Sequence[CorrectionPrise], contenu: str) -> str:
     """La phrase de correction que ce contenu **porte** — la plus récente —, vide sinon.
 
     Lue sur le texte, qui est la seule preuve qu'une correction a touché la pièce :
     une commande dite s'écrit avec sa phrase (`ORIGINE_DITE`). Une correction qui n'a
-    rien changé à ce fichier n'y est pas, et la carte ne la lui attribue pas.
+    rien changé à ce fichier n'y est pas, et la carte ne la lui attribue pas. Qu'elle
+    vienne de ce fil ou d'une conversation passée (#1334) n'y change rien : c'est la
+    phrase d'origine, celle que le fichier écrit.
     """
-    for choisi in reversed(corrections):
-        if choisi.parce_que and choisi.parce_que in contenu:
-            return choisi.parce_que
+    for prise in reversed(corrections):
+        if prise.phrase and prise.phrase in contenu:
+            return prise.phrase
     return ""
+
+
+def _maintenant() -> str:
+    """L'instant présent, à la précision du fil (ISO 8601 UTC, à la seconde)."""
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _corrections_du_fil_datees(fil: Sequence[MessageChat]) -> tuple[CorrectionPrise, ...]:
+    """Les corrections prises sur ce fil, chacune datée du message qui la porte (#1334).
+
+    Lues sur le champ `corrections`, comme `corrections_du_fil` ; la date est ce qui les
+    départage de celles du manifeste (`retenir`).
+    """
+    return tuple(CorrectionPrise.de(c, m.horodatage) for m in fil for c in m.corrections)
 
 
 def _echec_de_correction(constats: Constats, verdicts: Sequence[Verification]) -> str:
@@ -700,6 +783,14 @@ def _verdicts_du_fil(fil: Sequence[MessageChat]) -> dict[str, Verification]:
             if verdict.etat in _JOUES:
                 verdicts[verdict.commande] = verdict
     return verdicts
+
+
+def _a_revoir(projet: Projet) -> bool:
+    """Une commande de l'outillage n'a pas passé, et le projet a ses fichiers — bloquant (#1343)."""
+    racine = valider_racine(projet.racine)
+    if all(v.etat == VERIFIEE for v in verifications_declarees(racine)):
+        return False
+    return _a_ses_fichiers(projet)
 
 
 def _a_ses_fichiers(projet: Projet) -> bool:

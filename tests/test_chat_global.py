@@ -2385,10 +2385,19 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # message (`MessageChat.piece`), ce qui en a été fait aussi (`piece_ecrite`) ; ce
     # répondeur-ci n'en a pas reçu, il reste donc `None`. Le répondeur, lui, ne gagne
     # aucun attribut : les pièces passent par son conducteur.
-    assert set(vars(repondeur._conducteur)) == {"_comprehension", "_clients", "_pieces"}
+    #
+    # #1343 un quatrième, `_verificateur` : celui qui demande au poste ses outils,
+    # relus à chaque tour — `None` ici, le vérificateur réel.
+    assert set(vars(repondeur._conducteur)) == {
+        "_comprehension",
+        "_clients",
+        "_pieces",
+        "_verificateur",
+    }
     assert repondeur._conducteur._clients is None
     assert vars(repondeur._conducteur._comprehension) == {"_provider": juge}
     assert repondeur._conducteur._pieces is None
+    assert repondeur._conducteur._verificateur is None
     assert repondeur._modele is None
 
 

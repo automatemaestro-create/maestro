@@ -229,6 +229,7 @@ from maestro.messaging import (
     AgentMessage,
     Mailbox,
 )
+from maestro.outillage.correction import CorrectionPrise
 from maestro.outillage.generation import empreinte
 from maestro.outillage.questionnaire import REPONSE_LIBRE_MAX, Choix, QuestionOutillage, sujet_de
 from maestro.outillage.verification import Verification
@@ -1176,6 +1177,13 @@ class PieceProposee:
     sous la légende, pour que la revérification se lise sans déplier la liste (vu à
     la relecture de #1161 : la commande corrigée était sous la ligne de flottaison).
 
+    `corrections_prises` (#1334) sont les corrections dont cette version a été rédigée
+    — dites sur ce fil, ou reprises du manifeste d'une conversation passée, la plus
+    récente de chaque sujet : l'accord les écrit au manifeste avec la pièce, et c'est
+    ce qui fait qu'elles restent acquises au projet quand l'outillage se rouvre
+    ailleurs. `correction` en est la phrase que ce contenu porte ; celle d'une
+    correction reprise s'y lit donc comme celle d'une correction qu'on vient de dire.
+
     `rang` et `total` situent la pièce dans l'outillage de ce projet (les fichiers que
     la recommandation rédige, dans leur ordre). `source` est la provenance que le
     manifeste gardera (docs/38 §4.1). `regime` dit comment elle atteindra le projet :
@@ -1205,6 +1213,7 @@ class PieceProposee:
     source: Mapping[str, Any] = field(default_factory=dict)
     regime: str = "en-place"
     corrigees: tuple[str, ...] = ()
+    corrections_prises: tuple[CorrectionPrise, ...] = ()
 
     @property
     def ecrivable(self) -> bool:
@@ -1249,6 +1258,7 @@ class PieceProposee:
             "source": dict(self.source),
             "regime": self.regime,
             "corrigees": list(self.corrigees),
+            "corrections_prises": [c.to_dict() for c in self.corrections_prises],
         }
 
     @classmethod
@@ -1257,6 +1267,7 @@ class PieceProposee:
         verifications = data.get("verifications")
         source = data.get("source")
         corrigees = data.get("corrigees")
+        prises = data.get("corrections_prises")
         return cls(
             projet_id=str(data.get("projet_id") or ""),
             projet_nom=str(data.get("projet_nom") or ""),
@@ -1286,6 +1297,11 @@ class PieceProposee:
             regime=str(data.get("regime") or "en-place"),
             corrigees=tuple(
                 str(c) for c in (corrigees if isinstance(corrigees, list) else ()) if c
+            ),
+            corrections_prises=tuple(
+                CorrectionPrise.from_dict(c)
+                for c in (prises if isinstance(prises, list) else ())
+                if isinstance(c, Mapping)
             ),
         )
 
@@ -3196,6 +3212,7 @@ class ServiceChat:
         contenu: str,
         run_id: str,
         conversation: str | None = None,
+        suite: ReponseChat | None = None,
     ) -> MessageChat:
         """Pose dans le fil le **récit de fin** d'un run (#1224).
 
@@ -3211,15 +3228,20 @@ class ServiceChat:
         bulle mène au run. Il n'en résulte aucun doublon d'annonce — `issuesDuFil`
         ne retient qu'une fin par run, jamais une par message.
 
+        `suite` (#1343) est ce que la fin **propose** en plus du récit — la pièce
+        d'outillage que le projet construit fait changer (`ConducteurOutillage.
+        apres_le_run`). Elle voyage sur le **même** message, et c'est ce qui la
+        rend tranchable : une demande n'attend que sur le dernier message du fil
+        (`piece_en_attente`), et un récit posé après elle l'aurait soldée.
+
         Le fil visé est celui de l'**orchestration** : comme partout ici, c'est
         l'appelant qui le choisit en passant sa fiche.
         """
         fil = self._resoudre(agent, conversation)
-        return await self._persister_reponse(
-            agent,
-            conversation=fil,
-            reponse=ReponseChat(contenu=contenu, run_id=run_id),
-        )
+        reponse = ReponseChat(contenu=contenu, run_id=run_id)
+        if suite is not None:
+            reponse = replace(suite, contenu=contenu, run_id=run_id)
+        return await self._persister_reponse(agent, conversation=fil, reponse=reponse)
 
     def conversation_du_run(self, agent: str, run_id: str) -> str | None:
         """La conversation de `agent` où `run_id` a été demandé — `None` si aucune (#1224)."""

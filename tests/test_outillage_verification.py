@@ -64,6 +64,7 @@ from maestro.outillage.verification import (
     Verificateur,
     Verification,
     commandes_ecrites,
+    sonde,
 )
 from maestro.projets import ProjetStore
 from maestro.projets.modele import Perimetre, Projet
@@ -261,7 +262,9 @@ def test_un_projet_neuf_encore_vide_ecrit_ses_commandes_a_verifier_et_le_dit(
 
     preparation = _generer(racine, Verificateur(joueur=joueur, interprete=FAUX_BASH), neuf)
 
-    assert joueur.joues == []
+    # Aucune commande du projet n'est jouée : seul le poste répond de ses outils (#1343),
+    # et ils sont là — c'est le projet qui manque encore.
+    assert [commande for commande, _, _ in joueur.joues] == [sonde("npm"), sonde("npx")]
     assert {v.etat for v in preparation.rapport.verifications} == {A_VERIFIER}
     assert all(
         "aucun fichier en dehors de son outillage" in v.raison
@@ -281,7 +284,12 @@ def test_une_commande_dont_le_fichier_n_existe_pas_encore_est_a_verifier(
 
     preparation = _generer(racine, Verificateur(joueur=joueur, interprete=FAUX_BASH))
 
-    assert joueur.joues == []
+    # Les outils se sondent une fois chacun (#1343) ; aucune commande du projet ne se joue.
+    assert [commande for commande, _, _ in joueur.joues] == [
+        sonde("uv"),
+        sonde("pytest"),
+        sonde("ruff"),
+    ]
     raisons = {v.raison for v in preparation.rapport.verifications}
     assert raisons == {
         "`pyproject.toml` n'existe pas encore dans le projet : à jouer quand il "

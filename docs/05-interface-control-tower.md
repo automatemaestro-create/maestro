@@ -6643,11 +6643,11 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   que l'analyse a lu, instances bornées, orchestrateur jamais recruté). Un modèle qui ne répond pas
   fait retomber sur les **règles** des gabarits, et `composition` le dit, avec sa cause.
 - `POST /api/projets/{id}/equipe/correction` → `CorrectionEquipe` (#1159). La personne corrige
-  l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis l'étape
-  d'équipe. Corps : `demande` (une phrase, 500 caractères au plus), `equipe` (l'équipe **telle que
-  l'écran la montre** : `nom`, `role`, `retenu`, `instances`) et les `choix` d'un projet neuf. Rien
-  n'est créé : l'écran applique la correction à ce qu'il montre, et la création reste la route
-  suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
+  l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis la carte
+  d'équipe du fil (#1331). Corps : `demande` (une phrase, 500 caractères au plus), `equipe`
+  (l'équipe **telle que la carte la montre** : `nom`, `role`, `retenu`, `instances`) et, facultatifs,
+  les `choix` d'un questionnaire d'outillage. Rien n'est créé : la carte applique la correction à ce
+  qu'elle montre, et la création reste la route suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
   modèle ne répond pas — une correction n'a pas de repli, aucune règle ne comprend une phrase.
 - `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
   que l'API l'a servie**, rôles retirés ou instances ajustées, rôles ajoutés par une correction
@@ -6785,15 +6785,44 @@ une politique orphelines que rien n'affiche.
 Implémentation : [`maestro/equipe/`](../maestro/equipe/) (la dérivation et la création, **pures** —
 aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.py`](../maestro/controltower/equipe.py)
 (la seule couche qui touche un dépôt et connaisse un fournisseur de modèle),
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) (les deux routes),
-`apps/web/components/projets/EtapeEquipe.tsx` (l'écran de validation). Gardé par
-[`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py) et
-[`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043).
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) (les routes),
+`apps/web/components/chat/EquipeDansLeFil.tsx` (la carte qui propose, corrige et valide),
+`apps/web/components/chat/LigneRole.tsx` (la ligne d'un rôle) et
+`apps/web/components/chat/DemandeSurLEquipe.tsx` (la demande en mots). Gardé par
+[`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py),
+[`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043),
+[`tests/test_equipe_composition.py`](../tests/test_equipe_composition.py) (#1159) et
+`apps/web/tests/equipe-dans-le-fil.test.tsx`.
 
-⚠ **`EtapeEquipe` n'est plus montée depuis #1161.** Elle n'était atteinte que derrière l'étape
-d'outillage de l'écran Projets, retirée quand l'outillage est passé dans la conversation. L'équipe se
-propose et se valide dans le fil (`chat/EquipeDansLeFil`, #1146), qui reprend sa ligne de rôle ; la
-correction en mots de #1159 (`…/equipe/correction`) n'y est pas encore, et c'est #1331 qui l'y porte.
+**À l'écran, une seule surface recrute : la carte d'équipe du fil** (#1146, #1227, #1331). Elle se
+pose au pied de la conversation quand on demande un travail sur un projet sans agent — ou quand un
+run appelle un métier que l'équipe n'a pas —, sur `/chat` comme dans la colonne de conversation de
+chaque écran. Ce qu'on y fait :
+
+- **relire** : le récapitulatif dit combien d'agents seront créés, lesquels, et les autorisations
+  décidées d'avance, sans rien ouvrir ; « Voir l'équipe » déplie chaque rôle — sa raison, l'endroit
+  qui la prouve, ses instances, ses skills, ses autorisations, son playbook ;
+- **corriger en cochant** : décocher un rôle le retire, ses instances se règlent ;
+- **corriger avec ses mots** (#1331) : « Corriger avec vos mots », dans la rangée des gestes, ouvre
+  la demande sur la carte. « Ajoute quelqu'un pour la sécurité » ajoute un rôle **composé pour ce
+  projet**, playbook compris, qui arrive coché et signalé « ajouté à votre demande » ; « retire le
+  designer » le décoche ; « deux développeurs » change ses instances. La demande porte l'équipe
+  **telle que la carte la montre** — cases, instances et rôles déjà ajoutés —, la réponse de Maestro
+  se lit sous le champ, et rien n'est créé : « Créer l'équipe » reste le seul geste qui écrit, et il
+  attend la fin d'une correction en vol. Une demande incomprise le dit et laisse le texte dans le
+  champ ; un modèle en panne se dit au même endroit, l'équipe intacte. Ce qui a été montré et tapé
+  est retenu pour la demande : changer d'écran ne perd pas une correction ;
+- **valider ou remettre à plus tard** — « Continuer sans » quand un run attend.
+
+La place de la correction a été **tranchée sur pièces** (#1331) : trois directions rendues sur la
+vraie stack, jugées par le regard neuf contre *Replit Agent*, la carte « Review Plan » de *VS Code*
+et *Cursor Plan Mode* ; retenue, le geste discret qui ouvre la demande sur place, parce qu'il garde
+la carte courte dans la colonne de 320 px (commentaires « Veille de conception » et « Variante
+retenue » du ticket). La saisie **du fil**, juste dessous, n'est pas la porte de la correction : elle
+part à l'orchestrateur, qui ne sait rien de l'équipe montrée.
+
+L'étape d'équipe de l'écran Projets (`EtapeEquipe`, #1040), qui n'était plus montée depuis #1161,
+est retirée par #1331 ; sa ligne de rôle et sa demande en mots vivent désormais à côté de la carte.
 
 ### 6.20 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
 
@@ -7073,6 +7102,22 @@ suivi de ce que le modèle de correction n'a pas compris), la pièce qui attenda
 pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
 l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
 
+**Une correction reste acquise d'une conversation à l'autre** (#1334). Ce que la personne a dit
+est une propriété de **son projet**, pas du fil où elle l'a dit : dès qu'une pièce s'écrit, le
+manifeste de l'outillage garde les corrections dont elle a été rédigée — sujet, valeur, phrase,
+date (docs/38 §4.1 dit où et comment ; la pièce les porte d'ici là, `corrections_prises`). Quand
+l'outillage du même projet se rouvre dans une autre conversation — « Outiller dans la
+conversation » plus tard, une reprise —, elles se rejouent par `corriger` avant celles du fil, et
+**la plus récente l'emporte** entre les deux : une conversation plus ancienne qu'on reprend ne
+défait pas ce qu'une plus récente a écrit. Vu à la relecture de clôture de #1161 : l'outillage
+rouvert se redérivait de l'analyse, et la carte proposait de remplacer `node --test`, dite, par
+`npm run test`, que le projet déclare. Désormais `AGENTS.md`, déjà à jour, ne revient pas ; la pièce
+qu'une correction reprise touche la porte **comme une autre** — « Corrigée d'après votre demande :
+« … » » sur la carte, avec la phrase d'origine, sa commande sous la légende avec le verdict que le
+manifeste garde —, et une phrase de plus la corrige encore : le modèle de correction reçoit les
+corrections reprises parmi celles « déjà prises », et la nouvelle, écrite, remplace l'ancienne au
+manifeste.
+
 **La carte** (`components/chat/PieceDOutillage.tsx`, variante A retenue par le regard neuf — veille
 et « Variante retenue » de #1161, d'après la suggestion de revue de GitHub, le mode agent de VS Code
 et l'onboarding de Renovate) : une carte du
@@ -7091,7 +7136,8 @@ le diff derrière un clic (B), et deux grammaires sans compte de lignes (C).
 
 Gardé par [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) (prévision,
 écriture d'une pièce et fusion du manifeste, correction comprise, incomprise, en échec, accord de la
-carte sur un projet versionné, canal de bout en bout, routes), et côté écran par
+carte sur un projet versionné, canal de bout en bout, routes, correction reprise dans une seconde
+conversation et corrigée encore), et côté écran par
 `apps/web/tests/piece-outillage.test.tsx`, `gestes-en-colonne.test.tsx` (la carte agit depuis la
 colonne, parité avec `/chat`, trace sous la bulle) et `projets.test.tsx` (« Outiller dans la
 conversation »).
@@ -7166,6 +7212,22 @@ tout, un démarrage étant observé 15 s (`Delais`). Ne sont **pas** jouées, et
 encore, une commande que la portée « projet » renvoie à une personne (`sudo`, `pip install`, un
 chemin hors du projet — `maestro.portee`), et tout, sur un poste sans bash. Le code de retour fait
 foi, jamais le texte de la sortie.
+
+**Ce que le poste répond se joue même quand le projet ne peut rien jouer** (#1343). Une commande
+que le projet ne peut pas encore jouer appelle des programmes, et leur présence ne dépend pas de
+lui : chacun est demandé au bash des agents (`type`), dans la copie. Un programme introuvable rend
+la commande **échouée**, avec ce que la sonde a répondu — `AGENTS.md` la nomme, jamais comme la
+marche à suivre ; un programme présent la laisse à vérifier. Le questionnaire d'un projet neuf
+demande la même chose au poste : chaque option dit les outils qu'elle demande (`outils`), une
+option qui en manque le dit et **ne reste pas recommandée** s'il en est une qui s'en passe, et ce
+que le poste a répondu est dit au modèle, qui s'y reprend.
+
+**Et ce qui ne pouvait pas se jouer se joue dès que le projet le permet** (#1343). À la fin d'un
+run, si l'outillage que ce fil a écrit garde une commande qui n'a pas passé et que le projet a
+maintenant ses fichiers, les commandes sont **rejouées** sur le projet construit ; la première
+pièce dont le texte change est proposée **sur le message du récit de fin** — le dernier du fil,
+donc celui qui attend un geste —, puis les suivantes, chacune sur accord. Le récit et la revue se
+font en même temps ; l'un sans l'autre part seul.
 
 L'écran rend ce verdict **commande par commande**, dans la forme retenue sur pièces
 (`VerificationsOutillage`, variante A de #1160) : sur la page, la phrase de compte puis une ligne
