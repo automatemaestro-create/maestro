@@ -2451,11 +2451,22 @@ export type NoeudGraphe = {
   activite?: SigneDeVie | null;
 };
 
-/** Une arête du graphe (#490) : `de` l'amont, `vers` l'aval — le sens du flux. */
+/**
+ * Une arête du graphe (#490) : `de` l'amont, `vers` l'aval — le sens du flux.
+ *
+ * `redondante` et `via` (#1297) : l'aval attendait **déjà** l'amont par une
+ * autre chaîne du plan, dont `via` nomme les nœuds intermédiaires (la plus
+ * courte, dans l'ordre du flux). Calculées une fois côté serveur
+ * (`maestro/controltower/graphe.py`), jamais réécrites ici. Optionnelles : un
+ * graphe servi avant ce lot n'en porte pas, et toute arête s'y lit alors comme
+ * nécessaire.
+ */
 export type AreteGraphe = {
   de: string;
   vers: string;
   etat: string;
+  redondante?: boolean;
+  via?: string[];
 };
 
 /**

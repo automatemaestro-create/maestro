@@ -92,6 +92,7 @@ plan et d'états de tâche — d'où `EtatNoeud`, qui est exactement ce que
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -257,15 +258,37 @@ class AreteGraphe:
     `Task.dependances` se lit « j'attends ceux-ci », un dessin se lit « ceci mène
     à cela ». Prendre le sens de la déclaration ferait des flèches à rebours sur
     tous les écrans.
+
+    `via` (#1297) : la chaîne **déjà déclarée** qui mène de `de` à `vers` sans
+    passer par cette arête-ci — ses nœuds intermédiaires, la plus courte, dans
+    l'ordre du flux —, vide si aucune ne le fait. Une arête qui en a une est
+    **redondante** : l'aval attendait déjà l'amont par cette chaîne, et la
+    flèche n'apprend rien de plus. C'est celle qui « semblait venir d'ailleurs »
+    sur le run `3fe501fc0878`. Elle reste une arête — le plan l'a déclarée, et
+    « en toutes lettres » les nomme toutes —, mais la vue l'estompe ; la règle
+    est calculée **ici, une fois**, plutôt que réécrite en règle d'affichage.
     """
 
     de: str
     vers: str
     etat: str = ARETE_ATTENDUE
+    via: tuple[str, ...] = ()
 
-    def to_dict(self) -> dict[str, str]:
-        """Réémet l'arête en dict JSON-sérialisable (`{de, vers, etat}`)."""
-        return {"de": self.de, "vers": self.vers, "etat": self.etat}
+    @property
+    def redondante(self) -> bool:
+        """L'arête est-elle déjà impliquée par une autre chaîne du plan ?"""
+        return bool(self.via)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet l'arête en dict JSON-sérialisable (`{de, vers, etat, redondante, via}`)."""
+        return {
+            "de": self.de,
+            "vers": self.vers,
+            "etat": self.etat,
+            # Un client qui ignore ces deux clés lit exactement la forme d'avant.
+            "redondante": self.redondante,
+            "via": list(self.via),
+        }
 
 
 @dataclass(frozen=True)
@@ -404,6 +427,41 @@ def _etat_arete(amont: EtatNoeud) -> str:
     return ARETE_ATTENDUE
 
 
+def _chaine_de_rechange(
+    de: str, vers: str, aval: Mapping[str, Sequence[str]]
+) -> tuple[str, ...]:
+    """La plus courte chaîne de `de` à `vers` **qui ne passe pas par l'arête directe**.
+
+    Rend ses nœuds intermédiaires, dans l'ordre du flux, ou `()` si aucune n'existe
+    — c'est-à-dire si l'arête `de → vers` est la seule à relier les deux (#1297).
+    Un parcours en largeur, pour que la chaîne nommée soit celle qu'on suit d'un
+    regard ; à égalité, l'ordre du plan départage (celui de `dependants_directs`).
+    Les nœuds déjà vus ne sont pas revisités : un cycle relu du bus s'arrête.
+    """
+    precedent: dict[str, str] = {}
+    file: deque[str] = deque()
+    for suivant in aval.get(de, ()):
+        if suivant in (de, vers) or suivant in precedent:
+            continue
+        precedent[suivant] = de
+        file.append(suivant)
+    while file:
+        courant = file.popleft()
+        for suivant in aval.get(courant, ()):
+            if suivant == de or suivant in precedent:
+                continue
+            precedent[suivant] = courant
+            if suivant == vers:
+                chaine: list[str] = []
+                pas = courant
+                while pas != de:
+                    chaine.append(pas)
+                    pas = precedent[pas]
+                return tuple(reversed(chaine))
+            file.append(suivant)
+    return ()
+
+
 def _etapes_du_noeud(noeud: NoeudPlan, etat: EtatNoeud) -> tuple[EtapeTache, ...]:
     """La checklist à dessiner : celle que l'agent tient, sinon l'ossature du plan.
 
@@ -479,6 +537,7 @@ def graphe_du_run(
             de=amont,
             vers=noeud.id,
             etat=_etat_arete(etats.get(amont, EtatNoeud())),
+            via=_chaine_de_rechange(amont, noeud.id, aval),
         )
         for noeud in noeuds
         for amont in noeud.dependances
