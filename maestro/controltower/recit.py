@@ -77,6 +77,19 @@ pendant que le modèle écrit. La pièce qui change voyage sur **le message du r
 — c'est le dernier du fil, donc celui sur lequel une demande attend un geste
 (`chat.piece_en_attente`). Un récit que le modèle n'a pas écrit ne fait pas taire
 l'outillage : la pièce est alors posée seule, avec ses propres mots.
+
+## Et le bilan sur pièces, qu'il lit avant d'écrire (#1284)
+
+Le 2026-09-24, le récit du run `3fe501fc0878` a recopié le libellé du moteur —
+« échec transitoire persistant après 3 tentatives » — et conseillé de relancer un
+échec qui se serait reproduit à l'identique. Il ne voyait que la fiche du run. Il
+lit désormais aussi le **bilan** du run (`maestro.controltower.bilan`), rendu sur
+les pièces de son journal et vérifié contre elles : ce qui a failli, sa nature
+jugée sur la cause, et ce qu'il faut changer d'abord. La consigne (`SYSTEME`,
+point 3) dit lequel fait foi. Le bilan est rendu **en même temps** que le livrable
+se lit, et une seule fois par issue : le récit attend celui que la fin du run a mis
+en route, il n'en refait pas un. Sans bilan, rien ne change — le récit se rédige
+sur la fiche seule.
 """
 
 from __future__ import annotations
@@ -90,6 +103,7 @@ from typing import Protocol
 
 from maestro.agents.catalog import Agent
 from maestro.agents.playbook_du_code import registre
+from maestro.controltower.bilan import BilanRun, bilan_en_texte
 from maestro.controltower.chat import UTILISATEUR, MessageChat, ReponseChat, ServiceChat
 from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
@@ -174,7 +188,13 @@ SYSTEME = (
     "livrable n'en donne aucune, dis-le en une ligne et propose ce que tu vois "
     "de plus proche ;\n"
     "3. **ce qui reste à faire**, s'il reste quelque chose — une tâche en échec, "
-    "un fichier annoncé et absent, une dépendance à installer ;\n"
+    "un fichier annoncé et absent, une dépendance à installer. Quand le **bilan "
+    "du run** ci-dessous juge un échec, c'est son jugement qui fait foi, pas le "
+    "libellé que le moteur a posé sur la tâche : un moteur qui relance présume un "
+    "aléa, le bilan juge sur pièces. Sur un échec que le bilan dit **déterministe**, "
+    "ne conseille jamais de relancer tel quel : dis ce qui a failli, et ce qu'il "
+    "faut changer d'abord, d'après ses recommandations. Sur un aléa, dire qu'une "
+    "relance peut suffire reste juste ;\n"
     "4. **les fichiers qui comptent**, en liens. Un lien s'écrit "
     "`[nom lisible](<chemin absolu>)`, avec les chevrons, et le chemin doit être "
     "l'un de ceux de la liste « Fichiers du livrable » ci-dessous, recopié "
@@ -349,6 +369,12 @@ class RevueDeLOutillage(Protocol):
     ) -> ReponseChat | None: ...
 
 
+class BilanDuRun(Protocol):
+    """Ce que le conteur demande au bilan — `ServiceBilan.rendre` (#1284)."""
+
+    async def rendre(self, run_id: str) -> BilanRun | None: ...
+
+
 class ConteurDeFin:
     """Écrit dans le fil qui a demandé un run ce que ce run a laissé (#1224).
 
@@ -364,6 +390,9 @@ class ConteurDeFin:
 
     `outillage` (#1343) revoit l'outillage du projet du run, maintenant qu'il a ses
     fichiers ; `None` : la fin ne dit que le récit, comme avant.
+
+    `bilan` (#1284) rend le bilan sur pièces du run, que le rédacteur lit avant
+    d'écrire ; `None` : le récit se rédige sur la seule fiche du run, comme avant.
     """
 
     def __init__(
@@ -375,6 +404,7 @@ class ConteurDeFin:
         projet: ProjetDuRun,
         redacteur: RedacteurRecit | None = None,
         outillage: RevueDeLOutillage | None = None,
+        bilan: BilanDuRun | None = None,
     ) -> None:
         self._chat = chat
         self._state = state
@@ -382,6 +412,7 @@ class ConteurDeFin:
         self._projet = projet
         self._redacteur = redacteur if redacteur is not None else RedacteurModele()
         self._outillage = outillage
+        self._bilan = bilan
         # Les récits en cours d'écriture, par `run_id` : `deja_raconte` lit le
         # fil **persisté**, donc il ne voit pas un récit encore en vol. Deux
         # événements terminaux qui se suivent de près écriraient sinon deux fois.
@@ -444,11 +475,14 @@ class ConteurDeFin:
             return None
 
     async def _rediger(self, execution: EtatExecution, projet: Projet | None) -> str:
-        """Lit le livrable et fait rédiger le récit — `""` quand le rédacteur n'a rien rendu."""
-        livrable = await self._lire(projet)
+        """Lit le livrable et le bilan, puis fait rédiger le récit — `""` s'il n'a rien rendu."""
+        livrable, bilan = await asyncio.gather(
+            self._lire(projet), self._bilan_du_run(execution.run_id)
+        )
         try:
             texte = await self._redacteur.rediger(
-                agent=self._agent, contexte=contexte_du_recit(self._state, execution, livrable)
+                agent=self._agent,
+                contexte=contexte_du_recit(self._state, execution, livrable, bilan),
             )
         except Exception:  # noqa: BLE001 — un modèle muet ne fabrique pas de prose
             # Ce qui reste au fil est l'annonce de fin de #928 : le récit s'ajoute à elle,
@@ -465,6 +499,24 @@ class ConteurDeFin:
                 execution.run_id,
             )
         return texte
+
+    async def _bilan_du_run(self, run_id: str) -> BilanRun | None:
+        """Le bilan sur pièces du run (#1284) — `None` s'il n'y en a pas, sans jamais lever.
+
+        Le bilan est rendu une fois par issue (`ServiceBilan.rendre`) : le demander
+        ici attend celui que la fin du run a déjà mis en route, il n'en refait pas un.
+        Un bilan en échec ne coûte pas le récit : il se rédige sur la fiche du run,
+        comme avant ce lot.
+        """
+        if self._bilan is None:
+            return None
+        try:
+            return await self._bilan.rendre(run_id)
+        except Exception:  # noqa: BLE001 — un bilan manqué ne vaut pas le récit
+            _LOGGER.exception(
+                "Bilan du run %s indisponible : le récit se rédige sans lui.", run_id
+            )
+            return None
 
     async def _revoir(self, execution: EtatExecution, conversation: str) -> ReponseChat | None:
         """Ce que le run fait changer à l'outillage de son projet — `None` s'il n'y a rien (#1343).
@@ -500,15 +552,25 @@ class ConteurDeFin:
 
 
 def contexte_du_recit(
-    state: ControlTowerState, execution: EtatExecution, livrable: Livrable | None
+    state: ControlTowerState,
+    execution: EtatExecution,
+    livrable: Livrable | None,
+    bilan: BilanRun | None = None,
 ) -> str:
-    """Ce que le rédacteur lit : ce que le run a fait, puis ce qu'il a laissé.
+    """Ce que le rédacteur lit : ce que le run a fait, ce qu'on en a jugé, ce qu'il a laissé.
 
-    Trois blocs, et l'ordre est le raisonnement : *ce qui s'est passé* (la fiche
+    Quatre blocs, et l'ordre est le raisonnement : *ce qui s'est passé* (la fiche
     du run, telle que le fil la donne déjà au juge — `orchestration.fiche_du_run`,
-    donc une seule formule pour les deux canaux), *les fichiers qu'on peut
-    offrir en lien* (des chemins du poste, à recopier tels quels), puis *le
-    contenu lu*, **encadré comme donnée**.
+    donc une seule formule pour les deux canaux), *ce que le bilan en a jugé sur
+    pièces* (#1284), *les fichiers qu'on peut offrir en lien* (des chemins du
+    poste, à recopier tels quels), puis *le contenu lu*, **encadré comme donnée**.
+
+    Le bilan vient **juste après** la fiche, et c'est ce qui le fait lire comme ce
+    qu'il est : le jugement porté sur les faits qui précèdent. La fiche garde les
+    libellés du moteur — « échec transitoire persistant » compris —, et c'est le
+    bilan, puis la consigne (`SYSTEME`, point 3), qui disent lequel fait foi. Sans
+    bilan (modèle injoignable, réponse illisible), le bloc n'est pas écrit : le
+    récit se rédige comme avant ce lot, sur la fiche seule.
 
     L'encadrement n'est pas refait ici : `Livrable.contexte` est la sortie de
     `contexte_markdown` et de rien d'autre. Les chemins, eux, sont hors du bloc
@@ -518,6 +580,8 @@ def contexte_du_recit(
     from maestro.controltower.orchestration import fiche_du_run
 
     blocs = ["## Le run qui vient de finir", "", *fiche_du_run(state, execution)]
+    if bilan is not None:
+        blocs.extend(["", "## Le bilan du run, sur pièces", "", bilan_en_texte(bilan)])
     if livrable is None or livrable.vide:
         blocs.extend(
             [

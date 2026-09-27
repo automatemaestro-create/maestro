@@ -7,7 +7,7 @@ un projet neuf, une équipe proposée par Maestro et validée telle quelle, et
 ce ne sont pas des exemples inventés, ce sont les appels qui ont fait attendre
 une personne pour qu'un agent lance le code qu'il venait d'écrire.
 
-Sept parties :
+Huit parties :
 
 ① les quatorze gestes observés, qui doivent tous passer ;
 ② ce qui **sort du projet** et remonte — chemin hors racine, installation
@@ -24,11 +24,16 @@ Sept parties :
    critère du ticket ;
 ⑦ **sous Windows** (#1278) : le projet nommé par son chemin absolu est dans le
    projet, quelle que soit son orthographe, et un exécutable garde son verdict
-   avec son `.exe`. Les commandes sont, là encore, celles de deux runs réels.
+   avec son `.exe`. Les commandes sont, là encore, celles de deux runs réels ;
+⑧ **les formes ordinaires d'une commande d'agent** (#1348) : les 55 commandes
+   que le passage `20260927-070605` a rendues à une personne, rejouées sur la
+   racine de leur tâche. 44 restaient dans leur projet et y restent ; 11 en
+   sortaient vraiment et remontent toujours, chacune avec sa raison.
 
-⑦ se joue sur une racine **à la Windows** (`E:/…`) quel que soit l'OS du test :
-la portée rend le même verdict des deux côtés, et c'est ce qui permet au
-conteneur Linux du filet d'éprouver ce que seul un poste Windows produisait.
+⑦ et ⑧ se jouent sur une racine **à la Windows** (`E:/…`, `C:/…`) quel que soit
+l'OS du test : la portée rend le même verdict des deux côtés, et c'est ce qui
+permet au conteneur Linux du filet d'éprouver ce que seul un poste Windows
+produisait.
 """
 
 from __future__ import annotations
@@ -47,10 +52,11 @@ from maestro.agents.permissions import (
     politique_validee,
 )
 from maestro.decideur import Decideur
-from maestro.portee import PORTEE_PROJET, PorteeProjet, decoupe, hors_de_portee
+from maestro.portee import PORTEE_PROJET, PorteeProjet, hors_de_portee
 from maestro.projets.modele import Perimetre, Projet
 from maestro.providers import claude as claude_mod
 from maestro.sandbox.en_place import portee_de, presents_de
+from maestro.shell import lis
 
 #: Les quatorze commandes du run `96d0c3482649`, dans l'ordre où elles ont été
 #: soumises à la personne. Toutes ont été approuvées, aucune ne sortait du
@@ -224,17 +230,54 @@ def test_find_qui_agit_remonte_faute_de_cible_lisible(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "commande",
     [
-        "python app.py $(cat cible.txt)",
-        "rm -rf `cat cible.txt`",
         "echo 'guillemet non fermé",
-        "(cd build && rm -rf .)",
+        'python app.py "$(cat cible.txt',
+        "select x in a b; do rm notes.md; done",
+        "nettoie() { rm notes.md; }; nettoie",
+        "liste=(a b); rm ${liste[0]}",
     ],
 )
 def test_un_texte_qu_on_ne_sait_pas_lire_remonte(tmp_path: Path, commande: str) -> None:
-    """Ce qu'une substitution exécute n'est pas dans le texte qu'on juge, et un
-    sous-shell n'est pas une commande simple. Le seul verdict honnête est « je ne
-    sais pas », qui se rend en demandant à une personne."""
-    assert _portee(tmp_path).commande_hors_portee(commande) != ""
+    """Des guillemets qui ne se ferment pas, et la syntaxe que le lecteur ne lit
+    pas (`select`, fonction, tableau) : le seul verdict honnête est « je ne sais
+    pas », qui se rend en demandant à une personne. Depuis #1348 la liste est
+    courte — substitution, sous-shell, bloc, boucle, `case` et heredoc se
+    **lisent**, et sont jugés ci-dessous."""
+    assert "illisible" in _portee(tmp_path).commande_hors_portee(commande)
+
+
+def test_ce_qu_une_substitution_execute_est_juge_comme_le_reste(tmp_path: Path) -> None:
+    """Ce qu'une substitution exécute **est** dans le texte : on le juge, maillon
+    par maillon, comme le reste (#1348). Ce qu'on ne sait pas, c'est la **valeur**
+    qu'elle rend — et une cible de destruction qu'on ne connaît pas ne se juge pas."""
+    portee = _portee(tmp_path, ("", "notes.md", "build", "build/app.py"))
+
+    assert portee.commande_hors_portee("python app.py $(cat cible.txt)") == ""
+    assert "ne l'a pas produit" in portee.commande_hors_portee("python app.py $(rm notes.md)")
+    assert "ne l'a pas produit" in portee.commande_hors_portee("echo `rm notes.md`")
+    assert "ne peut pas juger" in portee.commande_hors_portee("rm -rf `cat cible.txt`")
+    assert "ne peut pas juger" in portee.commande_hors_portee('rm -rf "$CIBLE"')
+
+
+def test_un_sous_shell_se_lit_et_garde_son_dossier(tmp_path: Path) -> None:
+    """Un `cd` dans un sous-shell ne déplace que lui : ce qui suit la parenthèse
+    repart du dossier d'avant."""
+    portee = _portee(tmp_path, ("", "notes.md", "build", "build/app.py"))
+
+    assert "ne l'a pas produit" in portee.commande_hors_portee("(cd build && rm -rf .)")
+    assert portee.commande_hors_portee("(cd build && rm -rf __pycache__)") == ""
+    assert "ne l'a pas produit" in portee.commande_hors_portee("(cd build && ls); rm notes.md")
+
+
+def test_chaque_branche_d_un_case_est_jugee(tmp_path: Path) -> None:
+    """Le motif choisit une branche au moment de l'exécution : le texte, lui, les
+    porte toutes, et une seule qui détruit suffit."""
+    portee = _portee(tmp_path, ("", "notes.md"))
+
+    assert portee.commande_hors_portee('case "$x" in a|b) ls ;; *) echo ;; esac') == ""
+    assert "ne l'a pas produit" in portee.commande_hors_portee(
+        'case "$x" in a) ls ;; *) rm notes.md ;; esac'
+    )
 
 
 def test_un_appel_sans_commande_remonte(tmp_path: Path) -> None:
@@ -255,10 +298,10 @@ def test_seul_l_outil_d_execution_est_juge(tmp_path: Path) -> None:
 def test_le_decoupage_garde_les_redirections_a_part_des_arguments() -> None:
     """`python app.py > sortie.txt` lance `app.py` et écrit `sortie.txt` :
     confondre les deux ferait juger `sortie.txt` comme un argument de `python`."""
-    (simple,) = decoupe("python app.py 2>/dev/null > sortie.txt")
+    (simple,) = lis("python app.py 2>/dev/null > sortie.txt").commandes
 
-    assert simple.jetons == ("python", "app.py")
-    assert (">", "sortie.txt") in simple.redirections
+    assert [mot.rendu() for mot in simple.mots] == ["python", "app.py"]
+    assert (">", "sortie.txt") in [(r.operateur, r.cible.rendu()) for r in simple.redirections]
 
 
 @pytest.mark.parametrize(
@@ -700,3 +743,331 @@ def test_un_verbe_destructeur_se_reconnait_sous_toutes_ses_orthographes() -> Non
 def test_un_executable_windows_qui_reste_dans_le_projet_passe(commande: str) -> None:
     """Le témoin : reconnaître le suffixe ne fait pas sortir ce qui ne sortait pas."""
     assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+# --- ⑧ Les formes ordinaires d'une commande d'agent (#1348) ------------------
+
+#: Les 55 commandes `Bash` que le passage `20260927-070605` du banc a rendues à
+#: une personne (journal `_etat/journal.jsonl`, événements `validation.demande`),
+#: chacune avec la racine de sa tâche. Le journal tronque une commande à 1000
+#: caractères : quand la coupe tombe dans un heredoc, son corps court jusqu'à la
+#: fin ; quand elle tombe dans une chaîne ou une boucle, le texte s'arrête à la
+#: dernière commande complète (`tronquee` le dit).
+PASSAGE_20260927 = json.loads(
+    (Path(__file__).parent / "fixtures" / "portee" / "passage-20260927-070605.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def _du_passage(attendu: str) -> list[dict]:
+    return [entree for entree in PASSAGE_20260927 if entree["attendu"] == attendu]
+
+
+def _portee_de_la_tache(entree: dict) -> PorteeProjet:
+    return PorteeProjet(racine=Path(entree["racine"]), presents=frozenset(entree["presents"]))
+
+
+def test_le_passage_rejoue_est_celui_qui_a_rendu_55_demandes() -> None:
+    """L'échantillon est le vrai : chaque commande porte le motif qui l'a fait
+    remonter ce jour-là, et le compte est celui du rapport de bouclage."""
+    assert len(PASSAGE_20260927) == 55
+    assert all(entree["motif_avant"] for entree in PASSAGE_20260927)
+    assert sum("illisible" in entree["motif_avant"] for entree in PASSAGE_20260927) == 42
+
+
+@pytest.mark.parametrize(
+    "entree", _du_passage("dedans"), ids=lambda e: f"{e['scenario']}-{e['demande']}"
+)
+def test_ce_qu_un_agent_jouait_dans_son_projet_y_reste(entree: dict) -> None:
+    """Substitution, heredoc, bloc, boucle, `cd` dans un sous-dossier, dossier
+    créé par `mktemp`, lecture hors du projet : les formes ordinaires d'une
+    commande d'agent. Aucune ne sort du projet, et aucune ne dérange personne."""
+    assert _portee_de_la_tache(entree).commande_hors_portee(entree["commande"]) == ""
+
+
+@pytest.mark.parametrize(
+    "entree", _du_passage("dehors"), ids=lambda e: f"{e['scenario']}-{e['demande']}"
+)
+def test_ce_qui_sortait_vraiment_du_projet_remonte_toujours(entree: dict) -> None:
+    """Le prix d'une décision, nommé : un nom **fixe** dans le temporaire n'est
+    pas à l'agent — Maestro y range les espaces de travail des autres tâches
+    (`racine_des_espaces`) —, et seul ce qu'il crée par `mktemp` dans la commande
+    même est à lui. Le motif dit laquelle des deux familles a joué."""
+    motif = _portee_de_la_tache(entree).commande_hors_portee(entree["commande"])
+
+    assert entree["motif_attendu"] in motif, entree["raison"]
+
+
+#: La racine de S2 dans ce passage, et la commande que le ticket cite à son étape
+#: de reproduction.
+RACINE_S2 = Path("C:/Users/Sam25/maestro-scenarios/20260927-070605/s2-application")
+
+
+def test_s2_verifie_son_livrable_sans_deranger_personne() -> None:
+    """Le premier critère : le run du retex vérifie son application dans un
+    dossier qu'il crée lui-même, et le range en partant."""
+    commande = (
+        f'cd "{RACINE_S2.as_posix()}" && T=$(mktemp -d) && python app.py >"$T/out"; rm -rf "$T"'
+    )
+
+    evaluateur = PorteeProjet(RACINE_S2)
+    assert hors_de_portee(PORTEE_PROJET, evaluateur, "Bash", {"command": commande}) == ""
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        'T=$(mktemp -d); cp app.py "$T" && cd "$T" && python app.py; cd /; rm -rf "$T"',
+        'O=$(mktemp) && python app.py >"$O" 2>&1; cat "$O"; rm -f "$O"',
+        'W=$(mktemp -d "$TMP/recette-XXXX"); git clone -q . "$W/clone"; rm -rf "$W"',
+        'T=$(mktemp -d); for x in a b; do mkdir "$T/$x"; done; rm -rf "$T"',
+    ],
+)
+def test_ce_que_l_agent_cree_par_mktemp_est_a_lui(commande: str) -> None:
+    assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "sha256sum app.py > /tmp/avant.sha",  # la vérification V3 du bouclage
+        "rm -rf /tmp/vr-raw",
+        'T=$(mktemp -d); rm -rf "$T/../voisin"',  # remonter hors de son dossier
+        'rm -rf "$(cygpath -m "$TEMP")/vr-raw"',
+        'cd "$TMP/recette-d3I5/clone" && cp carnet.md ../avant.md',
+        # Passage `20260927-104414`, S9 : le cadre disait « dans le répertoire
+        # temporaire du système » — il dit maintenant `mktemp -d`.
+        'rm -f "$TEMP/verif_carnet.py"; ls scripts',
+    ],
+)
+def test_un_nom_fixe_du_temporaire_n_est_pas_a_l_agent(commande: str) -> None:
+    assert "sort du" in _portee_p3().commande_hors_portee(commande)
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "cd src && python -B -c 'import app'; cd ..; ls -la src",
+        "cd tests && python -m pytest -q; cd ..; git status --short",
+        "mkdir -p .verif && cd .verif && dotnet test ../Depensio.sln | tee ../verif.log",
+    ],
+)
+def test_un_cd_deplace_le_pied_des_chemins(commande: str) -> None:
+    """Le `..` qui suit un `cd` dans un sous-dossier ramène à la racine."""
+    assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+def test_un_cd_hors_du_projet_emporte_les_chemins_qui_le_suivent() -> None:
+    """Le pendant, dans l'autre sens : après un `cd` dehors, un nom nu désigne un
+    fichier de là-bas — y compris pour une destruction."""
+    portee = _portee_p3(("", "notes.md"))
+
+    assert "sort du" in portee.commande_hors_portee("cd /tmp && rm -rf notes.md")
+    assert "sort du" in portee.commande_hors_portee("cd .. && touch autre/x")
+    assert "ne l'a pas produit" in portee.commande_hors_portee("cd src; rm ../notes.md")
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        'which -a python py 2>&1; py --version; ls "/c/Program Files/Python313" 2>&1',
+        "ls ~/AppData/Local/ms-playwright 2>&1; where firefox; npm ls -g --depth=0",
+        "find . \\( -name __pycache__ -o -name .pytest_cache \\) -not -path './.git*'",
+    ],
+)
+def test_une_lecture_dans_un_enchainement_ne_sort_de_nulle_part(commande: str) -> None:
+    """Une lecture n'agit pas (#1197), et cela vaut maillon par maillon : un `ls`
+    hors du projet, au milieu de commandes qui restent dedans, ne fait rien sortir."""
+    assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        ".venv/Scripts/python.exe -m pip install rich",
+        "python -m pip install rich --target ./vendor",
+        "python -m venv .venv && . .venv/Scripts/activate && pip install -r requirements.txt",
+        "source .venv/bin/activate && python -m pip install rich",
+    ],
+)
+def test_installer_dans_le_projet_n_est_pas_en_sortir(commande: str) -> None:
+    """Les deux formes que le bouclage a relevées (P6), et leurs voisines : un
+    interpréteur du projet installe dans le projet."""
+    assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "python -m pip install rich --target ../ailleurs",
+        "source .venv/bin/activate && pip install --user rich",
+        "cd /tmp && python -m venv v && . v/bin/activate && pip install rich",
+        '"$PY" -m pip install rich',
+    ],
+)
+def test_une_installation_hors_du_projet_remonte_toujours(commande: str) -> None:
+    assert _portee_p3().commande_hors_portee(commande) != ""
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        # Le saut de ligne est un séparateur : `shlex` le lisait comme un blanc, et
+        # la seconde ligne devenait un argument de la première.
+        "echo ok\nrm notes.md",
+        "python --version\npip install rich",
+        # Ce qu'une enveloppe lance est ce qu'on juge.
+        "env PYTHONPATH=. pip install rich",
+        "timeout 60 pip install rich",
+        "nohup rm notes.md",
+        "find . -name '*.md' | xargs rm",
+        # Une commande donnée à un autre shell est une commande.
+        "bash -c 'pip install rich'",
+        'sh -c "rm notes.md"',
+        "bash <<'EOF'\nrm notes.md\nEOF",
+        'powershell.exe -NoProfile -Command "pip install rich"',
+        'cmd /c "winget install jq"',
+        # Et un heredoc non cité exécute ce qu'il substitue.
+        "cat > sortie.txt <<EOF\n$(rm notes.md)\nEOF",
+    ],
+)
+def test_ce_qui_sort_ou_detruit_sous_une_autre_forme_remonte(commande: str) -> None:
+    """Sans rouvrir #1278 : lire plus de formes ne fait rien passer de ce qui
+    sort vraiment du projet — et en ferme quelques-unes qui passaient."""
+    assert _portee_p3(("", "notes.md")).commande_hors_portee(commande) != "", commande
+
+
+#: Les deux commandes que le passage suivant (`20260927-104414`, joué sur ce
+#: correctif) a encore rendues à une personne, telles qu'elles ont été jouées.
+#: La première vérifie, par un `case`, les chemins que les notes du projet citent
+#: (S3) ; la seconde réutilise en toutes lettres le dossier qu'un `mktemp -d` de
+#: l'appel précédent avait créé (S6) — chaque appel `Bash` est un shell neuf.
+GESTES_DU_PASSAGE_104414 = (
+    "grep -o '`[^`]*`' NOTES.md | tr -d '`' | sort -u | while read -r p; do "
+    'case "$p" in *[/.]*) set -- $p; for w in "$@"; do case "$w" in '
+    '*.py|*.md|*.toml|*/) [ -e "$w" ] && echo "OK  $w" || echo "ABSENT $w";; esac; '
+    "done;; esac; done | sort -u\n"
+    'echo "--- dossiers racine:"; for d in */ .*/; do case "$d" in ./|../) ;; '
+    '*) grep -q "\\`$d\\`" NOTES.md && echo "cité $d" || echo "NON cité $d";; esac; done',
+    "T=/tmp/tmp.gv9kMtoQdP && find . \\( -path ./.git -o -path ./node_modules -o -name .env "
+    "-o -path '*/secrets' \\) -prune -o -type f -print0 | sort -z | xargs -0 sha1sum > "
+    '$T/apres.sha1 && diff $T/avant.sha1 $T/apres.sha1 && echo "empreintes identiques" && '
+    "find . \\( -path ./.git -o -path ./node_modules \\) -prune -o -print | sort | "
+    'diff $T/avant.list - && echo "arborescence identique"; ls -A .maestro/verification-logo '
+    "| wc -l; rm -rf $T/profil $T/profil2; ls $T; du -sh $T",
+)
+
+
+@pytest.mark.parametrize("commande", GESTES_DU_PASSAGE_104414)
+def test_les_gestes_du_passage_suivant_restent_dans_le_projet(commande: str) -> None:
+    assert _portee_p3(("", "NOTES.md", "README.md")).commande_hors_portee(commande) == ""
+
+
+#: La troisième, en S9 : un venv créé **dans** le projet, puis rempli par son
+#: propre interpréteur — le tout donné à PowerShell.
+POWERSHELL_S9_104414 = (
+    "powershell -NoProfile -Command 'python -m venv .venv; .venv\\Scripts\\python -m pip "
+    'install -q -r requirements.txt; "install=$LASTEXITCODE"; .venv\\Scripts\\python '
+    'scripts\\verifier_carnet.py; "verif_sans_pdf=$LASTEXITCODE"; .venv\\Scripts\\python '
+    'scripts\\assembler_carnet.py; "gen=$LASTEXITCODE"; .venv\\Scripts\\python '
+    "scripts\\verifier_carnet.py; \"verif=$LASTEXITCODE\"' 2>&1"
+)
+
+
+def test_powershell_installe_dans_le_projet_par_l_interpreteur_du_projet() -> None:
+    portee = _portee_p3()
+
+    assert portee.commande_hors_portee(POWERSHELL_S9_104414) == ""
+    assert "installe" in portee.commande_hors_portee(
+        "powershell -Command 'C:\\Python313\\python -m pip install rich'"
+    )
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "rm -rf /tmp/tmp.court",  # pas le nom de `mktemp`
+        "rm -rf /tmp/maestro-dev-carnet-v0iwvq4r",  # l'espace d'une autre tâche
+        "rm -rf /tmp/tmp.gv9kMtoQdP/../voisin",  # remonter hors de son dossier
+        "rm -rf /c/Users/moi/projets/tmp.gv9kMtoQdP",  # pas sous un dossier temporaire
+    ],
+)
+def test_seul_le_nom_de_mktemp_sous_le_temporaire_est_a_l_agent(commande: str) -> None:
+    assert "sort du" in _portee_p3().commande_hors_portee(commande)
+
+
+def test_le_nom_de_mktemp_se_reconnait_sous_toutes_ses_orthographes() -> None:
+    portee = _portee_p3()
+
+    for dossier in (
+        "/tmp/tmp.gv9kMtoQdP",
+        "C:/Users/Sam25/AppData/Local/Temp/tmp.gv9kMtoQdP",
+        "/c/Users/Sam25/AppData/Local/Temp/tmp.gv9kMtoQdP",
+    ):
+        assert portee.commande_hors_portee(f'rm -rf "{dossier}/profil"') == "", dossier
+
+
+#: Les deux commandes que le passage joué sur le code final (`20260927-131322`)
+#: a encore rendues à une personne : le ménage des caches de S3, et un `cp` sur le
+#: puits dans S6.
+MENAGE_S3_131322 = (
+    "for p in README.md pyproject.toml src src/depensio src/depensio/app.py "
+    'src/depensio/modele.py .maestro; do test -e "$p" && echo "OK $p" || echo "MANQUE $p"; '
+    'done\ntest -e src/app.py && echo "ancien existe" || echo "ancien absent (attendu)"\n'
+    'python src/depensio/app.py; echo "code $?"\n'
+    'PYTHONPATH=src python -B -m depensio.app; echo "code $?"\n'
+    'PYTHONPATH=src python -B -c "from depensio import modele; print(modele.X)"; '
+    'echo "code $?"\n'
+    "find src -name __pycache__ -type d -exec rm -rf {} +; "
+    "find . -name __pycache__ -not -path './.git/*'"
+)
+PUITS_S6_131322 = (
+    'W=$(mktemp -d) && echo "$W" > /dev/null && cp /dev/null /dev/null; '
+    'cd "E:/Projects Solutions/maestro-projects/p3" && sha256sum logo-anime.svg'
+)
+
+
+def test_les_gestes_du_passage_final_restent_dans_le_projet() -> None:
+    portee = _portee_p3(("", "README.md", "src", "src/depensio", "src/depensio/app.py"))
+
+    assert portee.commande_hors_portee(MENAGE_S3_131322) == ""
+    assert portee.commande_hors_portee(PUITS_S6_131322) == ""
+
+
+def test_un_find_qui_efface_se_confronte_a_ce_qui_etait_la() -> None:
+    """Le geste de #1226 — effacer les caches que ses exécutions ont produits —
+    écrit par `find` : ses cibles se décrivent (sous ces racines, ce nom), et si
+    rien de présent avant la tâche n'y répond, l'agent n'efface que son travail."""
+    portee = _portee_p3(("", "notes.md", "src", "src/app.py", "src/vieux/__pycache__"))
+
+    assert portee.commande_hors_portee("find build -name __pycache__ -exec rm -rf {} +") == ""
+    assert portee.commande_hors_portee("find . -name '*.pyc' -delete") == ""
+    assert "ne l'a pas produit" in portee.commande_hors_portee(
+        "find src -name __pycache__ -exec rm -rf {} +"
+    )
+    assert "ne l'a pas produit" in portee.commande_hors_portee("find . -iname 'NOTES.*' -delete")
+    # Ce qui ne se confronte pas remonte, comme avant.
+    for commande in (
+        "find . -type f -exec rm {} +",  # aucun nom : tout le projet
+        "find . -name a -o -name b -delete",  # un test qu'on ne sait pas lire
+        "find /tmp -name '*.log' -delete",  # une racine hors du projet
+    ):
+        assert portee.commande_hors_portee(commande) != "", commande
+
+
+def test_un_find_qui_lance_une_lecture_ne_detruit_rien() -> None:
+    portee = _portee_p3(("", "notes.md"))
+
+    assert portee.commande_hors_portee("find . -name '*.md' -exec wc -l {} +") == ""
+    assert "sort du" in portee.commande_hors_portee("find . -name '*.md' -exec cp {} /tmp/x \\;")
+
+
+def test_l_acte_de_s8_remonte_toujours() -> None:
+    """La commande que le README de S8 fait jouer (`CONVENTION_REGISTRE`) : une
+    ligne ajoutée à un registre tenu **hors** de la racine."""
+    racine = Path("C:/Users/Sam25/maestro-scenarios/20260927-070605/s8-hors-projet")
+    registre = "C:/Users/Sam25/maestro-scenarios/20260927-070605/s8-registre/livraisons.txt"
+    commande = f'echo "2026-09-27 depensio : total()" >> "{registre}"'
+
+    assert "sort du" in PorteeProjet(racine).commande_hors_portee(commande)

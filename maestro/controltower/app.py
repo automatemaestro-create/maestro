@@ -58,7 +58,9 @@ Endpoints :
   reste servie tant que personne n'y a répondu, même après que l'agent a repris ;
 - `POST /api/questions/{question_id}/reponse` — la réponse humaine, du **texte**
   : l'agent, suspendu sur le bus, la reçoit et reprend. Répondre n'approuve
-  aucun acte — un outil classé `ask` reste refusé sans arbitrage (EF-08) ;
+  aucun acte — un outil classé `ask` reste refusé sans arbitrage (EF-08). Ces
+  deux gestes se règlent aussi depuis le fil de l'orchestrateur, par le même
+  service (#1183, `ServiceAttentes`, `POST /api/chat/{agent}/reglement`) ;
 - `GET  /api/playbooks` — les playbooks des agents (#76 : version courante et
   provenance — défaut du code ou stockage versionné) ;
 - `GET  /api/playbooks/{agent}` — le playbook courant d'un agent (contenu) ;
@@ -408,6 +410,7 @@ from maestro.controltower.assistance import (
     RepondeurAssistance,
 )
 from maestro.controltower.assistance_documentee import RepondeurAssistanceDocumentee
+from maestro.controltower.attentes import ServiceAttentes
 from maestro.controltower.auto_amelioration import (
     AnalyseurEchecs,
     RedacteurPlaybook,
@@ -419,6 +422,7 @@ from maestro.controltower.battement import (
     RegistreBattementsMemoire,
     RegistreBattementsRedis,
 )
+from maestro.controltower.bilan import JugeBilan, ServiceBilan
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
@@ -430,6 +434,7 @@ from maestro.controltower.chat import (
     ProjetVise,
     QuestionIntrouvable,
     RecrutementIntrouvable,
+    ReglementIntrouvable,
     RepondeurChat,
     RepondeurModele,
     ReponseIndisponible,
@@ -444,12 +449,10 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
-    EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_RENFORT_DECISION,
     EVENEMENT_RENFORT_DEMANDE,
     EVENEMENT_TACHE_REASSIGNATION,
     EVENEMENT_TACHE_REFERENCE,
-    EVENEMENT_VALIDATION_DECISION,
     Event,
     EventBus,
     InMemoryEventBus,
@@ -534,6 +537,12 @@ from maestro.controltower.projets import (
 )
 from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
 from maestro.controltower.regime import MembreDeLEquipe, regime_d_un_run
+from maestro.controltower.reglements import (
+    MOTIF_ATTENTE_INCONNUE,
+    MOTIF_ATTENTE_REGLEE,
+    MOTIF_REPONSE_VIDE,
+    ReglementRefuse,
+)
 from maestro.controltower.renfort import RelaisRenfort
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
@@ -543,12 +552,9 @@ from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_PLAFOND,
     EXECUTION_EN_ATTENTE_REPONSES,
-    QUESTION_REPONDUE,
     RENFORT_ACCORDE,
     RENFORT_DECLINE,
     STATUTS_EXECUTION_TERMINAUX,
-    VALIDATION_APPROUVEE,
-    VALIDATION_REFUSEE,
     ControlTowerState,
     EtatAgent,
 )
@@ -1356,6 +1362,21 @@ class GesteRunRequete(BaseModel):
     conversation: str | None = None
 
 
+class ReglementRequete(BaseModel):
+    """Corps du geste qui confirme — ou écarte — le règlement que le fil propose (#1183).
+
+    `approuve`, et rien d'autre de fond : la question ou la validation visée, la
+    réponse qui partira et la raison d'un refus sont sur la proposition que le fil
+    porte (`ReglementPropose`), et c'est elle qui se règle. « Dis-lui plutôt MySQL »
+    ne passe pas par ici : il se dit dans la conversation, et appelle une carte
+    nouvelle — la règle du geste sur un run (#1179). `conversation` a le sens qu'elle
+    a partout ailleurs sur ce canal.
+    """
+
+    approuve: bool
+    conversation: str | None = None
+
+
 class DecisionPieceRequete(BaseModel):
     """Corps du geste qui tranche la pièce d'outillage que le fil propose (#1161).
 
@@ -1551,6 +1572,16 @@ _CODE_REFUS_GESTE: dict[str, int] = {
     MOTIF_RELANCE_RUN_SOLDE: 409,
     MOTIF_GESTE_RUN_SUSPENDU: 409,
     MOTIF_GESTE_RUN_NON_SUSPENDU: 409,
+}
+
+#: Le statut HTTP des refus d'une réponse à une question et d'une décision sur une
+#: validation (#1183) — ceux que leurs routes rendaient déjà, maintenant que les
+#: règles vivent dans le service des attentes (`ServiceAttentes`) : `404` sur une
+#: attente inconnue, `409` sur une attente déjà réglée, `422` sur une réponse vide.
+_CODE_REFUS_REGLEMENT: dict[str, int] = {
+    MOTIF_ATTENTE_INCONNUE: 404,
+    MOTIF_ATTENTE_REGLEE: 409,
+    MOTIF_REPONSE_VIDE: 422,
 }
 
 
@@ -1760,6 +1791,7 @@ def create_app(
     assistance_repondeur: RepondeurChat | None = None,
     orchestration_repondeur: RepondeurChat | None = None,
     recit_redacteur: RedacteurRecit | None = None,
+    bilan_juge: JugeBilan | None = None,
     analyseur: AnalyseurEchecs | None = None,
     redacteur_playbook: RedacteurPlaybook | None = None,
     generateur_agent: GenerateurDefinitionAgent | None = None,
@@ -1832,6 +1864,12 @@ def create_app(
     lanceur ; c'est aussi le point d'injection qui permet de jouer le fil **sans
     fournisseur** — les tests y mettent un répondeur scripté, un répondeur à
     fournisseur factice, ou aucun lanceur.
+
+    `bilan_juge` (#1284) rend le **bilan sur pièces** de chaque run à sa fin
+    (`maestro.controltower.bilan`), servi par `GET /api/executions/{run_id}/bilan`
+    et lu par le récit de fin. Par défaut le modèle du poste, résolu au premier
+    bilan ; les tests en injectent un scripté, et la suite neutralise le défaut
+    (`tests/conftest.py`).
 
     `analyseur` (#139) produit les propositions d'auto-amélioration servies par
     `POST /api/playbooks/{agent}/propositions` : à la demande, il analyse les
@@ -2363,6 +2401,11 @@ def create_app(
             state.ajouter_agent(agent["nom"], agent["role"])
         return rapport
 
+    # Ce qui attend quelqu'un — questions d'agent et validations — se règle par un
+    # seul service (#1183) : les deux routes de leurs écrans et le fil de
+    # l'orchestrateur l'appellent, aucun ne recopie ses règles.
+    attentes = ServiceAttentes(state, bus)
+
     # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,
     # bus —, un répondeur qui peut ouvrir un run, et rien de plus côté REST. Il se
     # construit ici, et pas avec les deux autres, parce qu'il tient son lanceur du
@@ -2410,6 +2453,9 @@ def create_app(
                 # Il agit sur les runs existants — pause, reprise, annulation,
                 # relance — par le **même** service que les boutons (#1179).
                 pilote=executions,
+                # Et il règle ce qui attend quelqu'un — répondre à un agent,
+                # trancher une validation — par le service de leurs écrans (#1183).
+                reglements=attentes,
             )
         ),
         mailbox=mailbox,
@@ -2431,6 +2477,15 @@ def create_app(
         except Exception:  # noqa: BLE001 — projet retiré, illisible, ou jamais déclaré
             return None
 
+    # Le bilan sur pièces d'un run (#1284) : rendu à la fin de **tout** run, qu'un
+    # fil l'ait demandé ou non, et publié sur le bus — donc gardé au journal durable.
+    bilans = ServiceBilan(
+        state=state,
+        journal=journal,
+        bus=bus,
+        agent=AGENT_ORCHESTRATION,
+        juge=bilan_juge,
+    )
     # Le récit de fin d'un run (#1224) : il écrit dans le fil ci-dessus, donc il
     # se construit après lui. Rien ne l'abonne au bus — c'est la pompe qui lui
     # passe la main, une fois la projection à jour (voir `_pompe`).
@@ -2443,6 +2498,9 @@ def create_app(
         # La fin d'un run revoit aussi l'outillage de son projet (#1343) : ce qui ne
         # pouvait pas se jouer sur un dossier vide se joue sur le projet construit.
         outillage=conducteur,
+        # Et le récit lit le bilan avant d'écrire (#1284) : celui que la fin a mis
+        # en route, jamais un second.
+        bilan=bilans,
     )
     # Les récits en vol, tenus par l'app : `asyncio.create_task` ne garde qu'une
     # référence faible, et une tâche ramassée en cours de route perdrait le
@@ -2455,15 +2513,21 @@ def create_app(
     relais_renfort = RelaisRenfort(bus, orchestration, AGENT_ORCHESTRATION)
 
     def raconter_la_fin(run_id: str) -> None:
-        """Lance le récit de `run_id` — sans faire attendre la pompe (#1224).
+        """Lance le bilan et le récit de `run_id` — sans faire attendre la pompe (#1224, #1284).
 
         La rédaction est un appel modèle et la lecture du livrable touche le
         disque : les faire dans la pompe figerait le flux temps réel de tous les
         écrans pendant plusieurs secondes.
+
+        Le bilan part **à côté** du récit, et non dedans : tout run en a un, y
+        compris celui qu'aucun fil n'a demandé et qui n'aura donc pas de récit. Le
+        récit, lui, attend le même bilan (`ServiceBilan.rendre` partage l'appel en
+        vol) : il n'y a qu'un appel au modèle pour les deux.
         """
-        tache = asyncio.create_task(conteur.raconter(run_id))
-        recits.add(tache)
-        tache.add_done_callback(recits.discard)
+        for travail in (bilans.rendre(run_id), conteur.raconter(run_id)):
+            tache = asyncio.create_task(travail)
+            recits.add(tache)
+            tache.add_done_callback(recits.discard)
 
     async def rejouer() -> None:
         """Relit le journal durable dans la projection — une seule fois par process."""
@@ -3391,6 +3455,26 @@ def create_app(
             taches=state.titres_du_run(run_id),
         ).to_dict()
 
+    @app.get("/api/executions/{run_id}/bilan")
+    async def bilan_execution(run_id: str) -> dict[str, Any]:
+        """Le **bilan sur pièces** d'un run terminé (#1284, docs/05 §6.23).
+
+        Rendu à la fin du run par un appel au modèle, vérifié contre les pièces du
+        journal du run, puis publié — donc gardé au journal durable, et relu d'ici
+        après un redémarrage. Chaque constat cite ses pièces (`P7`), et chaque pièce
+        les entrées du journal dont elle vient (`j-0042`, celles de
+        `GET /api/journal`) ; les constats sans pièce sont rendus à part, avec la
+        raison de leur écart.
+
+        `bilan` vaut `null` tant qu'il n'y en a pas : un run en vol, un modèle qui
+        n'a pas répondu, un run soldé avant ce lot. Ce n'est pas une erreur — le
+        run existe, son bilan pas encore. 404 si aucune trace reçue pour ce `run_id`.
+        """
+        if state.execution(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        bilan = bilans.bilan(run_id)
+        return {"run_id": run_id, "bilan": bilan.to_dict() if bilan is not None else None}
+
     @app.post("/api/sources/apercu")
     async def apercu_ingestion(
         sources: Annotated[str, Form()] = "[]",
@@ -3672,40 +3756,19 @@ def create_app(
         Lui ouvrir un champ d'événement à lui aurait demandé de le faire traverser
         le schéma du journal pour un texte que `detail` porte déjà — au prix d'un
         second endroit où lire « pourquoi ce refus ».
+
+        Les règles vivent dans le service des attentes (#1183,
+        `ServiceAttentes.trancher`), que le fil de l'orchestrateur appelle aussi :
+        la route n'en garde que la traduction en statut HTTP.
         """
-        demande = state.validation(tache_id)
-        if demande is None:
-            raise HTTPException(
-                status_code=404, detail=f"aucune demande de validation : {tache_id}"
+        try:
+            demande = await attentes.trancher(
+                tache_id, approuve=requete.approuve, motif=requete.motif
             )
-        if not demande.en_attente:
+        except ReglementRefuse as refus:
             raise HTTPException(
-                status_code=409,
-                detail=f"demande déjà tranchée ({demande.statut}) : {tache_id}",
-            )
-        approuve = requete.approuve
-        motif = "" if approuve else requete.motif.strip()
-        event = Event(
-            type=EVENEMENT_VALIDATION_DECISION,
-            tache_id=tache_id,
-            titre=demande.titre,
-            agent=demande.agent,
-            role=demande.role,
-            statut=VALIDATION_APPROUVEE if approuve else VALIDATION_REFUSEE,
-            detail=(
-                "approuvée depuis la Control Tower"
-                if approuve
-                else f"refusée depuis la Control Tower — {motif}"
-                if motif
-                else "refusée depuis la Control Tower"
-            ),
-            # Le projet de la validation (#277), recollé par la projection depuis
-            # sa tâche : la décision doit atteindre le flux du projet où elle se
-            # joue — c'est ce que le moteur y attend.
-            projet_id=demande.projet_id,
-        )
-        state.appliquer(event)
-        await bus.publish(event)
+                status_code=_CODE_REFUS_REGLEMENT.get(refus.motif, 409), detail=str(refus)
+            ) from refus
         return demande.to_dict()
 
     @app.get("/api/questions")
@@ -3749,51 +3812,19 @@ def create_app(
         question est restée posée précisément parce qu'elle sert encore. L'agent
         a peut-être déjà repris sur son hypothèse — le journal du run le dit —, et
         la réponse le rattrapera au prochain appel identique.
+
+        La réponse voyage dans `detail`, et nulle part ailleurs : c'est le champ que
+        la projection recopie et que le journal durable conserve. Les règles vivent
+        dans le service des attentes (#1183, `ServiceAttentes.repondre`), que le fil
+        de l'orchestrateur appelle aussi : la route n'en garde que la traduction en
+        statut HTTP.
         """
-        question = state.question(question_id)
-        if question is None:
+        try:
+            question = await attentes.repondre(question_id, requete.reponse)
+        except ReglementRefuse as refus:
             raise HTTPException(
-                status_code=404, detail=f"aucune question : {question_id}"
-            )
-        if not question.en_attente:
-            raise HTTPException(
-                status_code=409,
-                detail=f"question déjà répondue ({question.statut}) : {question_id}",
-            )
-        reponse = requete.reponse.strip()
-        if not reponse:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "une réponse vide n'apprend rien à l'agent : écrivez ce que "
-                    "vous lui répondez, ou laissez-le reprendre sur son hypothèse."
-                ),
-            )
-        event = Event(
-            type=EVENEMENT_QUESTION_REPONSE,
-            # Le run et la tâche sont recopiés depuis la question projetée : c'est
-            # `question.demande` qui les porte (comme `validation.demande` porte
-            # le sien, #570), et la réponse peut venir d'ailleurs — cet endpoint,
-            # une rediffusion, un journal durable rejoué. Une seule source, celle
-            # qui a posé la question.
-            run_id=question.run_id,
-            tache_id=question.tache_id,
-            titre=question.titre,
-            agent=question.agent,
-            role=question.role,
-            statut=QUESTION_REPONDUE,
-            # La réponse voyage dans `detail`, et nulle part ailleurs : c'est le
-            # champ que la projection recopie et que le journal durable conserve.
-            # Lui ouvrir un champ à lui aurait demandé de le faire traverser le
-            # schéma d'événement pour un texte que `detail` porte déjà.
-            detail=reponse,
-            projet_id=question.projet_id,
-            question_id=question_id,
-        )
-        # `appliquer` met à jour la question **en place** : ce qu'on rend est donc
-        # déjà l'état d'après, comme sur la décision de validation.
-        state.appliquer(event)
-        await bus.publish(event)
+                status_code=_CODE_REFUS_REGLEMENT.get(refus.motif, 409), detail=str(refus)
+            ) from refus
         return question.to_dict()
 
     def _playbook_origine(
@@ -6287,6 +6318,44 @@ def create_app(
                 fiche, approuve=requete.approuve, conversation=fil
             )
         except GesteRunIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
+        }
+
+    @app.post("/api/chat/{agent}/reglement", status_code=201)
+    async def trancher_reglement_chat(agent: str, requete: ReglementRequete) -> dict[str, Any]:
+        """Confirme — ou écarte — le règlement que le fil propose ; rend la paire (#1183).
+
+        Le geste qui **règle** depuis la conversation ce qui attend quelqu'un :
+        répondre à la question d'un agent, approuver ou refuser une validation. La
+        question ou la validation, la réponse et la raison d'un refus sont ceux de la
+        carte que le fil porte, relus du fil ; la confirmation les passe au service
+        des écrans (`ServiceAttentes`), et ce qui en sort voyage sur la réponse
+        (`reglement_fait`) — ce qui a repris, ou le refus du service.
+
+        Même forme et même réponse que `POST …/geste`. Un règlement **refusé** par le
+        service (l'attente a été réglée ailleurs depuis la carte) ne lève pas : il se
+        raconte dans le fil, motivé, parce que la confirmation, elle, a bien eu lieu.
+
+        `409` quand rien n'attend — le double clic ne répond pas deux fois —, `404`
+        hors catalogue, `422` sur une conversation mal formée, `502` si la suite n'a
+        pas pu être produite.
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.trancher_reglement(
+                fiche, approuve=requete.approuve, conversation=fil
+            )
+        except ReglementIntrouvable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

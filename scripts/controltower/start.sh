@@ -192,6 +192,15 @@ case "$(uname -s)" in
   *) WINDOWS=0 ;;
 esac
 
+# Toujours le python du venv (les dépendances ne sont que là — cf. CLAUDE.md). Nommé ICI, avant
+# tout mode : l'arrêt en a besoin comme le démarrage, pour demander le jeton de l'API (#1355), et le
+# chien de garde sort bien avant le préflight qui vérifie qu'il existe.
+if [ "$WINDOWS" = 1 ]; then
+  PYTHON="$RACINE/.venv/Scripts/python.exe"
+else
+  PYTHON="$RACINE/.venv/bin/python"
+fi
+
 # Les PID qui ÉCOUTENT sur le port donné (rien d'autre : ni clients, ni autres ports).
 pids_sur_port() {
   port="$1"
@@ -290,6 +299,25 @@ arreter_session() {
   liberer_port "$PORT_UI" "UI"
 }
 
+# Le jeton de l'API locale (#638), demandé à l'ARRÊT par le chemin même du démarrage :
+# `maestro-api --jeton`, seul endroit où il se résout — jamais un fichier relu en shell.
+# Même contrat : le jeton sur la sortie standard, code 3 et rien en régime ouvert (ce
+# n'est pas une panne), tout autre code pour une config fautive. L'annonce du régime,
+# sur l'erreur standard, n'a rien à faire dans la sortie d'un arrêt : elle est tue.
+#
+# Le python du venv d'abord, celui du poste à défaut : l'arrêt est best-effort et
+# n'exige pas le venv que le démarrage exige — un python sans les dépendances le dit
+# par son code, rendu tel quel. C'est aussi ce qui laisse la suite l'exercer là où le
+# paquet est installé sans venv (l'image de la CI, #372). Rien trouvé : 127.
+jeton_de_l_api() {
+  python_jeton="$PYTHON"
+  if [ ! -x "$python_jeton" ]; then
+    python_jeton="$(command -v python3 || command -v python || true)"
+  fi
+  [ -n "$python_jeton" ] || return 127
+  (cd "$RACINE" && "$python_jeton" -m maestro.controltower.cli --jeton 2>/dev/null)
+}
+
 # Solde les runs en vol — l'arrêt VOLONTAIRE, et lui seul (#486, #700, docs/28 §11).
 #
 # Appelée AVANT qu'on tue l'API : c'est elle qui tient les hôtes détachés et sait les
@@ -303,22 +331,62 @@ arreter_session() {
 # fenêtre vient d'être fermée) n'empêche pas d'arrêter le reste. On le DIT, en
 # revanche : un run qui continue sans écran pour le suivre est précisément ce que
 # ce ticket supprime, et le taire ferait chercher plus tard d'où vient la dépense.
+#
+# La porte est gardée comme toute l'API (#638) : elle part avec le JETON local, et
+# SEUL un « 200 » qui porte la liste des runs dit ce qui a été soldé (#1355). Un
+# refus (401, 5xx) ou une réponse qu'on ne sait pas lire ne disent rien des runs —
+# ils peuvent encore tourner, et c'est ce qui se dit. Lire l'absence de « run_id »
+# dans un refus comme « aucun run en vol » a laissé des runs battre sans écran
+# derrière un message rassurant : c'est l'accident de #486, revenu en silence.
 solder_les_runs() {
   reponse=""
+  corps=""
+  statut=""
   runs=""
+  jeton_arret=""
+  code_jeton_arret=0
   if [ "${MAESTRO_EXTINCTION:-1}" = "0" ]; then
     echo "[extinction] désactivée (MAESTRO_EXTINCTION=0) — les runs en vol continuent sans écran pour les suivre"
     return 0
   fi
-  reponse="$(curl -s -X POST --max-time "$DELAI_EXTINCTION" \
-    "http://127.0.0.1:${PORT_API}/api/extinction" 2>/dev/null || true)"
-  if [ -z "$reponse" ]; then
+  jeton_arret="$(jeton_de_l_api)" || code_jeton_arret=$?
+  if [ "$code_jeton_arret" != 0 ] && [ "$code_jeton_arret" != 3 ]; then
+    # Tenter sans lui ne coûte rien : l'API dira si elle le voulait, et son refus
+    # sera nommé plus bas. S'abstenir laisserait les runs sans même avoir frappé.
+    echo "[extinction] jeton de l'API illisible (code ${code_jeton_arret}) — l'extinction part sans lui"
+    jeton_arret=""
+  fi
+  # Le statut HTTP suit la réponse, sur sa propre ligne (« 000 » : personne n'a
+  # répondu). Le jeton passe par l'ENTRÉE STANDARD de curl (`-H @-`), jamais par
+  # ses arguments : une ligne de commande se lit dans la liste des process.
+  if [ -n "$jeton_arret" ]; then
+    reponse="$(printf 'Authorization: Bearer %s\n' "$jeton_arret" \
+      | curl -s -X POST --max-time "$DELAI_EXTINCTION" -H @- -w '\n%{http_code}' \
+        "http://127.0.0.1:${PORT_API}/api/extinction" 2>/dev/null || true)"
+  else
+    reponse="$(curl -s -X POST --max-time "$DELAI_EXTINCTION" -w '\n%{http_code}' \
+      "http://127.0.0.1:${PORT_API}/api/extinction" 2>/dev/null || true)"
+  fi
+  statut="${reponse##*$'\n'}"
+  corps="${reponse%$'\n'*}"
+  if [ -z "$statut" ] || [ "$statut" = "000" ]; then
     echo "[extinction] l'API ne répond pas sur :${PORT_API} — rien à solder par ici"
+    return 0
+  fi
+  if [ "$statut" != "200" ]; then
+    case "$statut" in
+      401 | 403) statut="$statut (jeton absent ou refusé)" ;;
+    esac
+    echo "[extinction] refusée : HTTP ${statut} — des runs peuvent rester en vol (voir $LOG_DIR_REL/api.log)"
+    return 0
+  fi
+  if ! printf '%s' "$corps" | grep -q '"runs"[[:space:]]*:[[:space:]]*\['; then
+    echo "[extinction] réponse illisible de l'API (HTTP 200) — des runs peuvent rester en vol (voir $LOG_DIR_REL/api.log)"
     return 0
   fi
   # Les identifiants, extraits du JSON sans jq (pas un prérequis du dépôt) : la
   # réponse est une liste de résumés, et « run_id » n'y apparaît qu'une fois par run.
-  runs="$(printf '%s' "$reponse" \
+  runs="$(printf '%s' "$corps" \
     | grep -o '"run_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
     | sed 's/^.*"\([^"]*\)"$/\1/' || true)"
   if [ -z "$runs" ]; then
@@ -847,12 +915,7 @@ fi
 # raison d'avoir arrêté la session en place (peut-être en train de servir) pour
 # le découvrir ensuite.
 
-# Toujours le python du venv (les dépendances ne sont que là — cf. CLAUDE.md).
-if [ "$WINDOWS" = 1 ]; then
-  PYTHON="$RACINE/.venv/Scripts/python.exe"
-else
-  PYTHON="$RACINE/.venv/bin/python"
-fi
+# Le python du venv (nommé en tête) : démarrer sans lui n'irait pas loin.
 if [ "$MODE" = "demarrer" ] && [ ! -x "$PYTHON" ]; then
   echo "Python du venv introuvable : $PYTHON (créer le venv et installer les deps)" >&2
   exit 1
@@ -1064,18 +1127,39 @@ signaler_journaux_exposes
 # Son code décide du nôtre : 0 ou 1 (vert ou rouge), le passage est joué et son
 # état sauvé — un rouge est une mesure, pas une panne du lanceur ; tout autre code
 # (usage, API muette, état non sauvé) remonte tel quel.
+#
+# ⚠ MAIS UN PROCESSUS TUÉ SORT EN 1 SOUS WINDOWS, le code d'un rouge (#1365) : le
+# 2026-09-27, deux passages tués à 12:41:25 ont été annoncés « état sauvé ». Ce qui
+# les distingue est le TÉMOIN que le banc écrit en dernier geste, une fois allé au
+# bout (rapport écrit, état traité) : pas de témoin, le passage a été interrompu, et
+# il n'a laissé ni verdict ni état. Le témoin est retiré avant le passage — celui
+# d'un passage précédent ferait passer un passage tué pour joué —, et vit à côté
+# des journaux de cette stack, en chemin relatif (le python du venv ne lit pas le
+# /tmp de Git Bash). Seuls 2 et 3 n'en attendent pas : le banc a refusé avant de
+# jouer. Sortie non tamponnée : les lignes d'un passage tué restent à l'écran (ou au
+# journal qui le capture), au lieu de mourir dans un tampon.
 if [ "$DONNEES" = "banc" ] && [ "$REJOUER" = 1 ]; then
   echo
   echo "[banc] passage des scénarios de référence contre :${PORT_API} — vrai modèle, des dizaines de minutes"
   if [ "$ARRET_AUTO" = 1 ]; then
     echo "[banc] ⚠ fermer la fenêtre du navigateur arrêterait la stack sous le banc"
   fi
+  temoin_passage="$LOG_DIR_REL/banc.temoin"
+  rm -f "$temoin_passage"
   code_passage=0
   if [ -n "$REJOUER_SCENARIOS" ]; then
-    MAESTRO_PORT_API="$PORT_API" "$PYTHON" -m maestro.scenarios --sauver-etat \
-      --scenario "$REJOUER_SCENARIOS" || code_passage=$?
+    MAESTRO_PORT_API="$PORT_API" PYTHONUNBUFFERED=1 "$PYTHON" -m maestro.scenarios --sauver-etat \
+      --temoin "$temoin_passage" --scenario "$REJOUER_SCENARIOS" || code_passage=$?
   else
-    MAESTRO_PORT_API="$PORT_API" "$PYTHON" -m maestro.scenarios --sauver-etat || code_passage=$?
+    MAESTRO_PORT_API="$PORT_API" PYTHONUNBUFFERED=1 "$PYTHON" -m maestro.scenarios --sauver-etat \
+      --temoin "$temoin_passage" || code_passage=$?
+  fi
+  if [ ! -s "$temoin_passage" ] && [ "$code_passage" != 2 ] && [ "$code_passage" != 3 ]; then
+    echo "[banc] passage INTERROMPU (code $code_passage) avant d'aller au bout — ni verdict ni état sauvé : le processus a été tué. La Control Tower reste servie : $URL_UI" >&2
+    if [ "$code_passage" = 0 ]; then
+      code_passage=1
+    fi
+    exit "$code_passage"
   fi
   case "$code_passage" in
     0 | 1)

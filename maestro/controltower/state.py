@@ -88,6 +88,7 @@ from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
 from maestro.sources.modele import Source, sources_en_liste
 from maestro.telemetry.costs import (
+    ETAPE_BILAN,
     ETAPE_BRIEF,
     RunCost,
     TaskCost,
@@ -962,6 +963,14 @@ class EtatExecution:
     # Posée par `plafond.demande`, retirée dès la décision ou l'issue du run :
     # c'est ce que la carte du fil lit pour poser la question avec ses chiffres.
     plafond: dict[str, Any] | None = None
+    # Le **bilan sur pièces** de ce run (#1284), sous la forme de
+    # `maestro.controltower.bilan.BilanRun.to_dict` — un dict et non la classe,
+    # pour la raison de `Event.verification` : cette couche n'importe pas celle qui
+    # le rend. Posé par l'activité `bilan` qui le porte, le dernier l'emportant ;
+    # None tant qu'aucun n'a été rendu — run en vol, modèle injoignable, ou run
+    # soldé avant ce lot. Il se reconstruit au rejeu du journal durable, comme le
+    # reste : c'est là qu'il est gardé.
+    bilan: dict[str, Any] | None = None
 
     @property
     def debut(self) -> str:
@@ -1193,6 +1202,7 @@ class EtatExecution:
         """
         planification = StepUsage()
         brief = StepUsage()
+        bilan = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Ce que le run a **occupé** (#989) : l'union des intervalles de ses
         # étapes, jamais leur somme. Les bornes se lisent par le même verbe que
@@ -1217,6 +1227,12 @@ class EtatExecution:
             if usage is None and event.cout_usd is not None:
                 usage = StepUsage(cout_usd=event.cout_usd)
             if usage is None:
+                continue
+            if event.etape_run == ETAPE_BILAN:
+                # Le bilan (#1284) : une dépense du run, rendue après sa fin —
+                # comptée à part, et hors du temps de mur, que le run avait fini
+                # d'occuper.
+                bilan = bilan.fusion(usage)
                 continue
             # Un relevé en cours (#835) n'entre pas au grand livre et n'occupe
             # donc rien : son type est hors des lecteurs comptables, et la
@@ -1263,6 +1279,7 @@ class EtatExecution:
             brief=brief,
             taches=tuple(entrees.values()),
             duree_mur_ms=union_ms(intervalles),
+            bilan=bilan,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1279,6 +1296,10 @@ class EtatExecution:
             **self.resume(),
             "brief": self.brief.to_dict() if self.brief is not None else None,
             "cout": self.cout.to_dict(),
+            # Le bilan sur pièces (#1284), dans le **détail** et non dans le résumé,
+            # pour la raison du brief : `GET /api/executions` rend N résumés, et
+            # seule la vue d'un run le lit. `null` tant qu'aucun n'a été rendu.
+            "bilan": dict(self.bilan) if self.bilan is not None else None,
             "evenements": [e.to_dict() for e in self.evenements],
         }
 
@@ -1739,6 +1760,10 @@ class ControlTowerState:
                 event.run_id, EtatExecution(run_id=event.run_id)
             )
             execution.evenements.append(event)
+            if event.bilan is not None:
+                # Le bilan sur pièces (#1284) voyage sur une activité de run :
+                # c'est au run qu'il appartient, pas à une tâche ni à un agent.
+                execution.bilan = dict(event.bilan)
             if event.projet_id is not None and execution.projet_id is None:
                 # Le projet du run (#222) est en principe posé par son événement
                 # de lancement — mais un run publié hors de l'API

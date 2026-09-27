@@ -219,6 +219,19 @@ le geste — ou le refus du service, motivé.
 Une demande qui pouvait viser **plusieurs** runs ne pose pas de carte : elle porte
 ses candidats (`runs_candidats`), un fait que la personne lit sous la bulle pour
 dire lequel, et rien n'est proposé tant qu'elle ne l'a pas dit.
+
+## …ou le règlement de ce qui attend quelqu'un (#1183)
+
+« Réponds-lui : prends Postgres », « oui, valide », « refuse et archive plutôt » : le
+fil **règle** ce qui attend une personne pendant un run — la question d'un agent, la
+validation d'un acte —, par le service de leurs écrans
+(`maestro.controltower.attentes`). C'est la septième demande — `reglement`
+(`ReglementPropose`) : l'action, l'attente visée telle qu'on l'a montrée, la réponse
+ou la raison d'un refus —, `reglement_en_attente` dit si elle tient encore, et
+`ServiceChat.trancher_reglement` est le geste qui y répond. Ce qui en est sorti est un
+**fait** : `reglement_fait` (`ReglementFait`), ce qui a repris — ou le refus du
+service, motivé. Une demande qui pouvait viser plusieurs attentes porte ses candidates
+(`attentes_candidates`) et ne propose rien.
 """
 
 from __future__ import annotations
@@ -246,6 +259,15 @@ from maestro.controltower.gestes import (
     GESTE_PAUSE,
     GESTE_RELANCE,
     GESTE_REPRISE,
+)
+from maestro.controltower.reglements import (
+    REGLEMENT_APPROBATION,
+    REGLEMENT_REFUS,
+    REGLEMENT_REPONSE,
+    AttenteVisee,
+    ReglementFait,
+    ReglementPropose,
+    attentes_visees_depuis,
 )
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.equipe import RoleValide
@@ -544,6 +566,21 @@ def geste_run_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
     return dernier
 
 
+def reglement_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """Le **règlement d'une attente** que ce fil propose encore, `None` sinon (#1183).
+
+    La septième demande du canal, et la même règle que les six autres : le dernier
+    message, et lui seul. Une réponse à un agent ou une décision sur une validation
+    attend tant que rien ne l'a suivie ; ce qui la solde est qu'on y ait répondu — un
+    clic, un « oui » tapé, ou n'importe quelle autre phrase, qui fait tomber la carte
+    sans rien régler.
+    """
+    dernier = fil[-1] if fil else None
+    if dernier is None or dernier.reglement is None:
+        return None
+    return dernier
+
+
 def projet_du_fil(fil: Sequence[MessageChat]) -> str | None:
     """Le projet dont ce fil construit l'outillage — `None` s'il n'en nomme aucun (#1161).
 
@@ -823,6 +860,32 @@ def _geste_sur_un_run(approuve: bool, demande: GesteRunPropose) -> str:
     return accord
 
 
+#: Ce qu'un accord au geste écrit dans le fil, par règlement (#1183) — le message que
+#: le clic vaut, au verbe du bouton de la carte, comme « Oui, lance. ».
+_ACCORDS_DE_REGLEMENT = {
+    REGLEMENT_REPONSE: "Oui, envoie-lui cette réponse.",
+    REGLEMENT_APPROBATION: "Oui, approuve cet acte.",
+    REGLEMENT_REFUS: "Oui, refuse cet acte.",
+}
+
+
+def _geste_de_reglement(approuve: bool, demande: ReglementPropose) -> str:
+    """Ce que le geste écrit dans le fil — le message que le clic vaut (#1183).
+
+    Même règle que `_geste_sur_un_run` : le fil est la seule mémoire du canal, et le
+    tour suivant relit ce clic comme une personne l'aurait écrit. La raison d'un refus
+    y va quand il y en a une — c'est ce qu'on voudra relire de la décision.
+    """
+    if not approuve:
+        if demande.action == REGLEMENT_REPONSE:
+            return "Non, ne lui réponds pas pour l'instant."
+        return "Non, laisse cette demande en attente."
+    accord = _ACCORDS_DE_REGLEMENT.get(demande.action, "Oui.")
+    if demande.action == REGLEMENT_REFUS and demande.texte:
+        return f"{accord[:-1]} — raison : {demande.texte}"
+    return accord
+
+
 def normaliser(texte: str) -> str:
     """Le texte réduit pour la comparaison : minuscules, sans accents ni ponctuation.
 
@@ -935,6 +998,15 @@ class GesteRunIntrouvable(RuntimeError):
     Le sixième pendant de `CadrageIntrouvable`, pour les mêmes trois façons de n'avoir
     rien à trancher. L'API la traduit en `409` — c'est ce qui empêche un double clic
     d'annuler deux fois, ou de relancer deux runs sur le même cadrage.
+    """
+
+
+class ReglementIntrouvable(RuntimeError):
+    """Ce fil n'a **aucun règlement d'attente** à confirmer (#1183).
+
+    Le septième pendant de `CadrageIntrouvable`, pour les mêmes trois façons de n'avoir
+    rien à trancher. L'API la traduit en `409` — c'est ce qui empêche un double clic de
+    répondre deux fois à un agent, ou de trancher deux fois une validation.
     """
 
 
@@ -1861,6 +1933,13 @@ class MessageChat:
     énoncée une fois (`geste_run_en_attente`). `geste_fait` est ce que la confirmation
     a donné (l'état relu, ou le refus du service), et `runs_candidats` les runs
     qu'une demande pouvait viser quand elle en visait plusieurs — deux faits.
+
+    `reglement` (#1183) est la septième : le **règlement d'une attente** — répondre à
+    la question d'un agent, approuver ou refuser une validation —, à confirmer. Même
+    patron, l'attente énoncée une fois (`reglement_en_attente`). `reglement_fait` est
+    ce que la confirmation a donné (ce qui a repris, ou le refus du service), et
+    `attentes_candidates` les attentes qu'une demande pouvait viser quand elle en
+    visait plusieurs — deux faits.
     """
 
     agent: str
@@ -1890,6 +1969,9 @@ class MessageChat:
     geste_run: GesteRunPropose | None = None
     geste_fait: GesteRunFait | None = None
     runs_candidats: tuple[RunVise, ...] = ()
+    reglement: ReglementPropose | None = None
+    reglement_fait: ReglementFait | None = None
+    attentes_candidates: tuple[AttenteVisee, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -1932,6 +2014,11 @@ class MessageChat:
             "geste_run": self.geste_run.to_dict() if self.geste_run is not None else None,
             "geste_fait": self.geste_fait.to_dict() if self.geste_fait is not None else None,
             "runs_candidats": [run.to_dict() for run in self.runs_candidats],
+            "reglement": self.reglement.to_dict() if self.reglement is not None else None,
+            "reglement_fait": (
+                self.reglement_fait.to_dict() if self.reglement_fait is not None else None
+            ),
+            "attentes_candidates": [a.to_dict() for a in self.attentes_candidates],
         }
 
     @property
@@ -1983,6 +2070,8 @@ class MessageChat:
         vise = data.get("projet_vise")
         geste_run = data.get("geste_run")
         geste_fait = data.get("geste_fait")
+        reglement = data.get("reglement")
+        reglement_fait = data.get("reglement_fait")
         return cls(
             agent=data["agent"],
             # Une ligne d'avant #694 n'en porte pas : elle vient forcément du
@@ -2037,6 +2126,15 @@ class MessageChat:
                 GesteRunFait.from_dict(geste_fait) if isinstance(geste_fait, Mapping) else None
             ),
             runs_candidats=runs_vises_depuis(data.get("runs_candidats")),
+            reglement=(
+                ReglementPropose.from_dict(reglement) if isinstance(reglement, Mapping) else None
+            ),
+            reglement_fait=(
+                ReglementFait.from_dict(reglement_fait)
+                if isinstance(reglement_fait, Mapping)
+                else None
+            ),
+            attentes_candidates=attentes_visees_depuis(data.get("attentes_candidates")),
         )
 
 
@@ -2138,6 +2236,11 @@ class ReponseChat:
     cohabite avec aucune autre demande ; `geste_fait` et `runs_candidats` sont des
     faits : ce que la confirmation a donné, et les runs entre lesquels une demande
     ambiguë laisse choisir.
+
+    `reglement` (#1183) est la septième — une attente à régler, question d'agent ou
+    validation —, et elle ne cohabite avec aucune autre demande ; `reglement_fait` et
+    `attentes_candidates` sont des faits : ce que la confirmation a donné, et les
+    attentes entre lesquelles une demande ambiguë laisse choisir.
     """
 
     contenu: str
@@ -2159,6 +2262,9 @@ class ReponseChat:
     geste_run: GesteRunPropose | None = None
     geste_fait: GesteRunFait | None = None
     runs_candidats: tuple[RunVise, ...] = ()
+    reglement: ReglementPropose | None = None
+    reglement_fait: ReglementFait | None = None
+    attentes_candidates: tuple[AttenteVisee, ...] = ()
 
     @property
     def porte_une_demande(self) -> bool:
@@ -2173,9 +2279,10 @@ class ReponseChat:
 #: Les champs d'une `ReponseChat` qui **demandent** quelque chose (#1339) — chacun
 #: pose une carte qui attend un geste, et en porte les boutons : l'accord d'un run,
 #: la question d'outillage, l'équipe à valider, le projet à déclarer, la pièce à
-#: écrire, le geste sur un run (#1179). Les autres champs sont des **faits** (le run
-#: ouvert, l'équipe créée, le projet déclaré, ce qu'un geste a fait d'une pièce…) :
-#: ils se lisent sous la bulle, et rien n'y attend de réponse.
+#: écrire, le geste sur un run (#1179), le règlement d'une attente (#1183). Les autres
+#: champs sont des **faits** (le run ouvert, l'équipe créée, le projet déclaré, ce
+#: qu'un geste a fait d'une pièce…) : ils se lisent sous la bulle, et rien n'y attend
+#: de réponse.
 CHAMPS_DE_DEMANDE = (
     "proposition",
     "question",
@@ -2183,6 +2290,7 @@ CHAMPS_DE_DEMANDE = (
     "projet_propose",
     "piece",
     "geste_run",
+    "reglement",
 )
 
 #: Ce que la rédaction apprend d'un message qui porte une demande (#1339). La
@@ -2792,6 +2900,31 @@ class RepondeurChat(ABC):
         """
         raise GesteRunIntrouvable(
             f"le fil {agent.nom} ne propose pas de geste sur un run : rien à trancher."
+        )
+
+    async def trancher_reglement(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: ReglementPropose,
+        approuve: bool,
+    ) -> ReponseChat:
+        """La réponse au **geste** qui confirme — ou écarte — le règlement d'une attente (#1183).
+
+        Le septième point d'extension « acte » du canal. Aucun juge : la décision est un
+        clic, et ce qu'il y a à faire se déduit — passer la réponse ou la décision au
+        service des écrans, dire ce qui a repris, en parler.
+
+        `demande` est celle que le fil portait, **relue du fil** : l'attente et le texte
+        qu'on a eus sous les yeux.
+
+        Par défaut, un répondeur **ne propose aucun règlement** : il le dit plutôt que
+        de le laisser deviner. Seul celui qui pose un `ReponseChat.reglement` a cette
+        méthode à écrire.
+        """
+        raise ReglementIntrouvable(
+            f"le fil {agent.nom} ne propose pas de régler une attente : rien à trancher."
         )
 
     async def rediger(
@@ -3538,6 +3671,55 @@ class ServiceChat:
             agent, conversation=fil, reponse=reponse
         )
 
+    async def trancher_reglement(
+        self,
+        agent: Agent,
+        *,
+        approuve: bool,
+        conversation: str | None = None,
+    ) -> tuple[MessageChat, MessageChat]:
+        """Confirme — ou écarte — le règlement que le fil propose ; rend la paire (#1183).
+
+        Le septième geste du canal, et **la même forme que `trancher_geste`** : un
+        message d'utilisateur, puis la réponse. Le règlement auquel on répond est **lu
+        du fil**, jamais passé par l'appelant — l'attente, la réponse et la raison
+        comprises : c'est ce qui fait qu'un double clic tombe sur `ReglementIntrouvable`
+        (le `409` de l'API) au lieu de répondre deux fois, et que ce qui part est
+        exactement ce que la carte a montré.
+
+        Le corps ne porte **aucun amendement** : « dis-lui plutôt MySQL » se dit dans la
+        conversation, et appelle une carte nouvelle.
+        """
+        fil = self._resoudre(agent, conversation)
+        attente = reglement_en_attente(self._store.fil(agent.nom, fil))
+        if attente is None or attente.reglement is None:
+            raise ReglementIntrouvable(
+                f"aucun règlement d'attente à confirmer sur le fil {agent.nom}."
+            )
+        demande = attente.reglement
+        geste = await self._deposer(
+            agent, _geste_de_reglement(approuve, demande), conversation=fil
+        )
+        try:
+            reponse = await self._repondeur.trancher_reglement(
+                agent,
+                self._store.fil(agent.nom, fil),
+                demande=demande,
+                approuve=approuve,
+            )
+        except ReglementIntrouvable:
+            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+            # manque — un 409, comme pour le cadrage, jamais un 502.
+            raise
+        except Exception as exc:
+            raise ReponseIndisponible(
+                f"l'agent {agent.nom} n'a pas pu donner suite au règlement de "
+                f"{demande.attente.identifiant} : {exc}"
+            ) from exc
+        return geste, await self._persister_reponse(
+            agent, conversation=fil, reponse=reponse
+        )
+
     async def poser_question(
         self,
         agent: Agent,
@@ -4049,14 +4231,15 @@ class ServiceChat:
 
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
         réponse exécutée, #943), `repondre_question` (#1031), `recruter` (#1146)
-        `declarer_projet` (#1294), `trancher_piece` (#1161) et `trancher_geste`
-        (#1179) : ce qu'un répondeur rend se persiste, s'achemine et se diffuse
-        toujours de la même façon, et c'est ici que les champs du contrat
-        (`run_id`, `tache_id`, `proposition` et son `projet_vise`, `question`,
-        `recrutement`, `equipe`, `etapes`, `comprehension`, `projet_propose`,
-        `projet_cree`, `piece`, `piece_ecrite`, `corrections`, `projet_outille`,
-        `geste_run`, `geste_fait`, `runs_candidats`) passent du répondeur au
-        message.
+        `declarer_projet` (#1294), `trancher_piece` (#1161), `trancher_geste`
+        (#1179) et `trancher_reglement` (#1183) : ce qu'un répondeur rend se
+        persiste, s'achemine et se diffuse toujours de la même façon, et c'est ici
+        que les champs du contrat (`run_id`, `tache_id`, `proposition` et son
+        `projet_vise`, `question`, `recrutement`, `equipe`, `etapes`,
+        `comprehension`, `projet_propose`, `projet_cree`, `piece`, `piece_ecrite`,
+        `corrections`, `projet_outille`, `geste_run`, `geste_fait`,
+        `runs_candidats`, `reglement`, `reglement_fait`, `attentes_candidates`)
+        passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -4089,6 +4272,9 @@ class ServiceChat:
             geste_run=reponse.geste_run,
             geste_fait=reponse.geste_fait,
             runs_candidats=reponse.runs_candidats,
+            reglement=reponse.reglement,
+            reglement_fait=reponse.reglement_fait,
+            attentes_candidates=reponse.attentes_candidates,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message
@@ -4242,6 +4428,16 @@ def transcription(fil: Sequence[MessageChat]) -> str:
             lignes.append(f"[Geste proposé sur la carte : {message.geste_run.en_phrase()}]")
         if message.geste_fait is not None:
             lignes.append(f"[Geste sur un run : {message.geste_fait.en_phrase()}]")
+        # Le règlement d'une attente (#1183) : ce que la carte proposait, ce que la
+        # confirmation a donné, et les attentes entre lesquelles une demande laissait
+        # choisir — la même règle que les gestes sur un run, juste au-dessus.
+        if message.attentes_candidates:
+            candidates = " ; ".join(a.en_phrase() for a in message.attentes_candidates)
+            lignes.append(f"[Attentes que la demande pouvait viser : {candidates}]")
+        if message.reglement is not None:
+            lignes.append(f"[Règlement proposé sur la carte : {message.reglement.en_phrase()}]")
+        if message.reglement_fait is not None:
+            lignes.append(f"[Règlement d'une attente : {message.reglement_fait.en_phrase()}]")
     return (
         "Fil de conversation avec l'utilisateur :\n\n"
         + "\n".join(lignes)

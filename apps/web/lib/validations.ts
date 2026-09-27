@@ -2,6 +2,10 @@
  * Ce qui attend un **arbitrage humain** (#48) : l'ordre de la file, la demande
  * qui dort sur une tâche, celles qui retiennent un run donné.
  *
+ * Depuis #1183 le fil de l'orchestrateur en est une surface de plus : il montre les
+ * demandes qui attendent à son pied, dans la carte des validations, et les tranche
+ * aussi sur une phrase (`validationsDuFil`).
+ *
  * Ces trois questions se posaient jusqu'ici à trois endroits — `fileDAttente`
  * dans `components/PanneauValidations`, l'appariement run ↔ demande dans
  * `lib/execution`, et rien du tout pour « laquelle attend sur cette tâche ? ».
@@ -64,6 +68,25 @@ export function arbitragesEnAttente(
     }
   }
   return par_tache;
+}
+
+/**
+ * Les demandes en attente que **ce fil** concerne, la plus ancienne en tête (#1183).
+ *
+ * La règle de `questionsDuFil` (`lib/questions`), et pour la même raison — *on
+ * tranche là où l'on est* : le fil de l'**orchestration** porte toutes les demandes
+ * du projet, puisque c'est là qu'on règle ce qui attend sans changer d'écran ; un
+ * **aparté avec `@agent`** ne porte que les siennes. `destinataire` est le fil
+ * affiché, `orchestration` celui qui vaut « toutes ».
+ */
+export function validationsDuFil(
+  validations: Validation[],
+  destinataire: string,
+  orchestration: string,
+): Validation[] {
+  const attente = fileDAttente(validations);
+  if (destinataire === orchestration) return attente;
+  return attente.filter((validation) => validation.agent === destinataire);
 }
 
 /**

@@ -2733,9 +2733,9 @@ fil de l'orchestration porte toutes les questions là où un aparté ne porte qu
 
 Quand un run atteint son plafond de dépense, il se **suspend** au lieu d'échouer (§6.1) : sa tâche
 coupée est mise de côté, son travail conservé, et rien ne se dépense d'ici la réponse. La question
-arrive **au pied du fil de l'orchestration**, juste sous les questions d'agents — c'est le run entier
-qui attend, et le fil colle à son bas : la carte la plus basse est la première vue —, sur une carte
-« Budget du run atteint » :
+arrive **au pied du fil de l'orchestration**, juste sous les questions d'agents et les validations —
+c'est le run entier qui attend, et le fil colle à son bas : la carte la plus basse est la première
+vue —, sur une carte « Budget du run atteint » :
 
 - **trois chiffres au même rang** : *Dépensé*, lu contre le plafond (« 0,22 $US — sur un plafond de
   0,01 $US ») ; *Reste à faire*, en tâches ; *Coût estimé du reste*, en fourchette — **l'estimation du
@@ -3480,6 +3480,68 @@ Gardé par `tests/test_gestes_du_fil.py` (le juge et le service en double, puis 
 le vrai `ServiceExecutions`, pour les quatre gestes, l'ambiguïté et les deux refus) et par
 `apps/web/tests/geste-sur-un-run.test.tsx` (la carte, la trace, les candidats, et leur montage
 dans le fil de chaque écran).
+
+#### Il règle ce qui attend quelqu'un : répondre à un agent, trancher une validation (#1183) — **livré**
+
+Un run qui attend une personne l'attendait **sur un autre écran** : la question d'un agent (#1023),
+la validation d'une action sensible (#48). Le fil voyait les deux depuis #1223, contenu compris,
+mais « réponds-lui : prends Postgres », « oui, valide » ou « refuse et archive plutôt » n'y avaient
+aucun effet : il ne pouvait que renvoyer vers l'écran concerné. Il les **règle** désormais, sans
+changer d'écran, par **le même service** que ces écrans (`ServiceAttentes`), et chaque règlement se
+**propose** puis se **confirme** — l'arbitrage des actes reste humain (docs/32) : le fil n'est
+qu'un autre endroit où la personne tranche.
+
+- **Le fil nomme ce qui attend.** Le bloc des attentes que le juge reçoit porte désormais, pour
+  chaque question et chaque validation, son **identifiant**, l'agent qui la porte et la tâche d'où
+  elle vient ; le cadre lui dit de nommer ce qui attend quand on lui demande où en est le travail,
+  et de le régler ici. Il rend un septième verdict, `attente` (§6.15.3) : « le développeur demande
+  quelle base utiliser : je lui réponds Postgres ? ».
+- **Une carte à confirmer** (`components/chat/ReglementDansLeFil.tsx`), au pied du fil comme les
+  autres — la grammaire de la carte d'un geste sur un run (#1179), appliquée : la **question** au
+  verbe du règlement (« Envoyer cette réponse ? », « Approuver cette demande ? », « Refuser cette
+  demande ? »), **ce qui attend** à ses faits — la question de l'agent, ou l'acte de la validation
+  dans l'ordre de son écran (« Appel de » et l'outil) —, puis qui le porte ; **ce qui partira**,
+  tel quel — la réponse que l'agent lira, citée, ou la raison d'un refus (« Sans raison donnée. »
+  sinon) — ; **ce qui va se passer**, dans les mots du service qui le fera (« L'agent attendait
+  cette réponse : il la lit et reprend sa tâche. », « L'appel est écarté : l'agent poursuit sa tâche
+  sans lui. ») ; puis un geste principal et « Pas maintenant ». « Refuser » est en ton d'alerte.
+  Aucun champ : « dis-lui plutôt MySQL » se dit dans le composeur, et appelle une carte nouvelle.
+- **Confirmé, le règlement passe par le service** : la réponse parvient à l'agent suspendu, qui la
+  lit et reprend ; la décision parvient au moteur, et la tâche reprend — ou l'acte est écarté.
+  Sous la réponse, une ligne **cochée** dit ce qui a été fait et ce qui a repris — « ✓ Réponse
+  transmise · l'agent attendait cette réponse : il la lit et reprend sa tâche » —, et le modèle en
+  parle depuis ce fait. La coche d'un refus est à la couleur du texte, jamais au vert.
+- **Un refus porte sa raison, la même que celle de l'écran des validations** : elle voyage dans le
+  même champ que le motif d'un refus motivé depuis la carte d'une validation (#272), jusqu'à
+  l'événement que le moteur attend — celui que #1185 portera jusqu'à l'agent. D'ici là l'agent
+  n'apprend que le refus, et rien ne dit le contraire : la carte écrit « Raison du refus », jamais
+  « transmise », et le modèle reçoit ce fait. Vu sur la vraie stack à la clôture : « votre consigne
+  lui a été transmise avec le refus » promettait ce qui n'avait pas lieu.
+- **L'acte d'une validation se lit comme sur sa carte** : « Appel de » et l'outil, puis ses
+  arguments en trois lignes au plus — l'acte entier reste sur la carte de la demande, rendue à sa
+  place dès que le règlement est tranché ou écarté.
+- **Ce qui attend se voit au pied du fil** : les questions d'agents y étaient déjà (#1025) ; les
+  **validations en attente** les rejoignent, dans la carte des validations montée telle quelle
+  (`CarteValidation`, #1228), refus motivé compris. La question ou la validation qu'une carte de
+  règlement vise **sort de sa pile** le temps que la carte attende — une seule carte par décision —,
+  et « Pas maintenant » la rend à sa place.
+- **Une demande ambiguë nomme ses candidates au lieu d'agir** (deux agents attendent, « réponds-lui
+  ») : aucune carte, la question dans les mots du modèle, et les attentes possibles listées sous la
+  bulle, chacune dans son encadré, sans bouton.
+- **Un règlement que l'état refuse se dit**, avec la raison du service : **avant** la carte (une
+  question déjà répondue, une validation déjà tranchée) ou **après** le clic (tranchée sur l'écran
+  des validations entre-temps). Rien n'est parti, la trace porte le glyphe d'arrêt et la raison.
+
+Ce ticket **applique** une forme déjà tranchée — celle de la carte proposée puis confirmée de #1179,
+qu'il réutilise en toutes lettres, et celle de la carte des validations, écrite par #1228 pour être
+montée dans le fil — : il n'a ni veille ni variantes à lui.
+
+Gardé par `tests/test_attentes_du_fil.py` (la carte, la confirmation au clic et tapée, l'échéance
+passée, l'ambiguïté et les refus ; la réponse lue par le vrai moteur suspendu sur le vrai canal
+des questions, dont la tâche reprend ; la décision rendue au validateur que le moteur attend, sa
+raison dans l'événement ; l'app entière, et les codes des routes des écrans inchangés) et par
+`apps/web/tests/reglement-dans-le-fil.test.tsx` (la carte, la trace, les candidates, les
+validations au pied du fil et leur refus motivé, la sortie de pile).
 
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
@@ -4278,7 +4340,10 @@ décrit le comportement réel, pas une fixture.
   gestes d'arrêt — `--stop` et la **fermeture de la fenêtre** du navigateur (chien de garde #149,
   #700). L'arrêt **subi** (démarrage qui remplace la session précédente, plantage, `SIGTERM`) passe,
   lui, par le `lifespan`, qui ne touche à rien. La distinction ne se déduit d'aucun signal, elle
-  **descend** de l'appelant.
+  **descend** de l'appelant. La porte est gardée par le jeton comme toute l'API (§6.21) : l'appelant
+  la pousse **avec** lui, et seul un `200` dit ce qui a été soldé — un `401`, un `5xx` ou une réponse
+  illisible se disent « des runs peuvent rester en vol », jamais « aucun run » (#1355,
+  [docs/28 §11.3](./28-decision-frontiere-execution-run.md)).
 
 ⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage :
 `reprendre` rouvre la porte d'un run **vivant** qu'on avait suspendu — même `run_id`, même plan,
@@ -6609,6 +6674,69 @@ vocabulaire et `GesteRefuse`),
 [`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
 [`tests/test_gestes_du_fil.py`](../tests/test_gestes_du_fil.py).
 
+#### 6.15.3 Régler une attente depuis le fil — répondre à un agent, trancher une validation (#1183)
+
+Le pendant, pour ce qui **attend quelqu'un** pendant un run, du geste sur un run (§2.9 pour
+l'écran). Le bloc des attentes du juge porte l'identifiant de chaque question (`question_id`) et de
+chaque validation (la tâche qu'elle retient, `tache_id`) ; le juge rend un septième verdict,
+`attente` :
+
+```json
+{"verdict": "attente", "objectif": "",
+ "attente": {"action": "reponse|approbation|refus", "cibles": ["schema:9f1c0a4bd3"],
+             "texte": "Prends Postgres."}}
+```
+
+`texte` est la réponse que l'agent lira (`reponse`) ou la raison d'un refus (`refus`, vide sans
+raison) ; il est ignoré sur une approbation. La **file** se déduit de l'action — une question ne
+s'approuve pas, une validation ne se répond pas —, si bien qu'un identifiant ne peut pas viser la
+mauvaise. Le code confronte les cibles à la projection : une attente inconnue ne pose rien et se
+dit ; **plusieurs** ne posent aucune carte et voyagent sur la réponse (`attentes_candidates`) ; une
+seule pose la carte (`reglement`) si le service l'accepterait, sinon une correction s'écrit derrière
+les mots du modèle et le refus voyage en `reglement_fait`, comme celui d'un clic. La carte :
+
+```json
+{"action": "reponse", "texte": "Prends Postgres.",
+ "suite": "l'agent attendait cette réponse : il la lit et reprend sa tâche",
+ "attente": {"genre": "question", "identifiant": "schema:9f1c0a4bd3", "agent": "dev",
+             "role": "Développeur", "titre": "Rédiger le schéma", "objet": "Postgres ou SQLite ?",
+             "run_id": "8a15f78f45d3", "outil": "", "hypothese": "…", "echeance": "…"}}
+```
+
+`suite` est ce que le règlement fera, dit **par le service** (`ServiceAttentes.suite`), lu sur la
+structure de l'attente et jamais sur son texte : une réponse fait reprendre l'agent qui l'attend,
+ou le rattrapera au prochain appel identique passé l'échéance de sa question (#1025) ; une décision
+sur un **acte** (`outil`) l'exécute ou l'écarte — l'agent poursuit alors sa tâche sans lui —, sur
+une **écriture dans le projet** (`diff`) écrit le travail ou n'écrit rien, ailleurs fait reprendre
+la tâche ou renonce à l'action demandée.
+
+**La route.** `POST /api/chat/{agent}/reglement` → `201` + la même paire qu'un envoi. Son corps est
+`{approuve, conversation}`, **rien d'autre** : ce qui se règle est la carte que le fil porte, relue
+du fil. L'accord passe par `ServiceAttentes.regler`, et la réponse porte ce qui en est sorti,
+`reglement_fait` : `{action, attente, texte, suite, refus}`, où `texte` est ce qui est parti et
+`refus` la phrase du service quand l'attente a été réglée ailleurs — alors rien n'est parti. Le
+geste s'écrit dans le fil (« Oui, envoie-lui cette réponse. », « Oui, refuse cet acte — raison :
+… », « Non, ne lui réponds pas pour l'instant. »). Un « oui » tapé vaut le clic
+(`_reglement_approuve`), comme pour un geste sur un run.
+
+**Les règles vivent une fois**, dans le service (`ServiceAttentes`) : `POST
+/api/questions/{id}/reponse` et `POST /api/validations/{tache}/decision` l'appellent aussi, et n'en
+gardent que le code HTTP (`404` inconnue, `409` déjà réglée, `422` réponse vide). La raison d'un
+refus n'est composée qu'à un endroit (`attentes.detail_de_la_decision`) : un refus motivé porte la
+même, au caractère près, qu'il vienne de l'écran des validations ou du fil.
+
+**`409` quand rien n'attend** (`ReglementIntrouvable`) : le double clic ne répond pas deux fois.
+
+Implémentation : [`maestro/controltower/reglements.py`](../maestro/controltower/reglements.py) (le
+vocabulaire, `AttenteVisee`, `ReglementPropose`, `ReglementFait`, `ReglementRefuse`),
+[`maestro/controltower/attentes.py`](../maestro/controltower/attentes.py) (`ServiceAttentes`),
+[`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`reglement_en_attente`,
+`ServiceChat.trancher_reglement`),
+[`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`VERDICT_ATTENTE`, `PiloteDesAttentes`, `RepondeurOrchestration.trancher_reglement`) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`tests/test_attentes_du_fil.py`](../tests/test_attentes_du_fil.py).
+
 ### 6.16 Borner un run depuis le chat (#990) — **livré**
 
 Le moteur sait arrêter un run sur quatre garde-fous depuis #9 — `plafond_cout_usd`,
@@ -6695,7 +6823,8 @@ champ, `echeance`, dont la raison est écrite plus bas.
   les agents, en attente d'abord, puis avec leur réponse. `projet` est **obligatoire**, au contrat
   commun du §6.0 : une question appartient au projet de la tâche qui la pose.
 - `POST /api/questions/{question_id}/reponse` → `200` + `EtatQuestion` — la réponse humaine. L'agent,
-  suspendu sur le bus, la reçoit et reprend.
+  suspendu sur le bus, la reçoit et reprend. Ses règles vivent depuis #1183 dans le service des
+  attentes (`ServiceAttentes.repondre`), que le fil de l'orchestrateur appelle aussi (§6.15.3).
 
 ```jsonc
 // EtatQuestion (GET /api/questions)
@@ -7681,4 +7810,77 @@ vérificateur et la boucle), [`maestro/controltower/bridge.py`](../maestro/contr
 vérification sur la tâche). Gardé par
 [`tests/test_verification_taches.py`](../tests/test_verification_taches.py) et, côté front, par
 [`apps/web/tests/verification-tache.test.tsx`](../apps/web/tests/verification-tache.test.tsx).
+
+### 6.23 Le bilan d'un run, sur pièces (#1284) — **livré** (l'écran : #1285)
+
+À la fin de **tout** run — terminé, en échec ou annulé, qu'un fil l'ait demandé ou non —, Maestro en
+rend un **bilan fondé sur les pièces de son journal**. Il est né du run `3fe501fc0878` (projet `p3`,
+2026-09-24) : sa maquette est tombée trois fois à l'identique, le moteur a relancé en présumant un
+aléa, et le récit de fin a recopié « échec transitoire » puis conseillé de relancer.
+
+- `GET /api/executions/{run_id}/bilan` → `{"run_id": "…", "bilan": BilanRun | null}`. `null` tant qu'il
+  n'y en a pas (run en vol, modèle qui n'a pas répondu, run soldé avant ce lot) : le run existe, son
+  bilan pas encore. `404` si aucune trace reçue pour ce `run_id`. Le détail d'un run
+  (`GET /api/executions/{run_id}`) porte le même objet sous `bilan`.
+
+```jsonc
+"bilan": {
+  "run_id": "3fe501fc0878",
+  "statut": "echec",                     // l'issue pour laquelle il a été rendu
+  "fin": "2026-09-24T10:14:02+00:00",
+  "constats": [
+    { "rubrique": "echec",               // livre · echec · acte · consommation · recommandation
+      "texte": "La maquette est tombée trois fois sur la même cause…",
+      "pieces": ["P7", "P9", "P12"],     // les pièces qui le fondent
+      "nature": "deterministe",          // alea · deterministe · indeterminee — un échec seulement
+      "tache": "maquette-sections",      // "" s'il n'en nomme aucune du run
+      "agent": "",                       // une recommandation sur le playbook d'un agent
+      "revision_playbook": false }       // true : l'analyse d'échecs (§6.4, #139) a de quoi proposer
+  ],
+  "ecartes": [                           // ce que la vérification a refusé, avec sa raison
+    { "rubrique": "echec", "texte": "…", "pieces": ["P999"], "raison": "pièce inexistante : P999" }
+  ],
+  "pieces": [                            // les pièces CITÉES, et les entrées du journal d'où elles viennent
+    { "id": "P7", "famille": "relance", "texte": "2026-09-24T10:03:11+00:00 · agent.activite · …",
+      "tache_id": "maquette-sections", "entrees": ["j-0042"] }
+  ],
+  "pieces_offertes": 97,                 // ce que le modèle a lu
+  "entrees_lues": 183,                   // le journal du run, lu en entier
+  "pieces_laissees": 0                   // ce que le budget a laissé de côté
+}
+```
+
+- **Les pièces viennent du journal, en entier.** Elles se lisent au journal requêtable (§6.2), l'index
+  du journal durable — toutes les entrées du run, sans la page de 200. Familles : `statut` (du run,
+  des tâches, et les tentatives d'une tâche), `relance` (relances du moteur et diagnostics du
+  rattrapage, #1178, lus comme des pièces), `acte` (arbitrages, refus d'outil, écritures dans le
+  projet, processus laissés), `usage` (coût par tâche, tokens sans prix compris), `echange`
+  (validations, questions, cadrage, renfort), `checklist` (checklist au regard du verdict,
+  vérifications), `decision` (décisions consignées, hypothèses, blocages), `activite` (le bruit de
+  fond). Chaque pièce cite ses entrées `j-NNNN`, celles que `GET /api/journal` sert. Ce que le modèle
+  lit est **borné** (`PIECES_MAX`) : les pièces décisives d'abord, l'activité en dernier, et ce qui
+  reste dehors est compté.
+- **Le modèle juge, l'exécution vérifie** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
+  La nature d'un échec est jugée sur sa cause ; le libellé du moteur (« échec transitoire ») lui est
+  présenté comme une présomption. Un constat sans pièce, ou qui en cite une absente du dossier, est
+  **écarté** — rendu à part, jamais comme un constat.
+- **Le bilan ne tranche rien** ([docs/32](./32-decision-cran-orchestrateur.md) §b) : ni relance, ni
+  réglage, ni cran. Une recommandation sur le playbook d'un agent ne réécrit rien — elle désigne
+  l'analyse d'échecs existante, et seulement quand cet agent a failli dans ce run.
+- **Gardé au journal durable, compté au run.** Il voyage sur une activité de run (`agent.activite`,
+  `etape_run: "bilan"`, statut `bilan_rendu`) qui porte aussi le coût de l'appel : le grand livre le
+  range dans son propre poste (`cout.bilan`), compté au total et hors du temps de mur — le run était
+  fini. Il est rendu **hors des bornes du run** : un run arrêté sur son plafond est précisément celui
+  dont on veut savoir pourquoi, et le total peut donc dépasser la borne du montant du bilan. Une
+  réponse illisible ne retient rien mais compte son coût (`bilan_illisible`) ; un modèle injoignable
+  ne fabrique rien.
+- **Le récit de fin le lit** (#1224) : juste après la fiche du run, et sa consigne dit que, sur un
+  échec que le bilan dit déterministe, il ne conseille pas de relancer tel quel mais dit ce qui a
+  failli et ce qu'il faut changer d'abord. Un seul appel au modèle pour les deux : le récit attend
+  le bilan que la fin a mis en route.
+
+Implémentation : [`maestro/controltower/bilan.py`](../maestro/controltower/bilan.py) (pièces,
+vérification, service), [`maestro/controltower/recit.py`](../maestro/controltower/recit.py) (sa
+lecture par le récit). Gardé par [`tests/test_bilan_run.py`](../tests/test_bilan_run.py), qui rejoue
+les pièces de `p3` — et, devant le vrai modèle, `test_p3_devant_le_vrai_modele_…` (`cli_reel`).
 

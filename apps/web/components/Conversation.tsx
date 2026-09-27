@@ -291,6 +291,7 @@ import { ActionsDuMessage } from "@/components/chat/ActionsDuMessage";
 import { BulleFil, EnTeteDeTour } from "@/components/chat/BulleFil";
 import { EtapesDuFil } from "@/components/chat/EtapesDuFil";
 import { RunsCandidats, TraceDuGeste } from "@/components/chat/GesteSurUnRun";
+import { AttentesCandidates, TraceDuReglement } from "@/components/chat/ReglementDansLeFil";
 import { TraceDePiece } from "@/components/chat/PieceDOutillage";
 import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
@@ -1741,6 +1742,12 @@ function Bulle({
  * depuis 14:02 » —, ou le refus du service et sa raison. Le renvoi mène au run
  * touché. Les runs qu'une demande ambiguë pouvait viser (`runs_candidats`) s'y
  * listent, chacun à ses faits (`RunsCandidats`).
+ *
+ * **Ce qu'un règlement d'attente a donné** (`reglement_fait`, #1183) suit la même
+ * règle (`TraceDuReglement`) : la réponse transmise à un agent ou la demande tranchée,
+ * et ce qui a repris — « l'agent la lit et reprend sa tâche » —, ou le refus du
+ * service. Les attentes qu'une demande pouvait viser s'y listent de même
+ * (`AttentesCandidates`).
  */
 function Suite({
   message,
@@ -1762,6 +1769,8 @@ function Suite({
   const corrections = message.corrections ?? [];
   const gesteFait = message.geste_fait ?? null;
   const candidats = message.runs_candidats ?? [];
+  const reglementFait = message.reglement_fait ?? null;
+  const attentesCandidates = message.attentes_candidates ?? [];
   if (
     runId === "" &&
     tacheId === "" &&
@@ -1770,7 +1779,9 @@ function Suite({
     pieceEcrite === null &&
     corrections.length === 0 &&
     gesteFait === null &&
-    candidats.length === 0
+    candidats.length === 0 &&
+    reglementFait === null &&
+    attentesCandidates.length === 0
   ) {
     return null;
   }
@@ -1911,6 +1922,11 @@ function Suite({
       {/* Les runs qu'une demande ambiguë pouvait viser (#1179), chacun à ses faits :
           la question est au-dessus, dans les mots du modèle. */}
       <RunsCandidats runs={candidats} />
+      {/* Ce qu'un règlement d'attente a donné (#1183) : la ligne cochée — la réponse
+          transmise, la demande tranchée, et ce qui a repris — ou le refus du service ;
+          puis les attentes qu'une demande ambiguë pouvait viser, comme les runs. */}
+      {reglementFait !== null && <TraceDuReglement fait={reglementFait} />}
+      <AttentesCandidates attentes={attentesCandidates} />
       {renvois.length > 0 && (
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
           {renvois.map((renvoi) => (

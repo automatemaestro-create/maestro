@@ -118,6 +118,7 @@ import {
   ouvrirConversationChat,
   declarerProjetDuFil,
   trancherGesteDuFil,
+  trancherReglementDuFil,
   recruterDansLeFil,
   repondreQuestionOutillage,
   trancherCadrageChat,
@@ -317,6 +318,14 @@ export type Chat = {
    * tour ordinaire.
    */
   trancherGeste: (approuve: boolean) => Promise<void>;
+  /**
+   * Confirme — ou écarte — le règlement d'une attente que le fil propose (#1183) :
+   * la réponse à la question d'un agent, l'approbation ou le refus d'une validation.
+   * Rien d'autre ne part : ce qui se règle est la carte que le fil porte, relue par
+   * l'API. Le geste et la suite — ce qui a repris, ou le refus motivé du service —
+   * rejoignent le fil comme un tour ordinaire.
+   */
+  trancherReglement: (approuve: boolean) => Promise<void>;
   /**
    * La conversation **servie** (#696) — celle qu'on lit et où part l'envoi.
    * `""` tant que l'API n'a pas répondu : personne ne peut la nommer avant.
@@ -769,6 +778,24 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     [agent, conversation, recharger],
   );
 
+  /**
+   * Le septième jumeau de `trancherCadrage` (#1183) : même emprunt d'`envoi`, même
+   * paire rendue d'un bloc, même relecture en sortie.
+   */
+  const trancherReglement = useCallback(
+    async (approuve: boolean) => {
+      setEnvoi(true);
+      try {
+        const paire = await trancherReglementDuFil(agent, { approuve, conversation });
+        setDirects((gardes) => [...gardes, ...paire]);
+      } finally {
+        setEnvoi(false);
+        await recharger();
+      }
+    },
+    [agent, conversation, recharger],
+  );
+
   const interrompre = useCallback(() => {
     const vol = enVol.current;
     if (vol === null) return;
@@ -828,6 +855,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
     declarerProjet,
     trancherPiece,
     trancherGeste,
+    trancherReglement,
     conversation,
     conversations,
     nouvelleConversation,

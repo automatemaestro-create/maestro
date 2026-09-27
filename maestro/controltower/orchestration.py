@@ -554,6 +554,39 @@ relance, ses nouvelles bornes. Trois propriétés, et chacune a sa raison :
 Le modèle voit ce dont il a besoin pour désigner : chaque run des faits porte
 désormais son heure de lancement et, suspendu, l'heure de sa pause.
 
+## Il règle ce qui attend quelqu'un, sans changer d'écran (#1183)
+
+Un run qui attend une personne l'attendait **ailleurs** : la question d'un agent, la
+validation d'une action sensible. Le fil les voyait depuis #1223 — contenu compris —
+mais « réponds-lui : prends Postgres », « oui, valide » ou « refuse et archive
+plutôt » n'y avaient aucun effet : il ne pouvait que renvoyer vers l'écran concerné.
+
+Un septième verdict, `attente`, porte la demande de **régler** ce qui attend : son
+action (`reponse`, `approbation`, `refus`), la ou les attentes qu'elle peut désigner —
+par leurs identifiants, que le bloc des attentes donne désormais — et le texte qui
+part : la réponse que l'agent lira, la raison d'un refus. Les propriétés de #1179
+tiennent telles quelles, sur une autre cible :
+
+- **rien ne se règle sans confirmation.** Le verdict pose une carte
+  (`ReponseChat.reglement`) ; le clic (`trancher_reglement`) ou un « oui » tapé juste
+  après la règle. L'arbitrage des actes reste humain (docs/32) : le fil n'est qu'un
+  autre endroit où la personne tranche, et c'est **elle** qui tranche — le modèle
+  propose ce qu'il a compris, la carte le montre mot pour mot ;
+- **une demande ambiguë nomme ses candidates au lieu d'agir** (`attentes_candidates`)
+  — deux questions d'agents quand elle dit « réponds-lui » ;
+- **le règlement passe par le service des écrans**, jamais par une copie
+  (`PiloteDesAttentes`, satisfait par `ServiceAttentes`) : ses refus — une question
+  déjà répondue, une validation déjà tranchée — sont ceux des routes, dits avant la
+  carte ou après le clic, et ce qui en sort est un fait (`reglement_fait`) : **ce qui
+  a repris** — l'agent qui lit sa réponse, la tâche qui repart, l'appel écarté —, dit
+  par le service depuis la structure de l'attente.
+
+La raison d'un refus voyage par le **même** champ que le motif de l'écran des
+validations (`attentes.detail_de_la_decision`) : c'est celle que #1185 portera jusqu'à
+l'agent, et le fil n'en compose pas une seconde. D'ici là, l'agent n'apprend que le
+refus — et le fil le dit ainsi : vu sur la vraie stack, « votre consigne lui a été
+transmise avec le refus » promettait ce qui n'avait pas lieu.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -638,6 +671,7 @@ from maestro.controltower.chat import (
     projet_du_fil,
     projet_en_attente,
     proposition_en_attente,
+    reglement_en_attente,
     transcription,
 )
 from maestro.controltower.consultation import (
@@ -680,6 +714,17 @@ from maestro.controltower.progression import (
     STATUT_PRETE,
 )
 from maestro.controltower.regime import bornes_du_run
+from maestro.controltower.reglements import (
+    GENRE_DU_REGLEMENT,
+    REGLEMENT_REFUS,
+    REGLEMENT_REPONSE,
+    REGLEMENTS,
+    VERBES_DE_REGLEMENT,
+    AttenteVisee,
+    ReglementFait,
+    ReglementPropose,
+    ReglementRefuse,
+)
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
@@ -743,6 +788,12 @@ VERDICT_OUTILLAGE = "outillage"
 #: (`RepondeurOrchestration.trancher_geste`).
 VERDICT_GESTE = "geste"
 
+#: Le septième verdict (#1183) : la personne **règle ce qui l'attend** — elle répond à
+#: la question d'un agent, approuve ou refuse une validation. Il ne règle rien : il
+#: pose la carte du règlement, et c'est la confirmation qui le passe au service des
+#: écrans (`RepondeurOrchestration.trancher_reglement`).
+VERDICT_ATTENTE = "attente"
+
 #: Les seuls verdicts admis. Tout autre mot — comme toute réponse hors contrat —
 #: retombe sur `VERDICT_ECHANGE` : la liste est **blanche**, jamais noire, parce
 #: qu'on ne maîtrise pas ce qu'un modèle peut écrire dans ce champ et qu'un mot
@@ -755,6 +806,7 @@ VERDICTS = frozenset(
         VERDICT_PROJET,
         VERDICT_OUTILLAGE,
         VERDICT_GESTE,
+        VERDICT_ATTENTE,
     }
 )
 
@@ -772,6 +824,15 @@ VERDICTS = frozenset(
 #: assez courte pour que la rétention de queue qu'elle impose (au plus
 #: `len(_MARQUEUR_VERDICT) - 1` caractères) ne se voie pas à l'écran.
 _MARQUEUR_VERDICT = "%%MAESTRO%%"
+
+#: La dernière ligne que le juge écrit, telle que le cadre la lui montre. Une
+#: constante plutôt qu'une ligne du cadre depuis le septième verdict (#1183) : la
+#: liste des verdicts dépasse la largeur d'une ligne de source, et la couper dans le
+#: cadre la couperait aussi dans le prompt — la forme que le modèle recopie.
+_LIGNE_DU_VERDICT = (
+    f'{_MARQUEUR_VERDICT} {{"verdict": '
+    '"proposition|accord|echange|projet|outillage|geste|attente", "objectif": "..."}'
+)
 
 #: Le cadre de l'orchestration : ce qu'elle est, et le contrat de sa réponse.
 #: Il existait depuis #268 « si un jour elle passe par un modèle » et n'avait
@@ -811,7 +872,9 @@ qu'il lit.
 
 Puis termine par une DERNIÈRE LIGNE, et une seule, de cette forme exacte :
 
-%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage|geste", "objectif": "..."}
+"""
+    + _LIGNE_DU_VERDICT
+    + """
 
 Cette ligne n'est jamais affichée : elle dit à l'interface quoi faire de ce que
 tu viens d'écrire. Elle vient en dernier, après le dernier mot de ta réponse, et
@@ -851,6 +914,14 @@ Le verdict :
   avec 5 $ de plus"). Le run se désigne par ce que les faits en disent — le dernier,
   celui d'hier, celui du tri, celui qui a échoué. Tu ne l'exécutes pas : une carte
   le proposera sous ta réponse, et c'est la personne qui confirmera.
+- "attente" — la personne RÈGLE ce qui l'attend, que les faits te montrent parmi
+  les questions et les validations en attente : elle répond à la question d'un
+  agent ("réponds-lui : prends Postgres", "dis au développeur qu'on garde
+  SQLite"), elle approuve l'acte qu'une validation retient ("oui, valide",
+  "autorise-le") ou elle le refuse ("refuse", "non, archive plutôt"). Un « oui,
+  valide » sans proposition de ta part juste avant approuve la validation en
+  attente : c'est une "attente", pas un "accord". Tu ne règles rien toi-même : une
+  carte le proposera sous ta réponse, et c'est la personne qui confirmera.
 - "outillage" — la personne parle de l'OUTILLAGE du projet : ce que Maestro écrit
   dans le projet pour ses agents (AGENTS.md, les skills, les commandes qui
   installent, construisent, testent, lancent). Elle demande de l'outiller ou de
@@ -862,8 +933,9 @@ Le verdict :
   ("change le truc", "modifie ça") aussi : la correction dira ce qu'elle n'a pas
   compris, sans rien écrire.
 - "accord" — le dernier message approuve une proposition que TU viens de faire
-  dans ce fil — un run, un projet, une pièce d'outillage ou un geste sur un run
-  ("oui", "vas-y", "ok lance", "crée-le", "écris-la", "oui, annule-le"). Sans
+  dans ce fil — un run, un projet, une pièce d'outillage, un geste sur un run ou
+  le règlement d'une attente ("oui", "vas-y", "ok lance", "crée-le", "écris-la",
+  "oui, annule-le", "oui, envoie-la"). Sans
   proposition juste avant, ce n'est jamais un accord — et dans le doute non plus.
   Une demande de changement, même vague, n'approuve rien : un accord écrit dans le
   projet de la personne, il doit être sans équivoque.
@@ -898,9 +970,30 @@ L'objectif :
 - sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
   autonome, qui reformule la demande sans rien inventer ;
 - sur "accord", recopie MOT POUR MOT l'objectif de la proposition que
-  l'utilisateur vient d'approuver — vide quand c'est un projet ou un geste sur un
-  run qu'il approuve ;
-- vide sur "echange", sur "projet" et sur "geste".
+  l'utilisateur vient d'approuver — vide quand c'est un projet, un geste sur un
+  run ou le règlement d'une attente qu'il approuve ;
+- vide sur "echange", sur "projet", sur "geste" et sur "attente".
+
+Sur "attente", ajoute à l'objet de la dernière ligne une clé "attente" :
+
+"attente": {"action": "reponse|approbation|refus", "cibles": ["<identifiant>"],
+            "texte": "..."}
+
+- "action" : "reponse" répond à la QUESTION d'un agent — il lit la réponse et
+  reprend ; "approbation" approuve l'acte qu'une VALIDATION retient ; "refus" le
+  refuse. Une question ne s'approuve pas et une validation ne se répond pas :
+  répondre à un agent n'autorise aucun acte ;
+- "cibles" : les identifiants, tels que les faits les écrivent, de la ou des
+  attentes que la demande peut désigner. UNE seule quand elle est sans ambiguïté.
+  Quand plusieurs peuvent lui correspondre, mets-les TOUTES : aucune carte ne sera
+  posée, ta réponse les nomme (qui demande, quoi) et demande laquelle. Aucune quand
+  rien de ce qui attend ne correspond : ta réponse le dit ;
+- "texte" : sur "reponse", la réponse que l'agent lira — ce que la personne lui
+  répond, avec ses mots, adressé à l'agent, sans rien y ajouter ni en retirer ;
+  sur "refus", la raison que la personne donne, avec ses mots ("archive plutôt"),
+  vide si elle n'en donne aucune ; vide sur "approbation". Cette raison est
+  consignée avec la décision ; l'agent, lui, n'apprend que le refus : ne dis pas
+  que tu lui transmets la raison ni qu'il la suivra.
 
 Sur "geste", ajoute à l'objet de la dernière ligne une clé "geste" :
 
@@ -960,11 +1053,17 @@ sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur un "accor
 qui approuve un projet, il dit que tu le déclares, rien de plus ; qui approuve une
 pièce d'outillage, il dit que tu l'écris, rien de plus ; qui approuve un geste sur
 un run, il dit que tu le fais, rien de plus — l'état du run, relu après le geste,
-s'affiche de lui-même juste en dessous. Sur "geste", il dit en une phrase ce que tu
+s'affiche de lui-même juste en dessous ; qui approuve le règlement d'une attente,
+il dit que tu le transmets, rien de plus — ce qui a repris s'affiche de lui-même
+juste en dessous. Sur "geste", il dit en une phrase ce que tu
 proposes de faire, à quel run, et ce que cela fera ; ne dis jamais que c'est fait.
 N'annonce pas de carte et ne dis pas comment confirmer : le code vérifie ta
 proposition après toi, pose la carte et ses boutons quand l'état du run l'accepte,
-et dit sinon pourquoi il n'y en aura pas. Sur "outillage", il redit
+et dit sinon pourquoi il n'y en aura pas. Sur "attente", il NOMME ce qui attend —
+qui demande quoi (« le développeur demande quelle base utiliser »), ou quel acte
+une validation retient — puis dit en une phrase ce que tu proposes d'en faire ; ne
+dis jamais que c'est transmis ni tranché, et, comme sur "geste", n'annonce pas de
+carte et ne dis pas comment confirmer. Sur "outillage", il redit
 en une phrase ce que la personne demande, avec ses mots et sans rien y deviner : tu
 parles avant la correction, et c'est elle qui dit juste en dessous ce qui en sort —
 la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la question
@@ -1007,13 +1106,20 @@ que d'inventer une règle. Une borne appartient au run qui l'a reçue à son
 accord : un run passé arrêté sur sa borne n'annonce rien du suivant, dont les
 bornes sont celles que la carte de ta proposition posera.
 
+Tu reçois aussi, quand il y en a, CE QUI ATTEND QUELQU'UN : les questions que des
+agents ont posées pendant leur tâche et les validations d'actes, chacune avec son
+identifiant. C'est ce qui attend la personne : nomme-le quand elle demande où en
+est le travail ou ce qui l'attend, et règle-le avec elle ICI — répondre à un agent
+ou trancher une validation se fait depuis cette conversation, tu ne l'envoies
+jamais sur un autre écran pour cela.
+
 Cette lecture est BORNÉE : seulement les runs les plus récents, un nombre limité
 de tâches, des détails tronqués, et elle le signale quand elle coupe. Ce qui n'y
 est pas, tu ne l'as pas vu : dis-le, et renvoie alors vers l'endroit qui le
 montre — la page Runs pour le détail complet d'un run et ses tâches (chaque run y
 a sa page), le tableau de bord pour ce qui court sur le projet, Validations pour
-ce qui attend un arbitrage, Coûts & analytics pour la dépense. Et ne promets pas
-qu'un écran montre ce que tu n'as pas vu toi-même : si tu ignores où un livrable
+les arbitrages au-delà de ceux que tu vois, Coûts & analytics pour la dépense. Et
+ne promets pas qu'un écran montre ce que tu n'as pas vu toi-même : si tu ignores où un livrable
 a été écrit, dis-le franchement au lieu d'envoyer chercher.
 
 Tu reçois aussi, quand il y en a, CE QUE TU VIENS DE LIRE dans le projet :
@@ -1273,6 +1379,27 @@ _PHRASE_GESTE_IMPOSSIBLE = (
 )
 _PHRASE_GESTE_REFUSE = "Ce geste n'a pas eu lieu : {cause}"
 _PHRASE_GESTE_EMPECHE = "Je n'ai pas pu {verbe} le run {run_id} : {cause}."
+
+#: Les **empêchements** du règlement d'une attente (#1183) — même règle que ceux des
+#: gestes sur un run : rien n'est parti, et seul ce code le sait. Un refus **motivé**
+#: du service n'en est pas un : c'est un fait (`reglement_fait`), et le modèle le dit.
+_PHRASE_SANS_REGLEMENT = (
+    "Aucun règlement des attentes n'est branché sur ce fil : je peux vous dire ce qui "
+    "attend, pas y répondre."
+)
+_PHRASE_ATTENTE_INTROUVABLE = (
+    "Je ne trouve rien qui attende sous {cibles} : je ne peux rien vous proposer. "
+    "Dites-moi de quelle question ou de quelle validation il s'agit."
+)
+#: La correction qui suit une proposition que la vérification refuse — la règle de
+#: `_PHRASE_GESTE_IMPOSSIBLE` : le modèle a déjà écrit sa proposition, la phrase revient
+#: dessus et dit qu'aucune carte ne suivra ; la raison est le fait, sous la bulle.
+_PHRASE_REGLEMENT_IMPOSSIBLE = (
+    "Vérification faite, aucune carte ne suivra : je ne peux finalement pas vous "
+    "proposer de {verbe} cette {genre} — la raison est juste en dessous."
+)
+_PHRASE_REGLEMENT_REFUSE = "Rien n'est parti : {cause}"
+_PHRASE_REGLEMENT_EMPECHE = "Je n'ai pas pu {verbe} la {genre} {identifiant} : {cause}."
 
 
 def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
@@ -1802,6 +1929,49 @@ def _faits_du_geste(demande: GesteRunPropose, fait: GesteRunFait) -> str:
         f"{confirme} C'est fait, et le run a été relu juste après : "
         f"{fait.run.en_phrase()}. {_CE_QUE_FAIT_LE_GESTE.get(demande.action, '')}"
     ).strip()
+
+
+def _faits_du_reglement_ecarte(demande: ReglementPropose) -> str:
+    """Le règlement proposé a été écarté d'un geste — rien n'est parti (#1183)."""
+    verbe = VERBES_DE_REGLEMENT.get(demande.action, demande.action)
+    return (
+        f"L'utilisateur a écarté, d'un geste, ta proposition de {verbe} "
+        f"{demande.attente.en_phrase()}. Rien n'est parti : elle attend toujours, telle "
+        "qu'elle était."
+    )
+
+
+def _faits_du_reglement(demande: ReglementPropose, fait: ReglementFait) -> str:
+    """Le règlement confirmé est parti — ou le service l'a refusé —, et ce qui en sort (#1183).
+
+    Ce qui a repris est donné tel que le service le dit (`ReglementFait.suite`) : c'est
+    ce que le fil doit dire — « la tâche reprend », « l'agent poursuit sans cet
+    appel » —, et il n'existe nulle part ailleurs que dans ce que le service vient de
+    rendre. Un refus y est un fait parmi les autres, et c'est le modèle qui le dit.
+    """
+    verbe = VERBES_DE_REGLEMENT.get(demande.action, demande.action)
+    confirme = (
+        f"L'utilisateur a confirmé, d'un geste, de {verbe} {demande.attente.en_phrase()}."
+    )
+    if fait.refus:
+        return f"{confirme} Le service l'a REFUSÉ, et rien n'est parti : {fait.refus}"
+    if demande.action == REGLEMENT_REPONSE:
+        parti = f"La réponse est partie à l'agent, telle quelle : « {fait.texte} »."
+    elif demande.action == REGLEMENT_REFUS:
+        # Vu sur la vraie stack (#1183) : « le refus est parti, avec sa raison » faisait
+        # écrire au modèle que la consigne était transmise à l'agent. Elle ne l'est pas —
+        # le moteur ne lit que la décision, et porter la raison jusqu'à l'agent est #1185.
+        parti = (
+            f"Le refus est parti. Sa raison, « {fait.texte} », est consignée avec la "
+            "décision, là où l'écran des validations garde le motif d'un refus ; l'agent, "
+            "lui, ne la reçoit pas : il apprend seulement que l'acte est refusé."
+            if fait.texte
+            else "Le refus est parti, sans raison donnée."
+        )
+    else:
+        parti = "L'approbation est partie."
+    suite = f" Ce qui en sort : {fait.suite}." if fait.suite else ""
+    return f"{confirme} C'est fait. {parti}{suite}"
 
 
 def _fait_sans_equipe(*, recrutable: bool) -> str:
@@ -2388,6 +2558,50 @@ class PiloteDesRuns(Protocol):
         ...
 
 
+class PiloteDesAttentes(Protocol):
+    """Ce que le fil demande au service des attentes pour les **régler** (#1183).
+
+    Trois verbes, et `ServiceAttentes` les a tels quels — c'est ce qui fait passer les
+    règlements du fil par les **mêmes** règles que les deux écrans, sans copie : relire
+    une attente (`visee`), savoir si un règlement serait refusé et pourquoi
+    (`refus_du_reglement`), le faire et dire ce qui en sort (`regler`, qui lève
+    `ReglementRefuse`). Un protocole plutôt qu'une importation, pour la raison du
+    `PiloteDesRuns` : ce module reste jouable sans projection, et ses tests sans bus.
+    """
+
+    def visee(self, genre: str, identifiant: str) -> AttenteVisee | None:
+        """L'attente telle qu'une carte la montre, `None` si aucune ne porte cet identifiant."""
+        ...
+
+    def suite(self, action: str, identifiant: str) -> str:
+        """Ce que ce règlement fera, dit avant qu'il parte — `""` si rien ne le dit."""
+        ...
+
+    def refus_du_reglement(
+        self, action: str, identifiant: str, texte: str = ""
+    ) -> Exception | None:
+        """Le refus que ce règlement recevrait maintenant, `None` s'il passe."""
+        ...
+
+    async def regler(self, action: str, identifiant: str, texte: str = "") -> ReglementFait:
+        """Règle l'attente et dit ce qui en sort — lève `ReglementRefuse` sur un refus."""
+        ...
+
+
+def _reglement_approuve(fil: Sequence[MessageChat]) -> ReglementPropose | None:
+    """Le règlement qu'un « oui » **tapé** confirme — `None` s'il n'en confirme aucun (#1183).
+
+    La règle de `_geste_approuve`, sur la septième carte : le dernier message est de la
+    personne, et celui d'avant proposait un règlement que rien d'autre n'a suivi. C'est
+    ce qui fait partir ce que la carte montrait — cette attente-là, ce texte-là —,
+    jamais ce qu'un modèle aurait recopié.
+    """
+    if len(fil) < 2 or fil[-1].auteur != UTILISATEUR:
+        return None
+    attente = reglement_en_attente(fil[:-1])
+    return attente.reglement if attente is not None else None
+
+
 def _geste_approuve(fil: Sequence[MessageChat]) -> GesteRunPropose | None:
     """Le geste qu'un « oui » **tapé** confirme — `None` s'il n'en confirme aucun (#1179).
 
@@ -2471,14 +2685,19 @@ def _entete_attentes(singulier: str, pluriel: str, total: int) -> str:
 
 
 def _fiche_validation(validation: EtatValidation) -> list[str]:
-    """Une validation : ce qu'elle retient, l'acte proposé, et pourquoi on demande."""
+    """Une validation : ce qu'elle retient, l'acte proposé, et pourquoi on demande.
+
+    Son **identifiant** vient en premier détail (#1183) : c'est par lui que le modèle
+    la désigne quand la personne la tranche depuis le fil — la tâche qu'elle
+    retient, clé de la file des validations.
+    """
     entete = f"- {validation.titre or validation.tache_id}"
     porteur = validation.role or validation.agent
     if porteur:
         entete += f" — {porteur}"
     if validation.run_id:
         entete += f" — run {validation.run_id}"
-    lignes = [entete]
+    lignes = [entete, f"  identifiant : {validation.tache_id}"]
     if validation.outil:
         acte = validation.outil
         arguments = " ".join(
@@ -2493,12 +2712,24 @@ def _fiche_validation(validation: EtatValidation) -> list[str]:
 
 
 def _fiche_question(question: EtatQuestion) -> list[str]:
-    """Une question d'agent : ce qu'elle demande, ses choix, et l'hypothèse de repli."""
+    """Une question d'agent : ce qu'elle demande, ses choix, et l'hypothèse de repli.
+
+    Son **identifiant** vient en premier détail (#1183), pour la raison de
+    `_fiche_validation`, suivi de qui la pose et de la tâche d'où elle vient : « le
+    développeur demande quelle base utiliser » se dit avec l'agent, pas seulement avec
+    son rôle.
+    """
     entete = f"- {_attente_bornee(question.question) or question.question_id}"
     porteur = question.role or question.agent
     if porteur:
         entete += f" — {porteur}"
-    lignes = [entete]
+    if question.run_id:
+        entete += f" — run {question.run_id}"
+    lignes = [entete, f"  identifiant : {question.question_id}"]
+    if question.agent:
+        lignes.append(f"  agent : {question.agent}")
+    if question.titre:
+        lignes.append(f"  tâche : {_attente_bornee(question.titre)}")
     if question.choix:
         lignes.append(f"  choix : {' · '.join(question.choix)}")
     if question.hypothese:
@@ -2539,6 +2770,10 @@ class _Verdict:
     #: pour la même raison : c'est le répondeur qui confronte ses runs à la
     #: projection et son action au service, jamais le lecteur du contrat.
     geste: Mapping[str, Any] | None = None
+    #: Le règlement d'une attente **brut** (#1183) — `None` hors du verdict `attente`.
+    #: Brut pour la même raison : c'est le répondeur qui confronte ses cibles aux
+    #: files et son action au service.
+    attente: Mapping[str, Any] | None = None
 
 
 def _objet_json(texte: str) -> Any:
@@ -2581,6 +2816,7 @@ def _verdict_depuis(texte: str) -> _Verdict:
     nom = str(charge.get("verdict") or "").strip().lower()
     projet = charge.get("projet")
     geste = charge.get("geste")
+    attente = charge.get("attente")
     return _Verdict(
         nom=nom if nom in VERDICTS else VERDICT_ECHANGE,
         # Le texte brut en repli : un objet bien formé mais sans phrase à
@@ -2590,6 +2826,7 @@ def _verdict_depuis(texte: str) -> _Verdict:
         objectif=str(charge.get("objectif") or "").strip(),
         projet=projet if isinstance(projet, Mapping) else None,
         geste=geste if isinstance(geste, Mapping) else None,
+        attente=attente if isinstance(attente, Mapping) else None,
     )
 
 
@@ -2842,6 +3079,7 @@ class _LectureDuFlux:
             objectif=lu.objectif,
             projet=lu.projet,
             geste=lu.geste,
+            attente=lu.attente,
         )
 
 
@@ -2981,6 +3219,11 @@ class RepondeurOrchestration(RepondeurChat):
     pause, reprise, annulation, relance —, par le service des boutons
     (`PiloteDesRuns`). Sans lui, le verdict `geste` ne pose aucune carte et le fil
     dit qu'il ne peut pas agir.
+
+    `reglements` (#1183) est ce qui fait **régler** au fil ce qui attend quelqu'un —
+    répondre à un agent, approuver ou refuser une validation —, par le service de
+    leurs écrans (`PiloteDesAttentes`). Sans lui, le verdict `attente` ne pose aucune
+    carte et le fil dit qu'il peut dire ce qui attend, pas y répondre.
     """
 
     def __init__(
@@ -3003,12 +3246,14 @@ class RepondeurOrchestration(RepondeurChat):
         projet: ProjetDuFil | None = None,
         outillage: OutillageDuFil | None = None,
         pilote: PiloteDesRuns | None = None,
+        reglements: PiloteDesAttentes | None = None,
     ) -> None:
         self._naissance = naissance
         self._regime = regime
         self._projet = projet
         self._outillage = outillage
         self._pilote = pilote
+        self._reglements = reglements
         self._lanceur = lanceur
         self._apercu = apercu
         self._faits = faits
@@ -3120,6 +3365,18 @@ class RepondeurOrchestration(RepondeurChat):
             # La personne veut agir sur un run existant (#1179) : le geste devient
             # une carte à confirmer — ou, sur plusieurs runs possibles, leurs noms.
             return _avec_etapes(await self._proposer_geste(redaction, verdict), etapes)
+        if verdict.nom == VERDICT_ATTENTE:
+            # La personne règle ce qui l'attend (#1183) : répondre à un agent, trancher
+            # une validation. Le règlement devient une carte à confirmer — ou, sur
+            # plusieurs attentes possibles, leurs noms.
+            return _avec_etapes(await self._proposer_reglement(redaction, verdict), etapes)
+        reglement = _reglement_approuve(fil) if verdict.nom == VERDICT_ACCORD else None
+        if reglement is not None:
+            # Un « oui » tapé sur une carte de règlement vaut le clic : il fait partir
+            # **ce que la carte montrait**, relu du fil (#1183).
+            return _avec_etapes(
+                await self._confirmer_reglement_tape(redaction, reglement), etapes
+            )
         geste = _geste_approuve(fil) if verdict.nom == VERDICT_ACCORD else None
         if geste is not None:
             # Un « oui » tapé sur une carte de geste vaut le clic : il exécute **ce
@@ -3728,6 +3985,196 @@ class RepondeurOrchestration(RepondeurChat):
         assert self._pilote is not None  # appelé derrière la garde de `_proposer_geste`
         try:
             refus = await self._pilote.refus_du_geste(action, run_id)
+        except Exception:  # noqa: BLE001 — la vérification éclaire, elle ne décide pas
+            return ""
+        return str(refus) if refus is not None else ""
+
+    async def trancher_reglement(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: ReglementPropose,
+        approuve: bool,
+    ) -> ReponseChat:
+        """Fait partir — ou écarte — le règlement que la carte proposait, puis en parle (#1183).
+
+        Aucun juge : la décision est un clic. Trois issues, comme `trancher_geste` :
+
+        - **écarté** — rien ne part, l'attente reste telle qu'elle était, et le modèle
+          le dit ;
+        - **confirmé** — la réponse ou la décision passe par le service des écrans
+          (`regler`), et ce qui en sort est un fait sur la réponse
+          (`reglement_fait`) : ce qui a repris — ou le **refus** motivé du service, si
+          l'attente a été réglée ailleurs entre la carte et le clic. Le modèle parle
+          depuis ce fait ;
+        - **empêché** — rien de branché, ou un service qui casse sans motif : la cause
+          est dite par ce code, seul à la connaître.
+        """
+        if not approuve:
+            return await self._parole_sur(
+                agent, fil, ReponseChat(contenu=""), faits=_faits_du_reglement_ecarte(demande)
+            )
+        if self._reglements is None:
+            return ReponseChat(contenu=_PHRASE_SANS_REGLEMENT)
+        reponse = await self._executer_reglement(demande)
+        fait = reponse.reglement_fait
+        if fait is None:
+            return reponse
+        return await self._parole_sur(
+            agent, fil, reponse, faits=_faits_du_reglement(demande, fait)
+        )
+
+    async def _proposer_reglement(self, redaction: Redaction, verdict: _Verdict) -> ReponseChat:
+        """Le verdict `attente` : la carte à confirmer, les candidates — ou pourquoi rien (#1183).
+
+        Le modèle a dit, en direct, ce qui attend et ce qu'il propose ; ce qui s'ajoute
+        derrière est ce qu'il ne pouvait pas savoir, et la **structure** de ce que le
+        message demande — la règle de `_proposer_geste` :
+
+        - **une attente désignée, que le service accepterait** — la carte
+          (`reglement`), avec l'attente telle que la projection la montre à cet
+          instant et le texte qui partira ;
+        - **plusieurs attentes** — aucune carte : les candidates voyagent sur la
+          réponse (`attentes_candidates`) et la question est celle du modèle ;
+        - **une attente inconnue, un règlement que l'état refuse** — aucune carte, et
+          la correction s'écrit derrière les mots du modèle. Le refus du service est
+          le fait de la réponse (`reglement_fait`), comme celui qu'un clic aurait reçu.
+
+        Une action hors des trois, ou aucune cible, n'ajoute rien : le modèle a parlé,
+        et ce qu'on ne comprend pas ne pose jamais de carte.
+        """
+        charge = verdict.attente or {}
+        action = str(charge.get("action") or "").strip().lower()
+        if self._reglements is None:
+            await redaction.ecrire(f" ⚠ {_PHRASE_SANS_REGLEMENT}")
+            return ReponseChat(contenu=redaction.texte)
+        if action not in REGLEMENTS:
+            return ReponseChat(contenu=redaction.texte)
+        genre = GENRE_DU_REGLEMENT[action]
+        designees = _identifiants(charge.get("cibles"))
+        connues = [
+            attente
+            for identifiant in designees
+            if (attente := self._lire_attente(genre, identifiant)) is not None
+        ]
+        if len(connues) > 1:
+            return ReponseChat(contenu=redaction.texte, attentes_candidates=tuple(connues))
+        if not connues:
+            if designees:
+                cibles = ", ".join(f"« {identifiant} »" for identifiant in designees)
+                await redaction.ecrire(
+                    "\n\n" + _PHRASE_ATTENTE_INTROUVABLE.format(cibles=cibles)
+                )
+            return ReponseChat(contenu=redaction.texte)
+        attente = connues[0]
+        texte = " ".join(str(charge.get("texte") or "").split())
+        if action not in (REGLEMENT_REPONSE, REGLEMENT_REFUS):
+            texte = ""
+        refus = self._refus_du_reglement(action, attente.identifiant, texte)
+        if refus:
+            verbe = VERBES_DE_REGLEMENT.get(action, action)
+            await redaction.ecrire(
+                "\n\n" + _PHRASE_REGLEMENT_IMPOSSIBLE.format(verbe=verbe, genre=genre)
+            )
+            return ReponseChat(
+                contenu=redaction.texte,
+                reglement_fait=ReglementFait(action, attente=attente, texte=texte, refus=refus),
+            )
+        return ReponseChat(
+            contenu=redaction.texte,
+            reglement=ReglementPropose(
+                action=action,
+                attente=attente,
+                texte=texte,
+                suite=self._suite_du_reglement(action, attente.identifiant),
+            ),
+        )
+
+    async def _confirmer_reglement_tape(
+        self, redaction: Redaction, demande: ReglementPropose
+    ) -> ReponseChat:
+        """Le « oui » **tapé** sur une carte de règlement : il part, derrière les mots du juge.
+
+        Le juge a déjà écrit, en direct, qu'il le transmet ; ce qui a repris s'affiche
+        sous la bulle (`reglement_fait`). Ce qui s'ajoute derrière ses mots est ce qu'il
+        ne pouvait pas savoir, et qui les contredit : un refus du service, ou un
+        empêchement — sans quoi la bulle dirait parti ce qui ne l'est pas.
+        """
+        if self._reglements is None:
+            await redaction.ecrire(f" {_PHRASE_SANS_REGLEMENT}")
+            return ReponseChat(contenu=redaction.texte)
+        reponse = await self._executer_reglement(demande)
+        fait = reponse.reglement_fait
+        if fait is None:
+            await redaction.ecrire("\n\n" + reponse.contenu)
+            return replace(reponse, contenu=redaction.texte)
+        if fait.refus:
+            await redaction.ecrire("\n\n" + _PHRASE_REGLEMENT_REFUSE.format(cause=fait.refus))
+        return replace(reponse, contenu=redaction.texte)
+
+    async def _executer_reglement(self, demande: ReglementPropose) -> ReponseChat:
+        """Le règlement passé au service — un fait, un refus ou un empêchement.
+
+        La réponse rendue est **muette** (`contenu` vide) quand un fait en sort : la
+        parole vient ensuite, du modèle ou du juge. Elle ne porte une phrase que sur un
+        empêchement, qui n'a pas de fait à montrer.
+        """
+        assert self._reglements is not None  # appelé derrière la garde de chaque chemin
+        attente = demande.attente
+        try:
+            fait = await self._reglements.regler(
+                demande.action, attente.identifiant, demande.texte
+            )
+        except ReglementRefuse as refus:
+            relue = self._lire_attente(attente.genre, attente.identifiant) or attente
+            return ReponseChat(
+                contenu="",
+                reglement_fait=ReglementFait(
+                    demande.action, attente=relue, texte=demande.texte, refus=str(refus)
+                ),
+            )
+        except Exception as echec:  # noqa: BLE001 — un empêchement se raconte, cf. docstring
+            verbe = VERBES_DE_REGLEMENT.get(demande.action, demande.action)
+            return ReponseChat(
+                contenu=_PHRASE_REGLEMENT_EMPECHE.format(
+                    verbe=verbe,
+                    genre=attente.genre,
+                    identifiant=attente.identifiant,
+                    cause=cause_lisible(echec),
+                )
+            )
+        return ReponseChat(contenu="", reglement_fait=fait)
+
+    def _lire_attente(self, genre: str, identifiant: str) -> AttenteVisee | None:
+        """Une attente telle qu'une carte la montre, `None` si inconnue **ou illisible**."""
+        reglements = self._reglements
+        if reglements is None:
+            return None
+        try:
+            return reglements.visee(genre, identifiant)
+        except Exception:  # noqa: BLE001 — une lecture qui casse ne désigne rien
+            return None
+
+    def _suite_du_reglement(self, action: str, identifiant: str) -> str:
+        """Ce que le service dit que le règlement fera — `""` s'il ne sait pas le dire."""
+        reglements = self._reglements
+        if reglements is None:
+            return ""
+        try:
+            return reglements.suite(action, identifiant)
+        except Exception:  # noqa: BLE001 — une phrase manquante ne retient pas la carte
+            return ""
+
+    def _refus_du_reglement(self, action: str, identifiant: str, texte: str) -> str:
+        """Le refus que le service opposerait **maintenant** au règlement — `""` s'il passe.
+
+        Une vérification qui casse ne bride pas le règlement : la carte est posée, et
+        c'est le service, au clic, qui dira ce qu'il en est.
+        """
+        assert self._reglements is not None  # derrière la garde de `_proposer_reglement`
+        try:
+            refus = self._reglements.refus_du_reglement(action, identifiant, texte)
         except Exception:  # noqa: BLE001 — la vérification éclaire, elle ne décide pas
             return ""
         return str(refus) if refus is not None else ""
