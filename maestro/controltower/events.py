@@ -242,6 +242,22 @@ EVENEMENT_BRIEF_REPONSES = "brief.reponses"
 EVENEMENT_RENFORT_DEMANDE = "renfort.demande"
 EVENEMENT_RENFORT_DECISION = "renfort.decision"
 
+#: `plafond.demande` et `plafond.decision` (#1182) portent la **décision au
+#: plafond de dépense** : le run qui l'a atteint s'est suspendu, sa tâche en vol
+#: mise de côté, et il attend qu'une personne relève le plafond, réduise la
+#: portée ou arrête. Même couple que les autres canaux d'attente, et pour leur
+#: raison : le bus est la seule chose que l'hôte en process et l'hôte détaché
+#: (#446) partagent.
+#:
+#: `plafond` porte les **faits** — la forme de `DemandePlafond.to_dict` sur la
+#: demande (dépense, plafonds en vigueur, tâches qui restent), de
+#: `DecisionPlafond.to_dict` sur la décision (geste, nouveau plafond, tâches
+#: écartées). `run_id` est la clé : un run n'a qu'une question au plafond en vol,
+#: toutes ses tâches attendant la même réponse. `statut` de la décision est le
+#: geste, pour qu'un lecteur du flux n'ait pas à ouvrir la charge.
+EVENEMENT_PLAFOND_DEMANDE = "plafond.demande"
+EVENEMENT_PLAFOND_DECISION = "plafond.decision"
+
 #: `run.plan` (#490) porte le **graphe du run** — un nœud par tâche, ses
 #: dépendances, son ossature de checklist —, publié **une fois**, à l'instant où
 #: la décomposition rend son plan. Il ne dit rien de l'état : ni agent, ni
@@ -576,6 +592,12 @@ class Event:
     # classe, pour la raison de `recrutement` : cette couche n'importe pas le
     # moteur. None partout ailleurs — l'événement n'en apprend rien.
     verification: dict[str, Any] | None = None
+    # La **décision au plafond de dépense** d'un run (#1182), portée par le seul
+    # couple `plafond.*` : la forme de `DemandePlafond.to_dict` sur la demande, de
+    # `DecisionPlafond.to_dict` sur la décision. Un dict et non les classes du
+    # moteur, pour la raison de `recrutement` : le transport ne dépend pas de ce
+    # qu'il transporte. None partout ailleurs, pour la raison d'`etapes`/`liens`.
+    plafond: dict[str, Any] | None = None
     # Le **bilan sur pièces** d'un run terminé (#1284), porté par la seule activité
     # de run `bilan` (`etape_run`) : ce qui a été livré, ce qui a failli et
     # pourquoi, chaque constat avec ses pièces (`maestro.controltower.bilan.BilanRun
@@ -637,6 +659,7 @@ class Event:
             "verification": (
                 dict(self.verification) if self.verification is not None else None
             ),
+            "plafond": dict(self.plafond) if self.plafond is not None else None,
             "bilan": dict(self.bilan) if self.bilan is not None else None,
             "horodatage": self.horodatage,
         }
@@ -779,6 +802,12 @@ class Event:
                 dict(data["verification"])
                 if isinstance(data.get("verification"), Mapping)
                 else None
+            ),
+            # Relecture tolérante (#1182), comme `recrutement` : ce sont
+            # `DemandePlafond.from_dict` et `DecisionPlafond.from_dict` qui la
+            # liront. Ce qui n'est pas un objet n'en est pas une.
+            plafond=(
+                dict(data["plafond"]) if isinstance(data.get("plafond"), Mapping) else None
             ),
             # Relecture tolérante (#1284), comme la vérification : le bilan passe
             # tel quel, et c'est `BilanRun.depuis` qui ne rend que ce qu'il sait

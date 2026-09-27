@@ -141,6 +141,18 @@ from maestro.engine.executor import (
 )
 from maestro.engine.guardrails import Guardrails
 from maestro.engine.pause import PorteExecution
+from maestro.engine.plafond import (
+    STATUT_PLAFOND_ARRETE,
+    STATUT_PLAFOND_ATTEINT,
+    STATUT_PLAFOND_REDUIT,
+    STATUT_PLAFOND_RELEVE,
+    STATUT_PLAFOND_SANS_DECISION,
+    ArbitrePlafond,
+    DecisionPlafond,
+    DemandePlafond,
+    Plafonds,
+    TacheRestante,
+)
 from maestro.engine.questions import ArbitreQuestion, DemandeQuestion, identifiant_question
 from maestro.engine.rattrapage import (
     CHOIX_PREREQUIS_LEVE,
@@ -209,7 +221,13 @@ from maestro.telemetry import (
     collect_usage,
     resume_controle_depense,
 )
-from maestro.telemetry.costs import ETAPE_BRIEF, ETAPE_EQUIPE, RunCost, TaskCost
+from maestro.telemetry.costs import (
+    ETAPE_BRIEF,
+    ETAPE_EQUIPE,
+    ETAPE_PLAFOND,
+    RunCost,
+    TaskCost,
+)
 
 __all__ = [
     "MODE_BRIEF_AUTO",
@@ -491,6 +509,7 @@ class OrchestrationEngine:
         verificateur: VerificateurTaches | None = None,
         rattrapage: PolitiqueRattrapage | None = None,
         registre_mcp: Callable[[], RegistreMcp] | None = None,
+        arbitre_plafond: ArbitrePlafond | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -555,8 +574,22 @@ class OrchestrationEngine:
         self._relance = relance
         self._questionneur = questionneur
         self._bornes_question = bornes_question or BornesArbitrage()
+        # À qui demander quoi faire quand le run atteint son plafond de dépense
+        # (#1182) — en pratique `maestro.controltower.plafond.ArbitrePlafondControlTower`.
+        # None : personne, et le run garde l'arrêt sec d'avant (la tâche en vol
+        # échoue, les suivantes sont refusées). Même nature que les arbitres
+        # ci-dessus : *où* la question est posée est un câblage de déploiement.
+        self._arbitre_plafond = arbitre_plafond
+        # Les plafonds **en vigueur** de chaque run (#1182) : ceux des garde-fous,
+        # relevés sur la décision de la personne. Un seul registre, partagé par
+        # l'exécuteur (qui arme le contrôle de chaque tâche) et le juge des échecs
+        # (qui dépense sous le même plafond) — ceux de l'exécuteur injecté quand il
+        # en tient, pour que la boucle relève le plafond là où les tâches le
+        # relisent.
+        injectes = executor.plafonds if executor is not None else None
+        self._plafonds = injectes if injectes is not None else Plafonds.de(self._guardrails)
         self._juge = (
-            JugeDesEchecs(orchestrator, self._equipe, self._guardrails)
+            JugeDesEchecs(orchestrator, self._equipe, self._plafonds)
             if rattrapage is not None
             else None
         )
@@ -628,6 +661,9 @@ class OrchestrationEngine:
                 # procédure d'accès d'un serveur MCP dans la bibliothèque.
                 suspendre_sur_prerequis=suspendre,
                 registre_mcp=registre_mcp,
+                # Les plafonds en vigueur (#1182) : ceux que la boucle relève sur
+                # décision, relus par l'exécuteur à chaque tâche.
+                plafonds=self._plafonds,
             )
         )
 
@@ -647,6 +683,7 @@ class OrchestrationEngine:
         arbitre_renfort: ArbitreRenfort | None = None,
         verification: bool = True,
         rattrapage: PolitiqueRattrapage | None = RATTRAPAGE_DEFAUT,
+        arbitre_plafond: ArbitrePlafond | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -744,6 +781,11 @@ class OrchestrationEngine:
         lever est demandé dans le fil — par le `questionneur`, sous la même borne
         qu'une question d'agent. `rattrapage=None` rend la conduite d'avant :
         l'échec barre son aval.
+
+        `arbitre_plafond` (#1182) est **à qui** demander quoi faire quand le run
+        atteint son plafond de dépense — en pratique
+        `maestro.controltower.plafond.ArbitrePlafondControlTower`. None (défaut) :
+        personne, et le run garde l'arrêt sec d'avant.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -782,6 +824,7 @@ class OrchestrationEngine:
             # La procédure d'accès d'un serveur MCP injoignable (#1181) se lit dans
             # l'allowlist du poste — le seed et ce qu'une admission y a fait entrer.
             registre_mcp=_allowlist_mcp_du_poste,
+            arbitre_plafond=arbitre_plafond,
         )
 
     async def run(
@@ -932,6 +975,26 @@ class OrchestrationEngine:
             asyncio.Semaphore(self._max_parallele) if self._max_parallele else None
         )
         en_vol: dict[str, asyncio.Task[TaskResult]] = {}
+        # La décision au plafond de dépense (#1182) : armée quand quelqu'un peut
+        # la rendre **et** que l'exécuteur sait relever le plafond du run. Sinon
+        # rien ne change — l'arrêt sec d'avant, que le journal dit déjà.
+        plafonds = self._executor.plafonds
+        au_plafond = (
+            _AuPlafond(
+                self._arbitre_plafond,
+                plafonds,
+                journal,
+                objective,
+                projet_id,
+                # Ce qui reste à faire : les tâches du plan dont l'issue n'est pas
+                # encore connue — celles mises de côté comprises.
+                lambda: [t for t in ordered if t.id in en_vol and not en_vol[t.id].done()],
+            )
+            if self._arbitre_plafond is not None and plafonds is not None
+            else None
+        )
+        if au_plafond is not None and plafonds is not None:
+            plafonds.suspendre(journal.run_id)
         # Les livrables **refaits** à la demande d'une QA (#1177) : la dernière
         # issue d'une tâche renvoyée à son rôle producteur. Ce qui est lu d'une
         # tâche, par la QA qui la rejuge comme par le rapport, passe par
@@ -947,20 +1010,49 @@ class OrchestrationEngine:
         async def _executer(task: Task, dependances: Sequence[TaskResult]) -> TaskResult:
             # Le seul passage vers l'exécuteur, pour une tâche du plan comme pour
             # une tentative de rattrapage (#1178) ou une reprise demandée par la QA
-            # (#1177) : la porte de pause et le plafond d'exécutions simultanées
-            # valent pour toutes.
-            if porte is not None:
-                # La pause (#477), et elle est **ici** : la dernière ligne
-                # avant que quoi que ce soit ne soit engagé. Franchie avant le
-                # sémaphore, pour la raison qui vaut déjà des dépendances —
-                # une tâche qui attend n'occupe pas un créneau. Une tâche déjà
-                # passée n'a plus de porte devant elle : elle finit, et c'est
-                # ce qui distingue une pause d'une annulation.
-                await porte.franchir()
-            if semaphore is None:
-                return await self._executor.execute(task, dependances, journal)
-            async with semaphore:
-                return await self._executor.execute(task, dependances, journal)
+            # (#1177) : la porte de pause, le plafond d'exécutions simultanées et
+            # la décision au plafond de dépense (#1182) valent pour toutes.
+            depense = StepUsage()
+            courante = task
+            dernier: TaskResult | None = None
+            while True:
+                if au_plafond is not None and au_plafond.ecartee(task.id):
+                    # Écartée par la personne au plafond : elle ne part pas, et
+                    # ce qui l'attend se bloque en cascade (#43).
+                    return au_plafond.solde(task, dernier, depense)
+                if porte is not None:
+                    # La pause (#477), et elle est **ici** : la dernière ligne
+                    # avant que quoi que ce soit ne soit engagé. Franchie avant le
+                    # sémaphore, pour la raison qui vaut déjà des dépendances —
+                    # une tâche qui attend n'occupe pas un créneau. Une tâche déjà
+                    # passée n'a plus de porte devant elle : elle finit, et c'est
+                    # ce qui distingue une pause d'une annulation.
+                    await porte.franchir()
+                if semaphore is None:
+                    result = await self._executor.execute(courante, dependances, journal)
+                else:
+                    async with semaphore:
+                        result = await self._executor.execute(courante, dependances, journal)
+                if au_plafond is None or not result.au_plafond:
+                    if depense.appels or depense.tokens_total or depense.cout_usd is not None:
+                        # Ce que les tentatives mises de côté avaient dépensé
+                        # voyage avec l'issue : le rapport dit ce que la tâche a
+                        # coûté en tout, comme le grand livre.
+                        result = replace(result, usage=depense.fusion(result.usage))
+                    return result
+                # Au plafond (#1182) : la tâche est mise de côté — sa dépense est
+                # au grand livre, son travail sur sa branche — et le run demande.
+                # Le créneau est rendu **avant** d'attendre : une personne qui
+                # répond dans une heure ne retient pas le parallélisme du run.
+                depense = depense.fusion(result.usage)
+                commencee = result.agent != "—"
+                if commencee or dernier is None:
+                    dernier = result
+                decision = await au_plafond.decision(task, result, commencee=commencee)
+                if decision is None or not decision.reprend:
+                    return au_plafond.solde(task, dernier, depense)
+                if commencee:
+                    courante = _reprise_au_plafond(courante)
 
         async def _des_que_prete(task: Task) -> TaskResult:
             # Attend ses seules dépendances : chaque exécution ne voit que le
@@ -1032,16 +1124,23 @@ class OrchestrationEngine:
                 for task in ordered:
                     en_vol[task.id] = tg.create_task(_des_que_prete(task))
         finally:
+            if au_plafond is not None:
+                # Un run annulé pendant qu'il attend sa décision emporte la
+                # question : personne n'attend plus la réponse.
+                au_plafond.fermer()
             if relais is not None:
                 await relais.fermer()
 
+        # Le plafond **en vigueur** à la fin du run (#1182) : relevé sur décision,
+        # c'est lui que le contrôle de dépense a tenu jusqu'au bout.
+        plafond_cout_usd, plafond_tokens = self._plafonds.en_vigueur(journal.run_id)
         return RunReport(
             objectif=objective,
             resultats=tuple(resultat_de(task.id) for task in ordered),
             run_id=journal.run_id,
             planification=plan_usage,
-            plafond_cout_usd=self._guardrails.plafond_cout_usd,
-            plafond_tokens=self._guardrails.plafond_tokens,
+            plafond_cout_usd=plafond_cout_usd,
+            plafond_tokens=plafond_tokens,
             mode_brief=mode_brief,
             brief=brief,
             cadrage=cadrage,
@@ -2380,6 +2479,314 @@ def _dependants_directs(tasks: Sequence[Task]) -> dict[str, list[str]]:
         for dep in task.dependances:
             dependants[dep].append(task.id)
     return dependants
+
+
+#: Ce que l'agent d'une tâche reprise au plafond lit en plus de sa description
+#: (#1182). Écrit au conditionnel du projet et non comme une promesse : une tâche
+#: qui travaillait dans un projet retrouve son travail (sa branche, ou la racine
+#: d'un projet non versionné) ; un livrable purement textuel, lui, n'avait rien
+#: d'écrit à conserver. L'agent regarde où il en était — c'est à lui d'en juger.
+NOTE_REPRISE_AU_PLAFOND = (
+    "Reprise : cette tâche avait déjà commencé. Elle a été mise de côté quand le "
+    "run a atteint son plafond de dépense, puis reprise sur la décision de "
+    "l'utilisateur. Si tu travaillais dans le projet, ce que tu avais produit y "
+    "est resté : regarde où tu en étais et continue, plutôt que de tout refaire."
+)
+
+
+def _reprise_au_plafond(task: Task) -> Task:
+    """La tâche mise de côté, telle qu'elle repart — sa description dit qu'elle reprend (#1182)."""
+    if NOTE_REPRISE_AU_PLAFOND in task.description:
+        return task
+    return replace(task, description=f"{task.description}\n\n{NOTE_REPRISE_AU_PLAFOND}")
+
+
+class _AuPlafond:
+    """La décision d'un run au plafond de dépense (#1182) — une question par franchissement.
+
+    Tenue le temps d'un `run`. Les tâches qui atteignent le plafond s'y présentent
+    une à une — la première en vol à sa mesure fautive, les autres à leur mesure
+    suivante ou à l'entrée de l'exécuteur —, et toutes attendent **la même**
+    réponse : la première pose la question, les suivantes la rejoignent. C'est ce
+    qui fait qu'une personne répond une fois pour son run, et non une fois par
+    tâche en vol.
+
+    Ce qu'elle retient ensuite vaut pour la suite du run : les tâches **écartées**
+    ne partent plus, un **arrêt** solde tout ce qui se présente sans redemander.
+    Un plafond **relevé** ne se retient pas ici — il vit dans `Plafonds`, là où les
+    tâches le relisent — et une tâche qui se présente après coup reprend sans
+    question tant qu'il n'est pas atteint à nouveau.
+    """
+
+    def __init__(
+        self,
+        arbitre: ArbitrePlafond,
+        plafonds: Plafonds,
+        journal: RunJournal,
+        objectif: str,
+        projet_id: str | None,
+        restantes: Callable[[], Sequence[Task]],
+    ) -> None:
+        self._arbitre = arbitre
+        self._plafonds = plafonds
+        self._journal = journal
+        self._objectif = objectif
+        self._projet_id = projet_id
+        self._restantes = restantes
+        self._question: asyncio.Task[DecisionPlafond | None] | None = None
+        self._ecartees: set[str] = set()
+        # Les tâches mises de côté qui attendent la réponse, par identifiant :
+        # celles-là avaient commencé, et la demande le dit.
+        self._mises_de_cote: dict[str, str] = {}
+        self._derniere: DecisionPlafond | None = None
+        self._arret: DecisionPlafond | None = None
+        self._arrete = False
+        self._motif_arret = ""
+
+    def ecartee(self, tache_id: str) -> bool:
+        """La personne a-t-elle écarté cette tâche au plafond ?"""
+        return tache_id in self._ecartees
+
+    async def decision(
+        self, task: Task, result: TaskResult, *, commencee: bool
+    ) -> DecisionPlafond | None:
+        """La décision qui vaut pour `task`, arrêtée au plafond — posée si personne ne l'a demandée.
+
+        Rend None quand le run s'arrête sans décision (la question n'a pas pu
+        partir). Rend la dernière décision de reprise, sans rien demander, quand
+        le plafond a été relevé entre la mesure de la tâche et son arrivée ici.
+        """
+        if self._arrete:
+            return self._arret
+        if commencee:
+            self._mises_de_cote[task.id] = task.titre
+        try:
+            while True:
+                if self._arrete:
+                    return self._arret
+                if self._question is None:
+                    if self._derniere is not None and not self._plafonds.epuise(self._journal):
+                        return self._derniere
+                    self._question = asyncio.create_task(self._demander(result.erreur or ""))
+                question = self._question
+                # `shield` : une tâche annulée qui attendait n'emporte pas la
+                # question des autres. Le run annulé, lui, la ferme (`fermer`).
+                decision = await asyncio.shield(question)
+                if decision is None or not decision.reprend or not self._plafonds.epuise(
+                    self._journal
+                ):
+                    return decision
+                # Relevé, mais pas assez : la dépense a continué de courir pendant
+                # l'attente (une tâche parallèle mesurée entre-temps). On redemande
+                # plutôt que de repartir pour retomber aussitôt.
+                self._derniere = None
+        finally:
+            self._mises_de_cote.pop(task.id, None)
+
+    def solde(
+        self, task: Task, result: TaskResult | None, depense: StepUsage
+    ) -> TaskResult:
+        """Solde `task` sur la décision au plafond — écartée, ou arrêtée avec le run.
+
+        Son étape finale est consignée ici, **à usage nul** : ce qu'elle a
+        dépensé est déjà au grand livre par sa ligne `<tâche>:plafond`. Le
+        résultat rendu porte, lui, cette dépense — c'est ce que le rapport agrège.
+        Un échec qui n'est pas rattrapable : c'est une décision.
+        """
+        raison = (result.erreur if result is not None else "") or ""
+        if self.ecartee(task.id):
+            cause = "tâche écartée au plafond de dépense, sur décision de l'utilisateur"
+        elif self._arret is not None:
+            cause = (
+                f"{raison} — le run s'arrête au plafond de dépense, sur décision de "
+                "l'utilisateur ; ce que la tâche avait fait reste sur sa branche"
+            )
+        else:
+            cause = (
+                f"{raison} — la décision au plafond n'a pas pu être demandée "
+                f"({self._motif_arret or 'personne pour la rendre'}) : le run s'arrête"
+            )
+        agent = result.agent if result is not None else "—"
+        role = result.role if result is not None else "non exécutée"
+        self._journal.consigne(
+            etape=task.id,
+            nom=task.titre,
+            agent=agent,
+            role=role,
+            statut=STATUT_ECHEC,
+            entree=task.description,
+            sortie="",
+            erreur=cause,
+            usage=StepUsage(),
+            ticket=task.ticket,
+            projet_id=task.projet_id,
+            description=task.description,
+        )
+        return TaskResult(
+            task_id=task.id,
+            titre=task.titre,
+            agent=agent,
+            role=role,
+            competences_requises=task.competences_requises,
+            score=result.score if result is not None else 0,
+            statut=STATUT_ECHEC,
+            sortie="",
+            erreur=cause,
+            usage=depense,
+            rattrapable=False,
+            au_plafond=True,
+        )
+
+    def fermer(self) -> None:
+        """Abandonne une question encore en vol — le run s'achève ou s'annule."""
+        if self._question is not None and not self._question.done():
+            self._question.cancel()
+
+    async def _demander(self, raison: str) -> DecisionPlafond | None:
+        """Pose la question, attend la réponse, l'applique et la consigne — une fois pour tous."""
+        try:
+            await asyncio.sleep(0)  # que les tâches arrivées ensemble s'inscrivent
+            demande = self._demande(raison)
+            self._consigne_question(demande)
+            decision: DecisionPlafond | None = None
+            motif = ""
+            try:
+                decision = await self._arbitre(demande)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — un canal muet n'invente pas de réponse
+                motif = str(exc) or type(exc).__name__
+            self._applique(decision, demande, motif)
+            return decision
+        finally:
+            self._question = None
+
+    def _demande(self, raison: str) -> DemandePlafond:
+        """Les faits de la question : dépense, plafonds en vigueur, ce qui reste à faire."""
+        total = RunCost.depuis_journal(self._journal).total
+        cout, jetons = self._plafonds.en_vigueur(self._journal.run_id)
+        restantes = tuple(
+            TacheRestante(
+                tache_id=tache.id,
+                titre=tache.titre,
+                interrompue=tache.id in self._mises_de_cote,
+            )
+            for tache in self._restantes()
+            if tache.id not in self._ecartees
+        )
+        return DemandePlafond(
+            run_id=self._journal.run_id,
+            projet_id=self._projet_id,
+            objectif=self._objectif,
+            depense_usd=total.cout_usd,
+            depense_tokens=total.tokens_total,
+            plafond_cout_usd=cout,
+            plafond_tokens=jetons,
+            raison=raison,
+            restantes=restantes,
+        )
+
+    def _applique(
+        self, decision: DecisionPlafond | None, demande: DemandePlafond, motif: str
+    ) -> None:
+        """Applique la réponse : plafond relevé, tâches écartées, ou run arrêté — et le dit."""
+        connues = {tache.tache_id for tache in demande.restantes}
+        if decision is None:
+            self._arrete = True
+            self._motif_arret = motif
+            statut = STATUT_PLAFOND_SANS_DECISION
+            sortie = (
+                f"la décision au plafond n'a pas pu être demandée ({motif}) : le run "
+                "s'arrête sur ce qui est fait"
+            )
+        elif not decision.reprend:
+            self._arrete = True
+            self._arret = decision
+            statut = STATUT_PLAFOND_ARRETE
+            sortie = (
+                "l'utilisateur arrête le run au plafond : il se solde sur ce qui est "
+                f"fait, {len(demande.restantes)} tâche(s) non faite(s)"
+            )
+        else:
+            self._plafonds.relever(
+                self._journal.run_id,
+                cout_usd=decision.plafond_cout_usd,
+                tokens=decision.plafond_tokens,
+            )
+            # Une tâche que la question ne nommait pas ne s'écarte pas : la
+            # personne n'a décidé que de ce qu'on lui a montré.
+            self._ecartees.update(t for t in decision.ecartees if t in connues)
+            self._derniere = decision
+            statut = STATUT_PLAFOND_REDUIT if decision.ecartees else STATUT_PLAFOND_RELEVE
+            sortie = _phrase_de_reprise(decision, demande, self._plafonds.en_vigueur(
+                self._journal.run_id
+            ))
+        detail = decision.detail.strip() if decision is not None else ""
+        self._journal.consigne(
+            etape=ETAPE_PLAFOND,
+            nom="Décision au plafond de dépense",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=statut,
+            entree="",
+            sortie=f"{sortie} — {detail}" if detail else sortie,
+            usage=StepUsage(),
+            projet_id=self._projet_id,
+        )
+
+    def _consigne_question(self, demande: DemandePlafond) -> None:
+        """Écrit au journal que le run attend une décision au plafond, et sur quels faits."""
+        titres = ", ".join(
+            f"« {t.titre} »" + (" (mise de côté)" if t.interrompue else "")
+            for t in demande.restantes
+        )
+        self._journal.consigne(
+            etape=ETAPE_PLAFOND,
+            nom="Plafond de dépense atteint",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=STATUT_PLAFOND_ATTEINT,
+            entree=demande.raison,
+            sortie=(
+                f"budget du run atteint — {_depense_en_clair(demande)} ; "
+                f"reste {len(demande.restantes)} tâche(s)"
+                + (f" : {titres}" if titres else "")
+                + " — le run attend la décision de l'utilisateur : relever, réduire ou arrêter"
+            ),
+            usage=StepUsage(),
+            projet_id=self._projet_id,
+        )
+
+
+def _depense_en_clair(demande: DemandePlafond) -> str:
+    """Ce qui est dépensé face au plafond qui tient — en dollars s'il y en a, en tokens sinon."""
+    morceaux: list[str] = []
+    if demande.plafond_cout_usd is not None and demande.depense_usd is not None:
+        morceaux.append(f"{demande.depense_usd:.2f} $ sur {demande.plafond_cout_usd:.2f} $")
+    if demande.plafond_tokens is not None:
+        morceaux.append(f"{demande.depense_tokens} tokens sur {demande.plafond_tokens}")
+    return " et ".join(morceaux) or f"{demande.depense_tokens} tokens dépensés"
+
+
+def _phrase_de_reprise(
+    decision: DecisionPlafond,
+    demande: DemandePlafond,
+    en_vigueur: tuple[float | None, int | None],
+) -> str:
+    """Ce que la reprise dit au journal : le nouveau plafond, et ce qui ne repart pas."""
+    cout, jetons = en_vigueur
+    morceaux: list[str] = []
+    if decision.plafond_cout_usd is not None and cout is not None:
+        morceaux.append(f"{cout:.2f} $")
+    if decision.plafond_tokens is not None and jetons is not None:
+        morceaux.append(f"{jetons} tokens")
+    plafond = " et ".join(morceaux)
+    phrase = f"plafond relevé à {plafond} — le run reprend"
+    titres = {t.tache_id: t.titre for t in demande.restantes}
+    ecartees = [titres[i] for i in decision.ecartees if i in titres]
+    if ecartees:
+        phrase += " sans " + ", ".join(f"« {titre} »" for titre in ecartees)
+    return phrase
 
 
 #: Le critère que porte le constat d'un renvoi de QA (#1177) : c'est ce que la

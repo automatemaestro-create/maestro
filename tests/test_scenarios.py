@@ -65,6 +65,7 @@ from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
     VALIDATION_APPROUVEE,
@@ -74,6 +75,7 @@ from maestro.controltower.state import (
 from maestro.decideur import Decideur
 from maestro.detail_tache import ETAPE_A_FAIRE, ETAPE_EN_COURS, ETAPE_FAITE
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
+from maestro.engine.plafond import GESTE_ARRETER
 from maestro.outillage.analyse import analyser
 from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, USAGE_DEMARRER, VERIFIEE
@@ -333,6 +335,8 @@ class FausseAPI:
         self.lectures_taches: list[dict[str, str]] = []
         #: Ce que le banc a répondu à chaque demande tranchée : `(tache_id, approuve)`.
         self.decisions: list[tuple[str, bool]] = []
+        #: Ce que le banc a décidé d'un run arrêté sur son plafond : `(run_id, geste)`.
+        self.gestes_au_plafond: list[tuple[str, str]] = []
         self._attente: dict[str, str] = {}
         self._compteur = 0
 
@@ -384,6 +388,8 @@ class FausseAPI:
             return self._recruter(corps or {})
         if chemin == f"{FIL}/cadrage":
             return self._cadrer(corps or {})
+        if chemin.startswith("/api/executions/") and chemin.endswith("/plafond"):
+            return self._au_plafond(chemin.split("/")[3], corps or {})
         if chemin.startswith("/api/executions/"):
             return self._execution(chemin.rsplit("/", 1)[-1])
         if chemin == "/api/taches":
@@ -567,6 +573,11 @@ class FausseAPI:
             if run.run_id == run_id:
                 return Reponse(statut=200, corps=run.to_dict())
         return Reponse(statut=404, corps={"detail": "inconnu"}, texte="inconnu")
+
+    def _au_plafond(self, run_id: str, corps: Mapping[str, Any]) -> Reponse:
+        """`POST /api/executions/{run_id}/plafond` (#1182) — retient le geste du banc."""
+        self.gestes_au_plafond.append((run_id, str(corps.get("geste") or "")))
+        return Reponse(statut=200, corps={})
 
     def _taches(self, params: Mapping[str, str]) -> Reponse:
         """`GET /api/taches?projet=…&run=…` : les cartes du run, sur son projet (#1291)."""
@@ -1405,6 +1416,28 @@ def test_s4_provoque_l_echec_par_une_borne_et_non_par_un_sabotage(tmp_path: Path
     assert issue.vert, issue.motif
     assert api.runs[0].bornes == {"plafond_tokens": 1}
     assert juge.saisines, "l'oracle de S4 passe par le juge"
+
+
+def test_s4_arrete_le_run_suspendu_sur_son_plafond(tmp_path: Path) -> None:
+    """Depuis #1182, un run au plafond **attend** : le banc joue la personne qui arrête.
+
+    Sans ce geste, S4 attendrait jusqu'à son délai un run que rien ne ferait
+    repartir — et relever le plafond dépenserait du vrai modèle que personne n'a
+    accordé. Le geste est noté au déroulé, comme un arbitrage.
+    """
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        _moteur_qui_echoue_sur_la_borne(run, racine)
+        run.statut_en_attente = EXECUTION_EN_ATTENTE_PLAFOND
+        run.lectures_avant_la_fin = 2
+
+    api = FausseAPI(moteur=moteur, explication="le budget du run était épuisé")
+    montage = _banc(tmp_path, api, juge=_juge_oui())
+    issue, ctx = montage.jouer(_scenario("S4"))
+
+    assert issue.vert, issue.motif
+    assert ("run-1", GESTE_ARRETER) in api.gestes_au_plafond
+    assert "plafond de dépense atteint" in [e.libelle for e in ctx.journal.etapes]
 
 
 def test_s4_saisit_le_juge_avec_la_cause_relevee_par_l_api(tmp_path: Path) -> None:

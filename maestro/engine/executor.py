@@ -82,6 +82,11 @@ from maestro.engine.guardrails import (
     Guardrails,
     detail_accorde,
 )
+from maestro.engine.plafond import (
+    STATUT_TACHE_SUSPENDUE,
+    SUFFIXE_ETAPE_PLAFOND,
+    Plafonds,
+)
 from maestro.engine.questions import (
     VERBE_QUESTION,
     ArbitreQuestion,
@@ -540,6 +545,12 @@ class TaskResult:
     échec. `blocages` porte les raisons que l'agent a **signalées** pendant la
     tâche (`signaler_blocage`, #719) : le Chef de projet les lit en jugeant
     l'échec, et peut en tirer un prérequis à proposer.
+
+    `au_plafond` (#1182) dit que la tâche s'est arrêtée sur le **plafond de
+    dépense** du run — interrompue à la mesure qui l'a franchi, ou refusée à
+    l'entrée parce qu'il l'était déjà. Ce n'est pas un échec comme un autre :
+    quand la boucle sait demander, la tâche est mise de côté et reprendra sur la
+    décision de la personne (`maestro.engine.plafond`).
     """
 
     task_id: str
@@ -559,6 +570,7 @@ class TaskResult:
     rattrapable: bool = True
     prerequis: PrerequisManquant | None = None
     blocages: tuple[str, ...] = ()
+    au_plafond: bool = False
 
     @property
     def ok(self) -> bool:
@@ -585,6 +597,7 @@ class TaskResult:
             "rattrapable": self.rattrapable,
             "prerequis": self.prerequis.to_dict() if self.prerequis is not None else None,
             "blocages": list(self.blocages),
+            "au_plafond": self.au_plafond,
         }
 
     @classmethod
@@ -624,6 +637,9 @@ class TaskResult:
                 else None
             ),
             blocages=tuple(str(b) for b in data.get("blocages") or ()),
+            # Absent d'un résultat venu d'un worker d'avant #1182 : faux — l'arrêt
+            # sec était alors la seule conduite.
+            au_plafond=bool(data.get("au_plafond", False)),
         )
 
 
@@ -716,6 +732,18 @@ class TaskExecutor(ABC):
         """
         return None
 
+    @property
+    def plafonds(self) -> Plafonds | None:
+        """Les plafonds en vigueur que la boucle peut relever (#1182) — None : aucun.
+
+        Au plafond, la boucle ne suspend un run que si elle peut, sur décision,
+        **relever** son plafond là où les tâches le relisent. None par défaut, et
+        c'est une limite dite : un exécuteur distribué
+        (`maestro.queue.CeleryExecutor`) arme ses plafonds côté worker, où la
+        décision ne voyage pas — ses runs gardent l'arrêt sec d'avant.
+        """
+        return None
+
     def suspendue(self, result: TaskResult) -> bool:
         """L'étape de ce résultat a-t-elle été consignée « suspendue » plutôt qu'échouée ? (#1181)
 
@@ -767,6 +795,7 @@ class LocalExecutor(TaskExecutor):
         juge: JugeDesTentatives | None = None,
         suspendre_sur_prerequis: bool = False,
         registre_mcp: Callable[[], RegistreMcp] | None = None,
+        plafonds: Plafonds | None = None,
     ) -> None:
         self._provider = provider
         # Une tâche à qui il manque un prérequis constaté (#1181) est **suspendue**
@@ -931,6 +960,11 @@ class LocalExecutor(TaskExecutor):
         # validation par tâche. Le défaut laisse plafond et time-out inactifs
         # mais garde la détection d'actions sensibles (refusées sans validateur).
         self._guardrails = guardrails if guardrails is not None else Guardrails()
+        # Les plafonds **en vigueur** de chaque run (#1182) : ceux des garde-fous au
+        # départ, relevés quand la personne le décide au plafond. La boucle passe
+        # le sien, qu'elle partage avec le juge des échecs ; seul, l'exécuteur tient
+        # ceux de ses garde-fous, et rien ne les relève.
+        self._plafonds = plafonds if plafonds is not None else Plafonds.de(self._guardrails)
         # Runtimes outillés (#1037) : **None** — le cas nominal — veut dire « résolus
         # depuis la fiche de l'agent routé », à chaque tâche, comme le playbook, les
         # serveurs MCP et la politique de permissions. Tout agent du catalogue a donc un
@@ -997,19 +1031,10 @@ class LocalExecutor(TaskExecutor):
         agent_execute: Agent | None = None
         # Un contrôle par exécution (#56) : il ne compte rien lui-même, il relit
         # le grand livre du `journal` à chaque mesure — planification et tâches
-        # achevées comptent autant que la tâche courante.
-        plafond = (
-            PlafondDepense(
-                journal,
-                self._guardrails.plafond_cout_usd,
-                plafond_tokens=self._guardrails.plafond_tokens,
-            )
-            if (
-                self._guardrails.plafond_cout_usd is not None
-                or self._guardrails.plafond_tokens is not None
-            )
-            else None
-        )
+        # achevées comptent autant que la tâche courante. Le plafond est celui **en
+        # vigueur** pour ce run (#1182) : relevé sur décision, il tient ici dès la
+        # tâche suivante.
+        plafond = self._plafonds.controle(journal)
         # Le relevé d'usage en cours (#835) : à chaque mesure que le fournisseur
         # signale, le cumul de la tâche part au journal — donc à la Control
         # Tower — au lieu d'attendre l'étape finale. Armé sur le collecteur de
@@ -1151,6 +1176,16 @@ class LocalExecutor(TaskExecutor):
             ),
             blocages=tuple(blocages),
         )
+        if result.au_plafond and self._plafonds.suspend(journal.run_id):
+            # Au plafond, la tâche n'est pas soldée (#1182) : elle est **mise de
+            # côté**, et la boucle demande à la personne ce qu'elle veut. Ni
+            # écart de checklist ni fusion — l'un et l'autre se disent à la
+            # clôture, qui n'a pas eu lieu —, et pas d'étape finale : le Kanban
+            # garde la tâche « en cours », elle reprendra ou sera soldée sur la
+            # décision. Sa branche a déjà reçu ce que le worktree portait
+            # (`_solder_la_branche`) : rien de son travail n'est perdu.
+            self._consigne_mise_de_cote(task, agent_execute, result, journal)
+            return result
         # L'écart entre le verdict et la checklist (#944) : dit **avant** l'étape
         # terminale, pour qu'il soit déjà au journal quand la tâche s'y annonce
         # terminée — une tâche ne peut pas s'afficher « Terminée » sur une
@@ -1326,6 +1361,49 @@ class LocalExecutor(TaskExecutor):
             usage=StepUsage(),
             projet_id=task.projet_id,
             verification={**verdict.to_dict(), "livraison": livraison},
+        )
+
+    @property
+    def plafonds(self) -> Plafonds:
+        """Les plafonds en vigueur de chaque run — ceux que la boucle relève (#1182)."""
+        return self._plafonds
+
+    def _consigne_mise_de_cote(
+        self,
+        task: Task,
+        agent: Agent | None,
+        result: TaskResult,
+        journal: RunJournal,
+    ) -> None:
+        """Écrit au journal qu'une tâche est mise de côté au plafond (#1182) — sa dépense comprise.
+
+        Étape annexe `<tâche>:plafond`, et c'est elle qui porte l'usage de la
+        tentative interrompue : c'est ce qui la fait entrer au grand livre, donc
+        compter sous le plafond relu à chaque mesure, sans solder la tâche. Le
+        pont en fait une activité de la tâche — elle ne change pas de colonne.
+
+        Une tâche **jamais démarrée** (le budget était déjà atteint quand elle
+        s'est présentée) ne laisse rien : elle n'a ni travail à conserver ni
+        dépense à compter, et une ligne par tâche en attente ne dirait rien que la
+        question du run ne dise déjà.
+        """
+        if agent is None:
+            return
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_PLAFOND}",
+            nom=task.titre,
+            agent=agent.nom,
+            role=agent.role,
+            statut=STATUT_TACHE_SUSPENDUE,
+            entree="",
+            sortie=(
+                "tâche mise de côté : le budget du run est atteint, son travail est "
+                "conservé et elle reprendra sur la décision de l'utilisateur"
+            ),
+            erreur=result.erreur,
+            usage=result.usage,
+            ticket=task.ticket,
+            projet_id=task.projet_id,
         )
 
     def _equipe(self, projet_id: str | None) -> tuple[Agent, ...] | None:
@@ -2528,7 +2606,10 @@ class LocalExecutor(TaskExecutor):
                         erreur=_avec_recette(_avec_stderr_cli(cause, stderr_cli), recette),
                         # Le budget du run est dépensé (#1178) : c'est une borne,
                         # pas un échec à rattraper — une tentative de plus coûterait.
+                        # Et c'est la personne qui en décide (#1182) : la boucle
+                        # met la tâche de côté et lui demande.
                         rattrapable=not isinstance(exc, PlafondDepenseDepasse),
+                        au_plafond=isinstance(exc, PlafondDepenseDepasse),
                         # Un serveur MCP injoignable (#1181) : ce qui manque est
                         # constaté, en données — la procédure d'accès que la
                         # bibliothèque connaît voyage avec l'échec, pour que la
@@ -3782,7 +3863,13 @@ def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResu
         plafond.verifie(StepUsage())
     except PlafondDepenseDepasse as exc:
         return _echec(
-            task, agent="—", role="non exécutée", score=0, erreur=str(exc), rattrapable=False
+            task,
+            agent="—",
+            role="non exécutée",
+            score=0,
+            erreur=str(exc),
+            rattrapable=False,
+            au_plafond=True,
         )
     return None
 
@@ -3887,12 +3974,15 @@ def _echec(
     erreur: str,
     rattrapable: bool = True,
     prerequis: PrerequisManquant | None = None,
+    au_plafond: bool = False,
 ) -> TaskResult:
     """Construit un `TaskResult` en échec pour `task` (sortie vide, cause consignée).
 
     `rattrapable=False` pour un échec qui est une décision — refus humain, budget
     dépensé (#1178, `TaskResult.rattrapable`). `prerequis` pour un échec dont la
     cause est un prérequis manquant constaté (#1181, `TaskResult.prerequis`).
+    `au_plafond=True` quand c'est le plafond de dépense qui l'arrête (#1182,
+    `TaskResult.au_plafond`).
     """
     return TaskResult(
         task_id=task.id,
@@ -3906,6 +3996,7 @@ def _echec(
         erreur=erreur,
         rattrapable=rattrapable,
         prerequis=prerequis,
+        au_plafond=au_plafond,
     )
 
 

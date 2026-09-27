@@ -11,6 +11,7 @@ import {
   EXECUTION_ECHEC,
   EXECUTION_EN_ATTENTE_ARBITRAGE,
   EXECUTION_EN_ATTENTE_BRIEF,
+  EXECUTION_EN_ATTENTE_PLAFOND,
   EXECUTION_EN_ATTENTE_REPONSES,
   EXECUTION_EN_COURS,
   EXECUTION_TERMINEE,
@@ -52,6 +53,26 @@ export function formatCout(cout: number | null): string {
   if (cout === null) return "—";
   if (cout > 0 && cout < CENTIME / 2) return `< ${FORMAT_COUT.format(CENTIME)}`;
   return FORMAT_COUT.format(cout);
+}
+
+/** Le nombre seul, au format des montants — pour une borne dont l'unité suit. */
+const FORMAT_MONTANT = new Intl.NumberFormat("fr-FR", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * Une **fourchette estimée** de dépense : « ≈ 2,22 à 5,46 $US » — l'unité une
+ * fois, à la fin (#1182).
+ *
+ * Née de la relecture des variantes de #1182 : écrite « ≈ 2,22 $US à 5,46 $US »,
+ * la fourchette se tronquait dans sa tuile (« 5,46… »), et c'est précisément le
+ * chiffre qui répond à « que coûtera la fin » qui disparaissait. Le « ≈ » dit
+ * l'estimation, la fourchette dit qu'elle n'est pas un montant — les deux
+ * restent, seul le « $US » répété part.
+ */
+export function formatFourchetteCout(bas: number, haut: number): string {
+  return `≈ ${FORMAT_MONTANT.format(bas)} à ${FORMAT_COUT.format(haut)}`;
 }
 
 /** Le qualificatif d'un montant qui ne couvre pas tout ce qui a été consommé (#1280). */
@@ -478,6 +499,9 @@ const LIBELLES_STATUT_EXECUTION: Record<string, string> = {
   // (#571) : c'est le même fait, et deux formulations pour un run selon qu'on lit
   // son badge ou son statut brut feraient chercher deux états.
   [EXECUTION_EN_ATTENTE_ARBITRAGE]: "Validation en attente",
+  // Même règle (#1182) : le libellé de la table `ATTENTES`, et celui que le fil
+  // dit du même statut (`maestro/controltower/orchestration.py`), au mot près.
+  [EXECUTION_EN_ATTENTE_PLAFOND]: "Budget atteint",
 };
 
 /** Le libellé d'un statut de run, ou le statut brut si le flux s'est enrichi. */

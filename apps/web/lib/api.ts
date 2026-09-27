@@ -26,6 +26,7 @@ import type {
   ConversationsChat,
   CorrectionEquipe,
   DecisionBrief,
+  DecisionPlafond,
   DecisionPiece,
   DeclarationProjet,
   DecisionsRun,
@@ -2328,6 +2329,28 @@ export function deciderBrief(
 ): Promise<void> {
   return envoyerJson(
     `/api/executions/${encodeURIComponent(runId)}/brief/decision`,
+    decision,
+    "décision refusée",
+  );
+}
+
+/**
+ * Tranche un run arrêté sur son **plafond de dépense**
+ * (`POST /api/executions/{run_id}/plafond`, #1182) : relever le plafond, réduire
+ * la portée en écartant des tâches, ou arrêter. Rend le résumé du run, reparti ou
+ * en train de se solder.
+ *
+ * Les refus du backend sont relayés tels quels, et c'est leur message qui
+ * s'affiche : `409` si le run n'attend plus cette décision (tranchée ailleurs, run
+ * annulé entre-temps), `422` si elle ne se tient pas — un plafond qui ne couvre
+ * même pas ce qui est déjà dépensé, une réduction qui écarte tout.
+ */
+export function deciderPlafond(
+  runId: string,
+  decision: DecisionPlafond,
+): Promise<ResumeExecution> {
+  return envoyerJsonEtLire<ResumeExecution>(
+    `/api/executions/${encodeURIComponent(runId)}/plafond`,
     decision,
     "décision refusée",
   );
