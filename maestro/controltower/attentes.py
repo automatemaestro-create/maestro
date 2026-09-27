@@ -24,7 +24,20 @@ Le motif d'un refus (#272) voyage dans le `detail` de l'événement de décision
 projection le recopie dans `decision` : c'est ce que l'écran relit et ce que le
 journal durable garde. `detail_de_la_decision` le compose, **une fois** : un refus
 tranché depuis le fil porte donc exactement la raison qu'un refus motivé depuis
-l'écran des validations — et c'est ce champ-là que #1185 portera jusqu'à l'agent.
+l'écran des validations.
+
+Depuis #1185 il voyage **aussi** dans un champ à lui (`Event.motif`) : c'est une
+**consigne**, que le moteur rend à l'agent pour qu'il replanifie son geste au lieu
+d'abandonner. `detail` reste la phrase qu'on affiche ; le champ est le fait qu'on
+transmet, et personne n'a à le retrouver dans la phrase.
+
+## Une approbation peut valoir pour la suite
+
+L'**étendue** d'une approbation (#1185, `maestro.decision_humaine`) — cet appel, ou
+l'outil pour la suite du run ou du projet — est un choix de la personne, admis ici
+et **seulement pour un acte** : une demande sans outil n'a rien à ne plus redemander.
+Un accord étendu s'écrit dans les permissions de l'agent (`maestro.agents.accords`)
+**avant** que la décision parte : l'appel suivant de l'agent le trouve déjà.
 
 ## Ce qui reprend, dit depuis l'attente
 
@@ -38,7 +51,8 @@ fil le dit (`ReglementFait.suite`) — sans jamais le deviner d'un texte :
   travail s'écrit pour une demande d'écriture dans le projet (#227) ;
 - un **refus** écarte l'acte, et l'agent poursuit sa tâche sans lui
   (`motif_refus`) ; pour une demande d'écriture, rien n'est écrit ; ailleurs,
-  l'action demandée n'a pas lieu ;
+  l'action demandée n'a pas lieu. Avec une **consigne** (#1185), l'agent repart
+  d'elle et sa nouvelle action sera soumise à son tour ;
 - sur un run **déjà soldé**, rien ne reprend : la réponse ou la décision est
   consignée, et le fil le dit ainsi (vu sur la vraie stack, où un refus tranché après
   la fin du run annonçait encore que l'agent poursuivait sa tâche).
@@ -52,6 +66,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from maestro.agents.accords import AccordStore
 from maestro.controltower.events import (
     EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_VALIDATION_DECISION,
@@ -64,6 +79,7 @@ from maestro.controltower.reglements import (
     GENRE_VALIDATION,
     MOTIF_ATTENTE_INCONNUE,
     MOTIF_ATTENTE_REGLEE,
+    MOTIF_ETENDUE_REFUSEE,
     MOTIF_REPONSE_VIDE,
     REGLEMENT_APPROBATION,
     REGLEMENT_REFUS,
@@ -82,6 +98,14 @@ from maestro.controltower.state import (
     ControlTowerState,
     EtatQuestion,
     EtatValidation,
+)
+from maestro.decision_humaine import (
+    ETENDUE_APPEL,
+    ETENDUE_PROJET,
+    ETENDUE_RUN,
+    ETENDUES,
+    ETENDUES_DURABLES,
+    portee_de_l_etendue,
 )
 
 #: Combien d'un objet (question, acte, description) une carte recopie. La lecture du
@@ -103,14 +127,25 @@ _PHRASE_REPONSE_VIDE = (
 )
 
 
-def detail_de_la_decision(approuve: bool, motif: str = "") -> str:
+def detail_de_la_decision(
+    approuve: bool, motif: str = "", etendue: str = ETENDUE_APPEL, outil: str = ""
+) -> str:
     """Le `detail` d'une décision de validation — là où voyage la raison d'un refus (#272).
 
     La **seule** composition de ce texte : la route de l'écran des validations et le
     fil la partagent, si bien qu'un refus motivé porte la même raison, au caractère
     près, d'où qu'il vienne. Vide ou absent, le motif laisse la phrase d'avant #272.
+
+    Une approbation **étendue** (#1185) le dit — c'est la ligne que « Déjà
+    tranchées » et le journal garderont d'un accord qui dépasse l'appel. À l'unité,
+    la phrase est celle d'avant, au caractère près.
     """
     if approuve:
+        if etendue in ETENDUES_DURABLES and outil:
+            return (
+                "approuvée depuis la Control Tower — et pour "
+                f"{portee_de_l_etendue(etendue, outil)}"
+            )
         return "approuvée depuis la Control Tower"
     motif = motif.strip()
     if motif:
@@ -174,6 +209,11 @@ class ServiceAttentes:
     `state` est la projection que les routes lisent, `bus` celui où le moteur attend.
     `horloge` rend l'instant présent — injectable, pour qu'un test dise « l'échéance
     est passée » sans attendre qu'elle le soit.
+
+    `accords` (#1185) rend le dépôt des accords étendus d'un projet (`None` : les
+    gabarits) — là où une approbation étendue s'écrit. Sans lui, une étendue durable
+    est refusée : un accord qu'on ne peut pas écrire serait un oui qu'on redemande
+    au prochain appel, c'est-à-dire une promesse que l'écran ne tiendrait pas.
     """
 
     def __init__(
@@ -182,10 +222,12 @@ class ServiceAttentes:
         bus: EventBus,
         *,
         horloge: Callable[[], datetime] | None = None,
+        accords: Callable[[str | None], AccordStore] | None = None,
     ) -> None:
         self._state = state
         self._bus = bus
         self._horloge = horloge or (lambda: datetime.now(UTC))
+        self._accords = accords
 
     # ── Lire ───────────────────────────────────────────────────────────────────
 
@@ -255,12 +297,57 @@ class ServiceAttentes:
             )
         return None
 
-    def suite(self, action: str, identifiant: str) -> str:
+    def refus_de_l_etendue(
+        self, validation: EtatValidation, etendue: str
+    ) -> ReglementRefuse | None:
+        """Le refus qu'une approbation **étendue** recevrait, `None` si elle passe (#1185).
+
+        `422` à chaque fois, et chacun dit ce qui manque : une étendue inconnue ; une
+        demande qui ne porte pas d'**acte** (une tâche, un diff — il n'y a pas d'outil
+        à ne plus redemander) ; un run introuvable pour un accord de run, un projet
+        pour un accord de projet ; un dépôt d'accords absent.
+        """
+        if etendue not in ETENDUES:
+            return ReglementRefuse(
+                MOTIF_ETENDUE_REFUSEE,
+                f"étendue inconnue : {etendue!r} ({', '.join(ETENDUES)}).",
+            )
+        if etendue not in ETENDUES_DURABLES:
+            return None
+        if not validation.outil:
+            return ReglementRefuse(
+                MOTIF_ETENDUE_REFUSEE,
+                "cette demande ne porte pas d'acte : il n'y a pas d'outil à ne plus "
+                "redemander — elle s'approuve pour elle seule.",
+            )
+        if etendue == ETENDUE_RUN and not validation.run_id:
+            return ReglementRefuse(
+                MOTIF_ETENDUE_REFUSEE,
+                "cette demande ne relève d'aucun run : l'accord ne peut pas valoir pour "
+                "la suite du run.",
+            )
+        if etendue == ETENDUE_PROJET and not validation.projet_id:
+            return ReglementRefuse(
+                MOTIF_ETENDUE_REFUSEE,
+                "cette demande ne relève d'aucun projet : l'accord ne peut pas valoir "
+                "pour le projet.",
+            )
+        if self._accords is None:
+            return ReglementRefuse(
+                MOTIF_ETENDUE_REFUSEE,
+                "aucun dépôt d'accords n'est câblé sur cette Control Tower : l'accord ne "
+                "pourrait pas être gardé.",
+            )
+        return None
+
+    def suite(self, action: str, identifiant: str, texte: str = "") -> str:
         """Ce que ce règlement fera, dit **avant** qu'il parte — `""` si rien ne le dit.
 
         La phrase que la carte du fil montre sous la question, et celle que le fait
         redira une fois le règlement parti (`regler`) : une seule rédaction de « ce qui
-        va se passer », au service qui le fera.
+        va se passer », au service qui le fera. `texte` est la raison d'un refus, qui
+        revient à l'agent comme consigne (#1185) : la carte le dit comme le fait le
+        redira.
         """
         if action == REGLEMENT_REPONSE:
             question = self._state.question(identifiant)
@@ -270,7 +357,10 @@ class ServiceAttentes:
         validation = self._state.validation(identifiant)
         if validation is None:
             return ""
-        return self._suite_de_la_decision(validation, approuve=action == REGLEMENT_APPROBATION)
+        approuve = action == REGLEMENT_APPROBATION
+        return self._suite_de_la_decision(
+            validation, approuve=approuve, motif="" if approuve else texte
+        )
 
     def refus_du_reglement(
         self, action: str, identifiant: str, texte: str = ""
@@ -322,19 +412,49 @@ class ServiceAttentes:
         return question
 
     async def trancher(
-        self, tache_id: str, *, approuve: bool, motif: str = ""
+        self,
+        tache_id: str,
+        *,
+        approuve: bool,
+        motif: str = "",
+        etendue: str = ETENDUE_APPEL,
     ) -> EtatValidation:
-        """Tranche une demande de validation : l'état d'abord, le bus ensuite (#48).
+        """Tranche une demande de validation : l'accord, l'état, puis le bus (#48).
 
-        Lève `ReglementRefuse` sur une demande inconnue ou déjà tranchée. Le `motif`
-        d'un refus voyage dans le `detail` (`detail_de_la_decision`) ; il est ignoré sur
-        une approbation.
+        Lève `ReglementRefuse` sur une demande inconnue ou déjà tranchée, ou sur une
+        étendue que la demande ne permet pas (`refus_de_l_etendue`). Le `motif` d'un
+        refus est une **consigne** (#1185) : il voyage dans le `detail`
+        (`detail_de_la_decision`) et dans `Event.motif`, que le moteur rend à
+        l'agent ; il est ignoré sur une approbation. L'`etendue` est ignorée sur un
+        refus.
+
+        Une approbation étendue **écrit son accord d'abord** — dans les permissions
+        de l'agent, au projet de la demande —, puis publie : le moteur, qui reprend
+        à la décision, trouvera l'accord dès l'appel suivant. Dans l'autre ordre, un
+        agent rapide redemanderait ce qu'on vient d'accorder.
         """
         refus = self.refus_de_la_decision(tache_id)
         if refus is not None:
             raise refus
         demande = self._state.validation(tache_id)
         assert demande is not None  # vérifiée par `refus_de_la_decision`
+        etendue = etendue if approuve else ETENDUE_APPEL
+        refus = self.refus_de_l_etendue(demande, etendue)
+        if refus is not None:
+            raise refus
+        consigne = "" if approuve else motif.strip()
+        if etendue in ETENDUES_DURABLES:
+            assert self._accords is not None  # vérifié par `refus_de_l_etendue`
+            try:
+                self._accords(demande.projet_id).accorder(
+                    agent=demande.agent,
+                    outil=demande.outil,
+                    etendue=etendue,
+                    run_id=demande.run_id,
+                    tache_id=tache_id,
+                )
+            except ValueError as exc:
+                raise ReglementRefuse(MOTIF_ETENDUE_REFUSEE, str(exc)) from exc
         event = Event(
             type=EVENEMENT_VALIDATION_DECISION,
             tache_id=tache_id,
@@ -342,10 +462,13 @@ class ServiceAttentes:
             agent=demande.agent,
             role=demande.role,
             statut=VALIDATION_APPROUVEE if approuve else VALIDATION_REFUSEE,
-            detail=detail_de_la_decision(approuve, "" if approuve else motif),
+            detail=detail_de_la_decision(approuve, consigne, etendue, demande.outil),
             # Le projet de la validation (#277), recollé par la projection depuis sa
             # tâche : la décision doit atteindre le flux du projet où elle se joue.
             projet_id=demande.projet_id,
+            # Les faits que le moteur lit (#1185) — jamais retrouvés dans `detail`.
+            motif=consigne,
+            etendue=etendue if etendue in ETENDUES_DURABLES else "",
         )
         self._state.appliquer(event)
         await self._bus.publish(event)
@@ -378,7 +501,7 @@ class ServiceAttentes:
             action,
             attente=validation_visee(validation),
             texte=motif,
-            suite=self._suite_de_la_decision(validation, approuve=approuve),
+            suite=self._suite_de_la_decision(validation, approuve=approuve, motif=motif),
         )
 
     def _run_solde(self, run_id: str) -> bool:
@@ -391,12 +514,14 @@ class ServiceAttentes:
         execution = self._state.execution(run_id) if run_id else None
         return execution is not None and execution.statut in STATUTS_EXECUTION_TERMINAUX
 
-    def _suite_de_la_decision(self, validation: EtatValidation, *, approuve: bool) -> str:
+    def _suite_de_la_decision(
+        self, validation: EtatValidation, *, approuve: bool, motif: str = ""
+    ) -> str:
         """Ce qu'une décision fait au travail — rien, si son run est déjà soldé."""
         if self._run_solde(validation.run_id):
             consigne = "l'approbation est consignée" if approuve else "le refus est consigné"
             return f"son run est déjà soldé : {consigne}, et rien ne reprend"
-        return suite_de_la_decision(validation, approuve=approuve)
+        return suite_de_la_decision(validation, approuve=approuve, motif=motif)
 
     def _suite_de_la_reponse(self, question: EtatQuestion) -> str:
         """Ce qu'une réponse fait à l'agent — il reprend, ou elle le rattrapera (#1025)."""
@@ -414,17 +539,30 @@ class ServiceAttentes:
         return "l'agent attendait cette réponse : il la lit et reprend sa tâche"
 
 
-def suite_de_la_decision(validation: EtatValidation, *, approuve: bool) -> str:
+def suite_de_la_decision(
+    validation: EtatValidation, *, approuve: bool, motif: str = ""
+) -> str:
     """Ce qu'une décision fait au travail, lu sur la **structure** de la demande.
 
     Un outil : un acte, arbitré au moment où il a lieu (#583) — refusé, l'agent
     poursuit sans lui (`motif_refus`). Un diff : une écriture dans le projet (#227) —
     refusée, rien n'est écrit et le travail reste consultable. Ailleurs, une tâche ou
     une action que l'agent a lui-même soumise : refusée, elle n'a pas lieu.
+
+    Un refus **avec consigne** (#1185) ne dit plus « sans lui » : l'agent — ou la
+    tâche, pour une validation de tâche — repart de ce qu'on lui a dit, et ce qu'il
+    en tire revient à la personne s'il le demande. Pour un diff, la consigne est
+    consignée mais l'écriture n'a pas d'autre forme à prendre.
     """
+    consigne = "" if approuve else motif.strip()
     if validation.outil:
         if approuve:
             return "l'appel s'exécute et la tâche reprend"
+        if consigne:
+            return (
+                "l'appel est écarté : l'agent reçoit votre consigne et replanifie son "
+                "geste — sa nouvelle action vous sera soumise si elle le demande"
+            )
         return "l'appel est écarté : l'agent poursuit sa tâche sans lui"
     if validation.diff is not None:
         if approuve:
@@ -432,6 +570,11 @@ def suite_de_la_decision(validation: EtatValidation, *, approuve: bool) -> str:
         return "rien n'est écrit dans le projet, et le travail reste consultable"
     if approuve:
         return "la tâche reprend"
+    if consigne:
+        return (
+            "l'action n'a pas lieu telle quelle : votre consigne revient à l'agent, qui "
+            "repart d'elle — ce qu'il en tire vous sera soumis s'il le demande"
+        )
     return "l'action demandée n'aura pas lieu"
 
 

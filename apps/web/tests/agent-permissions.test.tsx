@@ -31,7 +31,11 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContenuOngletAgent } from "@/components/ContenuOngletAgent";
-import type { AgentCatalogueDetail, PolitiquePermissions } from "@/lib/types";
+import type {
+  AccordEtendu,
+  AgentCatalogueDetail,
+  PolitiquePermissions,
+} from "@/lib/types";
 
 import { ficheCatalogueFactice, rendreAvecEtat } from "./aides";
 
@@ -60,8 +64,21 @@ vi.mock("@/lib/api", async (importOriginal) => {
         ? Promise.resolve()
         : Promise.reject(new Error(refus));
     },
+    // Le retrait d'un accord (#1185) : l'API rend ceux qui restent.
+    retirerAccord: (agent: string, id: string) => {
+      retraits.push({ agent, id });
+      if (refus !== null) return Promise.reject(new Error(refus));
+      accordsServis = accordsServis.filter((a) => a.id !== id);
+      return Promise.resolve(accordsServis);
+    },
   };
 });
+
+/** Les accords que l'API tient encore (#1185) — ce que `retirerAccord` rendra. */
+let accordsServis: AccordEtendu[] = [];
+
+/** Les retraits demandés, dans l'ordre. */
+const retraits: { agent: string; id: string }[] = [];
 
 /** Les outils que la fiche suggère — les trois origines de `permissions_outils`. */
 const OUTILS_EXPOSES = [
@@ -111,8 +128,75 @@ function derniereEcriture() {
 
 beforeEach(() => {
   ecrites.length = 0;
+  retraits.length = 0;
+  accordsServis = [];
   refus = null;
   poserFiche();
+});
+
+describe("⑤ ce qui a été accordé pour la suite se voit et se retire (#1185)", () => {
+  const POUR_LE_RUN: AccordEtendu = {
+    id: "a-run",
+    agent: "dev",
+    outil: "Bash",
+    etendue: "run",
+    run_id: "run-1",
+    tache_id: "t-1",
+    accorde_le: "2026-09-27T10:00:00+00:00",
+  };
+  const POUR_LE_PROJET: AccordEtendu = {
+    ...POUR_LE_RUN,
+    id: "a-projet",
+    outil: "mcp__slack__send_message",
+    etendue: "projet",
+    run_id: "",
+  };
+
+  it("dit qu'il n'y en a aucun, et comment on en donne un", async () => {
+    await monter();
+
+    expect(within(section()).getByText("Accordés pour la suite")).toBeInTheDocument();
+    // Sans prétendre qu'une personne tranche tout : une entrée `ask` peut être `auto`.
+    expect(
+      within(section()).getByText(/Aucun — aucune approbation n.a été étendue/),
+    ).toBeInTheDocument();
+  });
+
+  it("montre chaque accord avec son outil et sa portée, et le retire d'un geste", async () => {
+    accordsServis = [POUR_LE_RUN, POUR_LE_PROJET];
+    poserFiche({ permissions_accords: [POUR_LE_RUN, POUR_LE_PROJET] });
+    const { utilisateur } = await monter();
+
+    const liste = within(section()).getByRole("list", { name: "Accords pour la suite de dev" });
+    expect(within(liste).getByText("Bash")).toBeInTheDocument();
+    expect(within(liste).getByText("ce run · run-1")).toBeInTheDocument();
+    expect(within(liste).getByText("mcp__slack__send_message")).toBeInTheDocument();
+    expect(within(liste).getByText("ce projet")).toBeInTheDocument();
+
+    await utilisateur.click(
+      within(liste).getByRole("button", { name: "Retirer l'accord Bash pour ce run · run-1" }),
+    );
+
+    await waitFor(() => expect(within(liste).queryByText("Bash")).not.toBeInTheDocument());
+    expect(retraits).toEqual([{ agent: "dev", id: "a-run" }]);
+    // Ce que l'API a rendu fait foi : l'autre accord reste.
+    expect(within(liste).getByText("mcp__slack__send_message")).toBeInTheDocument();
+  });
+
+  it("garde la liste et nomme la cause quand le retrait est refusé", async () => {
+    accordsServis = [POUR_LE_RUN];
+    poserFiche({ permissions_accords: [POUR_LE_RUN] });
+    refus = "aucun accord 'a-run' pour l'agent dev — déjà retiré ?";
+    const { utilisateur } = await monter();
+
+    await utilisateur.click(within(section()).getByRole("button", { name: /Retirer l'accord Bash/ }));
+
+    expect(await within(section()).findByRole("alert")).toHaveTextContent(
+      "Retrait refusé : aucun accord 'a-run' pour l'agent dev — déjà retiré ?",
+    );
+    const liste = within(section()).getByRole("list", { name: "Accords pour la suite de dev" });
+    expect(within(liste).getByText("Bash")).toBeInTheDocument();
+  });
 });
 
 describe("① chaque geste écrit, et l'écran ne devance pas l'API", () => {

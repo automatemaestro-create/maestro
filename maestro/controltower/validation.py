@@ -21,7 +21,15 @@ plus l'ordre des lignes de l'exécuteur.
 Le contrat est celui du `Validateur` des garde-fous : approbation → le moteur
 reprend la tâche ; refus → il l'annule proprement avant toute exécution ; dans
 les deux cas la décision est consignée au journal (#8, étape
-`<tâche>:validation`). Fail-safe hérité : si le bus est en panne (Redis
+`<tâche>:validation`).
+
+⚠ Depuis #1185, un refus **avec consigne** n'annule plus rien : la consigne revient
+à l'agent (ou à la tâche, pour une validation de tâche), qui repart d'elle, et la
+nouvelle action repasse par ici. Le validateur rend alors une `DecisionHumaine` —
+verdict, consigne, étendue — au lieu d'un booléen ; une décision qui ne dit rien de
+plus qu'un oui ou un non reste un booléen, au caractère près.
+
+Fail-safe hérité : si le bus est en panne (Redis
 injoignable…), l'exception remonte aux garde-fous qui **refusent** la demande —
 jamais d'action sensible sans accord explicite.
 
@@ -60,6 +68,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.persistence import bus_durable
 from maestro.controltower.state import VALIDATION_APPROUVEE, VALIDATION_EN_ATTENTE
+from maestro.decision_humaine import ETENDUE_APPEL, DecisionHumaine
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
 from maestro.projets.application import (
     APPLICATION_APPROUVEE,
@@ -140,8 +149,8 @@ class ValidateurControlTower:
     def __init__(self, bus: EventBus) -> None:
         self._bus = bus
 
-    async def __call__(self, demande: DemandeValidation) -> bool:
-        """Publie la demande puis rend la décision humaine (True = approuvée)."""
+    async def __call__(self, demande: DemandeValidation) -> bool | DecisionHumaine:
+        """Publie la demande puis rend la décision humaine (vraie = approuvée)."""
         flux = self._bus.subscribe()
         ecoute = asyncio.create_task(_premiere_decision(flux, demande.task_id))
         # Laisse l'abonnement se poser avant de publier (bus mémoire : un tour
@@ -158,12 +167,19 @@ class ValidateurControlTower:
                     await ecoute
 
 
-async def _premiere_decision(flux: AsyncIterator[Event], tache_id: str) -> bool:
-    """Attend sur `flux` la décision visant `tache_id` ; True si approuvée.
+async def _premiere_decision(
+    flux: AsyncIterator[Event], tache_id: str
+) -> bool | DecisionHumaine:
+    """Attend sur `flux` la décision visant `tache_id` ; vraie si approuvée.
 
     Ignore tout le reste du bus (statuts de tâches, autres validations…). Si le
     flux se tarit sans décision (bus refermé), lève — les garde-fous muent
     l'exception en refus (fail-safe), pas en fausse décision humaine.
+
+    Rend une `DecisionHumaine` quand l'événement en dit plus qu'un oui ou un non
+    (#1185) — la consigne d'un refus (`Event.motif`), l'étendue d'une approbation
+    (`Event.etendue`) —, et le booléen d'avant sinon. Les deux champs sont lus
+    **sur l'événement**, jamais dans la phrase de `detail` qui les répète.
     """
     try:
         async for event in flux:
@@ -171,7 +187,14 @@ async def _premiere_decision(flux: AsyncIterator[Event], tache_id: str) -> bool:
                 continue
             if event.tache_id != tache_id:
                 continue
-            return event.statut == VALIDATION_APPROUVEE
+            approuve = event.statut == VALIDATION_APPROUVEE
+            motif = "" if approuve else event.motif.strip()
+            etendue = event.etendue if approuve else ""
+            if not motif and etendue in ("", ETENDUE_APPEL):
+                return approuve
+            return DecisionHumaine(
+                approuve=approuve, motif=motif, etendue=etendue or ETENDUE_APPEL
+            )
     finally:
         aclose = getattr(flux, "aclose", None)
         if aclose is not None:

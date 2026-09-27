@@ -75,6 +75,14 @@ faute de sujet est plus forte qu'une propriété tenue par un routage correct.
 Le fail-safe, lui, n'a pas bougé : pas de validateur pour un acte humain, ou un
 validateur en panne — refus, toujours.
 
+**Une décision humaine dit plus qu'un oui ou un non (#1185).** Un refus peut porter
+une **consigne** — « archive au lieu de supprimer » —, et elle revient à l'agent,
+qui replanifie son geste au lieu d'abandonner : sa nouvelle action repasse par ce
+même canal. Une approbation peut s'**étendre** à l'outil pour la suite du run ou du
+projet, par le choix de la personne et jamais par défaut. Les deux voyagent dans le
+détail de la décision (`maestro.decision_humaine.DetailDecision`), sans rien changer
+au couple `(approuvée ?, détail)` que tout le chemin se passe.
+
 À côté d'eux, et pour la même raison — ce sont les **limites du run**, elles
 n'ont pas à vivre dans un troisième endroit —, `GardeFousIngestion` (#315,
 ENF-07) plafonne la **matière d'entrée** d'un objectif : taille par source,
@@ -93,6 +101,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur, decideur_depuis
+from maestro.decision_humaine import (
+    ETENDUES_DURABLES,
+    DecisionHumaine,
+    DetailDecision,
+    portee_de_l_etendue,
+)
 from maestro.orchestrator.schema import Task
 
 if TYPE_CHECKING:  # pragma: no cover - annotation seule (cf. `DemandeValidation.diff`)
@@ -313,7 +327,13 @@ class DemandeValidation:
 
 #: Validateur humain : reçoit la demande, répond vrai (approuvée) ou faux (refusée).
 #: Synchrone ou asynchrone — le moteur attend le résultat dans les deux cas.
-Validateur = Callable[[DemandeValidation], bool | Awaitable[bool]]
+#:
+#: Depuis #1185 il peut aussi rendre une `DecisionHumaine`, quand la personne en a dit
+#: plus qu'un oui ou un non : la **consigne** d'un refus, que l'agent lira, ou
+#: l'**étendue** d'une approbation. Un booléen reste une réponse entière.
+Validateur = Callable[
+    [DemandeValidation], bool | DecisionHumaine | Awaitable[bool | DecisionHumaine]
+]
 
 
 @dataclass(frozen=True)
@@ -442,6 +462,17 @@ async def _tranche(
     validateur humain »…) : ils sont lus par des tests, par le journal et par
     l'agent lui-même, dont le comportement diffère selon le motif
     (`maestro.providers.arbitrage.reponse`).
+
+    Depuis #1185 ils **s'allongent** quand la personne en a dit plus (une
+    `DecisionHumaine`) — et seulement alors :
+
+    - un refus **avec consigne** rend « refusée par … — consigne : « … » », dans un
+      `DetailDecision` qui la porte : c'est ce que le fournisseur sert à l'agent
+      pour qu'il replanifie son geste au lieu d'abandonner ;
+    - une approbation **étendue** à la suite du run ou du projet le dit (« … — et
+      pour tout appel de 'Bash' sur ce run »), le journal devant garder qu'un
+      accord a été donné au-delà de l'appel. L'étendue n'a de sens que pour un
+      **acte** : une demande sans outil (une tâche, un diff) reste à l'unité.
     """
     if canal is None:
         return False, f"aucun {nom} configuré — refus par défaut"
@@ -461,9 +492,36 @@ async def _tranche(
                 decision = await decision
     except Exception as exc:  # fail-safe : un canal en panne ne laisse rien passer
         return False, f"{nom} en erreur ({exc}) — refus par défaut"
+    if isinstance(decision, DecisionHumaine):
+        return _detail_de(decision, demande, par=par)
     if decision:
         return True, f"approuvée par {par}"
     return False, f"refusée par {par}"
+
+
+def _detail_de(
+    decision: DecisionHumaine, demande: DemandeValidation, *, par: str
+) -> tuple[bool, str]:
+    """Le verdict d'une `DecisionHumaine`, et son détail qui porte consigne et étendue (#1185).
+
+    Rien n'est ajouté à ce qui n'a pas été dit : sans consigne, un refus rend la
+    phrase d'avant ; sans étendue durable — ou sur une demande qui ne porte pas
+    d'acte —, une approbation aussi.
+    """
+    if not decision.approuve:
+        consigne = decision.motif.strip()
+        if not consigne:
+            return False, f"refusée par {par}"
+        return False, DetailDecision(
+            f"refusée par {par} — consigne : « {consigne} »", consigne=consigne
+        )
+    if decision.etendue not in ETENDUES_DURABLES or not demande.outil:
+        return True, f"approuvée par {par}"
+    return True, DetailDecision(
+        f"approuvée par {par} — et pour "
+        f"{portee_de_l_etendue(decision.etendue, demande.outil)}",
+        etendue=decision.etendue,
+    )
 
 
 def _normalise(texte: str) -> str:

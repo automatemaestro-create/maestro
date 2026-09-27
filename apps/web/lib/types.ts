@@ -1052,6 +1052,40 @@ export type AgentCatalogue = {
   permissions: PolitiquePermissions | null;
   permissions_erreur: string | null;
   permissions_outils: OutilExpose[];
+  /**
+   * Les accords étendus encore en vigueur (#1185) : ce que la personne a approuvé
+   * « pour la suite » depuis une validation. Absent d'une API d'avant ce lot, lu
+   * alors comme une liste vide.
+   */
+  permissions_accords?: AccordEtendu[];
+};
+
+/**
+ * Jusqu'où vaut une approbation (#1185, `maestro.decision_humaine`) : **cet appel**
+ * (le défaut, le geste d'avant), ou l'outil pour la suite du **run** ou du
+ * **projet**. Choisie par la personne, jamais par défaut.
+ */
+export type EtendueApprobation = "appel" | "run" | "projet";
+
+/** L'approbation d'un seul appel — le geste par défaut, qui n'envoie rien de plus. */
+export const ETENDUE_APPEL: EtendueApprobation = "appel";
+
+/** Les deux étendues qui durent au-delà de l'appel, dans l'ordre de l'écran. */
+export const ETENDUES_DURABLES: readonly EtendueApprobation[] = ["run", "projet"];
+
+/**
+ * Un **accord étendu** (#1185, `Accord.to_dict`) : cet outil, par cet agent, n'est
+ * plus redemandé pour la suite d'un run (`run_id`) ou du projet. `tache_id` est la
+ * demande sur laquelle il a été donné, `accorde_le` l'instant (ISO UTC).
+ */
+export type AccordEtendu = {
+  id: string;
+  agent: string;
+  outil: string;
+  etendue: EtendueApprobation;
+  run_id: string;
+  tache_id: string;
+  accorde_le: string;
 };
 
 /** La fiche avec sa définition complète (`GET /api/catalogue/{nom}`). */

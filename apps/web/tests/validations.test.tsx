@@ -12,7 +12,8 @@
  *
  * - **le motif refermé est effacé**. Un motif conservé hors de l'écran partirait
  *   quand même avec le refus — un texte versé au journal du run que plus
- *   personne n'avait sous les yeux. « Sans motif » doit vouloir dire sans motif ;
+ *   personne n'avait sous les yeux — et depuis #1185, jusqu'à l'agent. « Sans
+ *   consigne » doit vouloir dire sans consigne ;
  * - **une carte est keyée sur `tache_id`**. C'est tout ce qui tient le temps
  *   réel : une demande tranchée ailleurs démonte *sa* carte et emporte son état
  *   local. Sans cette clé, la file se décalant d'un cran, un motif écrit pour une
@@ -303,9 +304,9 @@ describe("trancher une demande (#272)", () => {
       />,
     );
 
-    await utilisateur.click(screen.getByRole("button", { name: "Motiver le refus" }));
+    await utilisateur.click(screen.getByRole("button", { name: "Dire quoi faire à la place" }));
     await utilisateur.type(
-      screen.getByLabelText(/Motif du refus/),
+      screen.getByLabelText(/Ce que l.agent doit faire à la place/),
       "La branche cible est la mauvaise",
     );
     // C'est toujours « Refuser » qui tranche — le motif s'ouvre à côté.
@@ -324,9 +325,9 @@ describe("trancher une demande (#272)", () => {
       />,
     );
 
-    await utilisateur.click(screen.getByRole("button", { name: "Motiver le refus" }));
-    await utilisateur.type(screen.getByLabelText(/Motif du refus/), "écrit puis retiré");
-    await utilisateur.click(screen.getByRole("button", { name: "Sans motif" }));
+    await utilisateur.click(screen.getByRole("button", { name: "Dire quoi faire à la place" }));
+    await utilisateur.type(screen.getByLabelText(/Ce que l.agent doit faire à la place/), "écrit puis retiré");
+    await utilisateur.click(screen.getByRole("button", { name: "Retirer la consigne" }));
     await utilisateur.click(screen.getByRole("button", { name: "Refuser" }));
 
     // Un motif conservé hors de l'écran partirait quand même : c'est le texte
@@ -341,7 +342,7 @@ describe("trancher une demande (#272)", () => {
       <PanneauValidations validations={[enAttenteDepuis(MINUTE)]} decider={decider} />,
     );
 
-    await utilisateur.click(screen.getByRole("button", { name: "Motiver le refus" }));
+    await utilisateur.click(screen.getByRole("button", { name: "Dire quoi faire à la place" }));
 
     // Un formulaire ouvert n'est pas une décision prise (note technique du ticket).
     expect(decider).not.toHaveBeenCalled();
@@ -377,16 +378,139 @@ describe("trancher une demande (#272)", () => {
 
     // Un motif en cours de frappe sur la carte de tête — la première du DOM.
     await utilisateur.click(
-      screen.getAllByRole("button", { name: "Motiver le refus" })[0],
+      screen.getAllByRole("button", { name: "Dire quoi faire à la place" })[0],
     );
-    await utilisateur.type(screen.getByLabelText(/Motif du refus/), "pour la tête");
+    await utilisateur.type(screen.getByLabelText(/Ce que l.agent doit faire à la place/), "pour la tête");
 
     // …et la tête est tranchée ailleurs : sa carte se démonte, son état part avec.
     rerender(<FileValidations validations={[suivante]} decider={decider} />);
 
-    expect(screen.queryByLabelText(/Motif du refus/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Ce que l.agent doit faire à la place/)).not.toBeInTheDocument();
     await utilisateur.click(screen.getByRole("button", { name: "Refuser" }));
     expect(decider).toHaveBeenCalledWith("T-suivante", false);
+  });
+});
+
+// ── ④bis refuser en disant quoi faire, approuver pour la suite (#1185) ──────
+
+describe("refuser en disant quoi faire, approuver pour la suite (#1185)", () => {
+  /** Une demande qui porte un acte, dans un run et un projet : tout s'offre. */
+  const acte = (partiel: Partial<Validation> = {}) =>
+    enAttenteDepuis(MINUTE, {
+      tache_id: "T-9",
+      outil: "Bash",
+      arguments: { command: "rm -rf dist" },
+      run_id: "run-1",
+      projet_id: "prj-1",
+      ...partiel,
+    });
+
+  it("dit que la consigne part à l'agent, et la fait partir avec le refus", async () => {
+    const utilisateur = userEvent.setup();
+    const decider = vi.fn().mockResolvedValue(undefined);
+    rendreAvecEtat(<PanneauValidations validations={[acte()]} decider={decider} />);
+
+    await utilisateur.click(screen.getByRole("button", { name: "Dire quoi faire à la place" }));
+    const champ = screen.getByLabelText(/Ce que l.agent doit faire à la place/);
+    // L'aide dit où va le texte : à l'agent, qui repart de lui.
+    expect(screen.getByText(/Il part à l.agent avec le refus : il replanifie son geste/)).toBeInTheDocument();
+    await utilisateur.type(champ, "archive au lieu de supprimer");
+    await utilisateur.click(screen.getByRole("button", { name: "Refuser" }));
+
+    expect(decider).toHaveBeenCalledWith("T-9", false, "archive au lieu de supprimer");
+  });
+
+  it("offre l'accord pour la suite sur un acte, nommé par son outil, en second geste", async () => {
+    const utilisateur = userEvent.setup();
+    const decider = vi.fn().mockResolvedValue(undefined);
+    rendreAvecEtat(<PanneauValidations validations={[acte()]} decider={decider} />);
+
+    // Les deux gestes de toujours d'abord — « Refuser » à côté d'« Approuver » —,
+    // puis les deux divulgations.
+    const noms = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(noms.slice(0, 4)).toEqual([
+      "Approuver",
+      "Refuser",
+      "Ne plus demander pour Bash…",
+      "Dire quoi faire à la place",
+    ]);
+
+    await utilisateur.click(screen.getByRole("button", { name: "Ne plus demander pour Bash…" }));
+    const encart = screen.getByRole("group", { name: "Approuver et ne plus demander pour Bash" });
+    // Le bouton qui l'a ouvert dit maintenant qu'il le referme — rien d'autre.
+    expect(screen.getByRole("button", { name: "Refermer" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(within(encart).getByRole("link", { name: /permissions de devops/ })).toHaveAttribute(
+      "href",
+      "/agents/devops/mcp",
+    );
+    await utilisateur.click(within(encart).getByRole("button", { name: "Pour tout ce run" }));
+
+    expect(decider).toHaveBeenCalledWith("T-9", true, undefined, "run");
+  });
+
+  it("garde « Approuver » pour l'appel seul, encart ouvert ou non", async () => {
+    const utilisateur = userEvent.setup();
+    const decider = vi.fn().mockResolvedValue(undefined);
+    rendreAvecEtat(<PanneauValidations validations={[acte()]} decider={decider} />);
+
+    await utilisateur.click(screen.getByRole("button", { name: "Ne plus demander pour Bash…" }));
+    await utilisateur.click(screen.getByRole("button", { name: "Approuver" }));
+
+    // L'appel d'avant #1185, à l'argument près : le geste par défaut ne s'étend jamais.
+    expect(decider).toHaveBeenCalledWith("T-9", true);
+  });
+
+  it("approuve pour le projet quand la demande en porte un", async () => {
+    const utilisateur = userEvent.setup();
+    const decider = vi.fn().mockResolvedValue(undefined);
+    rendreAvecEtat(<PanneauValidations validations={[acte()]} decider={decider} />);
+
+    await utilisateur.click(screen.getByRole("button", { name: "Ne plus demander pour Bash…" }));
+    await utilisateur.click(screen.getByRole("button", { name: "Pour tout ce projet" }));
+
+    expect(decider).toHaveBeenCalledWith("T-9", true, undefined, "projet");
+  });
+
+  it("n'offre que les étendues qui ont un objet, et rien sans acte", () => {
+    const { unmount } = rendreAvecEtat(
+      <PanneauValidations validations={[acte({ projet_id: null })]} decider={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: "Ne plus demander pour Bash…" })).toBeInTheDocument();
+    unmount();
+
+    // Une demande sans acte (une tâche, un diff) n'a pas d'outil à ne plus redemander.
+    rendreAvecEtat(
+      <PanneauValidations
+        validations={[acte({ outil: "", arguments: null })]}
+        decider={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /Ne plus demander/ })).not.toBeInTheDocument();
+  });
+
+  it("n'ouvre pas l'encart et la consigne ensemble, et vide la consigne en passant", async () => {
+    const utilisateur = userEvent.setup();
+    const decider = vi.fn().mockResolvedValue(undefined);
+    rendreAvecEtat(<PanneauValidations validations={[acte()]} decider={decider} />);
+
+    await utilisateur.click(screen.getByRole("button", { name: "Ne plus demander pour Bash…" }));
+    await utilisateur.click(screen.getByRole("button", { name: "Dire quoi faire à la place" }));
+    // Deux décisions opposées : ouvrir la consigne referme l'encart.
+    expect(screen.queryByRole("group", { name: /ne plus demander/ })).not.toBeInTheDocument();
+    await utilisateur.type(
+      screen.getByLabelText(/Ce que l.agent doit faire à la place/),
+      "écrit puis abandonné",
+    );
+
+    await utilisateur.click(screen.getByRole("button", { name: "Ne plus demander pour Bash…" }));
+    expect(screen.queryByLabelText(/Ce que l.agent doit faire à la place/)).not.toBeInTheDocument();
+    await utilisateur.click(screen.getByRole("button", { name: "Refuser" }));
+
+    // La consigne refermée n'est pas partie : « sans consigne » veut dire sans consigne.
+    expect(decider).toHaveBeenCalledWith("T-9", false);
   });
 });
 

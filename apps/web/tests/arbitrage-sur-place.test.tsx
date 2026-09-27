@@ -171,10 +171,10 @@ describe("la tête d'un run", () => {
 
     const entete = tete();
     await userEvent.click(
-      within(entete).getByRole("button", { name: "Motiver le refus" }),
+      within(entete).getByRole("button", { name: "Dire quoi faire à la place" }),
     );
     await userEvent.type(
-      within(entete).getByLabelText(/Motif du refus/),
+      within(entete).getByLabelText(/Ce que l.agent doit faire à la place/),
       "Pas en production un vendredi",
     );
     await userEvent.click(within(entete).getByRole("button", { name: "Refuser" }));
@@ -410,10 +410,10 @@ describe("la cloche monte la carte du produit", () => {
     expect(within(panneau).getByText("Bash")).toBeTruthy();
 
     await userEvent.click(
-      within(panneau).getByRole("button", { name: "Motiver le refus" }),
+      within(panneau).getByRole("button", { name: "Dire quoi faire à la place" }),
     );
     await userEvent.type(
-      within(panneau).getByLabelText(/Motif du refus/),
+      within(panneau).getByLabelText(/Ce que l.agent doit faire à la place/),
       "Trop tôt",
     );
     await userEvent.click(

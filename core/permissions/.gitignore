@@ -2,4 +2,7 @@
 # VERSIONNÉE, qui se commite (<agent>.json). Le rangement par projet (#1038),
 # lui, est de la configuration d'installation — il reste sur le poste.
 _projets/
+# Les accords étendus (#1185, `maestro.agents.accords`) sont des décisions d'usage,
+# pas de la configuration : « ne plus me demander pour Bash sur ce run » ne se commite pas.
+_accords/
 *.tmp

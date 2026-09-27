@@ -46,6 +46,7 @@ from dataclasses import dataclass, replace
 from time import monotonic, perf_counter
 from typing import Any, Protocol
 
+from maestro.agents.accords import Accord
 from maestro.agents.capacity import CapacityStore, InstancesDerivees, JaugeInstances
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.fiche_outillee import runtime_outille
@@ -62,6 +63,7 @@ from maestro.agents.runtime import AgentRuntime
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import AgentStore, catalogue_du_projet
 from maestro.decideur import Decideur
+from maestro.decision_humaine import avec_consignes, consigne_de
 from maestro.deliberation import (
     CreditArbitrage,
     Deliberation,
@@ -1753,6 +1755,29 @@ class LocalExecutor(TaskExecutor):
             return None
         return self._permissions.pour_projet(projet_id).lire(agent)
 
+    def _accord_etendu(
+        self, agent: str, outil: str, projet_id: str | None, run_id: str
+    ) -> Accord | None:
+        """L'accord étendu qui dispense cet appel d'une personne (#1185), ou `None`.
+
+        Lu dans les permissions de l'agent, **dans le projet de la tâche**, à chaque
+        appel arbitré — pas à la tâche : la personne qui retire un accord depuis la
+        fiche de l'agent doit être redemandée dès l'appel suivant, même au milieu
+        d'une tâche. La lecture ne coûte qu'un fichier, et seulement sur un appel
+        qui aurait sinon dérangé quelqu'un.
+
+        Un dépôt illisible rend `None` : l'appel revient alors à une personne, le
+        sens sûr — un accord qu'on ne sait pas relire ne se présume pas.
+        """
+        if self._permissions is None:
+            return None
+        try:
+            return self._permissions.pour_projet(projet_id).accords().couvre(
+                agent, outil, run_id
+            )
+        except ValueError:
+            return None
+
     def _runtime_de(self, agent: Agent) -> AgentRuntime | None:
         """Le runtime outillé de `agent`, **dérivé de sa fiche** à chaque tâche (#1037).
 
@@ -2184,9 +2209,11 @@ class LocalExecutor(TaskExecutor):
         # l'immense majorité des tâches sont anodines, et l'envelopper de dehors
         # mesurait alors le temps de *décider qu'il n'y a personne à consulter* —
         # une durée sans objet, tronquée à `1` ms dès que la machine est chargée.
-        refus = await self._valide_si_sensible(agent, task, score, journal, credit)
+        refus, consignes = await self._valide_si_sensible(agent, task, score, journal, credit)
         if refus is not None:
             return refus
+        # Ce que la personne a demandé en refusant (#1185) rejoint ce que l'agent lit.
+        description = avec_consignes(description, consignes)
         suivi = suivi if suivi is not None else SuiviChecklist(task.etapes)
         blocages = blocages if blocages is not None else []
         timeout_s = self._guardrails.timeout_s
@@ -2269,13 +2296,23 @@ class LocalExecutor(TaskExecutor):
         score: int,
         journal: RunJournal,
         credit: CreditArbitrage,
-    ) -> TaskResult | None:
+    ) -> tuple[TaskResult | None, tuple[str, ...]]:
         """Déclenche la validation humaine si la tâche est sensible (#9).
 
-        Renvoie None si la tâche peut s'exécuter (anodine, ou approuvée) ; sinon le
-        `TaskResult` d'échec de la tâche stoppée. La demande et la décision sont
-        consignées au journal (étape dédiée `<task.id>:validation`, statuts alignés
-        sur l'entité APPROVAL de docs/03), que la décision soit oui ou non.
+        Rend `(refus, consignes)`. `refus` est None si la tâche peut s'exécuter
+        (anodine, ou approuvée), sinon le `TaskResult` d'échec de la tâche stoppée.
+        La demande et la décision sont consignées au journal (étape dédiée
+        `<task.id>:validation`, statuts alignés sur l'entité APPROVAL de docs/03),
+        que la décision soit oui ou non.
+
+        **Un refus qui dit quoi faire à la place n'arrête plus la tâche** (#1185) :
+        sa consigne s'ajoute à la tâche, et la tâche ainsi réorientée est
+        **soumise à son tour** — la personne voit la description d'origine suivie
+        de ce qu'elle a demandé, et tranche à nouveau. Approuvée, la tâche part
+        avec ses consignes (`consignes`, que l'appelant ajoute à ce que l'agent
+        lit) ; refusée sans consigne, elle s'arrête comme avant. Aucune borne sur
+        le nombre de tours : chacun est une décision humaine, et c'est la personne
+        qui choisit de réorienter encore ou d'arrêter.
 
         `credit` (#584, replacé par #880) mesure l'attente, et la fenêtre s'ouvre
         **ici** plutôt que chez l'appelant : une tâche anodine ressort sur le
@@ -2287,40 +2324,49 @@ class LocalExecutor(TaskExecutor):
         """
         raison = self._guardrails.raison_sensible(task)
         if raison is None:
-            return None
-        demande = DemandeValidation(
-            task_id=task.id,
-            titre=task.titre,
-            description=task.description,
-            agent=agent.nom,
-            role=agent.role,
-            raison=raison,
-            # D'où vient la demande (#570) — même règle que la décision consignée
-            # plus bas, et pour la même raison : ce sont des critères de filtre, et
-            # ce qui ne les porte pas disparaît des vues. La demande est le cas où
-            # ça coûte le plus cher : elle **précède** le premier `tache.statut` de
-            # sa tâche, donc rien en aval ne peut recoller l'appartenance à sa place.
-            run_id=journal.run_id,
-            projet_id=task.projet_id,
-            # Qui a demandé (#582) : ici, nous — c'est la classification du
-            # moteur. Posée explicitement plutôt que laissée au défaut du champ :
-            # ce chemin-ci *est* celui qui donne son sens à `ORIGINE_POLITIQUE`.
-            origine=ORIGINE_POLITIQUE,
-        )
-        with credit.attente():
-            approuve, detail = await self._guardrails.demande_validation(demande)
-        self._consigne_validation(
-            task,
-            agent=agent.nom,
-            role=agent.role,
-            nom=f"Validation humaine — {task.titre}",
-            raison=raison,
-            approuve=approuve,
-            detail=detail,
-            journal=journal,
-        )
-        if approuve:
-            return None
+            return None, ()
+        consignes: list[str] = []
+        while True:
+            demande = DemandeValidation(
+                task_id=task.id,
+                titre=task.titre,
+                # Réorientée par les consignes déjà reçues (#1185) : ce qu'on soumet
+                # est ce que la tâche fera, pas ce qu'elle aurait fait.
+                description=avec_consignes(task.description, consignes),
+                agent=agent.nom,
+                role=agent.role,
+                raison=raison,
+                # D'où vient la demande (#570) — même règle que la décision
+                # consignée plus bas, et pour la même raison : ce sont des critères
+                # de filtre, et ce qui ne les porte pas disparaît des vues. La
+                # demande est le cas où ça coûte le plus cher : elle **précède** le
+                # premier `tache.statut` de sa tâche, donc rien en aval ne peut
+                # recoller l'appartenance à sa place.
+                run_id=journal.run_id,
+                projet_id=task.projet_id,
+                # Qui a demandé (#582) : ici, nous — c'est la classification du
+                # moteur. Posée explicitement plutôt que laissée au défaut du champ :
+                # ce chemin-ci *est* celui qui donne son sens à `ORIGINE_POLITIQUE`.
+                origine=ORIGINE_POLITIQUE,
+            )
+            with credit.attente():
+                approuve, detail = await self._guardrails.demande_validation(demande)
+            self._consigne_validation(
+                task,
+                agent=agent.nom,
+                role=agent.role,
+                nom=f"Validation humaine — {task.titre}",
+                raison=raison,
+                approuve=approuve,
+                detail=detail,
+                journal=journal,
+            )
+            if approuve:
+                return None, tuple(consignes)
+            consigne = consigne_de(detail)
+            if not consigne:
+                break
+            consignes.append(consigne)
         return _echec(
             task,
             agent=agent.nom,
@@ -2329,8 +2375,10 @@ class LocalExecutor(TaskExecutor):
             erreur=f"action sensible ({raison}) : {detail} — tâche stoppée avant exécution.",
             # Un humain a dit non (#1178) : réécrire la tâche pour qu'elle passe
             # quand même serait le contournement qu'un arbitrage existe pour empêcher.
+            # C'est la **personne** qui réoriente (sa consigne, ci-dessus), jamais
+            # le moteur de lui-même.
             rattrapable=False,
-        )
+        ), tuple(consignes)
 
     def _arbitre(self, task: Task, agent: Agent, journal: RunJournal) -> Arbitre:
         """Le canal par lequel l'agent demande lui-même l'arbitrage (#582).
@@ -3130,6 +3178,16 @@ class LocalExecutor(TaskExecutor):
         Un acte que l'objectif ne nomme pas n'a, lui, rien reçu : sa tâche ne
         porte pas de `acte_accorde`, et ce canal fait exactement ce qu'il faisait.
 
+        **Un oui étendu dispense aussi** (#1185) : la personne qui a approuvé un
+        appel « et pour la suite du run » ou « du projet » a posé un accord dans
+        les permissions de l'agent (`maestro.agents.accords`), relu **à chaque
+        appel** (`_accord_etendu`). Il couvre l'outil exact, pour cet agent, et
+        rien de ce qui précède ne bouge : ce canal n'est atteint qu'après la
+        politique et la frontière. Le détail nomme l'accord, pour que la trace
+        dise qu'aucune personne n'a été dérangée *maintenant*, et quand elle l'a
+        été. Une **consigne** de refus, elle, revient au fournisseur dans le
+        détail (`maestro.decision_humaine.DetailDecision`), qui la sert à l'agent.
+
         **Qui tranche** (#586) arrive avec la demande : c'est le `decideur` que
         le fournisseur a retenu, soumis tel quel (#1278). Il était jusque-là
         **redemandé** à la politique par le seul nom de l'outil — un argument de
@@ -3143,6 +3201,7 @@ class LocalExecutor(TaskExecutor):
         pas câblé.
         """
         memoire = memoire if memoire is not None else MemoireArbitrage()
+        run_id = "" if journal is None else journal.run_id
 
         async def arbitre(
             outil: str, arguments: dict[str, str], motif: str, decideur: Decideur
@@ -3153,6 +3212,11 @@ class LocalExecutor(TaskExecutor):
                 # détail part quand même — c'est lui qui portera l'acte accordé
                 # jusqu'au journal.
                 return True, detail_accorde(task.acte_accorde)
+            # Un oui étendu à l'outil (#1185) : relu à chaque appel, pour qu'un
+            # accord retiré depuis les permissions de l'agent vaille dès le suivant.
+            etendu = self._accord_etendu(agent.nom, outil, task.projet_id, run_id)
+            if etendu is not None:
+                return True, etendu.detail()
             demande = DemandeValidation(
                 task_id=task.id,
                 titre=task.titre,
@@ -3162,7 +3226,7 @@ class LocalExecutor(TaskExecutor):
                 raison=motif,
                 # D'où vient la demande (#570) : sans run ni projet, elle sort du
                 # journal du run et de toutes les vues, qui sont cadrées dessus.
-                run_id="" if journal is None else journal.run_id,
+                run_id=run_id,
                 projet_id=task.projet_id,
                 outil=outil,
                 arguments=arguments,

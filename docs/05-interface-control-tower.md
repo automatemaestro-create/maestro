@@ -2192,12 +2192,49 @@ en pause et un run attend derrière. Trois décisions le disent, et une seule fo
 qui part avec ce même bouton. Rendre le refus conditionnel à une saisie ferait payer à chaque
 demande le prix de celles qu'on veut expliquer. Côté API, `POST /api/validations/{tache_id}/decision`
 accepte un `motif` optionnel qui rejoint le `detail` de l'événement — donc le journal durable et la
-`decision` de la demande projetée, que l'historique de l'écran affiche ligne à ligne. Il ne voyage
-**nulle part ailleurs** : lui ouvrir un champ d'événement aurait demandé de le faire traverser le
-schéma du journal pour un texte que `detail` porte déjà, au prix d'un second endroit où lire
-« pourquoi ce refus ». Sur une approbation il est ignoré, comme le `brief` d'une décision de brief
-l'est sur un refus (§2.7.4) ; absent, la décision est celle d'avant ce lot, au caractère près. Le
-moteur, lui, ne lit que `statut` : le motif n'a jamais le pouvoir de changer ce qui se passe.
+`decision` de la demande projetée, que l'historique de l'écran affiche ligne à ligne. Sur une
+approbation il est ignoré, comme le `brief` d'une décision de brief l'est sur un refus (§2.7.4) ;
+absent, la décision est celle d'avant ce lot, au caractère près.
+
+#### Un refus dit quoi faire à la place ; une approbation peut valoir pour la suite (#1185) — **livré**
+
+Deux gestes que la carte n'offrait pas, et une décision renversée : **le motif a désormais le pouvoir
+de changer ce qui se passe**.
+
+- **Le motif est une consigne, et elle atteint l'agent.** Jusqu'ici le moteur ne lisait que
+  `statut` : « Non, archive au lieu de supprimer » annulait le travail sans que l'agent sache
+  pourquoi. Le motif voyage maintenant **aussi** dans `Event.motif` — un champ à lui, que le moteur
+  lit sans jamais le retrouver dans la phrase de `detail` (#746) —, le validateur le rend à l'agent
+  (`maestro.decision_humaine.DecisionHumaine`), et l'agent lit un refus qui dit **replanifie ton
+  geste à partir de cette consigne**, au lieu de « poursuis sans cet outil ». Sa nouvelle action
+  repasse par l'arbitrage, **soumise à son tour**. Une tâche sensible refusée avec une consigne
+  (`_valide_si_sensible`) n'est plus stoppée : elle repart réorientée, et c'est cette version qui est
+  resoumise. Un refus **sec** garde son sens d'avant, au caractère près.
+- **À l'écran**, le bouton discret devient « Dire quoi faire à la place », et le champ « Ce que
+  l'agent doit faire à la place (facultatif) », avec son aide : il part à l'agent, qui replanifie, et
+  sa nouvelle action vous sera soumise. « Refuser » reste un clic.
+- **Une approbation peut valoir pour la suite** — cet outil, par cet agent, pour la suite du **run**
+  ou pour le **projet**. C'est la **variante A** retenue sur pièces (commentaire « ## Variante
+  retenue » du ticket, d'après VS Code et Visual Studio) : « Approuver » ne change pas — le geste par
+  défaut reste l'approbation d'**un** appel —, et un bouton discret « Ne plus demander pour `Bash`… »
+  ouvre dans la carte un encart « Approuver cet appel, et ne plus demander pour `Bash` : Pour tout
+  ce run · Pour tout ce projet ». L'encart et la consigne ne s'ouvrent pas ensemble : ce sont deux
+  décisions opposées. Offert **seulement pour un acte** : une demande d'écriture (diff) ou la
+  validation d'une tâche n'ont pas d'outil à ne plus redemander.
+- **L'accord s'écrit dans les permissions de l'agent**, avant que la décision parte
+  (`maestro.agents.accords`, `<permissions du projet>/_accords/<agent>.json`, jamais versionné,
+  jamais hérité d'un projet à l'autre). Le moteur le relit **à chaque appel arbitré** : les appels
+  suivants passent sans composer de demande, avec une trace qui nomme l'accord. Il se **voit** dans
+  la fiche de l'agent (onglet « MCP & permissions », sous la liste `ask`, « Accordés pour la suite »)
+  et s'y **retire** d'un geste — l'appel suivant redemande, même au milieu d'une tâche. Un accord de
+  run dont le run est soldé n'y est plus servi. Rien d'autre ne bouge : `deny` refuse toujours, la
+  frontière juge toujours avant, et le décideur par défaut reste `humain`.
+
+Couverture : [`tests/test_refus_consigne_accord_etendu.py`](../tests/test_refus_consigne_accord_etendu.py)
+— la consigne jusqu'au `permissionDecisionReason` du **vrai** hook et la seconde action resoumise,
+la tâche sensible réorientée, l'étendue écrite, servie, retirée, refusée en `422` quand la demande
+ne la permet pas, et la chaîne API ↔ moteur (un seul « oui, pour ce run », aucune demande ensuite) ;
+côté écran, `apps/web/tests/validations.test.tsx` et `agent-permissions.test.tsx`.
 
 **La cohérence en temps réel** tient à la **clé de React**, et à elle seule : chaque carte est keyée
 sur `tache_id`, donc une demande tranchée ailleurs démonte *sa* carte et emporte son état local —
@@ -3568,10 +3605,11 @@ qu'un autre endroit où la personne tranche.
   parle depuis ce fait. La coche d'un refus est à la couleur du texte, jamais au vert.
 - **Un refus porte sa raison, la même que celle de l'écran des validations** : elle voyage dans le
   même champ que le motif d'un refus motivé depuis la carte d'une validation (#272), jusqu'à
-  l'événement que le moteur attend — celui que #1185 portera jusqu'à l'agent. D'ici là l'agent
-  n'apprend que le refus, et rien ne dit le contraire : la carte écrit « Raison du refus », jamais
-  « transmise », et le modèle reçoit ce fait. Vu sur la vraie stack à la clôture : « votre consigne
-  lui a été transmise avec le refus » promettait ce qui n'avait pas lieu.
+  l'événement que le moteur attend, et depuis #1185 **jusqu'à l'agent** : c'est une consigne, dont
+  il repart pour choisir une autre action (voir §2.6). La carte l'écrit « Consigne pour
+  l'agent », et la suite le dit (« l'agent reçoit votre consigne et replanifie son geste »). Avant
+  #1185, la carte écrivait « Raison du refus » et jamais « transmise » : vu sur la vraie stack,
+  « votre consigne lui a été transmise avec le refus » promettait ce qui n'avait pas lieu.
 - **L'acte d'une validation se lit comme sur sa carte** : « Appel de » et l'outil, puis ses
   arguments en trois lignes au plus — l'acte entier reste sur la carte de la demande, rendue à sa
   place dès que le règlement est tranché ou écarté.
@@ -5086,13 +5124,22 @@ deux sont des **remplacements intégraux**, jamais des diffs, comme
   La politique vaut pour la **tâche suivante**, relue à chaud. Elle **ne lit pas**
   ce qu'elle remplace, et c'est ce qui permet de réparer depuis l'écran un
   fichier que la lecture refuse.
+- `DELETE /api/permissions/{agent}/accords/{id}` (#1185) →
+  `{agent, retire, accords}`. Retire un **accord étendu** — l'outil qu'une
+  personne avait approuvé « pour la suite du run » ou « du projet » (`etendue`
+  de `POST /api/validations/{tache_id}/decision`) — et rend ceux qui restent en
+  vigueur. Il vaut **dès l'appel suivant** : le moteur relit les accords à chaque
+  appel arbitré. `404` hors catalogue ou sur un accord inconnu (déjà retiré
+  compris). Dans le projet de `?projet=`, comme le reste de la fiche.
 
 La fiche du catalogue porte les **mêmes clés** dans ses trois provenances — un
 client n'a jamais à les deviner d'après `source` : `herite` nomme les réglages
 restés au code, `reglages_du_code` donne ce que le code dit de chacun (c'est ce
 que « revenir au défaut » rendrait), `permissions_outils` suggère ce que l'agent
-peut réellement appeler, et `permissions_erreur` porte la cause exacte quand la
-politique stockée est illisible.
+peut réellement appeler, `permissions_erreur` porte la cause exacte quand la
+politique stockée est illisible, et `permissions_accords` (#1185) les accords
+étendus encore en vigueur — `{id, agent, outil, etendue, run_id, tache_id,
+accorde_le}`.
 
 ### 6.5 Flux SSE d'un fil de chat — et le **fil global** (#268) — **livré**
 

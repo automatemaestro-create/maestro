@@ -111,6 +111,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from maestro.agents.accords import DOSSIER_ACCORDS, AccordStore
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur, decideur_depuis
@@ -598,6 +599,18 @@ class PermissionStore(RangeParProjet):
         )
         os.replace(temporaire, chemin)
         return propre
+
+    def accords(self) -> AccordStore:
+        """Les accords étendus de **ce niveau** (#1185) — `<racine>/_accords/`, jamais hérités.
+
+        Ce que la personne a accordé « pour la suite » vit à côté de la politique
+        qu'il prolonge : c'est dans les permissions de l'agent qu'on vient le relire
+        et le retirer. Mais à la différence de la politique, **rien ne se replie sur
+        le gabarit** : un accord donné dans un projet ne vaut pas dans un autre, et
+        l'absence d'accord ne retire aucun garde-fou — elle ramène l'appel à une
+        personne.
+        """
+        return AccordStore(self._racine / DOSSIER_ACCORDS)
 
     def agents(self) -> tuple[str, ...]:
         """Les noms des agents ayant une politique, triés — gabarit compris (vide si aucun)."""

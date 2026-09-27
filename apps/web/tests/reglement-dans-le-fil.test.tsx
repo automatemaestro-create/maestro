@@ -160,9 +160,9 @@ describe("la carte d'un règlement", () => {
     expect(screen.getByText("Bash")).toBeInTheDocument();
     expect(screen.getByText("command=rm -rf build").className).toContain("line-clamp-3");
     expect(screen.getByText(RAISON)).toBeInTheDocument();
-    // « du refus », jamais « transmise » : l'agent n'apprend que le refus (#1185).
-    expect(screen.getByText(/Raison du refus/)).toBeInTheDocument();
-    expect(screen.queryByText(/transmise/)).not.toBeInTheDocument();
+    // Depuis #1185 la raison revient à l'agent : la carte la dit consigne pour lui.
+    expect(screen.getByText(/Consigne pour l'agent/)).toBeInTheDocument();
+    expect(screen.queryByText(/Raison du refus/)).not.toBeInTheDocument();
     expect(screen.getByText(enPhrase(SUITE_REFUS))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refuser" }).className).toContain("bg-alerte");
   });
@@ -428,9 +428,9 @@ describe("dans le fil", () => {
 
     // La carte de l'écran des validations, montée telle quelle : l'acte en tête.
     expect(within(fil).getByText("Bash")).toBeInTheDocument();
-    await userEvent.click(within(fil).getByRole("button", { name: "Motiver le refus" }));
+    await userEvent.click(within(fil).getByRole("button", { name: "Dire quoi faire à la place" }));
     await userEvent.type(
-      within(fil).getByRole("textbox", { name: /Motif du refus/ }),
+      within(fil).getByRole("textbox", { name: /Ce que l.agent doit faire à la place/ }),
       RAISON,
     );
     await userEvent.click(within(fil).getByRole("button", { name: "Refuser" }));

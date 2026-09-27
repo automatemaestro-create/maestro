@@ -613,6 +613,21 @@ class Event:
     # vérification plutôt que celui du plan : une seule ligne de journal pour un
     # seul appel au modèle. None partout ailleurs.
     bilan: dict[str, Any] | None = None
+    # La **consigne** d'un refus (#1185), portée par le seul `validation.decision` :
+    # ce que la personne a écrit pour dire à l'agent quoi faire à la place, tel
+    # qu'elle l'a écrit. Il voyage **à côté** de `detail`, qui le répète dans sa
+    # phrase (« refusée depuis la Control Tower — … ») : `detail` est ce qu'un écran
+    # affiche, ceci est le fait que le moteur rend à l'agent — le lire dans la phrase
+    # serait juger du texte par un motif (#746). Même partage qu'`hypothese` avec
+    # `detail`. Chaîne vide ailleurs, et sur un refus sans consigne.
+    motif: str = ""
+    # L'**étendue** d'une approbation (#1185), portée par le seul
+    # `validation.decision` : `appel`, `run` ou `projet`
+    # (`maestro.decision_humaine.ETENDUES`). Vide ailleurs, et vide vaut `appel` — le
+    # geste d'avant ce lot. Relue telle quelle, sans être rejugée : c'est la route
+    # qui l'admet, et c'est l'accord écrit dans les permissions de l'agent qui la
+    # fait valoir (`maestro.agents.accords`).
+    etendue: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -669,6 +684,8 @@ class Event:
             "cadence": dict(self.cadence) if self.cadence is not None else None,
             "plafond": dict(self.plafond) if self.plafond is not None else None,
             "bilan": dict(self.bilan) if self.bilan is not None else None,
+            "motif": self.motif,
+            "etendue": self.etendue,
             "horodatage": self.horodatage,
         }
 
@@ -827,6 +844,11 @@ class Event:
             # tel quel, et c'est `BilanRun.depuis` qui ne rend que ce qu'il sait
             # lire. Ce qui n'est pas un objet n'est pas un bilan.
             bilan=dict(data["bilan"]) if isinstance(data.get("bilan"), Mapping) else None,
+            # Même régime que `cause` (#1185) : le texte passe tel quel. Une décision
+            # émise avant ce lot n'en porte pas, et se relit comme avant — un oui ou
+            # un non, pour cet appel seul.
+            motif=str(data.get("motif") or ""),
+            etendue=str(data.get("etendue") or ""),
             horodatage=data.get("horodatage", ""),
         )
 

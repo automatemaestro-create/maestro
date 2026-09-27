@@ -582,10 +582,12 @@ tiennent telles quelles, sur une autre cible :
   par le service depuis la structure de l'attente.
 
 La raison d'un refus voyage par le **même** champ que le motif de l'écran des
-validations (`attentes.detail_de_la_decision`) : c'est celle que #1185 portera jusqu'à
-l'agent, et le fil n'en compose pas une seconde. D'ici là, l'agent n'apprend que le
-refus — et le fil le dit ainsi : vu sur la vraie stack, « votre consigne lui a été
-transmise avec le refus » promettait ce qui n'avait pas lieu.
+validations (`attentes.detail_de_la_decision`), et le fil n'en compose pas une seconde.
+Depuis #1185 elle **atteint l'agent** comme consigne (`Event.motif`) : il replanifie son
+geste au lieu d'abandonner, et le fil peut le dire. Avant, il ne le pouvait pas — vu
+sur la vraie stack, « votre consigne lui a été transmise avec le refus » promettait ce
+qui n'avait pas lieu, et c'est ce qui a fait porter la raison jusqu'à l'agent plutôt
+que de la taire.
 
 ## Ce qui est gardé, et par quoi (#688)
 
@@ -1032,8 +1034,9 @@ Sur "attente", ajoute à l'objet de la dernière ligne une clé "attente" :
   projet » est le seul geste qui écrive ce qu'il annonce ;
   sur "refus", la raison que la personne donne, avec ses mots ("archive plutôt"),
   vide si elle n'en donne aucune ; vide sur "approbation". Cette raison est
-  consignée avec la décision ; l'agent, lui, n'apprend que le refus : ne dis pas
-  que tu lui transmets la raison ni qu'il la suivra.
+  consignée avec la décision et revient à l'agent comme consigne : il repart d'elle
+  pour choisir une autre action, soumise à son tour si elle le demande. Ne promets
+  pas pour autant ce qu'il fera : il la lit, c'est lui qui en tire son geste.
 
 Sur "geste", ajoute à l'objet de la dernière ligne une clé "geste" :
 
@@ -2004,12 +2007,13 @@ def _faits_du_reglement(demande: ReglementPropose, fait: ReglementFait) -> str:
         parti = f"La réponse est partie à l'agent, telle quelle : « {fait.texte} »."
     elif demande.action == REGLEMENT_REFUS:
         # Vu sur la vraie stack (#1183) : « le refus est parti, avec sa raison » faisait
-        # écrire au modèle que la consigne était transmise à l'agent. Elle ne l'est pas —
-        # le moteur ne lit que la décision, et porter la raison jusqu'à l'agent est #1185.
+        # écrire au modèle que la consigne était transmise à l'agent, quand elle ne
+        # l'était pas. Depuis #1185 elle l'est (`Event.motif`, rendue à l'agent par le
+        # validateur) : le fait le dit, sans promettre ce que l'agent en fera.
         parti = (
             f"Le refus est parti. Sa raison, « {fait.texte} », est consignée avec la "
-            "décision, là où l'écran des validations garde le motif d'un refus ; l'agent, "
-            "lui, ne la reçoit pas : il apprend seulement que l'acte est refusé."
+            "décision, là où l'écran des validations garde le motif d'un refus, et "
+            "revient à l'agent comme consigne : il replanifie son geste à partir d'elle."
             if fait.texte
             else "Le refus est parti, sans raison donnée."
         )
@@ -2627,8 +2631,12 @@ class PiloteDesAttentes(Protocol):
         """L'attente telle qu'une carte la montre, `None` si aucune ne porte cet identifiant."""
         ...
 
-    def suite(self, action: str, identifiant: str) -> str:
-        """Ce que ce règlement fera, dit avant qu'il parte — `""` si rien ne le dit."""
+    def suite(self, action: str, identifiant: str, texte: str = "") -> str:
+        """Ce que ce règlement fera, dit avant qu'il parte — `""` si rien ne le dit.
+
+        `texte` est la raison d'un refus : depuis #1185 elle revient à l'agent comme
+        consigne, et la phrase le dit — la carte et le fait disent la même chose.
+        """
         ...
 
     def refus_du_reglement(
@@ -4233,7 +4241,7 @@ class RepondeurOrchestration(RepondeurChat):
                 action=action,
                 attente=attente,
                 texte=texte,
-                suite=self._suite_du_reglement(action, attente.identifiant),
+                suite=self._suite_du_reglement(action, attente.identifiant, texte),
             ),
         )
 
@@ -4302,13 +4310,13 @@ class RepondeurOrchestration(RepondeurChat):
         except Exception:  # noqa: BLE001 — une lecture qui casse ne désigne rien
             return None
 
-    def _suite_du_reglement(self, action: str, identifiant: str) -> str:
+    def _suite_du_reglement(self, action: str, identifiant: str, texte: str = "") -> str:
         """Ce que le service dit que le règlement fera — `""` s'il ne sait pas le dire."""
         reglements = self._reglements
         if reglements is None:
             return ""
         try:
-            return reglements.suite(action, identifiant)
+            return reglements.suite(action, identifiant, texte)
         except Exception:  # noqa: BLE001 — une phrase manquante ne retient pas la carte
             return ""
 

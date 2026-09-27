@@ -39,8 +39,22 @@
  * GitHub Actions ouvre « Review deployments » en pop-up **sur la page du run**,
  * GitLab ouvre l'approbation depuis le **badge** qui dit que ça attend, et les
  * deux gardent un commentaire facultatif.
+ *
+ * #1185 y ajoute deux gestes, et leur forme a été **choisie sur pièces** (la
+ * variante A, commentaire « ## Variante retenue » du ticket, contre des captures de
+ * VS Code et de Visual Studio) :
+ *
+ * - **refuser en disant quoi faire à la place** : le motif devient une consigne
+ *   que l'agent lit — il replanifie son geste au lieu de voir sa tâche annulée ;
+ *   le bouton et le champ le disent (« Dire quoi faire à la place ») ;
+ * - **approuver pour la suite** : « Approuver » ne change pas — le geste par défaut
+ *   reste l'appel qu'on a sous les yeux —, et un second geste discret, après les
+ *   deux de toujours, ouvre un encart « Pour tout ce run / Pour tout ce projet »,
+ *   offert pour un **acte** seulement. L'encart et la consigne ne s'ouvrent pas
+ *   ensemble : ce sont deux décisions opposées.
  */
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { IconeAgent, IconeFermer } from "@/components/Icones";
@@ -52,14 +66,18 @@ import {
   CIBLE_MINIMALE,
   type DensiteCarte,
 } from "@/components/Primitives";
+import { cheminOnglet } from "@/lib/agents";
 import { formatAttente } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { usePiegeDeFocus } from "@/lib/usePiegeDeFocus";
 import {
+  ETENDUE_APPEL,
+  ETENDUES_DURABLES,
   NATURE_AJOUT,
   NATURE_MODIFICATION,
   NATURE_SUPPRESSION,
   type DiffProjet,
+  type EtendueApprobation,
   type Validation,
 } from "@/lib/types";
 
@@ -67,13 +85,23 @@ import {
  * Trancher une demande. `motif` accompagne un **refus** et reste facultatif :
  * omis, l'appel est celui d'avant #272 — c'est la signature du contexte global
  * (`lib/useControlTower`), reprise telle quelle plutôt que redéclarée au plus
- * étroit, sans quoi la carte ne pourrait plus proposer de motiver.
+ * étroit, sans quoi la carte ne pourrait plus proposer de motiver. Depuis #1185
+ * le motif est une **consigne** rendue à l'agent, et `etendue` étend une
+ * approbation à l'outil pour la suite du run ou du projet.
  */
 export type Decider = (
   tacheId: string,
   approuve: boolean,
   motif?: string,
+  etendue?: EtendueApprobation,
 ) => Promise<void>;
+
+/** Le libellé de chaque étendue durable, tel que l'encart l'offre (#1185). */
+const LIBELLE_ETENDUE: Record<EtendueApprobation, string> = {
+  appel: "Pour cet appel",
+  run: "Pour tout ce run",
+  projet: "Pour tout ce projet",
+};
 
 /**
  * De quoi trancher **sur place** depuis une lecture dense (#1228) : les demandes
@@ -115,18 +143,25 @@ export function CarteValidation({
   const [erreur, setErreur] = useState<string | null>(null);
   const [motifOuvert, setMotifOuvert] = useState(false);
   const [motif, setMotif] = useState("");
+  const [etendreOuvert, setEtendreOuvert] = useState(false);
   const compacte = densite === "compacte";
 
-  const surDecision = async (approuve: boolean) => {
+  const surDecision = async (
+    approuve: boolean,
+    etendue: EtendueApprobation = ETENDUE_APPEL,
+  ) => {
     setEnCours(true);
     setErreur(null);
     // Le motif n'accompagne que le refus, et n'est **passé** que s'il y en a
     // un : sans lui l'appel est exactement celui d'avant #272, ce qui garde
     // « approuver » et « refuser sec » hors de portée d'une régression du canal
-    // motivé.
+    // motivé. Même règle pour l'étendue (#1185) : « Approuver » reste l'appel
+    // d'avant, à l'argument près, et seul l'encart en passe une.
     const raison = approuve ? "" : motif.trim();
     try {
       if (raison) await decider(validation.tache_id, false, raison);
+      else if (approuve && etendue !== ETENDUE_APPEL)
+        await decider(validation.tache_id, true, undefined, etendue);
       else await decider(validation.tache_id, approuve);
       // Succès : la demande sort de « en attente » au rechargement et la carte
       // se démonte — inutile de rendre la main. On ne la rend qu'en cas d'échec,
@@ -143,7 +178,30 @@ export function CarteValidation({
   const acte = validation.outil;
   const attente = formatAttente(validation.horodatage, maintenant);
   const idMotif = `motif-refus-${validation.tache_id}`;
+  const idEtendue = `etendue-${validation.tache_id}`;
   const taille = compacte ? "petite" : "normale";
+  // Les étendues qu'on peut offrir (#1185) : seulement pour un **acte**, et chacune
+  // seulement si la demande dit à quoi elle vaudrait — un run, un projet. Une
+  // demande d'écriture (diff) ou la validation d'une tâche restent à l'unité.
+  const etendues = acte
+    ? ETENDUES_DURABLES.filter((etendue) =>
+        etendue === "run" ? validation.run_id !== "" : validation.projet_id !== null,
+      )
+    : [];
+
+  // L'encart d'approbation et la consigne de refus sont deux décisions opposées :
+  // ouvrir l'une referme l'autre, et vide la consigne — une consigne retirée doit
+  // vouloir dire sans consigne (le choix retenu, `## Variante retenue` du ticket).
+  const basculerEtendue = () => {
+    setEtendreOuvert((avant) => !avant);
+    setMotifOuvert(false);
+    setMotif("");
+  };
+  const basculerMotif = () => {
+    if (motifOuvert) setMotif("");
+    setMotifOuvert((avant) => !avant);
+    setEtendreOuvert(false);
+  };
 
   return (
     <Carte
@@ -221,19 +279,42 @@ export function CarteValidation({
         >
           Refuser
         </Bouton>
-        {/* Le motif n'est pas une étape du refus : il s'ouvre à côté, et c'est
+        {/* L'accord pour la suite (#1185, variante A) : un second geste, **après**
+            les deux gestes de toujours — « Refuser » reste à côté d'« Approuver »,
+            comme avant, à toutes les largeurs. Fermé, il nomme déjà l'outil ;
+            ouvert, il dit qu'il referme l'encart, et rien d'autre : « À l'unité »
+            se lisait comme une troisième façon d'approuver (regard neuf). */}
+        {etendues.length > 0 && (
+          <Bouton
+            variante="discret"
+            ton="accent"
+            taille="petite"
+            className={CIBLE_MINIMALE}
+            disabled={enCours}
+            aria-expanded={etendreOuvert}
+            aria-controls={etendreOuvert ? idEtendue : undefined}
+            onClick={basculerEtendue}
+          >
+            {/* Une seule chaîne, sans `<span>` pour l'outil : le titre de la carte
+                porte déjà l'outil en chasse fixe, et un second élément au même
+                texte brouillerait le nom accessible du bouton. */}
+            {etendreOuvert ? "Refermer" : `Ne plus demander pour ${acte}…`}
+          </Bouton>
+        )}
+        {/* La consigne n'est pas une étape du refus : elle s'ouvre à côté, et c'est
             toujours « Refuser » qui tranche. Rendre le refus conditionnel à une
             saisie ferait payer à chaque demande le prix de celles qu'on veut
             expliquer.
 
             Refermer **efface** ce qui a été écrit, et ce n'est pas un détail :
-            un motif conservé hors de l'écran partirait quand même avec le refus,
-            c'est-à-dire un texte envoyé au journal du run que plus personne
-            n'avait sous les yeux. « Sans motif » doit vouloir dire sans motif.
+            une consigne conservée hors de l'écran partirait quand même avec le
+            refus, jusqu'à l'agent, sans que plus personne l'ait sous les yeux.
+            Une consigne retirée doit vouloir dire sans consigne.
 
-            Il est là **aussi dans la cloche** depuis #1228, où il manquait : le
-            canal du motif est celui qui réoriente l'agent (#1185), et un refus
-            sec depuis la cloche lui rend la main sans rien lui dire. */}
+            Elle est là **aussi dans la cloche** depuis #1228 : c'est le canal qui
+            réoriente l'agent (#1185) — il la lit et replanifie son geste au lieu
+            de voir sa tâche annulée —, et un refus sec depuis la cloche lui
+            rendrait la main sans rien lui dire. */}
         <Bouton
           variante="discret"
           ton="alerte"
@@ -245,20 +326,57 @@ export function CarteValidation({
           // identifiant absent est une référence morte, et axe la tolère au
           // repli sans qu'on ait à s'en remettre à cette tolérance.
           aria-controls={motifOuvert ? idMotif : undefined}
-          onClick={() => {
-            setMotifOuvert((avant) => !avant);
-            if (motifOuvert) setMotif("");
-          }}
+          onClick={basculerMotif}
         >
-          {motifOuvert ? "Sans motif" : "Motiver le refus"}
+          {/* Ouverte, elle dit qu'on la retire — et qu'on la vide —, jamais
+              « Sans consigne », qui se lisait comme une façon de refuser (regard
+              neuf de la clôture, la même reprise que « Refermer » pour l'encart). */}
+          {motifOuvert ? "Retirer la consigne" : "Dire quoi faire à la place"}
         </Bouton>
       </div>
+      {etendreOuvert && etendues.length > 0 && (
+        <div
+          id={idEtendue}
+          role="group"
+          aria-label={`Approuver et ne plus demander pour ${acte}`}
+          className="mt-2 flex flex-wrap items-center gap-2 rounded-controle border border-bord bg-surface-creuse p-2.5"
+        >
+          <p className="w-full text-annexe text-texte-secondaire">
+            Approuver cet appel, et ne plus demander pour{" "}
+            <span className="font-mono text-texte">{acte}</span> à l&apos;agent{" "}
+            {validation.agent} :
+          </p>
+          {etendues.map((etendue) => (
+            <Bouton
+              key={etendue}
+              variante="contour"
+              ton="accent"
+              taille={taille}
+              className={CIBLE_MINIMALE}
+              disabled={enCours}
+              onClick={() => void surDecision(true, etendue)}
+            >
+              {LIBELLE_ETENDUE[etendue]}
+            </Bouton>
+          ))}
+          <p className="w-full text-annexe text-texte-secondaire">
+            L&apos;accord se relit et se retire dans les{" "}
+            <Link
+              href={cheminOnglet(validation.agent, "mcp")}
+              className="font-medium text-accent-texte underline hover:no-underline"
+            >
+              permissions de {validation.agent}
+            </Link>
+            .
+          </p>
+        </div>
+      )}
       {motifOuvert && (
         <ChampTexte
           id={idMotif}
           className="mt-2"
-          libelle="Motif du refus (facultatif)"
-          aide="Il part avec le refus, dans le journal du run — l'approbation l'ignore."
+          libelle="Ce que l'agent doit faire à la place (facultatif)"
+          aide="Il part à l'agent avec le refus : il replanifie son geste, et sa nouvelle action vous sera soumise à son tour."
           rows={2}
           maxLength={500}
           disabled={enCours}
