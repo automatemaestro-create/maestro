@@ -50,6 +50,7 @@ from maestro.sandbox import (
     espace_de_travail,
     frontiere_de,
 )
+from maestro.sandbox.en_place import portee_de
 from maestro.telemetry import RunJournal
 
 GIT = shutil.which("git")
@@ -319,6 +320,27 @@ def test_l_espace_nomme_son_atelier_a_l_agent(tmp_path: Path) -> None:
 
     assert f"{DOSSIER_ATELIER}/module-audio/" in consigne
     assert "racine du projet de l'utilisateur" in consigne
+
+
+def test_le_jetable_va_ou_la_portee_le_laisse_passer(tmp_path: Path) -> None:
+    """#1348 : la consigne envoyait le jetable « dans le répertoire temporaire du
+    système », et l'agent l'écrivait sous un nom fixe (`/tmp/avant.sha`) que la
+    portée rend à une personne. Elle nomme désormais le geste qui reste à lui :
+    un dossier qu'il crée par `mktemp -d` dans la commande même."""
+    projet = _projet_copie(tmp_path)
+
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        consigne = ws.consigne_espace()
+        portee = portee_de(ws.path, projet)
+
+    assert "mktemp -d" in consigne
+    assert (
+        portee.commande_hors_portee(
+            'T=$(mktemp -d) && python app.py > "$T/sortie"; cat "$T/sortie"; rm -rf "$T"'
+        )
+        == ""
+    )
+    assert "sort du" in portee.commande_hors_portee("python app.py > /tmp/sortie")
 
 
 def test_les_autres_regimes_ne_disent_rien_de_leur_espace(tmp_path: Path) -> None:
