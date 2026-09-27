@@ -419,6 +419,65 @@ def test_un_cycle_relu_du_bus_rend_un_graphe_etrange_plutot_que_rien():
     assert set(_niveau_de(graphe).values()) == {0}
 
 
+def test_une_dependance_deja_impliquee_par_une_autre_chaine_est_dite_redondante():
+    """La flèche qui « semblait venir d'ailleurs » (#1297, run `3fe501fc0878`) :
+    `contenu → integration` alors que la chaîne passe déjà par `maquette`. Elle
+    reste une arête — le plan l'a déclarée —, mais le graphe dit qu'elle
+    n'apprend rien de plus, et par où passe la chaîne qui l'implique."""
+    graphe = _graphe(
+        [
+            _noeud("contenu"),
+            _noeud("maquette", "contenu"),
+            _noeud("integration", "maquette", "contenu"),
+        ]
+    )
+
+    par_lien = {(arete.de, arete.vers): arete for arete in graphe.aretes}
+    assert par_lien[("contenu", "integration")].redondante is True
+    assert par_lien[("contenu", "integration")].via == ("maquette",)
+    assert par_lien[("contenu", "maquette")].redondante is False
+    assert par_lien[("maquette", "integration")].via == ()
+    # Toutes restent servies : « en toutes lettres » les nomme toutes (#537).
+    assert graphe.nb_aretes == 3
+
+
+def test_la_chaine_qui_implique_une_dependance_est_la_plus_courte():
+    """Deux chemins de rechange : on nomme le plus court, celui qu'on suit d'un
+    regard, et dans l'ordre du flux."""
+    graphe = _graphe(
+        [
+            _noeud("a"),
+            _noeud("b", "a"),
+            _noeud("c", "b"),
+            _noeud("d", "a"),
+            _noeud("e", "c", "d", "a"),
+        ]
+    )
+
+    (redondante,) = [arete for arete in graphe.aretes if arete.redondante]
+    assert (redondante.de, redondante.vers) == ("a", "e")
+    assert redondante.via == ("d",)
+
+
+def test_une_dependance_redondante_voyage_jusqu_au_client():
+    """Calculée une fois, ici, plutôt que réécrite en règle d'affichage."""
+    rendu = _graphe([_noeud("a"), _noeud("b", "a"), _noeud("c", "b", "a")]).to_dict()
+
+    assert {(a["de"], a["vers"]): (a["redondante"], a["via"]) for a in rendu["aretes"]} == {
+        ("a", "b"): (False, []),
+        ("b", "c"): (False, []),
+        ("a", "c"): (True, ["b"]),
+    }
+
+
+def test_un_cycle_ne_rend_aucune_dependance_redondante_par_erreur():
+    """Un plan relu du bus peut boucler : la recherche d'une chaîne de rechange
+    s'arrête, et une arête d'un cycle à deux n'est impliquée par rien."""
+    graphe = _graphe([_noeud("a", "b"), _noeud("b", "a")])
+
+    assert [arete.redondante for arete in graphe.aretes] == [False, False]
+
+
 def test_composer_le_graphe_d_un_run_inconnu_ne_leve_pas():
     """La projection répond à ce qu'elle sait ; le refus motivé est le rôle des
     routes."""

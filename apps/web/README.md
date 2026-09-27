@@ -136,7 +136,14 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   et une bascule cadre sur la **branche courante**. Elle **coexiste** avec le Kanban et
   le **journal** sous une bascule à trois positions et l'ouvre par défaut (#516 : le
   journal se lisait au pied de la vue, donc sous les deux autres lectures) —
-  l'arbitrage, et les options écartées, sont dans `lib/vuesRun.ts` ;
+  l'arbitrage, et les options écartées, sont dans `lib/vuesRun.ts`. Depuis #1297, **une
+  flèche se lit** : une légende au-dessus du dessin dit qu'une flèche est une
+  dépendance (et ce que disent ses trois tracés) et qu'une colonne rassemble des
+  tâches qui peuvent tourner de front ; une flèche survolée ou focalisée (chacune a
+  sa cible au clavier) se nomme sous le cadre ; une dépendance **redondante**
+  (servie par le graphe) pâlit ; et **aucune flèche ne croise une carte** — une
+  arête qui saute une colonne la traverse par un couloir libre
+  (`lib/graphe.tracerArete`) ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **État des runs** (#476, lot 4 de #472, docs/05 §2.1) : ce que le tableau de bord
@@ -2334,7 +2341,14 @@ pire, pour un défaut à corriger dans l'urgence d'une revue.
    **contrepartie** : le run porte une **alternative textuelle équivalente** — sa
    vue Kanban et son journal, à un onglet de là, donnent la même information sous
    une forme linéaire. L'exemption tomberait le jour où le graphe porterait une
-   information qu'aucune des deux autres lectures ne donne.
+   information qu'aucune des deux autres lectures ne donne. ⚠ **Ce jour est venu
+   avec #1297**, et l'exemption tient pour une autre raison : le graphe dit
+   désormais qu'une dépendance est **redondante**, ce que ni le Kanban ni le
+   journal ne disent — mais il le dit **en mots** au même endroit, dans « Les N
+   enchaînements en toutes lettres » (« · déjà impliquée par la chaîne via … ») et
+   dans le nom accessible de la cible clavier de chaque flèche. L'information
+   nouvelle a donc son alternative textuelle dans la vue même ; seul le tracé reste
+   muet.
 2. **Le niveau AAA n'est pas visé.** Son contraste de 7:1 imposerait
    `neutral-700` au minimum pour **tout** texte secondaire, ce qui supprimerait
    la distinction primaire/secondaire dont la densité de ces écrans dépend : on
