@@ -10,7 +10,10 @@ deux raisons qui se cumulent : `valider_racine` refuse le dépôt de Maestro
 lui-même (EF-38) et refuse `AppData`, donc le `TMPDIR` d'un poste Windows
 (mesuré en #221). Un dossier visible du profil utilisateur passe les deux, se
 retrouve à l'œil nu quand un scénario est rouge, et s'efface d'un geste.
-`MAESTRO_SCENARIOS_ATELIER` le déplace pour qui veut un autre disque.
+`MAESTRO_SCENARIOS_ATELIER` le déplace pour qui veut un autre disque. Ce dossier
+est celui du **poste**, pas d'une copie de travail : un passage y **réserve** son
+atelier (`Atelier.reserver`, #1365), et deux copies qui lancent le banc dans la
+même seconde en ont chacune un.
 
 **Ce qui reste après le passage.** Les dossiers, par défaut. Ce sont les
 **pièces** du verdict : un S1 rouge se comprend en regardant ce qui est resté
@@ -90,13 +93,52 @@ class Atelier:
     def pour(
         cls, horodatage: str, *, environnement: Mapping[str, str] | None = None
     ) -> Atelier:
-        """L'atelier d'un passage daté."""
+        """L'atelier d'un passage daté — nommé, pas réservé (voir `reserver`)."""
         return cls(racine_atelier(environnement) / horodatage)
+
+    @classmethod
+    def reserver(
+        cls, horodatage: str, *, environnement: Mapping[str, str] | None = None
+    ) -> Atelier:
+        """L'atelier d'un passage, **à lui seul** — créé, jamais repris (#1365).
+
+        ⚠ Le dossier des ateliers est celui du **poste** : toutes les copies de
+        travail y lancent leurs passages. L'horodatage est à la seconde, et deux
+        copies qui lancent le banc dans la même seconde recevaient le même nom,
+        donc le même atelier — mesuré le 2026-09-27 à 12:36:09 : leurs S1 et S2
+        ont semé, vidé et rejoué les mêmes dossiers, et S1 est sorti rouge sur un
+        `.env` que l'autre passage avait touché.
+
+        Le dossier est donc **créé de façon exclusive** (`mkdir` sans
+        `exist_ok`, que le système refuse si le nom est pris) : lire « existe-t-il
+        ? » puis le créer laisserait passer la course. S'il est pris, le passage
+        prend `<horodatage>-2`, puis `-3`… Le premier garde son nom nu, pour la
+        même raison que dans `dossier`, et l'ordre lexical tient : `…-123609-2`
+        vient après `…-123609` et avant `…-123610`. Le nom retenu **est**
+        l'identifiant du passage (`passage`) : rapport, atelier et état sauvé se
+        retrouvent par lui.
+        """
+        parent = racine_atelier(environnement)
+        parent.mkdir(parents=True, exist_ok=True)
+        rang = 1
+        while True:
+            chemin = parent / (horodatage if rang == 1 else f"{horodatage}-{rang}")
+            try:
+                chemin.mkdir()
+            except FileExistsError:
+                rang += 1
+                continue
+            return cls(chemin)
 
     @property
     def racine(self) -> Path:
         """Le dossier de l'atelier."""
         return self._racine
+
+    @property
+    def passage(self) -> str:
+        """L'identifiant du passage que l'atelier porte — le nom de son dossier."""
+        return self._racine.name
 
     def dossier(self, nom: str) -> Path:
         """Le dossier d'un scénario, créé s'il manque — vide, prêt à être semé.
