@@ -1706,20 +1706,31 @@ async function lireProjets<T>(
   return (await reponse.json()) as T;
 }
 
-/** Écriture d'une route projets (corps optionnel : un DELETE n'en porte pas). */
+/**
+ * Écriture d'une route projets (corps optionnel : un DELETE n'en porte pas).
+ *
+ * Une API qui ne répond pas lève `ErreurApi.injoignable`, comme en lecture
+ * (`lireProjets`) : sans quoi le navigateur remontait son « Failed to fetch »
+ * jusqu'à l'écran — vu à la relecture de #1331, sous la correction d'une équipe.
+ */
 async function ecrireProjet<T>(
   chemin: string,
   corps: unknown,
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<T> {
-  const reponse = await appel(`${API_URL}${chemin}`, {
-    method: methode,
-    ...(corps !== undefined && {
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(corps),
-    }),
-  });
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
+      method: methode,
+      ...(corps !== undefined && {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corps),
+      }),
+    });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) throw await refusProjet(reponse, refusParDefaut);
   return (await reponse.json()) as T;
 }

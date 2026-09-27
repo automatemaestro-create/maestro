@@ -280,6 +280,11 @@ export function EquipeDansLeFil({
     if (proposition === null || texte.trim() === "") return;
     setEnCorrection(true);
     setRefusCorrection(null);
+    // La réponse affichée est celle de **la** demande en cours : gardée pendant
+    // qu'une autre part, elle se lisait comme sa réponse — « J'ai ajouté… » sous
+    // « retire… », puis la panne (✗ du regard neuf, relecture de #1331). Ce que
+    // la demande précédente a changé, lui, reste sur l'équipe.
+    setReponse(null);
     try {
       const montree = { roles: proposition.roles, retenus, instances };
       const correction = await corrigerEquipe(
@@ -409,7 +414,10 @@ export function EquipeDansLeFil({
               >
                 Voir l&apos;équipe
               </Bouton>
-              <span className="min-w-0 flex-1 text-annexe text-texte-secondaire">
+              {/* Le compte passe à la ligne **entier** : à 320 px il se coupait
+                  avant son dernier chiffre (« … retenus sur » / « 2 », relevé
+                  par le regard neuf à la relecture de #1331). */}
+              <span className="text-annexe whitespace-nowrap text-texte-secondaire">
                 {gardes.length} rôle{gardes.length > 1 ? "s" : ""} retenu
                 {gardes.length > 1 ? "s" : ""} sur {roles.length}
               </span>

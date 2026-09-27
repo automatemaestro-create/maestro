@@ -29,10 +29,11 @@
  * de 320 px, et un formulaire posé d'office sur sa face y chassait le fil. Et
  * l'exemple est une **aide** sous le champ, pas un texte indicatif : à 320 px, le
  * texte indicatif était coupé à « ajoute quelqu'un pou » (réserve du regard neuf).
+ * Un échec se dit sur une ligne en ton d'alerte, comme les autres échecs de la
+ * carte (✗ du regard neuf à la relecture de #1331).
  */
 
 import { Bouton, Carte, Champ } from "@/components/Primitives";
-import { RefusMotive } from "@/components/projets/ExplorateurDossiers";
 import type { RefusProjet } from "@/lib/types";
 
 export function DemandeSurLEquipe({
@@ -114,7 +115,16 @@ export function DemandeSurLEquipe({
           <span className="font-medium">Maestro :</span> {reponse}
         </Carte>
       )}
-      {refus && <RefusMotive refus={refus} titre="Demande non traitée" />}
+      {/* L'échec se lit comme les autres échecs de la carte — la création
+          refusée, un refus de pièce d'outillage (`PieceDOutillage`) : une ligne
+          en ton d'alerte, annoncée. L'encadré ambre de `RefusMotive` se fondait
+          dans la carte, elle-même ambre, et disait la même panne autrement que
+          la bannière voisine (✗ du regard neuf, relecture de #1331). */}
+      {refus && (
+        <p className="text-annexe text-alerte-texte" role="alert">
+          Demande non traitée — {refus.message}
+        </p>
+      )}
     </form>
   );
 }

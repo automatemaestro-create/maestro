@@ -47,6 +47,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PageChat from "@/app/chat/page";
 import { avecGras } from "@/components/chat/LigneRole";
+import { ErreurApi } from "@/lib/api";
 import {
   appliquerCorrection,
   oublierPropositions,
@@ -676,6 +677,10 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
     await userEvent.click(within(carte).getByRole("button", { name: "Voir l'équipe" }));
     expect(within(carte).getByRole("checkbox", { name: /Designer/ })).not.toBeChecked();
     expect(within(carte).getAllByRole("spinbutton", { name: "Instances" })[0]).toHaveValue(2);
+    // La raison du nombre proposé ne contredit plus le compteur qui a changé.
+    const developpeur = within(carte).getByText("Développeur", { selector: "span" }).closest("li");
+    expect(developpeur).toHaveTextContent("Ajusté à votre demande — la proposition en prévoyait 1.");
+    expect(developpeur).not.toHaveTextContent("une instance suffit à ce volume");
 
     // La seconde demande est partie sur l'équipe **déjà** corrigée par la première.
     expect(corrigerEquipe.mock.calls[1][2]).toEqual([
@@ -783,6 +788,48 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
     expect(within(carte).getByRole("button", { name: "Ajouter ou corriger" })).toBeEnabled();
   });
 
+  it("une API qui ne répond pas se dit en mots, jamais « Failed to fetch »", async () => {
+    // Vu à la relecture de #1331, l'API coupée : « Demande non traitée — Failed
+    // to fetch ». La panne est typée à la source (`ecrireProjet`, ci-dessous).
+    corrigerEquipe.mockRejectedValue(
+      ErreurApi.injoignable(`/api/projets/${PROJET}/equipe/correction`),
+    );
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+
+    await demander(carte, "ajoute quelqu'un pour la sécurité");
+
+    const alerte = await within(carte).findByRole("alert");
+    expect(alerte).toHaveTextContent("L'API n'a pas répondu");
+    expect(alerte).not.toHaveTextContent("Failed to fetch");
+    expect(alerte).not.toHaveTextContent("/api/projets");
+    expect(champ(carte)).toHaveValue("ajoute quelqu'un pour la sécurité");
+  });
+
+  it("une panne après une correction ne laisse pas la réponse précédente passer pour la sienne", async () => {
+    // Vu à la relecture de #1331 : « retire le rôle de sécurité » en attente,
+    // l'API coupée, et sous le champ « Maestro : J'ai ajouté un agent Sécurité… »,
+    // puis seulement la panne.
+    corrigerEquipe
+      .mockResolvedValueOnce(
+        correction({ ajouts: [SECURITE], reponse: "J'ajoute un rôle Sécurité applicative." }),
+      )
+      .mockRejectedValueOnce(ErreurApi.injoignable("/api/projets/x/equipe/correction"));
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+    await demander(carte, "ajoute quelqu'un pour la sécurité");
+    await within(carte).findByRole("status");
+
+    await demander(carte, "retire le rôle de sécurité");
+
+    expect(await within(carte).findByRole("alert")).toHaveTextContent("Demande non traitée");
+    expect(within(carte).queryByRole("status")).toBeNull();
+    // Ce que la première demande a changé, lui, reste.
+    expect(within(carte).getByText(/3 agents/)).toBeInTheDocument();
+  });
+
   it("une demande vide ne part pas", async () => {
     poserFilAssistance({ messages: [demandeDeRecrutement()] });
     rendreAvecEtat(<PageChat />);
@@ -841,6 +888,28 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
     expect(corrigerEquipe.mock.calls[0][2]).toEqual([]);
   });
 
+  it("un rôle ajouté puis retiré le dit, au lieu de se dire encore « ajouté »", async () => {
+    // Vu à la relecture de #1331 : le designer ajouté puis retiré gardait
+    // « ajouté à votre demande » à côté de son nom barré.
+    corrigerEquipe
+      .mockResolvedValueOnce(correction({ ajouts: [SECURITE], reponse: "Ajouté." }))
+      .mockResolvedValueOnce(correction({ retraits: ["securite"], reponse: "Retiré." }));
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+    await demander(carte, "ajoute quelqu'un pour la sécurité");
+    await within(carte).findByText(/Ajouté\./);
+    await demander(carte, "retire-le");
+    await within(carte).findByText(/Retiré\./);
+
+    await userEvent.click(within(carte).getByRole("button", { name: "Voir l'équipe" }));
+
+    const ligne = within(carte).getByText("Sécurité applicative").closest("li") as HTMLElement;
+    expect(within(ligne).getByRole("checkbox")).not.toBeChecked();
+    expect(within(ligne).getByText("ajouté, puis retiré")).toBeInTheDocument();
+    expect(within(ligne).queryByText("ajouté à votre demande")).toBeNull();
+  });
+
   it("le repli des rôles écartés renvoie au geste qui les ajoute", async () => {
     poserFilAssistance({ messages: [demandeDeRecrutement()] });
     rendreAvecEtat(<PageChat />);
@@ -852,6 +921,26 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
     expect(
       within(carte).getByText(/dites-le avec « Corriger avec vos mots »/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("la correction, côté API", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("une API qui ne répond pas lève une panne typée, pas l'erreur brute du navigateur", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+    // Le vrai `corrigerEquipe`, et non le double du reste du fichier.
+    const reel = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+
+    const echec = await reel
+      .corrigerEquipe(PROJET, "ajoute quelqu'un pour la sécurité", [])
+      .catch((erreur: unknown) => erreur);
+
+    expect(echec).toBeInstanceOf(reel.ErreurApi);
+    expect((echec as InstanceType<typeof reel.ErreurApi>).statut).toBeNull();
   });
 });
 

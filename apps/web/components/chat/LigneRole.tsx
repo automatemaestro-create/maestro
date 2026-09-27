@@ -206,9 +206,12 @@ export function LigneRole({
         </span>
         <span className="col-start-3 row-start-1 flex flex-wrap items-center gap-2">
           <BadgeEtat contour>{role.nom}</BadgeEtat>
+          {/* Un rôle ajouté puis retiré ne se dit plus « ajouté » à côté de son
+              nom barré (✗ du regard neuf, relecture de #1331) : les deux gestes
+              sont nommés, dans l'ordre. */}
           {ajoute && (
-            <BadgeEtat ton="info" contour>
-              ajouté à votre demande
+            <BadgeEtat ton={retenu ? "info" : "neutre"} contour>
+              {retenu ? "ajouté à votre demande" : "ajouté, puis retiré"}
             </BadgeEtat>
           )}
           {/* D'où ce rôle descend (docs/37 §2.1) : les agents figés sont
@@ -269,8 +272,16 @@ export function LigneRole({
               className={CLASSE_CONTROLE}
             />
           </span>
+          {/* La raison servie justifie le nombre **proposé** : une fois ce nombre
+              changé — au champ, ou par une demande en mots (« deux développeurs »,
+              #1331) —, elle contredirait le compteur à côté d'elle (vu sur la
+              vraie stack : « 3 » à côté de « une instance : un seul travail… »).
+              « À votre demande » et non « par vous » : dit en mots, le nombre est
+              celui que le modèle a compris, et sa réponse dit lequel (regard neuf). */}
           <span className="min-w-0 flex-1 break-words text-micro text-texte-secondaire">
-            {role.raison_instances}
+            {instances === role.instances
+              ? role.raison_instances
+              : `Ajusté à votre demande — la proposition en prévoyait ${role.instances}.`}
           </span>
         </div>
 
