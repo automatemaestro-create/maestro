@@ -54,16 +54,18 @@ import {
   type PanneApi,
   type PorteeProjet,
 } from "./api";
-import type {
-  CoutExecution,
-  DecisionBrief,
-  DecisionPlafond,
-  EtatAgent,
-  Evenement,
-  Question,
-  ResumeExecution,
-  Tache,
-  Validation,
+import {
+  ETENDUE_APPEL,
+  type CoutExecution,
+  type DecisionBrief,
+  type DecisionPlafond,
+  type EtatAgent,
+  type EtendueApprobation,
+  type Evenement,
+  type Question,
+  type ResumeExecution,
+  type Tache,
+  type Validation,
 } from "./types";
 
 /**
@@ -140,12 +142,15 @@ export type ControlTower = {
   /**
    * Tranche une demande de validation : le moteur reprend ou annule la tâche.
    * `motif` (#272) accompagne un **refus** et reste facultatif — omis, la
-   * décision est celle d'avant ce lot ; sur une approbation il est ignoré.
+   * décision est celle d'avant ce lot ; sur une approbation il est ignoré. Depuis
+   * #1185 c'est une consigne, rendue à l'agent. `etendue` (#1185) étend une
+   * **approbation** à l'outil pour la suite du run ou du projet.
    */
   decider: (
     tacheId: string,
     approuve: boolean,
     motif?: string,
+    etendue?: EtendueApprobation,
   ) => Promise<void>;
   /**
    * Tranche le brief d'un run (#320) : approuver tel quel ou corrigé, ou refuser.
@@ -361,8 +366,13 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
   );
 
   const decider = useCallback(
-    async (tacheId: string, approuve: boolean, motif = "") => {
-      await deciderValidation(tacheId, approuve, motif);
+    async (
+      tacheId: string,
+      approuve: boolean,
+      motif = "",
+      etendue: EtendueApprobation = ETENDUE_APPEL,
+    ) => {
+      await deciderValidation(tacheId, approuve, motif, etendue);
       // Même mécanique que la réassignation : le WebSocket confirmera, le
       // rechargement direct fait disparaître la demande sans attendre.
       await recharger();

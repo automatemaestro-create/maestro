@@ -72,6 +72,7 @@ from typing import Protocol
 
 from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
+from maestro.decision_humaine import consigne_de
 from maestro.telemetry.redact import redact_secrets
 
 # --- ① L'agent lève la main : l'outil `demander_arbitrage` (#582) ----------------------
@@ -143,11 +144,23 @@ def reponse(approuve: bool, detail: str) -> str:
     jamais réécrit ici — « aucun validateur humain configuré » et « refusée par
     le validateur humain » ne se répondent pas de la même façon, et c'est à
     l'agent d'en tenir compte dans son compte-rendu.
+
+    Un refus **avec consigne** (#1185) ne dit plus « poursuis sans elle » : la
+    personne a dit quoi faire à la place, et c'est une autre action que l'agent doit
+    en tirer — qu'il soumettra à son tour si elle le demande. La consigne est déjà
+    dans `detail`, en toutes lettres ; elle n'est pas répétée.
     """
     if approuve:
         return (
             f"Arbitrage approuvé — {detail}. "
             "Réalise l'action que tu as décrite, puis poursuis ta tâche."
+        )
+    if consigne_de(detail):
+        return (
+            f"Arbitrage refusé — {detail}. "
+            "Ne réalise pas l'action telle que tu l'as décrite : replanifie-la à partir "
+            "de cette consigne, puis poursuis ta tâche. Si la nouvelle action demande "
+            "encore un arbitrage, redemande-le en la décrivant."
         )
     return (
         f"Arbitrage refusé — {detail}. "
@@ -323,7 +336,21 @@ def motif_refus(outil: str, detail: str) -> str:
     Même forme que les motifs de politique (`maestro.agents.permissions`) : il
     nomme l'outil, dit d'où vient le refus, et se termine par la consigne qui
     évite qu'un refus propre ne devienne un échec de tâche.
+
+    Quand la personne a écrit **quoi faire à la place** (#1185), la fin change :
+    « sans cet outil » serait faux — refuser `rm -rf dist` en demandant d'archiver
+    peut très bien se faire par le même `Bash`. L'agent lit donc la consigne (déjà
+    dans `detail`) et l'ordre d'en tirer une autre action ; celle-ci repasse par le
+    hook, donc par l'arbitrage, et le même appel rejoué retrouve le même refus
+    (`MemoireArbitrage`, indexée sur l'acte).
     """
+    if consigne_de(detail):
+        return (
+            f"appel de l'outil {outil!r} refusé à l'arbitrage humain — {detail}. "
+            "Ne rejoue pas cet appel tel quel : replanifie ton geste à partir de cette "
+            "consigne et poursuis ta tâche — ta nouvelle action sera soumise à son tour "
+            "si elle le demande."
+        )
     return (
         f"appel de l'outil {outil!r} refusé à l'arbitrage humain — {detail}. "
         "Poursuis la tâche sans cet outil."

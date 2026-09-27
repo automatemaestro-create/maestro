@@ -51,7 +51,10 @@ Endpoints :
 - `POST /api/validations/{tache_id}/decision` — la décision humaine
   (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule. Un
   refus peut porter un `motif` (#272), facultatif, qui rejoint le `detail` de
-  l'événement — donc le journal et la `decision` de la demande ;
+  l'événement — donc le journal et la `decision` de la demande — et, depuis
+  #1185, revient à l'agent comme **consigne** : il replanifie son geste au lieu
+  d'abandonner. Une approbation d'acte peut porter une `etendue` (`run`,
+  `projet`) : l'outil n'est plus redemandé à cet agent pour la suite ;
 - `GET  /api/questions` — les questions **libres** posées par les agents pendant
   leur tâche (#1023) : la question, ses choix facultatifs, l'hypothèse que
   l'agent suivra sans réponse, puis la réponse une fois écrite. Une question
@@ -121,6 +124,9 @@ Endpoints :
   (#262, source `core/permissions/<agent>.json`) : remplacement intégral, 422
   **motivé** sur une entrée mal formée, et aucune lecture préalable — c'est ce
   qui permet de réparer depuis l'écran une politique que le moteur refuse ;
+- `DELETE /api/permissions/{agent}/accords/{id}` — retire un **accord étendu**
+  (#1185) : l'outil qu'une personne avait approuvé « pour la suite du run » ou
+  « du projet » repasse à l'arbitrage dès l'appel suivant ;
 - `GET  /api/projets` — les projets déclarés de l'utilisateur (#223, EF-35) :
   racine canonicalisée sur le disque, origine, `vcs` détecté et périmètre ;
 - `GET  /api/projets/explorateur` — l'**explorateur de dossiers servi par
@@ -540,6 +546,7 @@ from maestro.controltower.regime import MembreDeLEquipe, regime_d_un_run
 from maestro.controltower.reglements import (
     MOTIF_ATTENTE_INCONNUE,
     MOTIF_ATTENTE_REGLEE,
+    MOTIF_ETENDUE_REFUSEE,
     MOTIF_REPONSE_VIDE,
     ReglementRefuse,
 )
@@ -559,6 +566,7 @@ from maestro.controltower.state import (
     EtatAgent,
 )
 from maestro.controltower.validation import ValidateurControlTower
+from maestro.decision_humaine import ETENDUE_APPEL, ETENDUE_RUN
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.engine.plafond import (
     GESTE_ARRETER,
@@ -700,20 +708,30 @@ class DecisionRequete(BaseModel):
     """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible.
 
     `motif` (#272) est la raison **facultative** d'un refus, telle que la personne
-    l'a écrite. Il ne change rien à ce que le moteur fait — celui-ci ne lit que
-    `statut` — mais il rejoint le `detail` de l'événement, donc le journal durable
-    et la `decision` de la demande projetée : sans lui, un refus revenait plus tard
-    comme un fait sans cause, et rien ne distinguait « trop risqué avant la démo »
-    d'une erreur de clic.
+    l'a écrite. Il rejoint le `detail` de l'événement, donc le journal durable et la
+    `decision` de la demande projetée : sans lui, un refus revenait plus tard comme
+    un fait sans cause, et rien ne distinguait « trop risqué avant la démo » d'une
+    erreur de clic.
 
-    Sur une **approbation** il est ignoré, comme le `brief` d'une décision de brief
-    l'est sur un refus (`DecisionBriefRequete`) : le canal porte les deux gestes,
-    chacun ne lit que ce qui le concerne. Vide ou absent, la décision est celle
-    d'avant ce lot, au caractère près.
+    ⚠ Depuis #1185 le moteur le **lit** : c'est une **consigne**. Elle voyage aussi
+    dans `Event.motif`, le validateur la rend à l'agent, et celui-ci replanifie son
+    geste à partir d'elle — « archive au lieu de supprimer » réoriente le travail au
+    lieu de l'arrêter ; la nouvelle action repasse par l'arbitrage.
+
+    `etendue` (#1185) est la portée d'une **approbation** : `appel` (le défaut, le
+    geste d'avant), ou l'outil pour la suite du `run` ou du `projet`. Choisie par la
+    personne, jamais par défaut ; admise seulement sur une demande qui porte un
+    acte, et écrite dans les permissions de l'agent, où elle se relit et se retire.
+
+    Sur une **approbation** le motif est ignoré, sur un refus l'étendue — comme le
+    `brief` d'une décision de brief l'est sur un refus (`DecisionBriefRequete`) : le
+    canal porte les deux gestes, chacun ne lit que ce qui le concerne. Vides ou
+    absents, la décision est celle d'avant ces lots, au caractère près.
     """
 
     approuve: bool
     motif: str = ""
+    etendue: str = ETENDUE_APPEL
 
 
 class ReponseQuestionRequete(BaseModel):
@@ -1582,6 +1600,7 @@ _CODE_REFUS_REGLEMENT: dict[str, int] = {
     MOTIF_ATTENTE_INCONNUE: 404,
     MOTIF_ATTENTE_REGLEE: 409,
     MOTIF_REPONSE_VIDE: 422,
+    MOTIF_ETENDUE_REFUSEE: 422,
 }
 
 
@@ -2404,7 +2423,14 @@ def create_app(
     # Ce qui attend quelqu'un — questions d'agent et validations — se règle par un
     # seul service (#1183) : les deux routes de leurs écrans et le fil de
     # l'orchestrateur l'appellent, aucun ne recopie ses règles.
-    attentes = ServiceAttentes(state, bus)
+    # Une approbation étendue (#1185) s'écrit dans les permissions de l'agent, au
+    # projet de la demande : le service reçoit de quoi trouver ce dépôt, jamais un
+    # chemin.
+    attentes = ServiceAttentes(
+        state,
+        bus,
+        accords=lambda projet_id: gabarits.permissions.pour_projet(projet_id).accords(),
+    )
 
     # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,
     # bus —, un répondeur qui peut ouvrir un run, et rien de plus côté REST. Il se
@@ -3750,12 +3776,16 @@ def create_app(
         réapplique l'événement sans effet (idempotence). 404 si aucune demande
         pour cette tâche, 409 si elle est déjà tranchée (jamais deux décisions).
 
-        Le `motif` d'un refus (#272) voyage dans le `detail` de l'événement, et
-        nulle part ailleurs : c'est le champ que la projection recopie dans
-        `decision`, donc celui que l'UI relit et que le journal durable conserve.
-        Lui ouvrir un champ d'événement à lui aurait demandé de le faire traverser
-        le schéma du journal pour un texte que `detail` porte déjà — au prix d'un
-        second endroit où lire « pourquoi ce refus ».
+        Le `motif` d'un refus (#272) voyage dans le `detail` de l'événement : c'est
+        le champ que la projection recopie dans `decision`, donc celui que l'UI
+        relit et que le journal durable conserve. Depuis #1185 il voyage **aussi**
+        dans `motif`, le fait que le moteur rend à l'agent comme consigne — lire la
+        consigne dans la phrase de `detail` serait juger du texte par un motif.
+
+        `etendue` (#1185) étend une approbation à l'outil pour la suite du run ou du
+        projet : l'accord s'écrit dans les permissions de l'agent avant que la
+        décision parte. `422` si la demande ne le permet pas (pas d'acte, pas de run,
+        pas de projet, étendue inconnue).
 
         Les règles vivent dans le service des attentes (#1183,
         `ServiceAttentes.trancher`), que le fil de l'orchestrateur appelle aussi :
@@ -3763,7 +3793,10 @@ def create_app(
         """
         try:
             demande = await attentes.trancher(
-                tache_id, approuve=requete.approuve, motif=requete.motif
+                tache_id,
+                approuve=requete.approuve,
+                motif=requete.motif,
+                etendue=requete.etendue,
             )
         except ReglementRefuse as refus:
             raise HTTPException(
@@ -4416,9 +4449,16 @@ def create_app(
         `cfg` cadre la politique sur un projet (#1038) : celle qu'il a posée,
         sinon celle du gabarit — l'absence d'une politique vaut « tout permis »,
         et c'est le repli le moins discutable des six dépôts.
+
+        `permissions_accords` (#1185) : les **accords étendus** de l'agent à ce
+        niveau — « ne plus demander pour cet outil » —, servis avec la fiche
+        parce qu'ils prolongent la politique et se relisent au même endroit. Un
+        accord de run dont le run est soldé n'est plus servi : il ne couvre plus
+        rien, et le montrer ferait lire un laissez-passer qui n'existe plus.
         """
         cfg = cfg if cfg is not None else gabarits
         outils = _outils_exposes(nom, cfg)
+        accords = _accords_en_vigueur(nom, cfg)
         try:
             politique = cfg.permissions.lire(nom)
         except ValueError as exc:
@@ -4426,12 +4466,35 @@ def create_app(
                 "permissions": None,
                 "permissions_erreur": str(exc),
                 "permissions_outils": outils,
+                "permissions_accords": accords,
             }
         return {
             "permissions": politique.to_dict() if politique is not None else None,
             "permissions_erreur": None,
             "permissions_outils": outils,
+            "permissions_accords": accords,
         }
+
+    def _accords_en_vigueur(nom: str, cfg: ConfigurationAgents) -> list[dict[str, Any]]:
+        """Les accords étendus de `nom` qui couvrent encore quelque chose (#1185).
+
+        Un accord de projet vaut tant qu'on ne l'a pas retiré ; un accord de run,
+        tant que son run n'est pas soldé — un run inconnu de la projection reste
+        servi, on ne sait pas dire qu'il est fini. Un dépôt illisible rend une
+        liste vide : l'agent est alors redemandé à chaque appel, le sens sûr.
+        """
+        try:
+            accords = cfg.permissions.accords().lire(nom)
+        except ValueError:
+            return []
+        en_vigueur = []
+        for accord in accords:
+            if accord.etendue == ETENDUE_RUN:
+                execution = state.execution(accord.run_id)
+                if execution is not None and execution.statut in STATUTS_EXECUTION_TERMINAUX:
+                    continue
+            en_vigueur.append(accord.to_dict())
+        return en_vigueur
 
     def _fiche_defaut(
         agent: Agent, *, avec_playbook: bool, cfg: ConfigurationAgents | None = None
@@ -5156,6 +5219,40 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"agent": agent, "permissions": politique.to_dict()}
+
+    @app.delete("/api/permissions/{agent}/accords/{accord_id}")
+    async def retirer_accord(
+        agent: str, accord_id: str, projet: str | None = None
+    ) -> dict[str, Any]:
+        """Retire un accord étendu d'un agent (#1185) — le prochain appel redemande.
+
+        L'accord a été donné en approuvant une demande « pour la suite du run » ou
+        « du projet » ; le retirer rend l'outil à l'arbitrage **dès l'appel
+        suivant**, même au milieu d'une tâche, parce que le moteur le relit à chaque
+        appel arbitré. Rien d'autre ne bouge : la politique de l'agent reste celle
+        qu'elle était.
+
+        Dans le **projet** demandé, comme les autres routes de la fiche (#1038).
+        `404` si l'agent n'est pas au catalogue ou si aucun accord ne porte cet
+        identifiant — y compris déjà retiré : il n'y a rien à redire. Rend les
+        accords qui restent en vigueur, pour que l'écran n'ait rien à recomposer.
+        """
+        cfg = _config(projet)
+        _exige_agent_du_catalogue(agent, cfg)
+        try:
+            retire = cfg.permissions.accords().retirer(agent, accord_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if retire is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"aucun accord {accord_id!r} pour l'agent {agent} — déjà retiré ?",
+            )
+        return {
+            "agent": agent,
+            "retire": retire.to_dict(),
+            "accords": _accords_en_vigueur(agent, cfg),
+        }
 
     # --- Projets de l'utilisateur (#223) : CRUD et explorateur de dossiers ---
     def _refus_projet(exc: Exception, *, explorateur: bool = False) -> HTTPException:

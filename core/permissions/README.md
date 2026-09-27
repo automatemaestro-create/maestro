@@ -131,6 +131,30 @@ la commande, un `Bash` laissé passer disait qu'il était passé, jamais ce qu'i
 avait lancé. L'acte ne va qu'à la trace, pas au motif que lit l'agent ; un refus
 de `deny` ou de frontière n'en porte pas, aucun arbitrage ne s'y étant joué.
 
+## Ce que la personne accorde pour la suite (#1185)
+
+Une entrée `ask`/`humain` fait trancher **chaque** appel. Depuis #1185, la personne
+qui approuve peut étendre son oui à l'**outil** — « Ne plus demander pour `Bash`… »,
+puis « Pour tout ce run » ou « Pour tout ce projet » sur la carte de la demande.
+C'est un choix de la personne, jamais un défaut : le décideur reste `humain`, et
+l'approbation d'un seul appel reste le geste par défaut.
+
+L'accord ne touche **pas** à la politique de ce dossier : il vit à côté, dans
+`_accords/<agent>.json` au niveau où la demande est née — `_projets/<id>/_accords/`
+pour un projet, ce dossier-ci pour un run hors projet — et **jamais versionné**
+(ce sont des décisions d'usage, pas de la configuration : `.gitignore`). Il n'est
+pas hérité d'un projet à l'autre. Il couvre l'outil **exact**, pour **cet agent**,
+et ne vaut qu'**après** la politique : `deny` refuse toujours, la frontière
+d'écriture juge toujours avant, un outil laissé passer n'avait rien à accorder. Le
+moteur le relit **à chaque appel arbitré** ; l'appel qui passe sur un accord laisse
+sa ligne au journal (« accord donné pour la suite par la personne… »).
+
+Il se relit et se retire dans l'onglet « MCP & permissions » de la fiche agent
+(« Accordés pour la suite »), ou par `DELETE /api/permissions/<agent>/accords/<id>` :
+l'appel suivant redemande, même au milieu d'une tâche. Un accord de run meurt avec
+son run ; un accord de projet vaut jusqu'à ce qu'on le retire. Code :
+`maestro/agents/accords.py` ; tests : `tests/test_refus_consigne_accord_etendu.py`.
+
 ## Ce que le dépôt classe, et pourquoi (#716)
 
 Jusqu'à #716 ce dossier ne portait **aucune** entrée `ask` — pas une. La chaîne

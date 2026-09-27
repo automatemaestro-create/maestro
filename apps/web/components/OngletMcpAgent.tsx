@@ -73,9 +73,12 @@ import {
   definirActivationsMcp,
   definirPermissions,
   migrerDeclarationsMcp,
+  retirerAccord,
 } from "@/lib/api";
+import { formatDateHeure } from "@/lib/format";
 import { entreesHorsPortee } from "@/lib/permissions";
 import type {
+  AccordEtendu,
   AgentCatalogueDetail,
   IntegrationPoolMcp,
   MigrationMcp,
@@ -805,6 +808,7 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
             aide="Un outil intégré refusé est retiré de la session ; un serveur MCP refusé en entier n'est jamais monté, ses secrets ne sont même pas résolus."
           />
           <ListeArbitrages entrees={askEntrees} agent={fiche.nom} />
+          <ListeAccords agent={fiche.nom} initiaux={fiche.permissions_accords ?? []} />
         </div>
       )}
       {erreur && (
@@ -876,6 +880,107 @@ function ListeArbitrages({
         suspendu le temps qu&apos;on tranche. Le cran se pose dans{" "}
         <code className="font-mono">core/permissions/{agent}.json</code>{" "}
         — il n&apos;est pas réglable ici.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Ce que la personne a approuvé **pour la suite** (#1185) — et le geste qui le
+ * retire.
+ *
+ * Un accord naît sur une carte de validation (« Ne plus demander pour `Bash`… »,
+ * puis « Pour tout ce run » ou « Pour tout ce projet ») ; c'est ici, dans les
+ * permissions de l'agent qu'il prolonge, qu'on vient le relire et le retirer —
+ * comme la liste des outils de Visual Studio ou le `/permissions` de Claude Code,
+ * relevés par la veille du ticket. Il est rangé **sous** `ask` parce qu'il ne vaut
+ * que là : la politique juge d'abord, et un accord n'ouvre jamais ce que `deny`
+ * ferme.
+ *
+ * Le retrait écrit tout de suite et vaut **dès l'appel suivant** — le moteur relit
+ * les accords à chaque appel arbitré. La liste ne bouge qu'avec la réponse de
+ * l'API, qui rend ceux qui restent : c'est elle qui a le dernier mot.
+ */
+function ListeAccords({
+  agent,
+  initiaux,
+}: {
+  agent: string;
+  initiaux: AccordEtendu[];
+}) {
+  const [accords, setAccords] = useState<AccordEtendu[]>(initiaux);
+  const [enCours, setEnCours] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  const retirer = async (id: string) => {
+    setEnCours(id);
+    setErreur(null);
+    try {
+      setAccords(await retirerAccord(agent, id));
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnCours(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-annexe font-medium text-texte-secondaire">
+        Accordés pour la suite
+      </span>
+      {accords.length === 0 ? (
+        <p className="text-annexe text-texte-secondaire">
+          Aucun — chaque appel arbitré est soumis à une personne. Un accord se
+          donne en approuvant une demande « pour tout ce run » ou « pour tout ce
+          projet ».
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-1" aria-label={`Accords pour la suite de ${agent}`}>
+          {accords.map((accord) => {
+            const portee =
+              accord.etendue === "run" ? `ce run · ${accord.run_id}` : "ce projet";
+            return (
+              <li
+                key={accord.id}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe"
+              >
+                <span className="font-mono text-texte">{accord.outil}</span>
+                <BadgeEtat ton="info">{portee}</BadgeEtat>
+                {accord.accorde_le && (
+                  <span className="text-texte-secondaire">
+                    accordé le {formatDateHeure(accord.accorde_le)}
+                  </span>
+                )}
+                <Bouton
+                  variante="discret"
+                  ton="alerte"
+                  taille="petite"
+                  className={CIBLE_MINIMALE}
+                  occupe={enCours === accord.id}
+                  disabled={enCours !== null}
+                  onClick={() => void retirer(accord.id)}
+                >
+                  Retirer
+                  <span className="sr-only">
+                    {" "}
+                    l&apos;accord {accord.outil} pour {portee}
+                  </span>
+                </Bouton>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {erreur !== null && (
+        <p role="alert" className="text-annexe font-medium text-alerte-texte">
+          Retrait refusé : {erreur}
+        </p>
+      )}
+      <p className="text-annexe text-texte-secondaire">
+        Un accord ne vaut qu&apos;après la politique — deny refuse toujours — et
+        pour l&apos;outil exact. Retiré, l&apos;outil est redemandé dès l&apos;appel
+        suivant, même au milieu d&apos;une tâche.
       </p>
     </div>
   );

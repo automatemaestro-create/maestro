@@ -14,7 +14,9 @@
 import { AUCUNE_BORNE, type BornesRun } from "./bornes";
 import { jetonApi } from "./jetonApi";
 import { lireProjetActifId } from "./projetActif";
+import { ETENDUE_APPEL, type EtendueApprobation } from "./types";
 import type {
+  AccordEtendu,
   AgentCatalogue,
   AgentCatalogueDetail,
   AnalyticsCouts,
@@ -1472,19 +1474,50 @@ export async function arreterFluxChat(
  * pas envoyée du tout : un refus sans motif produit l'appel d'avant ce lot, à
  * l'octet près — le backend la déclare optionnelle, mais l'omettre garde le
  * contrat lisible pour qui relit une trace réseau. Ignoré sur une approbation,
- * côté backend comme ici : approuver ne se motive pas dans ce canal.
+ * côté backend comme ici : approuver ne se motive pas dans ce canal. Depuis #1185
+ * le motif est une **consigne** : le moteur la rend à l'agent, qui replanifie.
+ *
+ * `etendue` (#1185) étend une **approbation** à l'outil, pour la suite du run ou
+ * du projet. Même règle que le motif : `appel` (le défaut) n'envoie rien, et un
+ * refus ne l'envoie jamais — l'appel d'avant reste l'appel d'avant, à l'octet près.
  */
 export function deciderValidation(
   tacheId: string,
   approuve: boolean,
   motif = "",
+  etendue: EtendueApprobation = ETENDUE_APPEL,
 ): Promise<void> {
   const raison = approuve ? "" : motif.trim();
+  const etendre = approuve && etendue !== ETENDUE_APPEL;
   return envoyerJson(
     `/api/validations/${encodeURIComponent(tacheId)}/decision`,
-    { approuve, ...(raison !== "" && { motif: raison }) },
+    {
+      approuve,
+      ...(raison !== "" && { motif: raison }),
+      ...(etendre && { etendue }),
+    },
     "décision refusée",
   );
+}
+
+/**
+ * Retire un **accord étendu** d'un agent (#1185, `DELETE
+ * /api/permissions/{agent}/accords/{id}`) : l'outil qu'on avait approuvé « pour la
+ * suite » repasse à l'arbitrage dès l'appel suivant. Rend les accords qui restent.
+ */
+export async function retirerAccord(
+  agent: string,
+  accordId: string,
+): Promise<AccordEtendu[]> {
+  const corps = await envoyerJsonEtLire<{ accords?: AccordEtendu[] }>(
+    cadreProjet(
+      `/api/permissions/${encodeURIComponent(agent)}/accords/${encodeURIComponent(accordId)}`,
+    ),
+    undefined,
+    "retrait refusé",
+    "DELETE",
+  );
+  return corps.accords ?? [];
 }
 
 /**
@@ -1501,7 +1534,7 @@ async function envoyerJsonEtLire<T>(
   chemin: string,
   corps: unknown,
   refusParDefaut: string,
-  methode: "POST" | "PUT" = "POST",
+  methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<T> {
   const reponse = await appel(`${API_URL}${chemin}`, {
     method: methode,

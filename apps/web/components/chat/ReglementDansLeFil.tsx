@@ -142,14 +142,17 @@ export function ReglementDansLeFil({
           {demande.texte}
         </blockquote>
       )}
-      {/* « Raison du refus », et non « transmise » : elle est consignée avec la
-          décision, là où l'écran des validations garde un motif, mais l'agent n'apprend
-          que le refus tant que #1185 ne la lui porte pas — vu sur la vraie stack. */}
+      {/* « Consigne pour l'agent » depuis #1185 : la raison est consignée avec la
+          décision, là où l'écran des validations garde un motif, **et** elle revient à
+          l'agent, qui replanifie son geste à partir d'elle. Avant, la carte écrivait
+          « Raison du refus » et jamais « transmise » — l'agent n'apprenait que le refus,
+          et vu sur la vraie stack, le dire transmis promettait ce qui n'avait pas lieu. */}
       {demande.action === "refus" && (
         <p className="mt-3 text-corps text-texte">
           {demande.texte !== "" ? (
             <>
-              Raison du refus : <strong className="font-medium">{demande.texte}</strong>
+              Consigne pour l&apos;agent :{" "}
+              <strong className="font-medium">{demande.texte}</strong>
             </>
           ) : (
             "Sans raison donnée."

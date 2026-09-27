@@ -687,13 +687,19 @@ def test_une_validation_se_tranche_par_une_carte_confirmee_jusqu_au_moteur(
     assert carte.reglement.suite == (
         "l'appel s'exécute et la tâche reprend"
         if approuve
-        else "l'appel est écarté : l'agent poursuit sa tâche sans lui"
+        else "l'appel est écarté : l'agent reçoit votre consigne et replanifie son geste "
+        "— sa nouvelle action vous sera soumise si elle le demande"
     )
-    assert decision is approuve
     validation = state.validation("nettoyer")
     assert validation is not None
     assert validation.statut == (VALIDATION_APPROUVEE if approuve else VALIDATION_REFUSEE)
-    if not approuve:
+    if approuve:
+        assert decision is True
+    else:
+        # La raison atteint le moteur, dans l'événement même, et le validateur la rend
+        # comme consigne (#1185) — la phrase de `detail` la répète pour l'écran.
+        assert bool(decision) is False and decision.motif == RAISON
+        assert recus[-1].motif == RAISON
         assert recus[-1].detail == f"refusée depuis la Control Tower — {RAISON}"
         assert validation.decision == f"refusée depuis la Control Tower — {RAISON}"
     fait = suite.reglement_fait
@@ -742,7 +748,7 @@ def test_sur_un_run_deja_solde_rien_ne_reprend_et_le_fil_le_dit(genre: str) -> N
 
 
 def test_un_refus_confirme_se_raconte_avec_sa_raison_et_ce_qui_en_sort() -> None:
-    """Le modèle parle depuis le fait : la raison partie, et l'agent qui poursuit sans l'acte."""
+    """Le modèle parle depuis le fait : la raison partie, et l'agent qui repart d'elle."""
     state = ControlTowerState()
     _soumet(state)
 
@@ -756,11 +762,11 @@ def test_un_refus_confirme_se_raconte_avec_sa_raison_et_ce_qui_en_sort() -> None
     assert suite.contenu == REDIGE
     faits = juge.redactions[-1]
     assert f"Sa raison, « {RAISON} », est consignée avec la décision" in faits
-    assert "l'agent poursuit sa tâche sans lui" in faits
-    # Vu sur la vraie stack : « avec sa raison » faisait dire au modèle que la consigne
-    # était transmise à l'agent. Elle ne l'est pas tant que #1185 ne la lui porte pas.
-    assert "l'agent, lui, ne la reçoit pas" in faits
-    assert "que tu lui transmets la raison ni qu'il la suivra" in _PROMPT_ORCHESTRATION
+    # Depuis #1185 la raison atteint l'agent : le fait le dit, et la suite aussi.
+    assert "revient à l'agent comme consigne" in faits
+    assert "l'agent reçoit votre consigne et replanifie son geste" in faits
+    # Ce qu'il en fera reste le sien : le fil ne le promet pas.
+    assert "il la lit, c'est lui qui en tire son geste" in _PROMPT_ORCHESTRATION
 
 
 # ── Bout en bout : l'API entière, le même service que les écrans ───────────────

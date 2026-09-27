@@ -21,8 +21,8 @@ couche d'exécution entière.
   le lit et reprend (#1023). Répondre n'approuve **aucun** acte (EF-08, docs/32 §5) ;
 - `approbation` — approuver l'acte qu'une validation retient : la tâche reprend ;
 - `refus` — le refuser, **avec sa raison** quand la personne en donne une. La raison
-  voyage par le même champ que le motif de l'écran des validations (#272) : c'est
-  celui que #1185 portera jusqu'à l'agent, et le fil n'en ouvre pas un second.
+  voyage par le même champ que le motif de l'écran des validations (#272), que #1185
+  porte jusqu'à l'agent comme consigne ; le fil n'en ouvre pas un second.
 
 Le **genre** de l'attente se déduit de l'action (`GENRE_DU_REGLEMENT`) : une question
 ne s'approuve pas, une validation ne se répond pas. Le contrat du juge n'a donc pas à
@@ -84,6 +84,10 @@ MOTIF_ATTENTE_REGLEE = "attente-reglee"
 
 #: Une réponse vide n'apprend rien à l'agent — `422` (#1023).
 MOTIF_REPONSE_VIDE = "reponse-vide"
+
+#: Une approbation étendue que la demande ne permet pas — étendue inconnue, demande
+#: sans acte, run ou projet introuvables — `422` (#1185).
+MOTIF_ETENDUE_REFUSEE = "etendue-refusee"
 
 
 class ReglementRefuse(ValueError):
