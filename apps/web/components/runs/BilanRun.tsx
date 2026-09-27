@@ -64,6 +64,7 @@ import {
   IconeFichier,
   IconeReprise,
   IconeStatutEchec,
+  IconeStatutEnCours,
 } from "@/components/Icones";
 import {
   BadgeEtat,
@@ -211,7 +212,10 @@ export function BilanRun({
   } else if (etat === ETAT_BILAN_EN_REDACTION) {
     corps = (
       <EtatVide
-        icone={IconeObjectif}
+        // Le glyphe « en cours » des statuts, et non le ◎ de l'absent : les deux
+        // cartes vides ne se distinguent plus par leur seul libellé (relevé par le
+        // regard neuf).
+        icone={IconeStatutEnCours}
         message="Bilan en cours de rédaction — Maestro relit les pièces du journal de ce run. Il s'affichera ici dès qu'il sera rendu."
       />
     );
