@@ -682,6 +682,7 @@ from maestro.controltower.consultation import (
     catalogue,
     demandes_de,
 )
+from maestro.controltower.estimation import EstimationRun, estimer_run
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_EXECUTION_STATUT,
@@ -935,13 +936,22 @@ Le verdict :
 - "accord" — le dernier message approuve une proposition que TU viens de faire
   dans ce fil — un run, un projet, une pièce d'outillage, un geste sur un run ou
   le règlement d'une attente ("oui", "vas-y", "ok lance", "crée-le", "écris-la",
-  "oui, annule-le", "oui, envoie-la"). Sans
-  proposition juste avant, ce n'est jamais un accord — et dans le doute non plus.
-  Une demande de changement, même vague, n'approuve rien : un accord écrit dans le
-  projet de la personne, il doit être sans équivoque.
+  "oui, annule-le", "oui, envoie-la"). Une proposition de run que les faits
+  montrent en attente est faite juste avant, même quelques questions plus haut.
+  Sans proposition juste avant, ce n'est jamais un accord — et dans le doute non
+  plus. Une demande de changement, même vague, n'approuve rien : un accord écrit
+  dans le projet de la personne, il doit être sans équivoque.
 - "echange" — tout le reste : question sur l'outil ou sur le travail, demande
   d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
   pas.
+
+Une proposition de run ne meurt pas à la première question. Quand les faits en
+montrent une en attente et que la personne en parle sans la trancher — ce qu'elle
+coûtera, combien de temps, ce qu'elle fera ou touchera —, c'est un "echange" qui
+la GARDE : ajoute à l'objet de la dernière ligne "garde_la_proposition": true, et
+sa carte reste sous ta réponse, acceptable telle quelle. Omets cette clé sur un
+refus, sur une autre demande, ou quand la conversation passe à autre chose. Une
+réponse qui CHANGE ce qui serait lancé est une nouvelle "proposition", corrigée.
 
 Ce qui se fait dans le dossier du projet ne se refuse jamais comme étranger à
 Maestro, et tu ne renvoies jamais l'utilisateur le faire lui-même ailleurs. Une
@@ -970,9 +980,35 @@ L'objectif :
 - sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
   autonome, qui reformule la demande sans rien inventer ;
 - sur "accord", recopie MOT POUR MOT l'objectif de la proposition que
-  l'utilisateur vient d'approuver — vide quand c'est un projet, un geste sur un
-  run ou le règlement d'une attente qu'il approuve ;
+  l'utilisateur vient d'approuver — celui que les faits montrent en attente —,
+  vide quand c'est un projet, un geste sur un run ou le règlement d'une attente
+  qu'il approuve ;
 - vide sur "echange", sur "projet", sur "geste" et sur "attente".
+
+Sur "proposition", ajoute à l'objet de la dernière ligne une clé "taches" : le
+nombre de tâches en lesquelles tu estimes que ce travail sera découpé (une
+retouche : 3 ; une application entière : davantage). C'est de lui que le code
+tire l'estimation de coût montrée sur la carte : un ordre de grandeur, jamais une
+promesse, et qui ne borne rien.
+
+Sur "accord" qui approuve un run, ajoute à l'objet de la dernière ligne une clé
+"bornes" avec celles que la personne demande pour CE run — dans son accord ("vas-y,
+5 $ max"), ou dans ce qu'elle a dit de la proposition depuis qu'elle attend :
+
+"bornes": {"plafond_cout_usd": 5}
+
+- "plafond_cout_usd" : le run s'interrompt quand il a coûté ce montant, en dollars ;
+- "plafond_tokens" : le run s'interrompt quand il a consommé ces tokens ;
+- "timeout_tache_s" : le délai de CHAQUE tâche, en secondes ("10 minutes par
+  tâche" : 600) ;
+- "parallelisme" : combien de tâches travaillent en même temps.
+
+Seulement celles qu'elle demande : omets la clé quand elle n'en demande aucune, il
+n'y a aucune borne par défaut. Maestro ne borne pas la durée d'un run ENTIER, seulement
+celle de chaque tâche : une durée demandée pour tout le run ("pas plus d'une heure")
+n'est donc pas une borne que tu puisses poser telle quelle — ce n'est pas un accord
+sans équivoque. Réponds alors en "echange" qui garde la proposition, en disant ce que
+tu peux borner à la place.
 
 Sur "attente", ajoute à l'objet de la dernière ligne une clé "attente" :
 
@@ -1052,8 +1088,13 @@ La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "proposition", il énonce l'objectif et demande explicitement l'accord. Sur
 "accord", il confirme que le run part — et c'est TOUT ce qui sera dit : rien
 n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les tâches
-apparaîtront ». L'identifiant du run et ce qu'il a ouvert s'affichent d'eux-mêmes
-sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur un "accord"
+apparaîtront ». L'identifiant du run, ce qu'il a ouvert et les bornes appliquées
+s'affichent d'eux-mêmes sous ta réponse ; ne les invente donc pas, tu ne les
+connais pas — mais si l'accord pose des bornes, redis en quelques mots celles que
+tu as posées dans ta dernière ligne, et aucune autre. Sur un "echange" qui garde
+la proposition, il répond à ce qui est demandé — avec l'estimation des faits quand
+la question porte sur le coût, un ordre de grandeur et non un devis ni une borne
+— et ne redemande pas l'accord : la carte est toujours sous ta réponse. Sur un "accord"
 qui approuve un projet, il dit que tu le déclares, rien de plus ; qui approuve une
 pièce d'outillage, il dit que tu l'écris, rien de plus ; qui approuve un geste sur
 un run, il dit que tu le fais, rien de plus — l'état du run, relu après le geste,
@@ -2787,6 +2828,17 @@ class _Verdict:
     #: Brut pour la même raison : c'est le répondeur qui confronte ses cibles aux
     #: files et son action au service.
     attente: Mapping[str, Any] | None = None
+    #: Les bornes qu'un accord **tapé** nomme (#1184) — « vas-y, 5 $ max » —, brutes :
+    #: `BornesRun.depuis` les lit, `lancer` les juge. `None` quand l'accord n'en nomme
+    #: aucune, et c'est alors « aucune borne » (#494), jamais un défaut.
+    bornes: Mapping[str, Any] | None = None
+    #: Le nombre de tâches que le modèle estime pour ce qu'il propose (#1184), brut :
+    #: `estimer_run` en tire l'estimation, plancher compris.
+    taches: Any = None
+    #: Sur un échange, la proposition qui attend **tient encore** (#1184) : la personne
+    #: en parle sans la trancher — « combien ça coûtera ? ». C'est le juge qui le dit,
+    #: message par message ; le canal ne fait que recopier la carte sous la réponse.
+    garde: bool = False
 
 
 def _objet_json(texte: str) -> Any:
@@ -2830,6 +2882,7 @@ def _verdict_depuis(texte: str) -> _Verdict:
     projet = charge.get("projet")
     geste = charge.get("geste")
     attente = charge.get("attente")
+    bornes = charge.get("bornes")
     return _Verdict(
         nom=nom if nom in VERDICTS else VERDICT_ECHANGE,
         # Le texte brut en repli : un objet bien formé mais sans phrase à
@@ -2840,6 +2893,11 @@ def _verdict_depuis(texte: str) -> _Verdict:
         projet=projet if isinstance(projet, Mapping) else None,
         geste=geste if isinstance(geste, Mapping) else None,
         attente=attente if isinstance(attente, Mapping) else None,
+        bornes=bornes if isinstance(bornes, Mapping) else None,
+        taches=charge.get("taches"),
+        # `True` et lui seul : une chaîne « false » ou un 1 ne gardent rien — ce
+        # qu'on ne comprend pas laisse la conduite d'avant, la carte qui tombe.
+        garde=charge.get("garde_la_proposition") is True,
     )
 
 
@@ -2913,6 +2971,46 @@ def _projet_de_l_accord(
     return conversation
 
 
+def _proposition_qui_tient(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """La proposition de run à laquelle le dernier message **répond** — `None` sinon (#1184).
+
+    Lue structurellement, comme `_projet_approuve` : le dernier message est de la
+    personne, et celui d'avant porte une proposition que rien d'autre n'a suivie —
+    faite à l'instant, ou **gardée** depuis par les réponses aux questions qui l'ont
+    suivie. C'est elle que la carte montre, donc elle qu'on garde ou qu'on recopie.
+    """
+    if len(fil) < 2 or fil[-1].auteur != UTILISATEUR:
+        return None
+    return proposition_en_attente(fil[:-1])
+
+
+def _bloc_de_la_proposition(fil: Sequence[MessageChat]) -> str:
+    """La proposition qui attend l'accord, en faits pour le juge — `""` sans elle (#1184).
+
+    Elle ne reste plus seulement « juste avant » : gardée d'une réponse à l'autre,
+    elle peut être à plusieurs échanges du message qu'on juge. Le juge la reçoit
+    donc **telle que la carte la montre** — l'objectif à recopier sur un accord, le
+    projet où elle partira, l'estimation qui répond à « combien ? » —, et non telle
+    qu'il s'en souviendrait.
+    """
+    attente = _proposition_qui_tient(fil)
+    if attente is None:
+        return ""
+    lignes = [
+        "Une proposition de run attend encore la réponse de l'utilisateur ; sa carte est "
+        f"sous ta dernière réponse, avec ses boutons. Son objectif : « {attente.proposition} »."
+    ]
+    if attente.projet_vise is not None:
+        lignes.append(f"Il partira dans le projet {attente.projet_vise.en_phrase()}.")
+    if attente.estimation is not None:
+        lignes.append(f"Son estimation, montrée sur la carte : {attente.estimation.en_phrase()}.")
+    lignes.append(
+        "Ses bornes se posent à l'accord — sur la carte, ou dans les mots de l'accord ; "
+        "celles qu'on ne pose pas n'existent pas."
+    )
+    return " ".join(lignes)
+
+
 def _piece_approuvee(fil: Sequence[MessageChat]) -> PieceProposee | None:
     """La pièce d'outillage qu'un « oui » **tapé** approuve — `None` sinon (#1161).
 
@@ -2979,6 +3077,12 @@ class _Contexte:
     dossier, outillage (`bloc_du_projet`) —, ou le fait qu'elle n'en a aucun. Le
     modèle ne recevait que des compteurs et répondait sans savoir de quel projet on
     lui parlait ; sans projet, il proposait un run qui partait n'importe où.
+
+    `proposition` (#1184) est le neuvième : **la** proposition de run qui attend
+    encore l'accord — son objectif, son projet, son estimation (`_bloc_de_la_proposition`).
+    Une proposition survit désormais aux questions qui la suivent : quelques échanges
+    plus bas, le juge doit encore savoir qu'elle tient, la recopier mot pour mot sur
+    un accord, et répondre « combien ? » avec le chiffre que la carte montre.
     """
 
     etat: str = ""
@@ -2989,6 +3093,7 @@ class _Contexte:
     projets: str = ""
     regime: str = ""
     projet: str = ""
+    proposition: str = ""
 
 
 class _LectureDuFlux:
@@ -3083,17 +3188,12 @@ class _LectureDuFlux:
         reste, self._retenu = self._retenu, ""
         avant, separe, apres = texte.partition(_MARQUEUR_VERDICT)
         lu = _verdict_depuis(apres if separe else texte)
-        return reste, _Verdict(
-            nom=lu.nom,
-            # La réponse affichée est ce qui a été écrit **avant** le marqueur, et
-            # non le champ `reponse` d'un objet JSON : c'est le sens du nouveau
-            # contrat, et c'est aussi ce qui a déjà été publié.
-            reponse=avant.strip(),
-            objectif=lu.objectif,
-            projet=lu.projet,
-            geste=lu.geste,
-            attente=lu.attente,
-        )
+        # La réponse affichée est ce qui a été écrit **avant** le marqueur, et non
+        # le champ `reponse` d'un objet JSON : c'est le sens du nouveau contrat, et
+        # c'est aussi ce qui a déjà été publié. Tout le reste du verdict passe tel
+        # quel (`replace`) : une clé neuve du contrat ne se perd pas en route faute
+        # d'avoir été recopiée ici — ce qu'ont failli faire les bornes (#1184).
+        return reste, replace(lu, reponse=avant.strip())
 
 
 def _verdict_du_texte(texte: str) -> _Verdict:
@@ -3160,6 +3260,9 @@ def _prompt(
             contexte.regime,
             contexte.attentes,
             contexte.faits,
+            # La proposition qui attend (#1184), au plus près de la conversation qui
+            # en parle : c'est d'elle qu'un « combien ? » ou un « vas-y » traite.
+            contexte.proposition,
             lectures,
         )
         if bloc
@@ -3435,15 +3538,17 @@ class RepondeurOrchestration(RepondeurChat):
                 etapes=etapes,
             )
         if verdict.nom == VERDICT_ACCORD:
-            # Un accord **tapé** ne porte aucune borne : le juge rend un
-            # objectif, pas un formulaire. Les bornes viennent du geste
-            # (`trancher_cadrage`), seul chemin où un écran a pu les poser.
+            # Un accord **tapé** porte les bornes qu'il nomme (#1184) — « vas-y, 5 $
+            # max » —, lues dans le verdict : elles se perdaient, le contrat n'ayant
+            # aucun champ pour elles, et le run partait sans le plafond demandé. Celles
+            # qu'il ne nomme pas n'existent pas : aucune borne par défaut (#494).
+            bornes = BornesRun.depuis(verdict.bornes) if verdict.bornes else AUCUNE_BORNE
             return _avec_etapes(
                 await self._ouvrir_un_run(
                     redaction,
                     verdict.objectif,
                     du_run.id if du_run is not None else None,
-                    AUCUNE_BORNE,
+                    bornes,
                     contexte_du_fil(fil),
                 ),
                 etapes,
@@ -3466,6 +3571,25 @@ class RepondeurOrchestration(RepondeurChat):
             if verdict.nom == VERDICT_PROPOSITION and self._lanceur is not None
             else ""
         )
+        # La proposition **garde son projet** (#1180) : c'est lui que l'accord
+        # exécutera, même donné depuis un autre projet. Et elle vient avec son
+        # **estimation** (#1184), sur les tâches que le modèle vient de compter.
+        projet_propose = vise if propose else None
+        estimation: EstimationRun | None = estimer_run(verdict.taches) if propose else None
+        tient = (
+            _proposition_qui_tient(fil)
+            if verdict.nom == VERDICT_ECHANGE and verdict.garde and self._lanceur is not None
+            else None
+        )
+        if tient is not None:
+            # Une question sur la proposition ne la retire pas (#1184) — « combien ça
+            # coûtera ? » faisait tomber la carte, qui ne tenait qu'au dernier
+            # message. Le juge dit qu'elle tient ; le canal la **recopie** du fil,
+            # objectif, projet et estimation compris, sans rien en réécrire : c'est
+            # ce que la carte montrait, et ce que l'accord lancera.
+            propose = tient.proposition
+            projet_propose = tient.projet_vise
+            estimation = tient.estimation
         # Un **échange** pendant qu'une pièce d'outillage attend ne la retire pas
         # (#1161) : une carte ne tient qu'au dernier message, et une question posée
         # entre-temps — « laquelle voulez-vous changer ? » — ne l'a pas tranchée. Vu sur
@@ -3477,9 +3601,8 @@ class RepondeurOrchestration(RepondeurChat):
         return ReponseChat(
             contenu=redaction.texte,
             proposition=propose,
-            # La proposition **garde son projet** (#1180) : c'est lui que l'accord
-            # exécutera, même donné depuis un autre projet.
-            projet_vise=vise if propose else None,
+            projet_vise=projet_propose if propose else None,
+            estimation=estimation if propose else None,
             piece=gardee,
             projet_outille=gardee.projet_id if gardee is not None else "",
             etapes=etapes,
@@ -3642,10 +3765,20 @@ class RepondeurOrchestration(RepondeurChat):
         # Le run reproposé travaillera dans le projet où l'équipe vient de naître
         # (#1180) — celui de la demande, jamais la fenêtre.
         vise = self._projet_vise(demande.projet_id) if propose else None
+        # Reproposée sans juge, elle n'a pas de tâches estimées : son estimation est
+        # le plancher, et elle le dit (#1184) — une proposition vient toujours avec
+        # la sienne.
+        estimation = estimer_run(None) if propose else None
         return await self._parole_sur(
             agent,
             fil,
-            ReponseChat(contenu="", proposition=propose, projet_vise=vise, equipe=equipe),
+            ReponseChat(
+                contenu="",
+                proposition=propose,
+                projet_vise=vise,
+                estimation=estimation,
+                equipe=equipe,
+            ),
             faits=faits,
         )
 
@@ -4455,6 +4588,8 @@ class RepondeurOrchestration(RepondeurChat):
                 if sans_equipe
                 else ""
             ),
+            # La proposition qui attend l'accord (#1184), lue du fil comme la carte.
+            proposition=_bloc_de_la_proposition(fil),
         )
 
     async def _consulter(
@@ -4778,10 +4913,13 @@ class RepondeurOrchestration(RepondeurChat):
           survit au rechargement, ce qu'une phrase ne fait pas mieux ;
         - les **bornes réellement posées** sont écrites par le geste qui les a
           posées (`chat._geste_de_cadrage`), à l'endroit où quelqu'un les a
-          choisies. Celles qu'on n'a pas posées n'ont rien à dire ici : le régime
-          s'annonce **au moment de lancer**, sur la carte de cadrage qui le
-          récapitule dans les deux sens (#990) — le redire après coup n'était plus
-          un choix affiché, c'était un gabarit.
+          choisies. Le régime ne se **récite** pas derrière les mots du modèle :
+          il s'annonce au moment de lancer, sur la carte de cadrage qui le
+          récapitule dans les deux sens (#990). Depuis #1184 il se **lit** aussi
+          sous la bulle, comme l'identifiant : `ReponseChat.bornes` porte ce que
+          le lanceur a reçu — un accord tapé peut désormais en poser, et la
+          question « quelles bornes lui ai-je vraiment posées ? » n'a qu'une
+          réponse, celle-ci.
 
         Restent les phrases d'**empêchement** ci-dessous, et elles ne sont pas du
         même ordre : rien ne s'est ouvert, le modèle ne peut pas le savoir, et
@@ -4812,4 +4950,11 @@ class RepondeurOrchestration(RepondeurChat):
             await redaction.ecrire(f" Le lancement a échoué : {echec}")
             return ReponseChat(contenu=redaction.texte)
 
-        return ReponseChat(contenu=redaction.texte, run_id=str(resume.get("run_id", "")))
+        # Les bornes **appliquées** voyagent avec le run qu'elles bornent (#1184), comme
+        # son identifiant : un fait, que l'écran dit sous la bulle dans les mots de
+        # Maestro — « aucune » comprise, l'illimité étant un choix affiché (#990). C'est
+        # ce que le lanceur a reçu, qu'un clic ou une phrase l'ait posé, et non ce que
+        # le modèle a cru poser : le fil répète les bornes réellement appliquées.
+        return ReponseChat(
+            contenu=redaction.texte, run_id=str(resume.get("run_id", "")), bornes=bornes
+        )

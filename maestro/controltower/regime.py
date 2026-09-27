@@ -173,11 +173,11 @@ DE_FRONT_NON_VERSIONNE = (
 REGLE_DES_BORNES = (
     "Bornes : celles d'un run — plafond de coût, de tokens, délai par tâche, tâches "
     "en parallèle — se posent au moment de l'accepter, sur la carte de la "
-    "proposition, et ne valent que pour lui. Un run n'hérite jamais des bornes d'un "
-    "run précédent, et un accord tapé dans la conversation n'en pose aucune. Sans "
-    f"borne posée, c'est « {AUCUNE_BORNE.en_phrase()} ». Les bornes d'un run passé, "
-    "dans sa fiche, sont les siennes : un run arrêté sur sa borne n'annonce rien du "
-    "suivant."
+    "proposition ou dans les mots d'un accord tapé (« vas-y, 5 $ max »), et ne "
+    "valent que pour lui. Un run n'hérite jamais des bornes d'un run précédent, et "
+    "l'estimation de coût d'une proposition n'en est pas une. Sans borne posée, "
+    f"c'est « {AUCUNE_BORNE.en_phrase()} ». Les bornes d'un run passé, dans sa "
+    "fiche, sont les siennes : un run arrêté sur sa borne n'annonce rien du suivant."
 )
 
 #: Un projet sans agent n'a aucune politique à lire — ce n'est pas un vide, c'est

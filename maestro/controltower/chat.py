@@ -253,6 +253,7 @@ from maestro.agents.playbook_du_code import registre
 from maestro.agents.playbooks import PlaybookStore
 from maestro.config import Settings, load_settings
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
+from maestro.controltower.estimation import EstimationRun
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
 from maestro.controltower.gestes import (
     GESTE_ANNULATION,
@@ -1940,6 +1941,14 @@ class MessageChat:
     ce que la confirmation a donné (ce qui a repris, ou le refus du service), et
     `attentes_candidates` les attentes qu'une demande pouvait viser quand elle en
     visait plusieurs — deux faits.
+
+    `estimation` (#1184) accompagne `proposition`, comme `projet_vise` : ce que
+    l'accord engagerait, en ordre de grandeur (`controltower.estimation`), chiffré au
+    moment de proposer et montré tel quel sur la carte. `None` partout ailleurs et sur
+    une proposition écrite avant ce lot. `bornes` (#1184) accompagne `run_id` : les
+    bornes **appliquées** au run que ce message a ouvert — celles que le lanceur a
+    reçues, « aucune » comprise —, qu'un clic ou une phrase les ait posées. Un fait,
+    lu sous la bulle ; `None` quand ce message n'a ouvert aucun run.
     """
 
     agent: str
@@ -1972,6 +1981,8 @@ class MessageChat:
     reglement: ReglementPropose | None = None
     reglement_fait: ReglementFait | None = None
     attentes_candidates: tuple[AttenteVisee, ...] = ()
+    estimation: EstimationRun | None = None
+    bornes: BornesRun | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -2019,6 +2030,8 @@ class MessageChat:
                 self.reglement_fait.to_dict() if self.reglement_fait is not None else None
             ),
             "attentes_candidates": [a.to_dict() for a in self.attentes_candidates],
+            "estimation": self.estimation.to_dict() if self.estimation is not None else None,
+            "bornes": self.bornes.to_dict() if self.bornes is not None else None,
         }
 
     @property
@@ -2072,6 +2085,8 @@ class MessageChat:
         geste_fait = data.get("geste_fait")
         reglement = data.get("reglement")
         reglement_fait = data.get("reglement_fait")
+        estimation = data.get("estimation")
+        bornes = data.get("bornes")
         return cls(
             agent=data["agent"],
             # Une ligne d'avant #694 n'en porte pas : elle vient forcément du
@@ -2135,6 +2150,10 @@ class MessageChat:
                 else None
             ),
             attentes_candidates=attentes_visees_depuis(data.get("attentes_candidates")),
+            estimation=(
+                EstimationRun.from_dict(estimation) if isinstance(estimation, Mapping) else None
+            ),
+            bornes=BornesRun.depuis(bornes) if isinstance(bornes, Mapping) else None,
         )
 
 
@@ -2241,6 +2260,10 @@ class ReponseChat:
     validation —, et elle ne cohabite avec aucune autre demande ; `reglement_fait` et
     `attentes_candidates` sont des faits : ce que la confirmation a donné, et les
     attentes entre lesquelles une demande ambiguë laisse choisir.
+
+    `estimation` (#1184) accompagne `proposition` — ce que l'accord engagerait, en
+    ordre de grandeur — et `bornes` accompagne `run_id` — les bornes appliquées au run
+    ouvert. La première se lit sur la carte, la seconde sous la bulle.
     """
 
     contenu: str
@@ -2265,6 +2288,8 @@ class ReponseChat:
     reglement: ReglementPropose | None = None
     reglement_fait: ReglementFait | None = None
     attentes_candidates: tuple[AttenteVisee, ...] = ()
+    estimation: EstimationRun | None = None
+    bornes: BornesRun | None = None
 
     @property
     def porte_une_demande(self) -> bool:
@@ -4238,8 +4263,8 @@ class ServiceChat:
         `projet_vise`, `question`, `recrutement`, `equipe`, `etapes`,
         `comprehension`, `projet_propose`, `projet_cree`, `piece`, `piece_ecrite`,
         `corrections`, `projet_outille`, `geste_run`, `geste_fait`,
-        `runs_candidats`, `reglement`, `reglement_fait`, `attentes_candidates`)
-        passent du répondeur au message.
+        `runs_candidats`, `reglement`, `reglement_fait`, `attentes_candidates`,
+        `estimation`, `bornes`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -4256,8 +4281,12 @@ class ServiceChat:
             tache_id=reponse.tache_id,
             proposition=reponse.proposition,
             # Le projet ne voyage qu'avec une proposition (#1180) : sans demande de
-            # cadrage, il n'y a aucun run dont il dirait où il travaillera.
+            # cadrage, il n'y a aucun run dont il dirait où il travaillera. Son
+            # estimation non plus (#1184), pour la même raison.
             projet_vise=reponse.projet_vise if reponse.proposition else None,
+            estimation=reponse.estimation if reponse.proposition else None,
+            # Les bornes appliquées ne voyagent qu'avec le run qu'elles bornent.
+            bornes=reponse.bornes if reponse.run_id else None,
             question=reponse.question,
             recrutement=reponse.recrutement,
             equipe=reponse.equipe,

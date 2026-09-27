@@ -97,6 +97,33 @@
  * Sans projet du tout — une proposition d'avant ce ticket relue sur la porte
  * « Nouveau projet » —, la carte le dit et « Lancer » est désarmé : aucun run ne
  * part sans projet depuis le fil, et l'API le refuserait.
+ *
+ * ## Et elle dit ce que le run coûterait (#1184)
+ *
+ * La carte se tranchait sur un objectif et des bornes brutes, sans rien qui dise
+ * ce que l'accord engage. Elle porte désormais l'**estimation** de la proposition
+ * (`demande.estimation`, chiffrée côté API sur les tâches que le modèle a
+ * estimées) — la question du rendu attendu du ticket : *combien va coûter ce
+ * run ?* La forme vient d'une veille et d'un choix rendu sur pièces
+ * (commentaires « Veille de conception » et « Variante retenue » de #1184), et on
+ * ne la défait pas sans rejouer le même geste :
+ *
+ * - **au pied de la carte, sur la rangée du bouton qui lance** — d'après
+ *   Replicate, qui pose « Each run costs approximately $0.29 » à l'endroit même
+ *   du bouton. Le texte suit les boutons au lieu d'être rejeté au bord droit ;
+ * - **hors de la boîte des bornes** — d'après BigQuery, où l'estimation d'une
+ *   requête et sa limite (« maximum bytes billed ») sont deux mécanismes à deux
+ *   endroits. La variante qui la posait en tête de la boîte a été écartée : là où
+ *   l'on saisit un plafond, un coût se lit comme un plafond suggéré, et aucune
+ *   borne ne vient par défaut (#494). Rien n'est donc pré-rempli ;
+ * - **une phrase, le seul chiffre en gras** — d'après fal.ai (« will cost
+ *   **$0.025** »). La variante en tuile chiffrée, la forme du brief, a été
+ *   écartée : elle faisait du prix l'élément le plus fort de la carte. Son
+ *   libellé, lui, est repris — « ordre de grandeur estimé, pas une mesure ni une
+ *   borne » (`fondementDeLaProposition`, `lib/estimation`).
+ *
+ * « Lancer » la porte en description (`aria-describedby`) : le coût est ce que le
+ * geste engage, et c'est au geste qu'un lecteur d'écran l'entend.
  */
 
 import { useState } from "react";
@@ -120,6 +147,10 @@ import {
   type SaisieBornes,
 } from "@/lib/bornes";
 import { cheminASesSeparateurs } from "@/lib/chemin";
+import {
+  fondementDeLaProposition,
+  fourchetteDeLaProposition,
+} from "@/lib/estimation";
 import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -196,6 +227,9 @@ export function DemandeDeCadrage({
   const ailleurs =
     demande.projet_vise != null && ouvert !== null && ouvert.id !== cible?.id;
   const propose = demande.proposition ?? "";
+  // Ce que l'accord engagerait (#1184) — absent sur une proposition d'avant ce
+  // ticket, qui ne se voit alors rien inventer.
+  const estimation = demande.estimation ?? null;
   const [edite, setEdite] = useState(propose);
   const [refus, setRefus] = useState<string | null>(null);
   const [saisie, setSaisie] = useState<SaisieBornes>(SAISIE_VIERGE);
@@ -379,24 +413,45 @@ export function DemandeDeCadrage({
           </div>
         )}
       </Carte>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {/* Sans projet où travailler, rien ne part (#1180) : l'API refuserait de
-            toute façon, et offrir le geste promettrait ce qu'elle refusera. */}
-        <Bouton
-          disabled={vide || bornesFautives || cible === null}
-          occupe={enCours}
-          onClick={() => void surDecision(true)}
-        >
-          {corrige ? "Lancer la version corrigée" : "Lancer"}
-        </Bouton>
-        <Bouton
-          variante="contour"
-          ton="alerte"
-          disabled={enCours}
-          onClick={() => void surDecision(false)}
-        >
-          Ne pas lancer
-        </Bouton>
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-wrap gap-2">
+          {/* Sans projet où travailler, rien ne part (#1180) : l'API refuserait
+              de toute façon, et offrir le geste promettrait ce qu'elle refusera. */}
+          <Bouton
+            disabled={vide || bornesFautives || cible === null}
+            occupe={enCours}
+            onClick={() => void surDecision(true)}
+            aria-describedby={estimation ? "cadrage-estimation" : undefined}
+          >
+            {corrige ? "Lancer la version corrigée" : "Lancer"}
+          </Bouton>
+          <Bouton
+            variante="contour"
+            ton="alerte"
+            disabled={enCours}
+            onClick={() => void surDecision(false)}
+          >
+            Ne pas lancer
+          </Bouton>
+        </div>
+        {/* Ce que le run coûterait (#1184, variante C) : au point du geste, hors de
+            la boîte des bornes, le seul chiffre en gras. `min-w-56` : trop à
+            l'étroit à côté des boutons — la colonne du shell —, la phrase passe
+            entière à la ligne plutôt que de s'y tasser mot par mot. */}
+        {estimation && (
+          <p
+            id="cadrage-estimation"
+            className="flex min-w-56 flex-1 flex-col text-annexe text-texte-secondaire"
+          >
+            <span className="text-texte">
+              Ce run coûterait{" "}
+              <strong className="font-semibold">
+                {fourchetteDeLaProposition(estimation)}
+              </strong>
+            </span>
+            <span>{fondementDeLaProposition(estimation)}</span>
+          </p>
+        )}
       </div>
       {vide && (
         <p className="mt-2 text-annexe text-attention-texte">

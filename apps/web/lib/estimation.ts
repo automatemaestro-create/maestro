@@ -28,9 +28,15 @@
  *   une part du budget d'usage de la fenêtre de 5 h. La fourchette reste le bon
  *   ordre de grandeur de l'**effort**, et l'écran le précise plutôt que de faire
  *   croire à une facture.
+ *
+ * ⚠ **Les constantes ont un jumeau côté API** depuis #1184
+ * (`maestro/controltower/estimation.py`), qui chiffre une proposition de run avant
+ * qu'elle n'arrive à l'écran. `tests/test_accord_et_proposition.py` lit ce fichier
+ * et échoue si les deux divergent : en changer une, c'est changer les deux.
  */
 
-import type { Brief } from "./types";
+import { formatCout } from "./format";
+import type { Brief, EstimationRun } from "./types";
 
 /**
  * Le découpage lui-même (le Chef de projet, en Opus) — docs/09 §4.3, ligne
@@ -126,4 +132,36 @@ export function estimerReste(nbTaches: number): EstimationSuite {
     bas: nbTaches * COUT_TACHE_USD_BAS,
     haut: nbTaches * COUT_TACHE_USD_HAUT * MARGE_RELANCES,
   };
+}
+
+/**
+ * Ce qu'une **proposition de run** engagerait (#1184) — la fourchette, telle que
+ * la carte « Lancer ce run ? » la montre au pied, à côté du bouton qui lance.
+ *
+ * Cette estimation-là n'est pas calculée ici : elle arrive **chiffrée** sur la
+ * proposition (`MessageChat.estimation`), parce que le fil en parle aussi — à
+ * « combien ça coûtera ? », l'orchestrateur répond avec le chiffre de la carte.
+ * La méthode et les coûts de référence sont pourtant ceux de ce module, recopiés
+ * côté API (`maestro/controltower/estimation.py`) et confrontés par un test : le
+ * même travail ne se chiffre pas de deux façons selon la carte qui le montre.
+ */
+export function fourchetteDeLaProposition(estimation: EstimationRun): string {
+  return `≈ ${formatCout(estimation.bas_usd)} à ${formatCout(estimation.haut_usd)}`;
+}
+
+/**
+ * Ce qui fonde la fourchette, dit comme tel (#1184, parti pris 2 de la veille) :
+ * le découpage et les tâches, puis la **nature** du chiffre — la formule de
+ * `CoutBrief` (#939), et « ni une borne » parce que l'estimation informe, elle ne
+ * plafonne pas (#494).
+ *
+ * Un compte qui n'est que le **plancher** — le modèle n'a rien estimé — ne se dit
+ * pas « ≈ 3 tâches » : ce serait présenter une règle comme une estimation du
+ * travail. Il se dit « au moins 3 ».
+ */
+export function fondementDeLaProposition(estimation: EstimationRun): string {
+  const n = estimation.taches;
+  const taches = `${n} tâche${n > 1 ? "s" : ""}`;
+  const compte = estimation.estimees ? `≈ ${taches}` : `au moins ${taches}`;
+  return `découpage puis ${compte} — ordre de grandeur estimé, pas une mesure ni une borne`;
 }
