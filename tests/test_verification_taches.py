@@ -499,7 +499,7 @@ def test_un_controle_faux_est_reecrit_par_la_contre_expertise(tmp_path):
 
 
 def test_un_controle_conteste_par_l_agent_est_reexamine_a_la_livraison_suivante(tmp_path):
-    """Le contrôle faux survit à l'établissement ; l'agent le conteste ; le vérificateur le révise."""
+    """Un contrôle faux survit à l'établissement ; l'agent le conteste ; il est révisé."""
     faux = "ls | grep -vx logo.svg | wc -l | grep -qx 0"
     juste = "test -f logo.svg"
     provider = _Reponses(
@@ -1045,7 +1045,6 @@ def test_la_verification_d_un_autre_run_ne_reste_pas_sur_la_tache():
     détail montrait pourtant le « 4/4 critère(s) tenu(s) » de celle de S3.
     """
     from maestro.controltower.events import EVENEMENT_TACHE_STATUT, Event
-    from maestro.controltower.state import ControlTowerState
 
     agent = AgentEtVerificateur([{"bonjour.txt": "Bonjour"}])
     premier = RunJournal(run_id="run-s3")
