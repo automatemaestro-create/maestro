@@ -281,7 +281,8 @@ def test_une_etape_de_fusion_se_rattache_a_sa_tache_et_non_a_un_identifiant_fant
 def test_les_quatre_suffixes_voisins_se_rattachent_de_la_meme_facon():
     """La liste vit **une fois** (`_SUFFIXES_ACTIVITE`) : la tenir en double est
     précisément ce qui a échoué. Ce contrôle les balaie d'un coup, pour qu'un
-    suffixe ajouté d'un seul côté se voie ici — `:processus` (#1279) compris."""
+    suffixe ajouté d'un seul côté se voie ici — `:processus` (#1279) et
+    `:rattrapage` (#1178) compris."""
     for suffixe in (
         ":validation",
         ":relance",
@@ -289,6 +290,7 @@ def test_les_quatre_suffixes_voisins_se_rattachent_de_la_meme_facon():
         ":activite",
         ":fusion",
         ":processus",
+        ":rattrapage",
     ):
         (event,) = evenements_depuis_step(_ligne(f"coquille-ui{suffixe}"))
         assert event.tache_id == "coquille-ui", suffixe

@@ -31,6 +31,8 @@ from maestro.orchestrator.errors import (
     BriefValidationError,
     OrchestratorError,
     PlanParsingError,
+    RattrapageParsingError,
+    RattrapageValidationError,
     TaskValidationError,
 )
 from maestro.orchestrator.orchestrator import Orchestrator
@@ -69,6 +71,8 @@ __all__ = [
     "Orchestrator",
     "OrchestratorError",
     "PlanParsingError",
+    "RattrapageParsingError",
+    "RattrapageValidationError",
     "Task",
     "TaskValidationError",
     "build_brief_user_prompt",
