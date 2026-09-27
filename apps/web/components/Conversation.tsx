@@ -325,6 +325,7 @@ import { RegionLive } from "@/components/RegionLive";
 import { AnnonceIssueRun } from "@/components/runs/AnnonceIssueRun";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurReponse, ErreurSource } from "@/lib/api";
+import { bornesEnLigne } from "@/lib/bornes";
 import { useBrouillon } from "@/lib/brouillons";
 import { cheminASesSeparateurs } from "@/lib/chemin";
 import { ascenseurDe, estEnBas, positionEnBas } from "@/lib/defilement";
@@ -1748,6 +1749,11 @@ function Bulle({
  * et ce qui a repris — « l'agent la lit et reprend sa tâche » —, ou le refus du
  * service. Les attentes qu'une demande pouvait viser s'y listent de même
  * (`AttentesCandidates`).
+ *
+ * **Les bornes appliquées** au run ouvert (`bornes`, #1184) suivent son
+ * identifiant sur la même ligne : un accord tapé peut désormais en poser
+ * (« vas-y, 5 $ max »), et la question « quelles bornes lui ai-je vraiment
+ * posées ? » a sa réponse ici, lue sur ce que le lanceur a reçu.
  */
 function Suite({
   message,
@@ -1762,6 +1768,7 @@ function Suite({
   const validations = etat?.validations ?? [];
   const executions = etat?.executions ?? [];
   const runId = message.run_id ?? "";
+  const bornes = message.bornes ?? null;
   const tacheId = message.tache_id ?? "";
   const equipe = message.equipe ?? null;
   const projetCree = message.projet_cree ?? null;
@@ -1888,6 +1895,16 @@ function Suite({
           <span className="inline-flex items-center gap-1">
             <IconeRuns className="size-3.5 shrink-0" />
             Run <span className="font-mono">{runId}</span>
+          </span>
+        )}
+        {/* Les bornes **appliquées** à ce run (#1184) : ce que le lanceur a reçu,
+            qu'un clic ou une phrase (« vas-y, 5 $ max ») les ait posées, et
+            « aucune » comprise — l'illimité est un choix affiché (#990). Un fait
+            sur la ligne du run, dans les mots de la carte, et non une phrase
+            récitée derrière ceux du modèle (#1222). */}
+        {runId !== "" && bornes !== null && (
+          <span className="min-w-0 break-words">
+            Bornes : {bornesEnLigne(bornes)}
           </span>
         )}
         {ouvertes > 0 && (

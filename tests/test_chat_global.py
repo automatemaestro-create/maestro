@@ -3141,12 +3141,13 @@ def test_un_refus_ne_borne_rien_parce_qu_il_n_ouvre_rien(
     assert lanceur.bornes == []
 
 
-def test_un_accord_tape_ne_porte_aucune_borne() -> None:
-    """Le juge rend un objectif, jamais un formulaire — donc aucun run borné par lui.
+def test_un_accord_tape_qui_ne_nomme_aucune_borne_n_en_pose_aucune() -> None:
+    """Un « oui » nu lance sans borne : aucune borne par défaut (#494).
 
-    La distinction n'est pas cosmétique : c'est elle qui fait que les bornes ne
-    peuvent venir que d'un **geste** d'écran, seul endroit où quelqu'un a pu les
-    poser.
+    Jusqu'à #1184, *tout* accord tapé partait sans borne — le verdict n'avait aucun
+    champ pour elles, et « vas-y, 5 $ max » perdait son plafond. Il porte désormais
+    celles que la personne nomme (`tests/test_accord_et_proposition.py`) ; ce test
+    garde l'autre moitié : celles qu'elle ne nomme pas n'existent pas.
     """
     lanceur = LanceurEspion()
     repondeur, _ = _repondeur(
@@ -4187,6 +4188,9 @@ _FAITS_DE_LA_REPONSE = {
     "runs_candidats": "les runs qu'une demande ambiguë pouvait viser, à nommer (#1179)",
     "reglement_fait": "ce qu'une confirmation a fait d'une attente, et ce qui a repris (#1183)",
     "attentes_candidates": "les attentes qu'une demande ambiguë pouvait viser (#1183)",
+    # Comme `projet_vise`, elle accompagne `proposition` sans rien demander seule.
+    "estimation": "ce que le run proposé engagerait, en ordre de grandeur (#1184)",
+    "bornes": "les bornes appliquées au run que la réponse a ouvert (#1184)",
 }
 
 
