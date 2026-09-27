@@ -447,6 +447,32 @@ def test_une_option_de_commande_se_sonde_sur_son_texte_meme_sans_outils_nommes()
     assert au_poste(comprise, {"uv": False}).questions[0].recommande == "python -m unittest"
 
 
+def test_aucun_n_est_pas_un_programme_a_chercher_sur_le_poste() -> None:
+    """Vu sur la vraie stack (passage `20260927-085810`) : l'option « aucun » d'une question de
+    commande était sondée comme un programme, et se disait « `aucun` n'est pas installé »."""
+    brute = {
+        "cle": "formater",
+        "intitule": "Faut-il mettre le script en forme ?",
+        "options": [
+            {"valeur": "aucun", "libelle": "Non", "raison": "Rien à installer."},
+            {"valeur": "black .", "libelle": "black", "raison": "…", "outils": ["black"]},
+            {"valeur": "python -m tabnanny .", "libelle": "tabnanny", "raison": "…"},
+        ],
+        "recommande": "aucun",
+        "pourquoi": "Un script court se tient à la main.",
+    }
+    constats = [NATURE, {"cle": "types", "valeur": "aucun", "parce_que": "pas de types"}]
+    comprise = comprehension_depuis_texte(
+        json.dumps({"constats": constats, "questions": [brute]}), ()
+    )
+
+    assert programmes_a_sonder(comprise) == ("black", "python")
+    question = au_poste(comprise, {"aucun": False, "black": False, "python": True}).questions[0]
+    assert question.recommande == "aucun"
+    assert question.options[0].absents == () and question.options[0].raison == "Rien à installer."
+    assert not repose_sur_un_absent(comprise, ["aucun"])
+
+
 def test_une_commande_deduite_sur_un_outil_absent_demande_au_modele_de_se_reprendre() -> None:
     comprise = comprehension_depuis_texte(json.dumps(COMPRIS_CHORALE), ())
 

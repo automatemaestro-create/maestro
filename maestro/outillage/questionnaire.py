@@ -621,11 +621,18 @@ def programmes_de_l_option(question: QuestionOutillage, option: Option) -> tuple
     Une option d'un sujet de commande (`USAGES`) **est** une commande : ce qu'elle
     appelle se lit sur son texte, même si le modèle a oublié de le nommer. Pour les
     autres sujets (un gestionnaire, une forge), seuls comptent les outils nommés.
+    `AUCUN` n'est pas une commande — il dit qu'il n'y en a pas —, et n'appelle rien.
     """
     noms = [*option.outils]
-    if question.cle in USAGES:
-        noms.extend(programmes(option.valeur))
+    noms.extend(_programmes_d_une_commande(question.cle, option.valeur))
     return tuple(dict.fromkeys(noms))
+
+
+def _programmes_d_une_commande(cle: str, valeur: str) -> tuple[str, ...]:
+    """Les programmes d'une valeur de sujet — ceux d'une commande, rien pour « aucun »."""
+    if cle not in USAGES or _est_aucun(valeur):
+        return ()
+    return programmes(valeur)
 
 
 def programmes_a_sonder(
@@ -642,8 +649,8 @@ def programmes_a_sonder(
         for option in question.options:
             noms.extend(programmes_de_l_option(question, option))
     for choisi in (*comprehension.constats, *acquis):
-        if choisi.cle in USAGES and not choisi.libre:
-            noms.extend(programmes(choisi.valeur))
+        if not choisi.libre:
+            noms.extend(_programmes_d_une_commande(choisi.cle, choisi.valeur))
     return tuple(dict.fromkeys(noms))
 
 
@@ -664,7 +671,7 @@ def repose_sur_un_absent(comprehension: Comprehension, absents: Iterable[str]) -
             ):
                 return True
     return any(
-        choisi.cle in USAGES and manquants & set(programmes(choisi.valeur))
+        manquants & set(_programmes_d_une_commande(choisi.cle, choisi.valeur))
         for choisi in comprehension.constats
     )
 
