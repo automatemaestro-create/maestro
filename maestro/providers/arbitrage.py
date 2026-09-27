@@ -23,7 +23,8 @@ Le second n'est pas un doublon du premier — **le silence de l'agent ne dispens
 de rien**.
 
 Le reste de ce module est ce qui appartient en propre au **second** canal : les
-bornes de l'attente, et l'invariant qui les tient.
+bornes de l'attente, l'invariant qui les tient, et l'**acte** que garde la trace
+de chaque appel arbitré (#1282).
 
 Un hook n'a pas tout son temps. `HookMatcher.timeout` **borne la durée d'un
 hook**, à 60 s par défaut, et le SDK transmet cette borne au CLI. Un arbitrage
@@ -64,12 +65,14 @@ est réservé à cet acte ».
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import json
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
 from maestro.config import ConfigError, Settings
 from maestro.decideur import Decideur
+from maestro.telemetry.redact import redact_secrets
 
 # --- ① L'agent lève la main : l'outil `demander_arbitrage` (#582) ----------------------
 
@@ -216,6 +219,10 @@ class TraceOutil(Protocol):
     portée de son entrée est tranché par le défaut, là où la politique, qui ne
     voit que le nom de l'outil, répondrait `auto`. Absent, l'appelant s'en remet
     à la politique — c'est le régime de tout ce qui ne dépend pas des arguments.
+
+    Le `motif` d'un appel arbitré porte en outre son **acte** (#1282, `avec_acte`) :
+    l'appelant n'a rien à recomposer, et un canal qui consigne le motif tel quel
+    garde ce qui a été fait, pas seulement comment cela s'est tranché.
     """
 
     def __call__(self, outil: str, motif: str, decideur: Decideur | None = None) -> None: ...
@@ -421,3 +428,94 @@ def motif_panne(outil: str, cause: object) -> str:
         f"appel de l'outil {outil!r} refusé : l'arbitrage humain n'a pas pu être "
         f"soumis ({cause}). Poursuis la tâche sans cet outil."
     )
+
+
+# --- ③ L'acte dans la trace : ce que le journal garde d'un appel arbitré (#1282) --------
+
+#: Ce que l'acte peut occuper, en tout, dans la trace d'un appel arbitré. Plus
+#: long qu'une cible d'activité (`maestro.providers.activite.CIBLE_MAX`, 120),
+#: dont la coupe a fait perdre au run `3fe501fc0878` ce qu'un `Bash` passé par
+#: `auto` avait réellement lancé : ce qu'on relit après coup doit dire l'acte, et
+#: un `--remote-debugging-port` tient en fin de ligne de commande. Plus court
+#: qu'un argument soumis à une personne (`maestro.acte.ARGUMENT_MAX`, 1000) : une
+#: trace se lit sur une ligne d'activité, elle ne sert pas à trancher.
+ACTE_TRACE_MAX = 400
+
+#: Ce qu'une seule valeur d'argument peut y prendre. Sans cette borne, un
+#: `content` de `Write` ou un script passé à `Bash` mangerait à lui seul toute la
+#: place, et les arguments qui le suivent — un `timeout`, la `description` que
+#: l'agent a donnée à sa commande — disparaîtraient de la trace sans un mot.
+VALEUR_TRACE_MAX = 300
+
+
+def acte_trace(outil: str, entree: object) -> str:
+    """L'acte d'un appel arbitré en une ligne : l'outil et ses arguments, **rédigés puis bornés**.
+
+    Rend « Bash · command="cd /tmp && mkdir -p edge-shot" · timeout=120 » : le même
+    « outil · cible » qu'une ligne d'activité (#479), chaque argument nommé, et sa
+    valeur en JSON — une chaîne entre guillemets, qu'aucune esperluette ni aucun
+    point-virgule de la commande ne peut faire déborder sur l'argument suivant, et
+    dont les sauts de ligne s'écrivent `\\n`, donc un script tient sur une ligne.
+
+    **Rédigé d'abord, borné ensuite**, et l'ordre est la garantie : borner d'abord
+    peut couper un secret en deux, et la moitié qui reste ne se reconnaît plus —
+    ni comme une valeur servie (#109), qu'on retrouve en entier, ni comme un motif
+    de clé, qui exige une longueur. Le journal repasse la trace entière par
+    `redact_secrets`, et c'est bien — mais trop tard pour un fragment.
+
+    Chaîne vide quand l'appel n'a **aucun argument** : le motif nomme déjà
+    l'outil, qui est alors tout l'acte. Même tolérance que
+    `maestro.acte.arguments_depuis` sur ce qui ne se lit pas — c'est une trace,
+    et une trace ne fait jamais échouer l'appel qu'elle raconte.
+    """
+    if not isinstance(entree, Mapping):
+        return ""
+    arguments = [
+        f"{cle}={_valeur_tracee(valeur)}"
+        for cle, valeur in entree.items()
+        if isinstance(cle, str) and cle
+    ]
+    if not arguments:
+        return ""
+    return _coupe(" · ".join((outil, *arguments)), ACTE_TRACE_MAX)
+
+
+def _valeur_tracee(valeur: object) -> str:
+    """Une valeur d'argument telle que la trace la garde — rédigée, bornée, sur une ligne.
+
+    Une chaîne est rédigée **telle que l'agent l'a écrite**, avant tout
+    échappement : un secret qui contient un guillemet ne se retrouverait plus une
+    fois sérialisé. Le reste (un nombre, un booléen, une liste) passe par sa forme
+    JSON, qui échappe elle aussi ses sauts de ligne, puis par la rédaction.
+    """
+    if isinstance(valeur, str):
+        return json.dumps(_coupe(redact_secrets(valeur), VALEUR_TRACE_MAX), ensure_ascii=False)
+    try:
+        texte = json.dumps(valeur, ensure_ascii=False, default=repr)
+    except (TypeError, ValueError):
+        texte = repr(valeur)
+    return _coupe(redact_secrets(texte), VALEUR_TRACE_MAX)
+
+
+def _coupe(texte: str, maximum: int) -> str:
+    """Ramène `texte` à `maximum` caractères, en disant qu'il a été coupé."""
+    return texte if len(texte) <= maximum else texte[:maximum].rstrip() + "…"
+
+
+def avec_acte(motif: str, acte: str) -> str:
+    """Le motif d'une issue d'arbitrage, suivi de l'acte qu'elle a tranché (#1282).
+
+    C'est ce que l'exécuteur consigne (`:refus-outil`) et que l'activité du run
+    affiche : l'issue d'abord — laissé passer, accordé, refusé, écarté —, puis
+    **ce qui** a été laissé passer, accordé, refusé ou écarté. Avant ce lot, seule
+    une demande soumise à une personne portait ses arguments
+    (`DemandeValidation.arguments`) ; un appel laissé passer par `auto` ne
+    laissait que « laissé passer — personne n'a été sollicité », sans la commande.
+
+    Ce texte-là n'est **pas** servi à l'agent : il connaît l'appel qu'il vient de
+    faire, et lui relire sa commande, secrets masqués, ne lui apprendrait rien.
+    Sans acte (un appel sans argument), le motif reste tel quel.
+    """
+    if not acte:
+        return motif
+    return f"{motif.rstrip().removesuffix('.')}. Acte : {acte}"
