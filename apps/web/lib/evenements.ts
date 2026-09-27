@@ -44,6 +44,8 @@ import {
   ORDRE_PAUSE,
   ORDRE_REPRISE,
   STATUT_ACTIVITE,
+  STATUT_BILAN_ILLISIBLE,
+  STATUT_BILAN_RENDU,
   VALIDATION_APPROUVEE,
   VERIFICATION_IMPOSSIBLE,
   VERIFICATION_NON_TENUE,
@@ -209,6 +211,17 @@ function phraseEtapeAgent(evenement: Evenement): string {
       return `${libelleStatut(evenement.statut)}${
         evenement.detail ? ` — ${evenement.detail}` : ` : ${quoi}`
       }`;
+    // Le bilan d'un run (#1284) : son titre (« Bilan du run, sur pièces ») et son
+    // `detail`, qui compte les constats — plutôt que le code du bus
+    // (« bilan_rendu »), que la branche par défaut rendait tel quel au journal
+    // du run, là où ses pièces renvoient (#1285).
+    // Le `detail` d'un bilan rendu compte ses constats « sur pièces », comme son
+    // titre : « Bilan du run » suffit devant, sans le dire deux fois (relevé par
+    // le regard neuf). Celui d'un bilan illisible est déjà une phrase entière.
+    case STATUT_BILAN_RENDU:
+      return evenement.detail ? `Bilan du run — ${evenement.detail}` : quoi;
+    case STATUT_BILAN_ILLISIBLE:
+      return evenement.detail || quoi;
     case "terminee":
       return qui ? `${qui} a terminé : ${quoi}` : `${quoi} — terminé`;
     case "echec":

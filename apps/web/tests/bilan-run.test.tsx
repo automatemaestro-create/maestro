@@ -35,6 +35,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VueRun } from "@/components/runs/VueRun";
 import { ErreurApi } from "@/lib/api";
+import { resumeEvenement } from "@/lib/evenements";
+import { evenementDepuisEntree } from "@/lib/journal";
 import {
   entreesALire,
   estUneLigneDuJournal,
@@ -54,6 +56,7 @@ import {
   EXECUTION_TERMINEE,
   RAISON_BILAN_MODELE_MUET,
   RAISON_BILAN_REPONSE_ILLISIBLE,
+  STATUT_BILAN_RENDU,
   type BilanRun,
   type EntreeJournal,
   type FriseRun,
@@ -148,7 +151,7 @@ const ENTREE_FIN = entreeJournalFactice({
   horodatage: "2026-09-27T16:41:02+00:00",
 });
 
-/** Le bilan de S4 : un échec qui se reproduira, deux choses à changer, un acte. */
+/** Le bilan de S4 : ce qui a failli se reproduira, deux choses à changer, un acte. */
 function bilanEchec(partiel: Partial<BilanRun> = {}): BilanRun {
   return bilanFactice({
     run_id: RUN,
@@ -204,10 +207,13 @@ function bilanEchec(partiel: Partial<BilanRun> = {}): BilanRun {
       {
         id: "P2",
         famille: "usage",
-        texte: "Usage de la tâche rediger-notes-md : 0 tokens, coût inconnu, 0 s ; issue : echec",
+        texte:
+          "Usage de la tâche « Créer NOTES.md : le projet décrit en trois lignes » (rediger-notes-md) : 0 tokens, coût inconnu, 0 s ; issue : Échec",
         tache_id: TACHE,
         entrees: ["j-0055"],
         synthese: true,
+        libelle:
+          "« Créer NOTES.md : le projet décrit en trois lignes » a consommé 0 tokens, coût inconnu, en 0 s — issue : Échec.",
       },
       {
         id: "P8",
@@ -316,9 +322,9 @@ describe("le bilan, rangé et nommé", () => {
     ]);
   });
 
-  it("résume les échecs par leur nature, ce qu'il faut changer et les actes", () => {
+  it("résume la nature de ce qui a failli, ce qu'il faut changer et les actes", () => {
     expect(resumeDuBilan(bilanEchec())).toBe(
-      "1 échec qui se reproduira · 2 choses à changer · 1 acte sorti ou accordé sans personne",
+      "ce qui a failli se reproduira · 2 choses à changer · 1 acte sorti ou accordé sans personne",
     );
     const alea = bilanEchec({
       constats: [
@@ -327,13 +333,14 @@ describe("le bilan, rangé et nommé", () => {
       ],
     });
     // Une nature illisible se range en « indéterminée », comme le backend.
-    expect(resumeDuBilan(alea)).toBe("1 échec d'aléa · 1 échec de nature indéterminée");
-    // L'accord suit le compte (relevé par le regard neuf : « 2 échecs qui se
-    // reproduira » sur la vraie stack).
+    expect(resumeDuBilan(alea)).toBe("ce qui a failli : aléa (1), nature indéterminée (1)");
+    // Deux constats sur la même panne ne font pas « 2 échecs » : la tête ne compte
+    // pas des constats comme des échecs, qu'elle dit « 1 échec » juste au-dessus
+    // (relevé par le regard neuf, sur un run réel).
     const deux = bilanEchec({
       constats: [bilanEchec().constats[1], bilanEchec().constats[1]],
     });
-    expect(resumeDuBilan(deux)).toBe("2 échecs qui se reproduiront");
+    expect(resumeDuBilan(deux)).toBe("ce qui a failli se reproduira");
     expect(resumeDuBilan(bilanFactice())).toBe("aucun constat n'a tenu contre ses pièces");
     expect(
       resumeDuBilan(bilanFactice({ constats: [bilanEchec().constats[0]] })),
@@ -365,6 +372,27 @@ describe("le bilan, rangé et nommé", () => {
     expect(entreesALire(bilanEchec()).sort()).toEqual(["j-0054", "j-0055", "j-0056"]);
   });
 
+  it("se dit en mots au journal du run, jamais par le code du bus", () => {
+    // La ligne du journal où les pièces renvoient : « Bilan du run, sur pièces :
+    // bilan_rendu » avant #1285 — la branche par défaut rendait le code tel quel.
+    const phrase = resumeEvenement(
+      evenementDepuisEntree(
+        entreeJournalFactice({
+          type: "agent.activite",
+          run_id: RUN,
+          agent: "orchestrateur",
+          titre: "Bilan du run, sur pièces",
+          statut: STATUT_BILAN_RENDU,
+          detail: "7 constats sur pièces, dont 1 sur ce qui a failli.",
+        }),
+      ),
+    );
+    expect(phrase).toBe(
+      "Bilan du run — 7 constats sur pièces, dont 1 sur ce qui a failli.",
+    );
+    expect(phrase).not.toContain("bilan_rendu");
+  });
+
   it("rend les pièces d'un constat dans l'ordre où il les cite, sans en inventer", () => {
     const bilan = bilanEchec();
     expect(
@@ -381,9 +409,9 @@ describe("la tête d'un run soldé", () => {
   it("dit le bilan en une ligne, sous la cause, avec la nature de l'échec", async () => {
     monter();
 
-    const ligne = await tete().findByText(/1 échec qui se reproduira/);
+    const ligne = await tete().findByText(/ce qui a failli se reproduira/);
     expect(ligne).toHaveTextContent(
-      "· 1 échec qui se reproduira · 2 choses à changer · 1 acte sorti ou accordé sans personne",
+      "· ce qui a failli se reproduira · 2 choses à changer · 1 acte sorti ou accordé sans personne",
     );
     expect(lecture.appelsBilan).toContain(RUN);
   });
@@ -473,8 +501,12 @@ describe("les pièces d'un constat", () => {
     expect(region.queryByText(/— a échoué/)).not.toBeInTheDocument();
     expect(region.getAllByText(/plafond de tokens dépassé : 36809/)[0]).toBeInTheDocument();
     expect(region.queryByText(/tache\.statut/)).not.toBeInTheDocument();
-    // Une synthèse, elle, rend son texte : c'est la phrase qu'aucune ligne ne porte.
-    expect(region.getByText(/Usage de la tâche rediger-notes-md/)).toBeInTheDocument();
+    // Une synthèse, elle, se dit par son libellé — des phrases, la tâche par son
+    // titre —, jamais par le texte que le modèle a lu (identifiant, champs).
+    expect(
+      region.getByText(/a consommé 0 tokens, coût inconnu, en 0 s — issue : Échec\./),
+    ).toBeInTheDocument();
+    expect(region.queryByText(/Usage de la tâche/)).not.toBeInTheDocument();
     // Les lignes ont été lues **par leur identifiant**, où qu'elles soient.
     expect(
       lecture.appelsJournal.some((appel) => appel.ids?.includes("j-0055")),
@@ -629,7 +661,7 @@ describe("les états du bilan", () => {
       erreur: ErreurApi.injoignable("/api/executions"),
     });
 
-    expect(await tete().findByText(/1 échec qui se reproduira/)).toBeInTheDocument();
+    expect(await tete().findByText(/ce qui a failli se reproduira/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bilan (5 constats)" })).toBeInTheDocument();
   });
 

@@ -1042,11 +1042,45 @@ def test_une_synthese_se_lit_en_mots_d_interface_sans_code_du_moteur() -> None:
         StepUsage(tokens_entree=40_000, tokens_sortie=720, cout_usd=0.2199, tours=2, duree_ms=31_000)
     ) == "40 720 tokens, coût 0,2199 $US, 2 tours, 31 s"
     assert "1 tour," in _usage_en_mots(StepUsage(tokens_entree=10, tours=1, duree_ms=1_000))
-    tentatives = next(
-        p for p in _dossier(rejouer_p3(total=60)).pieces
-        if p.texte.startswith("Tentatives de la tâche")
-    )
+    dossier = _dossier(rejouer_p3(total=60))
+    tentatives = next(p for p in dossier.pieces if p.texte.startswith("Tentatives de la tâche"))
     assert tentatives.texte.endswith("issue : Échec")
+    # Le libellé, pour la personne : des phrases, la tâche par son titre, sans son
+    # identifiant — le texte, lui, le garde pour que le modèle puisse le citer.
+    assert tentatives.libelle == (
+        "« Maquetter les sections » a démarré 3 fois ; le moteur l'a relancée 2 fois "
+        "en présumant un aléa — issue : Échec."
+    )
+    assert MAQUETTE in tentatives.texte and MAQUETTE not in tentatives.libelle
+    cout = next(p for p in dossier.pieces if p.famille == FAMILLE_USAGE and not p.tache_id)
+    assert cout.libelle.startswith("Le run a consommé ")
+    assert ";" not in cout.libelle.split(".")[0]
+    assert all(p.libelle for p in dossier.pieces if p.synthese)
+    assert not any(p.libelle for p in dossier.pieces if not p.synthese)
+
+
+def test_la_consigne_fait_nommer_une_tache_par_son_titre() -> None:
+    """Un constat s'affiche à la personne : la tâche par son titre, l'identifiant dans « tache ».
+
+    Relevé sur la vraie stack (#1285) : « La tâche rediger-notes-md a été arrêtée… ».
+    Jugé sur ce que la consigne dit, jamais sur ce qu'un modèle en a fait (#746).
+    """
+    assert "par son titre" in SYSTEME
+    assert "jamais par son" in SYSTEME and "identifiant" in SYSTEME
+
+
+def test_la_ligne_du_journal_s_accorde() -> None:
+    """« 1 constat », « 2 écartés » : le journal du run montre cette ligne telle quelle."""
+    from maestro.controltower.bilan import ConstatEcarte
+
+    un = Constat(rubrique=RUBRIQUE_ECHEC, texte="La maquette a failli.", pieces=("P1",))
+    ecarte = ConstatEcarte(rubrique=RUBRIQUE_ECHEC, texte="?", pieces=(), raison="aucune")
+    bilan = BilanRun(run_id=RUN, statut=EXECUTION_ECHEC, fin=None, constats=(un,),
+                     ecartes=(ecarte, ecarte))
+
+    assert bilan.resume() == (
+        "1 constat sur pièces, dont 1 sur ce qui a failli ; 2 écartés faute de pièce."
+    )
 
 
 def test_une_piece_gardee_avant_ce_lot_se_relit_sans_perdre_sa_nature() -> None:

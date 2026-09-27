@@ -2544,6 +2544,14 @@ export type DecisionsRun = {
  * `attendu` tant que le run n'est pas soldé, `en_redaction` pendant l'appel au
  * modèle, `rendu` quand il est là, `absent` sinon.
  */
+/**
+ * Les statuts de l'activité de run qui porte le bilan (`agent.activite`, étape
+ * `bilan`) — rendu, ou réponse du modèle illisible (`bilan.py`,
+ * `STATUT_BILAN_RENDU` / `STATUT_BILAN_ILLISIBLE`). Le journal les dit en mots.
+ */
+export const STATUT_BILAN_RENDU = "bilan_rendu";
+export const STATUT_BILAN_ILLISIBLE = "bilan_illisible";
+
 export const ETAT_BILAN_ATTENDU = "attendu";
 export const ETAT_BILAN_EN_REDACTION = "en_redaction";
 export const ETAT_BILAN_RENDU = "rendu";
@@ -2617,6 +2625,12 @@ export type PieceBilan = {
   tache_id: string;
   entrees: string[];
   synthese?: boolean;
+  /**
+   * Une synthèse dite pour une personne (#1285) : des phrases, la tâche par son
+   * titre, sans identifiant — le `texte` reste celui que le modèle a lu. Vide pour
+   * une pièce d'entrée, et absent d'un bilan rendu avant #1285.
+   */
+  libelle?: string;
 };
 
 /**

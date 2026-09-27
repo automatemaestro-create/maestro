@@ -283,8 +283,14 @@ class Piece:
     une ligne du journal, et la vue montre cette ligne telle que le journal la dit —
     son `texte`, écrit pour le modèle (horodatage, type, statut brut), n'est pas fait
     pour être lu ; une synthèse (le coût du run, l'usage d'une tâche, ses
-    tentatives, sa checklist) n'est la ligne d'aucune entrée, et son texte est la
-    phrase à montrer.
+    tentatives, sa checklist) n'est la ligne d'aucune entrée, et c'est son `libelle`
+    que la vue montre.
+
+    `libelle` est la synthèse dite **pour une personne** : en phrases, la tâche par
+    son titre, sans son identifiant. Le `texte` reste ce que le modèle lit — il y
+    garde l'identifiant de la tâche, qu'il doit pouvoir citer. Vide pour une pièce
+    d'entrée (la vue rend sa ligne du journal) et pour un bilan rendu avant #1285
+    (la vue retombe alors sur le `texte`).
 
     `priorite` et `rang` ne sortent pas et ne font pas l'identité d'une pièce : ils
     décident de ce qui entre dans le budget, puis de l'ordre de lecture.
@@ -296,6 +302,7 @@ class Piece:
     tache_id: str = ""
     entrees: tuple[str, ...] = ()
     synthese: bool = False
+    libelle: str = ""
     priorite: int = field(default=PRIORITE_CONTEXTE, compare=False)
     rang: int = field(default=0, compare=False)
 
@@ -312,6 +319,7 @@ class Piece:
             "tache_id": self.tache_id,
             "entrees": list(self.entrees),
             "synthese": self.synthese,
+            "libelle": self.libelle,
         }
 
     @classmethod
@@ -337,6 +345,7 @@ class Piece:
                 if isinstance(synthese, bool)
                 else famille == FAMILLE_USAGE or len(lues) != 1
             ),
+            libelle=str(data.get("libelle") or ""),
         )
 
 
@@ -505,6 +514,31 @@ def _compte(nombre: int, mot: str) -> str:
     return f"{nombre} {mot}{'s' if nombre > 1 else ''}"
 
 
+def _agent_entre_parentheses(agent: str) -> str:
+    """` (dev)` — l'agent qui a porté la tâche, rien pour le repère « — »."""
+    return f" ({agent})" if agent and agent != AGENT_ABSENT else ""
+
+
+def _usage_en_phrase(usage: StepUsage) -> str:
+    """Une mesure d'usage dite pour une personne (#1285) — le `libelle` d'une synthèse.
+
+    `40 874 tokens pour 0,1415 $US, en 2 tours et 31 s` : une phrase, et non la suite
+    de champs que le modèle lit (`_usage_en_mots`).
+    """
+    texte = f"{_nombre(usage.tokens_total)} tokens"
+    if usage.tokens_non_tarifes:
+        texte += f" (dont {_nombre(usage.tokens_non_tarifes)} sans prix)"
+    texte += f" pour {_montant(usage.cout_usd)}" if usage.cout_usd is not None else ", coût inconnu"
+    temps = []
+    if usage.tours:
+        temps.append(_compte(usage.tours, "tour"))
+    if usage.duree_ms is not None:
+        temps.append(f"{usage.duree_ms / 1000:.0f} s")
+    if temps:
+        texte += ", en " + " et ".join(temps)
+    return texte
+
+
 def _usage_en_mots(usage: StepUsage) -> str:
     """Une mesure d'usage en clair : tokens, part sans prix, coût, tours, durée.
 
@@ -557,6 +591,11 @@ def _syntheses(
             ),
             entrees=tuple(issue_du_run),
             synthese=True,
+            libelle=_borne(
+                f"Le run a consommé {_usage_en_phrase(cout.total)}{plancher}. "
+                f"Planification : {_usage_en_phrase(cout.planification)} ; "
+                f"cadrage : {_usage_en_phrase(cout.brief)}."
+            ),
             priorite=PRIORITE_DECISIVE,
         )
     )
@@ -581,6 +620,11 @@ def _syntheses(
                 ),
                 entrees=issues,
                 synthese=True,
+                libelle=_borne(
+                    f"« {nom or ligne.tache_id} »{_agent_entre_parentheses(ligne.agent)} "
+                    f"a consommé {_usage_en_phrase(ligne.usage)} — "
+                    f"issue : {_issue_en_mots(ligne.statut)}."
+                ),
                 priorite=PRIORITE_DECISIVE if sans_resultat else PRIORITE_ECLAIRANTE,
             )
         )
@@ -623,6 +667,15 @@ def _tentatives(tache: EtatTache, entrees: Sequence[EntreeJournal]) -> list[Piec
             ),
             entrees=tuple(e.id for e in (*demarrages, *relances)),
             synthese=True,
+            libelle=_borne(
+                f"« {tache.titre or tache.id} » a démarré {len(demarrages)} fois"
+                + (
+                    f" ; le moteur l'a relancée {len(relances)} fois en présumant un aléa"
+                    if relances
+                    else ""
+                )
+                + f" — issue : {issue}."
+            ),
             priorite=PRIORITE_DECISIVE if tache.statut == STATUT_ECHEC else PRIORITE_ECLAIRANTE,
         )
     ]
@@ -663,6 +716,21 @@ def _checklist(tache: EtatTache, entrees: Sequence[EntreeJournal]) -> Piece | No
         if e.type == EVENEMENT_TACHE_DETAIL
         or (e.type == EVENEMENT_AGENT_ACTIVITE and e.statut.startswith(_PREFIXE_VERIFICATION))
     )
+    # Pour une personne : la tâche par son titre, les étapes accordées, et de la
+    # vérification ce qu'elle dit en mots (son résumé), jamais son code.
+    dit = f"Checklist de « {tache.titre or tache.id} »"
+    if etapes:
+        faites = len(etapes) - len(restantes)
+        dit += (
+            f" : {faites}/{len(etapes)} étape{'s' if len(etapes) > 1 else ''} "
+            f"cochée{'s' if faites > 1 else ''}"
+        )
+        if restantes:
+            dit += " (non cochées : " + " ; ".join(restantes) + ")"
+    dit += f" — issue : {_issue_en_mots(tache.statut) if tache.statut else 'inconnue'}"
+    parole = str(verification.get("resume") or verification.get("empechement") or "")
+    if parole:
+        dit += f". Vérification : {parole}"
     return Piece(
         id="",
         famille=FAMILLE_CHECKLIST,
@@ -670,6 +738,7 @@ def _checklist(tache: EtatTache, entrees: Sequence[EntreeJournal]) -> Piece | No
         texte=_borne(" ; ".join(morceaux)),
         entrees=cites,
         synthese=True,
+        libelle=_borne(dit + "."),
         priorite=PRIORITE_DECISIVE if ecart else PRIORITE_ECLAIRANTE,
     )
 
@@ -735,6 +804,7 @@ def assembler_les_pieces(
             tache_id=piece.tache_id,
             entrees=piece.entrees,
             synthese=piece.synthese,
+            libelle=piece.libelle,
             priorite=piece.priorite,
             rang=piece.rang,
         )
@@ -997,13 +1067,17 @@ class BilanRun:
         return tuple(c for c in self.constats if c.rubrique == rubrique)
 
     def resume(self) -> str:
-        """La ligne que le journal du run prononce : combien de constats, combien d'écartés."""
-        texte = f"{len(self.constats)} constat(s) sur pièces"
+        """La ligne que le journal du run prononce : combien de constats, combien d'écartés.
+
+        Accordée (`7 constats`, `1 écarté`) et non `constat(s)` : le journal du run
+        la montre telle quelle, à côté des pièces qui y renvoient (#1285).
+        """
+        texte = f"{_compte(len(self.constats), 'constat')} sur pièces"
         echecs = self.de_rubrique(RUBRIQUE_ECHEC)
         if echecs:
             texte += f", dont {len(echecs)} sur ce qui a failli"
         if self.ecartes:
-            texte += f" ; {len(self.ecartes)} écarté(s) faute de pièce"
+            texte += f" ; {_compte(len(self.ecartes), 'écarté')} faute de pièce"
         return texte + "."
 
     def to_dict(self) -> dict[str, Any]:
@@ -1157,6 +1231,8 @@ Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code 
 ]}
 
 - "texte" : une ou deux phrases, en français, pour la personne qui a demandé le run ;
+  une tâche s'y nomme par son titre (« Maquetter les sections »), jamais par son
+  identifiant (maquette-sections), qui va dans "tache" ;
 - "nature" : seulement pour un échec ; "tache" : l'identifiant de la tâche dont le
   constat parle, s'il en nomme une ; "agent" : seulement quand la recommandation est
   de RÉVISER LE PLAYBOOK de cet agent — vide pour tout autre réglage, et jamais pour

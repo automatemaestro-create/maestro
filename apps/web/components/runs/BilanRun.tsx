@@ -60,9 +60,9 @@ import {
   IconeMonnaie,
   IconeObjectif,
   IconePermissions,
+  IconeFichier,
   IconeReprise,
   IconeStatutEchec,
-  IconeStatutTerminee,
 } from "@/components/Icones";
 import {
   BadgeEtat,
@@ -110,13 +110,19 @@ import type { BilanDuRun } from "@/lib/useBilanRun";
 import { useEntreesCitees } from "@/lib/useBilanRun";
 import { useFriseRun } from "@/lib/useFriseRun";
 
-/** L'icône du sujet de chaque rubrique — décorative, l'intitulé porte le sens. */
+/**
+ * L'icône du sujet de chaque rubrique — décorative, l'intitulé porte le sens.
+ *
+ * « Ce qui a été livré » porte un fichier, et non le ✓ cerclé de « Terminée » :
+ * sur un run en échec, la rubrique dit souvent que **rien** n'a été livré, et un
+ * glyphe de réussite y contredirait le texte (relevé par le regard neuf).
+ */
 const ICONES_RUBRIQUE: Record<string, Icone> = {
   [RUBRIQUE_ECHEC]: IconeStatutEchec,
   [RUBRIQUE_RECOMMANDATION]: IconeObjectif,
   [RUBRIQUE_ACTE]: IconePermissions,
   [RUBRIQUE_CONSOMMATION]: IconeMonnaie,
-  [RUBRIQUE_LIVRE]: IconeStatutTerminee,
+  [RUBRIQUE_LIVRE]: IconeFichier,
 };
 
 /**
@@ -319,13 +325,14 @@ function ContenuBilan({
       {/* Ce que le modèle a lu, dit en clair : le journal entier, et ce que le
           budget a laissé dehors s'il a mordu (#1284). Une borne muette ferait
           passer un run bavard pour un run sobre. */}
-      {/* « 10 pièces tirées des 8 entrées » se lisait comme une erreur de
-          compte : les synthèses (coût, usage, checklist) s'ajoutent aux lignes.
-          Le journal est donc dit lu en entier, son compte entre parenthèses. */}
+      {/* « 10 pièces tirées des 8 entrées » se lisait comme une erreur de compte
+          (relevé deux fois par le regard neuf) : les pièces sont les lignes du
+          journal **et** des synthèses — le coût, l'usage d'une tâche, sa
+          checklist. La phrase le dit. */}
       <p className="text-annexe text-texte-secondaire">
-        Rendu sur {bilan.pieces_offertes} pièce{bilan.pieces_offertes > 1 ? "s" : ""}{" "}
-        tirée{bilan.pieces_offertes > 1 ? "s" : ""} du journal de ce run, lu en entier (
-        {bilan.entrees_lues} entrée{bilan.entrees_lues > 1 ? "s" : ""})
+        Rendu sur {bilan.pieces_offertes} pièce{bilan.pieces_offertes > 1 ? "s" : ""} :
+        les lignes du journal de ce run, lu en entier ({bilan.entrees_lues} entrée
+        {bilan.entrees_lues > 1 ? "s" : ""}), et des synthèses sur son coût et ses tâches
         {bilan.pieces_laissees > 0
           ? ` — ${bilan.pieces_laissees} laissée${bilan.pieces_laissees > 1 ? "s" : ""} de côté par le budget de lecture`
           : ""}
@@ -499,7 +506,10 @@ function LignePiece({
 }) {
   const entree = estUneLigneDuJournal(piece) ? entrees.get(piece.entrees[0]) : undefined;
   const evenement = entree ? evenementDepuisEntree(entree) : null;
-  const phrase = evenement ? resumeEvenement(evenement) : piece.texte;
+  // Une synthèse se dit par son libellé (des phrases, la tâche par son titre) ;
+  // son texte — celui que le modèle a lu — n'est qu'un repli, pour un bilan rendu
+  // avant que le libellé n'existe.
+  const phrase = evenement ? resumeEvenement(evenement) : piece.libelle || piece.texte;
   // Le détail n'est redit que s'il apprend autre chose que la phrase : pour une
   // activité ou un arbitrage, la phrase **est** le détail (`lib/evenements`).
   const detail =

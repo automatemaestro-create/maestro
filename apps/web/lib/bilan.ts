@@ -86,24 +86,29 @@ export const NATURES_BILAN: Record<
   {
     libelle: string;
     ton: "alerte" | "attention" | "neutre";
-    /** Ce que la tête dit après « 1 échec » et après « 2 échecs » — l'accord. */
-    phrase: { singulier: string; pluriel: string };
+    /** Ce que la tête dit de ce qui a failli quand toute la rubrique a cette nature. */
+    verdict: string;
+    /** Son nom court, quand la rubrique mêle plusieurs natures. */
+    court: string;
   }
 > = {
   [NATURE_DETERMINISTE]: {
     libelle: "Se reproduira",
     ton: "alerte",
-    phrase: { singulier: "qui se reproduira", pluriel: "qui se reproduiront" },
+    verdict: "ce qui a failli se reproduira",
+    court: "se reproduira",
   },
   [NATURE_ALEA]: {
     libelle: "Aléa",
     ton: "attention",
-    phrase: { singulier: "d'aléa", pluriel: "d'aléa" },
+    verdict: "ce qui a failli relève d'un aléa",
+    court: "aléa",
   },
   [NATURE_INDETERMINEE]: {
     libelle: "Nature indéterminée",
     ton: "neutre",
-    phrase: { singulier: "de nature indéterminée", pluriel: "de nature indéterminée" },
+    verdict: "ce qui a failli est de nature indéterminée",
+    court: "nature indéterminée",
   },
 };
 
@@ -114,28 +119,40 @@ function compte(nombre: number, singulier: string, pluriel: string): string {
 
 /**
  * Ce que la **tête** de la vue dit du bilan, en une ligne (veille de #1285,
- * d'après le résumé de Buildkite : « 3 annotations — View all → ») : les échecs
- * par nature, ce qu'il faut changer, les actes sortis ou accordés sans personne.
- * Les deux dernières rubriques ne s'y comptent pas — elles ne changent pas ce
- * qu'on fait dans la minute —, et l'onglet les porte.
+ * d'après le résumé de Buildkite : « 3 annotations — View all → ») : la nature de
+ * ce qui a failli, ce qu'il faut changer, les actes sortis ou accordés sans
+ * personne. Les deux dernières rubriques ne s'y comptent pas — elles ne changent
+ * pas ce qu'on fait dans la minute —, et l'onglet les porte.
  *
  * La nature est dans la ligne parce que c'est **la** réponse que la tête doit
  * donner (relevé par le regard neuf sur le brouillon) : « se reproduira » dit
  * qu'une relance à l'identique échouera, et c'est le contresens du run `p3`.
+ *
+ * Elle ne **compte pas** les échecs : le bilan compte des *constats*, et deux
+ * constats peuvent dire la même panne. « 2 échecs qui se reproduiront » sous une
+ * tête qui dit « 1 échec » se contredisaient (relevé par le regard neuf, sur un
+ * run réel) : la ligne dit donc la nature, et le nombre de constats vit dans
+ * l'onglet.
  */
 export function resumeDuBilan(bilan: BilanRun): string {
   const morceaux: string[] = [];
   const echecs = bilan.constats.filter((c) => c.rubrique === RUBRIQUE_ECHEC);
-  for (const nature of [NATURE_DETERMINISTE, NATURE_ALEA, NATURE_INDETERMINEE]) {
-    const nombre = echecs.filter(
-      (c) => (NATURES_BILAN[c.nature] ? c.nature : NATURE_INDETERMINEE) === nature,
-    ).length;
-    if (nombre > 0) {
-      const { phrase } = NATURES_BILAN[nature];
-      morceaux.push(
-        `${compte(nombre, "échec", "échecs")} ${nombre > 1 ? phrase.pluriel : phrase.singulier}`,
-      );
-    }
+  const parNature = [NATURE_DETERMINISTE, NATURE_ALEA, NATURE_INDETERMINEE]
+    .map((nature) => ({
+      nature,
+      nombre: echecs.filter(
+        (c) => (NATURES_BILAN[c.nature] ? c.nature : NATURE_INDETERMINEE) === nature,
+      ).length,
+    }))
+    .filter(({ nombre }) => nombre > 0);
+  if (parNature.length === 1) {
+    morceaux.push(NATURES_BILAN[parNature[0].nature].verdict);
+  } else if (parNature.length > 1) {
+    morceaux.push(
+      `ce qui a failli : ${parNature
+        .map(({ nature, nombre }) => `${NATURES_BILAN[nature].court} (${nombre})`)
+        .join(", ")}`,
+    );
   }
   const aChanger = bilan.constats.filter(
     (c) => c.rubrique === RUBRIQUE_RECOMMANDATION,
