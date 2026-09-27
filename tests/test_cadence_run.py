@@ -51,10 +51,25 @@ from maestro.controltower import (
     create_app,
 )
 from maestro.controltower.bridge import evenements_depuis_step
-from maestro.controltower.events import EVENEMENT_AGENT_ACTIVITE
+from maestro.controltower.events import (
+    EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_QUESTION_DEMANDE,
+    EVENEMENT_QUESTION_REPONSE,
+)
 from maestro.controltower.orchestration import fiche_du_run
+from maestro.controltower.question import (
+    ArbitreQuestionControlTower,
+    evenement_question,
+    evenement_retrait,
+)
 from maestro.controltower.regime import CE_QUI_NE_SE_PREVOIT_PAS
-from maestro.controltower.state import EVENEMENT_EXECUTION_STATUT, EXECUTION_EN_COURS
+from maestro.controltower.state import (
+    EVENEMENT_EXECUTION_STATUT,
+    EXECUTION_EN_COURS,
+    QUESTION_EN_ATTENTE,
+    QUESTION_REPONDUE,
+    QUESTION_RETIREE,
+)
 from maestro.engine import OrchestrationEngine
 from maestro.engine.cadence import (
     CAUSE_CHAINE,
@@ -412,6 +427,7 @@ def test_sur_accord_le_projet_devient_un_depot_et_ses_taches_partent_chacune_dan
     # La proposition : dans le fil, sur la carte d'une question du run, avec sa raison.
     [demande] = fil.demandes
     assert demande.tache_id == "" and demande.run_id == RUN
+    assert demande.retirer_sans_reponse, "une proposition du run quitte le fil quand elle ne vaut plus"
     assert demande.choix == (CHOIX_VERSIONNER, CHOIX_GARDER)
     assert demande.hypothese == HYPOTHESE_VERSIONNEMENT
     assert "le projet « p3 » n'est pas versionné" in demande.question
@@ -648,6 +664,32 @@ def test_le_versionnement_accorde_passe_devant_les_taches_qui_attendaient_l_atel
     }
 
 
+@avec_git
+def test_une_tache_qui_a_ecrit_en_place_se_solde_en_place_meme_versionnee_entre_temps(
+    tmp_path: Path,
+) -> None:
+    """Le projet change de régime pendant qu'elle écrit (la route des projets, #855) :
+    elle n'a pas de branche, et sa fusion ne doit pas en chercher une."""
+    depot, projet = _projet_nu(tmp_path)
+    fournisseur = _Ecrivain()
+    fournisseur.retenues["t1.md"] = asyncio.Event()
+    executeur = _executeur(fournisseur, depot)
+    journal = RunJournal(run_id=RUN)
+
+    async def _scenario():
+        t1 = asyncio.create_task(executeur.execute(_tache("t1", projet.id), [], journal))
+        await fournisseur.entrees.setdefault("t1.md", asyncio.Event()).wait()
+        await asyncio.to_thread(depot.versionner, projet.id)
+        fournisseur.retenues["t1.md"].set()
+        return await t1
+
+    resultat = asyncio.run(_scenario())
+
+    assert resultat.ok
+    assert fournisseur.espaces["t1.md"] == Path(projet.racine)
+    assert _fusions(journal) == {"t1": STATUT_ECRITURE_EN_PLACE}
+
+
 def test_un_agent_au_complet_dit_une_fois_qu_il_fait_passer_ses_taches_une_a_une(
     tmp_path: Path,
 ) -> None:
@@ -831,6 +873,107 @@ def test_le_fil_lit_pourquoi_les_taches_passent_une_a_une() -> None:
     [cadence] = [ligne for ligne in lignes if ligne.startswith("  cadence : ")]
     assert "le projet « p3 » n'est pas versionné" in cadence
     assert "Le versionner est proposé dans le fil" in cadence
+
+
+class _BusNote(InMemoryEventBus):
+    """Le bus mémoire, qui garde ce qu'on y publie."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.publies: list[Event] = []
+
+    async def publish(self, event: Event) -> None:
+        self.publies.append(event)
+        await super().publish(event)
+
+
+def _demande_du_run(*, retirer: bool) -> DemandeQuestion:
+    return DemandeQuestion(
+        question_id="cadence:0123456789",
+        question="Versionner le projet « p3 » ?",
+        hypothese=HYPOTHESE_VERSIONNEMENT,
+        choix=(CHOIX_VERSIONNER, CHOIX_GARDER),
+        titre="Versionner le projet « p3 »",
+        agent=ACTEUR_ORCHESTRATEUR,
+        role=ROLE_ORCHESTRATEUR,
+        run_id=RUN,
+        projet_id=PROJET,
+        attente_s=0.05,
+        retirer_sans_reponse=retirer,
+    )
+
+
+def _sans_reponse(bus: _BusNote, demande: DemandeQuestion) -> None:
+    async def _attendre():
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(ArbitreQuestionControlTower(bus)(demande), 0.05)
+
+    asyncio.run(_attendre())
+
+
+def test_une_proposition_du_run_sans_reponse_quitte_le_fil() -> None:
+    """Passé la borne, son geste ne ferait plus rien : elle se retire au lieu de mentir."""
+    bus = _BusNote()
+    demande = _demande_du_run(retirer=True)
+
+    _sans_reponse(bus, demande)
+
+    assert [(e.type, e.statut) for e in bus.publies] == [
+        (EVENEMENT_QUESTION_DEMANDE, QUESTION_EN_ATTENTE),
+        (EVENEMENT_QUESTION_REPONSE, QUESTION_RETIREE),
+    ]
+    state = ControlTowerState()
+    for event in bus.publies:
+        state.appliquer(event)
+    question = state.question(demande.question_id)
+    assert question is not None and question.statut == QUESTION_RETIREE
+    assert not question.en_attente
+
+
+def test_la_question_d_un_agent_reste_ouverte_apres_sa_borne() -> None:
+    """Ce qui ne bouge pas (#1023, #584) : une réponse tardive sert encore à l'agent."""
+    bus = _BusNote()
+
+    _sans_reponse(bus, _demande_du_run(retirer=False))
+
+    assert [e.type for e in bus.publies] == [EVENEMENT_QUESTION_DEMANDE]
+
+
+def test_un_retrait_n_efface_pas_une_reponse_deja_donnee() -> None:
+    demande = _demande_du_run(retirer=True)
+    state = ControlTowerState()
+    state.appliquer(evenement_question(demande))
+    state.appliquer(
+        Event(
+            type=EVENEMENT_QUESTION_REPONSE,
+            run_id=RUN,
+            question_id=demande.question_id,
+            statut=QUESTION_REPONDUE,
+            detail=CHOIX_GARDER,
+        )
+    )
+
+    state.appliquer(evenement_retrait(demande))
+
+    question = state.question(demande.question_id)
+    assert question is not None
+    assert (question.statut, question.reponse) == (QUESTION_REPONDUE, CHOIX_GARDER)
+
+
+def test_repondre_a_une_proposition_retiree_est_refuse_en_le_disant() -> None:
+    demande = _demande_du_run(retirer=True)
+    log = InMemoryEventLog()
+    for event in (_lancement(), evenement_question(demande), evenement_retrait(demande)):
+        asyncio.run(log.consigner(event))
+    app = create_app(bus=InMemoryEventBus(), state=ControlTowerState(), event_log=log)
+
+    with TestClient(app) as client:
+        reponse = client.post(
+            f"/api/questions/{demande.question_id}/reponse", json={"reponse": CHOIX_VERSIONNER}
+        )
+
+    assert reponse.status_code == 409
+    assert "retirée sans réponse" in reponse.json()["detail"]
 
 
 def test_le_fil_sait_d_avance_qu_un_projet_non_versionne_fait_passer_ses_taches_une_a_une() -> None:

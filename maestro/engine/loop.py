@@ -1760,6 +1760,10 @@ class OrchestrationEngine:
             run_id=journal.run_id,
             projet_id=projet_id,
             attente_s=attente_s,
+            # Une question du run ne vaut que tant qu'il peut s'en servir : à la
+            # borne, ou à sa fin, elle quitte le fil au lieu d'y laisser un geste
+            # qui ne ferait plus rien.
+            retirer_sans_reponse=True,
         )
         try:
             return await asyncio.wait_for(questionneur(demande), attente_s), ""

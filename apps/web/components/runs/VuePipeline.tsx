@@ -956,6 +956,11 @@ function NoeudCarte({
  * `largeur` dit ce que le plan **autorise**, jamais ce que le run fera (le
  * parallélisme du moteur peut être plus étroit, et un run en pause ne démarre
  * rien) — d'où « jusqu'à N de front » et non « N en parallèle ».
+ *
+ * Et ce qui l'en empêche se dit **à côté** (#1298) : « une tâche à la fois : projet
+ * non versionné ». Les causes viennent du moteur, qui les a constatées (`cadence`) ;
+ * l'écran n'en devine aucune et ne compose pas leurs mots. Aucune cause, aucune
+ * mention : un plan large sur un projet versionné n'a rien à expliquer.
  */
 function ChiffresDuGraphe({ graphe }: { graphe: GrapheRun }) {
   const morceaux = [
@@ -966,9 +971,16 @@ function ChiffresDuGraphe({ graphe }: { graphe: GrapheRun }) {
     `${graphe.profondeur} niveau${graphe.profondeur > 1 ? "x" : ""}`,
   ];
   if (graphe.largeur > 1) morceaux.push(`jusqu'à ${graphe.largeur} de front`);
+  const causes = (graphe.cadence ?? []).filter((cause) => cause.mention !== "");
   return (
     <p className="chiffre text-annexe text-neutral-500 dark:text-neutral-400">
       {morceaux.join(" · ")}
+      {causes.map((cause) => (
+        <span key={cause.cle}>
+          {" — "}
+          {cause.mention}
+        </span>
+      ))}
     </p>
   );
 }

@@ -542,6 +542,7 @@ from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
     QUESTION_REPONDUE,
+    QUESTION_RETIREE,
     RENFORT_ACCORDE,
     RENFORT_DECLINE,
     STATUTS_EXECUTION_TERMINAUX,
@@ -3609,6 +3610,14 @@ def create_app(
         if question is None:
             raise HTTPException(
                 status_code=404, detail=f"aucune question : {question_id}"
+            )
+        if question.statut == QUESTION_RETIREE:
+            # Une proposition du run passée sa borne, ou dont le run est fini
+            # (#1298) : y répondre ne ferait plus rien, et le dire vaut mieux que
+            # d'accepter un geste que personne n'écoute.
+            raise HTTPException(
+                status_code=409,
+                detail=f"question retirée sans réponse, elle ne vaut plus : {question_id}",
             )
         if not question.en_attente:
             raise HTTPException(

@@ -452,6 +452,17 @@ const LIBELLES_STATUT: Record<string, string> = {
   verification_tenue: "Vérifiée",
   verification_non_tenue: "Vérification non tenue",
   verification_impossible: "Vérification impossible",
+  // Pourquoi les tâches d'un run passent une à une, et ce qu'est devenue la
+  // proposition de versionner le projet (#1298, `maestro/engine/cadence.py`). La
+  // phrase du moteur porte la cause ; le libellé dit seulement de quoi il s'agit.
+  une_a_une: "Une tâche à la fois",
+  projet_versionne: "Projet versionné",
+  versionnement_decline: "Versionnement décliné",
+  versionnement_sans_reponse: "Versionnement sans réponse",
+  versionnement_echoue: "Versionnement en échec",
+  versionnement_sans_suite: "Versionnement sans suite",
+  // Une question que le run a retirée du fil, faute de réponse à temps (#1298).
+  retiree: "Retirée sans réponse",
 };
 
 /** Le libellé d'un statut, ou le statut brut si le flux s'est enrichi. */

@@ -122,6 +122,12 @@ VALIDATION_REFUSEE = "refusee"
 #: qu'il n'y a plus rien à écrire, ce qui serait faux.
 QUESTION_EN_ATTENTE = "en_attente"
 QUESTION_REPONDUE = "repondue"
+#: Une question **retirée** sans réponse (#1298) : on a cessé de l'attendre, et
+#: son geste ne servirait plus — une proposition du run passée sa borne, ou son
+#: run fini. Posé par le seul `question.reponse` de retrait
+#: (`maestro.controltower.question.evenement_retrait`), et seulement sur une
+#: question encore en attente : une réponse déjà donnée ne s'efface pas.
+QUESTION_RETIREE = "retiree"
 
 #: Statuts d'une **décision de renfort** (#1227), portés par `renfort.decision` :
 #: l'équipe a été complétée, ou elle ne l'a pas été. Deux et non trois — il n'y a
@@ -2439,6 +2445,14 @@ class ControlTowerState:
         """
         question = self._questions.get(event.question_id)
         if question is None:
+            return
+        if event.statut == QUESTION_RETIREE:
+            # Un retrait (#1298) ne répond pas : il dit qu'on n'attend plus. Il ne
+            # touche qu'une question qui attendait encore — rediffusé après une
+            # réponse, il n'efface pas ce que la personne a dit.
+            if question.statut == QUESTION_EN_ATTENTE:
+                question.statut = QUESTION_RETIREE
+                question.horodatage = event.horodatage or question.horodatage
             return
         question.statut = QUESTION_REPONDUE
         question.reponse = event.detail or question.reponse

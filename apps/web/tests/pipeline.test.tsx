@@ -38,6 +38,8 @@ import { AvancementEtapes, LigneEtape } from "@/components/EtapesTache";
 import { VueRun } from "@/components/runs/VueRun";
 import type { EtapeAffichee } from "@/lib/detailTache";
 import { FournisseurEtatGlobal } from "@/lib/etatGlobal";
+import { resumeEvenement } from "@/lib/evenements";
+import { libelleStatut } from "@/lib/format";
 import {
   amorcesDeBranche,
   aretesEntrantes,
@@ -63,6 +65,7 @@ import {
   ETAPE_A_FAIRE,
   ETAPE_EN_COURS,
   ETAPE_FAITE,
+  EVENEMENT_AGENT_ACTIVITE,
   STATUT_EN_ATTENTE_VALIDATION,
   type GrapheRun,
   type PageJournal,
@@ -79,6 +82,7 @@ import {
 } from "@/lib/vuesRun";
 
 import {
+  evenementFactice,
   grapheFactice,
   noeudGrapheFactice,
   pageJournalCourante,
@@ -860,6 +864,110 @@ describe("les branches parallèles", () => {
     // plan **autorise**, jamais ce que le run fera.
     expect(within(pipeline).getByText(/4 tâches · 4 enchaînements · 3 niveaux/)).toBeInTheDocument();
     expect(within(pipeline).getByText(/jusqu'à 2 de front/)).toBeInTheDocument();
+  });
+});
+
+describe("pourquoi les tâches passent une à une (#1298)", () => {
+  const NON_VERSIONNE = {
+    cle: "projet_non_versionne:",
+    cause: "projet_non_versionne",
+    agent: "",
+    mention: "une tâche à la fois : projet non versionné",
+    phrase: "Les tâches de ce run passent une à une : le projet « p3 » n'est pas versionné.",
+  };
+
+  it("se dit à côté des chiffres du graphe, dans les mots du moteur", async () => {
+    lecture.graphe = grapheDeReference({ cadence: [NON_VERSIONNE] });
+    monter();
+
+    const pipeline = await pipelineCharge();
+    // La mention prolonge la ligne des chiffres : on la lit d'un même regard que
+    // « jusqu'à 2 de front », qu'elle vient justement contredire.
+    const chiffres = within(pipeline).getByText(/4 tâches · 4 enchaînements · 3 niveaux/);
+    expect(chiffres).toHaveTextContent(
+      "jusqu'à 2 de front — une tâche à la fois : projet non versionné",
+    );
+  });
+
+  it("dit chaque cause qui tient — le projet, puis l'agent au complet", async () => {
+    lecture.graphe = grapheDeReference({
+      cadence: [
+        NON_VERSIONNE,
+        {
+          cle: "instances:interface",
+          cause: "instances",
+          agent: "interface",
+          mention: "une tâche à la fois pour « interface » : une seule instance",
+          phrase: "Les tâches confiées à « interface » passent une à une.",
+        },
+      ],
+    });
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(within(pipeline).getByText(/4 tâches/)).toHaveTextContent(
+      "— une tâche à la fois : projet non versionné — une tâche à la fois pour « interface » : une seule instance",
+    );
+  });
+
+  it("dit la chaîne quand le plan en est une — rien d'autre à proposer", async () => {
+    lecture.graphe = grapheFactice({
+      run_id: RUN,
+      noeuds: [
+        noeudGrapheFactice({ id: "a", titre: "Schéma SQL", niveau: 0, dependants: ["b"] }),
+        noeudGrapheFactice({ id: "b", titre: "API CRUD", niveau: 1, dependances: ["a"] }),
+      ],
+      aretes: [{ de: "a", vers: "b", etat: ARETE_ATTENDUE }],
+      cadence: [
+        {
+          cle: "chaine:",
+          cause: "chaine",
+          agent: "",
+          mention: "une tâche à la fois : chaque tâche attend la précédente",
+          phrase: "Le plan est une chaîne.",
+        },
+      ],
+    });
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(within(pipeline).getByText(/2 tâches · 1 enchaînement · 2 niveaux/)).toHaveTextContent(
+      "— une tâche à la fois : chaque tâche attend la précédente",
+    );
+  });
+
+  it.each([
+    ["une_a_une", "Une tâche à la fois"],
+    ["projet_versionne", "Projet versionné"],
+    ["versionnement_decline", "Versionnement décliné"],
+    ["versionnement_sans_reponse", "Versionnement sans réponse"],
+    ["versionnement_echoue", "Versionnement en échec"],
+    ["versionnement_sans_suite", "Versionnement sans suite"],
+  ])("se lit au fil d'activité du run — %s a un libellé en toutes lettres", (statut, libelle) => {
+    expect(libelleStatut(statut)).toBe(libelle);
+  });
+
+  it("rend au fil d'activité la phrase du moteur, pas le titre de l'étape", () => {
+    expect(
+      resumeEvenement(
+        evenementFactice({
+          type: EVENEMENT_AGENT_ACTIVITE,
+          agent: "orchestrateur",
+          titre: "Cadence du run",
+          statut: "une_a_une",
+          detail: NON_VERSIONNE.phrase,
+        }),
+      ),
+    ).toBe(`Une tâche à la fois — ${NON_VERSIONNE.phrase}`);
+  });
+
+  it("se tait quand les tâches partent de front, ou d'un graphe servi avant ce lot", async () => {
+    lecture.graphe = grapheDeReference({ cadence: [] });
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(within(pipeline).queryByText(/une tâche à la fois/)).not.toBeInTheDocument();
+    expect(within(pipeline).getByText(/4 tâches/)).toHaveTextContent(/de front$/);
   });
 });
 
