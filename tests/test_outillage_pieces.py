@@ -81,8 +81,8 @@ from maestro.controltower.projets import ServiceProjets
 from maestro.engine.guardrails import DemandeValidation
 from maestro.outillage import CHEMIN_MANIFESTE, Commande, Constats, Gestionnaire, recommander
 from maestro.outillage.clients import SOURCE_POSTE, Client
-from maestro.outillage.correction import corriger, lire_correction
-from maestro.outillage.generation import poser_piece, prevoir
+from maestro.outillage.correction import CorrectionPrise, corriger, lire_correction
+from maestro.outillage.generation import corrections_declarees, generer, poser_piece, prevoir
 from maestro.outillage.modele import ORIGINE_DITE
 from maestro.outillage.questionnaire import Choix
 from maestro.outillage.recommandation import RAISON_AGENTS
@@ -100,6 +100,10 @@ avec_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
 #: La correction du critère 2, mot pour mot.
 DOTNET = "Nos tests tournent avec `dotnet test`"
+
+#: La correction de #1334, mot pour mot — et ce que le modèle de correction en comprend.
+NODE = "Nos tests tournent avec `node --test`"
+CORRIGE_NODE = {"comprise": True, "corrections": [{"cle": "tester", "valeur": "node --test"}]}
 
 #: Un interpréteur factice : le joueur doublé ne le lance jamais.
 FAUX_BASH = ("bash", "-c")
@@ -599,28 +603,35 @@ def test_revenir_a_une_version_deja_ecrite_puis_remplacee_la_repropose(
 ) -> None:
     """Vu sur la vraie stack : « retire dotnet test » ramenait `AGENTS.md` à sa version
     d'avant, déjà écrite une fois — et la pièce ne revenait pas : `(chemin, empreinte)`
-    comptait comme tranché, quoi qu'on ait écrit depuis à ce chemin."""
+    comptait comme tranché, quoi qu'on ait écrit depuis à ce chemin.
+
+    Depuis #1334, une correction écrite reste acquise au projet : on ne revient plus à
+    une version d'avant en la taisant, mais en **redisant** ce qu'elle disait — ici
+    `dotnet test`, écrit, puis `node --test`, écrit, puis `dotnet test` à nouveau."""
     projet_id = _importe(projets, _maison)
     racine = projets.entite(projet_id).racine_chemin
     service = _service(projets, _Joueur())
-    v1 = asyncio.run(service.prochaine(projet_id, []))
+
+    def dite(valeur: str, phrase: str) -> tuple[Choix, ...]:
+        objet = {"comprise": True, "corrections": [{"cle": "tester", "valeur": valeur}]}
+        return lire_correction(json.dumps(objet), phrase).corrections
+
+    v1 = asyncio.run(service.prochaine(projet_id, [], corrections=dite("dotnet test", DOTNET)))
     assert v1 is not None and v1.chemin == "AGENTS.md"
     ecrit_v1 = asyncio.run(service.ecrire(v1))
-    dotnet = lire_correction(
-        json.dumps({"comprise": True, "corrections": [{"cle": "tester", "valeur": "dotnet test"}]}),
-        DOTNET,
-    ).corrections
     fil = _fil_d_une_piece(v1, _message(NOM_ORCHESTRATION, "Écrit.", piece_ecrite=ecrit_v1))
-    v2 = asyncio.run(service.prochaine(projet_id, fil, corrections=dotnet))
+    v2 = asyncio.run(service.prochaine(projet_id, fil, corrections=dite("node --test", NODE)))
     assert v2 is not None and v2.chemin == "AGENTS.md" and v2.empreinte != v1.empreinte
     ecrit_v2 = asyncio.run(service.ecrire(v2))
     fil.append(_message(NOM_ORCHESTRATION, "Corrigé, écrit.", piece_ecrite=ecrit_v2))
 
-    retour = asyncio.run(service.prochaine(projet_id, fil))
+    retour = asyncio.run(
+        service.prochaine(projet_id, fil, corrections=dite("dotnet test", DOTNET))
+    )
 
     assert retour is not None and retour.chemin == "AGENTS.md" and retour.sort == "reecrit"
     assert retour.empreinte == v1.empreinte
-    assert "dotnet test" in (racine / "AGENTS.md").read_text(encoding="utf-8")
+    assert "node --test" in (racine / "AGENTS.md").read_text(encoding="utf-8")
     # Ce qui compte d'un chemin est la **dernière** décision prise sur lui.
     assert pieces_tranchees(fil) == {("AGENTS.md", ecrit_v2.empreinte)}
 
@@ -1443,7 +1454,10 @@ def _piece(**champs: Any) -> PieceProposee:
 
 
 def test_la_piece_son_fait_et_la_correction_se_relisent_a_l_identique() -> None:
-    piece = _piece(correction=DOTNET, corrigees=("dotnet test",))
+    prise = CorrectionPrise(
+        cle="tester", valeur="dotnet test", phrase=DOTNET, prise_le="2026-09-27T10:00:00+00:00"
+    )
+    piece = _piece(correction=DOTNET, corrigees=("dotnet test",), corrections_prises=(prise,))
     fait = PieceEcrite(projet_id="p-1", chemin="AGENTS.md", nom="AGENTS.md", etat="ecrit")
     correction = Choix(cle="tester", valeur="dotnet test", deduit=True, parce_que=DOTNET)
     message = _message(
@@ -1453,8 +1467,12 @@ def test_la_piece_son_fait_et_la_correction_se_relisent_a_l_identique() -> None:
     relu = MessageChat.from_dict(json.loads(json.dumps(message.to_ligne())))
 
     assert relu.piece == piece and relu.piece_ecrite == fait and relu.corrections == (correction,)
+    assert relu.piece is not None and relu.piece.corrections_prises == (prise,)
     ancienne = MessageChat.from_dict({"agent": NOM_ORCHESTRATION, "contenu": "x"})
     assert ancienne.piece is None and ancienne.piece_ecrite is None and ancienne.corrections == ()
+    # Une pièce persistée avant #1334 se relit, sans correction prise.
+    avant = PieceProposee.from_dict({"chemin": "AGENTS.md", "contenu": "# A\n"})
+    assert avant.corrections_prises == ()
 
 
 def test_une_piece_attend_tant_que_rien_ne_l_a_suivie_et_le_fil_nomme_son_projet() -> None:
@@ -1509,4 +1527,243 @@ def test_les_notes_renversees_renvoient_a_la_decision_et_docs_05_decrit_les_piec
         "05-interface-control-tower.md", "#### Pièce par pièce, dans le fil (#1161)", "\n### "
     )
     for fait in ("Corriger avec ses mots", "**La carte**", "PieceDOutillage.tsx", "422"):
+        assert fait in pieces, fait
+
+
+# --------------------------------------------------------------------------- #
+# ⑥ D'une conversation à l'autre : la correction dite reste acquise (#1334)     #
+# --------------------------------------------------------------------------- #
+
+
+def test_une_correction_dite_reste_acquise_dans_une_autre_conversation(
+    projets: ServiceProjets, tmp_path: Path, _maison: Path
+) -> None:
+    """Critère 1 de #1334, de bout en bout sur les routes, le modèle doublé.
+
+    Vu à la relecture de clôture de #1161, sur la vraie stack : la correction ne vivait
+    que dans le fil. Rouvert dans une autre conversation, l'outillage se redérivait de
+    l'analyse, et la carte proposait de **remplacer** `node --test`, dite par la
+    personne, par `npm run test`, que le projet déclare.
+    """
+    projet_id = _importe(projets, _maison)
+    racine = projets.entite(projet_id).racine_chemin
+    modele = _Modele(
+        _dicte("Vos tests tournent avec node --test : je revérifie.", VERDICT_OUTILLAGE),
+        correction=CORRIGE_NODE,
+    )
+    app = create_app(
+        bus=InMemoryEventBus(),
+        state=ControlTowerState(),
+        chat_store=ChatStore(tmp_path / "chat"),
+        projets=projets,
+        orchestration_repondeur=_repondeur(projets, modele),
+    )
+    route = f"/api/chat/{NOM_ORCHESTRATION}"
+    ecrire = f"{route}/outillage/piece"
+    with TestClient(app) as client:
+        # La première conversation : AGENTS.md écrit, corrigé avec des mots, réécrit.
+        ouverture = client.post(f"{route}/outillage/questionnaire", params={"projet": projet_id})
+        agents = ouverture.json()["messages"][0]["piece"]
+        premiere = ouverture.json()["conversation"]
+        ecrit = client.post(
+            ecrire, json={"decision": DECISION_ECRIRE, "piece": agents["empreinte"]}
+        )
+        assert ecrit.status_code == 201, ecrit.text
+        dite = client.post(f"{route}/messages", json={"contenu": NODE, "projet_id": projet_id})
+        assert dite.status_code == 201, dite.text
+        corrigee = dite.json()["messages"][1]["piece"]
+        assert corrigee["chemin"] == "AGENTS.md" and corrigee["correction"] == NODE
+        reecrit = client.post(
+            ecrire, json={"decision": DECISION_ECRIRE, "piece": corrigee["empreinte"]}
+        )
+        assert reecrit.status_code == 201, reecrit.text
+        # La seconde : l'outillage du même projet s'y rouvre.
+        autre = client.post(f"{route}/conversations").json()["conversation"]["id"]
+        assert autre != premiere
+        reouverture = client.post(
+            f"{route}/outillage/questionnaire",
+            params={"projet": projet_id, "conversation": autre},
+        )
+
+    assert reouverture.status_code == 201, reouverture.text
+    assert reouverture.json()["conversation"] == autre
+    piece = reouverture.json()["messages"][0]["piece"]
+    # `AGENTS.md` porte déjà la commande dite : il est à jour, rien ne le repropose — et
+    # surtout pas avec `npm run test` à la place.
+    assert piece is not None and piece["chemin"] != "AGENTS.md"
+    assert "npm run test" not in piece["texte_apres"]
+    ecrit_sur_le_disque = (racine / "AGENTS.md").read_text(encoding="utf-8")
+    assert f"`node --test` — dite par la personne (« {NODE} »)" in ecrit_sur_le_disque
+    # Et le manifeste la porte — la phrase, pas une paraphrase.
+    (prise,) = _manifeste(racine)["corrections"]
+    assert (prise["cle"], prise["valeur"], prise["phrase"]) == ("tester", "node --test", NODE)
+
+
+def _premiere_conversation(
+    projets: ServiceProjets, maison: Path
+) -> tuple[str, Path, dict[str, Any]]:
+    """Une première conversation : `AGENTS.md` écrit, corrigé par `NODE`, puis réécrit.
+
+    Rend le projet, sa racine, et le manifeste tel que la conversation l'a laissé.
+    """
+    modele = _Modele(correction=CORRIGE_NODE)
+    projet_id, racine, service, fil, _ = _apres_agents_ecrit(projets, maison, _Joueur(), modele)
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    fil.append(_message(UTILISATEUR, NODE))
+    reponse = asyncio.run(conducteur.corriger(fil, projet_id=projet_id, phrase=NODE))
+    assert reponse.piece is not None and reponse.piece.chemin == "AGENTS.md"
+    assert asyncio.run(service.ecrire(reponse.piece)).ecrite
+    return projet_id, racine, _manifeste(racine)
+
+
+def test_une_correction_reprise_se_dit_sur_la_carte_et_se_corrige_encore(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Critère 2 de #1334 : dans une autre conversation, la pièce qu'une correction reprise
+    touche la porte comme une autre — sa phrase d'origine sur la carte —, et une phrase de
+    plus la corrige encore."""
+    projet_id, racine, _ = _premiere_conversation(projets, _maison)
+    encore = "Finalement, nos tests tournent avec `npm test`"
+    joueur = _Joueur()
+    modele = _Modele(
+        correction={"comprise": True, "corrections": [{"cle": "tester", "valeur": "npm test"}]}
+    )
+    service = _service(projets, joueur, modele)  # une conversation neuve : rien d'épinglé
+
+    # `AGENTS.md` est à jour : les pièces viennent à partir du premier skill, passées une
+    # à une jusqu'à celui des tests.
+    fil: list[MessageChat] = []
+    tests = asyncio.run(service.prochaine(projet_id, fil))
+    assert tests is not None and tests.chemin == SKILL_ROUTE
+    while tests is not None and tests.chemin != ".agents/skills/lancer-les-tests/SKILL.md":
+        assert "node --test" not in tests.contenu and tests.correction == ""
+        fil += _fil_d_une_piece(
+            tests, _message(NOM_ORCHESTRATION, "Passée.", piece_ecrite=piece_ecartee(tests))
+        )
+        tests = asyncio.run(service.prochaine(projet_id, fil))
+
+    # La carte du skill de tests redit la phrase d'origine, et la commande dite.
+    assert tests is not None
+    assert tests.correction == NODE and tests.corrigees == ("node --test",)
+    assert f"Dite par la personne qui a outillé ce projet : « {NODE} »" in tests.contenu
+    assert "npm run test" not in tests.contenu
+    # Son verdict est celui que le manifeste garde : la commande reprise ne se rejoue pas.
+    assert "node --test" not in joueur.joues
+    assert [(c.cle, c.valeur, c.phrase) for c in tests.corrections_prises] == [
+        ("tester", "node --test", NODE)
+    ]
+
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    fil += [
+        _message(NOM_ORCHESTRATION, "Et le skill de tests ?", piece=tests),
+        _message(UTILISATEUR, encore),
+    ]
+    reponse = asyncio.run(conducteur.corriger(fil, projet_id=projet_id, phrase=encore))
+
+    piece = reponse.piece
+    assert piece is not None and piece.chemin == "AGENTS.md" and piece.sort == "reecrit"
+    assert piece.correction == encore
+    assert "`npm test` — dite par la personne" in piece.texte_apres
+    assert "node --test" not in piece.texte_apres and "node --test" in piece.texte_avant
+    # Le modèle de correction a su ce qui avait été dit dans l'autre conversation.
+    (prompt,) = modele.appels["correction"]
+    assert f"« node --test » — dit : « {NODE} »" in prompt
+    # Écrite, la nouvelle correction remplace l'ancienne au manifeste.
+    assert asyncio.run(service.ecrire(piece)).ecrite
+    (prise,) = _manifeste(racine)["corrections"]
+    assert (prise["cle"], prise["valeur"], prise["phrase"]) == ("tester", "npm test", encore)
+
+
+def test_la_correction_la_plus_recente_l_emporte_entre_le_fil_et_le_manifeste(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Une conversation **reprise**, plus ancienne, ne défait pas ce qu'une plus récente a
+    écrit ; une correction plus récente du fil, elle, l'emporte sur le manifeste."""
+    projet_id, _, manifeste = _premiere_conversation(projets, _maison)
+    (prise,) = manifeste["corrections"]
+    dotnet = Choix(cle="tester", valeur="dotnet test", deduit=True, parce_que=DOTNET)
+
+    def fil_date(horodatage: str) -> list[MessageChat]:
+        return [
+            _message(
+                NOM_ORCHESTRATION, "Correction prise.", corrections=(dotnet,), horodatage=horodatage
+            )
+        ]
+
+    ancien = asyncio.run(
+        _service(projets, _Joueur()).prochaine(projet_id, fil_date("2026-01-01T00:00:00+00:00"))
+    )
+    recent = asyncio.run(
+        _service(projets, _Joueur()).prochaine(projet_id, fil_date("2999-01-01T00:00:00+00:00"))
+    )
+
+    assert prise["prise_le"] > "2026-01-01T00:00:00+00:00"
+    # Plus ancienne que le manifeste : `AGENTS.md` porte déjà `node --test`, il est à jour.
+    assert ancien is not None and ancien.chemin == SKILL_ROUTE
+    # Plus récente : c'est elle qui vaut, et la pièce revient avec sa phrase.
+    assert recent is not None and recent.chemin == "AGENTS.md" and recent.correction == DOTNET
+    assert "`dotnet test` — dite par la personne" in recent.texte_apres
+
+
+def test_le_manifeste_garde_la_derniere_correction_de_chaque_sujet(tmp_path: Path) -> None:
+    """docs/38 §4.1 : `corrections` fusionnées par `poser_piece`, gardées par `generer`, et
+    lues sans rien croire — le manifeste vit dans le projet, n'importe qui l'a pu toucher."""
+    racine = tmp_path / "p"
+    racine.mkdir()
+    source = {"type": "analyse", "projet_id": "p", "reference": "ana-1", "resume": ""}
+    agents = Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n")
+    skill = Fichier(
+        chemin=".agents/skills/lancer-les-tests/SKILL.md",
+        role="skill",
+        portee="fichier",
+        contenu="---\nname: lancer-les-tests\n---\n",
+    )
+    dotnet = CorrectionPrise("tester", "dotnet test", DOTNET, "2026-09-27T10:00:00+00:00")
+    langage = CorrectionPrise("langages", "C#", "c'est du C#", "2026-09-27T10:00:00+00:00")
+    node = CorrectionPrise("tester", "node --test", NODE, "2026-09-27T11:00:00+00:00")
+
+    poser_piece(racine, agents, source=source, corrections=(dotnet, langage))
+    assert corrections_declarees(racine) == (dotnet,)  # un sujet que `corriger` ne change pas
+    poser_piece(racine, skill, source=source, corrections=(node,))
+    poser_piece(racine, agents, source=source, corrections=(dotnet,))  # reprise d'un vieux fil
+    assert corrections_declarees(racine) == (node,)
+    generer(racine, [agents, skill], source=source)
+    assert corrections_declarees(racine) == (node,)  # régénérer ne fait rien oublier
+
+    manifeste = _manifeste(racine)
+    manifeste["corrections"] = [
+        {"cle": "couleur-du-logo", "valeur": "vert"},
+        {"cle": "tester", "valeur": ""},
+        "node --test",
+        {"cle": "lint", "valeur": "eslint .\n  --max-warnings 0", "phrase": "Notre lint :\neslint"},
+    ]
+    (racine / CHEMIN_MANIFESTE).write_text(json.dumps(manifeste), encoding="utf-8")
+    (lint,) = corrections_declarees(racine)
+    # Une valeur et une phrase tiennent sur une ligne, comme celles que le modèle rend.
+    assert (lint.cle, lint.valeur, lint.phrase) == (
+        "lint",
+        "eslint . --max-warnings 0",
+        "Notre lint : eslint",
+    )
+
+
+def test_docs_38_et_05_disent_ou_la_correction_reste_acquise() -> None:
+    """Critère 3 de #1334 : le manifeste la porte (docs/38 §4.1 dit où et comment), et
+    docs/05 §6.20 le décrit."""
+    docs = Path(__file__).resolve().parent.parent / "docs"
+
+    def entre(fichier: str, debut: str, fin: str) -> str:
+        texte = (docs / fichier).read_text(encoding="utf-8")
+        depart = texte.index(debut)
+        return texte[depart : texte.index(fin, depart)]
+
+    manifeste = entre(
+        "38-decision-outillage-universel-du-projet.md", "### 4.1 Ce qu'il porte", "### 4.2"
+    )
+    for fait in ('"corrections": [', '"prise_le"', "#1334", "la plus récente"):
+        assert fait in manifeste, fait
+    pieces = entre(
+        "05-interface-control-tower.md", "#### Pièce par pièce, dans le fil (#1161)", "\n### "
+    )
+    for fait in ("d'une conversation à l'autre", "#1334", "manifeste"):
         assert fait in pieces, fait

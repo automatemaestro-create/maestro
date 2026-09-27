@@ -229,6 +229,7 @@ from maestro.messaging import (
     AgentMessage,
     Mailbox,
 )
+from maestro.outillage.correction import CorrectionPrise
 from maestro.outillage.generation import empreinte
 from maestro.outillage.questionnaire import REPONSE_LIBRE_MAX, Choix, QuestionOutillage, sujet_de
 from maestro.outillage.verification import Verification
@@ -1176,6 +1177,13 @@ class PieceProposee:
     sous la légende, pour que la revérification se lise sans déplier la liste (vu à
     la relecture de #1161 : la commande corrigée était sous la ligne de flottaison).
 
+    `corrections_prises` (#1334) sont les corrections dont cette version a été rédigée
+    — dites sur ce fil, ou reprises du manifeste d'une conversation passée, la plus
+    récente de chaque sujet : l'accord les écrit au manifeste avec la pièce, et c'est
+    ce qui fait qu'elles restent acquises au projet quand l'outillage se rouvre
+    ailleurs. `correction` en est la phrase que ce contenu porte ; celle d'une
+    correction reprise s'y lit donc comme celle d'une correction qu'on vient de dire.
+
     `rang` et `total` situent la pièce dans l'outillage de ce projet (les fichiers que
     la recommandation rédige, dans leur ordre). `source` est la provenance que le
     manifeste gardera (docs/38 §4.1). `regime` dit comment elle atteindra le projet :
@@ -1205,6 +1213,7 @@ class PieceProposee:
     source: Mapping[str, Any] = field(default_factory=dict)
     regime: str = "en-place"
     corrigees: tuple[str, ...] = ()
+    corrections_prises: tuple[CorrectionPrise, ...] = ()
 
     @property
     def ecrivable(self) -> bool:
@@ -1249,6 +1258,7 @@ class PieceProposee:
             "source": dict(self.source),
             "regime": self.regime,
             "corrigees": list(self.corrigees),
+            "corrections_prises": [c.to_dict() for c in self.corrections_prises],
         }
 
     @classmethod
@@ -1257,6 +1267,7 @@ class PieceProposee:
         verifications = data.get("verifications")
         source = data.get("source")
         corrigees = data.get("corrigees")
+        prises = data.get("corrections_prises")
         return cls(
             projet_id=str(data.get("projet_id") or ""),
             projet_nom=str(data.get("projet_nom") or ""),
@@ -1286,6 +1297,11 @@ class PieceProposee:
             regime=str(data.get("regime") or "en-place"),
             corrigees=tuple(
                 str(c) for c in (corrigees if isinstance(corrigees, list) else ()) if c
+            ),
+            corrections_prises=tuple(
+                CorrectionPrise.from_dict(c)
+                for c in (prises if isinstance(prises, list) else ())
+                if isinstance(c, Mapping)
             ),
         )
 
