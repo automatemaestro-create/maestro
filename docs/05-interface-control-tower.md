@@ -7031,6 +7031,22 @@ suivi de ce que le modèle de correction n'a pas compris), la pièce qui attenda
 pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
 l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
 
+**Une correction reste acquise d'une conversation à l'autre** (#1334). Ce que la personne a dit
+est une propriété de **son projet**, pas du fil où elle l'a dit : dès qu'une pièce s'écrit, le
+manifeste de l'outillage garde les corrections dont elle a été rédigée — sujet, valeur, phrase,
+date (docs/38 §4.1 dit où et comment ; la pièce les porte d'ici là, `corrections_prises`). Quand
+l'outillage du même projet se rouvre dans une autre conversation — « Outiller dans la
+conversation » plus tard, une reprise —, elles se rejouent par `corriger` avant celles du fil, et
+**la plus récente l'emporte** entre les deux : une conversation plus ancienne qu'on reprend ne
+défait pas ce qu'une plus récente a écrit. Vu à la relecture de clôture de #1161 : l'outillage
+rouvert se redérivait de l'analyse, et la carte proposait de remplacer `node --test`, dite, par
+`npm run test`, que le projet déclare. Désormais `AGENTS.md`, déjà à jour, ne revient pas ; la pièce
+qu'une correction reprise touche la porte **comme une autre** — « Corrigée d'après votre demande :
+« … » » sur la carte, avec la phrase d'origine, sa commande sous la légende avec le verdict que le
+manifeste garde —, et une phrase de plus la corrige encore : le modèle de correction reçoit les
+corrections reprises parmi celles « déjà prises », et la nouvelle, écrite, remplace l'ancienne au
+manifeste.
+
 **La carte** (`components/chat/PieceDOutillage.tsx`, variante A retenue par le regard neuf — veille
 et « Variante retenue » de #1161, d'après la suggestion de revue de GitHub, le mode agent de VS Code
 et l'onboarding de Renovate) : une carte du
@@ -7049,7 +7065,8 @@ le diff derrière un clic (B), et deux grammaires sans compte de lignes (C).
 
 Gardé par [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) (prévision,
 écriture d'une pièce et fusion du manifeste, correction comprise, incomprise, en échec, accord de la
-carte sur un projet versionné, canal de bout en bout, routes), et côté écran par
+carte sur un projet versionné, canal de bout en bout, routes, correction reprise dans une seconde
+conversation et corrigée encore), et côté écran par
 `apps/web/tests/piece-outillage.test.tsx`, `gestes-en-colonne.test.tsx` (la carte agit depuis la
 colonne, parité avec `/chat`, trace sous la bulle) et `projets.test.tsx` (« Outiller dans la
 conversation »).
