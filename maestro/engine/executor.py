@@ -2632,6 +2632,13 @@ class LocalExecutor(TaskExecutor):
         `entree` porte l'outil demandé, `sortie` le motif. Usage nul : le coût
         de la tâche est porté par son étape finale.
 
+        Le motif d'un appel **arbitré** porte son acte depuis #1282 — l'outil et
+        ses arguments, rédigés puis bornés par le fournisseur
+        (`maestro.providers.arbitrage.avec_acte`). Il est consigné tel quel :
+        c'est lui que le pont mue en `detail`, donc lui que l'activité du run
+        affiche, et recomposer l'acte ici demanderait des arguments que ce canal
+        ne transporte pas.
+
         Depuis #583 ce canal porte **deux natures** d'issue, et il faut les
         séparer parce que l'écran les rendrait autrement toutes les deux comme
         un refus : un appel écarté par la politique (`refus_outil`, le cas de

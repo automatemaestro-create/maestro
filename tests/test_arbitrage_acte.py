@@ -50,6 +50,14 @@ et ont différé le reste ici. Ce fichier porte ce reste, en trois blocs :
    bloc joue donc le **vrai** hook, le vrai arbitre et le vrai garde-fou dans un
    même run — c'est la seule expérience qui voie ce qui se perdait entre eux.
 
+⑥ **l'acte dans la trace** (#1282). Sur le même run `3fe501fc0878`, une douzaine
+   d'appels `Bash` sont passés par `auto` en ne laissant que « laissé passer —
+   personne n'a été sollicité » : l'un écrivait dans `/tmp`, et le journal ne
+   permettait pas de le savoir. Le bloc éprouve la forme de l'acte, chacune des
+   issues du vrai hook, puis la chaîne entière jusqu'à l'**activité du run** —
+   un secret dans une commande compris, qui doit y rester masqué même quand la
+   borne tombe au milieu.
+
 Aucun appel réseau : plans constants, fournisseurs factices, dépôts sur répertoire
 temporaire. Le harnais est celui de `tests/test_permissions.py` — mêmes doubles,
 mêmes aides — plutôt qu'un second à tenir d'accord.
@@ -62,7 +70,9 @@ from pathlib import Path
 import pytest
 
 from maestro.acte import ARGUMENT_MAX, arguments_depuis
-from maestro.agents.permissions import PermissionStore, Verdict
+from maestro.agents.permissions import EntreeArbitrage, PermissionStore, PolitiqueOutils, Verdict
+from maestro.controltower.bridge import evenements_depuis_step
+from maestro.controltower.events import EVENEMENT_AGENT_ACTIVITE
 from maestro.decideur import Decideur
 from maestro.engine import OrchestrationEngine
 from maestro.engine.executor import (
@@ -77,21 +87,28 @@ from maestro.engine.guardrails import (
     ORIGINE_POLITIQUE,
     DemandeValidation,
     Guardrails,
+    detail_accorde,
 )
 from maestro.orchestrator import Orchestrator
 from maestro.providers import claude as claude_mod
 from maestro.providers.arbitrage import (
+    ACTE_TRACE_MAX,
     NOM_OUTIL,
     NOM_SERVEUR,
     OUTIL_ARBITRAGE,
     RAISON_MANQUANTE,
+    VALEUR_TRACE_MAX,
+    BornesArbitrage,
+    acte_trace,
+    avec_acte,
     motif_approbation,
     motif_refus,
     reponse,
 )
 from maestro.providers.base import ModelProvider
 from maestro.sandbox.en_place import portee_de
-from maestro.telemetry import RunJournal
+from maestro.telemetry import MARQUEUR_SECRET, RunJournal, enregistre_secret
+from maestro.telemetry import redact as redact_mod
 
 # --- Harnais ----------------------------------------------------------------------------
 
@@ -1000,3 +1017,287 @@ def test_une_approbation_d_office_ne_se_dit_pas_humaine():
     assert "humain" not in motif
     assert DETAIL_AUTO in motif
     assert "validateur humain" in motif_approbation("Bash", "approuvée par le validateur humain")
+
+
+# --- ⑥ L'acte dans la trace (#1282) ----------------------------------------------------
+
+#: Le geste du run `3fe501fc0878` que le journal ne savait pas dire : une commande
+#: qui sort du projet, avec ce qui la rend reconnaissable en fin de ligne.
+COMMANDE_EDGE = "cd /tmp && msedge --headless --remote-debugging-port=9333 about:blank"
+
+#: Son entrée d'outil, telle que le CLI la donne : la commande, et deux arguments
+#: qui ne sont pas des chaînes — ils font partie de l'acte autant qu'elle.
+ENTREE_EDGE = {"command": COMMANDE_EDGE, "timeout": 120, "run_in_background": True}
+
+#: Ce que la trace doit en garder, mot pour mot.
+ACTE_EDGE = f'Bash · command="{COMMANDE_EDGE}" · timeout=120 · run_in_background=true'
+
+
+@pytest.fixture()
+def secret_servi(monkeypatch):
+    """Un secret **servi** à l'agent (#109), dans un registre vidé pour le test.
+
+    Servi, et non reconnaissable à un préfixe : c'est le cas où la rédaction ne
+    retrouve la valeur qu'**entière** — celui qu'une coupe mal placée ferait fuir.
+    Aléatoire d'un bout à l'autre, pour que chacun de ses fragments soit du secret.
+    """
+    monkeypatch.setattr(redact_mod, "_SECRETS_SERVIS", set())
+    secret = "c0e91b7d5f3a1c97f3a9c1e5b2d4f6a8"
+    enregistre_secret(secret)
+    return secret
+
+
+def test_l_acte_nomme_l_outil_et_chacun_de_ses_arguments():
+    # Le même « outil · cible » qu'une ligne d'activité, chaque argument nommé.
+    # La commande est entre guillemets : ni son `&&` ni ses tirets ne peuvent se
+    # lire comme l'argument suivant.
+    assert acte_trace("Bash", ENTREE_EDGE) == ACTE_EDGE
+
+
+def test_un_script_multiligne_tient_sur_une_ligne():
+    # Une trace se lit sur une ligne d'activité : les sauts de ligne s'écrivent,
+    # ils ne cassent pas la ligne — et on voit qu'il y en avait.
+    acte = acte_trace("Bash", {"command": "set -e\nrm -rf build\nnpm run build"})
+
+    assert "\n" not in acte
+    assert acte == 'Bash · command="set -e\\nrm -rf build\\nnpm run build"'
+
+
+def test_une_valeur_longue_est_bornee_sans_emporter_les_arguments_suivants():
+    # Un script de Bash ou un `content` de Write n'a aucune longueur naturelle.
+    # Borné, il le dit (« … ») — et le `timeout` qui le suit reste dans la trace.
+    acte = acte_trace("Bash", {"command": "echo " + "x" * 2000, "timeout": 120})
+
+    assert len(acte) <= ACTE_TRACE_MAX + 1
+    assert '…"' in acte
+    assert acte.endswith("· timeout=120")
+
+
+def test_un_acte_sans_argument_laisse_le_motif_tel_quel():
+    # Le motif nomme déjà l'outil, qui est alors tout l'acte : l'ajouter n'aurait
+    # rien appris.
+    assert acte_trace("mcp__forge__lister", {}) == ""
+    assert acte_trace("mcp__forge__lister", None) == ""
+    assert avec_acte("appel de l'outil 'X' laissé passer.", "") == (
+        "appel de l'outil 'X' laissé passer."
+    )
+
+
+def test_une_valeur_qui_ne_se_serialise_pas_est_nommee_sans_faire_lever_le_hook():
+    # Le hook ne lève jamais : une trace qui casserait sur une entrée exotique
+    # ferait échouer l'appel qu'elle ne faisait que raconter.
+    profonde: list = []
+    for _ in range(5000):
+        profonde = [profonde]
+
+    acte = acte_trace("mcp__x__y", {"cle": {(1, 2): "a"}, "arbre": profonde, "n": 3})
+
+    assert acte == "mcp__x__y · cle=<dict illisible> · arbre=<list illisible> · n=3"
+
+
+def test_la_trace_dit_l_issue_puis_l_acte():
+    trace = avec_acte(motif_approbation("Bash", "approuvée par le validateur humain"), ACTE_EDGE)
+
+    assert trace == (
+        "appel de l'outil 'Bash' approuvé à l'arbitrage — approuvée par le "
+        f"validateur humain. Acte : {ACTE_EDGE}"
+    )
+
+
+def test_un_secret_dans_une_commande_reste_masque(secret_servi):
+    # Les deux familles de #109 : une valeur servie à l'agent, une clé qu'on
+    # reconnaît à sa forme.
+    cle = "sk-ant-api03-" + "Q" * 24
+    acte = acte_trace(
+        "Bash", {"command": f"export JETON={secret_servi} CLE={cle} && npm publish"}
+    )
+
+    assert secret_servi not in acte
+    assert cle not in acte
+    assert acte.count(MARQUEUR_SECRET) == 2
+    assert acte.endswith('&& npm publish"')
+
+
+def test_un_secret_a_cheval_sur_la_borne_ne_laisse_aucun_fragment(secret_servi):
+    """La borne tombe au milieu du secret : il en resterait douze caractères.
+
+    Bornée d'abord, la valeur perdrait la fin du secret, et la rédaction — celle
+    d'ici comme celle du journal — ne reconnaîtrait plus ce qui en reste : un
+    secret servi ne se retrouve qu'entier. C'est pourquoi l'acte est rédigé
+    **avant** d'être borné.
+    """
+    commande = "echo " + "a" * (VALEUR_TRACE_MAX - 5 - 12) + secret_servi + " && ls"
+
+    acte = acte_trace("Bash", {"command": commande})
+
+    assert secret_servi[:12] not in acte
+    assert secret_servi[:6] not in acte
+
+
+# ⑥b — chacune des issues du vrai hook
+
+
+def _canal(issue):
+    """Le canal d'arbitrage d'une issue : un verdict, une panne, ou une attente sans fin."""
+    if issue is None:
+        return None
+
+    async def canal(outil, arguments, motif, decideur):
+        if isinstance(issue, BaseException):
+            raise issue
+        if issue == "jamais":
+            await asyncio.Event().wait()
+        return issue
+
+    return canal
+
+
+#: Le cran que la politique pose sur `Bash` : `auto`, ou le défaut (une personne).
+_AUTO = PolitiqueOutils(ask=(EntreeArbitrage("Bash", Decideur.AUTO),))
+_HUMAIN = PolitiqueOutils(ask=("Bash",))
+
+
+@pytest.mark.parametrize(
+    ("politique", "issue", "dit"),
+    [
+        pytest.param(_AUTO, None, "laissé passer", id="laissé passer par auto"),
+        pytest.param(
+            _HUMAIN,
+            (True, "approuvée par le validateur humain"),
+            "validateur humain",
+            id="accordé par une personne",
+        ),
+        pytest.param(
+            _HUMAIN,
+            (True, detail_accorde(ACTE_ACCORDE)),
+            "accord donné au cadrage",
+            id="accordé par l'accord de l'objectif",
+        ),
+        pytest.param(_HUMAIN, (True, DETAIL_AUTO), "accordée d'office", id="accordé d'office"),
+        pytest.param(
+            _HUMAIN,
+            (False, "refusée par le validateur humain"),
+            "refusé à l'arbitrage",
+            id="refusé",
+        ),
+        pytest.param(_HUMAIN, "jamais", "arbitrage en cours", id="écarté"),
+        pytest.param(
+            _HUMAIN, RuntimeError("bus injoignable"), "bus injoignable", id="canal en panne"
+        ),
+        pytest.param(_HUMAIN, None, "aucun canal d'arbitrage", id="sans canal"),
+    ],
+)
+def test_la_trace_de_chaque_issue_porte_l_acte(politique, issue, dit):
+    """Le critère, issue par issue, sur le hook de production.
+
+    Et une moitié qu'on oublierait : l'acte va à la **trace**, pas au motif que
+    l'agent lit en retour d'un refus — il sait ce qu'il vient d'appeler.
+    """
+    vues: list[tuple[str, str]] = []
+    hook = claude_mod._hook_permissions(
+        politique,
+        lambda outil, motif, decideur=None: vues.append((outil, motif)),
+        _canal(issue),
+        BornesArbitrage(attente_s=0.01, borne_hook_s=10.0),
+    )
+
+    sortie = asyncio.run(hook({"tool_name": "Bash", "tool_input": ENTREE_EDGE}, "tu-1", None))
+
+    ((outil, trace),) = vues
+    assert outil == "Bash"
+    assert dit in trace
+    assert trace.endswith(f". Acte : {ACTE_EDGE}")
+    if sortie:
+        servi = sortie["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "Acte :" not in servi
+        assert COMMANDE_EDGE not in servi
+
+
+# ⑥c — la chaîne entière, jusqu'à l'activité du run
+
+
+def _activite_de(journal: RunJournal, tache: str) -> list:
+    """Ce que l'activité du run montre des appels arbitrés de `tache`.
+
+    Le chemin est celui de la production : la ligne de journal, telle qu'elle
+    part sur le logger, convertie par le pont en événements du bus.
+    """
+    lignes = [r for r in journal.records if r.etape == f"{tache}{SUFFIXE_ETAPE_REFUS}"]
+    return [e for r in lignes for e in evenements_depuis_step(r.to_dict())]
+
+
+@pytest.mark.parametrize("accord", [True, False])
+def test_l_activite_du_run_dit_ce_qui_est_passe_et_ce_qui_a_ete_tranche(store, accord):
+    """Le run `3fe501fc0878` rejoué sur la chaîne de production : un `Bash` dans
+    le projet passe par `auto`, un autre écrit dans `/tmp` et remonte à une
+    personne. L'activité du run dit **les deux commandes**, chacune avec son
+    issue — ce que le journal taisait, et qu'il a fallu lire dans les
+    transcripts du CLI.
+    """
+    _ecrire_politique(store.racine, "developpeur", POLITIQUE_CADREE)
+    dans, dehors = "mkdir -p .maestro/maquette", "cd /tmp && mkdir -p edge-shot"
+    provider = PasseParLeVraiHook((dans, dehors))
+    journal = RunJournal(run_id="run-1282")
+
+    asyncio.run(
+        _moteur(
+            provider, store, Guardrails(validateur=ValidateurEnregistreur(accord)), PLAN_MAQUETTE
+        ).run("Monter la maquette du projet", journal=journal)
+    )
+
+    auto, tranche = _activite_de(journal, "maquette")
+    assert {auto.type, tranche.type} == {EVENEMENT_AGENT_ACTIVITE}
+    assert {auto.tache_id, tranche.tache_id} == {"maquette"}
+    assert auto.detail.endswith(f'Acte : Bash · command="{dans}"')
+    assert "personne n'a été sollicité" in auto.detail
+    assert tranche.detail.endswith(f'Acte : Bash · command="{dehors}"')
+    assert ("approuvée par le validateur humain" if accord else "refusé à l'arbitrage") in (
+        tranche.detail
+    )
+
+
+def test_l_activite_du_run_dit_la_commande_que_l_objectif_a_accordee(store):
+    """L'accord de l'objectif (#1198) nommait l'acte **tel que le plan l'écrit** —
+    « supprimer tout le contenu du dossier ». La trace dit désormais aussi la
+    commande réellement jouée sous cet accord, qui n'a dérangé personne."""
+    _ecrire_politique(store.racine, "developpeur", {"ask": {"Bash": "humain"}})
+    commande = "rm -rf notes lisez-moi.txt rapport.csv"
+    provider = PasseParLeVraiHook((commande,))
+    journal = RunJournal(run_id="run-1282-accord")
+
+    asyncio.run(
+        _moteur(
+            provider, store, Guardrails(validateur=ValidateurEnregistreur(True)),
+            _plan_s1(accorde=True),
+        ).run(OBJECTIF_S1, journal=journal)
+    )
+
+    (evenement,) = _activite_de(journal, "vider-le-dossier")
+    assert ACTE_ACCORDE in evenement.detail
+    assert evenement.detail.endswith(f'Acte : Bash · command="{commande}"')
+
+
+def test_un_secret_dans_une_commande_reste_masque_jusqu_a_l_activite(store, secret_servi):
+    """Le critère de sûreté, sur toute la chaîne : ni le journal ni l'activité ne
+    rendent le secret — ni entier quand il tient dans la borne, ni en fragment
+    quand elle tombe au milieu."""
+    _ecrire_politique(store.racine, "developpeur", POLITIQUE_CADREE)
+    entier = f"export JETON={secret_servi} && npm run build"
+    a_cheval = "echo " + "a" * (VALEUR_TRACE_MAX - 5 - 12) + secret_servi + " && ls"
+    provider = PasseParLeVraiHook((entier, a_cheval))
+    journal = RunJournal(run_id="run-1282-secret")
+
+    asyncio.run(
+        _moteur(
+            provider, store, Guardrails(validateur=ValidateurEnregistreur(True)), PLAN_MAQUETTE
+        ).run("Monter la maquette du projet", journal=journal)
+    )
+
+    lignes = [r for r in journal.records if r.etape == f"maquette{SUFFIXE_ETAPE_REFUS}"]
+    evenements = _activite_de(journal, "maquette")
+    assert len(lignes) == len(evenements) == 2
+    for texte in [r.sortie for r in lignes] + [e.detail for e in evenements]:
+        assert secret_servi[:12] not in texte
+    # Le secret entier est masqué **en le disant**, et la commande reste lisible
+    # autour de lui : c'est l'acte qu'on garde, pas un trou.
+    assert f"export JETON={MARQUEUR_SECRET} && npm run build" in evenements[0].detail
