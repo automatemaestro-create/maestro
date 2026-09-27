@@ -403,7 +403,7 @@ def test_un_controle_hors_portee_n_est_pas_joue_et_n_est_pas_un_vert(tmp_path):
 
 
 def test_une_commande_illisible_est_reecrite_par_le_verificateur(tmp_path):
-    """Le défaut du premier passage du banc (S1 à S3) : `$(…)` rendait un contrôle légitime « non joué »."""
+    """Premier passage du banc (S1 à S3) : `$(…)` rendait un contrôle légitime « non joué »."""
     provider = _Reponses(
         json.dumps(
             {"controles": [{"critere": "le dossier est vide", "commande": 'test -z "$(ls -A)"'}]}
