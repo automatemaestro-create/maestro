@@ -865,7 +865,8 @@ Sur "geste", ajoute à l'objet de la dernière ligne une clé "geste" :
 - "action" : "pause" suspend un run qui travaille — ce qui est parti va à son
   terme, ce qui ne l'est pas attend ; "reprise" remet en route un run EN PAUSE, le
   même, là où il en était ; "annulation" interrompt un run qui n'est pas soldé, et
-  ses tâches en vol perdent leur travail ; "relance" rejoue un run ARRÊTÉ
+  ses tâches en vol perdent leur travail — l'écran nomme ce geste « Interrompre » :
+  dis-le avec ce verbe ; "relance" rejoue un run ARRÊTÉ
   (orphelin, arrêté sur une borne, emporté par l'extinction de Maestro) dans un
   NOUVEAU run, sur son brief approuvé, sans repayer le cadrage. Un run en pause se
   reprend, il ne se relance pas ;
@@ -1192,7 +1193,14 @@ _PHRASE_RUN_INTROUVABLE = (
     "Je ne connais aucun run {runs} : je ne peux rien vous proposer sur lui. Dites-moi "
     "lequel, par son objectif ou son heure de lancement."
 )
-_PHRASE_GESTE_IMPOSSIBLE = "Je ne peux pas vous proposer de {verbe} ce run : {cause}"
+#: Le modèle a déjà écrit sa proposition quand la vérification la refuse : la phrase
+#: la **corrige** (« finalement »), sans quoi la bulle annoncerait une carte qui ne
+#: vient pas — vu sur la vraie stack, « Confirmez-la sur la carte juste en dessous »
+#: suivi d'un refus qui ne disait pas qu'il revenait sur ces mots.
+_PHRASE_GESTE_IMPOSSIBLE = (
+    "Vérification faite, je ne peux finalement pas vous proposer de {verbe} ce run : "
+    "{cause}"
+)
 _PHRASE_GESTE_REFUSE = "Ce geste n'a pas eu lieu : {cause}"
 _PHRASE_GESTE_EMPECHE = "Je n'ai pas pu {verbe} le run {run_id} : {cause}."
 
@@ -1348,7 +1356,11 @@ def etat_du_run(resume: Mapping[str, Any]) -> str:
     if resume.get("en_pause"):
         depuis = heure_locale(str(resume.get("pause_depuis") or ""))
         etat += f" — en pause depuis {depuis}" if depuis else " — en pause"
-    cause = libelle_cause(str(resume.get("cause") or ""))
+    # La cause d'une annulation (« Interrompu ») redit le statut « Annulée » : vu sur
+    # la vraie stack, le fil citait « Annulée — Interrompu » mot pour mot. Les autres
+    # causes, elles, disent pourquoi (un plafond, l'extinction de Maestro).
+    code = str(resume.get("cause") or "")
+    cause = libelle_cause(code) if code != CAUSE_ANNULATION else ""
     if cause:
         etat += f" — {cause}"
     return etat

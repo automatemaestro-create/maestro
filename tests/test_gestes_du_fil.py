@@ -409,7 +409,8 @@ def test_un_geste_que_le_service_refuse_n_est_pas_propose_et_dit_pourquoi() -> N
     reponse, _ = _proposer(pilote, _geste(GESTE_REPRISE, RUN), "reprends-le")
 
     assert reponse.geste_run is None
-    assert "Je ne peux pas vous proposer de reprendre ce run" in reponse.contenu
+    # La phrase **corrige** ce que le modèle venait d'annoncer : elle dit qu'elle y revient.
+    assert "je ne peux finalement pas vous proposer de reprendre ce run" in reponse.contenu
     assert "pas été mis en pause" in reponse.contenu
 
 
@@ -636,6 +637,31 @@ def test_le_fil_relu_porte_la_carte_le_fait_et_les_candidats() -> None:
     assert "[Geste proposé sur la carte : relancer le run" in texte
     assert "5,00 $" in texte
     assert "[Geste sur un run : mettre en pause le run" in texte
+
+
+def test_le_fil_nomme_l_annulation_du_verbe_de_son_bouton() -> None:
+    """« Interrompre » à l'écran (#467) : le clic ne s'écrit pas « annule » dans le fil.
+
+    Vu sur la vraie stack : la carte disait « Interrompre », la trace du clic « Oui,
+    annule ce run. » — deux mots pour le même geste, à une ligne d'écart.
+    """
+    from maestro.controltower.chat import _geste_sur_un_run
+
+    assert _geste_sur_un_run(True, _carte(GESTE_ANNULATION)) == "Oui, interromps ce run."
+    assert _carte(GESTE_ANNULATION).en_phrase().startswith("interrompre le run")
+
+
+def test_l_etat_relu_d_un_run_annule_ne_redit_pas_son_statut() -> None:
+    """« Annulée — Interrompu » : la cause d'une annulation redisait le statut, et le fil
+    la citait mot pour mot. Une cause qui dit pourquoi — l'extinction — reste."""
+    from maestro.controltower.causes import CAUSE_ANNULATION, CAUSE_EXTINCTION
+    from maestro.controltower.orchestration import etat_du_run
+
+    annule = {**_resume(RUN, OBJECTIF, EXECUTION_ANNULEE), "cause": CAUSE_ANNULATION}
+    eteint = {**_resume(RUN, OBJECTIF, EXECUTION_ANNULEE), "cause": CAUSE_EXTINCTION}
+
+    assert etat_du_run(annule) == "Annulée"
+    assert etat_du_run(eteint) == "Annulée — Maestro s'est éteint"
 
 
 def test_une_ligne_ecrite_avant_ce_lot_se_relit_sans_geste() -> None:

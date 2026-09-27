@@ -791,11 +791,13 @@ def _geste_de_piece(decision: str, piece: PieceProposee) -> str:
 
 
 #: Ce qu'un accord au geste écrit dans le fil, par action (#1179) — le message que
-#: le clic vaut, à l'impératif, comme « Oui, lance. ».
+#: le clic vaut, à l'impératif, comme « Oui, lance. ». L'annulation s'y dit
+#: **interrompre**, le verbe de son bouton à l'écran (#467) : la trace du clic ne
+#: doit pas nommer autrement le geste que la personne vient de faire.
 _ACCORDS_DE_GESTE = {
     GESTE_PAUSE: "Oui, mets ce run en pause.",
     GESTE_REPRISE: "Oui, reprends ce run.",
-    GESTE_ANNULATION: "Oui, annule ce run.",
+    GESTE_ANNULATION: "Oui, interromps ce run.",
     GESTE_RELANCE: "Oui, relance ce run.",
 }
 
@@ -1460,7 +1462,7 @@ class PieceEcrite:
 VERBES_DE_GESTE = {
     GESTE_PAUSE: "mettre en pause",
     GESTE_REPRISE: "reprendre",
-    GESTE_ANNULATION: "annuler",
+    GESTE_ANNULATION: "interrompre",
     GESTE_RELANCE: "relancer",
 }
 

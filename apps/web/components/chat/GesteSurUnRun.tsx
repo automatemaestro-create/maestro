@@ -81,7 +81,7 @@ export function CibleDuRun({ run, className = "" }: { run: RunVise; className?: 
   const resume = resumeDuRunVise(run);
   const href = hrefRun(run.run_id);
   return (
-    <p className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${className}`}>
+    <p className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-corps ${className}`}>
       <BadgeRun
         run={resume}
         regime={regimeDuRun(resume)}
