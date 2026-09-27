@@ -669,7 +669,7 @@ clics, derrière une liste, sur un écran qu'on ne visite pas spontanément.
 
 **Rien n'est réécrit, tout est remonté.** `CarteRun` est la ligne qu'on lit déjà dans
 la liste des runs et dans l'état des runs (§2.1.2) ; `VuePipeline` est la vue par
-défaut d'un run depuis #491, et les **cinq lectures** d'un run gardent leur
+défaut d'un run depuis #491, et les **lectures** d'un run gardent leur
 arbitrage (§2.4.2) — le centre n'en monte qu'une, la bascule restant dans la vue du
 run, où mène le titre de la carte.
 
@@ -1205,13 +1205,15 @@ dessous. Ouvrir un run donne enfin son backlog — jusqu'ici le Kanban était ce
 **projet** (#248) et un run n'avait pas de vue à lui, si bien que dans un projet où
 plusieurs runs se succèdent, *ce que ce run avait fait* n'était visible nulle part.
 
-> ⚠ **Cette lecture est quintuple** : le **pipeline** (§2.4.4), le **Kanban**, la
-> **frise** (§2.4.6), les **décisions** (§6.18) et le **journal** coexistent sous une
-> bascule, et c'est le pipeline qui ouvre. #491 l'a rendue double, #516 y a ajouté la
-> troisième position, #355 la quatrième, #1026 la cinquième. Tout ce que dit cette
-> section vaut inchangé — la tête, le contenu du journal, l'appartenance par l'API, le
-> pouls du shell —, seul le corps de l'écran a désormais cinq formes, dont on ne voit
-> **qu'une** à la fois. L'arbitrage est rendu en §2.4.4.
+> ⚠ **Cette lecture est sextuple** : le **pipeline** (§2.4.4), le **Kanban**, la
+> **frise** (§2.4.6), les **décisions** (§6.18), le **bilan** (§6.23) et le **journal**
+> coexistent sous une bascule, et c'est le pipeline qui ouvre. #491 l'a rendue double,
+> #516 y a ajouté la troisième position, #355 la quatrième, #1026 la cinquième, #1285
+> la sixième. Tout ce que dit cette section vaut inchangé — la tête, le contenu du
+> journal, l'appartenance par l'API, le pouls du shell —, seul le corps de l'écran a
+> désormais six formes, dont on ne voit **qu'une** à la fois. L'arbitrage est rendu en
+> §2.4.4. Depuis #1285, la tête d'un run soldé porte aussi **une ligne de bilan**, sous
+> la cause, qui mène à sa lecture.
 
 > ⚠ **Depuis #1228, cette vue ne se contente plus de montrer** (§2.4.7). Une demande de
 > validation qui retient ce run s'y **tranche sur place**, dans les trois lectures où
@@ -4709,7 +4711,9 @@ Une page de journal d'événements interrogeable — la mémoire longue du fil d
 - `GET /api/journal` → `PageJournal`. Paramètres de requête (`projet` excepté, cf. §6.0, tous
   optionnels) :
   - **filtres** : `agent`, `type`, `run_id`, `depuis`, `jusqua` (fenêtre ISO-8601, bornes
-    incluses) ;
+    incluses), `ids` (#1285 : identifiants d'entrée séparés par des virgules, `j-0042,j-0055` —
+    les entrées qu'une pièce du bilan d'un run cite, où qu'elles soient ; un identifiant inconnu
+    ne rend rien) ;
   - **tri** : `tri` ∈ `horodatage` (défaut) | `agent` | `type`, `ordre` ∈ `desc` (défaut) | `asc` ;
   - **pagination** : `page` (1-indexée, défaut 1), `taille` (défaut 50, max 200).
   - `422` sur un `tri`/`ordre` inconnu, `page` < 1 ou `taille` hors [1, 200].
@@ -7589,17 +7593,21 @@ vérification sur la tâche). Gardé par
 [`tests/test_verification_taches.py`](../tests/test_verification_taches.py) et, côté front, par
 [`apps/web/tests/verification-tache.test.tsx`](../apps/web/tests/verification-tache.test.tsx).
 
-### 6.23 Le bilan d'un run, sur pièces (#1284) — **livré** (l'écran : #1285)
+### 6.23 Le bilan d'un run, sur pièces (#1284, #1285) — **livré**
 
 À la fin de **tout** run — terminé, en échec ou annulé, qu'un fil l'ait demandé ou non —, Maestro en
 rend un **bilan fondé sur les pièces de son journal**. Il est né du run `3fe501fc0878` (projet `p3`,
 2026-09-24) : sa maquette est tombée trois fois à l'identique, le moteur a relancé en présumant un
 aléa, et le récit de fin a recopié « échec transitoire » puis conseillé de relancer.
 
-- `GET /api/executions/{run_id}/bilan` → `{"run_id": "…", "bilan": BilanRun | null}`. `null` tant qu'il
-  n'y en a pas (run en vol, modèle qui n'a pas répondu, run soldé avant ce lot) : le run existe, son
-  bilan pas encore. `404` si aucune trace reçue pour ce `run_id`. Le détail d'un run
-  (`GET /api/executions/{run_id}`) porte le même objet sous `bilan`.
+- `GET /api/executions/{run_id}/bilan` → `{"run_id": "…", "bilan": BilanRun | null, "etat": "…",
+  "raison": "…"}`. `bilan` est `null` tant qu'il n'y en a pas ; `etat` (#1285) dit pourquoi :
+  `attendu` (run en vol), `en_redaction` (l'appel au modèle est parti — dès que le statut terminal
+  est projeté, sans un tour d'attente), `rendu`, ou `absent`, avec sa `raison` quand l'API la sait
+  (`modele_muet` pour ce process, `reponse_illisible` même après un redémarrage — son coût est au
+  journal ; vide pour un run soldé avant ce lot ou un modèle muet avant le dernier redémarrage).
+  `404` si aucune trace reçue pour ce `run_id`. Le détail d'un run (`GET /api/executions/{run_id}`)
+  porte le même objet sous `bilan`.
 
 ```jsonc
 "bilan": {
@@ -7620,7 +7628,8 @@ aléa, et le récit de fin a recopié « échec transitoire » puis conseillé d
   ],
   "pieces": [                            // les pièces CITÉES, et les entrées du journal d'où elles viennent
     { "id": "P7", "famille": "relance", "texte": "2026-09-24T10:03:11+00:00 · agent.activite · …",
-      "tache_id": "maquette-sections", "entrees": ["j-0042"] }
+      "tache_id": "maquette-sections", "entrees": ["j-0042"],
+      "synthese": false }                // #1285 : true pour le coût, l'usage, les tentatives, la checklist
   ],
   "pieces_offertes": 97,                 // ce que le modèle a lu
   "entrees_lues": 183,                   // le journal du run, lu en entier
@@ -7656,9 +7665,27 @@ aléa, et le récit de fin a recopié « échec transitoire » puis conseillé d
   échec que le bilan dit déterministe, il ne conseille pas de relancer tel quel mais dit ce qui a
   failli et ce qu'il faut changer d'abord. Un seul appel au modèle pour les deux : le récit attend
   le bilan que la fin a mis en route.
+- **La vue du run le montre** (#1285) — une **sixième lecture**, « Bilan », entre les décisions et le
+  journal (§2.4.2), avec le compte de ses constats sur l'onglet ; et la **tête** d'un run soldé le
+  dit en une ligne sous la cause (« Bilan · 1 échec qui se reproduira · 2 choses à changer · … —
+  Lire le bilan »), qui y mène. La lecture rend **le travers d'abord** (ce qui a failli, ce qu'il
+  faut changer, les actes sortis ou accordés sans personne, la consommation sans résultat, ce qui a
+  été livré), la **nature** d'un échec en toutes lettres et par un glyphe (« Se reproduira »,
+  « Aléa », « Nature indéterminée »), la tâche par son titre, et **les constats écartés** repliés
+  au pied avec leur raison. **Chaque constat ouvre ses pièces** : rendues en clair — la ligne du
+  journal telle que le journal la dit, lue par son identifiant (`GET /api/journal?ids=j-0042,…`, où
+  qu'elle soit dans le journal), ou la phrase d'une synthèse —, et chacune s'ouvre dans le
+  **journal** du run sur ses seules entrées, ou dans la **frise** (entrée cerclée) quand elle y
+  figure. Les cinq états se disent : run en échec, run terminé sans défaut, bilan en rédaction,
+  bilan absent (et pourquoi), API en erreur. La forme a été choisie sur pièces entre trois
+  variantes (onglet, second niveau de la tête, bloc de plein format) — veille et choix consignés sur
+  #1285, d'après les « Annotations » de Buildkite et de GitHub Actions.
 
 Implémentation : [`maestro/controltower/bilan.py`](../maestro/controltower/bilan.py) (pièces,
 vérification, service), [`maestro/controltower/recit.py`](../maestro/controltower/recit.py) (sa
-lecture par le récit). Gardé par [`tests/test_bilan_run.py`](../tests/test_bilan_run.py), qui rejoue
-les pièces de `p3` — et, devant le vrai modèle, `test_p3_devant_le_vrai_modele_…` (`cli_reel`).
+lecture par le récit), [`apps/web/components/runs/BilanRun.tsx`](../apps/web/components/runs/BilanRun.tsx)
+et [`apps/web/lib/bilan.ts`](../apps/web/lib/bilan.ts) (l'écran). Gardé par
+[`tests/test_bilan_run.py`](../tests/test_bilan_run.py), qui rejoue les pièces de `p3` — et, devant le
+vrai modèle, `test_p3_devant_le_vrai_modele_…` (`cli_reel`) —, et côté front par
+[`apps/web/tests/bilan-run.test.tsx`](../apps/web/tests/bilan-run.test.tsx).
 

@@ -62,9 +62,18 @@
  * L'en-tête le rend (`components/SigneDeVie`) sous le nom et le rôle — une
  * ligne de plus dans la place existante, **jamais une entrée** : `entrees` ne
  * change pas, le tri non plus, et un couloir arrêté est l'en-tête d'avant.
+ *
+ * ## Elle éclaire les pièces du bilan (#1285)
+ *
+ * Une pièce du bilan du run qui porte sur une entrée de la frise (un statut de
+ * tâche, un message) s'y **ouvre** : la frise entière reste là — c'est le
+ * contexte, ce qui s'est passé avant et à côté —, et les entrées citées sont
+ * **cerclées** et amenées sous les yeux. La forme porte l'éclairage (un anneau),
+ * le texte aussi (« citée au bilan », lu par un lecteur d'écran) : jamais la
+ * teinte seule.
  */
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import {
   IconeActivite,
@@ -78,12 +87,14 @@ import {
 } from "@/components/Icones";
 import {
   BadgeEtat,
+  Bouton,
   EnTeteSection,
   EtatVide,
   type Icone,
   type TonBadge,
 } from "@/components/Primitives";
 import { LigneSigneDeVie } from "@/components/SigneDeVie";
+import type { Citation } from "@/lib/bilan";
 import { formatHeure, libelleStatut } from "@/lib/format";
 import type { CouloirFrise, EntreeFrise, FriseRun as Frise } from "@/lib/types";
 import { COULOIR_REPLI, STATUT_EN_ATTENTE_VALIDATION } from "@/lib/types";
@@ -152,14 +163,36 @@ export function FriseRun({
   runId,
   revision,
   messageVide,
+  citation = null,
+  toutEffacer,
 }: {
   runId: string;
   /** Le pouls du shell : une lecture de la frise par battement. */
   revision: number;
   /** Ce que dit la frise **vide**, nommé par l'appelant comme pour le Kanban. */
   messageVide: string;
+  /** Les entrées qu'une pièce du bilan cite, à éclairer (#1285) — null : aucune. */
+  citation?: Citation | null;
+  /** Éteindre l'éclairage. */
+  toutEffacer?: () => void;
 }) {
   const { frise, chargement, erreur } = useFriseRun(runId, revision);
+  const eclairees = new Set(citation?.entrees ?? []);
+  const premiere = frise?.entrees.find((entree) => eclairees.has(entree.id))?.id;
+
+  // L'entrée citée est amenée sous les yeux **une fois**, à l'ouverture : la
+  // frise d'un run long défile, et une pièce éclairée hors de l'écran ne se
+  // verrait pas. Pas à chaque battement — on ramènerait de force qui lit ailleurs.
+  // `nearest` et non `center` : `scrollIntoView` fait défiler **tous** les
+  // ancêtres, document compris, et centrer une entrée déjà visible faisait
+  // glisser le shell sous sa barre du haut (vu sur la vraie stack) — `nearest`
+  // ne bouge rien quand elle est déjà là.
+  useEffect(() => {
+    if (premiere === undefined) return;
+    document
+      .getElementById(idEntree(premiere))
+      ?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }, [premiere]);
 
   if (erreur !== null && frise === null) {
     return (
@@ -203,11 +236,29 @@ export function FriseRun({
         </span>
       }
     >
+      {citation !== null && citation.entrees.length > 0 && (
+        <p className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe text-texte-secondaire">
+          <span>
+            {citation.libelle} du bilan · {eclairees.size} entrée
+            {eclairees.size > 1 ? "s cerclées" : " cerclée"} ci-dessous
+            {premiere === undefined ? " — aucune n'est dans cette frise" : ""}
+          </span>
+          {/* Le nom du geste de sortie du journal cité (« Tout le journal »),
+              décliné : le même geste porte le même nom d'une lecture à l'autre
+              (relevé par le regard neuf — « Effacer » ne disait pas quoi). */}
+          {toutEffacer && (
+            <Bouton variante="contour" ton="neutre" taille="petite" onClick={toutEffacer}>
+              Toute la frise
+            </Bouton>
+          )}
+        </p>
+      )}
+
       <Legende />
 
       {/* Le contenu large défile chez lui, jamais en poussant la page. */}
       <div className="overflow-x-auto">
-        <TableFrise frise={frise} />
+        <TableFrise frise={frise} eclairees={eclairees} />
       </div>
 
       {/* La borne se dit toujours : une frise qui rendrait ses dernières lignes
@@ -295,7 +346,18 @@ function libelle(statut: string): string {
   return statut === STATUT_MESSAGE ? "Message" : libelleStatut(statut);
 }
 
-function TableFrise({ frise }: { frise: Frise }) {
+/** L'ancre d'une entrée de la frise — ce vers quoi une pièce du bilan défile. */
+function idEntree(id: string): string {
+  return `frise-entree-${id}`;
+}
+
+function TableFrise({
+  frise,
+  eclairees,
+}: {
+  frise: Frise;
+  eclairees: ReadonlySet<string>;
+}) {
   return (
     <table className="w-full min-w-max border-separate border-spacing-x-2 border-spacing-y-1 text-annexe">
       <caption className="sr-only">
@@ -327,6 +389,7 @@ function TableFrise({ frise }: { frise: Frise }) {
             key={entree.id}
             entree={entree}
             couloirs={frise.couloirs}
+            eclairee={eclairees.has(entree.id)}
           />
         ))}
       </tbody>
@@ -380,9 +443,11 @@ function EnTeteCouloir({ couloir }: { couloir: CouloirFrise }) {
 function LigneFrise({
   entree,
   couloirs,
+  eclairee,
 }: {
   entree: EntreeFrise;
   couloirs: CouloirFrise[];
+  eclairee: boolean;
 }) {
   return (
     <tr>
@@ -396,7 +461,9 @@ function LigneFrise({
       </th>
       {couloirs.map((couloir) => (
         <td key={couloir.agent || COULOIR_REPLI} className="align-top">
-          {couloir.agent === entree.couloir && <CarteEntree entree={entree} />}
+          {couloir.agent === entree.couloir && (
+            <CarteEntree entree={entree} eclairee={eclairee} />
+          )}
         </td>
       ))}
     </tr>
@@ -408,13 +475,26 @@ function LigneFrise({
  * porte, ce qu'elle dit. C'est le troisième critère pris au mot — « à l'œil,
  * sans ouvrir de détail ».
  */
-function CarteEntree({ entree }: { entree: EntreeFrise }) {
+function CarteEntree({
+  entree,
+  eclairee = false,
+}: {
+  entree: EntreeFrise;
+  /** Citée par une pièce du bilan qu'on vient d'ouvrir (#1285) : cerclée. */
+  eclairee?: boolean;
+}) {
   const { teintee } = apparence(entree.statut);
   const fond = teintee
     ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40"
     : "border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900";
   return (
-    <div className={`rounded-md border p-1.5 ${fond}`}>
+    <div
+      id={idEntree(entree.id)}
+      className={`rounded-md border p-1.5 ${fond} ${
+        eclairee ? "ring-2 ring-info ring-offset-2 ring-offset-surface" : ""
+      }`}
+    >
+      {eclairee && <span className="sr-only">Citée au bilan : </span>}
       <Badge statut={entree.statut} />
       {entree.titre && (
         <p className="mt-1 line-clamp-2 font-medium text-neutral-800 dark:text-neutral-200">

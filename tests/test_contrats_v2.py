@@ -233,6 +233,28 @@ def test_journal_filtre_par_run(client_journal):
     assert d_un_autre["pages"] == 0
 
 
+def test_journal_filtre_par_entrees(client_journal):
+    """`ids` rend les entrées nommées, où qu'elles soient dans le journal (#1285).
+
+    C'est ce qu'ouvre une pièce du bilan d'un run : les entrées qu'elle cite, même
+    au-delà de la page de 200 que la vue du run lit. Un identifiant inconnu ne rend
+    rien et ne lève rien ; les autres filtres s'y ajoutent.
+    """
+    tout = client_journal.get("/api/journal", params={"projet": "tous"}).json()
+    voulues = [tout["entrees"][0]["id"], tout["entrees"][-1]["id"]]
+
+    page = client_journal.get(
+        "/api/journal", params={"projet": "tous", "ids": ",".join([*voulues, "j-9999"])}
+    ).json()
+    hors_run = client_journal.get(
+        "/api/journal", params={"projet": "tous", "ids": voulues[0], "run_id": "autre"}
+    ).json()
+
+    assert sorted(e["id"] for e in page["entrees"]) == sorted(voulues)
+    assert page["total"] == 2
+    assert hors_run["total"] == 0
+
+
 def test_journal_pagine(client_journal):
     p1 = client_journal.get(
         "/api/journal", params={"projet": "tous", "taille": 3, "page": 1}

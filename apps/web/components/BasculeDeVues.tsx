@@ -47,6 +47,13 @@ export type VueBascule<C extends string> = {
    */
   question?: string;
   icone?: Icone;
+  /**
+   * Un compte posé après le libellé (#1285 : les constats du bilan d'un run,
+   * comme les « Annotations 3 » d'une build Buildkite). Le chiffre est pour
+   * l'œil ; `libelle` le dit en toutes lettres au lecteur d'écran (« Bilan (7
+   * constats) »), qui entendrait sinon « Bilan 7 » sans savoir de quoi.
+   */
+  compte?: { valeur: number; libelle: string };
 };
 
 export function BasculeDeVues<C extends string>({
@@ -72,7 +79,7 @@ export function BasculeDeVues<C extends string>({
         className
       }
     >
-      {vues.map(({ cle, libelle, question, icone: Icone }) => {
+      {vues.map(({ cle, libelle, question, icone: Icone, compte }) => {
         const courant = cle === courante;
         return (
           // La question vit **hors** du bouton : dedans, elle serait lue comme
@@ -93,6 +100,19 @@ export function BasculeDeVues<C extends string>({
             >
               {Icone && <Icone className="size-4 shrink-0" />}
               {libelle}
+              {compte && (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="chiffre rounded-pastille bg-texte/10 px-1.5 text-micro font-medium text-texte"
+                  >
+                    {compte.valeur}
+                  </span>
+                  {/* Le nom accessible devient « Bilan (7 constats) » : le
+                      calcul du nom pose une espace entre les deux morceaux. */}
+                  <span className="sr-only">({compte.libelle})</span>
+                </>
+              )}
             </button>
             {question && (
               <span id={`${base}-${cle}`} className="sr-only">

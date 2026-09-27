@@ -20,6 +20,7 @@ import {
 import type { Icone } from "@/components/Primitives";
 import { libelleStatut } from "@/lib/format";
 import {
+  AGENT_ABSENT,
   CAPACITE_ACTIVE,
   CHAT_AUTEUR_UTILISATEUR,
   EVENEMENT_AGENT_ACTIVITE,
@@ -100,10 +101,15 @@ function cite(texte: string): string {
  * phrase qui commence par un blanc est pire que pas de phrase du tout. Le
  * `default` couvre les statuts que l'UI ne connaît pas encore — même contrat que
  * `libelleStatut`, qui rend le statut brut plutôt que rien.
+ *
+ * `AGENT_ABSENT` (« — ») n'est pas un agent : c'est ce que le moteur consigne
+ * sur une tâche **jamais routée**. En faire le sujet donnait « — a échoué sur
+ * « … » », une phrase sans sujet (relevé par le regard neuf de #1285, sur une
+ * pièce du bilan) : elle prend la forme sans agent.
  */
 function phraseStatutTache(evenement: Evenement): string {
   const quoi = cite(sujetEvenement(evenement)) || "une tâche";
-  const qui = evenement.agent;
+  const qui = evenement.agent === AGENT_ABSENT ? "" : evenement.agent;
   switch (evenement.statut) {
     case "assignee":
       return qui ? `${qui} prend en charge ${quoi}` : `${quoi} est assignée`;

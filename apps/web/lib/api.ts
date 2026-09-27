@@ -29,6 +29,7 @@ import type {
   DecisionPiece,
   DeclarationProjet,
   DecisionsRun,
+  ReponseBilan,
   DefinitionAgent,
   DefinitionAgentProposee,
   DetailExecution,
@@ -469,6 +470,20 @@ export function chargerDecisionsExecution(
 }
 
 /**
+ * Le bilan d'une exécution, rendu sur pièces à sa fin
+ * (`GET /api/executions/{run_id}/bilan`, #1284) — et où il en est quand il n'est
+ * pas là (`etat`, `raison`, #1285).
+ *
+ * Pas de `?projet=`, par la même porte que `/frise` et `/decisions` : le run seul
+ * suffit à désigner ce qu'on lit. `404` pour un run dont l'API n'a aucune trace.
+ */
+export function chargerBilanExecution(runId: string): Promise<ReponseBilan> {
+  return chargerJson<ReponseBilan>(
+    `/api/executions/${encodeURIComponent(runId)}/bilan`,
+  );
+}
+
+/**
  * La vue coûts & analytics (`GET /api/analytics/couts`, #87) : agrégats par
  * tâche, par agent et par exécution, total et série temporelle du coût.
  * `depuis` (ISO) restreint la fenêtre — la période sélectionnable de l'UI ;
@@ -502,11 +517,16 @@ export function chargerAnalyticsCouts(options: {
  *
  * `taille` est plafonnée à 200 par le backend (`422` au-delà) : un appelant qui
  * veut « tout » demande la plus grande page, il ne demande pas l'infini.
+ *
+ * `ids` (#1285) restreint aux entrées nommées (`j-0042`) : celles qu'une pièce du
+ * bilan d'un run cite, où qu'elles soient dans le journal — y compris au-delà de
+ * la page de 200 que la vue du run lit.
  */
 export function chargerJournal(
   portee: PorteeProjet,
   options: {
     runId?: string;
+    ids?: readonly string[];
     agent?: string;
     type?: string;
     depuis?: string;
@@ -519,6 +539,7 @@ export function chargerJournal(
 ): Promise<PageJournal> {
   const params = new URLSearchParams({ projet: portee });
   if (options.runId !== undefined) params.set("run_id", options.runId);
+  if (options.ids !== undefined) params.set("ids", options.ids.join(","));
   if (options.agent !== undefined) params.set("agent", options.agent);
   if (options.type !== undefined) params.set("type", options.type);
   if (options.depuis !== undefined) params.set("depuis", options.depuis);

@@ -113,7 +113,12 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   **aucune seconde WebSocket** : la vue se rafraîchit au *pouls* de
   `useControlTower` (`revision`), c'est-à-dire quand celui-ci vient de relire
   (`lib/useTachesRun.ts`, `lib/useJournal.ts`). Un run d'un autre projet **le dit**
-  au lieu d'afficher un tableau vide qui se lirait « ce run n'a rien fait » ;
+  au lieu d'afficher un tableau vide qui se lirait « ce run n'a rien fait ». Un run
+  **soldé** y montre son **bilan** (#1285, docs/05 §6.23) : une ligne dans la tête,
+  sous la cause, et une lecture « Bilan » dans la bascule — le travers d'abord, la
+  nature d'un échec en toutes lettres, chaque constat ouvrant ses pièces dans le
+  journal (sur leurs seules entrées) ou la frise (entrée cerclée)
+  (`components/runs/BilanRun.tsx`, `lib/bilan.ts`, `lib/useBilanRun.ts`) ;
 - **Vue pipeline** (#491, lot 3 de #488, docs/05 §2.4.4) : le **flux** du run à la
   place de son inventaire — un niveau du graphe (#490) par colonne, un nœud par
   boîte, une courbe orientée par dépendance, tracée en SVG à la main sur les boîtes

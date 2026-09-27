@@ -62,6 +62,12 @@ export type JournalPersiste = {
 export type FiltresJournal = {
   runId?: string | null;
   agent?: string | null;
+  /**
+   * Les entrées nommées (`j-0042`), et elles seules (#1285) : celles qu'une pièce
+   * du bilan d'un run cite. Servies par l'API — elles peuvent être au-delà de la
+   * page de 200 qu'on lit sans ce filtre.
+   */
+  ids?: readonly string[] | null;
 };
 
 export function useJournal(
@@ -82,12 +88,16 @@ export function useJournal(
   // chaque rendu, donc le mettre en dépendance relancerait la lecture en boucle.
   const runId = filtres.runId ?? null;
   const agent = filtres.agent ?? null;
-  const cible = `${portee} ${runId ?? ""} ${agent ?? ""}`;
+  // Une chaîne et non le tableau, pour la même raison que les deux filtres
+  // ci-dessus : un tableau recréé à chaque rendu relancerait la lecture en boucle.
+  const ids = filtres.ids ? filtres.ids.join(",") : null;
+  const cible = `${portee} ${runId ?? ""} ${agent ?? ""} ${ids ?? ""}`;
 
   useEffect(() => {
     let abandonne = false;
     chargerJournal(portee, {
       runId: runId ?? undefined,
+      ids: ids === null ? undefined : ids.split(",").filter(Boolean),
       agent: agent ?? undefined,
       tri: TRI_JOURNAL_HORODATAGE,
       ordre: ORDRE_DESC,
@@ -112,7 +122,7 @@ export function useJournal(
     return () => {
       abandonne = true;
     };
-  }, [portee, runId, agent, cible, revision]);
+  }, [portee, runId, agent, ids, cible, revision]);
 
   return { evenements, total, chargement: lu !== cible, erreur };
 }

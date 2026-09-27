@@ -70,6 +70,7 @@ import {
 } from "@/lib/types";
 import {
   VUES_RUN,
+  VUE_BILAN,
   VUE_DECISIONS,
   VUE_FRISE,
   VUE_JOURNAL,
@@ -434,7 +435,7 @@ describe("l'arbitrage entre les lectures d'un run", () => {
     expect(VUE_RUN_DEFAUT).toBe(VUE_PIPELINE);
   });
 
-  it("propose les cinq : le flux, l'inventaire, l'activité, l'autonomie, puis le récit", () => {
+  it("propose les six : le flux, l'inventaire, l'activité, l'autonomie, le bilan, puis le récit", () => {
     // L'ordre *est* la décision. Le journal ferme la rangée (#516) : c'est ce que
     // #478 défendait en le posant sous les tâches — on le consulte après avoir vu
     // où en est le run —, reporté sur la bascule au lieu d'un empilement. La
@@ -442,12 +443,15 @@ describe("l'arbitrage entre les lectures d'un run", () => {
     // est-on ? », dans le sens du temps, là où le journal est ce qu'on ouvre
     // quand la vue d'ensemble ne suffit plus. Les décisions (#1026) s'insèrent à
     // leur tour juste avant le journal, et pour la même raison dans l'autre
-    // sens : elles sont la dernière vue d'ensemble, le journal le recours.
+    // sens : elles sont la dernière vue d'ensemble, le journal le recours. Le
+    // bilan (#1285) les suit : un jugement d'après coup, dont chaque pièce mène
+    // au journal voisin.
     expect(VUES_RUN.map((onglet) => onglet.cle)).toEqual([
       VUE_PIPELINE,
       VUE_KANBAN,
       VUE_FRISE,
       VUE_DECISIONS,
+      VUE_BILAN,
       VUE_JOURNAL,
     ]);
   });
@@ -460,11 +464,12 @@ describe("l'arbitrage entre les lectures d'un run", () => {
     // recouvrent pas : *qui, quand, et à qui* contre *qu'a-t-il fait*. Les
     // décisions en sont une troisième, chronologique elle aussi : ce qui la
     // sépare n'est pas l'ordre mais ce qu'elle retient (#1026).
-    const [pipeline, kanban, frise, decisions, journal] = VUES_RUN;
+    const [pipeline, kanban, frise, decisions, bilan, journal] = VUES_RUN;
     expect(pipeline.question).toMatch(/Quoi après quoi/);
     expect(kanban.question).toMatch(/Combien dans quel état/);
     expect(frise.question).toMatch(/Qui, quand, et à qui/);
     expect(decisions.question).toMatch(/décidé sans moi/);
+    expect(bilan.question).toMatch(/Ce qui a failli, pourquoi, et que faire/);
     expect(journal.question).toMatch(/Qu'a-t-il fait/);
   });
 });

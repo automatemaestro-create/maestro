@@ -121,6 +121,7 @@ from maestro.controltower.events import (
     Event,
     EventBus,
 )
+from maestro.controltower.frise import AGENT_ABSENT
 from maestro.controltower.journal import EntreeJournal, ServiceJournal
 from maestro.controltower.portee import PorteeRun
 from maestro.controltower.state import (
@@ -278,6 +279,13 @@ class Piece:
     synthèse (l'usage d'une tâche, ses tentatives) celles qu'elle résume. C'est le
     pont vers `GET /api/journal`, que la vue du run empruntera.
 
+    `synthese` (#1285) dit ce que la vue du run en rend : une pièce d'entrée **est**
+    une ligne du journal, et la vue montre cette ligne telle que le journal la dit —
+    son `texte`, écrit pour le modèle (horodatage, type, statut brut), n'est pas fait
+    pour être lu ; une synthèse (le coût du run, l'usage d'une tâche, ses
+    tentatives, sa checklist) n'est la ligne d'aucune entrée, et son texte est la
+    phrase à montrer.
+
     `priorite` et `rang` ne sortent pas et ne font pas l'identité d'une pièce : ils
     décident de ce qui entre dans le budget, puis de l'ordre de lecture.
     """
@@ -287,6 +295,7 @@ class Piece:
     texte: str
     tache_id: str = ""
     entrees: tuple[str, ...] = ()
+    synthese: bool = False
     priorite: int = field(default=PRIORITE_CONTEXTE, compare=False)
     rang: int = field(default=0, compare=False)
 
@@ -302,18 +311,32 @@ class Piece:
             "texte": self.texte,
             "tache_id": self.tache_id,
             "entrees": list(self.entrees),
+            "synthese": self.synthese,
         }
 
     @classmethod
     def depuis(cls, data: Mapping[str, Any]) -> Piece:
-        """Relit une pièce gardée — relecture tolérante, jamais revalidation."""
+        """Relit une pièce gardée — relecture tolérante, jamais revalidation.
+
+        Un bilan rendu avant #1285 ne dit pas `synthese` : sa nature se retrouve à
+        ce que ce module en a toujours su — l'usage n'est jamais une entrée, et une
+        pièce d'entrée n'en cite qu'une.
+        """
         entrees = data.get("entrees")
+        lues = tuple(str(e) for e in entrees) if isinstance(entrees, list) else ()
+        famille = str(data.get("famille") or "")
+        synthese = data.get("synthese")
         return cls(
             id=str(data.get("id") or ""),
-            famille=str(data.get("famille") or ""),
+            famille=famille,
             texte=str(data.get("texte") or ""),
             tache_id=str(data.get("tache_id") or ""),
-            entrees=tuple(str(e) for e in entrees) if isinstance(entrees, list) else (),
+            entrees=lues,
+            synthese=(
+                synthese
+                if isinstance(synthese, bool)
+                else famille == FAMILLE_USAGE or len(lues) != 1
+            ),
         )
 
 
@@ -344,9 +367,15 @@ class Dossier:
         return None
 
 
+#: Les blancs qu'une ligne replie : ceux de l'ASCII, et eux seuls — l'espace fine
+#: insécable qui sépare les milliers (`40 720`, #1285) doit survivre, sans quoi
+#: un nombre se couperait en fin de ligne à l'écran.
+_BLANCS = re.compile(r"[ \t\n\r\f\v]+")
+
+
 def _borne(texte: str, limite: int = TEXTE_PIECE_MAX) -> str:
     """`texte` sur une ligne, coupé à `limite` caractères — `…` quand il l'est."""
-    propre = " ".join(texte.split())
+    propre = _BLANCS.sub(" ", texte).strip()
     if len(propre) <= limite:
         return propre
     return propre[: limite - 1].rstrip() + "…"
@@ -439,16 +468,57 @@ def _texte_d_entree(entree: EntreeJournal, titres: Mapping[str, str]) -> str:
     return _borne(texte)
 
 
+def _issue_en_mots(statut: str) -> str:
+    """L'issue d'une tâche en mots d'interface (« Échec »), jamais son code (#1285).
+
+    Une synthèse ne vient d'aucune ligne du journal : son texte est ce que la vue du
+    run montre tel quel, et « issue : echec » y lisait le code du moteur. Le modèle
+    lit le même mot. Importé à l'appel, comme `libelle_cause` plus bas : ce module
+    est importé par le récit, que l'orchestration importe à son tour.
+    """
+    from maestro.controltower.orchestration import libelle_statut_tache
+
+    return libelle_statut_tache(statut) if statut else "aucune"
+
+
+def _agent_en_mots(agent: str) -> str:
+    """`, dev` quand un agent a porté la tâche — rien pour le repère « — » (jamais routée)."""
+    return f", {agent}" if agent and agent != AGENT_ABSENT else ""
+
+
+def _nombre(valeur: int) -> str:
+    """Un entier comme l'écran l'écrit : `40 720`, milliers séparés d'une espace fine."""
+    return f"{valeur:,}".replace(",", " ")
+
+
+def _montant(cout: float) -> str:
+    """Un montant comme l'écran l'écrit : `0,2199 $US` — virgule décimale et unité.
+
+    Quatre décimales et non deux : un bilan compte des appels qui coûtent moins
+    d'un centime, et les arrondir à `0,00 $US` ferait dire « gratuit » à une pièce.
+    """
+    return f"{cout:.4f}".replace(".", ",") + " $US"
+
+
+def _compte(nombre: int, mot: str) -> str:
+    """`1 démarrage`, `3 démarrages` — l'accord, et non `démarrage(s)`."""
+    return f"{nombre} {mot}{'s' if nombre > 1 else ''}"
+
+
 def _usage_en_mots(usage: StepUsage) -> str:
-    """Une mesure d'usage en clair : tokens, part sans prix, coût, tours, durée."""
-    morceaux = [f"{usage.tokens_total} tokens"]
+    """Une mesure d'usage en clair : tokens, part sans prix, coût, tours, durée.
+
+    En format d'interface (#1285) — la vue du run montre ce texte tel quel, et le
+    modèle lit le même : `40 720 tokens, coût 0,2199 $US, 2 tours, 31 s`.
+    """
+    morceaux = [f"{_nombre(usage.tokens_total)} tokens"]
     if usage.tokens_non_tarifes:
-        morceaux.append(f"dont {usage.tokens_non_tarifes} sans prix")
+        morceaux.append(f"dont {_nombre(usage.tokens_non_tarifes)} sans prix")
     morceaux.append(
-        f"coût {usage.cout_usd:.4f} $" if usage.cout_usd is not None else "coût inconnu"
+        f"coût {_montant(usage.cout_usd)}" if usage.cout_usd is not None else "coût inconnu"
     )
     if usage.tours:
-        morceaux.append(f"{usage.tours} tour(s)")
+        morceaux.append(_compte(usage.tours, "tour"))
     if usage.duree_ms is not None:
         morceaux.append(f"{usage.duree_ms / 1000:.0f} s")
     return ", ".join(morceaux)
@@ -470,7 +540,7 @@ def _syntheses(
     pieces: list[Piece] = []
     cout = execution.cout
     montant = execution.cout_usd
-    somme = f"{montant:.4f} $" if montant is not None else "inconnu"
+    somme = _montant(montant) if montant is not None else "inconnu"
     plancher = (
         " — plancher : des tokens sont sans prix ou encore relevés"
         if execution.cout_partiel
@@ -481,11 +551,12 @@ def _syntheses(
             id="",
             famille=FAMILLE_USAGE,
             texte=_borne(
-                f"Coût du run : {somme}{plancher} ; total {_usage_en_mots(cout.total)} ; "
+                f"Coût du run : {somme}{plancher} ; au total {_usage_en_mots(cout.total)} ; "
                 f"planification {_usage_en_mots(cout.planification)} ; "
                 f"cadrage {_usage_en_mots(cout.brief)}"
             ),
             entrees=tuple(issue_du_run),
+            synthese=True,
             priorite=PRIORITE_DECISIVE,
         )
     )
@@ -504,10 +575,12 @@ def _syntheses(
                 famille=FAMILLE_USAGE,
                 tache_id=ligne.tache_id,
                 texte=_borne(
-                    f"Usage de la tâche {ligne.tache_id} « {nom} » ({ligne.agent or '—'}) : "
-                    f"{_usage_en_mots(ligne.usage)} ; issue : {ligne.statut or 'aucune'}"
+                    f"Usage de la tâche « {nom} » ({ligne.tache_id}"
+                    f"{_agent_en_mots(ligne.agent)}) : "
+                    f"{_usage_en_mots(ligne.usage)} ; issue : {_issue_en_mots(ligne.statut)}"
                 ),
                 entrees=issues,
+                synthese=True,
                 priorite=PRIORITE_DECISIVE if sans_resultat else PRIORITE_ECLAIRANTE,
             )
         )
@@ -536,18 +609,20 @@ def _tentatives(tache: EtatTache, entrees: Sequence[EntreeJournal]) -> list[Piec
     ]
     if len(demarrages) < 2 and not relances:
         return []
-    issue = tache.statut or "inconnue"
+    issue = _issue_en_mots(tache.statut) if tache.statut else "inconnue"
     return [
         Piece(
             id="",
             famille=FAMILLE_STATUT,
             tache_id=tache.id,
             texte=_borne(
-                f"Tentatives de la tâche {tache.id} « {tache.titre} » dans ce run : "
-                f"{len(demarrages)} démarrage(s), {len(relances)} relance(s) du moteur "
+                f"Tentatives de la tâche « {tache.titre} » ({tache.id}) dans ce run : "
+                f"{_compte(len(demarrages), 'démarrage')}, "
+                f"{_compte(len(relances), 'relance')} du moteur "
                 f"(le moteur relance en présumant un aléa) ; issue : {issue}"
             ),
             entrees=tuple(e.id for e in (*demarrages, *relances)),
+            synthese=True,
             priorite=PRIORITE_DECISIVE if tache.statut == STATUT_ECHEC else PRIORITE_ECLAIRANTE,
         )
     ]
@@ -564,13 +639,13 @@ def _checklist(tache: EtatTache, entrees: Sequence[EntreeJournal]) -> Piece | No
     verification = tache.verification or {}
     if not etapes and not verification:
         return None
-    morceaux = [f"Checklist de la tâche {tache.id} « {tache.titre} »"]
+    morceaux = [f"Checklist de la tâche « {tache.titre} » ({tache.id})"]
     restantes = [etape.libelle for etape in etapes if etape.etat != ETAPE_FAITE]
     if etapes:
         morceaux.append(f"{len(etapes) - len(restantes)}/{len(etapes)} étape(s) cochée(s)")
         if restantes:
             morceaux.append("non cochées : " + " ; ".join(restantes))
-    morceaux.append(f"issue : {tache.statut or 'inconnue'}")
+    morceaux.append(f"issue : {_issue_en_mots(tache.statut) if tache.statut else 'inconnue'}")
     statut_verif = str(verification.get("statut") or "")
     if verification:
         resume = str(verification.get("resume") or "")
@@ -594,6 +669,7 @@ def _checklist(tache: EtatTache, entrees: Sequence[EntreeJournal]) -> Piece | No
         tache_id=tache.id,
         texte=_borne(" ; ".join(morceaux)),
         entrees=cites,
+        synthese=True,
         priorite=PRIORITE_DECISIVE if ecart else PRIORITE_ECLAIRANTE,
     )
 
@@ -658,6 +734,7 @@ def assembler_les_pieces(
             texte=piece.texte,
             tache_id=piece.tache_id,
             entrees=piece.entrees,
+            synthese=piece.synthese,
             priorite=piece.priorite,
             rang=piece.rang,
         )
@@ -1237,6 +1314,21 @@ def juge_par_defaut() -> JugeBilan | None:
 # --------------------------------------------------------------------------- #
 
 
+#: Où en est le bilan d'un run (#1285) — ce que la vue du run dit quand elle n'en a
+#: pas encore, ou plus : `attendu` tant que le run n'est pas soldé, `en_redaction`
+#: pendant l'appel au modèle, `rendu` quand il est là, `absent` sinon.
+ETAT_ATTENDU = "attendu"
+ETAT_EN_REDACTION = "en_redaction"
+ETAT_RENDU = "rendu"
+ETAT_ABSENT = "absent"
+
+#: Pourquoi un bilan est absent, quand on le sait. Aucune raison (`""`) : le run
+#: s'est soldé avant que Maestro ne rende des bilans, ou le modèle s'est tu avant le
+#: dernier redémarrage de l'API — un modèle muet ne laisse rien au journal.
+RAISON_MODELE_MUET = "modele_muet"
+RAISON_REPONSE_ILLISIBLE = "reponse_illisible"
+
+
 class ServiceBilan:
     """Rend le bilan d'un run à sa fin, le publie, et le relit (#1284).
 
@@ -1270,6 +1362,9 @@ class ServiceBilan:
         self._pieces_max = pieces_max
         self._en_vol: dict[str, asyncio.Future[BilanRun | None]] = {}
         self._rendus: dict[str, BilanRun] = {}
+        # Pourquoi le dernier appel de ce process n'a rien rendu (#1285) — ce que la
+        # vue du run dit d'un bilan absent. Oublié quand un bilan finit par venir.
+        self._non_rendus: dict[str, str] = {}
 
     def bilan(self, run_id: str) -> BilanRun | None:
         """Le bilan gardé de `run_id` — None s'il n'en a pas (encore)."""
@@ -1278,17 +1373,47 @@ class ServiceBilan:
             return BilanRun.depuis(execution.bilan)
         return self._rendus.get(run_id)
 
-    async def rendre(self, run_id: str) -> BilanRun | None:
-        """Le bilan de `run_id` à sa fin — rendu une fois par issue, None s'il ne peut l'être.
+    def etat(self, run_id: str) -> tuple[str, str]:
+        """Où en est le bilan de `run_id`, et pourquoi il manque quand on le sait (#1285).
 
-        Trois raisons de rendre None, aucune n'étant une panne : le run n'est pas
-        soldé, le modèle n'a pas répondu, ou sa réponse ne se lit pas.
+        Lu à chaque demande, jamais tenu à côté : le bilan gardé, l'appel en vol, le
+        statut du run, puis la trace d'un appel qui n'a rien rendu — celle de ce
+        process pour un modèle muet (il ne laisse rien au journal), celle du journal
+        pour une réponse illisible (son coût y est consigné, donc elle survit à un
+        redémarrage).
+        """
+        if self.bilan(run_id) is not None:
+            return ETAT_RENDU, ""
+        if run_id in self._en_vol:
+            return ETAT_EN_REDACTION, ""
+        execution = self._state.execution(run_id)
+        if execution is None:
+            return ETAT_ABSENT, ""
+        if execution.statut not in STATUTS_EXECUTION_TERMINAUX:
+            return ETAT_ATTENDU, ""
+        raison = self._non_rendus.get(run_id, "")
+        if not raison and any(
+            event.etape_run == ETAPE_BILAN and event.statut == STATUT_BILAN_ILLISIBLE
+            for event in execution.evenements
+        ):
+            raison = RAISON_REPONSE_ILLISIBLE
+        return ETAT_ABSENT, raison
+
+    def lancer(self, run_id: str) -> asyncio.Future[BilanRun | None] | BilanRun | None:
+        """Met en route le bilan de `run_id` **sans attendre** : l'appel en vol, ou son tenant lieu.
+
+        Synchrone, et c'est tout son objet (#1285) : la fin d'un run l'appelle au
+        moment même où le statut terminal est projeté, si bien qu'un écran qui relit
+        juste après lit « en rédaction » et jamais « absent ». Rend l'appel en vol
+        (le même pour tous les demandeurs), le bilan déjà rendu pour cette issue, ou
+        None quand il n'y a rien à rendre — run pas soldé, ou aucun juge. Exige une
+        boucle d'événements en cours dès qu'un appel part.
         """
         if self._juge is None:
             return self.bilan(run_id)
         en_vol = self._en_vol.get(run_id)
         if en_vol is not None:
-            return await en_vol
+            return en_vol
         execution = self._state.execution(run_id)
         if execution is None or execution.statut not in STATUTS_EXECUTION_TERMINAUX:
             return None
@@ -1298,7 +1423,18 @@ class ServiceBilan:
         tache = asyncio.ensure_future(self._rendre(execution))
         self._en_vol[run_id] = tache
         tache.add_done_callback(lambda _fini: self._en_vol.pop(run_id, None))
-        return await tache
+        return tache
+
+    async def rendre(self, run_id: str) -> BilanRun | None:
+        """Le bilan de `run_id` à sa fin — rendu une fois par issue, None s'il ne peut l'être.
+
+        Trois raisons de rendre None, aucune n'étant une panne : le run n'est pas
+        soldé, le modèle n'a pas répondu, ou sa réponse ne se lit pas.
+        """
+        lance = self.lancer(run_id)
+        if isinstance(lance, asyncio.Future):
+            return await lance
+        return lance
 
     async def _rendre(self, execution: EtatExecution) -> BilanRun | None:
         """Assemble, fait juger, vérifie, publie — et rend le bilan, ou None."""
@@ -1322,12 +1458,14 @@ class ServiceBilan:
                 "se rédige sans lui.",
                 run_id,
             )
+            self._non_rendus[run_id] = RAISON_MODELE_MUET
             return None
         bruts = lire_les_constats(texte)
         if bruts is None:
             _LOGGER.warning(
                 "Bilan du run %s non retenu : la réponse du modèle ne se lit pas.", run_id
             )
+            self._non_rendus[run_id] = RAISON_REPONSE_ILLISIBLE
             # L'appel a coûté : son coût est compté au run, avec la ligne qui le dit.
             await self._publier(
                 execution,
@@ -1351,6 +1489,7 @@ class ServiceBilan:
             pieces_laissees=dossier.nb_laissees,
         )
         self._rendus[run_id] = bilan
+        self._non_rendus.pop(run_id, None)
         await self._publier(
             execution,
             statut=STATUT_BILAN_RENDU,
