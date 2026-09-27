@@ -43,6 +43,13 @@ et ont différé le reste ici. Ce fichier porte ce reste, en trois blocs :
    qu'on ouvre : il ne vaut que pour l'outil d'exécution, que pour la tâche qui le
    déclare, jamais contre une liste `deny`, et jamais en silence.
 
+⑤ **la portée franchie, sur toute la chaîne** (#1278). Le hook sortait bien de
+   la portée un appel qui quittait le projet et désignait une personne ; l'arbitre
+   du moteur **redemandait** le cran à la politique, qui répondait `auto`, et le
+   garde-fou accordait d'office. Chaque maillon, éprouvé seul, avait raison. Ce
+   bloc joue donc le **vrai** hook, le vrai arbitre et le vrai garde-fou dans un
+   même run — c'est la seule expérience qui voie ce qui se perdait entre eux.
+
 Aucun appel réseau : plans constants, fournisseurs factices, dépôts sur répertoire
 temporaire. Le harnais est celui de `tests/test_permissions.py` — mêmes doubles,
 mêmes aides — plutôt qu'un second à tenir d'accord.
@@ -64,6 +71,7 @@ from maestro.engine.executor import (
     SUFFIXE_ETAPE_REFUS,
 )
 from maestro.engine.guardrails import (
+    DETAIL_AUTO,
     MOTS_SENSIBLES,
     ORIGINE_AGENT,
     ORIGINE_POLITIQUE,
@@ -71,6 +79,7 @@ from maestro.engine.guardrails import (
     Guardrails,
 )
 from maestro.orchestrator import Orchestrator
+from maestro.providers import claude as claude_mod
 from maestro.providers.arbitrage import (
     NOM_OUTIL,
     NOM_SERVEUR,
@@ -81,6 +90,7 @@ from maestro.providers.arbitrage import (
     reponse,
 )
 from maestro.providers.base import ModelProvider
+from maestro.sandbox.en_place import portee_de
 from maestro.telemetry import RunJournal
 
 # --- Harnais ----------------------------------------------------------------------------
@@ -165,7 +175,7 @@ class AppelleUnOutilAsk(_Executant):
         decision = None if politique is None else politique.decide("Bash")
         if decision is not None and decision.verdict is Verdict.ARBITRAGE:
             approuve, detail = await on_arbitrage_acte(
-                "Bash", dict(self.ARGUMENTS), decision.motif
+                "Bash", dict(self.ARGUMENTS), decision.motif, decision.decideur
             )
             self.run_calls.append({"arbitrage": (approuve, detail)})
             if not approuve and on_refus is not None:
@@ -668,7 +678,7 @@ class JoueSesCommandes(_Executant):
                         on_refus(outil, decision.motif)
                     continue
                 approuve, detail = await on_arbitrage_acte(
-                    outil, dict(arguments), decision.motif
+                    outil, dict(arguments), decision.motif, decision.decideur
                 )
                 self.issues.append((titre, outil, approuve, detail))
                 if on_refus is not None:
@@ -858,3 +868,130 @@ def test_l_acte_accorde_voyage_avec_la_tache(store):
     (sans, _) = validate_plan(json.loads(_plan_s1(accorde=False)))
     assert sans.acte_accorde == ""
     assert "acte_accorde" not in sans.to_dict()
+
+
+# --- ⑤ La portée franchie, sur toute la chaîne (#1278) ---------------------------------
+
+
+class PasseParLeVraiHook(_Executant):
+    """Exécutant qui soumet ses commandes au **vrai** hook du fournisseur Claude.
+
+    Là où `JoueSesCommandes` rejoue la logique du hook, celui-ci l'emprunte :
+    `_hook_permissions`, armé comme `run_agent` l'arme — la portée de l'espace de
+    travail (`portee_de`) et les deux canaux que le moteur lui passe. C'est ce qui
+    fait de ce double un banc de la **chaîne** et non d'un maillon.
+    """
+
+    name = "passe-par-le-vrai-hook"
+
+    def __init__(self, commandes: tuple[str, ...]) -> None:
+        super().__init__()
+        self.commandes = commandes
+        #: Ce que le hook a rendu, commande par commande : `{}` laisse passer.
+        self.sorties: list[tuple[str, dict]] = []
+
+    async def run_agent(
+        self, prompt, *, model, system_prompt=None, workspace, tools,
+        mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
+        on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
+        credit_arbitrage=None,
+        on_courrier=None, on_question=None,
+        plafond_tours=None, projet=None,
+    ):
+        hook = claude_mod._hook_permissions(
+            politique, on_refus, on_arbitrage_acte, portee=portee_de(workspace, projet)
+        )
+        for commande in self.commandes:
+            sortie = await hook(
+                {"tool_name": "Bash", "tool_input": {"command": commande}}, "tu-1", None
+            )
+            self.sorties.append((commande, sortie))
+        return await super().run_agent(
+            prompt, model=model, system_prompt=system_prompt, workspace=workspace,
+            tools=tools, mcp_serveurs=mcp_serveurs, politique=politique,
+            on_refus=on_refus, plafond_tours=plafond_tours,
+        )
+
+
+#: Le plan d'une tâche qui monte une maquette : un seul agent, un seul acte à juger
+#: par commande.
+PLAN_MAQUETTE = json.dumps(
+    [_tache("maquette", "Monter la maquette", "Capturer la page d'accueil du projet.")],
+    ensure_ascii=False,
+)
+
+#: La politique qu'une équipe proposée pose sur son `dev` depuis #1226, et celle
+#: de l'agent `interface` du run `3fe501fc0878` : `Bash` en `ask` + `auto`, borné
+#: au projet.
+POLITIQUE_CADREE = {"ask": {"Bash": "auto"}, "portees": {"Bash": "projet"}}
+
+
+def test_hors_de_la_portee_une_personne_tranche_sur_toute_la_chaine(store):
+    """Le deuxième défaut du ticket, et son critère : *un appel hors portée sous
+    cran `auto` crée une demande humaine sur toute la chaîne*.
+
+    Le geste est celui du run : écrire dans `/tmp`, hors du projet. Il remonte à
+    une personne, avec le motif de hors-portée — c'est lui qu'elle lira dans la
+    Control Tower. Le geste d'à côté, dans le projet, ne dérange personne : sans
+    ce témoin, « une demande » pourrait venir de n'importe quel appel.
+    """
+    _ecrire_politique(store.racine, "developpeur", POLITIQUE_CADREE)
+    validateur = ValidateurEnregistreur(decision=True)
+    provider = PasseParLeVraiHook(
+        ("mkdir -p .maestro/maquette", "cd /tmp && mkdir -p edge-shot")
+    )
+    journal = RunJournal(run_id="run-1278")
+
+    asyncio.run(
+        _moteur(provider, store, Guardrails(validateur=validateur), PLAN_MAQUETTE).run(
+            "Monter la maquette du projet", journal=journal
+        )
+    )
+
+    (demande,) = validateur.demandes
+    assert demande.arguments == {"command": "cd /tmp && mkdir -p edge-shot"}
+    assert demande.decideur == Decideur.HUMAIN
+    assert "hors de la portée" in demande.raison and "sort du" in demande.raison
+    # La personne a approuvé : l'appel passe, et les deux commandes aussi.
+    assert [sortie for _, sortie in provider.sorties] == [{}, {}]
+
+
+def test_la_trace_d_une_approbation_nomme_qui_l_a_rendue(store):
+    """Le troisième défaut : la trace se contredisait — « approuvé à
+    l'arbitrage humain — accordée d'office, personne n'a été sollicité ».
+
+    Sur la même chaîne, l'appel hors du projet est approuvé **par une
+    personne** et la trace le dit ; l'appel dans le projet passe par `auto`, et
+    sa trace ne prétend aucun arbitrage humain.
+    """
+    _ecrire_politique(store.racine, "developpeur", POLITIQUE_CADREE)
+    provider = PasseParLeVraiHook(
+        ("mkdir -p .maestro/maquette", "cd /tmp && mkdir -p edge-shot")
+    )
+    journal = RunJournal(run_id="run-1278-trace")
+
+    asyncio.run(
+        _moteur(
+            provider, store, Guardrails(validateur=ValidateurEnregistreur(True)), PLAN_MAQUETTE
+        ).run("Monter la maquette du projet", journal=journal)
+    )
+
+    dans, dehors = [r for r in journal.records if r.etape == f"maquette{SUFFIXE_ETAPE_REFUS}"]
+    assert "personne n'a été sollicité" in dans.sortie
+    assert "humain" not in dans.sortie
+    assert "validateur humain" in dehors.sortie
+    assert "personne n'a été sollicité" not in dehors.sortie
+    # Et le nom de l'étape, que le banc lit pour savoir qui a tranché (#586), dit
+    # la même chose que le motif — pas le cran que la politique donne à l'outil.
+    assert dans.nom.startswith("Outil arbitré (auto)")
+    assert dehors.nom.startswith("Outil arbitré (humain)")
+
+
+def test_une_approbation_d_office_ne_se_dit_pas_humaine():
+    """La même règle au niveau du texte, pour tout producteur : l'issue qu'aucune
+    personne n'a prononcée ne se trace jamais comme un arbitrage humain."""
+    motif = motif_approbation("Bash", DETAIL_AUTO)
+
+    assert "humain" not in motif
+    assert DETAIL_AUTO in motif
+    assert "validateur humain" in motif_approbation("Bash", "approuvée par le validateur humain")

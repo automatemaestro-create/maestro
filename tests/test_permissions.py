@@ -220,7 +220,7 @@ class ArbitreProvider(MontageEnregistreur):
         decision = None if politique is None else politique.decide("Bash")
         if decision is not None and decision.verdict is Verdict.ARBITRAGE:
             approuve, detail = await on_arbitrage_acte(
-                "Bash", {"command": "rm -rf /srv"}, decision.motif
+                "Bash", {"command": "rm -rf /srv"}, decision.motif, decision.decideur
             )
             self.run_calls.append({"arbitrage": (approuve, detail)})
             if on_refus is not None:
@@ -1171,10 +1171,10 @@ def test_la_borne_du_hook_est_posee_explicitement_dans_le_matcher(monkeypatch, t
 def test_un_appel_arbitre_approuve_passe_et_laisse_sa_trace():
     vu: list[tuple[str, str]] = []
 
-    async def arbitrage(outil, arguments, motif):
+    async def arbitrage(outil, arguments, motif, decideur):
         return True, "approuvée par le validateur humain"
 
-    sortie = _appelle(_hook_arbitre(arbitrage, lambda o, m: vu.append((o, m))))
+    sortie = _appelle(_hook_arbitre(arbitrage, lambda o, m, d=None: vu.append((o, m))))
 
     # Sortie vide : l'appel n'a pas besoin d'être *forcé*, seulement de ne plus
     # être suspendu — sous `bypassPermissions` il n'y a rien à lever.
@@ -1187,10 +1187,10 @@ def test_un_appel_arbitre_approuve_passe_et_laisse_sa_trace():
 def test_un_appel_arbitre_refuse_rend_un_deny_motive_et_l_agent_poursuit():
     vu: list[tuple[str, str]] = []
 
-    async def arbitrage(outil, arguments, motif):
+    async def arbitrage(outil, arguments, motif, decideur):
         return False, "refusée par le validateur humain"
 
-    motif = _motif(_appelle(_hook_arbitre(arbitrage, lambda o, m: vu.append((o, m)))))
+    motif = _motif(_appelle(_hook_arbitre(arbitrage, lambda o, m, d=None: vu.append((o, m)))))
 
     assert "'Bash'" in motif
     assert "refusé à l'arbitrage humain" in motif
@@ -1208,7 +1208,7 @@ def test_a_l_expiration_c_est_nous_qui_repondons_et_la_demande_reste_en_vol():
         etats: list[str] = []
         vu: list[tuple[str, str]] = []
 
-        async def arbitrage(outil, arguments, motif):
+        async def arbitrage(outil, arguments, motif, decideur):
             try:
                 await tranche.wait()
             except asyncio.CancelledError:
@@ -1219,7 +1219,7 @@ def test_a_l_expiration_c_est_nous_qui_repondons_et_la_demande_reste_en_vol():
 
         hook = _hook_arbitre(
             arbitrage,
-            lambda o, m: vu.append((o, m)),
+            lambda o, m, d=None: vu.append((o, m)),
             BornesArbitrage(attente_s=0.01, borne_hook_s=10.0),
         )
         sortie = await hook({"tool_name": "Bash", "tool_input": {}}, "tu-1", None)
@@ -1243,15 +1243,15 @@ def test_a_l_expiration_c_est_nous_qui_repondons_et_la_demande_reste_en_vol():
 def test_les_trois_issues_passent_toutes_par_le_canal_on_refus():
     reponses = iter([(True, "oui"), (False, "non")])
 
-    async def tranche(outil, arguments, motif):
+    async def tranche(outil, arguments, motif, decideur):
         return next(reponses)
 
-    async def jamais(outil, arguments, motif):
+    async def jamais(outil, arguments, motif, decideur):
         await asyncio.Event().wait()
         raise AssertionError("inatteignable")  # pragma: no cover
 
     vu: list[tuple[str, str]] = []
-    trace = lambda outil, motif: vu.append((outil, motif))  # noqa: E731
+    trace = lambda outil, motif, decideur=None: vu.append((outil, motif))  # noqa: E731
     _appelle(_hook_arbitre(tranche, trace))
     _appelle(_hook_arbitre(tranche, trace))
     _appelle(
@@ -1269,7 +1269,7 @@ def test_la_demande_porte_l_outil_et_ses_arguments():
     # le titre de la tâche. Les arguments arrivent sous la forme de `maestro.acte`.
     vu: list[tuple[str, dict[str, str], str]] = []
 
-    async def arbitrage(outil, arguments, motif):
+    async def arbitrage(outil, arguments, motif, decideur):
         vu.append((outil, arguments, motif))
         return True, "ok"
 
@@ -1295,7 +1295,7 @@ def test_un_outil_a_arbitrer_sans_canal_est_refuse_jamais_approuve():
 
 
 def test_un_canal_d_arbitrage_en_panne_ne_laisse_rien_passer():
-    async def casse(outil, arguments, motif):
+    async def casse(outil, arguments, motif, decideur):
         raise RuntimeError("bus injoignable")
 
     motif = _motif(_appelle(_hook_arbitre(casse)))
@@ -1306,7 +1306,7 @@ def test_un_transport_qui_coupe_n_est_pas_pris_pour_une_attente_qui_expire():
     # Les deux causes lèvent le même type. Rendre le motif de l'une pour l'autre
     # enverrait chercher une décision humaine là où c'est le transport qui est
     # tombé — et la demande, elle, n'est pas « encore en attente ».
-    async def coupe(outil, arguments, motif):
+    async def coupe(outil, arguments, motif, decideur):
         raise TimeoutError("lecture Redis expirée")
 
     motif = _motif(_appelle(_hook_arbitre(coupe)))
@@ -1358,7 +1358,7 @@ def test_le_cran_auto_n_attend_pas_le_canal_meme_quand_il_existe():
     # donc aucune attente n'est ouverte pour un acte que personne n'a à trancher.
     appels: list[str] = []
 
-    async def arbitrage(outil, arguments, motif):  # pragma: no cover - ne doit pas courir
+    async def arbitrage(outil, arguments, motif, decideur):  # pragma: no cover - ne doit pas courir
         appels.append(outil)
         return True, "approuvée par le validateur humain"
 

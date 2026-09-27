@@ -75,6 +75,7 @@ from maestro.providers.arbitrage import (
     Arbitre,
     ArbitreActe,
     BornesArbitrage,
+    TraceOutil,
     motif_approbation,
     motif_attente,
     motif_auto,
@@ -491,7 +492,7 @@ class ClaudeProvider(ModelProvider):
         tools: Sequence[str],
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
-        on_refus: Callable[[str, str], None] | None = None,
+        on_refus: TraceOutil | None = None,
         on_arbitrage_acte: ArbitreActe | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
@@ -1236,7 +1237,7 @@ def _attendus_mcp(mcp_serveurs: Sequence[ServeurMcp]) -> frozenset[str]:
 
 def _hook_permissions(
     politique: PolitiqueOutils | None,
-    on_refus: Callable[[str, str], None] | None,
+    on_refus: TraceOutil | None,
     on_arbitrage_acte: ArbitreActe | None = None,
     bornes: BornesArbitrage | None = None,
     credit: CreditArbitrage | None = None,
@@ -1277,7 +1278,10 @@ def _hook_permissions(
     une portée borne un cran, elle n'en ajoute pas un troisième — c'est
     exactement ce que [docs/32 §8](../../docs/32-decision-cran-orchestrateur.md)
     réservait à sa porte 2. `None` : rien à évaluer, donc une portée déclarée
-    fait retomber sur le défaut, dans le sens sûr.
+    fait retomber sur le défaut, dans le sens sûr. Ce décideur-là **part avec la
+    demande** (#1278) : l'appelant ne voit qu'un nom d'outil, et redemander le
+    cran à la politique rendait `auto` à un appel que ce hook venait de sortir
+    de sa portée — le garde-fou l'accordait d'office, sans personne.
 
     Depuis #586, l'arbitrage a un **décideur** (`DecisionOutil.decideur`), et le
     hook en applique un lui-même : `auto` — celui qui ne désigne personne — est
@@ -1341,18 +1345,26 @@ def _hook_permissions(
 
     bornes = bornes or BornesArbitrage()
 
-    def trace(outil: str, motif: str) -> None:
-        """Signale l'issue à l'exécuteur — un traçage en panne ne change rien au verdict."""
+    def trace(outil: str, motif: str, decideur: Decideur | None = None) -> None:
+        """Signale l'issue à l'exécuteur — un traçage en panne ne change rien au verdict.
+
+        `decideur` n'accompagne que l'issue d'un **arbitrage** (#1278), la seule
+        dont le cran puisse différer de celui de la politique : le reste se
+        trace comme avant, et un canal qui ne le lit pas n'en voit rien.
+        """
         if on_refus is None:
             return
         try:
-            on_refus(outil, motif)
+            if decideur is None:
+                on_refus(outil, motif)
+            else:
+                on_refus(outil, motif, decideur)
         except Exception:  # noqa: BLE001 — le traçage ne casse jamais l'exécution
             pass
 
-    def refuse(outil: str, motif: str) -> HookJSONOutput:
+    def refuse(outil: str, motif: str, decideur: Decideur | None = None) -> HookJSONOutput:
         """Compose le `deny` du hook après l'avoir tracé — le seul chemin de refus."""
-        trace(outil, motif)
+        trace(outil, motif, decideur)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -1361,12 +1373,18 @@ def _hook_permissions(
             }
         }
 
-    async def arbitre(outil: str, motif: str, entree: object) -> HookJSONOutput:
-        """Suspend l'appel le temps de l'arbitrage, et rend son issue — toujours à l'heure."""
+    async def arbitre(
+        outil: str, motif: str, entree: object, decideur: Decideur
+    ) -> HookJSONOutput:
+        """Suspend l'appel le temps de l'arbitrage, et rend son issue — toujours à l'heure.
+
+        `decideur` part avec la demande (#1278) : c'est celui que ce hook a
+        retenu, portée comprise, et l'appelant n'a pas à le redemander.
+        """
         if on_arbitrage_acte is None:
-            return refuse(outil, motif_sans_arbitre(outil))
+            return refuse(outil, motif_sans_arbitre(outil), decideur)
         attente = asyncio.ensure_future(
-            on_arbitrage_acte(outil, arguments_depuis(entree), motif)
+            on_arbitrage_acte(outil, arguments_depuis(entree), motif, decideur)
         )
         try:
             # La fenêtre se referme ici, avec le `with` — pas avec `attente`, qui
@@ -1384,17 +1402,17 @@ def _hook_permissions(
             # l'une pour l'autre enverrait chercher une décision humaine là où
             # c'est un transport qui est tombé.
             if attente.done() and not attente.cancelled() and attente.exception():
-                return refuse(outil, motif_panne(outil, attente.exception()))
+                return refuse(outil, motif_panne(outil, attente.exception()), decideur)
             attente.add_done_callback(_absorbe_arbitrage_tardif)
-            return refuse(outil, motif_attente(outil, bornes.attente_effective))
+            return refuse(outil, motif_attente(outil, bornes.attente_effective), decideur)
         except Exception as exc:  # noqa: BLE001 — fail-safe : un canal en panne ne passe pas
-            return refuse(outil, motif_panne(outil, exc))
+            return refuse(outil, motif_panne(outil, exc), decideur)
         if not approuve:
-            return refuse(outil, motif_refus(outil, detail))
+            return refuse(outil, motif_refus(outil, detail), decideur)
         # Approuvé : on trace, et on rend la sortie vide plutôt qu'un `allow`
         # explicite — l'appel n'a pas besoin d'être *forcé*, il a besoin de ne
         # plus être suspendu, et sous `bypassPermissions` il n'y a rien à lever.
-        trace(outil, motif_approbation(outil, detail))
+        trace(outil, motif_approbation(outil, detail), decideur)
         return {}
 
     def dispense_de_lecture(outil: str, entree: object) -> bool:
@@ -1455,7 +1473,9 @@ def _hook_permissions(
         sortie = hors_de_portee(
             decision.portee, portee, outil, input_data.get("tool_input")
         )
-        decideur = DECIDEUR_DEFAUT if sortie else decision.decideur
+        # Un arbitrage sans cran lisible escalade (#586) : c'est le repli que
+        # l'arbitre du moteur appliquait quand il redemandait la politique.
+        decideur = DECIDEUR_DEFAUT if sortie else (decision.decideur or DECIDEUR_DEFAUT)
         motif = motif_hors_portee(decision.motif, sortie) if sortie else decision.motif
         if decideur is Decideur.AUTO:
             # Le cran qui ne désigne personne (#586) : rien à soumettre, donc
@@ -1472,7 +1492,7 @@ def _hook_permissions(
             # n'y a pas d'acte à consigner. Ce que l'agent a fait reste visible
             # au fil temps réel, qui rend ses appels d'outils (#479).
             return {}
-        return await arbitre(outil, motif, input_data.get("tool_input"))
+        return await arbitre(outil, motif, input_data.get("tool_input"), decideur)
 
     return hook
 

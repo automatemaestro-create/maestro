@@ -351,7 +351,7 @@ def _hook(politique, *, arbitrages=None):
     sortie vide **et** à la liste d'arbitrages restée vide.
     """
 
-    async def arbitre(outil, arguments, motif):
+    async def arbitre(outil, arguments, motif, decideur):
         if arbitrages is not None:
             arbitrages.append((outil, arguments))
         return False, "personne n'a répondu"
