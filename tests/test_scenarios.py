@@ -3685,13 +3685,16 @@ def test_s11_est_rouge_quand_les_sections_passent_une_a_une(tmp_path: Path) -> N
 
 
 def test_s11_dit_quand_c_est_le_plan_qui_s_enchaine(tmp_path: Path) -> None:
-    """L'autre défaut, qui se corrige ailleurs (le playbook) : un plan en chaîne."""
+    """L'autre défaut, qui se corrige ailleurs (le playbook) : un plan en chaîne.
+
+    Sans annonce, comme le produit : une chaîne n'a rien à mener de front, et c'est
+    la cadence du run (#1298) qui le dit. Le motif nomme le plan, pas l'annonce.
+    """
     chaine = (
         _plan_publie(
             {"id": "a", "titre": "Tout maquetter", "dependances": []},
             {"id": "b", "titre": "Intégrer", "dependances": ["a"]},
         ),
-        _annonce_publiee("Une tâche à la fois par agent."),
         _statut("a", "en_cours", "01:00"),
         _statut("a", "terminee", "02:00"),
         _statut("b", "en_cours", "02:00"),

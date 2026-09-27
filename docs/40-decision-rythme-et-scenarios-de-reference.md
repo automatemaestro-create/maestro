@@ -358,7 +358,8 @@ la fois. Le playbook du Chef de projet demande désormais une tâche par éléme
 séparément, et le moteur dérive de la **largeur du plan** — la mesure de « jusqu'à N de front » —
 le plafond d'instances des agents que personne n'a réglés, borné à trois et annoncé au journal du
 run. Un réglage explicite de la personne l'emporte toujours ; un projet non versionné garde une
-tâche à la fois (#839).
+tâche à la fois (#839). Un plan en chaîne n'annonce rien : il n'a rien à mener de front, et la
+cadence du run dit déjà pourquoi ses tâches passent une à une (#1298).
 
 Le montage sème un site vitrine (un README qui décrit quatre sections, une charte commune), le
 **versionne par le geste de l'écran Projets** (`POST …/versionner`) et le dote de l'équipe que

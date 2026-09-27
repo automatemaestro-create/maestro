@@ -2438,9 +2438,11 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
     1. **le run aboutit** — des tâches menées de front ne doivent rien casser ; les
        aléas du fournisseur sous concurrence (~15 % sans relance à la démo V1, #88)
        sont ce que la relance (#91) absorbe, et le scénario le rejoue ;
-    2. **le plafond dérivé s'annonce** au journal du run : l'étape de run `equipe`,
+    2. **le plan laisse partir plus d'une tâche de front** — sa largeur, lue sur
+       l'événement `run.plan` ;
+    3. **le plafond dérivé s'annonce** au journal du run : l'étape de run `equipe`,
        au statut `instances_derivees`, avant la première tâche ;
-    3. **au moins deux tâches sont en cours en même temps** — la colonne « En cours »
+    4. **au moins deux tâches sont en cours en même temps** — la colonne « En cours »
        du pipeline, ce que le critère demande : entre leur `en_cours`, consigné une
        fois le créneau de l'agent obtenu (attendre son tour ne compte pas), et le
        statut qui le clôt (`_en_cours_ensemble`).
@@ -2491,6 +2493,15 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
         f"ensemble : {pic} ({', '.join(ensemble) or '—'}) ; annonce : "
         f"« {annonce if annonce is not None else 'aucune'} »",
     )
+    if largeur is not None and largeur <= 1:
+        # Jugé d'abord : un plan en chaîne n'a rien à mener de front, donc rien à
+        # annoncer (la cadence du run le dit, #1298) — le défaut est dans le plan.
+        return rouge(
+            "le plan n'a dégagé aucun travail de front (largeur 1) : ses tâches "
+            "s'enchaînent, alors que les quatre sections se livrent séparément",
+            run_id=run_id,
+            cout_usd=cout,
+        )
     if annonce is None:
         return rouge(
             "le run n'a pas annoncé son plafond d'instances, alors que son projet est "
@@ -2499,13 +2510,6 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
             cout_usd=cout,
         )
     if pic < 2:
-        if largeur is not None and largeur <= 1:
-            return rouge(
-                "le plan n'a dégagé aucun travail de front (largeur 1) : ses tâches "
-                "s'enchaînent, alors que les quatre sections se livrent séparément",
-                run_id=run_id,
-                cout_usd=cout,
-            )
         return rouge(
             f"le plan en laissait partir {largeur if largeur is not None else '?'} de "
             "front, mais jamais deux tâches n'ont été en cours ensemble — annonce du "

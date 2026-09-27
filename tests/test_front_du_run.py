@@ -45,12 +45,13 @@ from maestro.agents.capacity import (
     InstancesDerivees,
 )
 from maestro.engine import OrchestrationEngine
+from maestro.engine.cadence import CAUSE_CHAINE
 from maestro.orchestrator import Orchestrator
 from maestro.plan_run import NoeudPlan, largeur_du_plan
 from maestro.projets.modele import Projet
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import ETAPE_EQUIPE, RunJournal
+from maestro.telemetry import ETAPE_CADENCE, ETAPE_EQUIPE, RunJournal
 
 GIT = shutil.which("git")
 
@@ -318,10 +319,12 @@ def test_un_plan_lineaire_ne_change_rien(tmp_path: Path) -> None:
 
     assert all(r.ok for r in rapport.resultats)
     assert fournisseur.pic == 1
-    # Le régime s'annonce aussi quand il ne libère rien (#286 : dans les deux sens).
-    (annonce,) = _annonces(journal)
-    assert annonce.sortie.startswith("Une tâche à la fois par agent")
-    assert "largeur du plan : 1" in annonce.entree
+    # Le régime se dit dans les deux sens (#286), mais une fois : sur une chaîne, c'est
+    # la cadence du run (#1298) qui dit pourquoi les tâches passent une à une, et le
+    # plafond dérivé n'y ajoute pas un écho.
+    assert _annonces(journal) == []
+    causes = [r.cadence for r in journal.records if r.etape == ETAPE_CADENCE]
+    assert [cause["cause"] for cause in causes if cause] == [CAUSE_CHAINE]
 
 
 @pytest.mark.skipif(GIT is None, reason="git introuvable")

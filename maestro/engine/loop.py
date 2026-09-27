@@ -1582,13 +1582,16 @@ class OrchestrationEngine:
 
         Rien à dire hors projet, ni quand l'exécuteur n'applique rien — pas de jauge,
         exécuteur distribué, projet non versionné (#839 y garde une tâche à la fois,
-        et c'est à la cadence du run de le dire, #1298).
+        et c'est à la cadence du run de le dire, #1298). Rien non plus sur un plan
+        **en chaîne** : il n'y a rien à mener de front, et la cadence du run dit déjà
+        pourquoi ses tâches passent une à une — deux lignes pour un même fait feraient
+        du fil d'activité un écho.
         """
         if projet_id is None:
             return
         largeur = largeur_du_plan(noeuds_du_plan(tasks))
         derivees = self._executor.derive_les_instances(journal.run_id, projet_id, largeur)
-        if derivees is None:
+        if derivees is None or largeur <= 1:
             return
         journal.consigne(
             etape=ETAPE_EQUIPE,
