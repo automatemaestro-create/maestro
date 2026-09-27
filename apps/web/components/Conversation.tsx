@@ -291,6 +291,7 @@ import { ActionsDuMessage } from "@/components/chat/ActionsDuMessage";
 import { BulleFil, EnTeteDeTour } from "@/components/chat/BulleFil";
 import { EtapesDuFil } from "@/components/chat/EtapesDuFil";
 import { RunsCandidats, TraceDuGeste } from "@/components/chat/GesteSurUnRun";
+import { AttentesCandidates, TraceDuReglement } from "@/components/chat/ReglementDansLeFil";
 import { TraceDePiece } from "@/components/chat/PieceDOutillage";
 import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
@@ -670,6 +671,26 @@ export function Conversation({
   useEffect(() => {
     if (suit.current) collerEnBas();
   }, [messages, envoi, reponseEnCours?.texte, collerEnBas]);
+
+  // Même règle pour ce qui arrive **au pied** sans passer par un message (#1182) :
+  // une carte tirée de l'état du shell — la question d'un agent, la décision au
+  // plafond d'un run — naît quand cet état arrive, souvent après les messages.
+  // Sans ce second déclencheur, le fil restait collé au bas des messages et la
+  // carte, sous le pli, ne se voyait pas, sans geste « Dernier message » pour
+  // le dire (mesuré sur la vraie stack). Observée par sa **taille** et non par
+  // son contenu, qu'un `ReactNode` ne permet pas de comparer ; absent (jsdom),
+  // l'observateur manque et rien ne change.
+  const piedDuFil = useRef<HTMLDivElement | null>(null);
+  const avecPied = pied !== undefined;
+  useEffect(() => {
+    const cible = piedDuFil.current;
+    if (cible === null || typeof ResizeObserver === "undefined") return;
+    const observateur = new ResizeObserver(() => {
+      if (suit.current) collerEnBas();
+    });
+    observateur.observe(cible);
+    return () => observateur.disconnect();
+  }, [avecPied, collerEnBas]);
 
   // La mise au point à l'ouverture, quand l'appelant la demande (#945, voir
   // `focusAuMontage`). Par un effet et **non** par `autoFocus` : la règle
@@ -1058,7 +1079,11 @@ export function Conversation({
           jusqu'au geste et non jusqu'au message qui le précède ; la promesse
           est **plus forte** depuis #941, qui vise le bas de la section entière
           (composeur compris) : ce geste-ci est dedans par construction. */}
-      {pied !== undefined && <div className="mt-3">{pied}</div>}
+      {pied !== undefined && (
+        <div ref={piedDuFil} className="mt-3">
+          {pied}
+        </div>
+      )}
       {/* La sentinelle de fin de fil a disparu avec #941 : elle ne rendait rien
           et ne servait qu'à **désigner** l'ascenseur en remontant ses ancêtres,
           ce que la `ref` de la section fait aussi bien — et elle, en plus, sait
@@ -1717,6 +1742,12 @@ function Bulle({
  * depuis 14:02 » —, ou le refus du service et sa raison. Le renvoi mène au run
  * touché. Les runs qu'une demande ambiguë pouvait viser (`runs_candidats`) s'y
  * listent, chacun à ses faits (`RunsCandidats`).
+ *
+ * **Ce qu'un règlement d'attente a donné** (`reglement_fait`, #1183) suit la même
+ * règle (`TraceDuReglement`) : la réponse transmise à un agent ou la demande tranchée,
+ * et ce qui a repris — « l'agent la lit et reprend sa tâche » —, ou le refus du
+ * service. Les attentes qu'une demande pouvait viser s'y listent de même
+ * (`AttentesCandidates`).
  */
 function Suite({
   message,
@@ -1738,6 +1769,8 @@ function Suite({
   const corrections = message.corrections ?? [];
   const gesteFait = message.geste_fait ?? null;
   const candidats = message.runs_candidats ?? [];
+  const reglementFait = message.reglement_fait ?? null;
+  const attentesCandidates = message.attentes_candidates ?? [];
   if (
     runId === "" &&
     tacheId === "" &&
@@ -1746,7 +1779,9 @@ function Suite({
     pieceEcrite === null &&
     corrections.length === 0 &&
     gesteFait === null &&
-    candidats.length === 0
+    candidats.length === 0 &&
+    reglementFait === null &&
+    attentesCandidates.length === 0
   ) {
     return null;
   }
@@ -1887,6 +1922,11 @@ function Suite({
       {/* Les runs qu'une demande ambiguë pouvait viser (#1179), chacun à ses faits :
           la question est au-dessus, dans les mots du modèle. */}
       <RunsCandidats runs={candidats} />
+      {/* Ce qu'un règlement d'attente a donné (#1183) : la ligne cochée — la réponse
+          transmise, la demande tranchée, et ce qui a repris — ou le refus du service ;
+          puis les attentes qu'une demande ambiguë pouvait viser, comme les runs. */}
+      {reglementFait !== null && <TraceDuReglement fait={reglementFait} />}
+      <AttentesCandidates attentes={attentesCandidates} />
       {renvois.length > 0 && (
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
           {renvois.map((renvoi) => (

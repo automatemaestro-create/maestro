@@ -377,6 +377,88 @@ describe.each(SURFACES)(
 );
 
 // ---------------------------------------------------------------------------
+// ⑤ Le pied qui grandit recolle le fil qui suit (#1182)
+// ---------------------------------------------------------------------------
+
+/**
+ * Un `ResizeObserver` qu'on déclenche à la main — jsdom n'en fournit aucun, et
+ * ne mesure rien de toute façon. Il retient ce qu'on lui fait observer.
+ */
+class ObservateurDeTaille {
+  static instances: ObservateurDeTaille[] = [];
+  observes: Element[] = [];
+  constructor(private readonly rappel: ResizeObserverCallback) {
+    ObservateurDeTaille.instances.push(this);
+  }
+  observe(cible: Element) {
+    this.observes.push(cible);
+  }
+  unobserve() {}
+  disconnect() {
+    this.observes = [];
+  }
+  /** Ce que ferait le navigateur quand ce qu'on observe change de taille. */
+  grandir() {
+    this.rappel([], this as unknown as ResizeObserver);
+  }
+}
+
+describe("⑤ une carte qui arrive au pied recolle le fil — s'il suit", () => {
+  beforeEach(() => {
+    ObservateurDeTaille.instances = [];
+    vi.stubGlobal("ResizeObserver", ObservateurDeTaille);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Mesuré sur la vraie stack (#1182) : la carte du plafond vient de l'état du
+   * shell, **après** les messages — le fil restait collé au bas des messages et
+   * la carte, sous le pli, ne se voyait pas, sans geste « Dernier message ».
+   */
+  const monterAvecUnPied = () => {
+    poserFilAssistance({ messages: [messageFactice({ contenu: "Bonjour" })] });
+    rendreAvecEtat(
+      <Conversation
+        fil={filAssistanceCourant()}
+        interlocuteur="dev"
+        libelle="Chat avec dev"
+        titre="Chat avec dev"
+        pied={<p>une carte au pied</p>}
+      />,
+    );
+    const observateur = ObservateurDeTaille.instances.find((o) =>
+      o.observes.some((cible) => cible.textContent === "une carte au pied"),
+    );
+    return observateur;
+  };
+
+  it("observe le pied, et le recolle en bas quand il grandit", async () => {
+    const vue = surveillerLAscenseur(4242);
+    const observateur = monterAvecUnPied();
+    await screen.findByLabelText("Message à dev");
+    expect(observateur, "le pied n'est pas observé").toBeDefined();
+
+    vue.posee = null;
+    observateur!.grandir();
+    expect(vue.posee).toBe(4242);
+  });
+
+  it("laisse sa place au lecteur remonté lire", async () => {
+    const vue = surveillerLAscenseur(4242);
+    const observateur = monterAvecUnPied();
+    await screen.findByLabelText("Message à dev");
+    lecture.enBas = false;
+    cransDeMolette();
+
+    vue.posee = null;
+    observateur!.grandir();
+    expect(vue.posee).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ④ L'état est posé sur le CHANGEMENT de suivi
 // ---------------------------------------------------------------------------
 

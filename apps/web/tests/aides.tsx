@@ -227,6 +227,8 @@ export type FilFactice = {
   trancherPiece: (decision: DecisionPiece, empreinte: string) => Promise<void>;
   /** Le geste qui confirme ou écarte un geste sur un run (#1179). */
   trancherGeste: (approuve: boolean) => Promise<void>;
+  /** Le geste qui confirme ou écarte le règlement d'une attente (#1183). */
+  trancherReglement: (approuve: boolean) => Promise<void>;
   /** La conversation ouverte du fil (#696) — `""` tant que rien n'a été servi. */
   conversation: string;
   /** Les conversations du fil, la plus récente d'abord (#696). */
@@ -258,6 +260,7 @@ function filParDefaut(): FilFactice {
     declarerProjet: async () => {},
     trancherPiece: async () => {},
     trancherGeste: async () => {},
+    trancherReglement: async () => {},
     conversation: CHAT_CONVERSATION_ORIGINE,
     conversations: [conversationFactice()],
     nouvelleConversation: async () => {},
@@ -371,6 +374,9 @@ function etatParDefaut(): ControlTower {
     trancherBrief: async () => {},
     repondreAuBrief: async () => {},
     repondreAUneQuestion: async () => {},
+    // La décision au plafond (#1182) : rien à trancher par défaut — un test qui
+    // exerce le geste passe le sien (`vi.fn()`).
+    trancherPlafond: async () => {},
     // Rend le **nouveau** run, comme la vraie : c'est lui qui porte `reprise_de`,
     // et un test qui n'en veut rien peut ignorer la valeur.
     relancerRun: async (runId: string) => ({

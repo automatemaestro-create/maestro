@@ -83,6 +83,7 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_QUESTIONS,
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_PLAFOND_DEMANDE,
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
     Event,
@@ -94,6 +95,7 @@ from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
@@ -189,10 +191,22 @@ def _demande_arbitrage(horodatage: str, *, tache_id: str = TACHE) -> Event:
     )
 
 
+def _demande_plafond(horodatage: str) -> Event:
+    """Le run atteint son plafond de dépense et attend sa décision (#1182)."""
+    return Event(
+        type=EVENEMENT_PLAFOND_DEMANDE,
+        run_id=RUN,
+        projet_id=PROJET,
+        plafond={"run_id": RUN, "depense_usd": 5.02, "plafond_cout_usd": 5.0},
+        horodatage=horodatage,
+    )
+
+
 ATTENTES: tuple[Attente, ...] = (
     Attente("brief", EXECUTION_EN_ATTENTE_BRIEF, _demande_brief),
     Attente("réponses", EXECUTION_EN_ATTENTE_REPONSES, _questions_brief),
     Attente("arbitrage", EXECUTION_EN_ATTENTE_ARBITRAGE, _demande_arbitrage),
+    Attente("plafond", EXECUTION_EN_ATTENTE_PLAFOND, _demande_plafond),
 )
 
 

@@ -18,6 +18,7 @@ import {
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
   EXECUTION_EN_ATTENTE_ARBITRAGE,
+  EXECUTION_EN_ATTENTE_PLAFOND,
   EXECUTION_EN_ATTENTE_REPONSES,
   EXECUTION_TERMINEE,
   STATUT_EN_ATTENTE_VALIDATION,
@@ -260,15 +261,21 @@ export function peutEtreInterrompu(execution: ResumeExecution): boolean {
   return !estSolde(execution);
 }
 
-/** Ce qui retient un run en vol — les trois causes, et rien d'autre (#474). */
+/**
+ * Ce qui retient un run en vol — les quatre causes, et rien d'autre (#474). La
+ * quatrième est venue avec #1182 : le plafond de dépense atteint, où le run attend
+ * qu'on relève, réduise ou arrête.
+ */
 export const ATTENTE_BRIEF = "brief";
 export const ATTENTE_REPONSES = "reponses";
 export const ATTENTE_VALIDATION = "validation";
+export const ATTENTE_PLAFOND = "plafond";
 
 export type CauseAttente =
   | typeof ATTENTE_BRIEF
   | typeof ATTENTE_REPONSES
-  | typeof ATTENTE_VALIDATION;
+  | typeof ATTENTE_VALIDATION
+  | typeof ATTENTE_PLAFOND;
 
 /**
  * Les runs dont **une tâche** attend une décision humaine (#48).
@@ -377,6 +384,11 @@ export function causeDAttente(
 ): CauseAttente | null {
   if (execution.statut === EXECUTION_EN_ATTENTE_ARBITRAGE) {
     return ATTENTE_VALIDATION;
+  }
+  if (execution.statut === EXECUTION_EN_ATTENTE_PLAFOND) {
+    // Le plafond de dépense (#1182) : lu sur le statut, comme l'arbitrage — c'est
+    // la projection qui le pose, à la réception de la question.
+    return ATTENTE_PLAFOND;
   }
   if (attendUnHumain(execution)) {
     return execution.statut === EXECUTION_EN_ATTENTE_REPONSES

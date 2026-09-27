@@ -1051,6 +1051,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         ArbitreBriefControlTower,
         ArbitreClarificationControlTower,
     )
+    from maestro.controltower.plafond import ArbitrePlafondControlTower
     from maestro.controltower.question import ArbitreQuestionControlTower
     from maestro.controltower.renfort import ArbitreRenfortControlTower
     from maestro.controltower.validation import ValidateurControlTower
@@ -1115,6 +1116,10 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
             # personne ne voyait jamais rien. Sans bus, `None` : le run continue
             # avec l'équipe actuelle, ses tâches au rôle le plus proche.
             arbitre_renfort=None if bus is None else ArbitreRenfortControlTower(bus),
+            # La décision au plafond de dépense (#1182) : même bus, même règle.
+            # Sans bus, `None` — et le run garde l'arrêt sec d'avant, puisque
+            # personne ne pourrait relever son plafond.
+            arbitre_plafond=None if bus is None else ArbitrePlafondControlTower(bus),
         )
         run = asyncio.create_task(
             moteur.run(

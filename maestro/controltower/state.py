@@ -42,6 +42,8 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_PLAFOND_DECISION,
+    EVENEMENT_PLAFOND_DEMANDE,
     EVENEMENT_QUESTION_DEMANDE,
     EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_RUN_PLAN,
@@ -80,11 +82,13 @@ from maestro.engine.executor import (
     STATUT_EN_COURS,
     STATUT_TERMINEE,
 )
+from maestro.engine.plafond import STATUT_TACHE_SUSPENDUE
 from maestro.plan_run import NoeudPlan
 from maestro.projets.application import DiffProjet
 from maestro.references import ticket_en_dict
 from maestro.sources.modele import Source, sources_en_liste
 from maestro.telemetry.costs import (
+    ETAPE_BILAN,
     ETAPE_BRIEF,
     ETAPE_CADENCE,
     RunCost,
@@ -193,16 +197,25 @@ EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses"
 #: muet).
 EXECUTION_EN_ATTENTE_ARBITRAGE = "en_attente_arbitrage"
 
-#: Les trois états où le run est **suspendu sur un humain** (#320, #321, #571) :
-#: en vol, mais rien ne bougera sans un geste. Rassemblés parce que plusieurs
-#: endroits ont besoin de la question « ce run attend-il quelqu'un ? » —
+#: Le run **a atteint son plafond de dépense** (#1182) et attend qu'une personne
+#: relève le plafond, réduise la portée ou arrête : sa tâche en vol est mise de
+#: côté, rien ne se dépense d'ici là. Quatrième exemplaire du motif ci-dessus —
+#: même `attente_depuis`, même non-terminalité (le run reste annulable) —, et un
+#: statut à lui parce que ce n'est pas la même attente : on n'y approuve pas un
+#: acte, on y décide d'un budget, et l'écran n'y présente pas le même geste.
+EXECUTION_EN_ATTENTE_PLAFOND = "en_attente_plafond"
+
+#: Les quatre états où le run est **suspendu sur un humain** (#320, #321, #571,
+#: #1182) : en vol, mais rien ne bougera sans un geste. Rassemblés parce que
+#: plusieurs endroits ont besoin de la question « ce run attend-il quelqu'un ? » —
 #: l'ancienneté de l'attente se pose et se lève sur cet ensemble, et une vue qui
-#: veut lister ce qui bloque n'a pas à connaître les trois noms.
+#: veut lister ce qui bloque n'a pas à connaître les quatre noms.
 STATUTS_EXECUTION_EN_ATTENTE = frozenset(
     {
         EXECUTION_EN_ATTENTE_BRIEF,
         EXECUTION_EN_ATTENTE_REPONSES,
         EXECUTION_EN_ATTENTE_ARBITRAGE,
+        EXECUTION_EN_ATTENTE_PLAFOND,
     }
 )
 
@@ -233,6 +246,7 @@ _LIBELLES_STATUT_EXECUTION = {
     EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
     EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
     EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
+    EXECUTION_EN_ATTENTE_PLAFOND: "Budget atteint",
 }
 
 
@@ -325,9 +339,28 @@ def _solde_le_cout(event: Event) -> bool:
     carte de la tâche (`cout_partiel`) et le cumul du run (`EtatExecution.cout_usd`) —
     et qu'un relevé tenu pour soldé d'un côté et en cours de l'autre ferait
     diverger la carte et la tuile du même écran.
+
+    La **mise de côté** au plafond (#1182) solde elle aussi, sans être une issue :
+    son étape porte la dépense **complète** de la tentative interrompue, dont le
+    dernier relevé n'était qu'un « jusqu'ici ». Garder l'un et l'autre comptait
+    la tentative deux fois — 0,386 $ affichés pour 0,282 $ dépensés, run
+    `5b4717cc6b38`, là où la question au plafond, qui lit le grand livre, disait
+    juste.
     """
-    return event.type == EVENEMENT_TACHE_STATUT and (
-        event.usage is not None or event.cout_usd is not None
+    porte_une_mesure = event.usage is not None or event.cout_usd is not None
+    return porte_une_mesure and (event.type == EVENEMENT_TACHE_STATUT or _met_de_cote(event))
+
+
+def _met_de_cote(event: Event) -> bool:
+    """Cet événement dit-il qu'une tâche est **mise de côté** au plafond de dépense (#1182) ?
+
+    C'est l'étape annexe `<tâche>:plafond`, que le pont range en activité : la
+    tâche ne change pas de colonne, elle reprendra ou sera soldée sur la décision.
+    """
+    return (
+        event.type == EVENEMENT_AGENT_ACTIVITE
+        and event.statut == STATUT_TACHE_SUSPENDUE
+        and bool(event.tache_id)
     )
 
 
@@ -410,6 +443,26 @@ def _cout_avec_anterieur(tache: EtatTache, cout: float | None) -> float | None:
     if anterieur is None:
         return cout
     return anterieur if cout is None else anterieur + cout
+
+
+def _met_la_tentative_de_cote(tache: EtatTache, event: Event) -> None:
+    """La carte d'une tâche mise de côté au plafond (#1182) : ce que la tentative a coûté.
+
+    La tentative interrompue devient l'**antérieur** de la tâche, comme une
+    exécution soldée avant un renvoi de QA (#1177) : sa reprise relève depuis
+    zéro, et la carte cumule par-dessus au lieu de reculer. Le montant reste
+    **partiel** — la tâche n'a pas d'issue, elle attend une décision. Un autre run
+    qui reprendrait le même identifiant de tâche ne cumule pas, pour la raison de
+    `_retient_l_anterieur`.
+    """
+    if event.usage is None:
+        return
+    if event.run_id and tache.run_id and event.run_id != tache.run_id:
+        tache.usage_anterieure = None
+    tache.usage = _avec_anterieur(tache, event.usage)
+    tache.usage_anterieure = tache.usage
+    tache.cout_usd = tache.usage.cout_usd
+    tache.cout_partiel = True
 
 
 @dataclass
@@ -919,6 +972,19 @@ class EtatExecution:
     # et c'est ce que le fil en dira. Elles appartiennent à **ce** run : aucun
     # run suivant n'en hérite, et c'est ce que le fil ignorait.
     bornes: BornesRun | None = None
+    # La **question au plafond de dépense** en vol (#1182) — la forme de
+    # `DemandePlafond.to_dict` : dépense, plafonds en vigueur, tâches qui restent.
+    # Posée par `plafond.demande`, retirée dès la décision ou l'issue du run :
+    # c'est ce que la carte du fil lit pour poser la question avec ses chiffres.
+    plafond: dict[str, Any] | None = None
+    # Le **bilan sur pièces** de ce run (#1284), sous la forme de
+    # `maestro.controltower.bilan.BilanRun.to_dict` — un dict et non la classe,
+    # pour la raison de `Event.verification` : cette couche n'importe pas celle qui
+    # le rend. Posé par l'activité `bilan` qui le porte, le dernier l'emportant ;
+    # None tant qu'aucun n'a été rendu — run en vol, modèle injoignable, ou run
+    # soldé avant ce lot. Il se reconstruit au rejeu du journal durable, comme le
+    # reste : c'est là qu'il est gardé.
+    bilan: dict[str, Any] | None = None
 
     @property
     def debut(self) -> str:
@@ -1054,6 +1120,11 @@ class EtatExecution:
             # réparent pas de la même façon. Un code court n'y pèse rien, à la
             # différence du brief resté dans le détail.
             "cause": self.cause,
+            # La question au plafond (#1182), dans le **résumé** : c'est de la
+            # liste des runs que le fil tire ce qui attend un geste, et la carte
+            # qui la pose y lit ses chiffres. Quelques nombres et une liste de
+            # titres ; `null` dès qu'aucune question n'est en vol.
+            "plafond": dict(self.plafond) if self.plafond is not None else None,
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -1145,6 +1216,7 @@ class EtatExecution:
         """
         planification = StepUsage()
         brief = StepUsage()
+        bilan = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Ce que le run a **occupé** (#989) : l'union des intervalles de ses
         # étapes, jamais leur somme. Les bornes se lisent par le même verbe que
@@ -1169,6 +1241,12 @@ class EtatExecution:
             if usage is None and event.cout_usd is not None:
                 usage = StepUsage(cout_usd=event.cout_usd)
             if usage is None:
+                continue
+            if event.etape_run == ETAPE_BILAN:
+                # Le bilan (#1284) : une dépense du run, rendue après sa fin —
+                # comptée à part, et hors du temps de mur, que le run avait fini
+                # d'occuper.
+                bilan = bilan.fusion(usage)
                 continue
             # Un relevé en cours (#835) n'entre pas au grand livre et n'occupe
             # donc rien : son type est hors des lecteurs comptables, et la
@@ -1215,6 +1293,7 @@ class EtatExecution:
             brief=brief,
             taches=tuple(entrees.values()),
             duree_mur_ms=union_ms(intervalles),
+            bilan=bilan,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1231,6 +1310,10 @@ class EtatExecution:
             **self.resume(),
             "brief": self.brief.to_dict() if self.brief is not None else None,
             "cout": self.cout.to_dict(),
+            # Le bilan sur pièces (#1284), dans le **détail** et non dans le résumé,
+            # pour la raison du brief : `GET /api/executions` rend N résumés, et
+            # seule la vue d'un run le lit. `null` tant qu'aucun n'a été rendu.
+            "bilan": dict(self.bilan) if self.bilan is not None else None,
             "evenements": [e.to_dict() for e in self.evenements],
         }
 
@@ -1695,6 +1778,10 @@ class ControlTowerState:
                 event.run_id, EtatExecution(run_id=event.run_id)
             )
             execution.evenements.append(event)
+            if event.bilan is not None:
+                # Le bilan sur pièces (#1284) voyage sur une activité de run :
+                # c'est au run qu'il appartient, pas à une tâche ni à un agent.
+                execution.bilan = dict(event.bilan)
             if event.projet_id is not None and execution.projet_id is None:
                 # Le projet du run (#222) est en principe posé par son événement
                 # de lancement — mais un run publié hors de l'API
@@ -1739,6 +1826,10 @@ class ControlTowerState:
             self._applique_question_demande(event)
         elif event.type == EVENEMENT_QUESTION_REPONSE:
             self._applique_question_reponse(event)
+        elif event.type == EVENEMENT_PLAFOND_DEMANDE:
+            self._applique_plafond_demande(event)
+        elif event.type == EVENEMENT_PLAFOND_DECISION:
+            self._applique_plafond_decision(event)
         elif event.type == EVENEMENT_RUN_PLAN:
             self._applique_run_plan(event)
         elif event.type == EVENEMENT_EXECUTION_STATUT:
@@ -1973,6 +2064,8 @@ class ControlTowerState:
                     # contrôle par contrôle : la suivante la remplace, comme une
                     # livraison corrigée remplace la précédente.
                     tache.verification = dict(event.verification)
+                if _met_de_cote(event):
+                    _met_la_tentative_de_cote(tache, event)
         if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(
@@ -2201,6 +2294,46 @@ class ControlTowerState:
         # ferait afficher « en attente depuis 3 h » sur un run arrêté depuis.
         if execution.statut not in STATUTS_EXECUTION_EN_ATTENTE:
             execution.attente_depuis = None
+        if execution.statut != EXECUTION_EN_ATTENTE_PLAFOND:
+            # Même règle pour la question au plafond (#1182) : un run annulé
+            # pendant qu'il attend sa décision ne doit plus la proposer.
+            execution.plafond = None
+
+    def _applique_plafond_demande(self, event: Event) -> None:
+        """Le run s'arrête sur son plafond de dépense (#1182) : statut, ancienneté, faits.
+
+        Pendant de `_suspend_sur_arbitrage` sur la quatrième attente, avec ses
+        deux premières abstentions : sans run connu rien à suspendre, et un run
+        soldé ne se remet pas en vol sur une demande rejouée dans le désordre.
+        L'ancienneté, elle, **se repose** : un run ne pose qu'une question au
+        plafond à la fois, et une seconde (plafond relevé trop court) est une
+        nouvelle attente, qui commence maintenant.
+        """
+        execution = self._executions.get(event.run_id) if event.run_id else None
+        if execution is None or execution.statut in STATUTS_EXECUTION_TERMINAUX:
+            return
+        execution.statut = EXECUTION_EN_ATTENTE_PLAFOND
+        execution.fin = None
+        execution.attente_depuis = event.horodatage
+        execution.plafond = dict(event.plafond) if event.plafond is not None else {}
+
+    def _applique_plafond_decision(self, event: Event) -> None:
+        """Le run repart — ou va se solder — une fois la décision rendue (#1182).
+
+        Les trois gestes lèvent l'attente : relever et réduire rendent la main aux
+        tâches mises de côté, arrêter la rend au moteur qui solde le run — son
+        issue arrivera par `execution.statut`, comme celle de tout run. Il repasse
+        donc `en_cours` dans les trois cas. Une décision sur un run qui
+        n'attendait pas (rejouée, ou arrivée après une annulation) ne le touche
+        pas. Idempotent : l'endpoint applique puis la pompe réapplique.
+        """
+        execution = self._executions.get(event.run_id) if event.run_id else None
+        if execution is None or execution.statut != EXECUTION_EN_ATTENTE_PLAFOND:
+            return
+        execution.statut = EXECUTION_EN_COURS
+        execution.fin = None
+        execution.attente_depuis = None
+        execution.plafond = None
 
     def _applique_brief_demande(self, event: Event) -> None:
         """Le run s'arrête sur son brief (#320) : statut suspendu, brief consultable.

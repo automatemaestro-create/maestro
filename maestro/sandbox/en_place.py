@@ -308,6 +308,13 @@ class EspaceEnPlace(Workspace):
         une tâche d'action (vider, supprimer, renommer, déplacer, lancer une
         commande) ne dépose rien, et un agent à qui l'on promet que « ce que tu
         laisses est le livrable » sans cette nuance cherche un artefact à poser.
+
+        Depuis #1348, ce que personne n'aura à relire va dans un dossier que
+        l'agent **crée par `mktemp -d`**, et non plus « dans le répertoire
+        temporaire du système » : la phrase d'avant faisait écrire sous un nom
+        fixe de `/tmp` (`/tmp/avant.sha`, `$TEMP/vr-raw`), que la portée rend à
+        une personne — Maestro y range les espaces de travail des autres tâches.
+        Le dossier que l'agent crée lui-même est à lui (`maestro.portee`).
         """
         if not self.atelier:
             return ""
@@ -319,7 +326,9 @@ class EspaceEnPlace(Workspace):
             "rien de plus à y déposer. Range ce qui n'est "
             f"pas le livrable — brouillons, essais, harnais de vérification, notes — "
             f"dans `{self.atelier}/`, ton atelier ; ce que personne n'aura à relire "
-            "va dans le répertoire temporaire du système. Rien ne sera déplacé ni "
+            "va dans un dossier que tu crées par `mktemp -d`, dans la commande même "
+            "qui s'en sert — un nom fixe du répertoire temporaire du système sort du "
+            "projet et revient à une personne. Rien ne sera déplacé ni "
             "effacé après toi." + self._consigne_perimetre()
         )
 

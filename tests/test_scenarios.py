@@ -26,6 +26,11 @@ Cinq choses sont vérifiées ici, et ce sont celles que le ticket demande :
    l'API ne répond pas ;
 ⑤ le **rejeu** d'un rouge non déterministe — une fois, et écrit au rapport.
 
+S'y ajoutent l'état qu'un passage laisse (⑥, #1164) et, depuis #1365, ce qui sépare
+deux passages lancés dans la même seconde (un atelier **réservé** chacun) et ce qui
+sépare un passage allé au bout d'un passage tué (⑦ : le **témoin**, et le déroulé
+affiché au fil de l'eau, arbitrages tranchés nommés par leur acte).
+
 ⚠ Ce que cette suite ne peut pas dire : que le produit fait ce qu'on lui demande.
 C'est le banc réel qui le dit, et c'est pourquoi il existe. Ici on vérifie que le
 banc **pose bien les questions** et **rend bien le verdict** qu'il a mesuré.
@@ -60,6 +65,7 @@ from maestro.controltower.donnees import Donnees, donnees_du_banc
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
     VALIDATION_APPROUVEE,
@@ -69,6 +75,7 @@ from maestro.controltower.state import (
 from maestro.decideur import Decideur
 from maestro.detail_tache import ETAPE_A_FAIRE, ETAPE_EN_COURS, ETAPE_FAITE
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
+from maestro.engine.plafond import GESTE_ARRETER
 from maestro.outillage.analyse import analyser
 from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, USAGE_DEMARRER, VERIFIEE
@@ -328,6 +335,8 @@ class FausseAPI:
         self.lectures_taches: list[dict[str, str]] = []
         #: Ce que le banc a répondu à chaque demande tranchée : `(tache_id, approuve)`.
         self.decisions: list[tuple[str, bool]] = []
+        #: Ce que le banc a décidé d'un run arrêté sur son plafond : `(run_id, geste)`.
+        self.gestes_au_plafond: list[tuple[str, str]] = []
         self._attente: dict[str, str] = {}
         self._compteur = 0
 
@@ -379,6 +388,8 @@ class FausseAPI:
             return self._recruter(corps or {})
         if chemin == f"{FIL}/cadrage":
             return self._cadrer(corps or {})
+        if chemin.startswith("/api/executions/") and chemin.endswith("/plafond"):
+            return self._au_plafond(chemin.split("/")[3], corps or {})
         if chemin.startswith("/api/executions/"):
             return self._execution(chemin.rsplit("/", 1)[-1])
         if chemin == "/api/taches":
@@ -562,6 +573,11 @@ class FausseAPI:
             if run.run_id == run_id:
                 return Reponse(statut=200, corps=run.to_dict())
         return Reponse(statut=404, corps={"detail": "inconnu"}, texte="inconnu")
+
+    def _au_plafond(self, run_id: str, corps: Mapping[str, Any]) -> Reponse:
+        """`POST /api/executions/{run_id}/plafond` (#1182) — retient le geste du banc."""
+        self.gestes_au_plafond.append((run_id, str(corps.get("geste") or "")))
+        return Reponse(statut=200, corps={})
 
     def _taches(self, params: Mapping[str, str]) -> Reponse:
         """`GET /api/taches?projet=…&run=…` : les cartes du run, sur son projet (#1291)."""
@@ -959,6 +975,52 @@ def test_le_banc_approuve_l_arbitrage_de_son_propre_run(tmp_path: Path) -> None:
     assert "arbitrage approuvé" in libelles
 
 
+def test_l_acte_que_le_banc_accorde_se_lit_en_direct_meme_d_un_passage_tue(
+    tmp_path: Path,
+) -> None:
+    """Le banc tient la place de la personne : ce qu'il accorde se nomme, et se voit tout
+    de suite (#1365).
+
+    Le 2026-09-27, deux passages ont été tués en plein run, avec les python de toutes
+    les stacks du poste : aucun rapport, et le déroulé — les arbitrages que le banc
+    avait approuvés compris — n'existait qu'en mémoire. Il disait de plus la tâche,
+    jamais l'acte. Ici le passage meurt juste après avoir accordé un acte qui vise
+    tout le poste : l'acte reste lisible sur la sortie.
+    """
+
+    class Tue(BaseException):
+        pass
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        run.statut_en_attente = EXECUTION_EN_ATTENTE_ARBITRAGE
+        run.lectures_avant_la_fin = 2
+        _moteur_qui_vide(run, racine)
+
+    api = FausseAPI(moteur=moteur, validations=[_acte_en_attente("taskkill //F //IM python.exe")])
+
+    def dormir(_s: float) -> None:
+        if api.validations and api.validations[0]["statut"] == VALIDATION_APPROUVEE:
+            raise Tue
+
+    sortie = _Muet()
+    with pytest.raises(Tue):
+        banc.main(
+            ["--scenario", "S1"],
+            client=ClientAPI(api),
+            juge=_juge_oui(),
+            atelier=Atelier(tmp_path / "atelier"),
+            racine_rapports=tmp_path / "rapports",
+            horloge=lambda: 0.0,
+            dormir=dormir,
+            sortie=sortie,
+            erreur=_Muet(),
+        )
+
+    assert not (tmp_path / "rapports").exists(), "aucun rapport : le passage est mort en chemin"
+    (ligne,) = [ligne for ligne in sortie.texte.splitlines() if "arbitrage approuvé" in ligne]
+    assert "t1" in ligne and "taskkill //F //IM python.exe" in ligne, ligne
+
+
 def _acte_en_attente(commande: str) -> dict[str, Any]:
     """Une demande d'arbitrage **sur un acte** (#581), telle que l'API la rend."""
     return {
@@ -1352,6 +1414,28 @@ def test_s4_provoque_l_echec_par_une_borne_et_non_par_un_sabotage(tmp_path: Path
     assert issue.vert, issue.motif
     assert api.runs[0].bornes == {"plafond_tokens": 1}
     assert juge.saisines, "l'oracle de S4 passe par le juge"
+
+
+def test_s4_arrete_le_run_suspendu_sur_son_plafond(tmp_path: Path) -> None:
+    """Depuis #1182, un run au plafond **attend** : le banc joue la personne qui arrête.
+
+    Sans ce geste, S4 attendrait jusqu'à son délai un run que rien ne ferait
+    repartir — et relever le plafond dépenserait du vrai modèle que personne n'a
+    accordé. Le geste est noté au déroulé, comme un arbitrage.
+    """
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        _moteur_qui_echoue_sur_la_borne(run, racine)
+        run.statut_en_attente = EXECUTION_EN_ATTENTE_PLAFOND
+        run.lectures_avant_la_fin = 2
+
+    api = FausseAPI(moteur=moteur, explication="le budget du run était épuisé")
+    montage = _banc(tmp_path, api, juge=_juge_oui())
+    issue, ctx = montage.jouer(_scenario("S4"))
+
+    assert issue.vert, issue.motif
+    assert ("run-1", GESTE_ARRETER) in api.gestes_au_plafond
+    assert "plafond de dépense atteint" in [e.libelle for e in ctx.journal.etapes]
 
 
 def test_s4_saisit_le_juge_avec_la_cause_relevee_par_l_api(tmp_path: Path) -> None:
@@ -3588,6 +3672,89 @@ def test_un_scenario_rejoue_obtient_une_autre_racine(tmp_path: Path) -> None:
     assert second.is_dir()
 
 
+def test_deux_passages_dans_la_meme_seconde_ont_chacun_leur_atelier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deux copies qui lancent le banc dans la même seconde ne partagent rien (#1365).
+
+    Mesuré le 2026-09-27 : deux sessions (API :8048 et :8078) ont lancé le banc à
+    12:36:09, reçu le même horodatage, donc le même atelier sous le profil — que
+    toutes les copies du poste partagent. Leurs S1 et S2 ont semé, vidé et rejoué
+    les mêmes dossiers, et S1 est sorti rouge sur un `.env` que l'autre passage
+    avait touché : un rouge qui ne disait rien du produit. L'horodatage est figé
+    ici pour être la même seconde, sans dépendre de l'horloge.
+    """
+    monkeypatch.setenv(VARIABLE_ATELIER, str(tmp_path / "ateliers"))
+    monkeypatch.setattr(banc, "horodatage_courant", lambda: "20260927-123609")
+
+    for _stack in ("api-8048", "api-8078"):
+        code = banc.main(
+            ["--scenario", "S1"],
+            client=ClientAPI(FausseAPI(moteur=_moteur_qui_vide)),
+            juge=_juge_oui(),
+            racine_rapports=tmp_path / "rapports",
+            horloge=lambda: 0.0,
+            dormir=lambda _s: None,
+            sortie=_Muet(),
+            erreur=_Muet(),
+        )
+        assert code == banc.CODE_VERT
+
+    passages = sorted(dossier.name for dossier in (tmp_path / "rapports").iterdir())
+    assert passages == ["20260927-123609", "20260927-123609-2"], (
+        "le second passage de la même seconde a son propre identifiant — "
+        "sinon il écrase le rapport du premier"
+    )
+    racines = [
+        json.loads((tmp_path / "rapports" / nom / FICHIER_JSON).read_text(encoding="utf-8"))[
+            "scenarios"
+        ][0]["racine"]
+        for nom in passages
+    ]
+    assert racines[0] != racines[1], "chaque S1 a semé et vidé son propre dossier"
+    assert sorted(d.name for d in (tmp_path / "ateliers").iterdir()) == passages, (
+        "l'atelier porte le nom du passage : rapport, atelier et état se retrouvent"
+    )
+
+
+def test_l_atelier_d_un_passage_se_reserve_meme_a_plusieurs_en_meme_temps(
+    tmp_path: Path,
+) -> None:
+    """La réservation est exclusive : N passages lâchés ensemble, N ateliers (#1365).
+
+    Tous partent de la même barrière avec le même horodatage — c'est la course
+    réelle de deux copies, que la lecture « le dossier existe-t-il ? » puis sa
+    création laisseraient passer. Aucun `sleep` : la simultanéité est tenue par la
+    barrière (#292).
+    """
+    nombre = 8
+    barriere = threading.Barrier(nombre)
+    ateliers: list[Atelier] = []
+    verrou = threading.Lock()
+
+    def reserver() -> None:
+        barriere.wait()
+        atelier = Atelier.reserver(
+            "20260927-123609", environnement={VARIABLE_ATELIER: str(tmp_path)}
+        )
+        with verrou:
+            ateliers.append(atelier)
+
+    fils = [threading.Thread(target=reserver) for _ in range(nombre)]
+    for fil in fils:
+        fil.start()
+    for fil in fils:
+        fil.join(timeout=30)
+
+    racines = {atelier.racine for atelier in ateliers}
+    assert len(racines) == nombre
+    assert all(racine.is_dir() and racine.parent == tmp_path for racine in racines)
+    assert {atelier.passage for atelier in ateliers} == {
+        "20260927-123609",
+        *(f"20260927-123609-{rang}" for rang in range(2, nombre + 1)),
+    }
+
+
 # --- ③ Le rapport -----------------------------------------------------------
 
 
@@ -4274,3 +4441,91 @@ def test_sans_l_option_un_passage_ne_sauve_rien(tmp_path: Path) -> None:
 
     assert code == banc.CODE_VERT
     assert not (tmp_path / "atelier" / etat.DOSSIER_ETAT).exists()
+
+
+# --- ⑦ Le témoin d'un passage allé au bout (#1365) ---------------------------
+
+
+def test_un_passage_rouge_alle_au_bout_ecrit_son_temoin(tmp_path: Path) -> None:
+    """Le témoin dit « allé au bout », pas « vert » : un rouge l'écrit aussi.
+
+    C'est ce que le lanceur lit pour séparer un rouge d'un processus tué, qui sort
+    en `1` lui aussi sous Windows (mesuré le 2026-09-27 à 12:41:25).
+    """
+    temoin = tmp_path / "journaux" / "banc.temoin"
+    api = FausseAPI(moteur=lambda _run, _racine: None)  # le run ne vide rien : S1 rouge
+
+    code, _sortie, _erreur = _main(["--scenario", "S1", "--temoin", str(temoin)], api, tmp_path)
+
+    assert code == banc.CODE_ROUGE
+    (passage,) = (tmp_path / "rapports").iterdir()
+    assert Path(temoin.read_text(encoding="utf-8").strip()) == passage
+    assert (passage / FICHIER_JSON).is_file(), "le témoin désigne un rapport écrit"
+
+
+def test_un_passage_tue_en_chemin_ne_laisse_aucun_temoin(tmp_path: Path) -> None:
+    """Le témoin est le **dernier** geste : un passage arrêté avant n'en laisse pas.
+
+    Un processus tué ne passe par aucun `finally` ; l'arrêt le plus proche qu'un
+    test sache provoquer est une exception qu'aucun `except` du banc n'attrape,
+    levée au milieu du passage — pendant le run de S1.
+    """
+
+    class Tue(BaseException):
+        pass
+
+    def moteur_tue(_run: RunFactice, _racine: Path) -> None:
+        raise Tue
+
+    temoin = tmp_path / "banc.temoin"
+
+    with pytest.raises(Tue):
+        _main(
+            ["--scenario", "S1", "--temoin", str(temoin)],
+            FausseAPI(moteur=moteur_tue),
+            tmp_path,
+        )
+
+    assert not temoin.exists()
+    assert not (tmp_path / "rapports").exists(), "ni verdict…"
+
+
+def test_un_etat_non_sauve_ecrit_quand_meme_son_temoin(tmp_path: Path) -> None:
+    """Allé au bout sans état : le code `4` le dit, et le témoin dit que le rapport existe."""
+
+    class RedisEnPanne(ClientSynchrone):
+        def lrange(self, cle: str, debut: int, fin: int) -> list[bytes]:
+            raise ConnectionError("Redis coupé")
+
+    banc_ = _banc_de(tmp_path)
+    temoin = tmp_path / "banc.temoin"
+
+    code, _sortie, _erreur = _main(
+        ["--scenario", "S1", "--sauver-etat", "--temoin", str(temoin)],
+        FausseAPI(moteur=_moteur_qui_vide, espace=banc_.espace.nom),
+        tmp_path,
+        client_redis=RedisEnPanne(ServeurFactice()),
+        donnees_banc=banc_,
+    )
+
+    assert code == banc.CODE_ETAT_NON_SAUVE
+    assert temoin.read_text(encoding="utf-8").strip()
+
+
+def test_un_passage_refuse_avant_de_jouer_n_ecrit_aucun_temoin(tmp_path: Path) -> None:
+    temoin = tmp_path / "banc.temoin"
+
+    code, _sortie, _erreur = _main(
+        ["--scenario", "S1", "--temoin", str(temoin)], FausseAPI(sante=False), tmp_path
+    )
+
+    assert code == banc.CODE_API_MUETTE
+    assert not temoin.exists()
+
+
+@pytest.mark.parametrize("args", [["--temoin"], ["--temoin="]])
+def test_le_temoin_attend_un_chemin(args: list[str], tmp_path: Path) -> None:
+    code, _sortie, erreur = _main(args, FausseAPI(), tmp_path)
+
+    assert code == banc.CODE_USAGE
+    assert "--temoin attend une valeur" in erreur.texte

@@ -43,6 +43,29 @@
  * donc elle prend aussi le dernier rang ; la règle qui dit si elle attend encore est
  * celle de toutes (`gesteRunEnAttente`, `lib/gestesRun`).
  *
+ * ⚠ #1183 y ajoute deux choses, et c'est ce qui fait régler **ici** ce qui attend
+ * quelqu'un pendant un run :
+ *
+ * - les **validations en attente**, à côté des questions d'agents — dans la carte des
+ *   validations elle-même (`CarteValidation`), que #1228 a écrite pour être montée
+ *   « dans le fil sans rien recopier ». Elles suivent la règle des questions
+ *   (`validationsDuFil`) et leur rang : ce sont deux attentes d'un travail déjà en vol ;
+ * - la septième demande, le **règlement d'une attente** (`ReglementDansLeFil`) — la
+ *   réponse à un agent ou la décision sur une validation que le fil a comprise d'une
+ *   phrase, à confirmer. Elle vit sur le message et prend le dernier rang, comme le
+ *   geste sur un run. La question ou la validation qu'elle vise **sort de sa pile** le
+ *   temps que la carte attende : deux cartes pour une seule décision feraient trancher
+ *   deux fois la même chose, et la carte du règlement la nomme déjà. « Pas maintenant »
+ *   la rend à sa place.
+ *
+ * ⚠ Une huitième est venue avec #1182 : la **décision au plafond de dépense**
+ * (`PlafondDansLeFil`) — un run qui a atteint son budget et attend qu'on relève,
+ * réduise ou arrête. Elle ne vit pas sur un message mais sur le **run** (la liste
+ * des exécutions du shell), et elle se pose **juste sous les questions d'agents et
+ * les validations** : c'est le run entier qui attend, et le fil collant à son bas,
+ * la carte la plus basse est la première vue — mais au-dessus de ce que porte le
+ * dernier message.
+ *
  * ## Pourquoi il existe — le défaut que #1106 corrige
  *
  * Ce pied vivait **dans `app/chat/page.tsx`**. `ColonneConversation` (#926)
@@ -91,28 +114,45 @@
 
 import { useMemo, type ReactNode } from "react";
 
+import { CarteValidation } from "@/components/CarteValidation";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { DemandeDeProjet } from "@/components/chat/DemandeDeProjet";
 import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
 import { GesteSurUnRun } from "@/components/chat/GesteSurUnRun";
 import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
+import { PlafondDansLeFil } from "@/components/chat/PlafondDansLeFil";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
+import { ReglementDansLeFil } from "@/components/chat/ReglementDansLeFil";
 import { propositionEnAttente } from "@/lib/brief";
 import { recrutementEnAttente } from "@/lib/equipe";
 import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { gesteRunEnAttente } from "@/lib/gestesRun";
+import { useHorloge } from "@/lib/horloge";
 import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { pieceEnAttente, questionEnAttente } from "@/lib/outillage";
+import { runsAuPlafond } from "@/lib/plafond";
 import { questionsDuFil } from "@/lib/questions";
+import { reglementEnAttente } from "@/lib/reglements";
+import type { Question, Validation } from "@/lib/types";
 import type { Chat } from "@/lib/useChat";
+import { validationsDuFil } from "@/lib/validations";
 
 /** Aucune question d'agent : ce que vaut le fil hors du shell (#1294). */
-const AUCUNE_QUESTION: never[] = [];
+const AUCUNE_QUESTION: Question[] = [];
+
+/** Aucune validation non plus, pour la même raison (#1183). */
+const AUCUNE_VALIDATION: Validation[] = [];
+
+/** Aucun run : hors du shell, aucun ne peut attendre sur son plafond (#1182). */
+const AUCUN_RUN: never[] = [];
 
 /** Rien à répondre hors du shell — aucune question n'y est jamais montrée. */
 async function sansQuestion(): Promise<void> {}
+
+/** Rien à trancher hors du shell — ni validation ni plafond n'y est jamais montré. */
+async function sansDecision(): Promise<void> {}
 
 /**
  * Ce qui attend un geste sur ce fil, prêt à passer en `pied` de `Conversation` —
@@ -135,11 +175,33 @@ export function useGestesDuFil(
   const etat = useEtatGlobalFacultatif();
   const toutesLesQuestions = etat?.questions ?? AUCUNE_QUESTION;
   const repondreAUneQuestion = etat?.repondreAUneQuestion ?? sansQuestion;
+  const toutesLesValidations = etat?.validations ?? AUCUNE_VALIDATION;
+  const decider = etat?.decider ?? sansDecision;
+  const maintenant = useHorloge();
   const global = destinataire === AGENT_ORCHESTRATION;
+  const executions = etat?.executions ?? AUCUN_RUN;
+  const trancherPlafond = etat?.trancherPlafond ?? sansDecision;
+
+  // Le règlement qu'une phrase a proposé (#1183) : son attente sort de sa pile tant
+  // que la carte attend — une seule carte par décision (voir l'en-tête).
+  const reglement = global ? reglementEnAttente(fil.messages) : null;
+  const visee = reglement?.attente ?? null;
 
   const questions = useMemo(
-    () => questionsDuFil(toutesLesQuestions, destinataire, AGENT_ORCHESTRATION),
-    [toutesLesQuestions, destinataire],
+    () =>
+      questionsDuFil(toutesLesQuestions, destinataire, AGENT_ORCHESTRATION).filter(
+        (question) =>
+          !(visee?.genre === "question" && visee.identifiant === question.question_id),
+      ),
+    [toutesLesQuestions, destinataire, visee],
+  );
+  const validations = useMemo(
+    () =>
+      validationsDuFil(toutesLesValidations, destinataire, AGENT_ORCHESTRATION).filter(
+        (validation) =>
+          !(visee?.genre === "validation" && visee.identifiant === validation.tache_id),
+      ),
+    [toutesLesValidations, destinataire, visee],
   );
 
   // Les deux demandes portées par le **dernier message**, et seulement sur le
@@ -152,15 +214,25 @@ export function useGestesDuFil(
   const projetPropose = global ? projetEnAttente(fil.messages) : null;
   const piece = global ? (pieceEnAttente(fil.messages)?.piece ?? null) : null;
   const geste = global ? gesteRunEnAttente(fil.messages) : null;
+  // Les runs arrêtés sur leur plafond de dépense (#1182) — sur le seul fil de
+  // l'orchestration, parce que c'est une décision **du run** : aucun agent ne
+  // l'a posée, et un aparté avec l'un d'eux n'a pas à la porter.
+  const auPlafond = useMemo(
+    () => (global ? runsAuPlafond(executions) : []),
+    [global, executions],
+  );
 
   if (
+    auPlafond.length === 0 &&
     questions.length === 0 &&
+    validations.length === 0 &&
     proposition === null &&
     recrutement === null &&
     projetPropose === null &&
     !outillage?.question &&
     piece === null &&
-    geste === null
+    geste === null &&
+    reglement === null
   ) {
     return undefined;
   }
@@ -168,6 +240,32 @@ export function useGestesDuFil(
   return (
     <div className="flex flex-col gap-3">
       <QuestionsDuFil questions={questions} repondre={repondreAUneQuestion} />
+      {/* Les validations en attente (#1183), dans leur carte, montée telle quelle —
+          keyée sur la tâche comme dans toutes ses files (#272, `CarteValidation`). */}
+      {validations.map((validation) => (
+        <CarteValidation
+          key={validation.tache_id}
+          validation={validation}
+          decider={decider}
+          maintenant={maintenant}
+        />
+      ))}
+      {/* Le plafond de dépense **sous** les questions d'agents et les validations
+          (#1182) : c'est le run entier qui attend, là où elles n'en retiennent
+          qu'une tâche, et le fil colle à son bas — la carte la plus basse est celle
+          qu'on voit. Posée au-dessus, elle restait hors de l'écran derrière une
+          question déjà repartie sans réponse (mesuré sur la vraie stack). Au-dessus,
+          en revanche, de ce que porte le dernier message, qui répond à ce qu'on
+          vient de taper. La `key` est le run **et** le début de l'attente : une
+          seconde question sur le même run (plafond relevé trop court) repart d'une
+          carte neuve, pas des cases et du montant de la précédente. */}
+      {auPlafond.map((run) => (
+        <PlafondDansLeFil
+          key={`${run.run_id}|${run.attente_depuis ?? ""}`}
+          run={run}
+          trancher={trancherPlafond}
+        />
+      ))}
       {outillage?.question && (
         /* La `key` remet la carte à zéro d'une question à la suivante — même
            geste et même raison que `FilDeCadrage` d'un tour de clarification au
@@ -228,6 +326,13 @@ export function useGestesDuFil(
       )}
       {geste !== null && (
         <GesteSurUnRun demande={geste} trancher={fil.trancherGeste} enCours={fil.envoi} />
+      )}
+      {reglement !== null && (
+        <ReglementDansLeFil
+          demande={reglement}
+          trancher={fil.trancherReglement}
+          enCours={fil.envoi}
+        />
       )}
     </div>
   );

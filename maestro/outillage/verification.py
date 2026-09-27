@@ -85,11 +85,12 @@ from typing import Any
 
 from maestro.outillage.modele import USAGES, Constats, Entree, Recommandation
 from maestro.outillage.recommandation import SKILL_PAR_USAGE
-from maestro.portee import PorteeProjet, decoupe
+from maestro.portee import PorteeProjet
 from maestro.projets.modele import Perimetre
 from maestro.projets.perimetre import motifs_compiles
 from maestro.sandbox import verification as execution
 from maestro.sandbox.en_place import DOSSIER_ATELIER, fichiers_du_perimetre
+from maestro.shell import Illisible, Simple, lis, simples
 
 #: Jouée, elle a rendu la main sans erreur.
 VERIFIEE = "verifiee"
@@ -141,21 +142,33 @@ def sondable(nom: str) -> bool:
 def programmes(commande: str) -> tuple[str, ...]:
     """Les programmes que `commande` appelle, dans l'ordre, chacun une fois (#1343).
 
-    Lus sur la **découpe de la portée** (`maestro.portee.decoupe`), la seule lecture
-    d'une commande du dépôt : le verbe de chaque commande simple, ses affectations de
-    tête et un `env` retirés. Un verbe qui est un chemin (`./gradlew`) est un fichier
-    du projet, pas un outil du poste ; une commande que la découpe ne sait pas lire
-    (une substitution) ne rend rien — ce qu'elle exécute n'est pas dans son texte.
+    Lus par le **lexique commun des commandes** (`maestro.shell`, #1348), la seule
+    lecture d'une commande du dépôt : le verbe de chaque commande simple, blocs et
+    boucles compris, ses affectations de tête et un `env` retirés. Un verbe qui est un
+    chemin (`./gradlew`) est un fichier du projet, pas un outil du poste ; une commande
+    que le lexique ne lit pas, ou qui porte une substitution, ne rend rien — ce
+    qu'elle exécute n'est pas dans son texte.
     """
-    simples = decoupe(commande)
-    if simples is None:
+    try:
+        script = lis(commande)
+    except Illisible:
+        return ()
+    lues = list(simples(script))
+    if any(_substitue(simple) for simple in lues):
         return ()
     vus: dict[str, None] = {}
-    for simple in simples:
-        verbe = _verbe_appele(simple.jetons)
+    for simple in lues:
+        verbe = _verbe_appele([mot.rendu() for mot in simple.mots])
         if sondable(verbe):
             vus.setdefault(verbe, None)
     return tuple(vus)
+
+
+def _substitue(simple: Simple) -> bool:
+    """Cette commande simple exécute-t-elle autre chose que ce que ses mots nomment ?"""
+    mots = [*simple.mots, *(mot for _, mot in simple.affectations)]
+    mots += [redirection.cible for redirection in simple.redirections]
+    return any(mot.scripts() for mot in mots) or any(d.scripts for d in simple.documents)
 
 
 def _verbe_appele(jetons: Sequence[str]) -> str:

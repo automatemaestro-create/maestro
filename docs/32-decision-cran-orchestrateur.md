@@ -473,6 +473,52 @@ distribuée. Cette porte rouvre la *portée*, pas le *décideur*.
 > le hook voyage avec la demande** (`ArbitreActe`, `maestro/providers/arbitrage.py`) : le cran d'un
 > appel dépend de ses arguments, donc seul celui qui les voit peut le dire. Les deux se corrigent
 > ensemble, à dessein : l'escalade seule aurait réveillé une personne à chaque `cd` dans le projet.
+>
+> ⚠ **Ce que #1348 a corrigé le 2026-09-27, sur le passage `20260927-070605` du banc.**
+> L'escalade de #1278 atteignait enfin une personne, et lui a rendu **55 commandes**, dont 44
+> restaient dans leur projet. La portée lisait le texte avec `shlex` : une substitution
+> (`T=$(mktemp -d)`), un heredoc, une boucle, un bloc étaient « illisibles », un `..` après un
+> `cd` sortait, une lecture au milieu d'un enchaînement aussi. Plus grave, relevé en préparant le
+> test : `shlex` lit le saut de ligne comme un blanc. Un `ls` suivi, à la ligne, de `rm -rf /`
+> passait donc pour une lecture (`maestro/lecture.py`), et un `echo ok` suivi d'un `rm` pour un
+> geste dans la portée.
+>
+> Les deux modules lisent désormais par un lexique commun, `maestro/shell.py`, qui lit comme
+> bash. La portée juge **ce que le texte dit, là où il le dit** :
+>
+> - chaque maillon pour lui-même, substitutions comprises ;
+> - depuis le dossier où un `cd` l'a mené ;
+> - avec les valeurs que le texte donne ;
+> - et ce qu'une enveloppe (`env`, `timeout`, `xargs`) ou un autre shell (`bash -c`) lance.
+>
+> **Le sort du dossier temporaire**, que #1278 laissait ouvert, est tranché par la
+> **provenance**. Ce que l'agent crée par `mktemp` dans la commande même est à lui, et c'est
+> ainsi que S2 vérifie son livrable. Il en va de même du nom qu'un `mktemp` sans gabarit
+> fabrique (`/tmp/tmp.XXXXXXXXXX`), que l'agent réutilise en toutes lettres d'un appel à
+> l'autre, puisque chaque appel `Bash` est un shell neuf. Un **nom fixe** du temporaire, lui,
+> n'est pas à l'agent : Maestro y range les espaces de travail des autres tâches, et il
+> remonte. Deux consignes envoyaient justement l'agent « dans le répertoire temporaire du
+> système » : `EspaceEnPlace.consigne_espace` et le cadre commun `_cadre_outille.md`. Elles
+> nomment maintenant `mktemp -d`.
+>
+> Rien de ce qui sort vraiment n'a été rouvert : les formes de #1278 remontent toujours, et
+> sept qui passaient remontent désormais (enveloppes, `xargs rm`, `bash -c`, heredoc donné à un
+> shell). Installer dans le projet (`.venv/Scripts/python.exe -m pip install`, `--target
+> ./vendor`, un venv activé, PowerShell compris) n'en sort plus.
+>
+> Pièces :
+>
+> - `tests/test_portee.py` ⑧, sur les 55 commandes réelles du passage ;
+> - le passage suivant, `20260927-104414`, joué sur une première version du correctif : **vert
+>   en entier**, S2 sans aucune validation, S8 dont l'acte revient toujours à la personne, et
+>   17 demandes de portée au lieu de 55. Les formes qu'il a encore rendues (`case`, dossier
+>   `mktemp` réutilisé, venv installé par PowerShell) sont lues depuis ;
+> - le passage `20260927-131322`, joué sur le code final, consignes comprises : **vert en
+>   entier et sans rejeu**, avec **2 validations de commande** au lieu de 48, et aucune pour
+>   S2 ni S9. Les deux restantes, le ménage des caches par `find … -exec rm -rf {} +` et un
+>   `cp` sur `/dev/null`, sont lues depuis. Le `find` qui efface se confronte désormais au
+>   relevé de ce qui était là, par ses racines et son `-name` ; ce qui ne se confronte pas
+>   remonte comme avant.
 
 **Porte 3 — un jugement contextuel dont on accepte le régime.** Un acte dont la légitimité dépend du
 **plan**, que la politique ne connaît pas (« ce `rm` est-il dans le périmètre de la tâche T3 ? »).

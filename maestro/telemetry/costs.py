@@ -148,6 +148,25 @@ ETAPE_EQUIPE = "equipe"
 #: dans le grand livre une entrée de tâche fantôme nommée « cadence ».
 ETAPE_CADENCE = "cadence"
 
+#: Étape du journal qui n'appartient à aucune tâche : le **plafond de dépense
+#: atteint** (#1182) — la question posée à la personne, puis ce qu'elle a décidé
+#: (relever, réduire, arrêter). Usage nul par construction : la suspension ne
+#: sollicite aucun modèle, et la dépense de la tâche interrompue est portée par
+#: sa propre ligne (`<tâche>:plafond`), jamais par celle-ci. Comptée dans le temps
+#: du run comme `ETAPE_EQUIPE`, pour la même raison : un run suspendu une heure
+#: sur son budget a duré cette heure-là. À déclarer ici pour la raison
+#: d'`ETAPE_BRIEF` : sans cette ligne, la règle par défaut ouvrirait dans le grand
+#: livre une entrée de tâche fantôme nommée « plafond ».
+ETAPE_PLAFOND = "plafond"
+
+#: Étape qui n'appartient à aucune tâche : le **bilan** d'un run terminé (#1284), un
+#: appel au modèle rendu **après** la fin du run et compté dans son coût. Il ne naît
+#: jamais au journal du moteur — l'API le rend et le publie —, mais la liste des
+#: étapes hors tâche est fermée par le code : déclarée ici, elle ne peut pas ouvrir
+#: une tâche fantôme nommée « bilan » le jour où un journal la porterait. Son
+#: intervalle ne compte **pas** dans le temps de mur du run, qui était fini.
+ETAPE_BILAN = "bilan"
+
 
 @dataclass(frozen=True)
 class TaskCost:
@@ -207,6 +226,11 @@ class RunCost:
     masquerait ce que coûte réellement la mise au point de l'intention. Nul tant
     qu'aucun run n'est passé par cette étape — c'est le lot 6 (#320) qui la
     branche sur la boucle.
+
+    `bilan` (#1284) porte l'usage du **bilan sur pièces**, rendu une fois le run
+    fini. À part pour la raison du brief : c'est un appel distinct, et le compter en
+    planification ferait payer au cadrage ce que coûte le regard porté après coup.
+    Nul tant qu'aucun bilan n'a été rendu.
     """
 
     run_id: str
@@ -218,6 +242,7 @@ class RunCost:
     #: porte comme durée, à la place d'une somme qui comptait deux fois les
     #: tâches menées de front.
     duree_mur_ms: int | None = None
+    bilan: StepUsage = StepUsage()
 
     @property
     def total(self) -> StepUsage:
@@ -235,9 +260,12 @@ class RunCost:
         « Total duration » ; la décomposition travail/attente se lit par tâche,
         là où elle a un sens.
 
-        Les compteurs, eux, retombent bien sur `RunJournal.usage_totale`.
+        Les compteurs, eux, retombent bien sur `RunJournal.usage_totale`. Le
+        **bilan** (#1284) s'y ajoute : il ne naît pas au journal du moteur, mais
+        c'est une dépense du run, et un total qui la tairait ne serait plus celui
+        que la liste des runs affiche.
         """
-        total = self.planification.fusion(self.brief)
+        total = self.planification.fusion(self.brief).fusion(self.bilan)
         for tache in self.taches:
             total = total.fusion(tache.usage)
         return replace(
@@ -259,12 +287,18 @@ class RunCost:
         """
         planification = StepUsage()
         brief = StepUsage()
+        bilan = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Les intervalles de toutes les étapes comptées — planification et brief
         # compris : ils occupent le run comme le reste, et c'est le temps de mur
         # du run entier qu'on mesure, pas celui de ses seules tâches.
         intervalles: list[tuple[datetime, datetime]] = []
         for record in journal.records:
+            if record.etape == ETAPE_BILAN:
+                # Le bilan (#1284) : rendu après la fin, il coûte au run sans
+                # l'occuper — son intervalle reste hors du temps de mur.
+                bilan = bilan.fusion(record.usage)
+                continue
             if record.etape != ETAPE_REPRISE:
                 intervalle = _intervalle(record)
                 if intervalle is not None:
@@ -283,10 +317,11 @@ class RunCost:
                 # comptabiliser — les étapes qu'il annonce sont, elles, réintégrées
                 # au journal (`RunJournal.reconstitue`) et comptées à leur place.
                 continue
-            if record.etape in (ETAPE_EQUIPE, ETAPE_CADENCE):
-                # La confrontation de l'équipe au plan (#1227) et la cadence du run
-                # (#1298) : des étapes du run, sans usage et sans tâche. Leur
-                # intervalle est déjà pris ci-dessus — c'est du temps de run.
+            if record.etape in (ETAPE_EQUIPE, ETAPE_PLAFOND, ETAPE_CADENCE):
+                # La confrontation de l'équipe au plan (#1227), la décision au
+                # plafond de dépense (#1182), la cadence du run (#1298) : des
+                # étapes du run, sans usage et sans tâche. Leur intervalle est déjà
+                # pris ci-dessus — c'est du temps de run, l'attente humaine comprise.
                 continue
             tache_id = record.etape.split(":", 1)[0]
             entree = entrees.get(tache_id)
@@ -319,6 +354,7 @@ class RunCost:
             brief=brief,
             taches=tuple(entrees.values()),
             duree_mur_ms=union_ms(intervalles),
+            bilan=bilan,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -327,6 +363,7 @@ class RunCost:
             "run_id": self.run_id,
             "planification": self.planification.to_dict(),
             "brief": self.brief.to_dict(),
+            "bilan": self.bilan.to_dict(),
             "total": self.total.to_dict(),
             "taches": [tache.to_dict() for tache in self.taches],
         }

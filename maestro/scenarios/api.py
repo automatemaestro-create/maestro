@@ -57,9 +57,12 @@ from maestro.controltower.orchestration import NOM_ORCHESTRATION
 from maestro.controltower.purge import port_api
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.engine.plafond import GESTE_ARRETER
+from maestro.providers.arbitrage import acte_trace
 
 #: Le chemin du fil de l'orchestrateur — la seule porte de lancement qu'un écran
 #: offre depuis #666, donc la seule que le banc a le droit d'emprunter.
@@ -758,6 +761,15 @@ class ClientAPI:
             attendus=(200, 409),
         )
 
+    def arreter_au_plafond(self, run_id: str) -> None:
+        """Arrête un run suspendu sur son plafond de dépense (#1182) — 409 s'il est déjà tranché."""
+        self._appel(
+            "POST",
+            f"/api/executions/{run_id}/plafond",
+            corps={"geste": GESTE_ARRETER},
+            attendus=(200, 409),
+        )
+
 
 def _reponse_de(corps: Any, *, chemin: str) -> dict[str, Any]:
     """Le message **de l'agent** dans la paire que rendent les routes du fil.
@@ -902,10 +914,31 @@ def attendre_le_run(
                         arbitrages.append(str(demande.get("outil") or ""))
                     if demandes is not None:
                         demandes.append(dict(demande))
+                    # L'acte tranché, pas seulement sa tâche (#1365) : le banc tient
+                    # la place de la personne, et ce qu'il a accordé doit se relire —
+                    # y compris d'un passage tué, dont seul le déroulé affiché reste.
+                    acte = acte_trace(str(demande.get("outil") or ""), demande.get("arguments"))
                     note(
                         "arbitrage approuvé" if approuve else "arbitrage refusé",
-                        f"{tache} — {demande.get('titre') or demande.get('outil') or ''}",
+                        " — ".join(
+                            morceau
+                            for morceau in (
+                                tache,
+                                str(demande.get("titre") or demande.get("outil") or ""),
+                                acte,
+                            )
+                            if morceau
+                        ),
                     )
+        if statut == EXECUTION_EN_ATTENTE_PLAFOND:
+            # Au plafond de dépense (#1182), le banc joue la personne qui
+            # **arrête** : un plafond posé par un scénario est une borne voulue
+            # (S4 la pose pour provoquer un échec), et le relever dépenserait du
+            # vrai modèle que personne n'a accordé. C'est l'issue d'avant ce lot
+            # — le run se solde sur ce qui est fait —, désormais **décidée**, et
+            # notée au déroulé comme un arbitrage.
+            client.arreter_au_plafond(run_id)
+            note("plafond de dépense atteint", "run arrêté par le banc")
         if horloge() >= limite:
             return detail
         dormir(intervalle_s)

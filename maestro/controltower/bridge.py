@@ -96,15 +96,24 @@ _ETAPE_EQUIPE = "equipe"
 #: jusqu'à la projection — comme l'étape `brief` porte le brief rédigé.
 _ETAPE_CADENCE = "cadence"
 
+#: Étape du journal qui n'est pas une tâche : la **décision au plafond de
+#: dépense** (#1182 — cf. `maestro.telemetry.costs.ETAPE_PLAFOND`). Deux lignes par
+#: franchissement — la question, puis ce qui a été décidé —, sur le run entier.
+#: Même raison d'être déclarée ici qu'`equipe` : sans elle, une carte de tâche
+#: fantôme nommée « plafond » naîtrait au Kanban.
+_ETAPE_PLAFOND = "plafond"
+
 #: Étapes rattachées au **run**, pas à une tâche : elles deviennent des activités
 #: d'agent sans `tache_id` (l'orchestrateur cadre, planifie puis confronte
-#: l'équipe au plan et dit la cadence du run, le moteur reprend).
+#: l'équipe au plan et dit la cadence du run, le moteur reprend, le run attend sa
+#: décision au plafond).
 _ETAPES_RUN = (
     _ETAPE_PLANIFICATION,
     _ETAPE_BRIEF,
     _ETAPE_REPRISE,
     _ETAPE_EQUIPE,
     _ETAPE_CADENCE,
+    _ETAPE_PLAFOND,
 )
 
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
@@ -176,6 +185,14 @@ _SUFFIXE_VERIFICATION = ":verification"
 #: ferait l'issue d'une tâche nommée `<tache>:rattrapage`, une carte fantôme.
 _SUFFIXE_RATTRAPAGE = ":rattrapage"
 
+#: Suffixe de la ligne d'une tâche **mise de côté au plafond de dépense** (#1182 —
+#: cf. `maestro.engine.plafond.SUFFIXE_ETAPE_PLAFOND`). Recopié comme les autres
+#: suffixes du moteur. Rangé avec `:relance` : un fait rattaché à la tâche, qui ne
+#: la fait changer d'aucune colonne — elle reste « en cours », et reprendra. Sa
+#: mesure est **gardée** : c'est la dépense de la tentative interrompue, qui
+#: n'entre au grand livre que par cette ligne.
+_SUFFIXE_PLAFOND = ":plafond"
+
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
 #: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
 _SUFFIXE_MESSAGE = ":message"
@@ -244,6 +261,7 @@ _SUFFIXES_ACTIVITE = (
     _SUFFIXE_QUESTION,
     _SUFFIXE_VERIFICATION,
     _SUFFIXE_RATTRAPAGE,
+    _SUFFIXE_PLAFOND,
 )
 
 

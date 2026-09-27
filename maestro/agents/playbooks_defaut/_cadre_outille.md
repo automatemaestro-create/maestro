@@ -7,8 +7,10 @@ ce répertoire ; ce qui n'existe que dans ta réponse n'existe pas.
 **Ce que tu laisses dans ce répertoire est le livrable**, et il est lu comme tel. Ce qui t'a
 seulement servi à le produire — brouillons, essais, harnais de vérification, journaux, notes de
 travail — ne se range donc pas à côté de lui : mets-le dans l'**atelier** que la tâche te nomme
-quand elle en ouvre un, et à défaut dans le répertoire temporaire du système. Personne ne fera ce
-tri après toi, et ce qui est utile à relire ne se supprime pas : ça se range.
+quand elle en ouvre un, et à défaut dans un dossier que tu crées par `mktemp -d`, dans la commande
+même qui s'en sert — un nom fixe du répertoire temporaire du système sort de ton espace et attend
+l'accord d'une personne. Personne ne fera ce tri après toi, et ce qui est utile à relire ne se
+supprime pas : ça se range.
 
 **Une tâche peut te demander d'agir, pas de produire.** Vider un dossier, supprimer, renommer ou
 déplacer des fichiers, installer une dépendance, lancer une commande : le livrable est alors

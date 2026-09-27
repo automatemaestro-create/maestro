@@ -595,8 +595,9 @@ class VerificateurTaches:
     ) -> tuple[Controle, ...]:
         """Fait réécrire au vérificateur les commandes que la portée refuse — tant qu'il en gagne.
 
-        Une commande que Maestro ne sait pas lire (une substitution, une
-        redirection d'entrée) ou qui sortirait du dossier n'est pas jouée ; sans
+        Une commande que Maestro ne sait pas lire (une syntaxe que `maestro.shell`
+        refuse) ou qui sortirait du dossier n'est pas jouée — une substitution, elle,
+        se lit et se juge depuis #1348 ; sans
         ceci, un contrôle légitime mal écrit laissait la tâche « non vérifiée »
         par la seule faute du vérificateur — mesuré au premier passage du banc
         (S1 à S3, 2026-09-27). Le vérificateur réécrit donc ces commandes-là, et

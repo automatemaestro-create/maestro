@@ -56,6 +56,8 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_QUESTIONS,
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_PLAFOND_DECISION,
+    EVENEMENT_PLAFOND_DEMANDE,
     EVENEMENT_TACHE_STATUT,
     EVENEMENT_VALIDATION_DECISION,
     EVENEMENT_VALIDATION_DEMANDE,
@@ -67,6 +69,7 @@ from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
     STATUTS_EXECUTION_EN_ATTENTE,
@@ -79,6 +82,7 @@ from maestro.controltower.state import (
 from maestro.controltower.validation import appliquer_sous_validation, evenement_demande
 from maestro.engine import MOTS_SENSIBLES, Guardrails, OrchestrationEngine
 from maestro.engine.guardrails import DemandeValidation
+from maestro.engine.plafond import GESTE_ARRETER, GESTE_RELEVER
 from maestro.orchestrator import Orchestrator
 from maestro.projets.modele import Perimetre, Projet
 from maestro.providers.base import ModelProvider
@@ -475,6 +479,40 @@ ATTENTES: tuple[Attente, ...] = (
         issues=(
             Issue("accord", _decision_de_validation(VALIDATION_APPROUVEE), EXECUTION_EN_COURS),
             Issue("refus", _decision_de_validation(VALIDATION_REFUSEE), EXECUTION_EN_COURS),
+        ),
+    ),
+    # La quatrième (#1182), celle que la confrontation ci-dessous attendait : le run
+    # au plafond de dépense. Ses trois gestes le font repartir `en_cours` — y
+    # compris l'arrêt, dont l'issue arrive ensuite par `execution.statut` comme
+    # celle de tout run.
+    Attente(
+        nom="plafond",
+        statut=EXECUTION_EN_ATTENTE_PLAFOND,
+        suspend=_evenement(
+            EVENEMENT_PLAFOND_DEMANDE,
+            projet_id=PROJET,
+            plafond={"run_id": RUN, "depense_usd": 5.02, "plafond_cout_usd": 5.0},
+            horodatage="2026-08-26T09:15:00+00:00",
+        ),
+        issues=(
+            Issue(
+                "relever",
+                _evenement(
+                    EVENEMENT_PLAFOND_DECISION,
+                    statut=GESTE_RELEVER,
+                    plafond={"geste": GESTE_RELEVER, "plafond_cout_usd": 8.0},
+                ),
+                EXECUTION_EN_COURS,
+            ),
+            Issue(
+                "arrêter",
+                _evenement(
+                    EVENEMENT_PLAFOND_DECISION,
+                    statut=GESTE_ARRETER,
+                    plafond={"geste": GESTE_ARRETER},
+                ),
+                EXECUTION_EN_COURS,
+            ),
         ),
     ),
 )

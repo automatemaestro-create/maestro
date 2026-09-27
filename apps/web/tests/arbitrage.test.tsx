@@ -34,6 +34,7 @@ import { ATTENTES } from "@/components/runs/EtatRun";
 import { attenteDepuis, attendUnHumain, runsEnAttente } from "@/lib/brief";
 import {
   ATTENTE_BRIEF,
+  ATTENTE_PLAFOND,
   ATTENTE_REPONSES,
   ATTENTE_VALIDATION,
   REGIME_SUSPENDU,
@@ -49,6 +50,7 @@ import {
   EXECUTION_ANNULEE,
   EXECUTION_EN_ATTENTE_ARBITRAGE,
   EXECUTION_EN_ATTENTE_BRIEF,
+  EXECUTION_EN_ATTENTE_PLAFOND,
   EXECUTION_EN_ATTENTE_REPONSES,
   EXECUTION_EN_COURS,
 } from "@/lib/types";
@@ -90,6 +92,14 @@ const ATTENTES_HUMAINES = [
     statut: EXECUTION_EN_ATTENTE_ARBITRAGE,
     cause: ATTENTE_VALIDATION,
     libelle: "Validation en attente",
+  },
+  // La quatrième (#1182) — celle que le filet ci-dessous attendait : le run arrêté
+  // sur son plafond de dépense, qui attend qu'on relève, réduise ou arrête.
+  {
+    nom: "plafond",
+    statut: EXECUTION_EN_ATTENTE_PLAFOND,
+    cause: ATTENTE_PLAFOND,
+    libelle: "Budget atteint",
   },
 ] as const;
 

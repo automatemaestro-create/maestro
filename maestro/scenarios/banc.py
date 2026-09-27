@@ -1,7 +1,8 @@
 """Le banc : il déroule les scénarios de référence et rend un verdict par scénario (#1148).
 
     .venv/Scripts/python.exe -m maestro.scenarios [--scenario S1[,S3]] [--delai <s>]
-                                                  [--nettoyer | --sauver-etat] [--liste]
+                                                  [--nettoyer | --sauver-etat]
+                                                  [--temoin <fichier>] [--liste]
 
 Le retex du 2026-09-11 (#854) est la seule vérification qui ait trouvé de vrais
 défauts du produit. Il était manuel, et il n'a été joué **qu'une fois** : dix jours
@@ -55,6 +56,13 @@ sauve rien.
 n'a pas pu être sauvé (`--sauver-etat` ; le verdict est au rapport). Le `3` est un
 refus et non un rouge : distinguer « le produit s'est trompé » de « le produit
 n'était pas allumé » est la première chose qu'un bouclage a besoin de savoir.
+
+⚠ **Un processus tué sort en `1`** sous Windows (`TerminateProcess`), le code d'un
+rouge : le code seul ne distingue pas « au moins un rouge » de « tué en chemin ».
+`--temoin <fichier>` y répond — le banc y écrit le dossier de son rapport en
+**dernier** geste, une fois allé au bout (#1365). Pas de témoin : le passage a été
+interrompu, et n'a laissé ni verdict ni état. C'est ce que lit
+`start.sh --etat-banc --rejouer`.
 """
 
 from __future__ import annotations
@@ -76,6 +84,7 @@ from maestro.scenarios.api import (
 )
 from maestro.scenarios.juge import Juge, JugeModele
 from maestro.scenarios.modele import (
+    Etape,
     Journal,
     Rapport,
     Resultat,
@@ -112,7 +121,7 @@ CODE_ETAT_NON_SAUVE = 4
 
 _USAGE = (
     f"Usage : python -m {MODULE} [--scenario S1[,S3]] [--delai <secondes>] "
-    "[--nettoyer | --sauver-etat] [--liste]"
+    "[--nettoyer | --sauver-etat] [--temoin <fichier>] [--liste]"
 )
 
 
@@ -270,8 +279,14 @@ def main(
         )
         return CODE_USAGE
 
-    horodatage = horodatage_courant()
-    atelier = atelier or Atelier.pour(horodatage)
+    # L'atelier se **réserve** : le dossier des ateliers est celui du poste, et deux
+    # copies qui lancent le banc dans la même seconde auraient sinon le même (#1365).
+    # Le nom réservé est l'identifiant du passage — rapport, atelier et état.
+    if atelier is None:
+        atelier = Atelier.reserver(horodatage_courant())
+        horodatage = atelier.passage
+    else:
+        horodatage = horodatage_courant()
     juge = juge or JugeModele()
     client_resolu, juge_resolu, atelier_resolu = client, juge, atelier
 
@@ -282,7 +297,7 @@ def main(
             client=client_resolu,
             atelier=atelier_resolu,
             juge=juge_resolu,
-            journal=Journal(),
+            journal=Journal(echo=lambda etape: print(_en_direct(etape), file=sortie)),
             delai_run_s=options.delai_s,
             horloge=horloge,
             dormir=dormir,
@@ -316,6 +331,7 @@ def main(
             )
         except Exception as exc:  # Redis ou disque : le verdict, lui, est au rapport
             print(f"État du passage NON sauvé : {exc}", file=erreur)
+            _temoigner(options.temoin, dossier, erreur)
             return CODE_ETAT_NON_SAUVE
         print(
             f"État du passage sauvé : {instantane.dossier} "
@@ -338,7 +354,43 @@ def main(
             "pièces d'un rouge (`--nettoyer` les retire).",
             file=sortie,
         )
+    _temoigner(options.temoin, dossier, erreur)
     return CODE_VERT if rapport.vert else CODE_ROUGE
+
+
+#: Ce qu'une étape occupe à l'écran pendant le passage : une ligne. Le rapport garde
+#: le détail entier ; l'écran ne sert qu'à suivre, et à relire un passage tué.
+ETAPE_EN_DIRECT_MAX = 240
+
+
+def _en_direct(etape: Etape) -> str:
+    """Une étape du déroulé telle que la sortie la montre pendant le passage (#1365)."""
+    ligne = f"{etape.libelle} — {etape.detail}" if etape.detail else etape.libelle
+    ligne = " ".join(ligne.split())
+    if len(ligne) > ETAPE_EN_DIRECT_MAX:
+        ligne = ligne[:ETAPE_EN_DIRECT_MAX].rstrip() + "…"
+    return f"    · {ligne}"
+
+
+def _temoigner(temoin: Path | None, dossier: Path, erreur: TextIO) -> None:
+    """Écrit dans `temoin` le dossier du rapport — le dernier geste d'un passage (#1365).
+
+    C'est ce que lit le lanceur (`start.sh --etat-banc --rejouer`) pour savoir
+    que le passage est **allé au bout**. Le code de sortie ne le dit pas : un
+    processus tué sous Windows sort en `1`, le code d'un rouge — mesuré le
+    2026-09-27, deux passages tués à 12:41:25 que le lanceur a annoncés
+    « état sauvé ». Écrit en dernier, après l'état et le ménage, pour qu'un
+    passage tué en chemin n'en laisse aucun. Un témoin qui ne s'écrit pas se dit
+    et ne change pas le verdict : le lanceur conclura au passage interrompu, le
+    sens sûr de l'erreur.
+    """
+    if temoin is None:
+        return
+    try:
+        temoin.parent.mkdir(parents=True, exist_ok=True)
+        temoin.write_text(f"{dossier}\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"Témoin du passage non écrit ({temoin}) : {exc}", file=erreur)
 
 
 def _synthese(rapport: Rapport, dossier: Path) -> str:
@@ -366,6 +418,7 @@ class _Options:
         self.nettoyer = False
         self.sauver_etat = False
         self.liste = False
+        self.temoin: Path | None = None
 
 
 def _options(args: Sequence[str]) -> _Options:
@@ -388,6 +441,12 @@ def _options(args: Sequence[str]) -> _Options:
             options.delai_s = _delai(_suivant(arg, reste))
         elif arg.startswith("--delai="):
             options.delai_s = _delai(arg.partition("=")[2])
+        elif arg == "--temoin":
+            options.temoin = Path(_suivant(arg, reste))
+        elif arg.startswith("--temoin="):
+            if not arg.partition("=")[2]:
+                raise ValueError("--temoin attend une valeur")
+            options.temoin = Path(arg.partition("=")[2])
         else:
             raise ValueError(f"argument inconnu : {arg}")
     return options

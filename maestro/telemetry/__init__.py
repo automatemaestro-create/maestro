@@ -36,9 +36,11 @@ Six briques, assemblées par la boucle d'orchestration (`maestro.engine`) :
 from __future__ import annotations
 
 from maestro.telemetry.costs import (
+    ETAPE_BILAN,
     ETAPE_BRIEF,
     ETAPE_CADENCE,
     ETAPE_EQUIPE,
+    ETAPE_PLAFOND,
     ETAPE_PLANIFICATION,
     PlafondDepense,
     PlafondDepenseDepasse,
@@ -70,9 +72,11 @@ from maestro.telemetry.usage import (
 )
 
 __all__ = [
+    "ETAPE_BILAN",
     "ETAPE_BRIEF",
     "ETAPE_CADENCE",
     "ETAPE_EQUIPE",
+    "ETAPE_PLAFOND",
     "ETAPE_PLANIFICATION",
     "LOGGER_NAME",
     "MARQUEUR_SECRET",

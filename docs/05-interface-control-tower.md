@@ -2748,6 +2748,54 @@ retenue ». Implémentation :
 phrase d'attente vient de l'API, la carte dit que l'agent est reparti **et reste répondable**, et le
 fil de l'orchestration porte toutes les questions là où un aparté ne porte que les siennes.
 
+#### 2.7.7 Le run a atteint son budget : la décision se prend dans le fil (#1182) — **livré**
+
+Quand un run atteint son plafond de dépense, il se **suspend** au lieu d'échouer (§6.1) : sa tâche
+coupée est mise de côté, son travail conservé, et rien ne se dépense d'ici la réponse. La question
+arrive **au pied du fil de l'orchestration**, juste sous les questions d'agents et les validations —
+c'est le run entier qui attend, et le fil colle à son bas : la carte la plus basse est la première
+vue —, sur une carte « Budget du run atteint » :
+
+- **trois chiffres au même rang** : *Dépensé*, lu contre le plafond (« 0,22 $US — sur un plafond de
+  0,01 $US ») ; *Reste à faire*, en tâches ; *Coût estimé du reste*, en fourchette — **l'estimation du
+  brief** (`lib/estimation`, docs/09), appliquée aux tâches qui restent, dite « ordre de grandeur,
+  pas une mesure » ;
+- **ce qui reste, nommé** tâche par tâche, en cases à cocher — cochée = gardée ; la tâche coupée y
+  porte « mise de côté — travail conservé ». **Décocher, c'est réduire** : l'estimation et le plafond
+  proposé se recalculent sur ce qui est gardé ;
+- **le nouveau plafond**, prérempli (la dépense plus le haut de l'estimation de ce qui est gardé,
+  les deux montants écrits sous le champ), modifiable, et vérifié avant de partir : un plafond qui ne
+  couvre pas ce qui est déjà dépensé ne se soumet pas. En tokens — le fournisseur ne tarifie pas —,
+  rien n'est proposé : l'estimation est en dollars, le plafond s'écrit ;
+- **deux boutons qui disent ce qu'ils engagent** : « Relever à X et reprendre », qui devient « Reprendre
+  sans N tâches — plafond X » dès qu'on décoche, et « Arrêter le run ». Rien ne relève le plafond sans
+  qu'un montant ait été lu sur le bouton ;
+- une ligne pour **ce qui se passe sans réponse**, ouverte par le plafond atteint — le run reste
+  suspendu, rien ne se dépense — et la **franchise** : ce qui était engagé au franchissement a pu
+  dépasser un peu le plafond, un appel modèle ne se tarifant qu'une fois fait.
+
+Le **pied de la carte se suffit** : dans la colonne de conversation, le fil colle à son bas et la
+carte, plus haute que la colonne, s'y ouvre sur ses gestes — titre et tuiles au-dessus, hors de vue.
+L'aide du champ et la dernière ligne redisent donc le plafond franchi, la dépense et le haut de
+l'estimation (relecture de #1182). Et le fil **se recolle quand son pied grandit**, s'il suivait : une
+carte tirée de l'état du shell (celle-ci, la question d'un agent) arrive souvent après les messages, et
+restait sinon sous le pli, sans geste « Dernier message » pour le dire.
+
+Ailleurs, le statut se lit « **Budget atteint** » (liste des runs, vue d'un run, fil), avec la phrase
+« Le run attend une décision sur son budget » et un renvoi « Décider » vers le fil — la quatrième
+attente humaine, au même régime que les trois autres (`causeDAttente`, table `ATTENTES`).
+
+La forme vient d'une **veille de conception** (Vercel Spend Management, GitHub Actions « Reviewing
+deployments », Replit « Edit usage limit » capturés ; Devin et Cursor lus) et d'un **choix rendu sur
+pièces** par le regard neuf, entre trois variantes rendues sur la vraie stack contre un vrai run
+suspendu : retenue **A** (un formulaire, les chiffres en tuiles), écartées B (trois options qui
+déplient leurs contrôles — « réduire » tout coché relevait le plafond sans le dire) et C (relevé façon
+grand livre — des fourchettes par tâche que l'estimation ne fournit pas). Consignées sur #1182, sous
+« ## Veille de conception » et « ## Variante retenue ». Implémentation :
+[`apps/web/components/chat/PlafondDansLeFil.tsx`](../apps/web/components/chat/PlafondDansLeFil.tsx),
+[`apps/web/lib/plafond.ts`](../apps/web/lib/plafond.ts), `components/chat/GestesDuFil.tsx`. Gardé par
+`apps/web/tests/plafond-fil.test.tsx`.
+
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
 Le fil d'activité a **quitté le tableau de bord pour sa propre entrée de menu**.
@@ -3451,6 +3499,68 @@ Gardé par `tests/test_gestes_du_fil.py` (le juge et le service en double, puis 
 le vrai `ServiceExecutions`, pour les quatre gestes, l'ambiguïté et les deux refus) et par
 `apps/web/tests/geste-sur-un-run.test.tsx` (la carte, la trace, les candidats, et leur montage
 dans le fil de chaque écran).
+
+#### Il règle ce qui attend quelqu'un : répondre à un agent, trancher une validation (#1183) — **livré**
+
+Un run qui attend une personne l'attendait **sur un autre écran** : la question d'un agent (#1023),
+la validation d'une action sensible (#48). Le fil voyait les deux depuis #1223, contenu compris,
+mais « réponds-lui : prends Postgres », « oui, valide » ou « refuse et archive plutôt » n'y avaient
+aucun effet : il ne pouvait que renvoyer vers l'écran concerné. Il les **règle** désormais, sans
+changer d'écran, par **le même service** que ces écrans (`ServiceAttentes`), et chaque règlement se
+**propose** puis se **confirme** — l'arbitrage des actes reste humain (docs/32) : le fil n'est
+qu'un autre endroit où la personne tranche.
+
+- **Le fil nomme ce qui attend.** Le bloc des attentes que le juge reçoit porte désormais, pour
+  chaque question et chaque validation, son **identifiant**, l'agent qui la porte et la tâche d'où
+  elle vient ; le cadre lui dit de nommer ce qui attend quand on lui demande où en est le travail,
+  et de le régler ici. Il rend un septième verdict, `attente` (§6.15.3) : « le développeur demande
+  quelle base utiliser : je lui réponds Postgres ? ».
+- **Une carte à confirmer** (`components/chat/ReglementDansLeFil.tsx`), au pied du fil comme les
+  autres — la grammaire de la carte d'un geste sur un run (#1179), appliquée : la **question** au
+  verbe du règlement (« Envoyer cette réponse ? », « Approuver cette demande ? », « Refuser cette
+  demande ? »), **ce qui attend** à ses faits — la question de l'agent, ou l'acte de la validation
+  dans l'ordre de son écran (« Appel de » et l'outil) —, puis qui le porte ; **ce qui partira**,
+  tel quel — la réponse que l'agent lira, citée, ou la raison d'un refus (« Sans raison donnée. »
+  sinon) — ; **ce qui va se passer**, dans les mots du service qui le fera (« L'agent attendait
+  cette réponse : il la lit et reprend sa tâche. », « L'appel est écarté : l'agent poursuit sa tâche
+  sans lui. ») ; puis un geste principal et « Pas maintenant ». « Refuser » est en ton d'alerte.
+  Aucun champ : « dis-lui plutôt MySQL » se dit dans le composeur, et appelle une carte nouvelle.
+- **Confirmé, le règlement passe par le service** : la réponse parvient à l'agent suspendu, qui la
+  lit et reprend ; la décision parvient au moteur, et la tâche reprend — ou l'acte est écarté.
+  Sous la réponse, une ligne **cochée** dit ce qui a été fait et ce qui a repris — « ✓ Réponse
+  transmise · l'agent attendait cette réponse : il la lit et reprend sa tâche » —, et le modèle en
+  parle depuis ce fait. La coche d'un refus est à la couleur du texte, jamais au vert.
+- **Un refus porte sa raison, la même que celle de l'écran des validations** : elle voyage dans le
+  même champ que le motif d'un refus motivé depuis la carte d'une validation (#272), jusqu'à
+  l'événement que le moteur attend — celui que #1185 portera jusqu'à l'agent. D'ici là l'agent
+  n'apprend que le refus, et rien ne dit le contraire : la carte écrit « Raison du refus », jamais
+  « transmise », et le modèle reçoit ce fait. Vu sur la vraie stack à la clôture : « votre consigne
+  lui a été transmise avec le refus » promettait ce qui n'avait pas lieu.
+- **L'acte d'une validation se lit comme sur sa carte** : « Appel de » et l'outil, puis ses
+  arguments en trois lignes au plus — l'acte entier reste sur la carte de la demande, rendue à sa
+  place dès que le règlement est tranché ou écarté.
+- **Ce qui attend se voit au pied du fil** : les questions d'agents y étaient déjà (#1025) ; les
+  **validations en attente** les rejoignent, dans la carte des validations montée telle quelle
+  (`CarteValidation`, #1228), refus motivé compris. La question ou la validation qu'une carte de
+  règlement vise **sort de sa pile** le temps que la carte attende — une seule carte par décision —,
+  et « Pas maintenant » la rend à sa place.
+- **Une demande ambiguë nomme ses candidates au lieu d'agir** (deux agents attendent, « réponds-lui
+  ») : aucune carte, la question dans les mots du modèle, et les attentes possibles listées sous la
+  bulle, chacune dans son encadré, sans bouton.
+- **Un règlement que l'état refuse se dit**, avec la raison du service : **avant** la carte (une
+  question déjà répondue, une validation déjà tranchée) ou **après** le clic (tranchée sur l'écran
+  des validations entre-temps). Rien n'est parti, la trace porte le glyphe d'arrêt et la raison.
+
+Ce ticket **applique** une forme déjà tranchée — celle de la carte proposée puis confirmée de #1179,
+qu'il réutilise en toutes lettres, et celle de la carte des validations, écrite par #1228 pour être
+montée dans le fil — : il n'a ni veille ni variantes à lui.
+
+Gardé par `tests/test_attentes_du_fil.py` (la carte, la confirmation au clic et tapée, l'échéance
+passée, l'ambiguïté et les refus ; la réponse lue par le vrai moteur suspendu sur le vrai canal
+des questions, dont la tâche reprend ; la décision rendue au validateur que le moteur attend, sa
+raison dans l'événement ; l'app entière, et les codes des routes des écrans inchangés) et par
+`apps/web/tests/reglement-dans-le-fil.test.tsx` (la carte, la trace, les candidates, les
+validations au pied du fil et leur refus motivé, la sortie de pile).
 
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
@@ -4223,6 +4333,9 @@ décrit le comportement réel, pas une fixture.
 - `POST /api/executions/{run_id}/reprendre` → `ResumeExecution` — **reprend** un run suspendu là où
   il en était : `en_pause` repasse à `false` et les tâches qui attendaient repartent. `404` inconnu,
   `409` si le run n'est **pas** suspendu.
+- `POST /api/executions/{run_id}/plafond` → `ResumeExecution` — **tranche un run arrêté sur son
+  plafond de dépense** (#1182, ci-dessous) : `relever`, `reduire` ou `arreter`. `404` inconnu,
+  `409` si le run n'attend pas cette décision, `422` si elle ne se tient pas.
 - `POST /api/executions/{run_id}/relancer` → `202` + `ResumeExecution` — rejoue un run interrompu
   **sur son brief approuvé** (#349, ci-dessous) et rend le résumé du **nouveau** run. `404` inconnu,
   `409` déjà soldé ou **encore vivant**, `422` sans brief approuvé.
@@ -4636,6 +4749,51 @@ même mot feraient chercher un brief à valider sur un run qu'on vient de mettre
 accompagne le badge dit ce que la pause ne fait pas — « celles qui étaient en vol vont à leur
 terme » —, parce que quelqu'un qui croirait avoir tout arrêté serait surpris de voir une tâche rendre
 son livrable trois minutes plus tard.
+
+**Au plafond de dépense, le run se suspend et demande** (#1182). Jusque-là, un run qui atteignait
+son plafond jetait la tâche en vol et refusait tout ce qui restait : à 101 % du budget, la tâche
+presque finie était perdue sans que personne ait rien décidé. Le plafond reste un plafond — **rien ne
+le dépasse sans la réponse de la personne** —, c'est l'arrêt sec qui a disparu :
+
+- la mesure qui franchit le plafond **interrompt** la tâche, comme avant (un appel modèle ne se
+  tarifie qu'une fois fait), mais la tâche est **mise de côté** et non soldée : son travail reste sur
+  sa branche `maestro/<tâche>` (ou dans la racine d'un projet non versionné), sa dépense entre au
+  grand livre par une ligne `<tâche>:plafond`, et sa carte reste « en cours » ;
+- le run passe `en_attente_plafond` — quatrième attente humaine, même `attente_depuis`, toujours
+  annulable — et **rien ne se dépense ni ne démarre** d'ici la réponse. Une seule question par
+  franchissement : les tâches qui atteignent le plafond pendant l'attente rejoignent la même ;
+- le résumé porte la question sous `plafond` (`null` hors attente) — des **faits**, pas une phrase :
+
+```jsonc
+// ResumeExecution.plafond (forme de DemandePlafond)
+{
+  "depense_usd": 5.02, "depense_tokens": 41000,         // dépense du run, grand livre compris
+  "plafond_cout_usd": 5.0, "plafond_tokens": null,       // les plafonds en vigueur
+  "raison": "plafond de dépense dépassé : …",
+  "restantes": [                                         // ce qui reste à faire, dans l'ordre du plan
+    { "tache_id": "api", "titre": "Écrire l'API", "interrompue": true },
+    { "tache_id": "doc", "titre": "Documenter l'API", "interrompue": false }
+  ]
+}
+// Corps de POST /api/executions/{run_id}/plafond
+{ "geste": "reduire", "plafond_cout_usd": 6.5, "plafond_tokens": null, "ecartees": ["doc"] }
+```
+
+Les trois gestes : **relever** pose le nouveau plafond et reprend les tâches mises de côté là où
+elles en étaient — leur agent lit qu'il reprend, et retrouve dans le projet ce qu'il avait écrit ;
+**réduire** fait de même en écartant les tâches désignées (échec « écartée », leur aval se bloque) ;
+**arrêter** solde le run sur ce qui est fait. Le `422` refuse ce qui ne se tient pas : une reprise
+sans nouveau plafond, un plafond que la dépense **atteint déjà** (le run s'y arrêterait à sa première
+mesure), une tâche écartée que la question ne nommait pas, ou une réduction qui écarte tout — c'est
+un arrêt. L'attente **n'a pas de borne** : aucune issue par défaut ne se décide à la place de la
+personne, l'une dépenserait ce qu'elle n'a pas accordé, l'autre jetterait ce qu'elle a payé. Sans
+arbitre (`maestro-run` sans Control Tower, exécuteur distribué qui ne sait pas relever un plafond),
+le run garde l'arrêt sec d'avant. Le coût du reste n'est pas estimé côté moteur : c'est l'estimation
+du brief (`apps/web/lib/estimation.ts`) que l'écran applique aux tâches restantes. Le banc des
+scénarios joue la personne qui **arrête** (S4 pose sa borne pour provoquer un échec). Implémentation :
+[`maestro/engine/plafond.py`](../maestro/engine/plafond.py) et
+[`maestro/controltower/plafond.py`](../maestro/controltower/plafond.py) ; couverture
+`tests/test_plafond_suspendu.py`, `tests/test_plafond_control_tower.py`.
 
 **Un run soldé dit *pourquoi*, et pas seulement *quoi*** (#479). `cause` est un code
 court porté par le résumé, à côté du `detail` qui reste ce qu'il était (`TypeErreur :
@@ -6556,6 +6714,69 @@ vocabulaire et `GesteRefuse`),
 [`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
 [`tests/test_gestes_du_fil.py`](../tests/test_gestes_du_fil.py).
 
+#### 6.15.3 Régler une attente depuis le fil — répondre à un agent, trancher une validation (#1183)
+
+Le pendant, pour ce qui **attend quelqu'un** pendant un run, du geste sur un run (§2.9 pour
+l'écran). Le bloc des attentes du juge porte l'identifiant de chaque question (`question_id`) et de
+chaque validation (la tâche qu'elle retient, `tache_id`) ; le juge rend un septième verdict,
+`attente` :
+
+```json
+{"verdict": "attente", "objectif": "",
+ "attente": {"action": "reponse|approbation|refus", "cibles": ["schema:9f1c0a4bd3"],
+             "texte": "Prends Postgres."}}
+```
+
+`texte` est la réponse que l'agent lira (`reponse`) ou la raison d'un refus (`refus`, vide sans
+raison) ; il est ignoré sur une approbation. La **file** se déduit de l'action — une question ne
+s'approuve pas, une validation ne se répond pas —, si bien qu'un identifiant ne peut pas viser la
+mauvaise. Le code confronte les cibles à la projection : une attente inconnue ne pose rien et se
+dit ; **plusieurs** ne posent aucune carte et voyagent sur la réponse (`attentes_candidates`) ; une
+seule pose la carte (`reglement`) si le service l'accepterait, sinon une correction s'écrit derrière
+les mots du modèle et le refus voyage en `reglement_fait`, comme celui d'un clic. La carte :
+
+```json
+{"action": "reponse", "texte": "Prends Postgres.",
+ "suite": "l'agent attendait cette réponse : il la lit et reprend sa tâche",
+ "attente": {"genre": "question", "identifiant": "schema:9f1c0a4bd3", "agent": "dev",
+             "role": "Développeur", "titre": "Rédiger le schéma", "objet": "Postgres ou SQLite ?",
+             "run_id": "8a15f78f45d3", "outil": "", "hypothese": "…", "echeance": "…"}}
+```
+
+`suite` est ce que le règlement fera, dit **par le service** (`ServiceAttentes.suite`), lu sur la
+structure de l'attente et jamais sur son texte : une réponse fait reprendre l'agent qui l'attend,
+ou le rattrapera au prochain appel identique passé l'échéance de sa question (#1025) ; une décision
+sur un **acte** (`outil`) l'exécute ou l'écarte — l'agent poursuit alors sa tâche sans lui —, sur
+une **écriture dans le projet** (`diff`) écrit le travail ou n'écrit rien, ailleurs fait reprendre
+la tâche ou renonce à l'action demandée.
+
+**La route.** `POST /api/chat/{agent}/reglement` → `201` + la même paire qu'un envoi. Son corps est
+`{approuve, conversation}`, **rien d'autre** : ce qui se règle est la carte que le fil porte, relue
+du fil. L'accord passe par `ServiceAttentes.regler`, et la réponse porte ce qui en est sorti,
+`reglement_fait` : `{action, attente, texte, suite, refus}`, où `texte` est ce qui est parti et
+`refus` la phrase du service quand l'attente a été réglée ailleurs — alors rien n'est parti. Le
+geste s'écrit dans le fil (« Oui, envoie-lui cette réponse. », « Oui, refuse cet acte — raison :
+… », « Non, ne lui réponds pas pour l'instant. »). Un « oui » tapé vaut le clic
+(`_reglement_approuve`), comme pour un geste sur un run.
+
+**Les règles vivent une fois**, dans le service (`ServiceAttentes`) : `POST
+/api/questions/{id}/reponse` et `POST /api/validations/{tache}/decision` l'appellent aussi, et n'en
+gardent que le code HTTP (`404` inconnue, `409` déjà réglée, `422` réponse vide). La raison d'un
+refus n'est composée qu'à un endroit (`attentes.detail_de_la_decision`) : un refus motivé porte la
+même, au caractère près, qu'il vienne de l'écran des validations ou du fil.
+
+**`409` quand rien n'attend** (`ReglementIntrouvable`) : le double clic ne répond pas deux fois.
+
+Implémentation : [`maestro/controltower/reglements.py`](../maestro/controltower/reglements.py) (le
+vocabulaire, `AttenteVisee`, `ReglementPropose`, `ReglementFait`, `ReglementRefuse`),
+[`maestro/controltower/attentes.py`](../maestro/controltower/attentes.py) (`ServiceAttentes`),
+[`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`reglement_en_attente`,
+`ServiceChat.trancher_reglement`),
+[`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`VERDICT_ATTENTE`, `PiloteDesAttentes`, `RepondeurOrchestration.trancher_reglement`) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`tests/test_attentes_du_fil.py`](../tests/test_attentes_du_fil.py).
+
 ### 6.16 Borner un run depuis le chat (#990) — **livré**
 
 Le moteur sait arrêter un run sur quatre garde-fous depuis #9 — `plafond_cout_usd`,
@@ -6642,7 +6863,8 @@ champ, `echeance`, dont la raison est écrite plus bas.
   les agents, en attente d'abord, puis avec leur réponse. `projet` est **obligatoire**, au contrat
   commun du §6.0 : une question appartient au projet de la tâche qui la pose.
 - `POST /api/questions/{question_id}/reponse` → `200` + `EtatQuestion` — la réponse humaine. L'agent,
-  suspendu sur le bus, la reçoit et reprend.
+  suspendu sur le bus, la reçoit et reprend. Ses règles vivent depuis #1183 dans le service des
+  attentes (`ServiceAttentes.repondre`), que le fil de l'orchestrateur appelle aussi (§6.15.3).
 
 ```jsonc
 // EtatQuestion (GET /api/questions)
@@ -7628,4 +7850,77 @@ vérificateur et la boucle), [`maestro/controltower/bridge.py`](../maestro/contr
 vérification sur la tâche). Gardé par
 [`tests/test_verification_taches.py`](../tests/test_verification_taches.py) et, côté front, par
 [`apps/web/tests/verification-tache.test.tsx`](../apps/web/tests/verification-tache.test.tsx).
+
+### 6.23 Le bilan d'un run, sur pièces (#1284) — **livré** (l'écran : #1285)
+
+À la fin de **tout** run — terminé, en échec ou annulé, qu'un fil l'ait demandé ou non —, Maestro en
+rend un **bilan fondé sur les pièces de son journal**. Il est né du run `3fe501fc0878` (projet `p3`,
+2026-09-24) : sa maquette est tombée trois fois à l'identique, le moteur a relancé en présumant un
+aléa, et le récit de fin a recopié « échec transitoire » puis conseillé de relancer.
+
+- `GET /api/executions/{run_id}/bilan` → `{"run_id": "…", "bilan": BilanRun | null}`. `null` tant qu'il
+  n'y en a pas (run en vol, modèle qui n'a pas répondu, run soldé avant ce lot) : le run existe, son
+  bilan pas encore. `404` si aucune trace reçue pour ce `run_id`. Le détail d'un run
+  (`GET /api/executions/{run_id}`) porte le même objet sous `bilan`.
+
+```jsonc
+"bilan": {
+  "run_id": "3fe501fc0878",
+  "statut": "echec",                     // l'issue pour laquelle il a été rendu
+  "fin": "2026-09-24T10:14:02+00:00",
+  "constats": [
+    { "rubrique": "echec",               // livre · echec · acte · consommation · recommandation
+      "texte": "La maquette est tombée trois fois sur la même cause…",
+      "pieces": ["P7", "P9", "P12"],     // les pièces qui le fondent
+      "nature": "deterministe",          // alea · deterministe · indeterminee — un échec seulement
+      "tache": "maquette-sections",      // "" s'il n'en nomme aucune du run
+      "agent": "",                       // une recommandation sur le playbook d'un agent
+      "revision_playbook": false }       // true : l'analyse d'échecs (§6.4, #139) a de quoi proposer
+  ],
+  "ecartes": [                           // ce que la vérification a refusé, avec sa raison
+    { "rubrique": "echec", "texte": "…", "pieces": ["P999"], "raison": "pièce inexistante : P999" }
+  ],
+  "pieces": [                            // les pièces CITÉES, et les entrées du journal d'où elles viennent
+    { "id": "P7", "famille": "relance", "texte": "2026-09-24T10:03:11+00:00 · agent.activite · …",
+      "tache_id": "maquette-sections", "entrees": ["j-0042"] }
+  ],
+  "pieces_offertes": 97,                 // ce que le modèle a lu
+  "entrees_lues": 183,                   // le journal du run, lu en entier
+  "pieces_laissees": 0                   // ce que le budget a laissé de côté
+}
+```
+
+- **Les pièces viennent du journal, en entier.** Elles se lisent au journal requêtable (§6.2), l'index
+  du journal durable — toutes les entrées du run, sans la page de 200. Familles : `statut` (du run,
+  des tâches, et les tentatives d'une tâche), `relance` (relances du moteur et diagnostics du
+  rattrapage, #1178, lus comme des pièces), `acte` (arbitrages, refus d'outil, écritures dans le
+  projet, processus laissés), `usage` (coût par tâche, tokens sans prix compris), `echange`
+  (validations, questions, cadrage, renfort), `checklist` (checklist au regard du verdict,
+  vérifications), `decision` (décisions consignées, hypothèses, blocages), `activite` (le bruit de
+  fond). Chaque pièce cite ses entrées `j-NNNN`, celles que `GET /api/journal` sert. Ce que le modèle
+  lit est **borné** (`PIECES_MAX`) : les pièces décisives d'abord, l'activité en dernier, et ce qui
+  reste dehors est compté.
+- **Le modèle juge, l'exécution vérifie** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
+  La nature d'un échec est jugée sur sa cause ; le libellé du moteur (« échec transitoire ») lui est
+  présenté comme une présomption. Un constat sans pièce, ou qui en cite une absente du dossier, est
+  **écarté** — rendu à part, jamais comme un constat.
+- **Le bilan ne tranche rien** ([docs/32](./32-decision-cran-orchestrateur.md) §b) : ni relance, ni
+  réglage, ni cran. Une recommandation sur le playbook d'un agent ne réécrit rien — elle désigne
+  l'analyse d'échecs existante, et seulement quand cet agent a failli dans ce run.
+- **Gardé au journal durable, compté au run.** Il voyage sur une activité de run (`agent.activite`,
+  `etape_run: "bilan"`, statut `bilan_rendu`) qui porte aussi le coût de l'appel : le grand livre le
+  range dans son propre poste (`cout.bilan`), compté au total et hors du temps de mur — le run était
+  fini. Il est rendu **hors des bornes du run** : un run arrêté sur son plafond est précisément celui
+  dont on veut savoir pourquoi, et le total peut donc dépasser la borne du montant du bilan. Une
+  réponse illisible ne retient rien mais compte son coût (`bilan_illisible`) ; un modèle injoignable
+  ne fabrique rien.
+- **Le récit de fin le lit** (#1224) : juste après la fiche du run, et sa consigne dit que, sur un
+  échec que le bilan dit déterministe, il ne conseille pas de relancer tel quel mais dit ce qui a
+  failli et ce qu'il faut changer d'abord. Un seul appel au modèle pour les deux : le récit attend
+  le bilan que la fin a mis en route.
+
+Implémentation : [`maestro/controltower/bilan.py`](../maestro/controltower/bilan.py) (pièces,
+vérification, service), [`maestro/controltower/recit.py`](../maestro/controltower/recit.py) (sa
+lecture par le récit). Gardé par [`tests/test_bilan_run.py`](../tests/test_bilan_run.py), qui rejoue
+les pièces de `p3` — et, devant le vrai modèle, `test_p3_devant_le_vrai_modele_…` (`cli_reel`).
 

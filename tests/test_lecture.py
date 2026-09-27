@@ -218,12 +218,40 @@ def test_un_texte_qu_on_ne_sait_pas_lire_repart_vers_l_arbitrage(commande: str) 
 
 @pytest.mark.parametrize(
     "commande",
-    ["ls && rm -rf x", "rm -rf x && ls", "ls | xargs rm", "git status; git push"],
+    [
+        "ls && rm -rf x",
+        "rm -rf x && ls",
+        "ls | xargs rm",
+        "git status; git push",
+        # Le saut de ligne sépare deux commandes (#1348). `shlex` le lisait comme
+        # un blanc : la seconde ligne devenait un argument de la première, et un
+        # `ls` suivi, à la ligne, de n'importe quoi passait pour une lecture.
+        "ls\nrm -rf /",
+        "cat notes.md\npip install rich",
+        "ls \\\n-la\nrm x",
+    ],
 )
 def test_un_maillon_qui_agit_emporte_toute_la_commande(commande: str) -> None:
     """Même règle que la couche permissions : une commande composée vaut son
     maillon le plus faible."""
     assert not est_lecture(commande), commande
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        # Relevé au passage `20260927-063101` (note de clôture de #1278) : une
+        # parenthèse échappée ou citée est un argument de `find`, pas un
+        # sous-shell — `shlex` la rendait comme un opérateur.
+        "find . \\( -name __pycache__ -o -name .pytest_cache \\) -not -path './.git*'",
+        "find . '(' -name '*.py' ')' -print",
+        "grep -n ';' src/app.py",
+        "ls \\\n  -la",  # une ligne continuée n'est pas une seconde commande
+        "ls -la # le contenu du dossier",
+    ],
+)
+def test_ce_que_bash_lit_comme_un_mot_se_lit_comme_un_mot(commande: str) -> None:
+    assert est_lecture(commande), commande
 
 
 @pytest.mark.parametrize(
