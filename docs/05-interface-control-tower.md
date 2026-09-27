@@ -7660,19 +7660,23 @@ aléa, et le récit de fin a recopié « échec transitoire » puis conseillé d
   fini. Il est rendu **hors des bornes du run** : un run arrêté sur son plafond est précisément celui
   dont on veut savoir pourquoi, et le total peut donc dépasser la borne du montant du bilan. Une
   réponse illisible ne retient rien mais compte son coût (`bilan_illisible`) ; un modèle injoignable
-  ne fabrique rien.
+  ne fabrique rien et ne compte rien, mais laisse sa ligne (`bilan_muet`, sans usage) — si bien
+  qu'un bilan absent dit toujours pourquoi, même après un redémarrage, et qu'« aucune raison »
+  veut dire qu'aucune rédaction n'a été tentée (#1285).
 - **Le récit de fin le lit** (#1224) : juste après la fiche du run, et sa consigne dit que, sur un
   échec que le bilan dit déterministe, il ne conseille pas de relancer tel quel mais dit ce qui a
   failli et ce qu'il faut changer d'abord. Un seul appel au modèle pour les deux : le récit attend
   le bilan que la fin a mis en route.
 - **La vue du run le montre** (#1285) — une **sixième lecture**, « Bilan », entre les décisions et le
   journal (§2.4.2), avec le compte de ses constats sur l'onglet ; et la **tête** d'un run soldé le
-  dit en une ligne sous la cause (« Bilan · 1 échec qui se reproduira · 2 choses à changer · … —
-  Lire le bilan »), qui y mène. La lecture rend **le travers d'abord** (ce qui a failli, ce qu'il
+  dit en une ligne sous la cause (« Bilan · ce qui a failli se reproduira · 2 choses à changer ·
+  1 acte sorti ou accordé sans personne — Lire le bilan »), qui y mène. La lecture rend **le travers d'abord** (ce qui a failli, ce qu'il
   faut changer, les actes sortis ou accordés sans personne, la consommation sans résultat, ce qui a
   été livré), la **nature** d'un échec en toutes lettres et par un glyphe (« Se reproduira »,
-  « Aléa », « Nature indéterminée »), la tâche par son titre, et **les constats écartés** repliés
-  au pied avec leur raison. **Chaque constat ouvre ses pièces** : rendues en clair — la ligne du
+  « Aléa », « Nature indéterminée »), la tâche par le titre que **son** run lui a donné (un
+  identifiant de tâche se réemploie d'un run à l'autre : le plan du run nomme d'abord), tue sous
+  chaque constat quand le run n'en a qu'une, et **les constats écartés** repliés au pied avec leur
+  raison. **Chaque constat ouvre ses pièces** : rendues en clair — la ligne du
   journal telle que le journal la dit, lue par son identifiant (`GET /api/journal?ids=j-0042,…`, où
   qu'elle soit dans le journal), ou la phrase d'une synthèse —, et chacune s'ouvre dans le
   **journal** du run sur ses seules entrées, ou dans la **frise** (entrée cerclée) quand elle y

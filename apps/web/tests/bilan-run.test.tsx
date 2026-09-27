@@ -56,6 +56,7 @@ import {
   EXECUTION_TERMINEE,
   RAISON_BILAN_MODELE_MUET,
   RAISON_BILAN_REPONSE_ILLISIBLE,
+  STATUT_BILAN_MUET,
   STATUT_BILAN_RENDU,
   type BilanRun,
   type EntreeJournal,
@@ -396,6 +397,42 @@ describe("le bilan, rangé et nommé", () => {
     expect(phrase).not.toContain("bilan_rendu");
   });
 
+  it("dit en mots la décision qu'un agent a tranchée seul, pièce fréquente d'un bilan", () => {
+    // Relevé par le regard neuf sur S1 : « batisseur — Décision de l'agent — Vider
+    // le dossier… : decision_autonome » — le type retombait sur la branche par défaut.
+    const phrase = resumeEvenement(
+      evenementDepuisEntree(
+        entreeJournalFactice({
+          type: "tache.decision",
+          run_id: RUN,
+          tache_id: "vider-le-dossier",
+          agent: "batisseur",
+          titre: "Décision de l'agent — Vider le dossier du projet s1-vider",
+          statut: "decision_autonome",
+          detail: "Supprimer aussi .maestro/, vide.",
+        }),
+      ),
+    );
+    expect(phrase).toBe("batisseur a tranché seul : Supprimer aussi .maestro/, vide.");
+    expect(phrase).not.toContain("decision_autonome");
+  });
+
+  it("dit en mots le modèle muet à la fin d'un run, jamais par le code du bus", () => {
+    const phrase = resumeEvenement(
+      evenementDepuisEntree(
+        entreeJournalFactice({
+          type: "agent.activite",
+          run_id: RUN,
+          agent: "orchestrateur",
+          titre: "Bilan du run, sur pièces",
+          statut: STATUT_BILAN_MUET,
+          detail: "Bilan non rendu : le modèle n'a pas répondu.",
+        }),
+      ),
+    );
+    expect(phrase).toBe("Bilan non rendu : le modèle n'a pas répondu.");
+  });
+
   it("rend les pièces d'un constat dans l'ordre où il les cite, sans en inventer", () => {
     const bilan = bilanEchec();
     expect(
@@ -631,7 +668,9 @@ describe("les états du bilan", () => {
   it.each([
     [RAISON_BILAN_MODELE_MUET, /le modèle n'a pas répondu quand il s'est soldé/],
     [RAISON_BILAN_REPONSE_ILLISIBLE, /la réponse du modèle ne se lisait pas/],
-    ["", /il s'est soldé avant que Maestro n'en rende, ou le modèle n'a pas répondu/],
+    // Sans raison, l'écran tranche au lieu d'hésiter entre deux causes (relevé par
+    // le regard neuf) : chaque appel sans bilan laisse sa ligne au journal.
+    ["", /aucun n'a été demandé à sa fin, et son journal ne garde aucune tentative/],
   ])("un bilan absent le dit, et dit pourquoi (raison « %s »)", async (raison, phrase) => {
     lecture.bilan = reponseBilanFactice({ run_id: RUN, etat: ETAT_BILAN_ABSENT, raison });
     monter();

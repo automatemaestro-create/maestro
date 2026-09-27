@@ -59,6 +59,7 @@ import {
   IconeJournal,
   IconeMonnaie,
   IconeObjectif,
+  IconeParametres,
   IconePermissions,
   IconeFichier,
   IconeReprise,
@@ -119,7 +120,9 @@ import { useFriseRun } from "@/lib/useFriseRun";
  */
 const ICONES_RUBRIQUE: Record<string, Icone> = {
   [RUBRIQUE_ECHEC]: IconeStatutEchec,
-  [RUBRIQUE_RECOMMANDATION]: IconeObjectif,
+  // Pas le ◎ de l'onglet et de l'en-tête « Bilan », juste au-dessus (relevé par
+  // le regard neuf) : ce qu'il faut changer prend l'engrenage de ce qui se règle.
+  [RUBRIQUE_RECOMMANDATION]: IconeParametres,
   [RUBRIQUE_ACTE]: IconePermissions,
   [RUBRIQUE_CONSOMMATION]: IconeMonnaie,
   [RUBRIQUE_LIVRE]: IconeFichier,

@@ -183,9 +183,9 @@ export function etatDuBilan(reponse: ReponseBilan): { etat: string; raison: stri
 
 /**
  * Pourquoi ce run n'a pas de bilan, en une phrase — celle de l'onglet. Trois cas,
- * et le troisième dit honnêtement qu'on ne sait pas lequel des deux : un run
- * soldé avant que Maestro ne rende des bilans, et un modèle muet avant le dernier
- * redémarrage de l'API (il ne laisse rien au journal), ne se distinguent pas.
+ * tranchés : chaque appel qui n'a rien rendu laisse sa ligne au journal, donc sans
+ * raison, c'est qu'aucune rédaction n'a été tentée (un run soldé avant que Maestro
+ * ne rende des bilans) — l'écran le dit, au lieu d'hésiter entre deux causes.
  */
 export function pourquoiPasDeBilan(raison: string): string {
   if (raison === RAISON_BILAN_MODELE_MUET) {
@@ -194,7 +194,7 @@ export function pourquoiPasDeBilan(raison: string): string {
   if (raison === RAISON_BILAN_REPONSE_ILLISIBLE) {
     return "Ce run n'a pas de bilan : la réponse du modèle ne se lisait pas. L'appel a coûté, et ce coût est compté au run.";
   }
-  return "Ce run n'a pas de bilan : il s'est soldé avant que Maestro n'en rende, ou le modèle n'a pas répondu à sa fin.";
+  return "Ce run n'a pas de bilan : aucun n'a été demandé à sa fin, et son journal ne garde aucune tentative de rédaction.";
 }
 
 /**

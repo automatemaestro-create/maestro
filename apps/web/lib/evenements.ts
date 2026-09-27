@@ -11,6 +11,7 @@ import {
   IconeAlerte,
   IconeArbitrage,
   IconeCapacite,
+  IconeDecision,
   IconeMessage,
   IconePuce,
   IconeReassignation,
@@ -31,6 +32,7 @@ import {
   EVENEMENT_PLAYBOOK_PROPOSITION,
   EVENEMENT_RUN_PLAN,
   EVENEMENT_TACHE_BLOCAGE,
+  EVENEMENT_TACHE_DECISION,
   EVENEMENT_TACHE_REASSIGNATION,
   EVENEMENT_TACHE_REFERENCE,
   EVENEMENT_TACHE_STATUT,
@@ -45,6 +47,7 @@ import {
   ORDRE_REPRISE,
   STATUT_ACTIVITE,
   STATUT_BILAN_ILLISIBLE,
+  STATUT_BILAN_MUET,
   STATUT_BILAN_RENDU,
   VALIDATION_APPROUVEE,
   VERIFICATION_IMPOSSIBLE,
@@ -63,6 +66,7 @@ const ICONES: Record<string, Icone> = {
   [EVENEMENT_TACHE_REASSIGNATION]: IconeReassignation,
   [EVENEMENT_TACHE_REFERENCE]: IconeTicket,
   [EVENEMENT_TACHE_USAGE]: IconeTache,
+  [EVENEMENT_TACHE_DECISION]: IconeDecision,
   [EVENEMENT_AGENT_ACTIVITE]: IconeAgent,
   [EVENEMENT_AGENT_CAPACITE]: IconeCapacite,
   [EVENEMENT_MESSAGE_INTER_AGENTS]: IconeMessage,
@@ -221,6 +225,7 @@ function phraseEtapeAgent(evenement: Evenement): string {
     case STATUT_BILAN_RENDU:
       return evenement.detail ? `Bilan du run — ${evenement.detail}` : quoi;
     case STATUT_BILAN_ILLISIBLE:
+    case STATUT_BILAN_MUET:
       return evenement.detail || quoi;
     case "terminee":
       return qui ? `${qui} a terminé : ${quoi}` : `${quoi} — terminé`;
@@ -312,6 +317,14 @@ export function resumeEvenement(evenement: Evenement): string {
       return evenement.detail
         ? `${evenement.agent ? `${evenement.agent} · ` : ""}${evenement.detail}`
         : `${quoi} bute : ${libelleStatut(evenement.statut)}`;
+    }
+    case EVENEMENT_TACHE_DECISION: {
+      // Ce qu'un agent a tranché seul (#1024). La phrase est la décision, dans
+      // `detail` — le titre (« Décision de l'agent — … ») ne redirait que la tâche,
+      // et le statut (`decision_autonome`) n'est qu'un code du bus, que la branche
+      // par défaut rendait tel quel là où les pièces d'un bilan renvoient (#1285).
+      const qui = evenement.agent ? `${evenement.agent} a tranché seul` : "Tranché seul";
+      return evenement.detail ? `${qui} : ${evenement.detail}` : evenement.titre || qui;
     }
     case EVENEMENT_AGENT_ACTIVITE:
       return phraseEtapeAgent(evenement);

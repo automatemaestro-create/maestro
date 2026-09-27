@@ -62,6 +62,7 @@ from maestro.controltower.bilan import (
     RUBRIQUE_ECHEC,
     RUBRIQUE_RECOMMANDATION,
     STATUT_BILAN_ILLISIBLE,
+    STATUT_BILAN_MUET,
     STATUT_BILAN_RENDU,
     SYSTEME,
     BilanRun,
@@ -769,12 +770,26 @@ def test_un_bilan_par_issue_et_un_seul_appel_meme_demande_deux_fois() -> None:
 
 
 def test_un_modele_muet_ne_fabrique_aucun_bilan() -> None:
-    """Rien n'est publié, rien n'est inventé : le récit se rédigera sans bilan."""
+    """Rien n'est inventé : le récit se rédigera sans bilan — et le journal dit pourquoi.
+
+    Une ligne sans bilan ni usage (#1285) : sans elle, un bilan absent après un
+    redémarrage ne distinguait plus « le modèle s'est tu » de « rien n'a été demandé »,
+    et la vue du run devait dire l'un **ou** l'autre. Sans usage, elle ne compte rien
+    au run : on ne sait pas ce qu'un appel tombé a consommé.
+    """
     rejeu = rejouer_p3(total=60)
     service, bus = _service(rejeu, JugeScripte(panne=True))
 
     assert asyncio.run(service.rendre(RUN)) is None
-    assert bus.publies == []
+    (trace,) = bus.publies
+    assert (trace.statut, trace.bilan, trace.usage, trace.cout_usd) == (
+        STATUT_BILAN_MUET,
+        None,
+        None,
+        None,
+    )
+    assert trace.etape_run == ETAPE_BILAN
+    assert "n'a pas répondu" in trace.detail
 
 
 def test_une_reponse_illisible_ne_retient_rien_mais_son_cout_est_compte() -> None:
@@ -1159,9 +1174,13 @@ def test_l_etat_du_bilan_suit_le_run_de_son_vol_a_son_rendu() -> None:
 def test_un_bilan_absent_dit_pourquoi_quand_il_le_sait() -> None:
     """Modèle muet, réponse illisible, ou rien de connu (run soldé avant ce lot, sans juge)."""
     muet_rejeu = rejouer_p3(total=60)
-    muet, _ = _service(muet_rejeu, JugeScripte(panne=True))
+    muet, bus_muet = _service(muet_rejeu, JugeScripte(panne=True))
     asyncio.run(muet.rendre(RUN))
     assert muet.etat(RUN) == ("absent", "modele_muet")
+    # Après un redémarrage aussi : la ligne du modèle muet est au journal.
+    muet_rejeu.evenement(bus_muet.publies[0])
+    muet_relu, _ = _service(muet_rejeu, JugeScripte())
+    assert muet_relu.etat(RUN) == ("absent", "modele_muet")
 
     illisible_rejeu = rejouer_p3(total=60)
     illisible, bus = _service(illisible_rejeu, JugeScripte("pas du JSON"))

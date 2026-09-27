@@ -1640,6 +1640,12 @@ export const EVENEMENT_TACHE_USAGE = "tache.usage";
  * backend.
  */
 export const EVENEMENT_TACHE_BLOCAGE = "tache.blocage";
+/**
+ * #1024 : ce qu'un agent a **tranché seul**, hors de son brief — `detail` la
+ * décision, `titre` « Décision de l'agent — <tâche> », `statut`
+ * `decision_autonome`. La lecture Décisions (#1026) les liste ; le journal les dit.
+ */
+export const EVENEMENT_TACHE_DECISION = "tache.decision";
 export const EVENEMENT_AGENT_ACTIVITE = "agent.activite";
 export const EVENEMENT_AGENT_CAPACITE = "agent.capacite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";
@@ -2539,28 +2545,29 @@ export type DecisionsRun = {
 };
 
 /**
+ * Les statuts de l'activité de run qui porte le bilan (`agent.activite`, étape
+ * `bilan`) — rendu, réponse du modèle illisible, ou modèle muet (`bilan.py`,
+ * `STATUT_BILAN_*`). Le journal les dit en mots.
+ */
+export const STATUT_BILAN_RENDU = "bilan_rendu";
+export const STATUT_BILAN_ILLISIBLE = "bilan_illisible";
+export const STATUT_BILAN_MUET = "bilan_muet";
+
+/**
  * Où en est le bilan d'un run (#1285) — le champ `etat` de
  * `GET /api/executions/{run_id}/bilan` (`maestro/controltower/bilan.py`) :
  * `attendu` tant que le run n'est pas soldé, `en_redaction` pendant l'appel au
  * modèle, `rendu` quand il est là, `absent` sinon.
  */
-/**
- * Les statuts de l'activité de run qui porte le bilan (`agent.activite`, étape
- * `bilan`) — rendu, ou réponse du modèle illisible (`bilan.py`,
- * `STATUT_BILAN_RENDU` / `STATUT_BILAN_ILLISIBLE`). Le journal les dit en mots.
- */
-export const STATUT_BILAN_RENDU = "bilan_rendu";
-export const STATUT_BILAN_ILLISIBLE = "bilan_illisible";
-
 export const ETAT_BILAN_ATTENDU = "attendu";
 export const ETAT_BILAN_EN_REDACTION = "en_redaction";
 export const ETAT_BILAN_RENDU = "rendu";
 export const ETAT_BILAN_ABSENT = "absent";
 
 /**
- * Pourquoi un bilan est absent, quand l'API le sait. Aucune raison (`""`) : le run
- * s'est soldé avant que Maestro ne rende des bilans, ou le modèle s'est tu avant le
- * dernier redémarrage de l'API.
+ * Pourquoi un bilan est absent. Chaque appel qui n'a rien rendu laisse sa ligne au
+ * journal, si bien qu'aucune raison (`""`) veut dire qu'aucune rédaction n'a été
+ * tentée à la fin du run.
  */
 export const RAISON_BILAN_MODELE_MUET = "modele_muet";
 export const RAISON_BILAN_REPONSE_ILLISIBLE = "reponse_illisible";

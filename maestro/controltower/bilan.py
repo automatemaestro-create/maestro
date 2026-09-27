@@ -1037,10 +1037,13 @@ def verifier(
 # Le bilan
 # --------------------------------------------------------------------------- #
 
-#: Le statut de l'activité qui porte un bilan rendu, et celui d'un appel dont la
-#: réponse n'a pas pu se lire — son coût est compté, rien n'est retenu.
+#: Le statut de l'activité qui porte un bilan rendu, celui d'un appel dont la
+#: réponse n'a pas pu se lire — son coût est compté, rien n'est retenu —, et celui
+#: d'un appel tombé sans réponse (#1285) : ni bilan ni usage, seulement la trace qui
+#: fait dire, après un redémarrage, pourquoi le bilan manque.
 STATUT_BILAN_RENDU = "bilan_rendu"
 STATUT_BILAN_ILLISIBLE = "bilan_illisible"
+STATUT_BILAN_MUET = "bilan_muet"
 
 #: Le titre de l'activité — ce que le journal du run prononce.
 TITRE_BILAN = "Bilan du run, sur pièces"
@@ -1406,11 +1409,18 @@ ETAT_EN_REDACTION = "en_redaction"
 ETAT_RENDU = "rendu"
 ETAT_ABSENT = "absent"
 
-#: Pourquoi un bilan est absent, quand on le sait. Aucune raison (`""`) : le run
-#: s'est soldé avant que Maestro ne rende des bilans, ou le modèle s'est tu avant le
-#: dernier redémarrage de l'API — un modèle muet ne laisse rien au journal.
+#: Pourquoi un bilan est absent. Les deux raisons survivent à un redémarrage, parce
+#: que chaque appel qui n'a rien rendu laisse sa ligne au journal ; aucune raison
+#: (`""`) veut donc dire qu'**aucune rédaction n'a été tentée** à la fin du run — il
+#: s'est soldé avant que Maestro ne rende des bilans, ou sans l'API pour le demander.
 RAISON_MODELE_MUET = "modele_muet"
 RAISON_REPONSE_ILLISIBLE = "reponse_illisible"
+
+#: La raison que chaque trace d'un appel sans bilan donne à son absence.
+_RAISON_DE_LA_TRACE = {
+    STATUT_BILAN_MUET: RAISON_MODELE_MUET,
+    STATUT_BILAN_ILLISIBLE: RAISON_REPONSE_ILLISIBLE,
+}
 
 
 class ServiceBilan:
@@ -1462,9 +1472,8 @@ class ServiceBilan:
 
         Lu à chaque demande, jamais tenu à côté : le bilan gardé, l'appel en vol, le
         statut du run, puis la trace d'un appel qui n'a rien rendu — celle de ce
-        process pour un modèle muet (il ne laisse rien au journal), celle du journal
-        pour une réponse illisible (son coût y est consigné, donc elle survit à un
-        redémarrage).
+        process d'abord, puis la **dernière** ligne qu'un tel appel a laissée au
+        journal (modèle muet, réponse illisible), qui survit à un redémarrage.
         """
         if self.bilan(run_id) is not None:
             return ETAT_RENDU, ""
@@ -1476,11 +1485,10 @@ class ServiceBilan:
         if execution.statut not in STATUTS_EXECUTION_TERMINAUX:
             return ETAT_ATTENDU, ""
         raison = self._non_rendus.get(run_id, "")
-        if not raison and any(
-            event.etape_run == ETAPE_BILAN and event.statut == STATUT_BILAN_ILLISIBLE
-            for event in execution.evenements
-        ):
-            raison = RAISON_REPONSE_ILLISIBLE
+        if not raison:
+            for event in execution.evenements:
+                if event.etape_run == ETAPE_BILAN and event.statut in _RAISON_DE_LA_TRACE:
+                    raison = _RAISON_DE_LA_TRACE[event.statut]
         return ETAT_ABSENT, raison
 
     def lancer(self, run_id: str) -> asyncio.Future[BilanRun | None] | BilanRun | None:
@@ -1543,6 +1551,16 @@ class ServiceBilan:
                 run_id,
             )
             self._non_rendus[run_id] = RAISON_MODELE_MUET
+            # Sa ligne au journal, sans usage : on ne sait pas ce qu'un appel tombé a
+            # consommé, et elle ne compte donc rien au run — elle dit seulement,
+            # après un redémarrage, pourquoi le bilan manque (#1285).
+            await self._publier(
+                execution,
+                statut=STATUT_BILAN_MUET,
+                detail="Bilan non rendu : le modèle n'a pas répondu.",
+                usage=None,
+                bilan=None,
+            )
             return None
         bruts = lire_les_constats(texte)
         if bruts is None:
@@ -1589,10 +1607,10 @@ class ServiceBilan:
         *,
         statut: str,
         detail: str,
-        usage: StepUsage,
+        usage: StepUsage | None,
         bilan: BilanRun | None,
     ) -> None:
-        """Publie l'activité `bilan` du run : son coût, et le bilan quand il y en a un.
+        """Publie l'activité `bilan` du run : son coût s'il est connu, le bilan s'il y en a un.
 
         Une publication en échec ne coûte pas le bilan à qui l'attend (le récit de
         fin) : elle se dit au journal technique, et le bilan manquera au rejeu.
@@ -1608,7 +1626,7 @@ class ServiceBilan:
                     statut=statut,
                     detail=detail,
                     usage=usage,
-                    cout_usd=usage.cout_usd,
+                    cout_usd=usage.cout_usd if usage is not None else None,
                     projet_id=execution.projet_id,
                     etape_run=ETAPE_BILAN,
                     bilan=bilan.to_dict() if bilan is not None else None,
