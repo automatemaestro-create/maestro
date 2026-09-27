@@ -1422,3 +1422,37 @@ def test_un_echec_de_correction_rend_la_piece_non_ecrivable() -> None:
     assert not _piece(echec="`dotnet test` a échoué à l'exécution.").ecrivable
     # L'empreinte désigne le **contenu** : la même version, quelle que soit sa justification.
     assert _piece().to_dict()["empreinte"] == _piece(correction="").to_dict()["empreinte"]
+
+
+def test_les_notes_renversees_renvoient_a_la_decision_et_docs_05_decrit_les_pieces() -> None:
+    """Critère 3 : ce que la documentation dit de ce renversement, tenu comme un fait du dépôt.
+
+    Deux notes décidaient de l'étape d'outillage que #1161 retire — docs/37 §4 point 6
+    (« première et proposée d'office, mais reportable ») et la ligne #1034 de docs/38 §8.
+    Qui les relit doit tomber sur le renversement **là où la règle est écrite**, avec le
+    lien vers la note qui le décide (docs/43) ; et docs/05 §6.20 doit décrire ce qui la
+    remplace. Un renvoi retiré en réécrivant l'une de ces sections ferait relire une
+    règle morte comme une règle vivante.
+    """
+    docs = Path(__file__).resolve().parent.parent / "docs"
+    note = "43-decision-un-projet-nait-dans-la-conversation.md"
+
+    def entre(fichier: str, debut: str, fin: str) -> str:
+        texte = (docs / fichier).read_text(encoding="utf-8")
+        depart = texte.index(debut)
+        return texte[depart : texte.index(fin, depart)]
+
+    point_6 = entre(
+        "37-decision-equipe-sur-mesure.md", "6. **L'étape d'outillage", "7. **Le répertoire"
+    )
+    assert "⚠ **Renversé le 2026-09-24**" in point_6 and note in point_6
+    assert "#1161, **livré**" in point_6
+    section_8 = entre("38-decision-outillage-universel-du-projet.md", "## 8. ", "| #1035")
+    assert "⚠ **Renversé en partie le 2026-09-24**" in section_8 and note in section_8
+    assert "⚠ Renversé par #1161" in section_8
+    assert "| #1161 — pièce par pièce, dans la conversation" in section_8
+    pieces = entre(
+        "05-interface-control-tower.md", "#### Pièce par pièce, dans le fil (#1161)", "\n### "
+    )
+    for fait in ("Corriger avec ses mots", "**La carte**", "PieceDOutillage.tsx", "422"):
+        assert fait in pieces, fait
