@@ -55,7 +55,7 @@ import {
   IconePause,
   IconeReprise,
 } from "@/components/Icones";
-import { Bouton, LienRenvoi, type Icone } from "@/components/Primitives";
+import { Bouton, Carte, LienRenvoi, type Icone } from "@/components/Primitives";
 import { BadgeRun } from "@/components/runs/EtatRun";
 import { AUCUNE_BORNE, phraseDesBornes } from "@/lib/bornes";
 import { causeDAttente, regimeDuRun } from "@/lib/execution";
@@ -222,21 +222,19 @@ export function TraceDuGeste({ fait }: { fait: GesteRunFait }) {
  * ses faits, sans bouton : la question est dans les mots du modèle, juste au-dessus,
  * et la réponse se dit dans le composeur.
  *
- * Chaque candidat a son **encadré** : sous une bulle, la ligne cible passe sur
- * plusieurs rangs, et deux candidats collés se lisaient comme un seul bloc dont
- * seule la pastille du second marquait le début (relecture visuelle de #1179).
+ * Chaque candidat a son **encadré** — la carte compacte du socle : sous une bulle,
+ * la ligne cible passe sur plusieurs rangs, et deux candidats collés se lisaient
+ * comme un seul bloc dont seule la pastille du second marquait le début (relecture
+ * visuelle de #1179).
  */
 export function RunsCandidats({ runs }: { runs: RunVise[] }) {
   if (runs.length === 0) return null;
   return (
     <ul aria-label="Runs possibles" className="flex flex-col gap-2 text-annexe">
       {runs.map((run) => (
-        <li
-          key={run.run_id}
-          className="rounded-controle border border-bord bg-surface px-2.5 py-2"
-        >
+        <Carte key={run.run_id} balise="li" densite="compacte">
           <CibleDuRun run={run} />
-        </li>
+        </Carte>
       ))}
     </ul>
   );
