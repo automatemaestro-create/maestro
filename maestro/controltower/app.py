@@ -419,6 +419,7 @@ from maestro.controltower.battement import (
     RegistreBattementsMemoire,
     RegistreBattementsRedis,
 )
+from maestro.controltower.bilan import JugeBilan, ServiceBilan
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
@@ -1672,6 +1673,7 @@ def create_app(
     assistance_repondeur: RepondeurChat | None = None,
     orchestration_repondeur: RepondeurChat | None = None,
     recit_redacteur: RedacteurRecit | None = None,
+    bilan_juge: JugeBilan | None = None,
     analyseur: AnalyseurEchecs | None = None,
     redacteur_playbook: RedacteurPlaybook | None = None,
     generateur_agent: GenerateurDefinitionAgent | None = None,
@@ -1744,6 +1746,12 @@ def create_app(
     lanceur ; c'est aussi le point d'injection qui permet de jouer le fil **sans
     fournisseur** — les tests y mettent un répondeur scripté, un répondeur à
     fournisseur factice, ou aucun lanceur.
+
+    `bilan_juge` (#1284) rend le **bilan sur pièces** de chaque run à sa fin
+    (`maestro.controltower.bilan`), servi par `GET /api/executions/{run_id}/bilan`
+    et lu par le récit de fin. Par défaut le modèle du poste, résolu au premier
+    bilan ; les tests en injectent un scripté, et la suite neutralise le défaut
+    (`tests/conftest.py`).
 
     `analyseur` (#139) produit les propositions d'auto-amélioration servies par
     `POST /api/playbooks/{agent}/propositions` : à la demande, il analyse les
@@ -2343,6 +2351,15 @@ def create_app(
         except Exception:  # noqa: BLE001 — projet retiré, illisible, ou jamais déclaré
             return None
 
+    # Le bilan sur pièces d'un run (#1284) : rendu à la fin de **tout** run, qu'un
+    # fil l'ait demandé ou non, et publié sur le bus — donc gardé au journal durable.
+    bilans = ServiceBilan(
+        state=state,
+        journal=journal,
+        bus=bus,
+        agent=AGENT_ORCHESTRATION,
+        juge=bilan_juge,
+    )
     # Le récit de fin d'un run (#1224) : il écrit dans le fil ci-dessus, donc il
     # se construit après lui. Rien ne l'abonne au bus — c'est la pompe qui lui
     # passe la main, une fois la projection à jour (voir `_pompe`).
@@ -2355,6 +2372,9 @@ def create_app(
         # La fin d'un run revoit aussi l'outillage de son projet (#1343) : ce qui ne
         # pouvait pas se jouer sur un dossier vide se joue sur le projet construit.
         outillage=conducteur,
+        # Et le récit lit le bilan avant d'écrire (#1284) : celui que la fin a mis
+        # en route, jamais un second.
+        bilan=bilans,
     )
     # Les récits en vol, tenus par l'app : `asyncio.create_task` ne garde qu'une
     # référence faible, et une tâche ramassée en cours de route perdrait le
@@ -2367,15 +2387,21 @@ def create_app(
     relais_renfort = RelaisRenfort(bus, orchestration, AGENT_ORCHESTRATION)
 
     def raconter_la_fin(run_id: str) -> None:
-        """Lance le récit de `run_id` — sans faire attendre la pompe (#1224).
+        """Lance le bilan et le récit de `run_id` — sans faire attendre la pompe (#1224, #1284).
 
         La rédaction est un appel modèle et la lecture du livrable touche le
         disque : les faire dans la pompe figerait le flux temps réel de tous les
         écrans pendant plusieurs secondes.
+
+        Le bilan part **à côté** du récit, et non dedans : tout run en a un, y
+        compris celui qu'aucun fil n'a demandé et qui n'aura donc pas de récit. Le
+        récit, lui, attend le même bilan (`ServiceBilan.rendre` partage l'appel en
+        vol) : il n'y a qu'un appel au modèle pour les deux.
         """
-        tache = asyncio.create_task(conteur.raconter(run_id))
-        recits.add(tache)
-        tache.add_done_callback(recits.discard)
+        for travail in (bilans.rendre(run_id), conteur.raconter(run_id)):
+            tache = asyncio.create_task(travail)
+            recits.add(tache)
+            tache.add_done_callback(recits.discard)
 
     async def rejouer() -> None:
         """Relit le journal durable dans la projection — une seule fois par process."""
@@ -3245,6 +3271,26 @@ def create_app(
             journal.entrees_du_run(run_id),
             taches=state.titres_du_run(run_id),
         ).to_dict()
+
+    @app.get("/api/executions/{run_id}/bilan")
+    async def bilan_execution(run_id: str) -> dict[str, Any]:
+        """Le **bilan sur pièces** d'un run terminé (#1284, docs/05 §6.23).
+
+        Rendu à la fin du run par un appel au modèle, vérifié contre les pièces du
+        journal du run, puis publié — donc gardé au journal durable, et relu d'ici
+        après un redémarrage. Chaque constat cite ses pièces (`P7`), et chaque pièce
+        les entrées du journal dont elle vient (`j-0042`, celles de
+        `GET /api/journal`) ; les constats sans pièce sont rendus à part, avec la
+        raison de leur écart.
+
+        `bilan` vaut `null` tant qu'il n'y en a pas : un run en vol, un modèle qui
+        n'a pas répondu, un run soldé avant ce lot. Ce n'est pas une erreur — le
+        run existe, son bilan pas encore. 404 si aucune trace reçue pour ce `run_id`.
+        """
+        if state.execution(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
+        bilan = bilans.bilan(run_id)
+        return {"run_id": run_id, "bilan": bilan.to_dict() if bilan is not None else None}
 
     @app.post("/api/sources/apercu")
     async def apercu_ingestion(

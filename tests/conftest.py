@@ -145,6 +145,14 @@ que sur la CI, et lancerait `claude --version` à chaque test. La garde ferme la
 (`maestro.clients_du_poste.resoudre` ne trouve rien) : un poste nu, celui de la CI. Un test qui
 veut des clients les passe en double ; un test qui veut **vraiment** ceux du poste le dit avec
 `@pytest.mark.clients_du_poste`.
+
+Douzième garde-fou (#1284) : **aucun bilan de run n'est rendu d'office**. La fin de tout
+run fait rendre son bilan par un appel au modèle ; sous la suite, des dizaines de tests
+soldent un run sans y penser, et chacun résoudrait le fournisseur du poste — la garde
+du septième le ferait rougir, au gré de l'ordre des tâches de la boucle. Le juge par
+défaut (`maestro.controltower.bilan.juge_par_defaut`) rend donc « aucun juge » : pas
+d'appel, pas d'événement, pas de coût ajouté au run. Un test qui veut le bilan injecte
+le sien.
 """
 
 from __future__ import annotations
@@ -645,3 +653,16 @@ def _clients_du_poste_fermes(
     if request.node.get_closest_marker(MARQUEUR_CLIENTS_DU_POSTE) is not None:
         return
     monkeypatch.setattr("maestro.clients_du_poste.resoudre", lambda commande: None)
+
+
+@pytest.fixture(autouse=True)
+def _pas_de_bilan_d_office(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Aucun bilan de run n'est rendu d'office sous la suite (#1284).
+
+    Ce qui est remplacé est `maestro.controltower.bilan.juge_par_defaut`, que le
+    `ServiceBilan` appelle quand on ne lui passe pas de juge : il rend « aucun juge », et
+    le service ne rend alors aucun bilan — ni appel, ni événement, ni coût ajouté au run.
+    Un test qui veut le bilan injecte son juge (`create_app(bilan_juge=…)`,
+    `ServiceBilan(juge=…)`) et n'est pas concerné.
+    """
+    monkeypatch.setattr("maestro.controltower.bilan.juge_par_defaut", lambda: None)

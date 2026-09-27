@@ -7586,3 +7586,76 @@ vérification sur la tâche). Gardé par
 [`tests/test_verification_taches.py`](../tests/test_verification_taches.py) et, côté front, par
 [`apps/web/tests/verification-tache.test.tsx`](../apps/web/tests/verification-tache.test.tsx).
 
+### 6.23 Le bilan d'un run, sur pièces (#1284) — **livré** (l'écran : #1285)
+
+À la fin de **tout** run — terminé, en échec ou annulé, qu'un fil l'ait demandé ou non —, Maestro en
+rend un **bilan fondé sur les pièces de son journal**. Il est né du run `3fe501fc0878` (projet `p3`,
+2026-09-24) : sa maquette est tombée trois fois à l'identique, le moteur a relancé en présumant un
+aléa, et le récit de fin a recopié « échec transitoire » puis conseillé de relancer.
+
+- `GET /api/executions/{run_id}/bilan` → `{"run_id": "…", "bilan": BilanRun | null}`. `null` tant qu'il
+  n'y en a pas (run en vol, modèle qui n'a pas répondu, run soldé avant ce lot) : le run existe, son
+  bilan pas encore. `404` si aucune trace reçue pour ce `run_id`. Le détail d'un run
+  (`GET /api/executions/{run_id}`) porte le même objet sous `bilan`.
+
+```jsonc
+"bilan": {
+  "run_id": "3fe501fc0878",
+  "statut": "echec",                     // l'issue pour laquelle il a été rendu
+  "fin": "2026-09-24T10:14:02+00:00",
+  "constats": [
+    { "rubrique": "echec",               // livre · echec · acte · consommation · recommandation
+      "texte": "La maquette est tombée trois fois sur la même cause…",
+      "pieces": ["P7", "P9", "P12"],     // les pièces qui le fondent
+      "nature": "deterministe",          // alea · deterministe · indeterminee — un échec seulement
+      "tache": "maquette-sections",      // "" s'il n'en nomme aucune du run
+      "agent": "",                       // une recommandation sur le playbook d'un agent
+      "revision_playbook": false }       // true : l'analyse d'échecs (§6.4, #139) a de quoi proposer
+  ],
+  "ecartes": [                           // ce que la vérification a refusé, avec sa raison
+    { "rubrique": "echec", "texte": "…", "pieces": ["P999"], "raison": "pièce inexistante : P999" }
+  ],
+  "pieces": [                            // les pièces CITÉES, et les entrées du journal d'où elles viennent
+    { "id": "P7", "famille": "relance", "texte": "2026-09-24T10:03:11+00:00 · agent.activite · …",
+      "tache_id": "maquette-sections", "entrees": ["j-0042"] }
+  ],
+  "pieces_offertes": 97,                 // ce que le modèle a lu
+  "entrees_lues": 183,                   // le journal du run, lu en entier
+  "pieces_laissees": 0                   // ce que le budget a laissé de côté
+}
+```
+
+- **Les pièces viennent du journal, en entier.** Elles se lisent au journal requêtable (§6.2), l'index
+  du journal durable — toutes les entrées du run, sans la page de 200. Familles : `statut` (du run,
+  des tâches, et les tentatives d'une tâche), `relance` (relances du moteur et diagnostics du
+  rattrapage, #1178, lus comme des pièces), `acte` (arbitrages, refus d'outil, écritures dans le
+  projet, processus laissés), `usage` (coût par tâche, tokens sans prix compris), `echange`
+  (validations, questions, cadrage, renfort), `checklist` (checklist au regard du verdict,
+  vérifications), `decision` (décisions consignées, hypothèses, blocages), `activite` (le bruit de
+  fond). Chaque pièce cite ses entrées `j-NNNN`, celles que `GET /api/journal` sert. Ce que le modèle
+  lit est **borné** (`PIECES_MAX`) : les pièces décisives d'abord, l'activité en dernier, et ce qui
+  reste dehors est compté.
+- **Le modèle juge, l'exécution vérifie** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
+  La nature d'un échec est jugée sur sa cause ; le libellé du moteur (« échec transitoire ») lui est
+  présenté comme une présomption. Un constat sans pièce, ou qui en cite une absente du dossier, est
+  **écarté** — rendu à part, jamais comme un constat.
+- **Le bilan ne tranche rien** ([docs/32](./32-decision-cran-orchestrateur.md) §b) : ni relance, ni
+  réglage, ni cran. Une recommandation sur le playbook d'un agent ne réécrit rien — elle désigne
+  l'analyse d'échecs existante, et seulement quand cet agent a failli dans ce run.
+- **Gardé au journal durable, compté au run.** Il voyage sur une activité de run (`agent.activite`,
+  `etape_run: "bilan"`, statut `bilan_rendu`) qui porte aussi le coût de l'appel : le grand livre le
+  range dans son propre poste (`cout.bilan`), compté au total et hors du temps de mur — le run était
+  fini. Il est rendu **hors des bornes du run** : un run arrêté sur son plafond est précisément celui
+  dont on veut savoir pourquoi, et le total peut donc dépasser la borne du montant du bilan. Une
+  réponse illisible ne retient rien mais compte son coût (`bilan_illisible`) ; un modèle injoignable
+  ne fabrique rien.
+- **Le récit de fin le lit** (#1224) : juste après la fiche du run, et sa consigne dit que, sur un
+  échec que le bilan dit déterministe, il ne conseille pas de relancer tel quel mais dit ce qui a
+  failli et ce qu'il faut changer d'abord. Un seul appel au modèle pour les deux : le récit attend
+  le bilan que la fin a mis en route.
+
+Implémentation : [`maestro/controltower/bilan.py`](../maestro/controltower/bilan.py) (pièces,
+vérification, service), [`maestro/controltower/recit.py`](../maestro/controltower/recit.py) (sa
+lecture par le récit). Gardé par [`tests/test_bilan_run.py`](../tests/test_bilan_run.py), qui rejoue
+les pièces de `p3` — et, devant le vrai modèle, `test_p3_devant_le_vrai_modele_…` (`cli_reel`).
+

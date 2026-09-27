@@ -576,6 +576,14 @@ class Event:
     # classe, pour la raison de `recrutement` : cette couche n'importe pas le
     # moteur. None partout ailleurs — l'événement n'en apprend rien.
     verification: dict[str, Any] | None = None
+    # Le **bilan sur pièces** d'un run terminé (#1284), porté par la seule activité
+    # de run `bilan` (`etape_run`) : ce qui a été livré, ce qui a failli et
+    # pourquoi, chaque constat avec ses pièces (`maestro.controltower.bilan.BilanRun
+    # .to_dict`). Un dict et non la classe, pour la raison de `verification`. Il
+    # voyage sur l'activité qui porte aussi son coût, et c'est le patron de la
+    # vérification plutôt que celui du plan : une seule ligne de journal pour un
+    # seul appel au modèle. None partout ailleurs.
+    bilan: dict[str, Any] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -629,6 +637,7 @@ class Event:
             "verification": (
                 dict(self.verification) if self.verification is not None else None
             ),
+            "bilan": dict(self.bilan) if self.bilan is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -771,6 +780,10 @@ class Event:
                 if isinstance(data.get("verification"), Mapping)
                 else None
             ),
+            # Relecture tolérante (#1284), comme la vérification : le bilan passe
+            # tel quel, et c'est `BilanRun.depuis` qui ne rend que ce qu'il sait
+            # lire. Ce qui n'est pas un objet n'est pas un bilan.
+            bilan=dict(data["bilan"]) if isinstance(data.get("bilan"), Mapping) else None,
             horodatage=data.get("horodatage", ""),
         )
 
