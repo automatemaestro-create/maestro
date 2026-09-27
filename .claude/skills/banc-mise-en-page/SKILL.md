@@ -114,14 +114,18 @@ browser_evaluate  () => {
                     localStorage.setItem("maestro.guide.vu", "1");     // la visite se croit vue
                     localStorage.setItem("maestro.theme", "clair");    // capture reproductible
                     localStorage.setItem("maestro.projet.actif", "<id>");
+                    sessionStorage.setItem("maestro.session.entree", "1");  // #1293 : session entrée
                   }
 browser_navigate  http://localhost:3008/<page>      ← 2e passe : c'est celle qu'on mesure
 ```
 
 `maestro.projet.actif` n'est pas un confort : depuis #279 **aucun écran n'est
 atteint sans projet actif**, et un identifiant inconnu renvoie à la porte
-d'entrée. Sur l'**état du banc**, les projets du passage sont déjà déclarés :
-lire leurs identifiants par `GET /api/projets` et prendre celui dont les runs
+d'entrée. Depuis #1293 il ne suffit plus seul : un onglet neuf est un
+**démarrage**, qui s'arrête sur la porte et son « Reprendre » tant que
+`maestro.session.entree` n'est pas posé au `sessionStorage` du même onglet
+(docs/05 §2.0.1). Sur l'**état du banc**, les projets du passage sont déjà
+déclarés : lire leurs identifiants par `GET /api/projets` et prendre celui dont les runs
 peuplent la page. Sur une **stack neuve**, aucun projet n'est déclaré — en
 déclarer un, sur un dossier **hors du dépôt** (le dépôt de Maestro se refuse
 lui-même) et hors `AppData` (chemin sensible refusé) :
