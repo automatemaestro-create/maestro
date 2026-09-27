@@ -3432,6 +3432,68 @@ le vrai `ServiceExecutions`, pour les quatre gestes, l'ambiguïté et les deux r
 `apps/web/tests/geste-sur-un-run.test.tsx` (la carte, la trace, les candidats, et leur montage
 dans le fil de chaque écran).
 
+#### Il règle ce qui attend quelqu'un : répondre à un agent, trancher une validation (#1183) — **livré**
+
+Un run qui attend une personne l'attendait **sur un autre écran** : la question d'un agent (#1023),
+la validation d'une action sensible (#48). Le fil voyait les deux depuis #1223, contenu compris,
+mais « réponds-lui : prends Postgres », « oui, valide » ou « refuse et archive plutôt » n'y avaient
+aucun effet : il ne pouvait que renvoyer vers l'écran concerné. Il les **règle** désormais, sans
+changer d'écran, par **le même service** que ces écrans (`ServiceAttentes`), et chaque règlement se
+**propose** puis se **confirme** — l'arbitrage des actes reste humain (docs/32) : le fil n'est
+qu'un autre endroit où la personne tranche.
+
+- **Le fil nomme ce qui attend.** Le bloc des attentes que le juge reçoit porte désormais, pour
+  chaque question et chaque validation, son **identifiant**, l'agent qui la porte et la tâche d'où
+  elle vient ; le cadre lui dit de nommer ce qui attend quand on lui demande où en est le travail,
+  et de le régler ici. Il rend un septième verdict, `attente` (§6.15.3) : « le développeur demande
+  quelle base utiliser : je lui réponds Postgres ? ».
+- **Une carte à confirmer** (`components/chat/ReglementDansLeFil.tsx`), au pied du fil comme les
+  autres — la grammaire de la carte d'un geste sur un run (#1179), appliquée : la **question** au
+  verbe du règlement (« Envoyer cette réponse ? », « Approuver cette demande ? », « Refuser cette
+  demande ? »), **ce qui attend** à ses faits — la question de l'agent, ou l'acte de la validation
+  dans l'ordre de son écran (« Appel de » et l'outil) —, puis qui le porte ; **ce qui partira**,
+  tel quel — la réponse que l'agent lira, citée, ou la raison d'un refus (« Sans raison donnée. »
+  sinon) — ; **ce qui va se passer**, dans les mots du service qui le fera (« L'agent attendait
+  cette réponse : il la lit et reprend sa tâche. », « L'appel est écarté : l'agent poursuit sa tâche
+  sans lui. ») ; puis un geste principal et « Pas maintenant ». « Refuser » est en ton d'alerte.
+  Aucun champ : « dis-lui plutôt MySQL » se dit dans le composeur, et appelle une carte nouvelle.
+- **Confirmé, le règlement passe par le service** : la réponse parvient à l'agent suspendu, qui la
+  lit et reprend ; la décision parvient au moteur, et la tâche reprend — ou l'acte est écarté.
+  Sous la réponse, une ligne **cochée** dit ce qui a été fait et ce qui a repris — « ✓ Réponse
+  transmise · l'agent attendait cette réponse : il la lit et reprend sa tâche » —, et le modèle en
+  parle depuis ce fait. La coche d'un refus est à la couleur du texte, jamais au vert.
+- **Un refus porte sa raison, la même que celle de l'écran des validations** : elle voyage dans le
+  même champ que le motif d'un refus motivé depuis la carte d'une validation (#272), jusqu'à
+  l'événement que le moteur attend — celui que #1185 portera jusqu'à l'agent. D'ici là l'agent
+  n'apprend que le refus, et rien ne dit le contraire : la carte écrit « Raison du refus », jamais
+  « transmise », et le modèle reçoit ce fait. Vu sur la vraie stack à la clôture : « votre consigne
+  lui a été transmise avec le refus » promettait ce qui n'avait pas lieu.
+- **L'acte d'une validation se lit comme sur sa carte** : « Appel de » et l'outil, puis ses
+  arguments en trois lignes au plus — l'acte entier reste sur la carte de la demande, rendue à sa
+  place dès que le règlement est tranché ou écarté.
+- **Ce qui attend se voit au pied du fil** : les questions d'agents y étaient déjà (#1025) ; les
+  **validations en attente** les rejoignent, dans la carte des validations montée telle quelle
+  (`CarteValidation`, #1228), refus motivé compris. La question ou la validation qu'une carte de
+  règlement vise **sort de sa pile** le temps que la carte attende — une seule carte par décision —,
+  et « Pas maintenant » la rend à sa place.
+- **Une demande ambiguë nomme ses candidates au lieu d'agir** (deux agents attendent, « réponds-lui
+  ») : aucune carte, la question dans les mots du modèle, et les attentes possibles listées sous la
+  bulle, chacune dans son encadré, sans bouton.
+- **Un règlement que l'état refuse se dit**, avec la raison du service : **avant** la carte (une
+  question déjà répondue, une validation déjà tranchée) ou **après** le clic (tranchée sur l'écran
+  des validations entre-temps). Rien n'est parti, la trace porte le glyphe d'arrêt et la raison.
+
+Ce ticket **applique** une forme déjà tranchée — celle de la carte proposée puis confirmée de #1179,
+qu'il réutilise en toutes lettres, et celle de la carte des validations, écrite par #1228 pour être
+montée dans le fil — : il n'a ni veille ni variantes à lui.
+
+Gardé par `tests/test_attentes_du_fil.py` (la carte, la confirmation au clic et tapée, l'échéance
+passée, l'ambiguïté et les refus ; la réponse lue par le vrai moteur suspendu sur le vrai canal
+des questions, dont la tâche reprend ; la décision rendue au validateur que le moteur attend, sa
+raison dans l'événement ; l'app entière, et les codes des routes des écrans inchangés) et par
+`apps/web/tests/reglement-dans-le-fil.test.tsx` (la carte, la trace, les candidates, les
+validations au pied du fil et leur refus motivé, la sortie de pile).
+
 #### La fin d'un run s'annonce dans le fil, et remet son livrable (#928) — **livré**
 
 Le constat le plus net du retex du 2026-09-11 (G1) : *un run qui se termine ne
@@ -6473,6 +6535,69 @@ vocabulaire et `GesteRefuse`),
 [`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
 [`tests/test_gestes_du_fil.py`](../tests/test_gestes_du_fil.py).
 
+#### 6.15.3 Régler une attente depuis le fil — répondre à un agent, trancher une validation (#1183)
+
+Le pendant, pour ce qui **attend quelqu'un** pendant un run, du geste sur un run (§2.9 pour
+l'écran). Le bloc des attentes du juge porte l'identifiant de chaque question (`question_id`) et de
+chaque validation (la tâche qu'elle retient, `tache_id`) ; le juge rend un septième verdict,
+`attente` :
+
+```json
+{"verdict": "attente", "objectif": "",
+ "attente": {"action": "reponse|approbation|refus", "cibles": ["schema:9f1c0a4bd3"],
+             "texte": "Prends Postgres."}}
+```
+
+`texte` est la réponse que l'agent lira (`reponse`) ou la raison d'un refus (`refus`, vide sans
+raison) ; il est ignoré sur une approbation. La **file** se déduit de l'action — une question ne
+s'approuve pas, une validation ne se répond pas —, si bien qu'un identifiant ne peut pas viser la
+mauvaise. Le code confronte les cibles à la projection : une attente inconnue ne pose rien et se
+dit ; **plusieurs** ne posent aucune carte et voyagent sur la réponse (`attentes_candidates`) ; une
+seule pose la carte (`reglement`) si le service l'accepterait, sinon une correction s'écrit derrière
+les mots du modèle et le refus voyage en `reglement_fait`, comme celui d'un clic. La carte :
+
+```json
+{"action": "reponse", "texte": "Prends Postgres.",
+ "suite": "l'agent attendait cette réponse : il la lit et reprend sa tâche",
+ "attente": {"genre": "question", "identifiant": "schema:9f1c0a4bd3", "agent": "dev",
+             "role": "Développeur", "titre": "Rédiger le schéma", "objet": "Postgres ou SQLite ?",
+             "run_id": "8a15f78f45d3", "outil": "", "hypothese": "…", "echeance": "…"}}
+```
+
+`suite` est ce que le règlement fera, dit **par le service** (`ServiceAttentes.suite`), lu sur la
+structure de l'attente et jamais sur son texte : une réponse fait reprendre l'agent qui l'attend,
+ou le rattrapera au prochain appel identique passé l'échéance de sa question (#1025) ; une décision
+sur un **acte** (`outil`) l'exécute ou l'écarte — l'agent poursuit alors sa tâche sans lui —, sur
+une **écriture dans le projet** (`diff`) écrit le travail ou n'écrit rien, ailleurs fait reprendre
+la tâche ou renonce à l'action demandée.
+
+**La route.** `POST /api/chat/{agent}/reglement` → `201` + la même paire qu'un envoi. Son corps est
+`{approuve, conversation}`, **rien d'autre** : ce qui se règle est la carte que le fil porte, relue
+du fil. L'accord passe par `ServiceAttentes.regler`, et la réponse porte ce qui en est sorti,
+`reglement_fait` : `{action, attente, texte, suite, refus}`, où `texte` est ce qui est parti et
+`refus` la phrase du service quand l'attente a été réglée ailleurs — alors rien n'est parti. Le
+geste s'écrit dans le fil (« Oui, envoie-lui cette réponse. », « Oui, refuse cet acte — raison :
+… », « Non, ne lui réponds pas pour l'instant. »). Un « oui » tapé vaut le clic
+(`_reglement_approuve`), comme pour un geste sur un run.
+
+**Les règles vivent une fois**, dans le service (`ServiceAttentes`) : `POST
+/api/questions/{id}/reponse` et `POST /api/validations/{tache}/decision` l'appellent aussi, et n'en
+gardent que le code HTTP (`404` inconnue, `409` déjà réglée, `422` réponse vide). La raison d'un
+refus n'est composée qu'à un endroit (`attentes.detail_de_la_decision`) : un refus motivé porte la
+même, au caractère près, qu'il vienne de l'écran des validations ou du fil.
+
+**`409` quand rien n'attend** (`ReglementIntrouvable`) : le double clic ne répond pas deux fois.
+
+Implémentation : [`maestro/controltower/reglements.py`](../maestro/controltower/reglements.py) (le
+vocabulaire, `AttenteVisee`, `ReglementPropose`, `ReglementFait`, `ReglementRefuse`),
+[`maestro/controltower/attentes.py`](../maestro/controltower/attentes.py) (`ServiceAttentes`),
+[`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`reglement_en_attente`,
+`ServiceChat.trancher_reglement`),
+[`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`VERDICT_ATTENTE`, `PiloteDesAttentes`, `RepondeurOrchestration.trancher_reglement`) et
+[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`tests/test_attentes_du_fil.py`](../tests/test_attentes_du_fil.py).
+
 ### 6.16 Borner un run depuis le chat (#990) — **livré**
 
 Le moteur sait arrêter un run sur quatre garde-fous depuis #9 — `plafond_cout_usd`,
@@ -6559,7 +6684,8 @@ champ, `echeance`, dont la raison est écrite plus bas.
   les agents, en attente d'abord, puis avec leur réponse. `projet` est **obligatoire**, au contrat
   commun du §6.0 : une question appartient au projet de la tâche qui la pose.
 - `POST /api/questions/{question_id}/reponse` → `200` + `EtatQuestion` — la réponse humaine. L'agent,
-  suspendu sur le bus, la reçoit et reprend.
+  suspendu sur le bus, la reçoit et reprend. Ses règles vivent depuis #1183 dans le service des
+  attentes (`ServiceAttentes.repondre`), que le fil de l'orchestrateur appelle aussi (§6.15.3).
 
 ```jsonc
 // EtatQuestion (GET /api/questions)
