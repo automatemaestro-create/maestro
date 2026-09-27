@@ -209,6 +209,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
+from maestro.controltower.plafond import ArbitrePlafondControlTower
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.question import ArbitreQuestionControlTower
 from maestro.controltower.renfort import ArbitreRenfortControlTower
@@ -1625,6 +1626,9 @@ class ServiceExecutions:
                 # Sa borne ne passe pas par l'ordre : c'est le même temps humain
                 # qu'un arbitrage, et il n'a qu'un réglage.
                 arbitre_renfort=ArbitreRenfortControlTower(self._bus),
+                # La décision au plafond de dépense (#1182) : même règle, même bus.
+                # Le run s'y suspend au lieu d'échouer, et la carte du fil la pose.
+                arbitre_plafond=ArbitrePlafondControlTower(self._bus),
             )
             rapport = await moteur.run(
                 ordre.objectif,

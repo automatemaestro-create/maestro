@@ -4140,6 +4140,9 @@ décrit le comportement réel, pas une fixture.
 - `POST /api/executions/{run_id}/reprendre` → `ResumeExecution` — **reprend** un run suspendu là où
   il en était : `en_pause` repasse à `false` et les tâches qui attendaient repartent. `404` inconnu,
   `409` si le run n'est **pas** suspendu.
+- `POST /api/executions/{run_id}/plafond` → `ResumeExecution` — **tranche un run arrêté sur son
+  plafond de dépense** (#1182, ci-dessous) : `relever`, `reduire` ou `arreter`. `404` inconnu,
+  `409` si le run n'attend pas cette décision, `422` si elle ne se tient pas.
 - `POST /api/executions/{run_id}/relancer` → `202` + `ResumeExecution` — rejoue un run interrompu
   **sur son brief approuvé** (#349, ci-dessous) et rend le résumé du **nouveau** run. `404` inconnu,
   `409` déjà soldé ou **encore vivant**, `422` sans brief approuvé.
@@ -4550,6 +4553,51 @@ même mot feraient chercher un brief à valider sur un run qu'on vient de mettre
 accompagne le badge dit ce que la pause ne fait pas — « celles qui étaient en vol vont à leur
 terme » —, parce que quelqu'un qui croirait avoir tout arrêté serait surpris de voir une tâche rendre
 son livrable trois minutes plus tard.
+
+**Au plafond de dépense, le run se suspend et demande** (#1182). Jusque-là, un run qui atteignait
+son plafond jetait la tâche en vol et refusait tout ce qui restait : à 101 % du budget, la tâche
+presque finie était perdue sans que personne ait rien décidé. Le plafond reste un plafond — **rien ne
+le dépasse sans la réponse de la personne** —, c'est l'arrêt sec qui a disparu :
+
+- la mesure qui franchit le plafond **interrompt** la tâche, comme avant (un appel modèle ne se
+  tarifie qu'une fois fait), mais la tâche est **mise de côté** et non soldée : son travail reste sur
+  sa branche `maestro/<tâche>` (ou dans la racine d'un projet non versionné), sa dépense entre au
+  grand livre par une ligne `<tâche>:plafond`, et sa carte reste « en cours » ;
+- le run passe `en_attente_plafond` — quatrième attente humaine, même `attente_depuis`, toujours
+  annulable — et **rien ne se dépense ni ne démarre** d'ici la réponse. Une seule question par
+  franchissement : les tâches qui atteignent le plafond pendant l'attente rejoignent la même ;
+- le résumé porte la question sous `plafond` (`null` hors attente) — des **faits**, pas une phrase :
+
+```jsonc
+// ResumeExecution.plafond (forme de DemandePlafond)
+{
+  "depense_usd": 5.02, "depense_tokens": 41000,         // dépense du run, grand livre compris
+  "plafond_cout_usd": 5.0, "plafond_tokens": null,       // les plafonds en vigueur
+  "raison": "plafond de dépense dépassé : …",
+  "restantes": [                                         // ce qui reste à faire, dans l'ordre du plan
+    { "tache_id": "api", "titre": "Écrire l'API", "interrompue": true },
+    { "tache_id": "doc", "titre": "Documenter l'API", "interrompue": false }
+  ]
+}
+// Corps de POST /api/executions/{run_id}/plafond
+{ "geste": "reduire", "plafond_cout_usd": 6.5, "plafond_tokens": null, "ecartees": ["doc"] }
+```
+
+Les trois gestes : **relever** pose le nouveau plafond et reprend les tâches mises de côté là où
+elles en étaient — leur agent lit qu'il reprend, et retrouve dans le projet ce qu'il avait écrit ;
+**réduire** fait de même en écartant les tâches désignées (échec « écartée », leur aval se bloque) ;
+**arrêter** solde le run sur ce qui est fait. Le `422` refuse ce qui ne se tient pas : une reprise
+sans nouveau plafond, un plafond que la dépense **atteint déjà** (le run s'y arrêterait à sa première
+mesure), une tâche écartée que la question ne nommait pas, ou une réduction qui écarte tout — c'est
+un arrêt. L'attente **n'a pas de borne** : aucune issue par défaut ne se décide à la place de la
+personne, l'une dépenserait ce qu'elle n'a pas accordé, l'autre jetterait ce qu'elle a payé. Sans
+arbitre (`maestro-run` sans Control Tower, exécuteur distribué qui ne sait pas relever un plafond),
+le run garde l'arrêt sec d'avant. Le coût du reste n'est pas estimé côté moteur : c'est l'estimation
+du brief (`apps/web/lib/estimation.ts`) que l'écran applique aux tâches restantes. Le banc des
+scénarios joue la personne qui **arrête** (S4 pose sa borne pour provoquer un échec). Implémentation :
+[`maestro/engine/plafond.py`](../maestro/engine/plafond.py) et
+[`maestro/controltower/plafond.py`](../maestro/controltower/plafond.py) ; couverture
+`tests/test_plafond_suspendu.py`, `tests/test_plafond_control_tower.py`.
 
 **Un run soldé dit *pourquoi*, et pas seulement *quoi*** (#479). `cause` est un code
 court porté par le résumé, à côté du `detail` qui reste ce qu'il était (`TypeErreur :

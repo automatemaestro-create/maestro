@@ -242,6 +242,22 @@ EVENEMENT_BRIEF_REPONSES = "brief.reponses"
 EVENEMENT_RENFORT_DEMANDE = "renfort.demande"
 EVENEMENT_RENFORT_DECISION = "renfort.decision"
 
+#: `plafond.demande` et `plafond.decision` (#1182) portent la **décision au
+#: plafond de dépense** : le run qui l'a atteint s'est suspendu, sa tâche en vol
+#: mise de côté, et il attend qu'une personne relève le plafond, réduise la
+#: portée ou arrête. Même couple que les autres canaux d'attente, et pour leur
+#: raison : le bus est la seule chose que l'hôte en process et l'hôte détaché
+#: (#446) partagent.
+#:
+#: `plafond` porte les **faits** — la forme de `DemandePlafond.to_dict` sur la
+#: demande (dépense, plafonds en vigueur, tâches qui restent), de
+#: `DecisionPlafond.to_dict` sur la décision (geste, nouveau plafond, tâches
+#: écartées). `run_id` est la clé : un run n'a qu'une question au plafond en vol,
+#: toutes ses tâches attendant la même réponse. `statut` de la décision est le
+#: geste, pour qu'un lecteur du flux n'ait pas à ouvrir la charge.
+EVENEMENT_PLAFOND_DEMANDE = "plafond.demande"
+EVENEMENT_PLAFOND_DECISION = "plafond.decision"
+
 #: `run.plan` (#490) porte le **graphe du run** — un nœud par tâche, ses
 #: dépendances, son ossature de checklist —, publié **une fois**, à l'instant où
 #: la décomposition rend son plan. Il ne dit rien de l'état : ni agent, ni
@@ -570,6 +586,12 @@ class Event:
     # « ce run est parti sans borne ». Le fil prenait la borne d'un run passé pour
     # un réglage qui dure, faute de savoir qu'elle appartenait à ce run-là.
     bornes: BornesRun | None = None
+    # La **décision au plafond de dépense** d'un run (#1182), portée par le seul
+    # couple `plafond.*` : la forme de `DemandePlafond.to_dict` sur la demande, de
+    # `DecisionPlafond.to_dict` sur la décision. Un dict et non les classes du
+    # moteur, pour la raison de `recrutement` : le transport ne dépend pas de ce
+    # qu'il transporte. None partout ailleurs, pour la raison d'`etapes`/`liens`.
+    plafond: dict[str, Any] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -620,6 +642,7 @@ class Event:
             "recrutement": dict(self.recrutement) if self.recrutement is not None else None,
             "resultat": self.resultat,
             "bornes": self.bornes.to_dict() if self.bornes is not None else None,
+            "plafond": dict(self.plafond) if self.plafond is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -753,6 +776,12 @@ class Event:
                 BornesRun.depuis(data["bornes"])
                 if isinstance(data.get("bornes"), Mapping)
                 else None
+            ),
+            # Relecture tolérante (#1182), comme `recrutement` : ce sont
+            # `DemandePlafond.from_dict` et `DecisionPlafond.from_dict` qui la
+            # liront. Ce qui n'est pas un objet n'en est pas une.
+            plafond=(
+                dict(data["plafond"]) if isinstance(data.get("plafond"), Mapping) else None
             ),
             horodatage=data.get("horodatage", ""),
         )

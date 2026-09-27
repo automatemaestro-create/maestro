@@ -507,6 +507,7 @@ from maestro.controltower.persistence import (
     support_persistance,
 )
 from maestro.controltower.pieces import CorrectionModele, ServicePieces
+from maestro.controltower.plafond import evenement_decision
 from maestro.controltower.portee import (
     PorteeProjet,
     PorteeRefusee,
@@ -531,6 +532,7 @@ from maestro.controltower.state import (
     CAPACITE_ACTIVE,
     CAPACITE_DESACTIVE,
     EXECUTION_EN_ATTENTE_BRIEF,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     EXECUTION_EN_ATTENTE_REPONSES,
     QUESTION_REPONDUE,
     RENFORT_ACCORDE,
@@ -543,6 +545,13 @@ from maestro.controltower.state import (
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
+from maestro.engine.plafond import (
+    GESTE_ARRETER,
+    GESTE_REDUIRE,
+    GESTE_RELEVER,
+    DecisionPlafond,
+    DemandePlafond,
+)
 from maestro.equipe import GABARITS, RoleManquant, RoleValide, SkillRetenu
 from maestro.equipe.composition import MembreActuel
 from maestro.espace import espace_courant
@@ -707,6 +716,27 @@ class ReponseQuestionRequete(BaseModel):
     """
 
     reponse: str
+
+
+class DecisionPlafondRequete(BaseModel):
+    """Corps de la décision au plafond de dépense (#1182) : relever, réduire, arrêter.
+
+    `geste` est l'une des trois réponses (`maestro.engine.plafond.GESTES_PLAFOND`).
+    **Relever** et **réduire** portent le nouveau plafond — en dollars
+    (`plafond_cout_usd`) et/ou en tokens (`plafond_tokens`), selon celui que le run
+    a atteint ; **réduire** nomme en plus les tâches à écarter (`ecartees`, des
+    identifiants pris dans la question en vol). **Arrêter** ne porte rien.
+
+    Typé et non du texte libre, à la différence d'une réponse à une question
+    d'agent : ce qui repart est un **montant** et une liste de tâches, que le
+    moteur applique tels quels. Les recopier d'une phrase serait juger du texte
+    par un motif (#746) ; le choix se fait sur la carte, qui a les chiffres.
+    """
+
+    geste: str
+    plafond_cout_usd: float | None = None
+    plafond_tokens: int | None = None
+    ecartees: list[str] = []
 
 
 class DecisionBriefRequete(BaseModel):
@@ -1501,6 +1531,64 @@ def _detail_refus(exc: Exception) -> dict[str, Any]:
     if isinstance(index, int) and not isinstance(index, bool):
         detail["index"] = index
     return detail
+
+
+#: Ce que le journal du run dira de chaque geste au plafond (#1182) — qui a décidé,
+#: et d'où. Le chiffre, lui, est dans la ligne que le moteur écrit.
+_DETAIL_GESTE_PLAFOND = {
+    GESTE_RELEVER: "plafond relevé depuis la Control Tower",
+    GESTE_REDUIRE: "portée réduite depuis la Control Tower",
+    GESTE_ARRETER: "run arrêté depuis la Control Tower",
+}
+
+
+def _detail_decision_plafond(geste: str) -> str:
+    """La phrase qu'une décision au plafond porte au journal — vide pour un geste inconnu."""
+    return _DETAIL_GESTE_PLAFOND.get(geste, "")
+
+
+def _refus_plafond(decision: DecisionPlafond, demande: DemandePlafond) -> str:
+    """Pourquoi `decision` ne se tient pas face à la question en vol — "" si elle se tient.
+
+    Trois refus, chacun pour ce qu'il éviterait :
+
+    - une tâche écartée que la question ne nommait pas : la personne n'a décidé
+      que de ce qu'on lui a montré ;
+    - une réduction qui écarte **tout** ce qui reste : c'est un arrêt, et le dire
+      autrement ferait relever un plafond pour ne rien faire ;
+    - un plafond, relevé ou laissé tel quel, que la dépense **atteint déjà** : le
+      run retomberait dessus à sa première mesure, c'est-à-dire reposerait la même
+      question aussitôt.
+    """
+    if not decision.reprend:
+        return ""
+    connues = {tache.tache_id for tache in demande.restantes}
+    inconnues = [tache for tache in decision.ecartees if tache not in connues]
+    if inconnues:
+        return (
+            f"tâche(s) à écarter inconnue(s) de la question en vol : {', '.join(inconnues)}."
+        )
+    if connues and set(decision.ecartees) >= connues:
+        return "écarter tout ce qui reste revient à arrêter le run : choisissez « arrêter »."
+    cout = (
+        decision.plafond_cout_usd
+        if decision.plafond_cout_usd is not None
+        else demande.plafond_cout_usd
+    )
+    jetons = (
+        decision.plafond_tokens if decision.plafond_tokens is not None else demande.plafond_tokens
+    )
+    if cout is not None and demande.depense_usd is not None and demande.depense_usd >= cout:
+        return (
+            f"un plafond de {cout:.2f} $ ne couvre pas ce qui est déjà dépensé "
+            f"({demande.depense_usd:.2f} $) : le run s'y arrêterait aussitôt."
+        )
+    if jetons is not None and demande.depense_tokens >= jetons:
+        return (
+            f"un plafond de {jetons} tokens ne couvre pas ce qui est déjà dépensé "
+            f"({demande.depense_tokens} tokens) : le run s'y arrêterait aussitôt."
+        )
+    return ""
 
 
 #: Attente entre deux reprises de la pompe après une perte du bus (#1206), en
@@ -2896,6 +2984,63 @@ def create_app(
                 status_code=_CODE_REFUS_RELANCE.get(refus.motif, 422),
                 detail=_detail_refus(refus),
             ) from refus
+
+    @app.post("/api/executions/{run_id}/plafond")
+    async def decider_plafond(
+        run_id: str, requete: DecisionPlafondRequete
+    ) -> dict[str, Any]:
+        """Tranche un run arrêté sur son plafond de dépense (#1182) : il reprend, ou il se solde.
+
+        **Relever** pose le nouveau plafond et reprend les tâches mises de côté là
+        où elles en étaient ; **réduire** fait de même en écartant les tâches
+        désignées ; **arrêter** solde le run sur ce qui est fait. Même mécanique
+        que la décision sur un brief (#320) : l'état est appliqué **d'abord** (le
+        REST répond déjà à jour) puis l'événement est publié — le moteur, en
+        attente sur ce même bus, reprend ou s'arrête, et la pompe réapplique
+        l'événement sans effet.
+
+        404 si le run est inconnu, **409 s'il n'attend pas de décision au
+        plafond** (jamais tranché deux fois, jamais un run soldé ramené en vol),
+        422 si la décision ne se tient pas : geste inconnu, reprise sans nouveau
+        plafond, **nouveau plafond qui ne couvre même pas ce qui est déjà
+        dépensé** (le run retomberait dessus à sa première mesure — c'est reposer
+        la même question), réduction qui n'écarte rien ou qui écarte une tâche que
+        la question ne nommait pas.
+        """
+        resume = executions.resume(run_id)
+        if resume is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        detail = state.execution(run_id)
+        en_vol = detail.plafond if detail is not None else None
+        if resume["statut"] != EXECUTION_EN_ATTENTE_PLAFOND or en_vol is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"cette exécution n'attend pas de décision au plafond de dépense "
+                    f"({resume['statut']}) : {run_id}."
+                ),
+            )
+        demande = DemandePlafond.from_dict(en_vol)
+        try:
+            decision = DecisionPlafond(
+                geste=requete.geste,
+                plafond_cout_usd=requete.plafond_cout_usd,
+                plafond_tokens=requete.plafond_tokens,
+                ecartees=tuple(requete.ecartees),
+                detail=_detail_decision_plafond(requete.geste),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        refus = _refus_plafond(decision, demande)
+        if refus:
+            raise HTTPException(status_code=422, detail=refus)
+        event = evenement_decision(run_id, decision, projet_id=resume["projet_id"])
+        state.appliquer(event)
+        await bus.publish(event)
+        return await executions.resume_vivant(run_id) or resume
 
     @app.post("/api/executions/{run_id}/brief/decision")
     async def decider_brief(

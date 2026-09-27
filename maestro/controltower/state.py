@@ -42,6 +42,8 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_MESSAGE_INTER_AGENTS,
+    EVENEMENT_PLAFOND_DECISION,
+    EVENEMENT_PLAFOND_DEMANDE,
     EVENEMENT_QUESTION_DEMANDE,
     EVENEMENT_QUESTION_REPONSE,
     EVENEMENT_RUN_PLAN,
@@ -186,16 +188,25 @@ EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses"
 #: muet).
 EXECUTION_EN_ATTENTE_ARBITRAGE = "en_attente_arbitrage"
 
-#: Les trois états où le run est **suspendu sur un humain** (#320, #321, #571) :
-#: en vol, mais rien ne bougera sans un geste. Rassemblés parce que plusieurs
-#: endroits ont besoin de la question « ce run attend-il quelqu'un ? » —
+#: Le run **a atteint son plafond de dépense** (#1182) et attend qu'une personne
+#: relève le plafond, réduise la portée ou arrête : sa tâche en vol est mise de
+#: côté, rien ne se dépense d'ici là. Quatrième exemplaire du motif ci-dessus —
+#: même `attente_depuis`, même non-terminalité (le run reste annulable) —, et un
+#: statut à lui parce que ce n'est pas la même attente : on n'y approuve pas un
+#: acte, on y décide d'un budget, et l'écran n'y présente pas le même geste.
+EXECUTION_EN_ATTENTE_PLAFOND = "en_attente_plafond"
+
+#: Les quatre états où le run est **suspendu sur un humain** (#320, #321, #571,
+#: #1182) : en vol, mais rien ne bougera sans un geste. Rassemblés parce que
+#: plusieurs endroits ont besoin de la question « ce run attend-il quelqu'un ? » —
 #: l'ancienneté de l'attente se pose et se lève sur cet ensemble, et une vue qui
-#: veut lister ce qui bloque n'a pas à connaître les trois noms.
+#: veut lister ce qui bloque n'a pas à connaître les quatre noms.
 STATUTS_EXECUTION_EN_ATTENTE = frozenset(
     {
         EXECUTION_EN_ATTENTE_BRIEF,
         EXECUTION_EN_ATTENTE_REPONSES,
         EXECUTION_EN_ATTENTE_ARBITRAGE,
+        EXECUTION_EN_ATTENTE_PLAFOND,
     }
 )
 
@@ -816,6 +827,11 @@ class EtatExecution:
     # et c'est ce que le fil en dira. Elles appartiennent à **ce** run : aucun
     # run suivant n'en hérite, et c'est ce que le fil ignorait.
     bornes: BornesRun | None = None
+    # La **question au plafond de dépense** en vol (#1182) — la forme de
+    # `DemandePlafond.to_dict` : dépense, plafonds en vigueur, tâches qui restent.
+    # Posée par `plafond.demande`, retirée dès la décision ou l'issue du run :
+    # c'est ce que la carte du fil lit pour poser la question avec ses chiffres.
+    plafond: dict[str, Any] | None = None
 
     @property
     def debut(self) -> str:
@@ -949,6 +965,11 @@ class EtatExecution:
             # réparent pas de la même façon. Un code court n'y pèse rien, à la
             # différence du brief resté dans le détail.
             "cause": self.cause,
+            # La question au plafond (#1182), dans le **résumé** : c'est de la
+            # liste des runs que le fil tire ce qui attend un geste, et la carte
+            # qui la pose y lit ses chiffres. Quelques nombres et une liste de
+            # titres ; `null` dès qu'aucune question n'est en vol.
+            "plafond": dict(self.plafond) if self.plafond is not None else None,
             "debut": self.debut,
             "fin": self.fin,
         }
@@ -1630,6 +1651,10 @@ class ControlTowerState:
             self._applique_question_demande(event)
         elif event.type == EVENEMENT_QUESTION_REPONSE:
             self._applique_question_reponse(event)
+        elif event.type == EVENEMENT_PLAFOND_DEMANDE:
+            self._applique_plafond_demande(event)
+        elif event.type == EVENEMENT_PLAFOND_DECISION:
+            self._applique_plafond_decision(event)
         elif event.type == EVENEMENT_RUN_PLAN:
             self._applique_run_plan(event)
         elif event.type == EVENEMENT_EXECUTION_STATUT:
@@ -2056,6 +2081,46 @@ class ControlTowerState:
         # ferait afficher « en attente depuis 3 h » sur un run arrêté depuis.
         if execution.statut not in STATUTS_EXECUTION_EN_ATTENTE:
             execution.attente_depuis = None
+        if execution.statut != EXECUTION_EN_ATTENTE_PLAFOND:
+            # Même règle pour la question au plafond (#1182) : un run annulé
+            # pendant qu'il attend sa décision ne doit plus la proposer.
+            execution.plafond = None
+
+    def _applique_plafond_demande(self, event: Event) -> None:
+        """Le run s'arrête sur son plafond de dépense (#1182) : statut, ancienneté, faits.
+
+        Pendant de `_suspend_sur_arbitrage` sur la quatrième attente, avec ses
+        deux premières abstentions : sans run connu rien à suspendre, et un run
+        soldé ne se remet pas en vol sur une demande rejouée dans le désordre.
+        L'ancienneté, elle, **se repose** : un run ne pose qu'une question au
+        plafond à la fois, et une seconde (plafond relevé trop court) est une
+        nouvelle attente, qui commence maintenant.
+        """
+        execution = self._executions.get(event.run_id) if event.run_id else None
+        if execution is None or execution.statut in STATUTS_EXECUTION_TERMINAUX:
+            return
+        execution.statut = EXECUTION_EN_ATTENTE_PLAFOND
+        execution.fin = None
+        execution.attente_depuis = event.horodatage
+        execution.plafond = dict(event.plafond) if event.plafond is not None else {}
+
+    def _applique_plafond_decision(self, event: Event) -> None:
+        """Le run repart — ou va se solder — une fois la décision rendue (#1182).
+
+        Les trois gestes lèvent l'attente : relever et réduire rendent la main aux
+        tâches mises de côté, arrêter la rend au moteur qui solde le run — son
+        issue arrivera par `execution.statut`, comme celle de tout run. Il repasse
+        donc `en_cours` dans les trois cas. Une décision sur un run qui
+        n'attendait pas (rejouée, ou arrivée après une annulation) ne le touche
+        pas. Idempotent : l'endpoint applique puis la pompe réapplique.
+        """
+        execution = self._executions.get(event.run_id) if event.run_id else None
+        if execution is None or execution.statut != EXECUTION_EN_ATTENTE_PLAFOND:
+            return
+        execution.statut = EXECUTION_EN_COURS
+        execution.fin = None
+        execution.attente_depuis = None
+        execution.plafond = None
 
     def _applique_brief_demande(self, event: Event) -> None:
         """Le run s'arrête sur son brief (#320) : statut suspendu, brief consultable.

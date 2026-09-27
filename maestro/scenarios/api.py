@@ -57,9 +57,11 @@ from maestro.controltower.orchestration import NOM_ORCHESTRATION
 from maestro.controltower.purge import port_api
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.engine.plafond import GESTE_ARRETER
 
 #: Le chemin du fil de l'orchestrateur — la seule porte de lancement qu'un écran
 #: offre depuis #666, donc la seule que le banc a le droit d'emprunter.
@@ -758,6 +760,15 @@ class ClientAPI:
             attendus=(200, 409),
         )
 
+    def arreter_au_plafond(self, run_id: str) -> None:
+        """Arrête un run suspendu sur son plafond de dépense (#1182) — 409 s'il est déjà tranché."""
+        self._appel(
+            "POST",
+            f"/api/executions/{run_id}/plafond",
+            corps={"geste": GESTE_ARRETER},
+            attendus=(200, 409),
+        )
+
 
 def _reponse_de(corps: Any, *, chemin: str) -> dict[str, Any]:
     """Le message **de l'agent** dans la paire que rendent les routes du fil.
@@ -906,6 +917,15 @@ def attendre_le_run(
                         "arbitrage approuvé" if approuve else "arbitrage refusé",
                         f"{tache} — {demande.get('titre') or demande.get('outil') or ''}",
                     )
+        if statut == EXECUTION_EN_ATTENTE_PLAFOND:
+            # Au plafond de dépense (#1182), le banc joue la personne qui
+            # **arrête** : un plafond posé par un scénario est une borne voulue
+            # (S4 la pose pour provoquer un échec), et le relever dépenserait du
+            # vrai modèle que personne n'a accordé. C'est l'issue d'avant ce lot
+            # — le run se solde sur ce qui est fait —, désormais **décidée**, et
+            # notée au déroulé comme un arbitrage.
+            client.arreter_au_plafond(run_id)
+            note("plafond de dépense atteint", "run arrêté par le banc")
         if horloge() >= limite:
             return detail
         dormir(intervalle_s)
