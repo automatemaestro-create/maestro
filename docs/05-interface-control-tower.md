@@ -7601,13 +7601,16 @@ rend un **bilan fondé sur les pièces de son journal**. Il est né du run `3fe5
 aléa, et le récit de fin a recopié « échec transitoire » puis conseillé de relancer.
 
 - `GET /api/executions/{run_id}/bilan` → `{"run_id": "…", "bilan": BilanRun | null, "etat": "…",
-  "raison": "…"}`. `bilan` est `null` tant qu'il n'y en a pas ; `etat` (#1285) dit pourquoi :
-  `attendu` (run en vol), `en_redaction` (l'appel au modèle est parti — dès que le statut terminal
-  est projeté, sans un tour d'attente), `rendu`, ou `absent`, avec sa `raison` quand l'API la sait
-  (`modele_muet` pour ce process, `reponse_illisible` même après un redémarrage — son coût est au
-  journal ; vide pour un run soldé avant ce lot ou un modèle muet avant le dernier redémarrage).
-  `404` si aucune trace reçue pour ce `run_id`. Le détail d'un run (`GET /api/executions/{run_id}`)
-  porte le même objet sous `bilan`.
+  "raison": "…", "taches": {"<id>": "<titre>"}, "cout_bilan": 0.13 | null}`. `bilan` est `null`
+  tant qu'il n'y en a pas ; `etat` (#1285) dit pourquoi : `attendu` (run en vol), `en_redaction`
+  (l'appel au modèle est parti — dès que le statut terminal est projeté, sans un tour d'attente),
+  `rendu`, ou `absent`, avec sa `raison` — `modele_muet` ou `reponse_illisible`, qui survivent à un
+  redémarrage parce que chaque appel sans bilan laisse sa ligne au journal ; vide quand aucune
+  rédaction n'a été tentée (un run soldé avant ce lot). `taches` nomme chaque tâche du run par le
+  titre que **son** plan lui a donné ; `cout_bilan` est ce que l'appel du bilan a coûté, compté au
+  run après sa fin (la tête du run l'inclut, le coût que cite le bilan est celui « jusqu'à sa
+  fin »). `404` si aucune trace reçue pour ce `run_id`. Le détail d'un run
+  (`GET /api/executions/{run_id}`) porte le même objet sous `bilan`.
 
 ```jsonc
 "bilan": {

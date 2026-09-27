@@ -3300,7 +3300,8 @@ def create_app(
         n'a pas répondu, un run soldé avant ce lot. Ce n'est pas une erreur — le
         run existe, son bilan pas encore. 404 si aucune trace reçue pour ce `run_id`.
         """
-        if state.execution(run_id) is None:
+        execution = state.execution(run_id)
+        if execution is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         bilan = bilans.bilan(run_id)
         # Ce que la vue du run dit quand `bilan` est nul (#1285) : `attendu` (run en
@@ -3317,6 +3318,10 @@ def create_app(
             # le bilan, pour ne pas dépendre du moment où la liste des tâches arrive,
             # ni d'une panne qui l'aurait vidée.
             "taches": state.titres_du_run(run_id),
+            # Ce que le bilan a coûté (#1285), compté au run après sa fin : la tête
+            # du run l'inclut, la vue du bilan le dit — sans quoi le coût « jusqu'à
+            # sa fin » que cite le bilan contredisait la tête. `null` : inconnu.
+            "cout_bilan": execution.cout.bilan.cout_usd,
         }
 
     @app.post("/api/sources/apercu")

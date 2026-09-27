@@ -894,7 +894,8 @@ def test_un_run_sans_bilan_se_sert_avec_un_bilan_nul(tmp_path: Path) -> None:
     assert reponse.status_code == 200
     # L'état dit pourquoi il n'y en a pas (#1285) : un run en vol attend le sien.
     assert reponse.json() == {
-        "run_id": RUN, "bilan": None, "etat": "attendu", "raison": "", "taches": {}
+        "run_id": RUN, "bilan": None, "etat": "attendu", "raison": "", "taches": {},
+        "cout_bilan": None,
     }
 
 
@@ -1054,12 +1055,18 @@ def test_une_synthese_se_lit_en_mots_d_interface_sans_code_du_moteur() -> None:
         "Échec", "Terminée", "aucune"
     )
     assert (_agent_en_mots("—"), _agent_en_mots(""), _agent_en_mots("dev")) == ("", "", ", dev")
-    # Le format de l'écran (« 0,43 $US »), jamais le point décimal ni « tour(s) ».
-    assert _montant(0.2199) == "0,2199 $US"
+    # Le format de l'écran (`formatCout` : « 0,43 $US », « < 0,01 $US » sous le
+    # demi-centime, « 0,00 $US » pour un zéro mesuré), jamais le point décimal ni
+    # quatre décimales — relevé par le regard neuf : « 0,2830 $US » dans le bilan,
+    # « 0,41 $US » dans la tête du même écran.
+    assert _montant(0.2199) == "0,22 $US"
+    assert _montant(0.0004) == "< 0,01 $US"
+    assert _montant(0.0) == "0,00 $US"
+    assert _montant(1234.5) == "1 234,50 $US"
     usage = StepUsage(
         tokens_entree=40_000, tokens_sortie=720, cout_usd=0.2199, tours=2, duree_ms=31_000
     )
-    assert _usage_en_mots(usage) =="40 720 tokens, coût 0,2199 $US, 2 tours, 31 s"
+    assert _usage_en_mots(usage) =="40 720 tokens, coût 0,22 $US, 2 tours, 31 s"
     assert "1 tour," in _usage_en_mots(StepUsage(tokens_entree=10, tours=1, duree_ms=1_000))
     assert _usage_en_mots(StepUsage(duree_ms=0)).startswith("0 token, coût inconnu")
     dossier = _dossier(rejouer_p3(total=60))
@@ -1073,7 +1080,8 @@ def test_une_synthese_se_lit_en_mots_d_interface_sans_code_du_moteur() -> None:
     )
     assert MAQUETTE in tentatives.texte and MAQUETTE not in tentatives.libelle
     cout = next(p for p in dossier.pieces if p.famille == FAMILLE_USAGE and not p.tache_id)
-    assert cout.libelle.startswith("Le run a consommé ")
+    # « Jusqu'à sa fin » : la tête du run compte aussi le bilan, rendu après.
+    assert cout.libelle.startswith("Jusqu'à sa fin, le run a consommé ")
     assert ";" not in cout.libelle.split(".")[0]
     assert all(p.libelle for p in dossier.pieces if p.synthese)
     assert not any(p.libelle for p in dossier.pieces if not p.synthese)
@@ -1214,6 +1222,8 @@ def test_l_api_sert_l_etat_du_bilan_avec_le_bilan(tmp_path: Path) -> None:
     assert all("synthese" in piece for piece in servi["bilan"]["pieces"])
     # Les tâches nommées par leur titre, servies avec le bilan.
     assert servi["taches"][MAQUETTE] == "Maquetter les sections"
+    # Et ce que le bilan a coûté : la tête du run le compte, la vue le dit.
+    assert servi["cout_bilan"] == pytest.approx(USAGE_BILAN.cout_usd)
 
 
 def test_une_tache_se_nomme_par_le_titre_que_son_run_lui_a_donne() -> None:

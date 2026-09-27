@@ -2674,6 +2674,12 @@ export type ReponseBilan = {
    * dépendre d'une panne qui l'aurait vidée.
    */
   taches?: Record<string, string>;
+  /**
+   * Ce que l'appel du bilan a coûté (#1285), compté au run après sa fin — `null`
+   * quand il n'est pas connu. La tête du run l'inclut ; le bilan cite, lui, le
+   * coût « jusqu'à sa fin » : la vue dit l'un pour que l'autre ne le contredise pas.
+   */
+  cout_bilan?: number | null;
 };
 
 /** Clés de tri et sens du journal requêtable (maestro/controltower/journal.py). */

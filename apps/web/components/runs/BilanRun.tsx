@@ -90,7 +90,7 @@ import {
   type Citation,
 } from "@/lib/bilan";
 import { resumeEvenement } from "@/lib/evenements";
-import { formatDateHeure, formatHeure } from "@/lib/format";
+import { formatCout, formatDateHeure, formatHeure } from "@/lib/format";
 import { evenementDepuisEntree } from "@/lib/journal";
 import {
   ETAT_BILAN_ATTENDU,
@@ -194,6 +194,7 @@ export function BilanRun({
         titresTaches={
           new Map([...titresTaches, ...Object.entries(reponse?.taches ?? {})])
         }
+        coutBilan={reponse?.cout_bilan ?? null}
         revision={revision}
         ouvrir={ouvrir}
       />
@@ -273,6 +274,7 @@ function ContenuBilan({
   runId,
   bilan,
   titresTaches,
+  coutBilan,
   revision,
   ouvrir,
 }: {
@@ -280,6 +282,8 @@ function ContenuBilan({
   runId: string;
   bilan: Bilan;
   titresTaches: ReadonlyMap<string, string>;
+  /** Ce que le bilan a coûté, `null` si inconnu — dit au pied. */
+  coutBilan: number | null;
   revision: number;
   ouvrir: OuvrirPieces;
 }) {
@@ -344,6 +348,11 @@ function ContenuBilan({
           ? ` — ${bilan.pieces_laissees} laissée${bilan.pieces_laissees > 1 ? "s" : ""} de côté par le budget de lecture`
           : ""}
         {bilan.fin ? `, à sa fin du ${formatDateHeure(bilan.fin)}` : ""}.
+        {/* Le coût que le bilan cite est celui du run « jusqu'à sa fin » ; la tête
+            compte aussi le bilan, rendu après. Le dire ici fait tomber l'écart que
+            le regard neuf a relevé entre les deux montants du même écran. */}
+        {coutBilan !== null &&
+          ` Ce bilan a coûté ${formatCout(coutBilan)}, compté au coût du run.`}
       </p>
     </div>
   );

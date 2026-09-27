@@ -518,6 +518,33 @@ describe("un run en échec", () => {
     ).toBeInTheDocument();
     expect(region.queryByText(/Tâche : rediger-notes-md/)).not.toBeInTheDocument();
   });
+
+  it("dit au pied ce que le bilan a coûté, au format de la tête", async () => {
+    // Relevé par le regard neuf : le bilan citait le coût du run « jusqu'à sa fin »,
+    // la tête affichait le total, bilan compris — deux montants sans explication.
+    lecture.bilan = reponseBilanFactice({
+      run_id: RUN,
+      etat: ETAT_BILAN_RENDU,
+      bilan: bilanEchec(),
+      cout_bilan: 0.1284,
+    });
+    const { region } = await ouvrirLeBilan();
+
+    expect(region.getByText(/Ce bilan a coûté 0,13\s\$US, compté au coût du run\./)).toBeInTheDocument();
+  });
+
+  it("se tait sur son coût quand il n'est pas connu", async () => {
+    lecture.bilan = reponseBilanFactice({
+      run_id: RUN,
+      etat: ETAT_BILAN_RENDU,
+      bilan: bilanEchec(),
+      cout_bilan: null,
+    });
+    const { region } = await ouvrirLeBilan();
+
+    expect(region.getByText(/Rendu sur/)).toBeInTheDocument();
+    expect(region.queryByText(/Ce bilan a coûté/)).not.toBeInTheDocument();
+  });
 });
 
 /* ==================================================================== *

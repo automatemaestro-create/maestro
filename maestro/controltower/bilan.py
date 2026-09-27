@@ -500,13 +500,21 @@ def _nombre(valeur: int) -> str:
     return f"{valeur:,}".replace(",", " ")
 
 
-def _montant(cout: float) -> str:
-    """Un montant comme l'écran l'écrit : `0,2199 $US` — virgule décimale et unité.
+#: Sous ce montant, l'arrondi au centime rendrait `0,00 $US` (`format.ts`, `CENTIME / 2`).
+_DEMI_CENTIME = 0.005
 
-    Quatre décimales et non deux : un bilan compte des appels qui coûtent moins
-    d'un centime, et les arrondir à `0,00 $US` ferait dire « gratuit » à une pièce.
+
+def _montant(cout: float) -> str:
+    """Un montant comme l'écran l'écrit (`formatCout`, `apps/web/lib/format.ts`).
+
+    Deux décimales, comme la tête du run et `/couts` — quatre faisaient lire
+    « 0,2830 $US » dans le bilan à côté de « 0,41 $US » dans la tête (relevé par le
+    regard neuf, #1285) ; et, comme à l'écran, `< 0,01 $US` sous le demi-centime :
+    un appel qui coûte moins d'un centime ne se lit pas « gratuit ».
     """
-    return f"{cout:.4f}".replace(".", ",") + " $US"
+    if 0 < cout < _DEMI_CENTIME:
+        return "< 0,01 $US"
+    return f"{cout:,.2f}".replace(",", " ").replace(".", ",") + " $US"
 
 
 def _compte(nombre: int, mot: str) -> str:
@@ -589,15 +597,19 @@ def _syntheses(
         Piece(
             id="",
             famille=FAMILLE_USAGE,
+            # « Jusqu'à sa fin » : le bilan se rend après, et son appel s'ajoute au coût
+            # que la tête du run affiche — sans ces mots, les deux montants se
+            # contredisaient à l'écran (relevé par le regard neuf, #1285).
             texte=_borne(
-                f"Coût du run : {somme}{plancher} ; au total {_usage_en_mots(cout.total)} ; "
+                f"Coût du run jusqu'à sa fin : {somme}{plancher} ; au total "
+                f"{_usage_en_mots(cout.total)} ; "
                 f"planification {_usage_en_mots(cout.planification)} ; "
                 f"cadrage {_usage_en_mots(cout.brief)}"
             ),
             entrees=tuple(issue_du_run),
             synthese=True,
             libelle=_borne(
-                f"Le run a consommé {_usage_en_phrase(cout.total)}{plancher}. "
+                f"Jusqu'à sa fin, le run a consommé {_usage_en_phrase(cout.total)}{plancher}. "
                 f"Planification : {_usage_en_phrase(cout.planification)} ; "
                 f"cadrage : {_usage_en_phrase(cout.brief)}."
             ),
