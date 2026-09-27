@@ -576,6 +576,13 @@ class Event:
     # classe, pour la raison de `recrutement` : cette couche n'importe pas le
     # moteur. None partout ailleurs — l'événement n'en apprend rien.
     verification: dict[str, Any] | None = None
+    # La **cadence** d'un run (#1298), portée par la seule activité de l'étape
+    # `cadence` : pourquoi ses tâches passent une à une (plan en chaîne, projet non
+    # versionné, agent au complet), sa mention courte, sa phrase, et ce qu'est
+    # devenue la proposition de versionner (`maestro.engine.cadence.Cadence.to_dict`).
+    # Un dict et non la classe, pour la raison de `verification` : cette couche
+    # n'importe pas le moteur. None partout ailleurs — l'événement n'en apprend rien.
+    cadence: dict[str, Any] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -629,6 +636,7 @@ class Event:
             "verification": (
                 dict(self.verification) if self.verification is not None else None
             ),
+            "cadence": dict(self.cadence) if self.cadence is not None else None,
             "horodatage": self.horodatage,
         }
 
@@ -770,6 +778,12 @@ class Event:
                 dict(data["verification"])
                 if isinstance(data.get("verification"), Mapping)
                 else None
+            ),
+            # Même régime que `verification` (#1298) : la cadence passe telle
+            # quelle, relue par la projection qui n'en garde que ce qu'elle sait
+            # lire. Ce qui n'est pas un objet n'est pas une cadence.
+            cadence=(
+                dict(data["cadence"]) if isinstance(data.get("cadence"), Mapping) else None
             ),
             horodatage=data.get("horodatage", ""),
         )

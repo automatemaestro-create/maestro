@@ -86,6 +86,7 @@ from maestro.references import ticket_en_dict
 from maestro.sources.modele import Source, sources_en_liste
 from maestro.telemetry.costs import (
     ETAPE_BRIEF,
+    ETAPE_CADENCE,
     RunCost,
     TaskCost,
     intervalle_depuis,
@@ -898,6 +899,13 @@ class EtatExecution:
     # runs décomposent le même objectif, donc une relance (#349) volerait ses
     # arêtes au run qu'elle reprend.
     plan: list[NoeudPlan] = field(default_factory=list)
+    # **Pourquoi ses tâches passent une à une** (#1298) — les causes que le moteur
+    # a constatées (plan en chaîne, projet non versionné, agent au complet), par
+    # `cle`, telles que leur dernière ligne `cadence` les a dites : la proposition
+    # qui avance, la cause levée quand le projet a été versionné. Vide pour un run
+    # dont les tâches partent de front, ou d'avant ce lot. La vue du run en montre
+    # les mentions des causes qui tiennent (`graphe`), le fil en lit les phrases.
+    cadence: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Les **bornes que ce run a reçues à son accord** (#1323), posées par
     # l'événement de lancement et jamais retirées — la règle de `ticket`,
     # `projet_id` ou `mode_brief`. None pour un run dont le lancement n'en disait
@@ -1478,6 +1486,10 @@ class ControlTowerState:
                 if noeud.id in self._taches
             },
             plan_connu=plan_connu,
+            # Pourquoi ses tâches passent une à une (#1298) : les causes que le
+            # moteur a dites, levées comprises — c'est le graphe qui ne montre que
+            # celles qui tiennent.
+            cadence=tuple(execution.cadence.values()) if execution is not None else (),
         )
 
     def _etat_noeud(self, tache_id: str) -> EtatNoeud:
@@ -1944,6 +1956,8 @@ class ControlTowerState:
         """
         if event.etape_run == ETAPE_BRIEF and event.brief is not None:
             self._retient_brief_auto(event)
+        if event.etape_run == ETAPE_CADENCE and event.cadence is not None and event.run_id:
+            self._retient_cadence(event)
         if event.tache_id:
             tache = self._taches.get(event.tache_id)
             if tache is not None:
@@ -1959,6 +1973,22 @@ class ControlTowerState:
             event.agent, EtatAgent(nom=event.agent, role=event.role)
         )
         agent.derniere_activite = event.horodatage or agent.derniere_activite
+
+    def _retient_cadence(self, event: Event) -> None:
+        """Range la cause qui fait passer les tâches du run une à une (#1298).
+
+        Une par nature et par agent (`cle`, posée par le moteur) : la dernière
+        ligne d'une cause fait foi — la proposition qui avance, la cause levée
+        quand le projet est versionné. Rangée **sur le run**, jamais sur une
+        tâche : c'est un fait du plan, du projet ou d'un agent, que la vue du run
+        et le fil relisent (`EtatExecution.cadence`).
+        """
+        execution = self._executions.get(event.run_id)
+        cause = dict(event.cadence or {})
+        cle = str(cause.get("cle") or "")
+        if execution is None or not cle:
+            return
+        execution.cadence[cle] = cause
 
     def _retient_brief_auto(self, event: Event) -> None:
         """Le brief d'un run en mode `auto` : retenu, et **approuvé** (#1174).

@@ -206,11 +206,27 @@ class JaugeInstances:
         ] = WeakKeyDictionary()
 
     @asynccontextmanager
-    async def creneau(self, nom: str, plafond: Callable[[], int]) -> AsyncIterator[None]:
-        """Occupe un créneau d'exécution de l'agent `nom` le temps du bloc."""
+    async def creneau(
+        self,
+        nom: str,
+        plafond: Callable[[], int],
+        *,
+        on_attente: Callable[[int], None] | None = None,
+    ) -> AsyncIterator[None]:
+        """Occupe un créneau d'exécution de l'agent `nom` le temps du bloc.
+
+        `on_attente` (#1298) est prévenu, **une fois**, quand la tâche doit attendre
+        — l'agent est au complet —, avec le plafond qui la retient. C'est l'instant
+        où le moteur sait qu'une instance fait passer des tâches une à une ; une
+        tâche servie tout de suite ne le prévient pas.
+        """
         condition, en_vol = self._etat_de_la_boucle()
         async with condition:
-            while en_vol.get(nom, 0) >= max(1, plafond()):
+            prevenu = False
+            while en_vol.get(nom, 0) >= (borne := max(1, plafond())):
+                if on_attente is not None and not prevenu:
+                    prevenu = True
+                    on_attente(borne)
                 await condition.wait()
             en_vol[nom] = en_vol.get(nom, 0) + 1
         try:
