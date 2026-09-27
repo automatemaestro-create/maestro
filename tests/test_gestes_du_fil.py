@@ -359,6 +359,14 @@ def test_le_contrat_du_juge_porte_le_verdict_geste_et_ses_quatre_actions() -> No
     assert "mets-les TOUS" in _PROMPT_ORCHESTRATION
 
 
+def test_le_juge_n_annonce_pas_une_carte_que_la_verification_peut_retirer() -> None:
+    """Relecture visuelle de #1179 : « confirmez sur la carte ci-dessous », puis aucune carte.
+
+    Le juge parle avant la vérification : une carte qu'il promet peut ne jamais venir.
+    """
+    assert "N'annonce pas de carte" in _PROMPT_ORCHESTRATION
+
+
 # ── ② l'ambiguïté et le refus avant la carte ──────────────────────────────────
 
 

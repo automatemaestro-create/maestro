@@ -318,6 +318,10 @@ describe("les runs d'une demande ambiguë", () => {
 
     const liste = screen.getByRole("list", { name: "Runs possibles" });
     expect(within(liste).getAllByRole("listitem")).toHaveLength(2);
+    // Chacun dans son encadré : collés, deux candidats se lisaient comme un seul bloc.
+    for (const candidat of within(liste).getAllByRole("listitem")) {
+      expect(candidat.className).toContain("border");
+    }
     expect(within(liste).getByText("Corriger le tri")).toBeInTheDocument();
     expect(within(liste).getAllByRole("link", { name: /Voir le run/ })).toHaveLength(2);
     expect(within(liste).queryByRole("button")).not.toBeInTheDocument();

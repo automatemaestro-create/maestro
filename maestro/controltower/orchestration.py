@@ -916,8 +916,10 @@ qui approuve un projet, il dit que tu le déclares, rien de plus ; qui approuve 
 pièce d'outillage, il dit que tu l'écris, rien de plus ; qui approuve un geste sur
 un run, il dit que tu le fais, rien de plus — l'état du run, relu après le geste,
 s'affiche de lui-même juste en dessous. Sur "geste", il dit en une phrase ce que tu
-proposes de faire, à quel run, et ce que cela fera ; la carte juste en dessous le
-montre et attend la confirmation : ne dis jamais que c'est fait. Sur "outillage", il redit
+proposes de faire, à quel run, et ce que cela fera ; ne dis jamais que c'est fait.
+N'annonce pas de carte et ne dis pas comment confirmer : le code vérifie ta
+proposition après toi, pose la carte et ses boutons quand l'état du run l'accepte,
+et dit sinon pourquoi il n'y en aura pas. Sur "outillage", il redit
 en une phrase ce que la personne demande, avec ses mots et sans rien y deviner : tu
 parles avant la correction, et c'est elle qui dit juste en dessous ce qui en sort —
 la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la question
@@ -1199,8 +1201,10 @@ _PHRASE_RUN_INTROUVABLE = (
 #: suivi d'un refus qui ne disait pas qu'il revenait sur ces mots. La raison n'y est
 #: pas : elle est le **fait** du refus (`geste_fait`), marqué sous la bulle comme un
 #: refus au clic — un second paragraphe de prose se lisait comme une réponse de plus.
-#: Elle dit aussi qu'**aucune carte ne suivra** : les mots du modèle, déjà affichés,
-#: l'annoncent presque toujours (« la carte ci-dessous attend votre confirmation »).
+#: Elle dit aussi qu'**aucune carte ne suivra** : le modèle l'annonçait presque
+#: toujours (« confirmez sur la carte ci-dessous »), et deux réponses contraires se
+#: lisaient d'un coup d'œil. La consigne lui dit désormais de ne pas l'annoncer ; la
+#: phrase le dit quand même, parce qu'une consigne n'est pas une garantie.
 _PHRASE_GESTE_IMPOSSIBLE = (
     "Vérification faite, aucune carte ne suivra : je ne peux finalement pas vous "
     "proposer de {verbe} ce run — la raison est juste en dessous."
