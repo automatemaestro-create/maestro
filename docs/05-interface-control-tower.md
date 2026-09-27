@@ -3405,7 +3405,9 @@ lui-même (docs/33 ②).
   des écrans (« Échec »), jamais par l'identifiant de la machine à états.
 - **La conséquence d'une interruption suit l'état du run** : sur un run en pause, la carte ne
   lui prête pas de tâches en vol — celles qui attendaient ne partiront plus, et seule une tâche
-  partie avant la pause, si elle tourne encore, perd son travail.
+  partie avant la pause, si elle tourne encore, perd son travail. Une fois faite, sa coche est à
+  la couleur du texte, jamais au vert : le récit de fin juste au-dessus dit « Run interrompu » au
+  ton d'alerte, et le même état ne se lit pas en deux tons.
 
 La forme a été tranchée sur pièces (veille et « Variante retenue » de #1179) : la question qui
 nomme le geste et sa cible puis dit ce qui va se passer, d'après l'approbation d'outil de VS Code ;

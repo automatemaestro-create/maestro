@@ -1199,9 +1199,11 @@ _PHRASE_RUN_INTROUVABLE = (
 #: suivi d'un refus qui ne disait pas qu'il revenait sur ces mots. La raison n'y est
 #: pas : elle est le **fait** du refus (`geste_fait`), marqué sous la bulle comme un
 #: refus au clic — un second paragraphe de prose se lisait comme une réponse de plus.
+#: Elle dit aussi qu'**aucune carte ne suivra** : les mots du modèle, déjà affichés,
+#: l'annoncent presque toujours (« la carte ci-dessous attend votre confirmation »).
 _PHRASE_GESTE_IMPOSSIBLE = (
-    "Vérification faite, je ne peux finalement pas vous proposer de {verbe} ce run — "
-    "la raison est juste en dessous."
+    "Vérification faite, aucune carte ne suivra : je ne peux finalement pas vous "
+    "proposer de {verbe} ce run — la raison est juste en dessous."
 )
 _PHRASE_GESTE_REFUSE = "Ce geste n'a pas eu lieu : {cause}"
 _PHRASE_GESTE_EMPECHE = "Je n'ai pas pu {verbe} le run {run_id} : {cause}."

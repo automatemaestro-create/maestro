@@ -409,7 +409,9 @@ def test_un_geste_que_le_service_refuse_n_est_pas_propose_et_dit_pourquoi() -> N
     reponse, _ = _proposer(pilote, _geste(GESTE_REPRISE, RUN), "reprends-le")
 
     assert reponse.geste_run is None
-    # La phrase **corrige** ce que le modèle venait d'annoncer : elle dit qu'elle y revient.
+    # La phrase **corrige** ce que le modèle venait d'annoncer : elle dit qu'elle y revient,
+    # et que la carte qu'il annonçait ne viendra pas.
+    assert "aucune carte ne suivra" in reponse.contenu
     assert "je ne peux finalement pas vous proposer de reprendre ce run" in reponse.contenu
     # La raison est le **fait** du refus, marqué sous la bulle comme un refus au clic —
     # en prose, elle se lisait comme une réponse de plus (relecture visuelle de #1179).

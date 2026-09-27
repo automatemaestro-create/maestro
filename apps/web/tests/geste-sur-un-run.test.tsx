@@ -288,6 +288,24 @@ describe("la trace d'un geste confirmé", () => {
     expect(screen.getByText("Interrompu")).toBeInTheDocument();
     expect(screen.queryByText(/Annulée/)).not.toBeInTheDocument();
   });
+
+  it("coche une interruption à la couleur du texte, jamais au vert d'une réussite", () => {
+    // Relecture visuelle de #1179 : le récit de fin dit « Run interrompu » au ton
+    // d'alerte juste au-dessus ; un vert à côté lisait le même état comme une réussite.
+    render(
+      <TraceDuGeste fait={fait({ action: "annulation", run: run({ statut: "annulee" }) })} />,
+    );
+
+    const verbe = screen.getByText("Interrompu");
+    expect(verbe.className).toContain("text-texte");
+    expect(verbe.className).not.toContain("text-positif");
+  });
+
+  it("coche une pause au ton positif", () => {
+    render(<TraceDuGeste fait={fait()} />);
+
+    expect(screen.getByText("Mis en pause").className).toContain("text-positif-texte");
+  });
 });
 
 describe("les runs d'une demande ambiguë", () => {
@@ -394,8 +412,9 @@ describe("dans le fil", () => {
       agent: AGENT_ORCHESTRATION,
       auteur: AGENT_ORCHESTRATION,
       contenu:
-        "Je vous propose de le relancer.\n\nVérification faite, je ne peux finalement pas " +
-        "vous proposer de relancer ce run — la raison est juste en dessous.",
+        "Je vous propose de le relancer.\n\nVérification faite, aucune carte ne suivra : je " +
+        "ne peux finalement pas vous proposer de relancer ce run — la raison est juste en " +
+        "dessous.",
       geste_fait: fait({
         action: "relance",
         run: run({ statut: "echec", etat: "Échec" }),

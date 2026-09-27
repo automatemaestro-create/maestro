@@ -184,6 +184,11 @@ function etatRelu(fait: GesteRunFait): string {
  * Ce qu'un geste confirmé a **donné**, sous la réponse : une ligne cochée — le geste
  * fait, l'état relu, le run —, ou le refus du service avec sa raison et le glyphe
  * d'arrêt. Le renvoi vers le run est celui de la ligne de faits (`Suite`).
+ *
+ * La coche d'une **interruption** est à la couleur du texte, pas au vert : le récit
+ * de fin du run, juste au-dessus, dit « Run interrompu » au ton d'alerte, et un vert
+ * à côté lisait le même état comme une réussite (relecture visuelle de #1179). La
+ * coche dit que le geste a eu lieu ; le ton n'en fait pas une bonne nouvelle.
  */
 export function TraceDuGeste({ fait }: { fait: GesteRunFait }) {
   const libelles = libellesDuGeste(fait.action);
@@ -199,9 +204,10 @@ export function TraceDuGeste({ fait }: { fait: GesteRunFait }) {
   }
   const cible = fait.nouveau ?? fait.run;
   const etat = etatRelu(fait);
+  const ton = fait.action === "annulation" ? "text-texte" : "text-positif-texte";
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe">
-      <span className="inline-flex items-center gap-1 font-medium text-positif-texte">
+      <span className={`inline-flex items-center gap-1 font-medium ${ton}`}>
         <IconeCoche className="size-3.5 shrink-0" />
         {libelles?.fait ?? "Fait"}
       </span>
