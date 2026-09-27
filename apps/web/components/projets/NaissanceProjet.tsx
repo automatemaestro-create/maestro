@@ -44,15 +44,13 @@ import { useGestesDuFil } from "@/components/chat/GestesDuFil";
 import { Conversation } from "@/components/Conversation";
 import { IconeFlecheGauche } from "@/components/Icones";
 import { Bouton } from "@/components/Primitives";
-import { chargerProjets } from "@/lib/api";
 import { lireConversationOuverte as lireConversationDuFil } from "@/lib/conversationOuverte";
-import { useProjetActif } from "@/lib/etatProjetActif";
+import { useEntreeDansLeProjetNe } from "@/lib/entreeProjetNe";
 import { projetNeDuFil } from "@/lib/naissance";
 import {
   AGENT_ORCHESTRATION,
   INTERLOCUTEUR_ORCHESTRATION,
 } from "@/lib/orchestration";
-import { ecrireConversationOuverte } from "@/lib/preferences";
 import { useChat } from "@/lib/useChat";
 
 /**
@@ -89,7 +87,6 @@ export function NaissanceProjet({
    */
   parUnGeste?: boolean;
 }) {
-  const { choisir } = useProjetActif();
   // Le fil de l'orchestration **sans projet** : le backend l'accepte, et c'est le
   // projet que cette conversation fait naître qui lui en donnera un.
   const fil = useChat(AGENT_ORCHESTRATION, null);
@@ -124,43 +121,14 @@ export function NaissanceProjet({
   const ouverte =
     neuve !== null && (neuve === "" || fil.conversation === neuve);
 
-  // Le projet né **dans cette conversation** : on l'ouvre. Relu de la fiche que
-  // l'API sert (racine canonicalisée, VCS constaté), jamais reconstruit.
-  //
-  // ⚠ L'effet dépend de l'**identifiant**, jamais de l'objet : après le geste,
-  // `useChat` relit le fil, et chaque relecture rend des messages neufs portant
-  // le même fait. Dépendre de l'objet annulait la lecture de la liste en vol à
-  // chaque relecture — le projet était déclaré et la porte restait fermée
-  // (constaté sur la vraie stack, gardé par `projet-actif.test.tsx`).
+  // Le projet né **dans cette conversation** : on l'ouvre, par la même entrée que
+  // le fil d'un projet ouvert (#1340, `lib/entreeProjetNe` — fiche relue de l'API,
+  // effet sur l'identifiant). Le relais (manque relevé par le regard neuf) : la
+  // conversation où le projet est né continue dans la colonne de droite du projet.
+  // Une conversation neuve n'a rien fait naître avant qu'on l'ouvre : tout projet
+  // né l'est sous nos yeux, sans référence à prendre.
   const ne = ouverte && !fil.chargement ? projetNeDuFil(fil.messages) : null;
-  const neId = ne?.id ?? null;
-  const neNom = ne?.nom ?? "";
-  const [refus, setRefus] = useState<string | null>(null);
-  useEffect(() => {
-    if (neId === null) return;
-    let vivant = true;
-    void chargerProjets()
-      .then((projets) => {
-        if (!vivant) return;
-        const fiche = projets.find((projet) => projet.id === neId);
-        if (fiche === undefined) {
-          setRefus(
-            `Le projet « ${neNom} » est déclaré, mais je ne le retrouve pas dans la liste — rechargez la page.`,
-          );
-          return;
-        }
-        // Le relais (manque relevé par le regard neuf) : la conversation où le
-        // projet est né continue dans la colonne de droite du projet.
-        ecrireConversationOuverte(true);
-        choisir(fiche);
-      })
-      .catch((e: unknown) => {
-        if (vivant) setRefus(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      vivant = false;
-    };
-  }, [neId, neNom, choisir]);
+  const refus = useEntreeDansLeProjetNe(ne, { relais: true });
 
   return (
     <div className="flex flex-col gap-4">

@@ -202,3 +202,18 @@ export function useProjetActif(): ProjetActif {
   }
   return etat;
 }
+
+/**
+ * Le projet actif **s'il y a un fournisseur** — `null` hors du shell (#1340).
+ *
+ * Un seul module appelant : l'entrée dans le projet que le fil fait naître
+ * (`lib/entreeProjetNe`), montée par la porte, par `/chat` et par la colonne.
+ * Ces fils vivent sous le fournisseur ; ceux de `/chat` et de la colonne se
+ * rendent aussi seuls, hors de tout projet ouvert, et il n'y a alors rien à
+ * quitter ni personne pour entrer — l'entrée se tait. Partout ailleurs,
+ * `useProjetActif` reste la règle, et son erreur explicite ce qui dit qu'un
+ * composant a quitté le shell.
+ */
+export function useProjetActifFacultatif(): ProjetActif | null {
+  return useContext(ContexteProjetActif);
+}

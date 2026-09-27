@@ -6,6 +6,10 @@
  * déclare. Ce module tient les deux questions que deux surfaces se posent — la
  * carte qui attend un geste (`GestesDuFil`) et la porte qui ouvre le projet né
  * (`NaissanceProjet`) — pour qu'elles ne les formulent pas deux fois.
+ *
+ * Depuis #1340, une troisième : le fil d'un projet **déjà ouvert** fait naître un
+ * projet lui aussi, et l'y fait entrer (`lib/entreeProjetNe`) — à condition que la
+ * naissance ait lieu sous ses yeux (`projetNeHorsDe`).
  */
 
 import type { DemandeProjet, MessageChat, ProjetCree } from "@/lib/types";
@@ -34,9 +38,36 @@ export function projetEnAttente(messages: MessageChat[]): DemandeProjet | null {
  * après coup le retrouve.
  */
 export function projetNeDuFil(messages: MessageChat[]): ProjetCree | null {
+  return projetNeHorsDe(messages, []);
+}
+
+/**
+ * Les identifiants des projets que ce fil a fait naître, dans l'ordre (#1340) —
+ * ce qu'une surface **trouve** en lisant une conversation, et qui n'est donc pas
+ * une naissance à laquelle elle assiste.
+ */
+export function projetsNesDuFil(messages: MessageChat[]): string[] {
+  return messages.flatMap((message) =>
+    message.projet_cree ? [message.projet_cree.id] : [],
+  );
+}
+
+/**
+ * Le dernier projet que ce fil a fait naître **hors de ceux qu'on y connaissait
+ * déjà**, `null` s'il n'y en a pas (#1340).
+ *
+ * La porte n'en a pas besoin : elle ouvre une conversation neuve, où tout projet
+ * né l'est sous ses yeux. Le fil d'un projet ouvert, lui, se relit — d'un projet
+ * à l'autre, d'une conversation à l'autre —, et une naissance qu'il porte depuis
+ * hier n'est pas celle qu'on vient d'accepter.
+ */
+export function projetNeHorsDe(
+  messages: MessageChat[],
+  connus: readonly string[],
+): ProjetCree | null {
   for (let rang = messages.length - 1; rang >= 0; rang -= 1) {
     const cree = messages[rang].projet_cree;
-    if (cree) return cree;
+    if (cree && !connus.includes(cree.id)) return cree;
   }
   return null;
 }

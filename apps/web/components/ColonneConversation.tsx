@@ -105,6 +105,7 @@ import { useGestesDuFil } from "@/components/chat/GestesDuFil";
 import { Conversation } from "@/components/Conversation";
 import { IconeAgrandir, IconeFermer } from "@/components/Icones";
 import { Infobulle } from "@/components/Infobulle";
+import { useEntreeDepuisLeFil } from "@/lib/entreeProjetNe";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { entreeParLibelle } from "@/lib/navigation";
 import {
@@ -259,6 +260,9 @@ function FilDeLaColonne() {
   // jamais recopiée — sans quoi la colonne et `/chat` finiraient par ne plus
   // désigner la même attente, et c'est le défaut que ce ticket corrige.
   const gestes = useGestesDuFil(fil, AGENT_ORCHESTRATION);
+  // …et la même entrée dans le projet qu'il fait naître (#1340) : né ici, il
+  // devient le projet ouvert, comme depuis `/chat` et depuis la porte.
+  useEntreeDepuisLeFil(fil);
 
   return (
     // L'ascenseur de la colonne (point 3 de l'en-tête). `min-h-0` est ce qui lui

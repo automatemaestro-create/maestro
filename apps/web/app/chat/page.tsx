@@ -179,6 +179,7 @@ import {
 } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
 import { propositionEnAttente, runsEnAttente } from "@/lib/brief";
+import { useEntreeDepuisLeFil } from "@/lib/entreeProjetNe";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -260,6 +261,11 @@ export default function PageChat() {
   // sur `/chat` et nulle part ailleurs, c'est-à-dire à devoir changer de page
   // pour lancer un run.
   const gestes = useGestesDuFil(fil, destinataire);
+
+  // Un projet né ici devient le projet ouvert (#1340) — comme depuis la porte, et
+  // comme dans la colonne, qui appelle la même règle : c'est ce que la réponse
+  // vient de dire, et la demande suivante partira avec lui (#683).
+  useEntreeDepuisLeFil(fil);
 
   /**
    * Chaque frappe passe ici : une mention close par une espace change le
