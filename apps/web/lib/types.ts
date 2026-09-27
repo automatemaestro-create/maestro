@@ -1708,6 +1708,65 @@ export const EXECUTION_EN_ATTENTE_REPONSES = "en_attente_reponses";
  * réponse — `en_cours`, 0 tâche, coût figé, cœur battant (#568).
  */
 export const EXECUTION_EN_ATTENTE_ARBITRAGE = "en_attente_arbitrage";
+/**
+ * Le run a atteint son **plafond de dépense** et attend qu'une personne relève le
+ * plafond, réduise la portée ou arrête (#1182). Quatrième attente, non terminale
+ * comme les trois autres : la tâche en vol est mise de côté, rien ne se dépense
+ * d'ici la réponse, et le run reste annulable. La question elle-même voyage dans
+ * le résumé (`ResumeExecution.plafond`), et la carte du fil la pose.
+ */
+export const EXECUTION_EN_ATTENTE_PLAFOND = "en_attente_plafond";
+
+/** Les trois réponses au plafond de dépense (#1182), telles que l'API les attend. */
+export const GESTE_RELEVER = "relever";
+export const GESTE_REDUIRE = "reduire";
+export const GESTE_ARRETER = "arreter";
+export type GestePlafond =
+  | typeof GESTE_RELEVER
+  | typeof GESTE_REDUIRE
+  | typeof GESTE_ARRETER;
+
+/**
+ * Une tâche qui reste à faire quand le run atteint son plafond (#1182).
+ * `interrompue` : elle avait commencé — son travail est conservé et elle reprendra
+ * là où elle en était ; sinon, elle n'a pas encore démarré.
+ */
+export type TacheRestante = {
+  tache_id: string;
+  titre: string;
+  interrompue: boolean;
+};
+
+/**
+ * La **question au plafond de dépense** d'un run (#1182, `DemandePlafond` côté
+ * moteur) : des faits, jamais une phrase. `depense_usd` est `null` quand le
+ * fournisseur ne tarife pas — seul le plafond en tokens tient alors. Le coût du
+ * reste n'y est pas : c'est l'estimation du brief (`lib/estimation`), appliquée
+ * par l'écran aux tâches qui restent.
+ */
+export type DemandePlafond = {
+  run_id: string;
+  projet_id: string | null;
+  objectif: string;
+  depense_usd: number | null;
+  depense_tokens: number;
+  plafond_cout_usd: number | null;
+  plafond_tokens: number | null;
+  raison: string;
+  restantes: TacheRestante[];
+};
+
+/**
+ * Le corps de `POST /api/executions/{run_id}/plafond` (#1182). Relever et réduire
+ * portent le nouveau plafond — dans l'unité que le run a atteinte ; réduire nomme
+ * en plus les tâches écartées. Arrêter ne porte rien d'autre.
+ */
+export type DecisionPlafond = {
+  geste: GestePlafond;
+  plafond_cout_usd?: number | null;
+  plafond_tokens?: number | null;
+  ecartees?: string[];
+};
 
 /**
  * Les deux **ordres de pause** d'un run (#477), tels qu'ils voyagent dans
@@ -2109,6 +2168,12 @@ export type ResumeExecution = {
    * borne, quel montant). Absente des flux antérieurs au lot, d'où l'optionnel.
    */
   cause?: string;
+  /**
+   * La **question au plafond de dépense** en vol (#1182) — `null` hors de
+   * l'attente `en_attente_plafond`. Dans le résumé, parce que c'est de la liste des
+   * runs que le fil tire ce qui attend un geste. Absente des flux antérieurs.
+   */
+  plafond?: DemandePlafond | null;
   debut: string;
   fin: string | null;
   /**

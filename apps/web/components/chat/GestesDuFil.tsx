@@ -37,6 +37,12 @@
  * la saisie. Une fois l'équipe créée, c'est la demande de cadrage qui revient à ce
  * rang, sur le travail d'origine.
  *
+ * ⚠ Une cinquième est venue avec #1182 : la **décision au plafond de dépense**
+ * (`PlafondDansLeFil`) — un run qui a atteint son budget et attend qu'on relève,
+ * réduise ou arrête. Elle ne vit pas sur un message mais sur le **run** (la liste
+ * des exécutions du shell), et elle prend le **premier** rang : c'est le run entier
+ * qui attend, rien d'autre n'y bougera tant qu'elle n'est pas tranchée.
+ *
  * ## Pourquoi il existe — le défaut que #1106 corrige
  *
  * Ce pied vivait **dans `app/chat/page.tsx`**. `ColonneConversation` (#926)
@@ -89,6 +95,7 @@ import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { DemandeDeProjet } from "@/components/chat/DemandeDeProjet";
 import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
 import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
+import { PlafondDansLeFil } from "@/components/chat/PlafondDansLeFil";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { propositionEnAttente } from "@/lib/brief";
@@ -97,14 +104,21 @@ import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { pieceEnAttente, questionEnAttente } from "@/lib/outillage";
+import { runsAuPlafond } from "@/lib/plafond";
 import { questionsDuFil } from "@/lib/questions";
 import type { Chat } from "@/lib/useChat";
 
 /** Aucune question d'agent : ce que vaut le fil hors du shell (#1294). */
 const AUCUNE_QUESTION: never[] = [];
 
+/** Aucun run : hors du shell, aucun ne peut attendre sur son plafond (#1182). */
+const AUCUN_RUN: never[] = [];
+
 /** Rien à répondre hors du shell — aucune question n'y est jamais montrée. */
 async function sansQuestion(): Promise<void> {}
+
+/** Rien à trancher hors du shell — aucune carte de plafond n'y est montrée. */
+async function sansDecision(): Promise<void> {}
 
 /**
  * Ce qui attend un geste sur ce fil, prêt à passer en `pied` de `Conversation` —
@@ -128,6 +142,8 @@ export function useGestesDuFil(
   const toutesLesQuestions = etat?.questions ?? AUCUNE_QUESTION;
   const repondreAUneQuestion = etat?.repondreAUneQuestion ?? sansQuestion;
   const global = destinataire === AGENT_ORCHESTRATION;
+  const executions = etat?.executions ?? AUCUN_RUN;
+  const trancherPlafond = etat?.trancherPlafond ?? sansDecision;
 
   const questions = useMemo(
     () => questionsDuFil(toutesLesQuestions, destinataire, AGENT_ORCHESTRATION),
@@ -143,8 +159,16 @@ export function useGestesDuFil(
   const recrutement = messageRecrutement?.recrutement ?? null;
   const projetPropose = global ? projetEnAttente(fil.messages) : null;
   const piece = global ? (pieceEnAttente(fil.messages)?.piece ?? null) : null;
+  // Les runs arrêtés sur leur plafond de dépense (#1182) — sur le seul fil de
+  // l'orchestration, parce que c'est une décision **du run** : aucun agent ne
+  // l'a posée, et un aparté avec l'un d'eux n'a pas à la porter.
+  const auPlafond = useMemo(
+    () => (global ? runsAuPlafond(executions) : []),
+    [global, executions],
+  );
 
   if (
+    auPlafond.length === 0 &&
     questions.length === 0 &&
     proposition === null &&
     recrutement === null &&
@@ -157,6 +181,19 @@ export function useGestesDuFil(
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Le plafond de dépense d'abord (#1182) : c'est le **run entier** qui
+          attend, là où une question d'agent n'en retient qu'une tâche — et rien
+          d'autre ne bougera dans ce run tant qu'il n'est pas tranché. La `key`
+          est le run **et** le début de l'attente : une seconde question sur le
+          même run (plafond relevé trop court) repart d'une carte neuve, pas des
+          cases et du montant de la précédente. */}
+      {auPlafond.map((run) => (
+        <PlafondDansLeFil
+          key={`${run.run_id}|${run.attente_depuis ?? ""}`}
+          run={run}
+          trancher={trancherPlafond}
+        />
+      ))}
       <QuestionsDuFil questions={questions} repondre={repondreAUneQuestion} />
       {outillage?.question && (
         /* La `key` remet la carte à zéro d'une question à la suivante — même

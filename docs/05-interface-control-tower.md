@@ -2716,6 +2716,46 @@ retenue ». Implémentation :
 phrase d'attente vient de l'API, la carte dit que l'agent est reparti **et reste répondable**, et le
 fil de l'orchestration porte toutes les questions là où un aparté ne porte que les siennes.
 
+#### 2.7.7 Le run a atteint son budget : la décision se prend dans le fil (#1182) — **livré**
+
+Quand un run atteint son plafond de dépense, il se **suspend** au lieu d'échouer (§6.1) : sa tâche
+coupée est mise de côté, son travail conservé, et rien ne se dépense d'ici la réponse. La question
+arrive **au pied du fil de l'orchestration**, en premier — c'est le run entier qui attend —, sur une
+carte « Budget du run atteint » :
+
+- **trois chiffres au même rang** : *Dépensé*, lu contre le plafond (« 0,22 $US — sur un plafond de
+  0,01 $US ») ; *Reste à faire*, en tâches ; *Coût estimé du reste*, en fourchette — **l'estimation du
+  brief** (`lib/estimation`, docs/09), appliquée aux tâches qui restent, dite « ordre de grandeur,
+  pas une mesure » ;
+- **ce qui reste, nommé** tâche par tâche, en cases à cocher — cochée = gardée ; la tâche coupée y
+  porte « mise de côté — travail conservé ». **Décocher, c'est réduire** : l'estimation et le plafond
+  proposé se recalculent sur ce qui est gardé ;
+- **le nouveau plafond**, prérempli (la dépense plus le haut de l'estimation de ce qui est gardé),
+  modifiable, et vérifié avant de partir : un plafond qui ne couvre pas ce qui est déjà dépensé ne se
+  soumet pas. En tokens — le fournisseur ne tarifie pas —, rien n'est proposé : l'estimation est en
+  dollars, le plafond s'écrit ;
+- **deux boutons qui disent ce qu'ils engagent** : « Relever à X et reprendre », qui devient « Reprendre
+  sans N tâches — plafond X » dès qu'on décoche, et « Arrêter le run ». Rien ne relève le plafond sans
+  qu'un montant ait été lu sur le bouton ;
+- une ligne pour **ce qui se passe sans réponse** — le run reste suspendu, rien ne se dépense — et la
+  **franchise** : ce qui était engagé au franchissement a pu dépasser un peu le plafond, un appel
+  modèle ne se tarifant qu'une fois fait.
+
+Ailleurs, le statut se lit « **Budget atteint** » (liste des runs, vue d'un run, fil), avec la phrase
+« Le run attend une décision sur son budget » et un renvoi « Décider » vers le fil — la quatrième
+attente humaine, au même régime que les trois autres (`causeDAttente`, table `ATTENTES`).
+
+La forme vient d'une **veille de conception** (Vercel Spend Management, GitHub Actions « Reviewing
+deployments », Replit « Edit usage limit » capturés ; Devin et Cursor lus) et d'un **choix rendu sur
+pièces** par le regard neuf, entre trois variantes rendues sur la vraie stack contre un vrai run
+suspendu : retenue **A** (un formulaire, les chiffres en tuiles), écartées B (trois options qui
+déplient leurs contrôles — « réduire » tout coché relevait le plafond sans le dire) et C (relevé façon
+grand livre — des fourchettes par tâche que l'estimation ne fournit pas). Consignées sur #1182, sous
+« ## Veille de conception » et « ## Variante retenue ». Implémentation :
+[`apps/web/components/chat/PlafondDansLeFil.tsx`](../apps/web/components/chat/PlafondDansLeFil.tsx),
+[`apps/web/lib/plafond.ts`](../apps/web/lib/plafond.ts), `components/chat/GestesDuFil.tsx`. Gardé par
+`apps/web/tests/plafond-fil.test.tsx`.
+
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
 Le fil d'activité a **quitté le tableau de bord pour sa propre entrée de menu**.

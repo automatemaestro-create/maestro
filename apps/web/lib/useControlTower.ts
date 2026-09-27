@@ -40,6 +40,7 @@ import {
   chargerTaches,
   chargerValidations,
   deciderBrief,
+  deciderPlafond,
   deciderValidation,
   reassignerTache,
   reglerCapaciteAgent,
@@ -56,6 +57,7 @@ import {
 import type {
   CoutExecution,
   DecisionBrief,
+  DecisionPlafond,
   EtatAgent,
   Evenement,
   Question,
@@ -162,6 +164,11 @@ export type ControlTower = {
    * autorisation : un acte soumis à validation reste refusé sans arbitrage.
    */
   repondreAUneQuestion: (questionId: string, reponse: string) => Promise<void>;
+  /**
+   * Tranche un run arrêté sur son **plafond de dépense** (#1182) : relever,
+   * réduire ou arrêter. Le run reprend ses tâches mises de côté, ou se solde.
+   */
+  trancherPlafond: (runId: string, decision: DecisionPlafond) => Promise<void>;
   /**
    * Rejoue un run interrompu sur son **brief approuvé** (#349) : le cadrage déjà
    * payé repart sans repasser par la clarification ni par la validation, et le run
@@ -394,6 +401,17 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     [recharger],
   );
 
+  const trancherPlafond = useCallback(
+    async (runId: string, decision: DecisionPlafond) => {
+      await deciderPlafond(runId, decision);
+      // Même mécanique que les autres décisions : `plafond.decision` arrivera par
+      // le WebSocket, le rechargement direct retire la carte du pied du fil à
+      // l'instant où l'on tranche, sans dépendre de la socket.
+      await recharger();
+    },
+    [recharger],
+  );
+
   const relancerRun = useCallback(
     async (runId: string) => {
       const nouveau = await relancerExecution(runId);
@@ -472,6 +490,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     trancherBrief,
     repondreAuBrief,
     repondreAUneQuestion,
+    trancherPlafond,
     relancerRun,
     suspendreRun,
     reprendreRun,

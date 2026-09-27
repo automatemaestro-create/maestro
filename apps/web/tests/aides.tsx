@@ -368,6 +368,9 @@ function etatParDefaut(): ControlTower {
     trancherBrief: async () => {},
     repondreAuBrief: async () => {},
     repondreAUneQuestion: async () => {},
+    // La décision au plafond (#1182) : rien à trancher par défaut — un test qui
+    // exerce le geste passe le sien (`vi.fn()`).
+    trancherPlafond: async () => {},
     // Rend le **nouveau** run, comme la vraie : c'est lui qui porte `reprise_de`,
     // et un test qui n'en veut rien peut ignorer la valeur.
     relancerRun: async (runId: string) => ({
