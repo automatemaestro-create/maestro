@@ -6754,9 +6754,9 @@ même chose se paierait au premier écran qui voudrait afficher les deux. Chacun
 `null` vaut « pas de borne », comme partout ailleurs dans ce contrat.
 
 **Ils voyagent avec l'accord**, et pas ailleurs, pour la raison exacte qui y fait passer l'objectif
-amendé : le juge rend un objectif, jamais un formulaire, donc un tour de jugement les perdrait. Un
-accord **tapé** dans la zone de saisie n'en porte donc aucun — les bornes ne peuvent venir que d'un
-**geste** d'écran, seul endroit où quelqu'un a pu les poser.
+amendé : le juge rend un objectif, jamais un formulaire, donc un tour de jugement les perdrait. ⚠
+**Renversé par #1184** (§6.24) : « vas-y, 5 $ max » partait sans borne, faute de champ dans le
+verdict ; un accord **tapé** porte désormais les bornes qu'il nomme, lues dans le verdict du juge.
 
 **Ils ne sont pas jugés à la frontière.** La règle « un plafond est un maximum » vit dans
 `ServiceExecutions.lancer`, qui refuse **avant toute écriture**, et la redoubler dans le canal
@@ -7883,4 +7883,62 @@ Implémentation : [`maestro/controltower/bilan.py`](../maestro/controltower/bila
 vérification, service), [`maestro/controltower/recit.py`](../maestro/controltower/recit.py) (sa
 lecture par le récit). Gardé par [`tests/test_bilan_run.py`](../tests/test_bilan_run.py), qui rejoue
 les pièces de `p3` — et, devant le vrai modèle, `test_p3_devant_le_vrai_modele_…` (`cli_reel`).
+
+### 6.24 Au moment de lancer : les bornes d'un accord tapé, l'estimation, la proposition qui tient (#1184) — **livré**
+
+Trois raideurs du fil au moment de lancer, relevées le 2026-09-21 par les balayages « rien de figé ».
+La question du rendu attendu : *combien va coûter ce run, et quelles bornes lui ai-je vraiment
+posées ?* — sans qu'aucune borne ne soit imposée par défaut (#494).
+
+**Un accord tapé porte ses bornes.** « Vas-y, 5 $ max » ouvrait un run **sans aucune borne** : le
+verdict du juge n'avait aucun champ pour elles (§6.16). Sur un `accord` qui approuve un run, le verdict
+porte désormais une clé `bornes` — les quatre garde-fous de `lancer`, **seulement ceux que la personne
+nomme** —, lue par `BornesRun.depuis` et jugée par `lancer`, comme sur une relance (§6.15, `geste`).
+La seule durée que Maestro borne est celle de **chaque tâche** (`timeout_tache_s`) : une durée demandée
+pour le run entier n'est pas un accord sans équivoque, et le juge le dit en gardant la proposition au
+lieu de la convertir en silence.
+
+**Le fil répète les bornes appliquées**, sous la bulle qui a ouvert le run : `MessageChat.bornes` porte
+ce que le lanceur a reçu — un clic ou une phrase, « aucune » comprise (l'illimité est un choix
+affiché, #990) — et `Suite` l'écrit sur la ligne du run, dans les mots de la carte
+(`bornesEnLigne`, jumeau de `phraseDesBornes`) : « Run f40353261509 · Bornes : s'interrompt à
+0,50 $ ». Un fait, pas une phrase récitée derrière celle du modèle (#1222).
+
+**Une proposition survit aux questions qui la suivent.** La règle d'attente ne bouge pas — le dernier
+message, et lui seul (`proposition_en_attente`, #943). Ce qui change est qu'une réponse **peut garder**
+la proposition : quand la personne en parle sans la trancher (« combien ça coûtera ? »), le juge rend
+un `echange` avec `"garde_la_proposition": true`, et le canal **recopie** la proposition du fil —
+objectif, projet (#1180), estimation — sur sa réponse, sans rien en réécrire. Un refus tapé ou un
+autre sujet l'omettent, et la carte tombe comme avant. Le juge reçoit la proposition en attente dans
+ses faits (`_bloc_de_la_proposition`) : quelques échanges plus bas, il sait encore qu'elle tient, la
+recopie mot pour mot sur un accord, et répond « combien ? » avec le chiffre de la carte.
+
+**Une proposition vient avec son estimation.** `MessageChat.estimation` : `{taches, bas_usd,
+haut_usd, estimees}`. Le **modèle** estime le nombre de tâches en même temps qu'il propose (`"taches"`
+dans le verdict) ; le **code** chiffre, avec la méthode et les coûts de référence du brief (docs/09
+§4.3 : découpage, 0,74 $ à 1,40 $ par tâche, marge de relance sur la borne haute, plancher de trois) —
+[`maestro/controltower/estimation.py`](../maestro/controltower/estimation.py), jumeau d'`estimerSuite`
+(`apps/web/lib/estimation.ts`), les constantes confrontées par un test. Sans estimation du modèle
+(ou une proposition reposée après une équipe créée), c'est le plancher, et il se dit « au moins ».
+L'estimation **informe, elle ne borne rien** : aucun champ n'est pré-rempli, et un accord donné sur
+elle part sans plafond si personne n'en a posé.
+
+**Côté écran**, la forme est un choix rendu **sur pièces** (commentaires « Veille de conception » et
+« Variante retenue » de #1184) : trois variantes rendues sur la vraie stack, sur une vraie proposition
+du modèle, jugées par un regard qui n'en était pas l'auteur, contre des références capturées en direct
+(Replicate, fal.ai) ou lues (BigQuery). Retenue : **l'estimation au pied de la carte, sur la rangée du
+bouton « Lancer »** — « Ce run coûterait **≈ 3,02 $ à 6,26 $** », puis « découpage puis ≈ 3 tâches —
+ordre de grandeur estimé, pas une mesure ni une borne ». Écartées : la phrase **dans** la boîte des
+bornes (un coût là où l'on saisit un plafond se lit comme un plafond suggéré — BigQuery sépare les
+deux) et la tuile chiffrée du brief (le prix devenait l'élément le plus fort de la carte). « Lancer »
+porte l'estimation en description (`aria-describedby`).
+
+Implémentation : [`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
+(`_Verdict.bornes`/`taches`/`garde`, `_proposition_qui_tient`, `_bloc_de_la_proposition`, le contrat
+du juge), [`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`MessageChat.estimation`,
+`MessageChat.bornes`), [`maestro/controltower/estimation.py`](../maestro/controltower/estimation.py) ;
+côté UI `components/chat/DemandeDeCadrage.tsx`, `components/Conversation.tsx` (`Suite`),
+`lib/estimation.ts`, `lib/bornes.ts`. Couverture :
+[`tests/test_accord_et_proposition.py`](../tests/test_accord_et_proposition.py) et
+`apps/web/tests/demande-cadrage.test.tsx` (section ⑦).
 
