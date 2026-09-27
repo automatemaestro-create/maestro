@@ -258,6 +258,18 @@ def test_le_cadre_outille_prevoit_la_tache_qui_agit_au_lieu_de_produire():
     assert "commande shell comprise" in cadre
 
 
+def test_le_cadre_outille_envoie_le_jetable_dans_un_dossier_que_l_agent_cree():
+    """#1348 : le cadre envoyait ce qui n'est pas le livrable « dans le répertoire
+    temporaire du système », et l'agent l'y écrivait sous un nom fixe
+    (`$TEMP/verif_carnet.py`, passage `20260927-104414`) — que la portée rend à une
+    personne, parce que Maestro range là les espaces des autres tâches. Il nomme le
+    geste qui reste à l'agent : un dossier créé par `mktemp -d`."""
+    brut = pdc.cadre_outille()
+
+    assert "`mktemp -d`" in brut
+    assert "un nom fixe du répertoire temporaire du système sort de ton espace" in _normalise(brut)
+
+
 def test_le_socle_porte_le_regime_senior_en_entier():
     texte = _normalise(socle())
 

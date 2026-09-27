@@ -412,11 +412,47 @@ def test_un_controle_hors_portee_n_est_pas_joue_et_n_est_pas_un_vert(tmp_path):
     assert len(agent.sessions) == 1
 
 
-def test_une_commande_illisible_est_reecrite_par_le_verificateur(tmp_path):
-    """Premier passage du banc (S1 à S3) : `$(…)` rendait un contrôle légitime « non joué »."""
+def test_une_substitution_se_joue_sans_reecriture(tmp_path):
+    """Premier passage du banc (S1 à S3) : `$(…)` rendait un contrôle légitime « non joué ».
+
+    Depuis #1348, la portée **lit** une substitution et juge ce qu'elle exécute : le
+    contrôle se joue tel que le vérificateur l'a écrit, sans passer par une réécriture."""
     provider = _Reponses(
         json.dumps(
             {"controles": [{"critere": "le dossier est vide", "commande": 'test -z "$(ls -A)"'}]}
+        ),
+    )
+    joues: list[str] = []
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        joues.append(commande)
+        return Execution(code=0, sortie="", duree_s=0.0)
+
+    verificateur = VerificateurTaches(provider, joueur=joueur, interprete=_INTERPRETE)
+    _, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    assert verdict.tenue
+    assert joues == ['test -z "$(ls -A)"']
+    assert len(provider.prompts) == 1
+
+
+#: Un contrôle que la portée refuse toujours : il écrit sous un nom fixe du
+#: temporaire, hors du dossier du projet (#1348).
+HORS_PORTEE = "ls -A > /tmp/liste-du-controle && test ! -s /tmp/liste-du-controle"
+
+
+def test_une_commande_refusee_est_reecrite_par_le_verificateur(tmp_path):
+    """Un contrôle légitime que Maestro ne peut pas jouer tel quel est réécrit, et la
+    réécriture jouable prend sa place."""
+    provider = _Reponses(
+        json.dumps(
+            {"controles": [{"critere": "le dossier est vide", "commande": HORS_PORTEE}]}
         ),
         json.dumps({"commandes": [{"n": 1, "commande": "ls -A | wc -l | grep -qx 0"}]}),
     )
@@ -441,19 +477,19 @@ def test_une_commande_illisible_est_reecrite_par_le_verificateur(tmp_path):
     assert controles[0].commande == "ls -A | wc -l | grep -qx 0"
     assert controles[0].critere == "le dossier est vide"
     # Le vérificateur a lu pourquoi : la commande refusée et son motif.
-    assert 'test -z "$(ls -A)"' in provider.prompts[1]
+    assert HORS_PORTEE in provider.prompts[1]
     assert "<refusees>" in provider.prompts[1]
 
 
 def test_une_reecriture_qui_ne_gagne_rien_laisse_le_controle_non_joue(tmp_path):
-    illisible = 'test -z "$(ls -A)"'
+    illisible = HORS_PORTEE
     provider = _Reponses(
         json.dumps({"controles": [{"critere": "vide", "commande": illisible}]}),
-        json.dumps({"commandes": [{"n": 1, "commande": 'test -z "$(ls)"'}]}),
+        json.dumps({"commandes": [{"n": 1, "commande": "ls -A > /tmp/autre-liste"}]}),
     )
 
     def joueur(*args, **kwargs):  # pragma: no cover — rien n'est jouable
-        raise AssertionError("une commande illisible a été jouée")
+        raise AssertionError("une commande hors de la portée a été jouée")
 
     verificateur = VerificateurTaches(provider, joueur=joueur, interprete=_INTERPRETE)
     _, verdict = asyncio.run(

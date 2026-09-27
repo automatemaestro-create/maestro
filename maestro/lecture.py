@@ -14,10 +14,18 @@ tâche, donc un run « en attente d'arbitrage » et un scénario rouge. **Une co
 Il répond à **une** question, sur le texte d'une commande : *celle-ci ne fait-elle
 que lire ?* Il ne décide pas qui tranche (`maestro.decideur`), ni ce qu'un agent a
 le droit d'appeler (`maestro.agents.permissions`), ni où il a le droit d'écrire
-(`maestro.sandbox.en_place`). Il est **feuille** — il n'importe rien de `maestro` —
-pour la raison qui vaut déjà pour `maestro.acte` : la réponse est lue par le hook
-du fournisseur, et elle doit pouvoir s'éprouver sans monter ni politique, ni
-session, ni projet.
+(`maestro.sandbox.en_place`). Il est **feuille** — il n'importe de `maestro` que
+son lexique (`maestro.shell`, feuille lui-même) — pour la raison qui vaut déjà
+pour `maestro.acte` : la réponse est lue par le hook du fournisseur, et elle doit
+pouvoir s'éprouver sans monter ni politique, ni session, ni projet.
+
+⚠ **Le texte se lit comme bash le lit** (#1348). Ce module découpait avec `shlex`,
+qui compte le saut de ligne comme un blanc : `ls` suivi, à la ligne, de `rm -rf /`
+se lisait comme un seul `ls` à trois arguments, donc comme une lecture. Le lexique
+est désormais celui de `maestro.shell`, partagé avec la portée ; ce qui ne change
+pas est la prudence d'ici — seules des commandes simples enchaînées peuvent être
+une lecture, et tout le reste (bloc, boucle, substitution, heredoc, affectation)
+repart vers l'arbitrage.
 
 ## Trois partis pris, et le sens dans lequel ils se trompent
 
@@ -59,9 +67,10 @@ prétend rien : il dit qu'une commande **n'agit pas**, pas qu'elle lit peu.
 
 from __future__ import annotations
 
-import shlex
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
+
+from maestro.shell import SUBSTITUTION, Illisible, Simple, lis
 
 #: L'outil d'exécution des agents — le seul que ce module juge. Même valeur que
 #: `maestro.equipe.proposition.OUTIL_EXECUTION`, et les deux la portent pour deux
@@ -83,15 +92,12 @@ OUTIL_LECTURE = "Read"
 #: Ce qui enchaîne deux commandes sans rien faire de plus. Un `|` en fait partie :
 #: il ne crée aucun fichier, il branche une sortie sur une entrée — et chaque
 #: maillon est jugé pour lui-même, comme la couche permissions juge une commande
-#: composée à son maillon le plus faible.
+#: composée à son maillon le plus faible. Le saut de ligne aussi (#1348).
+#:
+#: Ce qui n'y est **pas** : `&` (arrière-plan) et `|&`. Ils ne sont pas des
+#: lectures, et n'ont pas à être reconnus plus finement — l'inconnu repart vers
+#: l'arbitrage, comme un sous-shell ou une entrée lue dans un fichier (`<`).
 SEPARATEURS = frozenset({";", "&&", "||", "|"})
-
-#: Les caractères que `shlex` isole en jetons de ponctuation. Tout amas qui n'est
-#: ni un séparateur ni une redirection reconnue en sort : un sous-shell (`(`,
-#: `)`), un lancement en arrière-plan (`&`), une entrée depuis un fichier (`<`).
-#: Aucun n'est une lecture, et aucun n'a à être reconnu plus finement —
-#: l'inconnu repart vers l'arbitrage.
-PONCTUATION = frozenset("();<>|&")
 
 #: Les redirections de **sortie**, et la seule chose qu'on les laisse viser.
 #: `2>/dev/null` est l'idiome d'un `find` qui traverse un disque : il n'écrit
@@ -104,11 +110,6 @@ REDIRECTIONS = frozenset({">", ">>", ">&", "&>"})
 
 #: Le puits : la seule destination d'écriture qui n'écrit rien.
 PUITS = "/dev/null"
-
-#: Les amorces de substitution : ce qu'elles exécutent n'est pas dans le texte
-#: qu'on juge. Cherchées **dans les jetons**, guillemets retirés, parce que c'est
-#: là qu'elles se cachent : `cat "$(ls)"` ne donne qu'un jeton.
-SUBSTITUTIONS = ("$(", "`")
 
 #: Les verbes qui ne font que lire, et pour chacun **les options qui l'en
 #: feraient sortir**. Une entrée vide dit « ce verbe n'a aucune forme écrivante »,
@@ -274,7 +275,7 @@ def est_lecture(commande: str) -> bool:
     segments = _segments(commande)
     if not segments:
         return False
-    return all(_segment_lit(jetons) for jetons in segments)
+    return all(simple_lit(jetons) for jetons in segments)
 
 
 def lecture_sans_arbitrage(outil: str, arguments: Any) -> bool:
@@ -292,58 +293,58 @@ def lecture_sans_arbitrage(outil: str, arguments: Any) -> bool:
 
 
 def _segments(commande: str) -> tuple[tuple[str, ...], ...] | None:
-    """Les commandes enchaînées, découpées en jetons — `None` si le texte échappe.
+    """Les commandes enchaînées, en jetons — `None` si le texte n'est pas qu'une telle suite.
 
-    `shlex` en mode POSIX avec `punctuation_chars` : les guillemets sont respectés
-    (un `;` dans une chaîne n'est pas un séparateur) et chaque amas d'opérateurs
-    sort en un jeton. Les commentaires sont désarmés (`commenters`) : un `#` est
-    un motif de recherche bien plus souvent qu'une fin de ligne, et l'ignorer
-    ferait juger une commande tronquée.
+    Lu par `maestro.shell`, qui lit comme bash : les guillemets sont respectés (un
+    `;` cité n'est pas un séparateur, une parenthèse échappée est un argument de
+    `find`), le saut de ligne sépare deux commandes, un `#` en tête de mot ouvre un
+    commentaire — ce que bash n'exécute pas n'a pas à être jugé.
 
     Une **redirection vers le puits** est traversée plutôt que refusée
     (`REDIRECTIONS`) : elle n'écrit nulle part, et le chiffre de descripteur qui
     la précède (`2` de `2>/dev/null`) repart avec elle — sans quoi il resterait
     dans les arguments du verbe, où il ne veut rien dire.
 
-    `None` pour trois raisons, qui mènent toutes trois à l'arbitrage : des
-    guillemets déséquilibrés (`ValueError`), un opérateur qui n'est ni un
-    enchaînement ni une redirection vers le puits, ou une substitution — ce
-    qu'elle exécute n'est pas dans le texte qu'on juge.
+    `None` pour tout ce qui n'est pas une suite de commandes simples, et c'est la
+    prudence de ce module, pas une limite du lecteur : des guillemets
+    déséquilibrés, un bloc, une boucle, un arrière-plan, une entrée lue dans un
+    fichier, un heredoc, une affectation (`FOO=bar ls` choisit ce que `ls`
+    exécute), une redirection vers autre chose que le puits, ou une substitution —
+    une lecture n'en a pas besoin, et la portée, elle, sait les juger.
     """
-    lexeur = shlex.shlex(commande, posix=True, punctuation_chars=True)
-    lexeur.whitespace_split = True
-    lexeur.commenters = ""
     try:
-        jetons = list(lexeur)
-    except ValueError:
+        script = lis(commande)
+    except Illisible:
+        return None
+    if not script.operateurs <= SEPARATEURS:
         return None
     segments: list[tuple[str, ...]] = []
-    courant: list[str] = []
-    reste = list(reversed(jetons))
-    while reste:
-        jeton = reste.pop()
-        if jeton in SEPARATEURS:
-            if courant:
-                segments.append(tuple(courant))
-            courant = []
-            continue
-        if jeton in REDIRECTIONS:
-            cible = reste.pop() if reste else ""
-            if cible != PUITS and not (jeton == ">&" and cible.isdigit()):
-                return None
-            if courant and courant[-1].isdigit():
-                courant.pop()
-            continue
-        if set(jeton) <= PONCTUATION or any(amorce in jeton for amorce in SUBSTITUTIONS):
+    for simple in script.commandes:
+        if not isinstance(simple, Simple) or not simple.mots:
             return None
-        courant.append(jeton)
-    if courant:
-        segments.append(tuple(courant))
+        if simple.affectations or simple.documents:
+            return None
+        for redirection in simple.redirections:
+            cible = redirection.cible.litteral()
+            if redirection.operateur not in REDIRECTIONS or cible is None:
+                return None
+            if cible != PUITS and not (redirection.operateur == ">&" and cible.isdigit()):
+                return None
+        if any(p.genre == SUBSTITUTION or p.scripts for mot in simple.mots for p in mot.parties):
+            return None
+        segments.append(tuple(mot.rendu() for mot in simple.mots))
     return tuple(segments) or None
 
 
-def _segment_lit(jetons: tuple[str, ...]) -> bool:
-    """Une commande simple ne fait-elle que lire ?"""
+def simple_lit(jetons: Sequence[str]) -> bool:
+    """Une commande simple, donnée par ses mots, ne fait-elle que lire ?
+
+    Public depuis #1348 : la portée juge **maillon par maillon**, et une lecture
+    au milieu d'un enchaînement n'agit pas plus que seule. Les redirections ne
+    sont pas son affaire — qui l'appelle les juge lui-même.
+    """
+    if not jetons:
+        return False
     verbe, *arguments = jetons
     ecrivantes = VERBES_LECTURE.get(verbe)
     if ecrivantes is None:
