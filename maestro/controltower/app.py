@@ -2319,6 +2319,11 @@ def create_app(
         l'exécution en ferait un échec de tâche, et c'est ce que le fil en dira.
         Sans projet, ou sur un projet inconnu, le bloc ne parle que de ce qui ne
         dépend d'aucune équipe : le cadrage et les bornes.
+
+        Le **versionnement** du projet est relu ici aussi (#1299), par le seul
+        lecteur de projets : c'est lui qui décide si les tâches indépendantes
+        partiront de front, et un projet versionné depuis le dernier message doit
+        se dire tel. Illisible, il se tait plutôt que deviner.
         """
         if not projet_id or not projets.existe(projet_id):
             return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
@@ -2334,7 +2339,11 @@ def create_app(
                 membres.append(MembreDeLEquipe(agent.role, agent.nom, illisible=str(refus)))
             else:
                 membres.append(MembreDeLEquipe(agent.role, agent.nom, politique))
-        return regime_d_un_run(membres, mode_brief=mode_brief_du_fil)
+        try:
+            versionne: bool | None = projets.entite(projet_id).versionne
+        except (ProjetInconnu, ProjetIllisible):
+            versionne = None
+        return regime_d_un_run(membres, mode_brief=mode_brief_du_fil, versionne=versionne)
 
     def projet_du_fil(projet_id: str) -> Projet | None:
         """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.

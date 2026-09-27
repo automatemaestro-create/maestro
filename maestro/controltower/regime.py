@@ -45,6 +45,13 @@ annoncerait le régime d'hier :
   demande de validation quand la politique en fait une, une question ou un
   arbitrage qu'un agent peut poser de lui-même, un renfort que le plan peut
   appeler (`CE_QUI_NE_SE_PREVOIT_PAS`) ;
+- **ce qui part de front** (#1299) — lu sur le versionnement **de ce projet** :
+  versionné, les tâches indépendantes partent de front jusqu'au plafond que le
+  run dérive de son plan (`DE_FRONT_VERSIONNE`) ; non versionné, une à la fois
+  (#839, `DE_FRONT_NON_VERSIONNE`). Sans ce fait, le fil appliquait à un projet
+  versionné la règle du projet qui ne l'est pas — mesuré au passage
+  `20260927-214542` de S11 : « Les tâches passeront une à une », sur un run dont
+  trois pages sont parties ensemble ;
 - **les bornes** — celles que la carte posera à l'accord, aucune par défaut, et
   jamais héritées d'un run passé (`REGLE_DES_BORNES`). Celles d'un run passé se
   lisent sur sa fiche (`bornes_du_run`), depuis l'événement de lancement qui les
@@ -68,6 +75,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from maestro.agents.capacity import PLAFOND_INSTANCES_DERIVEES
 from maestro.agents.permissions import PolitiqueOutils, Verdict
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.decideur import Decideur
@@ -140,6 +148,24 @@ CE_QUI_NE_SE_PREVOIT_PAS = (
     "avant."
 )
 
+#: Ce qu'un run mène de front sur un projet **versionné** (#1299) : ce que
+#: l'exécution applique (`LocalExecutor._plafond_instances`), le plafond global
+#: compris — lu dans la constante, jamais recopié.
+DE_FRONT_VERSIONNE = (
+    "Tâches de front : ce projet est versionné, chaque tâche travaille dans sa propre "
+    "copie. Les tâches que le plan laisse indépendantes partent de front, même "
+    "confiées au même agent — autant que le plan en laisse partir, "
+    f"{PLAFOND_INSTANCES_DERIVEES} au plus par agent, sauf pour un agent dont les "
+    "instances ont été fixées à la main ; le run annonce ce plafond dans son journal "
+    "en démarrant. Un plan en chaîne passe une tâche après l'autre."
+)
+
+#: Et sur un projet **non versionné** (#839) : l'atelier, une tâche à la fois.
+DE_FRONT_NON_VERSIONNE = (
+    "Tâches de front : ce projet n'est pas versionné — ses tâches passent une à une, "
+    "quel que soit le plan, parce que deux agents écriraient sinon dans le même dossier."
+)
+
 #: Les bornes d'un run — le fait que P8 ignorait. Elles se posent à l'accord, sur
 #: la carte, et n'appartiennent qu'au run qui les reçoit ; le défaut est dit avec
 #: les mots de la carte (`BornesRun.en_phrase`), pour que le fil et l'écran ne
@@ -180,7 +206,10 @@ class MembreDeLEquipe:
 
 
 def regime_d_un_run(
-    membres: Sequence[MembreDeLEquipe] | None, *, mode_brief: str = MODE_BRIEF_AUTO
+    membres: Sequence[MembreDeLEquipe] | None,
+    *,
+    mode_brief: str = MODE_BRIEF_AUTO,
+    versionne: bool | None = None,
 ) -> str:
     """Le bloc de faits : ce qu'un run fera, pour l'équipe `membres`.
 
@@ -189,6 +218,8 @@ def regime_d_un_run(
     séquence **vide** dit « un projet sans agent », qui est un fait à dire.
     `mode_brief` est celui que le lanceur du fil pose — l'appelant le tient du
     même endroit que lui, faute de quoi le fil décrirait le régime d'un autre.
+    `versionne` est le versionnement **constaté** du projet (#1299) : il dit ce qui
+    partira de front. `None` — on ne le sait pas — ne dit rien plutôt que deviner.
     """
     lignes = [ENTETE]
     brief = PHRASES_DU_BRIEF.get(mode_brief)
@@ -199,6 +230,9 @@ def regime_d_un_run(
         if membres:
             lignes.append(f"- {REGLE_DE_L_ACTE_ACCORDE}")
             lignes.append(f"- {CE_QUI_REVIENT}")
+            if versionne is not None:
+                de_front = DE_FRONT_VERSIONNE if versionne else DE_FRONT_NON_VERSIONNE
+                lignes.append(f"- {de_front}")
         lignes.append(f"- {CE_QUI_NE_SE_PREVOIT_PAS}")
     lignes.append(f"- {REGLE_DES_BORNES}")
     return "\n".join(lignes)
