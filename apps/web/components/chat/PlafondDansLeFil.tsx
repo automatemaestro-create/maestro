@@ -114,12 +114,18 @@ export function PlafondDansLeFil({
 
   const nbGardees = gardees.size;
   const nbEcartees = restantes.length - nbGardees;
+  const nbMisesDeCote = restantes.filter(
+    (tache) => tache.interrompue && gardees.has(tache.tache_id),
+  ).length;
   const reste = coutDuReste(nbGardees);
 
   const valeurs = Object.fromEntries(
     unites.map((unite) => {
       const propose = plafondPropose(demande, unite, nbGardees);
-      const texte = saisis[unite] ?? (propose === null ? "" : String(propose));
+      // Écrit comme on l'écrirait ici — « 5,69 », pas « 5.69 » : la saisie
+      // accepte les deux, le préremplissage parle la langue de l'écran.
+      const texte =
+        saisis[unite] ?? (propose === null ? "" : String(propose).replace(".", ","));
       return [unite, texte];
     }),
   ) as Record<UnitePlafond, string>;
@@ -236,9 +242,14 @@ export function PlafondDansLeFil({
             libelle="Reste à faire"
             valeur={taches(nbGardees)}
             detail={
+              // Ce qu'on a écarté d'abord, puis ce qui a été coupé en route —
+              // jamais « tout le plan » : une question posée après une tâche
+              // aboutie ne porte plus que ce qui reste (relecture de #1182).
               nbEcartees > 0
                 ? `${taches(nbEcartees)} écartée${nbEcartees > 1 ? "s" : ""}`
-                : "tout ce que le plan prévoyait"
+                : nbMisesDeCote > 0
+                  ? `dont ${nbMisesDeCote} mise${nbMisesDeCote > 1 ? "s" : ""} de côté`
+                  : "aucune écartée"
             }
           />
           <TuileChiffre

@@ -121,6 +121,8 @@ describe("la question au plafond", () => {
     expect(tuile(carte, "Dépensé")).toContain(formatCout(0.2213166));
     expect(tuile(carte, "Dépensé")).toContain(`sur un plafond de ${formatCout(0.01)}`);
     expect(tuile(carte, "Reste à faire")).toContain("3 tâches");
+    // La tâche coupée se compte dans le reste, et se dit — jamais « tout le plan ».
+    expect(tuile(carte, "Reste à faire")).toContain("dont 1 mise de côté");
     const reste = estimerReste(3);
     expect(tuile(carte, "Coût estimé du reste")).toContain(
       formatFourchetteCout(reste.bas, reste.haut),
@@ -177,7 +179,8 @@ describe("les trois gestes", () => {
     const propose = Math.ceil((0.2213166 + estimerReste(3).haut) * 100) / 100;
 
     expect(within(carte).getByLabelText("Nouveau plafond, en $US")).toHaveValue(
-      String(propose),
+      // Écrit à la française — la virgule décimale de l'écran.
+      String(propose).replace(".", ","),
     );
     await userEvent.click(
       within(carte).getByRole("button", {
