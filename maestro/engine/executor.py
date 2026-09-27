@@ -40,8 +40,8 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, nullcontext
+from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from time import monotonic, perf_counter
 from typing import Any, Protocol
@@ -74,6 +74,12 @@ from maestro.detail_tache import (
     consigne_detail,
     phrase_checklist_sans_releve,
     phrase_ecart_checklist,
+)
+from maestro.engine.cadence import (
+    CAUSE_INSTANCES,
+    STATUT_UNE_A_UNE,
+    Cadence,
+    consigne_cadence,
 )
 from maestro.engine.guardrails import (
     ORIGINE_AGENT,
@@ -741,6 +747,31 @@ class TaskExecutor(ABC):
         """
         return False
 
+    def atelier_du_projet(self, projet_id: str) -> str | None:
+        """Le nom du projet si cet exécuteur y fait passer les tâches **une à une** (#1298).
+
+        C'est l'atelier de #839 : un projet non versionné, où deux agents
+        écriraient dans le même dossier. La boucle le demande une fois, au départ,
+        pour dire pourquoi un plan large avance quand même une tâche après l'autre —
+        et proposer ce qui le libérerait. None par défaut, et c'est une limite
+        **dite** : un exécuteur distribué sérialise côté worker (un verrou par
+        process), où la boucle ne le voit pas ; elle ne dit rien plutôt que deviner.
+        """
+        return None
+
+    async def versionner_le_projet(self, projet_id: str) -> Projet:
+        """Met le projet sous Git pendant le run, sans heurter une tâche en place (#1298).
+
+        Appelé par la boucle sur l'accord donné dans le fil, et seulement quand
+        `atelier_du_projet` a dit que cet exécuteur tient l'atelier : c'est lui qui
+        sait quand aucune tâche n'écrit dans la racine. Refusé par défaut — un
+        exécuteur qui ne tient pas l'atelier ne peut pas choisir cet instant.
+        """
+        raise NotImplementedError(
+            "cet exécuteur ne tient pas l'atelier du projet : il ne peut pas le versionner "
+            "pendant le run"
+        )
+
 
 class LocalExecutor(TaskExecutor):
     """Exécution en process : routage, garde-fous, production du livrable.
@@ -852,6 +883,15 @@ class LocalExecutor(TaskExecutor):
         # donnerait l'illusion de le traiter.
         self._verrous_projet: dict[str, asyncio.Lock] = {}
         self._boucle_verrous: asyncio.AbstractEventLoop | None = None
+        # Les versionnements **annoncés** (#1298), par projet : un accord du fil a
+        # été donné, la mise sous Git attend l'atelier, et les tâches qui
+        # l'attendaient aussi la laissent passer (`_prendre_l_atelier`). Le signal
+        # se lève quand elle a abouti ou échoué — dans les deux cas, chacune relit
+        # le projet. Remis à neuf avec les verrous, pour la même raison qu'eux.
+        self._versionnements: dict[str, asyncio.Event] = {}
+        # Les agents au complet déjà signalés (#1298), par run : la cause se dit
+        # une fois par agent, pas à chaque tâche qu'il retient.
+        self._instances_signalees: set[tuple[str, str]] = set()
         # L'accord d'écriture continue (#706), retenu **par run et par projet** :
         # ce que le validateur a répondu à la première fusion — oui, non, ou
         # refus par défaut — et à quelle tâche. Une seule question par run, et
@@ -996,6 +1036,12 @@ class LocalExecutor(TaskExecutor):
         # celle de `cout_usd`, et elle vaut ici pour la même raison.
         attente_creneau_ms: int | None = None
         attente_atelier_ms: int | None = None
+        # La tâche a-t-elle travaillé **dans la racine** d'un projet non versionné,
+        # sous l'atelier (#839) ? Retenu à la prise de l'atelier et non relu à la
+        # fusion : depuis #1298, le projet peut être versionné pendant le run, et
+        # une tâche qui a écrit en place doit se solder en place même si le projet
+        # a changé de régime entre son dernier geste et sa clôture.
+        en_place = False
         entree = task.description
         # La **checklist** (#489) naît ici depuis #944, et non dans `_realise` :
         # elle doit survivre aux relances comme avant (une tâche relancée reprend
@@ -1112,13 +1158,17 @@ class LocalExecutor(TaskExecutor):
                         # est le même, chronométré ; chaque mesure part à zéro,
                         # jamais à `None` : ici on a mesuré, et mesurer qu'on n'a
                         # pas attendu n'est pas ne pas savoir.
+                        #
+                        # Une attente de créneau se **dit** depuis #1298 : la
+                        # première fois qu'un agent au complet retient une tâche
+                        # de ce run, la cause part au journal (`cadence`).
                         debut_creneau = perf_counter()
                         async with self._creneau_capacite(
-                            decision.agent.nom, task.projet_id
+                            decision.agent.nom, task.projet_id, task=task, journal=journal
                         ):
                             attente_creneau_ms = _ecoule_ms(debut_creneau)
                             debut_atelier = perf_counter()
-                            async with self._atelier_projet(task):
+                            async with self._atelier_projet(task) as en_place:
                                 attente_atelier_ms = _ecoule_ms(debut_atelier)
                                 result = await self._realise_gardee(
                                     decision.agent,
@@ -1178,7 +1228,7 @@ class LocalExecutor(TaskExecutor):
         # tâche n'est annoncée terminée qu'une fois le geste tenté, et la boucle
         # ne libère les tâches qui en dépendent qu'au retour de `execute`, donc
         # leur worktree part d'une branche de base qui porte déjà ce travail.
-        await self._fusionne_dans_le_projet(task, result, journal)
+        await self._fusionne_dans_le_projet(task, result, journal, en_place=en_place)
         journal.consigne(
             etape=task.id,
             nom=task.titre,
@@ -1395,7 +1445,12 @@ class LocalExecutor(TaskExecutor):
         return self._capacites.pour_projet(projet_id).inactifs()
 
     def _creneau_capacite(
-        self, nom: str, projet_id: str | None = None
+        self,
+        nom: str,
+        projet_id: str | None = None,
+        *,
+        task: Task | None = None,
+        journal: RunJournal | None = None,
     ) -> AbstractAsyncContextManager[None]:
         """Un créneau d'exécution de l'agent `nom`, borné à son plafond d'instances (#86).
 
@@ -1408,14 +1463,99 @@ class LocalExecutor(TaskExecutor):
         d'instances est un plafond **de ce que le poste fait tourner en même
         temps** pour cet agent, pas un quota par projet. Deux projets qui
         accordent trois instances au même agent n'en ouvrent pas six.
+
+        Une tâche **retenue** par un agent au complet le dit depuis #1298 : c'est
+        l'instant, et le seul, où le moteur sait qu'une instance fait passer des
+        tâches une à une (`_signale_instances`). Avant, rien ne le montrait.
         """
         capacites = self._capacites
         if capacites is None:
             return nullcontext()
         depot = capacites.pour_projet(projet_id)
-        return self._jauge.creneau(nom, lambda: depot.lire(nom).instances)
+        on_attente = (
+            None
+            if task is None or journal is None
+            else lambda plafond: self._signale_instances(task, nom, plafond, journal)
+        )
+        return self._jauge.creneau(
+            nom, lambda: depot.lire(nom).instances, on_attente=on_attente
+        )
 
-    def _atelier_projet(self, task: Task) -> AbstractAsyncContextManager[None]:
+    def _signale_instances(
+        self, task: Task, agent: str, plafond: int, journal: RunJournal
+    ) -> None:
+        """Consigne qu'un agent au complet fait passer des tâches une à une (#1298) — une fois.
+
+        Une fois par run et par agent : la cause est la même pour sa troisième
+        tâche retenue que pour la deuxième, et la répéter ferait du fil d'activité
+        un compteur d'attentes. Étape de run `cadence`, comme la cause posée au
+        départ par la boucle — ce n'est pas un fait de la tâche retenue, c'est un
+        fait de l'agent.
+        """
+        cle = (journal.run_id, agent)
+        if cle in self._instances_signalees:
+            return
+        self._instances_signalees.add(cle)
+        consigne_cadence(
+            journal,
+            Cadence(cause=CAUSE_INSTANCES, agent=agent, instances=plafond),
+            STATUT_UNE_A_UNE,
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            projet_id=task.projet_id,
+        )
+
+    def atelier_du_projet(self, projet_id: str) -> str | None:
+        """Cf. `TaskExecutor.atelier_du_projet` — ici, le projet non versionné de ce dépôt.
+
+        Lu par la même règle que `_atelier_projet` applique à chaque tâche : un
+        projet déclaré, non versionné, dans le dépôt câblé. C'est ce qui fait de la
+        cause « projet non versionné » un fait du moteur et non une supposition.
+        """
+        if self._projets is None:
+            return None
+        projet = self._projets.lire(projet_id)
+        if projet is None or projet.versionne:
+            return None
+        return projet.nom
+
+    async def versionner_le_projet(self, projet_id: str) -> Projet:
+        """Met le projet sous Git **entre deux tâches**, avant celles qui attendent (#1298).
+
+        Le verbe est celui de #704 (`ProjetStore.versionner`) : `git init`, puis un
+        premier commit de toute la racine — donc de ce que les tâches déjà soldées
+        y ont écrit. Ce qui est propre à ce geste est **quand** il a lieu :
+
+        - **sous l'atelier** (`_verrou_projet`) : aucune tâche n'écrit dans la racine
+          pendant qu'on l'enregistre, sans quoi le premier commit prendrait un
+          travail à moitié fait, et la tâche qui continuerait d'écrire laisserait
+          la racine sale — donc toutes les fusions suivantes refusées ;
+        - **avant les tâches qui attendent l'atelier** : elles l'attendaient pour
+          écrire en place ; annoncé (`_versionnements`), le versionnement passe
+          devant, et elles repartent chacune dans sa copie, de front. Sans cette
+          priorité, un niveau de quatre tâches déjà en file passerait encore une à
+          une, et l'accord ne libérerait que les niveaux suivants.
+
+        Lève ce que le verbe lève — `VersionnementRefuse` et `RacineRefusee`
+        motivées, la racine restant dans l'état d'avant ; `ValueError` pour un
+        projet inconnu ou sans dépôt câblé. Les tâches en attente relisent le projet
+        dans tous les cas, et reprennent en place s'il n'a pas changé.
+        """
+        depot = self._projets
+        if depot is None:
+            raise ValueError("aucun dépôt de projets n'est câblé : rien à mettre sous Git.")
+        verrou = self._verrou_projet(projet_id)
+        signal = asyncio.Event()
+        self._versionnements[projet_id] = signal
+        try:
+            async with verrou:
+                return await asyncio.to_thread(depot.versionner, projet_id)
+        finally:
+            self._versionnements.pop(projet_id, None)
+            signal.set()
+
+    @asynccontextmanager
+    async def _atelier_projet(self, task: Task) -> AsyncIterator[bool]:
         """L'atelier de `task` : la racine d'un projet non versionné, une tâche à la fois (#839).
 
         C'est le régime de concurrence du projet non versionné, **écrit** parce que
@@ -1432,8 +1572,8 @@ class LocalExecutor(TaskExecutor):
         peu. Le worktree d'un projet **versionné** garde tout son parallélisme :
         les arbres sont séparés par construction, la fusion (#705) est le seul
         geste sérialisé, et c'est le **même verrou** (`_verrou_projet`) qui sert
-        ici — les deux usages ne se rencontrent jamais, un projet étant l'un ou
-        l'autre.
+        ici — les deux usages ne se rencontrent qu'au passage d'un régime à
+        l'autre (#1298), où le verrou est justement ce qui rend le passage sûr.
 
         Portée à connaître : le verrou est celui **de ce processus**. Deux runs
         lancés séparément sur le même projet non versionné (deux hôtes détachés,
@@ -1442,13 +1582,53 @@ class LocalExecutor(TaskExecutor):
         il faudrait l'indexer par poste ; ni l'un ni l'autre n'a été jugé
         nécessaire tant que la Control Tower lance un run à la fois par projet.
 
-        `nullcontext()` — donc aucun effet — pour une tâche sans projet, un dépôt
-        non câblé, un projet introuvable ou un projet versionné.
+        Aucun effet pour une tâche sans projet, un dépôt non câblé, un projet
+        introuvable ou un projet versionné. Rend **si la tâche travaille en place**
+        — c'est ce que sa fusion relira (`_fusionne_dans_le_projet`).
+
+        Depuis #1298, un projet peut **changer de régime pendant le run** : un
+        versionnement accordé dans le fil (`versionner_le_projet`) passe devant les
+        tâches qui attendent l'atelier, et chacune relit le projet quand son tour
+        vient. Versionné entre-temps, elle ne prend pas le verrou : elle part dans
+        sa copie, de front avec les autres. C'est aussi pourquoi le projet est relu
+        **après** la prise — une mise sous Git faite par la route des projets
+        pendant l'attente vaut comme celle du fil.
         """
-        projet = self._projet(task)
-        if projet is None or projet.versionne:
-            return nullcontext()
-        return self._verrou_projet(projet.id)
+        verrou = await self._prendre_l_atelier(task)
+        try:
+            yield verrou is not None
+        finally:
+            if verrou is not None:
+                verrou.release()
+
+    async def _prendre_l_atelier(self, task: Task) -> asyncio.Lock | None:
+        """Le verrou de l'atelier, pris — ou None quand la tâche n'a pas à l'attendre.
+
+        Une boucle, parce que la réponse peut changer pendant qu'on attend : un
+        versionnement annoncé se laisse passer (la tâche relâche le verrou et
+        attend son issue), puis le projet est relu. La boucle se termine toujours :
+        un versionnement annoncé lève son signal dans tous les cas, même en échec.
+        """
+        while True:
+            projet = self._projet(task)
+            if projet is None or projet.versionne:
+                return None
+            verrou = self._verrou_projet(projet.id)
+            annonce = self._versionnements.get(projet.id)
+            if annonce is not None:
+                await annonce.wait()
+                continue
+            await verrou.acquire()
+            if projet.id in self._versionnements:
+                # Accordé pendant qu'on attendait : il passe devant, la tâche
+                # relira le projet une fois qu'il aura abouti.
+                verrou.release()
+                continue
+            relu = self._projet(task)
+            if relu is None or relu.versionne:
+                verrou.release()
+                return None
+            return verrou
 
     def _serveurs_mcp(
         self, agent: str, projet_id: str | None = None
@@ -1547,7 +1727,7 @@ class LocalExecutor(TaskExecutor):
         return self._projets.lire(task.projet_id)
 
     async def _fusionne_dans_le_projet(
-        self, task: Task, result: TaskResult, journal: RunJournal
+        self, task: Task, result: TaskResult, journal: RunJournal, *, en_place: bool = False
     ) -> None:
         """Fusionne la branche de la tâche dans le projet dès qu'elle est soldée (#705, D2).
 
@@ -1593,7 +1773,10 @@ class LocalExecutor(TaskExecutor):
 
         Le projet est **relu** ici plutôt que retenu de `_produce` : même
         application à chaud que les playbooks, et un projet supprimé entre-temps
-        vaut « introuvable », pas échec.
+        vaut « introuvable », pas échec. Son **régime**, lui, est celui dans lequel
+        la tâche a travaillé (`en_place`, #1298) : versionné entre son dernier geste
+        et sa clôture, le projet n'a pas de branche de cette tâche à fusionner — ce
+        qu'elle a écrit en place est déjà dans le premier commit.
         """
         if task.projet_id is None or self._projets is None:
             return
@@ -1627,7 +1810,7 @@ class LocalExecutor(TaskExecutor):
                 journal=journal,
             )
             return
-        if not projet.versionne:
+        if not projet.versionne or en_place:
             statut, detail = _ecriture_en_place(projet, result)
             self._consigne_fusion(
                 task,
@@ -1802,6 +1985,9 @@ class LocalExecutor(TaskExecutor):
         if self._boucle_verrous is not boucle:
             self._boucle_verrous = boucle
             self._verrous_projet = {}
+            # Les versionnements annoncés (#1298) suivent leurs verrous : un
+            # `asyncio.Event` se lie à sa boucle comme un `Lock`.
+            self._versionnements = {}
         return self._verrous_projet.setdefault(projet_id, asyncio.Lock())
 
     def _consigne_fusion(

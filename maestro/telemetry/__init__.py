@@ -38,6 +38,7 @@ from __future__ import annotations
 from maestro.telemetry.costs import (
     ETAPE_BILAN,
     ETAPE_BRIEF,
+    ETAPE_CADENCE,
     ETAPE_EQUIPE,
     ETAPE_PLAFOND,
     ETAPE_PLANIFICATION,
@@ -73,6 +74,7 @@ from maestro.telemetry.usage import (
 __all__ = [
     "ETAPE_BILAN",
     "ETAPE_BRIEF",
+    "ETAPE_CADENCE",
     "ETAPE_EQUIPE",
     "ETAPE_PLAFOND",
     "ETAPE_PLANIFICATION",

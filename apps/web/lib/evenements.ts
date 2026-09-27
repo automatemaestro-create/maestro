@@ -200,6 +200,15 @@ function phraseEtapeAgent(evenement: Evenement): string {
     case VERIFICATION_TENUE:
     case VERIFICATION_NON_TENUE:
     case VERIFICATION_IMPOSSIBLE:
+    // Et #1298 la **cadence** du run : pourquoi ses tâches passent une à une, et
+    // ce qu'est devenue la proposition de versionner le projet. Même règle : le
+    // `detail` est la phrase du moteur — la cause, ou l'issue de la proposition.
+    case "une_a_une":
+    case "projet_versionne":
+    case "versionnement_decline":
+    case "versionnement_sans_reponse":
+    case "versionnement_echoue":
+    case "versionnement_sans_suite":
       return `${libelleStatut(evenement.statut)}${
         evenement.detail ? ` — ${evenement.detail}` : ` : ${quoi}`
       }`;

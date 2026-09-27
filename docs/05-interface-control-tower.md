@@ -1506,6 +1506,25 @@ nœud et non un rang de tri (§6.11), deux tâches sans dépendance entre elles 
 ensemble et se lisent comme simultanées — une file les aurait mises l'une derrière
 l'autre, ce que le deuxième critère interdit.
 
+**Pourquoi les tâches passent une à une se dit à côté des chiffres (#1298).** La ligne
+« 4 tâches · aucun enchaînement · 1 niveau · jusqu'à 4 de front » disait ce que le plan
+**autorise** ; elle se prolonge de ce qui l'en empêche, dans les mots du moteur
+(`cadence`, §6.11) : « — une tâche à la fois : projet non versionné », « — une tâche à la
+fois pour « interface » : une seule instance », « — une tâche à la fois : chaque tâche
+attend la précédente ». Une mention, pas une alerte : même ton que les chiffres, rien ne
+bat ni ne se colore. Aucune cause, aucune mention — un projet versionné au plan large n'a
+rien à expliquer, et la mention du projet disparaît dès qu'il a été versionné pendant le
+run. Le **remède** ne se propose pas ici mais **dans le fil** (§2.9) : sur un projet non
+versionné, le run pose au pied du fil, avec la carte d'une question (#1023, celle des
+prérequis de #1181), la proposition de le **versionner** — un dépôt Git local, sans forge,
+un premier commit de l'existant — avec sa raison. Le run **ne l'attend pas** : il continue
+une tâche à la fois, et l'accord (le geste « Versionner le projet », le seul qui écrive
+dans le projet) prend effet entre deux tâches, les suivantes partant chacune dans sa copie,
+de front. « Garder tel quel », une phrase tapée, un silence jusqu'à la borne ou un run
+fini avant la réponse laissent tout en l'état ; chaque issue se lit au fil d'activité du
+run. La même cause entre dans les faits du run que lit le fil : à « pourquoi mes tâches
+passent-elles une à une ? », il répond sur ce que le moteur a constaté.
+
 **Les arêtes sont dessinées, pas listées.** Un `<svg>` en fond, une courbe de Bézier
 par dépendance, tracée du bord **droit** de l'amont au bord **gauche** de l'aval — le
 sens du flux —, mesurée sur les boîtes réelles (`getBoundingClientRect`, et non
@@ -5942,9 +5961,30 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
     { "de": "schema-sql", "vers": "api-crud", "etat": "franchie" },
     { "de": "api-crud",   "vers": "tests-e2e", "etat": "attendue" }
   ],
-  "niveaux": [ ["schema-sql"], ["api-crud", "ui-liste"], ["tests-e2e"] ]
+  "niveaux": [ ["schema-sql"], ["api-crud", "ui-liste"], ["tests-e2e"] ],
+  // Pourquoi les tâches passent UNE À UNE (#1298) — les causes que le moteur a
+  // constatées et qui tiennent encore ; [] quand elles partent de front.
+  // `cause` : `chaine` (le plan en est une), `projet_non_versionne` (l'atelier
+  // de #839), `instances` (un agent au complet, `agent` le nomme). `mention` est
+  // ce que la vue affiche, `phrase` la cause en toutes lettres — mots du moteur.
+  "cadence": [
+    { "cle": "projet_non_versionne:", "cause": "projet_non_versionne", "agent": "",
+      "mention": "une tâche à la fois : projet non versionné",
+      "phrase": "Les tâches de ce run passent une à une : le projet « p3 » n'est pas versionné, …" }
+  ]
 }
 ```
+
+**Pourquoi les tâches passent une à une, et d'où on le sait (#1298).** `largeur` dit ce que le
+plan **autorise** ; `cadence` dit ce qui, dans le moteur, l'en empêche — la moitié de
+l'ordonnancement que le graphe ne prétendait pas rendre. Rien n'y est deviné : le **plan en
+chaîne** et le **projet non versionné** sont constatés au départ, sur le plan et sur ce que
+l'exécuteur applique au projet (l'atelier de #839, `TaskExecutor.atelier_du_projet`) ; un **agent
+au complet** est constaté à l'instant où une tâche prête attend son créneau (#86), jamais prédit
+du routage. Le moteur les consigne en étape de run `cadence` (usage nul, aucune tâche — cf.
+docs/03 §4), le pont les transporte sur l'activité de cette étape, la projection les range sur le
+run. Une cause **levée** — le projet versionné pendant le run, sur accord — sort de la liste : un
+plan large sur un projet versionné n'a rien à expliquer.
 
 **Ce que le front n'a pas à recalculer**, et c'est le premier critère du ticket. `niveaux`, plus
 `niveau`/`rang` sur chaque nœud : un client qui les déduirait réécrirait un tri topologique en

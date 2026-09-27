@@ -126,6 +126,30 @@ from maestro.engine.brief import (
     motif_sans_reponse,
     tours_clarification_valide,
 )
+from maestro.engine.cadence import (
+    CAUSE_PROJET_NON_VERSIONNE,
+    CHOIX_GARDER,
+    CHOIX_VERSIONNER,
+    HYPOTHESE_VERSIONNEMENT,
+    PROPOSITION_ACCEPTEE,
+    PROPOSITION_DECLINEE,
+    PROPOSITION_ECHOUEE,
+    PROPOSITION_EN_ATTENTE,
+    PROPOSITION_SANS_REPONSE,
+    PROPOSITION_SANS_SUITE,
+    STATUT_PROJET_VERSIONNE,
+    STATUT_UNE_A_UNE,
+    STATUT_VERSIONNEMENT_DECLINE,
+    STATUT_VERSIONNEMENT_ECHOUE,
+    STATUT_VERSIONNEMENT_SANS_REPONSE,
+    STATUT_VERSIONNEMENT_SANS_SUITE,
+    VERBE_VERSIONNEMENT,
+    Cadence,
+    avec_proposition,
+    cadence_du_plan,
+    consigne_cadence,
+    question_du_versionnement,
+)
 from maestro.engine.executor import (
     ACTEUR_ORCHESTRATEUR,
     ROLE_ORCHESTRATEUR,
@@ -223,6 +247,7 @@ from maestro.telemetry import (
 )
 from maestro.telemetry.costs import (
     ETAPE_BRIEF,
+    ETAPE_CADENCE,
     ETAPE_EQUIPE,
     ETAPE_PLAFOND,
     RunCost,
@@ -950,6 +975,10 @@ class OrchestrationEngine:
         # par le routage, tâche par tâche.
         await self._confronte_equipe(objective, tasks, projet_id, journal)
         ordered = topological_order(tasks)
+        # La cadence du run (#1298) : pourquoi ses tâches passeront une à une, dite
+        # **avant** la première — et, sur un projet non versionné, la proposition
+        # de le versionner, posée dans le fil sans que le run l'attende.
+        versionnement = self._dit_la_cadence(ordered, projet_id, journal)
         dependants = _dependants_directs(ordered)
         # Le juge des échecs apprend l'objectif et le plan (#1178) : c'est de là
         # qu'il lit ce qui attend une tâche en échec, aux deux étages.
@@ -1127,6 +1156,8 @@ class OrchestrationEngine:
                 au_plafond.fermer()
             if relais is not None:
                 await relais.fermer()
+            if versionnement is not None:
+                await self._solde_le_versionnement(versionnement, projet_id, journal)
 
         # Le plafond **en vigueur** à la fin du run (#1182) : relevé sur décision,
         # c'est lui que le contrôle de dépense a tenu jusqu'au bout.
@@ -1606,6 +1637,242 @@ class OrchestrationEngine:
             usage=StepUsage(),
             projet_id=projet_id,
         )
+
+    def _dit_la_cadence(
+        self, tasks: Sequence[Task], projet_id: str | None, journal: RunJournal
+    ) -> _Versionnement | None:
+        """Dit pourquoi les tâches passeront une à une, et propose ce qui les libérerait (#1298).
+
+        La cause est lue là où le moteur la sait, jamais devinée : la forme du plan
+        (`cadence_du_plan`), et le régime que l'exécuteur **applique** au projet
+        (`TaskExecutor.atelier_du_projet`, l'atelier de #839). Elle est consignée
+        — toujours, même sans personne à qui proposer quoi que ce soit : c'est la
+        ligne que la vue du run et le fil relisent.
+
+        Sur un projet non versionné, ce qui la lèverait se **propose** : versionner
+        le projet, sur la carte d'une question du fil (le canal de #1023, celui des
+        prérequis de #1181). À la différence du renfort (#1227), le run **ne
+        l'attend pas** : un plan reste exécutable une tâche à la fois, et le faire
+        patienter des minutes pour une amélioration coûterait plus que la lenteur
+        qu'elle corrige. L'accord arrive quand il arrive ; l'exécuteur versionne
+        alors **entre deux tâches** (`versionner_le_projet`), et les suivantes
+        partent de front. Rend la proposition en vol, que la fin du run solde.
+
+        Rien n'est proposé sans canal (pas de questionneur) : la cause est dite, et
+        c'est tout — une carte que personne ne verrait serait une promesse creuse.
+        """
+        atelier = self._executor.atelier_du_projet(projet_id) if projet_id is not None else None
+        cadence = cadence_du_plan(tasks, atelier=atelier)
+        if cadence is None:
+            return None
+        proposer = (
+            cadence.cause == CAUSE_PROJET_NON_VERSIONNE
+            and self._questionneur is not None
+            and projet_id is not None
+        )
+        if proposer:
+            cadence = avec_proposition(cadence, PROPOSITION_EN_ATTENTE)
+        self._consigne_cadence(journal, cadence, STATUT_UNE_A_UNE, projet_id)
+        if not proposer or projet_id is None:
+            return None
+        versionnement = _Versionnement(cadence=cadence)
+        versionnement.tache = asyncio.create_task(
+            self._propose_de_versionner(versionnement, projet_id, journal)
+        )
+        return versionnement
+
+    async def _propose_de_versionner(
+        self, versionnement: _Versionnement, projet_id: str, journal: RunJournal
+    ) -> None:
+        """Pose la proposition dans le fil, et l'applique sur accord — jamais d'office (#1298).
+
+        Le **seul** geste qui écrive dans le projet est le choix « Versionner le
+        projet » de la carte : c'est l'accord de l'arbitrage des actes, rendu sur
+        ce qui sera écrit (un dépôt local, un premier commit de l'existant). Une
+        phrase tapée, « Garder tel quel », un silence jusqu'à la borne ou une
+        question qui n'a pas pu partir laissent tout en l'état — et chacune de ces
+        issues est consignée, comme celle d'une mise sous Git refusée.
+        """
+        cadence = versionnement.cadence
+        reponse, motif = await self._demande_du_run(
+            question_du_versionnement(cadence),
+            journal,
+            projet_id,
+            titre=f"Versionner le projet « {cadence.projet} »",
+            choix=(CHOIX_VERSIONNER, CHOIX_GARDER),
+            hypothese=HYPOTHESE_VERSIONNEMENT,
+            verbe=VERBE_VERSIONNEMENT,
+        )
+        if reponse is None:
+            self._issue_du_versionnement(
+                versionnement,
+                PROPOSITION_SANS_REPONSE,
+                STATUT_VERSIONNEMENT_SANS_REPONSE,
+                f"{motif} — le run continue une tâche à la fois, le projet reste tel quel",
+                projet_id,
+                journal,
+            )
+            return
+        choix = reponse.strip()
+        if choix != CHOIX_VERSIONNER:
+            self._issue_du_versionnement(
+                versionnement,
+                PROPOSITION_DECLINEE,
+                STATUT_VERSIONNEMENT_DECLINE,
+                (
+                    "décliné d'un geste"
+                    if choix == CHOIX_GARDER
+                    else f"réponse « {choix} » : seul le geste « {CHOIX_VERSIONNER} » écrit "
+                    "dans le projet"
+                )
+                + " — le run continue une tâche à la fois, le projet reste tel quel",
+                projet_id,
+                journal,
+            )
+            return
+        versionnement.en_ecriture = True
+        try:
+            projet = await self._executor.versionner_le_projet(projet_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as refus:  # noqa: BLE001 — un refus motivé ne condamne pas le run
+            self._issue_du_versionnement(
+                versionnement,
+                PROPOSITION_ECHOUEE,
+                STATUT_VERSIONNEMENT_ECHOUE,
+                f"accepté, mais la mise sous Git a échoué : {refus} — le run continue une "
+                "tâche à la fois, le projet reste tel quel",
+                projet_id,
+                journal,
+                detail=str(refus),
+            )
+            return
+        base = projet.vcs.branche_base if projet.vcs is not None else ""
+        self._issue_du_versionnement(
+            versionnement,
+            PROPOSITION_ACCEPTEE,
+            STATUT_PROJET_VERSIONNE,
+            "versionné sur accord — dépôt Git local"
+            + (f", branche « {base} »" if base else "")
+            + ", premier commit de l'existant : les tâches suivantes partent chacune dans "
+            "sa copie, de front",
+            projet_id,
+            journal,
+        )
+
+    async def _solde_le_versionnement(
+        self, versionnement: _Versionnement, projet_id: str | None, journal: RunJournal
+    ) -> None:
+        """À la fin du run, solde la proposition restée en vol (#1298).
+
+        Une mise sous Git **en cours** va à son terme : elle est courte, se fait sous
+        l'atelier, et l'interrompre laisserait le projet versionné sans que le
+        journal le dise. Une proposition qui attend encore sa réponse est retirée —
+        le run est fini, il n'y a plus de tâche à libérer — et la cause le dit.
+        """
+        tache = versionnement.tache
+        if tache is None or tache.done():
+            return
+        if versionnement.en_ecriture:
+            await asyncio.gather(tache, return_exceptions=True)
+            return
+        tache.cancel()
+        await asyncio.gather(tache, return_exceptions=True)
+        self._issue_du_versionnement(
+            versionnement,
+            PROPOSITION_SANS_SUITE,
+            STATUT_VERSIONNEMENT_SANS_SUITE,
+            "le run s'est achevé avant la réponse : rien n'a été versionné",
+            projet_id,
+            journal,
+        )
+
+    def _issue_du_versionnement(
+        self,
+        versionnement: _Versionnement,
+        proposition: str,
+        statut: str,
+        sortie: str,
+        projet_id: str | None,
+        journal: RunJournal,
+        *,
+        detail: str = "",
+    ) -> None:
+        """Consigne ce qu'est devenue la proposition, et la cause telle qu'elle est désormais."""
+        versionnement.cadence = avec_proposition(versionnement.cadence, proposition, detail)
+        self._consigne_cadence(journal, versionnement.cadence, statut, projet_id, sortie=sortie)
+
+    def _consigne_cadence(
+        self,
+        journal: RunJournal,
+        cadence: Cadence,
+        statut: str,
+        projet_id: str | None,
+        *,
+        sortie: str = "",
+    ) -> None:
+        """La cadence au journal, au nom de l'orchestrateur — étape de run, usage nul."""
+        consigne_cadence(
+            journal,
+            cadence,
+            statut,
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            projet_id=projet_id,
+            sortie=sortie,
+        )
+
+    async def _demande_du_run(
+        self,
+        texte: str,
+        journal: RunJournal,
+        projet_id: str | None,
+        *,
+        titre: str,
+        choix: tuple[str, ...],
+        hypothese: str,
+        verbe: str,
+    ) -> tuple[str | None, str]:
+        """Pose dans le fil une question **du run**, et attend la réponse — bornée (#1298).
+
+        Le pendant de `_demande` pour une question qui ne porte sur aucune tâche :
+        même canal (la carte d'une question, #1023), même borne
+        (`BornesArbitrage.attente_s`, le seul réglage du temps humain), mais aucune
+        tâche à qui la rattacher — l'identifiant se range sous l'étape du run
+        (`ETAPE_CADENCE`), et l'issue est consignée par l'appelant sur cette étape.
+
+        Rend la réponse et, quand il n'y en a pas, pourquoi : personne n'a répondu
+        à temps, ou la question n'a pas pu partir.
+        """
+        questionneur = self._questionneur
+        if questionneur is None:  # pragma: no cover — l'appelant l'a vérifié
+            return None, "aucun fil où poser la question"
+        attente_s = self._bornes_question.attente_s
+        cle = cle_acte(verbe, {"run": journal.run_id, "question": texte})
+        demande = DemandeQuestion(
+            question_id=identifiant_question(ETAPE_CADENCE, cle),
+            question=texte,
+            hypothese=hypothese,
+            choix=choix,
+            titre=titre,
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            run_id=journal.run_id,
+            projet_id=projet_id,
+            attente_s=attente_s,
+            # Une question du run ne vaut que tant qu'il peut s'en servir : à la
+            # borne, ou à sa fin, elle quitte le fil au lieu d'y laisser un geste
+            # qui ne ferait plus rien.
+            retirer_sans_reponse=True,
+        )
+        try:
+            return await asyncio.wait_for(questionneur(demande), attente_s), ""
+        except TimeoutError:
+            return None, f"personne n'a répondu en {attente_s:g} s"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — un canal muet ne condamne rien de plus
+            return None, f"la proposition n'a pas pu être posée dans le fil ({exc})"
 
     def _equipe(self, projet_id: str | None) -> tuple[Agent, ...]:
         """L'équipe sur laquelle découper — celle du projet, sinon celle du câblage.
@@ -2395,6 +2662,21 @@ class _Proposition:
     reponse: str | None = None
     texte: str = ""
     issue: str = ""
+
+
+@dataclass
+class _Versionnement:
+    """La proposition de versionner le projet, en vol pendant le run (#1298).
+
+    `cadence` est la cause telle qu'elle a été dite en dernier — chaque issue la
+    fait avancer —, `tache` l'attente de la réponse, qui court à côté des tâches,
+    et `en_ecriture` dit que l'accord est donné et que la mise sous Git a commencé :
+    la fin du run l'attend alors au lieu de la retirer.
+    """
+
+    cadence: Cadence
+    tache: asyncio.Task[None] | None = None
+    en_ecriture: bool = False
 
 
 def _allowlist_mcp_du_poste() -> RegistreMcp:

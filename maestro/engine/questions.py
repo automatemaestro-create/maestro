@@ -79,6 +79,13 @@ class DemandeQuestion:
     #: personne** autant qu'un réglage : « il reste quatre minutes » et « il reste
     #: une heure » n'appellent pas le même geste.
     attente_s: float = 0.0
+    #: La question **se retire du fil** quand on cesse de l'attendre (#1298). Faux
+    #: pour la question d'un agent, qui reste ouverte après la borne parce qu'une
+    #: réponse tardive sert encore (`MemoireArbitrage`, #584). Vrai pour une
+    #: proposition qui ne vaut que tant que le run peut s'en servir — versionner le
+    #: projet pendant le run : passé la borne ou fini le run, son geste ne ferait
+    #: plus rien, et une carte dont le bouton ne fait rien mentirait.
+    retirer_sans_reponse: bool = False
 
     def resume(self) -> str:
         """La question, ses choix et son hypothèse en une ligne — l'entrée du journal.

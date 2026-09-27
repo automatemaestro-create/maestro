@@ -522,10 +522,12 @@ def test_chaque_etape_est_consignee_dans_le_journal():
         _engine(exec_provider=MeteredProvider()).run("Objectif", journal=journal)
     )
 
-    # Une trace par étape — la planification d'abord, puis chaque tâche dans
-    # l'ordre : son début (#98) puis son issue.
+    # Une trace par étape — la planification d'abord, la cadence du run ensuite
+    # (#1298 : ce plan est une chaîne, ses tâches passent une à une), puis chaque
+    # tâche dans l'ordre : son début (#98) puis son issue.
     assert [r.etape for r in journal.records] == [
         "planification",
+        "cadence",
         "schema-bdd:debut", "schema-bdd",
         "api-taches:debut", "api-taches",
         "tests-api:debut", "tests-api",
@@ -534,7 +536,7 @@ def test_chaque_etape_est_consignee_dans_le_journal():
     assert report.run_id == "run-42"
 
     # Chaque trace porte l'entrée, la sortie et l'usage de l'étape.
-    tache = journal.records[2]
+    tache = next(r for r in journal.records if r.etape == "schema-bdd")
     assert "Schéma BDD" in tache.entree
     assert tache.sortie == "LIVRABLE mesuré"
     assert tache.usage.cout_usd == pytest.approx(0.01)

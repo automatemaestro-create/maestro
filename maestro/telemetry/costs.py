@@ -140,6 +140,14 @@ ETAPE_REPRISE = "reprise"
 #: nommée « equipe ».
 ETAPE_EQUIPE = "equipe"
 
+#: Étape du journal qui n'appartient à aucune tâche : la **cadence** du run (#1298)
+#: — pourquoi ses tâches passent une à une (plan en chaîne, projet non versionné,
+#: agent au complet), et ce qu'est devenue la proposition de versionner le projet.
+#: Usage nul par construction : constater ne sollicite aucun modèle. À déclarer ici
+#: pour la raison d'`ETAPE_BRIEF` : sans cette ligne, la règle par défaut ouvrirait
+#: dans le grand livre une entrée de tâche fantôme nommée « cadence ».
+ETAPE_CADENCE = "cadence"
+
 #: Étape du journal qui n'appartient à aucune tâche : le **plafond de dépense
 #: atteint** (#1182) — la question posée à la personne, puis ce qu'elle a décidé
 #: (relever, réduire, arrêter). Usage nul par construction : la suspension ne
@@ -309,11 +317,11 @@ class RunCost:
                 # comptabiliser — les étapes qu'il annonce sont, elles, réintégrées
                 # au journal (`RunJournal.reconstitue`) et comptées à leur place.
                 continue
-            if record.etape in (ETAPE_EQUIPE, ETAPE_PLAFOND):
+            if record.etape in (ETAPE_EQUIPE, ETAPE_PLAFOND, ETAPE_CADENCE):
                 # La confrontation de l'équipe au plan (#1227), la décision au
-                # plafond de dépense (#1182) : des étapes du run, sans usage et
-                # sans tâche. Leur intervalle est déjà pris ci-dessus — c'est du
-                # temps de run, l'attente humaine comprise.
+                # plafond de dépense (#1182), la cadence du run (#1298) : des
+                # étapes du run, sans usage et sans tâche. Leur intervalle est déjà
+                # pris ci-dessus — c'est du temps de run, l'attente humaine comprise.
                 continue
             tache_id = record.etape.split(":", 1)[0]
             entree = entrees.get(tache_id)

@@ -132,6 +132,10 @@ CE_QUI_NE_SE_PREVOIT_PAS = (
     "avec ce qu'il fera sans réponse — ou lui demander d'arbitrer un acte — une "
     "demande de validation, comme ci-dessus —, et un run dont le plan appelle un "
     "métier que l'équipe n'a pas propose un renfort dans le fil qui l'a lancé. "
+    "Sur un projet non versionné, un run dont le plan permettrait plusieurs tâches "
+    "de front les fait passer une à une (deux agents écriraient sinon dans le même "
+    "dossier) et propose, au pied du fil, de versionner le projet — un dépôt Git "
+    "local, sur accord seulement ; il ne l'attend pas pour avancer. "
     "Cela revient à l'utilisateur si cela arrive, et rien ne permet de le savoir "
     "avant."
 )

@@ -65,7 +65,11 @@ from maestro.controltower.events import (
     EventBus,
 )
 from maestro.controltower.persistence import bus_durable
-from maestro.controltower.state import QUESTION_EN_ATTENTE, QUESTION_REPONDUE
+from maestro.controltower.state import (
+    QUESTION_EN_ATTENTE,
+    QUESTION_REPONDUE,
+    QUESTION_RETIREE,
+)
 from maestro.engine.questions import DemandeQuestion
 from maestro.telemetry import redact_secrets
 
@@ -128,6 +132,29 @@ def evenement_question(demande: DemandeQuestion) -> Event:
     )
 
 
+def evenement_retrait(demande: DemandeQuestion) -> Event:
+    """La question retirée du fil sans réponse (#1298) — `question.reponse`, statut `retiree`.
+
+    Le même type que la réponse, parce que c'est le même fait vu de la carte : la
+    question n'attend plus. Le statut dit la différence, et c'est lui qui compte —
+    `_premiere_reponse` n'accepte que `repondue`, si bien qu'un retrait ne se fait
+    jamais passer pour une réponse humaine, et la projection ne le pose que sur une
+    question encore en attente.
+    """
+    return Event(
+        type=EVENEMENT_QUESTION_REPONSE,
+        run_id=demande.run_id,
+        tache_id=demande.tache_id,
+        titre=redact_secrets(demande.titre),
+        agent=demande.agent,
+        role=demande.role,
+        statut=QUESTION_RETIREE,
+        detail="retirée sans réponse : elle ne vaut plus",
+        projet_id=demande.projet_id,
+        question_id=demande.question_id,
+    )
+
+
 class ArbitreQuestionControlTower:
     """Arbitre (#1023) qui porte la question d'un agent à l'UI et attend la réponse.
 
@@ -151,6 +178,15 @@ class ArbitreQuestionControlTower:
         try:
             await self._bus.publish(evenement_question(demande))
             return await ecoute
+        except asyncio.CancelledError:
+            # On cesse d'attendre — la borne du moteur, ou la fin du run. Une
+            # question qui ne vaut que pendant l'attente (#1298) quitte alors le
+            # fil ; celle d'un agent reste ouverte, une réponse tardive servant
+            # encore. Best-effort : l'annulation doit remonter quoi qu'il arrive.
+            if demande.retirer_sans_reponse:
+                with suppress(Exception):
+                    await self._bus.publish(evenement_retrait(demande))
+            raise
         finally:
             if not ecoute.done():
                 ecoute.cancel()
