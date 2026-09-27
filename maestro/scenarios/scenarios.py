@@ -15,7 +15,7 @@
 | S9 | Un projet neuf hors de toute liste | Né, outillé et doté dans le fil, le run abouti : |
 | | | ses commandes écrites passent, et un modèle juge outillage et équipe pertinents |
 | S10 | Un dépôt d'une pile hors des tables | Le même oracle, sur une solution .NET reprise |
-| S11 | Des tâches indépendantes, de front | Sur un projet versionné, deux tâches au travail |
+| S11 | Des tâches indépendantes, de front | Sur un projet versionné, deux tâches en cours |
 | | | ensemble ; le plafond dérivé du plan s'annonce (#1299) |
 
 ## Trois règles que ces scénarios suivent
@@ -2420,7 +2420,7 @@ DOSSIER_S11 = "s11-de-front"
 
 
 def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
-    """Sur un projet versionné, des tâches indépendantes sont **au travail en même temps** (#1299).
+    """Sur un projet versionné, des tâches indépendantes sont **en cours en même temps** (#1299).
 
     Le retex du 2026-09-24, mot pour mot : *« je n'ai jamais remarqué un parallélisme
     dans le traitement des tâches jusqu'ici »*. Deux choses sérialisaient un run :
@@ -2440,9 +2440,10 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
        sont ce que la relance (#91) absorbe, et le scénario le rejoue ;
     2. **le plafond dérivé s'annonce** au journal du run : l'étape de run `equipe`,
        au statut `instances_derivees`, avant la première tâche ;
-    3. **au moins deux tâches sont au travail en même temps** : entre leur `en_cours`
-       — consigné une fois le créneau de l'agent obtenu, donc attendre son tour ne
-       compte pas — et le statut qui le clôt (`_au_travail_ensemble`).
+    3. **au moins deux tâches sont en cours en même temps** — la colonne « En cours »
+       du pipeline, ce que le critère demande : entre leur `en_cours`, consigné une
+       fois le créneau de l'agent obtenu (attendre son tour ne compte pas), et le
+       statut qui le clôt (`_en_cours_ensemble`).
 
     Le motif d'un rouge dit lequel des deux défauts on a vu, parce qu'ils ne se
     corrigent pas au même endroit : un plan **en chaîne** (sa largeur, lue sur
@@ -2483,10 +2484,10 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
     evenements = [e for e in detail.get("evenements") or [] if isinstance(e, Mapping)]
     annonce = _annonce_du_plafond(evenements)
     largeur = _largeur_publiee(evenements)
-    pic, ensemble = _au_travail_ensemble(evenements)
+    pic, ensemble = _en_cours_ensemble(evenements)
     ctx.note(
         "tâches de front",
-        f"plan de largeur {'inconnue' if largeur is None else largeur} ; au travail "
+        f"plan de largeur {'inconnue' if largeur is None else largeur} ; en cours "
         f"ensemble : {pic} ({', '.join(ensemble) or '—'}) ; annonce : "
         f"« {annonce if annonce is not None else 'aucune'} »",
     )
@@ -2507,13 +2508,13 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
             )
         return rouge(
             f"le plan en laissait partir {largeur if largeur is not None else '?'} de "
-            "front, mais jamais deux tâches n'ont été au travail ensemble — annonce du "
+            "front, mais jamais deux tâches n'ont été en cours ensemble — annonce du "
             f"run : « {annonce} »",
             run_id=run_id,
             cout_usd=cout,
         )
     return vert(
-        f"{pic} tâches au travail en même temps ({', '.join(ensemble)}) sur un plan de "
+        f"{pic} tâches en cours en même temps ({', '.join(ensemble)}) sur un plan de "
         f"largeur {largeur if largeur is not None else '?'} ; le run a annoncé : "
         f"« {annonce} »",
         run_id=run_id,
@@ -2551,17 +2552,24 @@ def _largeur_publiee(evenements: Sequence[Mapping[str, Any]]) -> int | None:
     return None
 
 
-def _au_travail_ensemble(
+def _en_cours_ensemble(
     evenements: Sequence[Mapping[str, Any]],
 ) -> tuple[int, tuple[str, ...]]:
-    """Le plus grand nombre de tâches **au travail en même temps**, et lesquelles (#1299).
+    """Le plus grand nombre de tâches **en cours en même temps**, et lesquelles (#1299).
 
-    Une tâche est au travail entre un `tache.statut` « en_cours » — l'étape `:debut`,
-    que le moteur consigne une fois son créneau et son atelier obtenus — et le statut
-    suivant qui n'en est plus un (terminée, en échec, suspendue). Une relance rouvre
-    un intervalle ; une tâche jamais close l'est au dernier instant de la trace. Deux
-    intervalles qui se **touchent** ne se chevauchent pas : à instant égal, une fin
-    passe avant un début.
+    Une tâche est en cours — la colonne du pipeline — entre un `tache.statut`
+    « en_cours », l'étape `:debut` que le moteur consigne une fois son créneau et son
+    atelier obtenus, et le statut suivant qui n'en est plus un (terminée, en échec,
+    suspendue). Une relance rouvre un intervalle ; une tâche jamais close l'est au
+    dernier instant de la trace. Deux intervalles qui se **touchent** ne se
+    chevauchent pas : à instant égal, une fin passe avant un début.
+
+    ⚠ En cours n'est pas « dans un créneau » : une tâche rend le créneau de son agent
+    une fois vérifiée, et reste en cours le temps de rejoindre le projet (sa fusion,
+    #705). Le pic peut donc dépasser d'une unité le plafond d'un agent pendant une
+    fusion — mesuré le 2026-09-27 (run `a3c6bfc510fb`) : quatre pages en cours
+    pendant six secondes sous un plafond de trois, la quatrième ayant attendu son
+    créneau 149 s. C'est ce que la personne voit, et ce que le critère demande.
 
     Rend les tâches du pic par leur titre, suivi de leur agent — c'est ce qui dit, au
     rapport, si le même agent en a mené plusieurs de front.

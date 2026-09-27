@@ -3582,7 +3582,7 @@ _QUATRE_SECTIONS = tuple(
     for nom in ("accueil", "creations", "ateliers", "contact")
 )
 
-#: Une trace où trois sections sont au travail ensemble (10:01 → 10:03), la quatrième
+#: Une trace où trois sections sont en cours ensemble (10:01 → 10:03), la quatrième
 #: après — le plafond dérivé tenu à trois.
 _TRACE_DE_FRONT = (
     _plan_publie(*_QUATRE_SECTIONS),
@@ -3651,13 +3651,13 @@ class ApiDeFront(FausseAPI):
         return Reponse(statut=reponse.statut, corps=corps)
 
 
-def test_s11_est_vert_quand_des_sections_sont_au_travail_ensemble(tmp_path: Path) -> None:
-    """Le produit de #1299 : plan large, trois sections au travail ensemble, plafond annoncé."""
+def test_s11_est_vert_quand_des_sections_sont_en_cours_ensemble(tmp_path: Path) -> None:
+    """Le produit de #1299 : plan large, trois sections en cours ensemble, plafond annoncé."""
     api = ApiDeFront(trace=_TRACE_DE_FRONT)
     issue, ctx = _banc(tmp_path, api).jouer(_scenario("S11"))
 
     assert issue.vert, issue.motif
-    assert "3 tâches au travail en même temps" in issue.motif
+    assert "3 tâches en cours en même temps" in issue.motif
     assert "largeur 4" in issue.motif
     assert "Jusqu'à 3 tâches de front" in issue.motif
     # Le montage : un site semé, versionné par le geste de l'écran Projets — jamais
@@ -3681,7 +3681,7 @@ def test_s11_est_rouge_quand_les_sections_passent_une_a_une(tmp_path: Path) -> N
 
     assert issue.verdict == "rouge"
     assert "le plan en laissait partir 4 de front" in issue.motif
-    assert "jamais deux tâches n'ont été au travail ensemble" in issue.motif
+    assert "jamais deux tâches n'ont été en cours ensemble" in issue.motif
 
 
 def test_s11_dit_quand_c_est_le_plan_qui_s_enchaine(tmp_path: Path) -> None:
@@ -3724,10 +3724,10 @@ def test_s11_est_un_empechement_quand_le_poste_ne_versionne_pas(tmp_path: Path) 
 def test_s11_une_relance_rouvre_l_intervalle_de_sa_tache() -> None:
     """Un échec clôt l'intervalle d'une tâche, sa relance en rouvre un autre.
 
-    Entre les deux, la tâche n'est pas au travail : seul le second intervalle croise
+    Entre les deux, la tâche n'est pas en cours : seul le second intervalle croise
     celui de `b`, et le pic le dit — deux, par leur titre et leur agent.
     """
-    from maestro.scenarios.scenarios import _au_travail_ensemble
+    from maestro.scenarios.scenarios import _en_cours_ensemble
 
     trace = [
         _statut("a", "en_cours", "01:00", agent="dev-1"),
@@ -3738,7 +3738,7 @@ def test_s11_une_relance_rouvre_l_intervalle_de_sa_tache() -> None:
         _statut("b", "terminee", "03:30", agent="dev-1"),
     ]
 
-    pic, ensemble = _au_travail_ensemble(trace)
+    pic, ensemble = _en_cours_ensemble(trace)
 
     assert pic == 2
     assert ensemble == ("« Maquetter a » (dev-1)", "« Maquetter b » (dev-1)")

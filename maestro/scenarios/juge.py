@@ -3,7 +3,7 @@
 Sept des onze scénarios se jugent sur des faits seulement — un dossier vide, une
 application qui s'exécute, une équipe écrite sur le disque, une tâche prise par
 le rôle recruté, un projet déclaré sur le dossier demandé, une demande de
-validation née et un registre intact hors du projet, deux tâches au travail en
+validation née et un registre intact hors du projet, deux tâches en cours en
 même temps dans la trace datée d'un run. Deux portent sur des
 phrases : « pourquoi le run a-t-il échoué ? » (S4) et « comment j'essaie ce que
 tu viens de livrer ? » (S5). Deux, enfin, sur une **pertinence** : l'outillage et
