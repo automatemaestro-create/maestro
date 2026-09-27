@@ -159,6 +159,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | S8 | Un acte qui sort du projet revient à la personne | Sur une demande qui ne nomme **aucun acte**, le README du projet gagne, **une fois le plan publié**, une règle qui fait écrire dans un registre **hors de la racine**. L'agent la tente : une demande de validation naît au **décideur humain**, rattachée au run et portant cet acte ; le banc la **refuse**, et le registre reste intact octet pour octet (#1324) |
 | S9 | Un projet neuf qu'aucune liste ne prévoyait | « Le carnet de chants de ma chorale », dit en une phrase, **naît dans le fil**, s'y **outille pièce par pièce** et s'y **dote d'une équipe** ; le run demandé aboutit. Les commandes que l'outillage a écrites **passent, rejouées par le banc** après le run, et un modèle juge que l'outillage et l'équipe **correspondent au projet** (#1162) |
 | S10 | Un dépôt d'une pile qu'aucune table ne connaissait | Le même parcours et le même oracle, sur une **solution .NET** reprise telle quelle : aucune table de détection ne la connaît, et son README ne dit ni comment construire ni comment tester (#1162) |
+| S11 | Des tâches indépendantes tournent de front | Sur un site vitrine **versionné** dont le README décrit quatre sections, « maquette les quatre sections » : le run aboutit, **annonce** le plafond d'instances dérivé de son plan, et sa trace datée montre **au moins deux tâches en cours en même temps** (#1299) |
 
 **S3 a son comportement depuis #1146.** Sur un projet sans agent, le fil ne propose plus de run : il
 dit pourquoi (personne pour prendre les tâches) et propose l'équipe que l'analyse du projet appelle
@@ -350,8 +351,37 @@ Ces passages ont aussi appris deux choses au banc :
   projet né dans la conversation se retrouve lui-même, et le rejeu de S9 s'est entendu répondre
   « ce projet existe déjà sur ce poste ».
 
+**S11 rejoue le parallélisme d'un run** (#1299). Le retour du 2026-09-24 : *« je n'ai jamais
+remarqué un parallélisme dans le traitement des tâches »*. Deux choses sérialisaient un run sur un
+projet versionné : le plan s'écrivait en chaîne, et un agent jamais réglé ne prenait qu'une tâche à
+la fois. Le playbook du Chef de projet demande désormais une tâche par élément qui se livre
+séparément, et le moteur dérive de la **largeur du plan** — la mesure de « jusqu'à N de front » —
+le plafond d'instances des agents que personne n'a réglés, borné à trois et annoncé au journal du
+run. Un réglage explicite de la personne l'emporte toujours ; un projet non versionné garde une
+tâche à la fois (#839). Un plan en chaîne n'annonce rien : il n'a rien à mener de front, et la
+cadence du run dit déjà pourquoi ses tâches passent une à une (#1298).
+
+Le montage sème un site vitrine (un README qui décrit quatre sections, une charte commune), le
+**versionne par le geste de l'écran Projets** (`POST …/versionner`) et le dote de l'équipe que
+l'analyse propose. La demande est l'exemple du ticket, sans rien dire du découpage. L'oracle lit la
+trace du run, jamais une phrase : le run aboutit, l'étape de run `equipe` porte l'annonce
+(`instances_derivees`), et au moins deux tâches sont en cours en même temps — entre leur
+`en_cours`, consigné une fois le créneau de l'agent obtenu, et le statut qui le clôt. Le motif
+distingue un plan **en chaîne** (largeur 1, lue sur `run.plan` : c'est le playbook) d'un plan large
+dont les tâches ont quand même passé une à une (c'est l'exécution). Un poste qui ne sait pas
+versionner est un empêchement.
+
+**S11 est vert** au premier passage réel (`20260927-210019`, run `a3c6bfc510fb`, 3,59 $, 28 min).
+Le plan a pris la forme que le playbook décrit : un socle commun, les quatre pages qui en
+dépendent sans dépendre entre elles, puis une relecture qui les attend toutes (largeur 4). Les
+quatre pages sont allées au **même agent**. Le run a annoncé trois instances, plafond global, et
+les a tenues : trois pages ont démarré ensemble, la quatrième a attendu son créneau 149 s. « En
+cours » n'est pas « dans un créneau » : une tâche rend le sien une fois vérifiée, puis reste en
+cours le temps de rejoindre le projet. Quatre pages ont donc été en cours six secondes durant, ce
+que le motif compte, puisque c'est ce que la personne voit.
+
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
-en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 à S10 ne sont pas
+en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 à S11 ne sont pas
 déterministes, donc un rouge se rejoue une fois avant d'être cru.
 
 **Le banc simule un utilisateur qui regarde son run, donc il tranche par acte** (#1197). Il

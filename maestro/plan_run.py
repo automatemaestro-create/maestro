@@ -201,6 +201,68 @@ def noeuds_du_plan(tasks: Sequence[Task]) -> list[NoeudPlan]:
     return [noeud for noeud in lus if not noeud.vide]
 
 
+def niveaux_topologiques(noeuds: Sequence[NoeudPlan]) -> dict[str, int]:
+    """Le rang de chaque nœud : **le plus long chemin qui y mène**, en partant de 0.
+
+    Un nœud sans dépendance (dans le plan) est au niveau 0 ; les autres suivent
+    leur amont le plus tardif. C'est ce qui met au même niveau deux tâches
+    indépendantes — la propriété que le graphe servi dessine
+    (`maestro.controltower.graphe`), et que le tri topologique du moteur
+    (`topological_order`, qui rend une **séquence**) ne donne pas.
+
+    Ici et non dans le graphe depuis #1299 : le moteur en tire le plafond
+    d'instances d'un run (`largeur_du_plan`), et « jusqu'à N de front » ne doit
+    pas vouloir dire deux choses selon qu'on le lit à l'écran ou qu'on
+    l'applique.
+
+    Une dépendance qui ne désigne aucun nœud du plan est ignorée : la relecture
+    est tolérante (cf. la docstring du module), et une arête sans amont n'a rien
+    à retenir. Un **cycle** est impossible sur un plan validé (`validate_plan` le
+    refuse avant tout run), mais un plan relu du bus ne repasse par aucune
+    validation : les nœuds qu'aucun ordre ne résout sont donc rangés **après**
+    tout le reste, sur un dernier niveau, plutôt que de faire tourner la boucle
+    sans fin. Rendre un graphe étrange vaut mieux que ne rien rendre du tout.
+    """
+    connus = {noeud.id for noeud in noeuds}
+    amont = {
+        noeud.id: [dep for dep in noeud.dependances if dep in connus] for noeud in noeuds
+    }
+    niveau: dict[str, int] = {}
+    restants = list(noeuds)
+    while restants:
+        differes: list[NoeudPlan] = []
+        for noeud in restants:
+            if all(dep in niveau for dep in amont[noeud.id]):
+                niveau[noeud.id] = 1 + max(
+                    (niveau[dep] for dep in amont[noeud.id]), default=-1
+                )
+            else:
+                differes.append(noeud)
+        if len(differes) == len(restants):
+            # Aucun n'a pu être rangé : c'est un cycle (ou une portion de plan
+            # qui n'aurait pas dû arriver jusqu'ici). On les pose tous ensemble,
+            # au niveau suivant, et on sort.
+            dernier = 1 + max(niveau.values(), default=-1)
+            for noeud in differes:
+                niveau[noeud.id] = dernier
+            break
+        restants = differes
+    return niveau
+
+
+def largeur_du_plan(noeuds: Sequence[NoeudPlan]) -> int:
+    """Le niveau le plus peuplé — ce que le plan laisse partir **de front**, au plus.
+
+    La `largeur` du graphe servi (« jusqu'à N de front ») et l'entrée du plafond
+    d'instances dérivé d'un run (#1299) : une seule mesure pour les deux. `0` pour
+    un plan vide.
+    """
+    comptes: dict[int, int] = {}
+    for rang in niveaux_topologiques(noeuds).values():
+        comptes[rang] = comptes.get(rang, 0) + 1
+    return max(comptes.values(), default=0)
+
+
 def dependants_directs(noeuds: Sequence[NoeudPlan]) -> dict[str, tuple[str, ...]]:
     """Inverse le graphe : pour chaque nœud, qui dépend de lui — dans l'ordre du plan.
 

@@ -106,7 +106,7 @@ from maestro.controltower.progression import (
 )
 from maestro.controltower.signe_de_vie import SigneDeVie
 from maestro.detail_tache import EtapeTache, etapes_en_liste
-from maestro.plan_run import NoeudPlan, dependants_directs
+from maestro.plan_run import NoeudPlan, dependants_directs, niveaux_topologiques
 
 #: États d'une arête, c'est-à-dire du **passage de relais** entre deux tâches :
 #:
@@ -387,50 +387,6 @@ class GrapheRun:
         }
 
 
-def _niveaux_topologiques(noeuds: Sequence[NoeudPlan]) -> dict[str, int]:
-    """Le rang de chaque nœud : **le plus long chemin qui y mène**, en partant de 0.
-
-    Un nœud sans dépendance (dans le plan) est au niveau 0 ; les autres suivent
-    leur amont le plus tardif. C'est ce qui met au même niveau deux tâches
-    indépendantes — la propriété que le deuxième critère demande, et que le tri
-    topologique du moteur (`topological_order`, qui rend une **séquence**) ne
-    donne pas.
-
-    Une dépendance qui ne désigne aucun nœud du plan est ignorée : la relecture
-    est tolérante (`maestro.plan_run`), et une arête sans amont n'a rien à
-    retenir. Un **cycle** est impossible sur un plan validé (`validate_plan` le
-    refuse avant tout run), mais un plan relu du bus ne repasse par aucune
-    validation : les nœuds qu'aucun ordre ne résout sont donc rangés **après**
-    tout le reste, sur un dernier niveau, plutôt que de faire tourner la boucle
-    sans fin. Rendre un graphe étrange vaut mieux que ne rien rendre du tout.
-    """
-    connus = {noeud.id for noeud in noeuds}
-    amont = {
-        noeud.id: [dep for dep in noeud.dependances if dep in connus] for noeud in noeuds
-    }
-    niveau: dict[str, int] = {}
-    restants = list(noeuds)
-    while restants:
-        differes: list[NoeudPlan] = []
-        for noeud in restants:
-            if all(dep in niveau for dep in amont[noeud.id]):
-                niveau[noeud.id] = 1 + max(
-                    (niveau[dep] for dep in amont[noeud.id]), default=-1
-                )
-            else:
-                differes.append(noeud)
-        if len(differes) == len(restants):
-            # Aucun n'a pu être rangé : c'est un cycle (ou une portion de plan
-            # qui n'aurait pas dû arriver jusqu'ici). On les pose tous ensemble,
-            # au niveau suivant, et on sort.
-            dernier = 1 + max(niveau.values(), default=-1)
-            for noeud in differes:
-                niveau[noeud.id] = dernier
-            break
-        restants = differes
-    return niveau
-
-
 def _etat_arete(amont: EtatNoeud) -> str:
     """L'état d'une arête, lu dans le **compartiment** de son amont.
 
@@ -484,7 +440,7 @@ def graphe_du_run(
     route, qui a un client à qui répondre.
     """
     aval = dependants_directs(noeuds)
-    niveau_de = _niveaux_topologiques(noeuds)
+    niveau_de = niveaux_topologiques(noeuds)
     rang_courant: dict[int, int] = {}
     lignes: list[NoeudGraphe] = []
     for noeud in noeuds:

@@ -81,9 +81,10 @@ _ETAPE_REPRISE = "reprise"
 _ETAPE_BRIEF = "brief"
 
 #: Étape du journal qui n'est pas une tâche : la **confrontation de l'équipe au
-#: plan** (#1227 — cf. `maestro.telemetry.costs.ETAPE_EQUIPE`). Deux lignes au
-#: plus par run, et elles portent sur le plan entier : le rôle qui manque, puis
-#: ce que la proposition de renfort a donné. Même raison d'être déclarée ici que
+#: plan** (#1227 — cf. `maestro.telemetry.costs.ETAPE_EQUIPE`). Trois lignes au
+#: plus par run, et elles portent sur le plan entier : le rôle qui manque, ce que
+#: la proposition de renfort a donné, et combien de tâches chaque rôle prendra de
+#: front (#1299). Même raison d'être déclarée ici que
 #: `brief` : sans elle, la règle par défaut ferait une carte de tâche fantôme
 #: nommée « equipe » sur le Kanban.
 _ETAPE_EQUIPE = "equipe"

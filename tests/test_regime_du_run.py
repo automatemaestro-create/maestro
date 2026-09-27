@@ -38,6 +38,7 @@ juge jamais le texte qu'il en tire (#1169) : le fournisseur est un double qui
 from __future__ import annotations
 
 import asyncio
+import shutil
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -70,6 +71,8 @@ from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.regime import (
     CE_QUI_NE_SE_PREVOIT_PAS,
     CE_QUI_REVIENT,
+    DE_FRONT_NON_VERSIONNE,
+    DE_FRONT_VERSIONNE,
     ENTETE,
     PHRASES_DU_BRIEF,
     REGLE_DE_L_ACTE_ACCORDE,
@@ -729,6 +732,57 @@ def test_le_bloc_dit_ce_qu_il_sait_selon_qu_il_y_a_une_equipe_aucune_ou_pas_de_p
     assert REGLE_DE_L_ACTE_ACCORDE not in vide
     assert SANS_AGENT not in sans_projet
     assert "Actes de l'équipe" not in sans_projet
+
+
+def test_le_bloc_dit_ce_qui_partira_de_front_selon_le_versionnement_du_projet() -> None:
+    """#1299 : versionné, les tâches indépendantes partent de front ; sinon, une à une (#839).
+
+    Le fait n'est dit que s'il est su : sans versionnement constaté, rien — la règle
+    générique du projet non versionné, restée seule, s'appliquait à tort à un
+    projet versionné (passage `20260927-214542` de S11).
+    """
+    membres = [_membre(POLITIQUE_DU_PROJET)]
+
+    versionne = regime_d_un_run(membres, versionne=True)
+    non_versionne = regime_d_un_run(membres, versionne=False)
+    inconnu = regime_d_un_run(membres)
+
+    assert DE_FRONT_VERSIONNE in versionne and DE_FRONT_NON_VERSIONNE not in versionne
+    assert DE_FRONT_NON_VERSIONNE in non_versionne and DE_FRONT_VERSIONNE not in non_versionne
+    assert "Tâches de front" not in inconnu
+    # Sans agent, aucune tâche ne partira : rien à dire de leur cadence.
+    assert "Tâches de front" not in regime_d_un_run([], versionne=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git introuvable")
+def test_le_juge_lit_le_versionnement_du_projet_a_chaque_message(
+    fil_s4: tuple[TestClient, FournisseurQuiNote, MoteurQuiRespecteSesBornes],
+    atelier: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Le projet versionné par le geste de l'écran se dit tel au message suivant (#1299).
+
+    Relu là où l'exécution le relit — le seul lecteur de projets —, jamais retenu :
+    un fil qui garderait le régime d'avant annoncerait « une à une » à des tâches
+    qui partent de front.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig-absent"))
+    client, fournisseur, _ = fil_s4
+    projet = _projet_existant(client, atelier, "vitrine")
+    proposition = client.post(f"/api/projets/{projet}/equipe/proposition").json()
+    equipe = client.post(f"/api/projets/{projet}/equipe", json=_validee(proposition))
+    assert equipe.status_code == 201, equipe.text
+
+    client.post(f"{CHAT}/messages", json={"contenu": "Maquette le site.", "projet_id": projet})
+    assert DE_FRONT_NON_VERSIONNE in fournisseur.juges[-1]
+
+    versionne = client.post(f"/api/projets/{projet}/versionner")
+    assert versionne.status_code == 200, versionne.text
+    client.post(f"{CHAT}/messages", json={"contenu": "Et maintenant ?", "projet_id": projet})
+
+    assert DE_FRONT_VERSIONNE in fournisseur.juges[-1]
+    assert DE_FRONT_NON_VERSIONNE not in fournisseur.juges[-1]
 
 
 def test_le_cadrage_dit_le_regime_de_brief_que_le_lanceur_pose() -> None:

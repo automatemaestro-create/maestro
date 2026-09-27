@@ -22,6 +22,21 @@ Limite POC assumée : la jauge borne les exécutions simultanées **par process*
 (par boucle asyncio) — exacte pour le moteur en process, elle ne coordonne pas
 encore plusieurs workers entre eux (la coordination distribuée viendra avec la
 persistance partagée, EF-16).
+
+## Le plafond d'un agent que personne n'a réglé se dérive du plan (#1299)
+
+`INSTANCES_DEFAUT = 1` a longtemps été le plafond de tout agent jamais réglé : un
+défaut arbitraire au sens de docs/41, qui faisait passer en file quatre tâches
+indépendantes du même rôle — le retex du 2026-09-24 (*« je n'ai jamais remarqué un
+parallélisme »*). Sur un projet **versionné**, où chaque tâche travaille dans son
+propre worktree, le plafond d'un tel agent est désormais **dérivé de la largeur du
+plan** (`InstancesDerivees`), borné par un plafond global
+(`PLAFOND_INSTANCES_DERIVEES`), et annoncé au journal du run avec son origine.
+
+Deux choses ne bougent pas. Un **réglage explicite** de la personne l'emporte
+toujours (`CapaciteAgent.fixe_ses_instances`) ; et un projet **non versionné**
+garde une tâche à la fois (#839), parce que deux agents y écriraient dans le même
+dossier.
 """
 
 from __future__ import annotations
@@ -42,8 +57,29 @@ from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 
 #: Plafond d'instances par défaut : un agent = une exécution à la fois (docs/09 :
-#: on *augmente* les instances pour absorber la charge).
+#: on *augmente* les instances pour absorber la charge). Depuis #1299, c'est le
+#: plafond d'un agent jamais réglé **hors** d'un run qui en dérive un autre — sur un
+#: projet versionné, le run le remplace par `InstancesDerivees`.
 INSTANCES_DEFAUT = 1
+
+#: Le plafond global des instances qu'un run **dérive de son plan** (#1299). Une
+#: décision, pas une mesure — la même que celle de la concurrence d'un run
+#: d'outillage (#626) et du plafond qu'une proposition d'équipe pose
+#: (`maestro.equipe.gabarits.INSTANCES_MAX_PROPOSEES`) : trois. La seule mesure qui
+#: existe est celle d'une concurrence de **deux** (démo V1, #88 : livrables compacts,
+#: −43 % de coût), et elle ne dit rien de trois ; ce chiffre ne s'appuie donc sur
+#: aucune. Il borne ce que Maestro ouvre de lui-même : la personne en règle un autre
+#: agent par agent (écran de capacité, jusqu'à ce qu'elle veut) ou run par run
+#: (`parallelisme`, #100), et les deux l'emportent.
+PLAFOND_INSTANCES_DERIVEES = 3
+
+#: Le statut de la ligne de journal qui annonce le plafond dérivé d'un run (#1299) —
+#: une étape de run `equipe`, l'équipe confrontée au plan (`maestro.engine.loop`).
+STATUT_INSTANCES_DERIVEES = "instances_derivees"
+
+#: D'où vient le plafond dérivé : la largeur du plan, ou le plafond global qui la borne.
+ORIGINE_LARGEUR = "largeur_du_plan"
+ORIGINE_PLAFOND_GLOBAL = "plafond_global"
 
 #: Nom d'agent admissible comme fichier de stockage — même verrou que
 #: `maestro.agents.store` : slug sûr, sans séparateur ni point.
@@ -57,31 +93,129 @@ class CapaciteAgent:
     Miroir des champs `actif`/`instances_max` de l'entité AGENT (docs/03).
     `modifie_le` est posé par le dépôt à l'écriture (ISO 8601, UTC) — vide pour
     une capacité jamais réglée (les défauts du code).
+
+    `instances_fixees` (#1299) dit si le nombre d'instances est un **choix** — celui
+    que la personne pose à l'écran de capacité — ou seulement la valeur par défaut,
+    que le run remplace alors par un plafond dérivé de son plan. `None` : on ne l'a
+    pas dit, et la valeur en décide (`fixe_ses_instances`).
     """
 
     nom: str
     actif: bool = True
     instances: int = INSTANCES_DEFAUT
     modifie_le: str = ""
+    instances_fixees: bool | None = None
+
+    @property
+    def fixe_ses_instances(self) -> bool:
+        """Le nombre d'instances est-il un réglage explicite, que le run doit garder (#1299) ?
+
+        Dit, il fait foi. Tu, la **valeur** en décide : une instance était le défaut
+        partout — celui de la création d'équipe comme celui d'un agent qu'on a
+        seulement désactivé puis réactivé —, donc l'avoir écrite ne disait rien d'un
+        choix, et c'est précisément ce défaut que #1299 remplace ; toute autre valeur
+        a été choisie, à l'écran de capacité ou avec l'équipe validée, et reste
+        fixée. C'est aussi la lecture des fichiers écrits avant #1299, qui ne
+        portent pas le drapeau.
+        """
+        if self.instances_fixees is not None:
+            return self.instances_fixees
+        return self.instances != INSTANCES_DEFAUT
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet la capacité en dict JSON-sérialisable (le fichier stocké)."""
+        """Réémet la capacité en dict JSON-sérialisable (le fichier stocké).
+
+        Le drapeau sort **tranché** (`fixe_ses_instances`) : un fichier écrit depuis
+        #1299 dit ce qu'il veut dire, sans renvoyer son lecteur à la règle de valeur.
+        """
         return {
             "nom": self.nom,
             "actif": self.actif,
             "instances": self.instances,
+            "instances_fixees": self.fixe_ses_instances,
             "modifie_le": self.modifie_le,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CapaciteAgent:
         """Reconstruit une capacité depuis sa forme `to_dict` (le fichier stocké)."""
+        fixees = data.get("instances_fixees")
         return cls(
             nom=data["nom"],
             actif=data.get("actif", True),
             instances=data.get("instances", INSTANCES_DEFAUT),
             modifie_le=data.get("modifie_le", ""),
+            instances_fixees=fixees if isinstance(fixees, bool) else None,
         )
+
+
+@dataclass(frozen=True)
+class InstancesDerivees:
+    """Le plafond d'instances qu'un run **dérive de son plan**, et d'où il vient (#1299).
+
+    `largeur` est ce que le plan laisse partir de front (`maestro.plan_run.largeur_du_plan`,
+    la même mesure que « jusqu'à N de front » à l'écran). Le plafond qui en sort vaut
+    pour chaque agent du run **qui n'a pas fixé ses instances** : un agent réglé à la
+    main garde son réglage (`reglees`, nommés dans l'annonce pour qu'une file qu'ils
+    imposent ne reste pas inexpliquée).
+
+    Pourquoi la largeur et pas le nombre de tâches qu'un agent recevra : le routage se
+    décide tâche par tâche, au démarrage de chacune (#42), donc prédire qu'un agent
+    prendra trois tâches d'un même niveau serait deviner. La largeur, elle, est un
+    fait du plan, figé au départ — et un agent ne peut jamais avoir plus de tâches de
+    front que le plan n'en laisse partir.
+    """
+
+    largeur: int
+    plafond_global: int = PLAFOND_INSTANCES_DERIVEES
+    reglees: tuple[CapaciteAgent, ...] = ()
+
+    @property
+    def instances(self) -> int:
+        """Le plafond appliqué : la largeur, bornée par le plafond global — jamais moins d'un."""
+        return max(INSTANCES_DEFAUT, min(self.largeur, self.plafond_global))
+
+    @property
+    def origine(self) -> str:
+        """`ORIGINE_PLAFOND_GLOBAL` quand le plafond global a borné la largeur, sinon la largeur."""
+        return ORIGINE_PLAFOND_GLOBAL if self.largeur > self.plafond_global else ORIGINE_LARGEUR
+
+    def phrase(self, *, parallelisme: int | None = None) -> str:
+        """L'annonce du journal : le chiffre, son origine, et ce qui le borne encore.
+
+        `parallelisme` est le plafond **du run** (#100), tous agents confondus : posé,
+        il borne en dessous de tout le reste, et l'annonce le dit.
+        """
+        if self.instances <= INSTANCES_DEFAUT:
+            texte = (
+                "Une tâche à la fois par agent : le plan n'en laisse partir qu'une de "
+                "front, chaque tâche attendant celle qui la précède."
+            )
+        elif self.origine == ORIGINE_PLAFOND_GLOBAL:
+            texte = (
+                f"Jusqu'à {self.instances} tâches de front par agent : le plan en laisse "
+                f"partir jusqu'à {self.largeur} de front, et le plafond global des "
+                f"instances qu'un run ouvre de lui-même est de {self.plafond_global}."
+            )
+        else:
+            texte = (
+                f"Jusqu'à {self.instances} tâches de front par agent : c'est la largeur "
+                f"du plan, {self.largeur} tâches indépendantes au même niveau. Chacune "
+                "travaille dans sa copie du projet."
+            )
+        if self.reglees:
+            gardes = ", ".join(
+                f"« {c.nom} » {c.instances} instance{'s' if c.instances > 1 else ''}"
+                for c in self.reglees
+            )
+            texte += f" Réglés à la main, et gardés : {gardes}."
+        if parallelisme is not None:
+            tache = "tâche" if parallelisme <= 1 else "tâches"
+            texte += (
+                f" Le run est borné à {parallelisme} {tache} à la fois, tous agents "
+                "confondus."
+            )
+        return texte
 
 
 class CapacityStore(RangeParProjet):

@@ -427,6 +427,24 @@ def test_ajuster_les_instances_sans_toucher_l_actif(client, capacites):
     assert capacites.lire("developpeur").instances == 4
 
 
+def test_des_instances_reglees_a_l_ecran_sont_fixees_meme_a_une(client, capacites):
+    """#1299 : une instance **posée** par la personne n'est plus le défaut que le run remplace.
+
+    Le run garde un réglage explicite au lieu d'en dériver un de son plan ; poser 1
+    à l'écran en est un. Désactiver ou réactiver seulement ne fixe rien.
+    """
+    client.post("/api/agents/qa/capacite", json={"actif": False})
+    assert capacites.lire("qa").fixe_ses_instances is False
+
+    client.post("/api/agents/qa/capacite", json={"instances": 1})
+    assert capacites.lire("qa").fixe_ses_instances is True
+
+    client.post("/api/agents/qa/capacite", json={"actif": True})
+    relue = capacites.lire("qa")
+    assert relue.actif is True
+    assert relue.fixe_ses_instances is True  # réactiver ne défait pas le réglage
+
+
 def test_le_reglage_est_diffuse_en_temps_reel_sur_le_websocket(client):
     with client.websocket_connect("/ws/evenements?projet=tous") as ws:
         client.post("/api/agents/qa/capacite", json={"actif": False, "instances": 2})

@@ -7,8 +7,17 @@ redémarrage.
 
 ## Fonctionnement
 
-- Un fichier par agent réglé : `<nom>.json` (`actif`, `instances`, horodaté).
-  Un agent **sans fichier** a la capacité par défaut : actif, une instance.
+- Un fichier par agent réglé : `<nom>.json` (`actif`, `instances`,
+  `instances_fixees`, horodaté). Un agent **sans fichier** a la capacité par
+  défaut : actif, une instance.
+- **Le plafond d'un agent qui n'a pas fixé ses instances se dérive du plan**
+  (#1299) : sur un projet **versionné**, c'est la largeur du plan — ce qu'il
+  laisse partir de front —, bornée à trois, annoncée au journal du run. Des
+  instances posées par la personne (`POST …/capacite` avec `instances`) sont
+  **fixées** et l'emportent toujours, une seule comprise. Un fichier sans
+  `instances_fixees` (d'avant #1299, ou écrit par la création d'équipe) se juge
+  sur sa valeur : une instance était le défaut, toute autre valeur un choix. Un
+  projet **non versionné** garde une tâche à la fois (#839).
 - Effet à l'exécution (`maestro/engine/executor.py`, relu **à chaud** à chaque
   tâche, comme les playbooks #78) :
   - un agent **désactivé** est écarté des candidats du routage

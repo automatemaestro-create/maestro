@@ -98,7 +98,7 @@ from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
 
-from maestro.agents.capacity import CapacityStore
+from maestro.agents.capacity import STATUT_INSTANCES_DERIVEES, CapacityStore
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.mcp import McpStore
 from maestro.agents.mcp_registry import RegistreMcp
@@ -233,7 +233,7 @@ from maestro.orchestrator.rattrapage import (
     taches_redecoupees,
 )
 from maestro.orchestrator.schema import Brief, Clarification, Task, topological_order
-from maestro.plan_run import noeuds_du_plan
+from maestro.plan_run import largeur_du_plan, noeuds_du_plan
 from maestro.prerequis import GENRE_ROLE, PrerequisManquant, prerequis_du_role
 from maestro.projets.store import ProjetStore
 from maestro.providers.arbitrage import BornesArbitrage
@@ -974,6 +974,9 @@ class OrchestrationEngine:
         # touche ni au plan ni aux tâches — un rôle créé pendant l'attente est lu
         # par le routage, tâche par tâche.
         await self._confronte_equipe(objective, tasks, projet_id, journal)
+        # Ce que le plan laisse partir de front devient le plafond d'instances du
+        # run (#1299), annoncé avant la première tâche — c'est le même instant.
+        self._derive_les_instances(tasks, projet_id, journal)
         ordered = topological_order(tasks)
         # La cadence du run (#1298) : pourquoi ses tâches passeront une à une, dite
         # **avant** la première — et, sur un projet non versionné, la proposition
@@ -1558,6 +1561,52 @@ class OrchestrationEngine:
                 journal.run_id, manque.manque.couvre or manque.manque.competences
             )
         self._consigne_renfort(manque, decision, projet_id, journal)
+
+    def _derive_les_instances(
+        self, tasks: Sequence[Task], projet_id: str | None, journal: RunJournal
+    ) -> None:
+        """Dérive de la largeur du plan le plafond d'instances du run, et l'annonce (#1299).
+
+        Le retex du 2026-09-24 : quatre tâches indépendantes du même rôle passaient en
+        file, parce qu'un agent jamais réglé ne prenait qu'une tâche à la fois
+        (`INSTANCES_DEFAUT`). La largeur du plan — ce qu'il laisse partir de front,
+        la même mesure que la vue du pipeline (`largeur_du_plan`) — devient le
+        plafond de ces agents, borné par un plafond global. C'est l'exécuteur qui
+        l'applique, lui qui tient la jauge ; la boucle ne fait que lui dire la largeur.
+
+        L'annonce est une étape de run `equipe` — l'équipe confrontée au plan, dont
+        c'est la seconde moitié : **combien** de tâches chaque rôle prendra de front.
+        Elle porte le chiffre et son origine, les agents réglés à la main qui gardent
+        leur réglage, et le plafond du run s'il y en a un. Usage nul : dériver un
+        entier ne sollicite aucun modèle.
+
+        Rien à dire hors projet, ni quand l'exécuteur n'applique rien — pas de jauge,
+        exécuteur distribué, projet non versionné (#839 y garde une tâche à la fois,
+        et c'est à la cadence du run de le dire, #1298). Rien non plus sur un plan
+        **en chaîne** : il n'y a rien à mener de front, et la cadence du run dit déjà
+        pourquoi ses tâches passent une à une — deux lignes pour un même fait feraient
+        du fil d'activité un écho.
+        """
+        if projet_id is None:
+            return
+        largeur = largeur_du_plan(noeuds_du_plan(tasks))
+        derivees = self._executor.derive_les_instances(journal.run_id, projet_id, largeur)
+        if derivees is None or largeur <= 1:
+            return
+        journal.consigne(
+            etape=ETAPE_EQUIPE,
+            nom="Tâches de front",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=STATUT_INSTANCES_DERIVEES,
+            entree=(
+                f"largeur du plan : {largeur} · plafond global : {derivees.plafond_global} "
+                f"· origine : {derivees.origine}"
+            ),
+            sortie=derivees.phrase(parallelisme=self._max_parallele),
+            usage=StepUsage(),
+            projet_id=projet_id,
+        )
 
     def _consigne_manque(
         self, manque: ManqueAuPlan, projet_id: str, journal: RunJournal

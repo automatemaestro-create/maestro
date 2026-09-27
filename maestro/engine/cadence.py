@@ -50,6 +50,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from maestro.orchestrator.schema import Task
+from maestro.plan_run import largeur_du_plan as largeur_des_noeuds
+from maestro.plan_run import noeuds_du_plan
 from maestro.telemetry import RunJournal, StepUsage
 from maestro.telemetry.costs import ETAPE_CADENCE
 
@@ -246,25 +248,12 @@ def largeur_du_plan(tasks: Sequence[Task]) -> int:
     tombent au même niveau. Une dépendance qui ne désigne aucune tâche du plan est
     ignorée ; un cycle — refusé avant tout run par `validate_plan` — range ce qui
     reste sur un dernier niveau plutôt que de boucler.
+
+    La mesure vit une fois, dans `maestro.plan_run` (#1299) : c'est aussi celle du
+    plafond d'instances que le run en dérive, et « de front » ne doit pas vouloir
+    dire trois choses selon qu'on le dessine, qu'on l'explique ou qu'on l'applique.
     """
-    connus = {tache.id for tache in tasks}
-    amont = {tache.id: [d for d in tache.dependances if d in connus] for tache in tasks}
-    niveau: dict[str, int] = {}
-    restants = list(tasks)
-    while restants:
-        differes = [t for t in restants if not all(d in niveau for d in amont[t.id])]
-        ranges = [t for t in restants if t not in differes]
-        if not ranges:
-            dernier = 1 + max(niveau.values(), default=-1)
-            niveau.update({tache.id: dernier for tache in differes})
-            break
-        for tache in ranges:
-            niveau[tache.id] = 1 + max((niveau[d] for d in amont[tache.id]), default=-1)
-        restants = differes
-    comptes: dict[int, int] = {}
-    for rang in niveau.values():
-        comptes[rang] = comptes.get(rang, 0) + 1
-    return max(comptes.values(), default=0)
+    return largeur_des_noeuds(noeuds_du_plan(tasks))
 
 
 def cadence_du_plan(tasks: Sequence[Task], *, atelier: str | None) -> Cadence | None:
