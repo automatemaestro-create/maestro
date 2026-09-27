@@ -1461,6 +1461,59 @@ export type GesteRunFait = {
   refus: string;
 };
 
+/**
+ * Les trois règlements qu'une attente reçoit depuis le fil (`controltower.reglements`,
+ * #1183) : répondre à la question d'un agent, approuver ou refuser une validation —
+ * par le même service que leurs écrans.
+ */
+export type Reglement = "reponse" | "approbation" | "refus";
+
+/**
+ * Une attente **telle que le fil l'a montrée** (`reglements.AttenteVisee`, #1183) : la
+ * question d'un agent ou la validation d'un acte, recopiée au moment où le fil en
+ * parle. `objet` est ce qu'on tranche en une ligne — la question, ou l'acte (outil et
+ * arguments) — ; `outil` n'est rempli que pour un acte ; `hypothese` et `echeance` ne
+ * valent que pour une question.
+ */
+export type AttenteVisee = {
+  genre: "question" | "validation" | string;
+  identifiant: string;
+  agent: string;
+  role: string;
+  titre: string;
+  objet: string;
+  run_id: string;
+  outil: string;
+  hypothese: string;
+  echeance: string;
+};
+
+/**
+ * Le règlement d'une attente **proposé** à la confirmation (`reglements.ReglementPropose`,
+ * #1183). `texte` est la réponse que l'agent lira, ou la raison d'un refus — vide sur
+ * une approbation et sur un refus sans raison. `suite` est ce que le règlement fera,
+ * dit par le service qui le fera — les mots mêmes du fait d'après (`ReglementFait`).
+ */
+export type ReglementPropose = {
+  action: Reglement | string;
+  attente: AttenteVisee;
+  texte: string;
+  suite: string;
+};
+
+/**
+ * Ce qu'un règlement confirmé a **donné** (`reglements.ReglementFait`, #1183) : ce qui est
+ * parti (`texte`), ce que le service dit qu'il en sort (`suite` — « la tâche reprend »),
+ * ou le refus du service — alors rien n'est parti, et `refus` dit pourquoi.
+ */
+export type ReglementFait = {
+  action: Reglement | string;
+  attente: AttenteVisee;
+  texte: string;
+  suite: string;
+  refus: string;
+};
+
 export type MessageChat = {
   agent: string;
   auteur: string;
@@ -1501,6 +1554,12 @@ export type MessageChat = {
   geste_fait?: GesteRunFait | null;
   /** Les runs qu'une demande ambiguë pouvait viser (#1179) — absent ou vide : aucun. */
   runs_candidats?: RunVise[];
+  /** Le règlement d'une attente que ce message propose de confirmer (#1183) — `null` : aucun. */
+  reglement?: ReglementPropose | null;
+  /** Ce qu'un règlement confirmé a donné, porté par la réponse (#1183) — `null` : rien. */
+  reglement_fait?: ReglementFait | null;
+  /** Les attentes qu'une demande ambiguë pouvait viser (#1183) — absent ou vide : aucune. */
+  attentes_candidates?: AttenteVisee[];
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
