@@ -2361,10 +2361,16 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # agit sur les runs. Il ne garde rien non plus — le geste proposé voyage sur le
     # message (`MessageChat.geste_run`), et c'est le fil qui le rend au clic comme
     # au « oui » tapé (`_geste_approuve`).
+    #
+    # #1183 en ajoute un, `_reglements` : le service des attentes, par lequel le fil
+    # répond aux agents et tranche les validations. Il ne garde rien non plus — le
+    # règlement proposé voyage sur le message (`MessageChat.reglement`), et c'est le
+    # fil qui le rend au clic comme au « oui » tapé (`_reglement_approuve`).
     assert set(vars(repondeur)) == {
         "_naissance",
         "_regime",
         "_pilote",
+        "_reglements",
         "_lanceur",
         "_apercu",
         "_faits",
@@ -4119,6 +4125,8 @@ _FAITS_DE_LA_REPONSE = {
     "projet_outille": "le projet dont le tour conduit l'outillage",
     "geste_fait": "ce qu'une confirmation a fait d'un run, relu ensuite (#1179)",
     "runs_candidats": "les runs qu'une demande ambiguë pouvait viser, à nommer (#1179)",
+    "reglement_fait": "ce qu'une confirmation a fait d'une attente, et ce qui a repris (#1183)",
+    "attentes_candidates": "les attentes qu'une demande ambiguë pouvait viser (#1183)",
 }
 
 
