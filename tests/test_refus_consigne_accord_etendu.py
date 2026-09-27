@@ -1,4 +1,4 @@
-"""Un refus dit pourquoi et l'agent repart de là ; une approbation peut valoir pour la suite (#1185).
+"""Un refus dit pourquoi et l'agent repart de là ; une approbation vaut pour la suite (#1185).
 
 Deux critères, et chacun se prouve sur la chaîne qui le porte plutôt que sur un
 maillon :
@@ -397,10 +397,9 @@ def test_la_main_levee_refusee_avec_consigne_dit_de_replanifier():
 
 
 def test_le_garde_fou_porte_la_consigne_dans_le_detail():
+    refus = DecisionHumaine(False, f"  {CONSIGNE}  ")
     approuve, detail = asyncio.run(
-        Guardrails(validateur=lambda d: DecisionHumaine(False, f"  {CONSIGNE}  ")).demande_validation(
-            _demande_acte()
-        )
+        Guardrails(validateur=lambda d: refus).demande_validation(_demande_acte())
     )
 
     assert approuve is False
@@ -596,7 +595,9 @@ def test_l_accord_se_retire_depuis_les_permissions_de_l_agent(client, state, sto
 
 def test_un_accord_de_run_solde_n_est_plus_servi(client, state, store):
     """Un accord qui ne couvre plus rien ne se montre plus comme un laissez-passer."""
-    state.appliquer(Event(type=EVENEMENT_EXECUTION_STATUT, run_id="run-a", statut=EXECUTION_EN_COURS))
+    state.appliquer(
+        Event(type=EVENEMENT_EXECUTION_STATUT, run_id="run-a", statut=EXECUTION_EN_COURS)
+    )
     state.appliquer(_demande())
     client.post("/api/validations/t-acte/decision", json={"approuve": True, "etendue": "run"})
     assert len(client.get(f"/api/catalogue/{AGENT}").json()["permissions_accords"]) == 1
@@ -703,9 +704,9 @@ def test_un_accord_mal_forme_ne_s_ecrit_pas(tmp_path, etendue, run_id, outil):
 def test_un_accord_illisible_est_ignore_et_ramene_a_l_arbitrage(tmp_path):
     accords = AccordStore(tmp_path / "_accords")
     accords.racine.mkdir(parents=True)
+    illisible = {"id": "x", "agent": AGENT, "outil": "Bash", "etendue": "toujours"}
     (accords.racine / f"{AGENT}.json").write_text(
-        json.dumps({"accords": [{"id": "x", "agent": AGENT, "outil": "Bash", "etendue": "toujours"}]}),
-        encoding="utf-8",
+        json.dumps({"accords": [illisible]}), encoding="utf-8"
     )
     assert accords.lire(AGENT) == ()
 
@@ -750,7 +751,7 @@ def test_un_accord_de_run_ne_vaut_pas_pour_un_autre_run(store):
 
 
 def test_un_accord_retire_redemande_des_l_appel_suivant(store):
-    """Retiré pendant la tâche, l'accord cesse de valoir au prochain appel, pas à la prochaine tâche."""
+    """Retiré en pleine tâche, l'accord ne vaut plus dès l'appel suivant."""
     _ecrire_politique(store, POLITIQUE_HUMAINE)
     accord = store.accords().accorder(
         agent=AGENT, outil="Bash", etendue=ETENDUE_RUN, run_id="run-1185-retrait"
@@ -761,7 +762,9 @@ def test_un_accord_retire_redemande_des_l_appel_suivant(store):
         if rang == 0:
             store.accords().retirer(AGENT, accord.id)
 
-    provider = PasseParLeVraiHook(("npm run build", "npm test"), entre_deux=retirer_apres_le_premier)
+    provider = PasseParLeVraiHook(
+        ("npm run build", "npm test"), entre_deux=retirer_apres_le_premier
+    )
 
     asyncio.run(
         _moteur(provider, store, Guardrails(validateur=validateur), PLAN_BUILD).run(
@@ -813,7 +816,8 @@ def test_de_bout_en_bout_un_oui_pour_le_run_dispense_les_appels_suivants(
     """
     _ecrire_politique(store, POLITIQUE_HUMAINE)
     provider = PasseParLeVraiHook(("npm run build", "npm test", "npm run lint"))
-    moteur = _moteur(provider, store, Guardrails(validateur=ValidateurControlTower(bus)), PLAN_BUILD)
+    garde_fous = Guardrails(validateur=ValidateurControlTower(bus))
+    moteur = _moteur(provider, store, garde_fous, PLAN_BUILD)
 
     issue = client.portal.start_task_soon(
         functools.partial(moteur.run, "Construire", journal=RunJournal(run_id="run-bout"))
