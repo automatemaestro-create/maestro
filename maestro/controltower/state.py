@@ -347,9 +347,15 @@ def _retient_l_anterieur(tache: EtatTache, event: Event) -> None:
     (`_avec_anterieur`), là où le grand livre du run, qui additionne les issues,
     le fait déjà. Un autre run qui reprendrait le même identifiant de tâche ne
     cumule pas : la retenue est oubliée à son premier événement.
+
+    Et sa **vérification** avec elle : elle porte sur le livrable d'un autre run.
+    Mesuré au banc (S3 puis S4) : la tâche de S4, stoppée par son plafond avant
+    toute vérification, montrait le « 4/4 » de sa voisine de S3 — un vert qui
+    n'était pas le sien.
     """
     if event.run_id and tache.run_id and event.run_id != tache.run_id:
         tache.usage_anterieure = None
+        tache.verification = None
         return
     repart = event.statut == STATUT_EN_COURS or _solde_le_cout(event)
     if repart and tache.statut in STATUTS_TACHE_TERMINAUX and tache.usage is not None:

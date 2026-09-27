@@ -1038,6 +1038,38 @@ def test_le_detail_de_la_tache_porte_sa_derniere_verification():
     assert tache.statut == STATUT_ECHEC
 
 
+def test_la_verification_d_un_autre_run_ne_reste_pas_sur_la_tache():
+    """Banc, S3 puis S4 : deux runs, une même tâche « rediger-notes-md ».
+
+    La tâche de S4 a échoué sur son plafond avant toute vérification, et son
+    détail montrait pourtant le « 4/4 critère(s) tenu(s) » de celle de S3.
+    """
+    from maestro.controltower.events import EVENEMENT_TACHE_STATUT, Event
+    from maestro.controltower.state import ControlTowerState
+
+    agent = AgentEtVerificateur([{"bonjour.txt": "Bonjour"}])
+    premier = RunJournal(run_id="run-s3")
+    asyncio.run(_engine(agent, _plan(_SALUT)).run("Salut", journal=premier))
+    etat = _projection(premier)
+    assert etat.tache("salut").verification is not None
+
+    etat.appliquer(
+        Event(
+            type=EVENEMENT_TACHE_STATUT,
+            run_id="run-s4",
+            tache_id="salut",
+            titre="Écrire le salut",
+            statut=STATUT_ECHEC,
+            detail="plafond de tokens dépassé",
+            usage=StepUsage(),
+        )
+    )
+
+    tache = etat.tache("salut")
+    assert tache.statut == STATUT_ECHEC
+    assert tache.verification is None
+
+
 def test_la_carte_d_une_tache_reprise_cumule_ses_executions():
     provider = ProducteurEtQa([[_DEFAUT], []])
     journal = RunJournal()
