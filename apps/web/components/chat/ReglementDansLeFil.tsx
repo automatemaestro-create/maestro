@@ -34,7 +34,12 @@ import { useState } from "react";
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeAide, IconeArret, IconeCoche, IconeValidations } from "@/components/Icones";
 import { Bouton, Carte, type Icone } from "@/components/Primitives";
-import { enPhrase, libellesDuReglement, porteurDeLAttente } from "@/lib/reglements";
+import {
+  argumentsDeLAppel,
+  enPhrase,
+  libellesDuReglement,
+  porteurDeLAttente,
+} from "@/lib/reglements";
 import type { AttenteVisee, ReglementFait, ReglementPropose } from "@/lib/types";
 
 /**
@@ -56,13 +61,30 @@ const GLYPHES: Record<string, Icone> = {
  */
 export function CibleDeLAttente({ attente }: { attente: AttenteVisee }) {
   const porteur = porteurDeLAttente(attente);
+  const acte = attente.genre === "validation" && attente.outil !== "";
+  const argumentsDeLActe = acte ? argumentsDeLAppel(attente) : "";
   return (
     <div className="min-w-0">
-      {attente.genre === "validation" && attente.outil !== "" ? (
-        <p className="break-words text-corps">
-          <span className="text-texte-secondaire">Appel de </span>
-          <span className="font-mono text-texte">{attente.objet}</span>
-        </p>
+      {acte ? (
+        /* L'ordre de la carte d'une validation : « Appel de » et l'outil, puis ce
+           qu'on lui passe. Les arguments se lisent en trois lignes au plus — vu sur la
+           vraie stack, un script entier en chasse fixe au pas du texte faisait de la
+           carte un pavé ; l'acte complet reste sur la carte de la demande, rendue à sa
+           place dès que celle-ci est tranchée ou écartée. */
+        <>
+          <p className="text-corps font-medium">
+            <span className="text-texte-secondaire">Appel de </span>
+            <span className="font-mono text-texte">{attente.outil}</span>
+          </p>
+          {argumentsDeLActe !== "" && (
+            <p
+              className="mt-1 line-clamp-3 font-mono text-annexe break-words text-texte-secondaire"
+              title={argumentsDeLActe}
+            >
+              {argumentsDeLActe}
+            </p>
+          )}
+        </>
       ) : (
         /* `whitespace-pre-wrap` : une question vient d'un modèle, ses retours à la
            ligne sont les siens (la règle de `QuestionDansLeFil`). */
@@ -120,11 +142,14 @@ export function ReglementDansLeFil({
           {demande.texte}
         </blockquote>
       )}
+      {/* « Raison du refus », et non « transmise » : elle est consignée avec la
+          décision, là où l'écran des validations garde un motif, mais l'agent n'apprend
+          que le refus tant que #1185 ne la lui porte pas — vu sur la vraie stack. */}
       {demande.action === "refus" && (
         <p className="mt-3 text-corps text-texte">
           {demande.texte !== "" ? (
             <>
-              Raison transmise : <strong className="font-medium">{demande.texte}</strong>
+              Raison du refus : <strong className="font-medium">{demande.texte}</strong>
             </>
           ) : (
             "Sans raison donnée."

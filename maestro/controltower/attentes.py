@@ -38,7 +38,10 @@ fil le dit (`ReglementFait.suite`) — sans jamais le deviner d'un texte :
   travail s'écrit pour une demande d'écriture dans le projet (#227) ;
 - un **refus** écarte l'acte, et l'agent poursuit sa tâche sans lui
   (`motif_refus`) ; pour une demande d'écriture, rien n'est écrit ; ailleurs,
-  l'action demandée n'a pas lieu.
+  l'action demandée n'a pas lieu ;
+- sur un run **déjà soldé**, rien ne reprend : la réponse ou la décision est
+  consignée, et le fil le dit ainsi (vu sur la vraie stack, où un refus tranché après
+  la fin du run annonçait encore que l'agent poursuivait sa tâche).
 
 La distinction se lit sur la **structure** de la demande — un outil, un diff —,
 jamais sur sa raison, qui est du texte.
@@ -72,6 +75,7 @@ from maestro.controltower.reglements import (
 )
 from maestro.controltower.state import (
     QUESTION_REPONDUE,
+    STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
     ControlTowerState,
@@ -256,7 +260,7 @@ class ServiceAttentes:
         validation = self._state.validation(identifiant)
         if validation is None:
             return ""
-        return suite_de_la_decision(validation, approuve=action == REGLEMENT_APPROBATION)
+        return self._suite_de_la_decision(validation, approuve=action == REGLEMENT_APPROBATION)
 
     def refus_du_reglement(
         self, action: str, identifiant: str, texte: str = ""
@@ -364,11 +368,33 @@ class ServiceAttentes:
             action,
             attente=validation_visee(validation),
             texte=motif,
-            suite=suite_de_la_decision(validation, approuve=approuve),
+            suite=self._suite_de_la_decision(validation, approuve=approuve),
         )
+
+    def _run_solde(self, run_id: str) -> bool:
+        """Le run de l'attente a-t-il rendu son issue ? `False` s'il est inconnu.
+
+        Une attente reste servie après son run — une réponse tardive sert encore
+        (#584) —, mais ce qu'un règlement en fait n'est plus une reprise. Vu sur la vraie
+        stack : un refus tranché après la fin du run disait « l'agent poursuit sa tâche ».
+        """
+        execution = self._state.execution(run_id) if run_id else None
+        return execution is not None and execution.statut in STATUTS_EXECUTION_TERMINAUX
+
+    def _suite_de_la_decision(self, validation: EtatValidation, *, approuve: bool) -> str:
+        """Ce qu'une décision fait au travail — rien, si son run est déjà soldé."""
+        if self._run_solde(validation.run_id):
+            consigne = "l'approbation est consignée" if approuve else "le refus est consigné"
+            return f"son run est déjà soldé : {consigne}, et rien ne reprend"
+        return suite_de_la_decision(validation, approuve=approuve)
 
     def _suite_de_la_reponse(self, question: EtatQuestion) -> str:
         """Ce qu'une réponse fait à l'agent — il reprend, ou elle le rattrapera (#1025)."""
+        if self._run_solde(question.run_id):
+            return (
+                "son run est déjà soldé : la réponse est consignée, et plus aucun agent ne "
+                "l'attend"
+            )
         if _echue(question.echeance, self._horloge()):
             hypothese = f" (« {_borne(question.hypothese)} »)" if question.hypothese else ""
             return (

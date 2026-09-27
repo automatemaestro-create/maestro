@@ -104,6 +104,16 @@ export function enPhrase(texte: string): string {
   return /[.!?…]$/.test(tete) ? tete : `${tete}.`;
 }
 
+/**
+ * Les arguments d'un acte, sans l'outil : l'objet d'une validation porte l'outil puis
+ * ses arguments, aplatis et bornés (`attentes.validation_visee`), et la carte nomme
+ * l'outil sur sa propre ligne, comme la carte d'une validation (`CarteValidation`).
+ */
+export function argumentsDeLAppel(attente: AttenteVisee): string {
+  const { objet, outil } = attente;
+  return (outil !== "" && objet.startsWith(outil) ? objet.slice(outil.length) : objet).trim();
+}
+
 /** Qui porte l'attente, en une ligne : l'agent, son rôle, la tâche d'où elle vient. */
 export function porteurDeLAttente(attente: AttenteVisee): string {
   return [attente.agent ? `Agent ${attente.agent}` : "", attente.role, attente.titre]

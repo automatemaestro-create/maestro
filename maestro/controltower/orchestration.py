@@ -554,7 +554,9 @@ tiennent telles quelles, sur une autre cible :
 
 La raison d'un refus voyage par le **même** champ que le motif de l'écran des
 validations (`attentes.detail_de_la_decision`) : c'est celle que #1185 portera jusqu'à
-l'agent, et le fil n'en compose pas une seconde.
+l'agent, et le fil n'en compose pas une seconde. D'ici là, l'agent n'apprend que le
+refus — et le fil le dit ainsi : vu sur la vraie stack, « votre consigne lui a été
+transmise avec le refus » promettait ce qui n'avait pas lieu.
 
 ## Ce qui est gardé, et par quoi (#688)
 
@@ -944,7 +946,9 @@ Sur "attente", ajoute à l'objet de la dernière ligne une clé "attente" :
 - "texte" : sur "reponse", la réponse que l'agent lira — ce que la personne lui
   répond, avec ses mots, adressé à l'agent, sans rien y ajouter ni en retirer ;
   sur "refus", la raison que la personne donne, avec ses mots ("archive plutôt"),
-  vide si elle n'en donne aucune ; vide sur "approbation".
+  vide si elle n'en donne aucune ; vide sur "approbation". Cette raison est
+  consignée avec la décision ; l'agent, lui, n'apprend que le refus : ne dis pas
+  que tu lui transmets la raison ni qu'il la suivra.
 
 Sur "geste", ajoute à l'objet de la dernière ligne une clé "geste" :
 
@@ -1867,8 +1871,13 @@ def _faits_du_reglement(demande: ReglementPropose, fait: ReglementFait) -> str:
     if demande.action == REGLEMENT_REPONSE:
         parti = f"La réponse est partie à l'agent, telle quelle : « {fait.texte} »."
     elif demande.action == REGLEMENT_REFUS:
+        # Vu sur la vraie stack (#1183) : « le refus est parti, avec sa raison » faisait
+        # écrire au modèle que la consigne était transmise à l'agent. Elle ne l'est pas —
+        # le moteur ne lit que la décision, et porter la raison jusqu'à l'agent est #1185.
         parti = (
-            f"Le refus est parti, avec sa raison : « {fait.texte} »."
+            f"Le refus est parti. Sa raison, « {fait.texte} », est consignée avec la "
+            "décision, là où l'écran des validations garde le motif d'un refus ; l'agent, "
+            "lui, ne la reçoit pas : il apprend seulement que l'acte est refusé."
             if fait.texte
             else "Le refus est parti, sans raison donnée."
         )

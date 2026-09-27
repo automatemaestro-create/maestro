@@ -153,11 +153,16 @@ describe("la carte d'un règlement", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Refuser cette demande ?" })).toBeInTheDocument();
-    // « Appel de » et l'outil — jamais le titre de la tâche au-dessus d'un `rm -rf`.
+    // « Appel de » et l'outil — jamais le titre de la tâche au-dessus d'un `rm -rf` —,
+    // puis ses arguments sur leur ligne, bornée : vu sur la vraie stack, l'acte entier en
+    // chasse fixe au pas du texte faisait de la carte un pavé.
     expect(screen.getByText("Appel de")).toBeInTheDocument();
-    expect(screen.getByText("Bash command=rm -rf build")).toBeInTheDocument();
+    expect(screen.getByText("Bash")).toBeInTheDocument();
+    expect(screen.getByText("command=rm -rf build").className).toContain("line-clamp-3");
     expect(screen.getByText(RAISON)).toBeInTheDocument();
-    expect(screen.getByText(/Raison transmise/)).toBeInTheDocument();
+    // « du refus », jamais « transmise » : l'agent n'apprend que le refus (#1185).
+    expect(screen.getByText(/Raison du refus/)).toBeInTheDocument();
+    expect(screen.queryByText(/transmise/)).not.toBeInTheDocument();
     expect(screen.getByText(enPhrase(SUITE_REFUS))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refuser" }).className).toContain("bg-alerte");
   });

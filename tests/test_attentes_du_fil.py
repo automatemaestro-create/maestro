@@ -50,6 +50,7 @@ from maestro.controltower.chat import (
     transcription,
 )
 from maestro.controltower.events import (
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_VALIDATION_DECISION,
     Event,
     EventBus,
@@ -77,6 +78,7 @@ from maestro.controltower.reglements import (
     ReglementPropose,
 )
 from maestro.controltower.state import (
+    EXECUTION_TERMINEE,
     QUESTION_EN_ATTENTE,
     QUESTION_REPONDUE,
     VALIDATION_APPROUVEE,
@@ -713,6 +715,32 @@ def test_ce_qui_reprend_se_lit_sur_la_structure_de_la_demande() -> None:
     assert suite_de_la_decision(tache, approuve=False) == "l'action demandée n'aura pas lieu"
 
 
+@pytest.mark.parametrize("genre", [GENRE_QUESTION, GENRE_VALIDATION])
+def test_sur_un_run_deja_solde_rien_ne_reprend_et_le_fil_le_dit(genre: str) -> None:
+    """Vu sur la vraie stack : le run avait fini, la carte disait « l'agent poursuit ».
+
+    Une demande reste réglable une fois son run soldé — elle est restée servie —, mais
+    ce qui en sort n'est plus une reprise : le service le dit, sur la carte comme dans
+    le fait, depuis l'état du run et jamais depuis un texte.
+    """
+    state = ControlTowerState()
+    identifiant = _pose(state) if genre == GENRE_QUESTION else _soumet(state)
+    state.appliquer(
+        Event(type=EVENEMENT_EXECUTION_STATUT, run_id="run-1183", statut=EXECUTION_TERMINEE)
+    )
+    service = ServiceAttentes(state, InMemoryEventBus())
+    action = REGLEMENT_REPONSE if genre == GENRE_QUESTION else REGLEMENT_REFUS
+
+    annonce = service.suite(action, identifiant)
+    fait = asyncio.run(service.regler(action, identifiant, "Postgres"))
+
+    assert annonce == fait.suite
+    assert annonce.startswith("son run est déjà soldé")
+    # Ni reprise ni poursuite annoncées : ce sont elles que le run soldé dément.
+    for promesse in ("reprend sa tâche", "la tâche reprend", "poursuit sa tâche"):
+        assert promesse not in annonce
+
+
 def test_un_refus_confirme_se_raconte_avec_sa_raison_et_ce_qui_en_sort() -> None:
     """Le modèle parle depuis le fait : la raison partie, et l'agent qui poursuit sans l'acte."""
     state = ControlTowerState()
@@ -727,8 +755,12 @@ def test_un_refus_confirme_se_raconte_avec_sa_raison_et_ce_qui_en_sort() -> None
 
     assert suite.contenu == REDIGE
     faits = juge.redactions[-1]
-    assert f"avec sa raison : « {RAISON} »" in faits
+    assert f"Sa raison, « {RAISON} », est consignée avec la décision" in faits
     assert "l'agent poursuit sa tâche sans lui" in faits
+    # Vu sur la vraie stack : « avec sa raison » faisait dire au modèle que la consigne
+    # était transmise à l'agent. Elle ne l'est pas tant que #1185 ne la lui porte pas.
+    assert "l'agent, lui, ne la reçoit pas" in faits
+    assert "que tu lui transmets la raison ni qu'il la suivra" in _PROMPT_ORCHESTRATION
 
 
 # ── Bout en bout : l'API entière, le même service que les écrans ───────────────
