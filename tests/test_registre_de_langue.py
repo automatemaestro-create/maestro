@@ -50,6 +50,7 @@ from maestro.agents import playbook_du_code as pdc
 from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.playbook_du_code import playbook_du_code, registre, roles_du_code, socle
 from maestro.controltower.assistance import _PROMPT_ASSISTANCE
+from maestro.controltower.bilan import SYSTEME as _SYSTEME_BILAN
 from maestro.controltower.chat import _CADRE_CONVERSATION
 from maestro.controltower.generation_agent import _CADRE_GENERATION
 from maestro.controltower.orchestration import _PROMPT_ORCHESTRATION, _PROMPT_REDACTION
@@ -66,6 +67,9 @@ CONVERSATIONNELS = {
     "orchestration (#685)": _PROMPT_ORCHESTRATION,
     "cadre de conversation d'un agent (#85)": _CADRE_CONVERSATION,
     "récit de fin d'un run (#1224)": _SYSTEME_RECIT,
+    # Ses constats s'affichent tels quels à la personne — dans la vue du run, et relus par
+    # le récit de fin qui lui écrit : ils parlent à la personne.
+    "bilan d'un run sur pièces (#1284)": _SYSTEME_BILAN,
     "parole du fil sur un geste (#1262)": _PROMPT_REDACTION,
     # Les raisons des rôles et la réponse à une correction sont lues telles quelles
     # à l'étape d'équipe (#1159).
@@ -206,6 +210,7 @@ APPELS_CONVERSATIONNELS = {
     "outillage.py::ComprehensionModele.comprendre": "compréhension d'un projet neuf (#1147)",
     "pieces.py::CorrectionModele.comprendre": "correction de l'outillage (#1161)",
     "recit.py::RedacteurModele.rediger": "récit de fin d'un run (#1224)",
+    "bilan.py::JugeModele.juger": "bilan d'un run sur pièces (#1284)",
     "equipe.py::CompositeurEquipe.ecrire": "composition d'équipe (#1159)",
 }
 
