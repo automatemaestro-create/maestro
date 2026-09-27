@@ -1919,9 +1919,10 @@ export function proposerEquipe(
  * Ce que la personne demande de changer à l'équipe montrée, **compris**
  * (`POST /api/projets/{id}/equipe/correction`, #1159) — rien n'est créé.
  *
- * `equipe` est l'équipe **telle que l'étape la montre**, cases et instances
- * comprises : « remets les tests » n'a de sens que si l'on sait qu'ils ont été
- * retirés. La réponse porte les rôles à ajouter (playbooks écrits pour ce
+ * `equipe` est l'équipe **telle que la carte d'équipe du fil la montre** (#1331),
+ * cases et instances comprises : « remets les tests » n'a de sens que si l'on sait
+ * qu'ils ont été retirés. `choix` ne sert qu'aux réponses d'un questionnaire
+ * d'outillage ; sans elles, l'équipe se dérive de l'analyse du projet. La réponse porte les rôles à ajouter (playbooks écrits pour ce
  * projet), ceux à retirer ou à remettre, les instances à changer, et la phrase
  * qui répond à la personne. 502 si le modèle ne répond pas : l'équipe montrée
  * reste intacte, et la demande se rejoue.

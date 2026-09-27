@@ -790,7 +790,7 @@ def test_la_proposition_d_un_projet_inconnu_est_un_404(client: TestClient) -> No
 
 
 def _validee(proposition: dict[str, Any]) -> dict[str, Any]:
-    """L'équipe validée comme `EtapeEquipe` la rapporte : ce qui a été servi, tel quel."""
+    """L'équipe validée comme la carte du fil la rapporte : ce qui a été servi, tel quel."""
     return {
         "proposition_id": proposition["id"],
         "roles": [

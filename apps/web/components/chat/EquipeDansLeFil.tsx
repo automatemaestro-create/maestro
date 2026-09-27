@@ -47,7 +47,8 @@
  *   complet de l'équipe y chasserait le fil de l'écran ;
  * - **un rôle se lit comme à l'étape d'équipe** (#1040, variante retenue A) : le
  *   détail rend `LigneRole` elle-même — raison et endroit qui la prouve,
- *   instances, skills, autorisations dépliées, playbook replié.
+ *   instances, skills, autorisations dépliées, playbook replié. Elle vit à côté de
+ *   cette carte depuis que l'étape est partie (#1331).
  *
  * ⚠ Le repli ne cache **aucune** décision prise d'avance. Le critère de #1040 —
  * « chaque permission `auto` étant montrée » — écartait justement une variante qui
@@ -55,27 +56,66 @@
  * personne (#716). Les autorisations `auto` des rôles gardés sont donc **nommées
  * dans le récapitulatif**, sur le chemin par défaut ; le détail dit le reste.
  *
+ * ## Corriger avec ses mots (#1331)
+ *
+ * Décocher et régler des instances ne disait pas « ajoute quelqu'un pour la
+ * sécurité ». La demande en mots de #1159 (`DemandeSurLEquipe`), qui n'existait
+ * qu'à l'étape d'équipe, est donc portée ici — et l'étape est partie, sans écran
+ * depuis #1161. Sa **place** sur une carte repliée a été tranchée sur pièces
+ * (commentaires « Veille de conception » et « Variante retenue » de #1331) : parmi
+ * trois directions rendues sur la vraie stack, le regard neuf a retenu **C — un
+ * geste discret de la carte**, « Corriger avec vos mots », qui ouvre la demande
+ * sur place, contre le champ posé d'office sur la face (A : à 320 px la carte
+ * doublait et chassait le fil) et le champ au pied du détail (B : rien ne disait
+ * sur la face qu'on pouvait corriger). D'après *Replit* (« Revise », geste discret
+ * de la carte, à côté de « Cancel ») et *VS Code* (« the card's feedback area » :
+ * envoyer n'approuve rien). Ce qu'on ne défait pas :
+ *
+ * - **le geste vit dans la rangée des gestes**, après « Plus tard », avec sa propre
+ *   icône : sous la boîte « Voir l'équipe », avec le même chevron, il se lisait
+ *   comme un second repli du détail (réserve du regard neuf) — et il reste en place
+ *   une fois ouvert, pour **replier** la demande ;
+ * - **la correction s'applique à l'équipe montrée** — cases, instances et rôles
+ *   déjà ajoutés — et y atterrit (`appliquerCorrection`) : un rôle ajouté arrive
+ *   retenu et signalé, le récapitulatif compte ce qui sera créé ;
+ * - **rien n'est créé avant la validation** : « Créer l'équipe (N) » reste le seul
+ *   geste plein, et il est désarmé tant qu'une correction est en vol ;
+ * - **ce qui a été montré et tapé est retenu par demande** (`retenirEquipe`) : la
+ *   carte est remontée à chaque navigation, et une correction — un appel modèle et
+ *   un playbook par rôle ajouté — ne se perd pas en changeant d'écran.
+ *
+ * ⚠ La saisie **du fil**, juste dessous, n'est pas la porte de la correction :
+ * elle part au juge de l'orchestration, qui ne sait rien de l'équipe montrée. La
+ * veille de #1331 l'a écartée par écrit ; la carte ne promet donc que son propre
+ * geste.
+ *
  * ## Ce que la carte ne décide pas
  *
  * Ni le projet — c'est celui de la **demande** (`DemandeRecrutement.projet_id`),
  * que l'API relit du fil, et pas celui de la fenêtre —, ni l'équipe : elle est
- * proposée par `POST …/equipe/proposition` (#1039) et repart telle qu'elle a été
- * montrée (`rolesValides`, partagé avec l'étape d'équipe).
+ * proposée par `POST …/equipe/proposition` (#1039), corrigée par `POST
+ * …/equipe/correction` (#1159) et repart telle qu'elle a été montrée
+ * (`rolesValides`).
  */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
-import { IconeAgents, IconeChevronBas } from "@/components/Icones";
+import { IconeAgents, IconeChat, IconeChevronBas } from "@/components/Icones";
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
+import { DemandeSurLEquipe } from "@/components/chat/DemandeSurLEquipe";
+import { LigneRole } from "@/components/chat/LigneRole";
 import { Bouton, Carte } from "@/components/Primitives";
 import { refusDepuis, RefusMotive } from "@/components/projets/ExplorateurDossiers";
-import { LigneRole } from "@/components/projets/EtapeEquipe";
-import { proposerEquipe } from "@/lib/api";
+import { corrigerEquipe, proposerEquipe } from "@/lib/api";
 import {
+  appliquerCorrection,
   autorisationsDecideesDavance,
   composition,
   compteAgents,
+  equipeRetenue,
+  membresMontres,
   propositionPourDemande,
+  retenirEquipe,
   rolesValides,
 } from "@/lib/equipe";
 import { useEtatGlobal } from "@/lib/etatGlobal";
@@ -118,6 +158,19 @@ export function EquipeDansLeFil({
   const [refus, setRefus] = useState<RefusProjet | null>(null);
   const [deplie, setDeplie] = useState(false);
   const [echec, setEchec] = useState<string | null>(null);
+  // La correction avec ses mots (#1331) : ouverte ou non, ce qui est tapé, la
+  // phrase rendue par le modèle, les lignes nées d'une demande, et ce qui a
+  // empêché la dernière d'aboutir.
+  const [ouverte, setOuverte] = useState(false);
+  const [texte, setTexte] = useState("");
+  const [reponse, setReponse] = useState<string | null>(null);
+  const [ajoutes, setAjoutes] = useState<Set<string>>(new Set());
+  const [enCorrection, setEnCorrection] = useState(false);
+  const [refusCorrection, setRefusCorrection] = useState<RefusProjet | null>(null);
+  // Le champ prend le focus quand **le geste** ouvre la correction — pas quand la
+  // carte la rouvre d'elle-même après une navigation, qui volerait le focus de
+  // l'écran qu'on vient d'ouvrir.
+  const focaliser = useRef(false);
 
   // Le renfort d'un run (#1227) : un seul rôle, celui que le plan appelle.
   // Dérivé de la demande et non d'un second champ — `gabarit` renseigné est
@@ -130,9 +183,9 @@ export function EquipeDansLeFil({
       : undefined;
 
   useEffect(() => {
-    // `vivant` plutôt qu'un `AbortController`, comme l'étape d'équipe : ce qu'on
-    // protège est l'écriture d'état sur une carte démontée — la demande a pu être
-    // tranchée depuis une autre fenêtre pendant que la proposition se composait.
+    // `vivant` plutôt qu'un `AbortController` : ce qu'on protège est l'écriture
+    // d'état sur une carte démontée — la demande a pu être tranchée depuis une
+    // autre fenêtre pendant que la proposition se composait.
     let vivant = true;
     const partir = async () => {
       try {
@@ -140,6 +193,20 @@ export function EquipeDansLeFil({
           proposerEquipe(demande.projet_id, [], renfort),
         );
         if (!vivant) return;
+        // Ce que la carte montrait pour cette demande avant d'être démontée —
+        // corrections, cases et texte compris (#1331) —, sinon la proposition
+        // telle qu'elle arrive : tout retenu.
+        const deja = equipeRetenue(cle);
+        if (deja !== undefined) {
+          setProposition({ ...rendue, roles: deja.roles });
+          setRetenus(new Set(deja.retenus));
+          setInstances({ ...deja.instances });
+          setAjoutes(new Set(deja.ajoutes));
+          setReponse(deja.reponse);
+          setTexte(deja.texte);
+          setOuverte(deja.ouverte);
+          return;
+        }
         setProposition(rendue);
         setRetenus(new Set(rendue.roles.map((r) => r.nom)));
         setInstances(
@@ -180,7 +247,63 @@ export function EquipeDansLeFil({
     (somme, r) => somme + (instances[r.nom] ?? r.instances),
     0,
   );
-  const fige = enCours || chargement;
+  // Tant qu'une correction est en vol, rien ne se coche ni ne se crée : la
+  // validation porterait l'équipe d'avant la demande (parti pris 2 de la veille).
+  const fige = enCours || chargement || enCorrection;
+
+  // Chaque changement de ce qui est montré est retenu pour cette demande (#1331) :
+  // la prochaine carte montée sur la même demande — un autre écran — le reprend.
+  useEffect(() => {
+    if (proposition === null) return;
+    retenirEquipe(cle, {
+      roles: proposition.roles,
+      retenus,
+      instances,
+      ajoutes,
+      reponse,
+      texte,
+      ouverte,
+    });
+  }, [cle, proposition, retenus, instances, ajoutes, reponse, texte, ouverte]);
+
+  useEffect(() => {
+    if (!ouverte || !focaliser.current) return;
+    focaliser.current = false;
+    document.getElementById(`${idCarte}-demande`)?.focus();
+  }, [ouverte, idCarte]);
+
+  // La correction s'applique à **ce que la carte montre** — cases, instances et
+  // rôles déjà ajoutés — et y atterrit. Rien n'est créé : la validation reste le
+  // seul geste qui écrit. La demande part sans réponses de questionnaire : la
+  // carte n'en a pas, l'équipe se dérive de l'analyse du projet de la demande.
+  const corriger = async () => {
+    if (proposition === null || texte.trim() === "") return;
+    setEnCorrection(true);
+    setRefusCorrection(null);
+    try {
+      const montree = { roles: proposition.roles, retenus, instances };
+      const correction = await corrigerEquipe(
+        demande.projet_id,
+        texte,
+        membresMontres(montree),
+      );
+      const apres = appliquerCorrection(montree, correction);
+      setProposition({ ...proposition, roles: apres.roles });
+      setRetenus(new Set(apres.retenus));
+      setInstances({ ...apres.instances });
+      setAjoutes((avant) => new Set([...avant, ...apres.ajoutes]));
+      setReponse(correction.reponse);
+      // Le champ ne se vide que si quelque chose a changé : une demande que le
+      // modèle n'a pas comprise reste là, pour qu'on la reformule.
+      if (apres.change) setTexte("");
+    } catch (erreur) {
+      // Un modèle en panne se dit sous le champ ; l'équipe montrée et le texte
+      // restent tels quels, et la demande se rejoue d'un clic.
+      setRefusCorrection(refusDepuis(erreur));
+    } finally {
+      setEnCorrection(false);
+    }
+  };
 
   const basculer = (nom: string) =>
     setRetenus((avant) => {
@@ -246,10 +369,14 @@ export function EquipeDansLeFil({
         />
       )}
 
+      {/* Une équipe vide se corrige comme une autre (#1331) : « ajoute un
+          développeur » y compose un rôle pour ce projet. La carte renvoyait
+          jusque-là créer l'agent à la main, depuis un autre écran. */}
       {proposition !== null && roles.length === 0 && (
         <p className="text-corps text-texte">
-          L&apos;analyse de ce projet ne propose aucun rôle. Créez un agent depuis
-          les écrans d&apos;agents du projet, puis redites votre demande.
+          L&apos;analyse de ce projet ne propose aucun rôle. Dites qui il vous faut
+          avec « Corriger avec vos mots » : le rôle sera composé pour ce projet,
+          playbook compris. Rien n&apos;est créé tant que vous n&apos;avez pas validé.
         </p>
       )}
 
@@ -302,6 +429,7 @@ export function EquipeDansLeFil({
                       }
                       fige={fige}
                       prefixe={`fil-equipe${idCarte}`}
+                      ajoute={ajoutes.has(role.nom)}
                     />
                   ))}
                 </ul>
@@ -322,12 +450,35 @@ export function EquipeDansLeFil({
                         </li>
                       ))}
                     </ul>
+                    {/* Le geste, nommé à côté de ce qu'il rattrape (critère de
+                        #1159 : aucun texte ne promet un geste que l'écran n'offre
+                        pas). La raison servie d'un écarté ne dit que le fait. */}
+                    <p className="mt-2">
+                      Pour en ajouter un quand même, dites-le avec « Corriger
+                      avec vos mots » : il sera composé pour votre projet,
+                      playbook compris.
+                    </p>
                   </details>
                 )}
               </div>
             )}
           </Carte>
         </>
+      )}
+
+      {proposition !== null && ouverte && (
+        <div id={`${idCarte}-corriger`} className="mt-3">
+          <DemandeSurLEquipe
+            id={`${idCarte}-demande`}
+            demande={texte}
+            changer={setTexte}
+            envoyer={() => void corriger()}
+            enCours={enCorrection}
+            fige={fige}
+            reponse={reponse}
+            refus={refusCorrection}
+          />
+        </div>
       )}
 
       {(proposition !== null || refus !== null) && (
@@ -355,6 +506,26 @@ export function EquipeDansLeFil({
           >
             {renfort === undefined ? "Plus tard" : "Continuer sans"}
           </Bouton>
+          {/* Le troisième geste, discret, **après** les deux issues — comme
+              « Revise » près de « Cancel » chez Replit : il ne décide de rien,
+              il ouvre la demande sur place, et la replie. Offert aussi sur une
+              équipe vide : c'est là qu'on a le plus à dire. */}
+          {proposition !== null && (
+            <Bouton
+              variante="discret"
+              ton="neutre"
+              icone={IconeChat}
+              aria-expanded={ouverte}
+              aria-controls={`${idCarte}-corriger`}
+              disabled={chargement}
+              onClick={() => {
+                focaliser.current = !ouverte;
+                setOuverte((avant) => !avant);
+              }}
+            >
+              {ouverte ? "Replier la correction" : "Corriger avec vos mots"}
+            </Bouton>
+          )}
         </div>
       )}
       {proposition !== null && roles.length > 0 && gardes.length === 0 && (
