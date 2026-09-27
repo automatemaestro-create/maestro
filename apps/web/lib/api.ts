@@ -1071,6 +1071,49 @@ export async function trancherGesteDuFil(
 }
 
 /**
+ * Confirme — ou écarte — le règlement d'une attente que le fil propose
+ * (`POST /api/chat/{agent}/reglement`, #1183) et rend la paire (geste, réponse).
+ *
+ * Seul `approuve` part : la question ou la validation visée, la réponse et la raison
+ * d'un refus sont sur la carte que le fil porte, et c'est elle que l'API règle — par
+ * le service des écrans des questions et des validations. La réponse porte ce qui a
+ * repris (`reglement_fait`), ou le refus du service quand l'attente a été réglée
+ * ailleurs depuis la carte.
+ *
+ * Un `409` n'est pas une panne, comme sur le geste d'un run : la carte a été confirmée
+ * ou écartée entre-temps, ou la conversation a repris.
+ */
+export async function trancherReglementDuFil(
+  agent: string,
+  decision: { approuve: boolean; conversation?: string },
+): Promise<MessageChat[]> {
+  const chemin = `/api/chat/${encodeURIComponent(agent)}/reglement`;
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approuve: decision.approuve,
+        conversation: decision.conversation,
+      }),
+    });
+  } catch {
+    // Rien n'a répondu : la panne est typée à la source (#996), comme pour un geste.
+    throw ErreurApi.injoignable(chemin);
+  }
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "cette carte n'attend plus de réponse — la conversation a repris."
+        : `règlement refusé (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
  * Valide — ou décline — l'équipe que le fil propose à un projet sans agent
  * (`POST /api/chat/{agent}/recrutement`, #1146) et rend la paire (geste, réponse).
  *

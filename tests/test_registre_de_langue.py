@@ -362,15 +362,22 @@ def test_le_contrat_json_de_l_orchestration_reste_intact():
     # que le même `+` protège. Le cinquième, `outillage`, avec #1161 : l'outillage
     # corrigé avec des mots — il n'ajoute pas d'objet, seulement un mot au contrat. Le
     # sixième, `geste`, avec #1179 : agir sur un run existant — son objet
-    # (`"geste": {…}`) porte à son tour des accolades littérales, bornes comprises.
+    # (`"geste": {…}`) porte à son tour des accolades littérales, bornes comprises. Le
+    # septième, `attente`, avec #1183 : régler depuis le fil la question d'un agent ou
+    # une validation — son objet (`"attente": {…}`) aussi, et la ligne du verdict
+    # devient une constante concaténée (`_LIGNE_DU_VERDICT`), trop longue pour une
+    # ligne de source : le prompt, lui, la porte entière, et c'est ce qu'on vérifie.
     assert (
-        '%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage|geste", '
+        '%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage|geste|attente", '
         '"objectif": "..."}' in _PROMPT_ORCHESTRATION
     )
     assert '"raisons": {"nom": "...", "dossier": "...", "versionnement": "..."}' in (
         _PROMPT_ORCHESTRATION
     )
     assert '"bornes": {"plafond_cout_usd": 5}}' in _PROMPT_ORCHESTRATION
+    assert '"attente": {"action": "reponse|approbation|refus", "cibles": ["<identifiant>"],' in (
+        _PROMPT_ORCHESTRATION
+    )
 
 
 def test_un_cycle_de_fragments_leve_au_lieu_de_boucler(racine_jetable, monkeypatch):
