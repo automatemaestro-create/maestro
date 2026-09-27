@@ -105,7 +105,24 @@ def _faits_du_renfort(demande: DemandeRecrutement, attente_s: float) -> str:
     revient dix minutes plus tard ne saurait pas si son run l'attend encore —
     c'est l'hypothèse d'une question d'agent (#1023), *voici ce qui se passera
     sans vous*. Le modèle en fait sa phrase ; rien d'ici n'est écrit tel quel.
+
+    Le geste qui valide n'y est pas décrit (#1339) : la carte le porte, et que la
+    demande attende sous le message, le répondeur l'apprend du message lui-même
+    (`chat.faits_pour_la_redaction`).
     """
+    if demande.tache:
+        # En cours de run (#1181) : ce n'est pas un plan qui attend, c'est **une**
+        # tâche, suspendue — et un refus ne l'arrête pas, elle va au plus proche.
+        return (
+            f"Pendant le run que l'utilisateur a lancé sur « {demande.objectif} », la "
+            f"tâche « {demande.tache} » ne trouve personne dans l'équipe pour la "
+            f"prendre : il lui manque le rôle « {demande.role} ». Pourquoi : "
+            f"{demande.raison} La tâche est suspendue : tu lui proposes de recruter ce "
+            "rôle, dont le playbook et les instances sont sur la carte ; rien n'est "
+            "créé sans sa validation, et la tâche reprend dès qu'il est recruté, sans "
+            f"relancer le run. S'il décline, ou s'il ne répond pas d'ici {_duree(attente_s)}, "
+            "la tâche reprend avec l'équipe actuelle, au rôle le plus proche."
+        )
     taches = (
         " Les tâches qui l'attendent : "
         + ", ".join(f"« {titre} »" for titre in demande.taches)
@@ -117,9 +134,8 @@ def _faits_du_renfort(demande: DemandeRecrutement, attente_s: float) -> str:
         f"Le run que l'utilisateur a lancé sur « {demande.objectif} » vient d'écrire "
         f"son plan, et ce plan appelle un rôle que l'équipe du projet n'a pas : "
         f"« {demande.role} ». Pourquoi : {demande.raison}{taches} Le run attend "
-        "avant d'exécuter : tu lui proposes de recruter ce rôle, et la carte qui le "
-        "propose — son playbook, ses instances, le geste qui le valide — s'affiche "
-        "juste sous ton message ; rien n'est créé sans sa validation. S'il décline, "
+        "avant d'exécuter : tu lui proposes de recruter ce rôle, dont le playbook et "
+        "les instances sont sur la carte ; rien n'est créé sans sa validation. S'il décline, "
         f"ou s'il ne répond pas d'ici {_duree(attente_s)}, le run continue avec "
         "l'équipe actuelle et ces tâches iront au rôle le plus proche."
     )
@@ -139,6 +155,15 @@ def _faits_sans_reponse(demande: DemandeRecrutement) -> str:
     seconde comme la proposition de l'utilisateur et lui a écrit « votre
     proposition… est restée sans réponse ». La proposition est celle du fil.
     """
+    if demande.tache:
+        return (
+            f"Tu avais proposé à l'utilisateur de recruter « {demande.role} » pour la "
+            f"tâche « {demande.tache} » du run sur « {demande.objectif} », et il n'a "
+            "pas répondu avant l'échéance. Aucun rôle n'a été recruté : la tâche a "
+            "repris avec l'équipe actuelle, au rôle le plus proche. Ce rôle peut se "
+            "recruter depuis les écrans d'agents du projet. La proposition n'est plus "
+            "affichée : la tâche est déjà repartie."
+        )
     return (
         f"Tu avais proposé à l'utilisateur de recruter « {demande.role} » pour le run "
         f"sur « {demande.objectif} », et il n'a pas répondu avant l'échéance. Aucun "
@@ -174,6 +199,8 @@ def evenement_demande(demande: DemandeRenfort, *, maintenant: datetime | None = 
         gabarit=demande.manque.manque.gabarit or "",
         raison=raison,
         taches=demande.manque.taches,
+        # La tâche suspendue, quand la demande naît en cours de run (#1181).
+        tache=demande.tache,
     )
     return Event(
         type=EVENEMENT_RENFORT_DEMANDE,
@@ -365,8 +392,10 @@ async def _premiere_decision(
 
     Ignore tout le reste du bus (statuts de tâches, validations, décisions visant
     un autre run). Le filtre est le **run**, et il suffit : un run n'a qu'une
-    demande de renfort en vol, la confrontation ayant lieu une fois, après la
-    décomposition (cf. `EVENEMENT_RENFORT_DECISION`).
+    demande de renfort en vol — la confrontation a lieu une fois, après la
+    décomposition, et les demandes nées en cours de run (#1181) passent l'une
+    après l'autre (`OrchestrationEngine._propose_un_role`, cf.
+    `EVENEMENT_RENFORT_DECISION`).
 
     Si le flux se tarit sans décision (bus refermé), **lève** : la boucle en fait
     un « personne n'a répondu » consigné, jamais un échec de run.

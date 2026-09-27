@@ -127,6 +127,12 @@ DELAI_APPLICATION_S = 60.0
 ATTENTE_RECIT_S = 120.0
 INTERVALLE_RECIT_S = 2.0
 
+#: Ce qu'on laisse à la fin d'un run de S9 et S10 pour paraître (#1343) : le récit, et
+#: l'outillage revu sur le projet construit — les commandes s'y rejouent pendant que le
+#: modèle rédige, et le message ne part qu'avec les deux. Le récit plus une
+#: vérification entière (`Delais.total_s`, lu et non recopié).
+ATTENTE_REVUE_S = ATTENTE_RECIT_S + Delais().total_s
+
 #: La note que la personne dépose dans le projet de S5 une fois le run raconté,
 #: et la question qu'elle pose dessus (#1265). C'est la question **dont la
 #: réponse ne peut venir que du disque** : la note est écrite après tout le reste,
@@ -983,7 +989,15 @@ def s5_comment_essayer_le_livrable(ctx: Contexte) -> Issue:
 
 
 def _recit_de_fin(ctx: Contexte, conversation: str, run_id: str) -> str:
-    """Le message que la **fin** du run a écrit dans le fil — vide s'il n'y vient pas.
+    """Le texte que la **fin** du run a écrit dans le fil — vide s'il n'y vient pas."""
+    fin = _message_de_fin(ctx, conversation, run_id, ATTENTE_RECIT_S)
+    return str(fin.get("contenu") or "") if fin is not None else ""
+
+
+def _message_de_fin(
+    ctx: Contexte, conversation: str, run_id: str, attente_s: float
+) -> Mapping[str, Any] | None:
+    """Le message que la **fin** du run a écrit dans le fil — `None` s'il n'y vient pas.
 
     Le récit se reconnaît à sa place et à son rattachement, jamais à ses mots :
     un message de l'orchestrateur, portant ce `run_id`, et qui n'est pas le
@@ -999,14 +1013,14 @@ def _recit_de_fin(ctx: Contexte, conversation: str, run_id: str) -> str:
     arrivé quelques secondes plus tard. Lire une seule fois rendait donc S5 rouge
     sur un produit qui marche, ce qui est le pire des verdicts.
 
-    L'attente est **bornée et dite** : passé `ATTENTE_RECIT_S`, on rend la chaîne
-    vide et l'oracle tranche. Elle passe par l'horloge et le sommeil du contexte,
-    comme le suivi d'un run — les tests jouent donc ce chemin sans attendre.
+    L'attente est **bornée et dite** : passé `attente_s`, on rend `None` et l'oracle
+    tranche. Elle passe par l'horloge et le sommeil du contexte, comme le suivi d'un
+    run — les tests jouent donc ce chemin sans attendre.
     """
-    limite = ctx.horloge() + ATTENTE_RECIT_S
+    limite = ctx.horloge() + attente_s
     while True:
         porteurs = [
-            str(message.get("contenu") or "")
+            message
             for message in ctx.client.fil(conversation)
             if str(message.get("run_id") or "") == run_id
             and str(message.get("auteur") or "") != "utilisateur"
@@ -1014,7 +1028,7 @@ def _recit_de_fin(ctx: Contexte, conversation: str, run_id: str) -> str:
         if len(porteurs) > 1:
             return porteurs[-1]
         if ctx.horloge() >= limite:
-            return ""
+            return None
         ctx.dormir(INTERVALLE_RECIT_S)
 
 
@@ -1955,7 +1969,10 @@ def _la_suite_d_un_projet_ne(
        sont **rejouées par le banc**, après le run, dans une copie du projet
        (`_rejouer_l_outillage`). C'est l'exécution qui tranche, pas le verdict que
        Maestro s'est donné : une commande écrite « à vérifier » sur un projet encore
-       vide doit passer sur celui que l'équipe a construit en la suivant ;
+       vide doit passer sur celui que l'équipe a construit en la suivant. Avant de
+       rejouer, le banc tranche l'outillage que **la fin du run a revu** sur le projet
+       construit (#1343, `_revue_d_apres_le_run`) : ce qui échoue y est dit échoué avec
+       sa sortie, et n'est plus rejoué ;
     4. **l'outillage et l'équipe correspondent au projet**, jugé par un modèle
        (`Juge.convient_au_projet`) et jamais par un lexique (#746). Une abstention
        du juge est un empêchement.
@@ -2010,6 +2027,9 @@ def _la_suite_d_un_projet_ne(
             run_id=run_id,
             cout_usd=cout,
         )
+    inacheve = _revue_d_apres_le_run(ctx, conversation, run_id)
+    if inacheve:
+        return rouge(inacheve, run_id=run_id, cout_usd=cout)
 
     rejeux, empechement = _rejouer_l_outillage(ctx, racine)
     if empechement:
@@ -2046,6 +2066,32 @@ def _la_suite_d_un_projet_ne(
         run_id=run_id,
         cout_usd=cout,
     )
+
+
+def _revue_d_apres_le_run(ctx: Contexte, conversation: str, run_id: str) -> str:
+    """Tranche l'outillage que la fin du run a revu — `""`, ou pourquoi il ne s'est pas soldé.
+
+    #1343 : ce qu'un projet neuf ne pouvait pas jouer se joue **dès que le projet le
+    permet**, et c'est la fin du run qui le propose — la pièce revue voyage sur le
+    message du récit (`maestro.controltower.recit`). Le banc la tranche comme toute
+    pièce, en personne sans avis (`_outiller_dans_le_fil`), **avant** de rejouer : ce
+    qu'il rejoue ensuite est ce que le manifeste dit une fois l'outillage revu.
+
+    L'attente est celle du récit **plus** celle d'une vérification entière : la revue
+    rejoue les commandes du projet pendant que le modèle rédige, et le message ne part
+    qu'avec les deux. Une fin qui ne vient pas n'est pas un rouge ici : le rejeu
+    tranchera sur le manifeste tel qu'il est.
+    """
+    fin = _message_de_fin(ctx, conversation, run_id, ATTENTE_REVUE_S)
+    if fin is None:
+        ctx.note("fin du run", f"aucun message de fin dans le fil en {ATTENTE_REVUE_S:g} s")
+        return ""
+    if not isinstance(fin.get("piece"), Mapping):
+        return ""
+    revues, inacheve = _outiller_dans_le_fil(ctx, conversation, fin)
+    if revues:
+        ctx.note("outillage revu après le run", ", ".join(revues))
+    return inacheve
 
 
 def _projet_en_mots(proposee: Mapping[str, Any]) -> str:

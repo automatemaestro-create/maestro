@@ -207,10 +207,12 @@ PLAFOND_FRISE = 500
 def _statut_de(entree: EntreeJournal) -> str:
     """Le statut de tâche que porte `entree`, dans le vocabulaire de docs/03 §3.
 
-    Trois familles, une seule échelle. Un `tache.statut` porte déjà le sien.
-    Une **demande** de validation est la seconde où la tâche s'arrête sur un
-    humain : `en_attente_validation`, le statut que `progression.py` nomme depuis
-    #473 sans que le moteur le produise. Une **décision** reprend les deux mots
+    Trois familles, une seule échelle. Un `tache.statut` porte déjà le sien —
+    `en_attente_validation` compris, que le moteur émet depuis #1181 sur une
+    tâche suspendue faute d'un prérequis que le fil propose. Une **demande** de
+    validation est la seconde où la tâche s'arrête sur un humain :
+    `en_attente_validation` aussi, que le moteur, lui, ne produit pas pour une
+    validation. Une **décision** reprend les deux mots
     que le moteur écrit lui-même sur l'étape `<tâche>:validation`, plutôt que les
     `approuvee`/`refusee` du bus, qui sont le vocabulaire de la *file* de
     validation et non celui d'une tâche.

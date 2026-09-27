@@ -570,6 +570,12 @@ class Event:
     # « ce run est parti sans borne ». Le fil prenait la borne d'un run passé pour
     # un réglage qui dure, faute de savoir qu'elle appartenait à ce run-là.
     bornes: BornesRun | None = None
+    # Le **verdict d'une vérification** (#1177), porté par la seule activité
+    # `<tâche>:verification` : son statut, sa ligne, et chaque contrôle avec sa
+    # preuve (`maestro.engine.verification.Verdict.to_dict`). Un dict et non la
+    # classe, pour la raison de `recrutement` : cette couche n'importe pas le
+    # moteur. None partout ailleurs — l'événement n'en apprend rien.
+    verification: dict[str, Any] | None = None
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -620,6 +626,9 @@ class Event:
             "recrutement": dict(self.recrutement) if self.recrutement is not None else None,
             "resultat": self.resultat,
             "bornes": self.bornes.to_dict() if self.bornes is not None else None,
+            "verification": (
+                dict(self.verification) if self.verification is not None else None
+            ),
             "horodatage": self.horodatage,
         }
 
@@ -752,6 +761,14 @@ class Event:
             bornes=(
                 BornesRun.depuis(data["bornes"])
                 if isinstance(data.get("bornes"), Mapping)
+                else None
+            ),
+            # Relecture tolérante (#1177), comme `recrutement` : le verdict passe
+            # tel quel, et c'est l'écran qui ne rend que ce qu'il sait lire. Ce
+            # qui n'est pas un objet n'est pas un verdict.
+            verification=(
+                dict(data["verification"])
+                if isinstance(data.get("verification"), Mapping)
                 else None
             ),
             horodatage=data.get("horodatage", ""),

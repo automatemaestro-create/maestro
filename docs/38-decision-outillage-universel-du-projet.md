@@ -726,7 +726,10 @@ constate, pas une propriété acquise.
 > Les commandes écrites sans exécution sont vérifiées avant d'être écrites (#1160, **livré**) :
 > chacune est jouée dans une copie du projet, et son verdict va au texte, au manifeste (§4.1) et
 > au rapport. Le format arrêté par cette note (§3 à §5) ne bouge pas, ni le `recommander` commun
-> aux deux chemins.
+> aux deux chemins. Depuis #1343, un projet neuf ne se contente plus de « à vérifier » : les
+> outils que ses commandes appellent sont demandés au poste (absents, la commande est échouée),
+> sa recommandation en tient compte, et à la fin d'un run l'outillage est rejoué sur le projet
+> construit, la pièce qui change proposée dans le fil ([docs/05 §6.20](./05-interface-control-tower.md)).
 >
 > ⚠ **Renversé en partie le 2026-09-24** ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)).
 > La ligne #1034 ne tient plus : l'outillage n'est plus une étape du parcours de création. Un projet

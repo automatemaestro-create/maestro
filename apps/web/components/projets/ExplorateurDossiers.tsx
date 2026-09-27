@@ -31,6 +31,7 @@ import { BadgeEtat, Bouton } from "@/components/Primitives";
 import {
   chargerDisponibiliteSelecteur,
   chargerExplorateur,
+  ErreurApi,
   ErreurProjet,
   ouvrirSelecteurNatif,
   verdictRacine,
@@ -45,10 +46,24 @@ import type {
   RefusProjet,
 } from "@/lib/types";
 
-/** Le refus porté par une exception — une panne réseau en est un aussi. */
+/**
+ * Le refus porté par une exception — une panne réseau en est un aussi.
+ *
+ * Une API qui n'a **pas répondu** (typée à la source, `ErreurApi.injoignable`) se
+ * dit avec le geste qui y répond, jamais avec le chemin de la route ni l'erreur
+ * brute du navigateur (même règle que `PieceDOutillage`, #1161 ; vu sous la
+ * correction d'une équipe à la relecture de #1331).
+ */
 export function refusDepuis(erreur: unknown): RefusProjet {
   if (erreur instanceof ErreurProjet) {
     return { motif: erreur.motif, message: erreur.message };
+  }
+  if (erreur instanceof ErreurApi && erreur.statut === null) {
+    return {
+      motif: "api-injoignable",
+      message:
+        "L'API n'a pas répondu. Vérifiez que maestro-api tourne, puis réessayez.",
+    };
   }
   return {
     motif: "api-injoignable",

@@ -65,6 +65,18 @@ run à chaque démarrage de l'API, pour des runs dont la conversation est close.
 L'idempotence, elle, est tenue **sur le fil** (`deja_raconte`) et non en mémoire :
 un même `execution.statut` terminal reçu deux fois ne fait pas deux récits, et le
 marqueur est le fil lui-même — le seul endroit qui survit à un redémarrage.
+
+## Et l'outillage, que le projet construit fait changer (#1343)
+
+Un run donne au projet ses fichiers, et c'est le moment où « à vérifier » peut enfin
+se jouer : le banc de #1162 a montré qu'on ne le faisait jamais, et qu'`AGENTS.md`
+prescrivait ensuite aux agents des commandes qui échouaient. La fin d'un run demande
+donc aussi à l'outillage ce qui a changé (`RevueDeLOutillage`, le conducteur de
+l'outillage), **en même temps** qu'elle rédige le récit : les commandes se rejouent
+pendant que le modèle écrit. La pièce qui change voyage sur **le message du récit**
+— c'est le dernier du fil, donc celui sur lequel une demande attend un geste
+(`chat.piece_en_attente`). Un récit que le modèle n'a pas écrit ne fait pas taire
+l'outillage : la pièce est alors posée seule, avec ses propres mots.
 """
 
 from __future__ import annotations
@@ -78,7 +90,7 @@ from typing import Protocol
 
 from maestro.agents.catalog import Agent
 from maestro.agents.playbook_du_code import registre
-from maestro.controltower.chat import UTILISATEUR, MessageChat, ServiceChat
+from maestro.controltower.chat import UTILISATEUR, MessageChat, ReponseChat, ServiceChat
 from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
     ControlTowerState,
@@ -329,6 +341,14 @@ class ProjetDuRun(Protocol):
     def __call__(self, projet_id: str | None) -> Projet | None: ...
 
 
+class RevueDeLOutillage(Protocol):
+    """Ce que le conteur demande à l'outillage — `ConducteurOutillage.apres_le_run` (#1343)."""
+
+    async def apres_le_run(
+        self, fil: Sequence[MessageChat], projet_id: str
+    ) -> ReponseChat | None: ...
+
+
 class ConteurDeFin:
     """Écrit dans le fil qui a demandé un run ce que ce run a laissé (#1224).
 
@@ -341,6 +361,9 @@ class ConteurDeFin:
     `ServiceProjets` : le conteur n'a besoin que d'une racine et d'un périmètre,
     et lui passer le service entier le ferait dépendre d'un store qu'il ne lit
     pas.
+
+    `outillage` (#1343) revoit l'outillage du projet du run, maintenant qu'il a ses
+    fichiers ; `None` : la fin ne dit que le récit, comme avant.
     """
 
     def __init__(
@@ -351,12 +374,14 @@ class ConteurDeFin:
         agent: Agent,
         projet: ProjetDuRun,
         redacteur: RedacteurRecit | None = None,
+        outillage: RevueDeLOutillage | None = None,
     ) -> None:
         self._chat = chat
         self._state = state
         self._agent = agent
         self._projet = projet
         self._redacteur = redacteur if redacteur is not None else RedacteurModele()
+        self._outillage = outillage
         # Les récits en cours d'écriture, par `run_id` : `deja_raconte` lit le
         # fil **persisté**, donc il ne voit pas un récit encore en vol. Deux
         # événements terminaux qui se suivent de près écriraient sinon deux fois.
@@ -390,8 +415,36 @@ class ConteurDeFin:
     async def _ecrire(
         self, execution: EtatExecution, conversation: str
     ) -> MessageChat | None:
-        """Lit le livrable, fait rédiger, et pose le message au fil."""
+        """Fait rédiger le récit et revoir l'outillage **ensemble**, puis pose un seul message.
+
+        Les deux ne dépendent pas l'un de l'autre, et les deux coûtent : un appel modèle
+        d'un côté, des commandes rejouées de l'autre (#1343). Les attendre l'un après
+        l'autre retarderait le récit de toute une vérification.
+        """
         projet = self._projet(execution.projet_id)
+        texte, revue = await asyncio.gather(
+            self._rediger(execution, projet), self._revoir(execution, conversation)
+        )
+        if not texte and revue is None:
+            return None
+        outillage = revue.contenu if revue is not None else ""
+        contenu = "\n\n".join(morceau for morceau in (texte, outillage) if morceau)
+        try:
+            return await self._chat.raconter_la_fin(
+                self._agent,
+                contenu=contenu,
+                run_id=execution.run_id,
+                conversation=conversation,
+                suite=revue,
+            )
+        except Exception:  # noqa: BLE001 — le fil est ailleurs, le run est fini
+            _LOGGER.exception(
+                "Récit de fin non posé au fil pour le run %s.", execution.run_id
+            )
+            return None
+
+    async def _rediger(self, execution: EtatExecution, projet: Projet | None) -> str:
+        """Lit le livrable et fait rédiger le récit — `""` quand le rédacteur n'a rien rendu."""
         livrable = await self._lire(projet)
         try:
             texte = await self._redacteur.rediger(
@@ -405,23 +458,30 @@ class ConteurDeFin:
                 "L'annonce de fin reste dans le fil et dans la cloche.",
                 execution.run_id,
             )
-            return None
+            return ""
         if not texte:
             _LOGGER.warning(
                 "Récit de fin non écrit pour le run %s : le rédacteur a rendu un texte vide.",
                 execution.run_id,
             )
+        return texte
+
+    async def _revoir(self, execution: EtatExecution, conversation: str) -> ReponseChat | None:
+        """Ce que le run fait changer à l'outillage de son projet — `None` s'il n'y a rien (#1343).
+
+        Une revue en échec ne coûte pas le récit : elle se dit au journal, et
+        l'outillage se revoit à sa prochaine ouverture.
+        """
+        if self._outillage is None or not execution.projet_id:
             return None
         try:
-            return await self._chat.raconter_la_fin(
-                self._agent,
-                contenu=texte,
-                run_id=execution.run_id,
-                conversation=conversation,
+            return await self._outillage.apres_le_run(
+                self._chat.fil(self._agent.nom, conversation), execution.projet_id
             )
-        except Exception:  # noqa: BLE001 — le fil est ailleurs, le run est fini
+        except Exception:  # noqa: BLE001 — une revue d'outillage ne vaut pas le récit
             _LOGGER.exception(
-                "Récit de fin non posé au fil pour le run %s.", execution.run_id
+                "Outillage non revu après le run %s : le récit part sans lui.",
+                execution.run_id,
             )
             return None
 

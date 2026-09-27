@@ -606,13 +606,29 @@ def _solder_les_runs(
         )
         return
     url = f"http://{service.hote}:{service.port}/api/extinction"
-    reponse = systeme.poster(url, _delai_extinction(environ))
+    reponse = systeme.poster(url, _delai_extinction(environ), _entetes_de_l_api(sortie))
     if reponse is None:
         sortie.dire(
             f"[extinction] l'API ne répond pas sur :{service.port} — rien à solder par ici"
         )
         return
-    runs = _runs_soldes(reponse)
+    # Seul un `200` qui porte la liste des runs dit ce qui a été soldé (#1355) : un
+    # refus ou une réponse qu'on ne sait pas lire ne disent rien des runs, qui peuvent
+    # encore tourner — c'est ce qui se dit, jamais « aucun run en vol ».
+    if reponse.statut != 200:
+        cause = " (jeton absent ou refusé)" if reponse.statut in (401, 403) else ""
+        sortie.alerter(
+            f"[extinction] refusée : HTTP {reponse.statut}{cause} — des runs peuvent "
+            f"rester en vol (voir {service.journal})"
+        )
+        return
+    runs = _runs_soldes(reponse.corps)
+    if runs is None:
+        sortie.alerter(
+            "[extinction] réponse illisible de l'API (HTTP 200) — des runs peuvent "
+            f"rester en vol (voir {service.journal})"
+        )
+        return
     if not runs:
         sortie.dire("[extinction] aucun run en vol")
         return
@@ -623,22 +639,45 @@ def _solder_les_runs(
         )
 
 
-def _runs_soldes(reponse: str) -> tuple[str, ...]:
-    """Les identifiants des runs soldés, lus dans la réponse de l'API.
+def _entetes_de_l_api(sortie: Sortie) -> dict[str, str]:
+    """Les en-têtes qui portent le jeton de l'API locale (#638) — vides en régime ouvert.
+
+    Ceux de tout outil local (`entetes_client`) : une seule façon de résoudre le jeton
+    et de l'écrire, jamais un en-tête réécrit ici. Import local, parce que seul l'arrêt
+    en a besoin. Un jeton qu'on ne sait pas résoudre (régime inconnu, fichier
+    illisible) se **dit**, et l'extinction part sans lui : l'API dira si elle le
+    voulait, et son refus sera nommé à son tour — s'abstenir laisserait les runs en
+    vol sans même avoir frappé à la porte.
+    """
+    from maestro.config import ConfigError
+    from maestro.controltower.acces import entetes_client
+
+    try:
+        return entetes_client()
+    except (ConfigError, OSError) as erreur:
+        sortie.alerter(
+            f"[extinction] jeton de l'API illisible ({erreur}) — l'extinction part sans lui"
+        )
+        return {}
+
+
+def _runs_soldes(reponse: str) -> tuple[str, ...] | None:
+    """Les identifiants des runs soldés, lus dans la réponse de l'API — `None` si illisible.
 
     Du JSON lu comme du JSON : le lanceur est en Python, là où `start.sh` devait
-    extraire ces identifiants au `grep` faute de `jq`. Une réponse inattendue rend un
-    tuple vide — on ne fabrique pas d'identifiant à partir de ce qu'on n'a pas compris.
+    extraire ces identifiants au `grep` faute de `jq`. Une réponse inattendue rend
+    `None`, et non un tuple vide (#1355) : « rien compris » ne dit pas « aucun run », et
+    on ne fabrique pas d'identifiant à partir de ce qu'on n'a pas compris.
     """
     try:
         charge: Any = json.loads(reponse)
     except ValueError:
-        return ()
+        return None
     if not isinstance(charge, dict):
-        return ()
+        return None
     runs = charge.get("runs")
     if not isinstance(runs, list):
-        return ()
+        return None
     trouves = []
     for entree in runs:
         if isinstance(entree, dict) and isinstance(entree.get("run_id"), str):

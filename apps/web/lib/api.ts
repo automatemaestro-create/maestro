@@ -1029,6 +1029,48 @@ export async function declarerProjetDuFil(
 }
 
 /**
+ * Confirme — ou écarte — le geste sur un run que le fil propose
+ * (`POST /api/chat/{agent}/geste`, #1179) et rend la paire (geste, réponse).
+ *
+ * Seul `approuve` part : l'action, le run et les bornes d'une relance sont sur la
+ * carte que le fil porte, et c'est elle que l'API exécute — par le service des
+ * boutons des écrans. La réponse porte l'état relu du run (`geste_fait`), ou le
+ * refus du service quand l'état du run a changé depuis la carte.
+ *
+ * Un `409` n'est pas une panne, comme sur le cadrage : le geste a été confirmé ou
+ * écarté entre-temps, ou la conversation a repris.
+ */
+export async function trancherGesteDuFil(
+  agent: string,
+  decision: { approuve: boolean; conversation?: string },
+): Promise<MessageChat[]> {
+  const chemin = `/api/chat/${encodeURIComponent(agent)}/geste`;
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approuve: decision.approuve,
+        conversation: decision.conversation,
+      }),
+    });
+  } catch {
+    // Rien n'a répondu : la panne est typée à la source (#996), comme pour une pièce.
+    throw ErreurApi.injoignable(chemin);
+  }
+  if (!reponse.ok) {
+    throw new Error(
+      reponse.status === 409
+        ? "ce geste n'attend plus de réponse — la conversation a repris."
+        : `geste sur le run refusé (${reponse.status})`,
+    );
+  }
+  const paire = (await reponse.json()) as { messages: MessageChat[] };
+  return paire.messages;
+}
+
+/**
  * Valide — ou décline — l'équipe que le fil propose à un projet sans agent
  * (`POST /api/chat/{agent}/recrutement`, #1146) et rend la paire (geste, réponse).
  *
@@ -1706,20 +1748,31 @@ async function lireProjets<T>(
   return (await reponse.json()) as T;
 }
 
-/** Écriture d'une route projets (corps optionnel : un DELETE n'en porte pas). */
+/**
+ * Écriture d'une route projets (corps optionnel : un DELETE n'en porte pas).
+ *
+ * Une API qui ne répond pas lève `ErreurApi.injoignable`, comme en lecture
+ * (`lireProjets`) : sans quoi le navigateur remontait son « Failed to fetch »
+ * jusqu'à l'écran — vu à la relecture de #1331, sous la correction d'une équipe.
+ */
 async function ecrireProjet<T>(
   chemin: string,
   corps: unknown,
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<T> {
-  const reponse = await appel(`${API_URL}${chemin}`, {
-    method: methode,
-    ...(corps !== undefined && {
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(corps),
-    }),
-  });
+  let reponse: Response;
+  try {
+    reponse = await appel(`${API_URL}${chemin}`, {
+      method: methode,
+      ...(corps !== undefined && {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corps),
+      }),
+    });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) throw await refusProjet(reponse, refusParDefaut);
   return (await reponse.json()) as T;
 }
@@ -1919,9 +1972,10 @@ export function proposerEquipe(
  * Ce que la personne demande de changer à l'équipe montrée, **compris**
  * (`POST /api/projets/{id}/equipe/correction`, #1159) — rien n'est créé.
  *
- * `equipe` est l'équipe **telle que l'étape la montre**, cases et instances
- * comprises : « remets les tests » n'a de sens que si l'on sait qu'ils ont été
- * retirés. La réponse porte les rôles à ajouter (playbooks écrits pour ce
+ * `equipe` est l'équipe **telle que la carte d'équipe du fil la montre** (#1331),
+ * cases et instances comprises : « remets les tests » n'a de sens que si l'on sait
+ * qu'ils ont été retirés. `choix` ne sert qu'aux réponses d'un questionnaire
+ * d'outillage ; sans elles, l'équipe se dérive de l'analyse du projet. La réponse porte les rôles à ajouter (playbooks écrits pour ce
  * projet), ceux à retirer ou à remettre, les instances à changer, et la phrase
  * qui répond à la personne. 502 si le modèle ne répond pas : l'équipe montrée
  * reste intacte, et la demande se rejoue.

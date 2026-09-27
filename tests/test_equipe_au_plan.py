@@ -1093,7 +1093,7 @@ def test_le_relais_pose_la_demande_dans_le_fil_puis_dit_l_echeance(tmp_path: Pat
     les faits que le relais lui passe : ce que le fil dit est ce qu'il a rédigé, à
     la lettre, et c'est lui qui a reçu le rôle, la raison, les tâches, l'échéance.
     """
-    from maestro.controltower.chat import recrutement_en_attente
+    from maestro.controltower.chat import FAIT_DE_LA_DEMANDE, recrutement_en_attente
     from maestro.controltower.events import InMemoryEventBus
     from maestro.controltower.orchestration import AGENT_ORCHESTRATION, NOM_ORCHESTRATION
     from maestro.controltower.renfort import RelaisRenfort, evenement_demande
@@ -1124,6 +1124,10 @@ def test_le_relais_pose_la_demande_dans_le_fil_puis_dit_l_echeance(tmp_path: Pat
     assert "avant l'échéance" in echue
     assert messages[1].recrutement is None
     assert recrutement_en_attente(messages) is None
+    # La demande attend sous le premier message, avec ses gestes : le répondeur le sait,
+    # et ne les redit pas (#1339). Sous le second, plus rien n'attend.
+    assert FAIT_DE_LA_DEMANDE in proposee
+    assert FAIT_DE_LA_DEMANDE not in echue
 
 
 def test_le_relais_pose_la_demande_dans_la_conversation_qui_a_lance_le_run(

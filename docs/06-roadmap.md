@@ -1077,9 +1077,9 @@ dernier détail de chaque tâche, coupé à 300 caractères : ni les relances, n
 l'usage. Et un appel laissé passer par le cran `auto` ne garde pas son acte dans le journal.
 
 **Le contenu** — **#1281**, parent, trois lots :
-- **#1282** (parallèle) : le journal garde l'**acte** de chaque appel arbitré (outil et arguments,
-  rédigés et bornés), pas seulement son issue. Sans cette pièce, aucun bilan ne peut dire qu'un
-  agent est sorti de son projet ;
+- **#1282** (parallèle, livré le 2026-09-27) : le journal garde l'**acte** de chaque appel arbitré
+  (outil et arguments, rédigés puis bornés), pas seulement son issue. Sans cette pièce, aucun bilan
+  ne peut dire qu'un agent est sorti de son projet ;
 - **#1284** (parallèle) : à la fin de tout run, Maestro rend un **bilan sur pièces** : ce qui a été
   livré, ce qui a failli et pourquoi, les actes sortis du projet ou accordés sans personne, la
   consommation sans résultat, et quoi changer. Chaque constat cite ses pièces, et un constat sans

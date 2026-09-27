@@ -196,6 +196,32 @@ def copie_de_verification(
         retirer_arbre(parent)
 
 
+@contextmanager
+def dossier_de_sonde() -> Iterator[Path]:
+    """Un dossier vide où demander au poste ce qu'il a, retiré en sortie (#1343).
+
+    Pour les questions qui ne portent sur aucun projet — *ce programme est-il
+    installé ?*, posée avant même que le projet existe. Même naissance qu'une copie
+    de vérification (sous `racine_des_espaces()`, pid dans le nom, donc ramassée si
+    le process meurt avant de la retirer) : une sonde ne s'exécute jamais dans le
+    répertoire courant de l'API, qui n'est le dossier de personne.
+
+    Lève `CopieImpossible` (`espace-indisponible`) si aucun répertoire temporaire ne
+    l'accueille.
+    """
+    try:
+        dossier = Path(tempfile.mkdtemp(prefix=marquer(PREFIXE_COPIE), dir=racine_des_espaces()))
+    except OSError as exc:
+        raise CopieImpossible(
+            "espace-indisponible",
+            f"aucun répertoire temporaire n'a pu accueillir la sonde du poste : {exc}",
+        ) from exc
+    try:
+        yield dossier
+    finally:
+        retirer_arbre(dossier)
+
+
 def _copier(
     source: Path,
     copie: Path,

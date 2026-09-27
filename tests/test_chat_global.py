@@ -56,6 +56,10 @@ Couvre :
 ⑫ **le fil n'écrit plus de phrase fixe sur les chemins du geste** (#1262) :
    accord, refus, équipe validée ou déclinée, renfort — ce que le fil dit est ce
    que le modèle a rédigé, à la lettre, et les faits sont des champs du message.
+⑬ **la parole d'après un geste ne redit pas les gestes d'une carte** (#1339) :
+   la consigne ne fait dire « ce qu'il peut faire ensuite » que lorsqu'aucune
+   carte ne le montre, et sur chaque chemin du geste la rédaction apprend si une
+   carte attend sa réponse — dérivé des champs du message, jamais du texte.
 
 Ce que ces tests **ne** peuvent pas tenir, et l'assument : la qualité du jugement
 lui-même. Le juge est un double, donc « cette phrase est-elle une demande de
@@ -81,7 +85,9 @@ from maestro.controltower.app import create_app
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.causes import CAUSE_PLAFOND_COUT
 from maestro.controltower.chat import (
+    CHAMPS_DE_DEMANDE,
     CONVERSATION_ORIGINE,
+    FAIT_DE_LA_DEMANDE,
     FRAGMENT_CHAT_DEBUT,
     FRAGMENT_CHAT_DELTA,
     FRAGMENT_CHAT_ETAPE,
@@ -92,6 +98,7 @@ from maestro.controltower.chat import (
     MessageChat,
     RecrutementIntrouvable,
     RepondeurScripte,
+    ReponseChat,
     proposition_en_attente,
     recrutement_en_attente,
 )
@@ -112,6 +119,8 @@ from maestro.controltower.orchestration import (
     # Le texte du prompt lui-même est l'objet du critère 2 : il se lit ici, comme
     # `test_registre_de_langue` le lit déjà pour la consigne de registre.
     _PROMPT_ORCHESTRATION,
+    # Et celui de la consigne de rédaction, pour la même raison (⑬, #1339).
+    _PROMPT_REDACTION,
     AGENT_ORCHESTRATION,
     NOM_ORCHESTRATION,
     VERDICT_ACCORD,
@@ -143,6 +152,14 @@ UTILISATEUR = "utilisateur"
 #: l'utilisateur l'approuve. Il ne ressemble à **aucun** message du fil : c'est ce
 #: qui rend visible, à l'assertion, que ce n'est pas le message brut qui part.
 OBJECTIF = "Développer une application Windows d'agenda aux fonctionnalités de base"
+
+#: Le projet de la fenêtre d'où partent les demandes de ces tests (#1180). Depuis
+#: que le fil ne propose ni n'ouvre aucun run **sans projet**, une demande de
+#: travail n'aboutit à un run que dans un projet. Il n'est déclaré nulle part : un
+#: répondeur sans sonde de projets le tient pour déclaré — « je ne sais pas » ne
+#: bride rien —, et ces tests parlent ainsi du canal, pas des projets. Ceux qui
+#: parlent du projet lui-même vivent dans `tests/test_projet_du_fil.py`.
+FENETRE = "prj-fenetre"
 
 
 def _verdict(nom: str, reponse: str, objectif: str = "") -> str:
@@ -429,7 +446,7 @@ def test_le_verdict_se_lit_aussi_dans_un_bloc_de_code() -> None:
     corps = _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF)
     repondeur, _ = _repondeur(f"Voici ma décision :\n```json\n{corps}\n```\n", lanceur=lanceur)
 
-    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("oui")))
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("oui"), projet_id=FENETRE))
 
     assert lanceur.objectifs == [OBJECTIF]
 
@@ -1063,7 +1080,9 @@ def test_les_pieces_jointes_de_la_conversation_partent_avec_le_run() -> None:
         _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
     )
 
-    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_avec_une_piece_jointe()))
+    asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil_avec_une_piece_jointe(), projet_id=FENETRE)
+    )
 
     assert lanceur.contextes == [SPEC_LUE]
 
@@ -1080,6 +1099,7 @@ def test_le_geste_d_accord_emporte_aussi_les_pieces_jointes() -> None:
             _fil_avec_une_piece_jointe(),
             approuve=True,
             objectif=OBJECTIF,
+            projet_id=FENETRE,
         )
     )
 
@@ -1111,7 +1131,9 @@ def test_un_accord_ouvre_le_run_et_le_rattache() -> None:
         _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
     )
 
-    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve(), projet_id=FENETRE)
+    )
 
     assert lanceur.objectifs == [OBJECTIF]
     assert reponse.run_id == "run-42"
@@ -1132,7 +1154,7 @@ def test_l_objectif_lance_est_celui_qui_a_ete_approuve_pas_le_message_brut() -> 
         _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
     )
 
-    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve(), projet_id=FENETRE))
 
     assert lanceur.objectifs == [OBJECTIF]
     assert "oui" not in lanceur.objectifs
@@ -1172,12 +1194,14 @@ def test_le_run_ouvert_appartient_au_projet_de_la_fenetre() -> None:
     assert lanceur.projets == ["prj-depensio"]
 
 
-def test_sans_projet_le_run_part_sans_projet() -> None:
-    """Le comportement d'avant #683, gardé : un rattachement absent n'empêche rien.
+def test_sans_projet_aucun_run_ne_part_du_fil() -> None:
+    """#1180 renverse ce que ce test gardait depuis #683 : sans projet, rien ne part.
 
-    Le projet est une **donnée** portée par le run (#222), jamais une condition
-    de son lancement — un poste sans projet actif doit continuer à ouvrir des
-    runs, quitte à ce qu'ils ne relèvent d'aucune vue de projet.
+    Il gardait « un rattachement absent n'empêche rien » — un poste sans projet
+    ouvrait des runs qui ne relevaient d'aucune vue, et sur une installation neuve
+    le run lancé n'apparaissait dans la liste d'aucun projet. Le projet reste une
+    donnée du run pour l'écran des exécutions ; depuis le **fil**, il en est la
+    condition : un accord sans projet n'atteint jamais le lanceur.
     """
     lanceur = LanceurEspion()
     repondeur, _ = _repondeur(
@@ -1186,8 +1210,8 @@ def test_sans_projet_le_run_part_sans_projet() -> None:
 
     reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
 
-    assert lanceur.projets == [None]
-    assert reponse.run_id == "run-42"
+    assert lanceur.projets == []
+    assert reponse.run_id == ""
 
 
 def test_l_apercu_est_cadre_sur_le_projet_de_la_fenetre() -> None:
@@ -1229,7 +1253,9 @@ def test_un_lancement_en_echec_se_raconte_dans_le_fil() -> None:
         provider=JugeScripte(_verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF)),
     )
 
-    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve(), projet_id=FENETRE)
+    )
 
     assert reponse.run_id == ""
     assert "Le lancement a échoué" in reponse.contenu
@@ -1551,7 +1577,9 @@ def test_une_proposition_streamee_garde_sa_carte() -> None:
     )
     repondeur, _ = _en_flux(juge, lanceur=LanceurEspion())
 
-    reponse = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil("crée-moi une app")))
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("crée-moi une app"), projet_id=FENETRE)
+    )
 
     assert reponse.proposition == OBJECTIF
     assert reponse.contenu == "Je peux ouvrir un run là-dessus. Je lance ?"
@@ -1575,7 +1603,9 @@ def test_un_accord_streame_ouvre_le_run_sans_rien_ajouter_aux_mots_du_modele() -
         incremente.append(delta)
 
     reponse = asyncio.run(
-        repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve(), incrementer=incrementer)
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil_approuve(), incrementer=incrementer, projet_id=FENETRE
+        )
     )
 
     assert lanceur.objectifs == [OBJECTIF]
@@ -1665,7 +1695,8 @@ def test_un_accord_poste_au_fil_global_ouvre_un_run_et_le_porte(
     client_global, lanceur, depot_chat
 ) -> None:
     reponse = client_global.post(
-        f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": "oui"}
+        f"/api/chat/{NOM_ORCHESTRATION}/messages",
+        json={"contenu": "oui", "projet_id": FENETRE},
     )
 
     assert reponse.status_code == 201
@@ -1683,7 +1714,8 @@ def test_le_run_ouvert_part_aussi_sur_le_websocket(client_global) -> None:
     """Un client temps réel apprend le rattachement sans rien relire."""
     with client_global.websocket_connect("/ws/evenements?projet=tous") as ws:
         client_global.post(
-            f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": "vas-y"}
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={"contenu": "vas-y", "projet_id": FENETRE},
         )
         aller = ws.receive_json()
         retour = ws.receive_json()
@@ -1771,7 +1803,8 @@ def _trames(reponse) -> list[dict]:
 def test_le_flux_du_fil_global_rend_debut_fragments_et_fin(client_global) -> None:
     """Le canal SSE vaut pour les trois fils — ici le global, qui agit en plus."""
     reponse = client_global.get(
-        f"/api/chat/{NOM_ORCHESTRATION}/flux", params={"contenu": "oui"}
+        f"/api/chat/{NOM_ORCHESTRATION}/flux",
+        params={"contenu": "oui", "projet_id": FENETRE},
     )
 
     assert reponse.status_code == 200
@@ -1872,7 +1905,7 @@ def test_le_flux_rend_la_reponse_de_l_orchestrateur_en_plusieurs_trames(
     ) as client:
         reponse = client.get(
             f"/api/chat/{NOM_ORCHESTRATION}/flux",
-            params={"contenu": "Génère une application d'agenda"},
+            params={"contenu": "Génère une application d'agenda", "projet_id": FENETRE},
         )
 
     trames = _trames(reponse)
@@ -1915,9 +1948,9 @@ def test_le_projet_de_la_fenetre_voyage_du_corps_jusqu_au_lanceur(
 def test_un_projet_mal_forme_vaut_aucun_projet(client_global, lanceur) -> None:
     """Normalisé à la frontière (#222) : un identifiant douteux ne fait pas échouer un message.
 
-    Le rattachement est une donnée, pas une condition du lancement. Refuser le
-    message ferait dépendre une conversation de la bonne tenue d'un identifiant
-    que l'utilisateur n'a jamais tapé.
+    Refuser le message ferait dépendre une conversation de la bonne tenue d'un
+    identifiant que l'utilisateur n'a jamais tapé. Il vaut « aucun projet » — et
+    depuis #1180, aucun projet veut dire aucun run : le message répond, rien ne part.
     """
     reponse = client_global.post(
         f"/api/chat/{NOM_ORCHESTRATION}/messages",
@@ -1925,7 +1958,7 @@ def test_un_projet_mal_forme_vaut_aucun_projet(client_global, lanceur) -> None:
     )
 
     assert reponse.status_code == 201
-    assert lanceur.projets == [None]
+    assert lanceur.projets == []
 
 
 def test_le_flux_porte_le_projet_comme_le_post(client_global, lanceur) -> None:
@@ -2138,22 +2171,21 @@ def test_un_run_dicte_au_fil_figure_dans_la_liste_de_son_projet(
     assert moteur.objectifs == [OBJECTIF]
 
 
-def test_sans_projet_le_run_reste_introuvable_a_l_ecran(client_reel, projets) -> None:
-    """L'échantillon fautif : ce que faisait **tout** run du chat avant #683.
+def test_sans_projet_le_fil_n_ouvre_plus_de_run_introuvable(client_reel, moteur) -> None:
+    """L'échantillon fautif de #683, refermé par #1180 : sans projet, aucun run.
 
-    Sans rattachement, le run n'entre dans la vue d'aucun projet (`PorteeProjet`,
-    #277) — il n'est atteignable que sous `aucun`, portée qu'aucun sélecteur de
-    l'UI ne propose. C'est ce qui le rendait invisible dans la liste et
-    impossible à ouvrir en détail, alors même que l'orchestrateur l'annonçait en
-    cours. Le garder ici est ce qui empêche de croire que l'assertion précédente
-    passerait de toute façon.
+    Sans rattachement, un run n'entrait dans la vue d'aucun projet (`PorteeProjet`,
+    #277) — atteignable sous `aucun` seulement, portée qu'aucun sélecteur de l'UI
+    ne propose : invisible dans la liste, impossible à ouvrir en détail, alors que
+    l'orchestrateur l'annonçait en cours. Sur une installation neuve, c'était le
+    sort de tout run dicté au fil. Il ne naît plus : le moteur n'est pas appelé,
+    et la liste des runs sans projet reste vide.
     """
-    ici, _ = (p["id"] for p in projets.lister())
-
     run_id = _demander(client_reel)
 
-    assert run_id not in _runs_de(client_reel, ici)
-    assert run_id in _runs_de(client_reel, "aucun")
+    assert run_id == ""
+    assert moteur.objectifs == []
+    assert _runs_de(client_reel, "aucun") == set()
 
 
 # ── ⑧ le protocole d'accord, joué de bout en bout (#688) ──────────────────────
@@ -2218,14 +2250,16 @@ def test_la_proposition_puis_l_accord_n_ouvrent_qu_au_second_tour() -> None:
     repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
     demande = "J'aimerai que tu me génère le projet p1 comme une application d'agenda"
 
-    propose = asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande)))
+    propose = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil(demande), projet_id=FENETRE)
+    )
     # Le premier tour n'a rien ouvert : c'est le sujet même du chantier.
     assert lanceur.objectifs == []
     assert propose.run_id == ""
 
     ouvert = asyncio.run(
         repondeur.produire(
-            AGENT_ORCHESTRATION, _fil(demande, _propose(), ACCORD_ECRIT)
+            AGENT_ORCHESTRATION, _fil(demande, _propose(), ACCORD_ECRIT), projet_id=FENETRE
         )
     )
 
@@ -2347,9 +2381,22 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # politique de l'équipe **à chaque message**, comme l'équipe et les attentes.
     # Il ne retient rien d'un tour à l'autre — une politique réglée entre deux
     # messages se dit au second, ce que `tests/test_regime_du_run.py` prouve.
+    #
+    # #1179 en ajoute un, `_pilote` : le service des boutons, par lequel le fil
+    # agit sur les runs. Il ne garde rien non plus — le geste proposé voyage sur le
+    # message (`MessageChat.geste_run`), et c'est le fil qui le rend au clic comme
+    # au « oui » tapé (`_geste_approuve`).
+    #
+    # #1180 en ajoute deux, `_projet` et `_outillage` : le projet de la
+    # conversation et son outillage, lus **à chaque message**. Le projet d'une
+    # proposition ne loge pas dans le répondeur : il voyage sur le message
+    # (`MessageChat.projet_vise`), et c'est le fil qui le rend à l'accord.
     assert set(vars(repondeur)) == {
         "_naissance",
         "_regime",
+        "_pilote",
+        "_projet",
+        "_outillage",
         "_lanceur",
         "_apercu",
         "_faits",
@@ -2365,6 +2412,7 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     }
     assert repondeur._equipe is None and repondeur._recruteur is None
     assert repondeur._naissance is None
+    assert repondeur._projet is None and repondeur._outillage is None
     # #1147 donne au conducteur un collaborateur : celui qui comprend le projet (le
     # modèle) ; #1295 un second, celui qui trouve les clients du poste — le détecteur
     # par défaut ici. La garantie est poussée d'un cran de plus : il ne porte que son
@@ -2376,10 +2424,19 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # message (`MessageChat.piece`), ce qui en a été fait aussi (`piece_ecrite`) ; ce
     # répondeur-ci n'en a pas reçu, il reste donc `None`. Le répondeur, lui, ne gagne
     # aucun attribut : les pièces passent par son conducteur.
-    assert set(vars(repondeur._conducteur)) == {"_comprehension", "_clients", "_pieces"}
+    #
+    # #1343 un quatrième, `_verificateur` : celui qui demande au poste ses outils,
+    # relus à chaque tour — `None` ici, le vérificateur réel.
+    assert set(vars(repondeur._conducteur)) == {
+        "_comprehension",
+        "_clients",
+        "_pieces",
+        "_verificateur",
+    }
     assert repondeur._conducteur._clients is None
     assert vars(repondeur._conducteur._comprehension) == {"_provider": juge}
     assert repondeur._conducteur._pieces is None
+    assert repondeur._conducteur._verificateur is None
     assert repondeur._modele is None
 
 
@@ -2400,10 +2457,10 @@ def test_l_objectif_lance_est_celui_qui_a_ete_montre_pas_ce_que_le_fil_contient(
     )
     repondeur = RepondeurOrchestration(lanceur=lanceur, provider=juge)
 
-    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande)))
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil(demande), projet_id=FENETRE))
     asyncio.run(
         repondeur.produire(
-            AGENT_ORCHESTRATION, _fil(demande, _propose(), ACCORD_ECRIT)
+            AGENT_ORCHESTRATION, _fil(demande, _propose(), ACCORD_ECRIT), projet_id=FENETRE
         )
     )
 
@@ -2476,7 +2533,8 @@ def test_le_point_d_injection_dispense_l_app_de_tout_fournisseur(
         )
     ) as client:
         reponse = client.post(
-            f"/api/chat/{NOM_ORCHESTRATION}/messages", json={"contenu": ACCORD_ECRIT}
+            f"/api/chat/{NOM_ORCHESTRATION}/messages",
+            json={"contenu": ACCORD_ECRIT, "projet_id": FENETRE},
         )
 
     assert reponse.status_code == 201
@@ -2635,7 +2693,7 @@ def test_une_proposition_porte_l_objectif_jusqu_au_message(lanceur) -> None:
     """La demande quitte la phrase : elle est sur le message, donc lisible par un écran."""
     reponse = asyncio.run(
         _repondeur_qui_propose(lanceur).produire(
-            AGENT_ORCHESTRATION, _fil("Génère une application d'agenda")
+            AGENT_ORCHESTRATION, _fil("Génère une application d'agenda"), projet_id=FENETRE
         )
     )
 
@@ -2726,7 +2784,7 @@ def client_proposition(bus, depot_chat, lanceur):
     ) as client:
         client.post(
             f"/api/chat/{NOM_ORCHESTRATION}/messages",
-            json={"contenu": "Génère une application d'agenda"},
+            json={"contenu": "Génère une application d'agenda", "projet_id": FENETRE},
         )
         yield client
 
@@ -2845,16 +2903,22 @@ def test_le_geste_part_aussi_sur_le_websocket(client_proposition) -> None:
     assert retour["type"] == EVENEMENT_CHAT_MESSAGE and retour["run_id"] == "run-42"
 
 
-def test_le_projet_de_la_fenetre_voyage_aussi_par_le_geste(
+def test_le_geste_ouvre_le_run_dans_le_projet_de_la_proposition(
     client_proposition, lanceur
 ) -> None:
-    """Un run ouvert au bouton appartient au projet actif, comme un run ouvert au clavier."""
+    """Un run ouvert au bouton appartient au projet **de la proposition** (#1180).
+
+    Il appartenait jusqu'ici au projet de la fenêtre du clic, que le corps porte
+    toujours : c'est ce qui faisait exécuter dans B une proposition faite sur A.
+    Le geste part ici d'une fenêtre passée sur un autre projet, et le run va là
+    où la proposition a été faite.
+    """
     client_proposition.post(
         f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
         json={"approuve": True, "projet_id": "prj-depensio"},
     )
 
-    assert lanceur.projets == ["prj-depensio"]
+    assert lanceur.projets == [FENETRE]
 
 
 def test_une_demande_d_action_se_propose_puis_part_sur_l_accord_dans_son_projet(
@@ -3083,7 +3147,7 @@ def test_un_accord_tape_ne_porte_aucune_borne() -> None:
         _verdict(VERDICT_ACCORD, "C'est parti.", OBJECTIF), lanceur=lanceur
     )
 
-    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve()))
+    asyncio.run(repondeur.produire(AGENT_ORCHESTRATION, _fil_approuve(), projet_id=FENETRE))
 
     assert lanceur.bornes == [AUCUNE_BORNE]
 
@@ -3117,6 +3181,7 @@ def test_une_borne_hors_bornes_est_refusee_par_le_moteur_et_racontee() -> None:
             [],
             approuve=True,
             objectif=OBJECTIF,
+            projet_id=FENETRE,
             bornes=BornesRun(plafond_cout_usd=0),
         )
     )
@@ -3142,7 +3207,7 @@ def fournisseur_qui_propose(monkeypatch: pytest.MonkeyPatch) -> JugeScripte:
 
 
 def test_les_bornes_du_geste_arrivent_au_moteur(
-    bus, depot_chat, projets, moteur, fournisseur_qui_propose
+    bus, depot_chat, projets, moteur, fournisseur_qui_propose, agents_equipes
 ) -> None:
     """La traversée **entière**, sans double de lanceur : corps HTTP → moteur.
 
@@ -3152,18 +3217,20 @@ def test_les_bornes_du_geste_arrivent_au_moteur(
     run naissait sans borne quoi qu'on ait saisi. Celui-ci monte donc l'app
     **entière**, avec un moteur muet, et lit ce que le moteur a reçu.
     """
+    ici = projets.lister()[0]["id"]
     with TestClient(
         create_app(
             bus=bus,
             state=ControlTowerState(),
             chat_store=depot_chat,
             projets=projets,
+            agents_store=agents_equipes,
             fabrique_moteur=moteur,
         )
     ) as client:
         client.post(
             f"/api/chat/{NOM_ORCHESTRATION}/messages",
-            json={"contenu": "Génère une application d'agenda"},
+            json={"contenu": "Génère une application d'agenda", "projet_id": ici},
         )
         reponse = client.post(
             f"/api/chat/{NOM_ORCHESTRATION}/cadrage",
@@ -3336,7 +3403,6 @@ def _sonde_qui_tombe(projet_id: str) -> int | None:
     [
         pytest.param(lambda projet_id: None, PROJET_SANS_EQUIPE, id="sonde-qui-ne-sait-pas"),
         pytest.param(_sonde_qui_tombe, PROJET_SANS_EQUIPE, id="sonde-qui-tombe"),
-        pytest.param(lambda projet_id: 0, None, id="sans-projet"),
     ],
 )
 def test_une_sonde_qui_ne_sait_pas_ne_bride_aucun_run(equipe: Any, projet_id: Any) -> None:
@@ -3344,6 +3410,11 @@ def test_une_sonde_qui_ne_sait_pas_ne_bride_aucun_run(equipe: Any, projet_id: An
 
     Une sonde aveugle qui bloquerait les runs serait une bride (docs/41) : le
     canal ne détourne une demande que sur un compte **nul et certain**.
+
+    Le troisième cas de ce banc — une conversation **sans projet**, où la sonde
+    n'était même pas consultée et où le run restait proposé — est parti avec
+    #1180 : sans projet, aucun run ne se propose, et ce n'est pas une sonde qui le
+    dit (`tests/test_projet_du_fil.py`).
     """
     lanceur = LanceurEspion()
     repondeur = _repondeur_sans_equipe(
@@ -3579,7 +3650,8 @@ def test_le_protocole_entier_equipe_proposee_validee_puis_run(
     # Les quatre champs de #1227 sont **vides** ici, et c'est le fait qui compte :
     # aucun run n'attend cette demande — c'est un projet sans agent, pas un plan
     # qui appelle un rôle absent. `run_id` vide est ce qui fait que l'équipe créée
-    # **repropose** le travail au lieu de laisser un run reprendre.
+    # **repropose** le travail au lieu de laisser un run reprendre. `tache` (#1181)
+    # l'est aussi : aucune tâche d'un run n'est suspendue sur ce recrutement.
     assert fil[-1]["recrutement"] == {
         "objectif": OBJECTIF,
         "projet_id": PROJET_SANS_EQUIPE,
@@ -3588,6 +3660,7 @@ def test_le_protocole_entier_equipe_proposee_validee_puis_run(
         "gabarit": "",
         "raison": "",
         "taches": [],
+        "tache": "",
     }
     assert fil[-1]["proposition"] == ""
 
@@ -3787,7 +3860,11 @@ def test_un_accord_au_geste_ouvre_le_run_puis_le_modele_en_parle() -> None:
 
     reponse = asyncio.run(
         repondeur.trancher_cadrage(
-            AGENT_ORCHESTRATION, _fil_du_geste("Oui, lance."), approuve=True, objectif=OBJECTIF
+            AGENT_ORCHESTRATION,
+            _fil_du_geste("Oui, lance."),
+            approuve=True,
+            objectif=OBJECTIF,
+            projet_id=FENETRE,
         )
     )
 
@@ -3814,7 +3891,9 @@ def test_un_lancement_en_echec_au_geste_se_dit_sans_faire_parler_le_modele() -> 
     repondeur = RepondeurOrchestration(lanceur=lanceur_qui_echoue, provider=juge)
 
     reponse = asyncio.run(
-        repondeur.trancher_cadrage(AGENT_ORCHESTRATION, [], approuve=True, objectif=OBJECTIF)
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION, [], approuve=True, objectif=OBJECTIF, projet_id=FENETRE
+        )
     )
 
     assert reponse.run_id == ""
@@ -3834,7 +3913,9 @@ def test_un_redacteur_muet_ne_defait_pas_le_geste_et_dit_pourquoi_il_se_tait() -
     repondeur = RepondeurOrchestration(lanceur=lanceur, provider=RedacteurEnPanne())
 
     reponse = asyncio.run(
-        repondeur.trancher_cadrage(AGENT_ORCHESTRATION, [], approuve=True, objectif=OBJECTIF)
+        repondeur.trancher_cadrage(
+            AGENT_ORCHESTRATION, [], approuve=True, objectif=OBJECTIF, projet_id=FENETRE
+        )
     )
 
     assert lanceur.objectifs == [OBJECTIF]
@@ -4035,3 +4116,187 @@ def test_sans_recruteur_le_modele_sait_ou_se_cree_l_equipe() -> None:
     assert lanceur.objectifs == []
     [prompt] = juge.jugements
     assert "écrans d'agents" in prompt
+
+
+# ── ⑬ la parole d'après un geste ne redit pas les gestes d'une carte (#1339) ───
+#
+# Vu à la relecture de clôture de #1161, sur la vraie stack et le vrai modèle :
+# après « Écrire ce fichier », le fil disait « vous pouvez la valider telle quelle
+# ou me dire ce qu'il faut y changer » juste au-dessus de la carte qui porte ces
+# gestes. La consigne le demandait — « dis […] ce qu'il peut faire ensuite », sans
+# condition —, et rien ne disait au modèle qu'une carte le montrait déjà.
+#
+# Ce qui se garde ici est ce qui se garde de toute consigne (le partage de
+# `test_registre_de_langue`) : qu'elle **distingue** les deux cas, et que sur chaque
+# chemin du geste la rédaction **sache** dans lequel elle est — dérivé des champs du
+# message, jamais de son texte. Ce qu'un modèle en fait se mesure sur la vraie stack.
+
+
+def _puces(consigne: str) -> list[str]:
+    """Les règles d'une consigne, une par puce, ses lignes recollées."""
+    return [" ".join(puce.split()) for puce in consigne.split("\n- ")[1:]]
+
+
+def test_la_consigne_ne_fait_dire_la_suite_que_quand_aucune_carte_ne_la_montre() -> None:
+    """Les deux moitiés de la règle, chacune sous sa condition.
+
+    La phrase qui les confondait (« dis ce que cela change pour lui et ce qu'il
+    peut faire ensuite », pour tout ce qui s'affiche sous le message) ne doit pas
+    revenir : « la suite » n'est dite que là où aucune carte ne la porte, et la carte
+    qui attend a sa règle à elle — ses gestes ne se redisent pas.
+    """
+    puces = _puces(_PROMPT_REDACTION)
+    suite = [puce for puce in puces if "ce qu'il peut faire ensuite" in puce]
+    carte = [puce for puce in puces if "une carte attend sa réponse" in puce]
+
+    assert len(suite) == 1, "la suite doit se dire sous une seule condition"
+    assert "aucune carte" in suite[0]
+    assert len(carte) == 1, "la carte qui attend doit avoir sa règle"
+    assert "ne les redis pas" in carte[0]
+
+
+def test_le_fait_de_la_demande_parle_la_langue_de_la_consigne() -> None:
+    """Le fait et la règle se reconnaissent aux mêmes mots, sans quoi rien ne les relie."""
+    assert "une carte attend sa réponse" in FAIT_DE_LA_DEMANDE
+    assert "une carte attend sa réponse" in _PROMPT_REDACTION
+
+
+#: Les champs d'une réponse qui ne **demandent** rien, chacun avec sa raison : ils se
+#: lisent sous la bulle, et rien n'y attend de geste.
+_FAITS_DE_LA_REPONSE = {
+    "contenu": "la parole elle-même",
+    "run_id": "le run qu'un accord a ouvert",
+    "tache_id": "la tâche qu'une réponse a ouverte",
+    "equipe": "l'équipe qu'un recrutement a créée",
+    "etapes": "les lectures faites pour répondre",
+    "comprehension": "ce que le questionnaire a compris du projet",
+    "projet_cree": "le projet qu'un accord a déclaré",
+    "piece_ecrite": "ce qu'un geste a fait de la pièce d'avant",
+    "corrections": "ce qu'une phrase a corrigé de l'outillage",
+    "projet_outille": "le projet dont le tour conduit l'outillage",
+    # Il accompagne `proposition` sans rien demander à lui seul : c'est la demande
+    # de cadrage qui porte la carte, lui dit seulement où le run travaillera.
+    "projet_vise": "le projet où travaillera le run proposé",
+    "geste_fait": "ce qu'une confirmation a fait d'un run, relu ensuite (#1179)",
+    "runs_candidats": "les runs qu'une demande ambiguë pouvait viser, à nommer (#1179)",
+}
+
+
+def test_chaque_champ_de_la_reponse_est_une_demande_ou_un_fait() -> None:
+    """Un champ neuf se range — sinon une demande de plus passerait pour un fait.
+
+    Ce qui dit à la rédaction qu'une carte attend est `CHAMPS_DE_DEMANDE` : une
+    sixième demande qu'il oublierait ferait redire ses gestes, en silence.
+    """
+    champs = {champ.name for champ in dataclasses.fields(ReponseChat)}
+    assert not set(CHAMPS_DE_DEMANDE) & set(_FAITS_DE_LA_REPONSE)
+    assert set(CHAMPS_DE_DEMANDE) | set(_FAITS_DE_LA_REPONSE) == champs
+
+
+def _refuser_le_run(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), provider=juge)
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION, _fil_du_geste("Non."), approuve=False, objectif=OBJECTIF
+    )
+
+
+def _lancer_le_run(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), provider=juge)
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION,
+        _fil_du_geste("Oui."),
+        approuve=True,
+        objectif=OBJECTIF,
+        projet_id=FENETRE,
+    )
+
+
+def _lancer_sans_equipe(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(
+        lanceur=LanceurEspion(), provider=juge, equipe=lambda _p: 0, recruteur=RecruteurEspion()
+    )
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION,
+        _fil_du_geste("Oui."),
+        approuve=True,
+        objectif=OBJECTIF,
+        projet_id=PROJET_SANS_EQUIPE,
+    )
+
+
+def _lancer_sans_equipe_ni_recrutement(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), provider=juge, equipe=lambda _p: 0)
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION,
+        _fil_du_geste("Oui."),
+        approuve=True,
+        objectif=OBJECTIF,
+        projet_id=PROJET_SANS_EQUIPE,
+    )
+
+
+def _recruter(
+    juge: JugeQuiRedige, demande: DemandeRecrutement, *, approuve: bool, lanceur: bool = True
+) -> Any:
+    recruteur = RecruteurEspion()
+    repondeur = RepondeurOrchestration(
+        lanceur=LanceurEspion() if lanceur else None,
+        provider=juge,
+        equipe=recruteur.compte,
+        recruteur=recruteur,
+    )
+    return repondeur.recruter(
+        AGENT_ORCHESTRATION,
+        _fil_du_geste("Je valide." if approuve else "Pas d'équipe."),
+        demande=demande,
+        approuve=approuve,
+        roles=_roles_valides() if approuve else (),
+    )
+
+
+#: Chaque chemin du geste de ce fil, et ce qui s'affiche sous sa parole : une carte
+#: qui attend sa réponse (`True`), ou des faits seulement (`False`). Les chemins de
+#: l'outillage et de la naissance d'un projet se jouent dans leurs suites
+#: (`test_outillage_pieces`), le renfort dans la sienne (`test_equipe_au_plan`).
+_CHEMINS_DU_GESTE = {
+    "run refusé": (_refuser_le_run, False),
+    "run lancé": (_lancer_le_run, False),
+    "run sans équipe, l'équipe proposée": (_lancer_sans_equipe, True),
+    "run sans équipe ni recrutement branché": (_lancer_sans_equipe_ni_recrutement, False),
+    "équipe déclinée": (lambda juge: _recruter(juge, _demande(), approuve=False), False),
+    "équipe créée, la demande reproposée": (
+        lambda juge: _recruter(juge, _demande(), approuve=True),
+        True,
+    ),
+    "équipe créée, aucune exécution branchée": (
+        lambda juge: _recruter(juge, _demande(), approuve=True, lanceur=False),
+        False,
+    ),
+    "renfort décliné": (
+        lambda juge: _recruter(juge, _demande_de_renfort(), approuve=False),
+        False,
+    ),
+    "renfort recruté": (
+        lambda juge: _recruter(juge, _demande_de_renfort(), approuve=True),
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("chemin", sorted(_CHEMINS_DU_GESTE))
+def test_la_redaction_sait_si_une_carte_attend_sa_reponse(chemin: str) -> None:
+    """Le fait n'est donné que là où une carte attend — et partout où elle attend.
+
+    Dans les deux sens, et c'est ce qui fait la règle : sans lui, le modèle redit
+    les gestes d'une carte qu'il ne sait pas affichée ; donné à tort, il se tairait
+    sur la suite là où rien ne la montre (un run lancé, un refus).
+    """
+    geste, attendu = _CHEMINS_DU_GESTE[chemin]
+    juge = JugeQuiRedige()
+
+    reponse = asyncio.run(geste(juge))
+
+    assert reponse.contenu == REDIGE
+    assert reponse.porte_une_demande is attendu
+    [redaction] = juge.redactions
+    assert (FAIT_DE_LA_DEMANDE in redaction) is attendu

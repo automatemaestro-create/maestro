@@ -57,6 +57,11 @@ from maestro.controltower import (
 from maestro.controltower.battement import SEUIL_ORPHELIN_S, horodatage_battement
 from maestro.controltower.bridge import evenements_depuis_step
 from maestro.controltower.brief import evenement_demande_brief
+from maestro.controltower.causes import (
+    CAUSE_LIMITE_USAGE,
+    CAUSE_PLAFOND_COUT,
+    CAUSE_PLAFOND_TOURS,
+)
 from maestro.controltower.events import (
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_EXECUTION_STATUT,
@@ -74,6 +79,7 @@ from maestro.controltower.state import (
     AGENT_OCCUPE,
     BRIEF_APPROUVE,
     EXECUTION_ANNULEE,
+    EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
@@ -468,6 +474,30 @@ def test_un_run_deja_solde_rend_409(statut):
 
         assert reponse.status_code == 409
         assert reponse.json()["detail"]["motif"] == MOTIF_RELANCE_RUN_SOLDE
+
+
+@pytest.mark.parametrize("cause", [CAUSE_PLAFOND_COUT, CAUSE_PLAFOND_TOURS, CAUSE_LIMITE_USAGE])
+def test_un_run_arrete_sur_une_borne_se_relance_une_fois(cause):
+    """#1179 : un plafond atteint n'a pas jugé le travail — « relance-le avec 5 $ de plus ».
+
+    Soldé, mais par sa **borne** : il passe le refus « déjà soldé », comme celui que
+    l'extinction a emporté (#486), et le laissez-passer est **consommé** par la
+    relance — un second clic retombe sur le refus.
+    """
+    journal = _journal(
+        *_evenements_du_run_mort(),
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT, run_id=MORT, statut=EXECUTION_ECHEC, cause=cause
+        ),
+    )
+    with _app(journal, RegistreBattementsMemoire(), MoteurEnVol()) as client:
+        premiere = client.post(f"/api/executions/{MORT}/relancer")
+        seconde = client.post(f"/api/executions/{MORT}/relancer")
+
+        assert premiere.status_code == 202, premiere.text
+        assert premiere.json()["reprise_de"] == MORT
+        assert seconde.status_code == 409
+        assert seconde.json()["detail"]["motif"] == MOTIF_RELANCE_RUN_SOLDE
 
 
 def test_un_run_encore_vivant_rend_409():

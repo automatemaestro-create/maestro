@@ -54,6 +54,12 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
    conclure. Ce que la forme ne dit pas, le comportement de `--stop` le dit : c'est
    la **même** fonction `solder_les_runs` que les deux appelants invoquent, et les
    tests ci-dessus l'exercent pour de vrai.
+
+⑤ **La porte se pousse avec le jeton, et un refus se dit comme tel** (#1355). L'API
+   sert durcie depuis #638 : `solder_les_runs` demande le jeton au vrai `maestro-api
+   --jeton` et le passe à `curl` par l'entrée standard, jamais en argument. Seul un
+   `200` qui porte la liste des runs dit ce qui a été soldé — un `401`, un `5xx` ou
+   une réponse illisible ne disent rien des runs, et c'est ce que le script annonce.
 """
 
 from __future__ import annotations
@@ -585,23 +591,42 @@ def test_le_laissez_passer_de_l_extinction_est_consomme_a_la_reprise() -> None:
 # ------------------------------------- ④ `start.sh` ne solde que sur `--stop`
 
 
-def _fauxbin(tmp_path: Path, reponse: str = "") -> tuple[Path, Path]:
+#: Le jeton que les tests de l'extinction imposent à l'API (`MAESTRO_API_JETON`, #638) :
+#: reconnaissable dans un journal, et jamais celui d'un poste.
+JETON_DE_TEST = "jeton-1355-de-test"
+
+
+def _fauxbin(
+    tmp_path: Path, reponse: str = "", statut: str | None = None
+) -> tuple[Path, Path]:
     """Des shims pour tout ce que `--stop` invoque — et le journal de leurs appels.
 
     Trois raisons, une par shim. `curl` est **l'observable** : ce test existe pour
-    savoir si la porte a été poussée, et par quelle méthode — et il rend au besoin la
-    `reponse` d'une API, ce que le script doit savoir relire. `netstat`/`lsof` rendent
-    le vide, ce qui n'est pas du confort — sans eux, un `--stop` joué sur des ports
-    arbitraires irait tuer les process qui les écoutent vraiment. `taskkill`/`kill`
-    sont le filet de ce filet.
+    savoir si la porte a été poussée, par quelle méthode et **avec quel en-tête** — et
+    il rend au besoin la `reponse` d'une API et son `statut` HTTP, ce que le script
+    doit savoir relire. Il tient le rôle entier : la réponse, puis le statut quand on
+    le lui demande (`-w`), et ce qu'on lui passe sur l'entrée standard (`-H @-`) va
+    dans `entetes.log`, à part des arguments. Sans statut nommé, une réponse vaut
+    `200` et le vide vaut `000` — ce que `curl` rend quand personne n'écoute.
+    `netstat`/`lsof` rendent le vide, ce qui n'est pas du confort — sans eux, un
+    `--stop` joué sur des ports arbitraires irait tuer les process qui les écoutent
+    vraiment. `taskkill`/`kill` sont le filet de ce filet.
     """
     fauxbin = tmp_path / "fauxbin"
     fauxbin.mkdir()
     appels = tmp_path / "appels.log"
+    entetes = tmp_path / "entetes.log"
     corps = fauxbin / "reponse.json"
     corps.write_text(reponse, encoding="utf-8", newline="\n")
+    code = statut if statut is not None else ("200" if reponse else "000")
     for nom in ("curl", "taskkill", "kill"):
-        rendu = f'\ncat "{corps.as_posix()}"' if nom == "curl" else ""
+        rendu = (
+            f'\ncase " $* " in *" @- "*) cat >> "{entetes.as_posix()}" ;; esac'
+            f'\ncat "{corps.as_posix()}"'
+            f"\ncase \" $* \" in *\" -w \"*) printf '\\n%s' \"{code}\" ;; esac"
+            if nom == "curl"
+            else ""
+        )
         shim = fauxbin / nom
         shim.write_text(
             f'#!/usr/bin/env bash\necho "{nom} $*" >> "{appels.as_posix()}"{rendu}\n',
@@ -616,16 +641,22 @@ def _fauxbin(tmp_path: Path, reponse: str = "") -> tuple[Path, Path]:
     return fauxbin, appels
 
 
-def _stop(tmp_path: Path, reponse: str = "", **env_extra: str) -> tuple[str, str]:
+def _stop(
+    tmp_path: Path, reponse: str = "", statut: str | None = None, **env_extra: str
+) -> tuple[str, str]:
     """Joue `start.sh --stop` sous shims, et rend `(stdout, journal des appels)`.
 
     Le navigateur par défaut est **imposé hors famille Chromium** : le script n'a
     alors ni fenêtre à surveiller ni binaire à interroger, donc aucun appel à
     PowerShell — ce test porte sur l'extinction, pas sur la résolution du navigateur
     (couverte par `test_controltower_start.py`).
+
+    Le régime d'accès est celui du défaut, **durci**, et son jeton est imposé
+    (`MAESTRO_API_JETON`) : le script le demande au vrai `maestro-api --jeton`, comme
+    au démarrage, et rien n'est lu ni écrit dans le `~/.maestro/` du poste.
     """
     assert BASH is not None
-    fauxbin, appels = _fauxbin(tmp_path, reponse)
+    fauxbin, appels = _fauxbin(tmp_path, reponse, statut)
     environnement = os.environ.copy()
     environnement.pop("MAESTRO_BROWSER", None)
     environnement.pop("MAESTRO_EXTINCTION", None)
@@ -636,6 +667,8 @@ def _stop(tmp_path: Path, reponse: str = "", **env_extra: str) -> tuple[str, str
             "MAESTRO_BROWSER_DEFAUT": "firefox",
             "MAESTRO_PORT_API": "18456",
             "MAESTRO_PORT_UI": "13456",
+            "MAESTRO_API_AUTH": "jeton",
+            "MAESTRO_API_JETON": JETON_DE_TEST,
         }
     )
     environnement.update(env_extra)
@@ -643,6 +676,7 @@ def _stop(tmp_path: Path, reponse: str = "", **env_extra: str) -> tuple[str, str
         [BASH, str(SCRIPT), "--stop"],
         cwd=str(RACINE),
         env=environnement,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -738,6 +772,98 @@ def test_l_extinction_se_desactive_et_le_dit(tmp_path: Path) -> None:
 
     assert "api/extinction" not in appels
     assert "désactivée" in stdout
+
+
+def _entetes(tmp_path: Path) -> str:
+    """Ce que le script a passé à `curl` sur son entrée standard — ses en-têtes."""
+    fichier = tmp_path / "entetes.log"
+    return fichier.read_text(encoding="utf-8") if fichier.exists() else ""
+
+
+@pytest.mark.skipif(BASH is None, reason="bash introuvable")
+def test_l_extinction_part_avec_le_jeton_de_l_api(tmp_path: Path) -> None:
+    """L'API sert durcie depuis #638 : sans jeton, la porte répond `401` (#1355).
+
+    L'accident qu'on garde ici a duré : `--stop` et la fenêtre fermée poussaient la
+    porte **sans en-tête**, l'API refusait, et le script annonçait « aucun run en
+    vol » pendant que les runs continuaient sur leur hôte détaché. Le jeton est
+    celui que `maestro-api --jeton` rend — le même chemin qu'au démarrage, jamais un
+    fichier relu en shell.
+
+    Il passe par l'**entrée standard** de `curl` (`-H @-`) et jamais par ses
+    arguments : une ligne de commande se lit dans la liste des process du poste, et
+    le jeton n'a rien à y faire (#1292 l'a retiré des journaux pour la même raison).
+    """
+    stdout, appels = _stop(tmp_path, reponse='{"runs":[],"nb":0}')
+
+    assert f"Authorization: Bearer {JETON_DE_TEST}" in _entetes(tmp_path), stdout
+    assert JETON_DE_TEST not in appels, "le jeton est passé en argument de curl"
+    assert "aucun run en vol" in stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="bash introuvable")
+def test_en_regime_ouvert_l_extinction_part_sans_en_tete(tmp_path: Path) -> None:
+    """`MAESTRO_API_AUTH=ouvert` : l'API n'exige rien, et le script n'envoie rien.
+
+    `maestro-api --jeton` rend alors le code `3` et une sortie vide — « il n'y en a
+    pas » n'est pas une panne, et ne se dit donc pas comme un jeton illisible.
+    """
+    stdout, appels = _stop(tmp_path, reponse='{"runs":[],"nb":0}', MAESTRO_API_AUTH="ouvert")
+
+    assert "api/extinction" in appels
+    assert _entetes(tmp_path) == ""
+    assert "illisible" not in stdout
+    assert "aucun run en vol" in stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="bash introuvable")
+@pytest.mark.parametrize(
+    ("reponse", "statut", "attendu"),
+    [
+        ('{"detail":"jeton requis"}', "401", "refusée : HTTP 401"),
+        ("<html>Internal Server Error</html>", "500", "refusée : HTTP 500"),
+        ("<html>502</html>", "200", "réponse illisible"),
+    ],
+    ids=["jeton-refuse", "panne-de-l-api", "reponse-illisible"],
+)
+def test_un_refus_n_est_jamais_lu_comme_aucun_run(
+    tmp_path: Path, reponse: str, statut: str, attendu: str
+) -> None:
+    """Un refus se dit comme tel, et l'arrêt continue (#1355).
+
+    Le `401` de #1355 ne contenait aucun `run_id`, et c'est tout ce que le script
+    regardait : il concluait « aucun run en vol ». Un refus, une panne ou une
+    réponse qu'on ne sait pas lire ne disent rien des runs — ils peuvent encore
+    tourner, et c'est ce qu'il faut dire. L'arrêt, lui, va au bout : refuser
+    d'arrêter le reste ferait d'un soldage manqué un second accident.
+    """
+    stdout, _ = _stop(tmp_path, reponse=reponse, statut=statut)
+
+    assert "aucun run en vol" not in stdout
+    assert attendu in stdout
+    assert "des runs peuvent rester en vol" in stdout
+    assert "Control Tower arrêtée." in stdout
+
+
+@pytest.mark.skipif(BASH is None, reason="bash introuvable")
+def test_un_jeton_illisible_se_dit_et_l_extinction_part_quand_meme(tmp_path: Path) -> None:
+    """Un régime inconnu fait échouer `maestro-api --jeton` : on le dit, on tente.
+
+    Tenter sans jeton ne coûte rien — l'API dira si elle le voulait, et son refus
+    sera nommé à son tour. S'abstenir laisserait les runs en vol sans même avoir
+    frappé à la porte.
+    """
+    stdout, appels = _stop(
+        tmp_path,
+        reponse='{"detail":"jeton requis"}',
+        statut="401",
+        MAESTRO_API_AUTH="regime-inconnu",
+    )
+
+    assert "jeton de l'API illisible" in stdout
+    assert "api/extinction" in appels
+    assert _entetes(tmp_path) == ""
+    assert "refusée : HTTP 401" in stdout
 
 
 def _appels_a_solder(texte: str) -> list[int]:

@@ -49,6 +49,7 @@ L'opérateur humain et le poste lui-même sont réputés de confiance (POC).
 | Épuisement des ressources du poste | boucle, compilation, fork bomb | Plafonds du conteneur : 256 pids, 2 Go, 2 CPU ; time-out par tâche (#64). ⚠ Le **plafond de tours ne compte plus** parmi les parades : #494 lui a retiré son défaut, aucun agent n'est plus borné sauf `plafond_tours` posé explicitement. Ce qui reste opposable à une boucle est donc ce que le conteneur borne — et, hors mode isolé, seuls le time-out par tâche et un plafond de dépense armé au lancement | #108 |
 | Vol de secrets d'un autre agent | agent compromis résolvant `${VAR}` d'autrui | Coffre **par agent** : la résolution MCP ne lit que le coffre de l'agent exécutant ; secret absent = serveur indisponible (échec propre), même si la variable existe dans le process | #109 |
 | Fuite de secret en sortie | agent citant son token dans un livrable, trace, rapport | Registre de rédaction : toute valeur **servie** est masquée (`[secret masqué]`) à la consignation — le journal alimentant Langfuse, le pont Control Tower et les rapports, le masquage suit partout | #109 (socle #8) |
+| Fuite d'un secret par l'acte d'un appel arbitré | commande `Bash` portant un jeton, que la trace de l'appel garde au journal et montre dans l'activité du run | L'acte (outil et arguments) est **rédigé avant d'être borné** : une coupe tombée au milieu d'un secret servi en laisserait un fragment que plus aucune rédaction ne reconnaît, pas même celle du journal. L'acte va à la trace, jamais au motif servi à l'agent | #1282 (socle #109) |
 | Lecture de l'environnement hôte depuis le conteneur | code exécuté dans le conteneur | Environnement minimal : seules les 3 variables d'auth fournisseur entrent (`ENV_TRANSMISES`) ; les secrets MCP voyagent résolus en mémoire, jamais dans l'environnement du conteneur | #108/#109 |
 | Action interdite via un outil | appel d'outil intégré ou MCP hors mandat | Politique **allow/deny par agent et par outil** : outils refusés retirés de la session, serveur MCP refusé jamais monté (secrets jamais résolus), le reste refusé **au vol** (hook PreToolUse) avec motif — violation tracée (`:refus-outil`), jamais fatale au run | #110 |
 | Config MCP ambiante montée à l'insu | config utilisateur/projet/plugin du CLI | `strict_mcp_config` : la session ne monte que la liste déclarée de l'agent | #104 |
@@ -466,7 +467,9 @@ sur `python:3.11-slim` :
 Compléments existants : `tests/test_mcp.py` (références `${VAR}`, littéraux
 masqués, `strict_mcp_config`), `tests/test_telemetry.py` et
 `tests/test_engine.py` (rédaction des valeurs d'environnement et motifs de
-clés au journal).
+clés au journal), `tests/test_arbitrage_acte.py` (bloc ⑥, #1282 : l'acte d'un
+appel arbitré, secret compris, du hook jusqu'à l'activité du run — y compris
+quand la borne tombe au milieu du secret).
 
 Pour le **mode local durci** (#638, §2.5), `tests/test_acces_api.py` : jeton
 engendré au premier démarrage, persisté hors du dépôt et idempotent ; `401` sur
