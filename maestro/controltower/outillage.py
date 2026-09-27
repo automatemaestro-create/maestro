@@ -146,7 +146,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -191,17 +191,23 @@ from maestro.outillage.questionnaire import (
     Comprehension,
     QuestionOutillage,
     acquis_de,
+    au_poste,
     comprehension_depuis_texte,
     constats_depuis_choix,
     donnees,
+    poste_en_texte,
+    programmes_a_sonder,
+    programmes_de_l_option,
     question_ouverte,
     recommandation_depuis_choix,
     reponses_en_texte,
+    repose_sur_un_absent,
     resume_des_choix,
     schema_en_texte,
     source_manifeste_des_choix,
     sujet_de,
 )
+from maestro.outillage.verification import Verificateur
 from maestro.projets import Projet
 from maestro.providers.base import ModelProvider
 
@@ -267,12 +273,21 @@ Ne justifie jamais un choix par ce que Maestro utilise lui-même : Maestro n'est
 projet. Si rien ne désigne une option plutôt qu'une autre, dis-le. La personne peut
 toujours répondre autre chose avec ses mots : n'ajoute pas d'option « autre ».
 
+Chaque option dit dans "outils" les programmes qu'elle demande sur le poste, tels qu'on
+les tape (par exemple "uv", "mvn", "dotnet", "typst") — une liste vide si elle n'en demande
+aucun. Maestro les cherche sur le poste de la personne, et te dit ce qu'il a trouvé sous
+« Ce que le poste a répondu ». Un outil introuvable sur ce poste ne se recommande pas et
+ne fonde aucun constat, sauf si la personne l'a elle-même choisi : recommande une option
+qui s'en passe, et dis-le dans "pourquoi". Un outil installé est un argument pour ce
+projet-ci.
+
 Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code :
 
 {"message": "...",
  "constats": [{"cle": "...", "valeur": "...", "parce_que": "..."}],
  "questions": [{"cle": "...", "intitule": "...",
-                "options": [{"valeur": "...", "libelle": "...", "raison": "..."}],
+                "options": [{"valeur": "...", "libelle": "...", "raison": "...",
+                             "outils": ["..."]}],
                 "recommande": "...", "pourquoi": "..."}]}
 
 - "message" : une phrase à la personne, facultative — vide s'il n'y a rien à dire ;
@@ -326,31 +341,44 @@ class ComprehensionModele:
         self._provider = provider
 
     async def comprendre(
-        self, conversation: str, reponses: Sequence[Choix]
+        self,
+        conversation: str,
+        reponses: Sequence[Choix],
+        *,
+        poste: Mapping[str, bool] | None = None,
     ) -> Comprehension:
-        """La compréhension de ce qui a été dit — `conversation` puis les `reponses`."""
+        """La compréhension de ce qui a été dit — `conversation` puis les `reponses`.
+
+        `poste` (#1343) est ce que le poste a répondu des outils déjà en jeu :
+        programme → installé. Il est dit au modèle, qui en tient compte.
+        """
         from maestro.providers.factory import modele_du_canal, provider_from_settings
 
         if self._provider is None:
             self._provider = provider_from_settings()
         fournisseur = self._provider
         texte = await fournisseur.generate(
-            _prompt_de_comprehension(conversation, reponses),
+            _prompt_de_comprehension(conversation, reponses, poste or {}),
             model=modele_du_canal(MODELE_EXECUTANT_DEFAUT, fournisseur),
             system_prompt=_PROMPT_COMPREHENSION,
         )
         return comprehension_depuis_texte(texte, reponses)
 
 
-def _prompt_de_comprehension(conversation: str, reponses: Sequence[Choix]) -> str:
-    """Le prompt d'utilisateur : ce qui a été dit, puis les réponses aux questions."""
+def _prompt_de_comprehension(
+    conversation: str, reponses: Sequence[Choix], poste: Mapping[str, bool] | None = None
+) -> str:
+    """Le prompt d'utilisateur : ce qui a été dit, les réponses, puis ce que le poste a répondu."""
     dit = conversation.strip() or "(rien d'autre n'a été dit)"
-    return (
+    prompt = (
         "## Ce qui a été dit dans la conversation\n\n"
         f"{dit}\n\n"
         "## Les réponses aux questions, dans l'ordre\n\n"
         f"{reponses_en_texte(reponses)}\n"
     )
+    if poste:
+        prompt += f"\n## Ce que le poste a répondu\n\n{poste_en_texte(poste)}\n"
+    return prompt
 
 
 def _conversation_de(fil: Sequence[MessageChat]) -> str:
@@ -370,6 +398,22 @@ def _conversation_de(fil: Sequence[MessageChat]) -> str:
         return ""
     corps = transcription(fil).split("\n\n", 1)[-1].rsplit("\n\n", 1)[0]
     return corps if len(corps) <= CONVERSATION_MAX else "…" + corps[-CONVERSATION_MAX:]
+
+
+def _programmes_du_fil(fil: Sequence[MessageChat]) -> tuple[str, ...]:
+    """Les outils que ce fil a déjà mis en jeu (#1343) — lus sur sa structure, jamais son texte.
+
+    Les options des questions déjà posées, puis les commandes de la dernière
+    compréhension : c'est ce que le modèle a déjà proposé, et ce que le poste en a dit
+    doit lui être redit — il ne se souvient de rien d'un tour à l'autre.
+    """
+    noms: list[str] = []
+    for message in fil:
+        if message.question is not None:
+            for option in message.question.options:
+                noms.extend(programmes_de_l_option(message.question, option))
+    noms.extend(programmes_a_sonder(Comprehension(), acquis_du_fil(fil)))
+    return tuple(dict.fromkeys(noms))
 
 
 def _retenue(
@@ -565,6 +609,15 @@ def _touchee(piece: PieceProposee, fil: Sequence[MessageChat]) -> bool:
     return any(chemin == piece.chemin and vue != piece.empreinte for chemin, vue in vues)
 
 
+def _phrase_de_revue(projet_nom: str) -> str:
+    """Ce que le fil dit quand un run a fait changer l'outillage d'un projet (#1343)."""
+    return (
+        f"« {projet_nom} » a maintenant ses fichiers : j'ai rejoué les commandes de son "
+        "outillage qui n'avaient pas encore passé, et ce qu'elles ont rendu change ce "
+        "qu'il écrit. Chaque pièce se réécrit sur votre accord."
+    )
+
+
 def _phrase_de_fin(projet_nom: str) -> str:
     """Ce que le fil dit quand plus aucune pièce n'est à écrire (#1161)."""
     return (
@@ -610,6 +663,14 @@ class ConducteurOutillage:
     **lit** (#1158), et sa première pièce vient tout de suite. Le geste sur une pièce
     (`trancher`) et une correction dite avec des mots (`corriger`) donnent la
     suivante. Sans ce collaborateur, le conducteur conclut comme avant, et le dit.
+
+    ## Et depuis #1343, il demande au poste
+
+    Un dernier collaborateur, `verificateur`, sonde les outils que la compréhension
+    met en jeu (`_comprendre`) : ce que le poste répond est dit au modèle, et une
+    recommandation qui repose sur un outil introuvable ne reste pas recommandée
+    (`maestro.outillage.questionnaire.au_poste`). `None` vaut le vérificateur réel —
+    sans bash sur le poste, il ne répond rien, et la compréhension est celle d'avant.
     """
 
     def __init__(
@@ -618,10 +679,12 @@ class ConducteurOutillage:
         clients: DetecteurClients | None = None,
         *,
         pieces: ServicePieces | None = None,
+        verificateur: Verificateur | None = None,
     ) -> None:
         self._comprehension = comprehension or ComprehensionModele()
         self._clients = clients
         self._pieces = pieces
+        self._verificateur = verificateur
 
     @property
     def ecrit(self) -> bool:
@@ -679,7 +742,7 @@ class ConducteurOutillage:
         if not conversation and not reponses:
             ouverte = question_ouverte()
             return ReponseChat(contenu=_phrase_de_la_question(ouverte), question=ouverte)
-        comprise = await self._comprehension.comprendre(conversation, reponses)
+        comprise = await self._comprendre(conversation, reponses, propre)
         acquis = acquis_de([*reponses, *comprise.constats])
         suivante = comprise.question_suivante(rang=len(donnees(reponses)) + 1)
         if suivante is None and self._pieces is not None and projet:
@@ -702,6 +765,43 @@ class ConducteurOutillage:
             question=suivante,
             comprehension=acquis,
         )
+
+    async def _comprendre(
+        self, conversation: str, reponses: Sequence[Choix], fil: Sequence[MessageChat]
+    ) -> Comprehension:
+        """Ce que le modèle comprend, **confronté au poste** (#1343).
+
+        Trois temps, et le modèle ne parle jamais d'un outil qu'on n'a pas cherché :
+
+        1. ce que le fil met déjà en jeu — les options des questions posées, les
+           commandes comprises — est demandé au poste, et dit au modèle ;
+        2. ce qu'il propose de neuf est demandé à son tour. S'il repose sur un outil
+           **introuvable qu'il ne connaissait pas** — sa recommandation, une commande
+           qu'il a déduite —, il est saisi une seconde fois, avec ce que le poste a
+           répondu : c'est lui qui se reprend, pas le code qui choisit à sa place ;
+        3. le code vérifie ensuite (`au_poste`) : une option qui manque d'un outil le
+           dit, et ne reste pas recommandée s'il en est une qui s'en passe.
+
+        Sans bash sur le poste, rien ne se sonde, et c'est la compréhension d'avant.
+        """
+        connu = await self._sonder(_programmes_du_fil(fil))
+        comprise = await self._comprehension.comprendre(conversation, reponses, poste=connu)
+        poste = {**connu, **await self._sonder(programmes_a_sonder(comprise), sauf=connu)}
+        neufs = [nom for nom, present in poste.items() if not present and nom not in connu]
+        if repose_sur_un_absent(comprise, neufs):
+            comprise = await self._comprehension.comprendre(conversation, reponses, poste=poste)
+            poste.update(await self._sonder(programmes_a_sonder(comprise), sauf=poste))
+        return au_poste(comprise, poste)
+
+    async def _sonder(
+        self, noms: Iterable[str], *, sauf: Mapping[str, bool] | None = None
+    ) -> dict[str, bool]:
+        """Ce que le poste répond de ces programmes — hors de la boucle : c'est un processus."""
+        demandes = tuple(nom for nom in noms if nom not in (sauf or {}))
+        if not demandes:
+            return {}
+        verificateur = self._verificateur or Verificateur()
+        return await asyncio.to_thread(verificateur.sonder, demandes)
 
     async def _piece(
         self,
@@ -796,6 +896,38 @@ class ConducteurOutillage:
         if projet_id and self._pieces is not None:
             self._pieces.reprendre(projet_id)
         return await self._tour(fil, projet_id)
+
+    async def apres_le_run(
+        self, fil: Sequence[MessageChat], projet_id: str
+    ) -> ReponseChat | None:
+        """L'outillage **revu après un run** : la pièce que le projet construit fait changer (#1343).
+
+        « À vérifier » promettait que ce qui ne pouvait pas encore se jouer le serait
+        dès que le projet le permettrait ; le banc de #1162 a montré que personne ne le
+        faisait, et qu'`AGENTS.md` prescrivait ensuite des commandes qui échouent. Un
+        run vient de donner au projet ses fichiers : les commandes qui n'avaient pas
+        passé sont **rejouées** (`ServicePieces.prochaine(revoir=True)`), et la première
+        pièce dont le texte change — une commande vérifiée, ou dite échouée avec sa
+        sortie — est **proposée**, comme toute pièce : rien ne s'écrit sans accord, et
+        les suivantes viennent geste après geste.
+
+        `None` quand il n'y a rien à revoir (`ServicePieces.a_revoir`) ou que rien de
+        ce que l'outillage écrit ne change. Bloquant par morceaux : les commandes se
+        jouent, hors de la boucle.
+        """
+        pieces = self._pieces
+        if pieces is None or not await pieces.a_revoir(projet_id, fil):
+            return None
+        suivante = await pieces.prochaine(projet_id, fil, revoir=True)
+        if suivante is None:
+            return None
+        return ReponseChat(
+            contenu=_texte_de_la_piece(
+                _phrase_de_revue(suivante.projet_nom), suivante, faits=False, apres_le_juge=False
+            ),
+            piece=suivante,
+            projet_outille=projet_id,
+        )
 
     async def trancher(
         self,

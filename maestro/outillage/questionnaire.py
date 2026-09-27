@@ -74,6 +74,26 @@ sur 6 »). Le plafond disparaît avec le catalogue : la compréhension rend les 
 qui restent, et une compréhension sans question **est** la conclusion. `rang` dit
 combien de réponses ont déjà été données, jamais combien il en reste — personne ne le
 sait d'avance, et un total qui bouge sous les yeux mentirait deux fois.
+
+## La recommandation regarde le poste (#1343)
+
+Le banc de #1162 a vu recommander `uv`, `ruff`, `typst`, `pandoc` pour un projet neuf,
+sur un poste qui n'en avait aucun : le modèle ne voit pas le poste, et rien ne le lui
+disait. Chaque option dit donc **les outils qu'elle demande** (`Option.outils`, écrits
+par le modèle — il sait que Maven se lance par `mvn` —, et pour une option qui est une
+commande, les programmes qu'elle appelle, lus sur son texte). Maestro les **sonde**
+(`maestro.outillage.verification`), et ce module tire du résultat ce qu'il implique,
+sans rien deviner (`au_poste`) :
+
+- une option dont un outil est introuvable le **dit** (`Option.absents`, et sa raison
+  le nomme) ;
+- une recommandation qui repose sur un outil introuvable **se reporte** sur la
+  première option qui s'en passe, et `pourquoi` dit pourquoi. Si toutes en manquent,
+  elle reste : c'est alors à la personne de dire ce qu'elle installera.
+
+Ce que le poste a répondu est aussi **dit au modèle** (`poste_en_texte`), pour que ses
+constats et ses questions suivantes en tiennent compte : c'est lui qui comprend, le
+code ne fait que vérifier.
 """
 
 from __future__ import annotations
@@ -81,8 +101,8 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 from maestro.outillage.clients import Client, clients_depuis_texte, reunir
@@ -98,6 +118,7 @@ from maestro.outillage.modele import (
     Recommandation,
 )
 from maestro.outillage.recommandation import recommander
+from maestro.outillage.verification import programmes, sondable
 
 #: Le `source.type` du manifeste (docs/38 §4.1) quand l'outillage vient des **réponses**
 #: de l'utilisateur. Son pendant, `"analyse"`, est écrit par `Analyse.source_manifeste`
@@ -154,6 +175,10 @@ VALEUR_MAX = 200
 #: c'est la personne qui décrit son projet, et c'est tout ce que le modèle en saura.
 REPONSE_LIBRE_MAX = 2000
 
+#: Combien d'outils une option peut dire demander (#1343) : de quoi nommer une pile
+#: (`dotnet`, `node`, `npm`), pas une liste qu'on sonderait une heure.
+OUTILS_MAX = 8
+
 
 def _est_aucun(valeur: str) -> bool:
     """`valeur` dit-elle « il n'y en a pas » ?"""
@@ -184,15 +209,31 @@ class Option:
     Depuis #1147 les options sont **écrites pour le projet** par le modèle, et `valeur`
     est la valeur concrète du sujet (une commande, un fichier), pas un code de
     catalogue.
+
+    `outils` (#1343) sont les programmes que ce choix demande sur le poste, tels que le
+    modèle les a nommés ; `absents`, ceux que le poste a dit ne pas avoir
+    (`au_poste`). Ni l'un ni l'autre n'est écrit dans la forme REST quand il est vide :
+    une option d'avant #1343 se relit à l'identique.
     """
 
     valeur: str
     libelle: str
     raison: str
+    outils: tuple[str, ...] = ()
+    absents: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """La forme du REST."""
-        return {"valeur": self.valeur, "libelle": self.libelle, "raison": self.raison}
+        forme: dict[str, Any] = {
+            "valeur": self.valeur,
+            "libelle": self.libelle,
+            "raison": self.raison,
+        }
+        if self.outils:
+            forme["outils"] = list(self.outils)
+        if self.absents:
+            forme["absents"] = list(self.absents)
+        return forme
 
 
 @dataclass(frozen=True)
@@ -248,6 +289,8 @@ class QuestionOutillage:
                     valeur=str(o.get("valeur") or ""),
                     libelle=str(o.get("libelle") or ""),
                     raison=str(o.get("raison") or ""),
+                    outils=_outils_lus(o.get("outils")),
+                    absents=_outils_lus(o.get("absents")),
                 )
                 for o in options
                 if isinstance(o, Mapping)
@@ -472,8 +515,22 @@ def _options_lues(brut: Any) -> tuple[Option, ...]:
             valeur=valeur,
             libelle=_une_ligne(entree.get("libelle") or valeur, VALEUR_MAX),
             raison=_une_ligne(entree.get("raison") or "", VALEUR_MAX),
+            outils=_outils_lus(entree.get("outils")),
         )
     return tuple(vues.values())
+
+
+def _outils_lus(brut: Any) -> tuple[str, ...]:
+    """Les outils qu'une option nomme, validés : des programmes, sans doublon, bornés (#1343).
+
+    Un nom qui n'est pas un programme à chercher sur le poste — une phrase, un chemin —
+    est écarté plutôt que sondé : c'est une donnée écrite par le modèle, qui finira
+    dans une commande jouée par le bash des agents.
+    """
+    noms = (
+        nom.strip() for nom in (brut if isinstance(brut, list) else ()) if isinstance(nom, str)
+    )
+    return tuple(dict.fromkeys(nom for nom in noms if sondable(nom)))[:OUTILS_MAX]
 
 
 def _questions_lues(brut: Any, tranches: set[str]) -> tuple[QuestionOutillage, ...]:
@@ -551,6 +608,132 @@ def reponses_en_texte(reponses: Sequence[Choix]) -> str:
         for c in donnees(reponses)
     ]
     return "\n".join(lignes) if lignes else "(aucune réponse pour l'instant)"
+
+
+# --------------------------------------------------------------------------- #
+# Ce que le poste répond (#1343)                                                #
+# --------------------------------------------------------------------------- #
+
+
+def programmes_de_l_option(question: QuestionOutillage, option: Option) -> tuple[str, ...]:
+    """Les programmes qu'une option demande : ceux qu'elle nomme, et ceux de sa commande.
+
+    Une option d'un sujet de commande (`USAGES`) **est** une commande : ce qu'elle
+    appelle se lit sur son texte, même si le modèle a oublié de le nommer. Pour les
+    autres sujets (un gestionnaire, une forge), seuls comptent les outils nommés.
+    """
+    noms = [*option.outils]
+    if question.cle in USAGES:
+        noms.extend(programmes(option.valeur))
+    return tuple(dict.fromkeys(noms))
+
+
+def programmes_a_sonder(
+    comprehension: Comprehension, acquis: Sequence[Choix] = ()
+) -> tuple[str, ...]:
+    """Tout ce que le poste doit dire pour juger une compréhension, chaque nom une fois.
+
+    Les outils de chaque option de chaque question, puis les programmes des commandes
+    **comprises** — les constats de `comprehension` et ceux déjà `acquis` : un constat
+    déduit (« tester : uv run pytest ») repose sur un outil aussi sûrement qu'une option.
+    """
+    noms: list[str] = []
+    for question in comprehension.questions:
+        for option in question.options:
+            noms.extend(programmes_de_l_option(question, option))
+    for choisi in (*comprehension.constats, *acquis):
+        if choisi.cle in USAGES and not choisi.libre:
+            noms.extend(programmes(choisi.valeur))
+    return tuple(dict.fromkeys(noms))
+
+
+def repose_sur_un_absent(comprehension: Comprehension, absents: Iterable[str]) -> bool:
+    """Ce que le modèle propose repose-t-il sur l'un de ces outils introuvables ?
+
+    La recommandation d'une question, ou une commande qu'il a **déduite** : c'est ce
+    qu'il faut lui redire avec ce que le poste a répondu, pour qu'il se reprenne. Une
+    option non recommandée qui en manque ne demande rien — elle le dira d'elle-même.
+    """
+    manquants = set(absents)
+    if not manquants:
+        return False
+    for question in comprehension.questions:
+        for option in question.options:
+            if option.valeur == question.recommande and manquants & set(
+                programmes_de_l_option(question, option)
+            ):
+                return True
+    return any(
+        choisi.cle in USAGES and manquants & set(programmes(choisi.valeur))
+        for choisi in comprehension.constats
+    )
+
+
+def au_poste(comprehension: Comprehension, poste: Mapping[str, bool]) -> Comprehension:
+    """La compréhension, ses questions confrontées à ce que le poste a répondu.
+
+    `poste` dit, programme par programme, s'il est installé (`True`) ou introuvable
+    (`False`) ; un programme dont le poste n'a rien dit est **inconnu**, et rien n'en
+    découle. Voir le module : une option qui repose sur un outil introuvable le dit, et
+    ne reste pas recommandée s'il en est une qui s'en passe. Idempotent — une option
+    qui porte déjà ses absents n'est pas annotée deux fois.
+    """
+    if not any(present is False for present in poste.values()):
+        return comprehension
+    return replace(
+        comprehension,
+        questions=tuple(_question_au_poste(q, poste) for q in comprehension.questions),
+    )
+
+
+def _question_au_poste(
+    question: QuestionOutillage, poste: Mapping[str, bool]
+) -> QuestionOutillage:
+    """Une question, ses options annotées de leurs outils absents, sa recommandation reportée."""
+    options = tuple(_option_au_poste(question, option, poste) for option in question.options)
+    recommandee = next((o for o in options if o.valeur == question.recommande), None)
+    autre = next((o for o in options if not o.absents), None)
+    if recommandee is None or not recommandee.absents or autre is None:
+        return replace(question, options=options)
+    return replace(
+        question,
+        options=options,
+        recommande=autre.valeur,
+        pourquoi=(
+            f"{_manquent(recommandee.absents)} sur ce poste : je vous propose "
+            f"« {autre.libelle} », qui s'en passe."
+        ),
+    )
+
+
+def _option_au_poste(
+    question: QuestionOutillage, option: Option, poste: Mapping[str, bool]
+) -> Option:
+    """L'option, et ce qui lui manque sur le poste — telle quelle s'il ne lui manque rien."""
+    if option.absents:
+        return option
+    absents = tuple(p for p in programmes_de_l_option(question, option) if poste.get(p) is False)
+    if not absents:
+        return option
+    debut = option.raison.rstrip(". ")
+    fait = f"{_manquent(absents)} sur ce poste."
+    return replace(option, absents=absents, raison=f"{debut} — {fait}" if debut else fait)
+
+
+def _manquent(absents: Sequence[str]) -> str:
+    """« `uv` n'est pas installé », « `uv` et `ruff` ne sont pas installés »."""
+    noms = [f"`{nom}`" for nom in absents]
+    if len(noms) == 1:
+        return f"{noms[0]} n'est pas installé"
+    return f"{', '.join(noms[:-1])} et {noms[-1]} ne sont pas installés"
+
+
+def poste_en_texte(poste: Mapping[str, bool]) -> str:
+    """Ce que le poste a répondu, tel que le modèle le lit — une ligne par outil, triées."""
+    return "\n".join(
+        f"- `{nom}` : {'installé' if present else 'introuvable sur ce poste'}"
+        for nom, present in sorted(poste.items())
+    )
 
 
 def acquis_de(choix: Sequence[Choix]) -> tuple[Choix, ...]:

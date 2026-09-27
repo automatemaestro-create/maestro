@@ -676,11 +676,17 @@ def test_la_conclusion_porte_la_comprehension_et_ne_promet_aucun_geste_absent() 
 def test_le_conducteur_ne_garde_aucun_etat_du_questionnaire() -> None:
     """Ses seuls attributs sont ses collaborateurs : jamais une réponse ni un tour.
 
-    Celui qui comprend, celui qui trouve les clients du poste (#1295), et depuis #1161
+    Celui qui comprend, celui qui trouve les clients du poste (#1295), depuis #1161
     celui qui écrit les pièces — qui ne garde pas d'état de conversation non plus
-    (`maestro.controltower.pieces`).
+    (`maestro.controltower.pieces`) —, et depuis #1343 celui qui demande au poste ses
+    outils, relus à chaque tour.
     """
-    assert set(vars(ConducteurOutillage())) == {"_comprehension", "_clients", "_pieces"}
+    assert set(vars(ConducteurOutillage())) == {
+        "_comprehension",
+        "_clients",
+        "_pieces",
+        "_verificateur",
+    }
 
 
 # --- ④ Les routes du fil -------------------------------------------------------------

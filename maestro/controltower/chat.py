@@ -210,7 +210,7 @@ import unicodedata
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -3152,6 +3152,7 @@ class ServiceChat:
         contenu: str,
         run_id: str,
         conversation: str | None = None,
+        suite: ReponseChat | None = None,
     ) -> MessageChat:
         """Pose dans le fil le **récit de fin** d'un run (#1224).
 
@@ -3167,15 +3168,20 @@ class ServiceChat:
         bulle mène au run. Il n'en résulte aucun doublon d'annonce — `issuesDuFil`
         ne retient qu'une fin par run, jamais une par message.
 
+        `suite` (#1343) est ce que la fin **propose** en plus du récit — la pièce
+        d'outillage que le projet construit fait changer (`ConducteurOutillage.
+        apres_le_run`). Elle voyage sur le **même** message, et c'est ce qui la
+        rend tranchable : une demande n'attend que sur le dernier message du fil
+        (`piece_en_attente`), et un récit posé après elle l'aurait soldée.
+
         Le fil visé est celui de l'**orchestration** : comme partout ici, c'est
         l'appelant qui le choisit en passant sa fiche.
         """
         fil = self._resoudre(agent, conversation)
-        return await self._persister_reponse(
-            agent,
-            conversation=fil,
-            reponse=ReponseChat(contenu=contenu, run_id=run_id),
-        )
+        reponse = ReponseChat(contenu=contenu, run_id=run_id)
+        if suite is not None:
+            reponse = replace(suite, contenu=contenu, run_id=run_id)
+        return await self._persister_reponse(agent, conversation=fil, reponse=reponse)
 
     def conversation_du_run(self, agent: str, run_id: str) -> str | None:
         """La conversation de `agent` où `run_id` a été demandé — `None` si aucune (#1224)."""
