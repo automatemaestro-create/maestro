@@ -23,7 +23,12 @@ verification` (#1160), appliquée ici au livrable d'une tâche :
    pas trouvé) — dans le même espace de travail, où ses fichiers l'attendent ;
 3. les contrôles sont établis **une fois**, à la première livraison, puis rejoués
    à l'identique : l'agent est jugé sur ce qu'on lui a dit, et ce qu'on lui a dit
-   ne bouge pas entre deux corrections.
+   ne bouge pas entre deux corrections ;
+4. le vérificateur peut se tromper, et il se relit avant de renvoyer qui que ce
+   soit : une commande que Maestro ne sait pas jouer est **réécrite**, et une
+   commande qui n'a pas tenu est **contre-expertisée** — le défaut est-il dans le
+   livrable, ou dans le contrôle ? Seul un contrôle qui ne constate pas son
+   critère se réécrit, jamais pour qu'il passe.
 
 ## Où l'on joue
 
@@ -519,7 +524,61 @@ class VerificateurTaches:
                         preuve="le vérificateur n'a pas rendu de jugement sur cette lecture",
                     )
                 )
+        if etablis is None:
+            controles = await self._contre_expertiser(
+                tache, livraison, controles, constats, modele
+            )
         return controles, Verdict(constats=tuple(constats), renvois=renvois)
+
+    async def _contre_expertiser(
+        self,
+        tache: Task,
+        livraison: Livraison,
+        controles: tuple[Controle, ...],
+        constats: list[Constat],
+        modele: str,
+    ) -> tuple[Controle, ...]:
+        """Un contrôle joué qui ne tient pas : le défaut est-il au livrable, ou au contrôle ?
+
+        Mesuré au banc (S6, 2026-09-27) : « aucun fichier ajouté ni modifié hors du
+        logo » avait été traduit en « la liste des fichiers vaut le seul logo », sur
+        un projet qui en contenait déjà trois. Le contrôle était faux, pas le
+        livrable — et sans ceci, il aurait renvoyé l'agent corriger ce qui était
+        juste, puis rendu rouge une tâche tenue.
+
+        Le vérificateur relit donc, **à l'établissement**, chaque commande qui n'a
+        pas tenu, avec ce qu'elle a rendu : il la garde si c'est le livrable qui est
+        en défaut, et ne la réécrit que si elle ne constate pas ce que dit son
+        critère — jamais pour qu'elle passe, ce que son prompt interdit en toutes
+        lettres. La réécriture est rejouée tout de suite, et c'est elle qui reste
+        établie. Un seul appel, et seulement quand quelque chose n'a pas tenu.
+
+        `constats` est mis à jour sur place ; rend les contrôles, révisés ou non.
+        """
+        fautifs = [
+            rang
+            for rang, constat in enumerate(constats)
+            if constat.etat == CONSTAT_NON_TENU and controles[rang].joue
+        ]
+        if not fautifs or livraison.espace is None:
+            return controles
+        texte = await self._provider.generate(
+            _prompt_contre_expertise(tache, livraison, controles, constats, fautifs),
+            model=modele,
+            system_prompt=SYSTEME,
+        )
+        revises = _lire_reecriture(texte, controles, dict.fromkeys(fautifs, ""))
+        if not revises:
+            return controles
+        nouveaux = list(controles)
+        for rang, controle in revises.items():
+            if livraison.portee is not None and livraison.portee.commande_hors_portee(
+                controle.commande
+            ):
+                continue  # une révision que Maestro ne peut pas jouer ne remplace rien
+            nouveaux[rang] = controle
+            constats[rang] = await self._jouer(controle, livraison)
+        return tuple(nouveaux)
 
     async def _rendre_jouables(
         self,
@@ -623,6 +682,36 @@ def _prompt_reecrire(
         f"<refusees>\n{lignes}\n</refusees>\n\n"
         "Forme de la réponse :\n"
         '{"commandes": [{"n": 1, "commande": "...", "demarrage": false}]}'
+    )
+
+
+def _prompt_contre_expertise(
+    tache: Task,
+    livraison: Livraison,
+    controles: Sequence[Controle],
+    constats: Sequence[Constat],
+    fautifs: Sequence[int],
+) -> str:
+    """Ce que le vérificateur relit quand une de ses commandes n'a pas tenu."""
+    lignes = "\n".join(
+        f"{rang + 1}. « {controles[rang].critere} » — `{controles[rang].commande}` "
+        f"a rendu le code {constats[rang].code} :\n{constats[rang].preuve or '(aucune sortie)'}"
+        for rang in fautifs
+    )
+    return (
+        f"{_bloc_tache(tache)}\n\n{_bloc_livraison(livraison)}\n\n"
+        "Ces commandes, que tu as écrites pour vérifier cette tâche, n'ont pas tenu. Pour "
+        "CHACUNE, juge où est le défaut. Dans le LIVRABLE : la commande constate bien ce "
+        "que dit son critère, et c'est le livrable qui ne le tient pas — n'y touche pas. "
+        "Dans le CONTRÔLE : la commande ne constate pas ce que dit son critère (elle en "
+        "exige plus ou autre chose, confond l'état d'avant la tâche avec ce que la tâche a "
+        "changé, lit le mauvais fichier) — alors seulement, réécris-la pour qu'elle "
+        "constate exactement le critère. Ne l'assouplis jamais pour qu'elle passe : un "
+        "contrôle qui ne peut plus échouer ne vérifie rien.\n"
+        f"<non_tenues>\n{lignes}\n</non_tenues>\n\n"
+        "Forme de la réponse — seules les commandes réécrites y figurent :\n"
+        '{"commandes": [{"n": 1, "commande": "...", "raison": "ce qui était faux dans le '
+        'contrôle"}]}'
     )
 
 
