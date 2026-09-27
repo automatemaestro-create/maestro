@@ -2382,6 +2382,11 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # Il ne retient rien d'un tour à l'autre — une politique réglée entre deux
     # messages se dit au second, ce que `tests/test_regime_du_run.py` prouve.
     #
+    # #1179 en ajoute un, `_pilote` : le service des boutons, par lequel le fil
+    # agit sur les runs. Il ne garde rien non plus — le geste proposé voyage sur le
+    # message (`MessageChat.geste_run`), et c'est le fil qui le rend au clic comme
+    # au « oui » tapé (`_geste_approuve`).
+    #
     # #1180 en ajoute deux, `_projet` et `_outillage` : le projet de la
     # conversation et son outillage, lus **à chaque message**. Le projet d'une
     # proposition ne loge pas dans le répondeur : il voyage sur le message
@@ -2389,6 +2394,7 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     assert set(vars(repondeur)) == {
         "_naissance",
         "_regime",
+        "_pilote",
         "_projet",
         "_outillage",
         "_lanceur",
@@ -4169,6 +4175,8 @@ _FAITS_DE_LA_REPONSE = {
     # Il accompagne `proposition` sans rien demander à lui seul : c'est la demande
     # de cadrage qui porte la carte, lui dit seulement où le run travaillera.
     "projet_vise": "le projet où travaillera le run proposé",
+    "geste_fait": "ce qu'une confirmation a fait d'un run, relu ensuite (#1179)",
+    "runs_candidats": "les runs qu'une demande ambiguë pouvait viser, à nommer (#1179)",
 }
 
 

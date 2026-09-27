@@ -79,6 +79,7 @@ from maestro.controltower.state import (
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
     STATUTS_TACHE_TERMINAUX,
+    libelle_statut_execution,
 )
 from maestro.engine import (
     MODE_BRIEF_SANS,
@@ -392,7 +393,8 @@ def test_annuler_un_run_deja_solde_409(state):
         reponse = client.post(f"/api/executions/{run_id}/annuler")
 
     assert reponse.status_code == 409
-    assert EXECUTION_TERMINEE in reponse.json()["detail"]
+    # Le statut au libellé des écrans (#1179) : ce refus se lit sous le bouton.
+    assert libelle_statut_execution(EXECUTION_TERMINEE) in reponse.json()["detail"]
 
 
 @pytest.mark.parametrize(

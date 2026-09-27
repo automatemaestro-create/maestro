@@ -22,6 +22,13 @@ sous-processus SDK) sont **relancés automatiquement** (#91, ENF-06,
 armée par défaut sur `OrchestrationEngine.default()`. Les échecs non
 transitoires (time-out ferme, plafonds, refus de validation) ne le sont jamais.
 
+Une tâche en échec **se rattrape** (#1178, `maestro.engine.rattrapage`) : le Chef
+de projet juge la cause avant chaque relance — seul un échec passager se rejoue à
+l'identique —, puis décide d'une tentative différente (autre approche, autre
+agent, tâche redécoupée, tâches aval ajustées) ; l'aval repart dès qu'elle aboutit,
+et ce que Maestro ne sait pas lever devient une question dans le fil. Politique
+`PolitiqueRattrapage`, armée par défaut sur `OrchestrationEngine.default()`.
+
 L'exécution d'une tâche passe par la frontière injectable `TaskExecutor` (#41) :
 `LocalExecutor` en process par défaut, ou `maestro.queue.CeleryExecutor` pour
 distribuer les tâches à des workers via la file Celery + Redis.
@@ -77,6 +84,7 @@ from maestro.engine.loop import (
     OrchestrationEngine,
     RunReport,
 )
+from maestro.engine.rattrapage import RATTRAPAGE_DEFAUT, PolitiqueRattrapage
 from maestro.engine.retry import PolitiqueRelance
 
 __all__ = [
@@ -95,7 +103,9 @@ __all__ = [
     "MODE_BRIEF_SANS",
     "MOTS_SENSIBLES",
     "OrchestrationEngine",
+    "PolitiqueRattrapage",
     "PolitiqueRelance",
+    "RATTRAPAGE_DEFAUT",
     "RunReport",
     "STATUT_BLOQUEE",
     "STATUT_ECHEC",

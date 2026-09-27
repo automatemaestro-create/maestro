@@ -425,6 +425,7 @@ from maestro.controltower.chat import (
     CadrageIntrouvable,
     ChatStore,
     DeclarationIntrouvable,
+    GesteRunIntrouvable,
     PieceIntrouvable,
     ProjetVise,
     QuestionIntrouvable,
@@ -457,6 +458,8 @@ from maestro.controltower.events import (
     titre_court,
 )
 from maestro.controltower.executions import (
+    MOTIF_GESTE_RUN_NON_SUSPENDU,
+    MOTIF_GESTE_RUN_SUSPENDU,
     MOTIF_RELANCE_RUN_INCONNU,
     MOTIF_RELANCE_RUN_SOLDE,
     MOTIF_RELANCE_RUN_VIVANT,
@@ -471,6 +474,7 @@ from maestro.controltower.generation_agent import (
     GenerateurDefinitionAgent,
     GenerationIndisponible,
 )
+from maestro.controltower.gestes import GESTE_ANNULATION, GESTE_PAUSE, GESTE_REPRISE
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
     HOTE_RUN_EN_PROCESS,
@@ -1308,6 +1312,20 @@ class DeclarationProjetRequete(BaseModel):
     conversation: str | None = None
 
 
+class GesteRunRequete(BaseModel):
+    """Corps du geste qui confirme — ou écarte — le geste sur un run que le fil propose (#1179).
+
+    `approuve`, et rien d'autre de fond : l'action, le run et les bornes d'une
+    relance sont sur la proposition que le fil porte (`GesteRunPropose`), et c'est
+    elle qui s'exécute. « Plutôt 10 $ » ne passe pas par ici : il se dit dans la
+    conversation, et appelle une carte nouvelle. `conversation` a le sens qu'elle a
+    partout ailleurs sur ce canal.
+    """
+
+    approuve: bool
+    conversation: str | None = None
+
+
 class DecisionPieceRequete(BaseModel):
     """Corps du geste qui tranche la pièce d'outillage que le fil propose (#1161).
 
@@ -1492,6 +1510,17 @@ _CODE_REFUS_RELANCE: dict[str, int] = {
     # interdit le geste, sans que la requête soit malformée.
     MOTIF_RELANCE_RUN_SOLDE: 409,
     MOTIF_RELANCE_RUN_VIVANT: 409,
+}
+
+#: Le statut HTTP des refus de la pause, de la reprise et de l'annulation (#1179) —
+#: ceux que leurs routes rendaient déjà, maintenant que les règles vivent dans le
+#: service (`refus_du_geste`) : `404` sur un run inconnu, `409` sur tout état qui
+#: interdit le geste (soldé, déjà suspendu, pas suspendu).
+_CODE_REFUS_GESTE: dict[str, int] = {
+    MOTIF_RELANCE_RUN_INCONNU: 404,
+    MOTIF_RELANCE_RUN_SOLDE: 409,
+    MOTIF_GESTE_RUN_SUSPENDU: 409,
+    MOTIF_GESTE_RUN_NON_SUSPENDU: 409,
 }
 
 
@@ -2290,6 +2319,9 @@ def create_app(
                 naissance=ServiceNaissance(projets, lecteur=outillage.analyser),
                 # Et son outillage s'y construit, pièce par pièce (#1161).
                 pieces=pieces,
+                # Il agit sur les runs existants — pause, reprise, annulation,
+                # relance — par le **même** service que les boutons (#1179).
+                pilote=executions,
             )
         ),
         mailbox=mailbox,
@@ -2793,6 +2825,19 @@ def create_app(
             raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
         return {"sources": recus, "total_octets": total}
 
+    async def _refuser_le_geste(geste: str, run_id: str) -> None:
+        """Lève le statut HTTP du refus qu'un geste recevrait — rien s'il passe (#1179).
+
+        Les règles sont celles du service (`ServiceExecutions.refus_du_geste`), que
+        le fil appelle aussi : la route n'en garde que la traduction en code, et le
+        `detail` reste la phrase du refus, comme avant que les règles n'y déménagent.
+        """
+        refus = await executions.refus_du_geste(geste, run_id)
+        if refus is not None:
+            raise HTTPException(
+                status_code=_CODE_REFUS_GESTE.get(refus.motif, 409), detail=str(refus)
+            )
+
     @app.post("/api/executions/{run_id}/annuler")
     async def annuler_execution(run_id: str) -> dict[str, Any]:
         """Interrompt un run en cours (#185) : rend son résumé passé à « annulée ».
@@ -2803,17 +2848,7 @@ def create_app(
         terminé n'est plus interruptible, et le dire vaut mieux que faire croire
         à une annulation.
         """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
-            raise HTTPException(
-                status_code=409,
-                detail=f"exécution déjà soldée ({resume['statut']}) : {run_id}.",
-            )
+        await _refuser_le_geste(GESTE_ANNULATION, run_id)
         annulee = await executions.annuler(run_id)
         if annulee is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2844,25 +2879,7 @@ def create_app(
         rien à suspendre) ou **déjà suspendu** — répondre 200 à une pause qui
         n'était pas la première ferait passer pour un geste ce qui n'en est pas un.
         """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"exécution déjà soldée ({resume['statut']}) : {run_id} — "
-                    "il n'y a rien à suspendre d'un run qui a rendu son issue."
-                ),
-            )
-        if resume["en_pause"]:
-            raise HTTPException(
-                status_code=409,
-                detail=f"exécution déjà suspendue : {run_id} (POST …/reprendre pour la relancer).",
-            )
+        await _refuser_le_geste(GESTE_PAUSE, run_id)
         suspendue = await executions.mettre_en_pause(run_id)
         if suspendue is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2886,20 +2903,7 @@ def create_app(
         rien à reprendre d'un run qui travaille, et le dire vaut mieux que rendre un
         200 sans effet.
         """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if not resume["en_pause"]:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"exécution non suspendue ({resume['statut']}) : {run_id} — "
-                    "il n'y a rien à reprendre d'un run qui n'a pas été mis en pause."
-                ),
-            )
+        await _refuser_le_geste(GESTE_REPRISE, run_id)
         reprise = await executions.reprendre(run_id)
         if reprise is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2920,9 +2924,11 @@ def create_app(
         — de qui il est la suite. Le run repris, lui, est soldé en `annulee` : rien
         n'a raté, son hôte est tombé et quelqu'un a repris la main.
 
-        `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre)
-        ou **encore vivant** (verdict de `vitalite`, #348 — l'interrompre d'abord si
-        c'est bien voulu), `422` si son brief n'a **jamais été approuvé** : le
+        `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre —
+        sauf un arrêt qui n'a pas jugé son travail : l'extinction, une borne
+        atteinte, `CAUSES_RELANCABLES`, #1179) ou **encore vivant** (verdict de
+        `vitalite`, #348 — l'interrompre d'abord si c'est bien voulu), `422` si son
+        brief n'a **jamais été approuvé** : le
         relancer reviendrait à repartir de son objectif brut en silence, c'est-à-dire
         à sauter la validation qu'il attendait encore. Le refus est motivé à la
         convention du reste (`{motif, message}`, §6.1).
@@ -6098,6 +6104,44 @@ def create_app(
                 fiche, approuve=requete.approuve, conversation=fil
             )
         except DeclarationIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
+        }
+
+    @app.post("/api/chat/{agent}/geste", status_code=201)
+    async def trancher_geste_chat(agent: str, requete: GesteRunRequete) -> dict[str, Any]:
+        """Confirme — ou écarte — le geste sur un run que le fil propose ; rend la paire (#1179).
+
+        Le geste qui **agit** sur un run depuis la conversation : suspendre,
+        reprendre, annuler, relancer. L'action, le run et les bornes d'une relance
+        sont ceux de la carte que le fil porte, relus du fil ; la confirmation les
+        exécute par le service des boutons (`ServiceExecutions.agir`), puis relit
+        le run — l'état relu voyage sur la réponse (`geste_fait`), et une relance y
+        rattache le run qu'elle ouvre (`run_id`).
+
+        Même forme et même réponse que `POST …/projet`. Un geste **refusé** par le
+        service (l'état du run a changé depuis la carte) ne lève pas : il se
+        raconte dans le fil, motivé, parce que la confirmation, elle, a bien eu lieu.
+
+        `409` quand rien n'attend — le double clic n'annule pas deux fois, ne
+        relance pas deux runs —, `404` hors catalogue, `422` sur une conversation
+        mal formée, `502` si la suite n'a pas pu être produite.
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.trancher_geste(
+                fiche, approuve=requete.approuve, conversation=fil
+            )
+        except GesteRunIntrouvable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

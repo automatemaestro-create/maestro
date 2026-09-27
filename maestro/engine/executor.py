@@ -44,7 +44,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
 from time import monotonic, perf_counter
-from typing import Any
+from typing import Any, Protocol
 
 from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
@@ -495,6 +495,12 @@ class TaskResult:
     est la version du playbook stocké avec laquelle l'agent a exécuté — None si
     l'agent a exécuté avec son prompt du code (playbook jamais édité, ou pas de
     dépôt câblé).
+
+    `rattrapable` (#1178) dit si un échec peut être **rattrapé** — rejugé,
+    retenté autrement, redécoupé. Il ne l'est pas quand il est une **décision** :
+    un humain a refusé la tâche, ou le budget du run est dépensé. Rattraper
+    serait alors contourner ce qui a été décidé. Vrai par défaut, et sans objet
+    sur une tâche réussie.
     """
 
     task_id: str
@@ -510,6 +516,7 @@ class TaskResult:
     usage: StepUsage = StepUsage()
     worker: str = ""
     playbook_version: int | None = None
+    rattrapable: bool = True
 
     @property
     def ok(self) -> bool:
@@ -532,6 +539,7 @@ class TaskResult:
             "usage": self.usage.to_dict(),
             "worker": self.worker,
             "playbook_version": self.playbook_version,
+            "rattrapable": self.rattrapable,
         }
 
     @classmethod
@@ -557,7 +565,36 @@ class TaskResult:
             usage=StepUsage.from_dict(data.get("usage", {})),
             worker=data.get("worker", ""),
             playbook_version=data.get("playbook_version"),
+            # Absent d'un résultat venu d'un worker d'avant #1178 : rattrapable,
+            # le défaut — c'était la seule conduite possible alors.
+            rattrapable=bool(data.get("rattrapable", True)),
         )
+
+
+class JugeDesTentatives(Protocol):
+    """Ce que l'exécuteur demande avant de relancer une tentative en échec (#1178).
+
+    La relance aveugle présumait passager tout ce qui n'était pas dans une courte
+    liste (`maestro.engine.retry.est_transitoire`). Le juge lit la cause et
+    répond : `(True, diagnostic)` — on rejoue tel quel ; `(False, diagnostic)` —
+    on ne rejoue pas, la tentative différente se décide au-dessus ; `None` — il
+    n'a rien pu dire, et la présomption d'avant tient.
+
+    En pratique `maestro.engine.rattrapage.JugeDesEchecs`, que la boucle câble :
+    le protocole vit ici pour que l'exécuteur n'importe pas le moteur de
+    rattrapage, qui l'importe, lui.
+    """
+
+    async def rejouer_la_tentative(
+        self,
+        task: Task,
+        agent: Agent,
+        erreur: str,
+        tentative: int,
+        journal: RunJournal,
+    ) -> tuple[bool, str] | None:
+        """Rejoue-t-on cette tentative telle quelle ? — et pourquoi."""
+        ...  # pragma: no cover - protocole
 
 
 class TaskExecutor(ABC):
@@ -637,8 +674,14 @@ class LocalExecutor(TaskExecutor):
         mailbox: Mailbox | None = None,
         questionneur: ArbitreQuestion | None = None,
         bornes_question: BornesArbitrage | None = None,
+        juge: JugeDesTentatives | None = None,
     ) -> None:
         self._provider = provider
+        # Le juge des relances (#1178) — en pratique le Chef de projet, câblé par
+        # la boucle quand le rattrapage est armé. None : la relance reste présumée
+        # (`est_transitoire`), la conduite d'avant — c'est celle des exécuteurs
+        # des workers, qui ne voient pas le plan du run.
+        self._juge = juge
         # À qui porter la question libre d'un agent (#1023) — en pratique
         # `maestro.controltower.question.ArbitreQuestionControlTower`. None : le
         # verbe n'est **pas servi du tout**, comme `signaler_blocage` sans
@@ -1720,6 +1763,9 @@ class LocalExecutor(TaskExecutor):
             role=agent.role,
             score=score,
             erreur=f"action sensible ({raison}) : {detail} — tâche stoppée avant exécution.",
+            # Un humain a dit non (#1178) : réécrire la tâche pour qu'elle passe
+            # quand même serait le contournement qu'un arbitrage existe pour empêcher.
+            rattrapable=False,
         )
 
     def _arbitre(self, task: Task, agent: Agent, journal: RunJournal) -> Arbitre:
@@ -2156,6 +2202,9 @@ class LocalExecutor(TaskExecutor):
                         role=agent.role,
                         score=score,
                         erreur=_avec_stderr_cli(cause, stderr_cli),
+                        # Le budget du run est dépensé (#1178) : c'est une borne,
+                        # pas un échec à rattraper — une tentative de plus coûterait.
+                        rattrapable=not isinstance(exc, PlafondDepenseDepasse),
                     )
             else:
                 sortie = sortie.strip()
@@ -2189,9 +2238,39 @@ class LocalExecutor(TaskExecutor):
                         stderr_cli,
                     ),
                 )
+            # La relance n'est plus présumée, elle est jugée (#1178) : le Chef de
+            # projet lit la cause, et seul un échec qu'il dit passager se rejoue à
+            # l'identique. Les autres sortent ici, sans second essai identique —
+            # un accès refusé ou un modèle inconnu ne s'arrangent pas en attendant
+            # deux secondes —, et la boucle exécute la tentative différente qu'il a
+            # décidée. Un juge qui n'a rien pu dire (None) laisse la présomption
+            # d'avant : on ne condamne pas une tâche sur un diagnostic absent.
+            diagnostic = ""
+            if self._juge is not None:
+                jugement = await self._juge.rejouer_la_tentative(
+                    task, agent, _avec_stderr_cli(cause, stderr_cli), tentative, journal
+                )
+                if jugement is not None:
+                    rejouer, diagnostic = jugement
+                    if not rejouer:
+                        return _echec(
+                            task,
+                            agent=agent.nom,
+                            role=agent.role,
+                            score=score,
+                            erreur=_avec_stderr_cli(cause, stderr_cli),
+                        )
             attente_s = relance.attente_s(tentative)
             self._consigne_relance(
-                task, agent, tentative, max_tentatives, cause, stderr_cli, attente_s, journal
+                task,
+                agent,
+                tentative,
+                max_tentatives,
+                cause,
+                stderr_cli,
+                attente_s,
+                journal,
+                diagnostic=diagnostic,
             )
             await asyncio.sleep(attente_s)
             tentative += 1
@@ -2243,6 +2322,8 @@ class LocalExecutor(TaskExecutor):
         stderr_cli: str | None,
         attente_s: float,
         journal: RunJournal,
+        *,
+        diagnostic: str = "",
     ) -> None:
         """Trace une relance au journal (#91) — donc au fil temps réel de la Control Tower.
 
@@ -2258,11 +2339,17 @@ class LocalExecutor(TaskExecutor):
         et une raison de plusieurs lignes coupée en deux par un « — relance dans
         2 s » se lit mal. C'est la matière qui manquait au diagnostic : sans elle,
         l'événement d'activité ne portait que « Check stderr output for details ».
+
+        `diagnostic` (#1178) est ce que le Chef de projet a dit de l'échec quand il
+        l'a jugé passager : la relance n'est plus une présomption, et la ligne dit
+        pourquoi on rejoue.
         """
         geste = (
             f"échec transitoire (tentative {tentative}/{max_tentatives}) : {cause} "
             f"— relance dans {attente_s:g} s."
         )
+        if diagnostic:
+            geste += f" Jugé passager : {diagnostic}"
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_RELANCE}",
             nom=f"Relance — {task.titre}",
@@ -3312,7 +3399,9 @@ def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResu
     try:
         plafond.verifie(StepUsage())
     except PlafondDepenseDepasse as exc:
-        return _echec(task, agent="—", role="non exécutée", score=0, erreur=str(exc))
+        return _echec(
+            task, agent="—", role="non exécutée", score=0, erreur=str(exc), rattrapable=False
+        )
     return None
 
 
@@ -3393,8 +3482,20 @@ def _avec_stderr_cli(cause: str, stderr_cli: str | None) -> str:
     return f"{cause}\n{stderr_cli}" if stderr_cli else cause
 
 
-def _echec(task: Task, *, agent: str, role: str, score: int, erreur: str) -> TaskResult:
-    """Construit un `TaskResult` en échec pour `task` (sortie vide, cause consignée)."""
+def _echec(
+    task: Task,
+    *,
+    agent: str,
+    role: str,
+    score: int,
+    erreur: str,
+    rattrapable: bool = True,
+) -> TaskResult:
+    """Construit un `TaskResult` en échec pour `task` (sortie vide, cause consignée).
+
+    `rattrapable=False` pour un échec qui est une décision — refus humain, budget
+    dépensé (#1178, `TaskResult.rattrapable`).
+    """
     return TaskResult(
         task_id=task.id,
         titre=task.titre,
@@ -3405,6 +3506,7 @@ def _echec(task: Task, *, agent: str, role: str, score: int, erreur: str) -> Tas
         statut=STATUT_ECHEC,
         sortie="",
         erreur=erreur,
+        rattrapable=rattrapable,
     )
 
 

@@ -290,6 +290,7 @@ import {
 import { ActionsDuMessage } from "@/components/chat/ActionsDuMessage";
 import { BulleFil, EnTeteDeTour } from "@/components/chat/BulleFil";
 import { EtapesDuFil } from "@/components/chat/EtapesDuFil";
+import { RunsCandidats, TraceDuGeste } from "@/components/chat/GesteSurUnRun";
 import { TraceDePiece } from "@/components/chat/PieceDOutillage";
 import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
@@ -1710,6 +1711,12 @@ function Bulle({
  * fil récitait dans une phrase du code (« Équipe créée : Développeur — 1 agent. »)
  * à côté des mots du modèle. Même ligne, même jeton, même renvoi — ici vers
  * l'écran des agents, où l'équipe se relit.
+ *
+ * **Ce qu'un geste sur un run a donné** (`geste_fait`, #1179) s'y lit aussi, en
+ * ligne cochée (`TraceDuGeste`) : l'état **relu** après le geste — « en pause
+ * depuis 14:02 » —, ou le refus du service et sa raison. Le renvoi mène au run
+ * touché. Les runs qu'une demande ambiguë pouvait viser (`runs_candidats`) s'y
+ * listent, chacun à ses faits (`RunsCandidats`).
  */
 function Suite({
   message,
@@ -1729,13 +1736,17 @@ function Suite({
   const projetCree = message.projet_cree ?? null;
   const pieceEcrite = message.piece_ecrite ?? null;
   const corrections = message.corrections ?? [];
+  const gesteFait = message.geste_fait ?? null;
+  const candidats = message.runs_candidats ?? [];
   if (
     runId === "" &&
     tacheId === "" &&
     equipe === null &&
     projetCree === null &&
     pieceEcrite === null &&
-    corrections.length === 0
+    corrections.length === 0 &&
+    gesteFait === null &&
+    candidats.length === 0
   ) {
     return null;
   }
@@ -1762,6 +1773,11 @@ function Suite({
   // (`lib/vuesRun`), il n'y a donc pas d'URL qui ouvre une tâche.
   const renvois: Renvoi[] = [];
   if (run !== undefined) renvois.push({ href: run, libelle: "Voir le run" });
+  const runDuGeste =
+    gesteFait !== null && runId === "" ? hrefRun(gesteFait.run.run_id) : undefined;
+  if (runDuGeste !== undefined) {
+    renvois.push({ href: runDuGeste, libelle: "Voir le run" });
+  }
   if (equipe !== null && agents !== undefined) {
     renvois.push({ href: agents.href, libelle: "Voir les agents" });
   }
@@ -1864,6 +1880,13 @@ function Suite({
           glyphe et en mot, les verdicts, et ce qui a été écrit derrière un clic. Sous la
           ligne des faits parce qu'elle peut se déplier. */}
       {pieceEcrite !== null && <TraceDePiece fait={pieceEcrite} piece={pieceTranchee} />}
+      {/* Ce qu'un geste sur un run a donné (#1179) : la ligne cochée — le geste
+          fait, l'état relu — ou le refus du service. Sous la ligne des faits, comme
+          la trace d'une pièce ; le renvoi vers le run est dans la ligne des renvois. */}
+      {gesteFait !== null && <TraceDuGeste fait={gesteFait} />}
+      {/* Les runs qu'une demande ambiguë pouvait viser (#1179), chacun à ses faits :
+          la question est au-dessus, dans les mots du modèle. */}
+      <RunsCandidats runs={candidats} />
       {renvois.length > 0 && (
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
           {renvois.map((renvoi) => (

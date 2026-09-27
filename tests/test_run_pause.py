@@ -57,6 +57,7 @@ from maestro.controltower.state import (
     ORDRE_PAUSE,
     ORDRE_REPRISE,
     ORDRES_PAUSE,
+    libelle_statut_execution,
 )
 from maestro.engine import STATUT_BLOQUEE, STATUT_TERMINEE, OrchestrationEngine
 from maestro.engine.pause import PorteExecution
@@ -615,7 +616,8 @@ def test_un_run_solde_n_est_plus_suspendable(statut):
         reponse = client.post(f"/api/executions/{RUN}/pause")
 
     assert reponse.status_code == 409
-    assert statut in reponse.json()["detail"]
+    # Le statut au libellé des écrans (#1179) : ce refus se lit sous le bouton.
+    assert libelle_statut_execution(statut) in reponse.json()["detail"]
 
 
 def test_un_run_deja_suspendu_ne_se_suspend_pas_deux_fois():

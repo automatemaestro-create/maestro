@@ -97,6 +97,14 @@ def est_transitoire(erreur: BaseException) -> bool:
     Le plafond du flux (#1277) est la leçon de la présomption : un dépassement
     passait pour un « crash du sous-processus », donc pour un aléa, alors que
     le message trop gros venait d'un fichier que chaque tentative relisait.
+
+    ⚠ Depuis #1178, la présomption n'est plus le dernier mot quand le rattrapage
+    est armé (`maestro.engine.rattrapage`) : ce qu'elle dit transitoire est encore
+    **jugé** par le Chef de projet avant chaque relance, et seul ce qu'il dit
+    passager se rejoue. Elle reste la règle quand il n'y a pas de juge (worker,
+    moteur sans rattrapage) ou quand il n'a rien pu dire. Ce qu'elle exclut, elle,
+    n'est jamais relancé à l'identique — et n'atteint le juge qu'à l'étage de la
+    tâche, pour une tentative différente.
     """
     return not isinstance(
         erreur,
