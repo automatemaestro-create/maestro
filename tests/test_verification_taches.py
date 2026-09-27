@@ -402,6 +402,66 @@ def test_un_controle_hors_portee_n_est_pas_joue_et_n_est_pas_un_vert(tmp_path):
     assert len(agent.sessions) == 1
 
 
+def test_une_commande_illisible_est_reecrite_par_le_verificateur(tmp_path):
+    """Le défaut du premier passage du banc (S1 à S3) : `$(…)` rendait un contrôle légitime « non joué »."""
+    provider = _Reponses(
+        json.dumps(
+            {"controles": [{"critere": "le dossier est vide", "commande": 'test -z "$(ls -A)"'}]}
+        ),
+        json.dumps({"commandes": [{"n": 1, "commande": "ls -A | wc -l | grep -qx 0"}]}),
+    )
+    joues: list[str] = []
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        joues.append(commande)
+        return Execution(code=0, sortie="", duree_s=0.0)
+
+    verificateur = VerificateurTaches(provider, joueur=joueur, interprete=_INTERPRETE)
+    controles, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    assert verdict.tenue
+    assert joues == ["ls -A | wc -l | grep -qx 0"]
+    # La réécriture est ce qui reste établi : les livraisons suivantes la rejouent.
+    assert controles[0].commande == "ls -A | wc -l | grep -qx 0"
+    assert controles[0].critere == "le dossier est vide"
+    # Le vérificateur a lu pourquoi : la commande refusée et son motif.
+    assert 'test -z "$(ls -A)"' in provider.prompts[1]
+    assert "<refusees>" in provider.prompts[1]
+
+
+def test_une_reecriture_qui_ne_gagne_rien_laisse_le_controle_non_joue(tmp_path):
+    illisible = 'test -z "$(ls -A)"'
+    provider = _Reponses(
+        json.dumps({"controles": [{"critere": "vide", "commande": illisible}]}),
+        json.dumps({"commandes": [{"n": 1, "commande": 'test -z "$(ls)"'}]}),
+    )
+
+    def joueur(*args, **kwargs):  # pragma: no cover — rien n'est jouable
+        raise AssertionError("une commande illisible a été jouée")
+
+    verificateur = VerificateurTaches(provider, joueur=joueur, interprete=_INTERPRETE)
+    _, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    # Une réécriture, et pas une de plus : elle n'a rien rendu de jouable.
+    assert len(provider.prompts) == 2
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_JOUE
+    assert constat.commande == illisible
+    assert not verdict.tenue
+
+
 def test_une_livraison_non_tenue_n_est_jamais_relancee_comme_un_alea():
     assert not est_transitoire(LivraisonNonTenue("non vérifiée"))
 

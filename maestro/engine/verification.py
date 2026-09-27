@@ -384,6 +384,12 @@ critère demande que des dépendances soient installées, la commande peut les i
 dans l'espace avant de constater. Une commande qui démarre un service et ne rend pas \
 la main quand il marche porte "demarrage": true — elle tient si elle tourne encore \
 après quelques secondes.
+- Maestro ne joue une commande que s'il peut lire ce qu'elle exécute. Écris-la en \
+commandes simples enchaînées par |, &&, || ou ;, avec if/then au besoin : JAMAIS de \
+substitution $(…) ni d'accent grave, JAMAIS de redirection d'entrée < ni de heredoc. \
+Pour compter ou comparer une sortie, passe par un tube (… | grep -q …, … | wc -l | \
+grep -qx 4) ou par python -c. L'entrée standard est déjà fermée, CI=1 est posé et \
+chaque commande a déjà son délai : n'écris ni timeout, ni < /dev/null.
 - Un critère qui ne se constate qu'en lisant le livrable devient une lecture : écris \
 ce qu'on doit y constater, puis juge-le toi-même sur le livrable ci-dessous, avec ta \
 preuve — l'extrait qui le montre, ou ce qui manque.
@@ -488,6 +494,7 @@ class VerificateurTaches:
             controles, lectures, renvois, empechement = _lire_etablissement(texte, amont)
             if empechement:
                 return (), Verdict(empechement=empechement)
+            controles = await self._rendre_jouables(tache, livraison, controles, modele)
         else:
             controles = etablis
             lectures, renvois = {}, ()
@@ -513,6 +520,46 @@ class VerificateurTaches:
                     )
                 )
         return controles, Verdict(constats=tuple(constats), renvois=renvois)
+
+    async def _rendre_jouables(
+        self,
+        tache: Task,
+        livraison: Livraison,
+        controles: tuple[Controle, ...],
+        modele: str,
+    ) -> tuple[Controle, ...]:
+        """Fait réécrire au vérificateur les commandes que la portée refuse — tant qu'il en gagne.
+
+        Une commande que Maestro ne sait pas lire (une substitution, une
+        redirection d'entrée) ou qui sortirait du dossier n'est pas jouée ; sans
+        ceci, un contrôle légitime mal écrit laissait la tâche « non vérifiée »
+        par la seule faute du vérificateur — mesuré au premier passage du banc
+        (S1 à S3, 2026-09-27). Le vérificateur réécrit donc ces commandes-là, et
+        seulement elles, **tant que chaque réécriture en rend de jouables** : la
+        règle d'arrêt de la boucle des livraisons, appliquée au vérificateur
+        lui-même. Ce qui reste refusé ensuite est dit « non joué », avec son motif.
+
+        Illisible ou hors portée se tranchent tous deux par la portée
+        (`commande_hors_portee`), jamais par le texte de son motif.
+        """
+        if livraison.espace is None or livraison.portee is None:
+            return controles
+        refus = _refus_de_portee(controles, livraison.portee)
+        while refus:
+            texte = await self._provider.generate(
+                _prompt_reecrire(tache, controles, refus),
+                model=modele,
+                system_prompt=SYSTEME,
+            )
+            reecrits = _lire_reecriture(texte, controles, refus)
+            if not reecrits:
+                break
+            candidats = tuple(reecrits.get(rang, c) for rang, c in enumerate(controles))
+            restants = _refus_de_portee(candidats, livraison.portee)
+            if len(restants) >= len(refus):
+                break
+            controles, refus = candidats, restants
+        return controles
 
     async def _jouer(self, controle: Controle, livraison: Livraison) -> Constat:
         """Joue une commande dans l'espace de la livraison — la portée d'abord, le code ensuite."""
@@ -543,6 +590,68 @@ class VerificateurTaches:
         except OSError as exc:
             return non_joue(f"l'interpréteur n'a pas pu la lancer ({exc})")
         return _constat_joue(controle, resultat, delai)
+
+
+def _refus_de_portee(
+    controles: Sequence[Controle], portee: PorteeProjet
+) -> dict[int, str]:
+    """Les commandes que la portée refuse, par rang — et le motif de chacune."""
+    refus: dict[int, str] = {}
+    for rang, controle in enumerate(controles):
+        if controle.joue:
+            motif = portee.commande_hors_portee(controle.commande)
+            if motif:
+                refus[rang] = motif
+    return refus
+
+
+def _prompt_reecrire(
+    tache: Task, controles: Sequence[Controle], refus: Mapping[int, str]
+) -> str:
+    """Ce que le vérificateur lit pour réécrire ses commandes refusées."""
+    lignes = "\n".join(
+        f"{rang + 1}. « {controles[rang].critere} » — `{controles[rang].commande}`\n"
+        f"   refusée : {motif}"
+        for rang, motif in refus.items()
+    )
+    return (
+        f"{_bloc_tache(tache)}\n\n"
+        "Ces commandes, que tu as écrites pour vérifier cette tâche, ne peuvent pas être "
+        "jouées : Maestro n'y lit pas ce qu'elles exécutent, ou elles sortent du dossier. "
+        "Réécris CHACUNE pour qu'elle constate la même chose sous une forme jouable, en "
+        "suivant tes règles d'écriture, sans changer son critère.\n"
+        f"<refusees>\n{lignes}\n</refusees>\n\n"
+        "Forme de la réponse :\n"
+        '{"commandes": [{"n": 1, "commande": "...", "demarrage": false}]}'
+    )
+
+
+def _lire_reecriture(
+    texte: str, controles: Sequence[Controle], refus: Mapping[int, str]
+) -> dict[int, Controle]:
+    """Les commandes réécrites, par rang — seules celles qu'on a demandées sont reprises."""
+    objet = _objet_json(texte or "")
+    brut = objet.get("commandes") if isinstance(objet, dict) else None
+    reecrits: dict[int, Controle] = {}
+    for element in brut if isinstance(brut, list) else ():
+        if not isinstance(element, dict):
+            continue
+        numero = element.get("n")
+        if not isinstance(numero, int) or isinstance(numero, bool):
+            continue
+        rang = numero - 1
+        commande = _texte(element.get("commande"))
+        if rang in refus and commande:
+            reecrits[rang] = Controle(
+                critere=controles[rang].critere,
+                commande=commande,
+                demarrage=(
+                    element["demarrage"] is True
+                    if "demarrage" in element
+                    else controles[rang].demarrage
+                ),
+            )
+    return reecrits
 
 
 def _non_joue(controle: Controle) -> Callable[[str], Constat]:
