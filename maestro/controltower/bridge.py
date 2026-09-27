@@ -144,6 +144,16 @@ _SUFFIXE_PROCESSUS = ":processus"
 #: montre et ce que l'API sert.
 _SUFFIXE_QUESTION = ":question"
 
+#: Suffixe des étapes de **vérification d'une livraison** (#1177 — cf.
+#: `maestro.engine.verification`, `SUFFIXE_ETAPE_VERIFICATION`). Recopié plutôt
+#: qu'importé, comme les autres suffixes du moteur.
+#:
+#: Rangé avec `:fusion` et `:processus` : un fait rattaché à la tâche, qui ne la
+#: fait pas changer de colonne — c'est son issue, consignée ensuite, qui dit si
+#: elle tient. Son verdict structuré voyage sur l'événement (`verification`), et
+#: la projection en garde le dernier sur la tâche, pour son panneau de détail.
+_SUFFIXE_VERIFICATION = ":verification"
+
 #: Suffixe des étapes du **rattrapage** d'une tâche en échec (#1178 — cf.
 #: `maestro.engine.rattrapage`, `SUFFIXE_ETAPE_RATTRAPAGE`). Recopié comme les
 #: autres suffixes du moteur. Rangé avec `:relance` et pour la même raison : le
@@ -218,6 +228,7 @@ _SUFFIXES_ACTIVITE = (
     _SUFFIXE_FUSION,
     _SUFFIXE_PROCESSUS,
     _SUFFIXE_QUESTION,
+    _SUFFIXE_VERIFICATION,
     _SUFFIXE_RATTRAPAGE,
 )
 
@@ -244,13 +255,15 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     - les étapes `planification`, `brief` (#318) et `reprise` (#96) et les étapes
       `<tache>:validation`, `<tache>:relance` (#91), `<tache>:refus-outil`
       (#110), `<tache>:activite` (#479), `<tache>:fusion` (#705),
-      `<tache>:processus` (#1279) et `<tache>:question` (#1023) deviennent des
-      **activités d'agent** (l'orchestrateur cadre puis planifie, le moteur
-      reprend un run interrompu, un humain tranche, le moteur relance, la
-      politique de permissions refuse un outil, l'agent travaille, le travail
-      soldé rejoint le projet, ce que la session laissait tourner est arrêté,
-      l'agent a posé une question et sait ce qu'il en est sorti — la raison
-      voyage dans `detail`) ;
+      `<tache>:processus` (#1279), `<tache>:question` (#1023) et
+      `<tache>:verification` (#1177) deviennent des **activités d'agent**
+      (l'orchestrateur cadre puis planifie, le moteur reprend un run
+      interrompu, un humain tranche, le moteur relance, la politique de
+      permissions refuse un outil, l'agent travaille, le travail soldé rejoint
+      le projet, ce que la session laissait tourner est arrêté, l'agent a posé
+      une question et sait ce qu'il en est sorti, une livraison a été vérifiée
+      en l'exécutant — la raison voyage dans `detail`, et le verdict d'une
+      vérification, contrôle par contrôle, dans `verification`) ;
       `planification`, `brief` et `reprise` portent sur le run entier, donc sans
       `tache_id` ;
     - les étapes `<tache>:debut` (#98) deviennent le **début** de leur tâche :
@@ -412,6 +425,10 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     # un plan — annoncer un graphe sans nœud ferait remplacer, dans la
     # projection, un plan déjà posé par rien du tout.
     noeuds = noeuds_depuis(record.get("plan")) if etape == _ETAPE_PLANIFICATION else []
+    # Le verdict d'une vérification (#1177), porté par la seule étape
+    # `:verification` : ailleurs, rien — donc None, et la projection ne touche à
+    # rien de ce que la tâche montrait déjà.
+    verification = record.get("verification")
     return (
         Event(
             type=type_evenement,
@@ -447,6 +464,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             # qu'elle peut le relancer dessus. Ailleurs, rien — donc None.
             brief=brief_depuis(record.get("brief")) if etape == _ETAPE_BRIEF else None,
             resultat=resultat,
+            verification=(
+                dict(verification)
+                if etape.endswith(_SUFFIXE_VERIFICATION) and isinstance(verification, Mapping)
+                else None
+            ),
             horodatage=str(record.get("horodatage", "")),
         ),
         *(

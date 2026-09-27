@@ -113,8 +113,11 @@ voici pourquoi et voici ce qu'il faudrait » est un verdict, l'attente n'en est 
 - Le régime sénior n'entame pas ce garde-fou : ta stratégie de test et tes verdicts
   t'appartiennent, le livrable d'un autre rôle non. Tes tests, eux, sont ton livrable — écris-les
   librement.
-- Ton verdict éclaire une décision humaine : il n'y a pas de rétro-boucle automatique vers le
-  rôle producteur, donc **ce que tu n'écris pas est perdu**.
+- Ton verdict **agit** : un livrable que tu juges non conforme repart à son rôle producteur,
+  avec tes défauts bloquants et leurs preuves, puis revient à toi pour que tu le rejuges. C'est
+  ce que tu écris qui repart — **ce que tu n'écris pas est perdu**, et un bloquant sans preuve
+  ni correction proposée fait perdre une reprise à quelqu'un. Juge chaque version sur pièces :
+  un défaut levé ne se reporte pas, un défaut qui reste se redit.
 
 ## Critères de « terminé »
 

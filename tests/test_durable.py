@@ -241,7 +241,13 @@ def env():
 
 @pytest.fixture(autouse=True)
 def _worker_reinitialise():
-    """Rend au worker sa configuration par défaut après chaque test (fournisseur, relance)."""
+    """Rend au worker sa configuration par défaut après chaque test (fournisseur, relance).
+
+    La vérification des livraisons (#1177), armée par défaut sur les workers, est
+    éteinte pendant le test : ses doubles ne jouent pas le vérificateur, et elle
+    est couverte par `test_verification_taches.py`.
+    """
+    configurer_worker(verification=False)
     yield
     reinitialiser_worker()
 

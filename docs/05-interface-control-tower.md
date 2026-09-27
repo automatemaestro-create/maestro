@@ -792,6 +792,18 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
   carte. Aucune navigation : la vue du run reste où elle était. Une tâche **sans
   détail reste exactement la carte d'avant** : pas de bouton, pas de curseur qui
   promet une ouverture, pas de panneau vide.
+- **Le détail s'ouvre sur la vérification de la tâche** (#1177, [docs/45](./45-decision-une-tache-verifiee-en-l-executant.md)) :
+  « a-t-elle vraiment tenu ce qu'on lui demandait ? » est la première question,
+  donc la première section. Le verdict vient compté — pastille à glyphe
+  *Vérifiée* / *Non tenue* / *Non vérifiée*, `tenus/total`, numéro de livraison,
+  « renvoyée par la QA » le cas échéant —, puis un critère par ligne avec son
+  glyphe (✓ tenu, ✗ non tenu, ⊘ non joué) et son état en toutes lettres. Ce qui
+  **ne tient pas** montre sa preuve d'office : la commande telle qu'elle a été
+  jouée (`$ … → code N`) et la fin de sa sortie, ou ce que la lecture n'a pas
+  trouvé ; ce qui **tient** tient en une ligne qui se déplie. Forme tranchée sur
+  pièces (commentaire « Variante retenue » de #1177), d'après le résumé d'un run
+  GitHub Actions et la page d'un job GitLab. La vérification suffit à ouvrir le
+  panneau d'une tâche qui n'a pas d'autre détail.
 - Création d'une tâche : soit en langage naturel (l'orchestrateur la découpe), soit manuellement.
 
 > **D'où viennent ces champs.** `description`, `etapes` et `liens` sont portés
@@ -7468,4 +7480,48 @@ démarrage, et `maestro-api --jeton` par où le lanceur obtient le jeton).
 Gardé par [`tests/test_acces_api.py`](../tests/test_acces_api.py) — le refus `401` et le filtrage
 d'origine, livrés avec ce lot plutôt que différés (#645) — et, côté front, par
 [`apps/web/tests/jeton-api.test.ts`](../apps/web/tests/jeton-api.test.ts).
+
+### 6.22 La vérification d'une tâche — son verdict et sa preuve (#1177) — **livré**
+
+Une tâche n'est « Terminée » qu'une fois ses critères de réussite **vérifiés en l'exécutant**
+([docs/45](./45-decision-une-tache-verifiee-en-l-executant.md)). Chaque livraison vérifiée laisse une
+étape `<tâche>:verification` au journal du run ; le pont la range en **activité d'agent** (la tâche ne
+change pas de colonne pendant qu'on la vérifie), et la projection garde la **dernière** sur la tâche.
+
+`GET /api/taches` porte donc, sur chaque tâche, un champ `verification` — `null` tant qu'aucune n'a eu
+lieu (tâche en cours, run sans vérificateur) :
+
+```jsonc
+"verification": {
+  "statut": "verification_non_tenue",   // _tenue · _non_tenue · _impossible
+  "resume": "1/2 critère(s) tenu(s)",   // la ligne que le fil prononce
+  "empechement": "",                    // non vide : rien n'a pu être vérifié, et pourquoi
+  "livraison": 2,                       // la livraison vérifiée — 2 : une correction
+  "renvoi": "revue",                    // présent quand c'est une QA qui a renvoyé le livrable
+  "constats": [
+    { "critere": "les tests passent", "etat": "non_tenu",  // tenu · non_tenu · non_joue
+      "commande": "pytest -q", "code": 1,                  // "" et null pour une lecture
+      "preuve": "FAILED tests/test_app.py::test_route - assert 500 == 200" }
+  ]
+}
+```
+
+- **Trois issues, jamais deux.** `impossible` n'est pas un vert : rien de faux n'a été constaté, mais
+  tout n'a pas pu l'être (un contrôle non joué, un vérificateur illisible). Le front lit un état ou un
+  statut inconnus comme **non joué** et déduit l'issue des constats — ce qu'on ne sait pas lire ne vaut
+  jamais un accord (`apps/web/lib/detailTache.ts`, `verificationDe`).
+- **La preuve est la fin de la sortie**, bornée (`maestro.engine.verification.PREUVE_MAX`) : là où une
+  commande dit pourquoi elle a échoué. Elle est expurgée des secrets comme toute sortie consignée.
+- **Le fil** la dit comme la fusion dans le projet : libellé (« Vérifiée », « Vérification non
+  tenue », « Vérification impossible ») puis la phrase du moteur — le compte, ou le renvoi de la QA.
+- **Une tâche renvoyée par la QA repart dans le même run** : sa carte repasse « En cours », puis se
+  solde à nouveau, et son **coût cumule** ses exécutions (`EtatTache.usage_anterieure`) — la carte dit
+  ce que la tâche a coûté en tout, comme le grand livre du run.
+
+Implémentation : [`maestro/engine/verification.py`](../maestro/engine/verification.py) (le
+vérificateur et la boucle), [`maestro/controltower/bridge.py`](../maestro/controltower/bridge.py) et
+[`maestro/controltower/state.py`](../maestro/controltower/state.py) (le transport et la dernière
+vérification sur la tâche). Gardé par
+[`tests/test_verification_taches.py`](../tests/test_verification_taches.py) et, côté front, par
+[`apps/web/tests/verification-tache.test.tsx`](../apps/web/tests/verification-tache.test.tsx).
 

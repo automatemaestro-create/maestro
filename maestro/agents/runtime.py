@@ -19,8 +19,9 @@ d'un éventuel repli).
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from maestro.agents.mcp import ServeurMcp, resolus
@@ -61,6 +62,12 @@ DEFAULT_TOOLS: tuple[str, ...] = (
     "Grep",
     "Bash",
 )
+
+#: Le juge d'une livraison (#1177) : reçoit l'espace de travail, le compte-rendu de
+#: l'agent et les fichiers produits, et rend `None` si la livraison tient, sinon le
+#: **retour** à donner à l'agent pour qu'il corrige. Il arrête la boucle en levant —
+#: le runtime ne sait ni ce qu'est un critère, ni quand renoncer.
+JugeLivraison = Callable[[Path, str, tuple[ProducedFile, ...]], Awaitable[str | None]]
 
 
 @dataclass(frozen=True)
@@ -227,6 +234,7 @@ class AgentRuntime:
         projet: Projet | None = None,
         tache_id: str = "",
         effort: str | None = None,
+        on_livraison: JugeLivraison | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -381,6 +389,16 @@ class AgentRuntime:
         (`effort_admis`) et ne transmet le mot-clé que si la réponse est non nulle.
         Un fournisseur qui n'expose pas ce réglage n'en reçoit donc jamais un — il
         n'a rien à ignorer, rien à connaître, et sa signature d'hier suffit.
+
+        `on_livraison` (#1177) juge chaque livraison **pendant que l'espace est
+        encore ouvert** — c'est tout l'objet de le recevoir ici plutôt que chez
+        l'appelant : les contrôles se jouent là où l'agent a travaillé, et une
+        livraison qui ne tient pas revient à l'agent dans ce même espace, où ses
+        fichiers l'attendent. Le retour qu'il rend est ajouté au message de la
+        tâche, et une nouvelle session du fournisseur part avec — même modèle,
+        mêmes outils, mêmes canaux. Le runtime ne décide de rien : ni de ce qui
+        tient, ni de quand renoncer (le juge lève, et l'exception traverse). None
+        (le défaut) : la première livraison est la livraison, comme avant #1177.
         """
         description = description.strip()
         if not description:
@@ -428,31 +446,45 @@ class AgentRuntime:
                 ws.consigne_espace(),
                 outillage.consigne(),
             )
-            resume = await self._provider.run_agent(
-                prompt,
-                model=self._model,
-                system_prompt=system_prompt or self._system_prompt,
-                workspace=ws.path,
-                tools=outils,
-                mcp_serveurs=montables,
-                politique=politique,
-                on_refus=on_refus,
-                on_arbitrage_acte=on_arbitrage_acte,
-                on_activite=on_activite,
-                on_etapes=on_etapes,
-                on_arbitrage=on_arbitrage,
-                on_blocage=on_blocage,
-                on_decision=on_decision,
-                credit_arbitrage=credit_arbitrage,
-                on_courrier=on_courrier,
-                on_question=on_question,
-                on_processus=on_processus,
-                plafond_tours=self._plafond_tours,
-                projet=projet,
-                **reglage_effort,
-            )
+
+            async def session(message: str) -> str:
+                return await self._provider.run_agent(
+                    message,
+                    model=self._model,
+                    system_prompt=system_prompt or self._system_prompt,
+                    workspace=ws.path,
+                    tools=outils,
+                    mcp_serveurs=montables,
+                    politique=politique,
+                    on_refus=on_refus,
+                    on_arbitrage_acte=on_arbitrage_acte,
+                    on_activite=on_activite,
+                    on_etapes=on_etapes,
+                    on_arbitrage=on_arbitrage,
+                    on_blocage=on_blocage,
+                    on_decision=on_decision,
+                    credit_arbitrage=credit_arbitrage,
+                    on_courrier=on_courrier,
+                    on_question=on_question,
+                    on_processus=on_processus,
+                    plafond_tours=self._plafond_tours,
+                    projet=projet,
+                    **reglage_effort,
+                )
+
+            resume = await session(prompt)
             # Capture *dans* le contexte : hors `keep`, l'espace disparaît à la sortie.
             fichiers = ws.produced_files()
+            # La recette (#1177) : chaque livraison est jugée ici, l'espace ouvert,
+            # et ce qui ne tient pas revient à l'agent dans ce même espace. Le
+            # message repart **entier** — une session du fournisseur ne se souvient
+            # pas de la précédente —, suivi du retour, qui porte les preuves.
+            while on_livraison is not None:
+                retour = await on_livraison(ws.path, resume.strip(), fichiers)
+                if retour is None:
+                    break
+                resume = await session(f"{prompt}\n\n{retour}")
+                fichiers = ws.produced_files()
             return AgentOutcome(
                 role=self._profile.role,
                 resume=resume.strip(),

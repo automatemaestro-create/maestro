@@ -118,6 +118,12 @@ export type Tache = {
   liens?: LienUtile[] | null;
   /** Le signe de vie (#836) : `null` dès que la tâche ne travaille pas. */
   activite?: SigneDeVie | null;
+  /**
+   * La dernière vérification de la tâche (#1177) : `null` tant qu'aucune n'a eu
+   * lieu. Optionnelle, pour la raison des `etapes` : une carte servie avant ce
+   * lot n'en porte pas.
+   */
+  verification?: VerificationTache | null;
 };
 
 /**
@@ -1727,6 +1733,52 @@ export type LienUtile = {
   libelle: string;
   url: string;
   nature: string;
+};
+
+/**
+ * Les trois issues d'une vérification (#1177, `maestro/engine/verification.py`) —
+ * statut de l'étape `<tâche>:verification`, donc de l'activité que le fil rend et
+ * du verdict que la tâche porte. `tenue` : tous les critères tiennent ;
+ * `non_tenue` : au moins un a été constaté faux ; `impossible` : rien de faux,
+ * mais tout n'a pas pu être vérifié — ce qui n'est pas un vert non plus.
+ */
+export const VERIFICATION_TENUE = "verification_tenue";
+export const VERIFICATION_NON_TENUE = "verification_non_tenue";
+export const VERIFICATION_IMPOSSIBLE = "verification_impossible";
+
+/** Ce qu'un contrôle a constaté (#1177) : tenu, non tenu, ou pas joué du tout. */
+export const CONSTAT_TENU = "tenu";
+export const CONSTAT_NON_TENU = "non_tenu";
+export const CONSTAT_NON_JOUE = "non_joue";
+
+/**
+ * Un contrôle d'une vérification (#1177) : le critère de la tâche, ce qui l'a
+ * constaté, et la preuve. `commande` est vide pour une **lecture** du livrable ;
+ * `code` est le code de retour d'une commande jouée, `null` sinon ; `preuve` est
+ * la fin de sa sortie, ou ce que la lecture a trouvé (ou pas).
+ */
+export type ConstatVerification = {
+  critere: string;
+  etat: string;
+  preuve: string;
+  commande: string;
+  code: number | null;
+};
+
+/**
+ * La dernière vérification d'une tâche (`GET /api/taches`, #1177) : son issue,
+ * sa ligne (« 2/3 critère(s) tenu(s) »), et chaque contrôle avec sa preuve.
+ * `livraison` numérote la livraison vérifiée — la deuxième est une correction.
+ * `renvoi` nomme la tâche de QA qui a renvoyé ce livrable, quand c'est elle qui
+ * a jugé. `empechement` dit pourquoi rien n'a pu être vérifié.
+ */
+export type VerificationTache = {
+  statut: string;
+  resume: string;
+  empechement?: string;
+  livraison?: number;
+  renvoi?: string;
+  constats: ConstatVerification[];
 };
 
 /** Statuts d'une exécution (maestro/controltower/state.py, #185). */

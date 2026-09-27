@@ -70,8 +70,13 @@ def _worker_reinitialise():
     workers : ces tests comptent les appels modèle et simulent des pannes —
     la relance elle-même est couverte par test_retry.py (et le câblage worker
     par `test_le_worker_relance_un_echec_transitoire`).
+
+    Éteint de même la vérification des livraisons (#1177) : ses doubles ne
+    jouent pas le vérificateur, et elle est couverte par
+    `test_verification_taches.py` — câblage worker compris
+    (`test_le_worker_verifie_ses_livraisons_par_defaut`).
     """
-    configurer_worker(relance=PolitiqueRelance(max_tentatives=1))
+    configurer_worker(relance=PolitiqueRelance(max_tentatives=1), verification=False)
     yield
     reinitialiser_worker()
 

@@ -55,9 +55,12 @@ pas d'exécution outillée, le rôle retombe sur son livrable texte.
 dont il dépend (transmis via le tableau noir), il ne les réécrit pas — son
 compte-rendu rend un **verdict explicite** (« conforme » / « conforme sous réserve » /
 « non conforme », #297), étayé par ses constats et suivi des défauts par sévérité
-décroissante. Au POC, « bloquer et renvoyer au Développeur » se matérialise par ce
-verdict : la boucle n'a pas encore de rétro-boucle automatique, le verdict éclaire la
-décision humaine — donc **ce qu'il n'écrit pas est perdu**.
+décroissante. Depuis #1177, « bloquer et renvoyer au Développeur » n'est plus un vœu :
+un livrable jugé **non conforme** repart à son rôle producteur avec les défauts
+bloquants et leurs preuves, puis revient au QA qui le rejuge (docs/04 §3.6). La boucle
+s'arrête quand le QA juge conforme, ou quand une reprise ne lève aucun défaut de plus —
+la tâche productrice finit alors en échec motivé. Ce que le QA n'écrit pas ne repart
+pas : **ce qu'il n'écrit pas est perdu**.
 
 Démo de bout en bout :
 

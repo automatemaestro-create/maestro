@@ -180,6 +180,10 @@ La `description` est tout ce que l'agent recevra. Elle porte, dans cet ordre :
    cas qui passe, un contrat respecté, une valeur mesurée. Deux à quatre suffisent. Proscris « du
    code de qualité », « bien documenté », « conforme aux bonnes pratiques » : personne ne peut
    dire si c'est tenu, donc ce ne sont pas des critères.
+   **Ils seront vérifiés** : une fois la tâche livrée, Maestro les traduit en commandes jouées
+   dans l'espace de travail de l'agent, ou en lectures du livrable, et la tâche n'est terminée
+   que s'ils tiennent — sinon elle revient à son agent, preuve à l'appui. Écris-les donc de
+   façon qu'une commande ou une lecture puisse les trancher.
 
 `format_sortie` complète la description : le livrable attendu **et sa forme** (« fichier SQL de
 migration », « module Python + ses tests », « maquette + jetons de charte »). `titre` reste court
