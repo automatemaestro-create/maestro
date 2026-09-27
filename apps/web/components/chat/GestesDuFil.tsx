@@ -37,6 +37,12 @@
  * la saisie. Une fois l'équipe créée, c'est la demande de cadrage qui revient à ce
  * rang, sur le travail d'origine.
  *
+ * ⚠ Une sixième est venue avec #1179 : le **geste sur un run** (`GesteSurUnRun`) —
+ * le mettre en pause, le reprendre, l'interrompre, le relancer —, à confirmer avant
+ * qu'il parte. Elle vit sur le message comme les autres et ne cohabite avec aucune,
+ * donc elle prend aussi le dernier rang ; la règle qui dit si elle attend encore est
+ * celle de toutes (`gesteRunEnAttente`, `lib/gestesRun`).
+ *
  * ## Pourquoi il existe — le défaut que #1106 corrige
  *
  * Ce pied vivait **dans `app/chat/page.tsx`**. `ColonneConversation` (#926)
@@ -88,12 +94,14 @@ import { useMemo, type ReactNode } from "react";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { DemandeDeProjet } from "@/components/chat/DemandeDeProjet";
 import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
+import { GesteSurUnRun } from "@/components/chat/GesteSurUnRun";
 import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { propositionEnAttente } from "@/lib/brief";
 import { recrutementEnAttente } from "@/lib/equipe";
 import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
+import { gesteRunEnAttente } from "@/lib/gestesRun";
 import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { pieceEnAttente, questionEnAttente } from "@/lib/outillage";
@@ -143,6 +151,7 @@ export function useGestesDuFil(
   const recrutement = messageRecrutement?.recrutement ?? null;
   const projetPropose = global ? projetEnAttente(fil.messages) : null;
   const piece = global ? (pieceEnAttente(fil.messages)?.piece ?? null) : null;
+  const geste = global ? gesteRunEnAttente(fil.messages) : null;
 
   if (
     questions.length === 0 &&
@@ -150,7 +159,8 @@ export function useGestesDuFil(
     recrutement === null &&
     projetPropose === null &&
     !outillage?.question &&
-    piece === null
+    piece === null &&
+    geste === null
   ) {
     return undefined;
   }
@@ -215,6 +225,9 @@ export function useGestesDuFil(
           declarer={fil.declarerProjet}
           enCours={fil.envoi}
         />
+      )}
+      {geste !== null && (
+        <GesteSurUnRun demande={geste} trancher={fil.trancherGeste} enCours={fil.envoi} />
       )}
     </div>
   );

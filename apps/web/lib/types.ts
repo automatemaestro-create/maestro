@@ -5,6 +5,8 @@
  * front restent des chaînes libres : le flux peut s'enrichir sans casser l'UI.
  */
 
+import type { BornesRun } from "./bornes";
+
 /**
  * La mesure d'usage d'une étape (`StepUsage.to_dict`, #57) : tokens
  * entrée/sortie, coût estimé, durées. `cout_usd` et les durées restent null
@@ -1408,6 +1410,51 @@ export type PieceEcrite = {
 /** Les trois décisions qu'un geste rend sur une pièce (`chat.DECISIONS_PIECE`). */
 export type DecisionPiece = "ecrire" | "passer" | "plus-tard";
 
+/**
+ * Les quatre gestes qu'un run reçoit depuis le fil (`controltower.gestes`, #1179) —
+ * les verbes des boutons des écrans des runs, passés par le même service.
+ */
+export type GesteRun = "pause" | "reprise" | "annulation" | "relance";
+
+/**
+ * Un run **tel que le fil l'a montré** (`chat.RunVise`, #1179) : celui qu'une carte
+ * vise, ou celui qu'un geste vient de relire. Recopié du résumé au moment où le fil
+ * en parle — une carte montre le run sur lequel on dit oui, le fait d'après le geste
+ * l'état qu'il a relu. `etat` est cet état en mots, pour le modèle ; l'écran relit
+ * `statut`, `en_pause` et `pause_depuis` avec ses propres libellés.
+ */
+export type RunVise = {
+  run_id: string;
+  titre: string;
+  statut: string;
+  en_pause: boolean;
+  pause_depuis: string | null;
+  etat: string;
+};
+
+/**
+ * Un geste sur un run **proposé** à la confirmation (`chat.GesteRunPropose`,
+ * #1179). `bornes` ne vaut que pour une relance — le seul geste qui ouvre un run —,
+ * `null` ailleurs et sur une relance qui n'en change aucune.
+ */
+export type GesteRunPropose = {
+  action: GesteRun | string;
+  run: RunVise;
+  bornes: BornesRun | null;
+};
+
+/**
+ * Ce qu'un geste confirmé a **donné** (`chat.GesteRunFait`, #1179) : le run relu
+ * juste après, le nouveau run d'une relance, ou le refus du service — alors rien
+ * n'a été fait, et `refus` dit pourquoi.
+ */
+export type GesteRunFait = {
+  action: GesteRun | string;
+  run: RunVise;
+  nouveau: RunVise | null;
+  refus: string;
+};
+
 export type MessageChat = {
   agent: string;
   auteur: string;
@@ -1442,6 +1489,12 @@ export type MessageChat = {
   piece_ecrite?: PieceEcrite | null;
   /** Ce qu'une phrase a corrigé de l'outillage (#1161) — absent ou vide : rien. */
   corrections?: ChoixOutillage[];
+  /** Le geste sur un run que ce message propose de confirmer (#1179) — `null` : aucun. */
+  geste_run?: GesteRunPropose | null;
+  /** Ce qu'un geste confirmé a donné, porté par la réponse (#1179) — `null` : rien. */
+  geste_fait?: GesteRunFait | null;
+  /** Les runs qu'une demande ambiguë pouvait viser (#1179) — absent ou vide : aucun. */
+  runs_candidats?: RunVise[];
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
@@ -2096,6 +2149,12 @@ export type ResumeExecution = {
    * Absent des flux antérieurs au lot, d'où l'optionnel.
    */
   en_pause?: boolean;
+  /**
+   * **Depuis quand** il est suspendu (#1179) — horodatage ISO-8601 de l'ordre de
+   * pause, `null` dès qu'il est repris ou soldé. C'est ce que le fil dit après le
+   * geste (« en pause depuis 14:02 »). Absent des flux antérieurs au lot.
+   */
+  pause_depuis?: string | null;
   /**
    * **Pourquoi** ce run s'est arrêté (#479, `CAUSE_*`) — chaîne vide tant qu'il
    * n'y a rien à dire, ce qui est le cas d'un run en cours comme d'un run qui a
