@@ -1,19 +1,33 @@
 /**
- * Les cinq **lectures** d'un run et la bascule entre elles (#491, lot 3 de
+ * Les six **lectures** d'un run et la bascule entre elles (#491, lot 3 de
  * #488 ; troisième position ajoutée par #516, quatrième par #355, cinquième par
- * #1026) — l'arbitrage que ces tickets demandaient de rendre, écrit ici et une
- * seule fois.
+ * #1026, sixième par #1285) — l'arbitrage que ces tickets demandaient de rendre,
+ * écrit ici et une seule fois.
  *
  * ## Ce qui est tranché
  *
- * **Les cinq vues coexistent, sous une bascule, et le pipeline est le défaut.**
+ * **Les six vues coexistent, sous une bascule, et le pipeline est le défaut.**
  * Elles ne se remplacent pas, parce qu'elles ne répondent pas à la même question
  * (docs/05 §2.4.2) : le pipeline dit **« quoi après quoi »**, le Kanban
  * **« combien dans quel état »**, la frise **« qui, quand, et à qui »**, les
- * décisions **« ce qui a été décidé sans moi, et pourquoi »**, le journal
- * **« qu'a-t-il fait »**. Aucune ne se déduit d'une autre — on ne lit pas un
- * enchaînement dans cinq colonnes, on ne compte pas un état dans un graphe, et
- * ni l'un ni l'autre ne rend ce qu'un run a *dit*.
+ * décisions **« ce qui a été décidé sans moi, et pourquoi »**, le bilan **« ce
+ * qui a failli, pourquoi, et que faire »**, le journal **« qu'a-t-il fait »**.
+ * Aucune ne se déduit d'une autre — on ne lit pas un enchaînement dans cinq
+ * colonnes, on ne compte pas un état dans un graphe, et ni l'un ni l'autre ne
+ * rend ce qu'un run a *dit*.
+ *
+ * **Le bilan est une lecture, pas un bloc de tête** (#1285). Il est **jugé** —
+ * rendu par un modèle sur les pièces du journal, vérifié contre elles (#1284) —,
+ * là où les cinq autres **montrent** ce que le run a émis ; et c'est la seule
+ * lecture dont chaque ligne renvoie à une autre (ses pièces s'ouvrent dans le
+ * journal ou la frise). Trois places ont été rendues sur la vraie stack et jugées
+ * sur pièces par le regard neuf (commentaire `## Variante retenue` du ticket) :
+ * un second niveau de la carte de tête faisait enfler la tête d'un écran et
+ * repliait les actes accordés sans personne ; un bloc de plein format entre la
+ * tête et la bascule repoussait les cinq lectures hors de l'écran, sans être ni
+ * un onglet ni un second niveau. L'onglet l'a emporté, d'après Buildkite (ses
+ * « Annotations » sont une lecture parmi les autres, avec leur compte) : la tête
+ * n'en dit qu'**une ligne**, qui y mène, et le pipeline reste l'ouverture.
  *
  * **Les décisions sont une lecture, pas un filtre du journal** (#1026). Tout ce
  * qu'elle montre est déjà dans le journal — et c'est justement le défaut qu'elle
@@ -94,6 +108,7 @@ import {
   IconeDecision,
   IconeGraphe,
   IconeJournal,
+  IconeObjectif,
   IconeTache,
 } from "@/components/Icones";
 import type { Icone } from "@/components/Primitives";
@@ -106,6 +121,8 @@ export const VUE_KANBAN = "kanban";
 export const VUE_FRISE = "frise";
 /** Ce que ses agents ont tranché **seuls**, et pourquoi (#1026). */
 export const VUE_DECISIONS = "decisions";
+/** Ce qui a failli, pourquoi, et que faire — son bilan sur pièces (#1285). */
+export const VUE_BILAN = "bilan";
 /** Ce qu'il a dit, dans l'ordre où il l'a dit — son journal persisté (#478). */
 export const VUE_JOURNAL = "journal";
 
@@ -114,6 +131,7 @@ export type VueRunCle =
   | typeof VUE_KANBAN
   | typeof VUE_FRISE
   | typeof VUE_DECISIONS
+  | typeof VUE_BILAN
   | typeof VUE_JOURNAL;
 
 export type VueRunOnglet = {
@@ -140,6 +158,12 @@ export type VueRunOnglet = {
  * d'aller chercher la ligne exacte dans la trace — elles sont la dernière vue
  * d'ensemble, le journal le recours. Le journal ferme donc toujours la rangée,
  * et la règle de #516 tient sans exception.
+ *
+ * Le **bilan** (#1285) s'insère entre les décisions et le journal : c'est un
+ * jugement d'après coup, comme les décisions, et chacune de ses pièces **mène**
+ * au journal — l'onglet voisin, celui qu'on ouvre en dernier. Il n'ouvre pas la
+ * vue : un run en vol n'a pas encore de bilan, et c'est la **tête** qui y renvoie
+ * d'une ligne quand il y en a un.
  */
 export const VUES_RUN: VueRunOnglet[] = [
   {
@@ -167,6 +191,13 @@ export const VUES_RUN: VueRunOnglet[] = [
     question:
       "Ce qui a été décidé sans moi : ce que les agents ont tranché seuls, et pourquoi",
     icone: IconeDecision,
+  },
+  {
+    cle: VUE_BILAN,
+    libelle: "Bilan",
+    question:
+      "Ce qui a failli, pourquoi, et que faire : le bilan du run, chaque constat sur ses pièces",
+    icone: IconeObjectif,
   },
   {
     cle: VUE_JOURNAL,

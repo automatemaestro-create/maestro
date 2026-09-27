@@ -21,6 +21,8 @@
  * un titre commun. C'est le sens qui change, pas l'apparence (`EnTeteSection`).
  */
 
+import type { ReactNode } from "react";
+
 import { IconeActivite } from "@/components/Icones";
 import { LigneActivite } from "@/components/LigneActivite";
 import { EnTeteSection, LienRenvoi } from "@/components/Primitives";
@@ -34,6 +36,7 @@ export function FilActivite({
   titre = "Activité en direct",
   messageVide = "Aucun événement reçu pour l'instant.",
   niveau = 2,
+  bandeau,
 }: {
   evenements: Evenement[];
   /** Nombre d'entrées affichées ; toutes par défaut. */
@@ -46,6 +49,12 @@ export function FilActivite({
   messageVide?: string;
   /** Son rang dans le document : section de page (2) ou sous-partie (3). */
   niveau?: 2 | 3;
+  /**
+   * Ce qui se dit **sous** le titre, avant les lignes (#1285) : d'où vient le
+   * fil quand il n'en montre qu'une partie — les entrées qu'une pièce du bilan
+   * cite. À la même place que dans la frise, sous son titre.
+   */
+  bandeau?: ReactNode;
 }) {
   // La limite borne des **lignes**, pas des événements : une rafale repliée
   // (#250) en occupe une seule. Le compte masqué, lui, reste en événements —
@@ -77,6 +86,7 @@ export function FilActivite({
           )
         }
       />
+      {bandeau}
       <ol className="space-y-1 text-corps">
         {affiches.map((groupe) => (
           <LigneActivite key={groupe.cle} groupe={groupe} />

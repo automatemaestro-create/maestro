@@ -41,6 +41,7 @@ La politique de rétention viendra avec la bascule PostgreSQL, pour les trois.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
@@ -224,13 +225,16 @@ class ServiceJournal:
         ordre: str = ORDRE_DESC,
         page: int = 1,
         taille: int = TAILLE_PAGE_DEFAUT,
+        ids: Collection[str] | None = None,
     ) -> dict[str, Any]:
         """Une page du journal (`GET /api/journal`) : filtres, tri, pagination.
 
         Filtre par `agent`, `type`, `run_id`, `portee` (#277) et fenêtre
         temporelle (`depuis`/`jusqua`, ISO-8601, bornes **incluses**, comparaison
         lexicale des horodatages — tous sont produits par `Event` au même format
-        UTC), trie sur `tri`/`ordre`, puis découpe en pages de `taille`
+        UTC), et par identifiants d'entrée (`ids`, #1285 : les entrées qu'une pièce
+        du bilan d'un run cite, où qu'elles soient dans le journal — un identifiant
+        inconnu ne rend rien), trie sur `tri`/`ordre`, puis découpe en pages de `taille`
         (1-indexé). `total` est le compte **après filtres, avant pagination** ;
         `pages` le nombre de pages, `0` quand rien ne sort. Une page au-delà de la
         dernière rend une liste vide avec des compteurs justes — pas un 404 : la
@@ -257,6 +261,9 @@ class ServiceJournal:
             entrees = [e for e in entrees if e.horodatage >= depuis]
         if jusqua:
             entrees = [e for e in entrees if e.horodatage <= jusqua]
+        if ids is not None:
+            voulues = set(ids)
+            entrees = [e for e in entrees if e.id in voulues]
         retenues = sorted(entrees, key=lambda e: e.cle_tri(tri), reverse=(ordre == ORDRE_DESC))
         total = len(retenues)
         pages = (total + taille - 1) // taille if total else 0

@@ -63,6 +63,7 @@ import {
   poserProjets,
   projetsDeclares,
   projetsDuFil,
+  reponseBilanFactice,
   routeurFactice,
 } from "./aides";
 
@@ -150,6 +151,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // cette déclaration. #256 lit la **même** réponse pour en tirer le
     // vocabulaire des compétences : une lecture, deux usages, un seul mock.
     chargerCatalogue: () => Promise.resolve(catalogueAgents()),
+    // #1285 : la vue d'un run soldé lit son bilan pour sa ligne de tête. Défaut :
+    // un bilan absent, ce que l'API réelle sert d'un run antérieur aux bilans.
+    chargerBilanExecution: (runId: string) =>
+      Promise.resolve(reponseBilanFactice({ run_id: runId })),
     // #1206 : le shell sonde la santé de l'API pour dire la perte de son
     // magasin. Défaut : un magasin qui répond — aucun bandeau système, et tout
     // test écrit avant ce lot dit encore vrai.

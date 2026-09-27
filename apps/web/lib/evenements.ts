@@ -11,6 +11,7 @@ import {
   IconeAlerte,
   IconeArbitrage,
   IconeCapacite,
+  IconeDecision,
   IconeMessage,
   IconePuce,
   IconeReassignation,
@@ -20,6 +21,7 @@ import {
 import type { Icone } from "@/components/Primitives";
 import { libelleStatut } from "@/lib/format";
 import {
+  AGENT_ABSENT,
   CAPACITE_ACTIVE,
   CHAT_AUTEUR_UTILISATEUR,
   EVENEMENT_AGENT_ACTIVITE,
@@ -30,6 +32,7 @@ import {
   EVENEMENT_PLAYBOOK_PROPOSITION,
   EVENEMENT_RUN_PLAN,
   EVENEMENT_TACHE_BLOCAGE,
+  EVENEMENT_TACHE_DECISION,
   EVENEMENT_TACHE_REASSIGNATION,
   EVENEMENT_TACHE_REFERENCE,
   EVENEMENT_TACHE_STATUT,
@@ -43,6 +46,9 @@ import {
   ORDRE_PAUSE,
   ORDRE_REPRISE,
   STATUT_ACTIVITE,
+  STATUT_BILAN_ILLISIBLE,
+  STATUT_BILAN_MUET,
+  STATUT_BILAN_RENDU,
   VALIDATION_APPROUVEE,
   VERIFICATION_IMPOSSIBLE,
   VERIFICATION_NON_TENUE,
@@ -60,6 +66,7 @@ const ICONES: Record<string, Icone> = {
   [EVENEMENT_TACHE_REASSIGNATION]: IconeReassignation,
   [EVENEMENT_TACHE_REFERENCE]: IconeTicket,
   [EVENEMENT_TACHE_USAGE]: IconeTache,
+  [EVENEMENT_TACHE_DECISION]: IconeDecision,
   [EVENEMENT_AGENT_ACTIVITE]: IconeAgent,
   [EVENEMENT_AGENT_CAPACITE]: IconeCapacite,
   [EVENEMENT_MESSAGE_INTER_AGENTS]: IconeMessage,
@@ -100,10 +107,15 @@ function cite(texte: string): string {
  * phrase qui commence par un blanc est pire que pas de phrase du tout. Le
  * `default` couvre les statuts que l'UI ne connaît pas encore — même contrat que
  * `libelleStatut`, qui rend le statut brut plutôt que rien.
+ *
+ * `AGENT_ABSENT` (« — ») n'est pas un agent : c'est ce que le moteur consigne
+ * sur une tâche **jamais routée**. En faire le sujet donnait « — a échoué sur
+ * « … » », une phrase sans sujet (relevé par le regard neuf de #1285, sur une
+ * pièce du bilan) : elle prend la forme sans agent.
  */
 function phraseStatutTache(evenement: Evenement): string {
   const quoi = cite(sujetEvenement(evenement)) || "une tâche";
-  const qui = evenement.agent;
+  const qui = evenement.agent === AGENT_ABSENT ? "" : evenement.agent;
   switch (evenement.statut) {
     case "assignee":
       return qui ? `${qui} prend en charge ${quoi}` : `${quoi} est assignée`;
@@ -212,6 +224,18 @@ function phraseEtapeAgent(evenement: Evenement): string {
       return `${libelleStatut(evenement.statut)}${
         evenement.detail ? ` — ${evenement.detail}` : ` : ${quoi}`
       }`;
+    // Le bilan d'un run (#1284) : son titre (« Bilan du run, sur pièces ») et son
+    // `detail`, qui compte les constats — plutôt que le code du bus
+    // (« bilan_rendu »), que la branche par défaut rendait tel quel au journal
+    // du run, là où ses pièces renvoient (#1285).
+    // Le `detail` d'un bilan rendu compte ses constats « sur pièces », comme son
+    // titre : « Bilan du run » suffit devant, sans le dire deux fois (relevé par
+    // le regard neuf). Celui d'un bilan illisible est déjà une phrase entière.
+    case STATUT_BILAN_RENDU:
+      return evenement.detail ? `Bilan du run — ${evenement.detail}` : quoi;
+    case STATUT_BILAN_ILLISIBLE:
+    case STATUT_BILAN_MUET:
+      return evenement.detail || quoi;
     case "terminee":
       return qui ? `${qui} a terminé : ${quoi}` : `${quoi} — terminé`;
     case "echec":
@@ -302,6 +326,14 @@ export function resumeEvenement(evenement: Evenement): string {
       return evenement.detail
         ? `${evenement.agent ? `${evenement.agent} · ` : ""}${evenement.detail}`
         : `${quoi} bute : ${libelleStatut(evenement.statut)}`;
+    }
+    case EVENEMENT_TACHE_DECISION: {
+      // Ce qu'un agent a tranché seul (#1024). La phrase est la décision, dans
+      // `detail` — le titre (« Décision de l'agent — … ») ne redirait que la tâche,
+      // et le statut (`decision_autonome`) n'est qu'un code du bus, que la branche
+      // par défaut rendait tel quel là où les pièces d'un bilan renvoient (#1285).
+      const qui = evenement.agent ? `${evenement.agent} a tranché seul` : "Tranché seul";
+      return evenement.detail ? `${qui} : ${evenement.detail}` : evenement.titre || qui;
     }
     case EVENEMENT_AGENT_ACTIVITE:
       return phraseEtapeAgent(evenement);

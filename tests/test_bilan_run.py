@@ -62,6 +62,7 @@ from maestro.controltower.bilan import (
     RUBRIQUE_ECHEC,
     RUBRIQUE_RECOMMANDATION,
     STATUT_BILAN_ILLISIBLE,
+    STATUT_BILAN_MUET,
     STATUT_BILAN_RENDU,
     SYSTEME,
     BilanRun,
@@ -79,6 +80,8 @@ from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_RUN_PLAN,
+    EVENEMENT_TACHE_STATUT,
     Event,
     InMemoryEventBus,
 )
@@ -105,6 +108,7 @@ from maestro.engine.executor import (
 )
 from maestro.engine.rattrapage import statut_du_geste
 from maestro.engine.verification import STATUT_VERIFICATION_NON_TENUE
+from maestro.plan_run import NoeudPlan
 from maestro.telemetry import ETAPE_BILAN, StepUsage
 
 RUN = "3fe501fc0878"
@@ -543,8 +547,12 @@ def test_l_usage_par_tache_dit_les_tokens_sans_prix_et_le_cout_partiel() -> None
     maquette = next(
         p for p in dossier.pieces if p.famille == FAMILLE_USAGE and p.tache_id == MAQUETTE
     )
-    assert "2092911 tokens, dont 2092911 sans prix, coût inconnu" in maquette.texte
-    assert "issue : echec" in maquette.texte
+    # En format d'interface (#1285) : milliers espacés d'une espace fine.
+    assert "2 092 911 tokens, dont 2 092 911 sans prix, coût inconnu" in (
+        maquette.texte
+    )
+    # L'issue en mots d'interface (#1285) : la vue du run montre ce texte tel quel.
+    assert "issue : Échec" in maquette.texte
     run = next(p for p in dossier.pieces if p.famille == FAMILLE_USAGE and not p.tache_id)
     assert "plancher" in run.texte
 
@@ -562,8 +570,8 @@ def test_p3_les_trois_tentatives_et_leur_cause_atteignent_le_juge() -> None:
     prompt = prompt_du_bilan(rejeu.state.execution(RUN), dossier)
 
     assert dossier.entrees_lues == ENTREES_P3
-    assert f"Tentatives de la tâche {MAQUETTE}" in prompt
-    assert "3 démarrage(s), 2 relance(s) du moteur" in prompt
+    assert f"Tentatives de la tâche « Maquetter les sections » ({MAQUETTE})" in prompt
+    assert "3 démarrages, 2 relances du moteur" in prompt
     relances = [p for p in dossier.pieces if p.famille == FAMILLE_RELANCE]
     assert len(relances) == 2
     assert all(CAUSE_P3 in p.texte for p in relances)
@@ -762,12 +770,26 @@ def test_un_bilan_par_issue_et_un_seul_appel_meme_demande_deux_fois() -> None:
 
 
 def test_un_modele_muet_ne_fabrique_aucun_bilan() -> None:
-    """Rien n'est publié, rien n'est inventé : le récit se rédigera sans bilan."""
+    """Rien n'est inventé : le récit se rédigera sans bilan — et le journal dit pourquoi.
+
+    Une ligne sans bilan ni usage (#1285) : sans elle, un bilan absent après un
+    redémarrage ne distinguait plus « le modèle s'est tu » de « rien n'a été demandé »,
+    et la vue du run devait dire l'un **ou** l'autre. Sans usage, elle ne compte rien
+    au run : on ne sait pas ce qu'un appel tombé a consommé.
+    """
     rejeu = rejouer_p3(total=60)
     service, bus = _service(rejeu, JugeScripte(panne=True))
 
     assert asyncio.run(service.rendre(RUN)) is None
-    assert bus.publies == []
+    (trace,) = bus.publies
+    assert (trace.statut, trace.bilan, trace.usage, trace.cout_usd) == (
+        STATUT_BILAN_MUET,
+        None,
+        None,
+        None,
+    )
+    assert trace.etape_run == ETAPE_BILAN
+    assert "n'a pas répondu" in trace.detail
 
 
 def test_une_reponse_illisible_ne_retient_rien_mais_son_cout_est_compte() -> None:
@@ -870,7 +892,11 @@ def test_un_run_sans_bilan_se_sert_avec_un_bilan_nul(tmp_path: Path) -> None:
         reponse = client.get(f"/api/executions/{RUN}/bilan")
 
     assert reponse.status_code == 200
-    assert reponse.json() == {"run_id": RUN, "bilan": None}
+    # L'état dit pourquoi il n'y en a pas (#1285) : un run en vol attend le sien.
+    assert reponse.json() == {
+        "run_id": RUN, "bilan": None, "etat": "attendu", "raison": "", "taches": {},
+        "cout_bilan": None,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -985,3 +1011,266 @@ def test_le_bilan_se_relit_tel_qu_il_a_ete_garde() -> None:
 
     assert relu == bilan
     assert isinstance(relu.constats[0], Constat)
+
+
+# --------------------------------------------------------------------------
+# ⑦ Ce que la vue du run en lit (#1285)
+# --------------------------------------------------------------------------
+
+
+def test_une_piece_dit_si_elle_resume_le_journal_ou_si_elle_en_est_une_ligne() -> None:
+    """La vue rend une ligne du journal en clair, une synthèse par son texte (#1285).
+
+    Le texte d'une pièce d'entrée est écrit pour le modèle (horodatage, type, statut
+    brut) ; celui d'une synthèse — le coût du run, l'usage d'une tâche, ses tentatives,
+    sa checklist — est déjà une phrase qu'aucune ligne du journal ne porte.
+    """
+    dossier = _dossier(rejouer_p3(total=60))
+
+    syntheses = {p.id for p in dossier.pieces if p.synthese}
+    entrees = [p for p in dossier.pieces if not p.synthese]
+    assert _ids(dossier, FAMILLE_USAGE)
+    assert set(_ids(dossier, FAMILLE_USAGE)) <= syntheses
+    tentatives = [p for p in dossier.pieces if p.texte.startswith("Tentatives de la tâche")]
+    assert tentatives and all(p.synthese for p in tentatives)
+    assert entrees and all(len(p.entrees) == 1 for p in entrees)
+    assert all(p.to_dict()["synthese"] == p.synthese for p in dossier.pieces)
+
+
+def test_une_synthese_se_lit_en_mots_d_interface_sans_code_du_moteur() -> None:
+    """La vue montre le texte d'une synthèse tel quel : ni « echec », ni le repère « — ».
+
+    Relevé sur la vraie stack (#1285) : « Usage de la tâche … (—) : … ; issue :
+    echec » — le code d'issue et le repère d'une tâche jamais routée, lus par une
+    personne.
+    """
+    from maestro.controltower.bilan import (
+        _agent_en_mots,
+        _issue_en_mots,
+        _montant,
+        _usage_en_mots,
+    )
+
+    assert (_issue_en_mots("echec"), _issue_en_mots("terminee"), _issue_en_mots("")) == (
+        "Échec", "Terminée", "aucune"
+    )
+    assert (_agent_en_mots("—"), _agent_en_mots(""), _agent_en_mots("dev")) == ("", "", ", dev")
+    # Le format de l'écran (`formatCout` : « 0,43 $US », « < 0,01 $US » sous le
+    # demi-centime, « 0,00 $US » pour un zéro mesuré), jamais le point décimal ni
+    # quatre décimales — relevé par le regard neuf : « 0,2830 $US » dans le bilan,
+    # « 0,41 $US » dans la tête du même écran.
+    assert _montant(0.2199) == "0,22 $US"
+    assert _montant(0.0004) == "< 0,01 $US"
+    assert _montant(0.0) == "0,00 $US"
+    assert _montant(1234.5) == "1 234,50 $US"
+    usage = StepUsage(
+        tokens_entree=40_000, tokens_sortie=720, cout_usd=0.2199, tours=2, duree_ms=31_000
+    )
+    assert _usage_en_mots(usage) =="40 720 tokens, coût 0,22 $US, 2 tours, 31 s"
+    assert "1 tour," in _usage_en_mots(StepUsage(tokens_entree=10, tours=1, duree_ms=1_000))
+    assert _usage_en_mots(StepUsage(duree_ms=0)).startswith("0 token, coût inconnu")
+    dossier = _dossier(rejouer_p3(total=60))
+    tentatives = next(p for p in dossier.pieces if p.texte.startswith("Tentatives de la tâche"))
+    assert tentatives.texte.endswith("issue : Échec")
+    # Le libellé, pour la personne : des phrases, la tâche par son titre, sans son
+    # identifiant — le texte, lui, le garde pour que le modèle puisse le citer.
+    assert tentatives.libelle == (
+        "« Maquetter les sections » a démarré 3 fois ; le moteur l'a relancée 2 fois "
+        "en présumant un aléa — issue : Échec."
+    )
+    assert MAQUETTE in tentatives.texte and MAQUETTE not in tentatives.libelle
+    cout = next(p for p in dossier.pieces if p.famille == FAMILLE_USAGE and not p.tache_id)
+    # « Jusqu'à sa fin » : la tête du run compte aussi le bilan, rendu après.
+    assert cout.libelle.startswith("Jusqu'à sa fin, le run a consommé ")
+    assert ";" not in cout.libelle.split(".")[0]
+    assert all(p.libelle for p in dossier.pieces if p.synthese)
+    assert not any(p.libelle for p in dossier.pieces if not p.synthese)
+
+
+def test_la_consigne_fait_nommer_une_tache_par_son_titre() -> None:
+    """Un constat s'affiche à la personne : la tâche par son titre, l'identifiant dans « tache ».
+
+    Relevé sur la vraie stack (#1285) : « La tâche rediger-notes-md a été arrêtée… ».
+    Jugé sur ce que la consigne dit, jamais sur ce qu'un modèle en a fait (#746).
+    """
+    assert "par son titre" in SYSTEME
+    assert "jamais par son" in SYSTEME and "identifiant" in SYSTEME
+
+
+def test_la_consigne_laisse_se_taire_une_rubrique_sans_rien_a_dire() -> None:
+    """Une rubrique vide ne s'affiche pas (parti pris 1 de la veille) : pas de constat « aucun ».
+
+    Relevé sur la vraie stack (#1285) : « Aucune consommation sans résultat : l'unique tâche
+    a abouti… » occupait une carte d'un run sans défaut. Rien ne le filtre au texte (#746) —
+    la consigne le dit au modèle.
+    """
+    assert "rien à dire ne reçoit aucun constat" in SYSTEME
+
+
+def test_la_ligne_du_journal_s_accorde() -> None:
+    """« 1 constat », « 2 écartés » : le journal du run montre cette ligne telle quelle."""
+    from maestro.controltower.bilan import ConstatEcarte
+
+    un = Constat(rubrique=RUBRIQUE_ECHEC, texte="La maquette a failli.", pieces=("P1",))
+    ecarte = ConstatEcarte(rubrique=RUBRIQUE_ECHEC, texte="?", pieces=(), raison="aucune")
+    bilan = BilanRun(run_id=RUN, statut=EXECUTION_ECHEC, fin=None, constats=(un,),
+                     ecartes=(ecarte, ecarte))
+
+    assert bilan.resume() == (
+        "1 constat sur pièces, dont 1 sur ce qui a failli ; 2 écartés faute de pièce."
+    )
+
+
+def test_une_piece_gardee_avant_ce_lot_se_relit_sans_perdre_sa_nature() -> None:
+    """Un bilan rendu avant #1285 ne dit pas `synthese` : la relecture le retrouve."""
+    from maestro.controltower.bilan import Piece
+
+    usage = Piece.depuis({"id": "P1", "famille": FAMILLE_USAGE, "texte": "Coût du run",
+                          "entrees": ["j-0056"]})
+    tentatives = Piece.depuis({"id": "P2", "famille": FAMILLE_STATUT, "texte": "Tentatives",
+                               "entrees": ["j-0003", "j-0009"]})
+    ligne = Piece.depuis({"id": "P3", "famille": FAMILLE_STATUT, "texte": "statut echec",
+                          "entrees": ["j-0055"]})
+
+    assert (usage.synthese, tentatives.synthese, ligne.synthese) == (True, True, False)
+    assert Piece.depuis({**ligne.to_dict(), "synthese": True}).synthese is True
+
+
+class _JugeRetenu(JugeScripte):
+    """Un juge qui ne répond qu'au signal : ce qui laisse voir le bilan « en rédaction »."""
+
+    def __init__(self, reponse: str | Callable[[str], str]) -> None:
+        super().__init__(reponse)
+        self.signal = asyncio.Event()
+
+    async def juger(self, *, agent: Any, prompt: str) -> tuple[str, StepUsage]:
+        await self.signal.wait()
+        return await super().juger(agent=agent, prompt=prompt)
+
+
+def test_l_etat_du_bilan_suit_le_run_de_son_vol_a_son_rendu() -> None:
+    """En vol → attendu ; soldé → en rédaction **dès la fin** ; puis rendu.
+
+    `lancer` est synchrone : aucun tour de boucle ne sépare la fin du run de l'état
+    « en rédaction ».
+    """
+    en_vol = Rejeu()
+    en_vol.execution(EXECUTION_EN_COURS, "Lancement")
+    service_en_vol, _ = _service(en_vol, JugeScripte())
+    assert service_en_vol.etat(RUN) == ("attendu", "")
+
+    rejeu = rejouer_p3(total=60)
+    juge = _JugeRetenu(_verdict_p3(_dossier(rejeu)))
+    service, bus = _service(rejeu, juge)
+
+    async def scenario() -> list[tuple[str, str]]:
+        # `lancer` est synchrone : c'est lui que la fin d'un run appelle, et l'écran
+        # qui relit juste après doit lire « en rédaction », jamais « absent ».
+        tache = service.lancer(RUN)
+        vus = [service.etat(RUN)]
+        juge.signal.set()
+        assert isinstance(tache, asyncio.Future)
+        await tache
+        vus.append(service.etat(RUN))
+        return vus
+
+    assert asyncio.run(scenario()) == [("en_redaction", ""), ("rendu", "")]
+    rejeu.evenement(bus.publies[0])
+    assert service.etat(RUN) == ("rendu", "")
+
+
+def test_un_bilan_absent_dit_pourquoi_quand_il_le_sait() -> None:
+    """Modèle muet, réponse illisible, ou rien de connu (run soldé avant ce lot, sans juge)."""
+    muet_rejeu = rejouer_p3(total=60)
+    muet, bus_muet = _service(muet_rejeu, JugeScripte(panne=True))
+    asyncio.run(muet.rendre(RUN))
+    assert muet.etat(RUN) == ("absent", "modele_muet")
+    # Après un redémarrage aussi : la ligne du modèle muet est au journal.
+    muet_rejeu.evenement(bus_muet.publies[0])
+    muet_relu, _ = _service(muet_rejeu, JugeScripte())
+    assert muet_relu.etat(RUN) == ("absent", "modele_muet")
+
+    illisible_rejeu = rejouer_p3(total=60)
+    illisible, bus = _service(illisible_rejeu, JugeScripte("pas du JSON"))
+    asyncio.run(illisible.rendre(RUN))
+    assert illisible.etat(RUN) == ("absent", "reponse_illisible")
+    # Après un redémarrage, la trace de l'appel illisible est au journal : la raison survit.
+    illisible_rejeu.evenement(bus.publies[0])
+    relu, _ = _service(illisible_rejeu, JugeScripte())
+    assert relu.etat(RUN) == ("absent", "reponse_illisible")
+
+    sans_juge, _ = _service(rejouer_p3(total=60), None)
+    assert sans_juge.etat(RUN) == ("absent", "")
+    inconnu, _ = _service(Rejeu(), JugeScripte())
+    assert inconnu.etat(RUN) == ("absent", "")
+
+
+def test_l_api_sert_l_etat_du_bilan_avec_le_bilan(tmp_path: Path) -> None:
+    """`GET …/bilan` dit l'état et sa raison, bilan compris — ce que la vue affiche."""
+    bus = InMemoryEventBus()
+    juge = JugeScripte(_verdict_p3(_dossier(rejouer_p3(total=60))))
+    with TestClient(
+        create_app(bus=bus, chat_store=ChatStore(tmp_path / "chat"), bilan_juge=juge)
+    ) as client:
+        _publier_p3(client, bus)
+        servi = _attendre(
+            lambda: (r := client.get(f"/api/executions/{RUN}/bilan").json())["bilan"] and r
+        )
+
+    assert servi is not None
+    assert (servi["etat"], servi["raison"]) == ("rendu", "")
+    assert all("synthese" in piece for piece in servi["bilan"]["pieces"])
+    # Les tâches nommées par leur titre, servies avec le bilan.
+    assert servi["taches"][MAQUETTE] == "Maquetter les sections"
+    # Et ce que le bilan a coûté : la tête du run le compte, la vue le dit.
+    assert servi["cout_bilan"] == pytest.approx(USAGE_BILAN.cout_usd)
+
+
+def test_une_tache_se_nomme_par_le_titre_que_son_run_lui_a_donne() -> None:
+    """Deux runs qui partagent un identifiant de tâche ne se prêtent pas leur titre.
+
+    Un identifiant se réemploie d'un run à l'autre (`rediger-notes-md`, vu sur le banc) :
+    la projection n'en tient qu'une carte, au titre du dernier run qui l'a portée. Le plan,
+    lui, est celui de chaque run — c'est lui qui nomme, comme dans le graphe ; la carte ne
+    nomme que ce que le plan n'annonçait pas.
+    """
+    premier, second, notes, hors_plan = "run-a", "run-b", "rediger-notes-md", "relire"
+    state = ControlTowerState()
+
+    def tache(run_id: str, tache_id: str, titre: str) -> Event:
+        return Event(
+            type=EVENEMENT_TACHE_STATUT,
+            run_id=run_id,
+            tache_id=tache_id,
+            titre=titre,
+            agent="dev",
+            statut=STATUT_TERMINEE,
+            projet_id=PROJET,
+        )
+
+    for run_id, titre in ((premier, "Rédiger NOTES.md"), (second, "Créer NOTES.md")):
+        state.appliquer(
+            Event(
+                type=EVENEMENT_EXECUTION_STATUT,
+                run_id=run_id,
+                statut=EXECUTION_EN_COURS,
+                titre="Objectif",
+                projet_id=PROJET,
+            )
+        )
+        state.appliquer(
+            Event(
+                type=EVENEMENT_RUN_PLAN,
+                run_id=run_id,
+                plan=[NoeudPlan(id=notes, titre=titre)],
+                projet_id=PROJET,
+            )
+        )
+        state.appliquer(tache(run_id, notes, titre))
+    state.appliquer(tache(premier, hors_plan, "Relire les notes"))
+
+    assert state.titres_du_run(premier) == {
+        notes: "Rédiger NOTES.md",
+        hors_plan: "Relire les notes",
+    }
+    assert state.titres_du_run(second) == {notes: "Créer NOTES.md"}

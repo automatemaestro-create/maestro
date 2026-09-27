@@ -2540,7 +2540,7 @@ def create_app(
     # Les récits en vol, tenus par l'app : `asyncio.create_task` ne garde qu'une
     # référence faible, et une tâche ramassée en cours de route perdrait le
     # message sans rien dire.
-    recits: set[asyncio.Task[Any]] = set()
+    recits: set[asyncio.Future[Any]] = set()
     # Le relais du renfort (#1260) : il pose dans le fil ci-dessus la demande
     # qu'un run a publiée sur le bus — quel que soit l'hôte du run, en process
     # ou détaché. Même patron que le récit : rien ne l'abonne, la pompe lui passe
@@ -2559,10 +2559,16 @@ def create_app(
         récit, lui, attend le même bilan (`ServiceBilan.rendre` partage l'appel en
         vol) : il n'y a qu'un appel au modèle pour les deux.
         """
-        for travail in (bilans.rendre(run_id), conteur.raconter(run_id)):
-            tache = asyncio.create_task(travail)
-            recits.add(tache)
-            tache.add_done_callback(recits.discard)
+        # Le bilan est **lancé** ici, sans attendre (#1285) : l'appel est en vol dès
+        # cette ligne, donc la vue du run qui relit juste après lit « en
+        # rédaction », jamais « absent ».
+        en_vol = bilans.lancer(run_id)
+        if isinstance(en_vol, asyncio.Future):
+            recits.add(en_vol)
+            en_vol.add_done_callback(recits.discard)
+        tache = asyncio.create_task(conteur.raconter(run_id))
+        recits.add(tache)
+        tache.add_done_callback(recits.discard)
 
     async def rejouer() -> None:
         """Relit le journal durable dans la projection — une seule fois par process."""
@@ -2816,6 +2822,7 @@ def create_app(
         ordre: str = ORDRE_DESC,
         page: int = 1,
         taille: int = TAILLE_PAGE_DEFAUT,
+        ids: str | None = None,
     ) -> dict[str, Any]:
         """Le journal requêtable : filtres (agent / type / run / projet / période), tri, pagination.
 
@@ -2824,6 +2831,9 @@ def create_app(
         #97).
 
         `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
+        `ids` (#1285) est une liste d'identifiants d'entrée séparés par des
+        virgules (`j-0042,j-0055`) : les entrées qu'une pièce du bilan d'un run
+        cite, que la vue du run ouvre — où qu'elles soient dans le journal.
         `projet` est **obligatoire** (#277) et suit le contrat commun :
         `<id>` | `tous` | `aucun` — 422 `projet-requis` s'il manque, 404
         `projet-inconnu` sur un identifiant non déclaré. 422 aussi sur un
@@ -2858,6 +2868,9 @@ def create_app(
             ordre=ordre,
             page=page,
             taille=taille,
+            ids=(
+                [i.strip() for i in ids.split(",") if i.strip()] if ids is not None else None
+            ),
         )
 
     @app.get("/api/taches")
@@ -3505,10 +3518,29 @@ def create_app(
         n'a pas répondu, un run soldé avant ce lot. Ce n'est pas une erreur — le
         run existe, son bilan pas encore. 404 si aucune trace reçue pour ce `run_id`.
         """
-        if state.execution(run_id) is None:
+        execution = state.execution(run_id)
+        if execution is None:
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         bilan = bilans.bilan(run_id)
-        return {"run_id": run_id, "bilan": bilan.to_dict() if bilan is not None else None}
+        # Ce que la vue du run dit quand `bilan` est nul (#1285) : `attendu` (run en
+        # vol), `en_redaction` (l'appel est parti), `absent` — avec sa `raison`
+        # quand on la sait (`modele_muet`, `reponse_illisible`) ; `rendu` sinon.
+        etat, raison = bilans.etat(run_id)
+        return {
+            "run_id": run_id,
+            "bilan": bilan.to_dict() if bilan is not None else None,
+            "etat": etat,
+            "raison": raison,
+            # Le titre de chaque tâche du run (#1285) : un constat nomme sa tâche
+            # par son identifiant, la vue la nomme par son titre — servi ici avec
+            # le bilan, pour ne pas dépendre du moment où la liste des tâches arrive,
+            # ni d'une panne qui l'aurait vidée.
+            "taches": state.titres_du_run(run_id),
+            # Ce que le bilan a coûté (#1285), compté au run après sa fin : la tête
+            # du run l'inclut, la vue du bilan le dit — sans quoi le coût « jusqu'à
+            # sa fin » que cite le bilan contredisait la tête. `null` : inconnu.
+            "cout_bilan": execution.cout.bilan.cout_usd,
+        }
 
     @app.post("/api/sources/apercu")
     async def apercu_ingestion(

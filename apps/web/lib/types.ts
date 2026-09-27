@@ -1759,6 +1759,12 @@ export const EVENEMENT_TACHE_USAGE = "tache.usage";
  * backend.
  */
 export const EVENEMENT_TACHE_BLOCAGE = "tache.blocage";
+/**
+ * #1024 : ce qu'un agent a **tranché seul**, hors de son brief — `detail` la
+ * décision, `titre` « Décision de l'agent — <tâche> », `statut`
+ * `decision_autonome`. La lecture Décisions (#1026) les liste ; le journal les dit.
+ */
+export const EVENEMENT_TACHE_DECISION = "tache.decision";
 export const EVENEMENT_AGENT_ACTIVITE = "agent.activite";
 export const EVENEMENT_AGENT_CAPACITE = "agent.capacite";
 export const EVENEMENT_MESSAGE_INTER_AGENTS = "message.inter_agents";
@@ -2617,6 +2623,13 @@ export const STATUT_EN_ATTENTE_VALIDATION = "en_attente_validation";
 export const COULOIR_REPLI = "";
 
 /**
+ * Ce que le moteur consigne comme agent d'une tâche **jamais routée** (« — »,
+ * `maestro/controltower/frise.py`, `AGENT_ABSENT`) : un repère, pas un agent. Une
+ * phrase ne le prend pas pour sujet (`lib/evenements`, #1285).
+ */
+export const AGENT_ABSENT = "—";
+
+/**
  * Une entrée de la frise d'activité d'un run (#355) : un fait daté, attribué à
  * un couloir.
  *
@@ -2745,6 +2758,144 @@ export type DecisionsRun = {
   hypotheses: number;
   plafond: number;
   tronquee: boolean;
+};
+
+/**
+ * Les statuts de l'activité de run qui porte le bilan (`agent.activite`, étape
+ * `bilan`) — rendu, réponse du modèle illisible, ou modèle muet (`bilan.py`,
+ * `STATUT_BILAN_*`). Le journal les dit en mots.
+ */
+export const STATUT_BILAN_RENDU = "bilan_rendu";
+export const STATUT_BILAN_ILLISIBLE = "bilan_illisible";
+export const STATUT_BILAN_MUET = "bilan_muet";
+
+/**
+ * Où en est le bilan d'un run (#1285) — le champ `etat` de
+ * `GET /api/executions/{run_id}/bilan` (`maestro/controltower/bilan.py`) :
+ * `attendu` tant que le run n'est pas soldé, `en_redaction` pendant l'appel au
+ * modèle, `rendu` quand il est là, `absent` sinon.
+ */
+export const ETAT_BILAN_ATTENDU = "attendu";
+export const ETAT_BILAN_EN_REDACTION = "en_redaction";
+export const ETAT_BILAN_RENDU = "rendu";
+export const ETAT_BILAN_ABSENT = "absent";
+
+/**
+ * Pourquoi un bilan est absent. Chaque appel qui n'a rien rendu laisse sa ligne au
+ * journal, si bien qu'aucune raison (`""`) veut dire qu'aucune rédaction n'a été
+ * tentée à la fin du run.
+ */
+export const RAISON_BILAN_MODELE_MUET = "modele_muet";
+export const RAISON_BILAN_REPONSE_ILLISIBLE = "reponse_illisible";
+
+/** Les cinq rubriques d'un bilan (#1284) — ce que chaque constat dit. */
+export const RUBRIQUE_LIVRE = "livre";
+export const RUBRIQUE_ECHEC = "echec";
+export const RUBRIQUE_ACTE = "acte";
+export const RUBRIQUE_CONSOMMATION = "consommation";
+export const RUBRIQUE_RECOMMANDATION = "recommandation";
+
+/**
+ * La famille des pièces d'**usage** (coût du run, usage d'une tâche) — toujours des
+ * synthèses, jamais la ligne d'une entrée du journal (`bilan.py`, `FAMILLE_USAGE`).
+ */
+export const FAMILLE_PIECE_USAGE = "usage";
+
+/** La nature d'un échec, jugée sur pièces par le modèle (#1284) — un échec seulement. */
+export const NATURE_ALEA = "alea";
+export const NATURE_DETERMINISTE = "deterministe";
+export const NATURE_INDETERMINEE = "indeterminee";
+
+/**
+ * Un constat du bilan, **vérifié** contre ses pièces (#1284) : ce qu'il dit, et les
+ * pièces (`P7`) qui le fondent. `nature` n'a de sens que pour un échec ; `tache` est
+ * l'identifiant d'une tâche du run, vide s'il n'en nomme aucune ; `agent` et
+ * `revision_playbook` disent qu'une recommandation vise le playbook d'un agent qui
+ * a failli dans ce run.
+ */
+export type ConstatBilan = {
+  rubrique: string;
+  texte: string;
+  pieces: string[];
+  nature: string;
+  tache: string;
+  agent: string;
+  revision_playbook: boolean;
+};
+
+/** Un constat que la vérification a refusé — gardé avec sa raison, jamais montré comme vrai. */
+export type ConstatEcarteBilan = {
+  rubrique: string;
+  texte: string;
+  pieces: string[];
+  raison: string;
+};
+
+/**
+ * Une pièce **citée** par un constat : un fait tiré du journal du run, et les
+ * entrées (`j-0042`) dont il vient — celles que `GET /api/journal?ids=` rend.
+ *
+ * `synthese` (#1285) dit comment la montrer : une pièce d'entrée **est** une ligne
+ * du journal, et la vue rend cette ligne telle que le journal la dit (son `texte`
+ * est écrit pour le modèle) ; une synthèse (coût du run, usage d'une tâche,
+ * tentatives, checklist) n'est la ligne d'aucune entrée, et son `texte` est la
+ * phrase à montrer. Absent d'un backend antérieur à #1285.
+ */
+export type PieceBilan = {
+  id: string;
+  famille: string;
+  texte: string;
+  tache_id: string;
+  entrees: string[];
+  synthese?: boolean;
+  /**
+   * Une synthèse dite pour une personne (#1285) : des phrases, la tâche par son
+   * titre, sans identifiant — le `texte` reste celui que le modèle a lu. Vide pour
+   * une pièce d'entrée, et absent d'un bilan rendu avant #1285.
+   */
+  libelle?: string;
+};
+
+/**
+ * Le bilan d'un run terminé, rendu sur les pièces de son journal (#1284, docs/05
+ * §6.23). `pieces` ne porte que les pièces **citées** ; `pieces_offertes`,
+ * `entrees_lues` et `pieces_laissees` disent ce que le modèle a lu et ce que le
+ * budget a laissé de côté.
+ */
+export type BilanRun = {
+  run_id: string;
+  statut: string;
+  fin: string | null;
+  constats: ConstatBilan[];
+  ecartes: ConstatEcarteBilan[];
+  pieces: PieceBilan[];
+  pieces_offertes: number;
+  entrees_lues: number;
+  pieces_laissees: number;
+};
+
+/**
+ * La réponse de `GET /api/executions/{run_id}/bilan`. `bilan` est nul tant qu'il
+ * n'y en a pas ; `etat` et `raison` (#1285) disent pourquoi — absents d'un backend
+ * antérieur, qui ne savait rien dire de plus que « pas de bilan ».
+ */
+export type ReponseBilan = {
+  run_id: string;
+  bilan: BilanRun | null;
+  etat?: string;
+  raison?: string;
+  /**
+   * Le titre de chaque tâche du run, par identifiant (#1285) — servi avec le bilan
+   * pour qu'un constat nomme sa tâche sans attendre la liste des tâches, ni
+   * dépendre d'une panne qui l'aurait vidée.
+   */
+  taches?: Record<string, string>;
+  /**
+   * Ce que l'appel du bilan a coûté (#1285), compté au run après sa fin — `null`
+   * quand il n'est pas connu. La tête du run l'inclut ; le bilan cite, lui, le
+   * coût « jusqu'à sa fin » : la vue dit l'un pour que l'autre ne le contredise pas.
+   */
+  cout_bilan?: number | null;
 };
 
 /** Clés de tri et sens du journal requêtable (maestro/controltower/journal.py). */

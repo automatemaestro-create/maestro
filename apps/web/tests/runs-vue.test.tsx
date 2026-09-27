@@ -68,6 +68,7 @@ import {
   poserJournal,
   projetFactice,
   rendreAvecEtat,
+  reponseBilanFactice,
   runFactice,
   tacheFactice,
   validationFactice,
@@ -92,6 +93,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       return lecture.taches;
     },
     chargerGrapheExecution: async () => lecture.graphe,
+    // #1285 : la vue d'un run soldé lit son bilan — jamais un vrai `fetch`.
+    chargerBilanExecution: async (runId: string) => reponseBilanFactice({ run_id: runId }),
   };
 });
 

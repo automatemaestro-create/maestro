@@ -29,6 +29,7 @@ import type { ControlTower } from "@/lib/useControlTower";
 import {
   AGENT_SOURCE_DEFAUT,
   CHAT_CONVERSATION_ORIGINE,
+  ETAT_BILAN_ABSENT,
   EVENEMENT_TACHE_STATUT,
   EXECUTION_ANNULEE,
   EXECUTION_EN_COURS,
@@ -39,6 +40,7 @@ import {
 import type {
   AgentCatalogue,
   AreteGraphe,
+  BilanRun,
   CatalogueFournisseurs,
   ConstatPoste,
   CoutExecution,
@@ -62,6 +64,7 @@ import type {
   PageJournal,
   Projet,
   Question,
+  ReponseBilan,
   ResumeExecution,
   RoleValideEquipe,
   SourceDeclaree,
@@ -1043,6 +1046,43 @@ export function decisionsRunFactice(
     hypotheses: entrees.filter((entree) => entree.hypothese).length,
     plafond: 200,
     tronquee: total > entrees.length,
+    ...partiel,
+  };
+}
+
+/**
+ * La réponse de `GET /api/executions/{run_id}/bilan` (#1285) : **absent** par
+ * défaut, sans raison — ce que rend un run soldé avant que Maestro ne rende des
+ * bilans. C'est le défaut des écrans qui ne regardent pas le bilan : un run soldé
+ * y porte la ligne « aucun bilan », ce que l'API réelle servirait.
+ */
+export function reponseBilanFactice(
+  partiel: Partial<ReponseBilan> = {},
+): ReponseBilan {
+  return {
+    run_id: "run-1",
+    bilan: null,
+    etat: ETAT_BILAN_ABSENT,
+    raison: "",
+    ...partiel,
+  };
+}
+
+/**
+ * Un bilan rendu (#1284) — sans constat par défaut ; un test pose ceux qu'il
+ * regarde, et les pièces qu'ils citent.
+ */
+export function bilanFactice(partiel: Partial<BilanRun> = {}): BilanRun {
+  return {
+    run_id: "run-1",
+    statut: "echec",
+    fin: "2026-09-27T16:41:02+00:00",
+    constats: [],
+    ecartes: [],
+    pieces: [],
+    pieces_offertes: 0,
+    entrees_lues: 0,
+    pieces_laissees: 0,
     ...partiel,
   };
 }

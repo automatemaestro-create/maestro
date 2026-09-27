@@ -7,8 +7,10 @@
  * Cette lecture est **multiple** — #491 l'a rendue double (le **pipeline**, le
  * flux — quoi après quoi ; le **Kanban**, les états — combien dans quelle
  * colonne), #516 y a ajouté le **journal** (qu'a-t-il fait), qui se lisait
- * jusque-là au pied de la vue, #355 la **frise** (qui, quand, et à qui) et #1026
- * les **décisions** (ce qui a été tranché sans moi). Le raisonnement complet, ce
+ * jusque-là au pied de la vue, #355 la **frise** (qui, quand, et à qui), #1026
+ * les **décisions** (ce qui a été tranché sans moi) et #1285 le **bilan** (ce qui
+ * a failli, pourquoi, et que faire — dont la tête dit aussi une ligne, et dont
+ * chaque pièce s'ouvre dans le journal ou la frise). Le raisonnement complet, ce
  * que l'ordre des onglets conserve de #478 et les options écartées vivent dans
  * `lib/vuesRun` — pas ici : cette page les monte, elle ne les tranche pas.
  *
@@ -74,7 +76,11 @@ import {
   CarteValidation,
   type ArbitrageSurPlace,
 } from "@/components/CarteValidation";
-import { IconeFlecheGauche, IconeRuns } from "@/components/Icones";
+import {
+  IconeFlecheDroite,
+  IconeFlecheGauche,
+  IconeRuns,
+} from "@/components/Icones";
 import { Kanban } from "@/components/Kanban";
 import { PAGE_VALIDATIONS } from "@/components/PanneauValidations";
 import {
@@ -83,6 +89,7 @@ import {
   EtatVide,
   LienRenvoi,
 } from "@/components/Primitives";
+import { BilanRun, type OuvrirPieces } from "@/components/runs/BilanRun";
 import { DecisionsRun } from "@/components/runs/DecisionsRun";
 import {
   Avancement,
@@ -100,9 +107,11 @@ import { JournalRun } from "@/components/runs/JournalRun";
 import { VuePipeline } from "@/components/runs/VuePipeline";
 import { RegionLive } from "@/components/RegionLive";
 import { mesuresDesRuns, mesuresDesTaches } from "@/lib/annonces";
+import { etatDuBilan, resumeDuBilan, type Citation } from "@/lib/bilan";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   causeDAttente,
+  estSolde,
   messageVideDuRun,
   nomDuRun,
   regimeDuRun,
@@ -118,11 +127,19 @@ import {
   hrefAvecRetour,
   hrefRun,
 } from "@/lib/navigation";
-import type { ResumeExecution, Validation } from "@/lib/types";
+import {
+  ETAT_BILAN_ABSENT,
+  ETAT_BILAN_EN_REDACTION,
+  ETAT_BILAN_RENDU,
+  type ResumeExecution,
+  type Validation,
+} from "@/lib/types";
+import { useBilanRun, type BilanDuRun } from "@/lib/useBilanRun";
 import { useTachesRun } from "@/lib/useTachesRun";
 import { arbitragesEnAttente, validationsDuRun } from "@/lib/validations";
 import {
   VUES_RUN,
+  VUE_BILAN,
   VUE_DECISIONS,
   VUE_FRISE,
   VUE_JOURNAL,
@@ -163,6 +180,18 @@ export function VueRun({
   // *même* run, déjà chargé — une frontière de route ferait repartir la tête et
   // les autres lectures pour un changement de regard (`lib/vuesRun`).
   const [vue, setVue] = useState<VueRunCle>(vueCible);
+  // Les entrées qu'une pièce du bilan vient d'ouvrir dans le journal ou la frise
+  // (#1285) — oubliées dès qu'on change de lecture par la bascule : un onglet
+  // choisi à la main montre tout, pas l'éclairage d'un geste précédent.
+  const [citation, setCitation] = useState<Citation | null>(null);
+  const choisir = (cle: VueRunCle) => {
+    setCitation(null);
+    setVue(cle);
+  };
+  const ouvrirPieces: OuvrirPieces = (lecture, cite) => {
+    setCitation(cite.entrees.length > 0 ? cite : null);
+    setVue(lecture === "frise" ? VUE_FRISE : VUE_JOURNAL);
+  };
 
   const run = executions.find((execution) => execution.run_id === runId);
   // `null` tant que le run n'est pas reconnu comme un run de ce projet : inutile
@@ -173,6 +202,17 @@ export function VueRun({
     chargement: chargementTaches,
     erreur: erreurTaches,
   } = useTachesRun(portee, run === undefined ? null : runId, revision);
+  // Le bilan (#1285), lu **une fois** pour la ligne de tête, le compte de
+  // l'onglet et l'onglet lui-même — trois lectures de la même réponse finiraient
+  // par ne plus dire la même chose. Rien n'est demandé tant que le run est en
+  // vol : il n'a pas de bilan, par construction.
+  const solde = run !== undefined && estSolde(run);
+  const bilan = useBilanRun(solde ? runId : null, revision);
+  // Un constat nomme une tâche par son identifiant ; la vue la nomme par son
+  // titre, comme le pipeline et le Kanban (relevé par le regard neuf). Le titre
+  // vient d'abord de la réponse du bilan (`taches`), qui le sert avec lui ; la
+  // liste des tâches du run n'est qu'un repli pour un backend qui ne le sert pas.
+  const titresTaches = new Map(taches.map((tache) => [tache.id, tache.titre]));
 
   // L'appariement validation → run passe par les tâches **du projet** : une
   // demande de validation porte sa tâche, jamais son run (`lib/execution`). Il se
@@ -265,6 +305,8 @@ export function VueRun({
             demandes={demandes}
             decider={decider}
             retour={retour}
+            bilan={bilan}
+            lireBilan={vue === VUE_BILAN ? undefined : () => choisir(VUE_BILAN)}
           />
         )}
       </section>
@@ -283,7 +325,15 @@ export function VueRun({
               mesures={[...mesuresDesTaches(taches), ...mesuresDesRuns([run])]}
             />
           )}
-          <OngletsVueRun vue={vue} choisir={setVue} />
+          <OngletsVueRun
+            vue={vue}
+            choisir={choisir}
+            constats={
+              bilan.reponse?.bilan && etatDuBilan(bilan.reponse).etat === ETAT_BILAN_RENDU
+                ? bilan.reponse.bilan.constats.length
+                : null
+            }
+          />
 
           {vue === VUE_PIPELINE && (
             <VuePipeline
@@ -342,6 +392,8 @@ export function VueRun({
             <FriseRun
               runId={runId}
               revision={revision}
+              citation={citation}
+              toutEffacer={() => setCitation(null)}
               messageVide={
                 chargementTaches
                   ? "Chargement de l'activité de ce run…"
@@ -376,12 +428,29 @@ export function VueRun({
             />
           )}
 
+          {/* Ce que ce run a fait de travers, pourquoi, et que faire (#1285) :
+              jugé sur les pièces de son journal (#1284), et chaque pièce s'ouvre
+              dans le journal — l'onglet voisin — ou dans la frise. */}
+          {vue === VUE_BILAN && (
+            <BilanRun
+              portee={portee}
+              runId={runId}
+              bilan={bilan}
+              solde={solde}
+              titresTaches={titresTaches}
+              revision={revision}
+              ouvrir={ouvrirPieces}
+            />
+          )}
+
           {vue === VUE_JOURNAL && (
             <JournalRun
               portee={portee}
               runId={runId}
               direct={evenements}
               revision={revision}
+              citation={citation}
+              toutLeJournal={() => setCitation(null)}
             />
           )}
         </>
@@ -406,14 +475,35 @@ export function VueRun({
 function OngletsVueRun({
   vue,
   choisir,
+  constats,
 }: {
   vue: VueRunCle;
   choisir: (vue: VueRunCle) => void;
+  /**
+   * Le nombre de constats du bilan, quand il est rendu (#1285) : posé sur son
+   * onglet comme Buildkite pose le sien sur « Annotations ». Rien sinon — un
+   * « 0 » sur un run en vol dirait « aucun défaut » d'un run qui n'est pas jugé.
+   */
+  constats: number | null;
 }) {
+  const vues =
+    constats === null
+      ? VUES_RUN
+      : VUES_RUN.map((onglet) =>
+          onglet.cle === VUE_BILAN
+            ? {
+                ...onglet,
+                compte: {
+                  valeur: constats,
+                  libelle: `${constats} constat${constats > 1 ? "s" : ""}`,
+                },
+              }
+            : onglet,
+        );
   return (
     <BasculeDeVues
       etiquette="Lectures de ce run"
-      vues={VUES_RUN}
+      vues={vues}
       courante={vue}
       choisir={choisir}
     />
@@ -440,6 +530,8 @@ function EnTeteRun({
   demandes,
   decider,
   retour,
+  bilan,
+  lireBilan,
 }: {
   run: ResumeExecution;
   attendUneValidation: boolean;
@@ -449,6 +541,10 @@ function EnTeteRun({
   decider: ArbitrageSurPlace["decider"];
   /** Où revenir si un lien mène quand même aux validations (#1228). */
   retour: string | undefined;
+  /** La lecture du bilan (#1285), faite une fois pour la tête et l'onglet. */
+  bilan: BilanDuRun;
+  /** Ouvre l'onglet du bilan — absent quand il est déjà ouvert. */
+  lireBilan: (() => void) | undefined;
 }) {
   const maintenant = useHorloge();
   const regime = regimeDuRun(run, attendUneValidation);
@@ -524,6 +620,9 @@ function EnTeteRun({
           lu « Plafond de dépense atteint » dans la liste doit se lire pareil
           ici. */}
       <LigneCause run={run} className="mt-3" />
+      {/* Sous la cause, qui ne bouge pas (#1285) : elle dit ce qu'un ensemble
+          fermé sait nommer, le bilan ce que les pièces du run ont montré. */}
+      <LigneBilan lecture={bilan} lire={lireBilan} />
       <LigneInterruption run={run} regime={regime} className="mt-3" />
       <LignePause regime={regime} className="mt-3" />
       <GestesRun run={run} className="mt-3" />
@@ -594,6 +693,76 @@ function ArbitragesDuRun({
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * Le bilan du run **en une ligne**, dans sa tête (#1285) — et le renvoi vers
+ * l'onglet qui le porte.
+ *
+ * C'est le parti pris de la veille, d'après le résumé de Buildkite (« 3
+ * annotations — View all → ») : la tête dit le verdict, le détail vit un niveau
+ * plus bas, et **aucune place de plus** — une ligne sous la cause, dans la carte
+ * qui existe. Elle nomme ce qui change ce qu'on fait dans la minute : les échecs
+ * **et leur nature** (« qui se reproduira » dit qu'une relance à l'identique
+ * échouera, le contresens du run `p3`), ce qu'il faut changer, les actes sortis ou
+ * accordés sans personne (`resumeDuBilan`).
+ *
+ * Un run en vol n'en a pas, et elle ne dit rien ; une rédaction en cours et un
+ * bilan absent se disent, eux, parce qu'un run soldé sans ligne de bilan se lirait
+ * « rien à signaler ». Le renvoi tombe quand l'onglet est déjà ouvert : proposer
+ * d'aller là où l'on est serait un geste pour rien.
+ *
+ * Elle dit ce que **la lecture du bilan** a rendu, et elle seule : l'API qui
+ * tombe ensuite n'efface pas un bilan déjà lu — celui d'un run soldé ne change
+ * plus, et l'onglet continue de le montrer. Une tête qui le tairait pendant que
+ * le corps le porte se contredirait (relevé par le regard neuf, état
+ * injoignable).
+ */
+function LigneBilan({
+  lecture,
+  lire,
+}: {
+  lecture: BilanDuRun;
+  lire: (() => void) | undefined;
+}) {
+  if (lecture.reponse === null) return null;
+  const { etat } = etatDuBilan(lecture.reponse);
+  const bilan = lecture.reponse.bilan;
+  let texte: string;
+  let renvoi: string;
+  if (etat === ETAT_BILAN_RENDU && bilan !== null) {
+    texte = resumeDuBilan(bilan);
+    renvoi = "Lire le bilan";
+  } else if (etat === ETAT_BILAN_EN_REDACTION) {
+    texte = "en cours de rédaction, sur les pièces du journal";
+    renvoi = "";
+  } else if (etat === ETAT_BILAN_ABSENT) {
+    texte = "aucun pour ce run";
+    renvoi = "Pourquoi";
+  } else {
+    return null;
+  }
+  return (
+    // `CIBLE_MINIMALE` sur la ligne entière, et non sur son seul renvoi : la ligne
+    // garde sa hauteur quand le renvoi tombe (onglet Bilan ouvert), sinon la
+    // barre d'onglets sautait d'un onglet à l'autre (relevé par le regard neuf).
+    <p className={`mt-3 flex ${CIBLE_MINIMALE} flex-wrap items-center gap-x-2 text-annexe`}>
+      <span className="min-w-0">
+        <span className="font-medium">Bilan</span>
+        <span className="text-texte-secondaire"> · {texte}</span>
+      </span>
+      {renvoi && lire && (
+        <button
+          type="button"
+          onClick={lire}
+          className={`inline-flex items-center gap-1 ${CIBLE_MINIMALE} rounded-controle font-medium text-info-texte hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info`}
+        >
+          {renvoi}
+          <IconeFlecheDroite aria-hidden="true" className="size-3.5 shrink-0" />
+        </button>
+      )}
+    </p>
   );
 }
 
