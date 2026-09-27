@@ -309,6 +309,11 @@ describe("la trace d'une pièce tranchée (parti pris 4 de la veille)", () => {
     expect(screen.getByText(/écrit\./)).toBeInTheDocument();
     expect(screen.getByText("1 vérifiée")).toBeInTheDocument();
     expect(screen.queryByText("ligne 1")).toBeNull();
+    // Le fait au pas des badges qui le suivent, en texte principal : la sixième relecture
+    // lisait le verdict avant de savoir quel fichier était écrit.
+    const ligne = screen.getByText(/écrit\./).closest("p");
+    expect(ligne?.className).toMatch(/\btext-annexe\b/);
+    expect(ligne?.className).toMatch(/\btext-texte\b/);
 
     await userEvent.click(screen.getByRole("button", { name: "Voir ce qui a été écrit" }));
 

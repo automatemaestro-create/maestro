@@ -44,7 +44,8 @@
  *
  * - **le diff est borné en hauteur aussi**, pas seulement en lignes : dans la colonne
  *   de 320 px, douze lignes repliées chacune plusieurs fois poussaient les gestes hors
- *   de la vue. Coupé, il le dit par le même contrôle, « Voir tout le changement » ;
+ *   de la vue. Coupé, il le dit dans la boîte (un « ⋯ » à la façon de ses replis) et
+ *   par le même contrôle, « Voir tout le changement » ;
  * - **la commande corrigée se lit avec son verdict juste sous la légende** (`corrigees`),
  *   sans déplier la liste — elle était sous la ligne de flottaison ; la liste entière
  *   se déplie à la demande, et d'elle-même sur un échec ;
@@ -150,7 +151,8 @@ export function PieceDOutillage({
       }
       const entieres = lignes.filter((ligne) => fin(ligne) <= limite);
       setCoupe(true);
-      setHauteur(entieres.length > 0 ? Math.max(...entieres.map(fin)) : limite);
+      // La place du repère de coupe (`h-6`), posé là où la ligne suivante commence.
+      setHauteur((entieres.length > 0 ? Math.max(...entieres.map(fin)) : limite) + 1.5 * rem);
     };
     mesurer();
     if (typeof ResizeObserver === "undefined") return;
@@ -207,6 +209,17 @@ export function PieceDOutillage({
         style={coupe && hauteur !== null ? { maxHeight: hauteur } : undefined}
       >
         <LignesDiff entrees={montrees} aplatDesAjouts={!diff.neuf} repliInchange={!diff.neuf} />
+        {/* Coupée, la boîte le dit elle-même, dans la grammaire de ses replis : deux
+            relectures l'avaient vue finir sur une ligne entière sans que rien dise que
+            le texte continuait. Le contrôle qui déplie, juste dessous, porte le reste. */}
+        {coupe && (
+          <p
+            aria-hidden
+            className="absolute inset-x-0 bottom-0 h-6 bg-surface-creuse px-2 text-center font-mono text-annexe leading-6 text-texte-secondaire"
+          >
+            ⋯
+          </p>
+        )}
       </div>
       {(repliees > 0 || coupe || ouvert) && (
         <Bouton
@@ -373,18 +386,23 @@ export function TraceDePiece({
   const diff = piece !== undefined && fait.etat === "ecrit" ? diffDeLaPiece(piece) : null;
   return (
     <div className="flex flex-col gap-1">
+      {/* Le fait au pas des badges qui le suivent, le chemin en tête : la sixième
+          relecture lisait « ✓ 3 vérifiées » avant de savoir quel fichier était écrit. */}
       <p
         className={
-          "flex flex-wrap items-center gap-x-2 gap-y-1 text-micro " +
-          (dansLeProjet || fait.etat === "ecartee"
-            ? "text-texte-secondaire"
-            : "text-attention-texte")
+          "flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe " +
+          (dansLeProjet
+            ? "text-texte"
+            : fait.etat === "ecartee"
+              ? "text-texte-secondaire"
+              : "text-attention-texte")
         }
       >
         <span className="inline-flex min-w-0 items-center gap-1">
           <IconeDuSort className="size-3.5 shrink-0" />
           <span className="min-w-0 break-words">
-            <span className="font-mono">{fait.chemin}</span> {pieceEcriteEnMots(fait)}
+            <span className="font-mono font-medium">{fait.chemin}</span>{" "}
+            {pieceEcriteEnMots(fait)}
           </span>
         </span>
         {piece !== undefined && dansLeProjet && piece.verifications.length > 0 && (
