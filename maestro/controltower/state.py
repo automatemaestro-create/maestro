@@ -216,6 +216,35 @@ STATUTS_EXECUTION_TERMINAUX = frozenset(
     {EXECUTION_TERMINEE, EXECUTION_ANNULEE, EXECUTION_ECHEC}
 )
 
+#: Ce que le fil dit d'un statut d'exécution (#946, C7 du retex du 2026-09-11) :
+#: l'ouverture d'un run annonçait « statut « en_cours » », c'est-à-dire
+#: l'identifiant de la machine à états rendu tel quel dans une conversation.
+#:
+#: Les libellés sont ceux de `libelleStatutExecution` (`apps/web/lib/format.ts`)
+#: **au mot près** — c'est la règle de #571, et le même run lu dans le fil puis
+#: sur son écran ne doit pas paraître dans deux états. Un statut absent de la
+#: table se dit brut plutôt que traduit à l'aveugle.
+#:
+#: Déclarée à côté des statuts depuis #1179 : les refus des gestes sur un run
+#: (`ServiceExecutions.refus_du_geste`) les nomment aussi, et s'affichent sous la
+#: bulle du fil comme sous les boutons des écrans — « déjà soldée (echec) » y
+#: rendait l'identifiant brut que #946 avait retiré de la conversation.
+_LIBELLES_STATUT_EXECUTION = {
+    EXECUTION_EN_COURS: "En cours",
+    EXECUTION_TERMINEE: "Terminée",
+    EXECUTION_ANNULEE: "Annulée",
+    EXECUTION_ECHEC: "Échec",
+    EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
+    EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
+    EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
+    EXECUTION_EN_ATTENTE_PLAFOND: "Budget atteint",
+}
+
+
+def libelle_statut_execution(statut: str) -> str:
+    """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
+    return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
+
 #: Les deux **ordres de pause** d'un run (#477), portés par `execution.statut` —
 #: le canal de l'annulation (#444), et surtout pas un second transport : le guet
 #: du process détaché est déjà branché là, et un run qui vit des heures n'a pas à
@@ -348,6 +377,46 @@ def _pose_debut(tache: EtatTache, statut: str, horodatage: str) -> None:
         tache.debut = horodatage
 
 
+def _retient_l_anterieur(tache: EtatTache, event: Event) -> None:
+    """Retient ce que la tâche a déjà soldé quand elle **repart dans le même run** (#1177).
+
+    Une tâche que la QA renvoie à son rôle producteur ne se solde plus une fois :
+    elle repart (`en_cours`, sa reprise) puis se solde à nouveau — ou se solde
+    une seconde fois sans repartir, quand la QA la déclare non conforme. Dans les
+    deux cas, ce qu'elle portait est retenu pour que sa carte **cumule**
+    (`_avec_anterieur`), là où le grand livre du run, qui additionne les issues,
+    le fait déjà. Un autre run qui reprendrait le même identifiant de tâche ne
+    cumule pas : la retenue est oubliée à son premier événement.
+
+    Et sa **vérification** avec elle : elle porte sur le livrable d'un autre run.
+    Mesuré au banc (S3 puis S4) : la tâche de S4, stoppée par son plafond avant
+    toute vérification, montrait le « 4/4 » de sa voisine de S3 — un vert qui
+    n'était pas le sien.
+    """
+    if event.run_id and tache.run_id and event.run_id != tache.run_id:
+        tache.usage_anterieure = None
+        tache.verification = None
+        return
+    repart = event.statut == STATUT_EN_COURS or _solde_le_cout(event)
+    if repart and tache.statut in STATUTS_TACHE_TERMINAUX and tache.usage is not None:
+        tache.usage_anterieure = tache.usage
+
+
+def _avec_anterieur(tache: EtatTache, usage: StepUsage) -> StepUsage:
+    """`usage` augmenté de ce que les exécutions précédentes du run ont soldé (#1177)."""
+    if tache.usage_anterieure is None:
+        return usage
+    return tache.usage_anterieure.fusion(usage)
+
+
+def _cout_avec_anterieur(tache: EtatTache, cout: float | None) -> float | None:
+    """Le coût de la carte, cumulé comme son usage (#1177) — inconnu ne s'ajoute pas."""
+    anterieur = tache.usage_anterieure.cout_usd if tache.usage_anterieure else None
+    if anterieur is None:
+        return cout
+    return anterieur if cout is None else anterieur + cout
+
+
 @dataclass
 class EtatTache:
     """La ligne « tâche » de la projection : de quoi peupler une carte Kanban.
@@ -395,6 +464,16 @@ class EtatTache:
     `usage.duree_ms` n'existe qu'à l'issue — un relevé en cours (#835) porte des
     tokens et un coût, jamais une durée. Servi, lui aussi, par le seul
     `signe_de_vie`.
+    `verification` (#1177) est la **dernière vérification** de la tâche — son
+    verdict et chaque contrôle avec sa preuve, tels que l'étape `:verification`
+    les porte. None tant qu'aucune n'a eu lieu (tâche en cours, run sans
+    vérificateur) : le panneau de détail n'en montre alors rien.
+    `usage_anterieure` (#1177) est ce que les exécutions **précédentes** de la
+    tâche ont soldé **dans ce run** : une tâche renvoyée par la QA à son rôle
+    producteur repart et se solde une seconde fois, et sa carte doit dire ce
+    qu'elle a coûté en tout — pas seulement sa dernière reprise. None dans le cas
+    courant, une tâche qui ne se solde qu'une fois. Jamais servi : c'est une
+    retenue de calcul, pas une information.
     """
 
     id: str
@@ -414,6 +493,8 @@ class EtatTache:
     horodatage: str = ""
     activite: SigneDeVie | None = None
     debut: str = ""
+    verification: dict[str, Any] | None = None
+    usage_anterieure: StepUsage | None = None
 
     @property
     def signe_de_vie(self) -> SigneDeVie | None:
@@ -462,6 +543,9 @@ class EtatTache:
             # Servi sur la carte parce que c'est d'elle que le graphe tire
             # l'état de son nœud, et que le Kanban lit la même carte.
             "activite": signe.to_dict() if signe is not None else None,
+            # La dernière vérification (#1177) : `null` tant qu'aucune n'a eu
+            # lieu — le panneau de détail ne montre alors rien de plus qu'avant.
+            "verification": self.verification,
         }
 
 
@@ -810,6 +894,12 @@ class EtatExecution:
     # run suspendu pendant l'attente de son brief doit continuer de montrer qu'il
     # attend ce brief — c'est ce qu'on regarde pour décider de le reprendre.
     en_pause: bool = False
+    # **Depuis quand** ce run est suspendu (#1179) — l'horodatage de l'ordre de
+    # pause, None dès qu'il est repris ou soldé : exactement le régime du drapeau
+    # ci-dessus, dont il est l'ancienneté. C'est ce qui fait dire au fil « en pause
+    # depuis 14:02 » après le geste, et non un simple « en pause » dont on ne sait
+    # s'il date d'une minute ou d'hier.
+    pause_depuis: str | None = None
     # Le **graphe du plan** (#490), posé une fois par `run.plan` et jamais
     # retiré : nœuds, arêtes, ossatures de checklist, tels que la décomposition
     # les a écrits. Vide pour un run qui n'en a pas publié — moteur antérieur à
@@ -958,6 +1048,8 @@ class EtatExecution:
             # ne le remplace pas — un run suspendu reste `en_cours`, ou
             # `en_attente_brief`, ou ce qu'il était.
             "en_pause": self.en_pause,
+            # Et depuis quand (#1179), à côté du drapeau dont il est l'ancienneté.
+            "pause_depuis": self.pause_depuis,
             # La cause d'arrêt (#479) dans le **résumé**, et c'est le critère du
             # ticket : « dans la liste comme dans sa vue ». Un run en échec dont
             # il faut ouvrir la page pour savoir s'il a manqué de budget ou
@@ -1671,6 +1763,7 @@ class ControlTowerState:
     def _applique_statut_tache(self, event: Event) -> None:
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
+        _retient_l_anterieur(tache, event)
         _pose_debut(tache, event.statut, event.horodatage)
         tache.statut = event.statut or tache.statut
         tache.titre = event.titre or tache.titre
@@ -1679,7 +1772,7 @@ class ControlTowerState:
         tache.run_id = event.run_id or tache.run_id
         tache.horodatage = event.horodatage or tache.horodatage
         if event.usage is not None:
-            tache.usage = event.usage
+            tache.usage = _avec_anterieur(tache, event.usage)
         if _solde_le_cout(event):
             # L'issue de la tâche solde ce que ses relevés (#835) montraient en
             # cours de route : le montant n'est plus un « jusqu'ici ». Il est
@@ -1688,10 +1781,11 @@ class ControlTowerState:
             # sans tarif, sans quoi une tâche morte afficherait 0,00 $. Et il
             # reste **partiel** si des tokens de l'issue n'ont pas de prix :
             # soldé ne veut pas dire complet.
-            tache.cout_usd = (
+            tache.cout_usd = _cout_avec_anterieur(
+                tache,
                 event.cout_usd
                 if event.cout_usd is not None or event.usage is None
-                else event.usage.cout_usd
+                else event.usage.cout_usd,
             )
             tache.cout_partiel = _laisse_des_tokens_sans_cout(event)
         if event.ticket is not None:
@@ -1822,9 +1916,12 @@ class ControlTowerState:
         if not event.tache_id:
             return
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
-        tache.cout_usd = event.cout_usd
+        # Le relevé d'une **reprise** (#1177) s'ajoute à ce que ses exécutions
+        # précédentes ont soldé dans ce run — sinon la carte reculerait au zéro
+        # d'ouverture de la reprise, alors que la tâche a déjà coûté.
+        tache.cout_usd = _cout_avec_anterieur(tache, event.cout_usd)
         if event.usage is not None:
-            tache.usage = event.usage
+            tache.usage = _avec_anterieur(tache, event.usage)
         tache.cout_partiel = True
         if event.projet_id is not None:
             # Même raison qu'en `_applique_reference` : l'appartenance au projet
@@ -1877,6 +1974,11 @@ class ControlTowerState:
             tache = self._taches.get(event.tache_id)
             if tache is not None:
                 tache.activite = SigneDeVie.depuis(event)
+                if event.verification is not None:
+                    # La dernière vérification de la tâche (#1177) — son verdict,
+                    # contrôle par contrôle : la suivante la remplace, comme une
+                    # livraison corrigée remplace la précédente.
+                    tache.verification = dict(event.verification)
         if _hors_du_parc(event.agent):
             return
         agent = self._agents.setdefault(
@@ -2011,6 +2113,13 @@ class ControlTowerState:
             return
         if event.statut in ORDRES_PAUSE:
             execution.en_pause = event.statut == ORDRE_PAUSE
+            # L'ancienneté de la pause (#1179) suit le drapeau : posée par l'ordre,
+            # retirée par la reprise. Une pause réappliquée (la pompe rediffuse
+            # l'événement que le service a déjà appliqué) garde sa première heure.
+            if not execution.en_pause:
+                execution.pause_depuis = None
+            elif execution.pause_depuis is None:
+                execution.pause_depuis = event.horodatage or None
             return
         # L'objectif **entier** est dans `description` depuis #991 (défaut S12),
         # `titre` ne portant plus que sa forme courte. Le repli sur `titre` n'est
@@ -2075,6 +2184,7 @@ class ControlTowerState:
             # « Reprendre » sur un run annulé pendant sa pause — le cas exact,
             # puisque `en_pause` n'empêche pas l'annulation.
             execution.en_pause = False
+            execution.pause_depuis = None
         # Le run n'attend plus dès qu'il n'est plus dans un état d'attente (#321) —
         # au premier chef l'**annulation en pleine attente**, qui est le cas que la
         # troisième exigence du ticket protège. Laisser l'ancienneté derrière soi

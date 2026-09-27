@@ -467,6 +467,12 @@ const LIBELLES_STATUT: Record<string, string> = {
   processus_arretes: "Processus arrêtés",
   processus_survivants: "Processus non arrêtés",
   session_non_confinee: "Session non confinée",
+  // Ce que la vérification d'une livraison a rendu (#1177) : ses critères
+  // tiennent, au moins un ne tient pas — la preuve revient à l'agent —, ou rien
+  // n'a pu être vérifié en entier. La phrase du moteur porte le compte.
+  verification_tenue: "Vérifiée",
+  verification_non_tenue: "Vérification non tenue",
+  verification_impossible: "Vérification impossible",
 };
 
 /** Le libellé d'un statut, ou le statut brut si le flux s'est enrichi. */

@@ -50,6 +50,7 @@ from maestro.agents.capacity import CapacityStore, JaugeInstances
 from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.fiche_outillee import runtime_outille
 from maestro.agents.mcp import McpStore, ServeurMcp
+from maestro.agents.mcp_registry import RegistreMcp
 from maestro.agents.permissions import (
     DecisionOutil,
     PermissionStore,
@@ -93,6 +94,15 @@ from maestro.engine.questions import (
     identifiant_question,
 )
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
+from maestro.engine.verification import (
+    SUFFIXE_ETAPE_VERIFICATION,
+    Amont,
+    LivraisonNonTenue,
+    Recette,
+    Renvoi,
+    VerificateurTaches,
+)
+from maestro.engine.verification import Verdict as VerdictVerification
 from maestro.equipe.manque import RoleManquant, role_manquant
 from maestro.equipe.proposition import OUTIL_EXECUTION
 from maestro.messaging.mailbox import (
@@ -102,6 +112,7 @@ from maestro.messaging.mailbox import (
     consigne_message,
 )
 from maestro.orchestrator.schema import Task
+from maestro.prerequis import PrerequisManquant, prerequis_du_mcp, prerequis_du_role
 from maestro.projets.application import (
     ApplicationRefusee,
     DiffProjet,
@@ -114,13 +125,19 @@ from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
 from maestro.providers.activite import PERIODE_ACTIVITE_S
 from maestro.providers.arbitrage import Arbitre, ArbitreActe, BornesArbitrage
-from maestro.providers.base import ModelProvider, UnsupportedCapability, stderr_de
+from maestro.providers.base import (
+    McpServerUnavailable,
+    ModelProvider,
+    UnsupportedCapability,
+    stderr_de,
+)
 from maestro.providers.courrier import Courrier
 from maestro.providers.question import Questionneur
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
 from maestro.sandbox import ProducedFile, branche_de_tache
 from maestro.sandbox.confinement import ReleveConfinement
+from maestro.sandbox.en_place import portee_de
 from maestro.telemetry import (
     PlafondDepense,
     PlafondDepenseDepasse,
@@ -140,6 +157,15 @@ STATUT_BLOQUEE = "bloquee"
 #: Statut *non terminal* d'une tâche en train de s'exécuter (docs/03 §3) — celui
 #: que porte l'événement de début (#98) : la colonne « En cours » du Kanban.
 STATUT_EN_COURS = "en_cours"
+
+#: Statut *non terminal* d'une tâche **suspendue sur un humain** (docs/03 §3,
+#: « Attente humaine » à l'écran). La machine à états le nommait depuis toujours,
+#: et la Control Tower le range déjà « en cours » (`progression.py`, le Kanban, la
+#: frise) ; le moteur l'émet depuis #1181, sur la tâche à qui il manque un
+#: prérequis que le fil propose (`LocalExecutor(suspendre_sur_prerequis=...)`).
+#: La tâche n'échoue pas : elle attend qu'on lui donne ce qui manque, puis
+#: reprend — sa carte repasse « en cours » au début de la reprise.
+STATUT_EN_ATTENTE_VALIDATION = "en_attente_validation"
 
 #: Suffixe des étapes de relance au journal (#91) : `<task.id>:relance`, une par
 #: relance déclenchée — le pont Control Tower les mue en activités d'agent.
@@ -501,11 +527,24 @@ class TaskResult:
     l'agent a exécuté avec son prompt du code (playbook jamais édité, ou pas de
     dépôt câblé).
 
+    `renvois` (#1177) nomme les livrables **amont** que ce livrable juge non
+    conformes — le verdict d'une QA, lu par le vérificateur de la tâche. Vide dans
+    le cas courant ; la boucle du run renvoie chacun à son rôle producteur
+    (`maestro.engine.loop`).
+
     `rattrapable` (#1178) dit si un échec peut être **rattrapé** — rejugé,
     retenté autrement, redécoupé. Il ne l'est pas quand il est une **décision** :
     un humain a refusé la tâche, ou le budget du run est dépensé. Rattraper
     serait alors contourner ce qui a été décidé. Vrai par défaut, et sans objet
     sur une tâche réussie.
+
+    `prerequis` (#1181) dit **ce qui manquait** à une tâche en échec, quand
+    Maestro l'a constaté sans rien deviner : un serveur MCP injoignable (lu sur
+    `McpServerUnavailable.serveurs`), un rôle que personne ne couvre (le routage).
+    C'est ce que la boucle propose dans le fil au lieu de laisser la tâche en
+    échec. `blocages` porte les raisons que l'agent a **signalées** pendant la
+    tâche (`signaler_blocage`, #719) : le Chef de projet les lit en jugeant
+    l'échec, et peut en tirer un prérequis à proposer.
 
     `au_plafond` (#1182) dit que la tâche s'est arrêtée sur le **plafond de
     dépense** du run — interrompue à la mesure qui l'a franchi, ou refusée à
@@ -527,7 +566,10 @@ class TaskResult:
     usage: StepUsage = StepUsage()
     worker: str = ""
     playbook_version: int | None = None
+    renvois: tuple[Renvoi, ...] = ()
     rattrapable: bool = True
+    prerequis: PrerequisManquant | None = None
+    blocages: tuple[str, ...] = ()
     au_plafond: bool = False
 
     @property
@@ -551,7 +593,10 @@ class TaskResult:
             "usage": self.usage.to_dict(),
             "worker": self.worker,
             "playbook_version": self.playbook_version,
+            "renvois": [r.to_dict() for r in self.renvois],
             "rattrapable": self.rattrapable,
+            "prerequis": self.prerequis.to_dict() if self.prerequis is not None else None,
+            "blocages": list(self.blocages),
             "au_plafond": self.au_plafond,
         }
 
@@ -578,9 +623,20 @@ class TaskResult:
             usage=StepUsage.from_dict(data.get("usage", {})),
             worker=data.get("worker", ""),
             playbook_version=data.get("playbook_version"),
+            renvois=tuple(
+                Renvoi.depuis(r) for r in data.get("renvois") or () if isinstance(r, Mapping)
+            ),
             # Absent d'un résultat venu d'un worker d'avant #1178 : rattrapable,
             # le défaut — c'était la seule conduite possible alors.
             rattrapable=bool(data.get("rattrapable", True)),
+            # Absents d'un résultat venu d'un worker d'avant #1181 : rien ne
+            # manquait de constaté, rien n'a été signalé.
+            prerequis=(
+                PrerequisManquant.from_dict(data["prerequis"])
+                if isinstance(data.get("prerequis"), Mapping)
+                else None
+            ),
+            blocages=tuple(str(b) for b in data.get("blocages") or ()),
             # Absent d'un résultat venu d'un worker d'avant #1182 : faux — l'arrêt
             # sec était alors la seule conduite.
             au_plafond=bool(data.get("au_plafond", False)),
@@ -608,8 +664,14 @@ class JugeDesTentatives(Protocol):
         erreur: str,
         tentative: int,
         journal: RunJournal,
+        *,
+        blocages: Sequence[str] = (),
     ) -> tuple[bool, str] | None:
-        """Rejoue-t-on cette tentative telle quelle ? — et pourquoi."""
+        """Rejoue-t-on cette tentative telle quelle ? — et pourquoi.
+
+        `blocages` (#1181) : ce que l'agent a signalé pendant la tentative — le
+        juge le lit avec l'erreur.
+        """
         ...  # pragma: no cover - protocole
 
 
@@ -667,6 +729,18 @@ class TaskExecutor(ABC):
         """
         return None
 
+    def suspendue(self, result: TaskResult) -> bool:
+        """L'étape de ce résultat a-t-elle été consignée « suspendue » plutôt qu'échouée ? (#1181)
+
+        Vrai quand l'exécuteur a constaté un prérequis manquant **et** qu'on lui a
+        dit qu'il serait proposé : la carte de la tâche attend alors un geste
+        humain. La boucle le demande pour **solder** l'attente si la proposition
+        n'aboutit pas — une carte laissée « en attente » sur une tâche que plus
+        rien ne reprendra mentirait. Faux par défaut : un exécuteur distribué
+        consigne l'échec, comme avant.
+        """
+        return False
+
 
 class LocalExecutor(TaskExecutor):
     """Exécution en process : routage, garde-fous, production du livrable.
@@ -702,10 +776,33 @@ class LocalExecutor(TaskExecutor):
         mailbox: Mailbox | None = None,
         questionneur: ArbitreQuestion | None = None,
         bornes_question: BornesArbitrage | None = None,
+        verificateur: VerificateurTaches | None = None,
         juge: JugeDesTentatives | None = None,
+        suspendre_sur_prerequis: bool = False,
+        registre_mcp: Callable[[], RegistreMcp] | None = None,
         plafonds: Plafonds | None = None,
     ) -> None:
         self._provider = provider
+        # Une tâche à qui il manque un prérequis constaté (#1181) est **suspendue**
+        # plutôt qu'échouée : son étape se consigne « en attente d'un humain »
+        # (`STATUT_EN_ATTENTE_VALIDATION`), et la boucle propose le remède dans le
+        # fil. Vrai seulement quand la boucle **peut** le proposer — elle le sait,
+        # l'exécuteur non : un exécuteur qui suspendrait sans personne pour
+        # proposer laisserait une carte en attente d'un geste qui ne viendra pas.
+        # Faux par défaut : la conduite d'avant, et celle des workers distribués.
+        self._suspendre_sur_prerequis = suspendre_sur_prerequis
+        # La bibliothèque MCP (#1181) où se lit la procédure d'accès d'un serveur
+        # injoignable. Un **fournisseur** et non un registre : elle se relit au
+        # moment du constat, comme le reste de ce qui se relit à chaud ici, et une
+        # admission faite pendant le run y est. None : le seed curé.
+        self._registre_mcp = registre_mcp if registre_mcp is not None else RegistreMcp.curee
+        # Le vérificateur des livraisons (#1177) : une tâche n'est « Terminée »
+        # qu'une fois ses critères vérifiés en l'exécutant, et ce qui ne tient pas
+        # revient à son agent, preuve à l'appui (`maestro.engine.verification`).
+        # None : la première livraison est la livraison, comme avant — c'est le
+        # régime des tests qui ne parlent pas de vérification. Les vrais runs
+        # l'arment (`OrchestrationEngine.default`, workers), comme la relance.
+        self._verificateur = verificateur
         # Le juge des relances (#1178) — en pratique le Chef de projet, câblé par
         # la boucle quand le rattrapage est armé. None : la relance reste présumée
         # (`est_transitoire`), la conduite d'avant — c'est celle des exécuteurs
@@ -906,6 +1003,11 @@ class LocalExecutor(TaskExecutor):
         # verdict de la tâche ne se dit qu'à la clôture — et la clôture est ici.
         # L'agent qui l'alimente, lui, n'existe pas encore : il sort du routage.
         suivi = SuiviChecklist(task.etapes)
+        # Les blocages que l'agent **signale** (#719), retenus en plus d'être
+        # consignés (#1181) : ils voyagent avec le résultat jusqu'au Chef de
+        # projet, qui les lit s'il faut juger un échec. Nés ici pour la raison de
+        # la checklist — ils couvrent toutes les tentatives de la tâche.
+        blocages: list[str] = []
         agent_execute: Agent | None = None
         # Un contrôle par exécution (#56) : il ne compte rien lui-même, il relit
         # le grand livre du `journal` à chaque mesure — planification et tâches
@@ -942,7 +1044,9 @@ class LocalExecutor(TaskExecutor):
                     # Et, quand le repli vient d'un **manque de rôle** (#1041), le
                     # manque est signalé au fil avant l'échec : « à assigner » dit
                     # que personne n'a pris la tâche, il ne dit pas *qui* aurait pu
-                    # la prendre. Recruter reste hors du run (docs/37 §3.5).
+                    # la prendre. Depuis #1181 il voyage aussi sur le résultat, en
+                    # prérequis : la boucle propose de recruter ce rôle dans le
+                    # fil, et la tâche reprend sur l'équipe complétée.
                     manque = role_manquant(decision.non_couvertes)
                     if manque is not None:
                         self._consigne_role_manquant(task, manque, journal)
@@ -954,6 +1058,10 @@ class LocalExecutor(TaskExecutor):
                             else decision.raison
                         ),
                     )
+                    if manque is not None:
+                        result = replace(
+                            result, prerequis=prerequis_du_role(manque, task.titre)
+                        )
                 else:
                     releve.agent = decision.agent
                     agent_execute = decision.agent
@@ -983,6 +1091,10 @@ class LocalExecutor(TaskExecutor):
                             erreur=str(exc),
                         )
                     else:
+                        # La recette de la tâche (#1177) naît ici, avec l'agent qui
+                        # la mène : elle survit aux relances comme la checklist, et
+                        # ses renvois se lisent à la clôture, ci-dessous.
+                        recette = self._recette(task, decision.agent, dependances, journal)
                         # Contrôle de capacité (#86) : l'agent au complet retient
                         # la tâche jusqu'à la libération d'un créneau d'instance.
                         # Puis l'atelier du projet (#839) : une seule tâche à la
@@ -1019,9 +1131,16 @@ class LocalExecutor(TaskExecutor):
                                     politique,
                                     deliberation,
                                     suivi,
+                                    recette,
+                                    blocages,
                                 )
                         if playbook is not None:
                             result = replace(result, playbook_version=playbook.version)
+                        if recette is not None and result.ok and recette.renvois:
+                            # Le verdict « non conforme » d'une QA sur un livrable
+                            # amont (#1177) : porté par le résultat, et c'est la
+                            # boucle du run qui renvoie le livrable à son rôle.
+                            result = replace(result, renvois=recette.renvois)
         # Les parts d'attente voyagent avec la durée horloge (#584, #989) : c'est
         # la même mesure, décomposée. Elles sont posées sur **cette** étape et sur
         # aucune autre — l'étape finale de la tâche est la seule qui porte sa
@@ -1035,6 +1154,7 @@ class LocalExecutor(TaskExecutor):
                 attente_creneau_ms=attente_creneau_ms,
                 attente_atelier_ms=attente_atelier_ms,
             ),
+            blocages=tuple(blocages),
         )
         if result.au_plafond and self._plafonds.suspend(journal.run_id):
             # Au plafond, la tâche n'est pas soldée (#1182) : elle est **mise de
@@ -1064,7 +1184,15 @@ class LocalExecutor(TaskExecutor):
             nom=task.titre,
             agent=result.agent,
             role=result.role,
-            statut=result.statut,
+            # Une tâche à qui il manque un prérequis constaté n'échoue pas quand la
+            # boucle sait le proposer (#1181) : elle est **suspendue** sur la
+            # personne qui peut le donner. Le résultat rendu à la boucle reste un
+            # échec — c'est lui qu'elle rattrape —, seul l'écran lit l'attente.
+            statut=(
+                STATUT_EN_ATTENTE_VALIDATION
+                if self.suspendue(result)
+                else result.statut
+            ),
             entree=entree,
             sortie=result.sortie,
             erreur=result.erreur,
@@ -1100,8 +1228,91 @@ class LocalExecutor(TaskExecutor):
         rôle qui la couvre. Le run `2f7aae8437f4` (S6, 2026-09-24) a recruté un
         Designer pour une tâche `ui` + `frontend`, puis l'a vue partir au
         développeur sur un ex æquo — alors que le fil venait de dire le contraire.
+
+        Elles **s'ajoutent** depuis #1181 : un rôle peut désormais se recruter en
+        cours de run, pour une tâche que personne ne savait prendre, après celui
+        que le plan avait appelé — le second ne défait pas la promesse du premier.
         """
-        self._recrutees[run_id] = frozenset(competences)
+        self._recrutees[run_id] = self._recrutees.get(run_id, frozenset()) | frozenset(
+            competences
+        )
+
+    def suspendue(self, result: TaskResult) -> bool:
+        """Cf. `TaskExecutor.suspendue` — ici, dès qu'on a dit à l'exécuteur de suspendre."""
+        return (
+            self._suspendre_sur_prerequis
+            and result.statut == STATUT_ECHEC
+            and result.prerequis is not None
+        )
+
+    def _recette(
+        self,
+        task: Task,
+        agent: Agent,
+        dependances: Sequence[TaskResult],
+        journal: RunJournal,
+    ) -> Recette | None:
+        """La boucle de vérification de cette exécution (#1177) — None sans vérificateur.
+
+        Trois choses s'y ferment ici, parce que c'est ici qu'on les connaît : le
+        **modèle** de l'agent (le vérificateur juge au même niveau que celui qui a
+        produit, sauf modèle réglé sur lui), l'**amont** — les tâches réussies dont
+        celle-ci dépend, seules cibles d'un renvoi de QA — et la **portée** de
+        l'espace de travail, celle-là même qui garde les commandes de l'agent
+        (`portee_de`). Le projet est relu une fois, à la naissance de la recette.
+        """
+        if self._verificateur is None:
+            return None
+        projet = self._projet(task)
+        return Recette(
+            verificateur=self._verificateur,
+            tache=task,
+            modele=agent.modele,
+            amont=tuple(
+                Amont(tache_id=dep.task_id, titre=dep.titre, role=dep.role)
+                for dep in dependances
+                if dep.ok
+            ),
+            portee_de=lambda espace: portee_de(espace, projet),
+            on_verdict=lambda verdict, livraison: self._consigne_verification(
+                task, agent, verdict, livraison, journal
+            ),
+        )
+
+    def _consigne_verification(
+        self,
+        task: Task,
+        agent: Agent,
+        verdict: VerdictVerification,
+        livraison: int,
+        journal: RunJournal,
+    ) -> None:
+        """Trace une vérification au journal (#1177) — donc au fil et au détail de la tâche.
+
+        Étape dédiée `<task.id>:verification`, une par livraison vérifiée. Étape
+        annexe et non statut de tâche, comme `:fusion` : la tâche ne change pas de
+        colonne pendant qu'on la vérifie — c'est son issue, consignée ensuite par
+        `execute`, qui dit si elle tient. `sortie` porte le verdict en une ligne
+        (ce que le fil prononce), `description` les preuves en clair, et
+        `verification` le verdict structuré, contrôle par contrôle — ce que le
+        panneau de détail de la tâche rend.
+
+        Usage nul : l'appel du vérificateur tombe dans la mesure de la tâche, que
+        son étape finale porte — le compter ici le compterait deux fois.
+        """
+        journal.consigne(
+            etape=f"{task.id}{SUFFIXE_ETAPE_VERIFICATION}",
+            nom=f"Vérification — {task.titre}",
+            agent=agent.nom,
+            role=agent.role,
+            statut=verdict.statut,
+            entree=f"livraison n° {livraison}",
+            sortie=verdict.resume(),
+            description=verdict.preuves(),
+            usage=StepUsage(),
+            projet_id=task.projet_id,
+            verification={**verdict.to_dict(), "livraison": livraison},
+        )
 
     @property
     def plafonds(self) -> Plafonds:
@@ -1648,6 +1859,8 @@ class LocalExecutor(TaskExecutor):
         politique: PolitiqueOutils | None = None,
         deliberation: Deliberation | None = None,
         suivi: SuiviChecklist | None = None,
+        recette: Recette | None = None,
+        blocages: list[str] | None = None,
     ) -> TaskResult:
         """Réalise la tâche sous garde-fous (#9) : validation humaine, puis time-out.
 
@@ -1704,16 +1917,17 @@ class LocalExecutor(TaskExecutor):
         if refus is not None:
             return refus
         suivi = suivi if suivi is not None else SuiviChecklist(task.etapes)
+        blocages = blocages if blocages is not None else []
         timeout_s = self._guardrails.timeout_s
         if timeout_s is None:
             return await self._realise(
                 agent, task, description, score, playbook, serveurs_mcp, politique,
-                journal, deliberation, suivi,
+                journal, deliberation, suivi, recette, blocages,
             )
         realisation = asyncio.create_task(
             self._realise(
                 agent, task, description, score, playbook, serveurs_mcp, politique,
-                journal, deliberation, suivi,
+                journal, deliberation, suivi, recette, blocages,
             ),
             name=f"maestro-realisation:{task.id}",
         )
@@ -1747,9 +1961,10 @@ class LocalExecutor(TaskExecutor):
             agent=agent.nom,
             role=agent.role,
             score=score,
-            erreur=(
+            erreur=_avec_recette(
                 f"time-out : la tâche a dépassé {timeout_s:g} s"
-                f"{_hors_arbitrage(arbitre_ms)} — {issue}."
+                f"{_hors_arbitrage(arbitre_ms)} — {issue}.",
+                recette,
             ),
         )
 
@@ -2201,6 +2416,8 @@ class LocalExecutor(TaskExecutor):
         journal: RunJournal,
         deliberation: Deliberation,
         suivi: SuiviChecklist,
+        recette: Recette | None = None,
+        blocages: list[str] | None = None,
     ) -> TaskResult:
         """Produit le livrable de `task` et le mue en `TaskResult` (échec consigné, jamais levé).
 
@@ -2244,10 +2461,21 @@ class LocalExecutor(TaskExecutor):
         était déjà acquis, et une décision humaine obtenue à la tentative 1 est ce
         qu'il y a de plus coûteux à redemander. C'est ce qui donne son sens à
         « la tâche relancée reprend sur elle ».
+
+        La **recette** (#1177) traverse de même : c'est dans `_produce` que chaque
+        livraison est vérifiée, et une livraison qui ne tient pas revient à l'agent
+        sans sortir d'ici. Ce qui en sort est l'une de deux choses — une livraison
+        qui tient, ou `LivraisonNonTenue` quand la boucle s'arrête, muée ici en
+        échec **motivé** et jamais relancée. Et quand c'est autre chose qui arrête
+        la tâche au milieu d'une correction — le **budget du run** atteint, un
+        aléa persistant —, la cause est suivie des dernières preuves : une tâche
+        qui échouait sa vérification ne doit pas finir sur « plafond dépassé »
+        comme si rien n'avait été constaté.
         """
         relance = self._relance
         max_tentatives = relance.max_tentatives if relance is not None else 1
         tentative = 1
+        blocages = blocages if blocages is not None else []
         # L'ossature part avant la première tentative : c'est ce qui donne à lire
         # la tâche pendant qu'elle démarre, là où l'agent n'a encore rien dit.
         # Muet quand le plan n'en déclare aucune (règle de #246).
@@ -2265,7 +2493,13 @@ class LocalExecutor(TaskExecutor):
             try:
                 sortie, fichiers = await self._produce(
                     agent, task, description, playbook, serveurs_mcp, politique, journal,
-                    suivi, deliberation,
+                    suivi, deliberation, recette, blocages,
+                )
+            except LivraisonNonTenue as exc:
+                # La boucle de vérification s'est arrêtée sans vert (#1177) : la
+                # tâche finit sur son motif — verdict, livraisons, arrêt, preuves.
+                return _echec(
+                    task, agent=agent.nom, role=agent.role, score=score, erreur=exc.motif
                 )
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
                 cause = str(exc)
@@ -2279,13 +2513,22 @@ class LocalExecutor(TaskExecutor):
                         agent=agent.nom,
                         role=agent.role,
                         score=score,
-                        erreur=_avec_stderr_cli(cause, stderr_cli),
+                        erreur=_avec_recette(_avec_stderr_cli(cause, stderr_cli), recette),
                         # Le budget du run est dépensé (#1178) : c'est une borne,
                         # pas un échec à rattraper — une tentative de plus coûterait.
                         # Et c'est la personne qui en décide (#1182) : la boucle
                         # met la tâche de côté et lui demande.
                         rattrapable=not isinstance(exc, PlafondDepenseDepasse),
                         au_plafond=isinstance(exc, PlafondDepenseDepasse),
+                        # Un serveur MCP injoignable (#1181) : ce qui manque est
+                        # constaté, en données — la procédure d'accès que la
+                        # bibliothèque connaît voyage avec l'échec, pour que la
+                        # boucle la propose au lieu de le laisser tel quel.
+                        prerequis=(
+                            prerequis_du_mcp(exc, self._registre_mcp())
+                            if isinstance(exc, McpServerUnavailable)
+                            else None
+                        ),
                     )
             else:
                 sortie = sortie.strip()
@@ -2311,12 +2554,15 @@ class LocalExecutor(TaskExecutor):
                     agent=agent.nom,
                     role=agent.role,
                     score=score,
-                    erreur=_avec_stderr_cli(
-                        cause if tentative == 1 else (
-                            f"{cause} — échec transitoire persistant après "
-                            f"{tentative} tentatives (relances épuisées)."
+                    erreur=_avec_recette(
+                        _avec_stderr_cli(
+                            cause if tentative == 1 else (
+                                f"{cause} — échec transitoire persistant après "
+                                f"{tentative} tentatives (relances épuisées)."
+                            ),
+                            stderr_cli,
                         ),
-                        stderr_cli,
+                        recette,
                     ),
                 )
             # La relance n'est plus présumée, elle est jugée (#1178) : le Chef de
@@ -2329,7 +2575,12 @@ class LocalExecutor(TaskExecutor):
             diagnostic = ""
             if self._juge is not None:
                 jugement = await self._juge.rejouer_la_tentative(
-                    task, agent, _avec_stderr_cli(cause, stderr_cli), tentative, journal
+                    task,
+                    agent,
+                    _avec_stderr_cli(cause, stderr_cli),
+                    tentative,
+                    journal,
+                    blocages=tuple(blocages),
                 )
                 if jugement is not None:
                     rejouer, diagnostic = jugement
@@ -2339,7 +2590,7 @@ class LocalExecutor(TaskExecutor):
                             agent=agent.nom,
                             role=agent.role,
                             score=score,
-                            erreur=_avec_stderr_cli(cause, stderr_cli),
+                            erreur=_avec_recette(_avec_stderr_cli(cause, stderr_cli), recette),
                         )
             attente_s = relance.attente_s(tentative)
             self._consigne_relance(
@@ -2734,6 +2985,7 @@ class LocalExecutor(TaskExecutor):
         agent: Agent,
         raison: str,
         journal: RunJournal,
+        retenus: list[str] | None = None,
     ) -> None:
         """Trace le blocage qu'un agent **déclare** (#719) — donc au fil temps réel.
 
@@ -2758,9 +3010,16 @@ class LocalExecutor(TaskExecutor):
         même parce que ce chemin a **deux entrées** — l'outil MCP, et un appelant
         direct — et qu'une ligne de frise vide se lirait comme une panne
         d'affichage (règle de `_consigne_activite`).
+
+        `retenus` (#1181) reçoit la raison en plus du journal : c'est la liste que
+        le résultat de la tâche emporte (`TaskResult.blocages`), pour que le Chef
+        de projet la lise s'il faut juger un échec — et en tire, au besoin, le
+        prérequis à proposer. Le verbe, lui, n'attend toujours rien.
         """
         if not raison.strip():
             return
+        if retenus is not None:
+            retenus.append(raison.strip())
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_BLOCAGE}",
             nom=f"Blocage signalé — {task.titre}",
@@ -2782,8 +3041,8 @@ class LocalExecutor(TaskExecutor):
         (`maestro.controltower.bridge`) mue en événement `tache.blocage` — donc au
         fil temps réel et à la frise, que `agent.activite` n'atteindrait pas
         (#355). `sortie` porte la phrase entière : ce qui n'est couvert par
-        personne, le poste que cela désigne, et que le recrutement se fait hors du
-        run (docs/37 §3.5).
+        personne, et le poste que cela désigne — celui que la boucle propose
+        ensuite de recruter dans le fil (#1181), la tâche suspendue d'ici là.
 
         L'agent consigné est l'**orchestrateur**, comme sur la planification
         (`maestro.engine.loop._plan`) : c'est lui qui répartit le travail et lui
@@ -2794,9 +3053,10 @@ class LocalExecutor(TaskExecutor):
         Usage nul, comme le blocage (#719) et la décision (#1024) : constater un
         manque ne dépense rien, le routage ayant échoué avant tout appel modèle.
 
-        La tâche ne change pas de colonne : c'est son propre échec « à assigner »,
-        consigné juste après, qui la déplace. Cette ligne-ci ne fait que nommer ce
-        que cet échec ne sait pas dire.
+        La tâche ne change pas de colonne : c'est sa propre issue « à assigner »,
+        consignée juste après — suspendue quand la boucle sait proposer le
+        recrutement (#1181), en échec sinon —, qui la déplace. Cette ligne-ci ne
+        fait que nommer ce que cette issue ne sait pas dire.
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_MANQUE}",
@@ -3041,6 +3301,8 @@ class LocalExecutor(TaskExecutor):
         journal: RunJournal | None = None,
         suivi: SuiviChecklist | None = None,
         deliberation: Deliberation | None = None,
+        recette: Recette | None = None,
+        blocages: list[str] | None = None,
     ) -> tuple[str, tuple[ProducedFile, ...]]:
         """Produit le livrable de `task` : le runtime outillé de l'agent, sinon texte.
 
@@ -3138,6 +3400,14 @@ class LocalExecutor(TaskExecutor):
         chaque tâche, comme le playbook, plutôt que figé au câblage du runtime.
         Ce qu'un fournisseur n'admet pas ne lui est jamais transmis
         (`ModelProvider.effort_admis`) : ni ici, ni dans le runtime.
+
+        La **recette** (#1177) est le seul canal de cette liste à équiper les deux
+        chemins **différemment** : sur le chemin outillé, elle descend au runtime
+        (`on_livraison`), qui la joue l'espace ouvert et rend à l'agent ce qui ne
+        tient pas ; sur le chemin texte, il n'y a pas d'espace, donc la boucle vit
+        ici — chaque livrable est relu, et ce qui ne tient pas repart au modèle
+        avec le livrable précédent et ses preuves. Sans vérificateur, la recette
+        vaut None et le runtime livre la première livraison, comme avant.
         """
         deliberation = deliberation if deliberation is not None else Deliberation()
         runtime = self._runtime_de(agent)
@@ -3194,7 +3464,7 @@ class LocalExecutor(TaskExecutor):
                         None
                         if journal is None
                         else lambda raison: self._consigne_blocage_signale(
-                            task, agent, raison, journal
+                            task, agent, raison, journal, blocages
                         )
                     ),
                     # Même règle que le blocage (#1024) : ce verbe ne fait
@@ -3244,6 +3514,7 @@ class LocalExecutor(TaskExecutor):
                     projet=self._projet(task),
                     tache_id=task.id,
                     effort=agent.effort,
+                    on_livraison=recette,
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
@@ -3257,12 +3528,26 @@ class LocalExecutor(TaskExecutor):
         # fournisseur qui n'annonce aucun effort — le cas de tout adaptateur
         # texte-seul — l'appel est au bit près celui d'avant ce lot.
         reglage = self._provider.effort_admis(agent.modele, agent.effort)
-        sortie = await self._provider.generate(
-            _build_task_prompt(description, task.format_sortie),
-            model=agent.modele,
-            system_prompt=playbook.contenu if playbook is not None else agent.prompt_systeme,
-            **({"effort": reglage} if reglage else {}),
-        )
+        prompt = _build_task_prompt(description, task.format_sortie)
+
+        async def livrer(message: str) -> str:
+            return await self._provider.generate(
+                message,
+                model=agent.modele,
+                system_prompt=(
+                    playbook.contenu if playbook is not None else agent.prompt_systeme
+                ),
+                **({"effort": reglage} if reglage else {}),
+            )
+
+        sortie = await livrer(prompt)
+        # La recette d'un livrable texte (#1177) : aucune commande à jouer, rien que
+        # des lectures — et ce qui ne tient pas repart au modèle, preuves à l'appui.
+        while recette is not None:
+            retour = await recette(None, sortie.strip())
+            if retour is None:
+                break
+            sortie = await livrer(f"{prompt}\n\n{retour}")
         return sortie, ()
 
 
@@ -3569,6 +3854,20 @@ def _avec_stderr_cli(cause: str, stderr_cli: str | None) -> str:
     return f"{cause}\n{stderr_cli}" if stderr_cli else cause
 
 
+def _avec_recette(cause: str, recette: Recette | None) -> str:
+    """Colle à `cause` les dernières preuves d'une vérification qui ne tenait pas (#1177).
+
+    Une tâche arrêtée **au milieu d'une correction** — budget du run atteint,
+    time-out, aléa persistant — ne finit pas sur sa seule cause d'arrêt : ce qui
+    avait été constaté avant est la moitié de l'explication, et la seule qui dise
+    que le livrable ne tenait pas. Muet sans recette, ou quand la dernière
+    vérification tenait (ou n'a pas eu lieu) : la cause repart telle quelle.
+    """
+    if recette is None or not recette.en_defaut:
+        return cause
+    return f"{cause}\n{recette.motif('la tâche a été arrêtée avant de tenir')}"
+
+
 def _echec(
     task: Task,
     *,
@@ -3577,13 +3876,16 @@ def _echec(
     score: int,
     erreur: str,
     rattrapable: bool = True,
+    prerequis: PrerequisManquant | None = None,
     au_plafond: bool = False,
 ) -> TaskResult:
     """Construit un `TaskResult` en échec pour `task` (sortie vide, cause consignée).
 
     `rattrapable=False` pour un échec qui est une décision — refus humain, budget
-    dépensé (#1178, `TaskResult.rattrapable`). `au_plafond=True` quand c'est le
-    plafond de dépense qui l'arrête (#1182, `TaskResult.au_plafond`).
+    dépensé (#1178, `TaskResult.rattrapable`). `prerequis` pour un échec dont la
+    cause est un prérequis manquant constaté (#1181, `TaskResult.prerequis`).
+    `au_plafond=True` quand c'est le plafond de dépense qui l'arrête (#1182,
+    `TaskResult.au_plafond`).
     """
     return TaskResult(
         task_id=task.id,
@@ -3596,6 +3898,7 @@ def _echec(
         sortie="",
         erreur=erreur,
         rattrapable=rattrapable,
+        prerequis=prerequis,
         au_plafond=au_plafond,
     )
 

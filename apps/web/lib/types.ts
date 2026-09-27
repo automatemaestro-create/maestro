@@ -5,6 +5,8 @@
  * front restent des chaînes libres : le flux peut s'enrichir sans casser l'UI.
  */
 
+import type { BornesRun } from "./bornes";
+
 /**
  * La mesure d'usage d'une étape (`StepUsage.to_dict`, #57) : tokens
  * entrée/sortie, coût estimé, durées. `cout_usd` et les durées restent null
@@ -116,6 +118,12 @@ export type Tache = {
   liens?: LienUtile[] | null;
   /** Le signe de vie (#836) : `null` dès que la tâche ne travaille pas. */
   activite?: SigneDeVie | null;
+  /**
+   * La dernière vérification de la tâche (#1177) : `null` tant qu'aucune n'a eu
+   * lieu. Optionnelle, pour la raison des `etapes` : une carte servie avant ce
+   * lot n'en porte pas.
+   */
+  verification?: VerificationTache | null;
 };
 
 /**
@@ -1353,6 +1361,17 @@ export type ProjetCree = {
 };
 
 /**
+ * Le projet d'une proposition de run (`chat.ProjetVise`, #1180) — son identifiant,
+ * que l'exécution suit, et le nom et le dossier que la carte affiche, lus sur la
+ * fiche au moment de proposer.
+ */
+export type ProjetVise = {
+  id: string;
+  nom: string;
+  racine: string;
+};
+
+/**
  * Une pièce d'outillage que le fil propose d'écrire (`chat.PieceProposee`, #1161),
  * **déjà vérifiée** : ses commandes ont été jouées avant la carte.
  *
@@ -1408,6 +1427,51 @@ export type PieceEcrite = {
 /** Les trois décisions qu'un geste rend sur une pièce (`chat.DECISIONS_PIECE`). */
 export type DecisionPiece = "ecrire" | "passer" | "plus-tard";
 
+/**
+ * Les quatre gestes qu'un run reçoit depuis le fil (`controltower.gestes`, #1179) —
+ * les verbes des boutons des écrans des runs, passés par le même service.
+ */
+export type GesteRun = "pause" | "reprise" | "annulation" | "relance";
+
+/**
+ * Un run **tel que le fil l'a montré** (`chat.RunVise`, #1179) : celui qu'une carte
+ * vise, ou celui qu'un geste vient de relire. Recopié du résumé au moment où le fil
+ * en parle — une carte montre le run sur lequel on dit oui, le fait d'après le geste
+ * l'état qu'il a relu. `etat` est cet état en mots, pour le modèle ; l'écran relit
+ * `statut`, `en_pause` et `pause_depuis` avec ses propres libellés.
+ */
+export type RunVise = {
+  run_id: string;
+  titre: string;
+  statut: string;
+  en_pause: boolean;
+  pause_depuis: string | null;
+  etat: string;
+};
+
+/**
+ * Un geste sur un run **proposé** à la confirmation (`chat.GesteRunPropose`,
+ * #1179). `bornes` ne vaut que pour une relance — le seul geste qui ouvre un run —,
+ * `null` ailleurs et sur une relance qui n'en change aucune.
+ */
+export type GesteRunPropose = {
+  action: GesteRun | string;
+  run: RunVise;
+  bornes: BornesRun | null;
+};
+
+/**
+ * Ce qu'un geste confirmé a **donné** (`chat.GesteRunFait`, #1179) : le run relu
+ * juste après, le nouveau run d'une relance, ou le refus du service — alors rien
+ * n'a été fait, et `refus` dit pourquoi.
+ */
+export type GesteRunFait = {
+  action: GesteRun | string;
+  run: RunVise;
+  nouveau: RunVise | null;
+  refus: string;
+};
+
 export type MessageChat = {
   agent: string;
   auteur: string;
@@ -1419,6 +1483,12 @@ export type MessageChat = {
   etapes?: EtapeFil[];
   /** L'objectif soumis à l'accord par ce message (#943) — vide : aucune demande. */
   proposition?: string;
+  /**
+   * Le projet où travaillera le run proposé (#1180), écrit au moment de proposer —
+   * c'est là que l'accord l'ouvre, quelle que soit la fenêtre du clic. `null` ou
+   * absent : aucune proposition, ou une proposition écrite avant ce ticket.
+   */
+  projet_vise?: ProjetVise | null;
   /** La question d'outillage que ce message pose (#1031) — `null` : aucune. */
   question?: QuestionOutillage | null;
   /** La réponse d'outillage que ce message porte (#1031) — `null` : aucune. */
@@ -1442,6 +1512,12 @@ export type MessageChat = {
   piece_ecrite?: PieceEcrite | null;
   /** Ce qu'une phrase a corrigé de l'outillage (#1161) — absent ou vide : rien. */
   corrections?: ChoixOutillage[];
+  /** Le geste sur un run que ce message propose de confirmer (#1179) — `null` : aucun. */
+  geste_run?: GesteRunPropose | null;
+  /** Ce qu'un geste confirmé a donné, porté par la réponse (#1179) — `null` : rien. */
+  geste_fait?: GesteRunFait | null;
+  /** Les runs qu'une demande ambiguë pouvait viser (#1179) — absent ou vide : aucun. */
+  runs_candidats?: RunVise[];
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
@@ -1674,6 +1750,52 @@ export type LienUtile = {
   libelle: string;
   url: string;
   nature: string;
+};
+
+/**
+ * Les trois issues d'une vérification (#1177, `maestro/engine/verification.py`) —
+ * statut de l'étape `<tâche>:verification`, donc de l'activité que le fil rend et
+ * du verdict que la tâche porte. `tenue` : tous les critères tiennent ;
+ * `non_tenue` : au moins un a été constaté faux ; `impossible` : rien de faux,
+ * mais tout n'a pas pu être vérifié — ce qui n'est pas un vert non plus.
+ */
+export const VERIFICATION_TENUE = "verification_tenue";
+export const VERIFICATION_NON_TENUE = "verification_non_tenue";
+export const VERIFICATION_IMPOSSIBLE = "verification_impossible";
+
+/** Ce qu'un contrôle a constaté (#1177) : tenu, non tenu, ou pas joué du tout. */
+export const CONSTAT_TENU = "tenu";
+export const CONSTAT_NON_TENU = "non_tenu";
+export const CONSTAT_NON_JOUE = "non_joue";
+
+/**
+ * Un contrôle d'une vérification (#1177) : le critère de la tâche, ce qui l'a
+ * constaté, et la preuve. `commande` est vide pour une **lecture** du livrable ;
+ * `code` est le code de retour d'une commande jouée, `null` sinon ; `preuve` est
+ * la fin de sa sortie, ou ce que la lecture a trouvé (ou pas).
+ */
+export type ConstatVerification = {
+  critere: string;
+  etat: string;
+  preuve: string;
+  commande: string;
+  code: number | null;
+};
+
+/**
+ * La dernière vérification d'une tâche (`GET /api/taches`, #1177) : son issue,
+ * sa ligne (« 2/3 critère(s) tenu(s) »), et chaque contrôle avec sa preuve.
+ * `livraison` numérote la livraison vérifiée — la deuxième est une correction.
+ * `renvoi` nomme la tâche de QA qui a renvoyé ce livrable, quand c'est elle qui
+ * a jugé. `empechement` dit pourquoi rien n'a pu être vérifié.
+ */
+export type VerificationTache = {
+  statut: string;
+  resume: string;
+  empechement?: string;
+  livraison?: number;
+  renvoi?: string;
+  constats: ConstatVerification[];
 };
 
 /** Statuts d'une exécution (maestro/controltower/state.py, #185). */
@@ -2155,6 +2277,12 @@ export type ResumeExecution = {
    * Absent des flux antérieurs au lot, d'où l'optionnel.
    */
   en_pause?: boolean;
+  /**
+   * **Depuis quand** il est suspendu (#1179) — horodatage ISO-8601 de l'ordre de
+   * pause, `null` dès qu'il est repris ou soldé. C'est ce que le fil dit après le
+   * geste (« en pause depuis 14:02 »). Absent des flux antérieurs au lot.
+   */
+  pause_depuis?: string | null;
   /**
    * **Pourquoi** ce run s'est arrêté (#479, `CAUSE_*`) — chaîne vide tant qu'il
    * n'y a rien à dire, ce qui est le cas d'un run en cours comme d'un run qui a

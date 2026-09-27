@@ -93,6 +93,7 @@ import {
   libelleStatutExecution,
   RAISON_COUT_PARTIEL,
 } from "@/lib/format";
+import { PHRASE_INTERRUPTION, PHRASE_PAUSE } from "@/lib/gestesRun";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import { PAGE_DU_PLAFOND } from "@/lib/plafond";
@@ -367,7 +368,9 @@ export function LignePause({
     <p
       className={`text-annexe text-texte-secondaire ${className}`}
     >
-      {"Aucune tâche nouvelle n'est lancée ; celles qui étaient en vol vont à leur terme. Le run reprendra son plan là où il en est."}
+      {/* La phrase que la carte du fil dit aussi avant une pause (#1179) : écrite
+          une fois, dans `lib/gestesRun`. */}
+      {PHRASE_PAUSE}
     </p>
   );
 }
@@ -517,9 +520,7 @@ export function BoutonInterrompre({
             Laisser tourner
           </Bouton>
           <span className="text-annexe text-texte-secondaire">
-            {
-              "Les tâches en vol sont tuées là où elles en sont et perdent leur travail. C'est sans retour."
-            }
+            {PHRASE_INTERRUPTION}
           </span>
         </span>
       ) : (

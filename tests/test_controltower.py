@@ -223,6 +223,9 @@ def test_liste_des_taches_statut_agent_cout(client, state):
         # terminée ici —, et servi sur la carte parce que le graphe en tire
         # l'état de son nœud.
         "activite": None,
+        # La dernière vérification (#1177) : `null` tant qu'aucune n'a eu lieu —
+        # le panneau de détail n'en montre alors rien.
+        "verification": None,
     }
 
 

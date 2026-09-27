@@ -63,6 +63,17 @@ def est_releve_usage(etape: str) -> bool:
     return etape.endswith(SUFFIXE_ETAPE_USAGE)
 
 
+def _expurge(valeur: Any) -> Any:
+    """`valeur` avec chacun de ses textes expurgé — dicts et listes parcourus, le reste tel quel."""
+    if isinstance(valeur, str):
+        return redact_secrets(valeur)
+    if isinstance(valeur, Mapping):
+        return {cle: _expurge(v) for cle, v in valeur.items()}
+    if isinstance(valeur, list | tuple):
+        return [_expurge(v) for v in valeur]
+    return valeur
+
+
 @dataclass(frozen=True)
 class StepRecord:
     """Trace d'une étape : qui a fait quoi, avec quelle entrée, quelle issue, quel coût.
@@ -111,6 +122,7 @@ class StepRecord:
     liens: list[LienUtile] = field(default_factory=list)
     plan: list[NoeudPlan] = field(default_factory=list)
     brief: dict[str, Any] | None = None
+    verification: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -146,6 +158,11 @@ class StepRecord:
             # ni décision de brief, donc c'était pour lui le **seul** chemin par
             # lequel le brief pouvait atteindre la projection, et il manquait.
             "brief": self.brief,
+            # Le verdict d'une vérification (#1177), porté par les seules étapes
+            # `<tâche>:verification` : contrôle par contrôle, avec sa preuve. C'est
+            # le seul chemin par lequel il atteint le panneau de détail de la tâche
+            # — la preuve en clair de `description` se lit, elle ne se range pas.
+            "verification": self.verification,
         }
 
 
@@ -200,6 +217,7 @@ class RunJournal:
         liens: Sequence[LienUtile] = (),
         plan: Sequence[NoeudPlan] = (),
         brief: Mapping[str, Any] | None = None,
+        verification: Mapping[str, Any] | None = None,
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -234,6 +252,12 @@ class RunJournal:
             # c'est le texte que la personne relit et approuve, et le masquer la
             # ferait approuver autre chose que ce qui sera décomposé.
             brief=dict(brief) if brief is not None else None,
+            # Expurgé, lui (#1177) : ses preuves sont la fin de la sortie d'une
+            # commande jouée dans un projet, exactement ce qui peut imprimer un
+            # secret — la règle de `sortie` vaut pour elles, champ par champ.
+            verification=(
+                _expurge(verification) if verification is not None else None
+            ),
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))

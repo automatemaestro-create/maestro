@@ -81,6 +81,43 @@ class TurnLimitReached(RuntimeError):
     """
 
 
+#: Les états d'un serveur MCP qui n'a pas pu servir une tâche (#1181) — **les mots
+#: de Maestro**, pas ceux d'un fournisseur. Chaque adaptateur mue son signal natif
+#: en l'un d'eux (le CLI de Claude écrit `needs-auth`, un autre écrirait autre
+#: chose), et c'est ce qui laisse le moteur décider de la suite **sans lire de
+#: texte** : l'état voyage en donnée sur l'exception, jamais dans sa phrase.
+#:
+#: - `a_authentifier` : le serveur répond, mais demande qu'on s'authentifie ;
+#: - `en_echec` : il n'a pas démarré, ou sa connexion a échoué ;
+#: - `desactive` : il est déclaré mais désactivé ;
+#: - `sans_reponse` : il n'a jamais répondu dans le délai de connexion ;
+#: - `non_montable` : sa déclaration référence un secret que personne n'a fourni —
+#:   il n'a même pas été lancé.
+MCP_A_AUTHENTIFIER = "a_authentifier"
+MCP_EN_ECHEC = "en_echec"
+MCP_DESACTIVE = "desactive"
+MCP_SANS_REPONSE = "sans_reponse"
+MCP_NON_MONTABLE = "non_montable"
+
+
+@dataclass(frozen=True)
+class ServeurInjoignable:
+    """Un serveur MCP qui a empêché une tâche de démarrer, et pourquoi (#1181).
+
+    `nom` est celui de la liaison — donc, pour un serveur instancié depuis la
+    bibliothèque, l'id de son entrée (`RegistreMcp.instancier`) : c'est par lui
+    qu'on retrouve la procédure que le registre connaît. `etat` est l'un des
+    `MCP_*` ci-dessus, `cause` ce que le fournisseur en a dit (vide s'il n'a rien
+    dit), `references` les variables `${VAR}` qui manquaient à un serveur
+    `non_montable` — les secrets à fournir, nommés.
+    """
+
+    nom: str
+    etat: str
+    cause: str = ""
+    references: tuple[str, ...] = ()
+
+
 class McpServerUnavailable(RuntimeError):
     """Levée quand un serveur MCP déclaré ne peut pas être monté (#104).
 
@@ -91,7 +128,17 @@ class McpServerUnavailable(RuntimeError):
     message nomme le serveur et la cause : c'est l'« erreur propre » du contrat,
     consignée au journal comme tout échec de tâche. Non transitoire par nature
     (configuration ou secret à corriger) — jamais relancée (ENF-06).
+
+    Depuis #1181 elle porte aussi `serveurs` : **les mêmes faits en données**
+    (`ServeurInjoignable`), pour que le moteur suspende la tâche et propose la
+    procédure du registre sans jamais reconnaître la panne à sa phrase. Vide
+    quand le producteur ne les a pas donnés — un appelant tiers, un test : la
+    tâche échoue alors comme avant, rien n'est deviné.
     """
+
+    def __init__(self, message: str, serveurs: Sequence[ServeurInjoignable] = ()) -> None:
+        super().__init__(message)
+        self.serveurs: tuple[ServeurInjoignable, ...] = tuple(serveurs)
 
 
 class PlafondFluxDepasse(RuntimeError):

@@ -259,10 +259,13 @@ Endpoints :
   global** : on y adresse une demande à l'orchestration, qui répond et **ouvre
   un run** quand c'en est une (`maestro.controltower.orchestration`). Le corps
   porte le `projet_id` de la fenêtre (#683) : le run ouvert **appartient** au
-  projet actif, donc il figure dans sa liste de runs et s'ouvre en détail ;
+  projet actif, donc il figure dans sa liste de runs et s'ouvre en détail. Sans
+  projet, le fil ne propose ni n'ouvre aucun run (#1180) ;
 - `POST /api/chat/{agent}/cadrage` — **tranche** la demande de cadrage que le
   fil porte (#943) : accepter, refuser, ou accepter un objectif **amendé**, sans
-  repasser par la zone de saisie ni par le juge. Même paire rendue qu'un envoi ;
+  repasser par la zone de saisie ni par le juge. Le run s'ouvre dans le projet
+  **de la proposition** (`projet_vise`, #1180), et non dans celui de la fenêtre
+  du clic. Même paire rendue qu'un envoi ;
   `409` quand rien n'attend. Le corps porte aussi les quatre **bornes** du run
   (#990) — coût, tokens, délai par tâche, parallélisme —, aux mêmes noms que sur
   `POST /api/executions` : c'est par ce geste qu'un run lancé depuis l'interface
@@ -422,7 +425,9 @@ from maestro.controltower.chat import (
     CadrageIntrouvable,
     ChatStore,
     DeclarationIntrouvable,
+    GesteRunIntrouvable,
     PieceIntrouvable,
+    ProjetVise,
     QuestionIntrouvable,
     RecrutementIntrouvable,
     RepondeurChat,
@@ -453,6 +458,8 @@ from maestro.controltower.events import (
     titre_court,
 )
 from maestro.controltower.executions import (
+    MOTIF_GESTE_RUN_NON_SUSPENDU,
+    MOTIF_GESTE_RUN_SUSPENDU,
     MOTIF_RELANCE_RUN_INCONNU,
     MOTIF_RELANCE_RUN_SOLDE,
     MOTIF_RELANCE_RUN_VIVANT,
@@ -467,6 +474,7 @@ from maestro.controltower.generation_agent import (
     GenerateurDefinitionAgent,
     GenerationIndisponible,
 )
+from maestro.controltower.gestes import GESTE_ANNULATION, GESTE_PAUSE, GESTE_REPRISE
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
     HOTE_RUN_EN_PROCESS,
@@ -492,6 +500,7 @@ from maestro.controltower.orchestration import (
     attentes_de,
     detail_du_run,
     faits_des_runs,
+    outillage_en_clair,
 )
 from maestro.controltower.outillage import (
     ComprehensionModele,
@@ -558,6 +567,7 @@ from maestro.espace import espace_courant
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
+from maestro.outillage.contexte import outillage_du_projet
 from maestro.outillage.questionnaire import Choix, ComprehensionIllisible
 from maestro.poste import SondePoste
 from maestro.projets import (
@@ -1001,7 +1011,10 @@ class CadrageDecisionRequete(BaseModel):
     lancement qui échoue (`orchestration._ouvrir_un_run`).
 
     `objectif` et les bornes sont ignorés sur un refus : il n'y a rien à lancer.
-    `projet_id` et `conversation` ont exactement le sens qu'ils ont sur un envoi.
+    `projet_id` et `conversation` ont exactement le sens qu'ils ont sur un envoi —
+    à ceci près que le run suit le projet **de la proposition** quand elle en porte
+    un (#1180) : le fil est transverse, et la fenêtre du clic n'est pas forcément
+    celle où la proposition a été faite.
     """
 
     approuve: bool
@@ -1329,6 +1342,20 @@ class DeclarationProjetRequete(BaseModel):
     conversation: str | None = None
 
 
+class GesteRunRequete(BaseModel):
+    """Corps du geste qui confirme — ou écarte — le geste sur un run que le fil propose (#1179).
+
+    `approuve`, et rien d'autre de fond : l'action, le run et les bornes d'une
+    relance sont sur la proposition que le fil porte (`GesteRunPropose`), et c'est
+    elle qui s'exécute. « Plutôt 10 $ » ne passe pas par ici : il se dit dans la
+    conversation, et appelle une carte nouvelle. `conversation` a le sens qu'elle a
+    partout ailleurs sur ce canal.
+    """
+
+    approuve: bool
+    conversation: str | None = None
+
+
 class DecisionPieceRequete(BaseModel):
     """Corps du geste qui tranche la pièce d'outillage que le fil propose (#1161).
 
@@ -1513,6 +1540,17 @@ _CODE_REFUS_RELANCE: dict[str, int] = {
     # interdit le geste, sans que la requête soit malformée.
     MOTIF_RELANCE_RUN_SOLDE: 409,
     MOTIF_RELANCE_RUN_VIVANT: 409,
+}
+
+#: Le statut HTTP des refus de la pause, de la reprise et de l'annulation (#1179) —
+#: ceux que leurs routes rendaient déjà, maintenant que les règles vivent dans le
+#: service (`refus_du_geste`) : `404` sur un run inconnu, `409` sur tout état qui
+#: interdit le geste (soldé, déjà suspendu, pas suspendu).
+_CODE_REFUS_GESTE: dict[str, int] = {
+    MOTIF_RELANCE_RUN_INCONNU: 404,
+    MOTIF_RELANCE_RUN_SOLDE: 409,
+    MOTIF_GESTE_RUN_SUSPENDU: 409,
+    MOTIF_GESTE_RUN_NON_SUSPENDU: 409,
 }
 
 
@@ -2160,12 +2198,13 @@ def create_app(
         couperait le fil en deux. Le run part donc, brief rédigé sans attendre ;
         l'écran des exécutions reste la voie de celui qui veut le valider avant.
 
-        `projet_id` (#683) est le projet de la fenêtre, transmis par le message
-        et **normalisé à la frontière** (`envoyer_chat`). Il est passé à `lancer`
-        exactement comme le fait `POST /api/executions` — même paramètre, même
-        validation de forme (`projet_id_valide`), donc une seule règle pour les
-        deux portes d'entrée. Sans projet, le run part sans projet : le
-        rattachement est une donnée, jamais une condition du lancement (#222).
+        `projet_id` (#683) est le projet du run — celui de la proposition
+        approuvée (#1180), à défaut celui de la fenêtre, **normalisé à la
+        frontière** (`envoyer_chat`). Il est passé à `lancer` exactement comme le
+        fait `POST /api/executions` — même paramètre, même validation de forme
+        (`projet_id_valide`), donc une seule règle pour les deux portes d'entrée.
+        Le fil ne l'appelle jamais sans projet (#1180, `_ouvrir_un_run`) ; l'écran
+        des exécutions, lui, garde le rattachement pour une donnée (#222).
 
         `bornes` (#990) achève le rapprochement des deux portes : les quatre
         garde-fous que `POST /api/executions` transmettait depuis #185 passent
@@ -2274,6 +2313,30 @@ def create_app(
 
     consultations = Consultations(projet=projet_du_fil, detail=detail_du_run(state))
 
+    def projet_nomme(projet_id: str) -> ProjetVise | None:
+        """Le projet de la fenêtre tel que le fil le nomme — `None` s'il n'est pas déclaré (#1180).
+
+        Le même lecteur que les lectures du fil (`projet_du_fil`, `ServiceProjets`) :
+        un projet que l'API ne déclare pas n'est pas un projet où un run peut partir,
+        et c'est la seule réponse qui ferme la porte. Ce qu'il rend est ce qu'une
+        proposition écrit sur elle (`ProjetVise`) : l'identifiant que l'accord suit,
+        et le nom et le dossier que la carte affiche.
+        """
+        projet = projet_du_fil(projet_id)
+        if projet is None:
+            return None
+        return ProjetVise(id=projet.id, nom=projet.nom, racine=projet.racine)
+
+    def outillage_du_fil(projet_id: str) -> str:
+        """L'outillage du projet pour le fil, lu **comme un agent le reçoit** (#1180).
+
+        `outillage_du_projet` est la lecture qui part dans le message de chaque
+        tâche : le fil dit donc de l'outillage exactement ce que l'équipe en
+        recevra, et rien qu'une seconde analyse du disque pourrait inventer.
+        """
+        projet = projet_du_fil(projet_id)
+        return outillage_en_clair(outillage_du_projet(projet)) if projet is not None else ""
+
     async def consulter(demande: Demande, projet_id: str | None) -> Lecture:
         """Exécute une lecture du fil, **hors boucle** — elle touche le disque (#1223).
 
@@ -2333,6 +2396,10 @@ def create_app(
                 # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
                 # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
                 regime=regime_du_projet,
+                # Le projet de la conversation (#1180) : nommé par sa fiche, avec son
+                # outillage — et sans lui, aucun run ne part du fil.
+                projet=projet_nomme,
+                outillage=outillage_du_fil,
                 conducteur=conducteur,
                 # Un projet naît dans la conversation (#1294) : déclaré par le
                 # **même** service que `POST /api/projets`, et un dossier importé
@@ -2340,6 +2407,9 @@ def create_app(
                 naissance=ServiceNaissance(projets, lecteur=outillage.analyser),
                 # Et son outillage s'y construit, pièce par pièce (#1161).
                 pieces=pieces,
+                # Il agit sur les runs existants — pause, reprise, annulation,
+                # relance — par le **même** service que les boutons (#1179).
+                pilote=executions,
             )
         ),
         mailbox=mailbox,
@@ -2843,6 +2913,19 @@ def create_app(
             raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
         return {"sources": recus, "total_octets": total}
 
+    async def _refuser_le_geste(geste: str, run_id: str) -> None:
+        """Lève le statut HTTP du refus qu'un geste recevrait — rien s'il passe (#1179).
+
+        Les règles sont celles du service (`ServiceExecutions.refus_du_geste`), que
+        le fil appelle aussi : la route n'en garde que la traduction en code, et le
+        `detail` reste la phrase du refus, comme avant que les règles n'y déménagent.
+        """
+        refus = await executions.refus_du_geste(geste, run_id)
+        if refus is not None:
+            raise HTTPException(
+                status_code=_CODE_REFUS_GESTE.get(refus.motif, 409), detail=str(refus)
+            )
+
     @app.post("/api/executions/{run_id}/annuler")
     async def annuler_execution(run_id: str) -> dict[str, Any]:
         """Interrompt un run en cours (#185) : rend son résumé passé à « annulée ».
@@ -2853,17 +2936,7 @@ def create_app(
         terminé n'est plus interruptible, et le dire vaut mieux que faire croire
         à une annulation.
         """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
-            raise HTTPException(
-                status_code=409,
-                detail=f"exécution déjà soldée ({resume['statut']}) : {run_id}.",
-            )
+        await _refuser_le_geste(GESTE_ANNULATION, run_id)
         annulee = await executions.annuler(run_id)
         if annulee is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2894,25 +2967,7 @@ def create_app(
         rien à suspendre) ou **déjà suspendu** — répondre 200 à une pause qui
         n'était pas la première ferait passer pour un geste ce qui n'en est pas un.
         """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if resume["statut"] in STATUTS_EXECUTION_TERMINAUX:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"exécution déjà soldée ({resume['statut']}) : {run_id} — "
-                    "il n'y a rien à suspendre d'un run qui a rendu son issue."
-                ),
-            )
-        if resume["en_pause"]:
-            raise HTTPException(
-                status_code=409,
-                detail=f"exécution déjà suspendue : {run_id} (POST …/reprendre pour la relancer).",
-            )
+        await _refuser_le_geste(GESTE_PAUSE, run_id)
         suspendue = await executions.mettre_en_pause(run_id)
         if suspendue is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2936,20 +2991,7 @@ def create_app(
         rien à reprendre d'un run qui travaille, et le dire vaut mieux que rendre un
         200 sans effet.
         """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if not resume["en_pause"]:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"exécution non suspendue ({resume['statut']}) : {run_id} — "
-                    "il n'y a rien à reprendre d'un run qui n'a pas été mis en pause."
-                ),
-            )
+        await _refuser_le_geste(GESTE_REPRISE, run_id)
         reprise = await executions.reprendre(run_id)
         if reprise is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
@@ -2970,9 +3012,11 @@ def create_app(
         — de qui il est la suite. Le run repris, lui, est soldé en `annulee` : rien
         n'a raté, son hôte est tombé et quelqu'un a repris la main.
 
-        `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre)
-        ou **encore vivant** (verdict de `vitalite`, #348 — l'interrompre d'abord si
-        c'est bien voulu), `422` si son brief n'a **jamais été approuvé** : le
+        `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre —
+        sauf un arrêt qui n'a pas jugé son travail : l'extinction, une borne
+        atteinte, `CAUSES_RELANCABLES`, #1179) ou **encore vivant** (verdict de
+        `vitalite`, #348 — l'interrompre d'abord si c'est bien voulu), `422` si son
+        brief n'a **jamais été approuvé** : le
         relancer reviendrait à repartir de son objectif brut en silence, c'est-à-dire
         à sauter la validation qu'il attendait encore. Le refus est motivé à la
         convention du reste (`{motif, message}`, §6.1).
@@ -6073,7 +6117,8 @@ def create_app(
                 approuve=requete.approuve,
                 objectif=requete.objectif,
                 # Normalisé **ici**, à la frontière, comme sur un envoi : c'est
-                # le projet de la fenêtre, et c'est lui qui rattachera le run.
+                # le projet de la fenêtre. Il ne rattache le run que si la
+                # proposition n'a pas de projet à elle (#1180, écrite avant ce lot).
                 projet_id=projet_id_valide(requete.projet_id),
                 bornes=requete.bornes_posees(),
                 conversation=fil,
@@ -6204,6 +6249,44 @@ def create_app(
                 fiche, approuve=requete.approuve, conversation=fil
             )
         except DeclarationIntrouvable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ReponseIndisponible as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "agent": fiche.nom,
+            "role": fiche.role,
+            "conversation": fil,
+            "messages": [geste.to_dict(), reponse.to_dict()],
+        }
+
+    @app.post("/api/chat/{agent}/geste", status_code=201)
+    async def trancher_geste_chat(agent: str, requete: GesteRunRequete) -> dict[str, Any]:
+        """Confirme — ou écarte — le geste sur un run que le fil propose ; rend la paire (#1179).
+
+        Le geste qui **agit** sur un run depuis la conversation : suspendre,
+        reprendre, annuler, relancer. L'action, le run et les bornes d'une relance
+        sont ceux de la carte que le fil porte, relus du fil ; la confirmation les
+        exécute par le service des boutons (`ServiceExecutions.agir`), puis relit
+        le run — l'état relu voyage sur la réponse (`geste_fait`), et une relance y
+        rattache le run qu'elle ouvre (`run_id`).
+
+        Même forme et même réponse que `POST …/projet`. Un geste **refusé** par le
+        service (l'état du run a changé depuis la carte) ne lève pas : il se
+        raconte dans le fil, motivé, parce que la confirmation, elle, a bien eu lieu.
+
+        `409` quand rien n'attend — le double clic n'annule pas deux fois, ne
+        relance pas deux runs —, `404` hors catalogue, `422` sur une conversation
+        mal formée, `502` si la suite n'a pas pu être produite.
+        """
+        fiche, service = _canal_chat(agent)
+        fil = _conversation_demandee(service, fiche, requete.conversation)
+        try:
+            geste, reponse = await service.trancher_geste(
+                fiche, approuve=requete.approuve, conversation=fil
+            )
+        except GesteRunIntrouvable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

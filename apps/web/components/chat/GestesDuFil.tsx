@@ -37,7 +37,13 @@
  * la saisie. Une fois l'équipe créée, c'est la demande de cadrage qui revient à ce
  * rang, sur le travail d'origine.
  *
- * ⚠ Une cinquième est venue avec #1182 : la **décision au plafond de dépense**
+ * ⚠ Une sixième est venue avec #1179 : le **geste sur un run** (`GesteSurUnRun`) —
+ * le mettre en pause, le reprendre, l'interrompre, le relancer —, à confirmer avant
+ * qu'il parte. Elle vit sur le message comme les autres et ne cohabite avec aucune,
+ * donc elle prend aussi le dernier rang ; la règle qui dit si elle attend encore est
+ * celle de toutes (`gesteRunEnAttente`, `lib/gestesRun`).
+ *
+ * ⚠ Une septième est venue avec #1182 : la **décision au plafond de dépense**
  * (`PlafondDansLeFil`) — un run qui a atteint son budget et attend qu'on relève,
  * réduise ou arrête. Elle ne vit pas sur un message mais sur le **run** (la liste
  * des exécutions du shell), et elle prend le **premier** rang : c'est le run entier
@@ -94,6 +100,7 @@ import { useMemo, type ReactNode } from "react";
 import { DemandeDeCadrage } from "@/components/chat/DemandeDeCadrage";
 import { DemandeDeProjet } from "@/components/chat/DemandeDeProjet";
 import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
+import { GesteSurUnRun } from "@/components/chat/GesteSurUnRun";
 import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
 import { PlafondDansLeFil } from "@/components/chat/PlafondDansLeFil";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
@@ -101,6 +108,7 @@ import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { propositionEnAttente } from "@/lib/brief";
 import { recrutementEnAttente } from "@/lib/equipe";
 import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
+import { gesteRunEnAttente } from "@/lib/gestesRun";
 import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { pieceEnAttente, questionEnAttente } from "@/lib/outillage";
@@ -159,6 +167,7 @@ export function useGestesDuFil(
   const recrutement = messageRecrutement?.recrutement ?? null;
   const projetPropose = global ? projetEnAttente(fil.messages) : null;
   const piece = global ? (pieceEnAttente(fil.messages)?.piece ?? null) : null;
+  const geste = global ? gesteRunEnAttente(fil.messages) : null;
   // Les runs arrêtés sur leur plafond de dépense (#1182) — sur le seul fil de
   // l'orchestration, parce que c'est une décision **du run** : aucun agent ne
   // l'a posée, et un aparté avec l'un d'eux n'a pas à la porter.
@@ -174,7 +183,8 @@ export function useGestesDuFil(
     recrutement === null &&
     projetPropose === null &&
     !outillage?.question &&
-    piece === null
+    piece === null &&
+    geste === null
   ) {
     return undefined;
   }
@@ -252,6 +262,9 @@ export function useGestesDuFil(
           declarer={fil.declarerProjet}
           enCours={fil.envoi}
         />
+      )}
+      {geste !== null && (
+        <GesteSurUnRun demande={geste} trancher={fil.trancherGeste} enCours={fil.envoi} />
       )}
     </div>
   );

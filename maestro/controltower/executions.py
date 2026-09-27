@@ -186,7 +186,7 @@ from maestro.controltower.battement import (
     RegistreBattementsMemoire,
     vitalite,
 )
-from maestro.controltower.bornes import BornesRun
+from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.bridge import JournalEventHandler
 from maestro.controltower.brief import (
     ArbitreBriefControlTower,
@@ -195,6 +195,9 @@ from maestro.controltower.brief import (
 from maestro.controltower.causes import (
     CAUSE_ANNULATION,
     CAUSE_EXTINCTION,
+    CAUSE_LIMITE_USAGE,
+    CAUSE_PLAFOND_COUT,
+    CAUSE_PLAFOND_TOURS,
     cause_de,
     detail_avec_cause,
 )
@@ -206,6 +209,14 @@ from maestro.controltower.events import (
     Event,
     EventBus,
     titre_court,
+)
+from maestro.controltower.gestes import (
+    GESTE_ANNULATION,
+    GESTE_PAUSE,
+    GESTE_RELANCE,
+    GESTE_REPRISE,
+    GESTES_RUN,
+    GesteRefuse,
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
@@ -224,6 +235,7 @@ from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
     STATUTS_TACHE_TERMINAUX,
     ControlTowerState,
+    libelle_statut_execution,
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import (
@@ -282,6 +294,30 @@ MOTIF_RELANCE_RUN_SOLDE = "run-solde"
 MOTIF_RELANCE_RUN_VIVANT = "run-vivant"
 MOTIF_RELANCE_SANS_CADRAGE = "cadrage-absent"
 
+#: Les deux refus que seule la **pause** connaît (#477), rendus par le service
+#: depuis #1179 — ils vivaient dans les routes, et le fil, qui propose les mêmes
+#: gestes, en aurait sinon écrit une seconde version. « Inconnu » et « soldé » sont
+#: ceux de la relance ci-dessus : c'est le même état du run, qui refuse le même
+#: geste pour la même raison.
+MOTIF_GESTE_RUN_SUSPENDU = "run-suspendu"
+MOTIF_GESTE_RUN_NON_SUSPENDU = "run-non-suspendu"
+
+#: Un geste hors de `GESTES_RUN` — un modèle qui aurait inventé un verbe, une
+#: requête mal formée : refusé avant de toucher au run.
+MOTIF_GESTE_INCONNU = "geste-inconnu"
+
+#: Les **causes** d'un run soldé qui n'ont pas jugé son travail, donc qui se
+#: relancent (#1179) : l'extinction de Maestro (#486), et les **bornes** — un
+#: plafond de dépense ou de tours atteint, la limite d'usage du fournisseur. Un run
+#: arrêté sur la borne qu'on lui avait posée n'a rendu aucun verdict sur ce qu'il
+#: faisait : « relance-le avec 5 $ de plus » est précisément ce qu'on veut en
+#: faire, et c'était, avant ce ticket, un « déjà soldée » sans issue. Un run qu'on
+#: a délibérément annulé, qui a échoué sur son travail ou qui s'est terminé, lui,
+#: a rendu son issue et reste hors de portée.
+CAUSES_RELANCABLES = frozenset(
+    {CAUSE_EXTINCTION, CAUSE_PLAFOND_COUT, CAUSE_PLAFOND_TOURS, CAUSE_LIMITE_USAGE}
+)
+
 #: Le détail consigné sur un run que l'**extinction** de Maestro solde (#486) —
 #: écrit ici plutôt qu'au point d'appel parce que c'est la phrase qu'un humain lira
 #: au redémarrage, sur un run qu'il n'a pas vu s'arrêter.
@@ -292,7 +328,7 @@ DETAIL_EXTINCTION = (
 _LOGGER = logging.getLogger("maestro.controltower")
 
 
-class RelanceRefusee(ValueError):
+class RelanceRefusee(GesteRefuse):
     """Une relance refusée, **avec son motif** — jamais un rejet muet (#349).
 
     Même contrat que `SourceRefusee` (#315) et même raison d'hériter de
@@ -300,11 +336,11 @@ class RelanceRefusee(ValueError):
     `_detail_refus` sait déjà en tirer le corps `{motif, message}` que servent les
     routes. `motif` est l'un des `MOTIF_RELANCE_*` ; le message reste la phrase
     lisible, celle que l'UI affiche telle quelle.
-    """
 
-    def __init__(self, motif: str, message: str) -> None:
-        super().__init__(message)
-        self.motif = motif
+    Depuis #1179 c'est un `GesteRefuse` parmi les autres : le fil, qui relance par
+    le même service (`agir`), le rattrape avec ceux de la pause et de l'annulation,
+    sans connaître celui-ci.
+    """
 
 
 def moteur_par_defaut(**reglages: Any) -> OrchestrationEngine:
@@ -804,6 +840,103 @@ class ServiceExecutions:
             raise RuntimeError(f"run {run_id} absent de la projection après son lancement")
         return {**resume, "rapport": rapport.to_dict()}
 
+    async def refus_du_geste(self, geste: str, run_id: str) -> GesteRefuse | None:
+        """Le refus qu'un geste sur `run_id` recevrait **maintenant** — `None` s'il passe (#1179).
+
+        Les règles de la pause, de la reprise et de l'annulation vivaient dans leurs
+        routes ; celles de la relance, dans `relancer`. Le fil propose désormais les
+        mêmes gestes, et une seconde version des règles y aurait répondu autre chose
+        que le bouton. Elles vivent donc ici, une fois, pour les quatre gestes, et
+        les deux portes les appellent :
+
+        - **inconnu** — la projection ne connaît pas ce run ;
+        - **annulation** — refusée sur un run soldé : il n'y a plus rien à interrompre ;
+        - **pause** — refusée sur un run soldé, ou déjà suspendu : répondre oui à une
+          pause qui n'était pas la première ferait passer pour un geste ce qui n'en
+          est pas un ;
+        - **reprise** — refusée sur un run qui n'est pas suspendu, soldé compris
+          (l'issue lève la pause) : il n'y a rien à reprendre ;
+        - **relance** — les refus de `relancer` (#349), qui interrogent le registre
+          des battements : c'est ce qui rend la méthode asynchrone.
+
+        Rend le refus plutôt que de le lever : la route en fait un statut HTTP, le
+        fil le dit avant même de proposer la carte, et aucun des deux n'a de
+        `try` à écrire pour une réponse attendue. `agir` le lève, lui.
+
+        Sa phrase se lit sous un bouton comme sous une bulle : le statut y est dit
+        par son libellé d'écran (`libelle_statut_execution`), jamais par
+        l'identifiant de la machine à états.
+        """
+        if geste not in GESTES_RUN:
+            return GesteRefuse(
+                MOTIF_GESTE_INCONNU,
+                f"geste inconnu : {geste!r} (attendu l'un de : {', '.join(GESTES_RUN)}).",
+            )
+        execution = self._state.execution(run_id)
+        if execution is None:
+            return GesteRefuse(
+                MOTIF_RELANCE_RUN_INCONNU,
+                f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if geste == GESTE_RELANCE:
+            return await self._refus_de_relance(run_id)
+        if geste == GESTE_REPRISE:
+            if execution.en_pause:
+                return None
+            return GesteRefuse(
+                MOTIF_GESTE_RUN_NON_SUSPENDU,
+                f"exécution non suspendue ({libelle_statut_execution(execution.statut)}) : "
+                f"{run_id} — il n'y a rien à reprendre d'un run qui n'a pas été mis en "
+                "pause.",
+            )
+        if execution.statut in STATUTS_EXECUTION_TERMINAUX:
+            quoi = "suspendre" if geste == GESTE_PAUSE else "interrompre"
+            return GesteRefuse(
+                MOTIF_RELANCE_RUN_SOLDE,
+                f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
+                f"{run_id} — il n'y a rien à {quoi} d'un run qui a rendu son issue.",
+            )
+        if geste == GESTE_PAUSE and execution.en_pause:
+            return GesteRefuse(
+                MOTIF_GESTE_RUN_SUSPENDU,
+                f"exécution déjà suspendue : {run_id} — il reste à la reprendre, pas à "
+                "la suspendre une seconde fois.",
+            )
+        return None
+
+    async def agir(
+        self, geste: str, run_id: str, *, bornes: BornesRun = AUCUNE_BORNE
+    ) -> dict[str, Any]:
+        """Exécute un geste sur `run_id` et rend l'état **relu** du run (#1179).
+
+        La porte du fil sur les quatre verbes du service — les mêmes que les
+        boutons des écrans, jamais une copie : `mettre_en_pause`, `reprendre`,
+        `annuler`, `relancer`. Le refus est celui de `refus_du_geste`, levé
+        (`GesteRefuse`) : le fil a proposé le geste sur un état que le temps a pu
+        changer — un run soldé entre la carte et le clic —, et c'est ce refus-là,
+        motivé, qu'il dit.
+
+        Ce qui revient est le résumé relu **après** le geste : suspendu, repris,
+        annulé — ou, pour une relance, le résumé du **nouveau** run, qui porte
+        `reprise_de`. `bornes` ne sert que la relance : c'est le seul geste qui
+        ouvre un run, donc le seul qui en reçoive ; les trois autres agissent sur
+        un run dont les bornes sont déjà posées.
+        """
+        if geste == GESTE_RELANCE:
+            return await self.relancer(run_id, bornes=bornes)
+        refus = await self.refus_du_geste(geste, run_id)
+        if refus is not None:
+            raise refus
+        verbes = {
+            GESTE_PAUSE: self.mettre_en_pause,
+            GESTE_REPRISE: self.reprendre,
+            GESTE_ANNULATION: self.annuler,
+        }
+        resume = await verbes[geste](run_id)
+        if resume is None:  # pragma: no cover - le refus vient de le trouver
+            raise GesteRefuse(MOTIF_RELANCE_RUN_INCONNU, f"exécution inconnue : {run_id}")
+        return resume
+
     async def annuler(self, run_id: str) -> dict[str, Any] | None:
         """Interrompt le run `run_id` et rend son résumé passé à « annulée ».
 
@@ -890,7 +1023,9 @@ class ServiceExecutions:
             porte.ouvrir()
         return await self.resume_vivant(run_id)
 
-    async def relancer(self, run_id: str) -> dict[str, Any]:
+    async def relancer(
+        self, run_id: str, *, bornes: BornesRun = AUCUNE_BORNE
+    ) -> dict[str, Any]:
         """Rejoue un run interrompu **sur son brief approuvé** (#349) — le nouveau résumé.
 
         Ce qui se perd quand un run meurt n'est pas du temps machine : c'est un
@@ -929,7 +1064,9 @@ class ServiceExecutions:
           emporté n'a jamais rendu de verdict sur son travail : on l'a arrêté en
           partant, et le retrouver au redémarrage est exactement ce qu'on veut.
           Rien d'autre ne change, le brief approuvé restant requis comme partout
-          ailleurs ;
+          ailleurs. Depuis #1179, les runs arrêtés sur une **borne** passent pour la
+          même raison (`CAUSES_RELANCABLES`) : un plafond atteint n'a pas jugé le
+          travail, et le relancer avec d'autres bornes est ce qu'on en veut ;
         - il est **vivant** — verdict de `vitalite` (#348) et de lui seul : re-déduire
           ici l'orphelinat depuis les horodatages donnerait une seconde formule à
           tenir d'accord avec la première, et c'est exactement ce que le lot 1 existe
@@ -950,43 +1087,22 @@ class ServiceExecutions:
         troisième verdict existe pour refuser.
 
         Lève `RelanceRefusee` (⊂ `ValueError`) avec son motif dans les quatre cas ;
-        la route en fait un 404, un 409 ou un 422.
+        la route en fait un 404, un 409 ou un 422. Les quatre vivent dans
+        `_refus_de_relance`, que `refus_du_geste` rend aussi au fil (#1179).
+
+        `bornes` (#1179) sont celles du **nouveau** run — « relance-le avec 5 $ de
+        plus ». Le run relancé n'hérite pas de celles du run repris : une borne
+        appartient au run qui l'a reçue à son accord (#1323), et c'est précisément
+        celle qui l'a arrêté qu'on veut souvent changer. Non posées, c'est
+        `AUCUNE_BORNE`, le régime de la route `…/relancer`, qui n'en porte pas.
         """
+        refus = await self._refus_de_relance(run_id)
+        if refus is not None:
+            raise refus
         execution = self._state.execution(run_id)
-        if execution is None:
-            raise RelanceRefusee(
-                MOTIF_RELANCE_RUN_INCONNU,
-                f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if (
-            execution.statut in STATUTS_EXECUTION_TERMINAUX
-            and execution.cause != CAUSE_EXTINCTION
-        ):
-            raise RelanceRefusee(
-                MOTIF_RELANCE_RUN_SOLDE,
-                f"exécution déjà soldée ({execution.statut}) : {run_id} — "
-                "il n'y a rien à reprendre d'un run qui a rendu son issue.",
-            )
-        verdict = vitalite(
-            execution.statut,
-            (await self._registre()).get(run_id),
-            seuil_s=self._seuil_orphelin_s,
-        )
-        if verdict == VITALITE_VIVANT:
-            raise RelanceRefusee(
-                MOTIF_RELANCE_RUN_VIVANT,
-                f"exécution encore vivante : {run_id} — son hôte bat toujours. "
-                "L'interrompre d'abord (POST …/annuler) si c'est bien voulu.",
-            )
-        brief = execution.brief
-        if brief is None or not execution.brief_approuve:
-            raise RelanceRefusee(
-                MOTIF_RELANCE_SANS_CADRAGE,
-                f"exécution sans brief approuvé : {run_id} — elle s'est arrêtée "
-                f"avant la validation de son cadrage ({execution.statut}), il n'y a "
-                "donc rien à rejouer. La relancer reviendrait à repartir de son "
-                "objectif brut, ce qui est un nouveau run, pas une reprise.",
-            )
+        brief = execution.brief if execution is not None else None
+        if execution is None or brief is None:  # pragma: no cover - vérifié au-dessus
+            raise RelanceRefusee(MOTIF_RELANCE_RUN_INCONNU, f"exécution inconnue : {run_id}")
         ticket, projet = execution.ticket, execution.projet_id
 
         # Rien entre ce point et l'écriture ci-dessous ne doit **attendre** : la
@@ -1023,11 +1139,60 @@ class ServiceExecutions:
         )
         return await self.lancer(
             brief.synthese(),
+            plafond_cout_usd=bornes.plafond_cout_usd,
+            plafond_tokens=bornes.plafond_tokens,
+            timeout_tache_s=bornes.timeout_tache_s,
+            parallelisme=bornes.parallelisme,
             ticket=ticket,
             projet_id=projet,
             mode_brief=MODE_BRIEF_SANS,
             reprise_de=run_id,
         )
+
+    async def _refus_de_relance(self, run_id: str) -> RelanceRefusee | None:
+        """Les quatre refus de `relancer` (#349), rendus plutôt que levés — `None` s'il passe.
+
+        Ils se lisent dans cet ordre, et l'ordre est le leur depuis #349 : le soldé
+        tombe **avant** la lecture du registre, parce qu'un run soldé n'a pas de
+        verdict de vitalité. Un run soldé dont la cause n'a pas jugé le travail
+        (`CAUSES_RELANCABLES`) passe ce refus-là, et lui seul.
+        """
+        execution = self._state.execution(run_id)
+        if execution is None:
+            return RelanceRefusee(
+                MOTIF_RELANCE_RUN_INCONNU,
+                f"exécution inconnue : {run_id} (voir GET /api/executions).",
+            )
+        if (
+            execution.statut in STATUTS_EXECUTION_TERMINAUX
+            and execution.cause not in CAUSES_RELANCABLES
+        ):
+            return RelanceRefusee(
+                MOTIF_RELANCE_RUN_SOLDE,
+                f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
+                f"{run_id} — il n'y a rien à reprendre d'un run qui a rendu son issue.",
+            )
+        verdict = vitalite(
+            execution.statut,
+            (await self._registre()).get(run_id),
+            seuil_s=self._seuil_orphelin_s,
+        )
+        if verdict == VITALITE_VIVANT:
+            return RelanceRefusee(
+                MOTIF_RELANCE_RUN_VIVANT,
+                f"exécution encore vivante : {run_id} — son hôte bat toujours. "
+                "L'interrompre d'abord (POST …/annuler) si c'est bien voulu.",
+            )
+        if execution.brief is None or not execution.brief_approuve:
+            return RelanceRefusee(
+                MOTIF_RELANCE_SANS_CADRAGE,
+                f"exécution sans brief approuvé : {run_id} — elle s'est arrêtée "
+                "avant la validation de son cadrage "
+                f"({libelle_statut_execution(execution.statut)}), il n'y a "
+                "donc rien à rejouer. La relancer reviendrait à repartir de son "
+                "objectif brut, ce qui est un nouveau run, pas une reprise.",
+            )
+        return None
 
     async def _solder(
         self, run_id: str, detail: str, *, cause: str = CAUSE_ANNULATION

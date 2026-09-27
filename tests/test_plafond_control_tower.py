@@ -35,7 +35,6 @@ from maestro.controltower.events import (
     EVENEMENT_PLAFOND_DECISION,
     EVENEMENT_PLAFOND_DEMANDE,
 )
-from maestro.controltower.orchestration import libelle_statut_execution
 from maestro.controltower.plafond import (
     ArbitrePlafondControlTower,
     evenement_decision,
@@ -47,6 +46,7 @@ from maestro.controltower.state import (
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
     STATUTS_EXECUTION_EN_ATTENTE,
+    libelle_statut_execution,
 )
 from maestro.engine import OrchestrationEngine
 from maestro.engine.plafond import (

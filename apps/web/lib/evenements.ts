@@ -44,6 +44,9 @@ import {
   ORDRE_REPRISE,
   STATUT_ACTIVITE,
   VALIDATION_APPROUVEE,
+  VERIFICATION_IMPOSSIBLE,
+  VERIFICATION_NON_TENUE,
+  VERIFICATION_TENUE,
   type Evenement,
 } from "@/lib/types";
 
@@ -191,6 +194,12 @@ function phraseEtapeAgent(evenement: Evenement): string {
     case "processus_arretes":
     case "processus_survivants":
     case "session_non_confinee":
+    // Et #1177 la vérification d'une livraison : la même règle encore — elle
+    // arrive à la tâche entre sa livraison et son issue, et le `detail` porte le
+    // compte (« 2/3 critère(s) tenu(s) ») ou le renvoi de la QA.
+    case VERIFICATION_TENUE:
+    case VERIFICATION_NON_TENUE:
+    case VERIFICATION_IMPOSSIBLE:
       return `${libelleStatut(evenement.statut)}${
         evenement.detail ? ` — ${evenement.detail}` : ` : ${quoi}`
       }`;

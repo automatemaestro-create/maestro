@@ -37,6 +37,16 @@ la tâche, ou le budget du run est dépensé. Rattraper serait contourner la dé
 Et un rattrapage ne dépense qu'**à l'intérieur** du budget : chaque diagnostic et
 chaque tentative passent sous le même plafond que le reste du run (#9, #56), et un
 plafond atteint arrête le rattrapage en le disant.
+
+## Ce qui manque se propose (#1181)
+
+Un échec dont la cause est un **prérequis** — un serveur MCP à authentifier, un rôle
+que personne ne couvre, ce qu'un agent a signalé lui manquer — ne se rejoue ni ne se
+redécoupe : il se **donne**. La boucle le propose dans le fil (`question_du_prerequis`,
+un geste déclaré `CHOIX_PREREQUIS_LEVE` ; ou la carte d'équipe pour un rôle), et la
+tâche reprend telle quelle. Ce module en porte le texte et les issues au journal
+(`consigne_proposition`, statuts `prerequis_*`) ; la borne est
+`PolitiqueRattrapage.max_propositions`.
 """
 
 from __future__ import annotations
@@ -61,6 +71,7 @@ from maestro.orchestrator.errors import RattrapageValidationError
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.rattrapage import EchecDeTache, Rattrapage, Tentative
 from maestro.orchestrator.schema import Task
+from maestro.prerequis import PrerequisManquant
 from maestro.telemetry import (
     PlafondDepense,
     RunJournal,
@@ -91,6 +102,29 @@ STATUT_RATTRAPAGE_ECHOUE = "rattrapage_echoue"
 #: pour que les deux espaces d'identifiants ne se croisent jamais.
 VERBE_RATTRAPAGE = "rattraper_une_tache"
 
+#: Le verbe d'une **proposition de prérequis** dans les clés d'acte (#1181) — un
+#: troisième espace, pour la même raison : la carte d'une proposition ne doit
+#: jamais recevoir la réponse écrite pour une question.
+VERBE_PREREQUIS = "proposer_un_prerequis"
+
+#: Le geste que la carte d'une proposition offre (#1181) : la personne a donné ce
+#: qui manquait, la tâche reprend. C'est un **choix déclaré** de la question
+#: (`DemandeQuestion.choix`), donc un bouton — et c'est à lui seul que la boucle
+#: reconnaît l'accord, par identité avec ce qu'elle a offert. Une réponse écrite
+#: avec d'autres mots n'est pas lue par un motif : elle part au Chef de projet,
+#: qui la juge (`JugeDesEchecs`, réponse qui fait autorité).
+CHOIX_PREREQUIS_LEVE = "C'est fait — reprendre la tâche"
+
+#: Les issues d'une proposition de prérequis, au journal (`<tâche>:rattrapage`).
+#: Quatre et non deux, parce qu'elles n'appellent pas la même suite : **levé** —
+#: la personne l'a donné, la tâche reprend ; **décliné** — un rôle qu'on n'a pas
+#: voulu recruter, la tâche va au plus proche (#1260) ; **répondu** — une réponse
+#: en mots, que le Chef de projet lit ; **sans réponse** — la tâche reste en échec.
+STATUT_PREREQUIS_LEVE = "prerequis_leve"
+STATUT_PREREQUIS_DECLINE = "prerequis_decline"
+STATUT_PREREQUIS_REPONDU = "prerequis_repondu"
+STATUT_PREREQUIS_SANS_REPONSE = "prerequis_sans_reponse"
+
 
 def statut_du_geste(geste: str) -> str:
     """Le statut d'une ligne de diagnostic : le geste décidé, préfixé — `rattrapage_retenter`."""
@@ -109,10 +143,18 @@ class PolitiqueRattrapage:
 
     Ce sont des bornes de dépense, pas des défauts arbitraires : chaque tentative
     coûte, et le budget du run, quand il y en a un, les borne en plus.
+
+    `max_propositions` (#1181) borne les **prérequis proposés** pour une même
+    tâche — un serveur à authentifier, un secret, un rôle. La seconde proposition
+    dit « il manque toujours » quand la reprise a rencontré le même manque ; au-delà,
+    c'est le Chef de projet qui juge. Ce n'est pas une dépense de modèle — proposer
+    ne coûte rien —, c'est le nombre de fois qu'on revient vers la personne avec la
+    même demande. 0 : on ne propose jamais, et l'échec se rattrape comme avant.
     """
 
     max_tentatives: int = 2
     max_questions: int = 1
+    max_propositions: int = 2
 
     def __post_init__(self) -> None:
         if self.max_tentatives < 1:
@@ -121,6 +163,10 @@ class PolitiqueRattrapage:
             )
         if self.max_questions < 0:
             raise ValueError(f"max_questions doit être ≥ 0 (reçu : {self.max_questions}).")
+        if self.max_propositions < 0:
+            raise ValueError(
+                f"max_propositions doit être ≥ 0 (reçu : {self.max_propositions})."
+            )
 
 
 #: Politique des vrais runs (`OrchestrationEngine.default()`) : deux tentatives
@@ -198,6 +244,10 @@ class JugeDesEchecs:
         """Retient l'objectif et le plan de `run_id` — l'aval d'une tâche s'y lit."""
         self._runs[run_id] = (objectif, tuple(taches))
 
+    def objectif(self, run_id: str) -> str:
+        """L'objectif de `run_id` — ce que la proposition d'un rôle rappelle (#1181)."""
+        return self._runs.get(run_id, ("", ()))[0]
+
     def aval(self, run_id: str, tache_id: str) -> tuple[Task, ...]:
         """Les tâches qui attendent `tache_id`, directement ou non, dans l'ordre du plan."""
         _, taches = self._runs.get(run_id, ("", ()))
@@ -234,6 +284,8 @@ class JugeDesEchecs:
         erreur: str,
         tentative: int,
         journal: RunJournal,
+        *,
+        blocages: Sequence[str] = (),
     ) -> tuple[bool, str] | None:
         """Le juge de l'exécuteur : rejoue-t-on cette tentative telle quelle ?
 
@@ -252,7 +304,12 @@ class JugeDesEchecs:
         if tentative > 1:
             geste = f"{geste}, rejouée {tentative - 1} fois à l'identique"
         courante = Tentative(
-            taches=(task,), agent=agent.nom, role=agent.role, erreur=erreur, geste=geste
+            taches=(task,),
+            agent=agent.nom,
+            role=agent.role,
+            erreur=erreur,
+            geste=geste,
+            blocages=tuple(blocages),
         )
         base = dossier if dossier is not None else Dossier(tache=task)
         verdict, _ = await self._juge(
@@ -398,6 +455,8 @@ def _geste_en_clair(verdict: Rattrapage) -> str:
         return texte
     if verdict.geste == "demander":
         return f"question à l'utilisateur : {verdict.question}"
+    if verdict.prerequis is not None:
+        return f"prérequis proposé à l'utilisateur : {verdict.prerequis.phrase()}"
     return "abandonnée sur la réponse de l'utilisateur"
 
 
@@ -471,6 +530,60 @@ def question_du_rattrapage(
     if diagnostic.strip():
         lignes.append(f"Diagnostic : {diagnostic.strip()}")
     return "\n".join(lignes)
+
+
+def question_du_prerequis(tache: Task, prerequis: PrerequisManquant, rang: int) -> str:
+    """Ce que la carte d'une proposition pose : ce qui manque, puis comment le donner (#1181).
+
+    Les **faits** seulement, écrits ici et non par un modèle, comme ceux d'une
+    question de rattrapage : ce qui manque est constaté (la bibliothèque MCP, le
+    routage) ou nommé par le Chef de projet, et la procédure est celle qu'il
+    connaît. `rang` dit si c'est la première fois : à la seconde, la reprise a
+    rencontré le même manque, et la carte le dit plutôt que de reposer la même
+    demande comme si de rien n'était.
+
+    Le geste qui répond est sur la carte (`CHOIX_PREREQUIS_LEVE`), et la phrase de
+    fin dit ce qu'il fait — reprendre la tâche **dans ce run** : c'est la réponse
+    à « et si je le donne, je dois tout relancer ? ».
+    """
+    etat = "est suspendue" if rang <= 1 else "est toujours suspendue"
+    lignes = [f"La tâche « {tache.titre} » {etat} : {prerequis.phrase()}"]
+    if prerequis.procedure.strip():
+        lignes += ["", "Pour le lui donner :", prerequis.procedure.strip()]
+    lignes += [
+        "",
+        "Quand c'est fait, dites-le : la tâche reprendra là où elle s'est arrêtée, "
+        "sans relancer le run. Ne collez aucun secret ici.",
+    ]
+    return "\n".join(lignes)
+
+
+def consigne_proposition(
+    journal: RunJournal,
+    tache: Task,
+    prerequis: PrerequisManquant,
+    statut: str,
+    issue: str,
+) -> None:
+    """Écrit au journal ce qu'une proposition de prérequis a donné (#1181).
+
+    Étape `<tâche>:rattrapage`, activité de la tâche comme un diagnostic : la
+    proposition est un geste du Chef de projet sur elle, et la frise la montre à
+    sa place. `entree` porte le prérequis, `sortie` son issue — levé, décliné,
+    répondu en mots, ou sans réponse. Usage nul : proposer ne dépense rien.
+    """
+    journal.consigne(
+        etape=f"{tache.id}{SUFFIXE_ETAPE_RATTRAPAGE}",
+        nom=f"Prérequis — {tache.titre}",
+        agent=ACTEUR_ORCHESTRATEUR,
+        role=ROLE_ORCHESTRATEUR,
+        statut=statut,
+        entree=prerequis.phrase(),
+        sortie=issue,
+        usage=StepUsage(),
+        ticket=tache.ticket,
+        projet_id=tache.projet_id,
+    )
 
 
 def hypothese_du_rattrapage(aval: Sequence[Task]) -> str:

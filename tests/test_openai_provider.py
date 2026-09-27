@@ -21,6 +21,7 @@ import pytest
 
 from maestro.config import ConfigError, Settings
 from maestro.engine.loop import OrchestrationEngine
+from maestro.engine.verification import SYSTEME as SYSTEME_VERIFICATION
 from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT
 from maestro.providers import (
     AuthMode,
@@ -485,11 +486,27 @@ _PLAN = [
 ]
 
 
+#: Ce que « répond » l'endpoint au vérificateur des livraisons (#1177) : ce
+#: fournisseur est texte-seul, donc chaque critère se vérifie en lisant.
+_VERDICT = {
+    "controles": [
+        {
+            "critere": "le livrable est rendu",
+            "lecture": "un livrable non vide",
+            "tenu": True,
+            "preuve": "LIVRABLE",
+        }
+    ]
+}
+
+
 def _reponse_planificateur_ou_agent(corps):
-    """Le plan pour l'appel de l'orchestrateur, un livrable texte pour les agents."""
+    """Le plan pour l'orchestrateur, un verdict au vérificateur, un livrable aux agents."""
     messages = corps.get("messages", [])
     if messages and messages[0] == {"role": "system", "content": ORCHESTRATOR_SYSTEM_PROMPT}:
         return 200, _payload_texte(json.dumps(_PLAN, ensure_ascii=False))
+    if messages and messages[0] == {"role": "system", "content": SYSTEME_VERIFICATION}:
+        return 200, _payload_texte(json.dumps(_VERDICT, ensure_ascii=False))
     return 200, _payload_texte(f"LIVRABLE ({corps['model']})")
 
 
@@ -506,9 +523,10 @@ def test_une_execution_aboutit_de_bout_en_bout_sur_l_endpoint_openai(endpoint, m
     assert [r.task_id for r in rapport.reussies] == ["schema-contacts", "api-contacts"]
     assert rapport.echouees == () and rapport.bloquees == ()
 
-    # Tous les appels modèle (planification + 2 tâches) ont bien visé l'endpoint
-    # configuré, avec le modèle configuré : la preuve de la bascule sans code.
-    assert len(endpoint.requetes) == 3
+    # Tous les appels modèle (planification + 2 tâches + leurs 2 vérifications,
+    # #1177) ont bien visé l'endpoint configuré, avec le modèle configuré : la
+    # preuve de la bascule sans code — vérificateur compris.
+    assert len(endpoint.requetes) == 5
     assert {r["corps"]["model"] for r in endpoint.requetes} == {"mistral-small-latest"}
     assert {r["autorisation"] for r in endpoint.requetes} == {"Bearer sk-essai"}
 
