@@ -1583,6 +1583,16 @@ def _faits_sans_equipe(objectif: str, *, recrutable: bool) -> str:
 
 def _faits_d_une_equipe_declinee(demande: DemandeRecrutement) -> str:
     """L'équipe — ou le renfort — a été déclinée d'un geste : personne n'est recruté."""
+    if demande.tache:
+        # Une tâche en cours de run attendait ce rôle (#1181) : elle reprend quand
+        # même, au rôle le plus proche — c'est ce que la boucle fait du refus.
+        return (
+            f"L'utilisateur a décliné, d'un geste, le renfort « {demande.role or 'ce rôle'} » "
+            f"que la tâche « {demande.tache} » du run sur « {demande.objectif} » "
+            "attendait. Personne n'est recruté. La tâche reprend avec l'équipe "
+            "actuelle, au rôle le plus proche, qui n'en a pas le métier. Ce rôle peut "
+            "toujours se recruter depuis les écrans d'agents du projet."
+        )
     if demande.pendant_un_run:
         return (
             f"L'utilisateur a décliné, d'un geste, le renfort « {demande.role or 'ce rôle'} » "
@@ -1610,6 +1620,13 @@ def _faits_d_une_equipe_creee(
         f"créée dans le projet — {equipe.composition()} — et s'affiche juste sous "
         "ton message."
     )
+    if demande.tache:
+        # La tâche suspendue faute de ce rôle reprend sur lui, dans ce run (#1181).
+        return (
+            f"{creee} La tâche « {demande.tache} » du run sur « {demande.objectif} » "
+            "était suspendue faute de ce rôle : elle reprend avec l'équipe complétée, "
+            "sans relancer le run."
+        )
     if demande.pendant_un_run:
         return (
             f"{creee} Le run sur « {demande.objectif} » attendait ce renfort : il "

@@ -477,6 +477,15 @@ def _bloc_tentative(rang: int, tentative: Tentative) -> list[str]:
         _borne_erreur(tentative.erreur),
         "  >>>",
     ]
+    if tentative.blocages:
+        # Ce que l'agent a dit lui manquer (#1181) — une donnée comme l'erreur, et
+        # souvent la vraie cause : un agent bloqué rend un livrable vide.
+        lignes += [
+            "  Blocages que l'agent a signalés pendant la tentative (donnée) :",
+            "  <<<",
+            *(f"  - {_borne_erreur(raison)}" for raison in tentative.blocages),
+            "  >>>",
+        ]
     return lignes
 
 

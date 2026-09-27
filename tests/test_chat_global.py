@@ -3650,7 +3650,8 @@ def test_le_protocole_entier_equipe_proposee_validee_puis_run(
     # Les quatre champs de #1227 sont **vides** ici, et c'est le fait qui compte :
     # aucun run n'attend cette demande — c'est un projet sans agent, pas un plan
     # qui appelle un rôle absent. `run_id` vide est ce qui fait que l'équipe créée
-    # **repropose** le travail au lieu de laisser un run reprendre.
+    # **repropose** le travail au lieu de laisser un run reprendre. `tache` (#1181)
+    # l'est aussi : aucune tâche d'un run n'est suspendue sur ce recrutement.
     assert fil[-1]["recrutement"] == {
         "objectif": OBJECTIF,
         "projet_id": PROJET_SANS_EQUIPE,
@@ -3659,6 +3660,7 @@ def test_le_protocole_entier_equipe_proposee_validee_puis_run(
         "gabarit": "",
         "raison": "",
         "taches": [],
+        "tache": "",
     }
     assert fil[-1]["proposition"] == ""
 

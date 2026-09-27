@@ -38,18 +38,25 @@ from maestro.engine.executor import (
     STATUT_TERMINEE,
 )
 
+# Réexporté (`as`) : la frise et l'orchestration le lisent ici depuis #473, et
+# c'est ici qu'il reste nommé pour elles, même venu du moteur (#1181).
+from maestro.engine.executor import (
+    STATUT_EN_ATTENTE_VALIDATION as STATUT_EN_ATTENTE_VALIDATION,
+)
+
 #: Statuts de la machine à états (docs/03 §3) qui n'ont **pas** de constante
 #: côté moteur : `assignee` est posé par la réassignation manuelle du Kanban
-#: (#52), les trois autres ne sont à ce jour que documentaires — le moteur
-#: n'émet ni `backlog`, ni `prete`, ni `en_attente_validation`. Ils sont nommés
-#: ici pour que la table ci-dessous couvre la machine à états **entière** : une
-#: correspondance qui n'existerait que pour ce qui circule aujourd'hui ferait
-#: tomber dans `autres` le jour où le moteur les émettra, c'est-à-dire au pire
-#: moment.
+#: (#52), les deux autres ne sont à ce jour que documentaires — le moteur
+#: n'émet ni `backlog`, ni `prete`. Ils sont nommés ici pour que la table
+#: ci-dessous couvre la machine à états **entière** : une correspondance qui
+#: n'existerait que pour ce qui circule aujourd'hui ferait tomber dans `autres`
+#: le jour où le moteur les émettra, c'est-à-dire au pire moment — ce qui est
+#: arrivé à `en_attente_validation`, nommé ici depuis #473 et émis par le moteur
+#: depuis #1181 (une tâche suspendue sur un prérequis que le fil propose), qui
+#: est donc passé à l'import.
 STATUT_BACKLOG = "backlog"
 STATUT_PRETE = "prete"
 STATUT_ASSIGNEE = "assignee"
-STATUT_EN_ATTENTE_VALIDATION = "en_attente_validation"
 
 #: Les cinq compartiments du critère #473, plus le ramasse-miettes.
 A_FAIRE = "a_faire"
