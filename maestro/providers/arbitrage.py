@@ -487,13 +487,17 @@ def _valeur_tracee(valeur: object) -> str:
     échappement : un secret qui contient un guillemet ne se retrouverait plus une
     fois sérialisé. Le reste (un nombre, un booléen, une liste) passe par sa forme
     JSON, qui échappe elle aussi ses sauts de ligne, puis par la rédaction.
+
+    Une valeur qui ne se sérialise pas — clé d'objet exotique, imbrication sans
+    fond — est **nommée illisible** plutôt que de faire lever le hook, qui ne lève
+    jamais (`_hook_permissions`) : son `repr` aurait la même profondeur.
     """
     if isinstance(valeur, str):
         return json.dumps(_coupe(redact_secrets(valeur), VALEUR_TRACE_MAX), ensure_ascii=False)
     try:
         texte = json.dumps(valeur, ensure_ascii=False, default=repr)
-    except (TypeError, ValueError):
-        texte = repr(valeur)
+    except (TypeError, ValueError, RecursionError):
+        texte = f"<{type(valeur).__name__} illisible>"
     return _coupe(redact_secrets(texte), VALEUR_TRACE_MAX)
 
 

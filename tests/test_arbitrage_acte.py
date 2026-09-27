@@ -1083,6 +1083,18 @@ def test_un_acte_sans_argument_laisse_le_motif_tel_quel():
     )
 
 
+def test_une_valeur_qui_ne_se_serialise_pas_est_nommee_sans_faire_lever_le_hook():
+    # Le hook ne lève jamais : une trace qui casserait sur une entrée exotique
+    # ferait échouer l'appel qu'elle ne faisait que raconter.
+    profonde: list = []
+    for _ in range(5000):
+        profonde = [profonde]
+
+    acte = acte_trace("mcp__x__y", {"cle": {(1, 2): "a"}, "arbre": profonde, "n": 3})
+
+    assert acte == "mcp__x__y · cle=<dict illisible> · arbre=<list illisible> · n=3"
+
+
 def test_la_trace_dit_l_issue_puis_l_acte():
     trace = avec_acte(motif_approbation("Bash", "approuvée par le validateur humain"), ACTE_EDGE)
 
