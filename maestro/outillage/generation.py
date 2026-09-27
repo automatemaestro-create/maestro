@@ -76,6 +76,17 @@ régime, et aucun ne décide autre chose que ce que `generer` décide déjà :
   recommande plus) : lui confier une pièce seule effacerait de la comptabilité celles
   écrites avant elle. Ici, les autres entrées restent telles quelles, et les verdicts
   des commandes s'ajoutent à ceux déjà déclarés.
+
+## Ce que la personne a dit de l'outillage (#1334)
+
+Une correction dite dans la conversation (« Nos tests tournent avec `node --test` »,
+`maestro.outillage.correction`) s'écrit dans le fichier avec sa phrase ; le manifeste
+en garde la **correction elle-même** (`corrections` : le sujet, la valeur, la phrase,
+quand elle a été prise), pour que l'outillage rouvert dans une autre conversation la
+reprenne au lieu de la remplacer par ce que le projet déclare. `poser_piece` les
+**fusionne** — la plus récente de chaque sujet l'emporte (`retenir`) —, et `generer`,
+qui n'en reçoit aucune, garde celles déjà déclarées : régénérer l'outillage ne fait
+pas oublier ce que la personne a dit.
 """
 
 from __future__ import annotations
@@ -90,6 +101,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN, VERSION_MANIFESTE
+from maestro.outillage.correction import (
+    CLES_CORRIGEABLES,
+    CorrectionPrise,
+    corrections_lues,
+    retenir,
+)
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
 from maestro.outillage.redaction import GENERE_PAR, PORTEE_BLOC, Fichier, bloc
 from maestro.outillage.verification import Verification
@@ -217,6 +234,7 @@ class _EtatManifeste:
     entrees: dict[str, dict[str, Any]] = field(default_factory=dict)
     source: dict[str, Any] = field(default_factory=dict)
     verifications: tuple[Verification, ...] = ()
+    corrections: tuple[CorrectionPrise, ...] = ()
 
     def empreinte_de(self, chemin: str) -> str:
         """L'empreinte que Maestro a **écrite** pour `chemin`, "" s'il ne le possède pas."""
@@ -323,7 +341,9 @@ def generer(
         if entree is not None:
             gardees[fichier.chemin] = entree
     ecritures.extend(_retirees(etat, gardees))
-    manifeste = _ecrire_manifeste(racine, gardees, dict(source), quand, garde, verdicts)
+    manifeste = _ecrire_manifeste(
+        racine, gardees, dict(source), quand, garde, verdicts, etat.corrections
+    )
     if manifeste:
         ecritures.append(
             Ecriture(
@@ -347,6 +367,7 @@ def poser_piece(
     frontiere: FrontiereEcriture | None = None,
     horodatage: str = "",
     verifications: Sequence[Verification] = (),
+    corrections: Sequence[CorrectionPrise] = (),
 ) -> Rapport:
     """Écrit **une** pièce de l'outillage dans `cible`, et **fusionne** le manifeste (#1161).
 
@@ -366,6 +387,11 @@ def poser_piece(
     dernier verdict d'une commande est celui qui vaut. `source` remplace celle du
     manifeste : c'est la provenance de ce qui vient d'être écrit.
 
+    `corrections` (#1334) sont celles que la pièce porte — prises dans la conversation
+    ou reprises du manifeste : elles s'ajoutent à celles déjà déclarées, la plus récente
+    de chaque sujet l'emportant (`retenir`). Seuls les sujets que `corriger` change y
+    entrent.
+
     Ne lève pas, comme `generer` : tout empêchement est une ligne du rapport.
     """
     racine = Path(cible)
@@ -383,7 +409,12 @@ def poser_piece(
     else:
         entrees.pop(fichier.chemin, None)
     ecritures = [ecriture]
-    manifeste = _ecrire_manifeste(racine, entrees, dict(source), quand, garde, verdicts)
+    prises = tuple(
+        c for c in retenir(etat.corrections, corrections) if c.cle in CLES_CORRIGEABLES
+    )
+    manifeste = _ecrire_manifeste(
+        racine, entrees, dict(source), quand, garde, verdicts, prises
+    )
     if manifeste:
         ecritures.append(
             Ecriture(
@@ -410,6 +441,17 @@ def verifications_declarees(cible: Path | str) -> tuple[Verification, ...]:
     jour » sans rejouer une installation. Lecture pure, comme `portees_declarees`.
     """
     return _lire_manifeste(Path(cible)).verifications
+
+
+def corrections_declarees(cible: Path | str) -> tuple[CorrectionPrise, ...]:
+    """Les corrections que le manifeste de `cible` garde — `()` s'il n'y en a pas (#1334).
+
+    Ce que la personne a dit de l'outillage de ce projet, dans une conversation où une
+    pièce s'est écrite : l'outillage rouvert ailleurs la rejoue par `corriger`. Lecture
+    pure, comme `verifications_declarees` ; chaque entrée est lue sans rien croire
+    (`corrections_lues`).
+    """
+    return _lire_manifeste(Path(cible)).corrections
 
 
 def _refus_de_version(
@@ -894,6 +936,7 @@ def _lire_manifeste(racine: Path) -> _EtatManifeste:
             for v in (verifications if isinstance(verifications, list) else ())
             if isinstance(v, dict) and v.get("commande")
         ),
+        corrections=corrections_lues(donnees.get("corrections")),
     )
 
 
@@ -904,6 +947,7 @@ def _ecrire_manifeste(
     quand: str,
     garde: FrontiereEcriture,
     verifications: Sequence[Verification] = (),
+    corrections: Sequence[CorrectionPrise] = (),
 ) -> str:
     """Écrit `.maestro/outillage/manifeste.json` — rend "" ou le motif de l'échec.
 
@@ -917,6 +961,8 @@ def _ecrire_manifeste(
     lisait (`_lire_manifeste` ne lit que `manifeste`, `source` et `entrees`), et
     monter la version ferait refuser toute régénération par une version antérieure
     de Maestro (`REFUS_VERSION`) pour une information qu'elle n'a pas besoin de lire.
+    `corrections` (#1334) l'est au même titre : une version qui ne la lit pas perd la
+    mémoire de ce qui a été dit, jamais celle de ce que Maestro possède.
     """
     refus = garde.refus_chemin(CHEMIN_MANIFESTE, ecriture=True)
     if refus is not None:
@@ -928,6 +974,7 @@ def _ecrire_manifeste(
         "source": source,
         "entrees": list(entrees.values()),
         "verifications": [v.to_dict() for v in verifications],
+        "corrections": [c.to_dict() for c in corrections],
     }
     texte = json.dumps(donnees, ensure_ascii=False, indent=2) + "\n"
     return _ecrire_fichier(racine / PurePosixPath(CHEMIN_MANIFESTE), texte)

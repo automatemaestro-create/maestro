@@ -41,12 +41,23 @@ falsifierait. Sur un projet neuf, ces sujets-là passent par le questionnaire, d
 sont des réponses comme les autres. Une correction qui ne touche aucun sujet corrigeable
 se dit « comprise, sans effet sur l'outillage » — elle n'est ni perdue ni appliquée en
 silence.
+
+## Une correction prise reste acquise au projet (#1334)
+
+Une correction ne vit pas que dans la conversation où elle a été dite : dès qu'une pièce
+s'écrit, le manifeste la garde (`CorrectionPrise`, docs/38 §4.1) — le sujet, la valeur et
+la phrase —, et l'outillage rouvert dans une autre conversation la rejoue par `corriger`
+avant tout. Sans elle, il se redérivait de l'analyse et proposait de **remplacer** la
+commande dite par celle que le projet déclare. Entre une correction du manifeste et une
+du fil, **la plus récente l'emporte** (`retenir`) : une conversation plus ancienne,
+reprise, ne défait pas ce qu'une plus récente a écrit.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import Any
 
 from maestro.outillage.modele import (
     ORIGINE_DITE,
@@ -91,6 +102,91 @@ class CorrectionLue:
     comprise: bool
     corrections: tuple[Choix, ...] = ()
     message: str = ""
+
+
+@dataclass(frozen=True)
+class CorrectionPrise:
+    """Une correction **prise**, telle que le projet la garde d'une conversation à l'autre (#1334).
+
+    `cle` et `valeur` sont ce que `corriger` applique, `phrase` la phrase de la personne
+    — la justification qui s'écrit à côté de la commande, et que la carte redit. Le
+    manifeste la porte dès qu'une pièce s'écrit (docs/38 §4.1). `prise_le` dit quand
+    Maestro l'a prise (ISO 8601 UTC, la précision du fil) : c'est lui qui départage une
+    correction du manifeste et une du fil (`retenir`).
+    """
+
+    cle: str
+    valeur: str
+    phrase: str = ""
+    prise_le: str = ""
+
+    @classmethod
+    def de(cls, choisi: Choix, prise_le: str) -> CorrectionPrise:
+        """La correction `choisi`, prise à `prise_le` — sa cause est la phrase dite."""
+        return cls(cle=choisi.cle, valeur=choisi.valeur, phrase=choisi.parce_que, prise_le=prise_le)
+
+    def en_choix(self) -> Choix:
+        """La forme que `corriger` lit — un `Choix` déduit dont la cause est la phrase."""
+        return Choix(cle=self.cle, valeur=self.valeur, deduit=True, parce_que=self.phrase)
+
+    def to_dict(self) -> dict[str, str]:
+        """La correction en JSON — la forme du manifeste et de la pièce qui la porte."""
+        return {
+            "cle": self.cle,
+            "valeur": self.valeur,
+            "phrase": self.phrase,
+            "prise_le": self.prise_le,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CorrectionPrise:
+        """Relit une correction persistée, sans la rejuger (la règle de `Choix.from_dict`)."""
+        return cls(
+            cle=str(data.get("cle") or ""),
+            valeur=str(data.get("valeur") or ""),
+            phrase=str(data.get("phrase") or ""),
+            prise_le=str(data.get("prise_le") or ""),
+        )
+
+
+def corrections_lues(brutes: Any) -> tuple[CorrectionPrise, ...]:
+    """Les corrections d'un manifeste, **lues sans rien croire** — `()` sur tout le reste.
+
+    Le manifeste vit dans le projet, et n'importe qui peut l'avoir touché : une entrée
+    hors des sujets corrigeables, ou sans valeur, est écartée ; une valeur et une phrase
+    tiennent sur une ligne, bornées comme celles que le modèle rend (`lire_correction`).
+    Ce qui passe n'est qu'une correction comme une autre : sa commande est **jouée**
+    avant qu'une pièce ne se montre, comme toute commande corrigée.
+    """
+    lues: list[CorrectionPrise] = []
+    for entree in brutes if isinstance(brutes, list) else ():
+        if not isinstance(entree, Mapping):
+            continue
+        prise = CorrectionPrise.from_dict(entree)
+        valeur = _une_ligne(prise.valeur, VALEUR_MAX)
+        if prise.cle not in CLES_CORRIGEABLES or not valeur:
+            continue
+        lues.append(replace(prise, valeur=valeur, phrase=_une_ligne(prise.phrase, PHRASE_MAX)))
+    return tuple(lues)
+
+
+def retenir(*groupes: Sequence[CorrectionPrise]) -> tuple[CorrectionPrise, ...]:
+    """La correction **la plus récente** de chaque sujet, de la plus ancienne à la plus récente.
+
+    `prise_le` ordonne. À date égale — la même seconde —, l'ordre des groupes départage :
+    on les donne du plus ancien au plus récent (le manifeste, puis le fil, puis la
+    correction qu'on vient de comprendre). Une correction sans date est plus ancienne que
+    toute autre. C'est ce qui fait qu'une conversation reprise ne défait pas ce qu'une
+    plus récente a écrit, et qu'une correction plus récente du fil l'emporte sur le
+    manifeste.
+    """
+    ordonnees = sorted((c for groupe in groupes for c in groupe), key=lambda c: c.prise_le)
+    dernieres: dict[str, CorrectionPrise] = {}
+    for prise in ordonnees:
+        # Retirée puis remise : l'ordre rendu est celui de la dernière prise de chaque sujet.
+        dernieres.pop(prise.cle, None)
+        dernieres[prise.cle] = prise
+    return tuple(dernieres.values())
 
 
 def lire_correction(texte: str, phrase: str) -> CorrectionLue:
