@@ -60,6 +60,7 @@ from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.providers.arbitrage import acte_trace
 
 #: Le chemin du fil de l'orchestrateur — la seule porte de lancement qu'un écran
 #: offre depuis #666, donc la seule que le banc a le droit d'emprunter.
@@ -902,9 +903,21 @@ def attendre_le_run(
                         arbitrages.append(str(demande.get("outil") or ""))
                     if demandes is not None:
                         demandes.append(dict(demande))
+                    # L'acte tranché, pas seulement sa tâche (#1365) : le banc tient
+                    # la place de la personne, et ce qu'il a accordé doit se relire —
+                    # y compris d'un passage tué, dont seul le déroulé affiché reste.
+                    acte = acte_trace(str(demande.get("outil") or ""), demande.get("arguments"))
                     note(
                         "arbitrage approuvé" if approuve else "arbitrage refusé",
-                        f"{tache} — {demande.get('titre') or demande.get('outil') or ''}",
+                        " — ".join(
+                            morceau
+                            for morceau in (
+                                tache,
+                                str(demande.get("titre") or demande.get("outil") or ""),
+                                acte,
+                            )
+                            if morceau
+                        ),
                     )
         if horloge() >= limite:
             return detail

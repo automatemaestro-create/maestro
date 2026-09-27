@@ -15,6 +15,7 @@ passer un « ni vert ni rouge » pour un vert.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -59,10 +60,17 @@ class Journal:
     """Le déroulé d'un scénario, en train de s'écrire."""
 
     etapes: list[Etape] = field(default_factory=list)
+    #: Qui voit chaque étape **au moment où elle s'écrit** — la sortie du banc.
+    #: Le rapport ne s'écrit qu'à la fin : un passage tué n'en laisse aucun, et son
+    #: déroulé, arbitrages tranchés compris, ne survit qu'à l'écran (#1365).
+    echo: Callable[[Etape], None] | None = field(default=None, compare=False, repr=False)
 
     def note(self, libelle: str, detail: str = "") -> None:
         """Consigne une étape."""
-        self.etapes.append(Etape(libelle=libelle, detail=detail))
+        etape = Etape(libelle=libelle, detail=detail)
+        self.etapes.append(etape)
+        if self.echo is not None:
+            self.echo(etape)
 
 
 @dataclass(frozen=True)

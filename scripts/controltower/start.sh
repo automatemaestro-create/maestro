@@ -1127,18 +1127,39 @@ signaler_journaux_exposes
 # Son code décide du nôtre : 0 ou 1 (vert ou rouge), le passage est joué et son
 # état sauvé — un rouge est une mesure, pas une panne du lanceur ; tout autre code
 # (usage, API muette, état non sauvé) remonte tel quel.
+#
+# ⚠ MAIS UN PROCESSUS TUÉ SORT EN 1 SOUS WINDOWS, le code d'un rouge (#1365) : le
+# 2026-09-27, deux passages tués à 12:41:25 ont été annoncés « état sauvé ». Ce qui
+# les distingue est le TÉMOIN que le banc écrit en dernier geste, une fois allé au
+# bout (rapport écrit, état traité) : pas de témoin, le passage a été interrompu, et
+# il n'a laissé ni verdict ni état. Le témoin est retiré avant le passage — celui
+# d'un passage précédent ferait passer un passage tué pour joué —, et vit à côté
+# des journaux de cette stack, en chemin relatif (le python du venv ne lit pas le
+# /tmp de Git Bash). Seuls 2 et 3 n'en attendent pas : le banc a refusé avant de
+# jouer. Sortie non tamponnée : les lignes d'un passage tué restent à l'écran (ou au
+# journal qui le capture), au lieu de mourir dans un tampon.
 if [ "$DONNEES" = "banc" ] && [ "$REJOUER" = 1 ]; then
   echo
   echo "[banc] passage des scénarios de référence contre :${PORT_API} — vrai modèle, des dizaines de minutes"
   if [ "$ARRET_AUTO" = 1 ]; then
     echo "[banc] ⚠ fermer la fenêtre du navigateur arrêterait la stack sous le banc"
   fi
+  temoin_passage="$LOG_DIR_REL/banc.temoin"
+  rm -f "$temoin_passage"
   code_passage=0
   if [ -n "$REJOUER_SCENARIOS" ]; then
-    MAESTRO_PORT_API="$PORT_API" "$PYTHON" -m maestro.scenarios --sauver-etat \
-      --scenario "$REJOUER_SCENARIOS" || code_passage=$?
+    MAESTRO_PORT_API="$PORT_API" PYTHONUNBUFFERED=1 "$PYTHON" -m maestro.scenarios --sauver-etat \
+      --temoin "$temoin_passage" --scenario "$REJOUER_SCENARIOS" || code_passage=$?
   else
-    MAESTRO_PORT_API="$PORT_API" "$PYTHON" -m maestro.scenarios --sauver-etat || code_passage=$?
+    MAESTRO_PORT_API="$PORT_API" PYTHONUNBUFFERED=1 "$PYTHON" -m maestro.scenarios --sauver-etat \
+      --temoin "$temoin_passage" || code_passage=$?
+  fi
+  if [ ! -s "$temoin_passage" ] && [ "$code_passage" != 2 ] && [ "$code_passage" != 3 ]; then
+    echo "[banc] passage INTERROMPU (code $code_passage) avant d'aller au bout — ni verdict ni état sauvé : le processus a été tué. La Control Tower reste servie : $URL_UI" >&2
+    if [ "$code_passage" = 0 ]; then
+      code_passage=1
+    fi
+    exit "$code_passage"
   fi
   case "$code_passage" in
     0 | 1)

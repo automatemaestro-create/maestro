@@ -178,6 +178,15 @@ joué au premier plan avec le vrai modèle, état sauvé dans l'atelier du passa
 ailleurs (celui du bouclage, par exemple) ne sauve rien : son état serait mêlé à celui de la stack
 qui l'a servi. Le détail est dans `maestro/scenarios/etat.py`.
 
+**Deux passages ne partagent rien, et un passage tué se dit** (#1365). Le dossier des ateliers
+(`~/maestro-scenarios/`) est celui du poste : deux copies qui lançaient le banc dans la même seconde
+recevaient le même horodatage, donc le même atelier, et leurs scénarios semaient et vidaient les
+mêmes dossiers (mesuré le 2026-09-27 à 12:36:09). Un passage **réserve** désormais son atelier —
+création exclusive, `<horodatage>-2` si le nom est pris —, et ce nom est l'identifiant du passage.
+Un processus tué sortant en `1` sous Windows, le code d'un rouge, le lanceur ne lit plus ce code
+seul : le banc écrit un témoin en dernier geste, et sans lui le lanceur annonce un passage
+**interrompu**, jamais « état sauvé ».
+
 **S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
 dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on
 a généré une documentation »*. Le scénario demande un livrable exécutable, puis constate trois
