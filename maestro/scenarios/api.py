@@ -691,6 +691,19 @@ class ClientAPI:
         )
         return detail
 
+    def taches(self, run_id: str, *, projet_id: str) -> list[dict[str, Any]]:
+        """Les tâches qu'un run a portées, telles que la carte les montre (#1291).
+
+        La source du Kanban d'un run (`GET /api/taches?projet=…&run=…`) : statut,
+        et la checklist de chaque tâche dans l'état où l'écran la rend. C'est la
+        seule lecture qui dise ce qu'un agent a **coché** — le détail du run ne
+        porte que des comptes.
+        """
+        cartes: list[dict[str, Any]] = list(
+            self._appel("GET", "/api/taches", params={"projet": projet_id, "run": run_id}) or []
+        )
+        return cartes
+
     def validations(self, *, projet_id: str) -> list[dict[str, Any]]:
         """Les demandes d'arbitrage du projet (#48) — celles qui suspendent un run."""
         demandes: list[dict[str, Any]] = self._appel(

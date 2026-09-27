@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Pilote MCP Slack — notifications de supervision d'un run (ticket #105)
 
 **Version :** 0.1

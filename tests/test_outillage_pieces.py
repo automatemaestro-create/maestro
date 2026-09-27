@@ -80,6 +80,7 @@ from maestro.controltower.pieces import (
 from maestro.controltower.projets import ServiceProjets
 from maestro.engine.guardrails import DemandeValidation
 from maestro.outillage import CHEMIN_MANIFESTE, Commande, Constats, Gestionnaire, recommander
+from maestro.outillage.clients import SOURCE_POSTE, Client
 from maestro.outillage.correction import corriger, lire_correction
 from maestro.outillage.generation import poser_piece, prevoir
 from maestro.outillage.modele import ORIGINE_DITE
@@ -105,6 +106,10 @@ FAUX_BASH = ("bash", "-c")
 
 #: Ce que la rédaction d'un geste rend — un texte qu'aucun gabarit du code ne produit.
 REDIGE = "C'est fait, et voici la suite."
+
+#: La pièce qui suit `AGENTS.md` sur un poste nu (celui de la suite, `tests/conftest.py`) :
+#: aucun client d'agent, donc aucun pont (#1295) — le premier skill vient tout de suite.
+SKILL_ROUTE = ".agents/skills/mettre-en-route/SKILL.md"
 
 
 @pytest.fixture(autouse=True)
@@ -238,11 +243,23 @@ def _projet_node(maison: Path) -> Path:
 
 
 def _service(
-    projets: ServiceProjets, joueur: _Joueur, modele: _Modele | None = None
+    projets: ServiceProjets,
+    joueur: _Joueur,
+    modele: _Modele | None = None,
+    *,
+    poste: tuple[Client, ...] | None = None,
 ) -> ServicePieces:
-    """Le service des pièces, commandes jouées par le joueur doublé."""
+    """Le service des pièces, commandes jouées par le joueur doublé.
+
+    `poste` : les clients d'agents du poste, doublés (#1295) ; `None` laisse le poste nu
+    de la suite (`tests/conftest.py`).
+    """
     return ServicePieces(
-        ServiceOutillage(projets, provider=_LecteurMuet()),
+        ServiceOutillage(
+            projets,
+            provider=_LecteurMuet(),
+            clients=(lambda: poste) if poste is not None else None,
+        ),
         projets,
         verificateur=Verificateur(joueur=joueur, interprete=FAUX_BASH),
         correction=CorrectionModele(modele or _Modele()),
@@ -489,7 +506,9 @@ def test_un_projet_importe_propose_sa_premiere_piece_verifiee_sans_rien_ecrire(
     assert piece.texte_apres == piece.contenu and "npm run test" in piece.contenu
     # Rédigée avec **toute** la recommandation : AGENTS.md désigne les skills à venir.
     assert "`.agents/skills/lancer-les-tests/SKILL.md`" in piece.contenu
-    assert (piece.rang, piece.total) == (1, 6)
+    # Un poste nu (celui de la suite) : aucun client, aucun pont (#1295) — AGENTS.md et
+    # les trois skills.
+    assert (piece.rang, piece.total) == (1, 4)
     assert piece.ecrivable and piece.regime == "en-place" and piece.projet_nom == "Dépensio"
     # Vérifiée **avant** d'être montrée, et dans une copie : la racine n'a rien reçu.
     assert set(joueur.joues) == {"npm install", "npm run build", "npm run test"}
@@ -516,9 +535,9 @@ def test_ecrire_une_piece_n_ecrit_qu_elle_et_la_suivante_vient_sans_rien_rejouer
     assert fait.ecrite and fait.etat == "ecrit" and fait.empreinte
     assert (racine / "AGENTS.md").read_text(encoding="utf-8") == agents.texte_apres
     assert [e["chemin"] for e in _manifeste(racine)["entrees"]] == ["AGENTS.md"]
-    # Seule la pièce écrite : ni pont ni skill n'ont atteint le disque.
-    assert not (racine / "CLAUDE.md").exists() and not (racine / ".agents").exists()
-    assert suivante is not None and suivante.chemin == "CLAUDE.md" and suivante.rang == 2
+    # Seule la pièce écrite : aucun skill n'a atteint le disque.
+    assert not (racine / ".agents").exists()
+    assert suivante is not None and suivante.chemin == SKILL_ROUTE and suivante.rang == 2
     # Les commandes qu'AGENTS.md a fait jouer ne se rejouent pas pour les pièces suivantes.
     assert joueur.joues == joues_avant
 
@@ -538,8 +557,41 @@ def test_passer_une_piece_ne_l_ecrit_pas_et_elle_ne_revient_pas_telle_quelle(
 
     assert not ecartee.ecrite and ecartee.etat == "ecartee"
     assert pieces_tranchees(fil) == {("AGENTS.md", ecartee.empreinte)}
-    assert suivante is not None and suivante.chemin == "CLAUDE.md"
+    assert suivante is not None and suivante.chemin == SKILL_ROUTE
     assert not (racine / "AGENTS.md").exists()
+
+
+def test_les_ponts_des_pieces_suivent_les_clients_du_poste_et_ceux_qu_on_nomme(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Un pont ne s'écrit que pour un client utilisé qui ne lit pas `AGENTS.md` (#1295).
+
+    La pièce par pièce le tient comme l'analyse et le questionnaire, par le même
+    `recommander` : les clients du **poste** pour un projet lu, et pour un projet décrit,
+    ceux que la personne a **nommés** en plus. Sans eux, la fusion de #1295 avait laissé
+    ce chemin-ci sans aucun pont, Gemini CLI installé ou non.
+    """
+    gemini = Client(cle="gemini", libelle="Gemini CLI", version="0.9.0", source=SOURCE_POSTE)
+    projet_id = _importe(projets, _maison)
+    service = _service(projets, _Joueur(), poste=(gemini,))
+    agents = asyncio.run(service.prochaine(projet_id, []))
+    assert agents is not None and agents.chemin == "AGENTS.md" and agents.total == 5
+
+    passee = _message(NOM_ORCHESTRATION, "Passée.", piece_ecrite=piece_ecartee(agents))
+    suivante = asyncio.run(service.prochaine(projet_id, _fil_d_une_piece(agents, passee)))
+
+    assert suivante is not None and suivante.chemin == "GEMINI.md" and suivante.rang == 2
+    assert "@AGENTS.md" in suivante.texte_apres
+
+    # Un projet décrit, sur un poste nu : c'est la personne qui nomme Gemini CLI.
+    racine = _maison / "Maestro" / "padel"
+    neuf = str(projets.creer("padel", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+    decrit = [Choix(cle="langages", valeur="Dart")]
+    nomme = [*decrit, Choix(cle="clients", valeur="Gemini CLI")]
+    sans = asyncio.run(_service(projets, _Joueur()).prochaine(neuf, [], acquis=decrit))
+    avec = asyncio.run(_service(projets, _Joueur()).prochaine(neuf, [], acquis=nomme))
+    assert sans is not None and avec is not None
+    assert avec.total == sans.total + 1
 
 
 def test_revenir_a_une_version_deja_ecrite_puis_remplacee_la_repropose(
@@ -966,12 +1018,8 @@ def test_un_projet_neuf_s_outille_piece_par_piece_jusqu_au_bout(
             )
         )
 
-    assert ecrites == [
-        "AGENTS.md",
-        "CLAUDE.md",
-        "GEMINI.md",
-        ".agents/skills/lancer-les-tests/SKILL.md",
-    ]
+    # Un poste nu, et personne n'a nommé d'outil d'agent : aucun pont (#1295).
+    assert ecrites == ["AGENTS.md", ".agents/skills/lancer-les-tests/SKILL.md"]
     assert piece_en_attente(fil) is None
     assert {e["chemin"] for e in _manifeste(racine)["entrees"]} == set(ecrites)
     assert "il n'y a plus rien à écrire" in modele.appels["redaction"][-1]
@@ -1136,7 +1184,7 @@ def test_un_oui_tape_sur_une_piece_l_ecrit_comme_le_clic(
     # Les mots du juge d'abord, puis ce que lui ne pouvait pas savoir : c'est écrit.
     assert reponse.contenu.startswith("Je l'écris.")
     assert "AGENTS.md est écrit." in reponse.contenu
-    assert reponse.piece is not None and reponse.piece.chemin == "CLAUDE.md"
+    assert reponse.piece is not None and reponse.piece.chemin == SKILL_ROUTE
 
 
 def test_le_verdict_outillage_comprend_la_correction_sans_rien_ecrire(
@@ -1270,7 +1318,7 @@ def test_la_route_ouvre_l_outillage_d_un_projet_ecrit_la_piece_et_refuse_le_doub
     clic, suite = geste.json()["messages"]
     assert clic["auteur"] == UTILISATEUR and clic["contenu"] == "Oui, écris AGENTS.md."
     assert suite["piece_ecrite"]["etat"] == "ecrit" and suite["piece_ecrite"]["ecrite"] is True
-    assert suite["piece"]["chemin"] == "CLAUDE.md"
+    assert suite["piece"]["chemin"] == SKILL_ROUTE
     assert (racine / "AGENTS.md").read_text(encoding="utf-8") == piece["texte_apres"]
     # Le double clic vise la pièce d'avant : il n'écrit pas la suivante, qu'on n'a pas vue.
     double = client.post(
@@ -1278,7 +1326,7 @@ def test_la_route_ouvre_l_outillage_d_un_projet_ecrit_la_piece_et_refuse_le_doub
         json={"decision": DECISION_ECRIRE, "piece": piece["empreinte"]},
     )
     assert double.status_code == 409, double.text
-    assert not (racine / "CLAUDE.md").exists()
+    assert not (racine / SKILL_ROUTE).exists()
 
 
 def test_un_outillage_ouvert_pour_un_projet_le_retient_d_une_question_a_l_autre(
@@ -1328,7 +1376,7 @@ def test_la_route_passe_une_piece_sans_l_ecrire(
     assert geste.status_code == 201, geste.text
     clic, suite = geste.json()["messages"]
     assert clic["contenu"] == "Pas cette pièce : AGENTS.md."
-    assert suite["piece_ecrite"]["etat"] == "ecartee" and suite["piece"]["chemin"] == "CLAUDE.md"
+    assert suite["piece_ecrite"]["etat"] == "ecartee" and suite["piece"]["chemin"] == SKILL_ROUTE
     assert not (racine / "AGENTS.md").exists()
 
 

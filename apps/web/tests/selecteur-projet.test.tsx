@@ -35,7 +35,7 @@ import { SelecteurProjet } from "@/components/projets/SelecteurProjet";
 import { FournisseurProjetActif } from "@/lib/etatProjetActif";
 import { marquerGuideVu } from "@/lib/guide";
 import { entreeParLibelle, HORS_MENU, MENU } from "@/lib/navigation";
-import { lireProjetActifId } from "@/lib/projetActif";
+import { lireProjetActifId, marquerEntreeDeSession } from "@/lib/projetActif";
 
 import {
   navigations,
@@ -64,6 +64,9 @@ const MAESTRO = projetFactice({
 const monterSelecteur = async (actif = DEPENSIO) => {
   poserProjets([DEPENSIO, MAESTRO]);
   window.localStorage.setItem("maestro.projet.actif", actif.id);
+  // Le sélecteur vit dans une session **entrée** (#1293) : sans elle, le projet
+  // retenu n'est qu'une proposition de la porte, et il n'y a rien à afficher.
+  marquerEntreeDeSession();
   render(
     <FournisseurProjetActif>
       <SelecteurProjet />
@@ -219,6 +222,7 @@ describe("le sélecteur de projet (SelecteurProjet)", () => {
     const utilisateur = userEvent.setup();
     poserProjets([DEPENSIO]);
     window.localStorage.setItem("maestro.projet.actif", DEPENSIO.id);
+    marquerEntreeDeSession();
     render(
       <FournisseurProjetActif>
         <SelecteurProjet />
@@ -275,6 +279,7 @@ describe("le sélecteur dans le shell", () => {
     marquerGuideVu();
     poserProjets([DEPENSIO, MAESTRO]);
     window.localStorage.setItem("maestro.projet.actif", DEPENSIO.id);
+    marquerEntreeDeSession();
   });
 
   it("occupe la barre supérieure de toutes les pages", async () => {

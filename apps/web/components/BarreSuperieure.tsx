@@ -78,7 +78,7 @@ import {
 import { ID_COLONNE_CONVERSATION } from "@/components/ColonneConversation";
 import { Infobulle } from "@/components/Infobulle";
 import { useEtatGlobal } from "@/lib/etatGlobal";
-import { formatCout } from "@/lib/format";
+import { partiesCoutPartiel, RAISON_COUT_PARTIEL } from "@/lib/format";
 import { entreeCourante } from "@/lib/navigation";
 
 type Props = {
@@ -125,7 +125,8 @@ export function BarreSuperieure({
   basculerConversation,
 }: Props) {
   const chemin = usePathname();
-  const { connecte, coutTotal, projet } = useEtatGlobal();
+  const { connecte, coutTotal, coutPartiel, projet } = useEtatGlobal();
+  const cumul = partiesCoutPartiel(coutTotal, coutPartiel, { court: true });
   const titre = entreeCourante(chemin)?.libelle ?? "Control Tower";
 
   return (
@@ -198,15 +199,29 @@ export function BarreSuperieure({
         {/* Ce que le montant recouvre ne se lit nulle part ailleurs — c'est
             donc une infobulle et non un `title` (#536), atteignable au clavier
             comme à la souris. */}
+        {/* Un cumul qui n'est qu'un plancher le dit (#1280), de la même façon
+            que le run dont il additionne le montant : sans quoi « 0,21 $US »
+            s'affichait nu au-dessus d'un run qui se disait partiel. La raison
+            rejoint l'infobulle déjà là, plutôt qu'une seconde. L'état prend la
+            forme **courte** — le libellé dit déjà « Coût » — et le ton du
+            libellé, pas le gras du montant : la relecture visuelle l'a vu
+            peser autant que le chiffre, et tronquer le titre de la page à
+            côté de la pastille « Reconnexion… ». */}
         <Infobulle
-          texte={`Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise`}
+          texte={
+            coutPartiel
+              ? `Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise. ${RAISON_COUT_PARTIEL}`
+              : `Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise`
+          }
           className="hidden whitespace-nowrap text-sm text-neutral-600 @3xl:inline-flex dark:text-neutral-400"
         >
           <span data-guide="cout-cumule">
             Coût cumulé :{" "}
-            <span className="font-medium tabular-nums">
-              {formatCout(coutTotal)}
-            </span>
+            {cumul.montant !== null && (
+              <span className="font-medium tabular-nums">{cumul.montant}</span>
+            )}
+            {cumul.mention !== null &&
+              `${cumul.montant !== null ? " · " : ""}${cumul.mention}`}
           </span>
         </Infobulle>
 

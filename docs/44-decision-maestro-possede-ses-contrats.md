@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 44 — Maestro possède ses contrats
 
 **Date :** 2026-09-24. **Consignée par :** #1315.

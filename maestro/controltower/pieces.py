@@ -84,6 +84,7 @@ from maestro.controltower.outillage import ServiceOutillage
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.validation import appliquer_sous_validation
 from maestro.engine.guardrails import DemandeValidation
+from maestro.outillage.clients import reunir
 from maestro.outillage.correction import (
     CLES_CORRIGEABLES,
     CorrectionLue,
@@ -106,6 +107,7 @@ from maestro.outillage.modele import ORIGINE_DITE, Analyse, Constats, Entree, Re
 from maestro.outillage.questionnaire import (
     Choix,
     acquis_de,
+    clients_depuis_choix,
     constats_depuis_choix,
     schema_en_texte,
     source_manifeste_des_choix,
@@ -471,16 +473,22 @@ class ServicePieces:
         qui a été compris. Un projet **lu** : ceux de son analyse (#1158). Dans les
         deux cas, les corrections s'appliquent ensuite par `corriger`, et c'est
         `recommander` — le même pour les deux — qui tranche.
+
+        Ses ponts suivent les clients d'agents (#1295) : ceux du poste, relus à chaque
+        tour, et pour un projet décrit ceux que la personne a nommés — les mêmes que
+        l'analyse et le questionnaire recommandent.
         """
         projet = self._outillage.entite(projet_id)
         racine = await asyncio.to_thread(valider_racine, projet.racine)
         prises = (*corrections_du_fil(fil), *corrections)
         compris = tuple(acquis) if acquis is not None else acquis_du_fil(fil)
+        clients = await self._outillage.clients_du_poste()
         if compris:
             hors = [c for c in prises if c.cle not in CLES_CORRIGEABLES]
             choix = acquis_de([*compris, *hors])
             constats = corriger(constats_depuis_choix(choix), prises)
             source = source_manifeste_des_choix(projet.id, choix)
+            clients = reunir(clients, clients_depuis_choix(choix))
         else:
             analyse = await self._analyse(projet, fil)
             constats = corriger(analyse.constats, prises)
@@ -489,7 +497,7 @@ class ServicePieces:
             projet=projet,
             racine=racine,
             constats=constats,
-            recommandation=recommander(constats),
+            recommandation=recommander(constats, clients),
             source=source,
             corrections=prises,
         )

@@ -4,6 +4,7 @@
 |---|---|---|
 | S1 | Vider un dossier | Le dossier est vide hors périmètre exclu |
 | S2 | Créer une petite application | Elle s'exécute, sans commande soumise à la personne |
+| | (et depuis #1291) | Une tâche terminée finit à N/N, cochée par le verbe de checklist |
 | S3 | Reprendre un projet sans équipe | L'équipe est proposée avant de dépenser, puis ça part |
 | S4 | « Pourquoi le run a échoué ? » | La réponse nomme la cause de l'API, jugée par un modèle |
 | S5 | « Comment j'essaie le livrable ? » | La fin se raconte, lie un fichier réel, dit quoi taper |
@@ -62,6 +63,7 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     STATUTS_EXECUTION_TERMINAUX,
 )
+from maestro.detail_tache import ETAPE_FAITE
 from maestro.engine.executor import STATUT_ROLE_MANQUANT, STATUT_TERMINEE
 from maestro.lecture import OUTIL_SHELL
 from maestro.scenarios.api import (
@@ -460,6 +462,14 @@ def s2_creer_une_application(ctx: Contexte) -> Issue:
     quatorze fois. Elle est jugée **avant** l'exécution du livrable : un vert
     rendu sur une application qui tourne masquerait exactement la régression qu'on
     vient de corriger.
+
+    La troisième vient de #1291 : **une tâche terminée finit à N/N**, cochée par
+    le verbe de checklist de Maestro. Depuis le 2026-09-22, toutes les tâches se
+    soldaient à « 0/N · relevé incomplet » parce que la checklist se lisait dans
+    un outil du CLI que le CLI avait remplacé, et aucun scénario ne l'a vu : les
+    oracles regardaient le livrable, jamais la carte. S2 est le scénario d'un
+    agent outillé qui écrit et lance du code, donc celui où la checklist doit se
+    tenir ; elle est jugée **après** le livrable, qui reste le sujet du scénario.
     """
     racine = ctx.atelier.dossier("s2-application")
     projet_id = _declarer(ctx, "banc-s2-application", racine, origine="nouveau")
@@ -514,13 +524,45 @@ def s2_creer_une_application(ctx: Contexte) -> Issue:
             run_id=run_id,
             cout_usd=cout,
         )
+    tenue, releve = _checklists_du_run(ctx, run_id, projet_id)
+    if not tenue:
+        return rouge(
+            "aucune tâche terminée ne finit à N/N : la checklist n'a pas été tenue "
+            f"jusqu'au bout ({releve})",
+            run_id=run_id,
+            cout_usd=cout,
+        )
     return vert(
         f"`python {POINT_D_ENTREE}` s'exécute et sort en 0 "
         f"({sortie[:120] or 'aucune sortie'}) ; aucune validation de commande "
-        "demandée à la personne",
+        f"demandée à la personne ; checklist tenue ({releve})",
         run_id=run_id,
         cout_usd=cout,
     )
+
+
+def _checklists_du_run(ctx: Contexte, run_id: str, projet_id: str) -> tuple[bool, str]:
+    """Une tâche terminée du run finit-elle à N/N ? — et le relevé de chaque carte (#1291).
+
+    Lu sur ce que la carte montre (`GET /api/taches?run=`), jamais dans la trace :
+    c'est à l'écran que « 0/N · relevé incomplet » se lisait. Une tâche compte si
+    elle est **terminée** et que sa checklist, non vide, est entièrement faite ;
+    une seule suffit, et les autres se lisent au relevé — un écart réel sur une
+    tâche voisine n'est pas le défaut que cet oracle garde.
+    """
+    cartes = ctx.client.taches(run_id, projet_id=projet_id)
+    tenue = False
+    releves: list[str] = []
+    for carte in cartes:
+        etapes = [e for e in carte.get("etapes") or [] if isinstance(e, Mapping)]
+        faites = sum(1 for etape in etapes if str(etape.get("etat") or "") == ETAPE_FAITE)
+        statut = str(carte.get("statut") or "")
+        releves.append(f"« {carte.get('titre') or carte.get('id')} » {faites}/{len(etapes)}")
+        if statut == STATUT_TERMINEE and etapes and faites == len(etapes):
+            tenue = True
+    releve = " ; ".join(releves) or "aucune tâche servie"
+    ctx.note("checklists du run", releve)
+    return tenue, releve
 
 
 # --- S3 — reprendre un projet existant sans équipe -------------------------

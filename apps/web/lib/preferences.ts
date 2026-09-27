@@ -47,6 +47,21 @@
  *    absente (première visite) ou salie (valeur d'une version antérieure) rend
  *    désormais le **défaut** ; `"1"` et `"0"` sont les deux seuls **choix**, et
  *    ils sont tenus.
+ *
+ * ── Ce que #1293 y change : un choix de la colonne vaut pour la session ──────
+ *
+ * Tenu **indéfiniment**, un `"0"` suffisait à fermer la conversation à chaque
+ * démarrage : un seul « fermer » d'avant le 22/09 ramenait le tableau de bord
+ * d'avant l'atelier (docs/43 §2.1). La conversation est la porte d'entrée d'un
+ * projet ; la fermer est un geste du moment, pas un réglage du poste. Son choix
+ * vit donc dans le `sessionStorage` : tenu le temps de la session, rechargements
+ * compris, et oublié au démarrage suivant, qui retrouve le défaut de #1107.
+ *
+ * D'où un **stockage** en paramètre de `preferenceBooleenne`, et une seule
+ * conséquence : l'ancienne valeur du `localStorage` n'est plus lue — elle ne
+ * désigne plus rien, et un `"0"` ancien reste sans effet. Le repli de la barre
+ * latérale, lui, garde le `localStorage` : c'est un réglage d'affichage, qui ne
+ * cache rien de ce que l'atelier promet.
  */
 
 /** Le trio d'une préférence : lire l'état, l'écrire, suivre ses changements. */
@@ -63,15 +78,20 @@ type PreferenceBooleenne = {
  * — deux préférences ne peuvent pas le partager, sans quoi une bascule
  * réveillerait les abonnés de l'autre. `defaut` est ce que rend `lire` quand
  * **personne n'a choisi** : première visite, valeur illisible, stockage refusé.
+ * `stockage` dit combien de temps un choix tient : le poste (`localStorage`,
+ * par défaut) ou la session (`sessionStorage`, #1293). Une fonction, et non le
+ * stockage lui-même : y accéder peut lever (cookies bloqués), et ce doit être
+ * dans le `try` de l'appel.
  */
 function preferenceBooleenne(
   cle: string,
   evenement: string,
   defaut: () => boolean = () => false,
+  stockage: () => Storage = () => window.localStorage,
 ): PreferenceBooleenne {
   const lire = (): boolean => {
     try {
-      const brut = window.localStorage.getItem(cle);
+      const brut = stockage().getItem(cle);
       // Les deux seules valeurs qu'`ecrire` produit sont les deux seules qui
       // comptent pour un choix. Tout le reste — clé absente, ou salie par une
       // version antérieure — n'est pas un choix : c'est l'absence de choix,
@@ -90,7 +110,7 @@ function preferenceBooleenne(
 
   const ecrire = (valeur: boolean): void => {
     try {
-      window.localStorage.setItem(cle, valeur ? "1" : "0");
+      stockage().setItem(cle, valeur ? "1" : "0");
     } catch {
       // Voir `lire` : l'absence de persistance ne casse pas la bascule.
     }
@@ -103,6 +123,9 @@ function preferenceBooleenne(
     const surInterne = (recu: Event) => {
       rappel((recu as CustomEvent<boolean>).detail);
     };
+    // Un `sessionStorage` ne prévient pas les autres onglets — chacun a le sien —,
+    // si bien que seule une préférence du poste suit ici un onglet voisin ; une
+    // préférence de session n'a rien à y apprendre, et `lire` relit la sienne.
     const surStockage = (recu: StorageEvent) => {
       if (recu.key !== cle) return;
       rappel(lire());
@@ -124,7 +147,8 @@ export const CLE_SIDEBAR_REPLIEE = "maestro.sidebar.repliee";
 /**
  * Clé de l'ouverture de la colonne de droite (#925) — même espace de noms, et
  * un nom de **zone** plutôt qu'un nom de composant : c'est la conversation qui
- * s'y installe (#926), et la clé lui survivra.
+ * s'y installe (#926), et la clé lui survivra. Dans le `sessionStorage` depuis
+ * #1293 : la même clé au `localStorage` est celle d'avant, qu'on ne lit plus.
  */
 export const CLE_CONVERSATION_OUVERTE = "maestro.conversation.ouverte";
 
@@ -158,11 +182,15 @@ const repliSidebar = preferenceBooleenne(
  * sous `lg` la colonne **recouvre** (#925) : un poste neuf en fenêtre étroite
  * trouverait son travail sous 320 px de conversation, ce que les variantes de
  * #1107 ont rendu et que le regard neuf a écarté en toutes lettres.
+ *
+ * Et le défaut est **retrouvé à chaque démarrage** (#1293) : le choix contraire
+ * ne tient que la session.
  */
 const colonneConversation = preferenceBooleenne(
   CLE_CONVERSATION_OUVERTE,
   "maestro:conversation-ouverte",
   () => window.matchMedia(REQUETE_COLONNE_AU_LARGE).matches,
+  () => window.sessionStorage,
 );
 
 /** Le repli persisté, ou déplié à défaut (première visite, stockage bloqué). */

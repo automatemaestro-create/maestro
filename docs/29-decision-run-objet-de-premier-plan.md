@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 29 — Le run, objet de premier plan : note de décision
 
 > Ticket #470. Décision datée du **2026-08-24**, sur `origin/main` à `c69153f`.

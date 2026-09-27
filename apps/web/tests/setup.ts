@@ -197,6 +197,10 @@ beforeEach(() => {
   canauxDemandes.length = 0;
   projetsDuFil.length = 0;
   window.localStorage.clear();
+  // La session aussi (#1293) : l'entrée dans un projet et l'ouverture de la
+  // colonne de conversation y vivent — chaque test est un **démarrage**, sauf à
+  // poser lui-même une session déjà entrée (`poserProjetActif`).
+  window.sessionStorage.clear();
   // Le brouillon du composeur vit dans la mémoire du module depuis #926
   // (`lib/brouillons`) — donc il survit à un démontage, ce qu'on lui demande,
   // et survivrait au test suivant, ce qu'on ne veut pas.

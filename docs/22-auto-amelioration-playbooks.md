@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Auto-amélioration des playbooks — de l'échec consigné à la révision proposée (ticket #111)
 
 **Version :** 0.1

@@ -523,6 +523,7 @@ from maestro.controltower.projets import (
     statut_http,
 )
 from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
+from maestro.controltower.regime import MembreDeLEquipe, regime_d_un_run
 from maestro.controltower.renfort import RelaisRenfort
 from maestro.controltower.state import (
     BRIEF_APPROUVE,
@@ -561,6 +562,7 @@ from maestro.projets import (
 from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.base import ModelProvider
 from maestro.providers.blocage import OUTIL_BLOCAGE
+from maestro.providers.checklist import OUTIL_CHECKLIST
 from maestro.providers.courrier import OUTIL_COURRIER
 from maestro.providers.decision import OUTIL_DECISION
 from maestro.providers.question import OUTIL_QUESTION
@@ -1576,6 +1578,9 @@ async def _pompe(
                     en_panne = False
                 attente = reprise_s
                 state.appliquer(event)
+                # Rattaché **après** la projection, qui vient d'apprendre le
+                # projet du run si c'est cet événement qui le porte (#1290).
+                event = state.au_projet_de_son_run(event)
                 journal.consigner(event)
                 diffusion.diffuser(event)
                 if (
@@ -2043,6 +2048,12 @@ def create_app(
         hote=hote_run,
     )
 
+    # Le régime de brief des runs ouverts depuis le fil — **une** valeur, lue par
+    # le lanceur qui l'applique et par le régime qui le dit (#1323) : deux
+    # écritures du même choix finiraient par faire annoncer au fil un autre
+    # cadrage que celui du run.
+    mode_brief_du_fil = MODE_BRIEF_AUTO
+
     async def ouvrir_un_run(
         objectif: str,
         projet_id: str | None = None,
@@ -2082,7 +2093,7 @@ def create_app(
             timeout_tache_s=bornes.timeout_tache_s,
             parallelisme=bornes.parallelisme,
             projet_id=projet_id,
-            mode_brief=MODE_BRIEF_AUTO,
+            mode_brief=mode_brief_du_fil,
             contexte_sources=contexte_sources,
         )
 
@@ -2127,6 +2138,34 @@ def create_app(
                 ligne += f" — compétences : {competences}"
             lignes.append(ligne)
         return "\n".join(lignes)
+
+    def regime_du_projet(projet_id: str | None) -> str:
+        """Ce qu'un run de ce projet fera, pour le fil — lu, jamais deviné (#1323).
+
+        L'équipe par la règle unique du routeur (`catalogue_du_projet`), comme
+        `roles_du_projet`, et la politique de chaque agent par l'appel exact de
+        l'exécution (`permissions.pour_projet(…).lire`, relu à chaque message
+        comme l'exécuteur le relit à chaque tâche) : le fil dit ce que la tâche
+        appliquera. Une politique que la lecture refuse n'est pas tue —
+        l'exécution en ferait un échec de tâche, et c'est ce que le fil en dira.
+        Sans projet, ou sur un projet inconnu, le bloc ne parle que de ce qui ne
+        dépend d'aucune équipe : le cadrage et les bornes.
+        """
+        if not projet_id or not projets.existe(projet_id):
+            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+        agents = catalogue_du_projet(agents_store, projet_id)
+        if agents is None:
+            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+        politiques = permissions.pour_projet(projet_id)
+        membres: list[MembreDeLEquipe] = []
+        for agent in agents:
+            try:
+                politique = politiques.lire(agent.nom)
+            except ValueError as refus:
+                membres.append(MembreDeLEquipe(agent.role, agent.nom, illisible=str(refus)))
+            else:
+                membres.append(MembreDeLEquipe(agent.role, agent.nom, politique))
+        return regime_d_un_run(membres, mode_brief=mode_brief_du_fil)
 
     def projet_du_fil(projet_id: str) -> Projet | None:
         """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.
@@ -2199,6 +2238,9 @@ def create_app(
                 consultation=consulter,
                 roles=roles_du_projet,
                 attentes=attentes_de(state),
+                # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
+                # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
+                regime=regime_du_projet,
                 conducteur=ConducteurOutillage(comprehension, pieces=pieces),
                 # Un projet naît dans la conversation (#1294) : déclaré par le
                 # **même** service que `POST /api/projets`, et un dossier importé
@@ -2267,7 +2309,9 @@ def create_app(
             raise
         for event in evenements:
             state.appliquer(event)
-            journal.consigner(event)
+            # Le même rattachement que la pompe (#1290) : le journal durable
+            # garde l'issue d'un run telle qu'elle a été publiée, sans projet.
+            journal.consigner(state.au_projet_de_son_run(event))
         magasin.rejeu_abouti()
 
     @asynccontextmanager
@@ -4073,8 +4117,8 @@ def create_app(
         générique d'une fiche sert depuis #1037 : tout agent du catalogue est
         outillé, seules ses consignes de métier lui sont propres), les verbes du serveur
         in-process **maestro** (arbitrage, blocage, courrier, décision
-        consignée, question — leurs constantes existent précisément pour qu'une
-        politique les désigne, #805, #1023) et les
+        consignée, question, checklist — leurs constantes existent précisément
+        pour qu'une politique les désigne, #805, #1023, #1291) et les
         **serveurs MCP** effectivement montés pour lui, cités en entier
         (`mcp__<serveur>`, qui couvre tous leurs outils).
 
@@ -4105,6 +4149,7 @@ def create_app(
                 "libelle": "consigner une décision tranchée seul",
             },
             {"nom": OUTIL_QUESTION, "origine": "maestro", "libelle": "poser une question"},
+            {"nom": OUTIL_CHECKLIST, "origine": "maestro", "libelle": "tenir sa checklist"},
         ]
         try:
             serveurs = cfg.mcp.lire(nom)
@@ -5277,7 +5322,8 @@ def create_app(
         """Écrit dans le projet l'outillage que son analyse recommande (#1033, docs/38).
 
         Le second geste du chantier, et celui qui touche au dossier de
-        quelqu'un : `AGENTS.md`, les deux ponts d'une ligne, les skills dans
+        quelqu'un : `AGENTS.md`, un pont d'une ligne par client du poste qui ne
+        le lit pas (#1295), les skills dans
         `.agents/skills/` et le manifeste `.maestro/outillage/manifeste.json`,
         qui dit ce qui vient de Maestro.
 
@@ -6175,7 +6221,7 @@ def create_app(
         une proposition, et la génération est le lot 5 (#1033).
         """
         try:
-            return outillage.recommandation(id_projet, requete.choix_acquis())
+            return await outillage.recommandation(id_projet, requete.choix_acquis())
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
@@ -6504,7 +6550,9 @@ def create_app(
         filtré puis suit le flux voit deux fois le même périmètre, et un
         événement d'un autre projet n'arrive jamais dans une vue filtrée. Un
         événement **sans** projet n'entre pas non plus dans une vue de projet,
-        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré.
+        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré —
+        une fois la pompe passée : celui d'un run qui relève d'un projet y a été
+        rattaché (`ControlTowerState.au_projet_de_son_run`, #1290).
 
         Le refus se dit **sur la socket** avant de la fermer : la connexion est
         acceptée, le motif part en une trame `{"erreur": {motif, message}}`,

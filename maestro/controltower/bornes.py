@@ -37,6 +37,17 @@ borne** : « aucune borne : le run ira jusqu'au bout ». C'est le troisième cri
 du ticket, et c'est la règle de la ligne `plan :` d'un run d'outillage (#286) —
 un régime s'annonce **dans les deux sens**, sans quoi l'illimité se lit comme un
 oubli plutôt que comme un choix.
+
+## Ce qu'elles sont : un fait du run qui les a reçues (#1323)
+
+Une borne se pose au moment d'accepter **un** run, et ne vaut que pour lui : il
+n'existe aucun réglage durable qu'un run suivant hériterait. Le fil l'ignorait —
+au bouclage du 2026-09-25, la borne « s'interrompt à 1 tokens » donnée à l'accord
+de S4 a été tenue pour un réglage qui persiste (« ce nouveau run a toutes les
+chances de s'arrêter pareil »), alors que la carte de la proposition suivante
+disait « aucune borne ». D'où `to_dict` : les bornes voyagent sur l'événement de
+**lancement** (`Event.bornes`), rejoignent la projection (`EtatExecution.bornes`)
+et se lisent dans la fiche de ce run, là où le fil les raconte.
 """
 
 from __future__ import annotations
@@ -121,6 +132,20 @@ class BornesRun:
             timeout_tache_s=delai,
             parallelisme=None if parallele is None else int(parallele),
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Les quatre valeurs en JSON — la forme que `depuis` relit, `None` compris (#1323).
+
+        Les quatre clés sortent **toujours**, y compris sans borne : c'est ce qui
+        distingue, sur l'événement de lancement qui les porte, « ce run n'a reçu
+        aucune borne » d'un événement qui n'en dit rien (voir `Event.bornes`).
+        """
+        return {
+            "plafond_cout_usd": self.plafond_cout_usd,
+            "plafond_tokens": self.plafond_tokens,
+            "timeout_tache_s": self.timeout_tache_s,
+            "parallelisme": self.parallelisme,
+        }
 
     @property
     def aucune(self) -> bool:

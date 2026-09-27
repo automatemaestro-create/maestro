@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 41 — Maestro juge, il ne bride pas ; le produit se vérifie sur le réel
 
 **Date :** 2026-09-21. **Instruite par :** `/idee` (#1013). **Consignée par :** #1169.

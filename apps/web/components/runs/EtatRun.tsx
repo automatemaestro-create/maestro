@@ -55,6 +55,7 @@ import {
   IconeStatutEnCours,
   IconeStatutTerminee,
 } from "@/components/Icones";
+import { Infobulle } from "@/components/Infobulle";
 import {
   BadgeEtat,
   Bouton,
@@ -84,11 +85,12 @@ import {
   type RegimeRun,
 } from "@/lib/execution";
 import {
-  formatCout,
+  formatCoutPartiel,
   formatDureeRun,
   formatHeureRelative,
   libelleCause,
   libelleStatutExecution,
+  RAISON_COUT_PARTIEL,
 } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
@@ -98,6 +100,29 @@ import {
   type Progression,
   type ResumeExecution,
 } from "@/lib/types";
+
+/**
+ * Le coût d'un run dans une ligne de faits (#1280) : le montant tarifé, et
+ * « coût partiel » quand il n'est qu'un plancher.
+ *
+ * Trois lignes le montrent — l'en-tête de la vue d'un run, la carte d'un run
+ * (liste, état des runs, run au centre) et l'annonce de fin dans le fil et la
+ * cloche —, et c'est ici qu'elles le rendent **une** fois : un montant qui se
+ * dirait partiel sur la carte et complet dans l'annonce contredirait l'écran.
+ *
+ * La forme est la variante B de #1280, retenue par le regard neuf : l'état
+ * **nommé en mots**, collé au montant, au ton de la ligne — ni teinte
+ * d'attention ni graisse, un montant partiel n'étant pas une panne. La raison
+ * (tâche en cours, session interrompue avant d'être facturée) va dans une
+ * `Infobulle`, atteignable au clavier ; un montant complet n'en porte pas, pour
+ * rester exactement ce qu'il était.
+ */
+export function MontantDuRun({ run }: { run: ResumeExecution }) {
+  const partiel = run.cout_partiel === true;
+  const montant = formatCoutPartiel(run.cout_usd, partiel);
+  if (!partiel) return <>{montant}</>;
+  return <Infobulle texte={RAISON_COUT_PARTIEL}>{montant}</Infobulle>;
+}
 
 /**
  * Ce que chaque cause d'attente **dit** et **où elle mène**.
@@ -863,7 +888,9 @@ export function CarteRun({
           </>
         )}
         <span aria-hidden="true">·</span>
-        <span className="whitespace-nowrap">{formatCout(run.cout_usd)}</span>
+        <span className="whitespace-nowrap">
+          <MontantDuRun run={run} />
+        </span>
       </p>
 
       <Avancement run={run} />

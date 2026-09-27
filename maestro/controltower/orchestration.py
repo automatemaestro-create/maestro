@@ -459,6 +459,29 @@ Le prix est écrit : un appel modèle court par geste. Il ne retarde rien de ce
 que le geste décide — le run part, l'équipe est créée **avant** que le modèle
 n'écrive —, et un modèle muet ne défait aucun geste.
 
+## Ce que Maestro fera, il le lit aussi (#1323)
+
+Le fil savait ce que le projet contient et ce que ses runs ont fait ; il ne
+savait pas ce que **Maestro** ferait du suivant. Au bouclage du 2026-09-25 il a
+donc comblé, deux fois sur deux : « le run vous demandera votre accord avant de
+commencer » (S3, aucun accord demandé), puis la borne d'un run passé prise pour
+un réglage qui dure (P8, « ce nouveau run a toutes les chances de s'arrêter
+pareil »). Deux faits manquaient, et ils sont désormais **lus** :
+
+- **ce qu'un run fera** (`RegimeDuProjet`, `maestro.controltower.regime`) — le
+  cadrage, les actes de chaque agent selon la politique que l'exécution relira,
+  l'acte que l'objectif accorde, ce qui revient à la personne et ce qui ne se
+  prévoit pas, la règle des bornes. Il entre dans le prompt du juge et dans les
+  faits des deux gestes qui mettent un run devant la personne (lancement, équipe
+  créée) ;
+- **les bornes de chaque run** — portées par l'événement de lancement
+  (`Event.bornes`), gardées par la projection, dites dans la fiche du run
+  (`bornes_du_run`) et dans les faits d'un lancement.
+
+Le cadre dit la règle qu'on en tire — s'appuyer sur ces faits, avouer ce qu'ils
+ne disent pas, tenir une borne pour celle de son run — et rien d'autre : aucune
+phrase interdite, aucun lexique (#1169). Ce qu'il en dit reste son jugement.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -567,6 +590,7 @@ from maestro.controltower.progression import (
     STATUT_EN_ATTENTE_VALIDATION,
     STATUT_PRETE,
 )
+from maestro.controltower.regime import bornes_du_run
 from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
@@ -813,6 +837,16 @@ avec eux que tu proposes un projet — un dossier encore libre, un nom qu'aucun
 projet ne porte — et qu'un projet déjà déclaré se reconnaît au lieu de se
 proposer une seconde fois.
 
+Tu reçois aussi CE QU'UN RUN FERA : comment il démarre, ce que la politique de
+chaque agent de l'équipe laisse passer sans personne et ce qu'elle renvoie à
+l'utilisateur, l'acte que l'objectif accepté couvre, et les bornes. C'est ce que
+Maestro applique réellement. Tout ce que tu dis de la suite d'un run — ce qui
+passera sans l'utilisateur, ce qui lui reviendra, ce qui l'arrêtera — s'appuie
+sur ces faits ; ce qu'ils ne disent pas, tu ne le sais pas, et tu le dis plutôt
+que d'inventer une règle. Une borne appartient au run qui l'a reçue à son
+accord : un run passé arrêté sur sa borne n'annonce rien du suivant, dont les
+bornes sont celles que la carte de ta proposition posera.
+
 Cette lecture est BORNÉE : seulement les runs les plus récents, un nombre limité
 de tâches, des détails tronqués, et elle le signale quand elle coupe. Ce qui n'y
 est pas, tu ne l'as pas vu : dis-le, et renvoie alors vers l'endroit qui le
@@ -847,9 +881,9 @@ Tu prépares la réponse de l'orchestrateur de Maestro. Tu ne réponds PAS à
 l'utilisateur : tu décides ce qu'il faut LIRE pour pouvoir lui répondre avec des
 faits plutôt qu'avec des généralités.
 
-On te donne l'état de l'orchestration, l'équipe du projet, ce qui attend un
-arbitrage, les runs récents et la conversation. Tout cela, tu l'as déjà : ne le
-redemande pas.
+On te donne l'état de l'orchestration, l'équipe du projet, ce qu'un run y fera,
+ce qui attend un arbitrage, les runs récents et la conversation. Tout cela, tu
+l'as déjà : ne le redemande pas.
 
 """
     + catalogue()
@@ -971,6 +1005,9 @@ en clair, bref — une à trois phrases —, sans JSON, sans balise, sans titre.
 
 - Parle depuis ces faits et depuis eux seuls : n'invente ni identifiant, ni
   nombre, ni suite qui n'y soit pas, et ne dis jamais fait ce qui ne l'est pas.
+- Ce qui passera sans lui, ce qui lui reviendra et ce qui arrêtera le run ne se
+  disent que depuis les faits qui le décrivent (« Ce qu'un run fera », les bornes
+  de ce run) ; ce qu'ils ne disent pas, tu ne le sais pas.
 - Ce que les faits disent affiché sous ton message (une carte, une équipe, un
   run) s'y lit déjà : ne le recopie pas, dis ce que cela change pour lui et ce
   qu'il peut faire ensuite.
@@ -1256,19 +1293,24 @@ def _faits_du_refus(objectif: str) -> str:
     )
 
 
-def _faits_du_lancement(objectif: str) -> str:
+def _faits_du_lancement(objectif: str, bornes: BornesRun = AUCUNE_BORNE) -> str:
     """Le run proposé a été accepté d'un geste — et il est ouvert.
 
     Ce qu'un run fait **d'abord** est dit en toutes lettres : sans lui, le modèle
     comblait — « le développeur a commencé à rédiger le fichier », écrit sur le
     réel (passage du banc du 2026-09-24) alors que le run cadrait encore.
+
+    Ses **bornes** aussi (#1323), celles que le geste vient de poser, « aucune »
+    comprise : ce sont celles de ce run-là, et le modèle n'a plus à les déduire
+    d'un run passé.
     """
     return (
         f"L'utilisateur a accepté, d'un geste, de lancer le run sur : « {objectif} ». "
         "Le run est ouvert : il commence par cadrer le travail et le découper en "
         "tâches, que l'équipe prendra ensuite — rien n'est encore écrit dans le "
         "projet. Son identifiant et son avancement s'affichent d'eux-mêmes juste "
-        "sous ton message."
+        "sous ton message. Les bornes de ce run, posées sur la carte au moment "
+        f"d'accepter : {bornes.en_phrase()}."
     )
 
 
@@ -1636,6 +1678,10 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     cause = libelle_cause(execution.cause)
     if cause:
         lignes.append(f"  cause : {cause}")
+    # Les bornes que **ce** run a reçues (#1323), juste avant l'issue qu'elles
+    # expliquent parfois : sans elles, un arrêt sur « plafond de 1 » se lisait
+    # comme un réglage qui dure, et le fil prédisait le même arrêt au run suivant.
+    lignes.append(f"  {bornes_du_run(execution.bornes)}")
     issue = _borne(_issue_du_run(execution))
     if issue:
         lignes.append(f"  issue : {issue}")
@@ -1811,6 +1857,7 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
         cause = libelle_cause(execution.cause)
         if cause:
             lignes.append(f"cause : {cause}")
+        lignes.append(bornes_du_run(execution.bornes))
         issue = _issue_du_run(execution)
         if issue:
             lignes.append(f"issue : {issue}")
@@ -1860,6 +1907,15 @@ EquipeDuFil = Callable[[str | None], str]
 #: demandé. Rend `""` quand rien n'attend — le bloc disparaît plutôt que
 #: d'annoncer un vide que l'aperçu dit déjà.
 AttentesEnCours = Callable[[str | None], str]
+
+#: Ce qu'un run du projet `projet_id` **fera** (#1323) — ce qui passera sans
+#: personne, ce qui reviendra à la personne, ce qui l'arrêtera —, lu dans ce que
+#: Maestro applique : la politique de chaque agent de l'équipe, le régime de brief
+#: du lanceur, la règle des bornes (`maestro.controltower.regime`). Distinct de
+#: `EquipeDuFil`, qui dit **qui** travaille : celui-ci dit ce que le travail
+#: demandera. Sans lui, le modèle devinait — un accord qu'aucun run ne demande,
+#: une borne passée prise pour un réglage.
+RegimeDuProjet = Callable[[str | None], str]
 
 #: Combien d'attentes le fil raconte, et sur quelle longueur. Mêmes raisons que
 #: les bornes des runs (#1157), et elles se **disent** de la même façon.
@@ -2139,6 +2195,12 @@ class _Contexte:
     `projets` (#1294) est le sixième : les projets du poste (répertoire des projets,
     Git, projets déclarés, projet de la fenêtre), ce que le modèle doit savoir
     pour proposer un projet sans inventer ni reprendre un nom ou un dossier.
+
+    `regime` (#1323) est le septième : ce qu'un run de ce projet **fera** —
+    cadrage, actes de chaque agent selon sa politique, acte accordé par
+    l'objectif, bornes. C'est ce que le modèle devinait quand il annonçait un
+    accord que le run ne demanderait pas, ou prédisait l'arrêt d'un run sur la
+    borne d'un autre.
     """
 
     etat: str = ""
@@ -2147,6 +2209,7 @@ class _Contexte:
     faits: str = ""
     recrutement: str = ""
     projets: str = ""
+    regime: str = ""
 
 
 class _LectureDuFlux:
@@ -2298,6 +2361,9 @@ def _prompt(
     d'aller chercher, #1223). Les quatre premiers sont sus, le dernier est allé
     se chercher : il vient donc en dernier, au plus près de la conversation qu'il
     sert.
+
+    Le **régime** d'un run (#1323) suit l'équipe : après qui travaille, ce que
+    le travail demandera — qui en passe par une personne, et ce qui l'arrête.
     """
     entete = [
         bloc
@@ -2308,6 +2374,7 @@ def _prompt(
             contexte.projets,
             contexte.equipe,
             contexte.recrutement,
+            contexte.regime,
             contexte.attentes,
             contexte.faits,
             lectures,
@@ -2363,6 +2430,12 @@ class RepondeurOrchestration(RepondeurChat):
     pièce : le conducteur du questionnaire le reçoit, et un projet qui naît voit son
     outillage commencer dans la même réponse. Sans lui, le questionnaire conclut sans
     rien écrire, et le verdict `outillage` dit qu'il ne peut pas écrire.
+
+    `regime` (#1323) dit ce qu'un run de ce projet **fera** — lu dans la politique
+    de l'équipe et le régime du lanceur, jamais deviné. Il entre dans le prompt
+    du juge et dans les faits des deux gestes qui ouvrent ou reproposent un run
+    (lancement, équipe créée) : ce sont les trois endroits où le fil parle de la
+    suite. Sans lui, le bloc disparaît, et le fil dit ce qu'il disait avant.
     """
 
     def __init__(
@@ -2381,8 +2454,10 @@ class RepondeurOrchestration(RepondeurChat):
         attentes: AttentesEnCours | None = None,
         naissance: ServiceNaissance | None = None,
         pieces: ServicePieces | None = None,
+        regime: RegimeDuProjet | None = None,
     ) -> None:
         self._naissance = naissance
+        self._regime = regime
         self._lanceur = lanceur
         self._apercu = apercu
         self._faits = faits
@@ -2625,9 +2700,8 @@ class RepondeurOrchestration(RepondeurChat):
         )
         if not lance.run_id:
             return lance
-        return replace(
-            lance, contenu=await self.rediger(agent, fil, faits=_faits_du_lancement(objectif))
-        )
+        faits = self._avec_regime(_faits_du_lancement(objectif, bornes), projet_id)
+        return replace(lance, contenu=await self.rediger(agent, fil, faits=faits))
 
     async def recruter(
         self,
@@ -2699,7 +2773,11 @@ class RepondeurOrchestration(RepondeurChat):
             return ReponseChat(contenu=redaction.texte, recrutement=demande)
         equipe = EquipeRecrutee.du_rapport(rapport, demande.projet_id)
         lancable = self._lanceur is not None
-        faits = _faits_d_une_equipe_creee(demande, equipe, lancable=lancable)
+        # Le régime est lu **après** la création : c'est la politique que l'équipe
+        # vient de recevoir qui dira ce que le run reproposé fera (#1323).
+        faits = self._avec_regime(
+            _faits_d_une_equipe_creee(demande, equipe, lancable=lancable), demande.projet_id
+        )
         # Pendant un run, rien à reproposer : lui rendre son propre objectif
         # ouvrirait un second run sur le même travail — et `trancher_cadrage` n'a
         # aucun moyen de savoir qu'il ferait double emploi. Sans lanceur non plus :
@@ -3093,6 +3171,10 @@ class RepondeurOrchestration(RepondeurChat):
             self._naissance,
         )
         return _Contexte(
+            # Ce qu'un run fera (#1323), lu sur le même projet que l'équipe : le
+            # modèle parle de la suite d'un run avec la politique réelle et la
+            # règle des bornes sous les yeux, au lieu de les supposer.
+            regime=self._regime_de(projet_id),
             # Les projets du poste (#1294) : ce qu'il faut pour proposer un projet
             # sans inventer son dossier ni reprendre un nom déjà pris.
             projets=(
@@ -3243,6 +3325,29 @@ class RepondeurOrchestration(RepondeurChat):
             self._modele = modele_du_canal(agent.modele, fournisseur)
             self._provider = fournisseur
         return self._provider
+
+    def _regime_de(self, projet_id: str | None) -> str:
+        """Ce qu'un run de `projet_id` fera, `""` sans lecture branchée — jamais une levée.
+
+        La règle de `_sans_echec` : une politique illisible ou un dépôt disparu
+        coûtent un bloc de prompt, jamais la réponse. Le régime, lui, sait déjà
+        dire une politique illisible — ce qui lève ici est une lecture qui n'a
+        pas abouti du tout.
+        """
+        regime = self._regime
+        return _sans_echec(lambda: regime(projet_id)) if regime is not None else ""
+
+    def _avec_regime(self, faits: str, projet_id: str | None) -> str:
+        """Les faits d'un geste, suivis de ce qu'un run de ce projet fera (#1323).
+
+        Réservé aux deux gestes qui mettent un run devant la personne — celui qui
+        l'ouvre, et l'équipe créée qui le repropose : c'est derrière eux que le
+        fil parle de la suite, et c'est là que S3 a annoncé un accord que le run
+        ne demanderait pas. Les faits du geste viennent d'abord ; le régime les
+        complète, il ne les remplace pas.
+        """
+        regime = self._regime_de(projet_id)
+        return f"{faits}\n\n{regime}" if regime else faits
 
     def _sans_equipe(self, projet_id: str | None) -> bool:
         """Le projet de la fenêtre n'a **personne** pour prendre les tâches (#1146).

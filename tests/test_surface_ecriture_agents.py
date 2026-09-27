@@ -107,6 +107,7 @@ class _Executant(ModelProvider):
         mcp_serveurs=(), politique=None, on_refus=None, on_arbitrage_acte=None,
         on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
         credit_arbitrage=None, on_courrier=None, on_question=None,
+        on_processus=None,
         plafond_tours=None, projet=None,
     ):
         (Path(workspace) / "livrable.txt").write_text("contenu", encoding="utf-8")

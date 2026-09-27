@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Pilote MCP gestion de tickets — GitLab (ticket #106)
 
 **Version :** 0.1

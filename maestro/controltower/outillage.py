@@ -146,11 +146,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from maestro import clients_du_poste
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.playbook_du_code import registre
 from maestro.controltower.chat import (
@@ -180,8 +181,10 @@ from maestro.outillage import (
     analyser,
     generer_outillage,
     lire_le_projet,
+    recommander,
     sans_lecture,
 )
+from maestro.outillage.clients import Client, noms_en_texte
 from maestro.outillage.modele import Lecture, Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
@@ -244,6 +247,12 @@ chemin de fichier relatif au projet. La valeur "aucun" dit explicitement qu'il n
 pas (« pas de tests pour l'instant ») : ce n'est pas un manque. Un constat ne s'écrit que
 sous l'une de ces clés : hors d'elles, il ne nourrirait aucune entrée de l'outillage.
 
+Pour "clients", la valeur liste les outils d'agent avec lesquels la personne dit
+travailler, séparés par des virgules, chacun par son nom — par exemple """
+    + noms_en_texte()
+    + """ — suivi de sa version si elle l'a dite. N'en ajoute aucun qu'elle n'a pas nommé, et ne
+pose jamais de question sur ce sujet : Maestro trouve lui-même ceux qui sont installés.
+
 Les réponses de la personne font foi. Une réponse CLIQUÉE vaut telle quelle, sauf si une
 réponse tapée plus tard la corrige. Une réponse TAPÉE est dite avec ses mots : comprends-la
 et traduis-la en constats. Si elle ne répond pas à la question — une question en retour,
@@ -276,6 +285,22 @@ Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code 
 """
     + registre()
 )
+
+
+#: Ce qui trouve les clients d'agents du poste (#1295). `None` vaut
+#: `maestro.clients_du_poste.detecter`, relu **à chaque appel** plutôt que retenu à la
+#: construction : c'est la porte que `tests/conftest.py` ferme pour toute la suite.
+DetecteurClients = Callable[[], Sequence[Client]]
+
+
+async def _clients_du_poste(detecteur: DetecteurClients | None) -> tuple[Client, ...]:
+    """Les clients d'agents du poste, lus **hors de la boucle** : `--version` lance un processus.
+
+    Relus à chaque recommandation, jamais gardés : une mise à jour de Claude Code change la
+    réponse (la lecture native d'`AGENTS.md` dépend de sa version), et une réponse périmée
+    écrirait un pont de trop, ou en oublierait un.
+    """
+    return tuple(await asyncio.to_thread(detecteur or clients_du_poste.detecter))
 
 
 class ComprehensionModele:
@@ -407,7 +432,9 @@ def _phrase_de_la_question(question: QuestionOutillage) -> str:
     )
 
 
-def _phrase_de_conclusion(acquis: Sequence[Choix], *, ecrit: bool) -> str:
+def _phrase_de_conclusion(
+    acquis: Sequence[Choix], poste: Sequence[Client] = (), *, ecrit: bool
+) -> str:
     """Ce que le fil dit sans plus de question **ni pièce à montrer** (#1031, #1161).
 
     Le questionnaire ne s'arrête pas sur un silence. Il rend **ce qu'il a produit** —
@@ -427,8 +454,11 @@ def _phrase_de_conclusion(acquis: Sequence[Choix], *, ecrit: bool) -> str:
       l'API sur un fil qui n'en a vu naître aucun. Le geste existe : dire, projet
       ouvert, de l'outiller (le verdict `outillage` du juge), et la première pièce
       vient de ce qui vient d'être compris, sans reposer une question.
+
+    `poste` (#1295) sont les clients d'agents du poste : le compte est celui de la liste que
+    l'écran montrera (`POST …/outillage/recommandation` les lit aussi), ponts compris.
     """
-    reco = recommandation_depuis_choix(acquis)
+    reco = recommandation_depuis_choix(acquis, poste=poste)
     skills = sum(1 for e in reco.entrees if e.type == "skill")
     suite = (
         "Je ne sais pas encore quel projet outiller : ouvrez-le et dites-moi de "
@@ -567,24 +597,30 @@ class ConducteurOutillage:
     Le **projet** n'y est pas non plus : il se lit sur le fil (`projet_du_fil` — le
     projet né dans la conversation, la pièce en cours), ou il est nommé par l'appelant.
 
+    Un autre collaborateur, `clients` (#1295), trouve les clients d'agents du poste —
+    relu à la conclusion seulement, pour que la phrase compte la liste que l'écran
+    montrera, ponts compris. Pas plus un état que celui qui comprend.
+
     ## Et depuis #1161, il écrit **pièce par pièce**
 
-    Son second collaborateur, `pieces` (`maestro.controltower.pieces.ServicePieces`),
-    fait de la fin du questionnaire le **début de l'écriture** : plus de conclusion qui
-    liste tout, mais la première pièce, montrée avec son diff et déjà vérifiée. Un
-    projet qui a déjà ses fichiers — un dossier importé — n'a pas de questionnaire :
-    il se **lit** (#1158), et sa première pièce vient tout de suite. Le geste sur une
-    pièce (`trancher`) et une correction dite avec des mots (`corriger`) donnent la
+    Son collaborateur `pieces` (`maestro.controltower.pieces.ServicePieces`) fait de la
+    fin du questionnaire le **début de l'écriture** : plus de conclusion qui liste
+    tout, mais la première pièce, montrée avec son diff et déjà vérifiée. Un projet qui
+    a déjà ses fichiers — un dossier importé — n'a pas de questionnaire : il se
+    **lit** (#1158), et sa première pièce vient tout de suite. Le geste sur une pièce
+    (`trancher`) et une correction dite avec des mots (`corriger`) donnent la
     suivante. Sans ce collaborateur, le conducteur conclut comme avant, et le dit.
     """
 
     def __init__(
         self,
         comprehension: ComprehensionModele | None = None,
+        clients: DetecteurClients | None = None,
         *,
         pieces: ServicePieces | None = None,
     ) -> None:
         self._comprehension = comprehension or ComprehensionModele()
+        self._clients = clients
         self._pieces = pieces
 
     @property
@@ -654,9 +690,10 @@ class ConducteurOutillage:
                 fil, projet, acquis=acquis, prelude=_phrase_de_transition(acquis)
             )
         if suivante is None:
+            poste = await _clients_du_poste(self._clients)
             return ReponseChat(
                 contenu=_joint(
-                    comprise.message, _phrase_de_conclusion(acquis, ecrit=self.ecrit)
+                    comprise.message, _phrase_de_conclusion(acquis, poste, ecrit=self.ecrit)
                 ),
                 comprehension=acquis,
             )
@@ -903,6 +940,16 @@ class ConducteurOutillage:
         return await self._tour(fil)
 
 
+def _pour_le_poste(analyse: Analyse, poste: Sequence[Client]) -> Analyse:
+    """L'analyse, sa recommandation refaite avec les clients d'agents du poste (#1295).
+
+    La lecture gardée d'un projet (`_LectureGardee`) ne porte **pas** les clients : elle
+    dit ce que le projet est, eux disent qui l'ouvrira. La recommandation se refait donc
+    à chaque appel, par la même fonction que l'analyse, sur les mêmes constats.
+    """
+    return replace(analyse, recommandation=recommander(analyse.constats, poste))
+
+
 def _joint(prelude: str, corps: str) -> str:
     """Colle le prélude au corps — sans ligne vide inutile quand l'un des deux manque."""
     return "\n\n".join(morceau for morceau in (prelude, corps) if morceau)
@@ -1007,6 +1054,11 @@ class ServiceOutillage:
     `comprehension` (#1147) est ce qui comprend un projet neuf — le modèle, derrière
     `ComprehensionModele`. `None` en construit un qui résout le fournisseur configuré
     au premier usage ; seule la voie du questionnaire l'appelle.
+
+    `clients` (#1295) trouve les clients d'agents du poste, qui décident des **ponts**
+    (`recommander`) : relus à chaque recommandation — analyse, réponses, génération —,
+    jamais gardés avec la lecture du projet. Ce qu'on garde d'un projet est ce que le
+    modèle en a lu ; un Claude Code mis à jour entre-temps est un autre poste.
     """
 
     def __init__(
@@ -1018,6 +1070,7 @@ class ServiceOutillage:
         provider: ModelProvider | None = None,
         modele: str = MODELE_EXECUTANT_DEFAUT,
         comprehension: ComprehensionModele | None = None,
+        clients: DetecteurClients | None = None,
     ) -> None:
         self._projets = projets
         self._bornes = bornes
@@ -1026,6 +1079,7 @@ class ServiceOutillage:
         self._modele = modele
         self._lues: dict[str, _LectureGardee] = {}
         self._comprehension = comprehension or ComprehensionModele()
+        self._clients = clients
 
     async def analyser(self, id_projet: str) -> dict[str, Any]:
         """Analyse le projet `id_projet` et rend l'outillage recommandé (docs/38).
@@ -1041,8 +1095,20 @@ class ServiceOutillage:
         **hors de la boucle d'événements** : parcourir un projet réel prend des
         secondes, et une route qui bloquerait la boucle figerait les flux SSE
         des autres écrans.
+
+        La recommandation rendue est celle **du poste** (#1295) : les ponts suivent les
+        clients d'agents qui y sont installés, à leur version.
         """
-        return (await self._analyse(self._projet(id_projet))).to_dict()
+        analyse = await self._analyse(self._projet(id_projet))
+        return _pour_le_poste(analyse, await self.clients_du_poste()).to_dict()
+
+    async def clients_du_poste(self) -> tuple[Client, ...]:
+        """Les clients d'agents du poste, relus à chaque appel (#1295) — ceux des pièces aussi.
+
+        Une seule porte sur le poste pour l'analyse et pour l'écriture pièce par pièce
+        (#1161, `ServicePieces`) : les deux recommandent les mêmes ponts.
+        """
+        return await _clients_du_poste(self._clients)
 
     async def generer(
         self,
@@ -1098,13 +1164,14 @@ class ServiceOutillage:
         """
         projet = self._projet(id_projet)
         acquis = list(choix)
+        poste = await _clients_du_poste(self._clients)
         if acquis:
             reference = ""
             constats = constats_depuis_choix(acquis)
-            recommandee = recommandation_depuis_choix(acquis)
+            recommandee = recommandation_depuis_choix(acquis, poste=poste)
             source = source_manifeste_des_choix(projet.id, acquis)
         else:
-            analyse = await self._analyse(projet)
+            analyse = _pour_le_poste(await self._analyse(projet), poste)
             reference = analyse.id
             constats, recommandee = analyse.constats, analyse.recommandation
             source = analyse.source_manifeste()
@@ -1225,7 +1292,7 @@ class ServiceOutillage:
             "message": comprise.message,
         }
 
-    def recommandation(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
+    async def recommandation(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
         """L'outillage que ces réponses recommandent — **la forme de l'analyse** (#1031).
 
         La même `Recommandation` que `analyser` rend, produite par la **même**
@@ -1246,14 +1313,18 @@ class ServiceOutillage:
         `source` est le fragment de provenance du manifeste (docs/38 §4.1), le jumeau
         de celui qu'`Analyse.source_manifeste()` rend : c'est lui qui dira, six mois
         plus tard, que cet outillage vient de réponses et lesquelles.
+
+        Les clients d'agents du poste (#1295) s'y ajoutent à ceux que les réponses nomment :
+        les mêmes que la génération relira, donc les mêmes ponts.
         """
         projet = self._projet(id_projet)
         acquis = acquis_de(choix)
+        poste = await _clients_du_poste(self._clients)
         return {
             "projet_id": projet.id,
             "source": source_manifeste_des_choix(projet.id, acquis),
             "choix": [c.to_dict() for c in acquis],
-            "recommandation": recommandation_depuis_choix(acquis).to_dict(),
+            "recommandation": recommandation_depuis_choix(acquis, poste=poste).to_dict(),
         }
 
     def entite(self, id_projet: str) -> Projet:

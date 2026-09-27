@@ -1,3 +1,4 @@
+<!-- documentation: développement -->
 # Stack technique & outils — Maestro
 
 **Version :** 0.1

@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Projets, ressources locales et poste de travail — cadrage (ticket #215)
 
 **Version :** 1.2
@@ -340,6 +341,7 @@ un projet local **déplace la frontière** ; il faut le consigner plutôt que le
 | Exfiltration du code de l'utilisateur | `git push` vers un distant tiers, appel réseau depuis un `Bash` | Politique d'outils par agent (#110) ; l'égress non filtré reste la limite connue ([docs/19 §5](./19-securite-modele-de-menace.md)) — un filtrage par domaine devient plus urgent qu'avant |
 | **Prompt injection par le contenu du projet** | un `README`, un commentaire ou une dépendance qui contient des instructions | Le contenu lu est **une donnée, pas une consigne** : à porter dans les prompts systèmes ; les actions sensibles restent derrière la validation, ce qui borne les dégâts |
 | Fuite de secrets du projet | `.env`, clés, tokens présents dans le dépôt de l'utilisateur | Exclusions par défaut au périmètre (`.env`, `**/secrets/**`) ; rédaction existante (#109) élargie aux valeurs lues dans le projet |
+| **Un processus d'agent survit à sa tâche** (#1279) | un serveur ou un navigateur headless lancé en arrière-plan par `Bash` — un port de débogage resté ouvert au poste | Session **confinée** hors mode isolé : tout ce qu'elle lance est arrêté à sa clôture, ce qui résiste est nommé au journal du run ([docs/17 §6](./17-isolation-execution.md)) |
 
 **Le poste hôte reste l'actif à protéger** ([docs/19 §1](./19-securite-modele-de-menace.md)) —
 il gagne simplement un voisin : **le projet de l'utilisateur**. En mode isolé, le conteneur
@@ -353,8 +355,9 @@ projet commence par son outillage**. Le format est arrêté par
 [docs/38](./38-decision-outillage-universel-du-projet.md), qui le justifie et le date ; cette
 section dit ce que ça change **ici**, dans le chantier des projets locaux.
 
-**Ce que c'est, en une ligne** : un `AGENTS.md` à la racine, deux ponts d'une ligne (`CLAUDE.md`,
-`GEMINI.md`), des skills au format Agent Skills dans `.agents/skills/<nom>/`, les scripts du projet
+**Ce que c'est, en une ligne** : un `AGENTS.md` à la racine, un pont d'une ligne (`CLAUDE.md`,
+`GEMINI.md`) pour chaque client utilisé qui ne le lit pas (#1295), des skills au format Agent Skills
+dans `.agents/skills/<nom>/`, les scripts du projet
 tels qu'ils sont, et un **manifeste** `.maestro/outillage/manifeste.json` qui dit ce que Maestro a
 écrit, depuis quelle analyse ou quels choix, et par quelle version. Les formats sont ouverts : un
 autre agent que Claude sait les lire.
@@ -362,7 +365,8 @@ autre agent que Claude sait les lire.
 > ⚠ **Deux points changent le 2026-09-24** ([docs/43](./43-decision-un-projet-nait-dans-la-conversation.md)),
 > à la demande de la personne :
 > - les deux ponts ne s'écrivent plus d'office. `AGENTS.md` suffit, et un pont ne s'écrit que pour
->   un client utilisé qui ne le lit pas nativement (#1295) ;
+>   un client utilisé qui ne le lit pas nativement (#1295, **livré** — la règle et sa table en
+>   [docs/38 §3.2](./38-decision-outillage-universel-du-projet.md)) ;
 > - créer un projet ne commence plus par une étape d'outillage : le projet naît dans la conversation,
 >   et son outillage s'y construit pièce par pièce (#1294, #1161).
 >

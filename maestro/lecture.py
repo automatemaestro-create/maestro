@@ -51,7 +51,8 @@ garde-fou qui refuse le geste juste et laisse passer le mauvais l'est encore plu
 
 Ce qui borne les secrets n'a donc pas bougé d'un pouce, et se lit ailleurs : les
 outils de fichiers restent tenus par la frontière (`Read` sur un `.env` est
-**refusé**, pas arbitré), les exclusions du périmètre valent à l'analyse comme au
+**refusé**, pas arbitré — et, depuis #1304, un `Grep` qui le traverserait aussi),
+les exclusions du périmètre valent à l'analyse comme au
 relevé, et la rédaction des valeurs (#109) tient ce qui sort. Ce module, lui, ne
 prétend rien : il dit qu'une commande **n'agit pas**, pas qu'elle lit peu.
 """

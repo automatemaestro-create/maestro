@@ -121,6 +121,7 @@ class _Executant(ModelProvider):
         on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
         credit_arbitrage=None,
         on_courrier=None, on_question=None,
+        on_processus=None,
         plafond_tours=None, projet=None,
     ):
         (Path(workspace) / "livrable.txt").write_text("contenu", encoding="utf-8")
@@ -154,6 +155,7 @@ class AppelleUnOutilAsk(_Executant):
         on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
         credit_arbitrage=None,
         on_courrier=None, on_question=None,
+        on_processus=None,
         plafond_tours=None, projet=None,
     ):
         if self.SANS_ACTE in prompt:
@@ -200,6 +202,7 @@ class LeveLaMain(_Executant):
         on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
         credit_arbitrage=None,
         on_courrier=None, on_question=None,
+        on_processus=None,
         plafond_tours=None, projet=None,
     ):
         if on_arbitrage is not None:
@@ -654,6 +657,7 @@ class JoueSesCommandes(_Executant):
         on_activite=None, on_etapes=None, on_arbitrage=None, on_blocage=None, on_decision=None,
         credit_arbitrage=None,
         on_courrier=None, on_question=None,
+        on_processus=None,
         plafond_tours=None, projet=None,
     ):
         for titre, actes in self.actes.items():

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import shutil
+import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
@@ -33,6 +35,7 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
+import claude_agent_sdk
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -63,7 +66,7 @@ from maestro.detail_tache import EtapeTache
 from maestro.familles_claude import familles_claude
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
-from maestro.providers import blocage, courrier, decision, question
+from maestro.providers import blocage, checklist, controle, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
     CANAL_EN_ERREUR,
@@ -89,6 +92,7 @@ from maestro.providers.base import (
     AuthMode,
     CollecteurStderr,
     Credentials,
+    GardeFouInoperant,
     ImageJointe,
     McpServerUnavailable,
     ModeleDisponible,
@@ -97,7 +101,7 @@ from maestro.providers.base import (
     TurnLimitReached,
     attache_stderr,
 )
-from maestro.providers.checklist import est_checklist, etapes_depuis_outil
+from maestro.sandbox.confinement import ReleveConfinement, SessionConfinee
 from maestro.sandbox.container import IsolationConfig
 from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
 
@@ -292,6 +296,13 @@ class ClaudeProvider(ModelProvider):
         # tranche, et ce qu'on annonce au runtime comme durée max du hook. None :
         # les défauts du module — jamais ceux du SDK, qu'on ne choisit pas.
         self._arbitrage = arbitrage or BornesArbitrage()
+        # Le verdict de la sonde du point de contrôle (#1304), gardé le temps de
+        # ce fournisseur : ce qu'elle éprouve — le CLI qu'il lance, le SDK qui
+        # lui sert le hook — ne change pas d'une session à l'autre. Une sonde
+        # **non concluante** n'est pas gardée : rien n'y a été prouvé.
+        self._point_de_controle_tenu = False
+        self._garde_fou_inoperant: GardeFouInoperant | None = None
+        self._sonde_en_vol: asyncio.Task[None] | None = None
 
     @property
     def credentials(self) -> Credentials:
@@ -501,6 +512,7 @@ class ClaudeProvider(ModelProvider):
         credit_arbitrage: CreditArbitrage | None = None,
         on_courrier: courrier.Courrier | None = None,
         on_question: question.Questionneur | None = None,
+        on_processus: Callable[[ReleveConfinement], None] | None = None,
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
@@ -615,15 +627,18 @@ class ClaudeProvider(ModelProvider):
         que de les emporter — c'est justement d'une tâche en échec qu'on veut
         savoir ce qu'elle faisait juste avant.
 
-        `on_etapes` (#489) reçoit la **checklist** de l'agent, lue là où il la
-        tient déjà : l'entrée de ses appels `TodoWrite`
-        (`maestro.providers.checklist`). Elle passe par le même `_absorbe`, pour
-        la même raison qu'en #479 — c'est le seul endroit où le flux est observé.
-        Elle n'est en revanche **pas régulée** : un agent pose sa liste et la
-        recoche, pas plus d'une poignée de fois par tâche, et son appelant ne
-        republie que ce qui a changé (`SuiviChecklist.rapporte`). Un régulateur y
-        ajouterait une latence sur l'information qu'on veut la plus fraîche, pour
-        borner un débit qui ne déborde pas.
+        `on_etapes` (#489) reçoit la **checklist** de l'agent, et depuis #1291
+        par un verbe de Maestro : le serveur in-process `maestro` sert
+        `tenir_checklist(etapes)` (`maestro.providers.checklist`, le contrat
+        entier), et chaque appel alimente ce canal avec l'état complet de la
+        liste. Ce fournisseur ne lit **plus aucun outil du CLI** : la checklist
+        se lisait dans les appels `TodoWrite`, et elle est restée à 0/N le jour
+        où le CLI a remplacé cet outil par `TaskCreate`/`TaskUpdate` (docs/44).
+        Le canal n'est **pas régulé** : un agent pose sa liste et la recoche, pas
+        plus d'une poignée de fois par tâche, et son appelant ne republie que ce
+        qui a changé (`SuiviChecklist.rapporte`). Un régulateur y ajouterait une
+        latence sur l'information qu'on veut la plus fraîche, pour borner un
+        débit qui ne déborde pas.
 
         `on_arbitrage` (#582) fait porter au **serveur MCP in-process** `maestro`
         (`maestro.providers.arbitrage`) l'outil `demander_arbitrage(raison)` :
@@ -717,18 +732,50 @@ class ClaudeProvider(ModelProvider):
         Ce que ce fournisseur fait de `None` est donc une réponse servie à l'agent
         — « reprends sur ton hypothèse » — et jamais un refus.
 
+        `on_processus` (#1279, `maestro.sandbox.confinement`) reçoit ce que la
+        session a laissé derrière elle à sa clôture. Hors mode isolé, le CLI n'est
+        plus lancé par le SDK mais par le **lanceur du confinement**, pointé en
+        `cli_path` — la couture du mode isolé, et la seule que le SDK expose : il
+        ne rend ni le processus ni le pid du CLI. Le lanceur range la session dans
+        un arbre (Job Object, groupe de processus), l'arrête tout entier quand elle
+        se ferme — succès, échec, annulation — et rend un relevé : les processus
+        qui lui survivaient et qu'il a arrêtés, ceux qui ont **résisté** (nom et
+        pid), ou pourquoi la session n'a pas pu être confinée. Il arrive ici **une
+        fois la session fermée**, dans le `finally` : c'est justement d'une tâche en
+        échec qu'on veut savoir ce qu'elle laissait tourner. Rien n'est appelé
+        quand il n'y a rien à dire, et un callback qui lève ne casse jamais
+        l'exécution observée. Le CLI confiné est celui que le SDK aurait pris
+        (`_commande_du_cli`). En mode isolé, le conteneur jetable tient déjà ce
+        rôle : la session n'a rien de plus à confiner.
+
         `effort` (#253) alimente l'option homonyme du SDK (`--effort` du CLI),
         après le même tamis que sur `generate` : c'est un **conseil de dépense**,
         au même titre que le modèle, et pas une borne — à la différence de
         `plafond_tours`, un effort mal réglé ne tue aucune tâche, il la rend
         seulement plus ou moins fouillée. À `None` — le défaut — rien n'est passé
         et le CLI garde le régime qu'il aurait eu sans ce lot.
+
+        **La session ne démarre qu'une fois le point de contrôle éprouvé** (#1304).
+        Dès qu'elle arme le hook — une politique ou une frontière —, une sonde
+        (`maestro.providers.controle`) vérifie sur ce fournisseur réel qu'un refus
+        de Maestro y est appliqué : un garde-fou qui ne tient plus est pire qu'un
+        garde-fou absent, puisqu'on le croit en place. Son échec lève
+        `GardeFouInoperant` (jamais relancé) ou `SondeNonConcluante` (relancée
+        par le moteur) **avant** que l'agent ne reçoive sa tâche, et c'est la
+        cause que le journal consigne. Voir `_point_de_controle_verifie`.
         """
         env = self._auth_env()
         cli_path: Path | None = None
+        confinement: SessionConfinee | None = None
         if self._isolation is not None:
             cli_path = self._isolation.shim
             env |= self._isolation.env_sandbox(workspace, projet=projet)
+        else:
+            # Hors du conteneur jetable, plus rien n'emporte ce que la session
+            # lance en arrière-plan : le lanceur du confinement s'en charge (#1279).
+            confinement = SessionConfinee.preparer(_commande_du_cli())
+            cli_path = confinement.lanceur
+            env |= confinement.env
         # La frontière d'écriture du régime en place (#839) : armée si et
         # seulement si `workspace` **est** la racine du projet — un projet non
         # versionné se remplit dans sa racine, et ce que la copie garantissait
@@ -740,6 +787,22 @@ class ClaudeProvider(ModelProvider):
         # il n'y a ni fusion ni diff pour le rattraper. Rendue dans les trois
         # régimes — un cran borné doit être évaluable partout où il est écrit.
         portee = portee_de(workspace, projet)
+        # La sonde de démarrage (#1304) : une session qui arme le point de
+        # contrôle ne démarre pas tant qu'on ne sait pas qu'un refus y tient.
+        # Sans politique ni frontière, Maestro ne pose aucun refus — rien à sonder.
+        if politique is not None or frontiere is not None:
+            try:
+                # La sonde passe par le même lanceur que l'agent (#1279) : confinée
+                # comme lui, et son relevé — elle ne lance rien — est remplacé par
+                # celui de l'agent à sa clôture.
+                await self._point_de_controle_verifie(
+                    model=model, env=env, cli_path=cli_path, workspace=workspace
+                )
+            except BaseException:
+                # Aucune session d'agent ne suivra : le dossier du relevé part ici.
+                if confinement is not None:
+                    confinement.solder()
+                raise
         stderr = CollecteurStderr()
         serveurs = _serveurs_mcp(
             mcp_serveurs,
@@ -750,6 +813,7 @@ class ClaudeProvider(ModelProvider):
                 credit=credit_arbitrage,
                 on_courrier=on_courrier,
                 on_question=on_question,
+                on_etapes=on_etapes,
             ),
         )
         options = ClaudeAgentOptions(
@@ -809,7 +873,6 @@ class ClaudeProvider(ModelProvider):
                     plafond_tours=plafond_tours,
                     stderr=stderr,
                     regulateur=regulateur,
-                    on_etapes=on_etapes,
                 )
             return await _collect_response_pilotee(
                 prompt,
@@ -818,11 +881,219 @@ class ClaudeProvider(ModelProvider):
                 plafond_tours=plafond_tours,
                 stderr=stderr,
                 regulateur=regulateur,
-                on_etapes=on_etapes,
             )
         finally:
             if regulateur is not None:
                 regulateur.vider()
+            if confinement is not None:
+                _rendre_compte(confinement.solder(), on_processus)
+
+    async def _point_de_controle_verifie(
+        self,
+        *,
+        model: str,
+        env: dict[str, str],
+        cli_path: Path | None,
+        workspace: Path,
+    ) -> None:
+        """Rend la main si un refus de Maestro tient chez ce fournisseur — lève sinon (#1304).
+
+        Le verdict se **garde le temps de ce fournisseur** : ce que la sonde
+        éprouve — le CLI qu'il lance, le SDK qui lui sert le hook — ne change pas
+        d'une session à l'autre, et un run partage son fournisseur entre ses
+        tâches. Chaque session consulte donc ce verdict à son démarrage, et la
+        sonde ne se joue qu'à la première : payer un appel de modèle par tâche
+        pour reprouver la même chose serait une dépense sans information.
+
+        Ce qui est gardé, et ce qui ne l'est pas :
+
+        - un refus qui **tient** : gardé ;
+        - un garde-fou **inopérant** : gardé aussi, et relevé à chaque session —
+          c'est une propriété du fournisseur, et le reprouver à chaque tâche ne
+          ferait que payer le même constat ;
+        - une sonde **non concluante**, ou une panne du fournisseur pendant la
+          sonde : rien n'a été prouvé, donc rien n'est gardé, et la session
+          suivante — ou la relance de celle-ci — la rejoue.
+
+        Des sessions qui démarrent **ensemble** attendent la même sonde plutôt
+        que d'en lancer une chacune. Elle court dans sa propre tâche, protégée
+        (`shield`) : une session annulée pendant qu'elle l'attend ne l'annule pas
+        pour les autres.
+        """
+        if self._garde_fou_inoperant is not None:
+            raise GardeFouInoperant(str(self._garde_fou_inoperant))
+        if self._point_de_controle_tenu:
+            return
+        boucle = asyncio.get_running_loop()
+        en_vol = self._sonde_en_vol
+        if en_vol is None or en_vol.done() or en_vol.get_loop() is not boucle:
+            en_vol = boucle.create_task(
+                self._sonde(model=model, env=env, cli_path=cli_path, workspace=workspace)
+            )
+            en_vol.add_done_callback(_absorbe_sonde)
+            self._sonde_en_vol = en_vol
+        await asyncio.shield(en_vol)
+
+    async def _sonde(
+        self,
+        *,
+        model: str,
+        env: dict[str, str],
+        cli_path: Path | None,
+        workspace: Path,
+    ) -> None:
+        """Joue la sonde une fois, en lit le verdict sur son témoin, et le garde s'il est acquis.
+
+        La session de sonde est montée **comme celle de l'agent** là où c'est ce
+        qu'on éprouve — même modèle, même environnement (authentification, mode
+        isolé), même CLI, même répertoire, même mode de permissions — et réduite
+        au reste : aucun outil du CLI, un seul outil à elle, la vraie politique
+        de Maestro qui le refuse, et le hook de production (`_hook_permissions`)
+        comme point de contrôle. Le témoin (`controle.TemoinSonde`) relève ce que
+        le point de contrôle a lu et ce que l'outil a subi ; la prose de l'agent
+        de la sonde n'est pas lue.
+
+        Une panne du fournisseur pendant la sonde remonte telle quelle — avec son
+        stderr, et donc sa classification transitoire —, **sauf** si le témoin a
+        déjà vu l'appel : ce qui a été constaté l'a été, et vaut verdict. Le
+        plafond de tours de la sonde n'est pas une panne : il borne un agent qui
+        insisterait après le refus, et le témoin a alors tout ce qu'il faut.
+        """
+        temoin = controle.TemoinSonde()
+        erreur: Exception | None = None
+        try:
+            await _joue_sonde(
+                temoin, model=model, env=env, cli_path=cli_path, workspace=workspace
+            )
+        except TurnLimitReached:
+            pass
+        except Exception as exc:  # noqa: BLE001 — jugé sur le témoin juste en dessous
+            erreur = exc
+        if erreur is not None and not temoin.vus and not temoin.executions:
+            raise erreur
+        try:
+            temoin.verdict()
+        except GardeFouInoperant as exc:
+            self._garde_fou_inoperant = exc
+            raise
+        self._point_de_controle_tenu = True
+
+
+#: Le plafond de tours de la session de sonde : l'appel, puis le mot de la fin — et
+#: un tour de marge pour un agent qui rappellerait l'outil une fois refusé.
+TOURS_SONDE = 3
+
+
+async def _joue_sonde(
+    temoin: controle.TemoinSonde,
+    *,
+    model: str,
+    env: dict[str, str],
+    cli_path: Path | None,
+    workspace: Path,
+) -> None:
+    """La session de sonde du point de contrôle, jouée sur le fournisseur réel (#1304).
+
+    Rendue **à part** de `ClaudeProvider._sonde` pour que ce qui décide — le
+    témoin et son verdict — se lise sans monter de session, et que ce qui monte
+    la session tienne ici, en une fonction : les options du SDK, le serveur de la
+    sonde et son hook.
+
+    Le hook est **celui de production** (`_hook_permissions`), appliqué à une
+    vraie `PolitiqueOutils` : la sonde éprouve le chemin par lequel passe tout
+    refus de Maestro, pas un double écrit pour elle. Il est seulement précédé du
+    relevé du témoin, qui voit l'appel **tel que le point de contrôle le lit**.
+    """
+    # Import différé, comme dans `_hook_permissions` : `maestro.providers` ne
+    # dépend pas de `maestro.agents` à l'exécution.
+    from maestro.agents.permissions import PolitiqueOutils
+
+    politique = PolitiqueOutils(deny=tuple(controle.POLITIQUE_SONDE["deny"]))
+    point_de_controle = _hook_permissions(politique, None)
+
+    async def hook_sonde(
+        input_data: HookInput, tool_use_id: str | None, context: HookContext
+    ) -> HookJSONOutput:
+        temoin.voit(input_data)
+        sortie: HookJSONOutput = await point_de_controle(input_data, tool_use_id, context)
+        return sortie
+
+    @tool(controle.NOM_OUTIL_SONDE, controle.DESCRIPTION_OUTIL_SONDE, {})
+    async def sonder(args: dict[str, Any]) -> dict[str, Any]:
+        return {"content": [{"type": "text", "text": temoin.execute()}]}
+
+    stderr = CollecteurStderr()
+    options = ClaudeAgentOptions(
+        model=model,
+        system_prompt=controle.CONSIGNE_SONDE,
+        env=env,
+        cwd=workspace,
+        cli_path=cli_path,
+        stderr=stderr,
+        tools=[],
+        permission_mode="bypassPermissions",
+        max_turns=TOURS_SONDE,
+        mcp_servers={
+            controle.NOM_SERVEUR_SONDE: create_sdk_mcp_server(
+                name=controle.NOM_SERVEUR_SONDE, tools=[sonder]
+            )
+        },
+        strict_mcp_config=True,
+        setting_sources=sans_reglages_du_poste(),
+        skills=sans_skills_du_poste(),
+        max_buffer_size=PLAFOND_FLUX_OCTETS,
+        hooks={"PreToolUse": [HookMatcher(hooks=[hook_sonde])]},
+    )
+    await _collect_response(
+        controle.PROMPT_SONDE, options, plafond_tours=TOURS_SONDE, stderr=stderr
+    )
+
+
+def _absorbe_sonde(sonde: asyncio.Task[None]) -> None:
+    """Relève l'issue d'une sonde que plus personne n'attendait (#1304).
+
+    Même raison que `_absorbe_arbitrage_tardif` : une session annulée pendant
+    qu'elle attendait la sonde la laisse finir (`shield`), et une issue en échec
+    que personne ne relève serait signalée par asyncio comme une exception jamais
+    lue. Le verdict, lui, est déjà gardé par le fournisseur — rien n'est perdu.
+    """
+    if not sonde.cancelled():
+        sonde.exception()
+
+
+def _commande_du_cli() -> tuple[str, ...] | None:
+    """Le CLI que la session confinée lance (#1279) — celui que le SDK aurait pris.
+
+    Le SDK ne lance plus lui-même le CLI d'une session outillée : il lance le
+    lanceur du confinement, à qui il faut nommer la commande à confiner. C'est le
+    choix que le SDK faisait sans `cli_path`, et celui qu'il documente — le CLI
+    **embarqué** dans son paquet, utilisé par défaut —, sinon le `claude` du PATH
+    (`claude.exe` sous Windows : le SDK y refuse le `claude.cmd` de npm). Repris
+    ici parce que le SDK n'expose pas le sien ; `None` quand il n'y a ni l'un ni
+    l'autre, et la session tourne alors sans confinement — en le disant.
+    """
+    nom = "claude.exe" if sys.platform == "win32" else "claude"
+    embarque = Path(claude_agent_sdk.__file__).resolve().parent / "_bundled" / nom
+    if embarque.is_file():
+        return (str(embarque),)
+    trouve = shutil.which(nom)
+    return (trouve,) if trouve else None
+
+
+def _rendre_compte(
+    releve: ReleveConfinement, on_processus: Callable[[ReleveConfinement], None] | None
+) -> None:
+    """Remet le relevé du confinement à l'appelant — rien quand il n'y a rien à dire.
+
+    Best-effort, comme les autres canaux d'observation : un callback qui lève ne
+    doit ni casser la tâche, ni masquer l'exception qu'elle propage peut-être.
+    """
+    if on_processus is None or releve.vide:
+        return
+    try:
+        on_processus(releve)
+    except Exception:  # noqa: BLE001 — l'observation ne casse jamais l'observé
+        return
 
 
 def _outil_arbitrage(
@@ -1120,6 +1391,34 @@ def _outil_decision(on_decision: decision.Consigneur) -> SdkMcpTool[Any]:
     return consigner_decision
 
 
+def _outil_checklist(on_etapes: checklist.Releveur) -> SdkMcpTool[Any]:
+    """L'outil `tenir_checklist(etapes)` servi à l'agent (#1291).
+
+    Le plus mince des verbes du serveur, et c'est voulu : tout ce qu'il fait —
+    lire l'entrée, dire une faute, alimenter le canal, accuser réception — vit
+    dans `maestro.providers.checklist.servir`, qui ne sait rien du SDK. Ce qui
+    reste ici est la seule chose propre à ce fournisseur : l'enveloppe `@tool` et
+    la forme de la réponse MCP. Un autre fournisseur outillé servirait le même
+    contrat en changeant d'enveloppe, et c'est tout l'objet de #1291 — la
+    checklist ne dépend plus d'un outil du CLI, qu'une version nouvelle retire ou
+    renomme sans prévenir (docs/44).
+
+    Jumeau de `_outil_decision` sur le reste : **aucun `await`**, l'agent n'est
+    jamais suspendu, et aucune issue n'est rendue en **erreur d'outil** — une
+    entrée invalide se récrit, un canal en panne ne se rejoue pas.
+
+    Rendu **séparément de son serveur** comme ses voisins : il s'éprouve en
+    l'appelant comme le ferait le SDK, sans CLI ni quota
+    (`tests/test_checklist_tache.py`).
+    """
+
+    @tool(checklist.NOM_OUTIL, checklist.DESCRIPTION_OUTIL, checklist.SCHEMA_ENTREE)
+    async def tenir_checklist(args: dict[str, Any]) -> dict[str, Any]:
+        return {"content": [{"type": "text", "text": checklist.servir(args, on_etapes)}]}
+
+    return tenir_checklist
+
+
 @contextmanager
 def _fenetre_arbitrage(credit: CreditArbitrage | None) -> Iterator[None]:
     """Ouvre la fenêtre d'attente du crédit quand il y en a un (#584), sinon ne fait rien.
@@ -1144,6 +1443,7 @@ def _outils_maestro(
     credit: CreditArbitrage | None = None,
     on_courrier: courrier.Courrier | None = None,
     on_question: question.Questionneur | None = None,
+    on_etapes: checklist.Releveur | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """Les outils que le serveur `maestro` a **effectivement** à porter (#718).
 
@@ -1165,6 +1465,11 @@ def _outils_maestro(
     `on_question` (#1023) est le cinquième, et il prend le `credit` comme le
     premier : ce sont les deux seuls verbes qui **suspendent** l'agent, donc les
     deux seuls dont l'attente ne doit pas être facturée au délai de la tâche.
+
+    `on_etapes` (#1291) est le sixième, la checklist de la tâche. Il était le
+    seul canal de `run_agent` à ne pas avoir de verbe : on le remplissait en
+    lisant l'outil de liste du CLI. C'est cette lecture que ce verbe remplace, et
+    il suit la règle commune — sans canal, pas de verbe.
     """
     outils: list[SdkMcpTool[Any]] = []
     if on_arbitrage is not None:
@@ -1177,6 +1482,8 @@ def _outils_maestro(
         outils.append(_outil_courrier(on_courrier))
     if on_question is not None:
         outils.append(_outil_question(on_question, credit))
+    if on_etapes is not None:
+        outils.append(_outil_checklist(on_etapes))
     return outils
 
 
@@ -1331,6 +1638,13 @@ def _hook_permissions(
     qui lève l'est aussi (bus en panne — même règle que
     `Guardrails.demande_validation` depuis #9).
 
+    Et un troisième **en amont de tout** (#1304) : un appel dont le nom ne se lit
+    pas, ou dont l'entrée n'est pas un objet, est **refusé avec son motif**
+    (`maestro.providers.controle`). Il rendait `{}` jusque-là — « laisser
+    passer » —, si bien qu'un CLI qui aurait déplacé ces champs ouvrait la
+    frontière, la politique et la portée d'un seul coup, sans un mot. Le hook ne
+    devine plus rien de ce qu'il ne sait pas lire.
+
     Le hook ne lève jamais : un traçage en échec est avalé — l'observation ne
     casse pas l'exécution observée.
     """
@@ -1433,11 +1747,19 @@ def _hook_permissions(
     async def hook(
         input_data: HookInput, tool_use_id: str | None, context: HookContext
     ) -> HookJSONOutput:
-        outil = str(input_data.get("tool_name") or "")
-        if not outil:
-            return {}
+        # Fermé par défaut (#1304) : un appel qu'on ne sait pas nommer, ou dont
+        # l'entrée n'est pas un objet, est refusé — jamais laissé au flux normal.
+        # Tout ce qui suit repose sur ces deux lectures, et un CLI qui les
+        # déplacerait ouvrirait sinon la frontière, la politique et la portée
+        # d'un coup, sans un mot. La sonde de démarrage le dit avant l'agent.
+        outil = controle.nom_outil(input_data)
+        if outil is None:
+            return refuse(controle.OUTIL_SANS_NOM, controle.motif_sans_nom())
+        entree = controle.entree_outil(input_data)
+        if entree is None:
+            return refuse(outil, controle.motif_entree_illisible(outil))
         if frontiere is not None:
-            motif_frontiere = frontiere.refus(outil, input_data.get("tool_input"))
+            motif_frontiere = frontiere.refus(outil, entree)
             if motif_frontiere is not None:
                 return refuse(outil, motif_frontiere)
         if politique is None:
@@ -1452,9 +1774,7 @@ def _hook_permissions(
         # ailleurs, parce que c'est ici, et seulement ici, que les arguments de
         # l'appel existent. Sans portée déclarée, `hors_de_portee` rend "" et
         # tout ce qui suit est au bit près le régime d'avant ce lot.
-        sortie = hors_de_portee(
-            decision.portee, portee, outil, input_data.get("tool_input")
-        )
+        sortie = hors_de_portee(decision.portee, portee, outil, entree)
         decideur = DECIDEUR_DEFAUT if sortie else decision.decideur
         motif = motif_hors_portee(decision.motif, sortie) if sortie else decision.motif
         if decideur is Decideur.AUTO:
@@ -1467,12 +1787,12 @@ def _hook_permissions(
             # le distingue d'un `allow`.
             trace(outil, motif_auto(outil))
             return {}
-        if dispense_de_lecture(outil, input_data.get("tool_input")):
+        if dispense_de_lecture(outil, entree):
             # Rien n'est tracé, et c'est la même règle que `Verdict.PASSE` : il
             # n'y a pas d'acte à consigner. Ce que l'agent a fait reste visible
             # au fil temps réel, qui rend ses appels d'outils (#479).
             return {}
-        return await arbitre(outil, motif, input_data.get("tool_input"))
+        return await arbitre(outil, motif, entree)
 
     return hook
 
@@ -1589,7 +1909,6 @@ async def _collect_response(
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
     regulateur: RegulateurActivite | None = None,
-    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
 ) -> str:
     """Déroule `query`, assemble le texte de la réponse et signale l'usage (ticket #8).
 
@@ -1612,7 +1931,9 @@ async def _collect_response(
     que personne n'a lu.
 
     `regulateur` (#479) publie l'activité au fil du flux — None quand personne
-    n'écoute. `on_etapes` (#489) reçoit la checklist de l'agent, même régime.
+    n'écoute. La checklist de l'agent n'en part plus depuis #1291 : elle arrive
+    par son verbe, servi par le serveur `maestro`, et le flux n'est plus lu pour
+    elle.
 
     L'usage est signalé **tour par tour** depuis #835 (`_CompteurTours`), et non
     plus une fois au `ResultMessage` : c'est ce qui permet au moteur de relever
@@ -1624,7 +1945,7 @@ async def _collect_response(
     compteur = _CompteurTours()
     try:
         async for message in query(prompt=prompt, options=options):
-            _absorbe(message, parts, outils, regulateur, on_etapes, compteur=compteur)
+            _absorbe(message, parts, outils, regulateur, compteur=compteur)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
@@ -1705,8 +2026,8 @@ def _delta_texte(evenement: object) -> str:
     texte et ne rend donc rien.
 
     La lecture est **tolérante par construction** plutôt que gardée par un
-    schéma, et c'est la même règle que `maestro.providers.checklist` : un
-    événement d'une forme qu'on ne connaît pas encore vaut « rien à publier »,
+    schéma, et c'est la même règle que `maestro.providers.activite.cible_depuis` :
+    un événement d'une forme qu'on ne connaît pas encore vaut « rien à publier »,
     jamais une exception au milieu d'une réponse. Une frontière qui casserait sur
     un champ inattendu ferait d'une nouveauté d'API une panne de chat.
     """
@@ -1727,7 +2048,6 @@ async def _collect_response_pilotee(
     plafond_tours: int | None = None,
     stderr: CollecteurStderr | None = None,
     regulateur: RegulateurActivite | None = None,
-    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
 ) -> str:
     """Comme `_collect_response`, mais en session pilotée : serveurs MCP connectés d'abord.
 
@@ -1755,7 +2075,7 @@ async def _collect_response_pilotee(
             await _attend_serveurs_mcp(client, attendus)
             await client.query(prompt)
             async for message in client.receive_response():
-                _absorbe(message, parts, outils, regulateur, on_etapes, compteur=compteur)
+                _absorbe(message, parts, outils, regulateur, compteur=compteur)
                 if isinstance(message, ResultMessage) and message.is_error:
                     detail = message.result or message.subtype
                     if _MARQUEUR_MAX_TURNS in message.subtype:
@@ -1818,7 +2138,6 @@ def _absorbe(
     parts: list[str],
     outils: list[str],
     regulateur: RegulateurActivite | None = None,
-    on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
     *,
     compteur: _CompteurTours | None = None,
 ) -> None:
@@ -1846,7 +2165,9 @@ def _absorbe(
     - une session **coupée avant son résultat** (CLI mort, plafond crevé) garde
       désormais les tokens de ses tours dans le collecteur, là où elle n'y
       laissait rien : c'est ce que les relances agrègent, et ce qui donne prise
-      au plafond en tokens **pendant** une tâche au lieu d'après.
+      au plafond en tokens **pendant** une tâche au lieu d'après. Elle les garde
+      **non tarifés** (#1280) : aucun résultat n'est venu les couvrir, et le
+      grand livre le dit au lieu de les compter pour rien.
 
     Sans `compteur`, le comportement est celui d'avant ce lot — un seul
     signalement, au résultat.
@@ -1857,11 +2178,12 @@ def _absorbe(
     constat du ticket — la matière traversait cette fonction et personne ne la
     publiait.
 
-    Et c'est pour la même raison que la **checklist** de l'agent part d'ici
-    (#489) : elle est l'entrée d'un appel d'outil comme un autre, et cet appel
-    passait déjà là. `on_etapes` la reçoit **en plus** du régulateur, jamais à sa
-    place — poser une case à cocher est aussi un geste, et le taire au fil
-    d'activité ferait un trou dans la séquence que #479 existe pour reconstituer.
+    ⚠ La **checklist** de l'agent n'en part plus (#1291). Elle se lisait ici,
+    dans l'entrée des appels `TodoWrite` du CLI (#489), et c'est ce couplage à un
+    outil interne du CLI qui l'a laissée à 0/N quand le CLI en a changé : elle
+    arrive désormais par son verbe (`_outil_checklist`). Aucun nom d'outil n'est
+    donc plus lu ici — l'appel au verbe, comme n'importe quel autre, reste un
+    geste pour le régulateur et un outil employé pour le grand livre.
 
     ⚠ Les deux comptes ne sont **pas** le même et ne doivent pas être fusionnés.
     `outils` reste **dédupliqué** parce qu'il alimente `StepUsage.outils`, dont
@@ -1881,8 +2203,6 @@ def _absorbe(
             elif isinstance(block, ToolUseBlock):
                 if regulateur is not None:
                     regulateur.note(Geste.outil_appele(block.name, block.input))
-                if on_etapes is not None and est_checklist(block.name):
-                    _publie_etapes(on_etapes, block.input)
                 if block.name not in outils:
                     outils.append(block.name)
         if compteur is not None:
@@ -1892,25 +2212,6 @@ def _absorbe(
     elif isinstance(message, ResultMessage):
         total = _usage_from_result(message, tuple(outils))
         report_usage(total if compteur is None else compteur.reste(total))
-
-
-def _publie_etapes(
-    on_etapes: Callable[[Sequence[EtapeTache]], None], entree: object
-) -> None:
-    """Lit la checklist de l'agent dans l'entrée de l'outil et la signale (#489).
-
-    Ne lève jamais, aux deux étages : ni la lecture (tolérante par construction,
-    `maestro.providers.checklist`), ni le callback — même règle que `on_refus` et
-    que le régulateur d'activité. Une liste vide n'est pas signalée : un appel
-    illisible dirait « l'agent n'a plus rien à faire » là où il ne dit rien du
-    tout, et `SuiviChecklist` effacerait une checklist en place.
-    """
-    try:
-        etapes = etapes_depuis_outil(entree)
-        if etapes:
-            on_etapes(etapes)
-    except Exception:  # noqa: BLE001 — observer ne casse jamais l'observé
-        pass
 
 
 def _config_mcp_sdk(serveur: ServeurMcp) -> McpServerConfig:
@@ -2039,12 +2340,22 @@ class _CompteurTours:
         return ajout if (ajout.tokens_total or ajout.tours) else None
 
     def reste(self, resultat: StepUsage) -> StepUsage:
-        """Ce que `resultat` porte en plus des tours déjà signalés (tours + reste = résultat)."""
+        """Ce que `resultat` porte en plus des tours déjà signalés (tours + reste = résultat).
+
+        La part **non tarifée** suit la même soustraction (#1280), et c'est ce qui
+        fait du résultat le seul geste qui tarifie après coup : les tours, signalés
+        sans coût, en ont chacun une égale à leurs tokens ; un résultat tarifé n'en
+        a aucune, donc son reste retire exactement celle des tours de **cette**
+        session. Une session tuée avant son résultat garde la sienne, et le
+        résultat d'une relance ne couvre pas la session d'avant — chaque tentative
+        a son compteur.
+        """
         return replace(
             resultat,
             tokens_entree=resultat.tokens_entree - self.total.tokens_entree,
             tokens_sortie=resultat.tokens_sortie - self.total.tokens_sortie,
             tours=resultat.tours - self.total.tours,
+            tokens_non_tarifes=resultat.tokens_non_tarifes - self.total.tokens_non_tarifes,
         )
 
 

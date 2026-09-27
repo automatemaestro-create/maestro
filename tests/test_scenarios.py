@@ -64,6 +64,8 @@ from maestro.controltower.state import (
     VALIDATION_APPROUVEE,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.detail_tache import ETAPE_A_FAIRE, ETAPE_EN_COURS, ETAPE_FAITE
+from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 from maestro.scenarios import banc, etat
 from maestro.scenarios.api import (
@@ -117,6 +119,23 @@ from maestro.scenarios.scenarios import (
 # --- La fausse API ------------------------------------------------------------
 
 
+def _carte(
+    titre: str = "Écrire l'application",
+    *,
+    statut: str = STATUT_TERMINEE,
+    etats: Sequence[str] = (ETAPE_FAITE, ETAPE_FAITE),
+) -> dict[str, Any]:
+    """Une carte de `GET /api/taches` — le peu dont l'oracle de checklist a besoin (#1291)."""
+    return {
+        "id": titre.lower().replace(" ", "-"),
+        "titre": titre,
+        "statut": statut,
+        "etapes": [
+            {"libelle": f"Étape {rang}", "etat": etat} for rang, etat in enumerate(etats, 1)
+        ],
+    }
+
+
 @dataclass
 class RunFactice:
     """Un run de la fausse API : ce qu'on lui a demandé, et comment il s'est soldé."""
@@ -132,6 +151,9 @@ class RunFactice:
     #: Combien de lectures avant de rendre le statut final — 0 : tout de suite.
     lectures_avant_la_fin: int = 0
     lectures: int = 0
+    #: Ce que `GET /api/taches?run=` sert pour ce run (#1291). Par défaut, le
+    #: produit d'aujourd'hui : une tâche terminée, sa checklist cochée par le verbe.
+    taches: list[dict[str, Any]] = field(default_factory=lambda: [_carte()])
 
     def to_dict(self) -> dict[str, Any]:
         """La forme de `GET /api/executions/{run_id}` — le peu dont le banc a besoin."""
@@ -275,6 +297,7 @@ class FausseAPI:
         self.appels: list[tuple[str, str]] = []
         self.recrutements: list[dict[str, Any]] = []
         self.retires: list[str] = []
+        self.lectures_taches: list[dict[str, str]] = []
         self._attente: dict[str, str] = {}
         self._compteur = 0
 
@@ -328,6 +351,8 @@ class FausseAPI:
             return self._cadrer(corps or {})
         if chemin.startswith("/api/executions/"):
             return self._execution(chemin.rsplit("/", 1)[-1])
+        if chemin == "/api/taches":
+            return self._taches(params or {})
         if chemin == "/api/validations":
             return Reponse(statut=200, corps=self.validations)
         if chemin.startswith("/api/validations/"):
@@ -505,6 +530,14 @@ class FausseAPI:
             if run.run_id == run_id:
                 return Reponse(statut=200, corps=run.to_dict())
         return Reponse(statut=404, corps={"detail": "inconnu"}, texte="inconnu")
+
+    def _taches(self, params: Mapping[str, str]) -> Reponse:
+        """`GET /api/taches?projet=…&run=…` : les cartes du run, sur son projet (#1291)."""
+        self.lectures_taches.append(dict(params))
+        for run in self.runs:
+            if run.run_id == params.get("run") and run.projet_id == params.get("projet"):
+                return Reponse(statut=200, corps=list(run.taches))
+        return Reponse(statut=404, corps={"detail": "run-inconnu"}, texte="run-inconnu")
 
     def _decider(self, tache_id: str) -> Reponse:
         for demande in self.validations:
@@ -1114,6 +1147,88 @@ def test_une_validation_de_tache_n_est_pas_une_validation_de_commande(
     assert issue.vert, issue.motif
     assert ctx.arbitrages == [""]
     assert ctx.validations_de_commande == ()
+
+
+def _moteur_qui_ecrit_l_application_avec(*cartes: dict[str, Any]):
+    """Un run qui livre l'application, et dont les cartes montrent `cartes` (#1291)."""
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        run.taches = list(cartes)
+        _moteur_qui_ecrit_l_application(run, racine)
+
+    return moteur
+
+
+def test_s2_est_rouge_quand_toutes_les_checklists_restent_a_zero(tmp_path: Path) -> None:
+    """Le défaut de #1291, tel qu'il se voyait : l'application tourne, et chaque carte
+    finit à « 0/N · relevé incomplet ».
+
+    Aucun oracle ne l'a vu pendant des jours, parce que tous regardaient le livrable.
+    Le troisième de S2 regarde la carte, là où le défaut se lisait.
+    """
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application_avec(
+            _carte(etats=(ETAPE_A_FAIRE, ETAPE_A_FAIRE, ETAPE_A_FAIRE))
+        )
+    )
+    issue, ctx = _banc(tmp_path, api, lanceur=lambda _r, _p: (0, "bonjour")).jouer(
+        _scenario("S2")
+    )
+
+    assert not issue.vert
+    assert "aucune tâche terminée ne finit à N/N" in issue.motif
+    assert "0/3" in issue.motif
+    # Lu sur le projet et le run du scénario, jamais en vue transverse.
+    assert api.lectures_taches == [{"projet": ctx.projet_id, "run": issue.run_id}]
+
+
+def test_s2_est_rouge_quand_aucune_checklist_n_a_ete_tenue(tmp_path: Path) -> None:
+    """Une tâche sans aucune étape : l'agent n'a jamais appelé le verbe, et le plan
+    n'annonçait rien. Terminée n'est pas « tenue »."""
+    api = FausseAPI(moteur=_moteur_qui_ecrit_l_application_avec(_carte(etats=())))
+    issue, _ctx = _banc(tmp_path, api, lanceur=lambda _r, _p: (0, "bonjour")).jouer(
+        _scenario("S2")
+    )
+
+    assert not issue.vert
+    assert "0/0" in issue.motif
+
+
+def test_s2_ne_compte_pas_une_checklist_complete_sur_une_tache_en_echec(
+    tmp_path: Path,
+) -> None:
+    """N/N ne vaut que sous un verdict de succès : c'est la tâche **terminée** qu'on lit."""
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application_avec(_carte(statut=STATUT_ECHEC))
+    )
+    issue, _ctx = _banc(tmp_path, api, lanceur=lambda _r, _p: (0, "bonjour")).jouer(
+        _scenario("S2")
+    )
+
+    assert not issue.vert
+
+
+def test_s2_une_tache_a_n_sur_n_suffit_un_ecart_reel_voisin_ne_rougit_pas(
+    tmp_path: Path,
+) -> None:
+    """« relevé incomplet » reste pour un écart **réel** (#1112) : une tâche voisine à
+    1/2 n'est pas le défaut gardé ici, et le relevé la montre sans en faire un rouge."""
+    api = FausseAPI(
+        moteur=_moteur_qui_ecrit_l_application_avec(
+            _carte("Écrire l'application"),
+            _carte("Documenter", etats=(ETAPE_FAITE, ETAPE_EN_COURS)),
+        )
+    )
+    issue, ctx = _banc(tmp_path, api, lanceur=lambda _r, _p: (0, "bonjour")).jouer(
+        _scenario("S2")
+    )
+
+    assert issue.vert, issue.motif
+    assert "checklist tenue" in issue.motif
+    assert "« Écrire l'application » 2/2" in issue.motif
+    assert "« Documenter » 1/2" in issue.motif
+    # Et le relevé est au déroulé : un vert se relit, chiffres compris.
+    assert any(etape.libelle == "checklists du run" for etape in ctx.journal.etapes)
 
 
 def test_s2_lance_vraiment_l_application_par_defaut(tmp_path: Path) -> None:

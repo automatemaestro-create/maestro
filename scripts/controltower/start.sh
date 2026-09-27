@@ -344,6 +344,29 @@ attendre_http() {
   done
 }
 
+# Les journaux qui portent ENCORE le jeton d'API en clair (#1292). L'API le masque désormais dans
+# tout ce qu'elle écrit (`maestro.controltower.acces.FiltreDuJeton`), mais un journal écrit avant
+# n'est PAS réécrit : on le NOMME, sans y toucher — le supprimer reste le geste de la personne.
+# Le critère est la VALEUR du jeton, le seul exact : un journal masqué n'en contient plus rien, et
+# on ne réécrit pas ici la forme du masque. Le jeton passe à grep par un descripteur, jamais par
+# sa ligne de commande, qu'une liste des processus montrerait. Balayés : les `*.log` de la copie.
+# Appelé APRÈS le démarrage : les journaux de ces ports viennent d'être réécrits, et seuls restent
+# nommés ceux qui survivent à ce démarrage. Muet en régime ouvert (aucun jeton en main) et quand
+# il n'y a rien.
+signaler_journaux_exposes() {
+  local exposes fichier
+  [ -n "$JETON_API" ] || return 0
+  [ -d "$RACINE/.maestro" ] || return 0
+  exposes="$(grep -rlF --include='*.log' -f <(printf '%s\n' "$JETON_API") \
+    "$RACINE/.maestro" 2>/dev/null || true)"
+  [ -n "$exposes" ] || return 0
+  echo "  ⚠ jeton d'API en clair dans des journaux écrits avant son masquage (#1292) — rien ne les réécrit :"
+  while IFS= read -r fichier; do
+    echo "      · ${fichier#"$RACINE"/}"
+  done <<<"$exposes"
+  echo "    les supprimer : ils ne servent plus au diagnostic, et le jeton n'a rien à faire dans un fichier lisible"
+}
+
 # Un Chromium INSTALLÉ sur la machine (Chrome/Edge/Chromium), premier trouvé — c'est le repli
 # quand on ne sait pas lire le navigateur par défaut du poste (#200). Ses options (--user-data-dir,
 # --new-window) sont celles de la fenêtre isolée. Ne consulte PAS MAESTRO_BROWSER : la priorité est
@@ -1031,6 +1054,7 @@ elif [ "$ARRET_AUTO" = 1 ]; then
 else
   echo "  runs en vol : soldés par l'arrêt, reprenables au redémarrage (MAESTRO_EXTINCTION=0 pour laisser tourner)"
 fi
+signaler_journaux_exposes
 
 # ── Rejouer l'état du banc (#1164) ───────────────────────────────────────────
 # Le passage se joue AU PREMIER PLAN, contre la stack qu'on vient de servir : c'est

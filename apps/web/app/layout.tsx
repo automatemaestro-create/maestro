@@ -5,8 +5,14 @@ import { SCRIPT_INIT_THEME } from "@/lib/theme";
 
 import "./globals.css";
 
+/**
+ * « Maestro », et rien d'autre (#1293) : c'est le titre de la fenêtre de la coque
+ * — Electron reprend le `<title>` du document — comme celui de l'onglet. Il
+ * disait encore « Control Tower », le nom de l'écran d'avant l'atelier, et c'est
+ * sous ce titre-là que le retex du 2026-09-24 a vu revenir l'ancien produit.
+ */
 export const metadata: Metadata = {
-  title: "Maestro — Control Tower",
+  title: "Maestro",
   description:
     "Poste de pilotage de l'orchestration : agents, tâches et coûts en temps réel.",
 };

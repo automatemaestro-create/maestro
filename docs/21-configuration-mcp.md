@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Configuration MCP — ce qui dépend du client, ce qui dépend de l'outil (ticket #126)
 
 **Version :** 0.3 — §3 mis à jour après livraison du parent #129 (pool projet,

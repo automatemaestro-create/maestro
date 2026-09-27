@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # Cahier des charges — Maestro
 
 **Version :** 0.1 (cadrage)

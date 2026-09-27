@@ -42,7 +42,11 @@ projection → vues ; ces tests le suivent d'un bout à l'autre.
    tant que son équipe n'a pas été validée, les **gabarits** de rôle restent
    lisibles hors projet, et la fiche d'un gabarit répond comme la liste. Mesuré
    ici parce qu'une liste vide ne prouve quelque chose que sur un projet dont on
-   sait qu'il est déclaré.
+   sait qu'il est déclaré ;
+⑨ **la fin d'un run atteint la vue de son projet** (#1290) : l'issue, la pause,
+   la reprise et le récit de fin partent sans projet, et la pompe les rattache
+   au projet de leur run avant de les diffuser et de les consigner — au rejeu
+   aussi. Un run sans projet ne s'en voit pas prêter un.
 
 Ni réseau ni Redis : bus mémoire, fournisseurs factices, TestClient de Starlette,
 dépôt de projets jetable (la portée exige des projets réellement déclarés).
@@ -61,7 +65,12 @@ from maestro.agents.catalog import GABARITS_DU_CODE
 from maestro.agents.store import AgentStore
 from maestro.appartenance import LONGUEUR_MAX_ID, projet_id_valide
 from maestro.controltower import (
+    EVENEMENT_CHAT_MESSAGE,
+    EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_TACHE_STATUT,
+    EXECUTION_ANNULEE,
+    EXECUTION_ECHEC,
+    EXECUTION_TERMINEE,
     ControlTowerState,
     Event,
     InMemoryEventBus,
@@ -72,6 +81,7 @@ from maestro.controltower import (
 from maestro.controltower.analytics import agrege_couts
 from maestro.controltower.portee import PorteeProjet, PorteeRefusee, resoudre_portee
 from maestro.controltower.projets import ServiceProjets
+from maestro.controltower.state import ORDRE_PAUSE, ORDRE_REPRISE
 from maestro.engine import OrchestrationEngine
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
@@ -626,12 +636,15 @@ def client_journal(projets: ServiceProjets, ids: tuple[str, str]) -> TestClient:
     """App réelle dont le journal durable porte déjà des entrées des deux bords."""
     projet, autre = ids
     log = InMemoryEventLog()
-    for projet_id in (projet, projet, autre, None):
+    # Un run par projet : l'entrée sans projet est celle d'un run qui n'en a pas.
+    # Posée dans un run qui en a un, le rejeu la rattacherait à ce projet
+    # (#1290) — ce qui n'est pas ce que mesure « hors projet ».
+    for run_id, projet_id in (("r1", projet), ("r1", projet), ("r2", autre), ("r3", None)):
         asyncio.run(
             log.consigner(
                 Event(
                     type=EVENEMENT_TACHE_STATUT,
-                    run_id="r1",
+                    run_id=run_id,
                     tache_id="t1",
                     statut="en_cours",
                     projet_id=projet_id,
@@ -918,3 +931,176 @@ def test_l_assistance_ignore_le_projet_de_configuration(
         client_chat_equipe.get("/api/chat/assistance", params={"projet": projet}).status_code
         == 200
     )
+
+
+# --- ⑨ La fin d'un run atteint la vue de son projet (#1290) -------------------
+#
+# Le retex du 2026-09-24 : un run fini depuis quinze minutes en base restait
+# « En cours » à l'écran. Son issue part **sans projet** — c'est ce que publie un
+# hôte détaché qui solde son run (`bridge.solder_le_run`), et l'hôte en process
+# aussi —, si bien que la connexion d'une vue de projet, qui ne retient que
+# l'égalité stricte (`PorteeProjet.retient`), ne la recevait jamais. La pompe
+# rattache désormais un événement sans projet au projet **de son run**, lu dans
+# la projection avant de diffuser : un seul endroit pour tous les émetteurs.
+
+
+def _cycle_de_vie(run_id: str, statut: str) -> Event:
+    """L'issue d'un run telle qu'un hôte la publie : sans `projet_id`."""
+    return Event(type=EVENEMENT_EXECUTION_STATUT, run_id=run_id, statut=statut)
+
+
+@pytest.fixture()
+def flux(projets: ServiceProjets, ids: tuple[str, str]):
+    """App réelle sur bus mémoire : `run-1` est au premier projet, `run-2` à l'autre.
+
+    Chaque run tient son projet de sa première étape, comme un run lancé depuis
+    la Control Tower le tient de son lancement. Rend le client **et** le bus, sur
+    lequel le test publie ce qu'un hôte de run publierait.
+    """
+    projet, autre = ids
+    bus = InMemoryEventBus()
+    state = ControlTowerState()
+    state.appliquer(_evenement(tache_id="t1", run_id="run-1", projet_id=projet))
+    state.appliquer(_evenement(tache_id="t2", run_id="run-2", projet_id=autre))
+    with TestClient(create_app(bus=bus, state=state, projets=projets)) as client:
+        yield client, bus
+
+
+@pytest.mark.parametrize(
+    "statut",
+    [EXECUTION_TERMINEE, EXECUTION_ECHEC, EXECUTION_ANNULEE, ORDRE_PAUSE, ORDRE_REPRISE],
+)
+def test_le_cycle_de_vie_d_un_run_atteint_la_vue_de_son_projet_sans_porter_de_projet(
+    flux, ids: tuple[str, str], statut: str
+) -> None:
+    """Le critère 1 : fin, pause, reprise et annulation, quel que soit l'hôte.
+
+    Un **témoin** qui porte son projet suit l'issue sur le bus : sans le
+    rattachement, c'est lui qui arrive le premier — le test échoue au lieu de
+    bloquer sur une trame qui ne viendra jamais.
+    """
+    client, bus = flux
+    projet, _ = ids
+    with client.websocket_connect(f"/ws/evenements?projet={projet}") as socket:
+        client.portal.call(bus.publish, _cycle_de_vie("run-1", statut))
+        client.portal.call(
+            bus.publish, _evenement(tache_id="t1", run_id="run-1", projet_id=projet)
+        )
+        recu = socket.receive_json()
+
+    assert recu["type"] == EVENEMENT_EXECUTION_STATUT
+    assert recu["statut"] == statut
+    assert recu["projet_id"] == projet
+
+
+def test_le_recit_de_fin_atteint_lui_aussi_la_vue_du_projet(
+    flux, ids: tuple[str, str]
+) -> None:
+    """Le message du fil qui raconte la fin (#1224) porte le run, pas le projet.
+
+    C'est lui qui fait relire l'état à la vue du projet quand l'issue et le récit
+    se suivent : le rattacher par le même geste couvre « les messages du chat »
+    que le ticket nomme.
+    """
+    client, bus = flux
+    projet, _ = ids
+    recit = Event(
+        type=EVENEMENT_CHAT_MESSAGE, run_id="run-1", agent="orchestration", statut="agent"
+    )
+    with client.websocket_connect(f"/ws/evenements?projet={projet}") as socket:
+        client.portal.call(bus.publish, recit)
+        client.portal.call(
+            bus.publish, _evenement(tache_id="t1", run_id="run-1", projet_id=projet)
+        )
+        recu = socket.receive_json()
+
+    assert recu["type"] == EVENEMENT_CHAT_MESSAGE
+    assert recu["projet_id"] == projet
+
+
+def test_la_fin_d_un_run_n_atteint_pas_la_vue_d_un_autre_projet(
+    flux, ids: tuple[str, str]
+) -> None:
+    """Le rattachement lit le projet **du run**, il n'élargit rien (#277)."""
+    client, bus = flux
+    _, autre = ids
+    with client.websocket_connect(f"/ws/evenements?projet={autre}") as socket:
+        client.portal.call(bus.publish, _cycle_de_vie("run-1", EXECUTION_TERMINEE))
+        client.portal.call(
+            bus.publish, _evenement(tache_id="t2", run_id="run-2", projet_id=autre)
+        )
+        recu = socket.receive_json()
+
+    assert recu["type"] == EVENEMENT_TACHE_STATUT
+    assert recu["run_id"] == "run-2"
+
+
+def test_un_run_sans_projet_reste_hors_de_toute_vue_de_projet(
+    projets: ServiceProjets, ids: tuple[str, str]
+) -> None:
+    """Rien n'est deviné : un run qui ne relève d'aucun projet ne s'en voit pas prêter un."""
+    projet, _ = ids
+    bus = InMemoryEventBus()
+    state = ControlTowerState()
+    state.appliquer(_evenement(tache_id="t3", run_id="run-3"))
+    with TestClient(create_app(bus=bus, state=state, projets=projets)) as client:
+        with client.websocket_connect("/ws/evenements?projet=aucun") as socket:
+            client.portal.call(bus.publish, _cycle_de_vie("run-3", EXECUTION_TERMINEE))
+            recu = socket.receive_json()
+
+    assert recu["run_id"] == "run-3"
+    assert recu["projet_id"] is None
+
+
+def test_la_fin_d_un_run_se_relit_dans_le_journal_de_son_projet(
+    flux, ids: tuple[str, str]
+) -> None:
+    """Le journal requêtable consigne l'événement **rattaché** (#478).
+
+    Un client qui recharge sur une trame qu'il vient de recevoir doit la
+    retrouver dans l'historique de sa vue : diffuser l'issue au projet sans la
+    consigner au projet ferait mentir cette promesse de la pompe.
+    """
+    client, bus = flux
+    projet, _ = ids
+    with client.websocket_connect(f"/ws/evenements?projet={projet}") as socket:
+        client.portal.call(bus.publish, _cycle_de_vie("run-1", EXECUTION_TERMINEE))
+        # Le témoin garantit qu'une trame arrive, rattachement ou non : la pompe
+        # traite dans l'ordre, donc l'issue est consignée quand elle la reçoit.
+        client.portal.call(
+            bus.publish, _evenement(tache_id="t1", run_id="run-1", projet_id=projet)
+        )
+        socket.receive_json()
+
+    page = client.get(
+        "/api/journal", params={"projet": projet, "type": EVENEMENT_EXECUTION_STATUT}
+    ).json()
+    assert [(e["run_id"], e["statut"]) for e in page["entrees"]] == [
+        ("run-1", EXECUTION_TERMINEE)
+    ]
+
+
+def test_le_rejeu_rattache_aussi_la_fin_d_un_run_a_son_projet(
+    projets: ServiceProjets, ids: tuple[str, str]
+) -> None:
+    """Après un redémarrage, le journal d'un projet porte encore la fin de ses runs.
+
+    Le journal durable garde l'événement tel qu'il a été publié — sans projet —,
+    et c'est au rejeu que la projection, qui a déjà vu le lancement, le rattache.
+    """
+    projet, _ = ids
+    log = InMemoryEventLog()
+    for event in (
+        _evenement(tache_id="t1", run_id="run-1", projet_id=projet),
+        _cycle_de_vie("run-1", EXECUTION_ECHEC),
+    ):
+        asyncio.run(log.consigner(event))
+    app = create_app(
+        bus=InMemoryEventBus(), state=ControlTowerState(), projets=projets, event_log=log
+    )
+    with TestClient(app) as client:
+        page = client.get(
+            "/api/journal", params={"projet": projet, "type": EVENEMENT_EXECUTION_STATUT}
+        ).json()
+
+    assert [(e["run_id"], e["projet_id"]) for e in page["entrees"]] == [("run-1", projet)]

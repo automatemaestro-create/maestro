@@ -1,3 +1,4 @@
+<!-- documentation: produit -->
 # 33 — L'orchestrateur surveille son run : note de décision
 
 > Ticket #651. Décision datée du **2026-08-28**. Faits mesurés sur `origin/main` à `1bef04a` ;
