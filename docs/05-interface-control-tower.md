@@ -792,6 +792,18 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
   carte. Aucune navigation : la vue du run reste où elle était. Une tâche **sans
   détail reste exactement la carte d'avant** : pas de bouton, pas de curseur qui
   promet une ouverture, pas de panneau vide.
+- **Le détail s'ouvre sur la vérification de la tâche** (#1177, [docs/45](./45-decision-une-tache-verifiee-en-l-executant.md)) :
+  « a-t-elle vraiment tenu ce qu'on lui demandait ? » est la première question,
+  donc la première section. Le verdict vient compté — pastille à glyphe
+  *Vérifiée* / *Non tenue* / *Non vérifiée*, `tenus/total`, numéro de livraison,
+  « renvoyée par la QA » le cas échéant —, puis un critère par ligne avec son
+  glyphe (✓ tenu, ✗ non tenu, ⊘ non joué) et son état en toutes lettres. Ce qui
+  **ne tient pas** montre sa preuve d'office : la commande telle qu'elle a été
+  jouée (`$ … → code N`) et la fin de sa sortie, ou ce que la lecture n'a pas
+  trouvé ; ce qui **tient** tient en une ligne qui se déplie. Forme tranchée sur
+  pièces (commentaire « Variante retenue » de #1177), d'après le résumé d'un run
+  GitHub Actions et la page d'un job GitLab. La vérification suffit à ouvrir le
+  panneau d'une tâche qui n'a pas d'autre détail.
 - Création d'une tâche : soit en langage naturel (l'orchestrateur la découpe), soit manuellement.
 
 > **D'où viennent ces champs.** `description`, `etapes` et `liens` sont portés

@@ -8,8 +8,11 @@
  * détail qui la rend (`PanneauDetailTache`, via le Kanban).
  */
 
-import { describe, expect, it } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
+import { Kanban } from "@/components/Kanban";
 import { detailDe, verificationDe } from "@/lib/detailTache";
 import { resumeEvenement } from "@/lib/evenements";
 import { libelleStatut } from "@/lib/format";
@@ -24,7 +27,7 @@ import {
   type VerificationTache,
 } from "@/lib/types";
 
-import { evenementFactice, tacheFactice } from "./aides";
+import { agentFactice, evenementFactice, projetFactice, tacheFactice } from "./aides";
 
 /** Une vérification telle que l'API la sert — un critère tenu, un qui ne l'est pas. */
 function verificationFactice(
@@ -134,6 +137,155 @@ describe("verificationDe", () => {
 
     expect(detail.vide).toBe(false);
     expect(detail.verification?.statut).toBe(VERIFICATION_NON_TENUE);
+  });
+});
+
+/** Ouvre le panneau de détail de la seule tâche du Kanban, et le rend. */
+async function panneauDe(verification: VerificationTache | null) {
+  render(
+    <Kanban
+      taches={[tacheFactice({ titre: "Écrire l'API", statut: "echec", verification })]}
+      agents={[agentFactice({ nom: "dev", role: "Développeur" })]}
+      reassigner={vi.fn()}
+      projet={projetFactice()}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: /Ouvrir le détail de la tâche/ }));
+  return screen.getByRole("dialog");
+}
+
+describe("le détail d'une tâche montre sa vérification (variante A retenue)", () => {
+  it("ouvre sur le verdict compté, avant la description", async () => {
+    const panneau = await panneauDe(verificationFactice());
+    const section = within(panneau).getByRole("region", { name: "Vérification" });
+
+    expect(within(section).getByText("1/2")).toBeInTheDocument();
+    expect(within(section).getByText("Non tenue")).toBeInTheDocument();
+    expect(within(section).getByText("livraison n° 2")).toBeInTheDocument();
+    // La section vient en tête du corps du panneau.
+    const sections = within(panneau).getAllByRole("region");
+    expect(sections[0]).toBe(section);
+  });
+
+  it("montre d'office la preuve d'un critère qui ne tient pas", async () => {
+    const panneau = await panneauDe(verificationFactice());
+    const section = within(panneau).getByRole("region", { name: "Vérification" });
+
+    // La commande telle qu'elle a été jouée, et son code (réserve 1 du regard neuf)…
+    expect(within(section).getByText("$ pytest -q → code 1")).toBeInTheDocument();
+    // …puis la fin de sa sortie, sans geste à faire.
+    const preuve = within(section).getByText(/assert 500 == 200/);
+    expect(preuve.tagName).toBe("PRE");
+    expect(preuve.closest("details")).toBeNull();
+  });
+
+  it("un critère tenu tient en une ligne qui se déplie", async () => {
+    const panneau = await panneauDe(verificationFactice());
+    const section = within(panneau).getByRole("region", { name: "Vérification" });
+
+    const trace = within(section).getByText("$ python -c 'import app' → code 0");
+    expect(trace.tagName).toBe("SUMMARY");
+    expect(trace.className).toContain("truncate");
+  });
+
+  it("une lecture tenue dit ce qu'elle a trouvé dans le livrable (réserve 4)", async () => {
+    const panneau = await panneauDe(
+      verificationFactice({
+        statut: VERIFICATION_TENUE,
+        constats: [
+          {
+            critere: "le rapport rend un verdict",
+            etat: CONSTAT_TENU,
+            preuve: "« Verdict : conforme »",
+            commande: "",
+            code: null,
+          },
+        ],
+      }),
+    );
+
+    expect(
+      within(panneau).getByText("lu dans le livrable : « Verdict : conforme »"),
+    ).toBeInTheDocument();
+    expect(within(panneau).getByText("Vérifiée")).toBeInTheDocument();
+  });
+
+  it("chaque état se dit en toutes lettres, jamais par la seule couleur", async () => {
+    const panneau = await panneauDe(
+      verificationFactice({
+        statut: VERIFICATION_IMPOSSIBLE,
+        constats: [
+          {
+            critere: "le service démarre",
+            etat: CONSTAT_NON_JOUE,
+            preuve: "pas jouée — la commande sort du dossier du projet",
+            commande: "sudo systemctl start app",
+            code: null,
+          },
+        ],
+      }),
+    );
+    const section = within(panneau).getByRole("region", { name: "Vérification" });
+
+    expect(within(section).getByText("Non vérifiée")).toBeInTheDocument();
+    expect(within(section).getByText(/— non joué/)).toBeInTheDocument();
+    // Pas de code sur une commande qui n'a pas été jouée.
+    expect(within(section).getByText("$ sudo systemctl start app")).toBeInTheDocument();
+    expect(within(section).getByText(/sort du dossier du projet/)).toBeInTheDocument();
+  });
+
+  it("dit pourquoi rien n'a pu être vérifié", async () => {
+    const panneau = await panneauDe({
+      statut: VERIFICATION_IMPOSSIBLE,
+      resume: "vérification impossible : aucun contrôle",
+      empechement: "le vérificateur n'a établi aucun contrôle",
+      constats: [],
+    });
+
+    expect(
+      within(panneau).getByText("le vérificateur n'a établi aucun contrôle"),
+    ).toBeInTheDocument();
+  });
+
+  it("dit qu'un livrable a été renvoyé par la QA", async () => {
+    const panneau = await panneauDe(
+      verificationFactice({
+        livraison: undefined,
+        renvoi: "revue",
+        constats: [
+          {
+            critere: "la QA juge ce livrable conforme",
+            etat: CONSTAT_NON_TENU,
+            preuve: "« Revoir l'API » : 2 défaut(s) bloquant(s) — la route rend 500",
+            commande: "",
+            code: null,
+          },
+        ],
+      }),
+    );
+
+    expect(within(panneau).getByText("renvoyée par la QA")).toBeInTheDocument();
+    expect(within(panneau).getByText(/la route rend 500/)).toBeInTheDocument();
+  });
+
+  it("une tâche sans vérification rend le panneau d'avant", async () => {
+    render(
+      <Kanban
+        taches={[tacheFactice({ description: "Écrire l'API." })]}
+        agents={[agentFactice({ nom: "dev", role: "Développeur" })]}
+        reassigner={vi.fn()}
+        projet={projetFactice()}
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Ouvrir le détail de la tâche/ }));
+
+    expect(
+      within(screen.getByRole("dialog")).queryByRole("region", { name: "Vérification" }),
+    ).toBeNull();
   });
 });
 

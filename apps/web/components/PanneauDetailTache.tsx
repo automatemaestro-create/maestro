@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Le détail d'une tâche du Kanban (#251) : description, étapes en checklist et
- * liens utiles, ouverts **sur place** depuis la carte.
+ * Le détail d'une tâche du Kanban (#251) : sa vérification (#1177), description,
+ * étapes en checklist et liens utiles, ouverts **sur place** depuis la carte.
  *
  * Un panneau, pas une carte qui gonfle : c'est le point du ticket. La carte du
  * Kanban est un objet dense qu'on lit en diagonale sur cinq colonnes — y verser
@@ -33,9 +33,18 @@ import {
   IconeFermer,
   IconeLienExterne,
   IconeMaquette,
+  IconeStatutBloquee,
+  IconeStatutEchec,
+  IconeStatutTerminee,
   IconeTicket,
 } from "@/components/Icones";
-import type { Icone } from "@/components/Primitives";
+import {
+  BadgeEtat,
+  CIBLE_MINIMALE,
+  classesCarte,
+  type Icone,
+  type TonBadge,
+} from "@/components/Primitives";
 import { Infobulle } from "@/components/Infobulle";
 import { LienTicketExterne } from "@/components/LienTicketExterne";
 import {
@@ -45,11 +54,22 @@ import {
 import {
   detailDe,
   libelleDeNature,
+  type ConstatAffiche,
   type LienAffiche,
   type NatureAffichee,
+  type VerificationAffichee,
 } from "@/lib/detailTache";
 import { formatCout, formatDuree, libelleStatut } from "@/lib/format";
-import { type EtatAgent, type Tache } from "@/lib/types";
+import {
+  CONSTAT_NON_JOUE,
+  CONSTAT_NON_TENU,
+  CONSTAT_TENU,
+  VERIFICATION_IMPOSSIBLE,
+  VERIFICATION_NON_TENUE,
+  VERIFICATION_TENUE,
+  type EtatAgent,
+  type Tache,
+} from "@/lib/types";
 import { usePiegeDeFocus } from "@/lib/usePiegeDeFocus";
 
 /**
@@ -168,6 +188,12 @@ export function PanneauDetailTache({
         </header>
 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
+          {/* La vérification d'abord (#1177) : « a-t-elle tenu ? » est la
+              question qu'on pose au panneau avant de lire ce qu'on lui
+              demandait. Absente tant que la tâche n'a pas été vérifiée. */}
+          {detail.verification !== null && (
+            <BlocVerification verification={detail.verification} />
+          )}
           {detail.description !== "" && (
             <section aria-label="Description">
               <TitreSection>Description</TitreSection>
@@ -303,6 +329,164 @@ function TitreSection({
         </span>
       )}
     </h3>
+  );
+}
+
+/**
+ * Le verdict d'une vérification (#1177) : son ton, son mot, son glyphe. La forme
+ * porte l'état autant que la couleur — ✓ cerclé, ✗, ⊘ se distinguent en noir et
+ * blanc (#709) —, et les trois issues du moteur ont chacune la leur : « non
+ * vérifiée » n'est pas un vert, et ne ressemble donc pas à « vérifiée ».
+ */
+const VERDICT: Record<
+  VerificationAffichee["statut"],
+  { ton: TonBadge; libelle: string; icone: Icone }
+> = {
+  [VERIFICATION_TENUE]: { ton: "positif", libelle: "Vérifiée", icone: IconeStatutTerminee },
+  [VERIFICATION_NON_TENUE]: { ton: "alerte", libelle: "Non tenue", icone: IconeStatutEchec },
+  [VERIFICATION_IMPOSSIBLE]: {
+    ton: "attention",
+    libelle: "Non vérifiée",
+    icone: IconeStatutBloquee,
+  },
+};
+
+/** Ce qu'un contrôle a constaté, en forme et en mots — le mot est lu, jamais la seule teinte. */
+const CONSTAT: Record<
+  ConstatAffiche["etat"],
+  { libelle: string; icone: Icone; couleur: string }
+> = {
+  [CONSTAT_TENU]: { libelle: "tenu", icone: IconeStatutTerminee, couleur: "text-positif" },
+  [CONSTAT_NON_TENU]: { libelle: "non tenu", icone: IconeStatutEchec, couleur: "text-alerte" },
+  [CONSTAT_NON_JOUE]: {
+    libelle: "non joué",
+    icone: IconeStatutBloquee,
+    couleur: "text-attention",
+  },
+};
+
+/**
+ * La vérification de la tâche (#1177) — **en tête du corps**, parce que c'est la
+ * question qu'on pose au panneau d'abord : *cette tâche a-t-elle tenu ce qu'on
+ * lui demandait ?* Variante retenue sur pièces par le regard neuf (commentaire
+ * « ## Variante retenue » du ticket), contre un verdict dans l'en-tête et un
+ * détail replié en bas.
+ *
+ * Le verdict vient compté (le compte avant la liste, comme le résumé d'un run
+ * GitHub Actions), puis un critère par ligne. Ce qui **ne tient pas** montre sa
+ * preuve d'office — la commande telle qu'elle a été jouée, préfixée `$` comme
+ * sur un job GitLab, son code, et la fin de sa sortie ; ce qui **tient** tient en
+ * une ligne dépliable, parce qu'une étape réussie n'a pas à pousser la
+ * description hors de l'écran.
+ */
+function BlocVerification({ verification }: { verification: VerificationAffichee }) {
+  const verdict = VERDICT[verification.statut];
+  return (
+    <section aria-label="Vérification">
+      <TitreSection compteur={`${verification.tenus}/${verification.constats.length}`}>
+        Vérification
+      </TitreSection>
+      <p className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-annexe text-texte-secondaire">
+        <BadgeEtat ton={verdict.ton} icone={verdict.icone}>
+          {verdict.libelle}
+        </BadgeEtat>
+        {verification.livraison !== null && <span>livraison n° {verification.livraison}</span>}
+        {verification.renvoi !== "" && <span>renvoyée par la QA</span>}
+      </p>
+      {verification.empechement !== "" && (
+        <p className="mb-2 text-corps text-texte">{verification.empechement}</p>
+      )}
+      <ul className="space-y-2.5">
+        {verification.constats.map((constat, rang) => (
+          <LigneConstat key={`${rang}-${constat.critere}`} constat={constat} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Un contrôle : son critère, son état, et ce qui le prouve.
+ *
+ * Le retour à la ligne coupe aux espaces (`break-words`), jamais au milieu d'un
+ * nombre : « n==6618 » ne doit pas se lire « n==66 / 18 » (réserve du regard
+ * neuf). La sortie d'une commande garde ses sauts de ligne, bornée en hauteur et
+ * défilante — c'est déjà sa fin, là où elle dit pourquoi.
+ */
+function LigneConstat({ constat }: { constat: ConstatAffiche }) {
+  const etat = CONSTAT[constat.etat];
+  const Glyphe = etat.icone;
+  const joue = constat.commande !== "";
+  const commande = joue
+    ? `$ ${constat.commande}${constat.code !== null ? ` → code ${constat.code}` : ""}`
+    : "";
+  return (
+    <li className="flex items-start gap-2">
+      <Glyphe aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${etat.couleur}`} />
+      <div className="min-w-0 flex-1">
+        <p className="break-words text-corps text-texte">
+          {constat.critere}
+          <span className="sr-only"> — {etat.libelle}</span>
+        </p>
+        {constat.etat === CONSTAT_TENU ? (
+          <TraceRepliee
+            texte={joue ? commande : constat.preuve && `lu dans le livrable : ${constat.preuve}`}
+            fixe={joue}
+          />
+        ) : (
+          <>
+            {joue && (
+              <p className="mt-0.5 break-words font-mono text-annexe text-texte-secondaire">
+                {commande}
+              </p>
+            )}
+            {constat.preuve !== "" &&
+              (joue ? (
+                <pre
+                  className={classesCarte({
+                    densite: "compacte",
+                    ton: "creuse",
+                    className:
+                      "mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-annexe text-texte",
+                  })}
+                >
+                  {constat.preuve}
+                </pre>
+              ) : (
+                <p className="mt-0.5 break-words text-annexe text-texte-secondaire">
+                  {constat.preuve}
+                </p>
+              ))}
+          </>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Ce qui prouve un critère **tenu**, en une ligne qui se déplie — la commande
+ * jouée, ou ce que la lecture a trouvé dans le livrable.
+ *
+ * Un `<details>` natif, comme les replis du fil (`chat/EtapesDuFil`) : ouvrable
+ * au clavier, annoncé par les lecteurs d'écran, marqué par le triangle du
+ * navigateur — ce qui se déplie le montre. Replié, le sommaire tient sur une
+ * ligne ; ouvert, **le même texte** s'y déroule en entier, au lieu d'être répété
+ * dessous.
+ */
+function TraceRepliee({ texte, fixe }: { texte: string; fixe: boolean }) {
+  if (texte === "") return null;
+  return (
+    <details className="group mt-0.5 text-annexe text-texte-secondaire">
+      <summary
+        className={
+          `${CIBLE_MINIMALE} cursor-pointer truncate group-open:overflow-visible ` +
+          `group-open:whitespace-pre-wrap group-open:break-words ${fixe ? "font-mono" : ""}`
+        }
+      >
+        {texte}
+      </summary>
+    </details>
   );
 }
 
