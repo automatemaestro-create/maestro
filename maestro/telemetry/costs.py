@@ -140,6 +140,17 @@ ETAPE_REPRISE = "reprise"
 #: nommée « equipe ».
 ETAPE_EQUIPE = "equipe"
 
+#: Étape du journal qui n'appartient à aucune tâche : le **plafond de dépense
+#: atteint** (#1182) — la question posée à la personne, puis ce qu'elle a décidé
+#: (relever, réduire, arrêter). Usage nul par construction : la suspension ne
+#: sollicite aucun modèle, et la dépense de la tâche interrompue est portée par
+#: sa propre ligne (`<tâche>:plafond`), jamais par celle-ci. Comptée dans le temps
+#: du run comme `ETAPE_EQUIPE`, pour la même raison : un run suspendu une heure
+#: sur son budget a duré cette heure-là. À déclarer ici pour la raison
+#: d'`ETAPE_BRIEF` : sans cette ligne, la règle par défaut ouvrirait dans le grand
+#: livre une entrée de tâche fantôme nommée « plafond ».
+ETAPE_PLAFOND = "plafond"
+
 #: Étape qui n'appartient à aucune tâche : le **bilan** d'un run terminé (#1284), un
 #: appel au modèle rendu **après** la fin du run et compté dans son coût. Il ne naît
 #: jamais au journal du moteur — l'API le rend et le publie —, mais la liste des
@@ -298,10 +309,11 @@ class RunCost:
                 # comptabiliser — les étapes qu'il annonce sont, elles, réintégrées
                 # au journal (`RunJournal.reconstitue`) et comptées à leur place.
                 continue
-            if record.etape == ETAPE_EQUIPE:
-                # La confrontation de l'équipe au plan (#1227) : une étape du run,
-                # sans usage et sans tâche. Son intervalle est déjà pris ci-dessus
-                # — c'est du temps de run, l'attente humaine comprise.
+            if record.etape in (ETAPE_EQUIPE, ETAPE_PLAFOND):
+                # La confrontation de l'équipe au plan (#1227), la décision au
+                # plafond de dépense (#1182) : des étapes du run, sans usage et
+                # sans tâche. Leur intervalle est déjà pris ci-dessus — c'est du
+                # temps de run, l'attente humaine comprise.
                 continue
             tache_id = record.etape.split(":", 1)[0]
             entree = entrees.get(tache_id)

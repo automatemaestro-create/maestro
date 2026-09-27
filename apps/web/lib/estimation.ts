@@ -101,3 +101,29 @@ export function estimerSuite(brief: Brief): EstimationSuite {
       COUT_DECOMPOSITION_USD + nbTaches * COUT_TACHE_USD_HAUT * MARGE_RELANCES,
   };
 }
+
+/**
+ * Ce que coûterait **le reste d'un run** arrêté sur son plafond de dépense (#1182).
+ *
+ * La même estimation que ci-dessus, et c'est le point — le ticket la demande
+ * « sans en inventer une autre » : les mêmes bornes par tâche, la même marge de
+ * relance sur la borne haute. Deux différences, qui tiennent au moment et non à la
+ * méthode :
+ *
+ * - **le nombre de tâches est connu** : ce sont celles qui restent, que la
+ *   question au plafond nomme une à une. Ni plancher, ni critères comptés à la
+ *   place du plan — le plan existe ;
+ * - **la décomposition n'y est plus** : elle a eu lieu, elle est dans ce qui est
+ *   déjà dépensé.
+ *
+ * Une tâche mise de côté compte pour une tâche entière. Elle a déjà fait une
+ * partie de son travail, mais personne ne sait laquelle, et une estimation
+ * optimiste ferait relever un plafond qui retomberait aussitôt.
+ */
+export function estimerReste(nbTaches: number): EstimationSuite {
+  return {
+    nbTaches,
+    bas: nbTaches * COUT_TACHE_USD_BAS,
+    haut: nbTaches * COUT_TACHE_USD_HAUT * MARGE_RELANCES,
+  };
+}

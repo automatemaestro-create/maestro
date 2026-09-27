@@ -728,6 +728,7 @@ from maestro.controltower.reglements import (
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
+    EXECUTION_EN_ATTENTE_PLAFOND,
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
     ControlTowerState,
@@ -1431,7 +1432,7 @@ def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
 ApercuOrchestration = Callable[[str | None], str]
 
 #: Les statuts sous lesquels un run **n'est pas soldé** : il tourne, ou il attend
-#: quelqu'un. Les quatre comptent pour « en cours » dans l'aperçu — de la place
+#: quelqu'un. Les cinq comptent pour « en cours » dans l'aperçu — de la place
 #: où l'on pose la question, un run qui attend un arbitrage est un run en cours,
 #: et l'écran des exécutions dira lequel attend quoi.
 _STATUTS_ACTIFS = frozenset(
@@ -1440,6 +1441,7 @@ _STATUTS_ACTIFS = frozenset(
         EXECUTION_EN_ATTENTE_BRIEF,
         EXECUTION_EN_ATTENTE_REPONSES,
         EXECUTION_EN_ATTENTE_ARBITRAGE,
+        EXECUTION_EN_ATTENTE_PLAFOND,
     }
 )
 

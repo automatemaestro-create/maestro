@@ -65,7 +65,7 @@ from maestro.engine.executor import (
     SUFFIXE_ETAPE_QUESTION,
     _ecoule_ms,
 )
-from maestro.engine.guardrails import Guardrails
+from maestro.engine.plafond import Plafonds
 from maestro.engine.questions import DemandeQuestion
 from maestro.orchestrator.errors import RattrapageValidationError
 from maestro.orchestrator.orchestrator import Orchestrator
@@ -74,7 +74,6 @@ from maestro.orchestrator.schema import Task
 from maestro.prerequis import PrerequisManquant
 from maestro.telemetry import (
     PlafondDepense,
-    PlafondDepenseDepasse,
     RunJournal,
     StepUsage,
     collect_usage,
@@ -229,11 +228,14 @@ class JugeDesEchecs:
         self,
         orchestrator: Orchestrator,
         equipe: Callable[[str | None], Sequence[Agent]],
-        guardrails: Guardrails,
+        plafonds: Plafonds,
     ) -> None:
         self._orchestrator = orchestrator
         self._equipe = equipe
-        self._guardrails = guardrails
+        # Les plafonds **en vigueur** (#1182), partagés avec l'exécuteur : un
+        # plafond relevé sur décision vaut pour les diagnostics comme pour les
+        # tâches, sans qu'aucun des deux ait à l'apprendre.
+        self._plafonds = plafonds
         self._runs: dict[str, tuple[str, tuple[Task, ...]]] = {}
         self._dossiers: dict[tuple[str, str], Dossier] = {}
         self._retenus: dict[tuple[str, str], Verdict] = {}
@@ -273,14 +275,7 @@ class JugeDesEchecs:
 
     def budget_epuise(self, journal: RunJournal) -> bool:
         """Le budget du run est-il déjà dépensé ? — auquel cas plus rien ne s'engage."""
-        plafond = self._plafond(journal)
-        if plafond is None:
-            return False
-        try:
-            plafond.verifie(StepUsage())
-        except PlafondDepenseDepasse:
-            return True
-        return False
+        return self._plafonds.epuise(journal)
 
     async def rejouer_la_tentative(
         self,
@@ -401,13 +396,8 @@ class JugeDesEchecs:
         return verdict, usage
 
     def _plafond(self, journal: RunJournal) -> PlafondDepense | None:
-        """Le plafond de dépense du run, armé comme celui de chaque tâche (#9, #56)."""
-        garde = self._guardrails
-        if garde.plafond_cout_usd is None and garde.plafond_tokens is None:
-            return None
-        return PlafondDepense(
-            journal, garde.plafond_cout_usd, plafond_tokens=garde.plafond_tokens
-        )
+        """Le plafond de dépense du run, armé comme celui de chaque tâche (#9, #56, #1182)."""
+        return self._plafonds.controle(journal)
 
 
 def consigne_diagnostic(

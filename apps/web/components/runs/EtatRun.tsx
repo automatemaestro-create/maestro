@@ -68,6 +68,7 @@ import { PAGE_DU_CADRAGE } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   ATTENTE_BRIEF,
+  ATTENTE_PLAFOND,
   ATTENTE_REPONSES,
   ATTENTE_VALIDATION,
   causeDAttente,
@@ -95,6 +96,7 @@ import {
 import { PHRASE_INTERRUPTION, PHRASE_PAUSE } from "@/lib/gestesRun";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
+import { PAGE_DU_PLAFOND } from "@/lib/plafond";
 import {
   EXECUTION_ECHEC,
   EXECUTION_TERMINEE,
@@ -169,6 +171,14 @@ export const ATTENTES: Record<
     phrase: "Une tâche attend un arbitrage humain",
     page: "Validations",
     action: "Trancher",
+  },
+  // Le plafond de dépense (#1182) : la décision se prend au pied du fil, où la
+  // carte « Budget du run atteint » pose la question avec ses chiffres.
+  [ATTENTE_PLAFOND]: {
+    libelle: "Budget atteint",
+    phrase: "Le run attend une décision sur son budget",
+    page: PAGE_DU_PLAFOND,
+    action: "Décider",
   },
 };
 

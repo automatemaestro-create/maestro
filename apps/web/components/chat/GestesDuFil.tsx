@@ -58,6 +58,14 @@
  *   deux fois la même chose, et la carte du règlement la nomme déjà. « Pas maintenant »
  *   la rend à sa place.
  *
+ * ⚠ Une huitième est venue avec #1182 : la **décision au plafond de dépense**
+ * (`PlafondDansLeFil`) — un run qui a atteint son budget et attend qu'on relève,
+ * réduise ou arrête. Elle ne vit pas sur un message mais sur le **run** (la liste
+ * des exécutions du shell), et elle se pose **juste sous les questions d'agents et
+ * les validations** : c'est le run entier qui attend, et le fil collant à son bas,
+ * la carte la plus basse est la première vue — mais au-dessus de ce que porte le
+ * dernier message.
+ *
  * ## Pourquoi il existe — le défaut que #1106 corrige
  *
  * Ce pied vivait **dans `app/chat/page.tsx`**. `ColonneConversation` (#926)
@@ -112,6 +120,7 @@ import { DemandeDeProjet } from "@/components/chat/DemandeDeProjet";
 import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
 import { GesteSurUnRun } from "@/components/chat/GesteSurUnRun";
 import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
+import { PlafondDansLeFil } from "@/components/chat/PlafondDansLeFil";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { ReglementDansLeFil } from "@/components/chat/ReglementDansLeFil";
@@ -123,6 +132,7 @@ import { useHorloge } from "@/lib/horloge";
 import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { pieceEnAttente, questionEnAttente } from "@/lib/outillage";
+import { runsAuPlafond } from "@/lib/plafond";
 import { questionsDuFil } from "@/lib/questions";
 import { reglementEnAttente } from "@/lib/reglements";
 import type { Question, Validation } from "@/lib/types";
@@ -135,10 +145,13 @@ const AUCUNE_QUESTION: Question[] = [];
 /** Aucune validation non plus, pour la même raison (#1183). */
 const AUCUNE_VALIDATION: Validation[] = [];
 
+/** Aucun run : hors du shell, aucun ne peut attendre sur son plafond (#1182). */
+const AUCUN_RUN: never[] = [];
+
 /** Rien à répondre hors du shell — aucune question n'y est jamais montrée. */
 async function sansQuestion(): Promise<void> {}
 
-/** Rien à trancher hors du shell — aucune validation n'y est jamais montrée. */
+/** Rien à trancher hors du shell — ni validation ni plafond n'y est jamais montré. */
 async function sansDecision(): Promise<void> {}
 
 /**
@@ -166,6 +179,8 @@ export function useGestesDuFil(
   const decider = etat?.decider ?? sansDecision;
   const maintenant = useHorloge();
   const global = destinataire === AGENT_ORCHESTRATION;
+  const executions = etat?.executions ?? AUCUN_RUN;
+  const trancherPlafond = etat?.trancherPlafond ?? sansDecision;
 
   // Le règlement qu'une phrase a proposé (#1183) : son attente sort de sa pile tant
   // que la carte attend — une seule carte par décision (voir l'en-tête).
@@ -199,8 +214,16 @@ export function useGestesDuFil(
   const projetPropose = global ? projetEnAttente(fil.messages) : null;
   const piece = global ? (pieceEnAttente(fil.messages)?.piece ?? null) : null;
   const geste = global ? gesteRunEnAttente(fil.messages) : null;
+  // Les runs arrêtés sur leur plafond de dépense (#1182) — sur le seul fil de
+  // l'orchestration, parce que c'est une décision **du run** : aucun agent ne
+  // l'a posée, et un aparté avec l'un d'eux n'a pas à la porter.
+  const auPlafond = useMemo(
+    () => (global ? runsAuPlafond(executions) : []),
+    [global, executions],
+  );
 
   if (
+    auPlafond.length === 0 &&
     questions.length === 0 &&
     validations.length === 0 &&
     proposition === null &&
@@ -225,6 +248,22 @@ export function useGestesDuFil(
           validation={validation}
           decider={decider}
           maintenant={maintenant}
+        />
+      ))}
+      {/* Le plafond de dépense **sous** les questions d'agents et les validations
+          (#1182) : c'est le run entier qui attend, là où elles n'en retiennent
+          qu'une tâche, et le fil colle à son bas — la carte la plus basse est celle
+          qu'on voit. Posée au-dessus, elle restait hors de l'écran derrière une
+          question déjà repartie sans réponse (mesuré sur la vraie stack). Au-dessus,
+          en revanche, de ce que porte le dernier message, qui répond à ce qu'on
+          vient de taper. La `key` est le run **et** le début de l'attente : une
+          seconde question sur le même run (plafond relevé trop court) repart d'une
+          carte neuve, pas des cases et du montant de la précédente. */}
+      {auPlafond.map((run) => (
+        <PlafondDansLeFil
+          key={`${run.run_id}|${run.attente_depuis ?? ""}`}
+          run={run}
+          trancher={trancherPlafond}
         />
       ))}
       {outillage?.question && (

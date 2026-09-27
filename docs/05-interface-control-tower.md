@@ -2729,6 +2729,54 @@ retenue ». Implémentation :
 phrase d'attente vient de l'API, la carte dit que l'agent est reparti **et reste répondable**, et le
 fil de l'orchestration porte toutes les questions là où un aparté ne porte que les siennes.
 
+#### 2.7.7 Le run a atteint son budget : la décision se prend dans le fil (#1182) — **livré**
+
+Quand un run atteint son plafond de dépense, il se **suspend** au lieu d'échouer (§6.1) : sa tâche
+coupée est mise de côté, son travail conservé, et rien ne se dépense d'ici la réponse. La question
+arrive **au pied du fil de l'orchestration**, juste sous les questions d'agents et les validations —
+c'est le run entier qui attend, et le fil colle à son bas : la carte la plus basse est la première
+vue —, sur une carte « Budget du run atteint » :
+
+- **trois chiffres au même rang** : *Dépensé*, lu contre le plafond (« 0,22 $US — sur un plafond de
+  0,01 $US ») ; *Reste à faire*, en tâches ; *Coût estimé du reste*, en fourchette — **l'estimation du
+  brief** (`lib/estimation`, docs/09), appliquée aux tâches qui restent, dite « ordre de grandeur,
+  pas une mesure » ;
+- **ce qui reste, nommé** tâche par tâche, en cases à cocher — cochée = gardée ; la tâche coupée y
+  porte « mise de côté — travail conservé ». **Décocher, c'est réduire** : l'estimation et le plafond
+  proposé se recalculent sur ce qui est gardé ;
+- **le nouveau plafond**, prérempli (la dépense plus le haut de l'estimation de ce qui est gardé,
+  les deux montants écrits sous le champ), modifiable, et vérifié avant de partir : un plafond qui ne
+  couvre pas ce qui est déjà dépensé ne se soumet pas. En tokens — le fournisseur ne tarifie pas —,
+  rien n'est proposé : l'estimation est en dollars, le plafond s'écrit ;
+- **deux boutons qui disent ce qu'ils engagent** : « Relever à X et reprendre », qui devient « Reprendre
+  sans N tâches — plafond X » dès qu'on décoche, et « Arrêter le run ». Rien ne relève le plafond sans
+  qu'un montant ait été lu sur le bouton ;
+- une ligne pour **ce qui se passe sans réponse**, ouverte par le plafond atteint — le run reste
+  suspendu, rien ne se dépense — et la **franchise** : ce qui était engagé au franchissement a pu
+  dépasser un peu le plafond, un appel modèle ne se tarifant qu'une fois fait.
+
+Le **pied de la carte se suffit** : dans la colonne de conversation, le fil colle à son bas et la
+carte, plus haute que la colonne, s'y ouvre sur ses gestes — titre et tuiles au-dessus, hors de vue.
+L'aide du champ et la dernière ligne redisent donc le plafond franchi, la dépense et le haut de
+l'estimation (relecture de #1182). Et le fil **se recolle quand son pied grandit**, s'il suivait : une
+carte tirée de l'état du shell (celle-ci, la question d'un agent) arrive souvent après les messages, et
+restait sinon sous le pli, sans geste « Dernier message » pour le dire.
+
+Ailleurs, le statut se lit « **Budget atteint** » (liste des runs, vue d'un run, fil), avec la phrase
+« Le run attend une décision sur son budget » et un renvoi « Décider » vers le fil — la quatrième
+attente humaine, au même régime que les trois autres (`causeDAttente`, table `ATTENTES`).
+
+La forme vient d'une **veille de conception** (Vercel Spend Management, GitHub Actions « Reviewing
+deployments », Replit « Edit usage limit » capturés ; Devin et Cursor lus) et d'un **choix rendu sur
+pièces** par le regard neuf, entre trois variantes rendues sur la vraie stack contre un vrai run
+suspendu : retenue **A** (un formulaire, les chiffres en tuiles), écartées B (trois options qui
+déplient leurs contrôles — « réduire » tout coché relevait le plafond sans le dire) et C (relevé façon
+grand livre — des fourchettes par tâche que l'estimation ne fournit pas). Consignées sur #1182, sous
+« ## Veille de conception » et « ## Variante retenue ». Implémentation :
+[`apps/web/components/chat/PlafondDansLeFil.tsx`](../apps/web/components/chat/PlafondDansLeFil.tsx),
+[`apps/web/lib/plafond.ts`](../apps/web/lib/plafond.ts), `components/chat/GestesDuFil.tsx`. Gardé par
+`apps/web/tests/plafond-fil.test.tsx`.
+
 ### 2.8 🗒️ Journal — l'activité, en plein format et **persistée** *(#249, #250, #478 — **livré**)*
 
 Le fil d'activité a **quitté le tableau de bord pour sa propre entrée de menu**.
@@ -4266,6 +4314,9 @@ décrit le comportement réel, pas une fixture.
 - `POST /api/executions/{run_id}/reprendre` → `ResumeExecution` — **reprend** un run suspendu là où
   il en était : `en_pause` repasse à `false` et les tâches qui attendaient repartent. `404` inconnu,
   `409` si le run n'est **pas** suspendu.
+- `POST /api/executions/{run_id}/plafond` → `ResumeExecution` — **tranche un run arrêté sur son
+  plafond de dépense** (#1182, ci-dessous) : `relever`, `reduire` ou `arreter`. `404` inconnu,
+  `409` si le run n'attend pas cette décision, `422` si elle ne se tient pas.
 - `POST /api/executions/{run_id}/relancer` → `202` + `ResumeExecution` — rejoue un run interrompu
   **sur son brief approuvé** (#349, ci-dessous) et rend le résumé du **nouveau** run. `404` inconnu,
   `409` déjà soldé ou **encore vivant**, `422` sans brief approuvé.
@@ -4679,6 +4730,51 @@ même mot feraient chercher un brief à valider sur un run qu'on vient de mettre
 accompagne le badge dit ce que la pause ne fait pas — « celles qui étaient en vol vont à leur
 terme » —, parce que quelqu'un qui croirait avoir tout arrêté serait surpris de voir une tâche rendre
 son livrable trois minutes plus tard.
+
+**Au plafond de dépense, le run se suspend et demande** (#1182). Jusque-là, un run qui atteignait
+son plafond jetait la tâche en vol et refusait tout ce qui restait : à 101 % du budget, la tâche
+presque finie était perdue sans que personne ait rien décidé. Le plafond reste un plafond — **rien ne
+le dépasse sans la réponse de la personne** —, c'est l'arrêt sec qui a disparu :
+
+- la mesure qui franchit le plafond **interrompt** la tâche, comme avant (un appel modèle ne se
+  tarifie qu'une fois fait), mais la tâche est **mise de côté** et non soldée : son travail reste sur
+  sa branche `maestro/<tâche>` (ou dans la racine d'un projet non versionné), sa dépense entre au
+  grand livre par une ligne `<tâche>:plafond`, et sa carte reste « en cours » ;
+- le run passe `en_attente_plafond` — quatrième attente humaine, même `attente_depuis`, toujours
+  annulable — et **rien ne se dépense ni ne démarre** d'ici la réponse. Une seule question par
+  franchissement : les tâches qui atteignent le plafond pendant l'attente rejoignent la même ;
+- le résumé porte la question sous `plafond` (`null` hors attente) — des **faits**, pas une phrase :
+
+```jsonc
+// ResumeExecution.plafond (forme de DemandePlafond)
+{
+  "depense_usd": 5.02, "depense_tokens": 41000,         // dépense du run, grand livre compris
+  "plafond_cout_usd": 5.0, "plafond_tokens": null,       // les plafonds en vigueur
+  "raison": "plafond de dépense dépassé : …",
+  "restantes": [                                         // ce qui reste à faire, dans l'ordre du plan
+    { "tache_id": "api", "titre": "Écrire l'API", "interrompue": true },
+    { "tache_id": "doc", "titre": "Documenter l'API", "interrompue": false }
+  ]
+}
+// Corps de POST /api/executions/{run_id}/plafond
+{ "geste": "reduire", "plafond_cout_usd": 6.5, "plafond_tokens": null, "ecartees": ["doc"] }
+```
+
+Les trois gestes : **relever** pose le nouveau plafond et reprend les tâches mises de côté là où
+elles en étaient — leur agent lit qu'il reprend, et retrouve dans le projet ce qu'il avait écrit ;
+**réduire** fait de même en écartant les tâches désignées (échec « écartée », leur aval se bloque) ;
+**arrêter** solde le run sur ce qui est fait. Le `422` refuse ce qui ne se tient pas : une reprise
+sans nouveau plafond, un plafond que la dépense **atteint déjà** (le run s'y arrêterait à sa première
+mesure), une tâche écartée que la question ne nommait pas, ou une réduction qui écarte tout — c'est
+un arrêt. L'attente **n'a pas de borne** : aucune issue par défaut ne se décide à la place de la
+personne, l'une dépenserait ce qu'elle n'a pas accordé, l'autre jetterait ce qu'elle a payé. Sans
+arbitre (`maestro-run` sans Control Tower, exécuteur distribué qui ne sait pas relever un plafond),
+le run garde l'arrêt sec d'avant. Le coût du reste n'est pas estimé côté moteur : c'est l'estimation
+du brief (`apps/web/lib/estimation.ts`) que l'écran applique aux tâches restantes. Le banc des
+scénarios joue la personne qui **arrête** (S4 pose sa borne pour provoquer un échec). Implémentation :
+[`maestro/engine/plafond.py`](../maestro/engine/plafond.py) et
+[`maestro/controltower/plafond.py`](../maestro/controltower/plafond.py) ; couverture
+`tests/test_plafond_suspendu.py`, `tests/test_plafond_control_tower.py`.
 
 **Un run soldé dit *pourquoi*, et pas seulement *quoi*** (#479). `cause` est un code
 court porté par le résumé, à côté du `detail` qui reste ce qu'il était (`TypeErreur :
