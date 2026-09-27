@@ -190,7 +190,7 @@ export function CarteValidation({
     : [];
 
   // L'encart d'approbation et la consigne de refus sont deux décisions opposées :
-  // ouvrir l'une referme l'autre, et vide la consigne — « sans consigne » doit
+  // ouvrir l'une referme l'autre, et vide la consigne — une consigne retirée doit
   // vouloir dire sans consigne (le choix retenu, `## Variante retenue` du ticket).
   const basculerEtendue = () => {
     setEtendreOuvert((avant) => !avant);
@@ -309,7 +309,7 @@ export function CarteValidation({
             Refermer **efface** ce qui a été écrit, et ce n'est pas un détail :
             une consigne conservée hors de l'écran partirait quand même avec le
             refus, jusqu'à l'agent, sans que plus personne l'ait sous les yeux.
-            « Sans consigne » doit vouloir dire sans consigne.
+            Une consigne retirée doit vouloir dire sans consigne.
 
             Elle est là **aussi dans la cloche** depuis #1228 : c'est le canal qui
             réoriente l'agent (#1185) — il la lit et replanifie son geste au lieu
@@ -328,7 +328,10 @@ export function CarteValidation({
           aria-controls={motifOuvert ? idMotif : undefined}
           onClick={basculerMotif}
         >
-          {motifOuvert ? "Sans consigne" : "Dire quoi faire à la place"}
+          {/* Ouverte, elle dit qu'on la retire — et qu'on la vide —, jamais
+              « Sans consigne », qui se lisait comme une façon de refuser (regard
+              neuf de la clôture, la même reprise que « Refermer » pour l'encart). */}
+          {motifOuvert ? "Retirer la consigne" : "Dire quoi faire à la place"}
         </Bouton>
       </div>
       {etendreOuvert && etendues.length > 0 && (

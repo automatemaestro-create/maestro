@@ -931,9 +931,9 @@ function ListeAccords({
       </span>
       {accords.length === 0 ? (
         <p className="text-annexe text-texte-secondaire">
-          Aucun — chaque appel arbitré est soumis à une personne. Un accord se
-          donne en approuvant une demande « pour tout ce run » ou « pour tout ce
-          projet ».
+          Aucun — aucune approbation n&apos;a été étendue au-delà de son appel. Un
+          accord se donne sur la carte d&apos;une demande, en l&apos;approuvant pour
+          tout le run ou pour tout le projet.
         </p>
       ) : (
         <ul className="flex flex-col gap-1" aria-label={`Accords pour la suite de ${agent}`}>

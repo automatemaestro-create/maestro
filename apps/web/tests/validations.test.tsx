@@ -327,7 +327,7 @@ describe("trancher une demande (#272)", () => {
 
     await utilisateur.click(screen.getByRole("button", { name: "Dire quoi faire à la place" }));
     await utilisateur.type(screen.getByLabelText(/Ce que l.agent doit faire à la place/), "écrit puis retiré");
-    await utilisateur.click(screen.getByRole("button", { name: "Sans consigne" }));
+    await utilisateur.click(screen.getByRole("button", { name: "Retirer la consigne" }));
     await utilisateur.click(screen.getByRole("button", { name: "Refuser" }));
 
     // Un motif conservé hors de l'écran partirait quand même : c'est le texte

@@ -156,7 +156,10 @@ describe("⑤ ce qui a été accordé pour la suite se voit et se retire (#1185)
     await monter();
 
     expect(within(section()).getByText("Accordés pour la suite")).toBeInTheDocument();
-    expect(within(section()).getByText(/Aucun — chaque appel arbitré est soumis/)).toBeInTheDocument();
+    // Sans prétendre qu'une personne tranche tout : une entrée `ask` peut être `auto`.
+    expect(
+      within(section()).getByText(/Aucun — aucune approbation n.a été étendue/),
+    ).toBeInTheDocument();
   });
 
   it("montre chaque accord avec son outil et sa portée, et le retire d'un geste", async () => {
