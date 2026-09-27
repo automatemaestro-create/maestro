@@ -417,9 +417,8 @@ function LigneConstat({ constat }: { constat: ConstatAffiche }) {
   const etat = CONSTAT[constat.etat];
   const Glyphe = etat.icone;
   const joue = constat.commande !== "";
-  const commande = joue
-    ? `$ ${constat.commande}${constat.code !== null ? ` → code ${constat.code}` : ""}`
-    : "";
+  const code = joue && constat.code !== null ? `→ code ${constat.code}` : "";
+  const commande = joue ? `$ ${constat.commande}` : "";
   return (
     <li className="flex items-start gap-2">
       <Glyphe aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${etat.couleur}`} />
@@ -432,12 +431,13 @@ function LigneConstat({ constat }: { constat: ConstatAffiche }) {
           <TraceRepliee
             texte={joue ? commande : constat.preuve && `lu dans le livrable : ${constat.preuve}`}
             fixe={joue}
+            code={code}
           />
         ) : (
           <>
             {joue && (
               <p className="mt-0.5 break-words font-mono text-annexe text-texte-secondaire">
-                {commande}
+                {code === "" ? commande : `${commande} ${code}`}
               </p>
             )}
             {constat.preuve !== "" &&
@@ -473,20 +473,27 @@ function LigneConstat({ constat }: { constat: ConstatAffiche }) {
  * navigateur — ce qui se déplie le montre. Replié, le sommaire tient sur une
  * ligne ; ouvert, **le même texte** s'y déroule en entier, au lieu d'être répété
  * dessous.
+ *
+ * Le code de sortie se tient **à côté** du sommaire, jamais dedans : l'ellipse
+ * coupe la fin d'une ligne, et c'est là qu'il était — la relecture du rendu l'a
+ * vu disparaître sur les trois commandes d'une vraie recette (réserve 1).
  */
-function TraceRepliee({ texte, fixe }: { texte: string; fixe: boolean }) {
+function TraceRepliee({ texte, fixe, code }: { texte: string; fixe: boolean; code: string }) {
   if (texte === "") return null;
   return (
-    <details className="group mt-0.5 text-annexe text-texte-secondaire">
-      <summary
-        className={
-          `${CIBLE_MINIMALE} cursor-pointer truncate group-open:overflow-visible ` +
-          `group-open:whitespace-pre-wrap group-open:break-words ${fixe ? "font-mono" : ""}`
-        }
-      >
-        {texte}
-      </summary>
-    </details>
+    <div className="mt-0.5 flex items-baseline gap-2 text-annexe text-texte-secondaire">
+      <details className="group min-w-0 flex-1">
+        <summary
+          className={
+            `${CIBLE_MINIMALE} cursor-pointer truncate group-open:overflow-visible ` +
+            `group-open:whitespace-pre-wrap group-open:break-words ${fixe ? "font-mono" : ""}`
+          }
+        >
+          {texte}
+        </summary>
+      </details>
+      {code !== "" && <span className="shrink-0 font-mono">{code}</span>}
+    </div>
   );
 }
 

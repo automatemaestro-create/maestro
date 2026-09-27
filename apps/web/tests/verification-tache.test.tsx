@@ -185,9 +185,21 @@ describe("le détail d'une tâche montre sa vérification (variante A retenue)",
     const panneau = await panneauDe(verificationFactice());
     const section = within(panneau).getByRole("region", { name: "Vérification" });
 
-    const trace = within(section).getByText("$ python -c 'import app' → code 0");
+    const trace = within(section).getByText("$ python -c 'import app'");
     expect(trace.tagName).toBe("SUMMARY");
     expect(trace.className).toContain("truncate");
+  });
+
+  it("le code d'une commande tenue ne tombe jamais sous l'ellipse (réserve 1)", async () => {
+    const panneau = await panneauDe(verificationFactice());
+    const section = within(panneau).getByRole("region", { name: "Vérification" });
+
+    // Relecture du 2026-09-27 : repliée, une commande longue coupait son
+    // « → code 0 » avec elle. Le code se tient hors du sommaire tronqué.
+    const trace = within(section).getByText("$ python -c 'import app'");
+    const code = within(section).getByText("→ code 0");
+    expect(trace.contains(code)).toBe(false);
+    expect(code.className).toContain("shrink-0");
   });
 
   it("une lecture tenue dit ce qu'elle a trouvé dans le livrable (réserve 4)", async () => {
