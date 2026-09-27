@@ -60,7 +60,7 @@ import { BadgeRun } from "@/components/runs/EtatRun";
 import { AUCUNE_BORNE, phraseDesBornes } from "@/lib/bornes";
 import { causeDAttente, regimeDuRun } from "@/lib/execution";
 import { formatHeureCourte, libelleStatutExecution } from "@/lib/format";
-import { libellesDuGeste, resumeDuRunVise } from "@/lib/gestesRun";
+import { consequenceDuGeste, libellesDuGeste, resumeDuRunVise } from "@/lib/gestesRun";
 import { hrefRun } from "@/lib/navigation";
 import type { GesteRunFait, GesteRunPropose, RunVise } from "@/lib/types";
 
@@ -128,7 +128,7 @@ export function GesteSurUnRun({
       titre={libelles.question}
     >
       <CibleDuRun run={demande.run} />
-      <p className="mt-2 text-corps text-texte">{libelles.consequence}</p>
+      <p className="mt-2 text-corps text-texte">{consequenceDuGeste(demande)}</p>
       {/* Les bornes du nouveau run, **dans les deux sens** : « aucune » s'annonce
           comme un choix (#990), pas comme un oubli. */}
       {demande.action === "relance" && (

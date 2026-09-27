@@ -34,6 +34,7 @@ import { formatHeureCourte } from "@/lib/format";
 import {
   gesteRunEnAttente,
   PHRASE_INTERRUPTION,
+  PHRASE_INTERRUPTION_EN_PAUSE,
   PHRASE_PAUSE,
 } from "@/lib/gestesRun";
 import { marquerGuideVu } from "@/lib/guide";
@@ -120,6 +121,20 @@ describe("la carte d'un geste sur un run", () => {
     expect(screen.getByText(PHRASE_INTERRUPTION)).toBeInTheDocument();
     const bouton = screen.getByRole("button", { name: "Interrompre" });
     expect(bouton.className).toContain("bg-alerte");
+  });
+
+  it("ne prête pas de tâches en vol à un run en pause qu'elle propose d'interrompre", () => {
+    // Relecture visuelle de #1179 : sous un run suspendu, la phrase du bouton contredisait
+    // le modèle juste au-dessus, qui disait ses tâches jamais démarrées.
+    render(
+      <GesteSurUnRun
+        demande={carte("annulation", { run: run({ en_pause: true, pause_depuis: PAUSE_A }) })}
+        trancher={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.getByText(PHRASE_INTERRUPTION_EN_PAUSE)).toBeInTheDocument();
+    expect(screen.queryByText(PHRASE_INTERRUPTION)).not.toBeInTheDocument();
   });
 
   it.each([
@@ -252,14 +267,14 @@ describe("la trace d'un geste confirmé", () => {
       <TraceDuGeste
         fait={fait({
           run: run({ statut: "annulee" }),
-          refus: "exécution déjà soldée (annulee) : a9f4ec9ae5c7.",
+          refus: "exécution déjà soldée (Annulée) : a9f4ec9ae5c7.",
         })}
       />,
     );
 
     expect(
       screen.getByText(
-        "Mettre en pause : refusé — exécution déjà soldée (annulee) : a9f4ec9ae5c7.",
+        "Mettre en pause : refusé — exécution déjà soldée (Annulée) : a9f4ec9ae5c7.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Mis en pause")).not.toBeInTheDocument();
@@ -369,6 +384,31 @@ describe("dans le fil", () => {
       "/runs/a9f4ec9ae5c7",
     );
     // La carte ne revient pas : elle a été tranchée.
+    expect(within(fil).queryByRole("region", { name: "Geste sur un run" })).toBeNull();
+  });
+
+  it("marque sous la réponse un geste refusé avant toute carte", async () => {
+    // Relecture visuelle de #1179 : en prose, ce refus se lisait comme une réponse de
+    // plus, derrière un modèle qui venait d'annoncer la carte.
+    const reponse: MessageChat = messageFactice({
+      agent: AGENT_ORCHESTRATION,
+      auteur: AGENT_ORCHESTRATION,
+      contenu:
+        "Je vous propose de le relancer.\n\nVérification faite, je ne peux finalement pas " +
+        "vous proposer de relancer ce run — la raison est juste en dessous.",
+      geste_fait: fait({
+        action: "relance",
+        run: run({ statut: "echec", etat: "Échec" }),
+        refus: "exécution déjà soldée (Échec) : a9f4ec9ae5c7.",
+      }),
+    });
+    poserFilAssistance({ messages: [reponse] });
+    const fil = await filDeLaColonne();
+
+    expect(
+      within(fil).getByText("Relancer : refusé — exécution déjà soldée (Échec) : a9f4ec9ae5c7."),
+    ).toBeInTheDocument();
+    expect(within(fil).queryByText("Relancé")).toBeNull();
     expect(within(fil).queryByRole("region", { name: "Geste sur un run" })).toBeNull();
   });
 

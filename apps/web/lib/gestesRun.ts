@@ -50,6 +50,16 @@ export const PHRASE_PAUSE =
 export const PHRASE_INTERRUPTION =
   "Les tâches en vol sont tuées là où elles en sont et perdent leur travail. C'est sans retour.";
 
+/**
+ * Ce qu'une interruption coûte à un run **en pause** (#477) : rien n'est parti depuis la
+ * pause, et seule une tâche partie avant elle peut tourner encore. La phrase du bouton,
+ * lue sur la carte d'un run suspendu, lui prêtait des tâches en vol que le modèle,
+ * juste au-dessus, disait n'avoir jamais démarré — deux réponses à « que va-t-il se
+ * passer ? » (relecture visuelle de #1179).
+ */
+export const PHRASE_INTERRUPTION_EN_PAUSE =
+  "Les tâches qui attendaient ne partiront plus, et une tâche partie avant la pause, si elle tourne encore, perd son travail. C'est sans retour.";
+
 /** Les mots d'un geste : sa question, son verbe, ce qu'il fait, et comment il se dit fait. */
 export type LibellesDuGeste = {
   /** Le titre de la carte — la question que la confirmation tranche. */
@@ -97,6 +107,20 @@ export const LIBELLES_DES_GESTES: Record<GesteRun, LibellesDuGeste> = {
  */
 export function libellesDuGeste(action: string): LibellesDuGeste | null {
   return (LIBELLES_DES_GESTES as Record<string, LibellesDuGeste>)[action] ?? null;
+}
+
+/**
+ * Ce que **ce** geste fera à **ce** run — la conséquence de ses libellés, sauf pour
+ * l'interruption d'un run en pause, qui n'a plus de tâches en vol à tuer au sens du
+ * bouton (`PHRASE_INTERRUPTION_EN_PAUSE`). `null` pour une action inconnue.
+ */
+export function consequenceDuGeste(demande: GesteRunPropose): string | null {
+  const libelles = libellesDuGeste(demande.action);
+  if (libelles === null) return null;
+  if (demande.action === "annulation" && demande.run.en_pause) {
+    return PHRASE_INTERRUPTION_EN_PAUSE;
+  }
+  return libelles.consequence;
 }
 
 /**

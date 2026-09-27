@@ -234,6 +234,7 @@ from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
     STATUTS_TACHE_TERMINAUX,
     ControlTowerState,
+    libelle_statut_execution,
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.engine.brief import (
@@ -860,6 +861,10 @@ class ServiceExecutions:
         Rend le refus plutôt que de le lever : la route en fait un statut HTTP, le
         fil le dit avant même de proposer la carte, et aucun des deux n'a de
         `try` à écrire pour une réponse attendue. `agir` le lève, lui.
+
+        Sa phrase se lit sous un bouton comme sous une bulle : le statut y est dit
+        par son libellé d'écran (`libelle_statut_execution`), jamais par
+        l'identifiant de la machine à états.
         """
         if geste not in GESTES_RUN:
             return GesteRefuse(
@@ -879,15 +884,16 @@ class ServiceExecutions:
                 return None
             return GesteRefuse(
                 MOTIF_GESTE_RUN_NON_SUSPENDU,
-                f"exécution non suspendue ({execution.statut}) : {run_id} — "
-                "il n'y a rien à reprendre d'un run qui n'a pas été mis en pause.",
+                f"exécution non suspendue ({libelle_statut_execution(execution.statut)}) : "
+                f"{run_id} — il n'y a rien à reprendre d'un run qui n'a pas été mis en "
+                "pause.",
             )
         if execution.statut in STATUTS_EXECUTION_TERMINAUX:
             quoi = "suspendre" if geste == GESTE_PAUSE else "interrompre"
             return GesteRefuse(
                 MOTIF_RELANCE_RUN_SOLDE,
-                f"exécution déjà soldée ({execution.statut}) : {run_id} — "
-                f"il n'y a rien à {quoi} d'un run qui a rendu son issue.",
+                f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
+                f"{run_id} — il n'y a rien à {quoi} d'un run qui a rendu son issue.",
             )
         if geste == GESTE_PAUSE and execution.en_pause:
             return GesteRefuse(
@@ -1162,8 +1168,8 @@ class ServiceExecutions:
         ):
             return RelanceRefusee(
                 MOTIF_RELANCE_RUN_SOLDE,
-                f"exécution déjà soldée ({execution.statut}) : {run_id} — "
-                "il n'y a rien à reprendre d'un run qui a rendu son issue.",
+                f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
+                f"{run_id} — il n'y a rien à reprendre d'un run qui a rendu son issue.",
             )
         verdict = vitalite(
             execution.statut,
@@ -1180,7 +1186,8 @@ class ServiceExecutions:
             return RelanceRefusee(
                 MOTIF_RELANCE_SANS_CADRAGE,
                 f"exécution sans brief approuvé : {run_id} — elle s'est arrêtée "
-                f"avant la validation de son cadrage ({execution.statut}), il n'y a "
+                "avant la validation de son cadrage "
+                f"({libelle_statut_execution(execution.statut)}), il n'y a "
                 "donc rien à rejouer. La relancer reviendrait à repartir de son "
                 "objectif brut, ce qui est un nouveau run, pas une reprise.",
             )

@@ -518,7 +518,9 @@ relance, ses nouvelles bornes. Trois propriétés, et chacune a sa raison :
   routes (`refus_du_geste`), dits **avant** de poser la carte quand l'état les
   rend certains, et **après** le clic quand le temps les a fait naître. Ce que le
   geste a donné est un fait (`geste_fait`) : l'état **relu** — « en pause depuis
-  14:02 » —, le nouveau run d'une relance, ou le refus et sa phrase.
+  14:02 » —, le nouveau run d'une relance, ou le refus et sa phrase. Un refus dit
+  avant la carte est le **même** fait qu'un refus au clic, et s'affiche de même :
+  une prose seule le laissait lire comme une réponse de plus (relecture de #1179).
 
 Le modèle voit ce dont il a besoin pour désigner : chaque run des faits porte
 désormais son heure de lancement et, suspendu, l'heure de sa pause.
@@ -648,18 +650,16 @@ from maestro.controltower.progression import (
 )
 from maestro.controltower.regime import bornes_du_run
 from maestro.controltower.state import (
-    EXECUTION_ANNULEE,
-    EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_BRIEF,
     EXECUTION_EN_ATTENTE_REPONSES,
     EXECUTION_EN_COURS,
-    EXECUTION_TERMINEE,
     ControlTowerState,
     EtatExecution,
     EtatQuestion,
     EtatTache,
     EtatValidation,
+    libelle_statut_execution,
 )
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -1196,10 +1196,12 @@ _PHRASE_RUN_INTROUVABLE = (
 #: Le modèle a déjà écrit sa proposition quand la vérification la refuse : la phrase
 #: la **corrige** (« finalement »), sans quoi la bulle annoncerait une carte qui ne
 #: vient pas — vu sur la vraie stack, « Confirmez-la sur la carte juste en dessous »
-#: suivi d'un refus qui ne disait pas qu'il revenait sur ces mots.
+#: suivi d'un refus qui ne disait pas qu'il revenait sur ces mots. La raison n'y est
+#: pas : elle est le **fait** du refus (`geste_fait`), marqué sous la bulle comme un
+#: refus au clic — un second paragraphe de prose se lisait comme une réponse de plus.
 _PHRASE_GESTE_IMPOSSIBLE = (
-    "Vérification faite, je ne peux finalement pas vous proposer de {verbe} ce run : "
-    "{cause}"
+    "Vérification faite, je ne peux finalement pas vous proposer de {verbe} ce run — "
+    "la raison est juste en dessous."
 )
 _PHRASE_GESTE_REFUSE = "Ce geste n'a pas eu lieu : {cause}"
 _PHRASE_GESTE_EMPECHE = "Je n'ai pas pu {verbe} le run {run_id} : {cause}."
@@ -1246,29 +1248,6 @@ _STATUTS_ACTIFS = frozenset(
         EXECUTION_EN_ATTENTE_ARBITRAGE,
     }
 )
-
-#: Ce que le fil dit d'un statut d'exécution (#946, C7 du retex du 2026-09-11) :
-#: l'ouverture d'un run annonçait « statut « en_cours » », c'est-à-dire
-#: l'identifiant de la machine à états rendu tel quel dans une conversation.
-#:
-#: Les libellés sont ceux de `libelleStatutExecution` (`apps/web/lib/format.ts`)
-#: **au mot près** — c'est la règle de #571, et le même run lu dans le fil puis
-#: sur son écran ne doit pas paraître dans deux états. Un statut absent de la
-#: table se dit brut plutôt que traduit à l'aveugle.
-_LIBELLES_STATUT_EXECUTION = {
-    EXECUTION_EN_COURS: "En cours",
-    EXECUTION_TERMINEE: "Terminée",
-    EXECUTION_ANNULEE: "Annulée",
-    EXECUTION_ECHEC: "Échec",
-    EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
-    EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
-    EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
-}
-
-
-def libelle_statut_execution(statut: str) -> str:
-    """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
-    return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
 
 
 #: Ce que le fil dit d'un statut de **tâche** (#1157) — les libellés de
@@ -3348,9 +3327,10 @@ class RepondeurOrchestration(RepondeurChat):
           (`runs_candidats`) et la question est celle du modèle. Une désignation
           multiple n'agit jamais, quoi que le modèle ait écrit ;
         - **un run inconnu, un geste que l'état du run refuse** — aucune carte, et
-          la cause s'écrit derrière les mots du modèle (la règle de
+          la correction s'écrit derrière les mots du modèle (la règle de
           `_proposer_projet`) : rien ne sera proposé qu'aucune confirmation ne
-          pourrait honorer.
+          pourrait honorer. Le refus du service est le fait de la réponse
+          (`geste_fait`), comme celui qu'un clic aurait reçu.
 
         Une action hors des quatre, ou aucun run désigné, n'ajoute rien : le modèle
         a parlé, et ce qu'on ne comprend pas ne pose jamais de carte.
@@ -3382,10 +3362,11 @@ class RepondeurOrchestration(RepondeurChat):
         refus = await self._refus_du_geste(action, run_id)
         if refus:
             verbe = VERBES_DE_GESTE.get(action, action)
-            await redaction.ecrire(
-                "\n\n" + _PHRASE_GESTE_IMPOSSIBLE.format(verbe=verbe, cause=refus)
+            await redaction.ecrire("\n\n" + _PHRASE_GESTE_IMPOSSIBLE.format(verbe=verbe))
+            return ReponseChat(
+                contenu=redaction.texte,
+                geste_fait=GesteRunFait(action, run=_run_vise(resume), refus=refus),
             )
-            return ReponseChat(contenu=redaction.texte)
         bornes = charge.get("bornes")
         posees = (
             BornesRun.depuis(bornes)

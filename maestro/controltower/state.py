@@ -205,6 +205,34 @@ STATUTS_EXECUTION_TERMINAUX = frozenset(
     {EXECUTION_TERMINEE, EXECUTION_ANNULEE, EXECUTION_ECHEC}
 )
 
+#: Ce que le fil dit d'un statut d'exécution (#946, C7 du retex du 2026-09-11) :
+#: l'ouverture d'un run annonçait « statut « en_cours » », c'est-à-dire
+#: l'identifiant de la machine à états rendu tel quel dans une conversation.
+#:
+#: Les libellés sont ceux de `libelleStatutExecution` (`apps/web/lib/format.ts`)
+#: **au mot près** — c'est la règle de #571, et le même run lu dans le fil puis
+#: sur son écran ne doit pas paraître dans deux états. Un statut absent de la
+#: table se dit brut plutôt que traduit à l'aveugle.
+#:
+#: Déclarée à côté des statuts depuis #1179 : les refus des gestes sur un run
+#: (`ServiceExecutions.refus_du_geste`) les nomment aussi, et s'affichent sous la
+#: bulle du fil comme sous les boutons des écrans — « déjà soldée (echec) » y
+#: rendait l'identifiant brut que #946 avait retiré de la conversation.
+_LIBELLES_STATUT_EXECUTION = {
+    EXECUTION_EN_COURS: "En cours",
+    EXECUTION_TERMINEE: "Terminée",
+    EXECUTION_ANNULEE: "Annulée",
+    EXECUTION_ECHEC: "Échec",
+    EXECUTION_EN_ATTENTE_BRIEF: "Brief à valider",
+    EXECUTION_EN_ATTENTE_REPONSES: "Questions en attente",
+    EXECUTION_EN_ATTENTE_ARBITRAGE: "Validation en attente",
+}
+
+
+def libelle_statut_execution(statut: str) -> str:
+    """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
+    return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
+
 #: Les deux **ordres de pause** d'un run (#477), portés par `execution.statut` —
 #: le canal de l'annulation (#444), et surtout pas un second transport : le guet
 #: du process détaché est déjà branché là, et un run qui vit des heures n'a pas à

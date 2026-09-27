@@ -411,7 +411,12 @@ def test_un_geste_que_le_service_refuse_n_est_pas_propose_et_dit_pourquoi() -> N
     assert reponse.geste_run is None
     # La phrase **corrige** ce que le modèle venait d'annoncer : elle dit qu'elle y revient.
     assert "je ne peux finalement pas vous proposer de reprendre ce run" in reponse.contenu
-    assert "pas été mis en pause" in reponse.contenu
+    # La raison est le **fait** du refus, marqué sous la bulle comme un refus au clic —
+    # en prose, elle se lisait comme une réponse de plus (relecture visuelle de #1179).
+    fait = reponse.geste_fait
+    assert fait is not None and fait.action == GESTE_REPRISE and fait.run.run_id == RUN
+    assert "pas été mis en pause" in fait.refus
+    assert "pas été mis en pause" not in reponse.contenu
 
 
 # ── ① la confirmation : exécutée par le service, l'état relu ──────────────────
@@ -713,7 +718,10 @@ def test_un_run_solde_ne_se_suspend_ni_ne_s_annule(geste: str) -> None:
     refus = _refus(state, geste)
 
     assert refus is not None and refus.motif == MOTIF_RELANCE_RUN_SOLDE
-    assert EXECUTION_ANNULEE in str(refus)
+    # Le statut au libellé des écrans : la phrase s'affiche sous un bouton comme sous une
+    # bulle, et « (annulee) » y rendait l'identifiant de la machine à états (#946).
+    assert "(Annulée)" in str(refus)
+    assert f"({EXECUTION_ANNULEE})" not in str(refus)
 
 
 def test_une_pause_ne_se_pose_pas_deux_fois_et_une_reprise_veut_une_pause() -> None:
@@ -1036,5 +1044,6 @@ def test_de_bout_en_bout_un_geste_que_l_etat_refuse_ne_pose_pas_de_carte(
         reponse = _dire(client, "reprends-le")
 
         assert reponse["geste_run"] is None
-        assert "pas été mis en pause" in reponse["contenu"]
+        assert "finalement pas vous proposer de reprendre" in reponse["contenu"]
+        assert "pas été mis en pause" in reponse["geste_fait"]["refus"]
         assert _confirmer(client).status_code == 409

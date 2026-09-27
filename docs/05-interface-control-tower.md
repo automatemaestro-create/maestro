@@ -3399,8 +3399,13 @@ lui-même (docs/33 ②).
   bouton** — on répond en mots, et la carte suit.
 - **Un geste que l'état du run refuse se dit**, avec la raison du service : **avant** la carte
   quand l'état le rend certain (on ne propose pas de reprendre un run qui travaille), **après** le
-  clic quand le temps l'a fait naître (un run soldé entre la carte et la confirmation) — alors la
-  trace porte le glyphe d'arrêt et la raison, et rien n'a été fait.
+  clic quand le temps l'a fait naître (un run soldé entre la carte et la confirmation). Dans les
+  deux cas la trace porte le glyphe d'arrêt et la raison, et rien n'a été fait ; avant la carte, une
+  phrase revient d'abord sur ce que le modèle venait d'annoncer. Le statut y est dit au libellé
+  des écrans (« Échec »), jamais par l'identifiant de la machine à états.
+- **La conséquence d'une interruption suit l'état du run** : sur un run en pause, la carte ne
+  lui prête pas de tâches en vol — celles qui attendaient ne partiront plus, et seule une tâche
+  partie avant la pause, si elle tourne encore, perd son travail.
 
 La forme a été tranchée sur pièces (veille et « Variante retenue » de #1179) : la question qui
 nomme le geste et sa cible puis dit ce qui va se passer, d'après l'approbation d'outil de VS Code ;
@@ -6408,7 +6413,8 @@ Les `bornes` ne valent que pour une relance, le seul geste qui ouvre un run. Le 
 désignation à la projection : un run inconnu ne pose rien et se dit ; **plusieurs** runs connus ne
 posent aucune carte et voyagent sur la réponse (`runs_candidats`) ; un seul run pose la carte
 (`geste_run`) — si le service l'accepterait, ce que `ServiceExecutions.refus_du_geste` dit, sinon
-la raison du refus s'écrit derrière les mots du modèle :
+une correction s'écrit derrière les mots du modèle et le refus voyage en `geste_fait`, comme celui
+d'un clic (ci-dessous). La carte :
 
 ```json
 {"action": "pause", "bornes": null,
