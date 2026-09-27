@@ -900,7 +900,7 @@ class ConducteurOutillage:
     async def apres_le_run(
         self, fil: Sequence[MessageChat], projet_id: str
     ) -> ReponseChat | None:
-        """L'outillage **revu après un run** : la pièce que le projet construit fait changer (#1343).
+        """L'outillage **revu après un run** : la pièce que le projet construit change (#1343).
 
         « À vérifier » promettait que ce qui ne pouvait pas encore se jouer le serait
         dès que le projet le permettrait ; le banc de #1162 a montré que personne ne le

@@ -7125,6 +7125,22 @@ encore, une commande que la portée « projet » renvoie à une personne (`sudo`
 chemin hors du projet — `maestro.portee`), et tout, sur un poste sans bash. Le code de retour fait
 foi, jamais le texte de la sortie.
 
+**Ce que le poste répond se joue même quand le projet ne peut rien jouer** (#1343). Une commande
+que le projet ne peut pas encore jouer appelle des programmes, et leur présence ne dépend pas de
+lui : chacun est demandé au bash des agents (`type`), dans la copie. Un programme introuvable rend
+la commande **échouée**, avec ce que la sonde a répondu — `AGENTS.md` la nomme, jamais comme la
+marche à suivre ; un programme présent la laisse à vérifier. Le questionnaire d'un projet neuf
+demande la même chose au poste : chaque option dit les outils qu'elle demande (`outils`), une
+option qui en manque le dit et **ne reste pas recommandée** s'il en est une qui s'en passe, et ce
+que le poste a répondu est dit au modèle, qui s'y reprend.
+
+**Et ce qui ne pouvait pas se jouer se joue dès que le projet le permet** (#1343). À la fin d'un
+run, si l'outillage que ce fil a écrit garde une commande qui n'a pas passé et que le projet a
+maintenant ses fichiers, les commandes sont **rejouées** sur le projet construit ; la première
+pièce dont le texte change est proposée **sur le message du récit de fin** — le dernier du fil,
+donc celui qui attend un geste —, puis les suivantes, chacune sur accord. Le récit et la revue se
+font en même temps ; l'un sans l'autre part seul.
+
 L'écran rend ce verdict **commande par commande**, dans la forme retenue sur pièces
 (`VerificationsOutillage`, variante A de #1160) : sur la page, la phrase de compte puis une ligne
 par commande dans l'ordre joué, un badge à glyphe et mot devant, l'échec déployé sur place (son

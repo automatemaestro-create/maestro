@@ -1,4 +1,4 @@
-"""L'outillage d'un projet neuf regarde le poste, et se revérifie dès que le projet le permet (#1343).
+"""L'outillage d'un projet neuf regarde le poste, et se revérifie quand le projet le permet (#1343).
 
 Relevé par S9 sur la vraie stack : l'outillage d'un projet neuf recommandait `uv`,
 `ruff`, `typst`, `pandoc` — absents du poste —, écrivait leurs commandes « à vérifier »
@@ -143,7 +143,7 @@ class _Joueur:
 
 
 def _neuf(*commandes: tuple[str, str]) -> Constats:
-    """Les constats d'un projet neuf : des commandes de convention, qui vivront dans un manifeste."""
+    """Les constats d'un projet neuf : des commandes de convention, qui vivront dans un fichier."""
     return Constats(
         commandes=tuple(
             Commande(usage=usage, commande=texte, chemin="pyproject.toml", origine="convention")
@@ -301,7 +301,7 @@ def test_sonder_le_poste_rend_ce_que_bash_trouve_et_ce_qu_il_ne_trouve_pas() -> 
 
 
 def test_sans_bash_le_poste_ne_repond_rien() -> None:
-    """Sous la garde du conftest : pas d'interpréteur, donc aucun fait du poste — jamais « absent »."""
+    """Sous la garde du conftest : pas d'interpréteur, aucun fait du poste — jamais « absent »."""
     assert Verificateur().sonder(("uv",)) == {}
 
 
