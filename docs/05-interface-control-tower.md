@@ -1533,8 +1533,44 @@ trait suit l'état de l'arête : plein et vert `franchie`, pointillé neutre `at
 pointillé rose `rompue`. Survoler un nœud met **ses** arêtes en avant et estompe les
 autres. Aucune dépendance de rendu de graphe n'a été ajoutée — `apps/web` tient en
 trois paquets, et le précédent local du SVG à la main est `GraphiqueEvolutionCout`. Le
-`<svg>` est `aria-hidden` (un tracé n'a rien à annoncer) : les enchaînements sont
+tracé est `aria-hidden` (un dessin n'a rien à annoncer) : les enchaînements sont
 **aussi** rendus en toutes lettres, dans un `<details>` replié.
+
+**Une flèche se lit, et ne passe sous aucune carte (#1297).** Le retour d'expérience du
+2026-09-24 demandait ce que dit une flèche — « un lien logique ? une dépendance ? une
+possibilité de parallélisme ? » — et en montrait une qui semblait venir d'ailleurs. Quatre
+réponses :
+
+- **Une légende des flèches, au-dessus du dessin**, sous ses chiffres : « Une flèche est une
+  dépendance : la tâche où elle arrive attend le livrable de celle d'où elle part. Une
+  colonne : des tâches qui peuvent tourner de front. », puis un échantillon de chaque tracé
+  — *franchie : le livrable est rendu*, *en attente : pas encore rendu*, *rompue : l'amont a
+  échoué, l'aval ne partira pas* —, dessiné par la même table que les arêtes. Les **trois**
+  états sont toujours dits, à l'inverse de la légende des nœuds, bornée à ce que le graphe
+  contient : c'est un vocabulaire de trois mots, et savoir ce que voudra dire le vert avant
+  qu'il n'apparaisse est la question. Un graphe plat n'a pas de légende des flèches.
+- **Une flèche survolée ou focalisée se nomme** dans une ligne **sous le cadre** : « *B*
+  attend le livrable de *A* — franchie », précédée de l'échantillon de son tracé ; elle passe
+  devant, les autres s'estompent. Chaque flèche a une **cible** — le même tracé, transparent
+  et large — qu'on survole à la souris et qu'on atteint à la tabulation, nommée par cette
+  phrase pour les lecteurs d'écran ; `Échap` la tait. La ligne garde sa hauteur du repos au
+  survol, et invite au repos à survoler.
+- **Une dépendance redondante** (servie par le graphe, §6.11) **pâlit** au repos, et la
+  légende ajoute alors *pâlie : déjà impliquée par une autre chaîne* ; regardée, elle reprend
+  sa couleur et se nomme avec la chaîne qui l'implique (« · déjà impliquée par la chaîne via
+  … »), comme dans « en toutes lettres ».
+- **Aucune flèche ne croise une carte.** Une arête qui saute une colonne la traverse par un
+  **couloir libre** — l'intervalle entre deux cartes, ou sous la dernière —, choisi au plus
+  près de la droite qui joindrait ses deux bouts ; chaque courbe reste dans sa gouttière.
+  C'est ce que le banc de mise en page mesure sur la vraie stack, et `pipeline.test.tsx`
+  hors rendu (`lib/graphe.tracerArete`).
+
+Pourquoi ces formes-là : la légende au-dessus vient de GitLab, qui pose sa phrase (« survolez
+un job pour voir ceux dont il dépend ») au-dessus de son graphe de dépendances ; « colonne =
+tâches simultanées », de GitHub Actions. Deux autres variantes ont été rendues sur la vraie
+stack et **écartées** par le regard neuf : une bulle posée sur la flèche (elle recouvrait la
+carte qu'elle contourne) et des en-têtes de colonne (« Niveau 1 · 2 peuvent tourner de
+front », juste sur un plan large, muets sur une chaîne). Le choix est consigné sur le ticket.
 
 **« La suite apparaît » veut dire qu'elle s'allume, pas qu'elle se crée.** Sur un plan
 déclaré d'avance (#489/#490), la boîte de l'aval est là depuis le début — grise, en
@@ -5957,9 +5993,12 @@ bascule, et se lit avec n'importe laquelle des quatre. Le décompte de cette sec
   ],
   // `de` l'amont, `vers` l'aval : le sens du FLUX, jamais celui de la
   // déclaration (`Task.dependances` se lit « j'attends ceux-ci »).
+  // `redondante`/`via` (#1297) : l'aval attendait DÉJÀ l'amont par une autre
+  // chaîne du plan — `via` en nomme les nœuds intermédiaires (la plus courte).
   "aretes": [
-    { "de": "schema-sql", "vers": "api-crud", "etat": "franchie" },
-    { "de": "api-crud",   "vers": "tests-e2e", "etat": "attendue" }
+    { "de": "schema-sql", "vers": "api-crud",  "etat": "franchie", "redondante": false, "via": [] },
+    { "de": "api-crud",   "vers": "tests-e2e", "etat": "attendue", "redondante": false, "via": [] },
+    { "de": "schema-sql", "vers": "tests-e2e", "etat": "franchie", "redondante": true,  "via": ["api-crud"] }
   ],
   "niveaux": [ ["schema-sql"], ["api-crud", "ui-liste"], ["tests-e2e"] ],
   // Pourquoi les tâches passent UNE À UNE (#1298) — les causes que le moteur a
@@ -6018,6 +6057,16 @@ existent toujours : le relais n'existe que si une messagerie est injectée
 `OrchestrationEngine.default()`, qui n'en injecte aucune. Se brancher sur le message lui-même aurait
 laissé **toutes les arêtes éteintes** dans la configuration ordinaire — le défaut exact que #488 a
 nommé chez `consigne_detail` : « toute la plomberie est posée, rien ne la remplit ».
+
+**Une dépendance redondante se dit, elle ne se retire pas (#1297).** Un plan peut déclarer
+`contenu → intégration` alors que la chaîne passe déjà par `contenu → maquette → intégration` : la
+dépendance directe n'apprend rien de plus, et c'est elle qui, tracée d'une traite, passait sous la
+carte du milieu et « semblait venir d'ailleurs » (retour d'expérience du 2026-09-24, run
+`3fe501fc0878`). Le graphe la marque `redondante` et nomme dans `via` la plus courte chaîne qui
+l'implique ; il ne la retire pas — le plan l'a déclarée, et la liste « en toutes lettres » les rend
+toutes. Le calcul vit ici, une fois, plutôt qu'en règle d'affichage : un parcours en largeur depuis
+l'amont qui s'interdit l'arête directe, sans jamais revisiter un nœud (un cycle relu du bus
+s'arrête).
 
 **Un graphe plat est un graphe, pas un vide** (quatrième critère). Un plan sans aucune dépendance
 déclarée est le cas le **plus courant** : `plat: true`, tous les nœuds au niveau 0, `niveaux` à une

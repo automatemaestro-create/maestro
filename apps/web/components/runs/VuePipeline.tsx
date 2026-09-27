@@ -46,6 +46,15 @@
  *   (`lib/graphe.etatDuNoeud`), une tâche arrêtée sur quelqu'un ne « bougeant »
  *   pas quel qu'ait été son dernier geste. Rien d'autre n'a bougé sur la boîte,
  *   et un run soldé rend le dessin d'avant ce lot.
+ * - **Une flèche se lit, et ne passe jamais sous une carte** (#1297). Le retour
+ *   d'expérience du 2026-09-24 demandait si une flèche disait « un lien
+ *   logique ? une dépendance ? un parallélisme ? », et en montrait une qui
+ *   « semblait venir d'ailleurs » : une dépendance **redondante**, tracée sous la
+ *   carte du milieu. Une légende dit désormais, au-dessus du dessin, ce qu'est
+ *   une flèche et une colonne ; une redondante (servie par le graphe) pâlit ; le
+ *   tracé contourne les cartes (`lib/graphe.tracerArete`) ; et une flèche
+ *   survolée ou focalisée se nomme sous le cadre. Variante retenue sur pièces
+ *   par le regard neuf, consignée sur le ticket.
  *
  * ⚠ Un graphe **ne se lit pas s'il déborde** (note technique du ticket). Deux
  * réponses, et aucune ne consiste à tout montrer plus petit : le dessin vit dans
@@ -108,7 +117,9 @@ import {
   NOEUD_EN_COURS,
   NOEUD_PRET,
   NOEUD_TERMINE,
+  tracerArete,
   type EtatNoeud,
+  type TraceArete,
 } from "@/lib/graphe";
 import {
   ARETE_ATTENDUE,
@@ -228,6 +239,8 @@ type ApparenceArete = {
   tirets?: string;
   /** Ce qu'un lecteur d'écran en dit, dans la liste textuelle des arêtes. */
   phrase: string;
+  /** Ce que la légende des flèches en dit — l'état, et ce qu'il veut dire pour l'aval. */
+  legende?: string;
 };
 
 const APPARENCE_ARETE: Record<string, ApparenceArete> = {
@@ -235,18 +248,21 @@ const APPARENCE_ARETE: Record<string, ApparenceArete> = {
     trait: "stroke-emerald-500",
     pointe: "fill-emerald-500",
     phrase: "franchie",
+    legende: "franchie : le livrable est rendu",
   },
   [ARETE_ATTENDUE]: {
     trait: "stroke-neutral-300 dark:stroke-neutral-700",
     pointe: "fill-neutral-300 dark:fill-neutral-700",
     tirets: "5 5",
     phrase: "en attente",
+    legende: "en attente : pas encore rendu",
   },
   [ARETE_ROMPUE]: {
     trait: "stroke-rose-400 dark:stroke-rose-500",
     pointe: "fill-rose-400 dark:fill-rose-500",
     tirets: "2 4",
     phrase: "rompue",
+    legende: "rompue : l'amont a échoué, l'aval ne partira pas",
   },
 };
 
@@ -259,6 +275,36 @@ const APPARENCE_ARETE_INCONNUE: ApparenceArete = {
 
 function apparenceArete(etat: string): ApparenceArete {
   return APPARENCE_ARETE[etat] ?? APPARENCE_ARETE_INCONNUE;
+}
+
+/** L'ordre de la légende des flèches : ce qui est passé, ce qui attend, ce qui a cassé. */
+const ORDRE_LEGENDE_FLECHES = [ARETE_FRANCHIE, ARETE_ATTENDUE, ARETE_ROMPUE];
+
+/**
+ * La transparence d'une dépendance **redondante** au repos (#1297) : assez pâle
+ * pour reculer derrière la chaîne qui l'implique, assez marquée pour qu'on la
+ * voie encore — elle reste une dépendance déclarée. Survolée ou focalisée, elle
+ * reprend toute sa couleur comme n'importe quelle autre.
+ */
+const PALE = "opacity-50";
+
+const cleArete = (arete: AreteGraphe) => `${arete.de}→${arete.vers}`;
+
+/** La chaîne qui implique déjà une arête redondante, en titres : « via A → B ». */
+function viaEnToutesLettres(arete: AreteGraphe, titre: (id: string) => string): string {
+  const via = arete.via ?? [];
+  return via.length > 0 ? ` · déjà impliquée par la chaîne via ${via.map(titre).join(" → ")}` : "";
+}
+
+/**
+ * Ce qu'une flèche veut dire, en une phrase (#1297) : « *B* attend le livrable de
+ * *A* — franchie ». C'est ce que la ligne sous le dessin affiche quand on survole
+ * ou focalise la flèche, et le nom accessible de sa cible clavier.
+ */
+function phraseDuLien(arete: AreteGraphe, titre: (id: string) => string): string {
+  return `${titre(arete.vers)} attend le livrable de ${titre(arete.de)} — ${
+    apparenceArete(arete.etat).phrase
+  }${viaEnToutesLettres(arete, titre)}`;
 }
 
 /**
@@ -444,6 +490,24 @@ function GraphePipeline({
 
   const { toile, refPour, boites } = useMesureDesBoites();
 
+  // La flèche qu'on survole ou qu'on focalise (#1297) : elle passe devant, les
+  // autres s'estompent, et la ligne sous le dessin la nomme.
+  const [lienActif, setLienActif] = useState<string | null>(null);
+  const titre = (id: string) => parId.get(id)?.titre || id;
+  const traces = new Map(
+    aretes.map((arete) => [cleArete(arete), tracerArete(arete.de, arete.vers, niveaux, boites)]),
+  );
+  const areteActive =
+    aretes.find((arete) => cleArete(arete) === lienActif && traces.get(cleArete(arete))) ??
+    null;
+
+  // Un couloir qui longe **la plus haute** colonne passe sous le bas de la
+  // toile : on lui réserve la place, plutôt que de le laisser frôler le cadre.
+  const fondDesCartes = Math.max(0, ...[...boites.values()].map((b) => b.y + b.hauteur));
+  const couloirSousLeDessin = [...traces.values()].some(
+    (trace) => trace !== null && trace.bas > fondDesCartes,
+  );
+
   // La légende suit le **cadrage**, pas le graphe entier : cadrer sur la branche
   // courante retire des nœuds, et laisser leur état dans la légende ferait
   // chercher des boîtes qu'on vient soi-même de masquer.
@@ -464,41 +528,81 @@ function GraphePipeline({
     >
       <ChiffresDuGraphe graphe={graphe} />
       <NoteDeLecture graphe={graphe} />
+      {aretes.length > 0 && (
+        <LegendeFleches redondante={aretes.some((arete) => arete.redondante)} />
+      )}
 
       {/* Le cadre borne le dessin et **défile chez lui** : c'est ce qui empêche
           le corps de la page de défiler horizontalement (#306/#308 — le banc de
           mise en page est le seul à voir cette classe de défaut). */}
       <div className="mt-3 max-h-[34rem] overflow-auto rounded-lg border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
-        <div ref={toile} className="relative flex w-max items-start gap-16">
-          <svg
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 size-full"
-          >
-            <defs>
-              {Object.entries(APPARENCE_ARETE).map(([etat, apparence]) => (
-                <marker
-                  key={etat}
-                  id={`${MARQUEUR}-${etat}`}
-                  viewBox="0 0 10 10"
-                  refX="9"
-                  refY="5"
-                  markerWidth="5"
-                  markerHeight="5"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M0 0 L10 5 L0 10 Z" className={apparence.pointe} />
-                </marker>
+        <div
+          ref={toile}
+          className={`relative flex w-max items-start gap-16${couloirSousLeDessin ? " pb-5" : ""}`}
+        >
+          <svg className="pointer-events-none absolute inset-0 size-full overflow-visible">
+            {/* Le tracé n'a rien à annoncer : il est `aria-hidden`, et « en
+                toutes lettres » reste l'alternative textuelle (exemption #537). */}
+            <g aria-hidden="true">
+              <defs>
+                {Object.entries(APPARENCE_ARETE).map(([etat, apparence]) => (
+                  <marker
+                    key={etat}
+                    id={`${MARQUEUR}-${etat}`}
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="5"
+                    markerHeight="5"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M0 0 L10 5 L0 10 Z" className={apparence.pointe} />
+                  </marker>
+                ))}
+              </defs>
+              {aretes.map((arete) => (
+                <Arete
+                  key={cleArete(arete)}
+                  arete={arete}
+                  trace={traces.get(cleArete(arete)) ?? null}
+                  survole={survole}
+                  lienActif={areteActive === null ? null : cleArete(areteActive)}
+                />
               ))}
-            </defs>
-            {aretes.map((arete) => (
-              <Arete
-                key={`${arete.de}→${arete.vers}`}
-                arete={arete}
-                depart={boites.get(arete.de)}
-                arrivee={boites.get(arete.vers)}
-                survole={survole}
-              />
-            ))}
+            </g>
+            {/* La **cible** de chaque flèche (#1297) : le même tracé, transparent
+                et large, qu'on survole à la souris et qu'on atteint au clavier.
+                Le précédent est la zone de visée de `GraphiqueEvolutionCout` —
+                `role="img"`, parce qu'un élément SVG sans rôle n'a pas le droit
+                de porter un `aria-label` (axe : `aria-prohibited-attr`). Elle est
+                **hors** du groupe masqué : un élément focalisable sous
+                `aria-hidden` est, lui, une faute (`aria-hidden-focus`). */}
+            {aretes.map((arete) => {
+              const trace = traces.get(cleArete(arete));
+              if (!trace) return null;
+              return (
+                <path
+                  key={`cible-${cleArete(arete)}`}
+                  data-fleche={cleArete(arete)}
+                  d={trace.d}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={12}
+                  role="img"
+                  tabIndex={0}
+                  aria-label={phraseDuLien(arete, titre)}
+                  onPointerEnter={() => setLienActif(cleArete(arete))}
+                  onPointerLeave={() => setLienActif(null)}
+                  onFocus={() => setLienActif(cleArete(arete))}
+                  onBlur={() => setLienActif(null)}
+                  onKeyDown={(evenement) => {
+                    // WCAG 1.4.13 : ce qui apparaît au focus se referme sur Échap.
+                    if (evenement.key === "Escape") setLienActif(null);
+                  }}
+                  className="pointer-events-auto cursor-help outline-none focus-visible:stroke-accent/20"
+                />
+              );
+            })}
           </svg>
 
           {niveaux.map((niveau, rang) => (
@@ -531,9 +635,34 @@ function GraphePipeline({
         </div>
       </div>
 
+      {/* Le lien nommé **sous** le dessin, jamais sur lui (variante retenue de
+          #1297) : une bulle posée sur la flèche recouvrait la carte qu'elle
+          contourne. La ligne garde **deux lignes de haut** du repos au survol —
+          sinon tout ce qui suit sauterait à chaque flèche —, et l'échantillon du
+          tracé actif la relie à la flèche qu'on regarde. Pas de région vivante :
+          au clavier, la cible porte déjà la même phrase pour nom accessible. */}
+      {aretes.length > 0 && (
+        <p className="mt-1.5 flex min-h-8 items-start gap-1.5 text-annexe text-texte-secondaire">
+          {areteActive !== null ? (
+            <>
+              <EchantillonFleche
+                etat={areteActive.etat}
+                pale={areteActive.redondante === true}
+                className="mt-1"
+              />
+              <span className="text-texte">{phraseDuLien(areteActive, titre)}</span>
+            </>
+          ) : (
+            "Survolez une flèche, ou parcourez-les au clavier, pour lire le lien qu'elle porte."
+          )}
+        </p>
+      )}
+
       {/* Le graphe **en toutes lettres**, pour qui ne voit pas les courbes : le
-          `<svg>` est `aria-hidden`, un tracé n'ayant rien à annoncer. Replié par
-          défaut — c'est un doublon du dessin, pas une seconde information. */}
+          tracé est `aria-hidden`, un dessin n'ayant rien à annoncer. Replié par
+          défaut — c'est un doublon du dessin, pas une seconde information. Il
+          garde **toutes** les dépendances, redondantes comprises, et dit par
+          quelle chaîne une redondante passe déjà (#1297). */}
       {aretes.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-annexe text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100">
@@ -544,7 +673,7 @@ function GraphePipeline({
               <li key={`texte-${arete.de}→${arete.vers}`}>
                 {`${parId.get(arete.de)?.titre ?? arete.de} → ${
                   parId.get(arete.vers)?.titre ?? arete.vers
-                } — ${apparenceArete(arete.etat).phrase}`}
+                } — ${apparenceArete(arete.etat).phrase}${viaEnToutesLettres(arete, titre)}`}
               </li>
             ))}
           </ul>
@@ -677,52 +806,52 @@ function memesBoites(
  * Une dépendance, tracée du **bord droit de l'amont** au **bord gauche de
  * l'aval** : le sens du flux, jamais celui de la déclaration.
  *
- * Une courbe de Bézier à tangentes horizontales plutôt qu'un segment : c'est ce
- * qui rend lisible un faisceau de liens qui partent du même nœud vers plusieurs
- * niveaux, là où des droites se superposeraient. Les points de contrôle sont à
- * mi-distance, avec un plancher — sinon deux colonnes voisines rendraient une
- * courbe si plate qu'elle passerait sous les boîtes.
+ * Des courbes de Bézier à tangentes horizontales plutôt que des segments : c'est
+ * ce qui rend lisible un faisceau de liens qui partent du même nœud vers
+ * plusieurs niveaux, là où des droites se superposeraient. **Par où** passe le
+ * tracé se décide hors du JSX (`lib/graphe.tracerArete`, #1297) : jamais sous
+ * une carte, une arête qui saute une colonne la traversant par un couloir libre.
  *
- * Ne rend rien tant que les deux boîtes ne sont pas mesurées : un tracé vers
- * `(0,0)` traverserait le dessin le temps d'une image.
+ * Ne rend rien tant que les deux boîtes ne sont pas mesurées (`trace` nul) : un
+ * tracé vers `(0,0)` traverserait le dessin le temps d'une image.
  */
 function Arete({
   arete,
-  depart,
-  arrivee,
+  trace,
   survole,
+  lienActif,
 }: {
   arete: AreteGraphe;
-  depart: Boite | undefined;
-  arrivee: Boite | undefined;
+  trace: TraceArete | null;
   survole: string | null;
+  lienActif: string | null;
 }) {
-  if (depart === undefined || arrivee === undefined) return null;
-  if (depart.largeur === 0 || arrivee.largeur === 0) return null;
-
+  if (trace === null) return null;
   const apparence = apparenceArete(arete.etat);
-  const x1 = depart.x + depart.largeur;
-  const y1 = depart.y + depart.hauteur / 2;
-  const x2 = arrivee.x;
-  const y2 = arrivee.y + arrivee.hauteur / 2;
-  const courbure = Math.max(24, (x2 - x1) / 2);
-  const trace = `M ${x1} ${y1} C ${x1 + courbure} ${y1}, ${x2 - courbure} ${y2}, ${x2} ${y2}`;
 
   // Survoler un nœud met **ses** arêtes en avant et estompe les autres : sur un
-  // faisceau dense, c'est la seule façon de suivre un lien du regard.
-  const concerne =
-    survole === null || survole === arete.de || survole === arete.vers;
+  // faisceau dense, c'est la seule façon de suivre un lien du regard. Survoler ou
+  // focaliser une **flèche** (#1297) fait de même pour elle seule, et l'emporte.
+  // `null` : rien n'est regardé — le dessin au repos.
+  const enAvant =
+    lienActif !== null
+      ? lienActif === cleArete(arete)
+      : survole !== null
+        ? survole === arete.de || survole === arete.vers
+        : null;
+  // Au repos, une dépendance redondante recule derrière la chaîne qui l'implique.
+  const opacite =
+    enAvant === false ? "opacity-20" : enAvant === null && arete.redondante ? PALE : "opacity-100";
 
   return (
     <path
-      d={trace}
+      d={trace.d}
+      data-redondante={arete.redondante ? "" : undefined}
       fill="none"
-      strokeWidth={concerne && survole !== null ? 2.5 : 1.5}
+      strokeWidth={enAvant === true ? 2.5 : 1.5}
       strokeDasharray={apparence.tirets}
       markerEnd={`url(#${MARQUEUR}-${arete.etat})`}
-      className={`${apparence.trait} transition-opacity motion-reduce:transition-none ${
-        concerne ? "opacity-100" : "opacity-20"
-      }`}
+      className={`${apparence.trait} transition-opacity motion-reduce:transition-none ${opacite}`}
     />
   );
 }
@@ -1077,6 +1206,84 @@ function BasculeCadrage({
           <span className="chiffre ml-1 font-normal">{nbBranche}</span>
         )}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Un échantillon de flèche, tracé par **la même table** que les arêtes du dessin
+ * (`APPARENCE_ARETE`) et coiffé de la même pointe : une légende qui dessinerait à
+ * part finirait par ne plus ressembler au dessin. Le trait est un peu plus épais
+ * que sur le graphe — sur 24 px, des tirets gris à 1,5 px se lisaient à peine
+ * (constat du regard neuf sur les variantes de #1297).
+ */
+function EchantillonFleche({
+  etat,
+  pale = false,
+  className = "",
+}: {
+  etat: string;
+  pale?: boolean;
+  className?: string;
+}) {
+  const apparence = apparenceArete(etat);
+  return (
+    <svg
+      aria-hidden="true"
+      width="28"
+      height="8"
+      className={`shrink-0 overflow-visible ${className}`}
+    >
+      <line
+        x1="0"
+        y1="4"
+        x2="24"
+        y2="4"
+        strokeWidth={2}
+        strokeDasharray={apparence.tirets}
+        markerEnd={`url(#${MARQUEUR}-${etat})`}
+        className={`${apparence.trait} ${pale ? PALE : ""}`}
+      />
+    </svg>
+  );
+}
+
+/**
+ * Ce que disent une flèche et une colonne (#1297) — la légende qui manquait :
+ * celle des nœuds ne couvre que leurs états, et le sens d'une flèche ne se
+ * lisait que dans « en toutes lettres », replié.
+ *
+ * **Au-dessus du dessin**, sous ses chiffres : la variante retenue sur pièces,
+ * d'après la phrase que GitLab pose au-dessus de son graphe de dépendances — on
+ * sait ce qu'est une flèche avant d'en suivre une. Les **trois** états sont
+ * toujours dits, même absents du graphe, à l'inverse de la légende des nœuds :
+ * c'est un vocabulaire de trois mots, et savoir ce que voudra dire le vert quand
+ * la première tâche aura rendu son livrable est justement la question. La
+ * mention « pâlie », elle, ne vient qu'avec une dépendance redondante à l'écran.
+ */
+function LegendeFleches({ redondante }: { redondante: boolean }) {
+  return (
+    <div className="mt-2 space-y-1 text-annexe text-texte-secondaire">
+      <p>
+        <span className="font-medium text-texte">Une flèche est une dépendance</span>
+        {" : la tâche où elle arrive attend le livrable de celle d'où elle part. "}
+        <span className="font-medium text-texte">Une colonne</span>
+        {" : des tâches qui peuvent tourner de front."}
+      </p>
+      <ul aria-label="Les états d'une flèche" className="flex flex-wrap gap-x-4 gap-y-1">
+        {ORDRE_LEGENDE_FLECHES.map((etat) => (
+          <li key={etat} className="inline-flex items-center gap-1.5">
+            <EchantillonFleche etat={etat} />
+            {apparenceArete(etat).legende}
+          </li>
+        ))}
+        {redondante && (
+          <li className="inline-flex items-center gap-1.5">
+            <EchantillonFleche etat={ARETE_FRANCHIE} pale />
+            pâlie : déjà impliquée par une autre chaîne
+          </li>
+        )}
+      </ul>
     </div>
   );
 }

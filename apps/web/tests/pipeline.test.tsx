@@ -30,9 +30,9 @@
  * le dessin double à dessein pour qui ne voit pas les courbes.
  */
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AvancementEtapes, LigneEtape } from "@/components/EtapesTache";
 import { VueRun } from "@/components/runs/VueRun";
@@ -45,10 +45,14 @@ import {
   aretesEntrantes,
   brancheCourante,
   comptesEtapes,
+  ECART_COULOIR,
   etapeCourante,
   etatDuNoeud,
   etatsDesNoeuds,
   niveauxRetenus,
+  pointsDuTrace,
+  tracerArete,
+  type Rect,
   NOEUD_A_FAIRE,
   NOEUD_ATTENTE_HUMAIN,
   NOEUD_AUTRE,
@@ -1251,5 +1255,397 @@ describe("quand le graphe n'a rien à montrer", () => {
     expect(
       screen.queryByText(/cette vue se remplira dès qu'il publiera/),
     ).not.toBeInTheDocument();
+  });
+});
+
+/* ==================================================================== *
+ * ④ Les flèches se lisent, et ne passent sous aucune carte (#1297)
+ * ==================================================================== */
+
+/**
+ * La forme du run `3fe501fc0878` que le retour d'expérience du 2026-09-24 a
+ * capturée : une chaîne de trois niveaux, et une dépendance **redondante** du
+ * premier au troisième — celle qui « semblait venir d'ailleurs », tracée d'une
+ * traite sous la carte du milieu.
+ *
+ *     contenu ──▶ maquette ──▶ integration
+ *        └──────────(redondante)──────▲
+ */
+function grapheRedondant(): GrapheRun {
+  return grapheFactice({
+    run_id: RUN,
+    noeuds: [
+      noeudGrapheFactice({
+        id: "contenu",
+        titre: "Contenu produit",
+        niveau: 0,
+        dependants: ["maquette", "integration"],
+        statut: "terminee",
+        compartiment: "terminees",
+      }),
+      noeudGrapheFactice({
+        id: "maquette",
+        titre: "Maquette des sections",
+        niveau: 1,
+        dependances: ["contenu"],
+        dependants: ["integration"],
+        statut: "terminee",
+        compartiment: "terminees",
+      }),
+      noeudGrapheFactice({
+        id: "integration",
+        titre: "Intégration front",
+        niveau: 2,
+        dependances: ["maquette", "contenu"],
+      }),
+    ],
+    aretes: [
+      { de: "contenu", vers: "maquette", etat: ARETE_FRANCHIE, redondante: false, via: [] },
+      { de: "maquette", vers: "integration", etat: ARETE_FRANCHIE, redondante: false, via: [] },
+      {
+        de: "contenu",
+        vers: "integration",
+        etat: ARETE_FRANCHIE,
+        redondante: true,
+        via: ["maquette"],
+      },
+    ],
+  });
+}
+
+/**
+ * Une géométrie posée sur jsdom, qui n'en calcule aucune : chaque carte (le
+ * `<li>` d'une colonne « Niveau n ») reçoit la boîte qu'aurait sa place — une
+ * colonne tous les 320 px, une carte tous les 200 px, 256 × 160 —, et tout le
+ * reste, la toile comprise, l'origine. Assez pour que chaque flèche ait un tracé,
+ * donc une cible à survoler et à focaliser ; la géométrie **réelle** se mesure au
+ * banc de mise en page, jamais ici.
+ */
+function poserUneGeometrie() {
+  return vi
+    .spyOn(Element.prototype, "getBoundingClientRect")
+    .mockImplementation(function (this: Element) {
+      const colonne =
+        this.tagName === "LI" ? this.closest("ol[aria-label^='Niveau ']") : null;
+      const [x, y, largeur, hauteur] =
+        colonne === null
+          ? [0, 0, 0, 0]
+          : [
+              (Number(colonne.getAttribute("aria-label")?.slice("Niveau ".length)) - 1) * 320,
+              [...colonne.children].indexOf(this) * 200,
+              256,
+              160,
+            ];
+      return {
+        x,
+        y,
+        left: x,
+        top: y,
+        width: largeur,
+        height: hauteur,
+        right: x + largeur,
+        bottom: y + hauteur,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+}
+
+/** Les cibles des flèches — une par dépendance dessinée, nommée par son lien. */
+async function ciblesDesFleches(pipeline: HTMLElement) {
+  return waitFor(() => {
+    const cibles = within(pipeline).getAllByRole("img", { name: /attend le livrable de/ });
+    expect(cibles.length).toBeGreaterThan(0);
+    return cibles;
+  });
+}
+
+/** Les tracés visibles, dans l'ordre des arêtes — le groupe masqué aux lecteurs d'écran. */
+const traces = (pipeline: HTMLElement) =>
+  [...pipeline.querySelectorAll("svg > g[aria-hidden='true'] > path")] as SVGPathElement[];
+
+describe("la légende des flèches (#1297)", () => {
+  it("dit ce qu'est une flèche et une colonne, au-dessus du dessin", async () => {
+    // Le retour d'expérience : « les flèches désignent-elles un lien logique ?
+    // une dépendance ? une possibilité de parallélisme ? ». La variante retenue
+    // le dit **avant** le dessin, comme GitLab au-dessus de son graphe.
+    lecture.graphe = grapheDeReference();
+    monter();
+
+    const pipeline = await pipelineCharge();
+    const cle = within(pipeline).getByText("Une flèche est une dépendance").parentElement;
+    expect(cle).toHaveTextContent(
+      "Une flèche est une dépendance : la tâche où elle arrive attend le livrable de celle d'où elle part.",
+    );
+    expect(cle).toHaveTextContent("Une colonne : des tâches qui peuvent tourner de front.");
+    const niveau1 = within(pipeline).getByRole("list", { name: "Niveau 1" });
+    expect(
+      (cle as HTMLElement).compareDocumentPosition(niveau1) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("nomme les trois états d'une flèche, même ceux que le graphe ne montre pas encore", async () => {
+    // Le graphe de référence n'a aucun relais rompu : savoir ce que voudra dire le
+    // rose avant qu'il n'apparaisse est justement la question.
+    lecture.graphe = grapheDeReference();
+    monter();
+
+    const pipeline = await pipelineCharge();
+    const etats = within(pipeline).getByRole("list", { name: "Les états d'une flèche" });
+    expect(within(etats).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "franchie : le livrable est rendu",
+      "en attente : pas encore rendu",
+      "rompue : l'amont a échoué, l'aval ne partira pas",
+    ]);
+  });
+
+  it("se tait sur un graphe plat, qui n'a aucune flèche à expliquer", async () => {
+    lecture.graphe = grapheFactice({
+      run_id: RUN,
+      noeuds: [
+        noeudGrapheFactice({ id: "schema", titre: "Schéma SQL" }),
+        noeudGrapheFactice({ id: "ui", titre: "UI liste" }),
+      ],
+    });
+    monter();
+
+    const pipeline = await pipelineCharge();
+    expect(within(pipeline).queryByText("Une flèche est une dépendance")).not.toBeInTheDocument();
+    expect(within(pipeline).queryByText(/Survolez une flèche/)).not.toBeInTheDocument();
+  });
+
+  it("ne dit « pâlie » qu'avec une dépendance redondante à l'écran", async () => {
+    lecture.graphe = grapheDeReference();
+    const { unmount } = monter();
+    let pipeline = await pipelineCharge();
+    expect(within(pipeline).queryByText(/pâlie/)).not.toBeInTheDocument();
+    unmount();
+
+    lecture.graphe = grapheRedondant();
+    monter();
+    await screen.findByText("Contenu produit");
+    pipeline = screen.getByRole("region", { name: "Pipeline du run" });
+    expect(
+      within(pipeline).getByText("pâlie : déjà impliquée par une autre chaîne"),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("une flèche qu'on regarde se nomme (#1297)", () => {
+  let geometrie: ReturnType<typeof poserUneGeometrie>;
+  beforeEach(() => {
+    geometrie = poserUneGeometrie();
+  });
+  afterEach(() => {
+    geometrie.mockRestore();
+  });
+
+  it("donne à chaque flèche une cible atteignable au clavier, nommée par son lien", async () => {
+    lecture.graphe = grapheDeReference();
+    monter();
+
+    const pipeline = await pipelineCharge();
+    const cibles = await ciblesDesFleches(pipeline);
+    expect(cibles.map((cible) => cible.getAttribute("aria-label"))).toEqual([
+      "API CRUD attend le livrable de Schéma SQL — franchie",
+      "UI liste attend le livrable de Schéma SQL — franchie",
+      "Recette attend le livrable de API CRUD — en attente",
+      "Recette attend le livrable de UI liste — en attente",
+    ]);
+    for (const cible of cibles) expect(cible).toHaveAttribute("tabindex", "0");
+    // Le tracé visible, lui, reste muet : « en toutes lettres » est l'alternative.
+    expect(traces(pipeline).length).toBe(4);
+    expect(pipeline.querySelector("svg > g[aria-hidden='true']")).not.toBeNull();
+  });
+
+  it("nomme sous le dessin la flèche survolée, et estompe les autres", async () => {
+    lecture.graphe = grapheDeReference();
+    monter();
+
+    const pipeline = await pipelineCharge();
+    const [, versUi] = await ciblesDesFleches(pipeline);
+    expect(within(pipeline).getByText(/Survolez une flèche/)).toBeInTheDocument();
+
+    await userEvent.hover(versUi);
+
+    expect(
+      within(pipeline).getByText("UI liste attend le livrable de Schéma SQL — franchie"),
+    ).toBeInTheDocument();
+    expect(within(pipeline).queryByText(/Survolez une flèche/)).not.toBeInTheDocument();
+    const [versApi, versUiTrace] = traces(pipeline);
+    expect(versUiTrace).toHaveClass("opacity-100");
+    expect(versUiTrace).toHaveAttribute("stroke-width", "2.5");
+    expect(versApi).toHaveClass("opacity-20");
+
+    await userEvent.unhover(versUi);
+    expect(within(pipeline).getByText(/Survolez une flèche/)).toBeInTheDocument();
+  });
+
+  it("nomme la flèche focalisée au clavier, et se tait sur Échap", async () => {
+    lecture.graphe = grapheDeReference();
+    monter();
+
+    const pipeline = await pipelineCharge();
+    const [, , apiVersRecette] = await ciblesDesFleches(pipeline);
+    act(() => apiVersRecette.focus());
+
+    expect(
+      within(pipeline).getByText("Recette attend le livrable de API CRUD — en attente"),
+    ).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(
+      within(pipeline).queryByText("Recette attend le livrable de API CRUD — en attente"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("une dépendance redondante (#1297)", () => {
+  let geometrie: ReturnType<typeof poserUneGeometrie>;
+  beforeEach(() => {
+    geometrie = poserUneGeometrie();
+  });
+  afterEach(() => {
+    geometrie.mockRestore();
+  });
+
+  it("pâlit au repos, et reprend sa couleur quand on la regarde", async () => {
+    lecture.graphe = grapheRedondant();
+    monter();
+    await screen.findByText("Contenu produit");
+    const pipeline = screen.getByRole("region", { name: "Pipeline du run" });
+    const cibles = await ciblesDesFleches(pipeline);
+
+    const redondante = traces(pipeline).find((trace) => trace.hasAttribute("data-redondante"));
+    expect(redondante).toHaveClass("opacity-50");
+    expect(traces(pipeline).filter((trace) => trace.hasAttribute("data-redondante"))).toHaveLength(1);
+
+    const cible = cibles.find((c) => /déjà impliquée/.test(c.getAttribute("aria-label") ?? ""));
+    await userEvent.hover(cible as Element);
+    expect(redondante).toHaveClass("opacity-100");
+    expect(
+      within(pipeline).getByText(
+        "Intégration front attend le livrable de Contenu produit — franchie · déjà impliquée par la chaîne via Maquette des sections",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("reste nommée en toutes lettres, avec la chaîne qui l'implique", async () => {
+    // Le graphe reste une alternative textuelle (#537) : « en toutes lettres »
+    // garde **toutes** les dépendances.
+    lecture.graphe = grapheRedondant();
+    monter();
+    await screen.findByText("Contenu produit");
+    const pipeline = screen.getByRole("region", { name: "Pipeline du run" });
+
+    await userEvent.click(within(pipeline).getByText("Les 3 enchaînements en toutes lettres"));
+
+    expect(
+      within(pipeline).getByText(
+        "Contenu produit → Intégration front — franchie · déjà impliquée par la chaîne via Maquette des sections",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(pipeline).getByText("Contenu produit → Maquette des sections — franchie"),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("le tracé d'une flèche ne passe sous aucune carte (#1297)", () => {
+  /** Une carte de 256 × 160 à la colonne `c` et au rang `r` — le pas de la vue. */
+  const carte = (c: number, r: number, hauteur = 160): Rect => ({
+    x: c * 320,
+    y: r * 200,
+    largeur: 256,
+    hauteur,
+  });
+
+  /** Un point strictement **dans** une carte — son bord, où la flèche part et arrive, n'en est pas. */
+  const dedans = (p: { x: number; y: number }, r: Rect) =>
+    p.x > r.x + 0.5 && p.x < r.x + r.largeur - 0.5 && p.y > r.y + 0.5 && p.y < r.y + r.hauteur - 0.5;
+
+  function carteTraversee(
+    de: string,
+    vers: string,
+    colonnes: string[][],
+    boites: Map<string, Rect>,
+  ): string[] {
+    const trace = tracerArete(de, vers, colonnes, boites);
+    expect(trace).not.toBeNull();
+    const points = pointsDuTrace(trace!, 48);
+    return [...boites].filter(([, r]) => points.some((p) => dedans(p, r))).map(([id]) => id);
+  }
+
+  it("relie deux colonnes voisines d'une seule courbe, dans leur gouttière", () => {
+    const boites = new Map([
+      ["a", carte(0, 0)],
+      ["b", carte(1, 0)],
+    ]);
+    const trace = tracerArete("a", "b", [["a"], ["b"]], boites);
+
+    expect(trace?.segments.map((s) => s.forme)).toEqual(["courbe"]);
+    expect(trace?.d).toBe("M 256 80 C 288 80, 288 80, 320 80");
+  });
+
+  it("contourne la carte du milieu — la flèche de 3fe501fc0878", () => {
+    // Tracée d'une traite, elle passait à y = 80 d'un bout à l'autre, donc sous
+    // « maquette ». Elle doit maintenant passer dessous, par le couloir libre.
+    const boites = new Map([
+      ["contenu", carte(0, 0)],
+      ["maquette", carte(1, 0)],
+      ["integration", carte(2, 0)],
+    ]);
+    const colonnes = [["contenu"], ["maquette"], ["integration"]];
+
+    expect(carteTraversee("contenu", "integration", colonnes, boites)).toEqual([]);
+    const trace = tracerArete("contenu", "integration", colonnes, boites);
+    expect(trace?.segments.map((s) => s.forme)).toEqual(["courbe", "ligne", "courbe"]);
+    // Le couloir sous la dernière carte de la colonne sautée.
+    expect(trace?.bas).toBe(160 + ECART_COULOIR);
+  });
+
+  it("passe entre deux cartes quand l'intervalle est le couloir le plus direct", () => {
+    // Départ et arrivée à la hauteur de l'intervalle : passer dessous serait un
+    // détour ; passer d'une traite, traverser une carte.
+    const boites = new Map([
+      ["a", carte(0, 0, 360)],
+      ["m1", carte(1, 0)],
+      ["m2", carte(1, 1)],
+      ["b", carte(2, 0, 360)],
+    ]);
+    const colonnes = [["a"], ["m1", "m2"], ["b"]];
+
+    expect(carteTraversee("a", "b", colonnes, boites)).toEqual([]);
+    const ligne = tracerArete("a", "b", colonnes, boites)?.segments[1];
+    expect(ligne?.forme).toBe("ligne");
+    expect(ligne?.de.y).toBe(180);
+  });
+
+  it("franchit plusieurs colonnes de suite sans en toucher une", () => {
+    // Un plan large : trois colonnes sautées, des hauteurs inégales, et une arête
+    // qui part du bas pour arriver en haut.
+    const boites = new Map([
+      ["a0", carte(0, 0)],
+      ["a1", carte(0, 1)],
+      ["b0", carte(1, 0, 120)],
+      ["b1", carte(1, 1, 200)],
+      ["c0", carte(2, 0)],
+      ["d0", carte(3, 0, 100)],
+      ["d1", carte(3, 1)],
+      ["d2", carte(3, 2)],
+      ["e0", carte(4, 0)],
+    ]);
+    const colonnes = [["a0", "a1"], ["b0", "b1"], ["c0"], ["d0", "d1", "d2"], ["e0"]];
+
+    expect(carteTraversee("a1", "e0", colonnes, boites)).toEqual([]);
+    expect(carteTraversee("a0", "e0", colonnes, boites)).toEqual([]);
+  });
+
+  it("ne trace rien tant que les boîtes ne sont pas mesurées", () => {
+    // Un tracé vers (0,0) traverserait le dessin le temps d'une image.
+    const boites = new Map([["a", carte(0, 0)]]);
+    expect(tracerArete("a", "b", [["a"], ["b"]], boites)).toBeNull();
+    expect(
+      tracerArete("a", "b", [["a"], ["b"]], new Map([...boites, ["b", { x: 0, y: 0, largeur: 0, hauteur: 0 }]])),
+    ).toBeNull();
   });
 });
