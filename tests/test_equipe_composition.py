@@ -758,7 +758,8 @@ def test_une_demande_vide_ou_trop_longue_est_refusee_avant_tout_appel(
 
 
 # --------------------------------------------------------------------------- #
-# ④ Par HTTP — l'appel exact de l'étape d'équipe
+# ④ Par HTTP — l'appel exact de la carte d'équipe du fil (#1331 ; l'étape d'équipe
+# de #1159, qui le faisait avant elle, est retirée)
 # --------------------------------------------------------------------------- #
 
 
@@ -817,6 +818,45 @@ def test_la_route_de_correction_ajoute_le_role_demande(
     assert [a["nom"] for a in servi["ajouts"]] == ["securite"]
     assert servi["ajouts"][0]["playbook"].strip()
     assert servi["cree"] is False
+
+
+def test_la_route_de_correction_retire_le_designer_et_change_les_instances(
+    client_http: tuple[TestClient, _FournisseurEcrit], atelier: Path
+) -> None:
+    """Les deux autres gestes du critère de #1331, par l'appel que la carte fait :
+    l'équipe montrée (cases comprises), aucune réponse de questionnaire."""
+    client, fournisseur = client_http
+    projet = _declarer_flutter(client, atelier)
+    fournisseur._reponses.append(
+        _json(
+            retraits=["interface"],
+            instances={"mobile": 2},
+            reponse="Je retire le designer et je passe à deux développeurs.",
+        )
+    )
+
+    reponse = client.post(
+        f"/api/projets/{projet}/equipe/correction",
+        json={
+            "demande": "retire le designer, et deux développeurs",
+            "equipe": [
+                {"nom": "mobile", "role": "Développeur mobile", "retenu": True, "instances": 1},
+                {"nom": "interface", "role": "Designer", "retenu": True, "instances": 1},
+            ],
+            "choix": [],
+        },
+    )
+
+    assert reponse.status_code == 200, reponse.text
+    servi = reponse.json()
+    assert servi["retraits"] == ["interface"]
+    assert servi["instances"] == {"mobile": 2}
+    assert servi["ajouts"] == []
+    assert servi["cree"] is False
+    # Le modèle a reçu l'équipe telle que la carte la montrait.
+    prompt = fournisseur.demandes[0][0]
+    assert "retire le designer, et deux développeurs" in prompt
+    assert "Designer" in prompt
 
 
 def test_la_route_de_correction_refuse_une_demande_vide(

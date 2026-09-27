@@ -6601,11 +6601,11 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   que l'analyse a lu, instances bornées, orchestrateur jamais recruté). Un modèle qui ne répond pas
   fait retomber sur les **règles** des gabarits, et `composition` le dit, avec sa cause.
 - `POST /api/projets/{id}/equipe/correction` → `CorrectionEquipe` (#1159). La personne corrige
-  l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis l'étape
-  d'équipe. Corps : `demande` (une phrase, 500 caractères au plus), `equipe` (l'équipe **telle que
-  l'écran la montre** : `nom`, `role`, `retenu`, `instances`) et les `choix` d'un projet neuf. Rien
-  n'est créé : l'écran applique la correction à ce qu'il montre, et la création reste la route
-  suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
+  l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis la carte
+  d'équipe du fil (#1331). Corps : `demande` (une phrase, 500 caractères au plus), `equipe`
+  (l'équipe **telle que la carte la montre** : `nom`, `role`, `retenu`, `instances`) et, facultatifs,
+  les `choix` d'un questionnaire d'outillage. Rien n'est créé : la carte applique la correction à ce
+  qu'elle montre, et la création reste la route suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
   modèle ne répond pas — une correction n'a pas de repli, aucune règle ne comprend une phrase.
 - `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
   que l'API l'a servie**, rôles retirés ou instances ajustées, rôles ajoutés par une correction
@@ -6743,15 +6743,44 @@ une politique orphelines que rien n'affiche.
 Implémentation : [`maestro/equipe/`](../maestro/equipe/) (la dérivation et la création, **pures** —
 aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.py`](../maestro/controltower/equipe.py)
 (la seule couche qui touche un dépôt et connaisse un fournisseur de modèle),
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) (les deux routes),
-`apps/web/components/projets/EtapeEquipe.tsx` (l'écran de validation). Gardé par
-[`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py) et
-[`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043).
+[`maestro/controltower/app.py`](../maestro/controltower/app.py) (les routes),
+`apps/web/components/chat/EquipeDansLeFil.tsx` (la carte qui propose, corrige et valide),
+`apps/web/components/chat/LigneRole.tsx` (la ligne d'un rôle) et
+`apps/web/components/chat/DemandeSurLEquipe.tsx` (la demande en mots). Gardé par
+[`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py),
+[`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043),
+[`tests/test_equipe_composition.py`](../tests/test_equipe_composition.py) (#1159) et
+`apps/web/tests/equipe-dans-le-fil.test.tsx`.
 
-⚠ **`EtapeEquipe` n'est plus montée depuis #1161.** Elle n'était atteinte que derrière l'étape
-d'outillage de l'écran Projets, retirée quand l'outillage est passé dans la conversation. L'équipe se
-propose et se valide dans le fil (`chat/EquipeDansLeFil`, #1146), qui reprend sa ligne de rôle ; la
-correction en mots de #1159 (`…/equipe/correction`) n'y est pas encore, et c'est #1331 qui l'y porte.
+**À l'écran, une seule surface recrute : la carte d'équipe du fil** (#1146, #1227, #1331). Elle se
+pose au pied de la conversation quand on demande un travail sur un projet sans agent — ou quand un
+run appelle un métier que l'équipe n'a pas —, sur `/chat` comme dans la colonne de conversation de
+chaque écran. Ce qu'on y fait :
+
+- **relire** : le récapitulatif dit combien d'agents seront créés, lesquels, et les autorisations
+  décidées d'avance, sans rien ouvrir ; « Voir l'équipe » déplie chaque rôle — sa raison, l'endroit
+  qui la prouve, ses instances, ses skills, ses autorisations, son playbook ;
+- **corriger en cochant** : décocher un rôle le retire, ses instances se règlent ;
+- **corriger avec ses mots** (#1331) : « Corriger avec vos mots », dans la rangée des gestes, ouvre
+  la demande sur la carte. « Ajoute quelqu'un pour la sécurité » ajoute un rôle **composé pour ce
+  projet**, playbook compris, qui arrive coché et signalé « ajouté à votre demande » ; « retire le
+  designer » le décoche ; « deux développeurs » change ses instances. La demande porte l'équipe
+  **telle que la carte la montre** — cases, instances et rôles déjà ajoutés —, la réponse de Maestro
+  se lit sous le champ, et rien n'est créé : « Créer l'équipe » reste le seul geste qui écrit, et il
+  attend la fin d'une correction en vol. Une demande incomprise le dit et laisse le texte dans le
+  champ ; un modèle en panne se dit au même endroit, l'équipe intacte. Ce qui a été montré et tapé
+  est retenu pour la demande : changer d'écran ne perd pas une correction ;
+- **valider ou remettre à plus tard** — « Continuer sans » quand un run attend.
+
+La place de la correction a été **tranchée sur pièces** (#1331) : trois directions rendues sur la
+vraie stack, jugées par le regard neuf contre *Replit Agent*, la carte « Review Plan » de *VS Code*
+et *Cursor Plan Mode* ; retenue, le geste discret qui ouvre la demande sur place, parce qu'il garde
+la carte courte dans la colonne de 320 px (commentaires « Veille de conception » et « Variante
+retenue » du ticket). La saisie **du fil**, juste dessous, n'est pas la porte de la correction : elle
+part à l'orchestrateur, qui ne sait rien de l'équipe montrée.
+
+L'étape d'équipe de l'écran Projets (`EtapeEquipe`, #1040), qui n'était plus montée depuis #1161,
+est retirée par #1331 ; sa ligne de rôle et sa demande en mots vivent désormais à côté de la carte.
 
 ### 6.20 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
 
