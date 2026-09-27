@@ -28,6 +28,10 @@
  *    poserait 12 px de vide permanents sous le dernier message — dans une
  *    colonne de 320 px, c'est le fil qu'on rogne.
  *
+ * Depuis #1161, la question d'outillage a une suite : la **pièce d'outillage** à
+ * écrire, une à une. Elle obéit aux mêmes trois propriétés, et laisse une trace dans
+ * le fil une fois tranchée.
+ *
  * Et une garde qui n'appartient à aucun critère mais que ce lot rend
  * nécessaire : depuis que la colonne porte **toutes** les questions du projet,
  * la même question peut être montée deux fois sur un même écran — la colonne et
@@ -48,7 +52,7 @@ import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { Shell } from "@/components/Shell";
 import { marquerGuideVu } from "@/lib/guide";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
-import type { MessageChat, QuestionOutillage } from "@/lib/types";
+import type { MessageChat, PieceProposee, QuestionOutillage } from "@/lib/types";
 import { ecrireConversationOuverte } from "@/lib/preferences";
 
 import {
@@ -92,6 +96,37 @@ function questionDOutillageFactice(): MessageChat {
     auteur: AGENT_ORCHESTRATION,
     contenu: "Dans quel langage ?",
     question: QUESTION_OUTILLAGE,
+  });
+}
+
+const PIECE: PieceProposee = {
+  projet_id: "prj-7f3a1c2b",
+  projet_nom: "Dépensio",
+  cible: "D:/projets/depensio",
+  chemin: "AGENTS.md",
+  nom: "AGENTS.md",
+  nature: "instructions",
+  raison: "le fichier d'instructions que tous les clients lisent",
+  texte_avant: "",
+  texte_apres: "# Dépensio\n",
+  sort: "cree",
+  verifications: [],
+  correction: "",
+  echec: "",
+  ecrivable: true,
+  empreinte: "sha256:aaaa",
+  rang: 1,
+  total: 6,
+  regime: "en-place",
+};
+
+/** Le message qui propose une pièce d'outillage à écrire (#1161). */
+function pieceDOutillageFactice(): MessageChat {
+  return messageFactice({
+    agent: AGENT_ORCHESTRATION,
+    auteur: AGENT_ORCHESTRATION,
+    contenu: "Première pièce : AGENTS.md.",
+    piece: PIECE,
   });
 }
 
@@ -181,6 +216,77 @@ describe("les gestes du fil, dans la colonne", () => {
     expect(
       within(fil).getByRole("region", { name: "Question d'outillage" }),
     ).toBeInTheDocument();
+  });
+
+  it("porte la pièce d'outillage, et l'écrit d'ici (#1161)", async () => {
+    // La cinquième demande du fil : l'outillage se construit pièce par pièce dans
+    // la conversation, donc sa carte agit depuis la colonne comme les autres.
+    const trancherPiece = vi.fn(async () => {});
+    poserFilAssistance({ messages: [pieceDOutillageFactice()], trancherPiece });
+    const fil = await filDeLaColonne();
+
+    const carte = within(fil).getByRole("region", {
+      name: "Pièce d'outillage à écrire",
+    });
+    expect(gestesDe(fil)).toEqual(["Pièce d'outillage à écrire"]);
+    await userEvent.click(
+      within(carte).getByRole("button", { name: "Écrire ce fichier" }),
+    );
+    await waitFor(() =>
+      expect(trancherPiece).toHaveBeenCalledWith("ecrire", "sha256:aaaa"),
+    );
+  });
+
+  it("garde dans le fil la trace de la pièce écrite et de la correction prise", async () => {
+    // Une fois tranchée, la carte s'en va : ce qui reste est le fait, à sa place
+    // dans le fil — le chemin et ce qui lui est arrivé, puis la correction.
+    poserFilAssistance({
+      messages: [
+        // La carte qui proposait la pièce : la trace y relit ce qui a été écrit.
+        messageFactice({ ...pieceDOutillageFactice(), horodatage: "2026-07-28T09:59:00Z" }),
+        messageFactice({
+          horodatage: "2026-07-28T10:00:00Z",
+          agent: AGENT_ORCHESTRATION,
+          auteur: AGENT_ORCHESTRATION,
+          contenu: "C'est écrit.",
+          piece_ecrite: {
+            projet_id: "prj-7f3a1c2b",
+            chemin: "AGENTS.md",
+            nom: "AGENTS.md",
+            etat: "ecrit",
+            raison: "",
+            cible: "D:/projets/depensio",
+            regime: "en-place",
+            empreinte: "sha256:aaaa",
+            ecrite: true,
+          },
+        }),
+        messageFactice({
+          horodatage: "2026-07-28T10:01:00Z",
+          agent: AGENT_ORCHESTRATION,
+          auteur: AGENT_ORCHESTRATION,
+          contenu: "Je reprends avec dotnet test.",
+          corrections: [
+            {
+              cle: "tester",
+              valeur: "dotnet test",
+              deduit: false,
+              parce_que: "Nos tests tournent avec dotnet test",
+              sujet: "Commande de test",
+              commande: true,
+            },
+          ],
+        }),
+      ],
+    });
+    const fil = await filDeLaColonne();
+
+    expect(fil).toHaveTextContent("AGENTS.md écrit.");
+    expect(
+      within(fil).getByRole("button", { name: "Voir ce qui a été écrit" }),
+    ).toBeInTheDocument();
+    expect(fil).toHaveTextContent("Correction prise — Commande de test : dotnet test");
+    expect(gestesDe(fil)).toEqual([]);
   });
 
   it("porte une question d'agent ET une proposition en même temps", async () => {
@@ -296,6 +402,16 @@ describe("la parité entre /chat et la colonne", () => {
     const fil = await filDeLaColonne();
     expect(gestesDe(fil)).toEqual(surLaPage);
     expect(surLaPage).toContain("Question d'outillage");
+  });
+
+  it("rend les mêmes gestes sur une pièce d'outillage à écrire (#1161)", async () => {
+    poserFilAssistance({ messages: [pieceDOutillageFactice()] });
+    const surLaPage = gestesDeLaPage();
+    cleanupRendu();
+
+    const fil = await filDeLaColonne();
+    expect(gestesDe(fil)).toEqual(surLaPage);
+    expect(surLaPage).toContain("Pièce d'outillage à écrire");
   });
 });
 

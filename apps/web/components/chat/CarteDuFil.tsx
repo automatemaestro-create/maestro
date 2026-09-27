@@ -10,9 +10,9 @@
  * la **proposition de run** (`chat/DemandeDeCadrage`), l'**équipe**
  * (`chat/EquipeDansLeFil`), la **question d'un agent**
  * (`chat/QuestionDansLeFil`), la **question d'outillage**
- * (`chat/QuestionDOutillage`) et sa **conclusion**
- * (`chat/ConclusionOutillage`), et la **fin d'un run**
- * (`runs/AnnonceIssueRun`). Les cinq premiers écrivaient chacun la même chaîne à
+ * (`chat/QuestionDOutillage`) et sa **conclusion** — devenue depuis #1161 la
+ * **pièce d'outillage** (`chat/PieceDOutillage`), qui s'écrit une à une —, et la
+ * **fin d'un run** (`runs/AnnonceIssueRun`). Les cinq premiers écrivaient chacun la même chaîne à
  * la main — `Carte balise="section" ton="attention" densite="aeree"`, un
  * `EnTeteSection` de niveau 3, un `aria-label` ; le sixième était un `div` nu.
  * Six objets du même fil, deux enveloppes, et cinq occasions de diverger : c'est

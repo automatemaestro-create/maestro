@@ -65,9 +65,14 @@ from typing import Any
 from maestro import __version__
 from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN
 from maestro.outillage.detection import CHEMIN_MANIFESTE
-from maestro.outillage.modele import Commande, Constats, Entree, Recommandation
+from maestro.outillage.modele import ORIGINE_DITE, Commande, Constats, Entree, Recommandation
 from maestro.outillage.questionnaire import SOURCE_CHOIX
-from maestro.outillage.recommandation import DOSSIER_SKILLS, SKILL_PAR_USAGE, USAGES_VERIFICATION
+from maestro.outillage.recommandation import (
+    DOSSIER_SKILLS,
+    RAISON_AGENTS,
+    SKILL_PAR_USAGE,
+    USAGES_VERIFICATION,
+)
 from maestro.outillage.verification import ECHOUEE, VERIFIEE, Verification
 
 #: Les portées d'un fichier généré (docs/38 §4.1, champ `portee`) : le fichier
@@ -328,14 +333,19 @@ def _index_des_skills(recommandation: Recommandation) -> tuple[tuple[str, str], 
     inventaire de ce que Maestro a écrit.
     """
     return tuple(
-        (entree.nom, DESCRIPTION_PAR_SKILL.get(entree.nom, _raison_stable(entree)))
+        (entree.nom, DESCRIPTION_PAR_SKILL.get(entree.nom, raison_stable(entree)))
         for entree in recommandation.entrees
         if entree.type == "skill"
     )
 
 
-def _raison_stable(entree: Entree) -> str:
-    """Pourquoi ce skill existe — **la raison du skill**, pas celle de la recommandation.
+def raison_stable(entree: Entree) -> str:
+    """Pourquoi cette entrée existe — **sa raison à elle**, pas celle de la recommandation.
+
+    Publique depuis #1161 : la carte d'une pièce qui **réécrit** un fichier que Maestro
+    a posé dit cette raison-là, et non « le projet porte déjà… », que la recommandation
+    écrit pour qui lit l'analyse. `AGENTS.md` a la sienne (`RAISON_AGENTS`) ; un skill,
+    celle de son usage.
 
     `Entree.raison` est écrite pour qui lit l'analyse, et elle change avec l'état
     du projet : un skill que Maestro a écrit lui-même se relit ensuite en « le
@@ -348,6 +358,8 @@ def _raison_stable(entree: Entree) -> str:
     commandes et par la ligne qui nomme l'endroit du skill (« constaté dans … »
     ou « à créer … », selon le registre de la propriété 4).
     """
+    if entree.type == "instructions":
+        return RAISON_AGENTS
     usage = SKILL_PAR_NOM.get(entree.nom, "")
     connu = SKILL_PAR_USAGE.get(usage)
     return connu[1] if connu is not None else entree.raison
@@ -669,6 +681,12 @@ def _provenance(commande: Commande, implique: bool = False) -> str:
     dans `package.json` » y désignerait un fichier absent ; « attendue une fois
     `package.json` créé » dit la même chose sans l'affirmation de lecture.
     """
+    if commande.origine == ORIGINE_DITE:
+        # Dite par la personne (#1161) : sa phrase est la justification, quel que soit
+        # le registre — elle ne se lit ni dans un fichier, ni dans une convention.
+        return f"dite par la personne ({commande.extrait})" if commande.extrait else (
+            "dite par la personne"
+        )
     if implique:
         precision = f" ({commande.extrait})" if commande.extrait else ""
         endroit = f"`{commande.chemin}`" if commande.chemin else "le manifeste du projet"
@@ -705,7 +723,7 @@ def texte_skill(
     d'elles, la section n'existe pas.
     """
     nom = entree.nom
-    raison = _raison_stable(entree)
+    raison = raison_stable(entree)
     description = DESCRIPTION_PAR_SKILL.get(nom, raison)
     lignes = [
         "---",
@@ -725,7 +743,15 @@ def texte_skill(
         *(entree.commandes or ("# aucune commande constatée pour ce skill",)),
         "```",
     ]
-    if entree.justification is not None:
+    if entree.justification is not None and not entree.justification.chemin:
+        # Dite par la personne (#1161) : aucun fichier ne la justifie, sa phrase si.
+        phrase = f" : {entree.justification.role}" if entree.justification.role else ""
+        lignes += [
+            "",
+            f"Dite par la personne qui a outillé ce projet{phrase}. Si le projet a changé "
+            "depuis, c'est lui qui fait foi, pas ce fichier.",
+        ]
+    elif entree.justification is not None:
         role = f" ({entree.justification.role})" if entree.justification.role else ""
         endroit = f"`{entree.justification.chemin}`{role}"
         lignes += [

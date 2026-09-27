@@ -537,7 +537,10 @@ from maestro.controltower.causes import (
     cause_lisible,
 )
 from maestro.controltower.chat import (
+    DECISION_ECRIRE,
+    DECISION_PLUS_TARD,
     ORIGINE_EXISTANT,
+    PIECE_ECARTEE,
     UTILISATEUR,
     DemandeProjet,
     DemandeRecrutement,
@@ -546,10 +549,13 @@ from maestro.controltower.chat import (
     Etapeur,
     Incrementeur,
     MessageChat,
+    PieceProposee,
     ProjetCree,
     Redaction,
     RepondeurChat,
     ReponseChat,
+    piece_en_attente,
+    projet_du_fil,
     projet_en_attente,
     transcription,
 )
@@ -570,6 +576,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.naissance import NaissanceRefusee, ServiceNaissance
 from maestro.controltower.outillage import ComprehensionModele, ConducteurOutillage
+from maestro.controltower.pieces import ServicePieces
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 
 # Les statuts de tâche viennent de leurs **deux** définitions, comme partout
@@ -635,11 +642,19 @@ VERDICT_ECHANGE = "echange"
 #: un run (`RepondeurOrchestration.declarer_projet`).
 VERDICT_PROJET = "projet"
 
+#: Le cinquième verdict (#1161) : la personne parle de l'**outillage** du projet — elle
+#: demande de l'outiller, de le reprendre, ou elle le corrige avec ses mots (« nos
+#: tests tournent avec `dotnet test` »). Il n'écrit rien : la correction est comprise,
+#: la pièce qu'elle touche revient **revérifiée**, et c'est un geste qui l'écrit.
+VERDICT_OUTILLAGE = "outillage"
+
 #: Les seuls verdicts admis. Tout autre mot — comme toute réponse hors contrat —
 #: retombe sur `VERDICT_ECHANGE` : la liste est **blanche**, jamais noire, parce
 #: qu'on ne maîtrise pas ce qu'un modèle peut écrire dans ce champ et qu'un mot
 #: inattendu ne doit jamais pouvoir valoir un accord.
-VERDICTS = frozenset({VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE, VERDICT_PROJET})
+VERDICTS = frozenset(
+    {VERDICT_PROPOSITION, VERDICT_ACCORD, VERDICT_ECHANGE, VERDICT_PROJET, VERDICT_OUTILLAGE}
+)
 
 #: Le **marqueur de fin** : ce qui sépare la réponse affichée de la décision
 #: machine (#1222). Tout ce qui le précède est du texte pour l'utilisateur, tout
@@ -694,7 +709,7 @@ qu'il lit.
 
 Puis termine par une DERNIÈRE LIGNE, et une seule, de cette forme exacte :
 
-%%MAESTRO%% {"verdict": "proposition|accord|echange|projet", "objectif": "..."}
+%%MAESTRO%% {"verdict": "proposition|accord|echange|projet|outillage", "objectif": "..."}
 
 Cette ligne n'est jamais affichée : elle dit à l'interface quoi faire de ce que
 tu viens d'écrire. Elle vient en dernier, après le dernier mot de ta réponse, et
@@ -722,10 +737,22 @@ Le verdict :
   fichiers de log", "renomme src en app", "déplace les images dans assets").
   Sois large : un run proposé de trop coûte un "non", une demande légitime non
   reconnue coûte à l'utilisateur de se reformuler sans savoir pourquoi.
+- "outillage" — la personne parle de l'OUTILLAGE du projet : ce que Maestro écrit
+  dans le projet pour ses agents (AGENTS.md, les skills, les commandes qui
+  installent, construisent, testent, lancent). Elle demande de l'outiller ou de
+  reprendre son outillage ("outille ce projet", "écris son AGENTS.md"), ou elle le
+  CORRIGE avec ses mots ("nos tests tournent avec dotnet test", "on utilise pnpm,
+  pas npm", "pas de CI pour l'instant"). Quand une pièce d'outillage est proposée
+  sur la carte juste avant, ce qui la corrige est un "outillage" — jamais une
+  proposition de run —, et une demande d'y CHANGER quelque chose sans dire quoi
+  ("change le truc", "modifie ça") aussi : la correction dira ce qu'elle n'a pas
+  compris, sans rien écrire.
 - "accord" — le dernier message approuve une proposition que TU viens de faire
-  dans ce fil — un run ou un projet ("oui", "vas-y", "ok lance", "crée-le").
-  Sans proposition juste avant, ce n'est jamais un accord — et dans le doute non
-  plus.
+  dans ce fil — un run, un projet ou une pièce d'outillage ("oui", "vas-y", "ok
+  lance", "crée-le", "écris-la"). Sans proposition juste avant, ce n'est jamais un
+  accord — et dans le doute non plus. Une demande de changement, même vague,
+  n'approuve rien : un accord écrit dans le projet de la personne, il doit être
+  sans équivoque.
 - "echange" — tout le reste : question sur l'outil ou sur le travail, demande
   d'état, salutation, refus ("non", "plutôt pas"), message que tu ne comprends
   pas.
@@ -782,7 +809,14 @@ La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les tâches
 apparaîtront ». L'identifiant du run et ce qu'il a ouvert s'affichent d'eux-mêmes
 sous ta réponse ; ne les invente donc pas, tu ne les connais pas. Sur un "accord"
-qui approuve un projet, il dit que tu le déclares, rien de plus. Sur "projet", il
+qui approuve un projet, il dit que tu le déclares, rien de plus ; qui approuve une
+pièce d'outillage, il dit que tu l'écris, rien de plus. Sur "outillage", il redit
+en une phrase ce que la personne demande, avec ses mots et sans rien y deviner : tu
+parles avant la correction, et c'est elle qui dit juste en dessous ce qui en sort —
+la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la question
+qui en découle. Ne demande aucune précision, et ne dis jamais que c'est écrit ni
+que la commande marche : rien n'est écrit sans l'accord de la personne. Sur
+"projet", il
 dit en une ou deux phrases ce que tu as compris du projet, puis que ta
 proposition est juste en dessous, à accepter ou à corriger en quelques mots : ne
 la recopie pas champ par champ, la carte les montre. Sur "echange", il répond —
@@ -1006,6 +1040,21 @@ _PHRASE_PROPOSITION_REFUSEE = (
 _PHRASE_DECLARATION_EMPECHEE = (
     "Je n'ai créé aucun projet : {cause}. La proposition est reposée ci-dessous : "
     "corrigez-la en quelques mots, ou acceptez-la à nouveau."
+)
+
+#: Les **empêchements** de l'outillage dans la conversation (#1161) — même règle que
+#: ceux de la naissance : rien ne s'est fait, et seul ce code le sait.
+_PHRASE_SANS_OUTILLAGE = (
+    "Aucune écriture d'outillage n'est branchée sur ce fil : je peux en parler, pas "
+    "l'écrire."
+)
+_PHRASE_SANS_PROJET_A_OUTILLER = (
+    "Je ne sais pas quel projet outiller : ouvrez-en un, ou dites-moi lequel."
+)
+_PHRASE_OUTILLAGE_EMPECHE = "Je n'ai rien changé à l'outillage : {cause}. Rien n'a été écrit."
+_PHRASE_PIECE_EN_ECHEC = (
+    "Cette version de {chemin} ne s'écrit pas : {echec} Dites-moi la bonne commande, "
+    "ou passez cette pièce."
 )
 
 
@@ -1341,15 +1390,45 @@ def _faits_d_un_projet_refuse(demande: DemandeProjet) -> str:
     )
 
 
+def _faits_de_l_outillage(ouverture: ReponseChat | None, empechement: str) -> str:
+    """Ce que l'ouverture de l'outillage d'un projet né a produit — en faits (#1161).
+
+    Le modèle en parle ; la carte, elle, porte la question ou la pièce. Rien quand
+    aucune écriture d'outillage n'est branchée : il n'y a alors rien à en dire.
+    """
+    if empechement:
+        return (
+            f"Son outillage n'a pas pu commencer ({empechement}) : il se reprendra quand "
+            "l'utilisateur le demandera dans cette conversation. Rien n'a été écrit."
+        )
+    if ouverture is None:
+        return ""
+    if ouverture.piece is not None:
+        return (
+            "Son outillage commence, pièce par pièce : la première, "
+            f"{ouverture.piece.chemin}, est proposée sur la carte sous ton message, avec "
+            "ce qu'elle changera dans le projet et le verdict de ses commandes, jouées "
+            "avant. Rien n'est écrit sans son accord, et il peut la corriger avec ses mots."
+        )
+    if ouverture.question is not None:
+        return (
+            "Son outillage commence par une question, posée sur la carte sous ton "
+            f"message : « {ouverture.question.intitule} ». Chaque pièce lui sera ensuite "
+            "proposée, et écrite sur son accord."
+        )
+    return "Son outillage est déjà à jour : il n'y a rien à y écrire."
+
+
 def _faits_d_un_projet_declare(
-    cree: ProjetCree, *, compris: str, mis_sous_git: bool = False
+    cree: ProjetCree, *, compris: str, mis_sous_git: bool = False, outillage: str = ""
 ) -> str:
     """Le projet accepté est déclaré — et, importé, il a été lu (#1294, #1158).
 
-    La suite est dite telle qu'elle est **aujourd'hui** : le projet n'a ni
-    outillage ni équipe, et c'est à la première demande de travail que l'équipe se
-    propose (#1146). Promettre une étape qui n'existe pas encore serait écrire sur
-    le réel ce que le produit ne fait pas.
+    La suite est dite telle qu'elle est **aujourd'hui** : le projet n'a pas
+    d'équipe, et c'est à la première demande de travail qu'elle se propose (#1146).
+    Promettre une étape qui n'existe pas encore serait écrire sur le réel ce que le
+    produit ne fait pas. Son **outillage**, lui, commence dans la même conversation
+    (#1161) : `outillage` dit ce qui en est proposé (`_faits_de_l_outillage`).
 
     `mis_sous_git` dit que **cette** déclaration a versionné le dossier. Pour un
     dossier importé, c'est la seule écriture, et elle se dit : la vraie stack a
@@ -1385,8 +1464,13 @@ def _faits_d_un_projet_declare(
             "C'est désormais le projet ouvert, et cette conversation continue avec lui ; "
             "sa fiche s'affiche juste sous ton message.",
             lu,
-            "Il n'a encore ni outillage ni équipe : c'est en disant ce qu'il veut faire "
-            "en premier que l'équipe lui sera proposée.",
+            (
+                f"{outillage} Il n'a pas encore d'équipe : c'est en disant ce qu'il veut "
+                "faire en premier qu'elle lui sera proposée."
+                if outillage
+                else "Il n'a encore ni outillage ni équipe : c'est en disant ce qu'il veut "
+                "faire en premier que l'équipe lui sera proposée."
+            ),
         )
         if morceau
     )
@@ -2056,6 +2140,30 @@ def _projet_approuve(fil: Sequence[MessageChat]) -> DemandeProjet | None:
     return attente.projet_propose if attente is not None else None
 
 
+def _piece_approuvee(fil: Sequence[MessageChat]) -> PieceProposee | None:
+    """La pièce d'outillage qu'un « oui » **tapé** approuve — `None` sinon (#1161).
+
+    La règle de `_projet_approuve`, sur l'autre carte : le dernier message est de la
+    personne, et celui d'avant portait une pièce que rien d'autre n'a suivie. C'est ce
+    qui fait écrire ce que la carte montrait, et jamais ce qu'un modèle aurait compris.
+    """
+    if len(fil) < 2 or fil[-1].auteur != UTILISATEUR:
+        return None
+    attente = piece_en_attente(fil[:-1])
+    return attente.piece if attente is not None else None
+
+
+def _demandes_de(ouverture: ReponseChat | None) -> dict[str, Any]:
+    """Ce que l'ouverture de l'outillage **demande**, à reporter sur la réponse qui la porte."""
+    if ouverture is None:
+        return {}
+    return {
+        "question": ouverture.question,
+        "piece": ouverture.piece,
+        "comprehension": ouverture.comprehension,
+    }
+
+
 def _avec_etapes(reponse: ReponseChat, etapes: tuple[EtapeFil, ...]) -> ReponseChat:
     """La même réponse, portant les étapes du tour — sans toucher au reste.
 
@@ -2318,6 +2426,11 @@ class RepondeurOrchestration(RepondeurChat):
     puis la déclaration sur accord. Sans elle, le verdict `projet` ne montre aucune
     carte et le fil dit qu'il ne peut pas déclarer de projet.
 
+    `pieces` (#1161) est ce qui **écrit** l'outillage dans la conversation, pièce par
+    pièce : le conducteur du questionnaire le reçoit, et un projet qui naît voit son
+    outillage commencer dans la même réponse. Sans lui, le questionnaire conclut sans
+    rien écrire, et le verdict `outillage` dit qu'il ne peut pas écrire.
+
     `regime` (#1323) dit ce qu'un run de ce projet **fera** — lu dans la politique
     de l'équipe et le régime du lanceur, jamais deviné. Il entre dans le prompt
     du juge et dans les faits des deux gestes qui ouvrent ou reproposent un run
@@ -2340,6 +2453,7 @@ class RepondeurOrchestration(RepondeurChat):
         roles: EquipeDuFil | None = None,
         attentes: AttentesEnCours | None = None,
         naissance: ServiceNaissance | None = None,
+        pieces: ServicePieces | None = None,
         regime: RegimeDuProjet | None = None,
     ) -> None:
         self._naissance = naissance
@@ -2359,8 +2473,10 @@ class RepondeurOrchestration(RepondeurChat):
         self._modele: str | None = None
         # Le questionnaire comprend par le **même** fournisseur que le fil (#1147) :
         # un fournisseur injecté ici l'est pour les deux, et sans lui chacun résout
-        # celui du poste au premier usage.
-        self._conducteur = conducteur or ConducteurOutillage(ComprehensionModele(provider))
+        # celui du poste au premier usage. Il écrit par les pièces (#1161).
+        self._conducteur = conducteur or ConducteurOutillage(
+            ComprehensionModele(provider), pieces=pieces
+        )
         self._sonde = sonde
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
@@ -2435,6 +2551,16 @@ class RepondeurOrchestration(RepondeurChat):
             # La personne veut commencer un projet (#1294) : la proposition du
             # modèle passe par la vérification avant de devenir une carte.
             return _avec_etapes(await self._proposer_projet(redaction, verdict), etapes)
+        if verdict.nom == VERDICT_OUTILLAGE:
+            # La personne parle de l'outillage (#1161) : l'outiller, le reprendre, le
+            # corriger avec ses mots. La correction est comprise, la pièce qu'elle
+            # touche revient revérifiée — rien ne s'écrit ici.
+            return _avec_etapes(await self._outiller(fil, redaction, projet_id), etapes)
+        piece = _piece_approuvee(fil) if verdict.nom == VERDICT_ACCORD else None
+        if piece is not None:
+            # Un « oui » tapé sur une pièce vaut le clic : il écrit **ce que la carte
+            # montrait**, relu du fil (#1161).
+            return _avec_etapes(await self._ecrire_la_piece(fil, redaction, piece), etapes)
         approuve = _projet_approuve(fil) if verdict.nom == VERDICT_ACCORD else None
         if approuve is not None:
             # Un « oui » tapé sur une carte de projet vaut le clic : il déclare
@@ -2487,7 +2613,21 @@ class RepondeurOrchestration(RepondeurChat):
             if verdict.nom == VERDICT_PROPOSITION and self._lanceur is not None
             else ""
         )
-        return ReponseChat(contenu=redaction.texte, proposition=propose, etapes=etapes)
+        # Un **échange** pendant qu'une pièce d'outillage attend ne la retire pas
+        # (#1161) : une carte ne tient qu'au dernier message, et une question posée
+        # entre-temps — « laquelle voulez-vous changer ? » — ne l'a pas tranchée. Vu sur
+        # la vraie stack : le fil parlait de « la pièce proposée juste en dessous »…
+        # qui n'y était plus. Une nouvelle demande de travail, elle, prend la place ;
+        # l'outillage reprend quand on le demande.
+        attente = piece_en_attente(fil[:-1]) if verdict.nom == VERDICT_ECHANGE else None
+        gardee = attente.piece if attente is not None else None
+        return ReponseChat(
+            contenu=redaction.texte,
+            proposition=propose,
+            piece=gardee,
+            projet_outille=gardee.projet_id if gardee is not None else "",
+            etapes=etapes,
+        )
 
     async def trancher_cadrage(
         self,
@@ -2667,7 +2807,8 @@ class RepondeurOrchestration(RepondeurChat):
         - **accepté** — le projet est déclaré tel que la carte le montrait, mis
           sous Git si c'était proposé, **lu** s'il est importé (#1158) ; le fait
           voyage sur le message (`projet_cree`), et le modèle parle depuis lui —
-          ce que la lecture a compris compris ;
+          ce que la lecture a compris compris. Son **outillage commence** dans la
+          même réponse (#1161) : la question qui manque, ou la première pièce ;
         - **empêché** — la déclaration refuse (le dossier a disparu, il vient
           d'être déclaré ailleurs…) : rien n'est créé, la cause est dite par ce
           code, seul à le savoir, et la proposition est **reposée** pour qu'on la
@@ -2686,11 +2827,17 @@ class RepondeurOrchestration(RepondeurChat):
                 contenu=_PHRASE_DECLARATION_EMPECHEE.format(cause=echec),
                 projet_propose=demande,
             )
+        ouverture, empechement = await self._ouvrir_outillage(fil, cree)
         faits = _faits_d_un_projet_declare(
-            cree, compris=compris, mis_sous_git=demande.versionner and cree.versionne
+            cree,
+            compris=compris,
+            mis_sous_git=demande.versionner and cree.versionne,
+            outillage=_faits_de_l_outillage(ouverture, empechement),
         )
         return ReponseChat(
-            contenu=await self.rediger(agent, fil, faits=faits), projet_cree=cree
+            contenu=await self.rediger(agent, fil, faits=faits),
+            projet_cree=cree,
+            **_demandes_de(ouverture),
         )
 
     async def _proposer_projet(self, redaction: Redaction, verdict: _Verdict) -> ReponseChat:
@@ -2724,9 +2871,10 @@ class RepondeurOrchestration(RepondeurChat):
 
         Le juge a déjà écrit, en direct, qu'il déclare le projet. Ce qui s'ajoute
         derrière est ce que lui ne pouvait pas savoir : l'empêchement si la
-        déclaration refuse, ou — pour un dossier importé — ce que sa lecture en a
-        compris, rédigé par le modèle sur les faits. Un projet neuf n'a rien à
-        ajouter : sa fiche s'affiche sous le message.
+        déclaration refuse ; pour un dossier importé, ce que sa lecture en a compris ;
+        et le début de l'outillage (#1161) — rédigés par le modèle sur les faits. Un
+        projet neuf sans outillage branché n'a rien à ajouter : sa fiche s'affiche
+        sous le message.
         """
         if self._naissance is None:
             await redaction.ecrire(f" {_PHRASE_SANS_NAISSANCE}")
@@ -2736,12 +2884,130 @@ class RepondeurOrchestration(RepondeurChat):
         except Exception as echec:  # noqa: BLE001 — un refus se raconte, cf. `declarer_projet`
             await redaction.ecrire(f" {_PHRASE_DECLARATION_EMPECHEE.format(cause=echec)}")
             return ReponseChat(contenu=redaction.texte, projet_propose=demande)
-        if compris:
+        ouverture, empechement = await self._ouvrir_outillage(fil, cree)
+        outillage = _faits_de_l_outillage(ouverture, empechement)
+        if compris or outillage:
             faits = _faits_d_un_projet_declare(
-                cree, compris=compris, mis_sous_git=demande.versionner and cree.versionne
+                cree,
+                compris=compris,
+                mis_sous_git=demande.versionner and cree.versionne,
+                outillage=outillage,
             )
             await redaction.ecrire("\n\n" + await self.rediger(agent, fil, faits=faits))
-        return ReponseChat(contenu=redaction.texte, projet_cree=cree)
+        return ReponseChat(
+            contenu=redaction.texte, projet_cree=cree, **_demandes_de(ouverture)
+        )
+
+    async def _ouvrir_outillage(
+        self, fil: Sequence[MessageChat], cree: ProjetCree
+    ) -> tuple[ReponseChat | None, str]:
+        """L'outillage du projet qui vient de naître — ce qu'il demande, ou pourquoi rien (#1161).
+
+        Le **même** conducteur que partout : un dossier neuf se décrit (la question
+        qui manque, comprise de la conversation qui vient de le faire naître), un
+        dossier importé se lit (la première pièce). Rendu **à côté** de l'empêchement
+        plutôt que levé : le projet, lui, est déclaré, et une ouverture qui échoue ne
+        défait pas un geste réussi — elle se dit, et l'outillage se reprend en le
+        demandant. `(None, "")` quand aucune écriture d'outillage n'est branchée.
+        """
+        if not self._conducteur.ecrit:
+            return None, ""
+        try:
+            return await self._conducteur.ouvrir(fil, projet_id=cree.id), ""
+        except Exception as echec:  # noqa: BLE001 — cf. docstring : le projet est né
+            return None, cause_lisible(echec)
+
+    async def trancher_piece(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        piece: PieceProposee,
+        decision: str,
+    ) -> ReponseChat:
+        """Exécute la décision prise **au geste** sur une pièce, puis en parle (#1161).
+
+        Aucun juge : la décision est un clic. Le conducteur écrit (ou passe, ou
+        reporte) et propose la pièce suivante ; ce qui s'est passé devient les
+        **faits** d'où le modèle parle (#1262), et les cartes portent le reste — la
+        pièce écrite sous la bulle, la suivante au pied du fil. Un **empêchement**
+        (un fichier qui a bougé, une écriture refusée) garde les mots du code : rien
+        ne s'est fait, et lui seul le sait.
+        """
+        reponse = await self._conducteur.trancher(fil, piece=piece, decision=decision)
+        fait = reponse.piece_ecrite
+        abouti = decision == DECISION_PLUS_TARD or (
+            fait is not None and (fait.ecrite or fait.etat == PIECE_ECARTEE)
+        )
+        if not abouti:
+            return reponse
+        return replace(reponse, contenu=await self.rediger(agent, fil, faits=reponse.contenu))
+
+    async def _outiller(
+        self, fil: Sequence[MessageChat], redaction: Redaction, projet_id: str | None
+    ) -> ReponseChat:
+        """Le verdict `outillage` : outiller, reprendre, ou corriger avec des mots (#1161).
+
+        Le juge a redit la demande, en direct, sans la deviner. Ce qui s'ajoute
+        derrière est ce qu'il ne pouvait pas savoir : ce que la correction a donné — la
+        pièce revérifiée, ou ce qui n'a pas été compris —, dit par le conducteur, seul à
+        le dire. Un empêchement se dit ici, et la pièce qui attendait reste proposée.
+
+        Le projet est celui de la fenêtre, sinon celui que le fil outille déjà.
+        """
+        attente = piece_en_attente(fil[:-1])
+        reposee = attente.piece if attente is not None else None
+        projet = projet_id or projet_du_fil(fil)
+        if not self._conducteur.ecrit:
+            await redaction.ecrire(f" {_PHRASE_SANS_OUTILLAGE}")
+            return ReponseChat(contenu=redaction.texte, piece=reposee)
+        if not projet:
+            await redaction.ecrire(f" {_PHRASE_SANS_PROJET_A_OUTILLER}")
+            return ReponseChat(contenu=redaction.texte)
+        try:
+            reponse = await self._conducteur.corriger(
+                fil, projet_id=projet, phrase=fil[-1].contenu if fil else ""
+            )
+        except Exception as echec:  # noqa: BLE001 — un empêchement se raconte, cf. docstring
+            await redaction.ecrire(
+                "\n\n" + _PHRASE_OUTILLAGE_EMPECHE.format(cause=cause_lisible(echec))
+            )
+            return ReponseChat(contenu=redaction.texte, piece=reposee)
+        if reponse.contenu:
+            # Une pièce comprise et montrée n'ajoute rien : le juge a parlé, la carte
+            # dit le reste (`_texte_de_la_piece`). Ce qui s'ajoute est ce que lui ne
+            # savait pas — incomprise, sans effet, en échec, plus rien à écrire.
+            await redaction.ecrire("\n\n" + reponse.contenu)
+        return replace(reponse, contenu=redaction.texte)
+
+    async def _ecrire_la_piece(
+        self, fil: Sequence[MessageChat], redaction: Redaction, piece: PieceProposee
+    ) -> ReponseChat:
+        """Le « oui » **tapé** sur une pièce : l'écriture, derrière les mots du juge (#1161).
+
+        La même règle que le geste : une version dont la correction a échoué ne
+        s'écrit pas, et la carte reste proposée ; un empêchement se dit.
+        """
+        if not self._conducteur.ecrit:
+            await redaction.ecrire(f" {_PHRASE_SANS_OUTILLAGE}")
+            return ReponseChat(contenu=redaction.texte, piece=piece)
+        if not piece.ecrivable:
+            await redaction.ecrire(
+                "\n\n" + _PHRASE_PIECE_EN_ECHEC.format(chemin=piece.chemin, echec=piece.echec)
+            )
+            return ReponseChat(contenu=redaction.texte, piece=piece)
+        try:
+            reponse = await self._conducteur.trancher(
+                fil, piece=piece, decision=DECISION_ECRIRE, faits=False
+            )
+        except Exception as echec:  # noqa: BLE001 — un empêchement se raconte
+            await redaction.ecrire(
+                "\n\n" + _PHRASE_OUTILLAGE_EMPECHE.format(cause=cause_lisible(echec))
+            )
+            return ReponseChat(contenu=redaction.texte, piece=piece)
+        if reponse.contenu:
+            await redaction.ecrire("\n\n" + reponse.contenu)
+        return replace(reponse, contenu=redaction.texte)
 
     async def _declarer(self, demande: DemandeProjet) -> tuple[ProjetCree, str]:
         """Déclare le projet accordé, et lit un dossier importé — ce qu'on en a compris.
@@ -2759,9 +3025,9 @@ class RepondeurOrchestration(RepondeurChat):
         return cree, compris
 
     async def ouvrir_questionnaire(
-        self, agent: Agent, fil: Sequence[MessageChat]
+        self, agent: Agent, fil: Sequence[MessageChat], *, projet_id: str | None = None
     ) -> ReponseChat:
-        """Ouvre — ou reprend — le questionnaire d'outillage d'un projet neuf (#1031).
+        """Ouvre — ou reprend — l'outillage d'un projet (#1031, #1161).
 
         Ce fil-ci le porte, et pas un autre, parce que c'est la seule porte d'entrée
         du produit (#666) : un questionnaire posé dans un second fil demanderait de
@@ -2773,8 +3039,11 @@ class RepondeurOrchestration(RepondeurChat):
         (#1147, `ConducteurOutillage`) — celui qui comprend le projet à partir de ce
         qui a été dit, conversation comprise — et il n'a lieu que si quelque chose
         a été dit : un fil muet reçoit la question ouverte sans appel.
+
+        `projet_id` (#1161) nomme le projet à outiller — « Outiller maintenant » sur
+        sa carte ; ce qui en sort est sa première question ou sa première pièce.
         """
-        return await self._conducteur.ouvrir(fil)
+        return await self._conducteur.ouvrir(fil, projet_id=projet_id)
 
     async def repondre_question(
         self,

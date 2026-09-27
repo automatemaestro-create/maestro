@@ -415,7 +415,9 @@ reposée.
 
 **Ce qui reste à l'écran Projets** : la **gestion**. On y modifie une déclaration (le formulaire
 ne sert plus qu'à cela), on la retire, on la met sous Git. Rien n'y crée plus de projet.
-L'outillage d'un projet se construit dans la même conversation, pièce par pièce (#1161).
+L'outillage d'un projet se construit dans la même conversation, pièce par pièce (#1161, §6.20
+« Pièce par pièce, dans le fil ») : à la naissance du projet, le fil enchaîne sur sa première
+question — un dossier neuf se décrit — ou sa première pièce — un dossier importé se lit.
 
 Implémentation : `components/projets/NaissanceProjet.tsx`, `components/chat/DemandeDeProjet.tsx`,
 `lib/naissance.ts`, `lib/useChat.ts` (`declarerProjet`) ; côté API §6.15.1. Couverture :
@@ -2234,9 +2236,12 @@ Paramètres.
 conversation, sur la porte d'entrée : « Nouveau projet » y ramène en quittant le projet ouvert. Le
 formulaire décrit ci-dessous ne sert plus qu'à **modifier** une déclaration. Tout ce qui ne servait
 qu'à créer est parti avec la création : le choix de l'origine, le dossier parent prérempli, le nom du
-dossier à créer, et l'étape d'outillage enchaînée après la déclaration. L'étape d'outillage reste
-offerte aux projets déjà déclarés (« Outiller maintenant »), jusqu'à ce que #1161 la mette dans la
-conversation.
+dossier à créer, et l'étape d'outillage enchaînée après la déclaration. Depuis #1161, l'étape
+d'outillage est partie tout à fait, et l'étape d'équipe qu'elle enchaînait avec elle (§6.19). Un
+projet dont l'outillage a été reporté le **dit** sur sa carte (« Outillage reporté »), et **« Outiller
+dans la conversation »** ouvre la colonne de droite et y pose, pour ce projet, sa première question
+ou sa première pièce (§6.20). Reprendre l'outillage **lève le report** (`reprendre_outillage`) : la
+carte cesse de le rappeler, au geste comme au rechargement, et un nouveau « plus tard » le repose.
 
 **Ce que la liste montre**, une carte par projet : le **nom**, la **racine** canonicalisée telle que
 le backend l'a enregistrée, l'**origine** (« Dossier existant » / « Nouveau dossier »), le **VCS
@@ -6743,6 +6748,11 @@ aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.p
 [`tests/test_equipe_proposition.py`](../tests/test_equipe_proposition.py) et
 [`tests/test_equipe_creation.py`](../tests/test_equipe_creation.py) (#1043).
 
+⚠ **`EtapeEquipe` n'est plus montée depuis #1161.** Elle n'était atteinte que derrière l'étape
+d'outillage de l'écran Projets, retirée quand l'outillage est passé dans la conversation. L'équipe se
+propose et se valide dans le fil (`chat/EquipeDansLeFil`, #1146), qui reprend sa ligne de rôle ; la
+correction en mots de #1159 (`…/equipe/correction`) n'y est pas encore, et c'est #1331 qui l'y porte.
+
 ### 6.20 L'outillage d'un projet — l'analyser, le choisir, l'écrire (#1020) — **livré**
 
 Le chantier #1020 : **créer ou importer un projet commence par son outillage**. Le format est arrêté
@@ -6756,17 +6766,18 @@ qu'elles portent.
 > ⚠ **Le chemin de création change** ([docs/43 §2.2 et §2.3](./43-decision-un-projet-nait-dans-la-conversation.md),
 > 2026-09-24), à la demande de la personne.
 > - Un projet **naît dans la conversation** (#1294, **livré** — §2.0.2), et son outillage s'y
->   construit **pièce par pièce**, chaque pièce sur accord (#1161). L'étape `EtapeOutillage` a
->   quitté le chemin de création avec le formulaire ; elle reste offerte, depuis l'écran Projets, à
->   un projet déjà déclaré.
+>   construit **pièce par pièce**, chaque pièce sur accord (#1161, **livré** — « Pièce par pièce,
+>   dans le fil » ci-dessous). L'étape `EtapeOutillage` de l'écran Projets et la carte qui écrivait
+>   tout en une fois au pied du fil (`ConclusionOutillage`) sont retirées.
 > - Les deux ponts ne s'écrivent plus d'office : `AGENTS.md` seul, un pont pour un client utilisé
 >   qui ne le lit pas nativement (#1295, **livré**). Les clients sont ceux du poste — relus à chaque
 >   analyse, recommandation et génération, avec leur `--version` — et ceux que les réponses nomment
 >   (sujet `clients`). Un pont écarté l'est dans `recommandation.ecartes`, avec sa raison ; la route
 >   `POST …/outillage/recommandation` est devenue asynchrone pour les lire hors de la boucle.
 >
-> Cette section décrit l'état **présent** jusqu'à ce que ces lots la réécrivent. Les routes et leurs
-> trois règles restent la matière des deux chemins.
+> Les routes ci-dessous restent servies et gardent leurs trois règles : l'analyse, le questionnaire,
+> la génération et le report sont la matière de l'écriture pièce par pièce. Aucun écran n'appelle plus
+> `…/recommandation` ni `…/generation`.
 
 **Six routes, deux voies, une seule recommandation.** Un projet **existant** est analysé, un projet
 **neuf** est questionné — et les deux aboutissent à la *même* forme `recommandation`, produite par
@@ -6779,11 +6790,14 @@ la même fonction. Il n'y a pas deux idées de « ce qu'il faut à ce projet » 
 | `POST /api/projets/{id}/outillage/recommandation` | Ce que ces réponses recommandent — **la forme de l'analyse** (#1031) | non |
 | `POST /api/chat/{agent}/outillage/questionnaire` | Pose (ou reprend) le questionnaire **dans le fil** (#1031) | le fil |
 | `POST /api/chat/{agent}/outillage` | Répond d'un **geste** à la question que le fil porte (#1031) | le fil |
+| `POST /api/chat/{agent}/outillage/piece` | Écrit, passe ou reporte d'un **geste** la pièce que le fil propose (#1161) | **oui** — une pièce |
 | `POST /api/projets/{id}/outillage/generation` | Écrit l'outillage dans le projet, au régime de docs/24 §2.4 (#1033) | **oui** |
 | `POST /api/projets/{id}/outillage/report` | Enregistre le « plus tard » de l'étape d'outillage (#1034) | la fiche |
 
 Les cinq premières **ne touchent à rien** : l'analyse est en lecture seule et le questionnaire ne
-regarde aucun fichier. Seule `…/generation` écrit dans le dossier de quelqu'un.
+regarde aucun fichier. Seules `…/generation` et `…/outillage/piece` écrivent dans le dossier de
+quelqu'un — la première tout d'un coup, la seconde une pièce à la fois, sur l'accord donné à la
+carte qui la montrait.
 
 #### L'analyse — `GET /api/projets/{id}/outillage/analyse`
 
@@ -6934,13 +6948,17 @@ question qui n'en a pas. **Une phrase tapée dans la zone de saisie** (`POST …
 un `choix` libre sur son sujet, et la suite vient du questionnaire, pas du juge. Chaque message qui
 pose une question — et la conclusion — porte `comprehension` : ce que Maestro a compris à ce tour.
 
+> ⚠ **Renversé par #1161** : la voie du fil n'écrit plus tout en une fois. La fin du questionnaire
+> est la **première pièce**, et `ConclusionOutillage` est retirée — voir « Pièce par pièce, dans le
+> fil » ci-dessous. Le paragraphe suivant reste pour l'histoire du partage entre les routes.
+
 **Et la voie du fil écrit** (#1104). Elle conduisait le questionnaire, le concluait sur « rien n'est
 écrit tant que vous ne l'avez pas validé »… et rien ne validait : le pied du fil redevenait vide dès
 que le dernier message ne portait plus de question. Aucune route n'a été ajoutée pour y remédier, et
 c'est le signe que le partage était bon — la conclusion se valide par **la génération ci-dessous**,
 avec le corps de l'étape de création (`{retenus, choix}`), parce que cette route ne sait pas de
 quelle surface viennent les réponses. Ce qui a changé tient en deux choses : une carte au pied de la
-conversation ([`ConclusionOutillage`](../apps/web/components/chat/ConclusionOutillage.tsx), montée
+conversation (`ConclusionOutillage`, montée
 comme les trois autres gestes par `GestesDuFil`, donc aussi dans la colonne de conversation), et une
 phrase de conclusion qui dit **où** se donne la validation qu'elle promet. Les réponses se relisent
 là où elles vivent — le champ `choix` des messages, et depuis #1147 la `comprehension` de la
@@ -6948,6 +6966,93 @@ conclusion, qui part avec elles —, et le **projet visé est
 celui de la fenêtre** : le fil est transverse (#281), ses messages n'en portent aucun, d'où une carte
 qui le nomme avant d'écrire. Joué de bout en bout par
 [`tests/test_outillage_voie_du_fil.py`](../tests/test_outillage_voie_du_fil.py).
+
+#### Pièce par pièce, dans le fil (#1161) — **livré**
+
+Décidé par [docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md) : l'outillage n'est
+plus une étape de formulaire, ni une carte qui écrit tout d'un coup. Il se construit **dans la
+conversation**, une **pièce** à la fois — `AGENTS.md`, un pont, un skill —, chacune montrée,
+justifiée et déjà vérifiée, puis écrite sur accord.
+
+**D'où viennent les pièces.** Le même conducteur que le questionnaire
+(`ConducteurOutillage`, `maestro/controltower/outillage.py`), avec un second collaborateur,
+`ServicePieces` (`maestro/controltower/pieces.py`). Un dossier **importé**, qui a déjà ses fichiers,
+se **lit** (#1158) et sa première pièce vient tout de suite ; un dossier **neuf** se décrit d'abord,
+et la fin du questionnaire est la première pièce, rédigée de ce qui a été compris. Le fil enchaîne
+ainsi dès la naissance d'un projet (§2.0.2), et « Outiller dans la conversation » sur la carte d'un
+projet reporté (§2.7.1) passe le projet par `POST …/outillage/questionnaire?projet=<id>`. Le projet
+voyage ensuite sur chaque message du tour (`projet_outille`) : c'est lui que le tour suivant outille,
+même quand le fil ne l'a jamais vu naître.
+
+**Ce qu'une pièce porte** (`PieceProposee`, le champ `piece` du message) : son chemin, sa nature,
+sa raison, le texte **avant** et **après**, ce que le geste fera (`sort` : `cree`, `reecrit`, `bloc`),
+les verdicts de ses commandes (#1160), son rang dans l'outillage, le régime d'écriture du projet, et
+son **empreinte** — celle du contenu montré. Une pièce que l'écriture ne toucherait pas (à jour, pas
+à Maestro, fichier modifié à la main) ne se propose pas : les quatre cas de docs/38 §4.2 décident, par
+`prevoir`, avant qu'on la montre. Une commande dont le verdict est déjà connu — au manifeste ou plus
+haut dans le fil — n'est pas rejouée.
+
+**Le geste** — `POST /api/chat/{agent}/outillage/piece`, corps
+`{"decision": "ecrire" | "passer" | "plus-tard", "piece": "<empreinte>", "conversation": "…"}` :
+
+- **écrire** écrit la pièce **telle que la carte la montrait** (`poser_piece`) : un fichier, et le
+  manifeste **fusionné** — les pièces déjà écrites y restent, là où `…/generation` retire ce qu'on ne
+  lui repasse pas. Un fichier qui a bougé depuis la carte n'est pas écrit : la pièce revient, diff à
+  jour. Sur un projet **versionné**, l'écriture passe par une branche et `appliquer_sous_validation`,
+  et **l'accord donné à la carte est la validation** — borné aux chemins du diff montré (la pièce et
+  le manifeste) : un diff qui en toucherait un autre est refusé (`AccordDeLaCarte`) ;
+- **passer** n'écrit rien, et la pièce ne revient pas **telle quelle** ;
+- **plus tard** n'écrit rien, enregistre le report (`…/outillage/report`) et arrête le fil ; la carte
+  du projet le rappellera.
+
+La réponse porte ce qui s'est passé (`piece_ecrite`, rendu sous la bulle : « écrit », « déjà à
+jour », « passé : rien n'a été écrit », ou la raison d'une non-écriture) et la pièce suivante — ou
+la fin de l'outillage, dite. La pièce visée n'est pas nommée par un index : c'est celle qui attend,
+et l'empreinte doit être celle qu'on a vue. `409` quand rien n'attend ou que la pièce a changé (un
+double clic), `422` sur une décision inconnue ou sur l'écriture d'une version **en échec** (ci-dessous),
+`502` si la suite n'a pas pu être produite — le geste, lui, reste acquis au fil. Un « oui » tapé
+pendant qu'une pièce attend vaut le clic, par le juge (verdict `accord`).
+
+**Corriger avec ses mots.** « Nos tests tournent avec `dotnet test` », tapé dans le fil : le juge
+rend le verdict `outillage` et **redit** la demande, en direct, sans rien y deviner ni demander de
+précision : il parle avant la correction, et c'est elle seule qui dit ce qu'elle a compris ou non
+(vu sur la vraie stack : un juge qui « avait compris » au-dessus d'une correction qui n'avait pas
+compris faisait deux paragraphes contradictoires, chacun avec sa question). Le modèle de correction
+(`CorrectionModele`, prompt au registre #945) traduit la phrase en sujets et valeurs
+(`maestro/outillage/correction.py` — une commande par usage, le gestionnaire, la forge, la CI) ; le
+code l'applique aux constats, la commande corrigée prend l'origine **`dite`** et la phrase de la
+personne pour justification (« dite par la personne (« … ») », écrite telle quelle dans `AGENTS.md`
+et le skill), et la pièce touchée revient, **revérifiée par l'exécution** — une commande corrigée n'a
+jamais de verdict connu. La correction voyage sur le message (`corrections`, rendue sous la bulle :
+« Correction prise — … ») et reste acquise aux tours suivants. **Rien n'est écrit** avant l'accord.
+Trois issues ne corrigent rien, et le disent : une phrase **incomprise** (« Rien n'a été écrit : »
+suivi de ce que le modèle de correction n'a pas compris), la pièce qui attendait restant proposée ; une correction
+**sans effet** sur ce qui s'écrit ; et une commande corrigée qui **échoue** à l'exécution — la
+pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
+l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
+
+**La carte** (`components/chat/PieceDOutillage.tsx`, variante A retenue par le regard neuf — veille
+et « Variante retenue » de #1161, d'après la suggestion de revue de GitHub, le mode agent de VS Code
+et l'onboarding de Renovate) : une carte du
+pied du fil, montée par `GestesDuFil` à côté des autres gestes, donc aussi dans la colonne de 320 px.
+En tête `chemin · ce que le geste fera · +N −M` ; dessous le pourquoi en une ligne, ou la phrase de
+la personne après une correction ; le **diff ouvert**, borné à 12 lignes (un fichier neuf se lit
+comme un texte, sans aplat ; une modification est condensée autour de ce qui change — lignes
+partagées avec l'éditeur de playbook, `components/LignesDiff.tsx` ; un fichier neuf **corrigé**
+s'ouvre sur le passage qui porte la commande dite, le reste replié, et la borne de hauteur ne coupe
+jamais cette ligne — `apercuDeLaPiece`, vu par la relecture : ses douze premières lignes ne
+montraient pas ce que la correction écrivait ; une boîte coupée par sa borne de hauteur finit sur un
+« ⋯ », à la façon de ses replis) ; le verdict des commandes,
+déplié quand une correction les a rejouées ou que l'une échoue ; et trois gestes nommés à leur
+portée : « Écrire ce fichier », « Pas cette pièce », « Remettre l'outillage à plus tard ». Écartées :
+le diff derrière un clic (B), et deux grammaires sans compte de lignes (C).
+
+Gardé par [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) (prévision,
+écriture d'une pièce et fusion du manifeste, correction comprise, incomprise, en échec, accord de la
+carte sur un projet versionné, canal de bout en bout, routes), et côté écran par
+`apps/web/tests/piece-outillage.test.tsx`, `gestes-en-colonne.test.tsx` (la carte agit depuis la
+colonne, parité avec `/chat`, trace sous la bulle) et `projets.test.tsx` (« Outiller dans la
+conversation »).
 
 #### La génération — `POST /api/projets/{id}/outillage/generation`
 
@@ -7050,9 +7155,10 @@ contexte au même agent.
 
 Implémentation : [`maestro/outillage/`](../maestro/outillage/) (le domaine),
 [`maestro/controltower/outillage.py`](../maestro/controltower/outillage.py) (le service et le
-conducteur du fil), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (les routes),
-`apps/web/components/projets/EtapeOutillage.tsx` et `apps/web/components/chat/QuestionDOutillage.tsx`
-(les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
+conducteur du fil), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) (les
+pièces et leur correction, #1161), [`maestro/controltower/app.py`](../maestro/controltower/app.py)
+(les routes), `apps/web/components/chat/QuestionDOutillage.tsx` et
+`apps/web/components/chat/PieceDOutillage.tsx` (les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
 [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),
 [`test_outillage_generation.py`](../tests/test_outillage_generation.py),
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et

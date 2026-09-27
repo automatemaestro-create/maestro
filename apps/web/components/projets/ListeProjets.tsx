@@ -29,16 +29,14 @@
  *   conversation**, sur la porte d'entrée (`NaissanceProjet`). « Nouveau projet »
  *   y ramène, et cet écran garde la **gestion** — modifier une déclaration (le
  *   formulaire ne sert plus qu'à cela), la retirer, la mettre sous Git ;
- * - **l'étape d'outillage reste offerte aux projets déjà déclarés** (#1034) : un
- *   projet reporté le **dit** sur sa carte (`outillage.a_faire`) et offre d'y
- *   revenir, sauf pendant que l'étape est ouverte sur lui. Elle quitte le chemin
- *   de création avec le formulaire ; son pendant dans la conversation est #1161 ;
- * - **et l'outillage généré enchaîne sur l'équipe** (#1040, docs/37 §4.6) :
- *   `EtapeEquipe` prend la suite, parce que c'est elle qui *branche* les skills
- *   qu'on vient d'écrire. Un « outiller plus tard », lui, referme le parcours —
- *   poser une seconde question derrière un report contredirait le report. Les
- *   réponses du questionnaire d'un projet neuf voyagent d'une étape à l'autre :
- *   sans elles, l'équipe se dériverait d'une analyse qui n'a rien à lire.
+ * - **l'outillage se reprend dans la conversation** (#1161, docs/43 §2.2) : un
+ *   projet dont l'outillage a été reporté le **dit** sur sa carte
+ *   (`outillage.a_faire`), et « Outiller dans la conversation » l'y ouvre — la
+ *   colonne s'ouvre, et la première question ou la première pièce se pose dans le
+ *   fil de l'orchestration, où l'outillage se construit pièce par pièce. L'étape à
+ *   cocher qui l'écrivait ici en une fois (`EtapeOutillage`, #1034) est partie avec
+ *   elle, et avec elle l'étape d'équipe qu'elle enchaînait : l'équipe se propose dans
+ *   le fil, à la première demande de travail (#1146).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -53,22 +51,18 @@ import { BadgeEtat, Bouton, Carte, EtatVide } from "@/components/Primitives";
 import {
   chargerProjets,
   modifierProjet,
+  ouvrirQuestionnaireOutillage,
   panneDe,
   supprimerProjet,
   versionnerProjet,
   type PanneApi,
 } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
+import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
+import { ecrireConversationOuverte } from "@/lib/preferences";
 import { libelleOrigine } from "@/lib/projets";
-import type {
-  ChoixOutillage,
-  DeclarationProjet,
-  Projet,
-  RefusProjet,
-} from "@/lib/types";
+import type { DeclarationProjet, Projet, RefusProjet } from "@/lib/types";
 
-import { EtapeEquipe } from "./EtapeEquipe";
-import { EtapeOutillage } from "./EtapeOutillage";
 import { refusDepuis, RefusMotive } from "./ExplorateurDossiers";
 import { FormulaireProjet } from "./FormulaireProjet";
 
@@ -103,29 +97,21 @@ function CarteProjet({
   onModifier,
   onSupprime,
   onVersionne,
-  onOutiller,
-  outillageOuvert = false,
 }: {
   projet: Projet;
   onModifier: () => void;
   onSupprime: () => Promise<void>;
   onVersionne: () => Promise<void>;
-  /** Rouvre l'étape d'outillage sur ce projet — la sortie d'un « plus tard ». */
-  onOutiller: () => void;
-  /**
-   * L'étape d'outillage est ouverte **sur ce projet**, juste au-dessus.
-   *
-   * La carte se tait alors sur l'outillage — ni badge « reporté », ni bouton
-   * « Outiller maintenant ». Relevé par le regard neuf sur les trois variantes :
-   * l'étape proposait « Outiller plus tard » pendant que la carte, deux cents
-   * pixels plus bas, annonçait déjà le report et offrait de le défaire. Le report
-   * se dit **après** le choix, pas pendant.
-   */
-  outillageOuvert?: boolean;
 }) {
   const [geste, setGeste] = useState<GesteArme | null>(null);
   const [enCours, setEnCours] = useState(false);
   const [refus, setRefus] = useState<RefusCarte | null>(null);
+  // L'outillage a été repris dans la conversation depuis cette carte : le rappel du
+  // report s'efface tout de suite, comme il s'effacerait au rechargement (l'API lève le
+  // report à la reprise). La carte n'ajoute rien — la colonne qui s'ouvre sur la
+  // question est le retour du geste ; une ligne « il vous attend » disparaissait au
+  // rechargement, et la troisième relecture lisait deux cartes pour un même état.
+  const [outillageOuvert, setOutillageOuvert] = useState(false);
 
   /** Joue un geste armé : la carte se fige, un refus revient à son titre. */
   const jouer = async (titreRefus: string, action: () => Promise<void>) => {
@@ -154,6 +140,18 @@ function CarteProjet({
       await onVersionne();
     });
 
+  // « Outiller dans la conversation » (#1161) : l'outillage ne s'écrit plus dans une
+  // étape de cet écran, il se construit dans le fil de l'orchestration, pièce par
+  // pièce. La colonne s'ouvre, puis la première question — ou la première pièce —
+  // s'y pose pour ce projet ; la liste, elle, ne bouge pas.
+  const outiller = () =>
+    jouer("Outillage non ouvert", async () => {
+      ecrireConversationOuverte(true);
+      await ouvrirQuestionnaireOutillage(AGENT_ORCHESTRATION, undefined, projet.id);
+      setOutillageOuvert(true);
+      setEnCours(false);
+    });
+
   return (
     <Carte
       balise="li"
@@ -174,8 +172,8 @@ function CarteProjet({
         )}
         {/* « Un projet non outillé le dit » (#1034, docs/37 §4.6) — et il le dit
             **tant qu'il ne l'est pas** : `a_faire` croise la décision (reporté)
-            et le disque (manifeste absent), si bien que générer suffit à faire
-            taire le rappel. */}
+            et le disque (manifeste absent), si bien qu'une première pièce écrite
+            suffit à faire taire le rappel. */}
         {projet.outillage?.a_faire && !outillageOuvert && (
           <BadgeEtat ton="attention" contour>
             Outillage reporté
@@ -245,16 +243,16 @@ function CarteProjet({
               Mettre sous Git
             </Bouton>
           )}
-          {/* Un report n'est pas un cul-de-sac : la question revient d'un clic,
-              là où elle a été posée. */}
+          {/* Un report n'est pas un cul-de-sac : l'outillage reprend d'un clic,
+              là où il se construit désormais — dans la conversation (#1161). */}
           {projet.outillage?.a_faire && !outillageOuvert && geste === null && (
             <Bouton
               variante="contour"
               ton="attention"
-              onClick={onOutiller}
-              disabled={enCours}
+              onClick={() => void outiller()}
+              occupe={enCours}
             >
-              Outiller maintenant
+              Outiller dans la conversation
             </Bouton>
           )}
           {geste === "supprimer" ? (
@@ -323,18 +321,6 @@ export function ListeProjets({ apresEcriture, nouveauProjet }: Props = {}) {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<PanneApi | null>(null);
   const [editionId, setEditionId] = useState<string | null>(null);
-  // Le projet qui vient d'être déclaré et dont l'outillage se décide : l'étape
-  // suivante du parcours, pas un écran à part (#1034).
-  const [aOutiller, setAOutiller] = useState<Projet | null>(null);
-  // Puis celui dont l'**équipe** se décide (#1040) — troisième et dernière
-  // étape, ouverte par l'outillage généré. Deux états plutôt qu'un rang : le
-  // parcours peut se reprendre à l'outillage depuis une carte, et un compteur
-  // d'étape obligerait chaque entrée à savoir d'où elle vient.
-  const [aRecruter, setARecruter] = useState<Projet | null>(null);
-  // Les réponses du questionnaire d'un projet **neuf**, transmises de l'étape
-  // d'outillage à celle d'équipe : sans elles, l'équipe d'un projet neuf se
-  // dériverait d'une analyse qui n'a rien à lire (#1031).
-  const [choixOutillage, setChoixOutillage] = useState<ChoixOutillage[]>([]);
   const enPanne = useEcranEnPanne(erreur);
 
   const recharger = useCallback(async () => {
@@ -361,25 +347,6 @@ export function ListeProjets({ apresEcriture, nouveauProjet }: Props = {}) {
     await recharger();
     apresEcriture?.();
   }, [recharger, apresEcriture]);
-
-  const finirOutillage = (
-    suite: "equipe" | "fin",
-    choix: ChoixOutillage[] = [],
-  ) => {
-    const projet = aOutiller;
-    setAOutiller(null);
-    if (suite === "equipe" && projet !== null) {
-      setChoixOutillage(choix);
-      setARecruter(projet);
-    }
-    void rechargerApresEcriture();
-  };
-
-  const finirEquipe = () => {
-    setARecruter(null);
-    setChoixOutillage([]);
-    void rechargerApresEcriture();
-  };
 
   const modifier = async (id: string, declaration: DeclarationProjet) => {
     await modifierProjet(id, declaration);
@@ -420,18 +387,6 @@ export function ListeProjets({ apresEcriture, nouveauProjet }: Props = {}) {
           )}
         </div>
 
-        {aOutiller !== null && (
-          <EtapeOutillage projet={aOutiller} onTermine={finirOutillage} />
-        )}
-
-        {aRecruter !== null && (
-          <EtapeEquipe
-            projet={aRecruter}
-            choix={choixOutillage}
-            onTermine={finirEquipe}
-          />
-        )}
-
         {chargement && (
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
             Chargement des projets…
@@ -471,11 +426,6 @@ export function ListeProjets({ apresEcriture, nouveauProjet }: Props = {}) {
                   onModifier={() => setEditionId(projet.id)}
                   onSupprime={rechargerApresEcriture}
                   onVersionne={rechargerApresEcriture}
-                  onOutiller={() => {
-                    setAOutiller(projet);
-                    setEditionId(null);
-                  }}
-                  outillageOuvert={aOutiller?.id === projet.id}
                 />
               ),
             )}

@@ -47,6 +47,7 @@ from collections.abc import Sequence
 from maestro.outillage.clients import CLIENTS_CONNUS, Client, ClientConnu, par_cle
 from maestro.outillage.detection import DOSSIERS_SKILLS
 from maestro.outillage.modele import (
+    ORIGINE_DITE,
     Commande,
     Constats,
     Ecarte,
@@ -130,6 +131,15 @@ def recommander(constats: Constats, clients: Sequence[Client] = ()) -> Recommand
     )
 
 
+#: Pourquoi `AGENTS.md` — la raison du fichier lui-même, qui ne dépend pas de ce que le
+#: projet porte déjà (`redaction.raison_stable`, #1161). Les clients de la personne qui
+#: le lisent tel quel s'y ajoutent quand on les connaît (#1295).
+RAISON_AGENTS = (
+    "le seul fichier d'instructions du projet, au format ouvert que lisent la plupart des "
+    "clients d'agents, et celui qui désigne où sont les skills"
+)
+
+
 def _instructions(
     constats: Constats, presents: dict[str, Piece], utilises: dict[str, Client]
 ) -> Entree:
@@ -162,8 +172,7 @@ def _instructions(
             "le projet porte déjà un AGENTS.md : Maestro n'y écrirait qu'un bloc délimité, "
             f"sans toucher au reste{lu_par}"
             if deja
-            else "le seul fichier d'instructions du projet, au format ouvert que lisent la "
-            f"plupart des clients d'agents, et celui qui désigne où sont les skills{lu_par}"
+            else f"{RAISON_AGENTS}{lu_par}"
         ),
         justification=readme
         or Piece(
@@ -371,7 +380,15 @@ def _usages_du_skill(usage: str) -> tuple[str, ...]:
 
 
 def _justification(commande: Commande) -> Piece:
-    """L'endroit du projet qui justifie un skill : le fichier lu, et ce qu'on y a vu."""
+    """L'endroit du projet qui justifie un skill : le fichier lu, et ce qu'on y a vu.
+
+    Une commande **dite par la personne** (#1161, `ORIGINE_DITE`) n'a pas d'endroit
+    dans le projet : ce qui la justifie est sa phrase. La pièce n'a alors **pas de
+    chemin** — la rédaction dit « dite par la personne », jamais « constaté dans »
+    un fichier qu'on n'a pas lu pour ça.
+    """
+    if commande.origine == ORIGINE_DITE:
+        return Piece(nom="la personne", chemin="", role=commande.extrait)
     return Piece(nom=commande.chemin, chemin=commande.chemin, role=commande.extrait)
 
 

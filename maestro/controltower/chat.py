@@ -188,6 +188,17 @@ déclare : `projet_en_attente` dit si elle tient encore, `ServiceChat.declarer_p
 est le geste qui y répond. Ce que l'accord a déclaré est un **fait** porté par la
 réponse (`projet_cree`, `ProjetCree`), comme `run_id` porte le run qu'un accord a
 ouvert.
+
+## …et ce qu'il demande peut être une pièce d'outillage (#1161)
+
+L'outillage d'un projet se construit **dans la conversation, pièce par pièce** (docs/43
+§2.2) : chaque fichier — `AGENTS.md`, un skill — est proposé avec son **diff**, déjà
+vérifié par l'exécution, puis écrit sur accord. La proposition vit sur le message comme
+les quatre autres demandes — `piece` (`PieceProposee`) —, `piece_en_attente` dit si elle
+tient encore, et `ServiceChat.trancher_piece` est le geste qui y répond : écrire,
+passer, ou remettre l'outillage à plus tard. Ce que le geste a fait est un **fait** porté
+par la réponse (`piece_ecrite`, `PieceEcrite`), et ce qu'une phrase a corrigé aussi
+(`corrections`) : c'est ce que le tour suivant relit, sans rien redemander au modèle.
 """
 
 from __future__ import annotations
@@ -218,7 +229,9 @@ from maestro.messaging import (
     AgentMessage,
     Mailbox,
 )
-from maestro.outillage.questionnaire import REPONSE_LIBRE_MAX, Choix, QuestionOutillage
+from maestro.outillage.generation import empreinte
+from maestro.outillage.questionnaire import REPONSE_LIBRE_MAX, Choix, QuestionOutillage, sujet_de
+from maestro.outillage.verification import Verification
 from maestro.providers.base import ModelProvider
 from maestro.sources import (
     DepotTeleversements,
@@ -475,6 +488,118 @@ def projet_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
     return dernier
 
 
+def piece_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """La **pièce d'outillage** que ce fil propose encore, `None` sinon (#1161).
+
+    La cinquième demande du canal, et la même règle que les quatre autres : le dernier
+    message, et lui seul. Une pièce proposée attend tant que rien ne l'a suivie ; ce
+    qui la solde est qu'on y ait répondu — un clic (écrire, passer, plus tard), un
+    « oui » tapé, ou une correction (« nos tests tournent avec `dotnet test` »), qui
+    appelle une pièce revérifiée au lieu d'écrire l'ancienne.
+    """
+    dernier = fil[-1] if fil else None
+    if dernier is None or dernier.piece is None:
+        return None
+    return dernier
+
+
+def projet_du_fil(fil: Sequence[MessageChat]) -> str | None:
+    """Le projet dont ce fil construit l'outillage — `None` s'il n'en nomme aucun (#1161).
+
+    Lu **structurellement**, du plus récent au plus ancien : la pièce proposée ou
+    écrite porte son projet, et le projet né dans la conversation (`projet_cree`) est
+    celui dont l'outillage commence. Le fil est transverse (#281) et ses messages ne
+    portent pas de périmètre ; ceux-là, si — ce sont des faits de ce projet-là.
+    """
+    for message in reversed(fil):
+        nomme = _projet_nomme(message)
+        if nomme:
+            return nomme
+    return None
+
+
+def _projet_nomme(message: MessageChat) -> str:
+    """Le projet qu'un message nomme lui-même — vide s'il n'en nomme aucun."""
+    if message.projet_outille:
+        return message.projet_outille
+    if message.piece is not None:
+        return message.piece.projet_id
+    if message.piece_ecrite is not None:
+        return message.piece_ecrite.projet_id
+    if message.projet_cree is not None:
+        return message.projet_cree.id
+    return ""
+
+
+def fil_du_projet(fil: Sequence[MessageChat], projet: str | None) -> list[MessageChat]:
+    """Les messages de ce fil qui parlent de l'outillage de `projet` — ou d'aucun (#1161).
+
+    Le fil est transverse (#281) : deux projets peuvent s'y outiller l'un après l'autre.
+    Vu sur la vraie stack, le second recevait alors les réponses, la compréhension, les
+    corrections et les verdicts du premier — des tests et une CI qu'il n'avait pas. Les
+    lecteurs de l'outillage (`choix_du_fil`, `acquis_du_fil`, `corrections_du_fil`,
+    `pieces_tranchees`, les verdicts connus) lisent donc **ce** fil-là.
+
+    Chaque message se rattache au dernier projet que le fil nommait quand il a été
+    écrit (`_projet_nomme` : le tour marqué, la pièce, le fait, le projet né) ; une
+    réponse ou une correction de la personne, qui n'en nomme aucun, suit celui de la
+    question qu'elle tranche. Ce qui ne se rattache à aucun projet reste : un
+    questionnaire ouvert sans projet s'applique au premier qui le reprend. Sans
+    `projet`, le fil entier.
+    """
+    if not projet:
+        return list(fil)
+    courant = ""
+    propres: list[MessageChat] = []
+    for message in fil:
+        courant = _projet_nomme(message) or courant
+        if courant in ("", projet):
+            propres.append(message)
+    return propres
+
+
+def corrections_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
+    """Les corrections de l'outillage prises sur ce fil, dans l'ordre (#1161).
+
+    Lues sur le champ `corrections` des messages, jamais dans leur texte — la règle de
+    `choix_du_fil`. La dernière d'un même sujet l'emporte : c'est à `corriger` d'en
+    décider, pas à la lecture.
+    """
+    return tuple(c for m in fil for c in m.corrections)
+
+
+def acquis_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
+    """Ce que le questionnaire a compris en dernier sur ce fil — `()` s'il n'y en a pas (#1161).
+
+    La dernière `comprehension` non vide : c'est elle que l'outillage d'un projet neuf
+    rédige, sans rappeler le modèle (#1147). Un projet lu (#1158) n'en a pas — son
+    outillage vient de l'analyse.
+    """
+    for message in reversed(fil):
+        if message.comprehension:
+            return message.comprehension
+    return ()
+
+
+def pieces_tranchees(fil: Sequence[MessageChat]) -> frozenset[tuple[str, str]]:
+    """Les pièces déjà tranchées sur ce fil — `(chemin, empreinte du contenu proposé)` (#1161).
+
+    Écrite ou écartée, une pièce ne se repropose pas **telle quelle** : c'est ce qui
+    fait avancer la conversation d'une pièce à la suivante. Une pièce dont le contenu a
+    changé depuis — une correction l'a touchée — n'est plus la même, et se repropose.
+
+    ⚠ **Seule la dernière décision prise sur un chemin compte** : une version écrite
+    puis remplacée par une autre redevient une proposition, parce qu'y revenir change
+    le disque. Vu sur la vraie stack : « retire dotnet test » ramenait `AGENTS.md` à sa
+    version d'avant, déjà écrite une fois, et la pièce ne revenait jamais.
+    """
+    dernieres: dict[str, str] = {}
+    for m in fil:
+        if m.piece_ecrite is not None and m.piece_ecrite.empreinte:
+            dernieres[m.piece_ecrite.chemin] = m.piece_ecrite.empreinte
+    return frozenset(dernieres.items())
+
+
 def choix_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
     """Les réponses d'outillage acquises sur ce fil, dans l'ordre où elles sont venues.
 
@@ -603,6 +728,32 @@ def _geste_de_declaration(approuve: bool, origine: str) -> str:
     return "Oui, crée ce projet." if approuve else "Non, ne crée pas ce projet."
 
 
+#: Les trois décisions qu'un geste peut rendre sur une pièce d'outillage (#1161).
+#: `ecrire` : la pièce s'écrit telle que la carte la montre. `passer` : pas celle-là —
+#: rien ne s'écrit, la suivante est proposée. `plus-tard` : l'outillage entier est remis
+#: à plus tard (le report de docs/37 §4.6, qui se lit sur la fiche du projet).
+DECISION_ECRIRE = "ecrire"
+DECISION_PASSER = "passer"
+DECISION_PLUS_TARD = "plus-tard"
+DECISIONS_PIECE: frozenset[str] = frozenset(
+    {DECISION_ECRIRE, DECISION_PASSER, DECISION_PLUS_TARD}
+)
+
+
+def _geste_de_piece(decision: str, piece: PieceProposee) -> str:
+    """Ce que le geste écrit dans le fil — le message que le clic vaut (#1161).
+
+    Même règle que `_geste_de_cadrage` : le fil est la seule mémoire du canal, et le
+    tour suivant relit ce clic comme une personne l'aurait écrit. Le **chemin** y va,
+    pas le nom : c'est ce qui sera écrit, et ce que la carte titre.
+    """
+    if decision == DECISION_ECRIRE:
+        return f"Oui, écris {piece.chemin}."
+    if decision == DECISION_PASSER:
+        return f"Pas cette pièce : {piece.chemin}."
+    return "Plus tard pour l'outillage."
+
+
 def normaliser(texte: str) -> str:
     """Le texte réduit pour la comparaison : minuscules, sans accents ni ponctuation.
 
@@ -697,6 +848,15 @@ class DeclarationIntrouvable(RuntimeError):
     proposition a déjà reçu sa réponse (un message a suivi), ou le répondeur de ce
     fil n'en fait pas. L'API la traduit en `409` — c'est ce qui empêche un double
     clic de déclarer deux fois le même projet.
+    """
+
+
+class PieceIntrouvable(RuntimeError):
+    """Ce fil n'a **aucune pièce d'outillage en attente** à trancher (#1161).
+
+    Le cinquième pendant de `CadrageIntrouvable`, pour les mêmes trois façons de
+    n'avoir rien à trancher. L'API la traduit en `409` — c'est ce qui empêche un
+    double clic d'écrire deux fois la même pièce, ou de passer celle d'après.
     """
 
 
@@ -983,6 +1143,232 @@ class ProjetCree:
 
 
 @dataclass(frozen=True)
+class PieceProposee:
+    """Une pièce d'outillage proposée à l'écriture — **déjà vérifiée**, avec son diff (#1161).
+
+    Ce que la carte montre et ce que l'accord écrit, **tel quel** : `contenu` est le
+    texte que la rédaction a rendu (le fichier entier, ou l'intérieur du bloc que
+    Maestro possède dans un fichier d'autrui, selon `portee`), et c'est lui qui
+    s'écrit — jamais une seconde rédaction au moment du clic, qui pourrait rejouer
+    les commandes et rendre autre chose que ce qu'on a lu.
+
+    `texte_avant` est ce que le disque porte aujourd'hui à ce chemin (vide : rien),
+    `texte_apres` ce qu'il portera — le fichier **entier**, bloc fusionné compris :
+    l'écran en tire le diff (`lib/diff`, le même que l'éditeur de playbook) plutôt
+    que de le recevoir tout fait. `empreinte_avant` est celle du premier : l'accord
+    **revérifie**, et un fichier qui a bougé entre la carte et le clic ne s'écrit pas
+    sur la foi d'un diff périmé. `sort` dit ce que le geste fera à ce chemin — le
+    **créer** (`cree`), **réécrire** un fichier que Maestro a posé (`reecrit`), ou
+    ajouter son **bloc** à un fichier qui est au projet (`bloc`), rien d'autre n'y
+    étant touché : c'est ce qu'on veut savoir avant de laisser écrire chez soi.
+
+    `verifications` sont les verdicts des commandes que cette pièce écrit, jouées
+    **avant** d'être proposées (#1160) : la carte dit ce qui marche avant qu'on
+    accepte. `correction` est la phrase de la personne que cette version porte —
+    « nos tests tournent avec `dotnet test` » —, vide sinon : c'est la justification
+    que le fichier écrit, et la carte la montre. `echec` n'est pas vide quand une
+    commande **corrigée** a échoué à l'exécution : cette version ne s'écrit pas
+    (critère du ticket, « une correction en échec le dit, sans rien écrire »), et
+    `echec` dit pourquoi. Une commande que le projet déclarait et qui échoue, elle,
+    s'écrit avec son verdict, comme depuis #1160 — c'est la correction qu'on ne
+    laisse pas passer sans preuve. `corrigees` nomme, parmi les commandes vérifiées,
+    celles que la personne a **dites** : la carte les montre avec leur verdict juste
+    sous la légende, pour que la revérification se lise sans déplier la liste (vu à
+    la relecture de #1161 : la commande corrigée était sous la ligne de flottaison).
+
+    `rang` et `total` situent la pièce dans l'outillage de ce projet (les fichiers que
+    la recommandation rédige, dans leur ordre). `source` est la provenance que le
+    manifeste gardera (docs/38 §4.1). `regime` dit comment elle atteindra le projet :
+    `en-place`, ou `branche` — fusionnée sur l'accord, le diff étant celui-ci.
+    """
+
+    projet_id: str
+    projet_nom: str
+    cible: str
+    chemin: str
+    nom: str
+    nature: str
+    raison: str
+    role: str
+    portee: str
+    contenu: str
+    executable: bool = False
+    texte_avant: str = ""
+    texte_apres: str = ""
+    empreinte_avant: str = ""
+    sort: str = "cree"
+    verifications: tuple[Verification, ...] = ()
+    correction: str = ""
+    echec: str = ""
+    rang: int = 1
+    total: int = 1
+    source: Mapping[str, Any] = field(default_factory=dict)
+    regime: str = "en-place"
+    corrigees: tuple[str, ...] = ()
+
+    @property
+    def ecrivable(self) -> bool:
+        """Cette version peut-elle s'écrire ? Pas quand sa correction a échoué à l'exécution."""
+        return not self.echec
+
+    @property
+    def empreinte(self) -> str:
+        """L'empreinte du contenu proposé — ce qui **désigne** cette version de la pièce.
+
+        Le geste la rend (`ServiceChat.trancher_piece`) : après une pièce écrite, la
+        réponse porte déjà la suivante, et un double clic sans elle écrirait une pièce
+        que personne n'a vue. Avec elle, il tombe sur le `409`.
+        """
+        return empreinte(self.contenu)
+
+    def to_dict(self) -> dict[str, Any]:
+        """La pièce en JSON — la forme du REST et du stockage."""
+        return {
+            "projet_id": self.projet_id,
+            "projet_nom": self.projet_nom,
+            "cible": self.cible,
+            "chemin": self.chemin,
+            "nom": self.nom,
+            "nature": self.nature,
+            "raison": self.raison,
+            "role": self.role,
+            "portee": self.portee,
+            "contenu": self.contenu,
+            "executable": self.executable,
+            "texte_avant": self.texte_avant,
+            "texte_apres": self.texte_apres,
+            "empreinte_avant": self.empreinte_avant,
+            "sort": self.sort,
+            "verifications": [v.to_dict() for v in self.verifications],
+            "correction": self.correction,
+            "echec": self.echec,
+            "ecrivable": self.ecrivable,
+            "empreinte": self.empreinte,
+            "rang": self.rang,
+            "total": self.total,
+            "source": dict(self.source),
+            "regime": self.regime,
+            "corrigees": list(self.corrigees),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> PieceProposee:
+        """Relit une pièce persistée, sans rien rejuger (même règle que `MessageChat`)."""
+        verifications = data.get("verifications")
+        source = data.get("source")
+        corrigees = data.get("corrigees")
+        return cls(
+            projet_id=str(data.get("projet_id") or ""),
+            projet_nom=str(data.get("projet_nom") or ""),
+            cible=str(data.get("cible") or ""),
+            chemin=str(data.get("chemin") or ""),
+            nom=str(data.get("nom") or ""),
+            nature=str(data.get("nature") or ""),
+            raison=str(data.get("raison") or ""),
+            role=str(data.get("role") or ""),
+            portee=str(data.get("portee") or "fichier"),
+            contenu=str(data.get("contenu") or ""),
+            executable=bool(data.get("executable")),
+            texte_avant=str(data.get("texte_avant") or ""),
+            texte_apres=str(data.get("texte_apres") or ""),
+            empreinte_avant=str(data.get("empreinte_avant") or ""),
+            sort=str(data.get("sort") or "cree"),
+            verifications=tuple(
+                Verification.from_dict(v)
+                for v in (verifications if isinstance(verifications, list) else ())
+                if isinstance(v, Mapping)
+            ),
+            correction=str(data.get("correction") or ""),
+            echec=str(data.get("echec") or ""),
+            rang=int(data.get("rang") or 1),
+            total=int(data.get("total") or 1),
+            source=dict(source) if isinstance(source, Mapping) else {},
+            regime=str(data.get("regime") or "en-place"),
+            corrigees=tuple(
+                str(c) for c in (corrigees if isinstance(corrigees, list) else ()) if c
+            ),
+        )
+
+    def en_phrase(self) -> str:
+        """La pièce en une ligne — ce que le modèle relit de la carte au tour suivant."""
+        quoi = _SORTS_EN_MOTS.get(self.sort, self.sort)
+        corrigee = f", après la correction « {self.correction} »" if self.correction else ""
+        echec = f" — ne s'écrit pas : {self.echec}" if self.echec else ""
+        return (
+            f"{self.chemin} ({self.nature}, pièce {self.rang} sur {self.total}, {quoi}) "
+            f"dans « {self.projet_nom} »{corrigee}{echec}"
+        )
+
+
+#: Ce que le geste fera au chemin d'une pièce, en mots — pour la transcription.
+_SORTS_EN_MOTS = {
+    "cree": "fichier à créer",
+    "reecrit": "fichier de Maestro à réécrire",
+    "bloc": "bloc à ajouter dans un fichier du projet",
+}
+
+
+#: Ce qu'il est advenu d'une pièce, tel qu'un fait le porte (#1161). `ecrit` et
+#: `inchange` viennent de l'écriture (`Ecriture.etat`), `ecartee` du geste « pas cette
+#: pièce » ; `refuse` et `ignore` disent qu'elle n'a **pas** été écrite, et pourquoi.
+PIECE_ECARTEE = "ecartee"
+
+
+@dataclass(frozen=True)
+class PieceEcrite:
+    """Ce qu'un geste a fait d'une pièce — le fait qu'une réponse porte sous sa bulle (#1161).
+
+    Le pendant de `PieceProposee` après le geste, comme `ProjetCree` l'est de
+    `DemandeProjet` : on dit ce qui s'est passé, relu du rapport d'écriture — écrite,
+    ou pas, avec la raison. `empreinte` est celle du contenu **proposé** : c'est ce qui
+    fait qu'une pièce tranchée ne se repropose pas telle quelle (`pieces_tranchees`),
+    et qu'elle se repropose dès qu'une correction l'a changée.
+    """
+
+    projet_id: str
+    chemin: str
+    nom: str
+    etat: str
+    raison: str = ""
+    cible: str = ""
+    regime: str = "en-place"
+    empreinte: str = ""
+
+    @property
+    def ecrite(self) -> bool:
+        """La pièce est-elle, après ce geste, ce que le projet porte ?"""
+        return self.etat in ("ecrit", "inchange")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le fait en JSON — la forme du REST et du stockage."""
+        return {
+            "projet_id": self.projet_id,
+            "chemin": self.chemin,
+            "nom": self.nom,
+            "etat": self.etat,
+            "raison": self.raison,
+            "cible": self.cible,
+            "regime": self.regime,
+            "empreinte": self.empreinte,
+            "ecrite": self.ecrite,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> PieceEcrite:
+        """Relit un fait persisté, sans rien rejuger (même règle que `MessageChat`)."""
+        return cls(
+            projet_id=str(data.get("projet_id") or ""),
+            chemin=str(data.get("chemin") or ""),
+            nom=str(data.get("nom") or ""),
+            etat=str(data.get("etat") or ""),
+            raison=str(data.get("raison") or ""),
+            cible=str(data.get("cible") or ""),
+            regime=str(data.get("regime") or "en-place"),
+            empreinte=str(data.get("empreinte") or ""),
+        )
+
+
+@dataclass(frozen=True)
 class EtapeFil:
     """Une chose que l'interlocuteur a **faite** en répondant — une lecture (#1223).
 
@@ -1128,6 +1514,21 @@ class MessageChat:
     une ligne écrite avant ce lot, l'attente énoncée une fois (`projet_en_attente`)
     — et jamais sur le même message qu'une autre demande. `projet_cree` est ce que
     l'accord a **déclaré** : le pendant de `run_id` et d'`equipe` pour un projet.
+
+    `piece` (#1161) est la cinquième chose qu'un message d'agent peut demander : une
+    **pièce d'outillage** à écrire, montrée avec son diff et déjà vérifiée. Même patron
+    — `None` partout ailleurs et sur une ligne écrite avant ce lot, l'attente énoncée
+    une fois (`piece_en_attente`). `piece_ecrite` est ce que le geste en a **fait**, et
+    `corrections` ce qu'une phrase a corrigé de l'outillage, chaque sujet avec la
+    phrase pour cause : deux faits que le tour suivant relit sans rappeler le modèle.
+    Un même message peut porter le fait de la pièce d'avant **et** la suivante — comme
+    `equipe` et `proposition` après un recrutement (#1146).
+
+    `projet_outille` (#1161) est le projet dont ce message **conduit l'outillage** — une
+    question, une pièce, la fin. Le fil est transverse (#281) et un outillage ouvert
+    pour un projet nommé (« Outiller maintenant ») n'a ni projet né ni pièce pour le
+    dire à la question suivante : vu sur la vraie stack, la réponse ne savait plus quel
+    projet outiller. Vide partout ailleurs et sur une ligne écrite avant ce lot.
     """
 
     agent: str
@@ -1149,6 +1550,10 @@ class MessageChat:
     comprehension: tuple[Choix, ...] = ()
     projet_propose: DemandeProjet | None = None
     projet_cree: ProjetCree | None = None
+    piece: PieceProposee | None = None
+    piece_ecrite: PieceEcrite | None = None
+    corrections: tuple[Choix, ...] = ()
+    projet_outille: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -1181,6 +1586,12 @@ class MessageChat:
                 self.projet_propose.to_dict() if self.projet_propose is not None else None
             ),
             "projet_cree": self.projet_cree.to_dict() if self.projet_cree is not None else None,
+            "piece": self.piece.to_dict() if self.piece is not None else None,
+            "piece_ecrite": (
+                self.piece_ecrite.to_dict() if self.piece_ecrite is not None else None
+            ),
+            "corrections": [c.to_dict() for c in self.corrections],
+            "projet_outille": self.projet_outille,
         }
 
     @property
@@ -1227,6 +1638,8 @@ class MessageChat:
         choix = data.get("choix")
         propose = data.get("projet_propose")
         cree = data.get("projet_cree")
+        piece = data.get("piece")
+        piece_ecrite = data.get("piece_ecrite")
         return cls(
             agent=data["agent"],
             # Une ligne d'avant #694 n'en porte pas : elle vient forcément du
@@ -1263,6 +1676,16 @@ class MessageChat:
                 DemandeProjet.from_dict(propose) if isinstance(propose, Mapping) else None
             ),
             projet_cree=ProjetCree.from_dict(cree) if isinstance(cree, Mapping) else None,
+            piece=PieceProposee.from_dict(piece) if isinstance(piece, Mapping) else None,
+            piece_ecrite=(
+                PieceEcrite.from_dict(piece_ecrite) if isinstance(piece_ecrite, Mapping) else None
+            ),
+            corrections=tuple(
+                Choix.from_dict(c)
+                for c in data.get("corrections") or ()
+                if isinstance(c, Mapping)
+            ),
+            projet_outille=str(data.get("projet_outille") or ""),
         )
 
 
@@ -1350,6 +1773,11 @@ class ReponseChat:
     `projet_propose` (#1294) est la quatrième demande — un projet à déclarer —, et
     elle ne cohabite avec aucune autre ; `projet_cree` est ce que l'accord a
     déclaré, porté comme `run_id` porte ce qu'un accord a ouvert.
+
+    `piece` (#1161) est la cinquième — une pièce d'outillage à écrire —, et elle ne
+    cohabite avec aucune autre demande ; `piece_ecrite` et `corrections` sont des
+    faits : ce qu'un geste a fait de la pièce d'avant, ce qu'une phrase a corrigé.
+    `projet_outille` dit de quel projet ce tour conduit l'outillage.
     """
 
     contenu: str
@@ -1363,6 +1791,10 @@ class ReponseChat:
     comprehension: tuple[Choix, ...] = ()
     projet_propose: DemandeProjet | None = None
     projet_cree: ProjetCree | None = None
+    piece: PieceProposee | None = None
+    piece_ecrite: PieceEcrite | None = None
+    corrections: tuple[Choix, ...] = ()
+    projet_outille: str = ""
 
 
 @dataclass(frozen=True)
@@ -1899,6 +2331,32 @@ class RepondeurChat(ABC):
             f"le fil {agent.nom} ne propose pas de projet : rien à déclarer."
         )
 
+    async def trancher_piece(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        piece: PieceProposee,
+        decision: str,
+    ) -> ReponseChat:
+        """La réponse au **geste** qui tranche une pièce d'outillage (#1161).
+
+        Le cinquième point d'extension « acte » du canal. Aucun juge : la décision
+        est un clic — écrire la pièce telle que la carte la montre, la passer, ou
+        remettre l'outillage à plus tard —, et la suite se déduit : la pièce
+        suivante, revérifiée, ou la fin de l'outillage.
+
+        `piece` est celle que le fil portait, **relue du fil** : c'est celle qu'on a
+        eue sous les yeux, diff compris.
+
+        Par défaut, un répondeur **ne propose aucune pièce** : il le dit plutôt que de
+        le laisser deviner. Seul celui qui pose une `ReponseChat.piece` a cette méthode
+        à écrire.
+        """
+        raise PieceIntrouvable(
+            f"le fil {agent.nom} ne propose pas de pièce d'outillage : rien à trancher."
+        )
+
     async def rediger(
         self, agent: Agent, fil: Sequence[MessageChat], *, faits: str
     ) -> str:
@@ -1923,14 +2381,19 @@ class RepondeurChat(ABC):
         )
 
     async def ouvrir_questionnaire(
-        self, agent: Agent, fil: Sequence[MessageChat]
+        self, agent: Agent, fil: Sequence[MessageChat], *, projet_id: str | None = None
     ) -> ReponseChat:
-        """Ouvre — ou reprend — le questionnaire d'outillage sur ce fil (#1031).
+        """Ouvre — ou reprend — l'outillage d'un projet sur ce fil (#1031, #1161).
 
         L'entrée du dispositif, rendue comme n'importe quelle réponse d'agent : le
         canal ne gagne pas un second chemin d'écriture parce qu'il gagne une
         question. Elle reçoit le fil et en dérive où l'on en est, ce qui la rend
         idempotente sans qu'aucune garde n'ait à le tenir.
+
+        `projet_id` (#1161) est le projet à outiller quand le fil ne le nomme pas
+        encore — « Outiller maintenant » depuis la carte d'un projet dont
+        l'outillage a été reporté. Ce qui en sort est la question qui manque, ou la
+        première pièce.
 
         Par défaut, un répondeur **ne pose aucune question** : il le dit.
         """
@@ -2075,7 +2538,7 @@ class RepondeurScripte(RepondeurChat):
         return f"Faits reçus : « {faits} » — message scripté, aucun modèle n'a été appelé."
 
     async def ouvrir_questionnaire(
-        self, agent: Agent, fil: Sequence[MessageChat]
+        self, agent: Agent, fil: Sequence[MessageChat], *, projet_id: str | None = None
     ) -> ReponseChat:
         """Conduit le questionnaire d'outillage, **pour de vrai** (#1031, #1147).
 
@@ -2086,7 +2549,18 @@ class RepondeurScripte(RepondeurChat):
         (« deux vocabulaires pour le même contrat finissent par diverger de ce que
         l'API sert »). Le **modèle**, lui, est celui du conducteur injecté.
         """
-        return await self._conducteur().ouvrir(fil)
+        return await self._conducteur().ouvrir(fil, projet_id=projet_id)
+
+    async def trancher_piece(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        piece: PieceProposee,
+        decision: str,
+    ) -> ReponseChat:
+        """Tranche une pièce d'outillage, **pour de vrai** (#1161) — le conducteur réel."""
+        return await self._conducteur().trancher(fil, piece=piece, decision=decision)
 
     async def repondre_question(
         self,
@@ -2497,11 +2971,85 @@ class ServiceChat:
             agent, conversation=fil, reponse=reponse
         )
 
+    async def trancher_piece(
+        self,
+        agent: Agent,
+        *,
+        decision: str,
+        piece: str = "",
+        conversation: str | None = None,
+    ) -> tuple[MessageChat, MessageChat]:
+        """Tranche la pièce d'outillage en attente ; rend la paire (geste, réponse) (#1161).
+
+        Le cinquième geste du canal, et **la même forme qu'`envoyer`** : un message
+        d'utilisateur, puis la réponse. La pièce à laquelle on répond est **lue du
+        fil**, jamais passée par l'appelant — chemin, contenu et diff compris : ce
+        qui s'écrit est exactement ce que la carte a montré.
+
+        `piece` est l'**empreinte** de la version que la carte montrait
+        (`PieceProposee.empreinte`) — une désignation, pas un contenu. Elle est
+        nécessaire ici plus qu'ailleurs : la réponse à un geste porte **la pièce
+        suivante**, de la même sorte, si bien qu'un double clic sans elle écrirait
+        une pièce que personne n'a vue. Une empreinte qui n'est pas celle de la pièce
+        en attente — comme l'absence de pièce — est `PieceIntrouvable` (le `409`).
+        Vide, la pièce en attente fait foi : c'est la forme d'un appel sans écran.
+
+        `decision` est l'un de `DECISIONS_PIECE` (`ValueError` sinon, avant toute
+        écriture). Écrire une version dont la **correction a échoué à l'exécution**
+        est refusé de même (`ValueError`, le `422`) : « une correction en échec le
+        dit, sans rien écrire » ne tient pas à un bouton caché, il tient ici.
+
+        Le corps ne porte **aucun amendement** : une correction se dit dans la
+        conversation, et appelle une pièce revérifiée.
+        """
+        if decision not in DECISIONS_PIECE:
+            offertes = ", ".join(sorted(DECISIONS_PIECE))
+            raise ValueError(f"décision inconnue : {decision!r} (attendu l'une de : {offertes}).")
+        fil = self._resoudre(agent, conversation)
+        attente = piece_en_attente(self._store.fil(agent.nom, fil))
+        if attente is None or attente.piece is None:
+            raise PieceIntrouvable(
+                f"aucune pièce d'outillage en attente sur le fil {agent.nom}."
+            )
+        visee = attente.piece
+        if piece and piece != visee.empreinte:
+            raise PieceIntrouvable(
+                f"cette version de pièce n'attend plus sur le fil {agent.nom} : c'est "
+                f"{visee.chemin} qui est proposé maintenant."
+            )
+        if decision == DECISION_ECRIRE and not visee.ecrivable:
+            raise ValueError(
+                f"cette version de {visee.chemin} ne s'écrit pas : {visee.echec} Corrigez-la "
+                "avec vos mots, ou passez-la."
+            )
+        geste = await self._deposer(
+            agent, _geste_de_piece(decision, visee), conversation=fil
+        )
+        try:
+            reponse = await self._repondeur.trancher_piece(
+                agent,
+                self._store.fil(agent.nom, fil),
+                piece=visee,
+                decision=decision,
+            )
+        except PieceIntrouvable:
+            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+            # manque — un 409, comme pour le cadrage, jamais un 502.
+            raise
+        except Exception as exc:
+            raise ReponseIndisponible(
+                f"l'agent {agent.nom} n'a pas pu donner suite à la pièce {visee.chemin} : {exc}"
+            ) from exc
+        return geste, await self._persister_reponse(
+            agent, conversation=fil, reponse=reponse
+        )
+
     async def poser_question(
         self,
         agent: Agent,
         *,
         conversation: str | None = None,
+        projet_id: str | None = None,
     ) -> MessageChat:
         """Ouvre le questionnaire d'outillage sur ce fil ; rend le message posé.
 
@@ -2517,11 +3065,16 @@ class ServiceChat:
 
         `QuestionIntrouvable` sur un fil dont le répondeur n'en pose pas — `409`,
         comme partout ailleurs sur ce canal.
+
+        `projet_id` (#1161) nomme le projet à outiller quand le fil ne le nomme pas :
+        « Outiller maintenant » sur la carte d'un projet ouvre son outillage **dans la
+        conversation**, là où il se construit désormais, plutôt que dans une étape de
+        formulaire.
         """
         fil = self._resoudre(agent, conversation)
         try:
             reponse = await self._repondeur.ouvrir_questionnaire(
-                agent, self._store.fil(agent.nom, fil)
+                agent, self._store.fil(agent.nom, fil), projet_id=projet_id
             )
         except QuestionIntrouvable:
             raise
@@ -2993,11 +3546,12 @@ class ServiceChat:
 
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
         réponse exécutée, #943), `repondre_question` (#1031), `recruter` (#1146)
-        et `declarer_projet` (#1294) : ce qu'un répondeur rend se persiste,
-        s'achemine et se diffuse toujours de la même façon, et c'est ici que les
-        dix champs du contrat (`run_id`, `tache_id`, `proposition`, `question`,
-        `recrutement`, `equipe`, `etapes`, `comprehension`, `projet_propose`,
-        `projet_cree`) passent du répondeur au message.
+        `declarer_projet` (#1294) et `trancher_piece` (#1161) : ce qu'un répondeur
+        rend se persiste, s'achemine et se diffuse toujours de la même façon, et
+        c'est ici que les treize champs du contrat (`run_id`, `tache_id`,
+        `proposition`, `question`, `recrutement`, `equipe`, `etapes`,
+        `comprehension`, `projet_propose`, `projet_cree`, `piece`, `piece_ecrite`,
+        `corrections`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -3020,6 +3574,10 @@ class ServiceChat:
             comprehension=reponse.comprehension,
             projet_propose=reponse.projet_propose,
             projet_cree=reponse.projet_cree,
+            piece=reponse.piece,
+            piece_ecrite=reponse.piece_ecrite,
+            corrections=reponse.corrections,
+            projet_outille=reponse.projet_outille,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message
@@ -3141,6 +3699,20 @@ def transcription(fil: Sequence[MessageChat]) -> str:
         if message.projet_cree is not None:
             cree = message.projet_cree
             lignes.append(f"[Projet déclaré : « {cree.nom} » ({cree.id}), {cree.racine}]")
+        # L'outillage pièce par pièce (#1161) : ce que la carte a montré, ce que le geste
+        # en a fait, ce qu'une phrase a corrigé — aucun de ces faits n'est dans une
+        # phrase, et le tour suivant doit partir d'eux.
+        if message.piece_ecrite is not None:
+            fait = message.piece_ecrite
+            lignes.append(f"[Pièce d'outillage {fait.etat} : {fait.chemin} — {fait.raison}]")
+        lignes.extend(
+            f"[Correction de l'outillage prise : {sujet_de(c.cle)} = {c.valeur}]"
+            for c in message.corrections
+        )
+        if message.piece is not None:
+            lignes.append(
+                f"[Pièce d'outillage proposée sur la carte : {message.piece.en_phrase()}]"
+            )
     return (
         "Fil de conversation avec l'utilisateur :\n\n"
         + "\n".join(lignes)

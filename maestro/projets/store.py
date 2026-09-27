@@ -240,6 +240,25 @@ class ProjetStore:
             return projet
         return self.ecrire(replace(projet, outillage=Outillage(reporte_le=_maintenant())))
 
+    def reprendre_outillage(self, id_: str) -> Projet:
+        """Lève le « plus tard » : l'outillage est repris, dans la conversation (#1161).
+
+        Le pendant de `reporter_outillage`. Reprendre l'outillage, c'est ne plus le
+        remettre à plus tard : la fiche cesse de le rappeler (badge et geste de l'écran
+        Projets), et un nouveau « plus tard » le reposera. Vu à la relecture de #1161 :
+        sans lui, la carte du projet disait « Outillage reporté » pendant que sa
+        question attendait dans la colonne.
+
+        Idempotent : un projet qui n'était pas reporté est rendu tel quel, sans
+        écriture. Lève `ValueError` si le projet n'est pas dans le dépôt.
+        """
+        projet = self.lire(id_)
+        if projet is None:
+            raise ValueError(f"projet inconnu : {id_!r} — rien à reprendre.")
+        if not projet.outillage.reporte:
+            return projet
+        return self.ecrire(replace(projet, outillage=Outillage()))
+
     def supprimer(self, id_: str) -> bool:
         """Retire le projet `id_` du dépôt ; False s'il n'y était pas (rien à faire).
 

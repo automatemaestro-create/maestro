@@ -2370,9 +2370,16 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     # par défaut ici. La garantie est poussée d'un cran de plus : il ne porte que son
     # fournisseur — **le même** que celui du juge —, jamais une réponse, un tour ou
     # une question en cours.
-    assert set(vars(repondeur._conducteur)) == {"_comprehension", "_clients"}
+    #
+    # #1161 lui en donne un troisième, `_pieces` : l'écriture de l'outillage pièce par
+    # pièce. Injecté, et sans état de conversation — la pièce proposée voyage sur le
+    # message (`MessageChat.piece`), ce qui en a été fait aussi (`piece_ecrite`) ; ce
+    # répondeur-ci n'en a pas reçu, il reste donc `None`. Le répondeur, lui, ne gagne
+    # aucun attribut : les pièces passent par son conducteur.
+    assert set(vars(repondeur._conducteur)) == {"_comprehension", "_clients", "_pieces"}
     assert repondeur._conducteur._clients is None
     assert vars(repondeur._conducteur._comprehension) == {"_provider": juge}
+    assert repondeur._conducteur._pieces is None
     assert repondeur._modele is None
 
 

@@ -401,7 +401,6 @@ const RESIDU = new Map<string, number>([
   ["components/CentreNotifications.tsx", 14],
   ["components/CreationAgentEcran.tsx", 4],
   ["components/EditeurAgent.tsx", 38],
-  ["components/EditeurPlaybook.tsx", 4],
   ["components/EtapesTache.tsx", 4],
   ["components/FilActivite.tsx", 1],
   ["components/GraphiqueEvolutionCout.tsx", 13], // manque : `serie`
@@ -416,6 +415,9 @@ const RESIDU = new Map<string, number>([
   ["components/Kanban.tsx", 8],
   ["components/LienTicketExterne.tsx", 3],
   ["components/LigneActivite.tsx", 11],
+  // Les tons d'ajout et de retrait d'un diff, sortis d'`EditeurPlaybook` pour être
+  // partagés avec la pièce d'outillage (#1161) : un déplacement, pas une paire de plus.
+  ["components/LignesDiff.tsx", 4],
   ["components/ListeAgents.tsx", 5],
   ["components/MenuAide.tsx", 9],
   ["components/OngletLogs.tsx", 6],

@@ -290,6 +290,7 @@ import {
 import { ActionsDuMessage } from "@/components/chat/ActionsDuMessage";
 import { BulleFil, EnTeteDeTour } from "@/components/chat/BulleFil";
 import { EtapesDuFil } from "@/components/chat/EtapesDuFil";
+import { TraceDePiece } from "@/components/chat/PieceDOutillage";
 import { SeparateurDeJour } from "@/components/chat/SeparateurDeJour";
 import { SourcesDuFil } from "@/components/chat/SourcesDuFil";
 import {
@@ -301,6 +302,7 @@ import { RefusSource } from "@/components/composer/RefusSource";
 import {
   IconeAgents,
   IconeArret,
+  IconeDossier,
   IconeEnvoyer,
   IconeFlecheBas,
   IconeProjets,
@@ -330,10 +332,12 @@ import { useEtatGlobalFacultatif } from "@/lib/etatGlobal";
 import { useHorloge } from "@/lib/horloge";
 import { jourDe, libelleDuJour } from "@/lib/journees";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
+import { cleDePiece, piecesDuFil } from "@/lib/outillage";
 import {
   CHAT_AUTEUR_UTILISATEUR,
   VALIDATION_EN_ATTENTE,
   type MessageChat,
+  type PieceProposee,
 } from "@/lib/types";
 import type { Chat, ReponseEnCours } from "@/lib/useChat";
 import { useSourcesComposees } from "@/lib/useSourcesComposees";
@@ -802,6 +806,9 @@ export function Conversation({
     if (index === 0 || ouvertures[index] !== null) return false;
     return tourDe(messages[index - 1].auteur) === tourDe(message.auteur);
   });
+  // Les versions de pièces d'outillage que le fil a proposées (#1161) : la trace d'une
+  // pièce tranchée y relit ce que sa carte montrait — le diff, les verdicts.
+  const piecesProposees = piecesDuFil(messages);
   // La réponse qui s'écrit ouvre un tour, sauf à prolonger celui du dernier
   // message — ce qui arrive quand l'agent enchaîne deux fois. Elle ne change
   // jamais le pied d'un message **persisté** : elle est transitoire, et le
@@ -939,6 +946,7 @@ export function Conversation({
         )}
         {messages.map((message, index) => {
           const ouverture = ouvertures[index];
+          const fait = message.piece_ecrite ?? null;
           return (
             <Fragment key={`${message.horodatage}-${index}`}>
               {ouverture !== null && (
@@ -953,6 +961,11 @@ export function Conversation({
               <Bulle
                 message={message}
                 ouvreUnTour={!continuations[index]}
+                pieceTranchee={
+                  fait === null
+                    ? undefined
+                    : piecesProposees.get(cleDePiece(fait.chemin, fait.empreinte))
+                }
               />
               {/* **Ce que le travail a rendu** (#928), posé **à l'heure de sa
                   fin** (#1290) : sous le message qui la précède — le récit du
@@ -1619,8 +1632,11 @@ function BulleEnCours({
 function Bulle({
   message,
   ouvreUnTour,
+  pieceTranchee,
 }: {
   message: MessageChat;
+  /** La version de pièce que ce message a tranchée, relue du fil (#1161). */
+  pieceTranchee?: PieceProposee;
   /**
    * Le message d'avant est d'un autre auteur, ou une journée les sépare (#876).
    * Depuis #1225, c'est aussi ce qui décide que ce message **nomme** son auteur
@@ -1666,7 +1682,7 @@ function Bulle({
           (`ServiceChat._repondre`, #268) — et le fond plein de la bulle
           utilisateur n'est pas une surface pour du texte secondaire et des
           liens. */}
-      {!utilisateur && <Suite message={message} />}
+      {!utilisateur && <Suite message={message} pieceTranchee={pieceTranchee} />}
     </BulleFil>
   );
 }
@@ -1713,7 +1729,13 @@ function cheminASesSeparateurs(chemin: string): ReactNode {
   ));
 }
 
-function Suite({ message }: { message: MessageChat }) {
+function Suite({
+  message,
+  pieceTranchee,
+}: {
+  message: MessageChat;
+  pieceTranchee?: PieceProposee;
+}) {
   // Facultatif depuis #1294 : le fil est aussi posé sur la porte d'entrée, avant
   // tout projet, où il n'y a ni run, ni tâche, ni validation à compter.
   const etat = useEtatGlobalFacultatif();
@@ -1723,7 +1745,16 @@ function Suite({ message }: { message: MessageChat }) {
   const tacheId = message.tache_id ?? "";
   const equipe = message.equipe ?? null;
   const projetCree = message.projet_cree ?? null;
-  if (runId === "" && tacheId === "" && equipe === null && projetCree === null) {
+  const pieceEcrite = message.piece_ecrite ?? null;
+  const corrections = message.corrections ?? [];
+  if (
+    runId === "" &&
+    tacheId === "" &&
+    equipe === null &&
+    projetCree === null &&
+    pieceEcrite === null &&
+    corrections.length === 0
+  ) {
     return null;
   }
 
@@ -1804,6 +1835,22 @@ function Suite({ message }: { message: MessageChat }) {
             Équipe créée : {equipeCreeeEnUneLigne(equipe)}
           </span>
         )}
+        {/* Ce qu'une phrase a corrigé de l'outillage (#1161) : le sujet et sa
+            nouvelle valeur, la phrase elle-même étant juste au-dessus. */}
+        {corrections.map((correction) => (
+          <span
+            key={`${correction.cle}|${correction.valeur}`}
+            className="inline-flex min-w-0 items-center gap-1"
+          >
+            <IconeDossier className="size-3.5 shrink-0" />
+            <span className="min-w-0 break-words">
+              Correction prise — {correction.sujet ?? correction.cle} :{" "}
+              <span className={correction.commande ? "font-mono" : ""}>
+                {correction.valeur}
+              </span>
+            </span>
+          </span>
+        ))}
         {runId !== "" && (
           <span className="inline-flex items-center gap-1">
             <IconeRuns className="size-3.5 shrink-0" />
@@ -1831,6 +1878,10 @@ function Suite({ message }: { message: MessageChat }) {
           </span>
         )}
       </p>
+      {/* Ce qu'un geste a fait d'une pièce d'outillage (#1161) : sa trace — le sort en
+          glyphe et en mot, les verdicts, et ce qui a été écrit derrière un clic. Sous la
+          ligne des faits parce qu'elle peut se déplier. */}
+      {pieceEcrite !== null && <TraceDePiece fait={pieceEcrite} piece={pieceTranchee} />}
       {renvois.length > 0 && (
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
           {renvois.map((renvoi) => (
