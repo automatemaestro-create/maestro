@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from maestro.deliberation import CreditArbitrage
-from maestro.providers.arbitrage import Arbitre, ArbitreActe
+from maestro.providers.arbitrage import Arbitre, ArbitreActe, TraceOutil
 from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
 from maestro.providers.decision import Consigneur
@@ -562,7 +562,7 @@ class ModelProvider(ABC):
         tools: Sequence[str],
         mcp_serveurs: Sequence[ServeurMcp] = (),
         politique: PolitiqueOutils | None = None,
-        on_refus: Callable[[str, str], None] | None = None,
+        on_refus: TraceOutil | None = None,
         on_arbitrage_acte: ArbitreActe | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,
@@ -616,7 +616,10 @@ class ModelProvider(ABC):
         décide — `(True, détail)` laisse l'appel passer, `(False, détail)` le
         refuse avec son motif. C'est l'appelant qui compose la demande et la
         soumet au validateur configuré : le fournisseur ne connaît ni la tâche,
-        ni le run, ni qui tranche.
+        ni le run. Il dit en revanche **quel cran** vaut pour cet appel — le
+        décideur de la politique, ou le défaut quand l'appel sort de la portée
+        de son entrée (#1226) —, et ce décideur part avec la demande (#1278) :
+        lui seul voit les arguments dont le cran dépend.
 
         Deux exigences pèsent sur le fournisseur qui l'honore, et aucune n'est
         négociable. Il doit **refuser** un appel à arbitrer quand le canal est

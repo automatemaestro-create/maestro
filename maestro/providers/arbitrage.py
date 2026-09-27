@@ -66,8 +66,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from maestro.config import ConfigError, Settings
+from maestro.decideur import Decideur
 
 # --- ① L'agent lève la main : l'outil `demander_arbitrage` (#582) ----------------------
 
@@ -192,7 +194,31 @@ MARGE_MIN_S: float = 5.0
 #: trancher n'est pas le même dans les deux cas — la raison qu'un agent a
 #: rédigée d'un côté, l'acte qu'on a intercepté de l'autre. Les réunir sous une
 #: seule signature obligerait l'un des deux à mentir sur ce qu'il transporte.
-ArbitreActe = Callable[[str, dict[str, str], str], Awaitable[tuple[bool, str]]]
+#:
+#: Le quatrième argument est le **décideur que le fournisseur a retenu** (#1278),
+#: et l'appelant le soumet tel quel. Il n'est pas redemandé à la politique : depuis
+#: la portée (#1226), le cran d'un appel dépend de ses **arguments**, que seul le
+#: fournisseur voit — un `Bash` en `auto` borné au projet revient au défaut quand
+#: il sort du projet. Le redemander par le seul nom de l'outil rendait `auto`, et
+#: le garde-fou accordait d'office ce que le hook venait de confier à une personne.
+ArbitreActe = Callable[[str, dict[str, str], str, Decideur], Awaitable[tuple[bool, str]]]
+
+
+class TraceOutil(Protocol):
+    """Le canal de **traçage** d'un appel d'outil (`on_refus`) — et, arbitré, qui a tranché.
+
+    Il porte toutes les issues que le fournisseur rend — refus de politique ou de
+    frontière, passage `auto`, et les trois issues d'un arbitrage —, et c'est à
+    l'appelant de les consigner (journal, fil temps réel).
+
+    `decideur` est le cran qui a tranché un appel **arbitré**, quand le
+    fournisseur le connaît mieux que la politique (#1278) : un appel sorti de la
+    portée de son entrée est tranché par le défaut, là où la politique, qui ne
+    voit que le nom de l'outil, répondrait `auto`. Absent, l'appelant s'en remet
+    à la politique — c'est le régime de tout ce qui ne dépend pas des arguments.
+    """
+
+    def __call__(self, outil: str, motif: str, decideur: Decideur | None = None) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -274,8 +300,14 @@ def motif_approbation(outil: str, detail: str) -> str:
     C'est la différence avec `reponse` du premier canal, qui *parle à l'agent* :
     lui a levé la main, donc il attend une réponse. Ici il ne sait même pas
     qu'on lui a demandé la permission.
+
+    Le texte ne dit **pas** qui a approuvé, et c'est délibéré (#1278) : c'est
+    `detail` qui le nomme — « approuvée par le validateur humain », « accordée
+    d'office — décideur « auto » », l'accord donné au cadrage. L'écrire ici en
+    plus faisait lire « approuvé à l'arbitrage humain — accordée d'office,
+    personne n'a été sollicité » : une trace qui se contredit dans la phrase.
     """
-    return f"appel de l'outil {outil!r} approuvé à l'arbitrage humain — {detail}"
+    return f"appel de l'outil {outil!r} approuvé à l'arbitrage — {detail}"
 
 
 def motif_refus(outil: str, detail: str) -> str:

@@ -7,7 +7,7 @@ un projet neuf, une équipe proposée par Maestro et validée telle quelle, et
 ce ne sont pas des exemples inventés, ce sont les appels qui ont fait attendre
 une personne pour qu'un agent lance le code qu'il venait d'écrire.
 
-Six parties :
+Sept parties :
 
 ① les quatorze gestes observés, qui doivent tous passer ;
 ② ce qui **sort du projet** et remonte — chemin hors racine, installation
@@ -21,7 +21,14 @@ Six parties :
    défaut reprend la main ;
 ⑥ la politique — la portée s'écrit, se relit, se refuse quand on ne sait pas la
    lire —, et la correction des équipes **déjà créées**, qui est le second
-   critère du ticket.
+   critère du ticket ;
+⑦ **sous Windows** (#1278) : le projet nommé par son chemin absolu est dans le
+   projet, quelle que soit son orthographe, et un exécutable garde son verdict
+   avec son `.exe`. Les commandes sont, là encore, celles de deux runs réels.
+
+⑦ se joue sur une racine **à la Windows** (`E:/…`) quel que soit l'OS du test :
+la portée rend le même verdict des deux côtés, et c'est ce qui permet au
+conteneur Linux du filet d'éprouver ce que seul un poste Windows produisait.
 """
 
 from __future__ import annotations
@@ -289,9 +296,9 @@ def _hook(politique, portee, *, arbitrages=None, tracees=None):
     reconnaît donc à son `deny` **et** à la demande consignée.
     """
 
-    async def arbitre(outil, arguments, motif):
+    async def arbitre(outil, arguments, motif, decideur):
         if arbitrages is not None:
-            arbitrages.append((outil, motif))
+            arbitrages.append((outil, motif, decideur))
         return False, "personne n'a répondu"
 
     return claude_mod._hook_permissions(
@@ -354,6 +361,9 @@ def test_hors_de_la_portee_le_defaut_reprend_la_main(tmp_path: Path) -> None:
     motif = arbitrages[0][1]
     assert "liste ask" in motif and PORTEE_PROJET in motif
     assert "ne l'a pas produit" in motif
+    # Et le décideur qui part avec la demande est ce défaut, pas le cran écrit
+    # (#1278) : c'est lui que le garde-fou appliquera, sans le redemander.
+    assert arbitrages[0][2] is Decideur.HUMAIN
 
 
 def test_une_portee_qu_on_ne_peut_pas_evaluer_fait_retomber_sur_le_defaut() -> None:
@@ -536,3 +546,157 @@ def test_hors_de_la_racine_du_projet_rien_n_est_releve(tmp_path: Path) -> None:
     assert portee.presents == frozenset()
     assert portee.commande_hors_portee("rm -rf notes.md") == ""
     assert portee.commande_hors_portee("rm -rf ../projet") != ""
+
+
+# --- ⑦ Sous Windows, le projet est dans le projet (#1278) --------------------
+
+#: La racine du run `3fe501fc0878` (projet `p3`, 2026-09-24), écrite comme la
+#: Control Tower la déclare. Une racine **à la Windows**, sur tous les OS : le
+#: verdict ne dépend pas de celui qui juge.
+RACINE_P3 = Path("E:/Projects Solutions/maestro-projects/p3")
+
+#: Les quatre commandes que ce run a vu juger « hors de la portée », telles
+#: qu'elles ont été jouées — la troisième est tronquée là où le journal l'est.
+#: Aucune ne sort du projet : chacune y entre par son chemin absolu, sous les
+#: deux orthographes que l'agent emploie (Windows, et MSYS pour Git Bash).
+GESTES_DU_RUN_P3 = (
+    'cd "E:\\Projects Solutions\\maestro-projects\\p3" && node -v; npm -v; python --version',
+    'mkdir -p "E:\\Projects Solutions\\maestro-projects\\p3\\maquette"',
+    'cd "E:\\Projects Solutions\\maestro-projects\\p3" && '
+    'node ".maestro/maquette-sections/cdp-shot.mjs"',
+    'cd "/e/Projects Solutions/maestro-projects/p3" && rmdir .maestro/contenu-produit',
+)
+
+
+def _portee_p3(presents: tuple[str, ...] = ("", "README.md")) -> PorteeProjet:
+    """La portée de `p3` en écriture en place : sa racine, et ce qui y était déjà."""
+    return PorteeProjet(racine=RACINE_P3, presents=frozenset(presents))
+
+
+@pytest.mark.parametrize("commande", GESTES_DU_RUN_P3)
+def test_les_gestes_du_run_p3_restent_dans_le_projet(commande: str) -> None:
+    """Le premier défaut du ticket : la racine elle-même jugée hors de la racine.
+    Corriger l'escalade sans lui réveillerait une personne à chaque `cd` dans le
+    projet — la régression même que #1226 avait fermée."""
+    assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+@pytest.mark.parametrize(
+    "chemin",
+    [
+        "E:\\Projects Solutions\\maestro-projects\\p3",
+        "E:/Projects Solutions/maestro-projects/p3",
+        "e:\\projects solutions\\MAESTRO-PROJECTS\\p3",
+        "E:\\Projects Solutions\\maestro-projects\\p3\\",
+        "E:\\Projects Solutions\\maestro-projects\\p3\\maquette\\index.html",
+        "/e/Projects Solutions/maestro-projects/p3",
+        "/E/Projects Solutions/maestro-projects/p3/src",
+        "E:\\Projects Solutions\\maestro-projects\\autre\\..\\p3\\src",
+    ],
+)
+def test_toutes_les_orthographes_de_la_racine_sont_dans_le_projet(chemin: str) -> None:
+    assert _portee_p3().commande_hors_portee(f'touch "{chemin}/x"') == "", chemin
+
+
+@pytest.mark.parametrize(
+    "chemin",
+    [
+        "C:\\Windows\\System32",
+        "E:\\Projects Solutions\\maestro-projects\\autre",
+        # Le préfixe n'est pas l'appartenance : `p3-bis` commence comme `p3`.
+        "E:\\Projects Solutions\\maestro-projects\\p3-bis",
+        "E:\\Projects Solutions\\maestro-projects\\p3\\..\\autre",
+        "/c/Users/Sam25/AppData/Local/Temp",
+        "/e/Projects Solutions/maestro-projects/autre",
+        # La racine de Git Bash n'est pas celle du lecteur : `/tmp` est `%TEMP%`.
+        "/tmp/edge-shot",
+        "\\\\serveur\\partage\\p3",
+    ],
+)
+def test_un_chemin_absolu_d_ailleurs_reste_dehors_sous_windows(chemin: str) -> None:
+    assert "sort du" in _portee_p3().commande_hors_portee(f'touch "{chemin}/x"'), chemin
+
+
+def test_ce_que_le_run_p3_a_joue_hors_du_projet_remonte() -> None:
+    """Les actes qui, dans le même run, ont vraiment quitté le projet : écrire
+    dans `%TEMP%`, et y lancer un navigateur qui ouvre un port de débogage."""
+    portee = _portee_p3()
+
+    assert portee.commande_hors_portee(
+        "cd /tmp && mkdir -p edge-shot && msedge.exe --headless "
+        "--user-data-dir=/tmp/edge-profile --screenshot=shot.png index.html"
+    ) != ""
+    assert portee.commande_hors_portee(
+        "cd /tmp/edge-shot && (msedge.exe --headless=new --remote-debugging-port=9333 x)"
+    ) != ""
+
+
+def test_un_chemin_windows_sort_de_la_racine_de_l_os(tmp_path: Path) -> None:
+    """Le cas pour lequel le motif Windows avait été ajouté : un test joué sous
+    Linux — le conteneur du filet — doit pouvoir prouver qu'un `C:\\Windows`
+    sort de la racine. Corriger la racine Windows ne doit pas le défaire."""
+    portee = PorteeProjet(racine=tmp_path)
+
+    assert "sort du" in portee.commande_hors_portee('touch "C:\\Windows\\x"')
+    assert "sort du" in portee.commande_hors_portee("touch C:/Windows/x")
+
+
+def test_ce_qui_etait_la_se_reconnait_sous_toutes_ses_orthographes() -> None:
+    """Sous Windows, `NOTES.md` **est** `notes.md` : la même casse près que la
+    racine, faute de quoi l'effacement de ce que la personne avait posé
+    passerait pour celui d'un fichier que l'agent a produit."""
+    portee = _portee_p3(("", "notes.md", "src", "src/app.py"))
+
+    for commande in (
+        "rm NOTES.md",
+        'rm "E:\\Projects Solutions\\maestro-projects\\p3\\notes.md"',
+        'rm -rf "/e/Projects Solutions/maestro-projects/p3/SRC"',
+        'rm "src\\app.py"',
+    ):
+        assert "ne l'a pas produit" in portee.commande_hors_portee(commande), commande
+    assert portee.commande_hors_portee('rm -rf "src\\__pycache__"') == ""
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        # Run réel `e5e1a7058fc5` (banc, `banc-s4-pourquoi`, 2026-09-25) : `rich`
+        # s'est installé dans le Python du poste sans que personne le voie.
+        '"/c/Users/Sam25/AppData/Local/Programs/Python/Python313/python.exe" -m pip install rich',
+        "python.exe -m pip install rich",
+        "pip.exe install rich",
+        "winget.exe install foo",
+        '"C:\\Python313\\python.exe" -m pip install rich',
+        "PIP.EXE install rich",
+        "Python.Exe -m pip install rich",
+        "npm.cmd install -g typescript",
+        "sudo.exe rm -rf build",
+        "choco.bat install jq",
+        "python3.12 -m pip install rich",
+        "pip3.12 install rich",
+    ],
+)
+def test_un_executable_windows_garde_son_verdict(commande: str) -> None:
+    """Le quatrième défaut : `python.exe`, `pip.exe` et `winget.exe` gardaient
+    leur suffixe, et la portée ne voyait jamais l'acte."""
+    assert _portee_p3().commande_hors_portee(commande) != ""
+    assert hors_de_portee(
+        PORTEE_PROJET, _portee_p3(), "Bash", {"command": commande}
+    ) != ""
+
+
+def test_un_verbe_destructeur_se_reconnait_sous_toutes_ses_orthographes() -> None:
+    """Ce qui valait pour l'installation vaut pour la destruction : `/bin/rm` et
+    `rm.exe` effacent ce que la personne avait posé autant qu'un `rm`."""
+    portee = _portee_p3(("", "notes.md"))
+
+    for commande in ("/bin/rm notes.md", "rm.exe notes.md", "/usr/bin/find . -delete"):
+        assert portee.commande_hors_portee(commande) != "", commande
+
+
+@pytest.mark.parametrize(
+    "commande", ["python.exe app.py", "npm.cmd install", "node.exe build.js", "py -3 app.py"]
+)
+def test_un_executable_windows_qui_reste_dans_le_projet_passe(commande: str) -> None:
+    """Le témoin : reconnaître le suffixe ne fait pas sortir ce qui ne sortait pas."""
+    assert _portee_p3().commande_hors_portee(commande) == ""

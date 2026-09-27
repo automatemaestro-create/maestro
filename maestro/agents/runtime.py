@@ -31,7 +31,7 @@ from maestro.detail_tache import EtapeTache
 from maestro.outillage import outillage_du_projet
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
-from maestro.providers.arbitrage import Arbitre, ArbitreActe
+from maestro.providers.arbitrage import Arbitre, ArbitreActe, TraceOutil
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
 from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
@@ -213,7 +213,7 @@ class AgentRuntime:
         mcp_serveurs: Sequence[ServeurMcp] = (),
         environ: Mapping[str, str] | None = None,
         politique: PolitiqueOutils | None = None,
-        on_refus: Callable[[str, str], None] | None = None,
+        on_refus: TraceOutil | None = None,
         on_arbitrage_acte: ArbitreActe | None = None,
         on_activite: Callable[[str], None] | None = None,
         on_etapes: Callable[[Sequence[EtapeTache]], None] | None = None,

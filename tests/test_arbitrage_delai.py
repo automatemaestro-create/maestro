@@ -38,6 +38,7 @@ from pathlib import Path
 import pytest
 
 from maestro.agents.permissions import PermissionStore, PolitiqueOutils
+from maestro.decideur import Decideur
 from maestro.deliberation import (
     CreditArbitrage,
     Deliberation,
@@ -124,7 +125,9 @@ class ProviderQuiArbitre(ModelProvider):
             arguments = {"command": "rm -rf /srv"}
             self.demandes.append(("Bash", dict(arguments)))
             with credit_arbitrage.attente():
-                await on_arbitrage_acte("Bash", arguments, "motif de politique")
+                await on_arbitrage_acte(
+                    "Bash", arguments, "motif de politique", Decideur.HUMAIN
+                )
         await asyncio.sleep(self.travail_s)
         (Path(workspace) / "livrable.txt").write_text("contenu", encoding="utf-8")
         return "OUTILLE"
@@ -727,7 +730,7 @@ def test_le_hook_referme_sa_fenetre_a_sa_borne_et_pas_a_la_decision():
         credit = CreditArbitrage()
         tranche = asyncio.Event()
 
-        async def arbitrage(outil, arguments, motif):
+        async def arbitrage(outil, arguments, motif, decideur):
             await tranche.wait()
             return True, "décision tardive"
 
@@ -763,7 +766,7 @@ def test_le_hook_mesure_aussi_une_attente_qui_aboutit():
     async def scenario():
         credit = CreditArbitrage()
 
-        async def arbitrage(outil, arguments, motif):
+        async def arbitrage(outil, arguments, motif, decideur):
             await asyncio.sleep(0.1)
             return True, "approuvée"
 
@@ -823,7 +826,7 @@ def test_sans_credit_le_fournisseur_arbitre_exactement_comme_avant():
     # à mesurer, et le canal doit fonctionner tel quel — c'est le comportement
     # de #583, que ce lot ne doit pas rendre conditionnel à un branchement.
     async def scenario():
-        async def arbitrage(outil, arguments, motif):
+        async def arbitrage(outil, arguments, motif, decideur):
             return False, "refusée par le validateur humain"
 
         hook = claude_mod._hook_permissions(

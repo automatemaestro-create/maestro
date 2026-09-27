@@ -249,7 +249,7 @@ class DemandeEtAgit(_Executant):
         decision = None if politique is None else politique.decide("Bash")
         if decision is not None and decision.verdict is Verdict.ARBITRAGE:
             issue = await kw["on_arbitrage_acte"](
-                "Bash", dict(self.ARGUMENTS), decision.motif
+                "Bash", dict(self.ARGUMENTS), decision.motif, decision.decideur
             )
             self.arbitrages.append(issue)
             approuve, detail = issue

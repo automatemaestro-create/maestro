@@ -76,7 +76,9 @@ autre question : *quelle configuration de projet sert cette requête HTTP ?*.
 
 from __future__ import annotations
 
+import ntpath
 import os
+import posixpath
 import re
 import shlex
 from collections.abc import Iterator
@@ -144,8 +146,8 @@ VERBES_HORS_PROJET: frozenset[str] = frozenset(
 #: global** : sans lui, ils remplissent le dossier du projet, ce qui est
 #: exactement leur travail.
 INSTALLATIONS_HORS_PROJET: dict[str, tuple[str, ...]] = {
+    # `pip3`, `pip3.12` se reconnaissent ici sans leur version (`_forme_nue`).
     "pip": (),
-    "pip3": (),
     "pipx": (),
     "gem": (),
     "npm": ("-g", "--global", "--location=global"),
@@ -184,11 +186,33 @@ FIND_AGISSANTES: frozenset[str] = frozenset(
 #: moment où le shell l'étendra.
 GLOBS = ("*", "?", "[")
 
-#: Un chemin absolu à la mode Windows (`C:\\…`, `\\\\serveur\\part`), que
-#: `Path.is_absolute()` ne reconnaît pas quand le dépôt tourne sous POSIX. La
-#: portée doit rendre le même verdict des deux côtés : un test écrit sous Linux
-#: doit pouvoir prouver qu'un `C:\\Windows` sort de la racine.
+#: Un chemin absolu à la mode Windows (`C:\\…`, `C:/…`, `\\\\serveur\\part`).
+#: Il sert **deux** questions, et c'est d'avoir oublié la seconde que #1278 est
+#: né : un chemin d'une racine POSIX qu'il faut faire sortir (un test joué sous
+#: Linux doit pouvoir prouver qu'un `C:\\Windows` sort de la racine), et une
+#: **racine** Windows, qu'il faut alors juger à la mode Windows sur tous les OS.
 _ABSOLU_WINDOWS = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+#: Un lecteur écrit à la mode MSYS (`/e/…`), la forme que Git Bash donne à
+#: l'agent sous Windows. Sous une racine Windows, `/e/Projets` **est**
+#: `E:\\Projets` ; sous une racine POSIX, c'est un dossier `/e` comme un autre, et
+#: ce motif n'y est jamais consulté.
+_LECTEUR_MSYS = re.compile(r"^/([A-Za-z])(?=/|$)")
+
+#: Les suffixes qu'un exécutable porte sous Windows et que le shell n'exige pas :
+#: `pip.exe install` **est** `pip install`. Ce ne sont pas les verbes qu'on juge
+#: mais leur orthographe, d'où une liste close — celle du `PATHEXT` par défaut
+#: pour ce qui se lance d'une ligne de commande —, jamais lue sur le poste : le
+#: verdict ne dépend pas de la machine qui juge.
+SUFFIXES_EXECUTABLES: tuple[str, ...] = (".exe", ".cmd", ".bat", ".com")
+
+#: Le numéro de version qu'un interpréteur ou son installeur porte dans son nom
+#: (`python3.12`, `pip3.12`) : le même programme, sous une autre orthographe.
+_VERSION = re.compile(r"[\d.]+$")
+
+#: Les interpréteurs Python, une fois le verbe ramené à sa forme nue : leur
+#: `-m pip install` est un `pip install`.
+INTERPRETES_PYTHON: frozenset[str] = frozenset({"python", "py"})
 
 #: La redirection qui **écrase** sa cible. Les autres ajoutent (`>>`) ou branchent
 #: un descripteur (`>&`, `&>`) : elles ne font disparaître aucun contenu.
@@ -299,14 +323,19 @@ class PorteeProjet:
         return self._destruction_hors_portee(verbe, arguments)
 
     def _destruction_hors_portee(self, verbe: str, arguments: list[str]) -> str:
-        """Ce que ce verbe détruirait et que l'agent n'a pas produit — `""` sinon."""
-        if verbe == "find" and any(jeton in FIND_AGISSANTES for jeton in arguments):
+        """Ce que ce verbe détruirait et que l'agent n'a pas produit — `""` sinon.
+
+        Le verbe se reconnaît sous toutes ses orthographes (`_nom_du_verbe`) : un
+        `/bin/rm` ou un `rm.exe` efface autant qu'un `rm`.
+        """
+        nom = _nom_du_verbe(verbe)
+        if nom == "find" and any(jeton in FIND_AGISSANTES for jeton in arguments):
             return (
                 "commande hors de la portée : `find` agit ici au lieu de lister "
                 "(-delete/-exec), et ce qu'il atteindra ne se lit pas dans ses "
                 "arguments. Une personne tranche."
             )
-        if verbe not in VERBES_DESTRUCTEURS:
+        if nom not in VERBES_DESTRUCTEURS:
             return ""
         for cible in _cibles(arguments):
             if any(glob in cible for glob in GLOBS):
@@ -350,35 +379,48 @@ class PorteeProjet:
         faire sortir un `..`, un chemin absolu d'ailleurs et un `~`, qui sont les
         trois façons de nommer le dehors.
         """
-        chemin = Path(brut.strip()).expanduser()
-        if _ABSOLU_WINDOWS.match(brut.strip()):
-            return False
-        if not chemin.is_absolute():
-            chemin = self.racine / chemin
-        normalise = os.path.normcase(os.path.normpath(str(chemin)))
-        racine = os.path.normcase(os.path.normpath(str(self.racine)))
-        return normalise == racine or normalise.startswith(racine + os.sep)
+        return self._sous_la_racine(brut) is not None
 
     def _presente(self, brut: str) -> bool:
-        """`brut` était-il déjà dans le projet quand la tâche a commencé ?"""
-        return self.relatif(brut) in self.presents
+        """`brut` était-il déjà dans le projet quand la tâche a commencé ?
+
+        À la casse près sous une racine Windows, pour la raison de la racine
+        elle-même : `NOTES.md` y **est** `notes.md`, et l'effacer efface ce que la
+        personne avait posé.
+        """
+        relatif = self._sous_la_racine(brut)
+        if relatif is None:
+            return False
+        if not _racine_windows(self.racine):
+            return relatif in self.presents
+        return relatif.casefold() in {present.casefold() for present in self.presents}
 
     def relatif(self, brut: str) -> str:
         """Le chemin de `brut` relatif à la racine, en POSIX — `""` pour la racine.
 
         Public parce que c'est aussi la forme dans laquelle `presents` se relève
         (`maestro.sandbox.en_place.presents_de`) : deux orthographes du même
-        chemin feraient un relevé qui ne répond jamais.
+        chemin feraient un relevé qui ne répond jamais. Un chemin hors de la
+        racine rend aussi `""` : ce verbe ne sert qu'après `_dans_la_racine`.
         """
-        chemin = Path(brut.strip()).expanduser()
-        if not chemin.is_absolute():
-            chemin = self.racine / chemin
-        normalise = Path(os.path.normpath(str(chemin)))
-        try:
-            relatif = normalise.relative_to(self.racine).as_posix()
-        except ValueError:
-            return ""
-        return "" if relatif == "." else relatif
+        return self._sous_la_racine(brut) or ""
+
+    def _sous_la_racine(self, brut: str) -> str | None:
+        """Le chemin relatif POSIX de `brut` sous la racine, `""` pour elle, `None` dehors.
+
+        La seule lecture d'un chemin de ce module, pour que « est-ce dedans ? »
+        et « qu'est-ce que c'est ? » ne divergent jamais (#1278). Elle se fait
+        **selon la racine**, pas selon l'OS qui juge : une racine Windows se lit
+        à la mode Windows — lecteur, deux séparateurs, casse, forme MSYS de Git
+        Bash —, une racine POSIX à la mode POSIX. C'est ce qui rend le même
+        verdict sur le poste qui exécute et dans le conteneur Linux qui l'éprouve.
+        """
+        texte = brut.strip()
+        if texte.startswith("~"):
+            texte = os.path.expanduser(texte)
+        if _racine_windows(self.racine):
+            return _sous_racine_windows(texte, str(self.racine))
+        return _sous_racine_posix(texte, str(self.racine))
 
 
 def hors_de_portee(
@@ -465,18 +507,44 @@ def decoupe(commande: str) -> tuple[CommandeSimple, ...] | None:
 
 def _verbe_hors_projet(verbe: str, arguments: list[str]) -> str:
     """Le motif d'un verbe qui sort du projet sans nommer de chemin — `""` sinon."""
-    nom = Path(verbe).name
+    ecrit = ntpath.basename(verbe)
+    nom = _nom_du_verbe(verbe)
     if nom in VERBES_HORS_PROJET:
         return (
-            f"commande hors de la portée « {PORTEE_PROJET} » : `{nom}` agit sur la "
+            f"commande hors de la portée « {PORTEE_PROJET} » : `{ecrit}` agit sur la "
             "machine et non dans le dossier du projet. Une personne tranche."
         )
     if _installe_hors_projet(nom, arguments):
         return (
-            f"commande hors de la portée « {PORTEE_PROJET} » : `{nom}` installe "
+            f"commande hors de la portée « {PORTEE_PROJET} » : `{ecrit}` installe "
             "hors du dossier du projet. Une personne tranche."
         )
     return ""
+
+
+def _nom_du_verbe(verbe: str) -> str:
+    """Le nom sous lequel on reconnaît `verbe`, quelle que soit son orthographe (#1278).
+
+    Le verbe d'une commande s'écrit de bien des façons pour un même programme :
+    un chemin (`/usr/bin/pip`, `C:\\Python313\\python.exe`, la forme MSYS
+    `/c/…/python.exe`), une casse (`PIP.EXE`), un suffixe d'exécutable Windows
+    (`.exe`, `.cmd`…). Le comparer tel quel aux listes de ce module laissait
+    `python.exe -m pip install` **dans** la portée : le run `e5e1a7058fc5` a
+    installé `rich` dans le Python du poste sans que personne le voie.
+
+    Ramené ici à son nom nu, en minuscules et sans suffixe. Le numéro de
+    version, lui, reste — c'est `_forme_nue` qui l'ôte, là où il le faut.
+    """
+    nom = ntpath.basename(verbe).lower()
+    for suffixe in SUFFIXES_EXECUTABLES:
+        if nom.endswith(suffixe) and len(nom) > len(suffixe):
+            return nom[: -len(suffixe)]
+    return nom
+
+
+def _forme_nue(nom: str) -> str:
+    """`nom` sans son numéro de version : `python3.12` → `python`, `pip3` → `pip`."""
+    return _VERSION.sub("", nom) or nom
 
 
 def _installe_hors_projet(nom: str, arguments: list[str]) -> bool:
@@ -484,9 +552,11 @@ def _installe_hors_projet(nom: str, arguments: list[str]) -> bool:
 
     `python -m pip install` compte comme `pip install` : c'est le même geste
     écrit autrement, et l'agent l'écrit souvent ainsi quand l'exécutable n'est pas
-    dans son chemin.
+    dans son chemin. L'interpréteur et l'installeur se reconnaissent **sans leur
+    numéro de version** : `python3.12` est un `python`, `pip3.12` un `pip`.
     """
-    if nom in {"python", "python3", "py"} and "pip" in arguments:
+    nom = _forme_nue(nom)
+    if nom in INTERPRETES_PYTHON and "pip" in arguments:
         nom, arguments = "pip", arguments[arguments.index("pip") + 1 :]
     drapeaux = INSTALLATIONS_HORS_PROJET.get(nom)
     if drapeaux is None:
@@ -557,6 +627,56 @@ def _cibles(arguments: list[str]) -> Iterator[str]:
         yield argument
         if "=" in argument:
             yield argument.partition("=")[2]
+
+
+def _racine_windows(racine: Path) -> bool:
+    """`racine` est-elle un chemin Windows — donc à juger à la mode Windows ?
+
+    Lue sur son **texte** et non sur l'OS qui juge : c'est ce qui laisse un test
+    Linux poser `E:/Projets/p3` et obtenir le verdict du poste Windows.
+    """
+    return bool(_ABSOLU_WINDOWS.match(str(racine)))
+
+
+def _sous_racine_windows(texte: str, racine: str) -> str | None:
+    """`_sous_la_racine` pour une racine Windows — casse et séparateurs indifférents.
+
+    Trois orthographes d'un chemin absolu y mènent : `E:\\…`, `E:/…` et la forme
+    MSYS `/e/…` de Git Bash, ramenée à son lecteur. Un chemin enraciné **sans**
+    lecteur (`/tmp`, `\\x`) est dehors : sous Git Bash, `/` est la racine de son
+    installation — `/tmp` est `%TEMP%` —, jamais celle du projet.
+    """
+    lecteur = _LECTEUR_MSYS.match(texte)
+    if lecteur:
+        texte = f"{lecteur.group(1)}:{texte[lecteur.end():] or '/'}"
+    if _ABSOLU_WINDOWS.match(texte):
+        chemin = texte
+    elif texte.startswith(("/", "\\")):
+        return None
+    else:
+        chemin = ntpath.join(racine, texte)
+    base = ntpath.normpath(racine)
+    normalise = ntpath.normpath(chemin)
+    if ntpath.normcase(normalise) == ntpath.normcase(base):
+        return ""
+    prefixe = base if base.endswith("\\") else base + "\\"
+    if not ntpath.normcase(normalise).startswith(ntpath.normcase(prefixe)):
+        return None
+    return normalise[len(prefixe) :].replace("\\", "/")
+
+
+def _sous_racine_posix(texte: str, racine: str) -> str | None:
+    """`_sous_la_racine` pour une racine POSIX — où tout chemin Windows est dehors."""
+    if _ABSOLU_WINDOWS.match(texte):
+        return None
+    base = posixpath.normpath(racine)
+    normalise = posixpath.normpath(posixpath.join(base, texte))
+    if normalise == base:
+        return ""
+    prefixe = base if base.endswith("/") else base + "/"
+    if not normalise.startswith(prefixe):
+        return None
+    return normalise[len(prefixe) :]
 
 
 def _motif_hors_racine(chemin: str, racine: Path) -> str:

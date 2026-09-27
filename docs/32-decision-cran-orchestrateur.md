@@ -461,6 +461,18 @@ distribuée. Cette porte rouvre la *portée*, pas le *décideur*.
 > ⚠ L'asymétrie y est **l'inverse** de celle de `maestro/lecture.py`, et c'est assumé sur place :
 > une personne a déjà décidé, à la validation de l'équipe, que cet agent exécuterait dans ce
 > projet, et il n'y a personne pendant une tâche pour répondre à ce qu'on lui renverrait (EF-08).
+>
+> ⚠ **Ce que #1278 a corrigé le 2026-09-26, sur un run réel sous Windows** (`3fe501fc0878`). Deux
+> défauts qui s'annulaient en apparence. La racine du projet, nommée par son chemin absolu (`E:\…`,
+> ou `/e/…` sous Git Bash), était jugée **hors** de la racine ; et le « défaut qui reprend la main »
+> ne l'atteignait jamais : l'arbitre du moteur **redemandait** le cran à la politique par le seul nom
+> de l'outil — le choix de #600, antérieur à la portée —, obtenait `auto`, et le garde-fou accordait
+> d'office ce que le hook venait de confier à une personne. Désormais une racine Windows se juge à
+> la mode Windows sur tous les OS (lecteur, séparateurs, casse, forme MSYS), le verbe se reconnaît
+> sans son `.exe` (`python.exe -m pip install` sort comme `pip install`), et **le décideur retenu par
+> le hook voyage avec la demande** (`ArbitreActe`, `maestro/providers/arbitrage.py`) : le cran d'un
+> appel dépend de ses arguments, donc seul celui qui les voit peut le dire. Les deux se corrigent
+> ensemble, à dessein : l'escalade seule aurait réveillé une personne à chaque `cd` dans le projet.
 
 **Porte 3 — un jugement contextuel dont on accepte le régime.** Un acte dont la légitimité dépend du
 **plan**, que la politique ne connaît pas (« ce `rm` est-il dans le périmètre de la tâche T3 ? »).
