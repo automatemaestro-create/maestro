@@ -6527,6 +6527,25 @@ nôtres et ne le sont pas. La **réponse humaine** ne l'est pas non plus : elle 
 affichée mais pour **atteindre l'agent**, et un `[REDACTED]` au milieu lui ferait lire autre chose
 que ce qu'on a écrit — c'est la raison qui vaut déjà pour les réponses de clarification (§6.10).
 
+**Une question peut aussi venir du Chef de projet, sur une tâche en échec (#1178).** Quand une tâche
+échoue et que le Chef de projet ne sait pas la faire aboutir seul — ce qui manque, seul
+l'utilisateur peut le donner (un accès, un secret, une décision), sa proposition a été refusée, ou
+ses tentatives sont épuisées —, le moteur pose la question **par ce canal-ci**, sans en ouvrir un
+autre : même événement `question.demande`, même carte au pied du fil de l'orchestration, même route
+de réponse. `agent` vaut `orchestrateur`, `tache_id` la tâche en échec, et `question` porte d'abord
+ce que le Chef de projet attend, puis les **faits** — la tâche, chaque tentative faite avec son
+erreur, le diagnostic —, écrits par le moteur et non par le modèle : une question qui oublierait la
+cause ferait répondre à l'aveugle. `hypothese` dit ce qui se passe sans réponse : la tâche reste en
+échec, et celles qui l'attendent ne s'exécutent pas. Le run **attend** : l'aval de la tâche ne part
+pas pendant la question, les tâches indépendantes continuent. La borne est la même
+(`MAESTRO_ARBITRAGE_ATTENTE`), l'issue est consignée de la même façon (étape `<tache>:question`), et
+la réponse revient au Chef de projet, qui la tient pour **autorité** — une nouvelle tentative qui en
+tient compte, ou l'abandon s'il le demande. ⚠ Une limite, dite plutôt que tue : passé la borne, la
+carte dit qu'une réponse « sert encore » — vrai pour un agent qui rejouera le même appel, pas pour
+une tâche en échec, dont le run est déjà reparti. Moteur :
+[`maestro/engine/rattrapage.py`](../maestro/engine/rattrapage.py), gardé par
+[`tests/test_rattrapage.py`](../tests/test_rattrapage.py).
+
 Implémentation : [`maestro/providers/question.py`](../maestro/providers/question.py) (le vocabulaire
 du verbe `mcp__maestro__poser_une_question` et ses deux frontières),
 [`maestro/providers/claude.py`](../maestro/providers/claude.py) (`_outil_question`),
