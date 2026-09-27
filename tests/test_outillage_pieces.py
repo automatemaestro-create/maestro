@@ -340,8 +340,12 @@ def test_une_piece_remise_en_crlf_reste_a_maestro_et_garde_ses_fins_de_ligne(
     racine = tmp_path / "p"
     racine.mkdir()
     source = {"type": "analyse", "projet_id": "p", "reference": "ana-1", "resume": ""}
-    ecrit = Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n\nnpm\n")
-    corrige = Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n\nuv\n")
+    ecrit = Fichier(
+        chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n\nnpm\n"
+    )
+    corrige = Fichier(
+        chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n\nuv\n"
+    )
     poser_piece(racine, ecrit, source=source)
     (racine / "AGENTS.md").write_bytes(b"# A\r\n\r\nnpm\r\n")
 
@@ -1038,7 +1042,9 @@ def test_une_correction_qui_retire_une_commande_porte_sa_phrase_sur_la_carte(
     phrase = "Pas de tests pour l'instant."
 
     reponse = asyncio.run(
-        conducteur.corriger([*fil, _message(UTILISATEUR, phrase)], projet_id=projet_id, phrase=phrase)
+        conducteur.corriger(
+            [*fil, _message(UTILISATEUR, phrase)], projet_id=projet_id, phrase=phrase
+        )
     )
 
     piece = reponse.piece
