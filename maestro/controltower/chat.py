@@ -199,6 +199,21 @@ tient encore, et `ServiceChat.trancher_piece` est le geste qui y répond : écri
 passer, ou remettre l'outillage à plus tard. Ce que le geste a fait est un **fait** porté
 par la réponse (`piece_ecrite`, `PieceEcrite`), et ce qu'une phrase a corrigé aussi
 (`corrections`) : c'est ce que le tour suivant relit, sans rien redemander au modèle.
+
+## …et ce qu'il demande peut être un geste sur un run (#1179)
+
+« Mets-le en pause », « annule », « reprends celui qui s'est arrêté », « relance-le
+avec 5 $ de plus » : le fil **agit** sur les runs, par les services des boutons
+(`maestro.controltower.gestes`). Chaque geste qui a un effet est une demande comme
+les cinq autres — `geste_run` (`GesteRunPropose`) : l'action, le run visé tel qu'on
+l'a montré, les bornes d'une relance —, `geste_run_en_attente` dit si elle tient
+encore, et `ServiceChat.trancher_geste` est le geste qui y répond. Ce qui en est
+sorti est un **fait** : `geste_fait` (`GesteRunFait`), l'état du run **relu** après
+le geste — ou le refus du service, motivé.
+
+Une demande qui pouvait viser **plusieurs** runs ne pose pas de carte : elle porte
+ses candidats (`runs_candidats`), un fait que la personne lit sous la bulle pour
+dire lequel, et rien n'est proposé tant qu'elle ne l'a pas dit.
 """
 
 from __future__ import annotations
@@ -221,6 +236,12 @@ from maestro.agents.playbooks import PlaybookStore
 from maestro.config import Settings, load_settings
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
+from maestro.controltower.gestes import (
+    GESTE_ANNULATION,
+    GESTE_PAUSE,
+    GESTE_RELANCE,
+    GESTE_REPRISE,
+)
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.equipe import RoleValide
 from maestro.messaging import (
@@ -504,6 +525,20 @@ def piece_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
     return dernier
 
 
+def geste_run_en_attente(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """Le **geste sur un run** que ce fil propose encore, `None` sinon (#1179).
+
+    La sixième demande du canal, et la même règle que les cinq autres : le dernier
+    message, et lui seul. Un geste proposé attend tant que rien ne l'a suivi ; ce qui
+    le solde est qu'on y ait répondu — un clic, un « oui » tapé, ou n'importe quelle
+    autre phrase, qui fait tomber la carte sans rien exécuter.
+    """
+    dernier = fil[-1] if fil else None
+    if dernier is None or dernier.geste_run is None:
+        return None
+    return dernier
+
+
 def projet_du_fil(fil: Sequence[MessageChat]) -> str | None:
     """Le projet dont ce fil construit l'outillage — `None` s'il n'en nomme aucun (#1161).
 
@@ -755,6 +790,32 @@ def _geste_de_piece(decision: str, piece: PieceProposee) -> str:
     return "Plus tard pour l'outillage."
 
 
+#: Ce qu'un accord au geste écrit dans le fil, par action (#1179) — le message que
+#: le clic vaut, à l'impératif, comme « Oui, lance. ».
+_ACCORDS_DE_GESTE = {
+    GESTE_PAUSE: "Oui, mets ce run en pause.",
+    GESTE_REPRISE: "Oui, reprends ce run.",
+    GESTE_ANNULATION: "Oui, annule ce run.",
+    GESTE_RELANCE: "Oui, relance ce run.",
+}
+
+
+def _geste_sur_un_run(approuve: bool, demande: GesteRunPropose) -> str:
+    """Ce que le geste écrit dans le fil — le message que le clic vaut (#1179).
+
+    Même règle que `_geste_de_cadrage` : le fil est la seule mémoire du canal, et le
+    tour suivant relit ce clic comme une personne l'aurait écrit. Les **bornes**
+    d'une relance y vont quand il y en a — la seule chose que le clic ajoute à ce
+    que la carte montrait, et ce qu'on voudra relire du run qui en sortira.
+    """
+    if not approuve:
+        return "Non, laisse ce run tel quel."
+    accord = _ACCORDS_DE_GESTE.get(demande.action, "Oui.")
+    if demande.bornes is not None and not demande.bornes.aucune:
+        return f"{accord[:-1]} — bornes : {demande.bornes.en_phrase()}."
+    return accord
+
+
 def normaliser(texte: str) -> str:
     """Le texte réduit pour la comparaison : minuscules, sans accents ni ponctuation.
 
@@ -858,6 +919,15 @@ class PieceIntrouvable(RuntimeError):
     Le cinquième pendant de `CadrageIntrouvable`, pour les mêmes trois façons de
     n'avoir rien à trancher. L'API la traduit en `409` — c'est ce qui empêche un
     double clic d'écrire deux fois la même pièce, ou de passer celle d'après.
+    """
+
+
+class GesteRunIntrouvable(RuntimeError):
+    """Ce fil n'a **aucun geste sur un run en attente** à trancher (#1179).
+
+    Le sixième pendant de `CadrageIntrouvable`, pour les mêmes trois façons de n'avoir
+    rien à trancher. L'API la traduit en `409` — c'est ce qui empêche un double clic
+    d'annuler deux fois, ou de relancer deux runs sur le même cadrage.
     """
 
 
@@ -1384,6 +1454,185 @@ class PieceEcrite:
         )
 
 
+#: Le verbe de chaque geste, à l'infinitif — ce que la transcription dit d'une carte
+#: et d'un fait au tour suivant, et ce que l'orchestration écrit d'un empêchement
+#: (#1179). Une table, pour que le fil et le modèle nomment un geste des mêmes mots.
+VERBES_DE_GESTE = {
+    GESTE_PAUSE: "mettre en pause",
+    GESTE_REPRISE: "reprendre",
+    GESTE_ANNULATION: "annuler",
+    GESTE_RELANCE: "relancer",
+}
+
+
+@dataclass(frozen=True)
+class RunVise:
+    """Un run **tel que le fil l'a montré** — ce qu'un geste désigne, et ce qu'il laisse (#1179).
+
+    Recopié du résumé de la projection au moment où le fil en parle, et non relu à
+    l'affichage : une carte de geste montre le run sur lequel la personne a dit oui,
+    et le fait d'après le geste l'état qu'il a **relu** juste après. Ce sont deux
+    instants, et c'est précisément leur écart que la personne doit voir.
+
+    `etat` est ce même état **en mots** (« En cours — en pause depuis 14:02 »),
+    composé par l'orchestration avec les libellés de l'écran (#571) : c'est ce que
+    la transcription donne au modèle au tour suivant. L'écran, lui, relit `statut`,
+    `en_pause` et `pause_depuis` et les dit avec ses propres libellés.
+    """
+
+    run_id: str
+    titre: str = ""
+    statut: str = ""
+    en_pause: bool = False
+    pause_depuis: str | None = None
+    etat: str = ""
+
+    @classmethod
+    def du_resume(cls, resume: Mapping[str, Any], *, etat: str = "") -> RunVise:
+        """Le run d'un résumé de la projection (`EtatExecution.resume`)."""
+        depuis = resume.get("pause_depuis")
+        return cls(
+            run_id=str(resume.get("run_id") or ""),
+            titre=str(resume.get("titre") or resume.get("objectif") or ""),
+            statut=str(resume.get("statut") or ""),
+            en_pause=bool(resume.get("en_pause")),
+            pause_depuis=str(depuis) if depuis else None,
+            etat=etat,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le run en JSON — la forme du REST et du stockage."""
+        return {
+            "run_id": self.run_id,
+            "titre": self.titre,
+            "statut": self.statut,
+            "en_pause": self.en_pause,
+            "pause_depuis": self.pause_depuis,
+            "etat": self.etat,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RunVise:
+        """Relit un run persisté, sans rien rejuger (même règle que `MessageChat`)."""
+        depuis = data.get("pause_depuis")
+        return cls(
+            run_id=str(data.get("run_id") or ""),
+            titre=str(data.get("titre") or ""),
+            statut=str(data.get("statut") or ""),
+            en_pause=bool(data.get("en_pause")),
+            pause_depuis=str(depuis) if depuis else None,
+            etat=str(data.get("etat") or ""),
+        )
+
+    def en_phrase(self) -> str:
+        """Le run en une ligne — ce que le modèle relit au tour suivant."""
+        titre = f" « {self.titre} »" if self.titre else ""
+        etat = self.etat or self.statut
+        return f"run {self.run_id}{titre}" + (f" ({etat})" if etat else "")
+
+
+def runs_vises_depuis(brut: Any) -> tuple[RunVise, ...]:
+    """Les runs d'une ligne relue — `()` sur un message écrit avant #1179."""
+    if not isinstance(brut, Sequence) or isinstance(brut, str | bytes):
+        return ()
+    lus = [RunVise.from_dict(item) for item in brut if isinstance(item, Mapping)]
+    return tuple(run for run in lus if run.run_id)
+
+
+@dataclass(frozen=True)
+class GesteRunPropose:
+    """Un geste sur un run, **proposé** à la confirmation de la personne (#1179).
+
+    `action` est l'un des `GESTES_RUN` ; `run`, le run visé tel que la carte le
+    montre ; `bornes`, celles d'une **relance** — le seul geste qui ouvre un run, donc
+    le seul qui en reçoive (« relance-le avec 5 $ de plus »). `None` ailleurs, et sur
+    une relance qui n'en change aucune.
+
+    Rien n'est exécuté tant que la personne n'a pas dit oui, d'un geste ou d'un mot :
+    c'est la règle des cinq autres demandes, et celle de docs/33 ② — l'orchestrateur
+    ne décide rien de lui-même.
+    """
+
+    action: str
+    run: RunVise
+    bornes: BornesRun | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le geste en JSON — la forme du REST et du stockage."""
+        return {
+            "action": self.action,
+            "run": self.run.to_dict(),
+            "bornes": self.bornes.to_dict() if self.bornes is not None else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> GesteRunPropose:
+        """Relit un geste persisté, sans rien rejuger (même règle que `MessageChat`)."""
+        run = data.get("run")
+        bornes = data.get("bornes")
+        return cls(
+            action=str(data.get("action") or ""),
+            run=RunVise.from_dict(run) if isinstance(run, Mapping) else RunVise(run_id=""),
+            bornes=BornesRun.depuis(bornes) if isinstance(bornes, Mapping) else None,
+        )
+
+    def en_phrase(self) -> str:
+        """Le geste en une ligne — ce que le modèle relit de la carte au tour suivant."""
+        verbe = VERBES_DE_GESTE.get(self.action, self.action)
+        phrase = f"{verbe} le {self.run.en_phrase()}"
+        if self.bornes is not None and not self.bornes.aucune:
+            phrase += f", bornes du nouveau run : {self.bornes.en_phrase()}"
+        return phrase
+
+
+@dataclass(frozen=True)
+class GesteRunFait:
+    """Ce qu'un geste sur un run a **donné** — l'état relu, ou le refus (#1179).
+
+    Le pendant de `GesteRunPropose` après la confirmation, comme `ProjetCree` l'est de
+    `DemandeProjet` : `run` est le run **relu** juste après le geste (suspendu depuis
+    telle heure, annulé, repris), `nouveau` le run qu'une relance a ouvert, et
+    `refus` la phrase du service quand l'état du run a refusé le geste — alors rien
+    n'a été fait, et `run` est son état tel qu'on l'a relu pour le dire.
+    """
+
+    action: str
+    run: RunVise
+    nouveau: RunVise | None = None
+    refus: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Le fait en JSON — la forme du REST et du stockage."""
+        return {
+            "action": self.action,
+            "run": self.run.to_dict(),
+            "nouveau": self.nouveau.to_dict() if self.nouveau is not None else None,
+            "refus": self.refus,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> GesteRunFait:
+        """Relit un fait persisté, sans rien rejuger (même règle que `MessageChat`)."""
+        run = data.get("run")
+        nouveau = data.get("nouveau")
+        return cls(
+            action=str(data.get("action") or ""),
+            run=RunVise.from_dict(run) if isinstance(run, Mapping) else RunVise(run_id=""),
+            nouveau=RunVise.from_dict(nouveau) if isinstance(nouveau, Mapping) else None,
+            refus=str(data.get("refus") or ""),
+        )
+
+    def en_phrase(self) -> str:
+        """Le fait en une ligne — ce que le modèle relit au tour suivant."""
+        verbe = VERBES_DE_GESTE.get(self.action, self.action)
+        if self.refus:
+            return f"{verbe} le {self.run.en_phrase()} : refusé, rien n'a été fait — {self.refus}"
+        if self.nouveau is not None:
+            suite = self.nouveau.en_phrase()
+            return f"{verbe} le run {self.run.run_id} : fait — il est suivi par le {suite}"
+        return f"{verbe} le run {self.run.run_id} : fait — relu ensuite : {self.run.en_phrase()}"
+
+
 @dataclass(frozen=True)
 class EtapeFil:
     """Une chose que l'interlocuteur a **faite** en répondant — une lecture (#1223).
@@ -1545,6 +1794,13 @@ class MessageChat:
     pour un projet nommé (« Outiller maintenant ») n'a ni projet né ni pièce pour le
     dire à la question suivante : vu sur la vraie stack, la réponse ne savait plus quel
     projet outiller. Vide partout ailleurs et sur une ligne écrite avant ce lot.
+
+    `geste_run` (#1179) est la sixième chose qu'un message d'agent peut demander : un
+    **geste sur un run** — pause, reprise, annulation, relance —, à confirmer. Même
+    patron — `None` partout ailleurs et sur une ligne écrite avant ce lot, l'attente
+    énoncée une fois (`geste_run_en_attente`). `geste_fait` est ce que la confirmation
+    a donné (l'état relu, ou le refus du service), et `runs_candidats` les runs
+    qu'une demande pouvait viser quand elle en visait plusieurs — deux faits.
     """
 
     agent: str
@@ -1570,6 +1826,9 @@ class MessageChat:
     piece_ecrite: PieceEcrite | None = None
     corrections: tuple[Choix, ...] = ()
     projet_outille: str = ""
+    geste_run: GesteRunPropose | None = None
+    geste_fait: GesteRunFait | None = None
+    runs_candidats: tuple[RunVise, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -1608,6 +1867,9 @@ class MessageChat:
             ),
             "corrections": [c.to_dict() for c in self.corrections],
             "projet_outille": self.projet_outille,
+            "geste_run": self.geste_run.to_dict() if self.geste_run is not None else None,
+            "geste_fait": self.geste_fait.to_dict() if self.geste_fait is not None else None,
+            "runs_candidats": [run.to_dict() for run in self.runs_candidats],
         }
 
     @property
@@ -1656,6 +1918,8 @@ class MessageChat:
         cree = data.get("projet_cree")
         piece = data.get("piece")
         piece_ecrite = data.get("piece_ecrite")
+        geste_run = data.get("geste_run")
+        geste_fait = data.get("geste_fait")
         return cls(
             agent=data["agent"],
             # Une ligne d'avant #694 n'en porte pas : elle vient forcément du
@@ -1702,6 +1966,13 @@ class MessageChat:
                 if isinstance(c, Mapping)
             ),
             projet_outille=str(data.get("projet_outille") or ""),
+            geste_run=(
+                GesteRunPropose.from_dict(geste_run) if isinstance(geste_run, Mapping) else None
+            ),
+            geste_fait=(
+                GesteRunFait.from_dict(geste_fait) if isinstance(geste_fait, Mapping) else None
+            ),
+            runs_candidats=runs_vises_depuis(data.get("runs_candidats")),
         )
 
 
@@ -1794,6 +2065,11 @@ class ReponseChat:
     cohabite avec aucune autre demande ; `piece_ecrite` et `corrections` sont des
     faits : ce qu'un geste a fait de la pièce d'avant, ce qu'une phrase a corrigé.
     `projet_outille` dit de quel projet ce tour conduit l'outillage.
+
+    `geste_run` (#1179) est la sixième — un geste sur un run à confirmer —, et elle ne
+    cohabite avec aucune autre demande ; `geste_fait` et `runs_candidats` sont des
+    faits : ce que la confirmation a donné, et les runs entre lesquels une demande
+    ambiguë laisse choisir.
     """
 
     contenu: str
@@ -1811,6 +2087,9 @@ class ReponseChat:
     piece_ecrite: PieceEcrite | None = None
     corrections: tuple[Choix, ...] = ()
     projet_outille: str = ""
+    geste_run: GesteRunPropose | None = None
+    geste_fait: GesteRunFait | None = None
+    runs_candidats: tuple[RunVise, ...] = ()
 
     @property
     def porte_une_demande(self) -> bool:
@@ -1825,10 +2104,17 @@ class ReponseChat:
 #: Les champs d'une `ReponseChat` qui **demandent** quelque chose (#1339) — chacun
 #: pose une carte qui attend un geste, et en porte les boutons : l'accord d'un run,
 #: la question d'outillage, l'équipe à valider, le projet à déclarer, la pièce à
-#: écrire. Les autres champs sont des **faits** (le run ouvert, l'équipe créée, le
-#: projet déclaré, ce qu'un geste a fait d'une pièce…) : ils se lisent sous la bulle,
-#: et rien n'y attend de réponse.
-CHAMPS_DE_DEMANDE = ("proposition", "question", "recrutement", "projet_propose", "piece")
+#: écrire, le geste sur un run (#1179). Les autres champs sont des **faits** (le run
+#: ouvert, l'équipe créée, le projet déclaré, ce qu'un geste a fait d'une pièce…) :
+#: ils se lisent sous la bulle, et rien n'y attend de réponse.
+CHAMPS_DE_DEMANDE = (
+    "proposition",
+    "question",
+    "recrutement",
+    "projet_propose",
+    "piece",
+    "geste_run",
+)
 
 #: Ce que la rédaction apprend d'un message qui porte une demande (#1339). La
 #: consigne de rédaction (`orchestration._PROMPT_REDACTION`) en tire sa règle, avec
@@ -2412,6 +2698,31 @@ class RepondeurChat(ABC):
         """
         raise PieceIntrouvable(
             f"le fil {agent.nom} ne propose pas de pièce d'outillage : rien à trancher."
+        )
+
+    async def trancher_geste(
+        self,
+        agent: Agent,
+        fil: Sequence[MessageChat],
+        *,
+        demande: GesteRunPropose,
+        approuve: bool,
+    ) -> ReponseChat:
+        """La réponse au **geste** qui confirme — ou écarte — un geste sur un run (#1179).
+
+        Le sixième point d'extension « acte » du canal. Aucun juge : la décision est un
+        clic, et ce qu'il y a à faire se déduit — exécuter le geste par le service des
+        boutons, relire l'état du run, en parler.
+
+        `demande` est celle que le fil portait, **relue du fil** : le run et l'action
+        qu'on a eus sous les yeux, bornes comprises.
+
+        Par défaut, un répondeur **ne propose aucun geste sur un run** : il le dit
+        plutôt que de le laisser deviner. Seul celui qui pose un `ReponseChat.geste_run`
+        a cette méthode à écrire.
+        """
+        raise GesteRunIntrouvable(
+            f"le fil {agent.nom} ne propose pas de geste sur un run : rien à trancher."
         )
 
     async def rediger(
@@ -3101,6 +3412,55 @@ class ServiceChat:
             agent, conversation=fil, reponse=reponse
         )
 
+    async def trancher_geste(
+        self,
+        agent: Agent,
+        *,
+        approuve: bool,
+        conversation: str | None = None,
+    ) -> tuple[MessageChat, MessageChat]:
+        """Confirme — ou écarte — le geste sur un run que le fil propose ; rend la paire (#1179).
+
+        Le sixième geste du canal, et **la même forme qu'`envoyer`** : un message
+        d'utilisateur, puis la réponse. Le geste auquel on répond est **lu du fil**,
+        jamais passé par l'appelant — action, run et bornes compris : c'est ce qui fait
+        qu'un double clic ou un geste tardif tombe sur `GesteRunIntrouvable` (le `409`
+        de l'API) au lieu d'annuler deux fois, et que ce qui s'exécute est exactement
+        ce que la carte a montré.
+
+        Le corps ne porte **aucun amendement** : « plutôt 10 $ » se dit dans la
+        conversation, et appelle une carte nouvelle — la règle du projet proposé.
+        """
+        fil = self._resoudre(agent, conversation)
+        attente = geste_run_en_attente(self._store.fil(agent.nom, fil))
+        if attente is None or attente.geste_run is None:
+            raise GesteRunIntrouvable(
+                f"aucun geste sur un run en attente sur le fil {agent.nom}."
+            )
+        demande = attente.geste_run
+        geste = await self._deposer(
+            agent, _geste_sur_un_run(approuve, demande), conversation=fil
+        )
+        try:
+            reponse = await self._repondeur.trancher_geste(
+                agent,
+                self._store.fil(agent.nom, fil),
+                demande=demande,
+                approuve=approuve,
+            )
+        except GesteRunIntrouvable:
+            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+            # manque — un 409, comme pour le cadrage, jamais un 502.
+            raise
+        except Exception as exc:
+            raise ReponseIndisponible(
+                f"l'agent {agent.nom} n'a pas pu donner suite au geste sur le run "
+                f"{demande.run.run_id} : {exc}"
+            ) from exc
+        return geste, await self._persister_reponse(
+            agent, conversation=fil, reponse=reponse
+        )
+
     async def poser_question(
         self,
         agent: Agent,
@@ -3612,12 +3972,13 @@ class ServiceChat:
 
         Partagée par `_repondre` (une réponse jugée), `trancher_cadrage` (une
         réponse exécutée, #943), `repondre_question` (#1031), `recruter` (#1146)
-        `declarer_projet` (#1294) et `trancher_piece` (#1161) : ce qu'un répondeur
-        rend se persiste, s'achemine et se diffuse toujours de la même façon, et
-        c'est ici que les treize champs du contrat (`run_id`, `tache_id`,
-        `proposition`, `question`, `recrutement`, `equipe`, `etapes`,
-        `comprehension`, `projet_propose`, `projet_cree`, `piece`, `piece_ecrite`,
-        `corrections`) passent du répondeur au message.
+        `declarer_projet` (#1294), `trancher_piece` (#1161) et `trancher_geste`
+        (#1179) : ce qu'un répondeur rend se persiste, s'achemine et se diffuse
+        toujours de la même façon, et c'est ici que les champs du contrat
+        (`run_id`, `tache_id`, `proposition`, `question`, `recrutement`, `equipe`,
+        `etapes`, `comprehension`, `projet_propose`, `projet_cree`, `piece`,
+        `piece_ecrite`, `corrections`, `projet_outille`, `geste_run`, `geste_fait`,
+        `runs_candidats`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -3644,6 +4005,9 @@ class ServiceChat:
             piece_ecrite=reponse.piece_ecrite,
             corrections=reponse.corrections,
             projet_outille=reponse.projet_outille,
+            geste_run=reponse.geste_run,
+            geste_fait=reponse.geste_fait,
+            runs_candidats=reponse.runs_candidats,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message
@@ -3779,6 +4143,17 @@ def transcription(fil: Sequence[MessageChat]) -> str:
             lignes.append(
                 f"[Pièce d'outillage proposée sur la carte : {message.piece.en_phrase()}]"
             )
+        # Les gestes sur un run (#1179) : ce que la carte proposait, ce que la
+        # confirmation a donné, et les runs entre lesquels une demande laissait
+        # choisir — aucun n'est dans une phrase, et « le premier » au tour suivant
+        # doit savoir de quelle liste il parle.
+        if message.runs_candidats:
+            candidats = " ; ".join(run.en_phrase() for run in message.runs_candidats)
+            lignes.append(f"[Runs que la demande pouvait viser : {candidats}]")
+        if message.geste_run is not None:
+            lignes.append(f"[Geste proposé sur la carte : {message.geste_run.en_phrase()}]")
+        if message.geste_fait is not None:
+            lignes.append(f"[Geste sur un run : {message.geste_fait.en_phrase()}]")
     return (
         "Fil de conversation avec l'utilisateur :\n\n"
         + "\n".join(lignes)
