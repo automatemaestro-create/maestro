@@ -89,6 +89,10 @@ from maestro.providers.arbitrage import (
     reponse,
 )
 from maestro.providers.base import (
+    MCP_A_AUTHENTIFIER,
+    MCP_DESACTIVE,
+    MCP_EN_ECHEC,
+    MCP_SANS_REPONSE,
     PLAFOND_TOURS_DEFAUT,
     AuthMode,
     CollecteurStderr,
@@ -99,6 +103,7 @@ from maestro.providers.base import (
     ModeleDisponible,
     ModelProvider,
     PlafondFluxDepasse,
+    ServeurInjoignable,
     TurnLimitReached,
     attache_stderr,
 )
@@ -123,6 +128,17 @@ _MARQUEUR_MAX_TURNS = "error_max_turns"
 #: « pending » n'en fait pas partie : c'est l'état transitoire du démarrage
 #: (npx qui télécharge, endpoint lent), attendu jusqu'à `_MCP_CONNEXION_MAX_S`.
 _MCP_STATUTS_ECHEC = frozenset({"failed", "needs-auth", "disabled"})
+
+#: Ces mêmes statuts du CLI, dits avec les mots de Maestro (#1181) : c'est la
+#: traduction que tout adaptateur doit à `McpServerUnavailable.serveurs`, pour que
+#: le moteur suspende la tâche et propose la procédure du registre sans jamais
+#: lire le vocabulaire d'un CLI. Elle vit ici et nulle part ailleurs — le jour où
+#: le CLI renomme un statut, c'est la seule ligne à changer.
+_MCP_ETATS_MAESTRO: dict[str, str] = {
+    "needs-auth": MCP_A_AUTHENTIFIER,
+    "failed": MCP_EN_ECHEC,
+    "disabled": MCP_DESACTIVE,
+}
 
 #: Délai maximal accordé à la connexion des serveurs MCP déclarés avant l'échec
 #: propre (`McpServerUnavailable`). Large : le premier `npx -y` d'un serveur
@@ -2119,6 +2135,11 @@ async def _attend_serveurs_mcp(client: ClaudeSDKClient, attendus: frozenset[str]
     encore en attente à l'échéance (`_MCP_CONNEXION_MAX_S`) → idem, un
     « pending » sans fin est un serveur qui ne viendra pas. C'est la garantie
     du contrat #104 : l'agent ne travaille jamais amputé de ses capacités.
+
+    Chaque serveur en cause voyage aussi **en donnée** sur l'exception (#1181,
+    `ServeurInjoignable`), son statut traduit dans les mots de Maestro
+    (`_MCP_ETATS_MAESTRO`) : c'est ce que le moteur lit pour suspendre la tâche
+    et proposer la procédure du registre. Le message, lui, ne change pas.
     """
     echeance = monotonic() + _MCP_CONNEXION_MAX_S
     while True:
@@ -2130,25 +2151,38 @@ async def _attend_serveurs_mcp(client: ClaudeSDKClient, attendus: frozenset[str]
         }
         echecs: list[str] = []
         en_attente: list[str] = []
+        injoignables: list[ServeurInjoignable] = []
+        attente: list[ServeurInjoignable] = []
         for nom in sorted(attendus):
             etat = etats.get(nom)
             if etat is None:
                 en_attente.append(f"{nom} : absent de la session")
+                attente.append(ServeurInjoignable(nom, MCP_SANS_REPONSE, "absent de la session"))
             elif etat.get("status") in _MCP_STATUTS_ECHEC:
                 cause = etat.get("error") or f"état « {etat.get('status')} »"
                 echecs.append(f"{nom} : {cause}")
+                injoignables.append(
+                    ServeurInjoignable(
+                        nom,
+                        _MCP_ETATS_MAESTRO[str(etat.get("status"))],
+                        str(etat.get("error") or ""),
+                    )
+                )
             elif etat.get("status") != "connected":
                 en_attente.append(f"{nom} : connexion en cours")
+                attente.append(ServeurInjoignable(nom, MCP_SANS_REPONSE, "connexion en cours"))
         if echecs:
             raise McpServerUnavailable(
-                "serveur(s) MCP indisponible(s) — " + " ; ".join(echecs) + "."
+                "serveur(s) MCP indisponible(s) — " + " ; ".join(echecs) + ".",
+                injoignables,
             )
         if not en_attente:
             return
         if monotonic() >= echeance:
             raise McpServerUnavailable(
                 "serveur(s) MCP indisponible(s) — toujours pas connecté(s) après "
-                f"{_MCP_CONNEXION_MAX_S:g} s : " + " ; ".join(en_attente) + "."
+                f"{_MCP_CONNEXION_MAX_S:g} s : " + " ; ".join(en_attente) + ".",
+                attente,
             )
         await asyncio.sleep(_MCP_SONDAGE_S)
 

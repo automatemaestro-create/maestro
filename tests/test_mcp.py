@@ -60,7 +60,13 @@ from maestro.engine.retry import est_transitoire
 from maestro.orchestrator import Orchestrator
 from maestro.providers import ClaudeProvider, Credentials
 from maestro.providers import claude as claude_mod
-from maestro.providers.base import McpServerUnavailable, ModelProvider
+from maestro.providers.base import (
+    MCP_A_AUTHENTIFIER,
+    MCP_DESACTIVE,
+    MCP_SANS_REPONSE,
+    McpServerUnavailable,
+    ModelProvider,
+)
 
 # --- Fournisseurs factices --------------------------------------------------------------
 
@@ -734,12 +740,15 @@ def test_un_serveur_jamais_connecte_echoue_a_l_echeance(monkeypatch, tmp_path):
     monkeypatch.setattr(claude_mod, "_MCP_CONNEXION_MAX_S", 0.0)
     provider = ClaudeProvider(Credentials())
 
-    with pytest.raises(McpServerUnavailable, match="toujours pas connecté"):
+    with pytest.raises(McpServerUnavailable, match="toujours pas connecté") as excinfo:
         _run_agent(
             provider, tmp_path, (ServeurMcp(nom="factice", type="stdio", commande="python"),)
         )
 
     assert fake.derniere_instance.prompts == []
+    # Les faits voyagent aussi en données, dans les mots de Maestro (#1181).
+    ((nom, etat),) = [(s.nom, s.etat) for s in excinfo.value.serveurs]
+    assert (nom, etat) == ("factice", MCP_SANS_REPONSE)
 
 
 def test_needs_auth_et_disabled_valent_echec_definitif(monkeypatch, tmp_path):
@@ -768,6 +777,12 @@ def test_needs_auth_et_disabled_valent_echec_definitif(monkeypatch, tmp_path):
     message = str(excinfo.value)
     assert "slack : état « needs-auth »" in message
     assert "tickets : état « disabled »" in message
+    # Le moteur ne lit jamais ce message (#1181) : l'adaptateur rend les mêmes faits
+    # en données, son vocabulaire traduit dans celui de Maestro.
+    assert [(s.nom, s.etat) for s in excinfo.value.serveurs] == [
+        ("slack", MCP_A_AUTHENTIFIER),
+        ("tickets", MCP_DESACTIVE),
+    ]
 
 
 def test_sans_serveur_declare_la_session_reste_verrouillee(monkeypatch, tmp_path):

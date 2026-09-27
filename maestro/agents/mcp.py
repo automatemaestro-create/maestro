@@ -78,7 +78,11 @@ from typing import Any
 
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
-from maestro.providers.base import McpServerUnavailable
+from maestro.providers.base import (
+    MCP_NON_MONTABLE,
+    McpServerUnavailable,
+    ServeurInjoignable,
+)
 from maestro.telemetry.redact import enregistre_secret
 
 #: Types de serveurs déclarables : une commande locale (stdio) ou un endpoint
@@ -765,15 +769,22 @@ def _resout(valeur: str, environ: Mapping[str, str], serveur: ServeurMcp) -> str
     Chaque valeur résolue est un secret par convention (#109) : elle est
     enregistrée au registre de rédaction avant d'être servie — masquée si elle
     réapparaît dans un journal, une trace ou un livrable.
+
+    Le refus porte ses faits en donnée depuis #1181 (`ServeurInjoignable`, état
+    `non_montable`, références manquantes nommées) : c'est ce que le moteur lit
+    pour proposer, dans le fil, le secret à fournir.
     """
     references = _REFERENCE_ENV.findall(valeur)
     manquantes = sorted({nom for nom in references if not environ.get(nom)})
     if manquantes:
+        cause = (
+            f"référence(s) non résolue(s) : {', '.join(manquantes)} — absente(s) de "
+            "l'environnement de résolution (le coffre de l'agent si un coffre est "
+            "provisionné, sinon l'environnement du process)."
+        )
         raise McpServerUnavailable(
-            f"serveur MCP {serveur.nom!r} non montable : référence(s) non "
-            f"résolue(s) : {', '.join(manquantes)} — absente(s) de l'environnement "
-            "de résolution (le coffre de l'agent si un coffre est provisionné, "
-            "sinon l'environnement du process)."
+            f"serveur MCP {serveur.nom!r} non montable : {cause}",
+            (ServeurInjoignable(serveur.nom, MCP_NON_MONTABLE, cause, tuple(manquantes)),),
         )
     for nom in references:
         enregistre_secret(environ[nom])

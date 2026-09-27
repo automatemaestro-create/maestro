@@ -899,6 +899,11 @@ class DemandeRecrutement:
     qui change est ce qu'elle a à montrer, et c'est exactement ce que ces champs
     portent. `run_id` est le témoin qui les sépare — *ce recrutement suspend-il un
     run ?* —, jamais une phrase reconnue dans le contenu.
+
+    `tache` (#1181) ajoute un troisième moment, **en cours d'exécution** : une
+    tâche du run que personne ne sait prendre, suspendue jusqu'au recrutement.
+    Son titre, et c'est le témoin qui la sépare du plan entier — le relais n'y
+    lit pas les mêmes faits (`maestro.controltower.renfort`).
     """
 
     objectif: str
@@ -908,6 +913,7 @@ class DemandeRecrutement:
     gabarit: str = ""
     raison: str = ""
     taches: tuple[str, ...] = ()
+    tache: str = ""
 
     @property
     def pendant_un_run(self) -> bool:
@@ -924,6 +930,7 @@ class DemandeRecrutement:
             "gabarit": self.gabarit,
             "raison": self.raison,
             "taches": list(self.taches),
+            "tache": self.tache,
         }
 
     @classmethod
@@ -932,7 +939,7 @@ class DemandeRecrutement:
 
         Les quatre champs de #1227 sont **absents** des demandes écrites avant ce
         lot : elles se relisent telles quelles, et un fil ancien garde exactement
-        la carte qu'il avait.
+        la carte qu'il avait. Même règle pour `tache` (#1181).
         """
         taches = data.get("taches")
         return cls(
@@ -943,6 +950,7 @@ class DemandeRecrutement:
             gabarit=str(data.get("gabarit") or ""),
             raison=str(data.get("raison") or ""),
             taches=tuple(str(t) for t in taches) if isinstance(taches, list) else (),
+            tache=str(data.get("tache") or ""),
         )
 
 

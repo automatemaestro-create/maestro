@@ -77,6 +77,11 @@ class DemandeRenfort:
     qu'un arbitrage ou qu'une question d'agent (`BornesArbitrage.attente_s`), et
     lui donner un second réglage ferait deux chiffres à tenir d'accord pour une
     seule question — *combien laisse-t-on à qui répond ?*
+
+    `tache` (#1181) dit **quand** la demande est posée : vide, c'est la
+    confrontation du plan entier, avant la première tâche (#1227) ; renseignée,
+    c'est une tâche **en cours de run** que personne ne sait prendre, suspendue
+    jusqu'à la décision — son titre, pour que le fil dise laquelle attend.
     """
 
     run_id: str
@@ -84,6 +89,7 @@ class DemandeRenfort:
     objectif: str
     manque: ManqueAuPlan
     attente_s: float
+    tache: str = ""
 
 
 @dataclass(frozen=True)

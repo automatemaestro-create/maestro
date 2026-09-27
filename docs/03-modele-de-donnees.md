@@ -286,15 +286,21 @@ stateDiagram-v2
     backlog --> bloquee: dépendance en échec (ou elle-même bloquée)
     prete --> assignee: routeur choisit un agent
     assignee --> en_cours: worker disponible
-    en_cours --> en_attente_validation: appel d'outil classé « ask »
-    en_attente_validation --> en_cours: approuvée
-    en_attente_validation --> echec: refusée
+    en_cours --> en_attente_validation: appel d'outil classé « ask », ou prérequis manquant proposé dans le fil
+    en_attente_validation --> en_cours: approuvée, ou prérequis donné (la tâche reprend)
+    en_attente_validation --> echec: refusée, ou proposition sans suite
     en_cours --> terminee: objectif atteint
     en_cours --> echec: erreur
     echec --> prete: relance / re-routage
     bloquee --> prete: dépendance relancée avec succès
     terminee --> [*]
 ```
+
+`en_attente_validation` est le seul statut où la tâche attend **une personne**. Le moteur l'émet
+depuis #1181 sur une tâche à qui il manque un **prérequis** qu'il sait proposer — un serveur MCP à
+authentifier, un rôle à recruter, un secret, un outil (`maestro/prerequis.py`) : elle est suspendue
+au lieu d'échouer, le fil propose le remède, et elle **reprend** dans le même run quand on le lui a
+donné. Une proposition sans réponse la solde en `echec`.
 
 ---
 

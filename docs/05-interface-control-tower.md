@@ -1519,8 +1519,9 @@ il porte le bouton **« Trancher »**, qui ouvre la demande sur place (§2.4.7).
 ⚠ **Il *renvoyait* vers l'écran des validations jusqu'à #1228** (« Trancher → », même
 table `ATTENTES` que la liste) : la boîte fait 16 rem, et un arbitrage ne s'y *lit* pas
 — ce qui reste vrai. Ce qui était faux est qu'il fallait pour autant quitter le graphe.
-⚠ L'attente se lit dans la **file des validations**, pas sur la tâche : le
-moteur n'émet pas le statut `en_attente_validation` de la machine à états, et la table
+⚠ L'attente d'un arbitrage se lit dans la **file des validations**, pas sur la tâche : le
+moteur n'émet pas le statut `en_attente_validation` pour une validation (il ne l'émet que
+pour une tâche suspendue sur un prérequis que le fil propose, #1181), et la table
 partagée le rangerait de toute façon dans « en cours », à raison — la tâche est en vol.
 « En vol » et « quelqu'un doit trancher » ne se ressemblent pas à l'œil, et les
 confondre est le défaut d'origine du chantier (#355 : 53 minutes indiscernables d'un
@@ -5977,10 +5978,11 @@ ferait apparaître en cours de route sans qu'on sache s'il était prévu. Et le 
 critère écrit en toutes lettres tient par construction : **le `couloir` d'une entrée est toujours
 l'un des `couloirs` servis** — la déclaration ordonne les couloirs, elle ne les filtre jamais.
 
-**`en_attente_validation` est produit ici, et nulle part ailleurs.** Le moteur ne l'émet pas —
-[`progression.py`](../maestro/controltower/progression.py) le nomme depuis #473 sans que rien ne le
-produise —, et la file `GET /api/validations` en dit l'**état courant**, jamais la **seconde** où la
-tâche s'est arrêtée. Une frise a besoin de la seconde : `validation.demande` *est* ce changement de
+**`en_attente_validation` est produit ici pour une validation.** Le moteur ne l'émet pas pour
+elle — il ne l'émet que sur une tâche suspendue faute d'un prérequis que le fil propose (#1181), et
+cette seconde-là arrive sur la frise par son `tache.statut`, comme tout changement d'état —, et la
+file `GET /api/validations` en dit l'**état courant**, jamais la **seconde** où la tâche s'est
+arrêtée. Une frise a besoin de la seconde : `validation.demande` *est* ce changement de
 statut, vu du run. Aucun vocabulaire nouveau n'est inventé — la décision reprend au mot près les deux
 statuts (`approuve`, `refuse`) que le moteur écrit lui-même sur l'étape `<tâche>:validation`.
 
@@ -6545,6 +6547,27 @@ carte dit qu'une réponse « sert encore » — vrai pour un agent qui rejouera 
 une tâche en échec, dont le run est déjà reparti. Moteur :
 [`maestro/engine/rattrapage.py`](../maestro/engine/rattrapage.py), gardé par
 [`tests/test_rattrapage.py`](../tests/test_rattrapage.py).
+
+**Et ce qui manque à une tâche s'y propose, au moment où il manque (#1181).** Un prérequis que
+Maestro sait nommer — un **serveur MCP** à authentifier ou injoignable, un **secret**, un **outil**,
+un **rôle** absent de l'équipe — ne fait plus échouer la tâche : elle est **suspendue** (sa carte
+passe en `en_attente_validation`, « Attente humaine »), et le fil propose le remède. Deux sources, et
+aucune ne lit un texte : le moteur **constate** un serveur injoignable (les faits voyagent en données
+sur l'exception de l'adaptateur) ou un rôle que personne ne couvre (le routage), et le Chef de
+projet **nomme** ce qu'un agent a signalé comme blocage (`signaler_blocage`, #719 — geste
+`proposer`). Un rôle recrutable part sur la **carte d'équipe** (le canal de renfort de #1227, la
+demande portant alors la tâche suspendue, `recrutement.tache`) ; tout le reste part sur la **carte
+d'une question** de ce canal-ci, avec ce qui manque, la **procédure** pour le donner — pour un
+serveur, celle que la bibliothèque MCP connaît : son mode d'accès, les variables à renseigner dans
+l'écran Intégrations, le lien vers la procédure de l'outil — et un seul geste déclaré en `choix`,
+« C'est fait — reprendre la tâche ». Ce geste reprend la tâche **telle quelle, dans le même run** ;
+un même manque rencontré à la reprise se repropose (« toujours suspendue »), deux fois au plus. Une
+réponse écrite en mots n'est lue par aucun motif : elle part au Chef de projet, qui la tient pour
+autorité — il peut alors rejouer la tâche à l'identique, ce qu'un échec non passager n'autorise
+qu'après une réponse. Sans réponse à la borne, la tâche reste en échec et sa carte le dit. Moteur :
+[`maestro/prerequis.py`](../maestro/prerequis.py) et
+[`maestro/engine/loop.py`](../maestro/engine/loop.py) (`_rattrape`), gardé par
+[`tests/test_prerequis_en_cours_de_run.py`](../tests/test_prerequis_en_cours_de_run.py).
 
 Implémentation : [`maestro/providers/question.py`](../maestro/providers/question.py) (le vocabulaire
 du verbe `mcp__maestro__poser_une_question` et ses deux frontières),

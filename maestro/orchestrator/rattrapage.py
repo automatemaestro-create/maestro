@@ -14,7 +14,7 @@ rangés : ce sont des valeurs du domaine de l'orchestrateur, que son prompt lit 
 que la boucle ne fait que transporter — l'inverse obligerait `maestro.orchestrator`
 à importer `maestro.engine`, à contresens des dépendances du paquet.
 
-## Trois natures, quatre gestes — et pourquoi ce ne sont pas des catalogues
+## Trois natures, des gestes — et pourquoi ce ne sont pas des catalogues
 
 La **nature** est le jugement que le ticket demande en toutes lettres : *passager*,
 *configuration* ou *approche*. Elle ne classe pas l'erreur à sa place — c'est le
@@ -24,7 +24,8 @@ l'identique**. Les deux autres disent pourquoi il faut changer quelque chose.
 
 Les **gestes** sont les verbes que Maestro sait exécuter, pas une liste de causes :
 rejouer, retenter autrement (une tâche reprise, ou redécoupée en plusieurs),
-demander à l'utilisateur, abandonner sur sa réponse. Ce qui varie à l'infini — la
+demander à l'utilisateur, abandonner sur sa réponse — et, depuis #1181, lui
+proposer le prérequis qui manque (ci-dessous). Ce qui varie à l'infini — la
 nouvelle approche, les compétences qui routent vers un autre agent, le
 redécoupage, l'ajustement des tâches qui attendent — s'écrit **dans** le geste, en
 tâches au format du plan, et c'est le modèle qui l'écrit.
@@ -35,13 +36,30 @@ tâches au format du plan, et c'est le modèle qui l'écrit.
 donc quoi qu'il ait répondu — la même garantie que `Brief.questions_en_hypotheses`
 donne au plafond de clarification :
 
-- un échec jugé autre que passager **ne se rejoue pas** à l'identique ;
+- un échec jugé autre que passager **ne se rejoue pas** à l'identique — sauf
+  après une réponse de l'utilisateur, qui a pu changer l'environnement (#1181) ;
 - une nouvelle tentative **change quelque chose** au regard de celles qui ont déjà
   échoué — l'approche (description), le métier (compétences), ou le découpage ;
 - elle n'ajoute **aucun acte accordé** que la tâche d'origine ne portait pas : un
   rattrapage ne sert jamais à contourner un arbitrage (#1198) ;
 - on n'**abandonne** que sur une réponse de l'utilisateur : ce que Maestro ne sait
   pas lever, il le demande, il ne le barre pas en silence.
+
+## Un cinquième geste : proposer ce qui manque (#1181)
+
+Un agent qui bute le **dit** (`signaler_blocage`, #719) — « il me manque le jeton
+Stripe », « personne ici ne sait faire le design » —, et cette raison ne faisait
+que s'écrire au journal. Elle arrive maintenant au Chef de projet avec l'échec
+(`Tentative.blocages`), et il peut en tirer un **prérequis** à proposer : un
+secret, un serveur, un outil ou un rôle (`maestro.prerequis`). Ce n'est pas une
+question ouverte — `demander` le reste —, c'est une chose nommée, avec la façon de
+la donner, que la personne accepte d'un geste ; la tâche reprend alors telle
+quelle, sans relancer le run.
+
+Et une réponse de l'utilisateur **change l'environnement** : « c'est fait, le jeton
+est dans le coffre » rend légitime de rejouer à l'identique un échec qui n'était
+pas passager. Rejouer reste donc réservé à un échec passager — **ou** à une tâche
+dont l'utilisateur vient de répondre.
 """
 
 from __future__ import annotations
@@ -52,6 +70,7 @@ from typing import Any
 
 from maestro.orchestrator.errors import RattrapageValidationError, TaskValidationError
 from maestro.orchestrator.schema import Task, validate_plan, validate_task
+from maestro.prerequis import GENRE_ROLE, GENRES, PrerequisManquant
 
 #: L'échec ne se reproduira pas : un aléa (coupure, processus mort sans cause dans
 #: la tâche, limite de débit). Le seul cas où rejouer à l'identique a un sens.
@@ -73,7 +92,10 @@ GESTE_RETENTER = "retenter"
 GESTE_DEMANDER = "demander"
 #: Laisser la tâche en échec — seulement sur la réponse de l'utilisateur.
 GESTE_ABANDONNER = "abandonner"
-GESTES = (GESTE_REJOUER, GESTE_RETENTER, GESTE_DEMANDER, GESTE_ABANDONNER)
+#: Proposer à l'utilisateur le prérequis qui manque (#1181) — un secret, un
+#: serveur, un outil, un rôle —, puis reprendre la tâche telle quelle.
+GESTE_PROPOSER = "proposer"
+GESTES = (GESTE_REJOUER, GESTE_RETENTER, GESTE_DEMANDER, GESTE_ABANDONNER, GESTE_PROPOSER)
 
 
 @dataclass(frozen=True)
@@ -86,6 +108,10 @@ class Tentative:
     échoué. `geste` dit en quelques mots comment elle avait été prise (« telle que
     planifiée », « rejouée à l'identique »…), pour le prompt et pour la question
     posée dans le fil ; `diagnostic` est ce que le modèle en avait dit.
+
+    `blocages` (#1181) porte ce que l'agent a **signalé** pendant la tentative —
+    ce qui lui manquait, dans ses mots. C'est souvent la vraie cause, que
+    l'erreur ne dit pas : un agent bloqué rend un livrable vide.
     """
 
     taches: tuple[Task, ...]
@@ -94,6 +120,7 @@ class Tentative:
     erreur: str
     geste: str = "telle que planifiée"
     diagnostic: str = ""
+    blocages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,7 +164,8 @@ class Rattrapage:
       le redécoupage, dont les livrables remplacent ensemble celui qui manquait ;
     - `ajustements` pour `retenter` aussi : les tâches aval dont la description
       change, parce que ce qu'elles recevront a changé ;
-    - `question` pour `demander` — ce qu'on attend de l'utilisateur.
+    - `question` pour `demander` — ce qu'on attend de l'utilisateur ;
+    - `prerequis` pour `proposer` (#1181) — ce qui manque, et comment le donner.
     """
 
     nature: str
@@ -146,6 +174,7 @@ class Rattrapage:
     taches: tuple[Task, ...] = ()
     ajustements: tuple[tuple[str, str], ...] = ()
     question: str = ""
+    prerequis: PrerequisManquant | None = None
 
     @property
     def rejoue(self) -> bool:
@@ -180,7 +209,9 @@ def valide_rattrapage(data: Mapping[str, Any], echec: EchecDeTache) -> Rattrapag
     diagnostic = _texte(data, "diagnostic")
     if not diagnostic:
         raise RattrapageValidationError("le diagnostic est vide.")
-    if geste == GESTE_REJOUER and nature != NATURE_PASSAGER:
+    if geste == GESTE_REJOUER and nature != NATURE_PASSAGER and echec.reponse is None:
+        # Une réponse de l'utilisateur peut avoir changé l'environnement (#1181) :
+        # un accès accordé, un secret fourni. Sans elle, rien n'a bougé.
         raise RattrapageValidationError(
             f"un échec jugé « {nature} » ne se rejoue pas à l'identique : "
             "il faut changer quelque chose, ou demander."
@@ -198,6 +229,7 @@ def valide_rattrapage(data: Mapping[str, Any], echec: EchecDeTache) -> Rattrapag
     if geste == GESTE_RETENTER:
         taches = _taches_de_rattrapage(data.get("taches"), echec)
         ajustements = _ajustements(data.get("aval"), echec)
+    prerequis = _prerequis(data.get("prerequis")) if geste == GESTE_PROPOSER else None
     return Rattrapage(
         nature=nature,
         diagnostic=diagnostic,
@@ -205,6 +237,48 @@ def valide_rattrapage(data: Mapping[str, Any], echec: EchecDeTache) -> Rattrapag
         taches=taches,
         ajustements=ajustements,
         question=question if geste == GESTE_DEMANDER else "",
+        prerequis=prerequis,
+    )
+
+
+def _prerequis(brut: Any) -> PrerequisManquant:
+    """Le prérequis que le Chef de projet propose, validé (#1181).
+
+    Il doit **nommer** ce qui manque (`objet`), dire pourquoi (`raison`), et être
+    de l'un des genres que Maestro sait proposer (`maestro.prerequis.GENRES`) — un
+    remède qu'on ne saurait pas montrer dans le fil n'est pas un prérequis, c'est
+    une question. Un rôle nomme en plus les compétences qu'il couvrirait : c'est
+    par elles que l'équipe le recrute, jamais par son libellé.
+    """
+    if not isinstance(brut, Mapping):
+        raise RattrapageValidationError("proposer sans « prerequis » : rien à proposer.")
+    genre = _texte(brut, "genre")
+    if genre not in GENRES:
+        raise RattrapageValidationError(
+            f"genre de prérequis inconnu {genre!r} (attendus : {', '.join(GENRES)})."
+        )
+    objet = _texte(brut, "objet")
+    raison = _texte(brut, "raison")
+    if not objet or not raison:
+        raise RattrapageValidationError(
+            "un prérequis nomme ce qui manque (« objet ») et pourquoi (« raison »)."
+        )
+    competences: tuple[str, ...] = ()
+    if genre == GENRE_ROLE:
+        brutes = brut.get("competences")
+        competences = tuple(
+            c.strip() for c in brutes if isinstance(c, str) and c.strip()
+        ) if isinstance(brutes, list) else ()
+        if not competences:
+            raise RattrapageValidationError(
+                "un rôle à recruter nomme les compétences qu'il couvrirait (« competences »)."
+            )
+    return PrerequisManquant(
+        genre=genre,
+        objet=objet,
+        raison=raison,
+        procedure=_texte(brut, "procedure"),
+        competences=competences,
     )
 
 
