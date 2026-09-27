@@ -320,6 +320,27 @@ un avis :
 avant de rien semer. Ce n'est jamais un rouge, qui ferait lire une absence du poste comme un défaut
 du produit, ni un vert.
 
+Les premiers passages réels, le 2026-09-27 :
+
+- **S10 est vert** (passage `20260927-043104`, run `3451d8ef3aeb`, 1,29 $, 9 min). La lecture a
+  compris la solution, l'outillage a écrit `dotnet restore`, `build`, `test` et `format` sur
+  `Depensio.sln`, vérifiés avant d'être écrits. L'équipe recrutée est un développeur C# et un
+  testeur xunit. Après le run, les quatre commandes rejouées passent ;
+- **S9 est rouge**, sur quatre tentatives et deux passages (`20260927-043104`, `20260927-050818`),
+  et toujours pour la même cause : l'outillage recommande à un projet neuf un outil **absent du
+  poste** (`uv`, `ruff`, `typst`, `pandoc`), l'écrit « à vérifier », et personne ne le revérifie
+  une fois le projet construit. Faute de pouvoir le suivre, l'équipe construit autrement.
+  C'est un défaut du produit, pas du banc : #1343.
+
+Ces passages ont aussi appris deux choses au banc :
+
+- **il rejoue dans l'environnement de la stack**. La stack joue les commandes d'un projet sous
+  `PYTHONIOENCODING=utf-8`, qu'exportent `start.sh` et le lanceur (#141). Lancé à la main, le banc
+  mesurait son terminal, et des tests verts pour l'agent rougissaient sur une sortie cp1252 ;
+- **il oublie la tentative rouge avant son rejeu** : sa déclaration, jamais son dossier. Sinon, un
+  projet né dans la conversation se retrouve lui-même, et le rejeu de S9 s'est entendu répondre
+  « ce projet existe déjà sur ce poste ».
+
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
 en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 à S10 ne sont pas
 déterministes, donc un rouge se rejoue une fois avant d'être cru.
