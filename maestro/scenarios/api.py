@@ -798,6 +798,8 @@ def attendre_le_run(
     dormir: Callable[[float], None] = time.sleep,
     intervalle_s: float = INTERVALLE_SUIVI_S,
     arbitrages: list[str] | None = None,
+    approuve: bool = True,
+    demandes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Suit un run jusqu'à son issue et rend son détail — arbitrages tranchés au passage.
 
@@ -829,6 +831,15 @@ def attendre_le_run(
     y entre sous une chaîne vide : ce n'est pas une validation de commande, et la
     taire ferait perdre le total.
 
+    `approuve=False` (#1324) fait jouer au banc **la personne qui refuse** : S8
+    mesure qu'un acte hors du projet revient à quelqu'un, et le seul geste qui
+    garantisse que le banc ne modifie pas le poste est de ne rien accorder. Le
+    refus suit les mêmes règles que l'accord — son run seul, chaque acte une
+    fois — et `demandes` reçoit une copie de chaque demande tranchée, telle que
+    l'API l'a servie : la file des validations s'indexe par tâche, donc une
+    demande refusée peut y être **remplacée** par la suivante, et l'oracle qui
+    doit dire « une demande est née » ne la retrouverait plus après coup.
+
     À l'expiration du délai, le dernier état lu est rendu tel quel : c'est à
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
@@ -848,11 +859,13 @@ def attendre_le_run(
                 ):
                     tache = str(demande["tache_id"])
                     tranchees.add(cle_demande(demande))
-                    client.decider(tache, approuve=True)
+                    client.decider(tache, approuve=approuve)
                     if arbitrages is not None:
                         arbitrages.append(str(demande.get("outil") or ""))
+                    if demandes is not None:
+                        demandes.append(dict(demande))
                     note(
-                        "arbitrage approuvé",
+                        "arbitrage approuvé" if approuve else "arbitrage refusé",
                         f"{tache} — {demande.get('titre') or demande.get('outil') or ''}",
                     )
         if horloge() >= limite:
