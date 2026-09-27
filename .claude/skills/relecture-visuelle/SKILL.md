@@ -84,12 +84,18 @@ browser_evaluate  () => {
                     localStorage.setItem("maestro.guide.vu", "1");
                     localStorage.setItem("maestro.theme", "clair");   // ou "sombre"
                     localStorage.setItem("maestro.projet.actif", "<id nommé par la préparation>");
+                    sessionStorage.setItem("maestro.session.entree", "1");   // #1293 : sinon la porte
                   }
 ```
 
 > ⚠ **Une fois PAR ORIGINE** : l'après (`<PORT_UI>`) et l'avant (`<PORT_UI + 200>`) ont chacun leur
 > `localStorage`. L'identifiant du projet peut différer d'une origine à l'autre (le projet neuf de
 > `vide`) : la préparation nomme les deux.
+
+> ⚠ **La session aussi** (#1293) : sans `maestro.session.entree`, chaque navigation depuis un
+> onglet neuf est un **démarrage** et s'arrête sur la porte (« Reprendre … »), projet retenu ou
+> non. Le `sessionStorage` est celui de l'**onglet** : le poser dans l'onglet qui capture, et le
+> reposer après un `browser_close`. Pour regarder la porte elle-même, ne pas le poser.
 
 ### 4. Regarder — chaque écran, dans les deux thèmes
 
