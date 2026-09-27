@@ -3070,6 +3070,48 @@ qui a été recruté, pas les mots), `tests/test_registre_de_langue.py` (la cons
 rédaction porte le registre, et son appel est rangé), `apps/web/tests/chat-global.test.tsx`
 (l'équipe créée se lit sous la bulle, sans phrase du code).
 
+##### La parole ne redit pas les gestes d'une carte (#1339)
+
+La consigne de rédaction disait, pour tout ce que les faits montrent sous le
+message, « dis ce que cela change pour lui **et ce qu'il peut faire ensuite** ». La
+seconde moitié défaisait la première quand la suite **est une carte avec ses
+gestes** : vu sur la vraie stack à la relecture de clôture de #1161, après « Écrire
+ce fichier » le fil disait « vous pouvez la valider telle quelle ou me dire ce
+qu'il faut y changer », juste au-dessus de la carte qui porte « Écrire ce
+fichier », « Pas cette pièce » et « Quelque chose ne va pas ? Dites-le juste en
+dessous ». Le modèle n'avait aucun moyen de savoir qu'une carte les montrait, et
+plusieurs faits l'y poussaient (« il peut la lancer, l'amender ou la borner d'un
+geste »).
+
+La règle se partage désormais en deux, **pour tous les gestes** — la trancher pour
+la seule pièce d'outillage aurait décidé en passant de ce que le fil dit après un
+run lancé ou une équipe créée :
+
+- **une carte attend sa réponse** — l'accord d'un run, la question d'outillage,
+  l'équipe à valider, le projet à déclarer, la pièce à écrire : ses gestes sont
+  sous les yeux de la personne, et la parole ne les redit pas, pas même en résumé.
+  Elle dit ce qui vient de changer, et ce que la carte ne dit pas ;
+- **aucune carte n'attend** — un refus, un run lancé, une équipe déclinée, la
+  dernière pièce écrite : rien sous le message ne montre la suite, et la parole la
+  dit.
+
+Le modèle sait dans quel cas il est par un **fait dérivé du message**, jamais écrit
+chemin par chemin : chaque chemin du geste compose d'abord sa réponse, puis la
+rédaction apprend des champs de demande (`chat.CHAMPS_DE_DEMANDE`,
+`ReponseChat.porte_une_demande`) qu'« une carte attend sa réponse »
+(`chat.faits_pour_la_redaction`) — le renfort d'un run compris. Un chemin neuf qui
+pose une demande en informe la rédaction sans rien savoir de cette règle. Les faits
+d'un geste, eux, ne décrivent plus les boutons d'une carte.
+
+Couverture : `tests/test_chat_global.py` (⑬ — la consigne sépare les deux cas, le
+fait parle ses mots, chaque champ de la réponse est rangé demande ou fait, et chaque
+chemin du geste du fil donne le fait là où une carte attend et nulle part ailleurs),
+`tests/test_outillage_pieces.py` (après « Écrire ce fichier » et « Pas cette pièce »
+la pièce suivante attend, après la dernière et après « plus tard » rien n'attend ;
+un projet déclaré dont l'outillage commence), `tests/test_equipe_au_plan.py` (la
+demande de renfort attend, son échéance non). Ce qu'un modèle en fait se mesure sur
+la vraie stack.
+
 #### Le fil se lit — Markdown, blocs de code, journées (#697)
 
 Le fil rendait le **texte brut** d'agents qui écrivent du Markdown en permanence :

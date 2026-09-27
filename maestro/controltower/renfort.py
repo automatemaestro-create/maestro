@@ -105,6 +105,10 @@ def _faits_du_renfort(demande: DemandeRecrutement, attente_s: float) -> str:
     revient dix minutes plus tard ne saurait pas si son run l'attend encore —
     c'est l'hypothèse d'une question d'agent (#1023), *voici ce qui se passera
     sans vous*. Le modèle en fait sa phrase ; rien d'ici n'est écrit tel quel.
+
+    Le geste qui valide n'y est pas décrit (#1339) : la carte le porte, et que la
+    demande attende sous le message, le répondeur l'apprend du message lui-même
+    (`chat.faits_pour_la_redaction`).
     """
     taches = (
         " Les tâches qui l'attendent : "
@@ -117,9 +121,8 @@ def _faits_du_renfort(demande: DemandeRecrutement, attente_s: float) -> str:
         f"Le run que l'utilisateur a lancé sur « {demande.objectif} » vient d'écrire "
         f"son plan, et ce plan appelle un rôle que l'équipe du projet n'a pas : "
         f"« {demande.role} ». Pourquoi : {demande.raison}{taches} Le run attend "
-        "avant d'exécuter : tu lui proposes de recruter ce rôle, et la carte qui le "
-        "propose — son playbook, ses instances, le geste qui le valide — s'affiche "
-        "juste sous ton message ; rien n'est créé sans sa validation. S'il décline, "
+        "avant d'exécuter : tu lui proposes de recruter ce rôle, dont le playbook et "
+        "les instances sont sur la carte ; rien n'est créé sans sa validation. S'il décline, "
         f"ou s'il ne répond pas d'ici {_duree(attente_s)}, le run continue avec "
         "l'équipe actuelle et ces tâches iront au rôle le plus proche."
     )

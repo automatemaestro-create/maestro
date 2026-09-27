@@ -56,6 +56,10 @@ Couvre :
 ⑫ **le fil n'écrit plus de phrase fixe sur les chemins du geste** (#1262) :
    accord, refus, équipe validée ou déclinée, renfort — ce que le fil dit est ce
    que le modèle a rédigé, à la lettre, et les faits sont des champs du message.
+⑬ **la parole d'après un geste ne redit pas les gestes d'une carte** (#1339) :
+   la consigne ne fait dire « ce qu'il peut faire ensuite » que lorsqu'aucune
+   carte ne le montre, et sur chaque chemin du geste la rédaction apprend si une
+   carte attend sa réponse — dérivé des champs du message, jamais du texte.
 
 Ce que ces tests **ne** peuvent pas tenir, et l'assument : la qualité du jugement
 lui-même. Le juge est un double, donc « cette phrase est-elle une demande de
@@ -81,7 +85,9 @@ from maestro.controltower.app import create_app
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.controltower.causes import CAUSE_PLAFOND_COUT
 from maestro.controltower.chat import (
+    CHAMPS_DE_DEMANDE,
     CONVERSATION_ORIGINE,
+    FAIT_DE_LA_DEMANDE,
     FRAGMENT_CHAT_DEBUT,
     FRAGMENT_CHAT_DELTA,
     FRAGMENT_CHAT_ETAPE,
@@ -92,6 +98,7 @@ from maestro.controltower.chat import (
     MessageChat,
     RecrutementIntrouvable,
     RepondeurScripte,
+    ReponseChat,
     proposition_en_attente,
     recrutement_en_attente,
 )
@@ -112,6 +119,8 @@ from maestro.controltower.orchestration import (
     # Le texte du prompt lui-même est l'objet du critère 2 : il se lit ici, comme
     # `test_registre_de_langue` le lit déjà pour la consigne de registre.
     _PROMPT_ORCHESTRATION,
+    # Et celui de la consigne de rédaction, pour la même raison (⑬, #1339).
+    _PROMPT_REDACTION,
     AGENT_ORCHESTRATION,
     NOM_ORCHESTRATION,
     VERDICT_ACCORD,
@@ -4044,3 +4053,178 @@ def test_sans_recruteur_le_modele_sait_ou_se_cree_l_equipe() -> None:
     assert lanceur.objectifs == []
     [prompt] = juge.jugements
     assert "écrans d'agents" in prompt
+
+
+# ── ⑬ la parole d'après un geste ne redit pas les gestes d'une carte (#1339) ───
+#
+# Vu à la relecture de clôture de #1161, sur la vraie stack et le vrai modèle :
+# après « Écrire ce fichier », le fil disait « vous pouvez la valider telle quelle
+# ou me dire ce qu'il faut y changer » juste au-dessus de la carte qui porte ces
+# gestes. La consigne le demandait — « dis […] ce qu'il peut faire ensuite », sans
+# condition —, et rien ne disait au modèle qu'une carte le montrait déjà.
+#
+# Ce qui se garde ici est ce qui se garde de toute consigne (le partage de
+# `test_registre_de_langue`) : qu'elle **distingue** les deux cas, et que sur chaque
+# chemin du geste la rédaction **sache** dans lequel elle est — dérivé des champs du
+# message, jamais de son texte. Ce qu'un modèle en fait se mesure sur la vraie stack.
+
+
+def _puces(consigne: str) -> list[str]:
+    """Les règles d'une consigne, une par puce, ses lignes recollées."""
+    return [" ".join(puce.split()) for puce in consigne.split("\n- ")[1:]]
+
+
+def test_la_consigne_ne_fait_dire_la_suite_que_quand_aucune_carte_ne_la_montre() -> None:
+    """Les deux moitiés de la règle, chacune sous sa condition.
+
+    La phrase qui les confondait (« dis ce que cela change pour lui et ce qu'il
+    peut faire ensuite », pour tout ce qui s'affiche sous le message) ne doit pas
+    revenir : « la suite » n'est dite que là où aucune carte ne la porte, et la carte
+    qui attend a sa règle à elle — ses gestes ne se redisent pas.
+    """
+    puces = _puces(_PROMPT_REDACTION)
+    suite = [puce for puce in puces if "ce qu'il peut faire ensuite" in puce]
+    carte = [puce for puce in puces if "une carte attend sa réponse" in puce]
+
+    assert len(suite) == 1, "la suite doit se dire sous une seule condition"
+    assert "aucune carte" in suite[0]
+    assert len(carte) == 1, "la carte qui attend doit avoir sa règle"
+    assert "ne les redis pas" in carte[0]
+
+
+def test_le_fait_de_la_demande_parle_la_langue_de_la_consigne() -> None:
+    """Le fait et la règle se reconnaissent aux mêmes mots, sans quoi rien ne les relie."""
+    assert "une carte attend sa réponse" in FAIT_DE_LA_DEMANDE
+    assert "une carte attend sa réponse" in _PROMPT_REDACTION
+
+
+#: Les champs d'une réponse qui ne **demandent** rien, chacun avec sa raison : ils se
+#: lisent sous la bulle, et rien n'y attend de geste.
+_FAITS_DE_LA_REPONSE = {
+    "contenu": "la parole elle-même",
+    "run_id": "le run qu'un accord a ouvert",
+    "tache_id": "la tâche qu'une réponse a ouverte",
+    "equipe": "l'équipe qu'un recrutement a créée",
+    "etapes": "les lectures faites pour répondre",
+    "comprehension": "ce que le questionnaire a compris du projet",
+    "projet_cree": "le projet qu'un accord a déclaré",
+    "piece_ecrite": "ce qu'un geste a fait de la pièce d'avant",
+    "corrections": "ce qu'une phrase a corrigé de l'outillage",
+    "projet_outille": "le projet dont le tour conduit l'outillage",
+}
+
+
+def test_chaque_champ_de_la_reponse_est_une_demande_ou_un_fait() -> None:
+    """Un champ neuf se range — sinon une demande de plus passerait pour un fait.
+
+    Ce qui dit à la rédaction qu'une carte attend est `CHAMPS_DE_DEMANDE` : une
+    sixième demande qu'il oublierait ferait redire ses gestes, en silence.
+    """
+    champs = {champ.name for champ in dataclasses.fields(ReponseChat)}
+    assert not set(CHAMPS_DE_DEMANDE) & set(_FAITS_DE_LA_REPONSE)
+    assert set(CHAMPS_DE_DEMANDE) | set(_FAITS_DE_LA_REPONSE) == champs
+
+
+def _refuser_le_run(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), provider=juge)
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION, _fil_du_geste("Non."), approuve=False, objectif=OBJECTIF
+    )
+
+
+def _lancer_le_run(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), provider=juge)
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION, _fil_du_geste("Oui."), approuve=True, objectif=OBJECTIF
+    )
+
+
+def _lancer_sans_equipe(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(
+        lanceur=LanceurEspion(), provider=juge, equipe=lambda _p: 0, recruteur=RecruteurEspion()
+    )
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION,
+        _fil_du_geste("Oui."),
+        approuve=True,
+        objectif=OBJECTIF,
+        projet_id=PROJET_SANS_EQUIPE,
+    )
+
+
+def _lancer_sans_equipe_ni_recrutement(juge: JugeQuiRedige) -> Any:
+    repondeur = RepondeurOrchestration(lanceur=LanceurEspion(), provider=juge, equipe=lambda _p: 0)
+    return repondeur.trancher_cadrage(
+        AGENT_ORCHESTRATION,
+        _fil_du_geste("Oui."),
+        approuve=True,
+        objectif=OBJECTIF,
+        projet_id=PROJET_SANS_EQUIPE,
+    )
+
+
+def _recruter(
+    juge: JugeQuiRedige, demande: DemandeRecrutement, *, approuve: bool, lanceur: bool = True
+) -> Any:
+    recruteur = RecruteurEspion()
+    repondeur = RepondeurOrchestration(
+        lanceur=LanceurEspion() if lanceur else None,
+        provider=juge,
+        equipe=recruteur.compte,
+        recruteur=recruteur,
+    )
+    return repondeur.recruter(
+        AGENT_ORCHESTRATION,
+        _fil_du_geste("Je valide." if approuve else "Pas d'équipe."),
+        demande=demande,
+        approuve=approuve,
+        roles=_roles_valides() if approuve else (),
+    )
+
+
+#: Chaque chemin du geste de ce fil, et ce qui s'affiche sous sa parole : une carte
+#: qui attend sa réponse (`True`), ou des faits seulement (`False`). Les chemins de
+#: l'outillage et de la naissance d'un projet se jouent dans leurs suites
+#: (`test_outillage_pieces`), le renfort dans la sienne (`test_equipe_au_plan`).
+_CHEMINS_DU_GESTE = {
+    "run refusé": (_refuser_le_run, False),
+    "run lancé": (_lancer_le_run, False),
+    "run sans équipe, l'équipe proposée": (_lancer_sans_equipe, True),
+    "run sans équipe ni recrutement branché": (_lancer_sans_equipe_ni_recrutement, False),
+    "équipe déclinée": (lambda juge: _recruter(juge, _demande(), approuve=False), False),
+    "équipe créée, la demande reproposée": (
+        lambda juge: _recruter(juge, _demande(), approuve=True),
+        True,
+    ),
+    "équipe créée, aucune exécution branchée": (
+        lambda juge: _recruter(juge, _demande(), approuve=True, lanceur=False),
+        False,
+    ),
+    "renfort décliné": (
+        lambda juge: _recruter(juge, _demande_de_renfort(), approuve=False),
+        False,
+    ),
+    "renfort recruté": (
+        lambda juge: _recruter(juge, _demande_de_renfort(), approuve=True),
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("chemin", sorted(_CHEMINS_DU_GESTE))
+def test_la_redaction_sait_si_une_carte_attend_sa_reponse(chemin: str) -> None:
+    """Le fait n'est donné que là où une carte attend — et partout où elle attend.
+
+    Dans les deux sens, et c'est ce qui fait la règle : sans lui, le modèle redit
+    les gestes d'une carte qu'il ne sait pas affichée ; donné à tort, il se tairait
+    sur la suite là où rien ne la montre (un run lancé, un refus).
+    """
+    geste, attendu = _CHEMINS_DU_GESTE[chemin]
+    juge = JugeQuiRedige()
+
+    reponse = asyncio.run(geste(juge))
+
+    assert reponse.contenu == REDIGE
+    assert reponse.porte_une_demande is attendu
+    [redaction] = juge.redactions
+    assert (FAIT_DE_LA_DEMANDE in redaction) is attendu

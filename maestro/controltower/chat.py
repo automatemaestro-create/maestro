@@ -1812,6 +1812,47 @@ class ReponseChat:
     corrections: tuple[Choix, ...] = ()
     projet_outille: str = ""
 
+    @property
+    def porte_une_demande(self) -> bool:
+        """Une carte, sous ce message, attend-elle la réponse de la personne ? (#1339)
+
+        Lu sur les champs de demande (`CHAMPS_DE_DEMANDE`), jamais sur le texte : c'est
+        ce que la rédaction apprend avant d'écrire (`faits_pour_la_redaction`).
+        """
+        return any(getattr(self, champ) for champ in CHAMPS_DE_DEMANDE)
+
+
+#: Les champs d'une `ReponseChat` qui **demandent** quelque chose (#1339) — chacun
+#: pose une carte qui attend un geste, et en porte les boutons : l'accord d'un run,
+#: la question d'outillage, l'équipe à valider, le projet à déclarer, la pièce à
+#: écrire. Les autres champs sont des **faits** (le run ouvert, l'équipe créée, le
+#: projet déclaré, ce qu'un geste a fait d'une pièce…) : ils se lisent sous la bulle,
+#: et rien n'y attend de réponse.
+CHAMPS_DE_DEMANDE = ("proposition", "question", "recrutement", "projet_propose", "piece")
+
+#: Ce que la rédaction apprend d'un message qui porte une demande (#1339). La
+#: consigne de rédaction (`orchestration._PROMPT_REDACTION`) en tire sa règle, avec
+#: les mêmes mots : une carte qui attend sa réponse porte ses gestes, et la parole
+#: ne les redit pas — vu sur le réel, « vous pouvez la valider telle quelle, me dire
+#: ce qu'il faut y changer ou l'écarter » juste au-dessus des trois boutons qui le
+#: disent. Sans ce fait, le modèle ne peut pas savoir qu'une carte les montre.
+FAIT_DE_LA_DEMANDE = (
+    "Juste sous ton message, une carte attend sa réponse : ses gestes sont sur elle, "
+    "sous ses yeux."
+)
+
+
+def faits_pour_la_redaction(faits: str, reponse: ReponseChat) -> str:
+    """Les faits d'un geste, et ce que le message qui en parlera porte sous lui (#1339).
+
+    Dérivé de la réponse qui portera la parole — jamais écrit chemin par chemin :
+    un chemin neuf qui pose une demande en informe la rédaction sans rien savoir de
+    cette règle, et un chemin qui n'en pose pas ne l'annonce pas.
+    """
+    if not reponse.porte_une_demande:
+        return faits
+    return f"{faits}\n{FAIT_DE_LA_DEMANDE}"
+
 
 @dataclass(frozen=True)
 class FragmentChat:
@@ -3149,16 +3190,19 @@ class ServiceChat:
         Les faits suffisent, comme pour le récit de fin (#1224).
         """
         fil = self._resoudre(agent, conversation)
+        reponse = ReponseChat(contenu="", recrutement=demande)
         try:
-            contenu = await self._repondeur.rediger(agent, (), faits=faits)
+            # La demande attend sous le message, avec ses gestes : le répondeur l'apprend
+            # du message lui-même, et ne les redit pas (#1339).
+            contenu = await self._repondeur.rediger(
+                agent, (), faits=faits_pour_la_redaction(faits, reponse)
+            )
         except Exception as exc:
             raise ReponseIndisponible(
                 f"l'agent {agent.nom} n'a pas pu rédiger la demande de renfort : {exc}"
             ) from exc
         return await self._persister_reponse(
-            agent,
-            conversation=fil,
-            reponse=ReponseChat(contenu=contenu, recrutement=demande),
+            agent, conversation=fil, reponse=replace(reponse, contenu=contenu)
         )
 
     async def raconter_la_fin(
