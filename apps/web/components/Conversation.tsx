@@ -324,6 +324,7 @@ import { AnnonceIssueRun } from "@/components/runs/AnnonceIssueRun";
 import { mesureDesMessages } from "@/lib/annonces";
 import { ErreurReponse, ErreurSource } from "@/lib/api";
 import { useBrouillon } from "@/lib/brouillons";
+import { cheminASesSeparateurs } from "@/lib/chemin";
 import { ascenseurDe, estEnBas, positionEnBas } from "@/lib/defilement";
 import { equipeCreeeEnUneLigne } from "@/lib/equipe";
 import { tachesOuvertes } from "@/lib/execution";
@@ -1710,25 +1711,6 @@ function Bulle({
  * à côté des mots du modèle. Même ligne, même jeton, même renvoi — ici vers
  * l'écran des agents, où l'équipe se relit.
  */
-/**
- * Un chemin qui ne se coupe qu'à ses séparateurs : une occasion de coupure
- * (`<wbr>`) après chaque `/`, et `break-words` en dernier recours pour un nom de
- * dossier plus large que la colonne entière.
- */
-function cheminASesSeparateurs(chemin: string): ReactNode {
-  const segments = chemin.split("/");
-  return segments.map((segment, rang) => (
-    <Fragment key={rang}>
-      {segment}
-      {rang < segments.length - 1 && (
-        <>
-          /<wbr />
-        </>
-      )}
-    </Fragment>
-  ));
-}
-
 function Suite({
   message,
   pieceTranchee,

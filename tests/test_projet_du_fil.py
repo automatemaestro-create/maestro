@@ -91,6 +91,7 @@ class JugeQuiNote(ModelProvider):
         self.verdict = verdict
         self.juges: list[str] = []
         self.systemes: list[str] = []
+        self.redactions: list[str] = []
 
     def supports(self, model: str) -> bool:
         return True
@@ -102,6 +103,7 @@ class JugeQuiNote(ModelProvider):
         if "tu décides ce qu'il faut LIRE" in systeme:
             return "RIEN"
         if "Il vient de se passer quelque chose" in systeme:
+            self.redactions.append(prompt)
             return "C'est noté."
         self.juges.append(prompt)
         self.systemes.append(systeme)
@@ -363,6 +365,9 @@ def test_approuvee_depuis_un_autre_projet_elle_s_execute_dans_le_sien(
         assert run_id not in _runs_de(client, ids["carnet"])
     assert moteur.projets == [ids["depensio"]]
     assert moteur.objectifs == [OBJECTIF]
+    # Et le modèle qui en parle sait où le run est parti — pas dans la fenêtre
+    # d'où la personne a cliqué.
+    assert "Il travaille dans le projet « depensio »" in juge.redactions[-1]
 
 
 class JugeEnDeuxTours(JugeQuiNote):

@@ -492,6 +492,35 @@ Le cadre dit la règle qu'on en tire — s'appuyer sur ces faits, avouer ce qu'i
 ne disent pas, tenir une borne pour celle de son run — et rien d'autre : aucune
 phrase interdite, aucun lexique (#1169). Ce qu'il en dit reste son jugement.
 
+## Le fil sait sur quel projet il travaille (#1180)
+
+Le prompt du juge ne portait que des compteurs : ni le nom du projet dont on lui
+parlait, ni son dossier, ni son outillage. Et le fil étant commun à tous les
+projets, le geste partait avec le projet de la fenêtre **au moment du clic** : une
+proposition faite sur A, approuvée en regardant B, s'exécutait dans B ; sans
+projet, le run partait quand même et n'apparaissait dans la liste d'aucun. Trois
+gestes, et chacun a son gardien :
+
+- **le projet de la conversation entre au contexte** (`bloc_du_projet`) — nom,
+  dossier, et l'outillage tel qu'un agent le reçoit (`outillage_en_clair`, sur
+  `outillage_du_projet`) : le chemin des instructions et l'index des skills, pas
+  leur contenu, qui se lit au tour de lecture quand la question en dépend.
+  L'équipe a déjà son bloc (#1223) ;
+- **une proposition garde son projet** (`ReponseChat.projet_vise`, écrit en
+  proposant). Le geste l'exécute là (`ServiceChat.trancher_cadrage` lit la
+  demande, plus la fenêtre), et un « oui » tapé aussi (`_projet_de_l_accord`) ;
+- **sans projet, aucun run** — et ce n'est pas une sonde qui le dit, c'est
+  l'absence même de projet. Le juge reçoit le fait (`FAIT_SANS_PROJET`) et la règle
+  (son cadre) : il propose de créer le projet — le verdict `projet` de #1294 — ou
+  d'en prendre un parmi ceux déjà déclarés. Le canal tient la structure comme pour
+  un projet sans équipe : aucune carte de run, et `_ouvrir_un_run` refuse de lui-même
+  (`PHRASE_RUN_SANS_PROJET`) ce qu'une proposition d'avant ce lot laisserait passer.
+
+La sonde du projet (`ProjetDuFil`) ne ferme la porte que sur un fait : la fenêtre
+n'a pas de projet, ou il n'est pas déclaré. Sans sonde, ou quand elle lève, le
+projet est nommé par son identifiant et le run part — « je ne sais pas » ne bride
+rien (`_sans_equipe`, #1146). Gardé par `tests/test_projet_du_fil.py`.
+
 ## Ce qui est gardé, et par quoi (#688)
 
 `tests/test_chat_global.py` tient le tout, sans réseau, sans modèle et sans
@@ -1357,7 +1386,9 @@ def _faits_du_refus(objectif: str) -> str:
     )
 
 
-def _faits_du_lancement(objectif: str, bornes: BornesRun = AUCUNE_BORNE) -> str:
+def _faits_du_lancement(
+    objectif: str, bornes: BornesRun = AUCUNE_BORNE, projet: ProjetVise | None = None
+) -> str:
     """Le run proposé a été accepté d'un geste — et il est ouvert.
 
     Ce qu'un run fait **d'abord** est dit en toutes lettres : sans lui, le modèle
@@ -1367,9 +1398,14 @@ def _faits_du_lancement(objectif: str, bornes: BornesRun = AUCUNE_BORNE) -> str:
     Ses **bornes** aussi (#1323), celles que le geste vient de poser, « aucune »
     comprise : ce sont celles de ce run-là, et le modèle n'a plus à les déduire
     d'un run passé.
+
+    Son **projet** enfin (#1180) : celui de la proposition, où le run est parti —
+    pas forcément celui que la personne regarde, puisque le geste a pu venir d'un
+    autre projet.
     """
+    ou = f" Il travaille dans le projet {projet.en_phrase()}." if projet is not None else ""
     return (
-        f"L'utilisateur a accepté, d'un geste, de lancer le run sur : « {objectif} ». "
+        f"L'utilisateur a accepté, d'un geste, de lancer le run sur : « {objectif} ».{ou} "
         "Le run est ouvert : il commence par cadrer le travail et le découper en "
         "tâches, que l'équipe prendra ensuite — rien n'est encore écrit dans le "
         "projet. Son identifiant et son avancement s'affichent d'eux-mêmes juste "
@@ -2926,7 +2962,9 @@ class RepondeurOrchestration(RepondeurChat):
         )
         if not lance.run_id:
             return lance
-        faits = self._avec_regime(_faits_du_lancement(objectif, bornes), projet_id)
+        faits = self._avec_regime(
+            _faits_du_lancement(objectif, bornes, self._projet_vise(projet_id)), projet_id
+        )
         return await self._parole_sur(agent, fil, lance, faits=faits)
 
     async def recruter(
