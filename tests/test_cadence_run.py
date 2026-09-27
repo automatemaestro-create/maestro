@@ -175,7 +175,7 @@ def _projet_git(tmp_path: Path) -> tuple[ProjetStore, Projet]:
 
 
 def _tache(id_: str, projet_id: str | None, *, dependances: tuple[str, ...] = ()) -> Task:
-    """Une tâche confiée au développeur, seul rôle outillé monté ici ; son livrable porte son nom."""
+    """Une tâche confiée au développeur, seul rôle outillé monté ici ; le livrable porte son nom."""
     return Task(
         id=id_,
         titre=f"Tâche {id_}",
@@ -427,7 +427,8 @@ def test_sur_accord_le_projet_devient_un_depot_et_ses_taches_partent_chacune_dan
     # La proposition : dans le fil, sur la carte d'une question du run, avec sa raison.
     [demande] = fil.demandes
     assert demande.tache_id == "" and demande.run_id == RUN
-    assert demande.retirer_sans_reponse, "une proposition du run quitte le fil quand elle ne vaut plus"
+    # Une proposition du run quitte le fil quand elle ne vaut plus.
+    assert demande.retirer_sans_reponse
     assert demande.choix == (CHOIX_VERSIONNER, CHOIX_GARDER)
     assert demande.hypothese == HYPOTHESE_VERSIONNEMENT
     assert "le projet « p3 » n'est pas versionné" in demande.question
@@ -508,10 +509,11 @@ def test_sans_reponse_le_run_continue_une_tache_a_la_fois(tmp_path: Path) -> Non
                     await asyncio.sleep(0.01)
             return await super().run_agent(prompt, **kwargs)
 
+    plan = _plan(("t1", ()), ("t2", ()))
     asyncio.run(
-        _moteur(
-            _QuiAttendLaBorne(), depot, _plan(("t1", ()), ("t2", ())), fil=_Fil(None), attente_s=0.05
-        ).run("Un site", journal=journal, projet_id=projet.id)
+        _moteur(_QuiAttendLaBorne(), depot, plan, fil=_Fil(None), attente_s=0.05).run(
+            "Un site", journal=journal, projet_id=projet.id
+        )
     )
 
     assert not (Path(projet.racine) / ".git").exists()
@@ -527,8 +529,9 @@ def test_un_run_fini_avant_la_reponse_retire_la_proposition_et_le_dit(tmp_path: 
     depot, projet = _projet_nu(tmp_path)
     journal = RunJournal(run_id=RUN)
 
+    plan = _plan(("t1", ()), ("t2", ()))
     rapport = asyncio.run(
-        _moteur(_Ecrivain(), depot, _plan(("t1", ()), ("t2", ())), fil=_Fil(None), attente_s=60).run(
+        _moteur(_Ecrivain(), depot, plan, fil=_Fil(None), attente_s=60).run(
             "Un site", journal=journal, projet_id=projet.id
         )
     )
@@ -627,7 +630,10 @@ def test_le_versionnement_accorde_passe_devant_les_taches_qui_attendaient_l_atel
     fournisseur.retenues["t1.md"] = asyncio.Event()
     runtimes = {DEVELOPER_PROFILE.nom: AgentRuntime(fournisseur, DEVELOPER_PROFILE)}
     executeur = _Instrumente(
-        fournisseur, runtimes=runtimes, projets=depot, guardrails=Guardrails(validateur=_Validateur())
+        fournisseur,
+        runtimes=runtimes,
+        projets=depot,
+        guardrails=Guardrails(validateur=_Validateur()),
     )
     journal = RunJournal(run_id=RUN)
 

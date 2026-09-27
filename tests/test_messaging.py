@@ -233,14 +233,16 @@ def test_handoff_annonce_puis_debloque_la_tache_aval():
     etapes = [r.etape for r in journal.records]
     # L'annonce du handoff est consignée entre la fin de la tâche amont et le
     # démarrage (#98) de la tâche aval : l'échange précède (et débloque) l'exécution.
+    # La chaîne se dit elle-même avant la première tâche (#1298, étape `cadence`).
     assert etapes == [
         "planification",
+        "cadence",
         "schema-bdd:debut", "schema-bdd", "schema-bdd:message",
         "api-taches:debut", "api-taches", "api-taches:message",
         "tests-api:debut", "tests-api",  # dernière tâche du plan : pas d'annonce
     ]
 
-    annonce = journal.records[3]
+    annonce = next(r for r in journal.records if r.etape == "schema-bdd:message")
     assert annonce.agent == "bdd" and annonce.statut == STATUT_ENVOYE
     assert "la main passe" in annonce.nom
     assert "handoff" in annonce.sortie

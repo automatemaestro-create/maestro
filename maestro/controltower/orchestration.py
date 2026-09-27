@@ -2126,8 +2126,8 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     # passent-elles une à une ? », et dire si le versionnement proposé attend
     # encore une réponse. Des phrases composées par le moteur, donc bornées par
     # construction : elles passent entières, sans la coupe d'un détail d'agent.
-    for cause in execution.cadence.values():
-        phrase = " ".join(str(cause.get("phrase") or "").split())
+    for constat in execution.cadence.values():
+        phrase = " ".join(str(constat.get("phrase") or "").split())
         if phrase:
             lignes.append(f"  cadence : {phrase}")
     taches = state.taches(run=PorteeRun.run(execution.run_id))

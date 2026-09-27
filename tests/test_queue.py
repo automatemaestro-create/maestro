@@ -482,14 +482,18 @@ def test_boucle_complete_via_la_file(app):
     assert "appel #1" in str(exec_provider.calls[1]["prompt"])
     assert "appel #2" in str(exec_provider.calls[2]["prompt"])
 
-    # Chaque étape est consignée au journal de l'orchestrateur.
+    # Chaque étape est consignée au journal de l'orchestrateur — et la chaîne se
+    # dit avant la première tâche (#1298) : ses tâches passent une à une.
     assert [rec.etape for rec in journal.records] == [
         "planification",
+        "cadence",
         "schema-bdd",
         "api-taches",
         "tests-api",
     ]
-    assert all(rec.statut == "terminee" for rec in journal.records)
+    assert all(
+        rec.statut == "terminee" for rec in journal.records if rec.etape != "cadence"
+    )
 
 
 def test_une_dependance_en_echec_ne_met_jamais_l_aval_en_file(app):
@@ -519,6 +523,7 @@ def test_une_dependance_en_echec_ne_met_jamais_l_aval_en_file(app):
     assert all(r.worker == "" for r in aval)
     assert [rec.statut for rec in journal.records] == [
         "terminee",  # planification
+        "une_a_une",  # cadence (#1298) : le plan est une chaîne
         "echec",  # schema-bdd (racine)
         "bloquee",  # api-taches
         "bloquee",  # tests-api
