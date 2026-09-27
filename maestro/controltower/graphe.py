@@ -284,6 +284,32 @@ class GrapheRun:
     aretes: tuple[AreteGraphe, ...] = ()
     niveaux: tuple[tuple[str, ...], ...] = ()
     plan_connu: bool = False
+    # Pourquoi les tâches passent une à une (#1298) : les causes que le moteur a
+    # dites de ce run (`maestro.engine.cadence.Cadence.to_dict`), levées comprises.
+    # `largeur` dit ce que le plan **autorise** ; celles-ci disent ce qui, dans le
+    # moteur, l'en empêche — c'est la moitié de l'ordonnancement que le graphe ne
+    # prétendait pas rendre, lue là où elle est sue et non recalculée ici.
+    cadence: tuple[Mapping[str, Any], ...] = ()
+
+    @property
+    def causes_de_cadence(self) -> tuple[dict[str, Any], ...]:
+        """Les causes qui **tiennent** : ni levées, ni muettes — ce que la vue montre.
+
+        Une cause levée (projet versionné pendant le run) sort de la vue : un plan
+        large sur un projet versionné n'a rien à expliquer. Ses mots restent dans
+        la projection, où le fil les relit.
+        """
+        return tuple(
+            {
+                "cle": str(cause.get("cle") or ""),
+                "cause": str(cause.get("cause") or ""),
+                "agent": str(cause.get("agent") or ""),
+                "mention": str(cause.get("mention") or ""),
+                "phrase": str(cause.get("phrase") or ""),
+            }
+            for cause in self.cadence
+            if not cause.get("liberee") and str(cause.get("mention") or "")
+        )
 
     @property
     def plat(self) -> bool:
@@ -354,6 +380,10 @@ class GrapheRun:
             "noeuds": [noeud.to_dict() for noeud in self.noeuds],
             "aretes": [arete.to_dict() for arete in self.aretes],
             "niveaux": [list(niveau) for niveau in self.niveaux],
+            # Pourquoi les tâches passent une à une (#1298) — vide quand elles
+            # partent de front, ou quand le moteur n'en a rien dit. Un client qui
+            # ignore la clé lit exactement la forme d'avant.
+            "cadence": list(self.causes_de_cadence),
         }
 
 
@@ -396,6 +426,7 @@ def graphe_du_run(
     etats: Mapping[str, EtatNoeud],
     *,
     plan_connu: bool = True,
+    cadence: Sequence[Mapping[str, Any]] = (),
 ) -> GrapheRun:
     """Compose le graphe d'un run à partir de son plan et de l'état de ses tâches.
 
@@ -464,4 +495,5 @@ def graphe_du_run(
         aretes=aretes,
         niveaux=niveaux,
         plan_connu=plan_connu,
+        cadence=tuple(cadence),
     )

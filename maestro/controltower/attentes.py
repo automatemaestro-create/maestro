@@ -75,6 +75,7 @@ from maestro.controltower.reglements import (
 )
 from maestro.controltower.state import (
     QUESTION_REPONDUE,
+    QUESTION_RETIREE,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_APPROUVEE,
     VALIDATION_REFUSEE,
@@ -216,6 +217,15 @@ class ServiceAttentes:
             return ReglementRefuse(
                 MOTIF_ATTENTE_INCONNUE,
                 f"aucune question d'agent ne porte l'identifiant {question_id}.",
+            )
+        if question.statut == QUESTION_RETIREE:
+            # Une proposition du run passée sa borne, ou dont le run est fini (#1298) :
+            # y répondre ne ferait plus rien, et le dire vaut mieux que d'accepter un
+            # geste que personne n'écoute.
+            return ReglementRefuse(
+                MOTIF_ATTENTE_REGLEE,
+                "cette question a été retirée sans réponse, elle ne vaut plus : le run "
+                "qui la posait ne l'attend plus.",
             )
         if not question.en_attente:
             return ReglementRefuse(

@@ -123,6 +123,7 @@ class StepRecord:
     plan: list[NoeudPlan] = field(default_factory=list)
     brief: dict[str, Any] | None = None
     verification: dict[str, Any] | None = None
+    cadence: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la trace en dict JSON-sérialisable (la ligne du journal)."""
@@ -163,6 +164,10 @@ class StepRecord:
             # le seul chemin par lequel il atteint le panneau de détail de la tâche
             # — la preuve en clair de `description` se lit, elle ne se range pas.
             "verification": self.verification,
+            # La cadence du run (#1298), portée par la seule étape `cadence` :
+            # pourquoi ses tâches passent une à une, et ce qu'est devenue la
+            # proposition qui les libérerait. Le pont en fait un `run.cadence`.
+            "cadence": self.cadence,
         }
 
 
@@ -218,6 +223,7 @@ class RunJournal:
         plan: Sequence[NoeudPlan] = (),
         brief: Mapping[str, Any] | None = None,
         verification: Mapping[str, Any] | None = None,
+        cadence: Mapping[str, Any] | None = None,
     ) -> StepRecord:
         """Consigne une étape (textes expurgés des secrets) et émet sa ligne JSON."""
         record = StepRecord(
@@ -258,6 +264,10 @@ class RunJournal:
             verification=(
                 _expurge(verification) if verification is not None else None
             ),
+            # Expurgée comme la sortie (#1298) : le motif d'une mise sous Git
+            # refusée est le message de Git, qui cite des chemins et pourrait citer
+            # pire — la règle de `sortie` vaut pour lui aussi.
+            cadence=_expurge(cadence) if cadence is not None else None,
         )
         self._records.append(record)
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))

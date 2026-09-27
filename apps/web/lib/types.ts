@@ -2500,6 +2500,27 @@ export type GrapheRun = {
   noeuds: NoeudGraphe[];
   aretes: AreteGraphe[];
   niveaux: string[][];
+  /**
+   * Pourquoi les tâches passent **une à une** (#1298) — les causes que le moteur a
+   * constatées et qui tiennent encore. Vide quand elles partent de front.
+   * Optionnelle : un graphe servi avant ce lot n'en porte pas.
+   */
+  cadence?: CauseCadence[];
+};
+
+/**
+ * Une cause qui fait passer les tâches d'un run une à une (#1298) — plan en
+ * chaîne, projet non versionné, agent au complet —, telle que le moteur l'a dite
+ * (`maestro/engine/cadence.py`). `mention` est ce que la vue affiche à côté des
+ * chiffres du graphe, `phrase` la même cause en toutes lettres, celle que le fil
+ * lit. Les mots viennent du moteur : l'écran ne les compose pas.
+ */
+export type CauseCadence = {
+  cle: string;
+  cause: string;
+  agent: string;
+  mention: string;
+  phrase: string;
 };
 
 /**

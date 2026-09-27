@@ -89,6 +89,14 @@ _ETAPE_BRIEF = "brief"
 #: nommée « equipe » sur le Kanban.
 _ETAPE_EQUIPE = "equipe"
 
+#: Étape du journal qui n'est pas une tâche : la **cadence** du run (#1298 — cf.
+#: `maestro.telemetry.costs.ETAPE_CADENCE`) — pourquoi ses tâches passent une à
+#: une, et ce qu'est devenue la proposition de versionner le projet. Même raison
+#: d'être déclarée ici que `equipe` : sans elle, une carte fantôme « cadence ».
+#: Elle porte en plus son fait structuré (`cadence`), que l'activité transporte
+#: jusqu'à la projection — comme l'étape `brief` porte le brief rédigé.
+_ETAPE_CADENCE = "cadence"
+
 #: Étape du journal qui n'est pas une tâche : la **décision au plafond de
 #: dépense** (#1182 — cf. `maestro.telemetry.costs.ETAPE_PLAFOND`). Deux lignes par
 #: franchissement — la question, puis ce qui a été décidé —, sur le run entier.
@@ -98,12 +106,14 @@ _ETAPE_PLAFOND = "plafond"
 
 #: Étapes rattachées au **run**, pas à une tâche : elles deviennent des activités
 #: d'agent sans `tache_id` (l'orchestrateur cadre, planifie puis confronte
-#: l'équipe au plan, le moteur reprend, le run attend sa décision au plafond).
+#: l'équipe au plan et dit la cadence du run, le moteur reprend, le run attend sa
+#: décision au plafond).
 _ETAPES_RUN = (
     _ETAPE_PLANIFICATION,
     _ETAPE_BRIEF,
     _ETAPE_REPRISE,
     _ETAPE_EQUIPE,
+    _ETAPE_CADENCE,
     _ETAPE_PLAFOND,
 )
 
@@ -452,6 +462,8 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     # `:verification` : ailleurs, rien — donc None, et la projection ne touche à
     # rien de ce que la tâche montrait déjà.
     verification = record.get("verification")
+    # La cadence du run (#1298), portée par la seule étape `cadence`.
+    cadence = record.get("cadence") if etape == _ETAPE_CADENCE else None
     return (
         Event(
             type=type_evenement,
@@ -492,6 +504,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
                 if etape.endswith(_SUFFIXE_VERIFICATION) and isinstance(verification, Mapping)
                 else None
             ),
+            cadence=dict(cadence) if isinstance(cadence, Mapping) else None,
             horodatage=str(record.get("horodatage", "")),
         ),
         *(

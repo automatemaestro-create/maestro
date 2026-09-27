@@ -990,6 +990,10 @@ Sur "attente", ajoute à l'objet de la dernière ligne une clé "attente" :
   rien de ce qui attend ne correspond : ta réponse le dit ;
 - "texte" : sur "reponse", la réponse que l'agent lira — ce que la personne lui
   répond, avec ses mots, adressé à l'agent, sans rien y ajouter ni en retirer ;
+  quand la question porte des choix et que la personne en retient un ("oui,
+  versionne-le", "prends le premier"), le texte est CE choix, recopié mot pour
+  mot : c'est lui que la question reconnaît, et un choix comme « Versionner le
+  projet » est le seul geste qui écrive ce qu'il annonce ;
   sur "refus", la raison que la personne donne, avec ses mots ("archive plutôt"),
   vide si elle n'en donne aucune ; vide sur "approbation". Cette raison est
   consignée avec la décision ; l'agent, lui, n'apprend que le refus : ne dis pas
@@ -2293,6 +2297,15 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     issue = _borne(_issue_du_run(execution))
     if issue:
         lignes.append(f"  issue : {issue}")
+    # Pourquoi ses tâches passent une à une (#1298) — ce que le moteur a constaté,
+    # jamais deviné : c'est ce qui laisse le fil répondre à « pourquoi mes tâches
+    # passent-elles une à une ? », et dire si le versionnement proposé attend
+    # encore une réponse. Des phrases composées par le moteur, donc bornées par
+    # construction : elles passent entières, sans la coupe d'un détail d'agent.
+    for constat in execution.cadence.values():
+        phrase = " ".join(str(constat.get("phrase") or "").split())
+        if phrase:
+            lignes.append(f"  cadence : {phrase}")
     taches = state.taches(run=PorteeRun.run(execution.run_id))
     if not taches:
         lignes.append("  tâches : aucune tâche connue de ce run.")
