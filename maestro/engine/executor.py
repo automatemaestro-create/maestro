@@ -3106,8 +3106,8 @@ class LocalExecutor(TaskExecutor):
         (`on_livraison`), qui la joue l'espace ouvert et rend à l'agent ce qui ne
         tient pas ; sur le chemin texte, il n'y a pas d'espace, donc la boucle vit
         ici — chaque livrable est relu, et ce qui ne tient pas repart au modèle
-        avec le livrable précédent et ses preuves. Le mot-clé ne part que s'il y a
-        une recette : sans vérificateur, l'appel au runtime est celui d'avant.
+        avec le livrable précédent et ses preuves. Sans vérificateur, la recette
+        vaut None et le runtime livre la première livraison, comme avant.
         """
         deliberation = deliberation if deliberation is not None else Deliberation()
         runtime = self._runtime_de(agent)
@@ -3214,7 +3214,7 @@ class LocalExecutor(TaskExecutor):
                     projet=self._projet(task),
                     tache_id=task.id,
                     effort=agent.effort,
-                    **({"on_livraison": recette} if recette is not None else {}),
+                    on_livraison=recette,
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
