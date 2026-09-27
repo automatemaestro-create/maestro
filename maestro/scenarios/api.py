@@ -526,6 +526,17 @@ class ClientAPI:
         """Oublie la déclaration — le dossier sur le disque, lui, reste (#221)."""
         self._appel("DELETE", f"/api/projets/{projet_id}", attendus=(200, 404))
 
+    def versionner_projet(self, projet_id: str) -> dict[str, Any]:
+        """Met le projet sous Git par le geste de l'écran Projets (#855) et rend sa fiche.
+
+        Le verbe du produit (`ProjetStore.versionner`, #704) : `git init` et un
+        premier commit de la racine. Le banc ne touche jamais à Git lui-même.
+        """
+        fiche: dict[str, Any] = dict(
+            self._appel("POST", f"/api/projets/{projet_id}/versionner") or {}
+        )
+        return fiche
+
     def projets(self) -> list[dict[str, Any]]:
         """Les projets déclarés, tels que l'API les sert — racine canonicalisée, VCS constaté."""
         fiches: list[dict[str, Any]] = list(self._appel("GET", "/api/projets") or [])

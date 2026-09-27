@@ -154,6 +154,22 @@ export function aucuneBorne(bornes: BornesRun): boolean {
  */
 export function phraseDesBornes(bornes: BornesRun): string {
   if (aucuneBorne(bornes)) return "Aucune borne — le run ira jusqu'au bout.";
+  return effetsDesBornes(bornes);
+}
+
+/**
+ * Les bornes **appliquées** à un run, en fin de ligne (#1184) — « Bornes : … »
+ * sous la bulle qui l'a ouvert. La même phrase que `phraseDesBornes`, sans la
+ * majuscule ni le point que la sienne porte quand elle se lit seule : ici elle
+ * suit un libellé, sur la ligne des faits.
+ */
+export function bornesEnLigne(bornes: BornesRun): string {
+  if (aucuneBorne(bornes)) return "aucune — le run ira jusqu'au bout";
+  return effetsDesBornes(bornes);
+}
+
+/** Ce que chaque borne posée fait, joint par « · » — le cœur des deux phrases. */
+function effetsDesBornes(bornes: BornesRun): string {
   const morceaux: string[] = [];
   if (bornes.plafond_cout_usd !== null) {
     morceaux.push(`s'interrompt à ${formatCout(bornes.plafond_cout_usd)}`);

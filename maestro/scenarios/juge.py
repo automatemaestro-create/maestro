@@ -1,9 +1,10 @@
 """Les oracles qui portent sur une **phrase** : un modèle juge (#1148, #746, #1224, #1162).
 
-Six des dix scénarios se jugent sur des faits seulement — un dossier vide, une
+Sept des onze scénarios se jugent sur des faits seulement — un dossier vide, une
 application qui s'exécute, une équipe écrite sur le disque, une tâche prise par
 le rôle recruté, un projet déclaré sur le dossier demandé, une demande de
-validation née et un registre intact hors du projet. Deux portent sur des
+validation née et un registre intact hors du projet, deux tâches en cours en
+même temps dans la trace datée d'un run. Deux portent sur des
 phrases : « pourquoi le run a-t-il échoué ? » (S4) et « comment j'essaie ce que
 tu viens de livrer ? » (S5). Deux, enfin, sur une **pertinence** : l'outillage et
 l'équipe d'un projet qu'aucune liste ne prévoyait lui correspondent-ils (S9, S10) ?

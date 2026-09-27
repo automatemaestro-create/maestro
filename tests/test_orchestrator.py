@@ -430,6 +430,27 @@ def test_le_format_de_sortie_d_une_action_est_un_etat():
     assert "jamais un fichier à produire" in texte
 
 
+def test_le_plan_degage_le_travail_qui_se_fait_de_front():
+    """#1299 : « ne relier que les dépendances réelles » ne suffisait pas à faire
+    **dégager** l'indépendance — les deux runs de `p3` avaient une largeur de 1.
+
+    La règle positive, et l'exemple du ticket : des éléments de même nature qui se
+    livrent séparément font une tâche chacun, sans dépendance entre eux, même pour
+    un seul rôle. Ce qu'ils partagent monte dans une tâche amont ou s'écrit dans
+    chacun, jamais par une chaîne ; ce qui les réunit dépend d'eux tous. Et la
+    fourchette de tâches ne tient pas contre ce découpage.
+    """
+    texte = _playbook()
+
+    assert "Le travail qui se fait de front" in texte
+    assert "même confiées au même rôle" in texte
+    assert "une tâche par élément" in texte
+    assert "« maquetter les quatre sections du site » est quatre tâches" in texte
+    assert "ne les enchaîne jamais pour qu'ils se le transmettent" in texte
+    assert "une tâche qui dépend d'eux tous" in texte
+    assert "c'est la fourchette qui se relit, pas le découpage" in texte
+
+
 def test_le_playbook_cadre_sur_l_equipe_reste_celui_du_document():
     """Garde de non-régression sur le chargeur (#1041) : le document servi à une
     équipe donnée porte les mêmes règles que celui du code, marqueurs substitués."""

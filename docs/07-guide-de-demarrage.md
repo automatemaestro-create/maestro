@@ -281,7 +281,10 @@ L'effet est **réel** sur l'exécution : un agent **désactivé** est écarté d
 du routage — la tâche va au meilleur agent restant, ou part en repli « à assigner » —
 et refuse aussi la réassignation manuelle (422) ; le plafond d'**instances** borne ses
 exécutions simultanées — une tâche routée vers un agent au complet attend qu'un créneau
-se libère (par défaut : une instance par agent). L'état de capacité est **reflété en
+se libère. Un agent dont on n'a pas fixé les instances en prend, sur un projet versionné,
+autant que le plan laisse partir de tâches de front, trois au plus (#1299) — le run
+l'annonce dans son journal ; sur un projet non versionné, une tâche à la fois (#839). Des
+instances posées ici sont fixées, une seule comprise. L'état de capacité est **reflété en
 temps réel** sur les fiches (événement `agent.capacite` sur le WebSocket). Limite POC :
 la jauge d'instances est par process (pas encore de coordination inter-workers, EF-16).
 Détails : [`core/capacite/README.md`](../core/capacite/README.md).

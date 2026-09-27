@@ -166,7 +166,9 @@ Un agent spécialisé. Champs clés :
 - `role` : `chef_de_projet`, `developpeur`, `bdd`, `devops`, `designer`, `qa`, ou personnalisé.
 - `modele` : le modèle utilisé (ex. *Opus*, *Sonnet*, *Haiku*).
 - `prompt_systeme` : l'identité et les contraintes de l'agent.
-- `instances_max` : nombre d'instances parallèles autorisées (contrôle de capacité).
+- `instances_max` : nombre d'instances parallèles autorisées (contrôle de capacité). Fixé par la
+  personne, il l'emporte toujours ; non fixé, il se **dérive du plan** de chaque run sur un projet
+  versionné — sa largeur, bornée à trois, annoncée au journal du run (#1299).
 - `actif` : activé/désactivé.
 - `playbook_courant` : la version de playbook en vigueur.
 

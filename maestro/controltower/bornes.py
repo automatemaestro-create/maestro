@@ -63,9 +63,19 @@ def _nombre(valeur: Any) -> float | None:
     Ni validation ni refus (voir le module) : on écarte ce qui n'est pas un
     nombre — `None`, une chaîne vide, un booléen — et on laisse passer le reste,
     `lancer` restant seul juge de ce qui est hors bornes.
+
+    Une chaîne qui **porte** un nombre (« 5 », « 2,50 ») en est un depuis #1184 :
+    les bornes d'un accord tapé viennent du verdict du modèle, qui peut écrire
+    `"5"` pour `5`. L'écarter lancerait sans le plafond que la personne a demandé
+    — exactement le défaut du ticket —, alors que le nombre est là.
     """
     if valeur is None or isinstance(valeur, bool):
         return None
+    if isinstance(valeur, str):
+        try:
+            return float(valeur.strip().replace(",", "."))
+        except ValueError:
+            return None
     if isinstance(valeur, (int, float)):
         return float(valeur)
     return None

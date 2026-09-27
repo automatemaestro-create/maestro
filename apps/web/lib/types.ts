@@ -1395,6 +1395,20 @@ export type ProjetCree = {
 };
 
 /**
+ * Ce qu'un run proposé engagerait (`estimation.EstimationRun`, #1184) : les tâches
+ * attendues et la fourchette de dépense, découpage compris — la méthode et les
+ * coûts de référence d'`estimerSuite` (`lib/estimation`), chiffrés côté API parce
+ * que le fil en parle aussi. `estimees` est faux quand le compte n'est que le
+ * plancher, faute d'estimation du modèle : ce n'est pas la même chose à dire.
+ */
+export type EstimationRun = {
+  taches: number;
+  bas_usd: number;
+  haut_usd: number;
+  estimees: boolean;
+};
+
+/**
  * Le projet d'une proposition de run (`chat.ProjetVise`, #1180) — son identifiant,
  * que l'exécution suit, et le nom et le dossier que la carte affiche, lus sur la
  * fiche au moment de proposer.
@@ -1611,6 +1625,18 @@ export type MessageChat = {
   reglement_fait?: ReglementFait | null;
   /** Les attentes qu'une demande ambiguë pouvait viser (#1183) — absent ou vide : aucune. */
   attentes_candidates?: AttenteVisee[];
+  /**
+   * Ce que le run proposé engagerait, en ordre de grandeur (#1184) — accompagne
+   * `proposition`, chiffré au moment de proposer. `null` ou absent : aucune
+   * proposition, ou une proposition écrite avant ce ticket.
+   */
+  estimation?: EstimationRun | null;
+  /**
+   * Les bornes **appliquées** au run que ce message a ouvert (#1184) — ce que le
+   * lanceur a reçu, « aucune » comprise, qu'un clic ou une phrase les ait posées.
+   * `null` ou absent : ce message n'a ouvert aucun run.
+   */
+  bornes?: BornesRun | null;
   /** La conversation d'appartenance (#694) — `origine` pour celle d'un agent par défaut. */
   conversation?: string;
   /** La matière résolue que le message embarque (#482) — absente ou vide : aucune. */
