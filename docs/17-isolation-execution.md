@@ -193,7 +193,7 @@ un arbre de processus (`maestro/sandbox/arbre.py`) :
 
 | Plateforme | L'arbre | Ce qui s'en échappe, et comment on le rattrape |
 |---|---|---|
-| Windows | un **Job Object** « tué à la fermeture », où le CLI naît suspendu | un **alias d'application** (le `python` du Microsoft Store) fait naître son processus hors du job — mesuré ; le **veilleur** tient une poignée sur chaque membre, voit ses enfants nés dehors et les **adopte** dans un job à lui |
+| Windows | un **Job Object** « tué à la fermeture », où le CLI naît suspendu | un **alias d'application** (le `python` du Microsoft Store) fait naître son processus hors du job — mesuré ; le **veilleur** tient une poignée sur chaque membre, voit ses enfants nés dehors et les **adopte** dans un job à lui — jamais avant qu'ils aient commencé à vivre (ci-dessous) |
 | Linux | le **groupe** de processus du CLI | un `setsid` ; le lanceur se déclare *subreaper* : l'orphelin lui revient, il est arrêté comme descendant |
 | macOS | le groupe de processus | un `setsid` reste hors d'atteinte |
 
@@ -203,10 +203,24 @@ pas dans son délai de grâce), le signal est intercepté sous POSIX ; sous Wind
 « tué à la fermeture » emporte l'arbre quand le système ferme la poignée du lanceur
 mort — sans relevé, et rien n'est alors affirmé.
 
+**Un évadé qui n'a pas fini de naître n'est jamais touché** (#1367). Tous les `python`
+du Store d'un poste partagent **un seul conteneur AppX**, quelle que soit la copie de
+travail qui les a lancés. L'activation du paquet fait naître le processus suspendu,
+l'ajoute au conteneur puis le relâche ; le ranger dans un job ou le tuer pendant ces
+quelques millisecondes fait échouer l'activation, et le système détruit alors le
+conteneur : tous les `python` du poste meurent à la même seconde — la panne du
+2026-09-27, reproduite sur le poste. Le veilleur attend donc qu'un évadé suspendu soit
+relâché pour l'adopter ; suspendu, il ne lance rien. Celui que son créateur, tué entre
+sa naissance et sa relâche (Git Bash fait naître ses enfants suspendus), ne relâchera
+plus est achevé une fois l'échéance passée ; tant que son créateur vit, il n'est
+jamais touché. Le détail et les mesures sont dans l'en-tête de `maestro/sandbox/arbre.py`.
+
 **Ce qui n'est pas confiné, et le dit** : un poste dont le paquet n'a pas été réinstallé
 (lanceur absent) ou sans CLI trouvable fait tourner la session comme avant, avec une
 ligne « session non confinée » au journal. Reste hors d'atteinte, sous Windows, un
 processus né d'un évadé mort avant d'avoir été vu : plus rien ne le relie à l'arbre.
 Tests : `tests/test_confinement.py` — la chaîne réelle (fournisseur, transport du SDK,
 lanceur, faux CLI) en succès, échec et annulation, le `sleep &` de `bash`, l'alias du
-Store, le lanceur terminé en pleine session, et la ligne du journal.
+Store, le lanceur terminé en pleine session, et la ligne du journal ;
+`tests/test_arbre.py` — un évadé suspendu n'est ni adopté ni tué, il l'est une fois
+relâché, et le reste d'un créateur mort est achevé.

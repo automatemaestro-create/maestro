@@ -58,6 +58,38 @@ lui, il est adopté, nommé et arrêté.
 Ce qui reste hors d'atteinte, et se dit : un évadé qui meurt **avant** d'avoir été
 vu en laissant lui-même un orphelin — plus rien ne relie celui-ci à l'arbre.
 
+## Jamais adopter un évadé qui n'a pas fini de naître (#1367)
+
+⚠ Mesuré le 2026-09-28 : **tous les python du Store du poste vivent dans un seul
+conteneur AppX** — un par paquet et par utilisateur, que rejoint chaque activation
+tant qu'il vit, quelle que soit la copie de travail qui l'a lancée. L'activation d'un
+alias fait naître le processus **suspendu**, l'ajoute au conteneur (événement `211`
+du journal `AppModel-Runtime/Admin`), finit l'activation (`201`), puis le relâche.
+Le ranger dans un job **pendant** ces quelques millisecondes fait échouer
+l'activation : avant l'ajout, `212`/`208` `0x80070005` et un « Permission denied »
+pour qui l'a lancé ; entre l'ajout et la fin, l'activation pend, échoue (`208`), et
+le système **détruit le conteneur** (`217`) — tous les python du poste meurent à la
+même seconde, API, bancs et hôtes de toutes les copies. C'était la panne du
+2026-09-27. Reproduite deux fois sur le poste, sentinelle hors de tout job emportée,
+par un veilleur qui adopte sans relâche. Le **tuer** à cet instant a le même effet
+(reproduit une fois). Sont sans effet : pas de veilleur ; arrêter le job de son
+**créateur** en pleine activation (500 coupes) ; tuer ou adopter un évadé dont
+l'activation est finie.
+
+Le veilleur ne touche donc **jamais** un évadé qui n'a pas commencé à vivre : un
+processus dont tous les fils sont suspendus (`_suspendus`) est retenu
+(`_en_activation`), avec son parent, et repris au tour suivant. Rien n'est perdu à
+attendre : suspendu, il ne lance rien. L'arrêt l'attend (`ATTENTE_ACTIVATION_S`) pour
+l'adopter une fois né.
+
+Reste le suspendu qui ne naîtra jamais : Git Bash fait naître ses enfants suspendus
+puis les relâche, et un arrêt qui tombe entre les deux en laisse un — 69 fois sur 300
+clôtures jouées au moment exact où `bash` lance python. Une fois son créateur mort et
+l'échéance passée, bien au-delà de toute activation, il est achevé
+(`_achever_les_abandonnes`) : tuer un tel reste est sans effet sur le conteneur
+(mesuré sur 154 restes). Tant que son créateur vit, il peut encore le relâcher, et il
+n'est jamais touché — il se nomme parmi ce qui vit encore.
+
 ## Nommer ce qu'on arrête, et ce qui résiste
 
 Le confinement doit **dire** ce qu'il a arrêté et, surtout, ce qu'il n'a pas pu
@@ -90,6 +122,16 @@ from typing import IO, Any
 PERIODE_VEILLE_S = 0.2
 PERIODE_REPOS_S = 2.0
 FENETRE_ACTIVITE_S = 5.0
+
+#: Combien de temps, depuis qu'il a été vu suspendu, l'arrêt attend qu'un évadé
+#: **en activation** (voir l'en-tête) ait fini de naître pour l'adopter et l'arrêter,
+#: et à quel pas il regarde. Une activation dure quelques millisecondes (relevé le
+#: 2026-09-28 : suspendu à 5 ms, relâché à 10 ms) ; ce délai n'est atteint que par un
+#: processus qui ne sera jamais relâché — achevé si son créateur est mort, jamais
+#: touché sinon. Large à dessein : tuer une activation qui court encore détruirait le
+#: conteneur du paquet, attendre ne coûte que la durée d'une clôture, rare.
+ATTENTE_ACTIVATION_S = 5.0
+PAS_ACTIVATION_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -526,6 +568,70 @@ if sys.platform == "win32":
             ("szExeFile", ctypes.c_wchar * 260),
         ]
 
+    #: `SystemProcessInformation` : un `_ProcessusSysteme` par processus du poste, chacun
+    #: suivi de ses `_FilSysteme`. Le statut `STATUS_INFO_LENGTH_MISMATCH` dit que le
+    #: tampon est trop petit, et le tampon ne grandit pas au-delà de `_TAMPON_MAX`.
+    _INFO_PROCESSUS_SYSTEME = 5
+    _TAMPON_TROP_PETIT = 0xC0000004
+    _TAMPON_MAX = 64 << 20
+
+    #: `KTHREAD_STATE.Waiting` et `KWAIT_REASON.Suspended` (wdm.h) : un fil qui attend
+    #: qu'on le relâche.
+    _FIL_EN_ATTENTE = 5
+    _ATTENTE_SUSPENSION = 5
+
+    class _ChaineUnicode(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.USHORT),
+            ("MaximumLength", wintypes.USHORT),
+            ("Buffer", ctypes.c_void_p),
+        ]
+
+    class _ProcessusSysteme(ctypes.Structure):
+        """`SYSTEM_PROCESS_INFORMATION`, tel que `winternl.h` le déclare."""
+
+        _fields_ = [
+            ("NextEntryOffset", wintypes.ULONG),
+            ("NumberOfThreads", wintypes.ULONG),
+            ("Reserved1", ctypes.c_byte * 48),
+            ("ImageName", _ChaineUnicode),
+            ("BasePriority", ctypes.c_long),
+            ("UniqueProcessId", ctypes.c_void_p),
+            ("Reserved2", ctypes.c_void_p),
+            ("HandleCount", wintypes.ULONG),
+            ("SessionId", wintypes.ULONG),
+            ("Reserved3", ctypes.c_void_p),
+            ("PeakVirtualSize", ctypes.c_size_t),
+            ("VirtualSize", ctypes.c_size_t),
+            ("Reserved4", wintypes.ULONG),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("Reserved5", ctypes.c_void_p),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("Reserved6", ctypes.c_void_p),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PrivatePageCount", ctypes.c_size_t),
+            ("Reserved7", ctypes.c_longlong * 6),
+        ]
+
+    class _FilSysteme(ctypes.Structure):
+        """`SYSTEM_THREAD_INFORMATION`, tel que `winternl.h` le déclare."""
+
+        _fields_ = [
+            ("Reserved1", ctypes.c_longlong * 3),
+            ("Reserved2", wintypes.ULONG),
+            ("StartAddress", ctypes.c_void_p),
+            ("UniqueProcess", ctypes.c_void_p),
+            ("UniqueThread", ctypes.c_void_p),
+            ("Priority", ctypes.c_long),
+            ("BasePriority", ctypes.c_long),
+            ("Reserved3", wintypes.ULONG),
+            ("ThreadState", wintypes.ULONG),
+            ("WaitReason", wintypes.ULONG),
+        ]
+
     _kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
     _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
     _kernel32.SetInformationJobObject.argtypes = (
@@ -576,6 +682,8 @@ if sys.platform == "win32":
         ctypes.POINTER(ctypes.c_ulonglong),
     )
     _kernel32.GetProcessTimes.restype = wintypes.BOOL
+    _kernel32.GetSystemTimeAsFileTime.argtypes = (ctypes.POINTER(ctypes.c_ulonglong),)
+    _kernel32.GetSystemTimeAsFileTime.restype = None
     _kernel32.CreateIoCompletionPort.argtypes = (
         wintypes.HANDLE,
         wintypes.HANDLE,
@@ -606,6 +714,16 @@ if sys.platform == "win32":
     _kernel32.Process32NextW.restype = wintypes.BOOL
     _ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
     _ntdll.NtResumeProcess.restype = ctypes.c_long
+    _ntdll.NtQuerySystemInformation.argtypes = (
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.ULONG,
+        ctypes.POINTER(wintypes.ULONG),
+    )
+    _ntdll.NtQuerySystemInformation.restype = ctypes.c_long
+
+    #: La taille du dernier tampon qui a suffi : l'instantané suivant la reprend.
+    _taille_instantane_fils = 1 << 20
 
     def _ranger_puis_reprendre(pid: int, *, veiller: bool = False) -> tuple[int | None, Any]:
         """Range le processus suspendu `pid` dans un job, puis le relâche — rend job et veilleur.
@@ -708,6 +826,16 @@ if sys.platform == "win32":
             return None
         return int(creation.value)
 
+    def _age_s(processus: int) -> float:
+        """Depuis combien de secondes le processus est né — `0` si illisible (jamais « vieux »)."""
+        ne = _naissance(processus)
+        if ne is None:
+            return 0.0
+        maintenant = ctypes.c_ulonglong()
+        _kernel32.GetSystemTimeAsFileTime(ctypes.byref(maintenant))
+        # Un FILETIME compte des centaines de nanosecondes.
+        return max(0.0, (int(maintenant.value) - ne) / 10_000_000)
+
     def _instantane() -> list[tuple[int, int]]:
         """`(pid, ppid)` de chaque processus du poste — vide si le système refuse."""
         cliche = _kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
@@ -724,6 +852,57 @@ if sys.platform == "win32":
             return lignes
         finally:
             _kernel32.CloseHandle(cliche)
+
+    def _suspendus(pids: Iterable[int]) -> set[int] | None:
+        """Ceux de `pids` dont **tous** les fils attendent d'être relâchés — `None` si illisible.
+
+        C'est l'état d'un processus que l'activation de son paquet n'a pas fini de
+        faire naître (voir l'en-tête). Un pid absent de l'instantané — mort entre
+        deux regards — n'est pas suspendu, ni un processus sans fil.
+        """
+        global _taille_instantane_fils
+        voulus = set(pids)
+        if not voulus:
+            return set()
+        taille = _taille_instantane_fils
+        while True:
+            tampon = ctypes.create_string_buffer(taille)
+            rendu = wintypes.ULONG()
+            statut = _ntdll.NtQuerySystemInformation(
+                _INFO_PROCESSUS_SYSTEME, tampon, taille, ctypes.byref(rendu)
+            )
+            if statut & 0xFFFFFFFF == _TAMPON_TROP_PETIT and taille < _TAMPON_MAX:
+                # Le poste a pu gagner des processus entre la mesure et l'appel suivant.
+                taille = min(max(taille * 2, int(rendu.value) + (64 << 10)), _TAMPON_MAX)
+                continue
+            if statut != 0:
+                return None
+            _taille_instantane_fils = taille
+            break
+        fin = int(rendu.value)
+        base = ctypes.addressof(tampon)
+        taille_processus = ctypes.sizeof(_ProcessusSysteme)
+        suspendus: set[int] = set()
+        decalage = 0
+        while decalage + taille_processus <= fin:
+            entree = _ProcessusSysteme.from_address(base + decalage)
+            nombre = int(entree.NumberOfThreads)
+            pid = int(entree.UniqueProcessId or 0)
+            if (
+                pid in voulus
+                and nombre > 0
+                and decalage + taille_processus + nombre * ctypes.sizeof(_FilSysteme) <= fin
+            ):
+                fils = (_FilSysteme * nombre).from_address(base + decalage + taille_processus)
+                if all(
+                    f.ThreadState == _FIL_EN_ATTENTE and f.WaitReason == _ATTENTE_SUSPENSION
+                    for f in fils
+                ):
+                    suspendus.add(pid)
+            if not entree.NextEntryOffset:
+                break
+            decalage += int(entree.NextEntryOffset)
+        return suspendus
 
     def _terminer_job(job: int) -> bool:
         """Termine tout ce que le job porte — vrai si le système l'a fait."""
@@ -745,7 +924,10 @@ if sys.platform == "win32":
           dont le parent déclaré est un pid tenu, et né après lui, est bien son
           enfant ;
         - `_isoles` : les évadés que le système a refusé d'adopter, tués un à un
-          à l'arrêt.
+          à l'arrêt ;
+        - `_en_activation` : `pid → ppid` des évadés vus **suspendus** au dernier
+          regard — pas encore nés, donc intouchables (voir l'en-tête, #1367) —, et
+          `_attente_depuis` l'instant où chacun a été vu suspendu la première fois.
 
         Le fil de veille lit le port : une naissance est tenue, une mort est
         soldée ; entre deux messages, il balaie. Le job de l'arbre appartient à
@@ -758,6 +940,8 @@ if sys.platform == "win32":
             self._tenus: dict[int, int] = {}
             self._isoles: dict[int, int] = {}
             self._morts: set[int] = set()
+            self._en_activation: dict[int, int] = {}
+            self._attente_depuis: dict[int, float] = {}
             port = _kernel32.CreateIoCompletionPort(_POIGNEE_INVALIDE, None, 0, 1)
             if not port:
                 raise OSError(ctypes.get_last_error(), "port de complétion refusé")
@@ -818,8 +1002,8 @@ if sys.platform == "win32":
                             with self._verrou:
                                 self._morts.add(pid)
                     if time.monotonic() >= balayage:
-                        self._balayer()
-                        actif = time.monotonic() - activite < FENETRE_ACTIVITE_S
+                        attente = self._balayer()
+                        actif = attente or time.monotonic() - activite < FENETRE_ACTIVITE_S
                         balayage = time.monotonic() + (
                             PERIODE_VEILLE_S if actif else PERIODE_REPOS_S
                         )
@@ -855,19 +1039,71 @@ if sys.platform == "win32":
                     return True
             return False
 
-        def _balayer(self) -> None:
+        def _balayer(self) -> bool:
             """Adopte les évadés de tous les tenus, puis lâche les morts — un seul instantané.
 
             Un mort n'est lâché qu'**après** : ses évadés, devenus orphelins, ne sont
-            reconnaissables que tant que son pid est tenu.
+            reconnaissables que tant que son pid est tenu. Et pas du tout tant qu'un
+            de ses enfants est encore en activation : il faudra le reconnaître au tour
+            suivant — ou l'achever, si ce mort était son créateur. Rend vrai si l'un
+            d'eux est apparu récemment — la veille reste alors serrée ; un suspendu de
+            longue date ne la tient pas éveillée.
             """
             with self._verrou:
                 self.adopter_les_evades()
-                for pid in self._morts:
+                self._achever_les_abandonnes()
+                attendus = set(self._en_activation.values())
+                for pid in self._morts - attendus:
                     poignee = self._tenus.pop(pid, None)
                     if poignee is not None:
                         _kernel32.CloseHandle(poignee)
-                self._morts.clear()
+                self._morts &= attendus
+                return self._attente_recente(FENETRE_ACTIVITE_S)
+
+        def _attente_recente(self, duree_s: float) -> bool:
+            """Un évadé est-il en activation depuis moins de `duree_s` ?"""
+            maintenant = time.monotonic()
+            return any(maintenant - vu < duree_s for vu in self._attente_depuis.values())
+
+        def _achever_les_abandonnes(self) -> int:
+            """Tue les évadés suspendus que leur créateur, mort, ne relâchera plus — et les compte.
+
+            Git Bash fait naître ses enfants suspendus, puis les relâche : tué entre
+            les deux, il en laisse un qui ne vivra jamais (voir l'en-tête). Un évadé
+            n'est achevé que **suspendu depuis `ATTENTE_ACTIVATION_S` au moins, et
+            son parent mort** — une activation dure quelques millisecondes, et le tuer
+            pendant qu'elle court détruirait le conteneur du paquet ; tant que son
+            parent vit, il peut encore le relâcher, et il n'est jamais touché. Tuer un
+            tel reste est sans effet sur le conteneur (mesuré sur 154 restes). Avant
+            le geste, la poignée ouverte revérifie qu'il est toujours suspendu,
+            toujours l'enfant de ce parent, et **né** depuis l'échéance au moins :
+            entre deux regards, son pid a pu servir à un autre, qui s'active peut-être
+            à l'instant — l'ancienneté vue n'est qu'un premier tri.
+            """
+            maintenant = time.monotonic()
+            acheves = 0
+            for pid, ppid in list(self._en_activation.items()):
+                if maintenant - self._attente_depuis.get(pid, maintenant) < ATTENTE_ACTIVATION_S:
+                    continue
+                parent = self._tenus.get(ppid) or self._isoles.get(ppid)
+                if parent is None or _poignee_vivante(parent):
+                    continue
+                poignee = _kernel32.OpenProcess(_DROITS_TENUE, False, pid)
+                if not poignee:
+                    continue
+                try:
+                    if (
+                        self._enfant_de(pid, ppid, poignee)
+                        and _age_s(poignee) >= ATTENTE_ACTIVATION_S
+                        and _suspendus([pid]) == {pid}
+                        and _kernel32.TerminateProcess(poignee, 1)
+                    ):
+                        acheves += 1
+                        self._en_activation.pop(pid, None)
+                        self._attente_depuis.pop(pid, None)
+                finally:
+                    _kernel32.CloseHandle(poignee)
+            return acheves
 
         def adopter_les_evades(self, parents: Iterable[int] | None = None) -> int:
             """Adopte les enfants de `parents` (tous les tenus par défaut) nés hors de nos jobs.
@@ -876,20 +1112,45 @@ if sys.platform == "win32":
             son parent : c'est ce qui écarte un processus plus ancien qui porterait,
             comme parent déclaré, un pid recyclé depuis. Ses propres enfants nés avant
             l'adoption sont cherchés au tour suivant.
+
+            Un enfant encore **suspendu** n'est ni rangé dans un job ni tué (#1367, voir
+            l'en-tête) : l'activation de son paquet n'est peut-être pas finie, et l'un
+            comme l'autre détruirait alors le conteneur du paquet. Il est noté dans
+            `_en_activation`, avec l'instant où il a été vu suspendu pour la première
+            fois — refaite à chaque regard sur tous les tenus —, et repris au tour
+            suivant. Un état illisible compte pour suspendu : dans le doute, on attend.
             """
             with self._verrou:
                 cherches = set(self._tenus if parents is None else parents)
+                # Refait à part puis échangé d'un coup : qui le lit ne voit jamais un
+                # relevé à moitié fait.
+                en_activation = {} if parents is None else dict(self._en_activation)
                 adoptes = 0
                 while cherches:
                     connus = self._connus()
-                    nouveaux: set[int] = set()
+                    candidats: dict[int, int] = {}
                     for pid, ppid in _instantane():
-                        if ppid not in cherches or pid in connus or pid in nouveaux:
+                        if ppid in cherches and pid not in connus:
+                            candidats.setdefault(pid, ppid)
+                    suspendus = _suspendus(candidats)
+                    nouveaux: set[int] = set()
+                    for pid, ppid in candidats.items():
+                        if suspendus is None or pid in suspendus:
+                            if self._enfant_de(pid, ppid):
+                                en_activation[pid] = ppid
                             continue
+                        en_activation.pop(pid, None)
                         if self._adopter(pid, ppid):
                             nouveaux.add(pid)
                     adoptes += len(nouveaux)
                     cherches = nouveaux
+                self._en_activation = en_activation
+                if parents is None:
+                    maintenant = time.monotonic()
+                    self._attente_depuis = {
+                        pid: self._attente_depuis.get(pid, maintenant)
+                        for pid in self._en_activation
+                    }
                 return adoptes
 
         def _connus(self) -> set[int]:
@@ -898,15 +1159,32 @@ if sys.platform == "win32":
                 connus.update(_pids_du_job(job))
             return connus
 
-        def _adopter(self, pid: int, ppid: int) -> bool:
+        def _enfant_de(self, pid: int, ppid: int, poignee: int | None = None) -> bool:
+            """`pid` est-il l'enfant du tenu `ppid`, c'est-à-dire né après lui ?
+
+            Né avant, il porte comme parent déclaré un pid que le système a recyclé
+            depuis : ce n'est pas un évadé de l'arbre. Ne demande au processus que sa
+            date de naissance : c'est tout ce qu'on s'autorise sur un évadé en
+            activation.
+            """
             parent = self._tenus.get(ppid) or self._isoles.get(ppid)
             if parent is None:
                 return False
+            lue = poignee or _kernel32.OpenProcess(_DROITS_LECTURE, False, pid)
+            if not lue:
+                return False
+            try:
+                ne_parent, ne_enfant = _naissance(parent), _naissance(lue)
+            finally:
+                if poignee is None:
+                    _kernel32.CloseHandle(lue)
+            return ne_parent is not None and ne_enfant is not None and ne_enfant >= ne_parent
+
+        def _adopter(self, pid: int, ppid: int) -> bool:
             poignee = _kernel32.OpenProcess(_DROITS_TENUE, False, pid)
             if not poignee:
                 return False
-            ne_parent, ne_enfant = _naissance(parent), _naissance(poignee)
-            if ne_parent is None or ne_enfant is None or ne_enfant < ne_parent:
+            if not self._enfant_de(pid, ppid, poignee):
                 _kernel32.CloseHandle(poignee)
                 return False
             job = _job_pour(poignee)
@@ -921,7 +1199,7 @@ if sys.platform == "win32":
         # --------------------------------------------------- ce que l'arbre lit
 
         def pids(self) -> list[int]:
-            """Les pids vivants de l'arbre — évadés compris, une fois adoptés."""
+            """Les pids vivants de l'arbre — évadés compris, adoptés ou encore en activation."""
             with self._verrou:
                 self.adopter_les_evades()
                 vus: list[int] = []
@@ -932,12 +1210,19 @@ if sys.platform == "win32":
                     for pid, poignee in self._isoles.items()
                     if pid not in vus and _poignee_vivante(poignee)
                 )
+                vus.extend(
+                    pid
+                    for pid in self._en_activation
+                    if pid not in vus and _vivant_windows(pid)
+                )
                 return vus
 
         def vit(self, pid: int) -> bool:
             with self._verrou:
                 if any(pid in _pids_du_job(job) for job in self._jobs):
                     return True
+                if pid in self._en_activation:
+                    return _vivant_windows(pid)
                 poignee = self._isoles.get(pid) or self._tenus.get(pid)
                 return poignee is not None and _poignee_vivante(poignee)
 
@@ -946,16 +1231,30 @@ if sys.platform == "win32":
 
             La veille est arrêtée d'abord : les poignées des morts restent tenues,
             si bien que leurs orphelins sont encore reconnaissables au tour suivant.
+            Un évadé encore suspendu est attendu, jusqu'à `ATTENTE_ACTIVATION_S` après
+            l'avoir vu suspendu la première fois : adopté et arrêté s'il naît, achevé
+            si son créateur est mort (`_achever_les_abandonnes`). Celui dont le parent
+            vit encore n'est jamais touché, et se nomme parmi ce qui vit encore
+            (`pids()`, voir l'en-tête).
             """
             self._arreter_la_veille()
-            for _ in range(5):
+            tours = 0
+            while tours < 5:
                 with self._verrou:
                     for job in self._jobs:
                         _terminer_job(job)
                     for poignee in self._isoles.values():
                         _kernel32.TerminateProcess(poignee, 1)
-                    if not self.adopter_les_evades():
+                    if self.adopter_les_evades():
+                        tours += 1
+                        continue
+                    # Lue avant d'achever : celui qui franchit l'échéance entre les deux
+                    # est achevé au tour suivant, pas laissé derrière.
+                    attente = self._attente_recente(ATTENTE_ACTIVATION_S)
+                    self._achever_les_abandonnes()
+                    if not attente:
                         return
+                time.sleep(PAS_ACTIVATION_S)
 
         def fermer(self) -> None:
             """Rend tout — ce qui vit encore dans un job d'adoption meurt avec lui."""
@@ -965,6 +1264,8 @@ if sys.platform == "win32":
                     _kernel32.CloseHandle(poignee)
                 self._tenus.clear()
                 self._isoles.clear()
+                self._en_activation.clear()
+                self._attente_depuis.clear()
                 for job in self._jobs[1:]:
                     _kernel32.CloseHandle(job)
                 del self._jobs[1:]
