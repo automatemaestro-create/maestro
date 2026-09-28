@@ -82,6 +82,7 @@ from maestro.engine.executor import (
     SUFFIXE_ETAPE_DECISION,
 )
 from maestro.orchestrator import Orchestrator
+from maestro.providers import arbitrage as arbitrage_mod
 from maestro.providers import decision as decision_mod
 from maestro.providers.arbitrage import NOM_SERVEUR
 from maestro.providers.base import ModelProvider
@@ -353,6 +354,32 @@ def test_le_verbe_porte_le_nom_sous_lequel_une_politique_le_designe():
     """
     assert decision_mod.OUTIL_DECISION == f"mcp__{NOM_SERVEUR}__{decision_mod.NOM_OUTIL}"
     assert decision_mod.OUTIL_DECISION == "mcp__maestro__consigner_decision"
+
+
+def test_un_acte_hors_de_l_espace_ne_s_ecarte_pas_ici_il_se_demande():
+    """La frontière avec `demander_arbitrage`, dite par les **deux** verbes (#1349).
+
+    Neuf essais de S8 sur seize : l'agent découvre un acte hors du projet et le
+    consigne **écarté** par ce verbe, dont la description invitait à y mettre « ce
+    que tu écartes du périmètre ». Refuser cet acte n'est pas une décision de
+    travail, c'est celle de la personne. Chacun des deux verbes renvoie donc à
+    l'autre par son nom : c'est au moment où l'agent lit l'outil qu'il choisit
+    lequel appeler.
+    """
+    consigner = " ".join(decision_mod.DESCRIPTION_OUTIL.split())
+    demander = " ".join(arbitrage_mod.DESCRIPTION_OUTIL.split())
+
+    # Le renvoi est dans la phrase même : le nom du voisin figurait déjà plus haut (« ce
+    # n'est ni une demande d'accord — cela, c'est … »), il ne prouverait rien seul. Et
+    # elle ferme la description : placée plus tôt, les « appelle-le » et « l'appel » qui
+    # la suivaient renvoyaient à `demander_arbitrage`, le dernier verbe nommé.
+    assert consigner.endswith(
+        "Un acte hors de ton espace de travail ne s'écarte pas ici : y renoncer n'est pas "
+        f"à toi, demande-le par « {arbitrage_mod.NOM_OUTIL} »."
+    )
+    # Et l'autre bout : c'est là qu'il se tranche, même appelé par le projet.
+    assert "n'écarte pas seul une action hors de ton espace" in demander
+    assert "c'est ici qu'elle se tranche" in demander
 
 
 def test_le_verbe_n_est_monte_que_si_un_canal_lui_est_cable():

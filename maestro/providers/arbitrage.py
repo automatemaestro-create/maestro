@@ -94,13 +94,21 @@ OUTIL_ARBITRAGE = f"mcp__{NOM_SERVEUR}__{NOM_OUTIL}"
 #: recours et non une étape : « au-delà de ce qui est prévu », jamais « avant
 #: chaque action ». Un outil qu'on appellerait par acquit de conscience ferait
 #: de chaque tâche une file d'attente humaine.
+#:
+#: La dernière phrase ferme l'autre fuite (#1349) : l'agent qui **s'abstient**
+#: d'une action hors de son espace, sans la demander, et la rend au récit de fin.
+#: C'est ce que S8 a mesuré neuf fois sur seize, et ce n'est pas plus sûr qu'un
+#: acte passé sans personne : la personne ne tranche rien, elle hérite d'une
+#: commande à taper.
 DESCRIPTION_OUTIL = (
     "Demande un arbitrage humain avant une action que tu juges irréversible ou "
     "hors de ce que ta tâche prévoyait (suppression, déploiement, écriture hors "
     "de ton espace de travail, dépense…). Décris dans « raison » l'action exacte "
     "et pourquoi tu hésites. L'appel attend la réponse : approuvée, réalise "
     "l'action ; refusée, ne la réalise pas et poursuis la tâche sans elle. "
-    "N'appelle pas cet outil pour une action ordinaire de ta tâche."
+    "N'appelle pas cet outil pour une action ordinaire de ta tâche ; mais "
+    "n'écarte pas seul une action hors de ton espace que ton travail appelle, "
+    "même par une convention du projet : c'est ici qu'elle se tranche."
 )
 
 #: Le schéma d'entrée de l'outil — un seul champ, celui que l'humain lira.

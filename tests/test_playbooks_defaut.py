@@ -20,7 +20,8 @@ Ce qu'elle tient, rôle par rôle :
    outillé aussi, et aucun marqueur `{{…}}` ne survit à la lecture. Le **cadre** y est couvert
    pour lui-même : c'est le seul fragment que les deux chemins d'exécution partagent, donc le
    seul endroit où poser ce qui vaut pour tout agent outillé — lire sans passer par le shell
-   (#1102), et agir sur un répertoire au lieu d'y produire (#1149) ;
+   (#1102), agir sur un répertoire au lieu d'y produire (#1149), et demander l'acte que le
+   travail appelle hors de l'espace au lieu de l'écarter seul (#1349) ;
 ④ **les garde-fous propres au rôle** — QA n'écrit pas le livrable d'un autre, Designer
    propose la charte, BDD ne joue pas d'opération destructive, DevOps ne déploie pas,
    Développeur ne fusionne rien. C'est la frontière que le régime sénior (#293) ne devait
@@ -52,6 +53,7 @@ from maestro.agents.playbook_du_code import (
     socle,
 )
 from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookStore
+from maestro.providers import arbitrage
 from maestro.providers.base import PLAFOND_TOURS_DEFAUT
 
 #: Les rôles à playbook, pris à la source plutôt que recopiés : ajouter un rôle au
@@ -268,6 +270,49 @@ def test_le_cadre_outille_envoie_le_jetable_dans_un_dossier_que_l_agent_cree():
 
     assert "`mktemp -d`" in brut
     assert "un nom fixe du répertoire temporaire du système sort de ton espace" in _normalise(brut)
+
+
+def test_le_cadre_outille_rend_l_acte_hors_de_l_espace_a_une_personne():
+    """#1349 : sur seize essais de S8, l'agent qui découvre dans le README un acte hors
+    du projet l'a **écarté seul** neuf fois — consigné, puis rendu au récit de fin
+    comme une commande à taper —, et ne l'a **demandé** que six fois. Même projet,
+    même modèle : le cadre disait « Reste dans cet espace » et rien de ce qu'il faut
+    faire d'un acte que le travail appelle au-dehors.
+
+    Le cadre est le seul fragment qui atteigne tout agent outillé **à l'exécution**,
+    équipe déjà composée comprise (`playbook_outille`) : c'est là que la règle se pose.
+    Le verbe est nommé par sa constante, pas recopié — un renommage le fait rougir."""
+    brut = pdc.cadre_outille()
+    cadre = _normalise(brut)
+
+    # L'acte ne revient à l'agent dans aucun sens : ni pour le faire, ni pour y renoncer.
+    assert "ne t'appartient pas, ni pour le faire ni pour y renoncer" in cadre
+    assert "même quand c'est une convention du projet qui le demande" in cadre
+    # Le chemin, par le verbe que le produit sert, et les deux issues.
+    assert f"`{arbitrage.NOM_OUTIL}`" in brut
+    assert "accordé, fais-le ; refusé, n'y touche par aucun moyen" in cadre
+    # Les deux conduites mesurées, écartées en toutes lettres.
+    assert "Ne l'écarte pas seul" in cadre
+    assert "comme une tâche que la personne ferait à ta place" in cadre
+    # Les garde-fous du rôle ne deviennent pas négociables pour autant.
+    assert "Ce que tes garde-fous t'interdisent ne se demande pas" in cadre
+
+
+def test_le_socle_ne_range_plus_l_acte_hors_de_l_espace_dans_ce_qui_remonte():
+    """#1349 : le socle offrait l'autre chemin — « remonter » ce qui « ne t'appartient
+    pas » et ce qu'on a « laissé de côté ». L'acte hors de l'espace est désormais nommé
+    parmi ce qui **demande un humain**, et exclu de ce qui remonte."""
+    sections = {
+        titre.strip(): _normalise(corps)
+        for titre, corps in re.findall(
+            r"^### ([^\n]+)\n(.*?)(?=^### |\Z)", socle(), re.MULTILINE | re.DOTALL
+        )
+    }
+
+    assert "un acte hors de ton espace de travail" in sections["Ce qui demande un humain"]
+    remonte = sections["Ce que tu remontes au lieu de le décider"]
+    assert "Un acte que ton travail appelait hors de ton espace n'en fait pas partie" in remonte
+    assert "il se demande pendant la tâche" in remonte
 
 
 def test_le_socle_porte_le_regime_senior_en_entier():

@@ -90,6 +90,14 @@ OUTIL_DECISION = f"mcp__{NOM_SERVEUR}__{NOM_OUTIL}"
 #: raison qu'en #719 : sans cette phrase, un agent peut croire qu'il vient de
 #: soumettre quelque chose et attendre un tour de plus une réponse qui n'arrivera
 #: jamais.
+#:
+#: ⚠ « Ce que tu écartes du périmètre » a une exception, dite en dernier (#1349) :
+#: l'acte **hors de l'espace de travail**. Sur seize essais de S8, l'agent qui le
+#: découvrait dans le README l'a consigné écarté ici neuf fois, puis rendu au récit
+#: de fin comme une commande à taper — une décision qui n'était pas la sienne. Y
+#: renoncer revient à la personne, par `demander_arbitrage`. En dernier et pas
+#: juste après « écartes » : les phrases qui la suivraient disent « appelle-le » et
+#: « l'appel », et ne doivent renvoyer qu'à ce verbe-ci.
 DESCRIPTION_OUTIL = (
     "Consigne une décision que tu as prise seul, au moment où tu la prends. "
     "Mets dans « decision » ce que tu as tranché (l'option retenue, l'hypothèse "
@@ -101,7 +109,9 @@ DESCRIPTION_OUTIL = (
     "au journal du run, rattachée à ta tâche et à ton nom, pour qu'elle se lise "
     "pendant que tu travailles et se relise après. Poursuis aussitôt. "
     "Ce n'est ni une demande d'accord — cela, c'est « demander_arbitrage » — ni "
-    "une difficulté que tu subis — cela, c'est « signaler_blocage »."
+    "une difficulté que tu subis — cela, c'est « signaler_blocage ». "
+    "Un acte hors de ton espace de travail ne s'écarte pas ici : y renoncer n'est "
+    "pas à toi, demande-le par « demander_arbitrage »."
 )
 
 #: Le schéma d'entrée de l'outil — ce qui a été tranché, et pourquoi. Rien

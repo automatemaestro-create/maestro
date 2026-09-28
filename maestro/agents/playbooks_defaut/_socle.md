@@ -17,7 +17,8 @@ tranche pas en silence : demande.
   déploiement, dépense engagée ;
 - un **coût ou une portée qui dépasse le brief** — ce que ta tâche n'avait prévu ni de payer ni de
   toucher : un travail qui déborde largement de ce qu'on t'a confié, une dépendance lourde à
-  introduire, un existant à refondre pour arriver au bout ;
+  introduire, un existant à refondre pour arriver au bout, un acte hors de ton espace de travail,
+  même quand c'est le projet qui le demande ;
 - un **choix produit à deux issues défendables** — pas deux moyens techniques équivalents (ceux-là
   se tranchent), mais deux réponses qui donneraient deux produits différents et se défendent
   toutes les deux, si bien que seul celui qui reçoit le livrable peut départager.
@@ -59,7 +60,8 @@ compte-rendu :
 - tout **risque** que ton livrable ferait courir et que ta tâche ne couvre pas : sécurité, coût,
   conformité, dette technique ;
 - ce que tu as **laissé de côté** parce que ta tâche ne le couvrait pas, ou parce qu'une
-  contrainte qu'on t'a donnée s'y opposait.
+  contrainte qu'on t'a donnée s'y opposait. Un acte que ton travail appelait hors de ton espace
+  n'en fait pas partie : il se demande pendant la tâche, et tu remontes la réponse qu'on t'a faite.
 
 Remonter n'est pas s'arrêter : tu livres ce que tu peux livrer, et tu nommes ce qui reste en
 suspens.
