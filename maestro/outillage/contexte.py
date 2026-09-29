@@ -484,6 +484,10 @@ def _frontmatter(texte: str) -> dict[str, str] | None:
     d'attaque pour deux chaînes de caractères. Ce qu'il ne sait pas lire — blocs
     repliés, listes, imbrication — est simplement absent du dictionnaire, et une
     description manquante se voit dans l'index.
+
+    Un scalaire **cité** se lit comme YAML le lit (`_scalaire`) : Maestro cite la
+    description qu'il écrit (#1350, `redaction.scalaire_yaml`), et l'index doit rendre
+    la phrase, pas son échappement.
     """
     lignes = texte.splitlines()
     if not lignes or lignes[0].strip() != "---":
@@ -495,8 +499,27 @@ def _frontmatter(texte: str) -> dict[str, str] | None:
         cle, separateur, valeur = ligne.partition(":")
         if not separateur or not cle.strip() or cle[:1].isspace():
             continue
-        entetes[cle.strip()] = valeur.strip().strip("\"'")
+        entetes[cle.strip()] = _scalaire(valeur.strip())
     return None
+
+
+def _scalaire(valeur: str) -> str:
+    """Un scalaire d'une ligne tel que YAML le lit — cité entre guillemets, apostrophes, ou nu.
+
+    Entre guillemets doubles, les échappements sont ceux de JSON, que YAML accepte tous
+    (c'est la forme que Maestro écrit) ; entre apostrophes, une apostrophe se double. Ce
+    qui ne se décode pas est rendu **sans ses guillemets** plutôt que perdu : c'est le
+    comportement d'avant, et une description approximative reste une description.
+    """
+    if len(valeur) >= 2 and valeur[0] == valeur[-1] == '"':
+        try:
+            lu = json.loads(valeur)
+        except ValueError:
+            return valeur[1:-1]
+        return lu if isinstance(lu, str) else valeur[1:-1]
+    if len(valeur) >= 2 and valeur[0] == valeur[-1] == "'":
+        return valeur[1:-1].replace("''", "'")
+    return valeur.strip("\"'")
 
 
 def _cible_sure(racine: Path, chemin: str, exclus: tuple[re.Pattern[str], ...]) -> Path | None:

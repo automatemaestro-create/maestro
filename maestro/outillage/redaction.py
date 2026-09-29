@@ -14,7 +14,7 @@ réel.
     fichiers[0].chemin      # "AGENTS.md"
     fichiers[0].portee      # "bloc" si le projet en avait déjà un, "fichier" sinon
 
-## Quatre propriétés à ne pas défaire
+## Six propriétés à ne pas défaire
 
 1. **Le rendu est déterministe.** Aucun horodatage, aucun identifiant, aucun
    ordre de dictionnaire ne rentre dans le texte : deux rédactions des mêmes
@@ -48,6 +48,15 @@ réel.
    renvoyée au manifeste —, ou **à vérifier** avec la raison. Le verdict entre
    dans le texte par sa `raison`, qui est déterministe (ni durée ni date) : la
    propriété 1 tient. Sans verdicts donnés, le texte est celui d'avant, au bit près.
+6. **Un skill dit ce qu'il fait pour ce projet** (#1350). Sa `description` — ce qu'un
+   agent lit pour décider de l'ouvrir, et que l'index d'`AGENTS.md` recopie — est ce que
+   ses commandes font **pour ce projet**, tel que le modèle l'a compris
+   (`Entree.pour`) : « assembler le carnet à partir des chants », pas « compilation,
+   bundle, artefacts ». Elle vient des constats, donc la propriété 1 tient. Une table
+   de repli (`DESCRIPTION_PAR_SKILL`) ne sert qu'une commande que personne n'a décrite,
+   et ne dit que ce qui est vrai de tout projet. Elle s'écrit **citée**
+   (`scalaire_yaml`) : une phrase française porte des « : », qu'un scalaire YAML nu
+   ne tolère pas.
 
 ## Ce que ce module ne décide pas
 
@@ -58,6 +67,7 @@ réel.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -104,33 +114,45 @@ DESIGNATION_SKILLS = (
     "avant de commencer."
 )
 
-#: Nom du skill → sa `description` de frontmatter. Écrite ici et pas dérivée de
-#: `SKILL_PAR_USAGE` : la *raison* d'un skill dit pourquoi Maestro le recommande
-#: (elle s'affiche dans l'analyse), sa *description* dit à un agent **quand
-#: l'ouvrir** — ce sont deux phrases pour deux lecteurs, et c'est la seconde qui
-#: décide de la divulgation progressive (docs/38 §2.1).
+#: Nom du skill → sa `description` de frontmatter **quand le modèle n'a rien dit** de
+#: ses commandes pour ce projet (#1350). Ce n'est pas le mécanisme : la description
+#: d'un skill est ce que ses commandes font pour ce projet (`Entree.pour`, écrite par le
+#: modèle qui l'a compris — « assembler le carnet à partir des chants »). Ce qui reste
+#: ici sert une commande que personne n'a décrite — lue par les tables, ou comprise
+#: sans sa phrase —, et ne dit donc que ce qui est vrai de **tout** projet : ni
+#: compilation, ni bundle, ni intégration continue, ni interface, qu'un carnet de
+#: chants n'a pas (le juge de S9 l'a relevé, deux essais sur deux).
+#:
+#: Écrite ici et pas dérivée de `SKILL_PAR_USAGE` : la *raison* d'un skill dit
+#: pourquoi Maestro le recommande (elle s'affiche dans l'analyse), sa *description*
+#: dit à un agent **quand l'ouvrir** — deux phrases pour deux lecteurs, et c'est la
+#: seconde qui décide de la divulgation progressive (docs/38 §2.1).
 DESCRIPTION_PAR_SKILL: dict[str, str] = {
     "mettre-en-route": (
         "Installer les dépendances du projet avec son gestionnaire, avant toute "
         "autre chose sur un poste ou un espace de travail neuf."
     ),
     "construire-le-projet": (
-        "Construire le projet — compilation, bundle, artefacts — avec la commande "
-        "que le projet déclare."
+        "Construire le projet avec sa propre commande, avant de livrer ce qu'elle produit."
     ),
     "lancer-les-tests": (
         "Jouer la suite de tests du projet et lire son verdict. À utiliser avant "
         "de rendre un travail, et après tout changement de code."
     ),
     "verifier-le-style": (
-        "Jouer les vérifications du projet — style, formatage, types — avant de "
-        "rendre un travail, pour ne pas les redécouvrir en intégration continue."
+        "Jouer les vérifications du projet avant de rendre un travail, pour qu'un "
+        "autre n'ait pas à les redécouvrir."
     ),
     "lancer-en-local": (
-        "Démarrer le projet en local pour le voir tourner : le seul moyen de "
-        "vérifier un changement d'interface autrement qu'en le lisant."
+        "Démarrer le projet en local pour le voir tourner, et vérifier un changement "
+        "autrement qu'en le lisant."
     ),
 }
+
+#: Le plafond d'une `description` — celui de la spécification Agent Skills (docs/38
+#: §2.1). Une description réunie de trois commandes pourrait le passer : elle est
+#: tronquée plutôt que de rendre le skill invalide.
+DESCRIPTION_MAX = 1024
 
 #: Usage → nom du skill qui le sert, dérivé de `SKILL_PAR_USAGE` plutôt que
 #: recopié — et l'inverse aussi, parce qu'une `Entree` de skill porte son nom et
@@ -333,10 +355,39 @@ def _index_des_skills(recommandation: Recommandation) -> tuple[tuple[str, str], 
     inventaire de ce que Maestro a écrit.
     """
     return tuple(
-        (entree.nom, DESCRIPTION_PAR_SKILL.get(entree.nom, raison_stable(entree)))
+        (entree.nom, description_du_skill(entree))
         for entree in recommandation.entrees
         if entree.type == "skill"
     )
+
+
+def description_du_skill(entree: Entree) -> str:
+    """La `description` du frontmatter d'un skill — ce qu'il fait **pour ce projet** (#1350).
+
+    Ce que ses commandes font pour le projet, tel que le modèle l'a compris
+    (`Entree.pour`) : c'est la phrase qui décide si un agent ouvre le skill, et elle
+    ne peut pas valoir pour n'importe quel dépôt. Sans elle — une commande que personne
+    n'a décrite —, la phrase de repli de `DESCRIPTION_PAR_SKILL`, puis la raison de
+    l'entrée pour un skill hors de la table. Une ligne, sous le plafond de la
+    spécification (`DESCRIPTION_MAX`).
+    """
+    texte = entree.pour or DESCRIPTION_PAR_SKILL.get(entree.nom, raison_stable(entree))
+    ligne = " ".join(texte.split())
+    return ligne if len(ligne) <= DESCRIPTION_MAX else ligne[: DESCRIPTION_MAX - 1] + "…"
+
+
+def scalaire_yaml(texte: str) -> str:
+    """`texte` en scalaire YAML **cité** — la seule forme qu'une phrase française traverse.
+
+    Nu, un scalaire YAML ne peut contenir ni « : » (deux-points suivi d'une espace) ni
+    « # » précédé d'une espace, ni commencer par un indicateur : la typographie
+    française en met un par phrase, et un client qui lit le frontmatter en YAML refuse
+    alors le skill entier — c'était déjà le cas de la description de `lancer-en-local`
+    avant #1350, et une description écrite par le modèle le ferait sans cesse. Les
+    guillemets doubles de JSON sont un scalaire YAML valide, échappements compris :
+    `maestro.outillage.contexte` les relit par le même décodeur.
+    """
+    return json.dumps(texte, ensure_ascii=False)
 
 
 def raison_stable(entree: Entree) -> str:
@@ -721,19 +772,26 @@ def texte_skill(
     `verdicts` (#1160) ajoute une section « Ce que Maestro en a vérifié » : le
     verdict de chaque commande du bloc, dans son ordre. Sans verdict pour aucune
     d'elles, la section n'existe pas.
+
+    La `description` est ce que le skill fait **pour ce projet** (`description_du_skill`,
+    #1350), écrite **citée** (`scalaire_yaml`) ; le premier paragraphe la redit à qui
+    ouvre le fichier. Sans phrase du modèle, ce paragraphe est la raison stable du
+    skill, comme avant.
     """
     nom = entree.nom
     raison = raison_stable(entree)
-    description = DESCRIPTION_PAR_SKILL.get(nom, raison)
+    presentation = entree.pour or (
+        raison.strip().capitalize() + ("" if raison.rstrip().endswith(".") else ".")
+    )
     lignes = [
         "---",
         f"name: {nom}",
-        f"description: {description}",
+        f"description: {scalaire_yaml(description_du_skill(entree))}",
         "---",
         "",
         f"# {_titre(nom)}",
         "",
-        raison.strip().capitalize() + ("" if raison.rstrip().endswith(".") else "."),
+        presentation,
         "",
         "## Comment faire",
         "",

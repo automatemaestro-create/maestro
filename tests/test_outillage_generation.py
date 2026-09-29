@@ -63,6 +63,7 @@ from maestro.outillage import (
     source_manifeste_des_choix,
 )
 from maestro.outillage.generation import REFUS_VERSION
+from maestro.outillage.questionnaire import comprehension_depuis_texte
 from maestro.outillage.redaction import bloc, texte_script, texte_skill
 from maestro.projets.modele import Perimetre, Projet, Vcs
 from maestro.projets.racine import RacineRefusee, detecter_vcs
@@ -557,10 +558,129 @@ def test_un_skill_inconnu_du_catalogue_retombe_sur_la_raison_de_son_entree() -> 
 
     texte = texte_skill(maison)
 
-    assert "description: le projet déclare un script de déploiement" in texte
+    assert _description(texte) == "le projet déclare un script de déploiement"
     # La phrase est capitalisée et ponctuée, même quand la raison ne l'était pas.
     assert "Le projet déclare un script de déploiement." in texte
     assert "aucune commande constatée pour ce skill" in texte
+
+
+# --------------------------------------------------------------------------- #
+# Un outillage qui parle de ce projet (#1350)
+# --------------------------------------------------------------------------- #
+
+#: Ce que le modèle comprend du carnet de chants de S9, tel qu'il le rend : chaque
+#: commande dit ce qu'elle fait **pour ce projet** (`pour`), avec ses mots — et un « : »,
+#: comme toute phrase française, ce qui cassait un frontmatter écrit nu.
+COMPREHENSION_DU_CARNET = json.dumps(
+    {
+        "message": "",
+        "constats": [
+            {
+                "cle": "nature",
+                "valeur": "Le carnet de chants d'une chorale : un fichier texte par chant, "
+                "assemblé avec le sommaire des titres",
+                "parce_que": "votre demande",
+            },
+            {"cle": "langages", "valeur": "Python", "parce_que": "réponse cliquée"},
+            {
+                "cle": "construire",
+                "valeur": "python assembler.py",
+                "parce_que": "réponse cliquée",
+                "pour": "Assembler le carnet à partir des chants de chants/ : sommaire des "
+                "titres compris, après tout ajout ou toute retouche d'un chant",
+            },
+            {
+                "cle": "tester",
+                "valeur": "python -m unittest",
+                "parce_que": "réponse cliquée",
+                "pour": "Vérifier que le carnet est complet : chaque chant y figure, et le "
+                "sommaire les nomme tous",
+            },
+            {"cle": "ci", "valeur": "aucun", "parce_que": "pas de CI demandée"},
+        ],
+        "questions": [],
+    },
+    ensure_ascii=False,
+)
+
+#: Ce qu'un skill promettait d'office, quel que soit le projet (relevé par S9) : une
+#: construction de logiciel web, une CI — et une interface pour qui démarre en local.
+PROMESSES_GENERIQUES = ("compilation", "bundle", "intégration continue", "en CI", "interface")
+
+
+def _outillage_du_carnet() -> dict[str, str]:
+    """`chemin → contenu` de l'outillage que le carnet reçoit de ce que le modèle a compris."""
+    choix = list(comprehension_depuis_texte(COMPREHENSION_DU_CARNET, []).constats)
+    fichiers = rediger(
+        constats_depuis_choix(choix),
+        recommandation_depuis_choix(choix),
+        source=source_manifeste_des_choix("prj-0000c4a7", choix),
+    )
+    return {fichier.chemin: fichier.contenu for fichier in fichiers}
+
+
+def _description(skill: str) -> str:
+    """La `description` du frontmatter, **lue comme YAML la lit** : un scalaire cité."""
+    ligne = next(ligne for ligne in skill.splitlines() if ligne.startswith("description: "))
+    return json.loads(ligne.removeprefix("description: "))
+
+
+def test_un_skill_d_un_projet_neuf_dit_ce_qu_il_fait_pour_ce_projet() -> None:
+    """#1350 : la description d'un skill est ce que le modèle a compris de sa commande.
+
+    S9 est resté rouge sur son juge : « les skills restent sur un modèle générique
+    (compilation, bundle, types, intégration continue) ». La description vient désormais
+    de la compréhension du projet, et c'est elle que l'index d'`AGENTS.md` recopie
+    (docs/38 §3.1) ; le premier paragraphe du `SKILL.md` la redit à qui l'ouvre.
+    """
+    ecrits = _outillage_du_carnet()
+    construire = ecrits[f"{DOSSIER_SKILLS}/construire-le-projet/SKILL.md"]
+    tests = ecrits[f"{DOSSIER_SKILLS}/lancer-les-tests/SKILL.md"]
+
+    assert _description(construire) == (
+        "Assembler le carnet à partir des chants de chants/ : sommaire des titres compris, "
+        "après tout ajout ou toute retouche d'un chant."
+    )
+    assert _description(tests).startswith("Vérifier que le carnet est complet :")
+    assert "# Construire le projet\n\nAssembler le carnet à partir des chants" in construire
+    assert (
+        "- **construire-le-projet** — Assembler le carnet à partir des chants de chants/ :"
+        in ecrits["AGENTS.md"]
+    )
+
+
+def test_un_outillage_ne_promet_rien_que_le_projet_n_a_pas() -> None:
+    """#1350 : ni compilation ni bundle pour un carnet, ni CI pour un projet qui n'en a pas."""
+    for chemin, texte in _outillage_du_carnet().items():
+        for promesse in PROMESSES_GENERIQUES:
+            assert promesse not in texte, f"{chemin} promet « {promesse.strip()} »"
+
+
+def test_sans_phrase_du_modele_un_skill_ne_promet_rien_non_plus() -> None:
+    """Le repli — une commande que personne n'a décrite — reste vrai de tout projet.
+
+    Ce n'est pas le mécanisme (docs/41) : c'est ce qui s'écrit quand le modèle n'a rien
+    dit de la commande, et il ne doit pas affirmer à sa place ce que le projet n'a pas.
+    """
+    choix = [
+        Choix("nature", "Un outil en ligne de commande", deduit=True),
+        Choix("construire", "python assembler.py", deduit=True),
+        Choix("lint", "ruff check .", deduit=True),
+        Choix("demarrer", "python -m outil", deduit=True),
+    ]
+
+    fichiers = rediger(constats_depuis_choix(choix), recommandation_depuis_choix(choix))
+
+    skills = [f for f in fichiers if f.role == "skill"]
+    assert {f.chemin.split("/")[-2] for f in skills} == {
+        "construire-le-projet",
+        "verifier-le-style",
+        "lancer-en-local",
+    }
+    for fichier in skills:
+        assert _description(fichier.contenu)
+        for promesse in PROMESSES_GENERIQUES:
+            assert promesse not in fichier.contenu, f"{fichier.chemin} promet « {promesse} »"
 
 
 def test_un_script_genere_s_arrete_a_la_premiere_commande_en_echec() -> None:

@@ -131,10 +131,13 @@ ne l'appelle pas, et propose tout autre rôle que le besoin réel demande — un
 application mobile, un pipeline d'apprentissage automatique, la sécurité, la
 documentation, les données d'un projet neuf qui en stockera…
 
-Chaque rôle porte sa raison : ce que le projet contient, ou ce que la personne a dit,
-qui le rend nécessaire. Un rôle sans raison tirée du projet ou de ses mots n'est pas
-proposé. Si un fichier cité dans ce qu'on te donne le prouve, recopie son chemin exact
-dans "preuve" ; sinon laisse "preuve" vide — n'invente jamais un chemin. Une instance
+Chaque rôle porte sa raison : ce que ce rôle fera DANS CE projet, avec les mots du
+projet — ce qu'il écrit, ce qu'il produit, ce qu'il vérifie —, et ce que le projet
+contient, ou ce que la personne a dit, qui le rend nécessaire. Une raison qui vaudrait
+pour n'importe quel dépôt (« le projet se construit et se teste ») n'en est pas une. Un
+rôle sans raison tirée du projet ou de ses mots n'est pas proposé. Si un fichier cité
+dans ce qu'on te donne le prouve, recopie son chemin exact dans "preuve" ; sinon laisse
+"preuve" vide — n'invente jamais un chemin. Une instance
 par rôle par défaut ; davantage seulement si le projet a des surfaces indépendantes, et
 dis pourquoi. Ne propose jamais l'orchestrateur : c'est Maestro lui-même, présent dans
 tout projet, et c'est lui qui recrute.
@@ -396,13 +399,21 @@ def _constats_en_clair(constats: Constats) -> str:
 
 
 def _skills_en_clair(recommandation: Recommandation) -> str:
+    """Les skills recommandés, leur commande — et ce qu'ils font pour ce projet (#1350).
+
+    Ce que le modèle a compris d'une commande (`Entree.pour`, « assembler le carnet à
+    partir des chants ») est ce qui rattache un rôle au travail réel du projet : sans
+    lui, un skill n'est qu'un nom générique, et la raison du rôle qui s'en sert l'est
+    devenue aussi (S9).
+    """
     skills = _skills_recommandes(recommandation)
     if not skills:
         return "- aucun : l'outillage n'en recommande pas"
     lignes = []
     for nom, entree in skills.items():
         commande = f" : `{entree.commandes[0]}`" if entree.commandes else ""
-        lignes.append(f"- {nom}{commande}")
+        pour = f" — {entree.pour}" if entree.pour else ""
+        lignes.append(f"- {nom}{commande}{pour}")
     return "\n".join(lignes)
 
 

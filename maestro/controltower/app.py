@@ -189,8 +189,9 @@ Endpoints :
   **playbook** (écrit par la mécanique de #257, à défaut celui de son gabarit —
   `playbook_origine` le dit), les **skills** de l'outillage qu'il branche et ses
   **autorisations proposées**, chacune avec sa raison, cran `auto` compris
-  (#716). Corps vide : le projet est analysé ; avec les réponses du
-  questionnaire d'outillage : l'équipe se dérive d'elles. `ecartes` nomme ce qui
+  (#716). Corps vide : le projet est analysé — sauf un projet encore vide, qui
+  reprend les réponses que son manifeste d'outillage garde (#1350) ; avec les
+  réponses du questionnaire d'outillage : l'équipe se dérive d'elles. `ecartes` nomme ce qui
   n'est **pas** proposé — l'orchestrateur en fait partie par décision. Avec
   `renfort` (#1227) : **un seul rôle**, celui qu'un plan de run appelle et que
   l'équipe n'a pas, justifié par ce plan et non par un constat — sans quoi il
@@ -6694,7 +6695,10 @@ def create_app(
         réponses au questionnaire d'outillage (#1031) : l'équipe se dérive de
         ces **réponses**, sans qu'aucun fichier soit ouvert — c'est le cas d'un
         projet neuf. Les deux passent par la même dérivation, et `source` dit
-        laquelle a servi.
+        laquelle a servi. Un corps vide sur un projet **encore vide** (aucun
+        fichier que son manifeste ne déclare) reprend les réponses que ce
+        manifeste garde (#1350, `choix_d_un_projet_decrit`) : c'est ainsi que le
+        fil, qui n'en passe pas, compose l'équipe sur ce que le projet est.
 
         **Rien n'est créé**, et la réponse le dit (`cree`, `validation`) : aucun
         agent, aucun playbook, aucune politique, aucune capacité n'est écrit. La

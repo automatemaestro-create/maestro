@@ -84,11 +84,12 @@ SKILL_PAR_USAGE: dict[str, tuple[str, str]] = {
     ),
     "lint": (
         "verifier-le-style",
-        "le projet a ses vérifications de style : les jouer évite de les redécouvrir en CI",
+        "le projet a ses vérifications de style : les jouer avant de rendre un travail évite "
+        "qu'un autre les redécouvre",
     ),
     "demarrer": (
         "lancer-en-local",
-        "voir tourner le projet est le seul moyen de vérifier un changement d'interface",
+        "voir tourner le projet vérifie un changement autrement qu'en le lisant",
     ),
 }
 
@@ -328,10 +329,33 @@ def _skills(constats: Constats) -> list[Entree]:
                     tuple(f"bash {script.chemin}" for script in scripts)
                     + tuple(commande.commande for commande in commandes)
                 ),
+                pour=_pour_du_skill(commandes),
             )
         )
     entrees.extend(_scripts_reconnus(constats))
     return entrees
+
+
+def _pour_du_skill(commandes: Sequence[Commande]) -> str:
+    """Ce qu'un skill fait pour ce projet — la phrase de chacune de ses commandes (#1350).
+
+    Une phrase par commande qui en porte une, dans l'ordre des usages, chacune ponctuée
+    en phrase et sans doublon : `verifier-le-style` réunit trois commandes, et « vérifier
+    le style » redit pour le formatage n'apprendrait rien de plus à qui choisit ce skill.
+    Vide quand aucune n'en porte : la rédaction retombe alors sur ce qui vaut pour tout
+    projet, et c'est le seul cas où elle le fait.
+    """
+    phrases = dict.fromkeys(
+        _en_phrase(commande.pour) for commande in commandes if commande.pour.strip()
+    )
+    return " ".join(phrases)
+
+
+def _en_phrase(texte: str) -> str:
+    """`texte` en phrase : une majuscule en tête, un point à la fin s'il n'en a aucun."""
+    phrase = " ".join(texte.split())
+    phrase = phrase[:1].upper() + phrase[1:]
+    return phrase if phrase[-1:] in ".!?…" else f"{phrase}."
 
 
 def _raison_du_skill(raison: str, chemin_present: str | None, scripts: list[Piece]) -> str:

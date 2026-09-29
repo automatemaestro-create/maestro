@@ -73,13 +73,16 @@ from maestro.equipe.modele import (
     ORIGINE_PLAYBOOK_GABARIT,
     ORIGINE_PLAYBOOK_GENERE,
 )
+from maestro.outillage.generation import generer
 from maestro.outillage.modele import Commande, Constats, Langage
 from maestro.outillage.questionnaire import (
     Choix,
     constats_depuis_choix,
     recommandation_depuis_choix,
+    source_manifeste_des_choix,
 )
 from maestro.outillage.recommandation import recommander
+from maestro.outillage.redaction import rediger
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
 
@@ -694,6 +697,120 @@ def test_le_service_compose_l_equipe_par_le_modele(
     prompt, systeme = fournisseur.demandes[0]
     assert "Dart" in prompt
     assert systeme == CADRE_COMPOSITION
+
+
+#: Ce que le questionnaire a compris du carnet de chants de S9 (#1350) — la matière dont
+#: son outillage s'est écrit, et que son manifeste garde.
+ACQUIS_DU_CARNET = (
+    Choix(
+        "nature",
+        "Le carnet de chants d'une chorale : un fichier texte par chant, assemblé avec le "
+        "sommaire des titres",
+        deduit=True,
+    ),
+    Choix("langages", "Python", deduit=True),
+    Choix(
+        "construire",
+        "python assembler.py",
+        deduit=True,
+        pour="Assembler le carnet à partir des chants, sommaire des titres compris",
+    ),
+    Choix(
+        "tester",
+        "python -m unittest",
+        deduit=True,
+        pour="Vérifier que le carnet est complet et que le sommaire nomme chaque chant",
+    ),
+    Choix("ci", "aucun", deduit=True),
+)
+
+
+def _projet_ne_dans_le_fil(
+    atelier: Path, projets: ServiceProjets, *, ses_fichiers: bool = False
+) -> str:
+    """Un projet neuf outillé depuis ses réponses : sur le disque, rien que l'outillage.
+
+    C'est l'état où le fil propose l'équipe (S9) : `AGENTS.md`, les skills et le
+    manifeste — ce que Maestro a écrit —, et aucun fichier du projet lui-même.
+    """
+    racine = atelier / "carnet"
+    projet_id = str(projets.creer("carnet-de-chants", str(racine), origine="nouveau")["id"])
+    acquis = list(ACQUIS_DU_CARNET)
+    generer(
+        racine,
+        rediger(constats_depuis_choix(acquis), recommandation_depuis_choix(acquis)),
+        source=source_manifeste_des_choix(projet_id, acquis),
+    )
+    if ses_fichiers:
+        (racine / "chants").mkdir()
+        (racine / "chants" / "ave-verum.txt").write_text("Ave verum corpus\n", encoding="utf-8")
+    return projet_id
+
+
+def _service_du_carnet(
+    tmp_path: Path,
+    atelier: Path,
+    gabarits: ConfigurationAgents,
+    fournisseur: ModelProvider,
+    *,
+    ses_fichiers: bool = False,
+) -> tuple[ServiceEquipe, str]:
+    projets = ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,))
+    projet = _projet_ne_dans_le_fil(atelier, projets, ses_fichiers=ses_fichiers)
+    service = ServiceEquipe(
+        projets,
+        gabarits,
+        generateur=_GenerateurHorsLigne(),
+        compositeur=CompositeurEquipe(provider=fournisseur),
+    )
+    return service, projet
+
+
+def test_un_projet_encore_vide_compose_son_equipe_sur_ce_qu_il_est(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """#1350 : l'équipe du carnet parle du carnet, pas d'un dépôt qui « se construit et se teste ».
+
+    Le fil demande l'équipe **sans réponses** (la carte n'en a pas) : sans elles, le
+    projet était analysé, et son disque ne portait que l'outillage de Maestro — le modèle
+    ne savait du carnet que son nom, et ses raisons valaient pour n'importe quel dépôt.
+    Un projet qui n'a encore aucun fichier à lui se **décrit** (la règle de l'outillage
+    dans le fil) : son équipe se compose sur les réponses que son manifeste garde.
+    """
+    fournisseur = _FournisseurEcrit(_json(roles=[ROLE_MOBILE]))
+    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, fournisseur)
+
+    asyncio.run(service.proposer(projet))
+
+    prompt, _ = fournisseur.demandes[0]
+    assert "un projet neuf, décrit par les réponses de la personne" in prompt
+    assert "nature : Le carnet de chants d'une chorale" in prompt
+    # Ce que chaque skill fait pour ce projet, pour que les rôles s'y rattachent.
+    assert "Assembler le carnet à partir des chants" in prompt
+
+
+def test_un_projet_qui_a_ses_fichiers_compose_son_equipe_sur_sa_lecture(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Le pendant : dès que le projet a ses fichiers, c'est eux qui disent ce qu'il est."""
+    fournisseur = _FournisseurEcrit(_json(roles=[ROLE_MOBILE]))
+    service, projet = _service_du_carnet(
+        tmp_path, atelier, gabarits, fournisseur, ses_fichiers=True
+    )
+
+    asyncio.run(service.proposer(projet))
+
+    prompt, _ = fournisseur.demandes[0]
+    assert "un projet existant, lu par l'analyse" in prompt
+    assert "nature :" not in prompt
+
+
+def test_le_cadre_demande_des_raisons_qui_ne_valent_que_pour_ce_projet() -> None:
+    """#1350 : « une phrase : pourquoi ce projet appelle ce rôle » laissait passer une raison
+    qui valait pour tout dépôt — le juge de S9 l'a lue comme telle."""
+    cadre = " ".join(CADRE_COMPOSITION.split())
+    assert "ce que ce rôle fera DANS CE projet" in cadre
+    assert "vaudrait pour n'importe quel dépôt" in cadre
 
 
 def test_un_modele_en_panne_fait_retomber_sur_les_regles_et_le_dit(

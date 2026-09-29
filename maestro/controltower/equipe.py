@@ -71,6 +71,7 @@ from maestro.controltower.generation_agent import (
     GenerateurDefinitionAgent,
     GenerationIndisponible,
 )
+from maestro.controltower.pieces import projet_a_ses_fichiers
 from maestro.controltower.projets import ServiceProjets
 from maestro.equipe import (
     ORIGINE_PLAYBOOK_GABARIT,
@@ -102,6 +103,7 @@ from maestro.equipe.composition import (
 )
 from maestro.equipe.modele import ORIGINE_PLAYBOOK_ESQUISSE
 from maestro.outillage import Analyse, Bornes, analyser
+from maestro.outillage.generation import choix_declares
 from maestro.outillage.modele import Constats, Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
@@ -110,6 +112,7 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
 )
 from maestro.projets import Projet
+from maestro.projets.racine import valider_racine
 from maestro.providers.base import ModelProvider
 
 #: Ce qu'on écrit sur un rôle dont le playbook a bien été rédigé pour ce projet.
@@ -276,8 +279,9 @@ class ServiceEquipe:
         """
         projet = self._projets.entite(id_projet)
         # Les réponses d'un projet neuf arrivent avec ce qui en a été compris (#1147) :
-        # rien ne se re-déduit ici, et le modèle n'est pas rappelé.
-        acquis = list(choix)
+        # rien ne se re-déduit ici, et le modèle n'est pas rappelé. Sans elles — le fil
+        # n'en passe pas —, un projet encore vide reprend celles que son manifeste garde.
+        acquis = list(choix) or list(await asyncio.to_thread(choix_d_un_projet_decrit, projet))
         constats, recommandation, source = (
             await asyncio.to_thread(self._matiere_analysee, projet)
             if not acquis
@@ -322,8 +326,9 @@ class ServiceEquipe:
         """
         phrase = demande_valide(demande)
         projet = self._projets.entite(id_projet)
-        # Comme pour `proposer` : les réponses arrivent avec ce qui en a été compris (#1147).
-        acquis = list(choix)
+        # Comme pour `proposer` : les réponses arrivent avec ce qui en a été compris (#1147),
+        # ou se relisent au manifeste d'un projet encore vide (#1350).
+        acquis = list(choix) or list(await asyncio.to_thread(choix_d_un_projet_decrit, projet))
         constats, recommandation, _source = (
             await asyncio.to_thread(self._matiere_analysee, projet)
             if not acquis
@@ -597,6 +602,25 @@ class ServiceEquipe:
         if self._compositeur is None:
             self._compositeur = CompositeurEquipe()
         return self._compositeur
+
+
+def choix_d_un_projet_decrit(projet: Projet) -> tuple[Choix, ...]:
+    """Les réponses d'où l'outillage d'un projet **encore vide** a été écrit — `()` sinon (#1350).
+
+    Le fil propose l'équipe sans lui passer de réponses (la carte d'équipe n'en a pas) :
+    elle se dérivait donc de l'**analyse** du disque, qui ne portait que l'outillage de
+    Maestro, et le modèle ne savait du projet que son nom — sur le banc (S9), les raisons
+    des rôles valaient « pour n'importe quel dépôt ». Un projet qui n'a encore aucun
+    fichier à lui se **décrit** (`projet_a_ses_fichiers`, la règle même de l'outillage
+    dans le fil) : ce qu'il est vit dans les réponses que son manifeste garde
+    (`choix_declares`). Dès qu'il a ses fichiers, ce sont eux qui disent ce qu'il est, et
+    l'analyse reprend la main.
+
+    Bloquant — le parcours du dossier : joué hors de la boucle d'événements.
+    """
+    if projet_a_ses_fichiers(projet):
+        return ()
+    return choix_declares(valider_racine(projet.racine))
 
 
 def _porte_dans(racine: Path) -> Callable[[str], bool]:
