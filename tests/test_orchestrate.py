@@ -478,7 +478,7 @@ class Depot:
                  "milestone": {"jalon": jalon} if (jalon := self._jalon_de(iid)) else None},
                 ensure_ascii=False, separators=(",", ":"),
             )
-            for iid in self.tickets
+            for iid in self._ouverts()
         )
         (self.fixtures / "jalons.json").write_text(
             f'{{"data":{{"repository":{{"issues":{{"nodes":[{noeuds}]}}}}}}}}', encoding="utf-8"
@@ -513,16 +513,24 @@ class Depot:
         type_: str = "feature",
         assigne: str = "",
         parent: int | None = None,
-        lots: list[tuple[int, str, bool]] | None = None,
+        lots: list[tuple[int, str, bool] | tuple[int, str, bool, bool]] | None = None,
         labels_sup: str = "",
         corps_sup: str = "",
         jalon: str | None = "",
+        ferme: bool = False,
     ) -> None:
         """Déclare un ticket : son statut, ses labels, et son rôle éventuel de lot ou de parent.
 
         `jalon` le range dans un jalon nommé, ou SANS jalon (`None`) ; laissé vide, il prend le
         jalon par défaut du harnais (`_jalon_de`). Il ne sert que la lecture du backlog (#1053) : la
         table d'un jalon, elle, se pose par `milestone_tickets`.
+
+        `ferme` le déclare FERMÉ (#1054) : sa vue porte `state: closed`, et les deux lectures du
+        backlog OUVERT (`backlog.json`, `jalons.json`) ne le rendent pas — ce que fait la forge.
+        C'est ce qui permet d'éprouver qu'un ticket demandé mais fermé se nomme au lieu de manquer.
+
+        Un lot de `lots` peut porter un 4e champ, vrai s'il est fermé : sa coche vaut alors « x »,
+        comme `gh_issue_raw` la dérive de l'état du lot (#390).
 
         `labels_sup` ajoute des labels à la liste de base — il n'existe que pour `lot::arbitre`
         (#562), qui est un fait porté par le PARENT et non par son découpage : sans lui, le seul
@@ -548,13 +556,14 @@ class Depot:
             # l'état que la coche est dérivée (#390). Le `statut` d'un lot est son CYCLE DE VIE, qui
             # ne ferme rien.
             entetes += "".join(
-                f"lot:\t{i}\t-\t{'∥' if p else '-'}\t{t}\n" for i, t, p in lots
+                f"lot:\t{i}\t{'x' if clos and clos[0] else '-'}\t{'∥' if p else '-'}\t{t}\n"
+                for i, t, p, *clos in lots
             )
         labels = f"agent::dev, prio::{prio}, type::{type_}"
         if labels_sup:
             labels += f", {labels_sup}"
         (self.fixtures / f"issue-{iid}.txt").write_text(
-            f"title:\t{titre}\nstate:\topen\nlabels:\t{labels}\n"
+            f"title:\t{titre}\nstate:\t{'closed' if ferme else 'open'}\nlabels:\t{labels}\n"
             f"assignees:\t{assigne}\n{entetes}--\n{corps}\n",
             encoding="utf-8",
         )
@@ -562,7 +571,8 @@ class Depot:
             _statut_json(str(iid), statut, assigne), encoding="utf-8"
         )
         self.tickets[str(iid)] = {
-            "titre": titre, "statut": statut, "prio": prio, "type": type_, "assigne": assigne
+            "titre": titre, "statut": statut, "prio": prio, "type": type_, "assigne": assigne,
+            "ferme": ferme,
         }
         if jalon != "":
             self.jalons[str(iid)] = jalon
@@ -622,11 +632,15 @@ class Depot:
         )
         (self.fixtures / "backlog.json").write_text(
             '{{"data":{{"repository":{{"issues":{{"nodes":[{}]}}}}}}}}'.format(
-                ",".join(self._noeud(iid) for iid in self.tickets)
+                ",".join(self._noeud(iid) for iid in self._ouverts())
             ),
             encoding="utf-8",
         )
         self._ecrit_jalons()
+
+    def _ouverts(self) -> list[str]:
+        """Les tickets que rendent les lectures du backlog OUVERT : tous sauf les fermés (#1054)."""
+        return [iid for iid, t in self.tickets.items() if not t.get("ferme")]
 
     def mr(
         self,
@@ -5077,6 +5091,207 @@ def test_l_en_tete_du_run_compte_les_jalons_traverses(depot: Depot) -> None:
     r = depot.lance("run.sh", "--dry-run", "--plan", str(plan), "--run-id", "jalons")
     assert "milestone : Phase A · rail produit · puis 2 autre(s) jalon(s) du rail" in r.stdout, \
         r.stdout + r.stderr
+
+
+# =====================================================================================
+# La portée d'un run se demande : par chantier, par tickets nommés, ou par jalon (#1054)
+# =====================================================================================
+# Trois portées, `--parent`, `--ticket` et `--milestone`, qui se CUMULENT (le plan porte l'union de
+# ce qu'elles demandent) et que ni le rail ni l'état du jalon ne filtrent. Un iid demandé qui n'est
+# pas prenable se NOMME, avec sa cause, même sans `--check` : une portée ne rend jamais un plan plus
+# court en silence.
+
+def _chantier_a_travers_les_jalons(depot: Depot) -> None:
+    """Le backlog de `_backlog_deux_jalons`, plus un chantier (#700) que l'échéance contredit.
+
+    Son lot 1 est dans le jalon le PLUS TARDIF (« Phase B »), son lot 2 dans le plus proche
+    (« Phase A »), son lot 3 sur l'AUTRE RAIL, et son lot 4 est déjà fermé. Le parent n'a pas de
+    jalon. Un plan rangé ticket par ticket mettrait le lot 2 devant le lot 1 ; le plan sans consigne
+    n'atteint pas le lot 3.
+    """
+    _backlog_deux_jalons(depot)
+    depot.ticket(700, "Chantier transverse", jalon=None, lots=[
+        (701, "Lot B", False), (702, "Lot A", False), (703, "Lot outil", False),
+        (704, "Lot livré", False, True),
+    ])
+    depot.ticket(701, "Lot B", parent=700, jalon="Phase B")
+    depot.ticket(702, "Lot A", parent=700, jalon="Phase A")
+    depot.ticket(703, "Lot outil", parent=700, jalon="Outillage")
+    depot.ticket(704, "Lot livré", parent=700, statut="Terminé", jalon="Phase A", ferme=True)
+    depot.publie()
+
+
+def _commentaires(sortie: str, marqueur: str) -> list[str]:
+    """Les lignes de commentaire du plan qui portent ce marqueur (`# milestone`, `# portee`…)."""
+    return [ligne for ligne in sortie.splitlines() if ligne.startswith(f"# {marqueur}\t")]
+
+
+def test_parent_rend_les_lots_de_son_chantier_dans_son_ordre_jalons_meles(depot: Depot) -> None:
+    """C1 : `--parent <iid>` rend les lots prenables de ce parent, dans l'ordre du parent, quel que
+    soit leur jalon — et sans lire un ticket hors de la portée (#602)."""
+    _chantier_a_travers_les_jalons(depot)
+
+    # Le motif : sans portée, le chantier n'est PAS atteignable entier — son lot d'outillage est
+    # écarté par le rail —, et le plan porte le reste du backlog.
+    defaut = [ligne[1] for ligne in _lignes_du_plan(depot.lance("queue.sh").stdout)]
+    assert "703" not in defaut and "520" in defaut
+
+    journal = depot.fixtures / "gh.log"
+    journal.unlink(missing_ok=True)
+    r = depot.lance("queue.sh", "--parent", "700")
+    assert r.returncode == 0, r.stderr
+    plan = _lignes_du_plan(r.stdout)
+    assert [ligne[1] for ligne in plan] == ["701", "702", "703"], \
+        "les lots ouverts, dans l'ordre du parent : l'échéance aurait mis le lot A devant le lot B"
+    assert {ligne[2] for ligne in plan} == {"700"}, "ils restent des lots de leur parent"
+    assert _commentaires(r.stdout, "milestone") == [
+        "# milestone\tPhase B\tproduit", "# milestone\tPhase A\tproduit",
+        "# milestone\tOutillage\toutillage",
+    ], "une ligne par jalon traversé, chacune avec le rail de SON jalon"
+    assert _commentaires(r.stdout, "portee") == ["# portee\tparent\t700"], \
+        "le plan dit ce qu'on lui a demandé"
+    assert "hors du plan" not in r.stderr, \
+        "un lot fermé est le cas nominal d'un chantier entamé : il ne s'annonce pas"
+
+    vues = sorted({a.split("issue(number:")[1].split(")")[0]
+                   for a in journal.read_text(encoding="utf-8").splitlines()
+                   if "issue(number:" in a and "body }" in a})
+    assert vues == ["700", "701", "702", "703"], \
+        "la vue du parent et celles de ses lots ouverts, et aucune hors de la portée"
+
+    # Et `--check`, qui nomme tout écarté, dit où est passé le lot fermé.
+    r = depot.lance("queue.sh", "--parent", "700", "--check")
+    assert "écarté #704  fermé — lot de #700" in r.stderr, r.stderr
+
+
+def test_les_portees_se_cumulent_et_sans_portee_le_plan_reste_global(depot: Depot) -> None:
+    """C2 : `--ticket`, `--parent` et `--milestone` se cumulent — l'union, rangée par les règles du
+    plan — et, sans aucune, le plan est celui du lot 1 (#1053)."""
+    _backlog_deux_jalons(depot)
+
+    def plan(*portee: str) -> list[str]:
+        r = depot.lance("queue.sh", *portee)
+        assert r.returncode == 0, r.stderr
+        return [ligne[1] for ligne in _lignes_du_plan(r.stdout)]
+
+    # Le motif : chaque portée seule rend sa part, et les trois parts sont DISJOINTES — leur
+    # intersection serait vide, et un cumul qui la prendrait ne rendrait rien.
+    assert plan("--ticket", "540") == ["540"]
+    assert plan("--parent", "500") == ["501", "502"]
+    assert plan("--milestone", "Outillage") == ["550"], "une portée explicite ne filtre pas le rail"
+
+    cumul = plan("--ticket", "540", "--parent", "500", "--milestone", "Outillage")
+    assert cumul == ["501", "502", "550", "540"], \
+        "l'union, par échéance du jalon : Phase A, puis Outillage, puis Phase B"
+
+    # Plusieurs iid par option : séparés, entre virgules, ou l'option répétée — le même plan.
+    attendu = ["530", "540"]
+    assert plan("--ticket", "540", "530") == attendu
+    assert plan("--ticket", "540,#530") == attendu
+    assert plan("--ticket", "530", "--ticket", "540") == attendu
+
+    # Sans aucune portée : le plan global du lot 1, sans une ligne de portée.
+    r = depot.lance("queue.sh")
+    assert [ligne[1] for ligne in _lignes_du_plan(r.stdout)] == \
+        ["520", "501", "502", "510", "530", "540"]
+    assert not _commentaires(r.stdout, "portee") and not _commentaires(r.stdout, "demande-ecartee")
+
+
+def test_un_iid_demande_non_prenable_est_nomme_avec_sa_cause_meme_sans_check(
+    depot: Depot,
+) -> None:
+    """C3 : chaque iid demandé que le plan ne porte pas est nommé avec sa cause — sur stderr SANS
+    `--check`, et dans le plan —, et ce qui reste prenable part quand même."""
+    _backlog_deux_jalons(depot)
+    depot.ticket(800, "Pris par alice", statut="En cours", assigne="alice")
+    depot.ticket(801, "Réservé à bob", assigne="bob")
+    depot.ticket(802, "Déjà livré", statut="Terminé", ferme=True)
+    depot.ticket(600, "Chantier en revue", lots=[(601, "Lot en revue", False),
+                                                 (602, "Lot suivant", False),
+                                                 (603, "Lot fermé", False, True)])
+    depot.ticket(601, "Lot en revue", statut="En revue", parent=600)
+    depot.ticket(602, "Lot suivant", parent=600)
+    depot.ticket(603, "Lot fermé", statut="Terminé", parent=600, ferme=True)
+    depot.publie()
+    portee = ("--ticket", "800", "801", "802", "803", "500", "540",
+              "--parent", "510", "600")
+
+    # Le motif : sans portée, ces tickets sont écartés en silence — seul `--check` les nommerait —,
+    # si bien que l'annonce ci-dessous est bien le fait de la DEMANDE.
+    silencieux = depot.lance("queue.sh")
+    assert "800" not in silencieux.stdout and "hors du plan" not in silencieux.stderr
+
+    r = depot.lance("queue.sh", *portee)
+    assert r.returncode == 0, r.stderr
+    assert [ligne[1] for ligne in _lignes_du_plan(r.stdout)] == ["602", "540"], \
+        "ce qui est prenable part, les autres ne réduisent pas le plan en silence"
+
+    causes = {
+        "800": "cycle de vie « En cours » — demandé par --ticket",
+        "801": "assigné à bob — demandé par --ticket",
+        "802": "fermé — demandé par --ticket",
+        "803": "introuvable — demandé par --ticket",
+        "500": "parent de suivi — ses lots se demandent par « --parent 500 »",
+        "510": "pas un parent de suivi (aucune sub-issue) — « --ticket 510 » le demande seul",
+        "601": "cycle de vie « En revue » — lot de #600",
+    }
+    assert "7 ticket(s) demandé(s) hors du plan" in r.stderr, r.stderr
+    for iid, cause in causes.items():
+        assert f"#{iid:<5} {cause}" in r.stderr, f"#{iid} doit être nommé : {r.stderr}"
+    ecartees = {ligne.split("\t")[1]: ligne.split("\t")[2]
+                for ligne in _commentaires(r.stdout, "demande-ecartee")}
+    assert ecartees == causes, "le plan, rejoué par --resume, garde la même trace"
+    assert "603" not in ecartees, "un lot fermé ne s'annonce pas : c'est le cas nominal"
+
+    # `--check` nomme TOUT écarté : le lot fermé, lu dès la vue du parent, et ceux que la lecture du
+    # backlog écarte ensuite — l'une n'efface pas l'autre.
+    r = depot.lance("queue.sh", *portee, "--check")
+    assert "écarté #603  fermé — lot de #600" in r.stderr, r.stderr
+    assert "écarté #800  cycle de vie « En cours »" in r.stderr, r.stderr
+
+
+def test_un_ticket_hors_projet_demande_se_dit_hors_projet(depot: Depot) -> None:
+    """Un ticket sans état est HORS PROJET (contrat de `gl_backlog_table`) : « cycle de vie « - » »
+    ne dirait pas à qui le demande ce qu'il faut réparer (`lib.sh project-add`)."""
+    _backlog_deux_jalons(depot)
+    depot.ticket(805, "Créé dans l'interface", statut="")
+    depot.publie()
+    carte = (depot.fixtures / "carte.json").read_text(encoding="utf-8")
+    (depot.fixtures / "carte.json").write_text(
+        "".join(ligne for ligne in carte.splitlines(keepends=True) if "\t805\t" not in ligne),
+        encoding="utf-8",
+    )
+    # Le motif : absent de la carte, le ticket sort de la table avec un statut « - ».
+    assert "805\t-\t" in depot.lib("backlog-table").stdout
+
+    r = depot.lance("queue.sh", "--ticket", "805")
+    assert r.returncode == 0, r.stderr
+    assert "#805   hors projet (aucun état) — demandé par --ticket" in r.stderr, r.stderr
+
+
+def test_un_jalon_demande_inconnu_arrete_le_plan(depot: Depot) -> None:
+    """Une faute de frappe n'est pas une portée vide : comme la lecture de sa table avant #1054,
+    un jalon inconnu arrête le plan au lieu de partir sur « Rien à traiter »."""
+    _backlog_deux_jalons(depot)
+    assert depot.lance("queue.sh", "--milestone", "Phase A").returncode == 0, "le motif : connu"
+    r = depot.lance("queue.sh", "--milestone", "Phase Α")  # un alpha grec, pas un A
+    assert r.returncode == 1
+    assert "aucun jalon « Phase Α »" in r.stderr
+    assert not r.stdout.strip(), "aucun plan"
+
+
+def test_run_transmet_la_portee_a_queue(depot: Depot) -> None:
+    """Un run se demande par chantier : `run.sh` passe la portée telle quelle à `queue.sh`, et la
+    dit sans effet sur un plan déjà figé."""
+    _chantier_a_travers_les_jalons(depot)
+    r = depot.lance("run.sh", "--dry-run", "--parent", "700", "--run-id", "chantier")
+    assert r.returncode == 0, r.stdout + r.stderr
+    retenus = re.findall(r"^\s+\d+\. #(\d+)", r.stdout, flags=re.M)
+    assert retenus == ["701", "702", "703"], r.stdout
+
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--ticket", "540", "--run-id", "fige")
+    assert "portée demandée sans effet — le plan est déjà figé (--plan)" in r.stderr, r.stderr
 
 
 # =====================================================================================

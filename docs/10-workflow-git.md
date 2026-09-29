@@ -5690,6 +5690,7 @@ tient pour cela une **file de merge**, drainée au fil de l'eau puis en fin de r
 ```bash
 bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a été écarté
 bash scripts/orchestrate/queue.sh --milestones  # sur quel milestone lancer un run (§11.2)
+bash scripts/orchestrate/queue.sh --parent 1052 --check  # le plan d'un chantier entier (§11.2)
 bash scripts/orchestrate/queue.sh --touche-claude  # les tickets du plan où la session ne pourra pas écrire (§11.2)
 bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — rien n'est lancé
 bash scripts/orchestrate/run.sh             # le run, dans un terminal laissé ouvert
@@ -5750,7 +5751,7 @@ même plan, et un run reste reproductible même si le backlog évolue pendant qu
 
 | Règle | Pourquoi |
 |---|---|
-| Seuls les tickets **« À faire » et non assignés** — sans consigne, de **tout le backlog du rail produit** ; avec `--milestone`, de ce jalon seul | un ticket assigné est le travail de quelqu'un (§5) ; le rail reste un filtre (#617), le jalon n'en est plus un (#1053) |
+| Seuls les tickets **« À faire » et non assignés** — sans consigne, de **tout le backlog du rail produit** ; avec une **portée** (`--parent`, `--ticket`, `--milestone`), de ce qu'elle demande | un ticket assigné est le travail de quelqu'un (§5) ; le rail reste un filtre du plan sans consigne (#617), le jalon n'en est plus un (#1053) |
 | Les **parents de suivi sont écartés**, remplacés par leurs lots **dans l'ordre du parent** | un parent ne porte ni branche ni code (§5.1) ; c'est cet ordre, tenu par la forge, qui encode les dépendances |
 | Les lots d'un même parent restent **contigus**, le parent héritant de leur priorité maximale et de leur échéance la plus proche | s'intercaler ferait partir le lot suivant d'un `origin/main` qui a bougé pour rien |
 | Le reste trié par **échéance du jalon**, puis `prio::`, puis iid croissant ; un ticket **sans jalon** en dernier | l'échéance est l'ordre de la file (§3.4), et l'ordre reste reproductible |
@@ -5764,6 +5765,25 @@ plan, et l'en-tête du run annonce le premier et compte les suivants. Un ticket 
 ou de l'**autre rail** est écarté avec sa raison. Le coût tient en deux lectures fixes de plus (les
 jalons, et le jalon de chaque ticket ouvert par `lib.sh issues-jalons`) ; un ticket de l'autre rail
 ne coûte aucune lecture. `--orphelins` garde la portée d'un milestone, le courant par défaut.
+
+**La portée d'un run se demande** (#1054, chantier #1052) : `--parent <iid>…` prend les lots d'un
+chantier **dans l'ordre du parent, quel que soit leur jalon** — un parent de suivi est une
+fonctionnalité, et ses lots en sont les tickets (§5.1) —, `--ticket <iid>…` une liste nommée, et
+`--milestone <titre>` les tickets d'un jalon, devenu une **restriction** du backlog lu plutôt que la
+source du plan (même plan qu'avant, à la ligne `# portee` près). Les trois **se cumulent** — le plan
+porte l'union de ce qu'elles demandent, rangée par les règles ci-dessus — et **ni le rail ni l'état
+du jalon ne les filtrent** : ce sont les bornes du plan *sans consigne*, qui rendraient sinon
+inatteignable un chantier traversant les deux rails. `run.sh` les transmet telles quelles
+(`run.sh --parent 1052`), et les dit sans effet sur un plan déjà figé (`--plan`, `--resume`).
+
+**Un iid demandé qui n'est pas prenable est nommé avec sa cause**, sur stderr **même sans
+`--check`**, et dans le plan en `# demande-ecartee` — `run.sh` laisse passer stderr, et le plan
+rejoué par `--resume` garde la trace. Causes : cycle de vie, assigné, fermé, introuvable, **hors
+projet**, parent nommé par `--ticket` (« ses lots se demandent par `--parent` »), `--parent` sur un
+ticket sans lot. Demander une portée et recevoir un plan plus court sans explication est le mode de
+panne qu'elle ne doit pas avoir. Ne s'annoncent pas un à un, et `--check` les nomme : les **lots
+fermés** d'un chantier (son cas nominal) et les tickets d'un jalon. Un jalon demandé **inconnu**
+arrête le plan (code 1), comme avant : une faute de frappe n'est pas une portée vide.
 
 `--check` ajoute sur stderr le détail des **écartés avec leur raison** — sans lui, une absence est
 indistinguable d'un bug —, les **tickets sans jalon** retenus en fin de plan, et, pour la même
