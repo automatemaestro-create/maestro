@@ -343,7 +343,9 @@ FAMILLES_MODELES="$RACINE/maestro/providers/familles-claude.tsv"
 # d'en sortir, en connaissance de cause.
 EFFORT="${MAESTRO_ORCHESTRATE_EFFORT:-xhigh}"
 PLAN_IMPOSE=""
-MILESTONE=""
+# La portée demandée (#1054) — `--milestone`, `--parent`, `--ticket` —, transmise TELLE QUELLE à
+# `queue.sh`, qui la valide et la résout : ses règles n'existent qu'à un endroit.
+PORTEE=()
 RUN_ID=""
 TEST_REPRISE=""
 LIRE_RESULTAT=""
@@ -414,7 +416,12 @@ Options :
   --effort <niveau>    Effort de raisonnement des sessions : low, medium, high, xhigh, max.
                        Défaut : xhigh.
   --plan <fichier>     Utilise un plan déjà calculé (TSV de queue.sh) au lieu d'en calculer un.
-  --milestone <titre>  Transmis à queue.sh (par défaut : la phase courante).
+  --milestone <titre>  Portée : les tickets de ce milestone. Transmis à queue.sh, comme les deux
+  --parent <iid>…      suivantes : les lots de ce chantier, quel que soit leur jalon, et
+  --ticket <iid>…      ces tickets nommés. Elles se cumulent ; un iid demandé qui n'est pas
+                       prenable est nommé avec sa cause. Sans aucune : tout le backlog du rail
+                       produit, trié par échéance de jalon. Sans effet avec --plan ou --resume,
+                       dont le plan est déjà figé.
   --run-id <id>        Identifiant du run. Défaut : horodatage.
   --sans-merge         N'ouvre pas de file de merge : le run laisse ses PR ouvertes, comme avant
                        #419. Par défaut, une PR verte est mergée PENDANT le run (par
@@ -489,7 +496,13 @@ while [ $# -gt 0 ]; do
         *) REPRISE_ID="$2"; REPRISE_AVEC_VALEUR=1; shift ;;
       esac
       ;;
-    --milestone) MILESTONE="${2:-}"; shift ;;
+    --milestone) PORTEE+=("$1" "${2:-}"); shift ;;
+    # Plusieurs iid par option, comme `queue.sh` les lit : on recopie l'option et chaque valeur qui
+    # suit tant qu'elle n'est pas elle-même une option, sans les interpréter.
+    --parent | --ticket | --tickets)
+      PORTEE+=("$1")
+      while [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; do PORTEE+=("$2"); shift; done
+      ;;
     --run-id) RUN_ID="${2:-}"; shift ;;
     # Un run en tue d'autres par défaut (#213) : ces deux options sont les seules façons d'en
     # sortir — ne rien tuer, ou ne faire que ça.
@@ -2998,17 +3011,17 @@ if [ -n "$PLAN_IMPOSE" ]; then
   # ORDINAIRE écarterait un tube ou une substitution de processus, qui conviennent très bien.
   [ -r "$PLAN_IMPOSE" ] || { printf 'run.sh : plan illisible ou introuvable — %s\n' "$PLAN_IMPOSE" >&2; exit 1; }
   cp "$PLAN_IMPOSE" "$PLAN"
+  # Une portée demandée n'a rien à restreindre ici : le dire plutôt que de la taire (#1054).
+  [ "${#PORTEE[@]}" -gt 0 ] &&
+    printf 'run.sh : portée demandée sans effet — le plan est déjà figé (%s).\n' \
+      "$([ "$REPRISE" = 1 ] && printf 'reprise' || printf -- '--plan')" >&2
 else
   queue="$RACINE/scripts/orchestrate/queue.sh"
   [ -x "$queue" ] || [ -f "$queue" ] || {
     printf 'run.sh : %s absent — il porte le calcul de l'\''ordre (#168).\n' "$queue" >&2
     exit 1
   }
-  if [ -n "$MILESTONE" ]; then
-    bash "$queue" --milestone "$MILESTONE" >"$PLAN" || { renonce_au_run; exit 1; }
-  else
-    bash "$queue" >"$PLAN" || { renonce_au_run; exit 1; }
-  fi
+  bash "$queue" "${PORTEE[@]}" >"$PLAN" || { renonce_au_run; exit 1; }
 fi
 
 nb_plan="$(grep -cv '^#' "$PLAN")"
