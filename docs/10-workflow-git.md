@@ -5750,15 +5750,25 @@ même plan, et un run reste reproductible même si le backlog évolue pendant qu
 
 | Règle | Pourquoi |
 |---|---|
-| Seuls les tickets **« À faire » et non assignés** du **milestone courant** | un ticket assigné est le travail de quelqu'un (§5) ; un autre milestone n'est pas la phase en cours |
+| Seuls les tickets **« À faire » et non assignés** — sans consigne, de **tout le backlog du rail produit** ; avec `--milestone`, de ce jalon seul | un ticket assigné est le travail de quelqu'un (§5) ; le rail reste un filtre (#617), le jalon n'en est plus un (#1053) |
 | Les **parents de suivi sont écartés**, remplacés par leurs lots **dans l'ordre du parent** | un parent ne porte ni branche ni code (§5.1) ; c'est cet ordre, tenu par la forge, qui encode les dépendances |
-| Les lots d'un même parent restent **contigus**, le parent héritant de leur priorité maximale | s'intercaler ferait partir le lot suivant d'un `origin/main` qui a bougé pour rien |
-| Le reste trié par `prio::` puis iid croissant | pour que l'ordre soit reproductible |
+| Les lots d'un même parent restent **contigus**, le parent héritant de leur priorité maximale et de leur échéance la plus proche | s'intercaler ferait partir le lot suivant d'un `origin/main` qui a bougé pour rien |
+| Le reste trié par **échéance du jalon**, puis `prio::`, puis iid croissant ; un ticket **sans jalon** en dernier | l'échéance est l'ordre de la file (§3.4), et l'ordre reste reproductible |
 | Chaque ticket porte son **groupe de dépendance** (colonne `groupe`) | l'ordre dit ce qui passe après quoi, jamais ce qui pourrait partir **en même temps** |
 
+**Le jalon trie, il ne filtre plus** (#1053, chantier #1052). L'échéance se lit comme le **rang** du
+jalon dans `lib.sh milestones`, l'ordre même de `current-milestone` : le plan sans consigne
+**commence donc par le plan d'avant**, ticket pour ticket, et continue sur le jalon suivant au lieu de
+s'arrêter à sa frontière. Il porte une ligne `# milestone` **par jalon traversé**, dans l'ordre du
+plan, et l'en-tête du run annonce le premier et compte les suivants. Un ticket d'un jalon **fermé**
+ou de l'**autre rail** est écarté avec sa raison. Le coût tient en deux lectures fixes de plus (les
+jalons, et le jalon de chaque ticket ouvert par `lib.sh issues-jalons`) ; un ticket de l'autre rail
+ne coûte aucune lecture. `--orphelins` garde la portée d'un milestone, le courant par défaut.
+
 `--check` ajoute sur stderr le détail des **écartés avec leur raison** — sans lui, une absence est
-indistinguable d'un bug — et, pour la même raison, les **groupes obtenus** : une colonne de plus dans
-le plan ne dit pas d'elle-même ce qu'elle a conclu.
+indistinguable d'un bug —, les **tickets sans jalon** retenus en fin de plan, et, pour la même
+raison, les **groupes obtenus** : une colonne de plus dans le plan ne dit pas d'elle-même ce qu'elle a
+conclu.
 
 **Le plan déclare ce qui est parallélisable** (#288). Sortie TSV : `rang`, `iid`, `parent`, `prio`,
 `groupe`, `titre` — `groupe` vient **avant `titre`** parce que le titre est le champ absorbant d'un
@@ -7228,9 +7238,11 @@ relève de cette section-ci tient en trois points :
 - ⚠ **C'est une classe de risque nouvelle, et l'argument inverse a été vérifié faux.** On pouvait
   croire qu'une session lit déjà du texte arbitraire, le dépôt étant public depuis #734 et la
   description d'un ticket étant lue comme une consigne : `queue.sh` ne retient que les tickets « À
-  faire » **du milestone courant**, et un non-collaborateur ne peut poser ni milestone ni état de
-  projet. Le double filtre tient, et tout ce qu'une session lit aujourd'hui comme consigne a été
-  écrit par l'équipe. **Le web est la première source de texte non contrôlée** — d'où le poids porté
+  faire », et un non-collaborateur ne peut poser ni milestone ni état de projet. Depuis #1053 le
+  plan couvre le backlog et retient un ticket sans jalon : la garde tient au seul état « À faire »,
+  qu'aucun automatisme du projet ne pose (vérifié le 2026-09-29 : seul « Auto-add sub-issues » est
+  actif, et rattacher un lot demande l'écriture sur le dépôt). Tout ce qu'une session lit
+  aujourd'hui comme consigne a été écrit par l'équipe. **Le web est la première source de texte non contrôlée** — d'où le poids porté
   par la garde écrite, et non par ce qui borne la casse (`deny`, `guard.sh`, `main` protégée), qui
   n'a pas bougé et n'en est pas une.
 

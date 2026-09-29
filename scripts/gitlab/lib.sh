@@ -563,6 +563,14 @@ gl_issues_sans_milestone() {
   gh_issues_sans_milestone
 }
 
+# gl_issues_jalons -> « iid<TAB>jalon » pour chaque ticket OUVERT, le jalon valant « - » quand il n'y
+# en a pas. Une lecture pour tout le backlog : c'est ce qui permet à `queue.sh` de trier le backlog
+# par échéance de jalon (#1053) sans relire chaque ticket, ni lister les jalons un par un — une liste
+# de jalon plafonne à 100 tickets, clos compris, et le plus ancien jalon ouvert en porte davantage.
+gl_issues_jalons() {
+  gh_issues_jalons
+}
+
 # gl_issue_owner <iid> -> imprime « <statut><TAB><assignés> » : le LIBELLÉ du cycle de vie (lu dans
 # le champ Status, cf. contrat de surface en tête de fichier) et les usernames des assignés
 # séparés par des virgules. Un champ vide signifie « non posé » pour le cycle de vie, « personne »
@@ -7997,14 +8005,43 @@ gh_labels() {
     | grep -o '"name":"[^"]*"' | sed 's/.*:"//; s/"$//'
 }
 
-# gh_issues_sans_milestone -> numéros des tickets OUVERTS sans jalon (cf. gl_issues_sans_milestone).
+# gh_issues_jalons -> « iid<TAB>jalon » pour chaque ticket OUVERT (cf. gl_issues_jalons).
 # `milestone` est demandé sous un ALIAS (`jalon:`) pour la raison exposée dans gh_issue_raw : sans
 # lui, le `title` du jalon et celui du ticket partagent une clé, et « jalon absent » deviendrait
 # indistinguable de « jalon présent » dès qu'on cherche la clé plutôt que l'objet.
+#
+# Le titre du jalon est découpé et déséchappé EXACTEMENT comme dans gh_milestones (coupé au premier
+# guillemet, trois entités rendues) : `queue.sh` rapproche les deux colonnes par égalité, et deux
+# projections qui ne rendraient pas le même titre feraient passer un jalon connu pour introuvable.
+gh_issues_jalons() {
+  local raw
+  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { issues(first: 100, states: OPEN) { nodes { number milestone { jalon: title } } } } }')" || return 1
+  printf '%s' "$raw" | awk '
+    {
+      n = split($0, parts, /\{"number":/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        if (match(node, /^[0-9]+/) == 0) continue
+        iid = substr(node, RSTART, RLENGTH)
+        jalon = "-"
+        p = index(node, "\"jalon\":\"")
+        if (p) {
+          jalon = substr(node, p + 9); sub(/".*$/, "", jalon)
+          gsub(/\\u0026/, "\\&", jalon); gsub(/\\u003e/, ">", jalon); gsub(/\\u003c/, "<", jalon)
+        }
+        printf "%s\t%s\n", iid, jalon
+      }
+    }
+  '
+}
+
+# gh_issues_sans_milestone -> numéros des tickets OUVERTS sans jalon (cf. gl_issues_sans_milestone).
+# Une projection de gh_issues_jalons, et non une seconde requête : « ce ticket a-t-il un jalon ? » ne
+# se décide qu'à un seul endroit.
 gh_issues_sans_milestone() {
-  gh_graphql_read '{ '"$(gh_depot_gql)"' { issues(first: 100, states: OPEN) { nodes { number milestone { jalon: title } } } } }' \
-    | sed 's/{"number":/\n{"number":/g' \
-    | awk '/^\{"number":[0-9]/ && !/"jalon":"/ { match($0, /[0-9]+/); print substr($0, RSTART, RLENGTH) }'
+  local jalons
+  jalons="$(gh_issues_jalons)" || return 1
+  printf '%s\n' "$jalons" | awk -F'\t' '$2 == "-" { print $1 }'
 }
 
 # gh_open_mr_branches -> branche source de chaque PR ouverte (cf. gl_open_mr_branches).
@@ -9489,6 +9526,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     workflow-derives)      gl_workflow_derives "$@" ;;
     status-derives)        st_derives ;;
     issues-sans-milestone) gl_issues_sans_milestone ;;
+    issues-jalons)  gl_issues_jalons ;;
     open-mr-branches)      gl_open_mr_branches ;;
     merge-settings) gl_merge_settings ;;
     issue-brief)    gl_issue_brief "$@" ;;
@@ -9604,6 +9642,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "  status-derives                     (tickets ouverts hors projet ou sans Status — iid/cause," >&2
       echo "                                      précédés de « #examines <examinés> <ouverts> »)" >&2
       echo "  issues-sans-milestone              (iid des tickets ouverts sans jalon)" >&2
+      echo "  issues-jalons                      (iid<TAB>jalon de chaque ticket ouvert, « - » sans jalon)" >&2
       echo "  issue-brief <iid>                  (titre + labels + critères d'acceptation + rendu attendu s'il est écrit)" >&2
       echo "  issue-owner <iid>                  (cycle de vie + assignés du ticket, TSV — vide = libre)" >&2
       echo "  statuts <iid…>                     (cycle de vie de N tickets NOMMÉS en UNE lecture, TSV iid/libellé ;" >&2

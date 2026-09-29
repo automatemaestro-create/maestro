@@ -2209,8 +2209,11 @@ lance_session() {
 #
 # ⚠ C'est une classe de risque NOUVELLE, et le prompt le dit ainsi. L'argument inverse — « une
 # session lit déjà du texte arbitraire, le dépôt étant public depuis #734 » — a été vérifié FAUX au
-# cadrage : `queue.sh` ne retient que les tickets « À faire » du MILESTONE COURANT, et un
-# non-collaborateur ne peut poser ni milestone ni état de projet. Tout ce qu'une session lit
+# cadrage : `queue.sh` ne retient que les tickets « À faire », et un non-collaborateur ne peut poser
+# ni milestone ni état de projet. Depuis #1053 le plan couvre le backlog et retient un ticket sans
+# jalon ; la garde tient au seul état « À faire », qu'aucun automatisme du projet ne pose (vérifié le
+# 2026-09-29 : seul « Auto-add sub-issues » y est actif, et rattacher un lot demande l'écriture sur
+# le dépôt). Tout ce qu'une session lit
 # aujourd'hui comme consigne a été écrit par l'équipe ; le web est la première source qui ne l'est
 # pas. Ce qui borne la casse ne bouge pas et n'est pas la garde : le `deny`, `guard.sh`, et `main`
 # protégée par six checks requis (#734).
@@ -3124,10 +3127,16 @@ printf 'dépôt : %s (%s)\n' "$(gl_forge_nom)" "$(gl_depot_courant)"
 # dégradation douce : un plan d'avant ce lot, rejoué par `--resume`, n'en porte aucune et la ligne
 # se tait. L'annoncer est ce qui distingue « ce run traite le produit » de « ce run traite
 # l'outillage », deux régimes que rien ne séparait quand `current-milestone` n'avait qu'une réponse.
+#
+# Un plan sans consigne traverse les jalons (#1053) et porte une ligne par jalon, dans l'ordre du
+# plan : le premier est annoncé comme avant, et le compte des suivants dit que le run ne s'arrête pas
+# à sa frontière. Les annoncer par leur nom et nommer la portée est le lot 3 du chantier (#1055).
 if grep -q '^# milestone	' "$PLAN" 2>/dev/null; then
   # shellcheck disable=SC2034  # `_` est le marqueur de la ligne, lu puis jeté.
   IFS=$'\t' read -r _ ms_titre ms_rail < <(grep -m1 '^# milestone	' "$PLAN")
-  printf 'milestone : %s · rail %s\n' "$ms_titre" "$ms_rail"
+  ms_suivants=$(( $(grep -c '^# milestone	' "$PLAN") - 1 ))
+  printf 'milestone : %s · rail %s%s\n' "$ms_titre" "$ms_rail" \
+    "$([ "$ms_suivants" -gt 0 ] && printf ' · puis %s autre(s) jalon(s) du rail' "$ms_suivants")"
 fi
 # Le modèle y est dit EN TOUTES LETTRES, avec d'où il vient (#1269) : « opus » ne dit pas sur quoi le
 # run a tourné, l'identifiant résolu si — et c'est ce qu'on relira dans `run.log`.
