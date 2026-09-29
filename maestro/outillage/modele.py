@@ -291,6 +291,12 @@ class Commande:
     `scripts.test`), `origine` **comment** (cf. `ORIGINES_COMMANDE`). Une
     commande sans ces trois champs serait invérifiable, et c'est ce qui
     distingue une analyse d'une supposition bien tournée.
+
+    `pour` (#1350) est ce qu'elle fait **pour ce projet**, avec ses mots — « assembler
+    le carnet à partir des chants » —, tel que le modèle l'a compris. C'est la
+    description du skill qui la porte ; vide, le skill retombe sur une phrase qui vaut
+    pour tout projet. Absent de la forme JSON quand il est vide : une commande lue par
+    les tables se sérialise comme avant.
     """
 
     usage: str
@@ -298,16 +304,20 @@ class Commande:
     chemin: str
     extrait: str = ""
     origine: str = "declaree"
+    pour: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """La commande en JSON."""
-        return {
+        forme: dict[str, Any] = {
             "usage": self.usage,
             "commande": self.commande,
             "chemin": self.chemin,
             "extrait": self.extrait,
             "origine": self.origine,
         }
+        if self.pour:
+            forme["pour"] = self.pour
+        return forme
 
 
 @dataclass(frozen=True)
@@ -407,6 +417,10 @@ class Entree:
     réponse : la reconnaissance de l'existant est une information, pas un
     silence — sans elle, un `AGENTS.md` déjà écrit et un `AGENTS.md` jamais
     envisagé se ressembleraient.
+
+    `pour` (#1350) est ce qu'un skill fait **pour ce projet**, réuni de ses commandes
+    (`Commande.pour`) : la description de son `SKILL.md`. `raison` dit à qui lit
+    l'analyse pourquoi Maestro le recommande ; `pour` dit à un agent quand l'ouvrir.
     """
 
     type: str
@@ -416,10 +430,11 @@ class Entree:
     raison: str
     justification: Piece | None = None
     commandes: tuple[str, ...] = ()
+    pour: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        """L'entrée en JSON."""
-        return {
+        """L'entrée en JSON — `pour` seulement quand le modèle a dit quelque chose."""
+        forme: dict[str, Any] = {
             "type": self.type,
             "nom": self.nom,
             "chemin": self.chemin,
@@ -430,6 +445,9 @@ class Entree:
             ),
             "commandes": list(self.commandes),
         }
+        if self.pour:
+            forme["pour"] = self.pour
+        return forme
 
 
 @dataclass(frozen=True)

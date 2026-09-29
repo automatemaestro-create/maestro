@@ -300,7 +300,7 @@ def _commandes_corrigees(constats: Constats, derniers: dict[str, Choix]) -> tupl
             continue
         poses.add(commande.usage)
         if not _est_aucun(choisi.valeur):
-            commandes.append(_dite(commande.usage, choisi, commande.chemin))
+            commandes.append(_dite(commande.usage, choisi, commande.chemin, commande.pour))
     for usage in USAGES:
         choisi = derniers.get(usage)
         if choisi is not None and usage not in poses and not _est_aucun(choisi.valeur):
@@ -308,14 +308,20 @@ def _commandes_corrigees(constats: Constats, derniers: dict[str, Choix]) -> tupl
     return tuple(commandes)
 
 
-def _dite(usage: str, choisi: Choix, chemin: str) -> Commande:
-    """La commande dite pour `usage`, justifiée par la phrase."""
+def _dite(usage: str, choisi: Choix, chemin: str, pour: str = "") -> Commande:
+    """La commande dite pour `usage`, justifiée par la phrase.
+
+    Elle garde ce que la commande qu'elle remplace faisait **pour le projet** (`pour`,
+    #1350) : « nos tests tournent avec pytest » change la commande, pas ce que les tests
+    vérifient — et la perdre rendrait au skill une description qui vaut pour tout projet.
+    """
     return Commande(
         usage=usage,
         commande=_une_ligne(choisi.valeur, VALEUR_MAX),
         chemin=chemin,
         extrait=_extrait(choisi),
         origine=ORIGINE_DITE,
+        pour=pour,
     )
 
 

@@ -29,6 +29,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -474,6 +475,26 @@ def test_corriger_remplace_la_commande_et_la_dit_de_la_personne() -> None:
     assert "dotnet test" in skill
     assert f"Dite par la personne qui a outillé ce projet : « {DOTNET} »" in skill
     assert "Constaté dans" not in skill
+
+
+def test_corriger_une_commande_garde_ce_qu_elle_fait_pour_le_projet() -> None:
+    """#1350 : « nos tests tournent avec pytest » change la commande, pas ce qu'elle vérifie.
+
+    La phrase que le modèle a écrite pour ce projet décrit le skill : une correction qui
+    la perdrait rendrait au skill la description générique que #1350 a retirée.
+    """
+    pour = "Vérifier que le carnet est complet et que le sommaire nomme chaque chant."
+    constats = replace(
+        _constats_node(),
+        commandes=(
+            Commande(usage="tester", commande="npm run test", chemin="package.json", pour=pour),
+        ),
+    )
+    correction = Choix(cle="tester", valeur="pytest", deduit=True, parce_que="c'est pytest")
+
+    tests = corriger(constats, [correction]).commande_de("tester")
+
+    assert tests is not None and tests.commande == "pytest" and tests.pour == pour
 
 
 def test_corriger_aucun_retire_la_commande_et_le_skill_s_ecarte() -> None:

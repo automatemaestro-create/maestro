@@ -395,6 +395,37 @@ def test_un_skill_sans_nom_declare_prend_celui_de_son_dossier(tmp_path: Path) ->
     assert [skill.nom for skill in outillage.skills] == ["construire"]
 
 
+@pytest.mark.parametrize(
+    ("ecrite", "lue"),
+    [
+        ('"Assembler le carnet : sommaire compris"', "Assembler le carnet : sommaire compris"),
+        ('"un \\"mot\\" cité, un chemin C:\\\\chants"', 'un "mot" cité, un chemin C:\\chants'),
+        ("'l''index : cité'", "l'index : cité"),
+        ("Jouer la suite", "Jouer la suite"),
+    ],
+)
+def test_une_description_citee_se_lit_comme_yaml_la_lit(
+    tmp_path: Path, ecrite: str, lue: str
+) -> None:
+    """#1350 : une description écrite par le modèle est citée, et l'index la rend sans guillemets.
+
+    Maestro cite la description d'un skill (un « : » à la française la rendait illisible
+    en YAML) : l'index que l'agent reçoit doit dire la phrase, pas son échappement.
+    """
+    racine = tmp_path / "depensio"
+    projet = projet_outille(racine)
+    ecrire(
+        racine,
+        ".agents/skills/assembler/SKILL.md",
+        f"---\nname: assembler\ndescription: {ecrite}\n---\n",
+    )
+    poser_manifeste(racine, [entree(".agents/skills/assembler/SKILL.md", "skill")])
+
+    (skill,) = outillage_du_projet(projet).skills
+
+    assert skill.description == lue
+
+
 def test_l_index_est_plafonne_et_le_dit(tmp_path: Path) -> None:
     """Au-delà, l'index coûterait plus cher que le travail qu'il sert."""
     racine = tmp_path / "depensio"

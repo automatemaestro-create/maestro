@@ -55,6 +55,7 @@ from maestro.controltower.outillage import (
 )
 from maestro.controltower.projets import ServiceProjets
 from maestro.outillage.questionnaire import (
+    POUR_MAX,
     SOURCE_CHOIX,
     SUJETS,
     VALEUR_MAX,
@@ -62,6 +63,7 @@ from maestro.outillage.questionnaire import (
     ComprehensionIllisible,
     QuestionOutillage,
     acquis_de,
+    choix_du_manifeste,
     comprehension_depuis_texte,
     constats_depuis_choix,
     question_ouverte,
@@ -508,6 +510,96 @@ def test_le_resume_et_la_provenance_disent_ce_qui_est_acquis() -> None:
     assert DESCRIPTION_FLUTTER not in source["reference"]  # une phrase tapée n'est pas un constat
 
 
+# --- Ce que chaque commande fait pour ce projet (#1350) ------------------------------------
+
+#: Ce qu'un modèle comprend du carnet de chants de S9 : chaque commande dit, avec les mots
+#: du projet, ce qu'elle fait **pour lui** — la matière de la description de son skill.
+POUR_ASSEMBLER = (
+    "Assembler le carnet à partir des chants de chants/ : sommaire des titres compris, "
+    "après tout ajout ou toute retouche d'un chant"
+)
+POUR_VERIFIER = (
+    "Vérifier que le carnet est complet : chaque chant y figure, et le sommaire les nomme tous"
+)
+CARNET = {
+    "message": "",
+    "constats": [
+        _constat("nature", "Le carnet de chants d'une chorale, assemblé avec son sommaire"),
+        {**_constat("langages", "Python"), "pour": "une phrase qui n'a rien à faire ici"},
+        {**_constat("construire", "python assembler.py"), "pour": POUR_ASSEMBLER},
+        {**_constat("tester", "python -m unittest"), "pour": POUR_VERIFIER},
+        _constat("ci", "aucun", "pas de CI demandée"),
+    ],
+    "questions": [],
+}
+
+
+def test_une_commande_comprise_dit_ce_qu_elle_fait_pour_ce_projet() -> None:
+    """#1350 : ce que le modèle comprend d'une commande **pour ce projet** voyage jusqu'au skill.
+
+    S9 est resté rouge sur des skills décrits par une table figée (« compilation, bundle,
+    artefacts ») quand le modèle, lui, demandait « Quelle commande assemble le carnet ? ».
+    La phrase n'a de sens que sur une commande : ailleurs, elle est écartée.
+    """
+    constats = {c.cle: c for c in comprehension_depuis_texte(json.dumps(CARNET), []).constats}
+
+    assert constats["construire"].pour == POUR_ASSEMBLER
+    assert constats["tester"].pour == POUR_VERIFIER
+    assert constats["langages"].pour == ""  # pas une commande : rien à dire d'un skill
+    assert Choix.from_dict(constats["tester"].to_dict()) == constats["tester"]
+    # Sans phrase, la forme d'avant reste la même, à la clé près.
+    assert "pour" not in Choix("tester", "pytest").to_dict()
+
+    acquis = list(constats.values())
+    assert constats_depuis_choix(acquis).commande_de("construire").pour == POUR_ASSEMBLER
+    entrees = {e.nom: e for e in recommandation_depuis_choix(acquis).entrees}
+    assert entrees["construire-le-projet"].pour == POUR_ASSEMBLER + "."
+    assert entrees["lancer-les-tests"].pour == POUR_VERIFIER + "."
+
+
+def test_la_phrase_d_une_commande_tient_sur_une_ligne_bornee() -> None:
+    """Elle finit dans un frontmatter : une ligne, sous le plafond d'une phrase."""
+    brut = {
+        "constats": [
+            _constat("nature", "x"),
+            {**_constat("tester", "pytest"), "pour": "a\n\nb" + "c" * 900},
+        ]
+    }
+
+    (_, tester) = comprehension_depuis_texte(json.dumps(brut), []).constats
+
+    assert "\n" not in tester.pour
+    assert len(tester.pour) <= POUR_MAX
+
+
+def test_le_manifeste_garde_les_choix_dont_l_outillage_vient() -> None:
+    """#1350 : l'équipe d'un projet encore vide se compose sur **ce qu'il est**.
+
+    Le fil propose l'équipe sans lui repasser les réponses : ce que le projet est se relit
+    donc dans son manifeste, qui garde les constats acquis tels quels — la `reference`
+    n'est qu'une ligne pour l'œil, qu'aucun code ne découpe. Le manifeste vit dans le
+    projet : ce qu'on y relit n'est pas cru (sujets du schéma, une ligne, bornée).
+    """
+    acquis = list(comprehension_depuis_texte(json.dumps(CARNET), []).constats)
+    source = source_manifeste_des_choix("prj-carnet", acquis)
+
+    assert choix_du_manifeste(source) == tuple(acquis_de(acquis))
+    assert choix_du_manifeste({"type": "analyse", "choix": source["choix"]}) == ()
+    assert choix_du_manifeste({}) == ()
+    touche = {
+        **source,
+        "choix": [
+            *source["choix"],
+            {"cle": "point_entree", "valeur": "main.py"},  # hors du schéma
+            {"cle": "demarrer", "valeur": "python -m http.server\n" + "x" * 900},
+            "pas un objet",
+        ],
+    }
+    relus = {c.cle: c for c in choix_du_manifeste(touche)}
+    assert "point_entree" not in relus
+    assert "\n" not in relus["demarrer"].valeur and len(relus["demarrer"].valeur) <= VALEUR_MAX
+
+
 # --- ③ Le conducteur ---------------------------------------------------------------------
 
 
@@ -558,6 +650,19 @@ def test_le_prompt_porte_le_registre_et_interdit_la_pile_de_maestro() -> None:
     assert "une question courte" in systeme and "une seule phrase courte" in systeme
     for cle in SUJETS:
         assert f'"{cle}"' in systeme  # le schéma est cité, une seule fois écrit
+
+
+def test_le_prompt_demande_ce_que_chaque_commande_fait_pour_ce_projet() -> None:
+    """#1350 : la description d'un skill vient de là — il faut donc la demander."""
+    faux = FauxModele(FLUTTER_TOUR_1)
+
+    asyncio.run(_conducteur(faux).ouvrir([_message(UTILISATEUR, DESCRIPTION_FLUTTER)]))
+
+    systeme = " ".join(faux.appels[0]["systeme"].split())
+    assert '"pour"' in systeme
+    assert "POUR CE PROJET" in systeme
+    # Rien de ce que le projet n'a pas : c'est la moitié du défaut de S9.
+    assert "une CI qu'il n'a pas" in systeme
 
 
 def test_les_reponses_cliquees_et_tapees_sont_dites_comme_telles_au_modele() -> None:

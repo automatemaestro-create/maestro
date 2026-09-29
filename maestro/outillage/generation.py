@@ -108,6 +108,7 @@ from maestro.outillage.correction import (
     retenir,
 )
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
+from maestro.outillage.questionnaire import Choix, choix_du_manifeste
 from maestro.outillage.redaction import GENERE_PAR, PORTEE_BLOC, Fichier, bloc
 from maestro.outillage.verification import Verification
 from maestro.sandbox.en_place import FrontiereEcriture
@@ -452,6 +453,18 @@ def corrections_declarees(cible: Path | str) -> tuple[CorrectionPrise, ...]:
     (`corrections_lues`).
     """
     return _lire_manifeste(Path(cible)).corrections
+
+
+def choix_declares(cible: Path | str) -> tuple[Choix, ...]:
+    """Les réponses dont l'outillage de `cible` a été écrit — `()` s'il vient d'une analyse (#1350).
+
+    Ce qu'un projet neuf **est**, tant qu'il n'a aucun fichier à lui : le questionnaire
+    l'a compris, l'outillage s'en est écrit, et le manifeste le garde (`source.choix`).
+    L'équipe d'un projet encore vide s'y compose, plutôt que sur un disque qui ne porte
+    que l'outillage de Maestro. Lecture pure, comme `corrections_declarees` ; rien n'y est
+    cru sans être relu (`choix_du_manifeste`).
+    """
+    return choix_du_manifeste(_lire_manifeste(Path(cible)).source)
 
 
 def _refus_de_version(

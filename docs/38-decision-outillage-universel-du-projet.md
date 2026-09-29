@@ -149,6 +149,22 @@ inerte pour un agent et utile pour la personne qui ouvre le fichier et se demand
 du frontmatter de chaque skill, recopié au moment de la génération. Deux orthographes d'une même
 description finiraient par diverger, et c'est la description qui décide si un agent ouvre le skill.
 
+**La description dit ce que le skill fait pour ce projet** (#1350). C'est ce que ses commandes font
+**pour lui**, tel que le modèle l'a compris en comprenant le projet (le champ `pour` d'un constat de
+commande, [`maestro/outillage/questionnaire.py`](../maestro/outillage/questionnaire.py)) — « Assembler
+le carnet à partir des chants, sommaire des titres compris » —, et le premier paragraphe du
+`SKILL.md` la redit. Mesuré sur le banc (S9, passage `20260927-085810`) : une table figée décrivait
+le skill de construction d'un carnet de chants par « compilation, bundle, artefacts », et celui de
+vérification par « pour ne pas les redécouvrir en intégration continue » sur un projet sans CI. Cette
+table ne sert plus qu'une commande que personne n'a décrite (lue par les tables d'une analyse), et ne
+dit que ce qui est vrai de tout projet. Une correction de la commande en mots garde la phrase : elle
+change la commande, pas ce qu'elle fait pour le projet.
+
+**La description s'écrit citée** (`description: "…"`, guillemets doubles et échappements JSON, que
+YAML lit tels quels). Nu, un scalaire YAML ne tolère ni « : » ni « # » précédé d'une espace, et la
+typographie française en met un par phrase : un client qui lit le frontmatter en YAML refuse alors
+le skill entier. C'était déjà le cas de la description de `lancer-en-local` avant #1350.
+
 **Deux registres, décidés par `source.type` (§4.1) et pas par le disque** (#1105). Ce que l'analyse
 a **lu** se dit au passé — « constaté dans `package.json` », « déclarée dans `pyproject.toml` ».
 Ce que les **réponses** d'un projet neuf impliquent (`source.type: "choix"`) se dit au futur —
@@ -332,7 +348,11 @@ par quelle version :
     "type": "analyse",                         // analyse (#1030) | choix (#1031)
     "projet_id": "prj-7f3a",
     "reference": "ana-3c9",                    // l'analyse, ou les réponses données
-    "resume": "Python + FastAPI, pytest, ruff ; aucune CI détectée"
+    "resume": "Python + FastAPI, pytest, ruff ; aucune CI détectée",
+    "choix": [                                 // #1350, source « choix » seulement : les constats acquis
+      { "cle": "tester", "valeur": "python -m unittest", "parce_que": "…",
+        "pour": "Vérifier que le carnet est complet" }
+    ]
   },
   "entrees": [
     { "chemin": "AGENTS.md", "role": "instructions", "portee": "fichier",
@@ -389,6 +409,15 @@ projet déclare. Avec elle :
   Une entrée hors de ces sujets, ou sans valeur, est écartée ; valeur et phrase tiennent sur une ligne,
   bornées comme celles que le modèle rend. Ce qui passe n'est qu'une commande de plus à jouer avant
   d'être montrée, jamais une commande crue.
+
+`source.choix` (#1350) garde, pour un outillage venu des **réponses** d'un projet neuf, les constats
+acquis **en structure** — sujet, valeur, cause, et ce qu'une commande fait pour le projet —, là où
+`reference` n'est qu'une ligne pour l'œil (une valeur peut contenir « ; »). Tant que le projet n'a
+aucun fichier à lui, c'est ce qu'il **est** : son équipe s'y compose quand le fil la propose sans
+lui passer de réponses ([docs/05 §6.19, `…/equipe/proposition`](./05-interface-control-tower.md)).
+Mesuré sur le banc (S9) : sans elle, l'équipe se composait sur l'analyse d'un disque qui ne portait
+que l'outillage de Maestro, et ses raisons valaient pour n'importe quel dépôt. Ce qui s'y relit est
+lu comme ce que le modèle rend (sujets du schéma, une ligne, bornée) : le manifeste vit dans le projet.
 
 Trois propriétés à ne pas défaire :
 

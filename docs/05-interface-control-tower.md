@@ -7214,6 +7214,12 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   **analysé** (#1030) — le cas d'un projet existant. Corps portant les `choix` du questionnaire
   d'outillage (#1031) : l'équipe se dérive de ces **réponses**, sans qu'aucun fichier soit ouvert —
   le cas d'un projet neuf. Même dérivation dans les deux cas, et `source` dit laquelle a servi.
+  **Depuis #1350**, un corps vide sur un projet **encore vide** — aucun fichier que le manifeste
+  d'outillage ne déclare, le cas du fil qui propose l'équipe après avoir écrit l'outillage — reprend
+  les réponses que ce manifeste garde (`source.choix`, [docs/38 §4.1](./38-decision-outillage-universel-du-projet.md)) :
+  analyser un disque qui ne porte que l'outillage de Maestro ne disait du projet que son nom, et les
+  raisons des rôles valaient pour n'importe quel dépôt. C'est la règle même qui ouvre l'outillage
+  dans le fil (décrit tant qu'il n'a pas de fichier à lui, lu ensuite).
   **Depuis #1159** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)), c'est le **modèle**
   qui compose l'équipe pour le besoin réel du projet — ses constats, ce que la personne a répondu,
   les cinq gabarits comme matière et non comme liste fermée —, puis l'exécution **vérifie** ce qu'il
@@ -7576,7 +7582,9 @@ ce qui en découle — c'est ce qui permet au fil (qui tient ses réponses dans 
 parcours de création (qui les tient à l'écran) de servir du même questionnaire sans partager de
 session. Seules les réponses **données** (`deduit: false`) sont lues ; sans aucune, la question
 ouverte revient **sans appel au modèle**. `deductions` rend ce qui a été **compris**, chaque constat
-avec sa cause (`parce_que`) ; `message` ce que Maestro a à dire avant la question. Un fournisseur
+avec sa cause (`parce_que`) — et, sur une commande, ce qu'elle fait **pour ce projet** (`pour`,
+#1350), qui devient la description de son skill ([docs/38 §3.1](./38-decision-outillage-universel-du-projet.md)) ;
+`message` ce que Maestro a à dire avant la question. Un fournisseur
 injoignable ou une compréhension illisible est un `502` nommé, jamais une question inventée.
 
 `POST …/outillage/recommandation` rend, à tout moment, `{"projet_id", "source", "choix",

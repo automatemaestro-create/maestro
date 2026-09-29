@@ -253,6 +253,15 @@ chemin de fichier relatif au projet. La valeur "aucun" dit explicitement qu'il n
 pas (« pas de tests pour l'instant ») : ce n'est pas un manque. Un constat ne s'écrit que
 sous l'une de ces clés : hors d'elles, il ne nourrirait aucune entrée de l'outillage.
 
+Chaque constat qui est une commande dit aussi, dans "pour", ce qu'elle fait POUR CE PROJET
+et quand un agent la joue : une phrase à l'infinitif, avec les mots du projet — ce qu'elle
+produit, ce qu'elle vérifie (par exemple, pour une application de réservation : « Jouer
+les tests des écrans de réservation et du paiement, avant de rendre un changement »).
+Cette phrase devient la description de l'outil que les agents du projet ouvriront : jamais
+une phrase qui vaudrait pour n'importe quel projet, et rien que ce projet n'a pas — ni une
+CI qu'il n'a pas, ni une compilation qu'il ne fait pas, ni une interface qu'il n'a pas.
+Laisse "pour" vide sur les autres sujets.
+
 Pour "clients", la valeur liste les outils d'agent avec lesquels la personne dit
 travailler, séparés par des virgules, chacun par son nom — par exemple """
     + noms_en_texte()
@@ -284,7 +293,7 @@ projet-ci.
 Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code :
 
 {"message": "...",
- "constats": [{"cle": "...", "valeur": "...", "parce_que": "..."}],
+ "constats": [{"cle": "...", "valeur": "...", "parce_que": "...", "pour": "..."}],
  "questions": [{"cle": "...", "intitule": "...",
                 "options": [{"valeur": "...", "libelle": "...", "raison": "...",
                              "outils": ["..."]}],
@@ -294,6 +303,7 @@ Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code 
 - "constats" : TOUT ce qu'on sait à ce tour, réponses comprises, pas seulement ce qui est
   nouveau ;
 - "parce_que" : ce qui, dans ce qui a été dit, établit le constat, en quelques mots ;
+- "pour" : sur une commande seulement, ce qu'elle fait pour ce projet (voir plus haut) ;
 - "questions" : dans l'ordre où les poser, vide quand plus rien ne manque. Tant que la
   sorte de projet n'est pas dite, la seule question est "nature", sans options.
 

@@ -313,7 +313,7 @@ class ServicePieces:
         dont on vient d'écrire `AGENTS.md` reste un projet neuf.
         """
         projet = self._outillage.entite(projet_id)
-        return await asyncio.to_thread(_a_ses_fichiers, projet)
+        return await asyncio.to_thread(projet_a_ses_fichiers, projet)
 
     async def prochaine(
         self,
@@ -790,11 +790,17 @@ def _a_revoir(projet: Projet) -> bool:
     racine = valider_racine(projet.racine)
     if all(v.etat == VERIFIEE for v in verifications_declarees(racine)):
         return False
-    return _a_ses_fichiers(projet)
+    return projet_a_ses_fichiers(projet)
 
 
-def _a_ses_fichiers(projet: Projet) -> bool:
-    """Le dossier du projet porte-t-il un fichier que Maestro n'a pas déclaré ? — bloquant."""
+def projet_a_ses_fichiers(projet: Projet) -> bool:
+    """Le dossier du projet porte-t-il un fichier que Maestro n'a pas déclaré ? — bloquant.
+
+    La règle qui départage un projet **lu** d'un projet **décrit** : l'outillage dans le
+    fil s'y ouvre (`ServicePieces.a_ses_fichiers`), et l'équipe s'y compose depuis
+    #1350 (`maestro.controltower.equipe`) — une seule règle pour les deux, sans quoi un
+    même dossier serait décrit pour son outillage et lu pour son équipe.
+    """
     racine = valider_racine(projet.racine)
     declares = set(portees_declarees(racine))
     return any(

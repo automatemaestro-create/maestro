@@ -44,6 +44,7 @@ justifie ce skill-là.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,26 +94,68 @@ class Verdict:
         return not self.erreurs
 
 
+#: Ce qui ne peut pas **ouvrir** un scalaire YAML nu (YAML 1.2, §7.3.3) : un indicateur.
+#: `-`, `?` et `:` ne le sont que suivis d'une espace, et sont traités à part.
+INDICATEURS_YAML = frozenset("[]{},#&*!|>'\"%@`")
+
+
+def _scalaire(valeur: str) -> tuple[str, str | None]:
+    """Un scalaire de tête **tel qu'un lecteur YAML le lit**, et pourquoi il ne se lit pas.
+
+    Trois formes, les seules qu'un champ d'une ligne admet : cité entre doubles
+    guillemets (échappements à la JSON, que YAML accepte tous), cité entre apostrophes
+    (une apostrophe s'y double), ou nu. Un scalaire **nu** ne peut contenir ni « : »
+    (deux-points suivi d'une espace — YAML y ouvre une table) ni « # » précédé d'une
+    espace (un commentaire), ni commencer par un indicateur. C'est la règle que la
+    typographie française enfreint à chaque « : », et un client qui lit le frontmatter
+    en YAML — tous, sauf ce test jusqu'à #1350 — refuse alors le skill entier.
+    """
+    if valeur.startswith('"'):
+        try:
+            lu = json.loads(valeur)
+        except ValueError:
+            lu = None
+        if not isinstance(lu, str):
+            return valeur, "scalaire entre guillemets mal formé"
+        return lu, None
+    if valeur.startswith("'"):
+        interieur = valeur[1:-1] if len(valeur) >= 2 and valeur.endswith("'") else None
+        if interieur is None or "'" in interieur.replace("''", ""):
+            return valeur, "scalaire entre apostrophes mal formé"
+        return interieur.replace("''", "'"), None
+    if ": " in valeur or valeur.endswith(":") or " #" in valeur:
+        return valeur, "scalaire nu qui contient « : » ou « # » : il doit être cité"
+    if valeur[:1] in INDICATEURS_YAML or valeur[:2] in ("- ", "? ", ": "):
+        return valeur, "scalaire nu qui commence par un indicateur YAML : il doit être cité"
+    return valeur, None
+
+
 def _frontmatter_brut(texte: str) -> tuple[dict[str, str], str | None]:
     """Les champs scalaires du frontmatter, et l'erreur de forme s'il y en a une.
 
     Lecteur **autonome**, écrit ici et pas emprunté au code de production (cf.
     l'en-tête). Il ne lit que des scalaires, ce que la spécification suffit à
-    demander : `metadata` est une table, et sa seule présence est retenue.
+    demander : `metadata` est une table, et sa seule présence est retenue. Un scalaire
+    qu'un lecteur YAML refuserait est une erreur de forme (`_scalaire`, #1350) : la
+    première est rendue, et la lecture continue pour que les autres règles jugent.
     """
     lignes = texte.splitlines()
     if not lignes or lignes[0].strip() != "---":
         return {}, "SKILL.md sans frontmatter YAML en première ligne"
     champs: dict[str, str] = {}
+    fautif: str | None = None
     for index, ligne in enumerate(lignes[1:], start=1):
         if ligne.strip() == "---":
-            return champs, None
+            return champs, fautif
         if not ligne.strip() or ligne[:1].isspace():
             continue  # continuation, ou entrée d'une table : pas un champ de tête
         cle, separateur, valeur = ligne.partition(":")
         if not separateur:
             return champs, f"ligne {index} du frontmatter sans « clé: valeur »"
-        champs[cle.strip()] = valeur.strip().strip("\"'")
+        lu, faute = _scalaire(valeur.strip())
+        champs[cle.strip()] = lu
+        if faute is not None and fautif is None:
+            fautif = f"ligne {index} du frontmatter, « {cle.strip()} » : {faute}"
     return champs, "frontmatter non fermé par une seconde ligne « --- »"
 
 
@@ -216,6 +259,46 @@ class TestValidateurProuve:
 
         assert not verdict.valide
         assert any(fragment in erreur for erreur in verdict.erreurs), verdict.erreurs
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            # La description figée de `lancer-en-local` jusqu'à #1350 : un « : » à la française.
+            "Démarrer le projet en local pour le voir tourner : le seul moyen de vérifier.",
+            "Jouer la suite #rapide",
+            "- une liste, pas une phrase",
+            '"des guillemets jamais fermés',
+            "'une apostrophe qu'on n'a pas doublée'",
+        ],
+    )
+    def test_un_scalaire_que_yaml_refuserait_fait_rougir(
+        self, tmp_path: Path, description: str
+    ) -> None:
+        """#1350 : un client lit le frontmatter en YAML, et y refuse le skill entier."""
+        dossier = poser_skill(tmp_path, "tests", f"name: tests\ndescription: {description}\n")
+
+        verdict = valider_skill(dossier)
+
+        assert not verdict.valide
+        assert any("« description »" in erreur for erreur in verdict.erreurs), verdict.erreurs
+
+    @pytest.mark.parametrize(
+        ("ecrite", "lue"),
+        [
+            ('"Assembler le carnet : sommaire compris"', "Assembler le carnet : sommaire compris"),
+            ('"un \\"mot\\" cité"', 'un "mot" cité'),
+            ("'l''index : cité'", "l'index : cité"),
+        ],
+    )
+    def test_un_scalaire_cite_se_lit_sans_ses_guillemets(
+        self, tmp_path: Path, ecrite: str, lue: str
+    ) -> None:
+        dossier = poser_skill(tmp_path, "tests", f"name: tests\ndescription: {ecrite}\n")
+
+        champs, defaut = _frontmatter_brut((dossier / "SKILL.md").read_text(encoding="utf-8"))
+
+        assert defaut is None and valider_skill(dossier).valide
+        assert champs["description"] == lue
 
     def test_un_skill_md_absent_est_la_seule_violation_rendue(self, tmp_path: Path) -> None:
         """Un dossier sans `SKILL.md` n'est pas un skill : inutile de juger le reste."""
@@ -394,8 +477,15 @@ def test_un_projet_neuf_questionne_rend_lui_aussi_des_skills_valides(tmp_path: P
         Choix("manifeste", "pyproject.toml", deduit=True),
         Choix("gestionnaire", "uv", deduit=True),
         Choix("installer", "uv sync", deduit=True),
-        Choix("tester", "pytest", deduit=True),
-        Choix("lint", "ruff check .", deduit=True),
+        # Ce que le modèle dit d'une commande pour ce projet (#1350) : une phrase
+        # française, donc des « : » et des apostrophes, qui deviennent la description.
+        Choix(
+            "tester",
+            "pytest",
+            deduit=True,
+            pour="Jouer les tests des routes : chaque appel HTTP y a son cas, l'erreur comprise",
+        ),
+        Choix("lint", "ruff check .", deduit=True, pour="Vérifier le style : #règles de ruff"),
         Choix("demarrer", "uv run python -m app", deduit=True),
         Choix("forge", "github"),
         Choix("ci", ".github/workflows/ci.yml"),

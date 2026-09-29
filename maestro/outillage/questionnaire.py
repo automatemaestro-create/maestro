@@ -179,6 +179,11 @@ REPONSE_LIBRE_MAX = 2000
 #: (`dotnet`, `node`, `npm`), pas une liste qu'on sonderait une heure.
 OUTILS_MAX = 8
 
+#: La longueur de ce qu'une commande fait pour le projet (`Choix.pour`, #1350). Une
+#: phrase — elle devient la description d'un skill, que la spécification borne à 1024
+#: caractères et qu'un skill de vérification réunit de trois commandes.
+POUR_MAX = 300
+
 
 def _est_aucun(valeur: str) -> bool:
     """`valeur` dit-elle « il n'y en a pas » ?"""
@@ -328,6 +333,11 @@ class Choix:
       avec sa cause (`parce_que`). C'est la forme que prend la compréhension quand elle
       voyage — dans le fil (`MessageChat.comprehension`) comme dans le corps des routes
       sans état.
+
+    `pour` (#1350) ne vit que sur une commande comprise : ce qu'elle fait **pour ce
+    projet**, avec ses mots. Il descend jusqu'à la description du skill qui la porte
+    (`Commande.pour`, `Entree.pour`) ; il n'est écrit dans la forme stockée que s'il dit
+    quelque chose, si bien qu'un choix d'avant #1350 se relit à l'identique.
     """
 
     cle: str
@@ -335,6 +345,7 @@ class Choix:
     deduit: bool = False
     parce_que: str = ""
     libre: bool = False
+    pour: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """La forme du REST et du message de chat — le `sujet` nommé pour l'écran.
@@ -344,7 +355,7 @@ class Choix:
         lisait comme une fin de phrase (relecture de #1147). Jamais pour une réponse
         tapée : ce sont les mots de la personne, pas une commande.
         """
-        return {
+        forme: dict[str, Any] = {
             "cle": self.cle,
             "valeur": self.valeur,
             "deduit": self.deduit,
@@ -353,6 +364,9 @@ class Choix:
             "sujet": sujet_de(self.cle),
             "commande": self.cle in USAGES and not self.libre,
         }
+        if self.pour:
+            forme["pour"] = self.pour
+        return forme
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Choix:
@@ -363,6 +377,7 @@ class Choix:
             deduit=bool(data.get("deduit")),
             parce_que=str(data.get("parce_que") or ""),
             libre=bool(data.get("libre")),
+            pour=str(data.get("pour") or ""),
         )
 
 
@@ -484,6 +499,14 @@ def _constats_lus(brut: Any) -> tuple[Choix, ...]:
     Un constat **hors du schéma** est écarté : il ne nourrirait aucune entrée de
     l'outillage, et la carte, qui dit ce qui sera écrit, n'en aurait que la clé à
     montrer (« point_entree », relecture de #1147).
+
+    `pour` (#1350) n'est lu que sur une **commande** : sur un autre sujet, il n'y a pas
+    de skill dont il serait la description. Une ligne, bornée (`POUR_MAX`) — il finit
+    dans un frontmatter.
+
+    C'est aussi le lecteur des choix que le manifeste garde (`choix_du_manifeste`) : ce
+    que le modèle rend et ce qu'un fichier du projet prétend se croient aux mêmes
+    conditions, et deux lecteurs finiraient par ne plus se refuser les mêmes choses.
     """
     lus: dict[str, Choix] = {}
     for entree in brut if isinstance(brut, list) else ():
@@ -498,6 +521,7 @@ def _constats_lus(brut: Any) -> tuple[Choix, ...]:
             valeur=valeur,
             deduit=True,
             parce_que=_une_ligne(entree.get("parce_que") or "", VALEUR_MAX),
+            pour=_une_ligne(entree.get("pour") or "", POUR_MAX) if cle in USAGES else "",
         )
     return tuple(lus.values())
 
@@ -835,6 +859,7 @@ def constats_depuis_choix(choix: Sequence[Choix]) -> Constats:
             chemin=manifeste,
             extrait=_extrait(acquis[usage]),
             origine="convention",
+            pour=_une_ligne(acquis[usage].pour, POUR_MAX) if acquis[usage].pour else "",
         )
         for usage in USAGES
         if valeur(usage)
@@ -908,6 +933,12 @@ def source_manifeste_des_choix(projet_id: str, choix: Sequence[Choix]) -> dict[s
     acquis**, dans l'ordre : c'est ce qui tient lieu d'identifiant d'analyse, et c'est
     relisible sans rien ouvrir d'autre. Les phrases tapées n'y vont pas — elles sont
     dans le fil, et c'est ce qu'on en a compris qui a décidé de l'outillage.
+
+    `choix` (#1350) garde ces mêmes constats **en structure** — sujet, valeur, cause, et
+    ce qu'une commande fait pour le projet —, pour qu'on les relise sans découper la
+    `reference`, qui n'est qu'une ligne pour l'œil (une valeur peut contenir « ; »). C'est
+    ce que le projet **est** tant qu'il n'a aucun fichier à lui : son équipe s'y compose
+    (`choix_du_manifeste`, `maestro.controltower.equipe`).
     """
     acquis = acquis_de(choix)
     return {
@@ -915,7 +946,30 @@ def source_manifeste_des_choix(projet_id: str, choix: Sequence[Choix]) -> dict[s
         "projet_id": projet_id,
         "reference": " ; ".join(f"{c.cle}={c.valeur}" for c in acquis),
         "resume": resume_des_choix(acquis),
+        "choix": [_choix_au_manifeste(c) for c in acquis],
     }
+
+
+def _choix_au_manifeste(choisi: Choix) -> dict[str, str]:
+    """Un constat acquis tel que le manifeste le garde : ce qui le fait, rien pour l'écran."""
+    forme = {"cle": choisi.cle, "valeur": choisi.valeur, "parce_que": choisi.parce_que}
+    if choisi.pour:
+        forme["pour"] = choisi.pour
+    return forme
+
+
+def choix_du_manifeste(source: Mapping[str, Any]) -> tuple[Choix, ...]:
+    """Les constats d'où un outillage **venu des réponses** a été écrit — `()` sinon (#1350).
+
+    Relus du fragment `source` du manifeste (`source_manifeste_des_choix`) : seulement
+    pour une source `choix`, jamais pour une analyse. Le manifeste vit dans le projet, et
+    n'importe qui peut l'avoir touché : chaque entrée passe par le lecteur de ce que le
+    modèle rend (`_constats_lus`) — sujet du schéma, une ligne, bornée —, et revient
+    **déduite**, comme ce qu'elle était.
+    """
+    if source.get("type") != SOURCE_CHOIX:
+        return ()
+    return _constats_lus(source.get("choix"))
 
 
 def clients_depuis_choix(choix: Sequence[Choix]) -> tuple[Client, ...]:
