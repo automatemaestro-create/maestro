@@ -43,6 +43,7 @@ from maestro.outillage import (
     sans_lecture,
 )
 from maestro.outillage.detection import IGNORES_DEFAUT
+from maestro.outillage.verification import ECHOUEE, Verification
 from maestro.projets.modele import Perimetre
 from maestro.providers.base import ModelProvider
 
@@ -351,6 +352,57 @@ def test_un_constat_qui_cite_un_fichier_non_lu_est_ecarte_avec_sa_raison(tmp_pat
     (ecarte,) = analyse.lecture.ecartes
     assert "dotnet test" in ecarte.ligne
     assert "Depensio.sln" in ecarte.raison and "pas lu" in ecarte.raison
+
+
+def test_une_commande_en_echec_est_dite_au_modele_et_ce_qu_il_en_tire_confronte(
+    tmp_path: Path,
+) -> None:
+    """#1381 : l'échec et sa sortie sont une donnée ; ce que la commande fait se rattache à elle."""
+    echec = Verification(
+        usage="tester",
+        commande="npm test",
+        etat=ECHOUEE,
+        raison="elle a rendu la main en erreur (code 1)",
+        code=1,
+        sortie="npm ERR! missing script: test",
+    )
+    lecteur = _Lecteur(
+        (
+            "LIRE: Depensio.sln\nLIRE: tests/Api.Tests/Api.Tests.csproj",
+            "\n".join(
+                (
+                    "COMMANDE: tester | tests/Api.Tests/Api.Tests.csproj | convention | "
+                    "xunit | dotnet test",
+                    "POUR: Jouer les tests xunit de l'API | dotnet test",
+                    "POUR: Construire la solution | dotnet build",
+                    "FIN",
+                )
+            ),
+        )
+    )
+
+    analyse = asyncio.run(
+        lire_le_projet(
+            analyser(projet_dotnet(tmp_path)),
+            perimetre=Perimetre(),
+            provider=lecteur,
+            modele="modele-factice",
+            echecs=(echec,),
+        )
+    )
+
+    # L'échec, sa sortie entre deux bornes, et ce qui est attendu : dits dès le premier tour.
+    premier = lecteur.prompts[0]
+    assert "- tester : `npm test` — code 1" in premier
+    assert "----- sortie de `npm test` -----\nnpm ERR! missing script: test" in premier
+    assert "POUR: <ce qu'elle fait pour ce projet> | <commande>" in premier
+    tests = analyse.constats.commande_de("tester")
+    assert tests is not None and tests.commande == "dotnet test"
+    assert tests.pour == "Jouer les tests xunit de l'API"
+    # Une phrase dont la commande n'a pas été retenue ne s'attache à rien, et le dit.
+    assert analyse.lecture is not None
+    (ecarte,) = analyse.lecture.ecartes
+    assert "dotnet build" in ecarte.raison and "pas retenue" in ecarte.raison
 
 
 def test_ce_que_les_tables_ont_lu_n_est_ni_repete_ni_retire(tmp_path: Path) -> None:

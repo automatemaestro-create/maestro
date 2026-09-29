@@ -85,6 +85,15 @@ ORIGINES_COMMANDE: frozenset[str] = frozenset({"declaree", "convention"})
 #: qu'une commande lui a été dite.
 ORIGINE_DITE = "dite"
 
+#: La quatrième (#1381) : la commande a été **proposée par Maestro** à la revue d'après un
+#: run, parce que celle que l'outillage écrivait y a échoué — lue dans le projet construit
+#: (les deux verbes de #1158, confrontée au fichier **lu**), puis **jouée** avant d'être
+#: montrée, et écrite sur accord. Son `chemin` est le fichier où Maestro l'a lue, son
+#: `extrait` ce qu'il y a lu. Hors d'`ORIGINES_COMMANDE` pour la même raison que la
+#: précédente : une lecture ne peut pas prétendre avoir été vérifiée par l'exécution, ni
+#: une commande proposée passer pour dite par la personne.
+ORIGINE_PROPOSEE = "proposee"
+
 #: L'état d'une entrée recommandée. `deja-present` est celui qui compte : c'est
 #: la forme que prend « ce que le projet porte déjà est reconnu plutôt que
 #: dupliqué » — l'entrée reste dans la réponse, avec le chemin de ce qui existe,

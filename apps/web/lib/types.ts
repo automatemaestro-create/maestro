@@ -1453,6 +1453,14 @@ export type PieceProposee = {
   regime: string;
   /** Les commandes de cette version que la personne a **dites** — absent : aucune. */
   corrigees?: string[];
+  /**
+   * Les commandes de cette version que **Maestro propose** (#1381) : à la revue d'après
+   * un run, celle que l'outillage écrivait avait échoué, il a lu celle que le projet
+   * construit montre et l'a jouée avant de la montrer. Absent : aucune.
+   */
+  proposees?: string[];
+  /** Les fichiers du projet où Maestro a lu les commandes qu'il propose — absent : aucun. */
+  lues_dans?: string[];
 };
 
 /**

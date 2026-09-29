@@ -43,6 +43,19 @@ remplacer la commande dite par celle que le projet déclare. La pièce qu'une co
 reprise touche la porte comme une autre : sa phrase sur la carte, et elle se corrige
 encore avec des mots.
 
+## Ce que le projet construit montre, quand la commande écrite échoue (#1381)
+
+La revue d'après un run (#1343) rejoue ce qui n'avait pas passé. Relevé par S9 : la
+commande écrite à la naissance du projet (`python assembler.py`) échouait, le script
+ayant été livré sous un autre nom, et la revue ne savait que le dire — la seule autre
+source d'une commande était la phrase de la personne. Désormais, une commande **que
+personne n'a dite** qui échoue fait **lire le projet construit** (`_revue`, la lecture de
+#1158 avec l'échec pour indice), et chaque commande de même usage qu'il en tire est
+**jouée** : la première qui passe est proposée (`ORIGINE_PROPOSEE`), le fichier où
+Maestro l'a lue à l'appui. C'est le patron de docs/41 : le modèle comprend et propose,
+l'exécution vérifie. Montrée, elle vaut pour les pièces qui suivent comme une correction
+du fil ; écrite, elle est retenue au manifeste — et elle ne passe jamais pour dite.
+
 Une seule chose est gardée, et elle n'est pas un état de conversation : **la lecture
 d'un projet importé**, épinglée pour la conversation (`_lues`). Écrire `AGENTS.md`
 change le projet, et l'analyse — qui se relit dès qu'un fichier bouge — relirait tout
@@ -74,8 +87,8 @@ sachant moins que le premier.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -95,11 +108,12 @@ from maestro.controltower.outillage import ServiceOutillage
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.validation import appliquer_sous_validation
 from maestro.engine.guardrails import DemandeValidation
-from maestro.outillage.clients import reunir
+from maestro.outillage.clients import Client, reunir
 from maestro.outillage.correction import (
     CLES_CORRIGEABLES,
     CorrectionLue,
     CorrectionPrise,
+    adopter,
     constats_en_texte,
     corrections_en_texte,
     corriger,
@@ -117,7 +131,14 @@ from maestro.outillage.generation import (
     prevoir,
     verifications_declarees,
 )
-from maestro.outillage.modele import ORIGINE_DITE, Analyse, Constats, Entree, Recommandation
+from maestro.outillage.modele import (
+    ORIGINE_DITE,
+    ORIGINE_PROPOSEE,
+    Analyse,
+    Constats,
+    Entree,
+    Recommandation,
+)
 from maestro.outillage.questionnaire import (
     Choix,
     acquis_de,
@@ -127,8 +148,15 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
 )
 from maestro.outillage.recommandation import recommander
-from maestro.outillage.redaction import Fichier, raison_stable, rediger
-from maestro.outillage.verification import ECHOUEE, VERIFIEE, Verificateur, Verification
+from maestro.outillage.redaction import PORTEE_FICHIER, Fichier, raison_stable, rediger
+from maestro.outillage.verification import (
+    ECHOUEE,
+    VERIFIEE,
+    CommandeEcrite,
+    Verificateur,
+    Verification,
+    commandes_ecrites,
+)
 from maestro.projets import Projet
 from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import valider_racine
@@ -262,7 +290,9 @@ class _Matiere:
     """Ce qu'on sait d'un projet à ce tour : ses constats corrigés, et ce qu'ils recommandent.
 
     `corrections` sont celles qui ont corrigé les constats — reprises du manifeste, puis
-    dites sur le fil, la plus récente de chaque sujet (`retenir`).
+    dites ou proposées sur le fil, la plus récente de chaque sujet (`retenir`). `clients`
+    sont ceux dont la recommandation a tiré ses ponts : une commande proposée (#1381) la
+    fait recalculer, avec les mêmes.
     """
 
     projet: Projet
@@ -271,6 +301,17 @@ class _Matiere:
     recommandation: Recommandation
     source: dict[str, Any]
     corrections: tuple[CorrectionPrise, ...] = ()
+    clients: tuple[Client, ...] = ()
+
+    def proposant(self, proposees: Sequence[CorrectionPrise]) -> _Matiere:
+        """Cette matière, les commandes que Maestro propose (#1381) posées par-dessus."""
+        constats = adopter(self.constats, proposees)
+        return replace(
+            self,
+            constats=constats,
+            recommandation=recommander(constats, self.clients),
+            corrections=retenir(self.corrections, proposees),
+        )
 
 
 class ServicePieces:
@@ -335,7 +376,9 @@ class ServicePieces:
 
         `revoir` (#1343) est la revue d'après un run : le projet a changé, donc seul un
         verdict **vérifié** est repris — tout ce qui avait échoué ou n'avait pas pu se
-        jouer est rejoué sur le projet tel qu'il est maintenant.
+        jouer est rejoué sur le projet tel qu'il est maintenant. Et une commande écrite
+        qui y **échoue** fait lire le projet construit (#1381) : la commande de même usage
+        qu'il montre est jouée, et proposée si elle passe (`_revue`).
 
         Bloquant par morceaux — la vérification joue des commandes : joué hors de la
         boucle d'événements.
@@ -351,8 +394,104 @@ class ServicePieces:
         dernieres = dict(pieces_tranchees(fil))
         dernieres.update(tranchees)
         deja = set(dernieres.items())
-        connues = {} if revoir else _verdicts_du_fil(fil)
-        return await asyncio.to_thread(self._chercher, matiere, deja, connues, revoir=revoir)
+        if not revoir:
+            connues = _verdicts_du_fil(fil)
+            return await asyncio.to_thread(self._chercher, matiere, deja, connues)
+        matiere, revus = await self._revue(matiere)
+        return await asyncio.to_thread(
+            self._chercher, matiere, deja, {}, revoir=True, revus=revus
+        )
+
+    async def _revue(self, matiere: _Matiere) -> tuple[_Matiere, dict[str, Verification]]:
+        """Les commandes de l'outillage rejouées sur le projet construit, et ce qu'il montre.
+
+        Toutes celles que l'outillage écrit sont rejouées une fois (seul un verdict
+        **vérifié** du manifeste est repris, #1343). Si l'une **échoue** et que personne
+        ne l'a dite, le projet est **lu** — les deux verbes de #1158, l'échec et sa sortie
+        dits au modèle comme une donnée — et chaque commande de même usage qu'il en tire
+        est **jouée** : la première qui passe est proposée, lue dans son fichier. Aucune
+        ne passe : rien n'est proposé, et l'échec se dit avec sa sortie, comme depuis
+        #1343. Le code de retour décide, jamais le texte de la sortie (#1315).
+
+        Rend la matière — les commandes proposées posées par-dessus — et **tous** les
+        verdicts joués ici, que la recherche de la pièce reprend sans rien rejouer.
+        """
+        verdicts = await asyncio.to_thread(self._rejouer, matiere)
+        revus = {v.commande: v for v in verdicts}
+        tenues = {
+            c.commande
+            for c in matiere.constats.commandes
+            if c.origine == ORIGINE_DITE
+        }
+        echecs = tuple(v for v in verdicts if v.etat == ECHOUEE and v.commande not in tenues)
+        if not echecs:
+            return matiere, revus
+        lue = await self._outillage.relire_pour(matiere.projet, echecs)
+        proposees, essais = await asyncio.to_thread(self._essayer, matiere, echecs, lue)
+        revus.update(essais)
+        return (matiere.proposant(proposees) if proposees else matiere), revus
+
+    def _rejouer(self, matiere: _Matiere) -> tuple[Verification, ...]:
+        """Les verdicts de ce que l'outillage écrit, sur le projet tel qu'il est — **bloquant**."""
+        racine = matiere.racine
+        return (self._verificateur or Verificateur()).verifier(
+            racine,
+            matiere.constats,
+            matiere.recommandation,
+            perimetre=matiere.projet.perimetre,
+            portees=portees_declarees(racine),
+            connues={v.commande: v for v in verifications_declarees(racine) if v.etat == VERIFIEE},
+        )
+
+    def _essayer(
+        self, matiere: _Matiere, echecs: Sequence[Verification], lue: Analyse
+    ) -> tuple[tuple[CorrectionPrise, ...], dict[str, Verification]]:
+        """Joue, pour chaque usage en échec, les commandes que la lecture en tire — **bloquant**.
+
+        Celles que le modèle a rendues d'abord (il savait ce qui avait échoué), puis celles
+        des tables : toutes ont été lues dans un fichier du projet. Chacune est jouée dans
+        une copie, comme toute commande de l'outillage ; la première **vérifiée** de chaque
+        usage est proposée, les autres ne le sont pas. Rend les propositions et les
+        verdicts de tout ce qui a été joué.
+
+        Une commande que seul **l'outillage de Maestro** justifie — un fichier qu'il a
+        écrit en entier, son atelier — n'est ni jouée ni proposée : c'est lui qui
+        prescrivait celle qui a échoué. Vu sur S9 (passage `20260929-130422`) : la commande
+        de style « lue » dans le skill que Maestro avait écrit, en y corrigeant le nom du
+        script — une preuve circulaire.
+        """
+        verificateur = self._verificateur or Verificateur()
+        racine = matiere.racine
+        portees = portees_declarees(racine)
+        retenues = lue.lecture.retenus.commandes if lue.lecture is not None else ()
+        lues = tuple(
+            c
+            for c in {c.commande: c for c in (*lue.constats.commandes, *retenues)}.values()
+            if not _de_maestro(c.chemin, portees)
+        )
+        rangees = sorted(lues, key=lambda c: c not in retenues)
+        ecartees = {v.commande for v in echecs}
+        essais: dict[str, Verification] = {}
+        proposees: dict[str, CorrectionPrise] = {}
+        for echec in echecs:
+            for lue_ici in rangees:
+                if (
+                    echec.usage in proposees
+                    or lue_ici.usage != echec.usage
+                    or lue_ici.commande in ecartees
+                    or lue_ici.commande in essais
+                ):
+                    continue
+                (verdict,) = verificateur.verifier_commandes(
+                    racine,
+                    (CommandeEcrite(lue_ici.usage, lue_ici.commande, lue_ici.chemin),),
+                    perimetre=matiere.projet.perimetre,
+                    portees=portees,
+                )
+                essais[lue_ici.commande] = verdict
+                if verdict.etat == VERIFIEE:
+                    proposees[echec.usage] = CorrectionPrise.lue(lue_ici, _maintenant())
+        return tuple(proposees.values()), essais
 
     async def a_revoir(self, projet_id: str, fil: Sequence[MessageChat]) -> bool:
         """L'outillage de ce projet a-t-il, **maintenant**, des commandes à rejouer ? (#1343)
@@ -386,7 +525,7 @@ class ServicePieces:
         return await self._correction.comprendre(
             projet=matiere.projet.nom,
             constats=constats_en_texte(matiere.constats),
-            corrections=corrections_en_texte([c.en_choix() for c in matiere.corrections]),
+            corrections=corrections_en_texte(matiere.corrections),
             phrase=phrase,
         )
 
@@ -538,7 +677,10 @@ class ServicePieces:
             _corrections_du_fil_datees(fil),
             tuple(CorrectionPrise.de(c, _maintenant()) for c in corrections),
         )
-        prises = tuple(c.en_choix() for c in retenues)
+        # Ce que la personne a dit se corrige par `corriger` ; ce que Maestro a proposé
+        # après un run (#1381) se pose par `adopter` : ce n'est pas une phrase.
+        prises = tuple(c.en_choix() for c in retenues if not c.proposee)
+        proposees = tuple(c for c in retenues if c.proposee)
         compris = tuple(acquis) if acquis is not None else acquis_du_fil(fil)
         clients = await self._outillage.clients_du_poste()
         if compris:
@@ -551,6 +693,7 @@ class ServicePieces:
             analyse = await self._analyse(projet, fil)
             constats = corriger(analyse.constats, prises)
             source = analyse.source_manifeste()
+        constats = adopter(constats, proposees)
         return _Matiere(
             projet=projet,
             racine=racine,
@@ -558,6 +701,7 @@ class ServicePieces:
             recommandation=recommander(constats, clients),
             source=source,
             corrections=retenues,
+            clients=tuple(clients),
         )
 
     async def _analyse(self, projet: Projet, fil: Sequence[MessageChat]) -> Analyse:
@@ -578,6 +722,7 @@ class ServicePieces:
         connues: dict[str, Verification],
         *,
         revoir: bool = False,
+        revus: Mapping[str, Verification] | None = None,
     ) -> PieceProposee | None:
         """La première pièce qui changerait le disque et n'a pas été tranchée — **bloquant**.
 
@@ -586,7 +731,9 @@ class ServicePieces:
         commande qu'`AGENTS.md` a fait jouer n'est pas rejouée pour le skill qui
         l'écrit. Une commande **corrigée** a un autre texte : elle est jouée. En revue
         d'après un run (`revoir`, #1343), seuls les verdicts vérifiés du manifeste
-        valent : le reste se rejoue sur le projet construit.
+        valent : le reste se rejoue sur le projet construit — et l'a déjà été par la
+        revue (`revus`, #1381), dont les verdicts sont repris tels quels, « à vérifier »
+        compris : rien n'est joué deux fois dans la même revue.
         """
         racine, projet = matiere.racine, matiere.projet
         portees = portees_declarees(racine)
@@ -602,17 +749,26 @@ class ServicePieces:
             matiere.constats, matiere.recommandation, portees=portees, source=matiere.source
         )
         verificateur = self._verificateur or Verificateur()
+        deja_revues = revus or {}
         for rang, brouillon in enumerate(plan, start=1):
             entree = entrees.get(brouillon.chemin)
             if entree is None:  # pragma: no cover - `rediger` ne rend que des entrées
                 continue
-            verdicts = verificateur.verifier(
-                racine,
-                matiere.constats,
-                Recommandation(entrees=(entree,)),
-                perimetre=projet.perimetre,
-                portees=portees,
-                connues=verdicts_connus,
+            ecrites = commandes_ecrites(
+                matiere.constats, Recommandation(entrees=(entree,)), portees=portees
+            )
+            jouees = {
+                v.commande: v
+                for v in verificateur.verifier_commandes(
+                    racine,
+                    [c for c in ecrites if c.commande not in deja_revues],
+                    perimetre=projet.perimetre,
+                    portees=portees,
+                    connues=verdicts_connus,
+                )
+            }
+            verdicts = tuple(
+                deja_revues.get(c.commande) or jouees[c.commande] for c in ecrites
             )
             verdicts_connus.update({v.commande: v for v in verdicts if v.etat in _JOUES})
             fichier = next(
@@ -677,15 +833,41 @@ def _proposee(
         total=total,
         source=matiere.source,
         regime=REGIME_BRANCHE if projet.versionne else REGIME_EN_PLACE,
-        corrigees=_commandes_dites(matiere.constats, verdicts),
+        corrigees=_commandes_de(matiere.constats, verdicts, ORIGINE_DITE),
         corrections_prises=tuple(c for c in matiere.corrections if c.cle in CLES_CORRIGEABLES),
+        proposees=_commandes_de(matiere.constats, verdicts, ORIGINE_PROPOSEE),
+        lues_dans=_lues_dans(matiere.constats, verdicts),
     )
 
 
-def _commandes_dites(constats: Constats, verdicts: Sequence[Verification]) -> tuple[str, ...]:
-    """Les commandes de cette pièce que la personne a **dites**, dans l'ordre joué."""
-    dites = {c.commande for c in constats.commandes if c.origine == ORIGINE_DITE}
-    return tuple(v.commande for v in verdicts if v.commande in dites)
+def _de_maestro(chemin: str, portees: Mapping[str, str]) -> bool:
+    """`chemin` est-il de Maestro — un fichier qu'il a écrit en entier, ou son atelier ?
+
+    Un fichier dont Maestro ne possède qu'un bloc (`PORTEE_BLOC`) reste au projet : ce
+    qu'il y a écrit de lui-même peut justifier une commande.
+    """
+    racine_du_chemin = chemin.split("/", 1)[0]
+    return racine_du_chemin == DOSSIER_ATELIER or portees.get(chemin) == PORTEE_FICHIER
+
+
+def _commandes_de(
+    constats: Constats, verdicts: Sequence[Verification], origine: str
+) -> tuple[str, ...]:
+    """Les commandes de cette pièce **dites**, ou **proposées** (`origine`), dans l'ordre joué."""
+    retenues = {c.commande for c in constats.commandes if c.origine == origine}
+    return tuple(v.commande for v in verdicts if v.commande in retenues)
+
+
+def _lues_dans(constats: Constats, verdicts: Sequence[Verification]) -> tuple[str, ...]:
+    """Les fichiers où Maestro a lu les commandes qu'il propose dans cette pièce (#1381)."""
+    par_commande = {
+        c.commande: c.chemin
+        for c in constats.commandes
+        if c.origine == ORIGINE_PROPOSEE and c.chemin
+    }
+    return tuple(
+        dict.fromkeys(par_commande[v.commande] for v in verdicts if v.commande in par_commande)
+    )
 
 
 def _raison_de_la_piece(entree: Entree, prevision: Prevision) -> str:
@@ -710,10 +892,11 @@ def _phrase_portee(corrections: Sequence[CorrectionPrise], contenu: str) -> str:
     une commande dite s'écrit avec sa phrase (`ORIGINE_DITE`). Une correction qui n'a
     rien changé à ce fichier n'y est pas, et la carte ne la lui attribue pas. Qu'elle
     vienne de ce fil ou d'une conversation passée (#1334) n'y change rien : c'est la
-    phrase d'origine, celle que le fichier écrit.
+    phrase d'origine, celle que le fichier écrit. Une commande **proposée** par Maestro
+    (#1381) n'a pas de phrase de la personne, et ce qu'il a lu ne passe pas pour tel.
     """
     for prise in reversed(corrections):
-        if prise.phrase and prise.phrase in contenu:
+        if not prise.proposee and prise.phrase and prise.phrase in contenu:
             return prise.phrase
     return ""
 
@@ -727,19 +910,42 @@ def _corrections_du_fil_datees(fil: Sequence[MessageChat]) -> tuple[CorrectionPr
     """Les corrections prises sur ce fil, chacune datée du message qui la porte (#1334).
 
     Lues sur le champ `corrections`, comme `corrections_du_fil` ; la date est ce qui les
-    départage de celles du manifeste (`retenir`).
+    départage de celles du manifeste (`retenir`). S'y ajoutent les commandes que Maestro
+    a **proposées** à la revue d'après un run (#1381), portées par les pièces du fil avec
+    leur propre date : montrées une fois, elles valent pour les pièces qui suivent comme
+    une correction dite — « Pas cette pièce » n'écrit rien, il ne les défait pas.
     """
-    return tuple(CorrectionPrise.de(c, m.horodatage) for m in fil for c in m.corrections)
+    dites = tuple(CorrectionPrise.de(c, m.horodatage) for m in fil for c in m.corrections)
+    proposees = tuple(
+        prise
+        for m in fil
+        if m.piece is not None
+        for prise in m.piece.corrections_prises
+        if prise.proposee
+    )
+    return (*dites, *proposees)
 
 
 def _echec_de_correction(constats: Constats, verdicts: Sequence[Verification]) -> str:
-    """Pourquoi cette version ne s'écrit pas — une commande **corrigée** a échoué, "" sinon."""
-    dites = {c.commande for c in constats.commandes if c.origine == ORIGINE_DITE}
+    """Pourquoi cette version ne s'écrit pas — une commande **corrigée** a échoué, "" sinon.
+
+    Corrigée par la personne, ou proposée par Maestro (#1381) : ni l'une ni l'autre ne
+    s'écrit sans preuve. La phrase dit laquelle — une commande proposée n'a pas été dite.
+    """
+    tenues = {
+        c.commande: c for c in constats.commandes if c.origine in (ORIGINE_DITE, ORIGINE_PROPOSEE)
+    }
     for verdict in verdicts:
-        if verdict.etat == ECHOUEE and verdict.commande in dites:
-            # Deux-points et non parenthèses : la raison en porte déjà (« (code 1) »), et
-            # la troisième relecture a lu « (… (code 1)) ».
-            return f"`{verdict.commande}` a échoué à l'exécution : {verdict.raison.rstrip('.')}."
+        tenue = tenues.get(verdict.commande)
+        if verdict.etat != ECHOUEE or tenue is None:
+            continue
+        # Deux-points et non parenthèses : la raison en porte déjà (« (code 1) »), et
+        # la troisième relecture a lu « (… (code 1)) ».
+        raison = verdict.raison.rstrip(".")
+        if tenue.origine == ORIGINE_PROPOSEE:
+            lue = f", que j'avais lue dans `{tenue.chemin}`," if tenue.chemin else ""
+            return f"`{verdict.commande}`{lue} a échoué à l'exécution : {raison}."
+        return f"`{verdict.commande}` a échoué à l'exécution : {raison}."
     return ""
 
 

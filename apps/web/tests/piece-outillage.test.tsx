@@ -20,7 +20,10 @@
  * ④ les trois gestes partent avec l'**empreinte** de la version montrée, et un refus
  *   de l'API se lit sur la carte ;
  * ⑤ `diffDeLaPiece` : ni ligne fantôme pour la fin de fichier, ni ligne « commune »
- *   dans un fichier qu'on crée.
+ *   dans un fichier qu'on crée ;
+ * ⑥ une commande que **Maestro propose** après un run (#1381) se lit comme une commande
+ *   corrigée — verdict sous la légende — mais sa phrase dit le fichier où il l'a lue,
+ *   jamais « votre demande » ; sans proposition, l'échec se dit avec sa sortie.
  *
  * Aucun rendu jugé ici : c'est l'affaire de la relecture visuelle.
  */
@@ -232,6 +235,79 @@ describe("la carte d'une pièce d'outillage", () => {
     expect(within(region).getByText(/MSB1003/)).toBeInTheDocument();
     // Les deux autres issues restent : passer, ou tout remettre à plus tard.
     expect(within(region).getByRole("button", { name: "Pas cette pièce" })).toBeEnabled();
+  });
+
+  it("⑥ une commande proposée par Maestro dit d'où il la tient, jamais « votre demande »", () => {
+    // #1381, le cas de S9 : la commande écrite a échoué après le run, Maestro a lu le
+    // script livré sous un autre nom, et l'a jouée avant de la proposer.
+    const montree = "python assembler_carnet.py chants carnet.html";
+    render(
+      <PieceDOutillage
+        piece={piece({
+          projet_nom: "chorale",
+          texte_avant: AGENTS.replace("ligne 10", "- **Construction** : `python assembler.py`"),
+          texte_apres: AGENTS.replace(
+            "ligne 10",
+            `- **Construction** : \`${montree}\` — proposée par Maestro après un run, lue dans \`assembler_carnet.py\``,
+          ),
+          sort: "reecrit",
+          verifications: [
+            verdict({ usage: "construire", commande: montree }),
+            verdict({ usage: "tester", commande: "python -m unittest" }),
+          ],
+          proposees: [montree],
+          lues_dans: ["assembler_carnet.py"],
+        })}
+        trancher={vi.fn()}
+      />,
+    );
+    const region = carte();
+
+    const phrase = within(region).getByText(/Proposée par Maestro/);
+    expect(phrase.closest("p")?.textContent).toBe(
+      "Proposée par Maestro, lue dans assembler_carnet.py : la commande écrite avant le run " +
+        "échouait sur le projet construit.",
+    );
+    expect(phrase.closest("p")?.className).toMatch(/text-corps/);
+    expect(within(region).queryByText(/votre demande/)).toBeNull();
+    // Son verdict juste sous la légende, sans rien déplier — comme une commande corrigée.
+    expect(within(region).getByText("Commandes, rejouées sur le projet construit")).toBeInTheDocument();
+    const listes = within(region).getAllByRole("list", { name: "Verdict de chaque commande" });
+    expect(listes).toHaveLength(1);
+    expect(within(listes[0]).getAllByRole("listitem")).toHaveLength(1);
+    expect(listes[0]).toHaveTextContent(`vérifiée${montree}`);
+    // Ce qui ne bouge pas : le projet nommé, les trois gestes.
+    expect(within(region).getByText("Pièce 1 sur 6 · chorale")).toBeInTheDocument();
+    expect(within(region).getByRole("button", { name: "Écrire ce fichier" })).toBeEnabled();
+    expect(within(region).getByRole("button", { name: "Pas cette pièce" })).toBeEnabled();
+    expect(
+      within(region).getByRole("button", { name: "Remettre l'outillage à plus tard" }),
+    ).toBeEnabled();
+  });
+
+  it("⑥ sans commande qui passe, la commande écrite se dit échouée avec sa sortie", () => {
+    render(
+      <PieceDOutillage
+        piece={piece({
+          verifications: [
+            verdict({
+              usage: "construire",
+              commande: "python assembler.py",
+              etat: "echouee",
+              raison: "elle a rendu la main en erreur (code 2)",
+              code: 2,
+              sortie: "python: can't open file 'assembler.py'",
+            }),
+          ],
+        })}
+        trancher={vi.fn()}
+      />,
+    );
+    const region = carte();
+
+    expect(within(region).queryByText(/Proposée par Maestro/)).toBeNull();
+    expect(within(region).getByText("Commandes")).toBeInTheDocument();
+    expect(within(region).getByText(/can't open file/)).toBeInTheDocument();
   });
 
   it("④ les trois gestes partent avec l'empreinte de la version montrée", async () => {

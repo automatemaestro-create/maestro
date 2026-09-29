@@ -1382,6 +1382,13 @@ class PieceProposee:
     ailleurs. `correction` en est la phrase que ce contenu porte ; celle d'une
     correction reprise s'y lit donc comme celle d'une correction qu'on vient de dire.
 
+    `proposees` (#1381) nomme, parmi les commandes vérifiées, celles que **Maestro
+    propose** : à la revue d'après un run, la commande écrite avait échoué, il a lu celle
+    que le projet construit montre, et l'a jouée avant de la montrer. `lues_dans` dit les
+    fichiers où il les a lues. La carte les montre comme les commandes dites, verdict
+    sous la légende — mais avec d'où il les tient, jamais « vous avez dit » : une
+    commande proposée n'a pas de `correction`.
+
     `rang` et `total` situent la pièce dans l'outillage de ce projet (les fichiers que
     la recommandation rédige, dans leur ordre). `source` est la provenance que le
     manifeste gardera (docs/38 §4.1). `regime` dit comment elle atteindra le projet :
@@ -1412,6 +1419,8 @@ class PieceProposee:
     regime: str = "en-place"
     corrigees: tuple[str, ...] = ()
     corrections_prises: tuple[CorrectionPrise, ...] = ()
+    proposees: tuple[str, ...] = ()
+    lues_dans: tuple[str, ...] = ()
 
     @property
     def ecrivable(self) -> bool:
@@ -1457,6 +1466,8 @@ class PieceProposee:
             "regime": self.regime,
             "corrigees": list(self.corrigees),
             "corrections_prises": [c.to_dict() for c in self.corrections_prises],
+            "proposees": list(self.proposees),
+            "lues_dans": list(self.lues_dans),
         }
 
     @classmethod
@@ -1501,17 +1512,29 @@ class PieceProposee:
                 for c in (prises if isinstance(prises, list) else ())
                 if isinstance(c, Mapping)
             ),
+            proposees=_textes(data.get("proposees")),
+            lues_dans=_textes(data.get("lues_dans")),
         )
 
     def en_phrase(self) -> str:
         """La pièce en une ligne — ce que le modèle relit de la carte au tour suivant."""
         quoi = _SORTS_EN_MOTS.get(self.sort, self.sort)
         corrigee = f", après la correction « {self.correction} »" if self.correction else ""
+        proposee = (
+            f", avec la commande que Maestro propose, lue dans {', '.join(self.lues_dans)}"
+            if self.proposees and self.lues_dans
+            else ""
+        )
         echec = f" — ne s'écrit pas : {self.echec}" if self.echec else ""
         return (
             f"{self.chemin} ({self.nature}, pièce {self.rang} sur {self.total}, {quoi}) "
-            f"dans « {self.projet_nom} »{corrigee}{echec}"
+            f"dans « {self.projet_nom} »{corrigee}{proposee}{echec}"
         )
+
+
+def _textes(brut: Any) -> tuple[str, ...]:
+    """Une liste de textes persistée, relue sans rien d'autre que ses textes non vides."""
+    return tuple(str(t) for t in (brut if isinstance(brut, list) else ()) if t)
 
 
 #: Ce que le geste fera au chemin d'une pièce, en mots — pour la transcription.

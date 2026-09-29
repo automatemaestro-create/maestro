@@ -207,7 +207,7 @@ from maestro.outillage.questionnaire import (
     source_manifeste_des_choix,
     sujet_de,
 )
-from maestro.outillage.verification import Verificateur
+from maestro.outillage.verification import Verificateur, Verification
 from maestro.projets import Projet
 from maestro.providers.base import ModelProvider
 
@@ -539,11 +539,17 @@ def _phrase_de_la_piece(piece: PieceProposee) -> str:
     se lire même sans la carte.
     """
     rang = f"Pièce {piece.rang} sur {piece.total}" if piece.total > 1 else "Une pièce"
-    ouverture = (
-        f"{rang} pour « {piece.projet_nom} » : {piece.chemin}, corrigée d'après vous."
-        if piece.correction
-        else f"{rang} pour « {piece.projet_nom} » : {piece.chemin}."
-    )
+    if piece.correction:
+        ouverture = f"{rang} pour « {piece.projet_nom} » : {piece.chemin}, corrigée d'après vous."
+    elif piece.proposees:
+        # Une commande proposée n'est pas dite (#1381) : le texte dit d'où Maestro la tient.
+        lues = " et ".join(f"`{chemin}`" for chemin in piece.lues_dans) or "le projet"
+        ouverture = (
+            f"{rang} pour « {piece.projet_nom} » : {piece.chemin}, avec la commande que "
+            f"j'ai lue dans {lues}."
+        )
+    else:
+        ouverture = f"{rang} pour « {piece.projet_nom} » : {piece.chemin}."
     if piece.echec:
         return f"{ouverture}\n⚠ {piece.echec} Rien n'est écrit."
     return ouverture
@@ -619,12 +625,26 @@ def _touchee(piece: PieceProposee, fil: Sequence[MessageChat]) -> bool:
     return any(chemin == piece.chemin and vue != piece.empreinte for chemin, vue in vues)
 
 
-def _phrase_de_revue(projet_nom: str) -> str:
-    """Ce que le fil dit quand un run a fait changer l'outillage d'un projet (#1343)."""
+def _phrase_de_revue(piece: PieceProposee) -> str:
+    """Ce que le fil dit quand un run a fait changer l'outillage d'un projet (#1343).
+
+    Quand la pièce porte une commande que Maestro **propose** (#1381), la phrase dit
+    pourquoi : l'une de celles qu'il écrivait a échoué sur le projet construit, et il a
+    lu celle que le projet montre. La carte, juste dessous, dit laquelle et d'où.
+    """
+    debut = (
+        f"« {piece.projet_nom} » a maintenant ses fichiers : j'ai rejoué les commandes de "
+        "son outillage qui n'avaient pas encore passé"
+    )
+    if piece.proposees:
+        return (
+            f"{debut}. L'une a échoué : j'ai lu le projet pour trouver celle qu'il montre, "
+            "et je l'ai jouée avant de vous la proposer. Chaque pièce se réécrit sur votre "
+            "accord."
+        )
     return (
-        f"« {projet_nom} » a maintenant ses fichiers : j'ai rejoué les commandes de son "
-        "outillage qui n'avaient pas encore passé, et ce qu'elles ont rendu change ce "
-        "qu'il écrit. Chaque pièce se réécrit sur votre accord."
+        f"{debut}, et ce qu'elles ont rendu change ce qu'il écrit. Chaque pièce se réécrit "
+        "sur votre accord."
     )
 
 
@@ -919,7 +939,9 @@ class ConducteurOutillage:
         passé sont **rejouées** (`ServicePieces.prochaine(revoir=True)`), et la première
         pièce dont le texte change — une commande vérifiée, ou dite échouée avec sa
         sortie — est **proposée**, comme toute pièce : rien ne s'écrit sans accord, et
-        les suivantes viennent geste après geste.
+        les suivantes viennent geste après geste. Depuis #1381, une commande écrite qui
+        échoue fait lire le projet construit, et celle qu'il montre — jouée, vérifiée —
+        prend sa place dans la pièce, proposée par Maestro avec le fichier où il l'a lue.
 
         `None` quand il n'y a rien à revoir (`ServicePieces.a_revoir`) ou que rien de
         ce que l'outillage écrit ne change. Bloquant par morceaux : les commandes se
@@ -933,7 +955,7 @@ class ConducteurOutillage:
             return None
         return ReponseChat(
             contenu=_texte_de_la_piece(
-                _phrase_de_revue(suivante.projet_nom), suivante, faits=False, apres_le_juge=False
+                _phrase_de_revue(suivante), suivante, faits=False, apres_le_juge=False
             ),
             piece=suivante,
             projet_outille=projet_id,
@@ -1484,6 +1506,28 @@ class ServiceOutillage:
         pièce par pièce en tire ses constats sans la sérialiser pour la relire.
         """
         return await self._analyse(projet)
+
+    async def relire_pour(self, projet: Projet, echecs: Sequence[Verification]) -> Analyse:
+        """Le projet **construit** relu pour ses commandes en échec — revue d'après un run (#1381).
+
+        La lecture de #1158, les échecs dits au modèle (`lire_le_projet(echecs=…)`) : il
+        cherche la commande de même usage que le projet montre, et ce qu'il rend est
+        confronté au fichier qu'il a lu. Elle n'est **pas gardée** : la question n'est pas
+        celle de l'analyse, et une revue ne se joue que sur un échec. Sans fournisseur,
+        les tables seules — une revue ne se perd pas pour un modèle absent.
+        """
+        indices = await asyncio.to_thread(self._indices, projet)
+        try:
+            fournisseur = self._fournisseur()
+        except Exception as exc:  # noqa: BLE001 — sans fournisseur, les tables seules
+            return sans_lecture(indices, f"aucun fournisseur de modèle n'est utilisable : {exc}")
+        return await lire_le_projet(
+            indices,
+            perimetre=projet.perimetre,
+            provider=fournisseur,
+            modele=self._modele,
+            echecs=echecs,
+        )
 
     def _projet(self, id_projet: str) -> Projet:
         """Le projet déclaré, relu par le service des projets — jamais un second lecteur.

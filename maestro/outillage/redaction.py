@@ -75,7 +75,14 @@ from typing import Any
 from maestro import __version__
 from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN
 from maestro.outillage.detection import CHEMIN_MANIFESTE
-from maestro.outillage.modele import ORIGINE_DITE, Commande, Constats, Entree, Recommandation
+from maestro.outillage.modele import (
+    ORIGINE_DITE,
+    ORIGINE_PROPOSEE,
+    Commande,
+    Constats,
+    Entree,
+    Recommandation,
+)
 from maestro.outillage.questionnaire import SOURCE_CHOIX
 from maestro.outillage.recommandation import (
     DOSSIER_SKILLS,
@@ -738,6 +745,12 @@ def _provenance(commande: Commande, implique: bool = False) -> str:
         return f"dite par la personne ({commande.extrait})" if commande.extrait else (
             "dite par la personne"
         )
+    if commande.origine == ORIGINE_PROPOSEE:
+        # Proposée par Maestro à la revue d'après un run (#1381) : lue dans le projet
+        # construit, donc jamais « attendue » — le fichier existe, il a été ouvert.
+        endroit = f" dans `{commande.chemin}`" if commande.chemin else " dans le projet construit"
+        extrait = f" ({commande.extrait})" if commande.extrait else ""
+        return f"proposée par Maestro après un run, lue{endroit}{extrait}"
     if implique:
         precision = f" ({commande.extrait})" if commande.extrait else ""
         endroit = f"`{commande.chemin}`" if commande.chemin else "le manifeste du projet"
@@ -812,16 +825,24 @@ def texte_skill(
     elif entree.justification is not None:
         role = f" ({entree.justification.role})" if entree.justification.role else ""
         endroit = f"`{entree.justification.chemin}`{role}"
-        lignes += [
-            "",
-            (
+        if entree.justification.nom == ORIGINE_PROPOSEE:
+            # Proposée par Maestro après un run (#1381) : lue dans le projet construit,
+            # donc jamais « à créer », même sur un outillage venu des réponses.
+            phrase = (
+                f"Lue par Maestro après un run dans {endroit}. Si le projet a changé "
+                "depuis, c'est ce fichier qui fait foi, pas celui-ci."
+            )
+        elif _depuis_les_reponses(source):
+            phrase = (
                 f"À créer : {endroit}. Quand ce fichier existera, c'est lui qui fera "
                 "foi, pas celui-ci."
-                if _depuis_les_reponses(source)
-                else f"Constaté dans {endroit}. Si le projet a changé depuis, c'est ce "
+            )
+        else:
+            phrase = (
+                f"Constaté dans {endroit}. Si le projet a changé depuis, c'est ce "
                 "fichier qui fait foi, pas celui-ci."
-            ),
-        ]
+            )
+        lignes += ["", phrase]
     connus = verdicts or {}
     jouees = [
         (commande, connus[commande]) for commande in entree.commandes if commande in connus
