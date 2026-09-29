@@ -114,6 +114,10 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
     *"updateProjectV2ItemFieldValue"*)
       printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_pose"}}}}'
       exit 0 ;;
+    # Le jalon de chaque ticket ouvert (`gh_issues_jalons`, #1053) : AVANT le backlog, dont le motif
+    # `issues(first:` l'absorberait — et le backlog ne porte aucun jalon, si bien que tout ticket y
+    # paraîtrait « sans jalon ».
+    *"nodes { number milestone { jalon: title } }"*) cat "$FIX/jalons.json" 2>/dev/null; exit 0 ;;
     *"issues(first:"*) cat "$FIX/backlog.json" 2>/dev/null; exit 0 ;;
     *"pullRequests("*)
       # La PR d'UNE branche : le nom du fichier de fixture aplatit ses « / » (comme côté Python).
@@ -380,6 +384,10 @@ class Depot:
     env: dict[str, str]
     tickets: dict[str, dict] = field(default_factory=dict)
     numeros_jalons: dict[str, int] = field(default_factory=dict)
+    table_jalons: list[tuple] = field(default_factory=list)
+    #: Le jalon de chaque ticket rangé par le test (`ticket(jalon=…)` ou `milestone_tickets`) ;
+    #: `None` le déclare SANS jalon. Un ticket absent prend le jalon par défaut (`_jalon_de`).
+    jalons: dict[str, str | None] = field(default_factory=dict)
 
     # --- Mise en place de l'état GitLab simulé ---------------------------------------------------
     def reprise(self, iid: int, numero: int | None) -> None:
@@ -442,6 +450,39 @@ class Depot:
             encoding="utf-8",
         )
         self.numeros_jalons = {jalon[0]: n for n, jalon in enumerate(jalons, 1)}
+        self.table_jalons = list(jalons)
+        self._ecrit_jalons()
+
+    def _jalon_de(self, iid: str) -> str | None:
+        """Le jalon d'un ticket, tel que `gh_issues_jalons` le rendra.
+
+        Un ticket que le test n'a rangé nulle part est dans le jalon que `current-milestone`
+        rendrait — le premier actif du rail produit, ni soldé ni vide (#619). C'est ce que le
+        harnais disait déjà sans le nommer : la table de repli de `publie` sert chaque jalon sans
+        table à lui, donc le plan d'avant #1053 lisait tous ces tickets dans le jalon courant. Les
+        dizaines de tests écrits avant le plan global le gardent ainsi sans une ligne de plus.
+        """
+        if iid in self.jalons:
+            return self.jalons[iid]
+        for titre, etat, fermes, total, *rail in self.table_jalons:
+            if etat == "active" and (rail[0] if rail else "produit") == "produit" \
+                    and 0 < total and fermes < total:
+                return titre
+        return None
+
+    def _ecrit_jalons(self) -> None:
+        """La réponse de `gh_issues_jalons` : chaque ticket déclaré, avec son jalon ou `null`."""
+        noeuds = ",".join(
+            json.dumps(
+                {"number": int(iid),
+                 "milestone": {"jalon": jalon} if (jalon := self._jalon_de(iid)) else None},
+                ensure_ascii=False, separators=(",", ":"),
+            )
+            for iid in self.tickets
+        )
+        (self.fixtures / "jalons.json").write_text(
+            f'{{"data":{{"repository":{{"issues":{{"nodes":[{noeuds}]}}}}}}}}', encoding="utf-8"
+        )
 
     def milestone_tickets(self, titre: str, iids: list[int]) -> None:
         """Les tickets d'UN milestone donné (les autres gardent la table de `publie`).
@@ -449,6 +490,9 @@ class Depot:
         Le bouchon `gh` retrouve ce fichier par le NUMÉRO du jalon, parce que c'est ce que porte la
         seconde lecture de `milestone-issues` : GitHub ne filtre pas un jalon par son titre, il faut
         d'abord le résoudre. La correspondance titre → numéro vient de `milestones()`.
+
+        Les mêmes tickets reçoivent ce jalon dans la lecture du backlog (`gh_issues_jalons`) : un
+        ticket rangé dans un jalon l'est pour les deux lectures, qui ne peuvent pas se contredire.
         """
         numero = self.numeros_jalons[titre]
         noeuds = ",".join(self._noeud_jalon(str(iid)) for iid in iids)
@@ -456,6 +500,8 @@ class Depot:
             f'{{"data":{{"repository":{{"milestone":{{"issues":{{"nodes":[{noeuds}]}}}}}}}}}}',
             encoding="utf-8",
         )
+        self.jalons.update({str(iid): titre for iid in iids})
+        self._ecrit_jalons()
 
     def ticket(
         self,
@@ -470,8 +516,13 @@ class Depot:
         lots: list[tuple[int, str, bool]] | None = None,
         labels_sup: str = "",
         corps_sup: str = "",
+        jalon: str | None = "",
     ) -> None:
         """Déclare un ticket : son statut, ses labels, et son rôle éventuel de lot ou de parent.
+
+        `jalon` le range dans un jalon nommé, ou SANS jalon (`None`) ; laissé vide, il prend le
+        jalon par défaut du harnais (`_jalon_de`). Il ne sert que la lecture du backlog (#1053) : la
+        table d'un jalon, elle, se pose par `milestone_tickets`.
 
         `labels_sup` ajoute des labels à la liste de base — il n'existe que pour `lot::arbitre`
         (#562), qui est un fait porté par le PARENT et non par son découpage : sans lui, le seul
@@ -513,6 +564,8 @@ class Depot:
         self.tickets[str(iid)] = {
             "titre": titre, "statut": statut, "prio": prio, "type": type_, "assigne": assigne
         }
+        if jalon != "":
+            self.jalons[str(iid)] = jalon
 
     def _labels(self, iid: str) -> str:
         """Les labels d'un ticket déclaré — CATÉGORISATION SEULE.
@@ -573,6 +626,7 @@ class Depot:
             ),
             encoding="utf-8",
         )
+        self._ecrit_jalons()
 
     def mr(
         self,
@@ -4850,6 +4904,179 @@ def test_le_listing_des_milestones_n_imprime_aucun_plan(depot: Depot) -> None:
     assert r.returncode == 0, r.stderr
     assert "501" not in r.stdout, "le plan n'est pas calculé ici"
     assert not (depot.racine / ".maestro").exists()
+
+
+# =====================================================================================
+# Le plan couvre le backlog, l'échéance du jalon devenant sa clé de tri (#1053, chantier #1052)
+# =====================================================================================
+# Sans consigne, le jalon cesse d'être un FILTRE du plan pour en devenir la première CLÉ DE TRI ; le
+# rail, lui, reste un filtre (#617). Ce que ces tests gardent : le plan traverse les jalons dans
+# l'ordre de leur échéance, sa TÊTE est le plan d'avant ticket pour ticket, un ticket sans jalon
+# vient en dernier et se nomme, et lire le backlog ne coûte aucune lecture par ticket écarté.
+
+def _backlog_deux_jalons(depot: Depot) -> None:
+    """Deux jalons produit et un d'outillage, de quoi voir chaque clé de tri jouer.
+
+    « Phase A » est échue avant « Phase B » : c'est l'ORDRE de la table qui le dit (les dates du
+    harnais sont fixes, cf. `milestones`). « Outillage » s'intercale entre les deux, sur l'autre
+    rail. Dans B, un ticket `prio::haute` qui passerait devant tout A si la priorité primait
+    l'échéance ; dans A, un parent et ses deux lots, qui doivent rester contigus.
+    """
+    depot.milestones([("Phase A", "active", 1, 6), ("Outillage", "active", 0, 1, "outillage"),
+                      ("Phase B", "active", 0, 2), ("Phase Z", "closed", 3, 4)])
+    depot.ticket(500, "Parent de A", lots=[(501, "Lot 1", False), (502, "Lot 2", False)],
+                 jalon="Phase A")
+    depot.ticket(501, "Lot 1", parent=500, jalon="Phase A")
+    depot.ticket(502, "Lot 2", parent=500, jalon="Phase A")
+    depot.ticket(510, "A basse", prio="basse", jalon="Phase A")
+    depot.ticket(520, "A haute", prio="haute", jalon="Phase A")
+    depot.ticket(530, "B haute", prio="haute", jalon="Phase B")
+    depot.ticket(540, "B moyenne", jalon="Phase B")
+    depot.ticket(550, "Outil prioritaire", prio="haute", jalon="Outillage")
+    depot.ticket(560, "Reste d'une phase close", prio="haute", jalon="Phase Z")
+    depot.publie()
+    depot.milestone_tickets("Phase A", [500, 501, 502, 510, 520])
+    depot.milestone_tickets("Outillage", [550])
+    depot.milestone_tickets("Phase B", [530, 540])
+    depot.milestone_tickets("Phase Z", [560])
+
+
+def test_sans_consigne_le_plan_traverse_les_jalons_dans_l_ordre_de_leur_echeance(
+    depot: Depot,
+) -> None:
+    """C1 : le plan couvre plusieurs jalons, trié par échéance, puis `prio::`, puis iid, et les
+    lots d'un parent restent contigus."""
+    _backlog_deux_jalons(depot)
+
+    # Le motif d'abord : nommé, un jalon reste un FILTRE — « Phase A » seule ne porte aucun
+    # ticket de B. Le plan sans consigne constate donc un changement, pas une coïncidence.
+    nomme = [ligne[1] for ligne in _lignes_du_plan(depot.lance("queue.sh", "--milestone",
+                                                               "Phase A").stdout)]
+    assert nomme == ["520", "501", "502", "510"]
+
+    r = depot.lance("queue.sh")
+    assert r.returncode == 0, r.stderr
+    plan = [ligne[1] for ligne in _lignes_du_plan(r.stdout)]
+    assert plan == ["520", "501", "502", "510", "530", "540"], \
+        "tout A avant tout B, puis prio et iid à l'intérieur d'un jalon"
+    assert plan.index("510") < plan.index("530"), \
+        "l'échéance prime la priorité : un « basse » de A passe devant un « haute » de B"
+    assert plan[1:3] == ["501", "502"], "les lots d'un parent restent contigus et dans son ordre"
+    assert "550" not in plan, "le rail reste un filtre : l'outillage n'entre pas au plan produit"
+    assert "560" not in plan, "un jalon fermé n'est pas un run à lancer"
+
+    jalons = [ligne for ligne in r.stdout.splitlines() if ligne.startswith("# milestone\t")]
+    assert jalons == ["# milestone\tPhase A\tproduit", "# milestone\tPhase B\tproduit"], \
+        "une ligne par jalon traversé, dans l'ordre du plan"
+
+
+def test_la_tete_du_plan_global_est_le_plan_du_jalon_courant(depot: Depot) -> None:
+    """C2 : sur un backlog à deux jalons, la tête du plan sans consigne est, ligne pour ligne, le
+    plan que rendait `queue.sh` pour le jalon courant — rang, parent, prio, groupe et titre compris.
+    """
+    _backlog_deux_jalons(depot)
+
+    # Le motif : « Phase A » EST le jalon courant, celui que lisait le plan d'avant #1053.
+    assert depot.lib("current-milestone").stdout.strip() == "Phase A"
+
+    avant = _lignes_du_plan(depot.lance("queue.sh", "--milestone", "Phase A").stdout)
+    global_ = _lignes_du_plan(depot.lance("queue.sh").stdout)
+    assert len(global_) > len(avant), "le plan global continue au-delà du jalon courant"
+    assert global_[:len(avant)] == avant, "sa tête est le plan d'avant, ticket pour ticket"
+
+
+def test_un_ticket_sans_jalon_vient_en_dernier_et_check_le_nomme(depot: Depot) -> None:
+    """C3 : un ticket ouvert sans jalon figure en fin de plan, et `--check` dit pourquoi."""
+    _backlog_deux_jalons(depot)
+    depot.ticket(900, "Venu de l'interface web", prio="haute", jalon=None)
+    depot.publie()
+
+    # Le motif : ce ticket est `prio::haute` — rangé par sa priorité, il passerait en tête. Et un
+    # jalon nommé ne le voit pas : c'est bien le plan sans consigne qui le fait apparaître.
+    assert "900" not in depot.lance("queue.sh", "--milestone", "Phase A").stdout
+
+    r = depot.lance("queue.sh", "--check")
+    assert r.returncode == 0, r.stderr
+    plan = [ligne[1] for ligne in _lignes_du_plan(r.stdout)]
+    assert plan[-1] == "900", "sans échéance pour le ranger, il vient après tous les jalons"
+    assert "tickets sans jalon" in r.stderr and "#900" in r.stderr, "--check nomme sa cause"
+    jalons = [ligne for ligne in r.stdout.splitlines() if ligne.startswith("# milestone\t")]
+    assert jalons == ["# milestone\tPhase A\tproduit", "# milestone\tPhase B\tproduit"], \
+        "il n'a ni titre ni rail à annoncer : aucune ligne de jalon de plus"
+
+
+def test_check_nomme_l_autre_rail_et_le_jalon_ferme(depot: Depot) -> None:
+    """Un écarté sans raison est indistinguable d'un bug : l'autre rail et le jalon fermé se
+    disent."""
+    _backlog_deux_jalons(depot)
+    r = depot.lance("queue.sh", "--check")
+    assert r.returncode == 0, r.stderr
+    assert "écarté #550  rail outillage (jalon « Outillage »)" in r.stderr
+    assert "écarté #560  jalon fermé « Phase Z »" in r.stderr
+
+
+def test_un_ticket_que_la_lecture_des_jalons_n_a_pas_vu_est_ecarte_jamais_range(
+    depot: Depot,
+) -> None:
+    """Créé entre deux lectures, ou au-delà d'un plafond : on ne place pas au jugé ce qu'on n'a pas
+    lu. Le ranger « sans jalon » le ferait partir en fin de plan sous une fausse raison."""
+    _backlog_deux_jalons(depot)
+    fixture = depot.fixtures / "jalons.json"
+    donnees = json.loads(fixture.read_text(encoding="utf-8"))
+    noeuds = donnees["data"]["repository"]["issues"]["nodes"]
+    donnees["data"]["repository"]["issues"]["nodes"] = [n for n in noeuds if n["number"] != 540]
+    # Compacte, comme la forge la rend : le parseur découpe sur `{"number":`, sans espace.
+    fixture.write_text(json.dumps(donnees, ensure_ascii=False, separators=(",", ":")),
+                       encoding="utf-8")
+
+    r = depot.lance("queue.sh", "--check")
+    assert r.returncode == 0, r.stderr
+    assert "540" not in [ligne[1] for ligne in _lignes_du_plan(r.stdout)]
+    assert "écarté #540  jalon illisible" in r.stderr
+
+
+def test_le_plan_global_ne_lit_pas_un_ticket_qu_il_ecarte(depot: Depot) -> None:
+    """Le compte d'allers (#602, un compte d'appels et jamais un chronomètre) : le jalon de chaque
+    ticket vient d'UNE lecture du backlog, si bien qu'un ticket de l'autre rail ou d'un jalon fermé
+    ne coûte aucune lecture de sa vue, et qu'aucun jalon n'est lu ticket par ticket."""
+    _backlog_deux_jalons(depot)
+    journal = depot.fixtures / "gh.log"
+
+    # Le motif : sous `--milestone`, la vue de 550 EST lue — le compte ci-dessous sait donc la voir.
+    journal.unlink(missing_ok=True)
+    depot.lance("queue.sh", "--milestone", "Outillage")
+    assert "issue(number:550)" in journal.read_text(encoding="utf-8")
+
+    journal.unlink()
+    r = depot.lance("queue.sh")
+    assert r.returncode == 0, r.stderr
+    appels = journal.read_text(encoding="utf-8").splitlines()
+    assert not any("issue(number:550)" in a or "issue(number:560)" in a for a in appels), \
+        "un ticket écarté par son jalon n'est jamais lu"
+    assert sum("nodes { number milestone { jalon: title } }" in a for a in appels) == 1, \
+        "le jalon de tout le backlog tient en une lecture"
+    assert not any("milestone(number:" in a for a in appels), \
+        "aucun jalon n'est listé ticket par ticket"
+    vues = sorted({a.split("issue(number:")[1].split(")")[0] for a in appels
+                   if "issue(number:" in a and "body }" in a})
+    assert vues == ["500", "501", "502", "510", "520", "530", "540"], \
+        "une vue par candidat du rail, et pas une de plus"
+
+
+def test_l_en_tete_du_run_compte_les_jalons_traverses(depot: Depot) -> None:
+    """Le plan global porte une ligne par jalon : le run annonce le premier, comme avant, et dit
+    qu'il ne s'arrête pas à sa frontière. Nommer chacun est le lot 3 (#1055)."""
+    plan = Path(_plan(depot, [(1, 130, "-", "moyenne")]))
+    seul = plan.read_text(encoding="utf-8") + "# milestone\tPhase A\tproduit\n"
+    plan.write_text(seul, encoding="utf-8", newline="\n")
+    r = depot.lance("run.sh", "--dry-run", "--plan", str(plan), "--run-id", "jalon-seul")
+    assert "milestone : Phase A · rail produit\n" in r.stdout, r.stdout + r.stderr
+
+    plan.write_text(seul + "# milestone\tPhase B\tproduit\n# milestone\tPhase C\tproduit\n",
+                    encoding="utf-8", newline="\n")
+    r = depot.lance("run.sh", "--dry-run", "--plan", str(plan), "--run-id", "jalons")
+    assert "milestone : Phase A · rail produit · puis 2 autre(s) jalon(s) du rail" in r.stdout, \
+        r.stdout + r.stderr
 
 
 # =====================================================================================

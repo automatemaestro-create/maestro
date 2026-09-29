@@ -17,9 +17,24 @@
 #
 # --- Les règles d'ordonnancement, et pourquoi -----------------------------------------------------
 #
-# 1. Ne sont retenus que les tickets « À faire » et NON ASSIGNÉS du milestone courant. Un ticket
-#    assigné est le travail de quelqu'un (anti-collision, docs/10 §5) ; un ticket d'un autre
-#    milestone n'est pas la phase en cours.
+# 1. Ne sont retenus que les tickets « À faire » et NON ASSIGNÉS. Un ticket assigné est le travail
+#    de quelqu'un (anti-collision, docs/10 §5).
+#
+#    SANS CONSIGNE, ILS SONT PRIS DANS TOUT LE BACKLOG DU RAIL PRODUIT (#1053, chantier #1052) : le
+#    jalon n'est plus un filtre, il devient la première clé de tri (règle 4). C'est un sur-ensemble
+#    strict du plan d'avant : `current-milestone` retenant le jalon actif le plus tôt échu qui porte
+#    un ticket ouvert, le plan commence par les mêmes tickets, dans le même ordre, et continue sur
+#    le jalon suivant au lieu de s'arrêter à la frontière. Avec `--milestone <titre>`, seuls les
+#    tickets de ce jalon sont lus, comme avant.
+#
+#    LE RAIL RESTE UN FILTRE, lui, et c'est une décision : le défaut était « le courant du rail
+#    produit » (#617), et mêler l'outillage au produit est ce que #617 a corrigé — un run « produit »
+#    qui traitait de l'outillage sans le dire. Si le rail doit passer au ticket, c'est au lot 3 de
+#    le trancher (#1055), avec l'annonce de portée qui le rendrait visible. Un ticket d'un jalon
+#    FERMÉ est écarté et nommé : une phase soldée n'est pas un run à lancer.
+#
+#    Un ticket SANS JALON n'a pas de rail : il est retenu, rangé en fin de plan, et `--check` le
+#    nomme. Il était jusqu'ici invisible, sans qu'aucune ligne ne le signale.
 #
 #    « À faire » est le LIBELLÉ du cycle de vie, porté depuis #365 par le champ Status d'un projet
 #    GitHub Projects v2 — après le champ natif de GitLab, puis six labels `workflow::*`. Ce fichier
@@ -43,8 +58,12 @@
 #    bougé pour rien — et allongerait d'autant la fenêtre pendant laquelle un parent est à moitié
 #    livré.
 #
-# 4. Le reste est trié par `prio::` (haute > moyenne > basse) puis par iid croissant, pour que
-#    l'ordre soit REPRODUCTIBLE : deux appels sur le même backlog rendent le même plan.
+# 4. Le reste est trié par ÉCHÉANCE DU JALON, puis par `prio::` (haute > moyenne > basse), puis par
+#    iid croissant, pour que l'ordre soit REPRODUCTIBLE : deux appels sur le même backlog rendent le
+#    même plan. L'échéance est lue comme RANG dans `gl_milestones`, qui trie comme
+#    `current-milestone` (échéance croissante) : un seul ordre des jalons, jamais deux. Un bloc de
+#    lots prend l'échéance la plus proche de ses membres, comme il prend leur meilleure priorité
+#    (règle 3), et un ticket sans jalon vient après tous les autres.
 #
 # 5. Le plan DIT, en plus, ce qui pourrait partir en même temps — colonne `groupe` (#288, parent
 #    #287). Jusqu'ici le marqueur « (parallèle) » servait à ordonner puis était jeté,
@@ -73,10 +92,16 @@
 #    du découpage, pas du plan, et deux plans successifs doivent la donner pareille.
 #
 # --- Coût en appels -------------------------------------------------------------------------------
-# Deux lectures GraphQL (les tickets du milestone, les assignés du backlog ouvert) puis UNE lecture
+# Deux lectures de tables (les tickets du milestone, les assignés du backlog ouvert) puis UNE lecture
 # par candidat, mise en cache : la même sortie de `lib.sh issue-raw` sert à répondre aux deux
 # questions « ce ticket est-il un lot ? » et « ce ticket est-il un parent ? ». C'est l'approche de
 # gl_start_brief — une lecture, plusieurs projections — plutôt qu'un appel de helper par question.
+#
+# Sans consigne (#1053), la table du milestone est remplacée par DEUX lectures fixes : la table des
+# jalons (échéance et rail) et le jalon de chaque ticket ouvert (`gl_issues_jalons`, une requête
+# pour tout le backlog). Le rail et le jalon sont donc connus AVANT la lecture par candidat : un
+# ticket de l'autre rail n'en coûte aucune. Le compte d'allers est gardé par un test
+# (`tests/test_orchestrate.py`), jamais par un chronomètre (#602).
 #
 # LE DÉCOUPAGE NATIF NE CHANGE RIEN À CE COMPTE (#393) : `parent` et `subIssues` voyagent DANS la
 # requête de `gh_issue_raw`, donc dans la vue déjà mise en cache ici. Mesuré des deux côtés sur deux
@@ -104,11 +129,12 @@ L'ordre de traitement des tickets pour la boucle d'orchestration autonome.
   bash scripts/orchestrate/queue.sh [options]
 
 Options :
-  --check              Affiche aussi, sur stderr, le diagnostic : milestone retenu, tickets
-                       écartés avec leur raison, les blocs de lots gardés contigus, et les
-                       groupes de dépendance obtenus (ce qui pourrait partir en même temps).
-  --milestone <titre>  Milestone à traiter (titre exact). Par défaut : la phase courante
-                       (lib.sh current-milestone).
+  --check              Affiche aussi, sur stderr, le diagnostic : portée retenue, tickets
+                       écartés avec leur raison, tickets sans jalon rangés en fin de plan, les
+                       blocs de lots gardés contigus, et les groupes de dépendance obtenus (ce
+                       qui pourrait partir en même temps).
+  --milestone <titre>  Ne lit que ce milestone (titre exact). Par défaut : tout le backlog du
+                       rail produit, trié par échéance de jalon (#1053).
   --milestones         N'imprime pas de plan : liste les milestones ACTIFS sur lesquels un run
                        peut porter, avec ce qu'ils ont de traitable — titre, courant (0/1),
                        « À faire » et libres, ouverts, échéance, rail. C'est ce que /orchestrate lit
@@ -116,7 +142,8 @@ Options :
                        AU PLUS un milestone par rail, et pour aucun si celui du rail n'a rien à
                        prendre (#619) : un défaut sur lequel un run planifierait zéro ticket n'est
                        pas un défaut.
-  --orphelins          N'imprime pas de plan : liste les tickets « En cours » du milestone dont
+  --orphelins          N'imprime pas de plan : liste les tickets « En cours » du milestone (par
+                       défaut : le courant du rail produit) dont
                        plus personne ne s'occupe — ce que le plan N'INCLUT PAS et qu'un geste
                        explicite peut rendre prenable (`lib.sh reprendre-en-cours <iid>`). TSV :
                        iid, reprises, plafond, run d'origine, verdict, détail, titre. C'est ce que
@@ -236,15 +263,25 @@ if [ "$LISTE_MILESTONES" = 1 ]; then
   exit 0
 fi
 
-# --- 1. Le milestone ------------------------------------------------------------------------------
-if [ -z "$MILESTONE" ]; then
+# --- 1. La portée : un milestone nommé, ou le backlog du rail --------------------------------------
+# Le rail du plan sans consigne est celui du défaut de `current-milestone` (règle 1) : le produit.
+RAIL="produit"
+
+# `--orphelins` garde la portée d'un milestone : sans consigne, le courant du rail. C'est encore
+# « ce qui manque au milestone qu'un run visait », et l'aligner sur le plan global relève de
+# l'annonce de portée du lot 3 (#1055), pas de ce lot.
+if [ "$LISTE_ORPHELINS" = 1 ] && [ -z "$MILESTONE" ]; then
   MILESTONE="$(gl_current_milestone)" || {
     # Le helper vient de nommer sur stderr CE QU'IL A SAUTÉ et pourquoi (soldé / vide, #619) : on
     # ne le paraphrase pas, on dit seulement la conséquence ici.
-    echo "queue.sh : aucun milestone utilisable sur le rail produit — rien à planifier." >&2; exit 1
+    echo "queue.sh : aucun milestone utilisable sur le rail produit — aucun orphelin à lister." >&2; exit 1
   }
 fi
-diag "milestone : $MILESTONE — seuls ses tickets sont lus ; un ticket d'un autre milestone n'est pas candidat."
+if [ -n "$MILESTONE" ]; then
+  diag "milestone : $MILESTONE — seuls ses tickets sont lus ; un ticket d'un autre milestone n'est pas candidat."
+else
+  diag "portée : le backlog du rail $RAIL — l'échéance du jalon trie, elle ne filtre pas (#1053) ; un ticket sans jalon vient en fin de plan."
+fi
 
 # --- 1 bis. Les orphelins : ce que le plan n'inclut pas, et qu'on pourrait reprendre (#329) --------
 # La règle 1 écarte les tickets « En cours » et assignés, et c'est ce qui protège le travail des
@@ -297,41 +334,89 @@ if [ "$LISTE_ORPHELINS" = 1 ]; then
   exit 0
 fi
 
-# --- 2. Les tickets du milestone, et qui les a pris -----------------------------------------------
-gl_milestone_issues "$MILESTONE" >"$TMP/milestone.tsv" || exit 1
+# --- 2. Les tickets lus, et qui les a pris --------------------------------------------------------
+# Un milestone nommé se lit par sa table. Le backlog, lui, se lit par la table ouverte, à laquelle
+# deux lectures ajoutent ce qu'il faut pour le trier : l'échéance et le rail de chaque jalon, et le
+# jalon de chaque ticket (en-tête, « Coût en appels »).
+if [ -n "$MILESTONE" ]; then
+  gl_milestone_issues "$MILESTONE" >"$TMP/milestone.tsv" || exit 1
+else
+  gl_milestones >"$TMP/jalons.tsv" || exit 1
+  gl_issues_jalons >"$TMP/jalon-de.tsv" || exit 1
+fi
 gl_backlog_table opened >"$TMP/backlog.tsv" || exit 1
 
-# Les deux lectures plafonnent à `first: 100` côté GraphQL (lib.sh). Une troncature silencieuse
-# serait pire qu'une erreur : un ticket assigné dont la ligne manque passerait pour libre, et la
-# boucle le prendrait à quelqu'un. On alerte donc TOUJOURS, pas seulement en --check.
-alerte_troncature() { # <fichier> <quoi>
-  local nb
+# Les lectures de tickets plafonnent à `first: 100` côté GraphQL (lib.sh), celle des jalons à
+# `first: 50`. Une troncature silencieuse serait pire qu'une erreur : un ticket assigné dont la ligne
+# manque passerait pour libre, et la boucle le prendrait à quelqu'un. On alerte donc TOUJOURS, pas
+# seulement en --check.
+alerte_troncature() { # <fichier> <quoi> [plafond]
+  local nb plafond="${3:-100}"
   nb="$(grep -cv '^#' "$1")"
-  [ "$nb" -ge 100 ] || return 0
+  [ "$nb" -ge "$plafond" ] || return 0
   printf 'queue.sh : ⚠ %s — %s lignes, soit le plafond de l'\''API. Le plan peut être incomplet et un ticket pris passer pour libre.\n' \
     "$2" "$nb" >&2
 }
-alerte_troncature "$TMP/milestone.tsv" "tickets du milestone"
+if [ -n "$MILESTONE" ]; then
+  alerte_troncature "$TMP/milestone.tsv" "tickets du milestone"
+else
+  alerte_troncature "$TMP/jalons.tsv" "table des jalons" 50
+  alerte_troncature "$TMP/jalon-de.tsv" "jalons des tickets ouverts"
+fi
 alerte_troncature "$TMP/backlog.tsv" "backlog ouvert (assignés)"
 
 # --- 3. Les candidats : « À faire » et libres -----------------------------------------------------
 # Les écartés partent dans un fichier à part plutôt qu'à la poubelle : `--check` doit pouvoir dire
 # POURQUOI un ticket n'est pas dans le plan — sans quoi une absence est indistinguable d'un bug.
-awk -F '\t' -v OFS='\t' -v ecartes="$TMP/ecartes.tsv" '
-  FNR == NR { if ($1 !~ /^#/) assigne[$1] = $5; next }
-  /^#/ { next }
-  {
-    iid = $1; statut = $2; prio = $5; titre = $6
-    if (statut != "À faire") { print iid, "cycle de vie « " statut " »", titre > ecartes; next }
-    a = (iid in assigne) ? assigne[iid] : "-"
-    if (a != "-" && a != "") { print iid, "assigné à " a, titre > ecartes; next }
-    print iid, prio, titre
-  }
-' "$TMP/backlog.tsv" "$TMP/milestone.tsv" >"$TMP/candidats.tsv"
+#
+# `cle.tsv` porte, pour chaque candidat du backlog, la clé de la règle 4 — le RANG de son jalon parmi
+# les jalons actifs du rail, dans l'ordre de `gl_milestones` — et le titre du jalon. Il reste vide
+# pour un milestone nommé : tous ses tickets partagent alors la même clé, et le tri est celui d'avant.
+: >"$TMP/cle.tsv"
+if [ -n "$MILESTONE" ]; then
+  awk -F '\t' -v OFS='\t' -v ecartes="$TMP/ecartes.tsv" '
+    FNR == NR { if ($1 !~ /^#/) assigne[$1] = $5; next }
+    /^#/ { next }
+    {
+      iid = $1; statut = $2; prio = $5; titre = $6
+      if (statut != "À faire") { print iid, "cycle de vie « " statut " »", titre > ecartes; next }
+      a = (iid in assigne) ? assigne[iid] : "-"
+      if (a != "-" && a != "") { print iid, "assigné à " a, titre > ecartes; next }
+      print iid, prio, titre
+    }
+  ' "$TMP/backlog.tsv" "$TMP/milestone.tsv" >"$TMP/candidats.tsv"
+else
+  # Un ticket absent de la lecture des jalons (créé entre deux lectures, ou au-delà d'un plafond)
+  # est ÉCARTÉ et nommé, jamais rangé « sans jalon » : on ne place pas au jugé ce qu'on n'a pas lu.
+  # Les titres voyagent par des fichiers, jamais par `-v`, qui interprète les échappements (#340) ;
+  # seul le rail passe par `-v`, un mot ASCII.
+  awk -F '\t' -v OFS='\t' -v rail="$RAIL" -v ecartes="$TMP/ecartes.tsv" -v cles="$TMP/cle.tsv" '
+    FILENAME == ARGV[1] {
+      if ($1 !~ /^#/) { etat[$1] = $2; rl[$1] = $7; if ($2 == "active" && $7 == rail) rang[$1] = ++n }
+      next
+    }
+    FILENAME == ARGV[2] { jalon[$1] = $2; next }
+    /^#/ { next }
+    {
+      iid = $1; statut = $2; prio = $3; a = $5; titre = $6
+      if (statut != "À faire") { print iid, "cycle de vie « " statut " »", titre > ecartes; next }
+      if (a != "-" && a != "") { print iid, "assigné à " a, titre > ecartes; next }
+      if (!(iid in jalon)) { print iid, "jalon illisible (absent de la lecture des jalons)", titre > ecartes; next }
+      j = jalon[iid]
+      if (j == "-") cle = 999999
+      else if (!(j in etat)) { print iid, "jalon « " j " » absent de la table des jalons", titre > ecartes; next }
+      else if (etat[j] != "active") { print iid, "jalon fermé « " j " »", titre > ecartes; next }
+      else if (rl[j] != rail) { print iid, "rail " rl[j] " (jalon « " j " »)", titre > ecartes; next }
+      else cle = rang[j]
+      print iid, cle, j > cles
+      print iid, prio, titre
+    }
+  ' "$TMP/jalons.tsv" "$TMP/jalon-de.tsv" "$TMP/backlog.tsv" >"$TMP/candidats.tsv"
+fi
 touch "$TMP/ecartes.tsv"
 
 if [ ! -s "$TMP/candidats.tsv" ]; then
-  diag "aucun ticket « À faire » et libre dans ce milestone."
+  diag "aucun ticket « À faire » et libre dans $([ -n "$MILESTONE" ] && printf 'ce milestone' || printf 'le backlog du rail %s' "$RAIL")."
   printf '# rang\tiid\tparent\tprio\tgroupe\ttitre\n'
   exit 0
 fi
@@ -531,33 +616,52 @@ if [ ! -s "$TMP/membres.tsv" ]; then
   exit 0
 fi
 
-# --- 6. Priorité et iid minimal de chaque bloc -----------------------------------------------------
+# --- 6. Échéance, priorité et iid minimal de chaque bloc -------------------------------------------
 # La priorité d'un bloc est la MEILLEURE de ses membres : un parent dont un seul lot est
 # « prio::haute » passe devant, sans quoi ce lot serait retenu par ses voisins moins prioritaires.
+# Son échéance est la PLUS PROCHE, pour la même raison (règle 4) ; un membre absent de `cle.tsv`
+# (milestone nommé) prend la clé 1, commune à tous. Le premier fichier se reconnaît à son NOM et non
+# à `FNR == NR` : `cle.tsv` est vide pour un milestone nommé, et `FNR == NR` prendrait alors les
+# lignes de l'entrée standard pour les siennes.
 # shellcheck disable=SC2034  # les champs non lus sont nommés : c'est la disposition de membres.tsv
 while IFS=$'\t' read -r bloc rang iid parent prio groupe titre; do
   printf '%s\t%s\t%s\n' "$bloc" "$(rang_prio "$prio")" "$iid"
 done <"$TMP/membres.tsv" | awk -F '\t' -v OFS='\t' '
-  { if (!($1 in p) || $2 < p[$1]) p[$1] = $2
+  FILENAME == ARGV[1] { cle[$1] = $2 + 0; next }
+  { c = ($3 in cle) ? cle[$3] : 1
+    if (!($1 in k) || c < k[$1]) k[$1] = c
+    if (!($1 in p) || $2 < p[$1]) p[$1] = $2
     if (!($1 in m) || $3 + 0 < m[$1]) m[$1] = $3 + 0 }
-  END { for (g in p) print g, p[g], m[g] }
-' >"$TMP/blocs.tsv"
+  END { for (g in p) print g, k[g], p[g], m[g] }
+' "$TMP/cle.tsv" - >"$TMP/blocs.tsv"
 
 # --- 7. Le plan ------------------------------------------------------------------------------------
 printf '# rang\tiid\tparent\tprio\tgroupe\ttitre\n'
 awk -F '\t' -v OFS='\t' '
-  FNR == NR { pr[$1] = $2; mi[$1] = $3; next }
-  { print pr[$1], mi[$1], $2, $3, $4, $5, $6, $7 }
+  FNR == NR { cl[$1] = $2; pr[$1] = $3; mi[$1] = $4; next }
+  { print cl[$1], pr[$1], mi[$1], $2, $3, $4, $5, $6, $7 }
 ' "$TMP/blocs.tsv" "$TMP/membres.tsv" |
-  sort -t$'\t' -k1,1n -k2,2n -k3,3n |
-  awk -F '\t' -v OFS='\t' '{ print NR, $4, $5, $6, $7, $8 }'
+  sort -t$'\t' -k1,1n -k2,2n -k3,3n -k4,4n |
+  awk -F '\t' -v OFS='\t' '{ print NR, $5, $6, $7, $8, $9 }' >"$TMP/plan.tsv"
+cat "$TMP/plan.tsv"
 
 # Le plan dit SUR QUOI il porte (#617), par la même mécanique de commentaire que la réserve
 # ci-dessous : le milestone et son rail. Sans cette ligne, la seule façon pour le pilote d'annoncer
 # le rail serait de redemander le milestone courant à la forge — donc de reposer, après coup, une
 # question déjà tranchée ici, avec le risque de rendre une AUTRE réponse si un milestone s'est soldé
 # entre-temps. Le plan est la source : c'est lui qui est rejoué à l'identique par `--resume` (#204).
-printf '# milestone\t%s\t%s\n' "$MILESTONE" "$(gl_milestone_rail "$MILESTONE" 2>/dev/null || printf 'produit')"
+#
+# Sans consigne (#1053), une ligne PAR JALON TRAVERSÉ, dans l'ordre du plan : la première est celle
+# qu'annonçait déjà le plan d'avant, les suivantes disent jusqu'où il continue. Un ticket sans jalon
+# n'en ajoute aucune — il n'a ni titre ni rail à annoncer, et `--check` le nomme.
+if [ -n "$MILESTONE" ]; then
+  printf '# milestone\t%s\t%s\n' "$MILESTONE" "$(gl_milestone_rail "$MILESTONE" 2>/dev/null || printf 'produit')"
+else
+  awk -F '\t' -v OFS='\t' -v rail="$RAIL" '
+    FILENAME == ARGV[1] { jalon[$1] = $3; next }
+    ($2 in jalon) && jalon[$2] != "-" && !(jalon[$2] in vu) { vu[jalon[$2]] = 1; print "# milestone", jalon[$2], rail }
+  ' "$TMP/cle.tsv" "$TMP/plan.tsv"
+fi
 
 # Le plan porte sa propre réserve (#562). Ces lignes sont des COMMENTAIRES : les deux lectures du
 # plan par run.sh les écartent déjà (`grep -v '^#'`, puis `case "$rang" in '#'*`), et un plan
@@ -597,6 +701,17 @@ if [ "$CHECK" = 1 ]; then
     if grep -q 'cycle de vie « En cours »' "$TMP/ecartes.tsv"; then
       printf '  → un « En cours » écarté peut être un orphelin (session morte) : bash scripts/orchestrate/queue.sh --orphelins\n' >&2
     fi
+  fi
+  # Les tickets SANS JALON (#1053) : retenus, mais rangés en fin de plan faute d'échéance pour les
+  # ordonner. Muet quand il n'y en a pas, comme les signalements plus bas.
+  awk -F '\t' '
+    FILENAME == ARGV[1] { if ($3 == "-") sans[$1] = 1; next }
+    ($2 in sans) { printf "  #%-5s %s\n", $2, $6 }
+  ' "$TMP/cle.tsv" "$TMP/plan.tsv" >"$TMP/sans-jalon.txt"
+  if [ -s "$TMP/sans-jalon.txt" ]; then
+    printf '\ntickets sans jalon — retenus, rangés en fin de plan faute d'\''échéance pour les ordonner :\n' >&2
+    cat "$TMP/sans-jalon.txt" >&2
+    printf '  → leur donner un jalon les range à la place de son échéance.\n' >&2
   fi
   # Les blocs de plus d'un membre sont ce que le tri a dû garder contigu : les montrer, c'est
   # rendre vérifiable la règle 3 sans relire le plan à la main.

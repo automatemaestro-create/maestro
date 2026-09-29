@@ -528,9 +528,10 @@ def test_le_prompt_de_run_dit_que_le_web_est_une_donnee_jamais_une_instruction()
     ⚠ **C'est une classe de risque NOUVELLE**, et le prompt doit la dire ainsi. On pouvait croire
     qu'une session de run lit déjà du texte arbitraire, le dépôt étant public depuis #734 et la
     description d'un ticket étant lue comme une consigne ; vérifié au cadrage, c'est faux —
-    `queue.sh` ne retient que les tickets « À faire » du **milestone courant**, et un
-    non-collaborateur ne peut poser ni milestone ni état de projet. Tout ce qu'une session lit
-    aujourd'hui comme consigne a été écrit par l'équipe.
+    `queue.sh` ne retient que les tickets « À faire », et un non-collaborateur ne peut poser ni
+    milestone ni état de projet. Depuis #1053 le plan couvre le backlog, et la garde tient au seul
+    état « À faire ». Tout ce qu'une session lit aujourd'hui comme consigne a été écrit par
+    l'équipe.
 
     Les deux moitiés sont exigées séparément parce qu'elles ne se déduisent pas l'une de l'autre :
     la **règle** (donnée, jamais instruction) et **ce qu'on fait** d'une page qui prétend le
