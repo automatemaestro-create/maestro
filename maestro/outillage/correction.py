@@ -51,6 +51,15 @@ avant tout. Sans elle, il se redérivait de l'analyse et proposait de **remplace
 commande dite par celle que le projet déclare. Entre une correction du manifeste et une
 du fil, **la plus récente l'emporte** (`retenir`) : une conversation plus ancienne,
 reprise, ne défait pas ce qu'une plus récente a écrit.
+
+## Ce que Maestro propose n'est pas ce qu'on lui a dit (#1381)
+
+Quand une commande de l'outillage échoue à la revue d'après un run, Maestro lit le projet
+construit et propose la commande de même usage qu'il y montre, jouée avant d'être
+montrée (`maestro.controltower.pieces`). Écrite, elle est retenue comme une correction —
+même manifeste, même `retenir` —, mais elle n'est **pas dite** : son origine est
+`ORIGINE_PROPOSEE`, sa justification le fichier où Maestro l'a lue, et c'est `adopter`,
+non `corriger`, qui la pose dans les constats.
 """
 
 from __future__ import annotations
@@ -61,6 +70,7 @@ from typing import Any
 
 from maestro.outillage.modele import (
     ORIGINE_DITE,
+    ORIGINE_PROPOSEE,
     USAGES,
     Commande,
     Constats,
@@ -69,6 +79,7 @@ from maestro.outillage.modele import (
     Piece,
 )
 from maestro.outillage.questionnaire import (
+    POUR_MAX,
     SUJETS,
     VALEUR_MAX,
     Choix,
@@ -113,39 +124,85 @@ class CorrectionPrise:
     manifeste la porte dès qu'une pièce s'écrit (docs/38 §4.1). `prise_le` dit quand
     Maestro l'a prise (ISO 8601 UTC, la précision du fil) : c'est lui qui départage une
     correction du manifeste et une du fil (`retenir`).
+
+    `origine` (#1381) dit **qui** l'a apportée. `ORIGINE_DITE`, le défaut : la personne,
+    avec ses mots. `ORIGINE_PROPOSEE` : Maestro, à la revue d'après un run — la commande
+    écrite y avait échoué, il a lu celle que le projet construit montre et l'a jouée
+    avant de la proposer. `chemin` est alors le fichier où il l'a lue, et `phrase` ce
+    qu'il y a lu : une commande proposée n'a pas de phrase de la personne, et la carte ne
+    lui en prête pas. Une fois écrite, elle reste acquise au projet exactement comme une
+    correction dite, et se corrige encore avec des mots.
     """
 
     cle: str
     valeur: str
     phrase: str = ""
     prise_le: str = ""
+    origine: str = ORIGINE_DITE
+    chemin: str = ""
+    pour: str = ""
+
+    @property
+    def proposee(self) -> bool:
+        """Maestro l'a-t-il proposée, lue dans le projet construit, plutôt que la personne dite ?"""
+        return self.origine == ORIGINE_PROPOSEE
 
     @classmethod
     def de(cls, choisi: Choix, prise_le: str) -> CorrectionPrise:
         """La correction `choisi`, prise à `prise_le` — sa cause est la phrase dite."""
         return cls(cle=choisi.cle, valeur=choisi.valeur, phrase=choisi.parce_que, prise_le=prise_le)
 
+    @classmethod
+    def lue(cls, commande: Commande, prise_le: str) -> CorrectionPrise:
+        """`commande`, lue dans le projet construit et **proposée** par Maestro (#1381)."""
+        return cls(
+            cle=commande.usage,
+            valeur=commande.commande,
+            phrase=commande.extrait,
+            prise_le=prise_le,
+            origine=ORIGINE_PROPOSEE,
+            chemin=commande.chemin,
+            pour=commande.pour,
+        )
+
     def en_choix(self) -> Choix:
         """La forme que `corriger` lit — un `Choix` déduit dont la cause est la phrase."""
         return Choix(cle=self.cle, valeur=self.valeur, deduit=True, parce_que=self.phrase)
 
     def to_dict(self) -> dict[str, str]:
-        """La correction en JSON — la forme du manifeste et de la pièce qui la porte."""
-        return {
+        """La correction en JSON — la forme du manifeste et de la pièce qui la porte.
+
+        `origine` et `chemin` n'y sont que pour une commande **proposée** : une correction
+        dite s'écrit comme avant #1381, et un manifeste d'avant se relit à l'identique.
+        """
+        forme = {
             "cle": self.cle,
             "valeur": self.valeur,
             "phrase": self.phrase,
             "prise_le": self.prise_le,
         }
+        if self.proposee:
+            forme.update(origine=self.origine, chemin=self.chemin)
+        if self.pour:
+            forme["pour"] = self.pour
+        return forme
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CorrectionPrise:
-        """Relit une correction persistée, sans la rejuger (la règle de `Choix.from_dict`)."""
+        """Relit une correction persistée, sans la rejuger (la règle de `Choix.from_dict`).
+
+        Une origine inconnue se relit « dite » : c'est ce qu'était toute correction avant
+        #1381, et la seule qui ne prétend rien de plus qu'une phrase gardée.
+        """
+        origine = str(data.get("origine") or "")
         return cls(
             cle=str(data.get("cle") or ""),
             valeur=str(data.get("valeur") or ""),
             phrase=str(data.get("phrase") or ""),
             prise_le=str(data.get("prise_le") or ""),
+            origine=ORIGINE_PROPOSEE if origine == ORIGINE_PROPOSEE else ORIGINE_DITE,
+            chemin=str(data.get("chemin") or ""),
+            pour=str(data.get("pour") or ""),
         )
 
 
@@ -156,7 +213,8 @@ def corrections_lues(brutes: Any) -> tuple[CorrectionPrise, ...]:
     hors des sujets corrigeables, ou sans valeur, est écartée ; une valeur et une phrase
     tiennent sur une ligne, bornées comme celles que le modèle rend (`lire_correction`).
     Ce qui passe n'est qu'une correction comme une autre : sa commande est **jouée**
-    avant qu'une pièce ne se montre, comme toute commande corrigée.
+    avant qu'une pièce ne se montre, comme toute commande corrigée. Une commande
+    **proposée** (#1381) ne vaut que pour un usage : Maestro ne propose que des commandes.
     """
     lues: list[CorrectionPrise] = []
     for entree in brutes if isinstance(brutes, list) else ():
@@ -166,7 +224,17 @@ def corrections_lues(brutes: Any) -> tuple[CorrectionPrise, ...]:
         valeur = _une_ligne(prise.valeur, VALEUR_MAX)
         if prise.cle not in CLES_CORRIGEABLES or not valeur:
             continue
-        lues.append(replace(prise, valeur=valeur, phrase=_une_ligne(prise.phrase, PHRASE_MAX)))
+        if prise.proposee and prise.cle not in USAGES:
+            continue
+        lues.append(
+            replace(
+                prise,
+                valeur=valeur,
+                phrase=_une_ligne(prise.phrase, PHRASE_MAX),
+                chemin=_une_ligne(prise.chemin, VALEUR_MAX),
+                pour=_une_ligne(prise.pour, POUR_MAX),
+            )
+        )
     return tuple(lues)
 
 
@@ -221,10 +289,20 @@ def lire_correction(texte: str, phrase: str) -> CorrectionLue:
     return CorrectionLue(comprise=True, corrections=tuple(lues.values()), message=message)
 
 
-def corrections_en_texte(corrections: Sequence[Choix]) -> str:
-    """Les corrections déjà prises, telles que le modèle les relit — une par ligne."""
+def corrections_en_texte(corrections: Sequence[CorrectionPrise]) -> str:
+    """Les corrections déjà prises, telles que le modèle les relit — une par ligne.
+
+    Chacune dit qui l'a apportée : une commande que Maestro a **proposée** (#1381) n'a pas
+    été dite, et le modèle qui comprend la phrase suivante ne doit pas la prêter à la
+    personne.
+    """
     lignes = [
-        f"- {SUJETS.get(c.cle, c.cle)} ({c.cle}) : « {c.valeur} » — dit : « {c.parce_que} »"
+        f"- {SUJETS.get(c.cle, c.cle)} ({c.cle}) : « {c.valeur} » — "
+        + (
+            f"proposée par Maestro, lue dans {c.chemin or 'le projet construit'}"
+            if c.proposee
+            else f"dit : « {c.phrase} »"
+        )
         for c in corrections
     ]
     return "\n".join(lignes) if lignes else "(aucune correction pour l'instant)"
@@ -322,6 +400,54 @@ def _dite(usage: str, choisi: Choix, chemin: str, pour: str = "") -> Commande:
         extrait=_extrait(choisi),
         origine=ORIGINE_DITE,
         pour=pour,
+    )
+
+
+def adopter(constats: Constats, proposees: Sequence[CorrectionPrise]) -> Constats:
+    """Les `constats`, chaque commande **proposée par Maestro** à la place de la sienne (#1381).
+
+    La jumelle de `corriger` pour ce que personne n'a dit : la commande que la revue
+    d'après un run a lue dans le projet construit, jouée, puis montrée. Elle prend
+    `ORIGINE_PROPOSEE`, le fichier où Maestro l'a lue pour chemin et ce qu'il y a lu pour
+    extrait — c'est ce que la rédaction écrit à côté d'elle, jamais « dite par la
+    personne ». Ce qu'elle fait **pour le projet** (`pour`, #1350) est ce que le modèle
+    en a dit en la lisant, et à défaut ce que faisait la commande qu'elle remplace (voir
+    `_proposee`). Les corrections qui ne sont pas proposées sont ignorées ici : c'est
+    `corriger` qui les applique.
+    """
+    par_usage = {p.cle: p for p in proposees if p.proposee and p.cle in USAGES and p.valeur}
+    if not par_usage:
+        return constats
+    commandes: list[Commande] = []
+    poses: set[str] = set()
+    for commande in constats.commandes:
+        prise = par_usage.get(commande.usage)
+        if prise is None:
+            commandes.append(commande)
+        elif commande.usage not in poses:
+            poses.add(commande.usage)
+            commandes.append(_proposee(prise, commande.pour))
+    commandes.extend(
+        _proposee(par_usage[usage]) for usage in USAGES if usage in par_usage and usage not in poses
+    )
+    return replace(constats, commandes=tuple(commandes))
+
+
+def _proposee(prise: CorrectionPrise, pour_remplacee: str = "") -> Commande:
+    """La commande que Maestro propose pour `prise.cle`, justifiée par le fichier où il l'a lue.
+
+    Ce qu'elle fait pour le projet est ce que le modèle en a dit en la lisant (`pour`) :
+    la commande remplacée pouvait nommer un script qui n'existe pas — vu sur S9, « …
+    assembler.py compile… » à côté de `assembler_carnet.py`. Sans phrase du modèle, elle
+    garde celle de la commande qu'elle remplace, comme une commande dite.
+    """
+    return Commande(
+        usage=prise.cle,
+        commande=_une_ligne(prise.valeur, VALEUR_MAX),
+        chemin=prise.chemin,
+        extrait=prise.phrase,
+        origine=ORIGINE_PROPOSEE,
+        pour=prise.pour or pour_remplacee,
     )
 
 

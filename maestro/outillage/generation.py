@@ -385,8 +385,10 @@ def poser_piece(
 
     `verifications` sont les verdicts des commandes que cette pièce écrit : ils
     **s'ajoutent** à ceux déjà déclarés, et remplacent ceux d'une même commande — le
-    dernier verdict d'une commande est celui qui vaut. `source` remplace celle du
-    manifeste : c'est la provenance de ce qui vient d'être écrit.
+    dernier verdict d'une commande est celui qui vaut. Un verdict déclaré dont la
+    commande n'est plus écrite dans **aucun** fichier de Maestro quitte le manifeste
+    (`_verdicts_encore_ecrits`, #1381). `source` remplace celle du manifeste : c'est la
+    provenance de ce qui vient d'être écrit.
 
     `corrections` (#1334) sont celles que la pièce porte — prises dans la conversation
     ou reprises du manifeste : elles s'ajoutent à celles déjà déclarées, la plus récente
@@ -410,6 +412,7 @@ def poser_piece(
     else:
         entrees.pop(fichier.chemin, None)
     ecritures = [ecriture]
+    verdicts = _verdicts_encore_ecrits(racine, entrees, verdicts, verifications)
     prises = tuple(
         c for c in retenir(etat.corrections, corrections) if c.cle in CLES_CORRIGEABLES
     )
@@ -486,6 +489,41 @@ def _refus_de_version(
             "écrit, pour ne pas effacer ce qu'une autre version y a déclaré."
         ),
         verifications=verdicts,
+    )
+
+
+def _verdicts_encore_ecrits(
+    racine: Path,
+    entrees: Mapping[str, Mapping[str, Any]],
+    verdicts: Sequence[Verification],
+    neufs: Sequence[Verification],
+) -> tuple[Verification, ...]:
+    """Les verdicts gardés : ceux des commandes que l'outillage **écrit encore** (#1381).
+
+    `verifications` dit, commande par commande, ce que l'outillage prescrit — et c'est
+    ce que le banc rejoue. Une commande remplacée (corrigée par la personne, proposée
+    par Maestro à la revue d'après un run) cesse d'y avoir sa place quand plus aucun
+    fichier de Maestro ne l'écrit : vu sur S9 (passage `20260929-130422`), le verdict
+    « à vérifier » de `python assembler.py` y restait, et le banc la rejouait comme une
+    commande prescrite. Tant qu'un fichier la porte encore — un skill pas encore
+    réécrit, une pièce passée —, elle y reste.
+
+    Les verdicts de la pièce qu'on écrit (`neufs`) restent sans condition : elle les
+    écrit. Les autres se cherchent **tels que Maestro les a écrits**, sur le texte des
+    fichiers que le manifeste déclare — la seule preuve qu'une commande est prescrite,
+    comme la phrase d'une correction se lit sur la pièce qui la porte. Un fichier qu'on
+    ne lit pas en entier — illisible, vide, plus grand que ce qu'on en lit — garde
+    tout : dans le doute, on ne retire rien.
+    """
+    ecrites = {v.commande for v in neufs}
+    textes: list[str] = []
+    for chemin in entrees:
+        texte = lire_texte(racine / PurePosixPath(chemin), OCTETS_MAX + 1)
+        if not texte or len(texte.encode("utf-8", errors="replace")) > OCTETS_MAX:
+            return tuple(verdicts)
+        textes.append(texte)
+    return tuple(
+        v for v in verdicts if v.commande in ecrites or any(v.commande in t for t in textes)
     )
 
 

@@ -7815,6 +7815,23 @@ pièce dont le texte change est proposée **sur le message du récit de fin** �
 donc celui qui attend un geste —, puis les suivantes, chacune sur accord. Le récit et la revue se
 font en même temps ; l'un sans l'autre part seul.
 
+**Et une commande qui y échoue fait lire le projet construit** (#1381). Relevé par S9 : la commande
+écrite à la naissance du carnet (`python assembler.py`) échouait, l'équipe ayant livré le script sous
+`assembler_carnet.py`, et `AGENTS.md` ne gardait que l'échec. Quand une commande que personne n'a dite
+échoue à la revue, Maestro relit le projet par les deux verbes de #1158 — l'échec et sa sortie dits au
+modèle comme une **donnée**, jamais reconnus à leur texte (#1315) — et chaque commande de même usage
+qu'il en tire, confrontée au fichier **lu**, est **jouée** dans la copie : la première qui passe prend
+la place de celle qui a échoué, et la pièce est proposée avec elle. Un fichier que Maestro a écrit
+lui-même ne la justifie pas — c'est son outillage qui prescrivait l'échec —, et ce que le modèle dit
+qu'elle fait pour le projet devient la description du skill qui la porte. Aucune ne passe : rien n'est
+proposé, et l'échec se dit avec sa sortie, comme avant. La carte la montre comme une commande corrigée
+— son verdict juste sous la légende « Commandes, rejouées sur le projet construit » —, mais sa phrase
+dit **d'où Maestro la tient** (« Proposée par Maestro, lue dans `assembler_carnet.py` … »), jamais
+« d'après votre demande » ; `AGENTS.md` l'écrit « proposée par Maestro après un run, lue dans … ».
+Écrite, elle est retenue au manifeste comme une correction (`origine: "proposee"`, docs/38 §4.1) et ne
+se repropose plus ; « Pas cette pièce » n'écrit rien. La lecture coûte un appel au modèle par tour :
+elle ne se joue que sur un échec, jamais sur un outillage tout vérifié.
+
 L'écran rend ce verdict **commande par commande**, dans la forme retenue sur pièces
 (`VerificationsOutillage`, variante A de #1160) : sur la page, la phrase de compte puis une ligne
 par commande dans l'ordre joué, un badge à glyphe et mot devant, l'échec déployé sur place (son

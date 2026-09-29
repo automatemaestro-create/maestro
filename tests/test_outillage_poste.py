@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ import pytest
 from maestro.agents.playbook_du_code import registre
 from maestro.controltower.chat import (
     DECISION_ECRIRE,
+    DECISION_PASSER,
     ORIGINE_NOUVEAU,
     UTILISATEUR,
     ChatStore,
@@ -70,6 +72,13 @@ from maestro.outillage import (
     generer_outillage,
     recommander,
 )
+from maestro.outillage.correction import (
+    CorrectionPrise,
+    adopter,
+    corrections_en_texte,
+    corrections_lues,
+)
+from maestro.outillage.modele import ORIGINE_PROPOSEE
 from maestro.outillage.questionnaire import (
     Choix,
     Option,
@@ -608,7 +617,12 @@ COMPRIS_CARNET: dict[str, Any] = {
     "constats": [
         NATURE,
         {"cle": "langages", "valeur": "Python", "parce_que": "un script assemble le carnet"},
-        {"cle": "construire", "valeur": "python assembler.py", "parce_que": "le script"},
+        {
+            "cle": "construire",
+            "valeur": "python assembler.py",
+            "parce_que": "le script",
+            "pour": "Assembler le carnet avec assembler.py, après l'ajout d'un chant.",
+        },
     ],
     "questions": [],
 }
@@ -622,23 +636,38 @@ def projets(tmp_path: Path) -> ServiceProjets:
     )
 
 
-class _LecteurMuet(ModelProvider):
-    """Aucun projet n'est lu ici : un projet neuf se décrit, il ne se lit pas."""
+class _Lecteur(ModelProvider):
+    """Le modèle qui **lit** le projet (#1158) : il rend ce qu'on lui dicte, tour après tour.
 
-    name = "lecteur-muet"
+    Sans rien à dire, il ne doit pas être appelé : un projet neuf se décrit, il ne se lit
+    pas, et un outillage tout vérifié ne coûte aucune lecture (#1381).
+    """
+
+    name = "lecteur-double"
+
+    def __init__(self, *tours: str) -> None:
+        self._tours = list(tours)
+        self.prompts: list[str] = []
 
     def supports(self, model: str) -> bool:
         return True
 
     async def generate(self, prompt: str, *, model: str, system_prompt: Any = None) -> str:
-        raise AssertionError("un projet neuf ne se lit pas par le modèle")
+        # Retenu avant tout : la lecture avale les pannes de son modèle, et c'est sur
+        # `prompts` qu'un test voit qu'il a été appelé quand il ne devait pas l'être.
+        self.prompts.append(prompt)
+        if not self._tours:
+            raise AssertionError("le projet n'avait pas à être lu par le modèle")
+        return self._tours[min(len(self.prompts), len(self._tours)) - 1]
 
 
-def _outille(projets: ServiceProjets, joueur: _Joueur) -> ConducteurOutillage:
+def _outille(
+    projets: ServiceProjets, joueur: _Joueur, lecteur: _Lecteur | None = None
+) -> ConducteurOutillage:
     """Le conducteur qui écrit l'outillage pièce par pièce — commandes et sondes doublées."""
     verificateur = Verificateur(joueur=joueur, interprete=FAUX_BASH)
     pieces = ServicePieces(
-        ServiceOutillage(projets, provider=_LecteurMuet()),
+        ServiceOutillage(projets, provider=lecteur or _Lecteur()),
         projets,
         verificateur=verificateur,
     )
@@ -661,12 +690,12 @@ def _message(reponse: Any) -> MessageChat:
 
 
 def _carnet_outille(
-    projets: ServiceProjets, maison: Path, joueur: _Joueur
+    projets: ServiceProjets, maison: Path, joueur: _Joueur, lecteur: _Lecteur | None = None
 ) -> tuple[ConducteurOutillage, str, Path, list[MessageChat]]:
     """Le carnet né vide, son `AGENTS.md` écrit sur accord — ses commandes « à vérifier »."""
     racine = maison / "Maestro" / "chorale"
     projet_id = str(projets.creer("chorale", str(racine), origine=ORIGINE_NOUVEAU)["id"])
-    conducteur = _outille(projets, joueur)
+    conducteur = _outille(projets, joueur, lecteur)
     fil = [_dit(DEMANDE)]
     ouverture = asyncio.run(conducteur.ouvrir(fil, projet_id))
     assert ouverture.piece is not None and ouverture.piece.chemin == "AGENTS.md"
@@ -710,10 +739,12 @@ def test_apres_le_run_les_commandes_a_verifier_se_jouent_sur_le_projet_construit
 def test_une_commande_qui_echoue_sur_le_projet_construit_est_dite_echouee_avec_sa_sortie(
     projets: ServiceProjets, _maison: Path
 ) -> None:
+    """Le projet lu ne montre aucune autre commande : l'échec se dit, comme depuis #1343."""
     joueur = _Joueur(
         {"python assembler.py": execution.Execution(code=2, sortie="Traceback: boum", duree_s=1)}
     )
-    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur)
+    lecteur = _Lecteur("FIN")
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
     (racine / "assembler.py").write_text("raise SystemExit(2)\n", encoding="utf-8")
 
     revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
@@ -722,13 +753,16 @@ def test_une_commande_qui_echoue_sur_le_projet_construit_est_dite_echouee_avec_s
     (verdict,) = [v for v in revue.piece.verifications if v.commande == "python assembler.py"]
     assert (verdict.etat, verdict.code, verdict.sortie) == (ECHOUEE, 2, "Traceback: boum")
     assert "⚠ **Échouée**" in _ligne(revue.piece.contenu, "python assembler.py")
+    assert len(lecteur.prompts) == 1  # lu, parce qu'une commande a échoué
+    assert revue.piece.proposees == () and revue.piece.lues_dans == ()
 
 
 def test_rien_a_revoir_tant_que_le_projet_est_vide_ou_quand_tout_est_verifie(
     projets: ServiceProjets, _maison: Path
 ) -> None:
     joueur = _Joueur()
-    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur)
+    lecteur = _Lecteur()
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
 
     # Encore vide : rien de plus ne se jouerait qu'à l'écriture.
     assert asyncio.run(conducteur.apres_le_run(fil, projet_id)) is None
@@ -747,6 +781,337 @@ def test_rien_a_revoir_tant_que_le_projet_est_vide_ou_quand_tout_est_verifie(
     joues = len(joueur.joues)
     assert asyncio.run(conducteur.apres_le_run(fil, projet_id)) is None
     assert len(joueur.joues) == joues
+    # Rien n'a échoué : la lecture du projet, qui coûte un appel par tour, ne s'est pas jouée.
+    assert lecteur.prompts == []
+
+
+# ── Ce que le projet construit montre, quand la commande écrite échoue (#1381) ──
+
+#: La commande que l'outillage a écrite à la naissance du carnet, et celle que le run a
+#: construite : S9 l'a relevé, le script est livré sous un autre nom.
+ECRITE = "python assembler.py"
+MONTREE = "python assembler_carnet.py chants carnet.html"
+
+#: Ce que bash répond d'un script qui n'existe pas — une donnée pour le modèle, jamais lue.
+SANS_SCRIPT = execution.Execution(
+    code=2, sortie="python: can't open file 'assembler.py': [Errno 2]", duree_s=0.1
+)
+
+#: Ce que la commande montrée fait pour le carnet, dit par le modèle qui a lu le script.
+POUR_MONTREE = "Assembler les chants en carnet.html avec assembler_carnet.py."
+
+#: Le modèle qui lit le carnet construit : il ouvre le script, et rend la commande qu'il y
+#: lit — avec ce qu'elle fait pour le projet.
+LECTURE_DU_CARNET = (
+    "LIRE: assembler_carnet.py",
+    f"COMMANDE: construire | assembler_carnet.py | declaree | l'usage écrit en tête | {MONTREE}\n"
+    f"POUR: {POUR_MONTREE} | {MONTREE}\n"
+    "FIN",
+)
+
+
+def _carnet_construit(racine: Path) -> None:
+    """Ce que le run a laissé : les chants, et le script sous un nom que l'outillage ignore."""
+    (racine / "chants").mkdir()
+    (racine / "chants" / "ave.txt").write_text("Ave\n", encoding="utf-8")
+    (racine / "assembler_carnet.py").write_text(
+        f'"""Assemble le carnet.\n\nUsage : {MONTREE}\n"""\n', encoding="utf-8"
+    )
+
+
+def test_la_commande_qui_echoue_apres_le_run_fait_proposer_celle_que_le_projet_montre(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Le cas de S9 : `python assembler.py` écrite, le script livré sous `assembler_carnet.py`."""
+    joueur = _Joueur({ECRITE: SANS_SCRIPT})
+    lecteur = _Lecteur(*LECTURE_DU_CARNET)
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
+    avant = (racine / "AGENTS.md").read_text(encoding="utf-8")
+    _carnet_construit(racine)
+
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+
+    assert revue is not None and revue.piece is not None and revue.piece.chemin == "AGENTS.md"
+    # Lu parce que la commande écrite a échoué — et ce qu'elle a rendu est dit au modèle.
+    assert lecteur.prompts, "le projet construit n'a pas été lu"
+    assert f"`{ECRITE}`" in lecteur.prompts[0] and "can't open file" in lecteur.prompts[0]
+    # Jouée avant d'être montrée, et vérifiée.
+    assert joueur.joues.index(ECRITE) < joueur.joues.index(MONTREE)
+    (verdict,) = [v for v in revue.piece.verifications if v.commande == MONTREE]
+    assert verdict.etat == VERIFIEE
+    assert ECRITE not in {v.commande for v in revue.piece.verifications}
+    # Proposée par Maestro, avec le fichier où il l'a lue — pas dite par la personne.
+    assert revue.piece.proposees == (MONTREE,)
+    assert revue.piece.lues_dans == ("assembler_carnet.py",)
+    assert revue.piece.correction == "" and revue.piece.corrigees == ()
+    ligne = _ligne(revue.piece.contenu, MONTREE)
+    assert "`assembler_carnet.py`" in ligne and "**Vérifiée**" in ligne
+    assert "dite par la personne" not in ligne
+    assert f"`{ECRITE}`" not in revue.piece.contenu
+    assert revue.piece.ecrivable
+    assert "L'une a échoué : j'ai lu le projet" in revue.contenu
+    # Proposée, jamais écrite d'office.
+    assert (racine / "AGENTS.md").read_text(encoding="utf-8") == avant
+
+
+def test_une_commande_lue_qui_echoue_a_son_tour_n_est_pas_proposee(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Le code de retour décide : ce que le modèle a lu ne passe pas pour ce qui marche."""
+    joueur = _Joueur(
+        {ECRITE: SANS_SCRIPT, MONTREE: execution.Execution(code=1, sortie="KeyError", duree_s=1)}
+    )
+    lecteur = _Lecteur(*LECTURE_DU_CARNET)
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
+    _carnet_construit(racine)
+
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+
+    assert revue is not None and revue.piece is not None
+    assert MONTREE in joueur.joues
+    assert revue.piece.proposees == () and revue.piece.lues_dans == ()
+    assert MONTREE not in revue.piece.contenu
+    # La commande écrite est dite échouée, sortie comprise, comme depuis #1343.
+    (verdict,) = [v for v in revue.piece.verifications if v.commande == ECRITE]
+    assert (verdict.etat, verdict.code, verdict.sortie) == (ECHOUEE, 2, SANS_SCRIPT.sortie)
+    assert "⚠ **Échouée**" in _ligne(revue.piece.contenu, ECRITE)
+
+
+def test_une_commande_que_le_modele_n_a_pas_lue_n_est_ni_jouee_ni_proposee(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Un constat entre avec le fichier **lu** qui le prouve, ou n'entre pas (#1158)."""
+    joueur = _Joueur({ECRITE: SANS_SCRIPT})
+    lecteur = _Lecteur(f"COMMANDE: construire | assembler_carnet.py | declaree | vu | {MONTREE}")
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
+    _carnet_construit(racine)
+
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+
+    assert revue is not None and revue.piece is not None
+    assert MONTREE not in joueur.joues
+    assert revue.piece.proposees == ()
+    assert "⚠ **Échouée**" in _ligne(revue.piece.contenu, ECRITE)
+
+
+def test_l_outillage_de_maestro_ne_justifie_pas_la_commande_qu_il_propose(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Vu sur S9 : une commande « lue » dans ce que Maestro a écrit — une preuve circulaire."""
+    joueur = _Joueur({ECRITE: SANS_SCRIPT})
+    lecteur = _Lecteur(
+        "LIRE: AGENTS.md",
+        f"COMMANDE: construire | AGENTS.md | declaree | corrigée d'après AGENTS.md | {MONTREE}\n"
+        "FIN",
+    )
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
+    _carnet_construit(racine)
+
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+
+    assert revue is not None and revue.piece is not None
+    assert MONTREE not in joueur.joues
+    assert revue.piece.proposees == ()
+    # Et le modèle sait qu'il doit chercher ailleurs que dans ce que Maestro a écrit.
+    assert "ne justifie pas une commande" in lecteur.prompts[0]
+
+
+def test_sans_phrase_du_modele_la_commande_proposee_garde_ce_que_faisait_l_ancienne(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """La règle d'une correction dite (#1350) : la commande change, pas ce qu'elle fait."""
+    joueur = _Joueur({ECRITE: SANS_SCRIPT})
+    sans_pour = LECTURE_DU_CARNET[1].replace(f"POUR: {POUR_MONTREE} | {MONTREE}\n", "")
+    lecteur = _Lecteur(LECTURE_DU_CARNET[0], sans_pour)
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
+    _carnet_construit(racine)
+
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+
+    assert revue is not None and revue.piece is not None
+    assert revue.piece.proposees == (MONTREE,)
+    assert "Assembler le carnet avec assembler.py, après l'ajout d'un chant." in (
+        revue.piece.contenu
+    )
+
+
+def test_une_commande_proposee_rejouee_en_echec_ne_s_ecrit_pas(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Retenue, elle se rejoue comme une correction — et son échec se dit sans « vous »."""
+    joueur = _Joueur({ECRITE: SANS_SCRIPT})
+    lecteur = _Lecteur(*LECTURE_DU_CARNET)
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
+    _carnet_construit(racine)
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+    assert revue is not None and revue.piece is not None
+    fil.append(_message(revue))
+    ecrite = asyncio.run(conducteur.trancher(fil, piece=revue.piece, decision=DECISION_ECRIRE))
+    assert ecrite.piece_ecrite is not None and ecrite.piece_ecrite.ecrite
+    fil.append(_message(ecrite))
+    # Son verdict n'est plus tenu pour acquis (le manifeste est au projet, on a pu y
+    # toucher), et le script ne passe plus : la revue la rejoue, rien ne la remplace.
+    chemin = racine / CHEMIN_MANIFESTE
+    manifeste = json.loads(chemin.read_text(encoding="utf-8"))
+    for verdict in manifeste["verifications"]:
+        if verdict["commande"] == MONTREE:
+            verdict["etat"] = A_VERIFIER
+    chemin.write_text(json.dumps(manifeste, ensure_ascii=False), encoding="utf-8")
+    joueur._resultats[MONTREE] = execution.Execution(code=1, sortie="SyntaxError", duree_s=1)
+    lecteur._tours = ["FIN"]
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+
+    assert revue is not None
+    piece = revue.piece
+    assert piece is not None and not piece.ecrivable
+    assert piece.echec.startswith(f"`{MONTREE}`, que j'avais lue dans `assembler_carnet.py`,")
+    assert "a échoué à l'exécution" in piece.echec
+    assert piece.correction == ""
+
+
+def test_la_commande_proposee_s_ecrit_sur_accord_et_reste_acquise_au_projet(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Écrite, elle est retenue au manifeste comme une correction (#1334) : plus reproposée."""
+    joueur = _Joueur({ECRITE: SANS_SCRIPT})
+    lecteur = _Lecteur(*LECTURE_DU_CARNET)
+    conducteur, projet_id, racine, fil = _carnet_outille(projets, _maison, joueur, lecteur)
+    _carnet_construit(racine)
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+    assert revue is not None and revue.piece is not None
+    fil.append(_message(revue))
+
+    ecrite = asyncio.run(conducteur.trancher(fil, piece=revue.piece, decision=DECISION_ECRIRE))
+
+    assert ecrite.piece_ecrite is not None and ecrite.piece_ecrite.ecrite
+    assert MONTREE in _ligne((racine / "AGENTS.md").read_text(encoding="utf-8"), MONTREE)
+    manifeste = json.loads((racine / CHEMIN_MANIFESTE).read_text(encoding="utf-8"))
+    (prise,) = [c for c in manifeste["corrections"] if c["cle"] == "construire"]
+    assert (prise["valeur"], prise["origine"], prise["chemin"]) == (
+        MONTREE,
+        "proposee",
+        "assembler_carnet.py",
+    )
+    # La pièce suivante — le skill de construction — écrit la commande proposée, sans la
+    # rejouer : elle a été vérifiée avant d'être montrée.
+    assert ecrite.piece is not None and ecrite.piece.nature == "skill"
+    assert MONTREE in ecrite.piece.contenu and ECRITE not in ecrite.piece.contenu
+    assert ecrite.piece.proposees == (MONTREE,)
+    # Sa description dit ce que la commande montrée fait — plus le script qui n'existe pas
+    # (vu sur S9 : « Vérifier que le script d'assemblage assembler.py compile… »).
+    assert f'description: "{POUR_MONTREE}"' in ecrite.piece.contenu
+    assert "assembler.py" not in ecrite.piece.contenu
+    # Et d'où elle vient : un fichier lu dans le projet construit, pas un fichier « à créer ».
+    assert "Lue par Maestro après un run dans `assembler_carnet.py`" in ecrite.piece.contenu
+    assert "À créer" not in ecrite.piece.contenu
+    assert joueur.joues.count(MONTREE) == 1
+    # Plus aucun fichier n'écrit la commande remplacée — le skill ne l'est pas encore : son
+    # verdict quitte le manifeste, qui ne déclare que ce que l'outillage écrit. C'est ce que
+    # le banc rejoue (S9, passage 20260929-130422, où il restait « à vérifier »).
+    assert {v["commande"]: v["etat"] for v in manifeste["verifications"]} == {MONTREE: VERIFIEE}
+    fil.append(_message(ecrite))
+    skill = asyncio.run(conducteur.trancher(fil, piece=ecrite.piece, decision=DECISION_ECRIRE))
+    assert skill.piece_ecrite is not None and skill.piece_ecrite.ecrite
+    fil.append(_message(skill))
+    # Un run de plus ne la repropose pas, ne la rejoue pas, et ne relit rien.
+    lectures = len(lecteur.prompts)
+    assert asyncio.run(conducteur.apres_le_run(fil, projet_id)) is None
+    assert len(lecteur.prompts) == lectures
+    assert joueur.joues.count(MONTREE) == 1
+
+
+def test_pas_cette_piece_n_ecrit_rien_de_la_commande_proposee(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    joueur = _Joueur({ECRITE: SANS_SCRIPT})
+    conducteur, projet_id, racine, fil = _carnet_outille(
+        projets, _maison, joueur, _Lecteur(*LECTURE_DU_CARNET)
+    )
+    avant = (racine / "AGENTS.md").read_text(encoding="utf-8")
+    _carnet_construit(racine)
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+    assert revue is not None and revue.piece is not None
+    fil.append(_message(revue))
+
+    passee = asyncio.run(conducteur.trancher(fil, piece=revue.piece, decision=DECISION_PASSER))
+
+    assert passee.piece_ecrite is not None and not passee.piece_ecrite.ecrite
+    assert (racine / "AGENTS.md").read_text(encoding="utf-8") == avant
+    manifeste = json.loads((racine / CHEMIN_MANIFESTE).read_text(encoding="utf-8"))
+    assert all(c["cle"] != "construire" for c in manifeste.get("corrections", []))
+    # Passée, elle ne revient pas telle quelle.
+    assert passee.piece is None or passee.piece.chemin != "AGENTS.md"
+
+
+#: Ce que la lecture a rendu du carnet construit : la commande, et le fichier qui la prouve.
+LUE = Commande(
+    usage="construire",
+    commande=MONTREE,
+    chemin="assembler_carnet.py",
+    extrait="l'usage écrit en tête",
+    origine="declaree",
+)
+
+
+def test_une_commande_proposee_se_relit_du_manifeste_sans_passer_pour_dite() -> None:
+    proposee = CorrectionPrise.lue(LUE, QUAND)
+    dite = CorrectionPrise("tester", "pytest", "c'est pytest", QUAND)
+
+    assert proposee.proposee and not dite.proposee
+    assert proposee.to_dict()["origine"] == "proposee"
+    assert proposee.to_dict()["chemin"] == "assembler_carnet.py"
+    assert corrections_lues([proposee.to_dict(), dite.to_dict()]) == (proposee, dite)
+    # Une correction dite garde sa forme d'avant #1381 : un manifeste d'avant se relit.
+    assert set(dite.to_dict()) == {"cle", "valeur", "phrase", "prise_le"}
+    # Une origine inconnue se relit « dite » ; Maestro ne propose que des commandes.
+    assert not corrections_lues([{**proposee.to_dict(), "origine": "autre"}])[0].proposee
+    assert corrections_lues([{**proposee.to_dict(), "cle": "gestionnaire"}]) == ()
+    # Le modèle qui comprend la phrase suivante ne la prête pas à la personne.
+    texte = corrections_en_texte([proposee, dite])
+    assert f"« {MONTREE} » — proposée par Maestro, lue dans assembler_carnet.py" in texte
+    assert "« pytest » — dit : « c'est pytest »" in texte
+
+
+def test_adopter_pose_la_commande_proposee_et_garde_ce_qu_elle_fait_pour_le_projet() -> None:
+    pour = "Assembler le carnet à partir des chants."
+    ecrite = Commande(usage="construire", commande=ECRITE, chemin="", pour=pour)
+    constats = Constats(commandes=(ecrite,))
+
+    adoptee = adopter(constats, [CorrectionPrise.lue(LUE, QUAND)]).commande_de("construire")
+
+    assert adoptee is not None
+    assert (adoptee.commande, adoptee.origine, adoptee.chemin, adoptee.pour) == (
+        MONTREE,
+        ORIGINE_PROPOSEE,
+        "assembler_carnet.py",
+        pour,
+    )
+    # Ce que le modèle a dit de la commande en la lisant l'emporte, et voyage au manifeste.
+    dite_en_lisant = CorrectionPrise.lue(replace(LUE, pour=POUR_MONTREE), QUAND)
+    assert dite_en_lisant.to_dict()["pour"] == POUR_MONTREE
+    assert corrections_lues([dite_en_lisant.to_dict()]) == (dite_en_lisant,)
+    relue = adopter(constats, [dite_en_lisant]).commande_de("construire")
+    assert relue is not None and relue.pour == POUR_MONTREE
+    # Ce que la personne a dite n'est pas adopté ici : c'est `corriger` qui l'applique.
+    assert adopter(constats, [CorrectionPrise("construire", "make", "c'est make", QUAND)]) == (
+        constats
+    )
+
+
+def test_une_piece_qui_porte_une_commande_proposee_se_relit_a_l_identique() -> None:
+    piece = replace(
+        _piece_revue(),
+        proposees=(MONTREE,),
+        lues_dans=("assembler_carnet.py",),
+        corrections_prises=(CorrectionPrise.lue(LUE, QUAND),),
+    )
+
+    assert PieceProposee.from_dict(json.loads(json.dumps(piece.to_dict()))) == piece
+    assert PieceProposee.from_dict({"chemin": "AGENTS.md"}).proposees == ()
+    # Ce que le modèle relit de la carte au tour suivant dit d'où Maestro la tient.
+    assert "avec la commande que Maestro propose, lue dans assembler_carnet.py" in (
+        piece.en_phrase()
+    )
 
 
 class _Redacteur:

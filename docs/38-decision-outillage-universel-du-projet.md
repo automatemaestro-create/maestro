@@ -373,7 +373,10 @@ par quelle version :
   ],
   "corrections": [                             // #1334 : ce que la personne a dit, repris d'une conversation à l'autre
     { "cle": "tester", "valeur": "node --test",
-      "phrase": "Nos tests tournent avec `node --test`", "prise_le": "2026-09-27T10:04:12+00:00" }
+      "phrase": "Nos tests tournent avec `node --test`", "prise_le": "2026-09-27T10:04:12+00:00" },
+    { "cle": "construire", "valeur": "python assembler_carnet.py chants carnet.html",   // #1381
+      "phrase": "l'usage écrit en tête", "prise_le": "2026-09-29T12:10:00+00:00",
+      "origine": "proposee", "chemin": "assembler_carnet.py" }
   ]
 }
 ```
@@ -385,7 +388,11 @@ version antérieure de Maestro. Chaque commande que l'outillage écrit y porte s
 commande absent, commande que la portée « projet » renvoie à une personne, délai sans verdict, poste
 sans bash). Elle est jouée **dans une copie** de l'arbre outillé, jamais dans la racine ni dans le
 worktree qu'on commite ([`maestro/sandbox/verification.py`](../maestro/sandbox/verification.py)), et le
-même verdict se lit à côté de la commande dans `AGENTS.md` et dans son `SKILL.md`.
+même verdict se lit à côté de la commande dans `AGENTS.md` et dans son `SKILL.md`. Elle ne garde que les
+commandes que l'outillage **écrit encore** (#1381) : une commande remplacée — corrigée par la personne,
+proposée par Maestro après un run — garde son verdict tant qu'un fichier de Maestro la porte, et le
+perd quand plus aucun ne l'écrit. Vu sur S9 : le verdict « à vérifier » d'une commande remplacée y
+restait, et le banc la rejouait comme une commande prescrite.
 
 `corrections` (#1334) est la seconde clé ajoutée à la version 1, pour la même raison. L'outillage se
 corrige avec des mots dans la conversation (#1161, [`maestro/outillage/correction.py`](../maestro/outillage/correction.py)) :
@@ -408,7 +415,20 @@ projet déclare. Avec elle :
 - **ce qu'on n'y croit pas** : le manifeste vit dans le projet, et n'importe qui peut l'avoir touché.
   Une entrée hors de ces sujets, ou sans valeur, est écartée ; valeur et phrase tiennent sur une ligne,
   bornées comme celles que le modèle rend. Ce qui passe n'est qu'une commande de plus à jouer avant
-  d'être montrée, jamais une commande crue.
+  d'être montrée, jamais une commande crue ;
+- **qui l'a apportée** (#1381) : une correction peut ne pas avoir été **dite**. À la revue d'après un
+  run, une commande qui échoue fait lire le projet construit, et la commande de même usage qu'il
+  montre — confrontée au fichier lu, jouée, vérifiée — est **proposée par Maestro**. Écrite sur
+  accord, elle entre ici comme une correction, avec deux champs de plus : `origine: "proposee"` et
+  `chemin`, le fichier où Maestro l'a lue — un fichier **du projet**, jamais un de ceux que Maestro a
+  écrits en entier ni son atelier : c'est son outillage qui prescrivait la commande en échec — ; sa
+  `phrase` est ce qu'il y a lu, jamais une phrase de la personne, et `pour`, s'il est là, ce que le
+  modèle a dit qu'elle fait pour le projet en la lisant (la description du skill qui la porte : celle
+  de la commande remplacée pouvait nommer un script qui n'existe pas). Elle se rejoue par `adopter`
+  (et non `corriger`), s'écrit « proposée par Maestro après un run, lue dans … », et la plus récente
+  l'emporte toujours — une phrase dite ensuite la remplace. Une correction **dite** garde la forme
+  d'avant, sans ces champs, et une origine inconnue se relit « dite » : c'est la seule qui ne prétend
+  rien de plus qu'une phrase gardée.
 
 `source.choix` (#1350) garde, pour un outillage venu des **réponses** d'un projet neuf, les constats
 acquis **en structure** — sujet, valeur, cause, et ce qu'une commande fait pour le projet —, là où

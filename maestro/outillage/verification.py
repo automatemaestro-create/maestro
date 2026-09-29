@@ -363,7 +363,29 @@ class Verificateur:
         qu'on n'a pas pu jouer, et c'est peut-être possible maintenant. Une commande
         **corrigée** a un autre texte, donc n'est jamais connue : elle est jouée.
         """
-        commandes = commandes_ecrites(constats, recommandation, portees=portees)
+        return self.verifier_commandes(
+            racine,
+            commandes_ecrites(constats, recommandation, portees=portees),
+            perimetre=perimetre,
+            portees=portees,
+            connues=connues,
+        )
+
+    def verifier_commandes(
+        self,
+        racine: Path,
+        commandes: Sequence[CommandeEcrite],
+        *,
+        perimetre: Perimetre,
+        portees: Mapping[str, str] | None = None,
+        connues: Mapping[str, Verification] | None = None,
+    ) -> tuple[Verification, ...]:
+        """Les verdicts de `commandes`, jouées comme celles d'un outillage — dans une copie.
+
+        Le cœur de `verifier`, pour qui a déjà ses commandes : la revue d'après un run
+        (#1381) joue une commande **lue** dans le projet construit avant de la proposer, et
+        elle n'est écrite nulle part encore. Mêmes règles, mêmes délais, même portée.
+        """
         if not commandes:
             return ()
         verdicts: dict[str, Verification] = {

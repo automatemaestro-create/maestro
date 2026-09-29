@@ -337,12 +337,16 @@ def test_poser_une_piece_garde_au_manifeste_les_pieces_deja_ecrites(tmp_path: Pa
     source = {"type": "analyse", "projet_id": "p", "reference": "ana-1", "resume": ""}
     tests = Verification(usage="tester", commande="npm test", etat=VERIFIEE, raison="ok")
     build = Verification(usage="construire", commande="npm run build", etat=ECHOUEE, raison="ko")
-    agents = Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n")
+    # Chaque pièce écrit la commande dont elle porte le verdict : le manifeste ne garde que
+    # ceux des commandes que l'outillage écrit encore (#1381).
+    agents = Fichier(
+        chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n`npm test`\n"
+    )
     skill = Fichier(
         chemin=".agents/skills/lancer-les-tests/SKILL.md",
         role="skill",
         portee="fichier",
-        contenu="---\nname: lancer-les-tests\n---\n",
+        contenu="---\nname: lancer-les-tests\n---\n`npm run build`\n",
     )
 
     premiere = poser_piece(racine, agents, source=source, verifications=(tests,))
@@ -353,6 +357,33 @@ def test_poser_une_piece_garde_au_manifeste_les_pieces_deja_ecrites(tmp_path: Pa
     manifeste = _manifeste(racine)
     assert {e["chemin"] for e in manifeste["entrees"]} == {agents.chemin, skill.chemin}
     assert {v["commande"] for v in manifeste["verifications"]} == {"npm test", "npm run build"}
+
+
+def test_le_manifeste_ne_garde_que_les_verdicts_des_commandes_encore_ecrites(
+    tmp_path: Path,
+) -> None:
+    """#1381 : une commande remplacée garde son verdict tant qu'un fichier de Maestro l'écrit."""
+    racine = tmp_path / "p"
+    racine.mkdir()
+    source = {"type": "analyse", "projet_id": "p", "reference": "ana-1", "resume": ""}
+    npm = Verification(usage="tester", commande="npm test", etat=A_VERIFIER, raison="vide")
+    node = Verification(usage="tester", commande="node --test", etat=VERIFIEE, raison="ok")
+    skill = ".agents/skills/lancer-les-tests/SKILL.md"
+
+    def piece(chemin: str, commande: str) -> Fichier:
+        return Fichier(chemin=chemin, role="x", portee="fichier", contenu=f"`{commande}`\n")
+
+    poser_piece(racine, piece("AGENTS.md", "npm test"), source=source, verifications=(npm,))
+    poser_piece(racine, piece(skill, "npm test"), source=source, verifications=(npm,))
+    # AGENTS.md réécrit avec la commande qui la remplace : le skill écrit encore l'ancienne.
+    poser_piece(racine, piece("AGENTS.md", "node --test"), source=source, verifications=(node,))
+    assert {v["commande"] for v in _manifeste(racine)["verifications"]} == {
+        "npm test",
+        "node --test",
+    }
+    # Le skill réécrit à son tour : plus rien ne l'écrit, son verdict quitte le manifeste.
+    poser_piece(racine, piece(skill, "node --test"), source=source, verifications=(node,))
+    assert {v["commande"] for v in _manifeste(racine)["verifications"]} == {"node --test"}
 
 
 def test_une_piece_remise_en_crlf_reste_a_maestro_et_garde_ses_fins_de_ligne(

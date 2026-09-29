@@ -53,6 +53,13 @@
  *   pas sur son début : ses douze premières lignes ne montraient pas ce que la
  *   correction allait écrire.
  *
+ * Et depuis #1381, une commande que **Maestro propose** — à la revue d'après un run, celle
+ * que l'outillage écrivait y avait échoué, il a lu celle que le projet construit montre
+ * et l'a jouée — revient sur la **même carte**, avec la même grammaire : son verdict juste
+ * sous la légende, et une phrase qui dit **d'où il la tient**, le fichier lu. Jamais
+ * « d'après votre demande » : personne ne l'a dite, et c'est ce qui la distingue d'une
+ * correction.
+ *
  * ⚠ **Le projet visé est nommé**, dans l'`aside` qui ne transforme pas la casse :
  * le fil est transverse (#281), et c'est ce qui empêche d'écrire dans un dossier qu'on
  * n'avait pas en tête (la garde de #1104).
@@ -82,6 +89,7 @@ import {
 import { ErreurApi } from "@/lib/api";
 import {
   apercuDeLaPiece,
+  commandesMisesEnAvant,
   diffDeLaPiece,
   LIGNES_OUVERTES,
   SORTS_DE_PIECE,
@@ -110,14 +118,15 @@ export function PieceDOutillage({
   const montrees = ouvert ? diff.entrees : apercuDeLaPiece(piece, diff);
   const repliees = diff.entrees.length - LIGNES_OUVERTES;
   const corrigee = piece.correction !== "";
+  const proposee = (piece.proposees ?? []).length > 0;
   const echouee = piece.verifications.some((v) => v.etat === "echouee");
-  const dites = piece.verifications.filter((v) => piece.corrigees?.includes(v.commande));
-  // La première ligne montrée qui porte une commande corrigée : la borne ne la coupe pas.
+  const enAvant = commandesMisesEnAvant(piece);
+  const dites = piece.verifications.filter((v) => enAvant.includes(v.commande));
+  // La première ligne montrée qui porte une commande corrigée ou proposée : la borne ne la
+  // coupe pas.
   const focale = ouvert
     ? -1
-    : montrees.findIndex(
-        (e) => e.type !== "repli" && (piece.corrigees ?? []).some((c) => e.texte.includes(c)),
-      );
+    : montrees.findIndex((e) => e.type !== "repli" && enAvant.some((c) => e.texte.includes(c)));
 
   // Le diff replié est borné en hauteur aussi, et **coupé à une ligne entière** : la
   // seconde relecture l'avait vu tranché à mi-hauteur d'une ligne, à 320 px comme sur un
@@ -190,7 +199,7 @@ export function PieceDOutillage({
           +{diff.ajouts} −{diff.retraits}
         </span>
       </div>
-      {corrigee ? (
+      {corrigee && (
         <p className="mt-1 text-corps text-texte">
           {/* Les espaces insécables en chaînes : une entité `&nbsp;` en fin de ligne
               laissait l'indentation suivante dans le texte servi (vu sur la vraie stack). */}
@@ -198,7 +207,13 @@ export function PieceDOutillage({
           <TexteAvecCode texte={piece.correction} />
           {" »"}
         </p>
-      ) : (
+      )}
+      {proposee && (
+        <p className="mt-1 text-corps text-texte">
+          <TexteAvecCode texte={phraseDeProposition(piece.lues_dans ?? [])} />
+        </p>
+      )}
+      {!corrigee && !proposee && (
         <p className="mt-1 text-annexe text-texte-secondaire">{enPhrase(piece.raison)}</p>
       )}
 
@@ -244,12 +259,16 @@ export function PieceDOutillage({
         <div className="mt-3 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-annexe text-texte-secondaire">
-              {corrigee ? "Commandes, rejouées après votre correction" : "Commandes"}
+              {corrigee
+                ? "Commandes, rejouées après votre correction"
+                : proposee
+                  ? "Commandes, rejouées sur le projet construit"
+                  : "Commandes"}
             </span>
             <RecapitulatifVerifications verifications={piece.verifications} />
           </div>
-          {/* La commande corrigée, avec son verdict, sans rien déplier : c'est elle
-              que la correction a fait rejouer. */}
+          {/* La commande corrigée ou proposée, avec son verdict, sans rien déplier :
+              c'est elle que cette version change. */}
           {dites.length > 0 && !echouee && <ListeVerifications verifications={dites} />}
           {/* La liste entière : dépliée d'elle-même sur un échec (sa sortie), à la
               demande sinon. */}
@@ -322,6 +341,21 @@ export function PieceDOutillage({
         </p>
       )}
     </CarteDuFil>
+  );
+}
+
+/**
+ * D'où Maestro tient la commande qu'il propose (#1381), en une phrase : le fichier lu, et
+ * pourquoi il l'a cherchée. Jamais « vous avez dit » — personne ne l'a dite.
+ */
+export function phraseDeProposition(luesDans: string[]): string {
+  const ou =
+    luesDans.length === 0
+      ? "dans le projet construit"
+      : `dans ${luesDans.map((chemin) => `\`${chemin}\``).join(" et ")}`;
+  return (
+    `Proposée par Maestro, lue ${ou} : la commande écrite avant le run ` +
+    "échouait sur le projet construit."
   );
 }
 

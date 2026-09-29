@@ -48,6 +48,7 @@ from maestro.outillage.clients import CLIENTS_CONNUS, Client, ClientConnu, par_c
 from maestro.outillage.detection import DOSSIERS_SKILLS
 from maestro.outillage.modele import (
     ORIGINE_DITE,
+    ORIGINE_PROPOSEE,
     Commande,
     Constats,
     Ecarte,
@@ -410,9 +411,16 @@ def _justification(commande: Commande) -> Piece:
     dans le projet : ce qui la justifie est sa phrase. La pièce n'a alors **pas de
     chemin** — la rédaction dit « dite par la personne », jamais « constaté dans »
     un fichier qu'on n'a pas lu pour ça.
+
+    Une commande **proposée par Maestro** après un run (#1381, `ORIGINE_PROPOSEE`) a son
+    endroit — le fichier où il l'a lue dans le projet construit —, et la pièce le dit par
+    son nom : la rédaction écrit « lue par Maestro après un run », jamais « à créer » pour
+    un fichier qui existe.
     """
     if commande.origine == ORIGINE_DITE:
         return Piece(nom="la personne", chemin="", role=commande.extrait)
+    if commande.origine == ORIGINE_PROPOSEE:
+        return Piece(nom=ORIGINE_PROPOSEE, chemin=commande.chemin, role=commande.extrait)
     return Piece(nom=commande.chemin, chemin=commande.chemin, role=commande.extrait)
 
 

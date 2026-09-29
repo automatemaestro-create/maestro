@@ -172,11 +172,12 @@ export function diffDeLaPiece(piece: PieceProposee): DiffDePiece {
  * défaut, son diff est déjà condensé autour de ce qui change ; le fichier neuf l'est
  * ici de la même façon (`condenser`), autour des lignes qui nomment une commande
  * corrigée, et ses lignes restent des ajouts. Corrigé dans ses premières lignes, il se
- * montre comme avant.
+ * montre comme avant. Une commande que Maestro **propose** (#1381) se montre de même :
+ * c'est elle que l'accord écrira.
  */
 export function apercuDeLaPiece(piece: PieceProposee, diff: DiffDePiece): EntreeDiff[] {
   const debut = diff.entrees.slice(0, LIGNES_OUVERTES);
-  const dites = piece.corrigees ?? [];
+  const dites = commandesMisesEnAvant(piece);
   if (!diff.neuf || dites.length === 0) return debut;
   const lignes = diff.entrees as LigneDiff[];
   const touchee = (l: LigneDiff) => dites.some((commande) => l.texte.includes(commande));
@@ -187,6 +188,15 @@ export function apercuDeLaPiece(piece: PieceProposee, diff: DiffDePiece): Entree
   )
     .map((e): EntreeDiff => (e.type === "repli" ? e : { type: "ajout", texte: e.texte }))
     .slice(0, LIGNES_OUVERTES);
+}
+
+/**
+ * Les commandes qu'une pièce met en avant, verdict sous la légende : celles que la
+ * personne a **dites** (#1161), puis celles que Maestro **propose** (#1381). Ce sont
+ * les commandes que cette version change, et la raison pour laquelle elle revient.
+ */
+export function commandesMisesEnAvant(piece: PieceProposee): string[] {
+  return [...(piece.corrigees ?? []), ...(piece.proposees ?? [])];
 }
 
 /** Le texte sans son dernier saut de ligne — celui qui n'ouvre aucune ligne. */

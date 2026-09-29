@@ -2158,7 +2158,8 @@ def _outiller_dans_le_fil(
                 "pièce d'outillage",
                 f"{piece.get('chemin')} ({piece.get('nature') or '—'}, pièce "
                 f"{piece.get('rang')}/{piece.get('total')}) — {decision} → {etat} ; "
-                f"commandes : {_verdicts_en_mots(piece.get('verifications'))}",
+                f"commandes : {_verdicts_en_mots(piece.get('verifications'))}"
+                f"{_proposees_en_mots(piece)}",
             )
             if isinstance(fait, Mapping) and fait.get("ecrite"):
                 chemin = str(fait.get("chemin") or piece.get("chemin"))
@@ -2188,6 +2189,21 @@ def _reponse_a(question: Mapping[str, Any]) -> tuple[str, bool]:
     if recommande and recommande in options:
         return recommande, False
     return REPONSE_OUTILLAGE, True
+
+
+def _proposees_en_mots(piece: Mapping[str, Any]) -> str:
+    """Les commandes que Maestro propose dans cette pièce (#1381), et où il les a lues.
+
+    La pièce du déroulé qui dit qu'une commande ne vient ni du projet né, ni de la
+    personne : la revue d'après le run l'a lue dans le projet construit et l'a jouée.
+    """
+    proposees = piece.get("proposees")
+    if not isinstance(proposees, list) or not proposees:
+        return ""
+    lues = piece.get("lues_dans")
+    ou = ", ".join(str(c) for c in lues) if isinstance(lues, list) and lues else "—"
+    commandes = ", ".join(f"`{c}`" for c in proposees)
+    return f" ; proposée(s) par Maestro : {commandes}, lue(s) dans {ou}"
 
 
 def _verdicts_en_mots(verifications: Any) -> str:
