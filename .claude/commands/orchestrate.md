@@ -1,13 +1,15 @@
 ---
 description: Traite le backlog en autonomie — un ticket, un worktree, une session Claude Code, de /ticket-start à /ticket-ship
-argument-hint: "[--dry-run | --status | --resume [<run-id>] | --milestone <titre> | --max <n>] (aucun argument = lance un run)"
+argument-hint: "[--dry-run | --status | --resume [<run-id>] | --parent <iid>… | --ticket <iid>… | --milestone <titre> | --max <n>] (aucun argument = lance un run)"
 allowed-tools: Bash(bash:*), Bash(git:*), Skill, AskUserQuestion, Read
 ---
 
 Tu vas piloter la **boucle d'orchestration autonome** (`docs/10-workflow-git.md` §10) : elle traite
-les tickets « À faire » du milestone courant **un par un**, chacun dans **son propre worktree** et
-**sa propre session Claude Code**, de `/ticket-start` à `/ticket-ship`, sans interruption — et
-**reprend toute seule** quand la limite d'usage de 5 h tombe au milieu.
+les tickets « À faire » et libres **de sa portée** — sans consigne, tout le backlog du rail produit,
+jalon après jalon dans l'ordre de leur échéance (#1053) ; sinon un chantier, des tickets nommés ou un
+jalon (#1054) — chacun dans **son propre worktree** et **sa propre session Claude Code**, de
+`/ticket-start` à `/ticket-ship`, sans interruption — et **reprend toute seule** quand la limite
+d'usage de 5 h tombe au milieu.
 
 **Le script est la source unique.** `scripts/orchestrate/` porte toute la mécanique ; cette commande
 ne fait que la lancer, l'expliquer et lire son journal. Ne réimplémente **jamais** une étape à la
@@ -25,7 +27,13 @@ toi-même.
 
 ## Selon `$ARGUMENTS`
 
-### Aucun argument, ou `--max <n>` — préparer et faire lancer un run
+### Aucun argument, `--max <n>`, ou une portée — préparer et faire lancer un run
+
+**Une portée passée en argument est déjà un choix** : `--parent <iid>…` (les lots d'un chantier, dans
+l'ordre du parent, quel que soit leur jalon), `--ticket <iid>…` (des tickets nommés), `--milestone
+"<titre>"` (un jalon) — elles se cumulent. Ne pose alors pas la question (b) : repasse-la telle
+quelle à chaque lecture du point 0 qui l'accepte (`--orphelins`, `--non-arbitres`,
+`--touche-claude`), au `--dry-run` et au lancement.
 
 0. **Sur quoi va porter le run ?** *Avant tout le reste*, cinq lectures — hors ligne pour la
    première, en lecture seule pour les cinq — qui préparent les **seules** questions que cette
@@ -43,15 +51,15 @@ toi-même.
      (secondes depuis la dernière écriture), `ticket en vol` (vide s'il n'y en a pas) ; le
      **dernier** de la liste est le plus récent, c'est le candidat.
    - **`--milestones`** — TSV (en-tête `#` à ignorer) : `titre`, `courant` (0/1), `à faire et
-     libres`, `ouverts`, `échéance`, `rail`. Les candidats sont les lignes dont `à faire` **> 0**.
-     ⚠ Depuis #617 il y a **au plus deux** lignes à `courant = 1`, une par **rail** — `produit`
-     (moteur, API, Control Tower) et `outillage` (workflow git, scripts, CI, orchestration) : un
-     run porte sur un rail, et le défaut sans consigne est le courant du rail **produit**. **Au
-     plus**, et non exactement (#619) : un milestone à `à faire = 0` **perd** son `courant`, donc
-     un rail peut n'en avoir **aucun** — ce n'est pas une donnée manquante, c'est le verdict
-     « rien à prendre sur ce rail », à relayer tel quel (question (b)). Le compte est
-     **indicatif** sur un point : un parent de suivi y compte pour un, alors que le run traitera
-     ses lots.
+     libres`, `ouverts`, `échéance`, `rail`. C'est de quoi proposer une **portée** (question (b)).
+     Deux rails (#617) — `produit` (moteur, API, Control Tower) et `outillage` (workflow git,
+     scripts, CI, orchestration) : le plan **sans consigne** couvre **tous** les jalons actifs du
+     rail **produit**, dans l'ordre de leur échéance (#1053) ; ceux du rail **outillage** n'y
+     entrent que **demandés** — c'est ce qui garde la tête du plan (#1055 : le jalon d'outillage est
+     le plus tôt échu, et le mêler ferait partir l'outillage avant le produit). `courant` vaut 1 pour
+     **au plus** un jalon par rail, et pour aucun si le rail n'a rien à prendre (#619) : relaie ce
+     verdict tel quel. Le compte est **indicatif** sur un point : un parent de suivi y compte pour
+     un, alors que le run traitera ses lots.
    - **`--orphelins`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs lignes :
      ce sont des tickets **« En cours » dont plus personne ne s'occupe** (#329) — une session morte
      (délai, pilote tué, console fermée, session interactive laissée en plan) les y a laissés, et
@@ -67,8 +75,8 @@ toi-même.
      partiront un par un — un séquentiel que le run n'a pas choisi, qu'il a **subi**, et qui ne se
      distingue d'un séquentiel voulu par rien. TSV — `parent`, `au-plan` (combien de ses lots sont
      dans ce plan), `marques` (toujours 0, sinon il ne serait pas listé), `lots` (son découpage
-     entier), `titre`. ⚠ La liste **dépend du milestone** : si la question (b) en retient un autre
-     que le défaut, rejoue `--non-arbitres --milestone "<titre>"` avant de poser la question (d).
+     entier), `titre`. ⚠ La liste **dépend de la portée** : si la question (b) en retient une autre
+     que le défaut, rejoue `--non-arbitres` avec elle avant de poser la question (d).
    - **`--touche-claude`** — sortie vide (le cas courant) : n'en parle pas. Une ou plusieurs
      lignes : ce sont des tickets **du plan qui nomment `.claude/`** (#612), où une session
      autonome ne peut **pas** écrire — blocage dur du CLI, en amont de l'allowlist (#229/#238).
@@ -76,8 +84,8 @@ toi-même.
      depuis #418/#419 cette PR est mergée sans que personne ne l'ouvre : le résidu ne disparaît
      pas, il devient **invisible**. TSV — `iid`, `parent` (`-` si le ticket n'est pas un lot),
      `titre`. Ils **restent au plan** : écarter est une décision, et le geste existe déjà — les
-     assigner. ⚠ La liste **dépend du milestone**, comme `--non-arbitres` : si la question (b) en
-     retient un autre que le défaut, rejoue `--touche-claude --milestone "<titre>"`.
+     assigner. ⚠ La liste **dépend de la portée**, comme `--non-arbitres` : si la question (b) en
+     retient une autre que le défaut, rejoue `--touche-claude` avec elle. Et `--orphelins` aussi.
 
 1. **Montre le plan** de ce qui partirait par défaut : `bash scripts/orchestrate/run.sh --dry-run`
    (lecture seule, aucun quota). Il imprime l'ordre de traitement figé, ce qui serait fait pour
@@ -113,34 +121,36 @@ toi-même.
      choix si le plan a vieilli (priorités changées, tickets ajoutés depuis).
    - **Ne rien lancer** — s'en tenir au plan affiché.
 
-   **(b) Quel milestone ?** — seulement pour un run **neuf**, et seulement si le choix est **réel** :
-   au moins **deux** milestones à `à faire > 0` au point 0. Un seul candidat ne se demande pas, il
-   s'**annonce** (« le run portera sur *Phase N*, seule phase active avec des tickets à faire ») ;
-   aucun candidat, dis-le et ne lance rien. Quand la question se pose : le milestone `courant = 1`
-   **du rail produit** en premier et recommandé, les autres ensuite, chacun avec **son nombre de
-   tickets à faire** ET **son rail** en description. Si la question (a) est posée en même temps,
-   précise dans l'intitulé que ce choix ne vaut **que** pour un run neuf — une reprise rejoue le
-   plan de son run, milestone compris.
+   **(b) Quelle portée ?** — seulement pour un run **neuf**, sans portée passée en argument, et
+   seulement si le choix est **réel** : au moins un jalon du rail **outillage** à `à faire > 0` au
+   point 0 — ce que le plan sans consigne n'atteint **pas**. Sinon elle ne se demande pas, elle
+   s'**annonce** : « le run portera sur tout le backlog du rail produit — N tickets sur M jalons »,
+   chiffres lus dans la ligne `plan :` du point 1. Rien à prendre nulle part : dis-le et ne lance
+   rien. Quand la question se pose :
+   - **Tout le backlog du rail produit** (défaut, **recommandé** en premier) — N tickets sur M
+     jalons, lus dans la ligne `plan :` du point 1 ;
+   - **chaque jalon d'outillage** à `à faire > 0`, avec son nombre de tickets à faire en
+     description ;
+   - l'option libre (« Other ») porte le reste, à dire dans l'intitulé : **un chantier** (`#<iid>`
+     d'un parent de suivi — tous ses lots, quels que soient leurs jalons) ou **des tickets nommés**.
 
-   ⚠ **Un rail peut n'avoir AUCUNE ligne à `courant = 1`** (#619) : le courant d'un rail perd son
-   `1` dès qu'il n'a rien à prendre — soit qu'il soit **vide** (0 / 0, un contenant qu'on garde
-   parfois vide **à dessein**, comme la Phase 9), soit que tous ses « À faire » soient
-   **assignés**. Ce n'est pas une donnée manquante, c'est le verdict « **rien à prendre sur ce
-   rail** » : **dis-le en une phrase, en nommant le rail**, au lieu de recommander en silence un
-   milestone sur lequel le run planifierait zéro ticket. S'il reste des candidats sur **l'autre**
-   rail, propose-les en disant qu'ils changent de rail ; s'il n'en reste **nulle part**, ne lance
-   rien. `bash scripts/gitlab/lib.sh current-milestone produit` nomme sur stderr ce qu'il a sauté
-   et **pourquoi** — soldé → à *fermer*, vide → à *découper* : c'est ça qu'il faut relayer, et pas
-   un « aucun candidat » qui ne dit quoi faire ni de l'un ni de l'autre.
+   Si la question (a) est posée en même temps, précise dans l'intitulé que ce choix ne vaut **que**
+   pour un run neuf — une reprise rejoue le plan de son run, portée comprise.
 
-   ⚠ **Nommer le rail dans les intitulés n'est pas cosmétique** (#617) : un milestone d'outillage
-   se traite mal en autonomie — une bonne part de ses tickets touche `.claude/**`, où l'écriture
-   est **bloquée par le CLI** en amont de l'allowlist (#229/#238), donc la session rend son
-   correctif dans sa PR au lieu de l'appliquer. Si l'utilisateur choisit le rail `outillage`,
-   **dis-le en une phrase** avant de lancer — ce n'est pas un refus, c'est un régime à connaître.
+   ⚠ **Le rail produit peut n'avoir rien à prendre** (#619) : aucune ligne `courant = 1` sur ce
+   rail, et un plan sans consigne vide. Ce n'est pas une donnée manquante, c'est un verdict : **dis-le
+   en une phrase**, puis propose l'outillage s'il en reste, sinon ne lance rien. `bash
+   scripts/gitlab/lib.sh current-milestone produit` nomme sur stderr ce qu'il a sauté et **pourquoi**
+   — soldé → à *fermer*, vide → à *découper* : c'est ça qu'il faut relayer.
 
-   ⚠ **Et le plan dit maintenant lesquels** (#612, docs/10 §11.2). La cinquième lecture du point 0
-   nomme les tickets **de ce plan** qui touchent `.claude/`. S'il y en a, **dis-le avec le feu
+   ⚠ **Le garde-fou du rail est au TICKET, plus au jalon** (#1055). Une portée demandée peut
+   traverser les deux rails (#1054), et ce qui rendait un jalon d'outillage difficile en autonomie
+   — l'écriture sous `.claude/**`, **bloquée par le CLI** en amont de l'allowlist (#229/#238) —
+   tient à certains **tickets**, pas au jalon qui les range. Ne préviens donc plus d'un « rail
+   outillage » : c'est le signalement ci-dessous, ticket par ticket, qui le dit.
+
+   ⚠ **Le plan dit lesquels** (#612, docs/10 §11.2). La cinquième lecture du point 0 — rejouée
+   avec la portée retenue — nomme les tickets **de ce plan** qui touchent `.claude/`. S'il y en a, **dis-le avec le feu
    vert** — une ligne par ticket, iid et titre — en disant les deux choses qui vont avec : leur
    correctif partira dans la **description de la PR** au lieu d'être appliqué (#188), et le pilote
    merge sans que personne ne l'ouvre. Ce n'est **pas une question** : rien n'est à décider ici, la
@@ -236,20 +246,30 @@ toi-même.
    dit et lance le run quand même. Chaque reprise laisse sa trace — un commentaire sur le ticket et
    une ligne dans `.maestro/orchestrate/reprises.tsv` — et rappelle où dort le travail conservé.
 
-   Vient ensuite le lancement — et si le milestone retenu n'est pas celui dont le plan a été montré
-   au point 1, **montre d'abord le sien** (`--dry-run --milestone "<titre>"`, gratuit) :
+   Vient ensuite le lancement — et si la portée retenue n'est pas celle dont le plan a été montré
+   au point 1, **montre d'abord le sien** (`--dry-run` avec elle, gratuit) :
    ```
-   bash scripts/orchestrate/run.sh --detach                                   # run neuf
-   bash scripts/orchestrate/run.sh --detach --milestone "<titre>"             # ... sur ce milestone
+   bash scripts/orchestrate/run.sh --detach                                   # run neuf, sans consigne
+   bash scripts/orchestrate/run.sh --detach --parent <iid>                    # ... sur ce chantier
+   bash scripts/orchestrate/run.sh --detach --ticket <iid> <iid>              # ... sur ces tickets
+   bash scripts/orchestrate/run.sh --detach --milestone "<titre>"             # ... sur ce jalon
    bash scripts/orchestrate/run.sh --resume <id> --detach                     # reprise du run <id>
    ```
-   **Passe `--milestone` explicitement dès que la question (b) a été posée**, même pour le
-   milestone courant : le run est ainsi épinglé sur ce que l'utilisateur a choisi, et non sur une
-   phase courante qui peut basculer d'ici son démarrage. Une reprise, elle, ne prend **jamais**
-   `--milestone` — son plan est déjà figé.
+   Les portées se **cumulent** (le plan porte l'union de ce qu'elles demandent). Une reprise ne prend
+   **jamais** de portée — son plan est déjà figé, et `run.sh` le dirait. Un iid demandé qui ne part
+   pas (pris, fermé, hors projet…) est nommé avec sa cause dans l'en-tête du run : **relaie-le**
+   après le `--dry-run`, avant le feu vert, plutôt que de le laisser découvrir dans la console.
+
+   **La taille du plan se dit, elle ne se borne pas d'office.** Sans consigne, le plan couvre tout le
+   backlog du rail produit et peut tenir des jours : annonce-le avec les chiffres de la ligne
+   `plan :` (tickets, jalons). `touch .maestro/orchestrate/STOP` l'arrête entre deux tickets, et
+   `--resume` rejoue le reste sur son plan figé — c'est ce qui couvre « pouvoir s'arrêter ». `--max
+   <n>` existe pour qui **veut** un run borné ; ne le recommande pas par défaut : il n'économise rien
+   (onze tickets coûtent pareil en un run ou en trois) et sert d'abord à contenir une **panne
+   systématique** (docs/10 §11).
    Il ouvre une console indépendante, imprime le run-id, le journal et la commande de reprise, et
    rend la main immédiatement. Rappelle les options utiles, qui se combinent avec `--detach` :
-   `--max <n>` pour borner le run, `--modele <modèle>`, `--effort <niveau>` (`low`…`max`). Ces deux
+   `--max <n>`, `--modele <modèle>`, `--effort <niveau>` (`low`…`max`). Ces deux
    derniers ont un **défaut épinglé par le dépôt** — la dernière version d'Opus et `xhigh` (#206,
    #1269, #217) — et la ligne `plan :` les annonce en toutes lettres : ne les passe que si
    l'utilisateur demande explicitement un autre régime, et dis lequel s'il le fait (`--modele` prend
@@ -311,6 +331,11 @@ toi-même.
    pipeline vert sur la tête de la PR (#417, chantier #413). ⚠ Et c'est le **pilote** qui merge,
    jamais une session : `guard.sh` refuse `merge-mr` et `pipeline-wait` dans une session de run.
 
+   Dis aussi que le run **ne s'arrête plus à la frontière d'un jalon** (#1053) : chaque jalon qu'il
+   aura soldé en route est **nommé en fin de run**, avec la commande qui le boucle (`/milestone-bilan
+   "<titre>"`, #1055). Il n'en rend aucun verdict et n'en ferme aucun : c'est une convocation, la
+   même que le pied de `/backlog` (#758).
+
 ### `--dry-run` — juste voir le plan
 
 Lance `bash scripts/orchestrate/run.sh --dry-run` et commente le plan : combien de tickets, quels
@@ -318,10 +343,12 @@ groupes de lots, ce qui a été écarté et pourquoi (`bash scripts/orchestrate/
 le détail des écartés — parents de suivi, tickets assignés, statuts autres que « À faire »).
 Rien n'est lancé, aucun répertoire de run n'est laissé derrière.
 
-Le plan porte par défaut sur la **phase courante du rail produit** (#617). Pour en voir un autre,
-ajoute `--milestone "<titre>"` — et `bash scripts/orchestrate/queue.sh --milestones` dit lesquels
-ont du travail (titre, courant, à faire et libres, ouverts, échéance, rail). L'en-tête du run
-annonce le milestone retenu **et son rail**.
+Le plan porte par défaut sur **tout le backlog du rail produit**, jalon après jalon dans l'ordre de
+leur échéance (#1053). Pour une autre portée, ajoute `--parent <iid>`, `--ticket <iid>…` ou
+`--milestone "<titre>"` — `bash scripts/orchestrate/queue.sh --milestones` dit quels jalons ont du
+travail (titre, courant, à faire et libres, ouverts, échéance, rail). L'en-tête du run dit la
+**portée**, le nombre de tickets et de jalons (ligne `plan :`), **nomme** les jalons traversés avec
+leur rail (ligne `jalons :`), et ce qui a été demandé sans partir (ligne `demandés :`).
 
 ### `--status` — où en est le dernier run
 

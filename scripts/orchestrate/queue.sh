@@ -27,11 +27,15 @@
 #    un ticket ouvert, le plan commence par les mêmes tickets, dans le même ordre, et continue sur
 #    le jalon suivant au lieu de s'arrêter à la frontière.
 #
-#    LE RAIL RESTE UN FILTRE DU PLAN SANS CONSIGNE, et c'est une décision : le défaut était « le
-#    courant du rail produit » (#617), et mêler l'outillage au produit est ce que #617 a corrigé — un
-#    run « produit » qui traitait de l'outillage sans le dire. Si le rail doit passer au ticket, c'est
-#    au lot 3 de le trancher (#1055), avec l'annonce de portée qui le rendrait visible. Un ticket d'un
-#    jalon FERMÉ est écarté et nommé : une phase soldée n'est pas un run à lancer.
+#    LE RAIL RESTE UN FILTRE DU PLAN SANS CONSIGNE, et c'est une décision, tranchée par #1055 : le
+#    défaut était « le courant du rail produit » (#617), et ce qui fait que la tête du plan global
+#    est encore celle d'avant (critère de #1052), c'est ce filtre. Le jalon d'outillage est le plus
+#    tôt échu du dépôt (2027-09-15, quand le premier jalon produit l'est en 2028) : mêler les rails
+#    ferait partir tout l'outillage AVANT le produit, sans que personne l'ait demandé. L'outillage se
+#    demande — `--milestone`, `--parent`, `--ticket` (#1054) —, et le garde-fou qu'il appelait passe
+#    AU TICKET : c'est `--touche-claude` (#612) qui nomme, ticket par ticket et quelle que soit la
+#    portée, ceux où une session ne pourra pas écrire. Un ticket d'un jalon FERMÉ est écarté et
+#    nommé : une phase soldée n'est pas un run à lancer.
 #
 #    AVEC UNE PORTÉE, LE PLAN EST CELUI DE CE QUI EST DEMANDÉ (#1054) : `--parent <iid>…` (les lots
 #    de ce chantier, quel que soit leur jalon), `--ticket <iid>…` (une liste nommée) et
@@ -136,9 +140,8 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$RACINE/scripts/gitlab/lib.sh"
 
 CHECK=0
-# `--orphelins` lit UN jalon (le dernier `--milestone` donné) ; le plan, lui, lit la portée entière.
-MILESTONE=""
-# La portée demandée (#1054) : trois listes qui se cumulent, vides sans consigne.
+# La portée demandée (#1054) : trois listes qui se cumulent, vides sans consigne. Le plan et ses
+# trois signalements (`--orphelins`, `--non-arbitres`, `--touche-claude`) la lisent tous (#1055).
 MILESTONES=()
 PARENTS=()
 TICKETS=()
@@ -164,18 +167,19 @@ Options :
   --ticket <iid>…      Portée : ces tickets, dans l'ordre du plan. Même forme que --parent.
                        Les portées se CUMULENT (le plan porte l'union de ce qu'elles demandent),
                        et ni le rail ni l'état du jalon n'y filtrent. Un iid demandé qui n'est pas
-                       prenable est nommé avec sa cause sur stderr, même sans --check (#1054).
-                       Sans aucune : tout le backlog du rail produit, trié par échéance de jalon
-                       (#1053).
+                       prenable est nommé avec sa cause sur stderr, même sans --check (#1054) —
+                       sauf sous MAESTRO_QUEUE_ANNONCE_DEMANDES=0, que run.sh pose parce qu'il
+                       les relit dans le plan. Sans aucune : tout le backlog du rail produit, trié
+                       par échéance de jalon (#1053).
   --milestones         N'imprime pas de plan : liste les milestones ACTIFS sur lesquels un run
                        peut porter, avec ce qu'ils ont de traitable — titre, courant (0/1),
                        « À faire » et libres, ouverts, échéance, rail. C'est ce que /orchestrate lit
-                       pour proposer le choix du milestone avant un run neuf. `courant` vaut 1 pour
+                       pour proposer une portée avant un run neuf. `courant` vaut 1 pour
                        AU PLUS un milestone par rail, et pour aucun si celui du rail n'a rien à
                        prendre (#619) : un défaut sur lequel un run planifierait zéro ticket n'est
                        pas un défaut.
-  --orphelins          N'imprime pas de plan : liste les tickets « En cours » du milestone (par
-                       défaut : le courant du rail produit) dont
+  --orphelins          N'imprime pas de plan : liste les tickets « En cours » de la portée (par
+                       défaut : le backlog du rail produit, comme le plan) dont
                        plus personne ne s'occupe — ce que le plan N'INCLUT PAS et qu'un geste
                        explicite peut rendre prenable (`lib.sh reprendre-en-cours <iid>`). TSV :
                        iid, reprises, plafond, run d'origine, verdict, détail, titre. C'est ce que
@@ -206,7 +210,7 @@ while [ $# -gt 0 ]; do
     --check) CHECK=1 ;;
     --milestone)
       [ -n "${2:-}" ] || { printf 'queue.sh : --milestone attend un titre de jalon.\n\n' >&2; usage >&2; exit 2; }
-      MILESTONE="$2"; MILESTONES+=("$2"); shift ;;
+      MILESTONES+=("$2"); shift ;;
     # Plusieurs iid par option : « --ticket 12 15 », « --ticket 12,15 » ou l'option répétée. Les
     # valeurs sont prises tant qu'elles ne commencent pas par « - » ; `$1` reste l'option, que le
     # `shift` de fin de boucle consomme.
@@ -323,16 +327,6 @@ RAIL="produit"
 PORTEE=0
 [ "${#MILESTONES[@]}" -gt 0 ] || [ "${#PARENTS[@]}" -gt 0 ] || [ "${#TICKETS[@]}" -gt 0 ] && PORTEE=1
 
-# `--orphelins` garde la portée d'un milestone : sans consigne, le courant du rail. C'est encore
-# « ce qui manque au milestone qu'un run visait », et l'aligner sur le plan global relève de
-# l'annonce de portée du lot 3 (#1055), pas de ce lot.
-if [ "$LISTE_ORPHELINS" = 1 ] && [ -z "$MILESTONE" ]; then
-  MILESTONE="$(gl_current_milestone)" || {
-    # Le helper vient de nommer sur stderr CE QU'IL A SAUTÉ et pourquoi (soldé / vide, #619) : on
-    # ne le paraphrase pas, on dit seulement la conséquence ici.
-    echo "queue.sh : aucun milestone utilisable sur le rail produit — aucun orphelin à lister." >&2; exit 1
-  }
-fi
 if [ "$PORTEE" = 1 ]; then
   diag "portée demandée :$(for m in "${MILESTONES[@]}"; do printf ' jalon « %s »' "$m"; done)$(
     for p in "${PARENTS[@]}"; do printf ' chantier #%s' "$p"; done)$(
@@ -341,65 +335,19 @@ else
   diag "portée : le backlog du rail $RAIL — l'échéance du jalon trie, elle ne filtre pas (#1053) ; un ticket sans jalon vient en fin de plan."
 fi
 
-# --- 1 bis. Les orphelins : ce que le plan n'inclut pas, et qu'on pourrait reprendre (#329) --------
-# La règle 1 écarte les tickets « En cours » et assignés, et c'est ce qui protège le travail des
-# autres : ce filtre ne bouge pas. Mais il écarte aussi, du même geste, les tickets qu'une session
-# MORTE a laissés dans cet état — invisibles pour toujours, alors que leur worktree porte parfois des
-# milliers de lignes (#316). D'où cette sortie SÉPARÉE : le plan reste ce qu'il était, et ce qui
-# pourrait le rejoindre se LIT à côté, sans jamais s'y glisser tout seul.
-#
-# Le renversement de #327 tenu jusqu'au bout : on ne DÉCIDE pas de reprendre, on le PROPOSE. C'est
-# exactement la forme de la reprise d'un run inachevé (#204) — le plan liste, /orchestrate demande,
-# et le choix remplace le feu vert. Rien ici n'écrit quoi que ce soit.
-#
-# Le verdict (« quelqu'un s'en occupe-t-il encore ? ») n'est PAS recalculé ici : il est demandé au
-# verbe du lot 1, seul à savoir départager un vivant d'un orphelin (carte du pilote, fraîcheur du
-# worktree, seuil généreux). MAESTRO_ORPHELINS_SOURCE remplace l'appel — couture des tests, comme
-# MAESTRO_EN_COURS_SIGNAL côté worktree.sh : elle permet d'éprouver la COMPOSITION (filtre du
-# milestone, comptage des reprises, plafond) sans monter de worktree ni de carte de pilote.
-#
-# Le filtre du MILESTONE est la seule chose que ce fichier ajoute au verdict, et il n'est pas
-# cosmétique : un run porte sur un milestone, donc un orphelin d'ailleurs ne rejoindrait pas ce
-# plan-ci même repris. Le signalement global, lui, existe déjà (`reconcile-en-cours`, `doctor.sh`).
-if [ "$LISTE_ORPHELINS" = 1 ]; then
-  gl_milestone_issues "$MILESTONE" >"$TMP/milestone.tsv" || exit 1
-  if [ -n "${MAESTRO_ORPHELINS_SOURCE:-}" ]; then
-    # shellcheck disable=SC2086  # la couture EST une ligne de commande : son découpage est voulu
-    $MAESTRO_ORPHELINS_SOURCE >"$TMP/en-cours.tsv" 2>/dev/null
-  else
-    gl_reconcile_en_cours --tsv >"$TMP/en-cours.tsv" 2>/dev/null
-  fi
-  printf '# iid\treprises\tplafond\trun\tverdict\tdetail\ttitre\n'
-  # `read` sur cinq champs : le TSV du lot 1 est « iid, verdict, source, détail, titre ». La `source`
-  # n'est pas reprise — elle dit d'où vient le VERDICT (carte ou déduction), question déjà tranchée
-  # ici, puisque seuls les orphelins passent et qu'un orphelin est toujours une déduction.
-  while IFS=$'\t' read -r iid verdict _ detail titre; do
-    case "$iid" in ''|'#'*|*[!0-9]*) continue ;; esac
-    [ "$verdict" = "orphelin" ] || continue
-    awk -F '\t' -v iid="$iid" '$1 == iid { trouve = 1 } END { exit !trouve }' "$TMP/milestone.tsv" || continue
-
-    deja="$(gl_reprises_de "$iid")" && lisible=1 || lisible=0
-    if [ "$lisible" = 0 ]; then plafond="?"
-    elif [ "$deja" -ge "$GL_REPRISES_MAX" ]; then plafond="atteint"
-    else plafond="-"; fi
-
-    origine="$(bash "$RACINE/scripts/orchestrate/journal.sh" origine "$iid" 2>/dev/null)"
-    run="$(printf '%s' "$origine" | cut -f1)"
-    verdict_run="$(printf '%s' "$origine" | cut -f2)"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$iid" "$deja" "$plafond" "${run:--}" "${verdict_run:--}" "$detail" "$titre"
-  done <"$TMP/en-cours.tsv"
-  exit 0
-fi
-
 # --- 2. Les tickets lus, et qui les a pris --------------------------------------------------------
 # Le backlog se lit par la table ouverte, à laquelle deux lectures ajoutent ce qu'il faut pour le
 # trier : l'échéance et le rail de chaque jalon, et le jalon de chaque ticket (en-tête, « Coût en
 # appels »). Un milestone nommé ne se lit plus par sa table (#1054) : il RESTREINT ce backlog-là,
-# pour qu'une portée cumulée n'ait qu'une source et qu'un seul ordre.
+# pour qu'une portée cumulée n'ait qu'une source et qu'un seul ordre. `--orphelins` n'a que faire
+# des assignés du backlog : il se passe de cette lecture-là.
 gl_milestones >"$TMP/jalons.tsv" || exit 1
 gl_issues_jalons >"$TMP/jalon-de.tsv" || exit 1
-gl_backlog_table opened >"$TMP/backlog.tsv" || exit 1
+if [ "$LISTE_ORPHELINS" = 1 ]; then
+  printf '# iid\tstatut\tprio\tagent\tassigne\ttitre\n' >"$TMP/backlog.tsv"
+else
+  gl_backlog_table opened >"$TMP/backlog.tsv" || exit 1
+fi
 
 # Les lectures de tickets plafonnent à `first: 100` côté GraphQL (lib.sh), celle des jalons à
 # `first: 50`. Une troncature silencieuse serait pire qu'une erreur : un ticket assigné dont la ligne
@@ -493,6 +441,68 @@ if [ "$PORTEE" = 1 ]; then
       '$1 !~ /^#/ && $2 == ENVIRON["QUEUE_JALON"] { print $1, 0, "jalon « " ENVIRON["QUEUE_JALON"] " »" }' \
       "$TMP/jalon-de.tsv" >>"$TMP/demandes.tsv"
   done
+fi
+
+# --- 2 ter. Les orphelins : ce que le plan n'inclut pas, et qu'on pourrait reprendre (#329) --------
+# La règle 1 écarte les tickets « En cours » et assignés, et c'est ce qui protège le travail des
+# autres : ce filtre ne bouge pas. Mais il écarte aussi, du même geste, les tickets qu'une session
+# MORTE a laissés dans cet état — invisibles pour toujours, alors que leur worktree porte parfois des
+# milliers de lignes (#316). D'où cette sortie SÉPARÉE : le plan reste ce qu'il était, et ce qui
+# pourrait le rejoindre se LIT à côté, sans jamais s'y glisser tout seul.
+#
+# Le renversement de #327 tenu jusqu'au bout : on ne DÉCIDE pas de reprendre, on le PROPOSE. C'est
+# exactement la forme de la reprise d'un run inachevé (#204) — le plan liste, /orchestrate demande,
+# et le choix remplace le feu vert. Rien ici n'écrit quoi que ce soit.
+#
+# Le verdict (« quelqu'un s'en occupe-t-il encore ? ») n'est PAS recalculé ici : il est demandé au
+# verbe du lot 1, seul à savoir départager un vivant d'un orphelin (carte du pilote, fraîcheur du
+# worktree, seuil généreux). MAESTRO_ORPHELINS_SOURCE remplace l'appel — couture des tests, comme
+# MAESTRO_EN_COURS_SIGNAL côté worktree.sh : elle permet d'éprouver la COMPOSITION (filtre de la
+# portée, comptage des reprises, plafond) sans monter de worktree ni de carte de pilote.
+#
+# Le filtre de la PORTÉE est la seule chose que ce fichier ajoute au verdict, et il n'est pas
+# cosmétique : un orphelin d'ailleurs ne rejoindrait pas ce plan-ci même repris. C'est la portée du
+# PLAN, et non plus un jalon (#1055) : sans consigne, un ticket d'un jalon actif du rail, ou sans
+# jalon — ce que le plan lirait —, sinon ce qui est demandé. Tenir `--orphelins` au seul jalon
+# courant quand le plan traverse les jalons, c'était taire l'orphelin d'un jalon suivant que le run
+# prendrait une fois repris. Le signalement global, lui, existe déjà (`reconcile-en-cours`,
+# `doctor.sh`).
+if [ "$LISTE_ORPHELINS" = 1 ]; then
+  if [ "$PORTEE" = 1 ]; then
+    cut -f1 "$TMP/demandes.tsv" >"$TMP/portee.tsv"
+  else
+    awk -F '\t' -v rail="$RAIL" '
+      FILENAME == ARGV[1] { if ($1 !~ /^#/ && $2 == "active" && $7 == rail) actif[$1] = 1; next }
+      $1 !~ /^#/ && ($2 == "-" || ($2 in actif)) { print $1 }
+    ' "$TMP/jalons.tsv" "$TMP/jalon-de.tsv" >"$TMP/portee.tsv"
+  fi
+  if [ -n "${MAESTRO_ORPHELINS_SOURCE:-}" ]; then
+    # shellcheck disable=SC2086  # la couture EST une ligne de commande : son découpage est voulu
+    $MAESTRO_ORPHELINS_SOURCE >"$TMP/en-cours.tsv" 2>/dev/null
+  else
+    gl_reconcile_en_cours --tsv >"$TMP/en-cours.tsv" 2>/dev/null
+  fi
+  printf '# iid\treprises\tplafond\trun\tverdict\tdetail\ttitre\n'
+  # `read` sur cinq champs : le TSV du lot 1 est « iid, verdict, source, détail, titre ». La `source`
+  # n'est pas reprise — elle dit d'où vient le VERDICT (carte ou déduction), question déjà tranchée
+  # ici, puisque seuls les orphelins passent et qu'un orphelin est toujours une déduction.
+  while IFS=$'\t' read -r iid verdict _ detail titre; do
+    case "$iid" in ''|'#'*|*[!0-9]*) continue ;; esac
+    [ "$verdict" = "orphelin" ] || continue
+    grep -qx "$iid" "$TMP/portee.tsv" || continue
+
+    deja="$(gl_reprises_de "$iid")" && lisible=1 || lisible=0
+    if [ "$lisible" = 0 ]; then plafond="?"
+    elif [ "$deja" -ge "$GL_REPRISES_MAX" ]; then plafond="atteint"
+    else plafond="-"; fi
+
+    origine="$(bash "$RACINE/scripts/orchestrate/journal.sh" origine "$iid" 2>/dev/null)"
+    run="$(printf '%s' "$origine" | cut -f1)"
+    verdict_run="$(printf '%s' "$origine" | cut -f2)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$iid" "$deja" "$plafond" "${run:--}" "${verdict_run:--}" "$detail" "$titre"
+  done <"$TMP/en-cours.tsv"
+  exit 0
 fi
 
 # --- 3. Les candidats : « À faire » et libres -----------------------------------------------------
@@ -594,10 +604,14 @@ lignes_de_portee() {
 }
 
 # annonce_demandes_ecartees -> les mêmes, sur stderr, SANS `--check` : l'annonce est ce qui empêche
-# une portée de rendre un plan plus court en silence (critère de #1054). `run.sh` laisse passer
-# stderr, si bien qu'elle s'affiche au lancement d'un run. Muette quand tout ce qui est demandé est
-# au plan — un signalement nominal apprend à ne plus lire les signalements.
+# une portée de rendre un plan plus court en silence (critère de #1054). Muette quand tout ce qui est
+# demandé est au plan — un signalement nominal apprend à ne plus lire les signalements.
+#
+# `run.sh` l'éteint (MAESTRO_QUEUE_ANNONCE_DEMANDES=0, #1055) parce qu'il annonce les mêmes lignes
+# en les relisant DANS LE PLAN : c'est ce qui les rend à la reprise d'un run, que cette annonce-ci ne
+# verrait jamais — et deux annonces des mêmes lignes à la même seconde en feraient lire une de trop.
 annonce_demandes_ecartees() {
+  [ "${MAESTRO_QUEUE_ANNONCE_DEMANDES:-1}" != 0 ] || return 0
   [ -s "$TMP/demandes-ecartees.tsv" ] || return 0
   printf 'queue.sh : %s ticket(s) demandé(s) hors du plan :\n' \
     "$(cut -f1 "$TMP/demandes-ecartees.tsv" | sort -u | wc -l | tr -d ' ')" >&2

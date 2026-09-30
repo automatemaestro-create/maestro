@@ -3021,7 +3021,8 @@ else
     printf 'run.sh : %s absent — il porte le calcul de l'\''ordre (#168).\n' "$queue" >&2
     exit 1
   }
-  bash "$queue" "${PORTEE[@]}" >"$PLAN" || { renonce_au_run; exit 1; }
+  # Les demandes écartées, `queue.sh` les tait ici : l'en-tête du run les relit dans le plan (#1055).
+  MAESTRO_QUEUE_ANNONCE_DEMANDES=0 bash "$queue" "${PORTEE[@]}" >"$PLAN" || { renonce_au_run; exit 1; }
 fi
 
 nb_plan="$(grep -cv '^#' "$PLAN")"
@@ -3135,26 +3136,58 @@ printf '\n%sBoucle d'\''orchestration%s — run %s\n' "$C_B" "$C_0" "$RUN_ID"
 # Le DÉPÔT y figure pour la même raison (#341) : c'est là que les N PR vont s'ouvrir, et rien
 # d'autre dans le journal ne le dirait.
 printf 'dépôt : %s (%s)\n' "$(gl_forge_nom)" "$(gl_depot_courant)"
-# Sur QUOI porte ce run (#617). Le rail vient du plan lui-même, en ligne de commentaire, et n'est
-# donc ni relu ni recalculé ici — même mécanique que la réserve d'arbitrage plus bas, et même
-# dégradation douce : un plan d'avant ce lot, rejoué par `--resume`, n'en porte aucune et la ligne
-# se tait. L'annoncer est ce qui distingue « ce run traite le produit » de « ce run traite
-# l'outillage », deux régimes que rien ne séparait quand `current-milestone` n'avait qu'une réponse.
+# Sur QUOI porte ce run (#617, #1055). Tout vient du plan lui-même, en lignes de commentaire, et
+# rien n'est donc relu ni recalculé ici — même mécanique que la réserve d'arbitrage plus bas, et même
+# dégradation douce : un plan d'avant ces lignes, rejoué par `--resume`, en porte moins et l'en-tête
+# en dit moins, sans rien inventer.
 #
-# Un plan sans consigne traverse les jalons (#1053) et porte une ligne par jalon, dans l'ordre du
-# plan : le premier est annoncé comme avant, et le compte des suivants dit que le run ne s'arrête pas
-# à sa frontière. Les annoncer par leur nom et nommer la portée est le lot 3 du chantier (#1055).
-if grep -q '^# milestone	' "$PLAN" 2>/dev/null; then
+# LA PORTÉE vient des lignes `# portee` (#1054) : ce qui a été demandé, chantier, tickets ou jalon.
+# Sans elles, le plan est celui SANS CONSIGNE, et son rail se lit sur ses jalons. Un plan qui
+# traverse les jalons sans le dire est indiscernable d'un run qui s'est trompé de backlog : d'où la
+# portée, le nombre de tickets et le nombre de jalons sur la même ligne, la ligne `plan :`.
+#
+# LES JALONS TRAVERSÉS viennent des lignes `# milestone`, une par jalon dans l'ordre du plan (#1053),
+# chacune avec son rail : ils sont nommés sur leur propre ligne, et le rail de chacun y est dit parce
+# qu'une portée demandée peut traverser les deux (#1054) — le garde-fou qui en découle se dit, lui,
+# au ticket (`.claude/`, plus bas).
+portee_du_plan() {
+  local genre valeur tickets="" parties=""
   # shellcheck disable=SC2034  # `_` est le marqueur de la ligne, lu puis jeté.
-  IFS=$'\t' read -r _ ms_titre ms_rail < <(grep -m1 '^# milestone	' "$PLAN")
-  ms_suivants=$(( $(grep -c '^# milestone	' "$PLAN") - 1 ))
-  printf 'milestone : %s · rail %s%s\n' "$ms_titre" "$ms_rail" \
-    "$([ "$ms_suivants" -gt 0 ] && printf ' · puis %s autre(s) jalon(s) du rail' "$ms_suivants")"
+  while IFS=$'\t' read -r _ genre valeur; do
+    case "$genre" in
+      milestone) parties="${parties:+$parties + }jalon « $valeur »" ;;
+      parent) parties="${parties:+$parties + }chantier #$valeur" ;;
+      ticket) tickets="${tickets:+$tickets, }#$valeur" ;;
+    esac
+  done < <(grep '^# portee	' "$PLAN" 2>/dev/null)
+  if [ -n "$tickets" ]; then
+    case "$tickets" in
+      *,*) parties="${parties:+$parties + }tickets $tickets" ;;
+      *) parties="${parties:+$parties + }ticket $tickets" ;;
+    esac
+  fi
+  if [ -n "$parties" ]; then
+    printf '%s' "$parties"
+    return 0
+  fi
+  local rails
+  rails="$(grep '^# milestone	' "$PLAN" 2>/dev/null | cut -f3 | sort -u)"
+  case "$rails" in
+    '') printf 'sans consigne' ;;
+    *$'\n'*) printf 'sans consigne — le backlog, rails mêlés' ;;
+    *) printf 'sans consigne — le backlog du rail %s' "$rails" ;;
+  esac
+}
+nb_jalons="$(grep -c '^# milestone	' "$PLAN" 2>/dev/null)" || nb_jalons=0
+if [ "$nb_jalons" -gt 0 ]; then
+  printf 'jalons : %s\n' "$(grep '^# milestone	' "$PLAN" |
+    awk -F '\t' '{ printf "%s%s (%s)", (NR > 1 ? " → " : ""), $2, $3 }')"
 fi
 # Le modèle y est dit EN TOUTES LETTRES, avec d'où il vient (#1269) : « opus » ne dit pas sur quoi le
 # run a tourné, l'identifiant résolu si — et c'est ce qu'on relira dans `run.log`.
-printf 'plan : %s ticket(s) · modèle %s%s · effort %s · %s · %s · %s\n' \
-  "$nb_plan" "$MODELE" "$([ -n "$MODELE_ORIGINE" ] && printf ' (%s)' "$MODELE_ORIGINE")" "$EFFORT" \
+printf 'plan : %s ticket(s) sur %s jalon(s), %s · modèle %s%s · effort %s · %s · %s · %s\n' \
+  "$nb_plan" "$nb_jalons" "$(portee_du_plan)" \
+  "$MODELE" "$([ -n "$MODELE_ORIGINE" ] && printf ' (%s)' "$MODELE_ORIGINE")" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
   "$([ "$TIMEOUT_S" -gt 0 ] && printf 'timeout %s/ticket' "$(duree_lisible "$TIMEOUT_S")" || printf 'sans délai')" \
   "$(concurrence_libelle)"
@@ -3171,6 +3204,17 @@ grep -v '^#' "$PLAN" | while IFS=$'\t' read -r rang iid parent prio groupe titre
     "$([ "$parent" != "-" ] && printf ' (lot de #%s)' "$parent")"
 done
 printf '\n'
+
+# Ce qui a été DEMANDÉ et ne part pas (#1054), relu dans le plan : c'est ce qui le rend aussi à la
+# reprise d'un run, et c'est pourquoi `queue.sh` tait sa propre annonce quand c'est lui qui l'appelle
+# (MAESTRO_QUEUE_ANNONCE_DEMANDES=0). MUET quand tout ce qui est demandé est au plan.
+if grep -q '^# demande-ecartee	' "$PLAN" 2>/dev/null; then
+  printf 'demandés : ces tickets ont été demandés et ne partent pas — chacun avec sa cause :\n'
+  grep '^# demande-ecartee	' "$PLAN" | while IFS=$'\t' read -r _ i c t; do
+    printf '           #%-5s %s — %s\n' "$i" "$c" "$t"
+  done
+  printf '\n'
+fi
 
 # L'arbitrage manquant, s'il y en a (#562, docs/10 §5.1). Le plan le porte lui-même en lignes de
 # commentaire, donc rien n'est relu ni recalculé ici — et un plan d'avant ce lot, rejoué par
@@ -3237,6 +3281,42 @@ if [ "$DRY" = 1 ]; then
 fi
 
 printf '# iid\tverdict\tmr\tduree_s\tcout_usd\traison\n' >"$RESUME"
+
+# --- Les jalons qui attendaient déjà leur bouclage (#1055, chantier #1052) ---------------------------
+# La frontière de jalon était le point d'arrêt qui faisait qu'un humain VOYAIT un jalon soldé : un run
+# ne traitait qu'un jalon, et le solder était sa fin. Le plan traverse désormais les jalons (#1053),
+# donc le run ne s'arrête plus là — il le DIT, en fin de run (`bouclage_nomme`), pour chaque jalon
+# devenu soldé pendant qu'il tournait. « Devenu » demande de savoir ce qui l'était DÉJÀ : c'est cette
+# photo, prise avant le premier ticket.
+#
+# LA CONVOCATION N'EST PAS RÉÉCRITE : c'est `milestones-a-boucler` (#758), qui rend les jalons actifs
+# entièrement soldés SANS verdict consigné — le pied de `/backlog` et `doctor.sh` lisent le même.
+# Partage de #562 : ce qui est automatique est la détection du manque, jamais le verdict.
+#
+# UNE REPRISE garde la photo du run qu'elle continue, recopiée AVANT le ménage du journal : elle dit
+# l'état au vrai départ, et un jalon soldé entre la coupure et la reprise a bien été soldé par ce
+# plan. Une photo illisible (forge muette) n'est pas une photo vide : aucun fichier n'est écrit, et
+# la fin de run se rabat sur les seuls jalons que le plan traverse.
+#
+# BEST-EFFORT, comme `audit.txt` et les résidus `.claude/` : ni le verdict ni le code du run n'en
+# dépendent. Une lecture REST au départ, une à la fin. MAESTRO_ORCHESTRATE_BOUCLAGE=0 l'éteint.
+BOUCLAGE_DEPART="$RUN_DIR/a-boucler.tsv"
+bouclage_photo() {
+  [ "${MAESTRO_ORCHESTRATE_BOUCLAGE:-1}" != 0 ] || return 0
+  if [ "$REPRISE" = 1 ] && [ -n "$REPRISE_DIR" ] && [ -f "$REPRISE_DIR/a-boucler.tsv" ]; then
+    cp "$REPRISE_DIR/a-boucler.tsv" "$BOUCLAGE_DEPART" 2>/dev/null || true
+    return 0
+  fi
+  local sortie rc=0
+  sortie="$(gl_milestones_a_boucler 2>/dev/null </dev/null)" || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$sortie" >"$BOUCLAGE_DEPART" ;;
+    # Code 3 : aucun jalon à boucler au départ — une photo VIDE, qui est une réponse.
+    3) : >"$BOUCLAGE_DEPART" ;;
+  esac
+  return 0
+}
+bouclage_photo
 
 # `main` remise à niveau avant de commencer (#283) : fetch + fast-forward, par le helper qui porte
 # déjà ce geste (#205) — jamais un `git pull` réimplémenté ici.
@@ -4811,6 +4891,45 @@ EOF
   return 0
 }
 
+# --- Les jalons soldés pendant le run, nommés (#1055) ----------------------------------------------------
+# La moitié qui PARLE de la photo prise au départ (`bouclage_photo`) : chaque jalon qui attend son
+# bouclage maintenant et ne l'attendait pas alors est nommé, avec la commande qui le boucle. Rien
+# d'autre : aucun verdict, aucune fermeture, aucune écriture — `/milestone-bilan` PROPOSE un verdict,
+# et c'est une personne qui le rend (#759, #760).
+#
+# APRÈS le drain final : c'est un merge qui ferme le dernier ticket d'un jalon, et la file vient de
+# se vider. Sans photo lisible, seuls les jalons du plan sont nommés — le run ne prétend pas avoir
+# soldé ce qu'il n'a jamais touché. MUET quand il n'y a rien, comme `milestones-a-boucler` lui-même.
+bouclage_nomme() {
+  [ "${MAESTRO_ORCHESTRATE_BOUCLAGE:-1}" != 0 ] || return 0
+  local sortie rc=0 nouveaux titre rail
+  sortie="$(gl_milestones_a_boucler 2>/dev/null </dev/null)" || rc=$?
+  [ "$rc" = 0 ] || return 0
+  if [ -f "$BOUCLAGE_DEPART" ]; then
+    # Le premier fichier se reconnaît à son NOM : la photo peut être vide, et `FNR == NR` prendrait
+    # alors les lignes de l'entrée standard pour les siennes.
+    nouveaux="$(printf '%s\n' "$sortie" | awk -F '\t' '
+      FILENAME == ARGV[1] { if ($1 !~ /^#/) deja[$1] = 1; next }
+      $1 !~ /^#/ && $1 != "" && !($1 in deja)
+    ' "$BOUCLAGE_DEPART" -)"
+  else
+    nouveaux="$(printf '%s\n' "$sortie" | awk -F '\t' '
+      FILENAME == ARGV[1] { if ($1 == "# milestone") plan[$2] = 1; next }
+      $1 !~ /^#/ && ($1 in plan)
+    ' "$PLAN" -)"
+  fi
+  [ -n "$nouveaux" ] || return 0
+  printf '\n  %sJalons soldés pendant ce run%s — à boucler ; aucun verdict n'\''est rendu ici (#758) :\n' \
+    "$C_Y" "$C_0"
+  while IFS=$'\t' read -r titre rail _; do
+    [ -n "$titre" ] || continue
+    printf '    %s (%s) → /milestone-bilan "%s"\n' "$titre" "$rail" "$titre"
+  done <<EOF
+$nouveaux
+EOF
+  return 0
+}
+
 printf '%sRésumé du run %s%s\n' "$C_B" "$RUN_ID" "$C_0"
 printf '  %s✓%s %s réussi(s) · %s✗%s %s en échec · %s~%s %s sauté(s)\n' \
   "$C_G" "$C_0" "$NB_OK" "$C_R" "$C_0" "$NB_ECHEC" "$C_Y" "$C_0" "$NB_SAUTE"
@@ -4847,6 +4966,8 @@ merge_bilan
 # JUSTE APRÈS LES MERGES, et c'est le seul endroit qui a du sens : le bloc ci-dessus vient de dire
 # quelles PR sont parties dans `main`, et celui-ci dit ce que ces merges viennent d'enterrer.
 residus_claude
+# Et ce que ces merges viennent de SOLDER (#1055) : même moment, pour la même raison.
+bouclage_nomme
 # « Aucun merge non vérifié » n'a jamais voulu dire « aucun merge » — depuis #417 c'est l'inverse,
 # et le run merge désormais lui-même. Ce qui reste vrai, et qui est la seule chose à dire ici :
 # chaque merge est passé par `merge-mr`, qui vérifie avant de merger, et rien n'a été fermé.

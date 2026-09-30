@@ -246,6 +246,16 @@ if [ "$1" = "api" ]; then
         sed -i "s/^\\(labels:.*\\)$/\\1, $label/" "$FIX/issue-$iid.txt"
       printf '[]'
       exit 0 ;;
+    # La convocation au bouclage (`milestones-a-boucler`, #758) : la photo du départ d'un run, puis
+    # sa fin (#1055). La réponse est celle que rend le `--jq` du verbe — titre, fermés, total,
+    # description en base64 —, servie PAR LE RANG DE L'APPEL : `a-boucler-<n>.tsv` pour le n-ième
+    # (vide = aucun jalon à boucler), forge muette sans fixture. Une transition par le rang, jamais
+    # par un minuteur (#648) ; `gh.log` a déjà journalisé CET appel.
+    *"milestones?state=open"*)
+      n="$(grep -c 'milestones?state=open' "$FIX/gh.log")"
+      [ -f "$FIX/a-boucler-$n.tsv" ] || exit 1
+      cat "$FIX/a-boucler-$n.tsv"
+      exit 0 ;;
     *"actions/runs?branch="*)
       branche="${requete#*actions/runs?branch=}"; branche="${branche%%&*}"
       # Un pipeline qui TOURNE encore, puis rend son vert (#987) : `run-<branche>.en-cours` porte le
@@ -5077,19 +5087,25 @@ def test_le_plan_global_ne_lit_pas_un_ticket_qu_il_ecarte(depot: Depot) -> None:
         "une vue par candidat du rail, et pas une de plus"
 
 
-def test_l_en_tete_du_run_compte_les_jalons_traverses(depot: Depot) -> None:
-    """Le plan global porte une ligne par jalon : le run annonce le premier, comme avant, et dit
-    qu'il ne s'arrête pas à sa frontière. Nommer chacun est le lot 3 (#1055)."""
+def test_l_en_tete_du_run_nomme_les_jalons_traverses(depot: Depot) -> None:
+    """Le plan global porte une ligne par jalon : l'en-tête du run les nomme tous, dans l'ordre du
+    plan et chacun avec son rail (#1055), au lieu du seul premier suivi d'un compte."""
     plan = Path(_plan(depot, [(1, 130, "-", "moyenne")]))
     seul = plan.read_text(encoding="utf-8") + "# milestone\tPhase A\tproduit\n"
     plan.write_text(seul, encoding="utf-8", newline="\n")
     r = depot.lance("run.sh", "--dry-run", "--plan", str(plan), "--run-id", "jalon-seul")
-    assert "milestone : Phase A · rail produit\n" in r.stdout, r.stdout + r.stderr
+    assert "jalons : Phase A (produit)\n" in r.stdout, r.stdout + r.stderr
 
-    plan.write_text(seul + "# milestone\tPhase B\tproduit\n# milestone\tPhase C\tproduit\n",
+    plan.write_text(seul + "# milestone\tPhase B\tproduit\n# milestone\tOutils\toutillage\n",
                     encoding="utf-8", newline="\n")
     r = depot.lance("run.sh", "--dry-run", "--plan", str(plan), "--run-id", "jalons")
-    assert "milestone : Phase A · rail produit · puis 2 autre(s) jalon(s) du rail" in r.stdout, \
+    assert "jalons : Phase A (produit) → Phase B (produit) → Outils (outillage)\n" in r.stdout, \
+        r.stdout + r.stderr
+
+    # Un plan sans aucune ligne de jalon (des tickets sans jalon) n'en invente pas.
+    r = depot.lance("run.sh", "--dry-run", "--plan", _plan(depot, [(1, 130, "-", "moyenne")]),
+                    "--run-id", "sans-jalon")
+    assert "jalons :" not in r.stdout and "plan : 1 ticket(s) sur 0 jalon(s)" in r.stdout, \
         r.stdout + r.stderr
 
 
@@ -5292,6 +5308,150 @@ def test_run_transmet_la_portee_a_queue(depot: Depot) -> None:
     plan = _plan(depot, [(1, 130, "-", "moyenne")])
     r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--ticket", "540", "--run-id", "fige")
     assert "portée demandée sans effet — le plan est déjà figé (--plan)" in r.stderr, r.stderr
+
+
+# =====================================================================================
+# Un plan qui traverse les jalons le dit (#1055, chantier #1052)
+# =====================================================================================
+# La ligne `plan :` nomme la portée, le nombre de tickets et le nombre de jalons ; ce qui a été
+# demandé et ne part pas s'annonce une fois, relu dans le plan ; chaque jalon soldé pendant le run
+# est nommé en fin de run, avec la commande qui le boucle — sans qu'aucun verdict soit rendu.
+
+def _ligne_plan(sortie: str) -> str:
+    """La ligne `plan :` de l'en-tête d'un run, jusqu'au modèle (le reste est un autre sujet)."""
+    ligne = next(ligne for ligne in sortie.splitlines() if ligne.startswith("plan : "))
+    return ligne.split(" · modèle")[0]
+
+
+def test_la_ligne_plan_nomme_la_portee_les_tickets_et_les_jalons(depot: Depot) -> None:
+    """C1 : la portée demandée (ou son absence), le nombre de tickets et de jalons traversés, sur la
+    ligne `plan :` — pour un plan calculé comme pour un plan rejoué."""
+    _chantier_a_travers_les_jalons(depot)
+
+    # Sans consigne : le plan global du rail produit, sur ses deux jalons.
+    r = depot.lance("run.sh", "--dry-run", "--run-id", "global")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _ligne_plan(r.stdout) == \
+        "plan : 8 ticket(s) sur 2 jalon(s), sans consigne — le backlog du rail produit", r.stdout
+
+    # Un chantier qui traverse les deux rails : la portée demandée, et ses trois jalons nommés.
+    r = depot.lance("run.sh", "--dry-run", "--parent", "700", "--run-id", "chantier-dit")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _ligne_plan(r.stdout) == "plan : 3 ticket(s) sur 3 jalon(s), chantier #700", r.stdout
+    assert "jalons : Phase B (produit) → Phase A (produit) → Outillage (outillage)\n" in r.stdout
+
+    # Les portées cumulées se disent toutes, dans l'ordre où le plan les porte.
+    r = depot.lance("run.sh", "--dry-run", "--milestone", "Outillage", "--parent", "500",
+                    "--ticket", "530", "540", "--run-id", "cumul-dit")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _ligne_plan(r.stdout) == (
+        "plan : 6 ticket(s) sur 3 jalon(s), "
+        "jalon « Outillage » + chantier #500 + tickets #530, #540"
+    ), r.stdout
+
+    # Rejoué (`--plan`, comme `--resume`) : la portée vient du plan, pas de la ligne de commande.
+    fige = depot.racine / "plan-fige.tsv"
+    fige.write_text(depot.lance("queue.sh", "--ticket", "540").stdout, encoding="utf-8",
+                    newline="\n")
+    r = depot.lance("run.sh", "--dry-run", "--plan", str(fige), "--run-id", "rejoue-dit")
+    assert _ligne_plan(r.stdout) == "plan : 1 ticket(s) sur 1 jalon(s), ticket #540", r.stdout
+
+
+def test_les_demandes_ecartees_s_annoncent_une_fois_relues_dans_le_plan(depot: Depot) -> None:
+    """Ce qui a été demandé et ne part pas s'annonce dans l'en-tête du run, relu dans le plan — donc
+    aussi à la reprise — et `queue.sh` tait alors sa propre annonce : les mêmes lignes une fois."""
+    _backlog_deux_jalons(depot)
+    depot.ticket(800, "Pris par alice", statut="En cours", assigne="alice")
+    depot.publie()
+
+    # Le motif : appelé seul, `queue.sh` annonce l'écarté sur stderr.
+    assert "#800" in depot.lance("queue.sh", "--ticket", "800", "540").stderr
+
+    r = depot.lance("run.sh", "--dry-run", "--ticket", "800", "540", "--run-id", "demandes")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "demandés : ces tickets ont été demandés et ne partent pas" in r.stdout, r.stdout
+    assert "#800   cycle de vie « En cours » — demandé par --ticket — Pris par alice" in r.stdout
+    assert "hors du plan" not in r.stderr, "queue.sh se tait : l'en-tête du run le dit déjà"
+    assert (r.stdout + r.stderr).count("#800 ") == 1, "une seule annonce"
+
+    # Rejoué, le plan le dit encore — c'est ce que l'annonce de `queue.sh` ne ferait jamais.
+    fige = depot.racine / "plan-demandes.tsv"
+    fige.write_text(depot.lance("queue.sh", "--ticket", "800", "540").stdout, encoding="utf-8",
+                    newline="\n")
+    r = depot.lance("run.sh", "--dry-run", "--plan", str(fige), "--run-id", "demandes-rejoue")
+    assert "#800   cycle de vie « En cours »" in r.stdout, r.stdout
+
+
+def _a_boucler(depot: Depot, rang: int, jalons: list[tuple[str, int]]) -> None:
+    """La réponse de `milestones-a-boucler` au `rang`-ième appel : (titre, tickets fermés) chacun,
+    tous soldés et sans description — donc rail produit, sans verdict. `[]` : aucun à boucler."""
+    (depot.fixtures / f"a-boucler-{rang}.tsv").write_text(
+        "".join(f"{titre}\t{n}\t{n}\t\n" for titre, n in jalons), encoding="utf-8", newline="\n"
+    )
+
+
+def _run_court(depot: Depot, run_id: str, jalons: list[str]) -> subprocess.CompletedProcess:
+    """Un vrai run (pas un --dry-run) qui va jusqu'au résumé sans ouvrir de session : son ticket a
+    été pris entre-temps, donc sauté. Le plan porte les lignes `# milestone` voulues."""
+    depot.ticket(130, "Déjà pris", statut="En cours", assigne="alice")
+    depot.publie()
+    plan = Path(_plan(depot, [(1, 130, "-", "moyenne")]))
+    plan.write_text(plan.read_text(encoding="utf-8")
+                    + "".join(f"# milestone\t{j}\tproduit\n" for j in jalons),
+                    encoding="utf-8", newline="\n")
+    claude = _claude_stub(depot, 'echo "la session ne doit jamais démarrer" >&2\nexit 1\n')
+    return depot.lance("run.sh", "--plan", str(plan), "--run-id", run_id,
+                       env={"MAESTRO_CLAUDE_BIN": claude})
+
+
+def test_un_jalon_solde_pendant_le_run_est_nomme_en_fin_de_run(depot: Depot) -> None:
+    """C3 : chaque jalon devenu soldé PENDANT le run est nommé, avec `/milestone-bilan`, et aucun
+    verdict n'est rendu — celui qui l'était déjà au départ ne l'est pas."""
+    depot.milestone("Phase A")
+    _a_boucler(depot, 1, [("Phase Ancienne", 4)])
+    _a_boucler(depot, 2, [("Phase Ancienne", 4), ("Phase A", 5)])
+
+    r = _run_court(depot, "bouclage", ["Phase A", "Phase Ancienne"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert 'Phase A (produit) → /milestone-bilan "Phase A"' in r.stdout, r.stdout
+    # Le motif : « Phase Ancienne » est au plan ET soldée à la fin — seule la photo du départ,
+    # qui la portait déjà, la tient dehors.
+    assert '/milestone-bilan "Phase Ancienne"' not in r.stdout, \
+        "soldée avant le run : pas de son fait"
+    assert "aucun verdict n'est rendu ici" in r.stdout
+
+    appels = (depot.fixtures / "gh.log").read_text(encoding="utf-8").splitlines()
+    assert sum("milestones?state=open" in a for a in appels) == 2, "une photo, une fin"
+    assert not any("PATCH" in a or "milestone-verdict" in a for a in appels), \
+        "aucune écriture de jalon : le verdict se propose ailleurs, par une personne"
+    assert (depot.racine / ".maestro/orchestrate/bouclage/a-boucler.tsv").is_file(), \
+        "la photo reste au journal : une reprise la relit"
+
+
+def test_sans_photo_du_depart_seuls_les_jalons_du_plan_sont_nommes(depot: Depot) -> None:
+    """Une forge muette au départ n'est pas « rien à boucler » : le run ne prétend alors avoir soldé
+    que ce qu'il a touché — les jalons de son plan."""
+    depot.milestone("Phase A")
+    _a_boucler(depot, 2, [("Phase A", 5), ("Phase d'ailleurs", 3)])  # le 1er appel échoue
+
+    r = _run_court(depot, "sans-photo", ["Phase A"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert 'Phase A (produit) → /milestone-bilan "Phase A"' in r.stdout, r.stdout
+    assert "/milestone-bilan \"Phase d'ailleurs\"" not in r.stdout, \
+        "hors du plan : le run ne l'a pas soldée"
+    assert not (depot.racine / ".maestro/orchestrate/sans-photo/a-boucler.tsv").exists(), \
+        "une photo illisible n'est pas une photo vide"
+
+
+def test_rien_de_solde_pendant_le_run_ne_dit_rien(depot: Depot) -> None:
+    """Muet quand il n'y a rien, comme `milestones-a-boucler` lui-même : un signalement nominal
+    apprend à ne plus lire les signalements."""
+    depot.milestone("Phase A")
+    _a_boucler(depot, 1, [])
+    _a_boucler(depot, 2, [])
+    r = _run_court(depot, "rien-a-boucler", ["Phase A"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "/milestone-bilan" not in r.stdout and "Jalons soldés" not in r.stdout
 
 
 # =====================================================================================
@@ -5500,25 +5660,45 @@ def test_un_orphelin_est_liste_sans_jamais_entrer_dans_le_plan(depot: Depot) -> 
     assert "silencieux depuis 19h02" in lignes[0][5], "le détail voyage tel quel"
 
 
-def test_seuls_les_orphelins_du_milestone_visé_sont_listes(depot: Depot) -> None:
-    """Un run porte sur un milestone : un orphelin d'ailleurs ne rejoindrait pas CE plan.
+def test_seuls_les_orphelins_de_la_portee_du_plan_sont_listes(depot: Depot) -> None:
+    """Un orphelin d'ailleurs ne rejoindrait pas CE plan : la sortie suit la portée du plan (#1055).
 
-    Le signalement global existe déjà (`reconcile-en-cours`, `doctor.sh`) — cette sortie-ci répond à
-    « qu'est-ce qui manque au plan que je m'apprête à lancer ? ».
+    Sans consigne, le plan traverse les jalons du rail produit (#1053) : l'orphelin d'un jalon
+    SUIVANT en est, et le taire serait taire un ticket que le run prendrait une fois repris ;
+    celui de l'autre rail n'en est pas. Une portée demandée restreint de même. Le signalement
+    global existe déjà (`reconcile-en-cours`, `doctor.sh`) — cette sortie-ci répond à « qu'est-ce
+    qui manque au plan que je m'apprête à lancer ? ».
     """
-    depot.milestones([("Phase X", "active", 0, 2), ("Phase Y", "active", 0, 1)])
-    depot.ticket(316, "Du milestone courant", statut="En cours")
-    depot.ticket(299, "D'une autre phase", statut="En cours")
+    depot.milestones([("Phase X", "active", 0, 2), ("Phase Y", "active", 0, 1),
+                      ("Outils", "active", 0, 1, "outillage")])
+    depot.ticket(316, "Du milestone courant", statut="En cours", jalon="Phase X")
+    depot.ticket(299, "D'une phase suivante", statut="En cours", jalon="Phase Y")
+    depot.ticket(400, "De l'outillage", statut="En cours", jalon="Outils")
+    depot.ticket(401, "Sans jalon", statut="En cours", jalon=None)
     depot.publie()
-    depot.milestone_tickets("Phase X", [316])
-    depot.milestone_tickets("Phase Y", [299])
     source = _source_orphelins(
         depot,
         "316\torphelin\tdéduction\tmuet depuis 19h02 — /wt/316\tDu milestone courant\n"
-        "299\torphelin\tdéduction\tmuet depuis 3j — /wt/299\tD'une autre phase\n",
+        "299\torphelin\tdéduction\tmuet depuis 3j — /wt/299\tD'une phase suivante\n"
+        "400\torphelin\tdéduction\tmuet depuis 2j — /wt/400\tDe l'outillage\n"
+        "401\torphelin\tdéduction\tmuet depuis 5h — /wt/401\tSans jalon\n",
     )
 
-    assert [ligne[0] for ligne in _orphelins(depot, source)] == ["316"]
+    # Le motif : le jalon courant est « Phase X » — la sortie d'avant #1055 ne listait que 316.
+    assert depot.lib("current-milestone").stdout.strip() == "Phase X"
+    assert [ligne[0] for ligne in _orphelins(depot, source)] == ["316", "299", "401"], \
+        "le plan sans consigne : les jalons du rail produit, et le sans-jalon qu'il range en fin"
+
+    def restreint(*portee: str) -> list[str]:
+        r = depot.lance("queue.sh", "--orphelins", *portee,
+                        env={"MAESTRO_ORPHELINS_SOURCE": source})
+        assert r.returncode == 0, r.stderr
+        return [ligne.split("\t")[0] for ligne in r.stdout.splitlines()
+                if ligne and not ligne.startswith("#")]
+
+    assert restreint("--milestone", "Phase X") == ["316"]
+    assert restreint("--milestone", "Outils") == ["400"], "une portée explicite traverse le rail"
+    assert restreint("--ticket", "299", "401") == ["299", "401"]
 
 
 def test_un_ticket_vivant_n_est_jamais_propose(depot: Depot) -> None:
