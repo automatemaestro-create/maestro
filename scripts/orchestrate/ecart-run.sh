@@ -192,7 +192,7 @@ QUESTIONS=$(
   cat <<'TSV'
 veille de conception (« qu'est-ce qu'on vise ? »)	/ticket-start étape 5 · #714	veille-differe
 reprise d'un ticket orphelin	/orchestrate, feu vert · #327
-choix du milestone du run	/orchestrate, feu vert · §11.2
+choix de la portée du run	/orchestrate, feu vert · §11.2
 arbitrage lot::arbitre d'un parent	/orchestrate, feu vert · #562
 correctif resté sous .claude/	session de run · #608	reste-claude
 TSV
