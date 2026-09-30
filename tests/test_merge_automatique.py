@@ -256,6 +256,137 @@ def test_une_pr_qui_ne_ferme_pas_son_ticket_n_est_pas_mergee(depot: Depot) -> No
     assert "set-mr-description" in r.stderr, "le remède passe par le helper, pas par un --body"
 
 
+# --- Le lien que GitHub n'a pas posé (#1386) ----------------------------------------------------
+# Le 2026-09-30, deux PR de suite (#1384, #1385) ont été refusées en `6` alors que leur description
+# commençait par `Closes #<iid>` : GitHub, par intermittence et sur d'autres dépôts aussi, n'en
+# tirait aucun lien (`closingIssuesReferences` vide, `willCloseTarget: false`), et aucune API ne
+# permet de le poser. Le prérequis garde son sens — on ne merge que ce qui ferme le ticket traité —
+# mais change de SOURCE quand la forge se tait : la fermeture DÉCLARÉE dans la description, que
+# `merge-mr` tient alors lui-même en fermant le ticket après le merge.
+
+
+def _sans_lien(
+    depot: Depot,
+    corps: str | None,
+    etat_ticket: str = "open",
+    fermeture: dict | None = None,
+) -> str:
+    """Le décor nominal, à UNE pièce près : GitHub n'a lié la PR à aucun ticket.
+
+    `corps` est la description de la PR telle que la lit `--jq .body` (None : la forge ne la rend
+    pas), `etat_ticket` l'état du ticket relu après le merge, `fermeture` la réponse au PATCH qui le
+    ferme — par défaut, celle d'un ticket fermé.
+    """
+    sha = _branche(depot, BRANCHE, {"livrable.txt": "le travail du ticket\n"})
+    rest: list[dict] = [regle_run(BRANCHE, sha=sha), {"contient": [f"issues/{IID}"],
+                                                      "brut": etat_ticket + "\n"}]
+    if corps is not None:
+        rest.append({"contient": [f"pulls/{PR}"], "brut": corps})
+    depot.pose_etat(
+        graphql=[regle_pr(BRANCHE, pr=PR, sha=sha, ferme=()), regle_prs_ouvertes((BRANCHE,))],
+        rest=rest,
+        ecritures=[
+            regle_merge(PR),
+            {"contient": [f"issues/{IID}"],
+             "reponse": fermeture or {"number": IID, "state": "closed",
+                                      "state_reason": "completed"}},
+        ],
+    )
+    return sha
+
+
+def _fermetures(depot: Depot) -> list[str]:
+    return [ligne for ligne in depot.appels()
+            if f"issues/{IID}" in ligne and ("-X\tPATCH" in ligne or "--method\tPATCH" in ligne)]
+
+
+def test_une_pr_que_github_n_a_pas_liee_mais_qui_declare_fermer_est_mergee(depot: Depot) -> None:
+    """Le cas du 2026-09-30 : pas de lien, un `Closes #7` écrit. La PR est mergée, et le ticket
+    fermé par `merge-mr` en « completed » — sans quoi il resterait ouvert et sans « Terminé »."""
+    sha = _sans_lien(depot, f"Closes #{IID}\n\nLe travail du ticket.\n")
+
+    # Le motif : l'échantillon est bien celui du 30 septembre — la forge ne lie la PR à rien.
+    faits = depot.bash_inline(f". scripts/gitlab/lib.sh\ngh_merge_facts {BRANCHE}\n")
+    assert faits.stdout.rstrip("\n").split("\t")[-1] == "-", faits.stdout + faits.stderr
+
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    put = [ligne for ligne in depot.appels() if f"pulls/{PR}/merge" in ligne]
+    assert len(put) == 1 and f"sha={sha}" in put[0], "les autres prérequis tiennent, sha compris"
+    fermeture = _fermetures(depot)
+    assert len(fermeture) == 1, f"le ticket est fermé, une fois : {depot.appels()}"
+    assert "state=closed" in fermeture[0] and "state_reason=completed" in fermeture[0], \
+        "« completed » : c'est la raison que lit le workflow qui pose « Terminé » (#377)"
+    assert "lien" in (r.stdout + r.stderr), "la sortie dit que la forge n'avait pas lié la PR"
+    assert f"#{IID} fermé" in r.stdout
+
+
+@pytest.mark.parametrize("corps", [
+    f"Refs #{IID} — rien à fermer ici.\n",
+    f"Closes #{IID}0\n",
+    "Closes #999\n",
+    f"Sous-ticket de #{IID}\n",
+    "",
+])
+def test_sans_lien_ni_fermeture_declaree_la_pr_reste_refusee(depot: Depot, corps: str) -> None:
+    """La déclaration doit viser CE ticket, par un mot-clé de fermeture : ni une mention, ni un
+    autre iid, ni un iid dont celui-ci ne serait que le préfixe."""
+    _sans_lien(depot, corps)
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 6, r.stdout + r.stderr
+    assert f"ne ferme pas #{IID}" in r.stderr
+    assert ecritures(depot) == [], "ni merge, ni fermeture"
+
+
+def test_une_description_illisible_n_est_pas_une_declaration(depot: Depot) -> None:
+    """Forge muette sur la description : on ne merge pas au jugé ce qu'on n'a pas pu lire."""
+    _sans_lien(depot, None)
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 6, r.stdout + r.stderr
+    assert ecritures(depot) == []
+
+
+@pytest.mark.parametrize("corps", [
+    f"fixes: #{IID}\n",
+    f"Le travail.\r\n\r\nRESOLVED #{IID}\r\n",
+    f"Closes https://github.com/equipe-test/maestro/issues/{IID}\n",
+    f"Closes equipe-test/maestro#{IID}.\n",
+])
+def test_les_formes_de_fermeture_de_github_sont_reconnues(depot: Depot, corps: str) -> None:
+    """Les mots-clés de GitHub, leurs casses, le deux-points, et les formes qualifiées par le dépôt
+    — celles que GitHub lui-même accepte, et pas une de plus."""
+    _sans_lien(depot, corps)
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_un_ticket_deja_ferme_par_github_n_est_pas_referme(depot: Depot) -> None:
+    """GitHub peut fermer le ticket de lui-même, par le `Closes` du commit de squash : on constate,
+    on ne referme pas."""
+    _sans_lien(depot, f"Closes #{IID}\n", etat_ticket="closed")
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _fermetures(depot) == []
+
+
+def test_une_fermeture_refusee_est_nommee_sans_defaire_le_merge(depot: Depot) -> None:
+    """Le merge a eu lieu : son code reste `0`. Mais un ticket resté ouvert est nommé, avec le geste
+    qui le ferme — il ne passerait jamais « Terminé » tout seul."""
+    _sans_lien(depot, f"Closes #{IID}\n", fermeture={"message": "refus simulé"})
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"#{IID} est resté ouvert" in r.stderr, r.stderr
+    assert f"gh issue close {IID} --reason completed" in r.stderr
+
+
+def test_check_dit_la_fermeture_declaree_sans_rien_ecrire(depot: Depot) -> None:
+    _sans_lien(depot, f"Closes #{IID}\n")
+    r = depot.lib("merge-mr", BRANCHE, "--check")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "lien" in r.stdout and f"#{IID}" in r.stdout
+    assert ecritures(depot) == []
+
+
 # --- Prérequis 2 : rien de non poussé -----------------------------------------------------------
 
 

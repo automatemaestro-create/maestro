@@ -6288,7 +6288,9 @@ gl_mr_conflict() {
 # Les quatre prérequis, dans l'ordre où ils sont éprouvés — du plus décisif au plus cher. L'ordre
 # est le contenu de la décision : attendre un pipeline sur une branche qui ne pourra pas être
 # mergée de toute façon, c'est payer une attente pour un verdict sans objet.
-#   1. une PR OUVERTE, non brouillon, qui FERME le ticket ;
+#   1. une PR OUVERTE, non brouillon, qui FERME le ticket — par le lien que la forge en a tiré, ou,
+#      quand elle n'en a tiré aucun, par la fermeture que la PR DÉCLARE (#1386, voir
+#      gh_pr_declare_fermer) : le verbe ferme alors le ticket lui-même après le merge ;
 #   2. rien de NON POUSSÉ — merger moins que ce qui existe est une perte silencieuse ;
 #   3. aucun CONFLIT réel avec origin/main ;
 #   4. un pipeline VERT, et vert SUR LA TÊTE DE LA PR.
@@ -6352,6 +6354,62 @@ gh_merge_facts() {
   fermetures="$(printf '%s' "$raw" | gh_bloc closingIssuesReferences \
                 | grep -o '"number":[0-9]*' | sed 's/.*://' | paste -sd, - 2>/dev/null)"
   printf '%s\t%s\t%s\t%s\t%s\n' "$etat" "$mr" "${sha:--}" "$brouillon" "${fermetures:--}"
+}
+
+# gh_pr_declare_fermer <pr> <iid> -> 0 si la DESCRIPTION de la PR déclare fermer ce ticket par un
+# mot-clé de fermeture de GitHub, 1 sinon — description illisible comprise.
+#
+# LE REPLI DE #1386, ET SEULEMENT LUI. La source du prérequis 1 reste `closingIssuesReferences`
+# (gh_merge_facts) : c'est la forge qui dit ce que le merge fermera. Mais le 2026-09-30 GitHub a
+# cessé, par intermittence et sur d'autres dépôts aussi, d'en tirer un lien d'une description qui
+# commençait pourtant par « Closes #<iid> » (`willCloseTarget: false` — PR #1384 et #1385, refusées
+# en 6 alors que rien n'avait changé de notre côté), et aucune API ne pose ce lien. On relit alors
+# ce que la PR DÉCLARE, et `merge-mr` tient la déclaration en fermant le ticket lui-même.
+#
+# Les formes sont celles de GitHub, et pas une de plus : les neuf mots-clés (close/closes/closed,
+# fix/fixes/fixed, resolve/resolves/resolved), toute casse, un deux-points facultatif, puis
+# `#<iid>`, `<dépôt>#<iid>` ou l'URL du ticket DANS CE DÉPÔT. L'iid est borné des deux côtés : « #70 »
+# ne déclare pas #7, et une mention (« Refs #7 », « Sous-ticket de #7 ») n'est pas une fermeture.
+#
+# Une lecture REST, payée seulement quand la forge n'a pas lié la PR : le cas nominal ne coûte rien
+# de plus (#602). Le motif ne voyage pas par `grep -e` depuis une variable du corps : le corps est la
+# DONNÉE, lue sur l'entrée standard, jamais interprétée.
+gh_pr_declare_fermer() {
+  local mr="$1" iid="$2" corps depot hote
+  if [ -z "$mr" ] || [ -z "$iid" ]; then echo "usage: gh_pr_declare_fermer <pr> <iid>" >&2; return 2; fi
+  case "$mr$iid" in *[!0-9]*) echo "gh_pr_declare_fermer : numéros attendus" >&2; return 2 ;; esac
+  corps="$(gh api "repos/$GL_GH_REPO/pulls/$mr" --jq .body 2>/dev/null)" || return 1
+  depot="$(printf '%s' "$GL_GH_REPO" | sed 's/[.]/\\./g')"
+  hote="$(gl_host | sed 's/[.]/\\./g')"
+  printf '%s\n' "$corps" | grep -Eiq \
+    "(^|[^[:alnum:]_])(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(#|$depot#|https?://$hote/$depot/issues/)$iid([^[:alnum:]_]|\$)"
+}
+
+# gh_ferme_ticket_du_merge <iid> -> la moitié APRÈS du repli de #1386 : le ticket que la PR mergée
+# déclarait fermer, et que la forge ne fermera pas faute de lien, est fermé ici en « completed » —
+# la raison que lit le workflow `issues: closed` (#377) pour poser « Terminé », fermer le parent et
+# rendre la main à `garde-fermeture`. Déjà fermé (GitHub a pu lire le `Closes` du commit de
+# squash) : constaté, pas refermé.
+#
+# N'échoue jamais : le merge a eu lieu, et son verdict ne dépend pas de cette écriture. Un ticket
+# resté ouvert est NOMMÉ, avec le geste qui le ferme — il ne passerait jamais « Terminé » tout seul.
+gh_ferme_ticket_du_merge() {
+  local iid="$1" etat out
+  etat="$(gh api "repos/$GL_GH_REPO/issues/$iid" --jq .state 2>/dev/null | tr -d '[:space:]')"
+  if [ "$etat" = "closed" ]; then
+    printf '✓ #%s déjà fermé — rien à refermer.\n' "$iid"
+    return 0
+  fi
+  out="$(gh api -X PATCH "repos/$GL_GH_REPO/issues/$iid" \
+        -f state=closed -f state_reason=completed 2>&1)" || true
+  if printf '%s' "$out" | grep -q '"state":[[:space:]]*"closed"'; then
+    printf '✓ #%s fermé par merge-mr (« completed ») — le lien que GitHub n'\''avait pas posé.\n' "$iid"
+    return 0
+  fi
+  printf '⚠ #%s est resté ouvert : la PR est mergée, mais sa fermeture a été refusée.\n' "$iid" >&2
+  printf '%s\n' "$out" | tail -2 | sed 's/^/    /' >&2
+  printf '  le fermer : gh issue close %s --reason completed\n' "$iid" >&2
+  return 0
 }
 
 # gh_branche_fermante <iid> -> la branche de tête de la PR qui FERME ce ticket, PR déjà mergées ou
@@ -6469,17 +6527,26 @@ gl_merge_mr() {
     printf '  la passer en prête d'\''abord : gh pr ready %s\n' "$mr" >&2
     return 6
   fi
+  # `lien_absent` : la forge n'a lié la PR à aucun ticket, mais la PR déclare fermer celui-ci
+  # (#1386). Le merge se fait, et le verbe ferme le ticket lui-même ensuite.
+  local lien_absent=0
   if [ -n "$iid" ]; then
     case ",$fermetures," in
       *",$iid,"*) ;;
       *)
-        # Sans cette référence, le merge laisserait le ticket ouvert ET sans état : plus personne
-        # ne le poserait, le workflow `issues: closed` (#377) n'ayant pas d'événement à écouter.
-        printf '✗ PR #%s (%s) : ne ferme pas #%s (tickets fermés : %s).\n' \
-          "$mr" "$branche" "$iid" "$fermetures" >&2
-        printf '  ajouter « Closes #%s » à sa description : bash scripts/gitlab/lib.sh set-mr-description %s <fichier>\n' \
-          "$iid" "$mr" >&2
-        return 6 ;;
+        if gh_pr_declare_fermer "$mr" "$iid"; then
+          lien_absent=1
+          printf '  ⚠ PR #%s (%s) : GitHub n'\''a pas tiré de lien de son « Closes #%s » — merge-mr fermera le ticket lui-même après le merge (#1386).\n' \
+            "$mr" "$branche" "$iid" >&2
+        else
+          # Sans cette référence, le merge laisserait le ticket ouvert ET sans état : plus personne
+          # ne le poserait, le workflow `issues: closed` (#377) n'ayant pas d'événement à écouter.
+          printf '✗ PR #%s (%s) : ne ferme pas #%s (tickets fermés : %s) — ni lien de la forge, ni fermeture déclarée.\n' \
+            "$mr" "$branche" "$iid" "$fermetures" >&2
+          printf '  ajouter « Closes #%s » à sa description : bash scripts/gitlab/lib.sh set-mr-description %s <fichier>\n' \
+            "$iid" "$mr" >&2
+          return 6
+        fi ;;
     esac
   else
     # Une branche hors convention (`<type>/<iid>-<slug>`) n'est pas forcément illégitime, mais le
@@ -6561,8 +6628,13 @@ gl_merge_mr() {
   # --- Verdict ---------------------------------------------------------------------------------
   [ -z "$inverifiable" ] || printf '  ⚠ %s\n' "$inverifiable" >&2
   if [ "$check" -eq 1 ]; then
-    printf '✓ PR #%s (%s) : mergeable — pipeline vert sur %s, aucun conflit, ferme #%s.\n' \
-      "$mr" "$branche" "${sha:0:8}" "${iid:-?}"
+    if [ "$lien_absent" = 1 ]; then
+      printf '✓ PR #%s (%s) : mergeable — pipeline vert sur %s, aucun conflit, déclare fermer #%s (lien absent chez GitHub : merge-mr le fermera).\n' \
+        "$mr" "$branche" "${sha:0:8}" "$iid"
+    else
+      printf '✓ PR #%s (%s) : mergeable — pipeline vert sur %s, aucun conflit, ferme #%s.\n' \
+        "$mr" "$branche" "${sha:0:8}" "${iid:-?}"
+    fi
     return 0
   fi
 
@@ -6582,6 +6654,7 @@ gl_merge_mr() {
   fi
 
   printf '✓ PR #%s mergée (%s, %s) — ferme #%s.\n' "$mr" "$GL_MERGE_METHOD" "${sha:0:8}" "${iid:-?}"
+  if [ "$lien_absent" = 1 ]; then gh_ferme_ticket_du_merge "$iid"; fi
   # La branche distante part avec le merge (`delete_branch_on_merge`, #384) ; la locale est du
   # ressort de `cleanup-merged`, qui exige que la forge confirme le merge — ce qui vient d'arriver.
   # `sync-main` est best-effort et muet en échec, au même titre qu'ailleurs : un run merge désormais
