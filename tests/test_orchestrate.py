@@ -5455,6 +5455,179 @@ def test_rien_de_solde_pendant_le_run_ne_dit_rien(depot: Depot) -> None:
 
 
 # =====================================================================================
+# Ce que le chantier garde là où un échantillon favorable l'aurait laissé passer (#1056)
+# =====================================================================================
+# Les lots 1 à 3 ont éprouvé chacun son critère sur l'échantillon qui l'exerçait. Ces tests-ci
+# gardent ce que le chantier #1052 promettait EN PLUS, sur les formes que ces échantillons n'avaient
+# pas : la tête du plan quand le jalon d'outillage est le plus tôt échu (la forme réelle du dépôt),
+# un chantier à cheval sur les jalons dans le plan sans consigne, le compte TOTAL d'allers, et le
+# bouclage d'un run repris. Chacun prouve d'abord que son échantillon est FAUTIF pour la régression
+# qu'il garde — sans cette moitié, le vert répondrait à une question jamais posée.
+
+
+def test_la_tete_du_plan_tient_quand_l_outillage_est_le_plus_tot_echu(depot: Depot) -> None:
+    """La tête du plan sans consigne est le plan du jalon courant, sur la forme réelle du dépôt : le
+    jalon d'outillage y est le plus tôt échu (#1055). `_backlog_deux_jalons` le range ENTRE deux
+    jalons produit, où mêler les rails ne changerait pas la tête — ici, si."""
+    depot.milestones([("Outillage", "active", 0, 2, "outillage"), ("Phase A", "active", 1, 3),
+                      ("Phase B", "active", 0, 1)])
+    depot.ticket(550, "Outil prioritaire", prio="haute", jalon="Outillage")
+    depot.ticket(551, "Outil secondaire", prio="basse", jalon="Outillage")
+    depot.ticket(520, "A haute", prio="haute", jalon="Phase A")
+    depot.ticket(510, "A basse", prio="basse", jalon="Phase A")
+    depot.ticket(530, "B haute", prio="haute", jalon="Phase B")
+    depot.publie()
+
+    def plan(*portee: str) -> list[list[str]]:
+        r = depot.lance("queue.sh", *portee)
+        assert r.returncode == 0, r.stderr
+        return _lignes_du_plan(r.stdout)
+
+    # Le motif : l'échantillon est fautif pour un plan qui mêlerait les rails. Pris au plan, les
+    # tickets d'outillage passent DEVANT le jalon courant, par la seule échéance.
+    assert depot.lib("current-milestone").stdout.strip() == "Phase A"
+    mele = [ligne[1] for ligne in plan("--milestone", "Outillage", "--milestone", "Phase A")]
+    assert mele == ["550", "551", "520", "510"], "l'outillage, plus tôt échu, prendrait la tête"
+
+    avant = plan("--milestone", "Phase A")
+    global_ = plan()
+    assert [ligne[1] for ligne in global_] == ["520", "510", "530"]
+    assert global_[:len(avant)] == avant, "la tête est le plan du jalon courant, ligne pour ligne"
+
+
+def test_un_chantier_a_cheval_sur_les_jalons_reste_d_un_bloc_dans_le_plan_global(
+    depot: Depot,
+) -> None:
+    """Le tri du plan sans consigne — échéance, puis `prio::`, puis iid — sur un chantier dont les
+    lots traversent les jalons : il reste d'un bloc, dans l'ordre de son parent, rangé à l'échéance
+    de son lot le plus proche (règle 4 de `queue.sh`), et l'iid départage deux unités de même jalon
+    et de même priorité."""
+    _chantier_a_travers_les_jalons(depot)
+    depot.ticket(600, "A moyenne", jalon="Phase A")
+    depot.publie()
+
+    # Le motif : l'échantillon est fautif pour un tri ticket par ticket. Le lot 1 du chantier est
+    # dans le jalon le plus TARDIF et le lot 2 dans le plus proche : rangés chacun à son échéance,
+    # le lot 2 partirait avant le lot 1, et tout le reste de « Phase A » s'intercalerait entre eux.
+    def jalon_seul(iid: str) -> list[str]:
+        return _commentaires(depot.lance("queue.sh", "--ticket", iid).stdout, "milestone")
+
+    assert jalon_seul("701") == ["# milestone\tPhase B\tproduit"]
+    assert jalon_seul("702") == ["# milestone\tPhase A\tproduit"]
+
+    r = depot.lance("queue.sh")
+    assert r.returncode == 0, r.stderr
+    lignes = _lignes_du_plan(r.stdout)
+    plan = [ligne[1] for ligne in lignes]
+    assert plan == ["520", "501", "502", "600", "701", "702", "510", "530", "540"], \
+        "tout A, chantier compris, avant tout B ; dans A, haute, les moyennes par iid, puis basse"
+
+    # Et l'iid est bien ce qui a tranché : le bloc #500, le ticket 600 et le chantier #700 sont
+    # trois unités du même jalon et de la même priorité.
+    prio = {ligne[1]: ligne[3] for ligne in lignes}
+    assert {prio[i] for i in ("501", "502", "600", "701", "702")} == {"moyenne"}
+    assert plan.index("702") == plan.index("701") + 1, "le chantier reste d'un bloc, dans son ordre"
+    assert "703" not in plan, "son lot d'outillage reste hors du plan sans consigne (rail)"
+    assert _commentaires(r.stdout, "milestone") == [
+        "# milestone\tPhase A\tproduit", "# milestone\tPhase B\tproduit",
+    ]
+
+
+#: Les lectures fixes d'un plan (`queue.sh`, en-tête « Coût en appels ») : le jeton lu en local
+#: (#602), la table des jalons, le jalon de chaque ticket ouvert, et le backlog ouvert — le projet
+#: résolu par son titre, la carte des états (#365), puis ses tickets. Un chiffre de plus ici est une
+#: lecture de plus à CHAQUE plan : elle se décide, elle ne se glisse pas.
+FIXES_DU_PLAN = 6
+
+
+def test_le_compte_d_allers_du_plan_global_ne_suit_que_ses_candidats(depot: Depot) -> None:
+    """Le compte TOTAL d'allers vers la forge (#602 — un compte d'appels, jamais un chronomètre) :
+    des lectures fixes, les mêmes que celles d'un plan restreint à un jalon, puis une vue par
+    candidat. Un backlog qui grossit d'écartés — autre rail, jalon fermé, tickets assignés — ne
+    coûte pas un aller de plus : le plan global n'a pas le prix du backlog entier."""
+    _backlog_deux_jalons(depot)
+    journal = depot.fixtures / "gh.log"
+
+    def allers(*portee: str) -> list[str]:
+        journal.unlink(missing_ok=True)
+        r = depot.lance("queue.sh", *portee)
+        assert r.returncode == 0, r.stderr
+        # Un aller par ligne qui commence par sa sous-commande : le bouchon journalise un programme
+        # `--jq` multiligne tel quel, et ses lignes de suite ne sont pas des allers.
+        return [a for a in journal.read_text(encoding="utf-8").splitlines()
+                if a.startswith(("api ", "auth "))]
+
+    def vues(appels: list[str]) -> list[str]:
+        return [a for a in appels if "issue(number:" in a and "body }" in a]
+
+    base = allers()
+    assert len(vues(base)) == 7, "une vue par candidat du rail produit"
+    fixes = len(base) - len(vues(base))
+    assert fixes == FIXES_DU_PLAN, f"les lectures fixes du plan : {base}"
+
+    # Le motif : le compte voit un candidat de plus — un aller de plus, et c'est sa vue.
+    depot.ticket(545, "B moyenne bis", jalon="Phase B")
+    depot.publie()
+    un_de_plus = allers()
+    assert len(un_de_plus) == len(base) + 1
+    assert any("issue(number:545)" in a for a in vues(un_de_plus))
+
+    # Onze écartés de plus, par les trois causes : aucun aller de plus.
+    for iid in range(552, 557):
+        depot.ticket(iid, f"Outil {iid}", jalon="Outillage")
+    for iid in range(561, 564):
+        depot.ticket(iid, f"Phase close {iid}", jalon="Phase Z")
+    for iid in range(570, 573):
+        depot.ticket(iid, f"Pris {iid}", assigne="alice", jalon="Phase A")
+    depot.publie()
+    assert len(allers()) == len(un_de_plus), "un écarté ne coûte aucun aller"
+
+    # Et un plan restreint à un jalon paie les mêmes lectures fixes : le plan global n'ajoute que
+    # les vues des candidats qu'il porte en plus.
+    restreint = allers("--milestone", "Phase A")
+    assert len(restreint) - len(vues(restreint)) == fixes
+
+
+def test_une_reprise_nomme_le_jalon_solde_entre_la_coupure_et_la_reprise(depot: Depot) -> None:
+    """Le bouclage à travers une reprise : la photo du départ est celle du run REPRIS. Un jalon
+    soldé entre la coupure et la reprise l'a été par ce plan-là, et il se nomme en fin de run — sans
+    verdict. Une photo reprise à neuf le verrait déjà soldé, et le tairait."""
+    depot.milestone("Phase A")
+    # Au départ du run repris, rien n'attendait son bouclage ; depuis, « Phase A » s'est soldée :
+    # toutes les lectures qu'on pourra faire désormais la rendent.
+    _a_boucler(depot, 1, [("Phase A", 5)])
+    _a_boucler(depot, 2, [("Phase A", 5)])
+
+    # Le motif : un run NEUF sur ces réponses tait « Phase A », que sa propre photo voit déjà soldée
+    # — c'est ce que dirait une reprise qui reprendrait sa photo au lieu de garder celle du départ.
+    neuf = _run_court(depot, "neuf", ["Phase A"])
+    assert neuf.returncode == 0, neuf.stdout + neuf.stderr
+    assert '/milestone-bilan "Phase A"' not in neuf.stdout, neuf.stdout
+
+    source = _run_dir(depot, "20260730-100000", [(1, 130, "-", "moyenne")], resume=[], age=4000)
+    with (source / "plan.tsv").open("a", encoding="utf-8", newline="\n") as plan:
+        plan.write("# milestone\tPhase A\tproduit\n")
+    (source / "a-boucler.tsv").write_text("", encoding="utf-8", newline="\n")
+    journal = depot.fixtures / "gh.log"
+    journal.unlink()
+
+    claude = _claude_stub(depot, 'echo "la session ne doit jamais démarrer" >&2\nexit 1\n')
+    r = depot.lance("run.sh", "--resume", "20260730-100000", "--run-id", "suite",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert 'Phase A (produit) → /milestone-bilan "Phase A"' in r.stdout, r.stdout
+    assert "aucun verdict n'est rendu ici" in r.stdout
+
+    appels = journal.read_text(encoding="utf-8").splitlines()
+    assert sum("milestones?state=open" in a for a in appels) == 1, \
+        "la photo est relue au journal repris, seule la fin interroge la forge"
+    assert not any("PATCH" in a or "milestone-verdict" in a for a in appels), \
+        "aucune écriture de jalon"
+    assert (depot.racine / ".maestro/orchestrate/suite/a-boucler.tsv").read_text(
+        encoding="utf-8") == "", "la photo recopiée est celle du départ, pas une photo neuve"
+
+
+# =====================================================================================
 # Soldé et vide : deux abstentions, jamais une seule (#619)
 # =====================================================================================
 # « Non soldé » recouvrait DEUX situations que rien ne séparait :

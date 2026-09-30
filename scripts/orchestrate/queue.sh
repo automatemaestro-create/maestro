@@ -255,9 +255,10 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/vue" "$TMP/chaine"
 
 # --- 0. Les milestones sur lesquels un run peut porter (#204) --------------------------------------
-# `--milestones` répond à « quel milestone traiter ? », la question que /orchestrate pose avant de
-# lancer un run NEUF. Elle était tranchée en silence par la phase courante — le bon défaut, mais pas
-# toujours le bon choix : plusieurs milestones actifs peuvent porter du travail en même temps.
+# `--milestones` dit ce que chaque jalon actif porte de prenable : c'est de quoi /orchestrate propose
+# une PORTÉE avant un run NEUF (#1055). La question fut « quel milestone traiter ? », tranchée en
+# silence par la phase courante ; depuis #1053 le plan sans consigne traverse les jalons du rail
+# produit, et un jalon n'est plus qu'une des trois portées qu'on peut demander (#1054).
 #
 # Sortie TSV, du plus ancien au plus récent (l'ordre de gl_milestones), en-tête « # » ignorable :
 #     titre <TAB> courant <TAB> a_faire <TAB> ouverts <TAB> echeance <TAB> rail
@@ -265,8 +266,8 @@ mkdir -p "$TMP/vue" "$TMP/chaine"
 # `rail` (#617) vaut « produit » ou « outillage » et sépare les milestones de PRODUIT de ceux de
 # l'OUTILLAGE de la forge. Il change la lecture de `courant`, qui vaut désormais 1 pour le milestone
 # courant **de son rail** : il y en a donc AU PLUS DEUX à 1, un par rail, et non plus un seul. C'est
-# voulu — un run porte sur un rail, et proposer « le » courant sans dire lequel est ce qui a laissé
-# un run « produit » traiter de l'outillage.
+# voulu — proposer « le » courant sans dire de quel rail est ce qui a laissé un run « produit »
+# traiter de l'outillage.
 #
 # « AU PLUS » et non « exactement » depuis #619 : `courant` est retiré d'un milestone à
 # `a_faire = 0`, où il désignerait un défaut sur lequel un run planifierait zéro ticket. Un rail

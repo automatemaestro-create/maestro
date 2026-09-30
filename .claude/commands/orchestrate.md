@@ -267,8 +267,10 @@ quelle à chaque lecture du point 0 qui l'accepte (`--orphelins`, `--non-arbitre
    <n>` existe pour qui **veut** un run borné ; ne le recommande pas par défaut : il n'économise rien
    (onze tickets coûtent pareil en un run ou en trois) et sert d'abord à contenir une **panne
    systématique** (docs/10 §11).
-   Il ouvre une console indépendante, imprime le run-id, le journal et la commande de reprise, et
-   rend la main immédiatement. Rappelle les options utiles, qui se combinent avec `--detach` :
+
+   Lancé, `--detach` ouvre une console indépendante, imprime le run-id, le journal et la commande
+   de reprise, et rend la main immédiatement. Rappelle les options utiles, qui se combinent avec
+   `--detach` :
    `--max <n>`, `--modele <modèle>`, `--effort <niveau>` (`low`…`max`). Ces deux
    derniers ont un **défaut épinglé par le dépôt** — la dernière version d'Opus et `xhigh` (#206,
    #1269, #217) — et la ligne `plan :` les annonce en toutes lettres : ne les passe que si

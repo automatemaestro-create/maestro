@@ -677,19 +677,20 @@ Quatre choses à ne pas défaire :
   sans rien casser de visible.
 
 Côté run, `queue.sh --milestones` gagne la colonne `rail` et **au plus deux** lignes à
-`courant = 1`, une par rail — un run porte sur un rail, et proposer « le » courant sans dire lequel
-est ce qui a laissé un run « produit » traiter de l'outillage. « Au plus » et non « exactement » :
-un milestone sans rien à prendre perd son `courant` (#619, ci-dessus). Le plan porte son milestone et son rail en **ligne de
-commentaire** (`# milestone<TAB>titre<TAB>rail`, même mécanique que la réserve d'arbitrage de #562 :
-les deux lectures de `run.sh` écartent déjà les `#`), et l'en-tête du run l'annonce — sans rien
-redemander à la forge, et en se taisant sur un plan antérieur rejoué par `--resume`. Le défaut d'un
-run sans consigne reste le **rail produit**.
+`courant = 1`, une par rail — proposer « le » courant sans dire de quel rail est ce qui a laissé un
+run « produit » traiter de l'outillage. « Au plus » et non « exactement » : un milestone sans rien à
+prendre perd son `courant` (#619, ci-dessus). Le plan porte **chaque jalon qu'il traverse** et son
+rail en **ligne de commentaire** (`# milestone<TAB>titre<TAB>rail`, même mécanique que la réserve
+d'arbitrage de #562 : les deux lectures de `run.sh` écartent déjà les `#`), et l'en-tête du run les
+annonce — sans rien redemander à la forge, et en se taisant sur un plan antérieur rejoué par
+`--resume`. Le plan d'un run **sans consigne** reste sur le **rail produit** : c'est ce qui en garde
+la tête (§11.2) ; l'outillage se **demande**, par une portée (#1054).
 
-⚠ Un milestone d'outillage se traite **mal en autonomie** : une bonne part de ses tickets touche
-`.claude/**`, où l'écriture est **bloquée par le CLI** en amont de l'allowlist (#229/#238) — la
-session rend alors son correctif dans sa PR au lieu de l'appliquer (§11.7). `/orchestrate` le **dit
-en une phrase** quand le rail `outillage` est choisi : ce n'est pas un refus, c'est un régime à
-connaître.
+⚠ Une part des tickets d'outillage se traite **mal en autonomie** : ceux qui touchent `.claude/**`,
+où l'écriture est **bloquée par le CLI** en amont de l'allowlist (#229/#238) — la session rend alors
+son correctif dans sa PR au lieu de l'appliquer (§11.7). Le garde-fou est **au ticket** depuis
+#1055 : `queue.sh --touche-claude` (#612) nomme ceux du plan quelle que soit la portée, et
+`/orchestrate` le dit au feu vert. Ce n'est pas un refus, c'est un régime à connaître.
 
 ### 3.5 Socle Projects v2 — le champ Status qui porte le cycle de vie
 
@@ -5689,7 +5690,7 @@ tient pour cela une **file de merge**, drainée au fil de l'eau puis en fin de r
 
 ```bash
 bash scripts/orchestrate/queue.sh --check   # l'ordre de traitement, et ce qui a été écarté
-bash scripts/orchestrate/queue.sh --milestones  # sur quel milestone lancer un run (§11.2)
+bash scripts/orchestrate/queue.sh --milestones  # ce que portent les jalons, pour choisir une portée (§11.2)
 bash scripts/orchestrate/queue.sh --parent 1052 --check  # le plan d'un chantier entier (§11.2)
 bash scripts/orchestrate/queue.sh --touche-claude  # les tickets du plan où la session ne pourra pas écrire (§11.2)
 bash scripts/orchestrate/run.sh --dry-run   # le plan et ce qui serait fait — rien n'est lancé
@@ -5764,6 +5765,15 @@ s'arrêter à sa frontière. Il porte une ligne `# milestone` **par jalon traver
 plan et chacune avec son rail. Un ticket d'un jalon **fermé** ou de l'**autre rail** est écarté avec
 sa raison. Le coût tient en deux lectures fixes de plus (les jalons, et le jalon de chaque ticket
 ouvert par `lib.sh issues-jalons`) ; un ticket de l'autre rail ne coûte aucune lecture.
+
+**Ce qui ne bouge pas, et pourquoi** (chantier #1052). Le jalon cesse d'être un filtre, pas d'être
+l'ordre : **l'échéance reste l'ordre de la file** (§3.4), et elle range le plan **avant** la
+priorité. Retirer le filtre sans garder la clé ferait s'entrelacer les `prio::haute` libres de
+plusieurs jalons — l'installeur d'une phase de distribution partirait en même temps que l'atelier
+qu'il doit empaqueter, alors qu'**on n'empaquette pas une cible mouvante**
+([docs/24 §4.8](./24-projets-locaux-et-poste-de-travail.md)). Et la frontière d'un jalon était le
+point d'arrêt où un humain voyait qu'il était soldé : **le run ne s'y arrête plus, il la nomme** en
+fin de run (plus bas). La détection est automatique, le verdict jamais (partage de #562).
 
 **Le rail reste un filtre du plan sans consigne, et le garde-fou passe au ticket** (#1055). C'est ce
 filtre qui garde la tête du plan : le jalon d'outillage est le plus tôt échu du dépôt (2027-09-15,
