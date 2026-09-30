@@ -5761,10 +5761,40 @@ même plan, et un run reste reproductible même si le backlog évolue pendant qu
 jalon dans `lib.sh milestones`, l'ordre même de `current-milestone` : le plan sans consigne
 **commence donc par le plan d'avant**, ticket pour ticket, et continue sur le jalon suivant au lieu de
 s'arrêter à sa frontière. Il porte une ligne `# milestone` **par jalon traversé**, dans l'ordre du
-plan, et l'en-tête du run annonce le premier et compte les suivants. Un ticket d'un jalon **fermé**
-ou de l'**autre rail** est écarté avec sa raison. Le coût tient en deux lectures fixes de plus (les
-jalons, et le jalon de chaque ticket ouvert par `lib.sh issues-jalons`) ; un ticket de l'autre rail
-ne coûte aucune lecture. `--orphelins` garde la portée d'un milestone, le courant par défaut.
+plan et chacune avec son rail. Un ticket d'un jalon **fermé** ou de l'**autre rail** est écarté avec
+sa raison. Le coût tient en deux lectures fixes de plus (les jalons, et le jalon de chaque ticket
+ouvert par `lib.sh issues-jalons`) ; un ticket de l'autre rail ne coûte aucune lecture.
+
+**Le rail reste un filtre du plan sans consigne, et le garde-fou passe au ticket** (#1055). C'est ce
+filtre qui garde la tête du plan : le jalon d'outillage est le plus tôt échu du dépôt (2027-09-15,
+quand le premier jalon produit l'est en 2028), et mêler les rails ferait partir tout l'outillage
+avant le produit sans que personne l'ait demandé. L'outillage se **demande** (portée, ci-dessous),
+et ce qui le rendait délicat en autonomie — l'écriture sous `.claude/`, bloquée par le CLI (§11.7)
+— tient à certains **tickets**, que `--touche-claude` nomme un par un quelle que soit la portée :
+`/orchestrate` ne prévient plus d'un « rail outillage ».
+
+**Les signalements suivent la portée du plan** (#1055) : `--non-arbitres` et `--touche-claude` sont
+calculés sur ses tickets, et `--orphelins` y est tenu aussi — sans consigne, les « En cours » des
+jalons actifs du rail produit et les sans-jalon ; sinon, ce qui est demandé. Tenu au seul jalon
+courant alors que le plan traverse les jalons, il taisait l'orphelin d'un jalon suivant, que le run
+prendrait une fois repris.
+
+**L'en-tête du run dit sur quoi il porte** (#1055), tout relu dans le plan : la ligne `plan :` nomme
+la **portée** (`sans consigne — le backlog du rail produit`, ou `chantier #1052 + tickets #1100,
+#1101`…), le **nombre de tickets** et le **nombre de jalons** traversés ; la ligne `jalons :` les
+nomme dans l'ordre, chacun avec son rail ; la ligne `demandés :` rend les `# demande-ecartee`, donc
+aussi à la reprise — `queue.sh` tait alors sa propre annonce (`MAESTRO_QUEUE_ANNONCE_DEMANDES=0`).
+Un plan qui sort du jalon courant sans le dire serait indiscernable d'un run qui s'est trompé de
+backlog.
+
+**Le run ne s'arrête plus à la frontière d'un jalon, alors il le dit** (#1055). Cette frontière était
+le point d'arrêt qui faisait voir un jalon soldé. Le run photographie au départ les jalons qui
+attendent déjà leur bouclage (`lib.sh milestones-a-boucler`, #758, dans `<run-id>/a-boucler.tsv`,
+recopiée par une reprise), et nomme **en fin de run**, après le drain final, chaque jalon qui l'attend
+désormais et ne l'attendait pas, avec `/milestone-bilan "<titre>"`. Aucun verdict n'est rendu,
+aucun jalon fermé : c'est la convocation du pied de `/backlog`, jamais un bouclage (partage de #562).
+Une photo illisible n'est pas une photo vide : seuls les jalons du plan sont alors nommés. Muet quand
+il n'y a rien ; `MAESTRO_ORCHESTRATE_BOUCLAGE=0` l'éteint.
 
 **La portée d'un run se demande** (#1054, chantier #1052) : `--parent <iid>…` prend les lots d'un
 chantier **dans l'ordre du parent, quel que soit leur jalon** — un parent de suivi est une
@@ -5777,8 +5807,7 @@ inatteignable un chantier traversant les deux rails. `run.sh` les transmet telle
 (`run.sh --parent 1052`), et les dit sans effet sur un plan déjà figé (`--plan`, `--resume`).
 
 **Un iid demandé qui n'est pas prenable est nommé avec sa cause**, sur stderr **même sans
-`--check`**, et dans le plan en `# demande-ecartee` — `run.sh` laisse passer stderr, et le plan
-rejoué par `--resume` garde la trace. Causes : cycle de vie, assigné, fermé, introuvable, **hors
+`--check`**, et dans le plan en `# demande-ecartee` — que l'en-tête du run relit, reprise comprise. Causes : cycle de vie, assigné, fermé, introuvable, **hors
 projet**, parent nommé par `--ticket` (« ses lots se demandent par `--parent` »), `--parent` sur un
 ticket sans lot. Demander une portée et recevoir un plan plus court sans explication est le mode de
 panne qu'elle ne doit pas avoir. Ne s'annoncent pas un à un, et `--check` les nomme : les **lots
@@ -5942,22 +5971,29 @@ geste — ne peut pas l'atteindre. `--check` tient déjà les deux écarts sépa
 il n'oriente vers `--orphelins` que sur un écart « cycle de vie « En cours » », jamais sur un écart
 « assigné à ».
 
-**Le milestone, lui, se choisit** (#204). La phase courante reste le défaut — c'est presque toujours
-le bon — mais plusieurs milestones actifs peuvent porter du travail en même temps, et le run partait
-sur la phase courante **en silence**. `--milestones` dit sur quoi le choix porte :
+**La portée, elle, se choisit** (#204, #1055). Le plan sans consigne — tout le backlog du rail
+produit — reste le défaut, et c'est presque toujours le bon ; ce qu'il n'atteint pas, c'est
+l'outillage, un chantier précis ou des tickets nommés. `--milestones` dit ce que les jalons portent :
 
 ```bash
-bash scripts/orchestrate/queue.sh --milestones      # titre, courant, à faire et libres, ouverts, échéance
-bash scripts/orchestrate/queue.sh --milestone "Phase 5 — Socle réel (backend)"
+bash scripts/orchestrate/queue.sh --milestones      # titre, courant, à faire et libres, ouverts, échéance, rail
+bash scripts/orchestrate/queue.sh --parent 1052     # le plan d'un chantier
 ```
 
 Seuls les milestones **actifs** y figurent (un milestone fermé est une phase soldée), et la colonne
 qui décide est **`à faire`** — les tickets « À faire » **et libres**, le filtre du tableau ci-dessus,
 et non les tickets ouverts : proposer un milestone dont tout est déjà assigné mènerait à un plan
 vide. Le compte est **indicatif** sur un point : un parent de suivi y compte pour un, là où le run
-traitera ses lots. [`/orchestrate`](../.claude/commands/orchestrate.md) s'en sert pour **poser la
-question** avant un run neuf — et ne la pose que si le choix est réel : un seul candidat s'annonce
-sans rien demander.
+traitera ses lots. [`/orchestrate`](../.claude/commands/orchestrate.md) s'en sert pour **proposer une
+portée** avant un run neuf — le plan sans consigne en premier, chaque jalon d'outillage qui a du
+travail, et un chantier ou des tickets en réponse libre — et ne la propose que si le choix est
+réel : sans outillage à prendre, la portée s'annonce sans rien demander.
+
+**La taille du plan se dit, elle ne se borne pas d'office** (#1055). Un plan sans consigne couvre
+tout un rail et peut tenir des jours ; la ligne `plan :` en donne les chiffres. `STOP` l'arrête entre
+deux tickets, `--resume` rejoue le reste sur son plan figé, et `--max` reste ce qu'il est : le garde
+contre une **panne systématique**, pas un point de contrôle — onze tickets coûtent pareil en un run
+ou en trois. Aucun plafond par défaut n'est inventé (#286, #326).
 
 ### 11.3 Un ticket, une session — `run.sh`
 
