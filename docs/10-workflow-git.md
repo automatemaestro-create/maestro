@@ -1887,10 +1887,25 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
 
   | # | Prérequis | Ce qu'il empêche | Refus |
   |---|---|---|---|
-  | 1 | une PR **ouverte**, **non brouillon**, qui **ferme le ticket** | un merge qui laisserait le ticket ouvert **et sans état** — plus personne ne le poserait, le workflow `issues: closed` (§9.2) n'ayant aucun événement à écouter | `6` — geste humain · **`7` si elle est déjà mergée** |
+  | 1 | une PR **ouverte**, **non brouillon**, qui **ferme le ticket** — par le lien de la forge, ou, s'il manque, par la fermeture qu'elle **déclare** (#1386, ci-dessous) | un merge qui laisserait le ticket ouvert **et sans état** — plus personne ne le poserait, le workflow `issues: closed` (§9.2) n'ayant aucun événement à écouter | `6` — geste humain · **`7` si elle est déjà mergée** |
   | 2 | rien de **non poussé** sur la branche | merger **moins que ce qui existe**, la seule perte que rien ne rattrape | `6` |
   | 3 | **aucun conflit réel** avec `origin/main` — verdict `git merge-tree --write-tree`, jamais l'heuristique de `behind-main` ni le champ asynchrone de la forge (§8.3) | un merge qui casserait `main` | `5` → `/mr-fix` |
   | 4 | un **pipeline vert**, et vert **sur la tête de la PR** | le merge au rouge, et le faux vert d'un **run périmé** (le cas nominal juste après un push : le run précédent est fini, le nouveau n'a pas démarré) | `4` rouge → `/mr-fix` · `3` pas encore rendu → repasser |
+
+  ⚠ **Le lien que GitHub ne pose pas** (#1386). Le prérequis 1 se lit chez la forge
+  (`closingIssuesReferences`) : c'est elle qui dit ce que le merge fermera. Le 2026-09-30, elle a
+  cessé par intermittence — sur d'autres dépôts aussi — d'en tirer un lien d'une description qui
+  commençait pourtant par `Closes #<iid>` (`willCloseTarget: false`) : deux PR de suite refusées en
+  `6` (#1384, #1385) alors que rien n'avait changé de notre côté, débloquées chaque fois par un lien
+  posé à la main dans le panneau « Development », qu'aucune API ne pose. Quand le lien manque,
+  `merge-mr` relit donc ce que la PR **déclare** — les mots-clés de GitHub, vers **ce** ticket :
+  `#70` ne déclare pas `#7`, et une mention n'est pas une fermeture — et merge ; puis il **ferme le
+  ticket lui-même** en « completed », la raison que lit le workflow `issues: closed` (§9.2). Un
+  ticket déjà fermé est constaté, pas refermé ; une fermeture refusée est nommée avec son geste, sans
+  défaire le merge. Le prérequis ne s'assouplit pas — on ne merge que ce qui ferme le ticket traité —,
+  il change de source quand la forge se tait, et la sortie le dit. Limite connue : faute de lien, une
+  telle PR n'est pas retrouvée par « quelle PR ferme ce ticket ? » (ci-dessous) — un `merge-mr <iid>`
+  rejoué après ce merge rend `6`, là où `merge-mr <branche>` rend bien `7`.
 
   ⚠ **Le `7` n'est pas un refus, et c'est tout son intérêt** (#593). Le prérequis 1 couvre six
   façons de ne pas avoir « une PR ouverte », dont **cinq appellent un geste humain** — PR absente,
