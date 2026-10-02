@@ -33,6 +33,7 @@ donc pas (cf. `restes`).
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -511,3 +512,102 @@ def ecarts(
             if nom not in avant or nom not in apres or avant[nom] != apres[nom]
         )
     )
+
+
+# --- Ce qu'on lit dans son dépôt (#1408) ------------------------------------
+#
+# Un projet versionné porte son travail dans Git : chaque tâche sur sa branche, et le
+# projet livré sur la sienne (#705). Le banc **lit** ce dépôt, et n'y écrit jamais —
+# il ne fait que le cloner ailleurs, dans l'atelier du passage, comme le ferait
+# n'importe qui pour essayer ce que le run a livré.
+
+#: Ce qu'on laisse à une lecture Git locale : une borne d'anomalie, pas un budget.
+DELAI_GIT_S = 60.0
+
+
+def travail_en_avance(racine: Path, branche: str) -> str | None:
+    """La tête de `branche` si elle porte du travail que le projet n'a pas — sinon `None`.
+
+    « En avance » : au moins un commit de `branche` qui n'est pas dans l'histoire de
+    la branche courante du projet (`HEAD..branche`). Une branche absente, ou née et
+    jamais commitée, n'a rien sauvé.
+    """
+    tete = _git(racine, "rev-parse", "--verify", "--quiet", f"refs/heads/{branche}")
+    if tete.returncode != 0 or not tete.stdout.strip():
+        return None
+    compte = _git(racine, "rev-list", "--count", f"HEAD..refs/heads/{branche}")
+    brut = compte.stdout.strip()
+    if compte.returncode != 0 or not brut.isdigit() or int(brut) == 0:
+        return None
+    return tete.stdout.strip()
+
+
+def dans_le_projet(racine: Path, commit: str) -> bool:
+    """`commit` est-il dans l'histoire de la branche courante du projet ?"""
+    return _git(racine, "merge-base", "--is-ancestor", commit, "HEAD").returncode == 0
+
+
+def cloner(racine: Path, cible: Path) -> None:
+    """Clone ce que le projet a **commité** dans `cible` — vide ou absent. Lève `OSError`.
+
+    C'est ce qu'une personne récupère du projet, et la seule chose qui en soit le
+    livrable : ni ce qui traîne non commité dans la racine, ni ce que les commandes
+    d'un agent y ont laissé.
+    """
+    resultat = subprocess.run(  # noqa: S603 - git, sur deux chemins du banc
+        ["git", "clone", "--quiet", "--no-hardlinks", str(racine), str(cible)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=DELAI_GIT_S,
+        check=False,
+    )
+    if resultat.returncode != 0:
+        raise OSError(f"`git clone` du projet refusé : {_message(resultat)}")
+
+
+def salissures(dossier: Path) -> tuple[str, ...]:
+    """Ce que le dépôt de `dossier` montre de changé ou d'inconnu — `git status --porcelain`.
+
+    Vide : rien de suivi n'a bougé, et tout ce qui est apparu est ignoré par le projet.
+    Lève `OSError` si Git ne répond pas : un arbre illisible n'est pas un arbre propre.
+    """
+    resultat = _git(dossier, "status", "--porcelain", "--untracked-files=normal")
+    if resultat.returncode != 0:
+        raise OSError(f"`git status` illisible dans {dossier} : {_message(resultat)}")
+    return tuple(ligne.rstrip() for ligne in resultat.stdout.splitlines() if ligne.strip())
+
+
+def suivis_ignores(dossier: Path) -> tuple[str, ...]:
+    """Les fichiers **suivis** que les règles d'ignorance du projet ignorent — commités à tort.
+
+    `git ls-files --cached --ignored --exclude-standard` : ce que le projet déclare
+    lui-même ne pas faire partie de ses sources, et qui y est pourtant.
+    """
+    resultat = _git(dossier, "ls-files", "--cached", "--ignored", "--exclude-standard")
+    if resultat.returncode != 0:
+        raise OSError(f"`git ls-files` illisible dans {dossier} : {_message(resultat)}")
+    return tuple(ligne for ligne in resultat.stdout.splitlines() if ligne.strip())
+
+
+def _git(dossier: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Une lecture Git dans `dossier` — rend le résultat, ne lève que si Git est absent."""
+    try:
+        return subprocess.run(  # noqa: S603 - git, argv construit ici
+            ["git", "-C", str(dossier), *arguments],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=DELAI_GIT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OSError(f"`git {arguments[0]}` sans réponse en {DELAI_GIT_S:g} s") from exc
+
+
+def _message(resultat: subprocess.CompletedProcess[str]) -> str:
+    """Ce que Git a dit, en une ligne."""
+    texte = ((resultat.stderr or "") + (resultat.stdout or "")).strip()
+    return " ".join(texte.split())[:300] or f"code {resultat.returncode}"
