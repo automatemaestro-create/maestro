@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -76,12 +77,13 @@ from maestro.decideur import Decideur
 from maestro.detail_tache import ETAPE_A_FAIRE, ETAPE_EN_COURS, ETAPE_FAITE
 from maestro.engine.executor import STATUT_ECHEC, STATUT_TERMINEE
 from maestro.engine.plafond import GESTE_ARRETER
+from maestro.espace import racine_de_la_copie
 from maestro.outillage.analyse import analyser
 from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, USAGE_DEMARRER, VERIFIEE
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 from maestro.sandbox.verification import Execution
-from maestro.scenarios import banc, etat
+from maestro.scenarios import banc, etat, redemarrage
 from maestro.scenarios.api import (
     DELAI_REQUETE_S,
     DELAI_RUN_S,
@@ -93,6 +95,7 @@ from maestro.scenarios.api import (
     Reponse,
     Trame,
     TransportHTTP,
+    attendre_le_run,
     equipe_validee,
 )
 from maestro.scenarios.juge import (
@@ -109,14 +112,19 @@ from maestro.scenarios.projets import (
     VARIABLE_ATELIER,
     Atelier,
     cadre_dotnet,
+    cloner,
+    dans_le_projet,
     ecarts,
     empreinte,
     manquants,
     racine_atelier,
     restes,
+    salissures,
     semer_a_vider,
     semer_solution_dotnet,
+    suivis_ignores,
     temoins_exclus,
+    travail_en_avance,
 )
 from maestro.scenarios.rapport import (
     FICHIER_JSON,
@@ -125,18 +133,28 @@ from maestro.scenarios.rapport import (
     en_markdown,
 )
 from maestro.scenarios.scenarios import (
+    CONSTRUIRE_S12,
     DEMANDE_S8,
     DEMANDE_S9,
+    DEMANDE_S12,
     DOSSIER_DEHORS_S8,
     DOSSIER_S9,
     DOSSIER_S10,
+    DOSSIER_S12,
     GESTES_OUTILLAGE,
+    INSTALLER_S12,
     NOTE_S5,
+    PAGES_S12,
+    PAUSE_AVANT_EXTINCTION_S,
     POINT_D_ENTREE,
     REPONSE_OUTILLAGE,
+    SANS_TERMINAL,
     SCENARIOS,
+    SERVIR_S12,
+    TESTER_S12,
     TRAVAIL_S9,
     TRAVAIL_S10,
+    TRAVAIL_S12,
     Contexte,
     Joueur,
     Scenario,
@@ -731,6 +749,8 @@ class Banc:
     lanceur: Callable[[Path, str], tuple[int, str]] | None = None
     joueur: Joueur | None = None
     sonde: Callable[[Sequence[str]], str | None] | None = None
+    redemarrer: Callable[[], str] | None = None
+    sonder_page: Callable[[str], int | None] | None = None
 
     def contexte(self) -> Contexte:
         return Contexte(
@@ -743,6 +763,8 @@ class Banc:
             lancer_application=self.lanceur,
             jouer_commande=self.joueur,
             sonder_le_poste=self.sonde,
+            redemarrer=self.redemarrer,
+            sonder_page=self.sonder_page,
         )
 
     def jouer(self, scenario: Scenario) -> tuple[Any, Contexte]:
@@ -776,8 +798,12 @@ def _scenario(identifiant: str) -> Scenario:
 # --- ① Le déroulé -----------------------------------------------------------
 
 
-def test_les_onze_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
-    """Onze scénarios, S1 à S11, et seuls S1 et S3 ne se rejouent pas (docs/40 §5)."""
+def test_les_douze_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
+    """Douze scénarios, S1 à S12 ; S1, S3 et S12 ne se rejouent pas (docs/40 §5).
+
+    S12 parce que la moitié de son oracle porte sur des mécaniques déterministes —
+    l'extinction, la reprise — et qu'un passage coûte de l'ordre de l'heure (#1408).
+    """
     assert [s.identifiant for s in SCENARIOS] == [
         "S1",
         "S2",
@@ -790,6 +816,7 @@ def test_les_onze_scenarios_sont_declares_dans_l_ordre_de_la_decision() -> None:
         "S9",
         "S10",
         "S11",
+        "S12",
     ]
     assert {s.identifiant for s in SCENARIOS if s.rejouable} == {
         "S2",
@@ -3779,6 +3806,755 @@ def test_le_juge_de_pertinence_encadre_le_projet_l_outillage_et_l_equipe() -> No
     assert "<equipe>- dev (Développeur)</equipe>" in vus["prompt"]
 
 
+# --- S12 — une application web survit à une extinction (#1408) -----------------
+
+#: L'identité des commits que la fausse API écrit dans le projet — celle d'un poste
+#: sans identité git (#333), passée à chaque commande.
+_IDENTITE_GIT = (
+    "-c",
+    "user.name=banc",
+    "-c",
+    "user.email=banc@exemple.invalid",
+    "-c",
+    "commit.gpgsign=false",
+)
+
+
+def _git_s12(racine: Path, *arguments: str) -> str:
+    """Une commande Git dans le projet de la fausse API — lève si elle échoue."""
+    fini = subprocess.run(
+        ["git", *_IDENTITE_GIT, "-C", str(racine), *arguments],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return fini.stdout.strip()
+
+
+def _commiter_s12(racine: Path, message: str, **fichiers: str) -> str:
+    """Écrit des fichiers dans le projet et les commite — rend le commit."""
+    for nom, contenu in fichiers.items():
+        (racine / nom).write_text(contenu, encoding="utf-8")
+    _git_s12(racine, "add", "-A")
+    _git_s12(racine, "commit", "--allow-empty", "-q", "-m", message)
+    return _git_s12(racine, "rev-parse", "HEAD")
+
+
+def _tache_s12(tache: str, statut: str, minute: int, detail: str = "") -> dict[str, Any]:
+    """Un `tache.statut` daté de la trace de S12."""
+    return {
+        "type": "tache.statut",
+        "tache_id": tache,
+        "titre": f"Tâche {tache}",
+        "statut": statut,
+        "detail": detail,
+        "horodatage": f"2026-10-02T10:{minute:02d}:00+00:00",
+    }
+
+
+def _carte_s12(tache: str, statut: str) -> dict[str, Any]:
+    """Une carte de `GET /api/taches` : le peu que S12 en lit."""
+    return {"id": tache, "titre": f"Tâche {tache}", "statut": statut, "etapes": []}
+
+
+#: Ce que font l'extinction et « Reprendre » dans la fausse API de S12.
+PRODUIT_ATTENDU = "attendu"
+PRODUIT_DE_P5 = "p5"
+
+#: Ce que le run de S12 fait avant le moment d'interrompre.
+AVANT_MOMENT = "moment"
+AVANT_ECHEC = "echec"
+AVANT_SANS_MOMENT = "sans-moment"
+
+
+class ApiQuiInterrompt(ApiQuiOutille):
+    """La fausse API de S12 : un projet né dans le fil, un run interrompu puis repris (#1408).
+
+    Le run a trois tâches : un socle, puis des pages qui en dépendent, puis des tests.
+    Au premier relevé, le socle est fait et les pages tournent — le moment
+    d'interrompre —, sauf si `avant` en décide autrement (un socle en échec, ce que le
+    juge de p5 a fait de la tâche réussie ; ou un run qui aboutit sans ce moment).
+
+    `produit` choisit ce que l'extinction et « Reprendre » font :
+
+    - `PRODUIT_ATTENDU` — ce que le chantier de #1389 livre : l'extinction laisse les
+      cartes jamais démarrées à faire et sauve le travail en vol sur sa branche,
+      « Reprendre » continue **le même run**, qui finit sans rien rejouer et fusionne
+      la branche reprise ;
+    - `PRODUIT_DE_P5` — ce que p5 a montré le 2026-10-01 : l'extinction solde le run et
+      met en échec toutes ses cartes non faites, rien n'est sauvé, et la reprise
+      refuse (`409`) puis la relance ouvre un **nouveau run** sur un plan refait.
+
+    Le projet est un vrai dépôt Git : c'est ce que l'oracle lit, et ce qu'il clone.
+    `chronologie` retient les gestes sur le run dans l'ordre — le test du redémarrage
+    y ajoute le sien.
+    """
+
+    def __init__(
+        self,
+        repertoire: Path,
+        *,
+        produit: str = PRODUIT_ATTENDU,
+        avant: str = AVANT_MOMENT,
+        versionne_a_la_naissance: bool = True,
+        autres_en_vol: Sequence[str] = (),
+        faite_repart: bool = False,
+    ) -> None:
+        super().__init__(repertoire, moteur=self._lancer_le_run)
+        self._produit = produit
+        self._avant = avant
+        self._versionne_naissance = versionne_a_la_naissance
+        self._autres = list(autres_en_vol)
+        self._faite_repart = faite_repart
+        self._racine: Path | None = None
+        self._statuts: dict[str, str] = {}
+        self._cartes: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        self._traces: dict[str, list[dict[str, Any]]] = {}
+        self._fin_due: set[str] = set()
+        self.chronologie: list[str] = []
+        self.versionnes: list[str] = []
+
+    # --- Le transport -------------------------------------------------------
+
+    def demander(
+        self,
+        methode: str,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
+    ) -> Reponse:
+        if chemin == "/api/executions" and methode == "GET":
+            self.appels.append((methode, chemin))
+            return Reponse(statut=200, corps=self._resumes())
+        if chemin == "/api/extinction":
+            self.appels.append((methode, chemin))
+            return self._eteindre()
+        if chemin.startswith("/api/projets/") and chemin.endswith("/versionner"):
+            self.appels.append((methode, chemin))
+            return self._versionner(chemin.split("/")[3])
+        for geste in ("pause", "reprendre", "relancer"):
+            if chemin.startswith("/api/executions/") and chemin.endswith(f"/{geste}"):
+                self.appels.append((methode, chemin))
+                return getattr(self, f"_{geste}")(chemin.split("/")[3])
+        return super().demander(methode, chemin, corps=corps, params=params, delai_s=delai_s)
+
+    # --- La naissance -------------------------------------------------------
+
+    def _accord(self, corps: Mapping[str, Any]) -> Reponse:
+        reponse = super()._accord(corps)
+        cree = reponse.corps["messages"][-1]["projet_cree"]
+        self._racine = Path(str(cree["racine"]))
+        if self._versionne_naissance:
+            self._mettre_sous_git()
+            cree["versionne"] = True
+        return reponse
+
+    def _versionner(self, projet_id: str) -> Reponse:
+        self.versionnes.append(projet_id)
+        self._mettre_sous_git()
+        return Reponse(statut=200, corps={"id": projet_id, "vcs": {"type": "git"}})
+
+    def _mettre_sous_git(self) -> None:
+        assert self._racine is not None
+        if not (self._racine / ".git").exists():
+            _git_s12(self._racine, "init", "-q", "-b", "main")
+
+    # --- Le run -------------------------------------------------------------
+
+    def _lancer_le_run(self, run: RunFactice, racine: Path) -> None:
+        """Le run part : l'outillage est commité, le socle aussi s'il aboutit."""
+        _commiter_s12(racine, "outillage")
+        if self._avant == AVANT_ECHEC:
+            self._poser(
+                run.run_id,
+                EXECUTION_ECHEC,
+                [
+                    _tache_s12("socle", "en_cours", 1),
+                    _tache_s12("socle", STATUT_ECHEC, 2, "Prompt is too long"),
+                ],
+                {"socle": STATUT_ECHEC, "pages": "backlog", "tests": "backlog"},
+            )
+            return
+        _commiter_s12(racine, "socle", **{"package.json": "{}\n"})
+        if self._avant == AVANT_SANS_MOMENT:
+            self._poser(
+                run.run_id,
+                EXECUTION_TERMINEE,
+                [_tache_s12("socle", "en_cours", 1), _tache_s12("socle", "terminee", 2)],
+                {"socle": STATUT_TERMINEE},
+            )
+            return
+        self._poser(
+            run.run_id,
+            EXECUTION_EN_COURS,
+            [
+                _tache_s12("socle", "en_cours", 1),
+                _tache_s12("socle", "terminee", 2),
+                _tache_s12("pages", "en_cours", 3),
+            ],
+            {"socle": STATUT_TERMINEE, "pages": "en_cours", "tests": "backlog"},
+        )
+
+    def _poser(
+        self, run_id: str, statut: str, trace: list[dict[str, Any]], cartes: Mapping[str, str]
+    ) -> None:
+        self._statuts[run_id] = statut
+        self._traces[run_id] = list(trace)
+        self._cartes[run_id] = {"cartes": [_carte_s12(t, s) for t, s in cartes.items()]}
+
+    def _resumes(self) -> list[dict[str, Any]]:
+        mes_runs = [
+            {"run_id": run_id, "statut": statut, "vitalite": "vivant"}
+            for run_id, statut in self._statuts.items()
+        ]
+        autres = [{"run_id": r, "statut": "en_cours", "vitalite": "vivant"} for r in self._autres]
+        return mes_runs + autres
+
+    def _execution(self, run_id: str) -> Reponse:
+        if run_id not in self._statuts:
+            return super()._execution(run_id)
+        if run_id in self._fin_due:
+            self._fin_due.discard(run_id)
+            self._finir(run_id)
+        return Reponse(
+            statut=200,
+            corps={
+                "run_id": run_id,
+                "statut": self._statuts[run_id],
+                "cause": "extinction" if self._statuts[run_id] == "annulee" else "",
+                "cout_usd": 1.0,
+                "nb_taches": len(self._cartes[run_id]["cartes"]),
+                "evenements": list(self._traces[run_id]),
+            },
+        )
+
+    def _taches(self, params: Mapping[str, str]) -> Reponse:
+        run_id = str(params.get("run") or "")
+        if run_id not in self._cartes:
+            return super()._taches(params)
+        self.lectures_taches.append(dict(params))
+        return Reponse(statut=200, corps=[dict(c) for c in self._cartes[run_id]["cartes"]])
+
+    # --- Les gestes -----------------------------------------------------------
+
+    def _pause(self, run_id: str) -> Reponse:
+        self.chronologie.append("pause")
+        return Reponse(statut=200, corps={"run_id": run_id, "en_pause": True})
+
+    def _eteindre(self) -> Reponse:
+        self.chronologie.append("extinction")
+        assert self._racine is not None
+        soldes = [r for r, s in self._statuts.items() if s == EXECUTION_EN_COURS]
+        for run_id in soldes:
+            cartes = self._cartes[run_id]["cartes"]
+            if self._produit == PRODUIT_DE_P5:
+                # #466 avant #924 : toute carte non terminée passe en échec.
+                self._statuts[run_id] = "annulee"
+                for carte in cartes:
+                    if carte["statut"] != STATUT_TERMINEE:
+                        carte["statut"] = STATUT_ECHEC
+            else:
+                # Le travail en vol est sauvé sur sa branche ; rien d'autre ne bouge.
+                _git_s12(self._racine, "checkout", "-q", "-b", "maestro/pages")
+                _commiter_s12(self._racine, "pages : en cours", **{"pages.txt": "accueil\n"})
+                _git_s12(self._racine, "checkout", "-q", "main")
+        return Reponse(statut=200, corps={"runs": [{"run_id": r} for r in soldes], "nb": 1})
+
+    def _reprendre(self, run_id: str) -> Reponse:
+        self.chronologie.append("reprendre")
+        if self._produit == PRODUIT_DE_P5:
+            return Reponse(statut=409, corps={}, texte="ce run n'est pas suspendu")
+        self._fin_due.add(run_id)
+        return Reponse(statut=200, corps={"run_id": run_id})
+
+    def _relancer(self, run_id: str) -> Reponse:
+        self.chronologie.append("relancer")
+        neuf = f"run-{len(self._statuts) + 1}"
+        # Un plan refait : d'autres identifiants, tout repart de zéro.
+        self._poser(
+            neuf,
+            EXECUTION_EN_COURS,
+            [],
+            {"socle-nextjs": "backlog", "pages-2": "backlog", "tests-2": "backlog"},
+        )
+        self._fin_due.add(neuf)
+        return Reponse(statut=202, corps={"run_id": neuf, "reprise_de": run_id})
+
+    def _finir(self, run_id: str) -> None:
+        """Le run qui continue va au bout — et ce qu'il a fait rejoint le projet."""
+        assert self._racine is not None
+        cartes = self._cartes[run_id]["cartes"]
+        if self._produit == PRODUIT_ATTENDU:
+            if self._faite_repart:
+                self._traces[run_id].append(_tache_s12("socle", "en_cours", 5))
+            self._traces[run_id] += [
+                _tache_s12("pages", "en_cours", 5),
+                _tache_s12("pages", "terminee", 6),
+                _tache_s12("tests", "en_cours", 7),
+                _tache_s12("tests", "terminee", 8),
+            ]
+            _git_s12(self._racine, "merge", "-q", "--no-ff", "-m", "pages", "maestro/pages")
+        else:
+            self._traces[run_id] += [
+                ev
+                for rang, carte in enumerate(cartes)
+                for ev in (
+                    _tache_s12(carte["id"], "en_cours", 5 + 2 * rang),
+                    _tache_s12(carte["id"], "terminee", 6 + 2 * rang),
+                )
+            ]
+        _commiter_s12(self._racine, "application", **{"tests.txt": "ok\n"})
+        for carte in cartes:
+            carte["statut"] = STATUT_TERMINEE
+        self._statuts[run_id] = EXECUTION_TERMINEE
+
+
+def _sonde_s12(argv: Sequence[str]) -> str | None:
+    """Le poste de S12 a `npm` et `git`."""
+    return "10.9.0" if argv and argv[0] in {"npm", "git"} else None
+
+
+def _banc_s12(
+    tmp_path: Path,
+    api: ApiQuiInterrompt | None = None,
+    *,
+    joueur: JoueurFactice | None = None,
+    sonde: Callable[[Sequence[str]], str | None] = _sonde_s12,
+    pages: Callable[[str], int | None] | None = None,
+    rallumage: Callable[[], str] | None = None,
+) -> tuple[Banc, ApiQuiInterrompt, JoueurFactice, list[str]]:
+    """Le montage de S12 : le fil qui outille, un run qu'on interrompt, un livrable qu'on joue.
+
+    Le redémarrage de test ne touche à aucun process : il s'inscrit dans la chronologie
+    de l'API, entre l'extinction et la reprise. Les pages sondées répondent `200` sauf
+    avis contraire.
+    """
+    api = api or ApiQuiInterrompt(tmp_path / "Maestro")
+    joueur = joueur or JoueurFactice()
+    sondees: list[str] = []
+
+    def rallumer() -> str:
+        api.chronologie.append("rallumage")
+        return "API coupée puis rallumée (test)"
+
+    def sonder(url: str) -> int | None:
+        sondees.append(url)
+        return pages(url) if pages is not None else 200
+
+    montage = _banc(tmp_path, api, joueur=joueur, sonde=sonde)
+    montage.redemarrer = rallumage or rallumer
+    montage.sonder_page = sonder
+    return montage, api, joueur, sondees
+
+
+def test_s12_est_vert_quand_le_run_reprend_sur_son_plan_et_que_le_livrable_tient(
+    tmp_path: Path,
+) -> None:
+    """Le produit que le chantier de #1389 livre, de bout en bout : né dans le fil,
+    interrompu au moment voulu, éteint, rallumé, repris sur son plan — puis le livrable
+    cloné, installé, construit, testé et servi."""
+    montage, api, joueur, sondees = _banc_s12(tmp_path)
+    issue, ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.vert, issue.motif
+    assert issue.run_id == "run-1"
+    assert ctx.racine == ctx.atelier.racine / DOSSIER_S12
+    assert api.sans_projet[0] == DEMANDE_S12
+    # Les gestes, dans l'ordre d'une personne : pause, extinction, redémarrage, reprise.
+    assert api.chronologie == ["pause", "extinction", "rallumage", "reprendre"]
+    # Le temps d'un geste entre la pause et l'extinction (p5 : sept secondes).
+    assert montage.horloge.instant >= PAUSE_AVANT_EXTINCTION_S
+    # Le livrable est joué sur un CLONE — ce que le projet a commité —, dans l'ordre.
+    joues = [commande for commande, _dossier, _delai in joueur.joues]
+    assert joues[:3] == [
+        f"{SANS_TERMINAL} {INSTALLER_S12}",
+        f"{SANS_TERMINAL} {CONSTRUIRE_S12}",
+        f"{SANS_TERMINAL} {TESTER_S12}",
+    ]
+    assert joues[3].startswith("PORT=") and joues[3].endswith(SERVIR_S12)
+    dossiers = {dossier for _commande, dossier, _delai in joueur.joues}
+    assert len(dossiers) == 1
+    (clone,) = dossiers
+    assert clone != ctx.racine and (clone / ".git").exists()
+    assert (clone / "pages.txt").is_file(), "le travail repris est dans le clone"
+    # Chaque page de la demande a été demandée au livrable servi.
+    assert {url.split(":", 2)[2].split("/", 1)[1] for url in sondees} >= {
+        page.lstrip("/") for page in PAGES_S12
+    }
+    assert "sans rien rejouer ni perdre" in issue.motif
+
+
+def test_s12_est_rouge_sur_ce_que_p5_a_montre(tmp_path: Path) -> None:
+    """Le produit du 2026-10-01 : chaque défaut de p5 est un constat, tous dans le même motif.
+
+    C'est la preuve que l'oracle attrape ce qu'aucun scénario ne voyait : les cartes
+    jamais démarrées soldées en échec par l'extinction, le travail en vol jamais sauvé,
+    la reprise qui ouvre un nouveau run sur un plan refait — dont la tâche faite est
+    absente. Le livrable, lui, tient : le motif ne dit que ce qui manque.
+    """
+    api = ApiQuiInterrompt(tmp_path / "Maestro", produit=PRODUIT_DE_P5)
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.verdict == "rouge" and not issue.empechement
+    assert api.chronologie == ["pause", "extinction", "rallumage", "reprendre", "relancer"]
+    assert "« Tâche tests » backlog → echec" in issue.motif
+    assert "n'est pas sauvé sur sa branche : « Tâche pages » (`maestro/pages`)" in issue.motif
+    assert "« Reprendre » a ouvert un nouveau run (run-2) au lieu de continuer run-1" in (
+        issue.motif
+    )
+    assert "« Tâche socle » absente du run qui continue" in issue.motif
+    # Les deux runs sont comptés.
+    assert issue.cout_usd == 2.0
+
+
+def test_s12_est_rouge_quand_une_tache_faite_repart_apres_la_reprise(tmp_path: Path) -> None:
+    """Le même run, mais la tâche faite avant l'extinction y repart : elle est rejouée."""
+    api = ApiQuiInterrompt(tmp_path / "Maestro", faite_repart=True)
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.verdict == "rouge"
+    assert "« Tâche socle » repartie" in issue.motif
+    assert "nouveau run" not in issue.motif
+
+
+def test_s12_est_rouge_quand_le_run_echoue_avant_d_avoir_de_quoi_l_interrompre(
+    tmp_path: Path,
+) -> None:
+    """Le socle en échec — ce que le juge de p5 a fait d'une tâche réussie (#1388) : le
+    run se solde sans aboutir, avant tout moment d'interrompre. C'est un rouge, cause et
+    relevé compris, et rien n'est éteint."""
+    api = ApiQuiInterrompt(tmp_path / "Maestro", avant=AVANT_ECHEC)
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.verdict == "rouge" and not issue.empechement
+    assert "s'est soldé « echec »" in issue.motif
+    assert "« Tâche socle » echec" in issue.motif
+    assert "Prompt is too long" in issue.motif
+    assert api.chronologie == []
+
+
+def test_s12_est_empeche_quand_le_run_aboutit_sans_rien_a_interrompre(tmp_path: Path) -> None:
+    """Un run qui aboutit sans qu'une tâche soit faite pendant qu'une autre tourne : il
+    n'y avait rien à interrompre — un empêchement, jamais un vert."""
+    api = ApiQuiInterrompt(tmp_path / "Maestro", avant=AVANT_SANS_MOMENT)
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.empechement
+    assert "rien à interrompre" in issue.motif
+    assert api.chronologie == []
+
+
+def test_s12_ne_se_joue_pas_sans_npm_et_le_dit_d_emblee(tmp_path: Path) -> None:
+    """Un poste sans `npm` ne joue pas S12 : un empêchement, avant le moindre appel."""
+    montage, api, _joueur, _sondees = _banc_s12(
+        tmp_path, sonde=lambda argv: None if argv[0] == "npm" else "2.45"
+    )
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.empechement
+    assert "`npm`" in issue.motif
+    assert api.appels == []
+
+
+def test_s12_ne_solde_jamais_un_run_qu_il_n_a_pas_lance(tmp_path: Path) -> None:
+    """D'autres runs en vol : éteindre Maestro les solderait. Empêchement, avant toute demande."""
+    api = ApiQuiInterrompt(tmp_path / "Maestro", autres_en_vol=("run-de-quelqu-un",))
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.empechement
+    assert "run-de-quelqu-un" in issue.motif
+    assert api.sans_projet == [] and api.chronologie == []
+
+
+def test_s12_est_empeche_quand_maestro_ne_se_rallume_pas(tmp_path: Path) -> None:
+    """Un banc qui n'a pas pu rallumer Maestro ne mesure rien de la reprise."""
+
+    def ne_se_rallume_pas() -> str:
+        raise OSError("l'API rallumée ne répond pas sur :8008")
+
+    montage, api, _joueur, _sondees = _banc_s12(tmp_path, rallumage=ne_se_rallume_pas)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.empechement
+    assert "n'a pas pu rallumer Maestro" in issue.motif
+    assert api.chronologie == ["pause", "extinction"]
+
+
+def test_s12_versionne_le_projet_que_le_fil_n_a_pas_mis_sous_git(tmp_path: Path) -> None:
+    """p5 était versionné : un projet né sans Git l'est par le geste de l'écran Projets."""
+    api = ApiQuiInterrompt(tmp_path / "Maestro", versionne_a_la_naissance=False)
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.vert, issue.motif
+    assert api.versionnes == [ctx.projet_id]
+    chemins = [chemin for _methode, chemin in api.appels]
+    assert chemins.index(f"/api/projets/{ctx.projet_id}/versionner") < chemins.index(
+        f"{FIL}/recrutement"
+    )
+
+
+def test_s12_est_rouge_quand_le_livrable_ne_se_construit_pas(tmp_path: Path) -> None:
+    """Le build échoue sur le clone : le motif le dit, et les tests ne sont pas joués."""
+    joueur = JoueurFactice(codes={f"{SANS_TERMINAL} {CONSTRUIRE_S12}": 1})
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, joueur=joueur)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.verdict == "rouge"
+    assert f"`{CONSTRUIRE_S12}` échoue sur le projet livré" in issue.motif
+    assert f"{SANS_TERMINAL} {TESTER_S12}" not in [c for c, _d, _t in joueur.joues]
+
+
+@dataclass
+class JoueurQuiSalit(JoueurFactice):
+    """Un build qui laisse un dossier que le projet n'ignore pas — ce que #1401 décrit."""
+
+    def __call__(self, commande: str, dossier: Path, delai_s: float) -> Execution:
+        if commande.endswith(CONSTRUIRE_S12):
+            (dossier / "build").mkdir(exist_ok=True)
+            (dossier / "build" / "page.html").write_text("<html></html>\n", encoding="utf-8")
+        return super().__call__(commande, dossier, delai_s)
+
+
+def test_s12_est_rouge_quand_ce_qui_se_refabrique_salit_le_depot(tmp_path: Path) -> None:
+    """Ce que le build refabrique n'est pas ignoré : le dépôt du livrable est sale."""
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, joueur=JoueurQuiSalit())
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.verdict == "rouge"
+    assert "salissent le dépôt" in issue.motif
+    assert "build/" in issue.motif
+
+
+def test_s12_est_rouge_quand_une_page_n_est_pas_servie(tmp_path: Path) -> None:
+    """Une recette sans page : le livrable tourne, mais ne sert pas ce qu'on a demandé."""
+    montage, _api, _joueur, _sondees = _banc_s12(
+        tmp_path, pages=lambda url: 404 if url.endswith("/ratatouille") else 200
+    )
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.verdict == "rouge"
+    assert f"`{SERVIR_S12}` ne sert pas /recettes/ratatouille (404)" in issue.motif
+
+
+def test_s12_dit_les_pages_et_les_commandes_qu_il_jugera() -> None:
+    """La demande nomme ce que l'oracle joue : chaque page, chaque commande, le port."""
+    for page in PAGES_S12[1:]:
+        assert page in TRAVAIL_S12
+    for commande in (INSTALLER_S12, CONSTRUIRE_S12, TESTER_S12, SERVIR_S12):
+        assert f"`{commande}`" in TRAVAIL_S12
+    assert "`PORT`" in TRAVAIL_S12
+
+
+# --- Couper et rallumer l'API (#1408) ------------------------------------------
+
+
+@dataclass
+class SystemeFactice:
+    """Le poste du redémarrage : ce qui a été démarré, et un port toujours libre."""
+
+    demarres: list[tuple[list[str], Path, Path]] = field(default_factory=list)
+
+    def attachable(self, hote: str, port: int) -> bool:
+        return True
+
+    def demarrer(
+        self, argv: Sequence[str], *, cwd: Path, journal: Path, environ: Mapping[str, str]
+    ) -> None:
+        self.demarres.append((list(argv), cwd, journal))
+
+
+class ApiQuiMeurtPuisRenait(FausseAPI):
+    """Une API qui répond, se tait une fois coupée, puis répond de nouveau une fois relancée."""
+
+    def __init__(self, systeme: SystemeFactice, *, renait: bool = True, espace: str) -> None:
+        super().__init__(espace=espace)
+        self._systeme = systeme
+        self._renait = renait
+        self.coupee = False
+
+    def demander(
+        self,
+        methode: str,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
+    ) -> Reponse:
+        if chemin == "/api/sante" and self.coupee and not (
+            self._renait and self._systeme.demarres
+        ):
+            raise ErreurAPI("connexion refusée (test)", chemin=chemin)
+        return super().demander(methode, chemin, corps=corps, params=params, delai_s=delai_s)
+
+
+def test_redemarrer_coupe_puis_rallume_l_api_sur_le_banc(tmp_path: Path) -> None:
+    """L'API qui sert le banc est coupée sur son port, puis rallumée par la ligne de
+    `start.sh` — `--etat-banc` compris, puisqu'elle servait l'espace du banc."""
+    env = {"MAESTRO_PORT_API": "8008", "MAESTRO_ESPACE": "copie"}
+    systeme = SystemeFactice()
+    banc_de_la_copie = donnees_du_banc(environnement=env).espace.nom
+    api = ApiQuiMeurtPuisRenait(systeme, espace=banc_de_la_copie)
+    coupes: list[int] = []
+
+    def couper(port: int) -> None:
+        coupes.append(port)
+        api.coupee = True
+
+    horloge = Horloge()
+    fait = redemarrage.redemarrer_l_api(
+        ClientAPI(api),
+        journal=tmp_path / "api.log",
+        environnement=env,
+        systeme=systeme,  # type: ignore[arg-type]
+        couper=couper,
+        horloge=horloge,
+        dormir=horloge.dormir,
+    )
+
+    assert coupes == [8008]
+    ((argv, cwd, journal),) = systeme.demarres
+    assert argv[1:] == ["-m", redemarrage.MODULE_API, "--port", "8008", "--etat-banc"]
+    assert cwd == racine_de_la_copie() and journal == tmp_path / "api.log"
+    assert "rallumée sur :8008, sur l'état du banc" in fait
+
+
+def test_redemarrer_rallume_sur_les_donnees_de_la_copie_hors_du_banc(tmp_path: Path) -> None:
+    """Une API qui sert la copie se rallume sur la copie : jamais `--etat-banc` d'office."""
+    env = {"MAESTRO_PORT_API": "8008", "MAESTRO_ESPACE": "copie"}
+    systeme = SystemeFactice()
+    api = ApiQuiMeurtPuisRenait(systeme, espace="copie")
+    horloge = Horloge()
+
+    redemarrage.redemarrer_l_api(
+        ClientAPI(api),
+        journal=tmp_path / "api.log",
+        environnement=env,
+        systeme=systeme,  # type: ignore[arg-type]
+        couper=lambda _port: setattr(api, "coupee", True),
+        horloge=horloge,
+        dormir=horloge.dormir,
+    )
+
+    ((argv, _cwd, _journal),) = systeme.demarres
+    assert "--etat-banc" not in argv
+
+
+def test_redemarrer_leve_quand_l_api_rallumee_ne_repond_pas(tmp_path: Path) -> None:
+    """Une API qui ne revient pas lève `OSError` — l'empêchement de S12 —, journal nommé."""
+    env = {"MAESTRO_PORT_API": "8008", "MAESTRO_ESPACE": "copie"}
+    systeme = SystemeFactice()
+    api = ApiQuiMeurtPuisRenait(systeme, renait=False, espace="copie")
+    horloge = Horloge()
+
+    with pytest.raises(OSError, match="ne répond pas sur :8008"):
+        redemarrage.redemarrer_l_api(
+            ClientAPI(api),
+            journal=tmp_path / "api.log",
+            environnement=env,
+            systeme=systeme,  # type: ignore[arg-type]
+            couper=lambda _port: setattr(api, "coupee", True),
+            horloge=horloge,
+            dormir=horloge.dormir,
+        )
+
+
+def test_redemarrer_leve_quand_l_api_ne_se_coupe_pas(tmp_path: Path) -> None:
+    """Rien n'est rallumé par-dessus une API qui répond encore."""
+    env = {"MAESTRO_PORT_API": "8008", "MAESTRO_ESPACE": "copie"}
+    systeme = SystemeFactice()
+    api = ApiQuiMeurtPuisRenait(systeme, espace="copie")
+    horloge = Horloge()
+
+    with pytest.raises(OSError, match="répond encore"):
+        redemarrage.redemarrer_l_api(
+            ClientAPI(api),
+            journal=tmp_path / "api.log",
+            environnement=env,
+            systeme=systeme,  # type: ignore[arg-type]
+            couper=lambda _port: None,
+            horloge=horloge,
+            dormir=horloge.dormir,
+        )
+    assert systeme.demarres == []
+
+
+def test_couper_l_api_joue_le_geste_de_start_sh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """La coupe est `start.sh --couper-api` sur le port, par le bash des agents — jamais
+    un relevé de pids réécrit ici."""
+    joues: list[tuple[str, Path]] = []
+
+    def jouer(commande: str, cwd: Path, *, interprete: Sequence[str], delai_s: float) -> Execution:
+        joues.append((commande, cwd))
+        return Execution(code=0, sortie="API coupée", duree_s=0.1)
+
+    monkeypatch.setattr(redemarrage.execution, "interprete", lambda: ("bash", "-c"))
+    monkeypatch.setattr(redemarrage.execution, "jouer", jouer)
+    redemarrage.couper_l_api(8008)
+
+    ((commande, cwd),) = joues
+    assert commande == "MAESTRO_PORT_API=8008 bash scripts/controltower/start.sh --couper-api"
+    assert cwd == racine_de_la_copie()
+    assert (racine_de_la_copie() / redemarrage.LANCEUR).is_file()
+
+
+# --- Ce qu'on lit dans le dépôt d'un projet (#1408) ----------------------------
+
+
+def test_travail_en_avance_et_dans_le_projet_lisent_le_depot(tmp_path: Path) -> None:
+    """Une branche qui porte un commit absent du projet est « en avance » ; une branche
+    née sans commit n'a rien sauvé ; fusionné, le commit est dans le projet."""
+    racine = tmp_path / "projet"
+    racine.mkdir()
+    _git_s12(racine, "init", "-q", "-b", "main")
+    _commiter_s12(racine, "base", **{"a.txt": "a\n"})
+    _git_s12(racine, "branch", "maestro/vide")
+    _git_s12(racine, "checkout", "-q", "-b", "maestro/pages")
+    sauve = _commiter_s12(racine, "pages", **{"b.txt": "b\n"})
+    _git_s12(racine, "checkout", "-q", "main")
+
+    assert travail_en_avance(racine, "maestro/pages") == sauve
+    assert travail_en_avance(racine, "maestro/vide") is None
+    assert travail_en_avance(racine, "maestro/absente") is None
+    assert not dans_le_projet(racine, sauve)
+    _git_s12(racine, "merge", "-q", "--no-ff", "-m", "fusion", "maestro/pages")
+    assert dans_le_projet(racine, sauve)
+
+
+def test_le_livrable_se_lit_sur_un_clone_propre(tmp_path: Path) -> None:
+    """Le clone porte ce qui est commité ; ce qui apparaît sans être ignoré le salit, et
+    un fichier commité que le projet ignore se voit."""
+    racine = tmp_path / "projet"
+    racine.mkdir()
+    _git_s12(racine, "init", "-q", "-b", "main")
+    (racine / "dist").mkdir()
+    (racine / "dist" / "vieux.js").write_text("x\n", encoding="utf-8")
+    _commiter_s12(racine, "base", **{"a.txt": "a\n"})
+    _commiter_s12(racine, "ignorer", **{".gitignore": "dist/\nnode_modules/\n"})
+    (racine / "pas-commite.txt").write_text("brouillon\n", encoding="utf-8")
+    clone = tmp_path / "clone"
+
+    cloner(racine, clone)
+
+    assert (clone / "a.txt").is_file() and not (clone / "pas-commite.txt").exists()
+    assert salissures(clone) == ()
+    assert suivis_ignores(clone) == ("dist/vieux.js",)
+    (clone / "node_modules").mkdir()
+    (clone / "node_modules" / "x.js").write_text("x\n", encoding="utf-8")
+    assert salissures(clone) == ()
+    (clone / "build").mkdir()
+    (clone / "build" / "page.html").write_text("x\n", encoding="utf-8")
+    assert salissures(clone) == ("?? build/",)
+
+
 # --- Le périmètre exclu, sur le disque --------------------------------------
 
 
@@ -4564,6 +5340,92 @@ def test_le_banc_ne_se_plaint_pas_d_une_declaration_deja_oubliee(tmp_path: Path)
             return Reponse(statut=404, corps={"detail": "inconnu"}, texte="inconnu")
 
     ClientAPI(ApiSansProjet()).retirer_projet("prj-1")
+
+
+def test_les_gestes_d_interruption_empruntent_les_routes_de_l_ecran() -> None:
+    """Pause, reprise, relance, extinction et liste des runs (#1408) : les routes que les
+    boutons de l'écran et les gestes d'arrêt appellent, et rien d'autre."""
+    vus: list[tuple[str, str, dict[str, str] | None]] = []
+
+    class ApiQuiNote:
+        def demander(self, methode: str, chemin: str, **reste: Any) -> Reponse:
+            vus.append((methode, chemin, reste.get("params")))
+            if chemin == "/api/executions":
+                return Reponse(statut=200, corps=[{"run_id": "r1", "statut": "en_cours"}])
+            if chemin.endswith("/relancer"):
+                return Reponse(statut=202, corps={"run_id": "r2", "reprise_de": "r1"})
+            if chemin == "/api/extinction":
+                return Reponse(statut=200, corps={"runs": [{"run_id": "r1"}], "nb": 1})
+            return Reponse(statut=200, corps={"run_id": "r1"})
+
+    client = ClientAPI(ApiQuiNote())
+
+    assert client.executions() == [{"run_id": "r1", "statut": "en_cours"}]
+    assert client.suspendre("r1") == {"run_id": "r1"}
+    assert client.reprendre("r1") == {"run_id": "r1"}
+    assert client.relancer("r1")["run_id"] == "r2"
+    assert client.eteindre()["nb"] == 1
+    assert vus == [
+        ("GET", "/api/executions", {"projet": "tous"}),
+        ("POST", "/api/executions/r1/pause", None),
+        ("POST", "/api/executions/r1/reprendre", None),
+        ("POST", "/api/executions/r1/relancer", None),
+        ("POST", "/api/extinction", None),
+    ]
+
+
+def test_reprendre_un_run_qui_n_est_pas_suspendu_leve_son_409() -> None:
+    """La reprise d'un run éteint est refusée (`409`) : le banc le lit pour jouer la relance."""
+
+    class ApiQuiRefuseLaReprise:
+        def demander(self, methode: str, chemin: str, **reste: Any) -> Reponse:
+            return Reponse(statut=409, corps={}, texte="ce run n'est pas suspendu")
+
+    with pytest.raises(ErreurAPI) as leve:
+        ClientAPI(ApiQuiRefuseLaReprise()).reprendre("r1")
+
+    assert leve.value.statut == 409
+
+
+def test_le_suivi_rend_la_main_au_moment_demande_avant_l_issue() -> None:
+    """`arret` (#1408) : le suivi s'arrête au premier détail qui le satisfait, le run
+    encore en vol — et un run soldé avant ce moment est rendu comme d'habitude."""
+    api = FausseAPI()
+    api.runs.append(
+        RunFactice(run_id="r1", objectif="o", projet_id="p", bornes={}, lectures_avant_la_fin=5)
+    )
+    horloge = Horloge()
+    lectures: list[int] = []
+
+    def au_troisieme(_detail: Mapping[str, Any]) -> bool:
+        lectures.append(1)
+        return len(lectures) >= 3
+
+    detail = attendre_le_run(
+        ClientAPI(api),
+        "r1",
+        projet_id="p",
+        delai_s=60.0,
+        note=lambda *_: None,
+        horloge=horloge,
+        dormir=horloge.dormir,
+        arret=au_troisieme,
+    )
+
+    assert detail["statut"] == EXECUTION_EN_COURS
+    assert len(lectures) == 3
+
+    solde = attendre_le_run(
+        ClientAPI(api),
+        "r1",
+        projet_id="p",
+        delai_s=60.0,
+        note=lambda *_: None,
+        horloge=horloge,
+        dormir=horloge.dormir,
+        arret=lambda _detail: False,
+    )
+    assert solde["statut"] == EXECUTION_TERMINEE
 
 
 # --- ⑥ L'état qu'un passage laisse (#1164) -----------------------------------

@@ -1,4 +1,4 @@
-"""Les onze scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
+"""Les douze scénarios de référence, et ce qui les rend verts (#1148, docs/40 §5).
 
 | | Scénario | Ce qui le rend vert |
 |---|---|---|
@@ -17,6 +17,10 @@
 | S10 | Un dépôt d'une pile hors des tables | Le même oracle, sur une solution .NET reprise |
 | S11 | Des tâches indépendantes, de front | Sur un projet versionné, deux tâches en cours |
 | | | ensemble ; le plafond dérivé du plan s'annonce (#1299) |
+| S12 | Une application web survit à une | Née dans le fil, interrompue (pause, extinction, |
+| | extinction | redémarrage, reprise) : rien de fait ne repart, rien |
+| | | ne se perd, et le livrable cloné s'installe, se |
+| | | construit, passe ses tests et sert ses pages (#1408) |
 
 ## Trois règles que ces scénarios suivent
 
@@ -36,7 +40,8 @@ lui, **part** d'un projet sans équipe : c'est son sujet.
 **L'oracle regarde le monde, pas la prose.** Le disque pour S1, l'application
 lancée pour S2, l'équipe écrite et le run soldé pour S3, la file des validations
 et le disque hors de la racine pour S8, les commandes écrites **rejouées** pour S9
-et S10, la trace datée des tâches pour S11. Les oracles qui portent sur une phrase
+et S10, la trace datée des tâches pour S11, les cartes, la trace, le dépôt et le
+livrable cloné **joué** pour S12. Les oracles qui portent sur une phrase
 ou une pertinence — S4, S5, S9 et S10 — passent par un modèle
 (`maestro.scenarios.juge`, #746) : un lexique se tromperait dans les deux sens. Et
 même là, ce qui peut se constater se constate : S5 vérifie **sur le disque** que le
@@ -54,6 +59,8 @@ tenter en chemin l'acte que le projet décrit, comprendre un projet qu'aucune li
 ne prévoyait, dégager du plan le travail indépendant — donc un rouge se rejoue
 **une** fois avant d'être cru, et le rapport
 dit s'il l'a été (`Scenario.rejouable`, appliqué par `maestro.scenarios.banc`).
+S12 ne se rejoue pas d'office : la moitié de son oracle porte sur des mécaniques
+déterministes, et un passage coûte de l'ordre de l'heure (voir sa docstring).
 """
 
 from __future__ import annotations
@@ -64,14 +71,18 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 from maestro.agents.capacity import STATUT_INSTANCES_DERIVEES
+from maestro.controltower.battement import VITALITE_ORPHELIN
 from maestro.controltower.chat import DECISION_ECRIRE, DECISION_PASSER
 from maestro.controltower.events import EVENEMENT_RUN_PLAN, EVENEMENT_TACHE_STATUT
 from maestro.controltower.state import (
@@ -82,6 +93,8 @@ from maestro.controltower.state import (
 from maestro.decideur import Decideur
 from maestro.detail_tache import ETAPE_FAITE
 from maestro.engine.executor import STATUT_EN_COURS, STATUT_ROLE_MANQUANT, STATUT_TERMINEE
+from maestro.lanceur.lanceur import HOTE_DEFAUT
+from maestro.lanceur.systeme import Systeme
 from maestro.lecture import OUTIL_SHELL
 from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.verification import ECHOUEE, USAGE_DEMARRER, Delais
@@ -91,6 +104,7 @@ from maestro.projets.modele import EXCLUS_DEFAUT
 from maestro.projets.perimetre import motifs_compiles
 from maestro.sandbox import verification as execution
 from maestro.sandbox.en_place import DOSSIER_ATELIER
+from maestro.sandbox.projet import branche_de_tache
 from maestro.scenarios.api import (
     DELAI_RUN_S,
     ClientAPI,
@@ -105,16 +119,22 @@ from maestro.scenarios.projets import (
     Atelier,
     annoncer_le_registre,
     cadre_dotnet,
+    cloner,
+    dans_le_projet,
     ecarts,
     empreinte,
     manquants,
     restes,
+    salissures,
     semer_a_vider,
     semer_hors_du_projet,
     semer_projet_existant,
     semer_site_vitrine,
     semer_solution_dotnet,
+    suivis_ignores,
+    travail_en_avance,
 )
+from maestro.scenarios.redemarrage import redemarrer_l_api
 from maestro.telemetry import ETAPE_EQUIPE
 
 #: Le nom du fichier que S2 demande. L'oracle de S2 est « elle s'exécute », et une
@@ -236,6 +256,10 @@ class Contexte:
     `jouer_commande` et `sonder_le_poste` (#1162) sont les deux gestes de S9 et S10
     qui touchent au poste : rejouer une commande que l'outillage a écrite, lire la
     version d'un outil. Les tests les doublent ; `None` prend les vrais.
+
+    `redemarrer` et `sonder_page` (#1408) sont les deux gestes de S12 qui touchent au
+    monde hors de l'API : couper puis rallumer l'API qui sert le banc
+    (`maestro.scenarios.redemarrage`), et demander une page au livrable servi.
     """
 
     client: ClientAPI
@@ -248,6 +272,8 @@ class Contexte:
     lancer_application: Callable[[Path, str], tuple[int, str]] | None = None
     jouer_commande: Joueur | None = None
     sonder_le_poste: Callable[[Sequence[str]], str | None] | None = None
+    redemarrer: Callable[[], str] | None = None
+    sonder_page: Callable[[str], int | None] | None = None
     projet_id: str = ""
     racine: Path | None = None
     arbitrages: list[str] = field(default_factory=list)
@@ -281,6 +307,22 @@ class Contexte:
         """Ce qu'un outil du poste répond — `None` s'il n'y est pas, sauf injection."""
         sonde = self.sonder_le_poste or sonder_le_poste
         return sonde(argv)
+
+    def rallumer(self) -> str:
+        """Coupe puis rallume l'API qui sert le banc — le vrai process, sauf injection.
+
+        Le journal de l'API rallumée va dans l'atelier du passage : c'est une pièce
+        du verdict, et le lanceur qui avait démarré la première n'en sait rien.
+        """
+        if self.redemarrer is not None:
+            return self.redemarrer()
+        journal = self.atelier.racine / DOSSIER_API / f"api-{datetime.now():%H%M%S}.log"
+        return redemarrer_l_api(self.client, journal=journal)
+
+    def sonder_la_page(self, url: str) -> int | None:
+        """Le statut HTTP d'une page du livrable servi — la vraie requête, sauf injection."""
+        sonde = self.sonder_page or sonder_page
+        return sonde(url)
 
 
 def lancer_application(racine: Path, point_d_entree: str) -> tuple[int, str]:
@@ -1860,30 +1902,9 @@ def s9_un_projet_neuf_hors_de_toute_liste(ctx: Contexte) -> Issue:
     """
     racine = ctx.atelier.dossier(DOSSIER_S9)
     conversation = ctx.client.ouvrir_conversation()
-    proposee = _proposition_du_fil(
-        ctx, conversation, _demander(ctx, conversation, "", DEMANDE_S9)
-    )
-    if proposee is None:
-        return rouge(
-            f"le fil n'a proposé aucun projet en {TOURS_S7} tours pour « {DEMANDE_S9} »",
-            cout_usd=None,
-        )
-    ctx.note("projet proposé", _projet_en_mots(proposee))
-    if not _meme_dossier(str(proposee.get("racine") or ""), racine):
-        corrigee = _proposition_du_fil(
-            ctx,
-            conversation,
-            _demander(
-                ctx, conversation, "", f"Mets-le plutôt dans le dossier {racine.as_posix()}."
-            ),
-        )
-        if corrigee is None or not _meme_dossier(str(corrigee.get("racine") or ""), racine):
-            return empeche(
-                "le projet n'a pas pu être rangé dans l'atelier du banc (proposé : "
-                f"{(corrigee or proposee).get('racine')}) : S9 ne déclare rien ailleurs",
-                cout_usd=None,
-            )
-        ctx.note("dossier rangé dans l'atelier", _projet_en_mots(corrigee))
+    non_ne = _naitre_dans_l_atelier(ctx, conversation, DEMANDE_S9, racine, "S9")
+    if non_ne is not None:
+        return non_ne
 
     def decrire() -> str:
         return (
@@ -1961,6 +1982,43 @@ def s10_un_depot_d_une_pile_hors_de_toute_table(ctx: Contexte) -> Issue:
     return _la_suite_d_un_projet_ne(ctx, conversation, racine, TRAVAIL_S10, decrire)
 
 
+def _naitre_dans_l_atelier(
+    ctx: Contexte, conversation: str, demande: str, racine: Path, scenario: str
+) -> Issue | None:
+    """Fait proposer un projet neuf par le fil **sans projet**, rangé dans `racine`.
+
+    Rend `None` quand le projet proposé est rangé là.
+
+    La première moitié de la naissance (#1294) : la phrase de la personne, la
+    proposition, et la correction en mots qui range le dossier dans l'atelier du
+    passage, comme S7. Rien n'est encore déclaré : c'est l'accord qui le fera
+    (`_lancer_dans_le_fil`). Une correction qui ne prend pas est un **empêchement** —
+    le scénario ne déclare rien ailleurs que dans l'atelier.
+    """
+    proposee = _proposition_du_fil(ctx, conversation, _demander(ctx, conversation, "", demande))
+    if proposee is None:
+        return rouge(
+            f"le fil n'a proposé aucun projet en {TOURS_S7} tours pour « {demande} »",
+            cout_usd=None,
+        )
+    ctx.note("projet proposé", _projet_en_mots(proposee))
+    if _meme_dossier(str(proposee.get("racine") or ""), racine):
+        return None
+    corrigee = _proposition_du_fil(
+        ctx,
+        conversation,
+        _demander(ctx, conversation, "", f"Mets-le plutôt dans le dossier {racine.as_posix()}."),
+    )
+    if corrigee is None or not _meme_dossier(str(corrigee.get("racine") or ""), racine):
+        return empeche(
+            "le projet n'a pas pu être rangé dans l'atelier du banc (proposé : "
+            f"{(corrigee or proposee).get('racine')}) : {scenario} ne déclare rien ailleurs",
+            cout_usd=None,
+        )
+    ctx.note("dossier rangé dans l'atelier", _projet_en_mots(corrigee))
+    return None
+
+
 def _la_suite_d_un_projet_ne(
     ctx: Contexte,
     conversation: str,
@@ -1992,47 +2050,11 @@ def _la_suite_d_un_projet_ne(
        (`Juge.convient_au_projet`) et jamais par un lexique (#746). Une abstention
        du juge est un empêchement.
     """
-    accord = ctx.client.declarer_par_le_fil(conversation=conversation)
-    ctx.note("accord donné", _extrait(accord))
-    cree = accord.get("projet_cree")
-    if not isinstance(cree, Mapping) or not cree.get("id"):
-        return rouge(f"l'accord n'a déclaré aucun projet : {_extrait(accord)}", cout_usd=None)
-    projet_id = str(cree["id"])
-    ctx.projet_id, ctx.racine = projet_id, racine
-
-    ecrites, inacheve = _outiller_dans_le_fil(ctx, conversation, accord)
-    if inacheve:
-        return rouge(inacheve, cout_usd=None)
-    if not ecrites:
-        return rouge(
-            "aucune pièce d'outillage ne s'est écrite dans la conversation : le projet né "
-            "n'a reçu ni instructions ni commandes",
-            cout_usd=None,
-        )
-    ctx.note("outillage écrit sur accord", ", ".join(ecrites))
-
-    reponse = _demander(ctx, conversation, projet_id, travail)
-    if not reponse.get("recrutement"):
-        return rouge(
-            "le fil n'a proposé aucune équipe sur un projet qui n'en a pas "
-            f"(proposition de run : {str(reponse.get('proposition') or '—')!r})",
-            run_id=_run_de(reponse),
-            cout_usd=None,
-        )
-    proposition = ctx.client.proposition_equipe(projet_id)
-    validee = equipe_validee(proposition)
-    if not validee["roles"]:
-        return rouge("l'analyse du projet n'a proposé aucun rôle", cout_usd=None)
-    suite = ctx.client.recruter(conversation=conversation, validee=validee)
-    noms = ", ".join(str(role["nom"]) for role in validee["roles"])
-    ctx.note("équipe validée dans le fil", f"{noms} — {_extrait(suite)}")
-    if not suite.get("proposition"):
-        return rouge(
-            "l'équipe validée, le fil n'a pas reproposé le travail demandé", cout_usd=None
-        )
-    run_id = _run_de(_accorder(ctx, conversation, projet_id))
-    if not run_id:
-        return rouge("l'accord n'a ouvert aucun run", cout_usd=None)
+    lance = _lancer_dans_le_fil(ctx, conversation, racine, travail)
+    if isinstance(lance, Issue):
+        return lance
+    projet_id, run_id, ecrites = lance.projet_id, lance.run_id, list(lance.ecrites)
+    proposition, validee, noms = lance.proposition, lance.validee, lance.equipe
     detail = _suivre(ctx, run_id, projet_id)
     cout = _cout(detail)
     if str(detail.get("statut")) != EXECUTION_TERMINEE:
@@ -2081,6 +2103,103 @@ def _la_suite_d_un_projet_ne(
         run_id=run_id,
         cout_usd=cout,
     )
+
+
+@dataclass(frozen=True)
+class Lancement:
+    """Un projet né dans le fil, outillé et doté, et le run que son travail a ouvert.
+
+    Le parcours d'une personne du premier mot au run, que S9, S10 et S12 partagent
+    (`_lancer_dans_le_fil`), et ce que leurs oracles relisent ensuite : les pièces
+    écrites, l'équipe que l'analyse a proposée et celle qui a été validée.
+    """
+
+    projet_id: str
+    run_id: str
+    ecrites: tuple[str, ...]
+    proposition: Mapping[str, Any]
+    validee: Mapping[str, Any]
+
+    @property
+    def equipe(self) -> str:
+        """Les rôles recrutés, par leur nom."""
+        return ", ".join(str(role["nom"]) for role in self.validee["roles"])
+
+
+def _lancer_dans_le_fil(
+    ctx: Contexte,
+    conversation: str,
+    racine: Path,
+    travail: str,
+    *,
+    versionner: bool = False,
+) -> Lancement | Issue:
+    """L'accord, l'outillage, l'équipe, puis le run — le lancement, ou pourquoi il n'a pas eu lieu.
+
+    Tout passe par le fil, dans l'ordre où une personne le vit (#1162) : elle accepte
+    le projet proposé, tranche chaque pièce d'outillage que la conversation lui montre,
+    demande un premier travail, valide l'équipe qu'on lui propose, puis accorde le run.
+
+    `versionner` (#1408) demande un projet **sous Git** avant le travail : versionné à
+    sa naissance quand le fil l'a proposé, sinon par le geste de l'écran Projets
+    (`POST …/versionner`, le montage de S11) — un poste qui ne sait pas versionner est
+    un empêchement, jamais un rouge du produit.
+    """
+    accord = ctx.client.declarer_par_le_fil(conversation=conversation)
+    ctx.note("accord donné", _extrait(accord))
+    cree = accord.get("projet_cree")
+    if not isinstance(cree, Mapping) or not cree.get("id"):
+        return rouge(f"l'accord n'a déclaré aucun projet : {_extrait(accord)}", cout_usd=None)
+    projet_id = str(cree["id"])
+    ctx.projet_id, ctx.racine = projet_id, racine
+
+    ecrites, inacheve = _outiller_dans_le_fil(ctx, conversation, accord)
+    if inacheve:
+        return rouge(inacheve, cout_usd=None)
+    if not ecrites:
+        return rouge(
+            "aucune pièce d'outillage ne s'est écrite dans la conversation : le projet né "
+            "n'a reçu ni instructions ni commandes",
+            cout_usd=None,
+        )
+    ctx.note("outillage écrit sur accord", ", ".join(ecrites))
+
+    if versionner:
+        if cree.get("versionne"):
+            ctx.note("projet versionné", "dès sa naissance, comme le fil l'a proposé")
+        else:
+            fiche = ctx.client.versionner_projet(projet_id)
+            if not fiche.get("vcs"):
+                return empeche(
+                    "le projet né dans le fil n'a pas pu être versionné par le geste de "
+                    f"l'écran Projets ({cree.get('versionnement_refuse') or 'sans cause dite'})",
+                    cout_usd=None,
+                )
+            ctx.note("projet versionné", "par `POST /api/projets/{id}/versionner`")
+
+    reponse = _demander(ctx, conversation, projet_id, travail)
+    if not reponse.get("recrutement"):
+        return rouge(
+            "le fil n'a proposé aucune équipe sur un projet qui n'en a pas "
+            f"(proposition de run : {str(reponse.get('proposition') or '—')!r})",
+            run_id=_run_de(reponse),
+            cout_usd=None,
+        )
+    proposition = ctx.client.proposition_equipe(projet_id)
+    validee = equipe_validee(proposition)
+    if not validee["roles"]:
+        return rouge("l'analyse du projet n'a proposé aucun rôle", cout_usd=None)
+    suite = ctx.client.recruter(conversation=conversation, validee=validee)
+    noms = ", ".join(str(role["nom"]) for role in validee["roles"])
+    ctx.note("équipe validée dans le fil", f"{noms} — {_extrait(suite)}")
+    if not suite.get("proposition"):
+        return rouge(
+            "l'équipe validée, le fil n'a pas reproposé le travail demandé", cout_usd=None
+        )
+    run_id = _run_de(_accorder(ctx, conversation, projet_id))
+    if not run_id:
+        return rouge("l'accord n'a ouvert aucun run", cout_usd=None)
+    return Lancement(projet_id, run_id, tuple(ecrites), proposition, validee)
 
 
 def _revue_d_apres_le_run(ctx: Contexte, conversation: str, run_id: str) -> str:
@@ -2652,6 +2771,589 @@ def _instant(valeur: Any) -> datetime | None:
     return instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
 
 
+# --- S12 — une application web survit à une extinction ----------------------
+
+#: Ce que la personne dit en arrivant (#1408) : la demande de p5 (2026-09-30), réduite
+#: à ce qui se vérifie. Une **vraie** application web — un cadre, des dépendances à
+#: installer, un build —, et sa pile dite comme la dit quelqu'un qui la connaît : les
+#: questions d'outillage la retrouvent dans leurs recommandations, et l'oracle sait ce
+#: qu'il doit pouvoir taper.
+DEMANDE_S12 = (
+    "Je veux un livre de recettes en ligne : une application web Next.js en TypeScript, "
+    "installée avec npm et testée avec Vitest."
+)
+
+#: Les pages que l'application doit servir : l'accueil, et une page par recette.
+PAGES_S12 = ("/", "/recettes/crepes", "/recettes/ratatouille", "/recettes/tarte-aux-pommes")
+
+#: Ce que la personne doit pouvoir taper, dans l'ordre — et ce que l'oracle joue.
+INSTALLER_S12 = "npm install"
+CONSTRUIRE_S12 = "npm run build"
+TESTER_S12 = "npm test"
+SERVIR_S12 = "npm start"
+
+#: Le travail demandé une fois le projet outillé. Il nomme ce qui se vérifie — les
+#: pages, les commandes, le port —, comme S2 nomme son point d'entrée : un oracle qui
+#: devinerait la route d'une recette ou le script des tests jugerait sa propre lecture.
+#: Plusieurs tâches en naissent (un socle, puis des pages et des tests qui en
+#: dépendent), et c'est ce qui donne au banc un moment où une tâche est faite pendant
+#: qu'une autre tourne.
+TRAVAIL_S12 = (
+    "Construis l'application : une page d'accueil qui liste les recettes, une page par "
+    "recette, et trois recettes d'exemple — crêpes, ratatouille et tarte aux pommes —, "
+    f"servies sous {', '.join(PAGES_S12[1:])}. Des tests Vitest couvrent les recettes et "
+    f"leurs pages. `{INSTALLER_S12}`, `{CONSTRUIRE_S12}` et `{TESTER_S12}` doivent "
+    f"passer, et `{SERVIR_S12}` doit servir le site sur le port que donne la variable "
+    "d'environnement `PORT`."
+)
+
+#: Le projet de S12, la copie fraîche de son livrable, et le journal de l'API que le
+#: banc rallume — trois dossiers de l'atelier du passage.
+DOSSIER_S12 = "s12-recettes"
+DOSSIER_LIVRABLE_S12 = "s12-livrable"
+DOSSIER_API = "_api"
+
+#: Entre la pause et l'extinction : le temps d'un geste. Sur p5, la personne a mis le
+#: run en pause à 15:13:28 et éteint Maestro à 15:13:35 — sept secondes, pendant
+#: lesquelles la tâche partie avant la pause tournait encore (#1389).
+PAUSE_AVANT_EXTINCTION_S = 7.0
+
+#: L'intervalle entre deux lectures pendant que S12 guette le moment d'interrompre :
+#: chaque lecture relit aussi les cartes du run.
+INTERVALLE_MOMENT_S = 2.0
+
+#: Ce que les commandes du livrable reçoivent : elles jouent comme dans une
+#: intégration continue, sans terminal — Vitest ne s'y met pas en veille, et rien ne
+#: s'arrête sur une question.
+SANS_TERMINAL = "CI=1"
+
+#: Ce qu'on laisse à `npm start` pour démarrer et servir chaque page. La fenêtre est
+#: attendue en entier : le serveur, qui ne rend jamais la main, est arrêté avec sa
+#: descendance à son terme (`maestro.sandbox.verification.jouer`). Ce n'est pas la
+#: fenêtre de démarrage de la vérification du produit (`Delais.demarrage_s`), qui
+#: constate qu'un service **tourne** : ici on attend qu'il **réponde**.
+DELAI_SERVICE_S = 60.0
+INTERVALLE_SERVICE_S = 1.0
+DELAI_SONDE_PAGE_S = 5.0
+
+#: Le port à partir duquel le banc cherche où servir le livrable — loin de ceux des
+#: stacks du poste (8000 et 3000, puis ceux que les worktrees dérivent de leur ticket).
+PORT_SERVICE_S12 = 4600
+
+#: Le statut d'une page servie.
+PAGE_SERVIE = 200
+
+
+def sonder_page(url: str) -> int | None:
+    """Le statut HTTP que rend `url` — `None` si personne ne répond.
+
+    Un `404` ou un `500` **répondent**, et c'est leur statut qui est rendu : l'oracle
+    distingue une page absente d'un serveur muet.
+    """
+    try:
+        with urlopen(url, timeout=DELAI_SONDE_PAGE_S) as reponse:  # noqa: S310 - boucle locale
+            return int(reponse.status)
+    except HTTPError as erreur:
+        return int(erreur.code)
+    except (URLError, OSError, ValueError):
+        return None
+
+
+def s12_une_application_web_survit_a_une_extinction(ctx: Contexte) -> Issue:
+    """Une vraie application web, construite par le fil et interrompue en route (#1408).
+
+    Le premier vrai projet (p5, 2026-10-01) a échoué en quarante minutes sur des
+    défauts qu'aucun test ni aucun scénario n'avait vus : aucun ne construisait
+    d'application réelle, avec ses dépendances et son build, et aucun n'interrompait
+    un run. S12 fait ce que la personne a fait :
+
+    1. le projet **naît dans le fil**, s'y **outille** et s'y **dote** d'une équipe —
+       le parcours de S9 —, **versionné** comme l'était p5 ;
+    2. le travail demandé est une **vraie application web** (Next.js, npm, Vitest),
+       dont la demande nomme les pages et les commandes ;
+    3. dès qu'une tâche est **faite** pendant qu'une autre **tourne**, le banc met le
+       run en **pause**, **éteint** Maestro — la route des gestes d'arrêt,
+       `POST /api/extinction`, puis l'API coupée —, la **rallume** sur le même
+       journal (`maestro.scenarios.redemarrage`) et **reprend** le run par le geste de
+       l'écran ;
+    4. le run repris va au bout, et le banc juge **le livrable**, jamais le statut.
+
+    L'oracle regarde le monde — les cartes du run, sa trace, le dépôt du projet, le
+    livrable cloné et joué —, et ses **constats s'additionnent** : un passage dit d'un
+    coup tout ce qui manque, parce que les défauts qu'il garde ne se corrigent pas au
+    même endroit et qu'un passage coûte de l'ordre de l'heure.
+
+    - au redémarrage, **aucune carte jamais démarrée n'a changé d'état** (une carte
+      que personne n'a commencée n'a ni échoué ni été bloquée par l'extinction) ;
+    - la reprise **continue le même run**, et **aucune tâche faite n'y repart** —
+      lu sur la trace : aucun `en_cours` après l'interruption pour une tâche faite ;
+    - le travail de la tâche **en vol** à l'extinction est **sauvé sur sa branche**
+      (`branche_de_tache`), puis **dans le projet livré** ;
+    - le run repris **aboutit**, et son livrable — **cloné**, donc ce que le projet a
+      commité — **s'installe, se construit, passe ses tests** et **sert ses pages** ;
+      ce que ces commandes refabriquent ne salit pas le dépôt, et rien de ce que le
+      projet déclare ignorer n'y est commité.
+
+    Un run soldé **avant** d'avoir eu une tâche faite pendant qu'une autre tournait est
+    un rouge : le travail n'a pas abouti, ce que p5 a d'abord montré. Un run qui
+    aboutit sans jamais ce moment est un **empêchement** — il n'y avait rien à
+    interrompre. Sans `npm` ni `git` sur le poste, S12 ne se joue pas (empêchement dit
+    d'emblée), et il ne solde jamais un run qu'il n'a pas lancé : d'autres runs en vol
+    sur la stack sont un empêchement.
+
+    **Pas de rejeu d'office** (`rejouable=False`), à la différence de S9 : la moitié
+    de son oracle porte sur des mécaniques déterministes — l'extinction, la reprise —,
+    qu'un rejeu masquerait, et un passage coûte de l'ordre de l'heure. Le motif dit
+    quelle moitié a rougi ; `--scenario S12` le rejoue à la demande.
+    """
+    for argv in (("npm", "--version"), ("git", "--version")):
+        if ctx.sonder(argv) is None:
+            return empeche(
+                f"le poste n'a pas `{argv[0]}` : S12 construit une application npm dans un "
+                "projet versionné, il ne se joue pas sur ce poste",
+                cout_usd=None,
+            )
+    deja = _runs_en_vol(ctx)
+    if deja:
+        return empeche(
+            f"des runs sont déjà en vol sur cette stack ({', '.join(deja)}) : S12 éteint "
+            "Maestro, ce qui les solderait aussi — le banc ne solde que le sien",
+            cout_usd=None,
+        )
+
+    racine = ctx.atelier.dossier(DOSSIER_S12)
+    conversation = ctx.client.ouvrir_conversation()
+    non_ne = _naitre_dans_l_atelier(ctx, conversation, DEMANDE_S12, racine, "S12")
+    if non_ne is not None:
+        return non_ne
+    lance = _lancer_dans_le_fil(ctx, conversation, racine, TRAVAIL_S12, versionner=True)
+    if isinstance(lance, Issue):
+        return lance
+    return _interrompre_puis_juger(ctx, racine, lance.projet_id, lance.run_id)
+
+
+def _interrompre_puis_juger(ctx: Contexte, racine: Path, projet_id: str, run_id: str) -> Issue:
+    """La seconde moitié de S12 : le run lancé, l'interrompre comme une personne, puis juger.
+
+    Séparée de la naissance parce qu'elle ne dépend que d'un run d'un projet
+    versionné : c'est elle que le chantier de #1389 fait passer au vert, et elle se
+    joue aussi sur un run qu'un autre montage a lancé.
+    """
+    # --- Le moment : une tâche faite pendant qu'une autre tourne ---------------
+    atteint: list[bool] = []
+
+    def moment(_detail: Mapping[str, Any]) -> bool:
+        statuts = {_statut(c) for c in ctx.client.taches(run_id, projet_id=projet_id)}
+        if STATUT_TERMINEE in statuts and STATUT_EN_COURS in statuts:
+            atteint.append(True)
+        return bool(atteint)
+
+    detail = attendre_le_run(
+        ctx.client,
+        run_id,
+        projet_id=projet_id,
+        delai_s=ctx.delai_run_s,
+        note=ctx.note,
+        horloge=ctx.horloge,
+        dormir=ctx.dormir,
+        intervalle_s=INTERVALLE_MOMENT_S,
+        arbitrages=ctx.arbitrages,
+        arret=moment,
+    )
+    if not atteint:
+        return _sans_moment(ctx, run_id, projet_id, detail)
+
+    autres = tuple(r for r in _runs_en_vol(ctx) if r != run_id)
+    if autres:
+        return empeche(
+            f"d'autres runs sont partis sur cette stack pendant S12 ({', '.join(autres)}) : "
+            f"le banc n'éteint pas Maestro sous eux — {run_id} est laissé à son cours",
+            run_id=run_id,
+            cout_usd=_cout(detail),
+        )
+
+    # --- Pause, extinction, redémarrage ----------------------------------------
+    ctx.client.suspendre(run_id)
+    ctx.note("run mis en pause", f"{run_id} — le bouton de l'écran (`…/pause`)")
+    ctx.dormir(PAUSE_AVANT_EXTINCTION_S)
+    avant = ctx.client.execution(run_id, projet_id=projet_id)
+    cartes_avant = ctx.client.taches(run_id, projet_id=projet_id)
+    evenements_avant = _evenements(avant)
+    interruption = _dernier_instant(evenements_avant)
+    demarrees = _taches_demarrees(evenements_avant)
+    faites = {_id(c): _titre(c) for c in cartes_avant if _statut(c) == STATUT_TERMINEE}
+    en_vol = {_id(c): _titre(c) for c in cartes_avant if _statut(c) == STATUT_EN_COURS}
+    a_venir = {_id(c): c for c in cartes_avant if _id(c) not in demarrees}
+    ctx.note(
+        "au moment d'éteindre",
+        f"faites : {_noms(faites)} ; en vol : {_noms(en_vol)} ; jamais démarrées : "
+        f"{', '.join(f'« {_titre(c)} » ({_statut(c)})' for c in a_venir.values()) or '—'}",
+    )
+
+    eteinte = ctx.client.eteindre()
+    soldes = [
+        str(r.get("run_id") or "") for r in eteinte.get("runs") or [] if isinstance(r, Mapping)
+    ]
+    ctx.note(
+        "Maestro éteint",
+        f"`POST /api/extinction` — run(s) soldé(s) : {', '.join(soldes) or 'aucun'}",
+    )
+    try:
+        ctx.note("Maestro rallumé", ctx.rallumer())
+    except OSError as exc:
+        return empeche(
+            f"le banc n'a pas pu rallumer Maestro après l'extinction : {exc}",
+            run_id=run_id,
+            cout_usd=_cout(avant),
+        )
+
+    constats: list[str] = []
+    apres = {_id(c): c for c in ctx.client.taches(run_id, projet_id=projet_id)}
+    changees = [
+        f"« {_titre(carte)} » {_statut(carte)} → {_statut(apres.get(tache, {})) or 'absente'}"
+        for tache, carte in a_venir.items()
+        if _statut(apres.get(tache, {})) != _statut(carte)
+    ]
+    ctx.note(
+        "cartes au redémarrage",
+        ", ".join(changees) or "les cartes jamais démarrées sont inchangées",
+    )
+    if changees:
+        constats.append(
+            f"{len(changees)} carte(s) que personne n'avait commencée(s) ont changé d'état à "
+            f"l'extinction : {'; '.join(changees[:6])}"
+        )
+    try:
+        sauves = {
+            tache: travail_en_avance(racine, branche_de_tache(tache)) for tache in en_vol
+        }
+    except OSError as exc:
+        return empeche(
+            f"le dépôt du projet ne se lit pas : {exc}", run_id=run_id, cout_usd=_cout(avant)
+        )
+    ctx.note(
+        "travail en vol, sur sa branche",
+        " ; ".join(
+            f"« {en_vol[t]} » `{branche_de_tache(t)}` → {sha[:12] if sha else 'rien de sauvé'}"
+            for t, sha in sauves.items()
+        )
+        or "aucune tâche en vol",
+    )
+    non_sauves = [t for t, sha in sauves.items() if sha is None]
+    if non_sauves:
+        constats.append(
+            "le travail en vol à l'extinction n'est pas sauvé sur sa branche : "
+            + ", ".join(f"« {en_vol[t]} » (`{branche_de_tache(t)}`)" for t in non_sauves)
+        )
+
+    # --- La reprise -------------------------------------------------------------
+    try:
+        repris, geste = _reprendre(ctx, run_id)
+    except ErreurAPI as refus:
+        constats.append(f"le run interrompu ne se reprend pas : {refus}")
+        return rouge("; ".join(constats), run_id=run_id, cout_usd=_cout(avant))
+    ctx.note("run repris", f"{geste} → {repris}")
+    if repris != run_id:
+        constats.append(
+            f"« Reprendre » a ouvert un nouveau run ({repris}) au lieu de continuer "
+            f"{run_id} sur son plan"
+        )
+    fin = _suivre(ctx, repris, projet_id)
+    cartes_fin = ctx.client.taches(repris, projet_id=projet_id)
+    rejouees = _faites_reprises(faites, interruption, _evenements(fin), cartes_fin)
+    if rejouees:
+        constats.append(
+            f"{len(rejouees)} tâche(s) faite(s) avant l'extinction ne sont pas gardées : "
+            + "; ".join(rejouees[:6])
+        )
+
+    cout = _cout_des_runs(ctx, run_id, projet_id, fin, repris)
+    statut = str(fin.get("statut") or "")
+    if statut != EXECUTION_TERMINEE:
+        releve = _releve_de_l_echec(fin)
+        constats.append(
+            f"le run repris s'est soldé « {statut} » (cause « {fin.get('cause') or '—'} ») "
+            f"au lieu d'aboutir{f' — {releve[:300]}' if releve else ''}"
+        )
+        return rouge("; ".join(constats), run_id=run_id, cout_usd=cout)
+    perdus = [
+        t for t, sha in sauves.items() if sha is not None and not dans_le_projet(racine, sha)
+    ]
+    if perdus:
+        constats.append(
+            "le travail sauvé à l'extinction n'est pas dans le projet livré : "
+            + ", ".join(f"« {en_vol[t]} » ({(sauves[t] or '')[:12]})" for t in perdus)
+        )
+    constats += _le_livrable(ctx, racine)
+    if constats:
+        return rouge("; ".join(constats), run_id=run_id, cout_usd=cout)
+    return vert(
+        f"interrompu avec {_noms(faites)} faite(s) et {_noms(en_vol)} en vol, Maestro "
+        f"éteint puis rallumé, le run a repris sur son plan ({geste}) sans rien rejouer "
+        f"ni perdre ; le livrable cloné s'installe, se construit, passe ses tests et sert "
+        f"{len(PAGES_S12)} page(s)",
+        run_id=run_id,
+        cout_usd=cout,
+    )
+
+
+def _runs_en_vol(ctx: Contexte) -> tuple[str, ...]:
+    """Les runs de la stack que l'extinction solderait — non soldés, et dont l'hôte n'est pas mort.
+
+    Un run **orphelin** (#348) n'a plus d'hôte : l'extinction ne le touche pas.
+    """
+    return tuple(
+        str(resume.get("run_id") or "")
+        for resume in ctx.client.executions()
+        if str(resume.get("statut") or "") not in STATUTS_EXECUTION_TERMINAUX
+        and str(resume.get("vitalite") or "") != VITALITE_ORPHELIN
+    )
+
+
+def _sans_moment(
+    ctx: Contexte, run_id: str, projet_id: str, detail: Mapping[str, Any]
+) -> Issue:
+    """Le run n'a jamais eu une tâche faite pendant qu'une autre tournait — et pourquoi.
+
+    Trois issues, et le motif ne les confond pas : un run **soldé sans aboutir** est un
+    rouge (le travail a échoué avant d'avoir de quoi être interrompu) ; un run
+    **abouti** sans ce moment est un empêchement (rien à interrompre) ; un run encore
+    **en vol** au bout du délai est un rouge, comme partout ailleurs.
+    """
+    cout = _cout(detail)
+    cartes = _cartes_en_mots(ctx.client.taches(run_id, projet_id=projet_id))
+    statut = str(detail.get("statut") or "")
+    ctx.note(
+        "aucun moment d'interrompre",
+        f"run « {statut} » (cause « {detail.get('cause') or '—'} »), {_montant(detail)} — {cartes}",
+    )
+    if statut == EXECUTION_TERMINEE:
+        return empeche(
+            "le run a abouti sans qu'une tâche soit jamais faite pendant qu'une autre "
+            f"tournait : il n'y avait rien à interrompre ({cartes})",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    if statut in STATUTS_EXECUTION_TERMINAUX:
+        releve = _releve_de_l_echec(detail)
+        return rouge(
+            f"le run s'est soldé « {statut} » (cause « {detail.get('cause') or '—'} ») avant "
+            f"qu'une tâche soit faite pendant qu'une autre tournait — {cartes}"
+            f"{f' — {releve[:300]}' if releve else ''}",
+            run_id=run_id,
+            cout_usd=cout,
+        )
+    return rouge(
+        f"au bout de {ctx.delai_run_s:g} s, aucune tâche n'était faite pendant qu'une autre "
+        f"tournait — {cartes}",
+        run_id=run_id,
+        cout_usd=cout,
+    )
+
+
+def _reprendre(ctx: Contexte, run_id: str) -> tuple[str, str]:
+    """Le geste « Reprendre » sur le run interrompu — rend le run qui continue, et le geste joué.
+
+    La reprise **là où il en était** d'abord (`…/reprendre`, #477) : c'est ce que le
+    bouton fait d'un run en pause. Elle refuse (`409`) un run que l'extinction a
+    soldé, et le « Reprendre » que l'écran offre alors à un run éteint est la relance
+    (`…/relancer`, le panneau *Runs qui n'avancent plus*, #486). Le banc joue donc ce
+    que l'écran joue, dans l'ordre où il le propose ; tout autre refus remonte.
+    """
+    try:
+        resume = ctx.client.reprendre(run_id)
+        geste = "reprise (`…/reprendre`)"
+    except ErreurAPI as refus:
+        if refus.statut != 409:
+            raise
+        resume = ctx.client.relancer(run_id)
+        geste = "« Reprendre » d'un run éteint (`…/relancer`)"
+    return str(resume.get("run_id") or run_id), geste
+
+
+def _faites_reprises(
+    faites: Mapping[str, str],
+    interruption: datetime | None,
+    evenements: Sequence[Mapping[str, Any]],
+    cartes: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Les tâches faites avant l'interruption que le run qui continue n'a pas gardées.
+
+    Trois façons de ne pas les garder, chacune dite : une tâche **repartie** (un
+    `en_cours` daté après l'interruption, lu sur la trace), une tâche qui **n'est
+    plus faite** sur sa carte, une tâche **absente** du run qui continue — un plan
+    refait n'a plus ses identifiants.
+    """
+    statuts = {_id(c): _statut(c) for c in cartes}
+    reparties = {
+        str(e.get("tache_id") or "")
+        for e in evenements
+        if str(e.get("type") or "") == EVENEMENT_TACHE_STATUT
+        and str(e.get("statut") or "") == STATUT_EN_COURS
+        and (instant := _instant(e.get("horodatage"))) is not None
+        and (interruption is None or instant > interruption)
+    }
+    constats: list[str] = []
+    for tache, titre in faites.items():
+        if tache not in statuts:
+            constats.append(f"« {titre} » absente du run qui continue")
+        elif tache in reparties:
+            constats.append(f"« {titre} » repartie")
+        elif statuts[tache] != STATUT_TERMINEE:
+            constats.append(f"« {titre} » n'est plus faite ({statuts[tache]})")
+    return constats
+
+
+def _cout_des_runs(
+    ctx: Contexte, run_id: str, projet_id: str, fin: Mapping[str, Any], repris: str
+) -> float | None:
+    """Ce que le scénario a coûté : le run, et celui qui l'a continué s'il en est un autre."""
+    if repris == run_id:
+        return _cout(fin)
+    premier = _cout(ctx.client.execution(run_id, projet_id=projet_id))
+    second = _cout(fin)
+    connus = [c for c in (premier, second) if c is not None]
+    return sum(connus) if connus else None
+
+
+def _le_livrable(ctx: Contexte, racine: Path) -> list[str]:
+    """Ce qui manque au livrable — rien s'il s'installe, se construit, se teste et sert ses pages.
+
+    Joué sur un **clone** du projet (`cloner`) : ce qu'une personne récupère, donc ce
+    que le projet a commité, jamais ce que le run a laissé traîner dans sa racine. Les
+    commandes sont celles que la demande nomme, dans son ordre, par le bash des
+    agents et sous les délais de la vérification du produit (`Delais.commande_s`) ;
+    la première qui échoue arrête l'oracle, les suivantes n'ayant plus de quoi passer.
+    """
+    copie = ctx.atelier.dossier(DOSSIER_LIVRABLE_S12)
+    try:
+        cloner(racine, copie)
+    except OSError as exc:
+        return [f"le projet livré ne se clone pas : {exc}"]
+    delai = Delais().commande_s
+    for commande in (INSTALLER_S12, CONSTRUIRE_S12, TESTER_S12):
+        fait = ctx.jouer(f"{SANS_TERMINAL} {commande}", copie, delai)
+        ctx.note("livrable", f"`{commande}` — {_execution_en_mots(fait, delai)}")
+        if fait.expiree or fait.code != 0:
+            return [f"`{commande}` échoue sur le projet livré : {_execution_en_mots(fait, delai)}"]
+    constats: list[str] = []
+    try:
+        sales, ignores = salissures(copie), suivis_ignores(copie)
+    except OSError as exc:
+        return [f"le dépôt du livrable ne se lit pas : {exc}"]
+    if sales:
+        constats.append(
+            "installer, construire et tester salissent le dépôt — ce qui se refabrique "
+            f"n'est pas ignoré, ou a été commité : {', '.join(sales[:6])}"
+        )
+    if ignores:
+        constats.append(
+            f"{len(ignores)} fichier(s) commité(s) que le projet déclare lui-même ignorer : "
+            f"{', '.join(ignores[:6])}"
+        )
+    pages, sortie = _servir(ctx, copie)
+    ctx.note(
+        "pages servies",
+        ", ".join(f"{page} → {statut or 'sans réponse'}" for page, statut in pages.items()),
+    )
+    manquees = [
+        f"{page} ({statut or 'sans réponse'})"
+        for page, statut in pages.items()
+        if statut != PAGE_SERVIE
+    ]
+    if manquees:
+        constats.append(
+            f"`{SERVIR_S12}` ne sert pas {', '.join(manquees)}{f' — {sortie}' if sortie else ''}"
+        )
+    return constats
+
+
+def _servir(ctx: Contexte, copie: Path) -> tuple[dict[str, int | None], str]:
+    """Sert le livrable par `npm start` et sonde ses pages — leurs statuts, et la fin de sa sortie.
+
+    Le serveur tourne dans un fil à part, borné par `DELAI_SERVICE_S` et arrêté avec
+    sa descendance à son terme ; les pages sont sondées pendant ce temps, jusqu'à ce
+    qu'elles aient toutes répondu, que le serveur se soit arrêté, ou que la fenêtre
+    soit passée. Une sonde a toujours lieu, même sur un serveur déjà tombé : c'est ce
+    qui dit « sans réponse » plutôt que rien.
+    """
+    port = Systeme().port_libre_depuis(HOTE_DEFAUT, PORT_SERVICE_S12)
+    vues: dict[str, int | None] = dict.fromkeys(PAGES_S12)
+    if port is None:
+        return vues, f"aucun port libre à partir de {PORT_SERVICE_S12} pour le servir"
+    rendu: list[execution.Execution] = []
+    serveur = threading.Thread(
+        target=lambda: rendu.append(
+            ctx.jouer(f"PORT={port} {SERVIR_S12}", copie, DELAI_SERVICE_S)
+        ),
+        daemon=True,
+    )
+    serveur.start()
+    limite = ctx.horloge() + DELAI_SERVICE_S
+    while True:
+        for page in PAGES_S12:
+            if vues[page] != PAGE_SERVIE:
+                vues[page] = ctx.sonder_la_page(f"http://{HOTE_DEFAUT}:{port}{page}")
+        servies = all(statut == PAGE_SERVIE for statut in vues.values())
+        if servies or not serveur.is_alive() or ctx.horloge() >= limite:
+            break
+        ctx.dormir(INTERVALLE_SERVICE_S)
+    serveur.join(timeout=DELAI_SERVICE_S + DELAI_SONDE_PAGE_S)
+    sortie = " ".join(rendu[0].sortie.split())[-300:] if rendu else ""
+    return vues, sortie
+
+
+def _execution_en_mots(fait: execution.Execution, delai_s: float) -> str:
+    """Ce qu'une commande du livrable a rendu, en une ligne."""
+    if fait.expiree:
+        return f"aucun retour en {delai_s:g} s"
+    fin = " ".join(fait.sortie.split())[-300:] or "aucune sortie"
+    return f"code {fait.code} en {fait.duree_s:g} s — {fin}"
+
+
+def _evenements(detail: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """La trace d'un run, telle que son détail la sert."""
+    return [e for e in detail.get("evenements") or [] if isinstance(e, Mapping)]
+
+
+def _taches_demarrees(evenements: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Les tâches qui ont été **en cours** au moins une fois — lu sur la trace, jamais deviné."""
+    return {
+        str(e.get("tache_id") or "")
+        for e in evenements
+        if str(e.get("type") or "") == EVENEMENT_TACHE_STATUT
+        and str(e.get("statut") or "") == STATUT_EN_COURS
+    }
+
+
+def _dernier_instant(evenements: Sequence[Mapping[str, Any]]) -> datetime | None:
+    """L'instant du dernier événement de la trace — l'horloge du produit, pas celle du banc."""
+    instants = [i for e in evenements if (i := _instant(e.get("horodatage"))) is not None]
+    return max(instants) if instants else None
+
+
+def _id(carte: Mapping[str, Any]) -> str:
+    return str(carte.get("id") or "")
+
+
+def _titre(carte: Mapping[str, Any]) -> str:
+    return str(carte.get("titre") or carte.get("id") or "")
+
+
+def _statut(carte: Mapping[str, Any]) -> str:
+    return str(carte.get("statut") or "")
+
+
+def _noms(taches: Mapping[str, str]) -> str:
+    """Des tâches par leur titre, ou un tiret."""
+    return ", ".join(f"« {titre} »" for titre in taches.values()) or "—"
+
+
+def _cartes_en_mots(cartes: Sequence[Mapping[str, Any]]) -> str:
+    """Les cartes d'un run en une ligne : titre et statut de chacune."""
+    return ", ".join(f"« {_titre(c)} » {_statut(c)}" for c in cartes) or "aucune carte"
+
+
 # --- Le catalogue ----------------------------------------------------------
 
 
@@ -2723,6 +3425,11 @@ SCENARIOS: tuple[Scenario, ...] = (
         "Des tâches indépendantes tournent de front",
         s11_des_taches_independantes_tournent_de_front,
         True,
+    ),
+    Scenario(
+        "S12",
+        "Une application web survit à une extinction",
+        s12_une_application_web_survit_a_une_extinction,
     ),
 )
 

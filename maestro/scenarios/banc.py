@@ -23,7 +23,8 @@ bouclage d'un jalon (#1152) ou à la demande.
 **Un rouge est un résultat, pas une panne du banc.** Ce banc peut être livré avant
 que tous les scénarios soient verts : c'est son rôle de montrer les rouges. S1
 passe au vert avec #1149, S4 avec #1157, S5 avec #1224, S6 avec #1260 ; S9 attend
-#1343. Un code de sortie non nul
+#1343, et S12 naît rouge : il est la preuve de bouclage du chantier de #1395. Un
+code de sortie non nul
 n'est donc pas un défaut d'outillage — c'est la mesure.
 
 **Un rouge non déterministe se rejoue une fois, et le rapport le dit.** S2 demande

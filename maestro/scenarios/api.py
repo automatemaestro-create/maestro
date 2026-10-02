@@ -781,6 +781,51 @@ class ClientAPI:
             attendus=(200, 409),
         )
 
+    # --- Interrompre et reprendre (#1408) --------------------------------
+
+    def executions(self) -> list[dict[str, Any]]:
+        """Les runs que l'API connaît, tous projets confondus — leurs résumés (#185).
+
+        Ce que S12 lit avant d'éteindre Maestro : l'extinction solde **tous** les runs
+        en vol de la stack, et le banc ne solde jamais un run qu'il n'a pas lancé.
+        """
+        resumes: list[dict[str, Any]] = list(
+            self._appel("GET", "/api/executions", params={"projet": "tous"}) or []
+        )
+        return resumes
+
+    def suspendre(self, run_id: str) -> dict[str, Any]:
+        """Met le run en pause (#477), par le bouton de l'écran : son résumé, suspendu."""
+        resume: dict[str, Any] = self._appel("POST", f"/api/executions/{run_id}/pause")
+        return resume
+
+    def reprendre(self, run_id: str) -> dict[str, Any]:
+        """Reprend le run **là où il en était** (#477) — lève sur `409`, s'il n'est pas suspendu."""
+        resume: dict[str, Any] = self._appel("POST", f"/api/executions/{run_id}/reprendre")
+        return resume
+
+    def relancer(self, run_id: str) -> dict[str, Any]:
+        """Le « Reprendre » qu'offre l'écran à un run **éteint** (#349, #486) : le résumé rendu.
+
+        Celui du panneau *Runs qui n'avancent plus*, qui appelle cette route pour un
+        run soldé par l'extinction : le résumé qu'elle rend est celui du run qui
+        continue, quel qu'il soit — le même, ou un neuf qui porte `reprise_de`.
+        """
+        resume: dict[str, Any] = self._appel(
+            "POST", f"/api/executions/{run_id}/relancer", attendus=(200, 201, 202)
+        )
+        return resume
+
+    def eteindre(self) -> dict[str, Any]:
+        """**Maestro s'éteint** (#486) : `POST /api/extinction`, ce que poussent ses gestes d'arrêt.
+
+        La route que `start.sh --stop`, la fermeture de la fenêtre et le lanceur du
+        produit appellent avant de libérer les ports : elle solde les runs en vol, et
+        rend leurs résumés.
+        """
+        corps: dict[str, Any] = dict(self._appel("POST", "/api/extinction") or {})
+        return corps
+
 
 def _reponse_de(corps: Any, *, chemin: str) -> dict[str, Any]:
     """Le message **de l'agent** dans la paire que rendent les routes du fil.
@@ -861,6 +906,7 @@ def attendre_le_run(
     arbitrages: list[str] | None = None,
     approuve: bool = True,
     demandes: list[dict[str, Any]] | None = None,
+    arret: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> dict[str, Any]:
     """Suit un run jusqu'à son issue et rend son détail — arbitrages tranchés au passage.
 
@@ -901,6 +947,11 @@ def attendre_le_run(
     demande refusée peut y être **remplacée** par la suivante, et l'oracle qui
     doit dire « une demande est née » ne la retrouverait plus après coup.
 
+    `arret` (#1408) rend la main **avant** l'issue, au premier détail lu qui le
+    satisfait : S12 suit son run jusqu'au moment de l'interrompre, et pas au-delà.
+    Un run soldé avant ce moment est rendu comme d'habitude — c'est à l'appelant de
+    constater que le moment n'est jamais venu.
+
     À l'expiration du délai, le dernier état lu est rendu tel quel : c'est à
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
@@ -910,6 +961,8 @@ def attendre_le_run(
     while True:
         statut = str(detail.get("statut") or "")
         if statut in STATUTS_EXECUTION_TERMINAUX:
+            return detail
+        if arret is not None and arret(detail):
             return detail
         if statut == EXECUTION_EN_ATTENTE_ARBITRAGE:
             for demande in client.validations(projet_id=projet_id):

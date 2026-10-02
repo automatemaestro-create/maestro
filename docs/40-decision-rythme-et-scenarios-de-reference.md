@@ -160,6 +160,7 @@ modèle, par la porte d'entrée réelle (le fil de l'orchestrateur) :
 | S9 | Un projet neuf qu'aucune liste ne prévoyait | « Le carnet de chants de ma chorale », dit en une phrase, **naît dans le fil**, s'y **outille pièce par pièce** et s'y **dote d'une équipe** ; le run demandé aboutit. Les commandes que l'outillage a écrites **passent, rejouées par le banc** après le run, et un modèle juge que l'outillage et l'équipe **correspondent au projet** (#1162) |
 | S10 | Un dépôt d'une pile qu'aucune table ne connaissait | Le même parcours et le même oracle, sur une **solution .NET** reprise telle quelle : aucune table de détection ne la connaît, et son README ne dit ni comment construire ni comment tester (#1162) |
 | S11 | Des tâches indépendantes tournent de front | Sur un site vitrine **versionné** dont le README décrit quatre sections, « maquette les quatre sections » : le run aboutit, **annonce** le plafond d'instances dérivé de son plan, et sa trace datée montre **au moins deux tâches en cours en même temps** (#1299) |
+| S12 | Une application web survit à une extinction | Un livre de recettes Next.js **naît dans le fil**, versionné, outillé et doté ; dès qu'une tâche est faite pendant qu'une autre tourne, le run est mis en **pause**, Maestro **éteint** puis **rallumé**, le run **repris** : aucune carte jamais démarrée n'a changé d'état, le même run continue sans rien rejouer, le travail en vol était sauvé sur sa branche et rejoint le projet, et le **livrable cloné** s'installe, se construit, passe ses tests et sert ses pages (#1408) |
 
 **S3 a son comportement depuis #1146.** Sur un projet sans agent, le fil ne propose plus de run : il
 dit pourquoi (personne pour prendre les tâches) et propose l'équipe que l'analyse du projet appelle
@@ -404,6 +405,80 @@ les a tenues : trois pages ont démarré ensemble, la quatrième a attendu son c
 cours » n'est pas « dans un créneau » : une tâche rend le sien une fois vérifiée, puis reste en
 cours le temps de rejoindre le projet. Quatre pages ont donc été en cours six secondes durant, ce
 que le motif compte, puisque c'est ce que la personne voit.
+
+**S12 fait ce que la personne a fait sur p5** (#1408, audit #1395). Le premier vrai projet a
+échoué en quarante minutes, le 2026-10-01, sur des défauts qu'aucun test ni aucun scénario n'avait
+vus : aucun ne construisait d'application réelle, avec ses dépendances et son build, et aucun
+n'interrompait un run. Trois jalons avaient été soldés ainsi. S12 rejoue le parcours de p5, réduit à
+ce qui se vérifie :
+
+- **le projet naît dans le fil**, comme S9 : « un livre de recettes en ligne, une application web
+  Next.js en TypeScript, installée avec npm et testée avec Vitest ». Il est **versionné**, comme
+  l'était p5 : à sa naissance si le fil le propose, sinon par le geste de l'écran Projets. Son
+  outillage s'écrit pièce par pièce, son équipe se propose et se valide ;
+- **le travail demandé nomme ce qui se vérifie** : l'accueil et trois pages de recette, des tests,
+  `npm install`, `npm run build`, `npm test`, et `npm start` qui sert le site sur le port de
+  `PORT`. C'est la règle de S2 : un oracle qui devinerait la route d'une recette jugerait sa propre
+  lecture ;
+- **le banc interrompt le run comme la personne** : dès qu'une tâche est faite pendant qu'une autre
+  tourne, il le met en pause, attend sept secondes (l'écart de p5), puis éteint Maestro. Éteindre,
+  c'est la route des gestes d'arrêt (`POST /api/extinction`), puis l'API coupée par
+  `start.sh --couper-api`. Le banc la rallume ensuite par la ligne de démarrage de `start.sh`, sur
+  le **même journal** (`maestro.scenarios.redemarrage`). `start.sh` entier rouvrirait l'état du
+  dernier passage sauvé, et la reprise se mesurerait sur un autre journal. Le banc reprend enfin le
+  run par le geste de l'écran : la reprise là où il en était, sinon le « Reprendre » qu'offre un run
+  éteint (la relance).
+
+L'oracle regarde le monde, et ses constats **s'additionnent** : un passage dit d'un coup tout ce
+qui manque, parce que ces défauts ne se corrigent pas au même endroit et qu'un passage coûte de
+l'ordre de l'heure.
+
+- **aucune carte jamais démarrée n'a changé d'état** à l'extinction (#1390) ;
+- **le même run continue** (#1391), et aucune tâche faite n'y repart. Ce qui se lit sur la trace :
+  aucun `en_cours` daté après l'interruption, et aucune tâche faite absente du run qui continue ;
+- **le travail en vol était sauvé sur sa branche** à l'extinction, puis il est **dans le projet
+  livré** (#1392) ;
+- **le run repris aboutit**, et le **livrable cloné**, donc ce que le projet a commité, s'installe,
+  se construit, passe ses tests et sert chaque page en `200` (#1388, #1396, #1399, #1400). Ce que
+  ces commandes refabriquent ne salit pas son dépôt, et rien de ce que le projet déclare ignorer n'y
+  est commité (#1401).
+
+Un run soldé avant d'avoir eu une tâche faite pendant qu'une autre tournait est un **rouge** : le
+travail n'a pas abouti, et c'est la première chose que p5 a montrée. Un run qui aboutit sans ce
+moment est un empêchement, puisqu'il n'y avait rien à interrompre. S12 ne se joue pas sans `npm`
+ni `git`, et il ne solde jamais un run qu'il n'a pas lancé : des runs en vol sur la stack sont un
+empêchement. Il **ne se rejoue pas d'office**. La moitié de son oracle porte sur des mécaniques
+déterministes, qu'un rejeu masquerait, et un passage coûte de l'ordre de l'heure. Le motif dit
+quelle moitié a rougi, et `--scenario S12` le rejoue à la demande.
+
+**S12 naît rouge, sur ce que p5 a montré** (passage `20261002-130515`, run `7149eb975436`, 1,83 $,
+30 min 21 s). Le parcours de p5 s'est rejoué à l'identique : projet né versionné, six pièces
+d'outillage, un développeur et un testeur recrutés, un plan de cinq tâches. La tâche socle a fait
+son travail, puis son juge a dépassé la limite du modèle (« Prompt is too long · ~1 152 704
+tokens », #1388). Le rattrapage l'a redécoupée en deux tâches neuves (#1396), dont la première a
+échoué de la même façon, et l'aval s'est bloqué. Le run s'est soldé en échec avant d'avoir une
+tâche faite à interrompre. Le motif nomme chaque carte et la cause. La moitié « interruption » ne
+se jouera dans S12 qu'une fois #1388 et #1396 livrés.
+
+Elle a donc été **jouée à part sur le réel**, le même jour (12 min, 3,59 $ pour le run interrompu
+et sa relance). Le montage est celui de S11 : un site sans dépendances, que le juge de #1388 ne
+fait pas tomber. Le run est confié à la moitié « interruption » de S12
+(`_interrompre_puis_juger`). Interrompu avec une page faite, trois en vol et une jamais démarrée,
+il rougit sur chaque défaut de p5 :
+
+- la carte jamais démarrée est passée de `backlog` à `echec` à l'extinction ;
+- deux des trois tâches en vol n'avaient rien de sauvé sur leur branche ;
+- « Reprendre » a ouvert un nouveau run, qui a rejoué la page déjà faite.
+
+Il a aussi montré un mode d'échec que l'audit ne nommait pas, consigné sur #1392. Le run relancé
+n'a pas pu monter la branche de deux tâches : « already used by worktree ». Les worktrees des
+tâches tuées par l'extinction restent enregistrés, et rien ne les libère. La suite éprouve
+l'oracle sur le produit de p5 modélisé (`test_s12_est_rouge_sur_ce_que_p5_a_montre`).
+
+Le **jugement du livrable** a joué lui aussi sur un vrai projet : un clone du socle de p5, que la
+personne avait appliqué à la main. Il s'est installé (23 s), construit (12 s) et a passé ses
+treize tests. Son dépôt est resté propre, et ses cinq pages ont répondu en `200`. Aucun constat :
+un livrable sain rend un vert.
 
 **Un jalon produit ne se boucle pas GO avec un scénario rouge** (#1152). Les scénarios ne sont pas
 en CI : un passage coûte du vrai modèle (le run du retex a coûté ~10 $). S2 et S4 à S11 ne sont pas
