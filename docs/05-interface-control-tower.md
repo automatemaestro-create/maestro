@@ -24,6 +24,16 @@ entrées. Le Kanban des tâches n'en est pas une (il est l'objet de la **vue d'u
 run**, servie sous « Runs » depuis #476 — §2.4.2) et l'écran Projets non plus
 (il est servi, mais atteint depuis le sélecteur du shell).
 
+> ⚠ **Ce menu est rouvert le 2026-10-02** par [docs/46 §2.2](./46-decision-un-projet-se-concoit-en-phases.md),
+> à la demande de la personne : *« pas trop technique, pas trop chargé ; que l'utilisateur sache se
+> retrouver et sans effort »*.
+> - #1410 réduit le menu et la barre supérieure aux intentions de la personne, avec la piste validée
+>   *Accueil · Conception · Avancement · Équipe · Réglages*. Ce qui en sort reste à un geste.
+> - #1411 fait du tableau de bord l'**accueil** d'un projet.
+> - #1412 passe le détail technique en second niveau.
+>
+> Ce paragraphe et les suivants décrivent l'état présent, jusqu'à ce que ces lots le réécrivent.
+
 > ⚠ **Ce menu a changé deux fois, et les deux ont été décidées le 2026-08-24**
 > (revue #470, [docs/29](./29-decision-run-objet-de-premier-plan.md)). Une entrée
 > **« Runs »** s'ajoute — **c'est fait** (#474, §2.4.1) : un run n'était l'objet
@@ -369,6 +379,12 @@ Décidé par [docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.m
 ne passe plus par un **formulaire à étapes** (nom, origine, dossier, périmètre, puis l'outillage,
 puis l'équipe). La personne avait trouvé ce parcours « très mécanique » : il posait des choix
 avant d'avoir compris le projet.
+
+> ⚠ **La création change le 2026-10-02** ([docs/46 §2.1](./46-decision-un-projet-se-concoit-en-phases.md)).
+> « Nouveau projet » ouvrira le **mode conception**. Le cahier des charges du projet s'y définit en
+> quatre phases (Le produit, La solution, Le plan, La validation), chacune rédigée d'un coup par
+> Maestro, présentée en slide, corrigée sur place ou dans la conversation, puis validée (#1414).
+> Ce qui suit décrit le chemin actuel, jusqu'à ce que #1417 à #1419 le remplacent.
 
 **« Nouveau projet » ouvre la conversation.** Sur la porte d'entrée (§2.0.1), la porte passe en
 **mode création** : « Que voulez-vous construire ? » en titre, et dessous le fil de

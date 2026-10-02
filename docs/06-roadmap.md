@@ -52,6 +52,14 @@ gantt
 > Le jalon **« Le run tient parole »** suit « Rien de figé » (2026-09-21) : ce qui se passe pendant
 > un run, et ce que le fil sait faire. Depuis le 2026-09-24, il porte aussi le **bilan d'un run
 > terminé**, jugé sur pièces.
+> Le 2026-10-02, deux jalons naissent d'une même demande et passent devant « Indépendant du
+> modèle » :
+> - **« Maestro simple »** : moins d'entrées, les mots de la personne, moderne et visuel ;
+> - **« Le mode conception »** : un projet se définit comme un cahier des charges, en quatre phases
+>   validées en slides, et tient son plan.
+>
+> « Le niveau visuel » passe devant eux : la direction se choisit d'abord, sur les écrans cibles
+> ([docs/46](./46-decision-un-projet-se-concoit-en-phases.md)).
 
 ---
 
@@ -565,6 +573,17 @@ tour dans la file : il peut commencer maintenant.
 > (2028-02-02), plus bas. La fonction passe avant le poli, et l'on n'habille pas une capacité qui va
 > changer. L'échéance de ce jalon n'a pas bougé.
 
+> ⚠ **Ce jalon passe devant le 2026-10-02** (#1416, [docs/46 §2.3](./46-decision-un-projet-se-concoit-en-phases.md)) :
+> échéance 2028-02-05 → 2028-02-07 → **2028-02-01**. La personne : *« simple ne signifie pas
+> design bas de gamme »*.
+> - La direction se choisit **avant** « Maestro simple » et « Le mode conception », qui se
+>   construisent dedans.
+> - Les directions se poussent sur l'**accueil simplifié** et une **slide « Le produit »**, dans la
+>   structure de l'esquisse validée (#1125 recadré).
+> - L'accueil devient l'étalon (#1411). Cela absorbe #1127.
+>
+> Détail dans la section « Le mode conception », plus bas.
+
 ---
 
 ## « Les scénarios de référence » — le produit fait ce qu'on lui demande (2026-09-21)
@@ -919,6 +938,15 @@ Ne bougent pas : les garde-fous, l'abonnement Claude, et les standards ouverts (
 > ⚠ **Les critères de sortie du jalon sont dans sa description**, section `## Critères de sortie`
 > (C1 à C3). C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
 
+> ⚠ **Deux jalons passent devant celui-ci le 2026-10-02** (#1416) : « Maestro simple » et « Le mode
+> conception ». Son échéance passe de 2028-02-04 à **2028-02-06**.
+> - Rien de ce jalon n'en dépend.
+> - La personne a dit la simplicité « très importante ».
+> - L'écran de configuration d'un fournisseur (#1311) se posera directement dans l'architecture
+>   simplifiée.
+>
+> La règle « Maestro possède ses contrats » ne bouge pas ; seul l'ordre change.
+
 ---
 
 ## « Le fil, un vrai interlocuteur » (2026-09-23)
@@ -1138,6 +1166,89 @@ que le bilan aurait relevé sur ce même run.
 
 > ⚠ **Ce jalon n'a pas encore de section `## Critères de sortie`** dans sa description. Elle est à
 > poser avant son bouclage (docs/10 §3.4) : un jalon sans critères ne se boucle pas.
+
+---
+
+## « Le mode conception » et « Maestro simple » (2026-10-02)
+
+Deux jalons nés d'une même demande, instruite par [`/idee`](../.claude/commands/idee.md) (#1013) et consignée par #1416. Le plan a été **validé par la personne avant d'être écrit**, et l'esquisse lui a été montrée et acceptée ([`docs/assets/1416/esquisse-2026-10-02.html`](./assets/1416/esquisse-2026-10-02.html)). Elle a demandé qu'il en soit toujours ainsi avec `/idee` (#1415).
+
+> *« Je voudrais que les étapes d'initialisation du projet soient une sorte de définition d'un cahier
+> de charge. Je ne veux pas de questions posées petit à petit […], je préfèrerais une validation
+> globale mais pas en une seule fois non plus. »*
+>
+> *« J'aimerais que l'interface globale de Maestro soit plus simple. Pas trop technique, pas trop
+> chargé. »* — puis : *« simple ne signifie pas design bas de gamme. Je veux un design moderne mais
+> propre, quelque chose de visuel plutôt que beaucoup de textes. »*
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| *Le niveau visuel* (jalon existant, avancé) | La direction visuelle choisie par la personne sur les écrans cibles, puis figée dans le socle | 2028-02-01 | **#1124** : #1125 recadré, #1126 ; #1127 absorbé par #1411 |
+| **Maestro simple — on s'y retrouve sans effort, sans jargon** | Peu d'entrées, les mots de la personne, le détail technique à un geste, un accueil qui dit où en est le projet ; moderne et visuel | 2028-02-04 | **#1409**, 3 lots : #1410 ∥ #1411, puis #1412 |
+| **Le mode conception — un projet se définit comme un cahier des charges, phase par phase, et tient son plan** | Quatre phases rédigées d'un coup et validées en slides ; les documents du projet dans son dossier ; l'accueil qui suit le plan ; la recette de chaque jalon ; le cahier qui se modifie sans rien perdre | 2028-02-05 | **#1414**, 9 lots (#1417 à #1425) |
+| *Outillage de la forge* (rail outillage) | Le critère « simplicité » de la relecture visuelle ; `/idee` qui présente son plan avant d'écrire | 2027-09-15 | **#1413**, **#1415** |
+
+**Le mode conception.** Créer ou importer un projet, c'est définir son cahier des charges en quatre phases. Maestro rédige chacune d'un coup, sans questions posées une à une : ce qu'il ignore devient une hypothèse « à confirmer » sur la slide.
+- **Le produit** : vision, cibles, objectifs, fonctionnalités priorisées avec leurs critères d'acceptation vérifiables.
+- **La solution** : technique avec ses raisons, environnement, dossier, versionnement, outillage. Un import la trouve pré-remplie.
+- **Le plan** : jalons datés jusqu'à la livraison, runs, équipe, estimation.
+- **La validation** : le cahier en une vue, sa revue critique, puis « Valider et lancer ».
+
+La conversation reste à droite : chaque élément se corrige sur la slide ou en le disant. Le cahier mène ensuite le projet :
+- ses **documents** vivent dans le dossier du projet, indexés par `AGENTS.md`, et les agents s'en servent ;
+- l'**accueil** suit le plan ;
+- chaque **jalon** livré se recette contre le cahier, sur pièces ;
+- une **modification** marque « à revoir » ce qui en dépend.
+
+**Maestro simple.**
+- **L'architecture** (#1410) : le menu ne garde que les intentions de la personne, avec la piste validée *Accueil · Conception · Avancement · Équipe · Réglages*.
+- **L'accueil d'un projet** (#1411), qui devient l'écran étalon.
+- **Le vocabulaire** (#1412) : le détail technique derrière « Détails », partout.
+- **Le principe** : montrer plutôt qu'écrire, des textes courts, une finition de produit pro.
+
+**Le contrôle qualité**, proposé à l'invitation de la personne et validé avec le plan :
+- des critères vérifiables dès la phase « Le produit » ;
+- une revue critique avant chaque validation, qui informe sans bloquer ;
+- la recette de chaque jalon ;
+- pour Maestro lui-même, le critère « simplicité » de la relecture (#1413), le compte du menu épinglé, et un `/retex-utilisateur` au bouclage.
+
+**Des décisions tombent, à la demande de la personne**, et [docs/46](./46-decision-un-projet-se-concoit-en-phases.md) les écrit :
+- les questions posées une à une et l'outillage pièce par pièce quittent la création ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)) ;
+- les places du menu sont rouvertes ([docs/05 §1](./05-interface-control-tower.md)) ;
+- l'écran pilote du niveau visuel devient l'accueil simplifié ([docs/39 §7](./39-decision-niveau-visuel-choisi.md)).
+
+Ne bougent pas :
+- le formulaire ne revient pas ;
+- rien ne s'écrit sans accord ;
+- `AGENTS.md` seul ;
+- le format de docs/38, que les documents du projet prolongent ;
+- les mécanismes du socle.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Le run livre un vrai projet » | 2028-01-30 (inchangée) |
+| **« Le niveau visuel »** | 2028-02-05 → **2028-02-01** |
+| **« Maestro simple »** | **2028-02-04** (neuf) |
+| **« Le mode conception »** | **2028-02-05** (neuf) |
+| « Indépendant du modèle » | 2028-02-04 → **2028-02-06** |
+| Phase 9 | 2028-02-16 (inchangée) |
+
+- **Derrière « Le run livre un vrai projet »** : la fonction passe avant. Un beau cahier qui lance des runs qui perdent leur travail ne vaut rien.
+- **« Le niveau visuel » en tête des trois** : simple et beau se jugent ensemble. Choisie après, la direction aurait laissé voir des écrans dépouillés, à refaire. #1125 rend ses directions en brouillons sur la structure de l'esquisse, sans attendre que ces écrans existent. Il attend la personne, est assigné, et se démarre à la main.
+- **« Maestro simple » devant « Le mode conception »** : la personne l'a dit très important, et le mode conception se construit dans le shell que #1410 décide.
+- **Devant « Indépendant du modèle »** : rien n'y dépend de lui, et l'écran d'un fournisseur (#1311) se posera dans l'architecture simplifiée.
+- **Devant la Phase 9** : on n'empaquette pas une cible mouvante. Le premier lancement (#642) mène au mode conception.
+- **L'échéance du niveau visuel a bougé deux fois** dans la même instruction : derrière la simplification d'abord, puis devant elle, après la précision de la personne. Aucune priorité existante n'a changé.
+
+> ⚠ **Les critères de sortie des deux jalons neufs sont dans leur description**, section
+> `## Critères de sortie` (C1 à C4 pour « Maestro simple », C1 à C6 pour « Le mode conception »).
+> Ceux du « Niveau visuel » ont été recadrés le même jour. C'est elle qui fait foi au bouclage
+> (docs/10 §3.4), pas ce résumé.
+
+> ⚠ **Reste proposé, pas fait** : clore #1127 en doublon de #1411 (`/ticket-abandon 1127 doublon`).
+> C'est une décision humaine. En attendant, #1127 est assigné, pour qu'aucun run ne le prenne.
 
 ---
 

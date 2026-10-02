@@ -332,6 +332,17 @@ ce n'est pas le défaut.
         └── refuses/                   # ce qu'une régénération n'a pas écrasé
 ```
 
+> ⚠ **L'arbre gagne des documents** à partir de #1421, décidé le 2026-10-02 par
+> [docs/46 §3](./46-decision-un-projet-se-concoit-en-phases.md). La personne : *« Maestro doit
+> générer tous documents utiles au projet dans le répertoire du projet, et utilisables par l'équipe
+> d'agents. »*
+> - Chaque phase validée du cahier des charges écrit son document (le produit, la solution, le
+>   plan), plus ce que le projet appelle.
+> - Chaque document est déclaré au manifeste et indexé par `AGENTS.md`. Il est transmis aux agents
+>   par son index et son chemin, comme un skill (§5, `contexte.py`).
+> - Le format de cette note ne bouge pas. L'emplacement se juge sur le projet : un projet importé
+>   qui a déjà son `docs/` le garde.
+
 ## 4. Le manifeste
 
 ### 4.1 Ce qu'il porte

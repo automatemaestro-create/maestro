@@ -53,6 +53,18 @@ L'analyse complète est le corps de #1300 : la carte du code, l'état réel des 
 
 ### 2.2 La création : dans la conversation, l'outillage pièce par pièce
 
+> ⚠ **Renversé le 2026-10-02 par [docs/46 §2.1](./46-decision-un-projet-se-concoit-en-phases.md)**,
+> à la demande de la personne : *« je ne veux pas de questions posées petit à petit […], je
+> préfèrerais une validation globale mais pas en une seule fois non plus »*.
+> - La création d'un projet devient la définition de son **cahier des charges en quatre phases**
+>   (Le produit, La solution, Le plan, La validation). Maestro rédige chacune d'un coup et la
+>   présente en slide ; la personne la corrige puis la valide (#1414).
+> - Les questions posées une à une et l'outillage pièce par pièce quittent le chemin de création.
+> - **Le formulaire ne revient pas** : l'argument ci-dessous tient, et une slide est rédigée après
+>   que Maestro a compris.
+> - Ce qui suit décrit la décision du 2026-09-24, et le code tant que #1417 à #1419 ne sont pas
+>   livrés.
+
 **Avant.**
 - [docs/37](./37-decision-equipe-sur-mesure.md), principe 2 : *« La première étape de tout projet est la génération de son outillage […] sur un projet neuf, il découle des choix de l'utilisateur. »*
 - [docs/37 §4 point 6](./37-decision-equipe-sur-mesure.md) : *« L'étape d'outillage est première et proposée d'office, mais reportable. »*
