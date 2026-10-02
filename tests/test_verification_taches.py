@@ -15,13 +15,17 @@ Critères couverts :
 ② une vérification qui échoue encore, le budget atteint ou la correction sans
   gain, laisse la tâche en échec **motivé**, preuves lisibles — jamais un vert ;
 ③ le verdict « non conforme » de la QA renvoie le livrable à son rôle producteur
-  (`test_qa_*`).
+  (`test_qa_*`) ;
+④ une panne du vérificateur n'est pas un échec de l'agent (#1388) : typée par son
+  origine, relancée seule, elle laisse la tâche en échec **avec** sa livraison, et
+  sans rattrapage — et le prompt du vérificateur est borné en entier, noms compris.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +36,9 @@ from maestro.engine import (
     STATUT_ECHEC,
     Guardrails,
     OrchestrationEngine,
+    PolitiqueRelance,
 )
+from maestro.engine.rattrapage import PolitiqueRattrapage
 from maestro.engine.retry import est_transitoire
 from maestro.engine.verification import (
     CONSTAT_NON_JOUE,
@@ -48,7 +54,9 @@ from maestro.engine.verification import (
     DelaisVerification,
     Livraison,
     LivraisonNonTenue,
+    LivraisonNonVerifiee,
     Renvoi,
+    VerificateurEnPanne,
     VerificateurTaches,
 )
 from maestro.orchestrator import Orchestrator
@@ -57,7 +65,7 @@ from maestro.portee import PorteeProjet
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import ProducedFile
 from maestro.sandbox.verification import Execution
-from maestro.telemetry import RunJournal, StepUsage, report_usage
+from maestro.telemetry import PlafondDepenseDepasse, RunJournal, StepUsage, report_usage
 
 #: Un interpréteur quelconque : le joueur factice ne le lance pas. Passé au
 #: vérificateur pour que la garde de `tests/conftest.py` (qui retire l'interpréteur
@@ -627,6 +635,187 @@ def test_le_worker_verifie_ses_livraisons_par_defaut(module):
 
 
 # --------------------------------------------------------------------------- #
+# ④ Une panne du juge n'est pas un échec de la réalisation (#1388)
+# --------------------------------------------------------------------------- #
+
+#: L'entête du playbook de rattrapage : c'est ainsi que le Chef de projet factice
+#: reconnaît qu'on lui demande de rattraper une tâche plutôt que de planifier.
+_ENTETE_RATTRAPAGE = "# Playbook — Chef de projet : le rattrapage"
+
+
+class AgentEtJugeEnPanne(AgentEtVerificateur):
+    """L'agent livre ; le vérificateur tombe en panne à ses `pannes` premiers appels.
+
+    `pannes=None` : à tous ses appels.
+
+    L'exception porte le texte du run `da0a8ae6f1b2` — et c'est à dessein qu'il
+    n'en est rien lu : la panne se reconnaît à son **origine**, l'appel du
+    vérificateur, jamais à son texte (docs/44).
+    """
+
+    def __init__(self, livraisons: list[dict[str, str]], pannes: int | None = None) -> None:
+        super().__init__(livraisons)
+        self._pannes = pannes
+        self.appels_juge = 0
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        if system_prompt == SYSTEME:
+            self.appels_juge += 1
+            if self._pannes is None or self.appels_juge <= self._pannes:
+                raise RuntimeError(
+                    "Prompt is too long · the request is ~1106526 tokens (limit 1000000)"
+                )
+        return await super().generate(prompt, model=model, system_prompt=system_prompt)
+
+
+class ChefQuiCompte(ModelProvider):
+    """Planificateur factice : rend le plan, et retient toute demande de rattrapage."""
+
+    name = "chef-qui-compte"
+
+    def __init__(self, plan: str) -> None:
+        self._plan = plan
+        self.rattrapages: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        if system_prompt and system_prompt.startswith(_ENTETE_RATTRAPAGE):
+            self.rattrapages.append(prompt)
+        return self._plan
+
+
+def _engine_relance(provider: ModelProvider, chef: ChefQuiCompte) -> OrchestrationEngine:
+    """Le moteur des vrais runs, en petit : relance des aléas et rattrapage armés."""
+    return OrchestrationEngine(
+        provider,
+        Orchestrator(chef, model="claude-opus-4-8"),
+        relance=PolitiqueRelance(max_tentatives=3, backoff_s=0),
+        rattrapage=PolitiqueRattrapage(),
+        verificateur=VerificateurTaches(provider, joueur=joueur_grep, interprete=_INTERPRETE),
+    )
+
+
+def test_le_verificateur_en_panne_est_une_panne_typee_par_son_origine(tmp_path):
+    """Toute exception de l'appel au fournisseur, quel que soit son texte."""
+    provider = AgentEtJugeEnPanne([])
+    verificateur = VerificateurTaches(provider, joueur=joueur_grep, interprete=_INTERPRETE)
+
+    with pytest.raises(VerificateurEnPanne) as panne:
+        asyncio.run(
+            verificateur.verifier(_TACHE, Livraison(sortie="fait", espace=tmp_path), modele="m")
+        )
+
+    assert isinstance(panne.value.cause, RuntimeError)
+
+
+def test_le_budget_du_run_n_est_pas_une_panne_du_verificateur(tmp_path):
+    """Le plafond de dépense est une borne, pas une panne : il garde sa route (#1182)."""
+
+    class Plafonne(_Reponses):
+        async def generate(self, prompt, *, model, system_prompt=None):
+            raise PlafondDepenseDepasse("plafond de tokens dépassé")
+
+    verificateur = VerificateurTaches(Plafonne(), joueur=joueur_grep, interprete=_INTERPRETE)
+
+    with pytest.raises(PlafondDepenseDepasse):
+        asyncio.run(
+            verificateur.verifier(_TACHE, Livraison(sortie="fait", espace=tmp_path), modele="m")
+        )
+
+
+def test_un_juge_en_panne_ne_jette_pas_une_tache_livree():
+    """Le run `da0a8ae6f1b2` : la session réussit, le juge tombe, la tâche était vidée.
+
+    La tâche garde son travail et le dit ; la relance rejoue le vérificateur, jamais
+    la session de l'agent ; aucun rattrapage n'est lancé sur ce motif.
+    """
+    agent = AgentEtJugeEnPanne([{"bonjour.txt": "Bonjour"}])
+    chef = ChefQuiCompte(
+        _plan(_SALUT, _tache("suite", "Afficher le salut", ["backend"], ["salut"]))
+    )
+    journal = RunJournal(run_id="run-1388")
+
+    rapport = asyncio.run(_engine_relance(agent, chef).run("Salut", journal=journal))
+
+    salut, suite = rapport.resultats
+    # Une seule session d'agent : le travail réussi n'est pas refait…
+    assert len(agent.sessions) == 1
+    # …et c'est le vérificateur qui a été relancé, selon la politique des aléas.
+    assert agent.appels_juge == 3
+    # La tâche n'est pas verte — rien n'a été vérifié —, mais elle garde son travail.
+    assert salut.statut == STATUT_ECHEC
+    assert salut.verification_en_panne
+    assert salut.sortie == "J'ai livré (session 1)."
+    assert [f.chemin for f in salut.fichiers] == ["bonjour.txt"]
+    assert salut.erreur.startswith("livrée, vérification en panne")
+    assert "Prompt is too long" in salut.erreur  # la cause est dite, jamais lue
+    # Aucun rattrapage : ni redécoupage, ni tentative différente sur ce motif.
+    assert chef.rattrapages == []
+    assert not [r for r in journal.records if r.etape.startswith("salut-r")]
+    # L'aval ne part pas sur un livrable non vérifié.
+    assert suite.statut == STATUT_BLOQUEE
+    # Chaque panne est consignée comme une vérification impossible…
+    etapes = _verifications(journal, "salut")
+    assert [e.statut for e in etapes] == [STATUT_VERIFICATION_IMPOSSIBLE] * 3
+    assert "vérificateur en panne" in etapes[-1].sortie
+    # …et l'issue de la tâche porte la livraison, que le détail de la tâche lit.
+    issue = next(r for r in journal.records if r.etape == "salut")
+    assert issue.statut == STATUT_ECHEC
+    assert issue.sortie == salut.sortie
+
+
+def test_un_juge_qui_revient_juge_la_livraison_sans_rejouer_l_agent():
+    agent = AgentEtJugeEnPanne([{"bonjour.txt": "Bonjour"}], pannes=1)
+    chef = ChefQuiCompte(_plan(_SALUT))
+    journal = RunJournal()
+
+    rapport = asyncio.run(_engine_relance(agent, chef).run("Salut", journal=journal))
+
+    (salut,) = rapport.resultats
+    assert salut.ok, salut.erreur
+    assert not salut.verification_en_panne
+    assert len(agent.sessions) == 1
+    assert [e.statut for e in _verifications(journal, "salut")] == [
+        STATUT_VERIFICATION_IMPOSSIBLE,
+        STATUT_VERIFICATION_TENUE,
+    ]
+
+
+def test_une_livraison_non_verifiee_n_est_jamais_relancee_comme_un_alea():
+    """Relancer la tâche rejouerait la session de l'agent : c'est le vérificateur qu'on relance."""
+    assert not est_transitoire(LivraisonNonVerifiee("livrée, vérification en panne", "", ()))
+
+
+def test_la_panne_du_verificateur_fait_l_aller_retour_des_workers():
+    """`TaskResult.verification_en_panne` traverse la file comme le reste du résultat (#41)."""
+    from maestro.engine import TaskResult
+
+    resultat = TaskResult(
+        task_id="t",
+        titre="T",
+        agent="dev",
+        role="Développeur",
+        competences_requises=("backend",),
+        score=1,
+        statut=STATUT_ECHEC,
+        sortie="livré",
+        erreur="livrée, vérification en panne",
+        fichiers=(ProducedFile("a.txt", "a"),),
+        verification_en_panne=True,
+    )
+
+    relu = TaskResult.from_dict(json.loads(json.dumps(resultat.to_dict())))
+
+    assert relu == resultat
+    # Un résultat d'avant #1388 n'en porte pas : rien n'était en panne de constaté.
+    ancien = resultat.to_dict()
+    del ancien["verification_en_panne"]
+    assert not TaskResult.from_dict(ancien).verification_en_panne
+
+
+# --------------------------------------------------------------------------- #
 # Le livrable texte : pas d'espace, rien que des lectures
 # --------------------------------------------------------------------------- #
 
@@ -803,6 +992,82 @@ def test_le_verificateur_lit_le_livrable_encadre_comme_donnee(tmp_path):
     assert "Critères de réussite : le serveur démarre" in prompt
     # Rien d'amont : la question des renvois n'est pas posée.
     assert "<amont>" not in prompt
+
+
+#: Le code de l'agent dans un livrable façon p5 (#1388) — ce que le juge doit lire.
+_CODE_DE_L_AGENT = {
+    "app/page.tsx": "export default function Page() { return null }",
+    "lib/calcul.ts": "export const deux = () => 2",
+    "tests/calcul.test.ts": "test('deux', () => expect(deux()).toBe(2))",
+}
+
+
+def _livraison_p5(espace: Path) -> Livraison:
+    """Le livrable du run `da0a8ae6f1b2` : 22 891 fichiers de dépendances, 483 de build.
+
+    Ce que le recensement d'un worktree ne rend plus (`EspaceCopieDeTravail`) ; la
+    borne du prompt ne doit pas en dépendre pour autant — un projet sans
+    `.gitignore` porte ses dépendances, et Git les voit.
+    """
+    return Livraison(
+        sortie="fait",
+        fichiers=(
+            # Du JavaScript minifié : du texte, que l'ordre alphabétique lisait
+            # avant `app/` (« . » précède « a »).
+            *(
+                ProducedFile(f".next/static/chunk-{i:03}.js", "(()=>{})();" * 60)
+                for i in range(483)
+            ),
+            *(ProducedFile(chemin, contenu) for chemin, contenu in _CODE_DE_L_AGENT.items()),
+            *(
+                ProducedFile(f"node_modules/paquet-{i:05}/index.js", "module.exports = {}")
+                for i in range(22_891)
+            ),
+        ),
+        espace=espace,
+    )
+
+
+def test_le_prompt_du_juge_est_borne_en_entier_noms_compris(tmp_path):
+    """Le défaut du run `da0a8ae6f1b2` : 2 336 923 caractères, plus d'un million de tokens.
+
+    Le contenu était borné, pas les **noms** : chaque fichier non lu ajoutait sa
+    ligne, sans limite. Au-delà d'une poignée, leur nombre seul est dit.
+    """
+    provider = _Reponses(
+        json.dumps({"controles": [{"critere": _CRITERE, "commande": _COMMANDE}]})
+    )
+    verificateur = VerificateurTaches(provider, joueur=joueur_grep, interprete=_INTERPRETE)
+    (tmp_path / "bonjour.txt").write_text("Bonjour", encoding="utf-8")
+
+    asyncio.run(verificateur.verifier(_TACHE, _livraison_p5(tmp_path), modele="m"))
+
+    (prompt,) = provider.prompts
+    # Le contenu lu, les noms listés et ce qui entoure : un ordre de grandeur, pas
+    # deux millions de caractères.
+    assert len(prompt) < 60_000, len(prompt)
+    assert prompt.count("\n--- ") < 1_000
+    # Ce qui n'est ni lu ni listé est compté — le juge sait qu'il ne voit pas tout.
+    assert re.search(r"… et \d+ autre\(s\) fichier\(s\), ni lu\(s\) ni listé\(s\)", prompt)
+
+
+def test_le_code_de_l_agent_passe_avant_ce_qui_le_noie(tmp_path):
+    """L'ordre alphabétique épuisait la borne sur `.next/` et `node_modules/` (#1388).
+
+    Chaque dossier de tête a son tour de lecture : aucun, si peuplé soit-il,
+    n'épuise la lecture avant les autres — `app/`, `lib/` et `tests/` sont lus.
+    """
+    provider = _Reponses(
+        json.dumps({"controles": [{"critere": _CRITERE, "commande": _COMMANDE}]})
+    )
+    verificateur = VerificateurTaches(provider, joueur=joueur_grep, interprete=_INTERPRETE)
+    (tmp_path / "bonjour.txt").write_text("Bonjour", encoding="utf-8")
+
+    asyncio.run(verificateur.verifier(_TACHE, _livraison_p5(tmp_path), modele="m"))
+
+    (prompt,) = provider.prompts
+    for chemin, contenu in _CODE_DE_L_AGENT.items():
+        assert f"--- {chemin}\n{contenu}" in prompt
 
 
 def test_un_renvoi_ne_vise_qu_une_tache_amont(tmp_path):

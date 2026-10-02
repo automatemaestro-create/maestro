@@ -15,7 +15,10 @@ premier, et le second est un régime à lui (`maestro.sandbox.en_place`) :
   `maestro.engine.executor` demande dès que la tâche est soldée en succès
   (#705). Pour qu'elle le porte réellement, ce qui reste non commité y est
   **commité avant le démontage** (`_solder_la_branche`) — sans quoi le `--force`
-  du retrait l'emporterait et la branche survivrait vide ;
+  du retrait l'emporterait et la branche survivrait vide. Ce que la tâche a
+  **produit** s'y lit par Git, comme ce que la branche porte
+  (`EspaceCopieDeTravail`, #1388) : le `.gitignore` du projet en retire les
+  dépendances et la sortie de build ;
 - **projet non versionné** → **la racine elle-même**, en place (#839) : rien
   n'est copié, rien n'est retiré, ce que l'agent écrit est dans le projet
   pendant qu'il l'écrit — avec, depuis #944, un **atelier** `.maestro/<tâche>/`
@@ -87,16 +90,67 @@ class EspaceProjetIndisponible(RuntimeError):
     """L'espace de travail dérivé n'a pas pu être monté — **avec son motif**.
 
     Même parti pris que `RacineRefusee` (EF-38) : un refus porte un code court et
-    stable (`git-indisponible`, `worktree-refuse`, `espace-dans-la-racine`), pas
-    seulement une phrase. L'exécuteur en fait un échec de tâche consigné
-    (`maestro.engine.executor`), donc **visible** — là où un repli silencieux sur
-    un répertoire vide ferait travailler l'agent dans le vide sans que personne
-    ne l'apprenne.
+    stable (`git-indisponible`, `worktree-refuse`, `espace-dans-la-racine`,
+    `enumeration-refusee`), pas seulement une phrase. L'exécuteur en fait un échec
+    de tâche consigné (`maestro.engine.executor`), donc **visible** — là où un
+    repli silencieux sur un répertoire vide ferait travailler l'agent dans le
+    vide sans que personne ne l'apprenne.
     """
 
     def __init__(self, motif: str, message: str) -> None:
         super().__init__(message)
         self.motif = motif
+
+
+class EspaceCopieDeTravail(Workspace):
+    """Le worktree d'une tâche, dont les fichiers sont **ceux que Git voit** (#1388).
+
+    Le recensement d'un espace (`Workspace.fichiers`) parcourait tout le disque, et
+    l'empreinte du worktree est prise **avant** que l'agent ne travaille : tout ce
+    qu'un `npm install` ou un `next build` dépose ressortait donc en « fichier
+    produit ». Mesuré sur le run `da0a8ae6f1b2` (projet p5, 2026-10-01) : 22 891
+    fichiers de `node_modules/` et 483 de `.next/` au prompt du juge, qui dépassait
+    le million de tokens et jetait une tâche réussie — pendant que la branche, elle,
+    ne portait que les 31 fichiers de l'agent, parce que Git avait respecté le
+    `.gitignore`.
+
+    L'énumération est donc celle de Git : les fichiers **suivis**, et les **non
+    suivis que le projet n'ignore pas** (`git ls-files --cached --others
+    --exclude-standard`) — l'ensemble que `git add -A` porte sur la branche au
+    démontage (`_solder_la_branche`) et que le diff présente (`maestro.projets.
+    application._diff_worktree`). Le juge, le résultat de la tâche, le rapport du
+    run et le rassemblement d'un redécoupage lisent ainsi ce que la branche
+    livrera, et rien d'autre. Le point unique d'énumération de `Workspace` tient :
+    `derive` et `produced_files` passent tous deux par ici.
+
+    Le `.gitignore` est celui du **projet** — c'est lui, et seulement lui, qui dit
+    ce qui n'est pas un livrable ; aucun catalogue de dossiers n'est écrit ici. Un
+    projet qui n'ignore rien verra donc ses dépendances recensées, exactement comme
+    il les verrait commitées. Un lien symbolique n'est pas lu (invariant 3 du
+    module) : son contenu ne vit pas dans l'espace.
+
+    Si Git ne répond pas, c'est une **erreur motivée** (`EspaceProjetIndisponible`),
+    jamais un repli sur tout le disque : c'est ce repli qui faisait le défaut.
+    """
+
+    def fichiers(self) -> Iterator[Path]:
+        """Les fichiers que Git voit dans le worktree, triés par chemin."""
+        resultat = _git(
+            self.path, "ls-files", "-z", "--cached", "--others", "--exclude-standard"
+        )
+        if resultat.returncode != 0:
+            raise EspaceProjetIndisponible(
+                "enumeration-refusee",
+                f"Git n'a pas pu énumérer les fichiers de l'espace {self.path} : "
+                f"{_message_git(resultat)}",
+            )
+        # Un ensemble : `--cached` rend une entrée par étage d'un fichier en conflit.
+        relatifs = {champ for champ in resultat.stdout.split("\0") if champ}
+        for fichier in sorted(self.path / relatif for relatif in relatifs):
+            # Un fichier suivi que l'agent a supprimé reste dans l'index : il n'est
+            # plus un fichier de l'espace, et ne s'est jamais recensé comme tel.
+            if fichier.is_file() and not fichier.is_symlink():
+                yield fichier
 
 
 @contextmanager
@@ -161,7 +215,7 @@ def espace_de_travail(
         _verifie_hors_racine(chemin, racine)
         _monter_worktree(racine, chemin, _branche(tache_id), _base(projet))
         monte = True
-        yield Workspace.derive(chemin)
+        yield EspaceCopieDeTravail.derive(chemin)
     finally:
         if not keep:
             if monte:

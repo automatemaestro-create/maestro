@@ -1980,6 +1980,13 @@ class OrchestrationEngine:
         Rien ici ne lève : ce qui n'aboutit pas rend l'échec, avec ce qui l'a
         arrêté, et l'aval se bloque comme avant (#43).
 
+        Une livraison faite que le **vérificateur** n'a pas pu juger
+        (`TaskResult.verification_en_panne`, #1388) ne se rattrape pas : ce n'est
+        pas le travail qui a échoué, et le redécouper le referait de zéro sur des
+        branches neuves — ce qu'a fait le run `da0a8ae6f1b2`. Le fait est typé,
+        jamais lu dans le texte de l'erreur ; ce qu'on en fait au-delà (revérifier,
+        demander) est l'objet de #1396.
+
         ## Ce qui manque se propose avant de se juger (#1181)
 
         Un échec qui porte un **prérequis constaté** (`TaskResult.prerequis` : un
@@ -2005,6 +2012,7 @@ class OrchestrationEngine:
             or politique is None
             or echec.statut != STATUT_ECHEC
             or not echec.rattrapable
+            or echec.verification_en_panne
         ):
             return echec
         dossier = juge.ouvre(journal.run_id, task)
