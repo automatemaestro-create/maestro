@@ -7115,11 +7115,31 @@ cause ferait répondre à l'aveugle. `hypothese` dit ce qui se passe sans répon
 pas pendant la question, les tâches indépendantes continuent. La borne est la même
 (`MAESTRO_ARBITRAGE_ATTENTE`), l'issue est consignée de la même façon (étape `<tache>:question`), et
 la réponse revient au Chef de projet, qui la tient pour **autorité** — une nouvelle tentative qui en
-tient compte, ou l'abandon s'il le demande. ⚠ Une limite, dite plutôt que tue : passé la borne, la
-carte dit qu'une réponse « sert encore » — vrai pour un agent qui rejouera le même appel, pas pour
-une tâche en échec, dont le run est déjà reparti. Moteur :
+tient compte, ou l'abandon s'il le demande. Moteur :
 [`maestro/engine/rattrapage.py`](../maestro/engine/rattrapage.py), gardé par
 [`tests/test_rattrapage.py`](../tests/test_rattrapage.py).
+
+**La carte dit qui demande (#1396).** Une question du Chef de projet se lit comme telle : en-tête
+« Question du Chef de projet » (l'écran le reconnaît à `agent` = `orchestrateur`, l'identifiant
+que le moteur pose, jamais à un texte), sans son rôle de journal sur la ligne de la tâche, et
+`attente` le fait parler — « sans réponse d'ici *n* s, le Chef de projet s'en tiendra à ceci : … »,
+là où un agent « reprendra sur son hypothèse ». Et la question **quitte le fil à la borne**
+(`retirer_sans_reponse`, comme la proposition de versionner de #1298) : passé ce délai, la boucle a
+conclu et plus rien ne lirait une réponse. C'était la limite que cette section disait plutôt que de
+la taire — la carte promettait qu'une réponse « sert encore », vrai pour un agent qui rejouera le
+même appel, faux pour une tâche dont le run est déjà reparti.
+
+**Une livraison que la vérification n'a pas pu juger se demande aussi (#1396).** Quand l'agent a
+livré et que c'est son vérificateur qui est resté en panne ([docs/45 §3](./45-decision-une-tache-verifiee-en-l-executant.md)),
+le Chef de projet ne diagnostique rien et ne refait rien : il demande, d'emblée, sur cette même
+carte. `question` dit que la tâche a livré sans être jugée, puis les faits — la cause de la panne
+comprise ; `hypothese` dit que la tâche reste en échec **avec sa livraison** ; et un geste est
+déclaré en `choix`, « Accepter la livraison telle quelle ». Ce geste solde la tâche « terminée » —
+fusion de sa branche comprise, sous l'accord d'écriture du run (#706) —, et l'aval part dessus ;
+le résultat garde `verification_en_panne`, puisqu'elle n'a toujours pas été vérifiée. Une réponse
+en mots part au Chef de projet, qui la lit en sachant que le travail est livré. Le geste n'est
+offert que par un exécuteur qui sait solder la livraison (en process) ; un exécuteur distribué
+pose la question sans lui — limite dite.
 
 **Et ce qui manque à une tâche s'y propose, au moment où il manque (#1181).** Un prérequis que
 Maestro sait nommer — un **serveur MCP** à authentifier ou injoignable, un **secret**, un **outil**,

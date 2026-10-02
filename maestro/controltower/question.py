@@ -70,16 +70,34 @@ from maestro.controltower.state import (
     QUESTION_REPONDUE,
     QUESTION_RETIREE,
 )
+from maestro.engine.executor import ACTEUR_ORCHESTRATEUR
 from maestro.engine.questions import DemandeQuestion
 from maestro.telemetry import redact_secrets
+
+
+def phrase_d_attente(demande: DemandeQuestion, hypothese: str) -> str:
+    """Ce qui se passera sans réponse, dit par **qui demande** (#1396).
+
+    Un agent reprend son travail sur l'hypothèse qu'il a annoncée (#1023). Le Chef
+    de projet, lui — une tâche à rattraper, une proposition sur le run —, n'a rien
+    à reprendre : sans réponse, il s'en tient à ce que l'hypothèse dit. La carte
+    du run `da0a8ae6f1b2` annonçait que « l'agent reprendra » alors qu'aucun agent
+    n'attendait, et que c'était l'aval qui restait bloqué. L'auteur est un
+    identifiant que **nous** posons (`ACTEUR_ORCHESTRATEUR`), jamais un texte lu.
+    """
+    delai = f"sans réponse d'ici {demande.attente_s:g} s"
+    if demande.agent == ACTEUR_ORCHESTRATEUR:
+        return f"{delai}, le Chef de projet s'en tiendra à ceci : {hypothese}"
+    return f"{delai}, l'agent reprendra sur son hypothèse : {hypothese}"
 
 
 def evenement_question(demande: DemandeQuestion) -> Event:
     """Mue une `DemandeQuestion` du moteur en événement `question.demande`.
 
-    Porte tout ce qu'il faut pour répondre : qui demande (l'agent, son rôle), à
-    propos de quoi (la tâche, son titre), la **question** (`description`), les
-    **choix** s'il y en a, et l'**hypothèse** — ce que l'agent fera sans réponse.
+    Porte tout ce qu'il faut pour répondre : qui demande (l'agent, son rôle — ou
+    le Chef de projet), à propos de quoi (la tâche, son titre), la **question**
+    (`description`), les **choix** s'il y en a, et l'**hypothèse** — ce qui se
+    passera sans réponse, dit par qui demande (`phrase_d_attente`).
 
     L'hypothèse voyage dans un champ à elle *et* dans `detail`, et ce n'est pas un
     doublon : le champ est la donnée (servie telle quelle à l'agent à la borne),
@@ -110,10 +128,7 @@ def evenement_question(demande: DemandeQuestion) -> Event:
         role=demande.role,
         statut=QUESTION_EN_ATTENTE,
         description=redact_secrets(demande.question),
-        detail=(
-            f"sans réponse d'ici {demande.attente_s:g} s, l'agent reprendra sur "
-            f"son hypothèse : {hypothese}"
-        ),
+        detail=phrase_d_attente(demande, hypothese),
         projet_id=demande.projet_id,
         question_id=demande.question_id,
         hypothese=hypothese,

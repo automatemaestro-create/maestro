@@ -112,6 +112,13 @@ class Tentative:
     `blocages` (#1181) porte ce que l'agent a **signalé** pendant la tentative —
     ce qui lui manquait, dans ses mots. C'est souvent la vraie cause, que
     l'erreur ne dit pas : un agent bloqué rend un livrable vide.
+
+    `verification_en_panne` (#1396) dit que l'agent **a livré** et que c'est le
+    vérificateur qui n'a pas pu juger (`TaskResult.verification_en_panne`, la
+    panne typée de #1388). Un champ et non une phrase de l'erreur : le Chef de
+    projet ne lisait que le texte, et un « Prompt is too long » venu du juge
+    l'orientait vers une tâche trop grosse — donc vers un redécoupage qui refaisait
+    de zéro un travail réussi (run `da0a8ae6f1b2`).
     """
 
     taches: tuple[Task, ...]
@@ -121,6 +128,7 @@ class Tentative:
     geste: str = "telle que planifiée"
     diagnostic: str = ""
     blocages: tuple[str, ...] = ()
+    verification_en_panne: bool = False
 
 
 @dataclass(frozen=True)
@@ -398,6 +406,12 @@ def taches_redecoupees(tache: Task, taches: Sequence[Task], tour: int) -> tuple[
     choisit sont locaux au rattrapage, et deux tours pourraient les réemployer —
     ou croiser ceux du plan. Le ticket et le projet sont hérités, comme au
     lancement d'un run.
+
+    Les tâches **de tête** — celles qui n'en attendent aucune autre du
+    redécoupage — **reprennent** le travail de la tâche remplacée (`Task.reprend`,
+    #1396) : sur un projet versionné, leur branche part de la sienne, et ce qui
+    est fait n'est pas refait. Les autres partent de la base du projet, où la
+    fusion de celles qu'elles attendent a déjà porté ce travail.
     """
     prefixe = f"{tache.id}-r{tour}-"
     return tuple(
@@ -407,6 +421,7 @@ def taches_redecoupees(tache: Task, taches: Sequence[Task], tour: int) -> tuple[
             dependances=tuple(f"{prefixe}{dep}" for dep in sous.dependances),
             ticket=tache.ticket,
             projet_id=tache.projet_id,
+            reprend="" if sous.dependances else tache.id,
         )
         for sous in taches
     )

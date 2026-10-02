@@ -77,6 +77,8 @@ from maestro.controltower.state import QUESTION_EN_ATTENTE, QUESTION_REPONDUE
 from maestro.deliberation import cle_acte
 from maestro.engine import OrchestrationEngine
 from maestro.engine.executor import (
+    ACTEUR_ORCHESTRATEUR,
+    ROLE_ORCHESTRATEUR,
     STATUT_QUESTION_REPONDUE,
     STATUT_QUESTION_SANS_REPONSE,
     SUFFIXE_ETAPE_QUESTION,
@@ -875,6 +877,23 @@ def test_l_evenement_de_demande_porte_la_borne_en_toutes_lettres_et_en_date():
     # Le secret est parti du texte de l'agent, dans les deux endroits où il vit.
     assert "ghp_" not in event.hypothese
     assert "ghp_" not in event.detail
+
+
+def test_la_phrase_d_attente_dit_qui_demande():
+    """La phrase se dérive de l'**auteur** de la question, jamais d'un « l'agent » figé (#1396).
+
+    Le run `da0a8ae6f1b2` : le Chef de projet demandait quoi faire d'une tâche
+    livrée, et la carte annonçait que « l'agent reprendra sur son hypothèse » —
+    alors qu'aucun agent n'attendait, et que sans réponse c'était l'aval qui
+    restait bloqué.
+    """
+    agent = evenement_question(_demande())
+    chef = evenement_question(_demande(agent=ACTEUR_ORCHESTRATEUR, role=ROLE_ORCHESTRATEUR))
+
+    assert agent.detail.startswith("sans réponse d'ici 240 s, l'agent reprendra")
+    assert chef.detail.startswith("sans réponse d'ici 240 s, le Chef de projet")
+    assert "l'agent" not in chef.detail
+    assert chef.detail.endswith(HYPOTHESE)
 
 
 def test_l_arbitre_publie_puis_attend_la_reponse_de_sa_propre_question():

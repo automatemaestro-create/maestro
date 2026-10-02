@@ -471,6 +471,15 @@ def _bloc_tentative(rang: int, tentative: Tentative) -> list[str]:
         ]
     if tentative.diagnostic:
         lignes.append(f"  Ton diagnostic d'alors : {tentative.diagnostic}")
+    if tentative.verification_en_panne:
+        # Un fait constaté par Maestro (#1396), et non une donnée venue d'un outil :
+        # il se dit hors de l'encadrement, avant l'erreur, qui dira la cause de la
+        # panne — jamais la preuve que la tâche était trop grosse.
+        lignes.append(
+            "  Issue : l'agent A LIVRÉ, et c'est sa vérification qui est en panne — le "
+            "travail n'a pas échoué, il n'a pas été jugé. Sa livraison est conservée : "
+            "ne la refais pas et ne la redécoupe pas sans que l'utilisateur le demande."
+        )
     lignes += [
         "  Erreur (donnée) :",
         "  <<<",

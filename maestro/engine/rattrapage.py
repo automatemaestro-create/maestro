@@ -47,6 +47,20 @@ un geste déclaré `CHOIX_PREREQUIS_LEVE` ; ou la carte d'équipe pour un rôle)
 tâche reprend telle quelle. Ce module en porte le texte et les issues au journal
 (`consigne_proposition`, statuts `prerequis_*`) ; la borne est
 `PolitiqueRattrapage.max_propositions`.
+
+## Une livraison non vérifiée se demande, elle ne se refait pas (#1396)
+
+Quand l'agent **a livré** et que c'est le vérificateur qui est resté en panne
+(`TaskResult.verification_en_panne`, #1388), ce n'est pas le travail qui a échoué.
+Le run `da0a8ae6f1b2` l'avait pourtant redécoupé de zéro, sur des branches neuves :
+le Chef de projet ne lisait que le texte de l'erreur, et le « Prompt is too long »
+du juge disait « tâche trop grosse ». Le fait voyage désormais dans la tentative
+(`Tentative.verification_en_panne`), et la boucle n'en demande aucun diagnostic :
+le vérificateur a déjà été relancé seul, l'espace encore ouvert, et il reste à
+**demander** (`question_de_la_livraison`) — prendre la livraison telle quelle, d'un
+geste (`CHOIX_LIVRAISON_ACCEPTEE`), ou répondre en mots, que le Chef de projet lit
+en sachant que le travail est livré. Sans réponse, la tâche reste en échec avec sa
+livraison, et l'aval ne part pas sur un travail que personne n'a jugé.
 """
 
 from __future__ import annotations
@@ -114,6 +128,12 @@ VERBE_PREREQUIS = "proposer_un_prerequis"
 #: avec d'autres mots n'est pas lue par un motif : elle part au Chef de projet,
 #: qui la juge (`JugeDesEchecs`, réponse qui fait autorité).
 CHOIX_PREREQUIS_LEVE = "C'est fait — reprendre la tâche"
+
+#: Le geste que la carte d'une **livraison non vérifiée** offre (#1396) : la
+#: personne prend la livraison telle quelle, sans le jugement que le vérificateur
+#: n'a pas pu rendre. Un choix déclaré, reconnu par identité comme le précédent ;
+#: toute autre réponse part au Chef de projet.
+CHOIX_LIVRAISON_ACCEPTEE = "Accepter la livraison telle quelle"
 
 #: Les issues d'une proposition de prérequis, au journal (`<tâche>:rattrapage`).
 #: Quatre et non deux, parce qu'elles n'appellent pas la même suite : **levé** —
@@ -586,12 +606,34 @@ def consigne_proposition(
     )
 
 
-def hypothese_du_rattrapage(aval: Sequence[Task]) -> str:
-    """Ce qui se passera sans réponse — la tâche reste en échec, et ce qu'elle retient."""
+def question_de_la_livraison(tache: Task) -> str:
+    """Ce que la carte demande d'une livraison que le vérificateur n'a pas pu juger (#1396).
+
+    Rien à diagnostiquer : le fait est typé (`TaskResult.verification_en_panne`),
+    l'agent a livré et c'est son juge qui est tombé. Le Chef de projet ne refait
+    donc rien — il demande s'il faut prendre la livraison telle quelle, et ce
+    geste est sur la carte (`CHOIX_LIVRAISON_ACCEPTEE`). Les faits suivent, comme
+    pour toute question de rattrapage (`question_du_rattrapage`) : la cause de la
+    panne y est, puisque c'est elle qu'on accepte de ne pas avoir levée.
+    """
+    return (
+        f"La tâche « {tache.titre} » a livré, mais sa vérification est en panne : "
+        "personne n'a pu juger si sa livraison tient. La prendre telle quelle, ou que "
+        "dois-je en faire ?"
+    )
+
+
+def hypothese_du_rattrapage(aval: Sequence[Task], *, livree: bool = False) -> str:
+    """Ce qui se passera sans réponse — la tâche reste en échec, et ce qu'elle retient.
+
+    `livree` (#1396) : la tâche a livré sans que sa livraison soit jugée. Elle la
+    garde, mais rien ne part dessus — c'est ce qu'accepter la livraison changerait.
+    """
+    reste = "la tâche reste en échec avec sa livraison" if livree else "la tâche reste en échec"
     if not aval:
-        return "la tâche reste en échec ; aucune autre tâche n'en dépend"
+        return f"{reste} ; aucune autre tâche n'en dépend"
     titres = ", ".join(f"« {tache.titre} »" for tache in aval)
-    return f"la tâche reste en échec, et les tâches qui l'attendent ne s'exécutent pas : {titres}"
+    return f"{reste}, et les tâches qui l'attendent ne s'exécutent pas : {titres}"
 
 
 def _erreur_courte(erreur: str, borne: int = 300) -> str:

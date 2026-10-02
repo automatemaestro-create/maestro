@@ -23,6 +23,7 @@ partout.
 import asyncio
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -635,6 +636,73 @@ def test_une_tache_rejouee_retrouve_sa_branche(tmp_path: Path) -> None:
         assert (ws.path / "trace.txt").read_text(encoding="utf-8") == "premier passage\n"
 
 
+def _commite(espace: Path, message: str) -> None:
+    _git(espace, "add", "-A")
+    _git(
+        espace,
+        "-c",
+        "user.email=tests@maestro",
+        "-c",
+        "user.name=Tests",
+        "commit",
+        "--quiet",
+        "-m",
+        message,
+    )
+
+
+@besoin_de_git
+def test_un_redecoupage_part_de_la_branche_de_la_tache_qu_il_remplace(tmp_path: Path) -> None:
+    """Ce qui est fait n'est pas refait (#1396) : le travail de `socle` est sous les pieds.
+
+    Le run `da0a8ae6f1b2` redécoupait `socle-nextjs` sur des branches parties de
+    la base : le travail réussi de `maestro/socle-nextjs` n'était plus là, et
+    `npm install` comme le reste se refaisaient de zéro.
+    """
+    projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="socle") as ws:
+        (ws.path / "package.json").write_text('{"name": "p5"}\n', encoding="utf-8")
+        _commite(ws.path, "le socle, livré")
+
+    with espace_de_travail(projet, tache_id="socle-r1-init", reprend="socle") as ws:
+        assert (ws.path / "package.json").read_text(encoding="utf-8") == '{"name": "p5"}\n'
+
+    # La branche du redécoupage descend de celle de la tâche, qui reste intacte.
+    socle = _git(racine, "rev-parse", "maestro/socle").strip()
+    assert _git(racine, "merge-base", "maestro/socle-r1-init", "maestro/socle").strip() == socle
+
+
+@besoin_de_git
+def test_sans_branche_a_reprendre_le_redecoupage_part_de_la_base(tmp_path: Path) -> None:
+    """Une tâche jamais montée n'a pas de branche : on part de la base, comme avant."""
+    projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="socle-r1-init", reprend="socle") as ws:
+        assert (ws.path / "README.md").is_file()
+    assert _git(racine, "rev-parse", "maestro/socle-r1-init").strip() == _git(
+        racine, "rev-parse", "main"
+    ).strip()
+
+
+@besoin_de_git
+def test_une_branche_existante_se_reprend_telle_quelle_meme_quand_elle_reprend(
+    tmp_path: Path,
+) -> None:
+    """`reprend` ne dit d'où partir qu'à la **création** : une branche rejouée garde la sienne."""
+    projet = _projet_git(tmp_path)
+    with espace_de_travail(projet, tache_id="socle") as ws:
+        (ws.path / "socle.txt").write_text("socle\n", encoding="utf-8")
+        _commite(ws.path, "socle")
+    with espace_de_travail(projet, tache_id="socle-r1-init") as ws:
+        (ws.path / "init.txt").write_text("init\n", encoding="utf-8")
+        _commite(ws.path, "init, parti de la base")
+
+    with espace_de_travail(projet, tache_id="socle-r1-init", reprend="socle") as ws:
+        assert (ws.path / "init.txt").is_file()
+        assert not (ws.path / "socle.txt").exists()
+
+
 @besoin_de_git
 def test_la_branche_part_de_la_branche_de_base_declaree(tmp_path: Path) -> None:
     projet = _projet_git(tmp_path, branche="develop")
@@ -1064,6 +1132,45 @@ def _joue(fournisseur: ModelProvider, depot: ProjetStore | None, projet_id: str 
         _executeur(fournisseur, depot).execute(_tache_routee("t1", projet_id), [], journal)
     )
     return resultat, journal
+
+
+class _FournisseurQuiRegarde(ModelProvider):
+    """Fournisseur factice outillé : note si le travail du socle est sous ses pieds."""
+
+    name = "regarde"
+
+    def __init__(self) -> None:
+        self.vus: list[bool] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):  # pragma: no cover
+        raise AssertionError("un rôle outillé passe par run_agent")
+
+    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools, **_):
+        self.vus.append((Path(workspace) / "package.json").is_file())
+        return "Fait."
+
+
+@besoin_de_git
+def test_l_executeur_monte_un_redecoupage_sur_la_branche_de_la_tache(tmp_path: Path) -> None:
+    """De la tâche jusqu'au worktree (#1396) : `Task.reprend` atteint le montage."""
+    depot = ProjetStore(tmp_path / "depot")
+    projet = depot.creer("Démo", Path(_projet_git(tmp_path).racine))
+    assert projet.versionne
+    with espace_de_travail(projet, tache_id="socle") as ws:
+        (ws.path / "package.json").write_text('{"name": "p5"}\n', encoding="utf-8")
+        _commite(ws.path, "le socle, livré")
+    fournisseur = _FournisseurQuiRegarde()
+    tache = replace(_tache_routee("socle-r1-init", projet.id), reprend="socle")
+
+    resultat = asyncio.run(
+        _executeur(fournisseur, depot).execute(tache, [], RunJournal(run_id="run-1396"))
+    )
+
+    assert resultat.ok, resultat.erreur
+    assert fournisseur.vus == [True]
 
 
 def test_l_ecriture_en_place_est_consignee_avec_ce_qui_a_ete_ecrit(tmp_path: Path) -> None:

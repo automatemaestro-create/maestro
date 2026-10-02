@@ -567,7 +567,10 @@ class TaskResult:
     le permet, il est resté en panne (`LivraisonNonVerifiee`). Un champ et non un
     statut (docs/45 §5) : la tâche reste en échec, puisque rien n'est vérifié, mais
     elle **garde sa livraison** — `sortie` et `fichiers` —, et ce n'est pas un
-    travail raté : la boucle du run ne la rattrape pas (`maestro.engine.loop`).
+    travail raté : la boucle du run ne la refait pas, elle **demande** quoi en faire
+    (#1396, `maestro.engine.loop`). Prise telle quelle sur décision humaine, la
+    tâche passe « terminée » et le champ reste vrai : elle n'a toujours pas été
+    vérifiée (`LocalExecutor.accepte_la_livraison`).
     """
 
     task_id: str
@@ -801,6 +804,29 @@ class TaskExecutor(ABC):
         raise NotImplementedError(
             "cet exécuteur ne tient pas l'atelier du projet : il ne peut pas le versionner "
             "pendant le run"
+        )
+
+    @property
+    def sait_accepter_une_livraison(self) -> bool:
+        """Cet exécuteur sait-il solder une livraison que la personne prend telle quelle ? (#1396)
+
+        La boucle le demande avant d'offrir le geste sur la carte d'une livraison
+        non vérifiée : un bouton qui ne ferait rien mentirait. Faux par défaut, et
+        c'est une limite **dite** : un exécuteur distribué fusionne côté worker, où
+        la décision ne voyage pas — la question y reste posée, sans ce geste.
+        """
+        return False
+
+    async def accepte_la_livraison(
+        self, task: Task, result: TaskResult, journal: RunJournal
+    ) -> TaskResult:
+        """Solde `result` — une livraison non vérifiée — telle quelle, sur décision humaine (#1396).
+
+        Refusé par défaut : seul un exécuteur qui `sait_accepter_une_livraison` est
+        appelé ici.
+        """
+        raise NotImplementedError(
+            "cet exécuteur ne sait pas solder une livraison acceptée : la tâche reste en échec"
         )
 
 
@@ -1351,6 +1377,50 @@ class LocalExecutor(TaskExecutor):
         if projet is None or not projet.versionne:
             return None
         return derivees
+
+    @property
+    def sait_accepter_une_livraison(self) -> bool:
+        """Cf. `TaskExecutor.sait_accepter_une_livraison` — ici, oui : la fusion est en process."""
+        return True
+
+    async def accepte_la_livraison(
+        self, task: Task, result: TaskResult, journal: RunJournal
+    ) -> TaskResult:
+        """Solde la livraison que la personne prend telle quelle (#1396) : fusion, puis terminée.
+
+        Le dernier mètre d'`execute`, rejoué sur décision. La tâche s'était close en
+        échec — rien de vérifié, donc rien de fusionné, et la ligne de projet l'a
+        dit —, et la personne accepte ce que le vérificateur n'a pas pu juger. Sur
+        un projet versionné, sa branche est fusionnée **maintenant**, sous le même
+        accord d'écriture que les autres fusions du run (#706), et **avant**
+        l'étape terminale pour la raison d'`execute` : l'aval part d'une base qui
+        porte ce travail. En place, la livraison est déjà dans la racine, et la
+        ligne de projet l'a recensée comme celle d'une tâche réussie (#1388).
+
+        L'étape terminale est à **usage nul**, comme celle d'un redécoupage abouti :
+        ce que la tâche a coûté est déjà porté par son étape d'échec. Le résultat
+        garde `verification_en_panne` — terminée sur décision, elle n'a toujours
+        pas été vérifiée, et le rapport ne doit pas dire le contraire.
+        """
+        accepte = replace(result, statut=STATUT_TERMINEE, erreur=None)
+        projet = self._projet(task)
+        if projet is not None and projet.versionne:
+            await self._fusionne_dans_le_projet(task, accepte, journal, en_place=False)
+        journal.consigne(
+            etape=task.id,
+            nom=task.titre,
+            agent=accepte.agent,
+            role=accepte.role,
+            statut=STATUT_TERMINEE,
+            entree=task.description,
+            sortie=accepte.sortie,
+            usage=StepUsage(),
+            playbook_version=accepte.playbook_version,
+            ticket=task.ticket,
+            projet_id=task.projet_id,
+            description=task.description,
+        )
+        return accepte
 
     def suspendue(self, result: TaskResult) -> bool:
         """Cf. `TaskExecutor.suspendue` — ici, dès qu'on a dit à l'exécuteur de suspendre."""
@@ -3878,6 +3948,9 @@ class LocalExecutor(TaskExecutor):
                     ),
                     projet=self._projet(task),
                     tache_id=task.id,
+                    # Une tâche de tête d'un redécoupage (#1396) : sa branche part
+                    # de celle de la tâche qu'elle remplace, pas de la base.
+                    reprend=task.reprend,
                     effort=agent.effort,
                     on_livraison=recette,
                 )
