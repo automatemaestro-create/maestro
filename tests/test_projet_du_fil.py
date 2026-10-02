@@ -72,9 +72,9 @@ COMMANDE_DU_PROJET = "npm run test:unitaires"
 
 
 def _verdict(nom: str, reponse: str, objectif: str = "") -> str:
-    """La réponse du modèle au contrat de `_PROMPT_ORCHESTRATION` : prose, puis la ligne."""
+    """La réponse du modèle au contrat de `_PROMPT_ORCHESTRATION` : la ligne, puis la prose."""
     ligne = json.dumps({"verdict": nom, "objectif": objectif}, ensure_ascii=False)
-    return f"{reponse}\n%%MAESTRO%% {ligne}"
+    return f"%%MAESTRO%% {ligne}\n{reponse}"
 
 
 class JugeQuiNote(ModelProvider):

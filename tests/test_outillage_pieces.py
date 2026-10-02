@@ -223,9 +223,9 @@ class _Modele(ModelProvider):
 
 
 def _dicte(reponse: str, nom: str, **charge: Any) -> str:
-    """Le contrat du juge : la prose, puis la dernière ligne marquée."""
+    """Le contrat du juge (#1427) : la ligne marquée de la décision, puis la prose."""
     objet = {"verdict": nom, "objectif": "", **charge}
-    return f"{reponse}\n{_MARQUEUR_VERDICT} {json.dumps(objet, ensure_ascii=False)}"
+    return f"{_MARQUEUR_VERDICT} {json.dumps(objet, ensure_ascii=False)}\n{reponse}"
 
 
 def _message(auteur: str, contenu: str, **champs: Any) -> MessageChat:

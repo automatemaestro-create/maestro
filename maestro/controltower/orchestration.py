@@ -363,6 +363,39 @@ ne casse jamais le fil, et n'affiche jamais de JSON à l'utilisateur. Préfacé 
 phrase, l'objet est encore lu, mais pour son **verdict seul** : ce qui est déjà à
 l'écran n'y est pas repris, et une demande approuvée continue d'ouvrir son run.
 
+## La décision d'abord, hors de la réponse (#1427)
+
+Le banc du 2026-10-02 a persisté, en tête du premier message d'un fil sans projet :
+*« Verdict "projet". Name: "livre de recettes" → folder …. Git available,
+versionner true. »* — la décision du juge, écrite en clair et en anglais **avant**
+sa réponse, puis affichée avec elle. Une fois sur la soixantaine de réponses
+relevées sur les bancs du poste, et la sonde ne l'a pas reproduite : le modèle
+décide avant de parler, et le contrat de #1222 ne lui donnait de place pour sa
+décision qu'**après** avoir parlé. Il lui arrivait donc de la noter là où il
+était, au début de ce qui s'affiche.
+
+La décision a désormais sa place **en tête**, sur la ligne marquée, et la réponse
+est ce qui la **suit**. C'est la **position** qui sépare la note de la réponse,
+jamais ses mots (docs/44) : ce qui précède la décision n'est pas publié tant
+qu'elle n'est pas lue, et n'est jamais publié si une réponse la suit
+(`_LectureDuFlux`). L'objet de la décision se lit à sa **structure**
+(`_objet_en_tete`, `raw_decode`) : c'est elle qui dit où la réponse commence.
+
+**Le prix est mesuré, et c'est le premier mot.** Sonde du 2026-10-02 sur le vrai
+modèle, même fil sans projet, quatre essais par contrat : le premier mot affiché
+arrive à 4,1-5,6 s en réponse d'abord, à 5,5-7,4 s en décision d'abord — environ
+deux secondes, le temps d'écrire l'objet d'un projet et ses trois raisons. La fin
+ne bouge pas (7,7-9,2 s contre 6,9-8,4 s) ; un échange, dont l'objet tient en une
+vingtaine de caractères, ne paie presque rien. Le direct de #1222 tient : la
+réponse s'écrit toujours au fur et à mesure, elle commence après la décision au
+lieu de la précéder.
+
+L'ordre de #1222 **se lit encore** : une décision que rien ne suit était une
+dernière ligne, et ce qui la précédait la réponse. Mais rien n'a pu partir avant
+de le savoir : un modèle qui garde l'ancien ordre perd le direct, pas le fil — et
+s'il y écrit une note, rien ne la distingue de sa réponse, parce que rien dans la
+structure ne l'en sépare.
+
 ## Il va voir, et ce qu'il voit se voit (#1223)
 
 Le lot précédent a fait parler ce canal en direct ; celui-ci lui donne de quoi
@@ -813,14 +846,17 @@ VERDICTS = frozenset(
     }
 )
 
-#: Le **marqueur de fin** : ce qui sépare la réponse affichée de la décision
-#: machine (#1222). Tout ce qui le précède est du texte pour l'utilisateur, tout
-#: ce qui le suit est l'objet JSON du verdict — et rien de tout cela ne s'affiche.
+#: Le **marqueur de la décision** : ce qui sépare la décision machine de la réponse
+#: affichée (#1222, #1427). Il ouvre la réponse du modèle, suivi de l'objet JSON du
+#: verdict ; la réponse est ce qui suit cet objet — et ni l'un ni ce qui les
+#: précéderait ne s'affiche.
 #:
 #: Il existe parce que l'ancien contrat — un seul objet JSON `{verdict, objectif,
 #: reponse}` — ne pouvait pas s'afficher au fur et à mesure : la phrase à montrer
-#: vivait *dans* une structure qu'il fallait avoir entière pour la lire. Le
-#: verdict passe donc **après** la réponse, où il ne retient plus rien.
+#: vivait *dans* une structure qu'il fallait avoir entière pour la lire. #1222 a
+#: sorti la phrase de l'objet en mettant le verdict **après** elle ; #1427 le remet
+#: **devant**, hors d'elle : un modèle qui décide en dernier décidait aussi, parfois,
+#: en tête de sa réponse et en clair.
 #:
 #: Sa forme est choisie pour être reconnaissable **en cours de flux**, sur un
 #: préfixe et sans arbre : une suite ASCII qu'aucune phrase française ne produit,
@@ -828,7 +864,7 @@ VERDICTS = frozenset(
 #: `len(_MARQUEUR_VERDICT) - 1` caractères) ne se voie pas à l'écran.
 _MARQUEUR_VERDICT = "%%MAESTRO%%"
 
-#: La dernière ligne que le juge écrit, telle que le cadre la lui montre. Une
+#: La première ligne que le juge écrit, telle que le cadre la lui montre. Une
 #: constante plutôt qu'une ligne du cadre depuis le septième verdict (#1183) : la
 #: liste des verdicts dépasse la largeur d'une ligne de source, et la couper dans le
 #: cadre la couperait aussi dans le prompt — la forme que le modèle recopie.
@@ -842,7 +878,8 @@ _LIGNE_DU_VERDICT = (
 #: jamais été branché ; #685 le branche et lui ajoute le verdict, puisque c'est le
 #: **même** appel qui rend la réponse et la décision. #1222 **inverse leur ordre**
 #: — la réponse d'abord, le verdict en dernière ligne — pour que la première
-#: puisse s'écrire à l'écran sans attendre le second.
+#: puisse s'écrire à l'écran sans attendre le second ; #1427 rend la première place
+#: à la décision, sur sa propre ligne, pour qu'elle ne s'écrive plus dans la réponse.
 #:
 #: ⚠ **Concaténé, et non interpolé** : le contrat de réponse ci-dessous est un objet
 #: JSON, donc ce texte porte des accolades littérales qu'une f-string lirait comme des
@@ -868,21 +905,25 @@ ouvres JAMAIS un de ta propre initiative. Tu proposes, et c'est l'utilisateur qu
 accepte — c'est donc son accord, et non toi, qui décide si une demande mérite un
 run.
 
-Écris D'ABORD ta réponse à l'utilisateur, en clair et rien d'autre : c'est elle
-qui s'affiche, et elle s'affiche AU FUR ET À MESURE que tu l'écris. Pas de JSON,
-pas de préambule, pas de balise — la première phrase que tu écris est la première
-qu'il lit.
+Tu écris deux choses, dans cet ordre, et rien d'autre.
 
-Puis termine par une DERNIÈRE LIGNE, et une seule, de cette forme exacte :
+D'ABORD ta DÉCISION, sur une PREMIÈRE LIGNE de cette forme exacte, avant tout
+autre caractère :
 
 """
     + _LIGNE_DU_VERDICT
     + """
 
 Cette ligne n'est jamais affichée : elle dit à l'interface quoi faire de ce que
-tu viens d'écrire. Elle vient en dernier, après le dernier mot de ta réponse, et
-rien ne la suit. Ne la mets jamais en tête, ni au milieu d'une phrase, ni dans un
-bloc de code, et n'écris nulle part ailleurs la suite de caractères %%MAESTRO%%.
+tu vas écrire. C'est là, et nulle part ailleurs, que tu notes ce que tu as décidé
+— le verdict, l'objectif, le projet et ses raisons. Rien ne la précède ; ne la
+mets jamais dans un bloc de code, ne la répète pas après ta réponse, et n'écris
+nulle part ailleurs la suite de caractères %%MAESTRO%%.
+
+ENSUITE, à la ligne, ta RÉPONSE à l'utilisateur, en clair : c'est elle qui
+s'affiche, et elle s'affiche AU FUR ET À MESURE que tu l'écris. Elle ne redit pas
+ta décision en notes — pas de JSON, pas de préambule, pas de balise : sa première
+phrase est la première qu'il lit.
 
 Le verdict :
 - "projet" — la personne veut COMMENCER un projet : en créer un nouveau ("je veux
@@ -950,7 +991,7 @@ Le verdict :
 Une proposition de run ne meurt pas à la première question. Quand les faits en
 montrent une en attente et que la personne en parle sans la trancher — ce qu'elle
 coûtera, combien de temps, ce qu'elle fera ou touchera —, c'est un "echange" qui
-la GARDE : ajoute à l'objet de la dernière ligne "garde_la_proposition": true, et
+la GARDE : ajoute à l'objet de ta ligne de décision "garde_la_proposition": true, et
 sa carte reste sous ta réponse, acceptable telle quelle. Omets cette clé sur un
 refus, sur une autre demande, ou quand la conversation passe à autre chose. Une
 réponse qui CHANGE ce qui serait lancé est une nouvelle "proposition", corrigée.
@@ -987,13 +1028,13 @@ L'objectif :
   qu'il approuve ;
 - vide sur "echange", sur "projet", sur "geste" et sur "attente".
 
-Sur "proposition", ajoute à l'objet de la dernière ligne une clé "taches" : le
+Sur "proposition", ajoute à l'objet de ta ligne de décision une clé "taches" : le
 nombre de tâches en lesquelles tu estimes que ce travail sera découpé (une
 retouche : 3 ; une application entière : davantage). C'est de lui que le code
 tire l'estimation de coût montrée sur la carte : un ordre de grandeur, jamais une
 promesse, et qui ne borne rien.
 
-Sur "accord" qui approuve un run, ajoute à l'objet de la dernière ligne une clé
+Sur "accord" qui approuve un run, ajoute à l'objet de ta ligne de décision une clé
 "bornes" avec celles que la personne demande pour CE run — dans son accord ("vas-y,
 5 $ max"), ou dans ce qu'elle a dit de la proposition depuis qu'elle attend :
 
@@ -1012,7 +1053,7 @@ n'est donc pas une borne que tu puisses poser telle quelle — ce n'est pas un a
 sans équivoque. Réponds alors en "echange" qui garde la proposition, en disant ce que
 tu peux borner à la place.
 
-Sur "attente", ajoute à l'objet de la dernière ligne une clé "attente" :
+Sur "attente", ajoute à l'objet de ta ligne de décision une clé "attente" :
 
 "attente": {"action": "reponse|approbation|refus", "cibles": ["<identifiant>"],
             "texte": "..."}
@@ -1038,7 +1079,7 @@ Sur "attente", ajoute à l'objet de la dernière ligne une clé "attente" :
   pour choisir une autre action, soumise à son tour si elle le demande. Ne promets
   pas pour autant ce qu'il fera : il la lit, c'est lui qui en tire son geste.
 
-Sur "geste", ajoute à l'objet de la dernière ligne une clé "geste" :
+Sur "geste", ajoute à l'objet de ta ligne de décision une clé "geste" :
 
 "geste": {"action": "pause|reprise|annulation|relance", "runs": ["<identifiant>"],
           "bornes": {"plafond_cout_usd": 5}}
@@ -1062,7 +1103,7 @@ Sur "geste", ajoute à l'objet de la dernière ligne une clé "geste" :
   plus » se calcule depuis les bornes que les faits donnent au run. Omets la clé
   sinon.
 
-Sur "projet", ajoute à l'objet de la dernière ligne une clé "projet" :
+Sur "projet", ajoute à l'objet de ta ligne de décision une clé "projet" :
 
 "projet": {"nom": "...", "dossier": "...", "origine": "nouveau|existant",
            "versionner": true,
@@ -1094,7 +1135,7 @@ n'est ajouté derrière tes mots, ni identifiant, ni récapitulatif, ni « les t
 apparaîtront ». L'identifiant du run, ce qu'il a ouvert et les bornes appliquées
 s'affichent d'eux-mêmes sous ta réponse ; ne les invente donc pas, tu ne les
 connais pas — mais si l'accord pose des bornes, redis en quelques mots celles que
-tu as posées dans ta dernière ligne, et aucune autre. Sur un "echange" qui garde
+tu as posées dans ta ligne de décision, et aucune autre. Sur un "echange" qui garde
 la proposition, il répond à ce qui est demandé — avec l'estimation des faits quand
 la question porte sur le coût, un ordre de grandeur et non un devis ni une borne
 — et ne redemande pas l'accord : la carte est toujours sous ta réponse. Sur un "accord"
@@ -2883,7 +2924,16 @@ def _verdict_depuis(texte: str) -> _Verdict:
     l'analyse plutôt qu'au jugement — ce qu'on ne comprend pas ne peut jamais
     valoir un accord.
     """
-    charge = _objet_json(texte)
+    return _verdict_de(_objet_json(texte), texte)
+
+
+def _verdict_de(charge: Any, texte: str) -> _Verdict:
+    """Le verdict qu'un objet **déjà décodé** porte — `texte` en repli de la réponse.
+
+    La ligne de décision (#1427) est décodée au fil du flux, par le lecteur qui doit
+    savoir où elle s'arrête : il n'a pas à la faire rechercher une seconde fois dans
+    un texte. Mêmes règles, donc, quel que soit le chemin.
+    """
     if not isinstance(charge, Mapping):
         return _Verdict(nom=VERDICT_ECHANGE, reponse=texte.strip())
     nom = str(charge.get("verdict") or "").strip().lower()
@@ -2913,6 +2963,28 @@ def _verdict_depuis(texte: str) -> _Verdict:
 #: nu ou en bloc de code. Un premier caractère non blanc qui en fait partie fait
 #: basculer la lecture en régime retenu : voir `_LectureDuFlux`.
 _OUVERTURES_MACHINE = ("{", "`")
+
+#: Le décodeur de la ligne de décision (#1427) : `raw_decode` dit où l'objet
+#: **finit**, ce qui est tout ce qu'il faut savoir pour que la réponse commence.
+_DECODEUR = json.JSONDecoder()
+
+
+def _objet_en_tete(texte: str) -> tuple[Any, str] | None:
+    """L'objet JSON qui ouvre `texte`, et ce qui le suit — `None` tant qu'il n'est pas entier.
+
+    C'est la **structure** de l'objet qui dit où la décision s'arrête, jamais un
+    retour à la ligne : un modèle qui l'écrit sur plusieurs lignes, ou qui enchaîne
+    sa réponse sur la même, est lu pareil. Un objet coupé par le flux ne se décode
+    pas encore ; un texte qui n'ouvre pas sur une accolade n'en portera jamais.
+    """
+    corps = texte.lstrip()
+    if not corps.startswith("{"):
+        return None
+    try:
+        objet, fin = _DECODEUR.raw_decode(corps)
+    except json.JSONDecodeError:
+        return None
+    return objet, corps[fin:]
 
 
 def _sans_echec(lecture: Callable[[], str]) -> str:
@@ -3105,27 +3177,39 @@ class _Contexte:
 
 
 class _LectureDuFlux:
-    """Sépare, **au fil des incréments**, ce qui s'affiche de ce qui décide (#1222).
+    """Sépare, **au fil des incréments**, ce qui s'affiche de ce qui décide (#1222, #1427).
 
-    Le modèle écrit sa réponse puis, en dernière ligne, `%%MAESTRO%%` suivi de
-    l'objet JSON du verdict (`_MARQUEUR_VERDICT`, `_PROMPT_ORCHESTRATION`). Cette
+    Le modèle écrit d'abord sa **décision** — `%%MAESTRO%%` suivi de l'objet JSON du
+    verdict (`_MARQUEUR_VERDICT`, `_PROMPT_ORCHESTRATION`) —, puis sa réponse. Cette
     classe consomme les morceaux tels que le fournisseur les rend et décide, à
-    chaque fois, ce qui peut partir à l'écran **maintenant** — sans jamais y
-    laisser fuiter une accolade du bloc machine.
+    chaque fois, ce qui peut partir à l'écran **maintenant** — sans jamais y laisser
+    fuiter une accolade du bloc machine, ni ce que le modèle a écrit avant de décider.
 
-    Deux régimes, et le premier caractère non blanc tranche une fois pour toutes :
+    **La position fait la réponse, jamais les mots** (#1427). La réponse est ce qui
+    **suit** la décision ; ce qui la précède — la décision redite en notes, en
+    anglais, comme sur le banc du 2026-10-02 — n'en est pas. Rien ne part donc tant
+    que la décision n'est pas lue, et c'est ce qui tient une note hors du fil sans
+    en reconnaître un seul mot.
 
-    - **prose** — le cas nominal. Les morceaux sont publiés au fur et à mesure,
-      à ceci près qu'on retient toujours la queue qui pourrait être le **début**
-      du marqueur (`%`, `%%M`, `%%MAES`…) : au plus `len(_MARQUEUR_VERDICT) - 1`
-      caractères, rendus dès que la suite dément. Marqueur complet vu : tout ce
-      qui suit est du JSON, plus rien n'est publié ;
-    - **machine** — la réponse commence par `{` ou un bloc de code, c'est-à-dire
-      par l'ancien contrat : un modèle qui répond en JSON malgré la consigne.
-      **Rien n'est publié en flux** ; à la clôture, `_verdict_depuis` lit l'objet
-      et sa `reponse` part en **un seul** incrément. C'est exactement le
-      comportement d'avant ce lot, et c'est ce qui fait qu'un modèle désobéissant
-      dégrade le direct sans jamais casser le fil.
+    Trois formes de réponse, et le flux dit laquelle :
+
+    - **la décision, puis la réponse** — le contrat. La décision est retenue jusqu'à
+      ce que son objet se **décode** entier (`_objet_en_tete`), puis la réponse est
+      publiée au fur et à mesure. On y retient toujours la queue qui pourrait amorcer
+      une **seconde** ligne marquée (`%`, `%%M`… — au plus
+      `len(_MARQUEUR_VERDICT) - 1` caractères, rendus dès que la suite dément) : une
+      décision recopiée en queue par habitude arrête la réponse et ne s'affiche pas ;
+    - **la réponse, puis la décision en queue** — l'ordre de #1222, que le prompt ne
+      demande plus. Il se lit encore : une décision que rien ne suit était une
+      dernière ligne, et ce qui la précédait la réponse. Mais rien n'a pu partir
+      avant de le savoir : le direct est perdu, pas le fil ;
+    - **le JSON nu ou en bloc de code** — l'ancien contrat de #685, que le premier
+      caractère non blanc tranche une fois pour toutes. **Rien n'est publié en
+      flux** ; à la clôture, `_verdict_depuis` lit l'objet et sa `reponse` part en
+      **un seul** incrément.
+
+    Un modèle hors consigne dégrade donc le direct sans jamais casser le fil, et
+    n'affiche jamais de JSON à la personne.
 
     Elle ne rase rien et ne réordonne rien : `Redaction` tient l'invariant du
     contrat SSE (la concaténation des incréments *est* le texte final), et le lui
@@ -3134,74 +3218,128 @@ class _LectureDuFlux:
 
     def __init__(self) -> None:
         self._brut: list[str] = []
-        # Ce qui est publiable mais pas encore parti : la queue qui pourrait
-        # amorcer le marqueur. Vide dès que la suite la dément.
-        self._retenu = ""
         # `None` tant qu'aucun caractère non blanc n'est venu : le régime ne se
         # décide pas sur des espaces.
         self._machine: bool | None = None
+        # Ce qui précède la décision, jamais publié en flux : on ne sait pas encore
+        # si une décision va le suivre (ce n'était pas la réponse) ou s'il la suivra
+        # elle-même en queue (c'était la réponse, à l'ordre de #1222).
+        self._avant = ""
+        # Ce qui suit le marqueur, tant que l'objet de la décision n'est pas entier.
+        self._ligne: str | None = None
+        self._decision: _Verdict | None = None
+        # Les blancs entre la décision et le premier mot de la réponse.
+        self._entre = ""
+        self._repond = False
+        # La queue de réponse qui pourrait amorcer une seconde ligne marquée.
+        self._retenu = ""
+        self._publie: list[str] = []
         self._coupe = False
 
     def pousser(self, morceau: str) -> str:
         """Le morceau consommé ; rend ce qui peut s'afficher **maintenant** (souvent `""`)."""
         self._brut.append(morceau)
+        if self._machine is None:
+            debut = "".join(self._brut).lstrip()
+            if not debut:
+                return ""
+            self._machine = debut.startswith(_OUVERTURES_MACHINE)
+            morceau = debut
+        if self._machine:
+            return ""
+        if self._decision is None:
+            return self._vers_la_decision(morceau)
+        return self._apres_la_decision(morceau)
+
+    def _vers_la_decision(self, morceau: str) -> str:
+        """Avant la décision : rien ne part, on cherche où elle commence et où elle finit."""
+        if self._ligne is None:
+            # Le marqueur peut tomber à cheval sur deux morceaux : on le cherche
+            # depuis la dernière position où il pouvait commencer.
+            depuis = max(0, len(self._avant) - len(_MARQUEUR_VERDICT) + 1)
+            self._avant += morceau
+            coupe = self._avant.find(_MARQUEUR_VERDICT, depuis)
+            if coupe == -1:
+                return ""
+            self._ligne = self._avant[coupe + len(_MARQUEUR_VERDICT) :]
+            self._avant = self._avant[:coupe]
+        else:
+            self._ligne += morceau
+        lue = _objet_en_tete(self._ligne)
+        if lue is None:
+            return ""
+        charge, suite = lue
+        self._decision = _verdict_de(charge, "")
+        return self._apres_la_decision(suite)
+
+    def _apres_la_decision(self, morceau: str) -> str:
+        """La décision lue : ce qui la suit est la réponse, publiée dès son premier mot."""
         if self._coupe:
             return ""
-        if self._machine is None:
-            candidat = (self._retenu + morceau).lstrip()
-            if not candidat:
-                self._retenu = ""
+        if not self._repond:
+            self._entre += morceau
+            debut = self._entre.lstrip()
+            if not debut:
                 return ""
-            self._machine = candidat.startswith(_OUVERTURES_MACHINE)
-            self._retenu = "" if self._machine else candidat
-        elif self._machine:
-            return ""
+            # La réponse commence après la décision : ce qui précédait la décision
+            # n'était pas une réponse, et ne partira jamais.
+            self._repond, self._entre, self._retenu = True, "", debut
         else:
             self._retenu += morceau
         coupe = self._retenu.find(_MARQUEUR_VERDICT)
         if coupe != -1:
-            # Le marqueur est là : ce qui le précède est la dernière prose, et
-            # plus rien ne sortira — le reste du flux est l'objet du verdict.
             acquis, self._retenu, self._coupe = self._retenu[:coupe], "", True
-            return acquis
-        garde = _amorce_retenue(self._retenu)
-        acquis = self._retenu[: len(self._retenu) - garde]
-        self._retenu = self._retenu[len(self._retenu) - garde :]
+        else:
+            garde = _amorce_retenue(self._retenu)
+            acquis = self._retenu[: len(self._retenu) - garde]
+            self._retenu = self._retenu[len(self._retenu) - garde :]
+        self._publie.append(acquis)
         return acquis
 
     def conclure(self) -> tuple[str, _Verdict]:
         """Le dernier morceau à publier, et le verdict — le flux étant terminé.
 
-        En régime prose, ce qui restait retenu n'était une amorce de marqueur que
-        par hypothèse : le flux fini, l'hypothèse tombe et le texte part. Le
-        verdict se lit alors dans ce qui suivait le marqueur.
+        **La décision, puis la réponse** : ce qui restait retenu n'amorçait une
+        seconde ligne que par hypothèse ; le flux fini, l'hypothèse tombe et le
+        texte part. La réponse est ce qui a été publié, à la lettre.
 
-        **Pas de marqueur du tout** : le texte est retenté comme l'ancien contrat,
-        et seul le **verdict** en est repris — jamais sa `reponse`, qui est déjà
-        à l'écran et qu'aucun flux ne reprend. C'est le cas du modèle qui préface
-        son JSON d'une phrase : il a désobéi deux fois (ni la prose demandée, ni
-        l'objet nu qu'on ne demande plus), et ce que le canal garde de lui est ce
-        qui se rattrape — une demande approuvée continue d'ouvrir son run, ce que
-        #685 tenait déjà. Le prix est visible et assumé : ce tour-là affiche ce
-        que le modèle a écrit, JSON compris.
+        **Une décision que rien n'a suivie** était une dernière ligne (#1222) : ce
+        qui la précédait était la réponse, et part maintenant, d'un bloc. Tout le
+        reste du verdict passe tel quel (`replace`) : une clé neuve du contrat ne se
+        perd pas en route faute d'avoir été recopiée ici — ce qu'ont failli faire
+        les bornes (#1184).
+
+        **Un marqueur dont l'objet ne s'est jamais décodé** : le verdict se lit sur
+        ce qui le suit, comme avant ce lot, et la réponse est ce qui le précède — ou,
+        à défaut, ce qui suit sa ligne : c'est la forme que le prompt demande.
+
+        **Pas de marqueur du tout** : le texte est retenté comme l'ancien contrat, et
+        seul le **verdict** en est repris — jamais sa `reponse`. C'est le cas du
+        modèle qui préface son JSON d'une phrase : il a désobéi deux fois, et ce que
+        le canal garde de lui est ce qui se rattrape — une demande approuvée
+        continue d'ouvrir son run, ce que #685 tenait déjà. Le prix est visible et
+        assumé : ce tour-là affiche ce que le modèle a écrit, JSON compris.
 
         Ni marqueur ni contrat lisible : **échange**. Un modèle qui oublie sa
-        dernière ligne a quand même parlé, et ce qu'on ne comprend pas n'ouvre
-        jamais rien — l'asymétrie du module (`_verdict_depuis`).
+        décision a quand même parlé, et ce qu'on ne comprend pas n'ouvre jamais
+        rien — l'asymétrie du module (`_verdict_depuis`).
         """
         texte = "".join(self._brut)
         if self._machine:
             verdict = _verdict_depuis(texte)
             return verdict.reponse, verdict
-        reste, self._retenu = self._retenu, ""
-        avant, separe, apres = texte.partition(_MARQUEUR_VERDICT)
-        lu = _verdict_depuis(apres if separe else texte)
-        # La réponse affichée est ce qui a été écrit **avant** le marqueur, et non
-        # le champ `reponse` d'un objet JSON : c'est le sens du nouveau contrat, et
-        # c'est aussi ce qui a déjà été publié. Tout le reste du verdict passe tel
-        # quel (`replace`) : une clé neuve du contrat ne se perd pas en route faute
-        # d'avoir été recopiée ici — ce qu'ont failli faire les bornes (#1184).
-        return reste, replace(lu, reponse=avant.strip())
+        if self._decision is not None and self._repond:
+            reste, self._retenu = ("" if self._coupe else self._retenu), ""
+            self._publie.append(reste)
+            return reste, replace(self._decision, reponse="".join(self._publie).strip())
+        if self._decision is not None:
+            return self._avant, replace(self._decision, reponse=self._avant.strip())
+        if self._ligne is not None:
+            lu = _verdict_depuis(self._ligne)
+            dite = self._avant if self._avant.strip() else self._ligne.partition("\n")[2]
+            return dite, replace(lu, reponse=dite.strip())
+        lu = _verdict_depuis(texte)
+        return self._avant, replace(lu, reponse=self._avant.strip())
 
 
 def _verdict_du_texte(texte: str) -> _Verdict:
@@ -4468,11 +4606,12 @@ class RepondeurOrchestration(RepondeurChat):
 
         **La réponse s'écrit pendant qu'elle est jugée** (#1222) : l'appel passe
         par `generate_stream` et `_LectureDuFlux` publie la prose au fur et à
-        mesure dans `redaction`, gardant pour elle la dernière ligne qui porte le
-        verdict. Le jugement n'est pas déplacé d'un cran — il reste rendu par ce
+        mesure dans `redaction`, gardant pour elle la ligne qui porte le verdict —
+        en tête depuis #1427, et avec elle tout ce que le modèle écrirait avant de
+        décider. Le jugement n'est pas déplacé d'un cran — il reste rendu par ce
         même appel —, c'est l'**ordre** dans lequel le modèle rend ses deux
-        moitiés qui a changé, et c'est tout ce qu'il fallait pour que la première
-        n'attende plus la seconde. Il n'y a plus d'appel « en bloc » : il ne
+        moitiés qui a changé, et c'est tout ce qu'il fallait pour que la réponse
+        ne soit plus enfermée dans le verdict. Il n'y a plus d'appel « en bloc » : il ne
         servait qu'au projet sans agent, dont la réponse était retenue pour être
         remplacée, et #1262 l'a rendue au modèle.
 

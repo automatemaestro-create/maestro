@@ -352,11 +352,11 @@ def test_un_dossier_importe_n_est_pas_touche(projets: ServiceProjets, _maison: P
 
 
 def _dicte(reponse: str, nom: str, *, projet: Mapping[str, Any] | None = None) -> str:
-    """Le contrat du juge : la prose, puis la dernière ligne marquée."""
+    """Le contrat du juge (#1427) : la décision d'abord, sur sa ligne marquée, puis la prose."""
     charge: dict[str, Any] = {"verdict": nom, "objectif": ""}
     if projet is not None:
         charge["projet"] = dict(projet)
-    return f"{reponse}\n{_MARQUEUR_VERDICT} {json.dumps(charge, ensure_ascii=False)}"
+    return f"{_MARQUEUR_VERDICT} {json.dumps(charge, ensure_ascii=False)}\n{reponse}"
 
 
 class ModeleScripte(ModelProvider):
@@ -416,6 +416,38 @@ def test_le_verdict_projet_pose_une_carte_verifiee_et_ne_declare_rien(
     # Les faits du poste ont atteint le juge : c'est avec eux qu'il propose.
     assert "Les projets de ce poste :" in modele.prompts[0]
     assert "projet de cette fenêtre : aucun" in modele.prompts[0]
+
+
+def test_la_note_du_juge_avant_sa_decision_n_entre_pas_dans_la_reponse(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """#1427, le constat du banc : un fil sans projet, et le juge qui note avant de parler.
+
+    Le 2026-10-02, le premier message de l'orchestrateur s'ouvrait sur
+    « Verdict "projet". Name: … → folder …. Git available, versionner true. » —
+    la décision du juge, écrite en clair avant sa réponse, puis persistée avec
+    elle. Sa place est la ligne de décision ; ce qui la précède n'est pas la
+    réponse, et c'est la **position** qui le dit, pas les mots. La carte reste
+    celle que la décision propose.
+    """
+    note = (
+        'Verdict "projet". Name: "kombucha vitrine" → folder '
+        f"{(_repertoire(_maison) / 'kombucha-vitrine').as_posix()}. Git available, "
+        "versionner true."
+    )
+    dite = "Un site vitrine pour votre kombucha : ma proposition est juste en dessous."
+    modele = ModeleScripte(f"{note}\n\n{_dicte(dite, VERDICT_PROJET, projet=_brute())}")
+
+    reponse = asyncio.run(
+        _repondeur(projets, modele).produire(
+            AGENT_ORCHESTRATION, [_message(UTILISATEUR, KOMBUCHA)]
+        )
+    )
+
+    assert reponse.contenu == dite
+    assert reponse.projet_propose is not None
+    assert reponse.projet_propose.racine.endswith("/kombucha-vitrine")
+    assert projets.lister() == []
 
 
 def test_une_proposition_refusee_par_la_verification_ne_pose_aucune_carte(

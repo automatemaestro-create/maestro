@@ -3191,6 +3191,36 @@ phrase, le marqueur jamais affiché *prouvé sur un échantillon fautif*, la car
 suit la prose, le lancement qui n'ajoute rien), `tests/test_openai_provider.py` (le
 dialecte en flux, son usage, son repli), `apps/web/tests/chat-global.test.tsx` (⑤).
 
+##### La décision d'abord, hors de la réponse (#1427)
+
+Le banc du 2026-10-02 a persisté en tête d'une réponse du fil sans projet la
+décision du juge, écrite en clair et en anglais : *« Verdict "projet". Name: … →
+folder …. Git available, versionner true. »*, puis la réponse elle-même. Le
+modèle décide avant de parler, et le contrat de #1222 ne lui donnait de place pour
+sa décision qu'**après** sa réponse : il lui arrivait de la noter là où il était.
+
+L'ordre de la ligne marquée est donc **renversé une seconde fois** : la décision
+d'abord, sur la ligne `%%MAESTRO%% {…}`, puis la réponse — qui reste hors de la
+structure et s'écrit au fur et à mesure. La réponse est ce qui **suit** la
+décision : ce qui la précède n'est jamais publié, et c'est sa **position** qui l'en
+écarte, jamais ses mots. L'objet de la décision se lit à sa structure (où il finit
+dit où la réponse commence), qu'il tienne sur une ligne ou plusieurs.
+
+- **Le prix est le premier mot**, mesuré le 2026-10-02 sur le vrai modèle (quatre
+  essais par contrat, verdict « projet ») : il arrive vers 6,8 s au lieu de 4,7 s
+  (médianes), le temps d'écrire le projet proposé et ses trois raisons ; la fin de
+  la réponse ne bouge pas. Un échange, dont la décision tient en une vingtaine de
+  caractères, ne paie presque rien.
+- **L'ordre de #1222 se lit encore** : une décision que rien ne suit était une
+  dernière ligne, ce qui la précédait la réponse. Mais rien n'a pu partir avant de
+  le savoir : un modèle qui garde l'ancien ordre perd le direct, jamais le fil.
+- **Une seconde ligne marquée**, recopiée en queue, arrête la réponse et ne
+  s'affiche pas ; la première décision fait foi.
+
+Couverture : `tests/test_chat_global.py` (④ter — la note écrite avant la décision
+ni publiée ni gardée, l'ancien ordre lu d'un bloc, la seconde ligne), et
+`tests/test_naissance_projet.py` (le constat du banc rejoué sur un fil sans projet).
+
 ##### Sur les chemins du geste aussi, le modèle parle et les cartes portent les faits (#1262)
 
 #1222 avait retiré le récital qui **suivait** un lancement. Il restait, sur les

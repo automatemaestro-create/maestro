@@ -76,9 +76,9 @@ MARQUEUR = "%%MAESTRO%%"
 
 
 def _dicte(reponse: str, nom: str, objectif: str = "", **cles: Any) -> str:
-    """La réponse du modèle au contrat : la prose, puis la dernière ligne marquée."""
+    """La réponse du modèle au contrat (#1427) : la ligne marquée de la décision, puis la prose."""
     charge = json.dumps({"verdict": nom, "objectif": objectif, **cles}, ensure_ascii=False)
-    return f"{reponse}\n{MARQUEUR} {charge}"
+    return f"{MARQUEUR} {charge}\n{reponse}"
 
 
 class JugeEnSequence(ModelProvider):

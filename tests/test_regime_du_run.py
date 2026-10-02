@@ -159,8 +159,8 @@ class FournisseurQuiNote(ModelProvider):
             # ranger ici ferait lire son prompt comme celui du dernier message.
             self.juges.append(prompt)
             return (
-                "Je vous propose ce travail.\n"
-                f'%%MAESTRO%% {{"verdict": "proposition", "objectif": "{self.objectif}"}}'
+                f'%%MAESTRO%% {{"verdict": "proposition", "objectif": "{self.objectif}"}}\n'
+                "Je vous propose ce travail."
             )
         if "vient de se terminer" in systeme:
             return "Le run est terminé."
@@ -821,8 +821,8 @@ class JugeQuiNote(ModelProvider):
             return "C'est noté."
         self.juges.append(prompt)
         return (
-            "Je vous propose ce travail.\n"
-            f'%%MAESTRO%% {{"verdict": "proposition", "objectif": "{OBJECTIF_S4}"}}'
+            f'%%MAESTRO%% {{"verdict": "proposition", "objectif": "{OBJECTIF_S4}"}}\n'
+            "Je vous propose ce travail."
         )
 
 

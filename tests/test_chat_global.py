@@ -1456,7 +1456,13 @@ def test_sans_incrementeur_rien_n_est_publie_et_le_texte_est_le_meme() -> None:
 
 
 def _dicte(reponse: str, nom: str = VERDICT_ECHANGE, objectif: str = "") -> str:
-    """Le **nouveau** contrat (#1222) : la prose, puis la dernière ligne marquée."""
+    """Le contrat du juge (#1427) : la décision d'abord, sur sa ligne marquée, puis la prose."""
+    charge = json.dumps({"verdict": nom, "objectif": objectif}, ensure_ascii=False)
+    return f"{_MARQUEUR_VERDICT} {charge}\n{reponse}"
+
+
+def _dicte_en_queue(reponse: str, nom: str = VERDICT_ECHANGE, objectif: str = "") -> str:
+    """L'ordre de #1222, que le prompt ne demande plus : la prose, puis la décision en queue."""
     charge = json.dumps({"verdict": nom, "objectif": objectif}, ensure_ascii=False)
     return f"{reponse}\n{_MARQUEUR_VERDICT} {charge}"
 
@@ -1612,6 +1618,105 @@ def test_un_accord_streame_ouvre_le_run_sans_rien_ajouter_aux_mots_du_modele() -
     assert reponse.run_id == "run-42"
     assert reponse.contenu == "C'est parti, je le confie à l'équipe."
     assert "".join(incremente).strip() == reponse.contenu
+
+
+# ── ④ter la décision d'abord, la réponse ensuite (#1427) ─────────────────────
+
+#: La note du constat de #1427, telle que le banc l'a persistée en tête du message :
+#: la décision du juge, écrite en clair avant sa réponse.
+NOTE_DU_JUGE = (
+    'Verdict "proposition". Objective: agenda app with week view → team of the project. '
+    "Tasks ~6."
+)
+
+
+def test_une_note_ecrite_avant_la_decision_ne_s_affiche_ni_ne_se_garde() -> None:
+    """Le constat de #1427 : ce que le modèle écrit **avant** sa décision n'est pas sa réponse.
+
+    La décision a sa place, la première ligne marquée ; la réponse est ce qui la
+    suit. Une note posée devant — la décision redite en clair, en anglais, comme
+    sur le banc du 2026-10-02 — est donc hors de la réponse **par sa position**,
+    jamais par ses mots : rien n'en part dans le flux, même découpée en morceaux
+    de trois caractères, et rien n'en reste dans le message. La carte, elle, vient
+    de la décision.
+    """
+    dite = "Je peux ouvrir un run là-dessus : une application d'agenda. Je lance ?"
+    juge = JugeQuiStreame(
+        f"{NOTE_DU_JUGE}\n\n{_dicte(dite, VERDICT_PROPOSITION, OBJECTIF)}"
+    )
+    repondeur, incremente = _en_flux(juge, lanceur=LanceurEspion())
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("crée-moi une app"), incrementer=incrementer,
+            projet_id=FENETRE,
+        )
+    )
+
+    assert reponse.contenu == dite
+    assert "".join(incremente).strip() == dite
+    assert len(incremente) > 1
+    assert reponse.proposition == OBJECTIF
+    # L'échantillon fautif : la note est bien dans ce que le modèle a écrit.
+    assert NOTE_DU_JUGE in juge.reponse
+
+
+def test_la_decision_en_queue_reste_lue_et_s_affiche_d_un_bloc() -> None:
+    """L'ordre de #1222 n'est plus demandé, mais il se lit encore — sans le direct.
+
+    Un modèle qui écrit sa réponse puis sa décision a quand même parlé et décidé :
+    sa carte est posée, sa prose affichée. Ce qu'il perd est le direct — rien ne
+    peut partir avant de savoir si une décision va suivre, puisque ce qui la
+    précède n'est pas une réponse —, exactement comme le JSON nu du repli de
+    #1222 : un modèle hors consigne dégrade le direct, il ne casse jamais le fil.
+    """
+    dite = "Je peux ouvrir un run là-dessus. Je lance ?"
+    juge = JugeQuiStreame(_dicte_en_queue(dite, VERDICT_PROPOSITION, OBJECTIF))
+    repondeur, incremente = _en_flux(juge, lanceur=LanceurEspion())
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("crée-moi une app"), incrementer=incrementer,
+            projet_id=FENETRE,
+        )
+    )
+
+    assert reponse.contenu == dite
+    assert reponse.proposition == OBJECTIF
+    assert incremente == [dite]
+
+
+def test_une_seconde_ligne_de_decision_ne_s_affiche_pas() -> None:
+    """Décidé en tête **et** en queue : la réponse s'arrête où la seconde ligne commence.
+
+    La première décision est celle que la réponse suit ; une seconde, recopiée en
+    queue par habitude, n'ajoute rien à l'écran — ni sa moitié coupée par le
+    découpage, ni son objet.
+    """
+    dite = "Il reste deux runs en cours sur ce projet."
+    juge = JugeQuiStreame(f"{_dicte(dite)}\n{_MARQUEUR_VERDICT} {{\"verdict\": \"accord\"}}")
+    repondeur, incremente = _en_flux(juge, lanceur=LanceurEspion())
+
+    async def incrementer(delta: str) -> None:
+        incremente.append(delta)
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION, _fil("où en est-on ?"), incrementer=incrementer,
+            projet_id=FENETRE,
+        )
+    )
+
+    assert reponse.contenu == dite
+    assert "".join(incremente).strip() == dite
+    assert "%" not in "".join(incremente)
+    assert reponse.run_id == ""
 
 
 # Le projet sans agent n'est plus une exception au direct (#1262) : sa réponse
