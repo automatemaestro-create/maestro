@@ -233,6 +233,7 @@ class AgentRuntime:
         on_processus: Callable[[ReleveConfinement], None] | None = None,
         projet: Projet | None = None,
         tache_id: str = "",
+        reprend: str = "",
         effort: str | None = None,
         on_livraison: JugeLivraison | None = None,
     ) -> AgentOutcome:
@@ -358,7 +359,9 @@ class AgentRuntime:
         sans `projet_id`) : le répertoire temporaire vide d'avant. `tache_id` ne
         sert qu'à nommer cette branche, ce répertoire et l'**atelier** de la
         tâche (#944) — le sous-dossier de la racine où l'agent range ce qui n'est
-        pas le livrable, et que le message de la tâche lui nomme.
+        pas le livrable, et que le message de la tâche lui nomme. `reprend`
+        (#1396, `Task.reprend`) nomme la tâche dont celle-ci reprend le travail :
+        une branche neuve part alors de la sienne (`espace_de_travail`).
 
         Deux autres choses en dépendent (#226), inertes elles aussi sans lui :
         les **secrets du projet** sont enregistrés auprès de la rédaction (#109)
@@ -432,6 +435,7 @@ class AgentRuntime:
         with espace_de_travail(
             projet,
             tache_id=tache_id,
+            reprend=reprend,
             prefix=self._profile.workspace_prefix,
             keep=keep_workspace,
         ) as ws:

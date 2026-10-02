@@ -73,6 +73,13 @@
       "minLength": 1,
       "maxLength": 200
     },
+    "reprend": {
+      "type": "string",
+      "description": "Identifiant de la tache dont celle-ci REPREND LE TRAVAIL (#1396) : sur un projet versionne, sa branche nait de la branche de cette tache plutot que de la base, si bien que ce qui est fait n'est pas refait. Pose par le MOTEUR, aux taches de tete d'un redecoupage — jamais par un plan, qui ne l'ecrit pas (il en est retire a la validation). Absent par defaut. Voyage avec la tache jusqu'au worker de la file.",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "projet_id": {
       "type": "string",
       "description": "Identifiant optionnel du projet (entite PROJECT, #221) auquel la tache appartient (#222). Absent par defaut : un plan sans projet reste valide et se deroule comme avant. Pose par le lancement du run, dont chaque tache du plan herite ; c'est ce qui permet aux vues (Kanban, couts, journal) de filtrer par projet.",

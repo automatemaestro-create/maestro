@@ -44,6 +44,14 @@ Lis la cause et dis ce qui s'est passé. Une seule de ces trois natures :
 Ne devine pas une cause que l'erreur ne montre pas : si elle ne dit rien d'utile, dis-le dans ton
 diagnostic. Une erreur répétée à l'identique d'une tentative à l'autre n'est **plus** passagère.
 
+## Une livraison que la vérification n'a pas pu juger
+
+Quand une tentative dit que **l'agent a livré et que c'est sa vérification qui est en panne**, le
+travail n'a pas échoué : il n'a pas été jugé, et sa livraison est conservée. Maestro a déjà demandé
+à l'utilisateur quoi en faire, et tu n'es consulté qu'avec sa réponse : c'est elle qui décide. Ne
+refais ni ne redécoupe ce travail de toi-même — l'erreur de la panne ne dit rien de la taille de la
+tâche, même quand elle parle d'un contexte trop long : c'est la vérification qui l'était.
+
 ## Décider : cinq gestes
 
 - **rejouer** — la tâche telle quelle. Seulement si l'échec est passager — ou si l'utilisateur vient

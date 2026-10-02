@@ -207,6 +207,80 @@ describe("la carte d'une question", () => {
 });
 
 /* ==================================================================== *
+ * La carte dit qui demande — un agent, ou le Chef de projet (#1396)
+ * ==================================================================== */
+
+describe("une question du Chef de projet", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(MAINTENANT);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Ce que le moteur publie quand le Chef de projet demande quoi faire d'une livraison. */
+  function questionDuChef(partiel: Partial<Question> = {}): Question {
+    return questionFactice({
+      question_id: "socle:1a2b3c4d5e",
+      tache_id: "socle",
+      titre: "Monter le socle Next.js",
+      question:
+        "La tâche « Monter le socle Next.js » a livré, mais sa vérification est en panne.",
+      hypothese: "la tâche reste en échec avec sa livraison",
+      choix: ["Accepter la livraison telle quelle"],
+      agent: AGENT_ORCHESTRATION,
+      role: "Orchestrateur",
+      attente:
+        "sans réponse d'ici 240 s, le Chef de projet s'en tiendra à ceci : la tâche reste en échec avec sa livraison",
+      ...partiel,
+    });
+  }
+
+  function carteDuChef(question: Question) {
+    rendreAvecEtat(<QuestionDansLeFil question={question} repondre={vi.fn(async () => {})} />);
+    return within(screen.getByRole("region", { name: "Question du Chef de projet" }));
+  }
+
+  it("se présente comme celle du Chef de projet, jamais d'un agent", () => {
+    // Le run `da0a8ae6f1b2` : « Question de l'agent orchestrateur », puis
+    // « l'agent reprendra sur son hypothèse » — aucun agent n'attendait.
+    const region = carteDuChef(questionDuChef({ echeance: AVANT_LA_BORNE }));
+
+    expect(
+      region.getByRole("heading", { name: /Question du Chef de projet/ }),
+    ).toBeInTheDocument();
+    // La ligne d'en-tête ne lui donne pas un second nom : la tâche, seule.
+    expect(region.getByText("Monter le socle Next.js")).toBeInTheDocument();
+    expect(region.queryByText(/Orchestrateur/)).not.toBeInTheDocument();
+    expect(region.getByText(/le Chef de projet s'en tiendra à ceci/)).toBeInTheDocument();
+    expect(region.queryByText(/l'agent/)).not.toBeInTheDocument();
+    // Son geste déclaré reste le seul bouton de choix.
+    expect(
+      region.getByRole("button", { name: "Accepter la livraison telle quelle" }),
+    ).toBeInTheDocument();
+  });
+
+  it("dit ce qu'il retient quand le canal n'a pas composé de phrase", () => {
+    const region = carteDuChef(questionDuChef({ attente: "", echeance: "" }));
+
+    expect(region.getByText(/Sans réponse, le Chef de projet s'en tiendra à ceci/)).toBeInTheDocument();
+    expect(region.queryByText(/l'agent/)).not.toBeInTheDocument();
+  });
+
+  it("ne promet pas, la borne passée, qu'une réponse servirait encore", () => {
+    // Passé la borne, la boucle a conclu et la question quitte le fil : rien ne
+    // lirait plus une réponse, à la différence de celle d'un agent (#584).
+    const region = carteDuChef(questionDuChef({ echeance: APRES_LA_BORNE }));
+
+    expect(region.getByText("Conclu sans réponse")).toBeInTheDocument();
+    expect(region.getByText(/le Chef de projet s'en est tenu à ceci/)).toBeInTheDocument();
+    expect(region.queryByText(/reparti/i)).not.toBeInTheDocument();
+    expect(region.queryByText(/Répondre sert encore/)).not.toBeInTheDocument();
+  });
+});
+
+/* ==================================================================== *
  * ② et ③ La borne : ce qui arrivera, puis ce qui est arrivé
  * ==================================================================== */
 

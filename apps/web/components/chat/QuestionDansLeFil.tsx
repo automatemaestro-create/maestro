@@ -55,6 +55,17 @@
  * seconde sur un fil qui s'écrit, ce que #877 évite, et `motion-reduce`
  * l'éteindrait) ; une **couleur propre aux questions** (docs/30 §6.1 —
  * `attention` *est* le ton de « quelque chose attend un geste »).
+ *
+ * ## Qui demande se dérive de l'auteur de la question (#1396)
+ *
+ * Le **Chef de projet** pose les siennes sur la même carte : quoi faire d'une
+ * tâche qu'il ne sait pas rattraper (#1178), d'une livraison que la vérification
+ * n'a pas pu juger (#1396), d'une proposition sur le run (#1298). La carte du run
+ * `da0a8ae6f1b2` le présentait en « agent orchestrateur » qui « reprendra sur son
+ * hypothèse » — alors qu'aucun agent n'attendait. Il est reconnu à l'identifiant
+ * que le moteur pose (le nom du fil global, `AGENT_ORCHESTRATION`), jamais à un
+ * texte, et nommé comme toute l'interface le nomme (`AUTEUR_CADRAGE`). Le reste de
+ * la carte ne change pas : c'est la même demande, d'un autre auteur.
  */
 
 import { useId, useState } from "react";
@@ -62,8 +73,10 @@ import { useId, useState } from "react";
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeAide } from "@/components/Icones";
 import { BadgeEtat, Bouton, ChampTexte } from "@/components/Primitives";
+import { AUTEUR_CADRAGE } from "@/lib/brief";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
+import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { questionEchue } from "@/lib/questions";
 import type { Question } from "@/lib/types";
 
@@ -72,10 +85,25 @@ export function QuestionDansLeFil({
   repondre,
 }: {
   question: Question;
-  /** Porte la réponse à l'agent — le texte, tel qu'il a été écrit ou choisi. */
+  /** Porte la réponse à qui demande — le texte, tel qu'il a été écrit ou choisi. */
   repondre: (questionId: string, reponse: string) => Promise<void>;
 }) {
   const maintenant = useHorloge();
+  // Qui demande (#1396) : un agent, ou le Chef de projet — voir l'en-tête.
+  const duChefDeProjet = question.agent === AGENT_ORCHESTRATION;
+  /* « Question de l'agent <nom> », et non « Question de <nom> » : le nom
+     d'un agent est déclaré par l'équipe d'un projet, donc arbitraire
+     (`Question.agent`), et « Question de infra » y manquait son élision
+     (#1110). Des deux issues que le ticket ouvre, celle-ci est la seule
+     qui tienne pour **tous** les noms : l'élision française se décide à
+     l'oreille et non à la lettre, si bien qu'une règle dérivée de
+     l'initiale se tromperait au premier sigle, h muet ou « u »
+     semi-voyelle — on supprime la classe de coquilles au lieu de la
+     rétrécir. Le titre dit du même coup exactement ce que l'`aria-label`
+     de la carte annonce. */
+  const titre = duChefDeProjet
+    ? `Question du ${AUTEUR_CADRAGE}`
+    : `Question de l'agent ${question.agent}`;
   const [ecrite, setEcrite] = useState("");
   const [enCours, setEnCours] = useState(false);
   const [refus, setRefus] = useState<string | null>(null);
@@ -113,25 +141,17 @@ export function QuestionDansLeFil({
   };
 
   return (
-    /* « Question de l'agent <nom> », et non « Question de <nom> » : le nom
-       d'un agent est déclaré par l'équipe d'un projet, donc arbitraire
-       (`Question.agent`), et « Question de infra » y manquait son élision
-       (#1110). Des deux issues que le ticket ouvre, celle-ci est la seule
-       qui tienne pour **tous** les noms : l'élision française se décide à
-       l'oreille et non à la lettre, si bien qu'une règle dérivée de
-       l'initiale se tromperait au premier sigle, h muet ou « u »
-       semi-voyelle — on supprime la classe de coquilles au lieu de la
-       rétrécir. Le titre dit du même coup exactement ce que l'`aria-label`
-       de la carte annonce. */
     <CarteDuFil
-      libelle={`Question de l'agent ${question.agent}`}
+      libelle={titre}
       icone={IconeAide}
-      titre={`Question de l'agent ${question.agent}`}
+      titre={titre}
       aside={
         echue ? (
           // L'état ne tient pas à la couleur seule (docs/30 §1.6) : il est
           // écrit — ici en badge, et en toutes lettres au pied de la carte.
-          <BadgeEtat ton="attention">Reparti sans réponse</BadgeEtat>
+          <BadgeEtat ton="attention">
+            {duChefDeProjet ? "Conclu sans réponse" : "Reparti sans réponse"}
+          </BadgeEtat>
         ) : question.horodatage ? (
           <span className="text-annexe text-texte-secondaire">
             demandé {formatHeureRelative(question.horodatage, maintenant)}
@@ -143,9 +163,11 @@ export function QuestionDansLeFil({
           d'après la table « Event · Environments · Comment » de GitHub Actions
           et le troisième manque du banc de #471. Le rôle peut manquer sur une
           question venue d'ailleurs : la ligne se resserre plutôt que d'afficher
-          un séparateur qui ne sépare rien. */}
+          un séparateur qui ne sépare rien. Le Chef de projet est nommé par
+          l'en-tête : son rôle de journal (« Orchestrateur ») en ferait ici un
+          second interlocuteur (#1396). */}
       <p className="mb-3 text-annexe text-texte-secondaire">
-        {[question.role, question.titre].filter(Boolean).join(" · ")}
+        {[duChefDeProjet ? "" : question.role, question.titre].filter(Boolean).join(" · ")}
       </p>
       {/* La question porte le poids (voir l'en-tête du fichier). `whitespace-pre-wrap`
           parce qu'elle vient d'un modèle : ses retours à la ligne sont les siens,
@@ -202,7 +224,15 @@ export function QuestionDansLeFil({
           la borne, c'est l'écran qui parle, parce que le canal ne dit rien de
           plus — la question reste ouverte et l'agent, lui, est reparti. */}
       <p className="mt-3 text-annexe text-attention-texte">
-        {echue ? (
+        {echue && duChefDeProjet ? (
+          // Le Chef de projet a conclu à la borne, et la question quitte le fil
+          // (`retirer_sans_reponse`) : rien ne lirait plus une réponse, et la
+          // carte ne promet donc pas qu'elle servirait encore.
+          <>
+            Personne n&apos;a répondu à temps : le {AUTEUR_CADRAGE} s&apos;en est tenu à
+            ceci — <strong className="font-medium">{question.hypothese}</strong>.
+          </>
+        ) : echue ? (
           <>
             Personne n&apos;a répondu à temps : l&apos;agent est reparti sur son
             hypothèse — <strong className="font-medium">{question.hypothese}</strong>.
@@ -215,6 +245,11 @@ export function QuestionDansLeFil({
           <>
             {question.attente.charAt(0).toLocaleUpperCase("fr")}
             {question.attente.slice(1)}.
+          </>
+        ) : duChefDeProjet ? (
+          <>
+            Sans réponse, le {AUTEUR_CADRAGE} s&apos;en tiendra à ceci :{" "}
+            <strong className="font-medium">{question.hypothese}</strong>.
           </>
         ) : (
           <>

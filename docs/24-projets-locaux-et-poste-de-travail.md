@@ -193,6 +193,16 @@ Avant #1388, le worktree recensait tout le disque : 22 891 fichiers de `node_mod
 du vérificateur sur le run `da0a8ae6f1b2`, qui dépassait le million de tokens et jetait une tâche
 réussie. Si Git ne répond pas, c'est une erreur motivée, jamais un repli sur tout le disque.
 
+**D'où part la branche d'un redécoupage (#1396).** Une tâche reprise ou rejouée garde son
+identifiant, donc sa branche : elle retrouve son travail. Un **redécoupage**, lui, crée des tâches
+neuves (`<tâche>-r<tour>-<id>`), et leurs branches partaient de la base — sur le run
+`da0a8ae6f1b2`, le travail réussi de `maestro/socle-nextjs` n'était plus sous les pieds de ses
+remplaçantes, et tout se refaisait de zéro. Les tâches **de tête** d'un redécoupage portent
+désormais la tâche qu'elles reprennent (`Task.reprend`, posé par le moteur seul), et leur branche
+**naît de la sienne** quand elle existe ; les autres partent de la base, où la fusion de celles
+qu'elles attendent a déjà porté ce travail. Une branche qui existe déjà se reprend telle quelle :
+`reprend` ne dit d'où partir qu'à la création.
+
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
 directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le
 prend au sérieux plutôt qu'une dérogation :

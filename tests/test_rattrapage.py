@@ -49,6 +49,7 @@ from maestro.orchestrator.prompt import build_rattrapage_user_prompt, prompt_rat
 from maestro.orchestrator.rattrapage import (
     EchecDeTache,
     Tentative,
+    taches_redecoupees,
     valide_rattrapage,
 )
 from maestro.providers.arbitrage import BornesArbitrage
@@ -797,6 +798,53 @@ def test_une_erreur_demesuree_est_bornee_par_la_fin():
     prompt = build_rattrapage_user_prompt(echec)
     assert "CAUSE FINALE" in prompt and "PREMIERE-LIGNE" not in prompt
     assert len(prompt) < 10_000
+
+
+def test_le_prompt_dit_qu_une_livraison_faite_n_est_pas_un_travail_rate():
+    """Le fait typé de #1388 voyage dans la tentative, et le prompt le dit (#1396).
+
+    Jusqu'ici le Chef de projet ne lisait que le **texte** de l'erreur — un
+    « Prompt is too long » l'orientait vers une tâche trop grosse, donc vers un
+    redécoupage. Le fait est un champ : il n'a rien à reconnaître.
+    """
+    tache = Task.from_dict(_tache("t1", "X"))
+    livree = Tentative(
+        taches=(tache,),
+        agent="dev",
+        role="Développeur",
+        erreur="livrée, vérification en panne — Prompt is too long",
+        verification_en_panne=True,
+    )
+    ratee = Tentative(taches=(tache,), agent="dev", role="Développeur", erreur="403")
+
+    assert "c'est sa vérification qui est en panne" in build_rattrapage_user_prompt(
+        EchecDeTache(tache=tache, tentatives=(livree,))
+    )
+    assert "c'est sa vérification qui est en panne" not in build_rattrapage_user_prompt(
+        EchecDeTache(tache=tache, tentatives=(ratee,))
+    )
+
+
+def test_un_redecoupage_reprend_le_travail_de_la_tache_qu_il_remplace():
+    """Ce qui est fait n'est pas refait (#1396) : les tâches de tête partent de sa branche.
+
+    Une tâche du redécoupage qui en attend une autre part de la base du projet,
+    où la fusion de celle qu'elle attend a déjà porté ce travail.
+    """
+    tache = Task.from_dict(_tache("socle", "Monter le socle."))
+    sous = (
+        Task.from_dict(_tache("init", "Initialiser.")),
+        Task.from_dict(_tache("contrat", "Écrire le contrat.", dependances=("init",))),
+    )
+
+    init, contrat = taches_redecoupees(tache, sous, 1)
+
+    assert (init.id, init.reprend) == ("socle-r1-init", "socle")
+    assert (contrat.id, contrat.reprend, contrat.dependances) == (
+        "socle-r1-contrat",
+        "",
+        ("socle-r1-init",),
+    )
 
 
 # --- La Control Tower lit les lignes du rattrapage sur leur tâche -------------------------

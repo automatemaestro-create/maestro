@@ -42,7 +42,7 @@ Pas un nombre de tentatives : un **fait**.
 | La correction ne fait tenir **aucun critère de plus** que la meilleure livraison précédente | **Échec motivé** : l'agent avait la preuve et n'en a rien tiré |
 | Le **budget du run** est atteint pendant une correction | **Échec motivé** : la cause d'arrêt, suivie des dernières preuves |
 | Un contrôle n'a **pas pu être joué** (portée, pas de bash) ou le vérificateur est **illisible** | **Échec motivé** : ce qui n'est pas vérifié n'est pas vérifié, et l'agent n'y peut rien |
-| Le **vérificateur est en panne** (son appel au fournisseur échoue) et le reste après ses relances | **Échec qui garde sa livraison** (#1388) : « livrée, vérification en panne » |
+| Le **vérificateur est en panne** (son appel au fournisseur échoue) et le reste après ses relances | **Échec qui garde sa livraison** (#1388) : « livrée, vérification en panne » — puis **demandé** dans le fil, jamais refait (#1396) |
 
 **Une panne du vérificateur n'est pas un échec de l'agent** (#1388). Elle est typée par son
 **origine** (l'appel du vérificateur a échoué), jamais reconnue à son texte. Elle est relancée
@@ -57,7 +57,11 @@ million de tokens. La tâche a été relancée session comprise, vidée, puis re
 
 Le nombre de critères est fini et chaque tour doit en gagner un, donc la boucle **finit toujours**, budget posé ou non. Un échec motivé dit combien de critères tiennent, après combien de livraisons, pourquoi la boucle s'est arrêtée, et chaque preuve. **Ce n'est jamais un vert.**
 
-**Puis le rattrapage** (#1178, [docs/04 §3.1](./04-specifications-agents.md), `maestro/engine/rattrapage.py`) : un échec motivé est un échec comme un autre pour le Chef de projet. Il le juge, motif et preuves en main, et peut le retenter autrement (autre approche, autre agent, tâche redécoupée), ou le demander dans le fil. La tentative différente repasse par la même vérification. Le **budget dépensé** ne se rattrape pas : c'est une borne, pas un échec. Une **livraison que le vérificateur n'a pas pu juger** ne se rattrape pas non plus : ce n'est pas le travail qui a échoué, et le redécouper le referait de zéro (#1388 ; ce qu'on en fait au-delà, revérifier ou demander, est l'objet de #1396).
+**Puis le rattrapage** (#1178, [docs/04 §3.1](./04-specifications-agents.md), `maestro/engine/rattrapage.py`) : un échec motivé est un échec comme un autre pour le Chef de projet. Il le juge, motif et preuves en main, et peut le retenter autrement (autre approche, autre agent, tâche redécoupée), ou le demander dans le fil. La tentative différente repasse par la même vérification. Le **budget dépensé** ne se rattrape pas : c'est une borne, pas un échec.
+
+**Une livraison que le vérificateur n'a pas pu juger n'est pas un échec comme un autre** (#1396, qui renverse ici la phrase du paragraphe précédent pour ce seul cas). Ce n'est pas le travail qui a échoué, et le redécouper le refaisait de zéro sur des branches neuves : c'est ce qu'a fait le run `da0a8ae6f1b2`, parce que le Chef de projet ne lisait que le **texte** de l'erreur, et que le « Prompt is too long » du juge y disait « tâche trop grosse ». Le fait typé de #1388 voyage désormais dans la **tentative** (`Tentative.verification_en_panne`). Il n'appelle aucun diagnostic : le vérificateur a déjà été **revérifié** seul, l'espace encore ouvert, selon la politique des aléas. Reste à **demander**, d'emblée, dans le fil ([docs/05 §6.17](./05-interface-control-tower.md)) : la personne peut prendre la livraison telle quelle d'un geste (la tâche passe « Terminée » sur décision humaine, sa branche est fusionnée, l'aval part, et le résultat dit toujours qu'elle n'a pas été vérifiée), ou répondre en mots, que le Chef de projet lit en sachant que le travail est livré. Sans réponse, la tâche reste en échec **avec** sa livraison, et l'aval ne part pas sur un travail que personne n'a jugé.
+
+**Et un redécoupage, quel qu'en soit le motif, ne refait pas ce qui est fait** (#1396). Sur un projet versionné, les tâches **de tête** d'un redécoupage (celles qui n'en attendent aucune autre) partent de la **branche de la tâche qu'elles remplacent**, et non de la base (`Task.reprend`, posé par le moteur seul) ; les autres partent de la base, où la fusion de celles qu'elles attendent a déjà porté ce travail.
 
 ## 4. La QA dans la même boucle
 

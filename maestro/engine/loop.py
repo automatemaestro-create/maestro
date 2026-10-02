@@ -179,6 +179,7 @@ from maestro.engine.plafond import (
 )
 from maestro.engine.questions import ArbitreQuestion, DemandeQuestion, identifiant_question
 from maestro.engine.rattrapage import (
+    CHOIX_LIVRAISON_ACCEPTEE,
     CHOIX_PREREQUIS_LEVE,
     RATTRAPAGE_DEFAUT,
     STATUT_PREREQUIS_DECLINE,
@@ -196,6 +197,7 @@ from maestro.engine.rattrapage import (
     consigne_proposition,
     consigne_question,
     hypothese_du_rattrapage,
+    question_de_la_livraison,
     question_du_prerequis,
     question_du_rattrapage,
 )
@@ -1980,12 +1982,19 @@ class OrchestrationEngine:
         Rien ici ne lève : ce qui n'aboutit pas rend l'échec, avec ce qui l'a
         arrêté, et l'aval se bloque comme avant (#43).
 
+        ## Une livraison non vérifiée se demande (#1396)
+
         Une livraison faite que le **vérificateur** n'a pas pu juger
-        (`TaskResult.verification_en_panne`, #1388) ne se rattrape pas : ce n'est
-        pas le travail qui a échoué, et le redécouper le referait de zéro sur des
-        branches neuves — ce qu'a fait le run `da0a8ae6f1b2`. Le fait est typé,
-        jamais lu dans le texte de l'erreur ; ce qu'on en fait au-delà (revérifier,
-        demander) est l'objet de #1396.
+        (`TaskResult.verification_en_panne`, #1388) n'est pas un travail raté, et
+        le redécouper le referait de zéro sur des branches neuves — ce qu'a fait le
+        run `da0a8ae6f1b2`. Le fait est typé, porté par la tentative, jamais lu dans
+        le texte de l'erreur. Il n'appelle aucun diagnostic : le vérificateur a déjà
+        été relancé seul, l'espace encore ouvert. Reste à **demander**, d'emblée —
+        la carte offre de prendre la livraison telle quelle
+        (`CHOIX_LIVRAISON_ACCEPTEE`, quand l'exécuteur sait la solder) ; une
+        réponse en mots part au Chef de projet, qui la juge en sachant que le
+        travail est livré ; sans réponse, la tâche reste en échec **avec** sa
+        livraison et l'aval ne part pas.
 
         ## Ce qui manque se propose avant de se juger (#1181)
 
@@ -2012,7 +2021,6 @@ class OrchestrationEngine:
             or politique is None
             or echec.statut != STATUT_ECHEC
             or not echec.rattrapable
-            or echec.verification_en_panne
         ):
             return echec
         dossier = juge.ouvre(journal.run_id, task)
@@ -2023,6 +2031,7 @@ class OrchestrationEngine:
                 role=echec.role,
                 erreur=echec.erreur or "",
                 blocages=echec.blocages,
+                verification_en_panne=echec.verification_en_panne,
             )
         )
         usage = echec.usage
@@ -2038,6 +2047,9 @@ class OrchestrationEngine:
         # réponse en mots le laisse au Chef de projet, qui ne doit pas le voir
         # reproposé au tour suivant comme s'il était neuf.
         deja_propose: TaskResult | None = None
+        # La livraison non vérifiée sur laquelle on a déjà demandé (#1396) — même
+        # raison : une réponse en mots va au Chef de projet, on ne redemande pas.
+        deja_demandee: TaskResult | None = None
         essais = questions = tours = propositions = 0
         diagnostic = issue = ""
         budget_depense = "le budget du run est dépensé, aucune tentative de plus n'est engagée"
@@ -2049,9 +2061,24 @@ class OrchestrationEngine:
                 a_proposer: PrerequisManquant | None = None
                 verdict: Verdict | None = None
                 question = motif = ""
+                # Une livraison non vérifiée se demande d'emblée (#1396), avec le
+                # geste qui la prend telle quelle — quand l'exécuteur sait la solder.
+                livree = dernier.verification_en_panne and dernier is not deja_demandee
+                choix: tuple[str, ...] = ()
                 constate = dernier.prerequis
                 est_constate = False
-                if (
+                if livree:
+                    # Ni diagnostic ni tentative : le vérificateur a déjà été relancé
+                    # seul, et refaire le travail referait ce qui est livré. Un
+                    # diagnostic d'avant jugeait un autre échec, que la reprise a
+                    # levé : la question ne le cite pas (vu sur le run `0e7e20dd6844`).
+                    deja_demandee = dernier
+                    diagnostic = ""
+                    question = question_de_la_livraison(task)
+                    motif = "la livraison n'a pas pu être vérifiée"
+                    if self._executor.sait_accepter_une_livraison:
+                        choix = (CHOIX_LIVRAISON_ACCEPTEE,)
+                elif (
                     constate is not None
                     and dernier is not deja_propose
                     and propositions < politique.max_propositions
@@ -2203,11 +2230,20 @@ class OrchestrationEngine:
                     )
                     break
                 texte = question_du_rattrapage(task, dossier, question, diagnostic)
-                reponse = await self._demande(task, texte, journal)
+                reponse = await self._demande(
+                    task, texte, journal, choix=choix, livree=dernier.verification_en_panne
+                )
                 questions += 1
                 if reponse is None:
                     issue = "la question posée dans le fil est restée sans réponse"
                     break
+                if choix and reponse.strip() == CHOIX_LIVRAISON_ACCEPTEE:
+                    # La personne prend la livraison telle quelle (#1396) : l'exécuteur
+                    # la solde — fusion comprise —, et l'aval part dessus.
+                    accepte = await self._executor.accepte_la_livraison(
+                        derniere_tache, dernier, journal
+                    )
+                    return replace(accepte, task_id=task.id, titre=task.titre, usage=usage)
                 dossier.question, dossier.reponse = texte, reponse
                 essais = 0
         finally:
@@ -2571,13 +2607,20 @@ class OrchestrationEngine:
         *,
         choix: tuple[str, ...] = (),
         verbe: str = VERBE_RATTRAPAGE,
+        livree: bool = False,
     ) -> str | None:
         """Pose dans le fil la question d'un échec, et attend la réponse — bornée (#1178).
 
         `choix` et `verbe` (#1181) servent la **proposition** d'un prérequis, qui
         passe par la même carte : un geste déclaré (« c'est fait ») que la carte
         rend en bouton, et un espace de clés à elle pour que sa réponse ne soit
-        jamais celle d'une question.
+        jamais celle d'une question. `choix` sert aussi la livraison non vérifiée
+        (#1396), dont `livree` fait dire à l'hypothèse qu'elle est gardée.
+
+        La question **quitte le fil** à la borne (#1396) : passé ce délai, la boucle
+        a conclu et plus rien ne lirait une réponse — à la différence d'une question
+        d'agent, qu'une réponse tardive sert encore (`MemoireArbitrage`, #584). Une
+        carte qui resterait répondable promettrait un geste sans effet.
 
         Le canal est celui d'une question d'agent (#1023, `ArbitreQuestion`) : la
         carte existe déjà au pied du fil de l'orchestration, avec son champ de
@@ -2595,7 +2638,8 @@ class OrchestrationEngine:
             return None
         attente_s = self._bornes_question.attente_s
         hypothese = hypothese_du_rattrapage(
-            self._juge.aval(journal.run_id, task.id) if self._juge is not None else ()
+            self._juge.aval(journal.run_id, task.id) if self._juge is not None else (),
+            livree=livree,
         )
         cle = cle_acte(verbe, {"run": journal.run_id, "question": texte})
         demande = DemandeQuestion(
@@ -2610,6 +2654,7 @@ class OrchestrationEngine:
             run_id=journal.run_id,
             projet_id=task.projet_id,
             attente_s=attente_s,
+            retirer_sans_reponse=True,
         )
         reponse: str | None = None
         try:

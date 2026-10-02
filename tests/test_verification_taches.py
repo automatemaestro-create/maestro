@@ -18,7 +18,10 @@ Critères couverts :
   (`test_qa_*`) ;
 ④ une panne du vérificateur n'est pas un échec de l'agent (#1388) : typée par son
   origine, relancée seule, elle laisse la tâche en échec **avec** sa livraison, et
-  sans rattrapage — et le prompt du vérificateur est borné en entier, noms compris.
+  sans rattrapage — et le prompt du vérificateur est borné en entier, noms compris ;
+⑤ une livraison que le vérificateur n'a pas pu juger **se demande** (#1396) : le
+  Chef de projet pose la question, ne refait rien, et la personne peut accepter la
+  livraison d'un geste — ou répondre en mots, qu'il lit avec le fait typé.
 """
 
 from __future__ import annotations
@@ -38,7 +41,15 @@ from maestro.engine import (
     OrchestrationEngine,
     PolitiqueRelance,
 )
-from maestro.engine.rattrapage import PolitiqueRattrapage
+from maestro.engine.executor import (
+    ACTEUR_ORCHESTRATEUR,
+    STATUT_QUESTION_REPONDUE,
+    STATUT_QUESTION_SANS_REPONSE,
+    STATUT_TERMINEE,
+    SUFFIXE_ETAPE_QUESTION,
+)
+from maestro.engine.questions import DemandeQuestion
+from maestro.engine.rattrapage import CHOIX_LIVRAISON_ACCEPTEE, PolitiqueRattrapage
 from maestro.engine.retry import est_transitoire
 from maestro.engine.verification import (
     CONSTAT_NON_JOUE,
@@ -62,6 +73,7 @@ from maestro.engine.verification import (
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.portee import PorteeProjet
+from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import ProducedFile
 from maestro.sandbox.verification import Execution
@@ -813,6 +825,183 @@ def test_la_panne_du_verificateur_fait_l_aller_retour_des_workers():
     ancien = resultat.to_dict()
     del ancien["verification_en_panne"]
     assert not TaskResult.from_dict(ancien).verification_en_panne
+
+
+# --------------------------------------------------------------------------- #
+# ⑤ Une livraison non vérifiée se demande, elle ne se refait pas (#1396)
+# --------------------------------------------------------------------------- #
+
+_SUITE = _tache("suite", "Afficher le salut", ["backend"], ["salut"])
+
+
+def _engine_qui_demande(
+    provider: ModelProvider,
+    chef: ChefQuiCompte,
+    questionneur,
+    *,
+    attente_s: float = 5.0,
+) -> OrchestrationEngine:
+    """Le moteur des vrais runs, en petit, branché sur quelqu'un à qui demander."""
+    return OrchestrationEngine(
+        provider,
+        Orchestrator(chef, model="claude-opus-4-8"),
+        relance=PolitiqueRelance(max_tentatives=3, backoff_s=0),
+        rattrapage=PolitiqueRattrapage(),
+        verificateur=VerificateurTaches(provider, joueur=joueur_grep, interprete=_INTERPRETE),
+        questionneur=questionneur,
+        bornes_question=BornesArbitrage(attente_s=attente_s),
+    )
+
+
+def test_une_livraison_non_verifiee_se_demande_sans_rien_refaire():
+    """Le run `da0a8ae6f1b2` rejoué, juge en panne : on demande, on ne redécoupe pas.
+
+    Une seule session d'agent, aucune tâche `-r1-`, et la question est celle du
+    Chef de projet : elle porte la cause de la panne, et un seul geste déclaré —
+    accepter la livraison telle quelle. Sans réponse, la tâche reste en échec
+    avec sa livraison, et l'aval ne part pas sur un travail que personne n'a jugé.
+    """
+    questions: list[DemandeQuestion] = []
+
+    async def personne(demande: DemandeQuestion) -> str:
+        questions.append(demande)
+        await asyncio.Event().wait()
+        return ""
+
+    agent = AgentEtJugeEnPanne([{"bonjour.txt": "Bonjour"}])
+    chef = ChefQuiCompte(_plan(_SALUT, _SUITE))
+    journal = RunJournal(run_id="run-1396")
+
+    rapport = asyncio.run(
+        _engine_qui_demande(agent, chef, personne, attente_s=0.05).run("Salut", journal=journal)
+    )
+
+    salut, suite = rapport.resultats
+    assert len(agent.sessions) == 1
+    assert chef.rattrapages == []
+    assert not [r for r in journal.records if r.etape.startswith("salut-r")]
+    (question,) = questions
+    assert question.agent == ACTEUR_ORCHESTRATEUR
+    assert question.tache_id == "salut"
+    assert question.choix == (CHOIX_LIVRAISON_ACCEPTEE,)
+    assert "Prompt is too long" in question.question  # la cause est dite
+    # Passé la borne, plus rien ne lirait une réponse : la carte quitte le fil.
+    assert question.retirer_sans_reponse
+    assert salut.statut == STATUT_ECHEC and salut.verification_en_panne
+    assert salut.sortie == "J'ai livré (session 1)."
+    assert "sans réponse" in (salut.erreur or "")
+    assert suite.statut == STATUT_BLOQUEE
+    (echange,) = [r for r in journal.records if r.etape == f"salut{SUFFIXE_ETAPE_QUESTION}"]
+    assert echange.statut == STATUT_QUESTION_SANS_REPONSE
+
+
+def test_accepter_la_livraison_la_solde_et_l_aval_repart():
+    """Le geste déclaré : la livraison est prise telle quelle, et c'est dit au journal."""
+
+    async def accepte(demande: DemandeQuestion) -> str:
+        return CHOIX_LIVRAISON_ACCEPTEE
+
+    # Le juge tombe sur les trois essais de `salut`, puis revient pour `suite`.
+    agent = AgentEtJugeEnPanne([{"bonjour.txt": "Bonjour"}], pannes=3)
+    chef = ChefQuiCompte(_plan(_SALUT, _SUITE))
+    journal = RunJournal(run_id="run-1396")
+
+    rapport = asyncio.run(_engine_qui_demande(agent, chef, accepte).run("Salut", journal=journal))
+
+    salut, suite = rapport.resultats
+    assert salut.ok and salut.statut == STATUT_TERMINEE
+    # Terminée sur décision, pas vérifiée : le fait reste porté par le résultat.
+    assert salut.verification_en_panne
+    assert salut.sortie == "J'ai livré (session 1)."
+    assert [f.chemin for f in salut.fichiers] == ["bonjour.txt"]
+    assert chef.rattrapages == []
+    # Une session pour `salut`, une pour `suite` : rien n'a été refait.
+    assert len(agent.sessions) == 2
+    assert suite.ok
+    # La carte de la tâche passe à « terminée » après l'échec, et la décision est au journal.
+    assert [r.statut for r in journal.records if r.etape == "salut"] == [
+        STATUT_ECHEC,
+        STATUT_TERMINEE,
+    ]
+    (echange,) = [r for r in journal.records if r.etape == f"salut{SUFFIXE_ETAPE_QUESTION}"]
+    assert echange.statut == STATUT_QUESTION_REPONDUE
+
+
+class AgentQuiTombePuisLivre(AgentEtJugeEnPanne):
+    """Sa première session tombe (accès refusé) ; la reprise livre, et le juge reste en panne."""
+
+    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools, **kwargs):
+        if not self.sessions:
+            self.sessions.append(prompt)
+            raise RuntimeError("403 : accès refusé au registre")
+        return await super().run_agent(
+            prompt, model=model, system_prompt=system_prompt, workspace=workspace, tools=tools
+        )
+
+
+class ChefQuiReprend(ChefQuiCompte):
+    """Juge le premier échec et reprend la tâche autrement — un diagnostic qui ne vaut que là."""
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        if system_prompt and system_prompt.startswith(_ENTETE_RATTRAPAGE):
+            self.rattrapages.append(prompt)
+            reprise = dict(_SALUT, description=_SALUT["description"] + " Sans le registre.")
+            return json.dumps(
+                {
+                    "nature": "configuration",
+                    "diagnostic": "DIAGNOSTIC-DU-PREMIER-ECHEC : le registre refuse l'accès.",
+                    "geste": "retenter",
+                    "taches": [reprise],
+                }
+            )
+        return self._plan
+
+
+def test_la_question_d_une_livraison_ne_reprend_pas_un_diagnostic_perime():
+    """Vu sur le réel (run `0e7e20dd6844`) : la carte citait le diagnostic d'un échec d'avant.
+
+    Ce diagnostic jugeait l'échec qu'il avait sous les yeux — ici un accès refusé —, et
+    la reprise l'a levé. La livraison qui suit n'est pas diagnostiquée : sa question dit
+    les tentatives, la cause de la panne, et rien d'autre.
+    """
+    questions: list[DemandeQuestion] = []
+
+    async def personne(demande: DemandeQuestion) -> str:
+        questions.append(demande)
+        await asyncio.Event().wait()
+        return ""
+
+    agent = AgentQuiTombePuisLivre([{"bonjour.txt": "Bonjour"}])
+    chef = ChefQuiReprend(_plan(_SALUT))
+
+    asyncio.run(_engine_qui_demande(agent, chef, personne, attente_s=0.05).run("Salut"))
+
+    (question,) = questions
+    assert question.choix == (CHOIX_LIVRAISON_ACCEPTEE,)
+    assert "403 : accès refusé au registre" in question.question  # l'histoire reste dite
+    assert "DIAGNOSTIC-DU-PREMIER-ECHEC" not in question.question
+
+
+def test_une_reponse_ecrite_va_au_chef_de_projet_avec_le_fait_type():
+    """Une réponse en mots n'est lue par aucun motif : le Chef de projet la juge.
+
+    Et il la juge en sachant que le travail est **livré** — c'est un champ de la
+    tentative, jamais une phrase qu'il devrait reconnaître dans l'erreur.
+    """
+
+    async def repond(demande: DemandeQuestion) -> str:
+        return "Relancez la vérification demain."
+
+    agent = AgentEtJugeEnPanne([{"bonjour.txt": "Bonjour"}])
+    chef = ChefQuiCompte(_plan(_SALUT))
+
+    rapport = asyncio.run(_engine_qui_demande(agent, chef, repond).run("Salut"))
+
+    (prompt,) = chef.rattrapages
+    assert "Relancez la vérification demain." in prompt
+    assert "c'est sa vérification qui est en panne" in prompt
+    assert len(agent.sessions) == 1
+    assert rapport.resultats[0].statut == STATUT_ECHEC
 
 
 # --------------------------------------------------------------------------- #

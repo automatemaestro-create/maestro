@@ -18,6 +18,7 @@ texte normalisé — reformuler reste possible, retirer la règle doit se voir.
 import asyncio
 import json
 import re
+from dataclasses import replace
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -250,6 +251,24 @@ def test_task_dict_roundtrip():
     task = Task.from_dict(_valid_task(dependances=["autre"]))
     again = Task.from_dict(task.to_dict())
     assert again == task
+
+
+def test_la_tache_reprise_voyage_jusqu_au_worker_et_ne_vient_jamais_d_un_plan():
+    """`reprend` (#1396) traverse la file comme le reste de la tâche, schéma compris.
+
+    Le worker revalide la tâche contre le schéma partagé avant de l'exécuter : un
+    champ que le schéma ignorerait y serait refusé, et le redécoupage repartirait
+    de la base. Mais c'est le moteur seul qui le pose — un plan qui l'écrirait ne
+    ferait pas partir une tâche de la branche d'une autre.
+    """
+    reprise = replace(Task.from_dict(_valid_task()), reprend="socle")
+    brut = json.loads(json.dumps(reprise.to_dict()))
+
+    validate_task(brut)
+    assert Task.from_dict(brut).reprend == "socle"
+    assert "reprend" not in Task.from_dict(_valid_task()).to_dict()
+    (planifiee,) = validate_plan([brut])
+    assert planifiee.reprend == ""
 
 
 # --- Extraction JSON tolérante --------------------------------------------------------

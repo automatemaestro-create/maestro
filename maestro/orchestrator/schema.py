@@ -137,6 +137,14 @@ class Task:
     d'écriture, ni le périmètre exclu du projet, et il ne dispense pas de la
     trace : chaque appel qui passe sur cet accord laisse sa ligne au journal et
     au fil, avec l'acte accordé dedans.
+
+    `reprend` (#1396) nomme la tâche dont celle-ci **reprend le travail** : sur un
+    projet versionné, sa branche naît de celle de cette tâche plutôt que de la
+    base (`maestro.sandbox.projet`). C'est le **moteur** qui le pose, aux tâches
+    de tête d'un redécoupage (`taches_redecoupees`) — jamais un plan : ce que le
+    modèle écrirait là est retiré à la validation (`validate_plan`). Vide dans le
+    cas courant, et la clé est alors omise de `to_dict`. Il voyage avec la tâche
+    jusqu'au worker de la file, qui la revalide contre le schéma partagé.
     """
 
     id: str
@@ -149,6 +157,7 @@ class Task:
     projet_id: str | None = None
     etapes: tuple[str, ...] = ()
     acte_accorde: str = ""
+    reprend: str = ""
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Task:
@@ -164,6 +173,7 @@ class Task:
             projet_id=projet_id_valide(data.get("projet_id")),
             etapes=tuple(data.get("etapes", ())),
             acte_accorde=str(data.get("acte_accorde", "") or "").strip(),
+            reprend=str(data.get("reprend", "") or "").strip(),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -184,6 +194,8 @@ class Task:
             data["etapes"] = list(self.etapes)
         if self.acte_accorde:
             data["acte_accorde"] = self.acte_accorde
+        if self.reprend:
+            data["reprend"] = self.reprend
         return data
 
 
@@ -208,6 +220,10 @@ def validate_plan(tasks: Sequence[Mapping[str, Any]]) -> list[Task]:
     vide, `id` uniques, chaque dépendance résoluble dans le plan, aucune
     auto-dépendance, et graphe **acyclique**. Lève `TaskValidationError` au premier
     invariant enfreint.
+
+    Un plan est ce que le modèle écrit — le plan d'un run comme les tâches d'un
+    rattrapage : `reprend`, que le moteur seul pose (#1396), en est retiré. Une
+    tâche planifiée qui le porterait partirait de la branche d'une autre.
     """
     if not tasks:
         raise TaskValidationError("Plan vide : l'orchestrateur doit produire au moins une tâche.")
@@ -216,7 +232,7 @@ def validate_plan(tasks: Sequence[Mapping[str, Any]]) -> list[Task]:
     by_id: dict[str, Task] = {}
     for index, raw in enumerate(tasks):
         validate_task(raw, where=f"tâche #{index + 1}")
-        task = Task.from_dict(raw)
+        task = replace(Task.from_dict(raw), reprend="")
         if task.id in by_id:
             raise TaskValidationError(f"Identifiant de tâche dupliqué : {task.id!r}.")
         by_id[task.id] = task
