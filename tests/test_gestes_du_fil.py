@@ -119,15 +119,15 @@ PAUSE_A = "2026-09-27T12:02:00+00:00"
 def _geste(
     action: str, *runs: str, reponse: str = "Je vous propose ce geste.", **extra: Any
 ) -> str:
-    """La réponse du juge au contrat de #1222 : la prose, puis la ligne du verdict."""
+    """La réponse du juge au contrat de #1427 : la ligne du verdict, puis la prose."""
     geste = {"action": action, "runs": list(runs), **extra}
     charge = {"verdict": VERDICT_GESTE, "objectif": "", "geste": geste}
-    return f"{reponse}\n{_MARQUEUR_VERDICT} {json.dumps(charge, ensure_ascii=False)}"
+    return f"{_MARQUEUR_VERDICT} {json.dumps(charge, ensure_ascii=False)}\n{reponse}"
 
 
 def _dit(nom: str, reponse: str) -> str:
     charge = json.dumps({"verdict": nom, "objectif": ""}, ensure_ascii=False)
-    return f"{reponse}\n{_MARQUEUR_VERDICT} {charge}"
+    return f"{_MARQUEUR_VERDICT} {charge}\n{reponse}"
 
 
 class Juge(ModelProvider):

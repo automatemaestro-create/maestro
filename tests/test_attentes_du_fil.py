@@ -114,15 +114,15 @@ REDIGE = "C'est transmis : il reprend avec votre réponse."
 def _attente(
     action: str, *cibles: str, texte: str = "", reponse: str = "Je vous propose ceci."
 ) -> str:
-    """La réponse du juge au contrat de #1222 : la prose, puis la ligne du verdict."""
+    """La réponse du juge au contrat de #1427 : la ligne du verdict, puis la prose."""
     attente = {"action": action, "cibles": list(cibles), "texte": texte}
     charge = {"verdict": VERDICT_ATTENTE, "objectif": "", "attente": attente}
-    return f"{reponse}\n{_MARQUEUR_VERDICT} {json.dumps(charge, ensure_ascii=False)}"
+    return f"{_MARQUEUR_VERDICT} {json.dumps(charge, ensure_ascii=False)}\n{reponse}"
 
 
 def _dit(nom: str, reponse: str) -> str:
     charge = json.dumps({"verdict": nom, "objectif": ""}, ensure_ascii=False)
-    return f"{reponse}\n{_MARQUEUR_VERDICT} {charge}"
+    return f"{_MARQUEUR_VERDICT} {charge}\n{reponse}"
 
 
 class Juge(ModelProvider):

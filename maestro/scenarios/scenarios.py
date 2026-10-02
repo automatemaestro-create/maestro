@@ -1118,8 +1118,9 @@ def _le_direct(echange: Echange) -> str:
     texte : après le premier incrément, il en vient d'autres, plus tard. Deux
     façons d'y manquer, et le motif dit laquelle :
 
-    - **une seule trame** porte tout le texte — le fil d'avant #1222, ou un
-      modèle qui a répondu en JSON (`_LectureDuFlux`, régime machine) ;
+    - **une seule trame** porte tout le texte — le fil d'avant #1222, un
+      modèle qui a répondu en JSON (`_LectureDuFlux`, régime machine), ou qui a
+      écrit sa décision après sa réponse au lieu d'avant (#1427) ;
     - **plusieurs trames, toutes dans la même image d'écran** (`IMAGE_S`) — un
       transport qui tamponne, ou une réponse écrite entière puis découpée : on
       les compte, mais personne ne les voit arriver.
