@@ -2,7 +2,7 @@
 # 39 — Le niveau visuel se choisit une fois, par une personne
 
 **Date :** 2026-09-21. **Instruite par :** `/idee` (#1013). **Consignée par :** #1134.
-**Jalon :** *Le niveau visuel — une direction choisie, un écran étalon* (échéance 2028-02-05).
+**Jalon :** *Le niveau visuel — une direction choisie, un écran étalon* (échéance 2028-02-05 ; **2028-02-01** depuis le 2026-10-02, §7).
 **Chantiers :** #1124 (produit : la direction et l'écran étalon), #1129 (outillage : bibliothèque de
 références, veille et regard neuf qui partent de l'étalon, regard de la personne par jalon).
 
@@ -187,6 +187,16 @@ Sur le rail produit, l'échéance d'un jalon **est** son rang :
 - **Aucune autre échéance n'a bougé**, et aucune priorité existante non plus.
 - **#1125 n'attend pas son tour.** Joué en interactif, il se démarre à la main dès maintenant, en
   parallèle des runs.
+
+> ⚠ **Recadré le 2026-10-02 par [docs/46 §2.3](./46-decision-un-projet-se-concoit-en-phases.md).**
+> La personne : *« simple ne signifie pas design bas de gamme. Je veux un design moderne mais
+> propre, quelque chose de visuel plutôt que beaucoup de textes. »*
+> - Le jalon passe **devant** « Maestro simple » et « Le mode conception » (échéance
+>   **2028-02-01**). Les deux se construisent dans la direction retenue.
+> - L'écran pilote n'est plus le tableau de bord d'aujourd'hui. Ce sont **l'accueil simplifié et une
+>   slide « Le produit »**, dans la structure de l'[esquisse validée](./assets/1416/esquisse-2026-10-02.html).
+> - L'accueil devient l'écran étalon (#1411). Cela absorbe #1127.
+> - La décision de cette note ne bouge pas : une direction choisie une fois, par une personne.
 
 ## 8. Ce qui rouvrirait la décision
 

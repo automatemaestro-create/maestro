@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Esquisse validée — mode conception et accueil</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
+<style>
+:root{--surface-0:#f6f5f2;--surface-1:#efede8;--surface-2:#ffffff;--text-primary:#1f1e1c;--text-secondary:#5f5e5a;--text-muted:#888780;--border:rgba(0,0,0,.12);--border-strong:rgba(0,0,0,.22);--accent:#185fa5;--bg-accent:#e6f1fb;--text-accent:#0c447c;--success:#3b6d11;--bg-success:#eaf3de;--warning:#854f0b;--bg-warning:#faeeda;--radius:8px}
+@media (prefers-color-scheme: dark){:root{--surface-0:#1b1b1a;--surface-1:#232321;--surface-2:#2b2b29;--text-primary:#f1efe8;--text-secondary:#b4b2a9;--text-muted:#888780;--border:rgba(255,255,255,.12);--border-strong:rgba(255,255,255,.24);--accent:#85b7eb;--bg-accent:#0c447c;--text-accent:#b5d4f4;--success:#97c459;--bg-success:#27500a;--warning:#fac775;--bg-warning:#633806}}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px;background:var(--surface-1);color:var(--text-primary);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}
+main{max-width:980px;margin:0 auto}
+header p{color:var(--text-secondary);margin:4px 0 24px}
+h1{font-size:22px;font-weight:500;margin:0}
+h2{font-size:15px;font-weight:500;color:var(--text-secondary);margin:28px 0 8px}
+.fr{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface-0)}
+.bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-1);font-size:12px;color:var(--text-secondary)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--border-strong)}
+.card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px}
+.lab{font-size:12px;color:var(--text-muted);margin:0 0 6px}
+.chip{font-size:13px;background:var(--surface-1);border-radius:var(--radius);padding:6px 8px;margin:0 0 6px;display:flex;justify-content:space-between;gap:6px}
+.pill{font-size:12px;padding:3px 8px;border-radius:var(--radius)}
+.ti{vertical-align:-2px}
+button{font:inherit;font-size:13px;border:1px solid var(--border-strong);background:transparent;color:var(--text-primary);border-radius:var(--radius);padding:6px 12px}
+.primaire{background:var(--accent);border-color:var(--accent);color:var(--surface-2)}
+.conception{display:grid;grid-template-columns:44px minmax(0,1fr) 240px;min-height:460px}
+.accueil{display:grid;grid-template-columns:150px minmax(0,1fr);min-height:340px}
+@media (max-width:720px){.conception{grid-template-columns:minmax(0,1fr)}.conception>.rail,.accueil>nav{display:none}.accueil{grid-template-columns:minmax(0,1fr)}.conv{border-left:0!important;border-top:1px solid var(--border)}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Esquisse validée le 2026-10-02</h1>
+<p>Deux écrans du même projet d'exemple : le mode conception sur la phase « Le produit », puis l'accueil du projet. L'esquisse fixe la structure et l'esprit — visuel, peu de texte, une action par carte —, pas le style : la direction visuelle est choisie par la personne (#1125). Ticket : #1416, note : docs/46.</p>
+</header>
+
+<h2>Mode conception — phase « Le produit »</h2>
+<div class="fr">
+  <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">Recettes · Conception</span></div>
+  <div class="conception">
+    <div class="rail" style="border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:16px;padding:14px 0;color:var(--text-secondary);font-size:18px">
+      <i class="ti ti-home" aria-label="Accueil"></i><i class="ti ti-bulb" aria-label="Conception" style="color:var(--accent)"></i><i class="ti ti-timeline" aria-label="Avancement"></i><i class="ti ti-users" aria-label="Équipe"></i><i class="ti ti-settings" aria-label="Réglages"></i>
+    </div>
+    <div style="padding:16px 18px">
+      <div style="display:flex;gap:8px;margin:0 0 16px">
+        <div style="flex:1;border-top:3px solid var(--accent);padding-top:6px;font-size:13px;color:var(--text-accent)"><b style="font-weight:500">1 Le produit</b><br><span style="color:var(--text-secondary)">brouillon</span></div>
+        <div style="flex:1;border-top:3px solid var(--border);padding-top:6px;font-size:13px;color:var(--text-muted)">2 La solution</div>
+        <div style="flex:1;border-top:3px solid var(--border);padding-top:6px;font-size:13px;color:var(--text-muted)">3 Le plan</div>
+        <div style="flex:1;border-top:3px solid var(--border);padding-top:6px;font-size:13px;color:var(--text-muted)">4 Validation</div>
+      </div>
+      <p style="font-size:21px;line-height:1.35;margin:0 0 4px;font-weight:500">Savoir quoi cuisiner ce soir avec ce qu'on a dans le frigo.</p>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 16px"><i class="ti ti-target" aria-hidden="true"></i> Objectif : 1 000 personnes actives le 3e mois · <span style="color:var(--text-accent)">pourquoi ?</span></p>
+      <div class="lab">Pour qui</div>
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 16px">
+        <div class="card" style="text-align:center;font-size:13px"><i class="ti ti-home-heart" aria-hidden="true" style="font-size:22px;color:var(--text-secondary)"></i><br>Familles</div>
+        <div class="card" style="text-align:center;font-size:13px"><i class="ti ti-school" aria-hidden="true" style="font-size:22px;color:var(--text-secondary)"></i><br>Étudiants</div>
+        <div class="card" style="text-align:center;font-size:13px"><i class="ti ti-chef-hat" aria-hidden="true" style="font-size:22px;color:var(--text-secondary)"></i><br>Amateurs</div>
+        <div class="card" style="text-align:center;font-size:13px;border:2px solid var(--accent)"><i class="ti ti-old" aria-hidden="true" style="font-size:22px;color:var(--text-accent)"></i><br>Seniors<br><span class="pill" style="background:var(--bg-accent);color:var(--text-accent)">ajouté</span></div>
+      </div>
+      <div class="lab">Ce qu'il fera</div>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 16px">
+        <div class="card"><div style="font-size:13px;font-weight:500;margin:0 0 6px">1re livraison</div><div class="chip"><span>Recherche par ingrédients</span><span style="color:var(--success)">3 ✓</span></div><div class="chip"><span>Fiche recette</span><span style="color:var(--success)">2 ✓</span></div></div>
+        <div class="card"><div style="font-size:13px;font-weight:500;margin:0 0 6px">Ensuite</div><div class="chip"><span>Liste de courses</span><span style="color:var(--success)">2 ✓</span></div><div class="chip"><span>Favoris</span><span style="color:var(--success)">1 ✓</span></div></div>
+        <div class="card"><div style="font-size:13px;font-weight:500;margin:0 0 6px">Plus tard</div><div class="chip"><span>Application mobile</span><span style="color:var(--text-muted)">—</span></div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="pill" style="background:var(--bg-warning);color:var(--warning)"><i class="ti ti-help-circle" aria-hidden="true"></i> À confirmer : livraison fin mars</span>
+        <span class="pill" style="background:var(--surface-1);color:var(--text-secondary)"><i class="ti ti-alert-triangle" aria-hidden="true"></i> 1 point d'attention</span>
+        <button class="primaire" style="margin-left:auto">Valider cette phase</button>
+      </div>
+    </div>
+    <div class="conv" style="border-left:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:8px;font-size:13px;background:var(--surface-1)">
+      <div style="color:var(--text-secondary)">Conversation</div>
+      <div class="card" style="padding:8px">J'ai rédigé le produit à partir de votre description. Une date reste à confirmer.</div>
+      <div style="align-self:flex-end;background:var(--bg-accent);color:var(--text-accent);border-radius:var(--radius);padding:8px;max-width:85%">Vise aussi les seniors</div>
+      <div class="card" style="padding:8px">Ajouté aux cibles. La recherche passe en grands caractères.</div>
+      <div style="margin-top:auto;border:1px solid var(--border-strong);border-radius:var(--radius);padding:8px;color:var(--text-muted);background:var(--surface-2)">Corriger ou demander…</div>
+    </div>
+  </div>
+</div>
+
+<h2>Accueil du projet</h2>
+<div class="fr">
+  <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span style="margin-left:6px">Recettes · Accueil</span></div>
+  <div class="accueil">
+    <nav aria-label="Navigation principale" style="border-right:1px solid var(--border);padding:14px 12px;display:flex;flex-direction:column;gap:12px;font-size:14px;color:var(--text-secondary)">
+      <span style="color:var(--text-primary);font-weight:500"><i class="ti ti-home" aria-hidden="true"></i> Accueil</span>
+      <span><i class="ti ti-bulb" aria-hidden="true"></i> Conception</span>
+      <span><i class="ti ti-timeline" aria-hidden="true"></i> Avancement</span>
+      <span><i class="ti ti-users" aria-hidden="true"></i> Équipe</span>
+      <span><i class="ti ti-settings" aria-hidden="true"></i> Réglages</span>
+    </nav>
+    <div style="padding:18px">
+      <div style="display:flex;align-items:baseline;gap:10px;margin:0 0 18px;flex-wrap:wrap">
+        <span style="font-size:21px;font-weight:500">Recettes</span>
+        <span class="pill" style="background:var(--bg-success);color:var(--success)"><i class="ti ti-circle-check" aria-hidden="true"></i> Livraison le 28 mars · à l'heure</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0 0 22px">
+        <div><div style="height:8px;border-radius:4px;background:var(--success)"></div><div style="font-size:13px;margin-top:6px">Fondations</div><div style="font-size:12px;color:var(--text-secondary)">livré · 14 fév</div></div>
+        <div><div style="height:8px;border-radius:4px;background:var(--surface-1);overflow:hidden"><div style="width:60%;height:8px;background:var(--accent)"></div></div><div style="font-size:13px;margin-top:6px;font-weight:500">Recherche et fiches</div><div style="font-size:12px;color:var(--text-secondary)">60 % · 3 mars</div></div>
+        <div><div style="height:8px;border-radius:4px;background:var(--surface-1)"></div><div style="font-size:13px;margin-top:6px">Courses et favoris</div><div style="font-size:12px;color:var(--text-secondary)">17 mars</div></div>
+        <div><div style="height:8px;border-radius:4px;background:var(--surface-1)"></div><div style="font-size:13px;margin-top:6px">Lancement</div><div style="font-size:12px;color:var(--text-secondary)">28 mars</div></div>
+      </div>
+      <div class="lab">À décider</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin:0 0 18px">
+        <div class="card" style="display:flex;gap:10px;align-items:center"><i class="ti ti-clipboard-check" aria-hidden="true" style="font-size:24px;color:var(--success)"></i><div style="flex:1;font-size:14px">Recette de « Fondations »<br><span style="font-size:13px;color:var(--text-secondary)">5 critères sur 5 tenus</span></div><button>Accepter</button></div>
+        <div class="card" style="display:flex;gap:10px;align-items:center"><i class="ti ti-message-question" aria-hidden="true" style="font-size:24px;color:var(--warning)"></i><div style="flex:1;font-size:14px">L'agent web demande<br><span style="font-size:13px;color:var(--text-secondary)">un choix d'hébergement</span></div><button>Répondre</button></div>
+      </div>
+      <div class="lab">La suite</div>
+      <div class="card" style="display:flex;align-items:center;gap:10px"><i class="ti ti-player-play" aria-hidden="true" style="font-size:22px;color:var(--accent)"></i><span style="flex:1;font-size:14px">« Recherche et fiches » se termine dans 6 jours, puis « Courses et favoris » démarre.</span><span style="font-size:13px;color:var(--text-accent)">Détails</span></div>
+    </div>
+  </div>
+</div>
+</main>
+</body>
+</html>
