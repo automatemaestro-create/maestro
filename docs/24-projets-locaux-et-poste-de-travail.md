@@ -183,6 +183,16 @@ tâche, sous trois propriétés tenues ensemble : temps réel, annulable, sans c
 | **Non versionné** | **La racine elle-même**, en place (#839, `maestro.sandbox.en_place`) — rien n'est copié, rien n'est retiré —, plus un **atelier** `.maestro/<tâche>/` pour ce qui n'est pas le livrable (#944) | Ce que l'agent écrit, **pendant qu'il l'écrit** ; les tâches d'un même projet sont **sérialisées** (une seule à la fois dans l'arbre) | **Aucun** : il n'y a pas de moment de fusion où l'accrocher — ce qui garde est la frontière d'écriture, la sérialisation et le journal | Aucun historique : c'est le régime d'un projet **neuf**. Un projet qui a de la valeur se met sous Git (`versionner`, #704) et passe dans la ligne du dessus |
 | **Sans projet** | Le `mkdtemp()` jetable d'avant | Rien — il n'y a pas de racine | — | — |
 
+**Ce que la tâche a produit (#1388).** Les deux régimes répondent à cette question par le même
+point d'énumération (`Workspace.fichiers`), chacun selon ce qui le régit : le projet non versionné
+par son **périmètre**, le projet versionné par **ce que Git voit** — les fichiers suivis, et les
+non suivis que le projet n'ignore pas (`EspaceCopieDeTravail`), soit l'ensemble même que la branche
+porte au démontage. Un `npm install` ou un build ne font donc entrer leurs fichiers ni au rapport
+de run, ni au résultat de la tâche, ni au prompt de son vérificateur, dans l'un comme dans l'autre.
+Avant #1388, le worktree recensait tout le disque : 22 891 fichiers de `node_modules/` au prompt
+du vérificateur sur le run `da0a8ae6f1b2`, qui dépassait le million de tokens et jetait une tâche
+réussie. Si Git ne répond pas, c'est une erreur motivée, jamais un repli sur tout le disque.
+
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
 directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le
 prend au sérieux plutôt qu'une dérogation :

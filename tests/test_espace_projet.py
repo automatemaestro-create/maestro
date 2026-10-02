@@ -44,6 +44,7 @@ from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import (
     DOSSIER_ATELIER,
+    EspaceCopieDeTravail,
     EspaceProjetIndisponible,
     FrontiereEcriture,
     branche_de_tache,
@@ -686,6 +687,103 @@ def test_un_enregistrement_orphelin_ne_bloque_pas_le_montage(tmp_path: Path) -> 
     with espace_de_travail(projet, tache_id="t-1") as ws:
         assert (ws.path / "README.md").is_file()
     assert orphelin.as_posix() not in _git(racine, "worktree", "list").replace("\\", "/")
+
+
+# --------------------------------------------------------------------------- #
+# Le recensement du worktree est celui que Git voit (#1388)
+# --------------------------------------------------------------------------- #
+
+
+def _projet_git_qui_ignore(tmp_path: Path) -> Projet:
+    """Un projet versionné qui ignore ses dépendances et sa sortie de build — p5, en petit."""
+    racine = tmp_path / "projets" / "p5"
+    (racine / "src").mkdir(parents=True)
+    (racine / ".gitignore").write_text("node_modules/\n.next/\n", encoding="utf-8")
+    (racine / "src" / "app.py").write_text("print('salut')\n", encoding="utf-8")
+    (racine / "package.json").write_text('{"name": "p5"}\n', encoding="utf-8")
+    _git(racine, "init", "--quiet")
+    _git(racine, "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(racine, "add", "-A")
+    _git(
+        racine, "-c", "user.email=tests@maestro", "-c", "user.name=Tests",
+        "commit", "--quiet", "-m", "socle",
+    )
+    return _projet(racine, vcs=detecter_vcs(racine))
+
+
+@besoin_de_git
+def test_le_recensement_du_worktree_ne_rend_pas_ce_que_git_ignore(tmp_path: Path) -> None:
+    """Le défaut du run `da0a8ae6f1b2` : 22 891 fichiers de `node_modules/` au prompt du juge.
+
+    L'empreinte du worktree est prise **avant** que l'agent n'installe quoi que ce
+    soit : tout ce qu'un `npm install` ou un `next build` dépose ressortait donc en
+    « fichier produit ». Git, lui, respecte le `.gitignore` — et c'est ce qu'il voit
+    qui part sur la branche, donc ce que la tâche a produit.
+    """
+    projet = _projet_git_qui_ignore(tmp_path)
+    with espace_de_travail(projet, tache_id="socle-nextjs") as ws:
+        # Ce qu'un `npm install` puis un `next build` déposent : ignoré par le projet.
+        (ws.path / "node_modules" / "react").mkdir(parents=True)
+        (ws.path / "node_modules" / "react" / "index.js").write_text("x", encoding="utf-8")
+        (ws.path / ".next" / "server").mkdir(parents=True)
+        (ws.path / ".next" / "server" / "page.js").write_text("y", encoding="utf-8")
+        # Ce que l'agent a écrit : un fichier neuf, un fichier suivi modifié.
+        (ws.path / "app").mkdir()
+        (ws.path / "app" / "page.tsx").write_text("export default null\n", encoding="utf-8")
+        (ws.path / "src" / "app.py").write_text("print('bonjour')\n", encoding="utf-8")
+
+        produits = [f.chemin for f in ws.produced_files()]
+
+    assert produits == ["app/page.tsx", "src/app.py"]
+
+
+@besoin_de_git
+def test_le_recensement_du_worktree_est_celui_que_la_branche_porte(tmp_path: Path) -> None:
+    """Le juge et la branche lisent le même ensemble : ce qui est commité au démontage."""
+    projet = _projet_git_qui_ignore(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="t-1") as ws:
+        (ws.path / "node_modules").mkdir()
+        (ws.path / "node_modules" / "paquet.js").write_text("x", encoding="utf-8")
+        (ws.path / "lib").mkdir()
+        (ws.path / "lib" / "outil.ts").write_text("export {}\n", encoding="utf-8")
+        produits = {f.chemin for f in ws.produced_files()}
+
+    portes = set(
+        _git(racine, "diff", "--name-only", "main...maestro/t-1").splitlines()
+    )
+    assert produits == portes == {"lib/outil.ts"}
+
+
+def test_un_git_qui_refuse_l_enumeration_est_une_erreur_motivee(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Jamais de repli silencieux sur tout le disque : c'est ce repli qui faisait le défaut."""
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "paquet.js").write_text("x", encoding="utf-8")
+
+    def _git_fache(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["git"], returncode=128, stdout="", stderr="fatal: not a git repository\n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", _git_fache)
+    with pytest.raises(EspaceProjetIndisponible) as refus:
+        EspaceCopieDeTravail(path=tmp_path).produced_files()
+    assert refus.value.motif == "enumeration-refusee"
+    assert "not a git repository" in str(refus.value)
+
+
+def test_un_git_absent_a_l_enumeration_est_une_erreur_motivee(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _sans_git(*args: object, **kwargs: object) -> object:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", _sans_git)
+    with pytest.raises(EspaceProjetIndisponible) as refus:
+        EspaceCopieDeTravail.derive(tmp_path)
+    assert refus.value.motif == "git-indisponible"
 
 
 # --------------------------------------------------------------------------- #

@@ -42,10 +42,22 @@ Pas un nombre de tentatives : un **fait**.
 | La correction ne fait tenir **aucun critère de plus** que la meilleure livraison précédente | **Échec motivé** : l'agent avait la preuve et n'en a rien tiré |
 | Le **budget du run** est atteint pendant une correction | **Échec motivé** : la cause d'arrêt, suivie des dernières preuves |
 | Un contrôle n'a **pas pu être joué** (portée, pas de bash) ou le vérificateur est **illisible** | **Échec motivé** : ce qui n'est pas vérifié n'est pas vérifié, et l'agent n'y peut rien |
+| Le **vérificateur est en panne** (son appel au fournisseur échoue) et le reste après ses relances | **Échec qui garde sa livraison** (#1388) : « livrée, vérification en panne » |
+
+**Une panne du vérificateur n'est pas un échec de l'agent** (#1388). Elle est typée par son
+**origine** (l'appel du vérificateur a échoué), jamais reconnue à son texte. Elle est relancée
+**seule**, selon la politique des aléas et dans l'espace encore ouvert : la session de l'agent ne
+se rejoue pas. Restée en panne, elle laisse la tâche en échec, puisque rien n'est vérifié, mais la
+tâche garde son compte-rendu et ses fichiers. C'est un **champ** du résultat
+(`verification_en_panne`), pas un statut nouveau (§5). Chaque panne est consignée comme une
+vérification impossible. Le prompt du vérificateur est **borné en entier**, noms de fichiers
+compris. Ce qui a rendu ces trois règles nécessaires vient du run `da0a8ae6f1b2` (p5). La session
+avait réussi, mais le vérificateur listait 22 891 fichiers de `node_modules/` et dépassait le
+million de tokens. La tâche a été relancée session comprise, vidée, puis redécoupée de zéro.
 
 Le nombre de critères est fini et chaque tour doit en gagner un, donc la boucle **finit toujours**, budget posé ou non. Un échec motivé dit combien de critères tiennent, après combien de livraisons, pourquoi la boucle s'est arrêtée, et chaque preuve. **Ce n'est jamais un vert.**
 
-**Puis le rattrapage** (#1178, [docs/04 §3.1](./04-specifications-agents.md), `maestro/engine/rattrapage.py`) : un échec motivé est un échec comme un autre pour le Chef de projet. Il le juge, motif et preuves en main, et peut le retenter autrement (autre approche, autre agent, tâche redécoupée), ou le demander dans le fil. La tentative différente repasse par la même vérification. Seul le **budget dépensé** ne se rattrape pas : c'est une borne, pas un échec.
+**Puis le rattrapage** (#1178, [docs/04 §3.1](./04-specifications-agents.md), `maestro/engine/rattrapage.py`) : un échec motivé est un échec comme un autre pour le Chef de projet. Il le juge, motif et preuves en main, et peut le retenter autrement (autre approche, autre agent, tâche redécoupée), ou le demander dans le fil. La tentative différente repasse par la même vérification. Le **budget dépensé** ne se rattrape pas : c'est une borne, pas un échec. Une **livraison que le vérificateur n'a pas pu juger** ne se rattrape pas non plus : ce n'est pas le travail qui a échoué, et le redécouper le referait de zéro (#1388 ; ce qu'on en fait au-delà, revérifier ou demander, est l'objet de #1396).
 
 ## 4. La QA dans la même boucle
 

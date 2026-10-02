@@ -72,7 +72,9 @@ class Workspace:
     Le **recensement** — ce que `derive` relève, ce que `produced_files` rend —
     passe par `fichiers`, la seule énumération de l'espace, que la racine d'un
     projet redéfinit (`maestro.sandbox.en_place.EspaceEnPlace`) pour parcourir
-    l'arbre **par le périmètre** : sans ce point de passage unique, empreintes et
+    l'arbre **par le périmètre**, et le worktree (`maestro.sandbox.projet.
+    EspaceCopieDeTravail`, #1388) pour ne rendre **que ce que Git voit** : sans
+    ce point de passage unique, empreintes et
     livrables seraient relevés sur deux énumérations, et un fichier vu par l'une
     et pas par l'autre ressortirait en livrable sans que l'agent l'ait écrit.
     """
@@ -94,8 +96,11 @@ class Workspace:
     def fichiers(self) -> Iterator[Path]:
         """Les fichiers de l'espace, triés par chemin — **tout** ce qui vit sous `path`.
 
-        C'est l'énumération de l'espace jetable et du worktree : rien n'y est
-        exclu, l'un est créé vide et l'autre est une copie conforme de la branche.
+        C'est l'énumération de l'espace jetable : rien n'y est exclu, il est créé
+        vide. Le worktree n'en relève plus depuis #1388 : « copie conforme de la
+        branche » ne valait qu'à sa dérivation, et tout ce qu'un `npm install` y
+        déposait ensuite ressortait en livrable — il énumère par Git
+        (`maestro.sandbox.projet.EspaceCopieDeTravail`).
         """
         for f in sorted(self.path.rglob("*")):
             if f.is_file():

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from maestro.engine.verification import LivraisonNonTenue
+from maestro.engine.verification import LivraisonNonTenue, LivraisonNonVerifiee
 from maestro.providers.base import (
     GardeFouInoperant,
     McpServerUnavailable,
@@ -102,7 +102,10 @@ def est_transitoire(erreur: BaseException) -> bool:
     Une livraison **non tenue** (#1177, `LivraisonNonTenue`) ne l'est pas non
     plus : la boucle de vérification s'est arrêtée sur un fait — la correction
     n'a rien fait gagner, ou ce qui reste ne se vérifie pas —, et relancer la
-    tâche rejouerait la même boucle sur les mêmes critères.
+    tâche rejouerait la même boucle sur les mêmes critères. Ni une livraison
+    **non vérifiée** (#1388, `LivraisonNonVerifiee`) : le vérificateur a déjà été
+    relancé, seul, et relancer la tâche rejouerait la session d'un agent qui
+    avait livré.
 
     ⚠ Depuis #1178, la présomption n'est plus le dernier mot quand le rattrapage
     est armé (`maestro.engine.rattrapage`) : ce qu'elle dit transitoire est encore
@@ -120,5 +123,6 @@ def est_transitoire(erreur: BaseException) -> bool:
         | UnsupportedCapability
         | McpServerUnavailable
         | GardeFouInoperant
-        | LivraisonNonTenue,
+        | LivraisonNonTenue
+        | LivraisonNonVerifiee,
     )

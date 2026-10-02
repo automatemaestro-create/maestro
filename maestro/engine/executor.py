@@ -106,6 +106,7 @@ from maestro.engine.verification import (
     SUFFIXE_ETAPE_VERIFICATION,
     Amont,
     LivraisonNonTenue,
+    LivraisonNonVerifiee,
     Recette,
     Renvoi,
     VerificateurTaches,
@@ -525,7 +526,8 @@ class TaskResult:
 
     Miroir léger de l'entité `RUN` (docs/03) pour le POC : qui a fait quoi, avec quel
     statut et quel livrable. `sortie` porte le livrable si `terminee`, `erreur` la
-    cause si `echec` (auquel cas `sortie` est vide). `fichiers` porte les fichiers
+    cause si `echec` (auquel cas `sortie` est vide — sauf une livraison faite que le
+    vérificateur n'a pas pu juger, voir `verification_en_panne`). `fichiers` porte les fichiers
     produits quand la tâche est passée par un runtime outillé (#35) — vide pour un
     livrable texte. `usage` porte le coût de la tâche (#8) : tokens, coût, durée,
     outils — durée horloge toujours mesurée, le reste selon ce que le fournisseur
@@ -559,6 +561,13 @@ class TaskResult:
     l'entrée parce qu'il l'était déjà. Ce n'est pas un échec comme un autre :
     quand la boucle sait demander, la tâche est mise de côté et reprendra sur la
     décision de la personne (`maestro.engine.plafond`).
+
+    `verification_en_panne` (#1388) dit que l'agent **a livré** et que c'est le
+    vérificateur qui n'a pas pu juger — relancé autant que la politique des aléas
+    le permet, il est resté en panne (`LivraisonNonVerifiee`). Un champ et non un
+    statut (docs/45 §5) : la tâche reste en échec, puisque rien n'est vérifié, mais
+    elle **garde sa livraison** — `sortie` et `fichiers` —, et ce n'est pas un
+    travail raté : la boucle du run ne la rattrape pas (`maestro.engine.loop`).
     """
 
     task_id: str
@@ -579,6 +588,7 @@ class TaskResult:
     prerequis: PrerequisManquant | None = None
     blocages: tuple[str, ...] = ()
     au_plafond: bool = False
+    verification_en_panne: bool = False
 
     @property
     def ok(self) -> bool:
@@ -606,6 +616,7 @@ class TaskResult:
             "prerequis": self.prerequis.to_dict() if self.prerequis is not None else None,
             "blocages": list(self.blocages),
             "au_plafond": self.au_plafond,
+            "verification_en_panne": self.verification_en_panne,
         }
 
     @classmethod
@@ -648,6 +659,9 @@ class TaskResult:
             # Absent d'un résultat venu d'un worker d'avant #1182 : faux — l'arrêt
             # sec était alors la seule conduite.
             au_plafond=bool(data.get("au_plafond", False)),
+            # Absent d'un résultat venu d'un worker d'avant #1388 : faux — une
+            # panne du vérificateur y était un échec de la réalisation.
+            verification_en_panne=bool(data.get("verification_en_panne", False)),
         )
 
 
@@ -1378,6 +1392,9 @@ class LocalExecutor(TaskExecutor):
             on_verdict=lambda verdict, livraison: self._consigne_verification(
                 task, agent, verdict, livraison, journal
             ),
+            # Un vérificateur en panne se relance comme un aléa de l'agent (#1388) —
+            # la même politique —, mais seul : la session de l'agent ne se rejoue pas.
+            relance=self._relance,
         )
 
     def _consigne_verification(
@@ -2820,6 +2837,12 @@ class LocalExecutor(TaskExecutor):
                 return _echec(
                     task, agent=agent.nom, role=agent.role, score=score, erreur=exc.motif
                 )
+            except LivraisonNonVerifiee as exc:
+                # L'agent a livré, le vérificateur est resté en panne (#1388) : la
+                # tâche n'est pas verte, mais elle garde sa livraison — et rien ne
+                # la relance ici, ce serait rejouer la session de l'agent. La
+                # recette a déjà relancé le vérificateur, seul.
+                return _livree_non_verifiee(task, agent, score, exc)
             except Exception as exc:  # exécution: on consigne l'échec sans casser la boucle
                 cause = str(exc)
                 # #346 : ce que le CLI du fournisseur a écrit sur stderr voyage
@@ -4026,10 +4049,12 @@ def _ecriture_en_place(projet: Projet, result: TaskResult) -> tuple[str, str]:
     a changé dans la racine depuis que l'agent y est entré, exclusions et liens
     écartés. Une tâche en **échec** n'a pas de livrable (le résultat d'un échec
     est vide par contrat) : ce qu'elle a écrit avant de tomber est dans la
-    racine, et la phrase le dit sans prétendre le compter.
+    racine, et la phrase le dit sans prétendre le compter. Sauf une livraison que
+    le vérificateur n'a pas pu juger (#1388) : elle est faite et recensée, et se
+    dit comme celle d'une tâche réussie.
     """
     racine = projet.racine
-    if not result.ok:
+    if not result.ok and not result.verification_en_panne:
         return (
             STATUT_ECRITURE_EN_PLACE,
             f"tâche en échec : ce que l'agent a écrit avant d'échouer est resté dans "
@@ -4208,6 +4233,33 @@ def _avec_recette(cause: str, recette: Recette | None) -> str:
     if recette is None or not recette.en_defaut:
         return cause
     return f"{cause}\n{recette.motif('la tâche a été arrêtée avant de tenir')}"
+
+
+def _livree_non_verifiee(
+    task: Task, agent: Agent, score: int, exc: LivraisonNonVerifiee
+) -> TaskResult:
+    """Le résultat d'une livraison faite que le vérificateur n'a pas pu juger (#1388).
+
+    Un échec — rien n'est vérifié, et ce n'est jamais un vert (docs/45) —, mais
+    pas celui de `_echec`, qui **vide** la sortie : c'est ce vidage qui jetait le
+    travail réussi de `socle-nextjs` sur le run `da0a8ae6f1b2`. La livraison y
+    reste entière, `verification_en_panne` le dit, et la cause est celle de la
+    panne, stderr du CLI compris (#346) quand il y en a un.
+    """
+    cause = exc.panne.cause if exc.panne is not None else exc
+    return TaskResult(
+        task_id=task.id,
+        titre=task.titre,
+        agent=agent.nom,
+        role=agent.role,
+        competences_requises=task.competences_requises,
+        score=score,
+        statut=STATUT_ECHEC,
+        sortie=exc.sortie.strip(),
+        erreur=_avec_stderr_cli(exc.motif, stderr_de(cause)),
+        fichiers=exc.fichiers,
+        verification_en_panne=True,
+    )
 
 
 def _echec(

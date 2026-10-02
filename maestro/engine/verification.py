@@ -70,6 +70,18 @@ Un contrôle **non joué** (portée, pas de bash, pas d'espace pour un livrable
 texte) n'est ni tenu ni non tenu : il empêche le vert — ce qu'on n'a pas vérifié
 n'est pas vérifié —, mais il ne revient pas à l'agent, qui n'y peut rien.
 
+## Un vérificateur en panne n'est pas un agent en échec (#1388)
+
+L'appel du vérificateur au fournisseur peut échouer — contexte dépassé,
+fournisseur injoignable. Cette panne est **typée par son origine**
+(`VerificateurEnPanne`), jamais reconnue à son texte, et relancée **seule**, par
+la recette, l'espace encore ouvert : la session de l'agent ne se rejoue pas.
+Restée en panne, elle laisse la tâche en échec — rien n'est vérifié —, mais avec
+sa livraison (`LivraisonNonVerifiee`, `TaskResult.verification_en_panne`), et la
+boucle du run ne la rattrape pas. Le prompt du vérificateur est **borné en
+entier**, noms de fichiers compris (`_bloc_livraison`) : c'est en listant 22 891
+fichiers de `node_modules/` qu'il avait dépassé le million de tokens.
+
 ## Le verdict de la QA entre dans la même boucle
 
 Le vérificateur d'une tâche qui dépend d'autres tâches dit aussi si son livrable
@@ -91,16 +103,20 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from maestro.orchestrator.schema import Task
 from maestro.portee import PorteeProjet
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import ProducedFile
 from maestro.sandbox import verification as execution
+from maestro.telemetry import PlafondDepenseDepasse
+
+if TYPE_CHECKING:
+    from maestro.engine.retry import PolitiqueRelance
 
 #: Suffixe des étapes de vérification au journal : `<task.id>:verification`, une
 #: par livraison vérifiée — le pont Control Tower les range en activités d'agent
@@ -129,9 +145,14 @@ PREUVE_MAX = 1500
 
 #: Ce que le vérificateur lit du livrable, borné : le compte-rendu de l'agent, puis
 #: les fichiers produits. Au-delà, il le sait — c'est écrit dans ce qu'il lit.
+#: `_FICHIERS_MAX` borne tout ce que les fichiers lus occupent, en-têtes compris, et
+#: `_NON_LUS_MAX` le nombre de fichiers **nommés** sans être lus (#1388) : au-delà,
+#: leur nombre seul est dit. Sans cette seconde borne, chaque fichier non lu
+#: ajoutait sa ligne — 2,3 millions de caractères sur le run `da0a8ae6f1b2`.
 _COMPTE_RENDU_MAX = 8000
 _FICHIER_MAX = 8000
 _FICHIERS_MAX = 40_000
+_NON_LUS_MAX = 50
 
 _SANS_BASH = (
     "aucun bash n'a été trouvé sur ce poste pour jouer la commande — celui que les "
@@ -371,6 +392,31 @@ class Amont:
 Joueur = Callable[..., execution.Execution]
 
 
+class VerificateurEnPanne(Exception):
+    """L'appel du vérificateur au fournisseur a échoué — une panne typée par son origine (#1388).
+
+    Toute exception levée par cet appel en devient une, quel qu'en soit le texte :
+    contexte dépassé, fournisseur injoignable, CLI qui meurt. C'est l'endroit d'où
+    elle vient qui la qualifie — jamais ce qu'elle dit (docs/44) : reconnaître
+    « Prompt is too long » à son texte ne tiendrait qu'avec ce fournisseur-là, et
+    jusqu'à la version qui le reformule.
+
+    Elle n'est pas un échec de la **réalisation** : l'agent a livré, c'est le juge
+    qui n'a pas pu juger. Avant #1388, elle traversait le runtime comme un aléa de
+    l'agent — la tâche était relancée **session comprise**, puis son travail vidé
+    et rattrapé (run `da0a8ae6f1b2` : trois sessions, 2,3 $, aucune livraison
+    gardée). Elle ne quitte donc jamais `Recette`, qui relance le vérificateur seul.
+
+    Le **plafond de dépense** n'en est pas une : c'est une borne que la personne
+    relève ou non (#1182), et il garde sa route — il traverse tel quel.
+    """
+
+    def __init__(self, cause: Exception) -> None:
+        nature = type(cause).__name__
+        super().__init__(f"{nature} : {cause}" if str(cause) else nature)
+        self.cause = cause
+
+
 SYSTEME = """\
 Tu es le vérificateur de Maestro. Un agent vient de rendre le livrable d'une tâche. \
 Tu ne réalises rien et tu ne corriges rien : tu établis comment savoir si la tâche a \
@@ -486,16 +532,16 @@ class VerificateurTaches:
         d'une tâche qui en a en amont). `None` : première livraison, le modèle les
         établit et juge ses lectures dans le même appel.
 
-        Ne lève que ce que le fournisseur lève (plafond de dépense, aléa) :
-        l'exécuteur en fait ce qu'il fait de tout échec de la réalisation.
+        Ne lève que ce que l'appel au fournisseur lève, et sous deux formes
+        seulement : le **plafond de dépense**, tel quel — une borne, que
+        l'exécuteur traite comme pour l'agent —, et `VerificateurEnPanne` pour
+        tout le reste (#1388). Ce n'était pas le cas avant : « l'exécuteur en fait
+        ce qu'il fait de tout échec de la réalisation » faisait d'une panne du
+        juge un échec de l'agent, relancé session comprise.
         """
         modele = self._modele or modele
         if etablis is None:
-            texte = await self._provider.generate(
-                _prompt_etablir(tache, livraison, amont),
-                model=modele,
-                system_prompt=SYSTEME,
-            )
+            texte = await self._consulter(_prompt_etablir(tache, livraison, amont), modele)
             controles, lectures, renvois, empechement = _lire_etablissement(texte, amont)
             if empechement:
                 return (), Verdict(empechement=empechement)
@@ -505,10 +551,8 @@ class VerificateurTaches:
             lectures, renvois = {}, ()
             a_relire = [i for i, c in enumerate(controles) if not c.joue]
             if a_relire or amont:
-                texte = await self._provider.generate(
-                    _prompt_relire(tache, livraison, controles, a_relire, amont),
-                    model=modele,
-                    system_prompt=SYSTEME,
+                texte = await self._consulter(
+                    _prompt_relire(tache, livraison, controles, a_relire, amont), modele
                 )
                 lectures, renvois = _lire_relecture(texte, controles, amont)
         constats: list[Constat] = []
@@ -531,6 +575,22 @@ class VerificateurTaches:
             tache, livraison, controles, constats, modele
         )
         return controles, Verdict(constats=tuple(constats), renvois=renvois)
+
+    async def _consulter(self, prompt: str, modele: str) -> str:
+        """Un appel du vérificateur au fournisseur — sa panne typée par son origine (#1388).
+
+        Le seul chemin par lequel ce module parle au modèle : établir, relire,
+        réécrire et contre-expertiser y passent tous, et c'est ce qui fait que
+        `VerificateurEnPanne` dit vrai — une exception qu'il enveloppe vient de cet
+        appel, et de nul autre. Le plafond de dépense passe tel quel : une borne,
+        pas une panne.
+        """
+        try:
+            return await self._provider.generate(prompt, model=modele, system_prompt=SYSTEME)
+        except PlafondDepenseDepasse:
+            raise
+        except Exception as exc:
+            raise VerificateurEnPanne(exc) from exc
 
     async def _contre_expertiser(
         self,
@@ -568,10 +628,8 @@ class VerificateurTaches:
         ]
         if not fautifs or livraison.espace is None:
             return controles
-        texte = await self._provider.generate(
-            _prompt_contre_expertise(tache, livraison, controles, constats, fautifs),
-            model=modele,
-            system_prompt=SYSTEME,
+        texte = await self._consulter(
+            _prompt_contre_expertise(tache, livraison, controles, constats, fautifs), modele
         )
         revises = _lire_reecriture(texte, controles, dict.fromkeys(fautifs, ""))
         if not revises:
@@ -612,11 +670,7 @@ class VerificateurTaches:
             return controles
         refus = _refus_de_portee(controles, livraison.portee)
         while refus:
-            texte = await self._provider.generate(
-                _prompt_reecrire(tache, controles, refus),
-                model=modele,
-                system_prompt=SYSTEME,
-            )
+            texte = await self._consulter(_prompt_reecrire(tache, controles, refus), modele)
             reecrits = _lire_reecriture(texte, controles, refus)
             if not reecrits:
                 break
@@ -842,25 +896,18 @@ def _bloc_tache(tache: Task) -> str:
 
 
 def _bloc_livraison(livraison: Livraison) -> str:
-    """Le compte-rendu de l'agent puis ses fichiers, bornés — et la borne dite."""
+    """Le compte-rendu de l'agent puis ses fichiers, bornés — et la borne dite.
+
+    Borné **en entier**, noms compris (#1388) : c'est le même bloc que relisent la
+    relecture (`_prompt_relire`) et la contre-expertise (`_prompt_contre_expertise`),
+    donc la seule borne qui vaille pour les trois prompts.
+    """
     compte_rendu = livraison.sortie.strip() or "(aucun compte-rendu)"
     if len(compte_rendu) > _COMPTE_RENDU_MAX:
         compte_rendu = compte_rendu[:_COMPTE_RENDU_MAX] + "\n[… compte-rendu tronqué]"
     morceaux = [f"<compte_rendu>\n{compte_rendu}\n</compte_rendu>"]
     if livraison.fichiers:
-        restant = _FICHIERS_MAX
-        blocs: list[str] = []
-        for fichier in livraison.fichiers:
-            if fichier.contenu is None:
-                blocs.append(f"--- {fichier.chemin} (binaire ou trop volumineux, non lu)")
-                continue
-            if restant <= 0:
-                blocs.append(f"--- {fichier.chemin} (non lu : lecture bornée atteinte)")
-                continue
-            contenu = fichier.contenu[: min(_FICHIER_MAX, restant)]
-            restant -= len(contenu)
-            suite = "" if len(contenu) == len(fichier.contenu) else "\n[… tronqué]"
-            blocs.append(f"--- {fichier.chemin}\n{contenu}{suite}")
+        blocs = _blocs_fichiers(livraison.fichiers)
         morceaux.append("<fichiers>\n" + "\n".join(blocs) + "\n</fichiers>")
     else:
         morceaux.append("<fichiers>(aucun fichier produit)</fichiers>")
@@ -868,6 +915,69 @@ def _bloc_livraison(livraison: Livraison) -> str:
         "Ce que l'agent a rendu — son compte-rendu, puis les fichiers qu'il a "
         "produits dans son espace de travail :\n" + "\n".join(morceaux)
     )
+
+
+def _blocs_fichiers(fichiers: Sequence[ProducedFile]) -> list[str]:
+    """Les fichiers lus, en entier ou tronqués, puis ceux qu'on nomme sans les lire.
+
+    Ce qui est lu l'est **dans l'ordre de `_ordre_de_lecture`**, sous une borne qui
+    compte l'en-tête de chaque fichier avec son contenu — mille fichiers d'un
+    caractère ne la franchissent pas davantage qu'un seul de mille. Ce qui n'est
+    pas lu (binaire, trop volumineux, au-delà de la borne) est nommé, jusqu'à
+    `_NON_LUS_MAX` noms ; le reste est **compté**, pour que le vérificateur sache
+    qu'il ne voit pas tout. Les deux listes sortent triées par chemin : l'ordre de
+    lecture décide de ce qu'on lit, pas de la façon dont on le présente.
+    """
+    lus: dict[str, str] = {}
+    non_lus: dict[str, str] = {}
+    restant = _FICHIERS_MAX
+    for fichier in _ordre_de_lecture(fichiers):
+        if fichier.contenu is None:
+            non_lus[fichier.chemin] = "binaire ou trop volumineux, non lu"
+            continue
+        tete = f"--- {fichier.chemin}\n"
+        if restant <= len(tete):
+            non_lus[fichier.chemin] = "non lu : lecture bornée atteinte"
+            continue
+        contenu = fichier.contenu[: min(_FICHIER_MAX, restant - len(tete))]
+        restant -= len(tete) + len(contenu)
+        suite = "" if len(contenu) == len(fichier.contenu) else "\n[… tronqué]"
+        lus[fichier.chemin] = f"{tete}{contenu}{suite}"
+    nommes = sorted(non_lus)
+    blocs = [lus[chemin] for chemin in sorted(lus)]
+    blocs += [f"--- {chemin} ({non_lus[chemin]})" for chemin in nommes[:_NON_LUS_MAX]]
+    if len(nommes) > _NON_LUS_MAX:
+        blocs.append(
+            f"… et {len(nommes) - _NON_LUS_MAX} autre(s) fichier(s), ni lu(s) ni listé(s)."
+        )
+    return blocs
+
+
+def _ordre_de_lecture(fichiers: Sequence[ProducedFile]) -> Iterator[ProducedFile]:
+    """Les fichiers, **chaque dossier de tête à son tour** — aucun n'épuise la lecture (#1388).
+
+    L'ordre alphabétique lisait `.next/` (« . » précède « a ») jusqu'à la borne, et
+    le code de l'agent — `app/`, `lib/`, `tests/` — n'était jamais lu. Ici, un
+    fichier de chaque dossier de tête, puis un second de chacun, et ainsi de suite
+    (les fichiers à la racine forment un dossier comme un autre) : un dossier de
+    vingt mille fichiers n'a pas plus de tours qu'un dossier de trois. Aucun nom de
+    dossier n'est écrit ici — ce qu'un projet ignore, son `.gitignore` l'a déjà
+    retiré du recensement (`maestro.sandbox.projet.EspaceCopieDeTravail`) ; ceci
+    tient la borne pour ce qui reste.
+    """
+    dossiers: dict[str, list[ProducedFile]] = {}
+    for fichier in sorted(fichiers, key=lambda f: f.chemin):
+        tete, separe, _ = fichier.chemin.partition("/")
+        dossiers.setdefault(tete if separe else "", []).append(fichier)
+    files = [iter(dossiers[nom]) for nom in sorted(dossiers)]
+    while files:
+        restantes = []
+        for file in files:
+            suivant = next(file, None)
+            if suivant is not None:
+                yield suivant
+                restantes.append(file)
+        files = restantes
 
 
 def _bloc_amont(amont: Sequence[Amont]) -> str:
@@ -1035,6 +1145,35 @@ class LivraisonNonTenue(Exception):
         self.verdict = verdict
 
 
+class LivraisonNonVerifiee(Exception):
+    """La livraison est faite, mais le vérificateur est resté en panne : non jugée (#1388).
+
+    Levée par `Recette` une fois le vérificateur relancé autant que la politique
+    des aléas le permet (`PolitiqueRelance`), elle **porte la livraison** — le
+    compte-rendu et les fichiers — jusqu'à l'exécuteur, qui la garde sur le
+    résultat de la tâche au lieu de la vider. La tâche n'est pas verte (rien n'a
+    été vérifié), mais elle n'est pas non plus un travail raté : l'exécuteur ne la
+    relance pas (`maestro.engine.retry` — ce serait rejouer la session de l'agent),
+    et la boucle du run ne la rattrape pas (`TaskResult.verification_en_panne`).
+
+    `panne` est la dernière `VerificateurEnPanne` — sa cause, et le stderr qu'un
+    CLI y a accroché (#346), voyagent avec.
+    """
+
+    def __init__(
+        self,
+        motif: str,
+        sortie: str,
+        fichiers: tuple[ProducedFile, ...],
+        panne: VerificateurEnPanne | None = None,
+    ) -> None:
+        super().__init__(motif)
+        self.motif = motif
+        self.sortie = sortie
+        self.fichiers = fichiers
+        self.panne = panne
+
+
 @dataclass
 class Recette:
     """La boucle de vérification d'**une** exécution de tâche (#1177).
@@ -1048,6 +1187,14 @@ class Recette:
     tient, le **retour** à donner à l'agent quand elle ne tient pas encore, et
     lève `LivraisonNonTenue` quand la boucle s'arrête. `on_verdict` est rappelé à
     chaque verdict, avant toute décision : c'est par lui que l'exécuteur consigne.
+
+    Un vérificateur **en panne** (#1388) est relancé **ici**, l'espace encore
+    ouvert, selon `relance` — la politique des aléas de l'exécuteur, la même que
+    pour l'agent ; `None`, aucune relance. Ici et pas plus haut : relancer la
+    tâche rejouerait la session de l'agent, et l'espace où jouer les contrôles
+    serait refermé. Chaque panne est consignée par `on_verdict`, comme une
+    vérification impossible ; la dernière lève `LivraisonNonVerifiee`, qui porte
+    la livraison.
     """
 
     verificateur: VerificateurTaches
@@ -1056,6 +1203,7 @@ class Recette:
     amont: tuple[Amont, ...] = ()
     portee_de: Callable[[Path], PorteeProjet] | None = None
     on_verdict: Callable[[Verdict, int], None] | None = None
+    relance: PolitiqueRelance | None = None
     controles: tuple[Controle, ...] | None = None
     livraisons: int = 0
     meilleur: int = -1
@@ -1088,13 +1236,7 @@ class Recette:
                 else None
             ),
         )
-        controles, verdict = await self.verificateur.verifier(
-            self.tache,
-            livraison,
-            modele=self.modele,
-            etablis=self.controles,
-            amont=self.amont,
-        )
+        controles, verdict = await self._verifier(livraison)
         if controles:
             self.controles = controles
         self.dernier = verdict
@@ -1120,6 +1262,41 @@ class Recette:
             )
         self.meilleur = verdict.tenus
         return self.retour(verdict)
+
+    async def _verifier(self, livraison: Livraison) -> tuple[tuple[Controle, ...], Verdict]:
+        """Le verdict de la livraison — le vérificateur relancé s'il tombe en panne, jamais l'agent.
+
+        Une panne n'est pas un verdict : `dernier` n'en garde rien, et la meilleure
+        livraison non plus. Elle est **dite** (`on_verdict`, une vérification
+        impossible qui nomme sa cause et l'essai), puis, quand la politique n'en
+        permet plus, la livraison sort entière dans `LivraisonNonVerifiee`.
+        """
+        essais = self.relance.max_tentatives if self.relance is not None else 1
+        essai = 1
+        while True:
+            try:
+                return await self.verificateur.verifier(
+                    self.tache,
+                    livraison,
+                    modele=self.modele,
+                    etablis=self.controles,
+                    amont=self.amont,
+                )
+            except VerificateurEnPanne as panne:
+                constat = f"vérificateur en panne (essai {essai}/{essais}) — {panne}"
+                if self.on_verdict is not None:
+                    self.on_verdict(Verdict(empechement=constat), self.livraisons)
+                if self.relance is None or essai >= essais:
+                    raise LivraisonNonVerifiee(
+                        f"livrée, vérification en panne — le vérificateur n'a pas pu "
+                        f"juger la livraison n° {self.livraisons} après {essai} essai(s) : "
+                        f"{panne}",
+                        livraison.sortie,
+                        livraison.fichiers,
+                        panne,
+                    ) from panne
+                await asyncio.sleep(self.relance.attente_s(essai))
+                essai += 1
 
     @property
     def renvois(self) -> tuple[Renvoi, ...]:
