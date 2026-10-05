@@ -221,9 +221,27 @@ export function tachesOuvertes(execution: ResumeExecution): number {
  * donner du travail, et rien ne repartira sans un second geste. Le drapeau vit à
  * côté du statut, qui ne bouge pas : un run peut être suspendu *et* arrêté sur son
  * brief, les deux étant vrais en même temps.
+ *
+ * Un run **soldé** n'est jamais « en pause » ici, même quand il en garde le
+ * drapeau : depuis #1390, l'extinction de Maestro laisse sa pause à un run qu'on
+ * avait suspendu (`estInterrompuEnPause`), mais il n'a plus de porte à rouvrir —
+ * proposer « Reprendre » sur lui serait un geste que le service refuse.
  */
 export function estEnPause(execution: ResumeExecution): boolean {
-  return execution.en_pause === true;
+  return !estSolde(execution) && execution.en_pause === true;
+}
+
+/**
+ * Ce run était-il **en pause quand Maestro s'est éteint** (#1390) ?
+ *
+ * La pause est une décision de la personne, l'extinction en est une autre : la
+ * seconde ne défait pas la première. Le run est soldé — son hôte est éteint —, et
+ * il garde sa pause, qui est ce que l'écran dit de lui : « Interrompu en pause »,
+ * et non « Annulée ». Une annulation, elle, lève toujours la pause (le backend
+ * efface le drapeau), si bien que ce cas ne se confond avec aucun autre.
+ */
+export function estInterrompuEnPause(execution: ResumeExecution): boolean {
+  return estEteint(execution) && execution.en_pause === true;
 }
 
 /**

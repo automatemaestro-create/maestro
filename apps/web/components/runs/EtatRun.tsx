@@ -73,6 +73,8 @@ import {
   ATTENTE_VALIDATION,
   causeDAttente,
   estEnPause,
+  estEteint,
+  estInterrompuEnPause,
   estRelancable,
   nomDuRun,
   peutEtreInterrompu,
@@ -98,11 +100,16 @@ import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import { PAGE_DU_PLAFOND } from "@/lib/plafond";
 import {
+  CAUSE_ANNULATION,
+  CAUSE_EXTINCTION,
   EXECUTION_ECHEC,
   EXECUTION_TERMINEE,
   type Progression,
   type ResumeExecution,
 } from "@/lib/types";
+
+/** Les causes d'un run **arrêté**, qui n'ont rien raté (#1390) : dites sans alerte. */
+const CAUSES_D_INTERRUPTION: readonly string[] = [CAUSE_ANNULATION, CAUSE_EXTINCTION];
 
 /**
  * Le coût d'un run dans une ligne de faits (#1280) : le montant tarifé, et
@@ -269,6 +276,19 @@ function apparence(
       ton: "alerte",
       libelle: "Interrompu",
       icone: IconeArret,
+      pulse: false,
+    };
+  }
+  if (estEteint(run)) {
+    // Maestro s'est éteint en l'emportant (#1390) : ni « Annulée » — personne n'a
+    // arrêté *ce* run —, ni l'alerte d'un hôte perdu. Neutre, comme un run annulé
+    // chez GitHub Actions ou Buildkite (veille de #1390), et en pause s'il l'était :
+    // la pause d'une personne survit à l'extinction.
+    const enPause = estInterrompuEnPause(run);
+    return {
+      ton: "neutre",
+      libelle: enPause ? "Interrompu en pause" : "Interrompu",
+      icone: enPause ? IconePause : IconeArret,
       pulse: false,
     };
   }
@@ -598,9 +618,16 @@ export function LigneCause({
 }) {
   const libelle = libelleCause(run.cause);
   if (libelle === null) return null;
+  // Une **interruption** — Maestro éteint, un run annulé — n'est pas une panne
+  // (#1390) : sa cause se dit au ton du texte secondaire, comme Buildkite écrit
+  // « canceled after 11m 41s » sous un build annulé. L'alerte reste aux causes
+  // qui appellent un geste (une borne atteinte, des tâches en échec).
+  const ton = CAUSES_D_INTERRUPTION.includes(run.cause ?? "")
+    ? "text-texte-secondaire"
+    : "text-alerte-texte";
   return (
     <p
-      className={`text-annexe text-alerte-texte ${className}`}
+      className={`text-annexe ${ton} ${className}`}
       // Le run est soldé : `role="status"` annoncerait un changement en cours.
       // C'est un fait acquis qu'on lit, pas une alerte qui survient.
     >
@@ -701,6 +728,16 @@ const SEGMENTS = [
     pluriel: "en cours",
   },
   {
+    // Ce qu'un run soldé arrêtait en vol (#1390) : présent et pas fini, donc
+    // hachuré comme ce qui tourne, mais **neutre** — ni le bleu de ce qui
+    // travaille, ni le rouge d'un échec qu'elle n'est pas.
+    cle: "interrompues",
+    couleur: "bg-texte-secondaire/55",
+    remplissage: "en-vol",
+    singulier: "interrompue",
+    pluriel: "interrompues",
+  },
+  {
     cle: "bloquees",
     couleur: "bg-attention/45",
     remplissage: "en-vol",
@@ -771,7 +808,8 @@ export function Avancement({
 
   const parts = SEGMENTS.map((segment) => ({
     ...segment,
-    valeur: progression[segment.cle],
+    // `?? 0` : un backend antérieur à #1390 ne sert pas `interrompues`.
+    valeur: progression[segment.cle] ?? 0,
   })).filter((segment) => segment.valeur > 0);
 
   return (

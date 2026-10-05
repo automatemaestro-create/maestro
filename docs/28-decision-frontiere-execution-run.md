@@ -735,6 +735,37 @@ Deux règles, et les deux appelants les tiennent :
   soldé ; un `401`, un `5xx` ou une réponse illisible se nomment comme tels — « des runs peuvent
   rester en vol » —, et l'arrêt va au bout.
 
+### 11.4 Ce que l'extinction laisse derrière elle (2026-10-05)
+
+> Écrit au ticket **#1390**, premier lot de #1389. La décision du §11 ne bouge pas — l'arrêt
+> volontaire solde, et le run reste reprenable par sa cause. Ce qui change est ce que le soldage
+> **dit** des tâches du run et de sa pause.
+
+**Le constat.** Projet p5, run `5352205e1c6d` (2026-10-01) : mis en pause à 15:13:28, Maestro éteint
+sept secondes plus tard. Le run est soldé `annulee` (cause `extinction`) et **ses neuf tâches** passent
+`echec`, dont **huit que personne n'avait commencées**. À l'écran, un run arrêté après une minute
+montrait neuf échecs. Le soldage des tâches (#466) précédait #924, qui fait naître les cartes du plan
+`backlog` **avant** leur départ : il les ramassait avec la seule tâche qui tournait.
+
+**Trois règles, et une seule méthode les porte** (`ServiceExecutions._solder`, commune à l'extinction,
+à l'annulation et à la relance) :
+
+- **une tâche jamais démarrée n'est pas touchée** (`backlog`, `prete`) : elle n'a rien fait, rien raté,
+  personne ne la porte — elle reste à faire, et c'est ce que la reprise viendra chercher ;
+- **la tâche en vol est interrompue**, statut `interrompue`, avec la cause de l'arrêt : elle n'a pas
+  échoué (le compteur d'échecs de son agent ne bouge pas), et elle n'est pas acquise (la progression
+  la compte à part, jamais parmi les soldées). Son agent est libéré, comme depuis #466 ;
+- **un run en pause quand Maestro s'éteint le reste** : soldé — son hôte est éteint —, il garde
+  `en_pause` et l'heure de sa pause. L'extinction arrête Maestro, pas la décision de la personne. Une
+  **annulation** pendant la pause, elle, la lève toujours : il n'y a rien à reprendre d'un run qu'on a
+  arrêté exprès. Et le « Reprendre » de la pause refuse un run soldé (`409`) : sa porte n'existe plus,
+  il se reprend par la relance.
+
+**Ce que ça ne fait pas encore** : reprendre le run **sur son plan**. La relance de #349 crée toujours
+un nouveau run reparti du brief ; c'est l'objet du lot suivant (#1391), puis de la reprise de la tâche
+interrompue depuis sa branche (#1392). Le soldage laisse désormais l'état que ces deux lots ont besoin
+de lire : ce qui est fait, ce qui a été interrompu, ce qui reste.
+
 ---
 
 ## 12. La porte n° 4 est franchie — la reprise exacte (2026-08-28)

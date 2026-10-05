@@ -32,6 +32,7 @@ from typing import Any
 from maestro.agents.capacity import INSTANCES_DEFAUT, CapaciteAgent
 from maestro.agents.catalog import Agent
 from maestro.controltower.bornes import BornesRun
+from maestro.controltower.causes import CAUSE_EXTINCTION
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
@@ -65,6 +66,7 @@ from maestro.controltower.graphe import EtatNoeud, GrapheRun, graphe_du_run
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.progression import (
     STATUT_BACKLOG,
+    STATUT_INTERROMPUE,
     Progression,
     progression_des_statuts,
 )
@@ -254,6 +256,24 @@ def libelle_statut_execution(statut: str) -> str:
     """Le statut d'un run en mots d'interface, ou brut si le flux s'est enrichi."""
     return _LIBELLES_STATUT_EXECUTION.get(statut, statut)
 
+
+#: Ce que l'écran dit d'un run que l'**extinction** de Maestro a soldé (#1390) — le
+#: badge de `BadgeRun` (`apps/web/components/runs/EtatRun.tsx`) au mot près. Son
+#: statut est `annulee`, comme toute interruption, mais « Annulée » disait qu'on
+#: avait arrêté *ce* run : c'est Maestro qu'on a éteint.
+LIBELLE_RUN_INTERROMPU = "Interrompu"
+
+
+def libelle_etat_execution(statut: str, cause: str) -> str:
+    """Ce qu'un run **est**, en mots d'écran : son statut, sauf s'il a été éteint (#1390).
+
+    Le fil décrit un run comme l'écran le badge (#571) ; la cause, la pause et le
+    reste se disent à côté, par leur appelant.
+    """
+    if statut in STATUTS_EXECUTION_TERMINAUX and cause == CAUSE_EXTINCTION:
+        return LIBELLE_RUN_INTERROMPU
+    return libelle_statut_execution(statut)
+
 #: Les deux **ordres de pause** d'un run (#477), portés par `execution.statut` —
 #: le canal de l'annulation (#444), et surtout pas un second transport : le guet
 #: du process détaché est déjà branché là, et un run qui vit des heures n'a pas à
@@ -289,7 +309,15 @@ BRIEF_REFUSE = VALIDATION_REFUSEE
 #: question ne peut pas avoir deux réponses. Une seconde liste, fût-elle recopiée
 #: juste, se serait séparée de celle-ci au premier statut ajouté — et le premier
 #: symptôme aurait été un agent libéré ici mais compté occupé là.
-STATUTS_TACHE_TERMINAUX = frozenset({STATUT_TERMINEE, STATUT_ECHEC, STATUT_BLOQUEE})
+#:
+#: `interrompue` (#1390) en est, au sens exact de cette table : **plus personne
+#: ne la porte** — son agent est libéré, et aucun de ses deux compteurs ne bouge,
+#: puisqu'elle n'a ni abouti ni échoué. Terminale ne veut pas dire acquise : elle
+#: repartira à la reprise de son run, comme un `echec` repart à une relance. C'est
+#: aussi pourquoi la progression ne la compte pas soldée (`progression.py`).
+STATUTS_TACHE_TERMINAUX = frozenset(
+    {STATUT_TERMINEE, STATUT_ECHEC, STATUT_BLOQUEE, STATUT_INTERROMPUE}
+)
 
 #: Valeurs d'`Event.agent` qui ne désignent pas un exécutant réel (tâche bloquée
 #: jamais exécutée : « — », routage sans élu…) : rien à mettre à jour côté agents.
@@ -2295,11 +2323,21 @@ class ControlTowerState:
         execution.fin = (
             event.horodatage if execution.statut in STATUTS_EXECUTION_TERMINAUX else None
         )
-        if execution.statut in STATUTS_EXECUTION_TERMINAUX:
+        if (
+            execution.statut in STATUTS_EXECUTION_TERMINAUX
+            and execution.cause != CAUSE_EXTINCTION
+        ):
             # Un run soldé n'est plus suspendu (#477) : il n'y a plus rien à
             # reprendre, et laisser le drapeau derrière soi ferait proposer
             # « Reprendre » sur un run annulé pendant sa pause — le cas exact,
             # puisque `en_pause` n'empêche pas l'annulation.
+            #
+            # ⚠ Sauf l'**extinction** (#1390) : elle arrête Maestro, pas la
+            # décision de la personne. Un run en pause quand Maestro s'éteint le
+            # reste — soldé « interrompu en pause », reprenable —, et c'est le
+            # constat de p5 qu'on corrige : la pause effacée, il se lisait comme
+            # un run annulé. Le laissez-passer consommé à la relance (cause
+            # `annulation`) la lève, comme toute annulation.
             execution.en_pause = False
             execution.pause_depuis = None
         # Le run n'attend plus dès qu'il n'est plus dans un état d'attente (#321) —

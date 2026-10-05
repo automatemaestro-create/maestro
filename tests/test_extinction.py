@@ -42,6 +42,11 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
    foi de la **cause** — un run délibérément annulé, lui, reste refusé. Le
    laissez-passer est consommé à la reprise, ce qui garde le garde-fou du double clic.
 
+③bis **Ce que l'extinction laisse derrière elle se lit tel qu'il était** (#1390). Une
+   tâche que personne n'avait commencée reste à faire, celle qui tournait est
+   **interrompue** — ni l'une ni l'autre en échec —, et un run en pause le reste,
+   soldé mais reprenable. C'est le constat de p5 : neuf échecs pour une tâche en vol.
+
 ④ **`start.sh` solde depuis ses deux gestes d'arrêt, et depuis eux seuls.** La porte
    est poussée par la branche `--stop` et par le chien de garde qui constate la
    fenêtre fermée (#700) — dans les deux cas **avant** de libérer les ports, après
@@ -88,6 +93,7 @@ from maestro.controltower.causes import CAUSE_ANNULATION, CAUSE_EXTINCTION
 from maestro.controltower.events import (
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_RUN_PLAN,
     EVENEMENT_TACHE_STATUT,
 )
 from maestro.controltower.executions import (
@@ -95,6 +101,7 @@ from maestro.controltower.executions import (
     MOTIF_RELANCE_RUN_SOLDE,
 )
 from maestro.controltower.hote import HoteMort, HoteRun, OrdreRun
+from maestro.controltower.progression import STATUT_BACKLOG, STATUT_INTERROMPUE
 from maestro.controltower.state import (
     AGENT_LIBRE,
     AGENT_OCCUPE,
@@ -102,10 +109,12 @@ from maestro.controltower.state import (
     EXECUTION_ANNULEE,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
+    ORDRE_PAUSE,
     STATUTS_TACHE_TERMINAUX,
 )
 from maestro.engine import MODE_BRIEF_HUMAIN, STATUT_EN_COURS, DemandeBrief
 from maestro.orchestrator import Brief
+from maestro.plan_run import NoeudPlan
 
 RACINE = Path(__file__).resolve().parent.parent
 SCRIPT = RACINE / "scripts" / "controltower" / "start.sh"
@@ -237,7 +246,7 @@ def _tache_en_vol(state: ControlTowerState, run_id: str, tache_id: str, agent: s
 
 
 def _journal_du_run_eteint(
-    *, approuve: bool = True, cause: str = CAUSE_EXTINCTION
+    *, approuve: bool = True, cause: str = CAUSE_EXTINCTION, en_pause: bool = False
 ) -> InMemoryEventLog:
     """La trace d'un run cadré, approuvé, puis **soldé par l'extinction de Maestro**.
 
@@ -246,6 +255,7 @@ def _journal_du_run_eteint(
     redémarré, et tout ce qu'elle sait de ce run est ce qu'elle vient de rejouer
     (#97). `cause` permet de rejouer le **même** run soldé par une annulation
     ordinaire — le seul champ qui les distingue, et donc le seul qui décide.
+    `en_pause` le fait mettre en pause avant l'extinction : le cas de p5 (#1390).
     """
     journal = InMemoryEventLog()
     evenements = [
@@ -269,6 +279,15 @@ def _journal_du_run_eteint(
                 run_id=ETEINT,
                 statut=BRIEF_APPROUVE,
                 brief=BRIEF,
+            )
+        )
+    if en_pause:
+        evenements.append(
+            Event(
+                type=EVENEMENT_EXECUTION_STATUT,
+                run_id=ETEINT,
+                statut=ORDRE_PAUSE,
+                horodatage="2026-10-01T15:13:28+00:00",
             )
         )
     evenements.append(
@@ -586,6 +605,159 @@ def test_le_laissez_passer_de_l_extinction_est_consomme_a_la_reprise() -> None:
     assert seconde.status_code == 409, seconde.text
     assert seconde.json()["detail"]["motif"] == MOTIF_RELANCE_RUN_SOLDE
     assert resume["cause"] == CAUSE_ANNULATION
+
+
+# ------------------- ③bis ce que l'extinction laisse derrière elle (#1390)
+
+
+#: Le plan du run éteint : une tâche part, les deux autres attendent leur tour. C'est
+#: le run de p5 en petit — neuf cartes déclarées par le plan (#924), une seule
+#: démarrée quand Maestro s'est éteint.
+EN_VOL = "modeliser-les-fiches"
+JAMAIS_DEMARREES = ("ecrire-l-api", "ecrire-la-doc")
+
+
+def _plan(state: ControlTowerState, run_id: str) -> None:
+    """Publie le plan du run : ses cartes naissent « à faire » (#924)."""
+    state.appliquer(
+        Event(
+            type=EVENEMENT_RUN_PLAN,
+            run_id=run_id,
+            plan=[NoeudPlan(id=t, titre=t) for t in (EN_VOL, *JAMAIS_DEMARREES)],
+        )
+    )
+
+
+def _eteindre_un_run_en_vol(
+    client: TestClient, state: ControlTowerState, run_id: str
+) -> None:
+    """Le run a son plan et une tâche en vol ; Maestro s'éteint, la tâche est soldée."""
+    _plan(state, run_id)
+    _tache_en_vol(state, run_id, EN_VOL, "dev")
+
+    assert client.post("/api/extinction").status_code == 200
+    # Le soldage des tâches se **pousse** (#466) : on attend la pompe, et c'est ce
+    # qui garantit que les cartes restées « à faire » le sont **après** le soldage,
+    # et non parce qu'on les a lues trop tôt.
+    _attendre(
+        lambda: (tache := state.tache(EN_VOL)) is not None
+        and tache.statut != STATUT_EN_COURS,
+        "la tâche en vol soldée par l'extinction",
+    )
+
+
+def test_une_tache_jamais_demarree_reste_a_faire_quand_maestro_s_eteint() -> None:
+    """Le premier critère de #1390 : ni en échec, ni bloquée — à faire.
+
+    Le constat de p5 (run `5352205e1c6d`) : neuf tâches en échec, dont **huit que
+    personne n'avait commencées**. #466 soldait tout ce qui n'était pas terminal, et
+    il était juste quand une carte n'existait qu'une fois démarrée ; #924 a fait
+    naître les cartes du plan **avant** leur départ, et le soldage les a ramassées
+    avec les autres. Une carte jamais démarrée n'a rien fait, rien raté, et personne
+    ne la porte : le soldage n'a rien à lui dire.
+    """
+    state = ControlTowerState()
+    hote = HoteDouble()
+    with _app(hote, state=state) as client:
+        run_id = _lancer(client)
+        _eteindre_un_run_en_vol(client, state, run_id)
+
+        for tache_id in JAMAIS_DEMARREES:
+            tache = state.tache(tache_id)
+            assert tache is not None
+            assert tache.statut == STATUT_BACKLOG, tache_id
+        # Ce que la vue lit d'un coup d'œil : une interrompue, deux à faire, aucun
+        # échec — et le compte des soldées ne promet pas ce qui reste à faire.
+        progression = _resume(client, run_id)["progression"]
+        assert progression["a_faire"] == 2
+        assert progression["interrompues"] == 1
+        assert progression["echecs"] == 0
+        assert (progression["soldees"], progression["total"]) == (0, 3)
+
+
+def test_la_tache_en_vol_est_interrompue_avec_sa_cause_et_n_a_pas_echoue() -> None:
+    """Le deuxième critère : la tâche en vol est **interrompue**, pas en échec.
+
+    Elle a été arrêtée de l'extérieur, au milieu de son travail : rien ne dit qu'elle
+    allait échouer, et le compteur d'échecs de son agent ne doit pas le prétendre.
+    Son agent est libéré comme avant (#466) — personne ne la porte plus —, et la
+    **cause** voyage avec elle, ce qui dit *pourquoi* sans relire la trace du run.
+    """
+    state = ControlTowerState()
+    hote = HoteDouble()
+    with _app(hote, state=state) as client:
+        run_id = _lancer(client)
+        _eteindre_un_run_en_vol(client, state, run_id)
+
+        tache = state.tache(EN_VOL)
+        assert tache is not None
+        assert tache.statut == STATUT_INTERROMPUE
+        assert tache.statut in STATUTS_TACHE_TERMINAUX
+        agent = state.agent("dev")
+        assert agent is not None
+        assert agent.statut == AGENT_LIBRE
+        assert agent.taches_echouees == 0
+        execution = state.execution(run_id)
+        assert execution is not None
+        soldage = [
+            e
+            for e in execution.evenements
+            if e.type == EVENEMENT_TACHE_STATUT and e.tache_id == EN_VOL
+        ][-1]
+        assert soldage.statut == STATUT_INTERROMPUE
+        assert soldage.cause == CAUSE_EXTINCTION
+
+
+def test_un_run_en_pause_quand_maestro_s_eteint_le_reste() -> None:
+    """Le troisième critère : soldé « interrompu en pause », pas comme un run annulé.
+
+    La pause est une décision de la personne (#477), l'extinction en est une autre :
+    la seconde ne défait pas la première. Le run est soldé — l'extinction est un
+    arrêt, son hôte est éteint — et il garde sa pause et son heure, qui sont ce que
+    l'écran et le fil disent de lui. Un run **annulé** pendant sa pause, lui, la perd
+    (`test_une_annulation_reste_possible_sur_un_run_suspendu`) : il n'y a plus rien
+    à reprendre d'un run qu'on a arrêté exprès.
+    """
+    hote = HoteDouble()
+    with _app(hote) as client:
+        run_id = _lancer(client)
+        assert client.post(f"/api/executions/{run_id}/pause").status_code == 200
+        depuis = _resume(client, run_id)["pause_depuis"]
+        assert depuis
+
+        assert client.post("/api/extinction").status_code == 200
+
+        resume = _resume(client, run_id)
+        assert resume["statut"] == EXECUTION_ANNULEE
+        assert resume["cause"] == CAUSE_EXTINCTION
+        assert resume["en_pause"] is True
+        assert resume["pause_depuis"] == depuis
+
+
+def test_la_pause_d_un_run_eteint_survit_au_redemarrage_et_le_run_reste_reprenable() -> None:
+    """Au redémarrage, l'API rebâtit le run depuis son journal — pause comprise.
+
+    Et il reste **reprenable** par le geste qu'offre l'écran à un run éteint (#486) :
+    la relance de son brief, tant que la reprise sur son plan n'existe pas (#1391).
+    Le « Reprendre » de la pause, lui, ne s'adresse qu'à un run **vivant** : sur un
+    run soldé il n'y a plus de porte à rouvrir, et un `200` sans effet ferait croire
+    à une reprise qui n'a pas eu lieu — d'où le `409`, comme pour une pause ou une
+    annulation sur un run soldé.
+    """
+    hote = HoteDouble()
+    with _app(hote, journal=_journal_du_run_eteint(en_pause=True)) as client:
+        resume = _resume(client, ETEINT)
+        assert resume["cause"] == CAUSE_EXTINCTION
+        assert resume["en_pause"] is True
+
+        reprise = client.post(f"/api/executions/{ETEINT}/reprendre")
+        assert reprise.status_code == 409, reprise.text
+        assert _resume(client, ETEINT)["en_pause"] is True
+
+        assert client.post(f"/api/executions/{ETEINT}/relancer").status_code == 202
+        # Le laissez-passer consommé (`annulation`) emporte la pause avec lui : le
+        # run a été repris, il ne se propose plus.
+        assert _resume(client, ETEINT)["en_pause"] is False
 
 
 # ------------------------------------- ④ `start.sh` ne solde que sur `--stop`

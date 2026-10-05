@@ -296,6 +296,8 @@ stateDiagram-v2
     en_cours --> en_cours: critère non tenu — la preuve revient à l'agent
     en_cours --> terminee: critères vérifiés en l'exécutant
     en_cours --> echec: erreur, ou vérification non tenue (échec motivé)
+    en_cours --> interrompue: run soldé pendant qu'elle tournait (extinction, annulation, relance)
+    en_attente_validation --> interrompue: run soldé pendant qu'elle attendait
     terminee --> en_cours: renvoyée par la QA (non conforme)
     terminee --> echec: non conforme selon la QA, sans progrès
     echec --> prete: relance / re-routage
@@ -310,6 +312,14 @@ depuis #1181 sur une tâche à qui il manque un **prérequis** qu'il sait propos
 authentifier, un rôle à recruter, un secret, un outil (`maestro/prerequis.py`) : elle est suspendue
 au lieu d'échouer, le fil propose le remède, et elle **reprend** dans le même run quand on le lui a
 donné. Une proposition sans réponse la solde en `echec`.
+
+`interrompue` est ce qu'un run **soldé** laisse de la tâche qu'il faisait tourner (#1390) — Maestro
+éteint, le run annulé ou relancé. Elle n'a **pas échoué** : on l'a arrêtée de l'extérieur, et le
+compteur d'échecs de son agent ne bouge pas ; elle n'est pas **acquise** non plus : son travail est
+à reprendre, et la progression du run ne la compte pas parmi les tâches soldées. Personne ne la
+porte plus, si bien que son agent est libéré. Le soldage ne touche **pas** aux tâches que personne
+n'avait commencées (`backlog`, `prete`) : elles restent à faire. La cause de l'arrêt voyage avec la
+tâche interrompue, comme avec le run.
 
 ---
 

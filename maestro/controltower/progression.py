@@ -15,7 +15,12 @@ rassemble des statuts de la machine à états de [docs/03 §3](
 ci-dessous **est** le contrat que les vues partagent — c'est elle que lit une
 colonne de Kanban, pas une correspondance réinventée par écran.
 
-Un sixième compartiment, `autres`, ramasse ce que la table ne connaît pas. Il
+Un sixième s'y est ajouté avec #1390, **interrompues** : ce qu'un run soldé
+arrêtait en vol. Ni acquis ni raté, son travail est à reprendre — c'est ce qui
+lui vaut un compartiment à lui plutôt qu'une place parmi les échecs, où le
+soldage le rangeait avant.
+
+Un dernier compartiment, `autres`, ramasse ce que la table ne connaît pas. Il
 n'est pas une commodité : sans lui, un statut nouveau (ou une tâche dont aucun
 événement n'a encore porté de statut lisible) disparaîtrait du compte, et
 `total` cesserait silencieusement d'égaler le nombre de tâches du run. Un
@@ -58,16 +63,28 @@ STATUT_BACKLOG = "backlog"
 STATUT_PRETE = "prete"
 STATUT_ASSIGNEE = "assignee"
 
-#: Les cinq compartiments du critère #473, plus le ramasse-miettes.
+#: Une tâche **arrêtée en vol** quand son run a été soldé (#1390) — par une
+#: extinction de Maestro, une annulation, une relance. Pas une issue du moteur,
+#: qui ne l'émet pas : c'est le soldage du run (`ServiceExecutions._solder`) qui
+#: la pose, sur ce qui tournait encore. Elle n'a **pas échoué** — rien ne dit
+#: qu'elle allait le faire, on l'a arrêtée de l'extérieur — et elle n'est pas
+#: acquise non plus : son travail est à reprendre. Les tâches que personne
+#: n'avait commencées, elles, ne sont pas touchées : elles restent à faire.
+STATUT_INTERROMPUE = "interrompue"
+
+#: Les cinq compartiments du critère #473, les interrompues (#1390), plus le
+#: ramasse-miettes.
 A_FAIRE = "a_faire"
 EN_COURS = "en_cours"
+INTERROMPUES = "interrompues"
 BLOQUEES = "bloquees"
 TERMINEES = "terminees"
 ECHECS = "echecs"
 AUTRES = "autres"
 
-#: L'ordre du flux de travail — celui dans lequel une vue les présente.
-COMPARTIMENTS = (A_FAIRE, EN_COURS, BLOQUEES, TERMINEES, ECHECS, AUTRES)
+#: L'ordre du flux de travail — celui dans lequel une vue les présente. Les
+#: interrompues suivent ce qui est en cours : c'est ce qu'elles étaient.
+COMPARTIMENTS = (A_FAIRE, EN_COURS, INTERROMPUES, BLOQUEES, TERMINEES, ECHECS, AUTRES)
 
 #: **Le contrat partagé** : quel compartiment pour quel statut de tâche. Deux
 #: partis pris, et ce sont les seuls arbitrages du module :
@@ -86,17 +103,24 @@ COMPARTIMENT_PAR_STATUT: dict[str, str] = {
     STATUT_ASSIGNEE: A_FAIRE,
     STATUT_EN_COURS: EN_COURS,
     STATUT_EN_ATTENTE_VALIDATION: EN_COURS,
+    STATUT_INTERROMPUE: INTERROMPUES,
     STATUT_BLOQUEE: BLOQUEES,
     STATUT_TERMINEE: TERMINEES,
     STATUT_ECHEC: ECHECS,
 }
 
 #: Les compartiments qui rassemblent les statuts **terminaux** du moteur
-#: (`terminee`, `echec`, `bloquee` — docs/03 §3, et le `STATUTS_TACHE_TERMINAUX` de
-#: la projection) : une tâche qui y est comptée ne bougera plus. C'est ce qui
-#: donne `soldees`, donc le dénominateur d'une barre de progression honnête —
-#: une tâche bloquée est acquise au même titre qu'une tâche échouée, elle ne
-#: sera pas jouée.
+#: (`terminee`, `echec`, `bloquee` — docs/03 §3) : une tâche qui y est comptée ne
+#: bougera plus. C'est ce qui donne `soldees`, donc le numérateur d'une barre de
+#: progression honnête — une tâche bloquée est acquise au même titre qu'une tâche
+#: échouée, elle ne sera pas jouée.
+#:
+#: ⚠ Les **interrompues** n'en sont pas (#1390), alors que la projection les tient
+#: pour terminales (`STATUTS_TACHE_TERMINAUX` : plus personne ne les porte, leur
+#: agent est libre). Les deux questions diffèrent : « quelqu'un la porte-t-il ? »
+#: et « est-elle acquise ? ». Une tâche interrompue n'a rien rendu, son travail
+#: est à reprendre ; la compter soldée ferait dire « 9/9 soldées » au run de p5,
+#: qui n'en avait fait qu'une.
 COMPARTIMENTS_SOLDES = (TERMINEES, ECHECS, BLOQUEES)
 
 
@@ -125,6 +149,7 @@ class Progression:
 
     a_faire: int = 0
     en_cours: int = 0
+    interrompues: int = 0
     bloquees: int = 0
     terminees: int = 0
     echecs: int = 0

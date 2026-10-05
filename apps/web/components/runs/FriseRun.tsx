@@ -83,6 +83,7 @@ import {
   IconeStatutBloquee,
   IconeStatutEchec,
   IconeStatutEnCours,
+  IconeStatutInterrompue,
   IconeStatutTerminee,
 } from "@/components/Icones";
 import {
@@ -136,6 +137,9 @@ const APPARENCE: Record<string, ApparenceEntree> = {
   // Le violet d'avant #912, conservé au pixel : un état qui emprunte le ton de
   // la provenance, comme dans `Kanban` et `VuePipeline`.
   bloquee: { ton: "provenance", icone: IconeStatutBloquee },
+  // Arrêtée en vol par le soldage de son run (#1390) : neutre, jamais l'alerte
+  // d'un échec qu'elle n'est pas.
+  interrompue: { ton: "neutre", icone: IconeStatutInterrompue },
   terminee: { ton: "positif", icone: IconeStatutTerminee },
   echec: { ton: "alerte", icone: IconeStatutEchec },
   approuve: { ton: "positif", icone: IconeArbitrage },

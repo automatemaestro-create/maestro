@@ -71,6 +71,11 @@ export const NOEUD_EN_COURS = "en_cours";
 export const NOEUD_PRET = "pret";
 /** Déclaré au plan, rien ne l'a encore débloqué. */
 export const NOEUD_A_FAIRE = "a_faire";
+/**
+ * Arrêtée en vol quand son run a été soldé (#1390) — ni ratée ni acquise : son
+ * travail est à reprendre.
+ */
+export const NOEUD_INTERROMPU = "interrompu";
 export const NOEUD_BLOQUE = "bloque";
 export const NOEUD_TERMINE = "termine";
 export const NOEUD_ECHEC = "echec";
@@ -82,6 +87,7 @@ export type EtatNoeud =
   | typeof NOEUD_EN_COURS
   | typeof NOEUD_PRET
   | typeof NOEUD_A_FAIRE
+  | typeof NOEUD_INTERROMPU
   | typeof NOEUD_BLOQUE
   | typeof NOEUD_TERMINE
   | typeof NOEUD_ECHEC
@@ -97,6 +103,7 @@ export type EtatNoeud =
 const ETAT_PAR_COMPARTIMENT: Record<keyof Progression | string, EtatNoeud> = {
   a_faire: NOEUD_A_FAIRE,
   en_cours: NOEUD_EN_COURS,
+  interrompues: NOEUD_INTERROMPU,
   bloquees: NOEUD_BLOQUE,
   terminees: NOEUD_TERMINE,
   echecs: NOEUD_ECHEC,

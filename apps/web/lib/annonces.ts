@@ -140,6 +140,11 @@ const ETIQUETTES_TACHE: {
 }[] = [
   { statut: "assignee", singulier: "tâche assignée", pluriel: "tâches assignées" },
   { statut: "en_cours", singulier: "tâche en cours", pluriel: "tâches en cours" },
+  {
+    statut: "interrompue",
+    singulier: "tâche interrompue",
+    pluriel: "tâches interrompues",
+  },
   { statut: "bloquee", singulier: "tâche bloquée", pluriel: "tâches bloquées" },
   { statut: "terminee", singulier: "tâche terminée", pluriel: "tâches terminées" },
   { statut: "echec", singulier: "tâche en échec", pluriel: "tâches en échec" },
