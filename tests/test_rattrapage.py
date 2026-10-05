@@ -817,10 +817,10 @@ def test_le_prompt_dit_qu_une_livraison_faite_n_est_pas_un_travail_rate():
     )
     ratee = Tentative(taches=(tache,), agent="dev", role="Développeur", erreur="403")
 
-    assert "c'est sa vérification qui est en panne" in build_rattrapage_user_prompt(
+    assert "c'est sa vérification qui n'a pas abouti" in build_rattrapage_user_prompt(
         EchecDeTache(tache=tache, tentatives=(livree,))
     )
-    assert "c'est sa vérification qui est en panne" not in build_rattrapage_user_prompt(
+    assert "c'est sa vérification qui n'a pas abouti" not in build_rattrapage_user_prompt(
         EchecDeTache(tache=tache, tentatives=(ratee,))
     )
 

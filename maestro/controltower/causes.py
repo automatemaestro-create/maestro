@@ -43,10 +43,14 @@ avoir livré son ticket. Chercher « rate limit » dans ce flux ferait donc nomm
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from maestro.controltower.hote import DemarrageHoteRate
 from maestro.providers.base import TurnLimitReached
 from maestro.telemetry import PlafondDepenseDepasse
+
+if TYPE_CHECKING:
+    from maestro.engine.loop import RunReport
 
 #: Le plafond de tours de l'exécution agentique a été atteint (#91). Depuis #494
 #: aucun agent du dépôt n'en pose plus, donc cette cause désigne un plafond
@@ -88,6 +92,14 @@ CAUSE_ANNULATION = "annulation"
 #: (`hote_detache.main`).
 CAUSE_EXTINCTION = "extinction"
 
+#: **Des tâches ont échoué** (#1432) : le run est allé au bout de son plan, et au
+#: moins une tâche y a fini en échec ou n'a pas pu partir. Rien n'a levé — c'est le
+#: rapport du run qui le dit (`cause_du_rapport`) — et ce n'est pas un fourre-tout :
+#: un fait précis, celui que le passage `20261004-202743` (S12) laissait sans cause
+#: alors que tout le reste d'un run en échec en porte une. Le `detail` dit combien,
+#: et le fil dit lesquelles et pourquoi.
+CAUSE_TACHES_EN_ECHEC = "taches_en_echec"
+
 #: Les causes que ce module sait nommer, dans l'ordre où elles se lisent.
 CAUSES = (
     CAUSE_PLAFOND_TOURS,
@@ -96,6 +108,7 @@ CAUSES = (
     CAUSE_HOTE,
     CAUSE_ANNULATION,
     CAUSE_EXTINCTION,
+    CAUSE_TACHES_EN_ECHEC,
 )
 
 #: Ce qui trahit une limite d'usage du fournisseur dans le message d'un échec.
@@ -174,3 +187,12 @@ def detail_avec_cause(erreur: BaseException) -> tuple[str, str]:
     l'écran doit ranger et teinter, une phrase pour ce qu'un humain doit lire.
     """
     return f"{type(erreur).__name__} : {erreur}", cause_de(erreur)
+
+
+def cause_du_rapport(rapport: RunReport) -> str:
+    """La cause d'un run allé au bout de son plan — `CAUSE_TACHES_EN_ECHEC` s'il échoue (#1432).
+
+    Les trois hôtes (en process, détaché, CLI) soldent le même rapport par les mêmes
+    mots ; ils posent donc aussi la même cause, d'ici. Vide sur un run terminé.
+    """
+    return CAUSE_TACHES_EN_ECHEC if rapport.echouees or rapport.bloquees else ""

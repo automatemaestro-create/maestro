@@ -4921,7 +4921,7 @@ scénarios joue la personne qui **arrête** (S4 pose sa borne pour provoquer un 
 court porté par le résumé, à côté du `detail` qui reste ce qu'il était (`TypeErreur :
 message`). Le partage est celui de la lecture : le **code** dit de quoi il s'agit —
 c'est lui que l'écran range et teinte —, le **détail** dit ce qui s'est passé. Cinq
-codes, plus un sixième arrivé avec #486 :
+codes, plus un sixième arrivé avec #486 et un septième avec #1432 :
 
 | `cause` | ce qui a arrêté le run | ce qu'on en fait |
 | --- | --- | --- |
@@ -4931,12 +4931,19 @@ codes, plus un sixième arrivé avec #486 :
 | `hote_non_demarre` | le process du run n'est jamais parti (#443) | ni tâche, ni coût, ni journal à lire — regarder la machine |
 | `annulation` | quelqu'un a interrompu, ou refusé le brief | rien à réparer |
 | `extinction` | **Maestro s'est éteint** en emportant le run (#486, `start.sh --stop`) | le **reprendre** au redémarrage (§2.1, panneau *Runs qui n'avancent plus*) |
+| `taches_en_echec` | le run est allé au bout de son plan, et des tâches y ont **échoué** ou n'ont pas pu partir (#1432) | lire au fil lesquelles et pourquoi ; le détail dit combien ont réussi |
 
 Le sixième est le seul dont l'écran tire une **conséquence** et pas seulement une
 phrase, et c'est ce qui justifie de ne pas l'avoir fondu dans `annulation` : le statut
 consigné est le même (`annulee`), et seule la cause sépare « on a éteint l'application
 qui tenait ce run » de « quelqu'un a arrêté ce run-là ». Le premier se repropose, le
 second jamais.
+
+Le septième comble un trou, et ce n'est **pas** un fourre-tout : avant #1432, un run allé au bout
+de son plan avec des tâches en échec finissait « Échec » **sans aucune cause** (passage du banc
+`20261004-202743`, S12), alors que tout autre échec en porte une. Le fait est précis, il vient du
+rapport du run (`cause_du_rapport`), et les trois hôtes — en process, détaché, CLI — le posent d'un
+même endroit.
 
 Quatre choses à ne pas défaire. **`""` n'est pas une cause de plus** : un échec que le
 classement ne sait pas ranger n'est pas « inconnu » au sens où il faudrait l'annoncer

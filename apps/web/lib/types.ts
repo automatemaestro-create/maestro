@@ -2062,6 +2062,12 @@ export const CAUSE_LIMITE_USAGE = "limite_usage";
 export const CAUSE_HOTE_NON_DEMARRE = "hote_non_demarre";
 export const CAUSE_ANNULATION = "annulation";
 export const CAUSE_EXTINCTION = "extinction";
+/**
+ * Le run est allé au bout de son plan, et des tâches y ont échoué ou n'ont pas pu
+ * partir (#1432). Un fait précis, pas un fourre-tout : sans lui, un tel run
+ * finissait en « Échec » sans aucune cause, quand tout autre échec en porte une.
+ */
+export const CAUSE_TACHES_EN_ECHEC = "taches_en_echec";
 
 /**
  * Le statut d'une étape d'**activité** (#479) : ce que l'agent fait pendant que

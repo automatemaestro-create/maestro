@@ -71,6 +71,7 @@ import {
   CAUSE_LIMITE_USAGE,
   CAUSE_PLAFOND_COUT,
   CAUSE_PLAFOND_TOURS,
+  CAUSE_TACHES_EN_ECHEC,
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
   EXECUTION_EN_ATTENTE_BRIEF,
@@ -197,7 +198,7 @@ describe("les libellés que la liste emprunte au format", () => {
     expect(libelleStatutExecution("venu-du-futur")).toBe("venu-du-futur");
   });
 
-  it("nomme les six causes d'arrêt et se tait sur ce qu'elle ne sait pas (#479, #486)", () => {
+  it("nomme les sept causes d'arrêt et se tait sur ce qu'elle ne sait pas (#479, #486, #1432)", () => {
     expect(libelleCause(CAUSE_PLAFOND_TOURS)).toBe("Plafond de tours atteint");
     expect(libelleCause(CAUSE_PLAFOND_COUT)).toBe("Plafond de dépense atteint");
     expect(libelleCause(CAUSE_LIMITE_USAGE)).toBe("Limite d'usage du fournisseur");
@@ -207,6 +208,9 @@ describe("les libellés que la liste emprunte au format", () => {
     // ci-dessus (`annulee`), et « Interrompu » tout court ferait chercher qui a
     // cliqué sur quoi après un simple `start.sh --stop`.
     expect(libelleCause(CAUSE_EXTINCTION)).toBe("Maestro s'est éteint");
+    // #1432 — un run allé au bout de son plan, des tâches en échec : il finissait
+    // en « Échec » sans aucune cause, quand tout autre échec en porte une.
+    expect(libelleCause(CAUSE_TACHES_EN_ECHEC)).toBe("Des tâches ont échoué");
     // Une cause absente ou venue d'un backend plus récent ne rend **rien** : la
     // ligne disparaît, plutôt que d'afficher un code brut à l'écran.
     expect(libelleCause(undefined)).toBeNull();

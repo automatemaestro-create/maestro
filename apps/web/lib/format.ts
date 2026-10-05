@@ -7,6 +7,7 @@ import {
   CAUSE_LIMITE_USAGE,
   CAUSE_PLAFOND_COUT,
   CAUSE_PLAFOND_TOURS,
+  CAUSE_TACHES_EN_ECHEC,
   EXECUTION_ANNULEE,
   EXECUTION_ECHEC,
   EXECUTION_EN_ATTENTE_ARBITRAGE,
@@ -547,6 +548,7 @@ const LIBELLES_CAUSE: Record<string, string> = {
   // cause de la précédente : le statut consigné est le même (« annulée »), et
   // « Interrompu » tout court ferait chercher qui a cliqué sur quoi.
   [CAUSE_EXTINCTION]: "Maestro s'est éteint",
+  [CAUSE_TACHES_EN_ECHEC]: "Des tâches ont échoué",
 };
 
 /**
