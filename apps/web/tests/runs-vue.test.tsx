@@ -275,6 +275,24 @@ describe("les quatre cas qui ne se confondent pas", () => {
     ).toBeInTheDocument();
   });
 
+  it("ne promet pas d'événements à un run soldé sans tâche (#1390)", async () => {
+    // Relevé par le regard neuf de #1390, sur un vrai run éteint pendant sa
+    // décomposition : « se remplira dès qu'il publiera ses événements » promettait
+    // une suite à un run qui ne publiera plus rien. Le vide dit ce qui s'est passé.
+    monter({
+      executions: [
+        runFactice({ run_id: RUN, statut: EXECUTION_ANNULEE, cause: CAUSE_EXTINCTION }),
+      ],
+    });
+
+    expect(
+      await screen.findByText(/Maestro s'est éteint avant que ce run publie son plan/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/cette vue se remplira dès qu'il publiera/),
+    ).not.toBeInTheDocument();
+  });
+
   it("montre la bannière et rien d'autre quand l'API est injoignable", async () => {
     // Panne **typée** depuis #996 : rien n'a répondu, ce que la bannière nomme
     // sans avoir à relire un message.

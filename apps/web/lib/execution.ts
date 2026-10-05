@@ -567,7 +567,9 @@ export function runsParRegime(
  *    l'écran taisait (**G11**). Elle ne peut pas précéder le brief : un run arrêté
  *    sur son brief n'est pas du régime `travaille`, donc `estEnDecomposition` rend
  *    déjà `false` — l'ordre est une redondance voulue, pas une condition ;
- * 3. **le reste** — rien à expliquer, seulement à dire que ça viendra.
+ * 3. **le run soldé** (#1390) — il ne publiera plus rien : on dit ce qui s'est
+ *    passé, et, s'il a été éteint, que son objectif reste à faire ;
+ * 4. **le reste** — rien à expliquer, seulement à dire que ça viendra.
  *
  * La phrase ne nomme aucune des quatre lectures depuis #491 : elles la partagent,
  * et un pipeline vide qui promettrait de remplir un tableau désignerait l'écran
@@ -582,6 +584,15 @@ export function messageVideDuRun(
   }
   if (estEnDecomposition(execution)) {
     return "Décomposition en cours : l'orchestrateur écrit le plan de ce run. Ses tâches paraîtront ici toutes ensemble, dès qu'il l'aura publié.";
+  }
+  // Un run **soldé** ne publiera plus rien (#1390) : promettre qu'il le fera
+  // décrivait un run vivant. Le vide dit ce qui s'est passé — et, d'un run
+  // éteint, que tout son objectif reste à faire.
+  if (estEteint(execution)) {
+    return "Aucune tâche : Maestro s'est éteint avant que ce run publie son plan — tout son objectif reste à faire.";
+  }
+  if (estSolde(execution)) {
+    return "Aucune tâche : ce run s'est arrêté avant d'en avoir déclaré une.";
   }
   return "Aucune tâche pour ce run — cette vue se remplira dès qu'il publiera ses événements.";
 }

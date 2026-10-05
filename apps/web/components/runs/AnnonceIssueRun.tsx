@@ -56,8 +56,9 @@
  *   `lib/issueRun`, donc du persisté (voir son en-tête) — c'est le troisième
  *   critère du ticket, et il se perdrait en une ligne ;
  * - **l'état ne tient jamais à la couleur seule** : `IconeStatutTerminee` /
- *   `IconeStatutEchec` sont deux formes, et le libellé dit la même chose en
- *   toutes lettres (filet `a11y.test.tsx`, docs/30 §3.2) ;
+ *   `IconeStatutEchec` / `IconeStatutInterrompue` sont trois formes, et le
+ *   libellé dit la même chose en toutes lettres (filet `a11y.test.tsx`, docs/30
+ *   §3.2) ;
  * - **le chemin reste sélectionnable** : c'est du texte, pas un lien. Un
  *   `file://` serait refusé par la coque (qui ne navigue que sur l'origine
  *   locale) comme par le navigateur (qui bloque `file:` depuis une page http) —
@@ -71,6 +72,7 @@ import {
   IconeCopier,
   IconeDossier,
   IconeStatutEchec,
+  IconeStatutInterrompue,
   IconeStatutTerminee,
 } from "@/components/Icones";
 import { Bouton, CIBLE_MINIMALE, LienRenvoi } from "@/components/Primitives";
@@ -84,6 +86,7 @@ import {
 } from "@/lib/issueRun";
 import { copierTexte, ouvrirDossier, peutOuvrirDossier } from "@/lib/poste";
 import { hrefRun } from "@/lib/navigation";
+import { EXECUTION_ECHEC } from "@/lib/types";
 
 /**
  * L'annonce complète — celle du fil.
@@ -117,8 +120,20 @@ export function AnnonceIssueRun({
   issue: IssueRun;
   compacte?: boolean;
 }) {
-  const Icone = issue.abouti ? IconeStatutTerminee : IconeStatutEchec;
-  const ton = issue.abouti ? "text-positif-texte" : "text-alerte-texte";
+  // Trois fins, trois formes (#1390) : un run **interrompu** — annulé, ou emporté
+  // par l'extinction de Maestro — n'a pas échoué, et la croix rouge de l'échec le
+  // disait. Il prend le carré d'arrêt de son badge, au ton du texte secondaire.
+  const echoue = issue.execution.statut === EXECUTION_ECHEC;
+  const Icone = issue.abouti
+    ? IconeStatutTerminee
+    : echoue
+      ? IconeStatutEchec
+      : IconeStatutInterrompue;
+  const ton = issue.abouti
+    ? "text-positif-texte"
+    : echoue
+      ? "text-alerte-texte"
+      : "text-texte-secondaire";
   const fin = issue.execution.fin ?? "";
   const run = hrefRun(issue.execution.run_id);
   // Les faits, séparés par le **point médian** que le fil emploie partout

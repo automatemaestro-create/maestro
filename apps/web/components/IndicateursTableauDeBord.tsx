@@ -55,6 +55,7 @@ import {
  * ce sont ses colonnes à lui, et les deux composants évoluent séparément.
  */
 const STATUT_EN_COURS = "en_cours";
+const STATUT_INTERROMPUE = "interrompue";
 const STATUT_BLOQUEE = "bloquee";
 const STATUT_ECHEC = "echec";
 
@@ -238,7 +239,10 @@ export function IndicateursTableauDeBord({
       libelle: "Tâches",
       icone: IconeTache,
       valeur: String(taches.length),
-      detail: `${compte(STATUT_EN_COURS)} en cours · ${compte(STATUT_BLOQUEE)} bloquée(s) · ${compte(STATUT_ECHEC)} échec(s)`,
+      // Les interrompues (#1390) ne s'y disent que quand il y en a : un run que
+      // Maestro a emporté en s'éteignant laisse son travail à reprendre, et la
+      // tuile qui ne comptait que « 0 en cours · 0 échec(s) » le taisait.
+      detail: `${compte(STATUT_EN_COURS)} en cours${compte(STATUT_INTERROMPUE) > 0 ? ` · ${compte(STATUT_INTERROMPUE)} interrompue(s)` : ""} · ${compte(STATUT_BLOQUEE)} bloquée(s) · ${compte(STATUT_ECHEC)} échec(s)`,
     },
     {
       libelle: "Agents",
