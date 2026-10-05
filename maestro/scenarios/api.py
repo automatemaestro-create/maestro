@@ -873,23 +873,39 @@ def equipe_validee(proposition: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def cle_demande(demande: Mapping[str, Any]) -> tuple[str, str, str]:
-    """L'identité d'une demande de validation aux yeux du banc — tâche **et** acte (#1198).
+def cle_demande(demande: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    """L'identité d'une demande de validation aux yeux du banc — tâche, acte, espèce et
+    instant (#1198, #1434).
 
     Le pendant de `maestro.deliberation.cle_acte` de ce côté-ci de l'API : la
     tâche situe la demande, l'acte la distingue de la suivante. Les arguments
     sont sérialisés **clés triées**, pour que deux lectures du même acte donnent
     la même clé quel que soit l'ordre rendu par le JSON.
 
-    Une demande qui ne porte pas d'acte — validation de tâche, accord
-    d'écriture — se réduit à sa tâche, exactement comme avant : elle est seule de
-    son espèce sur cette tâche.
+    ⚠ **Une demande sans acte n'est pas seule de son espèce sur sa tâche** (#1434).
+    Validation de tâche et accord d'écriture (#706) se réduisaient tous deux à
+    `(tache, "", "")` : le 2026-10-05, S12 a vu l'accord de fusion de
+    `initialiser-projet` arriver après une validation déjà approuvée sur la même
+    tâche, le banc l'a prise pour celle-ci et ne l'a jamais tranchée — 23 minutes
+    de run suspendu, jusqu'au geste d'une personne. Le `titre` distingue donc
+    l'**espèce** (celui de la tâche, ou « Écrire dans le projet … au fil de ce
+    run »), et l'`horodatage` — celui de la publication, que seule la décision
+    réécrit, quand la demande a déjà quitté l'attente — l'**instance** : une
+    demande reposée, par un run repris par exemple, est une nouvelle demande.
+
+    Une même demande relue reste une seule clé, ce pour quoi le banc retient ce
+    qu'il a tranché : rien de ce qui la compose ne bouge tant qu'elle attend.
+    L'horodatage est à la seconde : deux demandes de même espèce sur la même
+    tâche publiées dans la même seconde se confondraient, ce qu'aucun produit ne
+    fait — une tâche travaille entre deux demandes.
     """
     arguments = demande.get("arguments")
     return (
         str(demande.get("tache_id") or ""),
         str(demande.get("outil") or ""),
         json.dumps(arguments, sort_keys=True, ensure_ascii=False) if arguments else "",
+        str(demande.get("titre") or ""),
+        str(demande.get("horodatage") or ""),
     )
 
 
@@ -928,7 +944,9 @@ def attendre_le_run(
     demandes, une seule approuvée, run rouge. L'identité retenue est donc celle
     que le moteur utilise pour ses propres décisions (`maestro.deliberation`) :
     la tâche **et** l'acte. Deux appels au même acte ne reviennent de toute façon
-    pas ici, le moteur leur servant la décision qu'il a gardée.
+    pas ici, le moteur leur servant la décision qu'il a gardée. Une demande sans
+    acte s'y reconnaît à son titre et à son instant (#1434, `cle_demande`) : sur
+    une même tâche, la validation et l'accord d'écriture sont deux demandes.
 
     `arbitrages` (#1226) reçoit l'**outil** de chaque demande tranchée, dans
     l'ordre. Ce n'est pas une commodité de trace : un scénario dont l'oracle est
@@ -956,7 +974,7 @@ def attendre_le_run(
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
     limite = horloge() + delai_s
-    tranchees: set[tuple[str, str, str]] = set()
+    tranchees: set[tuple[str, str, str, str, str]] = set()
     detail = client.execution(run_id, projet_id=projet_id)
     while True:
         statut = str(detail.get("statut") or "")
