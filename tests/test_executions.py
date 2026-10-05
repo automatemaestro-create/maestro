@@ -69,7 +69,7 @@ from maestro.controltower import (
     InMemoryEventLog,
     create_app,
 )
-from maestro.controltower.causes import CAUSE_ANNULATION
+from maestro.controltower.causes import CAUSE_ANNULATION, CAUSE_TACHES_EN_ECHEC
 from maestro.controltower.events import ReferenceTicket
 from maestro.controltower.state import (
     AGENT_LIBRE,
@@ -289,6 +289,7 @@ def test_l_issue_du_run_est_consignee_et_lisible(state):
         run_id = client.post("/api/executions", json={"objectif": "Prototyper"}).json()["run_id"]
         resume = attendre_statut(client, run_id, EXECUTION_TERMINEE)
         assert resume["fin"] is not None  # bornes temporelles closes
+        assert resume["cause"] == ""  # un run terminé n'a pas de cause d'arrêt
 
         detail = client.get(f"/api/executions/{run_id}").json()
 
@@ -308,6 +309,9 @@ def test_une_tache_en_echec_solde_le_run_en_echec(state):
         resume = attendre_statut(client, run_id, EXECUTION_ECHEC)
 
     assert resume["statut"] == EXECUTION_ECHEC
+    # #1432 — un run allé au bout de son plan, une tâche en échec : il porte sa
+    # cause, comme tout autre échec, au lieu d'une chaîne vide.
+    assert resume["cause"] == CAUSE_TACHES_EN_ECHEC
 
 
 def test_une_erreur_du_moteur_devient_le_statut_du_run(state):

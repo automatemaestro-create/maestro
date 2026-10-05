@@ -21,7 +21,9 @@ Critères couverts :
   sans rattrapage — et le prompt du vérificateur est borné en entier, noms compris ;
 ⑤ une livraison que le vérificateur n'a pas pu juger **se demande** (#1396) : le
   Chef de projet pose la question, ne refait rien, et la personne peut accepter la
-  livraison d'un geste — ou répondre en mots, qu'il lit avec le fait typé.
+  livraison d'un geste — ou répondre en mots, qu'il lit avec le fait typé ;
+⑥ un service se démarre, se sonde et s'arrête par Maestro, et une commande que le
+  système refuse de lancer est nommée sans jeter la livraison (#1432).
 """
 
 from __future__ import annotations
@@ -999,7 +1001,7 @@ def test_une_reponse_ecrite_va_au_chef_de_projet_avec_le_fait_type():
 
     (prompt,) = chef.rattrapages
     assert "Relancez la vérification demain." in prompt
-    assert "c'est sa vérification qui est en panne" in prompt
+    assert "c'est sa vérification qui n'a pas abouti" in prompt
     assert len(agent.sessions) == 1
     assert rapport.resultats[0].statut == STATUT_ECHEC
 
@@ -1609,3 +1611,371 @@ def test_la_commande_est_jouee_pour_de_vrai_dans_l_espace_de_l_agent():
     assert rapport.resultats[0].ok, rapport.resultats[0].erreur
     assert len(agent.sessions) == 2
     assert f"`{_COMMANDE}` a rendu le code 1" in agent.sessions[1]
+
+
+# --------------------------------------------------------------------------- #
+# ⑥ Un service se démarre, se sonde, s'arrête — et un lancement refusé ne jette
+#   pas la livraison (#1432)
+# --------------------------------------------------------------------------- #
+
+#: Le critère que le passage `20261004-202743` (S12) n'a pas pu jouer.
+_CRITERE_SERVEUR = "Avec PORT=4123, « npm start » répond 200 à GET http://localhost:4123/."
+_SERVICE = "PORT=4123 npm start"
+_SONDE = "curl -s -o /dev/null -w '%{http_code}' http://localhost:4123/ | grep -qx 200"
+
+
+def _refus_du_systeme() -> PermissionError:
+    """Ce que `subprocess.Popen` lève quand Windows refuse de créer le processus.
+
+    Mesuré sur le poste le 2026-10-05 : l'antivirus prend la ligne de commande pour
+    un cheval de Troie (`Trojan:Win32/SuspExec.SE`) et `CreateProcess` rend
+    `ERROR_ACCESS_DENIED` — `PermissionError(13, 'Accès refusé', None, 5)`.
+    """
+    return PermissionError(13, "Accès refusé", None, 5)
+
+
+def test_une_commande_que_le_systeme_refuse_de_lancer_ne_jette_pas_la_livraison():
+    """S12, run `b223d0547c04` : trois critères tenus, le quatrième jamais lancé.
+
+    La tâche était vidée (« l'interpréteur n'a pas pu la lancer »), puis jugée par le
+    Chef de projet comme un échec ordinaire. Le juge dit désormais que c'est **lui**
+    qui n'a pas pu lancer sa commande, avec la réponse du système, et la tâche garde
+    sa livraison : ni redécoupage, ni seconde session.
+    """
+    agent = AgentEtVerificateur(
+        [{"bonjour.txt": "Bonjour"}],
+        {
+            "Écrire le salut": [
+                {
+                    "controles": [
+                        {"critere": _CRITERE, "commande": _COMMANDE},
+                        {"critere": _CRITERE_SERVEUR, "commande": "node.exe -e 'refusé'"},
+                    ]
+                }
+            ]
+        },
+    )
+
+    def joueur(commande, cwd, *, interprete, delai_s):
+        if commande == _COMMANDE:
+            return joueur_grep(commande, cwd, interprete=interprete, delai_s=delai_s)
+        raise _refus_du_systeme()
+
+    chef = ChefQuiCompte(_plan(_SALUT, _SUITE))
+    moteur = OrchestrationEngine(
+        agent,
+        Orchestrator(chef, model="claude-opus-4-8"),
+        relance=PolitiqueRelance(max_tentatives=3, backoff_s=0),
+        rattrapage=PolitiqueRattrapage(),
+        verificateur=VerificateurTaches(agent, joueur=joueur, interprete=_INTERPRETE),
+    )
+    journal = RunJournal(run_id="run-1432")
+
+    rapport = asyncio.run(moteur.run("Salut", journal=journal))
+
+    salut, suite = rapport.resultats
+    # La panne est nommée pour ce qu'elle est, avec la cause système…
+    assert "le juge n'a pas pu la lancer — le système a répondu" in salut.erreur
+    assert "Accès refusé" in salut.erreur
+    assert "[tenu]" in salut.erreur  # …à côté de ce qui a tenu.
+    # …et la tâche garde sa livraison, comme pour un juge en panne (#1388).
+    assert salut.statut == STATUT_ECHEC
+    assert salut.verification_en_panne
+    assert salut.sortie == "J'ai livré (session 1)."
+    assert [f.chemin for f in salut.fichiers] == ["bonjour.txt"]
+    assert salut.erreur.startswith("livrée, non vérifiée")
+    # Rien n'est refait : une session d'agent, aucun rattrapage.
+    assert len(agent.sessions) == 1
+    assert chef.rattrapages == []
+    assert suite.statut == STATUT_BLOQUEE
+    (etape,) = _verifications(journal, "salut")
+    assert etape.statut == STATUT_VERIFICATION_IMPOSSIBLE
+
+
+def test_une_livraison_que_le_juge_n_a_pas_pu_jouer_se_demande():
+    """Le même cas, quelqu'un à qui demander : la carte offre de prendre la livraison."""
+    questions: list[DemandeQuestion] = []
+
+    async def personne(demande: DemandeQuestion) -> str:
+        questions.append(demande)
+        await asyncio.Event().wait()
+        return ""
+
+    agent = AgentEtVerificateur(
+        [{"bonjour.txt": "Bonjour"}],
+        {
+            "Écrire le salut": [
+                {"controles": [{"critere": _CRITERE_SERVEUR, "commande": "refusée"}]}
+            ]
+        },
+    )
+
+    def joueur(*args, **kwargs):
+        raise _refus_du_systeme()
+
+    chef = ChefQuiCompte(_plan(_SALUT))
+    moteur = OrchestrationEngine(
+        agent,
+        Orchestrator(chef, model="claude-opus-4-8"),
+        relance=PolitiqueRelance(max_tentatives=3, backoff_s=0),
+        rattrapage=PolitiqueRattrapage(),
+        verificateur=VerificateurTaches(agent, joueur=joueur, interprete=_INTERPRETE),
+        questionneur=personne,
+        bornes_question=BornesArbitrage(attente_s=0.05),
+    )
+
+    (salut,) = asyncio.run(moteur.run("Salut")).resultats
+
+    (question,) = questions
+    assert question.choix == (CHOIX_LIVRAISON_ACCEPTEE,)
+    assert "sa vérification n'a pas abouti" in question.question
+    assert "le juge n'a pas pu la lancer" in question.question
+    assert chef.rattrapages == []
+    assert salut.verification_en_panne and salut.sortie == "J'ai livré (session 1)."
+
+
+def _demarreur_qui_rend(resultat, appels: list[dict[str, Any]]):
+    def demarreur(commande, cwd, *, interprete, sonde, delai_s, delai_sonde_s):
+        appels.append(
+            {"commande": commande, "sonde": sonde, "delai_s": delai_s, "sonde_s": delai_sonde_s}
+        )
+        if isinstance(resultat, BaseException):
+            raise resultat
+        return resultat
+
+    return demarreur
+
+
+def _verifier_le_serveur(tmp_path, demarreur, *, controle=None):
+    reponse = json.dumps(
+        {
+            "controles": [
+                controle
+                or {"critere": _CRITERE_SERVEUR, "commande": _SERVICE, "sonde": _SONDE}
+            ]
+        }
+    )
+
+    def joueur(*args, **kwargs):  # pragma: no cover — un service sondé ne passe pas par lui
+        raise AssertionError("un démarrage sondé a été joué comme une commande")
+
+    verificateur = VerificateurTaches(
+        _Reponses(reponse),
+        delais=DelaisVerification(commande_s=90.0, demarrage_s=2.0, sonde_s=7.0),
+        joueur=joueur,
+        demarreur=demarreur,
+        interprete=_INTERPRETE,
+    )
+    return asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+
+def _demarrage(**champs: Any) -> Any:
+    from maestro.sandbox.verification import Demarrage
+
+    base: dict[str, Any] = {
+        "repondu": False,
+        "code": None,
+        "sortie": "",
+        "sonde": Execution(code=7, sortie="", duree_s=0.1),
+        "duree_s": 3.0,
+    }
+    return Demarrage(**{**base, **champs})
+
+
+def test_un_service_qui_repond_a_sa_sonde_tient(tmp_path):
+    """Maestro démarre, sonde, arrête : la commande du juge ne fait que démarrer."""
+    appels: list[dict[str, Any]] = []
+    demarreur = _demarreur_qui_rend(
+        _demarrage(repondu=True, sonde=Execution(code=0, sortie="", duree_s=0.1)), appels
+    )
+
+    controles, verdict = _verifier_le_serveur(tmp_path, demarreur)
+
+    assert verdict.tenue
+    (controle,) = controles
+    # Une sonde fait du contrôle un démarrage, et elle est établie avec lui.
+    assert controle.demarrage and controle.sonde == _SONDE
+    assert appels == [{"commande": _SERVICE, "sonde": _SONDE, "delai_s": 90.0, "sonde_s": 7.0}]
+    assert "a répondu à la sonde" in verdict.constats[0].preuve
+
+
+def test_un_service_qui_ne_repond_pas_a_temps_revient_a_l_agent(tmp_path):
+    demarreur = _demarreur_qui_rend(_demarrage(sortie="Error: listen EADDRINUSE"), [])
+
+    _, verdict = _verifier_le_serveur(tmp_path, demarreur)
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_TENU
+    assert constat.preuve.startswith("le service n'a pas répondu à la sonde")
+    assert "EADDRINUSE" in constat.preuve
+    # Une sonde qui n'a rien écrit n'ajoute rien à la preuve.
+    assert "dernière sonde" not in constat.preuve
+
+
+def test_un_service_qui_s_arrete_avant_de_repondre_ne_tient_pas(tmp_path):
+    demarreur = _demarreur_qui_rend(_demarrage(code=1, sortie="next: not found"), [])
+
+    _, verdict = _verifier_le_serveur(tmp_path, demarreur)
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_TENU
+    assert constat.code == 1
+    assert constat.preuve.startswith("le service a rendu la main (code 1)")
+    assert "next: not found" in constat.preuve
+
+
+def test_une_sonde_qui_repond_avant_le_service_ne_prouve_rien(tmp_path):
+    """Un port déjà tenu par un autre processus : ce qui répond n'est pas le service."""
+    demarreur = _demarreur_qui_rend(
+        _demarrage(deja=True, sonde=Execution(code=0, sortie="", duree_s=0.1)), []
+    )
+
+    _, verdict = _verifier_le_serveur(tmp_path, demarreur)
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_JOUE
+    assert "tenait avant que le service ne démarre" in constat.preuve
+    assert not verdict.tenue
+
+
+def test_un_service_ou_une_sonde_que_le_systeme_refuse_se_nomme(tmp_path):
+    from maestro.sandbox.verification import SondeNonLancee
+
+    _, service = _verifier_le_serveur(tmp_path, _demarreur_qui_rend(_refus_du_systeme(), []))
+    _, sonde = _verifier_le_serveur(
+        tmp_path, _demarreur_qui_rend(SondeNonLancee(13, "Accès refusé", None, 5), [])
+    )
+
+    assert service.constats[0].etat == CONSTAT_NON_JOUE
+    assert service.constats[0].preuve.startswith("le juge n'a pas pu lancer le service")
+    assert sonde.constats[0].preuve.startswith("le juge n'a pas pu lancer sa sonde")
+    assert "Accès refusé" in sonde.constats[0].preuve
+
+
+def test_une_sonde_passe_la_portee_comme_une_commande(tmp_path):
+    """Une sonde hors de la portée n'est pas jouée — le vérificateur la réécrit d'abord."""
+    provider = _Reponses(
+        json.dumps(
+            {
+                "controles": [
+                    {"critere": _CRITERE_SERVEUR, "commande": _SERVICE, "sonde": HORS_PORTEE}
+                ]
+            }
+        ),
+        json.dumps({"commandes": [{"n": 1, "commande": _SERVICE, "sonde": _SONDE}]}),
+    )
+    appels: list[dict[str, Any]] = []
+    verificateur = VerificateurTaches(
+        provider,
+        demarreur=_demarreur_qui_rend(
+            _demarrage(repondu=True, sonde=Execution(0, "", 0.1)), appels
+        ),
+        interprete=_INTERPRETE,
+    )
+
+    controles, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    assert "sa sonde :" in provider.prompts[1]
+    assert [a["sonde"] for a in appels] == [_SONDE]
+    assert controles[0].sonde == _SONDE and controles[0].demarrage
+    assert verdict.tenue
+
+
+def test_le_juge_apprend_a_sonder_un_service_plutot_qu_a_l_attendre_lui_meme():
+    """La règle d'écriture que S12 n'avait pas : démarrer seulement, la sonde à part."""
+    assert '"sonde"' in SYSTEME
+    assert "n'y écris ni l'attente, ni la sonde, ni" in SYSTEME
+
+
+# --------------------------------------------------------------------------- #
+# Pour de vrai : le service démarré, sondé et arrêté par le bash des agents
+# --------------------------------------------------------------------------- #
+
+
+def _bash_ou_rien() -> tuple[str, ...]:
+    from maestro.sandbox.verification import interprete
+
+    trouve = interprete()
+    if trouve is None:  # pragma: no cover — poste sans bash
+        pytest.skip("aucun bash sur ce poste")
+    return trouve
+
+
+@pytest.mark.commandes_jouees
+def test_un_service_se_demarre_repond_puis_est_arrete_pour_de_vrai(tmp_path):
+    """Un service qui bat tant qu'il vit : il répond, puis plus rien ne bat."""
+    import time
+
+    from maestro.sandbox.verification import demarrer
+
+    bash = _bash_ou_rien()
+    service = "sleep 1; touch pret; while true; do date > battement; sleep 0.2; done"
+
+    debut = time.monotonic()
+    resultat = demarrer(
+        service, tmp_path, interprete=bash, sonde="test -f pret", delai_s=30, delai_sonde_s=5
+    )
+
+    assert resultat.repondu and not resultat.deja and resultat.code is None
+    assert time.monotonic() - debut < 15
+    # Arrêté avec sa descendance : la boucle ne bat plus.
+    battement = (tmp_path / "battement").stat().st_mtime_ns
+    time.sleep(1.0)
+    assert (tmp_path / "battement").stat().st_mtime_ns == battement
+
+
+@pytest.mark.commandes_jouees
+def test_un_service_qui_meurt_ou_qui_se_tait_ne_repond_pas_pour_de_vrai(tmp_path):
+    import time
+
+    from maestro.sandbox.verification import demarrer
+
+    bash = _bash_ou_rien()
+    mort = demarrer(
+        "echo boum; exit 3",
+        tmp_path,
+        interprete=bash,
+        sonde="test -f jamais",
+        delai_s=30,
+        delai_sonde_s=5,
+    )
+    debut = time.monotonic()
+    muet = demarrer(
+        "sleep 60", tmp_path, interprete=bash, sonde="test -f jamais", delai_s=3, delai_sonde_s=2
+    )
+
+    assert (mort.repondu, mort.code, mort.sortie) == (False, 3, "boum")
+    assert (muet.repondu, muet.code) == (False, None)
+    assert time.monotonic() - debut < 12
+
+
+@pytest.mark.commandes_jouees
+def test_une_sonde_qui_tient_deja_ne_demarre_rien_pour_de_vrai(tmp_path):
+    from maestro.sandbox.verification import demarrer
+
+    bash = _bash_ou_rien()
+    (tmp_path / "pret").write_text("", encoding="utf-8")
+
+    resultat = demarrer(
+        "touch lance; sleep 30",
+        tmp_path,
+        interprete=bash,
+        sonde="test -f pret",
+        delai_s=10,
+        delai_sonde_s=5,
+    )
+
+    assert resultat.deja and not resultat.repondu
+    assert not (tmp_path / "lance").exists()

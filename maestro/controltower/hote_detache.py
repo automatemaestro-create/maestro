@@ -170,7 +170,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from maestro.controltower.bridge import solder_le_run
-from maestro.controltower.causes import CAUSE_ANNULATION, detail_avec_cause
+from maestro.controltower.causes import (
+    CAUSE_ANNULATION,
+    cause_du_rapport,
+    detail_avec_cause,
+)
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EventBus,
@@ -999,6 +1003,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         echouees = len(rapport.echouees) + len(rapport.bloquees)
         statut = EXECUTION_ECHEC if echouees else EXECUTION_TERMINEE
         detail = f"{len(rapport.reussies)}/{len(rapport.resultats)} tâche(s) réussie(s)"
+        cause = cause_du_rapport(rapport)
         code = 0 if not rapport.echouees else 1
     finally:
         # Le cœur s'arrête avec le run, quelle qu'en soit l'issue, et **n'efface

@@ -136,8 +136,10 @@ from maestro.controltower.causes import (
     CAUSE_LIMITE_USAGE,
     CAUSE_PLAFOND_COUT,
     CAUSE_PLAFOND_TOURS,
+    CAUSE_TACHES_EN_ECHEC,
     CAUSES,
     cause_de,
+    cause_du_rapport,
     detail_avec_cause,
 )
 from maestro.controltower.chat import (
@@ -288,6 +290,7 @@ __all__ = [
     "CAUSE_LIMITE_USAGE",
     "CAUSE_PLAFOND_COUT",
     "CAUSE_PLAFOND_TOURS",
+    "CAUSE_TACHES_EN_ECHEC",
     "CONVERSATION_ORIGINE",
     "DELAI_ANNULATION_S",
     "EVENEMENT_AGENT_ACTIVITE",
@@ -409,6 +412,7 @@ __all__ = [
     "batteur_redis",
     "bus_durable",
     "cause_de",
+    "cause_du_rapport",
     "chemin_sqlite",
     "create_app",
     "create_default_app",

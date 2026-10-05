@@ -485,6 +485,45 @@ def test_la_cause_vient_en_plus_du_detail_jamais_a_sa_place():
     assert cause == CAUSE_PLAFOND_COUT
 
 
+def test_un_run_aux_taches_en_echec_porte_sa_cause_et_un_run_termine_aucune():
+    """Passage `20261004-202743`, S12 : 0/5 tâches, run en échec, cause vide (#1432).
+
+    Une tâche en échec, ou seulement bloquée en aval, suffit ; un run terminé n'a
+    pas de cause d'arrêt.
+    """
+    from maestro.controltower.causes import CAUSE_TACHES_EN_ECHEC, cause_du_rapport
+    from maestro.engine import (
+        STATUT_BLOQUEE,
+        STATUT_ECHEC,
+        STATUT_TERMINEE,
+        RunReport,
+        TaskResult,
+    )
+
+    def rapport(*statuts: str) -> RunReport:
+        return RunReport(
+            objectif="o",
+            resultats=tuple(
+                TaskResult(
+                    task_id=f"t{rang}",
+                    titre="T",
+                    agent="dev",
+                    role="Développeur",
+                    competences_requises=("backend",),
+                    score=1,
+                    statut=statut,
+                    sortie="",
+                )
+                for rang, statut in enumerate(statuts)
+            ),
+        )
+
+    assert cause_du_rapport(rapport(STATUT_TERMINEE, STATUT_ECHEC)) == CAUSE_TACHES_EN_ECHEC
+    assert cause_du_rapport(rapport(STATUT_BLOQUEE)) == CAUSE_TACHES_EN_ECHEC
+    assert cause_du_rapport(rapport(STATUT_TERMINEE)) == ""
+    assert CAUSE_TACHES_EN_ECHEC in CAUSES
+
+
 # ---------------------------------------- ②b La cause voyage, et se pose
 
 

@@ -675,6 +675,7 @@ from maestro.controltower.causes import (
     CAUSE_LIMITE_USAGE,
     CAUSE_PLAFOND_COUT,
     CAUSE_PLAFOND_TOURS,
+    CAUSE_TACHES_EN_ECHEC,
     cause_lisible,
 )
 from maestro.controltower.chat import (
@@ -1575,6 +1576,7 @@ _LIBELLES_CAUSE = {
     CAUSE_HOTE: "L'hôte du run n'a pas démarré",
     CAUSE_ANNULATION: "Interrompu",
     CAUSE_EXTINCTION: "Maestro s'est éteint",
+    CAUSE_TACHES_EN_ECHEC: "Des tâches ont échoué",
 }
 
 

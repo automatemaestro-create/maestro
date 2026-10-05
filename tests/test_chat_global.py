@@ -83,7 +83,7 @@ from fastapi.testclient import TestClient
 from maestro.agents.store import AgentStore
 from maestro.controltower.app import create_app
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
-from maestro.controltower.causes import CAUSE_PLAFOND_COUT
+from maestro.controltower.causes import CAUSE_PLAFOND_COUT, CAUSE_TACHES_EN_ECHEC
 from maestro.controltower.chat import (
     CHAMPS_DE_DEMANDE,
     CONVERSATION_ORIGINE,
@@ -816,6 +816,20 @@ def test_une_cause_que_le_fil_ne_connait_pas_ne_sort_pas_en_code_brut() -> None:
 
     assert "cause_inedite" not in faits
     assert "quelque chose a cassé" in faits
+
+
+def test_un_run_aux_taches_en_echec_le_dit_dans_le_fil() -> None:
+    """#1432 : la cause posée au bout du plan est dite comme l'écran la dit."""
+    state = ControlTowerState()
+    state.appliquer(_lancement("run-rouge", "Construire le livre de recettes", PROJET))
+    state.appliquer(
+        _issue("run-rouge", EXECUTION_ECHEC, "0/5 tâche(s) réussie(s)", cause=CAUSE_TACHES_EN_ECHEC)
+    )
+
+    faits = faits_des_runs(state)(PROJET, ())
+
+    assert "Des tâches ont échoué" in faits
+    assert CAUSE_TACHES_EN_ECHEC not in faits
 
 
 def test_un_run_ouvert_par_ce_fil_entre_meme_s_il_n_a_pas_de_projet() -> None:

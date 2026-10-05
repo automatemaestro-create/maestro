@@ -77,6 +77,7 @@ from maestro.controltower.brief import (
     ArbitreBriefControlTower,
     ArbitreClarificationControlTower,
 )
+from maestro.controltower.causes import CAUSE_TACHES_EN_ECHEC
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EVENEMENT_TACHE_STATUT,
@@ -751,6 +752,7 @@ def joue_main(
     moteur: Any,
     *,
     bus: Any = None,
+    causes: list[str] | None = None,
     **ordre_kw: Any,
 ) -> tuple[int, list[tuple[str, str, str]], list[str]]:
     """Joue le **process fils** en entier, et rend `(code, issues publiées, battements)`.
@@ -782,8 +784,10 @@ def joue_main(
     battus: list[str] = []
     issues: list[tuple[str, str, str]] = []
 
-    def solder(run_id: str, statut: str, detail: str = "", **_kwargs: Any) -> bool:
+    def solder(run_id: str, statut: str, detail: str = "", **kwargs: Any) -> bool:
         issues.append((run_id, statut, detail))
+        if causes is not None:
+            causes.append(kwargs.get("cause", ""))
         return True
 
     sans_redis(monkeypatch)
@@ -2142,7 +2146,10 @@ def test_les_deux_hotes_racontent_la_meme_issue_du_meme_rapport(
         resultats=(resultat("t1"), resultat("t2", STATUT_ECHEC)),
     )
 
-    _, issues, _ = joue_main(monkeypatch, tmp_path, MoteurScripte(rapport=rapport))
+    causes: list[str] = []
+    _, issues, _ = joue_main(
+        monkeypatch, tmp_path, MoteurScripte(rapport=rapport), causes=causes
+    )
     capsys.readouterr()
 
     projection = ControlTowerState()
@@ -2159,6 +2166,8 @@ def test_les_deux_hotes_racontent_la_meme_issue_du_meme_rapport(
     _, statut, detail = issues[0]
     assert (statut, detail) == (en_process.statut, en_process.detail)
     assert (statut, detail) == (EXECUTION_ECHEC, "1/2 tâche(s) réussie(s)")
+    # #1432 — et la même cause : un run en échec n'en porte jamais une vide.
+    assert causes == [en_process.cause] == [CAUSE_TACHES_EN_ECHEC]
 
 
 def test_une_annulation_ne_republie_rien(

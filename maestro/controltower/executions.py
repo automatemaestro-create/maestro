@@ -199,6 +199,7 @@ from maestro.controltower.causes import (
     CAUSE_PLAFOND_COUT,
     CAUSE_PLAFOND_TOURS,
     cause_de,
+    cause_du_rapport,
     detail_avec_cause,
 )
 from maestro.controltower.events import (
@@ -1829,6 +1830,7 @@ class ServiceExecutions:
             EXECUTION_ECHEC if echouees else EXECUTION_TERMINEE,
             "",
             f"{len(rapport.reussies)}/{total} tâche(s) réussie(s)",
+            cause=cause_du_rapport(rapport),
         )
         # Le battement s'efface **après** le statut terminal, jamais avant : entre
         # les deux, un lecteur verrait un run encore `en_cours` sans battement,

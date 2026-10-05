@@ -438,6 +438,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         CAUSE_ANNULATION as _CAUSE_ANNULATION,
     )
     from maestro.controltower.causes import (
+        cause_du_rapport as _cause_du_rapport,
+    )
+    from maestro.controltower.causes import (
         detail_avec_cause as _detail_avec_cause,
     )
     from maestro.controltower.state import (
@@ -535,6 +538,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             journal.run_id,
             EXECUTION_ECHEC if echouees else EXECUTION_TERMINEE,
             f"{len(report.reussies)}/{len(report.resultats)} tâche(s) réussie(s)",
+            _cause_du_rapport(report),
         )
 
     if notificateur is not None:

@@ -67,8 +67,23 @@ critères tiennent, après combien de livraisons, pourquoi la boucle s'est arrê
 et chaque preuve. **Ce n'est jamais un vert.**
 
 Un contrôle **non joué** (portée, pas de bash, pas d'espace pour un livrable
-texte) n'est ni tenu ni non tenu : il empêche le vert — ce qu'on n'a pas vérifié
-n'est pas vérifié —, mais il ne revient pas à l'agent, qui n'y peut rien.
+texte, une commande que le système refuse de lancer) n'est ni tenu ni non tenu :
+il empêche le vert — ce qu'on n'a pas vérifié n'est pas vérifié —, mais il ne
+revient pas à l'agent, qui n'y peut rien. Et quand rien d'autre n'a été constaté
+faux, la livraison est **gardée** (`LivraisonNonVerifiee`, #1432), comme pour un
+vérificateur en panne : c'est le juge qui n'a pas pu aller au bout, pas l'agent
+qui a échoué — et la jeter faisait refaire un travail que trois critères sur
+quatre venaient de tenir (passage du banc `20261004-202743`, S12).
+
+## Un service se démarre, se sonde, s'arrête (#1432)
+
+Un critère comme « le serveur répond 200 » se constate par un contrôle de
+**démarrage sondé** : la commande démarre le service, sans plus, et sa **sonde**
+constate une fois qu'il répond. Maestro démarre, rejoue la sonde jusqu'à ce
+qu'elle tienne, puis arrête le service avec sa descendance
+(`maestro.sandbox.verification.demarrer`). Le juge écrivait sinon l'attente et
+l'arrêt lui-même — un `node -e` qui lançait, interrogeait puis tuait le serveur,
+qu'un antivirus a pris pour un cheval de Troie et que Windows a refusé de lancer.
 
 ## Un vérificateur en panne n'est pas un agent en échec (#1388)
 
@@ -173,11 +188,16 @@ class DelaisVerification:
     une à deux minutes. Au-delà, la commande est arrêtée avec sa descendance, et
     elle **ne tient pas** — elle n'a pas rendu la main, ce qu'un critère ne peut
     pas tenir pour vrai. `demarrage_s` est la fenêtre d'observation d'un contrôle
-    de démarrage : un service qui tourne encore au bout de ce temps a démarré.
+    de démarrage **sans sonde** : un service qui tourne encore au bout de ce temps
+    a démarré. Un démarrage **sondé** (#1432) est borné par `commande_s` — il
+    s'arrête dès que le service répond, et un service qu'on construit avant de le
+    servir prend le temps d'une construction —, chaque passage de sa sonde par
+    `sonde_s`.
     """
 
     commande_s: float = 300.0
     demarrage_s: float = 15.0
+    sonde_s: float = 15.0
 
 
 @dataclass(frozen=True)
@@ -187,18 +207,28 @@ class Controle:
     `commande` non vide : un contrôle **joué** — son code de retour tranche.
     Sinon `lecture` dit ce qu'on doit constater en lisant le livrable, et c'est le
     vérificateur qui le juge. `demarrage` : la commande lance un service qui ne
-    rend pas la main quand il marche.
+    rend pas la main quand il marche. `sonde` (#1432) : la commande qui constate
+    une fois que ce service **répond** — Maestro la rejoue tant qu'il tourne, puis
+    l'arrête (`maestro.sandbox.verification.demarrer`) ; une sonde fait du
+    contrôle un démarrage.
     """
 
     critere: str
     commande: str = ""
     lecture: str = ""
     demarrage: bool = False
+    sonde: str = ""
 
     @property
     def joue(self) -> bool:
         """Le contrôle se constate-t-il en exécutant ?"""
         return bool(self.commande)
+
+    def en_ligne(self) -> str:
+        """Ce qui est joué, tel qu'un prompt ou une preuve le cite."""
+        if self.sonde:
+            return f"`{self.commande}` (sonde : `{self.sonde}`)"
+        return f"`{self.commande}`"
 
     def to_dict(self) -> dict[str, Any]:
         """La forme JSON du contrôle."""
@@ -207,6 +237,7 @@ class Controle:
             "commande": self.commande,
             "lecture": self.lecture,
             "demarrage": self.demarrage,
+            "sonde": self.sonde,
         }
 
 
@@ -391,6 +422,9 @@ class Amont:
 #: La signature de `maestro.sandbox.verification.jouer` — ce qu'un test double.
 Joueur = Callable[..., execution.Execution]
 
+#: La signature de `maestro.sandbox.verification.demarrer` (#1432) — idem.
+Demarreur = Callable[..., execution.Demarrage]
+
 
 class VerificateurEnPanne(Exception):
     """L'appel du vérificateur au fournisseur a échoué — une panne typée par son origine (#1388).
@@ -434,7 +468,15 @@ l'espace de travail, rien qui sorte du dossier, rien qui attende une réponse. S
 critère demande que des dépendances soient installées, la commande peut les installer \
 dans l'espace avant de constater. Une commande qui démarre un service et ne rend pas \
 la main quand il marche porte "demarrage": true — elle tient si elle tourne encore \
-après quelques secondes.
+après quelques secondes. Si le critère demande que ce service RÉPONDE (une page, une \
+route, un port), ajoute "sonde" : une commande qui le constate une seule fois, par \
+exemple curl -s -o /dev/null -w '%{http_code}' http://localhost:4123/ | grep -qx 200. \
+Maestro démarre le service, rejoue la sonde jusqu'à ce qu'elle rende 0, puis \
+l'arrête : le contrôle tient si elle a tenu pendant que le service tournait. La \
+commande ne fait donc que démarrer le service, avec ce qu'il lui faut (PORT=4123 npm \
+start, ou npm run build && npm start) : n'y écris ni l'attente, ni la sonde, ni \
+l'arrêt — pas de mise en arrière-plan, pas de kill, pas de script qui lance le \
+service à ta place.
 - Maestro ne joue une commande que s'il peut lire ce qu'elle exécute. Écris-la en \
 commandes simples enchaînées par |, &&, || ou ;, avec if/then au besoin : JAMAIS de \
 substitution $(…) ni d'accent grave, JAMAIS de redirection d'entrée < ni de heredoc. \
@@ -458,6 +500,7 @@ Forme de la réponse :
 {"controles": [
   {"critere": "le critère, tel que la tâche l'écrit", "commande": "..."},
   {"critere": "...", "commande": "...", "demarrage": true},
+  {"critere": "...", "commande": "...", "demarrage": true, "sonde": "..."},
   {"critere": "...", "lecture": "ce qu'on doit constater", "tenu": true, \
 "preuve": "l'extrait, ou ce qui manque"}
 ], "renvois": []}"""
@@ -495,10 +538,10 @@ class VerificateurTaches:
     borne comme le reste. `modele` : celui du vérificateur ; `None`, celui de
     l'agent vérifié — le même niveau de jugement que celui qui a produit.
 
-    `joueur` et `interprete` valent ceux de `maestro.sandbox.verification`,
-    **relus à chaque appel** : c'est ce qui laisse la suite de tests retirer
-    l'interpréteur d'un seul endroit (`tests/conftest.py`, #1160), comme pour
-    l'outillage.
+    `joueur`, `demarreur` et `interprete` valent ceux de
+    `maestro.sandbox.verification`, **relus à chaque appel** : c'est ce qui laisse
+    la suite de tests retirer l'interpréteur d'un seul endroit
+    (`tests/conftest.py`, #1160), comme pour l'outillage.
     """
 
     def __init__(
@@ -508,12 +551,14 @@ class VerificateurTaches:
         modele: str | None = None,
         delais: DelaisVerification | None = None,
         joueur: Joueur | None = None,
+        demarreur: Demarreur | None = None,
         interprete: tuple[str, ...] | None = None,
     ) -> None:
         self._provider = provider
         self._modele = modele
         self._delais = delais if delais is not None else DelaisVerification()
         self._joueur = joueur
+        self._demarreur = demarreur
         self._interprete = interprete
 
     async def verifier(
@@ -636,9 +681,7 @@ class VerificateurTaches:
             return controles
         nouveaux = list(controles)
         for rang, controle in revises.items():
-            if livraison.portee is not None and livraison.portee.commande_hors_portee(
-                controle.commande
-            ):
+            if livraison.portee is not None and _hors_portee(controle, livraison.portee):
                 continue  # une révision que Maestro ne peut pas jouer ne remplace rien
             nouveaux[rang] = controle
             constats[rang] = await self._jouer(controle, livraison)
@@ -682,7 +725,12 @@ class VerificateurTaches:
         return controles
 
     async def _jouer(self, controle: Controle, livraison: Livraison) -> Constat:
-        """Joue une commande dans l'espace de la livraison — la portée d'abord, le code ensuite."""
+        """Joue une commande dans l'espace de la livraison — la portée d'abord, le code ensuite.
+
+        Une commande que le système refuse de **lancer** n'est ni tenue ni non tenue :
+        le juge n'a pas pu jouer son contrôle, et il le dit, avec la réponse du
+        système (#1432) — l'agent n'y est pour rien.
+        """
         non_joue = _non_joue(controle)
         if livraison.espace is None:
             return non_joue(_SANS_ESPACE)
@@ -692,9 +740,11 @@ class VerificateurTaches:
         if interprete is None:
             return non_joue(_SANS_BASH)
         if livraison.portee is not None:
-            motif = livraison.portee.commande_hors_portee(controle.commande)
+            motif = _hors_portee(controle, livraison.portee)
             if motif:
                 return non_joue(f"pas jouée — {motif}")
+        if controle.sonde:
+            return await self._demarrer(controle, livraison.espace, interprete)
         joueur = self._joueur if self._joueur is not None else execution.jouer
         delai = self._delais.demarrage_s if controle.demarrage else self._delais.commande_s
         try:
@@ -708,8 +758,35 @@ class VerificateurTaches:
                 delai_s=delai,
             )
         except OSError as exc:
-            return non_joue(f"l'interpréteur n'a pas pu la lancer ({exc})")
+            return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
         return _constat_joue(controle, resultat, delai)
+
+    async def _demarrer(
+        self, controle: Controle, espace: Path, interprete: tuple[str, ...]
+    ) -> Constat:
+        """Démarre le service du contrôle, le sonde jusqu'à ce qu'il réponde, l'arrête (#1432)."""
+        non_joue = _non_joue(controle)
+        demarreur = self._demarreur if self._demarreur is not None else execution.demarrer
+        delai = self._delais.commande_s
+        try:
+            resultat = await asyncio.to_thread(
+                demarreur,
+                controle.commande,
+                espace,
+                interprete=interprete,
+                sonde=controle.sonde,
+                delai_s=delai,
+                delai_sonde_s=self._delais.sonde_s,
+            )
+        except execution.SondeNonLancee as exc:
+            return non_joue(
+                f"le juge n'a pas pu lancer sa sonde — le système a répondu : {exc}"
+            )
+        except OSError as exc:
+            return non_joue(
+                f"le juge n'a pas pu lancer le service — le système a répondu : {exc}"
+            )
+        return _constat_demarrage(controle, resultat, delai)
 
 
 def _refus_de_portee(
@@ -719,10 +796,23 @@ def _refus_de_portee(
     refus: dict[int, str] = {}
     for rang, controle in enumerate(controles):
         if controle.joue:
-            motif = portee.commande_hors_portee(controle.commande)
+            motif = _hors_portee(controle, portee)
             if motif:
                 refus[rang] = motif
     return refus
+
+
+def _hors_portee(controle: Controle, portee: PorteeProjet) -> str:
+    """Ce que la portée refuse dans ce contrôle — sa commande, puis sa sonde (#1432).
+
+    Une sonde est une commande comme une autre : jouée dans l'espace, elle passe la
+    même garde.
+    """
+    motif = portee.commande_hors_portee(controle.commande)
+    if motif or not controle.sonde:
+        return motif
+    motif = portee.commande_hors_portee(controle.sonde)
+    return f"sa sonde : {motif}" if motif else ""
 
 
 def _prompt_reecrire(
@@ -730,7 +820,7 @@ def _prompt_reecrire(
 ) -> str:
     """Ce que le vérificateur lit pour réécrire ses commandes refusées."""
     lignes = "\n".join(
-        f"{rang + 1}. « {controles[rang].critere} » — `{controles[rang].commande}`\n"
+        f"{rang + 1}. « {controles[rang].critere} » — {controles[rang].en_ligne()}\n"
         f"   refusée : {motif}"
         for rang, motif in refus.items()
     )
@@ -741,8 +831,9 @@ def _prompt_reecrire(
         "Réécris CHACUNE pour qu'elle constate la même chose sous une forme jouable, en "
         "suivant tes règles d'écriture, sans changer son critère.\n"
         f"<refusees>\n{lignes}\n</refusees>\n\n"
-        "Forme de la réponse :\n"
-        '{"commandes": [{"n": 1, "commande": "...", "demarrage": false}]}'
+        "Forme de la réponse — une commande qui démarre un service garde sa sonde, "
+        "réécrite au besoin :\n"
+        '{"commandes": [{"n": 1, "commande": "...", "demarrage": false, "sonde": ""}]}'
     )
 
 
@@ -755,7 +846,7 @@ def _prompt_contre_expertise(
 ) -> str:
     """Ce que le vérificateur relit quand une de ses commandes n'a pas tenu."""
     lignes = "\n".join(
-        f"{rang + 1}. « {controles[rang].critere} » — `{controles[rang].commande}` "
+        f"{rang + 1}. « {controles[rang].critere} » — {controles[rang].en_ligne()} "
         f"a rendu le code {constats[rang].code} :\n{constats[rang].preuve or '(aucune sortie)'}"
         for rang in fautifs
     )
@@ -794,14 +885,21 @@ def _lire_reecriture(
         rang = numero - 1
         commande = _texte(element.get("commande"))
         if rang in refus and commande:
+            sonde = (
+                _texte(element.get("sonde"))
+                if "sonde" in element
+                else controles[rang].sonde
+            )
             reecrits[rang] = Controle(
                 critere=controles[rang].critere,
                 commande=commande,
-                demarrage=(
+                demarrage=bool(sonde)
+                or (
                     element["demarrage"] is True
                     if "demarrage" in element
                     else controles[rang].demarrage
                 ),
+                sonde=sonde,
             )
     return reecrits
 
@@ -844,6 +942,66 @@ def _constat_joue(
         critere=controle.critere,
         etat=CONSTAT_TENU if resultat.code == 0 else CONSTAT_NON_TENU,
         preuve=sortie,
+        commande=controle.commande,
+        code=resultat.code,
+    )
+
+
+def _constat_demarrage(
+    controle: Controle, resultat: execution.Demarrage, delai: float
+) -> Constat:
+    """Le constat d'un service sondé (#1432) — la sonde tranche, par son code de retour.
+
+    Quatre issues. La sonde a tenu pendant que le service tournait : **tenu**. Le
+    service a rendu la main avant qu'elle tienne, ou le délai s'est écoulé sans
+    qu'elle tienne : **non tenu**, ce qui revient à l'agent avec ce que le service
+    et la sonde ont écrit. La sonde tenait avant même le démarrage : **non joué** —
+    ce qui lui répond n'est pas ce service, et ni l'agent ni le juge n'en savent
+    plus.
+    """
+    sonde = resultat.sonde
+    if resultat.deja:
+        return Constat(
+            critere=controle.critere,
+            etat=CONSTAT_NON_JOUE,
+            preuve=(
+                f"pas joué — la sonde `{controle.sonde}` tenait avant que le service ne "
+                "démarre : ce qui lui répond n'est pas lui (un autre processus tient déjà "
+                "ce qu'elle interroge)"
+            ),
+            commande=controle.commande,
+        )
+    if resultat.repondu:
+        return Constat(
+            critere=controle.critere,
+            etat=CONSTAT_TENU,
+            preuve=(
+                f"démarré, il a répondu à la sonde `{controle.sonde}` au bout de "
+                f"{resultat.duree_s:g} s ; Maestro l'a ensuite arrêté"
+            ),
+            commande=controle.commande,
+        )
+    service = _fin(resultat.sortie, PREUVE_MAX)
+    derniere = _fin(sonde.sortie, PREUVE_MAX // 3)
+    if resultat.code is not None:
+        tete = (
+            f"le service a rendu la main (code {resultat.code}) avant de répondre à la "
+            f"sonde `{controle.sonde}`"
+        )
+    else:
+        tete = (
+            f"le service n'a pas répondu à la sonde `{controle.sonde}` en {delai:g} s ; "
+            "Maestro l'a arrêté"
+        )
+    morceaux = [tete]
+    if derniere:
+        morceaux.append(f"dernière sonde (code {sonde.code}) :\n{derniere}")
+    if service:
+        morceaux.append(f"sortie du service :\n{service}")
+    return Constat(
+        critere=controle.critere,
+        etat=CONSTAT_NON_TENU,
+        preuve="\n".join(morceaux),
         commande=controle.commande,
         code=resultat.code,
     )
@@ -1017,11 +1175,13 @@ def _lire_etablissement(
             continue
         commande = _texte(element.get("commande"))
         if commande:
+            sonde = _texte(element.get("sonde"))
             controles.append(
                 Controle(
                     critere=critere,
                     commande=commande,
-                    demarrage=element.get("demarrage") is True,
+                    demarrage=element.get("demarrage") is True or bool(sonde),
+                    sonde=sonde,
                 )
             )
             continue
@@ -1146,10 +1306,13 @@ class LivraisonNonTenue(Exception):
 
 
 class LivraisonNonVerifiee(Exception):
-    """La livraison est faite, mais le vérificateur est resté en panne : non jugée (#1388).
+    """La livraison est faite, mais le juge n'a pas pu la juger en entier (#1388, #1432).
 
     Levée par `Recette` une fois le vérificateur relancé autant que la politique
-    des aléas le permet (`PolitiqueRelance`), elle **porte la livraison** — le
+    des aléas le permet (`PolitiqueRelance`) — ou, sans panne (`panne` vaut alors
+    `None`), quand rien n'a été constaté faux mais qu'un contrôle n'a pas pu être
+    joué : une commande que le système a refusé de lancer, une portée qui la
+    refuse, un poste sans bash, une réponse illisible. Elle **porte la livraison** — le
     compte-rendu et les fichiers — jusqu'à l'exécuteur, qui la garde sur le
     résultat de la tâche au lieu de la vider. La tâche n'est pas verte (rien n'a
     été vérifié), mais elle n'est pas non plus un travail raté : l'exécuteur ne la
@@ -1185,7 +1348,9 @@ class Recette:
     Appelée à chaque livraison (`__call__`) avec l'espace où jouer, le
     compte-rendu et les fichiers produits. Elle rend `None` quand la livraison
     tient, le **retour** à donner à l'agent quand elle ne tient pas encore, et
-    lève `LivraisonNonTenue` quand la boucle s'arrête. `on_verdict` est rappelé à
+    lève `LivraisonNonTenue` quand la boucle s'arrête sur un critère constaté
+    faux — `LivraisonNonVerifiee` quand rien ne l'a été mais que tout n'a pas pu
+    être vérifié (#1432). `on_verdict` est rappelé à
     chaque verdict, avant toute décision : c'est par lui que l'exécuteur consigne.
 
     Un vérificateur **en panne** (#1388) est relancé **ici**, l'espace encore
@@ -1245,12 +1410,14 @@ class Recette:
         if verdict.tenue:
             return None
         if not verdict.non_tenus:
-            # Rien de faux, mais rien de vérifié en entier : l'agent n'y peut rien.
-            raise LivraisonNonTenue(
-                self.motif(
-                    "ce qui reste n'a pas pu être vérifié, et l'agent n'y peut rien"
-                ),
-                verdict,
+            # Rien de faux, mais rien de vérifié en entier : l'agent n'y peut rien,
+            # et sa livraison est **gardée** (#1432) — c'est le juge qui n'a pas pu
+            # aller au bout, comme lorsqu'il tombe en panne (#1388).
+            raise LivraisonNonVerifiee(
+                "livrée, "
+                + self.motif("ce qui reste n'a pas pu être vérifié, et l'agent n'y peut rien"),
+                livraison.sortie,
+                livraison.fichiers,
             )
         if verdict.tenus <= self.meilleur:
             raise LivraisonNonTenue(

@@ -615,11 +615,15 @@ def question_de_la_livraison(tache: Task) -> str:
     geste est sur la carte (`CHOIX_LIVRAISON_ACCEPTEE`). Les faits suivent, comme
     pour toute question de rattrapage (`question_du_rattrapage`) : la cause de la
     panne y est, puisque c'est elle qu'on accepte de ne pas avoir levée.
+
+    Un juge qui n'a pas pu **jouer** un de ses contrôles (#1432 : une commande que
+    le système a refusé de lancer) pose la même question : rien n'a été constaté
+    faux, mais tout n'a pas été jugé.
     """
     return (
-        f"La tâche « {tache.titre} » a livré, mais sa vérification est en panne : "
-        "personne n'a pu juger si sa livraison tient. La prendre telle quelle, ou que "
-        "dois-je en faire ?"
+        f"La tâche « {tache.titre} » a livré, mais sa vérification n'a pas abouti : "
+        "personne n'a pu juger si sa livraison tient en entier. La prendre telle "
+        "quelle, ou que dois-je en faire ?"
     )
 
 

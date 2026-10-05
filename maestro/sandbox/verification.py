@@ -78,6 +78,25 @@ perd.
 
 ⚠ **Le code de retour fait foi, jamais le texte.** La sortie est gardée pour être
 **montrée** à la personne, jamais lue pour deviner une panne (#1315).
+
+## Démarrer un service, attendre qu'il réponde, l'arrêter (#1432)
+
+« Le serveur répond 200 » ne se constate pas d'une seule commande qui rend la main :
+il faut démarrer le service, l'interroger jusqu'à ce qu'il réponde, puis l'arrêter.
+Ce verbe-là appartient à Maestro (`demarrer`, docs/44), pas à la commande qu'on lui
+donne. Le service naît dans son arbre comme toute commande ; une **sonde** — une
+commande ordinaire qui constate une fois que le service répond — est rejouée tant
+qu'il tourne, jusqu'à rendre 0 ; puis l'arbre est arrêté.
+
+Sans ce verbe, le juge écrivait lui-même l'attente et l'arrêt. Mesuré sur le passage
+du banc `20261004-202743` (S12) : un `node -e` qui lançait `npm start`, l'interrogeait
+puis le tuait par `taskkill` — une ligne que l'antivirus du poste a prise pour un
+cheval de Troie (`Trojan:Win32/SuspExec.SE`), si bien que Windows a refusé de créer
+le processus (`[WinError 5] Accès refusé`). Le service se démarre désormais par sa
+commande nue (`npm start`), et l'attente comme l'arrêt se font ici.
+
+La sonde est jouée **une fois avant** le service : si elle tient déjà, ce qui lui
+répond n'est pas lui (un port qu'un autre processus tient), et rien n'est démarré.
 """
 
 from __future__ import annotations
@@ -122,6 +141,10 @@ _DELAI_VIDANGE_S = 5.0
 #: assez de marge pour qu'un caractère UTF-8 coupé en tête ne compte pas.
 _OCTETS_GARDES = CARACTERES_SORTIE * 8
 
+#: L'intervalle entre deux passages de la sonde d'un service qui démarre (#1432). Un
+#: passage lance un bash : sous Windows, une à deux centaines de millisecondes.
+PERIODE_SONDE_S = 1.0
+
 
 class CopieImpossible(Exception):
     """La copie de vérification n'a pas pu être faite — avec son motif.
@@ -148,6 +171,34 @@ class Execution:
     sortie: str
     duree_s: float
     expiree: bool = False
+
+
+@dataclass(frozen=True)
+class Demarrage:
+    """Ce qu'un service démarré puis sondé a rendu (#1432).
+
+    `repondu` : la sonde a rendu 0 pendant que le service tournait — la seule
+    réussite. `deja` : la sonde tenait **avant** le démarrage, si bien que ce qui
+    lui répond n'est pas le service ; rien n'a alors été démarré. `code` : le code
+    du service s'il s'est arrêté de lui-même, `None` s'il tournait encore quand il
+    a été arrêté. `sortie` : la fin de ce que le service a écrit. `sonde` : le
+    dernier passage de la sonde.
+    """
+
+    repondu: bool
+    code: int | None
+    sortie: str
+    sonde: Execution
+    duree_s: float
+    deja: bool = False
+
+
+class SondeNonLancee(OSError):
+    """La **sonde** d'un service n'a pas pu être lancée — et non le service lui-même.
+
+    Même nature que l'`OSError` de `jouer` (l'interpréteur ne s'est pas lancé), même
+    message ; le type dit seulement laquelle des deux commandes n'est pas partie.
+    """
 
 
 @contextmanager
@@ -351,13 +402,111 @@ def jouer(
     finally:
         arbre.fermer()
     duree = time.monotonic() - debut
-    texte = bytes(tampon).decode("utf-8", errors="replace").replace("\r\n", "\n")
     return Execution(
         code=None if expiree else arbre.process.returncode,
-        sortie=_fin(texte, caracteres_sortie),
+        sortie=_fin(_texte(tampon), caracteres_sortie),
         duree_s=round(duree, 2),
         expiree=expiree,
     )
+
+
+def demarrer(
+    commande: str,
+    cwd: Path,
+    *,
+    interprete: Sequence[str],
+    sonde: str,
+    delai_s: float,
+    delai_sonde_s: float,
+    periode_s: float = PERIODE_SONDE_S,
+    caracteres_sortie: int = CARACTERES_SORTIE,
+) -> Demarrage:
+    """Démarre le service `commande`, rejoue `sonde` jusqu'à ce qu'elle tienne, puis l'arrête.
+
+    La sonde est jouée par `jouer`, bornée par `delai_sonde_s`, toutes les
+    `periode_s` ; l'ensemble est borné par `delai_s`. S'arrête au premier des trois
+    faits : la sonde rend 0 pendant que le service tourne (`repondu`), le service
+    rend la main de lui-même (`code`), le délai s'écoule. Le service est ensuite
+    arrêté **avec sa descendance**, quoi qu'il arrive (voir l'en-tête).
+
+    Lève `OSError` si le service ne se lance pas, `SondeNonLancee` si c'est la
+    sonde — à l'appelant d'en faire un verdict.
+    """
+    debut = time.monotonic()
+
+    def sonder(borne_s: float) -> Execution:
+        try:
+            return jouer(
+                sonde,
+                cwd,
+                interprete=interprete,
+                delai_s=borne_s,
+                caracteres_sortie=caracteres_sortie,
+            )
+        except OSError as exc:
+            raise SondeNonLancee(
+                exc.errno, exc.strerror, exc.filename, getattr(exc, "winerror", None)
+            ) from exc
+
+    derniere = sonder(delai_sonde_s)
+    if derniere.code == 0:
+        return Demarrage(
+            repondu=False,
+            code=None,
+            sortie="",
+            sonde=derniere,
+            duree_s=round(time.monotonic() - debut, 2),
+            deja=True,
+        )
+    arbre = Arbre.lancer(
+        [*interprete, commande], cwd=cwd, env={**os.environ, **ENVIRONNEMENT_AJOUTE}
+    )
+    tampon = bytearray()
+    assert arbre.process.stdout is not None
+    lecteur = threading.Thread(
+        target=_lire, args=(arbre.process.stdout, tampon), daemon=True
+    )
+    lecteur.start()
+    repondu = False
+    code: int | None = None
+    try:
+        while True:
+            reste = delai_s - (time.monotonic() - debut)
+            code = arbre.process.poll()
+            if code is not None or reste <= 0:
+                break
+            derniere = sonder(min(delai_sonde_s, reste))
+            # Le service doit tourner encore quand la sonde tient : un service mort
+            # pendant qu'elle jouait n'est pas celui qui lui a répondu.
+            code = arbre.process.poll()
+            if derniere.code == 0 and code is None:
+                repondu = True
+                break
+            reste = delai_s - (time.monotonic() - debut)
+            if code is not None or reste <= 0:
+                break
+            try:
+                code = arbre.process.wait(timeout=min(periode_s, reste))
+            except subprocess.TimeoutExpired:
+                code = None
+            else:
+                break
+    finally:
+        arbre.arreter()
+        lecteur.join(timeout=_DELAI_VIDANGE_S)
+        arbre.fermer()
+    return Demarrage(
+        repondu=repondu,
+        code=code,
+        sortie=_fin(_texte(tampon), caracteres_sortie),
+        sonde=derniere,
+        duree_s=round(time.monotonic() - debut, 2),
+    )
+
+
+def _texte(tampon: bytearray) -> str:
+    """Ce que le fil de lecture a gardé, en texte — fins de ligne Windows ramenées."""
+    return bytes(tampon).decode("utf-8", errors="replace").replace("\r\n", "\n")
 
 
 def _lire(flux: IO[bytes], tampon: bytearray) -> None:
