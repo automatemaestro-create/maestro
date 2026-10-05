@@ -221,9 +221,27 @@ export function tachesOuvertes(execution: ResumeExecution): number {
  * donner du travail, et rien ne repartira sans un second geste. Le drapeau vit à
  * côté du statut, qui ne bouge pas : un run peut être suspendu *et* arrêté sur son
  * brief, les deux étant vrais en même temps.
+ *
+ * Un run **soldé** n'est jamais « en pause » ici, même quand il en garde le
+ * drapeau : depuis #1390, l'extinction de Maestro laisse sa pause à un run qu'on
+ * avait suspendu (`estInterrompuEnPause`), mais il n'a plus de porte à rouvrir —
+ * proposer « Reprendre » sur lui serait un geste que le service refuse.
  */
 export function estEnPause(execution: ResumeExecution): boolean {
-  return execution.en_pause === true;
+  return !estSolde(execution) && execution.en_pause === true;
+}
+
+/**
+ * Ce run était-il **en pause quand Maestro s'est éteint** (#1390) ?
+ *
+ * La pause est une décision de la personne, l'extinction en est une autre : la
+ * seconde ne défait pas la première. Le run est soldé — son hôte est éteint —, et
+ * il garde sa pause, qui est ce que l'écran dit de lui : « Interrompu en pause »,
+ * et non « Annulée ». Une annulation, elle, lève toujours la pause (le backend
+ * efface le drapeau), si bien que ce cas ne se confond avec aucun autre.
+ */
+export function estInterrompuEnPause(execution: ResumeExecution): boolean {
+  return estEteint(execution) && execution.en_pause === true;
 }
 
 /**
@@ -549,7 +567,9 @@ export function runsParRegime(
  *    l'écran taisait (**G11**). Elle ne peut pas précéder le brief : un run arrêté
  *    sur son brief n'est pas du régime `travaille`, donc `estEnDecomposition` rend
  *    déjà `false` — l'ordre est une redondance voulue, pas une condition ;
- * 3. **le reste** — rien à expliquer, seulement à dire que ça viendra.
+ * 3. **le run soldé** (#1390) — il ne publiera plus rien : on dit ce qui s'est
+ *    passé, et, s'il a été éteint, que son objectif reste à faire ;
+ * 4. **le reste** — rien à expliquer, seulement à dire que ça viendra.
  *
  * La phrase ne nomme aucune des quatre lectures depuis #491 : elles la partagent,
  * et un pipeline vide qui promettrait de remplir un tableau désignerait l'écran
@@ -564,6 +584,15 @@ export function messageVideDuRun(
   }
   if (estEnDecomposition(execution)) {
     return "Décomposition en cours : l'orchestrateur écrit le plan de ce run. Ses tâches paraîtront ici toutes ensemble, dès qu'il l'aura publié.";
+  }
+  // Un run **soldé** ne publiera plus rien (#1390) : promettre qu'il le fera
+  // décrivait un run vivant. Le vide dit ce qui s'est passé — et, d'un run
+  // éteint, que tout son objectif reste à faire.
+  if (estEteint(execution)) {
+    return "Aucune tâche : Maestro s'est éteint avant que ce run publie son plan — tout son objectif reste à faire.";
+  }
+  if (estSolde(execution)) {
+    return "Aucune tâche : ce run s'est arrêté avant d'en avoir déclaré une.";
   }
   return "Aucune tâche pour ce run — cette vue se remplira dès qu'il publiera ses événements.";
 }

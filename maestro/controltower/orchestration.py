@@ -748,6 +748,7 @@ from maestro.controltower.progression import (
     STATUT_ASSIGNEE,
     STATUT_BACKLOG,
     STATUT_EN_ATTENTE_VALIDATION,
+    STATUT_INTERROMPUE,
     STATUT_PRETE,
 )
 from maestro.controltower.regime import bornes_du_run
@@ -773,7 +774,7 @@ from maestro.controltower.state import (
     EtatQuestion,
     EtatTache,
     EtatValidation,
-    libelle_statut_execution,
+    libelle_etat_execution,
 )
 from maestro.engine.executor import (
     STATUT_BLOQUEE,
@@ -1541,7 +1542,7 @@ _STATUTS_ACTIFS = frozenset(
 #: de la table au-dessus : la même tâche lue dans le fil puis sur le Kanban ne
 #: doit pas paraître dans deux états.
 #:
-#: Seuls les huit statuts que la **machine à états** donne à une tâche (docs/03
+#: Seuls les neuf statuts que la **machine à états** donne à une tâche (docs/03
 #: §3) y figurent. La table du front en range aussi qui n'en sont pas — issues de
 #: fusion, arbitrages d'outil, blocage signalé : ce sont des faits *consignés sur*
 #: une tâche, jamais la colonne où elle se trouve. Les recopier ici ferait
@@ -1553,6 +1554,7 @@ _LIBELLES_STATUT_TACHE = {
     STATUT_ASSIGNEE: "Assignée",
     STATUT_EN_COURS: "En cours",
     STATUT_EN_ATTENTE_VALIDATION: "Attente humaine",
+    STATUT_INTERROMPUE: "Interrompue",
     STATUT_BLOQUEE: "Bloquée",
     STATUT_TERMINEE: "Terminée",
     STATUT_ECHEC: "Échec",
@@ -1618,7 +1620,9 @@ def etat_du_run(resume: Mapping[str, Any]) -> str:
     atteint ». C'est ce que le fil dit du run qu'une carte vise et de celui qu'un
     geste vient de toucher, sans jamais écrire un code de la machine à états.
     """
-    etat = libelle_statut_execution(str(resume.get("statut") or ""))
+    etat = libelle_etat_execution(
+        str(resume.get("statut") or ""), str(resume.get("cause") or "")
+    )
     if resume.get("en_pause"):
         depuis = heure_locale(str(resume.get("pause_depuis") or ""))
         etat += f" — en pause depuis {depuis}" if depuis else " — en pause"
@@ -2362,7 +2366,10 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     ajoute — les tâches d'un run sont les siennes, et un filtre de projet les
     ferait disparaître d'un run dont la projection n'a pas appris le projet.
     """
-    entete = f"- Run {execution.run_id} — {libelle_statut_execution(execution.statut)}"
+    entete = (
+        f"- Run {execution.run_id} — "
+        f"{libelle_etat_execution(execution.statut, execution.cause)}"
+    )
     if execution.objectif:
         entete += f" — « {_borne(execution.objectif)} »"
     lignes = [entete]
@@ -2559,7 +2566,8 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
         if execution is None:
             return ""
         lignes = [
-            f"Run {execution.run_id} — {libelle_statut_execution(execution.statut)}"
+            f"Run {execution.run_id} — "
+            f"{libelle_etat_execution(execution.statut, execution.cause)}"
         ]
         if execution.objectif:
             lignes.append(f"objectif : {execution.objectif}")

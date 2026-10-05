@@ -297,6 +297,7 @@ def test_la_progression_d_un_run_vaut_toujours_son_nombre_de_taches():
     assert progression.to_dict() == {
         "a_faire": 1,
         "en_cours": 1,
+        "interrompues": 0,
         "bloquees": 0,
         "terminees": 1,
         "echecs": 1,
@@ -483,6 +484,7 @@ def test_la_progression_survit_au_redemarrage_de_l_api():
         assert detail["progression"] == {
             "a_faire": 0,
             "en_cours": 0,
+            "interrompues": 0,
             "bloquees": 0,
             "terminees": 1,
             "echecs": 1,

@@ -676,7 +676,30 @@ def test_l_etat_relu_d_un_run_annule_ne_redit_pas_son_statut() -> None:
     eteint = {**_resume(RUN, OBJECTIF, EXECUTION_ANNULEE), "cause": CAUSE_EXTINCTION}
 
     assert etat_du_run(annule) == "Annulée"
-    assert etat_du_run(eteint) == "Annulée — Maestro s'est éteint"
+    assert etat_du_run(eteint) == "Interrompu — Maestro s'est éteint"
+
+
+def test_le_fil_dit_d_un_run_eteint_ce_qu_en_dit_son_badge() -> None:
+    """« Interrompu », et « en pause » s'il l'était — jamais « Annulée » (#1390, #571).
+
+    Le statut d'un run éteint est `annulee`, comme toute interruption ; l'écran le
+    badge « Interrompu » (« Interrompu en pause » quand sa pause a survécu), et le
+    fil qui le décrit dit la même chose, au mot près, avec l'heure de la pause.
+    """
+    from maestro.controltower.causes import CAUSE_EXTINCTION
+    from maestro.controltower.orchestration import etat_du_run
+
+    eteint_en_pause = {
+        **_resume(RUN, OBJECTIF, EXECUTION_ANNULEE),
+        "cause": CAUSE_EXTINCTION,
+        "en_pause": True,
+        "pause_depuis": "2026-10-01T15:13:28+00:00",
+    }
+
+    etat = etat_du_run(eteint_en_pause)
+
+    assert etat.startswith("Interrompu — en pause depuis 2026-10-01 ")
+    assert etat.endswith(" — Maestro s'est éteint")
 
 
 def test_une_ligne_ecrite_avant_ce_lot_se_relit_sans_geste() -> None:

@@ -47,6 +47,7 @@ import {
   REGIME_TRAVAILLE,
   causeDAttente,
   estEnPause,
+  estInterrompuEnPause,
   estSolde,
   peutEtreInterrompu,
   peutEtreSuspendu,
@@ -189,6 +190,29 @@ describe("le régime d'un run — ce que « en cours » cachait", () => {
     // porte pas, et son absence vaut « pas en pause », jamais un écran cassé.
     expect(estEnPause(runFactice())).toBe(false);
   });
+
+  it("ne dit pas « en pause » d'un run soldé, mais garde la pause d'un run éteint (#1390)", () => {
+    // Le backend laisse sa pause à un run en pause quand Maestro s'éteint : la
+    // pause d'une personne survit à l'extinction. Mais le run est soldé — il n'a
+    // plus de porte à rouvrir, et « Reprendre la pause » y serait refusé.
+    const eteintEnPause = runFactice({
+      statut: EXECUTION_ANNULEE,
+      cause: CAUSE_EXTINCTION,
+      en_pause: true,
+    });
+    expect(estEnPause(eteintEnPause)).toBe(false);
+    expect(estInterrompuEnPause(eteintEnPause)).toBe(true);
+    expect(regimeDuRun(eteintEnPause)).toBe(REGIME_SOLDE);
+    // Éteint sans pause, ou annulé : pas « interrompu en pause ».
+    expect(
+      estInterrompuEnPause(runFactice({ statut: EXECUTION_ANNULEE, cause: CAUSE_EXTINCTION })),
+    ).toBe(false);
+    expect(
+      estInterrompuEnPause(
+        runFactice({ statut: EXECUTION_ANNULEE, cause: CAUSE_ANNULATION, en_pause: true }),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("les libellés que la liste emprunte au format", () => {
@@ -261,10 +285,39 @@ describe("la carte d'un run — la même sur les trois écrans", () => {
     [runFactice({ vitalite: VITALITE_ORPHELIN }), "Interrompu"],
     [runFactice({ statut: EXECUTION_TERMINEE }), "Terminée"],
     [runFactice({ statut: EXECUTION_ECHEC }), "Échec"],
+    [runFactice({ statut: EXECUTION_ANNULEE, cause: CAUSE_ANNULATION }), "Annulée"],
+    // #1390 — un run que l'extinction de Maestro a soldé n'est pas « Annulée » :
+    // personne n'a arrêté *ce* run, et il garde sa pause s'il l'avait.
+    [runFactice({ statut: EXECUTION_ANNULEE, cause: CAUSE_EXTINCTION }), "Interrompu"],
+    [
+      runFactice({ statut: EXECUTION_ANNULEE, cause: CAUSE_EXTINCTION, en_pause: true }),
+      "Interrompu en pause",
+    ],
   ])("porte un badge qui dit son régime", (run, libelle) => {
     carte(run);
 
     expect(screen.getByText(libelle)).toBeInTheDocument();
+  });
+
+  it("n'offre pas « Reprendre » la pause d'un run qu'une extinction a soldé (#1390)", () => {
+    carte(runFactice({ statut: EXECUTION_ANNULEE, cause: CAUSE_EXTINCTION, en_pause: true }));
+
+    expect(screen.queryByRole("button", { name: /Reprendre/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Aucune tâche nouvelle n'est lancée/)).not.toBeInTheDocument();
+  });
+
+  it("dit la cause d'une interruption sans l'alerte d'une panne (#1390)", () => {
+    // Maestro éteint, un run annulé : rien n'a raté. Une borne atteinte, elle,
+    // appelle un geste, et garde l'alerte.
+    rendreAvecEtat(
+      <LigneCause run={runFactice({ statut: EXECUTION_ANNULEE, cause: CAUSE_EXTINCTION })} />,
+    );
+    expect(screen.getByText("Maestro s'est éteint")).toHaveClass("text-texte-secondaire");
+
+    rendreAvecEtat(
+      <LigneCause run={runFactice({ statut: EXECUTION_ECHEC, cause: CAUSE_PLAFOND_COUT })} />,
+    );
+    expect(screen.getByText("Plafond de dépense atteint")).toHaveClass("text-alerte-texte");
   });
 
   it("mène l'attente vers l'écran qui porte le geste qui la lève", () => {
@@ -465,6 +518,41 @@ describe("l'avancement d'un run — compté par le backend, jamais ici", () => {
     expect(segments[0].className).toContain("bg-positif");
     expect(segments[1].className.trim()).toBe("h-full");
     expect(segments[1].style.backgroundImage).toBe("");
+  });
+
+  it("compte à part ce qu'une interruption a arrêté — ni soldé, ni en échec (#1390)", () => {
+    // Le run de p5 après le correctif : une tâche faite, une coupée en vol par
+    // l'extinction, sept que personne n'avait commencées.
+    barre(
+      runFactice({
+        statut: EXECUTION_ANNULEE,
+        cause: CAUSE_EXTINCTION,
+        nb_taches: 9,
+        progression: {
+          a_faire: 7,
+          en_cours: 0,
+          interrompues: 1,
+          bloquees: 0,
+          terminees: 1,
+          echecs: 0,
+          autres: 0,
+          soldees: 1,
+          total: 9,
+        },
+      }),
+    );
+
+    const jauge = screen.getByRole("progressbar", { name: "Progression du run" });
+    expect(jauge).toHaveAttribute("aria-valuenow", "1");
+    expect(
+      screen.getByText("1/9 soldée — 1 terminée · 1 interrompue · 7 à faire"),
+    ).toBeInTheDocument();
+    const segments = Array.from(jauge.children) as HTMLElement[];
+    expect(segments).toHaveLength(3);
+    // Présente et pas finie : hachurée comme ce qui tourne, jamais l'alerte d'un
+    // échec qu'elle n'est pas.
+    expect(segments[1].style.backgroundImage).toContain("repeating-linear-gradient");
+    expect(segments[1].className).not.toMatch(/\bbg-(positif|alerte|info)/);
   });
 
   it("se rabat sur le nombre de tâches quand la progression manque", () => {

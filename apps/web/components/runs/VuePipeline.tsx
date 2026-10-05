@@ -86,6 +86,7 @@ import {
   IconeStatutBloquee,
   IconeStatutEchec,
   IconeStatutEnCours,
+  IconeStatutInterrompue,
   IconeStatutTerminee,
 } from "@/components/Icones";
 import { PanneauDetailTache } from "@/components/PanneauDetailTache";
@@ -115,6 +116,7 @@ import {
   NOEUD_BLOQUE,
   NOEUD_ECHEC,
   NOEUD_EN_COURS,
+  NOEUD_INTERROMPU,
   NOEUD_PRET,
   NOEUD_TERMINE,
   tracerArete,
@@ -186,6 +188,15 @@ const APPARENCE: Record<EtatNoeud, ApparenceNoeud> = {
     icone: IconePuce,
     pulse: false,
   },
+  [NOEUD_INTERROMPU]: {
+    // Neutre et pleine (#1390) : elle a vécu, mais elle n'a ni abouti ni échoué —
+    // le rouge dirait le contraire, et c'est le constat de p5 qu'on corrige.
+    libelle: "Interrompue",
+    ton: "neutre",
+    surface: "pleine",
+    icone: IconeStatutInterrompue,
+    pulse: false,
+  },
   [NOEUD_BLOQUE]: {
     libelle: "Bloquée",
     // Le violet d'avant #912, conservé au pixel : un état qui emprunte le ton
@@ -223,6 +234,7 @@ const ORDRE_LEGENDE: EtatNoeud[] = [
   NOEUD_ATTENTE_HUMAIN,
   NOEUD_EN_COURS,
   NOEUD_PRET,
+  NOEUD_INTERROMPU,
   NOEUD_BLOQUE,
   NOEUD_TERMINE,
   NOEUD_ECHEC,

@@ -111,6 +111,7 @@ import { etatDuBilan, resumeDuBilan, type Citation } from "@/lib/bilan";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
   causeDAttente,
+  estEteint,
   estSolde,
   messageVideDuRun,
   nomDuRun,
@@ -580,7 +581,12 @@ function EnTeteRun({
         {run.debut
           ? ` · démarré ${formatHeureRelative(run.debut, maintenant)}`
           : ""}
-        {run.fin ? ` · terminé ${formatHeureRelative(run.fin, maintenant)}` : ""}
+        {/* « Interrompu » et non « terminé » pour un run que Maestro a emporté en
+            s'éteignant (#1390) : le badge le dit reprenable, « terminé » disait
+            le contraire — relevé par le regard neuf au choix de la variante. */}
+        {run.fin
+          ? ` · ${estEteint(run) ? "interrompu" : "terminé"} ${formatHeureRelative(run.fin, maintenant)}`
+          : ""}
         {/* Le coût, et « coût partiel » s'il n'est qu'un plancher (#1280) :
             la même forme que la carte du run et l'annonce de sa fin. */}
         {" · "}

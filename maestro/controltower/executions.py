@@ -223,6 +223,11 @@ from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
 from maestro.controltower.plafond import ArbitrePlafondControlTower
 from maestro.controltower.portee import PorteeProjet, PorteeRun
+from maestro.controltower.progression import (
+    STATUT_BACKLOG,
+    STATUT_INTERROMPUE,
+    STATUT_PRETE,
+)
 from maestro.controltower.question import ArbitreQuestionControlTower
 from maestro.controltower.renfort import ArbitreRenfortControlTower
 from maestro.controltower.souffrance import SEUIL_SOUFFRANCE_S, en_souffrance
@@ -245,7 +250,6 @@ from maestro.engine.brief import (
     BriefRefuse,
     mode_brief_valide,
 )
-from maestro.engine.executor import STATUT_ECHEC
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.engine.pause import PorteExecution
 from maestro.references import ReferenceTicket
@@ -325,6 +329,11 @@ CAUSES_RELANCABLES = frozenset(
 DETAIL_EXTINCTION = (
     "Maestro s'est éteint : le run a été interrompu avec lui et peut être repris."
 )
+
+#: Les statuts d'une tâche que **personne n'a commencée** (#1390) — déclarée par le
+#: plan (#924), sans exécutant. Le soldage d'un run ne les touche pas : elles
+#: restent à faire (`_solder_les_taches` dit pourquoi `assignee` n'en est pas).
+_JAMAIS_DEMARREES = frozenset({STATUT_BACKLOG, STATUT_PRETE})
 
 _LOGGER = logging.getLogger("maestro.controltower")
 
@@ -856,7 +865,8 @@ class ServiceExecutions:
           pause qui n'était pas la première ferait passer pour un geste ce qui n'en
           est pas un ;
         - **reprise** — refusée sur un run qui n'est pas suspendu, soldé compris
-          (l'issue lève la pause) : il n'y a rien à reprendre ;
+          (l'issue lève la pause) : il n'y a rien à reprendre ; et sur un run soldé
+          **en pause** — l'extinction garde la pause (#1390) —, qui ne tourne plus ;
         - **relance** — les refus de `relancer` (#349), qui interrogent le registre
           des battements : c'est ce qui rend la méthode asynchrone.
 
@@ -882,8 +892,19 @@ class ServiceExecutions:
         if geste == GESTE_RELANCE:
             return await self._refus_de_relance(run_id)
         if geste == GESTE_REPRISE:
-            if execution.en_pause:
+            soldee = execution.statut in STATUTS_EXECUTION_TERMINAUX
+            if execution.en_pause and not soldee:
                 return None
+            if execution.en_pause:
+                # Le run qu'une extinction a soldé pendant sa pause la garde (#1390),
+                # mais il ne tourne plus : rouvrir sa porte rendrait un 200 sans
+                # effet, et effacerait la seule trace de la pause.
+                return GesteRefuse(
+                    MOTIF_RELANCE_RUN_SOLDE,
+                    f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
+                    f"{run_id} — sa pause ne se lève plus sur un run qui ne tourne plus ; "
+                    "il se reprend en le relançant.",
+                )
             return GesteRefuse(
                 MOTIF_GESTE_RUN_NON_SUSPENDU,
                 f"exécution non suspendue ({libelle_statut_execution(execution.statut)}) : "
@@ -1352,14 +1373,29 @@ class ServiceExecutions:
         jour-là, trois `tache.statut` publiés sur le bus ; on le rend ici à la
         machine qui aurait dû le faire.
 
-        **`echec` et non `bloquee`**, alors que les deux sont terminaux et que seul
-        le premier incrémente `taches_echouees` sur la fiche de l'agent. `bloquee` a
-        un sens précis dans la machine à états (docs/03 §3 : « dépendance en échec —
-        la tâche n'est jamais mise en file ni exécutée »), et le poser sur une tâche
-        qui était bel et bien en vol ferait mentir l'état plutôt qu'épargner un
-        compteur. Le compteur, lui, dit vrai : la tâche n'a pas abouti. Le *pourquoi*
-        voyage à côté — `cause` (#479) et le `motif` en clair —, ce qui est
-        précisément la séparation que `causes.py` existe pour tenir.
+        **`interrompue`, ni `echec` ni `bloquee`** (#1390). #466 posait `echec`, et
+        écartait `bloquee` à raison — elle a un sens précis dans la machine à états
+        (docs/03 §3 : « dépendance en échec — la tâche n'est jamais mise en file ni
+        exécutée »). Mais `echec` mentait aussi, d'une autre façon : une tâche
+        arrêtée de l'extérieur au milieu de son travail n'a pas échoué, rien ne dit
+        qu'elle allait le faire, et le compteur d'échecs de son agent ne doit pas le
+        prétendre. Elle est **interrompue** : terminale au sens de la projection —
+        plus personne ne la porte, son agent est libéré —, mais pas acquise, son
+        travail étant à reprendre. Le *pourquoi* voyage à côté — `cause` (#479) et
+        le `motif` en clair —, ce qui est précisément la séparation que `causes.py`
+        existe pour tenir.
+
+        **Une tâche que personne n'a commencée n'est pas touchée** (#1390), et c'est
+        le constat de p5 : neuf tâches en échec après une extinction, dont huit
+        jamais démarrées. #466 précédait #924, qui fait naître les cartes du plan
+        `backlog` **avant** leur départ ; le soldage les ramassait avec le reste.
+        Elle n'a rien fait, rien raté, personne ne la porte : elle reste à faire, et
+        c'est ce que la reprise du run viendra chercher. Ne sont « jamais
+        démarrées » que `backlog` et `prete`, les deux statuts **sans exécutant** ;
+        `assignee` n'en est pas, bien qu'il compte « à faire » dans la progression :
+        il porte un agent que la projection tient pour occupé — le laisser, c'est
+        refaire #466 —, et la réassignation du Kanban le pose aussi sur une tâche en
+        vol, si bien qu'il ne dit pas si elle a commencé.
 
         Trois choses à ne pas défaire :
 
@@ -1371,8 +1407,10 @@ class ServiceExecutions:
           pendant que l'exécution s'éteint encore serait remise `en_cours` par le
           dernier événement du moteur, et on aurait réparé dans le sens du vent ;
         - les tâches déjà terminales sont **sautées**. Sans ce filtre, une tâche
-          réussie avant l'annulation repasserait `echec` et l'agent perdrait un
-          `taches_terminees` acquis — un run annulé n'annule pas ce qui a été fait.
+          réussie avant l'annulation repasserait `interrompue` et l'agent perdrait
+          un `taches_terminees` acquis — un run annulé n'annule pas ce qui a été
+          fait. Une tâche déjà interrompue l'est aussi : la relance d'un run éteint
+          le solde une seconde fois, et la cause de son interruption ne change pas.
 
         ⚠ Et l'événement se **pousse** (`_pousser`), il ne s'émet pas (`_emettre`) :
         c'est la seule différence de forme avec les issues de run d'à côté, et elle
@@ -1380,8 +1418,9 @@ class ServiceExecutions:
         s'appuyant sur l'idempotence pour que la pompe réapplique sans effet — vrai
         d'`execution.statut`, **faux** de `tache.statut`, dont l'application
         incrémente `taches_terminees`/`taches_echouees` sur la fiche de l'agent.
-        Émettre ici compterait donc chaque tâche soldée **deux fois** (constaté :
-        `taches_echouees` à 2 pour un seul échec). Pousser est aussi ce que fait
+        Émettre ici compterait donc chaque tâche soldée **deux fois** (constaté du
+        temps où elle passait `echec` : `taches_echouees` à 2 pour un seul échec).
+        Pousser est aussi ce que fait
         déjà tout autre événement de tâche — le pont télémétrie n'a jamais eu
         d'autre chemin —, et c'est exactement le geste de la réparation manuelle du
         2026-08-24 : publier sur le bus, laisser la pompe appliquer, consigner au
@@ -1393,7 +1432,7 @@ class ServiceExecutions:
         `tache.statut` terminal par tâche restée en l'air.
         """
         for tache in self._state.taches(run=PorteeRun.run(run_id)):
-            if tache.statut in STATUTS_TACHE_TERMINAUX:
+            if tache.statut in STATUTS_TACHE_TERMINAUX or tache.statut in _JAMAIS_DEMARREES:
                 continue
             self._pousser(
                 Event(
@@ -1407,8 +1446,8 @@ class ServiceExecutions:
                     # membre du parc est écarté d'emblée (`_hors_du_parc`).
                     agent=tache.agent,
                     role=tache.role,
-                    statut=STATUT_ECHEC,
-                    detail=f"tâche non terminée quand son run a été soldé — {motif}",
+                    statut=STATUT_INTERROMPUE,
+                    detail=f"tâche interrompue en vol quand son run a été soldé — {motif}",
                     ticket=tache.ticket,
                     projet_id=tache.projet_id,
                     cause=cause,

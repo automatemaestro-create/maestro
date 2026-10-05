@@ -75,6 +75,7 @@ import {
   IconeStatutBloquee,
   IconeStatutEchec,
   IconeStatutEnCours,
+  IconeStatutInterrompue,
   IconeStatutTerminee,
   IconeTache,
 } from "@/components/Icones";
@@ -211,6 +212,15 @@ const COLONNES: {
     titre: "En cours",
     ton: "attention",
     icone: IconeStatutEnCours,
+  },
+  {
+    // Ce qu'un run soldé arrêtait en vol (#1390). Juste après « En cours » — c'est
+    // ce qu'elles étaient —, et neutre : elles n'ont pas échoué, c'est la colonne
+    // « Échecs » qui les ramassait avant, et le constat de p5.
+    statuts: ["interrompue"],
+    titre: "Interrompues",
+    ton: "neutre",
+    icone: IconeStatutInterrompue,
   },
   {
     statuts: ["bloquee"],

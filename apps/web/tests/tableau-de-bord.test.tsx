@@ -184,6 +184,22 @@ describe("les indicateurs de tête (IndicateursTableauDeBord)", () => {
     );
   });
 
+  it("nomme les tâches interrompues quand il y en a (#1390)", () => {
+    // Relevé par le regard neuf de #1390 : sur un run que Maestro avait emporté,
+    // la tuile disait « 0 en cours · 0 bloquée(s) · 0 échec(s) » de cinq tâches
+    // dont trois avaient été coupées en vol.
+    monter({
+      taches: [
+        tacheFactice({ id: "T-1", statut: "terminee" }),
+        tacheFactice({ id: "T-2", statut: "interrompue" }),
+        tacheFactice({ id: "T-3", statut: "interrompue" }),
+      ],
+    });
+    expect(tuile("Tâches")).toHaveTextContent(
+      "0 en cours · 2 interrompue(s) · 0 bloquée(s) · 0 échec(s)",
+    );
+  });
+
   it("met le travail sur ce projet et les libres en valeur, le reste en détail", () => {
     // #247 : c'est « combien travaillent, combien sont disponibles » qu'on vient
     // chercher — le total et les désactivés passent derrière.

@@ -71,6 +71,7 @@ from maestro.controltower import (
 )
 from maestro.controltower.causes import CAUSE_ANNULATION, CAUSE_TACHES_EN_ECHEC
 from maestro.controltower.events import ReferenceTicket
+from maestro.controltower.progression import STATUT_INTERROMPUE
 from maestro.controltower.state import (
     AGENT_LIBRE,
     AGENT_OCCUPE,
@@ -819,26 +820,25 @@ def test_l_annulation_ne_revient_pas_sur_ce_qui_etait_deja_fait(state):
 
         client.post(f"/api/executions/{run_id}/annuler")
         _attendre(
-            lambda: _tache(client, "api-users").get("statut") == STATUT_ECHEC,
+            lambda: _tache(client, "api-users").get("statut") == STATUT_INTERROMPUE,
             "la tâche en vol est soldée",
         )
 
         assert _tache(client, "schema-bdd")["statut"] == STATUT_TERMINEE
         bdd = _agent(client, "bdd")
         assert bdd["statut"] == AGENT_LIBRE
-        # Un succès acquis, un échec — et non deux échecs. Ce compte garde aussi
-        # la publication contre le **double comptage** : `tache.statut` n'est pas
-        # idempotent à l'application, donc une émission qui appliquerait puis
-        # publierait ferait ici (1, 2).
-        assert (bdd["taches_terminees"], bdd["taches_echouees"]) == (1, 1)
+        # Un succès acquis, et aucun échec : la tâche en vol est **interrompue**
+        # (#1390), elle n'a pas échoué — du temps où le soldage posait `echec`, ce
+        # compte valait (1, 1), et le constat de p5 était là.
+        assert (bdd["taches_terminees"], bdd["taches_echouees"]) == (1, 0)
 
 
 def test_la_tache_soldee_dit_pourquoi_elle_s_est_arretee(state):
     """« Cause consignée » : le code d'arrêt et la phrase voyagent avec le soldage.
 
-    Sans eux, une tâche passée `echec` par une annulation serait indiscernable
-    d'une tâche que son agent a ratée — c'est exactement la confusion que
-    `causes.py` (#479) existe pour lever.
+    Sans eux, une tâche interrompue (#1390) ne dirait pas *qui* l'a arrêtée — une
+    annulation, l'extinction de Maestro, une relance —, et c'est exactement la
+    confusion que `causes.py` (#479) existe pour lever.
     """
     moteur = MoteurQuiSeFige(demarrees=(("brief-directions", "designer"),))
     with app_avec(moteur, state) as client:
@@ -850,7 +850,7 @@ def test_la_tache_soldee_dit_pourquoi_elle_s_est_arretee(state):
 
         client.post(f"/api/executions/{run_id}/annuler")
         _attendre(
-            lambda: _tache(client, "brief-directions").get("statut") == STATUT_ECHEC,
+            lambda: _tache(client, "brief-directions").get("statut") == STATUT_INTERROMPUE,
             "la tâche est soldée",
         )
 
@@ -860,7 +860,7 @@ def test_la_tache_soldee_dit_pourquoi_elle_s_est_arretee(state):
         for e in execution.evenements
         if e.type == EVENEMENT_TACHE_STATUT
         and e.tache_id == "brief-directions"
-        and e.statut == STATUT_ECHEC
+        and e.statut == STATUT_INTERROMPUE
     ][-1]
     assert soldage.cause == CAUSE_ANNULATION
     assert "interrompue depuis la Control Tower" in soldage.detail

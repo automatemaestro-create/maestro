@@ -123,6 +123,10 @@ function phraseStatutTache(evenement: Evenement): string {
       return qui ? `${qui} travaille sur ${quoi}` : `${quoi} démarre`;
     case "bloquee":
       return qui ? `${qui} signale un blocage sur ${quoi}` : `${quoi} est bloquée`;
+    case "interrompue":
+      // Le soldage de son run l'a arrêtée (#1390) : ce n'est pas l'agent qui l'a
+      // fait, et la phrase ne le met pas en sujet.
+      return `${quoi} est interrompue${qui ? ` (${qui})` : ""}`;
     case "terminee":
       return qui ? `${qui} a terminé ${quoi}` : `${quoi} est terminée`;
     case "echec":
@@ -493,10 +497,11 @@ export function grouperEvenements(evenements: Evenement[]): GroupeEvenements[] {
 /**
  * Les statuts de tâche qui méritent une notification globale — miroir des états
  * terminaux/bloquant du moteur (`STATUT_TERMINEE`/`ECHEC`/`BLOQUEE`,
- * maestro/engine/executor). Les transitions intermédiaires (assignée, en cours)
- * sont du bruit hors du tableau de bord.
+ * maestro/engine/executor), et de l'interruption que pose le soldage d'un run
+ * (#1390). Les transitions intermédiaires (assignée, en cours) sont du bruit hors
+ * du tableau de bord.
  */
-const STATUTS_TACHE_NOTABLES = new Set(["terminee", "echec", "bloquee"]);
+const STATUTS_TACHE_NOTABLES = new Set(["terminee", "echec", "bloquee", "interrompue"]);
 
 /**
  * Un événement digne du centre de notifications (#119) : ce qu'un utilisateur

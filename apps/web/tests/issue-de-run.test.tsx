@@ -278,6 +278,21 @@ describe("l'annonce de fin", () => {
     expect(screen.getByText("Run en échec")).toBeInTheDocument();
   });
 
+  it("ne dit pas un run interrompu avec le rouge d'un échec (#1390)", () => {
+    // Relevé à la relecture de #1390 : « Run interrompu » portait la croix rouge
+    // de l'échec, sur un run que Maestro avait emporté en s'éteignant. Une
+    // interruption n'a rien raté ; l'échec, lui, garde son alerte.
+    render(<AnnonceIssueRun issue={issueFactice({ statut: EXECUTION_ANNULEE })} />);
+    const interrompu = screen.getAllByText("Run interrompu")[0];
+    expect(interrompu.className).toContain("text-texte-secondaire");
+    expect(interrompu.className).not.toContain("text-alerte-texte");
+  });
+
+  it("garde l'alerte de l'échec", () => {
+    render(<AnnonceIssueRun issue={issueFactice({ statut: EXECUTION_ECHEC })} />);
+    expect(screen.getAllByText("Run en échec")[0].className).toContain("text-alerte-texte");
+  });
+
   it("porte l'heure de la FIN, et non celle du lancement", () => {
     // C'est le défaut qui a écarté la variante B du choix de #928 : rangée sous
     // la bulle qui avait lancé le run, l'annonce portait l'heure du départ — un

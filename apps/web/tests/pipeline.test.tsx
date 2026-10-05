@@ -59,6 +59,7 @@ import {
   NOEUD_BLOQUE,
   NOEUD_ECHEC,
   NOEUD_EN_COURS,
+  NOEUD_INTERROMPU,
   NOEUD_PRET,
   NOEUD_TERMINE,
 } from "@/lib/graphe";
@@ -219,6 +220,8 @@ describe("l'état auquel un nœud se dessine", () => {
     const table: [string, string][] = [
       ["a_faire", NOEUD_A_FAIRE],
       ["en_cours", NOEUD_EN_COURS],
+      // #1390 — ce qu'un run soldé arrêtait en vol : ni « Autre », ni échec.
+      ["interrompues", NOEUD_INTERROMPU],
       ["bloquees", NOEUD_BLOQUE],
       ["terminees", NOEUD_TERMINE],
       ["echecs", NOEUD_ECHEC],

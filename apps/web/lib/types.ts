@@ -2279,6 +2279,11 @@ export type Brief = {
  * (terminées + échecs + bloquées) : une barre se dessine par `soldees / total`,
  * sans avoir à savoir lesquels des compartiments sont terminaux.
  *
+ * `interrompues` (#1390) compte ce qu'un run soldé arrêtait **en vol** — Maestro
+ * éteint, le run annulé ou relancé. Ni acquises ni ratées, elles ne sont pas dans
+ * `soldees` : leur travail est à reprendre. Optionnel : un backend antérieur ne le
+ * sert pas, et une tâche absente d'un compte n'y vaut rien.
+ *
  * `total` est **stable** dès que le run a publié son plan (#924) : il compte les
  * tâches que celui-ci déclare, non celles qui ont démarré. Seul le numérateur
  * bouge, et une barre ne peut donc plus paraître presque pleine à mi-parcours
@@ -2287,6 +2292,7 @@ export type Brief = {
 export type Progression = {
   a_faire: number;
   en_cours: number;
+  interrompues?: number;
   bloquees: number;
   terminees: number;
   echecs: number;

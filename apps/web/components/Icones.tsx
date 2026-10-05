@@ -690,6 +690,22 @@ export function IconeStatutBloquee(props: Props) {
   );
 }
 
+/**
+ * Statut « interrompue » (#1390) : la tâche tournait quand son run a été soldé.
+ *
+ * Le cercle de la famille et le **carré d'arrêt** d'`IconeArret` — le geste qui
+ * l'a coupée —, ni la croix de l'échec ni les barres de la pause : elle n'a pas
+ * raté, et elle ne reprendra pas d'elle-même.
+ */
+export function IconeStatutInterrompue(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="9.5" />
+      <path d="M9.25 9.25h5.5v5.5h-5.5Z" />
+    </Trait>
+  );
+}
+
 /** Statut « terminée ». */
 export function IconeStatutTerminee(props: Props) {
   return (

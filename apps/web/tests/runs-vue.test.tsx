@@ -49,9 +49,11 @@ import { MENTION_COUT_PARTIEL, RAISON_COUT_PARTIEL } from "@/lib/format";
 import { evenementDepuisEntree, fusionnerJournal } from "@/lib/journal";
 import {
   ARETE_FRANCHIE,
+  EXECUTION_ANNULEE,
   EXECUTION_EN_ATTENTE_BRIEF,
   EXECUTION_ECHEC,
   EXECUTION_TERMINEE,
+  CAUSE_EXTINCTION,
   CAUSE_PLAFOND_COUT,
   type GrapheRun,
   type PageJournal,
@@ -273,6 +275,24 @@ describe("les quatre cas qui ne se confondent pas", () => {
     ).toBeInTheDocument();
   });
 
+  it("ne promet pas d'événements à un run soldé sans tâche (#1390)", async () => {
+    // Relevé par le regard neuf de #1390, sur un vrai run éteint pendant sa
+    // décomposition : « se remplira dès qu'il publiera ses événements » promettait
+    // une suite à un run qui ne publiera plus rien. Le vide dit ce qui s'est passé.
+    monter({
+      executions: [
+        runFactice({ run_id: RUN, statut: EXECUTION_ANNULEE, cause: CAUSE_EXTINCTION }),
+      ],
+    });
+
+    expect(
+      await screen.findByText(/Maestro s'est éteint avant que ce run publie son plan/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/cette vue se remplira dès qu'il publiera/),
+    ).not.toBeInTheDocument();
+  });
+
   it("montre la bannière et rien d'autre quand l'API est injoignable", async () => {
     // Panne **typée** depuis #996 : rien n'a répondu, ce que la bannière nomme
     // sans avoir à relire un message.
@@ -353,6 +373,29 @@ describe("la tête de la vue", () => {
     });
 
     expect(screen.getByText("Plafond de dépense atteint")).toBeInTheDocument();
+  });
+
+  it("dit d'un run que Maestro a emporté qu'il est interrompu, pas terminé (#1390)", () => {
+    // La variante retenue au choix de #1390, et la remarque du regard neuf : « terminé
+    // il y a 4 min » contredisait un badge qui le dit en pause, donc reprenable.
+    monter({
+      executions: [
+        runFactice({
+          run_id: RUN,
+          statut: EXECUTION_ANNULEE,
+          cause: CAUSE_EXTINCTION,
+          en_pause: true,
+          debut: "2026-10-01T15:12:00+00:00",
+          fin: "2026-10-01T15:13:35+00:00",
+        }),
+      ],
+    });
+
+    expect(screen.getByText("Interrompu en pause")).toBeInTheDocument();
+    expect(screen.getByText(/ · interrompu /)).toBeInTheDocument();
+    expect(screen.queryByText(/ · terminé /)).not.toBeInTheDocument();
+    expect(screen.getByText("Maestro s'est éteint")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reprendre" })).not.toBeInTheDocument();
   });
 
   it("porte le geste de pause, comme la liste", () => {

@@ -431,6 +431,8 @@ const LIBELLES_STATUT: Record<string, string> = {
   assignee: "Assignée",
   en_cours: "En cours",
   en_attente_validation: "Attente humaine",
+  // Arrêtée en vol quand son run a été soldé (#1390) — ni échec ni acquis.
+  interrompue: "Interrompue",
   bloquee: "Bloquée",
   terminee: "Terminée",
   echec: "Échec",
