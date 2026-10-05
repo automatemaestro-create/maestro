@@ -1081,7 +1081,7 @@ class ApiQuiRedemande(FausseAPI):
     def _decider(self, tache_id: str, *, approuve: bool = True) -> Reponse:
         reponse = super()._decider(tache_id, approuve=approuve)
         self.commandes.extend(
-            str(d.get("arguments", {}).get("command", "")) for d in self.validations
+            str((d.get("arguments") or {}).get("command", "")) for d in self.validations
         )
         self.validations = [self._suite.pop(0)] if self._suite else []
         return reponse
@@ -1128,6 +1128,138 @@ def _moteur_qui_attend_puis_vide(lectures: int) -> Callable[[RunFactice, Path], 
         _moteur_qui_vide(run, racine)
 
     return moteur
+
+
+def _demande_sans_acte(titre: str, horodatage: str) -> dict[str, Any]:
+    """Une demande **sans acte**, telle que `EtatValidation.to_dict` la sert : ni outil,
+    ni arguments — une validation de tâche, ou l'accord d'écriture de #706."""
+    return {
+        "tache_id": "initialiser-projet",
+        "run_id": "run-1",
+        "statut": VALIDATION_EN_ATTENTE,
+        "titre": titre,
+        "outil": "",
+        "arguments": None,
+        "horodatage": horodatage,
+    }
+
+
+class ApiQuiRetientLeRun(ApiQuiRedemande):
+    """Le run reste suspendu **tant qu'une demande l'attend**, comme dans le produit (#571).
+
+    `RunFactice` se solde au bout de ses lectures quoi que le banc ait tranché : il
+    ne pouvait pas montrer un run qui attend pour toujours la réponse à une demande
+    que le banc a écartée sans la trancher.
+    """
+
+    def _execution(self, run_id: str) -> Reponse:
+        reponse = super()._execution(run_id)
+        attend = any(d.get("statut") == VALIDATION_EN_ATTENTE for d in self.validations)
+        corps = dict(reponse.corps)
+        corps["statut"] = EXECUTION_EN_ATTENTE_ARBITRAGE if attend else EXECUTION_TERMINEE
+        return Reponse(statut=reponse.statut, corps=corps)
+
+
+@pytest.mark.parametrize(
+    "suite",
+    [
+        pytest.param(
+            [
+                _demande_sans_acte("Initialiser le projet", "2026-10-05T14:19:02+00:00"),
+                _demande_sans_acte(
+                    "Écrire dans le projet s12 au fil de ce run", "2026-10-05T14:21:40+00:00"
+                ),
+            ],
+            id="validation-de-tache-puis-accord-d-ecriture",
+        ),
+        pytest.param(
+            [
+                _demande_sans_acte(
+                    "Écrire dans le projet s12 au fil de ce run", "2026-10-05T14:21:40+00:00"
+                ),
+                _demande_sans_acte(
+                    "Écrire dans le projet s12 au fil de ce run", "2026-10-05T14:33:15+00:00"
+                ),
+            ],
+            id="accord-d-ecriture-repose",
+        ),
+    ],
+)
+def test_le_banc_tranche_chaque_demande_sans_acte_d_une_meme_tache(
+    suite: list[dict[str, Any]],
+) -> None:
+    """Deux demandes sans acte sur une même tâche sont tranchées **chacune** (#1434).
+
+    Le 2026-10-05, S12 (passage 20261005-170235, run c459ef72ee17) : le banc a
+    approuvé une demande sans acte sur `initialiser-projet`, puis le run a demandé
+    l'accord de fusion de `maestro/initialiser-projet` sur **la même tâche**. Les deux
+    se réduisaient à `(tache, "", "")` : la seconde a été prise pour la première,
+    jamais tranchée, et le run est resté suspendu 23 minutes, jusqu'à ce qu'une
+    personne l'approuve à la main. Sans ce geste, S12 expirait rouge sur un produit
+    qui attendait simplement qu'on lui réponde.
+    """
+    api = ApiQuiRetientLeRun(suite)
+    api.runs.append(RunFactice(run_id="run-1", objectif="o", projet_id="p", bornes={}))
+    horloge = Horloge()
+
+    detail = attendre_le_run(
+        ClientAPI(api),
+        "run-1",
+        projet_id="p",
+        delai_s=60.0,
+        note=lambda *_: None,
+        horloge=horloge,
+        dormir=horloge.dormir,
+    )
+
+    assert api.decisions == [("initialiser-projet", True), ("initialiser-projet", True)]
+    assert detail["statut"] == EXECUTION_TERMINEE
+
+
+def test_le_banc_ne_tranche_qu_une_fois_la_demande_qu_il_relit_en_attente() -> None:
+    """La même demande, relue tant que sa décision n'est pas projetée, n'est tranchée
+    qu'**une** fois (#1198, #1365) — la raison d'être de l'ensemble des tranchées.
+
+    La décision part vers l'API, mais la file peut la montrer en attente encore
+    quelques lectures : une demande qu'on reconnaît mal serait tranchée à chacune,
+    et chaque approbation compterait au déroulé comme un geste de la personne.
+    """
+
+    class ApiQuiProjetteEnRetard(FausseAPI):
+        def _decider(self, tache_id: str, *, approuve: bool = True) -> Reponse:
+            self.decisions.append((tache_id, approuve))
+            return Reponse(statut=200, corps={})
+
+    api = ApiQuiProjetteEnRetard(
+        validations=[_demande_sans_acte("Initialiser le projet", "2026-10-05T14:19:02+00:00")]
+    )
+    api.runs.append(
+        RunFactice(
+            run_id="run-1",
+            objectif="o",
+            projet_id="p",
+            bornes={},
+            lectures_avant_la_fin=4,
+            statut_en_attente=EXECUTION_EN_ATTENTE_ARBITRAGE,
+        )
+    )
+    horloge = Horloge()
+    arbitrages: list[str] = []
+
+    detail = attendre_le_run(
+        ClientAPI(api),
+        "run-1",
+        projet_id="p",
+        delai_s=60.0,
+        note=lambda *_: None,
+        horloge=horloge,
+        dormir=horloge.dormir,
+        arbitrages=arbitrages,
+    )
+
+    assert detail["statut"] == EXECUTION_TERMINEE
+    assert api.decisions == [("initialiser-projet", True)]
+    assert arbitrages == [""]
 
 
 def test_un_run_qui_n_en_finit_pas_n_est_pas_un_run_abouti(tmp_path: Path) -> None:
