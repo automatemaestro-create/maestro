@@ -98,12 +98,20 @@ _SLUG_AGENT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 #: arriverait dans le formulaire comme un texte à finir plutôt qu'à relire.
 #:
 #: Il porte aussi la règle que #1102 a tirée d'un run réel : **un playbook ne fait
-#: pas d'une commande le premier geste obligatoire**. L'intention dit le *fait* —
-#: le cran proposé pour l'outil d'exécution de ce rôle
-#: (`maestro.equipe.proposition.REGIME_EXECUTION`) —, le cadre en tire la
-#: *consigne*, et les deux ne se recopient pas. La règle est écrite
-#: conditionnellement (« si l'intention dit que… ») parce que ce cadre sert aussi
-#: la saisie libre du formulaire, où aucune intention ne parle de cran.
+#: pas d'une commande le premier geste obligatoire**. C'est une règle de *méthode*,
+#: qui vaut quel que soit le cran : elle est écrite sans condition.
+#:
+#: ⚠ **Il interdit d'écrire le régime d'exécution** (#1405). #1102 puis #1226 lui
+#: faisaient tirer du cran que l'intention donnait — *passe sans personne*, *attend
+#: l'accord d'une personne*, et la portée — la consigne à écrire dans le playbook.
+#: Le modèle la reformulait, et sur p5 il y a ajouté une exception que la politique
+#: n'a pas (« joindre un service extérieur » attendait l'accord d'une personne) :
+#: l'agent a fait attendre quelqu'un avant un `npm install` qui passait seul. Le
+#: régime est désormais écrit par Maestro, depuis la politique, au prompt système de
+#: chaque tâche (`maestro.agents.regime_d_execution`) ; l'intention ne le porte plus,
+#: et ce cadre dit pourquoi le playbook n'a pas à le dire. Une règle d'autorisation
+#: qu'un playbook ajouterait serait au mieux un doublon, au pire une seconde règle
+#: que l'agent croirait.
 _CADRE_GENERATION = f"""\
 Tu conçois la définition d'un agent IA pour Maestro, un orchestrateur qui répartit
 du travail entre des agents autonomes. On te donne l'intention de l'utilisateur en
@@ -131,25 +139,54 @@ vouvoie l'utilisateur. Le playbook que tu écris doit donc le lui prescrire en
 toutes lettres — c'est le registre de toute l'interface de Maestro, et un agent à
 qui personne ne l'a dit rend le registre dans lequel on s'adresse à lui.
 
-⚠ Ne fais jamais d'une commande à exécuter le premier geste obligatoire de
-l'agent, ni le préalable de tout le reste. Une commande peut être soumise à
-l'accord d'une personne, et sans réponse elle est refusée : un playbook qui en
-ordonne une avant toute chose suspend l'agent à cet accord dès sa première tâche.
-Si l'intention dit que ses commandes attendent l'accord d'une personne, écris-le
-dans le playbook : il lit ce dont il a besoin — avec son outil de lecture, jamais
-par le shell —, commence son travail, et ne demande une exécution que lorsqu'elle
-sert le livrable. Sur un refus, il poursuit et le signale, il ne réessaie pas.
+⚠ Le playbook dit le métier de l'agent, pas ses permissions. N'y écris aucune
+règle sur ce qu'il a le droit d'exécuter, sur ce qui attend l'accord d'une
+personne, sur leurs exceptions ni sur le moment de demander un arbitrage : ce
+régime-là, Maestro l'écrit lui-même, depuis la politique qu'il applique à l'agent,
+et l'ajoute à son prompt à chaque tâche. Une règle que tu ajouterais lui ferait
+demander ce que sa politique laisse passer, ou faire ce qu'elle retient.
 
-⚠ Si l'intention dit au contraire que ses commandes passent sans attendre
-personne **dans le dossier du projet**, n'écris pas l'inverse : il y lance ce
-qu'il écrit, le teste et nettoie ce que ses exécutions ont produit, sans rien
-faire approuver. Nomme alors les seules exceptions que l'intention donne — ce qui
-sort du dossier, ce qui efface ce qui s'y trouvait avant lui —, et dis qu'un
-refus se poursuit et se signale plutôt que de se réessayer.
+⚠ Ne fais jamais d'une commande à exécuter le premier geste obligatoire de
+l'agent, ni le préalable de tout le reste : il lit d'abord ce dont il a besoin —
+avec son outil de lecture, jamais par le shell —, commence son travail, et lance
+une commande lorsqu'elle sert le livrable.
 
 N'écris dans FOURNISSEUR et MODELE que des noms de la liste qui t'est donnée. Si
 rien n'y convient, laisse les deux lignes vides : l'agent prendra les réglages par
 défaut. Ne devine jamais un nom."""
+
+#: Le cadre de la **réécriture** d'un playbook déjà écrit (#1405) : le même modèle,
+#: invité à retirer le régime d'exécution qu'un cadre d'avant lui faisait écrire.
+#:
+#: C'est le modèle qui juge ce qui relève du régime, et c'est voulu : un passage qui
+#: dit « tes commandes passent sans attendre personne » ou « joindre un service
+#: extérieur attend l'accord d'une personne » ne se reconnaît pas à un mot (#1169),
+#: et un lexique qui l'arracherait saurait encore moins garder le métier qui
+#: l'entoure. Ce que le code tient, lui, est ce qui ne se rédige pas : la section des
+#: skills (`maestro.equipe.creation.TITRE_SKILLS`) ne passe jamais par ici, et le
+#: régime que l'agent lira est composé depuis sa politique, quoi qu'il reste de ce
+#: texte (`maestro.agents.regime_d_execution`).
+_CADRE_SANS_REGIME = f"""\
+Tu relis le playbook d'un agent IA de Maestro, un orchestrateur qui répartit du
+travail entre des agents autonomes. Ce playbook est le prompt système de l'agent,
+en Markdown.
+
+Il peut énoncer le régime d'exécution de l'agent : ce qu'il a le droit d'exécuter
+sans demander, ce qui attend l'accord d'une personne, les exceptions à l'un ou à
+l'autre, le moment de demander un arbitrage. Ce régime, Maestro l'écrit désormais
+lui-même, depuis la politique qu'il applique à l'agent, et l'ajoute à son prompt à
+chaque tâche : un régime laissé dans le playbook en serait une seconde version, que
+l'agent croirait.
+
+Rends le playbook sans ce régime, et sans rien changer d'autre : ni le métier, ni
+la méthode, ni le registre, ni l'ordre des sections, ni les mots du reste. Ne
+résume rien et n'ajoute rien. Un passage qui mêle les deux garde ce qui relève du
+métier — comment travailler, quoi rendre, ce qu'il ne fait jamais par principe — et
+perd ce qui relève de l'autorisation. Une section qui ne disait que le régime
+disparaît, titre compris. Un playbook qui n'en dit rien se rend tel quel.
+
+Réponds par la ligne {MARQUEUR_PLAYBOOK}, puis le playbook INTÉGRAL en Markdown, et
+rien après."""
 
 
 class GenerationIndisponible(RuntimeError):
@@ -266,6 +303,45 @@ class GenerateurDefinitionAgent:
             modele=modele,
         )
 
+    async def sans_regime(self, playbook: str) -> str:
+        """`playbook` réécrit sans le régime d'exécution qu'il énonçait (#1405) — rien d'écrit.
+
+        Le chemin des playbooks **déjà écrits** : ceux qu'un cadre d'avant #1405
+        faisait rédiger avec leur régime (`maestro.controltower.regeneration_playbooks`
+        les lui confie). Le modèle rend le playbook entier après `MARQUEUR_PLAYBOOK`,
+        comme pour une proposition, et ce qui précède le marqueur est écarté — un
+        modèle qui annonce ce qu'il a retiré ne fait pas entrer son annonce dans le
+        prompt de l'agent.
+
+        Lève `ValueError` sur un playbook vide (rien à réécrire) et
+        `GenerationIndisponible` si le modèle est injoignable, muet, ou rend une
+        réponse sans marqueur ou sans playbook : l'appelant garde alors le playbook
+        tel qu'il était, jamais un texte amputé.
+        """
+        texte = playbook.strip()
+        if not texte:
+            raise ValueError("playbook vide : rien à réécrire.")
+        try:
+            reponse = await self._generer(
+                _prompt_sans_regime(texte), cadre=_CADRE_SANS_REGIME
+            )
+        except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
+            raise GenerationIndisponible(
+                f"la réécriture du playbook a échoué : {exc}"
+            ) from exc
+        parties = reponse.split(MARQUEUR_PLAYBOOK, 1)
+        if len(parties) != 2:
+            raise GenerationIndisponible(
+                f"réponse du modèle sans marqueur {MARQUEUR_PLAYBOOK!r} : le playbook "
+                "reste tel qu'il était."
+            )
+        reecrit = parties[1].strip()
+        if not reecrit:
+            raise GenerationIndisponible(
+                "le modèle n'a rendu aucun playbook : il reste tel qu'il était."
+            )
+        return reecrit
+
     def _registre(self) -> tuple[FournisseurDisponible, ...]:
         """Les fournisseurs auxquels la réponse sera confrontée.
 
@@ -278,8 +354,12 @@ class GenerateurDefinitionAgent:
 
         return catalogue_fournisseurs()
 
-    async def _generer(self, prompt: str) -> str:
+    async def _generer(self, prompt: str, *, cadre: str = _CADRE_GENERATION) -> str:
         """L'appel modèle, fournisseur résolu au premier usage (import local, comme #139).
+
+        `cadre` est le prompt système de l'appel : celui de la proposition par
+        défaut, celui de la réécriture pour `sans_regime` — le même fournisseur, le
+        même modèle, résolus une fois.
 
         Une réponse **vide** est un échec au même titre qu'une exception : un
         modèle qui n'a rien dit n'a rien proposé, et laisser passer le vide ferait
@@ -296,7 +376,7 @@ class GenerateurDefinitionAgent:
             self._modele = modele_du_canal(self._modele, fournisseur)
             self._provider = fournisseur
         texte = await self._provider.generate(
-            prompt, model=self._modele, system_prompt=_CADRE_GENERATION
+            prompt, model=self._modele, system_prompt=cadre
         )
         if not (texte or "").strip():
             raise RuntimeError("le fournisseur de modèle a rendu une réponse vide")
@@ -324,6 +404,23 @@ def _prompt_generation(
             _registre_en_clair(registre),
             "",
             "Propose la définition de l'agent selon le format demandé.",
+        )
+    )
+
+
+def _prompt_sans_regime(playbook: str) -> str:
+    """Le playbook à relire, puis la demande — la consigne, elle, est le cadre.
+
+    Même ordre que `_prompt_generation` : la matière d'abord, et ce qui ferme le
+    prompt se lit comme l'instruction.
+    """
+    return "\n".join(
+        (
+            "Playbook à relire :",
+            "",
+            playbook,
+            "",
+            "Rends ce playbook sans son régime d'exécution, selon le format demandé.",
         )
     )
 

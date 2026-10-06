@@ -43,6 +43,12 @@ from pathlib import Path
 import pytest
 
 from maestro import equipe
+from maestro.agents.regime_d_execution import (
+    PORTEE_DE_L_AGENT,
+    REGIME_DE_L_AGENT,
+    REGIME_EXECUTION,
+    REGIME_PORTEE,
+)
 from maestro.agents.store import NOMS_RESERVES
 from maestro.controltower.generation_agent import _CADRE_GENERATION, INTENTION_MAX
 from maestro.decideur import Decideur
@@ -381,60 +387,55 @@ def test_un_ask_sans_decideur_escalade_plutot_que_de_s_auto_approuver() -> None:
     assert servi["decideur"] == str(Decideur.HUMAIN)
 
 
-# --- ⑤ Le playbook et l'autorisation sont d'accord (#1102) --------------------
+# --- ⑤ Le playbook dit le métier, Maestro dit le régime (#1102, #1405) ---------
 
 
-def test_l_intention_dit_sous_quel_regime_le_role_execute() -> None:
-    """#1102 : le playbook était écrit dans l'ignorance du cran de son agent, si
-    bien qu'il lui ordonnait en premier geste une commande qu'une personne devait
-    approuver. L'intention porte désormais le fait ; la règle qu'on en tire vit
-    dans le cadre de #257, et nulle part ailleurs.
-
-    ⚠ Depuis #1226 le fait a changé de valeur — l'agent exécute dans son projet
-    sans attendre personne — et la **portée** le borne. L'intention doit porter
-    les deux : le régime seul ferait écrire un playbook qui croit tout permis."""
-    dev = _role(_propose(_constats()), "dev")
-
-    execution = next(a for a in dev.autorisations if a.outil == OUTIL_EXECUTION)
-    assert execution.decideur_effectif is Decideur.AUTO
-    assert equipe.REGIME_EXECUTION[Decideur.AUTO] in dev.intention
-    assert equipe.REGIME_PORTEE[PORTEE_PROJET] in dev.intention
-
-
-def test_l_intention_suit_le_cran_quand_le_projet_declare_ses_commandes() -> None:
-    """Le régime annoncé est **celui de l'autorisation proposée**, jamais une
-    phrase écrite à côté d'elle : un projet qui déclare ses commandes fait passer
-    les deux à `auto` du même coup."""
-    constats = _constats(
-        commandes=(
-            Commande(
-                usage="tester",
-                commande="pytest -q",
-                chemin="Makefile",
-                extrait="test:",
-                origine="declaree",
+@pytest.mark.parametrize(
+    ("nom", "constats"),
+    [
+        ("dev", _constats()),
+        (
+            "tests",
+            _constats(
+                commandes=(
+                    Commande(
+                        usage="tester",
+                        commande="pytest -q",
+                        chemin="Makefile",
+                        extrait="test:",
+                        origine="declaree",
+                    ),
+                )
             ),
-        )
-    )
+        ),
+    ],
+)
+def test_l_intention_ne_donne_plus_le_regime_au_modele(nom: str, constats) -> None:
+    """#1405 : l'intention ne dit plus sous quel régime le rôle exécute.
 
-    tests = _role(_propose(constats), "tests")
+    #1102 l'y avait fait entrer et #1226 y avait ajouté la portée ; le modèle qui
+    rédige le playbook le **reformulait**, et sur p5 il y a ajouté une exception que
+    la politique n'a pas (« joindre un service extérieur ») — l'agent a fait
+    attendre quelqu'un avant un `npm install` qui passait seul. Le régime est
+    désormais écrit par Maestro depuis la politique (`maestro.agents.regime_d_execution`),
+    et ce qu'on ne donne pas au modèle, il ne le reformule pas. Le cran, lui, n'a
+    pas bougé : l'autorisation proposée reste celle que #1226 a posée."""
+    role = _role(_propose(constats), nom)
 
-    execution = next(a for a in tests.autorisations if a.outil == OUTIL_EXECUTION)
+    execution = next(a for a in role.autorisations if a.outil == OUTIL_EXECUTION)
     assert execution.decideur_effectif is Decideur.AUTO
-    assert equipe.REGIME_EXECUTION[Decideur.AUTO] in tests.intention
-    assert equipe.REGIME_EXECUTION[Decideur.HUMAIN] not in tests.intention
-
-
-@pytest.mark.parametrize("decideur", list(Decideur))
-def test_chaque_decideur_a_sa_phrase_de_regime(decideur: Decideur) -> None:
-    """Un décideur sans phrase ferait une intention muette sur le régime — le
-    défaut que #1102 corrige, revenu par la porte d'un cran neuf."""
-    assert equipe.REGIME_EXECUTION[decideur].strip()
+    phrases = (
+        *REGIME_EXECUTION.values(),
+        *REGIME_PORTEE.values(),
+        *REGIME_DE_L_AGENT.values(),
+        *PORTEE_DE_L_AGENT.values(),
+    )
+    assert not any(phrase.strip() in role.intention for phrase in phrases)
 
 
 def test_l_intention_tient_sous_la_borne_du_generateur() -> None:
-    """`ServiceEquipe._playbook` coupe l'intention à `INTENTION_MAX` : le régime
-    étant en fin de phrase, il serait le premier perdu."""
+    """`ServiceEquipe._playbook` coupe l'intention à `INTENTION_MAX` : les skills
+    du projet, qui ferment la phrase, seraient les premiers perdus."""
     constats = _constats(
         langages=(
             _langage("Python", 0.5, exemple="src/app.py"),
@@ -448,26 +449,27 @@ def test_l_intention_tient_sous_la_borne_du_generateur() -> None:
     )
 
     for role in _propose(constats).roles:
-        # La coupe de `_playbook` doit être un non-événement : sinon le régime,
-        # qui ferme la phrase, partirait le premier.
+        # La coupe de `_playbook` doit être un non-événement.
         assert role.intention[:INTENTION_MAX] == role.intention
-        assert any(phrase in role.intention for phrase in equipe.REGIME_EXECUTION.values())
 
 
-def test_le_cadre_de_generation_interdit_de_faire_d_une_commande_le_premier_geste() -> None:
-    """L'autre moitié de ⑤, et la seule qui porte une **consigne** : l'intention
-    dit le fait, le cadre de #257 en tire la règle. La règle y est écrite
-    conditionnellement parce que ce cadre sert aussi la saisie libre du
-    formulaire, où aucune intention ne parle de cran."""
+def test_le_cadre_de_generation_laisse_le_regime_a_maestro() -> None:
+    """La consigne de #257, depuis #1405 : le playbook dit le métier, pas les
+    permissions — et la règle de méthode de #1102 (une commande n'est jamais le
+    premier geste) y reste, **sans condition**, parce qu'elle ne dépend plus d'un
+    cran que l'intention ne donne plus."""
     # Le cadre est enveloppé à ~80 colonnes : une phrase attendue y traverse une
     # fin de ligne. On compare donc sur le texte remis à plat, pas sur la mise en page.
     cadre = " ".join(_CADRE_GENERATION.split())
 
+    assert "Le playbook dit le métier de l'agent, pas ses permissions" in cadre
+    assert "Maestro l'écrit lui-même, depuis la politique qu'il applique à l'agent" in cadre
     assert "jamais d'une commande à exécuter le premier geste obligatoire" in cadre
-    assert "Si l'intention dit que ses commandes attendent l'accord d'une personne" in cadre
-    # Et la conduite qu'il prescrit à la place, jusqu'au refus.
     assert "avec son outil de lecture, jamais par le shell" in cadre
-    assert "il poursuit et le signale, il ne réessaie pas" in cadre
+    # Plus aucune consigne qui ferait écrire au modèle le régime que l'intention lui
+    # donnait : c'est par elles que l'exception de p5 était entrée.
+    assert "Si l'intention dit" not in cadre
+    assert "Nomme alors les seules exceptions" not in cadre
 
 
 def test_sur_un_projet_neuf_le_dev_recoit_le_droit_d_executer_dans_le_projet() -> None:

@@ -34,12 +34,13 @@ seule couche qui connaisse un fournisseur de modèle. Un rôle dont la générat
 (`playbook_origine`) : une équipe entière perdue parce qu'un quota est épuisé
 serait une réponse bien pire qu'un playbook générique annoncé comme tel.
 
-⚠ Ce que ce module doit en revanche à #257, c'est de lui dire **sous quel régime
-le rôle exécute** : l'`intention` porte le cran proposé pour l'outil d'exécution
-(#1102). Un playbook écrit sans lui faisait d'une commande à approuver le premier
-geste de l'agent, si bien qu'une équipe validée telle quelle attendait un humain
-dès sa première tâche. Le fait est ici, la règle qu'on en tire est dans le cadre
-de #257 — jamais les deux.
+⚠ **Le régime d'exécution n'est plus dans l'intention** (#1405). #1102 l'y avait
+mis pour que #257 écrive un playbook qui sache sous quel cran son agent exécute ;
+le modèle le reformulait, et sur p5 il y a ajouté une exception que la politique
+n'a pas. Le régime est désormais écrit par Maestro, depuis la politique, à la fin
+du prompt système de chaque tâche (`maestro.agents.regime_d_execution`) : ce
+module pose le cran (`autorisations_du_role`), l'exécution le dit à l'agent, et le
+modèle ne rédige que le métier.
 
 **Le modèle de chaque rôle.** L'analyse d'un projet ne dit rien du modèle avec
 lequel un rôle doit travailler. Une fiche sans réglage prend le modèle par
@@ -273,7 +274,7 @@ def _role(
         playbook=gabarit.playbook_de_repli(),
         playbook_origine=ORIGINE_PLAYBOOK_GABARIT,
         playbook_raison=raison_playbook_gabarit(gabarit.gabarit),
-        intention=intention_du_role(gabarit.role, constats, branches, autorisations),
+        intention=intention_du_role(gabarit.role, constats, branches),
         outils=outils,
         skills=branches,
         autorisations=autorisations,
@@ -494,39 +495,9 @@ def _commandes_declarees(
     return tuple(dict.fromkeys(endroits))
 
 
-#: Ce que l'intention dit du **régime d'exécution** du rôle, décideur par
-#: décideur (#1102). Un **fait**, jamais une consigne : ce que le playbook doit
-#: en faire est écrit dans le cadre de #257
-#: (`maestro.controltower.generation_agent._CADRE_GENERATION`), et le redire ici
-#: ferait deux consignes à tenir d'accord — la frontière que `_intention` pose
-#: déjà pour tout le reste.
-REGIME_EXECUTION: dict[Decideur, str] = {
-    Decideur.HUMAIN: (
-        " Ses commandes shell attendent l'accord d'une personne, qui peut ne pas "
-        "venir pendant sa tâche — sauf celles qui ne font que lire, qui passent "
-        "sans attendre personne."
-    ),
-    Decideur.AUTO: (
-        " Ses commandes shell passent sans attendre personne, en étant tracées."
-    ),
-}
-
-#: Ce que la **portée** ajoute au régime, quand le cran en porte une (#1226).
-#: Un fait de plus, et non une consigne : le playbook a besoin de savoir que
-#: l'agent exécute librement *dans* le dossier du projet et que deux familles
-#: d'actes y font exception, sans quoi il ordonnerait de tout faire approuver —
-#: le défaut que #1102 avait déjà corrigé dans l'autre sens.
-REGIME_PORTEE: dict[str, str] = {
-    PORTEE_PROJET: (
-        " Cela vaut dans le dossier du projet : ce qui en sort, ou ce qui efface "
-        "ce qui s'y trouvait avant lui, attend l'accord d'une personne."
-    ),
-}
-
-
 #: Le nombre de compétences qu'une intention nomme pour un rôle composé (#1159). Borné
-#: parce que l'intention l'est (`INTENTION_MAX`, #257) et que le régime d'exécution,
-#: qui la ferme, serait le premier coupé.
+#: parce que l'intention l'est (`INTENTION_MAX`, #257) : au-delà, c'est la fin de la
+#: phrase — les skills du projet — qui serait coupée.
 COMPETENCES_DANS_L_INTENTION = 5
 
 
@@ -534,21 +505,27 @@ def intention_du_role(
     role: str,
     constats: Constats,
     skills: Sequence[SkillBranche],
-    autorisations: Sequence[AutorisationProposee],
     competences: Sequence[str] = (),
 ) -> str:
     """La phrase d'où #257 écrira le playbook de ce rôle — *pour ce projet*.
 
     Une phrase, comme l'entrée de #257 : le rôle, ce que le projet est, les
-    skills qu'il branche, et **sous quel régime il exécute**. Rien de ce que le
-    playbook doit dire n'y est écrit — c'est le cadre de #257 qui le demande, et
-    le redire ici en ferait une seconde consigne à tenir d'accord.
+    skills qu'il branche. Rien de ce que le playbook doit dire n'y est écrit —
+    c'est le cadre de #257 qui le demande, et le redire ici en ferait une seconde
+    consigne à tenir d'accord.
 
-    Le régime d'exécution y est entré par #1102, et c'est le premier fait qui ne
-    vienne pas du projet mais de la **proposition elle-même** : un playbook écrit
-    dans l'ignorance du cran de son agent ordonnait, en premier geste, une
-    commande qu'une personne devait approuver — la tâche commençait donc par
-    attendre quelqu'un. L'intention le dit, le cadre de #257 en tire la règle.
+    ⚠ **Le régime d'exécution n'y est plus** (#1405). #1102 l'y avait fait entrer,
+    pour qu'un playbook écrit dans l'ignorance du cran de son agent cesse d'ordonner
+    en premier geste une commande qu'une personne devait approuver ; #1226 y avait
+    ajouté la portée. Le modèle qui rédige le playbook le **reformulait** donc, et
+    sur p5 il y a ajouté une exception que la politique n'a pas — « joindre un
+    service extérieur » attendait l'accord d'une personne —, si bien que l'agent a
+    fait attendre quelqu'un avant un `npm install` qui passait seul. Le régime est
+    désormais écrit par Maestro, depuis la politique, dans le prompt système de
+    chaque tâche (`maestro.agents.regime_d_execution`) ; ce qu'on ne donne pas au
+    modèle, il ne le reformule pas. Le souci de #1102 n'est pas perdu : la règle
+    « une commande n'est jamais le premier geste » reste dans le cadre de #257, et
+    le régime `humain` la redit à l'agent à chaque tâche.
 
     Elle vit **dans la proposition** et pas seulement dans l'appel : c'est elle
     qu'on relit pour juger un playbook qu'on trouve à côté de la plaque, et un
@@ -571,30 +548,8 @@ def intention_du_role(
         ". Il travaille dans le dossier du projet",
         f" et appelle les skills du projet : {noms}" if noms else "",
         ".",
-        _regime_execution(autorisations),
     ]
     return "".join(morceaux)
-
-
-def _regime_execution(autorisations: Sequence[AutorisationProposee]) -> str:
-    """Ce que l'intention dit du cran proposé pour l'outil d'exécution, portée comprise.
-
-    Vide quand le rôle n'a pas cet outil dans les mains, ou quand son cran ne
-    désigne aucun décideur (`allow`, `deny` : personne ne tranche) : une phrase
-    sur un régime qui ne s'applique pas serait pire que son absence.
-    """
-    execution = next(
-        (
-            autorisation
-            for autorisation in autorisations
-            if autorisation.outil == OUTIL_EXECUTION
-        ),
-        None,
-    )
-    if execution is None or execution.decideur_effectif is None:
-        return ""
-    regime = REGIME_EXECUTION.get(execution.decideur_effectif, "")
-    return regime + REGIME_PORTEE.get(execution.portee, "") if regime else ""
 
 
 def _ecarte(gabarit: Gabarit, constats: Constats) -> RoleEcarte:

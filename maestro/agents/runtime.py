@@ -26,6 +26,7 @@ from typing import Any
 
 from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.permissions import PolitiqueOutils
+from maestro.agents.regime_d_execution import avec_regime
 from maestro.config import Settings, load_settings
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
@@ -271,6 +272,15 @@ class AgentRuntime:
         traçage de l'appelant. None : aucune politique (comportement
         historique).
 
+        Elle **écrit** aussi le régime que l'agent lit (#1405) : le prompt système
+        de l'exécution se termine par le bloc que Maestro compose depuis cette
+        politique (`maestro.agents.regime_d_execution`) — ce qui passe sans
+        personne, ce qui revient à une personne —, et ce bloc prime sur ce que le
+        playbook dirait d'autre des commandes. C'est ici que la politique et le
+        prompt se rencontrent, donc le seul endroit où le texte ne peut pas
+        décrire une autre règle que celle que le hook appliquera. None : aucun
+        bloc, le prompt est celui d'avant, au caractère près.
+
         `on_arbitrage_acte` (#583) traverse ce runtime sans qu'il en fasse rien,
         comme `on_refus` : c'est le fournisseur qui suspend l'appel classé `ask`
         (son hook est le seul point de contrôle avant l'acte) et l'appelant qui
@@ -432,6 +442,9 @@ class AgentRuntime:
         # admis, l'appel au fournisseur est au bit près celui d'avant ce lot.
         reglage = self._provider.effort_admis(self._model, effort or self._effort)
         reglage_effort = {"effort": reglage} if reglage else {}
+        # Le régime de cette exécution, écrit depuis la politique qu'elle applique
+        # (#1405) — jamais par le modèle qui a rédigé le playbook.
+        prompt_systeme = avec_regime(system_prompt or self._system_prompt, politique)
         with espace_de_travail(
             projet,
             tache_id=tache_id,
@@ -455,7 +468,7 @@ class AgentRuntime:
                 return await self._provider.run_agent(
                     message,
                     model=self._model,
-                    system_prompt=system_prompt or self._system_prompt,
+                    system_prompt=prompt_systeme,
                     workspace=ws.path,
                     tools=outils,
                     mcp_serveurs=montables,

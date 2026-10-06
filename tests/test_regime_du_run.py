@@ -52,6 +52,7 @@ from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import EntreeArbitrage, PermissionStore, PolitiqueOutils
 from maestro.agents.playbooks import PlaybookStore
+from maestro.agents.regime_d_execution import REGIME_EXECUTION, REGIME_PORTEE
 from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
@@ -87,7 +88,7 @@ from maestro.controltower.state import EXECUTION_ECHEC, EXECUTION_EN_COURS
 from maestro.decideur import Decideur
 from maestro.engine import RunReport
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
-from maestro.equipe.proposition import OUTIL_EXECUTION, REGIME_EXECUTION, REGIME_PORTEE
+from maestro.equipe.proposition import OUTIL_EXECUTION
 from maestro.portee import PORTEE_PROJET
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
@@ -634,11 +635,11 @@ POLITIQUE_DU_PROJET = PolitiqueOutils(
 
 
 def test_le_regime_d_un_agent_suit_le_cran_de_sa_politique_sur_le_shell() -> None:
-    """Le shell se dit par le verdict que le hook lira, avec les mots de l'intention d'un rôle.
+    """Le shell se dit par le verdict que le hook lira, avec les phrases du régime.
 
-    Les phrases sont celles de `maestro.equipe.proposition` (`REGIME_EXECUTION`,
-    `REGIME_PORTEE`), et elles se composent exactement comme dans l'intention
-    d'un rôle : le fil et le playbook décrivent le même régime avec les mêmes mots.
+    Les phrases sont celles de `maestro.agents.regime_d_execution` (`REGIME_EXECUTION`,
+    `REGIME_PORTEE`), rangées à côté de celles que l'agent lit dans son propre prompt
+    (#1405) : le fil et l'agent décrivent le même régime depuis le même endroit.
     """
     auto = regime_des_actes([_membre(POLITIQUE_DU_PROJET)])
     humain = regime_des_actes([_membre(PolitiqueOutils(ask=(OUTIL_EXECUTION,)))])
