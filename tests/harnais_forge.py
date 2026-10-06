@@ -1100,6 +1100,74 @@ def ecritures(depot: Depot) -> list[str]:
     return [ligne for ligne in depot.appels() if any(verbe in ligne for verbe in ECRITURES)]
 
 
+def ecrit_lanceur(fauxbin: Path, prelude: str = "") -> None:
+    """Le lanceur `gh` du double : un script bash qui passe la main à `faux_gh.py`.
+
+    ⚠ SOUS GIT BASH, C'EST ICI QUE LE RUNTIME MSYS CONVERTIT LES ARGUMENTS (#1439) : bash→bash ne
+    convertit rien, bash→`python.exe` (natif) convertit tout ce qui ressemble à un chemin POSIX —
+    exactement comme bash→`gh.exe`. Le double reçoit donc, sur ce poste, ce que le vrai `gh`
+    recevrait. `prelude` s'insère avant l'`exec` : c'est la place du double de ce runtime
+    (`emule_msys`), là où le vrai agirait.
+    """
+    lanceur = fauxbin / "gh"
+    interpreteur = sys.executable.replace(chr(92), "/")
+    lanceur.write_text(
+        "#!/usr/bin/env bash\n"
+        f"{prelude}"
+        f'exec "{interpreteur}" "{(fauxbin / "faux_gh.py").as_posix()}" "$@"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    lanceur.chmod(0o755)
+
+
+#: Le double du runtime MSYS (#1439), inséré dans le lanceur par `emule_msys`. Sa règle est celle
+#: qu'on a OBSERVÉE sous Git Bash le 2026-10-06, pas toute la sienne (qui a ses exceptions : un
+#: argument qui porte un « : » passe intact) : un argument qui commence par « / », ou dont la valeur
+#: après « = » ou « =@ » commence par « / », est réécrit sous la racine d'installation de Git —
+#: « /idee x » devient « C:/Program Files/Git/idee x ». Un chemin qui EXISTE est laissé tel quel :
+#: le vrai runtime le traduit vers le même fichier, ce qui, sous Linux, revient à n'y rien changer.
+#: Les deux neutralisations documentées l'éteignent : `MSYS_NO_PATHCONV` (Git for Windows) et
+#: `MSYS2_ARG_CONV_EXCL='*'` (MSYS2). Sous Git Bash, il s'efface devant le vrai runtime.
+_RUNTIME_MSYS = r"""
+case "${OSTYPE:-}" in
+  msys*) ;;
+  *)
+    if [ -z "${MSYS_NO_PATHCONV:-}" ] && [ "${MSYS2_ARG_CONV_EXCL:-}" != '*' ]; then
+      racine_git='C:/Program Files/Git'
+      convertis=()
+      for a in "$@"; do
+        case "$a" in
+          //*) ;;
+          /*) [ -e "$a" ] || a="$racine_git$a" ;;
+          *=*)
+            v="${a#*=}"
+            case "$v" in
+              @/*) [ -e "${v#@}" ] || a="${a%%=*}=@$racine_git${v#@}" ;;
+              /*) [ -e "$v" ] || a="${a%%=*}=$racine_git$v" ;;
+            esac ;;
+        esac
+        convertis+=("$a")
+      done
+      set -- "${convertis[@]}"
+    fi ;;
+esac
+"""
+
+
+def emule_msys(depot: Depot) -> None:
+    """Fait recevoir au double ce que Git Bash ferait recevoir à `gh.exe`, sur TOUT système (#1439).
+
+    Sous Git Bash, le défaut est réel et ce double s'efface : le runtime convertit à l'`exec` du
+    lanceur (voir `ecrit_lanceur`). Sous Linux — le conteneur du filet et la CI —, il n'y a rien à
+    convertir, si bien qu'un test du défaut y serait vert avant comme après le correctif : un ✓ sur
+    une question jamais posée. Ce double la pose. Opt-in et non d'office : sa règle est celle qu'on
+    a observée, pas toute celle du runtime, et la poser sous toutes les suites ferait rougir des
+    appels que le vrai laisse passer.
+    """
+    ecrit_lanceur(depot.fauxbin, _RUNTIME_MSYS)
+
+
 def monte_depot(tmp_path: Path) -> Depot:
     """Monte le dépôt jetable et son `gh` factice — le corps de la fixture, sans la marque.
 
@@ -1173,17 +1241,9 @@ def monte_depot(tmp_path: Path) -> Depot:
     git("push", "--quiet", "-u", "origin", "main", cwd=racine)
 
     # Le gh factice : un script Python, appelé par un lanceur nommé `gh` (sans extension) pour
-    # que `command -v gh` de lib.sh le trouve comme le vrai.
+    # que `type -P gh` de lib.sh le trouve comme le vrai.
     (fauxbin / "faux_gh.py").write_text(FAUX_GH, encoding="utf-8", newline="\n")
-    lanceur = fauxbin / "gh"
-    interpreteur = sys.executable.replace(chr(92), "/")
-    lanceur.write_text(
-        "#!/usr/bin/env bash\n"
-        f'exec "{interpreteur}" "{(fauxbin / "faux_gh.py").as_posix()}" "$@"\n',
-        encoding="utf-8",
-        newline="\n",
-    )
-    lanceur.chmod(0o755)
+    ecrit_lanceur(fauxbin)
 
     # Neutralisation du poste : `docker` répond toujours en échec. Plus aucun helper testé ici ne
     # l'appelle depuis le retrait de l'outillage runner (#344) — le shim reste parce qu'un `docker`

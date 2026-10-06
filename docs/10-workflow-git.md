@@ -2493,6 +2493,46 @@ passe un chemin natif, ou l'on reste d'un seul côté. Côté code, `maestro.san
 (`racine_des_espaces`) écarte une valeur MSYS pour que les deux côtés retombent au même endroit ;
 son en-tête porte la mesure.
 
+**Le troisième : un argument qui commence par « / » (#1439).** Le runtime MSYS réécrit en chemin
+Windows tout argument qui **ressemble** à un chemin POSIX avant de le passer à un exécutable
+natif — et `gh.exe` en est un. Les guillemets n'y peuvent rien : la conversion a lieu au lancement
+du processus, après le shell. Le 2026-10-06, `/ticket-create` a créé #1415 sous le titre
+« C:/Program Files/Git/idee présente un plan… » ; #181 avait déjà donné la branche
+`chore/181-c-program-files-git-ticket-start…`, le titre faisant le slug. Le cas n'a rien de rare :
+les titres de ce dépôt commencent souvent par une commande (`/idee`, `/orchestrate`…).
+
+Ce qu'on a mesuré avant de corriger, et qui fait le correctif :
+
+- **La règle du runtime a ses exceptions** : `"/idee présente"` et `title=/idee` sont réécrits,
+  `"/orchestrate in:title,body"` passe intact (un « : » l'en dispense). Une parade qui compterait
+  sur ces exceptions tiendrait jusqu'au premier titre sans deux-points.
+- **`lib.sh` reposait sur cette conversion pour ses fichiers** : `-F body=@/tmp/…` devient
+  `body=@C:/Users/…/Temp/…`, seule forme que `gh.exe` sait ouvrir. Le correctif naïf —
+  `export MSYS_NO_PATHCONV=1` en tête de `lib.sh` — aurait donc cassé `issue-note`,
+  `set-description` et le suivi, et étendu la neutralisation à `git`, `python` et à tout natif à qui
+  un script passe un chemin.
+
+D'où **une fonction `gh` en tête de `lib.sh`**, que tous ses appels — et ceux des scripts qui le
+sourcent — traversent sans qu'un seul ait changé. Elle neutralise la conversion **pour `gh` seul**
+(`MSYS_NO_PATHCONV=1`, celle de Git for Windows, et `MSYS2_ARG_CONV_EXCL='*'`, celle de MSYS2), et
+convertit **elle-même** par `cygpath -m` ce qui désigne un fichier existant (`/…` ou `…=@/…`). Un
+texte n'est pas un fichier existant : il passe intact. Hors MSYS, rien n'est converti et le
+comportement est inchangé. Le pré-requis cherche désormais le binaire par `type -P` : `command -v gh`
+trouverait la fonction, et un poste sans `gh` passerait `require`. Une commande qui crée un ticket
+passe par `lib.sh issue-create "<titre>" <fichier> [labels] [jalon]`, jamais par un `gh issue create`
+direct ; une commande qui garde un appel direct ne met **jamais** un texte libre en tête d'argument
+(`/idee` écrit `--search "in:title,body <concept>"`).
+
+Preuve sur le vrai `gh.exe`, lue en octets dans la requête qu'il émet (`GH_DEBUG=api`) : sans
+l'enveloppe `title=C%3A%2FProgram+Files%2FGit%2Fidee+pr%C3%A9sente…`, avec elle
+`title=%2Fidee+pr%C3%A9sente…`. Gardé par [`tests/test_conversion_chemins.py`](../tests/test_conversion_chemins.py) :
+le titre intact, le corps venu d'un chemin `mktemp` qui arrive toujours (il attrape le correctif
+naïf : le double reçoit `@/tmp/…`), `gh` absent toujours nommé, et aucune commande sous `.claude/`
+qui appelle `gh` avec un texte libre en tête d'argument. ⚠ Sous Linux — conteneur du filet, CI —
+rien n'est converti, et un test du titre y serait vert avant comme après : `emule_msys`
+(`tests/harnais_forge.py`) y pose un **double du runtime**, à la règle observée, que le premier test
+éprouve sur l'échantillon fautif. La moitié « fichiers » n'a de prise que sous Git Bash.
+
 ### 7.1 Permissions Claude Code (allowlist)
 
 Pour que les commandes du workflow — en particulier [`/ticket-ship`](../.claude/commands/ticket-ship.md) —

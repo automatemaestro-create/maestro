@@ -325,6 +325,46 @@ GL_GQL_RETRY_DELAY="${GL_GQL_RETRY_DELAY:-1}"
 # quelque part. Même variable d'environnement des deux côtés — un seul nom pour un seul projet.
 GL_PROJET_TITRE="${MAESTRO_PROJECT_TITRE:-Maestro}"
 
+# --- L'appel à `gh` : le texte intact, les fichiers convertis (#1439) -----------------------------
+# Sous Git Bash, le runtime MSYS réécrit en chemin Windows tout argument qui RESSEMBLE à un chemin
+# POSIX avant de le passer à un exécutable natif — et `gh.exe` en est un. Les guillemets n'y peuvent
+# rien : la conversion a lieu au lancement du processus, après le shell. Or le titre d'un ticket
+# commence souvent par une commande : #1415 est né « C:/Program Files/Git/idee présente… », et ce
+# titre devient le slug de la branche (#181 : `chore/181-c-program-files-git-ticket-start…`).
+#
+# Cette fonction s'appelle `gh` pour que TOUS les appels de ce fichier — et des scripts qui le
+# sourcent — y passent sans qu'un seul ait à changer, ceux de demain compris. Elle fait deux choses,
+# et la seconde est ce qui écarte le correctif naïf (`export MSYS_NO_PATHCONV=1` en tête de fichier) :
+#   • elle NEUTRALISE la conversion, pour `gh` seul — les deux variables : `MSYS_NO_PATHCONV` est
+#     celle de Git for Windows, `MSYS2_ARG_CONV_EXCL` celle de MSYS2 ;
+#   • elle CONVERTIT elle-même ce qui désigne un fichier existant : `-F body=@/tmp/…` reposait sur la
+#     conversion pour que `gh.exe` trouve son fichier (`issue-note`, `set-description`, le suivi…).
+#     Un texte n'est pas un fichier existant : il passe intact.
+# Exporter la neutralisation l'aurait étendue à `git`, à `python` et à tout natif à qui un script
+# passe un chemin POSIX : elle reste posée appel par appel, jamais exportée.
+#
+# Hors MSYS (Linux, conteneur du filet, CI), rien n'est converti : les deux variables n'y sont lues
+# par personne et `cygpath` n'y joue pas — le comportement est inchangé. ⚠ `command -v gh` trouve
+# désormais cette FONCTION : la présence du binaire se demande à `type -P` (gh_require).
+# Gardé par tests/test_conversion_chemins.py.
+gh() {
+  local a chemin
+  local -a args=()
+  for a in "$@"; do
+    case "${OSTYPE:-}" in
+      msys*)
+        case "$a" in
+          /*) if [ -e "$a" ]; then a="$(cygpath -m "$a")"; fi ;;
+          *=@/*)
+            chemin="${a#*=@}"
+            if [ -e "$chemin" ]; then a="${a%%=@*}=@$(cygpath -m "$chemin")"; fi ;;
+        esac ;;
+    esac
+    args+=("$a")
+  done
+  MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' command gh "${args[@]}"
+}
+
 # --- Identité de la forge ---------------------------------------------------------------------
 # gl_depot_courant -> le dépôt visé par la forge active, pour les MESSAGES du code partagé
 # (« ticket #12 introuvable dans … »). Ne sert jamais à construire un appel : chaque backend
@@ -4196,6 +4236,21 @@ gl_issue_note() {
   gh_issue_note "$@"
 }
 
+# gl_issue_create <titre> <fichier> [labels-csv] [jalon] -> crée le ticket, imprime son iid.
+# Le verbe de /ticket-create (#1439), qui appelait `gh issue create` en direct : le titre d'un ticket
+# commence souvent par une commande (`/idee`, `/orchestrate`…), et Git Bash le réécrivait en chemin
+# Windows avant qu'il atteigne `gh.exe` — #1415 est né « C:/Program Files/Git/idee présente… ». Par
+# ici, l'appel passe par l'enveloppe `gh` de ce fichier (voir son en-tête). Le corps voyage par
+# fichier (#233) ; ni assignation, ni état : `project-add` le pose dans la foulée.
+gl_issue_create() {
+  local titre="$1" fichier="$2" labels="${3:-}" jalon="${4:-}"
+  if [ -z "$titre" ] || [ -z "$fichier" ]; then
+    echo "usage: gl_issue_create <titre> <fichier> [labels-csv] [jalon]" >&2; return 2
+  fi
+  if [ ! -f "$fichier" ]; then echo "fichier introuvable : $fichier" >&2; return 1; fi
+  gh_create_issue "$titre" "$fichier" "$labels" "$jalon" ""
+}
+
 # --- Le reste à appliquer sous `.claude/` devient un TICKET (#610, chantier #608) ------------------
 # Une session autonome ne peut pas écrire sous `.claude/` : garde-fou du CLI, EN AMONT de l'`allow`
 # comme des hooks — déduit par #229, mesuré par #238, re-mesuré par #614 trois semaines et une
@@ -6989,7 +7044,8 @@ gh_depot_gql() {
 # On lit le CODE DE RETOUR et jamais la sortie : `gh auth token` imprime le jeton, qui n'a rien à
 # faire dans une variable de ce fichier ni dans une trace de session.
 gh_require() {
-  if ! command -v gh >/dev/null 2>&1; then
+  # `type -P` et non `command -v` : ce dernier trouverait l'enveloppe `gh` de ce fichier (#1439).
+  if ! type -P gh >/dev/null 2>&1; then
     echo "gh n'est pas installé. Voir https://cli.github.com" >&2
     return 1
   fi
@@ -9679,6 +9735,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
     issue-title)    gl_issue_title "$@" ;;
     create-mr)      gl_create_mr "$@" ;;
     issue-note)     gl_issue_note "$@" ;;
+    issue-create)   gl_issue_create "$@" ;;
     issue-url)      gl_issue_url "$@" ;;
     reste-claude)   gl_reste_claude "$@" ;;
     reste-claude-de) gl_reste_claude_de "$@" ;;
@@ -9798,6 +9855,8 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "    create-mr <iid> <fichier> [branche]  (PR en Draft vers main, titre du ticket, description du fichier ;" >&2
       echo "                                         idempotent : met à jour la PR ouverte existante au lieu d'échouer)" >&2
       echo "    issue-note <iid> <fichier>          (poste le fichier en commentaire sur le ticket)" >&2
+      echo "    issue-create <titre> <fichier> [labels-csv] [jalon]" >&2
+      echo "                                        (crée le ticket, imprime son iid — sans état : project-add ensuite)" >&2
       echo "    issue-title <iid>                   (titre du ticket, UTF-8 intact)" >&2
       echo "    issue-url <iid>                     (URL web du ticket)" >&2
       echo "  Reste à appliquer sous .claude/ — le résidu devient un TICKET (#610, chantier #608) :" >&2
