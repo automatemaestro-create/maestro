@@ -1,7 +1,7 @@
 ---
 description: Crée un ticket bien formé (labels type::/agent::/prio:: + corps de template, état « À faire », item du projet)
 argument-hint: "<type: feature|bug|doc|infra> <titre>  (le reste peut être précisé en dialogue)"
-allowed-tools: Bash(bash:*), Bash(gh:*), Skill, AskUserQuestion, Read, Write
+allowed-tools: Bash(bash:*), Skill, AskUserQuestion, Read, Write
 ---
 
 Tu vas créer un **nouveau ticket** bien formé selon les règles de Maestro (résumées
@@ -187,20 +187,20 @@ lieu d'inventer.
    être contredit. Si l'utilisateur a explicitement demandé un autre milestone, respecte son choix
    — c'est aussi le seul moyen de ranger le **premier** ticket d'une phase neuve dans son milestone
    encore vide, et c'est le prix assumé du saut ci-dessus. Si le helper ne retourne rien (tous les
-   milestones du rail sont soldés ou vides), **omets** simplement l'option — ne bloque pas la
-   création pour ça.
+   milestones du rail sont soldés ou vides), **omets** simplement le jalon (quatrième argument de
+   l'étape 9) — ne bloque pas la création pour ça.
 
-9. Crée le ticket. Le corps multi-lignes passe **par un fichier**, jamais sur la ligne de commande :
-   la couche permissions découpe un appel sur ses sauts de ligne et ne matche aucune substitution
-   `$(…)`, si bien qu'un `--body "$(cat …)"` serait refusé alors même que `gh issue create` est
-   autorisé (docs/10 §11.7). C'est `--body-file` qui porte le corps :
+9. Crée le ticket **par le verbe**, jamais par un `gh issue create` en direct : sous Git Bash, un
+   titre qui commence par « / » — une commande, `/idee`, `/orchestrate`… — est réécrit en chemin
+   Windows avant d'atteindre `gh` (#1415 est né « C:/Program Files/Git/idee… », #1439, docs/10
+   §7.0). Le verbe appelle `gh` par l'enveloppe de `lib.sh`, qui l'en protège. Le corps passe **par
+   un fichier**, jamais sur la ligne de commande : la couche permissions découpe un appel sur ses
+   sauts de ligne et ne matche aucune substitution `$(…)` (docs/10 §11.7).
    ```
-   gh issue create \
-     --title "<titre>" \
-     --label "type::<type>,agent::<rôle>,prio::<niveau>" \
-     --milestone "<milestone-de-phase>" \
-     --body-file <fichier-de-corps>
+   bash scripts/gitlab/lib.sh issue-create "<titre>" <fichier-de-corps> "type::<type>,agent::<rôle>,prio::<niveau>" "<milestone-de-phase>"
    ```
+   Il imprime l'**iid** créé. Un jalon introuvable est **dit sur stderr** et le ticket naît sans
+   jalon : relaie-le dans le résumé.
    **Aucun label d'état ici** : les six `workflow::*` ont été retirés par #365 (docs/10 §3), le
    cycle de vie vivant désormais dans le champ Status que l'étape suivante pose. Le ticket sort donc
    de cet appel **sans état** — c'est normal, et c'est pourquoi l'étape suivante n'est pas

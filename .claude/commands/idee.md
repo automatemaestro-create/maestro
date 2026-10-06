@@ -52,8 +52,10 @@ Quatre règles gouvernent tout le reste :
      ```
      Puis, concept par concept, ce qui a déjà été ouvert, fermé ou abandonné sur le sujet :
      ```
-     gh issue list --state all --search "<concept> in:title,body" --limit 20
+     gh issue list --state all --search "in:title,body <concept>" --limit 20
      ```
+     Le qualificatif vient **en tête** : un concept qui commence par « / » (une commande) serait
+     réécrit en chemin Windows par Git Bash s'il ouvrait l'argument (#1439, docs/10 §7.0).
      Et les branches qui en portent un morceau : `git branch -a --list "*<mot>*"`.
    - **Les jalons**, leur rail, leur échéance et leur avancement :
      ```
