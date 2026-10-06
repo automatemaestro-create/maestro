@@ -59,8 +59,10 @@ from maestro.sandbox.projet import (
     PREFIXE_BRANCHE,
     EspaceCopieDeTravail,
     EspaceProjetIndisponible,
+    TravailAnterieur,
     branche_de_tache,
     espace_de_travail,
+    sauver_le_travail_en_vol,
 )
 from maestro.sandbox.ramassage import Ramassage, racine_des_espaces, ramasser
 from maestro.sandbox.workspace import ProducedFile, Workspace, isolated_workspace
@@ -75,6 +77,7 @@ __all__ = [
     "IsolationConfig",
     "ProducedFile",
     "Ramassage",
+    "TravailAnterieur",
     "Workspace",
     "branche_de_tache",
     "chemin_atelier",
@@ -83,4 +86,5 @@ __all__ = [
     "isolated_workspace",
     "racine_des_espaces",
     "ramasser",
+    "sauver_le_travail_en_vol",
 ]

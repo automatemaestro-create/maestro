@@ -4457,7 +4457,10 @@ décrit le comportement réel, pas une fixture.
   attendaient repartent. **Interrompu** (#1391, [docs/28 §12.9](./28-decision-frontiere-execution-run.md))
   — soldé par l'extinction ou une borne, en pause ou non, ou `orphelin` : il repart `en_cours` **sur
   son plan**, les tâches faites gardent leur état et leur sortie, seules la tâche interrompue et
-  celles jamais démarrées s'exécutent ; un run qui n'a **rien d'acquis** (arrêté avant son plan)
+  celles jamais démarrées s'exécutent. La tâche interrompue **repart de sa branche** (#1392) : ce
+  qu'elle avait écrit y a été porté quand son run a été éteint, et le message de sa tâche dit à
+  l'agent ce qui est déjà fait ([docs/24](./24-projets-locaux-et-poste-de-travail.md)) ; un run
+  qui n'a **rien d'acquis** (arrêté avant son plan)
   repart de son brief approuvé, comme `…/relancer`. `404` inconnu ; `409` si le run travaille ou
   attend quelqu'un, s'il est soldé par son issue ou une annulation voulue, ou si sa reprise est déjà
   en train de partir ; `422` sans plan ni brief approuvé ; `503` si son état acquis ne se relit pas.

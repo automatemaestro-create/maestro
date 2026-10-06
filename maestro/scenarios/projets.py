@@ -542,6 +542,26 @@ def travail_en_avance(racine: Path, branche: str) -> str | None:
     return tete.stdout.strip()
 
 
+def en_cours_d_ecriture(racine: Path, branche: str) -> tuple[str, ...]:
+    """Ce que le worktree qui porte `branche` montre de non commité — vide s'il n'y en a pas.
+
+    Le travail d'une tâche **pendant** qu'elle l'écrit (#1392) : un projet versionné
+    la fait travailler dans un worktree de sa branche, hors de la racine, et ce
+    qu'elle y a écrit sans le commiter ne se lit qu'en lui (`salissures`). C'est ce
+    que S12 attend avant d'interrompre — une tâche qui n'a encore rien écrit n'a
+    rien à perdre — et ce qu'il relit après l'extinction : un travail sauvé n'y est
+    plus en attente. Lève `OSError` si Git ne répond pas.
+    """
+    liste = _git(racine, "worktree", "list", "--porcelain")
+    if liste.returncode != 0:
+        raise OSError(f"`git worktree list` illisible dans {racine} : {_message(liste)}")
+    for bloc in liste.stdout.split("\n\n"):
+        champs = dict(ligne.split(" ", 1) for ligne in bloc.splitlines() if " " in ligne)
+        if champs.get("branch") == f"refs/heads/{branche}" and "worktree" in champs:
+            return salissures(Path(champs["worktree"]))
+    return ()
+
+
 def dans_le_projet(racine: Path, commit: str) -> bool:
     """`commit` est-il dans l'histoire de la branche courante du projet ?"""
     return _git(racine, "merge-base", "--is-ancestor", commit, "HEAD").returncode == 0

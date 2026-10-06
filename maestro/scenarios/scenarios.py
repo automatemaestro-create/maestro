@@ -17,10 +17,11 @@
 | S10 | Un dépôt d'une pile hors des tables | Le même oracle, sur une solution .NET reprise |
 | S11 | Des tâches indépendantes, de front | Sur un projet versionné, deux tâches en cours |
 | | | ensemble ; le plafond dérivé du plan s'annonce (#1299) |
-| S12 | Une application web survit à une | Née dans le fil, interrompue (pause, extinction, |
-| | extinction | redémarrage, reprise) : rien de fait ne repart, rien |
-| | | ne se perd, et le livrable cloné s'installe, se |
-| | | construit, passe ses tests et sert ses pages (#1408) |
+| S12 | Une application web survit à une | Née dans le fil, interrompue pendant qu'une tâche |
+| | extinction | écrit (pause, extinction, redémarrage, reprise) : |
+| | | rien de fait ne repart, rien d'écrit ne se perd, et |
+| | | le livrable cloné s'installe, se construit, passe |
+| | | ses tests et sert ses pages (#1408, #1392) |
 
 ## Trois règles que ces scénarios suivent
 
@@ -123,6 +124,7 @@ from maestro.scenarios.projets import (
     dans_le_projet,
     ecarts,
     empreinte,
+    en_cours_d_ecriture,
     manquants,
     restes,
     salissures,
@@ -2871,8 +2873,10 @@ def s12_une_application_web_survit_a_une_extinction(ctx: Contexte) -> Issue:
        le parcours de S9 —, **versionné** comme l'était p5 ;
     2. le travail demandé est une **vraie application web** (Next.js, npm, Vitest),
        dont la demande nomme les pages et les commandes ;
-    3. dès qu'une tâche est **faite** pendant qu'une autre **tourne**, le banc met le
-       run en **pause**, **éteint** Maestro — la route des gestes d'arrêt,
+    3. dès qu'une tâche est **faite** pendant qu'une autre **tourne et a écrit** —
+       du travail dans son espace, commité ou non (#1392) : une tâche partie depuis
+       quelques secondes n'a rien à perdre, et l'interrompre n'éprouverait rien —,
+       le banc met le run en **pause**, **éteint** Maestro — la route des gestes d'arrêt,
        `POST /api/extinction`, puis l'API coupée —, la **rallume** sur le même
        journal (`maestro.scenarios.redemarrage`) et **reprend** le run par le geste de
        l'écran ;
@@ -2887,15 +2891,17 @@ def s12_une_application_web_survit_a_une_extinction(ctx: Contexte) -> Issue:
       que personne n'a commencée n'a ni échoué ni été bloquée par l'extinction) ;
     - la reprise **continue le même run**, et **aucune tâche faite n'y repart** —
       lu sur la trace : aucun `en_cours` après l'interruption pour une tâche faite ;
-    - le travail de la tâche **en vol** à l'extinction est **sauvé sur sa branche**
-      (`branche_de_tache`), puis **dans le projet livré** ;
+    - le travail que la tâche **en vol** avait écrit sans le commiter au moment
+      d'éteindre est **sauvé sur sa branche** (`branche_de_tache`) dès l'extinction —
+      il n'en reste rien hors d'elle (#1392) —, puis il est **dans le projet livré** :
+      la tâche reprise est repartie de lui ;
     - le run repris **aboutit**, et son livrable — **cloné**, donc ce que le projet a
       commité — **s'installe, se construit, passe ses tests** et **sert ses pages** ;
       ce que ces commandes refabriquent ne salit pas le dépôt, et rien de ce que le
       projet déclare ignorer n'y est commité.
 
-    Un run soldé **avant** d'avoir eu une tâche faite pendant qu'une autre tournait est
-    un rouge : le travail n'a pas abouti, ce que p5 a d'abord montré. Un run qui
+    Un run soldé **avant** d'avoir eu une tâche faite pendant qu'une autre tournait et
+    écrivait est un rouge : le travail n'a pas abouti, ce que p5 a d'abord montré. Un run qui
     aboutit sans jamais ce moment est un **empêchement** — il n'y avait rien à
     interrompre. Sans `npm` ni `git` sur le poste, S12 ne se joue pas (empêchement dit
     d'emblée), et il ne solde jamais un run qu'il n'a pas lancé : d'autres runs en vol
@@ -2939,12 +2945,14 @@ def _interrompre_puis_juger(ctx: Contexte, racine: Path, projet_id: str, run_id:
     versionné : c'est elle que le chantier de #1389 fait passer au vert, et elle se
     joue aussi sur un run qu'un autre montage a lancé.
     """
-    # --- Le moment : une tâche faite pendant qu'une autre tourne ---------------
+    # --- Le moment : une tâche faite pendant qu'une autre tourne et écrit ------
     atteint: list[bool] = []
 
     def moment(_detail: Mapping[str, Any]) -> bool:
-        statuts = {_statut(c) for c in ctx.client.taches(run_id, projet_id=projet_id)}
-        if STATUT_TERMINEE in statuts and STATUT_EN_COURS in statuts:
+        cartes = ctx.client.taches(run_id, projet_id=projet_id)
+        if any(_statut(c) == STATUT_TERMINEE for c in cartes) and any(
+            _statut(c) == STATUT_EN_COURS and _a_ecrit(racine, _id(c)) for c in cartes
+        ):
             atteint.append(True)
         return bool(atteint)
 
@@ -2990,6 +2998,24 @@ def _interrompre_puis_juger(ctx: Contexte, racine: Path, projet_id: str, run_id:
         f"{', '.join(f'« {_titre(c)} » ({_statut(c)})' for c in a_venir.values()) or '—'}",
     )
 
+    # Ce que chaque tâche en vol a écrit sans le commiter, au moment d'éteindre :
+    # c'est ce travail-là que l'extinction doit porter sur sa branche (#1392).
+    try:
+        ecrit = {tache: en_cours_d_ecriture(racine, branche_de_tache(tache)) for tache in en_vol}
+    except OSError as exc:
+        return empeche(
+            f"le dépôt du projet ne se lit pas : {exc}", run_id=run_id, cout_usd=_cout(avant)
+        )
+    ctx.note(
+        "travail en vol, au moment d'éteindre",
+        " ; ".join(
+            f"« {en_vol[t]} » : {len(fichiers)} fichier(s) non commité(s)"
+            + (f" ({', '.join(fichiers[:5])})" if fichiers else "")
+            for t, fichiers in ecrit.items()
+        )
+        or "aucune tâche en vol",
+    )
+
     eteinte = ctx.client.eteindre()
     soldes = [
         str(r.get("run_id") or "") for r in eteinte.get("runs") or [] if isinstance(r, Mapping)
@@ -3027,6 +3053,9 @@ def _interrompre_puis_juger(ctx: Contexte, racine: Path, projet_id: str, run_id:
         sauves = {
             tache: travail_en_avance(racine, branche_de_tache(tache)) for tache in en_vol
         }
+        restes = {
+            tache: en_cours_d_ecriture(racine, branche_de_tache(tache)) for tache in en_vol
+        }
     except OSError as exc:
         return empeche(
             f"le dépôt du projet ne se lit pas : {exc}", run_id=run_id, cout_usd=_cout(avant)
@@ -3035,15 +3064,22 @@ def _interrompre_puis_juger(ctx: Contexte, racine: Path, projet_id: str, run_id:
         "travail en vol, sur sa branche",
         " ; ".join(
             f"« {en_vol[t]} » `{branche_de_tache(t)}` → {sha[:12] if sha else 'rien de sauvé'}"
+            + (f", {len(restes[t])} fichier(s) encore hors de la branche" if restes[t] else "")
             for t, sha in sauves.items()
         )
         or "aucune tâche en vol",
     )
-    non_sauves = [t for t, sha in sauves.items() if sha is None]
+    # Seule une tâche qui avait écrit a quelque chose à perdre : celle qui n'avait
+    # encore rien laissé dans son espace n'est pas jugée sur une branche vide.
+    non_sauves = [t for t in en_vol if ecrit[t] and (sauves[t] is None or restes[t])]
     if non_sauves:
         constats.append(
             "le travail en vol à l'extinction n'est pas sauvé sur sa branche : "
-            + ", ".join(f"« {en_vol[t]} » (`{branche_de_tache(t)}`)" for t in non_sauves)
+            + ", ".join(
+                f"« {en_vol[t]} » (`{branche_de_tache(t)}` : "
+                f"{', '.join((restes[t] or ecrit[t])[:5])})"
+                for t in non_sauves
+            )
         )
 
     # --- La reprise -------------------------------------------------------------
@@ -3095,6 +3131,23 @@ def _interrompre_puis_juger(ctx: Contexte, racine: Path, projet_id: str, run_id:
         run_id=run_id,
         cout_usd=cout,
     )
+
+
+def _a_ecrit(racine: Path, tache: str) -> bool:
+    """La tâche a-t-elle déjà laissé du travail — non commité dans son espace, ou commité ?
+
+    Ce qu'attend S12 avant d'interrompre (#1392) : une tâche partie depuis quelques
+    secondes n'a encore rien écrit, et l'interrompre n'éprouverait rien — c'est ce
+    qu'avait fait le passage `20261005-195909`, dont la tâche coupée tournait depuis
+    huit secondes. Un dépôt illisible vaut « pas encore » : le banc relira.
+    """
+    branche = branche_de_tache(tache)
+    try:
+        return bool(en_cours_d_ecriture(racine, branche)) or (
+            travail_en_avance(racine, branche) is not None
+        )
+    except OSError:
+        return False
 
 
 def _runs_en_vol(ctx: Contexte) -> tuple[str, ...]:

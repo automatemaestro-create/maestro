@@ -110,9 +110,11 @@ maintenant sur la mort de la **machine**, l'arrêt de l'API ne coûtant plus rie
 - **on rattrape par** `reprendre` (ci-dessous) depuis #1391 : le run repart **sur
   son plan, sous le même identifiant**, et le travail des tâches déjà faites —
   leur état **et leur sortie** — est gardé, relu dans le magasin d'état acquis que
-  le run remplit au fil de l'eau (`maestro.engine.acquis`, docs/28 §12). Ce qui ne
-  se rattrape **pas**, c'est le travail **en cours** de la tâche interrompue : un
-  run reprend à la tâche près, jamais au milieu d'une tâche (docs/28 §12.6).
+  le run remplit au fil de l'eau (`maestro.engine.acquis`, docs/28 §12). La tâche
+  interrompue, elle, n'est pas acquise : elle repasse par une session neuve — mais
+  sur **sa branche**, où ce qu'elle avait écrit a été porté quand son run a été
+  soldé (`_sauver_le_travail_en_vol`, #1392), et l'agent sait ce qui y est fait
+  (docs/28 §12.10).
   `relancer`, lui, **recommence** : il rejoue le cadrage approuvé dans un nouveau
   run, qui repart de la décomposition.
 
@@ -253,6 +255,7 @@ from maestro.controltower.state import (
     STATUTS_EXECUTION_TERMINAUX,
     STATUTS_TACHE_TERMINAUX,
     ControlTowerState,
+    EtatTache,
     libelle_statut_execution,
 )
 from maestro.controltower.validation import ValidateurControlTower
@@ -265,7 +268,15 @@ from maestro.engine.brief import (
 )
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.engine.pause import PorteExecution
+from maestro.projets.application import ApplicationRefusee
+from maestro.projets.racine import RacineRefusee
+from maestro.projets.store import ProjetStore
 from maestro.references import ReferenceTicket
+from maestro.sandbox.projet import (
+    EspaceProjetIndisponible,
+    branche_de_tache,
+    sauver_le_travail_en_vol,
+)
 from maestro.sources import (
     DepotTeleversements,
     RapportLecture,
@@ -451,6 +462,13 @@ class ServiceExecutions:
     magasin de son côté (`hote_detache._magasin_du_run`). Par défaut un magasin
     **mémoire** — celui des tests, qui ne survit à rien ; la production câble
     `magasin_acquis_configure`, qui suit le support du journal durable.
+
+    `projets` (#1392) est le **dépôt des projets** — de quoi retrouver la racine
+    d'une tâche en vol quand son run est soldé de l'extérieur, et porter sur sa
+    branche ce que son worktree retient encore (`_sauver_le_travail_en_vol`). None
+    — le défaut des tests — : rien n'est porté, et le travail d'une tâche tuée en
+    vol attend le remontage de sa reprise, comme avant ce ticket. La production
+    câble le dépôt de l'app (`create_app`).
     """
 
     def __init__(
@@ -468,8 +486,10 @@ class ServiceExecutions:
         periode_battement_s: float = PERIODE_BATTEMENT_S,
         hote: HoteRun | None = None,
         acquis: MagasinAcquis | None = None,
+        projets: ProjetStore | None = None,
     ) -> None:
         self._bus = bus
+        self._projets = projets
         self._acquis = acquis if acquis is not None else MagasinAcquisMemoire()
         # Les runs dont une reprise sur le plan est **en train** de partir (#1391) —
         # le garde-fou du double clic, parce que la reprise relit son état hors du
@@ -1462,6 +1482,10 @@ class ServiceExecutions:
         self._demarrer()
         self._consigne(run_id, EXECUTION_ANNULEE, "", detail, cause=cause)
         await self._hote.annuler(run_id, delai_s=DELAI_ANNULATION_S)
+        # Entre l'extinction de l'hôte et le soldage des tâches (#1392) : la
+        # première est ce qui rend le geste nécessaire, le second ce qui fait
+        # oublier quelles tâches étaient en vol.
+        await self._sauver_le_travail_en_vol(run_id)
         self._solder_les_taches(run_id, detail, cause=cause)
         await self._oublier(run_id)
 
@@ -1608,9 +1632,7 @@ class ServiceExecutions:
         pas. Le geste de rattrapage est le même qu'en août — republier un
         `tache.statut` terminal par tâche restée en l'air.
         """
-        for tache in self._state.taches(run=PorteeRun.run(run_id)):
-            if tache.statut in STATUTS_TACHE_TERMINAUX or tache.statut in _JAMAIS_DEMARREES:
-                continue
+        for tache in self._taches_en_vol(run_id):
             self._pousser(
                 Event(
                     type=EVENEMENT_TACHE_STATUT,
@@ -1629,6 +1651,68 @@ class ServiceExecutions:
                     projet_id=tache.projet_id,
                     cause=cause,
                 )
+            )
+
+    def _taches_en_vol(self, run_id: str) -> list[EtatTache]:
+        """Les tâches que le run portait **en vol** : ni terminales, ni jamais démarrées.
+
+        Une seule lecture pour les deux gestes qui en ont besoin — les solder
+        (`_solder_les_taches`, qui dit pourquoi ces deux filtres) et porter leur
+        travail sur leur branche (`_sauver_le_travail_en_vol`) : deux lectures
+        finiraient par ne pas désigner les mêmes tâches.
+        """
+        return [
+            tache
+            for tache in self._state.taches(run=PorteeRun.run(run_id))
+            if tache.statut not in STATUTS_TACHE_TERMINAUX
+            and tache.statut not in _JAMAIS_DEMARREES
+        ]
+
+    async def _sauver_le_travail_en_vol(self, run_id: str) -> None:
+        """Porte sur sa branche ce que chaque tâche en vol du run avait écrit (#1392).
+
+        **Le travail d'une tâche en vol n'est plus sauvé seulement quand son
+        `finally` a le temps de tourner.** Le démontage de son espace commite ce
+        qu'il porte encore (#705) ; mais un hôte détaché qui ne s'éteint pas dans
+        `DELAI_ANNULATION_S` est achevé avec sa descendance (`hote_detache._eteindre`),
+        et un hôte peut mourir seul (`_ramasser`) : dans les deux cas, aucun
+        `finally` ne tourne, et ce que la tâche avait écrit restait dans un worktree
+        du répertoire temporaire, hors de sa branche. Constaté sur p5, puis par S12.
+
+        Le geste est donc joué **ici**, par celui qui sait que l'hôte ne tourne plus
+        — après `_hote.annuler`, après le constat de sa mort —, et c'est le même
+        commit que le démontage aurait fait (`sauver_le_travail_en_vol`). Une
+        reprise du run sur son plan (#1391) remonte ensuite la branche, et la tâche
+        y retrouve son travail (`maestro.sandbox.projet.TravailAnterieur`).
+
+        Il vaut pour **tout** soldage d'un run de l'extérieur — extinction,
+        annulation, relance, hôte mort —, comme le démontage valait quel que soit le
+        verdict : une tâche qu'on arrête n'a pas à perdre ce qu'elle avait fait.
+        Sur l'hôte en process, la tâche peut encore dérouler son `finally` quand on
+        arrive : les deux commits se suivent, le second ne trouve rien à faire.
+
+        Best-effort et sans jamais lever : un projet introuvable, une racine
+        refusée, un Git absent ou un commit refusé (le `pre-commit` du projet) sont
+        **dits** au journal de l'API, et le soldage continue — un run qu'on éteint
+        ne reste pas allumé parce qu'une sauvegarde a échoué. Le Git se joue hors
+        de la boucle, et les tâches l'une après l'autre : deux commits concurrents
+        dans un même dépôt se disputeraient son verrou.
+        """
+        projets = self._projets
+        if projets is None:
+            return
+        en_vol = [(t.id, t.projet_id) for t in self._taches_en_vol(run_id) if t.projet_id]
+        if not en_vol:
+            return
+        try:
+            await asyncio.to_thread(_porter_sur_les_branches, projets, run_id, en_vol)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Travail en vol du run %s non porté sur ses branches : la reprise "
+                "du run le cherchera dans les worktrees restés montés.",
+                run_id,
             )
 
     async def fermer(self) -> None:
@@ -1858,6 +1942,10 @@ class ServiceExecutions:
                     defunt.cause,
                 )
                 self._consigne(defunt.run_id, EXECUTION_ECHEC, "", defunt.cause)
+                # Un hôte mort n'a démonté aucun worktree (#1392) : ce que ses
+                # tâches en vol avaient écrit est porté sur leur branche avant
+                # qu'on oublie lesquelles c'étaient.
+                await self._sauver_le_travail_en_vol(defunt.run_id)
                 # Ce que le run portait est soldé avec lui (#466) : le process est
                 # mort, il n'écrira plus l'issue de ses tâches, et sans ce geste
                 # elles resteraient `en_cours` avec leurs agents `occupe` pour
@@ -2169,3 +2257,36 @@ class ServiceExecutions:
                     "Publication d'un événement d'exécution impossible : le run "
                     "continue, son reflet temps réel manquera cet événement."
                 )
+
+
+def _porter_sur_les_branches(
+    projets: ProjetStore, run_id: str, en_vol: Sequence[tuple[str, str]]
+) -> None:
+    """Ce que `ServiceExecutions._sauver_le_travail_en_vol` joue hors de la boucle (#1392).
+
+    Tâche par tâche, et chacune pour son compte : un refus motivé pour l'une —
+    racine refusée, Git absent, commit que le projet refuse — est dit, et
+    n'empêche pas la suivante d'être sauvée.
+    """
+    for tache_id, projet_id in en_vol:
+        projet = projets.lire(projet_id)
+        if projet is None:
+            continue
+        try:
+            porte = sauver_le_travail_en_vol(projet, tache_id)
+        except (ApplicationRefusee, RacineRefusee, EspaceProjetIndisponible) as refus:
+            _LOGGER.warning(
+                "Travail en vol de la tâche %s (run %s) non porté sur %s : %s",
+                tache_id,
+                run_id,
+                branche_de_tache(tache_id),
+                refus,
+            )
+            continue
+        if porte:
+            _LOGGER.info(
+                "Travail en vol de la tâche %s (run %s) porté sur %s",
+                tache_id,
+                run_id,
+                branche_de_tache(tache_id),
+            )

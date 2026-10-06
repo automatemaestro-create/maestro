@@ -31,6 +31,13 @@ premier, et le second est un régime à lui (`maestro.sandbox.en_place`) :
   **sérialise** les tâches d'un même projet (une seule à la fois dans l'arbre) ;
 - **tâche sans projet** → le `mkdtemp()` d'avant, inchangé.
 
+Une tâche **tuée en vol** — Maestro éteint, le process de son run achevé — ne
+passe jamais par ce démontage. Son travail n'en est pas perdu pour autant (#1392) :
+celui qui a éteint le process le porte sur la branche dès qu'il l'a fait
+(`sauver_le_travail_en_vol`), et la tâche qui remonte cette branche **sait** ce
+qu'elle y retrouve — l'espace le dit à l'agent (`TravailAnterieur`) et le compte
+dans ce que la tâche livre.
+
 Trois invariants tiennent le worktree, et ce sont eux qu'il ne faut pas défaire :
 
 1. **le chemin de travail est hors de la racine** — vérifié, pas supposé
@@ -59,6 +66,7 @@ import subprocess
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from maestro.fichiers import retirer_arbre
@@ -87,6 +95,71 @@ _LONGUEUR_SLUG = 60
 #: Repli de nom quand l'identifiant de tâche ne laisse aucun caractère sûr.
 _SLUG_DEFAUT = "tache"
 
+#: Ce que le message d'une tâche reprise nomme de son travail antérieur (#1392) —
+#: une borne de **taille de prompt**, pas un tri : au-delà, le compte de ce qui
+#: n'est pas nommé est dit, et l'agent le retrouve de toute façon dans son espace.
+_FICHIERS_DITS_MAX = 40
+_COMMITS_DITS_MAX = 10
+
+#: Ce que dit chaque lettre de `git diff --name-status` ; une lettre absente d'ici
+#: est rendue telle que Git l'écrit, jamais tue.
+_STATUTS_GIT = {"A": "ajouté", "M": "modifié", "D": "supprimé", "T": "type changé"}
+
+
+@dataclass(frozen=True)
+class TravailAnterieur:
+    """Ce que la branche d'une tâche porte **avant** qu'elle ne démarre (#1392).
+
+    Une branche `maestro/<tâche>` qui existe déjà au montage est celle d'une
+    exécution précédente de **la même tâche** : interrompue en vol (Maestro éteint
+    pendant qu'elle écrivait, son travail sauvé par `sauver_le_travail_en_vol`),
+    en échec, ou livrée sans que sa fusion n'ait eu lieu. Son travail est sous les
+    pieds de l'agent — un worktree est une copie de sa branche —, mais rien ne le
+    lui disait : il le prenait pour le projet, ou le refaisait. `reference` est ce
+    à quoi on compare — la branche que la tâche reprend (#1396) ou la base du
+    projet —, `commits` les sujets de ce que la branche a de plus (bornés à
+    `_COMMITS_DITS_MAX`, `nb_commits` les compte tous), `fichiers` ce qu'ils
+    changent, `(statut, chemin)`, triés.
+    """
+
+    branche: str
+    reference: str
+    nb_commits: int
+    commits: tuple[str, ...]
+    fichiers: tuple[tuple[str, str], ...]
+
+    @property
+    def chemins(self) -> frozenset[str]:
+        """Les chemins que ce travail a touchés, relatifs à la racine du worktree."""
+        return frozenset(chemin for _, chemin in self.fichiers)
+
+    def consigne(self) -> str:
+        """Le paragraphe qui dit à l'agent ce qui est déjà fait, et qu'il repart de là."""
+        depuis = (
+            "la base du projet" if self.reference == "HEAD" else f"`{self.reference}`"
+        )
+        sujets = ", ".join(f"« {sujet} »" for sujet in self.commits)
+        reste = self.nb_commits - len(self.commits)
+        if reste > 0:
+            sujets += f" et {reste} autre(s)"
+        lignes = [
+            f"Ta branche `{self.branche}` n'est pas neuve : une exécution précédente "
+            f"de cette tâche y a laissé du travail que {depuis} n'a pas, et ton "
+            f"répertoire le porte déjà — {self.nb_commits} commit(s) ({sujets}), "
+            f"{len(self.fichiers)} fichier(s) :"
+        ]
+        lignes += [
+            f"- {_STATUTS_GIT.get(statut, statut)} : `{chemin}`"
+            for statut, chemin in self.fichiers[:_FICHIERS_DITS_MAX]
+        ]
+        if len(self.fichiers) > _FICHIERS_DITS_MAX:
+            lignes.append(f"- et {len(self.fichiers) - _FICHIERS_DITS_MAX} autre(s)")
+        lignes.append(
+            "Pars de cet état : relis ce qui est fait, garde ce qui tient, termine ce "
+            "qui manque — ne le refais pas depuis zéro."
+        )
+        return "\n".join(lignes)
+
 
 class EspaceProjetIndisponible(RuntimeError):
     """L'espace de travail dérivé n'a pas pu être monté — **avec son motif**.
@@ -104,6 +177,7 @@ class EspaceProjetIndisponible(RuntimeError):
         self.motif = motif
 
 
+@dataclass(frozen=True)
 class EspaceCopieDeTravail(Workspace):
     """Le worktree d'une tâche, dont les fichiers sont **ceux que Git voit** (#1388).
 
@@ -133,7 +207,30 @@ class EspaceCopieDeTravail(Workspace):
 
     Si Git ne répond pas, c'est une **erreur motivée** (`EspaceProjetIndisponible`),
     jamais un repli sur tout le disque : c'est ce repli qui faisait le défaut.
+
+    `anterieur` (#1392) est le travail qu'une exécution précédente de la tâche a
+    laissé sur sa branche, `None` sur une branche neuve. Il change deux choses, et
+    seulement quand il est là : le message de la tâche le **dit** à l'agent
+    (`consigne_espace`), et ses fichiers ne sont **pas** relevés au départ — ils
+    sont le travail de cette tâche, fait par une tentative précédente, et la
+    livraison que lit le juge les porte comme si elle les avait écrits d'un trait.
+    Sans cela, une tâche reprise qui ne réécrit rien de ce qui est fait livrerait
+    une moitié.
     """
+
+    anterieur: TravailAnterieur | None = None
+
+    def consigne_espace(self) -> str:
+        """Ce que la branche porte déjà, s'il y a quelque chose — sinon rien, comme avant."""
+        return "" if self.anterieur is None else self.anterieur.consigne()
+
+    def _releve(self) -> dict[str, tuple[int, int]]:
+        """L'empreinte de départ, **moins** ce que la tâche avait déjà fait (#1392)."""
+        releve = super()._releve()
+        if self.anterieur is not None:
+            for chemin in self.anterieur.chemins:
+                releve.pop(chemin, None)
+        return releve
 
     def fichiers(self) -> Iterator[Path]:
         """Les fichiers que Git voit dans le worktree, triés par chemin."""
@@ -178,6 +275,12 @@ def espace_de_travail(
     qu'à la création : une branche qui existe déjà se reprend telle quelle. Sans
     objet en place et sans projet.
 
+    Une branche qui existe déjà porte le travail d'une exécution précédente de la
+    tâche (#1392) — celle qu'une extinction a coupée, typiquement, et que la
+    reprise du run (#1391) rejoue sous le même identifiant. Ce qu'elle a de plus
+    que la branche reprise ou la base est relevé au montage (`TravailAnterieur`)
+    et porté par l'espace, qui le dit à l'agent et le compte dans sa livraison.
+
     `keep=True` conserve l'espace (et, pour un projet versionné, le worktree
     monté) : l'inspection après coup en a besoin, et c'est alors à l'appelant de
     faire le ménage — y compris de décider ce qu'il advient du travail non
@@ -220,24 +323,68 @@ def espace_de_travail(
     # non commité ne vit nulle part ailleurs (`ramassage.porte_un_worktree`).
     parent = Path(tempfile.mkdtemp(prefix=prefix, dir=racine_des_espaces()))
     chemin = parent / _slug(tache_id)
+    branche = _branche(tache_id)
+    depart = _branche(reprend) if reprend.strip() else ""
     monte = False
     try:
         _verifie_hors_racine(chemin, racine)
-        _monter_worktree(
-            racine,
-            chemin,
-            _branche(tache_id),
-            _base(projet),
-            depart=_branche(reprend) if reprend.strip() else "",
-        )
+        # Lu **avant** le montage, qui crée la branche quand elle manque : seule une
+        # branche qui existait déjà porte le travail d'une exécution précédente.
+        existait = _ref_existe(racine, branche)
+        _monter_worktree(racine, chemin, branche, _base(projet), depart=depart)
         monte = True
-        yield EspaceCopieDeTravail.derive(chemin)
+        # **Après** le montage, jamais avant : il vient de porter sur la branche ce
+        # qu'un worktree abandonné retenait encore (`_liberer_la_branche`).
+        anterieur = (
+            _travail_anterieur(racine, branche, _reference(racine, projet, depart))
+            if existait
+            else None
+        )
+        yield EspaceCopieDeTravail.derive(chemin, anterieur=anterieur)
     finally:
         if not keep:
             if monte:
-                _solder_la_branche(chemin, _branche(tache_id))
+                _solder_la_branche(chemin, branche)
                 _retirer_worktree(racine, chemin)
             retirer_arbre(parent)
+
+
+def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
+    """Porte sur sa branche ce qu'une tâche **tuée en vol** a laissé dans son worktree (#1392).
+
+    Le démontage d'`espace_de_travail` commite le travail en attente avant de
+    retirer le worktree (#705) — mais il vit dans un `finally`, et un `finally` ne
+    tourne que dans un process qui vit encore. Constaté sur p5 et rejoué par S12 :
+    Maestro éteint pendant qu'une tâche écrit, l'hôte du run est achevé avec sa
+    descendance au bout de `DELAI_ANNULATION_S`, et ce que la tâche avait écrit
+    restait dans un worktree du répertoire temporaire, hors de toute branche,
+    jusqu'à ce qu'une reprise vienne le chercher — ou jamais.
+
+    C'est donc **celui qui a éteint le process** qui joue le geste, une fois
+    qu'il l'a fait (`maestro.controltower.executions`) : le même commit, par la même
+    orthographe (`commiter_en_attente`), sur les seuls worktrees qui ont la forme
+    exacte de ceux qu'`espace_de_travail` monte pour **cette** tâche — jamais celui
+    qu'une personne aurait ouvert elle-même (`_worktrees_abandonnes`). Le worktree
+    reste monté : le retirer n'ajoute rien à la sauvegarde, et c'est le montage
+    suivant de la tâche qui le libère (`_liberer_la_branche`).
+
+    Rend `True` si un worktree de la tâche a été trouvé — son travail est alors sur
+    la branche —, `False` s'il n'y en avait pas : projet non versionné (la tâche
+    écrit en place, rien n'est hors du projet), ou démontage qui a eu le temps de
+    se faire. Lève `RacineRefusee` si la racine n'est plus admissible,
+    `EspaceProjetIndisponible` si Git manque, `ApplicationRefusee` si Git refuse
+    le commit (un `pre-commit` du projet, un index verrouillé) : l'appelant le dit,
+    ce n'est pas ici qu'on le tait.
+    """
+    if not projet.versionne:
+        return False
+    racine = valider_racine(projet.racine)
+    branche = _branche(tache_id)
+    trouve = False
+    for abandonne in _worktrees_abandonnes(racine, branche):
+        commiter_en_attente(abandonne, branche)
+        trouve = True
+    return trouve
 
 
 def branche_de_tache(tache_id: str) -> str:
@@ -271,6 +418,72 @@ def _slug(tache_id: str) -> str:
 def _base(projet: Projet) -> str:
     """La branche de base déclarée du projet, "" si le dépôt était en HEAD détaché."""
     return projet.vcs.branche_base if projet.vcs is not None else ""
+
+
+def _reference(racine: Path, projet: Projet, depart: str) -> str:
+    """Ce à quoi comparer la branche d'une tâche pour dire ce qu'elle a fait (#1392).
+
+    La branche qu'elle reprend (#1396) si elle existe — le travail de celle-là
+    n'est pas le sien —, sinon la base déclarée, sinon la tête du projet : les
+    trois points d'où `_monter_worktree` a pu la faire naître, dans le même ordre.
+    """
+    for candidate in (depart, _base(projet)):
+        if candidate and _ref_existe(racine, candidate):
+            return candidate
+    return "HEAD"
+
+
+def _travail_anterieur(racine: Path, branche: str, reference: str) -> TravailAnterieur | None:
+    """Ce que `branche` porte de plus que `reference` — `None` si rien, ou si Git ne dit rien.
+
+    Les commits sont ceux de `reference..branche`, les fichiers ceux que `branche`
+    change depuis son point de départ (`reference...branche`, trois points) : une
+    base qui a avancé depuis — les fusions des tâches voisines — n'y entre pas.
+    Une branche dont les commits ne changent plus rien (un travail défait) ne porte
+    rien qui vaille d'être dit. Muet sur un refus de Git comme sur un Git qui ne
+    répond plus : ce relevé informe l'agent, il ne doit pas faire échouer le
+    montage qui vient de réussir.
+    """
+    try:
+        return _releve_anterieur(racine, branche, reference)
+    except EspaceProjetIndisponible:
+        return None
+
+
+def _releve_anterieur(racine: Path, branche: str, reference: str) -> TravailAnterieur | None:
+    """Le corps de `_travail_anterieur`, qui laisse passer un Git qui ne répond pas."""
+    plage = f"{reference}..refs/heads/{branche}"
+    compte = _git(racine, "rev-list", "--count", plage)
+    if compte.returncode != 0 or not compte.stdout.strip().isdigit():
+        return None
+    nb_commits = int(compte.stdout.strip())
+    if nb_commits == 0:
+        return None
+    sujets = _git(racine, "log", f"-n{_COMMITS_DITS_MAX}", "--format=%s", plage)
+    difference = _git(
+        racine,
+        "diff",
+        "--name-status",
+        "--no-renames",
+        "-z",
+        f"{reference}...refs/heads/{branche}",
+    )
+    if sujets.returncode != 0 or difference.returncode != 0:
+        return None
+    # `-z` : « statut\0chemin\0 » par fichier, sans les guillemets dont Git
+    # entoure un nom non ASCII — c'est le chemin tel que le worktree l'écrit.
+    champs = [champ for champ in difference.stdout.split("\0") if champ]
+    paires = zip(champs[::2], champs[1::2], strict=False)
+    fichiers = tuple(sorted(paires, key=lambda paire: paire[1]))
+    if not fichiers:
+        return None
+    return TravailAnterieur(
+        branche=branche,
+        reference=reference,
+        nb_commits=nb_commits,
+        commits=tuple(ligne for ligne in sujets.stdout.splitlines() if ligne.strip()),
+        fichiers=fichiers,
+    )
 
 
 def _verifie_hors_racine(chemin: Path, racine: Path) -> None:
@@ -369,13 +582,36 @@ def _liberer_la_branche(racine: Path, branche: str, chemin: Path) -> None:
     exécution **antérieure** de cette tâche : une tâche n'est jamais exécutée deux
     fois en même temps, et sa tentative précédente a démonté le sien en sortant —
     sauf à être morte sans le pouvoir.
+
+    Depuis #1392, le premier geste a souvent déjà été fait — par celui qui a éteint
+    le process (`sauver_le_travail_en_vol`) — et il est alors sans objet : il reste
+    ici pour la mort que personne n'a vue (machine éteinte, process tué hors de
+    Maestro).
+    """
+    for abandonne in _worktrees_abandonnes(racine, branche, sauf=chemin):
+        _solder_la_branche(abandonne, branche)
+        _retirer_worktree(racine, abandonne)
+        _git(racine, "worktree", "prune")
+
+
+def _worktrees_abandonnes(
+    racine: Path, branche: str, *, sauf: Path | None = None
+) -> list[Path]:
+    """Les worktrees **de la forme d'un espace de Maestro** qui retiennent `branche`.
+
+    La forme exacte de ce qu'`espace_de_travail` monte pour la tâche de `branche` —
+    `<racine des espaces>/maestro-…/<tâche>` —, et rien d'autre : le critère qui
+    tient à l'écart le worktree qu'une personne aurait ouvert elle-même sur une
+    branche `maestro/…`. `sauf` est l'emplacement qu'on s'apprête à monter. Rend
+    une liste vide quand Git ne sait pas répondre.
     """
     resultat = _git(racine, "worktree", "list", "--porcelain")
     if resultat.returncode != 0:
-        return
+        return []
     espaces = _normalise(racine_des_espaces())
-    cible = _normalise(chemin)
+    cible = None if sauf is None else _normalise(sauf)
     tache = branche.removeprefix(PREFIXE_BRANCHE)
+    trouves: list[Path] = []
     for dossier, reference in _worktrees(resultat.stdout):
         abandonne = Path(dossier)
         if (
@@ -386,9 +622,8 @@ def _liberer_la_branche(racine: Path, branche: str, chemin: Path) -> None:
             or _normalise(abandonne.parent.parent) != espaces
         ):
             continue
-        _solder_la_branche(abandonne, branche)
-        _retirer_worktree(racine, abandonne)
-        _git(racine, "worktree", "prune")
+        trouves.append(abandonne)
+    return trouves
 
 
 def _worktrees(porcelaine: str) -> Iterator[tuple[str, str]]:
