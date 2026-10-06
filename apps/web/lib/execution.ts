@@ -128,30 +128,39 @@ export function estEteint(execution: ResumeExecution): boolean {
 }
 
 /**
- * Ce run a-t-il un **cadrage à rejouer** (#349, #486) ?
+ * Ce run **interrompu** se reprend-il là où il en était (#349, #486, #1391) ?
  *
  * Deux moitiés, et aucune ne suffit. La première est l'état du run : **perdu**
- * (orphelin, son hôte s'est tu) ou **éteint** (Maestro s'est arrêté en l'emportant)
- * — un run qui travaille n'a pas à être repris. La seconde est son **brief
- * approuvé** : sans lui il n'y a rien à rejouer, le run s'étant arrêté avant que
- * quelqu'un ne valide son cadrage, et le relancer reviendrait à repartir de son
- * objectif brut, c'est-à-dire à sauter la validation qu'il attendait encore. L'API
- * refuse ce cas en 422 ; ne pas proposer le geste évite d'offrir un bouton qui
- * n'aboutira pas.
+ * (orphelin, son hôte s'est tu) ou **éteint** (Maestro s'est arrêté en l'emportant,
+ * en pause ou non) — un run qui travaille n'a pas à être repris. La seconde est ce
+ * qu'il a **d'acquis** :
+ *
+ * - un **plan** (ses tâches déclarées, `nb_taches`) — depuis #1391, il reprend
+ *   dessus, sous le même identifiant : ce qui est fait reste fait, seul ce qui
+ *   reste s'exécute. Le brief n'y est pour rien, et c'est ce que #1391 ouvre : un
+ *   run dont personne n'a validé le cadrage (lancé `sans`, ou `auto` hors du fil)
+ *   se reprend aussi ;
+ * - sinon un **brief approuvé** — arrêté avant son plan, il repart de son cadrage
+ *   validé, qui est l'endroit où il en était.
+ *
+ * Sans l'un ni l'autre, rien à reprendre : repartir de l'objectif brut sauterait la
+ * validation qu'il attendait encore. L'API refuse ce cas en 422 ; ne pas proposer
+ * le geste évite d'offrir un bouton qui n'aboutira pas. La règle fine — ce plan
+ * est-il bien rangé ? — est celle du service (`…/reprendre`), qui la juge au geste.
  *
  * Les deux états mènent au **même** bouton — c'est le critère de #486, « par le
- * bouton existant » —, et c'est justifié : ce que la relance rejoue est un cadrage,
- * et un cadrage payé se rejoue de la même façon qu'on l'ait perdu ou rangé.
+ * bouton existant » —, et c'est justifié : un run se reprend de la même façon qu'on
+ * l'ait perdu ou éteint.
  */
-export function estRelancable(execution: ResumeExecution): boolean {
+export function estReprenable(execution: ResumeExecution): boolean {
   return (
     (estOrphelin(execution) || estEteint(execution)) &&
-    execution.brief_approuve === true
+    (execution.brief_approuve === true || execution.nb_taches > 0)
   );
 }
 
 /**
- * Les runs perdus dont le cadrage peut repartir, **dans l'ordre du backend**.
+ * Les runs interrompus qui se reprennent, **dans l'ordre du backend**.
  *
  * Aucun tri ici, à dessein : `GET /api/executions` rend déjà ses résumés récents
  * d'abord, et c'est le bon ordre — le run qu'on vient de perdre est celui qu'on
@@ -159,10 +168,10 @@ export function estRelancable(execution: ResumeExecution): boolean {
  * poserait une seconde règle d'ordre à tenir d'accord avec la première pour un
  * résultat identique.
  */
-export function runsRelancables(
+export function runsReprenables(
   executions: ResumeExecution[],
 ): ResumeExecution[] {
-  return executions.filter(estRelancable);
+  return executions.filter(estReprenable);
 }
 
 /* ------------------------------------------------------------------ *
@@ -224,8 +233,10 @@ export function tachesOuvertes(execution: ResumeExecution): number {
  *
  * Un run **soldé** n'est jamais « en pause » ici, même quand il en garde le
  * drapeau : depuis #1390, l'extinction de Maestro laisse sa pause à un run qu'on
- * avait suspendu (`estInterrompuEnPause`), mais il n'a plus de porte à rouvrir —
- * proposer « Reprendre » sur lui serait un geste que le service refuse.
+ * avait suspendu (`estInterrompuEnPause`), mais il n'a plus de porte à rouvrir. Il
+ * se reprend quand même — par le « Reprendre » du panneau *Runs qui n'avancent
+ * plus*, **sur son plan** (#1391, `estReprenable`) : c'est un autre chemin du
+ * service, pas une porte qu'on rouvre.
  */
 export function estEnPause(execution: ResumeExecution): boolean {
   return !estSolde(execution) && execution.en_pause === true;
@@ -528,7 +539,7 @@ export function estEnDecomposition(execution: ResumeExecution): boolean {
  *
  * Aucun tri : `GET /api/executions` rend ses résumés récents d'abord, et chaque
  * groupe conserve cet ordre de lui-même — même parti pris que `ListeRuns` et que
- * `runsRelancables`, qui ne retrient pas non plus.
+ * `runsReprenables`, qui ne retrient pas non plus.
  *
  * Les régimes **absents** n'ont pas d'entrée : un appelant lit
  * `parRegime.get(REGIME_…) ?? []`, ce qui distingue mal « aucun » de « pas
@@ -600,7 +611,7 @@ export function messageVideDuRun(
 /**
  * Les runs **qu'on a laissés attendre**, dans l'ordre du backend (#738).
  *
- * Le pendant de `runsRelancables` sur l'autre verdict, et sa seconde moitié est
+ * Le pendant de `runsReprenables` sur l'autre verdict, et sa seconde moitié est
  * tout le sujet : le verdict du backend **ne suffit pas à décider ce qu'on
  * signale**. `en_souffrance` juge une attente et rien d'autre, si bien qu'il dit
  * `true` sur des runs à qui l'écran n'a rien à proposer d'utile — et le module

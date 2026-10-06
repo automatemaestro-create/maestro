@@ -53,6 +53,7 @@ réutilise pas.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tempfile
@@ -65,7 +66,7 @@ from maestro.projets.application import ApplicationRefusee, commiter_en_attente
 from maestro.projets.modele import Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
-from maestro.sandbox.ramassage import racine_des_espaces
+from maestro.sandbox.ramassage import PREFIXE_COMMUN, racine_des_espaces
 from maestro.sandbox.workspace import Workspace, isolated_workspace
 
 #: Préfixe des branches de tâche (docs/24 §2.4) : une branche `maestro/<tâche>`
@@ -312,8 +313,15 @@ def _monter_worktree(
     `depart` (#1396) est la branche de la tâche dont celle-ci reprend le travail :
     quand elle existe, la branche créée part d'elle et non de `base`. Une tâche
     jamais montée n'a pas de branche, et l'on part alors de la base, comme avant.
+
+    Le `prune` ne libère pas tout : un worktree dont le process a été **tué** — la
+    tâche en vol quand Maestro s'est éteint — garde son répertoire, donc son
+    enregistrement, donc la branche. Un run repris sur son plan (#1391) rejoue cette
+    tâche sous le **même** identifiant, et Git refusait de la remonter
+    (`_liberer_la_branche`).
     """
     _git(racine, "worktree", "prune")
+    _liberer_la_branche(racine, branche, chemin)
     if _ref_existe(racine, branche):
         arguments = ["worktree", "add", str(chemin), branche]
     else:
@@ -332,6 +340,78 @@ def _monter_worktree(
             f"Worktree refusé pour la branche {branche!r} dans {racine} : "
             f"{_message_git(resultat)}",
         )
+
+
+def _liberer_la_branche(racine: Path, branche: str, chemin: Path) -> None:
+    """Rend `branche` qu'un worktree **abandonné** retient — son travail sauvé d'abord (#1391).
+
+    Constaté sur le banc (S12, 2026-10-05) : Maestro éteint pendant qu'une tâche
+    écrivait, le process de son run est tué avant que le `finally` d'
+    `espace_de_travail` ne démonte son worktree. Le répertoire reste, l'enregistrement
+    aussi, et à la reprise du run sur son plan la même tâche — même identifiant, même
+    branche — se voit refuser son worktree : « already used by worktree ». Le run
+    repris tombait en échec sur la tâche même qu'il devait refaire.
+
+    Deux gestes, dans cet ordre, et le premier est la raison du second :
+
+    1. ce que le worktree porte encore est **commité sur la branche**
+       (`_solder_la_branche`, le geste même que le démontage aurait fait) : le
+       retirer d'abord emporterait le travail de la tâche, qui ne vit nulle part
+       ailleurs ;
+    2. le worktree est **retiré**, jamais la branche (`_retirer_worktree`) — elle se
+       remonte ensuite, avec ce travail dessus.
+
+    Ne sont libérés que les worktrees qui ont **la forme exacte** de ceux
+    qu'`espace_de_travail` monte — `<racine des espaces>/maestro-…/<tâche>` : un
+    worktree que la personne aurait ouvert elle-même sur une branche `maestro/…`,
+    fût-ce dans son répertoire temporaire, n'est jamais touché, et le refus de Git
+    s'affiche alors comme avant. Un worktree de cette forme est celui d'une
+    exécution **antérieure** de cette tâche : une tâche n'est jamais exécutée deux
+    fois en même temps, et sa tentative précédente a démonté le sien en sortant —
+    sauf à être morte sans le pouvoir.
+    """
+    resultat = _git(racine, "worktree", "list", "--porcelain")
+    if resultat.returncode != 0:
+        return
+    espaces = _normalise(racine_des_espaces())
+    cible = _normalise(chemin)
+    tache = branche.removeprefix(PREFIXE_BRANCHE)
+    for dossier, reference in _worktrees(resultat.stdout):
+        abandonne = Path(dossier)
+        if (
+            reference != f"refs/heads/{branche}"
+            or _normalise(abandonne) == cible
+            or abandonne.name != tache
+            or not abandonne.parent.name.startswith(PREFIXE_COMMUN)
+            or _normalise(abandonne.parent.parent) != espaces
+        ):
+            continue
+        _solder_la_branche(abandonne, branche)
+        _retirer_worktree(racine, abandonne)
+        _git(racine, "worktree", "prune")
+
+
+def _worktrees(porcelaine: str) -> Iterator[tuple[str, str]]:
+    """`(chemin, référence)` de chaque worktree d'un `git worktree list --porcelain`.
+
+    Un worktree en HEAD détaché n'a pas de ligne `branch` : il rend une référence
+    vide, qui ne désigne aucune branche.
+    """
+    for bloc in porcelaine.split("\n\n"):
+        champs = dict(
+            ligne.split(" ", 1) for ligne in bloc.splitlines() if " " in ligne
+        )
+        if "worktree" in champs:
+            yield champs["worktree"], champs.get("branch", "")
+
+
+def _normalise(chemin: Path) -> str:
+    """Un chemin comparable à un autre : absolu, résolu, casse du système de fichiers."""
+    try:
+        resolu = chemin.resolve()
+    except OSError:  # pragma: no cover - chemin non représentable
+        resolu = chemin
+    return os.path.normcase(str(resolu))
 
 
 def _solder_la_branche(chemin: Path, branche: str) -> None:

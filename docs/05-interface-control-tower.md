@@ -4452,9 +4452,15 @@ décrit le comportement réel, pas une fixture.
 - `POST /api/executions/{run_id}/pause` → `ResumeExecution` — **suspend** un run en cours (#477,
   ci-dessous) : `en_pause` passe à `true`, le statut ne bouge pas. `404` si le run est inconnu,
   `409` s'il est déjà soldé ou **déjà suspendu**.
-- `POST /api/executions/{run_id}/reprendre` → `ResumeExecution` — **reprend** un run suspendu là où
-  il en était : `en_pause` repasse à `false` et les tâches qui attendaient repartent. `404` inconnu,
-  `409` si le run n'est **pas** suspendu.
+- `POST /api/executions/{run_id}/reprendre` → `ResumeExecution` — **reprend** un run là où il en
+  était, **sous le même `run_id`**. Suspendu (#477) : `en_pause` repasse à `false` et les tâches qui
+  attendaient repartent. **Interrompu** (#1391, [docs/28 §12.9](./28-decision-frontiere-execution-run.md))
+  — soldé par l'extinction ou une borne, en pause ou non, ou `orphelin` : il repart `en_cours` **sur
+  son plan**, les tâches faites gardent leur état et leur sortie, seules la tâche interrompue et
+  celles jamais démarrées s'exécutent ; un run qui n'a **rien d'acquis** (arrêté avant son plan)
+  repart de son brief approuvé, comme `…/relancer`. `404` inconnu ; `409` si le run travaille ou
+  attend quelqu'un, s'il est soldé par son issue ou une annulation voulue, ou si sa reprise est déjà
+  en train de partir ; `422` sans plan ni brief approuvé ; `503` si son état acquis ne se relit pas.
 - `POST /api/executions/{run_id}/plafond` → `ResumeExecution` — **tranche un run arrêté sur son
   plafond de dépense** (#1182, ci-dessous) : `relever`, `reduire` ou `arreter`. `404` inconnu,
   `409` si le run n'attend pas cette décision, `422` si elle ne se tient pas.
@@ -4486,10 +4492,11 @@ décrit le comportement réel, pas une fixture.
   illisible se disent « des runs peuvent rester en vol », jamais « aucun run » (#1355,
   [docs/28 §11.3](./28-decision-frontiere-execution-run.md)).
 
-⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage :
-`reprendre` rouvre la porte d'un run **vivant** qu'on avait suspendu — même `run_id`, même plan,
-même coût engagé, rien à reconstruire ; `relancer` rejoue un run **mort** depuis son brief et
-repaie une planification, sous un **nouveau** `run_id`.
+⚠ **`reprendre` et `relancer` ne sont pas le même geste**, et les confondre coûte un cadrage et un
+travail déjà fait : `reprendre` **continue** un run — il rouvre la porte d'un run suspendu, ou
+repart sur le plan d'un run interrompu (#1391) — même `run_id`, même plan, ce qui est fait reste
+fait ; `relancer` **recommence** un run depuis son brief et repaie une planification, sous un
+**nouveau** `run_id`. C'est `reprendre` que l'écran propose sous « Reprendre ».
 
 ```jsonc
 // LancementExecution (corps de POST /api/executions)
@@ -4616,9 +4623,10 @@ constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battem
 > détaché**, devenu le défaut avec #446 (`MAESTRO_HOTE_RUN=process` ramène la tâche de fond). Un run
 > survit donc à l'arrêt **accidentel** de l'API — relancer après une modification, planter — mais
 > **pas au sommeil de la machine**, qui reste traité par le battement ci-dessous (on le voit) et par
-> la relance sur brief de #349 (on le rattrape). Ni à l'arrêt **volontaire**, qui solde ses runs
-> (`annulee`, cause `extinction`) et les rend **reprenables** par le bouton « Reprendre » du panneau
-> ci-dessous — un run soldé de la sorte y figure au même titre qu'un orphelin. Deux gestes le
+> la reprise sur son plan de #1391 (on le rattrape, sans refaire ce qui est fait). Ni à l'arrêt
+> **volontaire**, qui solde ses runs (`annulee`, cause `extinction`) et les rend **reprenables** par
+> le bouton « Reprendre » du panneau ci-dessous — un run soldé de la sorte y figure au même titre
+> qu'un orphelin, et repart comme lui sur son plan, sous le même identifiant. Deux gestes le
 > déclenchent : `start.sh --stop` depuis #486, et **fermer la fenêtre du navigateur** depuis #700,
 > qui l'a fait passer d'accident à décision ([docs/28 §11.2](./28-decision-frontiere-execution-run.md)).
 

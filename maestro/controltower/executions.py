@@ -107,11 +107,14 @@ maintenant sur la mort de la **machine**, l'arrêt de l'API ne coûtant plus rie
   approuvé (`brief_approuve`). Et le **dernier battement**, qui n'est effacé que
   par un soldage : il vieillit, et c'est ce vieillissement qui transforme un
   `en_cours` éternel en `orphelin` ;
-- **on rattrape par** `relancer` (ci-dessous), qui rejoue le cadrage approuvé dans
-  un nouveau run. Ce qui ne se rattrape **pas**, c'est le travail des tâches déjà
-  faites : le run repart de la décomposition, jamais de sa tâche 3. Reprendre à
-  l'endroit exact de l'interruption suppose une frontière d'exécution durable, et
-  fait l'objet d'un cadrage à part (#350).
+- **on rattrape par** `reprendre` (ci-dessous) depuis #1391 : le run repart **sur
+  son plan, sous le même identifiant**, et le travail des tâches déjà faites —
+  leur état **et leur sortie** — est gardé, relu dans le magasin d'état acquis que
+  le run remplit au fil de l'eau (`maestro.engine.acquis`, docs/28 §12). Ce qui ne
+  se rattrape **pas**, c'est le travail **en cours** de la tâche interrompue : un
+  run reprend à la tâche près, jamais au milieu d'une tâche (docs/28 §12.6).
+  `relancer`, lui, **recommence** : il rejoue le cadrage approuvé dans un nouveau
+  run, qui repart de la décomposition.
 
 Un run publié hors de l'API (`maestro-run --publier`) lit cette liste à l'envers,
 et c'est le seul cas qui s'y ajoute : aucun redémarrage de l'API ne le concerne —
@@ -163,9 +166,17 @@ d'attention sur le run du 2026-08-14 —, et ce cadrage est intégralement conse
 dans la projection. Le run relancé est un **nouveau** run, qui porte la référence
 de celui qu'il reprend (`reprise_de`, même relation que le fichier `reprise-de`
 entre deux runs d'orchestration, #204) ; le run repris est soldé au lieu de rester
-`en_cours`. Ce n'est **pas** une reprise à l'endroit exact de l'interruption :
-celle-là suppose une frontière d'exécution durable, et fait l'objet d'un cadrage à
-part (#350).
+`en_cours`. Ce n'est **pas** une reprise à l'endroit exact de l'interruption.
+
+**Celle-là existe depuis #1391** (docs/28 §12, cadrage #701) : `reprendre` continue
+un run interrompu — extinction, borne, hôte tombé, en pause ou non — **sur son
+plan**, sous le même `run_id`. Le moteur range au fil du run son plan exécutable
+et ses issues réussies (`MagasinAcquis`, hors du process : Redis, ou le fichier du
+journal en local), le service les relit et confie le run à son hôte avec cet état
+(`OrdreRun.reprise`) ; le moteur ne refait ni cadrage ni plan, rend les issues
+acquises sans les rejouer, et l'aval lit leurs sorties. C'est désormais le geste
+**par défaut** d'un run interrompu — « Reprendre » à l'écran —, et `relancer` celui
+de **recommencer**.
 """
 
 from __future__ import annotations
@@ -181,6 +192,7 @@ from maestro.appartenance import projet_id_valide
 from maestro.controltower.battement import (
     PERIODE_BATTEMENT_S,
     SEUIL_ORPHELIN_S,
+    VITALITE_ORPHELIN,
     VITALITE_VIVANT,
     RegistreBattements,
     RegistreBattementsMemoire,
@@ -244,6 +256,7 @@ from maestro.controltower.state import (
     libelle_statut_execution,
 )
 from maestro.controltower.validation import ValidateurControlTower
+from maestro.engine.acquis import EtatAcquis, MagasinAcquis, MagasinAcquisMemoire
 from maestro.engine.brief import (
     MODE_BRIEF_HUMAIN,
     MODE_BRIEF_SANS,
@@ -311,6 +324,15 @@ MOTIF_GESTE_RUN_NON_SUSPENDU = "run-non-suspendu"
 #: requête mal formée : refusé avant de toucher au run.
 MOTIF_GESTE_INCONNU = "geste-inconnu"
 
+#: Les deux refus que seule la **reprise sur le plan** connaît (#1391). Le premier
+#: est le garde-fou du double clic : la reprise relit son état acquis hors du
+#: process (un `await`), et une seconde requête arrivée pendant ce temps lancerait
+#: un second hôte sous le même `run_id`. Le second dit qu'on n'a pas pu relire
+#: l'état — et c'est un refus, jamais un repli sur la relance : repartir du brief
+#: ferait refaire un plan qui existe, faute d'avoir su le lire.
+MOTIF_REPRISE_EN_COURS = "reprise-en-cours"
+MOTIF_REPRISE_ETAT_ILLISIBLE = "etat-acquis-illisible"
+
 #: Les **causes** d'un run soldé qui n'ont pas jugé son travail, donc qui se
 #: relancent (#1179) : l'extinction de Maestro (#486), et les **bornes** — un
 #: plafond de dépense ou de tours atteint, la limite d'usage du fournisseur. Un run
@@ -329,6 +351,16 @@ CAUSES_RELANCABLES = frozenset(
 DETAIL_EXTINCTION = (
     "Maestro s'est éteint : le run a été interrompu avec lui et peut être repris."
 )
+
+#: Le détail du run qui **repart sur son plan** (#1391) — la ligne que la frise et
+#: le fil montrent à la césure, à côté de l'étape `reprise` du moteur qui dit ce
+#: qui est acquis et ce qui reste.
+DETAIL_REPRISE = "run repris sur son plan depuis la Control Tower"
+
+#: Le détail du soldage qui **précède** la reprise d'un run dont l'hôte s'est tu
+#: (#1391) : l'issue part sur le bus, où un hôte qui vivrait encore l'entend et
+#: s'arrête — on ne fait pas tourner deux hôtes sous un même `run_id`.
+DETAIL_HOTE_TU = "son hôte s'était tu : le run est repris sur son plan"
 
 #: Les statuts d'une tâche que **personne n'a commencée** (#1390) — déclarée par le
 #: plan (#924), sans exécutant. Le soldage d'un run ne les touche pas : elles
@@ -411,6 +443,14 @@ class ServiceExecutions:
     que veulent les tests. Le défaut de **production**,
     lui, est l'hôte détaché, et il se résout là où se résolvent le bus, le journal
     et le registre (`create_default_app`, `MAESTRO_HOTE_RUN`).
+
+    `acquis` (#1391) est le **magasin d'état acquis** des runs — où chacun range
+    son plan exécutable et ses issues réussies, de quoi le reprendre sur son plan
+    (`reprendre`). Le service le **lit** ; il le passe au moteur des runs qu'il
+    déroule lui-même (hôte en process), alors que l'hôte détaché résout le même
+    magasin de son côté (`hote_detache._magasin_du_run`). Par défaut un magasin
+    **mémoire** — celui des tests, qui ne survit à rien ; la production câble
+    `magasin_acquis_configure`, qui suit le support du journal durable.
     """
 
     def __init__(
@@ -427,8 +467,14 @@ class ServiceExecutions:
         seuil_souffrance_s: float = SEUIL_SOUFFRANCE_S,
         periode_battement_s: float = PERIODE_BATTEMENT_S,
         hote: HoteRun | None = None,
+        acquis: MagasinAcquis | None = None,
     ) -> None:
         self._bus = bus
+        self._acquis = acquis if acquis is not None else MagasinAcquisMemoire()
+        # Les runs dont une reprise sur le plan est **en train** de partir (#1391) —
+        # le garde-fou du double clic, parce que la reprise relit son état hors du
+        # process avant d'écrire quoi que ce soit (cf. `_reprendre_sur_son_plan`).
+        self._reprises: set[str] = set()
         self._state = state
         self._fabrique = fabrique_moteur if fabrique_moteur is not None else moteur_par_defaut
         self._ingestion = (
@@ -864,9 +910,14 @@ class ServiceExecutions:
         - **pause** — refusée sur un run soldé, ou déjà suspendu : répondre oui à une
           pause qui n'était pas la première ferait passer pour un geste ce qui n'en
           est pas un ;
-        - **reprise** — refusée sur un run qui n'est pas suspendu, soldé compris
-          (l'issue lève la pause) : il n'y a rien à reprendre ; et sur un run soldé
-          **en pause** — l'extinction garde la pause (#1390) —, qui ne tourne plus ;
+        - **reprise** — elle passe sur deux runs depuis #1391 : le run **suspendu**
+          qui tourne (la porte se rouvre, #477), et le run **interrompu** — soldé
+          par un arrêt qui n'a pas jugé son travail (`CAUSES_RELANCABLES`, pause
+          comprise : l'extinction la garde, #1390), ou `orphelin` (son hôte s'est
+          tu, #348) —, qui reprend sur son plan. Refusée sur un run qui travaille ou
+          attend quelqu'un (rien à reprendre), sur un run soldé par son issue ou une
+          annulation voulue, et sur un run dont on ne sait pas si l'hôte vit
+          (`indetermine`) : le reprendre tuerait peut-être un travail en cours ;
         - **relance** — les refus de `relancer` (#349), qui interrogent le registre
           des battements : c'est ce qui rend la méthode asynchrone.
 
@@ -895,21 +946,31 @@ class ServiceExecutions:
             soldee = execution.statut in STATUTS_EXECUTION_TERMINAUX
             if execution.en_pause and not soldee:
                 return None
-            if execution.en_pause:
-                # Le run qu'une extinction a soldé pendant sa pause la garde (#1390),
-                # mais il ne tourne plus : rouvrir sa porte rendrait un 200 sans
-                # effet, et effacerait la seule trace de la pause.
+            if soldee:
+                # Interrompu par ce qui n'a pas jugé son travail — l'extinction, une
+                # borne —, pause comprise (#1390) : il se reprend sur son plan
+                # (#1391). Une issue rendue ou une annulation voulue, non.
+                if execution.cause in CAUSES_RELANCABLES:
+                    return None
                 return GesteRefuse(
                     MOTIF_RELANCE_RUN_SOLDE,
                     f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
-                    f"{run_id} — sa pause ne se lève plus sur un run qui ne tourne plus ; "
-                    "il se reprend en le relançant.",
+                    f"{run_id} — il n'y a rien à reprendre d'un run qui a rendu son issue "
+                    "ou qu'on a arrêté exprès.",
                 )
+            verdict = vitalite(
+                execution.statut,
+                (await self._registre()).get(run_id),
+                seuil_s=self._seuil_orphelin_s,
+            )
+            if verdict == VITALITE_ORPHELIN:
+                # Son hôte s'est tu (#348) : rien ne le porte plus, il se reprend.
+                return None
             return GesteRefuse(
                 MOTIF_GESTE_RUN_NON_SUSPENDU,
                 f"exécution non suspendue ({libelle_statut_execution(execution.statut)}) : "
-                f"{run_id} — il n'y a rien à reprendre d'un run qui n'a pas été mis en "
-                "pause.",
+                f"{run_id} — il n'y a rien à reprendre d'un run qui n'a été ni mis en "
+                "pause, ni interrompu.",
             )
         if execution.statut in STATUTS_EXECUTION_TERMINAUX:
             quoi = "suspendre" if geste == GESTE_PAUSE else "interrompre"
@@ -1023,26 +1084,141 @@ class ServiceExecutions:
         return await self.resume_vivant(run_id)
 
     async def reprendre(self, run_id: str) -> dict[str, Any] | None:
-        """Reprend le run `run_id` **là où il en était** — le pendant exact de la pause.
+        """Reprend le run `run_id` **là où il en était** — suspendu, ou interrompu (#477, #1391).
 
-        Le plan, les tâches déjà terminées, le brief approuvé, le coût engagé : rien
-        n'a bougé pendant la pause, puisque rien n'a été tué. Reprendre n'a donc rien
-        à reconstruire — c'est un `Event.set()` à un aller Redis près, et c'est ce
-        qui sépare ce verbe de `relancer` (#349), qui rejoue un run **mort** depuis
-        son brief et paie une planification neuve. Les deux existent parce que les
-        deux situations existent ; les confondre ferait repayer le cadrage d'un run
-        qu'on avait simplement mis de côté.
+        **Un run suspendu qui tourne** (#477) : le plan, les tâches déjà terminées,
+        le brief approuvé, le coût engagé — rien n'a bougé pendant la pause, puisque
+        rien n'a été tué. Reprendre n'a donc rien à reconstruire : c'est un
+        `Event.set()` à un aller Redis près.
 
-        Rend None si le run est inconnu. Comme la pause, ne juge de rien : la route
-        refuse de reprendre ce qui n'est pas suspendu.
+        **Un run interrompu** (#1391, docs/28 §12) — soldé par l'extinction de
+        Maestro ou par une borne, en pause ou non, ou dont l'hôte s'est tu : il
+        reprend **sur son plan, sous le même `run_id`** (`_reprendre_sur_son_plan`).
+        Les tâches réussies gardent leur état et leur sortie, l'aval lit celles-ci
+        comme si rien ne s'était arrêté, et seules la tâche interrompue et celles
+        jamais démarrées s'exécutent. C'est la reprise que #349 avait remise à plus
+        tard (« le run repart de la décomposition, jamais de sa tâche 3 ») et que le
+        constat de p5 a demandée : « Reprendre » relançait un **nouveau** run, qui
+        re-planifiait et refaisait son socle de zéro.
+
+        `relancer` (#349) reste le geste de **recommencer** : un nouveau run sur le
+        brief approuvé. Il ne sert ici que de repli, pour un run interrompu qui n'a
+        **rien d'acquis** — arrêté avant que son plan n'existe, ou né avant ce
+        ticket : l'endroit où il en était est alors son brief, et le repartir de là
+        est exactement le reprendre.
+
+        Rend None si le run est inconnu. Ne juge pas de l'état du run : la route et
+        le fil appellent `refus_du_geste` d'abord. Lève `GesteRefuse` sur ce que
+        seule la reprise sur le plan connaît — une reprise déjà en train de partir,
+        un état acquis illisible — et `RelanceRefusee` sur les refus du repli.
         """
-        if self.resume(run_id) is None:
+        execution = self._state.execution(run_id)
+        if execution is None:
             return None
+        if execution.statut in STATUTS_EXECUTION_TERMINAUX or not execution.en_pause:
+            return await self._reprendre_sur_son_plan(run_id)
         self._demarrer()
         self._consigne(run_id, ORDRE_REPRISE, "", "exécution reprise depuis la Control Tower")
         porte = self._portes.get(run_id)
         if porte is not None:
             porte.ouvrir()
+        return await self.resume_vivant(run_id)
+
+    async def _reprendre_sur_son_plan(self, run_id: str) -> dict[str, Any] | None:
+        """Le run interrompu repart **sur son plan, sous le même `run_id`** (#1391).
+
+        L'ordre des gestes est celui de `lancer`, à ce qui est déjà acquis près :
+
+        1. l'**état acquis** est relu (`MagasinAcquis.lire`) — le plan exécutable et
+           les issues réussies, sorties comprises. Rien d'acquis : repli sur
+           `relancer` (cf. `reprendre`). Illisible : refus, jamais repli ;
+        2. un run **non soldé** — son hôte s'est tu — est d'abord **soldé**
+           (`_solder`) : l'issue part sur le bus, un hôte qui vivrait encore
+           l'entend et s'arrête, et ses tâches en vol passent `interrompue`, leurs
+           agents libérés. On ne fait jamais tourner deux hôtes sous un `run_id` ;
+        3. la **pause** est levée s'il en portait une (#1390) : on le reprend, c'est
+           la décision de le remettre en route ;
+        4. le run repasse **`en_cours`** — la projection efface sa fin et sa cause —,
+           avec un premier battement, comme un lancement ;
+        5. il part chez son **hôte** avec son état acquis (`OrdreRun.reprise`), ses
+           bornes (celles qu'il avait reçues, #1323), son ticket et son projet. Le
+           moteur ne refait ni cadrage ni plan (`OrchestrationEngine.run`).
+
+        **Le double clic** : la relecture de l'état est un `await` avant la première
+        écriture, si bien que deux requêtes pourraient passer toutes deux les refus
+        et lancer deux hôtes. Un run dont la reprise est en train de partir refuse
+        donc la seconde (`MOTIF_REPRISE_EN_COURS`) ; une fois parti, il est vivant,
+        et `refus_du_geste` la refuse de lui-même.
+
+        Un démarrage raté de l'hôte solde le run `echec` avec sa cause, comme dans
+        `lancer` — et son état acquis reste rangé : une reprise suivante le relira.
+        """
+        if run_id in self._reprises:
+            raise GesteRefuse(
+                MOTIF_REPRISE_EN_COURS,
+                f"reprise déjà en train de partir : {run_id} — un second départ ferait "
+                "tourner deux fois le même run.",
+            )
+        self._reprises.add(run_id)
+        try:
+            try:
+                etat = await self._acquis.lire(run_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _LOGGER.exception("État acquis du run %s illisible.", run_id)
+                raise GesteRefuse(
+                    MOTIF_REPRISE_ETAT_ILLISIBLE,
+                    f"l'état acquis de {run_id} n'a pas pu être relu ({type(exc).__name__}) : "
+                    "rien n'est repris ni relancé — le relancer depuis son brief referait un "
+                    "plan qui existe. Réessayer une fois le stockage revenu.",
+                ) from exc
+            if etat is None:
+                return await self.relancer(run_id)
+            return await self._repartir(run_id, etat)
+        finally:
+            self._reprises.discard(run_id)
+
+    async def _repartir(self, run_id: str, etat: EtatAcquis) -> dict[str, Any] | None:
+        """Les écritures de la reprise — sans `await` entre le contrôle et la première (#1391)."""
+        execution = self._state.execution(run_id)
+        if execution is None:  # pragma: no cover - lu par l'appelant
+            return None
+        self._demarrer()
+        if execution.statut not in STATUTS_EXECUTION_TERMINAUX:
+            await self._solder(run_id, DETAIL_HOTE_TU)
+        if execution.en_pause:
+            self._consigne(run_id, ORDRE_REPRISE, "", DETAIL_REPRISE)
+        self._consigne(
+            run_id,
+            EXECUTION_EN_COURS,
+            "",
+            f"{DETAIL_REPRISE} : {len(etat.acquises)} tâche(s) acquise(s), "
+            f"{len(etat.a_reprendre)} à faire",
+        )
+        await self._battement(run_id)
+        bornes = execution.bornes if execution.bornes is not None else AUCUNE_BORNE
+        try:
+            await self._hote.lancer(
+                OrdreRun(
+                    run_id=run_id,
+                    objectif=execution.objectif or titre_court(run_id),
+                    plafond_cout_usd=bornes.plafond_cout_usd,
+                    plafond_tokens=bornes.plafond_tokens,
+                    timeout_tache_s=bornes.timeout_tache_s,
+                    parallelisme=bornes.parallelisme,
+                    ticket=execution.ticket,
+                    projet_id=execution.projet_id,
+                    # Sans objet sur une reprise (le cadrage a eu lieu) : `sans`, le
+                    # seul régime qui ne demande rien à personne.
+                    mode_brief=MODE_BRIEF_SANS,
+                    reprise=etat,
+                )
+            )
+        except DemarrageHoteRate as echec:
+            _LOGGER.error("Démarrage de l'hôte du run repris %s raté : %s", run_id, echec)
+            self._consigne(run_id, EXECUTION_ECHEC, "", str(echec), cause=cause_de(echec))
+            await self._oublier(run_id)
         return await self.resume_vivant(run_id)
 
     async def relancer(
@@ -1058,8 +1234,9 @@ class ServiceExecutions:
         2026-08-14 et outillé ici.
 
         Le run relancé est un **nouveau run** — pas une reprise à l'endroit exact de
-        l'interruption, qui supposerait une frontière d'exécution durable (cadrage
-        #350). Il part de la **synthèse** du brief retenu, en mode `sans` : c'est,
+        l'interruption, qui est `reprendre` depuis #1391 : ce verbe-ci est celui de
+        **recommencer**, et le repli de `reprendre` sur un run qui n'a rien d'acquis.
+        Il part de la **synthèse** du brief retenu, en mode `sans` : c'est,
         au texte près, ce que le run mort allait décomposer (`OrchestrationEngine.run`
         donne `brief.synthese()` à la planification dès qu'un brief existe), et
         `sans` est le seul régime qui ne repaie ni la rédaction, ni la clarification,
@@ -1834,6 +2011,9 @@ class ServiceExecutions:
                 # La décision au plafond de dépense (#1182) : même règle, même bus.
                 # Le run s'y suspend au lieu d'échouer, et la carte du fil la pose.
                 arbitre_plafond=ArbitrePlafondControlTower(self._bus),
+                # L'état acquis (#1391) : le magasin que ce service relit pour
+                # reprendre un run, rempli par le run lui-même au fil de l'eau.
+                acquis=self._acquis,
             )
             rapport = await moteur.run(
                 ordre.objectif,
@@ -1843,6 +2023,8 @@ class ServiceExecutions:
                 mode_brief=ordre.mode_brief,
                 porte=porte,
                 contexte_sources=ordre.contexte_sources,
+                # Un run repris sur son plan (#1391) : ce qui est acquis ne se refait pas.
+                reprise=ordre.reprise,
             )
         except asyncio.CancelledError:
             raise

@@ -187,9 +187,10 @@ export type ControlTower = {
    */
   suspendreRun: (runId: string) => Promise<ResumeExecution>;
   /**
-   * Reprend un run suspendu **là où il en était** (#477) — le plan, les tâches
-   * déjà faites et le cadrage n'ont pas bougé. À ne pas confondre avec
-   * `relancerRun`, qui rejoue un run **mort** depuis son brief et en crée un neuf.
+   * Reprend un run **là où il en était** (#477, #1391) — suspendu, ou interrompu
+   * (Maestro éteint, hôte tombé) : le même run continue sur son plan, ce qui est
+   * fait reste fait. À ne pas confondre avec `relancerRun`, qui **recommence** un
+   * run depuis son brief et en crée un neuf.
    */
   reprendreRun: (runId: string) => Promise<ResumeExecution>;
   /**

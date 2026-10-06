@@ -36,7 +36,10 @@ sérialisation (`hote.py`), et c'est ce qui laisse `ordre_vers_dict` être un d�
 d'ici plutôt qu'un point du contrat.
 
 **Ce qui traverse.** L'ordre — objectif, plafonds, `ticket`, `projet_id`,
-`mode_brief`, et depuis #1172 `contexte_sources` — et rien d'autre. Les sources
+`mode_brief`, depuis #1172 `contexte_sources`, et depuis #1391 la `reprise` d'un
+run qu'on reprend sur son plan : son état acquis, plan et sorties, relu par l'API
+dans le magasin que **ce** process remplit au fil du run (`_magasin_du_run`) — et
+rien d'autre. Les sources
 traversent **lues**, en texte déjà encadré, et non en références : la Control
 Tower les canonicalise, les plafonne, copie les octets téléversés (#315/#317) et
 les **lit** avant le lancement. Ce qui a été lu est ce que le brief reçoit. Jusqu'à
@@ -188,6 +191,7 @@ from maestro.controltower.state import (
     ORDRE_PAUSE,
     ORDRES_PAUSE,
 )
+from maestro.engine.acquis import EtatAcquis, MagasinAcquis
 from maestro.engine.pause import PorteExecution
 from maestro.references import ReferenceTicket
 
@@ -320,6 +324,9 @@ def ordre_vers_dict(ordre: OrdreRun) -> dict[str, Any]:
         "projet_id": ordre.projet_id,
         "mode_brief": ordre.mode_brief,
         "contexte_sources": ordre.contexte_sources,
+        # L'état acquis d'un run repris sur son plan (#1391), par sa propre
+        # réémission comme le ticket ; `null` pour un lancement ordinaire.
+        "reprise": None if ordre.reprise is None else ordre.reprise.to_dict(),
     }
 
 
@@ -356,6 +363,14 @@ def ordre_depuis_dict(data: Mapping[str, Any]) -> OrdreRun:
         # Relu tel quel, jamais « nettoyé » : c'est un texte déjà encadré (ENF-13),
         # et la moindre retouche pourrait défaire sa clôture.
         contexte_sources=str(data.get("contexte_sources") or ""),
+        # Strict, celui-ci (#1391) : un état acquis illisible ne se devine pas — un
+        # run repris « sans » le serait de zéro, sous l'identifiant d'un run qui a
+        # déjà payé ses tâches. `from_dict` lève, et le démarrage est raté, dit.
+        reprise=(
+            EtatAcquis.from_dict(data["reprise"])
+            if isinstance(data.get("reprise"), Mapping)
+            else None
+        ),
     )
 
 
@@ -461,6 +476,12 @@ class HoteRunDetache(HoteRun):
                 f"l'hôte détaché du run {ordre.run_id} n'a pas pu être lancé "
                 f"({self._python} -m {MODULE_HOTE}) : {type(exc).__name__} — {exc}"
             ) from exc
+        # Un run repris sur son plan repart sous le **même** `run_id` (#1391) : la
+        # dépouille de son premier process, si ce lanceur l'a vue mourir sans encore
+        # la rendre, n'en est plus une — la rendre au prochain ramassage ferait
+        # solder en « echec » le run qui vient de repartir.
+        self._recolter()
+        self._morts.pop(ordre.run_id, None)
         self._process[ordre.run_id] = process
         self._journaux[ordre.run_id] = journal
         await self._attendre_demarrage(ordre.run_id, process, atelier, journal)
@@ -1065,6 +1086,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
     from maestro.telemetry import RunJournal
 
     bus = _bus_du_run()
+    magasin = _magasin_du_run()
     # La porte de pause (#477) est ouverte avant le guet, jamais après : il la
     # ferme sur l'ordre qu'il lit, et un guet qui trouverait `None` laisserait
     # passer l'ordre sans que rien ne le rattrape — celui qui arrive pendant le
@@ -1125,6 +1147,11 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
             # Sans bus, `None` — et le run garde l'arrêt sec d'avant, puisque
             # personne ne pourrait relever son plafond.
             arbitre_plafond=None if bus is None else ArbitrePlafondControlTower(bus),
+            # L'état acquis du run (#1391) s'écrit **ici**, côté producteur
+            # (docs/28 §12.2) : ce process survit à l'API, et c'est lui qui sait
+            # quand une tâche réussit. Le magasin est celui que l'API relira — le
+            # même réglage, résolu au même endroit.
+            acquis=magasin,
         )
         run = asyncio.create_task(
             moteur.run(
@@ -1142,6 +1169,9 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
                 mode_brief=ordre.mode_brief,
                 porte=porte,
                 contexte_sources=ordre.contexte_sources,
+                # Un run repris sur son plan (#1391) : ce qu'il a déjà payé ne se
+                # refait pas, et son aval lit les sorties acquises.
+                reprise=ordre.reprise,
             )
         )
         attendus: set[asyncio.Future[Any]] = {run, guet}
@@ -1164,6 +1194,9 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         if bus is not None:
             with suppress(asyncio.CancelledError, Exception):
                 await bus.close()
+        if magasin is not None:
+            with suppress(asyncio.CancelledError, Exception):
+                await magasin.close()
 
 
 async def _observer_ordres(
@@ -1291,6 +1324,28 @@ def _bus_du_run() -> BusDurable | None:
             f"Bus d'événements indisponible — {type(exc).__name__} : {exc} "
             "(pas de décision humaine possible : un brief « humain » sera refusé "
             "avant le premier appel modèle, et toute action sensible sera refusée)",
+            file=sys.stderr,
+        )
+        return None
+
+
+def _magasin_du_run() -> MagasinAcquis | None:
+    """Le magasin d'état acquis de ce process (#1391) — **ne lève jamais**, comme le bus.
+
+    Celui que l'API relit, résolu par le même réglage (`magasin_acquis_configure`).
+    Un magasin qu'on n'a pas pu construire ne fait pas tomber le run : il le rend
+    seulement moins reprenable — une reprise refera ce qui n'aura pas été rangé —,
+    et la cause part au journal de l'hôte, comme celle d'un bus manquant.
+    """
+    from maestro.config import load_settings
+    from maestro.controltower.acquis import magasin_acquis_configure
+
+    try:
+        return magasin_acquis_configure(load_settings())
+    except Exception as exc:  # noqa: BLE001 - un magasin manquant se dit, il n'emporte rien
+        print(
+            f"Magasin d'état acquis indisponible — {type(exc).__name__} : {exc} "
+            "(le run continue, mais ne se reprendra pas sur son plan s'il est interrompu)",
             file=sys.stderr,
         )
         return None

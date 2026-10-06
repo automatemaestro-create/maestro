@@ -658,8 +658,10 @@ Quatre choses à savoir :
 - **Suspendre n'est pas annuler** (#477). `…/pause` arrête de **lancer** des tâches ; celles
   qui sont en vol vont à leur terme et gardent leur travail, là où `…/annuler` les tue là
   où elles en sont. Le run n'est pas soldé, il bat toujours, et `…/reprendre` le remet en
-  route **sur le même plan** — à ne pas confondre avec `…/relancer`, qui rejoue un run
-  **mort** depuis son brief, sous un nouveau `run_id`.
+  route **sur le même plan** — à ne pas confondre avec `…/relancer`, qui **recommence** un
+  run depuis son brief, sous un nouveau `run_id`. `…/reprendre` continue aussi, depuis #1391,
+  un run que l'extinction de Maestro a interrompu : sur son plan, sous le même `run_id`,
+  sans refaire les tâches déjà faites.
 - **Le lancement ne bloque pas.** Le run part en arrière-plan et son `run_id` est rendu
   tout de suite : c'est ce qui permet de l'afficher « en cours » puis de le suivre par le
   flux temps réel, sans attendre la fin. Une erreur survenue en arrière-plan (fournisseur

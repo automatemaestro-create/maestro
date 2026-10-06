@@ -351,10 +351,15 @@ describe("la carte d'un run — la même sur les trois écrans", () => {
 
   it("distingue un run interrompu récupérable de celui qui ne l'est pas", () => {
     carte(runFactice({ vitalite: VITALITE_ORPHELIN, brief_approuve: true }));
-    expect(screen.getByText(/il peut repartir/)).toBeInTheDocument();
+    expect(screen.getByText(/il se reprend là où il en était/)).toBeInTheDocument();
 
     carte(runFactice({ vitalite: VITALITE_ORPHELIN, brief_approuve: false }));
     expect(screen.getByText(/rien ne s'y joue plus/)).toBeInTheDocument();
+  });
+
+  it("dit qu'un run interrompu avec un plan se reprend, brief approuvé ou non (#1391)", () => {
+    carte(runFactice({ vitalite: VITALITE_ORPHELIN, brief_approuve: false, nb_taches: 4 }));
+    expect(screen.getByText(/il se reprend là où il en était/)).toBeInTheDocument();
   });
 
   it("mène au run qu'il reprend, sans quoi le cadrage déjà payé serait hors de portée", () => {

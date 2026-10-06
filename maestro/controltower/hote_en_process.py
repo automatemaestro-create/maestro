@@ -79,7 +79,18 @@ class HoteRunEnProcess(HoteRun):
         """
         tache = asyncio.get_running_loop().create_task(self._derouler(ordre))
         self._taches[ordre.run_id] = tache
-        tache.add_done_callback(lambda _: self._taches.pop(ordre.run_id, None))
+        tache.add_done_callback(lambda fin: self._retirer(ordre.run_id, fin))
+
+    def _retirer(self, run_id: str, tache: asyncio.Task[None]) -> None:
+        """Retire la tâche du registre — **elle**, jamais celle qui l'a remplacée (#1391).
+
+        Un run repris sur son plan repart sous le **même** `run_id` : si la tâche
+        de son premier départ s'éteint après que la reprise a posé la sienne, retirer
+        « le run » par son identifiant effacerait la tâche vivante, et le run
+        repris tournerait sans que l'hôte le sache — ni annulable, ni compté en vol.
+        """
+        if self._taches.get(run_id) is tache:
+            del self._taches[run_id]
 
     async def annuler(self, run_id: str, *, delai_s: float) -> bool:
         """Annule la tâche du run et attend son extinction au plus `delai_s`.

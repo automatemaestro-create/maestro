@@ -737,12 +737,12 @@ def test_un_run_en_pause_quand_maestro_s_eteint_le_reste() -> None:
 def test_la_pause_d_un_run_eteint_survit_au_redemarrage_et_le_run_reste_reprenable() -> None:
     """Au redémarrage, l'API rebâtit le run depuis son journal — pause comprise.
 
-    Et il reste **reprenable** par le geste qu'offre l'écran à un run éteint (#486) :
-    la relance de son brief, tant que la reprise sur son plan n'existe pas (#1391).
-    Le « Reprendre » de la pause, lui, ne s'adresse qu'à un run **vivant** : sur un
-    run soldé il n'y a plus de porte à rouvrir, et un `200` sans effet ferait croire
-    à une reprise qui n'a pas eu lieu — d'où le `409`, comme pour une pause ou une
-    annulation sur un run soldé.
+    Et il reste **reprenable** — par le « Reprendre » de la pause lui-même depuis
+    #1391, qui refusait (`409`) un run soldé tant que la reprise sur son plan
+    n'existait pas. Le run de ce décor n'a **rien d'acquis** (aucun plan rangé : il
+    s'est éteint avant sa décomposition) : l'endroit où il en était est son brief
+    approuvé, et la reprise en repart dans un nouveau run. La reprise **sur son
+    plan**, sous le même identifiant, est l'objet de `tests/test_reprise_du_plan.py`.
     """
     hote = HoteDouble()
     with _app(hote, journal=_journal_du_run_eteint(en_pause=True)) as client:
@@ -751,10 +751,8 @@ def test_la_pause_d_un_run_eteint_survit_au_redemarrage_et_le_run_reste_reprenab
         assert resume["en_pause"] is True
 
         reprise = client.post(f"/api/executions/{ETEINT}/reprendre")
-        assert reprise.status_code == 409, reprise.text
-        assert _resume(client, ETEINT)["en_pause"] is True
-
-        assert client.post(f"/api/executions/{ETEINT}/relancer").status_code == 202
+        assert reprise.status_code == 200, reprise.text
+        assert reprise.json()["reprise_de"] == ETEINT
         # Le laissez-passer consommé (`annulation`) emporte la pause avec lui : le
         # run a été repris, il ne se propose plus.
         assert _resume(client, ETEINT)["en_pause"] is False

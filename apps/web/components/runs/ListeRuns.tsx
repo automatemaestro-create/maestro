@@ -14,7 +14,7 @@
  * - **L'ordre vient du backend.** `GET /api/executions` rend ses résumés récents
  *   d'abord (`ExecutionService.resumes`), ce qui *est* l'ordre du critère. Retrier
  *   ici poserait une seconde règle à tenir d'accord avec la première pour un
- *   résultat identique — même parti pris que `runsRelancables`.
+ *   résultat identique — même parti pris que `runsReprenables`.
  * - **La progression n'est pas recomptée.** Elle arrive comptée par le backend sur
  *   la machine à états du moteur (#473) ; la recalculer depuis les tâches chargées
  *   ferait d'une barre d'avancement la mesure de sa propre pagination.

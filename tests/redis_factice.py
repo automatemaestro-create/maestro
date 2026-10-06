@@ -192,6 +192,10 @@ class ClientAsynchrone:
     async def hdel(self, cle: str, *champs: str) -> int:
         return self._sync.hdel(cle, *champs)
 
+    async def delete(self, *cles: str) -> int:
+        # L'état acquis d'un run s'oublie d'un `DEL` sur son hash (#1391).
+        return self._sync.delete(*cles)
+
     async def publish(self, canal: str, donnee: str | bytes) -> int:
         return self._sync.publish(canal, donnee)
 

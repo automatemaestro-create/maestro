@@ -1078,5 +1078,5 @@ def test_de_bout_en_bout_un_geste_que_l_etat_refuse_ne_pose_pas_de_carte(
 
         assert reponse["geste_run"] is None
         assert "finalement pas vous proposer de reprendre" in reponse["contenu"]
-        assert "pas été mis en pause" in reponse["geste_fait"]["refus"]
+        assert "ni mis en pause, ni interrompu" in reponse["geste_fait"]["refus"]
         assert _confirmer(client).status_code == 409

@@ -88,11 +88,21 @@ qui termine une tâche à dépendants **annonce** l'issue par message (diffusion
 **réception** du message de ses dépendances. L'échange est journalisé (#8) et
 visible dans le flux d'événements de la Control Tower (#46). Sans messagerie
 (défaut), la synchronisation reste purement en process — comportement historique.
+
+Depuis #1391, un run **se reprend sur son plan** (docs/28 §12). Avec un magasin
+d'état acquis (`acquis=`, `maestro.engine.acquis`), la boucle y range le plan
+exécutable dès qu'il est figé, puis chaque issue réussie à l'instant où elle l'est. Un
+run interrompu — extinction, hôte tombé — repart alors par `run(reprise=…)` : ni
+cadrage ni planification, les tâches acquises rendent leur issue sans repartir, et
+leurs sorties nourrissent l'aval comme si rien ne s'était arrêté. Seules la tâche
+interrompue et celles jamais démarrées s'exécutent ; une étape `reprise` le dit au
+fil du run.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from time import perf_counter
@@ -113,6 +123,7 @@ from maestro.agents.store import (
 )
 from maestro.config import Settings, load_settings
 from maestro.deliberation import cle_acte
+from maestro.engine.acquis import EtatAcquis, MagasinAcquis
 from maestro.engine.brief import (
     MODE_BRIEF_AUTO,
     MODE_BRIEF_HUMAIN,
@@ -243,6 +254,7 @@ from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
 from maestro.telemetry import (
     RunJournal,
+    StepRecord,
     StepUsage,
     collect_usage,
     resume_controle_depense,
@@ -252,6 +264,7 @@ from maestro.telemetry.costs import (
     ETAPE_CADENCE,
     ETAPE_EQUIPE,
     ETAPE_PLAFOND,
+    ETAPE_REPRISE,
     RunCost,
     TaskCost,
 )
@@ -272,6 +285,11 @@ __all__ = [
 #: Le passage d'une tâche vers l'exécuteur, porte de pause et plafond compris —
 #: celui qu'une tentative de rattrapage emprunte comme une tâche du plan (#1178).
 _Executer = Callable[[Task, Sequence[TaskResult]], Awaitable[TaskResult]]
+
+#: Ce que le moteur dit quand le magasin d'état acquis lui refuse une écriture
+#: (#1391) : le run continue, il sera seulement moins reprenable. Le seul canal
+#: qui survive à tout hôte — le journal du process, que l'hôte détaché garde.
+_LOGGER = logging.getLogger("maestro.engine.acquis")
 
 
 @dataclass(frozen=True)
@@ -537,10 +555,17 @@ class OrchestrationEngine:
         rattrapage: PolitiqueRattrapage | None = None,
         registre_mcp: Callable[[], RegistreMcp] | None = None,
         arbitre_plafond: ArbitrePlafond | None = None,
+        acquis: MagasinAcquis | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
         self._orchestrator = orchestrator
+        # Où le run range ce qu'il a payé (#1391) — son plan exécutable, puis chaque
+        # issue réussie —, de quoi le reprendre sur son plan s'il est interrompu.
+        # None : rien n'est rangé, et un run interrompu ne se reprend que par une
+        # relance depuis son brief (#349). Du câblage de déploiement, comme les
+        # arbitres : *où* l'état survit est un choix de l'hôte, pas du lancement.
+        self._acquis = acquis
         # L'équipe **du projet** pour la décomposition (#1041) : les mêmes entrées
         # que l'exécuteur reçoit pour le routage, retenues ici parce que la
         # planification arrive **avant** lui et doit découper sur la même équipe.
@@ -711,6 +736,7 @@ class OrchestrationEngine:
         verification: bool = True,
         rattrapage: PolitiqueRattrapage | None = RATTRAPAGE_DEFAUT,
         arbitre_plafond: ArbitrePlafond | None = None,
+        acquis: MagasinAcquis | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -813,6 +839,10 @@ class OrchestrationEngine:
         atteint son plafond de dépense — en pratique
         `maestro.controltower.plafond.ArbitrePlafondControlTower`. None (défaut) :
         personne, et le run garde l'arrêt sec d'avant.
+
+        `acquis` (#1391) est **où** le run range ce qu'il a payé — en pratique
+        `maestro.controltower.acquis.magasin_acquis_configure()`. None (défaut) :
+        rien n'est rangé, et le run interrompu ne se reprend pas sur son plan.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -852,6 +882,7 @@ class OrchestrationEngine:
             # l'allowlist du poste — le seed et ce qu'une admission y a fait entrer.
             registre_mcp=_allowlist_mcp_du_poste,
             arbitre_plafond=arbitre_plafond,
+            acquis=acquis,
         )
 
     async def run(
@@ -864,6 +895,7 @@ class OrchestrationEngine:
         mode_brief: str = MODE_BRIEF_SANS,
         porte: PorteExecution | None = None,
         contexte_sources: str = "",
+        reprise: EtatAcquis | None = None,
     ) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
 
@@ -938,25 +970,55 @@ class OrchestrationEngine:
         s'arrête jamais sur un refus ni sur un silence : le run continue avec
         l'équipe actuelle, en le disant. Sans projet, sans équipe ou sans manque,
         elle ne fait rien et ne consigne rien.
+
+        `reprise` (#1391, docs/28 §12) est l'**état acquis** d'un run interrompu,
+        relu de son magasin : le run reprend **sur son plan**, sous le même
+        `run_id`. Ni cadrage ni planification — le plan est celui qui a été payé,
+        et le refaire donnerait d'autres tâches, d'autres identifiants, un autre
+        run. L'équipe n'est pas reconfrontée (c'est fait) et la cadence n'est pas
+        redite ; le plafond d'instances, lui, est redérivé en silence, parce qu'il
+        vit dans l'exécuteur de **ce** process. Les tâches acquises rendent leur
+        issue sans repartir — ni exécution, ni ligne au journal, ni annonce de
+        relais : la projection les a déjà —, et l'aval reçoit leurs sorties comme
+        si le run ne s'était jamais arrêté. Leurs dépenses sont réintégrées au
+        journal sans être republiées (`RunJournal.reprend`), si bien que le
+        plafond de dépense compte ce que le run a déjà payé. Une étape `reprise`
+        dit au fil ce qui est acquis et ce qui reste. `mode_brief` et
+        `contexte_sources` sont sans objet : ils nourrissaient un cadrage qui a eu
+        lieu.
+
+        Avec un magasin d'état acquis (`acquis=` à la construction), la boucle y
+        range le plan **dès qu'il est figé** — avant la confrontation de l'équipe,
+        qui peut attendre une personne —, puis chaque issue réussie à l'instant où
+        elle l'est, et **oublie** l'état d'un run dont toutes les tâches ont réussi :
+        il n'a plus rien à reprendre. Une écriture refusée ne fait jamais échouer le
+        run (`_range`).
         """
         journal = journal if journal is not None else RunJournal()
         mode_brief = mode_brief_valide(mode_brief)
-        cadrage, brief, tours_clarification = await self._cadrage(
-            objective, journal, mode_brief, projet_id, contexte_sources
-        )
-        # L'entrée de la décomposition : le brief retenu, ou l'objectif brut en mode
-        # « sans ». `Brief.synthese()` plutôt que le seul `brief.objectif` — c'est le
-        # texte que l'humain a relu pour approuver, périmètre et critères compris, et
-        # décomposer moins que ce qui a été approuvé rendrait l'approbation trompeuse.
-        # Les sources suivent la même règle : le brief les a digérées, sinon le plan
-        # est le premier à les lire.
-        entree_plan = objective if brief is None else brief.synthese()
-        plan_usage, tasks = await self._plan(
-            entree_plan,
-            journal,
-            projet_id,
-            contexte_sources=contexte_sources if brief is None else "",
-        )
+        if reprise is not None:
+            # Le run repart sur son plan : rien de ce qui précède la première tâche
+            # n'est rejoué, et ce que le plan avait coûté reste au journal d'origine.
+            cadrage, brief, tours_clarification = StepUsage(), None, 0
+            plan_usage, tasks = StepUsage(), list(reprise.plan)
+            self._consigne_reprise(journal, reprise, projet_id)
+        else:
+            cadrage, brief, tours_clarification = await self._cadrage(
+                objective, journal, mode_brief, projet_id, contexte_sources
+            )
+            # L'entrée de la décomposition : le brief retenu, ou l'objectif brut en
+            # mode « sans ». `Brief.synthese()` plutôt que le seul `brief.objectif` —
+            # c'est le texte que l'humain a relu pour approuver, périmètre et
+            # critères compris, et décomposer moins que ce qui a été approuvé rendrait
+            # l'approbation trompeuse. Les sources suivent la même règle : le brief
+            # les a digérées, sinon le plan est le premier à les lire.
+            entree_plan = objective if brief is None else brief.synthese()
+            plan_usage, tasks = await self._plan(
+                entree_plan,
+                journal,
+                projet_id,
+                contexte_sources=contexte_sources if brief is None else "",
+            )
         if ticket is not None:
             tasks = [
                 task
@@ -971,19 +1033,41 @@ class OrchestrationEngine:
                 else replace(task, projet_id=projet_id)
                 for task in tasks
             ]
-        # L'équipe confrontée au plan (#1227), **avant** la première tâche : c'est
-        # le seul moment où un recrutement change encore quelque chose. Elle ne
-        # touche ni au plan ni aux tâches — un rôle créé pendant l'attente est lu
-        # par le routage, tâche par tâche.
-        await self._confronte_equipe(objective, tasks, projet_id, journal)
-        # Ce que le plan laisse partir de front devient le plafond d'instances du
-        # run (#1299), annoncé avant la première tâche — c'est le même instant.
-        self._derive_les_instances(tasks, projet_id, journal)
+        if reprise is None:
+            # Le plan rejoint l'état acquis **dès qu'il est figé** (#1391) : avant la
+            # confrontation de l'équipe, qui peut attendre une personne des minutes
+            # durant — un run éteint pendant ce temps a déjà un plan à reprendre.
+            await self._range(
+                journal.run_id, "le plan", lambda m: m.poser_plan(journal.run_id, tasks)
+            )
+            # L'équipe confrontée au plan (#1227), **avant** la première tâche :
+            # c'est le seul moment où un recrutement change encore quelque chose.
+            # Elle ne touche ni au plan ni aux tâches — un rôle créé pendant
+            # l'attente est lu par le routage, tâche par tâche.
+            await self._confronte_equipe(objective, tasks, projet_id, journal)
+            # Ce que le plan laisse partir de front devient le plafond d'instances
+            # du run (#1299), annoncé avant la première tâche — c'est le même
+            # instant.
+            self._derive_les_instances(tasks, projet_id, journal)
+        elif projet_id is not None:
+            # Repris (#1391) : le plafond d'instances vit dans l'exécuteur de **ce**
+            # process, il se redérive donc — sans être redit, le fil l'a déjà.
+            self._executor.derive_les_instances(
+                journal.run_id, projet_id, largeur_du_plan(noeuds_du_plan(tasks))
+            )
         ordered = topological_order(tasks)
         # La cadence du run (#1298) : pourquoi ses tâches passeront une à une, dite
         # **avant** la première — et, sur un projet non versionné, la proposition
-        # de le versionner, posée dans le fil sans que le run l'attende.
-        versionnement = self._dit_la_cadence(ordered, projet_id, journal)
+        # de le versionner, posée dans le fil sans que le run l'attende. Un run
+        # repris l'a déjà dite (#1391).
+        versionnement = (
+            self._dit_la_cadence(ordered, projet_id, journal) if reprise is None else None
+        )
+        # Les issues déjà payées d'un run repris (#1391) : rendues telles quelles,
+        # jamais réexécutées. Vide pour un run neuf.
+        acquises: Mapping[str, TaskResult] = (
+            reprise.resultats if reprise is not None else {}
+        )
         dependants = _dependants_directs(ordered)
         # Le juge des échecs apprend l'objectif et le plan (#1178) : c'est de là
         # qu'il lit ce qui attend une tâche en échec, aux deux étages.
@@ -1086,6 +1170,14 @@ class OrchestrationEngine:
                     courante = _reprise_au_plafond(courante)
 
         async def _des_que_prete(task: Task) -> TaskResult:
+            if task.id in acquises:
+                # Payée avant l'interruption (#1391) : son issue est rendue telle
+                # quelle — sortie comprise, c'est elle que l'aval lira —, sans
+                # exécution, sans ligne au journal ni annonce de relais. La
+                # projection la tient déjà pour terminée, et la refaire repaierait
+                # le travail, reposerait ses questions et réappliquerait dans le
+                # projet (docs/28 §12.1).
+                return acquises[task.id]
             # Attend ses seules dépendances : chaque exécution ne voit que le
             # tableau noir qui la concerne, aucun état partagé entre tâches. Le
             # sémaphore n'est pris qu'une fois les dépendances résolues, pour ne
@@ -1093,9 +1185,12 @@ class OrchestrationEngine:
             dependances = [await en_vol[dep] for dep in task.dependances]
             if relais is not None:
                 # Handoff (#44) : la tâche ne démarre qu'une fois le message de
-                # chacune de ses dépendances relevé dans la boîte aux lettres.
+                # chacune de ses dépendances relevé dans la boîte aux lettres —
+                # sauf d'une dépendance acquise (#1391), dont l'annonce est partie
+                # avant l'interruption et ne repartira pas.
                 for dep in task.dependances:
-                    await relais.attend(dep)
+                    if dep not in acquises:
+                        await relais.attend(dep)
             insatisfaites = [dep for dep in dependances if not dep.ok]
             if insatisfaites:
                 # Blocage aval (#43) : la tâche n'atteint jamais l'exécuteur — ni
@@ -1141,6 +1236,26 @@ class OrchestrationEngine:
                         executer=_executer,
                         refaits=refaits,
                     )
+                    # Un livrable refait à la demande de la QA remplace le premier
+                    # dans l'état acquis (#1391) : c'est lui que l'aval lit désormais.
+                    # Le geste est attendu dans le tour même : la closure lit
+                    # `refait` avant qu'il ne change.
+                    for refait in list(refaits.values()):
+                        if refait.ok:
+                            await self._range(
+                                journal.run_id,
+                                f"l'issue de {refait.task_id}",
+                                lambda m: m.acquerir(journal.run_id, refait),  # noqa: B023
+                            )
+            if result.ok:
+                # L'issue réussie rejoint l'état acquis **à l'instant où elle l'est**
+                # (#1391), avant même d'être annoncée à l'aval : une extinction une
+                # seconde plus tard la trouve rangée.
+                await self._range(
+                    journal.run_id,
+                    f"l'issue de {task.id}",
+                    lambda m: m.acquerir(journal.run_id, result),
+                )
             if relais is not None and dependants[task.id]:
                 # L'agent qui termine annonce l'issue à l'aval (handoff ou
                 # notification) — publication journalisée, résiliente.
@@ -1164,6 +1279,13 @@ class OrchestrationEngine:
             if versionnement is not None:
                 await self._solde_le_versionnement(versionnement, projet_id, journal)
 
+        if all(resultat_de(task.id).ok for task in ordered):
+            # Tout est fait (#1391) : il n'y a plus rien à reprendre de ce run, et
+            # ses sorties n'ont plus à occuper le magasin. Un run soldé autrement
+            # garde son état — c'est celui qu'on voudra peut-être reprendre.
+            await self._range(
+                journal.run_id, "l'oubli de l'état", lambda m: m.oublier(journal.run_id)
+            )
         # Le plafond **en vigueur** à la fin du run (#1182) : relevé sur décision,
         # c'est lui que le contrôle de dépense a tenu jusqu'au bout.
         plafond_cout_usd, plafond_tokens = self._plafonds.en_vigueur(journal.run_id)
@@ -1178,6 +1300,85 @@ class OrchestrationEngine:
             brief=brief,
             cadrage=cadrage,
             tours_clarification=tours_clarification,
+        )
+
+    async def _range(
+        self,
+        run_id: str,
+        quoi: str,
+        geste: Callable[[MagasinAcquis], Awaitable[None]],
+    ) -> None:
+        """Joue un geste sur le magasin d'état acquis — **jamais une levée** (#1391).
+
+        Le magasin rend un run reprenable ; il ne doit jamais le faire échouer. Un
+        Redis injoignable au moment de ranger une issue coûte à ce run d'être moins
+        reprenable — sa tâche serait refaite à une reprise —, ce qui se dit au
+        journal du process et s'arrête là. Sans magasin, rien n'est joué.
+        """
+        if self._acquis is None:
+            return
+        try:
+            await geste(self._acquis)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.warning(
+                "État acquis du run %s : %s n'a pas pu être rangé — le run continue, "
+                "une reprise refera ce qui manque.",
+                run_id,
+                quoi,
+                exc_info=True,
+            )
+
+    def _consigne_reprise(
+        self, journal: RunJournal, reprise: EtatAcquis, projet_id: str | None
+    ) -> None:
+        """Le run repart sur son plan : ce qui est acquis rejoint le journal, la césure se dit.
+
+        Deux gestes, et ils ne se ressemblent pas (#1391). Les issues acquises
+        **rejoignent le journal sans être republiées** (`RunJournal.reprend`) : le
+        plafond de dépense et le rapport de fin les comptent, la projection les a
+        déjà. Puis l'étape `reprise` (`ETAPE_REPRISE`, celle du mode durable #96)
+        **part** au fil du run : c'est la réponse à « est-ce bien le même run, et
+        qu'est-ce qui reste à faire ? » — combien de tâches sont acquises et ne
+        seront pas refaites, combien restent. Usage nul : reprendre ne sollicite
+        aucun modèle, et le grand livre ignore cette étape.
+        """
+        journal.reprend(
+            [
+                StepRecord(
+                    run_id=journal.run_id,
+                    etape=resultat.task_id,
+                    nom=resultat.titre,
+                    agent=resultat.agent,
+                    role=resultat.role,
+                    statut=resultat.statut,
+                    # Sans horodatage : ce qui a été payé avant l'interruption
+                    # compte dans la dépense, pas dans le temps de mur de ce process.
+                    horodatage="",
+                    entree="",
+                    sortie="",
+                    erreur=None,
+                    usage=resultat.usage,
+                    projet_id=projet_id,
+                )
+                for resultat in (reprise.resultats[i] for i in reprise.acquises)
+            ]
+        )
+        acquises, restantes = len(reprise.acquises), len(reprise.a_reprendre)
+        journal.consigne(
+            etape=ETAPE_REPRISE,
+            nom="Reprise du run sur son plan",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=STATUT_TERMINEE,
+            entree=f"plan de {len(reprise.plan)} tâche(s), repris là où il s'est arrêté",
+            sortie=(
+                f"{acquises} tâche(s) déjà faite(s), gardée(s) telles quelles — "
+                f"{restantes} à faire"
+            ),
+            usage=StepUsage(),
+            projet_id=projet_id,
         )
 
     async def _renvoie_aux_producteurs(

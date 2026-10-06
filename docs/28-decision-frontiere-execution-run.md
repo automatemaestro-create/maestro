@@ -14,7 +14,9 @@
 > #470/#486) sépare l'accident de la décision : un run survit à l'accident, pas à l'extinction. Le
 > **§12** (2026-08-28, #701) franchit la porte n° 4 du §8 — la reprise à l'endroit exact — et
 > tranche l'**état acquis durable hors process, sans Temporal** : sur l'axe même de cette porte, O4
-> ne reprend pas plus finement. Il reste derrière les trois autres.
+> ne reprend pas plus finement. Il reste derrière les trois autres. Le §12 est **en vigueur** depuis
+> #1391 (2026-10-05, §12.9) : « Reprendre » continue un run interrompu sur son plan, sous le même
+> identifiant.
 
 ---
 
@@ -758,13 +760,13 @@ montrait neuf échecs. Le soldage des tâches (#466) précédait #924, qui fait 
 - **un run en pause quand Maestro s'éteint le reste** : soldé — son hôte est éteint —, il garde
   `en_pause` et l'heure de sa pause. L'extinction arrête Maestro, pas la décision de la personne. Une
   **annulation** pendant la pause, elle, la lève toujours : il n'y a rien à reprendre d'un run qu'on a
-  arrêté exprès. Et le « Reprendre » de la pause refuse un run soldé (`409`) : sa porte n'existe plus,
-  il se reprend par la relance.
+  arrêté exprès. Et le « Reprendre » de la pause refusait un run soldé (`409`) : sa porte n'existe
+  plus. ⚠ **Renversé par #1391** (§12.9) : il le reprend désormais, sur son plan.
 
-**Ce que ça ne fait pas encore** : reprendre le run **sur son plan**. La relance de #349 crée toujours
-un nouveau run reparti du brief ; c'est l'objet du lot suivant (#1391), puis de la reprise de la tâche
-interrompue depuis sa branche (#1392). Le soldage laisse désormais l'état que ces deux lots ont besoin
-de lire : ce qui est fait, ce qui a été interrompu, ce qui reste.
+**Ce que ça ne faisait pas encore** : reprendre le run **sur son plan**. La relance de #349 créait
+un nouveau run reparti du brief ; c'est ce que le lot suivant a livré (#1391, §12.9), avant la reprise
+de la tâche interrompue depuis sa branche (#1392). Le soldage laisse l'état que ces deux lots ont
+besoin de lire : ce qui est fait, ce qui a été interrompu, ce qui reste.
 
 ---
 
@@ -773,6 +775,8 @@ de lire : ce qui est fait, ce qui a été interrompu, ce qui reste.
 > Ticket **#701**. Décision datée du **2026-08-28**, sur `origin/main` à `b8d885a` — donc **après**
 > #700 (§11.2) et #699, livrés le même jour et pris en compte tels qu'ils sont dans `main`, pas tels
 > que leurs tickets les annonçaient (§12.7). Aucun code n'est livré par ce cadrage.
+>
+> **En vigueur depuis #1391** (2026-10-05) — ce qui a été livré, et comment, est au §12.9.
 >
 > **Verdict : l'état acquis devient durable hors du process, sans Temporal.** Un run interrompu
 > repart de ses tâches déjà abouties au lieu de rejouer depuis le brief. **O4 reste derrière sa
@@ -1092,3 +1096,83 @@ Ce qui rouvrirait la décision de ce §12, nommé d'avance :
 4. **Une seconde machine.** Deux postes, ou un hôte partagé, et le magasin devient un état distribué
    à tenir cohérent — ce pour quoi Temporal existe. C'est la porte n° 2 du §8, vue depuis ce §12 :
    elle rouvre les deux décisions à la fois.
+
+### 12.9 Ce que #1391 a livré (2026-10-05)
+
+> Deuxième lot de #1389. Le §12.6 a tranché, ce lot l'applique : **le §12 passe de « cadrage » à
+> « en vigueur »**. Ce qui reste du chantier — reprendre la tâche interrompue depuis sa branche plutôt
+> que de zéro — est le lot suivant (#1392).
+
+**Le geste.** « Reprendre » continue un run **interrompu** — soldé par l'extinction de Maestro ou par
+une borne, en pause ou non, ou dont l'hôte s'est tu (`orphelin`) — **sur son plan, sous le même
+`run_id`** (`ServiceExecutions.reprendre`, route `POST …/reprendre`). C'est le même verbe que la pause
+(#477) : un run suspendu qui tourne rouvre sa porte, un run interrompu repart sur son acquis. Le
+« Reprendre » du panneau *Runs qui n'avancent plus* et celui de la vue du run l'appellent tous deux ;
+la relance de #349 (`…/relancer`) devient le geste de **recommencer** — un nouveau run sur le brief —,
+et le repli de la reprise sur un run qui n'a **rien d'acquis** (arrêté avant son plan, ou né avant ce
+lot), dont l'endroit où il en était est précisément son brief.
+
+**Les deux choses du §12.2, hors process.** Le moteur range (`OrchestrationEngine(acquis=…)`) :
+
+- le **plan exécutable** — les `Task` entières, ticket et projet hérités — **dès qu'il est figé**,
+  avant la confrontation de l'équipe qui peut attendre une personne ;
+- chaque **issue réussie**, `TaskResult` entier et donc sa `sortie`, **à l'instant où elle l'est** —
+  un livrable refait à la demande d'une QA (#1177) remplace le premier.
+
+Le format n'a rien d'inventé (`Task.to_dict`, `TaskResult.to_dict`, §12.6 ②) ; le magasin
+(`maestro.engine.acquis`, `maestro.controltower.acquis`) suit le support du journal durable : un hash
+Redis par run, `maestro.acquis:<run_id>`, rangé dans l'espace de la copie (#1164), ou une table
+`acquis` dans le fichier du journal local (#639). Il est écrit **côté producteur** — le process
+détaché du run, la leçon de #699 —, relu par l'API au geste. Une écriture refusée ne fait jamais
+échouer un run : elle le rend moins reprenable, et le journal de l'hôte le dit. Un run dont toutes les
+tâches ont réussi oublie son état ; la purge (#853) l'emporte avec le reste.
+
+**La reprise.** L'API relit l'état, solde d'abord un run dont l'hôte s'est tu (l'issue publiée arrête
+un hôte qui vivrait encore : jamais deux hôtes sous un `run_id`), lève la pause s'il en portait une, le
+remet `en_cours` et le confie à son hôte avec son état (`OrdreRun.reprise`), ses bornes, son projet et
+son ticket. Le moteur repris (`run(reprise=…)`) ne refait **ni cadrage ni plan** ; les tâches acquises
+rendent leur issue sans repartir — ni exécution, ni ligne au journal, ni annonce de relais — et l'aval
+lit leurs sorties comme si le run ne s'était pas arrêté. Leurs dépenses rejoignent le journal du
+process **sans être republiées** (`RunJournal.reprend`), si bien que le plafond de dépense compte ce
+que le run a déjà payé. Une étape `reprise` (celle du mode durable, #96) dit au fil ce qui est acquis
+et ce qui reste : c'est la réponse à « est-ce bien le même run, et qu'est-ce qui reste à faire ? ».
+
+**Ce que la reprise ouvre en plus.** Un run **sans brief approuvé** n'était pas reprenable du tout
+(§12.7, `MOTIF_RELANCE_SANS_CADRAGE`). #1174 avait refermé le cas du fil — l'accord qu'on y donne vaut
+approbation —, pas celui d'un run lancé `sans`, ou `auto` hors du fil : celui-là se reprend désormais
+sur son plan, qui n'a pas besoin d'un brief approuvé. Le prix assumé du §12.7 tombe avec lui.
+
+**Les garde-fous.** Le double clic : la relecture de l'état est un `await` avant la première écriture,
+donc une reprise en train de partir refuse la seconde (`reprise-en-cours`), et le run reparti, vivant,
+la refuse de lui-même. Un état **illisible** est un refus (`503`), jamais un repli sur la relance, qui
+referait un plan existant. Un même `run_id` relancé ne laisse pas la première tâche de fond (hôte en
+process) ni la dépouille du premier process (hôte détaché) effacer ou solder le second départ.
+
+**Ce que le banc a montré, et qui a été corrigé dans le lot.** Le premier passage de S12 (2026-10-05,
+`20261005-193910`) a repris le run **sous son identifiant**, sans rejouer sa tâche faite — puis l'a vu
+tomber en échec sur la tâche coupée en vol : son process tué n'avait pas démonté son worktree, qui
+retenait la branche `maestro/<tâche>`, et la même tâche — même identifiant, ce que la reprise sur le
+plan garantit — se voyait refuser le sien (« already used by worktree »). Le `prune` de `_monter_worktree`
+ne libérait que les worktrees dont le répertoire avait disparu. Le montage libère désormais celui
+qu'une exécution **antérieure** de la tâche a abandonné (`_liberer_la_branche`) : son travail non
+commité est d'abord **commité sur la branche** — le retirer d'abord l'emporterait —, puis le worktree
+est retiré, et la tâche remonte sur sa branche, ce travail compris. Seul un worktree de la forme exacte
+d'un espace de Maestro (`<racine des espaces>/maestro-…/<tâche>`) est concerné : celui qu'une personne
+aurait ouvert elle-même sur une branche `maestro/…` n'est jamais touché.
+
+**L'épreuve sur le réel** (S12, passage `20261005-195909`, run `e4ccc2630e94`) : une application
+Next.js née dans le fil, son socle fait et son module de données en vol ; pause, extinction
+(`POST /api/extinction`), API coupée puis rallumée, « Reprendre ». Le run repart **sous son
+identifiant**, aucune tâche faite n'y repart (l'oracle le lit sur la trace : aucun `en_cours` daté
+après l'interruption), la tâche coupée repart, et le run va au bout — `terminee`, huit tâches, 4,81 $.
+Sa session reprise a reçu dans son prompt, mot pour mot, la sortie de la tâche acquise que sa
+tentative coupée avait reçue avant l'extinction : le tableau noir a traversé la reprise.
+Le livrable cloné s'installe, se construit, passe ses 33 tests et sert ses quatre pages. Le scénario
+reste rouge sur un seul constat, qui est l'objet de #1392 : le travail de la tâche en vol n'est pas
+sauvé sur sa branche **à l'extinction** — il ne l'est qu'au remontage de la reprise.
+
+**Ce qui ne change pas.** La granularité est la tâche terminée (§12.6) : la tâche **interrompue** est
+refaite en entier — repartir de sa branche est #1392. Un plafond **relevé** pendant le premier départ
+(#1182) n'est pas reporté : le run repris repart sur les bornes qu'il avait reçues, et le plafond lui
+redemandera. La reprise reste un **geste** ; la reprise automatique au réveil de la machine reste
+derrière O4.

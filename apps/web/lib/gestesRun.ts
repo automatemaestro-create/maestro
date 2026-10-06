@@ -82,8 +82,10 @@ export const LIBELLES_DES_GESTES: Record<GesteRun, LibellesDuGeste> = {
   reprise: {
     question: "Reprendre ce run ?",
     verbe: "Reprendre",
+    // Vrai d'un run en pause comme d'un run interrompu (#1391) : ce qui est fait ne
+    // repart pas, et seule une tâche coupée en vol par l'extinction recommence.
     consequence:
-      "Les tâches qui attendaient repartent là où le run en était : rien n'est rejoué, rien n'est repayé.",
+      "Le run repart là où il en était, le même : ce qui est fait reste fait, seul ce qui reste s'exécute.",
     fait: "Repris",
   },
   annulation: {

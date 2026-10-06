@@ -61,6 +61,7 @@ from maestro.controltower.persistence import (
     DOSSIER_LOCAL,
     SUPPORT_REDIS,
     SUPPORT_SQLITE,
+    _passer_en_wal,
 )
 from maestro.espace import racine_de_la_copie
 from maestro.messaging import InMemoryMailbox, RedisMailbox
@@ -291,7 +292,7 @@ def test_le_passage_en_wal_attend_son_tour_au_lieu_d_echouer(tmp_path: Path) -> 
             return ("wal",)
 
     connexion = ConnexionQuiPerdLaCourse()
-    SqliteEventLog(tmp_path / "journal.sqlite3")._passer_en_wal(connexion)  # type: ignore[arg-type]
+    _passer_en_wal(connexion, tmp_path / "journal.sqlite3")  # type: ignore[arg-type]
 
     assert connexion.essais_wal == 2, "le perdant doit repasser, pas propager l'erreur"
     assert connexion.instructions == [

@@ -29,8 +29,9 @@
  * Deux tests l'encadrent des deux côtés (ici, et
  * `tests/test_relance_run.py::test_un_run_qui_n_a_jamais_battu_se_relance_quand_meme`).
  *
- * Aucun réseau : `relancer` est une fonction du test, comme le hook global l'est
- * pour tous les autres écrans (`tests/setup.ts`).
+ * Aucun réseau : `reprendre` est une fonction du test, comme le hook global l'est
+ * pour tous les autres écrans (`tests/setup.ts`). Depuis #1391 le bouton reprend
+ * le run **sur son plan** (`…/reprendre`) au lieu de le relancer dans un nouveau.
  */
 
 import { screen, waitFor, within } from "@testing-library/react";
@@ -47,9 +48,9 @@ import {
   estEnSouffrance,
   estEteint,
   estOrphelin,
-  estRelancable,
+  estReprenable,
   runsEnSouffrance,
-  runsRelancables,
+  runsReprenables,
 } from "@/lib/execution";
 import {
   CAUSE_ANNULATION,
@@ -112,12 +113,12 @@ describe("la règle — ce qu'on propose de reprendre", () => {
   it("retient un orphelin dont le brief a été approuvé", () => {
     const run = runPerdu();
     expect(estOrphelin(run)).toBe(true);
-    expect(estRelancable(run)).toBe(true);
-    expect(runsRelancables([run])).toEqual([run]);
+    expect(estReprenable(run)).toBe(true);
+    expect(runsReprenables([run])).toEqual([run]);
   });
 
   it("écarte un run vivant : il n'y a rien à reprendre d'un run qui travaille", () => {
-    expect(runsRelancables([runPerdu({ vitalite: VITALITE_VIVANT })])).toEqual([]);
+    expect(runsReprenables([runPerdu({ vitalite: VITALITE_VIVANT })])).toEqual([]);
   });
 
   it("écarte un run indéterminé, que l'API accepte pourtant de relancer", () => {
@@ -127,20 +128,38 @@ describe("la règle — ce qu'on propose de reprendre", () => {
     // ce qui disparaît ici, c'est la *proposition*.
     const inconnu = runPerdu({ vitalite: VITALITE_INDETERMINE });
     expect(estOrphelin(inconnu)).toBe(false);
-    expect(runsRelancables([inconnu])).toEqual([]);
+    expect(runsReprenables([inconnu])).toEqual([]);
   });
 
-  it("écarte un orphelin sans brief approuvé : le bouton n'aboutirait pas", () => {
-    // 422 côté API — il s'est arrêté avant que quelqu'un ne valide son cadrage.
-    // L'offrir ferait passer pour une panne ce qui est un run mort avant d'avoir
-    // rien coûté.
-    expect(runsRelancables([runPerdu({ brief_approuve: false })])).toEqual([]);
-    expect(runsRelancables([runPerdu({ brief_approuve: undefined })])).toEqual([]);
+  it("retient un orphelin sans brief approuvé dès qu'il a un plan (#1391)", () => {
+    // Il reprend sur son plan, et le brief n'y est pour rien : un run dont personne
+    // n'a validé le cadrage (lancé `sans`, ou `auto` hors du fil) n'était pas
+    // reprenable du tout avant #1391 (docs/28 §12.7) — c'est lui que la reprise sur
+    // le plan ouvre.
+    const sansBrief = runPerdu({ brief_approuve: false, nb_taches: 4 });
+    expect(runsReprenables([sansBrief])).toEqual([sansBrief]);
+  });
+
+  it("écarte un orphelin sans plan ni brief approuvé : le bouton n'aboutirait pas", () => {
+    // 422 côté API — il s'est arrêté avant son plan, et avant que quelqu'un ne
+    // valide son cadrage. L'offrir ferait passer pour une panne ce qui est un run
+    // mort avant d'avoir rien coûté.
+    expect(runsReprenables([runPerdu({ brief_approuve: false, nb_taches: 0 })])).toEqual([]);
+    expect(
+      runsReprenables([runPerdu({ brief_approuve: undefined, nb_taches: 0 })]),
+    ).toEqual([]);
+  });
+
+  it("retient un orphelin sans plan dont le brief a été approuvé", () => {
+    // Arrêté entre l'approbation et la décomposition : l'endroit où il en était est
+    // son brief, et la reprise en repart (le service se replie sur la relance).
+    const avantPlan = runPerdu({ nb_taches: 0 });
+    expect(runsReprenables([avantPlan])).toEqual([avantPlan]);
   });
 
   it("écarte un run soldé, qui n'a plus de verdict du tout", () => {
     const solde = runPerdu({ statut: EXECUTION_TERMINEE, vitalite: null });
-    expect(runsRelancables([solde])).toEqual([]);
+    expect(runsReprenables([solde])).toEqual([]);
   });
 
   it("retient un run que l'extinction de Maestro a soldé", () => {
@@ -151,7 +170,7 @@ describe("la règle — ce qu'on propose de reprendre", () => {
     const eteint = runEteint();
     expect(estOrphelin(eteint)).toBe(false);
     expect(estEteint(eteint)).toBe(true);
-    expect(runsRelancables([eteint])).toEqual([eteint]);
+    expect(runsReprenables([eteint])).toEqual([eteint]);
   });
 
   it("écarte un run annulé à la main, sous le même statut", () => {
@@ -161,13 +180,18 @@ describe("la règle — ce qu'on propose de reprendre", () => {
     // délibérément d'annuler, à chaque rechargement du tableau de bord.
     const annule = runEteint({ cause: CAUSE_ANNULATION });
     expect(estEteint(annule)).toBe(false);
-    expect(runsRelancables([annule])).toEqual([]);
+    expect(runsReprenables([annule])).toEqual([]);
   });
 
-  it("écarte un run éteint sans brief approuvé : rien de payé à rejouer", () => {
-    // L'extinction ouvre la porte du statut, jamais celle du cadrage : la seconde
+  it("écarte un run éteint sans plan ni brief approuvé : rien d'acquis à reprendre", () => {
+    // L'extinction ouvre la porte du statut, jamais celle de l'acquis : la seconde
     // moitié de la règle vaut des deux côtés, et l'API refuserait en 422.
-    expect(runsRelancables([runEteint({ brief_approuve: false })])).toEqual([]);
+    expect(
+      runsReprenables([runEteint({ brief_approuve: false, nb_taches: 0 })]),
+    ).toEqual([]);
+    // Avec un plan, il reprend dessus (#1391), brief approuvé ou non.
+    const avecPlan = runEteint({ brief_approuve: false });
+    expect(runsReprenables([avecPlan])).toEqual([avecPlan]);
   });
 
   it("n'appelle pas « éteint » un run en vol qui porterait une cause", () => {
@@ -177,7 +201,7 @@ describe("la règle — ce qu'on propose de reprendre", () => {
     // pire des deux lectures.
     const en_vol = runPerdu({ vitalite: VITALITE_VIVANT, cause: CAUSE_EXTINCTION });
     expect(estEteint(en_vol)).toBe(false);
-    expect(runsRelancables([en_vol])).toEqual([]);
+    expect(runsReprenables([en_vol])).toEqual([]);
   });
 
   it("garde l'ordre du backend — le plus récent d'abord, sans retrier", () => {
@@ -188,7 +212,7 @@ describe("la règle — ce qu'on propose de reprendre", () => {
     const vieux = runPerdu({ run_id: "vieux" });
     const vivant = runPerdu({ run_id: "vivant", vitalite: VITALITE_VIVANT });
 
-    expect(runsRelancables([recent, vivant, vieux]).map((r) => r.run_id)).toEqual([
+    expect(runsReprenables([recent, vivant, vieux]).map((r) => r.run_id)).toEqual([
       "recent",
       "vieux",
     ]);
@@ -202,7 +226,7 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runPerdu({ vitalite: VITALITE_VIVANT })]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
     expect(screen.queryByRole("region", { name: TITRE_RUNS_IMMOBILES })).toBeNull();
@@ -212,7 +236,7 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runPerdu(), runPerdu({ run_id: "4b33ea332e60" })]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
 
@@ -228,14 +252,14 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
 
   it("dit d'où vient chaque run, sous le même bouton", async () => {
     // #486 — les deux états mènent au **même** geste (c'est le critère du ticket :
-    // « par le bouton existant »), et c'est justifié : ce que la relance rejoue est
-    // un cadrage, qu'on l'ait perdu ou rangé. Seule l'origine se dit, parce que
+    // « par le bouton existant »), et c'est justifié : un run se reprend sur son
+    // plan de la même façon qu'on l'ait perdu ou éteint (#1391). Seule l'origine se dit, parce que
     // présenter une extinction volontaire comme une panne ferait chercher un
     // incident après un simple redémarrage.
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runPerdu(), runEteint({ run_id: "4b33ea332e60" })]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
 
@@ -248,11 +272,11 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
   });
 
   it("reprend le run sur lequel on a cliqué, et lui seul", async () => {
-    const relancer = vi.fn().mockResolvedValue(runPerdu({ run_id: "suite" }));
+    const reprendre = vi.fn().mockResolvedValue(runPerdu({ run_id: "suite" }));
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runPerdu(), runPerdu({ run_id: "4b33ea332e60" })]}
-        relancer={relancer}
+        reprendre={reprendre}
       />,
     );
 
@@ -260,20 +284,20 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
     const [, second] = within(panneau).getAllByRole("button", { name: "Reprendre" });
     await userEvent.click(second);
 
-    await waitFor(() => expect(relancer).toHaveBeenCalledTimes(1));
-    expect(relancer).toHaveBeenCalledWith("4b33ea332e60");
+    await waitFor(() => expect(reprendre).toHaveBeenCalledTimes(1));
+    expect(reprendre).toHaveBeenCalledWith("4b33ea332e60");
   });
 
   it("désarme le bouton pendant la reprise : jamais deux relances pour un clic de trop", async () => {
     // Un double clic partirait deux fois. L'API refuserait la seconde (409, le run
-    // venant d'être soldé), mais le message de refus s'afficherait sur une carte
+    // venant de repartir), mais le message de refus s'afficherait sur une carte
     // dont la reprise a *réussi* — un échec annoncé là où tout s'est bien passé.
     let terminer: (r: ResumeExecution) => void = () => {};
-    const relancer = vi.fn(
+    const reprendre = vi.fn(
       () => new Promise<ResumeExecution>((resoudre) => (terminer = resoudre)),
     );
     rendreAvecEtat(
-      <PanneauRunsImmobiles executions={[runPerdu()]} relancer={relancer} />,
+      <PanneauRunsImmobiles executions={[runPerdu()]} reprendre={reprendre} />,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Reprendre" }));
@@ -282,17 +306,17 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
     expect(enCours).toBeDisabled();
 
     terminer(runPerdu({ run_id: "suite" }));
-    await waitFor(() => expect(relancer).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(reprendre).toHaveBeenCalledTimes(1));
   });
 
   it("affiche le refus de l'API et réarme le bouton", async () => {
     // C'est le message du backend qui s'affiche, pas une phrase inventée ici : lui
     // seul sait ce qu'il a refusé (déjà soldé, encore vivant, sans cadrage).
-    const relancer = vi
+    const reprendre = vi
       .fn()
       .mockRejectedValue(new Error("exécution encore vivante : son hôte bat toujours."));
     rendreAvecEtat(
-      <PanneauRunsImmobiles executions={[runPerdu()]} relancer={relancer} />,
+      <PanneauRunsImmobiles executions={[runPerdu()]} reprendre={reprendre} />,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Reprendre" }));
@@ -304,19 +328,20 @@ describe("le panneau — ce qu'on voit et ce qu'on déclenche", () => {
   });
 
   it("ne dit rien de plus quand la reprise réussit — la carte est là pour partir", async () => {
-    // Aucun message de succès, et le bouton **reste** désarmé : la relance solde ce
-    // run, donc le rechargement le fait sortir de la liste. Une carte qui disparaît
+    // Aucun message de succès, et le bouton **reste** désarmé : repris, ce run
+    // repart et bat de nouveau (#1391), donc le rechargement le fait sortir de la
+    // liste. Une carte qui disparaît
     // dit déjà ce qui s'est passé, et un « repris ✓ » sur un composant qu'on démonte
     // aussitôt ne serait jamais lu. Le réarmer serait pire que superflu : il
-    // proposerait de reprendre un run qu'on vient de solder, le temps d'un
+    // proposerait de reprendre un run qu'on vient de reprendre, le temps d'un
     // rechargement.
-    const relancer = vi.fn().mockResolvedValue(runPerdu({ run_id: "suite" }));
+    const reprendre = vi.fn().mockResolvedValue(runPerdu({ run_id: "suite" }));
     rendreAvecEtat(
-      <PanneauRunsImmobiles executions={[runPerdu()]} relancer={relancer} />,
+      <PanneauRunsImmobiles executions={[runPerdu()]} reprendre={reprendre} />,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Reprendre" }));
-    await waitFor(() => expect(relancer).toHaveBeenCalled());
+    await waitFor(() => expect(reprendre).toHaveBeenCalled());
 
     const panneau = screen.getByRole("region", { name: TITRE_RUNS_IMMOBILES });
     expect(within(panneau).getByRole("button", { name: "Reprise…" })).toBeDisabled();
@@ -358,7 +383,7 @@ describe("la règle — ce qu'on signale comme laissé en attente", () => {
     expect(runsEnSouffrance([run])).toEqual([run]);
     // Et il n'entre pas dans l'autre famille : les deux verdicts ne désignent pas
     // les mêmes runs, c'est tout le sujet du panneau.
-    expect(runsRelancables([run])).toEqual([]);
+    expect(runsReprenables([run])).toEqual([]);
   });
 
   it("ne déduit rien d'un `attente_depuis` ancien : le verdict est celui du backend", () => {
@@ -377,7 +402,7 @@ describe("la règle — ce qu'on signale comme laissé en attente", () => {
     const mort = runEnSouffrance({ vitalite: VITALITE_ORPHELIN });
     expect(estEnSouffrance(mort)).toBe(true);
     expect(runsEnSouffrance([mort])).toEqual([]);
-    expect(runsRelancables([mort])).toEqual([mort]);
+    expect(runsReprenables([mort])).toEqual([mort]);
   });
 
   it("écarte un run en pause, où quelqu'un a déjà décidé", () => {
@@ -399,7 +424,7 @@ describe("le panneau — deux familles, deux gestes", () => {
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runEnSouffrance(), runPerdu()]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
 
@@ -422,7 +447,7 @@ describe("le panneau — deux familles, deux gestes", () => {
     // réponse à une attente n'est ni oui ni non (« répondre », « relever le budget »,
     // « annuler », « rien »), donc il n'y a pas de geste à mettre sous une carte.
     rendreAvecEtat(
-      <PanneauRunsImmobiles executions={[runEnSouffrance()]} relancer={vi.fn()} />,
+      <PanneauRunsImmobiles executions={[runEnSouffrance()]} reprendre={vi.fn()} />,
     );
 
     const panneau = screen.getByRole("region", { name: TITRE_RUNS_IMMOBILES });
@@ -438,7 +463,7 @@ describe("le panneau — deux familles, deux gestes", () => {
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runPerdu(), runEnSouffrance()]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
 
@@ -478,7 +503,7 @@ describe("la carte — ce que le run attend, et depuis quand", () => {
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runEnSouffrance({ statut })]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
 
@@ -509,7 +534,7 @@ describe("la carte — ce que le run attend, et depuis quand", () => {
     // reprise du CRM · a1b2… · Brief à valider · il y a 15 j », où la dernière
     // valeur n'est rattachée à rien.
     rendreAvecEtat(
-      <PanneauRunsImmobiles executions={[runEnSouffrance()]} relancer={vi.fn()} />,
+      <PanneauRunsImmobiles executions={[runEnSouffrance()]} reprendre={vi.fn()} />,
     );
 
     expect(
@@ -526,7 +551,7 @@ describe("la carte — ce que le run attend, et depuis quand", () => {
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runEnSouffrance({ attente_depuis: null })]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
 
@@ -543,7 +568,7 @@ describe("la carte — ce que le run attend, et depuis quand", () => {
     rendreAvecEtat(
       <PanneauRunsImmobiles
         executions={[runEnSouffrance(), runEnSouffrance({ run_id: "b2c3d4e5f6a1" })]}
-        relancer={vi.fn()}
+        reprendre={vi.fn()}
       />,
     );
 

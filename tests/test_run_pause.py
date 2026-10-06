@@ -633,11 +633,12 @@ def test_un_run_deja_suspendu_ne_se_suspend_pas_deux_fois():
 
 
 def test_un_run_qui_n_est_pas_suspendu_ne_se_reprend_pas():
-    """Le pendant du refus ci-dessus, et il vaut aussi pour un run soldé.
+    """Le pendant du refus ci-dessus : un run qui travaille n'a rien à reprendre.
 
-    Un run soldé a `en_pause == False` (l'issue lève la pause) : il tombe donc
-    dans ce refus-ci, et non dans celui du « déjà soldé ». C'est le même
-    diagnostic — il n'y a rien à reprendre.
+    Depuis #1391 la reprise passe aussi sur un run **interrompu** (Maestro éteint,
+    hôte tombé), qu'elle continue sur son plan ; un run qui tourne et bat n'est ni
+    l'un ni l'autre, et le refus le dit. Un run soldé par une annulation voulue
+    tombe, lui, dans le refus du « déjà soldé » (`tests/test_reprise_du_plan.py`).
     """
     state = ControlTowerState()
     _inscrit(state)
@@ -646,7 +647,7 @@ def test_un_run_qui_n_est_pas_suspendu_ne_se_reprend_pas():
         reponse = client.post(f"/api/executions/{RUN}/reprendre")
 
     assert reponse.status_code == 409
-    assert "pas été mis en pause" in reponse.json()["detail"]
+    assert "ni mis en pause, ni interrompu" in reponse.json()["detail"]
 
 
 def test_la_liste_des_runs_porte_le_drapeau_de_pause():

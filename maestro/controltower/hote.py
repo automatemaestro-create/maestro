@@ -68,6 +68,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from maestro.engine.acquis import EtatAcquis
 from maestro.engine.brief import MODE_BRIEF_HUMAIN
 from maestro.references import ReferenceTicket
 
@@ -157,6 +158,14 @@ class OrdreRun:
     brief sur ce que l'écran a annoncé « lu », jamais sur une relecture qui aurait
     pu changer entre-temps (une page, #316). Avant lui, l'ordre ne portait pas les
     sources : elles étaient lues, affichées, puis perdues avant le brief.
+
+    `reprise` (#1391) est l'**état acquis** d'un run interrompu qu'on reprend sur
+    son plan — sous le **même** `run_id` : son plan exécutable et ses issues
+    réussies, sorties comprises (`maestro.engine.acquis`). Une valeur, comme le
+    reste : l'API la relit de son magasin et la confie à l'hôte, qui la rend au
+    moteur ; l'hôte n'a pas à savoir où elle vivait. None pour un lancement
+    ordinaire. `mode_brief` et `contexte_sources` sont alors sans objet — ils
+    nourrissaient un cadrage qui a déjà eu lieu.
     """
 
     run_id: str
@@ -169,6 +178,7 @@ class OrdreRun:
     projet_id: str | None = None
     mode_brief: str = MODE_BRIEF_HUMAIN
     contexte_sources: str = ""
+    reprise: EtatAcquis | None = None
 
 
 class HoteRun(ABC):
