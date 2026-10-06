@@ -19,6 +19,9 @@ qu'il est au premier démarrage (`PosteVide`).
 - les **battements** des runs (`battement.py`) — le hash où chaque hôte pose son
   signal de vie, sans lequel un run purgé laisserait derrière lui une entrée
   définitive dans un hash relu à chaque `GET /api/executions` ;
+- l'**état acquis** des runs (`acquis.py`, #1391) — un hash par run, son plan et
+  les sorties de ses tâches réussies, de quoi le reprendre sur son plan : un run
+  purgé n'a plus rien à reprendre, et ses sorties n'ont plus à occuper Redis ;
 - la **file de tâches** (`celery_app.py`) et les **boîtes aux lettres** avec leur
   canal de diffusion (`mailbox.py`) — par prudence pour ces dernières : un
   pub/sub ne persiste rien, donc il n'y a le plus souvent aucune clé à retirer,
@@ -37,7 +40,8 @@ pas un poste désinstallé : ce qu'un utilisateur a réglé reste réglé.
 Une constante recopiée des deux côtés d'une frontière est ce que #830 a vu
 casser : `captures.mjs` a attendu un mois un texte que l'UI ne rendait plus.
 Ici la purge **importe** `CLE_JOURNAL_EVENEMENTS`, `CLE_BATTEMENTS`,
-`FILE_TACHES`, `CANAL_BOITE_PREFIXE`, `CANAL_DIFFUSION`, et résout les dossiers
+`PREFIXE_ACQUIS`, `FILE_TACHES`, `CANAL_BOITE_PREFIXE`, `CANAL_DIFFUSION`, et
+résout les dossiers
 par les mêmes `default()` / `racine_ingestion()` que l'API — le jour où l'un
 d'eux bouge, la purge suit sans qu'on y pense. `tests/test_retex_utilisateur.py`
 le garde : aucun littéral `maestro.` en dur dans ce module hors docstring.
@@ -75,6 +79,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from maestro.config import Settings, load_settings
+from maestro.controltower.acquis import PREFIXE_ACQUIS
 from maestro.controltower.battement import CLE_BATTEMENTS, VITALITE_VIVANT, vitalite
 from maestro.controltower.chat import ChatStore
 from maestro.controltower.cli import PORT_DEFAUT
@@ -148,6 +153,7 @@ class Perimetre:
     espace: Espace
     journal: str
     battements: str
+    prefixe_acquis: str
     file_taches: str
     prefixe_boites: str
     diffusion: str
@@ -162,6 +168,7 @@ class Inventaire:
 
     evenements: int
     battements: int
+    acquis: int
     taches: int
     boites: int
     conversations: int
@@ -178,6 +185,7 @@ def perimetre(settings: Settings | None = None) -> Perimetre:
         espace=espace,
         journal=espace.nommer(CLE_JOURNAL_EVENEMENTS),
         battements=espace.nommer(CLE_BATTEMENTS),
+        prefixe_acquis=espace.nommer(PREFIXE_ACQUIS),
         file_taches=espace.nommer(FILE_TACHES),
         prefixe_boites=espace.nommer(CANAL_BOITE_PREFIXE),
         diffusion=espace.nommer(CANAL_DIFFUSION),
@@ -245,6 +253,13 @@ def _cles_des_boites(client: ClientRedis, perimetre_: Perimetre) -> list[str]:
     return sorted(cles)
 
 
+def _cles_de_l_acquis(client: ClientRedis, perimetre_: Perimetre) -> list[str]:
+    """Les clés de l'état acquis des runs — un hash par run (#1391)."""
+    return sorted(
+        _texte(cle) for cle in client.scan_iter(match=f"{perimetre_.prefixe_acquis}*")
+    )
+
+
 def _fichiers(dossier: Path) -> list[Path]:
     """Les fichiers d'un dossier de données, sa documentation versionnée exceptée."""
     if not dossier.is_dir():
@@ -268,6 +283,7 @@ def inventaire(client: ClientRedis, perimetre_: Perimetre, *, projets: bool) -> 
     return Inventaire(
         evenements=int(client.llen(perimetre_.journal) or 0),
         battements=int(client.hlen(perimetre_.battements) or 0),
+        acquis=len(_cles_de_l_acquis(client, perimetre_)),
         taches=int(client.llen(perimetre_.file_taches) or 0),
         boites=len(_cles_des_boites(client, perimetre_)),
         conversations=len(_fichiers(perimetre_.conversations)),
@@ -289,6 +305,7 @@ def purger(client: ClientRedis, perimetre_: Perimetre, *, projets: bool) -> Inve
     """Retire l'état d'exécution ; rend ce qui est parti, aux comptes d'`inventaire`."""
     compte = inventaire(client, perimetre_, projets=projets)
     cles = [perimetre_.journal, perimetre_.battements, perimetre_.file_taches]
+    cles.extend(_cles_de_l_acquis(client, perimetre_))
     cles.extend(_cles_des_boites(client, perimetre_))
     client.delete(*cles)
     for dossier in (perimetre_.conversations, perimetre_.ingestion):
@@ -309,6 +326,7 @@ def _lignes(compte: Inventaire, perimetre_: Perimetre) -> list[str]:
     postes = [
         ("journal des événements", perimetre_.journal, f"{compte.evenements} événement(s)"),
         ("battements de runs", perimetre_.battements, f"{compte.battements} run(s)"),
+        ("état acquis des runs", f"{perimetre_.prefixe_acquis}*", f"{compte.acquis} run(s)"),
         ("file de tâches", perimetre_.file_taches, f"{compte.taches} tâche(s)"),
         ("boîtes et diffusion", boites, f"{compte.boites} clé(s)"),
         ("conversations", str(perimetre_.conversations), f"{compte.conversations} fichier(s)"),

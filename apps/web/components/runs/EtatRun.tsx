@@ -75,7 +75,7 @@ import {
   estEnPause,
   estEteint,
   estInterrompuEnPause,
-  estRelancable,
+  estReprenable,
   nomDuRun,
   peutEtreInterrompu,
   peutEtreSuspendu,
@@ -401,7 +401,10 @@ export function LignePause({
  * Un seul est jamais visible — ce sont deux faces du même geste, et en montrer
  * deux dont un inerte ferait chercher lequel s'applique. Aucun n'apparaît sur un
  * run soldé ou orphelin (`peutEtreSuspendu` : rien à suspendre là où plus rien ne
- * tourne, et un orphelin ne recevrait pas l'ordre).
+ * tourne, et un orphelin ne recevrait pas l'ordre). Un run **interrompu** — Maestro
+ * éteint, en pause ou non, hôte tombé — se reprend aussi par `…/reprendre` depuis
+ * #1391, mais pas d'ici : le geste vit dans le panneau *Runs qui n'avancent plus*,
+ * et cette carte, montée aussi dans l'état des runs, décrit sans décider.
  *
  * Les ordres partent par le contexte plutôt que par des props : le composant est
  * monté à la fois dans la liste et dans la vue d'un run, et faire descendre deux
@@ -637,8 +640,8 @@ export function LigneCause({
 }
 
 /**
- * L'hôte de ce run ne bat plus (#348), et ce qu'on peut encore en faire (#349).
- * Ne rend rien pour les autres régimes.
+ * L'hôte de ce run ne bat plus (#348), et ce qu'on peut encore en faire (#349,
+ * #1391). Ne rend rien pour les autres régimes.
  */
 export function LigneInterruption({
   run,
@@ -653,8 +656,8 @@ export function LigneInterruption({
   return (
     <p className={`text-annexe text-alerte-texte ${className}`}>
       Son hôte ne répond plus
-      {estRelancable(run)
-        ? " — son brief a été validé, il peut repartir depuis le tableau de bord."
+      {estReprenable(run)
+        ? " — il se reprend là où il en était depuis le tableau de bord, sans refaire ce qui est fait."
         : " et rien ne s'y joue plus."}
     </p>
   );

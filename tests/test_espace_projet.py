@@ -757,6 +757,52 @@ def test_un_enregistrement_orphelin_ne_bloque_pas_le_montage(tmp_path: Path) -> 
     assert orphelin.as_posix() not in _git(racine, "worktree", "list").replace("\\", "/")
 
 
+@besoin_de_git
+def test_un_worktree_abandonne_rend_sa_branche_avec_son_travail(tmp_path: Path) -> None:
+    """La tâche en vol quand Maestro s'éteint : process tué, worktree resté, travail non commité.
+
+    Le défaut de S12 (2026-10-05, #1391) : à la reprise du run sur son plan, la même
+    tâche — même identifiant, même branche — se voyait refuser son worktree, « already
+    used by worktree », et le run repris tombait en échec sur la tâche même qu'il
+    devait refaire. Le `prune` n'y pouvait rien : le répertoire existe encore.
+
+    Le travail laissé en plan est commité sur la branche avant que le worktree ne soit
+    retiré — le retirer d'abord l'emporterait —, et la tâche remonte en le retrouvant.
+    """
+    projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="t-1", keep=True) as ws:
+        abandonne = ws.path
+    # Ce qu'un process tué laisse : un worktree monté, du travail que personne n'a commité.
+    (abandonne / "en_cours.txt").write_text("à moitié écrit\n", encoding="utf-8")
+
+    with espace_de_travail(projet, tache_id="t-1") as ws:
+        assert (ws.path / "en_cours.txt").read_text(encoding="utf-8") == "à moitié écrit\n"
+    assert abandonne.as_posix() not in _git(racine, "worktree", "list").replace("\\", "/")
+
+
+@besoin_de_git
+def test_un_worktree_ouvert_par_la_personne_n_est_jamais_touche(tmp_path: Path) -> None:
+    """Seule la forme d'un espace de Maestro se libère : jamais le worktree de quelqu'un.
+
+    Une personne qui a ouvert elle-même un worktree sur `maestro/t-1` garde son
+    travail et son worktree ; la tâche, elle, se voit refuser le sien — le refus de Git,
+    dit, comme avant.
+    """
+    projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    a_soi = tmp_path / "le-mien" / "t-1"
+    _git(racine, "worktree", "add", "--quiet", "-b", branche_de_tache("t-1"), str(a_soi))
+    (a_soi / "brouillon.txt").write_text("à moi\n", encoding="utf-8")
+
+    with pytest.raises(EspaceProjetIndisponible):
+        with espace_de_travail(projet, tache_id="t-1"):
+            pass
+
+    assert (a_soi / "brouillon.txt").read_text(encoding="utf-8") == "à moi\n"
+    assert a_soi.as_posix() in _git(racine, "worktree", "list").replace("\\", "/")
+
+
 # --------------------------------------------------------------------------- #
 # Le recensement du worktree est celui que Git voit (#1388)
 # --------------------------------------------------------------------------- #

@@ -3154,21 +3154,15 @@ def _sans_moment(
 def _reprendre(ctx: Contexte, run_id: str) -> tuple[str, str]:
     """Le geste « Reprendre » sur le run interrompu — rend le run qui continue, et le geste joué.
 
-    La reprise **là où il en était** d'abord (`…/reprendre`, #477) : c'est ce que le
-    bouton fait d'un run en pause. Elle refuse (`409`) un run que l'extinction a
-    soldé, et le « Reprendre » que l'écran offre alors à un run éteint est la relance
-    (`…/relancer`, le panneau *Runs qui n'avancent plus*, #486). Le banc joue donc ce
-    que l'écran joue, dans l'ordre où il le propose ; tout autre refus remonte.
+    Depuis #1391, c'est **un** geste, celui de l'écran : `…/reprendre` continue sur son
+    plan un run que l'extinction a soldé, pause comprise — le bouton du panneau *Runs
+    qui n'avancent plus* et celui de la vue du run l'appellent tous deux. Avant lui,
+    `…/reprendre` refusait ce run (`409`) et l'écran offrait la relance, un **nouveau**
+    run : le banc jouait les deux dans cet ordre. Un refus remonte désormais tel quel —
+    c'est le run qui ne se reprend pas, et l'oracle le dit.
     """
-    try:
-        resume = ctx.client.reprendre(run_id)
-        geste = "reprise (`…/reprendre`)"
-    except ErreurAPI as refus:
-        if refus.statut != 409:
-            raise
-        resume = ctx.client.relancer(run_id)
-        geste = "« Reprendre » d'un run éteint (`…/relancer`)"
-    return str(resume.get("run_id") or run_id), geste
+    resume = ctx.client.reprendre(run_id)
+    return str(resume.get("run_id") or run_id), "reprise (`…/reprendre`)"
 
 
 def _faites_reprises(

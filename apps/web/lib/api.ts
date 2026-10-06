@@ -2259,17 +2259,19 @@ export function suspendreExecution(runId: string): Promise<ResumeExecution> {
 }
 
 /**
- * Reprend un run suspendu **là où il en était**
- * (`POST /api/executions/{run_id}/reprendre`, #477) et rend son résumé, `en_pause`
- * retiré.
+ * Reprend un run **là où il en était**
+ * (`POST /api/executions/{run_id}/reprendre`, #477, #1391) et rend son résumé :
+ * suspendu, sa porte se rouvre ; **interrompu** (Maestro éteint, en pause ou non,
+ * hôte tombé), il continue **sur son plan**, sous le même identifiant — ce qui est
+ * fait reste fait, seul ce qui reste s'exécute.
  *
- * ⚠ À ne pas confondre avec `relancerExecution` ci-dessous, qui rejoue un run
- * **mort** depuis son brief et repaie une planification : c'est un nouveau run,
- * avec un nouvel identifiant. Ici il n'y a qu'un run, le même, dont les tâches
- * repartent — rien n'a été tué, il n'y a rien à reconstruire.
+ * ⚠ À ne pas confondre avec `relancerExecution` ci-dessous, qui **recommence** un
+ * run depuis son brief et repaie une planification : c'est un nouveau run, avec un
+ * nouvel identifiant. Ici il n'y a qu'un run, le même.
  *
- * `409` si le run n'est pas suspendu : il n'y a rien à reprendre d'un run qui
- * travaille.
+ * `409` si le run travaille ou attend quelqu'un (rien à reprendre), ou s'il a rendu
+ * son issue ; `422` s'il n'a ni plan ni brief approuvé ; `503` si son état acquis
+ * n'a pas pu être relu. C'est le message de l'API qui s'affiche.
  */
 export function reprendreExecution(runId: string): Promise<ResumeExecution> {
   return envoyerJsonEtLire<ResumeExecution>(
@@ -2285,9 +2287,10 @@ export function reprendreExecution(runId: string): Promise<ResumeExecution> {
  *
  * **Les tâches en vol sont tuées là où elles en sont et perdent leur travail** —
  * c'est tout ce qui sépare ce geste de `suspendreExecution`, qui laisse celles qui
- * tournent aller à leur terme. Le run est soldé : rien ne le fera repartir, et le
- * seul recours est de le **relancer** (`relancerExecution` ci-dessous), c'est-à-dire
- * de rejouer son cadrage dans un run neuf.
+ * tournent aller à leur terme. Le run est soldé : une annulation voulue ne se
+ * reprend pas (#1391 ne reprend que ce qui a été interrompu sans qu'on le décide),
+ * et le seul recours est de le **relancer** (`relancerExecution` ci-dessous),
+ * c'est-à-dire de rejouer son cadrage dans un run neuf.
  *
  * L'API borne son attente (`DELAI_ANNULATION_S`) : un hôte qui ne répond plus ne
  * suspend pas la requête, le run est soldé de toute façon. C'est ce qui rend le
@@ -2309,7 +2312,8 @@ export function annulerExecution(runId: string): Promise<ResumeExecution> {
 /**
  * Rejoue un run interrompu **sur son brief approuvé**
  * (`POST /api/executions/{run_id}/relancer`, #349) et rend le résumé du **nouveau**
- * run — celui qui porte `reprise_de`.
+ * run — celui qui porte `reprise_de`. Depuis #1391 c'est le geste de
+ * **recommencer** : reprendre un run interrompu passe par `reprendreExecution`.
  *
  * Ce qu'un run mort emporte n'est pas du temps machine mais un cadrage validé par
  * un humain : clarification, brief, approbation. La relance le rejoue en mode

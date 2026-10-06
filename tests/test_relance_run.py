@@ -164,6 +164,7 @@ class MoteurEnVol:
         mode_brief: str = MODE_BRIEF_SANS,
         porte: object = None,
         contexte_sources: str = "",
+        reprise: object = None,
     ) -> None:
         self.objectifs.append(objectif)
         self.modes_brief.append(mode_brief)

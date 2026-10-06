@@ -164,6 +164,7 @@ class MoteurDouble:
         mode_brief: str = MODE_BRIEF_SANS,
         porte: object = None,
         contexte_sources: str = "",
+        reprise: object = None,
     ) -> RunReport:
         # `contexte_sources` (#1172) : les sources lues au lancement, que le vrai
         # moteur donne à lire au brief.

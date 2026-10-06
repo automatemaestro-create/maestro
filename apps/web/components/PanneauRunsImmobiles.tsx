@@ -9,9 +9,11 @@
  * pour toujours — le journal durable (#97) conserve le dernier état publié, et
  * personne ne publie « je suis mort ». Le battement (#348) donne enfin le
  * verdict ; ce panneau en fait un geste. Ce qu'il propose de récupérer n'est pas
- * du temps machine mais un **cadrage validé par un humain** : sur le run du
- * 2026-08-14, deux tours de clarification, trois réponses et une approbation,
- * soit 2,52 $ et une vingtaine de minutes d'attention.
+ * du temps machine mais ce que le run **a déjà payé** : un cadrage validé par un
+ * humain — sur le run du 2026-08-14, deux tours de clarification, trois réponses
+ * et une approbation, soit 2,52 $ et une vingtaine de minutes d'attention —, et
+ * depuis #1391 ses tâches faites : « Reprendre » le continue **sur son plan**, le
+ * même run, sans rien refaire de ce qui est fait.
  *
  * **#738 lui en confie un second**, et c'est ce qui l'a fait changer de nom.
  * `en_souffrance` (#737, [docs/33 §7.3](../../../docs/33-decision-surveillance-run.md))
@@ -42,9 +44,10 @@
  *
  * **Il ne montre que ce qui est actionnable**, et les deux familles s'y
  * restreignent pour des raisons différentes. Côté perdus : orphelin **ou éteint**
- * (#486) *et* brief approuvé (`runsRelancables`) — un run `indetermine` n'est pas
- * un run mort mais un run dont on ne sait rien, et un run **sans** brief approuvé
- * n'a rien à rejouer (422). Côté souffrance : le régime **suspendu**
+ * (#486) *et* quelque chose d'acquis — un plan, ou un brief approuvé
+ * (`runsReprenables`) : un run `indetermine` n'est pas un run mort mais un run dont
+ * on ne sait rien, et un run sans plan ni brief approuvé n'a rien à reprendre
+ * (422). Côté souffrance : le régime **suspendu**
  * (`runsEnSouffrance`), qui écarte l'orphelin — personne ne recevrait la réponse —
  * et le run en pause, où quelqu'un a déjà décidé. Les deux règles vivent dans
  * `lib/execution`, jamais ici : le panneau rend, il ne juge pas.
@@ -60,8 +63,8 @@
  * briefs, et c'est la même règle qui l'autorise : un brief ne tient pas dans une
  * carte (sept sections, des questions, un coût), donc y proposer « approuver »
  * inviterait à trancher sans lire. Reprendre un run n'est pas un arbitrage sur un
- * contenu : c'est un geste sur un run mort, qui ne détruit rien et dont le pire
- * cas est un run en trop, qu'on annule.
+ * contenu : c'est un geste sur un run arrêté, qui ne détruit rien — il continue ce
+ * qui restait à faire.
  */
 
 import { useState, type ReactNode } from "react";
@@ -80,27 +83,27 @@ import {
   estEteint,
   nomDuRun,
   runsEnSouffrance,
-  runsRelancables,
+  runsReprenables,
 } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { hrefRun } from "@/lib/navigation";
 import type { ResumeExecution } from "@/lib/types";
 
-type Relancer = (runId: string) => Promise<ResumeExecution>;
+type Reprendre = (runId: string) => Promise<ResumeExecution>;
 
 /** Le nom du bloc — celui que la règle des trois places recense (#539). */
 export const TITRE_RUNS_IMMOBILES = "Runs qui n'avancent plus";
 
 export function PanneauRunsImmobiles({
   executions,
-  relancer,
+  reprendre,
 }: {
   executions: ResumeExecution[];
-  relancer: Relancer;
+  reprendre: Reprendre;
 }) {
   const enSouffrance = runsEnSouffrance(executions);
-  const perdus = runsRelancables(executions);
+  const perdus = runsReprenables(executions);
   const total = enSouffrance.length + perdus.length;
   if (total === 0) return null;
   // Le compte par famille n'a de sens **qu'en face de l'autre** : seul, il répète
@@ -148,7 +151,7 @@ export function PanneauRunsImmobiles({
             compte={deuxFamilles ? perdus.length : null}
           >
             {perdus.map((run) => (
-              <CarteRunPerdu key={run.run_id} run={run} relancer={relancer} />
+              <CarteRunPerdu key={run.run_id} run={run} reprendre={reprendre} />
             ))}
           </Famille>
         )}
@@ -278,22 +281,23 @@ function CarteRunEnSouffrance({ run }: { run: ResumeExecution }) {
 
 function CarteRunPerdu({
   run,
-  relancer,
+  reprendre,
 }: {
   run: ResumeExecution;
-  relancer: Relancer;
+  reprendre: Reprendre;
 }) {
   const maintenant = useHorloge();
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
-  const surRelance = async () => {
+  const surReprise = async () => {
     setEnCours(true);
     setErreur(null);
     try {
-      await relancer(run.run_id);
-      // Pas de message de succès : la relance solde ce run, donc le rechargement
-      // le fait **sortir de la liste**. Une carte qui disparaît dit déjà ce qui
+      await reprendre(run.run_id);
+      // Pas de message de succès : repris, ce run repart (#1391) — il bat de
+      // nouveau, donc le rechargement le fait **sortir de la liste** et rentrer
+      // parmi les runs qui travaillent. Une carte qui disparaît dit déjà ce qui
       // s'est passé, et un état « repris ✓ » sur un composant qu'on démonte
       // aussitôt ne serait jamais lu.
     } catch (e) {
@@ -322,7 +326,7 @@ function CarteRunPerdu({
               : ""}
           </span>
         </span>
-        <Bouton ton="attention" occupe={enCours} onClick={() => void surRelance()}>
+        <Bouton ton="attention" occupe={enCours} onClick={() => void surReprise()}>
           {enCours ? "Reprise…" : "Reprendre"}
         </Bouton>
       </div>

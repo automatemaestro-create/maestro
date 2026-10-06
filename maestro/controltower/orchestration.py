@@ -1087,13 +1087,15 @@ Sur "geste", ajoute à l'objet de ta ligne de décision une clé "geste" :
           "bornes": {"plafond_cout_usd": 5}}
 
 - "action" : "pause" suspend un run qui travaille — ce qui est parti va à son
-  terme, ce qui ne l'est pas attend ; "reprise" remet en route un run EN PAUSE, le
-  même, là où il en était ; "annulation" interrompt un run qui n'est pas soldé, et
-  ses tâches en vol perdent leur travail — l'écran nomme ce geste « Interrompre » :
-  dis-le avec ce verbe ; "relance" rejoue un run ARRÊTÉ
-  (orphelin, arrêté sur une borne, emporté par l'extinction de Maestro) dans un
-  NOUVEAU run, sur son brief approuvé, sans repayer le cadrage. Un run en pause se
-  reprend, il ne se relance pas ;
+  terme, ce qui ne l'est pas attend ; "reprise" remet en route, LE MÊME, un run EN
+  PAUSE ou INTERROMPU (orphelin, arrêté sur une borne, emporté par l'extinction de
+  Maestro) : il continue sur son plan, ce qui est fait reste fait, seul ce qui
+  reste s'exécute ; "annulation" interrompt un run qui n'est pas soldé, et ses
+  tâches en vol perdent leur travail — l'écran nomme ce geste « Interrompre » :
+  dis-le avec ce verbe ; "relance" RECOMMENCE un run arrêté dans un NOUVEAU run,
+  sur son brief approuvé, qui re-planifie et refait tout — seulement si la personne
+  veut recommencer, ou changer ses bornes. Un run en pause ou interrompu se reprend ;
+  il ne se relance que si on veut le refaire ;
 - "runs" : les identifiants, tels que les faits les écrivent, du ou des runs que
   la demande peut désigner. UN seul quand elle est sans ambiguïté. Quand plusieurs
   runs peuvent lui correspondre, mets-les TOUS : aucune carte ne sera posée, ta

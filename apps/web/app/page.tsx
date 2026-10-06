@@ -120,7 +120,7 @@ export default function TableauDeBord() {
     erreur,
     decider,
     reassigner,
-    relancerRun,
+    reprendreRun,
     revision,
   } = useEtatGlobal();
 
@@ -176,7 +176,7 @@ export default function TableauDeBord() {
               c'est lui que la panne remplace. */}
           <PanneauBriefs executions={executions} />
           <PanneauValidations validations={validations} decider={decider} />
-          <PanneauRunsImmobiles executions={executions} relancer={relancerRun} />
+          <PanneauRunsImmobiles executions={executions} reprendre={reprendreRun} />
           <ContenuIndisponible quoi={`l'état de ${projet.nom}`} />
         </>
       ) : rienARegarder ? (
@@ -209,7 +209,7 @@ export default function TableauDeBord() {
               attendre**, rangés avant les perdus par ce même arbitrage — et là,
               plutôt qu'un quatrième panneau, parce que le corps du tableau de
               bord est plafonné à trois blocs de plein format (#539). */}
-          <PanneauRunsImmobiles executions={executions} relancer={relancerRun} />
+          <PanneauRunsImmobiles executions={executions} reprendre={reprendreRun} />
           <IndicateursTableauDeBord
             taches={taches}
             agents={agents}

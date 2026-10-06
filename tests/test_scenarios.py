@@ -3883,7 +3883,8 @@ class ApiQuiInterrompt(ApiQuiOutille):
       la branche reprise ;
     - `PRODUIT_DE_P5` — ce que p5 a montré le 2026-10-01 : l'extinction solde le run et
       met en échec toutes ses cartes non faites, rien n'est sauvé, et la reprise
-      refuse (`409`) puis la relance ouvre un **nouveau run** sur un plan refait.
+      refuse (`409`). L'écran offrait alors une relance, un **nouveau run** sur un
+      plan refait ; depuis #1391 il n'offre plus que « Reprendre », et le banc aussi.
 
     Le projet est un vrai dépôt Git : c'est ce que l'oracle lit, et ce qu'il clone.
     `chronologie` retient les gestes sur le run dans l'ordre — le test du redémarrage
@@ -3934,7 +3935,7 @@ class ApiQuiInterrompt(ApiQuiOutille):
         if chemin.startswith("/api/projets/") and chemin.endswith("/versionner"):
             self.appels.append((methode, chemin))
             return self._versionner(chemin.split("/")[3])
-        for geste in ("pause", "reprendre", "relancer"):
+        for geste in ("pause", "reprendre"):
             if chemin.startswith("/api/executions/") and chemin.endswith(f"/{geste}"):
                 self.appels.append((methode, chemin))
                 return getattr(self, f"_{geste}")(chemin.split("/")[3])
@@ -4069,19 +4070,6 @@ class ApiQuiInterrompt(ApiQuiOutille):
         self._fin_due.add(run_id)
         return Reponse(statut=200, corps={"run_id": run_id})
 
-    def _relancer(self, run_id: str) -> Reponse:
-        self.chronologie.append("relancer")
-        neuf = f"run-{len(self._statuts) + 1}"
-        # Un plan refait : d'autres identifiants, tout repart de zéro.
-        self._poser(
-            neuf,
-            EXECUTION_EN_COURS,
-            [],
-            {"socle-nextjs": "backlog", "pages-2": "backlog", "tests-2": "backlog"},
-        )
-        self._fin_due.add(neuf)
-        return Reponse(statut=202, corps={"run_id": neuf, "reprise_de": run_id})
-
     def _finir(self, run_id: str) -> None:
         """Le run qui continue va au bout — et ce qu'il a fait rejoint le projet."""
         assert self._racine is not None
@@ -4191,23 +4179,21 @@ def test_s12_est_rouge_sur_ce_que_p5_a_montre(tmp_path: Path) -> None:
 
     C'est la preuve que l'oracle attrape ce qu'aucun scénario ne voyait : les cartes
     jamais démarrées soldées en échec par l'extinction, le travail en vol jamais sauvé,
-    la reprise qui ouvre un nouveau run sur un plan refait — dont la tâche faite est
-    absente. Le livrable, lui, tient : le motif ne dit que ce qui manque.
+    et un run interrompu que « Reprendre » ne continue pas — p5 refusait la reprise
+    (`409`) et l'écran offrait une relance. Depuis #1391 le banc joue le seul geste de
+    l'écran (`…/reprendre`) : son refus est le constat, il ne se rattrape plus par un
+    nouveau run.
     """
     api = ApiQuiInterrompt(tmp_path / "Maestro", produit=PRODUIT_DE_P5)
     montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
     issue, _ctx = montage.jouer(_scenario("S12"))
 
     assert issue.verdict == "rouge" and not issue.empechement
-    assert api.chronologie == ["pause", "extinction", "rallumage", "reprendre", "relancer"]
+    assert api.chronologie == ["pause", "extinction", "rallumage", "reprendre"]
     assert "« Tâche tests » backlog → echec" in issue.motif
     assert "n'est pas sauvé sur sa branche : « Tâche pages » (`maestro/pages`)" in issue.motif
-    assert "« Reprendre » a ouvert un nouveau run (run-2) au lieu de continuer run-1" in (
-        issue.motif
-    )
-    assert "« Tâche socle » absente du run qui continue" in issue.motif
-    # Les deux runs sont comptés.
-    assert issue.cout_usd == 2.0
+    assert "le run interrompu ne se reprend pas" in issue.motif
+    assert "nouveau run" not in issue.motif
 
 
 def test_s12_est_rouge_quand_une_tache_faite_repart_apres_la_reprise(tmp_path: Path) -> None:

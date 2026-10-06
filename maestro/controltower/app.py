@@ -410,6 +410,7 @@ from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
 from maestro.controltower.acces import GardeAcces, PolitiqueAcces, politique_depuis
+from maestro.controltower.acquis import magasin_acquis_configure
 from maestro.controltower.analytics import PAS_DEMANDABLES, PAS_HEURE, agrege_couts
 from maestro.controltower.assistance import (
     AGENT_ASSISTANCE,
@@ -473,6 +474,9 @@ from maestro.controltower.executions import (
     MOTIF_RELANCE_RUN_INCONNU,
     MOTIF_RELANCE_RUN_SOLDE,
     MOTIF_RELANCE_RUN_VIVANT,
+    MOTIF_RELANCE_SANS_CADRAGE,
+    MOTIF_REPRISE_EN_COURS,
+    MOTIF_REPRISE_ETAT_ILLISIBLE,
     FabriqueMoteur,
     LecteurSources,
     RelanceRefusee,
@@ -484,7 +488,12 @@ from maestro.controltower.generation_agent import (
     GenerateurDefinitionAgent,
     GenerationIndisponible,
 )
-from maestro.controltower.gestes import GESTE_ANNULATION, GESTE_PAUSE, GESTE_REPRISE
+from maestro.controltower.gestes import (
+    GESTE_ANNULATION,
+    GESTE_PAUSE,
+    GESTE_REPRISE,
+    GesteRefuse,
+)
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
     HOTE_RUN_EN_PROCESS,
@@ -568,6 +577,7 @@ from maestro.controltower.state import (
 )
 from maestro.controltower.validation import ValidateurControlTower
 from maestro.decision_humaine import ETENDUE_APPEL, ETENDUE_RUN
+from maestro.engine.acquis import MagasinAcquis
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
 from maestro.engine.plafond import (
     GESTE_ARRETER,
@@ -1593,6 +1603,19 @@ _CODE_REFUS_GESTE: dict[str, int] = {
     MOTIF_GESTE_RUN_NON_SUSPENDU: 409,
 }
 
+#: Ce que la **reprise sur le plan** peut refuser en plus, une fois passés les refus
+#: du geste (#1391) : une reprise déjà en train de partir (`409`, l'état du run),
+#: un état acquis qu'on n'a pas pu relire (`503`, le stockage — la requête n'y est
+#: pour rien, et elle passera une fois le stockage revenu) et, par son repli sur la
+#: relance, un run sans plan ni brief approuvé (`422`, comme `…/relancer`).
+_CODE_REFUS_REPRISE: dict[str, int] = {
+    **_CODE_REFUS_GESTE,
+    **_CODE_REFUS_RELANCE,
+    MOTIF_REPRISE_EN_COURS: 409,
+    MOTIF_REPRISE_ETAT_ILLISIBLE: 503,
+    MOTIF_RELANCE_SANS_CADRAGE: 422,
+}
+
 #: Le statut HTTP des refus d'une réponse à une question et d'une décision sur une
 #: validation (#1183) — ceux que leurs routes rendaient déjà, maintenant que les
 #: règles vivent dans le service des attentes (`ServiceAttentes`) : `404` sur une
@@ -1834,6 +1857,7 @@ def create_app(
     sonde_poste: SondePoste | None = None,
     acces: PolitiqueAcces | None = None,
     comprehension: ComprehensionModele | None = None,
+    acquis: MagasinAcquis | None = None,
 ) -> FastAPI:
     """Construit l'app FastAPI de la Control Tower autour d'un bus et d'un état.
 
@@ -2001,6 +2025,13 @@ def create_app(
     `RegistreBattementsRedis` via `create_default_app` : c'est ce qui fait qu'un
     run lancé par `maestro-run --publier` reste reconnu vivant **à travers un
     redémarrage de l'API**, la lecture ne dépendant alors d'aucun process.
+
+    `acquis` (#1391) est le **magasin d'état acquis** des runs : le plan exécutable
+    et les issues réussies de chacun, que `POST /api/executions/{id}/reprendre`
+    relit pour reprendre un run interrompu sur son plan. Par défaut un magasin
+    mémoire, qui ne survit à rien ; la production câble
+    `magasin_acquis_configure` via `create_default_app` — celui du journal durable,
+    Redis ou SQLite, que le process détaché d'un run remplit de son côté.
 
     `fabrique_moteur` (#185) construit le moteur de chaque exécution lancée par
     `POST /api/executions` — par défaut `OrchestrationEngine.default`, résolu au
@@ -2234,6 +2265,7 @@ def create_app(
         lecteur_sources=lecteur_sources,
         battements=battements,
         hote=hote_run,
+        acquis=acquis,
     )
 
     # Le régime de brief des runs ouverts depuis le fil — **une** valeur, lue par
@@ -3088,24 +3120,37 @@ def create_app(
 
     @app.post("/api/executions/{run_id}/reprendre")
     async def reprendre_execution(run_id: str) -> dict[str, Any]:
-        """Reprend un run suspendu **là où il en était** (#477) : son résumé remis en route.
+        """Reprend un run **là où il en était** (#477, #1391) : son résumé remis en route.
 
-        Le plan, les tâches déjà terminées, le brief approuvé, le coût engagé : rien
-        n'a bougé pendant la pause, puisque rien n'a été tué. Cette route ne
-        reconstruit donc rien — elle rouvre la porte, et les tâches qui attendaient
-        repartent.
+        Deux runs se reprennent, et c'est le **même** run qui repart dans les deux :
 
-        ⚠ À ne pas confondre avec `…/relancer` (#349), qui rejoue un run **mort**
-        depuis son brief approuvé et repaie une planification : c'est un **nouveau**
-        run, avec un nouvel identifiant. Ici il n'y a qu'un run, le même, qui
-        reprend son travail — repayer le cadrage n'est pas une reprise.
+        - **suspendu** (#477) — rien n'a bougé pendant la pause, puisque rien n'a été
+          tué. La route ne reconstruit rien : elle rouvre la porte, et les tâches
+          qui attendaient repartent ;
+        - **interrompu** (#1391) — Maestro éteint, une borne atteinte, en pause ou
+          non, ou son hôte qui s'est tu. Il reprend **sur son plan, sous le même
+          identifiant** : les tâches faites gardent leur état et leur sortie, l'aval
+          lit celles-ci, et seules restent à faire la tâche interrompue et celles
+          jamais démarrées. Un run interrompu **sans rien d'acquis** (arrêté avant
+          son plan) repart de son brief approuvé — c'est l'endroit où il en était.
 
-        `404` si le run est inconnu, `409` s'il n'est **pas suspendu** : il n'y a
-        rien à reprendre d'un run qui travaille, et le dire vaut mieux que rendre un
-        200 sans effet.
+        ⚠ À ne pas confondre avec `…/relancer` (#349), qui **recommence** un run
+        depuis son brief approuvé : c'est un **nouveau** run, avec un nouvel
+        identifiant, qui re-planifie et refait tout.
+
+        `404` si le run est inconnu ; `409` s'il travaille ou attend quelqu'un (rien
+        à reprendre), s'il est soldé par son issue ou une annulation voulue, ou si sa
+        reprise est déjà en train de partir ; `503` si son état acquis n'a pas pu
+        être relu — jamais un repli sur la relance, qui referait un plan existant ;
+        `422` s'il n'a ni plan ni brief approuvé.
         """
         await _refuser_le_geste(GESTE_REPRISE, run_id)
-        reprise = await executions.reprendre(run_id)
+        try:
+            reprise = await executions.reprendre(run_id)
+        except GesteRefuse as refus:
+            raise HTTPException(
+                status_code=_CODE_REFUS_REPRISE.get(refus.motif, 409), detail=str(refus)
+            ) from refus
         if reprise is None:  # pragma: no cover - le résumé vient d'être lu
             raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
         return reprise
@@ -3124,6 +3169,10 @@ def create_app(
         c'en est un : le run relancé est un **nouveau** run, qui porte `reprise_de`
         — de qui il est la suite. Le run repris, lui, est soldé en `annulee` : rien
         n'a raté, son hôte est tombé et quelqu'un a repris la main.
+
+        Depuis #1391 c'est le geste de **recommencer** : reprendre un run interrompu
+        sur son plan, sous le même identifiant et sans refaire ce qui est fait, passe
+        par `…/reprendre`.
 
         `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre —
         sauf un arrêt qui n'a pas jugé son travail : l'extinction, une borne
@@ -7052,19 +7101,22 @@ async def _attend_deconnexion(websocket: WebSocket) -> None:
 
 @dataclass(frozen=True)
 class _SupportsDeploiement:
-    """Les quatre objets d'infrastructure que le **mode de distribution** choisit.
+    """Les objets d'infrastructure que le **mode de distribution** choisit.
 
     Ils vont ensemble et c'est tout le sujet : un journal local derrière un bus
     Redis exigerait encore un service, et un bus mémoire devant un journal Redis
     ferait consigner dans une instance qu'aucun autre process ne lit. Les
     résoudre d'un seul geste est ce qui rend le mode **nommable** — « serveur »
-    ou « local » — plutôt qu'assemblable de travers.
+    ou « local » — plutôt qu'assemblable de travers. Le magasin d'état acquis
+    (#1391) en est, et pour la même raison : il suit le journal durable, dont il
+    garde ce que le journal ne porte pas (`magasin_acquis_configure`).
     """
 
     bus: EventBus
     mailbox: Mailbox
     journal: EventLog
     battements: RegistreBattements
+    acquis: MagasinAcquis
 
 
 def _supports_configures(settings: Settings) -> _SupportsDeploiement:
@@ -7096,12 +7148,14 @@ def _supports_configures(settings: Settings) -> _SupportsDeploiement:
             mailbox=InMemoryMailbox(),
             journal=journal_configure(settings),
             battements=RegistreBattementsMemoire(),
+            acquis=magasin_acquis_configure(settings),
         )
     return _SupportsDeploiement(
         bus=RedisEventBus(settings.redis_url),
         mailbox=RedisMailbox(settings.redis_url),
         journal=journal_configure(settings),
         battements=RegistreBattementsRedis(settings.redis_url),
+        acquis=magasin_acquis_configure(settings),
     )
 
 
@@ -7162,6 +7216,7 @@ def create_default_app() -> FastAPI:
         battements=supports.battements,
         hote_run=_hote_configure(settings),
         acces=politique_depuis(settings),
+        acquis=supports.acquis,
     )
 
 

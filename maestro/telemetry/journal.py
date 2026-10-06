@@ -273,6 +273,22 @@ class RunJournal:
         self._logger.info(json.dumps(record.to_dict(), ensure_ascii=False))
         return record
 
+    def reprend(self, records: Sequence[StepRecord]) -> None:
+        """Réintègre des étapes **déjà publiées** par ce run, sans les réémettre (#1391).
+
+        Le journal d'un run repris sur son plan naît vide dans un process neuf, alors
+        que le run a déjà payé ses tâches acquises. Ce qui lit le journal pour savoir
+        ce que le run a dépensé — le plafond de dépense (`PlafondDepense`, qui relit le
+        grand livre à chaque mesure), le rapport de fin — doit les compter, sans quoi
+        un plafond de 5 $ en accorderait 5 de plus à chaque reprise.
+
+        Elles ne partent **pas** sur le logger : elles ont été publiées quand elles
+        sont arrivées, le journal durable et la projection les ont déjà, et les
+        réémettre compterait chaque tâche deux fois à l'écran. Rangées **avant** ce qui
+        suit, dans l'ordre reçu.
+        """
+        self._records[:0] = list(records)
+
     def releve(
         self,
         *,
