@@ -4003,14 +4003,18 @@ class ApiQuiInterrompt(ApiQuiOutille):
     """La fausse API de S12 : un projet né dans le fil, un run interrompu puis repris (#1408).
 
     Le run a trois tâches : un socle, puis des pages qui en dépendent, puis des tests.
-    Au premier relevé, le socle est fait et les pages tournent — le moment
-    d'interrompre —, sauf si `avant` en décide autrement (un socle en échec, ce que le
-    juge de p5 a fait de la tâche réussie ; ou un run qui aboutit sans ce moment).
+    Au premier relevé, le socle est fait et les pages tournent, **dans un worktree de
+    leur branche** où elles ont écrit sans commiter — le moment d'interrompre —, sauf
+    si `avant` en décide autrement (un socle en échec, ce que le juge de p5 a fait de
+    la tâche réussie ; ou un run qui aboutit sans ce moment). `ecrit_apres` retarde
+    cette écriture d'autant de relevés des cartes : une tâche partie depuis quelques
+    secondes n'a encore rien écrit (#1392).
 
     `produit` choisit ce que l'extinction et « Reprendre » font :
 
     - `PRODUIT_ATTENDU` — ce que le chantier de #1389 livre : l'extinction laisse les
-      cartes jamais démarrées à faire et sauve le travail en vol sur sa branche,
+      cartes jamais démarrées à faire et commite le travail en vol sur sa branche, dans
+      le worktree où il attendait (#1392),
       « Reprendre » continue **le même run**, qui finit sans rien rejouer et fusionne
       la branche reprise ;
     - `PRODUIT_DE_P5` — ce que p5 a montré le 2026-10-01 : l'extinction solde le run et
@@ -4032,8 +4036,13 @@ class ApiQuiInterrompt(ApiQuiOutille):
         versionne_a_la_naissance: bool = True,
         autres_en_vol: Sequence[str] = (),
         faite_repart: bool = False,
+        ecrit_apres: int = 0,
     ) -> None:
         super().__init__(repertoire, moteur=self._lancer_le_run)
+        self._ecrit_apres = ecrit_apres
+        self._espace_pages: Path | None = None
+        #: Les relevés des cartes faits pendant que les pages n'avaient rien écrit.
+        self.releves_avant_ecriture = 0
         self._produit = produit
         self._avant = avant
         self._versionne_naissance = versionne_a_la_naissance
@@ -4129,6 +4138,17 @@ class ApiQuiInterrompt(ApiQuiOutille):
             ],
             {"socle": STATUT_TERMINEE, "pages": "en_cours", "tests": "backlog"},
         )
+        # Les pages tournent dans leur espace : un worktree de leur branche, hors de la
+        # racine, comme le produit les monte.
+        self._espace_pages = racine.parent / f"{racine.name}-espace" / "pages"
+        _git_s12(racine, "worktree", "add", "-q", "-b", "maestro/pages", str(self._espace_pages))
+        if self._ecrit_apres == 0:
+            self._pages_ecrivent()
+
+    def _pages_ecrivent(self) -> None:
+        """Les pages écrivent dans leur espace, sans rien commiter."""
+        assert self._espace_pages is not None
+        (self._espace_pages / "pages.txt").write_text("accueil\n", encoding="utf-8")
 
     def _poser(
         self, run_id: str, statut: str, trace: list[dict[str, Any]], cartes: Mapping[str, str]
@@ -4168,6 +4188,10 @@ class ApiQuiInterrompt(ApiQuiOutille):
         if run_id not in self._cartes:
             return super()._taches(params)
         self.lectures_taches.append(dict(params))
+        if self._espace_pages is not None and not (self._espace_pages / "pages.txt").exists():
+            self.releves_avant_ecriture += 1
+            if self.releves_avant_ecriture >= self._ecrit_apres:
+                self._pages_ecrivent()
         return Reponse(statut=200, corps=[dict(c) for c in self._cartes[run_id]["cartes"]])
 
     # --- Les gestes -----------------------------------------------------------
@@ -4188,11 +4212,10 @@ class ApiQuiInterrompt(ApiQuiOutille):
                 for carte in cartes:
                     if carte["statut"] != STATUT_TERMINEE:
                         carte["statut"] = STATUT_ECHEC
-            else:
-                # Le travail en vol est sauvé sur sa branche ; rien d'autre ne bouge.
-                _git_s12(self._racine, "checkout", "-q", "-b", "maestro/pages")
-                _commiter_s12(self._racine, "pages : en cours", **{"pages.txt": "accueil\n"})
-                _git_s12(self._racine, "checkout", "-q", "main")
+            elif self._espace_pages is not None:
+                # Le travail en vol est commité sur sa branche, dans son worktree, qui
+                # reste monté ; rien d'autre ne bouge.
+                _commiter_s12(self._espace_pages, "pages : en cours")
         return Reponse(statut=200, corps={"runs": [{"run_id": r} for r in soldes], "nb": 1})
 
     def _reprendre(self, run_id: str) -> Reponse:
@@ -4323,9 +4346,52 @@ def test_s12_est_rouge_sur_ce_que_p5_a_montre(tmp_path: Path) -> None:
     assert issue.verdict == "rouge" and not issue.empechement
     assert api.chronologie == ["pause", "extinction", "rallumage", "reprendre"]
     assert "« Tâche tests » backlog → echec" in issue.motif
-    assert "n'est pas sauvé sur sa branche : « Tâche pages » (`maestro/pages`)" in issue.motif
+    # Le constat nomme ce qui est resté hors de la branche (#1392).
+    assert (
+        "n'est pas sauvé sur sa branche : « Tâche pages » (`maestro/pages` : ?? pages.txt)"
+        in issue.motif
+    )
     assert "le run interrompu ne se reprend pas" in issue.motif
     assert "nouveau run" not in issue.motif
+
+
+def test_s12_attend_que_la_tache_en_vol_ait_ecrit_avant_d_interrompre(tmp_path: Path) -> None:
+    """Le passage `20261005-195909` éteignait une tâche partie depuis huit secondes (#1392).
+
+    Elle n'avait rien écrit : il n'y avait rien à perdre, et l'oracle jugeait une branche
+    vide. S12 attend désormais qu'une tâche en vol ait laissé du travail dans son espace
+    — le socle est fait dès le premier relevé, mais la pause ne part qu'après
+    l'écriture des pages.
+    """
+    api = ApiQuiInterrompt(tmp_path / "Maestro", ecrit_apres=3)
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.vert, issue.motif
+    assert api.releves_avant_ecriture == 3
+    assert api.chronologie == ["pause", "extinction", "rallumage", "reprendre"]
+
+
+def test_s12_est_rouge_quand_l_extinction_laisse_du_travail_hors_de_la_branche(
+    tmp_path: Path,
+) -> None:
+    """Le premier critère de #1392, vu du banc : un fichier écrit par la tâche en vol et
+    resté dans son worktree après l'extinction est du travail que rien ne porte."""
+    api = ApiQuiInterrompt(tmp_path / "Maestro")
+    original = api._eteindre
+
+    def eteindre_en_oubliant() -> Reponse:
+        reponse = original()
+        assert api._espace_pages is not None
+        (api._espace_pages / "oublie.txt").write_text("écrit après le commit\n", "utf-8")
+        return reponse
+
+    api._eteindre = eteindre_en_oubliant  # type: ignore[method-assign]
+    montage, _api, _joueur, _sondees = _banc_s12(tmp_path, api)
+    issue, _ctx = montage.jouer(_scenario("S12"))
+
+    assert issue.verdict == "rouge"
+    assert "« Tâche pages » (`maestro/pages` : ?? oublie.txt)" in issue.motif
 
 
 def test_s12_est_rouge_quand_une_tache_faite_repart_apres_la_reprise(tmp_path: Path) -> None:

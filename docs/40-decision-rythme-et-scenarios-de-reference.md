@@ -437,7 +437,9 @@ l'ordre de l'heure.
 - **le même run continue** (#1391), et aucune tâche faite n'y repart. Ce qui se lit sur la trace :
   aucun `en_cours` daté après l'interruption, et aucune tâche faite absente du run qui continue ;
 - **le travail en vol était sauvé sur sa branche** à l'extinction, puis il est **dans le projet
-  livré** (#1392) ;
+  livré** (#1392). Le banc n'interrompt qu'une fois qu'une tâche en vol a **écrit** — une tâche
+  partie depuis quelques secondes n'a rien à perdre —, relève ce qu'elle avait écrit sans le
+  commiter au moment d'éteindre, et juge qu'il n'en reste rien hors de sa branche ensuite ;
 - **le run repris aboutit**, et le **livrable cloné**, donc ce que le projet a commité, s'installe,
   se construit, passe ses tests et sert chaque page en `200` (#1388, #1396, #1399, #1400). Ce que
   ces commandes refabriquent ne salit pas son dépôt, et rien de ce que le projet déclare ignorer n'y

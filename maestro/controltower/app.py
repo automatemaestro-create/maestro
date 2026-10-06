@@ -2266,6 +2266,10 @@ def create_app(
         battements=battements,
         hote=hote_run,
         acquis=acquis,
+        # Le dépôt des projets de l'app (#1392) : de quoi porter sur sa branche le
+        # travail d'une tâche en vol quand son run est soldé de l'extérieur — le
+        # même dépôt que celui des écrans, jamais un second qui pourrait diverger.
+        projets=projets.store,
     )
 
     # Le régime de brief des runs ouverts depuis le fil — **une** valeur, lue par

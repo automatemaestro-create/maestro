@@ -203,6 +203,21 @@ désormais la tâche qu'elles reprennent (`Task.reprend`, posé par le moteur se
 qu'elles attendent a déjà porté ce travail. Une branche qui existe déjà se reprend telle quelle :
 `reprend` ne dit d'où partir qu'à la création.
 
+**Une tâche coupée en vol (#1392).** Le commit du démontage vit dans un `finally`, et un process
+tué n'en déroule aucun : quand Maestro s'éteint pendant qu'une tâche écrit, son hôte est achevé au
+bout de quelques secondes, et ce qu'elle avait écrit restait dans son worktree, hors de sa branche.
+Celui qui éteint le run porte désormais ce travail sur la branche dès que l'hôte ne tourne plus —
+extinction, annulation, relance ou hôte mort (`sauver_le_travail_en_vol`, appelé par la Control
+Tower) —, par le même commit que le démontage et sur les seuls worktrees de la forme d'un espace
+de Maestro. Le worktree reste monté ; c'est le montage suivant de la tâche qui le libère. Un
+commit que le projet refuse (son `pre-commit`) est dit au journal, et n'empêche pas d'éteindre.
+
+À la reprise du run sur son plan, la tâche remonte sa branche, et **l'agent sait ce qu'il y
+retrouve** : le message de sa tâche dit ce que la branche porte de plus que la base, ou que la
+branche qu'elle reprend — ses commits, ses fichiers —, et qu'il repart de cet état au lieu de le
+refaire (`TravailAnterieur`). Ce travail compte dans ce que la tâche livre au juge, qu'elle l'ait
+réécrit ou non. Une branche neuve, ou déjà fusionnée, ne dit rien : le message est celui d'avant.
+
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
 directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le
 prend au sérieux plutôt qu'une dérogation :

@@ -1024,6 +1024,11 @@ contrat. Le change reste très favorable, et il vaut mieux l'écrire que le tair
 **un run reprend là où il s'est arrêté, à la tâche près — pas au milieu d'une tâche.** Une tâche
 interrompue en vol est repayée en entier, et aucune des trois options ne fait mieux.
 
+⚠ **Précisé par #1392** (§12.10) : la granularité de l'**état acquis** reste la tâche terminée, mais
+la tâche interrompue ne repart plus de zéro — elle repart de **sa branche**, où son travail a été
+porté à l'interruption, et l'agent sait ce qui y est fait. Ce qui reste repayé est sa session, pas
+ce qu'elle avait écrit.
+
 ### 12.7 Ce que ça change pour #699 et #700 — tous deux livrés avant ce cadrage
 
 **Les trois tickets sont nés le même jour ; les deux autres sont arrivés les premiers.** #700
@@ -1089,6 +1094,8 @@ Ce qui rouvrirait la décision de ce §12, nommé d'avance :
    trente-huitième est repayée en entier. ⚠ Cette porte **ne mène pas à O4** — Temporal rejoue
    l'activité entière lui aussi — mais vers le **découpage** des tâches ou un point de reprise
    intra-tâche. La confondre avec la porte n° 4 ferait acheter Temporal pour ce qu'il ne donne pas.
+   ⚠ **Franchie par #1392** (§12.10), et du côté qu'elle nommait : le point de reprise intra-tâche
+   est la **branche de la tâche**, qui garde ce qu'elle avait écrit — pas Temporal.
 3. **Le jour où le magasin coûte plus cher qu'un worker.** Si maintenir l'état acquis revient à
    réécrire à la main la moitié de ce que Temporal fait — reprise, requêtes d'état, exactement-une-
    fois —, la comparaison du §12.4 s'inverse d'elle-même. C'est le critère de bascule honnête, et
@@ -1169,10 +1176,75 @@ Sa session reprise a reçu dans son prompt, mot pour mot, la sortie de la tâche
 tentative coupée avait reçue avant l'extinction : le tableau noir a traversé la reprise.
 Le livrable cloné s'installe, se construit, passe ses 33 tests et sert ses quatre pages. Le scénario
 reste rouge sur un seul constat, qui est l'objet de #1392 : le travail de la tâche en vol n'est pas
-sauvé sur sa branche **à l'extinction** — il ne l'est qu'au remontage de la reprise.
+sauvé sur sa branche **à l'extinction** — il ne l'est qu'au remontage de la reprise. ⚠ Relu par
+#1392 (§12.10) : la tâche coupée tournait depuis **huit secondes** et n'avait encore rien écrit —
+sa branche ne porte qu'un commit, celui de sa reprise. Le constat était juste sur le mécanisme (rien
+ne sauvait à l'extinction), pas sur ce passage, où il n'y avait rien à perdre.
 
 **Ce qui ne change pas.** La granularité est la tâche terminée (§12.6) : la tâche **interrompue** est
-refaite en entier — repartir de sa branche est #1392. Un plafond **relevé** pendant le premier départ
+refaite en entier — repartir de sa branche est #1392 (§12.10). Un plafond **relevé** pendant le premier départ
 (#1182) n'est pas reporté : le run repris repart sur les bornes qu'il avait reçues, et le plafond lui
 redemandera. La reprise reste un **geste** ; la reprise automatique au réveil de la machine reste
 derrière O4.
+
+### 12.10 Ce que #1392 a livré (2026-10-06)
+
+> Troisième et dernier lot de #1389. La porte n° 2 du §12.8 — reprendre **au milieu** d'une tâche —
+> est franchie par le point de reprise qu'elle nommait : la **branche de la tâche**.
+
+**Le défaut, et pourquoi il n'était pas où on le cherchait.** Le travail d'une tâche vit dans son
+worktree, et il n'atteint sa branche que par le commit du démontage (#705) — dans le `finally`
+d'`espace_de_travail`. Or un `finally` ne tourne que dans un process qui vit : l'extinction publie
+l'issue, laisse `DELAI_ANNULATION_S` à l'hôte, puis l'achève avec sa descendance
+(`hote_detache._eteindre`) ; un hôte peut aussi mourir seul. Dans les deux cas, ce que la tâche avait
+écrit restait dans un worktree du répertoire temporaire, hors de toute branche, jusqu'à ce qu'un
+remontage vienne l'y chercher (`_liberer_la_branche`, #1391) — ou jamais.
+
+**① Sauvé à l'interruption, par celui qui éteint.** Le geste ne peut pas vivre dans le process tué ;
+il vit donc chez celui qui sait que ce process ne tourne plus. `ServiceExecutions` le joue après
+`_hote.annuler` — extinction, annulation, relance — et après le constat d'un hôte mort
+(`_ramasser`) : pour chaque tâche **en vol** du run (la même lecture que celle qui les solde,
+`_taches_en_vol`), il porte sur sa branche ce que son worktree retient
+(`maestro.sandbox.projet.sauver_le_travail_en_vol`). C'est le **même** commit que le démontage
+(`commiter_en_attente` : hooks du projet respectés, `.gitignore` compris), sur les **seuls** worktrees
+de la forme d'un espace de Maestro pour cette tâche — jamais celui qu'une personne aurait ouvert. Le
+worktree reste monté : le retirer n'ajoute rien à la sauvegarde, et le montage suivant le libère.
+Best-effort et sans jamais lever : un commit que le projet refuse est **dit** au journal de l'API, et
+Maestro s'éteint quand même. Le dépôt des projets vient de l'app (`create_app`), le même que celui
+des écrans.
+
+**② À la reprise, l'agent sait ce qui est fait.** La reprise sur le plan (§12.9) rejoue la tâche sous
+son identifiant, donc sur sa branche ; l'agent y trouvait son travail **sans le savoir**. Le montage
+relève désormais ce qu'une branche **qui existait déjà** porte de plus que la branche qu'elle reprend
+(#1396) ou que la base (`TravailAnterieur` : ses commits, ses fichiers et leur statut), et l'espace
+le dit dans le message de la tâche — « une exécution précédente de cette tâche y a laissé du
+travail […] : pars de cet état […] ne le refais pas depuis zéro ». Ces fichiers ne sont pas relevés
+au départ : ils comptent dans ce que la tâche livre au juge (#1388), qu'elle les ait réécrits ou
+non — sans quoi une tâche reprise qui ne refait rien de ce qui est fait livrerait une moitié. Une
+branche neuve, ou déjà fusionnée, ne dit rien : le message est celui d'avant, au caractère près.
+La règle vaut pour **toute** branche rejouée — une relance qui retombe sur la branche d'une tâche
+inaboutie la retrouve de même —, parce que c'est ce que l'agent a sous les pieds, quelle qu'en soit
+la raison.
+
+**③ Le banc éteint pendant qu'une tâche écrit.** Le passage du §12.9 rougissait sur « rien de
+sauvé » ; relu, sa tâche coupée tournait depuis huit secondes et n'avait rien écrit. S12 attend
+désormais qu'une tâche en vol ait laissé du travail dans son espace (`en_cours_d_ecriture`, ou des
+commits sur sa branche) avant la pause, relève ce qu'elle avait écrit sans le commiter au moment
+d'éteindre, et juge qu'il ne reste **rien** hors de la branche après l'extinction — puis que ce
+travail est dans le projet livré.
+
+**L'épreuve sur le réel** (S12, passage `20261006-124434`, run `475acf076b4a`, **vert**, 26 min,
+3,64 $) : le socle de l'application fait, trois tâches en vol, dont la page d'accueil qui avait
+modifié `app/page.tsx` sans le commiter ; pause, extinction, API rallumée, « Reprendre ». À
+l'extinction, la branche `maestro/page-accueil` reçoit le commit `f6db23e` (12:57:13) — rien n'en
+reste hors d'elle. Le run repart sous son identifiant, et la session reprise de la page d'accueil
+reçoit dans son message « Ta branche `maestro/page-accueil` n'est pas neuve […] modifié :
+`app/page.tsx` […] ne le refais pas depuis zéro » : elle relit la page, la vérifie (lint, types,
+build, HTML généré) et conclut qu'elle « avait déjà été écrite lors d'une exécution précédente
+[…] je n'ai rien modifié ». `f6db23e` est le seul commit de la tâche, et il est dans l'histoire du
+projet livré. Le run va au bout (`terminee`, six tâches) ; le livrable cloné s'installe, se
+construit, passe ses 25 tests et sert ses quatre pages.
+
+**Ce qui ne change pas.** L'état **acquis** reste à la tâche terminée (§12.6) : la tâche interrompue
+repasse par une session neuve, qui repaie ses tours de modèle, pas ce qu'elle avait écrit. Ce qu'un
+agent avait en tête sans l'écrire est perdu avec sa session ; ce qu'il avait écrit ne l'est plus.
