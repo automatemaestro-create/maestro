@@ -417,10 +417,28 @@ def _section_skills(
     return "\n".join(lignes)
 
 
+def scinder_section_skills(playbook: str) -> tuple[str, str]:
+    """`(corps, section)` : le playbook sans sa section « skills », et cette section.
+
+    La section est **celle que Maestro a posée** (`playbook_branche`), coupée au
+    même titre et par le même motif : c'est ce qui permet de faire réécrire le
+    corps par un modèle (#1405, `maestro.controltower.regeneration_playbooks`) sans
+    qu'il touche jamais à l'inventaire des skills, qui ne se rédige pas. `section`
+    est vide quand le playbook n'en porte pas.
+    """
+    trouvee = _MOTIF_SECTION_SKILLS.search(playbook)
+    section = trouvee.group(0).strip() if trouvee else ""
+    return _sans_section_skills(playbook).strip(), section
+
+
+#: La section « skills » d'un playbook : son titre, jusqu'au prochain titre de même
+#: niveau ou la fin du document.
+_MOTIF_SECTION_SKILLS = re.compile(
+    rf"^{re.escape(TITRE_SKILLS)}\s*$.*?(?=^## |\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
 def _sans_section_skills(playbook: str) -> str:
     """Le playbook privé de sa section « skills », s'il en portait une."""
-    motif = re.compile(
-        rf"^{re.escape(TITRE_SKILLS)}\s*$.*?(?=^## |\Z)",
-        re.MULTILINE | re.DOTALL,
-    )
-    return motif.sub("", playbook)
+    return _MOTIF_SECTION_SKILLS.sub("", playbook)

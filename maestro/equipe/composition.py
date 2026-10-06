@@ -695,7 +695,6 @@ def _role_compose(
             libelle,
             constats,
             branches,
-            autorisations,
             competences=() if gabarit is not None else competences,
         ),
         outils=outils,

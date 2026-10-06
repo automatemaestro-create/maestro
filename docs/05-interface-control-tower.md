@@ -3543,9 +3543,10 @@ Le modèle devinait parce qu'aucun de ces faits n'était dans ce qu'il recevait.
 - **La politique est lue là où l'exécution la lira** : l'équipe par
   `catalogue_du_projet` (la règle du routeur), chaque politique par
   `PermissionStore.pour_projet(…).lire` (l'appel de l'exécuteur), à chaque
-  message. Le régime se dit avec les phrases de l'intention d'un rôle
-  (`REGIME_EXECUTION`, `REGIME_PORTEE` de `maestro/equipe/proposition.py`) : le fil
-  et le playbook décrivent le même régime avec les mêmes mots. Une politique
+  message. Le régime se dit avec les phrases de `maestro/agents/regime_d_execution.py`
+  (`REGIME_EXECUTION`, `REGIME_PORTEE`), rangées à côté de celles que l'agent lit à la
+  fin de son propre prompt système (#1405) : le fil et l'agent décrivent le même régime,
+  depuis le même endroit et sous les mêmes clés. Une politique
   **illisible** se dit avec sa cause — l'exécution en ferait un échec de tâche —,
   jamais remplacée par un régime supposé ; un projet sans agent dit qu'il n'a pas
   encore de politique à lire.

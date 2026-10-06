@@ -36,9 +36,10 @@ annoncerait le régime d'hier :
 - **les actes de l'équipe, agent par agent** — lus dans la politique que
   l'exécution appliquera (`PermissionStore.pour_projet(…).lire`, l'appel exact
   de `Executor._politique_permissions`) et dits avec les phrases de
-  `maestro.equipe.proposition` (`REGIME_EXECUTION`, `REGIME_PORTEE`). Ce sont
-  celles que l'intention d'un rôle porte déjà : une seconde formulation du même
-  régime finirait par en décrire un autre ;
+  `maestro.agents.regime_d_execution` (`REGIME_EXECUTION`, `REGIME_PORTEE`). Elles
+  y vivent à côté de celles que l'agent lit dans son prompt système (#1405), sous
+  les mêmes clés : une formulation du régime écrite ailleurs finirait par en
+  décrire un autre ;
 - **l'acte que l'objectif nomme** — accordé avec le run (`REGLE_DE_L_ACTE_ACCORDE`,
   #1198) ;
 - **ce qui revient à la personne, et ce qu'on ne sait pas d'avance** — une
@@ -77,10 +78,11 @@ from dataclasses import dataclass
 
 from maestro.agents.capacity import PLAFOND_INSTANCES_DERIVEES
 from maestro.agents.permissions import PolitiqueOutils, Verdict
+from maestro.agents.regime_d_execution import REGIME_EXECUTION, REGIME_PORTEE, outils_soumis
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
 from maestro.decideur import Decideur
 from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN, MODE_BRIEF_SANS
-from maestro.equipe.proposition import OUTIL_EXECUTION, REGIME_EXECUTION, REGIME_PORTEE
+from maestro.equipe.proposition import OUTIL_EXECUTION
 
 #: L'en-tête du bloc — ce qui le distingue, dans le prompt, des faits du projet
 #: et des runs : ceux-là disent ce qui **est**, celui-ci ce qu'un run **fera**.
@@ -284,10 +286,10 @@ def _actes_du_membre(membre: MembreDeLEquipe) -> str:
             "outils passent sans attendre personne."
         )
     morceaux = [qui + _shell(politique)]
-    soumis = _autres_soumis(politique, Decideur.HUMAIN)
+    soumis = outils_soumis(politique, Decideur.HUMAIN)
     if soumis:
         morceaux.append(f"Attendent l'accord d'une personne : {', '.join(soumis)}.")
-    d_office = _autres_soumis(politique, Decideur.AUTO)
+    d_office = outils_soumis(politique, Decideur.AUTO)
     if d_office:
         morceaux.append(f"Passent d'office, en étant tracés : {', '.join(d_office)}.")
     if politique.deny:
@@ -296,7 +298,11 @@ def _actes_du_membre(membre: MembreDeLEquipe) -> str:
 
 
 def _shell(politique: PolitiqueOutils) -> str:
-    """Le régime des commandes shell, dit avec les phrases de l'intention d'un rôle (#1102, #1226).
+    """Le régime des commandes shell, dit à l'orchestrateur (#1102, #1226, #1405).
+
+    Le pendant, à la troisième personne, de ce que l'agent lit dans son propre
+    prompt (`maestro.agents.regime_d_execution.regime_de_l_agent`) : même verdict,
+    mêmes clés, phrases rangées au même endroit.
 
     Le verdict est celui que la politique rend pour l'outil d'exécution
     (`decide`), c'est-à-dire celui que le hook lira : `PASSE` quand rien ne le
@@ -315,17 +321,3 @@ def _shell(politique: PolitiqueOutils) -> str:
         return f" Ses commandes shell sont soumises au décideur « {decideur} »."
     portee = REGIME_PORTEE.get(decision.portee, "") if decideur is Decideur.AUTO else ""
     return regime + portee
-
-
-def _autres_soumis(politique: PolitiqueOutils, decideur: Decideur) -> list[str]:
-    """Les entrées `ask` **hors shell** que tranche `decideur`.
-
-    Le shell est déjà dit par `_shell` ; les autres outils soumis le sont à part,
-    parce que l'accord de l'objectif ne les couvre pas (#1198 : « vide le
-    dossier » n'a jamais accordé un message dans Slack).
-    """
-    return [
-        str(entree)
-        for entree in politique.ask
-        if entree.decideur is decideur and str(entree) != OUTIL_EXECUTION
-    ]

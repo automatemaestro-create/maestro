@@ -637,6 +637,31 @@ tâche :
    premier geste obligatoire de l'agent (`generation_agent._CADRE_GENERATION`). Les deux ne se
    recopient pas — c'est la frontière que `_intention` posait déjà pour tout le reste.
 
+> ⚠ **La règle 2 a changé de main le 2026-10-06 (#1405).** L'intention portait le cran, puis sa
+> portée (#1226), et le cadre de génération faisait écrire au modèle le régime qui en découlait. Le
+> modèle le **reformulait** : sur p5, le playbook de `dev-nextjs` disait que « joindre un service
+> extérieur » attendait l'accord d'une personne — une exception qu'aucune entrée ne donnait et que
+> la politique n'a pas (`npm install` sans `-g` reste dans la portée, `maestro/portee.py`). L'agent
+> a suspendu sa tâche par `demander_arbitrage` et attendu **4 min 19 s** avant un `npm install` qui
+> passait seul. Ce qui est décidé, en application de [docs/41 §0.1](./41-decision-maestro-juge-il-ne-bride-pas.md)
+> (le modèle propose, l'exécution vérifie ce qu'il écrit) :
+>
+> - le **régime** est écrit par Maestro, de façon déterministe, depuis la politique que la tâche
+>   applique, et il ferme le prompt système de chaque tâche outillée en disant qu'il prime
+>   (`maestro/agents/regime_d_execution.py`, [docs/04 §1.2](./04-specifications-agents.md)) ;
+> - l'**intention** ne porte plus le cran : ce qu'on ne donne pas au modèle, il ne le reformule pas ;
+>   le **cadre de génération** lui dit que le playbook dit le métier, pas les permissions, et garde
+>   sans condition la règle de méthode de #1102 — une commande n'est jamais le premier geste. Sous le
+>   cran `humain`, c'est désormais le bloc de régime qui la redit à l'agent, à chaque tâche ;
+> - les playbooks **déjà écrits** se reprennent par `python -m maestro.controltower.regeneration_playbooks`
+>   (`--check` pour voir sans rien écrire) : le modèle en retire le régime sans toucher au métier
+>   qu'une personne a validé, la section des skills ne passe pas par lui, et l'ancien texte est gardé
+>   sous `.maestro/regeneration-playbooks/`.
+>
+> Ce qui ne bouge pas : la règle 1, le cran proposé (#1226), et la portée elle-même. Rien ne lit un
+> playbook pour y chercher une règle (#1169) — le bloc est vrai parce qu'il est composé depuis la
+> règle, pas parce qu'on aurait vérifié le reste du texte.
+
 **Ce qui est écarté, et c'est le point.** Compter les commandes que *Maestro lui-même* a écrites
 dans un skill du projet comme « déclarées par le projet », ce qui aurait fait passer `Bash` en
 `auto` et réglé le symptôme. Elle est bien écrite dans le projet, mais personne ne l'y a décidée :
