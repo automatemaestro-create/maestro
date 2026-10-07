@@ -510,6 +510,19 @@ def test_le_resume_et_la_provenance_disent_ce_qui_est_acquis() -> None:
     assert DESCRIPTION_FLUTTER not in source["reference"]  # une phrase tapée n'est pas un constat
 
 
+def test_une_reponse_remplacee_par_une_correction_quitte_le_resume_mais_pas_la_reference() -> None:
+    """#1442 : le résumé finit en tête d'`AGENTS.md` (« Origine ») ; il ne cite plus ce que
+    l'outillage ne prescrit plus. Les réponses, elles, restent telles qu'elles ont été données."""
+    acquis = _flutter_acquis()
+
+    source = source_manifeste_des_choix("prj-neuf", acquis, remplaces={"tester", "ci"})
+
+    assert source["resume"] == "Une application mobile Flutter ; Dart"
+    assert "flutter test" not in source["resume"]
+    assert "tester=flutter test" in source["reference"]
+    assert {c["cle"]: c["valeur"] for c in source["choix"]}["tester"] == "flutter test"
+
+
 # --- Ce que chaque commande fait pour ce projet (#1350) ------------------------------------
 
 #: Ce qu'un modèle comprend du carnet de chants de S9 : chaque commande dit, avec les mots

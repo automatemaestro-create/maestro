@@ -687,7 +687,15 @@ class ServicePieces:
             hors = [c for c in prises if c.cle not in CLES_CORRIGEABLES]
             choix = acquis_de([*compris, *hors])
             constats = corriger(constats_depuis_choix(choix), prises)
-            source = source_manifeste_des_choix(projet.id, choix)
+            # Une réponse qu'une correction a remplacée ne se résume plus (#1442) : la
+            # ligne « Origine » d'`AGENTS.md` citerait une commande qu'il ne prescrit plus.
+            repondu = {c.cle: c.valeur for c in choix}
+            remplaces = {
+                c.cle
+                for c in retenues
+                if c.cle in CLES_CORRIGEABLES and c.valeur != repondu.get(c.cle)
+            }
+            source = source_manifeste_des_choix(projet.id, choix, remplaces=remplaces)
             clients = reunir(clients, clients_depuis_choix(choix))
         else:
             analyse = await self._analyse(projet, fil)

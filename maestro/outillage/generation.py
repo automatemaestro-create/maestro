@@ -109,7 +109,7 @@ from maestro.outillage.correction import (
 )
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
 from maestro.outillage.questionnaire import Choix, choix_du_manifeste
-from maestro.outillage.redaction import GENERE_PAR, PORTEE_BLOC, Fichier, bloc
+from maestro.outillage.redaction import GENERE_PAR, PORTEE_BLOC, Fichier, bloc, prescrit
 from maestro.outillage.verification import Verification
 from maestro.sandbox.en_place import FrontiereEcriture
 
@@ -509,11 +509,14 @@ def _verdicts_encore_ecrits(
     réécrit, une pièce passée —, elle y reste.
 
     Les verdicts de la pièce qu'on écrit (`neufs`) restent sans condition : elle les
-    écrit. Les autres se cherchent **tels que Maestro les a écrits**, sur le texte des
-    fichiers que le manifeste déclare — la seule preuve qu'une commande est prescrite,
-    comme la phrase d'une correction se lit sur la pièce qui la porte. Un fichier qu'on
-    ne lit pas en entier — illisible, vide, plus grand que ce qu'on en lit — garde
-    tout : dans le doute, on ne retire rien.
+    écrit. Les autres se cherchent **tels que Maestro les a écrits** (`prescrit`), sur le
+    texte des fichiers que le manifeste déclare — la seule preuve qu'une commande est
+    prescrite, comme la phrase d'une correction se lit sur la pièce qui la porte. Une
+    commande seulement citée n'y compte pas (#1442) : vu sur S9 (passage
+    `20261007-103746`), la ligne « Origine » d'`AGENTS.md` citait la commande de tests
+    des réponses, et son verdict « à vérifier » survivait à la commande qui la
+    remplaçait. Un fichier qu'on ne lit pas en entier — illisible, vide, plus grand que
+    ce qu'on en lit — garde tout : dans le doute, on ne retire rien.
     """
     ecrites = {v.commande for v in neufs}
     textes: list[str] = []
@@ -523,7 +526,9 @@ def _verdicts_encore_ecrits(
             return tuple(verdicts)
         textes.append(texte)
     return tuple(
-        v for v in verdicts if v.commande in ecrites or any(v.commande in t for t in textes)
+        v
+        for v in verdicts
+        if v.commande in ecrites or any(prescrit(t, v.commande) for t in textes)
     )
 
 

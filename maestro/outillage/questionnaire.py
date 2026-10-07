@@ -905,14 +905,21 @@ def constats_depuis_choix(choix: Sequence[Choix]) -> Constats:
     )
 
 
-def resume_des_choix(choix: Sequence[Choix]) -> str:
+def resume_des_choix(choix: Sequence[Choix], *, remplaces: Iterable[str] = ()) -> str:
     """La phrase que le manifeste garde (`source.resume`, docs/38 §4.1).
 
     Le pendant de `maestro.outillage.analyse.resume` : une ligne, et **seulement ce qui
     est acquis** — ce qu'on ne sait pas n'y figure pas en « inconnu ». C'est elle qu'on
     relira six mois plus tard, à côté d'un outillage dont on se demande d'où il sort.
+
+    `remplaces` (#1442) : les sujets dont une correction a remplacé la réponse — dite par
+    la personne, ou proposée par Maestro après un run. Leur réponse a cessé de décider de
+    l'outillage, et la citer ferait lire en tête d'`AGENTS.md` (la ligne « Origine ») une
+    commande qu'il ne prescrit plus : vu sur S9, `tests : python -m unittest …` au-dessus
+    de `python -m pytest`. Ils sont tus ; la ligne de chaque commande dit d'où elle vient.
     """
-    acquis = {c.cle: c.valeur for c in acquis_de(choix)}
+    tus = frozenset(remplaces)
+    acquis = {c.cle: c.valeur for c in acquis_de(choix) if c.cle not in tus}
     morceaux: list[str] = []
     for cle in (SUJET_NATURE, "langages"):
         if acquis.get(cle) and not _est_aucun(acquis[cle]):
@@ -926,7 +933,9 @@ def resume_des_choix(choix: Sequence[Choix]) -> str:
     return " ; ".join(morceaux) if morceaux else "aucun choix encore donné"
 
 
-def source_manifeste_des_choix(projet_id: str, choix: Sequence[Choix]) -> dict[str, Any]:
+def source_manifeste_des_choix(
+    projet_id: str, choix: Sequence[Choix], *, remplaces: Iterable[str] = ()
+) -> dict[str, Any]:
     """Le fragment `source` du manifeste quand l'outillage vient des réponses (docs/38 §4.1).
 
     Le jumeau d'`Analyse.source_manifeste()`. `reference` est la suite des **constats
@@ -939,13 +948,17 @@ def source_manifeste_des_choix(projet_id: str, choix: Sequence[Choix]) -> dict[s
     `reference`, qui n'est qu'une ligne pour l'œil (une valeur peut contenir « ; »). C'est
     ce que le projet **est** tant qu'il n'a aucun fichier à lui : son équipe s'y compose
     (`choix_du_manifeste`, `maestro.controltower.equipe`).
+
+    `remplaces` (#1442) ne touche que le `resume`, la seule phrase de la source qu'un
+    fichier écrit (`resume_des_choix`) : `reference` et `choix` gardent les réponses telles
+    qu'elles ont été données, et ce qui les a remplacées est au manifeste (`corrections`).
     """
     acquis = acquis_de(choix)
     return {
         "type": SOURCE_CHOIX,
         "projet_id": projet_id,
         "reference": " ; ".join(f"{c.cle}={c.valeur}" for c in acquis),
-        "resume": resume_des_choix(acquis),
+        "resume": resume_des_choix(acquis, remplaces=remplaces),
         "choix": [_choix_au_manifeste(c) for c in acquis],
     }
 
