@@ -7767,6 +7767,13 @@ personne pour justification (« dite par la personne (« … ») », écrite tel
 et le skill), et la pièce touchée revient, **revérifiée par l'exécution** — une commande corrigée n'a
 jamais de verdict connu. La correction voyage sur le message (`corrections`, rendue sous la bulle :
 « Correction prise — … ») et reste acquise aux tours suivants. **Rien n'est écrit** avant l'accord.
+Sur un projet **décrit**, elle gagne tout ce qui dérive de la réponse corrigée (#1443) : le message
+porte aussi ce que le questionnaire a compris, la réponse remplacée et les descriptions que la phrase
+rend fausses réécrites — le modèle de correction lit ce que chaque commande fait pour le projet, et
+dit lesquelles —, si bien que les pièces écrites ensuite, le manifeste (`source.choix`) et l'équipe
+proposée ne relisent plus l'ancienne réponse. Vu sur la vraie stack : `python generer_index.py`
+corrigée en `python index_par_region.py fiches` sur `AGENTS.md`, le skill de style écrit après disait
+encore « Vérifier le code de generer_index.py », et l'équipe en tirait sa raison.
 Trois issues ne corrigent rien, et le disent : une phrase **incomprise** (« Rien n'a été écrit : »
 suivi de ce que le modèle de correction n'a pas compris), la pièce qui attendait restant proposée ; une correction
 **sans effet** sur ce qui s'écrit ; et une commande corrigée qui **échoue** à l'exécution — la

@@ -117,6 +117,7 @@ from maestro.outillage.correction import (
     constats_en_texte,
     corrections_en_texte,
     corriger,
+    corriger_les_choix,
     lire_correction,
     retenir,
 )
@@ -195,8 +196,16 @@ Tu reçois ce qu'on sait déjà de l'outillage et les corrections déjà prises.
 que ce que la phrase change. N'invente rien : une commande que la phrase ne donne pas,
 et qu'on ne peut pas en déduire sans ambiguïté, ne s'écrit pas.
 
-- La phrase corrige l'outillage et tu la comprends : "comprise": true, et les
-  corrections.
+Une commande dit aussi, après « pour : », ce qu'elle fait pour ce projet : c'est la
+description de l'outil que les agents du projet ouvriront. La phrase peut la rendre
+fausse — celle de la commande qu'elle corrige, mais aussi celle d'une autre commande qui
+nommait ce que la phrase remplace (un fichier renommé, un outil changé). Pour chacune de
+celles-là, et seulement celles-là, donne dans "descriptions" la description réécrite :
+la même phrase, à l'infinitif, avec ce que la correction a changé. Une description que
+la phrase laisse vraie ne se réécrit pas.
+
+- La phrase corrige l'outillage et tu la comprends : "comprise": true, les
+  corrections, et les descriptions qu'elle rend fausses.
 - La phrase parle de l'outillage sans rien y changer (« continue », « outille ce
   projet », « c'est bon ») : "comprise": true, "corrections": [].
 - Tu ne sais pas la traduire en sujets de l'outillage — trop vague, contradictoire, hors
@@ -205,8 +214,11 @@ et qu'on ne peut pas en déduire sans ambiguïté, ne s'écrit pas.
 
 Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code :
 
-{"comprise": true, "corrections": [{"cle": "...", "valeur": "..."}], "message": "..."}
+{"comprise": true, "corrections": [{"cle": "...", "valeur": "..."}],
+ "descriptions": [{"cle": "...", "pour": "..."}], "message": "..."}
 
+- "descriptions" : la clé de la commande, et ce qu'elle fait pour ce projet une fois la
+  phrase prise en compte ; vide le plus souvent ;
 - "message" : une phrase à la personne quand "comprise" vaut false ; vide sinon —
   Maestro lui a déjà répondu, et la correction se lira sur ce qu'il écrit.
 
@@ -657,9 +669,10 @@ class ServicePieces:
         """Les constats du projet à ce tour, corrigés — et ce qu'ils recommandent.
 
         Un projet **décrit** (le fil porte ce que le questionnaire a compris) : ses
-        constats sont ceux des réponses, les sujets hors du corrigeable ajoutés à ce
-        qui a été compris. Un projet **lu** : ceux de son analyse (#1158). Dans les
-        deux cas, les corrections s'appliquent ensuite par `corriger`, et c'est
+        constats sont ceux des réponses, chaque réponse corrigée remplacée là où elle
+        vit (`corriger_les_choix`, #1443) — la source que le manifeste garde les reprend
+        telles quelles. Un projet **lu** : ceux de son analyse (#1158). Dans les deux
+        cas, les corrections s'appliquent ensuite par `corriger`, et c'est
         `recommander` — le même pour les deux — qui tranche.
 
         Les corrections sont celles que le manifeste a retenues d'une conversation
@@ -684,10 +697,13 @@ class ServicePieces:
         compris = tuple(acquis) if acquis is not None else acquis_du_fil(fil)
         clients = await self._outillage.clients_du_poste()
         if compris:
-            hors = [c for c in prises if c.cle not in CLES_CORRIGEABLES]
-            choix = acquis_de([*compris, *hors])
+            # La réponse corrigée cède sa place dans les constats mêmes (#1443) : c'est
+            # d'eux que le manifeste garde ce que le projet est, et que l'équipe se compose.
+            # `corriger` passe ensuite sur les commandes, pour qu'elles se disent dites.
+            choix = corriger_les_choix(acquis_de(compris), prises)
             constats = corriger(constats_depuis_choix(choix), prises)
-            # Une réponse qu'une correction a remplacée ne se résume plus (#1442) : la
+            # Ce que Maestro a proposé après un run (#1381) n'est pas une réponse : il ne
+            # remplace rien dans les constats, et la sienne ne se résume plus (#1442) — la
             # ligne « Origine » d'`AGENTS.md` citerait une commande qu'il ne prescrit plus.
             repondu = {c.cle: c.valeur for c in choix}
             remplaces = {
