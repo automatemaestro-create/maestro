@@ -89,7 +89,7 @@ from maestro.outillage.generation import corrections_declarees, generer, poser_p
 from maestro.outillage.modele import ORIGINE_DITE
 from maestro.outillage.questionnaire import Choix
 from maestro.outillage.recommandation import RAISON_AGENTS
-from maestro.outillage.redaction import Fichier, rediger
+from maestro.outillage.redaction import Fichier, prescrit, rediger
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, VERIFIEE, Verificateur, Verification
 from maestro.projets import ProjetStore
 from maestro.projets.application import DiffProjet, Modification
@@ -384,6 +384,60 @@ def test_le_manifeste_ne_garde_que_les_verdicts_des_commandes_encore_ecrites(
     # Le skill réécrit à son tour : plus rien ne l'écrit, son verdict quitte le manifeste.
     poser_piece(racine, piece(skill, "node --test"), source=source, verifications=(node,))
     assert {v["commande"] for v in _manifeste(racine)["verifications"]} == {"node --test"}
+
+
+def test_une_commande_seulement_citee_ou_contenue_dans_une_autre_quitte_le_manifeste(
+    tmp_path: Path,
+) -> None:
+    """#1442 : vu sur S9, la ligne « Origine » d'`AGENTS.md` citait la commande de tests des
+    réponses, et son verdict « à vérifier » survivait à celle qui la remplaçait."""
+    racine = tmp_path / "p"
+    racine.mkdir()
+    source = {"type": "choix", "projet_id": "p", "reference": "", "resume": ""}
+    ancienne = Verification(
+        usage="tester", commande="python -m pytest", etat=A_VERIFIER, raison="vide"
+    )
+    nouvelle = Verification(
+        usage="tester", commande="python -m pytest tests", etat=VERIFIEE, raison="ok"
+    )
+
+    def agents(contenu: str) -> Fichier:
+        return Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu=contenu)
+
+    premiere = agents("- **Tests** : `python -m pytest`\n")
+    poser_piece(racine, premiere, source=source, verifications=(ancienne,))
+    poser_piece(
+        racine,
+        agents(
+            "- **Origine** : des réponses (Python ; tests : python -m pytest).\n"
+            "- **Tests** : `python -m pytest tests`\n"
+        ),
+        source=source,
+        verifications=(nouvelle,),
+    )
+
+    assert {v["commande"] for v in _manifeste(racine)["verifications"]} == {
+        "python -m pytest tests"
+    }
+
+
+@pytest.mark.parametrize(
+    ("texte", "attendu"),
+    [
+        ("- **Tests** : `npm test` — déclarée dans `package.json`.\n", True),
+        ("## Comment faire\n\n```bash\nnpm test\n```\n", True),
+        ("#!/usr/bin/env bash\nset -euo pipefail\n\nnpm test\n", True),
+        # Citée dans une phrase : la ligne « Origine », qui résume des réponses.
+        ("- **Origine** : des réponses (Node ; tests : npm test ; aucune CI).\n", False),
+        # Contenue dans une autre commande, qui seule est prescrite.
+        ("- **Tests** : `npm test -- --ci`\n", False),
+        ("```bash\nnpm test -- --ci\n```\n", False),
+    ],
+)
+def test_une_commande_n_est_ecrite_que_sous_une_forme_ou_maestro_la_prescrit(
+    texte: str, attendu: bool
+) -> None:
+    assert prescrit(texte, "npm test") is attendu
 
 
 def test_une_piece_remise_en_crlf_reste_a_maestro_et_garde_ses_fins_de_ligne(

@@ -898,6 +898,25 @@ def texte_script(entree: Entree) -> str:
     return "\n".join(lignes).rstrip() + "\n"
 
 
+def prescrit(texte: str, commande: str) -> bool:
+    """`texte` prescrit-il `commande` — l'écrit-il comme ce module écrit une commande ? (#1442)
+
+    Trois formes, et ce sont les seules : en code dans une ligne (`_ligne_commande`, et
+    « Ce que Maestro en a vérifié » d'un skill), seule sur sa ligne dans le bloc d'un
+    skill (`texte_skill`) ou dans un script (`texte_script`). Une commande seulement
+    **citée** — la ligne « Origine », qui résume des réponses (`_ligne_origine`) — ou
+    **contenue** dans une autre (`python -m pytest` dans `python -m pytest tests`) n'est
+    pas prescrite : vu sur S9, une citation gardait au manifeste le verdict d'une
+    commande remplacée, et le banc la rejouait.
+    """
+    attendue = commande.strip()
+    if not attendue:
+        return False
+    if f"`{attendue}`" in texte:
+        return True
+    return any(ligne.strip() == attendue for ligne in texte.splitlines())
+
+
 def _titre(nom: str) -> str:
     """Le nom d'un skill en titre lisible : `lancer-les-tests` → `Lancer les tests`."""
     return nom.replace("-", " ").capitalize()

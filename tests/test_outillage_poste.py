@@ -662,7 +662,10 @@ class _Lecteur(ModelProvider):
 
 
 def _outille(
-    projets: ServiceProjets, joueur: _Joueur, lecteur: _Lecteur | None = None
+    projets: ServiceProjets,
+    joueur: _Joueur,
+    lecteur: _Lecteur | None = None,
+    compris: Mapping[str, Any] = COMPRIS_CARNET,
 ) -> ConducteurOutillage:
     """Le conducteur qui écrit l'outillage pièce par pièce — commandes et sondes doublées."""
     verificateur = Verificateur(joueur=joueur, interprete=FAUX_BASH)
@@ -672,7 +675,7 @@ def _outille(
         verificateur=verificateur,
     )
     return ConducteurOutillage(
-        ComprehensionModele(_Modele(COMPRIS_CARNET)), pieces=pieces, verificateur=verificateur
+        ComprehensionModele(_Modele(compris)), pieces=pieces, verificateur=verificateur
     )
 
 
@@ -690,12 +693,16 @@ def _message(reponse: Any) -> MessageChat:
 
 
 def _carnet_outille(
-    projets: ServiceProjets, maison: Path, joueur: _Joueur, lecteur: _Lecteur | None = None
+    projets: ServiceProjets,
+    maison: Path,
+    joueur: _Joueur,
+    lecteur: _Lecteur | None = None,
+    compris: Mapping[str, Any] = COMPRIS_CARNET,
 ) -> tuple[ConducteurOutillage, str, Path, list[MessageChat]]:
     """Le carnet né vide, son `AGENTS.md` écrit sur accord — ses commandes « à vérifier »."""
     racine = maison / "Maestro" / "chorale"
     projet_id = str(projets.creer("chorale", str(racine), origine=ORIGINE_NOUVEAU)["id"])
-    conducteur = _outille(projets, joueur, lecteur)
+    conducteur = _outille(projets, joueur, lecteur, compris)
     fil = [_dit(DEMANDE)]
     ouverture = asyncio.run(conducteur.ouvrir(fil, projet_id))
     assert ouverture.piece is not None and ouverture.piece.chemin == "AGENTS.md"
@@ -1041,6 +1048,102 @@ def test_pas_cette_piece_n_ecrit_rien_de_la_commande_proposee(
     assert all(c["cle"] != "construire" for c in manifeste.get("corrections", []))
     # Passée, elle ne revient pas telle quelle.
     assert passee.piece is None or passee.piece.chemin != "AGENTS.md"
+
+
+# ── Ce que la revue remplace ne reste nulle part (#1442) ──
+
+#: La commande de tests comprise à la naissance du carnet — le résumé des réponses la
+#: cite —, et celle que le README livré par le run prescrit. Vu sur S9 (passage
+#: `20261007-103746`) : la suite livrée est écrite pour pytest, `unittest` n'en joue aucun.
+TESTS_REPONDUS = "python -m unittest discover -s tests"
+TESTS_LUS = "python -m pytest"
+
+#: Le carnet compris avec sa commande de tests, comme S9 l'a décrit.
+COMPRIS_AVEC_TESTS: dict[str, Any] = {
+    **COMPRIS_CARNET,
+    "constats": [
+        *COMPRIS_CARNET["constats"],
+        {
+            "cle": "tester",
+            "valeur": TESTS_REPONDUS,
+            "parce_que": "Réponse choisie : tests unittest",
+            "pour": "Jouer les tests de l'assemblage du carnet, avant de rendre un changement.",
+        },
+    ],
+}
+
+#: Le modèle qui lit le carnet construit : il ouvre le README, et rend la commande qu'il y lit.
+LECTURE_DES_TESTS = (
+    "LIRE: README.md",
+    f"COMMANDE: tester | README.md | declaree | section Lancer les tests | {TESTS_LUS}\nFIN",
+)
+
+#: Ce que `unittest` répond d'une suite écrite pour pytest : code 5, aucun test joué.
+AUCUN_TEST = execution.Execution(
+    code=5, sortie="Ran 0 tests in 0.000s\n\nNO TESTS RAN", duree_s=0.1
+)
+
+
+def _tout_ecrire(conducteur: ConducteurOutillage, fil: list[MessageChat]) -> None:
+    """Écrit sur accord chaque pièce que le fil propose, jusqu'à la dernière."""
+    for _ in range(10):
+        piece = fil[-1].piece
+        if piece is None:
+            return
+        ecrite = asyncio.run(conducteur.trancher(fil, piece=piece, decision=DECISION_ECRIRE))
+        assert ecrite.piece_ecrite is not None and ecrite.piece_ecrite.ecrite, ecrite.contenu
+        fil.append(_message(ecrite))
+    raise AssertionError("le fil propose des pièces sans fin")
+
+
+def _carnet_teste(racine: Path) -> None:
+    """Ce que le run a laissé : le script, une suite écrite pour pytest, et le README qui le dit."""
+    (racine / "assembler.py").write_text("print('carnet')\n", encoding="utf-8")
+    (racine / "tests").mkdir()
+    (racine / "tests" / "test_carnet.py").write_text(
+        "def test_sommaire():\n    assert True\n", encoding="utf-8"
+    )
+    (racine / "README.md").write_text(
+        f"# Carnet\n\n## Lancer les tests\n\n    {TESTS_LUS}\n", encoding="utf-8"
+    )
+
+
+def test_la_commande_de_tests_remplacee_apres_le_run_ne_reste_nulle_part(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Le cas de S9 (passage `20261007-103746`) : la commande de tests des réponses, remplacée
+    à la revue d'après le run, restait au manifeste « à vérifier », avec sa raison devenue
+    fausse — la ligne « Origine » d'`AGENTS.md` la citait encore —, et le banc la rejouait."""
+    joueur = _Joueur({TESTS_REPONDUS: AUCUN_TEST})
+    lecteur = _Lecteur(*LECTURE_DES_TESTS)
+    conducteur, projet_id, racine, fil = _carnet_outille(
+        projets, _maison, joueur, lecteur, COMPRIS_AVEC_TESTS
+    )
+    _tout_ecrire(conducteur, fil)
+    chemin = racine / CHEMIN_MANIFESTE
+    ne = json.loads(chemin.read_text(encoding="utf-8"))
+    assert {v["commande"]: v["etat"] for v in ne["verifications"]}[TESTS_REPONDUS] == A_VERIFIER
+    _carnet_teste(racine)
+
+    revue = asyncio.run(conducteur.apres_le_run(fil, projet_id))
+    assert revue is not None and revue.piece is not None
+    assert revue.piece.proposees == (TESTS_LUS,)
+    fil.append(_message(revue))
+    _tout_ecrire(conducteur, fil)
+
+    manifeste = json.loads(chemin.read_text(encoding="utf-8"))
+    # Le manifeste ne déclare que ce que l'outillage prescrit : c'est ce que le banc rejoue.
+    assert {v["commande"]: v["etat"] for v in manifeste["verifications"]} == {
+        ECRITE: VERIFIEE,
+        TESTS_LUS: VERIFIEE,
+    }
+    # Et rien de ce que Maestro a écrit ne cite la commande remplacée, ni ne la dit à vérifier.
+    for entree in manifeste["entrees"]:
+        texte = (racine / entree["chemin"]).read_text(encoding="utf-8")
+        assert TESTS_REPONDUS not in texte, entree["chemin"]
+        assert "À vérifier" not in texte, entree["chemin"]
+    agents = (racine / "AGENTS.md").read_text(encoding="utf-8")
+    assert "**Vérifiée**" in _ligne(agents, TESTS_LUS)
 
 
 #: Ce que la lecture a rendu du carnet construit : la commande, et le fichier qui la prouve.
