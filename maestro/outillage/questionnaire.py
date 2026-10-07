@@ -949,9 +949,12 @@ def source_manifeste_des_choix(
     ce que le projet **est** tant qu'il n'a aucun fichier à lui : son équipe s'y compose
     (`choix_du_manifeste`, `maestro.controltower.equipe`).
 
-    `remplaces` (#1442) ne touche que le `resume`, la seule phrase de la source qu'un
-    fichier écrit (`resume_des_choix`) : `reference` et `choix` gardent les réponses telles
-    qu'elles ont été données, et ce qui les a remplacées est au manifeste (`corrections`).
+    Une réponse que la personne a **corrigée** n'y arrive pas : ses constats sont corrigés
+    avant (`maestro.outillage.correction.corriger_les_choix`, #1443), et c'est la réponse
+    en vigueur que `reference` et `choix` gardent — l'équipe s'y compose. `remplaces`
+    (#1442) sert ce qui n'est pas une réponse, une commande que Maestro a proposée après un
+    run : il ne touche que le `resume`, la seule phrase de la source qu'un fichier écrit
+    (`resume_des_choix`), et ce qui a remplacé la réponse est au manifeste (`corrections`).
     """
     acquis = acquis_de(choix)
     return {

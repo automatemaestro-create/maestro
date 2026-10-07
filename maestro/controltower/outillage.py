@@ -185,6 +185,7 @@ from maestro.outillage import (
     sans_lecture,
 )
 from maestro.outillage.clients import Client, noms_en_texte
+from maestro.outillage.correction import corriger_les_choix
 from maestro.outillage.modele import Lecture, Recommandation
 from maestro.outillage.questionnaire import (
     Choix,
@@ -1044,7 +1045,11 @@ class ConducteurOutillage:
           correction a touchée revient, **revérifiée par l'exécution** — une commande
           corrigée a un autre texte, elle n'est jamais un verdict connu. Le `message`
           du modèle n'y est pas repris : le juge a déjà dit, en direct, ce qu'il a
-          compris, et la relecture l'a vu redit juste en dessous.
+          compris, et la relecture l'a vu redit juste en dessous. Sur un projet
+          **décrit**, ce que le questionnaire a compris voyage aussi, corrigé
+          (`corriger_les_choix`, #1443) : la réponse remplacée et les descriptions que
+          la phrase rend fausses ne se relisent plus au tour suivant, ni dans les
+          pièces qu'il écrit, ni au manifeste dont l'équipe se compose.
 
         Une correction peut aussi ne rien corriger et demander d'avancer (« outille
         ce projet ») : c'est la pièce suivante qui vient. Sur un dossier **encore
@@ -1085,8 +1090,18 @@ class ConducteurOutillage:
                 piece=reposee,
                 projet_outille=projet_id,
             )
+        compris = acquis_du_fil(propre)
         return await self._piece(
-            fil, projet_id, corrections=lue.corrections, phrase=phrase, apres_le_juge=True
+            fil,
+            projet_id,
+            acquis=(
+                corriger_les_choix(compris, lue.corrections, lue.descriptions)
+                if compris
+                else None
+            ),
+            corrections=lue.corrections,
+            phrase=phrase,
+            apres_le_juge=True,
         )
 
     async def repondre(

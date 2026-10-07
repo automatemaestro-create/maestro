@@ -36,6 +36,12 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from maestro.agents.capacity import CapacityStore
+from maestro.agents.configuration import ConfigurationAgents
+from maestro.agents.mcp import McpStore
+from maestro.agents.permissions import PermissionStore
+from maestro.agents.playbooks import PlaybookStore
+from maestro.agents.store import AgentStore, SurchargeStore
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.chat import (
     DECISION_ECRIRE,
@@ -54,6 +60,8 @@ from maestro.controltower.chat import (
     projet_du_fil,
     transcription,
 )
+from maestro.controltower.equipe import CompositeurEquipe, ServiceEquipe
+from maestro.controltower.generation_agent import GenerationIndisponible
 from maestro.controltower.naissance import ServiceNaissance
 from maestro.controltower.orchestration import (
     _MARQUEUR_VERDICT,
@@ -84,10 +92,22 @@ from maestro.controltower.projets import ServiceProjets
 from maestro.engine.guardrails import DemandeValidation
 from maestro.outillage import CHEMIN_MANIFESTE, Commande, Constats, Gestionnaire, recommander
 from maestro.outillage.clients import SOURCE_POSTE, Client
-from maestro.outillage.correction import CorrectionPrise, corriger, lire_correction
-from maestro.outillage.generation import corrections_declarees, generer, poser_piece, prevoir
+from maestro.outillage.correction import (
+    CorrectionPrise,
+    Description,
+    corriger,
+    corriger_les_choix,
+    lire_correction,
+)
+from maestro.outillage.generation import (
+    choix_declares,
+    corrections_declarees,
+    generer,
+    poser_piece,
+    prevoir,
+)
 from maestro.outillage.modele import ORIGINE_DITE
-from maestro.outillage.questionnaire import Choix
+from maestro.outillage.questionnaire import Choix, source_manifeste_des_choix
 from maestro.outillage.recommandation import RAISON_AGENTS
 from maestro.outillage.redaction import Fichier, prescrit, rediger
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, VERIFIEE, Verificateur, Verification
@@ -1998,3 +2018,281 @@ def test_docs_38_et_05_disent_ou_la_correction_reste_acquise() -> None:
     )
     for fait in ("d'une conversation à l'autre", "#1334", "manifeste"):
         assert fait in pieces, fait
+
+
+# --------------------------------------------------------------------------- #
+# ⑦ Une correction gagne tout ce qui dérive de la réponse corrigée (#1443)      #
+# --------------------------------------------------------------------------- #
+
+#: Le script que la réponse cliquée nommait, et la commande que la personne a dite à la
+#: place — le parcours `verify` du 2026-10-07 (projet `herbier-des-cimes`).
+ANCIEN_SCRIPT = "generer_index.py"
+INDEX = "python index_par_region.py fiches"
+HERBIER = (
+    "Le générateur s'appellera plutôt index_par_region.py, et il prend en argument le "
+    "dossier des fiches : python index_par_region.py fiches"
+)
+
+#: Ce que le questionnaire a compris de l'herbier : la construction cliquée, et une
+#: commande dont ce qu'elle fait pour le projet nomme le script de cette réponse.
+COMPRIS_HERBIER: dict[str, Any] = {
+    "constats": [
+        {
+            "cle": "nature",
+            "valeur": "Herbier de randonnée : une fiche Markdown par plante, et un script "
+            "Python qui en génère un index par région",
+            "parce_que": "Votre description du projet",
+        },
+        {"cle": "langages", "valeur": "Python", "parce_que": "bibliothèque standard"},
+        {
+            "cle": "construire",
+            "valeur": f"python {ANCIEN_SCRIPT}",
+            "parce_que": f"Réponse cliquée : un script {ANCIEN_SCRIPT} à la racine",
+            "pour": "Régénérer l'index par région à partir des fiches, après l'ajout d'une fiche",
+        },
+        {
+            "cle": "lint",
+            "valeur": "python -m ruff check .",
+            "parce_que": "Réponse cliquée : ruff",
+            "pour": f"Vérifier le code de {ANCIEN_SCRIPT} et de ses tests, avant de rendre "
+            "un changement",
+        },
+    ],
+    "questions": [],
+}
+
+#: Ce que le modèle de correction comprend de la phrase : la commande qu'elle remplace, et
+#: la description qu'elle rend fausse, réécrite.
+POUR_LE_STYLE = (
+    "Vérifier le code de index_par_region.py et de ses tests, avant de rendre un changement"
+)
+CORRIGE_HERBIER: dict[str, Any] = {
+    "comprise": True,
+    "corrections": [{"cle": "construire", "valeur": INDEX}],
+    "descriptions": [{"cle": "lint", "pour": POUR_LE_STYLE}],
+}
+
+
+class _CompositeurQuiNote(ModelProvider):
+    """Le modèle qui compose l'équipe : il note ce qu'on lui fait lire, puis ne répond pas.
+
+    L'équipe retombe alors sur les règles des gabarits (`ServiceEquipe._composer`) : ce qui
+    compte ici est ce que le modèle **aurait lu** du projet, et ce que les règles en tirent.
+    """
+
+    name = "compositeur-qui-note"
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
+        self.prompts.append(prompt)
+        raise RuntimeError("aucune composition dans ce test")
+
+
+def _equipe(projets: ServiceProjets, tmp_path: Path, compositeur: ModelProvider) -> ServiceEquipe:
+    """Le service d'équipe du fil, sur des gabarits jetables — sans playbook à rédiger."""
+    racine = tmp_path / "core"
+    gabarits = ConfigurationAgents(
+        agents=AgentStore(racine / "agents"),
+        surcharges=SurchargeStore(racine / "surcharges"),
+        playbooks=PlaybookStore(racine / "playbooks"),
+        permissions=PermissionStore(racine / "permissions"),
+        mcp=McpStore(racine / "mcp"),
+        capacites=CapacityStore(racine / "capacite"),
+    )
+    return ServiceEquipe(
+        projets, gabarits, compositeur=CompositeurEquipe(provider=compositeur), playbooks=False
+    )
+
+
+def test_une_commande_corrigee_gagne_les_pieces_suivantes_le_manifeste_et_l_equipe(
+    projets: ServiceProjets, _maison: Path, tmp_path: Path
+) -> None:
+    """#1443, le chemin du parcours `verify` du 2026-10-07, le modèle doublé.
+
+    La réponse cliquée retenait `python generer_index.py` ; corrigée en mots sur la première
+    pièce, elle ne gagnait que la ligne qui la portait. Le skill de style, écrit **après**,
+    disait « Vérifier le code de generer_index.py… », le manifeste gardait la réponse
+    cliquée à côté de la correction, et l'équipe proposée ensuite en tirait sa raison : les
+    agents auraient reçu des consignes contradictoires, sous un « Correction prise ».
+    """
+    modele = _Modele(comprehension=COMPRIS_HERBIER, correction=CORRIGE_HERBIER)
+    conducteur = _repondeur(projets, modele)._conducteur
+    racine = _maison / "Maestro" / "herbier-des-cimes"
+    projet_id = str(
+        projets.creer("herbier-des-cimes", str(racine), origine=ORIGINE_NOUVEAU)["id"]
+    )
+    fil = [_message(UTILISATEUR, "Un herbier de randonnée, avec un index par région")]
+    ouverture = asyncio.run(conducteur.ouvrir(fil, projet_id=projet_id))
+    assert ouverture.piece is not None and ouverture.piece.chemin == "AGENTS.md"
+    assert f"python {ANCIEN_SCRIPT}" in ouverture.piece.contenu
+    fil.append(
+        _message(
+            NOM_ORCHESTRATION,
+            ouverture.contenu,
+            piece=ouverture.piece,
+            comprehension=ouverture.comprehension,
+        )
+    )
+
+    # La correction, dite sur la première pièce.
+    fil.append(_message(UTILISATEUR, HERBIER))
+    corrigee = asyncio.run(conducteur.corriger(fil, projet_id=projet_id, phrase=HERBIER))
+    assert corrigee.piece is not None and corrigee.piece.chemin == "AGENTS.md"
+    assert corrigee.piece.correction == HERBIER
+    fil.append(
+        _message(
+            NOM_ORCHESTRATION,
+            corrigee.contenu,
+            piece=corrigee.piece,
+            corrections=corrigee.corrections,
+            comprehension=corrigee.comprehension,
+        )
+    )
+    # Le modèle de correction a lu ce que chaque commande fait pour le projet : c'est ce
+    # qui lui permet de dire quelle description la phrase rend fausse.
+    (prompt,) = modele.appels["correction"]
+    assert f"Vérifier le code de {ANCIEN_SCRIPT}" in prompt
+
+    # Chaque pièce acceptée, jusqu'à la dernière : aucune ne nomme plus l'ancien script.
+    ecrites: list[str] = []
+    for _ in range(10):
+        piece = fil[-1].piece
+        if piece is None:
+            break
+        assert ANCIEN_SCRIPT not in piece.contenu, piece.chemin
+        reponse = asyncio.run(conducteur.trancher(fil, piece=piece, decision=DECISION_ECRIRE))
+        assert reponse.piece_ecrite is not None and reponse.piece_ecrite.ecrite, reponse.contenu
+        assert ANCIEN_SCRIPT not in reponse.contenu
+        ecrites.append(reponse.piece_ecrite.chemin)
+        fil.append(
+            _message(
+                NOM_ORCHESTRATION,
+                reponse.contenu,
+                piece=reponse.piece,
+                piece_ecrite=reponse.piece_ecrite,
+            )
+        )
+    style = ".agents/skills/verifier-le-style/SKILL.md"
+    assert "AGENTS.md" in ecrites and style in ecrites
+    for chemin in ecrites:
+        assert ANCIEN_SCRIPT not in (racine / chemin).read_text(encoding="utf-8"), chemin
+    assert POUR_LE_STYLE in (racine / style).read_text(encoding="utf-8")
+    assert POUR_LE_STYLE in (racine / "AGENTS.md").read_text(encoding="utf-8")
+
+    # Le manifeste garde la réponse en vigueur, pas celle qu'elle remplace.
+    manifeste = _manifeste(racine)
+    assert ANCIEN_SCRIPT not in json.dumps(manifeste, ensure_ascii=False)
+    choix = {c["cle"]: c for c in manifeste["source"]["choix"]}
+    assert (choix["construire"]["valeur"], choix["construire"]["parce_que"]) == (INDEX, HERBIER)
+    assert choix["lint"]["pour"] == POUR_LE_STYLE
+
+    # L'équipe proposée ensuite, et sa correction, se tirent de ce que le projet est.
+    compositeur = _CompositeurQuiNote()
+    equipe = _equipe(projets, tmp_path, compositeur)
+    servie = asyncio.run(equipe.proposer(projet_id))
+    with pytest.raises(GenerationIndisponible):
+        asyncio.run(equipe.corriger(projet_id, "Retire le rédacteur des fiches", ()))
+    composition, correction = compositeur.prompts
+    for lu in (composition, correction, json.dumps(servie, ensure_ascii=False)):
+        assert ANCIEN_SCRIPT not in lu
+    assert INDEX in composition and INDEX in correction
+
+
+def test_lire_correction_lit_les_descriptions_que_la_phrase_rend_fausses() -> None:
+    """#1443 : le modèle juge ce que la phrase rend faux ; le code ne croit rien sans le relire.
+
+    Une description ne vaut que pour une commande — seule une commande dit ce qu'elle fait
+    pour le projet —, tient sur une ligne, et la dernière d'un même sujet l'emporte.
+    """
+    texte = json.dumps(
+        {
+            "comprise": True,
+            "corrections": [{"cle": "construire", "valeur": INDEX}],
+            "descriptions": [
+                {"cle": "lint", "pour": "ancienne réécriture"},
+                {"cle": "vérification", "pour": "Vérifier le code de\nindex_par_region.py"},
+                {"cle": "forge", "pour": "Une forge n'est pas une commande"},
+                {"cle": "tester", "pour": ""},
+                "lint",
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    lue = lire_correction(texte, HERBIER)
+
+    assert lue.descriptions == (Description("lint", "Vérifier le code de index_par_region.py"),)
+    incomprise = json.dumps({"comprise": False, "descriptions": [{"cle": "lint", "pour": "x"}]})
+    assert lire_correction(incomprise, HERBIER).descriptions == ()
+
+
+def test_corriger_les_choix_remplace_la_reponse_la_ou_elle_vit() -> None:
+    """#1443 : la réponse corrigée cède sa valeur et sa cause dans les constats mêmes.
+
+    Ce que la commande fait pour le projet reste, sauf là où la phrase l'a rendu faux —
+    la description réécrite par le modèle vaut aussi pour une commande qu'elle ne corrige
+    pas. « aucun » n'a rien à faire pour le projet ; un sujet tu s'ajoute ; le reste ne
+    bouge pas, dans son ordre.
+    """
+    nature = Choix("nature", "Un herbier de randonnée", deduit=True)
+    construire = Choix(
+        "construire", f"python {ANCIEN_SCRIPT}", parce_que="Réponse cliquée", pour="Régénérer"
+    )
+    lint = Choix("lint", "ruff check .", deduit=True, pour=f"Vérifier {ANCIEN_SCRIPT}")
+    tester = Choix("tester", "pytest", deduit=True, pour="Jouer les tests")
+    corrections = (
+        Choix("construire", INDEX, deduit=True, parce_que=HERBIER),
+        Choix("tester", "aucun", deduit=True, parce_que="pas de tests"),
+        Choix("forge", "GitHub", deduit=True, parce_que="sur GitHub"),
+    )
+
+    corriges = corriger_les_choix(
+        (nature, construire, lint, tester), corrections, (Description("lint", POUR_LE_STYLE),)
+    )
+
+    assert corriges == (
+        nature,
+        Choix("construire", INDEX, deduit=True, parce_que=HERBIER, pour="Régénérer"),
+        replace(lint, pour=POUR_LE_STYLE),
+        Choix("tester", "aucun", deduit=True, parce_que="pas de tests"),
+        Choix("forge", "GitHub", deduit=True, parce_que="sur GitHub"),
+    )
+    assert corriger_les_choix((nature, lint), ()) == (nature, lint)
+
+
+def test_un_manifeste_d_avant_le_correctif_rend_la_reponse_en_vigueur(tmp_path: Path) -> None:
+    """#1443 : le manifeste du parcours gardait la réponse cliquée à côté de sa correction.
+
+    L'équipe d'un projet encore vide se compose sur ce qu'il relit (`choix_declares`) : les
+    corrections **dites** qu'il garde y sont appliquées. Une commande que Maestro a proposée
+    après un run (#1381) n'est pas une réponse, et n'y entre pas.
+    """
+    racine = tmp_path / "herbier"
+    racine.mkdir()
+    acquis = [
+        Choix("nature", "Un herbier de randonnée", deduit=True),
+        Choix("construire", f"python {ANCIEN_SCRIPT}", deduit=True, pour="Régénérer l'index"),
+        Choix("tester", "python -m pytest", deduit=True, pour="Jouer les tests"),
+    ]
+    source = source_manifeste_des_choix("prj-herbier", acquis)
+    agents = Fichier(chemin="AGENTS.md", role="instructions", portee="fichier", contenu="# A\n")
+    dite = CorrectionPrise("construire", INDEX, HERBIER, "2026-10-07T09:36:25+00:00")
+    proposee = CorrectionPrise.lue(
+        Commande(usage="tester", commande="python -m unittest", chemin="README.md"),
+        "2026-10-07T10:00:00+00:00",
+    )
+    poser_piece(racine, agents, source=source, corrections=(dite, proposee))
+    assert {c["cle"]: c["valeur"] for c in _manifeste(racine)["source"]["choix"]}[
+        "construire"
+    ] == f"python {ANCIEN_SCRIPT}"
+
+    relus = {c.cle: c for c in choix_declares(racine)}
+
+    assert (relus["construire"].valeur, relus["construire"].parce_que) == (INDEX, HERBIER)
+    assert relus["construire"].pour == "Régénérer l'index"
+    assert relus["tester"].valeur == "python -m pytest"

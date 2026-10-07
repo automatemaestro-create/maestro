@@ -52,6 +52,28 @@ commande dite par celle que le projet déclare. Entre une correction du manifest
 du fil, **la plus récente l'emporte** (`retenir`) : une conversation plus ancienne,
 reprise, ne défait pas ce qu'une plus récente a écrit.
 
+## Une correction gagne tout ce qui dérive de la réponse corrigée (#1443)
+
+Sur un projet **décrit**, une réponse n'est pas qu'une commande : c'est un constat du
+questionnaire, que le manifeste garde (`source.choix`) et dont l'équipe se compose, et
+ce que chaque commande fait pour le projet (`Choix.pour`, #1350) a été écrit par le
+modèle **avant** la correction. Vu sur la vraie stack (parcours `verify` du
+2026-10-07) : `python generer_index.py`, corrigée en `python index_par_region.py
+fiches` sur la première pièce, ne gagnait que la ligne qui la portait — le skill de
+style écrit ensuite disait « Vérifier le code de generer_index.py… », le manifeste
+gardait la réponse cliquée, et l'équipe en tirait sa raison.
+
+Deux moitiés, et le partage est celui de tout le module :
+
+- **le modèle juge** ce que la phrase rend faux : il lit ce que chaque commande fait
+  pour le projet (`constats_en_texte`) et réécrit les seules descriptions qu'elle
+  falsifie (`CorrectionLue.descriptions`) — jamais un remplacement de texte par le
+  code, qui reconnaîtrait un nom de fichier à sa graphie ;
+- **le code applique** la correction au constat même (`corriger_les_choix`) : la
+  réponse remplacée cède sa valeur et sa cause, garde ce qu'elle faisait pour le projet
+  si la phrase ne le change pas, et c'est ce constat-là qui voyage sur le fil, que le
+  manifeste garde et dont l'équipe se compose.
+
 ## Ce que Maestro propose n'est pas ce qu'on lui a dit (#1381)
 
 Quand une commande de l'outillage échoue à la revue d'après un run, Maestro lit le projet
@@ -101,18 +123,32 @@ PHRASE_MAX = VALEUR_MAX
 
 
 @dataclass(frozen=True)
+class Description:
+    """Ce qu'une commande fait pour le projet, **réécrit** : une correction l'a rendu faux (#1443).
+
+    `cle` est l'usage de la commande, `pour` sa description neuve — la forme de
+    `Choix.pour` (#1350), une phrase qui finit dans la description d'un skill.
+    """
+
+    cle: str
+    pour: str
+
+
+@dataclass(frozen=True)
 class CorrectionLue:
     """Ce que le modèle a compris d'une correction, **lu et vérifié**.
 
     `comprise` dit si la phrase a pu être traduite en sujets de l'outillage ;
     `corrections` porte ce qu'elle change, chaque sujet en `Choix` **déduit** dont la
-    cause (`parce_que`) est la phrase de la personne ; `message` est ce que le modèle a à
-    lui dire — ce qu'il n'a pas compris, ou ce qu'il retient.
+    cause (`parce_que`) est la phrase de la personne ; `descriptions` (#1443), ce que les
+    commandes font pour le projet là où la phrase l'a rendu faux ; `message` est ce que
+    le modèle a à lui dire — ce qu'il n'a pas compris, ou ce qu'il retient.
     """
 
     comprise: bool
     corrections: tuple[Choix, ...] = ()
     message: str = ""
+    descriptions: tuple[Description, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -261,10 +297,14 @@ def lire_correction(texte: str, phrase: str) -> CorrectionLue:
     """Ce que le modèle a compris de `phrase`, lu dans `texte` — la frontière avec le fil.
 
     Le contrat du modèle : un objet JSON `{"comprise": bool, "corrections": [{"cle",
-    "valeur"}], "message": str}`. Une correction sur un sujet **hors du schéma** est
-    écartée ; la dernière d'un même sujet l'emporte. `comprise: false` rend une lecture
-    **sans** correction, quoi que le modèle ait mis à côté : ce qu'il dit ne pas avoir
-    compris, il ne l'a pas compris à moitié.
+    "valeur"}], "descriptions": [{"cle", "pour"}], "message": str}`. Une correction sur
+    un sujet **hors du schéma** est écartée ; la dernière d'un même sujet l'emporte.
+    `comprise: false` rend une lecture **sans** correction, quoi que le modèle ait mis à
+    côté : ce qu'il dit ne pas avoir compris, il ne l'a pas compris à moitié.
+
+    Une description réécrite (#1443) ne vaut que pour une **commande** — seule une
+    commande dit ce qu'elle fait pour le projet —, tient sur une ligne et elle est bornée
+    comme celles du questionnaire (`POUR_MAX`) : elle finit dans un frontmatter.
 
     La **phrase** est posée ici, par le code, comme cause de chaque correction : elle
     est la justification que le ticket demande, jamais une paraphrase du modèle.
@@ -277,16 +317,29 @@ def lire_correction(texte: str, phrase: str) -> CorrectionLue:
         return CorrectionLue(comprise=False, message=message)
     cause = _une_ligne(phrase, PHRASE_MAX)
     lues: dict[str, Choix] = {}
-    brutes = objet.get("corrections")
-    for entree in brutes if isinstance(brutes, list) else ():
-        if not isinstance(entree, dict):
-            continue
+    for entree in _entrees(objet.get("corrections")):
         cle = _cle(entree.get("cle"))
         valeur = _une_ligne(entree.get("valeur") or "", VALEUR_MAX)
         if cle not in SUJETS or not valeur:
             continue
         lues[cle] = Choix(cle=cle, valeur=valeur, deduit=True, parce_que=cause)
-    return CorrectionLue(comprise=True, corrections=tuple(lues.values()), message=message)
+    descriptions: dict[str, Description] = {}
+    for entree in _entrees(objet.get("descriptions")):
+        cle = _cle(entree.get("cle"))
+        pour = _une_ligne(entree.get("pour") or "", POUR_MAX)
+        if cle in USAGES and pour:
+            descriptions[cle] = Description(cle=cle, pour=pour)
+    return CorrectionLue(
+        comprise=True,
+        corrections=tuple(lues.values()),
+        message=message,
+        descriptions=tuple(descriptions.values()),
+    )
+
+
+def _entrees(brutes: Any) -> tuple[Mapping[str, Any], ...]:
+    """Les objets d'une liste que le modèle a rendue — rien de ce qui n'en est pas un."""
+    return tuple(e for e in (brutes if isinstance(brutes, list) else ()) if isinstance(e, Mapping))
 
 
 def corrections_en_texte(corrections: Sequence[CorrectionPrise]) -> str:
@@ -314,12 +367,17 @@ def constats_en_texte(constats: Constats) -> str:
     Seuls les sujets qu'une correction peut changer y figurent, avec leur valeur et d'où
     elle vient : le modèle ne peut corriger que ce qu'il voit, et lui montrer une part de
     langage l'inviterait à la « corriger ».
+
+    Une commande dit aussi ce qu'elle fait pour le projet (`Commande.pour`, #1350) : c'est
+    ce que le modèle réécrit quand la phrase le rend faux (#1443), et il ne peut juger
+    qu'une description qu'il lit.
     """
     lignes: list[str] = []
     for usage in USAGES:
         commande = constats.commande_de(usage)
         if commande is not None:
-            lignes.append(f'- clé "{usage}" ({SUJETS[usage]}) : {commande.commande}')
+            pour = f" — pour : {commande.pour}" if commande.pour else ""
+            lignes.append(f'- clé "{usage}" ({SUJETS[usage]}) : {commande.commande}{pour}')
     if constats.gestionnaires:
         noms = ", ".join(g.nom for g in constats.gestionnaires)
         lignes.append(f'- clé "gestionnaire" ({SUJETS["gestionnaire"]}) : {noms}')
@@ -358,6 +416,53 @@ def corriger(constats: Constats, corrections: Sequence[Choix]) -> Constats:
         forge=_forge_corrigee(constats, derniers),
         ci=_ci_corrigee(constats, derniers),
     )
+
+
+def corriger_les_choix(
+    choix: Sequence[Choix],
+    corrections: Sequence[Choix],
+    descriptions: Sequence[Description] = (),
+) -> tuple[Choix, ...]:
+    """Les constats d'un projet **décrit**, chaque réponse corrigée remplacée où elle vit (#1443).
+
+    Le pendant de `corriger` pour le questionnaire : `corriger` change les `Constats` que
+    la rédaction lit, ceci change les constats **acquis** — ce que le fil relit au tour
+    suivant, ce que le manifeste garde (`source.choix`) et ce dont l'équipe se compose.
+    Une réponse corrigée qui y resterait à côté de sa correction serait relue par tout ce
+    qui en dérive (voir le module).
+
+    Chaque sujet corrigé prend la valeur dite et la phrase pour cause. Il garde ce qu'il
+    faisait pour le projet (`pour`, #1350) — « le générateur s'appellera autrement » ne
+    change pas ce que fait la construction —, sauf si la phrase l'a rendu faux : c'est
+    alors la description que le modèle a réécrite (`descriptions`), qui vaut aussi pour
+    une commande que la phrase ne corrige pas. « aucun » n'a rien à faire pour le
+    projet : sa description tombe. Un sujet que le questionnaire avait tu s'ajoute ;
+    l'ordre des autres est gardé, celui dans lequel le manifeste les écrit. La dernière
+    correction d'un sujet l'emporte, comme dans `corriger`.
+    """
+    derniers: dict[str, Choix] = {}
+    for dit in corrections:
+        if dit.cle and dit.valeur:
+            derniers[dit.cle] = dit
+    pours = {d.cle: d.pour for d in descriptions if d.cle in USAGES and d.pour}
+    connus = {c.cle for c in choix}
+    tus = (Choix(cle=cle, valeur=dit.valeur, deduit=True) for cle, dit in derniers.items())
+    return tuple(
+        _choix_corrige(choisi, derniers.get(choisi.cle), pours.get(choisi.cle, ""))
+        for choisi in (*choix, *(c for c in tus if c.cle not in connus))
+    )
+
+
+def _choix_corrige(choisi: Choix, dit: Choix | None, pour: str) -> Choix:
+    """Un constat, sa correction et sa description réécrite appliquées — tel quel sans elles."""
+    if dit is not None:
+        choisi = replace(choisi, valeur=dit.valeur, deduit=True, parce_que=dit.parce_que)
+    if choisi.cle not in USAGES:
+        return choisi
+    if _est_aucun(choisi.valeur):
+        return replace(choisi, pour="")
+    garde = (dit.pour if dit is not None else "") or choisi.pour
+    return replace(choisi, pour=pour or garde)
 
 
 def _extrait(choisi: Choix) -> str:

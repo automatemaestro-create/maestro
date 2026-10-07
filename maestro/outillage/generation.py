@@ -105,6 +105,7 @@ from maestro.outillage.correction import (
     CLES_CORRIGEABLES,
     CorrectionPrise,
     corrections_lues,
+    corriger_les_choix,
     retenir,
 )
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
@@ -466,8 +467,17 @@ def choix_declares(cible: Path | str) -> tuple[Choix, ...]:
     L'équipe d'un projet encore vide s'y compose, plutôt que sur un disque qui ne porte
     que l'outillage de Maestro. Lecture pure, comme `corrections_declarees` ; rien n'y est
     cru sans être relu (`choix_du_manifeste`).
+
+    Les corrections que le manifeste garde y sont appliquées (#1443) : un manifeste écrit
+    avant elles garde la réponse corrigée à côté de sa correction, et l'équipe en tirait
+    sa raison (« ce rôle écrit generer_index.py »). Seules celles **dites** : une commande
+    que Maestro a proposée après un run (#1381) n'est pas une réponse, et un projet qui a
+    eu un run a ses fichiers — son équipe se compose sur sa lecture.
     """
-    return choix_du_manifeste(_lire_manifeste(Path(cible)).source)
+    etat = _lire_manifeste(Path(cible))
+    dites = tuple(c.en_choix() for c in etat.corrections if not c.proposee)
+    choix = choix_du_manifeste(etat.source)
+    return corriger_les_choix(choix, dites) if choix else ()
 
 
 def _refus_de_version(

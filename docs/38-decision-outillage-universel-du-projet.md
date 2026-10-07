@@ -450,6 +450,17 @@ Mesuré sur le banc (S9) : sans elle, l'équipe se composait sur l'analyse d'un 
 que l'outillage de Maestro, et ses raisons valaient pour n'importe quel dépôt. Ce qui s'y relit est
 lu comme ce que le modèle rend (sujets du schéma, une ligne, bornée) : le manifeste vit dans le projet.
 
+Elle garde la réponse **en vigueur**, jamais celle qu'une correction dite a remplacée (#1443) : la
+réponse corrigée cède sa valeur et sa cause (la phrase) dans les constats mêmes
+(`corriger_les_choix`), et ce que chaque commande fait pour le projet (`pour`) y est réécrit là où la
+phrase l'a rendu faux — c'est le modèle de correction qui en juge, il lit ces descriptions. Vu sur la
+vraie stack (parcours du 2026-10-07) : `python generer_index.py`, corrigée en `python
+index_par_region.py fiches` sur la première pièce, restait ici « Réponse cliquée » à côté de
+`corrections` ; le skill de style écrit ensuite disait « Vérifier le code de generer_index.py », et
+l'équipe en tirait sa raison. Un manifeste écrit avant se relit corrections dites appliquées. Une
+commande **proposée** par Maestro après un run (#1381) n'est pas une réponse : elle n'y entre pas, et
+seul `resume` la tait (#1442).
+
 Trois propriétés à ne pas défaire :
 
 - **Une entrée par fichier, jamais par skill.** « Régénérer sans écraser » se décide fichier par
