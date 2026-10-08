@@ -106,6 +106,20 @@ livrable à son rôle producteur, preuves de la QA à l'appui
 (`maestro.engine.loop`). La QA évalue, elle ne réécrit toujours pas le livrable
 d'un autre rôle : elle le **renvoie**.
 
+## Le brief du run, à côté de la tâche (#1402)
+
+Le vérificateur lit le **brief approuvé du run** quand il y en a un — le même cadre
+que l'agent a reçu dans son message (`Brief.cadre`) : l'objectif, le
+hors-périmètre, les contraintes, les critères d'acceptation du run. Sans lui, il
+« déduisait » les critères qu'une tâche n'écrivait pas de sa seule description, et
+l'agent d'une tâche de vérification « reconstituait » ceux du run (p4, run
+`ad4d2ce8c3bf`). Le brief est un **cadre**, pas un contrat : les contrôles restent
+ceux des critères de la tâche, et c'est le prompt système qui le dit. Un critère du
+run que la tâche ne prend pas en charge ne devient pas un contrôle de cette tâche —
+on la ferait échouer pour le travail d'une autre. Il entre dans chacun des quatre
+prompts (établir, relire, réécrire, contre-expertiser) par le bloc de la tâche, entre
+balises comme le reste : c'est une donnée (ENF-13).
+
 ## Ce que ce module ne fait pas
 
 Il ne touche ni à l'arbitrage des actes (un contrôle hors portée n'est pas joué,
@@ -123,7 +137,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from maestro.orchestrator.schema import Task
+from maestro.orchestrator.schema import Brief, Task
 from maestro.portee import PorteeProjet
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import ProducedFile
@@ -460,6 +474,13 @@ Traduis chaque critère de réussite de la tâche en UN contrôle. Si la tâche 
 pas de critères, déduis-les de son objectif et de son format de sortie. Au moins un \
 contrôle, et pas un de plus que ce que la tâche demande.
 
+Quand le brief approuvé du run t'est donné, c'est le cadre que la personne a validé \
+pour tout le run : son objectif, ce qui en est exclu, ses critères d'acceptation. \
+Sers-t'en pour comprendre la tâche, et pour déduire les critères qu'elle n'écrit \
+pas ; il ne remplace pas son contrat — ne contrôle pas sur cette tâche un critère du \
+run qu'elle ne prend pas en charge. Une tâche qui demande de vérifier les critères du \
+run les prend en charge : ce sont alors ceux du brief.
+
 - Un critère qui se constate en exécutant quelque chose devient une commande bash, \
 jouée dans l'espace de travail de l'agent, depuis sa racine. Son code de retour \
 tranche : 0, le critère tient ; autre chose, il ne tient pas. La commande CONSTATE et \
@@ -569,6 +590,7 @@ class VerificateurTaches:
         modele: str,
         etablis: tuple[Controle, ...] | None = None,
         amont: Sequence[Amont] = (),
+        brief: Brief | None = None,
     ) -> tuple[tuple[Controle, ...], Verdict]:
         """Les contrôles de la tâche et le verdict de cette livraison.
 
@@ -576,6 +598,10 @@ class VerificateurTaches:
         quels, et le modèle n'est rappelé que pour les **lectures** (ou les renvois
         d'une tâche qui en a en amont). `None` : première livraison, le modèle les
         établit et juge ses lectures dans le même appel.
+
+        `brief` (#1402) : le brief approuvé du run, lu à côté de la tâche dans
+        chaque prompt — le cadre, jamais le contrat. `None` : un run sans brief, et
+        les prompts sont ceux d'avant, au caractère près.
 
         Ne lève que ce que l'appel au fournisseur lève, et sous deux formes
         seulement : le **plafond de dépense**, tel quel — une borne, que
@@ -586,18 +612,23 @@ class VerificateurTaches:
         """
         modele = self._modele or modele
         if etablis is None:
-            texte = await self._consulter(_prompt_etablir(tache, livraison, amont), modele)
+            texte = await self._consulter(
+                _prompt_etablir(tache, livraison, amont, brief), modele
+            )
             controles, lectures, renvois, empechement = _lire_etablissement(texte, amont)
             if empechement:
                 return (), Verdict(empechement=empechement)
-            controles = await self._rendre_jouables(tache, livraison, controles, modele)
+            controles = await self._rendre_jouables(
+                tache, livraison, controles, modele, brief
+            )
         else:
             controles = etablis
             lectures, renvois = {}, ()
             a_relire = [i for i, c in enumerate(controles) if not c.joue]
             if a_relire or amont:
                 texte = await self._consulter(
-                    _prompt_relire(tache, livraison, controles, a_relire, amont), modele
+                    _prompt_relire(tache, livraison, controles, a_relire, amont, brief),
+                    modele,
                 )
                 lectures, renvois = _lire_relecture(texte, controles, amont)
         constats: list[Constat] = []
@@ -617,7 +648,7 @@ class VerificateurTaches:
         # rouge est relue avec le compte-rendu de l'agent, qui a pu dire, preuve à
         # l'appui, en quoi elle se trompe (voir `Recette.retour`).
         controles = await self._contre_expertiser(
-            tache, livraison, controles, constats, modele
+            tache, livraison, controles, constats, modele, brief
         )
         return controles, Verdict(constats=tuple(constats), renvois=renvois)
 
@@ -644,6 +675,7 @@ class VerificateurTaches:
         controles: tuple[Controle, ...],
         constats: list[Constat],
         modele: str,
+        brief: Brief | None = None,
     ) -> tuple[Controle, ...]:
         """Un contrôle joué qui ne tient pas : le défaut est-il au livrable, ou au contrôle ?
 
@@ -674,7 +706,8 @@ class VerificateurTaches:
         if not fautifs or livraison.espace is None:
             return controles
         texte = await self._consulter(
-            _prompt_contre_expertise(tache, livraison, controles, constats, fautifs), modele
+            _prompt_contre_expertise(tache, livraison, controles, constats, fautifs, brief),
+            modele,
         )
         revises = _lire_reecriture(texte, controles, dict.fromkeys(fautifs, ""))
         if not revises:
@@ -693,6 +726,7 @@ class VerificateurTaches:
         livraison: Livraison,
         controles: tuple[Controle, ...],
         modele: str,
+        brief: Brief | None = None,
     ) -> tuple[Controle, ...]:
         """Fait réécrire au vérificateur les commandes que la portée refuse — tant qu'il en gagne.
 
@@ -713,7 +747,9 @@ class VerificateurTaches:
             return controles
         refus = _refus_de_portee(controles, livraison.portee)
         while refus:
-            texte = await self._consulter(_prompt_reecrire(tache, controles, refus), modele)
+            texte = await self._consulter(
+                _prompt_reecrire(tache, controles, refus, brief), modele
+            )
             reecrits = _lire_reecriture(texte, controles, refus)
             if not reecrits:
                 break
@@ -816,7 +852,10 @@ def _hors_portee(controle: Controle, portee: PorteeProjet) -> str:
 
 
 def _prompt_reecrire(
-    tache: Task, controles: Sequence[Controle], refus: Mapping[int, str]
+    tache: Task,
+    controles: Sequence[Controle],
+    refus: Mapping[int, str],
+    brief: Brief | None = None,
 ) -> str:
     """Ce que le vérificateur lit pour réécrire ses commandes refusées."""
     lignes = "\n".join(
@@ -825,7 +864,7 @@ def _prompt_reecrire(
         for rang, motif in refus.items()
     )
     return (
-        f"{_bloc_tache(tache)}\n\n"
+        f"{_bloc_tache(tache, brief)}\n\n"
         "Ces commandes, que tu as écrites pour vérifier cette tâche, ne peuvent pas être "
         "jouées : Maestro n'y lit pas ce qu'elles exécutent, ou elles sortent du dossier. "
         "Réécris CHACUNE pour qu'elle constate la même chose sous une forme jouable, en "
@@ -843,6 +882,7 @@ def _prompt_contre_expertise(
     controles: Sequence[Controle],
     constats: Sequence[Constat],
     fautifs: Sequence[int],
+    brief: Brief | None = None,
 ) -> str:
     """Ce que le vérificateur relit quand une de ses commandes n'a pas tenu."""
     lignes = "\n".join(
@@ -851,7 +891,7 @@ def _prompt_contre_expertise(
         for rang in fautifs
     )
     return (
-        f"{_bloc_tache(tache)}\n\n{_bloc_livraison(livraison)}\n\n"
+        f"{_bloc_tache(tache, brief)}\n\n{_bloc_livraison(livraison)}\n\n"
         "Ces commandes, que tu as écrites pour vérifier cette tâche, n'ont pas tenu. Pour "
         "CHACUNE, juge où est le défaut. Dans le LIVRABLE : la commande constate bien ce "
         "que dit son critère, et c'est le livrable qui ne le tient pas — n'y touche pas. "
@@ -1012,9 +1052,14 @@ def _constat_demarrage(
 # --------------------------------------------------------------------------- #
 
 
-def _prompt_etablir(tache: Task, livraison: Livraison, amont: Sequence[Amont]) -> str:
+def _prompt_etablir(
+    tache: Task,
+    livraison: Livraison,
+    amont: Sequence[Amont],
+    brief: Brief | None = None,
+) -> str:
     """Ce que le vérificateur lit à la première livraison."""
-    lignes = [_bloc_tache(tache), _bloc_livraison(livraison)]
+    lignes = [_bloc_tache(tache, brief), _bloc_livraison(livraison)]
     if livraison.espace is None:
         lignes.append(
             "Ce livrable est un texte : il n'y a aucun espace de travail où jouer une "
@@ -1032,24 +1077,35 @@ def _prompt_relire(
     controles: Sequence[Controle],
     a_relire: Sequence[int],
     amont: Sequence[Amont],
+    brief: Brief | None = None,
 ) -> str:
     """Ce que le vérificateur lit aux livraisons suivantes : seulement ce qui se lit."""
     lectures = "\n".join(
         f"{rang + 1}. « {controles[rang].critere} » — {controles[rang].lecture}"
         for rang in a_relire
     ) or "(aucune)"
-    lignes = [_bloc_tache(tache), _bloc_livraison(livraison)]
+    lignes = [_bloc_tache(tache, brief), _bloc_livraison(livraison)]
     if amont:
         lignes.append(_FORME_RENVOIS.replace("{amont}", _bloc_amont(amont)))
     lignes.append(_FORME_RELIRE.format(lectures=lectures))
     return "\n\n".join(lignes)
 
 
-def _bloc_tache(tache: Task) -> str:
-    return (
+def _bloc_tache(tache: Task, brief: Brief | None = None) -> str:
+    """La tâche, contrat de la vérification — suivie du brief du run, son cadre (#1402)."""
+    bloc = (
         "La tâche, telle que le plan l'a confiée à l'agent :\n"
         f"<tache>\nTitre : {tache.titre}\n\n{tache.description}\n\n"
         f"Format de sortie attendu : {tache.format_sortie}\n</tache>"
+    )
+    return bloc if brief is None else f"{bloc}\n\n{_bloc_brief(brief)}"
+
+
+def _bloc_brief(brief: Brief) -> str:
+    """Le brief approuvé du run, tel que l'agent l'a lu dans son message (`Brief.cadre`)."""
+    return (
+        "Le brief approuvé du run dont cette tâche fait partie — son cadre, pas son "
+        f"contrat :\n<brief>\n{brief.cadre()}\n</brief>"
     )
 
 
@@ -1360,6 +1416,9 @@ class Recette:
     serait refermé. Chaque panne est consignée par `on_verdict`, comme une
     vérification impossible ; la dernière lève `LivraisonNonVerifiee`, qui porte
     la livraison.
+
+    `brief` (#1402) est le brief approuvé du run, que chaque vérification lit à côté
+    de la tâche — le même que l'agent a reçu. `None` : un run sans brief.
     """
 
     verificateur: VerificateurTaches
@@ -1369,6 +1428,7 @@ class Recette:
     portee_de: Callable[[Path], PorteeProjet] | None = None
     on_verdict: Callable[[Verdict, int], None] | None = None
     relance: PolitiqueRelance | None = None
+    brief: Brief | None = None
     controles: tuple[Controle, ...] | None = None
     livraisons: int = 0
     meilleur: int = -1
@@ -1448,6 +1508,7 @@ class Recette:
                     modele=self.modele,
                     etablis=self.controles,
                     amont=self.amont,
+                    brief=self.brief,
                 )
             except VerificateurEnPanne as panne:
                 constat = f"vérificateur en panne (essai {essai}/{essais}) — {panne}"

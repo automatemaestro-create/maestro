@@ -35,8 +35,8 @@ from pathlib import Path
 import pytest
 from celery.contrib.testing.worker import start_worker, test_worker_started
 
-from maestro.engine import OrchestrationEngine, PolitiqueRelance, TaskResult
-from maestro.orchestrator import Orchestrator
+from maestro.engine import MODE_BRIEF_AUTO, OrchestrationEngine, PolitiqueRelance, TaskResult
+from maestro.orchestrator import BRIEF_SYSTEM_PROMPT, Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider
 from maestro.queue import NOM_TACHE_EXECUTER, CeleryExecutor, create_app
@@ -494,6 +494,64 @@ def test_boucle_complete_via_la_file(app):
     assert all(
         rec.statut == "terminee" for rec in journal.records if rec.etape != "cadence"
     )
+
+
+class CadrageProvider(ModelProvider):
+    """Planificateur factice qui rédige aussi le brief : le brief à son étape, le plan sinon."""
+
+    name = "cadrage"
+
+    def __init__(self, brief: dict[str, object]) -> None:
+        self._brief = brief
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        if system_prompt == BRIEF_SYSTEM_PROMPT:
+            return json.dumps(self._brief, ensure_ascii=False)
+        return _plan_json()
+
+
+def test_le_brief_approuve_voyage_jusqu_aux_workers(app):
+    """#1402 : chaque tâche reçoit le brief du run, même exécutée sur un worker distant.
+
+    Le worker ne partage rien avec l'orchestrateur : le brief voyage avec chaque
+    message, comme le tableau noir. Le prompt de chaque tâche consommée le porte,
+    et l'entrée que l'orchestrateur consigne au journal aussi.
+    """
+    exec_provider = RecordingProvider()
+    configurer_worker(provider_factory=lambda: exec_provider)
+    planner = CadrageProvider(
+        {
+            "objectif": "Une API de gestion de tâches",
+            "perimetre": ["CRUD des tâches"],
+            "hors_perimetre": ["Authentification"],
+            "criteres_acceptation": ["Une tâche se crée et se relit"],
+        }
+    )
+    engine = OrchestrationEngine(
+        planner,
+        Orchestrator(planner, model="claude-opus-4-8"),
+        executor=CeleryExecutor(app, timeout_s=30),
+    )
+    journal = RunJournal(run_id="run-brief")
+
+    with start_worker(app, pool="solo", perform_ping_check=False):
+        report = asyncio.run(
+            engine.run("Créer une API", journal=journal, mode_brief=MODE_BRIEF_AUTO)
+        )
+
+    assert all(r.ok for r in report.resultats)
+    assert len(exec_provider.calls) == 3
+    for appel in exec_provider.calls:
+        prompt = str(appel["prompt"])
+        assert "Brief approuvé du run" in prompt
+        assert "Hors périmètre :\n- Authentification" in prompt
+        assert "- Une tâche se crée et se relit" in prompt
+    for etape in ("schema-bdd", "api-taches", "tests-api"):
+        entree = next(r.entree for r in journal.records if r.etape == etape)
+        assert "Brief approuvé du run" in entree
 
 
 def test_une_dependance_en_echec_ne_met_jamais_l_aval_en_file(app):

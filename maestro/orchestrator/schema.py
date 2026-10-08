@@ -399,6 +399,30 @@ class Brief:
             lignes.append("")
         return "\n".join(lignes).rstrip() + "\n"
 
+    def cadre(self) -> str:
+        """Le cadre que chaque tâche du run reçoit à côté de sa description (#1402).
+
+        Pas la synthèse entière : ce qu'une tâche doit savoir du run auquel elle
+        contribue — à quoi il sert (l'objectif), ce qu'il ne fait pas (le
+        hors-périmètre), sous quelles contraintes, et à quoi on saura qu'il est
+        fait (ses critères d'acceptation). Le périmètre, le plan l'a déjà découpé
+        en tâches, et hypothèses et questions sont la matière de l'approbation,
+        pas celle du travail.
+
+        Rendu **ici**, pour la raison de `synthese` : l'agent qui réalise la tâche
+        et le vérificateur qui juge sa livraison lisent le même cadre, au mot près.
+        Un hors-périmètre vide s'affiche « — » — c'est une information ; des
+        contraintes absentes ne s'affichent pas, la plupart des briefs n'en ont pas.
+        """
+        lignes = [f"Objectif : {self.objectif}", "", "Hors périmètre :"]
+        lignes.extend(f"- {entree}" for entree in self.hors_perimetre or ("—",))
+        if self.contraintes:
+            lignes += ["", "Contraintes :"]
+            lignes.extend(f"- {entree}" for entree in self.contraintes)
+        lignes += ["", "Critères d'acceptation du run :"]
+        lignes.extend(f"- {entree}" for entree in self.criteres_acceptation or ("—",))
+        return "\n".join(lignes)
+
 
 @dataclass(frozen=True)
 class Clarification:

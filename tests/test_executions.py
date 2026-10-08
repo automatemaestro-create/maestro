@@ -165,9 +165,11 @@ class MoteurDouble:
         porte: object = None,
         contexte_sources: str = "",
         reprise: object = None,
+        brief_approuve: object = None,
     ) -> RunReport:
         # `contexte_sources` (#1172) : les sources lues au lancement, que le vrai
-        # moteur donne à lire au brief.
+        # moteur donne à lire au brief. `brief_approuve` (#1402) : celui d'un run
+        # qui ne recadre pas, que le vrai moteur donne à chaque tâche.
         # `ticket` (#187), `projet_id` (#222), `mode_brief` (#320) et `porte` (#477)
         # font partie de la signature du vrai moteur : le service les lui passe pour
         # qu'il en dote chaque tâche du plan, pour lui dire sous quel régime de brief

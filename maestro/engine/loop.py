@@ -896,6 +896,7 @@ class OrchestrationEngine:
         porte: PorteExecution | None = None,
         contexte_sources: str = "",
         reprise: EtatAcquis | None = None,
+        brief_approuve: Brief | None = None,
     ) -> RunReport:
         """Exécute la boucle complète pour `objective` et renvoie l'agrégat.
 
@@ -993,6 +994,17 @@ class OrchestrationEngine:
         elle l'est, et **oublie** l'état d'un run dont toutes les tâches ont réussi :
         il n'a plus rien à reprendre. Une écriture refusée ne fait jamais échouer le
         run (`_range`).
+
+        **Chaque tâche reçoit le brief approuvé du run** (#1402) : le brief retenu
+        par le cadrage est dit à l'exécuteur avant la première tâche
+        (`TaskExecutor.retient_le_brief`), qui le met dans le message de chaque
+        tâche et le fait lire au vérificateur de sa livraison. `brief_approuve` est
+        celui d'un run qui ne **refait pas** son cadrage — repris sur son plan
+        (`reprise`) ou relancé sur son brief (#349, en mode `sans`) : la Control
+        Tower le tient et le confie avec l'ordre du run. Un cadrage refait
+        l'emporte — le brief qu'un run vient de rédiger est le sien. Ni l'un ni
+        l'autre (un run `sans` lancé sur un objectif) : les tâches n'ont que leur
+        description, comme avant.
         """
         journal = journal if journal is not None else RunJournal()
         mode_brief = mode_brief_valide(mode_brief)
@@ -1019,6 +1031,11 @@ class OrchestrationEngine:
                 projet_id,
                 contexte_sources=contexte_sources if brief is None else "",
             )
+        # Le brief sous lequel les tâches de ce run travaillent (#1402) : celui que
+        # le cadrage vient de retenir, sinon celui que le run a reçu sans recadrer.
+        cadre = brief if brief is not None else brief_approuve
+        if cadre is not None:
+            self._executor.retient_le_brief(journal.run_id, cadre)
         if ticket is not None:
             tasks = [
                 task
