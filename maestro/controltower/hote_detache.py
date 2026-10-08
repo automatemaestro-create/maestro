@@ -165,7 +165,7 @@ import os
 import signal
 import subprocess
 import sys
-import tempfile
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -192,6 +192,7 @@ from maestro.controltower.state import (
     ORDRE_PAUSE,
     ORDRES_PAUSE,
 )
+from maestro.emplacements import jetable, se_nommer_occupant
 from maestro.engine.acquis import EtatAcquis, MagasinAcquis
 from maestro.engine.pause import PorteExecution
 from maestro.references import ReferenceTicket
@@ -638,7 +639,15 @@ class HoteRunDetache(HoteRun):
         emplacements (docs/10 §8.5) — ce qu'on invite à lire va sous `.maestro/`,
         ce que personne ne lit reste au répertoire temporaire. Le journal y **reste**
         quand même après un démarrage réussi : c'est la seule trace d'un run qui
-        mourra plus tard, et le système d'exploitation la ramassera.
+        mourra plus tard.
+
+        « Le système d'exploitation la ramassera », disait cette phrase jusqu'à
+        #1455 : Windows ne le fait pas, et le poste de référence en portait 436.
+        L'atelier naît donc sous la racine jetable (`maestro.emplacements`), **sans**
+        marque de pid — son occupant n'est pas ce process mais le fils qui n'existe
+        pas encore, et qui s'y nomme sitôt lancé (`se_nommer_occupant`). Le
+        ramassage le conserve tant que ce fils vit, et le laisse ensuite à l'âge :
+        jamais plus tôt, le temps que `ramasser` en ait lu la cause.
 
         Un atelier **déjà là** est vidé de son témoin, et ce n'est pas du ménage :
         un témoin périmé ferait dire « démarré » d'un process qui n'a pas encore
@@ -648,7 +657,7 @@ class HoteRunDetache(HoteRun):
         run.
         """
         if self._atelier is None:
-            return Path(tempfile.mkdtemp(prefix=f"maestro-hote-{run_id}-"))
+            return jetable(f"maestro-hote-{run_id}-", marque=False)
         atelier = self._atelier / run_id
         atelier.mkdir(parents=True, exist_ok=True)
         (atelier / FICHIER_PRET).unlink(missing_ok=True)
@@ -940,7 +949,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     from maestro.engine.cli import activer_publication_evenements, console_tolerante
     from maestro.engine.runner import run_borne
     from maestro.orchestrator.errors import OrchestratorError
-    from maestro.sandbox.ramassage import ramasser
     from maestro.telemetry import activer_export_langfuse, redact_secrets
 
     console_tolerante()
@@ -952,20 +960,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_USAGE, file=sys.stderr)
         return 2
     atelier = Path(args[0])
+    # L'occupant de l'atelier se nomme (#1455) : l'API l'a ouvert avant que ce
+    # process n'existe, et c'est ce témoin qui le garde du ramassage tant qu'il vit.
+    se_nommer_occupant(atelier)
     try:
         ordre = lire_ordre(atelier)
     except (OSError, ValueError) as exc:
         print(f"Ordre de run illisible : {exc}", file=sys.stderr)
         return 2
 
-    # Le ménage d'avant le travail (#992) : ce process va créer un espace de
-    # travail par tâche, et c'est le seul moment où l'on sait qu'aucun des siens
-    # n'existe encore. Un process tué ne passe jamais par son `finally` — la
-    # revue #568 en comptait 76 dépouilles le 2026-09-20 —, et personne d'autre
-    # ne repasse derrière. Best-effort, muet quand il n'y a rien à retirer, et
-    # jamais un motif d'échec : le run part dans tous les cas.
-    if passage := ramasser():
-        print(passage.resume(), file=sys.stderr)
+    # Le ménage (#992, #1455) : un process tué ne passe jamais par son `finally`
+    # — la revue #568 en comptait 76 dépouilles le 2026-09-20, le poste de
+    # référence 1 286 jetables le 2026-10-08 —, et personne d'autre ne repasse
+    # derrière. **En arrière-plan** : un premier passage sur un poste chargé
+    # retire des arbres entiers (`node_modules` compris), et le run n'a pas à
+    # l'attendre — ce que ce process crée porte son pid, vivant, donc n'est
+    # jamais candidat. Best-effort, muet quand il n'y a rien à retirer, et jamais
+    # un motif d'échec : le run part dans tous les cas.
+    threading.Thread(target=_menage, name="ramassage", daemon=True).start()
 
     # Export Langfuse (#81) : purement configuratif, no-op sans clés — même bascule
     # que pour un run CLI, pour qu'un run détaché ne perde pas sa trace.
@@ -1371,6 +1383,21 @@ def _annulation_vue(guet: asyncio.Task[bool]) -> bool:
     if guet.cancelled() or guet.exception() is not None:
         return False
     return guet.result()
+
+
+def _menage() -> None:
+    """Le ramassage du démarrage, hors du fil du run : une ligne au journal s'il a agi.
+
+    `ramasser` ne lève pas ; le filet est là pour qu'un défaut futur ne tue pas
+    en silence un fil dont personne n'attend rien.
+    """
+    from maestro.sandbox.ramassage import ramasser
+
+    try:
+        if passage := ramasser():
+            print(passage.resume(), file=sys.stderr, flush=True)
+    except Exception as exc:  # pragma: no cover - filet d'un best-effort
+        print(f"Ramassage des espaces interrompu : {exc}", file=sys.stderr, flush=True)
 
 
 def lire_ordre(atelier: Path) -> OrdreRun:

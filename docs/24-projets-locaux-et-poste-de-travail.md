@@ -480,6 +480,39 @@ Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.p
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) (#1035).
 
+### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — lot #1455 livré)*
+
+Hors des projets qu'on lui confie, Maestro ne pose rien sur le poste ailleurs que sous **trois
+racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul à déclarer :
+
+| Racine | Ce qu'elle porte | Qui la vide |
+|---|---|---|
+| `~/Maestro/` | les projets de l'utilisateur, proposés par défaut (#1022) | personne — c'est son travail |
+| `~/.maestro/` | l'état du poste : jeton de l'API, journal SQLite, profil de navigateur | personne — c'est l'état du produit |
+| `<temp>/maestro/` (`%TEMP%\maestro\` sous Windows, `/tmp/maestro/` dans le Bash d'un agent) | le jetable : atelier de chaque hôte détaché, espaces des tâches, copies de vérification, aperçus de sources | le **ramassage**, sans geste humain |
+
+**Pourquoi.** Le 2026-10-08, le poste de référence portait **1 286** dossiers `maestro-*` sous
+son répertoire temporaire — 436 ateliers d'hôte, 692 résidus de l'ancien mode démo, des espaces
+d'équipes sur mesure qu'aucune liste ne connaissait — et une dizaine à la racine du profil. Chacun
+était né là où son auteur l'avait jugé bon ; la plupart n'avaient personne pour les retirer.
+
+**Comment le jetable disparaît.** Chaque dossier jetable porte le pid du process qui l'occupe :
+dans son **nom** pour un espace de tâche (un témoin posé dedans ressortirait en livrable), dans un
+témoin `occupant.pid` pour l'atelier d'un hôte, que l'API ouvre avant que le process qui l'occupe
+n'existe. Le ramassage, joué en arrière-plan au démarrage de chaque hôte
+([`maestro/sandbox/ramassage.py`](../maestro/sandbox/ramassage.py)), retire ce dont l'occupant
+est mort, et ce qui ne nomme personne une fois inactif depuis six heures
+(`MAESTRO_ESPACE_ORPHELIN_SEUIL`). Il balaie aussi les **anciennes adresses** — le répertoire
+temporaire lui-même et ses résolutions MSYS — où tout `maestro-*` est candidat, sauf l'état d'une
+stack de développement et le cache des présentations, qu'un autre mécanisme possède. Il ne retire
+**jamais** un worktree dont le dépôt existe encore : c'est du travail non commité. Un worktree dont
+le dépôt a disparu n'en est plus. `MAESTRO_RAMASSAGE_ESPACES=0` l'éteint.
+
+**La garde.** [`tests/test_emplacements.py`](../tests/test_emplacements.py) refuse, sous
+`maestro/`, tout dossier temporaire ouvert et tout chemin composé sous le dossier personnel hors du
+module des racines ; les modules qui lisent le dossier personnel sans y rien créer s'inscrivent à
+son inventaire, avec leur raison.
+
 ---
 
 ## 3. Question 3 — De l'intention au brief : prompt, documents, sources

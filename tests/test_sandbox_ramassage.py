@@ -11,7 +11,12 @@ Trois questions, dans l'ordre du ticket :
 ② **l'orphelin** — le ramassage retire ce qu'un process mort a laissé, conserve ce
    qu'une tâche vivante occupe, et ne touche **jamais** à un worktree ;
 ③ **l'adresse** (S13) — une valeur `TMPDIR` venue de MSYS est écartée sous
-   Windows, et seulement sous Windows.
+   Windows, et seulement sous Windows ;
+④ **toutes les familles** (#1455) — sous la racine jetable tout est candidat ; aux
+   anciens emplacements, tout `maestro-*` l'est (ateliers d'hôte, résidus de
+   l'ancien mode démo, rôles des équipes sur mesure), sauf les familles qu'un autre
+   mécanisme possède ; l'atelier d'un hôte se garde par le témoin de son occupant,
+   et un worktree dont le dépôt a disparu n'est plus du travail à sauver.
 
 Aucun backend, aucun réseau : des dossiers jetables, `git` quand il est là.
 """
@@ -29,10 +34,11 @@ from pathlib import Path
 
 import pytest
 
+from maestro.emplacements import NOM_JETABLE, TEMOIN_PID, repertoire_temporaire
 from maestro.fichiers import retirer_arbre
 from maestro.sandbox import isolated_workspace
 from maestro.sandbox.ramassage import (
-    PREFIXES_HISTORIQUES,
+    FAMILLES_TIERCES,
     SEUIL_ORPHELIN_H,
     VALEUR_MSYS_HISTORIQUE,
     VARIABLE_RAMASSAGE,
@@ -246,7 +252,9 @@ def test_un_worktree_nest_jamais_ramasse(tmp_path: Path) -> None:
     parent = _espace(tmp_path, f"maestro-dev-pid{mort.pid}-11111111", age_h=99)
     tache = parent / "t-42"
     tache.mkdir()
-    (tache / ".git").write_text("gitdir: /ailleurs/.git/worktrees/t-42\n", encoding="utf-8")
+    administration = _administration_du_worktree(tmp_path, "t-42")
+    (tache / ".git").write_text(f"gitdir: {administration}\n", encoding="utf-8")
+    _vieillir(parent, 99)
     assert porte_un_worktree(parent) is True
     passage = ramasser(racines=[tmp_path], environnement={})
     assert passage.retires == ()
@@ -263,12 +271,121 @@ def test_un_git_init_dagent_nest_pas_un_worktree(tmp_path: Path) -> None:
     assert ramasser(racines=[tmp_path], environnement={}).retires == (espace,)
 
 
-def test_les_autres_dossiers_temporaires_ne_sont_pas_candidats(tmp_path: Path) -> None:
-    """L'atelier d'un hôte, un aperçu de source, un masque de conteneur : pas notre affaire."""
-    for nom in ("maestro-hote-run-1-aaaaaaaa", "maestro-apercu-bbbbbbbb", "projet-de-quelquun"):
+def _administration_du_worktree(racine: Path, nom: str) -> Path:
+    """Le dossier qu'un `.git` de worktree désigne, dans un dépôt qui existe."""
+    administration = racine / "depot" / ".git" / "worktrees" / nom
+    administration.mkdir(parents=True)
+    return administration
+
+
+def _mort() -> int:
+    """Le pid d'un process qui a vécu et ne vit plus."""
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    process.wait()
+    return process.pid
+
+
+#: Les familles relevées sur le poste de référence le 2026-10-08 (#1454), une par
+#: mécanisme qui les laissait derrière lui.
+_FAMILLES_DU_CONSTAT = (
+    "maestro-hote-fe3c327ed9e6-h43e7ow_",
+    "maestro-chat-demo-ziv7ry0u",
+    "maestro-capacite-demo-0352b41r",
+    "maestro-agents-demo-0r151_64",
+    "maestro-integrateur-css-fp4ods_f",
+    "maestro-testeur-vitest-a1b2c3d4",
+    "maestro-apercu-bbbbbbbb",
+    "maestro-queue.JE578b",
+)
+
+
+def test_aux_anciens_emplacements_toutes_les_familles_sont_candidates(tmp_path: Path) -> None:
+    """Le constat de #1454 : 1 286 `maestro-*` dont aucun ramasseur ne connaissait la
+    plupart. Passé le seuil, chaque famille part — aucune n'a à entrer dans une liste."""
+    for nom in _FAMILLES_DU_CONSTAT:
+        _espace(tmp_path, nom, age_h=SEUIL_ORPHELIN_H + 1)
+    passage = ramasser(racines=[tmp_path], environnement={})
+    assert sorted(chemin.name for chemin in passage.retires) == sorted(_FAMILLES_DU_CONSTAT)
+    assert not any(tmp_path.iterdir())
+
+
+def test_les_familles_tierces_et_le_reste_du_poste_ne_sont_jamais_candidats(
+    tmp_path: Path,
+) -> None:
+    """L'état d'une stack (#1456), le cache des présentations, le dossier de quelqu'un
+    d'autre : un autre mécanisme les possède, ou ils ne sont pas à Maestro."""
+    noms = ("maestro-controltower-8293-3293", "maestro-presentation", "projet-de-quelquun")
+    for nom in noms:
         _espace(tmp_path, nom, age_h=99)
+    assert all(nom.startswith(FAMILLES_TIERCES) for nom in noms[:2])
     assert list(espaces([tmp_path])) == []
     assert ramasser(racines=[tmp_path], environnement={}).retires == ()
+
+
+def test_sous_la_racine_jetable_tout_dossier_est_candidat(tmp_path: Path) -> None:
+    """Tout y est à Maestro : ni préfixe ni liste n'y décide, seul le verdict d'orphelin."""
+    jetable = tmp_path / NOM_JETABLE
+    mort = _espace(jetable, f"redacteur-pid{_mort()}-aaaaaaaa")
+    vivant = _espace(jetable, f"redacteur-pid{os.getpid()}-bbbbbbbb")
+    passage = ramasser(jetables=[jetable], environnement={})
+    assert passage.retires == (mort,)
+    assert passage.conserves == (vivant,)
+
+
+def test_qui_nomme_des_racines_ne_balaie_que_ce_quil_nomme(tmp_path: Path) -> None:
+    """La racine jetable n'est pas un `maestro-*` : un balayage des anciens emplacements
+    ne descend pas dedans, et un appel borné ne déborde jamais sur le poste."""
+    orphelin = _espace(tmp_path / NOM_JETABLE, f"maestro-dev-pid{_mort()}-cccccccc")
+    assert ramasser(racines=[tmp_path], environnement={}).retires == ()
+    assert orphelin.exists()
+
+
+def test_latelier_dun_hote_vivant_est_conserve_meme_vieux(tmp_path: Path) -> None:
+    """L'API ouvre l'atelier avant que son occupant n'existe : c'est le témoin qui le garde."""
+    atelier = _espace(tmp_path, "maestro-hote-run-a-aaaaaaaa")
+    (atelier / TEMOIN_PID).write_text(str(os.getpid()), encoding="utf-8")
+    _vieillir(atelier, 99)
+    passage = ramasser(racines=[tmp_path], environnement={})
+    assert passage.conserves == (atelier,)
+    assert atelier.exists()
+
+
+def test_latelier_dun_hote_mort_attend_le_seuil(tmp_path: Path) -> None:
+    """Mort ne suffit pas : l'API lit encore son journal pour nommer la cause (#446)."""
+    jeune = _espace(tmp_path, "maestro-hote-run-b-bbbbbbbb")
+    vieux = _espace(tmp_path, "maestro-hote-run-c-cccccccc")
+    for atelier in (jeune, vieux):
+        (atelier / TEMOIN_PID).write_text(str(_mort()), encoding="utf-8")
+    _vieillir(jeune, 1)
+    _vieillir(vieux, SEUIL_ORPHELIN_H + 1)
+    passage = ramasser(racines=[tmp_path], environnement={})
+    assert passage.retires == (vieux,)
+    assert jeune.exists()
+
+
+def test_un_worktree_dont_le_depot_a_disparu_nest_plus_garde(tmp_path: Path) -> None:
+    """Le travail n'a plus nulle part où revenir : l'espace est une dépouille comme une autre.
+
+    C'est le cas des espaces des tâches du banc, quand le projet du passage est retiré."""
+    parent = _espace(tmp_path, f"maestro-dev-pid{_mort()}-12121212")
+    tache = parent / "t-1455"
+    tache.mkdir()
+    (tache / ".git").write_text(
+        f"gitdir: {tmp_path / 'disparu' / '.git' / 'worktrees' / 't-1455'}\n", encoding="utf-8"
+    )
+    assert porte_un_worktree(parent) is False
+    assert ramasser(racines=[tmp_path], environnement={}).retires == (parent,)
+
+
+def test_un_gitdir_relatif_se_lit_depuis_le_worktree(tmp_path: Path) -> None:
+    """`worktree.useRelativePaths` écrit un chemin relatif au worktree : il se résout de là."""
+    administration = _administration_du_worktree(tmp_path, "t-rel")
+    parent = _espace(tmp_path, f"maestro-dev-pid{_mort()}-34343434")
+    tache = parent / "t-rel"
+    tache.mkdir()
+    relatif = os.path.relpath(administration, tache)
+    (tache / ".git").write_text(f"gitdir: {relatif}\n", encoding="utf-8")
+    assert porte_un_worktree(parent) is True
 
 
 def test_un_espace_marque_dun_autre_prefixe_reste_candidat(tmp_path: Path) -> None:
@@ -279,23 +396,17 @@ def test_un_espace_marque_dun_autre_prefixe_reste_candidat(tmp_path: Path) -> No
     assert ramasser(racines=[tmp_path], environnement={}).retires == (espace,)
 
 
-def test_la_liste_historique_couvre_tous_les_roles_outilles() -> None:
-    """La seule liste écrite du module, confrontée aux profils réels.
-
-    Sans cette garde, un rôle dont le préfixe manque laisserait ses espaces d'avant
-    le marqueur sur le disque pour toujours."""
-    from maestro.agents import TOOLED_PROFILES
-
-    attendus = {profile.workspace_prefix for profile in TOOLED_PROFILES}
-    assert attendus <= set(PREFIXES_HISTORIQUES), (
-        f"préfixes de rôle absents de PREFIXES_HISTORIQUES : {attendus - set(PREFIXES_HISTORIQUES)}"
-    )
-
-
 def test_le_ramassage_seteint_par_le_poste(tmp_path: Path) -> None:
     espace = _espace(tmp_path, "maestro-dev-44444444", age_h=99)
     assert ramasser(racines=[tmp_path], environnement={VARIABLE_RAMASSAGE: "0"}) == Ramassage()
     assert espace.exists()
+
+
+def test_la_suite_ne_ramasse_jamais_le_poste_qui_la_joue() -> None:
+    """La coupure du conftest (#1455) : des tests jouent `hote_detache.main` en entier,
+    et un ramassage sans argument balaierait le répertoire temporaire du poste."""
+    assert os.environ.get(VARIABLE_RAMASSAGE) == "0"
+    assert ramasser() == Ramassage()
 
 
 def test_le_ramassage_ne_leve_pas_sur_une_racine_absente(tmp_path: Path) -> None:
@@ -336,24 +447,29 @@ def test_une_valeur_msys_est_ecartee_sous_windows(tmp_path: Path) -> None:
     quand Python résout `/tmp` sur le lecteur courant (`C:\\tmp`, où dormaient les 76 résidus).
     Écarter la valeur fait retomber les deux côtés au même endroit."""
     environnement = {"TMPDIR": "/tmp", "TEMP": str(tmp_path)}
-    assert racine_des_espaces(environnement) == tmp_path
+    assert repertoire_temporaire(environnement) == tmp_path
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="hors Windows, `/tmp` est un chemin normal")
 def test_une_valeur_posix_est_gardee_hors_windows(tmp_path: Path) -> None:
     """Le pendant : rien ne change là où `/tmp` veut dire `/tmp`."""
-    assert racine_des_espaces({"TMPDIR": str(tmp_path)}) == tmp_path
+    assert repertoire_temporaire({"TMPDIR": str(tmp_path)}) == tmp_path
 
 
 def test_une_racine_inexistante_est_passee(tmp_path: Path) -> None:
     """Comme `tempfile` : une variable qui pointe dans le vide n'est pas une panne."""
     environnement = {"TMPDIR": str(tmp_path / "absent"), "TEMP": str(tmp_path)}
-    assert racine_des_espaces(environnement) == tmp_path
+    assert repertoire_temporaire(environnement) == tmp_path
 
 
 def test_sans_aucune_variable_on_retombe_sur_tempfile() -> None:
 
-    assert racine_des_espaces({}) == Path(tempfile.gettempdir())
+    assert repertoire_temporaire({}) == Path(tempfile.gettempdir())
+
+
+def test_les_espaces_naissent_sous_la_racine_jetable_du_temporaire(tmp_path: Path) -> None:
+    """#1455 : un sous-dossier dédié, que l'agent lit `/tmp/maestro/` dans son Bash."""
+    assert racine_des_espaces({"TEMP": str(tmp_path)}) == tmp_path / NOM_JETABLE
 
 
 def test_lespace_nait_bien_sous_la_racine_retenue() -> None:
