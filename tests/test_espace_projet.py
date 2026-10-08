@@ -53,6 +53,7 @@ from maestro.sandbox import (
     frontiere_de,
 )
 from maestro.sandbox.en_place import portee_de
+from maestro.sandbox.projet import CONSIGNE_COPIE_DE_TRAVAIL
 from maestro.telemetry import RunJournal
 
 GIT = shutil.which("git")
@@ -345,10 +346,9 @@ def test_le_jetable_va_ou_la_portee_le_laisse_passer(tmp_path: Path) -> None:
     assert "sort du" in portee.commande_hors_portee("python app.py > /tmp/sortie")
 
 
-def test_les_autres_regimes_ne_disent_rien_de_leur_espace(tmp_path: Path) -> None:
-    """Un répertoire jetable disparaît avec la tâche, un worktree est une copie
-    conforme d'une branche : ni l'un ni l'autre n'a d'atelier à nommer, et leur
-    message de tâche est celui d'avant #944, au caractère près."""
+def test_l_espace_jetable_ne_dit_rien_de_lui_meme(tmp_path: Path) -> None:
+    """Un répertoire jetable disparaît avec la tâche : il n'a ni atelier ni branche à
+    nommer, et son message de tâche est celui d'avant #944, au caractère près."""
     with espace_de_travail(None, tache_id="t1") as jetable:
         assert jetable.consigne_espace() == ""
 
@@ -356,12 +356,14 @@ def test_les_autres_regimes_ne_disent_rien_de_leur_espace(tmp_path: Path) -> Non
 @besoin_de_git
 def test_un_projet_versionne_n_a_pas_d_atelier(tmp_path: Path) -> None:
     """Son worktree est hors de la racine et sa branche porte tout : ce qu'un agent
-    y laisse ne salit le projet de personne avant la fusion."""
+    y laisse ne salit le projet de personne avant la fusion — et la consigne de sa
+    copie de travail ne lui promet aucun atelier (#1401)."""
     projet = _projet_git(tmp_path)
 
     with espace_de_travail(projet, tache_id="t1") as ws:
-        assert ws.consigne_espace() == ""
+        consigne = ws.consigne_espace()
         assert not (Path(projet.racine) / DOSSIER_ATELIER).exists()
+    assert DOSSIER_ATELIER not in consigne
 
 
 def test_le_message_de_la_tache_porte_l_atelier(tmp_path: Path) -> None:
@@ -867,6 +869,70 @@ def test_le_recensement_du_worktree_est_celui_que_la_branche_porte(tmp_path: Pat
         _git(racine, "diff", "--name-only", "main...maestro/t-1").splitlines()
     )
     assert produits == portes == {"lib/outil.ts"}
+
+
+# --------------------------------------------------------------------------- #
+# L'agent sait ce que devient ce qu'il laisse dans sa copie de travail (#1401)
+# --------------------------------------------------------------------------- #
+
+
+@besoin_de_git
+def test_la_copie_de_travail_dit_que_ce_qui_reste_est_commite(tmp_path: Path) -> None:
+    """Le défaut de p5 : en copie de travail, rien ne disait à l'agent que ce qu'il
+    laisse est commité au démontage (`git add -A`), brouillons compris, puis fusionné
+    dans le projet — ni où mettre ses brouillons pour qu'ils ne le soient pas, puisque
+    aucun atelier n'y est ouvert (#944). La consigne le dit, nomme la branche, et
+    envoie les brouillons dans un dossier que la portée laisse à l'agent."""
+    projet = _projet_git_qui_ignore(tmp_path)
+
+    with espace_de_travail(projet, tache_id="socle-nextjs") as ws:
+        consigne = " ".join(ws.consigne_espace().split())
+        portee = portee_de(ws.path, projet)
+
+    assert CONSIGNE_COPIE_DE_TRAVAIL in consigne
+    assert "copie de travail" in consigne
+    assert "est commité sur ta branche" in consigne
+    assert "brouillons compris" in consigne
+    # Ce qui n'est pas commité, c'est ce que le `.gitignore` du projet retire.
+    assert "`.gitignore`" in consigne
+    # Où vont les brouillons : un dossier créé par l'agent, hors de la copie.
+    assert "`mktemp -d`" in consigne
+    assert portee.commande_hors_portee('T=$(mktemp -d) && echo essai > "$T/notes.md"') == ""
+    # Une branche neuve n'a pas de travail antérieur à annoncer (#1392).
+    assert "n'est pas neuve" not in consigne
+
+
+@besoin_de_git
+def test_ce_que_la_copie_de_travail_annonce_est_ce_que_sa_branche_porte(tmp_path: Path) -> None:
+    """La consigne n'est vraie que si le démontage fait ce qu'elle dit : un brouillon
+    laissé dans la copie part sur la branche avec le livrable, et ce que le
+    `.gitignore` du projet retire — dépendances, sortie de build — n'y part pas."""
+    projet = _projet_git_qui_ignore(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="t-1") as ws:
+        (ws.path / "app").mkdir()
+        (ws.path / "app" / "page.tsx").write_text("export default null\n", encoding="utf-8")
+        (ws.path / "notes-de-travail.md").write_text("brouillon\n", encoding="utf-8")
+        (ws.path / "node_modules" / "react").mkdir(parents=True)
+        (ws.path / "node_modules" / "react" / "index.js").write_text("x", encoding="utf-8")
+        (ws.path / ".next" / "cache").mkdir(parents=True)
+        (ws.path / ".next" / "cache" / "build.json").write_text("{}", encoding="utf-8")
+
+    portes = set(_git(racine, "diff", "--name-only", "main...maestro/t-1").splitlines())
+    assert portes == {"app/page.tsx", "notes-de-travail.md"}
+
+
+@besoin_de_git
+def test_le_message_de_la_tache_porte_la_copie_de_travail(tmp_path: Path) -> None:
+    """Le bout de chaîne : c'est dans le message de sa tâche que l'agent le lit."""
+    projet = _projet_git_qui_ignore(tmp_path)
+    fournisseur = _FournisseurEcrivain()
+    runtime = AgentRuntime(fournisseur, DEVELOPER_PROFILE)
+
+    asyncio.run(runtime.execute("Construire le socle", projet=projet, tache_id="t1"))
+
+    (prompt,) = fournisseur.prompts
+    assert CONSIGNE_COPIE_DE_TRAVAIL in prompt
 
 
 def test_un_git_qui_refuse_l_enumeration_est_une_erreur_motivee(

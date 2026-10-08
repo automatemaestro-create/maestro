@@ -123,12 +123,20 @@ REGIME_DE_L_AGENT: dict[Decideur, str] = {
 #: phrase que p5 n'avait pas : elle **énumère** ce qui reste dans le projet, réseau
 #: et dépendances compris, et dit en toutes lettres qu'aucun de ces actes ne se fait
 #: arbitrer — puis les deux familles de `maestro.portee`, et elles seules.
+#:
+#: ⚠ L'énumération ne range plus le **ménage** dans le travail ordinaire (#1401). Elle
+#: disait « nettoyer ce que tes exécutions ont produit » : une invitation à effacer
+#: `node_modules/` et `.next/` en fin de tâche, là où le cadre d'exécution
+#: (`playbooks_defaut/_cadre_outille.md`) dit de les laisser, ignorés par le
+#: `.gitignore`. Le geste reste permis — la règle de `maestro.portee` n'a pas bougé,
+#: et ce bloc n'en dit que des exemples —, mais ce qu'il nomme pour finir une tâche
+#: est ce que le cadre en dit : arrêter ce que l'agent a lancé.
 PORTEE_DE_L_AGENT: dict[str, str] = {
     PORTEE_PROJET: (
         "Cela vaut dans le dossier du projet, pour tout le travail qui s'y fait : "
         "lancer, construire et tester ce que tu écris, installer les dépendances du "
-        "projet dans le projet, joindre le réseau pour cela, nettoyer ce que tes "
-        "exécutions ont produit. Ne demande d'arbitrage pour aucune de ces commandes. "
+        "projet dans le projet, joindre le réseau pour cela, arrêter ce que tu as "
+        "lancé. Ne demande d'arbitrage pour aucune de ces commandes. "
         "Deux familles d'actes, et elles seules, attendent l'accord d'une personne : "
         "ce qui sort du dossier du projet — écrire ou installer ailleurs, une "
         "installation globale, l'élévation de privilèges, une machine distante —, et "
