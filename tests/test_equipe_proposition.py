@@ -488,8 +488,11 @@ def test_sur_un_projet_neuf_le_dev_recoit_le_droit_d_executer_dans_le_projet() -
     assert execution.decideur_effectif is Decideur.AUTO
     assert execution.portee == PORTEE_PROJET
     assert execution.to_dict()["portee"] == PORTEE_PROJET
-    # Ce qu'il fait seul…
+    # Ce qu'il fait seul — et le ménage n'en est plus (#1401) : ce qui se refabrique
+    # reste, ignoré ; ce qu'il arrête en fin de tâche est ce qu'il a lancé.
     assert "sans vous demander de trancher chaque commande" in execution.raison
+    assert "nettoi" not in execution.raison
+    assert "arrête ce qu'il a lancé" in execution.raison
     # …et ce qui vous revient quand même — les deux familles, nommées.
     assert "sort du dossier du projet" in execution.raison
     assert "effacerait ce que vous aviez posé là" in execution.raison

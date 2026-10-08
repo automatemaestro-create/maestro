@@ -38,7 +38,7 @@ DEVELOPER_PROFILE = RoleProfile(
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche de développement à réaliser de bout en bout :",
     consignes=(
-        "Tu travailles dans un répertoire vide et isolé (le répertoire courant). "
+        "Tu travailles dans le répertoire courant. "
         "Écris-y les fichiers du livrable avec tes outils — ne te contente pas "
         "d'afficher du code. Vise un résultat minimal mais réellement exploitable. "
         "Tranche seul l'architecture, les patrons et les bibliothèques ; si une entrée "

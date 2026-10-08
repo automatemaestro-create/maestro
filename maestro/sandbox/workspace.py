@@ -111,12 +111,14 @@ class Workspace:
 
         **Vide** ici : un répertoire jetable disparaît avec la tâche et n'est le
         projet de personne, donc le message qu'il compose est au caractère près
-        celui d'avant #944. Les espaces dérivés d'un projet ont, eux, quelque
-        chose à dire : la racine d'un projet n'est pas isolée et porte un atelier
-        (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`), et un worktree
-        **est** la racine du projet qu'il copie sans en porter le nom
-        (`maestro.sandbox.projet.EspaceCopieDeTravail.consigne_espace`, #1399 —
-        qui renverse ici « un worktree n'a rien de particulier à dire »).
+        celui d'avant #944. Les deux espaces dérivés d'un projet ont, eux, quelque
+        chose à dire : la racine d'un projet non versionné n'est pas isolée et porte
+        un atelier (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`), et le
+        worktree d'un projet versionné **est** la racine du projet qu'il copie sans
+        en porter le nom (#1399 — qui renverse ici « un worktree n'a rien de
+        particulier à dire ») et se **commite** — tout ce que l'agent y laisse part
+        sur la branche de la tâche (#1401,
+        `maestro.sandbox.projet.EspaceCopieDeTravail.consigne_espace`).
         """
         return ""
 

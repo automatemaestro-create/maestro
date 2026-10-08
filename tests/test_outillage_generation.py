@@ -394,6 +394,22 @@ def test_une_entree_d_un_type_inconnu_est_sautee_plutot_que_devinee() -> None:
     assert rediger(_constats(), recommandation) == ()
 
 
+def test_agents_md_dit_ce_que_devient_ce_qui_se_refabrique() -> None:
+    """#1401 : « cela se refabrique, cela ne s'édite pas » ne disait ni s'il fallait
+    l'effacer, ni s'il fallait le livrer — sur p5, `node_modules/` et `.next/` étaient
+    dans ce flou, entre un cadre qui disait « ce que tu laisses est le livrable » et un
+    régime qui invitait à « nettoyer ». `AGENTS.md` dit la même règle que le cadre
+    d'exécution : ni édité, ni effacé pour faire le ménage, ni livré — ignoré."""
+    (instructions, *_) = rediger(_constats(), _recommandation())
+    section = instructions.contenu.split("## Ce qu'un agent ne touche pas", 1)[1]
+    plat = " ".join(section.split())
+
+    assert "dépendances installées, artefacts de build, caches — se refabrique" in plat
+    assert "ne le supprime pas pour faire le ménage" in plat
+    assert "ne le livre pas" in plat
+    assert "s'il n'est pas déjà ignoré par le `.gitignore`, ajoute-le" in plat
+
+
 def test_agents_md_porte_les_six_sections_et_les_constats_avec_leur_source() -> None:
     (instructions, *_) = rediger(_constats(), _recommandation())
     texte = instructions.contenu

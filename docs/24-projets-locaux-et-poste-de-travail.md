@@ -216,7 +216,7 @@ commit que le projet refuse (son `pre-commit`) est dit au journal, et n'empêche
 retrouve** : le message de sa tâche dit ce que la branche porte de plus que la base, ou que la
 branche qu'elle reprend — ses commits, ses fichiers —, et qu'il repart de cet état au lieu de le
 refaire (`TravailAnterieur`). Ce travail compte dans ce que la tâche livre au juge, qu'elle l'ait
-réécrit ou non. Une branche neuve, ou déjà fusionnée, n'a rien d'antérieur à dire.
+réécrit ou non. Une branche neuve, ou déjà fusionnée, n'annonce aucun travail antérieur.
 
 **L'agent sait où il est (#1399).** Un worktree porte le nom de sa tâche, jamais celui du dossier
 qu'il copie. Sur p5 (2026-10-01), la tâche `socle-nextjs` disait « Installer dans le dossier p5 »,
@@ -231,6 +231,23 @@ lui, n'est **jamais réécrit** : l'agent qui sait où il est reconnaît le proj
 amont, le Chef de projet désigne l'endroit par « la racine du projet », jamais par le nom du projet
 ou de son dossier (`maestro/orchestrator/playbook.md`, « Entrées attendues »). Ce paragraphe
 renverse, pour la copie de travail, « un worktree n'a rien de particulier à dire » (#944).
+
+**Ce que l'agent sait de sa copie de travail (#1401).** Tout ce qu'il laisse dans son worktree et
+que le `.gitignore` du projet n'ignore pas est commité au démontage (`git add -A`), puis fusionné
+dans le projet — brouillons compris —, et aucun atelier n'y est ouvert (#944 le réserve au projet
+non versionné). Rien ne le lui disait : sur p5, il recevait un cadre qui disait « ce que tu laisses
+est le livrable », un régime qui rangeait « nettoyer ce que tes exécutions ont produit » dans le
+travail ordinaire, et un `AGENTS.md` qui disait que ce que le projet génère « ne s'édite pas » —
+sans savoir si `node_modules/` et `.next/` restaient ou s'effaçaient. Le message de sa tâche dit
+désormais, sur toute branche, que ce qu'il laisse dans sa **copie de travail** est commité sur sa
+branche — brouillons compris — puis appliqué au projet, et que ce qui n'est pas le livrable va
+dans un dossier qu'il crée par `mktemp -d`, hors de la copie (`CONSIGNE_COPIE_DE_TRAVAIL`, dite
+par `EspaceCopieDeTravail.consigne_espace`). Ce que le `.gitignore`
+retire est dit une fois pour tous les espaces par le cadre d'exécution : **ce qui se refabrique
+n'est pas le livrable** — laissé en place s'il est ignoré, ajouté au `.gitignore` sinon, jamais
+supprimé pour « nettoyer » ; finir proprement, c'est arrêter ce qu'on a lancé. Le régime
+d'exécution et `AGENTS.md` disent la même chose. Le recensement, lui, n'a pas bougé : c'est celui
+de #1388.
 
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
 directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le

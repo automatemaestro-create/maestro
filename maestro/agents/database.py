@@ -45,7 +45,7 @@ DATABASE_PROFILE = RoleProfile(
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche de base de données à réaliser de bout en bout :",
     consignes=(
-        "Tu travailles dans un répertoire vide et isolé (le répertoire courant). "
+        "Tu travailles dans le répertoire courant. "
         "Écris-y les fichiers du livrable avec tes outils (schéma, migrations, "
         "requêtes) — ne te contente pas d'afficher du SQL. Vise un résultat minimal "
         "mais réellement applicable. Ne cible aucune base réelle : toute vérification "

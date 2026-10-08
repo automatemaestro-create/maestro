@@ -238,6 +238,18 @@ def test_ce_que_la_portee_garde_dans_le_projet_le_bloc_le_dit_passer_sans_arbitr
     assert "Ne demande d'arbitrage pour aucune de ces commandes" in bloc
 
 
+def test_le_bloc_ne_range_plus_le_menage_dans_le_travail_ordinaire() -> None:
+    """#1401 : la portée énumérait « nettoyer ce que tes exécutions ont produit »
+    parmi ce qui passe sans arbitrage — une invitation à effacer `node_modules/` et
+    `.next/` en fin de tâche, là où le cadre dit de les laisser, ignorés. Le geste
+    reste permis (la règle de `maestro.portee` n'a pas bougé), mais le bloc nomme à sa
+    place ce qui finit une tâche proprement : arrêter ce que l'agent a lancé."""
+    bloc = _a_plat(regime_de_l_agent(POLITIQUE_DE_P5))
+
+    assert "nettoy" not in bloc.lower()
+    assert "arrêter ce que tu as lancé" in bloc
+
+
 @pytest.mark.parametrize(
     ("commande", "famille"),
     [

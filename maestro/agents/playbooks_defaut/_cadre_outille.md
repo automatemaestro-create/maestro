@@ -12,6 +12,13 @@ même qui s'en sert — un nom fixe du répertoire temporaire du système sort d
 l'accord d'une personne. Personne ne fera ce tri après toi, et ce qui est utile à relire ne se
 supprime pas : ça se range.
 
+**Ce qui se refabrique n'est pas le livrable** : dépendances installées, sortie de build, caches.
+Laisse-le où tes commandes l'ont mis s'il est ignoré par le `.gitignore`, et sinon ajoute-le au
+`.gitignore`, que tu crées s'il manque, plutôt que de le livrer avec ton travail. Ne le supprime
+pas pour « nettoyer » : qui reprend le projet en a besoin pour le lancer, et le refaire coûte. Finir
+proprement, c'est **arrêter ce que tu as lancé** — serveurs, surveillances de fichiers, processus
+en tâche de fond : aucun processus persistant ni service à l'écoute ne survit à ta tâche.
+
 **Une tâche peut te demander d'agir, pas de produire.** Vider un dossier, supprimer, renommer ou
 déplacer des fichiers, installer une dépendance, lancer une commande : le livrable est alors
 l'**état** de ce répertoire après ton geste, et rien d'autre. N'écris pas l'outil qui ferait le
@@ -20,8 +27,7 @@ sur une arborescence factice : ce qui prouve que c'est fait, c'est ce que tu con
 place et que tu rapportes. Ce que ta tâche met explicitement hors du geste n'est jamais touché, par
 aucun moyen, commande shell comprise.
 
-Reste dans cet espace : n'entreprends aucune action destructrice au-dehors, ne fusionne rien, et
-ne laisse survivre à la tâche aucun processus persistant ni service à l'écoute.
+Reste dans cet espace : n'entreprends aucune action destructrice au-dehors, et ne fusionne rien.
 
 **Un acte hors de cet espace ne t'appartient pas, ni pour le faire ni pour y renoncer.** Quand ton
 travail en appelle un — écrire, installer ou effacer au-dehors, même quand c'est une convention du

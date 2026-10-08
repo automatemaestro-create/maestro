@@ -107,6 +107,20 @@ _COMMITS_DITS_MAX = 10
 #: est rendue telle que Git l'écrit, jamais tue.
 _STATUTS_GIT = {"A": "ajouté", "M": "modifié", "D": "supprimé", "T": "type changé"}
 
+#: Ce que le message d'une tâche dit de sa **copie de travail** (#1401) : ce que
+#: l'agent y laisse est commité, brouillons compris, et où vont les brouillons pour
+#: ne pas l'être. Voir `EspaceCopieDeTravail.consigne_espace`.
+CONSIGNE_COPIE_DE_TRAVAIL = (
+    "Dans cette copie de travail du projet, tout ce que tu laisses et que le "
+    "`.gitignore` du projet n'ignore pas est commité sur ta branche à la fin de ta "
+    "tâche — brouillons compris —, puis appliqué au projet avec elle. Ce qui n'est pas "
+    "le livrable — brouillons, essais, harnais de vérification, notes — ne se laisse "
+    "donc pas ici : mets-le dans un dossier que tu crées par `mktemp -d`, dans la "
+    "commande même qui s'en sert, hors de cette copie — un nom fixe du répertoire "
+    "temporaire du système sort de ton espace et revient à une personne. Ce qui mérite "
+    "d'être relu, dis-le dans ton compte-rendu."
+)
+
 
 @dataclass(frozen=True)
 class TravailAnterieur:
@@ -281,15 +295,31 @@ class EspaceCopieDeTravail(Workspace):
     copie: CopieDuProjet | None = None
 
     def consigne_espace(self) -> str:
-        """Où l'agent est (#1399), puis ce que sa branche porte déjà s'il y a quelque chose (#1392).
+        """Où l'agent est (#1399), ce que devient ce qu'il laisse (#1401), ce que sa branche porte.
 
         Renverse #944 pour la copie de travail : « un worktree n'a rien de
         particulier à dire » tenait tant qu'on le croyait une copie conforme dont
         l'agent n'avait rien à savoir. Il a à savoir qu'elle **est** le projet que
         sa tâche nomme — sur p5, faute de le lire, l'agent a cherché le dossier.
+
+        ⚠ **Ce n'est plus vide sur une branche neuve.** Tout ce que l'agent laisse
+        ici et que le `.gitignore` du projet n'ignore pas est commité au démontage
+        (`_solder_la_branche`, `git add -A`), puis fusionné dans le projet —
+        brouillons compris. Sur p5, rien ne le lui disait, et aucun atelier n'est
+        ouvert ici (#944, réservé au projet non versionné) : le message le dit donc
+        (`CONSIGNE_COPIE_DE_TRAVAIL`), et envoie ce qui n'est pas le livrable dans un
+        dossier que l'agent crée par `mktemp -d`, hors de la copie — le geste que la
+        portée lui laisse (`maestro.portee`, « l'établi »), le même qu'en place pour
+        ce que personne n'aura à relire (#1348).
+
+        Ce que le `.gitignore` retire, et ce qui s'y ajoute, est dit **une fois pour
+        tous les espaces** par le cadre d'exécution (`_cadre_outille.md`) : ce
+        message ne le redit pas, il dit ce que le cadre ne peut pas savoir — que
+        cet espace-ci se commite.
         """
         paragraphes = (
             self.copie.consigne() if self.copie is not None else "",
+            CONSIGNE_COPIE_DE_TRAVAIL,
             self.anterieur.consigne() if self.anterieur is not None else "",
         )
         return "\n\n".join(paragraphe for paragraphe in paragraphes if paragraphe)
