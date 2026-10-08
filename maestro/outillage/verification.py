@@ -83,6 +83,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from maestro.outillage.contexte import est_au_projet
 from maestro.outillage.modele import USAGES, Constats, Entree, Recommandation
 from maestro.outillage.recommandation import SKILL_PAR_USAGE
 from maestro.portee import PorteeProjet
@@ -573,11 +574,13 @@ def _projet_vide(racine: Path, perimetre: Perimetre, declares: frozenset[str]) -
     trouverait le dossier « non vide » — il porte `AGENTS.md` — et changerait de
     raison, donc de texte, pour un projet qui n'a pas bougé (l'idempotence de docs/38
     §4.2, gardée par `test_regenerer_en_place_ne_duplique_pas_agents_md_dans_lui_meme`).
+    La question est celle que le message d'une tâche pose aussi (#1400), et elle n'a
+    qu'une orthographe : `est_au_projet`.
     """
     fichiers = fichiers_du_perimetre(
         racine, motifs_compiles(perimetre.exclus), hors=(DOSSIER_ATELIER,)
     )
-    return all(relatif in declares for relatif in fichiers)
+    return not any(est_au_projet(relatif, declares) for relatif in fichiers)
 
 
 def _pas_encore(racine: Path, commande: CommandeEcrite, *, vide: bool) -> str:

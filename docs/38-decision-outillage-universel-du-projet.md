@@ -760,6 +760,55 @@ pas comme « déclarée », et la règle de [docs/37 §3](./37-decision-equipe-s
 reste entière — *seules les commandes que personne n'a décidées d'avance attendent une validation*.
 `pip install -e .` en est une ; `ls -la` n'en est pas une.
 
+### 5.7 Une racine qui ne porte que l'outillage le dit à l'agent (#1400)
+
+L'outillage est le premier geste d'un projet ([docs/37](./37-decision-equipe-sur-mesure.md),
+principe 2) : quand le premier agent arrive, la racine porte déjà `AGENTS.md`, `.agents/skills/…`
+et le manifeste. Sur p5 (2026-10-01), c'est ce qui a fait échouer l'initialisation : le générateur
+standard d'une application Next.js **refuse un dossier qui n'est pas vide** — vérifié le
+2026-10-08 sur `create-next-app@latest`, qui sort en code 1 en listant `.agents/` et `AGENTS.md`
+comme « files that could conflict » —, le plan en a conclu que « l'installation se fait alors à la
+main », et l'agent du socle a écrit `package.json` de mémoire. Six installations et environ neuf
+minutes plus tard, une installation passait ; l'agent de rattrapage, lui, avait lancé le générateur
+dans un sous-dossier.
+
+Maestro **savait** que le dossier ne portait que son outillage — la vérification d'un outillage se
+pose déjà la question pour savoir si une commande peut se jouer — et ne le disait à personne.
+
+**Ce qui est décidé.** Le fait est transmis, rien n'est déplacé :
+
+- quand l'**espace de travail de l'agent** ne porte que ce que le manifeste déclare — plus
+  `.maestro/`, où Maestro range son manifeste et les ateliers des tâches —, la consigne de
+  l'outillage (`OutillageDuProjet.consigne`) le dit dans le message de la tâche, **pièces nommées**
+  dans l'ordre du manifeste. C'est l'espace qui est jugé, pas la racine que décrit le manifeste : un
+  worktree ne porte que ce qui est commité, et c'est là que l'agent lancera son générateur ;
+- le fait vient avec ce qu'il implique, et seulement cela : un dossier « non vide » n'est pas une
+  raison d'écrire à la main ce que produit l'outil d'initialisation standard ; un générateur qui
+  exige un dossier vide se lance dans un **dossier jetable** (`mktemp -d`), et son résultat se range
+  à la racine **sans toucher à l'outillage** — aucune pièce remplacée, déplacée ni supprimée, aucune
+  recouverte par un fichier du même nom (une régénération y verrait une pièce modifiée à la main et
+  refuserait de l'écraser, §4.2), et le `.git` qu'il aurait initialisé reste dans le dossier
+  jetable ;
+- « ce fichier est-il au projet ? » n'a qu'une orthographe, `est_au_projet`
+  (`maestro/outillage/contexte.py`), que la vérification de l'outillage et le message de la tâche
+  partagent. Un projet qui a un seul fichier à lui n'apprend rien de plus : son message est celui
+  d'avant, au caractère près.
+
+**Mesuré le 2026-10-08** sur la vraie stack — S12, passage `20261008-082449`, run `b6a046cee9d8` :
+un projet Next.js né dans le fil, outillé de six pièces, versionné comme p5. La tâche du socle a
+reçu la section avec ses six pièces, a lancé `create-next-app` dans un dossier `mktemp -d`
+(cinq secondes), en a recopié le résultat à la racine, puis installé, testé et construit : Next
+16.4 et Vitest 5.0 cohérents, une installation qui passe en trois minutes et demie. Son diff
+(`maestro/socle-nextjs`) ajoute quinze fichiers et ne touche aucune pièce de l'outillage — les
+six empreintes sont identiques avant et après. La tâche suivante, partie d'un worktree qui portait
+déjà le socle, n'a pas reçu la section : sa racine n'était plus neuve.
+
+**Ce qui est gardé.** Le principe 2 de docs/37 et l'emplacement de §0, §3 et §4.3 : l'outillage reste
+le premier geste, et il reste à la racine. **Écartés**, parce qu'ils renverseraient l'un ou l'autre
+pour un défaut qui se corrige en disant un fait : différer l'outillage après l'initialisation, ou le
+sortir de la racine. Écartée aussi, une liste de générateurs dans la consigne : l'agent connaît
+celui de sa pile, et une liste n'en couvrirait jamais qu'une partie (#1169).
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |

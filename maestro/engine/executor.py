@@ -120,7 +120,7 @@ from maestro.messaging.mailbox import (
     Mailbox,
     consigne_message,
 )
-from maestro.orchestrator.schema import Task
+from maestro.orchestrator.schema import Brief, Task
 from maestro.prerequis import PrerequisManquant, prerequis_du_mcp, prerequis_du_role
 from maestro.projets.application import (
     ApplicationRefusee,
@@ -742,6 +742,20 @@ class TaskExecutor(ABC):
         fil fait en recrutant. Même limite dite que `continuer_avec_l_equipe`.
         """
 
+    def retient_le_brief(self, run_id: str, brief: Brief) -> None:  # noqa: B027 — défaut assumé
+        """Le run `run_id` travaille sous ce brief approuvé (#1402).
+
+        Dit par la boucle une fois, avant la première tâche : chacune le reçoit à
+        côté de sa description (`_build_task_description`), et le vérificateur de
+        sa livraison le lit à côté de ses critères. C'est le brief **retenu** —
+        corrigé par la personne s'il l'a été —, ou celui qu'un run repris ou relancé
+        a reçu sans refaire son cadrage.
+
+        Sans effet par défaut : un exécuteur qui ne le retient pas laisse ses tâches
+        sur leur seule description, comme avant ce ticket. Les deux exécuteurs du
+        dépôt le retiennent — en process, et jusqu'aux workers de la file.
+        """
+
     def derive_les_instances(
         self, run_id: str, projet_id: str, largeur: int
     ) -> InstancesDerivees | None:
@@ -966,6 +980,11 @@ class LocalExecutor(TaskExecutor):
         # Et l'autre issue (#1260) : les compétences pour lesquelles un rôle a été
         # recruté pendant le run, par `run_id`, même régime.
         self._recrutees: dict[str, frozenset[str]] = {}
+        # Le brief approuvé de chaque run (#1402), par `run_id`, même régime : la
+        # boucle le dit avant la première tâche, et chaque tâche du run le reçoit
+        # à côté de sa description — son vérificateur aussi. Jamais purgé : un
+        # brief tient en quelques lignes.
+        self._briefs: dict[str, Brief] = {}
         # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
         # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
         # par la couche SDK sur les exécutions outillées de l'agent. None :
@@ -1173,7 +1192,10 @@ class LocalExecutor(TaskExecutor):
                 else:
                     releve.agent = decision.agent
                     agent_execute = decision.agent
-                    entree = _build_task_description(task, dependances)
+                    # Le brief approuvé du run (#1402) entre dans le message : c'est
+                    # aussi lui que l'étape terminale consigne en entrée.
+                    brief = self._briefs.get(journal.run_id)
+                    entree = _build_task_description(task, dependances, brief)
                     # Application à chaud (#78, #104, #110) : playbook courant,
                     # serveurs MCP déclarés et politique de permissions sont
                     # résolus ici, à chaque tâche — jamais retenus entre deux
@@ -1201,8 +1223,11 @@ class LocalExecutor(TaskExecutor):
                     else:
                         # La recette de la tâche (#1177) naît ici, avec l'agent qui
                         # la mène : elle survit aux relances comme la checklist, et
-                        # ses renvois se lisent à la clôture, ci-dessous.
-                        recette = self._recette(task, decision.agent, dependances, journal)
+                        # ses renvois se lisent à la clôture, ci-dessous. Elle juge
+                        # sous le même brief que celui que l'agent a lu (#1402).
+                        recette = self._recette(
+                            task, decision.agent, dependances, journal, brief
+                        )
                         # Contrôle de capacité (#86) : l'agent au complet retient
                         # la tâche jusqu'à la libération d'un créneau d'instance.
                         # Puis l'atelier du projet (#839) : une seule tâche à la
@@ -1349,6 +1374,14 @@ class LocalExecutor(TaskExecutor):
             competences
         )
 
+    def retient_le_brief(self, run_id: str, brief: Brief) -> None:
+        """Cf. `TaskExecutor.retient_le_brief` — relu à chaque tâche de ce run (#1402).
+
+        Le dernier dit l'emporte : un run ne reçoit qu'un brief, et le redire ne
+        peut que le préciser.
+        """
+        self._briefs[run_id] = brief
+
     def derive_les_instances(
         self, run_id: str, projet_id: str, largeur: int
     ) -> InstancesDerivees | None:
@@ -1436,6 +1469,7 @@ class LocalExecutor(TaskExecutor):
         agent: Agent,
         dependances: Sequence[TaskResult],
         journal: RunJournal,
+        brief: Brief | None = None,
     ) -> Recette | None:
         """La boucle de vérification de cette exécution (#1177) — None sans vérificateur.
 
@@ -1445,6 +1479,7 @@ class LocalExecutor(TaskExecutor):
         celle-ci dépend, seules cibles d'un renvoi de QA — et la **portée** de
         l'espace de travail, celle-là même qui garde les commandes de l'agent
         (`portee_de`). Le projet est relu une fois, à la naissance de la recette.
+        Le **brief** du run (#1402) y entre tel que l'agent l'a lu.
         """
         if self._verificateur is None:
             return None
@@ -1465,6 +1500,7 @@ class LocalExecutor(TaskExecutor):
             # Un vérificateur en panne se relance comme un aléa de l'agent (#1388) —
             # la même politique —, mais seul : la session de l'agent ne se rejoue pas.
             relance=self._relance,
+            brief=brief,
         )
 
     def _consigne_verification(
@@ -4370,7 +4406,9 @@ def _echec(
     )
 
 
-def _build_task_description(task: Task, dependances: Sequence[TaskResult]) -> str:
+def _build_task_description(
+    task: Task, dependances: Sequence[TaskResult], brief: Brief | None = None
+) -> str:
     """Décrit la tâche et les livrables de ses dépendances (le « tableau noir »).
 
     Les résultats des dépendances forment le tableau noir : l'agent voit ce que les
@@ -4385,6 +4423,15 @@ def _build_task_description(task: Task, dependances: Sequence[TaskResult]) -> st
     consigne — un agent qui découvre en travaillant a raison contre un plan écrit
     à l'aveugle, et c'est précisément pourquoi son relevé la supplante
     (`maestro.detail_tache.SuiviChecklist`).
+
+    Le **brief approuvé du run** (#1402) y suit la tâche quand le run en a un : son
+    objectif, ce qui en est exclu, ses contraintes et ses critères d'acceptation
+    (`Brief.cadre`). Un agent ne voyait que sa tâche — et celui d'une tâche de
+    vérification « reconstituait » les critères du run faute de les avoir (p4, run
+    `ad4d2ce8c3bf`). Il vient **après** la description et non avant : la première
+    ligne reste le titre de la tâche, et c'est elle, le contrat sur lequel la
+    livraison sera vérifiée ; le brief en dit le cadre. Sans brief (un run `sans`),
+    le message est celui d'avant, à la ligne près.
     """
     lignes = [
         f"Tâche : {task.titre}",
@@ -4399,6 +4446,16 @@ def _build_task_description(task: Task, dependances: Sequence[TaskResult]) -> st
             "reprends-les, corrige-les ou remplace-les selon ce que la tâche exige) :",
         ]
         lignes += [f"- {etape}" for etape in task.etapes]
+    if brief is not None:
+        lignes += [
+            "",
+            "Brief approuvé du run — le cadre que la personne a validé pour tout le "
+            "run, dont ta tâche est une part. Ta tâche reste celle décrite plus haut, "
+            "et c'est sur ses critères que ta livraison sera vérifiée ; ce qui est "
+            "hors périmètre l'est aussi pour toi :",
+            "",
+            brief.cadre(),
+        ]
     if dependances:
         lignes += ["", "Résultats des tâches dont celle-ci dépend :"]
         for dep in dependances:

@@ -70,6 +70,7 @@ from dataclasses import dataclass
 
 from maestro.engine.acquis import EtatAcquis
 from maestro.engine.brief import MODE_BRIEF_HUMAIN
+from maestro.orchestrator.schema import Brief
 from maestro.references import ReferenceTicket
 
 #: Les hôtes que le dépôt sait construire, par leur **nom** — le vocabulaire du
@@ -166,6 +167,12 @@ class OrdreRun:
     moteur ; l'hôte n'a pas à savoir où elle vivait. None pour un lancement
     ordinaire. `mode_brief` et `contexte_sources` sont alors sans objet — ils
     nourrissaient un cadrage qui a déjà eu lieu.
+
+    `brief` (#1402) est le **brief approuvé** d'un run qui ne refait pas son
+    cadrage — repris sur son plan, ou relancé sur son brief (#349) : chaque tâche
+    du run le reçoit à côté de sa description (`OrchestrationEngine.run`,
+    `brief_approuve`). Une valeur qui sait se réémettre (`Brief.to_dict`), comme le
+    ticket. None pour un lancement ordinaire, dont le cadrage rédigera le sien.
     """
 
     run_id: str
@@ -179,6 +186,7 @@ class OrdreRun:
     mode_brief: str = MODE_BRIEF_HUMAIN
     contexte_sources: str = ""
     reprise: EtatAcquis | None = None
+    brief: Brief | None = None
 
 
 class HoteRun(ABC):

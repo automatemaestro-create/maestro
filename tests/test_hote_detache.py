@@ -1924,6 +1924,30 @@ def test_le_process_remet_au_moteur_les_sources_que_l_ordre_porte(
     assert "Les fiches portent un SIRET." in cable["run"]["contexte_sources"]
 
 
+def test_le_process_remet_au_moteur_le_brief_que_l_ordre_porte(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1402 : le brief d'un run repris ou relancé atteint le moteur du process fils.
+
+    Même règle que les sources : un champ sérialisé que personne ne transmet serait
+    le défaut d'avant, déplacé — les tâches du run partiraient sans leur brief.
+    """
+    brief = Brief.from_dict(
+        {
+            "objectif": "Prototyper un mini-CRM",
+            "perimetre": ["Fiches contacts"],
+            "hors_perimetre": ["Facturation"],
+            "criteres_acceptation": ["Une fiche se crée et se relit"],
+        }
+    )
+
+    cable = deroule(monkeypatch, InMemoryEventBus(), tmp_path, brief=brief)
+    sans = deroule(monkeypatch, InMemoryEventBus(), tmp_path)
+
+    assert cable["run"]["brief_approuve"] == brief
+    assert sans["run"]["brief_approuve"] is None
+
+
 def test_un_bus_referme_sans_decision_fait_lever_le_brief_et_les_clarifications(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

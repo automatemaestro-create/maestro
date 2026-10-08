@@ -389,7 +389,9 @@ class AgentRuntime:
         worktree n'en porte que ce qui est commité, et le manifeste, lui, vit
         sous `.maestro/`. C'est la moitié « transmis explicitement » de la
         règle ; l'autre moitié est le refus de le laisser entrer tout seul, qui
-        vit chez le fournisseur (`setting_sources=[]`, `skills=[]`).
+        vit chez le fournisseur (`setting_sources=[]`, `skills=[]`). L'espace,
+        lui, dit à l'outillage ce qu'il porte (#1400) : s'il ne porte que les
+        pièces que le manifeste déclare, le message le dit à l'agent.
 
         `effort` (#253) remplace, pour **cette exécution**, l'effort du runtime —
         même canal à chaud que `system_prompt` pour les playbooks, et pour la même
@@ -456,13 +458,20 @@ class AgentRuntime:
             # l'agent doit savoir de son espace dépend du régime (la racine d'un
             # projet nomme son atelier, un worktree dit qu'il se commite — #1401 —,
             # un répertoire jetable n'ajoute rien), et c'est l'espace, seul, qui sait
-            # lequel il est.
+            # lequel il est. L'outillage reçoit son énumération (#1400) : un espace
+            # qui ne porte que lui le dit à l'agent, avant qu'un générateur ne le
+            # découvre en refusant le dossier.
+            espace = (
+                ()
+                if outillage.vide
+                else (f.relative_to(ws.path).as_posix() for f in ws.fichiers())
+            )
             prompt = _build_prompt(
                 self._profile,
                 description,
                 format_sortie,
                 ws.consigne_espace(),
-                outillage.consigne(),
+                outillage.consigne(espace=espace),
             )
 
             async def session(message: str) -> str:

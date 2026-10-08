@@ -46,7 +46,7 @@ from maestro.engine.guardrails import Guardrails
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.engine.runner import run_borne
 from maestro.engine.verification import VerificateurTaches
-from maestro.orchestrator.schema import Task, validate_task
+from maestro.orchestrator.schema import Brief, Task, validate_brief, validate_task
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.queue.celery_app import NOM_TACHE_EXECUTER
@@ -220,6 +220,7 @@ def executer_tache(
     task_data: dict[str, Any],
     dependances_data: Sequence[dict[str, Any]] = (),
     run_id: str | None = None,
+    brief_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Consomme une tâche de la file : exécute et renvoie `TaskResult.to_dict()`.
 
@@ -232,13 +233,22 @@ def executer_tache(
     plafond de dépense configuré côté worker (#56) s'applique donc à la tâche
     seule, pas à l'exécution entière.
 
+    `brief_data` (#1402) est le brief approuvé du run, quand il en a un : validé
+    comme la tâche — un brief malformé refuse le message —, il est retenu pour ce
+    run, et la tâche le reçoit à côté de sa description, son vérificateur aussi.
+    Absent (un run sans brief, ou un orchestrateur d'avant) : rien ne change.
+
     Le résultat porte le nom du worker (`worker`) : c'est ce qui rend visible la
     répartition des tâches entre workers distincts (critère MVP n°2).
     """
     validate_task(task_data)
+    if brief_data is not None:
+        validate_brief(brief_data)
     task = Task.from_dict(task_data)
     dependances = [TaskResult.from_dict(d) for d in dependances_data]
     journal = RunJournal(run_id=run_id)
+    if brief_data is not None:
+        _executeur().retient_le_brief(journal.run_id, Brief.from_dict(brief_data))
     # Arrêt borné (#64) : les garde-fous s'appliquant côté worker, une réalisation
     # détachée par le time-out ne peut pas suspendre la remontée du résultat.
     result = run_borne(_executeur().execute(task, dependances, journal))

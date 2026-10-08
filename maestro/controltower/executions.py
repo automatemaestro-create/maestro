@@ -268,6 +268,7 @@ from maestro.engine.brief import (
 )
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.engine.pause import PorteExecution
+from maestro.orchestrator.schema import Brief
 from maestro.projets.application import ApplicationRefusee
 from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
@@ -696,6 +697,7 @@ class ServiceExecutions:
         mode_brief: str | None = MODE_BRIEF_HUMAIN,
         reprise_de: str = "",
         contexte_sources: str = "",
+        brief: Brief | None = None,
     ) -> dict[str, Any]:
         """Confie une exécution à l'hôte et rend son résumé **immédiatement**.
 
@@ -777,6 +779,11 @@ class ServiceExecutions:
         journal durable, exactement comme le ticket et le projet. C'est `relancer`
         qui le pose — le renseigner depuis la route de lancement ferait dire « ceci
         est la suite de cela » sans que rien n'ait été repris.
+
+        `brief` (#1402) est le brief approuvé que le run reçoit **sans le recadrer**
+        — `relancer` le pose, comme `reprise_de`, et aucune route ne le prend :
+        approuver un brief passe par sa décision, jamais par un lancement. Il part
+        avec l'ordre, et chaque tâche du run le reçoit à côté de sa description.
 
         Lève `ValueError` sur un objectif vide, un garde-fou hors bornes (les
         plafonds sont des maximums : ils doivent être > 0), un mode de brief
@@ -895,6 +902,7 @@ class ServiceExecutions:
                         for morceau in (contexte_markdown(rapport), contexte_sources.strip())
                         if morceau.strip()
                     ),
+                    brief=brief,
                 )
             )
         except DemarrageHoteRate as echec:
@@ -1233,6 +1241,10 @@ class ServiceExecutions:
                     # seul régime qui ne demande rien à personne.
                     mode_brief=MODE_BRIEF_SANS,
                     reprise=etat,
+                    # Mais son brief, s'il a été approuvé, reste celui de ses tâches
+                    # (#1402) : un run repris est le même run. Un brief rédigé que
+                    # personne n'a tranché n'en est pas un.
+                    brief=execution.brief if execution.brief_approuve else None,
                 )
             )
         except DemarrageHoteRate as echec:
@@ -1366,6 +1378,9 @@ class ServiceExecutions:
             projet_id=projet,
             mode_brief=MODE_BRIEF_SANS,
             reprise_de=run_id,
+            # Le brief rejoué part aussi tel quel (#1402) : ses tâches le reçoivent,
+            # comme celles du run qu'il recommence.
+            brief=brief,
         )
 
     async def _refus_de_relance(self, run_id: str) -> RelanceRefusee | None:
@@ -2113,6 +2128,8 @@ class ServiceExecutions:
                 contexte_sources=ordre.contexte_sources,
                 # Un run repris sur son plan (#1391) : ce qui est acquis ne se refait pas.
                 reprise=ordre.reprise,
+                # Le brief qu'un run repris ou relancé ne recadre pas (#1402).
+                brief_approuve=ordre.brief,
             )
         except asyncio.CancelledError:
             raise
