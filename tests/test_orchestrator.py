@@ -470,6 +470,22 @@ def test_le_plan_degage_le_travail_qui_se_fait_de_front():
     assert "c'est la fourchette qui se relit, pas le découpage" in texte
 
 
+def test_le_plan_designe_la_racine_du_projet_jamais_le_nom_de_son_dossier():
+    """#1399 : la tâche `socle-nextjs` de p5 disait « Installer dans le dossier p5 »,
+    « Commence par inspecter p5 » — et l'agent, qui travaille dans une copie qui ne
+    porte pas ce nom, cherchait un sous-dossier `p5` qui n'existait pas.
+
+    Le planificateur ne reçoit ni nom ni chemin, mais il sait que le répertoire de
+    l'agent **est** la racine du projet (« Agir », plus haut) : c'est ainsi qu'il la
+    désigne. La règle vit dans ses **entrées**, là où il apprend ce qu'il ne reçoit
+    pas — et aucune réécriture du texte qu'il rend ne la remplace."""
+    texte = _playbook()
+
+    assert "est la racine du projet" in texte
+    assert "désigne-le par « la racine du projet »" in texte
+    assert "jamais par le nom du projet ni par celui de son dossier" in texte
+
+
 def test_le_playbook_cadre_sur_l_equipe_reste_celui_du_document():
     """Garde de non-régression sur le chargeur (#1041) : le document servi à une
     équipe donnée porte les mêmes règles que celui du code, marqueurs substitués."""

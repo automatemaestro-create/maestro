@@ -109,12 +109,14 @@ class Workspace:
     def consigne_espace(self) -> str:
         """Ce que l'agent doit savoir de cet espace, ajouté au message de sa tâche.
 
-        **Vide** ici, et c'est la règle : un répertoire jetable et un worktree
-        n'ont rien de particulier à dire — le premier disparaît avec la tâche, le
-        second est une copie conforme d'une branche —, donc le message qu'ils
-        composent est au caractère près celui d'avant #944. Seule la racine d'un
-        projet a quelque chose à ajouter : elle n'est pas isolée, et elle porte un
-        atelier (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`).
+        **Vide** ici : un répertoire jetable disparaît avec la tâche et n'est le
+        projet de personne, donc le message qu'il compose est au caractère près
+        celui d'avant #944. Les espaces dérivés d'un projet ont, eux, quelque
+        chose à dire : la racine d'un projet n'est pas isolée et porte un atelier
+        (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`), et un worktree
+        **est** la racine du projet qu'il copie sans en porter le nom
+        (`maestro.sandbox.projet.EspaceCopieDeTravail.consigne_espace`, #1399 —
+        qui renverse ici « un worktree n'a rien de particulier à dire »).
         """
         return ""
 
