@@ -519,6 +519,16 @@ distribuée. Cette porte rouvre la *portée*, pas le *décideur*.
 >   `cp` sur `/dev/null`, sont lues depuis. Le `find` qui efface se confronte désormais au
 >   relevé de ce qui était là, par ses racines et son `-name` ; ce qui ne se confronte pas
 >   remonte comme avant.
+>
+> ⚠ **Ce que #1394 a corrigé le 2026-10-08, sur le run `da0a8ae6f1b2`** (projet `p5`). L'agent
+> arrêtait le serveur qu'il avait lancé, comme son cadre l'exige : `taskkill //PID 41084 //T //F`.
+> Sous Git Bash, `/PID` serait un chemin, d'où la barre doublée — et la portée lisait `//PID`
+> comme un chemin absolu hors du projet, deux fois dans la tâche. Sous une racine Windows, un mot
+> `//X` sans autre séparateur est désormais une **option**. C'est une règle de syntaxe, celle de
+> MSYS2, vérifiée sur le poste. `//serveur/partage` reste un chemin UNC, et `//serveur\partage`
+> aussi, bien que MSYS2 en fasse une option : ce cas ne peut que remonter plus. Un mot après
+> `--`, un mot qui n'est pas écrit en entier, et toute racine POSIX (où `//etc` est `/etc`)
+> gardent la règle des chemins.
 
 **Porte 3 — un jugement contextuel dont on accepte le régime.** Un acte dont la légitimité dépend du
 **plan**, que la politique ne connaît pas (« ce `rm` est-il dans le périmètre de la tâche T3 ? »).

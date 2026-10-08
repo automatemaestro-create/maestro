@@ -88,7 +88,10 @@ qui n'était pas une suite de mots — une substitution, un heredoc, une boucle 
   `python -c` ;
 - **un `find` qui efface décrit ses cibles** par ses racines et son `-name` : il
   se confronte au relevé de ce qui était là, comme un `rm` à ses arguments. Ce qui
-  ne se confronte pas (aucun nom, un `-o`, un `-regex`) remonte comme avant.
+  ne se confronte pas (aucun nom, un `-o`, un `-regex`) remonte comme avant ;
+- **une option que Git Bash fait passer** n'est pas un chemin : sous une racine
+  Windows, `taskkill //PID 41084 //T //F` arrête le serveur que l'agent a lancé
+  (#1394). `//serveur/partage`, lui, reste un chemin UNC.
 
 **L'établi.** Ce que l'agent crée par `mktemp` **dans la commande même** est à lui :
 il y écrit et le détruit comme dans sa racine — c'est ainsi que S2 vérifie son
@@ -390,6 +393,16 @@ _ABSOLU_WINDOWS = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 #: `E:\\Projets` ; sous une racine POSIX, c'est un dossier `/e` comme un autre, et
 #: ce motif n'y est jamais consulté.
 _LECTEUR_MSYS = re.compile(r"^/([A-Za-z])(?=/|$)")
+
+#: Une option Windows **échappée** pour Git Bash (#1394). Git Bash prend `/PID`
+#: pour un chemin et le réécrit (`C:/Program Files/Git/PID`) : l'agent double donc
+#: la barre d'une option — `taskkill //PID 41084 //T //F`, `cmd //c` —, et Git Bash
+#: la rend au programme avec une seule. La règle est celle de MSYS2, vérifiée sur
+#: le poste : deux barres en tête et aucune après font une option ; une barre après
+#: le nom (`//serveur/partage`) fait un chemin UNC, transmis tel quel. MSYS2 tient
+#: aussi `//serveur\\partage` pour une option : il reste ici un chemin, ce qui ne
+#: fait passer que moins.
+_OPTION_ECHAPPEE = re.compile(r"//[^/\\]+")
 
 #: Les suffixes qu'un exécutable porte sous Windows et que le shell n'exige pas :
 #: `pip.exe install` **est** `pip install`. Ce ne sont pas les verbes qu'on juge
@@ -721,7 +734,8 @@ class PorteeProjet:
             )
         if simple_lit([verbe, *rendus]):
             return ""
-        for valeur_operande, rendu in _operandes(nom, arguments):
+        windows = _racine_windows(self.racine)
+        for valeur_operande, rendu in _operandes(nom, arguments, windows=windows):
             texte = _texte(valeur_operande) or ""
             if texte in PERIPHERIQUES or texte.startswith("/dev/fd/"):
                 continue  # un périphérique n'est pas un chemin du disque
@@ -957,7 +971,7 @@ class PorteeProjet:
                 "(`xargs`), donc des chemins qu'on ne peut pas juger ici. Une personne "
                 "tranche."
             )
-        for rendu, cible in _cibles(arguments):
+        for rendu, cible in _cibles(arguments, windows=_racine_windows(self.racine)):
             if any(isinstance(morceau, _Motif) for morceau in cible):
                 return (
                     f"commande hors de la portée : `{verbe} {rendu}` vise un motif "
@@ -1358,7 +1372,9 @@ def _deballe(nom: str, arguments: list[tuple[Mot, _Valeur]]) -> list[tuple[Mot, 
     return arguments[index:] or None
 
 
-def _operandes(nom: str, arguments: list[tuple[Mot, _Valeur]]) -> Iterator[tuple[_Valeur, str]]:
+def _operandes(
+    nom: str, arguments: list[tuple[Mot, _Valeur]], *, windows: bool
+) -> Iterator[tuple[_Valeur, str]]:
     """Ce que les arguments **nomment** comme chemins, à situer depuis le dossier courant.
 
     Un opérande compte tel qu'il est, nom nu compris : relatif, il désigne un
@@ -1367,6 +1383,8 @@ def _operandes(nom: str, arguments: list[tuple[Mot, _Valeur]]) -> Iterator[tuple
     seulement si cette valeur ressemble à un chemin (`--sortie=../x`,
     `-I/usr/include`) : `--headless=new` n'en nomme aucun. Le code d'un
     interpréteur (`-c`, `-m`) et le programme de `sed` ou d'`awk` n'en sont pas.
+    Sous une racine Windows, une option que Git Bash fait passer (`//PID`) n'en
+    nomme aucun non plus (#1394).
     """
     nu = _forme_nue(nom)
     programme = OPTIONS_DE_PROGRAMME.get(nu, frozenset())
@@ -1377,12 +1395,14 @@ def _operandes(nom: str, arguments: list[tuple[Mot, _Valeur]]) -> Iterator[tuple
     )
     attend_programme = premier is not None and not deja_donne
     saute, options_finies = False, False
-    for (_, valeur), rendu in zip(arguments, rendus, strict=True):
+    for (mot, valeur), rendu in zip(arguments, rendus, strict=True):
         if saute:
             saute = False
             continue
         if not options_finies and rendu == "--":
             options_finies = True
+            continue
+        if not options_finies and _option_echappee(mot, windows):
             continue
         if not options_finies and rendu.startswith("-") and rendu != "-":
             if rendu in programme:
@@ -1398,6 +1418,21 @@ def _operandes(nom: str, arguments: list[tuple[Mot, _Valeur]]) -> Iterator[tuple
             attend_programme = False
             continue
         yield valeur, rendu
+
+
+def _option_echappee(mot: Mot, windows: bool) -> bool:
+    """`mot` est-il une option Windows que Git Bash fait passer (`//PID`) — donc pas un chemin ?
+
+    Une règle de **syntaxe**, pas une liste de verbes : `taskkill //PID 41084`
+    arrête le serveur que l'agent a lancé, comme `cmd //c` lui donne un programme.
+    Sous une racine Windows seulement — sous une racine POSIX, `//etc` **est**
+    `/etc` —, et pour un mot écrit tout entier : `//$x` ou un motif que le shell
+    étendra ne disent pas ce qu'ils deviendront, et restent des chemins.
+    """
+    texte = mot.litteral()
+    if not windows or texte is None or mot.glob:
+        return False
+    return _OPTION_ECHAPPEE.fullmatch(texte) is not None
 
 
 def _valeur_collee(valeur: _Valeur) -> _Valeur | None:
@@ -1440,11 +1475,14 @@ def _valeur_d_option(
     return None
 
 
-def _cibles(arguments: list[tuple[Mot, _Valeur]]) -> Iterator[tuple[str, _Valeur]]:
+def _cibles(
+    arguments: list[tuple[Mot, _Valeur]], *, windows: bool
+) -> Iterator[tuple[str, _Valeur]]:
     """Les arguments d'un verbe destructeur qui désignent ce qu'il va détruire.
 
     Tout ce qui n'est pas une option : `rm -rf build .cache` vise `build` et
-    `.cache`. Un nom nu compte ici — c'est la cible du geste.
+    `.cache`. Un nom nu compte ici — c'est la cible du geste. Une option que Git
+    Bash fait passer (`del //Q build`) est une option ici aussi (#1394).
 
     Un opérande `clé=valeur` rend **les deux** : `dd of=sortie` ne nomme pas plus
     sa cible autrement, et ne garder que le jeton entier ferait passer un `dd`
@@ -1452,7 +1490,7 @@ def _cibles(arguments: list[tuple[Mot, _Valeur]]) -> Iterator[tuple[str, _Valeur
     """
     for mot, valeur in arguments:
         rendu = mot.rendu()
-        if rendu == "--" or rendu.startswith("-") or not valeur:
+        if rendu == "--" or rendu.startswith("-") or not valeur or _option_echappee(mot, windows):
             continue
         yield rendu, valeur
         tete = valeur[0] if valeur else ""
