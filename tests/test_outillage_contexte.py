@@ -44,6 +44,8 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -59,8 +61,9 @@ from maestro.outillage import (
     VERSION_MANIFESTE,
     outillage_du_projet,
 )
-from maestro.outillage.contexte import Bornes
+from maestro.outillage.contexte import TITRE_RACINE_OUTILLEE, Bornes
 from maestro.projets.modele import Perimetre, Projet
+from maestro.projets.racine import detecter_vcs
 from maestro.providers.base import ModelProvider
 from maestro.providers.claude import sans_reglages_du_poste, sans_skills_du_poste
 
@@ -701,10 +704,12 @@ def test_un_projet_non_outille_rend_le_message_d_avant_a_la_ligne_pres(tmp_path:
 
     Les deux exécutions ne diffèrent que par le manifeste ; la seconde est donc
     la mesure de ce que ce lot a **ajouté** au message quand il n'a rien à dire.
+    La racine de `projet_outille` ne porte que l'outillage : le fragment ajouté le
+    dit (#1400), et c'est le fragment entier qui disparaît sans manifeste.
     """
     racine = tmp_path / "depensio"
     projet = projet_outille(racine)
-    consigne = outillage_du_projet(projet).consigne()
+    consigne = outillage_du_projet(projet).consigne(espace=ESPACE_NEUF)
     avec = _ProviderTemoin()
     asyncio.run(_runtime(avec).execute("Ajouter un écran", projet=projet, tache_id="t-1"))
     (racine / CHEMIN_MANIFESTE).unlink()
@@ -733,3 +738,173 @@ def test_l_outillage_est_lu_dans_la_racine_pas_dans_l_espace_de_la_tache(
 
     assert "mot-temoin-des-instructions" in provider.prompts[0]
     assert (racine / CHEMIN_MANIFESTE).is_file()
+
+
+# --------------------------------------------------------------------------- #
+# Une racine qui ne porte que l'outillage (#1400)                               #
+# --------------------------------------------------------------------------- #
+
+#: Les fichiers de l'espace d'une tâche dans un projet **neuf** : l'outillage que le
+#: manifeste de `projet_outille` déclare, le manifeste lui-même et l'atelier d'une
+#: tâche — tout ce que Maestro a posé, rien du projet.
+ESPACE_NEUF = (
+    ".agents/skills/lancer-les-tests/SKILL.md",
+    ".maestro/outillage/manifeste.json",
+    ".maestro/t-1/brouillon.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+)
+
+#: Les pièces déclarées de `projet_outille`, dans l'ordre de son manifeste.
+PIECES_NEUVES = ("AGENTS.md", "CLAUDE.md", ".agents/skills/lancer-les-tests/SKILL.md")
+
+
+def _section_racine(texte: str) -> str:
+    """La section qui dit ce que porte la racine — `""` si le texte ne la porte pas."""
+    _, titre, suite = texte.partition(TITRE_RACINE_OUTILLEE)
+    return titre + suite.split("\n## ", 1)[0] if titre else ""
+
+
+def test_une_racine_qui_ne_porte_que_l_outillage_le_dit_avec_ses_pieces(tmp_path: Path) -> None:
+    """p5 (2026-10-01) : Maestro savait que le dossier ne portait que son outillage, et ne
+    le disait à personne. L'agent du socle a tenté le générateur standard, l'a vu refuser
+    un dossier non vide, et a écrit `package.json` de mémoire — six installations et
+    neuf minutes plus tard, une installation passait.
+
+    Le fait se dit avec sa liste, **dérivée du manifeste** et dans son ordre, et avec ce
+    qu'il implique : un générateur qui exige un dossier vide se lance dans un dossier
+    jetable, et son résultat se range à la racine sans toucher à l'outillage.
+    """
+    projet = projet_outille(tmp_path / "depensio")
+
+    section = _section_racine(outillage_du_projet(projet).consigne(espace=ESPACE_NEUF))
+
+    assert section
+    positions = [section.find(f"`{piece}`") for piece in PIECES_NEUVES]
+    assert -1 not in positions, section
+    assert positions == sorted(positions)
+    assert "`.maestro/`" in section
+    assert "dossier jetable" in section
+    assert "`mktemp -d`" in section
+    assert "sans toucher à l'outillage" in section
+    assert "à la main" in section
+
+
+def test_la_section_vient_avant_ce_que_les_fichiers_ne_peuvent_pas_faire(tmp_path: Path) -> None:
+    """La phrase qui borne l'outillage reste la dernière du bloc (docstring de `consigne`)."""
+    projet = projet_outille(tmp_path / "depensio")
+
+    consigne = outillage_du_projet(projet).consigne(espace=ESPACE_NEUF)
+
+    assert consigne.index(TITRE_RACINE_OUTILLEE) < consigne.index("Deux choses que ces fichiers")
+    assert consigne.rstrip().endswith("sous tes autorisations.")
+
+
+@pytest.mark.parametrize(
+    "fichier_du_projet",
+    [
+        "package.json",
+        # Le manifeste décide, pas le disque : un skill que Maestro n'a pas déclaré
+        # est un fichier du projet, et la racine n'est plus neuve.
+        ".agents/skills/intrus/SKILL.md",
+        # `.maestro` à la racine n'est que le nom d'un fichier : seul le dossier est à Maestro.
+        ".maestrorc",
+    ],
+)
+def test_un_seul_fichier_du_projet_et_la_racine_n_est_plus_neuve(
+    tmp_path: Path, fichier_du_projet: str
+) -> None:
+    """Un projet qui a ses fichiers n'apprend rien de plus : la consigne est celle d'avant."""
+    outillage = outillage_du_projet(projet_outille(tmp_path / "depensio"))
+
+    assert outillage.consigne(espace=(*ESPACE_NEUF, fichier_du_projet)) == outillage.consigne()
+
+
+def test_une_piece_declaree_absente_de_l_espace_n_est_pas_nommee(tmp_path: Path) -> None:
+    """La liste est ce que la racine **porte** : une pièce disparue n'y est pas dite."""
+    projet = projet_outille(tmp_path / "depensio")
+    espace = tuple(chemin for chemin in ESPACE_NEUF if chemin != "CLAUDE.md")
+
+    section = _section_racine(outillage_du_projet(projet).consigne(espace=espace))
+
+    assert "`AGENTS.md`" in section
+    assert "`CLAUDE.md`" not in section
+
+
+def test_un_espace_sans_aucune_piece_de_l_outillage_ne_dit_rien_de_plus(tmp_path: Path) -> None:
+    """Sans pièce dans l'espace, il n'y a rien à ne pas toucher : la consigne d'avant."""
+    outillage = outillage_du_projet(projet_outille(tmp_path / "depensio"))
+
+    assert outillage.consigne(espace=(".maestro/t-1/brouillon.md",)) == outillage.consigne()
+    assert outillage.consigne(espace=()) == outillage.consigne()
+
+
+def test_le_message_d_une_tache_dans_un_projet_neuf_dit_que_sa_racine_ne_porte_que_l_outillage(
+    tmp_path: Path,
+) -> None:
+    """Le défaut de #1400, au point de couture : le message de la tâche du socle.
+
+    Projet non versionné : l'espace **est** la racine, qui porte l'outillage et
+    l'atelier de la tâche (`.maestro/t-1/`), et rien d'autre.
+    """
+    projet = projet_outille(tmp_path / "depensio")
+    provider = _ProviderTemoin()
+
+    asyncio.run(
+        _runtime(provider).execute("Initialiser le socle Next.js", projet=projet, tache_id="t-1")
+    )
+
+    section = _section_racine(provider.prompts[0])
+    assert section, "le message ne dit pas que la racine ne porte que l'outillage"
+    assert "`AGENTS.md`" in section
+    assert "`.agents/skills/lancer-les-tests/SKILL.md`" in section
+
+
+def test_le_message_d_une_tache_dans_un_projet_qui_a_ses_fichiers_n_en_dit_rien(
+    tmp_path: Path,
+) -> None:
+    """Un projet qui a déjà son code : l'outillage est transmis, la racine n'a rien à dire."""
+    racine = tmp_path / "depensio"
+    projet = projet_outille(racine)
+    ecrire(racine, "package.json", "{}\n")
+    provider = _ProviderTemoin()
+
+    asyncio.run(_runtime(provider).execute("Ajouter un écran", projet=projet, tache_id="t-1"))
+
+    assert "## L'outillage de ce projet" in provider.prompts[0]
+    assert TITRE_RACINE_OUTILLEE not in provider.prompts[0]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git introuvable")
+def test_dans_un_projet_versionne_c_est_le_worktree_de_la_tache_qui_est_juge(
+    tmp_path: Path,
+) -> None:
+    """L'agent travaille dans le worktree : c'est lui qui est neuf ou non, pas la racine.
+
+    L'outillage y arrive **commité**, manifeste compris (la fusion de sa branche) :
+    `.maestro/` n'est pas au projet pour autant. Un brouillon que la racine porte sans
+    l'avoir commité n'est pas dans le worktree, et ne rend pas la racine de l'agent
+    « non neuve ».
+    """
+    racine = tmp_path / "depensio"
+    projet_outille(racine)
+    for arguments in (
+        ("init", "--quiet"),
+        ("symbolic-ref", "HEAD", "refs/heads/main"),
+        ("add", "-A"),
+        ("-c", "user.email=tests@maestro", "-c", "user.name=Tests", "commit", "-q", "-m", "o"),
+    ):
+        subprocess.run(["git", *arguments], cwd=racine, check=True, capture_output=True)
+    ecrire(racine, "brouillon-non-commite.txt", "x\n")
+    projet = Projet(
+        id="prj-0000dead", nom="Dépensio", racine=racine.as_posix(), vcs=detecter_vcs(racine)
+    )
+    provider = _ProviderTemoin()
+
+    asyncio.run(
+        _runtime(provider).execute("Initialiser le socle Next.js", projet=projet, tache_id="t-1")
+    )
+
+    section = _section_racine(provider.prompts[0])
+    assert section, "le worktree ne porte que l'outillage, le message doit le dire"
+    assert "brouillon-non-commite.txt" not in section

@@ -40,6 +40,18 @@ Trois conséquences, et aucune n'est un réglage :
   personne, outil par outil (docs/32), et l'origine du fichier n'y change rien,
   fût-il écrit par Maestro.
 
+**Ce que la racine porte se dit aussi** (#1400). L'outillage est le premier geste
+d'un projet (docs/37, principe 2) : quand le premier agent arrive, la racine n'est
+déjà plus vide — et un générateur qui exige un dossier vide la refuse. Sur p5
+(2026-10-01), l'agent du socle en a conclu qu'il fallait tout écrire à la main : six
+installations et neuf minutes avant qu'une installation passe. Maestro **savait**
+que le dossier ne portait que son outillage, il ne le disait à personne. Quand
+l'espace de l'agent ne porte que ce que le manifeste déclare (aucun fichier n'y est
+`est_au_projet`), la consigne le dit, pièces nommées, avec ce que le fait implique
+— le générateur se lance ailleurs, son résultat se range sans toucher à
+l'outillage. Rien n'est déplacé : on transmet un fait, l'outillage reste où docs/38
+le pose.
+
 Comme `maestro.outillage.analyse`, ce module **ne fait que lire** : il n'ouvre
 aucun fichier en écriture, ne crée aucun dossier, n'importe pas `subprocess` et
 ne suit **aucun lien symbolique** (docs/24 §2.5). Le périmètre déclaré du projet
@@ -52,6 +64,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -59,6 +72,7 @@ from typing import Any
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
 from maestro.projets.modele import Projet
 from maestro.projets.perimetre import motifs_compiles
+from maestro.sandbox.en_place import DOSSIER_ATELIER
 
 #: Version du manifeste que ce module sait lire (docs/38 §4.1). Une version
 #: inconnue **n'est pas lue de travers** : rien n'est transmis, et la raison est
@@ -86,6 +100,10 @@ RAISON_HORS_CONTEXTE: dict[str, str] = {
 #: jamais celui qu'on relit.
 BALISE_DEBUT = "<!-- BEGIN:maestro-outillage -->"
 BALISE_FIN = "<!-- END:maestro-outillage -->"
+
+#: Le titre de la section qui dit à l'agent que son répertoire de travail ne porte
+#: encore que l'outillage (#1400).
+TITRE_RACINE_OUTILLEE = "### Ce que ton répertoire de travail porte déjà"
 
 #: Le champ du frontmatter d'un `SKILL.md` qui **prétend** accorder des outils.
 #: Nommé ici pour être signalé, jamais honoré (docs/38 §5.1, §6).
@@ -162,6 +180,10 @@ class OutillageDuProjet:
     il n'y en a pas : c'est ce qui sépare « projet non outillé » de « projet
     outillé dont rien n'a pu être lu », deux situations qui rendent le même
     contexte vide et n'appellent pas le même geste.
+
+    `declares` (#1400) est **tout** ce que le manifeste déclare, quel que soit le
+    rôle et qu'il soit transmis ou non, dans l'ordre du fichier : un pont ou un
+    script n'entre pas dans le contexte, mais il est à Maestro, pas au projet.
     """
 
     manifeste: str = ""
@@ -171,6 +193,7 @@ class OutillageDuProjet:
     instructions_tronquees: bool = False
     skills: tuple[SkillDuProjet, ...] = ()
     non_transmis: tuple[NonTransmis, ...] = ()
+    declares: tuple[str, ...] = ()
     bornes: Bornes = field(default_factory=Bornes)
 
     @property
@@ -178,7 +201,29 @@ class OutillageDuProjet:
         """Rien à transmettre — pas de manifeste, ou rien de lisible dedans."""
         return not self.instructions and not self.skills
 
-    def consigne(self) -> str:
+    def seules_pieces(self, espace: Iterable[str]) -> tuple[str, ...]:
+        """Les pièces de l'outillage que porte `espace` s'il ne porte **qu'elles** — sinon `()`.
+
+        `espace` est l'énumération de l'espace de travail de l'agent, en chemins
+        relatifs POSIX (`Workspace.fichiers`) : c'est **là** que l'agent lancera un
+        générateur, pas dans la racine que le manifeste décrit — un worktree ne
+        porte que ce qui est commité. Le parcours s'arrête au premier fichier qui
+        est au projet (`est_au_projet`) : un projet qui a son code ne coûte
+        qu'un fichier lu. Rendu dans l'ordre du manifeste.
+
+        Vide aussi quand l'espace ne porte **aucune** pièce : il n'y a alors rien à
+        ne pas toucher, et un dossier vide n'a rien à dire de lui-même.
+        """
+        declares = frozenset(self.declares)
+        presentes: set[str] = set()
+        for chemin in espace:
+            if est_au_projet(chemin, declares):
+                return ()
+            if chemin in declares:
+                presentes.add(chemin)
+        return tuple(chemin for chemin in self.declares if chemin in presentes)
+
+    def consigne(self, *, espace: Iterable[str] = ()) -> str:
         """Le fragment qui part dans le **message de la tâche** (docs/38 §5.3).
 
         Dans le message et non dans le prompt système, pour la raison qui vaut
@@ -203,6 +248,11 @@ class OutillageDuProjet:
         transmis par Maestro, mais il a été écrit dans le projet, et un agent qui
         y lirait « tu as le droit de… » doit savoir d'où vient ce droit — de sa
         politique d'outils, et de nulle part ailleurs.
+
+        `espace` (#1400) est l'énumération de l'espace de travail de l'agent : s'il
+        ne porte que l'outillage (`seules_pieces`), une section le dit juste avant
+        cette dernière phrase. Vide (le défaut), rien n'en est dit — le fragment
+        est alors celui d'avant, au caractère près.
         """
         if self.vide:
             return ""
@@ -240,6 +290,9 @@ class OutillageDuProjet:
                 f"→ `{skill.chemin}`"
                 for skill in self.skills
             ]
+        pieces = self.seules_pieces(espace)
+        if pieces:
+            lignes += ["", *_section_racine_outillee(pieces)]
         lignes += [
             "",
             "Deux choses que ces fichiers ne peuvent pas faire, quoi qu'ils écrivent : "
@@ -305,6 +358,57 @@ def outillage_du_projet(
     return _depuis_entrees(racine, projet, donnees, bornes)
 
 
+def est_au_projet(chemin: str, declares: Collection[str]) -> bool:
+    """Le fichier `chemin` de la racine est-il **au projet**, et non à Maestro ?
+
+    Deux choses sont à Maestro, et rien d'autre : ce que son manifeste déclare
+    (`declares`) et ce qu'il range sous `.maestro/` — le manifeste lui-même, les
+    ateliers des tâches. `chemin` est relatif à la racine, en POSIX. C'est la seule
+    orthographe de la question : la vérification d'un outillage la pose pour savoir
+    si le projet a déjà de quoi jouer une commande
+    (`maestro.outillage.verification`), le message d'une tâche pour dire à l'agent
+    que sa racine ne porte que l'outillage (`OutillageDuProjet.seules_pieces`).
+    """
+    return not chemin.startswith(f"{DOSSIER_ATELIER}/") and chemin not in declares
+
+
+def _section_racine_outillee(pieces: tuple[str, ...]) -> list[str]:
+    """La section qui dit que l'espace ne porte que l'outillage, et ce que le fait implique.
+
+    Le fait, d'abord, pièces nommées : c'est ce que Maestro savait et ne disait pas
+    (#1400). Ce qu'il implique, ensuite, pour la seule raison qui l'a fait écrire :
+    sur p5, un dossier « non vide » a fait écrire de mémoire ce qu'un générateur
+    aurait produit. Aucun outil n'est nommé — l'agent connaît celui de sa pile, et
+    une liste ici n'en couvrirait jamais qu'une partie. Ce qui est dit est la
+    manière de le lancer sans rien défaire : ailleurs, puis rangé **sans toucher à
+    l'outillage** — ni le recouvrir (une régénération verrait une pièce modifiée à
+    la main et refuserait de l'écraser, docs/38 §4.2), ni recopier le `.git` qu'il
+    aurait créé, qui remplacerait celui d'un worktree.
+    """
+    return [
+        TITRE_RACINE_OUTILLEE,
+        "",
+        "Ton répertoire de travail ne porte encore **que l'outillage de Maestro**, et "
+        "aucun fichier du projet :",
+        "",
+        *(f"- `{piece}`" for piece in pieces),
+        "",
+        f"et, s'il est là, `{DOSSIER_ATELIER}/`, où Maestro range son manifeste et les "
+        "ateliers des tâches.",
+        "",
+        "Ce n'est pas une raison d'écrire à la main ce que produit l'outil "
+        "d'initialisation standard du projet : lui choisit des versions qui vont "
+        "ensemble, ce qu'une liste écrite de mémoire ne garantit pas. Un générateur qui "
+        "exige un dossier vide se lance dans un **dossier jetable**, que tu crées par "
+        "`mktemp -d` ; son résultat se range ensuite à la racine **sans toucher à "
+        "l'outillage** — aucune de ces pièces n'est remplacée, déplacée ni supprimée, un "
+        "fichier du générateur qui porte le nom de l'une d'elles ne la recouvre pas (dis-le "
+        "dans ton rapport), et le `.git` qu'il aurait initialisé reste dans le dossier "
+        "jetable. Les dépendances s'installent ensuite à la racine, pas dans le dossier "
+        "jetable d'où il faudrait les déplacer.",
+    ]
+
+
 def _depuis_entrees(
     racine: Path, projet: Projet, donnees: dict[str, Any], bornes: Bornes
 ) -> OutillageDuProjet:
@@ -320,6 +424,7 @@ def _depuis_entrees(
     tronquees = False
     skills: list[SkillDuProjet] = []
     non_transmis: list[NonTransmis] = []
+    declares: dict[str, None] = {}
     brutes = donnees.get("entrees")
     entrees = brutes[: bornes.entrees_max] if isinstance(brutes, list) else []
     for brute in entrees:
@@ -327,6 +432,8 @@ def _depuis_entrees(
             continue
         chemin = str(brute.get("chemin") or "")
         role = str(brute.get("role") or "")
+        if chemin:
+            declares[chemin] = None
         if role not in ROLES_TRANSMIS:
             non_transmis.append(
                 NonTransmis(
@@ -384,6 +491,7 @@ def _depuis_entrees(
         instructions_tronquees=tronquees,
         skills=tuple(skills),
         non_transmis=tuple(non_transmis),
+        declares=tuple(declares),
         bornes=bornes,
     )
 
