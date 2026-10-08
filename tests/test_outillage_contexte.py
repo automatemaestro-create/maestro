@@ -578,12 +578,19 @@ def test_l_outillage_se_montre_tel_quel_avec_ses_bornes(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+#: Ce que toute construction de `ClaudeAgentOptions` doit passer : les réglages et les
+#: skills du poste fermés (#1032), et un **répertoire courant choisi** (#1397). Sans
+#: `cwd`, le CLI hérite de celui de l'API — le clone de développement de Maestro —, et ce
+#: que ce dossier apporte (sa mémoire, par exemple) entre dans la session.
+VERROUS = frozenset({"setting_sources", "skills", "cwd"})
+
+
 def _options_sans_garde(source: str) -> list[int]:
-    """Les lignes des `ClaudeAgentOptions(…)` qui n'arment pas les deux verrous.
+    """Les lignes des `ClaudeAgentOptions(…)` qui n'arment pas les trois verrous.
 
     Relevé sur l'AST : c'est la seule façon de parler de **toutes** les
     constructions du module, y compris celles qu'un lot futur ajoutera. Un
-    `grep` compterait les occurrences des deux mots sans dire s'ils sont dans la
+    `grep` compterait les occurrences des mots sans dire s'ils sont dans la
     bonne construction.
     """
     manquants: list[int] = []
@@ -595,33 +602,37 @@ def _options_sans_garde(source: str) -> list[int]:
         if nom != "ClaudeAgentOptions":
             continue
         passes = {mot.arg for mot in noeud.keywords if mot.arg}
-        if not {"setting_sources", "skills"} <= passes:
+        if not VERROUS <= passes:
             manquants.append(noeud.lineno)
     return manquants
 
 
 def test_la_sonde_de_la_porte_voit_une_construction_qui_oublie_un_verrou() -> None:
     """L'échantillon fautif, avant le verdict : sans lui, le balayage serait vert par accident."""
-    fautif = "options = ClaudeAgentOptions(cwd=chemin, skills=[])\n"
+    sans_reglages = "options = ClaudeAgentOptions(cwd=chemin, skills=[])\n"
+    sans_dossier = "options = ClaudeAgentOptions(setting_sources=[], skills=[])\n"
     correct = "options = ClaudeAgentOptions(cwd=chemin, setting_sources=[], skills=[])\n"
 
-    assert _options_sans_garde(fautif) == [1]
+    assert _options_sans_garde(sans_reglages) == [1]
+    assert _options_sans_garde(sans_dossier) == [1], "un chemin texte sans cwd (#1397)"
     assert _options_sans_garde(correct) == []
     assert _options_sans_garde("options = AutreChose(cwd=chemin)\n") == []
 
 
 def test_chaque_session_claude_ferme_les_reglages_et_les_skills_du_poste() -> None:
-    """docs/38 §5.3 : la porte que `strict_mcp_config` laissait ouverte, fermée partout.
+    """docs/38 §5.3 et §5.8 : la porte que `strict_mcp_config` laissait ouverte, fermée partout.
 
     « Partout » est le mot : une construction qui les oublierait rouvrirait la
     porte pour le seul chemin qu'elle sert — et c'est le genre d'écart qu'on ne
-    voit pas, puisque tout continue de marcher.
+    voit pas, puisque tout continue de marcher. Le `cwd` en est le troisième
+    verrou depuis #1397 : les chemins texte n'en passaient aucun, et le juge d'un
+    projet recevait la mémoire du dossier de l'API.
     """
     source = CLAUDE_PY.read_text(encoding="utf-8")
 
     manquants = _options_sans_garde(source)
 
-    assert manquants == [], f"ClaudeAgentOptions sans setting_sources/skills, lignes {manquants}"
+    assert manquants == [], f"ClaudeAgentOptions sans {sorted(VERROUS)}, lignes {manquants}"
     assert source.count("ClaudeAgentOptions(") >= 3
 
 
@@ -636,13 +647,42 @@ def test_les_deux_verrous_rendent_une_liste_vide_neuve_a_chaque_appel() -> None:
     assert sans_skills_du_poste() is not sans_skills_du_poste()
 
 
-def test_les_deux_verrous_ne_se_remplacent_pas_l_un_l_autre() -> None:
-    """`strict_mcp_config` ferme les serveurs MCP ; les deux autres, tout le reste."""
+def test_les_verrous_ne_se_remplacent_pas_l_un_l_autre() -> None:
+    """`strict_mcp_config` ferme les serveurs MCP ; les réglages et les skills, les fichiers ;
+    le dossier neutre, ce que le répertoire courant apporte d'autre (#1397)."""
     source = CLAUDE_PY.read_text(encoding="utf-8")
 
     assert "strict_mcp_config=True" in source
     assert "setting_sources=sans_reglages_du_poste()" in source
     assert "skills=sans_skills_du_poste()" in source
+    assert len(_options_au_dossier_neutre(source)) == 3, "les trois chemins texte (#1397)"
+
+
+def _options_au_dossier_neutre(source: str) -> list[int]:
+    """Les lignes des `ClaudeAgentOptions(…)` dont le `cwd` est `dossier_neutre()` — un usage,
+    jamais une mention : une docstring qui le cite ne compte pas."""
+    lignes: list[int] = []
+    for noeud in ast.walk(ast.parse(source)):
+        if not isinstance(noeud, ast.Call) or getattr(noeud.func, "id", "") != "ClaudeAgentOptions":
+            continue
+        for mot in noeud.keywords:
+            valeur = mot.value
+            if (
+                mot.arg == "cwd"
+                and isinstance(valeur, ast.Call)
+                and getattr(valeur.func, "id", "") == "dossier_neutre"
+            ):
+                lignes.append(noeud.lineno)
+    return lignes
+
+
+def test_la_sonde_du_dossier_neutre_compte_un_usage_et_pas_une_mention() -> None:
+    """L'échantillon fautif du décompte : une docstring qui nomme le verrou ne l'arme pas."""
+    mention = '"""On passe cwd=dossier_neutre() ici."""\noptions = ClaudeAgentOptions(cwd=ws)\n'
+    usage = "options = ClaudeAgentOptions(cwd=dossier_neutre())\n"
+
+    assert _options_au_dossier_neutre(mention) == []
+    assert _options_au_dossier_neutre(usage) == [1]
 
 
 # --------------------------------------------------------------------------- #

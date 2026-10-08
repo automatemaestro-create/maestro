@@ -809,6 +809,41 @@ pour un défaut qui se corrige en disant un fait : différer l'outillage après 
 sortir de la racine. Écartée aussi, une liste de générateurs dans la consigne : l'agent connaît
 celui de sa pile, et une liste n'en couvrirait jamais qu'une partie (#1169).
 
+### 5.8 Le répertoire courant est le troisième verrou (#1397)
+
+§5.4 a fermé ce que le CLI lit **dans des fichiers de réglages** ; il restait ce que le **répertoire
+courant** apporte d'autre. Sur p5 (2026-10-01), le juge de la tâche `socle-nextjs` a tourné dans le
+dossier de l'API — le clone de développement de Maestro — et le CLI y a joint la **mémoire** de ce
+dossier : 19 074 caractères de notes de développement, dans le jugement d'un projet utilisateur. Les
+agents, lancés dans leur espace (`cwd=workspace`), n'en recevaient rien : seuls les trois chemins
+**texte** de l'adaptateur (juge, planification, brief, rattrapage, récit, fil) ne passaient aucun
+`cwd`, et le CLI héritait de celui de l'API.
+
+**Ce qui est décidé.** Un appel texte ne travaille sur aucun projet, donc il ne tourne dans le dossier
+de personne : `maestro.sandbox.ramassage.dossier_neutre` lui en donne un **vide, possédé par
+Maestro, sans passé** — né sous la racine des espaces jetables avec le pid du process dans son nom,
+retiré à la sortie du process (ramassé s'il a été tué), vérifié vide à chaque appel et refait sinon. Un dossier **par
+process**, pas par appel : un CLI tient un état par répertoire de travail sur le poste, et un dossier
+par jugement y ajouterait une entrée à chaque fois. La règle porte sur le **dossier**, jamais sur ce
+qu'un CLI y lit : aucune variable propre au CLI pour couper sa mémoire, qui ferait dépendre Maestro
+de son fonctionnement interne ([docs/44](./44-decision-maestro-possede-ses-contrats.md)).
+
+Le `cwd` devient ainsi le **troisième verrou**, à côté de `setting_sources`/`skills` et de
+`strict_mcp_config`, et il est vérifié au même endroit : toute construction de
+`ClaudeAgentOptions` doit en passer un ([`tests/test_outillage_contexte.py`](../tests/test_outillage_contexte.py),
+balayage sur l'AST, échantillon fautif compris).
+
+**Mesuré le 2026-10-08** sur le CLI qu'embarque l'Agent SDK, modèle `haiku` :
+
+| Ce qu'on mesure | Dans le dossier de l'API | Dans le dossier neutre |
+| --- | --- | --- |
+| Mot-témoin posé dans la mémoire du dossier de l'API, demandé à un appel texte | **ressort** (échantillon fautif) | absent, sur les trois chemins (`generate`, `generate_stream`, `generate_with_images`) |
+| Tokens d'entrée d'un même appel texte, sur le poste du constat (mémoire de 15 022 caractères ce jour-là) | 6 037 | 419 |
+
+Le contrat se rejoue à chaque version, comme celui de §7 : [`tests/test_dossier_neutre.py`](../tests/test_dossier_neutre.py)
+(`cli_reel`). Si le CLI range un jour sa mémoire ailleurs, c'est l'échantillon fautif qui rougit — la
+sonde ne voit plus rien — et la mesure se refait.
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |
@@ -855,7 +890,8 @@ Et une a **déjà** fait bouger la décision, ce qui prouve que la liste n'est p
 Et une qui tient au dépôt : **la frontière de §5.3 se mesure, elle ne se décrète pas**. La mesure a
 été faite (§5.4) et elle a confirmé §5.3 — un `CLAUDE.md` de projet entrait bien dans le contexte.
 Elle reste à **rejouer** quand le SDK ou le CLI bougent : c'est le contrat d'une version qu'elle
-constate, pas une propriété acquise.
+constate, pas une propriété acquise. Le répertoire courant des appels texte (§5.8) suit la même
+règle, et son contrat se rejoue par `tests/test_dossier_neutre.py`.
 
 ## 8. Ce que les lots suivants en tiennent — et où ils l'appliquent
 

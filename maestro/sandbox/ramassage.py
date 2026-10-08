@@ -63,10 +63,12 @@ l'éteint.
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -119,6 +121,9 @@ VARIABLE_RAMASSAGE = "MAESTRO_RAMASSAGE_ESPACES"
 
 #: Le seuil ci-dessus, en heures, quand le poste veut le sien.
 VARIABLE_SEUIL = "MAESTRO_ESPACE_ORPHELIN_SEUIL"
+
+#: Le préfixe du **dossier neutre** où tournent les appels texte (#1397, `dossier_neutre`).
+PREFIXE_NEUTRE = "maestro-neutre-"
 
 #: Le marqueur de propriété dans le nom d'un espace : `…-pid<nombre>-<aléa>`.
 #: L'aléa de `mkdtemp` ne contient jamais de tiret, donc le motif ne peut pas
@@ -216,6 +221,68 @@ def racine_des_espaces(environnement: Mapping[str, str] | None = None) -> Path:
         except OSError:  # pragma: no cover - valeur non représentable
             continue
     return Path(tempfile.gettempdir())
+
+
+#: Le dossier neutre de ce process, avec le pid qui l'a créé (cf. `dossier_neutre`).
+_neutre: tuple[int, Path] | None = None
+_verrou_neutre = threading.Lock()
+
+
+def dossier_neutre() -> Path:
+    """Le dossier où lancer ce qui ne travaille sur **aucun** projet : vide, à Maestro, sans passé.
+
+    Un appel texte (juge, planification, brief, rattrapage, récit, fil) lance un CLI
+    comme une session d'agent, et un CLI ne se contente pas de ce qu'on lui passe : il
+    joint aussi ce que son **répertoire courant** lui apporte. Sans `cwd`, c'était celui
+    de l'API — le clone de développement de Maestro sur le poste du constat (#1397) : le
+    juge d'un projet utilisateur y a reçu la mémoire de ce dossier, 19 074 caractères de
+    notes de développement. Fermer les réglages (`setting_sources=[]`) ne fermait pas
+    cette porte-là, et aucune liste de ce qu'un CLI joint ne la fermerait : la règle porte
+    donc sur le **dossier**, jamais sur le mécanisme d'un outil (docs/44).
+
+    Trois propriétés, et chacune a sa raison :
+
+    - **vide** — vérifié à chaque appel, jamais supposé : un dossier où quelque chose a
+      été posé est remplacé par un neuf (l'ancien, marqué de ce pid, part au ramassage) ;
+    - **à Maestro** — né comme un espace jetable, sous `racine_des_espaces()` avec le pid
+      de ce process dans son nom (`marquer`) : retiré à la sortie du process
+      (`_retirer_neutre`), et par `ramasser` si le process a été tué avant ;
+    - **sans passé** — créé par ce process et pour lui. Un dossier **par process** et
+      non par appel : un CLI tient un état par répertoire de travail sur le poste, et un
+      dossier neuf à chaque appel y ajouterait une entrée par jugement. Rien n'y
+      travaille avec des outils — les appels texte n'en ont aucun —, donc rien n'y laisse
+      de quoi être relu.
+
+    Lève `OSError` si aucun répertoire temporaire ne l'accueille : retomber sur le
+    répertoire courant serait refaire le défaut, en silence.
+    """
+    global _neutre
+    with _verrou_neutre:
+        if _neutre is not None and _neutre[0] == os.getpid() and _est_vide(_neutre[1]):
+            return _neutre[1]
+        chemin = Path(tempfile.mkdtemp(prefix=marquer(PREFIXE_NEUTRE), dir=racine_des_espaces()))
+        _neutre = (os.getpid(), chemin)
+        return chemin
+
+
+def _est_vide(dossier: Path) -> bool:
+    """`dossier` existe-t-il, et ne porte-t-il rien ? — un dossier illisible ne l'est pas."""
+    try:
+        return dossier.is_dir() and next(dossier.iterdir(), None) is None
+    except OSError:
+        return False
+
+
+@atexit.register
+def _retirer_neutre() -> None:
+    """Retire, à la sortie du process, le dossier neutre **qu'il a créé** — jamais celui d'un autre.
+
+    Le pid est comparé parce qu'un enfant né d'un `fork` hérite de ce module et de ses
+    gestionnaires de sortie : sans la comparaison, il emporterait en sortant le dossier
+    que son parent sert encore. Best-effort, comme le reste du module.
+    """
+    if _neutre is not None and _neutre[0] == os.getpid():
+        retirer_arbre(_neutre[1])
 
 
 def racines_connues(environnement: Mapping[str, str] | None = None) -> tuple[Path, ...]:
