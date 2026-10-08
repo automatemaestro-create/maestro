@@ -216,7 +216,21 @@ commit que le projet refuse (son `pre-commit`) est dit au journal, et n'empêche
 retrouve** : le message de sa tâche dit ce que la branche porte de plus que la base, ou que la
 branche qu'elle reprend — ses commits, ses fichiers —, et qu'il repart de cet état au lieu de le
 refaire (`TravailAnterieur`). Ce travail compte dans ce que la tâche livre au juge, qu'elle l'ait
-réécrit ou non. Une branche neuve, ou déjà fusionnée, ne dit rien : le message est celui d'avant.
+réécrit ou non. Une branche neuve, ou déjà fusionnée, n'a rien d'antérieur à dire.
+
+**L'agent sait où il est (#1399).** Un worktree porte le nom de sa tâche, jamais celui du dossier
+qu'il copie. Sur p5 (2026-10-01), la tâche `socle-nextjs` disait « Installer dans le dossier p5 »,
+et l'agent travaillait dans `…/socle-nextjs`, où aucun `p5` n'existe : ses deux agents ont dû
+consigner une décision pour l'interpréter. Le message de chaque tâche d'un projet versionné dit
+donc, avant tout le reste, que le répertoire courant **est la racine du projet** — nommé, avec son
+dossier d'origine et la branche de la tâche —, que ce que la tâche nomme du projet ou de son dossier
+désigne ce répertoire (ni sous-dossier de ce nom, ni écriture dans le dossier d'origine, que la
+branche ne porte pas), que « la racine du projet » de ses instructions part d'ici, et que ce qu'il y
+laisse est commité sur sa branche puis appliqué au projet (`CopieDuProjet`). Le texte de la tâche,
+lui, n'est **jamais réécrit** : l'agent qui sait où il est reconnaît le projet sous tous ses noms. En
+amont, le Chef de projet désigne l'endroit par « la racine du projet », jamais par le nom du projet
+ou de son dossier (`maestro/orchestrator/playbook.md`, « Entrées attendues »). Ce paragraphe
+renverse, pour la copie de travail, « un worktree n'a rien de particulier à dire » (#944).
 
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
 directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le

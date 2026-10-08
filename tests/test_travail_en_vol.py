@@ -21,7 +21,8 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
 ② **À la reprise, la tâche sait ce que sa branche porte** (`TravailAnterieur`) : le
    message de sa tâche le lui dit — ce qui est fait, et qu'elle repart de là —, et ce
    travail compte dans ce qu'elle livre au juge, qu'elle l'ait réécrit ou non. Une
-   branche neuve, ou déjà fusionnée, ne dit rien : le message est celui d'avant.
+   branche neuve, ou déjà fusionnée, n'a rien d'antérieur à dire : le message ne
+   porte que ce que toute copie de travail dit d'elle-même (où l'agent est, #1399).
 
 Aucun réseau, aucun modèle : les dépôts sont jetables, l'hôte est un double — ce qu'on
 éprouve est *ce qui est sauvé, et ce qui est dit*, pas l'extinction d'un groupe de
@@ -281,6 +282,8 @@ def test_la_tache_reprise_apprend_ce_que_sa_branche_porte(tmp_path: Path) -> Non
     assert "- ajouté : `src/recettes.ts`" in consigne
     assert "- modifié : `README.md`" in consigne
     assert "ne le refais pas depuis zéro" in consigne
+    # Où elle est d'abord (#1399), ce que sa branche porte ensuite.
+    assert consigne.index("racine du projet") < consigne.index("n'est pas neuve")
 
 
 def test_ce_que_la_tache_avait_fait_compte_dans_sa_livraison(tmp_path: Path) -> None:
@@ -299,14 +302,16 @@ def test_ce_que_la_tache_avait_fait_compte_dans_sa_livraison(tmp_path: Path) -> 
     assert produits == {"README.md", "src/page.tsx", "src/recettes.ts"}
 
 
-def test_une_branche_neuve_ne_dit_rien(tmp_path: Path) -> None:
-    """Le cas courant : le message est celui d'avant, au caractère près."""
+def test_une_branche_neuve_ne_dit_rien_d_anterieur(tmp_path: Path) -> None:
+    """Le cas courant : rien n'est déjà fait — seul est dit où l'agent est (#1399)."""
     projet = _projet(tmp_path)
     with espace_de_travail(projet, tache_id=TACHE) as ws:
-        assert ws.consigne_espace() == ""
+        consigne = ws.consigne_espace()
+    assert "n'est pas neuve" not in consigne
+    assert "racine du projet" in consigne
 
 
-def test_une_branche_deja_fusionnee_ne_dit_rien(tmp_path: Path) -> None:
+def test_une_branche_deja_fusionnee_ne_dit_rien_d_anterieur(tmp_path: Path) -> None:
     """Un travail que `main` a déjà n'est pas à reprendre : la branche ne porte rien de plus."""
     projet = _projet(tmp_path)
     racine = Path(projet.racine)
@@ -314,7 +319,7 @@ def test_une_branche_deja_fusionnee_ne_dit_rien(tmp_path: Path) -> None:
     _git(racine, "merge", "--quiet", "--ff-only", branche_de_tache(TACHE))
 
     with espace_de_travail(projet, tache_id=TACHE) as ws:
-        assert ws.consigne_espace() == ""
+        assert "n'est pas neuve" not in ws.consigne_espace()
         assert ws.produced_files() == ()
 
 
@@ -329,7 +334,7 @@ def test_un_redecoupage_ne_prend_pas_le_travail_de_la_tache_reprise_pour_le_sien
 
     # Premier montage : la branche naît de celle du socle — elle n'a encore rien fait.
     with espace_de_travail(projet, tache_id="socle-r1", reprend="socle") as ws:
-        assert ws.consigne_espace() == ""
+        assert "n'est pas neuve" not in ws.consigne_espace()
         (ws.path / "src" / "init.ts").write_text("export {}\n", "utf-8")
 
     # Remontée : ce qu'elle a fait est le sien, le socle n'en est pas.

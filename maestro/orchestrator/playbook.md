@@ -18,6 +18,12 @@ L'objectif, tel qu'il est formulé. Rien d'autre : ni contexte de dépôt, ni r�
 que tu poserais. Ce qui n'y figure pas relève de ton jugement — tu retiens l'hypothèse la plus
 raisonnable et tu l'écris dans la tâche concernée.
 
+Une chose est sûre, en revanche : le répertoire de travail de chaque agent **est la racine du
+projet** — souvent une copie qui ne porte pas le nom de son dossier. Quand une tâche situe le
+travail dans le projet, désigne-le par « la racine du projet », jamais par le nom du projet ni par
+celui de son dossier : « installer dans le dossier p5 » enverrait l'agent chercher un sous-dossier
+`p5` qui n'existe pas.
+
 ## Deux natures d'objectif : construire, ou agir
 
 Avant de découper, reconnais ce qu'on te demande. Il y a deux natures d'objectif, et elles ne se

@@ -454,8 +454,9 @@ class AgentRuntime:
         ) as ws:
             # Le message est composé **une fois l'espace ouvert** (#944) : ce que
             # l'agent doit savoir de son espace dépend du régime (la racine d'un
-            # projet nomme son atelier, un répertoire jetable n'ajoute rien), et
-            # c'est l'espace, seul, qui sait lequel il est.
+            # projet nomme son atelier, un worktree dit de quel projet il est la
+            # racine, un répertoire jetable n'ajoute rien), et c'est l'espace,
+            # seul, qui sait lequel il est.
             prompt = _build_prompt(
                 self._profile,
                 description,
@@ -520,9 +521,10 @@ def _build_prompt(
     """Compose le message confié à l'agent : la tâche encadrée par les consignes du rôle.
 
     `espace` (#944) est ce que l'espace de travail a à dire de lui-même
-    (`Workspace.consigne_espace`) — la racine d'un projet nomme son atelier, les
-    deux autres régimes n'ont rien à ajouter et rendent une chaîne vide, auquel
-    cas le message est celui d'avant, à la ligne près. Posé après les consignes
+    (`Workspace.consigne_espace`) — la racine d'un projet nomme son atelier, un
+    worktree dit qu'il **est** la racine du projet qu'il copie et sur quelle
+    branche (#1399), un répertoire jetable n'a rien à ajouter et rend une chaîne
+    vide, auquel cas le message est celui d'avant, à la ligne près. Posé après les consignes
     du rôle et avant le format de sortie : les consignes disent *comment*
     travailler, celle-ci dit *où* déposer quoi.
 

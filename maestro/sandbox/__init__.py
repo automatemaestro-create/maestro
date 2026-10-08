@@ -57,6 +57,7 @@ from maestro.sandbox.en_place import (
 )
 from maestro.sandbox.projet import (
     PREFIXE_BRANCHE,
+    CopieDuProjet,
     EspaceCopieDeTravail,
     EspaceProjetIndisponible,
     TravailAnterieur,
@@ -70,6 +71,7 @@ from maestro.sandbox.workspace import ProducedFile, Workspace, isolated_workspac
 __all__ = [
     "DOSSIER_ATELIER",
     "PREFIXE_BRANCHE",
+    "CopieDuProjet",
     "EspaceCopieDeTravail",
     "EspaceEnPlace",
     "EspaceProjetIndisponible",
