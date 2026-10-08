@@ -54,7 +54,30 @@ dans l'arbre et nulle part ailleurs — la règle que `scripts/git/worktree.sh g
 tient déjà pour les worktrees de ce dépôt (docs/10 §9.2) : on ne ramasse pas du
 travail que personne n'a sauvegardé. La signature se lit sans Git : un worktree
 porte un `.git` **fichier** (qui pointe vers le dépôt), là où un `git init` fait
-par un agent dans son espace jetable pose un `.git` **dossier**.
+par un agent dans son espace jetable pose un `.git` **dossier**. Le refus tombe
+dans un seul cas (#1455) : le dépôt que ce fichier désigne **n'existe plus** —
+le travail n'a alors plus nulle part où revenir, et l'espace est une dépouille
+comme une autre.
+
+**#1455 — une racine pour tout le jetable, et toutes ses familles.** Le
+2026-10-08, ce ramassage ne connaissait que les espaces des rôles outillés, et le
+répertoire temporaire du poste portait **1 286** dossiers `maestro-*` : 436
+ateliers d'hôte (exclus à dessein, « le système les ramassera » — Windows ne le
+fait pas), 692 résidus de l'ancien mode démo (#1210), une trentaine d'espaces
+d'équipes sur mesure dont le préfixe n'était dans aucune liste. Depuis, tout le
+jetable du produit naît sous **une** racine, `<temp>/maestro/`
+(`maestro.emplacements`), et le ramassage balaie deux sortes d'endroits :
+
+- **la racine jetable**, où tout dossier est à Maestro et donc candidat ;
+- **les anciens emplacements** (le temporaire lui-même et ses résolutions MSYS),
+  où l'est tout `maestro-*` — un rôle ajouté demain n'a pas à entrer dans une
+  liste —, sauf les familles qu'un autre mécanisme possède (`FAMILLES_TIERCES`).
+
+Un jetable que le pid de son nom ne désigne pas peut se nommer par un témoin
+(`maestro.emplacements.TEMOIN_PID`) : c'est le cas de l'atelier d'un hôte, que
+l'API ouvre avant que son occupant n'existe. Un témoin vivant le conserve ; un
+témoin mort ou absent le laisse à l'âge — jamais plus tôt, parce que l'API lit
+encore le journal d'un hôte mort pour en nommer la cause (#446).
 
 Le ramassage est **best-effort** de bout en bout : il ne lève pas, il n'attend
 rien, et ce qui résiste est laissé pour la prochaine fois. `MAESTRO_RAMASSAGE_ESPACES=0`
@@ -66,21 +89,44 @@ from __future__ import annotations
 import os
 import re
 import sys
-import tempfile
 import time
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from maestro.emplacements import (
+    VARIABLES_TEMP,
+    _valeur_msys,
+    marquer,
+    occupant,
+    racine_jetable,
+    repertoire_temporaire,
+)
 from maestro.fichiers import retirer_arbre
 
-#: Les variables qui désignent le répertoire temporaire, dans l'ordre où
-#: `tempfile` les consulte — le même, pour que la racine retenue reste celle que
-#: la bibliothèque standard aurait choisie quand rien ne cloche.
-VARIABLES_TEMP: tuple[str, ...] = ("TMPDIR", "TEMP", "TMP")
+__all__ = [
+    "FAMILLES_TIERCES",
+    "PREFIXE_COMMUN",
+    "SEUIL_ORPHELIN_H",
+    "VALEUR_MSYS_HISTORIQUE",
+    "VARIABLES_TEMP",
+    "VARIABLE_RAMASSAGE",
+    "VARIABLE_SEUIL",
+    "Ramassage",
+    "espaces",
+    "est_orphelin",
+    "marquer",
+    "pid_dans",
+    "pid_vivant",
+    "porte_un_worktree",
+    "racine_des_espaces",
+    "racines_connues",
+    "ramasser",
+]
 
-#: Le préfixe que partagent tous les espaces de Maestro. Rien d'autre n'est
-#: candidat au ramassage.
+#: Le préfixe que partagent tous les jetables de Maestro **aux anciens
+#: emplacements** — là où ils voisinent avec ceux du reste du poste. Sous la
+#: racine jetable, aucun préfixe n'est requis : tout y est à Maestro.
 PREFIXE_COMMUN = "maestro-"
 
 #: La valeur que Git Bash pose dans `TMPDIR`/`TMP`, et donc la racine que Python
@@ -93,18 +139,20 @@ PREFIXE_COMMUN = "maestro-"
 #: autre module.
 VALEUR_MSYS_HISTORIQUE = "/tmp"
 
-#: Les préfixes des espaces nés **avant** le marqueur de pid — ceux des rôles
-#: outillés (`RoleProfile.workspace_prefix`). Ils sont écrits ici plutôt
-#: qu'importés : `maestro.agents` tire le runtime et son SDK, prix qu'un ménage
-#: best-effort n'a pas à payer, et un import raté ferait un ramassage muet qui ne
-#: ramasse rien. `tests/test_sandbox_ramassage.py` les confronte aux profils
-#: réels : la liste ne peut pas prendre du retard sans rougir.
-PREFIXES_HISTORIQUES: tuple[str, ...] = (
-    "maestro-bdd-",
-    "maestro-designer-",
-    "maestro-dev-",
-    "maestro-devops-",
-    "maestro-qa-",
+#: Les `maestro-*` des anciens emplacements qu'**un autre mécanisme possède**, et
+#: que ce ramassage ne touche donc jamais — chacun avec sa raison :
+#:
+#: - `maestro-controltower-` : l'état de la stack d'une copie de travail
+#:   (`scripts/controltower/start.sh`), profil de navigateur compris, que sa
+#:   stack peut tenir ouvert des jours ; il part avec son worktree (#1456) ;
+#: - `maestro-presentation` : le cache de `scripts/presentation/captures.sh`
+#:   (Node et navigateurs de Playwright), gardé à dessein d'un passage à l'autre.
+#:
+#: Une liste d'**exclusions**, jamais d'inclusions : c'est l'inclusion par préfixe
+#: de rôle qui avait laissé les équipes sur mesure sur le disque pour toujours.
+FAMILLES_TIERCES: tuple[str, ...] = (
+    "maestro-controltower-",
+    "maestro-presentation",
 )
 
 #: Combien de temps un espace **sans marqueur** doit être resté sans la moindre
@@ -124,6 +172,10 @@ VARIABLE_SEUIL = "MAESTRO_ESPACE_ORPHELIN_SEUIL"
 #: L'aléa de `mkdtemp` ne contient jamais de tiret, donc le motif ne peut pas
 #: mordre sur lui.
 _MARQUE = re.compile(r"-pid(\d+)-[^-]*$")
+
+#: La ligne d'un `.git` de worktree qui nomme son dossier d'administration dans
+#: le dépôt (`<dépôt>/.git/worktrees/<nom>`).
+_GITDIR = re.compile(r"^gitdir:\s*(.+?)\s*$", re.MULTILINE)
 
 #: `STILL_ACTIVE` de l'API Win32 — le code de sortie d'un process qui tourne.
 _TOUJOURS_ACTIF = 259
@@ -154,17 +206,10 @@ class Ramassage:
 
 
 # ── Où les espaces naissent ───────────────────────────────────────────────────
-
-
-def marquer(prefixe: str) -> str:
-    """Le préfixe d'un espace, augmenté du pid de ce process (`maestro-dev-pid4312-`).
-
-    Dans le **nom** et non dans un fichier témoin : un témoin posé au milieu de
-    l'espace ressortirait en livrable (`Workspace.produced_files` recense tout ce
-    qui s'y trouve) et l'agent le verrait dans son `ls`. Le nom, lui, ne coûte
-    rien à personne et survit à tout ce que l'agent écrit.
-    """
-    return f"{prefixe}pid{os.getpid()}-"
+#
+# `marquer` et la résolution du répertoire temporaire vivent depuis #1455 dans
+# `maestro.emplacements`, avec les deux autres racines du poste ; ils restent
+# importables d'ici, où #992 les a démontrés.
 
 
 def pid_dans(nom: str) -> int | None:
@@ -173,59 +218,29 @@ def pid_dans(nom: str) -> int | None:
     return int(trouve.group(1)) if trouve else None
 
 
-def _valeur_msys(brut: str) -> bool:
-    """Cette valeur de `TMPDIR` est-elle un chemin MSYS, illisible pour Python ?
-
-    Sous Windows seulement, et sur un seul critère : un chemin **enraciné sans
-    lecteur** (`/tmp`). Un chemin Windows porte son lecteur (`C:\\…`) ou son hôte
-    (`\\\\serveur\\partage`), jamais une barre oblique seule en tête ; `//serveur/…`
-    est une UNC écrite à la POSIX et reste donc lisible.
-    """
-    if sys.platform != "win32":
-        return False
-    return brut.startswith("/") and not brut.startswith("//")
-
-
 def racine_des_espaces(environnement: Mapping[str, str] | None = None) -> Path:
-    """Le répertoire sous lequel créer un espace jetable — celui que l'agent verra.
+    """Le répertoire sous lequel naissent les espaces jetables — celui que l'agent verra.
 
-    La règle de `tempfile`, moins les valeurs MSYS (cf. l'en-tête du module) :
-    c'est ce qui fait tomber Python et le Bash de l'agent au même endroit sous
-    Windows. Hors Windows rien ne change — aucune valeur n'est écartée, et
-    l'absence de toute variable retombe sur `tempfile.gettempdir()`, qui garde
-    ses replis (`/tmp`, le répertoire courant…).
-
-    ⚠ **`tempfile.tempdir` n'est pas consulté**, et c'est une décision : ce
-    n'est pas seulement le point de surcharge programmatique de `tempfile`, c'est
-    aussi son **cache** — le premier `gettempdir()` du process y écrit ce qu'il
-    vient de résoudre. Une valeur trouvée là ne dit donc pas si quelqu'un l'a
-    voulue ou si la bibliothèque s'en souvient, et la lire d'abord reviendrait à
-    rendre pour toujours la première résolution venue, MSYS comprise. Qui veut
-    imposer une racine passe donc par l'environnement — là même d'où vient le
-    défaut qu'on répare.
+    `<temp>/maestro` depuis #1455 (`maestro.emplacements.racine_jetable`), sous le
+    répertoire temporaire que Python et le Bash de l'agent résolvent au même
+    endroit (#992, S13 — cf. l'en-tête). Rendu **non créé** : on y crée par
+    `maestro.emplacements.jetable`, qui le pose au besoin.
     """
-    env = os.environ if environnement is None else environnement
-    for nom in VARIABLES_TEMP:
-        brut = (env.get(nom) or "").strip()
-        if not brut or _valeur_msys(brut):
-            continue
-        candidat = Path(brut)
-        try:
-            if candidat.is_dir():
-                return candidat
-        except OSError:  # pragma: no cover - valeur non représentable
-            continue
-    return Path(tempfile.gettempdir())
+    return racine_jetable(environnement)
 
 
 def racines_connues(environnement: Mapping[str, str] | None = None) -> tuple[Path, ...]:
-    """Toutes les racines où un espace de Maestro a pu naître — à balayer.
+    """Les **anciens** emplacements où un jetable de Maestro a pu naître — à balayer.
 
-    Trois provenances, et la troisième est celle des 76 résidus :
+    La racine jetable n'en est pas : tout y est à Maestro, elle se balaie sans
+    filtre (`espaces`). Ici, trois provenances, et la troisième est celle des 76
+    résidus de #992 :
 
-    1. `racine_des_espaces` — là où ils naissent depuis ce ticket ;
-    2. `tempfile.gettempdir()` — là où ils naissaient avant, quand la valeur MSYS
-       n'était pas écartée et que le process travaillait sur le bon lecteur ;
+    1. le répertoire temporaire de **cet** environnement — là où les espaces
+       naissaient de #992 à #1455 ;
+    2. celui d'un environnement **vide** (`tempfile.gettempdir()`) — là où ils
+       naissaient avant, quand la valeur MSYS n'était pas écartée et que le
+       process travaillait sur le bon lecteur ;
     3. sous Windows, la résolution d'une valeur MSYS (`/tmp` → `C:\\tmp`) sur le
        lecteur du répertoire courant **et** sur celui du temporaire du système.
        Celle que l'environnement porte, s'il en porte une, **et de toute façon**
@@ -238,7 +253,7 @@ def racines_connues(environnement: Mapping[str, str] | None = None) -> tuple[Pat
     stable.
     """
     env = os.environ if environnement is None else environnement
-    candidates: list[Path] = [racine_des_espaces(env), Path(tempfile.gettempdir())]
+    candidates: list[Path] = [repertoire_temporaire(env), repertoire_temporaire({})]
     if sys.platform == "win32":
         lecteurs = {_lecteur(Path.cwd()), *(_lecteur(c) for c in list(candidates))}
         valeurs = {VALEUR_MSYS_HISTORIQUE}
@@ -314,45 +329,78 @@ def pid_vivant(pid: int) -> bool:
 # ── Le ramassage ──────────────────────────────────────────────────────────────
 
 
-def espaces(racines: Iterable[Path]) -> Iterator[Path]:
-    """Les dossiers d'espaces de Maestro sous `racines` — marqués ou historiques.
-
-    Rien d'autre n'est candidat : les autres `maestro-*` du répertoire temporaire
-    (l'atelier d'un hôte, un aperçu de source, un masque de conteneur) appartiennent
-    à des mécanismes qui ne sont pas celui-ci et qui ont leur propre fin de vie.
-    """
-    for racine in racines:
+def _dossiers(racine: Path) -> list[Path]:
+    """Les sous-dossiers de `racine`, triés — vide si elle est absente ou illisible."""
+    try:
+        enfants = sorted(racine.iterdir())
+    except OSError:  # racine absente, ou devenue illisible
+        return []
+    dossiers = []
+    for chemin in enfants:
         try:
-            enfants = sorted(racine.iterdir())
-        except OSError:  # pragma: no cover - racine devenue illisible
+            if chemin.is_dir():
+                dossiers.append(chemin)
+        except OSError:  # pragma: no cover - entrée illisible
             continue
-        for chemin in enfants:
-            try:
-                if not chemin.is_dir():
-                    continue
-            except OSError:  # pragma: no cover - entrée illisible
-                continue
+    return dossiers
+
+
+def espaces(racines: Iterable[Path], *, jetables: Iterable[Path] = ()) -> Iterator[Path]:
+    """Les jetables de Maestro — tout sous `jetables`, les `maestro-*` sous `racines`.
+
+    Sous la racine jetable (`jetables`), tout dossier est à Maestro. Aux anciens
+    emplacements (`racines`), qu'il partage avec le reste du poste, seul l'est ce
+    qui porte le préfixe commun, moins les `FAMILLES_TIERCES` qu'un autre
+    mécanisme possède.
+    """
+    for racine in jetables:
+        yield from _dossiers(racine)
+    for racine in racines:
+        for chemin in _dossiers(racine):
             nom = chemin.name
-            if not nom.startswith(PREFIXE_COMMUN):
-                continue
-            if pid_dans(nom) is not None or nom.startswith(PREFIXES_HISTORIQUES):
+            if nom.startswith(PREFIXE_COMMUN) and not nom.startswith(FAMILLES_TIERCES):
                 yield chemin
 
 
+def _depot_existe(fichier_git: Path) -> bool:
+    """Le dépôt qu'un `.git` de worktree désigne existe-t-il encore ?
+
+    Le fichier nomme le dossier d'administration du worktree dans le dépôt
+    (`<dépôt>/.git/worktrees/<nom>`), absolu ou relatif au worktree. Illisible ou
+    sans ligne `gitdir:`, on répond **oui** : dans le doute, la garde tient.
+    """
+    try:
+        texte = fichier_git.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True
+    trouve = _GITDIR.search(texte)
+    if trouve is None:
+        return True
+    cible = Path(trouve.group(1))
+    if not cible.is_absolute():
+        cible = fichier_git.parent / cible
+    try:
+        return cible.exists()
+    except OSError:  # pragma: no cover - chemin non représentable
+        return True
+
+
 def porte_un_worktree(espace: Path) -> bool:
-    """`espace` abrite-t-il un worktree Git — donc peut-être du travail non sauvegardé ?
+    """`espace` abrite-t-il un worktree Git **dont le dépôt existe** — du travail à sauver ?
 
     Un worktree pose un `.git` **fichier** qui pointe vers le dépôt ; un `git init`
     fait par un agent dans son espace jetable pose un `.git` **dossier**. La
-    distinction suffit, et elle se lit sans appeler Git.
+    distinction suffit, et elle se lit sans appeler Git. Un worktree dont le dépôt
+    a disparu ne compte pas (#1455) : son travail n'a plus nulle part où revenir.
     """
     try:
         enfants = list(espace.iterdir())
     except OSError:  # pragma: no cover - espace illisible
         return False
     for enfant in (espace, *enfants):
+        fichier = enfant / ".git"
         try:
-            if (enfant / ".git").is_file():
+            if fichier.is_file() and _depot_existe(fichier):
                 return True
         except OSError:  # pragma: no cover - entrée illisible
             continue
@@ -380,14 +428,18 @@ def est_orphelin(
 ) -> bool:
     """Plus personne ne travaille ici, et rien de non sauvegardé n'y dort.
 
-    Les trois verdicts de l'en-tête, dans l'ordre où ils se posent : le worktree
-    d'abord (un refus qui prime), puis le pid s'il y en a un, puis l'âge.
+    Les verdicts de l'en-tête, dans l'ordre où ils se posent : le worktree d'abord
+    (un refus qui prime), puis le pid du nom s'il y en a un, puis le témoin d'un
+    occupant vivant, puis l'âge.
     """
     if porte_un_worktree(espace):
         return False
     pid = pid_dans(espace.name)
     if pid is not None:
         return not pid_vivant(pid)
+    nomme = occupant(espace)
+    if nomme is not None and pid_vivant(nomme):
+        return False
     reference = time.time() if maintenant is None else maintenant
     plafond = SEUIL_ORPHELIN_H * 3600 if seuil_s is None else seuil_s
     return reference - _derniere_activite(espace) >= plafond
@@ -406,25 +458,32 @@ def _seuil_du_poste(environnement: Mapping[str, str]) -> float:
 def ramasser(
     *,
     racines: Iterable[Path] | None = None,
+    jetables: Iterable[Path] | None = None,
     environnement: Mapping[str, str] | None = None,
     maintenant: float | None = None,
 ) -> Ramassage:
-    """Retire les espaces que plus aucune tâche vivante n'occupe — best-effort, sans lever.
+    """Retire les jetables que plus aucun process vivant n'occupe — best-effort, sans lever.
+
+    Sans argument, balaie la racine jetable du poste et ses anciens emplacements
+    (`racines_connues`). Qui nomme l'un des deux (`racines` pour les anciens
+    emplacements, `jetables` pour des racines dédiées) **ne balaie que ce qu'il
+    nomme** : un appel borné à un dossier ne doit jamais déborder sur le poste.
 
     Appelé au démarrage de l'hôte détaché (`maestro.controltower.hote_detache`),
-    c'est-à-dire juste avant que des espaces neufs ne naissent, et par quiconque
-    veut faire le ménage. Rendre la main sans rien avoir fait est une issue
-    normale : le ramassage est un filet, pas une étape du run.
+    et par quiconque veut faire le ménage. Rendre la main sans rien avoir fait est
+    une issue normale : le ramassage est un filet, pas une étape du run.
     """
     env = os.environ if environnement is None else environnement
     if (env.get(VARIABLE_RAMASSAGE) or "").strip() == "0":
         return Ramassage()
+    if racines is None and jetables is None:
+        racines, jetables = racines_connues(env), (racine_jetable(env),)
     seuil_s = _seuil_du_poste(env)
     retires: list[Path] = []
     conserves: list[Path] = []
     echecs: list[Path] = []
     try:
-        candidats = list(espaces(racines_connues(env) if racines is None else racines))
+        candidats = list(espaces(racines or (), jetables=jetables or ()))
     except OSError:  # pragma: no cover - plus aucune racine lisible
         return Ramassage()
     for espace in candidats:

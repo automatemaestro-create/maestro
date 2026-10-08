@@ -201,6 +201,9 @@ CLE_REGLAGES_DIR = "MAESTRO_REGLAGES_DIR"
 #: La reprise des agents dans leur projet, jouée au démarrage de l'API (#1038).
 CLE_REPRISE_AGENTS = "MAESTRO_REPRISE_AGENTS"
 
+#: Le ramassage des jetables du poste, joué au démarrage de chaque hôte (#992, #1455).
+CLE_RAMASSAGE = "MAESTRO_RAMASSAGE_ESPACES"
+
 #: Le **régime d'accès** de l'API et ses réglages (#638), plus le port du front
 #: dont le défaut d'origines se dérive. Vidés par `_neutralise_acces_api` : les
 #: trois premiers se posent dans un `.env`, et `MAESTRO_PORT_UI` dans le bloc
@@ -416,6 +419,22 @@ def _neutralise_reprise_agents() -> None:
     os.environ[CLE_REPRISE_AGENTS] = "0"
 
 
+def _neutralise_ramassage() -> None:
+    """Coupe le ramassage des jetables du poste pendant la suite (#1455).
+
+    `hote_detache.main` le lance au démarrage de chaque hôte, et des tests jouent
+    ce `main` en entier : sans cette coupure, la suite **retirerait** les
+    `maestro-*` du répertoire temporaire du poste qui la joue — ceux d'un run en
+    vol dans une autre copie de travail compris, dès qu'ils ont passé le seuil.
+    Le ramassage s'éprouve en l'appelant sur `tmp_path` avec un environnement
+    explicite (`tests/test_sandbox_ramassage.py`), jamais en démarrant un hôte.
+
+    Mise à `0` plutôt que vidée, comme la reprise des agents : `0` est ce que la
+    variable *signifie*.
+    """
+    os.environ[CLE_RAMASSAGE] = "0"
+
+
 def _neutralise_acces_api() -> None:
     """Vide le régime d'accès de l'API et le port du front (#638) — voir `CLES_ACCES_API`.
 
@@ -443,6 +462,7 @@ _neutralise_langfuse()
 _neutralise_couleur_orchestrate()
 _neutralise_forge()
 _neutralise_reprise_agents()
+_neutralise_ramassage()
 _neutralise_acces_api()
 _fige_espace()
 

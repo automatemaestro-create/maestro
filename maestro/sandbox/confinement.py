@@ -76,16 +76,15 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from maestro.emplacements import jetable
 from maestro.fichiers import retirer_arbre
 from maestro.sandbox.arbre import Arbre, ProcessusNomme
-from maestro.sandbox.ramassage import marquer, racine_des_espaces
 
 #: La commande que le lanceur confine — le vrai CLI —, en **liste JSON** : un chemin
 #: d'installation porte volontiers des espaces, et une liste ne se redécoupe pas.
@@ -242,9 +241,7 @@ class SessionConfinee:
         env = {ENV_COMMANDE: json.dumps(list(commande))}
         dossier: Path | None
         try:
-            dossier = Path(
-                tempfile.mkdtemp(prefix=marquer(PREFIXE_RELEVE), dir=racine_des_espaces())
-            )
+            dossier = jetable(PREFIXE_RELEVE)
         except OSError:
             # Sans dossier, le lanceur confine quand même — il ne rend simplement
             # pas compte : l'arrêt n'a jamais dépendu du relevé.

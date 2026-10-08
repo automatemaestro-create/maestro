@@ -65,12 +65,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from maestro.emplacements import jetable, repertoire_temporaire
 from maestro.fichiers import retirer_arbre
 from maestro.projets.application import ApplicationRefusee, commiter_en_attente
 from maestro.projets.modele import Projet
@@ -416,12 +416,14 @@ def espace_de_travail(
         yield EspaceEnPlace.derive(racine, perimetre=projet.perimetre, atelier=atelier)
         return
 
-    # `racine_des_espaces` et non le défaut de `tempfile` (#992, S13) : la même
-    # racine que l'espace jetable, donc celle que le Bash de l'agent appelle
-    # `/tmp` sous Windows. Le parent n'est **pas** marqué d'un pid, et c'est
-    # voulu : le ramassage ne doit jamais emporter un worktree, dont le travail
-    # non commité ne vit nulle part ailleurs (`ramassage.porte_un_worktree`).
-    parent = Path(tempfile.mkdtemp(prefix=prefix, dir=racine_des_espaces()))
+    # La racine jetable (#1455) et non le défaut de `tempfile` (#992, S13) : la
+    # même racine que l'espace jetable, sous ce que le Bash de l'agent appelle
+    # `/tmp` sous Windows. Le parent est marqué du pid de ce process comme tout
+    # jetable : le ramassage n'emporte jamais pour autant un worktree dont le
+    # dépôt existe, dont le travail non commité ne vit nulle part ailleurs
+    # (`ramassage.porte_un_worktree`) — le marqueur ne sert qu'aux dépouilles
+    # qui n'en portent plus, montage raté ou dépôt disparu.
+    parent = jetable(prefix)
     chemin = parent / _slug(tache_id)
     branche = _branche(tache_id)
     depart = _branche(reprend) if reprend.strip() else ""
@@ -706,11 +708,15 @@ def _worktrees_abandonnes(
     tient à l'écart le worktree qu'une personne aurait ouvert elle-même sur une
     branche `maestro/…`. `sauf` est l'emplacement qu'on s'apprête à monter. Rend
     une liste vide quand Git ne sait pas répondre.
+
+    La racine des espaces est la racine jetable depuis #1455, et le répertoire
+    temporaire lui-même avant : un run repris après la mise à jour retrouve le
+    worktree que sa première vie avait monté à l'ancienne adresse.
     """
     resultat = _git(racine, "worktree", "list", "--porcelain")
     if resultat.returncode != 0:
         return []
-    espaces = _normalise(racine_des_espaces())
+    espaces = {_normalise(racine_des_espaces()), _normalise(repertoire_temporaire())}
     cible = None if sauf is None else _normalise(sauf)
     tache = branche.removeprefix(PREFIXE_BRANCHE)
     trouves: list[Path] = []
@@ -721,7 +727,7 @@ def _worktrees_abandonnes(
             or _normalise(abandonne) == cible
             or abandonne.name != tache
             or not abandonne.parent.name.startswith(PREFIXE_COMMUN)
-            or _normalise(abandonne.parent.parent) != espaces
+            or _normalise(abandonne.parent.parent) not in espaces
         ):
             continue
         trouves.append(abandonne)
