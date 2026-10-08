@@ -21,7 +21,9 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
 ② **À la reprise, la tâche sait ce que sa branche porte** (`TravailAnterieur`) : le
    message de sa tâche le lui dit — ce qui est fait, et qu'elle repart de là —, et ce
    travail compte dans ce qu'elle livre au juge, qu'elle l'ait réécrit ou non. Une
-   branche neuve, ou déjà fusionnée, n'annonce aucun travail antérieur.
+   branche neuve, ou déjà fusionnée, n'annonce aucun travail antérieur : le message ne
+   porte que ce que toute copie de travail dit d'elle-même (où l'agent est, #1399, et
+   que ce qu'il y laisse se commite, #1401).
 
 Aucun réseau, aucun modèle : les dépôts sont jetables, l'hôte est un double — ce qu'on
 éprouve est *ce qui est sauvé, et ce qui est dit*, pas l'extinction d'un groupe de
@@ -281,6 +283,8 @@ def test_la_tache_reprise_apprend_ce_que_sa_branche_porte(tmp_path: Path) -> Non
     assert "- ajouté : `src/recettes.ts`" in consigne
     assert "- modifié : `README.md`" in consigne
     assert "ne le refais pas depuis zéro" in consigne
+    # Où elle est d'abord (#1399), ce que sa branche porte ensuite.
+    assert consigne.index("racine du projet") < consigne.index("n'est pas neuve")
 
 
 def test_ce_que_la_tache_avait_fait_compte_dans_sa_livraison(tmp_path: Path) -> None:
@@ -300,18 +304,19 @@ def test_ce_que_la_tache_avait_fait_compte_dans_sa_livraison(tmp_path: Path) -> 
 
 
 #: Ce que la consigne d'une branche reprise dit, et qu'une branche neuve ne dit pas : la
-#: copie de travail, elle, se présente toujours (#1401).
+#: copie de travail, elle, se présente toujours (#1399, #1401).
 REPRISE = "n'est pas neuve"
 
 
 def test_une_branche_neuve_ne_dit_rien_de_travail_anterieur(tmp_path: Path) -> None:
     """Le cas courant : rien à reprendre, rien d'annoncé — la copie de travail se
-    présente (#1401), sans travail antérieur."""
+    présente (où l'agent est, #1399 ; ce qui se commite, #1401), sans travail antérieur."""
     projet = _projet(tmp_path)
     with espace_de_travail(projet, tache_id=TACHE) as ws:
         consigne = ws.consigne_espace()
     assert REPRISE not in consigne
     assert "- ajouté : " not in consigne
+    assert "racine du projet" in consigne
 
 
 def test_une_branche_deja_fusionnee_ne_dit_rien_de_travail_anterieur(tmp_path: Path) -> None:

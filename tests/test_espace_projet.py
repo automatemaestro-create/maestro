@@ -347,8 +347,10 @@ def test_le_jetable_va_ou_la_portee_le_laisse_passer(tmp_path: Path) -> None:
 
 
 def test_l_espace_jetable_ne_dit_rien_de_lui_meme(tmp_path: Path) -> None:
-    """Un répertoire jetable disparaît avec la tâche : il n'a ni atelier ni branche à
-    nommer, et son message de tâche est celui d'avant #944, au caractère près."""
+    """Un répertoire jetable disparaît avec la tâche et n'est le projet de
+    personne : il n'a ni atelier ni branche à nommer, et son message de tâche est
+    celui d'avant #944, au caractère près. (Le worktree, lui, dit où il est depuis
+    #1399, et qu'il se commite depuis #1401.)"""
     with espace_de_travail(None, tache_id="t1") as jetable:
         assert jetable.consigne_espace() == ""
 
@@ -364,6 +366,76 @@ def test_un_projet_versionne_n_a_pas_d_atelier(tmp_path: Path) -> None:
         consigne = ws.consigne_espace()
         assert not (Path(projet.racine) / DOSSIER_ATELIER).exists()
     assert DOSSIER_ATELIER not in consigne
+
+
+# --------------------------------------------------------------------------- #
+# La copie de travail dit à l'agent où il est (#1399)
+# --------------------------------------------------------------------------- #
+
+
+@besoin_de_git
+def test_la_copie_de_travail_dit_a_l_agent_qu_il_est_a_la_racine_du_projet_nomme(
+    tmp_path: Path,
+) -> None:
+    """Le défaut de p5 : « Installer dans le dossier p5 », et l'agent travaillait dans
+    une copie nommée d'après sa tâche, où aucun `p5` n'existe. Rien ne lui disait
+    que son répertoire courant **est** ce projet — il l'a consigné comme une
+    décision. La copie le dit désormais : le projet par son nom et son dossier, sa
+    branche, et que ce que la tâche nomme du projet désigne ce répertoire."""
+    projet = _projet_git(tmp_path)
+    dossier = Path(projet.racine).name
+
+    with espace_de_travail(projet, tache_id="socle-nextjs") as ws:
+        consigne = ws.consigne_espace()
+        # Les conditions du défaut : la copie ne porte pas le nom du dossier.
+        assert ws.path.name != dossier
+
+    assert "racine du projet « Démo »" in consigne
+    assert f"`{projet.racine}`" in consigne
+    assert f"« {dossier} »" in consigne
+    assert "`maestro/socle-nextjs`" in consigne
+    assert "sans y créer de sous-dossier" in consigne
+    # « La racine du projet » des instructions du projet (AGENTS.md) est ce répertoire.
+    assert "« la racine du projet »" in consigne
+    # Le dossier d'origine n'est pas sur sa branche : il n'y écrit pas.
+    assert "échapperait à ta branche" in consigne
+    # Et ce qu'il laisse n'est pas perdu : commité, puis appliqué.
+    assert "commité sur ta branche" in consigne
+
+
+@besoin_de_git
+def test_un_projet_qui_porte_le_nom_de_son_dossier_n_est_nomme_qu_une_fois(
+    tmp_path: Path,
+) -> None:
+    """p5 s'appelait comme son dossier : le dire deux fois n'apprendrait rien."""
+    projet = _projet_git(tmp_path)
+    projet = replace(projet, nom=Path(projet.racine).name)
+
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        consigne = ws.consigne_espace()
+
+    assert consigne.count(f"« {projet.nom} »") == 2  # le projet, puis ce que la tâche nomme
+    assert " ou « " not in consigne
+
+
+@besoin_de_git
+def test_le_message_de_la_tache_dit_ou_travaille_l_agent_d_un_projet_versionne(
+    tmp_path: Path,
+) -> None:
+    """Le bout de chaîne : la consigne de la copie arrive dans le prompt de la tâche,
+    seul endroit où l'agent la lit, et la tâche elle-même n'y est pas réécrite
+    (aucune réécriture lexicale de ce qu'elle nomme)."""
+    projet = _projet_git(tmp_path)
+    fournisseur = _FournisseurEcrivain()
+    runtime = AgentRuntime(fournisseur, DEVELOPER_PROFILE)
+    tache = "Installer Next.js dans le dossier depensio-git."
+
+    asyncio.run(runtime.execute(tache, projet=projet, tache_id="socle-nextjs"))
+
+    (prompt,) = fournisseur.prompts
+    assert tache in prompt
+    assert "racine du projet « Démo »" in prompt
+    assert "`maestro/socle-nextjs`" in prompt
 
 
 def test_le_message_de_la_tache_porte_l_atelier(tmp_path: Path) -> None:

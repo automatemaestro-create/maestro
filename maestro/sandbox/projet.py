@@ -19,7 +19,9 @@ premier, et le second est un régime à lui (`maestro.sandbox.en_place`) :
   du retrait l'emporterait et la branche survivrait vide. Ce que la tâche a
   **produit** s'y lit par Git, comme ce que la branche porte
   (`EspaceCopieDeTravail`, #1388) : le `.gitignore` du projet en retire les
-  dépendances et la sortie de build ;
+  dépendances et la sortie de build. Le worktree porte le nom de sa tâche, jamais
+  celui du dossier qu'il copie : le message de la tâche dit donc à l'agent qu'il
+  **est** la racine de ce projet (`CopieDuProjet`, #1399) ;
 - **projet non versionné** → **la racine elle-même**, en place (#839) : rien
   n'est copié, rien n'est retiré, ce que l'agent écrit est dans le projet
   pendant qu'il l'écrit — avec, depuis #944, un **atelier** `.maestro/<tâche>/`
@@ -175,6 +177,58 @@ class TravailAnterieur:
         return "\n".join(lignes)
 
 
+@dataclass(frozen=True)
+class CopieDuProjet:
+    """Ce que le worktree d'une tâche **est** pour l'agent : la racine du projet, en copie (#1399).
+
+    Constaté sur p5 (2026-10-01) : la tâche `socle-nextjs` disait « Installer dans
+    le dossier p5 », « Commence par inspecter p5 », et l'agent travaillait dans
+    `…/maestro-dev-…/socle-nextjs`, où aucun `p5` n'existe. Ses deux agents ont dû
+    consigner une décision pour l'interpréter — « le dossier p5 est la racine du
+    worktree courant ». Rien ne leur disait que leur répertoire courant **est** ce
+    projet, ni que « la racine du projet » de son `AGENTS.md` est ce répertoire : un
+    worktree porte le nom de sa tâche, jamais celui du dossier qu'il copie.
+
+    Ce n'est pas au texte de la tâche de changer — aucune réécriture lexicale de ce
+    qu'il nomme : le projet peut s'y dire de mille façons, et l'agent qui sait où il
+    est les reconnaît toutes. C'est à l'espace de le **dire**, depuis ce qu'il sait
+    seul : le projet par son nom et son dossier (`Projet`), la branche qu'il monte.
+
+    `dossier` est la racine **d'origine**, nommée pour être reconnue — une tâche peut
+    la citer en toutes lettres — et pour qu'on n'y écrive pas : ce qui s'écrit là
+    n'est pas sur la branche de la tâche, donc ni fusionné ni défait avec elle.
+    """
+
+    nom: str
+    dossier: str
+    branche: str
+
+    @classmethod
+    def de(cls, projet: Projet, branche: str) -> CopieDuProjet:
+        """La copie du projet `projet` montée sur `branche`."""
+        return cls(nom=projet.nom.strip(), dossier=projet.racine, branche=branche)
+
+    def consigne(self) -> str:
+        """Le paragraphe qui dit à l'agent où il est, et ce que devient ce qu'il y laisse."""
+        nom_du_dossier = Path(self.dossier).name
+        projet = self.nom or nom_du_dossier
+        # Le nom du projet et celui de son dossier, une seule fois s'ils se confondent.
+        designes = " ou ".join(
+            f"« {nom} »" for nom in dict.fromkeys((projet, nom_du_dossier)) if nom
+        )
+        return (
+            f"Ton répertoire courant est la **racine du projet « {projet} »** : une copie "
+            f"de travail de son dossier `{self.dossier}`, sur ta branche `{self.branche}`. "
+            f"Quand ta tâche nomme ce projet ou son dossier ({designes}), c'est **ce "
+            "répertoire** qu'elle désigne : travailles-y directement, sans y créer de "
+            "sous-dossier de ce nom, et sans écrire dans le dossier d'origine — ce qui "
+            "s'y écrirait échapperait à ta branche. Les chemins que ses instructions "
+            "disent relatifs à « la racine du projet » partent d'ici. Ce que tu y "
+            "laisses est commité sur ta branche à la fin de ta tâche, et c'est cette "
+            "branche qui est appliquée au projet."
+        )
+
+
 class EspaceProjetIndisponible(RuntimeError):
     """L'espace de travail dérivé n'a pas pu être monté — **avec son motif**.
 
@@ -230,23 +284,33 @@ class EspaceCopieDeTravail(Workspace):
     livraison que lit le juge les porte comme si elle les avait écrits d'un trait.
     Sans cela, une tâche reprise qui ne réécrit rien de ce qui est fait livrerait
     une moitié.
+
+    `copie` (#1399) est ce que ce worktree est pour l'agent — la racine de quel
+    projet, sur quelle branche (`CopieDuProjet`) —, et le message de la tâche le
+    dit **toujours**, avant ce que la branche porte déjà. `None` pour un espace
+    monté hors d'`espace_de_travail`, qui ne sait d'aucun projet qu'il le copie.
     """
 
     anterieur: TravailAnterieur | None = None
+    copie: CopieDuProjet | None = None
 
     def consigne_espace(self) -> str:
-        """Ce que devient ce que l'agent laisse ici (#1401), puis ce que sa branche porte déjà.
+        """Où l'agent est (#1399), ce que devient ce qu'il laisse (#1401), ce que sa branche porte.
 
-        ⚠ **Ce n'est plus vide sur une branche neuve.** Le worktree passait pour une
-        « copie conforme d'une branche » qui n'avait rien à dire d'elle-même : or tout
-        ce que l'agent y laisse et que le `.gitignore` du projet n'ignore pas est
-        commité au démontage (`_solder_la_branche`, `git add -A`), puis fusionné dans
-        le projet — brouillons compris. Sur p5, rien ne le lui disait, et aucun
-        atelier n'est ouvert ici (#944, réservé au projet non versionné) : le message
-        le dit donc (`CONSIGNE_COPIE_DE_TRAVAIL`), et envoie ce qui n'est pas le
-        livrable dans un dossier que l'agent crée par `mktemp -d`, hors de la copie
-        — le geste que la portée lui laisse (`maestro.portee`, « l'établi »), le même
-        qu'en place pour ce que personne n'aura à relire (#1348).
+        Renverse #944 pour la copie de travail : « un worktree n'a rien de
+        particulier à dire » tenait tant qu'on le croyait une copie conforme dont
+        l'agent n'avait rien à savoir. Il a à savoir qu'elle **est** le projet que
+        sa tâche nomme — sur p5, faute de le lire, l'agent a cherché le dossier.
+
+        ⚠ **Ce n'est plus vide sur une branche neuve.** Tout ce que l'agent laisse
+        ici et que le `.gitignore` du projet n'ignore pas est commité au démontage
+        (`_solder_la_branche`, `git add -A`), puis fusionné dans le projet —
+        brouillons compris. Sur p5, rien ne le lui disait, et aucun atelier n'est
+        ouvert ici (#944, réservé au projet non versionné) : le message le dit donc
+        (`CONSIGNE_COPIE_DE_TRAVAIL`), et envoie ce qui n'est pas le livrable dans un
+        dossier que l'agent crée par `mktemp -d`, hors de la copie — le geste que la
+        portée lui laisse (`maestro.portee`, « l'établi »), le même qu'en place pour
+        ce que personne n'aura à relire (#1348).
 
         Ce que le `.gitignore` retire, et ce qui s'y ajoute, est dit **une fois pour
         tous les espaces** par le cadre d'exécution (`_cadre_outille.md`) : ce
@@ -254,6 +318,7 @@ class EspaceCopieDeTravail(Workspace):
         cet espace-ci se commite.
         """
         paragraphes = (
+            self.copie.consigne() if self.copie is not None else "",
             CONSIGNE_COPIE_DE_TRAVAIL,
             self.anterieur.consigne() if self.anterieur is not None else "",
         )
@@ -375,7 +440,9 @@ def espace_de_travail(
             if existait
             else None
         )
-        yield EspaceCopieDeTravail.derive(chemin, anterieur=anterieur)
+        yield EspaceCopieDeTravail.derive(
+            chemin, anterieur=anterieur, copie=CopieDuProjet.de(projet, branche)
+        )
     finally:
         if not keep:
             if monte:
