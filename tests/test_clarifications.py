@@ -440,6 +440,7 @@ class MoteurQuiQuestionne:
         porte=None,
         contexte_sources="",
         reprise=None,
+        brief_approuve=None,
     ):
         run_id = journal.run_id if journal is not None else ""
         try:

@@ -181,6 +181,7 @@ from maestro.controltower.causes import (
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
     EventBus,
+    brief_depuis,
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteMort, HoteRun, OrdreRun
 from maestro.controltower.persistence import BusDurable, bus_durable
@@ -327,6 +328,8 @@ def ordre_vers_dict(ordre: OrdreRun) -> dict[str, Any]:
         # L'état acquis d'un run repris sur son plan (#1391), par sa propre
         # réémission comme le ticket ; `null` pour un lancement ordinaire.
         "reprise": None if ordre.reprise is None else ordre.reprise.to_dict(),
+        # Le brief approuvé d'un run qui ne recadre pas (#1402), de même.
+        "brief": None if ordre.brief is None else ordre.brief.to_dict(),
     }
 
 
@@ -371,6 +374,10 @@ def ordre_depuis_dict(data: Mapping[str, Any]) -> OrdreRun:
             if isinstance(data.get("reprise"), Mapping)
             else None
         ),
+        # Relu sans être rejugé (#1402), comme tout brief qui circule : il a été
+        # validé à sa production, et un brief amputé retombe sur None — le run
+        # repart alors sans, ce que ses tâches faisaient avant ce ticket.
+        brief=brief_depuis(data.get("brief")),
     )
 
 
@@ -1172,6 +1179,8 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
                 # Un run repris sur son plan (#1391) : ce qu'il a déjà payé ne se
                 # refait pas, et son aval lit les sorties acquises.
                 reprise=ordre.reprise,
+                # Et le brief qu'il ne recadre pas (#1402) : ses tâches le reçoivent.
+                brief_approuve=ordre.brief,
             )
         )
         attendus: set[asyncio.Future[Any]] = {run, guet}

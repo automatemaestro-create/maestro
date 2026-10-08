@@ -42,7 +42,7 @@ from maestro.engine.executor import (
 from maestro.engine.loop import OrchestrationEngine
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
-from maestro.orchestrator.schema import Task
+from maestro.orchestrator.schema import Brief, Task
 from maestro.queue.celery_app import NOM_TACHE_EXECUTER
 from maestro.telemetry import RunJournal, StepUsage
 
@@ -74,6 +74,14 @@ class CeleryExecutor(TaskExecutor):
             app = app_defaut
         self._app = app
         self._timeout_s = timeout_s
+        # Le brief approuvé de chaque run (#1402), par `run_id` : il voyage avec
+        # chaque message de ce run, comme le tableau noir — un worker ne partage
+        # rien avec l'orchestrateur, il ne le connaîtrait pas autrement.
+        self._briefs: dict[str, Brief] = {}
+
+    def retient_le_brief(self, run_id: str, brief: Brief) -> None:
+        """Cf. `TaskExecutor.retient_le_brief` — porté par chaque message de ce run (#1402)."""
+        self._briefs[run_id] = brief
 
     async def execute(
         self, task: Task, dependances: Sequence[TaskResult], journal: RunJournal
@@ -82,14 +90,16 @@ class CeleryExecutor(TaskExecutor):
 
         Le tableau noir (résultats des dépendances) voyage **avec** le message :
         les workers ne partagent aucun état avec l'orchestrateur ni entre eux.
-        L'usage porté par le résultat est celui mesuré par le worker (le vrai
-        coût de la tâche) ; seul un échec de transport est chronométré ici.
+        Le brief approuvé du run aussi (#1402), quand il y en a un. L'usage porté
+        par le résultat est celui mesuré par le worker (le vrai coût de la tâche) ;
+        seul un échec de transport est chronométré ici.
         """
-        entree = _build_task_description(task, dependances)
+        brief = self._briefs.get(journal.run_id)
+        entree = _build_task_description(task, dependances, brief)
         debut = perf_counter()
         try:
             result = await asyncio.to_thread(
-                self._envoie_et_attend, task, dependances, journal.run_id
+                self._envoie_et_attend, task, dependances, journal.run_id, brief
             )
         # celery.exceptions.TimeoutError ne descend pas du TimeoutError natif :
         # on attrape les deux pour couvrir tous les transports.
@@ -135,17 +145,23 @@ class CeleryExecutor(TaskExecutor):
         return result
 
     def _envoie_et_attend(
-        self, task: Task, dependances: Sequence[TaskResult], run_id: str
+        self,
+        task: Task,
+        dependances: Sequence[TaskResult],
+        run_id: str,
+        brief: Brief | None = None,
     ) -> TaskResult:
         """Bloquant (déporté dans un thread) : `send_task` puis attente du résultat.
 
         L'envoi se fait **par nom** (`NOM_TACHE_EXECUTER`) : l'orchestrateur ne
-        dépend que du contrat JSON de la file, pas du code des workers.
+        dépend que du contrat JSON de la file, pas du code des workers. Le brief
+        (#1402) est un quatrième argument, **omis** sans brief : le message d'un
+        run sans brief reste celui d'avant, lisible par un worker d'avant.
         """
-        async_result = self._app.send_task(
-            NOM_TACHE_EXECUTER,
-            args=[task.to_dict(), [d.to_dict() for d in dependances], run_id],
-        )
+        args: list[object] = [task.to_dict(), [d.to_dict() for d in dependances], run_id]
+        if brief is not None:
+            args.append(brief.to_dict())
+        async_result = self._app.send_task(NOM_TACHE_EXECUTER, args=args)
         brut = async_result.get(timeout=self._timeout_s)
         return TaskResult.from_dict(brut)
 
