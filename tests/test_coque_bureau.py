@@ -463,7 +463,8 @@ def test_la_stack_du_verrou_est_celle_que_start_sh_demarre_et_arrete(main_js, st
     refuserait une stack voisine, ou laisserait une seconde fenêtre arrêter la
     stack de la première. Les défauts aussi : la stack par défaut de la coque doit
     être celle du lanceur."""
-    assert 'ETAT_DIR="${TMPDIR:-/tmp}/maestro-controltower-${PORT_API}-${PORT_UI}"' in start_sh
+    assert 'ETAT_DIR="$ETAT_STACK_RACINE/${ETAT_STACK_PREFIXE}${PORT_API}-${PORT_UI}"' in start_sh
+    assert "(`<temp>/maestro/controltower-<api>-<ui>`, #1456)" in main_js
     assert "const STACK = `${PORT_API}-${PORT_UI}`;" in main_js
     assert 'PORT_API="${MAESTRO_PORT_API:-8000}"' in start_sh
     assert 'PORT_UI="${MAESTRO_PORT_UI:-3000}"' in start_sh

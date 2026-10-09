@@ -21,6 +21,7 @@ import contextlib
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -445,8 +446,13 @@ def depot(tmp_path: Path) -> Depot:
     git("config", "user.email", "test@maestro.invalid", cwd=racine)
     git("config", "user.name", "Maestro Test", cwd=racine)
 
-    # Les vrais scripts, dans la vraie arborescence (worktree.sh appelle lib.sh en relatif).
-    for relatif in ("scripts/git/worktree.sh", "scripts/gitlab/lib.sh"):
+    # Les vrais scripts, dans la vraie arborescence (worktree.sh appelle lib.sh en relatif, et
+    # `gc` source la règle de l'état des stacks, #1456).
+    for relatif in (
+        "scripts/git/worktree.sh",
+        "scripts/gitlab/lib.sh",
+        "scripts/controltower/etat-stack.sh",
+    ):
         cible = racine / relatif
         cible.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(RACINE / relatif, cible)
@@ -1201,6 +1207,85 @@ def test_gc_ignore_une_branche_hors_convention(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     assert "hors convention" in acheve.stdout
     assert depot.worktree("experimentation").exists()
+
+
+# --- L'état de la stack part avec son worktree (#1456) -------------------------------------------
+# `start.sh` range l'état de la stack d'une copie sous `<temp>/maestro/controltower-<api>-<ui>`,
+# avec le témoin de la copie qui l'a démarrée (`scripts/controltower/etat-stack.sh`). Les tests le
+# posent tel que `start.sh` le laisse, sur un `TMPDIR` à eux, et rallument le ramassage que
+# `conftest.py` coupe pour ne jamais toucher au répertoire temporaire du poste.
+
+
+def _etat_de_stack(temp: Path, ports: str, copie: Path) -> Path:
+    """Le dossier d'état d'une stack, tel que `start.sh` le laisse : profil, témoin de sa copie."""
+    dossier = temp / "maestro" / f"controltower-{ports}"
+    (dossier / "maestro-profil-navigateur").mkdir(parents=True)
+    (dossier / "copie").write_text(copie.as_posix() + "\n", encoding="utf-8", newline="\n")
+    return dossier
+
+
+def _avec_etat_stack(temp: Path) -> dict[str, str]:
+    return {"TMPDIR": temp.as_posix(), "MAESTRO_RAMASSAGE_ETAT_STACK": "1"}
+
+
+def test_gc_retire_l_etat_de_la_stack_avec_son_worktree(depot: Depot, tmp_path: Path) -> None:
+    """Critère 2 de #1456 — le worktree soldé part, l'état de sa stack aussi ; celui d'une copie
+    toujours en place (le clone principal) reste. Le compte rendu le dit."""
+    temp = tmp_path / "temp"
+    depot.lance("create", "152", "--branche", BRANCHE)
+    etat = _etat_de_stack(temp, "8052-3052", depot.worktree())
+    principal = _etat_de_stack(temp, "8000-3000", depot.racine)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc", environnement=_avec_etat_stack(temp))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not depot.worktree().exists()
+    assert not etat.exists()
+    assert principal.exists()
+    assert "état de stack retiré avec sa copie : 1 dossier(s)" in acheve.stdout
+
+
+def test_gc_cible_retire_aussi_l_etat_de_la_stack(depot: Depot, tmp_path: Path) -> None:
+    """Le ramassage d'après merge (#438) est celui qui rend l'état orphelin : il le retire aussi."""
+    temp = tmp_path / "temp"
+    depot.lance("create", "152", "--branche", BRANCHE)
+    etat = _etat_de_stack(temp, "8052-3052", depot.worktree())
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc", "--iid", "152", environnement=_avec_etat_stack(temp))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not depot.worktree().exists()
+    assert not etat.exists()
+
+
+def test_gc_ne_retire_jamais_l_etat_d_une_stack_vivante(depot: Depot, tmp_path: Path) -> None:
+    """Critère 2 de #1456 — « jamais celui d'une stack vivante » : un port de la stack écoute
+    (ouvert ici pour de vrai), le worktree part, son état reste."""
+    temp = tmp_path / "temp"
+    depot.lance("create", "152", "--branche", BRANCHE)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as serveur:
+        serveur.bind(("127.0.0.1", 0))
+        serveur.listen(1)
+        etat = _etat_de_stack(temp, f"1-{serveur.getsockname()[1]}", depot.worktree())
+
+        acheve = depot.lance("gc", environnement=_avec_etat_stack(temp))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert not depot.worktree().exists()
+    assert etat.exists()
+    assert "état de stack" not in acheve.stdout
+
+
+def test_gc_check_ne_touche_pas_a_l_etat_des_stacks(depot: Depot, tmp_path: Path) -> None:
+    """`--check` ne touche à rien — ni aux worktrees, ni à un état déjà orphelin."""
+    temp = tmp_path / "temp"
+    depot.lance("create", "152", "--branche", BRANCHE)
+    orphelin = _etat_de_stack(temp, "8099-3099", tmp_path / "copie-partie")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc", "--check", environnement=_avec_etat_stack(temp))
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert orphelin.exists()
 
 
 # --- Le worktree d'une AUTRE session vivante (#503) ----------------------------------------------

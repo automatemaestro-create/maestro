@@ -480,7 +480,7 @@ Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.p
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) (#1035).
 
-### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — lot #1455 livré)*
+### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — lots #1455 et #1456 livrés)*
 
 Hors des projets qu'on lui confie, Maestro ne pose rien sur le poste ailleurs que sous **trois
 racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul à déclarer :
@@ -489,7 +489,7 @@ racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul 
 |---|---|---|
 | `~/Maestro/` | les projets de l'utilisateur, proposés par défaut (#1022) | personne — c'est son travail |
 | `~/.maestro/` | l'état du poste : jeton de l'API, journal SQLite, profil de navigateur | personne — c'est l'état du produit |
-| `<temp>/maestro/` (`%TEMP%\maestro\` sous Windows, `/tmp/maestro/` dans le Bash d'un agent) | le jetable : atelier de chaque hôte détaché, espaces des tâches, copies de vérification, aperçus de sources | le **ramassage**, sans geste humain |
+| `<temp>/maestro/` (`%TEMP%\maestro\` sous Windows, `/tmp/maestro/` dans le Bash d'un agent) | le jetable : atelier de chaque hôte détaché, espaces des tâches, copies de vérification, aperçus de sources, état de la stack de chaque copie de travail | le **ramassage**, sans geste humain |
 
 **Pourquoi.** Le 2026-10-08, le poste de référence portait **1 286** dossiers `maestro-*` sous
 son répertoire temporaire — 436 ateliers d'hôte, 692 résidus de l'ancien mode démo, des espaces
@@ -507,6 +507,17 @@ temporaire lui-même et ses résolutions MSYS — où tout `maestro-*` est candi
 stack de développement et le cache des présentations, qu'un autre mécanisme possède. Il ne retire
 **jamais** un worktree dont le dépôt existe encore : c'est du travail non commité. Un worktree dont
 le dépôt a disparu n'en est plus. `MAESTRO_RAMASSAGE_ESPACES=0` l'éteint.
+
+**L'état d'une stack part avec sa copie** (#1456). Le jeton de session, le chien de garde et le
+profil de la fenêtre que `scripts/controltower/start.sh` ouvre vivent sous
+`<temp>/maestro/controltower-<api>-<ui>`, avec le chemin de la copie de travail qui a démarré la
+stack. Ce dossier n'est pas jugé par le ramassage des hôtes — une stack inactive depuis six heures
+n'en est pas moins vivante —, mais par la règle de
+[`scripts/controltower/etat-stack.sh`](../scripts/controltower/etat-stack.sh) : il part quand sa
+copie a disparu (`worktree.sh gc`, qui retire le worktree, et chaque démarrage de `start.sh`), et
+**jamais** tant que sa stack vit — un de ses deux ports écoute, ou son chien de garde vit. Au
+démarrage, `start.sh` retire aussi les `maestro-controltower-*` de l'ancienne adresse, à même le
+répertoire temporaire, dont la stack est éteinte. `MAESTRO_RAMASSAGE_ETAT_STACK=0` l'éteint.
 
 **La garde.** [`tests/test_emplacements.py`](../tests/test_emplacements.py) refuse, sous
 `maestro/`, tout dossier temporaire ouvert et tout chemin composé sous le dossier personnel hors du
