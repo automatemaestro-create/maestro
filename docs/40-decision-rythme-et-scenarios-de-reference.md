@@ -529,6 +529,14 @@ La personne a retenu les six recommandations, en `prio::haute`, et les a **exclu
 | 5 | #1244 | le temps loggé est mesuré, et la PR ne porte plus de checklist qui redit `merge-mr` |
 | 6 | #1245 | les commandes de clôture ne portent que leur règle, et la démonstration part dans la doc |
 
+> ⚠ **#1240 est renversé en partie le 2026-10-09** ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md),
+> #1460). Son C2, « un ticket qui touche le chemin d'un scénario le joue avant de pousser », se
+> payait au prix de S1–S4 : S2 coûtait 0,41 $. Douze scénarios plus tard, S12 (≈ 26 min, 3 $) a
+> été joué six fois en un jour par trois tickets du même jalon, et le préfixe du chemin couvre tout
+> le produit. Le banc entier se jouera une fois par lot sur `main`. Au ticket, il ne se jouera plus
+> que sur le chemin dérivé de ce que chaque scénario exécute. La preuve exercée, le banc injouable
+> jamais compté vert et le bouclage d'un jalon par les scénarios (#1152) ne bougent pas.
+
 L'ordre suit les dépendances : #1241 reprend la preuve exercée de #1240, et #1245 comprime en
 dernier le texte que les cinq autres ont modifié. Les six écrivent sous `.claude/`, donc ils sont
 nés assignés et se traitent en interactif (docs/10 §11.7).

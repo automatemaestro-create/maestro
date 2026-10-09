@@ -2088,6 +2088,13 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     même geste que docs/40 §5, et l'état qu'il laisse sert ensuite la relecture visuelle. Le chemin
     est une **détection** ; **quel** scénario emprunte le changement — et s'il en est un — reste un
     jugement de la session, qui se consigne (« non joué : aucun scénario ne passe par la purge ») ;
+
+    ⚠ **Renversé en partie le 2026-10-09** ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md),
+    #1460). Le banc entier se jouera une fois par lot, sur `main` intégrée, par le pilote (#1462).
+    Au ticket, il ne sera plus dû que quand le changement touche ce que le modèle reçoit ou fait, sur
+    le scénario le moins cher dont la carte croise le diff (#1463). Le préfixe `GL_BANC_CHEMINS`
+    cessera alors d'être le déclencheur. **La règle ci-dessus tient jusqu'à #1464**, qui réécrit ce
+    paragraphe : on ne retire pas le filet du ticket avant d'avoir posé celui du lot ;
   - **ce qui ne bouge pas** : un ✗ est nommé, jamais coché, et ne bloque pas le merge ; un critère
     **hors diff** garde sa réponse ; les critères ne s'écrivent jamais à la clôture. Le prix est
     connu et assumé : un passage coûte du vrai modèle (S2 : 0,41 $ et 1 min 25 s sur #1226, qui
