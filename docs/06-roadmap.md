@@ -60,6 +60,10 @@ gantt
 >
 > « Le niveau visuel » passe devant eux : la direction se choisit d'abord, sur les écrans cibles
 > ([docs/46](./46-decision-un-projet-se-concoit-en-phases.md)).
+>
+> Le 2026-10-09, le chantier **« Le coût d'un ticket »** entre au jalon « Outillage de la forge »,
+> sans jalon neuf. Le banc s'y paie une fois par lot sur `main`, et au ticket seulement sur son
+> chemin ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md)).
 
 ---
 
@@ -1249,6 +1253,106 @@ Ne bougent pas :
 
 > ⚠ **Reste proposé, pas fait** : clore #1127 en doublon de #1411 (`/ticket-abandon 1127 doublon`).
 > C'est une décision humaine. En attendant, #1127 est assigné, pour qu'aucun run ne le prenne.
+
+---
+
+## « Le coût d'un ticket » — un chantier du rail outillage (2026-10-09)
+
+Ce chantier est né d'une demande du 2026-10-09, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1470. Le plan a été **validé par la personne avant d'être écrit** (#1415),
+d'un « Oui, tout », comme elle l'a demandé pour toute instruction `/idee`.
+
+> *« il semblerait que le traitement des tickets est devenu coûteux en terme de token. je suppose
+> que c'est parce qu'on rejoue à chaque fois tous les scénarios. est-ce vraiment la meilleure
+> approche pour avancer intelligemment et améliorer le système au long terme ? »*
+
+Il n'ouvre **aucun jalon** : tout va au jalon courant du rail outillage.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| *Outillage de la forge* (jalon existant, rail outillage) | Le banc se paie une fois par lot sur `main`, et au ticket seulement sur son chemin | 2027-09-15 | **#1460** — 4 lots : #1461 → #1462 → #1464, et #1463 en parallèle |
+| *Outillage de la forge* (même ajout) | Ce qui pèse vraiment : l'audit des tokens d'un run, une session de run qui ne charge que ce que le dépôt déclare, les gros modules découpés | 2027-09-15 | #1465, #1466, #1467, #1468, #1469, sans parent |
+
+**Le constat, mesuré** sur les flux de trois runs (26 et 27/09, 08/10) :
+- **Les sessions ne rejouent pas tout le banc.** Elles jouent 1 à 3 scénarios par ticket. Mais S12
+  (≈ 26 min, 3 $) a été joué ~6 fois le 08/10, par trois tickets du même jalon.
+- **Le banc n'est pas le premier poste.** Il pèse 7,6 % des tokens de la session le 08/10, et
+  ≈ 20 % d'un run en comptant le produit (estimation).
+- **Le contexte relu domine.** Sa médiane va de 200 à 375k tokens par tour, avec des pics à 965k.
+  La lecture de code en fait 82 % du poids le 08/10, surtout celle de `orchestration.py`,
+  `executor.py`, `chat.py`, `loop.py` et `scenarios.py`, ce dernier relu 25 à 34 fois.
+- **Le contexte de départ pèse 77k tokens**, dont 158 skills listés, plugins du poste compris.
+- **Le quota** : la fenêtre de 5 h était à 97 % en ~80 min, avec trois sessions en vol.
+
+**Le contenu :**
+- **#1460 (suivi, `lot::arbitre`)** — le banc se paie une fois par lot sur `main`, et au ticket
+  seulement sur son chemin :
+  - **#1461** : chaque passage du banc entre dans un historique (taux de réussite, coût et durée
+    par scénario, sha de `main` joué), rangé sous `~/.maestro/`, pour qu'il survive au worktree ;
+  - **#1462** : le pilote joue le banc entier une fois par lot, sur `main` intégrée après le drain,
+    et un rouge nomme les PR mergées depuis le dernier vert ;
+  - **#1463** (`lot::parallele`) : chaque passage dit quel code chaque scénario a exécuté. Cette
+    carte remplace le préfixe du chemin ;
+  - **#1464** : le banc dû au ticket se dérive de la carte, sur le scénario le moins cher qui couvre
+    le changement, et seulement quand celui-ci touche ce que le modèle reçoit ou fait. Né assigné :
+    il écrit sous `.claude/`.
+- **#1465** : `journal.sh audit` dit où sont passés les tokens d'un run (par famille d'appels,
+  poids du contexte, fichiers les plus relus). C'est l'instrument qui mesurera le reste.
+- **#1466** : une session de run ne charge que ce que le dépôt déclare, ni les plugins ni les skills
+  du poste. C'est le principe du régime épinglé par le dépôt, étendu au-delà des serveurs MCP
+  (#1245).
+- **#1467** : un module par scénario. `scenarios.py` devient un paquet, en pur déplacement.
+- **#1468** : `orchestration.py` et `chat.py` découpés selon leurs responsabilités, **avant** que les
+  lots du mode conception (#1414) ne les touchent.
+- **#1469** : `executor.py` et `loop.py` découpés, **une fois** le jalon produit courant sorti de ces
+  fichiers.
+- **#1457**, déjà ouvert, est mis à jour : sa rétention garde les rapports que lit l'historique.
+
+**Une décision tombe, à la demande de la personne**, et
+[docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md) l'écrit : #1240 C2 (« un ticket qui
+touche le chemin d'un scénario le joue avant de pousser ») est **renversé en partie**. Le banc
+entier se joue par lot sur `main`. Au ticket, il ne se joue plus que sur le chemin dérivé de la
+carte. Le présent de docs/10 §6 n'est réécrit que par #1464. D'ici là, un renvoi ⚠ y est posé.
+
+Ne bougent pas :
+- la preuve exercée ;
+- le banc injouable, jamais compté vert ;
+- le bouclage d'un jalon produit par les scénarios (#1152) ;
+- l'effort, le modèle et la concurrence des runs (#217, #1269, #626).
+
+Sont écartés ou différés :
+- **le découpage de `lib.sh` et `run.sh`** est écarté : les sessions les appellent, elles ne les
+  lisent pas ;
+- **le découpage de `app.py`** est différé : lu 81 fois, mais 1,6 % du poids, et déjà par plages.
+  Il se rejuge avec les chiffres de #1465.
+
+**Place dans la file**, sur le rail outillage. Tout va au jalon **« Outillage de la forge »**,
+échéance inchangée, et le rang se donne par `prio::` :
+
+| Rang | Tickets | `prio::` |
+| --- | --- | --- |
+| en tête du rail, avec les autres `haute` du jalon (#1413, #1415…) | #1460 et ses lots, #1465 | haute |
+| ensuite | #1466, #1467, #1468 | moyenne |
+| en dernier | #1469 | basse |
+
+- **Pas de jalon neuf**, sur le précédent de #1239 : six tickets du flux d'un ticket, tous dans ce
+  jalon, en `prio::haute`. Un jalon outillage neuf placé devant deviendrait le jalon courant du rail
+  (`current-milestone`), et y ferait tomber tout ticket d'outillage à venir. Placé derrière, il ne
+  gagnerait rien sur `prio::`.
+- **Le banc et l'audit en tête** : le banc est le seul poste dont le coût tient à une règle écrite,
+  et l'audit est l'instrument qui jugera tous les autres.
+- **#1462 avant #1464** : on ne retire pas le filet du ticket avant d'avoir posé celui du lot.
+- **#1466, #1467 et #1468 ensuite** : ils allègent le contexte sans rien décider. #1468 a une
+  condition de moment, avant les lots du mode conception.
+- **#1469 en dernier** : le jalon produit courant travaille la boucle d'exécution, et le découper
+  plus tôt multiplierait les conflits.
+- **Rail outillage pour #1467 à #1469**, bien que leur code soit dans `maestro/` : ils servent le
+  coût du développement et ne changent aucun comportement du produit. Ils doivent aussi se placer à
+  dessein. Un run sans consigne ne prend que le rail produit : ces tickets se lancent par
+  `--milestone`, `--parent` ou `--ticket`.
+
+> ⚠ **Les critères de chaque lot sont dans sa description**, et c'est elle qui fait foi à la
+> clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1470.
 
 ---
 
