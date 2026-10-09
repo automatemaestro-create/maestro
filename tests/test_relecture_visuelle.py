@@ -77,6 +77,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -647,6 +648,111 @@ def test_l_etat_vide_est_une_stack_neuve_et_un_projet_declare_par_l_api(tmp_path
     assert "« Projet neuf » déclaré par l'API — prj-neuf1" in resultat.stdout
     assert (depot.racine / ".maestro" / "relecture" / "56" / "vide").is_dir()
     assert depot.temoin(".etat").read_text(encoding="utf-8") == "56\tvide\n"
+
+
+def _vieillir(dossier: Path, heures: float) -> None:
+    """Recule la date de `dossier` et de tout ce qu'il porte — ce que `find -mmin` lit pour juger
+    qu'un atelier de relecture n'a plus bougé."""
+    instant = time.time() - heures * 3600
+    for chemin in sorted(dossier.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        os.utime(chemin, (instant, instant))
+    os.utime(dossier, (instant, instant))
+
+
+def test_sans_atelier_regle_le_projet_neuf_nait_sous_l_etat_du_poste_et_l_ancien_est_repris(
+    tmp_path: Path,
+) -> None:
+    """#1457 : le défaut quitte la racine du profil pour `~/.maestro/ateliers/relecture`, et
+    l'ancien atelier (`~/maestro-relecture`) est repris au montage d'un état — ses dossiers
+    d'iid abandonnés retirés (projet neuf, ou projets d'une relecture d'avant #1208), celui d'une
+    relecture peut-être en cours ailleurs (moins de 6 h) gardé, ce qui n'a pas la forme d'un
+    dossier d'iid jamais touché ; et tout se dit."""
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    maison = tmp_path / "maison"
+    ancien = maison / "maestro-relecture"
+    abandonne = ancien / "1147" / "projet-neuf"
+    (abandonne / ".maestro").mkdir(parents=True)
+    _vieillir(ancien / "1147", 48)
+    ancienne_forme = ancien / "1161" / "carnet-avant"
+    ancienne_forme.mkdir(parents=True)
+    (ancienne_forme / "README.md").write_text("# carnet\n", encoding="utf-8")
+    _vieillir(ancien / "1161", 72)
+    recent = ancien / "1300" / "projet-neuf"
+    recent.mkdir(parents=True)
+    _vieillir(ancien / "1300", 48)
+    (recent / "trace.txt").write_text("une relecture y écrit encore\n", encoding="utf-8")
+    (ancien / "carnet-de-recettes-1180").mkdir()
+
+    with FausseApi(api) as fausse:
+        resultat = depot.joue(
+            "61",
+            "--etat",
+            "vide",
+            env={
+                "PATH": python_sur_le_chemin(tmp_path / "bin"),
+                "HOME": str(maison),
+                "MAESTRO_RELECTURE_ATELIER": "",
+            },
+        )
+
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    [declaration] = fausse.declarations()
+    assert declaration["racine"].replace("\\", "/").endswith(
+        "maison/.maestro/ateliers/relecture/61/projet-neuf"
+    )
+    assert not abandonne.parent.exists(), "un projet neuf abandonné part, et son dossier d'iid"
+    assert not ancienne_forme.parent.exists(), "les projets d'une relecture d'avant aussi"
+    assert recent.is_dir(), "une relecture peut s'y tenir depuis une copie sur l'ancien code"
+    assert (ancien / "carnet-de-recettes-1180").is_dir()
+    assert "ancien atelier" in resultat.stdout
+    assert "2 atelier(s) de relecture retiré(s)" in resultat.stdout
+    assert "touché(s) il y a moins de 6 h (une relecture peut s'y tenir ailleurs) : 1300" in (
+        resultat.stdout
+    )
+    assert "jamais touchés (à retirer à la main) : carnet-de-recettes-1180" in resultat.stdout
+
+
+def test_l_ancien_atelier_de_la_relecture_part_quand_il_ne_porte_plus_rien(
+    tmp_path: Path,
+) -> None:
+    depot = DepotRelecture(tmp_path / "depot")
+    api = ports_libres()
+    depot.ports(api, 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    maison = tmp_path / "maison"
+    ancien = maison / "maestro-relecture"
+    (ancien / "1161" / "projet-neuf").mkdir(parents=True)
+    (ancien / "1294").mkdir()
+    _vieillir(ancien, 48)
+
+    resultat = depot.joue("62", env={"HOME": str(maison), "MAESTRO_RELECTURE_ATELIER": ""})
+
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert not ancien.exists()
+    assert "retiré — 2 atelier(s) de relecture que personne n'avait retiré(s)" in (
+        resultat.stdout
+    )
+
+
+def test_un_atelier_regle_laisse_l_ancien_tel_quel(tmp_path: Path) -> None:
+    """Qui règle l'atelier a choisi où vivent ses projets neufs : l'ancien défaut n'est pas le
+    sien, et rien n'y est lu ni retiré — c'est le régime de tous les autres tests du fichier."""
+    depot = DepotRelecture(tmp_path / "depot")
+    depot.ports(ports_libres(), 3036)
+    depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
+    maison = tmp_path / "maison"
+    abandonne = maison / "maestro-relecture" / "1294" / "projet-neuf"
+    abandonne.mkdir(parents=True)
+    _vieillir(maison / "maestro-relecture", 48)
+
+    resultat = depot.joue("63", env={"HOME": str(maison)})
+
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert abandonne.is_dir()
+    assert "ancien atelier" not in resultat.stdout
 
 
 def test_une_racine_refusee_par_l_api_se_dit_avec_son_motif(tmp_path: Path) -> None:

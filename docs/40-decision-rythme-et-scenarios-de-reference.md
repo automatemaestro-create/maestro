@@ -181,13 +181,26 @@ ailleurs (celui du bouclage, par exemple) ne sauve rien : son état serait mêl�
 qui l'a servi. Le détail est dans `maestro/scenarios/etat.py`.
 
 **Deux passages ne partagent rien, et un passage tué se dit** (#1365). Le dossier des ateliers
-(`~/maestro-scenarios/`) est celui du poste : deux copies qui lançaient le banc dans la même seconde
+(`~/.maestro/ateliers/scenarios/` depuis #1457, `~/maestro-scenarios/` avant) est celui du poste :
+deux copies qui lançaient le banc dans la même seconde
 recevaient le même horodatage, donc le même atelier, et leurs scénarios semaient et vidaient les
 mêmes dossiers (mesuré le 2026-09-27 à 12:36:09). Un passage **réserve** désormais son atelier —
 création exclusive, `<horodatage>-2` si le nom est pris —, et ce nom est l'identifiant du passage.
 Un processus tué sortant en `1` sous Windows, le code d'un rouge, le lanceur ne lit plus ce code
 seul : le banc écrit un témoin en dernier geste, et sans lui le lanceur annonce un passage
 **interrompu**, jamais « état sauvé ».
+
+**Le banc ne garde que ses derniers passages** (#1457). Il les gardait tous — 208 dossiers le
+2026-10-09, projets complets et `node_modules` compris —, et leurs projets versionnés retenaient,
+par leurs worktrees, les espaces de tâches laissés sous la racine jetable, que le ramassage ne
+retire pas tant que leur dépôt existe. Un passage qui réserve son atelier garde désormais les cinq
+derniers (`MAESTRO_SCENARIOS_PASSAGES_GARDES`, `0` l'éteint), et **toujours** celui dont
+`start.sh --etat-banc` rouvre l'état, quel que soit son rang : le rejouer coûte du vrai modèle. Un
+passage qu'un process vivant tient encore — le banc qui le joue s'y nomme, une tâche dans l'espace
+de son worktree — n'est jamais retiré, et un passage retiré emporte d'abord les worktrees de ses
+tâches. L'ancien atelier est repris par la même règle, puis retiré quand il ne porte plus rien ; ce
+qui n'y a pas la forme d'un passage est nommé, jamais touché. Le détail est dans
+`maestro/scenarios/projets.py`.
 
 **S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
 dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on

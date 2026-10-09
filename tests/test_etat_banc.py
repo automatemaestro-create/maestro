@@ -17,6 +17,11 @@ réelle, **par l'API réelle**, **sans rien rejouer** ; on le rejoue à la deman
 ④ **La ligne de commande** que `start.sh --etat-banc` joue : ses refus (rien à
    rouvrir, quelque chose de vivant sur le banc) et ses gestes.
 
+⑤ **Les passages que le banc garde** (#1457) — les derniers, et celui dont l'état
+   se rouvre quel que soit son rang ; un passage retiré emporte les worktrees que
+   ses tâches ont laissés sous la racine jetable ; l'ancien atelier
+   (`~/maestro-scenarios`) est repris par la même règle, puis retiré.
+
 Un faux Redis partagé (`tests/redis_factice.py`) tient lieu d'instance ; les dépôts
 de fichiers vivent sous `tmp_path`, jamais sous le `core/` du dépôt qui joue la suite.
 """
@@ -26,6 +31,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -48,14 +56,24 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.persistence import RedisEventLog
 from maestro.controltower.state import ControlTowerState
+from maestro.emplacements import TEMOIN_PID, occupant
 from maestro.espace import COMMUN, VARIABLE_ESPACE, Espace
 from maestro.messaging.mailbox import RedisMailbox
 from maestro.projets.store import ProjetStore
+from maestro.sandbox.ramassage import porte_un_worktree
 from maestro.scenarios import etat
 from maestro.scenarios.modele import Rapport, Resultat
-from maestro.scenarios.projets import VARIABLE_ATELIER
+from maestro.scenarios.projets import (
+    VARIABLE_ATELIER,
+    VARIABLE_PASSAGES_GARDES,
+    Atelier,
+    retenir,
+    worktrees_laisses,
+)
 
 PASSAGE = "20260922-100639"
+GIT = shutil.which("git")
+besoin_de_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
 
 @pytest.fixture()
@@ -80,8 +98,11 @@ def maison(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture()
 def ateliers(maison: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Où naissent les ateliers des passages — et donc leurs états sauvés."""
-    racine = maison / "maestro-scenarios"
+    """Où naissent les ateliers des passages — et donc leurs états sauvés.
+
+    Un atelier **réglé**, ni le défaut ni l'ancien (`~/maestro-scenarios`, #1457) :
+    ceux-là s'éprouvent sans la variable."""
+    racine = maison / "ateliers-du-banc"
     monkeypatch.setenv(VARIABLE_ATELIER, str(racine))
     return racine
 
@@ -561,3 +582,232 @@ def test_un_geste_mal_forme_est_un_usage(
         monkeypatch, args, client=client, copie=copie, ateliers=ateliers
     )
     assert code == etat.CODE_USAGE
+
+
+# ── ⑤ Les passages que le banc garde (#1457) ─────────────────────────────────
+
+
+@pytest.fixture()
+def temporaire(tmp_path: Path) -> Path:
+    """Le répertoire temporaire du poste, à part : la racine jetable vit dessous."""
+    dossier = tmp_path / "temp"
+    dossier.mkdir()
+    return dossier
+
+
+def regime(ateliers: Path | None, temporaire: Path, gardes: int) -> dict[str, str]:
+    """L'environnement d'une rétention : son atelier (ou l'atelier par défaut), son temporaire."""
+    env = {VARIABLE_PASSAGES_GARDES: str(gardes), "TMPDIR": str(temporaire)}
+    if ateliers is not None:
+        env[VARIABLE_ATELIER] = str(ateliers)
+    return env
+
+
+def un_passage(racine: Path, nom: str) -> Path:
+    """Un passage tel que le banc le laisse : un dossier par scénario joué."""
+    dossier = racine / nom
+    (dossier / "s1-vider").mkdir(parents=True)
+    return dossier
+
+
+def pid_mort() -> int:
+    """Le pid d'un process qui vient de finir — personne ne l'occupe plus."""
+    fini = subprocess.Popen([sys.executable, "-c", "pass"])
+    fini.wait()
+    return fini.pid
+
+
+def git(racine: Path, *arguments: str) -> None:
+    assert GIT is not None
+    subprocess.run(  # noqa: S603 - git, sur un dépôt du test
+        [GIT, "-c", "user.email=t@t", "-c", "user.name=T", "-c", "core.hooksPath=", *arguments],
+        cwd=racine,
+        check=True,
+        capture_output=True,
+    )
+
+
+def projet_versionne(racine: Path) -> Path:
+    """Un projet du passage sous Git, comme le banc en déclare (S12)."""
+    racine.mkdir(parents=True, exist_ok=True)
+    (racine / "app.py").write_text("print('salut')\n", encoding="utf-8")
+    git(racine, "init", "--quiet")
+    git(racine, "symbolic-ref", "HEAD", "refs/heads/main")
+    git(racine, "add", "-A")
+    git(racine, "commit", "--quiet", "-m", "socle")
+    return racine
+
+
+def test_le_banc_ne_garde_que_ses_derniers_passages_et_celui_qu_on_rouvre(
+    client: ClientSynchrone, banc: Donnees, ateliers: Path, temporaire: Path
+) -> None:
+    """Le critère : les derniers passages, et **jamais** celui que `start.sh --etat-banc`
+    rouvre — le rejouer coûte du vrai modèle. Ce qui n'a pas la forme d'un passage (un essai
+    posé là à la main) n'est pas à la rétention."""
+    noms = [f"2026100{jour}-100000" for jour in range(1, 9)]
+    for nom in noms:
+        un_passage(ateliers, nom)
+    etat.sauver(rapport(("S2", "vert"), horodatage=noms[1]), ateliers / noms[1], banc, client)
+    (ateliers / "essai-1158").mkdir()
+    rouvert = etat.dernier(ateliers)
+    assert rouvert is not None and rouvert.passage == noms[1]
+
+    retention = retenir(
+        rouvert=rouvert.dossier.parent, environnement=regime(ateliers, temporaire, 3)
+    )
+
+    assert sorted(d.name for d in ateliers.iterdir()) == sorted(
+        [noms[1], *noms[-3:], "essai-1158"]
+    )
+    assert set(retention.retires) == {noms[0], noms[2], noms[3], noms[4]}
+    assert retention.rouvert == noms[1]
+    apres = etat.dernier(ateliers)
+    assert apres is not None and apres.passage == noms[1], "toujours rouvrable sans rien rejouer"
+    texte = "\n".join(retention.lignes())
+    assert "4 passage(s) retiré(s) au-delà des 3 derniers gardés" in texte
+    assert f"{noms[1]} gardé pour start.sh --etat-banc" in texte
+
+
+def test_l_ordre_des_passages_est_celui_de_leur_rang_et_non_du_texte(
+    ateliers: Path, temporaire: Path
+) -> None:
+    """`…-10` vient après `…-9` : l'ordre lexical les inverserait, et garderait le mauvais."""
+    for nom in ("20261009-100000-9", "20261009-100000-10"):
+        un_passage(ateliers, nom)
+    retention = retenir(environnement=regime(ateliers, temporaire, 1))
+    assert retention.retires == ("20261009-100000-9",)
+    assert [d.name for d in ateliers.iterdir()] == ["20261009-100000-10"]
+
+
+def test_un_passage_en_cours_n_est_jamais_retire(ateliers: Path, temporaire: Path) -> None:
+    """L'atelier est celui du poste : une autre copie peut jouer un passage plus ancien que les
+    derniers. Le banc se nomme dans le passage qu'il réserve, et ce nom le garde."""
+    reserve = Atelier.reserver("20261001-100000", environnement=regime(ateliers, temporaire, 1))
+    assert occupant(reserve.racine) == os.getpid(), "le banc s'est nommé dans son passage"
+    abandonne = un_passage(ateliers, "20261002-100000")
+    (abandonne / TEMOIN_PID).write_text(str(pid_mort()), encoding="utf-8")
+    un_passage(ateliers, "20261003-100000")
+
+    retention = retenir(environnement=regime(ateliers, temporaire, 1))
+
+    assert retention.occupes == ("20261001-100000",)
+    assert retention.retires == ("20261002-100000",), "son banc est mort : il part"
+    assert reserve.racine.is_dir()
+    assert "1 encore en cours, gardé(s)" in "\n".join(retention.lignes())
+
+
+def test_une_retention_eteinte_ne_retire_rien(ateliers: Path, temporaire: Path) -> None:
+    for jour in range(1, 4):
+        un_passage(ateliers, f"2026100{jour}-100000")
+    retention = retenir(environnement=regime(ateliers, temporaire, 0))
+    assert retention.retires == () and retention.lignes() == []
+    assert len(list(ateliers.iterdir())) == 3
+
+
+@besoin_de_git
+def test_retirer_un_passage_retire_les_worktrees_que_ses_taches_ont_laisses(
+    tmp_path: Path, ateliers: Path, temporaire: Path
+) -> None:
+    """Le défaut constaté : le ramassage garde un worktree **tant que son dépôt existe** — c'est
+    son refus de toujours —, et le dépôt est un projet du banc, gardé à vie avec son passage. Les
+    espaces de ses tâches restaient donc sous la racine jetable pour toujours. Le passage retiré
+    les emporte ; un espace qu'une tâche vivante occupe garde son passage, et un worktree que la
+    personne aurait ouvert ailleurs n'est jamais touché."""
+    env = regime(ateliers, temporaire, 1)
+    jetables = temporaire / "maestro"
+
+    vieux = un_passage(ateliers, "20261001-100000")
+    depot = projet_versionne(vieux / "s12-reprise")
+    laisse = jetables / f"maestro-dev-pid{pid_mort()}-abcd1234" / "t-1"
+    laisse.parent.mkdir(parents=True)
+    git(depot, "worktree", "add", "--quiet", "-b", "maestro/t-1", str(laisse))
+    ailleurs = tmp_path / "mes-worktrees" / "essai"
+    git(depot, "worktree", "add", "--quiet", "-b", "essai", str(ailleurs))
+
+    en_vol = un_passage(ateliers, "20261002-100000")
+    depot_en_vol = projet_versionne(en_vol / "s12-reprise")
+    occupe = jetables / f"maestro-dev-pid{os.getpid()}-ffff0000" / "t-2"
+    occupe.parent.mkdir(parents=True)
+    git(depot_en_vol, "worktree", "add", "--quiet", "-b", "maestro/t-2", str(occupe))
+    un_passage(ateliers, "20261003-100000")
+
+    assert porte_un_worktree(laisse.parent), "le ramassage le garderait : son dépôt existe"
+    assert worktrees_laisses(vieux, env) == (laisse.parent,)
+
+    retention = retenir(environnement=env)
+
+    assert retention.retires == ("20261001-100000",)
+    assert retention.worktrees == 1
+    assert not vieux.exists()
+    assert not laisse.parent.exists(), "l'espace de la tâche part avec son passage"
+    assert ailleurs.is_dir(), "un worktree ouvert hors de la racine jetable n'est pas au banc"
+    assert retention.occupes == ("20261002-100000",), "une tâche y travaille encore"
+    assert occupe.is_dir() and en_vol.is_dir()
+    assert "avec 1 worktree(s) de tâches sous la racine jetable" in "\n".join(
+        retention.lignes()
+    )
+
+
+def test_l_ancien_atelier_est_repris_puis_retire_quand_il_ne_porte_plus_rien(
+    monkeypatch: pytest.MonkeyPatch,
+    client: ClientSynchrone,
+    banc: Donnees,
+    maison: Path,
+    temporaire: Path,
+) -> None:
+    """Le premier passage après la mise à jour : `~/maestro-scenarios` est repris par la même
+    règle — ses plus récents comptent parmi les derniers, son état reste rouvrable sans rien
+    rejouer —, ce qui n'est pas un passage y est nommé sans être touché, et il disparaît quand
+    il ne porte plus rien. Le passage le dit, à chaque fois."""
+    monkeypatch.delenv(VARIABLE_ATELIER, raising=False)
+    ancien = maison / "maestro-scenarios"
+    neuf = maison / ".maestro" / "ateliers" / "scenarios"
+    for nom in (PASSAGE, "20260923-100000", "20260924-100000"):
+        un_passage(ancien, nom)
+    etat.sauver(rapport(("S2", "vert")), ancien / PASSAGE, banc, client)
+    (ancien / "essai-1158").mkdir()
+    rouvert = etat.dernier()
+    assert rouvert is not None and rouvert.passage == PASSAGE, "l'état d'avant se rouvre encore"
+
+    env = regime(None, temporaire, 2)
+    atelier = Atelier.reserver("20261009-100000", environnement=env)
+    assert atelier.racine.parent == neuf, "le passage neuf naît sous ~/.maestro/ateliers"
+    retention = retenir(rouvert=rouvert.dossier.parent, environnement=env)
+
+    assert retention.retires == ("20260923-100000",)
+    assert sorted(d.name for d in ancien.iterdir()) == [
+        PASSAGE,
+        "20260924-100000",
+        "essai-1158",
+    ]
+    texte = "\n".join(retention.lignes())
+    assert f"Ancien atelier {ancien} : repris par la rétention" in texte
+    assert "2 de ses passages restent parmi les gardés" in texte
+    assert "jamais touchés (à retirer à la main) : essai-1158" in texte
+
+    # Le passage suivant sauve son état : l'ancien n'est plus celui qu'on rouvre, et part.
+    (ancien / "essai-1158").rmdir()
+    etat.sauver(rapport(("S2", "vert"), horodatage=atelier.passage), atelier.racine, banc, client)
+    Atelier.reserver("20261009-110000", environnement=env)
+    rouvert = etat.dernier()
+    assert rouvert is not None and rouvert.passage == atelier.passage
+    retention = retenir(rouvert=rouvert.dossier.parent, environnement=env)
+
+    assert retention.ancienne_retiree and not ancien.exists()
+    assert sorted(d.name for d in neuf.iterdir()) == ["20261009-100000", "20261009-110000"]
+    assert f"Ancien atelier {ancien} retiré : il ne portait plus rien." in retention.lignes()
+
+
+def test_un_atelier_regle_ne_lit_ni_ne_retire_l_ancien(
+    maison: Path, ateliers: Path, temporaire: Path
+) -> None:
+    """Qui règle `MAESTRO_SCENARIOS_ATELIER` a choisi où vit son atelier : l'ancien défaut
+    n'est plus le sien, et rien n'y est lu ni retiré."""
+    ancien = maison / "maestro-scenarios"
+    for jour in range(1, 4):
+        un_passage(ancien, f"2026092{jour}-100000")
+    un_passage(ateliers, "20261009-100000")
+    retention = retenir(environnement=regime(ateliers, temporaire, 1))
+    assert retention.retires == () and retention.ancienne is None
+    assert len(list(ancien.iterdir())) == 3
+    assert etat.dernier() is None, "aucun état sauvé sous l'atelier réglé"

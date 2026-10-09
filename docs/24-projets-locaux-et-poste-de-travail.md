@@ -480,7 +480,7 @@ Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.p
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) (#1035).
 
-### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — lots #1455 et #1456 livrés)*
+### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — lots #1455, #1456 et #1457 livrés)*
 
 Hors des projets qu'on lui confie, Maestro ne pose rien sur le poste ailleurs que sous **trois
 racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul à déclarer :
@@ -488,7 +488,7 @@ racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul 
 | Racine | Ce qu'elle porte | Qui la vide |
 |---|---|---|
 | `~/Maestro/` | les projets de l'utilisateur, proposés par défaut (#1022) | personne — c'est son travail |
-| `~/.maestro/` | l'état du poste : jeton de l'API, journal SQLite, profil de navigateur | personne — c'est l'état du produit |
+| `~/.maestro/` | l'état du poste : jeton de l'API, journal SQLite, profil de navigateur ; sous `ateliers/`, les ateliers du banc des scénarios et de la relecture visuelle | personne pour l'état ; les ateliers, par **rétention** |
 | `<temp>/maestro/` (`%TEMP%\maestro\` sous Windows, `/tmp/maestro/` dans le Bash d'un agent) | le jetable : atelier de chaque hôte détaché, espaces des tâches, copies de vérification, aperçus de sources, état de la stack de chaque copie de travail | le **ramassage**, sans geste humain |
 
 **Pourquoi.** Le 2026-10-08, le poste de référence portait **1 286** dossiers `maestro-*` sous
@@ -518,6 +518,19 @@ copie a disparu (`worktree.sh gc`, qui retire le worktree, et chaque démarrage 
 **jamais** tant que sa stack vit — un de ses deux ports écoute, ou son chien de garde vit. Au
 démarrage, `start.sh` retire aussi les `maestro-controltower-*` de l'ancienne adresse, à même le
 répertoire temporaire, dont la stack est éteinte. `MAESTRO_RAMASSAGE_ETAT_STACK=0` l'éteint.
+
+**Les ateliers ne gardent que leurs derniers passages** (#1457). Le banc des scénarios et la
+relecture visuelle sèment des **racines de projet** — que la validation des racines refuse sous
+`AppData`, donc sous le répertoire temporaire d'un poste Windows : leurs ateliers vivent sous
+`~/.maestro/ateliers/{scenarios,relecture}` (`MAESTRO_SCENARIOS_ATELIER` et
+`MAESTRO_RELECTURE_ATELIER` les déplacent). Voisiner avec le jeton de l'API n'en approche aucun
+agent : sa frontière est la racine de son projet. Chaque passage du banc ne garde que les cinq
+derniers, plus celui dont `start.sh --etat-banc` rouvre l'état, et un passage retiré emporte les
+worktrees que ses tâches ont laissés sous la racine jetable — le ramassage, lui, les garde tant que
+leur dépôt existe. Le projet neuf d'une relecture part à son `--fin`. Les anciens ateliers, à la
+racine du profil (`~/maestro-scenarios`, `~/maestro-relecture`), sont repris au premier passage puis
+retirés quand ils ne portent plus rien ; ce qui n'y a pas la forme d'un passage du banc ou d'un
+dossier de relecture (`<iid>/`) est nommé, jamais touché.
 
 **La garde.** [`tests/test_emplacements.py`](../tests/test_emplacements.py) refuse, sous
 `maestro/`, tout dossier temporaire ouvert et tout chemin composé sous le dossier personnel hors du
