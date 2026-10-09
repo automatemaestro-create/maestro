@@ -189,6 +189,30 @@ Un processus tué sortant en `1` sous Windows, le code d'un rouge, le lanceur ne
 seul : le banc écrit un témoin en dernier geste, et sans lui le lanceur annonce un passage
 **interrompu**, jamais « état sauvé ».
 
+**Chaque passage entre dans un historique, qui se lit** (#1461). Le rapport d'un passage reste
+dans la copie qui l'a joué (`.maestro/scenarios/<passage>/`). Il ne disait ni le code joué, ni la
+copie, ni le ticket, et celui d'un worktree partait avec lui. Le passage ajoute donc aussi **une
+ligne** à `~/.maestro/historique/scenarios.jsonl`, la racine de l'état du poste (#1454), hors des
+ateliers que le banc ramasse :
+
+- le **sha** de `HEAD`, la branche et l'iid qu'elle porte, la copie, et si son arbre portait des
+  modifications non commitées. Un vert sur un arbre modifié n'est pas le vert de ce sha ;
+- par scénario : verdict, coût, durée, rejeu, empêchement.
+
+C'est le point d'entrée du banc qui l'écrit, juste après le rapport. Clone principal, worktree ou
+pilote y entrent donc sans rien régler, et la ligne survit au retrait du worktree. Une copie sans
+Git écrit sa ligne sans sha, et un historique qui ne s'écrit pas se dit sans changer le verdict.
+`MAESTRO_SCENARIOS_HISTORIQUE` déplace le fichier. La suite de tests le fait, pour ne jamais
+écrire dans celui du poste.
+
+`python -m maestro.scenarios.historique` lit la série. Par scénario, elle rend le taux de réussite,
+le coût et la durée médians, les rejeux, les empêchements et le **dernier vert** avec son sha.
+`--fenetre <n>` la borne aux n derniers passages de chaque scénario, et `--json` la rend à un
+script : c'est l'entrée du banc par lot et du choix du scénario le moins cher (#1460).
+`--importer` y fait entrer les rapports d'une copie : les treize passages du clone principal
+d'avant ce ticket y sont entrés **sans sha**, et la lecture dit « sha inconnu » plutôt que de le
+deviner d'une date.
+
 **S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
 dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on
 a généré une documentation »*. Le scénario demande un livrable exécutable, puis constate trois

@@ -153,6 +153,11 @@ du septième le ferait rougir, au gré de l'ordre des tâches de la boucle. Le j
 défaut (`maestro.controltower.bilan.juge_par_defaut`) rend donc « aucun juge » : pas
 d'appel, pas d'événement, pas de coût ajouté au run. Un test qui veut le bilan injecte
 le sien.
+
+Treizième garde-fou (#1461) : **aucun test n'écrit dans l'historique du banc du poste**.
+Chaque passage du banc ajoute sa ligne sous `~/.maestro/`, et des dizaines de tests jouent
+`maestro.scenarios.banc.main` : sans garde, la série que lisent le banc par lot et le choix
+du scénario le moins cher compterait des passages de la suite. Un fichier jetable par test.
 """
 
 from __future__ import annotations
@@ -226,6 +231,12 @@ CLES_ACCES_API = (
 #: n'y lit pas non plus un jeton qui donnerait raison à un test pour la mauvaise
 #: raison.
 CLE_JETON_FICHIER = "MAESTRO_API_JETON_FICHIER"
+
+#: L'historique des passages du banc (#1461), sous `~/.maestro/` sans consigne. Pointé
+#: par `_historique_du_banc_isole` sur un fichier jetable : chaque test qui joue
+#: `maestro.scenarios.banc.main` y ajoute une ligne, et la série du poste ne doit
+#: compter que les vrais passages.
+CLE_HISTORIQUE_BANC = "MAESTRO_SCENARIOS_HISTORIQUE"
 
 #: Variables posées d'office par les intégrations continues. `GITLAB_CI` reste de la liste bien
 #: après le retrait de la CI GitLab (#344) : ce qui est testé est « quelqu'un lira-t-il ce compte
@@ -536,6 +547,30 @@ def _jeton_api_isole(
             os.environ.pop(CLE_JETON_FICHIER, None)
         else:
             os.environ[CLE_JETON_FICHIER] = ancienne
+
+
+@pytest.fixture(autouse=True)
+def _historique_du_banc_isole(
+    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> Iterator[None]:
+    """Coupe l'historique du banc du `~/.maestro/` du poste (#1461).
+
+    Même forme que `_jeton_api_isole`, pour la même raison : un dossier pour la
+    session, un fichier par test, qui n'existe pas au départ — chaque test lit
+    donc un historique vide, et aucune ligne n'est héritée du test précédent.
+    """
+    ancienne = os.environ.get(CLE_HISTORIQUE_BANC)
+    racine = tmp_path_factory.getbasetemp() / "historiques-banc"
+    racine.mkdir(exist_ok=True)
+    empreinte = hashlib.sha1(request.node.nodeid.encode("utf-8")).hexdigest()[:16]
+    os.environ[CLE_HISTORIQUE_BANC] = str(racine / f"{empreinte}.jsonl")
+    try:
+        yield
+    finally:
+        if ancienne is None:
+            os.environ.pop(CLE_HISTORIQUE_BANC, None)
+        else:
+            os.environ[CLE_HISTORIQUE_BANC] = ancienne
 
 
 @pytest.fixture(autouse=True)

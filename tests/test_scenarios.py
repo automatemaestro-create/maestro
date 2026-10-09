@@ -5049,6 +5049,159 @@ def test_l_horodatage_est_triable_en_ordre_lexical() -> None:
     assert marque.replace("-", "").isdigit()
 
 
+# --- ③bis L'historique du poste (#1461) --------------------------------------
+
+
+def _copie_git(racine: Path, branche: str) -> str:
+    """Une copie de travail sur `branche`, un commit — rend son sha."""
+    racine.mkdir(parents=True)
+    _git_s12(racine, "init", "-q", "-b", branche)
+    return _commiter_s12(racine, "base", **{"README.md": "copie\n"})
+
+
+def _passage_s1(tmp_path: Path, **injecte: Any) -> int:
+    """Un passage de S1 contre la fausse API — le reste injecté par l'appelant."""
+    injecte.setdefault("atelier", Atelier(tmp_path / "atelier"))
+    injecte.setdefault("racine_rapports", tmp_path / "rapports")
+    injecte.setdefault("sortie", _Muet())
+    injecte.setdefault("erreur", _Muet())
+    return banc.main(
+        ["--scenario", "S1"],
+        client=ClientAPI(FausseAPI(moteur=_moteur_qui_vide)),
+        juge=_juge_oui(),
+        horloge=lambda: 0.0,
+        dormir=lambda _s: None,
+        **injecte,
+    )
+
+
+def _lignes(fichier: Path) -> list[dict[str, Any]]:
+    return [json.loads(ligne) for ligne in fichier.read_text(encoding="utf-8").splitlines()]
+
+
+def test_un_passage_du_clone_ecrit_sa_ligne_avec_sha_branche_iid_et_scenarios(
+    tmp_path: Path,
+) -> None:
+    """Le critère 1 : la ligne porte le sha, la copie, l'iid, et par scénario ce que le
+    rapport dit — verdict, coût, durée, rejeu, empêchement."""
+    clone = tmp_path / "clone"
+    sha = _copie_git(clone, "chore/1461-historique")
+    fichier = tmp_path / "maison" / "historique.jsonl"
+
+    code = _passage_s1(tmp_path, copie=clone, historique=fichier)
+
+    assert code == banc.CODE_VERT
+    (ligne,) = _lignes(fichier)
+    assert ligne["sha"] == sha
+    assert ligne["branche"] == "chore/1461-historique"
+    assert ligne["iid"] == 1461
+    assert ligne["copie"] == str(clone.resolve())
+    assert ligne["modifiee"] is False
+    assert ligne["source"] == "passage"
+    (rapport,) = (tmp_path / "rapports").iterdir()
+    assert ligne["passage"] == rapport.name
+    attendu = json.loads((rapport / FICHIER_JSON).read_text(encoding="utf-8"))["scenarios"]
+    assert ligne["scenarios"] == [
+        {
+            "id": s["id"],
+            "verdict": s["verdict"],
+            "cout_usd": s["cout_usd"],
+            "duree_s": s["duree_s"],
+            "rejoue": s["rejoue"],
+            "empechement": s["empechement"],
+            "run_id": s["run_id"],
+        }
+        for s in attendu
+    ]
+    assert ligne["scenarios"][0]["cout_usd"] == 0.5, "le coût du run est repris"
+
+
+def test_un_passage_joue_dans_un_worktree_survit_au_retrait_du_worktree(tmp_path: Path) -> None:
+    """Le rapport d'un worktree part avec lui ; sa ligne d'historique, non (#1461)."""
+    clone = tmp_path / "clone"
+    _copie_git(clone, "main")
+    worktree = tmp_path / "worktree"
+    _git_s12(clone, "worktree", "add", "-q", "-b", "fix/1500-un-correctif", str(worktree))
+    sha = _git_s12(worktree, "rev-parse", "HEAD")
+    fichier = tmp_path / "maison" / "historique.jsonl"
+
+    code = _passage_s1(
+        tmp_path,
+        copie=worktree,
+        historique=fichier,
+        racine_rapports=worktree / ".maestro" / "scenarios",
+    )
+    assert code == banc.CODE_VERT
+    _git_s12(clone, "worktree", "remove", "--force", str(worktree))
+
+    assert not worktree.exists(), "le worktree et ses rapports sont partis"
+    (ligne,) = _lignes(fichier)
+    assert (ligne["iid"], ligne["sha"], ligne["branche"]) == (1500, sha, "fix/1500-un-correctif")
+    assert ligne["copie"] == str(worktree.resolve())
+    assert [s["id"] for s in ligne["scenarios"]] == ["S1"]
+
+
+def test_sans_reglage_la_ligne_va_sous_maestro_du_profil(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le pilote, comme toute copie, appelle le banc sans rien régler : sa ligne va
+    sous `~/.maestro/`, la racine de l'état du poste (#1454) — jamais dans la copie."""
+    maison = tmp_path / "maison"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
+    monkeypatch.delenv("MAESTRO_SCENARIOS_HISTORIQUE")
+    clone = tmp_path / "clone"
+    _copie_git(clone, "main")
+
+    assert _passage_s1(tmp_path, copie=clone) == banc.CODE_VERT
+
+    (ligne,) = _lignes(maison / ".maestro" / "historique" / "scenarios.jsonl")
+    assert ligne["branche"] == "main" and ligne["iid"] is None
+
+
+def test_par_defaut_la_copie_est_celle_du_code_qui_tourne(tmp_path: Path) -> None:
+    """Sans `copie`, la ligne nomme la copie du code (`racine_de_la_copie`), celle que
+    le pilote ou un worktree fait jouer — la même que pour l'espace Redis (#1164)."""
+    fichier = tmp_path / "historique.jsonl"
+
+    assert _passage_s1(tmp_path, historique=fichier) == banc.CODE_VERT
+
+    (ligne,) = _lignes(fichier)
+    assert ligne["copie"] == str(racine_de_la_copie().resolve())
+
+
+def test_une_copie_sans_git_ecrit_sa_ligne_et_dit_le_sha_inconnu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un sha qu'on ne sait pas lire ne coûte pas la ligne : il est vide, et dit tel."""
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    nue = tmp_path / "nue"
+    nue.mkdir()
+    fichier = tmp_path / "historique.jsonl"
+
+    assert _passage_s1(tmp_path, copie=nue, historique=fichier) == banc.CODE_VERT
+
+    (ligne,) = _lignes(fichier)
+    assert (ligne["sha"], ligne["branche"], ligne["iid"], ligne["modifiee"]) == (
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+def test_un_historique_qui_ne_s_ecrit_pas_se_dit_sans_changer_le_verdict(tmp_path: Path) -> None:
+    """Le rapport est écrit et fait foi ; l'historique en échec se nomme sur l'erreur."""
+    occupe = tmp_path / "occupe"
+    occupe.mkdir()  # un dossier là où le fichier devrait être : l'ajout échoue
+    erreur = _Muet()
+
+    code = _passage_s1(tmp_path, historique=occupe, erreur=erreur)
+
+    assert code == banc.CODE_VERT
+    assert "Historique du banc NON écrit" in erreur.texte
+    assert len(list((tmp_path / "rapports").iterdir())) == 1
+
+
 # --- ④ La ligne de commande -------------------------------------------------
 
 

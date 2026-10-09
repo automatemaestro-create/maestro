@@ -18,6 +18,8 @@ Le détail vit dans les modules, chacun sur une question :
 - `juge` — les oracles de S4, S5, S9 et S10, rendus par un modèle et jamais par un
   lexique (#746) ;
 - `rapport` — `.maestro/scenarios/<horodatage>/`, en Markdown et en JSON ;
+- `historique` — une ligne par passage sous `~/.maestro/`, sha et copie compris, et la
+  série par scénario (`python -m maestro.scenarios.historique`, #1461) ;
 - `modele` — les objets inertes du verdict.
 """
 
