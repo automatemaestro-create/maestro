@@ -204,6 +204,9 @@ CLE_REPRISE_AGENTS = "MAESTRO_REPRISE_AGENTS"
 #: Le ramassage des jetables du poste, joué au démarrage de chaque hôte (#992, #1455).
 CLE_RAMASSAGE = "MAESTRO_RAMASSAGE_ESPACES"
 
+#: Le ramassage de l'état des stacks, joué par `worktree.sh gc` et `start.sh` (#1456).
+CLE_RAMASSAGE_ETAT_STACK = "MAESTRO_RAMASSAGE_ETAT_STACK"
+
 #: Le **régime d'accès** de l'API et ses réglages (#638), plus le port du front
 #: dont le défaut d'origines se dérive. Vidés par `_neutralise_acces_api` : les
 #: trois premiers se posent dans un `.env`, et `MAESTRO_PORT_UI` dans le bloc
@@ -431,8 +434,14 @@ def _neutralise_ramassage() -> None:
 
     Mise à `0` plutôt que vidée, comme la reprise des agents : `0` est ce que la
     variable *signifie*.
+
+    Même coupure pour l'état des stacks (#1456) : un test qui rallume `worktree.sh
+    gc` le jouerait sur le répertoire temporaire **du poste**. Les tests qui
+    l'éprouvent la rallument avec un `TMPDIR` à eux (`tests/test_etat_stack.py`,
+    le ramassage de `tests/test_worktree.py`).
     """
     os.environ[CLE_RAMASSAGE] = "0"
+    os.environ[CLE_RAMASSAGE_ETAT_STACK] = "0"
 
 
 def _neutralise_acces_api() -> None:

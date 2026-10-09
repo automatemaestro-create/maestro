@@ -4765,6 +4765,35 @@ le message d'échec **distingue les deux échecs** — « désenregistré, son d
 « non retiré » : dire l'inverse de ce qui vient de se passer est précisément ce qui a laissé onze
 coquilles s'accumuler derrière autant de lignes rouges.
 
+#### L'état de la stack part avec son worktree (#1456)
+
+Chaque worktree a ses ports, donc sa stack, et `start.sh` range l'état de celle-ci — jeton de
+session, pid du chien de garde, profil de la fenêtre isolée — hors du dépôt. Le 2026-10-08, le
+répertoire temporaire du poste en portait **117** (`maestro-controltower-<api>-<ui>`), un par paire
+de ports montée depuis septembre : aucun ne partait avec son worktree.
+
+L'état vit désormais sous la racine du jetable, `<temp>/maestro/controltower-<api>-<ui>` (docs/24
+§2.7), avec un témoin `copie` qui nomme la copie qui a démarré la stack. `gc` joue, **après** ses
+retraits, la règle de [`scripts/controltower/etat-stack.sh`](../scripts/controltower/etat-stack.sh) :
+un état dont la copie a disparu part, **jamais** celui d'une stack vivante — un de ses deux ports
+écoute, ou son chien de garde vit. `start.sh` joue la même règle à chaque démarrage, ce qui rattrape
+une copie retirée hors de `gc` (l'avant d'une relecture, un `rm` à la main), et retire au passage
+l'ancienne adresse quand sa stack est éteinte. Trois choix à ne pas défaire :
+
+- **Même en mode ciblé** (#438) : la question est locale — ni forge ni backlog —, et le worktree
+  qu'un merge vient de retirer est précisément celui dont l'état devient orphelin. Jamais en
+  `--check`, qui ne touche à rien.
+- **Le ramassage des hôtes ne le juge pas** (`FAMILLES_TIERCES_JETABLES` de
+  `maestro/sandbox/ramassage.py`) : il retire par l'âge ce qui ne nomme pas de pid vivant, or une
+  stack inactive depuis six heures n'en est pas moins vivante, et son chien de garde perdrait la
+  session qu'il surveille. Un seul propriétaire.
+- **Le témoin, pas les ports du worktree** : le témoin dit à qui est l'état quelle que soit la façon
+  dont la copie est partie, et sans relire les réglages d'un worktree qui n'existe plus.
+
+`MAESTRO_RAMASSAGE_ETAT_STACK=0` l'éteint ; `tests/conftest.py` le coupe pour la suite, que ses
+tests rallument sur un `TMPDIR` à eux (`tests/test_etat_stack.py`, le ramassage de
+`tests/test_worktree.py`).
+
 #### Le cycle de vie posé sur le même verdict (#275)
 
 Le merge **ferme** le ticket (`Closes #<iid>`) mais ne touche à **aucun label**. Depuis #207, seul

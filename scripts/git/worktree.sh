@@ -93,6 +93,11 @@ désenregistre le worktree quand même. Personne ne les voyait (`git worktree li
 plus), et une coquille BLOQUAIT le remontage de son ticket. Un dossier inconnu qui porte quelque
 chose est nommé, jamais touché.
 
+Après ses retraits, il retire l'ÉTAT DE LA STACK des copies parties (#1456) — jeton, chien de garde
+et profil de fenêtre que `start.sh` range sous `<temp>/maestro/controltower-<api>-<ui>` —, jamais
+celui d'une stack vivante (un port qui écoute, un chien de garde vivant). La règle vit dans
+`scripts/controltower/etat-stack.sh`. MAESTRO_RAMASSAGE_ETAT_STACK=0 l'éteint.
+
 Sur ce même verdict « soldé », `gc` pose le CYCLE DE VIE « Terminé » du ticket (#275) via
 `lib.sh reconcile-workflow` — le merge ferme le ticket mais ne touche à aucun label, et sans ça
 un ticket mergé s'affiche « En revue » jusqu'au prochain /branch-cleanup manuel. Best-effort et
@@ -278,6 +283,35 @@ ramasse_coquilles() {
     esac
     COQUILLES_RAPPORT="$COQUILLES_RAPPORT$ligne"$'\n'
   done <<< "$(coquilles "$principal")"
+}
+
+# --- L'état de la stack d'une copie retirée (#1456) -------------------------------------------------
+# `start.sh` range l'état de la stack d'une copie (jeton de session, chien de garde, profil de la
+# fenêtre) sous `<temp>/maestro/controltower-<api>-<ui>`, avec le chemin de la copie qui l'a démarrée.
+# Retirer le worktree en fait un dossier sans propriétaire : il part ICI, après les retraits — et avec
+# lui celui d'une copie partie hors de `gc`. Jamais celui d'une stack vivante. La règle vit dans
+# `etat-stack.sh`, que `start.sh` joue aussi à chaque démarrage : elle n'est pas recopiée.
+#
+# Même en mode ciblé (#438) : la question est locale — ni forge ni backlog —, et le worktree qu'un merge
+# vient de retirer est précisément celui dont l'état devient orphelin. Jamais en `--check`, qui ne
+# touche à rien. Même dispositif de compte rendu que les coquilles, pour la même raison.
+ETATS_RAPPORT=""
+ETATS_RETIRES=0
+ramasse_etats_stack() {
+  ETATS_RAPPORT=""
+  ETATS_RETIRES=0
+  # shellcheck disable=SC1091  # le lint appelle shellcheck fichier par fichier (#285) : la source
+  # n'est pas sur sa ligne de commande, donc `source=` ne serait pas suivi de toute façon.
+  . "$ICI/../controltower/etat-stack.sh" || return 0
+  etat_stack_ramasser
+  ETATS_RETIRES=$((ETAT_STACK_RETIRES + ETAT_STACK_RESISTANTS))
+  if [ "$ETAT_STACK_RETIRES" -gt 0 ]; then
+    ETATS_RAPPORT="$(ok "état de stack retiré avec sa copie : $ETAT_STACK_RETIRES dossier(s)")"$'\n'
+  fi
+  if [ "$ETAT_STACK_RESISTANTS" -gt 0 ]; then
+    ETATS_RAPPORT="$ETATS_RAPPORT$(alerte "état de stack tenu, repris au prochain passage : $ETAT_STACK_RESISTANTS dossier(s)")"$'\n'
+  fi
+  return 0
 }
 
 # --- Ports & profil --------------------------------------------------------------------------------
@@ -2194,11 +2228,13 @@ commande_gc() {
     # En mode ciblé (#438), « aucun worktree » veut dire « celui de ce ticket n'est pas ici » — un
     # non-événement, et pas une occasion d'aller inventorier le backlog.
     [ -z "$cible" ] || return 0
+    [ "$check" = 1 ] || ramasse_etats_stack
     local seuls_orphelins
     seuls_orphelins="$(orphelins_en_cours "$sauf")"
-    if [ -n "$COQUILLES_RAPPORT" ] || [ -n "$seuls_orphelins" ]; then
+    if [ -n "$COQUILLES_RAPPORT" ] || [ -n "$ETATS_RAPPORT" ] || [ -n "$seuls_orphelins" ]; then
       printf '\n'
       [ -n "$COQUILLES_RAPPORT" ] && printf '%s' "$COQUILLES_RAPPORT"
+      [ -n "$ETATS_RAPPORT" ] && printf '%s' "$ETATS_RAPPORT"
       [ -n "$seuls_orphelins" ] &&
         printf '\nTickets « En cours » dont plus personne ne s'\''occupe :\n%s\n' "$seuls_orphelins"
       [ "$auto" = 1 ] && printf '\n'
@@ -2361,6 +2397,10 @@ commande_gc() {
     fi
   done <<< "$paires"
 
+  # L'état des stacks dont la copie vient de partir (#1456) — après les retraits, qui le rendent
+  # orphelin.
+  [ "$check" = 1 ] || ramasse_etats_stack
+
   # Le signalement des orphelins (#328) est indépendant de ce qui précède : il a sa propre question,
   # sa propre portée et son propre silence. Il est demandé ICI, une fois le ramassage joué, pour que
   # le compte rendu garde l'ordre « ce que j'ai fait, puis ce que je constate ».
@@ -2378,13 +2418,13 @@ commande_gc() {
   # taire dessus est exactement ce qui les a laissées s'accumuler à onze (#422).
   local muet_ramassage=0
   if [ "$auto" = 1 ] && [ "$retires" -eq 0 ] && [ "$signales" -eq 0 ] && [ "$echecs" -eq 0 ] &&
-     [ "$COQUILLES_RETIREES" -eq 0 ] && [ "$COQUILLES_SIGNALEES" -eq 0 ]; then
+     [ "$COQUILLES_RETIREES" -eq 0 ] && [ "$COQUILLES_SIGNALEES" -eq 0 ] && [ "$ETATS_RETIRES" -eq 0 ]; then
     muet_ramassage=1
     [ -z "$orphelins" ] && return 0
   fi
   [ "$auto" = 1 ] && printf '\n'
   if [ "$muet_ramassage" = 0 ]; then
-    printf '%s%s' "$rapport" "$COQUILLES_RAPPORT"
+    printf '%s%s%s' "$rapport" "$COQUILLES_RAPPORT" "$ETATS_RAPPORT"
     local appoint=""
     [ "$((COQUILLES_RETIREES + COQUILLES_SIGNALEES))" -gt 0 ] &&
       appoint="$(printf ', %s coquille(s)' "$((COQUILLES_RETIREES + COQUILLES_SIGNALEES))")"

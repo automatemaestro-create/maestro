@@ -68,7 +68,8 @@ d'équipes sur mesure dont le préfixe n'était dans aucune liste. Depuis, tout 
 jetable du produit naît sous **une** racine, `<temp>/maestro/`
 (`maestro.emplacements`), et le ramassage balaie deux sortes d'endroits :
 
-- **la racine jetable**, où tout dossier est à Maestro et donc candidat ;
+- **la racine jetable**, où tout dossier est à Maestro et donc candidat — sauf l'état de la stack
+  d'une copie de travail, qui part avec sa copie (`FAMILLES_TIERCES_JETABLES`, #1456) ;
 - **les anciens emplacements** (le temporaire lui-même et ses résolutions MSYS),
   où l'est tout `maestro-*` — un rôle ajouté demain n'a pas à entrer dans une
   liste —, sauf les familles qu'un autre mécanisme possède (`FAMILLES_TIERCES`).
@@ -106,6 +107,7 @@ from maestro.fichiers import retirer_arbre
 
 __all__ = [
     "FAMILLES_TIERCES",
+    "FAMILLES_TIERCES_JETABLES",
     "PREFIXE_COMMUN",
     "SEUIL_ORPHELIN_H",
     "VALEUR_MSYS_HISTORIQUE",
@@ -142,9 +144,10 @@ VALEUR_MSYS_HISTORIQUE = "/tmp"
 #: Les `maestro-*` des anciens emplacements qu'**un autre mécanisme possède**, et
 #: que ce ramassage ne touche donc jamais — chacun avec sa raison :
 #:
-#: - `maestro-controltower-` : l'état de la stack d'une copie de travail
-#:   (`scripts/controltower/start.sh`), profil de navigateur compris, que sa
-#:   stack peut tenir ouvert des jours ; il part avec son worktree (#1456) ;
+#: - `maestro-controltower-` : l'état de la stack d'une copie de travail à son
+#:   ancienne adresse (`scripts/controltower/start.sh` avant #1456), profil de
+#:   navigateur compris ; `start.sh` le retire à son démarrage, et seulement
+#:   quand plus aucune stack ne l'occupe (`scripts/controltower/etat-stack.sh`) ;
 #: - `maestro-presentation` : le cache de `scripts/presentation/captures.sh`
 #:   (Node et navigateurs de Playwright), gardé à dessein d'un passage à l'autre.
 #:
@@ -154,6 +157,18 @@ FAMILLES_TIERCES: tuple[str, ...] = (
     "maestro-controltower-",
     "maestro-presentation",
 )
+
+#: Les dossiers de la **racine jetable** qu'un autre mécanisme possède — la seule
+#: exception à « tout y est candidat » :
+#:
+#: - `controltower-` : l'état de la stack d'une copie de travail
+#:   (`scripts/controltower/etat-stack.sh`, #1456) — jeton de session, pid du
+#:   chien de garde. Ce ramassage le jugerait par son âge, or une stack inactive
+#:   depuis six heures n'en est pas moins vivante : lui retirer son jeton ferait
+#:   perdre à son chien de garde la session qu'il surveille. Il part avec la copie
+#:   qui l'a démarrée (`worktree.sh gc`, et `start.sh` à chaque démarrage), et
+#:   jamais tant qu'un de ses ports écoute.
+FAMILLES_TIERCES_JETABLES: tuple[str, ...] = ("controltower-",)
 
 #: Combien de temps un espace **sans marqueur** doit être resté sans la moindre
 #: activité avant d'être tenu pour orphelin. Large à dessein : sans pid à
@@ -348,13 +363,15 @@ def _dossiers(racine: Path) -> list[Path]:
 def espaces(racines: Iterable[Path], *, jetables: Iterable[Path] = ()) -> Iterator[Path]:
     """Les jetables de Maestro — tout sous `jetables`, les `maestro-*` sous `racines`.
 
-    Sous la racine jetable (`jetables`), tout dossier est à Maestro. Aux anciens
-    emplacements (`racines`), qu'il partage avec le reste du poste, seul l'est ce
-    qui porte le préfixe commun, moins les `FAMILLES_TIERCES` qu'un autre
-    mécanisme possède.
+    Sous la racine jetable (`jetables`), tout dossier est à Maestro, moins les
+    `FAMILLES_TIERCES_JETABLES`. Aux anciens emplacements (`racines`), qu'il
+    partage avec le reste du poste, seul l'est ce qui porte le préfixe commun,
+    moins les `FAMILLES_TIERCES` qu'un autre mécanisme possède.
     """
     for racine in jetables:
-        yield from _dossiers(racine)
+        for chemin in _dossiers(racine):
+            if not chemin.name.startswith(FAMILLES_TIERCES_JETABLES):
+                yield chemin
     for racine in racines:
         for chemin in _dossiers(racine):
             nom = chemin.name

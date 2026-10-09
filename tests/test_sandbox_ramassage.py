@@ -39,6 +39,7 @@ from maestro.fichiers import retirer_arbre
 from maestro.sandbox import isolated_workspace
 from maestro.sandbox.ramassage import (
     FAMILLES_TIERCES,
+    FAMILLES_TIERCES_JETABLES,
     SEUIL_ORPHELIN_H,
     VALEUR_MSYS_HISTORIQUE,
     VARIABLE_RAMASSAGE,
@@ -56,6 +57,7 @@ from maestro.sandbox.ramassage import (
 )
 
 GIT = shutil.which("git")
+RACINE = Path(__file__).resolve().parent.parent
 
 besoin_de_git = pytest.mark.skipif(GIT is None, reason="git introuvable")
 sous_windows = pytest.mark.skipif(
@@ -330,6 +332,30 @@ def test_sous_la_racine_jetable_tout_dossier_est_candidat(tmp_path: Path) -> Non
     passage = ramasser(jetables=[jetable], environnement={})
     assert passage.retires == (mort,)
     assert passage.conserves == (vivant,)
+
+
+def test_sous_la_racine_jetable_l_etat_d_une_stack_n_est_pas_candidat(tmp_path: Path) -> None:
+    """#1456 — l'état de la stack d'une copie de travail vit sous la racine jetable, mais il
+    part avec sa copie (`etat-stack.sh`) : jugé ici par son âge, une stack inactive depuis
+    six heures perdrait son jeton de session, et son chien de garde la session qu'il surveille."""
+    jetable = tmp_path / NOM_JETABLE
+    etat = _espace(jetable, "controltower-8056-3056", age_h=99)
+    orphelin = _espace(jetable, "sans-marque-aaaaaaaa", age_h=99)
+    assert etat.name.startswith(FAMILLES_TIERCES_JETABLES)
+    assert list(espaces([], jetables=[jetable])) == [orphelin]
+    assert ramasser(jetables=[jetable], environnement={}).retires == (orphelin,)
+    assert etat.exists()
+
+
+def test_l_etat_d_une_stack_se_nomme_comme_le_lanceur_le_range() -> None:
+    """Le nom que ce ramassage écarte est celui que `start.sh` compose : renommé d'un seul
+    côté, l'état d'une stack vivante redeviendrait un jetable à balayer par son âge."""
+    lib = (RACINE / "scripts" / "controltower" / "etat-stack.sh").read_text(encoding="utf-8")
+    start = (RACINE / "scripts" / "controltower" / "start.sh").read_text(encoding="utf-8")
+    assert f'ETAT_STACK_RACINE="${{TMPDIR:-/tmp}}/{NOM_JETABLE}"' in lib
+    assert f'ETAT_STACK_PREFIXE="{FAMILLES_TIERCES_JETABLES[0]}"' in lib
+    assert f'ETAT_STACK_ANCIEN_PREFIXE="{FAMILLES_TIERCES[0]}"' in lib
+    assert 'ETAT_DIR="$ETAT_STACK_RACINE/${ETAT_STACK_PREFIXE}${PORT_API}-${PORT_UI}"' in start
 
 
 def test_qui_nomme_des_racines_ne_balaie_que_ce_quil_nomme(tmp_path: Path) -> None:
