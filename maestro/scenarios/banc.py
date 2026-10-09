@@ -58,6 +58,17 @@ l'iid qu'elle porte, et par scénario verdict, coût et durée. Le rapport reste
 la copie, la ligne lui survit. `python -m maestro.scenarios.historique` lit la série
 (`maestro.scenarios.historique`).
 
+## Les passages qu'il garde (#1457)
+
+Un passage qui réserve son atelier fait d'abord la **rétention** du poste : les
+`PASSAGES_GARDES` derniers passages restent, et celui que `start.sh --etat-banc`
+rouvre, quel que soit son rang ; les autres partent avec les worktrees que leurs
+tâches ont laissés sous la racine jetable (`maestro.scenarios.projets.retenir`).
+Ce qui est retiré se dit, avant (le premier retrait d'un poste peut être long) et
+après. `MAESTRO_SCENARIOS_PASSAGES_GARDES` règle le nombre, `0` éteint la rétention.
+La rétention retire les **projets** des passages, jamais leurs rapports (dans la
+copie) ni la série ci-dessus.
+
 ## Codes de sortie
 
 `0` les scénarios joués sont **tous** verts · `1` au moins un rouge · `2` usage ·
@@ -102,7 +113,7 @@ from maestro.scenarios.modele import (
 from maestro.scenarios.modele import (
     horodatage as horodatage_courant,
 )
-from maestro.scenarios.projets import Atelier
+from maestro.scenarios.projets import Atelier, retenir
 from maestro.scenarios.scenarios import (
     SCENARIOS,
     Contexte,
@@ -297,6 +308,7 @@ def main(
     if atelier is None:
         atelier = Atelier.reserver(horodatage_courant())
         horodatage = atelier.passage
+        _retenir(sortie)
     else:
         horodatage = horodatage_courant()
     juge = juge or JugeModele()
@@ -356,9 +368,13 @@ def main(
     if options.nettoyer:
         for ctx in contextes:
             nettoyer(ctx)
-        atelier_resolu.retirer()
+        retrait = atelier_resolu.retirer()
+        worktrees = (
+            f", avec {retrait.worktrees} worktree(s) de tâches" if retrait.worktrees else ""
+        )
         print(
-            f"Nettoyé : déclarations retirées et atelier {atelier_resolu.racine} effacé.",
+            f"Nettoyé : déclarations retirées et atelier {atelier_resolu.racine} "
+            f"effacé{worktrees}.",
             file=sortie,
         )
     else:
@@ -369,6 +385,31 @@ def main(
         )
     _temoigner(options.temoin, dossier, erreur)
     return CODE_VERT if rapport.vert else CODE_ROUGE
+
+
+def _retenir(sortie: TextIO) -> None:
+    """Ne garde que les derniers passages du poste, une fois l'atelier du passage réservé (#1457).
+
+    **Après** la réservation : le passage qui commence compte parmi les derniers, et
+    il s'est déjà nommé dans son atelier — une autre copie qui ferait sa rétention à
+    cet instant le verrait occupé. Le passage que `start.sh --etat-banc` rouvre est
+    lu ici (`etat.dernier`), avant tout retrait, et gardé quel que soit son rang.
+    Seulement quand le banc réserve son atelier : un appelant qui en fournit un
+    (les tests) ne fait pas le ménage du poste.
+    """
+    from maestro.scenarios import etat  # paresseux, pour la raison donnée dans `main`
+
+    rouvert = etat.dernier()
+    retention = retenir(
+        rouvert=None if rouvert is None else rouvert.dossier.parent,
+        avant=lambda nombre: print(
+            f"Ateliers du banc : {nombre} passage(s) au-delà des derniers gardés — "
+            "retrait en cours, worktrees de leurs tâches compris…",
+            file=sortie,
+        ),
+    )
+    for ligne in retention.lignes():
+        print(ligne, file=sortie)
 
 
 #: Ce qu'une étape occupe à l'écran pendant le passage : une ligne. Le rapport garde

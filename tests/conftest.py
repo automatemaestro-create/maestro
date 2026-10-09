@@ -212,6 +212,9 @@ CLE_RAMASSAGE = "MAESTRO_RAMASSAGE_ESPACES"
 #: Le ramassage de l'état des stacks, joué par `worktree.sh gc` et `start.sh` (#1456).
 CLE_RAMASSAGE_ETAT_STACK = "MAESTRO_RAMASSAGE_ETAT_STACK"
 
+#: La rétention des passages du banc, jouée par chaque passage qui réserve son atelier (#1457).
+CLE_PASSAGES_GARDES = "MAESTRO_SCENARIOS_PASSAGES_GARDES"
+
 #: Le **régime d'accès** de l'API et ses réglages (#638), plus le port du front
 #: dont le défaut d'origines se dérive. Vidés par `_neutralise_acces_api` : les
 #: trois premiers se posent dans un `.env`, et `MAESTRO_PORT_UI` dans le bloc
@@ -450,9 +453,16 @@ def _neutralise_ramassage() -> None:
     gc` le jouerait sur le répertoire temporaire **du poste**. Les tests qui
     l'éprouvent la rallument avec un `TMPDIR` à eux (`tests/test_etat_stack.py`,
     le ramassage de `tests/test_worktree.py`).
+
+    Même coupure pour la rétention des passages du banc (#1457) : un test qui joue
+    `banc.main` sans atelier réglé réserverait sous le `~/.maestro/` du poste, et y
+    **retirerait** ses passages au-delà des derniers — ceux d'un passage en cours
+    dans une autre copie compris. La rétention s'éprouve sur `tmp_path`, avec un
+    environnement explicite (`tests/test_etat_banc.py`).
     """
     os.environ[CLE_RAMASSAGE] = "0"
     os.environ[CLE_RAMASSAGE_ETAT_STACK] = "0"
+    os.environ[CLE_PASSAGES_GARDES] = "0"
 
 
 def _neutralise_acces_api() -> None:

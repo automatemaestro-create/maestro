@@ -110,6 +110,7 @@ from maestro.scenarios.modele import Rapport, Resultat, horodatage
 from maestro.scenarios.projets import (
     FICHIER_REGISTRE,
     VARIABLE_ATELIER,
+    VARIABLE_PASSAGES_GARDES,
     Atelier,
     cadre_dotnet,
     cloner,
@@ -4794,11 +4795,12 @@ def test_l_atelier_des_taches_n_est_pas_le_contenu_du_projet(tmp_path: Path) -> 
 # --- L'atelier ---------------------------------------------------------------
 
 
-def test_l_atelier_vit_sous_le_profil_utilisateur_et_pas_dans_appdata() -> None:
-    """Deux refus de `valider_racine` à éviter : `AppData` (donc `TMPDIR`) et le dépôt."""
+def test_l_atelier_vit_sous_l_etat_du_poste_et_pas_dans_appdata() -> None:
+    """Deux refus de `valider_racine` à éviter : `AppData` (donc `TMPDIR`) et le dépôt —
+    et une seule racine du profil pour l'état du poste (#1457)."""
     racine = racine_atelier({})
 
-    assert racine.parent == Path.home()
+    assert racine == Path.home() / ".maestro" / "ateliers" / "scenarios"
     assert "AppData" not in racine.parts
 
 
@@ -4917,6 +4919,37 @@ def test_l_atelier_d_un_passage_se_reserve_meme_a_plusieurs_en_meme_temps(
         "20260927-123609",
         *(f"20260927-123609-{rang}" for rang in range(2, nombre + 1)),
     }
+
+
+def test_un_passage_qui_reserve_son_atelier_ne_garde_que_les_derniers_et_le_dit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La rétention est jouée par le passage lui-même, une fois son atelier réservé (#1457) :
+    il compte parmi les derniers, et ce qui part s'annonce — avant (le premier retrait d'un
+    poste peut être long) et après. Le détail de la règle est dans `tests/test_etat_banc.py`."""
+    ateliers = tmp_path / "ateliers"
+    monkeypatch.setenv(VARIABLE_ATELIER, str(ateliers))
+    monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "2")
+    for nom in ("20261001-100000", "20261002-100000"):
+        (ateliers / nom / "s1-vider").mkdir(parents=True)
+    monkeypatch.setattr(banc, "horodatage_courant", lambda: "20261009-120000")
+    sortie = _Muet()
+
+    code = banc.main(
+        ["--scenario", "S1"],
+        client=ClientAPI(FausseAPI(moteur=_moteur_qui_vide)),
+        juge=_juge_oui(),
+        racine_rapports=tmp_path / "rapports",
+        horloge=lambda: 0.0,
+        dormir=lambda _s: None,
+        sortie=sortie,
+        erreur=_Muet(),
+    )
+
+    assert code == banc.CODE_VERT
+    assert sorted(d.name for d in ateliers.iterdir()) == ["20261002-100000", "20261009-120000"]
+    assert "1 passage(s) au-delà des derniers gardés — retrait en cours" in sortie.texte
+    assert "1 passage(s) retiré(s) au-delà des 2 derniers gardés" in sortie.texte
 
 
 # --- ③ Le rapport -----------------------------------------------------------

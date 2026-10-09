@@ -36,7 +36,8 @@ ni les données du poste.
   sur ce banc, puis **sauve** l'état : le journal durable de l'espace et chaque
   dépôt, sous `<atelier du passage>/_etat/` — à côté des projets jetables du
   passage, que les déclarations sauvées désignent. `--nettoyer` efface l'atelier,
-  donc l'état : un passage nettoyé n'a rien laissé à rouvrir.
+  donc l'état : un passage nettoyé n'a rien laissé à rouvrir. La rétention du
+  banc (#1457), elle, ne retire **jamais** le passage dont l'état se rouvre.
 - **`--rouvrir`** remet le banc dans l'état du dernier passage sauvé : le journal
   réécrit dans l'espace du banc, les dépôts recopiés. L'API qui démarre ensuite
   rejoue ce journal comme après n'importe quel redémarrage — **rien n'est
@@ -104,7 +105,7 @@ from maestro.fichiers import retirer_arbre
 from maestro.projets.modele import ID_PROJET
 from maestro.queue.celery_app import FILE_TACHES
 from maestro.scenarios.modele import Rapport
-from maestro.scenarios.projets import racine_atelier
+from maestro.scenarios.projets import racine_atelier, racines_des_passages
 
 #: Le nom sous lequel ce module s'invoque — dérivé, jamais écrit (#830).
 MODULE = __spec__.name if __spec__ is not None else __name__
@@ -278,13 +279,18 @@ def sauver(
 
 
 def dernier(racine: Path | None = None) -> Instantane | None:
-    """Le dernier état sauvé parmi tous les passages du poste, ou None."""
-    racine = racine or racine_atelier()
-    if not racine.is_dir():
-        return None
+    """Le dernier état sauvé parmi tous les passages du poste, ou None.
+
+    Sans `racine`, l'atelier **et** l'ancien (`~/maestro-scenarios`, #1457) tant qu'il
+    existe : un poste mis à jour rouvre l'état qu'il avait sans rien rejouer, et la
+    rétention du banc garde ce passage-là (`maestro.scenarios.projets.retenir`).
+    """
+    racines = (racine,) if racine is not None else racines_des_passages()
     etats = [
         etat
-        for passage in racine.iterdir()
+        for dossier in racines
+        if dossier.is_dir()
+        for passage in dossier.iterdir()
         if (etat := Instantane.lire(passage / DOSSIER_ETAT)) is not None
     ]
     return max(etats, key=lambda e: e.sauve_le, default=None)

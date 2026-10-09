@@ -9,7 +9,10 @@ répond tient en trois lignes, et ce module en est la seule source :
 - `~/Maestro/` (`racine_projets`) — les projets de l'utilisateur, proposés par
   défaut (#1022). Jamais ramassée.
 - `~/.maestro/` (`racine_etat`) — l'état du poste : jeton de l'API, journal
-  SQLite, profil de navigateur. Jamais ramassée par Maestro.
+  SQLite, profil de navigateur, et sous `ateliers/` (`racine_ateliers`, #1457)
+  les ateliers du banc des scénarios et de la relecture visuelle. Seuls ces
+  ateliers sont vidés, et par **rétention** — leurs derniers passages restent,
+  ce sont les pièces d'un rouge (`maestro.scenarios.projets.retenir`).
 - `<temp>/maestro/` (`racine_jetable`) — le jetable : ateliers d'hôte, espaces
   des tâches, copies de vérification. Ramassée (`maestro.sandbox.ramassage`).
 
@@ -53,6 +56,10 @@ NOM_PROJETS = "Maestro"
 #: Le dossier de l'état du poste sous le profil.
 NOM_ETAT = ".maestro"
 
+#: Le dossier des ateliers sous l'état du poste (#1457) : un sous-dossier par
+#: atelier (`scenarios`, `relecture`), chacun porteur de racines de projet.
+NOM_ATELIERS = "ateliers"
+
 #: Le sous-dossier du répertoire temporaire qui porte tout le jetable.
 NOM_JETABLE = "maestro"
 
@@ -88,6 +95,18 @@ def racine_projets() -> Path:
 def racine_etat() -> Path:
     """`~/.maestro` — l'état du poste. Non créé : chaque écrivain pose ce qu'il écrit."""
     return maison() / NOM_ETAT
+
+
+def racine_ateliers() -> Path:
+    """`~/.maestro/ateliers` — sous quoi le banc et la relecture sèment leurs projets. Non créé.
+
+    Sous l'état du poste et non dans le jetable : un atelier porte des **racines de
+    projet**, que `valider_racine` refuse sous `AppData` (#221), donc sous le
+    répertoire temporaire d'un poste Windows. Voisiner avec le jeton de l'API n'en
+    approche aucun agent : sa frontière est la racine de son projet (#839,
+    `maestro.portee`), et le jeton en est aussi loin d'ici que de `~/maestro-scenarios`.
+    """
+    return racine_etat() / NOM_ATELIERS
 
 
 # ── Le répertoire temporaire ──────────────────────────────────────────────────

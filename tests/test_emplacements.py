@@ -37,17 +37,19 @@ from maestro.emplacements import (
     TEMOIN_PID,
     jetable,
     occupant,
+    racine_ateliers,
     racine_etat,
     racine_jetable,
     racine_projets,
     repertoire_temporaire,
 )
 from maestro.projets.modele import Perimetre, Projet
-from maestro.projets.racine import detecter_vcs
+from maestro.projets.racine import detecter_vcs, valider_racine
 from maestro.projets.reglages import repertoire_par_defaut
 from maestro.sandbox import espace_de_travail, isolated_workspace
 from maestro.sandbox.ramassage import pid_dans
 from maestro.sandbox.verification import copie_de_verification, dossier_de_sonde
+from maestro.scenarios.projets import racine_atelier
 
 RACINE_DEPOT = Path(__file__).resolve().parents[1]
 GIT = shutil.which("git")
@@ -83,10 +85,6 @@ INVENTAIRE: dict[str, str] = {
     "maestro/projets/racine.py": (
         "juge une racine déclarée contre le dossier personnel (racine nue refusée) ; "
         "n'y crée rien"
-    ),
-    "maestro/scenarios/projets.py": (
-        "atelier du banc des scénarios, encore à la racine du profil — il rejoint "
-        "`~/.maestro/` avec #1457"
     ),
 }
 
@@ -322,6 +320,26 @@ def test_le_jeton_et_le_journal_vivent_sous_la_racine_de_letat(maison: Path) -> 
 
 def test_le_repertoire_des_projets_propose_est_la_racine_des_projets(maison: Path) -> None:
     assert repertoire_par_defaut() == racine_projets() == maison / "Maestro"
+
+
+def test_les_ateliers_du_banc_et_de_la_relecture_vivent_sous_la_racine_de_letat(
+    maison: Path,
+) -> None:
+    """#1457 : plus à la racine du profil, et toujours des racines de projet admises."""
+    assert racine_ateliers() == racine_etat() / "ateliers"
+    banc = racine_atelier({})
+    assert banc == racine_ateliers() / "scenarios"
+    projet = banc / "20261009-101010" / "s1-vider"
+    assert valider_racine(projet, creer=True) == projet.resolve()
+
+    script = (RACINE_DEPOT / "scripts" / "design" / "relecture-visuelle.sh").read_text(
+        encoding="utf-8"
+    )
+    defaut = racine_ateliers().relative_to(maison).as_posix()
+    assert f"$HOME/{defaut}/relecture" in script, (
+        "le défaut de la relecture se recopie du module des racines, qu'un script ne peut pas "
+        "importer : il le suit"
+    )
 
 
 def test_le_repertoire_temporaire_ecarte_une_valeur_msys_sous_windows(
