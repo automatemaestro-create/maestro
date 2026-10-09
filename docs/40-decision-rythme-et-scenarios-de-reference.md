@@ -190,6 +190,30 @@ Un processus tué sortant en `1` sous Windows, le code d'un rouge, le lanceur ne
 seul : le banc écrit un témoin en dernier geste, et sans lui le lanceur annonce un passage
 **interrompu**, jamais « état sauvé ».
 
+**Chaque passage entre dans un historique, qui se lit** (#1461). Le rapport d'un passage reste
+dans la copie qui l'a joué (`.maestro/scenarios/<passage>/`). Il ne disait ni le code joué, ni la
+copie, ni le ticket, et celui d'un worktree partait avec lui. Le passage ajoute donc aussi **une
+ligne** à `~/.maestro/historique/scenarios.jsonl`, la racine de l'état du poste (#1454), hors des
+ateliers que le banc ramasse :
+
+- le **sha** de `HEAD`, la branche et l'iid qu'elle porte, la copie, et si son arbre portait des
+  modifications non commitées. Un vert sur un arbre modifié n'est pas le vert de ce sha ;
+- par scénario : verdict, coût, durée, rejeu, empêchement.
+
+C'est le point d'entrée du banc qui l'écrit, juste après le rapport. Clone principal, worktree ou
+pilote y entrent donc sans rien régler, et la ligne survit au retrait du worktree. Une copie sans
+Git écrit sa ligne sans sha, et un historique qui ne s'écrit pas se dit sans changer le verdict.
+`MAESTRO_SCENARIOS_HISTORIQUE` déplace le fichier. La suite de tests le fait, pour ne jamais
+écrire dans celui du poste.
+
+`python -m maestro.scenarios.historique` lit la série. Par scénario, elle rend le taux de réussite,
+le coût et la durée médians, les rejeux, les empêchements et le **dernier vert** avec son sha.
+`--fenetre <n>` la borne aux n derniers passages de chaque scénario, et `--json` la rend à un
+script : c'est l'entrée du banc par lot et du choix du scénario le moins cher (#1460).
+`--importer` y fait entrer les rapports d'une copie : les treize passages du clone principal
+d'avant ce ticket y sont entrés **sans sha**, et la lecture dit « sha inconnu » plutôt que de le
+deviner d'une date.
+
 **Le banc ne garde que ses derniers passages** (#1457). Il les gardait tous — 208 dossiers le
 2026-10-09, projets complets et `node_modules` compris —, et leurs projets versionnés retenaient,
 par leurs worktrees, les espaces de tâches laissés sous la racine jetable, que le ramassage ne
@@ -198,9 +222,10 @@ derniers (`MAESTRO_SCENARIOS_PASSAGES_GARDES`, `0` l'éteint), et **toujours** c
 `start.sh --etat-banc` rouvre l'état, quel que soit son rang : le rejouer coûte du vrai modèle. Un
 passage qu'un process vivant tient encore — le banc qui le joue s'y nomme, une tâche dans l'espace
 de son worktree — n'est jamais retiré, et un passage retiré emporte d'abord les worktrees de ses
-tâches. L'ancien atelier est repris par la même règle, puis retiré quand il ne porte plus rien ; ce
-qui n'y a pas la forme d'un passage est nommé, jamais touché. Le détail est dans
-`maestro/scenarios/projets.py`.
+tâches. Seuls les projets des passages partent : ni leurs rapports, dans la copie, ni
+l'historique ci-dessus. L'ancien atelier est repris par la même règle, puis retiré quand il ne
+porte plus rien ; ce qui n'y a pas la forme d'un passage est nommé, jamais touché. Le détail est
+dans `maestro/scenarios/projets.py`.
 
 **S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
 dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on
@@ -541,6 +566,14 @@ La personne a retenu les six recommandations, en `prio::haute`, et les a **exclu
 | 4 | #1243 | la relecture visuelle d'un ticket qui applique regarde l'après et les états nommés, sans seconde stack |
 | 5 | #1244 | le temps loggé est mesuré, et la PR ne porte plus de checklist qui redit `merge-mr` |
 | 6 | #1245 | les commandes de clôture ne portent que leur règle, et la démonstration part dans la doc |
+
+> ⚠ **#1240 est renversé en partie le 2026-10-09** ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md),
+> #1460). Son C2, « un ticket qui touche le chemin d'un scénario le joue avant de pousser », se
+> payait au prix de S1–S4 : S2 coûtait 0,41 $. Douze scénarios plus tard, S12 (≈ 26 min, 3 $) a
+> été joué six fois en un jour par trois tickets du même jalon, et le préfixe du chemin couvre tout
+> le produit. Le banc entier se jouera une fois par lot sur `main`. Au ticket, il ne se jouera plus
+> que sur le chemin dérivé de ce que chaque scénario exécute. La preuve exercée, le banc injouable
+> jamais compté vert et le bouclage d'un jalon par les scénarios (#1152) ne bougent pas.
 
 L'ordre suit les dépendances : #1241 reprend la preuve exercée de #1240, et #1245 comprime en
 dernier le texte que les cinq autres ont modifié. Les six écrivent sous `.claude/`, donc ils sont
