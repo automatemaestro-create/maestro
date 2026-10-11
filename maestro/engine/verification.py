@@ -85,6 +85,25 @@ qu'elle tienne, puis arrête le service avec sa descendance
 l'arrêt lui-même — un `node -e` qui lançait, interrogeait puis tuait le serveur,
 qu'un antivirus a pris pour un cheval de Troie et que Windows a refusé de lancer.
 
+## Deux vérifications ne se disputent pas un port (#1449)
+
+Un port est au poste, et les critères le nomment en toutes lettres
+(`PORT=4321 npm start`) : deux tâches d'un run vérifiées en même temps démarraient
+leur service sur le même. Sur le run `3a7fa26ba927`, la sonde de `page-recette` a
+trouvé le service de `page-accueil` ; la garde de #1432 l'a vu, son critère n'a pas
+été joué, et la tâche a fini en échec, sa dépendante bloquée. Deux gestes en
+répondent :
+
+- un service démarré par une vérification — sondé ou non — **prend son tour** sur
+  le poste (`maestro.sandbox.verification.creneau_de_service`), de sa sonde
+  préalable jusqu'à sa mort constatée : deux vérifications ne démarrent jamais
+  leur service ensemble, qu'elles soient du même run ou non ;
+- une sonde qui trouve le port **déjà tenu** — le serveur qu'un agent voisin a
+  lancé pour se vérifier — n'en fait pas tout de suite un « non joué » : Maestro
+  rend son tour et réessaie jusqu'à ce que le port se libère, borné par
+  `DelaisVerification.liberation_s`. Au-delà, le port est à quelqu'un d'autre, et
+  le contrôle n'est pas joué, comme avant.
+
 ## Un vérificateur en panne n'est pas un agent en échec (#1388)
 
 L'appel du vérificateur au fournisseur peut échouer — contexte dépassé,
@@ -130,8 +149,11 @@ rend un verdict, l'exécuteur en fait l'issue.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import re
+import threading
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -206,12 +228,15 @@ class DelaisVerification:
     a démarré. Un démarrage **sondé** (#1432) est borné par `commande_s` — il
     s'arrête dès que le service répond, et un service qu'on construit avant de le
     servir prend le temps d'une construction —, chaque passage de sa sonde par
-    `sonde_s`.
+    `sonde_s`. `liberation_s` (#1449) est le temps laissé à ce qui tient déjà ce que
+    la sonde interroge pour le rendre — le serveur qu'un agent voisin a lancé pour
+    se vérifier, puis arrêté — avant que le contrôle ne soit dit « non joué ».
     """
 
     commande_s: float = 300.0
     demarrage_s: float = 15.0
     sonde_s: float = 15.0
+    liberation_s: float = 120.0
 
 
 @dataclass(frozen=True)
@@ -785,44 +810,120 @@ class VerificateurTaches:
         delai = self._delais.demarrage_s if controle.demarrage else self._delais.commande_s
         try:
             # Dans un fil : `jouer` attend un processus, et la boucle asyncio du run
-            # porte d'autres tâches pendant ce temps.
-            resultat = await asyncio.to_thread(
-                joueur,
-                controle.commande,
-                livraison.espace,
-                interprete=interprete,
-                delai_s=delai,
+            # porte d'autres tâches pendant ce temps. Un service démarré prend son
+            # tour sur le poste, sonde ou non : il occupe son port tout autant (#1449).
+            appel = functools.partial(
+                joueur, controle.commande, livraison.espace, interprete=interprete, delai_s=delai
             )
+            if controle.demarrage:
+                debut = time.monotonic()
+                resultat, obtenu = await _a_son_tour(appel)
+                apres = _apres_attente(obtenu - debut, tour=True, port=False)
+            else:
+                resultat, apres = await asyncio.to_thread(appel), ""
         except OSError as exc:
             return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
-        return _constat_joue(controle, resultat, delai)
+        return _constat_joue(controle, resultat, delai, apres=apres)
 
     async def _demarrer(
         self, controle: Controle, espace: Path, interprete: tuple[str, ...]
     ) -> Constat:
-        """Démarre le service du contrôle, le sonde jusqu'à ce qu'il réponde, l'arrête (#1432)."""
+        """Démarre le service du contrôle, le sonde jusqu'à ce qu'il réponde, l'arrête (#1432).
+
+        Chaque essai prend son tour sur le poste (`creneau_de_service`, #1449) : deux
+        vérifications ne démarrent jamais leur service ensemble. Un essai dont la sonde
+        tenait **déjà** — ce qui lui répond n'est pas ce service — rend son tour et se
+        rejoue, jusqu'à ce que le port se libère ou que `liberation_s` s'écoule : le
+        serveur qu'un agent voisin a lancé pour se vérifier finit par s'arrêter, et la
+        tâche n'a pas à échouer sur un port qu'elle ne tenait pas.
+        """
         non_joue = _non_joue(controle)
         demarreur = self._demarreur if self._demarreur is not None else execution.demarrer
         delai = self._delais.commande_s
-        try:
-            resultat = await asyncio.to_thread(
-                demarreur,
-                controle.commande,
-                espace,
-                interprete=interprete,
-                sonde=controle.sonde,
-                delai_s=delai,
-                delai_sonde_s=self._delais.sonde_s,
+        appel = functools.partial(
+            demarreur,
+            controle.commande,
+            espace,
+            interprete=interprete,
+            sonde=controle.sonde,
+            delai_s=delai,
+            delai_sonde_s=self._delais.sonde_s,
+        )
+        debut = time.monotonic()
+        tour = False  # un autre service de vérification a-t-il fait attendre ?
+        tenu_depuis: float | None = None  # quand la sonde a trouvé le port tenu d'abord
+        while True:
+            essai = time.monotonic()
+            try:
+                resultat, obtenu = await _a_son_tour(appel)
+            except execution.SondeNonLancee as exc:
+                return non_joue(
+                    f"le juge n'a pas pu lancer sa sonde — le système a répondu : {exc}"
+                )
+            except OSError as exc:
+                return non_joue(
+                    f"le juge n'a pas pu lancer le service — le système a répondu : {exc}"
+                )
+            tour = tour or obtenu - essai >= 1
+            if not resultat.deja:
+                # Ce qui a retardé le service s'arrête où son tour a commencé.
+                apres = _apres_attente(
+                    obtenu - debut, tour=tour, port=tenu_depuis is not None
+                )
+                return _constat_demarrage(controle, resultat, delai, apres=apres)
+            maintenant = time.monotonic()
+            if tenu_depuis is None:
+                tenu_depuis = maintenant
+            attente = maintenant - tenu_depuis
+            if attente >= self._delais.liberation_s:
+                return _constat_demarrage(controle, resultat, delai, tenu_s=attente)
+            await asyncio.sleep(
+                min(execution.PERIODE_SONDE_S, self._delais.liberation_s - attente)
             )
-        except execution.SondeNonLancee as exc:
-            return non_joue(
-                f"le juge n'a pas pu lancer sa sonde — le système a répondu : {exc}"
-            )
-        except OSError as exc:
-            return non_joue(
-                f"le juge n'a pas pu lancer le service — le système a répondu : {exc}"
-            )
-        return _constat_demarrage(controle, resultat, delai)
+
+
+async def _a_son_tour(appel: Callable[[], Any]) -> tuple[Any, float]:
+    """Joue `appel` à son tour sur le poste — un service de vérification à la fois (#1449).
+
+    Rend son résultat, et l'instant (`time.monotonic`) où son tour a commencé. Dans un
+    fil, et pas dans la boucle : on y attend que l'autre service soit mort, ce qui
+    peut prendre le temps d'une construction. Une vérification annulée pendant
+    qu'elle attend abandonne son tour : elle ne démarrera plus rien.
+    """
+    abandon = threading.Event()
+
+    def au_creneau() -> tuple[Any, float]:
+        with execution.creneau_de_service(abandon=abandon):
+            obtenu = time.monotonic()
+            return appel(), obtenu
+
+    try:
+        return await asyncio.to_thread(au_creneau)
+    except asyncio.CancelledError:
+        abandon.set()
+        raise
+
+
+def _apres_attente(secondes: float, *, tour: bool, port: bool) -> str:
+    """« après 12 s d'attente (…) » — ce qui a retardé un service, dit dans sa preuve (#1449).
+
+    Le temps d'une vérification se lit ainsi sur elle : son tour, quand un autre
+    service de vérification tenait le poste (au-delà d'une seconde, en deçà ce n'est
+    que le prendre) ; le port, quand un autre processus le tenait. Rien, sinon.
+    """
+    raisons = []
+    if tour and secondes >= 1:
+        raisons.append("un autre service de vérification tenait le poste")
+    if port:
+        raisons.append("le port était tenu par un autre processus")
+    if not raisons:
+        return ""
+    return f" après {_duree(secondes)} d'attente ({' ; '.join(raisons)})"
+
+
+def _duree(secondes: float) -> str:
+    """Une attente en clair : « 12 s », ou « moins d'une seconde »."""
+    return f"{round(secondes):d} s" if secondes >= 1 else "moins d'une seconde"
 
 
 def _refus_de_portee(
@@ -959,15 +1060,18 @@ def _non_joue(controle: Controle) -> Callable[[str], Constat]:
 
 
 def _constat_joue(
-    controle: Controle, resultat: execution.Execution, delai: float
+    controle: Controle, resultat: execution.Execution, delai: float, *, apres: str = ""
 ) -> Constat:
-    """Le constat d'une commande jouée — par son code de retour, jamais par sa sortie."""
+    """Le constat d'une commande jouée — par son code de retour, jamais par sa sortie.
+
+    `apres` : ce qui a retardé un démarrage (`_apres_attente`, #1449), ou rien.
+    """
     sortie = _fin(resultat.sortie, PREUVE_MAX)
     if controle.demarrage and resultat.expiree:
         return Constat(
             critere=controle.critere,
             etat=CONSTAT_TENU,
-            preuve=f"démarrée, elle tournait encore au bout de {delai:g} s",
+            preuve=f"démarrée{apres}, elle tournait encore au bout de {delai:g} s",
             commande=controle.commande,
         )
     if resultat.expiree:
@@ -988,26 +1092,38 @@ def _constat_joue(
 
 
 def _constat_demarrage(
-    controle: Controle, resultat: execution.Demarrage, delai: float
+    controle: Controle,
+    resultat: execution.Demarrage,
+    delai: float,
+    *,
+    apres: str = "",
+    tenu_s: float = 0.0,
 ) -> Constat:
     """Le constat d'un service sondé (#1432) — la sonde tranche, par son code de retour.
 
     Quatre issues. La sonde a tenu pendant que le service tournait : **tenu**. Le
     service a rendu la main avant qu'elle tienne, ou le délai s'est écoulé sans
     qu'elle tienne : **non tenu**, ce qui revient à l'agent avec ce que le service
-    et la sonde ont écrit. La sonde tenait avant même le démarrage : **non joué** —
-    ce qui lui répond n'est pas ce service, et ni l'agent ni le juge n'en savent
-    plus.
+    et la sonde ont écrit. La sonde tenait avant même le démarrage, et tenait encore
+    au bout de l'attente : **non joué** — ce qui lui répond n'est pas ce service, et
+    ni l'agent ni le juge n'en savent plus.
+
+    Pour que le temps d'une vérification se lise sur elle (#1449) : `apres`, ce qui a
+    retardé le service (`_apres_attente`) ; `tenu_s`, le temps passé à attendre que
+    ce que la sonde interroge se libère, en vain.
     """
     sonde = resultat.sonde
     if resultat.deja:
+        encore = (
+            f", et tenait encore au bout de {_duree(tenu_s)} d'attente" if tenu_s > 0 else ""
+        )
         return Constat(
             critere=controle.critere,
             etat=CONSTAT_NON_JOUE,
             preuve=(
                 f"pas joué — la sonde `{controle.sonde}` tenait avant que le service ne "
-                "démarre : ce qui lui répond n'est pas lui (un autre processus tient déjà "
-                "ce qu'elle interroge)"
+                f"démarre{encore} : ce qui lui répond n'est pas lui (un autre processus "
+                "tient déjà ce qu'elle interroge)"
             ),
             commande=controle.commande,
         )
@@ -1016,7 +1132,7 @@ def _constat_demarrage(
             critere=controle.critere,
             etat=CONSTAT_TENU,
             preuve=(
-                f"démarré, il a répondu à la sonde `{controle.sonde}` au bout de "
+                f"démarré{apres}, il a répondu à la sonde `{controle.sonde}` au bout de "
                 f"{resultat.duree_s:g} s ; Maestro l'a ensuite arrêté"
             ),
             commande=controle.commande,
@@ -1034,6 +1150,9 @@ def _constat_demarrage(
             "Maestro l'a arrêté"
         )
     morceaux = [tete]
+    if apres:
+        # Le délai court depuis son démarrage : l'attente n'en a rien pris.
+        morceaux.append(f"il avait démarré{apres}")
     if derniere:
         morceaux.append(f"dernière sonde (code {sonde.code}) :\n{derniere}")
     if service:

@@ -98,10 +98,34 @@ commande nue (`npm start`), et l'attente comme l'arrêt se font ici.
 
 La sonde est jouée **une fois avant** le service : si elle tient déjà, ce qui lui
 répond n'est pas lui (un port qu'un autre processus tient), et rien n'est démarré.
+
+## Un service à la fois sur le poste (#1449)
+
+Un port est au **poste**, pas à l'espace de travail : deux vérifications qui
+démarrent chacune leur service sur le port que leurs critères nomment
+(`PORT=4321 npm start`) se le disputent, quel que soit le dossier où elles jouent.
+Mesuré sur le run `3a7fa26ba927` : deux pages livrées à quelques secondes d'écart,
+la sonde de la seconde a trouvé le service de la première, et son critère n'a pas
+été joué — la tâche a fini en échec pour un port qu'elle ne tenait pas.
+
+D'où le **créneau** (`creneau_de_service`) : un seul service démarré par une
+vérification à la fois, pour tous les process de Maestro du poste — l'hôte d'un
+run, un worker, l'API —, que l'appelant tient de la sonde préalable jusqu'à la
+**mort constatée** du service. Car l'arrêt attend que l'arbre soit mort, et pas
+seulement qu'on l'ait demandé (`_arreter`) : le tour suivant trouve le port rendu.
+
+Le créneau ne pose rien sur le disque. Sous POSIX, c'est un `flock` sur la racine
+jetable elle-même (`maestro.emplacements.racine_jetable`) ; sous Windows, un mutex
+nommé d'après elle. Le système rend l'un comme l'autre quand leur détenteur meurt :
+un process tué ne laisse aucun verrou à ramasser, et ni le ménage ni le ramassage
+n'ont rien à juger (#1454). Les process qui partagent un répertoire temporaire
+partagent le créneau — c'est le poste, et c'est ce qui laisse une suite de tests en
+prendre un à elle.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -109,13 +133,13 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from maestro.emplacements import jetable
+from maestro.emplacements import jetable, racine_jetable
 from maestro.fichiers import retirer_arbre
 from maestro.sandbox.arbre import Arbre
 
@@ -144,6 +168,65 @@ _OCTETS_GARDES = CARACTERES_SORTIE * 8
 #: L'intervalle entre deux passages de la sonde d'un service qui démarre (#1432). Un
 #: passage lance un bash : sous Windows, une à deux centaines de millisecondes.
 PERIODE_SONDE_S = 1.0
+
+#: Le nom du mutex qui tient le créneau des services sous Windows (#1449), suivi
+#: d'une empreinte de la racine jetable. `Local\` : la session de la personne, où
+#: vivent tous les process de Maestro qu'elle a lancés.
+PREFIXE_CRENEAU = "Local\\maestro-creneau-service-"
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    # Une instance à ce module : les signatures posées ici ne touchent pas celles
+    # de `maestro.sandbox.arbre`.
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateMutexW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.CreateMutexW.restype = wintypes.HANDLE
+    _kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    _kernel32.ReleaseMutex.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+
+    #: `WAIT_OBJECT_0`, `WAIT_ABANDONED` — le détenteur est mort sans rendre le
+    #: mutex, qui revient à celui qui l'attendait — et `WAIT_TIMEOUT`.
+    _OBTENU = 0x00000000
+    _ABANDONNE = 0x00000080
+    _PAS_ENCORE = 0x00000102
+
+    @contextmanager
+    def _mutex(nom: str, abandon: threading.Event | None) -> Iterator[None]:
+        """Le mutex `nom`, attendu puis tenu — par le fil qui l'attend, seul à le rendre."""
+        poignee = _kernel32.CreateMutexW(None, False, nom)
+        if not poignee:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            pas_ms = int(_PAS_CRENEAU_S * 1000)
+            while (etat := _kernel32.WaitForSingleObject(poignee, pas_ms)) == _PAS_ENCORE:
+                _si_abandon(abandon)
+            if etat not in (_OBTENU, _ABANDONNE):
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                yield
+            finally:
+                _kernel32.ReleaseMutex(poignee)
+        finally:
+            _kernel32.CloseHandle(poignee)
+
+else:
+    import fcntl
+
+#: Le pas auquel l'attente du créneau regarde si on l'a abandonnée.
+_PAS_CRENEAU_S = 0.2
+
+
+class CreneauAbandonne(Exception):
+    """L'attente du créneau des services a été abandonnée — la vérification est annulée.
+
+    Pas une `OSError` : le système n'a rien refusé, personne n'attend plus ce service.
+    """
 
 
 class CopieImpossible(Exception):
@@ -273,6 +356,66 @@ def dossier_de_sonde() -> Iterator[Path]:
         retirer_arbre(dossier)
 
 
+@contextmanager
+def creneau_de_service(
+    environnement: Mapping[str, str] | None = None,
+    *,
+    abandon: threading.Event | None = None,
+) -> Iterator[None]:
+    """Le créneau des services démarrés par une vérification — attendu, puis tenu (#1449).
+
+    Rend la main quand plus aucun autre service de vérification ne vit sur le poste,
+    dans ce process ou un autre (voir l'en-tête). Sans délai d'attente : chaque
+    détenteur est borné par les délais de sa vérification, et un détenteur mort rend
+    le créneau. `abandon`, posé pendant l'attente, l'interrompt (`CreneauAbandonne`)
+    : une vérification annulée ne démarre plus rien, et son fil ne retient pas la
+    sortie du process. Lève `OSError` si le système refuse le créneau — à
+    l'appelant d'en faire un verdict.
+    """
+    racine = racine_du_creneau(environnement)
+    if sys.platform == "win32":
+        with _mutex(nom_du_creneau(racine), abandon):
+            yield
+    else:
+        racine.mkdir(parents=True, exist_ok=True)
+        # Un descripteur par entrée : deux fils d'un même process s'excluent aussi,
+        # `flock` tenant à la description ouverte et non au process.
+        descripteur = os.open(racine, os.O_RDONLY)
+        try:
+            while True:
+                try:
+                    fcntl.flock(descripteur, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    _si_abandon(abandon)
+                    time.sleep(_PAS_CRENEAU_S)
+                else:
+                    break
+            yield
+        finally:
+            os.close(descripteur)  # rend le verrou
+
+
+def racine_du_creneau(environnement: Mapping[str, str] | None = None) -> Path:
+    """La racine dont le créneau des services est le verrou : la racine jetable du poste.
+
+    Relue à chaque prise du créneau : c'est la couture par laquelle la suite de tests
+    en prend un à elle (`tests/conftest.py`), sans attendre les runs du poste.
+    """
+    return racine_jetable(environnement)
+
+
+def _si_abandon(abandon: threading.Event | None) -> None:
+    """Lève `CreneauAbandonne` si l'attente a été abandonnée."""
+    if abandon is not None and abandon.is_set():
+        raise CreneauAbandonne("la vérification a été annulée pendant qu'elle attendait son tour")
+
+
+def nom_du_creneau(racine: Path) -> str:
+    """Le nom du mutex Windows du créneau de `racine` — une empreinte, sans séparateur."""
+    chemin = os.path.normcase(os.path.abspath(racine))
+    return PREFIXE_CRENEAU + hashlib.sha256(chemin.encode("utf-8")).hexdigest()[:16]
+
+
 def _copier(
     source: Path,
     copie: Path,
@@ -395,7 +538,7 @@ def jouer(
     except subprocess.TimeoutExpired:
         expiree = True
     try:
-        arbre.arreter()
+        _arreter(arbre)
         lecteur.join(timeout=_DELAI_VIDANGE_S)
         if not expiree and arbre.process.returncode is None:  # pragma: no cover - défensif
             arbre.process.wait(timeout=_DELAI_VIDANGE_S)
@@ -428,6 +571,10 @@ def demarrer(
     faits : la sonde rend 0 pendant que le service tourne (`repondu`), le service
     rend la main de lui-même (`code`), le délai s'écoule. Le service est ensuite
     arrêté **avec sa descendance**, quoi qu'il arrive (voir l'en-tête).
+
+    Un seul essai, sans rien attendre du poste : c'est à l'appelant de tenir le
+    créneau (`creneau_de_service`) autour de l'appel, et de rejouer plus tard un
+    démarrage dont la sonde tenait déjà (#1449).
 
     Lève `OSError` si le service ne se lance pas, `SondeNonLancee` si c'est la
     sonde — à l'appelant d'en faire un verdict.
@@ -492,7 +639,7 @@ def demarrer(
             else:
                 break
     finally:
-        arbre.arreter()
+        _arreter(arbre)
         lecteur.join(timeout=_DELAI_VIDANGE_S)
         arbre.fermer()
     return Demarrage(
@@ -502,6 +649,20 @@ def demarrer(
         sonde=derniere,
         duree_s=round(time.monotonic() - debut, 2),
     )
+
+
+def _arreter(arbre: Arbre) -> None:
+    """Arrête l'arbre **et attend sa mort** — le tour suivant trouve le port rendu (#1449).
+
+    Un arrêt n'est pas instantané : un service qui meurt tient encore son port le
+    temps que le système le lui reprenne, et celui qui démarrerait aussitôt sur le
+    même port rendrait la main sur `EADDRINUSE` — un échec que l'agent n'a pas causé.
+    Les membres sont relevés **avant** l'arrêt (après, il n'y a plus rien à
+    interroger) ; un survivant au-delà du délai n'est attendu de personne.
+    """
+    membres = arbre.membres()
+    arbre.arreter()
+    arbre.survivants(membres, delai_s=_DELAI_VIDANGE_S)
 
 
 def _texte(tampon: bytearray) -> str:
