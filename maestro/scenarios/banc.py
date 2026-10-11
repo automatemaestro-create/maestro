@@ -58,6 +58,16 @@ l'iid qu'elle porte, et par scénario verdict, coût et durée. Le rapport reste
 la copie, la ligne lui survit. `python -m maestro.scenarios.historique` lit la série
 (`maestro.scenarios.historique`).
 
+## La carte du code exécuté (#1463)
+
+Quand `start.sh --etat-banc --rejouer` a posé la sonde sur la stack, le banc
+**borne** chaque scénario avant de le jouer, éteint la sonde à la fin, puis écrit
+`couverture.json` à côté du rapport : pour chaque scénario joué, les fonctions
+Python exécutées par tous les processus de la stack et les fichiers de données lus
+(`maestro.scenarios.carte`). L'historique la garde avec la ligne du passage. Sans
+sonde posée, rien ne change ; une carte qui ne s'écrit pas se dit, sans changer le
+verdict.
+
 ## Les passages qu'il garde (#1457)
 
 Un passage qui réserve son atelier fait d'abord la **rétention** du poste : les
@@ -123,6 +133,7 @@ from maestro.scenarios.scenarios import (
 )
 
 if TYPE_CHECKING:
+    from maestro.scenarios.carte import Carte
     from maestro.scenarios.etat import ClientRedis
 
 #: Le nom sous lequel ce banc s'invoque (`python -m …`) — **dérivé** du paquet et
@@ -152,6 +163,7 @@ def jouer(
     horodatage: str,
     horloge: Callable[[], float] = time.monotonic,
     trace: Callable[[str], None] = lambda _ligne: None,
+    borner: Callable[[str], None] = lambda _identifiant: None,
 ) -> Rapport:
     """Déroule les scénarios et rend le rapport du passage.
 
@@ -164,10 +176,15 @@ def jouer(
     **empêchement** et les suivants sont joués. Un passage qui s'arrête au premier
     incident ne dirait rien des trois autres, et c'est précisément ce qu'on veut
     savoir au moment de boucler un jalon.
+
+    `borner` est appelé avec l'identifiant de chaque scénario **avant** qu'il ne
+    commence (#1463) : c'est la borne de la carte, rejeu compris dans le même
+    scénario (`maestro.scenarios.carte.Carte.borner`).
     """
     resultats: list[Resultat] = []
     for scenario in scenarios:
         trace(f"— {scenario.identifiant} · {scenario.titre}")
+        borner(scenario.identifiant)
         resultat, tentative = _une_tentative(scenario, fabrique, horloge=horloge)
         if not resultat.vert and scenario.rejouable:
             trace(f"  rouge non déterministe : {scenario.identifiant} rejoué une fois")
@@ -232,6 +249,7 @@ def main(
     donnees_banc: Donnees | None = None,
     copie: Path | None = None,
     historique: Path | None = None,
+    carte: Carte | None = None,
     sortie: TextIO | None = None,
     erreur: TextIO | None = None,
 ) -> int:
@@ -239,7 +257,8 @@ def main(
 
     `client`, `juge`, `atelier`, `racine_rapports`, `horloge`, `dormir`,
     `lancer_application`, `client_redis`, `donnees_banc`, `copie` (la copie de
-    travail dont l'historique lit le sha) et `historique` (son fichier) sont
+    travail dont l'historique lit le sha), `historique` (son fichier) et `carte`
+    (sans consigne, celle que `start.sh` a posée sur l'environnement) sont
     injectables **pour les tests** — une fausse API, un
     faux fournisseur, des dossiers jetables, aucune attente réelle. C'est la même
     couture que `maestro.controltower.purge`, et elle a la même raison d'être : le
@@ -337,17 +356,26 @@ def main(
         f"atelier {atelier_resolu.racine}",
         file=sortie,
     )
+    # Paresseux, comme `etat` : `python -m maestro.scenarios.carte --preparer` charge ce
+    # paquet, donc ce module, avant de s'exécuter.
+    from maestro.scenarios import carte as carte_module
+
+    carte = carte or carte_module.Carte.depuis_environnement()
     rapport = jouer(
         choisis,
         fabrique,
         horodatage=horodatage,
         horloge=horloge,
         trace=lambda ligne: print(ligne, file=sortie),
+        borner=carte.borner if carte is not None else lambda _identifiant: None,
     )
+    if carte is not None:
+        carte.finir()
 
     dossier = rapport_module.ecrire(rapport, racine=racine_rapports)
     print(_synthese(rapport, dossier), file=sortie)
-    _consigner(rapport, copie, historique, sortie, erreur)
+    couverture = _cartographier(carte, rapport, dossier, copie, sortie, erreur)
+    _consigner(rapport, copie, historique, sortie, erreur, carte=couverture)
 
     if banc is not None:
         try:
@@ -434,19 +462,50 @@ def _en_direct(etape: Etape) -> str:
     return f"    · {ligne}"
 
 
+def _cartographier(
+    carte: Carte | None,
+    rapport: Rapport,
+    dossier: Path,
+    copie: Path | None,
+    sortie: TextIO,
+    erreur: TextIO,
+) -> Path | None:
+    """Écrit la carte du code exécuté à côté du rapport, et la dit (#1463).
+
+    Sans carte posée (un passage hors de `start.sh --etat-banc --rejouer`), rien. Une
+    carte qui ne s'écrit pas se dit et ne change pas le verdict, comme l'historique.
+    """
+    if carte is None:
+        return None
+    from maestro.scenarios import carte as carte_module  # paresseux, cf. `main`
+
+    try:
+        chemin, contenu = carte.ecrire(rapport, dossier, racine=copie)
+    except OSError as exc:
+        print(f"Carte du code exécuté NON écrite : {exc}", file=erreur)
+        return None
+    print(f"Carte du code exécuté : {chemin} (python -m {carte_module.MODULE})", file=sortie)
+    for ligne in carte_module.en_lignes(contenu):
+        print(ligne, file=sortie)
+    return chemin
+
+
 def _consigner(
     rapport: Rapport,
     copie: Path | None,
     fichier: Path | None,
     sortie: TextIO,
     erreur: TextIO,
+    *,
+    carte: Path | None = None,
 ) -> None:
     """Ajoute le passage à l'historique du poste, sous `~/.maestro/` (#1461).
 
     Ici, au point d'entrée, et non dans le lanceur : clone principal, worktree ou
     pilote passent tous par `python -m maestro.scenarios`, donc tous y entrent
     sans rien régler. Un historique qui ne s'écrit pas se dit et ne change pas le
-    verdict — le rapport est écrit, et c'est lui qui fait foi pour ce passage.
+    verdict — le rapport est écrit, et c'est lui qui fait foi pour ce passage. La
+    carte du passage, quand il y en a une, y est gardée avec sa ligne (#1463).
     """
     # Import paresseux, comme `etat` : `python -m maestro.scenarios.historique`
     # charge ce paquet, donc ce module, avant de s'exécuter.
@@ -454,7 +513,7 @@ def _consigner(
 
     try:
         chemin = historique.consigner(
-            rapport, historique.copie_de_travail(copie), chemin=fichier
+            rapport, historique.copie_de_travail(copie), chemin=fichier, carte=carte
         )
     except (OSError, RuntimeError) as exc:  # disque, ou dossier personnel illisible
         print(f"Historique du banc NON écrit : {exc}", file=erreur)

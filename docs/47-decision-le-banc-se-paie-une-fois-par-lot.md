@@ -101,8 +101,11 @@ qui réécrit le présent.
    scénario. Une limite d'usage vaut abstention, jamais vert. Une option et une variable l'éteignent,
    et un script le joue hors run.
 3. **#1463 — chaque passage dit quel code chaque scénario a exécuté** : les fonctions Python et les
-   fichiers lus (playbooks, `core/`). C'est la **carte** qui remplace le préfixe. La granularité et
-   le moyen se tranchent dans le lot.
+   fichiers lus (playbooks, `core/`). C'est la **carte** qui remplace le préfixe. Le lot a tranché
+   la granularité (la fonction, jamais la ligne) et le moyen (une sonde que chaque processus Python
+   de la stack charge par `PYTHONPATH`, posée par `start.sh` pour un passage seulement). Ce que la
+   carte contient est en [docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md), et la
+   pesée des moyens sur le ticket.
 4. **#1464 — le banc dû au ticket se dérive de la carte.** `criteres` annonce les scénarios dont la
    carte croise le diff, le moins cher en tête (coût médian tiré de l'historique), et rien quand
    aucun ne croise. S12 n'est proposé que s'il est le seul à couvrir. `/ticket-finish` (étape 4ter),
@@ -137,8 +140,9 @@ juge, et elle le consigne. Aucune liste de fichiers « sensibles » ne remplace 
   vert.
 - **Le banc par lot coûte ≈ 13,5 $ et ≈ 1 h 25 par run**, sur le même quota. Il remplace les
   passages répétés au ticket : le 08/10, ≈ 6 × 3 $ pour S12 seul.
-- **La carte d'une stack multi-processus** (l'API, l'hôte détaché) est un risque technique. #1463
-  le porte. Tant qu'elle n'existe pas, le préfixe reste le déclencheur.
+- **La carte d'une stack multi-processus** (l'API, l'hôte détaché) était un risque technique.
+  #1463 l'a levé : chaque processus Python de la stack charge la sonde. Tant que #1464 ne la lit
+  pas, le préfixe reste le déclencheur.
 - **Un ticket traité hors run n'a pas de pilote pour jouer le banc par lot.** Le script de #1462 le
   joue à la main, sur la même copie dédiée.
 

@@ -22,6 +22,8 @@ Le détail vit dans les modules, chacun sur une question :
   série par scénario (`python -m maestro.scenarios.historique`, #1461) ;
 - `sur_main` — le banc par lot sur `main` : quand le jouer, et à quelles PR rattacher
   un rouge (#1462, `scripts/orchestrate/banc-main.sh`) ;
+- `carte` et `sonde` — quel code chaque scénario a exécuté, sur tous les processus de
+  la stack : `couverture.json` à côté du rapport (#1463) ;
 - `modele` — les objets inertes du verdict.
 """
 
