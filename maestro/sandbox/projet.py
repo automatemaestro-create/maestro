@@ -34,11 +34,13 @@ premier, et le second est un régime à lui (`maestro.sandbox.en_place`) :
 - **tâche sans projet** → le `mkdtemp()` d'avant, inchangé.
 
 Une tâche **tuée en vol** — Maestro éteint, le process de son run achevé — ne
-passe jamais par ce démontage. Son travail n'en est pas perdu pour autant (#1392) :
-celui qui a éteint le process le porte sur la branche dès qu'il l'a fait
-(`sauver_le_travail_en_vol`), et la tâche qui remonte cette branche **sait** ce
-qu'elle y retrouve — l'espace le dit à l'agent (`TravailAnterieur`) et le compte
-dans ce que la tâche livre.
+passe jamais par ce démontage, ou ne l'achève pas. Son travail n'en est pas perdu
+pour autant (#1392) : celui qui a éteint le process le porte sur la branche dès
+qu'il l'a fait (`sauver_le_travail_en_vol`), et la tâche qui remonte cette branche
+**sait** ce qu'elle y retrouve — l'espace le dit à l'agent (`TravailAnterieur`) et
+le compte dans ce que la tâche livre. Et un démontage coupé ne laisse jamais une
+moitié de worktree (#1447) : à tout instant, le worktree est intact à son adresse,
+ou il n'est plus un worktree (`_retirer_worktree`).
 
 Trois invariants tiennent le worktree, et ce sont eux qu'il ne faut pas défaire :
 
@@ -64,7 +66,9 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import subprocess
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -88,6 +92,15 @@ PREFIXE_BRANCHE = "maestro/"
 #: de quelques dizaines de millisecondes ; une minute est une borne d'anomalie
 #: (disque réseau, dépôt colossal), pas un budget d'attente.
 _DELAI_GIT_S = 60
+
+#: Les pauses entre deux essais d'écarter un worktree de son adresse (#1447,
+#: `_ecarter`). Sous Windows, un dossier qu'un process tient encore — son
+#: répertoire courant, un fichier ouvert, l'antivirus qui relit ce qu'un
+#: `npm install` vient d'écrire — ne se déplace pas ; la plupart de ces prises se
+#: relâchent d'elles-mêmes. Une seconde en tout : une extinction n'en accorde que
+#: cinq au démontage entier (`DELAI_ANNULATION_S`), et le worktree qu'on n'écarte
+#: pas reste intact, ce qui n'est pas une panne.
+_PAUSES_ECART_S: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4)
 
 #: Longueur maximale du fragment de nom engendré depuis l'identifiant de tâche —
 #: assez pour rester lisible dans `git branch`, assez court pour ne pas crever
@@ -387,12 +400,14 @@ def espace_de_travail(
     commité, que le démontage aurait porté sur la branche. Sinon tout est démonté
     **même en cas d'exception** — le travail encore en attente est d'abord
     **commité sur la branche de la tâche** (`_solder_la_branche`, #705), puis le
-    worktree est retiré par `git worktree remove`, jamais par une suppression de
-    branche. En place, `keep` n'a pas d'objet : la racine n'est **jamais**
-    démontée ni nettoyée, une exception y laisse ce qui a été écrit — c'est le
-    critère du ticket (« rien n'est perdu à la fermeture de l'espace »), et le
-    `rmtree` d'un `finally` est précisément ce qui a effacé le livrable de
-    `squelette-p1` le 2026-08-28 (#568).
+    worktree est retiré — écarté de son adresse d'un seul geste avant d'être
+    effacé, pour qu'une extinction qui coupe le démontage ne laisse pas de coquille
+    (`_retirer_worktree`, #1447) —, jamais par une suppression de branche ; un
+    worktree qu'un process tient encore reste monté, intact. En place, `keep` n'a
+    pas d'objet : la racine n'est **jamais** démontée ni nettoyée, une exception y
+    laisse ce qui a été écrit — c'est le critère du ticket (« rien n'est perdu à
+    la fermeture de l'espace »), et le `rmtree` d'un `finally` est précisément ce
+    qui a effacé le livrable de `squelette-p1` le 2026-08-28 (#568).
 
     Lève `RacineRefusee` si la racine du projet n'est plus admissible (EF-38) —
     dans les deux régimes, c'est la dernière porte avant qu'un agent n'écrive —
@@ -447,10 +462,14 @@ def espace_de_travail(
         )
     finally:
         if not keep:
+            libre = True
             if monte:
                 _solder_la_branche(chemin, branche)
-                _retirer_worktree(racine, chemin)
-            retirer_arbre(parent)
+                libre = _retirer_worktree(racine, chemin)
+            # Un worktree resté intact (#1447) ne s'efface pas avec son parent : ce
+            # serait refaire, à la main, la coquille que son retrait vient d'éviter.
+            if libre:
+                retirer_arbre(parent)
 
 
 def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
@@ -470,7 +489,9 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
     exacte de ceux qu'`espace_de_travail` monte pour **cette** tâche — jamais celui
     qu'une personne aurait ouvert elle-même (`_worktrees_abandonnes`). Le worktree
     reste monté : le retirer n'ajoute rien à la sauvegarde, et c'est le montage
-    suivant de la tâche qui le libère (`_liberer_la_branche`).
+    suivant de la tâche qui le libère (`_liberer_la_branche`). Un worktree dont Git
+    dit l'adresse vide ou sans `.git` (`prunable`, #1447) n'en est pas un : rien n'y
+    est commité (`_worktrees`).
 
     Rend `True` si un worktree de la tâche a été trouvé — son travail est alors sur
     la branche —, `False` s'il n'y en avait pas : projet non versionné (la tâche
@@ -695,7 +716,6 @@ def _liberer_la_branche(racine: Path, branche: str, chemin: Path) -> None:
     for abandonne in _worktrees_abandonnes(racine, branche, sauf=chemin):
         _solder_la_branche(abandonne, branche)
         _retirer_worktree(racine, abandonne)
-        _git(racine, "worktree", "prune")
 
 
 def _worktrees_abandonnes(
@@ -735,15 +755,22 @@ def _worktrees_abandonnes(
 
 
 def _worktrees(porcelaine: str) -> Iterator[tuple[str, str]]:
-    """`(chemin, référence)` de chaque worktree d'un `git worktree list --porcelain`.
+    """`(chemin, référence)` de chaque worktree **présent** d'un `git worktree list --porcelain`.
 
     Un worktree en HEAD détaché n'a pas de ligne `branch` : il rend une référence
     vide, qui ne désigne aucune branche.
+
+    Un worktree que Git dit `prunable` n'est pas rendu (#1447) : son adresse est vide,
+    ou n'a plus de `.git` — la coquille qu'un démontage coupé laissait avant ce
+    ticket. Il n'y a rien à y commiter, et Git, lancé dedans, remonterait jusqu'au
+    premier dépôt qu'il trouve au-dessus du répertoire temporaire. Le `worktree
+    prune` du montage suivant l'oublie.
     """
     for bloc in porcelaine.split("\n\n"):
-        champs = dict(
-            ligne.split(" ", 1) for ligne in bloc.splitlines() if " " in ligne
-        )
+        lignes = bloc.splitlines()
+        if any(ligne.split(" ", 1)[0] == "prunable" for ligne in lignes):
+            continue
+        champs = dict(ligne.split(" ", 1) for ligne in lignes if " " in ligne)
         if "worktree" in champs:
             yield champs["worktree"], champs.get("branch", "")
 
@@ -790,22 +817,84 @@ def _solder_la_branche(chemin: Path, branche: str) -> None:
         pass
 
 
-def _retirer_worktree(racine: Path, chemin: Path) -> None:
-    """Retire le worktree de `chemin` — **jamais la branche** (EF-36).
+def _retirer_worktree(racine: Path, chemin: Path) -> bool:
+    """Retire le worktree de `chemin` — **jamais la branche** (EF-36) — sans laisser de coquille.
+
+    Rend `True` quand plus rien n'est monté à `chemin`, `False` quand le worktree y
+    est resté **intact** : à l'appelant de ne pas effacer alors ce qui le contient.
+
+    **Ce geste peut être coupé à tout instant** (#1447) : il vit dans le `finally`
+    d'un hôte qu'une extinction achève au bout de `DELAI_ANNULATION_S`, et effacer
+    un `node_modules/` complet prend plus que cela. `git worktree remove --force`
+    effaçait sur place, `.git` en premier (l'ordre où NTFS rend les entrées) : coupé
+    au milieu, il laissait à l'adresse du worktree un dossier sans `.git` que Git
+    enregistrait encore — `git status` y répondait « not a git repository », et S12
+    s'y arrêtait. D'où trois gestes, dans cet ordre, et c'est l'ordre qui tient :
+
+    1. le worktree est **écarté** de son adresse d'un seul geste — un renommage dans
+       le même dossier (`_ecarter`), atomique : avant, il est intact ; après, il
+       n'est plus là ;
+    2. ce qui a été écarté **cesse d'être un worktree** — son `.git` d'abord, puis
+       l'enregistrement que Git en tenait (`git worktree prune`, qui oublie un
+       worktree dont l'adresse est vide) ;
+    3. le reste est **effacé** (`retirer_arbre`, #992 : lecture seule comprise).
+
+    Une mort après le premier geste laisse un enregistrement `prunable` — que ni la
+    sauvegarde d'une extinction (`_worktrees`) ni l'oracle de S12 ne lisent, et que le
+    montage suivant oublie — et un dossier qui n'est plus un worktree, que le
+    ramassage emporte dès que son hôte est mort (`maestro.sandbox.ramassage`). Le
+    ramassage ne garde que ce qui porte un `.git` : c'est pourquoi il part avant
+    l'enregistrement.
+
+    Un worktree qu'on ne peut pas écarter — un process y vit encore, et Windows ne
+    déplace pas un dossier tenu — reste **intact et monté**, comme celui d'une tâche
+    tuée avant son démontage : son travail est sur la branche (`_solder_la_branche`,
+    ou `sauver_le_travail_en_vol` à l'extinction), et le montage suivant de la tâche
+    le libère. L'effacer quand même est précisément ce qui fabriquait la coquille.
 
     Best-effort et silencieux à dessein : ce démontage vit dans un `finally`, et
-    une erreur levée ici masquerait celle qui a réellement condamné la tâche. Si
-    Git ne peut pas le retirer (dépôt déplacé, binaire absent), le répertoire est
-    supprimé à la main — par `retirer_arbre` (#992), parce qu'un worktree est
-    plein d'objets Git en lecture seule et qu'un `rmtree` nu en laisserait la
-    coquille — et l'enregistrement est purgé au prochain montage.
+    une erreur levée ici masquerait celle qui a réellement condamné la tâche. Aucun
+    des gestes ne demande Git, sauf l'oubli, que le montage suivant refait.
     """
+    if not chemin.exists():
+        _oublier_les_worktrees_disparus(racine)
+        return True
+    a_jeter = _ecarter(chemin)
+    if a_jeter is None:
+        return False
     try:
-        resultat = _git(racine, "worktree", "remove", "--force", str(chemin))
+        (a_jeter / ".git").unlink(missing_ok=True)
+    except OSError:  # pragma: no cover - `.git` tenu : le prune ne l'oubliera pas, l'âge si
+        pass
+    _oublier_les_worktrees_disparus(racine)
+    retirer_arbre(a_jeter)
+    return True
+
+
+def _ecarter(chemin: Path) -> Path | None:
+    """Renomme le worktree en un nom qu'aucune tâche ne porte — `None` s'il est resté en place.
+
+    Le nom garde le dossier parent, donc le volume (le renommage reste un seul geste)
+    et le marqueur de pid que le ramassage lit. Le point qu'il porte, `_slug` l'écarte
+    de tout nom de tâche : ce dossier ne passera jamais pour l'espace de quelqu'un.
+    """
+    cible = chemin.with_name(f"{chemin.name}.a-jeter-{secrets.token_hex(4)}")
+    for pause in (*_PAUSES_ECART_S, None):
+        try:
+            return chemin.rename(cible)
+        except OSError:
+            if pause is None:
+                return None
+            time.sleep(pause)
+    return None  # pragma: no cover - la boucle rend toujours
+
+
+def _oublier_les_worktrees_disparus(racine: Path) -> None:
+    """`git worktree prune` — l'enregistrement d'un worktree dont l'adresse est vide. Muet."""
+    try:
+        _git(racine, "worktree", "prune")
     except EspaceProjetIndisponible:
-        resultat = None
-    if resultat is None or resultat.returncode != 0:
-        retirer_arbre(chemin)
+        pass
 
 
 def _ref_existe(racine: Path, branche: str) -> bool:

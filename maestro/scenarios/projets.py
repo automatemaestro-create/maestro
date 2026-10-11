@@ -985,12 +985,21 @@ def en_cours_d_ecriture(racine: Path, branche: str) -> tuple[str, ...]:
     que S12 attend avant d'interrompre — une tâche qui n'a encore rien écrit n'a
     rien à perdre — et ce qu'il relit après l'extinction : un travail sauvé n'y est
     plus en attente. Lève `OSError` si Git ne répond pas.
+
+    Un worktree que Git dit `prunable` n'a rien à montrer (#1447) : son adresse est
+    vide, ou n'a plus de `.git` — la coquille qu'un démontage coupé par l'extinction
+    laissait avant ce ticket, et sur laquelle S12 s'arrêtait (« not a git
+    repository »). Ce qui s'y trouvait n'est en attente nulle part : c'est la branche
+    qui dit s'il a été sauvé (`travail_en_avance`).
     """
     liste = _git(racine, "worktree", "list", "--porcelain")
     if liste.returncode != 0:
         raise OSError(f"`git worktree list` illisible dans {racine} : {_message(liste)}")
     for bloc in liste.stdout.split("\n\n"):
-        champs = dict(ligne.split(" ", 1) for ligne in bloc.splitlines() if " " in ligne)
+        lignes = bloc.splitlines()
+        if any(ligne.split(" ", 1)[0] == "prunable" for ligne in lignes):
+            continue
+        champs = dict(ligne.split(" ", 1) for ligne in lignes if " " in ligne)
         if champs.get("branch") == f"refs/heads/{branche}" and "worktree" in champs:
             return salissures(Path(champs["worktree"]))
     return ()
