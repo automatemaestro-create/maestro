@@ -480,7 +480,7 @@ Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.p
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) (#1035).
 
-### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — lots #1455, #1456 et #1457 livrés)*
+### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — livré, lots #1455 à #1458)*
 
 Hors des projets qu'on lui confie, Maestro ne pose rien sur le poste ailleurs que sous **trois
 racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul à déclarer :
@@ -532,10 +532,50 @@ racine du profil (`~/maestro-scenarios`, `~/maestro-relecture`), sont repris au 
 retirés quand ils ne portent plus rien ; ce qui n'y a pas la forme d'un passage du banc ou d'un
 dossier de relecture (`<iid>/`) est nommé, jamais touché.
 
-**La garde.** [`tests/test_emplacements.py`](../tests/test_emplacements.py) refuse, sous
+**Une commande montre ce qui a été posé, et solde le reste sur un « oui »** (#1458). Le produit
+range désormais ce qu'il pose, mais il restait ce qui est né avant, et surtout ce que des
+**sessions de développement** avaient posé au jugé : `~/maestro-essais`, `~/maestro-mesure-882`,
+`~/maestro-verif-1160`, `~/.maestro/banc-728`, `~/.maestro/automation`… Aucun ramasseur ne peut
+les reconnaître : ils ne nomment personne, et en deviner la propriété serait la faute qu'on
+répare. [`maestro/menage.py`](../maestro/menage.py) les montre donc, et c'est une personne qui
+décide :
+
+```
+.venv/Scripts/python.exe -m maestro.menage            # --check : montre, n'écrit rien
+.venv/Scripts/python.exe -m maestro.menage --purger   # montre, puis demande « oui »
+```
+
+Chaque racine, puis le hors-racine, une ligne par élément avec sa taille, son propriétaire quand
+on le connaît et son sort : `jamais retiré` (la racine des projets), `déclaré` (à sa place),
+`conservé` (il porte un projet déclaré ou le répertoire des projets, ou il est **vivant** — un
+occupant qui tourne, un worktree dont le dépôt existe, une activité de moins de six heures, la
+règle même du ramassage), `à son propriétaire` (l'état d'une stack, un ancien atelier, le cache
+des présentations), `ramassable` (le ramassage le retirera) et `à retirer` — ce qu'aucun
+mécanisme ne connaît. `--purger` ne retire que ces derniers, tous ou ceux qu'on nomme, après un
+« oui » tapé sur l'entrée standard, et **rejuge** chacun au moment de le retirer. Les projets
+déclarés se lisent dans **chaque** copie du dépôt (le clone principal et ses worktrees ont chacun
+leur `core/projets/`) ; une déclaration illisible suffit à refuser toute la purge. Le « oui » est
+une réponse et non une option : une option se recopie d'une commande à l'autre sans que personne
+ait regardé la liste.
+
+### 2.7.1 Ce que s'interdisent les sessions qui développent Maestro, et les gardes
+<!-- documentation: développement -->
+
+**Une session de développement n'écrit que dans son worktree — `.maestro/session/` — ou son
+scratchpad, jamais dans `~`.** C'est la règle qui empêche ces dossiers de renaître, et
+`CLAUDE.md` la porte parce que c'est le texte que chaque session lit. Un essai, une mesure, un
+banc d'appoint ont leur place dans l'atelier de session du worktree : il part avec lui, et rien
+n'a à le retrouver ensuite.
+
+**Les gardes.** [`tests/test_emplacements.py`](../tests/test_emplacements.py) refuse, sous
 `maestro/`, tout dossier temporaire ouvert et tout chemin composé sous le dossier personnel hors du
 module des racines ; les modules qui lisent le dossier personnel sans y rien créer s'inscrivent à
-son inventaire, avec leur raison.
+son inventaire, avec leur raison. [`tests/test_menage.py`](../tests/test_menage.py) étend la règle
+au reste du dépôt : aucun script, prompt ou réglage (`scripts/`, `.claude/`, `apps/desktop/`) ne
+nomme sous `~` autre chose que `~/Maestro/`, `~/.maestro/` et les deux anciens ateliers que leur
+propriétaire vide — hors des lectures qu'il inventorie (la configuration de Claude Code, les
+lanceurs du système) —, et `CLAUDE.md` comme ce chapitre disent la règle aux noms que le code
+déclare.
 
 ---
 
