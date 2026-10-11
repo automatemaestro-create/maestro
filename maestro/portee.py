@@ -105,6 +105,11 @@ mais le nom qu'un `mktemp` sans gabarit fabrique (`/tmp/tmp.XXXXXXXXXX`) se
 reconnaît à lui seul : chaque appel `Bash` étant un shell neuf, l'agent réutilise
 en toutes lettres, dans l'appel suivant, le chemin que le précédent a créé.
 
+Ce nom-là est reconnu par **un seul** prédicat, `etabli_de`, que la frontière
+d'écriture applique aussi aux outils de fichiers (#1406) : l'établi où le shell
+écrit est celui où `Write` écrit. Un dossier de `mktemp` qui contient la racine
+n'en est pas un — il était là avant la tâche.
+
 **Installer dans le projet n'est pas en sortir.** Un `pip install` sort du projet,
 sauf quand c'est un interpréteur du projet qui installe
 (`.venv/Scripts/python.exe -m pip install`), qu'un venv du projet a été activé
@@ -115,8 +120,10 @@ toujours.
 
 Ni qui tranche (`maestro.decideur`), ni ce qu'un agent a le droit d'appeler
 (`maestro.agents.permissions`), ni où il a le droit d'écrire
-(`maestro.sandbox.en_place`). Il est **feuille** — il n'importe de `maestro` que
-`lecture` et `shell`, feuilles eux-mêmes — pour la raison qui vaut déjà là-bas :
+(`maestro.sandbox.en_place`) — qui lui emprunte seulement le prédicat de
+l'établi, pour que les deux gardes n'en aient pas chacune une version. Il est
+**feuille** — il n'importe de `maestro` que `lecture` et `shell`, feuilles
+eux-mêmes — pour la raison qui vaut déjà là-bas :
 la réponse est lue par le hook du fournisseur, et elle doit s'éprouver sans monter
 ni politique, ni session, ni projet.
 
@@ -1141,9 +1148,9 @@ class PorteeProjet:
         relatif = self._sous_la_racine(texte)
         if relatif is not None:
             return _Lieu(RACINE, relatif, incertain)
-        sous_mktemp = _sous_un_mktemp(texte)
-        if sous_mktemp is not None:
-            return _Lieu(ETABLI, sous_mktemp, incertain)
+        etabli = etabli_de(texte, self.racine)
+        if etabli is not None:
+            return _Lieu(ETABLI, etabli[1], incertain)
         return _Lieu(DEHORS, texte, incertain)
 
     def _ailleurs(self, lieu: _Lieu, ctx: _Contexte) -> str:
@@ -1561,17 +1568,46 @@ def _repond(nom: str, motif: str, sans_casse: bool) -> bool:
     return fnmatch.fnmatchcase(nom, motif)
 
 
-def _sous_un_mktemp(texte: str) -> str | None:
-    """Le chemin relatif sous un dossier nommé par `mktemp` — `None` s'il n'y est pas.
+def etabli_de(chemin: str, racine: Path | str) -> tuple[str, str] | None:
+    """Le dossier créé par `mktemp` où mène `chemin` — son nom, et le chemin relatif
+    (POSIX) dessous —, ou `None` s'il n'y mène pas.
 
-    `texte` est déjà replié (`_canonique`) : un `..` qui en sortirait n'y est plus.
+    **Le** prédicat de l'établi, et il n'y en a qu'un (#1406) : la portée le
+    consulte pour ce que le shell nomme, la frontière d'écriture
+    (`maestro.sandbox.en_place.FrontiereEcriture`) pour ce que les outils de
+    fichiers écrivent. Deux règles pour une même question avaient divergé : #1348
+    avait ouvert l'établi au seul shell, et l'agent que son cadre y envoyait se
+    voyait refuser l'outil d'écriture — dix refus sur les passages S6 du banc.
+
+    Un établi est un nom `tmp.XXXXXXXXXX` directement sous un dossier temporaire
+    (`tmp`, `temp`, à la casse près). `chemin` est déjà replié : un `..` qui en
+    sortirait n'y est plus. Seul le texte est lu, ce qui garde la portée pure ; ce
+    que le disque met derrière un nom (un lien) regarde qui écrit sur le disque.
+
+    Un dossier de `mktemp` qui **contient la racine** n'est pas un établi : il était
+    là avant la tâche, et ce qu'il porte à côté du projet n'est pas à l'agent — ni
+    un projet voisin, ni le conteneur lui-même, dont l'effacement emporterait le
+    projet. Il se reconnaît à son **nom**, tiré au hasard, et non à son chemin :
+    `/tmp/tmp.X` et `C:\\…\\Temp\\tmp.X` sont le même dossier sous Git Bash, et
+    seul le nom s'écrit pareil des deux côtés.
     """
+    etabli = _nomme_par_mktemp(chemin)
+    if etabli is None:
+        return None
+    autour = _nomme_par_mktemp(str(racine))
+    if autour is not None and autour[0].casefold() == etabli[0].casefold():
+        return None
+    return etabli
+
+
+def _nomme_par_mktemp(texte: str) -> tuple[str, str] | None:
+    """Le premier nom de `mktemp` sous un dossier temporaire dans `texte`, et ce qui le suit."""
     segments = [s for s in re.split(r"[\\/]+", texte) if s]
     for index in range(1, len(segments)):
         if _NOM_MKTEMP.fullmatch(segments[index]) and (
             segments[index - 1].lower() in _DOSSIERS_TEMPORAIRES
         ):
-            return "/".join(segments[index + 1 :])
+            return segments[index], "/".join(segments[index + 1 :])
     return None
 
 

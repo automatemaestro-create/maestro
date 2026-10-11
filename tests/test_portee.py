@@ -1085,6 +1085,23 @@ def test_le_nom_de_mktemp_se_reconnait_sous_toutes_ses_orthographes() -> None:
         assert portee.commande_hors_portee(f'rm -rf "{dossier}/profil"') == "", dossier
 
 
+@pytest.mark.parametrize(
+    "racine",
+    ["/tmp/tmp.gv9kMtoQdP/p3", "C:/Users/Sam25/AppData/Local/Temp/tmp.gv9kMtoQdP/p3"],
+)
+def test_le_dossier_de_mktemp_qui_porte_la_racine_n_est_pas_a_l_agent(racine: str) -> None:
+    """#1406 : un projet posé dans un dossier `mktemp`. Ce dossier était là avant la
+    tâche : l'effacer emporterait le projet, et ce qu'il porte à côté — un projet
+    voisin — n'est pas à l'agent. Reconnu à son nom, sous l'orthographe de Git Bash
+    comme sous celle de Windows ; un autre dossier de `mktemp` reste à l'agent."""
+    portee = PorteeProjet(racine=Path(racine))
+
+    for dossier in ("/tmp/tmp.gv9kMtoQdP", "C:/Users/Sam25/AppData/Local/Temp/tmp.gv9kMtoQdP"):
+        assert "sort du" in portee.commande_hors_portee(f'rm -rf "{dossier}"'), dossier
+        assert "sort du" in portee.commande_hors_portee(f'rm -rf "{dossier}/voisin"'), dossier
+    assert portee.commande_hors_portee('rm -rf "/tmp/tmp.AutreDossr/profil"') == ""
+
+
 #: Les deux commandes que le passage joué sur le code final (`20260927-131322`)
 #: a encore rendues à une personne : le ménage des caches de S3, et un `cp` sur le
 #: puits dans S6.
