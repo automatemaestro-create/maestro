@@ -265,8 +265,10 @@ class AreteGraphe:
     **redondante** : l'aval attendait déjà l'amont par cette chaîne, et la
     flèche n'apprend rien de plus. C'est celle qui « semblait venir d'ailleurs »
     sur le run `3fe501fc0878`. Elle reste une arête — le plan l'a déclarée, et
-    « en toutes lettres » les nomme toutes —, mais la vue l'estompe ; la règle
-    est calculée **ici, une fois**, plutôt que réécrite en règle d'affichage.
+    « en toutes lettres » les nomme toutes —, mais la vue ne la dessine plus
+    (#1393 : sur le plan de p5, cinq redondantes sur dix-huit faisaient
+    l'écheveau ; #1297 les pâlissait seulement) ; la règle est calculée **ici,
+    une fois**, plutôt que réécrite en règle d'affichage.
     """
 
     de: str

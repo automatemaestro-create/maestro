@@ -806,8 +806,9 @@ dans le code et **vérifiée sur l'état réel** des runs, lu par l'API.
 **Ce qui va au jalon « Le run tient parole »** (2028-02-03), qui tient la parole du run sur ce qu'il
 montre et sur sa façon d'exécuter :
 - **#1297** : les flèches du pipeline se lisent. Une légende dit qu'une flèche est une
-  **dépendance** et ce que dit sa couleur, une dépendance redondante s'estompe, et aucune flèche ne
-  passe sous une carte ;
+  **dépendance** et ce que dit sa couleur, une dépendance redondante s'estompe (renversé par
+  **#1393** : elle n'est plus dessinée, et les éventails se regroupent en troncs), et aucune flèche
+  ne passe sous une carte ;
 - **#1298** : le run dit pourquoi ses tâches passent une à une (projet non versionné, un seul agent,
   chaîne de dépendances), et propose de versionner le projet ;
 - **#1299** : les tâches indépendantes tournent de front. Le plan les dégage, et un agent en prend

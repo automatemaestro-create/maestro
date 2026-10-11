@@ -32,6 +32,11 @@
  * redondante, en revanche, est servi (`AreteGraphe.redondante`), jamais déduit
  * ici.
  *
+ * Et depuis #1393, **quelles flèches partagent un tronc** — une topologie, que
+ * le serveur pourrait poser mais qui dépend des colonnes **dessinées**, donc du
+ * cadrage (`troncsDesEventails`) — et par où passe ce tronc (`tracerTroncs`,
+ * `tracerDansTronc`).
+ *
  * Aucun import React : ces règles se testent sans rendu — `apps/web/tests/
  * pipeline.test.tsx` (#492) les éprouve hors de tout montage, et l'**ordre** dans
  * lequel les questions ci-dessus sont posées y est gardé comme la décision qu'il
@@ -306,6 +311,12 @@ export type TraceArete = { segments: Segment[]; d: string; bas: number };
 export const ECART_COULOIR = 12;
 
 /**
+ * L'écart entre deux flèches qui empruntent **le même couloir** d'une colonne
+ * (#1393) : sans lui, elles s'y superposaient et se lisaient comme un seul trait.
+ */
+export const ECART_VOIE = 4;
+
+/**
  * Une courbe à tangentes horizontales, d'un bord de gouttière à l'autre. Les
  * points de contrôle sont à mi-distance, avec un plancher — sinon deux colonnes
  * voisines rendraient une courbe si plate qu'elle se confondrait avec le bord.
@@ -325,19 +336,40 @@ function courbe(de: Point, vers: Point): Segment {
 }
 
 /**
- * Les hauteurs où l'on traverse une colonne **sans toucher une carte** : le
- * milieu de l'intervalle entre deux cartes, et sous la dernière. Pas au-dessus
- * de la première — la colonne commence en haut de la toile, il n'y a pas de place.
+ * Un couloir où l'on traverse une colonne **sans toucher une carte** : sa
+ * hauteur, et la marge libre de part et d'autre — `null` sous la dernière carte,
+ * où rien ne borne le couloir vers le bas.
  */
-function couloirsLibres(cartes: readonly Rect[]): number[] {
-  const libres: number[] = [];
+type Couloir = { y: number; marge: number | null };
+
+/**
+ * Les couloirs d'une colonne : le milieu de l'intervalle entre deux cartes, et
+ * sous la dernière. Pas au-dessus de la première — la colonne commence en haut
+ * de la toile, il n'y a pas de place.
+ */
+function couloirsLibres(cartes: readonly Rect[]): Couloir[] {
+  const libres: Couloir[] = [];
   for (let i = 0; i + 1 < cartes.length; i += 1) {
     const bas = cartes[i].y + cartes[i].hauteur;
-    if (cartes[i + 1].y > bas) libres.push((bas + cartes[i + 1].y) / 2);
+    if (cartes[i + 1].y > bas) {
+      libres.push({ y: (bas + cartes[i + 1].y) / 2, marge: (cartes[i + 1].y - bas) / 2 - 1 });
+    }
   }
   const derniere = cartes[cartes.length - 1];
-  libres.push(derniere.y + derniere.hauteur + ECART_COULOIR);
+  libres.push({ y: derniere.y + derniere.hauteur + ECART_COULOIR, marge: null });
   return libres;
+}
+
+/**
+ * La voie d'une flèche dans un couloir déjà emprunté (#1393) : la première passe
+ * au milieu, les suivantes s'en écartent de part et d'autre, sans sortir de
+ * l'intervalle libre — et sous la dernière carte, vers le bas seulement.
+ */
+function voieDans(couloir: Couloir, deja: number): number {
+  if (deja === 0) return couloir.y;
+  if (couloir.marge === null) return couloir.y + deja * ECART_VOIE;
+  const ecart = Math.min(Math.ceil(deja / 2) * ECART_VOIE, couloir.marge);
+  return couloir.y + (deja % 2 === 1 ? ecart : -ecart);
 }
 
 function cheminSvg(segments: readonly Segment[]): string {
@@ -359,10 +391,11 @@ function cheminSvg(segments: readonly Segment[]): string {
  * Deux colonnes voisines : une seule courbe, dans leur gouttière. C'est le cas
  * courant, et le dessin d'avant ce ticket.
  *
- * Une arête qui **saute** des colonnes — le plus souvent une dépendance
- * redondante, déjà impliquée par la chaîne qui passe par la colonne du milieu —
- * se traçait d'une traite, et passait donc sous la carte intermédiaire : c'est
- * la flèche qui « semblait venir d'ailleurs » sur le run `3fe501fc0878`. Elle
+ * Une arête qui **saute** des colonnes se traçait d'une traite, et passait donc
+ * sous la carte intermédiaire : c'est la flèche qui « semblait venir d'ailleurs »
+ * sur le run `3fe501fc0878` (une redondante, que la vue ne dessine plus depuis
+ * #1393 ; une arête qui saute une colonne sans l'être — les illustrations qui ne
+ * servent que la recette finale — reste à contourner). Elle
  * traverse désormais chaque colonne sautée par un **couloir libre** (entre deux
  * cartes, ou sous la dernière), choisi au plus près de la droite qui joindrait
  * ses deux bouts, et rejoint le couloir suivant par une courbe de gouttière. Une
@@ -373,6 +406,11 @@ function cheminSvg(segments: readonly Segment[]): string {
  * `colonnes` sont celles **dessinées** (`niveauxRetenus`, après cadrage), pas les
  * niveaux du plan : une colonne retirée par le cadrage n'a rien à contourner.
  *
+ * `voies` (#1393) est le registre des couloirs déjà empruntés, partagé par les
+ * tracés d'un même dessin : deux flèches qui choisissent le même couloir d'une
+ * colonne y passent l'une à côté de l'autre (`ECART_VOIE`) au lieu de se
+ * superposer. Sans registre, chaque tracé se calcule seul, comme avant.
+ *
  * `null` tant que les deux boîtes ne sont pas mesurées : un tracé vers `(0,0)`
  * traverserait le dessin le temps d'une image.
  */
@@ -381,6 +419,7 @@ export function tracerArete(
   vers: string,
   colonnes: readonly (readonly string[])[],
   boites: ReadonlyMap<string, Rect>,
+  voies?: Map<string, number>,
 ): TraceArete | null {
   const depart = boites.get(de);
   const arrivee = boites.get(vers);
@@ -405,9 +444,13 @@ export function tracerArete(
         .sort((a, b) => a.y - b.y);
       if (cartes.length === 0) continue;
       const vise = sortie.y + ((entree.y - sortie.y) * (k - ci)) / (cj - ci);
-      const y = couloirsLibres(cartes).reduce((meilleur, candidat) =>
-        Math.abs(candidat - vise) < Math.abs(meilleur - vise) ? candidat : meilleur,
+      const couloir = couloirsLibres(cartes).reduce((meilleur, candidat) =>
+        Math.abs(candidat.y - vise) < Math.abs(meilleur.y - vise) ? candidat : meilleur,
       );
+      const cle = `${k}|${couloir.y}`;
+      const deja = voies?.get(cle) ?? 0;
+      voies?.set(cle, deja + 1);
+      const y = voieDans(couloir, deja);
       const gauche = { x: Math.min(...cartes.map((carte) => carte.x)), y };
       const droite = { x: Math.max(...cartes.map((carte) => carte.x + carte.largeur)), y };
       segments.push(courbe(ici, gauche), { forme: "ligne", de: gauche, vers: droite });
@@ -449,6 +492,231 @@ export function pointsDuTrace(trace: TraceArete, pas = 24): Point[] {
     }
   }
   return points;
+}
+
+/* ------------------------------------------------------------------ *
+ * Les éventails en troncs (#1393)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Un **tronc** : un éventail **exact** entre deux colonnes voisines — chaque
+ * source y est attendue par chacune des cibles, et aucune cible n'attend une
+ * autre tâche de la colonne de départ. Ses flèches partagent un trait vertical
+ * dans la gouttière, au lieu d'autant de courbes : c'est la variante retenue sur
+ * pièces par le regard neuf, d'après le graphe d'un run GitHub Actions, où le job
+ * qui dépend de tous les autres reçoit un seul trait.
+ *
+ * L'exactitude est ce qui rend le tronc **vrai** : un trait commun à des liens
+ * qui ne se correspondent pas ferait lire « A attend C » là où le plan ne le dit
+ * pas — le défaut que la veille laisse à GitHub Actions. Un recouvrement
+ * partiel retombe donc en courbes, une par dépendance.
+ */
+export type Tronc = {
+  /** Stable d'un rendu à l'autre : la gouttière, les sources et les cibles. */
+  cle: string;
+  /** Le rang de la colonne de départ — le tronc vit dans la gouttière qui la suit. */
+  gouttiere: number;
+  /** Dans l'ordre de leur colonne, comme le dessin les empile. */
+  sources: string[];
+  cibles: string[];
+  aretes: AreteGraphe[];
+};
+
+/**
+ * Les troncs d'un dessin : les éventails exacts entre colonnes voisines, d'au
+ * moins trois tâches (une source vers deux cibles, deux sources vers une cible,
+ * ou davantage) — en deçà, une courbe suffit et un tronc n'apprendrait rien.
+ *
+ * Une **topologie**, sans géométrie : elle se décide sur les colonnes dessinées
+ * (`niveauxRetenus`, après cadrage), et se teste sans aucune boîte mesurée.
+ */
+export function troncsDesEventails(
+  aretes: readonly AreteGraphe[],
+  colonnes: readonly (readonly string[])[],
+): Tronc[] {
+  const colonneDe = new Map<string, number>();
+  const rangDe = new Map<string, number>();
+  colonnes.forEach((colonne, c) =>
+    colonne.forEach((id, r) => {
+      colonneDe.set(id, c);
+      rangDe.set(id, r);
+    }),
+  );
+  const parRang = (a: string, b: string) => (rangDe.get(a) ?? 0) - (rangDe.get(b) ?? 0);
+
+  const sorties = new Map<string, AreteGraphe[]>();
+  const entrees = new Map<string, Set<string>>();
+  for (const arete of aretes) {
+    const ci = colonneDe.get(arete.de);
+    if (ci === undefined || colonneDe.get(arete.vers) !== ci + 1) continue;
+    sorties.set(arete.de, [...(sorties.get(arete.de) ?? []), arete]);
+    entrees.set(arete.vers, (entrees.get(arete.vers) ?? new Set()).add(arete.de));
+  }
+
+  // Les sources qui servent **exactement** les mêmes cibles de la colonne
+  // suivante forment un éventail candidat.
+  const candidats = new Map<string, Omit<Tronc, "cle">>();
+  for (const [source, liste] of sorties) {
+    const cibles = [...new Set(liste.map((arete) => arete.vers))].sort(parRang);
+    const gouttiere = colonneDe.get(source) as number;
+    const cle = `${gouttiere}|${[...cibles].sort().join(",")}`;
+    const candidat = candidats.get(cle) ?? { gouttiere, sources: [], cibles, aretes: [] };
+    candidat.sources.push(source);
+    candidat.aretes.push(...liste);
+    candidats.set(cle, candidat);
+  }
+
+  const troncs: Tronc[] = [];
+  for (const candidat of candidats.values()) {
+    if (candidat.sources.length + candidat.cibles.length < 3) continue;
+    const exact = candidat.cibles.every((cible) =>
+      [...(entrees.get(cible) ?? [])].every((source) => candidat.sources.includes(source)),
+    );
+    if (!exact) continue;
+    const sources = [...candidat.sources].sort(parRang);
+    troncs.push({
+      ...candidat,
+      sources,
+      cle: `${candidat.gouttiere}|${sources.join(",")}→${candidat.cibles.join(",")}`,
+    });
+  }
+  return troncs;
+}
+
+/**
+ * La géométrie d'un tronc : son abscisse dans la gouttière, l'amorce de chaque
+ * source jusqu'à lui, son trait vertical — en **morceaux**, interrompu là où une
+ * autre flèche l'enjambe —, et son arrivée sur chaque cible.
+ */
+export type TraceTronc = {
+  x: number;
+  departs: { id: string; d: string }[];
+  morceaux: string[];
+  arrivees: { id: string; d: string }[];
+};
+
+/** La demi-largeur de l'interruption d'un tronc sous une flèche qui l'enjambe. */
+export const DEMI_ENJAMBEE = 5;
+
+/**
+ * Où un tracé franchit la verticale `x` — les hauteurs, interpolées entre deux
+ * points échantillonnés qui l'encadrent. L'intervalle est semi-ouvert : un point
+ * posé **sur** la verticale compte une fois, pas deux, et pas zéro.
+ */
+function franchissements(trace: TraceArete, x: number): number[] {
+  const points = pointsDuTrace(trace, 48);
+  const ys: number[] = [];
+  for (let i = 0; i + 1 < points.length; i += 1) {
+    const [p, q] = [points[i], points[i + 1]];
+    const [avant, apres] = [p.x - x, q.x - x];
+    if (!((avant < 0 && apres >= 0) || (avant > 0 && apres <= 0))) continue;
+    ys.push(p.y + ((q.y - p.y) * (x - p.x)) / (q.x - p.x));
+  }
+  return ys;
+}
+
+/**
+ * Le tracé des troncs d'un dessin, mesuré sur les boîtes réelles.
+ *
+ * Plusieurs troncs dans une même gouttière s'y répartissent à intervalles égaux.
+ * `enjambees` sont les tracés des **autres** flèches : là où l'une d'elles
+ * franchit un tronc sans y entrer, le tronc s'interrompt sous elle
+ * (`DEMI_ENJAMBEE`) — sans quoi rien ne dirait qu'elle n'y entre pas (réserve du
+ * regard neuf). Un franchissement au ras d'une amorce, là où des flèches se
+ * rejoignent, n'interrompt rien.
+ *
+ * `null` pour un tronc dont une boîte n'est pas encore mesurée.
+ */
+export function tracerTroncs(
+  troncs: readonly Tronc[],
+  colonnes: readonly (readonly string[])[],
+  boites: ReadonlyMap<string, Rect>,
+  enjambees: readonly TraceArete[] = [],
+): Map<string, TraceTronc | null> {
+  const resultat = new Map<string, TraceTronc | null>();
+  const mesuree = (id: string) => {
+    const boite = boites.get(id);
+    return boite !== undefined && boite.largeur > 0 ? boite : undefined;
+  };
+  for (const tronc of troncs) {
+    const voisins = troncs.filter((autre) => autre.gouttiere === tronc.gouttiere);
+    const departs = tronc.sources.map(mesuree);
+    const arrivees = tronc.cibles.map(mesuree);
+    const gauches = colonnes[tronc.gouttiere].map(mesuree);
+    const droites = (colonnes[tronc.gouttiere + 1] ?? []).map(mesuree);
+    if ([...departs, ...arrivees].some((boite) => boite === undefined)) {
+      resultat.set(tronc.cle, null);
+      continue;
+    }
+    const bord = Math.max(...gauches.map((b) => (b === undefined ? -Infinity : b.x + b.largeur)));
+    const suivant = Math.min(...droites.map((b) => (b === undefined ? Infinity : b.x)));
+    const x = bord + ((suivant - bord) * (voisins.indexOf(tronc) + 1)) / (voisins.length + 1);
+    const milieu = (boite: Rect) => boite.y + boite.hauteur / 2;
+    const amorces = [...(departs as Rect[]), ...(arrivees as Rect[])].map(milieu);
+    const [haut, bas] = [Math.min(...amorces), Math.max(...amorces)];
+
+    const coupures = enjambees
+      .flatMap((trace) => franchissements(trace, x))
+      .filter(
+        (y) =>
+          y > haut + DEMI_ENJAMBEE &&
+          y < bas - DEMI_ENJAMBEE &&
+          amorces.every((amorce) => Math.abs(amorce - y) > DEMI_ENJAMBEE),
+      )
+      .sort((a, b) => a - b);
+    const morceaux: string[] = [];
+    let depuis = haut;
+    for (const y of coupures) {
+      if (y - DEMI_ENJAMBEE > depuis) morceaux.push(`M ${x} ${depuis} V ${y - DEMI_ENJAMBEE}`);
+      depuis = Math.max(depuis, y + DEMI_ENJAMBEE);
+    }
+    if (bas > depuis) morceaux.push(`M ${x} ${depuis} V ${bas}`);
+
+    resultat.set(tronc.cle, {
+      x,
+      departs: tronc.sources.map((id, i) => {
+        const boite = departs[i] as Rect;
+        return { id, d: `M ${boite.x + boite.largeur} ${milieu(boite)} H ${x}` };
+      }),
+      morceaux,
+      arrivees: tronc.cibles.map((id, i) => {
+        const boite = arrivees[i] as Rect;
+        return { id, d: `M ${x} ${milieu(boite)} H ${boite.x}` };
+      }),
+    });
+  }
+  return resultat;
+}
+
+/**
+ * Le tracé d'**une** flèche d'un tronc, à elle seule : son amorce, la portion de
+ * tronc qui relie ses deux bouts, son arrivée. C'est ce qui s'allume quand on la
+ * regarde — ou qu'on survole l'une de ses tâches —, et la cible qu'on survole et
+ * qu'on focalise : jamais le tronc entier, qui ne dirait plus lesquels de ses
+ * liens sont ceux de la tâche (réserve du regard neuf, ce que la veille laisse à
+ * GitHub Actions). Trois lignes, toutes dans la gouttière : aucune ne touche une
+ * carte.
+ */
+export function tracerDansTronc(
+  de: string,
+  vers: string,
+  x: number,
+  boites: ReadonlyMap<string, Rect>,
+): TraceArete | null {
+  const depart = boites.get(de);
+  const arrivee = boites.get(vers);
+  if (depart === undefined || arrivee === undefined) return null;
+  if (depart.largeur === 0 || arrivee.largeur === 0) return null;
+  const sortie = { x: depart.x + depart.largeur, y: depart.y + depart.hauteur / 2 };
+  const entree = { x: arrivee.x, y: arrivee.y + arrivee.hauteur / 2 };
+  const coude1 = { x, y: sortie.y };
+  const coude2 = { x, y: entree.y };
+  const segments: Segment[] = [
+    { forme: "ligne", de: sortie, vers: coude1 },
+    { forme: "ligne", de: coude1, vers: coude2 },
+    { forme: "ligne", de: coude2, vers: entree },
+  ];
+  return { segments, d: cheminSvg(segments), bas: Math.max(sortie.y, entree.y) };
 }
 
 /* ------------------------------------------------------------------ *
