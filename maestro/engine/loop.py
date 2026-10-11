@@ -3235,7 +3235,9 @@ class _AuPlafond:
             projet_id=self._projet_id,
             objectif=self._objectif,
             depense_usd=total.cout_usd,
-            depense_tokens=total.tokens_total,
+            # Ce que le plafond en tokens compte — hors cache relu (#1398) —, et non
+            # le total : la question montre le chiffre qui l'a fait poser.
+            depense_tokens=total.tokens_hors_cache_lu,
             plafond_cout_usd=cout,
             plafond_tokens=jetons,
             raison=raison,

@@ -120,6 +120,14 @@ export type DetailTache = {
    * panneau : « a-t-elle tenu ? » est la question qu'on lui pose d'abord.
    */
   verification: VerificationAffichee | null;
+  /**
+   * La tâche a-t-elle une consommation **à ventiler** (#1398) — des tokens
+   * rapportés ? La carte n'en dit que le contexte atteint et renvoie au détail
+   * pour le reste : à elle seule, elle ouvre donc le panneau, sans quoi le renvoi
+   * de la carte mènerait nulle part. Une mesure vide (tâche qui n'a encore rien
+   * consommé) n'a rien à ventiler.
+   */
+  consommation: boolean;
   vide: boolean;
 };
 
@@ -230,6 +238,7 @@ export function detailDe(tache: Tache): DetailTache {
   const liens = liensDe(tache);
   const attentes = attentesDe(tache);
   const verification = verificationDe(tache);
+  const consommation = (tache.usage?.tokens_total ?? 0) > 0;
   return {
     description,
     etapes,
@@ -238,12 +247,14 @@ export function detailDe(tache: Tache): DetailTache {
     attentes,
     travailMs: tache.usage?.duree_execution_ms ?? tache.usage?.duree_ms ?? null,
     verification,
+    consommation,
     vide:
       description === "" &&
       etapes.length === 0 &&
       liens.length === 0 &&
       attentes.length === 0 &&
-      verification === null,
+      verification === null &&
+      !consommation,
   };
 }
 

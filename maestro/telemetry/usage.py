@@ -50,6 +50,15 @@ def _somme_optionnelle(a: _T | None, b: _T | None) -> _T | None:
     return a + b
 
 
+def _max_optionnel(a: int | None, b: int | None) -> int | None:
+    """Le plus grand de deux maxima optionnels, en préservant « inconnu » (#1398)."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return max(a, b)
+
+
 @dataclass(frozen=True)
 class StepUsage:
     """Usage d'une étape : appels modèle, tokens, coût, durées, tours, outils.
@@ -58,7 +67,22 @@ class StepUsage:
     via `avec_duree` ; `duree_api_ms` le temps API cumulé rapporté par le
     fournisseur. `cout_usd` reste None quand aucun fournisseur ne l'a rapporté
     (inconnu, à distinguer d'un coût nul). `tokens_entree` inclut le cache côté
-    fournisseur (cf. `maestro.providers.claude`).
+    fournisseur (cf. `maestro.providers.claude`) — et, depuis #1398, il dit
+    **combien** : voir `tokens_cache_lus` plus bas.
+
+    `tokens_cache_lus` et `tokens_cache_ecrits` (#1398) sont deux **parts** de
+    `tokens_entree`, sur le modèle de `tokens_non_tarifes` : jamais des tokens de
+    plus. `contexte_max` est le **contexte atteint** — le plus grand prompt d'un
+    seul appel d'API —, et il se fusionne par **maximum**, jamais par somme. Sans
+    eux, une tâche longue servie par le cache se lisait comme une tâche gloutonne :
+    `tokens_entree` additionne le contexte de **chaque** tour, si bien que
+    `socle-nextjs` affichait 1 845 438 tokens sur p5 pour un contexte qui n'a jamais
+    dépassé ≈ 66 k, et un coût de 1,87 $ — celui d'un travail relu en cache à 90 %
+    du prix en moins. Le total reste juste, c'est sa lecture seule qui trompait :
+    #8 et #57 l'avaient fait le chiffre de la consommation, il n'en est que le
+    volume traité. `contexte_max` vaut `None` — inconnu — là où personne n'a mesuré
+    un appel isolément (un résultat cumulé, une ligne d'avant ce ticket) : il ne se
+    déduit jamais d'une somme.
 
     `duree_arbitrage_ms` (#584) est la part de `duree_ms` passée **suspendue à une
     décision humaine** (`maestro.deliberation.CreditArbitrage`) — jamais un temps
@@ -122,6 +146,9 @@ class StepUsage:
     tours: int = 0
     outils: tuple[str, ...] = ()
     tokens_non_tarifes: int = 0
+    tokens_cache_lus: int = 0
+    tokens_cache_ecrits: int = 0
+    contexte_max: int | None = None
 
     def __post_init__(self) -> None:
         # Sans coût, rien de ce que la mesure a consommé n'a de prix (#1280). Posé
@@ -137,6 +164,19 @@ class StepUsage:
     def tokens_total(self) -> int:
         """Total des tokens consommés (entrée + sortie)."""
         return self.tokens_entree + self.tokens_sortie
+
+    @property
+    def tokens_hors_cache_lu(self) -> int:
+        """Le total **moins ce que le cache a relu** (#1398) — ce que compte le plafond en tokens.
+
+        Relire un contexte déjà en cache n'est pas le consommer une seconde fois :
+        le fournisseur le facture une fraction du prix d'entrée, et c'est ce que
+        chaque tour d'une tâche longue fait de tout ce qui précède. Un plafond en
+        tokens (#113) qui le comptait coupait une tâche sur ce qu'elle **relit** —
+        1 845 438 tokens sur p5 pour 1,87 $ — au lieu de ce qu'elle **traite**. Le
+        prompt frais, le cache écrit et la sortie restent comptés.
+        """
+        return self.tokens_total - self.tokens_cache_lus
 
     @property
     def duree_attente_ms(self) -> int | None:
@@ -201,6 +241,12 @@ class StepUsage:
             tours=self.tours + autre.tours,
             outils=self.outils + tuple(o for o in autre.outils if o not in self.outils),
             tokens_non_tarifes=self.tokens_non_tarifes + autre.tokens_non_tarifes,
+            tokens_cache_lus=self.tokens_cache_lus + autre.tokens_cache_lus,
+            tokens_cache_ecrits=self.tokens_cache_ecrits + autre.tokens_cache_ecrits,
+            # Un maximum, jamais une somme (#1398) : deux tours de 60 k n'ont pas
+            # atteint un contexte de 120 k, et c'est exactement l'erreur que
+            # l'additivité de `tokens_entree` faisait lire.
+            contexte_max=_max_optionnel(self.contexte_max, autre.contexte_max),
         )
 
     def avec_duree(
@@ -255,10 +301,19 @@ class StepUsage:
             # Un montant qui ne couvre pas tout ce qui a été consommé (#1280) ne
             # s'écrit pas comme un solde : c'est un plancher, et il le dit.
             cout = f"≥ {cout} ({self.tokens_non_tarifes} tokens sans coût)"
+        # Le contexte atteint et la part relue en cache (#1398), nommés quand on
+        # les connaît : sans eux, le total se lit comme une consommation, ce qu'il
+        # n'est pas sur une tâche longue servie par le cache.
+        contexte = (
+            "" if self.contexte_max is None else f" · contexte max {self.contexte_max}"
+        )
+        relus = (
+            f", dont {self.tokens_cache_lus} relus en cache" if self.tokens_cache_lus else ""
+        )
         return (
             f"{self.appels} appel(s) modèle · {self.tokens_total} tokens "
-            f"({self.tokens_entree} entrée / {self.tokens_sortie} sortie) · "
-            f"coût {cout} · durée {duree}"
+            f"({self.tokens_entree} entrée{relus} / {self.tokens_sortie} sortie)"
+            f"{contexte} · coût {cout} · durée {duree}"
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -285,18 +340,28 @@ class StepUsage:
             # La part que le coût ne couvre pas (#1280) : c'est par elle que le
             # grand livre et l'écran savent qu'un montant n'est qu'un plancher.
             "tokens_non_tarifes": self.tokens_non_tarifes,
+            # Le contexte atteint et les deux parts du cache (#1398) : ce qu'une
+            # tâche a vraiment consommé se lit par eux, pas par `tokens_total`.
+            "tokens_cache_lus": self.tokens_cache_lus,
+            "tokens_cache_ecrits": self.tokens_cache_ecrits,
+            "contexte_max": self.contexte_max,
+            # Dérivée comme `tokens_total` : ce que le plafond en tokens compte,
+            # calculé ici pour que l'écran ne refasse pas la règle.
+            "tokens_hors_cache_lu": self.tokens_hors_cache_lu,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> StepUsage:
         """Reconstruit une mesure depuis sa forme `to_dict` (aller-retour JSON, #41).
 
-        `tokens_total`, `duree_attente_ms` et `duree_execution_ms` (dérivés) sont
-        ignorés ; les clés absentes retombent sur les défauts — la mesure d'un
-        worker qui ne rapporte rien reste valide, et une ligne de journal écrite
-        avant #989 se relit sans attentes mesurées (inconnu, pas zéro). Une ligne
-        d'avant #1280 se relit avec la part non tarifée que son coût dit : tous
-        ses tokens s'il est inconnu, aucun s'il est connu.
+        `tokens_total`, `tokens_hors_cache_lu`, `duree_attente_ms` et
+        `duree_execution_ms` (dérivés) sont ignorés ; les clés absentes retombent
+        sur les défauts — la mesure d'un worker qui ne rapporte rien reste valide,
+        et une ligne de journal écrite avant #989 se relit sans attentes mesurées
+        (inconnu, pas zéro). Une ligne d'avant #1280 se relit avec la part non
+        tarifée que son coût dit : tous ses tokens s'il est inconnu, aucun s'il est
+        connu. Une ligne d'avant #1398 se relit sans contexte connu (`None`) et sans
+        part de cache : rien ne se reconstitue d'une somme de tours.
         """
         return cls(
             appels=data.get("appels", 0),
@@ -311,6 +376,9 @@ class StepUsage:
             tours=data.get("tours", 0),
             outils=tuple(data.get("outils", ())),
             tokens_non_tarifes=data.get("tokens_non_tarifes", 0),
+            tokens_cache_lus=data.get("tokens_cache_lus", 0),
+            tokens_cache_ecrits=data.get("tokens_cache_ecrits", 0),
+            contexte_max=data.get("contexte_max"),
         )
 
 
@@ -429,3 +497,57 @@ def report_usage(usage: StepUsage) -> None:
     collector = _COLLECTEUR.get()
     if collector is not None:
         collector.add(usage)
+
+
+#: Qui consigne une dépense du **run** — celle qu'aucune tâche n'a faite (#1398).
+#: Reçoit l'étape (une étape de run de `maestro.telemetry.costs`), son nom lisible
+#: et la mesure.
+ConsigneDepenseDuRun = Callable[[str, str, StepUsage], None]
+
+#: Le consignataire actif du contexte courant (None hors de tout `depenses_du_run()`).
+_DEPENSE_DU_RUN: ContextVar[ConsigneDepenseDuRun | None] = ContextVar(
+    "maestro_depense_du_run", default=None
+)
+
+
+@contextmanager
+def depenses_du_run(consigner: ConsigneDepenseDuRun) -> Iterator[None]:
+    """Ouvre un canal pour les dépenses du run faites **pendant** une tâche (#1398).
+
+    Le collecteur suit le contexte, et c'est sa force : une session de l'agent,
+    ses sous-tâches asyncio, ses relances signalent toutes à la tâche qui les a
+    lancées. C'est aussi ce qui rangeait chez la première tâche d'un run ce
+    qu'elle n'avait pas dépensé : la **sonde de démarrage** (#1304) court dans une
+    tâche asyncio que la session de l'agent crée, donc sous son collecteur — les
+    ≈ 20 k tokens de la sonde tombaient dans `socle-nextjs` sur p5. Ce canal est
+    l'autre adresse : ce qui y est signalé (`report_usage_du_run`) part au
+    consignataire, qui l'écrit sur une ligne du **run**, et n'entre dans aucun
+    collecteur de tâche.
+
+    Ouvert par le moteur autour de chaque tâche (`maestro.engine.executor`), qui
+    tient le journal du run. Comme le collecteur, il se propage à travers `await`
+    et aux tâches asyncio créées dans le bloc.
+    """
+    token = _DEPENSE_DU_RUN.set(consigner)
+    try:
+        yield
+    finally:
+        _DEPENSE_DU_RUN.reset(token)
+
+
+def report_usage_du_run(etape: str, nom: str, usage: StepUsage) -> None:
+    """Signale une dépense du run (`etape`, déclarée dans `costs`) au consignataire actif.
+
+    **Sans consignataire, la mesure retombe dans le collecteur actif**
+    (`report_usage`) : un appelant qui ne tient pas de journal de run — un
+    fournisseur appelé hors du moteur — la voit ainsi là où il mesure. Un chiffre
+    mal rangé se corrige ; un chiffre perdu ne se retrouve pas. Une mesure vide
+    n'est signalée à personne.
+    """
+    if not (usage.appels or usage.tokens_total or usage.tours or usage.cout_usd):
+        return
+    consigner = _DEPENSE_DU_RUN.get()
+    if consigner is None:
+        report_usage(usage)
+        return
+    consigner(etape, nom, usage)

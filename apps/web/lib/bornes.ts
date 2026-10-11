@@ -175,7 +175,10 @@ function effetsDesBornes(bornes: BornesRun): string {
     morceaux.push(`s'interrompt à ${formatCout(bornes.plafond_cout_usd)}`);
   }
   if (bornes.plafond_tokens !== null) {
-    morceaux.push(`s'interrompt à ${formatTokens(bornes.plafond_tokens)} tokens`);
+    // Ce que le plafond compte, dit avec lui (#1398) : hors cache relu.
+    morceaux.push(
+      `s'interrompt à ${formatTokens(bornes.plafond_tokens)} tokens hors cache relu`,
+    );
   }
   if (bornes.timeout_tache_s !== null) {
     morceaux.push(`${bornes.timeout_tache_s} s par tâche`);

@@ -95,12 +95,12 @@ import {
   type Icone,
   type TonBadge,
 } from "@/components/Primitives";
+import { libelleConsommation, resumeConsommation } from "@/lib/consommation";
 import { tacheArreteeSurUnHumain } from "@/lib/execution";
 import {
   formatCout,
   formatDuree,
   formatHeure,
-  formatTokens,
   libelleStatut,
 } from "@/lib/format";
 import {
@@ -590,15 +590,19 @@ function CarteTache({
         </span>
       </p>
       {tache.usage ? (
-        // La ventilation entrée/sortie ne se lit nulle part ailleurs : elle
-        // passe donc du `title` à l'infobulle (#536).
+        // Le **contexte atteint**, et non la somme des contextes de chaque tour
+        // (#1398) : « 1 845 438 tokens » faisait lire une tâche gloutonne là où
+        // elle relisait surtout son cache. Le coût garde sa place sur la ligne
+        // d'au-dessus ; la ventilation vit dans le détail de la tâche (variante
+        // C consignée sur le ticket) — l'infobulle n'en garde qu'une ligne,
+        // parce qu'une bulle plus haute est rognée par la colonne qui défile.
         <Infobulle
-          texte={`${formatTokens(tache.usage.tokens_entree)} tokens en entrée / ${formatTokens(tache.usage.tokens_sortie)} en sortie`}
+          texte={resumeConsommation(tache.usage)}
           className="chiffre mt-0.5 flex justify-between gap-2 text-annexe text-neutral-500 dark:text-neutral-400"
         >
           <span className="inline-flex items-center gap-1">
             <IconeJetons className="size-3.5 shrink-0" />
-            {formatTokens(tache.usage.tokens_total)} tokens
+            {libelleConsommation(tache.usage)}
           </span>
           {chrono}
         </Infobulle>

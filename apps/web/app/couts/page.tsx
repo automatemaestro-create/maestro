@@ -314,10 +314,14 @@ function Compteurs({
         valeur={formatCout(vue.total.cout_usd)}
         icone={IconeMonnaie}
       />
+      {/* « traités », et la part relue en cache dite à côté (#1398) : ce total
+          additionne le contexte de chaque tour, et le nommer « Tokens » tout court
+          le faisait lire comme une consommation — le mot est celui du détail
+          d'une tâche (« Traités en N tours »). */}
       <TuileChiffre
-        libelle="Tokens"
+        libelle="Tokens traités"
         valeur={formatTokens(vue.total.tokens_total)}
-        detail={`${formatTokens(vue.total.tokens_entree)} entrée · ${formatTokens(vue.total.tokens_sortie)} sortie`}
+        detail={`${formatTokens(vue.total.tokens_entree)} entrée${vue.total.tokens_cache_lus ? `, dont ${formatTokens(vue.total.tokens_cache_lus)} relus en cache` : ""} · ${formatTokens(vue.total.tokens_sortie)} sortie`}
         icone={IconeJetons}
       />
       <TuileChiffre
@@ -399,7 +403,7 @@ function TableTaches({ taches }: { taches: CoutTacheAgregee[] }) {
             <th className="py-1 pr-3 font-medium">Agent</th>
             <th className="py-1 pr-3 font-medium">Statut</th>
             <th className="py-1 pr-3 text-right font-medium">Exécutions</th>
-            <th className="py-1 pr-3 text-right font-medium">Tokens</th>
+            <th className="py-1 pr-3 text-right font-medium">Tokens traités</th>
             <th className="py-1 pr-3 text-right font-medium">Coût</th>
             <th className="py-1 text-right font-medium">Durée</th>
           </tr>
@@ -470,7 +474,7 @@ function TableExecutions({ executions }: { executions: CoutExecutionResume[] }) 
             <th className="py-1 pr-3 text-right font-medium">Tâches</th>
             <th className="py-1 pr-3 font-medium">Début</th>
             <th className="py-1 pr-3 font-medium">Fin</th>
-            <th className="py-1 pr-3 text-right font-medium">Tokens</th>
+            <th className="py-1 pr-3 text-right font-medium">Tokens traités</th>
             <th className="py-1 text-right font-medium">Coût</th>
           </tr>
         </thead>

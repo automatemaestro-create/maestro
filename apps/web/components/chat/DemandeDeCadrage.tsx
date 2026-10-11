@@ -383,7 +383,7 @@ export function DemandeDeCadrage({
             <Champ
               id="cadrage-borne-tokens"
               libelle="Tokens maximum"
-              aide="Le run s'interrompt quand il les a consommés. Vide : aucune borne."
+              aide="Le run s'interrompt quand il les a consommés, hors cache relu : ce que le modèle relit de son cache à chaque tour ne compte pas. Vide : aucune borne."
               erreur={champFautif(saisie.tokens) ? FAUTE : undefined}
               inputMode="numeric"
               value={saisie.tokens}

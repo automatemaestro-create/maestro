@@ -424,7 +424,9 @@ const RESIDU = new Map<string, number>([
   ["components/OngletMcpAgent.tsx", 36],
   ["components/OngletsAgent.tsx", 8],
   ["components/PanneauBriefs.tsx", 5],
-  ["components/PanneauCouts.tsx", 9],
+  // 9 → 8 par #1398 : le filet de ligne du grand livre, écrit une fois en
+  //   constante quand la sonde du point de contrôle a rejoint ses lignes.
+  ["components/PanneauCouts.tsx", 8],
   ["components/PanneauDetailTache.tsx", 14],
   ["components/PanneauRunsImmobiles.tsx", 4],
   // `components/PanneauValidations.tsx` a quitté ce tableau avec #1228 : ses
@@ -485,7 +487,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 636;
+const TOTAL_ANNONCE = 635;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

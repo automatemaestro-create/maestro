@@ -532,6 +532,24 @@ def _agent_entre_parentheses(agent: str) -> str:
     return f" ({agent})" if agent and agent != AGENT_ABSENT else ""
 
 
+def _lecture_du_volume(usage: StepUsage) -> list[str]:
+    """Ce qui empêche le total de se lire comme une consommation (#1398), quand on le sait.
+
+    Le total additionne le contexte de chaque tour : sur une tâche longue servie par
+    le cache, c'est surtout du relu — `socle-nextjs` affichait 1 845 438 tokens sur
+    p5 pour un contexte de ≈ 66 k et 1,87 $. Le bilan le disait tel quel, à la
+    personne comme au modèle qui juge le run, et « on ne devrait pas consommer
+    autant » était la lecture qu'il appelait. Rien n'est dit de ce qu'on ignore :
+    une mesure sans cache rapporté ni contexte mesuré se lit comme avant.
+    """
+    morceaux = []
+    if usage.tokens_cache_lus:
+        morceaux.append(f"dont {_nombre(usage.tokens_cache_lus)} relus en cache")
+    if usage.contexte_max is not None:
+        morceaux.append(f"contexte max {_nombre(usage.contexte_max)}")
+    return morceaux
+
+
 def _usage_en_phrase(usage: StepUsage) -> str:
     """Une mesure d'usage dite pour une personne (#1285) — le `libelle` d'une synthèse.
 
@@ -539,8 +557,11 @@ def _usage_en_phrase(usage: StepUsage) -> str:
     de champs que le modèle lit (`_usage_en_mots`).
     """
     texte = _tokens(usage.tokens_total)
+    precisions = _lecture_du_volume(usage)
     if usage.tokens_non_tarifes:
-        texte += f" (dont {_nombre(usage.tokens_non_tarifes)} sans prix)"
+        precisions.append(f"dont {_nombre(usage.tokens_non_tarifes)} sans prix")
+    if precisions:
+        texte += f" ({', '.join(precisions)})"
     texte += f" pour {_montant(usage.cout_usd)}" if usage.cout_usd is not None else ", coût inconnu"
     temps = []
     if usage.tours:
@@ -558,7 +579,7 @@ def _usage_en_mots(usage: StepUsage) -> str:
     En format d'interface (#1285) — la vue du run montre ce texte tel quel, et le
     modèle lit le même : `40 720 tokens, coût 0,2199 $US, 2 tours, 31 s`.
     """
-    morceaux = [_tokens(usage.tokens_total)]
+    morceaux = [_tokens(usage.tokens_total), *_lecture_du_volume(usage)]
     if usage.tokens_non_tarifes:
         morceaux.append(f"dont {_nombre(usage.tokens_non_tarifes)} sans prix")
     morceaux.append(
@@ -593,6 +614,13 @@ def _syntheses(
         if execution.cout_partiel
         else ""
     )
+    # La sonde du point de contrôle (#1398) a sa ligne au run : nommée quand elle a
+    # coûté, tue sinon — un run sans garde-fou n'en joue pas.
+    a_sonde = bool(cout.sonde.appels or cout.sonde.tokens_total)
+    sonde_mots = f" ; sonde du point de contrôle {_usage_en_mots(cout.sonde)}" if a_sonde else ""
+    sonde_phrase = (
+        f" ; sonde du point de contrôle : {_usage_en_phrase(cout.sonde)}" if a_sonde else ""
+    )
     pieces.append(
         Piece(
             id="",
@@ -604,14 +632,14 @@ def _syntheses(
                 f"Coût du run jusqu'à sa fin : {somme}{plancher} ; au total "
                 f"{_usage_en_mots(cout.total)} ; "
                 f"planification {_usage_en_mots(cout.planification)} ; "
-                f"cadrage {_usage_en_mots(cout.brief)}"
+                f"cadrage {_usage_en_mots(cout.brief)}{sonde_mots}"
             ),
             entrees=tuple(issue_du_run),
             synthese=True,
             libelle=_borne(
                 f"Jusqu'à sa fin, le run a consommé {_usage_en_phrase(cout.total)}{plancher}. "
                 f"Planification : {_usage_en_phrase(cout.planification)} ; "
-                f"cadrage : {_usage_en_phrase(cout.brief)}."
+                f"cadrage : {_usage_en_phrase(cout.brief)}{sonde_phrase}."
             ),
             priorite=PRIORITE_DECISIVE,
         )

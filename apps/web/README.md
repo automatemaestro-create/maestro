@@ -1210,7 +1210,9 @@ du diff ayant seulement changé de fichier. Puis **636** depuis #1294, qui a
 retiré le formulaire de création du chemin de création (un projet naît dans la
 conversation) : le choix de l'origine et le dossier parent prérempli du
 formulaire, et la phrase « aucun projet déclaré » de la porte, emportaient
-quatre paires. Ce ticket ne les
+quatre paires. Puis **635** depuis #1398, qui a écrit une fois en constante le
+filet des lignes du grand livre quand la sonde du point de contrôle les a
+rejointes, au lieu d'en recopier la paire sur une troisième. Ce ticket ne les
 migre pas — il pose le compte et **refuse la suivante** (`tests/couleurs.test.ts`),
 comme #832 l'a fait pour les contrôles de saisie et #534 pour le contraste. La
 689ᵉ est arrivée pendant l'attente de merge de ce lot (#894, une cinquième

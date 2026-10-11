@@ -168,6 +168,16 @@ ETAPE_PLAFOND = "plafond"
 #: intervalle ne compte **pas** dans le temps de mur du run, qui était fini.
 ETAPE_BILAN = "bilan"
 
+#: Étape qui n'appartient à aucune tâche : la **sonde du point de contrôle** (#1304),
+#: une session de modèle jouée une fois par fournisseur, au démarrage de la première
+#: session d'agent, pour éprouver qu'un refus de Maestro tient chez lui. Elle coûte
+#: (≈ 20 k tokens sur le vrai CLI) et tombait dans la première tâche qui l'armait :
+#: la sonde court dans une tâche asyncio née de la session de l'agent, donc sous son
+#: collecteur (#1398). Elle se consigne désormais par `report_usage_du_run`, sur
+#: cette ligne du run. À déclarer ici pour la raison d'`ETAPE_BRIEF` : sans cette
+#: ligne, la règle par défaut ouvrirait une tâche fantôme nommée « sonde ».
+ETAPE_SONDE = "sonde"
+
 
 @dataclass(frozen=True)
 class TaskCost:
@@ -232,6 +242,11 @@ class RunCost:
     fini. À part pour la raison du brief : c'est un appel distinct, et le compter en
     planification ferait payer au cadrage ce que coûte le regard porté après coup.
     Nul tant qu'aucun bilan n'a été rendu.
+
+    `sonde` (#1398) porte l'usage de la **sonde du point de contrôle** (#1304) :
+    jouée pendant la première tâche, elle n'en est pas une part — la compter dans
+    `socle-nextjs` lui faisait porter ≈ 20 k tokens qu'elle n'avait pas consommés.
+    Nul tant qu'aucune sonde n'a coûté.
     """
 
     run_id: str
@@ -244,6 +259,7 @@ class RunCost:
     #: tâches menées de front.
     duree_mur_ms: int | None = None
     bilan: StepUsage = StepUsage()
+    sonde: StepUsage = StepUsage()
 
     @property
     def total(self) -> StepUsage:
@@ -264,9 +280,10 @@ class RunCost:
         Les compteurs, eux, retombent bien sur `RunJournal.usage_totale`. Le
         **bilan** (#1284) s'y ajoute : il ne naît pas au journal du moteur, mais
         c'est une dépense du run, et un total qui la tairait ne serait plus celui
-        que la liste des runs affiche.
+        que la liste des runs affiche. La **sonde** (#1398) aussi : elle a changé de
+        ligne, pas de run.
         """
-        total = self.planification.fusion(self.brief).fusion(self.bilan)
+        total = self.planification.fusion(self.brief).fusion(self.bilan).fusion(self.sonde)
         for tache in self.taches:
             total = total.fusion(tache.usage)
         return replace(
@@ -289,6 +306,7 @@ class RunCost:
         planification = StepUsage()
         brief = StepUsage()
         bilan = StepUsage()
+        sonde = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Les intervalles de toutes les étapes comptées — planification et brief
         # compris : ils occupent le run comme le reste, et c'est le temps de mur
@@ -306,6 +324,11 @@ class RunCost:
                     intervalles.append(intervalle)
             if record.etape == ETAPE_PLANIFICATION:
                 planification = planification.fusion(record.usage)
+                continue
+            if record.etape == ETAPE_SONDE:
+                # La sonde du point de contrôle (#1398) : une dépense du run, jouée
+                # pendant une tâche sans en être une part.
+                sonde = sonde.fusion(record.usage)
                 continue
             if record.etape == ETAPE_BRIEF:
                 # Une étape du run, pas une tâche (#318) — et fusionnée plutôt
@@ -356,6 +379,7 @@ class RunCost:
             taches=tuple(entrees.values()),
             duree_mur_ms=union_ms(intervalles),
             bilan=bilan,
+            sonde=sonde,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -365,6 +389,7 @@ class RunCost:
             "planification": self.planification.to_dict(),
             "brief": self.brief.to_dict(),
             "bilan": self.bilan.to_dict(),
+            "sonde": self.sonde.to_dict(),
             "total": self.total.to_dict(),
             "taches": [tache.to_dict() for tache in self.taches],
         }
@@ -397,6 +422,17 @@ class PlafondDepense:
     `plafond_tokens` (budget en tokens, opérant sur tout fournisseur — les tokens
     sont toujours rapportés, #113). Les deux sont vérifiés : le franchissement de
     l'un ou l'autre stoppe la tâche.
+
+    ⚠ **Le plafond en tokens compte hors cache relu** (#1398,
+    `StepUsage.tokens_hors_cache_lu`) — décision, et non détail. Il portait sur
+    `tokens_total`, qui additionne le contexte de **chaque** tour : une tâche
+    longue servie par le cache y relit à chaque appel tout ce qui précède, et se
+    faisait couper sur ce qu'elle relit (1 845 438 tokens sur p5 pour 1,87 $), pas
+    sur ce qu'elle consomme. Écarté : le total, pour cette raison ; le seul
+    contexte atteint, qui ne dit rien d'une tâche qui tourne longtemps sur un
+    petit contexte. Le prompt frais, le cache écrit et la sortie restent comptés,
+    et un fournisseur qui ne rapporte aucun cache est compté exactement comme
+    avant.
     """
 
     def __init__(
@@ -441,11 +477,12 @@ class PlafondDepense:
             )
         if (
             self._plafond_tokens is not None
-            and total.tokens_total > self._plafond_tokens
+            and total.tokens_hors_cache_lu > self._plafond_tokens
         ):
             raise PlafondDepenseDepasse(
-                f"plafond de tokens dépassé : {total.tokens_total} tokens consommés sur "
-                f"l'exécution pour un plafond de {self._plafond_tokens} — tâche stoppée."
+                f"plafond de tokens dépassé : {total.tokens_hors_cache_lu} tokens consommés "
+                f"hors cache relu sur l'exécution pour un plafond de {self._plafond_tokens} "
+                "— tâche stoppée."
             )
 
 
@@ -464,7 +501,11 @@ def resume_controle_depense(
     """
     controles: list[str] = []
     if plafond_tokens is not None:
-        controles.append(f"tokens ({usage.tokens_total}/{plafond_tokens})")
+        # Ce que le plafond compte, dit avec le chiffre (#1398) : un « tokens
+        # (175438/500000) » à côté d'un total de 1,8 M se lirait comme une erreur.
+        controles.append(
+            f"tokens hors cache relu ({usage.tokens_hors_cache_lu}/{plafond_tokens})"
+        )
     if plafond_cout_usd is not None:
         if usage.cout_usd is not None:
             controles.append(f"coût réel ({usage.cout_usd:.4f}/{plafond_cout_usd:.4f} $)")

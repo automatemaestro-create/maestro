@@ -149,11 +149,13 @@ from maestro.sandbox import ProducedFile, branche_de_tache
 from maestro.sandbox.confinement import ReleveConfinement
 from maestro.sandbox.en_place import portee_de
 from maestro.telemetry import (
+    ConsigneDepenseDuRun,
     PlafondDepense,
     PlafondDepenseDepasse,
     RunJournal,
     StepUsage,
     collect_usage,
+    depenses_du_run,
     usage_en_cours,
 )
 
@@ -1159,7 +1161,13 @@ class LocalExecutor(TaskExecutor):
         # **cette** exécution, d'où sa vie ici : le cumul qu'il relève couvre
         # toutes les tentatives, comme celui que l'étape finale portera.
         releve = _ReleveUsage(self, task, journal)
-        with collect_usage(plafond=plafond, on_mesure=releve.mesure) as recolte:
+        # Ce qui se dépense **pendant** la tâche sans être à elle — la sonde du
+        # point de contrôle (#1304) — part sur une ligne du run (#1398), et non
+        # dans le collecteur ci-dessous, qui le rangeait chez la première tâche.
+        with (
+            depenses_du_run(_consigne_depense_du_run(journal, task.projet_id)),
+            collect_usage(plafond=plafond, on_mesure=releve.mesure) as recolte,
+        ):
             refus = _refus_plafond_creve(task, plafond)
             if refus is not None:
                 result = refus
@@ -4304,6 +4312,31 @@ def _refus_plafond_creve(task: Task, plafond: PlafondDepense | None) -> TaskResu
     return None
 
 
+def _consigne_depense_du_run(journal: RunJournal, projet_id: str | None) -> ConsigneDepenseDuRun:
+    """Le consignataire des dépenses du run nées pendant une tâche (#1398).
+
+    Une ligne du journal à l'étape que le fournisseur nomme — une étape **du run**,
+    déclarée dans `maestro.telemetry.costs` —, portée par l'orchestrateur : ce n'est
+    pas l'agent de la tâche qui a dépensé, c'est Maestro qui s'est éprouvé. Le
+    projet suit, pour que le grand livre filtré par projet la compte encore.
+    """
+
+    def consigner(etape: str, nom: str, usage: StepUsage) -> None:
+        journal.consigne(
+            etape=etape,
+            nom=nom,
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=STATUT_TERMINEE,
+            entree="",
+            sortie=usage.resume_court(),
+            usage=usage,
+            projet_id=projet_id,
+        )
+
+    return consigner
+
+
 def _resume_releve(usage: StepUsage) -> str:
     """Ce qu'un relevé d'usage (#835) **dit** — la ligne que le fil d'activité rend.
 
@@ -4311,10 +4344,19 @@ def _resume_releve(usage: StepUsage) -> str:
     joués, et le coût s'il est déjà tarifé. « rien consommé encore » pour une
     mesure vide, plutôt qu'un « 0 token » qui se lirait comme un compteur en
     panne.
+
+    Le **contexte atteint** passe devant quand il est mesuré (#1398), et le total
+    dit sa part relue en cache : « 1 845 438 tokens » seul se lisait comme une
+    tâche gloutonne, quand il additionne le contexte de chacun de ses tours.
     """
     if not usage.appels and not usage.tokens_total and not usage.tours:
         return "rien consommé encore"
-    morceaux = [f"{usage.tokens_total} tokens"]
+    morceaux = [] if usage.contexte_max is None else [f"contexte {usage.contexte_max} tokens"]
+    morceaux.append(
+        f"{usage.tokens_total} tokens traités dont {usage.tokens_cache_lus} relus en cache"
+        if usage.tokens_cache_lus
+        else f"{usage.tokens_total} tokens"
+    )
     if usage.tours:
         morceaux.append(f"{usage.tours} tour(s)")
     if usage.cout_usd is not None:

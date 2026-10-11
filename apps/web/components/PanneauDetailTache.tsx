@@ -59,6 +59,10 @@ import {
   type NatureAffichee,
   type VerificationAffichee,
 } from "@/lib/detailTache";
+import {
+  lignesConsommation,
+  type LigneConsommation as LigneConsommationAffichee,
+} from "@/lib/consommation";
 import { formatCout, formatDuree, libelleStatut } from "@/lib/format";
 import {
   CONSTAT_NON_JOUE,
@@ -194,6 +198,26 @@ export function PanneauDetailTache({
           {detail.verification !== null && (
             <BlocVerification verification={detail.verification} />
           )}
+          {/* Ce que la tâche a consommé, ventilé (#1398, variante C consignée
+              sur le ticket) : la carte n'en dit que le contexte atteint, et
+              c'est ici que le cache se lit — en **parts** de l'entrée, en
+              retrait, jamais en chiffre à part (LangSmith, Langfuse). Le volume
+              traité vient en dernier, à côté de ce qui l'explique : seul, il
+              faisait croire qu'une tâche servie par le cache en consommait trop. */}
+          {detail.consommation && tache.usage && (
+            <section aria-label="Consommation">
+              <TitreSection compteur="en tokens">Consommation</TitreSection>
+              <dl className="space-y-1 text-corps">
+                {lignesConsommation(tache.usage).map((ligne, rang) => (
+                  <LigneConsommation
+                    key={ligne.libelle}
+                    ligne={ligne}
+                    accentue={rang === 0}
+                  />
+                ))}
+              </dl>
+            </section>
+          )}
           {detail.description !== "" && (
             <section aria-label="Description">
               <TitreSection>Description</TitreSection>
@@ -309,6 +333,36 @@ function LigneTemps({
     <div className="flex items-baseline justify-between gap-3">
       <dt className={ton}>{libelle}</dt>
       <dd className={`chiffre shrink-0 ${ton}`}>{formatDuree(dureeMs)}</dd>
+    </div>
+  );
+}
+
+/**
+ * Une ligne de la ventilation de consommation (#1398) : la forme de `LigneTemps`,
+ * et pour les mêmes raisons — son nom à gauche, son nombre à droite, les tokens de
+ * la palette et aucun `dark:`.
+ *
+ * Le **contexte atteint** est accentué par la graisse, comme le travail l'est dans
+ * le bloc de temps : c'est le chiffre qu'on suit. Une **part** (cache relu, cache
+ * écrit) est en retrait et en texte secondaire : elle se lit sous l'entrée dont
+ * elle est une part, jamais comme un total de plus.
+ */
+function LigneConsommation({
+  ligne,
+  accentue,
+}: {
+  ligne: LigneConsommationAffichee;
+  accentue: boolean;
+}) {
+  const ton = accentue
+    ? "font-medium text-texte"
+    : ligne.part
+      ? "text-texte-secondaire"
+      : "text-texte";
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className={`${ton}${ligne.part ? " pl-3" : ""}`}>{ligne.libelle}</dt>
+      <dd className={`chiffre shrink-0 ${ton}`}>{ligne.valeur}</dd>
     </div>
   );
 }
