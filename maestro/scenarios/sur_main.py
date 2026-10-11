@@ -551,7 +551,7 @@ def _options(args: Sequence[str]) -> _Options:
     if not options.cible:
         raise ValueError("--cible attend le sha de main joué")
     if options.verbe == "decider" and not options.chemins:
-        raise ValueError("decider attend --chemins (GL_BANC_CHEMINS de scripts/gitlab/lib.sh)")
+        raise ValueError("decider attend --chemins (les préfixes du chemin des scénarios)")
     if options.verbe == "verdict" and options.rapport is None:
         raise ValueError("verdict attend --rapport <rapport.json>")
     return options
