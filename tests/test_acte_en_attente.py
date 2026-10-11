@@ -5,7 +5,8 @@ Le défaut : quand personne ne tranche un acte dans l'attente du hook (240 s,
 reste ouverte, et la décision rendue plus tard est retenue pour le rappel du même acte (#583,
 #584). Mais l'agent lisait trois choses différentes :
 
-- le motif de l'écart (`motif_attente`) : « si tu y reviens plus tard, la décision … s'appliquera » ;
+- le motif de l'écart (`motif_attente`) : « si tu y reviens plus tard, la décision …
+  s'appliquera » ;
 - son cadre d'exécution (`_cadre_outille.md`) : « un appel d'outil refusé est une décision …
   ne le rejoue pas à l'identique » — et l'écart lui arrive comme un appel refusé ;
 - son régime (`regime_de_l_agent`) : « sans réponse, la commande est refusée ».
