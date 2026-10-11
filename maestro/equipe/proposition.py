@@ -274,7 +274,7 @@ def _role(
         playbook=gabarit.playbook_de_repli(),
         playbook_origine=ORIGINE_PLAYBOOK_GABARIT,
         playbook_raison=raison_playbook_gabarit(gabarit.gabarit),
-        intention=intention_du_role(gabarit.role, constats, branches),
+        intention=intention_du_role(gabarit.role, constats),
         outils=outils,
         skills=branches,
         autorisations=autorisations,
@@ -502,22 +502,27 @@ def _commandes_declarees(
 
 #: Le nombre de compétences qu'une intention nomme pour un rôle composé (#1159). Borné
 #: parce que l'intention l'est (`INTENTION_MAX`, #257) : au-delà, c'est la fin de la
-#: phrase — les skills du projet — qui serait coupée.
+#: phrase — ce que le projet est — qui serait coupée.
 COMPETENCES_DANS_L_INTENTION = 5
 
 
 def intention_du_role(
     role: str,
     constats: Constats,
-    skills: Sequence[SkillBranche],
     competences: Sequence[str] = (),
 ) -> str:
     """La phrase d'où #257 écrira le playbook de ce rôle — *pour ce projet*.
 
-    Une phrase, comme l'entrée de #257 : le rôle, ce que le projet est, les
-    skills qu'il branche. Rien de ce que le playbook doit dire n'y est écrit —
-    c'est le cadre de #257 qui le demande, et le redire ici en ferait une seconde
-    consigne à tenir d'accord.
+    Une phrase, comme l'entrée de #257 : le rôle, ce que le projet est. Rien de ce
+    que le playbook doit dire n'y est écrit — c'est le cadre de #257 qui le demande,
+    et le redire ici en ferait une seconde consigne à tenir d'accord.
+
+    ⚠ **Les skills du rôle n'y sont plus** (#1404). Le modèle qui rédige le playbook
+    les recopiait — sur p5, une section « Ton périmètre » les nommait —, puis la
+    création ajoutait la sienne (`maestro.equipe.creation.playbook_branche`), qui les
+    nomme avec leur chemin et leurs commandes : l'agent lisait sa liste deux fois.
+    C'est la section de la création qui les dit, parce qu'elle seule sait lesquels le
+    projet **porte** (#1212) ; ce qu'on ne donne pas au modèle, il ne le recopie pas.
 
     ⚠ **Le régime d'exécution n'y est plus** (#1405). #1102 l'y avait fait entrer,
     pour qu'un playbook écrit dans l'ignorance du cran de son agent cesse d'ordonner
@@ -543,16 +548,13 @@ def intention_du_role(
     la phrase est celle d'avant, au caractère près.
     """
     langages = ", ".join(langage.nom for langage in constats.langages[:3])
-    noms = ", ".join(skill.nom for skill in skills)
     metier = ", ".join(competences[:COMPETENCES_DANS_L_INTENTION])
     morceaux = [
         f"Un agent « {role} »",
         f" ({metier})" if metier else "",
         " pour un projet",
         f" écrit en {langages}" if langages else "",
-        ". Il travaille dans le dossier du projet",
-        f" et appelle les skills du projet : {noms}" if noms else "",
-        ".",
+        ". Il travaille dans le dossier du projet.",
     ]
     return "".join(morceaux)
 

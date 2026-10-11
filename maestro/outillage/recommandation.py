@@ -414,7 +414,7 @@ def _justification(commande: Commande) -> Piece:
 
     Une commande **proposée par Maestro** après un run (#1381, `ORIGINE_PROPOSEE`) a son
     endroit — le fichier où il l'a lue dans le projet construit —, et la pièce le dit par
-    son nom : la rédaction écrit « lue par Maestro après un run », jamais « à créer » pour
+    son nom : la rédaction écrit « lue par Maestro après un run », jamais « prévu » pour
     un fichier qui existe.
     """
     if commande.origine == ORIGINE_DITE:

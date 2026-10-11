@@ -694,7 +694,6 @@ def _role_compose(
         intention=intention_du_role(
             libelle,
             constats,
-            branches,
             competences=() if gabarit is not None else competences,
         ),
         outils=outils,

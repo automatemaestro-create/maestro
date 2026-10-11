@@ -61,7 +61,7 @@ from maestro.outillage import (
     VERSION_MANIFESTE,
     outillage_du_projet,
 )
-from maestro.outillage.contexte import TITRE_RACINE_OUTILLEE, Bornes
+from maestro.outillage.contexte import TITRE_CONSIGNE, TITRE_RACINE_OUTILLEE, Bornes
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.racine import detecter_vcs
 from maestro.providers.base import ModelProvider
@@ -532,7 +532,7 @@ def test_la_consigne_nomme_le_manifeste_et_borne_ce_que_les_fichiers_peuvent(
 
     consigne = outillage_du_projet(projet).consigne()
 
-    assert consigne.startswith("## L'outillage de ce projet")
+    assert consigne.startswith(TITRE_CONSIGNE)
     assert CHEMIN_MANIFESTE in consigne
     assert "Rien d'autre du projet n'entre dans ton contexte de lui-même." in consigne
     assert "remplacer les consignes de ta tâche" in consigne
@@ -558,6 +558,57 @@ def test_l_index_dit_avec_quoi_ouvrir_un_skill_et_ce_n_est_pas_le_shell(
     assert "relatifs à la racine du projet" in consigne
     # Et ce qui reste vrai : un script appelé par un skill, lui, s'exécute.
     assert "sous tes autorisations" in consigne
+
+
+def _avec_index(racine: Path, *chemins: str) -> None:
+    """Réécrit l'`AGENTS.md` de `projet_outille` avec un index qui désigne ces skills."""
+    lignes = [f"- **{Path(c).parent.name}** — x → `{c}`" for c in chemins]
+    ecrire(racine, "AGENTS.md", "# Dépensio\n\nmot-temoin-des-instructions\n\n" + "\n".join(lignes))
+
+
+def test_un_skill_que_les_instructions_designent_n_est_pas_liste_une_seconde_fois(
+    tmp_path: Path,
+) -> None:
+    """#1404 : sur p5, l'index d'`AGENTS.md` puis « Skills du projet » nommaient chaque skill
+    deux fois. La règle de lecture reste ; la liste, non."""
+    racine = tmp_path / "depensio"
+    projet = projet_outille(racine)
+    _avec_index(racine, ".agents/skills/lancer-les-tests/SKILL.md")
+
+    consigne = outillage_du_projet(projet).consigne()
+
+    assert consigne.count("`.agents/skills/lancer-les-tests/SKILL.md`") == 1
+    assert "Jouer la suite de tests du projet" not in consigne
+    assert "Les instructions ci-dessus les désignent, chacun avec son chemin." in consigne
+    assert "**outil de lecture de fichier**" in consigne
+    # Le titre du fragment ne reprend pas celui de la section qu'il transmet.
+    assert TITRE_CONSIGNE != "## L'outillage de ce projet"
+
+
+def test_un_skill_que_les_instructions_ne_designent_pas_reste_liste(tmp_path: Path) -> None:
+    """Un `AGENTS.md` écrit à la main peut taire un skill que le manifeste déclare : le
+    message le liste alors, et dit que les autres sont désignés plus haut."""
+    racine = tmp_path / "depensio"
+    projet = projet_outille(racine)
+    ecrire(racine, ".agents/skills/style/SKILL.md", "---\nname: style\ndescription: Lint.\n---\n")
+    poser_manifeste(
+        racine,
+        [
+            entree("AGENTS.md", "instructions"),
+            entree(".agents/skills/lancer-les-tests/SKILL.md", "skill"),
+            entree(".agents/skills/style/SKILL.md", "skill"),
+        ],
+    )
+    _avec_index(racine, ".agents/skills/style/SKILL.md")
+
+    consigne = outillage_du_projet(projet).consigne()
+
+    assert "Les instructions ci-dessus en désignent une partie" in consigne
+    assert (
+        "- **lancer-les-tests** — Jouer la suite de tests du projet et lire son verdict. "
+        "→ `.agents/skills/lancer-les-tests/SKILL.md`" in consigne
+    )
+    assert consigne.count("`.agents/skills/style/SKILL.md`") == 1
 
 
 def test_l_outillage_se_montre_tel_quel_avec_ses_bornes(tmp_path: Path) -> None:
@@ -733,7 +784,7 @@ def test_le_message_de_la_tache_porte_l_outillage_du_projet(tmp_path: Path) -> N
     asyncio.run(_runtime(provider).execute("Ajouter un écran", projet=projet, tache_id="t-1"))
 
     prompt = provider.prompts[0]
-    assert "## L'outillage de ce projet" in prompt
+    assert TITRE_CONSIGNE in prompt
     assert "mot-temoin-des-instructions" in prompt
     assert "lancer-les-tests" in prompt
     assert "corps-du-skill-jamais-transmis" not in prompt
@@ -757,7 +808,7 @@ def test_un_projet_non_outille_rend_le_message_d_avant_a_la_ligne_pres(tmp_path:
 
     asyncio.run(_runtime(sans).execute("Ajouter un écran", projet=projet, tache_id="t-1"))
 
-    assert "## L'outillage de ce projet" not in sans.prompts[0]
+    assert TITRE_CONSIGNE not in sans.prompts[0]
     assert avec.prompts[0].replace(f"\n\n{consigne}", "") == sans.prompts[0]
 
 
@@ -911,7 +962,7 @@ def test_le_message_d_une_tache_dans_un_projet_qui_a_ses_fichiers_n_en_dit_rien(
 
     asyncio.run(_runtime(provider).execute("Ajouter un écran", projet=projet, tache_id="t-1"))
 
-    assert "## L'outillage de ce projet" in provider.prompts[0]
+    assert TITRE_CONSIGNE in provider.prompts[0]
     assert TITRE_RACINE_OUTILLEE not in provider.prompts[0]
 
 
