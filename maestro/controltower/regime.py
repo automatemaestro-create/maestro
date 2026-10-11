@@ -123,12 +123,22 @@ REGLE_DE_L_ACTE_ACCORDE = (
     "nomme pas suit la politique."
 )
 
-#: Où arrive ce qui revient à une personne, et ce qu'il advient sans elle —
-#: le fail-safe de l'arbitrage (EF-08) : l'acte est refusé, l'agent poursuit.
+#: Où arrive ce qui revient à une personne, et ce qu'il advient sans elle.
+#:
+#: ⚠ Sans réponse à temps, l'acte n'est **pas refusé** (#1407) : le fail-safe de
+#: l'arbitrage (EF-08) ne le laisse pas passer, mais l'appel est seulement écarté
+#: pour cette fois, la demande reste ouverte, et la décision rendue plus tard
+#: s'applique au rappel du même acte (#583, #584) — que l'agent fait avant de
+#: conclure, parce que ses textes le lui disent (`maestro.agents.regime_d_execution.
+#: SANS_REPONSE_A_TEMPS`). Ce fait disait « l'acte est refusé » : le fil annonçait
+#: à la personne qu'une décision tardive ne servait à rien.
 CE_QUI_REVIENT = (
     "Ce qui revient à l'utilisateur arrive comme une demande de validation, à "
-    "trancher depuis l'écran Validations ou la vue du run ; sans réponse à temps, "
-    "l'acte est refusé et l'agent poursuit sans lui."
+    "trancher depuis l'écran Validations ou la vue du run. Sans réponse à temps, "
+    "l'acte est écarté, pas refusé : il n'a pas lieu, la demande reste ouverte et "
+    "l'agent poursuit, puis il y revient avant de conclure — la décision rendue "
+    "entre-temps s'applique alors. Une demande encore ouverte à la fin de sa tâche "
+    "est nommée dans son compte-rendu."
 )
 
 #: Ce qu'aucune politique ne dit d'avance, et qu'un fait honnête doit nommer : le

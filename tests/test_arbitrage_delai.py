@@ -843,13 +843,14 @@ def test_sans_credit_le_fournisseur_arbitre_exactement_comme_avant():
 def test_le_motif_d_attente_dit_a_l_agent_que_la_decision_le_rattrapera():
     # Le dispositif ne sert à rien si le seul acteur capable de le déclencher
     # ignore qu'il existe : l'agent lisait « poursuis sans cet outil » et n'avait
-    # aucune raison d'y revenir.
+    # aucune raison d'y revenir. Depuis #1407, il y revient avant de conclure —
+    # la conduite commune à ses textes est gardée par `tests/test_acte_en_attente.py`.
     from maestro.providers.arbitrage import motif_attente
 
-    motif = motif_attente("Bash", 240.0)
+    motif = " ".join(motif_attente("Bash", 240.0).split())
 
     assert "reste en attente" in motif
-    assert "si tu y reviens plus tard" in motif
+    assert "refais-le à l'identique avant de conclure" in motif
     assert "sans nouvelle attente" in motif
 
 

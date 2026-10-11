@@ -380,16 +380,29 @@ def motif_attente(outil: str, attente_s: float) -> str:
     capable de le déclencher sache qu'il est là — l'agent lisait « poursuis sans
     cet outil » et n'avait aucune raison d'y revenir.
 
-    « Plus tard » et non « tout de suite », à dessein : rappeler l'outil dans la
-    seconde rouvrirait l'attente pour rien et brûlerait les tours de l'agent
-    (#239) sur une personne qui n'a pas fini de lire. Ce qu'on lui demande est de
-    continuer, puis de repasser — pas de faire le pied de grue.
+    « Avant de conclure » et non « tout de suite », à dessein : rappeler l'outil
+    dans la seconde rouvrirait l'attente pour rien et brûlerait les tours de
+    l'agent (#239) sur une personne qui n'a pas fini de lire. Ce qu'on lui demande
+    est de continuer, puis de repasser — pas de faire le pied de grue.
+
+    ⚠ **« Écarté, pas refusé », en tête** (#1407). Ce motif voyage dans le `deny`
+    du hook : l'agent le reçoit donc comme un appel **refusé**, et son cadre lui dit
+    qu'un refus ne se rejoue pas (`_cadre_outille.md`). « Si tu y reviens plus tard » ne pesait
+    pas contre cette règle : l'agent qui lui obéissait abandonnait pour de bon un
+    acte qui n'était qu'en attente. Le motif dit donc d'abord que personne n'a dit
+    non, puis la conduite que le cadre et le régime disent aussi — refaire l'appel
+    avant de conclure, une fois : il rejoint la demande ouverte
+    (`MemoireArbitrage`), et encore sans décision, l'agent conclut et nomme la
+    demande dans son compte-rendu, au lieu de faire attendre sa tâche en boucle.
     """
     return (
-        f"appel de l'outil {outil!r} écarté : arbitrage en cours, aucune décision "
-        f"humaine après {attente_s:g} s. La demande reste en attente. "
-        "Poursuis la tâche sans cet outil ; si tu y reviens plus tard, la "
-        "décision rendue entre-temps s'appliquera sans nouvelle attente."
+        f"appel de l'outil {outil!r} écarté, pas refusé : arbitrage en cours, aucune "
+        f"décision humaine après {attente_s:g} s. La demande reste en attente. "
+        "Poursuis ce qui ne dépend pas de cet appel, puis refais-le à l'identique "
+        "avant de conclure ta tâche : la décision rendue entre-temps s'appliquera "
+        "sans nouvelle attente, et sinon l'appel rejoindra la même demande sans en "
+        "ouvrir une autre. Encore sans décision, conclus sans lui, et nomme cette "
+        "demande en attente dans ton compte-rendu."
     )
 
 

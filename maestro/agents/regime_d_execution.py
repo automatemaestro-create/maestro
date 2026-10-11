@@ -112,12 +112,34 @@ REGIME_DE_L_AGENT: dict[Decideur, str] = {
     Decideur.HUMAIN: (
         "Tes commandes shell attendent l'accord d'une personne, qui peut ne pas venir "
         "pendant ta tâche — sauf celles qui ne font que lire, qui passent sans attendre "
-        "personne. Sans réponse, la commande est refusée : ne fais donc pas d'une "
-        "commande le préalable de tout le reste. Lis ce dont tu as besoin avec tes "
-        "outils de lecture, commence ton travail, et ne lance une commande que "
-        "lorsqu'elle sert ton livrable."
+        "personne. Sans réponse à temps, une commande n'a pas lieu, même si personne "
+        "ne l'a refusée : ne fais donc pas d'une commande le préalable de tout le "
+        "reste. Lis ce dont tu as besoin avec tes outils de lecture, commence ton "
+        "travail, et ne lance une commande que lorsqu'elle sert ton livrable."
     ),
 }
+
+#: Ce que devient un appel qu'une personne n'a pas tranché à temps, dit à l'agent (#1407).
+#:
+#: L'attente du hook est bornée (`maestro.providers.arbitrage.ATTENTE_S`) : au-delà,
+#: l'appel est **écarté** pour cette fois, la demande reste ouverte, et la décision
+#: rendue plus tard est retenue pour le rappel du même acte (#583, #584). Ce bloc
+#: disait « sans réponse, la commande est refusée » : l'agent qui le croyait
+#: abandonnait pour de bon un acte qui n'était qu'en attente. La conduite est celle
+#: que disent aussi le motif de l'écart (`arbitrage.motif_attente`) et le cadre
+#: d'exécution (`playbooks_defaut/_cadre_outille.md`) — trois textes, une conduite,
+#: gardée par `tests/test_acte_en_attente.py`.
+#:
+#: Elle n'entre au bloc que si une personne **peut** faire attendre l'agent
+#: (`_attend_une_personne`) : dite à un agent dont rien n'est arbitré, elle
+#: annoncerait une attente que sa politique ne fera jamais.
+SANS_REPONSE_A_TEMPS = (
+    "Un appel qui attend une personne et n'a pas de réponse à temps est écarté, pas "
+    "refusé : son motif le dit, et la demande reste ouverte. Poursuis ce qui ne dépend "
+    "pas de lui, puis refais-le à l'identique avant de conclure ta tâche : la décision "
+    "rendue entre-temps s'appliquera. Encore sans décision, conclus sans lui, et nomme "
+    "cette demande en attente dans ton compte-rendu."
+)
 
 #: Ce que la **portée** ajoute au cran `auto`, dit à l'agent (#1226). C'est la
 #: phrase que p5 n'avait pas : elle **énumère** ce qui reste dans le projet, réseau
@@ -187,7 +209,9 @@ def regime_de_l_agent(politique: PolitiqueOutils | None) -> str:
     Le shell d'abord — c'est l'outil dont le cran se dérive du projet, et le seul qui
     ait fait attendre quelqu'un —, puis les autres outils que la politique nomme,
     par sort. Une liste `allow` fermée n'est pas énumérée : ce qu'elle exclut n'est
-    pas monté sur la session, l'agent ne l'a pas dans les mains.
+    pas monté sur la session, l'agent ne l'a pas dans les mains. En dernier, ce que
+    devient un appel resté sans réponse (`SANS_REPONSE_A_TEMPS`), quand une personne
+    peut en faire attendre un.
     """
     if politique is None:
         return ""
@@ -199,6 +223,8 @@ def regime_de_l_agent(politique: PolitiqueOutils | None) -> str:
     ):
         if outils:
             lignes.append(f"- {libelle} : {', '.join(outils)}.")
+    if _attend_une_personne(politique):
+        lignes.append(f"- {SANS_REPONSE_A_TEMPS}")
     return "\n".join(lignes)
 
 
@@ -227,6 +253,25 @@ def outils_soumis(politique: PolitiqueOutils, decideur: Decideur) -> list[str]:
         for entree in politique.ask
         if entree.decideur is decideur and str(entree) != OUTIL_SHELL
     ]
+
+
+def _attend_une_personne(politique: PolitiqueOutils) -> bool:
+    """Une personne peut-elle faire attendre un appel de cet agent ?
+
+    Lu dans le verdict que la politique rend pour chacune de ses entrées `ask` — le
+    même que le hook lira —, jamais dans l'entrée seule : une entrée que `deny`
+    couvre, ou qu'une entrée antérieure du même outil précède, ne dit pas ce qui
+    s'applique. Oui dès qu'un arbitrage revient à quelqu'un d'autre que `auto`, et
+    aussi quand `auto` est **borné** : hors de sa portée, c'est le défaut — `humain`
+    — qui tranche (#1226).
+    """
+    for entree in politique.ask:
+        decision = politique.decide(str(entree))
+        if decision.verdict is not Verdict.ARBITRAGE:
+            continue
+        if decision.decideur is not Decideur.AUTO or decision.portee:
+            return True
+    return False
 
 
 def _shell(politique: PolitiqueOutils) -> str:

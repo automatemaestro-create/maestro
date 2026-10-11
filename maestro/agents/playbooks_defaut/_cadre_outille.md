@@ -48,6 +48,12 @@ personne, c'est la commande qui **agit** : celle-là, compose-la en sachant qu'e
 prends un autre chemin vers le même résultat, et s'il n'y en a pas, poursuis ta tâche sans lui et
 dis dans ton compte-rendu ce que ce refus t'a coûté.
 
+**Un appel qui attendait une personne et n'a pas eu de réponse à temps est écarté, pas refusé** :
+son motif le dit, et personne n'a dit non — la demande reste ouverte. Poursuis ce qui ne dépend
+pas de lui, puis refais-le à l'identique avant de conclure ta tâche : la décision rendue
+entre-temps s'appliquera. Encore sans décision, conclus sans lui, et nomme cette demande en attente
+dans ton compte-rendu.
+
 **Tiens ta checklist à jour** (`tenir_checklist`) : pose-la dès que tu as compris la tâche, et
 rappelle-la au fil de l'eau, la liste complète à chaque fois — une étape en cours quand tu
 l'attaques, faite quand elle l'est. C'est elle, et rien d'autre, qui dit à l'extérieur où en est ta
