@@ -447,6 +447,18 @@ class ModelProvider(ABC):
     #: sans relire la configuration : les deux viennent d'une seule lecture.
     modele_configure: str | None = None
 
+    @property
+    def commandes_sur_le_poste(self) -> bool:
+        """Les commandes de l'agent s'exécutent-elles sur ce poste (#1403) ?
+
+        C'est la condition pour que les faits que Maestro constate ici — système,
+        shell, temporaire, programmes (`maestro.machine`) — soient ceux de l'agent.
+        Vrai par défaut ; un fournisseur qui fait travailler son agent ailleurs (le
+        conteneur jetable du mode isolé, #108) le dit, et son agent ne reçoit alors
+        aucun fait du poste plutôt que ceux d'une autre machine.
+        """
+        return True
+
     @classmethod
     def catalogue(cls) -> FournisseurDisponible:
         """La fiche de ce fournisseur pour le catalogue (#253) — sans rien construire."""

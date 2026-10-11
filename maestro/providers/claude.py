@@ -328,6 +328,11 @@ class ClaudeProvider(ModelProvider):
         """Credentials injectés à la construction (slot alimenté par #30)."""
         return self._credentials
 
+    @property
+    def commandes_sur_le_poste(self) -> bool:
+        """Faux en mode isolé (#108) : l'agent travaille dans le conteneur, pas ici (#1403)."""
+        return self._isolation is None
+
     @classmethod
     def from_settings(cls, settings: Settings) -> ClaudeProvider:
         """Construit le fournisseur en dérivant credentials et isolation de la config.

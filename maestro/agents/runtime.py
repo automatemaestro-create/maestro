@@ -30,6 +30,7 @@ from maestro.agents.regime_d_execution import avec_regime
 from maestro.config import Settings, load_settings
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
+from maestro.machine import Machine
 from maestro.outillage import outillage_du_projet
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
@@ -237,6 +238,7 @@ class AgentRuntime:
         reprend: str = "",
         effort: str | None = None,
         on_livraison: JugeLivraison | None = None,
+        machine: Machine | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -414,6 +416,15 @@ class AgentRuntime:
         mêmes outils, mêmes canaux. Le runtime ne décide de rien : ni de ce qui
         tient, ni de quand renoncer (le juge lève, et l'exception traverse). None
         (le défaut) : la première livraison est la livraison, comme avant #1177.
+
+        `machine` (#1403) est ce que Maestro a constaté de la machine au début du
+        run (`maestro.machine`) — système, shell, temporaire, programmes de
+        l'outillage —, constaté une fois par l'appelant, qui tient le run. Le
+        runtime ne sonde rien : il pose la section dans le message, **si** son
+        fournisseur fait travailler l'agent sur ce poste
+        (`ModelProvider.commandes_sur_le_poste`) — dans le conteneur du mode isolé,
+        ces faits seraient ceux d'une autre machine. None : rien n'en est dit, et le
+        message est celui d'avant, à la ligne près.
         """
         description = description.strip()
         if not description:
@@ -473,6 +484,11 @@ class AgentRuntime:
                 format_sortie,
                 ws.consigne_espace(),
                 outillage.consigne(espace=espace),
+                machine=(
+                    machine.consigne()
+                    if machine is not None and self._provider.commandes_sur_le_poste
+                    else ""
+                ),
             )
 
             async def session(message: str) -> str:
@@ -527,6 +543,8 @@ def _build_prompt(
     format_sortie: str | None,
     espace: str = "",
     outillage: str = "",
+    *,
+    machine: str = "",
 ) -> str:
     """Compose le message confié à l'agent : la tâche encadrée par les consignes du rôle.
 
@@ -547,10 +565,19 @@ def _build_prompt(
     c'est Maestro qui a le dernier mot sur ce que son agent est. Vide quand le
     projet n'est pas outillé — le cas le plus courant —, auquel cas le message
     est là encore celui d'avant.
+
+    `machine` (#1403) est la section « La machine » (`Machine.consigne`) : ce que
+    Maestro a constaté du poste où les commandes s'exécutent. Posée juste après
+    l'espace — *où* travailler, puis *sur quoi* — et avant l'outillage, qui garde sa
+    place juste avant le format de sortie : c'est un fait de Maestro, pas une
+    consigne du projet, et elle nomme les programmes dont l'outillage, juste en
+    dessous, écrit les commandes. Vide : le message d'avant.
     """
     lignes = [profile.intro_tache, "", description, "", profile.consignes]
     if espace:
         lignes += ["", espace]
+    if machine:
+        lignes += ["", machine]
     if outillage:
         lignes += ["", outillage]
     if format_sortie:

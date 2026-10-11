@@ -355,6 +355,22 @@ son chemin. Ce qu'il faut en garder quand même, et qui est réel : **on peut ra
 Un hôte qui ne démarre pas doit le dire tout de suite et solder le run, jamais le laisser
 `en_attente` — c'est un critère du lot 2.
 
+**Une levée, et une seule : la version des programmes de l'outillage (#1403, décision de la
+personne du 2026-10-01).** La sonde du poste (#487, `maestro/poste.py`) lit ce paragraphe comme
+une interdiction de lancer un binaire pour sonder le poste, pas même pour lire sa version, et elle
+la garde. L'agent d'un run, lui, ne savait rien de la machine où il travaillait — le prompt système
+de Maestro remplace celui du CLI, et son bloc d'environnement avec (docs/44) — et il sondait à
+l'aveugle : `uname`, `which pandoc python python3 py`, un `ls` dans `Program Files` (233 commandes
+en échec ou « introuvable » sur 713 sessions, audit #1395). L'interdit est donc **levé pour ce seul
+usage** : les programmes que les commandes de l'outillage du projet appellent (lus sur le manifeste,
+jamais sur un catalogue), et leur **seule version**. Ce qui le borne (`maestro/machine.py`) : la
+présence se demande au bash des agents par `type`, qui ne lance rien ; seul un programme présent est
+lancé, avec `--version` et rien d'autre, dans un dossier jetable, l'entrée fermée, sous un délai par
+programme et un délai pour l'ensemble ; le code de retour fait foi, et une version qui ne vient pas
+est dite inconnue. Le constat est fait **une fois par run** et part dans le message de chaque tâche,
+section « La machine ». Rien d'autre ne change : la sonde du poste, celle qui répond à l'ouverture
+d'un formulaire, n'exécute toujours rien.
+
 ## 8. Ce qui rouvrirait la question
 
 O4 est derrière une porte. Les conditions qui la franchissent, nommées d'avance pour qu'on n'ait pas
