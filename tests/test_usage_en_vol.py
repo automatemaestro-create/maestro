@@ -131,7 +131,8 @@ def test_les_tours_se_signalent_au_fil_et_le_total_solde_ne_bouge_pas(sdk):
     assert [v.tours for v in vus] == [1, 2, 2]
     assert [v.cout_usd for v in vus[:2]] == [None, None]
     assert [v.appels for v in vus[:2]] == [0, 0]
-    # Soldé : exactement ce que le résultat seul rendait avant ce lot.
+    # Soldé : exactement ce que le résultat seul rendait avant ce lot — et, depuis
+    # #1398, sa part relue en cache et le contexte atteint, que seuls les tours disent.
     assert recolte.total == StepUsage(
         appels=1,
         tokens_entree=350,
@@ -140,6 +141,8 @@ def test_les_tours_se_signalent_au_fil_et_le_total_solde_ne_bouge_pas(sdk):
         duree_api_ms=900,
         tours=2,
         outils=("Write",),
+        tokens_cache_lus=50,
+        contexte_max=200,
     )
 
 
@@ -151,8 +154,10 @@ def test_un_resultat_qui_en_dit_moins_que_les_tours_fait_foi(sdk):
         absorbe(_Assistant([_Texte("…")], usage=_TOUR_1, message_id="m1"))
         absorbe(_Resultat(usage=None, total_cost_usd=None, num_turns=1))
 
+    # Le contexte qu'un tour a atteint (#1398) est un fait observé : un maximum, que
+    # le résultat ne solde pas — les compteurs, eux, retombent sur le sien.
     assert recolte.total == StepUsage(
-        appels=1, tokens_entree=0, tokens_sortie=0, duree_api_ms=0, tours=1
+        appels=1, tokens_entree=0, tokens_sortie=0, duree_api_ms=0, tours=1, contexte_max=150
     )
 
 
@@ -187,8 +192,15 @@ def test_sans_compteur_le_resultat_signale_tout_comme_avant(sdk):
         claude_mod._absorbe(_Assistant([_Texte("…")], usage=_TOUR_1, message_id="m1"), parts, [])
         claude_mod._absorbe(_Resultat(usage=_RESULTAT, total_cost_usd=0.01), parts, [])
 
+    # Sans les tours, le contexte atteint reste inconnu (#1398) : le résultat additionne.
     assert recolte.total == StepUsage(
-        appels=1, tokens_entree=350, tokens_sortie=30, cout_usd=0.01, duree_api_ms=0, tours=1
+        appels=1,
+        tokens_entree=350,
+        tokens_sortie=30,
+        cout_usd=0.01,
+        duree_api_ms=0,
+        tours=1,
+        tokens_cache_lus=50,
     )
 
 

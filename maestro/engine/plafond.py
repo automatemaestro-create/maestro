@@ -113,7 +113,9 @@ class DemandePlafond:
     """Ce que la personne reçoit quand son run atteint son plafond de dépense.
 
     Des **faits**, jamais une phrase : ce qui est dépensé (`depense_usd`, None
-    quand le fournisseur ne tarifie pas, et `depense_tokens`), les plafonds en
+    quand le fournisseur ne tarifie pas, et `depense_tokens` — **hors cache relu**,
+    la mesure même que le plafond en tokens confronte, #1398 : la question ne
+    montre pas un autre chiffre que celui qui l'a fait poser), les plafonds en
     vigueur, la raison telle que le contrôle l'a levée, et ce qui reste à faire.
     L'écran en tire la question et l'estimation du reste ; la rédiger ici ferait
     un second texte à tenir d'accord avec la carte.

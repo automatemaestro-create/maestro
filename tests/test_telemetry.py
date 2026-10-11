@@ -415,12 +415,12 @@ def test_resume_signale_un_plafond_de_cout_sans_prise():
 
 def test_resume_annonce_le_plafond_en_tokens_actif():
     resume = resume_controle_depense(None, 1000, StepUsage(appels=1, tokens_sortie=200))
-    assert "tokens (200/1000)" in resume
+    assert "tokens hors cache relu (200/1000)" in resume
 
 
 def test_resume_expose_le_cout_inoperant_quand_les_tokens_prennent_le_relais():
     resume = resume_controle_depense(1.0, 1000, StepUsage(appels=1, tokens_sortie=200))
-    assert "tokens (200/1000)" in resume
+    assert "tokens hors cache relu (200/1000)" in resume
     assert "coût inopérant" in resume
 
 

@@ -93,6 +93,7 @@ from maestro.telemetry.costs import (
     ETAPE_BILAN,
     ETAPE_BRIEF,
     ETAPE_CADENCE,
+    ETAPE_SONDE,
     RunCost,
     TaskCost,
     intervalle_depuis,
@@ -1245,6 +1246,7 @@ class EtatExecution:
         planification = StepUsage()
         brief = StepUsage()
         bilan = StepUsage()
+        sonde = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Ce que le run a **occupé** (#989) : l'union des intervalles de ses
         # étapes, jamais leur somme. Les bornes se lisent par le même verbe que
@@ -1305,6 +1307,10 @@ class EtatExecution:
                 # porte pas, et son cadrage reste donc compté en planification.
                 if event.etape_run == ETAPE_BRIEF:
                     brief = brief.fusion(usage)
+                elif event.etape_run == ETAPE_SONDE:
+                    # La sonde du point de contrôle (#1398) : sa propre ligne,
+                    # ni la tâche qui l'a armée, ni le cadrage.
+                    sonde = sonde.fusion(usage)
                 else:
                     planification = planification.fusion(usage)
             elif (
@@ -1322,6 +1328,7 @@ class EtatExecution:
             taches=tuple(entrees.values()),
             duree_mur_ms=union_ms(intervalles),
             bilan=bilan,
+            sonde=sonde,
         )
 
     def to_dict(self) -> dict[str, Any]:

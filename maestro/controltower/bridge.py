@@ -60,7 +60,7 @@ from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depu
 from maestro.espace import nom_redis
 from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
-from maestro.telemetry import LOGGER_NAME, redact_secrets
+from maestro.telemetry import ETAPE_SONDE, LOGGER_NAME, redact_secrets
 from maestro.telemetry.journal import SUFFIXE_ETAPE_USAGE
 from maestro.telemetry.usage import StepUsage
 
@@ -107,7 +107,9 @@ _ETAPE_PLAFOND = "plafond"
 #: Étapes rattachées au **run**, pas à une tâche : elles deviennent des activités
 #: d'agent sans `tache_id` (l'orchestrateur cadre, planifie puis confronte
 #: l'équipe au plan et dit la cadence du run, le moteur reprend, le run attend sa
-#: décision au plafond).
+#: décision au plafond, Maestro éprouve son point de contrôle — la **sonde**,
+#: #1398, **importée** comme le suffixe des relevés et pour la même raison : mal
+#: reconnue, elle ne serait pas perdue mais comptée dans une tâche fantôme).
 _ETAPES_RUN = (
     _ETAPE_PLANIFICATION,
     _ETAPE_BRIEF,
@@ -115,6 +117,7 @@ _ETAPES_RUN = (
     _ETAPE_EQUIPE,
     _ETAPE_CADENCE,
     _ETAPE_PLAFOND,
+    ETAPE_SONDE,
 )
 
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).

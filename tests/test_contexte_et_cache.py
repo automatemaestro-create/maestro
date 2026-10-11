@@ -229,6 +229,47 @@ def test_le_resume_d_une_etape_dit_le_contexte_et_le_cache_relu():
     assert "124000 relus en cache" in resume
 
 
+def test_le_bilan_ne_dit_plus_le_total_seul():
+    """Le bilan d'un run se lit à la personne et au modèle qui juge : le total seul trompe."""
+    from maestro.controltower.bilan import _usage_en_mots, _usage_en_phrase
+
+    usage = StepUsage(
+        appels=1,
+        tokens_entree=1_845_438,
+        tokens_sortie=30_000,
+        cout_usd=1.87,
+        tours=65,
+        tokens_cache_lus=1_700_000,
+        contexte_max=66_000,
+    )
+
+    # Le format de l'écran : espaces fines insécables entre milliers, insécable avant l'unité.
+    mots = _usage_en_mots(usage).replace(" ", " ").replace("\xa0", " ")
+    phrase = _usage_en_phrase(usage).replace(" ", " ").replace("\xa0", " ")
+    assert mots.startswith(
+        "1 875 438 tokens, dont 1 700 000 relus en cache, contexte max 66 000, coût 1,87 $US"
+    )
+    assert phrase.startswith(
+        "1 875 438 tokens (dont 1 700 000 relus en cache, contexte max 66 000) pour 1,87 $US"
+    )
+    # Sans cache rapporté ni contexte mesuré, la phrase est celle d'avant.
+    assert _usage_en_mots(StepUsage(tokens_entree=10, tours=1, cout_usd=0.0)).startswith(
+        "10 tokens, coût "
+    )
+
+
+def test_le_releve_en_vol_dit_le_contexte_avant_le_total():
+    from maestro.engine.executor import _resume_releve
+
+    usage = StepUsage(tokens_entree=190_010, tours=3, tokens_cache_lus=124_000, contexte_max=66_005)
+
+    assert _resume_releve(usage).startswith(
+        "contexte 66005 tokens · 190010 tokens traités dont 124000 relus en cache · 3 tour(s)"
+    )
+    # Un fournisseur qui ne dit ni l'un ni l'autre se lit comme avant.
+    assert _resume_releve(StepUsage(tokens_entree=10, tours=1)).startswith("10 tokens · 1 tour(s)")
+
+
 def test_un_endpoint_openai_dit_son_cache_relu_et_son_contexte():
     # `prompt_tokens_details.cached_tokens` est le champ public du dialecte : une
     # part de `prompt_tokens`, comme `cache_read_input_tokens` en est une chez Claude.

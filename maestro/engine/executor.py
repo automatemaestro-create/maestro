@@ -4293,10 +4293,19 @@ def _resume_releve(usage: StepUsage) -> str:
     joués, et le coût s'il est déjà tarifé. « rien consommé encore » pour une
     mesure vide, plutôt qu'un « 0 token » qui se lirait comme un compteur en
     panne.
+
+    Le **contexte atteint** passe devant quand il est mesuré (#1398), et le total
+    dit sa part relue en cache : « 1 845 438 tokens » seul se lisait comme une
+    tâche gloutonne, quand il additionne le contexte de chacun de ses tours.
     """
     if not usage.appels and not usage.tokens_total and not usage.tours:
         return "rien consommé encore"
-    morceaux = [f"{usage.tokens_total} tokens"]
+    morceaux = [] if usage.contexte_max is None else [f"contexte {usage.contexte_max} tokens"]
+    morceaux.append(
+        f"{usage.tokens_total} tokens traités dont {usage.tokens_cache_lus} relus en cache"
+        if usage.tokens_cache_lus
+        else f"{usage.tokens_total} tokens"
+    )
     if usage.tours:
         morceaux.append(f"{usage.tours} tour(s)")
     if usage.cout_usd is not None:
