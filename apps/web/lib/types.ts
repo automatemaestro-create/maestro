@@ -46,6 +46,26 @@ export type Usage = {
    * qu'un plancher. Optionnel : une mesure servie avant #1280 n'en porte pas.
    */
   tokens_non_tarifes?: number;
+  /**
+   * Les deux **parts** de `tokens_entree` servies par le cache du fournisseur
+   * (#1398) : relues, puis écrites. Jamais des tokens de plus. Optionnelles : une
+   * mesure servie avant #1398 n'en porte pas, et se lit sans cache rapporté.
+   */
+  tokens_cache_lus?: number;
+  tokens_cache_ecrits?: number;
+  /**
+   * Le **contexte atteint** (#1398) : le plus grand prompt d'un seul appel au
+   * modèle — ce que la carte d'une tâche montre. `tokens_total` additionne le
+   * contexte de chaque tour, cache relu compris, et se lisait comme une
+   * consommation qu'il n'est pas (1,8 M sur p5 pour ≈ 66 k de contexte). `null`
+   * ou absent : personne n'a mesuré d'appel isolé — inconnu, jamais zéro.
+   */
+  contexte_max?: number | null;
+  /**
+   * Ce que le plafond en tokens compte (#1398) : le total moins le cache relu.
+   * **Dérivé côté Python**, comme `tokens_total` — ne pas le recalculer ici.
+   */
+  tokens_hors_cache_lu?: number;
 };
 
 /**
@@ -264,6 +284,12 @@ export type CoutExecution = {
   run_id: string;
   planification: Usage;
   brief: Usage;
+  /**
+   * La **sonde du point de contrôle** (#1398) : jouée pendant la première tâche,
+   * elle a sa ligne au run au lieu de tomber dans cette tâche. Optionnelle : un
+   * grand livre servi avant #1398 n'en porte pas.
+   */
+  sonde?: Usage;
   total: Usage;
   taches: CoutTache[];
 };

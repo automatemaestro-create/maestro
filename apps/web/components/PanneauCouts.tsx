@@ -17,6 +17,14 @@ import { Carte, EnTeteSection } from "@/components/Primitives";
 import { formatCout, formatDuree, formatTokens } from "@/lib/format";
 import type { CoutExecution, Usage } from "@/lib/types";
 
+/**
+ * Le filet d'une ligne du grand livre, écrit **une** fois : la sonde du point de
+ * contrôle (#1398) a rejoint la planification et les tâches, et recopier la paire
+ * de couleurs sur une troisième ligne en aurait fait une de plus au résidu que
+ * `couleurs.test.ts` ne laisse que décroître.
+ */
+const LIGNE = "border-b border-neutral-100 dark:border-neutral-800/60";
+
 export function PanneauCouts({ couts }: { couts: CoutExecution[] }) {
   if (couts.length === 0) return null;
 
@@ -41,6 +49,13 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
   // quelque chose — une exécution sans télémétrie de planification reste lisible.
   const planificationRapportee =
     cout.planification.appels > 0 || cout.planification.cout_usd !== null;
+  // La sonde du point de contrôle (#1398) : sa ligne au run, montée seulement
+  // quand elle a coûté — un run sans garde-fou n'en joue pas, et un grand livre
+  // d'avant ce ticket n'en porte pas.
+  const sonde =
+    cout.sonde && (cout.sonde.appels > 0 || cout.sonde.tokens_total > 0)
+      ? cout.sonde
+      : null;
 
   return (
     <Carte className="text-corps">
@@ -85,7 +100,7 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
           </thead>
           <tbody>
             {planificationRapportee && (
-              <tr className="border-b border-neutral-100 dark:border-neutral-800/60">
+              <tr className={LIGNE}>
                 <td className="py-1 pr-3 italic">Planification</td>
                 <td className="py-1 pr-3 text-neutral-500 dark:text-neutral-400">
                   orchestrateur
@@ -93,10 +108,17 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
                 <CellulesUsage usage={cout.planification} />
               </tr>
             )}
+            {sonde && (
+              <tr className={LIGNE}>
+                <td className="py-1 pr-3 italic">Sonde du point de contrôle</td>
+                <td className="py-1 pr-3 text-texte-secondaire">orchestrateur</td>
+                <CellulesUsage usage={sonde} />
+              </tr>
+            )}
             {cout.taches.map((tache) => (
               <tr
                 key={tache.tache_id}
-                className="border-b border-neutral-100 dark:border-neutral-800/60"
+                className={LIGNE}
               >
                 <td className="max-w-64 py-1 pr-3">
                   <span className="block truncate" title={tache.tache_id}>
@@ -185,8 +207,11 @@ function CellulesUsage({
       <td className="chiffre py-1 pr-3 text-right">
         {/* L'infobulle est **dans** la cellule et non autour (#536) : un `<td>`
             ne s'enrobe pas, le tableau perdrait sa structure. */}
+        {/* La part relue en cache se dit avec l'entrée dont elle est une part
+            (#1398) : la colonne additionne les contextes de chaque tour, et sur
+            une tâche longue c'est surtout du relu. */}
         <Infobulle
-          texte={`${formatTokens(usage.tokens_entree)} tokens en entrée / ${formatTokens(usage.tokens_sortie)} en sortie`}
+          texte={`${formatTokens(usage.tokens_entree)} tokens en entrée${usage.tokens_cache_lus ? `, dont ${formatTokens(usage.tokens_cache_lus)} relus en cache` : ""} / ${formatTokens(usage.tokens_sortie)} en sortie`}
         >
           {formatTokens(usage.tokens_total)}
         </Infobulle>
