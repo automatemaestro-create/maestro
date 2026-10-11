@@ -214,6 +214,10 @@ MODULE_HOTE = "maestro.controltower.hote_detache"
 #: `redact_secrets`).
 FICHIER_ORDRE = "ordre.json"
 
+#: Le préfixe de l'atelier d'un hôte sous la racine jetable (`maestro-hote-<run>-<aléa>`) —
+#: par lequel l'inventaire du poste (`maestro.menage`, #1458) le reconnaît sans le recopier.
+PREFIXE_ATELIER = "maestro-hote-"
+
 #: Le journal du process (stdout **et** stderr) — la seule trace d'un hôte dont
 #: personne ne voit la console (depuis #469 il en a une, mais sans fenêtre : ce qui
 #: s'y écrirait n'aurait toujours aucun lecteur). C'est là que le lanceur va
@@ -657,7 +661,7 @@ class HoteRunDetache(HoteRun):
         run.
         """
         if self._atelier is None:
-            return jetable(f"maestro-hote-{run_id}-", marque=False)
+            return jetable(f"{PREFIXE_ATELIER}{run_id}-", marque=False)
         atelier = self._atelier / run_id
         atelier.mkdir(parents=True, exist_ok=True)
         (atelier / FICHIER_PRET).unlink(missing_ok=True)

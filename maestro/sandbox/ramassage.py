@@ -109,6 +109,8 @@ __all__ = [
     "FAMILLES_TIERCES",
     "FAMILLES_TIERCES_JETABLES",
     "PREFIXE_COMMUN",
+    "PROPRIETAIRES_TIERS",
+    "PROPRIETAIRES_TIERS_JETABLES",
     "SEUIL_ORPHELIN_H",
     "VALEUR_MSYS_HISTORIQUE",
     "VARIABLES_TEMP",
@@ -122,8 +124,10 @@ __all__ = [
     "pid_vivant",
     "porte_un_worktree",
     "racine_des_espaces",
+    "raison_de_garder",
     "racines_connues",
     "ramasser",
+    "seuil_du_poste",
 ]
 
 #: Le préfixe que partagent tous les jetables de Maestro **aux anciens
@@ -153,10 +157,15 @@ VALEUR_MSYS_HISTORIQUE = "/tmp"
 #:
 #: Une liste d'**exclusions**, jamais d'inclusions : c'est l'inclusion par préfixe
 #: de rôle qui avait laissé les équipes sur mesure sur le disque pour toujours.
-FAMILLES_TIERCES: tuple[str, ...] = (
-    "maestro-controltower-",
-    "maestro-presentation",
-)
+#: Chaque famille porte le mécanisme qui la possède, en clair : c'est ce que
+#: l'inventaire du poste (`maestro.menage`, #1458) en montre, sans le recopier.
+PROPRIETAIRES_TIERS: dict[str, str] = {
+    "maestro-controltower-": (
+        "état d'une stack à l'ancienne adresse — scripts/controltower/start.sh le retire"
+    ),
+    "maestro-presentation": "cache des présentations (scripts/presentation/captures.sh)",
+}
+FAMILLES_TIERCES: tuple[str, ...] = tuple(PROPRIETAIRES_TIERS)
 
 #: Les dossiers de la **racine jetable** qu'un autre mécanisme possède — la seule
 #: exception à « tout y est candidat » :
@@ -168,7 +177,13 @@ FAMILLES_TIERCES: tuple[str, ...] = (
 #:   perdre à son chien de garde la session qu'il surveille. Il part avec la copie
 #:   qui l'a démarrée (`worktree.sh gc`, et `start.sh` à chaque démarrage), et
 #:   jamais tant qu'un de ses ports écoute.
-FAMILLES_TIERCES_JETABLES: tuple[str, ...] = ("controltower-",)
+PROPRIETAIRES_TIERS_JETABLES: dict[str, str] = {
+    "controltower-": (
+        "état de la stack d'une copie de travail (scripts/controltower/etat-stack.sh) — "
+        "part avec sa copie"
+    ),
+}
+FAMILLES_TIERCES_JETABLES: tuple[str, ...] = tuple(PROPRIETAIRES_TIERS_JETABLES)
 
 #: Combien de temps un espace **sans marqueur** doit être resté sans la moindre
 #: activité avant d'être tenu pour orphelin. Large à dessein : sans pid à
@@ -440,29 +455,40 @@ def _derniere_activite(espace: Path) -> float:
     return max(dates, default=0.0)
 
 
-def est_orphelin(
+def raison_de_garder(
     espace: Path, *, maintenant: float | None = None, seuil_s: float | None = None
-) -> bool:
-    """Plus personne ne travaille ici, et rien de non sauvegardé n'y dort.
+) -> str | None:
+    """Pourquoi `espace` est encore occupé, en clair — `None` quand il est orphelin.
 
     Les verdicts de l'en-tête, dans l'ordre où ils se posent : le worktree d'abord
     (un refus qui prime), puis le pid du nom s'il y en a un, puis le témoin d'un
-    occupant vivant, puis l'âge.
+    occupant vivant, puis l'âge. La raison est rendue plutôt qu'un booléen pour que
+    l'inventaire du poste (`maestro.menage`, #1458) dise **pourquoi** il ne retire
+    pas, en lisant la même règle et non une copie.
     """
     if porte_un_worktree(espace):
-        return False
+        return "worktree d'un dépôt existant (travail non commité)"
     pid = pid_dans(espace.name)
     if pid is not None:
-        return not pid_vivant(pid)
+        return f"occupant vivant (pid {pid})" if pid_vivant(pid) else None
     nomme = occupant(espace)
     if nomme is not None and pid_vivant(nomme):
-        return False
+        return f"occupant vivant (pid {nomme})"
     reference = time.time() if maintenant is None else maintenant
     plafond = SEUIL_ORPHELIN_H * 3600 if seuil_s is None else seuil_s
-    return reference - _derniere_activite(espace) >= plafond
+    if reference - _derniere_activite(espace) >= plafond:
+        return None
+    return f"actif il y a moins de {plafond / 3600:g} h"
 
 
-def _seuil_du_poste(environnement: Mapping[str, str]) -> float:
+def est_orphelin(
+    espace: Path, *, maintenant: float | None = None, seuil_s: float | None = None
+) -> bool:
+    """Plus personne ne travaille ici, et rien de non sauvegardé n'y dort (`raison_de_garder`)."""
+    return raison_de_garder(espace, maintenant=maintenant, seuil_s=seuil_s) is None
+
+
+def seuil_du_poste(environnement: Mapping[str, str]) -> float:
     """Le seuil en secondes — celui du poste s'il en pose un de lisible et positif."""
     brut = (environnement.get(VARIABLE_SEUIL) or "").strip()
     try:
@@ -495,7 +521,7 @@ def ramasser(
         return Ramassage()
     if racines is None and jetables is None:
         racines, jetables = racines_connues(env), (racine_jetable(env),)
-    seuil_s = _seuil_du_poste(env)
+    seuil_s = seuil_du_poste(env)
     retires: list[Path] = []
     conserves: list[Path] = []
     echecs: list[Path] = []
