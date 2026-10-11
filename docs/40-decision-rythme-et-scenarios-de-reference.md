@@ -231,7 +231,13 @@ derniers (`MAESTRO_SCENARIOS_PASSAGES_GARDES`, `0` l'éteint), et **toujours** c
 `start.sh --etat-banc` rouvre l'état, quel que soit son rang : le rejouer coûte du vrai modèle. Un
 passage qu'un process vivant tient encore — le banc qui le joue s'y nomme, une tâche dans l'espace
 de son worktree — n'est jamais retiré, et un passage retiré emporte d'abord les worktrees de ses
-tâches. Seuls les projets des passages partent : ni leurs rapports, dans la copie, ni
+tâches. Il emporte aussi les **déclarations** de ses projets (#1477) : le banc nu déclare dans la
+stack de la copie qui le joue (son `core/projets/`), le banc qui sauve son état dans le jeu du banc
+de sa copie, et rien ne les retirait — le 2026-10-11, dix déclarations du 2026-09-22, racines parties
+avec leur passage, gardaient l'ancien atelier au ménage du poste. La rétention oublie donc, dans le
+`core/projets/` et le jeu du banc de **chaque** copie, celles dont la racine vit dans un passage qui
+n'existe plus, retiré à l'instant ou avant ; une déclaration hors des passages n'est jamais touchée.
+Seuls les projets des passages partent : ni leurs rapports, dans la copie, ni
 l'historique ci-dessus. L'ancien atelier est repris par la même règle, puis retiré quand il ne
 porte plus rien ; ce qui n'y a pas la forme d'un passage est nommé, jamais touché. Le détail est
 dans `maestro/scenarios/projets.py`.

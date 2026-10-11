@@ -113,7 +113,7 @@ from maestro.scenarios.modele import (
 from maestro.scenarios.modele import (
     horodatage as horodatage_courant,
 )
-from maestro.scenarios.projets import Atelier, retenir
+from maestro.scenarios.projets import Atelier, passages_gardes, retenir
 from maestro.scenarios.scenarios import (
     SCENARIOS,
     Contexte,
@@ -396,10 +396,17 @@ def _retenir(sortie: TextIO) -> None:
     lu ici (`etat.dernier`), avant tout retrait, et gardé quel que soit son rang.
     Seulement quand le banc réserve son atelier : un appelant qui en fournit un
     (les tests) ne fait pas le ménage du poste.
+
+    Les déclarations des projets d'un passage parti partent avec lui (#1477), dans
+    chaque dépôt du poste — `core/projets/` et jeu du banc de chaque copie : le banc
+    nu déclare dans le premier, et il peut avoir joué depuis n'importe quelle copie.
     """
+    from maestro import menage  # paresseux : `maestro.menage` lit l'atelier de ce paquet
     from maestro.scenarios import etat  # paresseux, pour la raison donnée dans `main`
 
     rouvert = etat.dernier()
+    # Une rétention éteinte ne lit rien : pas même la liste des copies du dépôt.
+    depots = menage.depots_de_declarations()[0] if passages_gardes() > 0 else ()
     retention = retenir(
         rouvert=None if rouvert is None else rouvert.dossier.parent,
         avant=lambda nombre: print(
@@ -407,6 +414,7 @@ def _retenir(sortie: TextIO) -> None:
             "retrait en cours, worktrees de leurs tâches compris…",
             file=sortie,
         ),
+        declarations=depots,
     )
     for ligne in retention.lignes():
         print(ligne, file=sortie)

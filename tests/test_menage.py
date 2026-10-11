@@ -29,6 +29,7 @@ from typing import TextIO, cast
 import pytest
 
 from maestro import menage
+from maestro.controltower.donnees import donnees_du_banc
 from maestro.emplacements import (
     NOM_ETAT,
     NOM_JETABLE,
@@ -61,6 +62,7 @@ from maestro.menage import (
     protections,
 )
 from maestro.projets.modele import Projet
+from maestro.projets.store import ProjetStore
 from maestro.sandbox.ramassage import FAMILLES_TIERCES, FAMILLES_TIERCES_JETABLES
 from maestro.scenarios.projets import ANCIEN_NOM_ATELIER
 
@@ -118,13 +120,16 @@ def _jouer(
     temporaire: Path,
     *,
     gardes: Protections | None = None,
-    reponse: str | _ReponseTardive = "",
+    reponse: str | _ReponseTardive | _RacineRevenue = "",
+    copies: list[Path] | None = None,
 ) -> tuple[int, str, str]:
+    """La commande sur le poste du test — avec `copies`, ses déclarations relues à chaque fois."""
     sortie, erreur = io.StringIO(), io.StringIO()
     entree = io.StringIO(reponse) if isinstance(reponse, str) else cast(TextIO, reponse)
     code = menage.main(
         argv,
-        gardes=gardes or _gardes(),
+        gardes=None if copies is not None else gardes or _gardes(),
+        copies=copies,
         anciennes_adresses=(temporaire,),
         environnement={"TMPDIR": str(temporaire)},
         entree=entree,
@@ -369,6 +374,98 @@ def test_les_declarations_de_chaque_copie_du_depot_protegent(
     assert intrus.exists()
 
 
+def test_une_declaration_dont_la_racine_a_disparu_ne_protege_plus_rien(
+    maison: Path, temporaire: Path, tmp_path: Path
+) -> None:
+    """Le constat de #1477 : dix déclarations du banc, racines parties avec leur passage,
+    gardaient `~/maestro-scenarios` « porteur d'un projet déclaré », et avec lui les worktrees
+    de ses dépôts. Une racine disparue ne protège plus rien ; sa déclaration est montrée, avec
+    sa copie et sa racine, et se solde sur un « oui » — nommée par son identifiant, ou avec le
+    reste —, par le verbe du produit. Une déclaration vivante, elle, protège toujours."""
+    principal, worktree = tmp_path / "Maestro", tmp_path / "worktrees" / "1477-declarations"
+    porteur = _dossier(maison / "maestro-banc-1477")
+    passage = porteur / "20260922-134829" / "s1-vider"
+    passage.mkdir(parents=True)
+    depot = principal / menage.DECLARATIONS_DANS_UNE_COPIE
+    morte = ProjetStore(depot).creer("banc-s1-vider", passage)
+    shutil.rmtree(passage.parent)
+    _vieillir(porteur)
+    vivant = _dossier(maison / "maestro-banc-vivant" / "p1")
+    _vieillir(vivant.parent)
+    banc = donnees_du_banc(racine=worktree).racines["projets"]
+    garde = ProjetStore(banc).creer("p1", vivant)
+
+    gardes = protections(copies=[principal, worktree])
+    assert gardes.illisible == ()
+    cles = {Path(p).resolve() for p in gardes.projets}
+    assert vivant.resolve() in cles, "le jeu du banc d'une copie est un dépôt de déclarations"
+    assert passage.resolve() not in cles
+    assert [(o.depot, o.id) for o in gardes.orphelines] == [(depot, morte.id)]
+
+    entrees = _par_chemin(
+        inventorier(gardes, anciennes_adresses=(), environnement={"TMPDIR": str(temporaire)})
+    )
+    assert entrees[porteur].sort == A_RETIRER, "plus rien ne l'épingle"
+    assert entrees[vivant.parent].sort == CONSERVE
+    assert "porte le projet" in entrees[vivant.parent].raison
+    fiche = entrees[ProjetStore(depot).fichier(morte.id)]
+    assert fiche.sort == A_RETIRER and passage.as_posix() in fiche.raison
+
+    code, sortie, _ = _jouer(["--purger", morte.id], temporaire, gardes=gardes, reponse="oui\n")
+    assert code == CODE_FAIT, sortie
+    assert "déclarations de projets" in sortie and "racine disparue" in sortie
+    assert ProjetStore(depot).ids() == (), "oubliée par son identifiant"
+    assert porteur.exists(), "non désigné : il reste"
+    assert ProjetStore(banc).ids() == (garde.id,) and vivant.exists()
+
+
+def test_une_declaration_se_rejuge_au_moment_de_l_oublier(
+    maison: Path, temporaire: Path, tmp_path: Path
+) -> None:
+    """La racine revenue entre la liste et la réponse : la déclaration protège de nouveau, et
+    reste."""
+    principal = tmp_path / "Maestro"
+    racine = _dossier(maison / "maestro-banc-revenu" / "p1")
+    depot = principal / menage.DECLARATIONS_DANS_UNE_COPIE
+    projet = ProjetStore(depot).creer("p1", racine)
+    shutil.rmtree(racine)
+
+    code, sortie, _ = _jouer(
+        ["--purger", projet.id], temporaire, reponse=_RacineRevenue(racine), copies=[principal]
+    )
+    assert code == CODE_FAIT, sortie
+    assert ProjetStore(depot).ids() == (projet.id,)
+    assert "gardé" in sortie
+
+
+def test_une_racine_indecidable_n_est_jamais_dite_disparue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seule une absence certaine libère : un volume qui ne répond pas, un accès refusé, et la
+    racine protège comme si elle était là."""
+    present = _dossier(tmp_path / "present")
+    assert not menage.racine_disparue(present)
+    assert menage.racine_disparue(tmp_path / "parti" / "p1")
+
+    refusee = tmp_path / "refusee"
+    stat_reel = os.stat
+
+    def stat(chemin: object, *args: object, **kwargs: object) -> os.stat_result:
+        if isinstance(chemin, str | os.PathLike) and Path(chemin) == refusee:
+            raise PermissionError(13, "accès refusé", str(refusee))
+        return stat_reel(chemin, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(menage.os, "stat", stat)
+    assert not menage.racine_disparue(refusee)
+    monkeypatch.undo()
+
+    if sys.platform == "win32":
+        lettres = "ZYXWVUTSRQPONMLKJIHGFED"
+        libres = [f"{x}:\\" for x in lettres if not os.path.exists(f"{x}:\\")]
+        if libres:
+            assert not menage.racine_disparue(Path(libres[0]) / "projets" / "p1")
+
+
 def _declarer(copie: Path, projet: Projet) -> None:
     depot = copie / menage.DECLARATIONS_DANS_UNE_COPIE
     depot.mkdir(parents=True, exist_ok=True)
@@ -404,6 +501,17 @@ class _ReponseTardive:
 
     def readline(self) -> str:
         (self._dossier / TEMOIN_PID).write_text(str(os.getpid()), encoding="utf-8")
+        return "oui\n"
+
+
+class _RacineRevenue:
+    """Une réponse qui arrive après que la racine d'un projet déclaré est revenue."""
+
+    def __init__(self, racine: Path) -> None:
+        self._racine = racine
+
+    def readline(self) -> str:
+        _dossier(self._racine)
         return "oui\n"
 
 
