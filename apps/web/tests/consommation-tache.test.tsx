@@ -111,12 +111,15 @@ describe("la carte du Kanban", () => {
     expect(visible).toContain("0,23");
   });
 
-  it("garde le volume dans l'infobulle, à côté de sa part relue en cache", () => {
+  it("garde le volume dans l'infobulle, nommé, en une ligne pas plus longue qu'avant", () => {
+    // Une bulle plus haute est rognée par la colonne du Kanban qui défile (vu à
+    // la relecture visuelle) : la ventilation vit dans le détail.
     rendreKanban([tacheFactice({ usage: usageServiParLeCache() })]);
 
     const bulle = screen.getByRole("tooltip");
-    expect(bulle.textContent).toBe(
-      `${formatTokens(90_585)} tokens traités en 8 tours, dont ${formatTokens(67_739)} relus en cache. Le détail de la tâche les ventile.`,
+    expect(bulle.textContent).toBe(`${formatTokens(90_585)} tokens traités en 8 tours`);
+    expect((bulle.textContent ?? "").length).toBeLessThanOrEqual(
+      `${formatTokens(87_626)} tokens en entrée / ${formatTokens(2_959)} en sortie`.length,
     );
   });
 

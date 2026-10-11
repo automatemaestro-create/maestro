@@ -93,7 +93,9 @@ function GrandLivre({ cout }: { cout: CoutExecution }) {
             <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
               <th className="py-1 pr-3 font-medium">Tâche</th>
               <th className="py-1 pr-3 font-medium">Agent</th>
-              <th className="py-1 pr-3 text-right font-medium">Tokens</th>
+              {/* Le mot du détail d'une tâche (#1398) : la colonne additionne le
+                  contexte de chaque tour, et son infobulle dit la part relue. */}
+              <th className="py-1 pr-3 text-right font-medium">Tokens traités</th>
               <th className="py-1 pr-3 text-right font-medium">Coût</th>
               <th className="py-1 text-right font-medium">Durée</th>
             </tr>

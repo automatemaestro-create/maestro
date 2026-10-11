@@ -44,19 +44,25 @@ export function libelleConsommation(usage: Usage): string {
 }
 
 /**
- * L'infobulle de la carte, en une ligne : le volume traité, sa part relue en
- * cache, et où lire le reste. Une ligne et pas la ventilation entière : ouverte
- * à l'intérieur d'une colonne qui défile, une bulle de cinq lignes est rognée
- * (variante A, écartée sur capture).
+ * L'infobulle de la carte : le volume traité et ses tours, **en une ligne** pas
+ * plus longue que celle d'avant ce ticket (« N tokens en entrée / M en sortie »).
+ *
+ * La ventilation — et la part relue en cache — vit dans le détail de la tâche.
+ * Ouverte à l'intérieur d'une colonne du Kanban qui défile, une bulle plus haute
+ * est rognée : la variante A (ventilation entière) l'a été sur capture, et une
+ * phrase de trois lignes l'a été à la relecture visuelle. Une ligne courte rogne
+ * comme celle d'avant, pas davantage — le défaut de la primitive dans une colonne
+ * qui défile est antérieur à ce ticket.
  */
 export function resumeConsommation(usage: Usage): string {
+  const contexte = contexteAtteint(usage);
+  // Sans contexte mesuré, la carte dit déjà le volume : la bulle rend alors la
+  // ventilation d'avant ce ticket, entrée et sortie.
+  if (contexte === null) {
+    return `${formatTokens(usage.tokens_entree)} tokens en entrée / ${formatTokens(usage.tokens_sortie)} en sortie`;
+  }
   const tours = usage.tours ? ` en ${usage.tours} tour${usage.tours > 1 ? "s" : ""}` : "";
-  const relus = usage.tokens_cache_lus
-    ? `, dont ${formatTokens(usage.tokens_cache_lus)} relus en cache`
-    : "";
-  // Un point et non un tiret : sur la ligne des mesures, « — » est le repère
-  // d'une valeur inconnue (`formatDuree(null)`, #894), et la bulle y est montée.
-  return `${formatTokens(usage.tokens_total)} tokens traités${tours}${relus}. Le détail de la tâche les ventile.`;
+  return `${formatTokens(usage.tokens_total)} tokens traités${tours}`;
 }
 
 /** Une ligne de la ventilation : son nom, sa valeur, et si c'est une part de la ligne d'au-dessus. */
