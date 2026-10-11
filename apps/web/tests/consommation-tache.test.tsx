@@ -21,7 +21,8 @@
  *    volume traité ;
  * 3. un contexte inconnu ne se fabrique pas : la carte retombe sur le volume,
  *    **nommé** « tokens traités », et le détail dit « non mesuré » ;
- * 4. la sonde du point de contrôle a sa ligne au grand livre du run.
+ * 4. le plafond en tokens dit ce qu'il compte : hors cache relu ;
+ * 5. la sonde du point de contrôle a sa ligne au grand livre du run.
  */
 
 import { render, screen, within } from "@testing-library/react";
@@ -30,6 +31,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { Kanban } from "@/components/Kanban";
 import { PanneauCouts } from "@/components/PanneauCouts";
+import { AUCUNE_BORNE, bornesEnLigne } from "@/lib/bornes";
 import { formatTokens } from "@/lib/format";
 
 import {
@@ -181,7 +183,19 @@ describe("le panneau de détail", () => {
   });
 });
 
-// --- ③ La sonde a sa ligne au grand livre du run ------------------------------
+// --- ③ Le plafond en tokens dit ce qu'il compte -------------------------------
+
+describe("le plafond en tokens", () => {
+  it("se dit hors cache relu, là où les bornes d'un run se relisent", () => {
+    // La décision du ticket : le plafond compte les tokens neufs, pas ce que le
+    // modèle relit de son cache à chaque tour — et l'écran le dit avec le chiffre.
+    expect(bornesEnLigne({ ...AUCUNE_BORNE, plafond_tokens: 500_000 })).toBe(
+      `s'interrompt à ${formatTokens(500_000)} tokens hors cache relu`,
+    );
+  });
+});
+
+// --- ④ La sonde a sa ligne au grand livre du run ------------------------------
 
 describe("le grand livre", () => {
   it("donne sa ligne à la sonde du point de contrôle quand elle a coûté", () => {

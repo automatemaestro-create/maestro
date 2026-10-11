@@ -1414,6 +1414,30 @@ Couverture : [`tests/test_cout_non_tarife.py`](../tests/test_cout_non_tarife.py)
 moteur aux routes avec un fournisseur dont la session meurt trois fois sans résultat,
 et l'ancien « le partiel s'éteint » de `tests/test_usage_en_vol.py`, renversé.
 
+**Ce qu'une tâche a vraiment consommé** (#1398). La carte d'une tâche affichait
+`tokens_total` seul, et ce total additionne le contexte de **chacun** de ses tours,
+cache relu compris : sur p5, `socle-nextjs` y montrait 1 845 438 tokens pour un
+contexte qui n'a jamais dépassé ≈ 66 k et un coût de 1,87 $ — d'où la lecture « une
+seule tâche ne devrait pas consommer autant ». La mesure distingue désormais ce qui
+compte : le **contexte atteint** (`contexte_max`, le plus grand prompt d'un seul appel,
+fusionné par maximum, `null` quand personne n'a mesuré d'appel isolé), le **cache
+relu** et le cache écrit (`tokens_cache_lus`, `tokens_cache_ecrits`, deux **parts** de
+`tokens_entree`), la sortie et le coût — tirés du bloc `usage` public de chaque appel,
+jamais d'un outil interne du CLI. L'écran suit la variante C consignée sur le ticket :
+la **carte** dit « contexte 16 074 tokens » à la place de l'ancien chiffre, le coût
+garde sa place, et le **panneau de détail** ventile (contexte, entrée — dont relu et
+écrit en cache, en retrait —, sortie, volume traité) ; un contexte inconnu ne se
+fabrique pas, la carte retombe alors sur « N tokens traités ». Deux corrections de
+comptabilité vont avec : la **sonde du point de contrôle** (#1304), jouée pendant la
+première tâche, n'y tombe plus — elle a sa ligne au run (`sonde` dans `/cout`, « Sonde
+du point de contrôle » au grand livre) ; et le **plafond en tokens** compte **hors cache
+relu** (`tokens_hors_cache_lu`), ce que la saisie des bornes, leur rappel et la carte du
+plafond atteint disent en toutes lettres. Prouvé sur le réel (passage du banc
+20261011-081931, S2) : `creer-app-py` traite 90 585 tokens pour un contexte de 16 074,
+dont 67 739 relus en cache (75 %), coût 0,23 $ ; la sonde coûte 2 403 tokens sur sa
+ligne. Couverture : [`tests/test_contexte_et_cache.py`](../tests/test_contexte_et_cache.py)
+et `apps/web/tests/consommation-tache.test.tsx`.
+
 **Pourquoi il s'est arrêté.** Un run soldé en échec porte désormais sa **cause
 nommée**, lue à l'identique dans la liste (§2.4.1) et dans la vue (`LigneCause`,
 montée aux deux endroits). Le moteur les connaissait — plafond de tours (#91),

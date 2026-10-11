@@ -77,6 +77,16 @@ function enUnite(valeur: number, unite: UnitePlafond): string {
   return unite === "usd" ? formatCout(valeur) : `${formatTokens(valeur)} tokens`;
 }
 
+/**
+ * Ce que compte un plafond en tokens, dit là où il se lit (#1398) : hors cache
+ * relu, la mesure que le moteur lui confronte — et non le volume traité, qu'une
+ * tâche longue gonfle à chaque tour en relisant son cache. Les gestes (« Relever
+ * à … ») gardent l'unité seule : la phrase qui les précède l'a déjà dit.
+ */
+function sensDuPlafond(unite: UnitePlafond): string {
+  return unite === "tokens" ? " hors cache relu" : "";
+}
+
 /** Le libellé du champ d'un nouveau plafond — l'unité **dans** le libellé. */
 const LIBELLE_CHAMP: Record<UnitePlafond, string> = {
   usd: "Nouveau plafond, en $US",
@@ -235,7 +245,7 @@ export function PlafondDansLeFil({
             detail={
               plafondActuel === null
                 ? undefined
-                : `sur un plafond de ${enUnite(plafondActuel, uniteAffichee)}`
+                : `sur un plafond de ${enUnite(plafondActuel, uniteAffichee)}${sensDuPlafond(uniteAffichee)}`
             }
           />
           <TuileChiffre
@@ -367,7 +377,7 @@ export function PlafondDansLeFil({
       <p className="mt-3 text-annexe text-attention-texte">
         {/* Le pourquoi redit au pied, pour la même raison que l'aide du champ. */}
         {plafondActuel !== null &&
-          `Le plafond de ${enUnite(plafondActuel, uniteAffichee)} est atteint. `}
+          `Le plafond de ${enUnite(plafondActuel, uniteAffichee)}${sensDuPlafond(uniteAffichee)} est atteint. `}
         Sans réponse, le run reste suspendu : rien ne se dépense. Ce qui était déjà
         engagé au franchissement a pu dépasser un peu le plafond — un appel modèle
         ne se tarife qu&apos;une fois fait.
