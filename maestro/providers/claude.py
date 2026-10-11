@@ -118,7 +118,13 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.agents.permissions import PolitiqueOutils
     from maestro.projets.modele import Projet
 from maestro.providers.registry import register
-from maestro.telemetry import StepUsage, report_usage
+from maestro.telemetry import (
+    ETAPE_SONDE,
+    StepUsage,
+    collect_usage,
+    report_usage,
+    report_usage_du_run,
+)
 
 #: Marqueur du plafond de tours dans les erreurs du SDK : le CLI rend un résultat
 #: `is_error=True` de sous-type `error_max_turns`, que le SDK relève en exception
@@ -980,14 +986,21 @@ class ClaudeProvider(ModelProvider):
         """
         temoin = controle.TemoinSonde()
         erreur: Exception | None = None
-        try:
-            await _joue_sonde(
-                temoin, model=model, env=env, cli_path=cli_path, workspace=workspace
-            )
-        except TurnLimitReached:
-            pass
-        except Exception as exc:  # noqa: BLE001 — jugé sur le témoin juste en dessous
-            erreur = exc
+        # Sous **son propre** collecteur (#1398) : la tâche asyncio de la sonde naît
+        # dans le contexte de la session qui l'arme, et son usage tombait donc chez
+        # la première tâche du run — ≈ 20 k tokens que `socle-nextjs` n'avait pas
+        # consommés sur p5. Ce qu'elle a coûté part sur une ligne du run, panne
+        # comprise : une sonde qui casse a quand même dépensé.
+        with collect_usage() as depense:
+            try:
+                await _joue_sonde(
+                    temoin, model=model, env=env, cli_path=cli_path, workspace=workspace
+                )
+            except TurnLimitReached:
+                pass
+            except Exception as exc:  # noqa: BLE001 — jugé sur le témoin juste en dessous
+                erreur = exc
+        report_usage_du_run(ETAPE_SONDE, NOM_ETAPE_SONDE, depense.total)
         if erreur is not None and not temoin.vus and not temoin.executions:
             raise erreur
         try:
@@ -1001,6 +1014,9 @@ class ClaudeProvider(ModelProvider):
 #: Le plafond de tours de la session de sonde : l'appel, puis le mot de la fin — et
 #: un tour de marge pour un agent qui rappellerait l'outil une fois refusé.
 TOURS_SONDE = 3
+
+#: Le nom de la ligne du run qui porte ce que la sonde a coûté (#1398).
+NOM_ETAPE_SONDE = "Sonde du point de contrôle"
 
 
 async def _joue_sonde(
@@ -2319,8 +2335,15 @@ def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUs
     """Traduit le `ResultMessage` du SDK en mesure d'usage d'un appel modèle.
 
     `tokens_entree` agrège le prompt direct et le cache (création + lecture) :
-    c'est la consommation réelle de l'appel, telle que le SDK la décompose.
-    `total_cost_usd` peut être None (le coût reste alors « inconnu », pas nul).
+    c'est le volume que l'appel a traité, tel que le SDK la décompose — et ses
+    deux parts de cache voyagent à côté (#1398). `total_cost_usd` peut être None
+    (le coût reste alors « inconnu », pas nul).
+
+    Le **contexte atteint** n'en sort pas, et c'est voulu : le bloc `usage` du
+    résultat additionne les tours de la session, si bien que son entrée est la
+    somme de leurs contextes — 1 845 438 tokens pour `socle-nextjs` sur p5, dont
+    aucun prompt n'a dépassé ≈ 66 k. Le contexte se lit tour par tour
+    (`_CompteurTours`) ; un résultat seul le laisse inconnu.
     """
     usage: dict[str, Any] = result.usage or {}
     return StepUsage(
@@ -2331,6 +2354,8 @@ def _usage_from_result(result: ResultMessage, outils: tuple[str, ...]) -> StepUs
         duree_api_ms=result.duration_api_ms,
         tours=result.num_turns,
         outils=outils,
+        tokens_cache_lus=int(usage.get("cache_read_input_tokens") or 0),
+        tokens_cache_ecrits=int(usage.get("cache_creation_input_tokens") or 0),
     )
 
 
@@ -2339,7 +2364,9 @@ def _tokens_entree(usage: Mapping[str, Any]) -> int:
 
     La même somme pour un tour (`AssistantMessage.usage`) et pour le résultat
     (`ResultMessage.usage`) — le SDK décompose les deux de la même façon, et
-    c'est ce qui permet au reste du résultat (#835) de tomber juste.
+    c'est ce qui permet au reste du résultat (#835) de tomber juste. Sur un
+    **tour**, c'est aussi la taille de son prompt : le contexte qu'il a atteint
+    (#1398).
     """
     return sum(
         int(usage.get(cle) or 0)
@@ -2372,6 +2399,13 @@ class _CompteurTours:
     zéro : un tour est un appel d'API, pas une invocation du fournisseur, et c'est
     le résultat seul qui pose `appels=1`, `outils`, la durée API et le coût.
 
+    Chaque tour dit aussi son **contexte** — la taille de son prompt — et les deux
+    parts de cache de son entrée (#1398). Le compteur est le seul à pouvoir dire
+    le contexte atteint, puisqu'il est le seul à voir les appels un par un : le
+    résultat les additionne. Les parts de cache se soldent comme les tokens (tours
+    plus reste font le résultat) ; le contexte, un maximum, ne se solde pas — le
+    reste n'en porte aucun, et la fusion garde celui des tours.
+
     `reste` rend ce que le résultat porte **en plus** des tours déclarés, pour que
     tours plus reste fassent exactement le résultat — y compris quand celui-ci en
     dit moins qu'eux (résultat sans `usage`, tours de sous-agents non repris,
@@ -2389,10 +2423,16 @@ class _CompteurTours:
         brut = getattr(message, "usage", None)
         if not isinstance(brut, Mapping):
             return None
+        entree = _tokens_entree(brut)
         tour = StepUsage(
-            tokens_entree=_tokens_entree(brut),
+            tokens_entree=entree,
             tokens_sortie=int(brut.get("output_tokens") or 0),
             tours=1,
+            tokens_cache_lus=int(brut.get("cache_read_input_tokens") or 0),
+            tokens_cache_ecrits=int(brut.get("cache_creation_input_tokens") or 0),
+            # Le prompt d'un appel est le contexte qu'il a atteint (#1398). Un tour
+            # sans entrée rapportée n'en dit rien : inconnu, pas zéro.
+            contexte_max=entree or None,
         )
         identifiant = getattr(message, "message_id", None)
         if isinstance(identifiant, str) and identifiant:
@@ -2401,6 +2441,9 @@ class _CompteurTours:
                 tokens_entree=max(connu.tokens_entree, tour.tokens_entree),
                 tokens_sortie=max(connu.tokens_sortie, tour.tokens_sortie),
                 tours=1,
+                tokens_cache_lus=max(connu.tokens_cache_lus, tour.tokens_cache_lus),
+                tokens_cache_ecrits=max(connu.tokens_cache_ecrits, tour.tokens_cache_ecrits),
+                contexte_max=connu.fusion(tour).contexte_max,
             )
         else:
             self._anonymes = self._anonymes.fusion(tour)
@@ -2413,6 +2456,11 @@ class _CompteurTours:
             tokens_entree=cumul.tokens_entree - avant.tokens_entree,
             tokens_sortie=cumul.tokens_sortie - avant.tokens_sortie,
             tours=cumul.tours - avant.tours,
+            tokens_cache_lus=cumul.tokens_cache_lus - avant.tokens_cache_lus,
+            tokens_cache_ecrits=cumul.tokens_cache_ecrits - avant.tokens_cache_ecrits,
+            # Un maximum ne se différencie pas : l'ajout porte celui du cumul, que
+            # la fusion du collecteur garde sans jamais le compter deux fois.
+            contexte_max=cumul.contexte_max,
         )
         return ajout if (ajout.tokens_total or ajout.tours) else None
 
@@ -2433,6 +2481,8 @@ class _CompteurTours:
             tokens_sortie=resultat.tokens_sortie - self.total.tokens_sortie,
             tours=resultat.tours - self.total.tours,
             tokens_non_tarifes=resultat.tokens_non_tarifes - self.total.tokens_non_tarifes,
+            tokens_cache_lus=resultat.tokens_cache_lus - self.total.tokens_cache_lus,
+            tokens_cache_ecrits=resultat.tokens_cache_ecrits - self.total.tokens_cache_ecrits,
         )
 
 

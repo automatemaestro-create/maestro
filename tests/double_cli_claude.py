@@ -17,6 +17,10 @@ peut trahir un refus : il ne l'applique pas (`applique_les_refus=False`), il ne
 passe pas le nom de l'outil au point de contrôle (`nomme_l_outil=False`), ou
 l'agent de la sonde n'appelle rien (`appelle=False`).
 
+`usage_sonde` (#1398) fait **coûter** la sonde, comme sur le vrai CLI : son
+résultat porte alors ce bloc `usage` et `cout_sonde`. Sans lui, la sonde ne rend
+aucun résultat — ce qu'elle a toujours fait ici.
+
 Pour exécuter l'outil comme le ferait le CLI, le double retient les outils des
 serveurs in-process au moment où le fournisseur les construit
 (`create_sdk_mcp_server`, qu'il enveloppe sans rien en changer).
@@ -32,7 +36,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import pytest
-from claude_agent_sdk import ClaudeAgentOptions, SdkMcpTool
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, SdkMcpTool
 
 from maestro.providers import claude as claude_mod
 from maestro.providers import controle
@@ -52,11 +56,15 @@ class DoubleCli:
         nomme_l_outil: bool = True,
         appelle: bool = True,
         session: Session | None = None,
+        usage_sonde: dict[str, int] | None = None,
+        cout_sonde: float | None = None,
     ) -> None:
         self.applique_les_refus = applique_les_refus
         self.nomme_l_outil = nomme_l_outil
         self.appelle = appelle
         self._session = session
+        self._usage_sonde = usage_sonde
+        self._cout_sonde = cout_sonde
         #: Les options de chaque session de sonde, dans l'ordre.
         self.sondes: list[ClaudeAgentOptions] = []
         #: Les options de chaque autre session — celles des agents.
@@ -79,6 +87,17 @@ class DoubleCli:
         if controle.NOM_SERVEUR_SONDE in (options.mcp_servers or {}):
             self.sondes.append(options)
             await self._joue_la_sonde(options)
+            if self._usage_sonde is not None:
+                yield ResultMessage(
+                    subtype="success",
+                    duration_ms=0,
+                    duration_api_ms=0,
+                    is_error=False,
+                    num_turns=1,
+                    session_id="sonde",
+                    total_cost_usd=self._cout_sonde,
+                    usage=dict(self._usage_sonde),
+                )
             return
         self.sessions.append(options)
         if self._session is not None:

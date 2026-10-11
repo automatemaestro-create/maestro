@@ -405,15 +405,25 @@ def _usage_depuis(payload: Any, duree_ms: int) -> StepUsage:
     Le dialecte ne rapporte pas de coût : `cout_usd` reste None (inconnu, pas nul).
     `duree_api_ms` est la durée mesurée de l'aller-retour HTTP — le proxy le plus
     proche du temps API, qu'aucun champ de réponse ne porte ici.
+
+    Un appel est un tour : son prompt est donc le **contexte** qu'il a atteint, et
+    `prompt_tokens_details.cached_tokens`, quand l'endpoint le rapporte, la part
+    relue en cache (#1398) — un champ public du dialecte, qu'Ollama ou vLLM
+    peuvent taire : rien de relu n'est alors inventé.
     """
     usage = payload.get("usage") or {} if isinstance(payload, dict) else {}
+    entree = int(usage.get("prompt_tokens") or 0)
+    details = usage.get("prompt_tokens_details")
+    relus = int(details.get("cached_tokens") or 0) if isinstance(details, dict) else 0
     return StepUsage(
         appels=1,
-        tokens_entree=int(usage.get("prompt_tokens") or 0),
+        tokens_entree=entree,
         tokens_sortie=int(usage.get("completion_tokens") or 0),
         cout_usd=None,
         duree_api_ms=duree_ms,
         tours=1,
+        tokens_cache_lus=relus,
+        contexte_max=entree or None,
     )
 
 
