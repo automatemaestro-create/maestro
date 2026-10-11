@@ -61,6 +61,7 @@ from maestro.menage import (
     protections,
 )
 from maestro.projets.modele import Projet
+from maestro.sandbox.ramassage import FAMILLES_TIERCES, FAMILLES_TIERCES_JETABLES
 from maestro.scenarios.projets import ANCIEN_NOM_ATELIER
 
 RACINE_DEPOT = Path(__file__).resolve().parents[1]
@@ -226,6 +227,12 @@ def test_sans_option_la_commande_verifie_et_n_ecrit_rien(
         assert titre in sortie
     assert "~/maestro-essais" in sortie and "2,0 Ko" in sortie
     assert f"python -m {MODULE} --purger" in sortie
+
+
+def test_chaque_famille_que_le_ramassage_laisse_a_un_autre_a_son_proprietaire() -> None:
+    """Une famille tierce ajoutée au ramassage sans propriétaire ici serait montrée sans nom."""
+    assert set(menage.PROPRIETAIRES_TIERS) == set(FAMILLES_TIERCES)
+    assert set(menage.PROPRIETAIRES_TIERS_JETABLES) == set(FAMILLES_TIERCES_JETABLES)
 
 
 def test_un_profil_de_navigateur_part_avec_son_worktree(maison: Path, temporaire: Path) -> None:

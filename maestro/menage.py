@@ -95,9 +95,10 @@ from maestro.fichiers import retirer_arbre
 from maestro.projets.reglages import ReglagesProjetsStore
 from maestro.projets.store import ProjetStore
 from maestro.sandbox.ramassage import (
+    FAMILLE_ETAT_STACK,
+    FAMILLE_ETAT_STACK_JETABLE,
+    FAMILLE_PRESENTATION,
     PREFIXE_COMMUN,
-    PROPRIETAIRES_TIERS,
-    PROPRIETAIRES_TIERS_JETABLES,
     pid_dans,
     pid_vivant,
     racines_connues,
@@ -162,6 +163,23 @@ INCONNU = "inconnu — posé hors des racines"
 
 #: Pourquoi un jetable est ramassable : le process qu'il nommait ne tourne plus.
 OCCUPANT_PARTI = "occupant parti"
+
+#: Le mécanisme qui possède chaque famille que le ramassage laisse à un autre
+#: (`FAMILLES_TIERCES` aux anciennes adresses, `FAMILLES_TIERCES_JETABLES` sous la racine
+#: jetable) — indexé par ses constantes, jamais par un préfixe recopié. Une famille ajoutée
+#: là-bas sans propriétaire ici fait rougir `tests/test_menage.py`.
+PROPRIETAIRES_TIERS: dict[str, str] = {
+    FAMILLE_ETAT_STACK: (
+        "état d'une stack à l'ancienne adresse — scripts/controltower/start.sh le retire"
+    ),
+    FAMILLE_PRESENTATION: "cache des présentations (scripts/presentation/captures.sh)",
+}
+PROPRIETAIRES_TIERS_JETABLES: dict[str, str] = {
+    FAMILLE_ETAT_STACK_JETABLE: (
+        "état de la stack d'une copie de travail (scripts/controltower/etat-stack.sh) — "
+        "part avec sa copie"
+    ),
+}
 
 _PROFIL_DE_WORKTREE = re.compile(rf"^{re.escape(NOM_PROFIL_NAVIGATEUR)}-(\d+)$")
 _IID_DE_WORKTREE = re.compile(r"^(\d+)(?:-|$)")

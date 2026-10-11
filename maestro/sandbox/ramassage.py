@@ -108,9 +108,10 @@ from maestro.fichiers import retirer_arbre
 __all__ = [
     "FAMILLES_TIERCES",
     "FAMILLES_TIERCES_JETABLES",
+    "FAMILLE_ETAT_STACK",
+    "FAMILLE_ETAT_STACK_JETABLE",
+    "FAMILLE_PRESENTATION",
     "PREFIXE_COMMUN",
-    "PROPRIETAIRES_TIERS",
-    "PROPRIETAIRES_TIERS_JETABLES",
     "SEUIL_ORPHELIN_H",
     "VALEUR_MSYS_HISTORIQUE",
     "VARIABLES_TEMP",
@@ -157,15 +158,11 @@ VALEUR_MSYS_HISTORIQUE = "/tmp"
 #:
 #: Une liste d'**exclusions**, jamais d'inclusions : c'est l'inclusion par préfixe
 #: de rôle qui avait laissé les équipes sur mesure sur le disque pour toujours.
-#: Chaque famille porte le mécanisme qui la possède, en clair : c'est ce que
-#: l'inventaire du poste (`maestro.menage`, #1458) en montre, sans le recopier.
-PROPRIETAIRES_TIERS: dict[str, str] = {
-    "maestro-controltower-": (
-        "état d'une stack à l'ancienne adresse — scripts/controltower/start.sh le retire"
-    ),
-    "maestro-presentation": "cache des présentations (scripts/presentation/captures.sh)",
-}
-FAMILLES_TIERCES: tuple[str, ...] = tuple(PROPRIETAIRES_TIERS)
+#: Chaque famille porte un nom, par lequel l'inventaire du poste (`maestro.menage`,
+#: #1458) dit à qui elle appartient sans recopier son préfixe.
+FAMILLE_ETAT_STACK = "maestro-controltower-"
+FAMILLE_PRESENTATION = "maestro-presentation"
+FAMILLES_TIERCES: tuple[str, ...] = (FAMILLE_ETAT_STACK, FAMILLE_PRESENTATION)
 
 #: Les dossiers de la **racine jetable** qu'un autre mécanisme possède — la seule
 #: exception à « tout y est candidat » :
@@ -177,13 +174,8 @@ FAMILLES_TIERCES: tuple[str, ...] = tuple(PROPRIETAIRES_TIERS)
 #:   perdre à son chien de garde la session qu'il surveille. Il part avec la copie
 #:   qui l'a démarrée (`worktree.sh gc`, et `start.sh` à chaque démarrage), et
 #:   jamais tant qu'un de ses ports écoute.
-PROPRIETAIRES_TIERS_JETABLES: dict[str, str] = {
-    "controltower-": (
-        "état de la stack d'une copie de travail (scripts/controltower/etat-stack.sh) — "
-        "part avec sa copie"
-    ),
-}
-FAMILLES_TIERCES_JETABLES: tuple[str, ...] = tuple(PROPRIETAIRES_TIERS_JETABLES)
+FAMILLE_ETAT_STACK_JETABLE = "controltower-"
+FAMILLES_TIERCES_JETABLES: tuple[str, ...] = (FAMILLE_ETAT_STACK_JETABLE,)
 
 #: Combien de temps un espace **sans marqueur** doit être resté sans la moindre
 #: activité avant d'être tenu pour orphelin. Large à dessein : sans pid à

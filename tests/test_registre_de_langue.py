@@ -469,6 +469,9 @@ _INNOCENTS = (
 _HORS_INTERFACE = {
     "maestro/controltower/cli.py": "la ligne de commande de la Control Tower",
     "maestro/controltower/purge.py": "la purge, jouée depuis un terminal",
+    # Même raison et même geste que la purge (#1458) : le ménage du poste se joue en
+    # terminal, et le propriétaire qu'il nomme est le script qui retirera ce qu'il montre.
+    "maestro/menage.py": "le ménage du poste, joué depuis un terminal",
     "maestro/engine/cli.py": "la ligne de commande du moteur (`maestro-run`)",
     # Même raison que la purge, et le même geste : le banc des scénarios (#1148) est
     # joué dans un terminal, et son refus nomme la commande qui allume la stack.
