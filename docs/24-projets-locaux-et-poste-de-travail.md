@@ -212,6 +212,20 @@ Tower) —, par le même commit que le démontage et sur les seuls worktrees de 
 de Maestro. Le worktree reste monté ; c'est le montage suivant de la tâche qui le libère. Un
 commit que le projet refuse (son `pre-commit`) est dit au journal, et n'empêche pas d'éteindre.
 
+**Un démontage coupé ne laisse pas de coquille (#1447).** L'extinction peut aussi tomber pendant
+que l'hôte démonte : effacer un `node_modules/` complet prend plus que les quelques secondes
+accordées. `git worktree remove` effaçait sur place, `.git` en premier ; coupé au milieu, il
+laissait à l'adresse du worktree un dossier sans `.git` que Git tenait encore pour celui de la
+branche — `git status` y répondait « not a git repository », S12 s'y arrêtait, et le dossier restait
+au répertoire temporaire. Le démontage se fait désormais en trois gestes : le worktree est
+**écarté** de son adresse d'un seul geste (un renommage dans son dossier), **cesse d'être un
+worktree** (son `.git`, puis l'enregistrement de Git), puis **s'efface**. Coupé à n'importe quel
+instant, il est intact à son adresse, ou n'est plus qu'un dossier que le ramassage emporte dès que
+son hôte est mort. Un worktree qu'un process tient encore ne se déplace pas sous Windows : il reste
+monté, intact, comme celui d'une tâche tuée avant son démontage. Une coquille laissée avant ce
+correctif — Git la dit `prunable` — n'est ni sauvée ni lue : le montage suivant l'oublie, et le
+ramassage l'emporte.
+
 À la reprise du run sur son plan, la tâche remonte sa branche, et **l'agent sait ce qu'il y
 retrouve** : le message de sa tâche dit ce que la branche porte de plus que la base, ou que la
 branche qu'elle reprend — ses commits, ses fichiers —, et qu'il repart de cet état au lieu de le

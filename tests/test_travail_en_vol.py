@@ -25,6 +25,14 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
    porte que ce que toute copie de travail dit d'elle-même (où l'agent est, #1399, et
    que ce qu'il y laisse se commite, #1401).
 
+③ **Un démontage coupé ne laisse pas de coquille** (#1447) : l'extinction tombait
+   aussi pendant que l'hôte effaçait un `node_modules/` complet, et laissait à
+   l'adresse du worktree un dossier sans `.git` que Git tenait encore pour celui de
+   la branche — S12 s'y arrêtait. Le worktree est désormais intact ou retiré à tout
+   instant, et une coquille d'avant le correctif n'arrête ni l'oracle de S12, ni la
+   sauvegarde, ni le montage suivant, ni le ramassage. La mort de l'hôte est jouée
+   par une exception que rien n'attrape, au milieu de l'effacement.
+
 Aucun réseau, aucun modèle : les dépôts sont jetables, l'hôte est un double — ce qu'on
 éprouve est *ce qui est sauvé, et ce qui est dit*, pas l'extinction d'un groupe de
 process (`tests/test_hote_detache.py`). L'épreuve sur le réel est S12
@@ -66,7 +74,14 @@ from maestro.projets.modele import Projet
 from maestro.projets.reglages import ReglagesProjetsStore
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
-from maestro.sandbox import branche_de_tache, espace_de_travail, sauver_le_travail_en_vol
+from maestro.sandbox import (
+    branche_de_tache,
+    espace_de_travail,
+    ramassage,
+    sauver_le_travail_en_vol,
+)
+from maestro.sandbox import projet as espace_projet
+from maestro.scenarios.projets import en_cours_d_ecriture
 
 GIT = shutil.which("git")
 
@@ -555,3 +570,261 @@ def test_sans_depot_de_projets_rien_n_est_porte(tmp_path: Path) -> None:
 
         assert _fichiers_de_la_branche(Path(projet.racine)) == set()
         assert _en_attente(tuee) == "?? src/recettes.ts"
+
+
+# --------------------------------------------------------------------------- #
+# ③ Un démontage interrompu ne laisse pas de coquille (#1447)
+# --------------------------------------------------------------------------- #
+
+
+class _Tue(BaseException):
+    """L'hôte achevé au milieu d'un geste : plus rien ne tourne après, `finally` compris.
+
+    `BaseException` et non `Exception` : aucun repli du démontage ne l'attrape, comme
+    aucun ne survit à un `taskkill /T /F`.
+    """
+
+
+#: Ce qu'efface le démontage quand l'hôte meurt : le défaut de #1447 tombait au
+#: milieu de `node_modules/`, qu'un `npm install` complet rend long à effacer.
+BUTEE = "node_modules"
+
+
+def _effacer_jusqu_a_la_butee(dossier: Path) -> None:
+    """Efface `dossier` dans l'ordre où NTFS le rend, et meurt en atteignant `BUTEE`.
+
+    L'ordre est celui des deux passages de #1447 : tout ce qui précède
+    `node_modules` dans l'alphabet était parti — `.git` le premier —, tout ce qui le
+    suit était resté.
+    """
+    for entree in sorted(dossier.iterdir(), key=lambda chemin: chemin.name.casefold()):
+        if entree.name == BUTEE:
+            next(entree.rglob("*.js")).unlink()  # quelques fichiers, puis la mort
+            raise _Tue
+        if entree.is_dir():
+            shutil.rmtree(entree)
+        else:
+            entree.unlink()
+
+
+@pytest.fixture
+def _temporaire_isole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Le répertoire temporaire du poste sous `tmp_path` : ce qu'une mort laisse y reste."""
+    temporaire = tmp_path / "temp"
+    temporaire.mkdir()
+    monkeypatch.setenv("TMPDIR", str(temporaire))
+    return temporaire
+
+
+@pytest.fixture
+def _mort_pendant_l_effacement(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """L'hôte meurt pendant qu'un démontage efface, **quelle que soit** la façon d'effacer.
+
+    Le démontage de #1447 effaçait par `git worktree remove --force`, celui d'après
+    efface en Python : les deux gestes sont rejoués par `_effacer_jusqu_a_la_butee`,
+    une fois armés — le montage, lui, se joue sans mort. Rend l'interrupteur.
+    """
+    arme: list[bool] = []
+    git, retirer = espace_projet._git, espace_projet.retirer_arbre
+
+    def _git(racine: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+        if arme and arguments[:2] == ("worktree", "remove"):
+            _effacer_jusqu_a_la_butee(Path(arguments[-1]))
+        return git(racine, *arguments)
+
+    def _retirer(chemin: Path) -> bool:
+        if arme and chemin.is_dir() and (chemin / BUTEE).is_dir():
+            _effacer_jusqu_a_la_butee(chemin)
+        return retirer(chemin)
+
+    monkeypatch.setattr(espace_projet, "_git", _git)
+    monkeypatch.setattr(espace_projet, "retirer_arbre", _retirer)
+    return arme
+
+
+def _ecrit_avec_ses_dependances(espace: Path) -> None:
+    """Une tâche de S12 en vol : son travail, et un `npm install` complet que le projet ignore."""
+    (espace / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
+    (espace / "package.json").write_text('{"name": "recettes"}\n', "utf-8")
+    (espace / BUTEE / "next").mkdir(parents=True)
+    for n in range(3):
+        (espace / BUTEE / "next" / f"m{n}.js").write_text("x", "utf-8")
+    (espace / "tsconfig.json").write_text("{}\n", "utf-8")
+
+
+def _worktrees_de_la_branche(racine: Path, tache_id: str = TACHE) -> list[tuple[Path, bool]]:
+    """`(chemin, prunable)` de chaque worktree que Git enregistre sur la branche de la tâche."""
+    trouves = []
+    for bloc in _git(racine, "worktree", "list", "--porcelain").split("\n\n"):
+        lignes = bloc.splitlines()
+        if f"branch refs/heads/{branche_de_tache(tache_id)}" not in lignes:
+            continue
+        chemin = next(ligne.removeprefix("worktree ") for ligne in lignes)
+        trouves.append((Path(chemin), any(ligne.startswith("prunable") for ligne in lignes)))
+    return trouves
+
+
+def _coquilles(racine: Path, tache_id: str = TACHE) -> list[Path]:
+    """Les worktrees de la tâche que Git enregistre et dont le dossier n'a plus de `.git`."""
+    return [
+        chemin
+        for chemin, _ in _worktrees_de_la_branche(racine, tache_id)
+        if chemin.exists() and not (chemin / ".git").exists()
+    ]
+
+
+def _coquille_d_avant_le_correctif(projet: Projet) -> Path:
+    """Ce que #1447 a trouvé dans `%TEMP%` : un worktree sauvé, puis effacé jusqu'à la butée."""
+    with espace_de_travail(projet, tache_id=TACHE, keep=True) as ws:
+        coquille = ws.path
+    _ecrit_avec_ses_dependances(coquille)
+    assert sauver_le_travail_en_vol(projet, TACHE) is True
+    with pytest.raises(_Tue):
+        _effacer_jusqu_a_la_butee(coquille)
+    assert _coquilles(Path(projet.racine)) == [coquille]
+    return coquille
+
+
+@pytest.mark.usefixtures("_temporaire_isole")
+def test_un_demontage_tue_pendant_qu_il_efface_ne_laisse_pas_de_coquille(
+    tmp_path: Path, _mort_pendant_l_effacement: list[bool]
+) -> None:
+    """Le défaut de #1447 : l'hôte achevé au milieu de `node_modules/` laissait un dossier
+    sans `.git` que Git tenait encore pour le worktree de la branche — et S12 s'y arrêtait.
+
+    Le worktree est désormais **intact ou retiré** à tout instant : ce que la mort laisse
+    n'est plus à son adresse, ni enregistré chez Git.
+    """
+    projet = _projet(tmp_path)
+    racine = Path(projet.racine)
+    with pytest.raises(_Tue):
+        with espace_de_travail(projet, tache_id=TACHE) as ws:
+            chemin = ws.path
+            _ecrit_avec_ses_dependances(chemin)
+            _mort_pendant_l_effacement.append(True)
+
+    assert _coquilles(racine) == []
+    assert not chemin.exists()
+    assert en_cours_d_ecriture(racine, branche_de_tache(TACHE)) == ()
+    # Le travail, lui, était sur sa branche avant que rien ne s'efface.
+    assert _fichiers_de_la_branche(racine) == {"package.json", "src/recettes.ts", "tsconfig.json"}
+
+
+@pytest.mark.usefixtures("_temporaire_isole")
+def test_ce_qu_une_mort_laisse_en_effacant_part_au_ramassage(
+    tmp_path: Path, _mort_pendant_l_effacement: list[bool], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le reste d'un effacement coupé n'est plus un worktree : le ramassage l'emporte
+    dès que son hôte est mort, au lieu de le garder comme du travail à sauver."""
+    projet = _projet(tmp_path)
+    with pytest.raises(_Tue):
+        with espace_de_travail(projet, tache_id=TACHE) as ws:
+            parent = ws.path.parent
+            _ecrit_avec_ses_dependances(ws.path)
+            _mort_pendant_l_effacement.append(True)
+    assert any(parent.iterdir())  # le reste est là, au répertoire temporaire
+
+    monkeypatch.setattr(ramassage, "pid_vivant", lambda _pid: False)
+    assert ramassage.raison_de_garder(parent) is None
+
+
+@pytest.mark.usefixtures("_temporaire_isole")
+def test_une_mort_entre_l_ecart_et_l_oubli_ne_laisse_rien_de_lisible_a_moitie(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L'autre instant du démontage : le worktree a quitté son adresse, Git ne l'a pas
+    encore oublié. Son enregistrement est `prunable`, et rien ne s'y arrête — ni
+    l'oracle de S12, ni la sauvegarde de l'extinction, ni le montage suivant."""
+    projet = _projet(tmp_path)
+    racine = Path(projet.racine)
+    arme: list[bool] = []
+    git = espace_projet._git
+
+    def _git_mortel(depot: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+        if arme and arguments[:2] == ("worktree", "prune"):
+            raise _Tue
+        return git(depot, *arguments)
+
+    monkeypatch.setattr(espace_projet, "_git", _git_mortel)
+    with pytest.raises(_Tue):
+        with espace_de_travail(projet, tache_id=TACHE) as ws:
+            chemin = ws.path
+            _ecrit_avec_ses_dependances(chemin)
+            arme.append(True)
+    arme.clear()
+
+    assert not chemin.exists()
+    assert _worktrees_de_la_branche(racine) == [(chemin, True)]
+    assert en_cours_d_ecriture(racine, branche_de_tache(TACHE)) == ()
+    assert sauver_le_travail_en_vol(projet, TACHE) is False
+    with espace_de_travail(projet, tache_id=TACHE) as ws:
+        assert (ws.path / "src" / "recettes.ts").is_file()
+
+
+@pytest.mark.usefixtures("_temporaire_isole")
+def test_un_worktree_qu_un_process_tient_encore_reste_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un process vit encore dans le worktree (Windows refuse alors de le déplacer) : il
+    reste **intact et monté**, comme celui d'une tâche tuée avant son démontage, et
+    c'est le montage suivant de la tâche qui le libère — jamais une demi-mesure."""
+    projet = _projet(tmp_path)
+    racine = Path(projet.racine)
+    renommer = Path.rename
+
+    def _refuse(source: Path, cible: Path) -> Path:
+        if source.name == TACHE:
+            raise PermissionError(32, "Le processus ne peut pas accéder au fichier")
+        return renommer(source, cible)
+
+    monkeypatch.setattr(Path, "rename", _refuse)
+    monkeypatch.setattr(espace_projet, "_PAUSES_ECART_S", ())
+    with espace_de_travail(projet, tache_id=TACHE) as ws:
+        chemin = ws.path
+        _ecrit_avec_ses_dependances(chemin)
+
+    assert _worktrees_de_la_branche(racine) == [(chemin, False)]
+    assert (chemin / ".git").is_file() and (chemin / BUTEE).is_dir()
+    assert _en_attente(chemin) == ""  # son travail est sur la branche
+    assert _fichiers_de_la_branche(racine) == {"package.json", "src/recettes.ts", "tsconfig.json"}
+
+    monkeypatch.setattr(Path, "rename", renommer)
+    with espace_de_travail(projet, tache_id=TACHE) as ws:
+        assert (ws.path / "src" / "recettes.ts").is_file()
+    assert not chemin.exists()
+    assert _worktrees_de_la_branche(racine) == []
+
+
+@pytest.mark.usefixtures("_temporaire_isole")
+def test_une_coquille_d_avant_le_correctif_n_arrete_ni_l_oracle_ni_la_sauvegarde(
+    tmp_path: Path,
+) -> None:
+    """Le second critère : un poste antérieur au correctif en porte déjà. L'oracle de S12
+    lisait `git status` dedans (« not a git repository »), et la sauvegarde de
+    l'extinction y lançait `git add -A` — dans le premier dépôt trouvé en remontant."""
+    projet = _projet(tmp_path)
+    racine = Path(projet.racine)
+    _coquille_d_avant_le_correctif(projet)
+    avant = _git(racine, "rev-parse", branche_de_tache(TACHE)).strip()
+
+    assert en_cours_d_ecriture(racine, branche_de_tache(TACHE)) == ()
+    assert sauver_le_travail_en_vol(projet, TACHE) is False
+    assert _git(racine, "rev-parse", branche_de_tache(TACHE)).strip() == avant
+
+
+@pytest.mark.usefixtures("_temporaire_isole")
+def test_une_coquille_d_avant_le_correctif_n_arrete_pas_le_montage_et_part_au_ramassage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La tâche se remonte sur son travail, et la coquille — désormais oubliée de Git —
+    quitte le disque au ramassage dès que l'hôte qui l'a laissée est mort."""
+    projet = _projet(tmp_path)
+    racine = Path(projet.racine)
+    coquille = _coquille_d_avant_le_correctif(projet)
+
+    with espace_de_travail(projet, tache_id=TACHE) as ws:
+        assert (ws.path / "src" / "recettes.ts").is_file()
+    assert _worktrees_de_la_branche(racine) == []
+
+    monkeypatch.setattr(ramassage, "pid_vivant", lambda _pid: False)
+    assert ramassage.raison_de_garder(coquille.parent) is None
