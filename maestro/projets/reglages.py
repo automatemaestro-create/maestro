@@ -47,10 +47,11 @@ from pathlib import Path
 from typing import Any
 
 from maestro.config import Settings, load_settings
+from maestro.emplacements import NOM_PROJETS, racine_projets
 from maestro.projets.racine import RacineRefusee, valider_racine
 
 #: Le nom du dossier proposé sous le dossier personnel — nommé, jamais nu.
-NOM_DEFAUT = "Maestro"
+NOM_DEFAUT = NOM_PROJETS
 
 #: Le fichier unique du dépôt de réglages (un objet, pas un par entité).
 _FICHIER = "projets.json"
@@ -66,13 +67,12 @@ def repertoire_par_defaut() -> Path:
     être posé à la main.
     """
     try:
-        maison = Path.home()
+        return racine_projets()
     except (RuntimeError, OSError) as exc:  # pragma: no cover - dépend de l'environnement
         raise RacineRefusee(
             "dossier-utilisateur-introuvable",
             "Dossier personnel introuvable : réglez le répertoire des projets à la main.",
         ) from exc
-    return maison / NOM_DEFAUT
 
 
 @dataclass(frozen=True)

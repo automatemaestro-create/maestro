@@ -140,7 +140,7 @@ régénérer et à #1032 de lire :
 | `## Vérifier` | Tests et lint, et comment n'en jouer qu'une partie |
 | `## Conventions` | Style, nommage, ce qu'on ne fait pas ici |
 | `## L'outillage de ce projet` | **La désignation** (§3.3) : où sont les skills, où sont les scripts, et l'index des skills |
-| `## Ce qu'un agent ne touche pas` | Secrets, fichiers générés, et `.maestro/`, qui n'est pas le livrable |
+| `## Ce qu'un agent ne touche pas` | Secrets, fichiers générés — ni édités, ni supprimés pour faire le ménage, ni livrés : ignorés par le `.gitignore` (#1401) —, et `.maestro/`, qui n'est pas le livrable |
 
 Le fichier se termine par une ligne visible qui nomme Maestro, sa version et le manifeste. Elle est
 inerte pour un agent et utile pour la personne qui ouvre le fichier et se demande d'où il sort.

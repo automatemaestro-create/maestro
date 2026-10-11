@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import io
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
+from maestro.emplacements import NOM_JETABLE, VARIABLES_TEMP, racine_jetable
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.sources import SourceRefusee, racine_ingestion
 from maestro.sources.apercu import apercu_sources
@@ -309,10 +309,14 @@ def test_un_apercu_refuse_ne_laisse_pas_ses_octets_derriere_lui(
 
     C'est le cas qui compte le plus — un refus écrit un fichier **partiel**, et
     c'est précisément ce qu'il ne faut pas conserver.
+
+    Le répertoire temporaire se déplace par l'environnement, pas par
+    `tempfile.tempdir`, que la racine jetable ignore à dessein (#992, #1455).
     """
-    jetables = tmp_path / "jetables"
-    jetables.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(jetables))
+    temporaire = tmp_path / "temporaire"
+    temporaire.mkdir()
+    for variable in VARIABLES_TEMP:
+        monkeypatch.setenv(variable, str(temporaire))
 
     trop = b"x" * 4096
     with pytest.raises(SourceRefusee):
@@ -322,7 +326,8 @@ def test_un_apercu_refuse_ne_laisse_pas_ses_octets_derriere_lui(
             garde_fous=GardeFousIngestion(taille_max_source_octets=1024),
         )
 
-    assert list(jetables.iterdir()) == []
+    assert racine_jetable() == temporaire / NOM_JETABLE
+    assert list(racine_jetable().iterdir()) == [], "le dossier de l'aperçu est parti"
 
 
 def test_la_route_apercoit_plusieurs_fichiers_dans_l_ordre_declare(

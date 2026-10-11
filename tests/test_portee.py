@@ -24,7 +24,8 @@ Huit parties :
    critère du ticket ;
 ⑦ **sous Windows** (#1278) : le projet nommé par son chemin absolu est dans le
    projet, quelle que soit son orthographe, et un exécutable garde son verdict
-   avec son `.exe`. Les commandes sont, là encore, celles de deux runs réels ;
+   avec son `.exe`. Une option que Git Bash fait passer (`//PID`) n'est pas un
+   chemin (#1394). Les commandes sont, là encore, celles de runs réels ;
 ⑧ **les formes ordinaires d'une commande d'agent** (#1348) : les 55 commandes
    que le passage `20260927-070605` a rendues à une personne, rejouées sur la
    racine de leur tâche. 44 restaient dans leur projet et y restent ; 11 en
@@ -743,6 +744,82 @@ def test_un_verbe_destructeur_se_reconnait_sous_toutes_ses_orthographes() -> Non
 def test_un_executable_windows_qui_reste_dans_le_projet_passe(commande: str) -> None:
     """Le témoin : reconnaître le suffixe ne fait pas sortir ce qui ne sortait pas."""
     assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+#: Les deux commandes que la portée a rendues à une personne dans le run
+#: `da0a8ae6f1b2` (projet `p5`, tâche `socle-nextjs`, 2026-10-01) : l'agent arrête
+#: le serveur qu'il avait lancé pour vérifier ses routes, puis s'assure qu'il ne
+#: tourne plus — ce que son cadre exige (`_cadre_outille.md` : aucun processus ne
+#: survit à la tâche). Sous Git Bash, `/PID` deviendrait un chemin : l'agent double
+#: la barre, et Git Bash rend `/PID` au programme.
+GESTES_DU_RUN_P5 = (
+    "taskkill //PID 41084 //T //F",
+    'tasklist //FI "PID eq 10264"',
+)
+
+
+@pytest.mark.parametrize("commande", GESTES_DU_RUN_P5)
+def test_une_option_windows_echappee_n_est_pas_un_chemin(commande: str) -> None:
+    """« « //PID » sort du dossier du projet », deux fois dans le même run (#1394) :
+    la portée lisait comme un chemin absolu l'option qu'un programme Windows
+    reçoit, et renvoyait à une personne le geste que le cadre de l'agent exige."""
+    assert _portee_p3().commande_hors_portee(commande) == ""
+
+
+def test_arreter_son_serveur_ne_sollicite_personne() -> None:
+    """Le critère du ticket, au hook : l'appel passe, la trace dit « laissé
+    passer », et aucune demande n'est consignée."""
+    arbitrages: list[tuple[str, str]] = []
+    tracees: list[tuple[str, str]] = []
+    hook = _hook(_politique_de_projet(), _portee_p3(), arbitrages=arbitrages, tracees=tracees)
+
+    assert _joue(hook, GESTES_DU_RUN_P5[0]) == {}
+    assert arbitrages == []
+    assert tracees and "laissé passer" in tracees[0][1]
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        # Un chemin UNC garde sa barre après le serveur : Git Bash le transmet tel quel.
+        "touch //serveur/partage/x",
+        "cp rapport.md //serveur/partage",
+        # Une barre inverse après le serveur : Git Bash en ferait une option, mais
+        # la lire comme un chemin ne fait passer que moins — le garde-fou ne recule pas.
+        "cp rapport.md '//serveur\\partage'",
+        # Après `--`, plus rien n'est une option : le programme reçoit un chemin.
+        "python app.py -- //sortie",
+        # Ce que le shell étend, ou ce que le texte ne donne pas, n'est pas une option écrite.
+        "cp rapport.md //$DESTINATION",
+        # Une barre seule ou triple n'est pas l'échappement d'une option.
+        "touch /PID",
+        "cp rapport.md ///serveur",
+    ],
+)
+def test_un_chemin_qui_ressemble_a_une_option_reste_un_chemin(commande: str) -> None:
+    assert "sort du" in _portee_p3().commande_hors_portee(commande), commande
+
+
+def test_une_option_echappee_ne_couvre_pas_le_reste_de_la_commande() -> None:
+    """Lire `//PID` comme une option ne lève que lui : ce qui suit, dans le même
+    appel ou dans le maillon d'après, se juge comme avant."""
+    portee = _portee_p3(("", "notes.md"))
+
+    assert "ne l'a pas produit" in portee.commande_hors_portee(
+        "taskkill //PID 41084 //T //F && rm notes.md"
+    )
+    assert "sort du" in portee.commande_hors_portee("taskkill //PID 41084 //F > /tmp/kill.log")
+    assert "sort du" in portee.commande_hors_portee("taskkill //PID 41084 //F ../voisin")
+    # Un verbe qui détruit lit ses options de la même façon : ses cibles restent jugées.
+    assert portee.commande_hors_portee("del //Q build") == ""
+    assert "ne l'a pas produit" in portee.commande_hors_portee("del //Q notes.md")
+
+
+def test_sous_une_racine_posix_une_double_barre_reste_un_chemin() -> None:
+    """La convention est celle de Git Bash : sous une racine POSIX, `//etc` **est**
+    `/etc`, et n'a rien d'une option."""
+    racine = Path("/srv/projet")
+    assert "sort du" in PorteeProjet(racine=racine).commande_hors_portee("cp rapport.md //etc")
 
 
 # --- ⑧ Les formes ordinaires d'une commande d'agent (#1348) ------------------

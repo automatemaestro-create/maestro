@@ -34,9 +34,10 @@ source d'un projet Go, et le sauter ferait échouer sa construction à tort. Ce 
 borne la copie est sa **taille**, et elle le dit (`CopieImpossible`).
 
 Elle n'y suit **aucun lien symbolique** (le vecteur d'évasion de docs/24 §2.5), naît
-sous `racine_des_espaces()` avec le pid de ce process dans son nom — le ramassage
-(`maestro.sandbox.ramassage`) l'emporte donc si le process meurt avant de la
-retirer — et elle est retirée en sortie, quoi qu'il arrive.
+sous la racine jetable (`maestro.emplacements.jetable`) avec le pid de ce process
+dans son nom — le ramassage (`maestro.sandbox.ramassage`) l'emporte donc si le
+process meurt avant de la retirer — et elle est retirée en sortie, quoi qu'il
+arrive.
 
 ## L'interpréteur est celui des agents : bash
 
@@ -106,7 +107,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from collections.abc import Iterator, Sequence
@@ -115,9 +115,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from maestro.emplacements import jetable
 from maestro.fichiers import retirer_arbre
 from maestro.sandbox.arbre import Arbre
-from maestro.sandbox.ramassage import marquer, racine_des_espaces
 
 #: Le préfixe d'une copie de vérification — sous le préfixe commun des espaces de
 #: Maestro, donc candidate au ramassage si son process meurt avant de la retirer.
@@ -226,7 +226,7 @@ def copie_de_verification(
     """
     source = Path(racine).resolve()
     try:
-        parent = Path(tempfile.mkdtemp(prefix=marquer(PREFIXE_COPIE), dir=racine_des_espaces()))
+        parent = jetable(PREFIXE_COPIE)
     except OSError as exc:
         raise CopieImpossible(
             "espace-indisponible",
@@ -253,7 +253,7 @@ def dossier_de_sonde() -> Iterator[Path]:
 
     Pour les questions qui ne portent sur aucun projet — *ce programme est-il
     installé ?*, posée avant même que le projet existe. Même naissance qu'une copie
-    de vérification (sous `racine_des_espaces()`, pid dans le nom, donc ramassée si
+    de vérification (sous la racine jetable, pid dans le nom, donc ramassée si
     le process meurt avant de la retirer) : une sonde ne s'exécute jamais dans le
     répertoire courant de l'API, qui n'est le dossier de personne.
 
@@ -261,7 +261,7 @@ def dossier_de_sonde() -> Iterator[Path]:
     l'accueille.
     """
     try:
-        dossier = Path(tempfile.mkdtemp(prefix=marquer(PREFIXE_COPIE), dir=racine_des_espaces()))
+        dossier = jetable(PREFIXE_COPIE)
     except OSError as exc:
         raise CopieImpossible(
             "espace-indisponible",

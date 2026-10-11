@@ -64,8 +64,9 @@ const PORT_UI = process.env.MAESTRO_PORT_UI || PORT_UI_DEFAUT;
 const PORT_API = process.env.MAESTRO_PORT_API || PORT_API_DEFAUT;
 
 // La stack que cette fenêtre sert, nommée comme `start.sh` la nomme : son état
-// (`maestro-controltower-<api>-<ui>`), ses journaux et le profil de son navigateur portent ce
-// couple, et son arrêt libère ces deux ports. C'est la clé du verrou d'instance unique (§ plus bas).
+// (`<temp>/maestro/controltower-<api>-<ui>`, #1456), ses journaux et le profil de son navigateur
+// portent ce couple, et son arrêt libère ces deux ports. C'est la clé du verrou d'instance unique
+// (§ plus bas).
 const STACK = `${PORT_API}-${PORT_UI}`;
 
 // L'URL est celle que `start.sh` ouvrirait : « localhost » et non « 127.0.0.1 ». Les deux noms

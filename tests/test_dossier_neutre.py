@@ -79,7 +79,7 @@ def test_le_dossier_neutre_est_vide_et_n_est_pas_celui_de_l_api() -> None:
 
 @pytest.mark.usefixtures("neutre_neuf")
 def test_le_dossier_neutre_appartient_a_maestro_et_se_ramasse_a_sa_mort() -> None:
-    """Né comme un espace jetable : sous la racine des espaces, le pid de ce process dans le nom.
+    """Un jetable comme les autres : sous la racine jetable, le pid de ce process dans le nom.
 
     C'est ce qui le fait ramasser par `ramasser` quand le process est mort, et conserver
     tant qu'il vit — sans qu'aucun mécanisme de plus ait à s'en souvenir.
@@ -89,7 +89,7 @@ def test_le_dossier_neutre_appartient_a_maestro_et_se_ramasse_a_sa_mort() -> Non
     assert dossier.parent == racine_des_espaces()
     assert dossier.name.startswith(PREFIXE_NEUTRE)
     assert pid_dans(dossier.name) == os.getpid()
-    assert dossier in list(espaces([dossier.parent]))
+    assert dossier in list(espaces((), jetables=[dossier.parent]))
     assert est_orphelin(dossier) is False
 
 

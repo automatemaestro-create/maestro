@@ -260,6 +260,31 @@ def test_le_cadre_outille_prevoit_la_tache_qui_agit_au_lieu_de_produire():
     assert "commande shell comprise" in cadre
 
 
+def test_le_cadre_outille_dit_que_ce_qui_se_refabrique_n_est_pas_le_livrable():
+    """#1401 : trois consignes ne disaient pas ce que deviennent `node_modules/` et
+    `.next/`. Le cadre dit « ce que tu laisses est le livrable », le régime d'exécution
+    rangeait « nettoyer ce que tes exécutions ont produit » parmi le travail ordinaire,
+    et `AGENTS.md` dit que ce que le projet génère « ne s'édite pas ». Sur p5, rien ne
+    disait si une dépendance installée restait ou s'effaçait.
+
+    Le cadre le dit une fois, pour tous les espaces : ce qui se refabrique reste où
+    les commandes l'ont mis, ignoré par le `.gitignore` — qu'on complète au besoin —,
+    jamais supprimé pour faire le ménage. Ce que l'agent arrête en fin de tâche, c'est
+    ce qu'il a lancé."""
+    cadre = _normalise(pdc.cadre_outille())
+
+    assert "Ce qui se refabrique n'est pas le livrable" in cadre
+    assert "dépendances installées, sortie de build, caches" in cadre
+    # Laissé s'il est ignoré, ajouté au `.gitignore` sinon — jamais effacé.
+    assert "s'il est ignoré par le .gitignore" in cadre
+    assert "sinon ajoute-le au .gitignore" in cadre
+    assert "Ne le supprime pas pour « nettoyer »" in cadre
+    # Finir proprement : arrêter ce qu'on a lancé, rien qui survive à la tâche.
+    assert "arrêter ce que tu as lancé" in cadre
+    assert "aucun processus persistant ni service à l'écoute" in cadre
+    assert cadre.count("processus persistant") == 1, "la règle est dite une fois"
+
+
 def test_le_cadre_outille_envoie_le_jetable_dans_un_dossier_que_l_agent_cree():
     """#1348 : le cadre envoyait ce qui n'est pas le livrable « dans le répertoire
     temporaire du système », et l'agent l'y écrivait sous un nom fixe

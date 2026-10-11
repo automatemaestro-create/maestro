@@ -2088,6 +2088,13 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     même geste que docs/40 §5, et l'état qu'il laisse sert ensuite la relecture visuelle. Le chemin
     est une **détection** ; **quel** scénario emprunte le changement — et s'il en est un — reste un
     jugement de la session, qui se consigne (« non joué : aucun scénario ne passe par la purge ») ;
+
+    ⚠ **Renversé en partie le 2026-10-09** ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md),
+    #1460). Le banc entier se jouera une fois par lot, sur `main` intégrée, par le pilote (#1462).
+    Au ticket, il ne sera plus dû que quand le changement touche ce que le modèle reçoit ou fait, sur
+    le scénario le moins cher dont la carte croise le diff (#1463). Le préfixe `GL_BANC_CHEMINS`
+    cessera alors d'être le déclencheur. **La règle ci-dessus tient jusqu'à #1464**, qui réécrit ce
+    paragraphe : on ne retire pas le filet du ticket avant d'avoir posé celui du lot ;
   - **ce qui ne bouge pas** : un ✗ est nommé, jamais coché, et ne bloque pas le merge ; un critère
     **hors diff** garde sa réponse ; les critères ne s'écrivent jamais à la clôture. Le prix est
     connu et assumé : un passage coûte du vrai modèle (S2 : 0,41 $ et 1 min 25 s sur #1226, qui
@@ -4765,6 +4772,35 @@ le message d'échec **distingue les deux échecs** — « désenregistré, son d
 « non retiré » : dire l'inverse de ce qui vient de se passer est précisément ce qui a laissé onze
 coquilles s'accumuler derrière autant de lignes rouges.
 
+#### L'état de la stack part avec son worktree (#1456)
+
+Chaque worktree a ses ports, donc sa stack, et `start.sh` range l'état de celle-ci — jeton de
+session, pid du chien de garde, profil de la fenêtre isolée — hors du dépôt. Le 2026-10-08, le
+répertoire temporaire du poste en portait **117** (`maestro-controltower-<api>-<ui>`), un par paire
+de ports montée depuis septembre : aucun ne partait avec son worktree.
+
+L'état vit désormais sous la racine du jetable, `<temp>/maestro/controltower-<api>-<ui>` (docs/24
+§2.7), avec un témoin `copie` qui nomme la copie qui a démarré la stack. `gc` joue, **après** ses
+retraits, la règle de [`scripts/controltower/etat-stack.sh`](../scripts/controltower/etat-stack.sh) :
+un état dont la copie a disparu part, **jamais** celui d'une stack vivante — un de ses deux ports
+écoute, ou son chien de garde vit. `start.sh` joue la même règle à chaque démarrage, ce qui rattrape
+une copie retirée hors de `gc` (l'avant d'une relecture, un `rm` à la main), et retire au passage
+l'ancienne adresse quand sa stack est éteinte. Trois choix à ne pas défaire :
+
+- **Même en mode ciblé** (#438) : la question est locale — ni forge ni backlog —, et le worktree
+  qu'un merge vient de retirer est précisément celui dont l'état devient orphelin. Jamais en
+  `--check`, qui ne touche à rien.
+- **Le ramassage des hôtes ne le juge pas** (`FAMILLES_TIERCES_JETABLES` de
+  `maestro/sandbox/ramassage.py`) : il retire par l'âge ce qui ne nomme pas de pid vivant, or une
+  stack inactive depuis six heures n'en est pas moins vivante, et son chien de garde perdrait la
+  session qu'il surveille. Un seul propriétaire.
+- **Le témoin, pas les ports du worktree** : le témoin dit à qui est l'état quelle que soit la façon
+  dont la copie est partie, et sans relire les réglages d'un worktree qui n'existe plus.
+
+`MAESTRO_RAMASSAGE_ETAT_STACK=0` l'éteint ; `tests/conftest.py` le coupe pour la suite, que ses
+tests rallument sur un `TMPDIR` à eux (`tests/test_etat_stack.py`, le ramassage de
+`tests/test_worktree.py`).
+
 #### Le cycle de vie posé sur le même verdict (#275)
 
 Le merge **ferme** le ticket (`Closes #<iid>`) mais ne touche à **aucun label**. Depuis #207, seul
@@ -5755,6 +5791,7 @@ bash scripts/orchestrate/run.sh --resume    # reprend un run qui ne s'est pas te
 bash scripts/orchestrate/run.sh --concurrence 3  # impose 3 créneaux — sinon dérivés du plan (§11.10)
 bash scripts/orchestrate/status.sh --watch  # où en est le run, depuis n'importe quel terminal
 bash scripts/orchestrate/journal.sh audit   # où est passé son temps, pendant ou après (§11.12)
+bash scripts/orchestrate/banc-main.sh       # le banc entier sur main, hors run (§11.13)
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
 ```
 
@@ -8291,3 +8328,79 @@ renvoyer par un chemin absolu ferait refuser la lecture.
 > code de sortie intact et **aucun `audit.txt` tronqué** derrière lui, le résumé retombant sur la
 > commande ; et `MAESTRO_AUDIT_FIN_RUN=0` l'**éteint**, sans rien retirer d'autre. Une quatrième
 > vérifie l'**ordre** : à l'instant où l'audit est écrit, le flux du ticket est déjà en `.jsonl.gz`.
+
+### 11.13 Le banc entier sur `main`, une fois par lot (#1462, chantier #1460)
+
+Le banc des scénarios de référence ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md))
+se paie **une fois par lot**, sur `main` intégrée, et non plus à chaque ticket qui touche son chemin
+([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md)). Le 08/10, S12 (≈ 26 min, ≈ 3 $)
+a été joué six fois par trois tickets du même jalon, chacun sur sa branche ; un passage complet
+coûte ≈ 13,5 $ et ≈ 1 h 25. Joué sur `main`, il vérifie en plus **ce qui sera livré** — le
+résultat des merges, pas une branche, le principe de la CI (#716).
+
+```bash
+bash scripts/orchestrate/banc-main.sh            # hors run : le passage sur origin/main
+bash scripts/orchestrate/banc-main.sh --forcer   # même si main n'a pas bougé sur le chemin
+bash scripts/orchestrate/banc-main.sh --retirer  # retire la copie dédiée
+bash scripts/orchestrate/run.sh --sans-banc      # un run qui ne le joue pas
+```
+
+**Le passage par lot.** En fin de run, **après le drain final** (§11.11) — c'est lui qui fait
+entrer le lot dans `main` — et **avant le résumé**, qui porte son verdict, le pilote appelle
+`banc-main.sh --sortie <run-dir>`. Le script, source unique du passage, est celui qu'une personne
+joue à la main les semaines où l'on merge en interactif. Il fait cinq choses, dans l'ordre :
+
+1. **Le sha joué** : `origin/main`, après un `fetch`.
+2. **La décision**, lue dans l'historique du banc (#1461) contre l'historique de `main`
+   (`python -m maestro.scenarios.sur_main decider`). Il ne joue que si `main` a bougé **sur le
+   chemin des scénarios** (`GL_BANC_CHEMINS` de `lib.sh`, §6 — la carte de #1463 le remplacera)
+   depuis le **dernier passage complet sur `main`**. Complet : tout le catalogue, sans aucun
+   empêchement. Sur `main` : un sha ancêtre de celui qu'on joue, sur un arbre non modifié — un
+   passage du clone principal sur `main` compte, celui d'une branche de ticket non. Sinon il
+   **s'abstient en le disant**, avec le passage qui couvre encore `main`.
+3. **La copie dédiée** (`worktree.sh main-banc`) : un worktree **détaché** sur ce sha, nommé
+   `main.banc`, monté comme l'avant d'une relecture (§9, #977), sur ses ports (`MAESTRO_BANC_PORTS`,
+   `8400:3400`) et dans son espace Redis (le nom du worktree, #1164). Ni le clone principal — la
+   stack de la personne reste libre, et Next.js n'admet qu'un serveur de dev par `apps/web` —, ni
+   le worktree d'un ticket. Elle **reste en place** d'un passage à l'autre : ses rapports y vivent,
+   et `start.sh --etat-banc` y rouvre l'état du dernier passage sur `main`.
+4. **Le passage**, par le lanceur **de la copie** — c'est le code de `main` qui se joue :
+   `start.sh --etat-banc --rejouer --no-browser`, puis `--stop`, quoi qu'il arrive.
+5. **Le verdict** (`sur_main verdict`), lu dans le rapport : un **rouge nomme les PR mergées entre
+   son dernier vert sur `main` et le sha joué**, lues dans `git log --first-parent` — celles du
+   chemin une à une, avec leur ticket (`Closes #`), les autres comptées sur une ligne. Un vert au
+   même sha se dit « non déterministe », et l'absence de tout vert sur `main` se dit aussi. Comme
+   pour les butées sans ticket de reprise (#611), le pilote **nomme**, il ne crée aucun ticket.
+
+**Une abstention n'est jamais un vert** (docs/47 §5). `start.sh` sort en `0` sur un passage vert
+comme rouge : le verdict se lit dans le rapport, jamais dans un code. Un processus tué sort en `1`
+sous Windows : seul le **témoin** que le banc écrit en dernier dit qu'il est allé au bout (#1365),
+et celui d'un passage précédent est retiré avant de jouer. Pas de témoin — passage tué, Redis
+absent, API muette, copie impossible à monter : le banc est **injouable**, c'est une abstention.
+Un scénario **empêché** (API, fournisseur, limite d'usage) aussi, jamais rattaché à une PR. Le
+pilote s'abstient de lui-même sur un **arrêt demandé** (`STOP`) et sur la **limite
+hebdomadaire** que le run a touchée : le banc tirerait sur le même quota.
+
+**Où le lire.** Dans le répertoire du run : `banc.etat` (une ligne — état, sha, début, fin,
+motif ; `en-cours` pendant le passage), `banc.txt` (le verdict en mots) et `banc.log` (tout le
+montage et le passage). Le résumé du run porte la ligne `banc sur main`, et `status.sh` une section
+**Banc sur main** : le passage dure une heure et demie après que le plan est soldé et la file
+vidée, et sans elle ce temps-là ne se verrait nulle part. Hors run, la sortie va sous
+`.maestro/banc-main/<horodatage>/`.
+
+**Son extinction.** `--sans-banc` ou `MAESTRO_ORCHESTRATE_BANC=0`. L'en-tête du run annonce le
+régime **dans les deux sens**, comme le budget (§11.3) : ne pas payer le banc est un choix qu'on
+doit voir. Le passage est **best-effort**, au même titre qu'`audit.txt` (§11.12) : ni le verdict du
+run ni son code de sortie n'en dépendent — un rouge du banc est une information sur `main`, pas un
+échec du lot.
+
+> **Tests.** [`tests/test_banc_sur_main.py`](../tests/test_banc_sur_main.py) éprouve la décision et
+> le rattachement sur de vrais dépôts Git jetables et des lignes d'historique écrites à la main :
+> un passage incomplet, empêché, joué sur une branche ou sur un arbre modifié ne dispense pas de
+> jouer ; un rouge nomme les PR de l'intervalle, celles du chemin d'abord. Dans
+> [`tests/test_orchestrate.py`](../tests/test_orchestrate.py), le **banc est doublé** (un faux
+> montage, un faux lanceur dans la copie) et tout le reste est réel : le pilote joue le banc entier
+> sur le sha d'`origin/main` dans la copie, ou s'abstient en le disant ; un passage tué, un témoin
+> périmé, une copie impossible ou un scénario empêché valent abstention ; un rouge nomme ses PR au
+> journal du run et dans `status.sh` ; l'extinction se dit, et l'ordre — après le drain, avant le
+> résumé — est gardé.

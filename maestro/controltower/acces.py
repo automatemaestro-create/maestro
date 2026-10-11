@@ -107,6 +107,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from maestro.config import ConfigError, Settings, load_settings
+from maestro.emplacements import NOM_ETAT, racine_etat
 
 #: Les deux régimes d'accès. `jeton` est le défaut de l'API servie.
 REGIME_JETON = "jeton"
@@ -136,7 +137,7 @@ _VALEUR_DU_PARAMETRE = re.compile(
 PORT_UI_DEFAUT = 3000
 
 #: Le fichier du jeton, hors du dépôt : `~/.maestro/jeton-api`.
-DOSSIER_JETON = ".maestro"
+DOSSIER_JETON = NOM_ETAT
 FICHIER_JETON = "jeton-api"
 
 #: Les octets du secret engendré (43 caractères en base64 URL-safe).
@@ -402,13 +403,13 @@ def chemin_du_jeton(settings: Settings | None = None) -> Path:
     if settings.api_jeton_fichier:
         return Path(settings.api_jeton_fichier).expanduser()
     try:
-        maison = Path.home()
+        etat = racine_etat()
     except (RuntimeError, OSError) as exc:  # pragma: no cover - dépend de l'environnement
         raise ConfigError(
             "Dossier personnel introuvable : nommer le fichier du jeton d'API "
             "(MAESTRO_API_JETON_FICHIER) ou le jeton lui-même (MAESTRO_API_JETON)."
         ) from exc
-    return maison / DOSSIER_JETON / FICHIER_JETON
+    return etat / FICHIER_JETON
 
 
 def jeton_local(settings: Settings | None = None) -> str:

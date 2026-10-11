@@ -95,6 +95,7 @@ from maestro.controltower.events import (
     RedisEventBus,
 )
 from maestro.controltower.magasin import endpoint_lisible
+from maestro.emplacements import NOM_ETAT, racine_etat
 from maestro.espace import espace_courant, nom_redis
 
 _LOGGER = logging.getLogger("maestro.controltower")
@@ -118,7 +119,7 @@ SUPPORTS = (SUPPORT_REDIS, SUPPORT_SQLITE)
 #: qu'une installation n'a pas. `~/Maestro` est déjà le répertoire *des projets*
 #: (`maestro.projets.reglages`) : ce dossier-ci porte les données du produit, pas
 #: le travail de l'utilisateur, d'où un nom masqué et distinct.
-DOSSIER_LOCAL = ".maestro"
+DOSSIER_LOCAL = NOM_ETAT
 
 #: Un fichier de journal par **espace** (#1164), comme les clés Redis : deux
 #: copies de travail ne se relisent pas l'une l'autre, et l'état du banc
@@ -454,13 +455,13 @@ def chemin_sqlite(
     if regle:
         return Path(regle).expanduser()
     try:
-        maison = Path.home()
+        etat = racine_etat()
     except (RuntimeError, OSError) as exc:  # pragma: no cover - dépend de l'environnement
         raise ConfigError(
             "Dossier personnel introuvable : nommez le fichier du journal local "
             "par MAESTRO_SQLITE_FICHIER."
         ) from exc
-    return maison / DOSSIER_LOCAL / f"{espace_courant(environnement).nom}{SUFFIXE_SQLITE}"
+    return etat / f"{espace_courant(environnement).nom}{SUFFIXE_SQLITE}"
 
 
 def journal_configure(settings: Settings | None = None) -> EventLog:

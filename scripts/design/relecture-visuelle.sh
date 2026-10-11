@@ -68,9 +68,11 @@
 #     (`<espace>.banc`, `.maestro/banc/`, #1164), que `start.sh` rouvre ou remet à neuf à chaque état.
 #     Ce qu'un worktree porte en propre — ses fils, ses projets, ses runs — n'est jamais touché.
 #   - Le projet neuf de l'état « vide » (section 5) : déclaré PAR L'API, qui crée son dossier sous
-#     `${MAESTRO_RELECTURE_ATELIER:-~/maestro-relecture}/<iid>/projet-neuf` — hors d'`AppData` et
-#     du dépôt, que la validation des racines refuse (EF-38). Son témoin,
-#     `.maestro/relecture/.projet-neuf`, dit à `--fin` quel dossier retirer.
+#     `${MAESTRO_RELECTURE_ATELIER:-~/.maestro/ateliers/relecture}/<iid>/projet-neuf` — hors
+#     d'`AppData` et du dépôt, que la validation des racines refuse (EF-38), sous l'état du poste
+#     (#1457, `maestro.emplacements.racine_ateliers`). Son témoin, `.maestro/relecture/.projet-neuf`,
+#     dit à `--fin` quel dossier retirer. L'atelier d'avant, `~/maestro-relecture`, est repris au
+#     montage d'un état (`reprend_ancien_atelier`).
 #   - `.maestro/relecture/.etat` — l'état que les stacks servent (section 5), pour qu'« injoignable »,
 #     qui coupe une stack au lieu d'en monter une, sache qu'il y en a une.
 #   - `.maestro/relecture/.avant` — le témoin de l'avant (section 6) : où il est monté et sur quels
@@ -262,7 +264,8 @@ Options :
   -h, --help        Cette aide.
 
 L'avant (origin/main) se sert sur les ports de l'après + 200. MAESTRO_RELECTURE_AVANT=0 l'éteint.
-Le projet neuf de l'état « vide » naît sous MAESTRO_RELECTURE_ATELIER (défaut ~/maestro-relecture).
+Le projet neuf de l'état « vide » naît sous MAESTRO_RELECTURE_ATELIER (défaut
+~/.maestro/ateliers/relecture).
 
 Codes de retour : 0 = il y a à regarder · 3 = aucune surface visible · 4 = aucune capture (saisine,
 planche) · 1 = échec · 2 = usage.
@@ -532,12 +535,58 @@ chemin_natif() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 
-# Le dossier du projet neuf : sous l'atelier des relectures, dans le profil de l'utilisateur. Ni
-# `AppData` (le temporaire d'un poste Windows) ni le dépôt : la validation des racines les refuse
-# (EF-38, mesuré en #221) — même raison, même parade que l'atelier du banc (`~/maestro-scenarios`).
+# Le dossier du projet neuf : sous l'atelier des relectures, dans l'état du poste (`~/.maestro/ateliers/`,
+# #1457 — le nom vient de `maestro.emplacements`, que ce script ne peut pas importer). Ni `AppData` (le
+# temporaire d'un poste Windows) ni le dépôt : la validation des racines les refuse (EF-38, mesuré en
+# #221) — même raison, même parade que l'atelier du banc (`~/.maestro/ateliers/scenarios`).
 racine_projet_neuf() {
-  local base="${MAESTRO_RELECTURE_ATELIER:-$HOME/maestro-relecture}"
+  local base="${MAESTRO_RELECTURE_ATELIER:-$HOME/.maestro/ateliers/relecture}"
   printf '%s/%s/projet-neuf' "${base//\\//}" "$1"
+}
+
+# L'atelier d'avant #1457, à la racine du profil. Il n'est lu que si l'atelier n'est pas réglé : qui
+# règle MAESTRO_RELECTURE_ATELIER a choisi où vivent ses projets neufs, et l'ancien défaut n'est pas
+# le sien.
+SEUIL_ANCIEN_ATELIER_MIN=360
+
+# reprend_ancien_atelier : retire de `~/maestro-relecture` ce qu'il porte de reconnaissable — un dossier
+# `<iid>/`, celui de la relecture du ticket `<iid>` : le projet neuf que son `--fin` aurait dû retirer, ou
+# les projets qu'une relecture d'avant #1208 y semait (`<iid>/<projet>`, `<projet>-avant`) —, puis le
+# dossier lui-même s'il est vide, et le DIT. Un dossier d'iid où quelque chose a bougé depuis moins de
+# six heures reste : une copie de travail restée sur l'ancien code peut y tenir une relecture en cours
+# (son `--fin` le retirera, ou la prochaine reprise). Ce qui n'a pas cette forme n'est jamais touché, et
+# se nomme. Muet quand il n'y a pas d'ancien atelier.
+reprend_ancien_atelier() {
+  [ -z "${MAESTRO_RELECTURE_ATELIER:-}" ] || return 0
+  local ancien="${HOME//\\//}/maestro-relecture" dossier iid retires=0 recents=() restes=() entree
+  [ -d "$ancien" ] || return 0
+  for dossier in "$ancien"/*/; do
+    dossier="${dossier%/}"
+    [ -d "$dossier" ] || continue
+    iid="$(basename "$dossier")"
+    case "$iid" in '' | *[!0-9]*) continue ;; esac
+    if [ -n "$(find "$dossier" -mmin -"$SEUIL_ANCIEN_ATELIER_MIN" -print -quit 2>/dev/null)" ]; then
+      recents+=("$iid")
+      continue
+    fi
+    rm -rf "$dossier" && retires=$((retires + 1))
+  done
+  for entree in "$ancien"/* "$ancien"/.[!.]*; do
+    [ -e "$entree" ] || continue
+    iid="$(basename "$entree")"
+    case " ${recents[*]} " in *" $iid "*) continue ;; esac
+    restes+=("$iid")
+  done
+  if [ "${#restes[@]}" -eq 0 ] && [ "${#recents[@]}" -eq 0 ] && rmdir "$ancien" 2>/dev/null; then
+    dire "  atelier    : ancien atelier $ancien retiré — $retires atelier(s) de relecture que personne n'avait retiré(s)"
+    return 0
+  fi
+  local message="  atelier    : ancien atelier $ancien — $retires atelier(s) de relecture retiré(s)"
+  [ "${#recents[@]}" -gt 0 ] &&
+    message="$message ; gardé(s), touché(s) il y a moins de 6 h (une relecture peut s'y tenir ailleurs) : ${recents[*]}"
+  [ "${#restes[@]}" -gt 0 ] &&
+    message="$message ; y restent, jamais touchés (à retirer à la main) : ${restes[*]}"
+  dire "$message"
 }
 
 # annonce_projets <port api> <côté> : les projets que la stack sert, et le nombre de runs de chacun —
@@ -1537,6 +1586,7 @@ fi
 # la stack dès qu'elle se ferme (#149), ce qui couperait l'API sous le navigateur qu'on pilote. La
 # sortie du lanceur passe telle quelle : c'est elle qui dit l'âge de l'état du banc.
 read -r -a ARGS_ETAT <<<"$(options_start "$ETAT")"
+reprend_ancien_atelier
 dire "  stack      : démarrage de la vraie stack, état « $ETAT » — $(description_etat "$ETAT")"
 dire "               (sans navigateur ; le premier passage construit l'UI)"
 code=0

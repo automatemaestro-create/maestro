@@ -65,12 +65,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from maestro.emplacements import jetable, repertoire_temporaire
 from maestro.fichiers import retirer_arbre
 from maestro.projets.application import ApplicationRefusee, commiter_en_attente
 from maestro.projets.modele import Projet
@@ -106,6 +106,20 @@ _COMMITS_DITS_MAX = 10
 #: Ce que dit chaque lettre de `git diff --name-status` ; une lettre absente d'ici
 #: est rendue telle que Git l'écrit, jamais tue.
 _STATUTS_GIT = {"A": "ajouté", "M": "modifié", "D": "supprimé", "T": "type changé"}
+
+#: Ce que le message d'une tâche dit de sa **copie de travail** (#1401) : ce que
+#: l'agent y laisse est commité, brouillons compris, et où vont les brouillons pour
+#: ne pas l'être. Voir `EspaceCopieDeTravail.consigne_espace`.
+CONSIGNE_COPIE_DE_TRAVAIL = (
+    "Dans cette copie de travail du projet, tout ce que tu laisses et que le "
+    "`.gitignore` du projet n'ignore pas est commité sur ta branche à la fin de ta "
+    "tâche — brouillons compris —, puis appliqué au projet avec elle. Ce qui n'est pas "
+    "le livrable — brouillons, essais, harnais de vérification, notes — ne se laisse "
+    "donc pas ici : mets-le dans un dossier que tu crées par `mktemp -d`, dans la "
+    "commande même qui s'en sert, hors de cette copie — un nom fixe du répertoire "
+    "temporaire du système sort de ton espace et revient à une personne. Ce qui mérite "
+    "d'être relu, dis-le dans ton compte-rendu."
+)
 
 
 @dataclass(frozen=True)
@@ -281,15 +295,31 @@ class EspaceCopieDeTravail(Workspace):
     copie: CopieDuProjet | None = None
 
     def consigne_espace(self) -> str:
-        """Où l'agent est (#1399), puis ce que sa branche porte déjà s'il y a quelque chose (#1392).
+        """Où l'agent est (#1399), ce que devient ce qu'il laisse (#1401), ce que sa branche porte.
 
         Renverse #944 pour la copie de travail : « un worktree n'a rien de
         particulier à dire » tenait tant qu'on le croyait une copie conforme dont
         l'agent n'avait rien à savoir. Il a à savoir qu'elle **est** le projet que
         sa tâche nomme — sur p5, faute de le lire, l'agent a cherché le dossier.
+
+        ⚠ **Ce n'est plus vide sur une branche neuve.** Tout ce que l'agent laisse
+        ici et que le `.gitignore` du projet n'ignore pas est commité au démontage
+        (`_solder_la_branche`, `git add -A`), puis fusionné dans le projet —
+        brouillons compris. Sur p5, rien ne le lui disait, et aucun atelier n'est
+        ouvert ici (#944, réservé au projet non versionné) : le message le dit donc
+        (`CONSIGNE_COPIE_DE_TRAVAIL`), et envoie ce qui n'est pas le livrable dans un
+        dossier que l'agent crée par `mktemp -d`, hors de la copie — le geste que la
+        portée lui laisse (`maestro.portee`, « l'établi »), le même qu'en place pour
+        ce que personne n'aura à relire (#1348).
+
+        Ce que le `.gitignore` retire, et ce qui s'y ajoute, est dit **une fois pour
+        tous les espaces** par le cadre d'exécution (`_cadre_outille.md`) : ce
+        message ne le redit pas, il dit ce que le cadre ne peut pas savoir — que
+        cet espace-ci se commite.
         """
         paragraphes = (
             self.copie.consigne() if self.copie is not None else "",
+            CONSIGNE_COPIE_DE_TRAVAIL,
             self.anterieur.consigne() if self.anterieur is not None else "",
         )
         return "\n\n".join(paragraphe for paragraphe in paragraphes if paragraphe)
@@ -386,12 +416,14 @@ def espace_de_travail(
         yield EspaceEnPlace.derive(racine, perimetre=projet.perimetre, atelier=atelier)
         return
 
-    # `racine_des_espaces` et non le défaut de `tempfile` (#992, S13) : la même
-    # racine que l'espace jetable, donc celle que le Bash de l'agent appelle
-    # `/tmp` sous Windows. Le parent n'est **pas** marqué d'un pid, et c'est
-    # voulu : le ramassage ne doit jamais emporter un worktree, dont le travail
-    # non commité ne vit nulle part ailleurs (`ramassage.porte_un_worktree`).
-    parent = Path(tempfile.mkdtemp(prefix=prefix, dir=racine_des_espaces()))
+    # La racine jetable (#1455) et non le défaut de `tempfile` (#992, S13) : la
+    # même racine que l'espace jetable, sous ce que le Bash de l'agent appelle
+    # `/tmp` sous Windows. Le parent est marqué du pid de ce process comme tout
+    # jetable : le ramassage n'emporte jamais pour autant un worktree dont le
+    # dépôt existe, dont le travail non commité ne vit nulle part ailleurs
+    # (`ramassage.porte_un_worktree`) — le marqueur ne sert qu'aux dépouilles
+    # qui n'en portent plus, montage raté ou dépôt disparu.
+    parent = jetable(prefix)
     chemin = parent / _slug(tache_id)
     branche = _branche(tache_id)
     depart = _branche(reprend) if reprend.strip() else ""
@@ -676,11 +708,15 @@ def _worktrees_abandonnes(
     tient à l'écart le worktree qu'une personne aurait ouvert elle-même sur une
     branche `maestro/…`. `sauf` est l'emplacement qu'on s'apprête à monter. Rend
     une liste vide quand Git ne sait pas répondre.
+
+    La racine des espaces est la racine jetable depuis #1455, et le répertoire
+    temporaire lui-même avant : un run repris après la mise à jour retrouve le
+    worktree que sa première vie avait monté à l'ancienne adresse.
     """
     resultat = _git(racine, "worktree", "list", "--porcelain")
     if resultat.returncode != 0:
         return []
-    espaces = _normalise(racine_des_espaces())
+    espaces = {_normalise(racine_des_espaces()), _normalise(repertoire_temporaire())}
     cible = None if sauf is None else _normalise(sauf)
     tache = branche.removeprefix(PREFIXE_BRANCHE)
     trouves: list[Path] = []
@@ -691,7 +727,7 @@ def _worktrees_abandonnes(
             or _normalise(abandonne) == cible
             or abandonne.name != tache
             or not abandonne.parent.name.startswith(PREFIXE_COMMUN)
-            or _normalise(abandonne.parent.parent) != espaces
+            or _normalise(abandonne.parent.parent) not in espaces
         ):
             continue
         trouves.append(abandonne)

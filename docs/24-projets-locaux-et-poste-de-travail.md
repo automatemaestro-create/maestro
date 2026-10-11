@@ -216,7 +216,7 @@ commit que le projet refuse (son `pre-commit`) est dit au journal, et n'empêche
 retrouve** : le message de sa tâche dit ce que la branche porte de plus que la base, ou que la
 branche qu'elle reprend — ses commits, ses fichiers —, et qu'il repart de cet état au lieu de le
 refaire (`TravailAnterieur`). Ce travail compte dans ce que la tâche livre au juge, qu'elle l'ait
-réécrit ou non. Une branche neuve, ou déjà fusionnée, n'a rien d'antérieur à dire.
+réécrit ou non. Une branche neuve, ou déjà fusionnée, n'annonce aucun travail antérieur.
 
 **L'agent sait où il est (#1399).** Un worktree porte le nom de sa tâche, jamais celui du dossier
 qu'il copie. Sur p5 (2026-10-01), la tâche `socle-nextjs` disait « Installer dans le dossier p5 »,
@@ -231,6 +231,23 @@ lui, n'est **jamais réécrit** : l'agent qui sait où il est reconnaît le proj
 amont, le Chef de projet désigne l'endroit par « la racine du projet », jamais par le nom du projet
 ou de son dossier (`maestro/orchestrator/playbook.md`, « Entrées attendues »). Ce paragraphe
 renverse, pour la copie de travail, « un worktree n'a rien de particulier à dire » (#944).
+
+**Ce que l'agent sait de sa copie de travail (#1401).** Tout ce qu'il laisse dans son worktree et
+que le `.gitignore` du projet n'ignore pas est commité au démontage (`git add -A`), puis fusionné
+dans le projet — brouillons compris —, et aucun atelier n'y est ouvert (#944 le réserve au projet
+non versionné). Rien ne le lui disait : sur p5, il recevait un cadre qui disait « ce que tu laisses
+est le livrable », un régime qui rangeait « nettoyer ce que tes exécutions ont produit » dans le
+travail ordinaire, et un `AGENTS.md` qui disait que ce que le projet génère « ne s'édite pas » —
+sans savoir si `node_modules/` et `.next/` restaient ou s'effaçaient. Le message de sa tâche dit
+désormais, sur toute branche, que ce qu'il laisse dans sa **copie de travail** est commité sur sa
+branche — brouillons compris — puis appliqué au projet, et que ce qui n'est pas le livrable va
+dans un dossier qu'il crée par `mktemp -d`, hors de la copie (`CONSIGNE_COPIE_DE_TRAVAIL`, dite
+par `EspaceCopieDeTravail.consigne_espace`). Ce que le `.gitignore`
+retire est dit une fois pour tous les espaces par le cadre d'exécution : **ce qui se refabrique
+n'est pas le livrable** — laissé en place s'il est ignoré, ajouté au `.gitignore` sinon, jamais
+supprimé pour « nettoyer » ; finir proprement, c'est arrêter ce qu'on a lancé. Le régime
+d'exécution et `AGENTS.md` disent la même chose. Le recensement, lui, n'a pas bougé : c'est celui
+de #1388.
 
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
 directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le
@@ -462,6 +479,103 @@ Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.p
 [`test_outillage_generation.py`](../tests/test_outillage_generation.py),
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) (#1035).
+
+### 2.7 Où Maestro écrit sur le poste *(chantier #1454 — livré, lots #1455 à #1458)*
+
+Hors des projets qu'on lui confie, Maestro ne pose rien sur le poste ailleurs que sous **trois
+racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul à déclarer :
+
+| Racine | Ce qu'elle porte | Qui la vide |
+|---|---|---|
+| `~/Maestro/` | les projets de l'utilisateur, proposés par défaut (#1022) | personne — c'est son travail |
+| `~/.maestro/` | l'état du poste : jeton de l'API, journal SQLite, profil de navigateur ; sous `ateliers/`, les ateliers du banc des scénarios et de la relecture visuelle | personne pour l'état ; les ateliers, par **rétention** |
+| `<temp>/maestro/` (`%TEMP%\maestro\` sous Windows, `/tmp/maestro/` dans le Bash d'un agent) | le jetable : atelier de chaque hôte détaché, espaces des tâches, copies de vérification, aperçus de sources, état de la stack de chaque copie de travail | le **ramassage**, sans geste humain |
+
+**Pourquoi.** Le 2026-10-08, le poste de référence portait **1 286** dossiers `maestro-*` sous
+son répertoire temporaire — 436 ateliers d'hôte, 692 résidus de l'ancien mode démo, des espaces
+d'équipes sur mesure qu'aucune liste ne connaissait — et une dizaine à la racine du profil. Chacun
+était né là où son auteur l'avait jugé bon ; la plupart n'avaient personne pour les retirer.
+
+**Comment le jetable disparaît.** Chaque dossier jetable porte le pid du process qui l'occupe :
+dans son **nom** pour un espace de tâche (un témoin posé dedans ressortirait en livrable), dans un
+témoin `occupant.pid` pour l'atelier d'un hôte, que l'API ouvre avant que le process qui l'occupe
+n'existe. Le ramassage, joué en arrière-plan au démarrage de chaque hôte
+([`maestro/sandbox/ramassage.py`](../maestro/sandbox/ramassage.py)), retire ce dont l'occupant
+est mort, et ce qui ne nomme personne une fois inactif depuis six heures
+(`MAESTRO_ESPACE_ORPHELIN_SEUIL`). Il balaie aussi les **anciennes adresses** — le répertoire
+temporaire lui-même et ses résolutions MSYS — où tout `maestro-*` est candidat, sauf l'état d'une
+stack de développement et le cache des présentations, qu'un autre mécanisme possède. Il ne retire
+**jamais** un worktree dont le dépôt existe encore : c'est du travail non commité. Un worktree dont
+le dépôt a disparu n'en est plus. `MAESTRO_RAMASSAGE_ESPACES=0` l'éteint.
+
+**L'état d'une stack part avec sa copie** (#1456). Le jeton de session, le chien de garde et le
+profil de la fenêtre que `scripts/controltower/start.sh` ouvre vivent sous
+`<temp>/maestro/controltower-<api>-<ui>`, avec le chemin de la copie de travail qui a démarré la
+stack. Ce dossier n'est pas jugé par le ramassage des hôtes — une stack inactive depuis six heures
+n'en est pas moins vivante —, mais par la règle de
+[`scripts/controltower/etat-stack.sh`](../scripts/controltower/etat-stack.sh) : il part quand sa
+copie a disparu (`worktree.sh gc`, qui retire le worktree, et chaque démarrage de `start.sh`), et
+**jamais** tant que sa stack vit — un de ses deux ports écoute, ou son chien de garde vit. Au
+démarrage, `start.sh` retire aussi les `maestro-controltower-*` de l'ancienne adresse, à même le
+répertoire temporaire, dont la stack est éteinte. `MAESTRO_RAMASSAGE_ETAT_STACK=0` l'éteint.
+
+**Les ateliers ne gardent que leurs derniers passages** (#1457). Le banc des scénarios et la
+relecture visuelle sèment des **racines de projet** — que la validation des racines refuse sous
+`AppData`, donc sous le répertoire temporaire d'un poste Windows : leurs ateliers vivent sous
+`~/.maestro/ateliers/{scenarios,relecture}` (`MAESTRO_SCENARIOS_ATELIER` et
+`MAESTRO_RELECTURE_ATELIER` les déplacent). Voisiner avec le jeton de l'API n'en approche aucun
+agent : sa frontière est la racine de son projet. Chaque passage du banc ne garde que les cinq
+derniers, plus celui dont `start.sh --etat-banc` rouvre l'état, et un passage retiré emporte les
+worktrees que ses tâches ont laissés sous la racine jetable — le ramassage, lui, les garde tant que
+leur dépôt existe. Le projet neuf d'une relecture part à son `--fin`. Les anciens ateliers, à la
+racine du profil (`~/maestro-scenarios`, `~/maestro-relecture`), sont repris au premier passage puis
+retirés quand ils ne portent plus rien ; ce qui n'y a pas la forme d'un passage du banc ou d'un
+dossier de relecture (`<iid>/`) est nommé, jamais touché.
+
+**Une commande montre ce qui a été posé, et solde le reste sur un « oui »** (#1458). Le produit
+range désormais ce qu'il pose, mais il restait ce qui est né avant, et surtout ce que des
+**sessions de développement** avaient posé au jugé : `~/maestro-essais`, `~/maestro-mesure-882`,
+`~/maestro-verif-1160`, `~/.maestro/banc-728`, `~/.maestro/automation`… Aucun ramasseur ne peut
+les reconnaître : ils ne nomment personne, et en deviner la propriété serait la faute qu'on
+répare. [`maestro/menage.py`](../maestro/menage.py) les montre donc, et c'est une personne qui
+décide :
+
+```
+.venv/Scripts/python.exe -m maestro.menage            # --check : montre, n'écrit rien
+.venv/Scripts/python.exe -m maestro.menage --purger   # montre, puis demande « oui »
+```
+
+Chaque racine, puis le hors-racine, une ligne par élément avec sa taille, son propriétaire quand
+on le connaît et son sort : `jamais retiré` (la racine des projets), `déclaré` (à sa place),
+`conservé` (il porte un projet déclaré ou le répertoire des projets, ou il est **vivant** — un
+occupant qui tourne, un worktree dont le dépôt existe, une activité de moins de six heures, la
+règle même du ramassage), `à son propriétaire` (l'état d'une stack, un ancien atelier, le cache
+des présentations), `ramassable` (le ramassage le retirera) et `à retirer` — ce qu'aucun
+mécanisme ne connaît. `--purger` ne retire que ces derniers, tous ou ceux qu'on nomme, après un
+« oui » tapé sur l'entrée standard, et **rejuge** chacun au moment de le retirer. Les projets
+déclarés se lisent dans **chaque** copie du dépôt (le clone principal et ses worktrees ont chacun
+leur `core/projets/`) ; une déclaration illisible suffit à refuser toute la purge. Le « oui » est
+une réponse et non une option : une option se recopie d'une commande à l'autre sans que personne
+ait regardé la liste.
+
+### 2.7.1 Ce que s'interdisent les sessions qui développent Maestro, et les gardes
+<!-- documentation: développement -->
+
+**Une session de développement n'écrit que dans son worktree — `.maestro/session/` — ou son
+scratchpad, jamais dans `~`.** C'est la règle qui empêche ces dossiers de renaître, et
+`CLAUDE.md` la porte parce que c'est le texte que chaque session lit. Un essai, une mesure, un
+banc d'appoint ont leur place dans l'atelier de session du worktree : il part avec lui, et rien
+n'a à le retrouver ensuite.
+
+**Les gardes.** [`tests/test_emplacements.py`](../tests/test_emplacements.py) refuse, sous
+`maestro/`, tout dossier temporaire ouvert et tout chemin composé sous le dossier personnel hors du
+module des racines ; les modules qui lisent le dossier personnel sans y rien créer s'inscrivent à
+son inventaire, avec leur raison. [`tests/test_menage.py`](../tests/test_menage.py) étend la règle
+au reste du dépôt : aucun script, prompt ou réglage (`scripts/`, `.claude/`, `apps/desktop/`) ne
+nomme sous `~` autre chose que `~/Maestro/`, `~/.maestro/` et les deux anciens ateliers que leur
+propriétaire vide — hors des lectures qu'il inventorie (la configuration de Claude Code, les
+lanceurs du système) —, et `CLAUDE.md` comme ce chapitre disent la règle aux noms que le code
+déclare.
 
 ---
 

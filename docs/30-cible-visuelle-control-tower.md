@@ -2925,7 +2925,7 @@ projets et runs d'un worktree ne sont jamais touchés :
 | État | Source réelle | Geste du lanceur |
 | --- | --- | --- |
 | `peuple` (défaut) | l'état du dernier passage du banc des scénarios, rouvert sans rien rejouer ; son âge est dit | `start.sh --etat-banc` |
-| `vide` | une stack neuve, puis un projet neuf **déclaré par l'API** (`origine: nouveau`) sous `~/maestro-relecture/<iid>/` | `start.sh --etat-neuf` |
+| `vide` | une stack neuve, puis un projet neuf **déclaré par l'API** (`origine: nouveau`) sous `~/.maestro/ateliers/relecture/<iid>/` (#1457 ; l'ancien `~/maestro-relecture` est repris au montage d'un état : ses dossiers `<iid>/` inactifs depuis 6 h retirés, le reste nommé) | `start.sh --etat-neuf` |
 | `injoignable` | l'API **coupée** sous la stack montée, l'UI encore servie (#996) — une coupure, pas un montage | `start.sh --couper-api` |
 
 **Ne se produisent pas, et se nomment** — dans le plan, la couverture (que le jugement recopie) et la

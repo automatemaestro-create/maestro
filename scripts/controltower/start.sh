@@ -163,7 +163,14 @@ LOG_DIR="$RACINE/$LOG_DIR_REL"
 # les ports pour le motif d'origine (#152) : deux sessions Claude Code — une par worktree — lancent
 # chacune leur Control Tower, et un dossier commun leur ferait partager jeton et PID du chien de
 # garde, la seconde arrêtant la première.
-ETAT_DIR="${TMPDIR:-/tmp}/maestro-controltower-${PORT_API}-${PORT_UI}"
+#
+# Sous la racine du jetable (`<temp>/maestro/`, #1454) et non plus à même le répertoire temporaire :
+# où il vit, ce qui en fait une stack vivante et qui le retire — avec sa copie — s'écrivent une seule
+# fois, dans `etat-stack.sh`, que `worktree.sh gc` lit aussi (#1456).
+# shellcheck disable=SC1091  # le lint appelle shellcheck fichier par fichier (#285) : la source
+# n'est pas sur sa ligne de commande, donc `source=` ne serait pas suivi de toute façon.
+. "$RACINE/scripts/controltower/etat-stack.sh"
+ETAT_DIR="$ETAT_STACK_RACINE/${ETAT_STACK_PREFIXE}${PORT_API}-${PORT_UI}"
 URL_UI="http://localhost:${PORT_UI}"
 # Plafond d'attente du soldage des runs en vol (#486). L'API borne l'extinction de
 # CHAQUE run à quelques secondes et les solde ENSEMBLE : ce délai n'est donc pas
@@ -175,7 +182,7 @@ DELAI_EXTINCTION="${MAESTRO_EXTINCTION_DELAI:-20}"
 # surveille est toujours celui du fichier : un `--stop` manuel ou un relancement
 # l'invalide, ce qui l'empêche d'arrêter une session qui n'est plus la sienne.
 FICHIER_SESSION="$ETAT_DIR/session"
-FICHIER_CHIEN="$ETAT_DIR/chien-de-garde.pid"
+FICHIER_CHIEN="$ETAT_DIR/$ETAT_STACK_CHIEN"
 
 # Profil jetable de la fenêtre ouverte par le script. Son nom sert aussi de
 # marqueur : c'est en cherchant les processus dont la ligne de commande le
@@ -1000,7 +1007,25 @@ if [ "$MODE" = "arreter" ]; then
   exit 0
 fi
 
+# L'état des stacks éteintes (#1456) : celui dont la copie a disparu, et tout l'ancien emplacement
+# (`<temp>/maestro-controltower-*`). APRÈS arreter_session, pour que l'ancien dossier de CETTE stack,
+# qu'on vient d'arrêter, parte avec les autres ; une stack vivante garde le sien. Une ligne, et rien
+# quand il n'y avait rien (MAESTRO_RAMASSAGE_ETAT_STACK=0 l'éteint).
+etat_stack_ramasser --ancien
+if [ "$ETAT_STACK_RETIRES" -gt 0 ] || [ "$ETAT_STACK_RESISTANTS" -gt 0 ]; then
+  ligne_etat="[nettoyage] état de stacks éteintes : ${ETAT_STACK_RETIRES} dossier(s) retiré(s)"
+  if [ "$ETAT_STACK_ANCIENS" -gt 0 ]; then
+    ligne_etat="$ligne_etat, dont ${ETAT_STACK_ANCIENS} à l'ancien emplacement"
+  fi
+  if [ "$ETAT_STACK_RESISTANTS" -gt 0 ]; then
+    ligne_etat="$ligne_etat ; ${ETAT_STACK_RESISTANTS} résistant(s), repris au prochain démarrage"
+  fi
+  echo "$ligne_etat"
+fi
+
 mkdir -p "$LOG_DIR" "$ETAT_DIR"
+# Le témoin de la copie qui tient cette stack : c'est lui qui fait partir l'état avec elle.
+printf '%s\n' "$RACINE" >"$ETAT_DIR/$ETAT_STACK_TEMOIN" 2>/dev/null || true
 cd "$RACINE" || exit 1
 
 # L'état du banc s'écrit ICI, entre l'arrêt de l'ancienne session et le démarrage de

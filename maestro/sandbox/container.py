@@ -62,12 +62,12 @@ import atexit
 import os
 import shutil
 import sys
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from maestro.config import ConfigError, Settings
+from maestro.emplacements import jetable
 from maestro.projets.modele import Projet
 from maestro.projets.perimetre import Exclu, exclusions
 from maestro.projets.racine import canonique
@@ -385,15 +385,16 @@ def _montages_masques(masques: str) -> list[str]:
 def _vides() -> tuple[Path, Path]:
     """Le fichier vide et le dossier vide qui servent de masques, créés une fois.
 
-    Vivent dans le répertoire temporaire du système et non sous `.maestro/` :
-    personne ne les lit jamais — ce sont deux inodes sans contenu, dont l'unique
-    raison d'être est d'exister le temps du `docker run` (cf. CLAUDE.md, « ce que
-    personne ne lit reste dans `${TMPDIR:-/tmp}` »). Créés à la demande, partagés
-    par tous les masques du processus, et retirés à sa sortie.
+    Vivent sous la racine jetable du poste et non sous `.maestro/` : personne ne
+    les lit jamais — ce sont deux inodes sans contenu, dont l'unique raison d'être
+    est d'exister le temps du `docker run` (cf. CLAUDE.md, « ce que personne ne lit
+    reste dans `${TMPDIR:-/tmp}` »). Créés à la demande, partagés par tous les
+    masques du processus, retirés à sa sortie — et ramassés s'il est tué, le pid
+    de ce process étant dans le nom (#1455).
     """
     global _RACINE_VIDES
     if _RACINE_VIDES is None:
-        _RACINE_VIDES = Path(tempfile.mkdtemp(prefix="maestro-masque-"))
+        _RACINE_VIDES = jetable("maestro-masque-")
         atexit.register(shutil.rmtree, _RACINE_VIDES, True)
         (_RACINE_VIDES / "vide").touch()
         (_RACINE_VIDES / "vide.d").mkdir()

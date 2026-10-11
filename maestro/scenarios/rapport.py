@@ -57,8 +57,8 @@ def en_markdown(rapport: Rapport) -> str:
         "",
         f"**Verdict du passage : {verdict}**",
         "",
-        f"- coût : {_cout(rapport.cout_usd)}",
-        f"- durée : {_duree(rapport.duree_s)}",
+        f"- coût : {cout_en_mots(rapport.cout_usd)}",
+        f"- durée : {duree_en_mots(rapport.duree_s)}",
         "",
         "| | Scénario | Verdict | Coût | Durée | Run |",
         "|---|---|---|---|---|---|",
@@ -66,7 +66,7 @@ def en_markdown(rapport: Rapport) -> str:
     for resultat in rapport.resultats:
         lignes.append(
             f"| {resultat.identifiant} | {resultat.titre} | {_marque(resultat)} | "
-            f"{_cout(resultat.cout_usd)} | {_duree(resultat.duree_s)} | "
+            f"{cout_en_mots(resultat.cout_usd)} | {duree_en_mots(resultat.duree_s)} | "
             f"{resultat.run_id or '—'} |"
         )
     for resultat in rapport.resultats:
@@ -104,7 +104,8 @@ def _section(resultat: Resultat) -> list[str]:
             f"- run : `{resultat.run_id or '—'}`",
             f"- projet : `{resultat.projet_id or '—'}`",
             f"- racine : `{resultat.racine or '—'}`",
-            f"- coût : {_cout(resultat.cout_usd)} · durée : {_duree(resultat.duree_s)}",
+            f"- coût : {cout_en_mots(resultat.cout_usd)} · "
+            f"durée : {duree_en_mots(resultat.duree_s)}",
             f"- {_arbitrages(resultat)}",
             "",
             "### Déroulé",
@@ -145,19 +146,20 @@ def _marque(resultat: Resultat) -> str:
     return "✅ vert" if resultat.vert else "❌ rouge"
 
 
-def _cout(montant: float | None) -> str:
+def cout_en_mots(montant: float | None) -> str:
     """Un montant en mots du produit, ou le fait qu'aucun n'a été rapporté.
 
     La virgule décimale et le symbole suivent `formatCout` (`apps/web/lib/format`)
     et `bornes._cout` : le même passage lu dans un rapport et dans l'UI ne doit pas
-    afficher deux montants d'apparence différente (règle de #571).
+    afficher deux montants d'apparence différente (règle de #571). Public pour la
+    même raison : l'historique du banc (#1461) dit ses médianes dans ces mots-là.
     """
     if montant is None:
         return "non rapporté"
     return f"{montant:.4f}".replace(".", ",") + " $"
 
 
-def _duree(secondes: float) -> str:
+def duree_en_mots(secondes: float) -> str:
     """Une durée en mots : « 42 s » sous la minute, « 3 min 12 s » au-delà."""
     entier = int(round(secondes))
     if entier < 60:

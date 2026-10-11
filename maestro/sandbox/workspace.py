@@ -17,15 +17,14 @@ conteneur.
 
 from __future__ import annotations
 
-import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Self
 
+from maestro.emplacements import jetable
 from maestro.fichiers import retirer_arbre
-from maestro.sandbox.ramassage import marquer, racine_des_espaces
 
 #: Taille max d'un fichier dont on capture le contenu (octets). Au-delà, on garde le
 #: chemin mais pas le contenu : un livrable exploitable n'a pas à charger en mémoire
@@ -111,12 +110,14 @@ class Workspace:
 
         **Vide** ici : un répertoire jetable disparaît avec la tâche et n'est le
         projet de personne, donc le message qu'il compose est au caractère près
-        celui d'avant #944. Les espaces dérivés d'un projet ont, eux, quelque
-        chose à dire : la racine d'un projet n'est pas isolée et porte un atelier
-        (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`), et un worktree
-        **est** la racine du projet qu'il copie sans en porter le nom
-        (`maestro.sandbox.projet.EspaceCopieDeTravail.consigne_espace`, #1399 —
-        qui renverse ici « un worktree n'a rien de particulier à dire »).
+        celui d'avant #944. Les deux espaces dérivés d'un projet ont, eux, quelque
+        chose à dire : la racine d'un projet non versionné n'est pas isolée et porte
+        un atelier (`maestro.sandbox.en_place.EspaceEnPlace.consigne_espace`), et le
+        worktree d'un projet versionné **est** la racine du projet qu'il copie sans
+        en porter le nom (#1399 — qui renverse ici « un worktree n'a rien de
+        particulier à dire ») et se **commite** — tout ce que l'agent y laisse part
+        sur la branche de la tâche (#1401,
+        `maestro.sandbox.projet.EspaceCopieDeTravail.consigne_espace`).
         """
         return ""
 
@@ -189,7 +190,8 @@ def isolated_workspace(
     Trois précisions que #992 a ajoutées à cette phrase, parce qu'elle n'était pas
     tenue (`maestro.sandbox.ramassage` les démontre) :
 
-    - **où** — `racine_des_espaces` plutôt que le défaut de `tempfile`, pour que
+    - **où** — la racine jetable du poste (`maestro.emplacements.jetable`,
+      `<temp>/maestro/` depuis #1455) plutôt que le défaut de `tempfile`, pour que
       Python et le Bash de l'agent tombent au même endroit sous Windows (S13) ;
     - **au nom de qui** — le pid de ce process est inscrit dans le nom
       (`marquer`), seul moyen pour un ramassage ultérieur de distinguer l'espace
@@ -197,7 +199,7 @@ def isolated_workspace(
     - **pour de bon** — `retirer_arbre` et non `shutil.rmtree(ignore_errors=True)`,
       qui laissait une coquille `.git` dès qu'un agent avait fait un `git init`.
     """
-    path = Path(tempfile.mkdtemp(prefix=marquer(prefix), dir=racine_des_espaces()))
+    path = jetable(prefix)
     try:
         yield Workspace(path=path)
     finally:

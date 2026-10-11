@@ -457,10 +457,11 @@ class AgentRuntime:
             # Le message est composé **une fois l'espace ouvert** (#944) : ce que
             # l'agent doit savoir de son espace dépend du régime (la racine d'un
             # projet nomme son atelier, un worktree dit de quel projet il est la
-            # racine, un répertoire jetable n'ajoute rien), et c'est l'espace,
-            # seul, qui sait lequel il est. L'outillage reçoit son énumération
-            # (#1400) : un espace qui ne porte que lui le dit à l'agent, avant
-            # qu'un générateur ne le découvre en refusant le dossier.
+            # racine et qu'il se commite — #1399, #1401 —, un répertoire jetable
+            # n'ajoute rien), et c'est l'espace, seul, qui sait lequel il est.
+            # L'outillage reçoit son énumération (#1400) : un espace qui ne porte
+            # que lui le dit à l'agent, avant qu'un générateur ne le découvre en
+            # refusant le dossier.
             espace = (
                 ()
                 if outillage.vide
@@ -530,10 +531,11 @@ def _build_prompt(
     """Compose le message confié à l'agent : la tâche encadrée par les consignes du rôle.
 
     `espace` (#944) est ce que l'espace de travail a à dire de lui-même
-    (`Workspace.consigne_espace`) — la racine d'un projet nomme son atelier, un
-    worktree dit qu'il **est** la racine du projet qu'il copie et sur quelle
-    branche (#1399), un répertoire jetable n'a rien à ajouter et rend une chaîne
-    vide, auquel cas le message est celui d'avant, à la ligne près. Posé après les consignes
+    (`Workspace.consigne_espace`) — la racine d'un projet nomme son atelier, le
+    worktree d'un projet versionné dit qu'il **est** la racine du projet qu'il copie
+    et sur quelle branche (#1399), et que ce qu'on y laisse est commité (#1401), le
+    répertoire jetable n'a rien à ajouter et rend une chaîne vide, auquel cas le
+    message est celui d'avant, à la ligne près. Posé après les consignes
     du rôle et avant le format de sortie : les consignes disent *comment*
     travailler, celle-ci dit *où* déposer quoi.
 

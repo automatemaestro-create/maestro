@@ -381,10 +381,15 @@ def _cran_execution(
     """Le cran proposé pour l'exécution de commandes — et **ce qu'il borne**.
 
     Un rôle recruté pour un projet y **exécute son travail sans attendre
-    personne** : lancer ce qu'il écrit, le tester, créer ses dossiers, nettoyer ce
-    que ses exécutions ont produit. Le cran est donc `auto`, et sa **portée** est
-    le projet (#1226, `maestro.portee`) : ce qui sort du dossier ou détruit ce que
-    l'agent n'a pas produit revient à une personne, un acte à la fois.
+    personne** : lancer ce qu'il écrit, le tester, créer ses dossiers, arrêter ce
+    qu'il a lancé. Le cran est donc `auto`, et sa **portée** est le projet (#1226,
+    `maestro.portee`) : ce qui sort du dossier ou détruit ce que l'agent n'a pas
+    produit revient à une personne, un acte à la fois.
+
+    ⚠ La raison ne range plus le **ménage** dans ce travail (#1401) : elle disait
+    qu'il « nettoie ce que ses exécutions ont produit », quand le cadre d'exécution
+    lui dit de laisser ce qui se refabrique, ignoré par le `.gitignore`. Le geste
+    reste permis par la portée ; ce n'est plus ce qu'on annonce de lui.
 
     ⚠ **Ce n'était pas le cas, et le fait qui l'a corrigé est mesuré.** Jusqu'au
     2026-09-22, un rôle dont le projet ne déclarait aucune commande recevait
@@ -421,8 +426,8 @@ def _cran_execution(
             raison=(
                 "ce rôle travaille dans le dossier de ce projet : il y lance ce "
                 "qu'il écrit, le teste, crée les dossiers dont il a besoin et "
-                "nettoie ce que ses exécutions ont produit — **sans vous demander "
-                "de trancher chaque commande**, qui passent en étant tracées. "
+                "arrête ce qu'il a lancé — **sans vous demander de trancher "
+                "chaque commande**, qui passent en étant tracées. "
                 "Aucune commande n'est encore écrite dans le projet, donc aucune "
                 f"n'a pu être lue : c'est le travail qui vient. {CE_QUI_VOUS_REVIENT}"
             ),

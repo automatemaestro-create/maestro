@@ -48,7 +48,7 @@ DESIGNER_PROFILE = RoleProfile(
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche de design (écrans, maquettes, composants) à réaliser de bout en bout :",
     consignes=(
-        "Tu travailles dans un répertoire vide et isolé (le répertoire courant). "
+        "Tu travailles dans le répertoire courant. "
         "Écris-y les fichiers du livrable avec tes outils (spécifications d'écran, "
         "maquettes/wireframes HTML ou SVG, design tokens, guide de composants) — ne te "
         "contente pas d'afficher des recommandations. Conforme-toi à la charte et au "

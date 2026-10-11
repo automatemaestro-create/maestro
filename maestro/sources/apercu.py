@@ -40,13 +40,13 @@ lire ici » et « je refuse de lire ça » ne s'affichent jamais pareil.
 from __future__ import annotations
 
 import shutil
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import IO, Any
 
 from maestro.config import Settings, load_settings
+from maestro.emplacements import jetable
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.sources.extraction import GardeFousExtraction, RapportLecture, extraire_sources
 from maestro.sources.images import lire_image_en_apercu
@@ -107,7 +107,7 @@ def apercu_sources(
     # Le dossier jetable est créé **avant** la résolution : c'est lui qui sert de
     # racine d'ingestion, donc il doit exister quand `emplacement_ingestion`
     # canonicalise (`chemin_dans_racine`, #221).
-    racine = Path(tempfile.mkdtemp(prefix="maestro-apercu-"))
+    racine = jetable("maestro-apercu-")
     try:
         reglages = replace(settings or load_settings(), ingestion_dir=str(racine))
         sources = resoudre_sources(
@@ -127,8 +127,8 @@ def apercu_sources(
         )
     finally:
         # `ignore_errors` : un aperçu qui n'arrive pas à faire son ménage ne doit
-        # pas transformer une réponse rendue en panne. Ce qui resterait est dans
-        # le répertoire temporaire du système, que l'OS ramasse.
+        # pas transformer une réponse rendue en panne. Ce qui resterait porte le
+        # pid de l'API dans son nom : le ramassage l'emporte quand elle meurt (#1455).
         shutil.rmtree(racine, ignore_errors=True)
 
 

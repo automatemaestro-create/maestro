@@ -183,12 +183,21 @@ SECTIONS: tuple[str, ...] = (
 #: sont les gisements de secrets de docs/24 §2.5 — les mêmes que le périmètre
 #: d'un projet retire d'office —, la dernière est l'atelier de Maestro
 #: (docs/38 §4.3) : il porte la comptabilité de la génération, pas le livrable.
+#:
+#: La troisième dit **la même règle que le cadre d'exécution** des agents de
+#: Maestro (`maestro/agents/playbooks_defaut/_cadre_outille.md`, #1401) : ce qui se
+#: refabrique n'est ni édité, ni effacé pour faire le ménage, ni livré — il reste
+#: ignoré. Elle disait seulement « cela ne s'édite pas », et sur p5 rien ne disait
+#: si `node_modules/` et `.next/` restaient ou s'effaçaient. `AGENTS.md` est lu par
+#: d'autres agents que ceux de Maestro : la règle y est entière, pas un renvoi.
 INTOUCHABLES: tuple[str, ...] = (
     "`.env` et tout fichier d'environnement : ils portent des secrets. Lis "
     "`.env.example` s'il existe.",
     "Tout ce qui vit sous un dossier `secrets/`.",
     "Ce que le projet génère — dépendances installées, artefacts de build, "
-    "caches : cela se refabrique, cela ne s'édite pas.",
+    "caches — se refabrique : ne l'édite pas, ne le supprime pas pour faire le "
+    "ménage, et ne le livre pas ; s'il n'est pas déjà ignoré par le `.gitignore`, "
+    "ajoute-le.",
     f"`.maestro/` : l'atelier de Maestro (dont `{CHEMIN_MANIFESTE}`, qui dit ce "
     "qui vient de lui). Ce n'est pas le livrable du projet.",
 )

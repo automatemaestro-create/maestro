@@ -44,7 +44,7 @@ QA_PROFILE = RoleProfile(
     prompt_systeme=_SYSTEM_PROMPT,
     intro_tache="Tâche de qualité (tests, validation, revue) à réaliser de bout en bout :",
     consignes=(
-        "Tu travailles dans un répertoire vide et isolé (le répertoire courant). "
+        "Tu travailles dans le répertoire courant. "
         "Écris-y les fichiers du livrable avec tes outils (tests, rapport de revue) — "
         "ne te contente pas d'afficher des remarques. Les livrables à valider sont "
         "dans la description ci-dessus (résultats des tâches dont celle-ci dépend) : "
