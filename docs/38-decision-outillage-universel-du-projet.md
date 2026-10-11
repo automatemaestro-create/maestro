@@ -885,6 +885,15 @@ modèle doublé qui la recopie, rôle créé, tâche exécutée —, et chaque �
 le prompt que le fournisseur reçoit
 ([`tests/test_message_de_tache_sans_redite.py`](../tests/test_message_de_tache_sans_redite.py)).
 
+**Mesuré le 2026-10-11** sur la vraie stack — S12, passage `20261011-092422`, run `411d4370a764`,
+vert : le livre de recettes Next.js de p5, né dans le fil, outillé de six pièces sur un dossier vide,
+doté de trois agents dont le modèle a rédigé les playbooks. Les six tâches du run ont reçu un message
+où la raison commune se lit **une fois** et chacune des sept commandes porte son « **À vérifier** »,
+sans « à créer » ni promesse, la règle du « prévu » une fois, le titre d'`AGENTS.md` une fois, et
+chaque skill nommé une fois par l'index — un second nom, quand il y en a un, vient du compte-rendu
+d'une tâche précédente. Les trois playbooks écrits par le modèle nomment chaque skill branché une
+fois, dans la section de la création, sans aucune marque du vouvoiement.
+
 **Ce qui n'a pas bougé.** La part du prompt système consacrée au régime, à l'arbitrage et aux interdits
 — ≈ 54 % sur p5 — vient du cadre d'exécution et du bloc de régime (#1405) ; elle n'est pas une
 redite, et ce ticket n'y touche pas. Le vouvoiement qui reste dans `AGENTS.md` (« compris de vos
