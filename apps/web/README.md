@@ -145,10 +145,16 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   flèche se lit** : une légende au-dessus du dessin dit qu'une flèche est une
   dépendance (et ce que disent ses trois tracés) et qu'une colonne rassemble des
   tâches qui peuvent tourner de front ; une flèche survolée ou focalisée (chacune a
-  sa cible au clavier) se nomme sous le cadre ; une dépendance **redondante**
-  (servie par le graphe) pâlit ; et **aucune flèche ne croise une carte** — une
-  arête qui saute une colonne la traverse par un couloir libre
-  (`lib/graphe.tracerArete`) ;
+  sa cible au clavier) se nomme sous le cadre ; et **aucune flèche ne croise une
+  carte** — une arête qui saute une colonne la traverse par un couloir libre
+  (`lib/graphe.tracerArete`), à côté de celle qui l'emprunte déjà. Depuis #1393, **le
+  pipeline se lit d'un coup d'œil** : une dépendance **redondante** (servie par le
+  graphe) n'est plus dessinée — elle reste dite « en toutes lettres », avec la chaîne
+  qui l'implique, et la légende dit combien le dessin en tait —, et un **éventail
+  exact** entre deux colonnes voisines partage un **tronc** dans la gouttière
+  (`lib/graphe.troncsDesEventails`), qu'une flèche qui le franchit sans y entrer
+  interrompt ; survoler une tâche n'allume que **ses** flèches, jamais le tronc
+  entier ;
 - **Tableau de bord temps réel** : état des agents (libre/occupé, tâche courante,
   compteurs, coût cumulé) et des tâches, mis à jour par WebSocket sans rechargement ;
 - **État des runs** (#476, lot 4 de #472, docs/05 §2.1) : ce que le tableau de bord
@@ -2350,10 +2356,12 @@ pire, pour un défaut à corriger dans l'urgence d'une revue.
    avec #1297**, et l'exemption tient pour une autre raison : le graphe dit
    désormais qu'une dépendance est **redondante**, ce que ni le Kanban ni le
    journal ne disent — mais il le dit **en mots** au même endroit, dans « Les N
-   enchaînements en toutes lettres » (« · déjà impliquée par la chaîne via … ») et
-   dans le nom accessible de la cible clavier de chaque flèche. L'information
-   nouvelle a donc son alternative textuelle dans la vue même ; seul le tracé reste
-   muet.
+   enchaînements en toutes lettres », et dans le nom accessible de la cible clavier
+   de chaque flèche. L'information nouvelle a donc son alternative textuelle dans la
+   vue même ; seul le tracé reste muet. Depuis #1393 le dessin **tait** les
+   redondantes : la liste les garde **toutes** (« · non dessinée, déjà impliquée par
+   la chaîne via … »), et c'est elle, plus que jamais, qui tient l'exemption — elle
+   porte strictement plus que le dessin.
 2. **Le niveau AAA n'est pas visé.** Son contraste de 7:1 imposerait
    `neutral-700` au minimum pour **tout** texte secondaire, ce qui supprimerait
    la distinction primaire/secondaire dont la densité de ces écrans dépend : on

@@ -470,6 +470,37 @@ def test_une_dependance_redondante_voyage_jusqu_au_client():
     }
 
 
+#: Le plan de p5 tel que le moteur l'a publié (run `da0a8ae6f1b2`, 2026-10-01) — celui
+#: que la personne a jugé illisible : le socle, la charte et les recettes, cinq pages,
+#: les tests. Chaque page dépend du socle **et** de la charte, qui dépend déjà du socle.
+_PAGES_P5 = ("page-accueil", "page-catalogue", "page-fiche", "mode-cuisine", "page-favoris")
+_PLAN_P5 = [
+    _noeud("socle-nextjs"),
+    _noeud("charte-composants", "socle-nextjs"),
+    _noeud("recettes-demo", "socle-nextjs"),
+    *(_noeud(page, "socle-nextjs", "charte-composants") for page in _PAGES_P5),
+    _noeud("tests-recette", "recettes-demo", *_PAGES_P5),
+]
+
+
+def test_le_plan_de_p5_ne_porte_que_treize_dependances_directes_sur_dix_huit():
+    """#1393 : la vue ne dessine plus les redondantes. Sur le plan de p5, ce sont les
+    cinq « socle → page », déjà impliquées par la charte — dix-huit enchaînements
+    déclarés, treize qui portent l'information. Le graphe les sert toutes : c'est la
+    liste « en toutes lettres » qui garde les cinq autres, avec leur chaîne."""
+    graphe = _graphe(_PLAN_P5)
+
+    redondantes = [arete for arete in graphe.aretes if arete.redondante]
+    assert graphe.nb_aretes == 18
+    assert graphe.nb_aretes - len(redondantes) == 13
+    assert {(arete.de, arete.vers, arete.via) for arete in redondantes} == {
+        ("socle-nextjs", page, ("charte-composants",)) for page in _PAGES_P5
+    }
+    # Les recettes sautent la colonne des pages sans être impliquées par rien.
+    par_lien = {(arete.de, arete.vers): arete for arete in graphe.aretes}
+    assert par_lien[("recettes-demo", "tests-recette")].redondante is False
+
+
 def test_un_cycle_ne_rend_aucune_dependance_redondante_par_erreur():
     """Un plan relu du bus peut boucler : la recherche d'une chaîne de rechange
     s'arrête, et une arête d'un cycle à deux n'est impliquée par rien."""

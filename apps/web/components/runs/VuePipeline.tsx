@@ -51,10 +51,22 @@
  *   logique ? une dépendance ? un parallélisme ? », et en montrait une qui
  *   « semblait venir d'ailleurs » : une dépendance **redondante**, tracée sous la
  *   carte du milieu. Une légende dit désormais, au-dessus du dessin, ce qu'est
- *   une flèche et une colonne ; une redondante (servie par le graphe) pâlit ; le
- *   tracé contourne les cartes (`lib/graphe.tracerArete`) ; et une flèche
- *   survolée ou focalisée se nomme sous le cadre. Variante retenue sur pièces
- *   par le regard neuf, consignée sur le ticket.
+ *   une flèche et une colonne ; le tracé contourne les cartes
+ *   (`lib/graphe.tracerArete`) ; et une flèche survolée ou focalisée se nomme
+ *   sous le cadre. Variante retenue sur pièces par le regard neuf, consignée sur
+ *   le ticket.
+ * - **Seules les dépendances directes sont dessinées, et un éventail se lit d'un
+ *   seul geste** (#1393). ⚠ Renversement de #1297, qui disait « une redondante
+ *   se dit, elle ne se retire pas » et la pâlissait : sur le plan de p5 (neuf
+ *   tâches, dix-huit à vingt-deux enchaînements), les pâlies restaient un
+ *   écheveau — « pas besoin d'afficher toutes les relations de dépendance, il
+ *   faut surtout que ce soit lisible ». Une dépendance redondante (servie par
+ *   le graphe) n'est plus tracée ; elle reste **dite**, dans « en toutes
+ *   lettres », avec la chaîne qui l'implique, et la légende dit combien le
+ *   dessin en tait. Et les éventails **exacts** entre deux colonnes voisines
+ *   partagent un **tronc** (`lib/graphe.troncsDesEventails`) : la charte qui sert
+ *   cinq pages est un peigne, plus cinq courbes. Variante retenue sur pièces
+ *   par le regard neuf, d'après GitHub Actions, consignée sur le ticket.
  *
  * ⚠ Un graphe **ne se lit pas s'il déborde** (note technique du ticket). Deux
  * réponses, et aucune ne consiste à tout montrer plus petit : le dessin vit dans
@@ -120,8 +132,13 @@ import {
   NOEUD_PRET,
   NOEUD_TERMINE,
   tracerArete,
+  tracerDansTronc,
+  tracerTroncs,
+  troncsDesEventails,
   type EtatNoeud,
   type TraceArete,
+  type TraceTronc,
+  type Tronc,
 } from "@/lib/graphe";
 import {
   ARETE_ATTENDUE,
@@ -292,20 +309,19 @@ function apparenceArete(etat: string): ApparenceArete {
 /** L'ordre de la légende des flèches : ce qui est passé, ce qui attend, ce qui a cassé. */
 const ORDRE_LEGENDE_FLECHES = [ARETE_FRANCHIE, ARETE_ATTENDUE, ARETE_ROMPUE];
 
-/**
- * La transparence d'une dépendance **redondante** au repos (#1297) : assez pâle
- * pour reculer derrière la chaîne qui l'implique, assez marquée pour qu'on la
- * voie encore — elle reste une dépendance déclarée. Survolée ou focalisée, elle
- * reprend toute sa couleur comme n'importe quelle autre.
- */
-const PALE = "opacity-50";
-
 const cleArete = (arete: AreteGraphe) => `${arete.de}→${arete.vers}`;
 
-/** La chaîne qui implique déjà une arête redondante, en titres : « via A → B ». */
+/**
+ * Pourquoi une dépendance redondante n'est pas dessinée, en titres (#1393) :
+ * « non dessinée, déjà impliquée par la chaîne via A → B ». C'est la seule place
+ * où elle se lit — la liste « en toutes lettres » —, et elle y dit d'un même
+ * mouvement qu'elle existe et pourquoi le dessin la tait.
+ */
 function viaEnToutesLettres(arete: AreteGraphe, titre: (id: string) => string): string {
   const via = arete.via ?? [];
-  return via.length > 0 ? ` · déjà impliquée par la chaîne via ${via.map(titre).join(" → ")}` : "";
+  return via.length > 0
+    ? ` · non dessinée, déjà impliquée par la chaîne via ${via.map(titre).join(" → ")}`
+    : "";
 }
 
 /**
@@ -316,7 +332,22 @@ function viaEnToutesLettres(arete: AreteGraphe, titre: (id: string) => string): 
 function phraseDuLien(arete: AreteGraphe, titre: (id: string) => string): string {
   return `${titre(arete.vers)} attend le livrable de ${titre(arete.de)} — ${
     apparenceArete(arete.etat).phrase
-  }${viaEnToutesLettres(arete, titre)}`;
+  }`;
+}
+
+/**
+ * L'état d'un trait **partagé** par plusieurs dépendances (#1393) — le tronc d'un
+ * éventail et ses arrivées : rompu dès qu'une l'est (l'aval ne partira pas),
+ * franchi seulement quand toutes le sont (l'aval peut partir), en attente sinon.
+ * Une amorce de départ, elle, ne porte que les dépendances d'une même source,
+ * qui partagent son état : il se lit dans l'amont (`graphe.py`).
+ */
+function etatCommun(aretes: readonly AreteGraphe[]): string {
+  if (aretes.some((arete) => arete.etat === ARETE_ROMPUE)) return ARETE_ROMPUE;
+  if (aretes.length > 0 && aretes.every((arete) => arete.etat === ARETE_FRANCHIE)) {
+    return ARETE_FRANCHIE;
+  }
+  return ARETE_ATTENDUE;
 }
 
 /**
@@ -472,9 +503,13 @@ function GraphePipeline({
       : null;
   const niveaux = niveauxRetenus(graphe, retenus);
   const visibles = new Set(niveaux.flat());
-  const aretes = graphe.aretes.filter(
+  // Toutes les dépendances du cadrage, pour « en toutes lettres » ; seules les
+  // directes au dessin (#1393) — une redondante n'y apprendrait rien de plus.
+  const toutes = graphe.aretes.filter(
     (arete) => visibles.has(arete.de) && visibles.has(arete.vers),
   );
+  const aretes = toutes.filter((arete) => !arete.redondante);
+  const implicites = toutes.length - aretes.length;
   const parId = new Map(graphe.noeuds.map((noeud) => [noeud.id, noeud]));
   const tacheParId = new Map(taches.map((tache) => [tache.id, tache]));
 
@@ -506,12 +541,43 @@ function GraphePipeline({
   // autres s'estompent, et la ligne sous le dessin la nomme.
   const [lienActif, setLienActif] = useState<string | null>(null);
   const titre = (id: string) => parId.get(id)?.titre || id;
+
+  // Les éventails exacts partagent un tronc (#1393) ; les autres flèches se
+  // tracent une à une, deux flèches d'un même couloir l'une à côté de l'autre.
+  const troncs = troncsDesEventails(aretes, niveaux);
+  const troncDe = new Map(
+    troncs.flatMap((tronc) => tronc.aretes.map((arete) => [cleArete(arete), tronc] as const)),
+  );
+  const voies = new Map<string, number>();
+  const tracesLibres = new Map(
+    aretes
+      .filter((arete) => !troncDe.has(cleArete(arete)))
+      .map((arete) => [
+        cleArete(arete),
+        tracerArete(arete.de, arete.vers, niveaux, boites, voies),
+      ]),
+  );
+  const tracesTroncs = tracerTroncs(
+    troncs,
+    niveaux,
+    boites,
+    [...tracesLibres.values()].filter((trace): trace is TraceArete => trace !== null),
+  );
+  // Une flèche d'un tronc a, elle aussi, son tracé à elle : celui qui s'allume
+  // quand on la regarde, et la cible qu'on survole ou qu'on focalise.
   const traces = new Map(
-    aretes.map((arete) => [cleArete(arete), tracerArete(arete.de, arete.vers, niveaux, boites)]),
+    aretes.map((arete) => {
+      const cle = cleArete(arete);
+      const tronc = troncDe.get(cle);
+      if (tronc === undefined) return [cle, tracesLibres.get(cle) ?? null] as const;
+      const trace = tracesTroncs.get(tronc.cle);
+      return [cle, trace ? tracerDansTronc(arete.de, arete.vers, trace.x, boites) : null] as const;
+    }),
   );
   const areteActive =
     aretes.find((arete) => cleArete(arete) === lienActif && traces.get(cleArete(arete))) ??
     null;
+  const lienRegarde = areteActive === null ? null : cleArete(areteActive);
 
   // Un couloir qui longe **la plus haute** colonne passe sous le bas de la
   // toile : on lui réserve la place, plutôt que de le laisser frôler le cadre.
@@ -541,7 +607,7 @@ function GraphePipeline({
       <ChiffresDuGraphe graphe={graphe} />
       <NoteDeLecture graphe={graphe} />
       {aretes.length > 0 && (
-        <LegendeFleches redondante={aretes.some((arete) => arete.redondante)} />
+        <LegendeFleches tronc={troncs.length > 0} implicites={implicites} />
       )}
 
       {/* Le cadre borne le dessin et **défile chez lui** : c'est ce qui empêche
@@ -572,15 +638,43 @@ function GraphePipeline({
                   </marker>
                 ))}
               </defs>
-              {aretes.map((arete) => (
-                <Arete
-                  key={cleArete(arete)}
-                  arete={arete}
-                  trace={traces.get(cleArete(arete)) ?? null}
-                  survole={survole}
-                  lienActif={areteActive === null ? null : cleArete(areteActive)}
+              {troncs.map((tronc) => (
+                <TroncDessine
+                  key={tronc.cle}
+                  tronc={tronc}
+                  trace={tracesTroncs.get(tronc.cle) ?? null}
+                  regard={survole !== null || lienRegarde !== null}
                 />
               ))}
+              {/* Les flèches libres passent **par-dessus** les troncs : là où
+                  l'une en franchit un sans y entrer, le tronc s'interrompt sous
+                  elle (`tracerTroncs`). */}
+              {aretes
+                .filter((arete) => !troncDe.has(cleArete(arete)))
+                .map((arete) => (
+                  <Arete
+                    key={cleArete(arete)}
+                    arete={arete}
+                    trace={traces.get(cleArete(arete)) ?? null}
+                    survole={survole}
+                    lienActif={lienRegarde}
+                  />
+                ))}
+              {/* D'un tronc, seules s'allument les flèches qu'on regarde — la
+                  sienne, ou celles de la tâche survolée —, chacune par son propre
+                  tracé : jamais le tronc entier (réserve du regard neuf). */}
+              {aretes
+                .filter((arete) => troncDe.has(cleArete(arete)))
+                .map((arete) => (
+                  <Arete
+                    key={cleArete(arete)}
+                    arete={arete}
+                    trace={traces.get(cleArete(arete)) ?? null}
+                    survole={survole}
+                    lienActif={lienRegarde}
+                    seulementRegardee
+                  />
+                ))}
             </g>
             {/* La **cible** de chaque flèche (#1297) : le même tracé, transparent
                 et large, qu'on survole à la souris et qu'on atteint au clavier.
@@ -660,11 +754,7 @@ function GraphePipeline({
         >
           {areteActive !== null ? (
             <>
-              <EchantillonFleche
-                etat={areteActive.etat}
-                pale={areteActive.redondante === true}
-                className="mt-1"
-              />
+              <EchantillonFleche etat={areteActive.etat} className="mt-1" />
               <LienNomme arete={areteActive} titre={titre} />
             </>
           ) : (
@@ -675,16 +765,16 @@ function GraphePipeline({
 
       {/* Le graphe **en toutes lettres**, pour qui ne voit pas les courbes : le
           tracé est `aria-hidden`, un dessin n'ayant rien à annoncer. Replié par
-          défaut — c'est un doublon du dessin, pas une seconde information. Il
-          garde **toutes** les dépendances, redondantes comprises, et dit par
-          quelle chaîne une redondante passe déjà (#1297). */}
-      {aretes.length > 0 && (
+          défaut. Il garde **toutes** les dépendances déclarées — celles que le
+          dessin tait comprises (#1393), chacune avec la chaîne qui l'implique :
+          c'est ce qui tient l'alternative textuelle, donc l'exemption #537. */}
+      {toutes.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-annexe text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100">
-            {`Les ${aretes.length} enchaînement${aretes.length > 1 ? "s" : ""} en toutes lettres`}
+            {`Les ${toutes.length} enchaînement${toutes.length > 1 ? "s" : ""} en toutes lettres`}
           </summary>
           <ul className="mt-1.5 space-y-1 text-annexe text-neutral-600 dark:text-neutral-400">
-            {aretes.map((arete) => (
+            {toutes.map((arete) => (
               <li key={`texte-${arete.de}→${arete.vers}`}>
                 {`${parId.get(arete.de)?.titre ?? arete.de} → ${
                   parId.get(arete.vers)?.titre ?? arete.vers
@@ -827,6 +917,10 @@ function memesBoites(
  * tracé se décide hors du JSX (`lib/graphe.tracerArete`, #1297) : jamais sous
  * une carte, une arête qui saute une colonne la traversant par un couloir libre.
  *
+ * Une flèche d'un **tronc** (#1393) ne se dessine pas seule au repos — le tronc
+ * la porte avec ses voisines (`TroncDessine`) — : elle ne paraît que regardée
+ * (`seulementRegardee`), par son propre tracé, pour s'allumer seule.
+ *
  * Ne rend rien tant que les deux boîtes ne sont pas mesurées (`trace` nul) : un
  * tracé vers `(0,0)` traverserait le dessin le temps d'une image.
  */
@@ -835,11 +929,13 @@ function Arete({
   trace,
   survole,
   lienActif,
+  seulementRegardee = false,
 }: {
   arete: AreteGraphe;
   trace: TraceArete | null;
   survole: string | null;
   lienActif: string | null;
+  seulementRegardee?: boolean;
 }) {
   if (trace === null) return null;
   const apparence = apparenceArete(arete.etat);
@@ -854,20 +950,78 @@ function Arete({
       : survole !== null
         ? survole === arete.de || survole === arete.vers
         : null;
-  // Au repos, une dépendance redondante recule derrière la chaîne qui l'implique.
-  const opacite =
-    enAvant === false ? "opacity-20" : enAvant === null && arete.redondante ? PALE : "opacity-100";
+  if (seulementRegardee && enAvant !== true) return null;
+  const opacite = enAvant === false ? "opacity-20" : "opacity-100";
 
   return (
     <path
       d={trace.d}
-      data-redondante={arete.redondante ? "" : undefined}
+      data-fleche-dessinee={cleArete(arete)}
       fill="none"
       strokeWidth={enAvant === true ? 2.5 : 1.5}
       strokeDasharray={apparence.tirets}
       markerEnd={`url(#${MARQUEUR}-${arete.etat})`}
       className={`${apparence.trait} transition-opacity motion-reduce:transition-none ${opacite}`}
     />
+  );
+}
+
+/**
+ * Un **tronc** (#1393) : l'éventail exact entre deux colonnes, dessiné d'un seul
+ * geste — une amorce par source, un trait vertical dans la gouttière (interrompu
+ * là où une autre flèche l'enjambe), une arrivée fléchée sur chaque cible.
+ *
+ * Chaque amorce de départ porte l'état de **sa** source — les dépendances qui en
+ * partent le partagent ; le trait et les arrivées portent l'état commun du tronc
+ * (`etatCommun`) : chaque cible y attend toutes les sources, donc il ne franchit
+ * que quand toutes ont rendu leur livrable.
+ *
+ * Dès qu'on regarde quelque chose — une tâche, une flèche —, le tronc entier
+ * recule ; ce qui en concerne le regard se redessine par-dessus, flèche par
+ * flèche (`Arete`, `seulementRegardee`). `null` tant qu'une boîte n'est pas
+ * mesurée.
+ */
+function TroncDessine({
+  tronc,
+  trace,
+  regard,
+}: {
+  tronc: Tronc;
+  trace: TraceTronc | null;
+  regard: boolean;
+}) {
+  if (trace === null) return null;
+  const commun = apparenceArete(etatCommun(tronc.aretes));
+  const trait = (apparence: ApparenceArete) => ({
+    fill: "none",
+    strokeWidth: 1.5,
+    strokeDasharray: apparence.tirets,
+    className: apparence.trait,
+  });
+  return (
+    <g
+      data-tronc={tronc.cle}
+      className={`transition-opacity motion-reduce:transition-none ${regard ? "opacity-20" : "opacity-100"}`}
+    >
+      {trace.departs.map(({ id, d }) => (
+        <path
+          key={`depart-${id}`}
+          d={d}
+          {...trait(apparenceArete(etatCommun(tronc.aretes.filter((arete) => arete.de === id))))}
+        />
+      ))}
+      {trace.morceaux.map((d) => (
+        <path key={d} d={d} {...trait(commun)} />
+      ))}
+      {trace.arrivees.map(({ id, d }) => (
+        <path
+          key={`arrivee-${id}`}
+          d={d}
+          markerEnd={`url(#${MARQUEUR}-${etatCommun(tronc.aretes)})`}
+          {...trait(commun)}
+        />
+      ))}
+    </g>
   );
 }
 
@@ -1247,7 +1401,6 @@ function LienNomme({
       <span className="font-medium text-texte">{titre(arete.de)}</span>
       {" — "}
       <span className="font-medium text-texte">{apparenceArete(arete.etat).phrase}</span>
-      {viaEnToutesLettres(arete, titre)}
     </span>
   );
 }
@@ -1261,11 +1414,9 @@ function LienNomme({
  */
 function EchantillonFleche({
   etat,
-  pale = false,
   className = "",
 }: {
   etat: string;
-  pale?: boolean;
   className?: string;
 }) {
   const apparence = apparenceArete(etat);
@@ -1284,7 +1435,7 @@ function EchantillonFleche({
         strokeWidth={2}
         strokeDasharray={apparence.tirets}
         markerEnd={`url(#${MARQUEUR}-${etat})`}
-        className={`${apparence.trait} ${pale ? PALE : ""}`}
+        className={apparence.trait}
       />
     </svg>
   );
@@ -1300,10 +1451,17 @@ function EchantillonFleche({
  * sait ce qu'est une flèche avant d'en suivre une. Les **trois** états sont
  * toujours dits, même absents du graphe, à l'inverse de la légende des nœuds :
  * c'est un vocabulaire de trois mots, et savoir ce que voudra dire le vert quand
- * la première tâche aura rendu son livrable est justement la question. La
- * mention « pâlie », elle, ne vient qu'avec une dépendance redondante à l'écran.
+ * la première tâche aura rendu son livrable est justement la question.
+ *
+ * Deux phrases de plus, chacune seulement quand le dessin la rend nécessaire
+ * (#1393) : ce qu'est un **tronc**, sur sa propre ligne — ajoutée au bout de la
+ * définition d'une flèche, elle courait sur toute la largeur du bloc (constat du
+ * regard neuf) — ; et **combien de dépendances le dessin tait**, avec l'endroit
+ * où elles se lisent. Un dessin qui retire sans le dire ferait croire à un plan
+ * plus simple qu'il n'est.
  */
-function LegendeFleches({ redondante }: { redondante: boolean }) {
+function LegendeFleches({ tronc, implicites }: { tronc: boolean; implicites: number }) {
+  const plusieurs = implicites > 1;
   return (
     <div className="mt-2 space-y-1 text-annexe text-texte-secondaire">
       <p>
@@ -1319,13 +1477,22 @@ function LegendeFleches({ redondante }: { redondante: boolean }) {
             {apparenceArete(etat).legende}
           </li>
         ))}
-        {redondante && (
-          <li className="inline-flex items-center gap-1.5">
-            <EchantillonFleche etat={ARETE_FRANCHIE} pale />
-            pâlie : déjà impliquée par une autre chaîne
-          </li>
-        )}
       </ul>
+      {tronc && (
+        <p>
+          <span className="font-medium text-texte">Un tronc</span>
+          {" : chaque tâche qui y entre est attendue par chacune de celles qu'il dessert."}
+        </p>
+      )}
+      {implicites > 0 && (
+        <p>
+          {`Seules les dépendances directes sont dessinées : ${implicites} autre${
+            plusieurs ? "s" : ""
+          }, déjà impliquée${plusieurs ? "s" : ""} par une chaîne, se ${
+            plusieurs ? "lisent" : "lit"
+          } en toutes lettres sous le dessin.`}
+        </p>
+      )}
     </div>
   );
 }

@@ -1573,15 +1573,56 @@ réponses :
   et large — qu'on survole à la souris et qu'on atteint à la tabulation, nommée par cette
   phrase pour les lecteurs d'écran ; `Échap` la tait. La ligne garde sa hauteur du repos au
   survol, et invite au repos à survoler.
-- **Une dépendance redondante** (servie par le graphe, §6.11) **pâlit** au repos, et la
-  légende ajoute alors *pâlie : déjà impliquée par une autre chaîne* ; regardée, elle reprend
-  sa couleur et se nomme avec la chaîne qui l'implique (« · déjà impliquée par la chaîne via
-  … »), comme dans « en toutes lettres ».
+- **Une dépendance redondante** (servie par le graphe, §6.11) **pâlissait** au repos. ⚠
+  **Renversé par #1393** — voir le paragraphe suivant : elle n'est plus dessinée.
 - **Aucune flèche ne croise une carte.** Une arête qui saute une colonne la traverse par un
   **couloir libre** — l'intervalle entre deux cartes, ou sous la dernière —, choisi au plus
   près de la droite qui joindrait ses deux bouts ; chaque courbe reste dans sa gouttière.
-  C'est ce que le banc de mise en page mesure sur la vraie stack, et `pipeline.test.tsx`
-  hors rendu (`lib/graphe.tracerArete`).
+  Deux flèches qui choisissent le même couloir y passent **côte à côte** (#1393), jamais
+  l'une sur l'autre. C'est ce que le banc de mise en page mesure sur la vraie stack, et
+  `pipeline.test.tsx` hors rendu (`lib/graphe.tracerArete`).
+
+**Le pipeline se lit d'un coup d'œil : seules les dépendances directes sont dessinées, et un
+éventail se lit d'un seul geste (#1393).** Le retour de la personne sur les runs de p5
+(2026-10-01) : « les flèches créent un bordel dans l'affichage, pas besoin d'afficher toutes les
+relations de dépendance, il faut surtout que ce soit lisible ». Le plan de p5 déclare neuf tâches
+et dix-huit à vingt-deux enchaînements, dont cinq **redondants** (le socle vers chaque page, alors
+que la charte dépend déjà du socle) : pâlis, ils restaient un écheveau. Trois réponses :
+
+- **Une dépendance redondante n'est plus dessinée.** Elle reste **dite** : « Les N enchaînements
+  en toutes lettres » les garde **toutes**, et chacune y dit pourquoi le dessin la tait (« · non
+  dessinée, déjà impliquée par la chaîne via … ») ; une ligne de la légende dit combien le dessin
+  en tait et où les lire (« Seules les dépendances directes sont dessinées : 5 autres, déjà
+  impliquées par une chaîne, se lisent en toutes lettres sous le dessin. »). Sur le plan de p5 :
+  18 enchaînements, 13 flèches. L'exemption d'accessibilité (§4) en sort renforcée : la liste
+  porte strictement plus que le dessin.
+- **Un éventail exact partage un tronc.** Quand des tâches d'une colonne servent **exactement** les
+  mêmes tâches de la suivante — et qu'aucune de ces dernières n'attend une autre tâche de cette
+  colonne —, leurs flèches partagent un trait vertical dans la gouttière : une amorce par source,
+  le tronc, une arrivée fléchée par cible (`lib/graphe.troncsDesEventails`). Sur le plan de p5,
+  la charte qui sert cinq pages est un peigne, plus cinq courbes ; les cinq pages qui servent les
+  tests, un autre. La légende dit alors « Un tronc : chaque tâche qui y entre est attendue par
+  chacune de celles qu'il dessert », sur sa propre ligne. Un recouvrement **partiel** reste en
+  courbes : un trait commun à des liens qui ne se correspondent pas ferait lire une dépendance que
+  le plan ne déclare pas. Une amorce porte l'état de sa source ; le tronc et ses arrivées, l'état
+  commun (franchi seulement quand toutes les sources ont rendu leur livrable, rompu dès qu'une
+  l'est). Une flèche qui **franchit** un tronc sans y entrer l'interrompt : le tronc s'efface sous
+  elle, et rien ne la fait lire comme un de ses liens.
+- **Regarder une tâche n'allume que ses flèches**, jamais le tronc entier : le tronc recule avec
+  le reste, et chacune des flèches de la tâche se redessine par-dessus, par son propre tracé
+  (son amorce, la portion de tronc qui relie ses deux bouts, son arrivée). Chaque flèche d'un tronc
+  garde sa cible au clavier, nommée par sa phrase.
+
+Pourquoi ces formes-là : le tronc vient de **GitHub Actions**, dont le graphe d'un run chargé fait
+partager aux liens d'une colonne un trait vertical dans la gouttière, le job qui dépend de tous les
+autres recevant un seul trait ; on lui laisse son tronc unique par gouttière (qui mélange des liens
+qui ne se correspondent pas) et son survol qui allume le tronc entier. On laisse à **GitLab** les
+deux régimes de son interrupteur « Afficher les dépendances » : allumé, il trace tout, longues
+lignes comprises ; éteint (le défaut), plus rien ne dit qui attend quoi. Deux autres variantes ont
+été rendues sur la vraie stack — un run réel au plan de p5 — et **écartées** par le regard neuf :
+la réduction seule, en courbes (cinq courbes serrées depuis la charte restaient un écheveau), et la
+réduction avec les implicites révélées au survol d'une tâche (même écheveau au repos, et un lien
+ajouté qui doublait une chaîne). Le choix est consigné sur le ticket.
 
 Pourquoi ces formes-là : la légende au-dessus vient de GitLab, qui pose sa phrase (« survolez
 un job pour voir ceux dont il dépend ») au-dessus de son graphe de dépendances ; « colonne =
@@ -4105,7 +4146,9 @@ idempotence) est gardé côté canal par `tests/test_chat_pleine_page.py` (④).
   ([docs/30 §3.5](./30-cible-visuelle-control-tower.md)) : le **graphe de
   pipeline** n'est pas rendu accessible nœud à nœud — aucun motif ARIA n'établit
   comment lire un DAG, et il porte une **alternative textuelle équivalente** (la
-  vue Kanban et le journal du run donnent la même information) —, et le niveau
+  vue Kanban et le journal du run donnent la même information ; et dans la vue
+  même, « Les N enchaînements en toutes lettres » rend **toutes** les dépendances,
+  y compris celles que le dessin tait depuis #1393, §6.12) —, et le niveau
   **AAA n'est pas visé**, son contraste de 7:1 supprimant la distinction
   primaire/secondaire dont la densité de ces écrans dépend. Ni l'une ni l'autre ne
   dispense d'un critère AA.
@@ -6174,15 +6217,23 @@ existent toujours : le relais n'existe que si une messagerie est injectée
 laissé **toutes les arêtes éteintes** dans la configuration ordinaire — le défaut exact que #488 a
 nommé chez `consigne_detail` : « toute la plomberie est posée, rien ne la remplit ».
 
-**Une dépendance redondante se dit, elle ne se retire pas (#1297).** Un plan peut déclarer
-`contenu → intégration` alors que la chaîne passe déjà par `contenu → maquette → intégration` : la
-dépendance directe n'apprend rien de plus, et c'est elle qui, tracée d'une traite, passait sous la
-carte du milieu et « semblait venir d'ailleurs » (retour d'expérience du 2026-09-24, run
-`3fe501fc0878`). Le graphe la marque `redondante` et nomme dans `via` la plus courte chaîne qui
-l'implique ; il ne la retire pas — le plan l'a déclarée, et la liste « en toutes lettres » les rend
-toutes. Le calcul vit ici, une fois, plutôt qu'en règle d'affichage : un parcours en largeur depuis
-l'amont qui s'interdit l'arête directe, sans jamais revisiter un nœud (un cycle relu du bus
-s'arrête).
+**Une dépendance redondante se dit dans le graphe ; la vue ne la dessine plus (#1297, #1393).** Un
+plan peut déclarer `contenu → intégration` alors que la chaîne passe déjà par `contenu → maquette →
+intégration` : la dépendance directe n'apprend rien de plus, et c'est elle qui, tracée d'une traite,
+passait sous la carte du milieu et « semblait venir d'ailleurs » (retour d'expérience du
+2026-09-24, run `3fe501fc0878`). Le graphe la marque `redondante` et nomme dans `via` la plus courte
+chaîne qui l'implique ; il ne la retire pas — le plan l'a déclarée, et la liste « en toutes
+lettres » les rend toutes. Le calcul vit ici, une fois, plutôt qu'en règle d'affichage : un parcours
+en largeur depuis l'amont qui s'interdit l'arête directe, sans jamais revisiter un nœud (un cycle
+relu du bus s'arrête).
+
+⚠ **Ce paragraphe disait « une redondante se dit, elle ne se retire pas » jusqu'à #1393**, et la vue
+la pâlissait. Le renversement est délibéré et porte sur la **vue**, pas sur le contrat : sur le plan
+de p5 (cinq redondantes sur dix-huit enchaînements), les pâlies restaient un écheveau, et la
+personne demandait que ce soit lisible plutôt que complet. Le serveur sert toujours toutes les
+arêtes avec `redondante`/`via` — c'est ce qui permet à la vue de les taire au dessin **et** de les
+dire en toutes lettres (§6.12) ; un client qui ignore ces clés les dessine toutes, comme avant
+#1297.
 
 **Un graphe plat est un graphe, pas un vide** (quatrième critère). Un plan sans aucune dépendance
 déclarée est le cas le **plus courant** : `plat: true`, tous les nœuds au niveau 0, `niveaux` à une
