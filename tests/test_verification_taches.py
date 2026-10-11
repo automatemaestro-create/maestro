@@ -23,7 +23,10 @@ Critères couverts :
   Chef de projet pose la question, ne refait rien, et la personne peut accepter la
   livraison d'un geste — ou répondre en mots, qu'il lit avec le fait typé ;
 ⑥ un service se démarre, se sonde et s'arrête par Maestro, et une commande que le
-  système refuse de lancer est nommée sans jeter la livraison (#1432).
+  système refuse de lancer est nommée sans jeter la livraison (#1432) ;
+⑦ deux vérifications ne se disputent jamais un port (#1449) : un service démarré
+  par une vérification à la fois sur le poste, et un port qu'un autre tient encore
+  est attendu avant d'être compté « non joué » — prouvé sur de vrais serveurs.
 """
 
 from __future__ import annotations
@@ -1746,7 +1749,7 @@ def _demarreur_qui_rend(resultat, appels: list[dict[str, Any]]):
     return demarreur
 
 
-def _verifier_le_serveur(tmp_path, demarreur, *, controle=None):
+def _verifier_le_serveur(tmp_path, demarreur, *, controle=None, liberation_s=0.0):
     reponse = json.dumps(
         {
             "controles": [
@@ -1761,7 +1764,9 @@ def _verifier_le_serveur(tmp_path, demarreur, *, controle=None):
 
     verificateur = VerificateurTaches(
         _Reponses(reponse),
-        delais=DelaisVerification(commande_s=90.0, demarrage_s=2.0, sonde_s=7.0),
+        delais=DelaisVerification(
+            commande_s=90.0, demarrage_s=2.0, sonde_s=7.0, liberation_s=liberation_s
+        ),
         joueur=joueur,
         demarreur=demarreur,
         interprete=_INTERPRETE,
@@ -1921,7 +1926,11 @@ def test_un_service_se_demarre_repond_puis_est_arrete_pour_de_vrai(tmp_path):
     from maestro.sandbox.verification import demarrer
 
     bash = _bash_ou_rien()
-    service = "sleep 1; touch pret; while true; do date > battement; sleep 0.2; done"
+    # Le premier battement avant le témoin : la sonde peut tenir dès `touch pret`.
+    service = (
+        "sleep 1; date > battement; touch pret; "
+        "while true; do date > battement; sleep 0.2; done"
+    )
 
     debut = time.monotonic()
     resultat = demarrer(
@@ -1979,3 +1988,521 @@ def test_une_sonde_qui_tient_deja_ne_demarre_rien_pour_de_vrai(tmp_path):
 
     assert resultat.deja and not resultat.repondu
     assert not (tmp_path / "lance").exists()
+
+
+# --------------------------------------------------------------------------- #
+# ⑦ Deux vérifications ne se disputent jamais un port (#1449)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def creneau_a_part(tmp_path, monkeypatch) -> Path:
+    """Un répertoire temporaire à ce test : le créneau des services est le sien, pas celui
+    du poste — un run en vol sur la machine qui joue la suite ne le retarde pas."""
+    temporaire = tmp_path / "temp"
+    temporaire.mkdir()
+    monkeypatch.setenv("TMPDIR", str(temporaire))
+    return temporaire
+
+
+def _controle_sonde(critere: str, sonde: str = _SONDE) -> dict[str, Any]:
+    return {"critere": critere, "commande": _SERVICE, "sonde": sonde}
+
+
+def _verifier_ensemble(
+    espaces: list[Path],
+    controles: list[dict[str, Any]],
+    *,
+    demarreur=None,
+    joueur=None,
+    delais: DelaisVerification | None = None,
+):
+    """Une vérification par espace, toutes lancées **ensemble** — deux tâches d'un run."""
+
+    async def toutes():
+        return await asyncio.gather(
+            *(
+                VerificateurTaches(
+                    _Reponses(json.dumps({"controles": [controle]})),
+                    delais=delais,
+                    joueur=joueur,
+                    demarreur=demarreur,
+                    interprete=_INTERPRETE,
+                ).verifier(
+                    _TACHE,
+                    Livraison(
+                        sortie="fait", espace=espace, portee=PorteeProjet(racine=espace)
+                    ),
+                    modele="m",
+                )
+                for espace, controle in zip(espaces, controles, strict=True)
+            )
+        )
+
+    return asyncio.run(toutes())
+
+
+def _deux_espaces(tmp_path: Path) -> list[Path]:
+    espaces = [tmp_path / "page-accueil", tmp_path / "page-recette"]
+    for espace in espaces:
+        espace.mkdir()
+    return espaces
+
+
+def test_deux_verifications_simultanees_ne_demarrent_jamais_leur_service_ensemble(
+    tmp_path, creneau_a_part
+):
+    """Le run `3a7fa26ba927` : deux tâches livrées à quelques secondes d'écart démarraient
+    leur service sur le même port, et la sonde de l'une interrogeait l'autre."""
+    import time
+
+    occupations: list[tuple[float, float]] = []
+
+    def demarreur(commande, cwd, *, interprete, sonde, delai_s, delai_sonde_s, **_):
+        debut = time.monotonic()
+        time.sleep(1.2)  # le service tient « le port » le temps de répondre
+        occupations.append((debut, time.monotonic()))
+        return _demarrage(repondu=True, sonde=Execution(0, "", 0.1))
+
+    resultats = _verifier_ensemble(
+        _deux_espaces(tmp_path),
+        [_controle_sonde("l'accueil répond 200"), _controle_sonde("la recette répond 404")],
+        demarreur=demarreur,
+    )
+
+    assert [verdict.tenue for _, verdict in resultats] == [True, True]
+    premier, second = sorted(occupations)
+    assert premier[1] <= second[0], f"deux services démarrés ensemble : {occupations}"
+    # Celle qui a attendu son tour le dit : le temps d'une vérification se lit sur elle.
+    preuves = [verdict.constats[0].preuve for _, verdict in resultats]
+    assert sum("un autre service de vérification tenait le poste" in p for p in preuves) == 1
+
+
+def test_un_demarrage_sans_sonde_prend_aussi_son_tour(tmp_path, creneau_a_part):
+    """« Le serveur démarre » occupe le port autant que « le serveur répond » : un
+    démarrage sans sonde qui le trouve tenu rend la main, et reviendrait à l'agent."""
+    import time
+
+    occupations: list[tuple[float, float]] = []
+
+    def occuper() -> None:
+        debut = time.monotonic()
+        time.sleep(0.4)
+        occupations.append((debut, time.monotonic()))
+
+    def demarreur(commande, cwd, **_):
+        occuper()
+        return _demarrage(repondu=True, sonde=Execution(0, "", 0.1))
+
+    def joueur(commande, cwd, **_):
+        occuper()
+        return Execution(code=None, sortie="", duree_s=0.4, expiree=True)
+
+    resultats = _verifier_ensemble(
+        _deux_espaces(tmp_path),
+        [
+            _controle_sonde("l'accueil répond 200"),
+            {"critere": "le serveur démarre", "commande": _SERVICE, "demarrage": True},
+        ],
+        demarreur=demarreur,
+        joueur=joueur,
+    )
+
+    assert [verdict.tenue for _, verdict in resultats] == [True, True]
+    premier, second = sorted(occupations)
+    assert premier[1] <= second[0], f"deux services démarrés ensemble : {occupations}"
+
+
+def _demarreur_deja_puis(reponses: list[Any], appels: list[float]):
+    """Rend, appel après appel, les démarrages de `reponses` — le dernier ensuite."""
+    import time
+
+    def demarreur(commande, cwd, *, interprete, sonde, delai_s, delai_sonde_s, **_):
+        appels.append(time.monotonic())
+        return reponses[min(len(appels), len(reponses)) - 1]
+
+    return demarreur
+
+
+def test_un_port_tenu_par_un_autre_est_attendu_puis_le_service_joue(
+    tmp_path, creneau_a_part, monkeypatch
+):
+    """Le serveur qu'un agent voisin a lancé pour se vérifier finit par s'arrêter : la
+    vérification l'attend au lieu de rendre la tâche en échec pour un port qu'elle ne
+    tenait pas."""
+    from maestro.sandbox import verification as execution
+
+    monkeypatch.setattr(execution, "PERIODE_SONDE_S", 0.05)
+    deja = _demarrage(deja=True, sonde=Execution(0, "", 0.1))
+    appels: list[float] = []
+    demarreur = _demarreur_deja_puis(
+        [deja, deja, _demarrage(repondu=True, sonde=Execution(0, "", 0.1))], appels
+    )
+
+    _, verdict = _verifier_le_serveur(tmp_path, demarreur, liberation_s=30.0)
+
+    assert verdict.tenue
+    assert len(appels) == 3
+    (constat,) = verdict.constats
+    assert constat.preuve.startswith("démarré après moins d'une seconde d'attente")
+    assert "le port était tenu par un autre processus" in constat.preuve
+    assert "a répondu à la sonde" in constat.preuve
+
+
+def test_un_service_qui_a_attendu_son_tour_puis_n_a_pas_repondu_le_dit_aussi(
+    tmp_path, creneau_a_part
+):
+    """Le temps d'une vérification se lit sur elle quelle qu'en soit l'issue : un service
+    qui revient à l'agent dit aussi qu'il a attendu, et que son délai n'en a rien perdu."""
+    fil = _tenir_le_creneau(1.3)
+
+    _, verdict = _verifier_le_serveur(tmp_path, _demarreur_qui_rend(_demarrage(), []))
+    fil.join(10)
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_TENU
+    assert constat.preuve.startswith("le service n'a pas répondu à la sonde")
+    assert re.search(
+        r"il avait démarré après \d+ s d'attente \(un autre service de vérification",
+        constat.preuve,
+    ), constat.preuve
+
+
+def test_un_port_qui_ne_se_libere_pas_reste_non_joue_et_le_dit(
+    tmp_path, creneau_a_part, monkeypatch
+):
+    """Un serveur de la personne tient le port pour de bon : au-delà de l'attente, le
+    critère n'est pas joué — ni tenu, ni renvoyé à l'agent, qui n'y est pour rien."""
+    import time
+
+    from maestro.sandbox import verification as execution
+
+    monkeypatch.setattr(execution, "PERIODE_SONDE_S", 0.05)
+    appels: list[float] = []
+    demarreur = _demarreur_deja_puis(
+        [_demarrage(deja=True, sonde=Execution(0, "", 0.1))], appels
+    )
+    verificateur = VerificateurTaches(
+        _Reponses(json.dumps({"controles": [_controle_sonde(_CRITERE_SERVEUR)]})),
+        delais=DelaisVerification(liberation_s=0.3),
+        demarreur=demarreur,
+        interprete=_INTERPRETE,
+    )
+
+    debut = time.monotonic()
+    _, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_JOUE
+    assert "tenait avant que le service ne démarre" in constat.preuve
+    assert "tenait encore au bout de" in constat.preuve
+    assert len(appels) >= 2, "l'attente a rejoué la sonde"
+    assert time.monotonic() - debut < 5
+
+
+def test_la_suite_ne_prend_jamais_le_creneau_du_poste():
+    """La garde de `tests/conftest.py` (#1449) : un run en vol sur le poste ne fait attendre
+    aucun test — mesuré en écrivant ce ticket, un démarrage sans sonde avait attendu le
+    service d'un vrai run et sa preuve le disait."""
+    from maestro.emplacements import racine_jetable
+    from maestro.sandbox.verification import racine_du_creneau
+
+    assert racine_du_creneau() != racine_jetable()
+
+
+def test_le_creneau_d_un_service_ne_laisse_rien_sous_la_racine_jetable(creneau_a_part):
+    """Ni fichier ni dossier : le ménage et le ramassage n'ont rien à juger (#1454)."""
+    from maestro.emplacements import racine_jetable
+    from maestro.sandbox.verification import creneau_de_service
+
+    with creneau_de_service():
+        pass
+
+    racine = racine_jetable()
+    assert not racine.exists() or list(racine.iterdir()) == []
+
+
+def test_le_creneau_d_un_service_se_partage_entre_deux_process(creneau_a_part):
+    """Une vérification d'un worker et celle d'un hôte de run sont deux process : le
+    créneau est celui du poste, et un process qui le tient fait attendre l'autre."""
+    import os
+    import subprocess
+    import sys
+    import time
+
+    from maestro.sandbox.verification import creneau_de_service
+
+    depot = Path(__file__).resolve().parents[1]
+    tenant = subprocess.Popen(  # noqa: S603 - argv fixe
+        [
+            sys.executable,
+            "-c",
+            "import time\n"
+            "from maestro.sandbox.verification import creneau_de_service\n"
+            "with creneau_de_service():\n"
+            "    print('tenu', flush=True)\n"
+            "    time.sleep(1.5)\n",
+        ],
+        cwd=depot,
+        env={**os.environ, "PYTHONPATH": str(depot)},
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert tenant.stdout is not None
+        assert tenant.stdout.readline().strip() == "tenu"
+        debut = time.monotonic()
+        with creneau_de_service():
+            attente = time.monotonic() - debut
+    finally:
+        tenant.wait(timeout=30)
+
+    assert attente >= 0.8, f"le créneau tenu ailleurs n'a pas fait attendre ({attente:.2f} s)"
+
+
+def _tenir_le_creneau(duree_s: float):
+    """Un fil qui tient le créneau `duree_s` — rend le fil, une fois le créneau tenu."""
+    import threading
+    import time
+
+    from maestro.sandbox.verification import creneau_de_service
+
+    tenu = threading.Event()
+
+    def tenir() -> None:
+        with creneau_de_service():
+            tenu.set()
+            time.sleep(duree_s)
+
+    fil = threading.Thread(target=tenir, daemon=True)
+    fil.start()
+    assert tenu.wait(10), "le créneau n'a pas pu être tenu"
+    return fil
+
+
+def test_une_attente_de_creneau_abandonnee_cesse_aussitot(creneau_a_part):
+    import threading
+    import time
+
+    from maestro.sandbox.verification import CreneauAbandonne, creneau_de_service
+
+    fil = _tenir_le_creneau(3.0)
+    abandon = threading.Event()
+    threading.Timer(0.3, abandon.set).start()
+
+    debut = time.monotonic()
+    with pytest.raises(CreneauAbandonne), creneau_de_service(abandon=abandon):
+        pytest.fail("le créneau a été obtenu alors qu'un autre le tenait")
+
+    assert time.monotonic() - debut < 2.0
+    fil.join(10)
+
+
+def test_une_verification_annulee_pendant_son_attente_ne_demarre_rien(
+    tmp_path, creneau_a_part
+):
+    """Un run qu'on arrête : la vérification qui attendait son tour ne démarre plus
+    de service, une fois l'autre parti — et son fil ne retient pas la sortie du process."""
+    import time
+
+    appels: list[float] = []
+    demarreur = _demarreur_deja_puis([_demarrage(repondu=True)], appels)
+    verificateur = VerificateurTaches(
+        _Reponses(json.dumps({"controles": [_controle_sonde(_CRITERE_SERVEUR)]})),
+        demarreur=demarreur,
+        interprete=_INTERPRETE,
+    )
+    fil = _tenir_le_creneau(1.5)
+
+    async def annulee():
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                verificateur.verifier(
+                    _TACHE,
+                    Livraison(
+                        sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)
+                    ),
+                    modele="m",
+                ),
+                timeout=0.3,
+            )
+
+    asyncio.run(annulee())
+    fil.join(10)
+    time.sleep(0.6)  # le temps qu'un fil qui n'aurait pas abandonné prenne son tour
+
+    assert appels == []
+
+
+# Pour de vrai : deux serveurs HTTP sur un même port, comme les deux pages du run
+# `3a7fa26ba927`. Sous Windows, `node` (le python du Store sortirait du Job Object
+# du service, et lui survivrait) ; ailleurs, le python de la suite.
+
+#: Le temps pendant lequel l'accueil répond 503 à « / » — un Next.js qui compile sa
+#: première page — : la fenêtre où la sonde de la recette trouvait son serveur.
+_CHAUFFE_S = 4
+
+_SERVEUR_JS = """\
+const http = require("http");
+const debut = Date.now();
+http.createServer((req, res) => {
+  res.statusCode = req.url === "/" ? (Date.now() - debut > CHAUFFE * 1000 ? 200 : 503) : 404;
+  res.end();
+}).listen(Number(process.argv[2]), "127.0.0.1");
+""".replace("CHAUFFE", str(_CHAUFFE_S))
+
+#: La sonde reçoit le chemin **sans** sa barre de tête : Git Bash réécrit en chemin
+#: Windows un argument qui commence par « / » avant de le passer à un programme natif.
+_SONDE_JS = """\
+const [port, chemin, attendu] = process.argv.slice(2);
+require("http")
+  .get({ host: "127.0.0.1", port: Number(port), path: "/" + chemin }, (res) =>
+    process.exit(res.statusCode === Number(attendu) ? 0 : 1))
+  .on("error", () => process.exit(1));
+"""
+
+_SERVEUR_PY = """\
+import http.server, sys, time
+debut = time.monotonic()
+class Pages(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/":
+            code = 200 if time.monotonic() - debut > CHAUFFE else 503
+        else:
+            code = 404
+        self.send_response(code)
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), Pages).serve_forever()
+""".replace("CHAUFFE", str(_CHAUFFE_S))
+
+_SONDE_PY = """\
+import sys, urllib.error, urllib.request
+port, chemin, attendu = sys.argv[1:]
+try:
+    code = urllib.request.urlopen(f"http://127.0.0.1:{port}/{chemin}", timeout=5).status
+except urllib.error.HTTPError as exc:
+    code = exc.code
+except OSError:
+    sys.exit(1)
+sys.exit(0 if code == int(attendu) else 1)
+"""
+
+
+def _serveur_de_pages(espace: Path) -> str:
+    """Écrit le serveur et la sonde dans `espace` ; rend l'interpréteur qui les joue."""
+    import shutil
+    import sys
+
+    if sys.platform == "win32":
+        if shutil.which("node") is None:  # pragma: no cover — poste sans node
+            pytest.skip("aucun node sur ce poste pour servir un vrai port")
+        (espace / "serveur.js").write_text(_SERVEUR_JS, encoding="utf-8")
+        (espace / "sonde.js").write_text(_SONDE_JS, encoding="utf-8")
+        return "node"
+    (espace / "serveur.py").write_text(_SERVEUR_PY, encoding="utf-8")
+    (espace / "sonde.py").write_text(_SONDE_PY, encoding="utf-8")
+    return f'"{sys.executable}"'
+
+
+def _port_libre() -> int:
+    import socket
+
+    with socket.socket() as prise:
+        prise.bind(("127.0.0.1", 0))
+        return int(prise.getsockname()[1])
+
+
+def _ecoute(port: int) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def _attendre_ecoute(port: int, delai_s: float) -> None:
+    import time
+
+    echeance = time.monotonic() + delai_s
+    while not _ecoute(port):
+        if time.monotonic() > echeance:
+            raise AssertionError(f"personne n'écoute sur {port} au bout de {delai_s} s")
+        time.sleep(0.1)
+
+
+@pytest.mark.commandes_jouees
+def test_deux_taches_verifiees_ensemble_sur_le_meme_port_jouent_tous_leurs_criteres(
+    tmp_path, creneau_a_part
+):
+    """La preuve du ticket, sur de vrais serveurs : l'accueil se vérifie, son serveur tient
+    le port ; la recette livre pendant ce temps, sur le même port. Avant #1449, sa sonde
+    trouvait le serveur de l'accueil et son critère n'était pas joué."""
+    bash = _bash_ou_rien()
+    port = _port_libre()
+    accueil, recette = _deux_espaces(tmp_path)
+    lanceur = _serveur_de_pages(accueil)
+    _serveur_de_pages(recette)
+    extension = "js" if lanceur == "node" else "py"
+    service = f"{lanceur} serveur.{extension} {port}"
+
+    def verifier(espace: Path, sonde: str):
+        controle = {
+            "critere": f"le service répond sur {port}",
+            "commande": service,
+            "sonde": f"{lanceur} sonde.{extension} {port} {sonde}",
+        }
+        return VerificateurTaches(
+            _Reponses(json.dumps({"controles": [controle]})),
+            delais=DelaisVerification(commande_s=60.0, sonde_s=10.0),
+            interprete=bash,
+        ).verifier(_TACHE, Livraison(sortie="fait", espace=espace), modele="m")
+
+    async def deroule():
+        tache_accueil = asyncio.create_task(verifier(accueil, "'' 200"))
+        # La recette livre quand le serveur de l'accueil tient déjà le port.
+        await asyncio.to_thread(_attendre_ecoute, port, 30.0)
+        tache_recette = asyncio.create_task(verifier(recette, "recettes/inconnue 404"))
+        return await asyncio.gather(tache_accueil, tache_recette)
+
+    (_, verdict_accueil), (_, verdict_recette) = asyncio.run(deroule())
+
+    assert verdict_accueil.tenue, verdict_accueil.preuves()
+    assert verdict_recette.tenue, verdict_recette.preuves()
+    assert "un autre service de vérification tenait le poste" in verdict_recette.preuves()
+    assert not _ecoute(port), "un serveur de vérification a survécu à son arrêt"
+
+
+@pytest.mark.commandes_jouees
+def test_un_service_arrete_a_rendu_son_port_quand_demarrer_rend_la_main(
+    tmp_path, creneau_a_part
+):
+    """Le tour suivant démarre sur un port libre : l'arrêt attend que le service soit
+    mort, pas seulement qu'on l'ait demandé."""
+    from maestro.sandbox.verification import demarrer
+
+    bash = _bash_ou_rien()
+    port = _port_libre()
+    lanceur = _serveur_de_pages(tmp_path)
+    extension = "js" if lanceur == "node" else "py"
+
+    resultat = demarrer(
+        f"{lanceur} serveur.{extension} {port}",
+        tmp_path,
+        interprete=bash,
+        sonde=f"{lanceur} sonde.{extension} {port} recettes/inconnue 404",
+        delai_s=30,
+        delai_sonde_s=10,
+    )
+
+    assert resultat.repondu, resultat.sortie
+    assert not _ecoute(port)

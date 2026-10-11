@@ -158,6 +158,14 @@ Treizième garde-fou (#1461) : **aucun test n'écrit dans l'historique du banc d
 Chaque passage du banc ajoute sa ligne sous `~/.maestro/`, et des dizaines de tests jouent
 `maestro.scenarios.banc.main` : sans garde, la série que lisent le banc par lot et le choix
 du scénario le moins cher compterait des passages de la suite. Un fichier jetable par test.
+
+Quatorzième garde-fou (#1449) : **aucun test n'attend le créneau des services du poste**.
+Un service démarré par une vérification prend son tour sur le poste, et ce tour est un verrou
+partagé par tous les process de Maestro qui partagent le répertoire temporaire. Sans garde, un
+test qui vérifie un démarrage attendrait le service d'un run en vol sur la machine (jusqu'au
+délai d'une commande, cinq minutes), et sa preuve dirait qu'il a attendu : un verdict qui
+dépend du poste. Tant qu'un test garde le répertoire temporaire du poste, son créneau est celui
+de la session ; un test qui pose son propre `TMPDIR` garde le comportement réel.
 """
 
 from __future__ import annotations
@@ -172,6 +180,7 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from maestro.config import Settings
 
@@ -711,6 +720,29 @@ def _pas_de_commande_du_projet_jouee(
     if request.node.get_closest_marker(MARQUEUR_COMMANDES_JOUEES) is not None:
         return
     monkeypatch.setattr("maestro.sandbox.verification.interprete", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _creneau_des_services_isole(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un créneau des services à la session, jamais celui du poste (#1449).
+
+    Ce qui est remplacé est `maestro.sandbox.verification.racine_du_creneau`, que le
+    créneau relit **à chaque prise** : la racine du poste devient un dossier de la session.
+    Un test qui pose son propre `TMPDIR` voit le comportement réel — c'est ainsi que se
+    prouve un créneau partagé entre deux process, dont le second n'a pas cette garde.
+    """
+    from maestro.emplacements import racine_jetable
+
+    du_poste = racine_jetable()
+    a_la_session = tmp_path_factory.getbasetemp() / "creneau-des-services"
+
+    def racine_du_creneau(environnement: dict[str, str] | None = None) -> Path:
+        racine = racine_jetable(environnement)
+        return a_la_session if racine == du_poste else racine
+
+    monkeypatch.setattr("maestro.sandbox.verification.racine_du_creneau", racine_du_creneau)
 
 
 @pytest.fixture(autouse=True)
