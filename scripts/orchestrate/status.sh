@@ -25,6 +25,8 @@
 #                   code, essais, cause. Elle a sa propre horloge — un run dont tout le plan est
 #                   traité peut drainer sa file encore longtemps, et sans cette section ce temps-là
 #                   s'afficherait comme un run en cours sans rien en vol, c'est-à-dire comme une panne
+#   banc.etat       le banc entier sur main, joué par le pilote après son drain (#1462) : état, sha,
+#                   début, fin, motif — et `banc.txt`, le verdict en mots, qui nomme les PR d'un rouge
 #   <iid>.session   présent dès que le ticket est pris en main -> c'est un ticket en cours
 #   <iid>.*         tout le reste (jsonl, json, vue, resultat.txt, log, worktree.log) — sert de témoin
 #                   d'activité, par sa date de modification. Le glob couvre aussi le `<iid>.jsonl.gz`
@@ -498,6 +500,42 @@ affiche_merges() { # <run-dir>
   printf '%s' "$lignes"
 }
 
+# affiche_banc <run-dir> : le banc entier sur main que le pilote joue après son drain final (#1462).
+#
+# Sa propre section, pour la raison qui a donné la sienne à la file de merge : il a sa propre horloge.
+# Le plan est soldé, la file vidée, et le pilote joue encore une heure et demie de scénarios — sans
+# cette section, ce temps-là ne se verrait nulle part. Lecture seule : `banc.etat` est écrit par
+# `banc-main.sh` seul, et `banc.txt` porte le verdict en mots (chaque rouge avec ses PR). Un run
+# d'avant #1462, ou dont le banc est éteint, n'en a pas, et la section disparaît d'elle-même.
+affiche_banc() { # <run-dir>
+  local dir="$1" etat sha debut fin motif ligne
+  [ -s "$dir/banc.etat" ] || return 0
+  IFS=$'\t' read -r etat sha debut fin motif <"$dir/banc.etat"
+  case "$etat" in
+    en-cours)
+      titre_section "Banc sur main — ${C_Y}⏳ en cours${C_0}${C_B} depuis $(duree_lisible "$(( $(date +%s) - ${debut:-0} ))")"
+      printf '   %s sur %s\n' "${motif:--}" "${sha:0:7}" ;;
+    vert)
+      titre_section "Banc sur main — ${C_G}✓ vert${C_0}${C_B} sur ${sha:0:7}"
+      printf '   %s\n' "${motif:--}" ;;
+    rouge)
+      titre_section "Banc sur main — ${C_R}✗ rouge${C_0}${C_B} sur ${sha:0:7}"
+      # Le verdict en mots, tel quel : c'est lui qui nomme les PR mergées depuis le dernier vert.
+      if [ -s "$dir/banc.txt" ]; then
+        while IFS= read -r ligne; do printf '   %s\n' "$ligne"; done <"$dir/banc.txt"
+      else
+        printf '   %s\n' "${motif:--}"
+      fi ;;
+    *)
+      titre_section "Banc sur main — ${C_Y}~ abstention${C_0}${C_B}"
+      printf '   %s\n' "${motif:--}" ;;
+  esac
+  [ "$fin" != "-" ] && [ -n "$fin" ] && [ -n "$debut" ] &&
+    printf '   %sjoué en %s · journal : %s%s\n' "$C_D" "$(duree_lisible "$((fin - debut))")" \
+      "$(relatif "$dir")/banc.log" "$C_0"
+  return 0
+}
+
 # --- L'état d'un run, décidé à un seul endroit ------------------------------------------------------
 # etat_du_run <run-id> : n'affiche RIEN et pose six variables globales —
 #
@@ -703,6 +741,7 @@ affiche_run() {
   [ "$nb_plan" -gt 0 ] && affiche_reste "$dir" "$en_vol"
   affiche_bilan "$dir"
   affiche_merges "$dir"
+  affiche_banc "$dir"
 
   titre_section "Suite"
   [ -f "$dir/run.log" ] && printf '   sortie     tail -f %s/run.log\n' "$(relatif "$dir")"

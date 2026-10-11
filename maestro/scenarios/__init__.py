@@ -20,6 +20,8 @@ Le détail vit dans les modules, chacun sur une question :
 - `rapport` — `.maestro/scenarios/<horodatage>/`, en Markdown et en JSON ;
 - `historique` — une ligne par passage sous `~/.maestro/`, sha et copie compris, et la
   série par scénario (`python -m maestro.scenarios.historique`, #1461) ;
+- `sur_main` — le banc par lot sur `main` : quand le jouer, et à quelles PR rattacher
+  un rouge (#1462, `scripts/orchestrate/banc-main.sh`) ;
 - `modele` — les objets inertes du verdict.
 """
 

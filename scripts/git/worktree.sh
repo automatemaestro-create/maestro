@@ -71,12 +71,18 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh sessions [<iid>|--tous]
   bash scripts/git/worktree.sh temps <iid> [--depuis <instant>]
   bash scripts/git/worktree.sh avant [--retirer|--ramasser] [--sans-fetch] <iid>
+  bash scripts/git/worktree.sh main-banc [--retirer] [--sha <sha>] [--sans-fetch]
 
 `avant` monte l'AVANT d'une relecture visuelle (#977) : un worktree DÉTACHÉ sur origin/main,
 nommé `<iid>.avant`, équipé pour servir sa Control Tower (dernière ligne « AVANT <chemin> »).
 C'est `scripts/design/relecture-visuelle.sh` qui l'appelle et le range. `--retirer` le retire
 (délier puis retirer) ; les avants dont le ticket n'a plus de worktree sur ce poste sont
 ramassés au montage suivant, ou par `--ramasser`.
+
+`main-banc` monte la copie où le banc des scénarios se joue sur main, une fois par lot (#1462) :
+un worktree DÉTACHÉ nommé `main.banc`, sur `--sha` (origin/main sans consigne), équipé comme un
+avant (dernière ligne « COPIE <chemin> »). Il reste en place d'un passage à l'autre — ses rapports
+y vivent — et c'est `scripts/orchestrate/banc-main.sh` qui l'appelle. `--retirer` le retire.
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
@@ -937,6 +943,7 @@ commande_list() {
         nom="$(basename "$chemin")"
         case "$nom" in
           [0-9]*.avant) printf '  %-50s %s\n' "$chemin" "(avant de la relecture visuelle de #${nom%.avant} — origin/main, détaché)" ;;
+          "$NOM_MAIN_BANC") printf '  %-50s %s\n' "$chemin" "(copie du banc sur main, une fois par lot — détaché)" ;;
           *) printf '  %-50s %s\n' "$chemin" "(HEAD détaché)" ;;
         esac ;;
     esac
@@ -1201,17 +1208,29 @@ commande_avant() {
 
   printf '\nAvant de la relecture visuelle #%s — origin/main (%s)\n\n' "$iid" "${sha:0:7}"
 
-  local sortie
+  monte_detache "$principal" "$dest" "$sha" "origin/main" || return 1
+
+  printf 'AVANT %s\n' "$(chemin_natif "$dest")"
+}
+
+# monte_detache <clone principal> <dest> <sha> <libellé du sha> : le worktree DÉTACHÉ `dest` sur
+# `sha`, monté ou ramené, puis équipé pour servir sa Control Tower. C'est le montage de l'avant
+# (#977), partagé depuis #1462 avec la copie du banc sur main (`main-banc`) : deux copies qu'on ne
+# monte que pour y servir une stack sur un état de main. Le refus d'un dossier qui porte une branche
+# reste à l'appelant, qui sait ce qu'il monte.
+monte_detache() {
+  local principal="$1" dest="$2" sha="$3" libelle="$4" sortie
   if [ -e "$dest/.git" ]; then
-    # Déjà là : une relecture rejouée (pipeline rouge, reprise) ou coupée avant `--fin`. Ramené sur
-    # origin/main sans rien réinstaller — `setup.sh` ne rejoue `npm ci` que si le lockfile a bougé.
-    # `--force` ne met rien en jeu : cet arbre n'est à personne, c'est une copie d'origin/main.
+    # Déjà là : une relecture rejouée (pipeline rouge, reprise), coupée avant `--fin`, ou le passage
+    # suivant du banc sur main. Ramené sur le sha sans rien réinstaller — `setup.sh` ne rejoue
+    # `npm ci` que si le lockfile a bougé. `--force` ne met rien en jeu : cet arbre n'est à
+    # personne, c'est une copie de main.
     if ! sortie="$(git -C "$dest" checkout --quiet --force --detach "$sha" 2>&1)"; then
-      erreur "avant en place mais impossible à ramener sur origin/main :"
+      erreur "worktree détaché en place mais impossible à ramener sur $libelle :"
       printf '%s\n' "$sortie" >&2
       return 1
     fi
-    deja "worktree d'avant déjà en place — ramené sur origin/main"
+    deja "worktree détaché déjà en place — ramené sur $libelle (${sha:0:7})"
   else
     if [ -d "$dest" ] && [ -z "$(ls -A "$dest" 2>/dev/null)" ]; then
       rmdir "$dest" 2>/dev/null && ignore "coquille vide d'un retrait précédent écartée"
@@ -1220,17 +1239,17 @@ commande_avant() {
       erreur "$(chemin_natif "$dest") existe déjà sans être un worktree — rien n'est touché"
       return 1
     fi
-    mkdir -p "$base" 2>/dev/null
+    mkdir -p "$(dirname "$dest")" 2>/dev/null
     if ! sortie="$(git -C "$principal" worktree add --detach "$dest" "$sha" 2>&1)"; then
       erreur "git worktree add a échoué :"
       printf '%s\n' "$sortie" >&2
       return 1
     fi
-    ok "worktree détaché créé sur origin/main"
+    ok "worktree détaché créé sur $libelle (${sha:0:7})"
   fi
 
   # Le même équipement qu'un worktree de ticket, moins ce qui ne sert qu'à une SESSION (réglages Claude
-  # Code, atelier) : personne n'entre dans un avant, on n'y fait que servir une stack.
+  # Code, atelier) : personne n'entre dans ces copies, on n'y fait que servir une stack.
   if [ ! -f "$dest/.env" ] && [ -f "$principal/.env" ]; then
     cp "$principal/.env" "$dest/.env" && ok ".env recopié depuis le clone principal"
   fi
@@ -1244,15 +1263,83 @@ commande_avant() {
     esac
   done
   # Annoncé AVANT de lancer, comme dans `ensure` : un `npm ci` laisse la console muette une demi-minute.
-  printf '  … dépendances de apps/web d'\''origin/main (~35 s à la première installation, rien si à jour)\n'
+  printf '  … dépendances de apps/web de %s (~35 s à la première installation, rien si à jour)\n' \
+    "$libelle"
   if ( cd "$dest" && bash "$dest/scripts/setup.sh" --only web >/dev/null 2>&1 ); then
     ok "apps/web : dépendances prêtes"
   else
-    erreur "apps/web : installation en échec dans l'avant"
+    erreur "apps/web : installation en échec dans $(chemin_natif "$dest")"
+    return 1
+  fi
+  return 0
+}
+
+# --- main-banc : la copie où le banc se joue sur main, une fois par lot (#1462) ---------------------
+# Le pilote joue le banc entier sur `main` intégrée après son drain final, et `banc-main.sh` le joue
+# hors run (docs/10 §11.13, docs/47). Ni le clone principal — sa stack est celle de la personne, et
+# Next.js n'admet qu'un serveur de dev par `apps/web` (#1164) —, ni le worktree d'un ticket. Une
+# copie DÉDIÉE, détachée sur le sha de main joué, montée comme l'avant (`monte_detache`).
+#
+# Trois choses à ne pas défaire :
+#   - le NOM `main.banc` porte un point, donc ne peut être ni un worktree de ticket (`<iid>-<slug>`)
+#     ni un avant (`<iid>.avant`) : `gc` et le ramassage des avants ne le voient pas. Il est aussi
+#     le nom de son ESPACE Redis (`maestro.espace`, #1164) — ses données ne croisent aucune autre ;
+#   - il RESTE en place d'un passage à l'autre : les rapports vivent dans la copie
+#     (`.maestro/scenarios/`), et `start.sh --etat-banc` y rouvre l'état du dernier passage sur main
+#     (« la même copie dédiée », docs/47 §6). Le passage suivant le ramène sur son sha ;
+#   - on ne touche QU'À UN WORKTREE DÉTACHÉ à cet emplacement, comme pour l'avant : un dossier qui
+#     porte une branche est refusé avant la moindre écriture. `--retirer` passe par
+#     `retire_worktree` après avoir vidé `apps/web/node_modules` (MAX_PATH, cf. l'avant).
+NOM_MAIN_BANC="main.banc"
+
+commande_main_banc() {
+  local mode="monter" sha="" fetch=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --retirer)   mode="retirer" ;;
+      --sha)       sha="${2:-}"; shift ;;
+      --sans-fetch) fetch=0 ;;
+      -h|--help)   usage; return 0 ;;
+      *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  local principal dest
+  principal="$(depot_principal)" || { erreur "hors d'un dépôt git"; return 1; }
+  dest="$(base_worktrees "$principal")/$NOM_MAIN_BANC"
+
+  if [ -e "$dest/.git" ] && git -C "$dest" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    erreur "$(chemin_natif "$dest") porte une branche : ce n'est pas la copie du banc, rien n'est touché"
     return 1
   fi
 
-  printf 'AVANT %s\n' "$(chemin_natif "$dest")"
+  if [ "$mode" = "retirer" ]; then
+    if [ ! -e "$dest/.git" ]; then
+      deja "aucune copie du banc sur main en place"
+      return 0
+    fi
+    if retire_avant "$dest"; then
+      ok "copie du banc sur main retirée"
+      return 0
+    fi
+    erreur "copie du banc sur main non retirée : $(printf '%s' "$RETRAIT_ERREUR" | head -1)"
+    return 1
+  fi
+
+  if [ -z "$sha" ]; then
+    if [ "$fetch" = 1 ]; then
+      GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch origin main >/dev/null 2>&1
+    fi
+    sha="$(git -C "$principal" rev-parse --verify --quiet 'origin/main^{commit}')" || {
+      erreur "origin/main introuvable — pas de copie du banc à monter"
+      return 1
+    }
+  fi
+
+  printf '\nCopie du banc sur main — %s\n\n' "${sha:0:7}"
+  monte_detache "$principal" "$dest" "$sha" "main" || return 1
+  printf 'COPIE %s\n' "$(chemin_natif "$dest")"
 }
 
 # --- sessions : retrouver les transcripts d'un ticket (#385) ----------------------------------------
@@ -2452,6 +2539,7 @@ case "$cmd" in
   list)        commande_list "$@" ;;
   remove)      commande_remove "$@" ;;
   avant)       commande_avant "$@" ;;
+  main-banc)   commande_main_banc "$@" ;;
   gc)          commande_gc "$@" ;;
   sessions)    commande_sessions "$@" ;;
   temps)       commande_temps "$@" ;;
