@@ -168,7 +168,8 @@ le skill entier. C'était déjà le cas de la description de `lancer-en-local` a
 **Deux registres, décidés par `source.type` (§4.1) et pas par le disque** (#1105). Ce que l'analyse
 a **lu** se dit au passé — « constaté dans `package.json` », « déclarée dans `pyproject.toml` ».
 Ce que les **réponses** d'un projet neuf impliquent (`source.type: "choix"`) se dit au futur —
-« à créer : `CONTRIBUTING.md` », « attendue une fois `package.json` créé ». Le dossier d'un projet
+« `CONTRIBUTING.md`, prévu », « attendue une fois `package.json` créé » (« à créer » jusqu'à #1404,
+qui se lisait comme une consigne : §5.9). Le dossier d'un projet
 neuf ne porte encore aucun de ces fichiers : mesuré au bouclage du 2026-09-21, `AGENTS.md` envoyait
 un agent lire un `CONTRIBUTING.md` que « ce projet écrit déjà ». Un avertissement en tête ne suffit
 pas — c'est la ligne lue **au moment d'agir** qui décide —, et deviner le registre en testant
@@ -843,6 +844,60 @@ balayage sur l'AST, échantillon fautif compris).
 Le contrat se rejoue à chaque version, comme celui de §7 : [`tests/test_dossier_neutre.py`](../tests/test_dossier_neutre.py)
 (`cli_reel`). Si le CLI range un jour sa mémoire ailleurs, c'est l'échantillon fautif qui rougit — la
 sonde ne voit plus rien — et la mesure se refait.
+
+### 5.9 Ce que l'agent reçoit se dit une fois (#1404)
+
+Sur p5 (2026-10-01), l'agent `socle-nextjs` recevait un message de tâche de 13 646 caractères et un
+prompt système de 10 641, qui se répétaient. Aucune des pièces n'était fausse ; leur somme
+dispersait l'agent :
+
+| Ce qui se répétait | D'où |
+| --- | --- |
+| Sept fois, dans `AGENTS.md`, « **À vérifier** : le projet n'a encore aucun fichier en dehors de son outillage […], tout le sera à la prochaine écriture de l'outillage » | Une raison par commande (`verification._pas_encore`), et une promesse de Maestro dans la raison |
+| `.github/workflows/ci.yml` et `CONTRIBUTING.md` « **à créer** », hors de la tâche du socle | Le registre des réponses (§3.1), écrit comme une consigne |
+| L'index des skills deux fois dans le message — celui d'`AGENTS.md` (§3.3), puis « Skills du projet » — et le titre « L'outillage de ce projet » deux fois | La consigne de l'outillage (`OutillageDuProjet.consigne`) relistait ce que les instructions qu'elle transmet listaient déjà |
+| Les skills du rôle deux fois dans le prompt système | L'intention donnait leurs noms au modèle qui rédige le playbook, qui les recopiait (« Ton périmètre ») ; la création ajoutait ensuite sa section (`playbook_branche`) |
+| Le prompt système tutoyait l'agent, puis le vouvoyait (« Servez-vous-en ») | La section des skills de la création |
+
+**Ce qui est décidé.** Chaque chose se dit une fois, là où elle est vraie :
+
+- une raison que **toutes** les commandes à vérifier d'un fichier partagent se dit **une fois**, sous
+  la première section qui en porte une ; chaque ligne garde son « **À vérifier** ». C'est la règle
+  que l'écran tenait déjà depuis #1160 (`raisonCommune`), et le texte écrit la tient à son tour
+  (`redaction.raison_commune`), dans `AGENTS.md` comme dans un `SKILL.md`. La raison dit **le fait**,
+  jamais ce que Maestro en fera : la revue d'après un run (#1343) rejoue ces commandes sans qu'un
+  texte ait à le promettre ;
+- un fichier que les réponses impliquent est **prévu**, et ce que « prévu » demande se dit une fois,
+  dans la ligne d'origine : *un fichier marqué « prévu » ne se crée que si ta tâche le demande* ;
+- la consigne garde sa **règle de lecture** (#1102) et ne liste pas une seconde fois un skill que
+  les instructions transmises désignent déjà par son chemin ; un `AGENTS.md` écrit à la main, ou tronqué, qui ne le
+  désigne pas le voit listé. Son titre ne reprend plus celui de la section d'`AGENTS.md` ;
+- l'**intention** ne nomme plus les skills du rôle (`maestro.equipe.proposition.intention_du_role`) :
+  ce qu'on ne donne pas au modèle, il ne le recopie pas — le principe de #1405. Seule la section de la
+  création les nomme, parce qu'elle seule sait lesquels le projet porte (#1212) ;
+- cette section **tutoie** l'agent, comme tout le playbook. Son ancien titre (« … qui sont les
+  vôtres ») reste reconnu comme ancre : une fiche écrite avant garde son texte jusqu'à son
+  rebranchement, qui le remplace au lieu d'empiler une seconde section.
+
+**Ce qui le prouve** : le chemin réel, des réponses d'un projet neuf jusqu'au fournisseur — outillage
+écrit et vérifié sur le dossier vide, équipe proposée, playbook rédigé depuis l'intention par un
+modèle doublé qui la recopie, rôle créé, tâche exécutée —, et chaque élément compté dans le message et
+le prompt que le fournisseur reçoit
+([`tests/test_message_de_tache_sans_redite.py`](../tests/test_message_de_tache_sans_redite.py)).
+
+**Mesuré le 2026-10-11** sur la vraie stack — S12, passage `20261011-092422`, run `411d4370a764`,
+vert : le livre de recettes Next.js de p5, né dans le fil, outillé de six pièces sur un dossier vide,
+doté de trois agents dont le modèle a rédigé les playbooks. Les six tâches du run ont reçu un message
+où la raison commune se lit **une fois** et chacune des sept commandes porte son « **À vérifier** »,
+sans « à créer » ni promesse, la règle du « prévu » une fois, le titre d'`AGENTS.md` une fois, et
+chaque skill nommé une fois par l'index — un second nom, quand il y en a un, vient du compte-rendu
+d'une tâche précédente. Les trois playbooks écrits par le modèle nomment chaque skill branché une
+fois, dans la section de la création, sans aucune marque du vouvoiement.
+
+**Ce qui n'a pas bougé.** La part du prompt système consacrée au régime, à l'arbitrage et aux interdits
+— ≈ 54 % sur p5 — vient du cadre d'exécution et du bloc de régime (#1405) ; elle n'est pas une
+redite, et ce ticket n'y touche pas. Le vouvoiement qui reste dans `AGENTS.md` (« compris de vos
+réponses », le pied du fichier) s'adresse à la personne, pas à l'agent.
 
 ## 6. Ce qui est écarté, et pourquoi
 

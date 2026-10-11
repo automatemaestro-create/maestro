@@ -26,6 +26,7 @@ distingue de `proposer`.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,7 @@ from maestro.equipe import (
     refus_de,
     skills_constates,
 )
+from maestro.equipe.creation import TITRES_SKILLS_ANTERIEURS, scinder_section_skills
 from maestro.projets.store import ProjetStore
 
 
@@ -225,6 +227,38 @@ def test_les_sections_qui_suivent_les_skills_sont_gardees() -> None:
 
     assert "## Garde-fous" in repose
     assert "vieux" not in repose
+
+
+@pytest.mark.parametrize(
+    "skills",
+    [
+        (SkillRetenu(nom="mettre-en-route", chemin=".agents/skills/m/SKILL.md"),),
+        (),
+    ],
+    ids=["avec-skills", "sans-skill"],
+)
+def test_la_section_des_skills_tutoie_l_agent_comme_son_playbook(skills) -> None:
+    """#1404 : « Servez-vous-en » sous un playbook écrit au tutoiement (`_CADRE_GENERATION`)."""
+    section = scinder_section_skills(playbook_branche(_role(skills=skills)))[1]
+    ecrits = playbook_branche(_role(skills_absents=(SkillRetenu(nom="x"),)))
+
+    for texte in (section, ecrits, AUCUN_SKILL, AUCUN_SKILL_ECRIT):
+        assert re.findall(r"\b(vous|votre|vos|vôtres?|servez)\b", texte, re.IGNORECASE) == []
+
+
+def test_une_section_posee_sous_l_ancien_titre_est_remplacee_pas_empilee() -> None:
+    """Une fiche écrite avant #1404 garde son texte jusqu'à son rebranchement — qui la
+    remplace, parce que l'ancien titre reste une ancre."""
+    (ancien,) = TITRES_SKILLS_ANTERIEURS
+    avant = f"Tu écris.\n\n{ancien}\n\nServez-vous-en.\n\n## Garde-fous\n\nrien de destructif.\n"
+
+    repose = playbook_branche(_role(playbook=avant))
+
+    assert ancien not in repose
+    assert repose.count(TITRE_SKILLS) == 1
+    assert "Servez-vous-en" not in repose
+    assert "## Garde-fous" in repose
+    assert scinder_section_skills(avant)[1].startswith(ancien)
 
 
 def test_la_capacite_creee_est_active_et_porte_les_instances_validees() -> None:

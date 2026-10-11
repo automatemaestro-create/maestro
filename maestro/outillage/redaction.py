@@ -36,11 +36,14 @@ réel.
 4. **Deux registres, jamais un seul** (#1105). Ce que l'analyse a **lu** se dit
    « constaté dans `package.json` », « déclarée dans `pyproject.toml` » ; ce que
    des **réponses impliquent** (`source.type: "choix"`, un projet neuf) se dit
-   « à créer », « attendue une fois `package.json` créé ». Le dossier d'un projet
+   « prévu », « attendue une fois `package.json` créé ». Le dossier d'un projet
    neuf ne porte ni `package.json` ni `CONTRIBUTING.md` : un agent qui lirait
    « constaté » irait ouvrir un fichier absent, et `AGENTS.md` est le premier
    fichier qu'il lit. Le registre se décide **une fois**, sur la source
-   (`_depuis_les_reponses`), jamais en devinant fichier par fichier.
+   (`_depuis_les_reponses`), jamais en devinant fichier par fichier. « Prévu », et
+   plus « à créer » (#1404) : sur p5, l'agent du socle lisait la CI et
+   `CONTRIBUTING.md` « à créer », hors de sa tâche. Ce qu'un fichier prévu demande
+   — rien, sauf si la tâche le veut — se dit une fois (`REGLE_DU_PREVU`).
 5. **Une commande écrite porte son verdict** (#1160). Chaque commande a été jouée
    avant d'être écrite (`maestro.outillage.verification`), et ce qu'on en sait se
    lit à côté d'elle, dans `AGENTS.md` comme dans son `SKILL.md` : **vérifiée**,
@@ -48,6 +51,9 @@ réel.
    renvoyée au manifeste —, ou **à vérifier** avec la raison. Le verdict entre
    dans le texte par sa `raison`, qui est déterministe (ni durée ni date) : la
    propriété 1 tient. Sans verdicts donnés, le texte est celui d'avant, au bit près.
+   Une raison que **toutes** les commandes à vérifier d'un fichier partagent se dit
+   **une fois** (`raison_commune`, #1404) — la règle même de l'écran : sur p5, la
+   même phrase suivait sept commandes d'`AGENTS.md`.
 6. **Un skill dit ce qu'il fait pour ce projet** (#1350). Sa `description` — ce qu'un
    agent lit pour décider de l'ouvrir, et que l'index d'`AGENTS.md` recopie — est ce que
    ses commandes font **pour ce projet**, tel que le modèle l'a compris
@@ -68,7 +74,7 @@ réel.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -90,7 +96,7 @@ from maestro.outillage.recommandation import (
     SKILL_PAR_USAGE,
     USAGES_VERIFICATION,
 )
-from maestro.outillage.verification import ECHOUEE, VERIFIEE, Verification
+from maestro.outillage.verification import A_VERIFIER, ECHOUEE, VERIFIEE, Verification
 
 #: Les portées d'un fichier généré (docs/38 §4.1, champ `portee`) : le fichier
 #: entier quand Maestro l'écrit, le seul bloc délimité quand il s'invite dans un
@@ -166,6 +172,34 @@ DESCRIPTION_MAX = 1024
 #: non son usage. Deux tables écrites à la main auraient fini par ne plus se
 #: répondre.
 SKILL_PAR_NOM: dict[str, str] = {nom: usage for usage, (nom, _) in SKILL_PAR_USAGE.items()}
+
+#: Le mot qui suit le chemin d'un fichier que des **réponses prévoient** et que
+#: personne n'a encore écrit (propriété 4). Une seule orthographe dans tout le module :
+#: la formule se lit dans trois sections d'`AGENTS.md` et dans chaque `SKILL.md`, et
+#: trois variantes auraient fini par faire croire à trois nuances.
+PREVU = "prévu"
+
+#: Ce qu'un fichier prévu demande à un agent, dit **une fois** — dans la ligne d'origine
+#: (`_ligne_origine`), la seule qui sorte chaque fois qu'un « prévu » peut se lire.
+#: « À créer », écrit à côté de chaque fichier, se lisait comme une consigne : sur p5,
+#: l'agent du socle trouvait la CI et `CONTRIBUTING.md` à créer, hors de sa tâche
+#: (#1404). Un fichier prévu dit ce que le projet attend, pas ce que la tâche commande.
+REGLE_DU_PREVU = f"un fichier marqué « {PREVU} » ne se crée que si ta tâche le demande"
+
+#: Les commandes de « Monter et lancer » puis de « Vérifier », avec leur libellé, dans
+#: l'ordre où une personne arrive sur un projet. Écrites une fois : c'est aussi la liste
+#: des commandes d'`AGENTS.md` dont la raison commune se cherche (`raison_commune`).
+COMMANDES_MONTER: tuple[tuple[str, str], ...] = (
+    ("installer", "Installer les dépendances"),
+    ("construire", "Construire"),
+    ("demarrer", "Démarrer en local"),
+)
+COMMANDES_VERIFIER: tuple[tuple[str, str], ...] = (
+    ("tester", "Tests"),
+    ("lint", "Style"),
+    ("formater", "Formatage"),
+    ("types", "Types"),
+)
 
 #: Les six sections d'`AGENTS.md` (docs/38 §3.1), dans l'ordre. La spécification
 #: n'en impose aucune ; ce gabarit est stable parce que c'est lui qui permet de
@@ -259,7 +293,7 @@ def rediger(
     `source` est le fragment de provenance que le manifeste gardera (docs/38
     §4.1), et il décide du **registre** du texte (propriété 4) : un outillage qui
     vient des **réponses** d'un projet neuf le dit en tête (#1100,
-    `_ligne_origine`) et parle ensuite de fichiers « à créer » plutôt que
+    `_ligne_origine`) et parle ensuite de fichiers « prévus » plutôt que
     « constatés » — dans `AGENTS.md` comme dans chaque `SKILL.md` (#1105). Sans
     `source`, le registre est celui d'une analyse : c'est ce que rend une
     rédaction dont personne n'a dit d'où elle sort.
@@ -349,13 +383,8 @@ def _depuis_les_reponses(source: Mapping[str, Any] | None) -> bool:
 
 
 def _endroit(chemin: str, implique: bool) -> str:
-    """Le chemin d'un fichier, et le fait qu'il **reste à créer** le cas échéant.
-
-    Une seule orthographe de « à créer » dans tout le module : la formule se lit
-    dans trois sections d'`AGENTS.md`, et trois variantes auraient fini par faire
-    croire à trois nuances.
-    """
-    return f"`{chemin}`, à créer" if implique else f"`{chemin}`"
+    """Le chemin d'un fichier, et le fait qu'il est **prévu** le cas échéant (`PREVU`)."""
+    return f"`{chemin}`, {PREVU}" if implique else f"`{chemin}`"
 
 
 def _index_des_skills(recommandation: Recommandation) -> tuple[tuple[str, str], ...]:
@@ -423,7 +452,7 @@ def raison_stable(entree: Entree) -> str:
     2026-09-20). La raison rendue ici est celle de `SKILL_PAR_USAGE`, qui ne
     dépend que de l'usage servi ; ce que le projet apporte reste dit par les
     commandes et par la ligne qui nomme l'endroit du skill (« constaté dans … »
-    ou « à créer … », selon le registre de la propriété 4).
+    ou « prévu : … », selon le registre de la propriété 4).
     """
     if entree.type == "instructions":
         return RAISON_AGENTS
@@ -453,18 +482,40 @@ def texte_instructions(
     occasions de diverger.
 
     `verdicts` (#1160) — commande → son verdict — met à côté de chaque commande ce
-    que Maestro en a su en la jouant (propriété 5).
+    que Maestro en a su en la jouant (propriété 5). Une raison que toutes les commandes
+    à vérifier du fichier partagent se dit une fois (`raison_commune`, #1404), sous la
+    première des deux sections qui en porte une : l'agent lit de haut en bas, et la
+    seconde n'a plus qu'à marquer ses lignes.
     """
     implique = _depuis_les_reponses(source)
     connus = verdicts or {}
+    commune = raison_commune(
+        connus[commande.commande]
+        for usage, _ in (*COMMANDES_MONTER, *COMMANDES_VERIFIER)
+        if (commande := constats.commande_de(usage)) is not None
+        and commande.commande in connus
+    )
+    note_en_montant = bool(commune) and _porte_la_raison(
+        constats, COMMANDES_MONTER, connus, commune
+    )
     blocs = [
         "# AGENTS.md",
         "",
         "Les instructions de ce projet, pour tout agent qui y travaille.",
         "",
         *_section("Le projet", _corps_projet(constats, source, implique)),
-        *_section("Monter et lancer", _corps_monter(constats, implique, connus)),
-        *_section("Vérifier", _corps_verifier(constats, implique, connus)),
+        *_section(
+            "Monter et lancer",
+            _corps_monter(
+                constats, implique, connus, commune, note=commune if note_en_montant else ""
+            ),
+        ),
+        *_section(
+            "Vérifier",
+            _corps_verifier(
+                constats, implique, connus, commune, note="" if note_en_montant else commune
+            ),
+        ),
         *_section("Conventions", _corps_conventions(constats, implique)),
         *_section("L'outillage de ce projet", _corps_outillage(constats, index)),
         *_section("Ce qu'un agent ne touche pas", [f"- {ligne}" for ligne in INTOUCHABLES]),
@@ -562,7 +613,8 @@ def _ligne_origine(source: Mapping[str, Any]) -> str:
     return (
         f"- **Origine** : cet outillage vient des réponses données à Maestro{reponses}, "
         "pas d'une lecture du dossier. Les fichiers nommés ici sont ceux que ces "
-        "réponses impliquent : certains n'existent peut-être pas encore."
+        "réponses impliquent, et certains n'existent peut-être pas encore : "
+        f"{REGLE_DU_PREVU}."
     )
 
 
@@ -570,40 +622,34 @@ def _corps_monter(
     constats: Constats,
     implique: bool = False,
     verdicts: Mapping[str, Verification] | None = None,
+    commune: str = "",
+    *,
+    note: str = "",
 ) -> list[str]:
-    """Installer, construire, démarrer — les commandes, avec leur source ou leur attente."""
-    lignes = [
-        _ligne_commande(constats, "installer", "Installer les dépendances", implique, verdicts),
-        _ligne_commande(constats, "construire", "Construire", implique, verdicts),
-        _ligne_commande(constats, "demarrer", "Démarrer en local", implique, verdicts),
-    ]
-    presentes = [ligne for ligne in lignes if ligne]
+    """Installer, construire, démarrer — les commandes, avec leur source ou leur attente.
+
+    `commune` est la raison que les lignes ne redisent pas ; `note`, la même quand
+    c'est **ici** qu'elle se dit (`texte_instructions`).
+    """
+    presentes = _lignes_commandes(constats, COMMANDES_MONTER, implique, verdicts, commune)
     if not presentes:
         return [
             "Le projet ne déclare aucune commande d'installation ni de démarrage. "
             "N'en invente pas : demande-la, ou lis son README."
         ]
-    return ["Depuis la **racine du projet** :", "", *presentes]
+    return ["Depuis la **racine du projet** :", "", *presentes, *_note_commune(note)]
 
 
 def _corps_verifier(
     constats: Constats,
     implique: bool = False,
     verdicts: Mapping[str, Verification] | None = None,
+    commune: str = "",
+    *,
+    note: str = "",
 ) -> list[str]:
     """Tests, style, formatage, types — et ce qu'il faut savoir d'une suite partielle."""
-    lignes = [
-        _ligne_commande(constats, "tester", "Tests", implique, verdicts),
-        *(
-            _ligne_commande(constats, usage, libelle, implique, verdicts)
-            for usage, libelle in (
-                ("lint", "Style"),
-                ("formater", "Formatage"),
-                ("types", "Types"),
-            )
-        ),
-    ]
-    presentes = [ligne for ligne in lignes if ligne]
+    presentes = _lignes_commandes(constats, COMMANDES_VERIFIER, implique, verdicts, commune)
     if not presentes:
         return [
             "Le projet ne déclare aucune commande de test ni de vérification. "
@@ -613,6 +659,7 @@ def _corps_verifier(
         "Depuis la **racine du projet** :",
         "",
         *presentes,
+        *_note_commune(note),
         "",
         "Joue ce qui concerne ce que tu as changé plutôt que tout : une suite "
         "entière sur un changement d'une ligne coûte du temps à tout le monde. "
@@ -620,13 +667,76 @@ def _corps_verifier(
     ]
 
 
+def _lignes_commandes(
+    constats: Constats,
+    commandes: Sequence[tuple[str, str]],
+    implique: bool,
+    verdicts: Mapping[str, Verification] | None,
+    commune: str,
+) -> list[str]:
+    """Les lignes des commandes que le projet a pour ces usages, dans leur ordre."""
+    lignes = (
+        _ligne_commande(constats, usage, libelle, implique, verdicts, commune)
+        for usage, libelle in commandes
+    )
+    return [ligne for ligne in lignes if ligne]
+
+
+def _porte_la_raison(
+    constats: Constats,
+    commandes: Sequence[tuple[str, str]],
+    verdicts: Mapping[str, Verification],
+    raison: str,
+) -> bool:
+    """Une commande de ces usages est-elle à vérifier pour `raison` ?"""
+    for usage, _ in commandes:
+        commande = constats.commande_de(usage)
+        verdict = verdicts.get(commande.commande) if commande is not None else None
+        if verdict is not None and _pour_la_raison(verdict, raison):
+            return True
+    return False
+
+
+def raison_commune(verdicts: Iterable[Verification]) -> str:
+    """La raison que **toutes** les commandes à vérifier partagent, s'il y en a deux — sinon "".
+
+    La règle de l'écran (`raisonCommune`, `apps/web/components/projets/
+    VerificationsOutillage.tsx`, regard neuf de #1160), tenue dans le texte écrit
+    (#1404) : cinq fois la même phrase se lisaient comme cinq problèmes à l'écran, et
+    sept fois dans `AGENTS.md` comme sept choses à retenir. Des raisons qui diffèrent
+    restent chacune sur sa ligne — chacune dit un fait différent.
+    """
+    raisons = [v.raison.strip() for v in verdicts if v.etat == A_VERIFIER]
+    if len(raisons) < 2 or not raisons[0]:
+        return ""
+    return raisons[0] if all(raison == raisons[0] for raison in raisons) else ""
+
+
+def _pour_la_raison(verdict: Verification, raison: str) -> bool:
+    """`verdict` est-il « à vérifier » pour cette raison-là ?"""
+    return bool(raison) and verdict.etat == A_VERIFIER and verdict.raison.strip() == raison
+
+
+def _note_commune(raison: str) -> list[str]:
+    """La phrase qui dit, une fois, la raison que les lignes marquées ne redisent pas."""
+    if not raison:
+        return []
+    return [
+        "",
+        "Les commandes marquées **À vérifier** n'ont pas encore été jouées, pour une "
+        f"même raison : {raison.rstrip('. ')}.",
+    ]
+
+
 def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
-    """Les conventions du projet — **déjà écrites**, ou **à créer** quand elles sont impliquées.
+    """Les conventions du projet — **déjà écrites**, ou **prévues** quand elles sont impliquées.
 
     La section que #1105 vise en toutes lettres : « Ce projet écrit déjà ses
     conventions… `CONTRIBUTING.md` » sur un dossier neuf envoie un agent ouvrir
     un fichier que personne n'a encore écrit. Les mêmes pièces, le même ordre, un
-    autre registre — la liste ne change pas, ce qu'on en dit change.
+    autre registre — la liste ne change pas, ce qu'on en dit change. Elles sont
+    **prévues**, et plus « à créer » (#1404) : la convention vaut pour le travail de
+    l'agent, le fichier qui l'écrira n'est pas sa tâche (`REGLE_DU_PREVU`).
     """
     lisibles = [piece for piece in constats.conventions if piece.role != "instructions d'agent"]
     if not lisibles:
@@ -640,16 +750,18 @@ def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
             "la seule convention constatable ici."
         ]
     entete = (
-        "Ces conventions viennent des réponses données à Maestro : elles sont **à "
-        "créer**, personne ne les a encore écrites."
+        "Ces conventions viennent des réponses données à Maestro ; aucun fichier ne "
+        "les écrit encore :"
         if implique
         else "Ce projet écrit déjà ses conventions. Lis-les avant d'en inventer :"
     )
-    prefixe = "à créer : " if implique else ""
     return [
         entete,
         "",
-        *[f"- {prefixe}`{piece.chemin}` — {piece.role or 'convention'}." for piece in lisibles],
+        *[
+            f"- {_endroit(piece.chemin, implique)} — {piece.role or 'convention'}."
+            for piece in lisibles
+        ],
         "",
         "Et, en toute circonstance, écris du code qui ressemble à celui qui "
         "l'entoure — nommage, densité de commentaires, idiomes.",
@@ -697,6 +809,7 @@ def _ligne_commande(
     libelle: str,
     implique: bool = False,
     verdicts: Mapping[str, Verification] | None = None,
+    commune: str = "",
 ) -> str:
     """Une ligne « **Libellé** : `commande` — lu dans `fichier` », ou "" sans constat.
 
@@ -707,17 +820,20 @@ def _ligne_commande(
     une lecture.
 
     Son **verdict** suit la provenance quand la commande a été jouée (#1160) : la
-    provenance dit d'où on la tient, le verdict si elle marche.
+    provenance dit d'où on la tient, le verdict si elle marche. `commune` est la
+    raison que le fichier dit une fois (`raison_commune`) : la ligne ne la redit pas.
     """
     commande = constats.commande_de(usage)
     if commande is None:
         return ""
     ligne = f"- **{libelle}** : `{commande.commande}` — {_provenance(commande, implique)}."
     verdict = (verdicts or {}).get(commande.commande)
-    return f"{ligne} {texte_verdict(verdict)}" if verdict is not None else ligne
+    if verdict is None:
+        return ligne
+    return f"{ligne} {texte_verdict(verdict, commune=commune)}"
 
 
-def texte_verdict(verdict: Verification) -> str:
+def texte_verdict(verdict: Verification, *, commune: str = "") -> str:
     """Ce que le texte écrit dit d'une commande jouée — une phrase, déterministe (#1160).
 
     Trois formes, une par verdict, et l'échec est la seule qui **prévient** : une
@@ -726,7 +842,12 @@ def texte_verdict(verdict: Verification) -> str:
     mais jamais comme une convention qui marche. Sa sortie n'est pas recopiée ici :
     elle varie d'un passage à l'autre et casserait la propriété 1 ; elle est au
     manifeste, qu'on nomme.
+
+    « À vérifier » pour la raison `commune` se marque sans la redire (#1404) : le
+    texte qui l'entoure la dit une fois (`_note_commune`).
     """
+    if _pour_la_raison(verdict, commune):
+        return "**À vérifier**."
     raison = verdict.raison.rstrip(". ")
     if verdict.etat == VERIFIEE:
         return f"**Vérifiée** quand Maestro a écrit cet outillage : {raison}."
@@ -788,12 +909,13 @@ def texte_skill(
     forme qui ne dépende pas du répertoire courant de l'agent (docs/38 §3.4).
 
     `source` décide du registre de la ligne qui nomme l'endroit du skill
-    (propriété 4) — « Constaté dans … » pour une analyse, « À créer : … » pour des
+    (propriété 4) — « Constaté dans … » pour une analyse, « Prévu : … » pour des
     réponses. C'est le seul endroit d'un `SKILL.md` qui parle du disque.
 
     `verdicts` (#1160) ajoute une section « Ce que Maestro en a vérifié » : le
     verdict de chaque commande du bloc, dans son ordre. Sans verdict pour aucune
-    d'elles, la section n'existe pas.
+    d'elles, la section n'existe pas. Une raison que toutes ses commandes à vérifier
+    partagent s'y dit une fois, comme dans `AGENTS.md` (#1404).
 
     La `description` est ce que le skill fait **pour ce projet** (`description_du_skill`,
     #1350), écrite **citée** (`scalaire_yaml`) ; le premier paragraphe la redit à qui
@@ -836,15 +958,15 @@ def texte_skill(
         endroit = f"`{entree.justification.chemin}`{role}"
         if entree.justification.nom == ORIGINE_PROPOSEE:
             # Proposée par Maestro après un run (#1381) : lue dans le projet construit,
-            # donc jamais « à créer », même sur un outillage venu des réponses.
+            # donc jamais « prévu », même sur un outillage venu des réponses.
             phrase = (
                 f"Lue par Maestro après un run dans {endroit}. Si le projet a changé "
                 "depuis, c'est ce fichier qui fait foi, pas celui-ci."
             )
         elif _depuis_les_reponses(source):
             phrase = (
-                f"À créer : {endroit}. Quand ce fichier existera, c'est lui qui fera "
-                "foi, pas celui-ci."
+                f"{PREVU.capitalize()} : {endroit}. Quand ce fichier existera, c'est lui "
+                "qui fera foi, pas celui-ci."
             )
         else:
             phrase = (
@@ -857,11 +979,16 @@ def texte_skill(
         (commande, connus[commande]) for commande in entree.commandes if commande in connus
     ]
     if jouees:
+        commune = raison_commune(verdict for _, verdict in jouees)
         lignes += [
             "",
             "## Ce que Maestro en a vérifié",
             "",
-            *(f"- `{commande}` — {texte_verdict(verdict)}" for commande, verdict in jouees),
+            *(
+                f"- `{commande}` — {texte_verdict(verdict, commune=commune)}"
+                for commande, verdict in jouees
+            ),
+            *_note_commune(commune),
         ]
     if _usages_couverts(nom):
         lignes += ["", _rappel_usages(nom)]

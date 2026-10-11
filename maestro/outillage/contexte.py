@@ -105,6 +105,11 @@ BALISE_FIN = "<!-- END:maestro-outillage -->"
 #: encore que l'outillage (#1400).
 TITRE_RACINE_OUTILLEE = "### Ce que ton répertoire de travail porte déjà"
 
+#: Le titre du fragment que la consigne pose dans le message de la tâche. Il ne reprend
+#: pas celui de la section d'`AGENTS.md` qu'il transmet (`## L'outillage de ce projet`,
+#: docs/38 §3.1) : sur p5, les deux se lisaient l'un sous l'autre (#1404).
+TITRE_CONSIGNE = "## L'outillage que Maestro te transmet"
+
 #: Le champ du frontmatter d'un `SKILL.md` qui **prétend** accorder des outils.
 #: Nommé ici pour être signalé, jamais honoré (docs/38 §5.1, §6).
 CHAMP_OUTILS = "allowed-tools"
@@ -253,11 +258,19 @@ class OutillageDuProjet:
         ne porte que l'outillage (`seules_pieces`), une section le dit juste avant
         cette dernière phrase. Vide (le défaut), rien n'en est dit — le fragment
         est alors celui d'avant, au caractère près.
+
+        Un skill que les instructions transmises **désignent déjà** — l'index
+        qu'`AGENTS.md` porte dans sa section « L'outillage de ce projet » (docs/38
+        §3.3) — n'est pas listé une seconde fois (#1404) : sur p5, le message
+        nommait chaque skill deux fois, l'un sous l'autre. La règle de lecture, elle,
+        reste : c'est ce que l'index d'`AGENTS.md`, écrit pour tout agent, ne dit pas
+        à un agent de Maestro. Seuls les skills que les instructions ne désignent
+        pas — un `AGENTS.md` écrit à la main, ou tronqué — sont listés ici.
         """
         if self.vide:
             return ""
         lignes = [
-            "## L'outillage de ce projet",
+            TITRE_CONSIGNE,
             "",
             "Ce qui suit est l'outillage du projet, que Maestro te transmet ici parce "
             f"que `{self.manifeste}` le déclare. Rien d'autre du projet n'entre dans "
@@ -273,23 +286,29 @@ class OutillageDuProjet:
                     f"le fichier entier est lisible dans le projet.)",
                 ]
         if self.skills:
+            a_lister = [skill for skill in self.skills if not self._designe(skill)]
+            designes = len(a_lister) < len(self.skills)
             lignes += [
                 "",
                 "### Skills du projet",
                 "",
-                "Leur `SKILL.md` n'est **pas** chargé : ouvre celui qui correspond à ta "
+                _ou_sont_les_skills(designes=designes, a_lister=bool(a_lister))
+                + "Leur `SKILL.md` n'est **pas** chargé : ouvre celui qui correspond à ta "
                 "tâche, et lui seul, avant de commencer. Ouvre-le avec ton **outil de "
                 "lecture de fichier**, jamais par une commande shell (`cat`, `type`) : "
                 "lire n'est pas exécuter, et une commande peut attendre l'accord d'une "
-                "personne que lire ne demande pas. Les chemins ci-dessous sont relatifs "
-                "à la racine du projet.",
-                "",
+                "personne que lire ne demande pas. Leurs chemins sont relatifs à la "
+                "racine du projet.",
             ]
-            lignes += [
-                f"- **{skill.nom}** — {skill.description or '(sans description)'} "
-                f"→ `{skill.chemin}`"
-                for skill in self.skills
-            ]
+            if a_lister:
+                lignes += [
+                    "",
+                    *(
+                        f"- **{skill.nom}** — {skill.description or '(sans description)'} "
+                        f"→ `{skill.chemin}`"
+                        for skill in a_lister
+                    ),
+                ]
         pieces = self.seules_pieces(espace)
         if pieces:
             lignes += ["", *_section_racine_outillee(pieces)]
@@ -302,6 +321,16 @@ class OutillageDuProjet:
             "lance comme n'importe quelle commande, sous tes autorisations.",
         ]
         return "\n".join(lignes)
+
+    def _designe(self, skill: SkillDuProjet) -> bool:
+        """Les instructions transmises désignent-elles ce skill — son chemin y est-il écrit ?
+
+        Le chemin en code, comme toute désignation de fichier : c'est la forme que
+        l'index d'`AGENTS.md` lui donne (`redaction._corps_outillage`), et celle qu'un
+        `AGENTS.md` écrit à la main donnerait pour envoyer un agent au même fichier.
+        Une instruction tronquée avant la ligne ne le désigne pas, et il est listé.
+        """
+        return f"`{skill.chemin}`" in self.instructions
 
     def to_dict(self) -> dict[str, Any]:
         """L'outillage transmis en JSON — ce qu'un appelant peut montrer tel quel."""
@@ -370,6 +399,21 @@ def est_au_projet(chemin: str, declares: Collection[str]) -> bool:
     que sa racine ne porte que l'outillage (`OutillageDuProjet.seules_pieces`).
     """
     return not chemin.startswith(f"{DOSSIER_ATELIER}/") and chemin not in declares
+
+
+def _ou_sont_les_skills(*, designes: bool, a_lister: bool) -> str:
+    """Où l'agent trouve l'index des skills — la phrase qui ouvre la règle de lecture.
+
+    Vide quand tous sont listés juste en dessous : la liste se montre d'elle-même.
+    """
+    if designes and a_lister:
+        return (
+            "Les instructions ci-dessus en désignent une partie ; les autres sont listés "
+            "ci-dessous. "
+        )
+    if designes:
+        return "Les instructions ci-dessus les désignent, chacun avec son chemin. "
+    return ""
 
 
 def _section_racine_outillee(pieces: tuple[str, ...]) -> list[str]:

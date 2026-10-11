@@ -433,10 +433,9 @@ def test_l_intention_ne_donne_plus_le_regime_au_modele(nom: str, constats) -> No
     assert not any(phrase.strip() in role.intention for phrase in phrases)
 
 
-def test_l_intention_tient_sous_la_borne_du_generateur() -> None:
-    """`ServiceEquipe._playbook` coupe l'intention à `INTENTION_MAX` : les skills
-    du projet, qui ferment la phrase, seraient les premiers perdus."""
-    constats = _constats(
+def _constats_charges():
+    """Trois langages, cinq commandes : de quoi brancher plusieurs skills à chaque rôle."""
+    return _constats(
         langages=(
             _langage("Python", 0.5, exemple="src/app.py"),
             _langage("TypeScript", 0.3, exemple="web/app.ts"),
@@ -448,9 +447,26 @@ def test_l_intention_tient_sous_la_borne_du_generateur() -> None:
         ),
     )
 
-    for role in _propose(constats).roles:
+
+def test_l_intention_tient_sous_la_borne_du_generateur() -> None:
+    """`ServiceEquipe._playbook` coupe l'intention à `INTENTION_MAX` : ce que le projet
+    est, qui ferme la phrase, serait le premier perdu."""
+    for role in _propose(_constats_charges()).roles:
         # La coupe de `_playbook` doit être un non-événement.
         assert role.intention[:INTENTION_MAX] == role.intention
+
+
+def test_l_intention_ne_donne_pas_les_skills_au_modele() -> None:
+    """#1404 : le modèle qui rédige le playbook recopiait les skills que l'intention lui
+    nommait (« Ton périmètre », sur p5), puis la création ajoutait sa section — l'agent
+    lisait sa liste deux fois. Seule la section de la création les nomme désormais."""
+    roles = _propose(_constats_charges()).roles
+
+    assert any(role.skills for role in roles)
+    for role in roles:
+        for skill in role.skills:
+            assert skill.nom not in role.intention, (role.nom, skill.nom)
+        assert "skill" not in role.intention.lower()
 
 
 def test_le_cadre_de_generation_laisse_le_regime_a_maestro() -> None:

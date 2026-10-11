@@ -589,6 +589,13 @@ def _pas_encore(racine: Path, commande: CommandeEcrite, *, vide: bool) -> str:
     Ce qui changera de lui-même quand le projet sera écrit : un dossier sans fichier à
     lui, le fichier où la commande vit pas encore là. Le poste, lui, se sonde
     (`Verificateur._en_attente`, #1343).
+
+    La raison dit **le fait**, jamais ce que Maestro en fera (#1404) : elle entre dans
+    `AGENTS.md`, que lit l'agent dont la tâche est justement d'écrire ce qui manque, et
+    « tout le sera à la prochaine écriture de l'outillage » y était une promesse de
+    Maestro qui ne lui servait à rien — sept fois sur p5. La revue d'après un run
+    (`ConducteurOutillage.apres_le_run`, #1343) rejoue ces commandes sans qu'aucun texte
+    ait à le promettre.
     """
     if vide:
         # « Le dossier est vide » se lisait juste sous « 7 fichiers écrits dans … » et
@@ -596,7 +603,7 @@ def _pas_encore(racine: Path, commande: CommandeEcrite, *, vide: bool) -> str:
         # fichiers — l'outillage, lui, vient d'y être écrit.
         return (
             "le projet n'a encore aucun fichier en dehors de son outillage : rien ne "
-            "peut s'y jouer avant, tout le sera à la prochaine écriture de l'outillage"
+            "peut s'y jouer avant"
         )
     # Des raisons **neutres en nombre** : l'écran dit une seule fois celle que plusieurs
     # commandes partagent (« Les 5 commandes à vérifier, pour une même raison : … »),
@@ -604,7 +611,7 @@ def _pas_encore(racine: Path, commande: CommandeEcrite, *, vide: bool) -> str:
     if commande.chemin and not (racine / PurePosixPath(commande.chemin)).exists():
         return (
             f"`{commande.chemin}` n'existe pas encore dans le projet : à jouer quand il "
-            "existera, à la prochaine écriture de l'outillage"
+            "existera"
         )
     return ""
 

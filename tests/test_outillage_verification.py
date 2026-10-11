@@ -53,6 +53,7 @@ from maestro.outillage import (
     generer_outillage,
     recommandation_depuis_choix,
     recommander,
+    rediger,
     source_manifeste_des_choix,
 )
 from maestro.outillage.verification import (
@@ -271,9 +272,16 @@ def test_un_projet_neuf_encore_vide_ecrit_ses_commandes_a_verifier_et_le_dit(
         for v in preparation.rapport.verifications
     )
     agents = (racine / "AGENTS.md").read_text(encoding="utf-8")
-    assert "**À vérifier** : le projet n'a encore aucun fichier en dehors de son outillage" in (
-        _ligne(agents, "npm ci")
+    # Chaque ligne garde son verdict ; la raison commune se dit une fois (#1404).
+    assert _ligne(agents, "npm ci").endswith("**À vérifier**.")
+    assert _ligne(agents, "npx vitest run").endswith("**À vérifier**.")
+    assert agents.count("aucun fichier en dehors de son outillage") == 1
+    assert (
+        "Les commandes marquées **À vérifier** n'ont pas encore été jouées, pour une même "
+        "raison : le projet n'a encore aucun fichier en dehors de son outillage : rien ne "
+        "peut s'y jouer avant." in agents
     )
+    assert "prochaine écriture de l'outillage" not in agents
 
 
 def test_une_commande_dont_le_fichier_n_existe_pas_encore_est_a_verifier(
@@ -291,10 +299,86 @@ def test_une_commande_dont_le_fichier_n_existe_pas_encore_est_a_verifier(
         sonde("ruff"),
     ]
     raisons = {v.raison for v in preparation.rapport.verifications}
+    # Le fait, jamais ce que Maestro en fera (#1404) : la raison entre dans `AGENTS.md`.
     assert raisons == {
-        "`pyproject.toml` n'existe pas encore dans le projet : à jouer quand il "
-        "existera, à la prochaine écriture de l'outillage"
+        "`pyproject.toml` n'existe pas encore dans le projet : à jouer quand il existera"
     }
+
+
+def _a_verifier(commande: str, usage: str, raison: str) -> Verification:
+    return Verification(usage=usage, commande=commande, etat=A_VERIFIER, raison=raison)
+
+
+def _rediges(
+    verifications: tuple[Verification, ...], constats: Constats | None = None
+) -> dict[str, str]:
+    """`chemin → contenu` de l'outillage de `constats`, rédigé avec ces verdicts."""
+    constats = constats or _constats()
+    fichiers = rediger(constats, recommander(constats), verifications=verifications)
+    return {fichier.chemin: fichier.contenu for fichier in fichiers}
+
+
+def test_une_raison_commune_se_dit_une_fois_sous_la_premiere_section() -> None:
+    """#1404 : la règle de l'écran (#1160) tenue dans le texte écrit. La note suit la première
+    section qui porte une commande à vérifier ; la seconde ne fait que marquer ses lignes."""
+    raison = "rien ne peut s'y jouer avant"
+    verdicts = tuple(
+        _a_verifier(c.commande, c.usage, raison) for c in _constats().commandes
+    )
+
+    agents = _rediges(verdicts)["AGENTS.md"]
+
+    assert agents.count(raison) == 1
+    monter = agents.split("## Monter et lancer", 1)[1].split("\n## ", 1)[0]
+    assert f"pour une même raison : {raison}." in monter
+    for commande in _constats().commandes:
+        assert _ligne(agents, commande.commande).endswith("**À vérifier**.")
+
+
+def test_des_raisons_qui_different_restent_chacune_sur_sa_ligne() -> None:
+    """Deux faits différents ne se résument pas en un : aucune note, chaque raison à sa place."""
+    verdicts = (
+        _a_verifier("uv sync", "installer", "`pyproject.toml` n'existe pas encore"),
+        _a_verifier("pytest", "tester", "le temps alloué était épuisé"),
+    )
+
+    agents = _rediges(verdicts)["AGENTS.md"]
+
+    assert "pour une même raison" not in agents
+    assert _ligne(agents, "uv sync").endswith(
+        "**À vérifier** : `pyproject.toml` n'existe pas encore."
+    )
+    assert _ligne(agents, "pytest").endswith("**À vérifier** : le temps alloué était épuisé.")
+
+
+def test_une_seule_commande_a_verifier_garde_sa_raison_sur_sa_ligne() -> None:
+    """Il faut deux commandes pour qu'une raison soit « commune » — la règle de l'écran."""
+    agents = _rediges((_a_verifier("pytest", "tester", "pas jouée — hors portée"),))["AGENTS.md"]
+
+    assert "pour une même raison" not in agents
+    assert _ligne(agents, "pytest").endswith("**À vérifier** : pas jouée — hors portée.")
+
+
+def test_un_skill_dit_aussi_une_fois_la_raison_de_ses_commandes() -> None:
+    """`verifier-le-style` enveloppe trois commandes : la même raison s'y lisait trois fois."""
+    raison = "rien ne peut s'y jouer avant"
+    style = Constats(
+        commandes=tuple(
+            Commande(usage=usage, commande=commande, chemin="pyproject.toml")
+            for usage, commande in (
+                ("lint", "ruff check ."),
+                ("formater", "ruff format --check ."),
+                ("types", "mypy ."),
+            )
+        )
+    )
+    verdicts = tuple(_a_verifier(c.commande, c.usage, raison) for c in style.commandes)
+
+    skill = _rediges(verdicts, style)[f"{DOSSIER_SKILLS}/verifier-le-style/SKILL.md"]
+
+    assert skill.count(raison) == 1
+    for commande in style.commandes:
+        assert f"- `{commande.commande}` — **À vérifier**." in skill
 
 
 def test_une_commande_hors_de_la_portee_du_projet_n_est_pas_jouee(tmp_path: Path) -> None:

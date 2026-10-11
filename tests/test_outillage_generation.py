@@ -64,7 +64,13 @@ from maestro.outillage import (
 )
 from maestro.outillage.generation import REFUS_VERSION
 from maestro.outillage.questionnaire import comprehension_depuis_texte
-from maestro.outillage.redaction import bloc, texte_script, texte_skill
+from maestro.outillage.redaction import (
+    PREVU,
+    REGLE_DU_PREVU,
+    bloc,
+    texte_script,
+    texte_skill,
+)
 from maestro.projets.modele import Perimetre, Projet, Vcs
 from maestro.projets.racine import RacineRefusee, detecter_vcs
 from maestro.sandbox import FrontiereEcriture, branche_de_tache
@@ -491,16 +497,22 @@ def test_un_projet_neuf_ne_dit_jamais_constate_d_un_fichier_qui_n_existe_pas() -
         assert "déclarée dans" not in texte
         assert "écrit déjà" not in texte
 
-    # Ce que les réponses impliquent, dit comme tel — et l'endroit reste nommé.
-    assert "- **Gestionnaires** : npm (`package.json`, à créer)." in agents
+    # Ce que les réponses impliquent, dit comme tel — et l'endroit reste nommé. « Prévu »,
+    # et plus « à créer » (#1404) : la CI n'est pas la tâche de l'agent du socle.
+    assert "- **Gestionnaires** : npm (`package.json`, prévu)." in agents
     assert (
         "- **Installer les dépendances** : `npm ci` — attendue une fois "
         "`package.json` créé (compris de vos réponses)." in agents
     )
-    assert "`.github/workflows/ci.yml`, à créer" in agents
+    assert "`.github/workflows/ci.yml`, prévu" in agents
     assert "Ces conventions viennent des réponses données à Maestro" in agents
-    assert "- à créer : `CONTRIBUTING.md` — convention de message de commit" in agents
-    assert "À créer : `package.json` (compris de vos réponses)." in skill
+    assert "- `CONTRIBUTING.md`, prévu — convention de message de commit" in agents
+    assert "Prévu : `package.json` (compris de vos réponses)." in skill
+    for texte in (agents, skill):
+        assert "à créer" not in texte.lower()
+    # Ce que « prévu » demande se dit une fois, dans la ligne d'origine.
+    assert agents.count(REGLE_DU_PREVU) == 1
+    assert REGLE_DU_PREVU in agents.split("## Le projet\n\n", 1)[1].splitlines()[0]
 
     # Aucune part de langage : rien n'a été compté sur un dossier vide.
     projet = agents.split("## Le projet\n\n", 1)[1].split("\n## ", 1)[0]
@@ -516,7 +528,7 @@ def test_une_analyse_garde_ses_constats_quand_le_registre_des_reponses_existe() 
     assert "Constaté dans `pyproject.toml` (manifeste Python)." in texte_skill(
         entree, source=SOURCE
     )
-    assert "à créer" not in texte_skill(entree, source=SOURCE)
+    assert PREVU not in texte_skill(entree, source=SOURCE).lower()
 
 
 def test_une_section_sans_matiere_dit_l_absence_plutot_que_de_disparaitre() -> None:

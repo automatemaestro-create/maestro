@@ -103,23 +103,32 @@ from maestro.agents.store import (
 #: aussi d'**ancre** : c'est par lui qu'une section déjà posée se retrouve pour
 #: être remplacée, et c'est pourquoi il ne se reformule pas à la légère — deux
 #: orthographes feraient deux sections.
-TITRE_SKILLS = "## Les skills du projet qui sont les vôtres"
+#:
+#: Il tutoie l'agent, comme tout le playbook (#1404, `generation_agent._CADRE_GENERATION`) :
+#: « qui sont les vôtres » le vouvoyait sous un métier écrit au tutoiement. L'ancien
+#: titre reste une ancre (`TITRES_SKILLS_ANTERIEURS`) : une fiche écrite avant garde son
+#: texte jusqu'à son rebranchement, qui le remplace au lieu d'empiler une seconde section.
+TITRE_SKILLS = "## Les skills du projet qui sont les tiens"
+
+#: Les titres qu'une section des skills a portés avant `TITRE_SKILLS`, reconnus pour être
+#: remplacés — jamais écrits.
+TITRES_SKILLS_ANTERIEURS: tuple[str, ...] = ("## Les skills du projet qui sont les vôtres",)
 
 #: Ce que la section dit avant de lister. Une phrase, parce que le playbook d'un
 #: agent n'est pas une documentation : elle rappelle que les skills sont ceux du
 #: **projet** (l'agent les reçoit tous, #1032) et que cette liste dit lesquels
 #: relèvent de son rôle.
 INTRO_SKILLS = (
-    "L'outillage du projet vous est transmis en entier ; ceux-ci sont ceux que "
-    "votre rôle branche. Servez-vous-en plutôt que de réinventer la commande."
+    "L'outillage du projet t'est transmis en entier ; ceux-ci sont ceux que ton "
+    "rôle branche. Sers-t'en plutôt que de réinventer la commande."
 )
 
 #: Ce qu'on écrit pour un rôle qui ne branche **aucun** skill. La section reste
 #: posée, et c'est voulu : « ce rôle n'en a aucun » et « personne n'a rangé ses
 #: skills » sont deux faits différents, et seul le premier est une décision.
 AUCUN_SKILL = (
-    "Aucun skill du projet n'est rattaché à votre rôle : l'outillage du projet "
-    "n'en a recommandé aucun pour ce que vous faites."
+    "Aucun skill du projet n'est rattaché à ton rôle : l'outillage du projet "
+    "n'en a recommandé aucun pour ce que tu fais."
 )
 
 #: Ce qu'on écrit quand l'outillage **recommandait** des skills à ce rôle mais
@@ -128,9 +137,9 @@ AUCUN_SKILL = (
 #: qui manquait à l'agent de S3 : ne pas partir à leur recherche. Les noms ne
 #: sont pas redits : nommer un skill absent, c'est inviter à le chercher.
 AUCUN_SKILL_ECRIT = (
-    "Aucun skill du projet n'est rattaché à votre rôle : l'outillage recommandé "
-    "pour ce que vous faites n'est pas écrit dans le projet. Ne le cherchez pas ; "
-    "servez-vous des commandes que le projet déclare."
+    "Aucun skill du projet n'est rattaché à ton rôle : l'outillage recommandé "
+    "pour ce que tu fais n'est pas écrit dans le projet. Ne le cherche pas ; "
+    "sers-toi des commandes que le projet déclare."
 )
 
 #: Le plafond d'instances qu'une **création** accepte. Décision, pas mesure — au
@@ -431,10 +440,11 @@ def scinder_section_skills(playbook: str) -> tuple[str, str]:
     return _sans_section_skills(playbook).strip(), section
 
 
-#: La section « skills » d'un playbook : son titre, jusqu'au prochain titre de même
-#: niveau ou la fin du document.
+#: La section « skills » d'un playbook : son titre — l'actuel ou un antérieur —, jusqu'au
+#: prochain titre de même niveau ou la fin du document.
 _MOTIF_SECTION_SKILLS = re.compile(
-    rf"^{re.escape(TITRE_SKILLS)}\s*$.*?(?=^## |\Z)",
+    rf"^(?:{'|'.join(re.escape(t) for t in (TITRE_SKILLS, *TITRES_SKILLS_ANTERIEURS))})"
+    r"\s*$.*?(?=^## |\Z)",
     re.MULTILINE | re.DOTALL,
 )
 
