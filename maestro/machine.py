@@ -64,7 +64,7 @@ import shlex
 import sys
 import time
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from maestro.emplacements import repertoire_temporaire
@@ -82,8 +82,8 @@ PRESENT = "present"
 ABSENT = "absent"
 NON_SONDE = "non-sonde"
 
-#: Ce qui fait écrire `echo $BASH_VERSION` plutôt que `bash --version` : le shell est
-#: déjà lancé pour répondre, et sa version est une variable qu'il pose lui-même.
+#: La version du shell se lit dans `$BASH_VERSION` plutôt que par `bash --version` : le
+#: shell est déjà lancé pour répondre, et c'est une variable qu'il pose lui-même.
 _VERSION_DU_SHELL = 'printf %s "$BASH_VERSION"'
 
 
@@ -140,7 +140,7 @@ class Machine:
     temporaire: str
     shell: str = ""
     version_shell: str | None = None
-    programmes: tuple[Programme, ...] = field(default_factory=tuple)
+    programmes: tuple[Programme, ...] = ()
     windows: bool = False
 
     def consigne(self) -> str:
