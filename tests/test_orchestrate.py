@@ -58,6 +58,8 @@ SCRIPTS = (
     "scripts/orchestrate/status.sh",
     "scripts/orchestrate/pilote.sh",
     "scripts/orchestrate/journal.sh",
+    # Le banc entier sur main, une fois par lot (#1462) : le pilote l'appelle après son drain.
+    "scripts/orchestrate/banc-main.sh",
     "scripts/orchestrate/settings.run.json",
     # Les serveurs MCP d'une session (#1245) : le run refuse de partir sans lui.
     "scripts/orchestrate/mcp.run.json",
@@ -793,6 +795,10 @@ def depot(tmp_path: Path) -> Depot:
         # la feraient échouer comme ils font échouer un ticket. Les tests qui la visent la
         # rallument (voir « Le modèle du run » plus bas).
         "MAESTRO_ORCHESTRATE_SONDE_MODELE": "0",
+        # Le banc entier sur main (#1462) est ÉTEINT par défaut, comme la file de merge : il se
+        # joue après le drain de CHAQUE run, et ces tests portent sur la boucle. Ceux qui le
+        # visent le rallument (voir « Le banc entier sur main » à la fin de ce fichier).
+        "MAESTRO_ORCHESTRATE_BANC": "0",
         "GL_GQL_RETRIES": "1",
         "GL_GQL_RETRY_DELAY": "0",
     }
@@ -9337,3 +9343,331 @@ def test_le_filet_lit_aussi_le_journal_du_run_repris(depot: Depot) -> None:
         "le résidu du run coupé n'a jamais été nommé — sa reprise est le dernier moment pour ça"
     )
     assert "#130" in r.stdout.split(BLOC_RESIDUS, 1)[1]
+
+
+# =====================================================================================
+# Le banc entier sur main, une fois par lot (#1462, parent #1460, docs/47)
+# =====================================================================================
+# Ces tests RALLUMENT `MAESTRO_ORCHESTRATE_BANC`, éteint dans le harnais pour la raison qui y éteint
+# la file de merge : les autres tests portent sur la boucle, et un banc qui tournerait derrière
+# chacun d'eux ferait parler cent assertions d'autre chose que de ce qu'elles vérifient.
+#
+# LE BANC EST DOUBLÉ, LE RESTE EST RÉEL. Le pilote appelle le vrai `banc-main.sh`, qui lit le vrai
+# historique (un fichier jetable) contre le vrai `main` d'un dépôt Git jetable, par le vrai
+# `maestro.scenarios.sur_main`. Seuls sont remplacés ce qui coûterait du vrai modèle : le montage de
+# la copie (un faux `scripts/git/worktree.sh`, qui rend une copie déjà là) et son lanceur (un faux
+# `start.sh` dans cette copie, qui écrit le rapport et le témoin qu'un passage laisse). C'est la
+# couture de la relecture visuelle pour son avant (`tests/test_relecture_visuelle.py`).
+
+FAUX_WORKTREE_BANC = r"""#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MAESTRO_FIXTURES/worktree-banc.log"
+[ "$1" = main-banc ] || exit 0
+if [ "${MAESTRO_FAUX_MONTAGE_CODE:-0}" != 0 ]; then
+  echo "  ✗ montage en échec" >&2
+  exit "$MAESTRO_FAUX_MONTAGE_CODE"
+fi
+echo "COPIE $MAESTRO_FAUSSE_COPIE"
+"""
+
+FAUX_START_BANC = r"""#!/usr/bin/env bash
+ici="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+printf '%s\tapi=%s\tui=%s\n' "$*" "$MAESTRO_PORT_API" "$MAESTRO_PORT_UI" \
+  >> "$MAESTRO_FIXTURES/start-banc.log"
+[ "$1" = --stop ] && exit 0
+# Un passage tué ou refusé avant de jouer : aucun témoin, et le code d'un rouge sous Windows.
+[ "${MAESTRO_FAUX_PASSAGE:-joue}" = joue ] || exit 1
+h=20261011-220000
+journaux="$ici/.maestro/controltower/$MAESTRO_PORT_API-$MAESTRO_PORT_UI"
+mkdir -p "$ici/.maestro/scenarios/$h" "$journaux"
+cp "$MAESTRO_FIXTURES/rapport-banc.json" "$ici/.maestro/scenarios/$h/rapport.json"
+printf '.maestro/scenarios/%s\n' "$h" > "$journaux/banc.temoin"
+exit 0
+"""
+
+
+def _catalogue_du_banc() -> list[str]:
+    """Le catalogue réel : un passage n'est « complet » que s'il l'a joué tout entier."""
+    from maestro.scenarios.scenarios import SCENARIOS
+
+    return [s.identifiant for s in SCENARIOS]
+
+
+def _ligne_historique(passage: str, sha: str, verdicts: dict[str, str]) -> dict:
+    return {
+        "version": 1, "source": "passage", "passage": passage, "sha": sha, "branche": "main",
+        "iid": None, "copie": "/clone", "modifiee": False,
+        "scenarios": [
+            {"id": i, "verdict": v, "cout_usd": 1.0, "duree_s": 60.0, "rejoue": False,
+             "empechement": False, "run_id": ""}
+            for i, v in verdicts.items()
+        ],
+    }
+
+
+@dataclass
+class Banc:
+    """Ce qu'un test du banc par lot pose et relit : le dépôt sur main, la copie, l'historique."""
+
+    depot: Depot
+    copie: Path
+    historique: Path
+    env: dict[str, str]
+
+    def passage_consigne(self, passage: str, sha: str, verdict: str = "vert") -> None:
+        """Un passage COMPLET sur main, déjà dans l'historique du poste."""
+        ligne = _ligne_historique(passage, sha, {i: verdict for i in _catalogue_du_banc()})
+        with self.historique.open("a", encoding="utf-8", newline="\n") as flux:
+            flux.write(json.dumps(ligne) + "\n")
+
+    def rapport(self, verdicts: dict[str, str], *, empeches: tuple[str, ...] = ()) -> None:
+        """Le rapport que le faux lanceur laissera — le verdict du passage doublé."""
+        charge = {
+            "horodatage": "20261011-220000",
+            "scenarios": [
+                {"id": i, "verdict": v, "motif": f"motif de {i}", "empechement": i in empeches}
+                for i, v in verdicts.items()
+            ],
+        }
+        (self.depot.fixtures / "rapport-banc.json").write_text(
+            json.dumps(charge), encoding="utf-8")
+
+    def main_avance(self, fichier: str, message: str) -> str:
+        """Un merge sur main : un commit de squash, puis `origin/main` qui le suit."""
+        (self.depot.racine / fichier).parent.mkdir(parents=True, exist_ok=True)
+        sha = _commit(self.depot, fichier, message)
+        _git(self.depot, "update-ref", "refs/remotes/origin/main", "HEAD")
+        return sha
+
+    def appels_start(self) -> list[str]:
+        journal = self.depot.fixtures / "start-banc.log"
+        return journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []
+
+    def appels_worktree(self) -> list[str]:
+        journal = self.depot.fixtures / "worktree-banc.log"
+        lignes = journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []
+        return [ligne for ligne in lignes if ligne.startswith("main-banc")]
+
+    def lance(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+        _livrables(self.depot, (130,))
+        plan = _plan(self.depot, [(1, 130, "-", "haute")])
+        return self.depot.lance("run.sh", "--plan", plan, "--run-id", "lot", *args,
+                                env={"MAESTRO_CLAUDE_BIN": _stub_livre(self.depot),
+                                     **self.env, **(env or {})})
+
+    @property
+    def run_dir(self) -> Path:
+        return self.depot.racine / ".maestro/orchestrate/lot"
+
+    def etat(self) -> list[str]:
+        return (self.run_dir / "banc.etat").read_text(encoding="utf-8").rstrip("\n").split("\t")
+
+
+@pytest.fixture
+def banc(depot: Depot, tmp_path: Path) -> Banc:
+    _init_git_sur_main(depot)
+    faux = depot.racine / "scripts/git/worktree.sh"
+    faux.parent.mkdir(parents=True, exist_ok=True)
+    faux.write_text(FAUX_WORKTREE_BANC, encoding="utf-8", newline="\n")
+    copie = tmp_path / "copie-main-banc"
+    lanceur = copie / "scripts/controltower/start.sh"
+    lanceur.parent.mkdir(parents=True)
+    lanceur.write_text(FAUX_START_BANC, encoding="utf-8", newline="\n")
+    historique = tmp_path / "historique-banc.jsonl"
+    env = {
+        "MAESTRO_ORCHESTRATE_BANC": "1",
+        "MAESTRO_FAUSSE_COPIE": str(copie),
+        "MAESTRO_SCENARIOS_HISTORIQUE": str(historique),
+        # Le dépôt jetable n'a pas de venv : l'interpréteur de la suite, et le `maestro` de CE dépôt
+        # (le venv partagé d'un worktree pointe sur celui du clone principal, #194).
+        "MAESTRO_BANC_PYTHON": sys.executable,
+        "PYTHONPATH": str(RACINE),
+    }
+    return Banc(depot=depot, copie=copie, historique=historique, env=env)
+
+
+@besoin_git
+def test_le_pilote_joue_le_banc_entier_sur_main_dans_une_copie_dediee(banc: Banc) -> None:
+    """Après le drain, le banc entier sur le sha d'`origin/main`, dans SA copie, par SON lanceur.
+
+    Ce qui se garde : la copie est montée sur le sha de main (jamais le clone principal ni le
+    worktree d'un ticket), le passage est le banc entier (`--rejouer` sans liste) sur les ports de
+    la copie, sans navigateur, et la stack est arrêtée après. Le verdict entre au journal du run.
+    """
+    sha = _git(banc.depot, "rev-parse", "HEAD")
+    banc.rapport({i: "vert" for i in _catalogue_du_banc()})
+    r = banc.lance()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert banc.appels_worktree() == [f"main-banc --sha {sha}"]
+    assert banc.appels_start() == [
+        "--etat-banc --rejouer --no-browser\tapi=8400\tui=3400",
+        "--stop\tapi=8400\tui=3400",
+    ], "le banc entier, sur les ports de la copie, puis la stack arrêtée"
+    etat = banc.etat()
+    assert etat[0] == "vert" and etat[1] == sha, etat
+    assert "aucun passage complet" in r.stdout, "la raison de jouer est dite"
+    sortie = r.stdout
+    assert sortie.index("Banc sur main") < sortie.index("Résumé du run"), (
+        "le verdict est sous le coup d'œil du résumé, donc écrit avant lui"
+    )
+    assert "banc sur main       : ✓" in sortie.split("Résumé du run", 1)[1]
+
+
+@besoin_git
+def test_main_qui_n_a_pas_bouge_sur_le_chemin_fait_s_abstenir_le_pilote_en_le_disant(
+    banc: Banc,
+) -> None:
+    """Le dernier passage complet sur main couvre encore main : rien de monté, rien de joué."""
+    joue = _git(banc.depot, "rev-parse", "HEAD")
+    banc.passage_consigne("20261010-100000", joue)
+    banc.main_avance("notes.md", "docs: notes (#42)")
+    r = banc.lance()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert banc.appels_worktree() == [] and banc.appels_start() == [], "ni copie ni passage"
+    etat = banc.etat()
+    assert etat[0] == "abstention"
+    assert "n'a pas bougé sur le chemin des scénarios" in etat[4]
+    assert "20261010-100000" in etat[4], "le passage qui couvre encore main est nommé"
+    assert "abstention" in r.stdout and "n'a pas bougé sur le chemin" in r.stdout
+
+
+@besoin_git
+@pytest.mark.parametrize(
+    "injouable", ["passage-tue", "temoin-perime", "montage-en-echec", "scenario-empeche"]
+)
+def test_un_banc_injouable_est_une_abstention_jamais_un_vert(banc: Banc, injouable: str) -> None:
+    """Tué en chemin, copie impossible, scénario empêché : abstention dite, run inchangé.
+
+    Le passage tué rend le code d'un rouge (Windows) et ne laisse aucun témoin : c'est le témoin,
+    jamais le code, qui dit qu'il est allé au bout (#1365). Celui d'un passage PRÉCÉDENT, tout
+    vert, resté dans la copie, ne doit pas être lu pour celui-ci. Le banc est best-effort : le run
+    garde son verdict.
+    """
+    catalogue = _catalogue_du_banc()
+    if injouable == "temoin-perime":
+        ancien = banc.copie / ".maestro/scenarios/20261001-100000"
+        ancien.mkdir(parents=True)
+        (ancien / "rapport.json").write_text(json.dumps({
+            "horodatage": "20261001-100000",
+            "scenarios": [{"id": i, "verdict": "vert", "motif": "vert"} for i in catalogue],
+        }), encoding="utf-8")
+        temoin = banc.copie / ".maestro/controltower/8400-3400/banc.temoin"
+        temoin.parent.mkdir(parents=True)
+        temoin.write_text(".maestro/scenarios/20261001-100000\n", encoding="utf-8")
+    banc.rapport({i: "vert" for i in catalogue[:-1]} | {catalogue[-1]: "rouge"},
+                 empeches=(catalogue[-1],))
+    env = {
+        "passage-tue": {"MAESTRO_FAUX_PASSAGE": "tue"},
+        "temoin-perime": {"MAESTRO_FAUX_PASSAGE": "tue"},
+        "montage-en-echec": {"MAESTRO_FAUX_MONTAGE_CODE": "1"},
+        "scenario-empeche": {},
+    }[injouable]
+    r = banc.lance(env=env)
+    assert r.returncode == 0, "le banc ne change pas le verdict du run\n" + r.stdout + r.stderr
+    etat = banc.etat()
+    assert etat[0] == "abstention", etat
+    if injouable == "scenario-empeche":
+        assert "empêché (abstention)" in (banc.run_dir / "banc.txt").read_text(encoding="utf-8")
+    else:
+        assert "banc injouable" in etat[4]
+    assert "banc sur main       : ~" in r.stdout
+    assert "banc sur main       : ✓" not in r.stdout
+
+
+@besoin_git
+def test_un_rouge_nomme_les_pr_mergees_depuis_son_dernier_vert_au_journal_et_dans_status(
+    banc: Banc,
+) -> None:
+    """Le rouge se rattache aux PR mergées sur main depuis son dernier vert — nommées, jamais
+    ouvertes en ticket —, au journal du run (sortie, `banc.txt`) comme dans `status.sh`."""
+    vert = _git(banc.depot, "rev-parse", "HEAD")
+    banc.passage_consigne("20261010-100000", vert)
+    banc.main_avance("maestro/moteur.py", "fix(engine): moteur (#41)\n\nCloses #40")
+    banc.main_avance("notes.md", "docs: notes (#42)\n\nCloses #39")
+    catalogue = _catalogue_du_banc()
+    banc.rapport({catalogue[0]: "rouge"} | {i: "vert" for i in catalogue[1:]})
+    r = banc.lance()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert banc.etat()[0] == "rouge"
+    for texte in (r.stdout, (banc.run_dir / "banc.txt").read_text(encoding="utf-8")):
+        assert f"{catalogue[0]} rouge" in texte
+        assert "dernier vert sur main : 20261010-100000" in texte
+        assert "#41 (ticket #40) fix(engine): moteur" in texte, "la PR du chemin, nommée"
+        assert "hors du chemin des scénarios (1) : #42" in texte
+    assert "banc sur main       : ✗" in r.stdout
+
+    statut = banc.depot.lance("status.sh", "--run-id", "lot", "--no-forge")
+    assert statut.returncode == 0, statut.stderr
+    assert "Banc sur main" in statut.stdout and "rouge" in statut.stdout
+    assert "#41 (ticket #40) fix(engine): moteur" in statut.stdout
+
+
+@pytest.mark.parametrize("extinction", [("--sans-banc",), ()])
+def test_sans_banc_le_pilote_ne_joue_rien_et_l_en_tete_le_dit(
+    depot: Depot, extinction: tuple[str, ...]
+) -> None:
+    """`--sans-banc` ou `MAESTRO_ORCHESTRATE_BANC=0` : rien de joué, et l'en-tête le dit."""
+    _livrables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    env = {"MAESTRO_CLAUDE_BIN": _stub_livre(depot),
+           "MAESTRO_ORCHESTRATE_BANC": "1" if extinction else "0"}
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "sansbanc", *extinction, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "banc : éteint" in r.stdout
+    assert "Banc sur main" not in r.stdout
+    assert not (depot.racine / ".maestro/orchestrate/sansbanc/banc.etat").exists()
+
+
+def test_l_en_tete_annonce_le_banc_par_lot_quand_il_est_allume(depot: Depot) -> None:
+    _livrables(depot, (130,))
+    plan = _plan(depot, [(1, 130, "-", "haute")])
+    r = depot.lance("run.sh", "--plan", plan, "--dry-run",
+                    env={"MAESTRO_ORCHESTRATE_BANC": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "banc : le banc entier sur main après le drain final" in r.stdout
+    assert "--sans-banc l'éteint" in r.stdout
+    assert "8. fin de run" in r.stdout
+
+
+@besoin_git
+def test_un_arret_demande_fait_s_abstenir_le_banc(banc: Banc) -> None:
+    """STOP posé pendant le run : on ne lance pas une heure et demie de vrai modèle derrière."""
+    _livrables(banc.depot, (130,))
+    plan = _plan(banc.depot, [(1, 130, "-", "haute")])
+    gabarit = _statut_json("130", "En revue")
+    claude = _claude_stub(banc.depot, f"""
+        printf '%s' '{gabarit}' > "$MAESTRO_FIXTURES/owner-130.json"
+        mkdir -p "$MAESTRO_STUB_WORKTREE_DIR/.maestro/orchestrate"
+        : > "$MAESTRO_STUB_WORKTREE_DIR/.maestro/orchestrate/STOP"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+        exit 0
+    """)
+    r = banc.depot.lance("run.sh", "--plan", plan, "--run-id", "lot",
+                         env={**banc.env, "MAESTRO_CLAUDE_BIN": claude})
+    assert "abstention — arrêt demandé" in r.stdout, r.stdout + r.stderr
+    assert banc.appels_worktree() == [] and banc.appels_start() == []
+
+
+def test_le_banc_se_joue_apres_le_drain_final_et_avant_le_resume() -> None:
+    """L'ordre est la décision : après le drain (main a reçu le lot), avant le résumé qui le dit."""
+    source = (RACINE / "scripts/orchestrate/run.sh").read_text(encoding="utf-8")
+    appels = [ligne.strip() for ligne in source.splitlines()
+              if ligne.strip() in ("merge_draine_final", "banc_sur_main", "banc_bilan")
+              or ligne.startswith("printf '%sRésumé du run")]
+    assert appels == ["merge_draine_final", "banc_sur_main",
+                      "printf '%sRésumé du run %s%s\\n' \"$C_B\" \"$RUN_ID\" \"$C_0\"",
+                      "banc_bilan"], appels
+
+
+def test_status_dit_le_banc_en_cours_avec_son_age(depot: Depot) -> None:
+    """Le plan soldé et la file vidée, le pilote joue encore : `status.sh` le montre."""
+    dossier = _run_dir(depot, "20260730-100000", [(1, 130, "-", "haute")],
+                       resume=[(130, "OK", 99, 600, "3.50", "-")])
+    debut = int(time.time()) - 600
+    (dossier / "banc.etat").write_text(
+        f"en-cours\t{'a' * 40}\t{debut}\t-\tpassage du banc entier — vrai modèle\n",
+        encoding="utf-8", newline="\n",
+    )
+    r = depot.lance("status.sh", "--run-id", "20260730-100000", "--no-forge")
+    assert r.returncode == 0, r.stderr
+    assert "Banc sur main — ⏳ en cours" in r.stdout
+    assert "passage du banc entier" in r.stdout and "aaaaaaa" in r.stdout

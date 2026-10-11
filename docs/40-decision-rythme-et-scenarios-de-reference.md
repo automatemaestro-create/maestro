@@ -214,6 +214,15 @@ script : c'est l'entrée du banc par lot et du choix du scénario le moins cher 
 d'avant ce ticket y sont entrés **sans sha**, et la lecture dit « sha inconnu » plutôt que de le
 deviner d'une date.
 
+**Le banc entier se joue une fois par lot, sur `main`** (#1462, [docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md)).
+Après son drain final, le pilote d'un run le joue dans une copie dédiée sur `origin/main`
+(`main.banc`), si `main` a bougé sur le chemin des scénarios depuis le dernier passage complet
+sur `main` que cet historique consigne ; sinon il s'abstient en le disant. Un rouge y nomme les PR
+mergées depuis le dernier vert du scénario sur `main` (`maestro.scenarios.sur_main`). Un passage
+injouable ou un scénario empêché est une abstention, jamais un vert. Hors run,
+`bash scripts/orchestrate/banc-main.sh` joue le même passage. Le détail est en
+[docs/10 §11.13](./10-workflow-git.md).
+
 **Le banc ne garde que ses derniers passages** (#1457). Il les gardait tous — 208 dossiers le
 2026-10-09, projets complets et `node_modules` compris —, et leurs projets versionnés retenaient,
 par leurs worktrees, les espaces de tâches laissés sous la racine jetable, que le ramassage ne
