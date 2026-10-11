@@ -529,6 +529,19 @@ distribuée. Cette porte rouvre la *portée*, pas le *décideur*.
 > aussi, bien que MSYS2 en fasse une option : ce cas ne peut que remonter plus. Un mot après
 > `--`, un mot qui n'est pas écrit en entier, et toute racine POSIX (où `//etc` est `/etc`)
 > gardent la règle des chemins.
+>
+> ⚠ **Ce que #1406 a corrigé le 2026-10-11, sur les sessions S6 du banc (24-27/09).** #1348 avait
+> ouvert l'établi à la portée, donc au shell, et réécrit les deux consignes pour y envoyer l'agent.
+> La frontière d'écriture de #839 n'avait pas bougé. L'agent obéissait (`T=$(mktemp -d)`), puis
+> écrivait dans ce dossier avec l'outil d'écriture, qui refusait : « sort de la racine du projet »,
+> dix fois, sur des projets non versionnés. Les deux gardes appliquent désormais **un seul
+> prédicat**, `maestro.portee.etabli_de` : un nom `tmp.XXXXXXXXXX` directement sous un dossier
+> temporaire. C'est la seule nuance au « jamais au-dessus ni à côté » d'EF-38. La frontière y
+> ajoute ce que le disque dit : le chemin résolu doit mener au même établi, au même chemin dessous,
+> donc un lien reste refusé. Le prédicat se resserre aussi : un dossier de `mktemp` qui **contient
+> la racine** n'est pas un établi. Il était là avant la tâche, et la portée laissait effacer, avec
+> lui, le projet entier. Ni le projet voisin, ni l'espace d'une autre tâche (`maestro-<agent>-…`)
+> ne s'ouvrent : leur nom n'est pas celui de `mktemp`.
 
 **Porte 3 — un jugement contextuel dont on accepte le régime.** Un acte dont la légitimité dépend du
 **plan**, que la politique ne connaît pas (« ce `rm` est-il dans le périmètre de la tâche T3 ? »).

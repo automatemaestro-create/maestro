@@ -127,7 +127,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from maestro.portee import PorteeProjet
+from maestro.portee import PorteeProjet, etabli_de
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import RacineRefusee, canonique, chemin_dans_racine
@@ -417,7 +417,10 @@ class FrontiereEcriture:
        le vérifie **sous** la racine : un `..`, un chemin absolu d'ailleurs ou un
        lien pointant dehors sortent par là. Une **lecture** hors racine n'est pas
        refusée : le périmètre borne ce qu'on écrit chez l'utilisateur, pas ce
-       qu'un agent peut lire sur le poste — c'était déjà vrai de la copie ;
+       qu'un agent peut lire sur le poste — c'était déjà vrai de la copie. Seule
+       exception à l'écriture : l'**établi**, le dossier que l'agent crée par
+       `mktemp -d`, reconnu par le prédicat de la portée et vérifié sans lien
+       (#1406, `_refus_hors_racine`) ;
     2. **par un lien symbolique** — le chemin résolu diffère du chemin demandé
        (à la casse près : Windows en change). Un lien **vers l'intérieur** de la
        racine passerait le premier contrôle et ferait écrire ailleurs que là où
@@ -602,11 +605,7 @@ class FrontiereEcriture:
         except RacineRefusee as refus:
             if not ecriture:
                 return None
-            return (
-                f"{geste} refusée : {brut} sort de la racine du projet ({self.racine}) — "
-                f"{refus.motif}. Un projet non versionné se remplit dans sa racine, "
-                "jamais au-dessus ni à côté (EF-38)."
-            )
+            return self._refus_hors_racine(brut, geste, candidat, refus.motif)
         if not _meme_chemin(cible, candidat):
             return (
                 f"{geste} refusée : {brut} passe par un lien symbolique (→ {cible}). "
@@ -621,6 +620,44 @@ class FrontiereEcriture:
                 "déclarés). Ces chemins ne sont ni lus ni écrits par un agent."
             )
         return None
+
+    def _refus_hors_racine(self, brut: str, geste: str, candidat: Path, motif: str) -> str | None:
+        """Le motif qui interdit d'écrire `brut` hors de la racine — `None` dans l'établi (#1406).
+
+        L'établi est le dossier que l'agent crée par `mktemp -d`, où son cadre et
+        sa consigne d'espace l'envoient ranger ce que personne n'aura à relire. La
+        portée le lui ouvrait au shell depuis #1348 ; l'outil d'écriture restait
+        refusé, si bien que l'agent qui obéissait butait. Les deux appliquent
+        désormais **le même prédicat** (`maestro.portee.etabli_de`), et c'est la
+        seule nuance au « jamais au-dessus ni à côté » d'EF-38.
+
+        Le nom se lit sur le texte ; le disque, lui, se vérifie : le chemin
+        **résolu** doit mener au même établi, au même chemin dessous. Un lien sous
+        l'établi, ou un nom de `mktemp` posé en lien sur autre chose, change l'un
+        ou l'autre — refusé, comme tout lien dans la racine. Ce qui est au-dessus
+        du temporaire n'est pas comparé : un nom court Windows ou le `/tmp` d'un
+        système qui le relie ailleurs ne font pas de l'établi un autre dossier.
+        """
+        demande = etabli_de(str(candidat), self.racine)
+        if demande is None:
+            return (
+                f"{geste} refusée : {brut} sort de la racine du projet ({self.racine}) — "
+                f"{motif}. Un projet non versionné se remplit dans sa racine, jamais "
+                "au-dessus ni à côté (EF-38) ; ce que personne n'aura à relire va dans "
+                "un dossier que tu crées par `mktemp -d`."
+            )
+        try:
+            reel: Path | None = candidat.resolve()
+        except (OSError, RuntimeError):  # lien en boucle : rien de sûr à y écrire
+            reel = None
+        atteint = None if reel is None else etabli_de(str(reel), self.racine)
+        if atteint is not None and _meme_etabli(demande, atteint):
+            return None
+        return (
+            f"{geste} refusée : {brut} passe par un lien symbolique (→ {reel}). Aucun "
+            "lien n'est suivi, pas plus dans un dossier créé par `mktemp` que dans la "
+            "racine — écris à un chemin qui n'en traverse pas."
+        )
 
     def _candidat(self, brut: str) -> Path:
         """Le chemin **lexical** demandé : joint à la racine s'il est relatif, `..` repliés.
@@ -712,6 +749,11 @@ def portee_de(workspace: Path | str, projet: Projet | None) -> PorteeProjet:
 def _meme_chemin(un: Path, autre: Path) -> bool:
     """`un` et `autre` désignent-ils le même chemin, à la casse près (comparaison de l'OS) ?"""
     return os.path.normcase(str(un)) == os.path.normcase(str(autre))
+
+
+def _meme_etabli(un: tuple[str, str], autre: tuple[str, str]) -> bool:
+    """Deux établis (`etabli_de`) : même dossier, même chemin dessous, à la casse près ?"""
+    return all(os.path.normcase(a) == os.path.normcase(b) for a, b in zip(un, autre, strict=True))
 
 
 def _sous(chemin: Path, parent: Path) -> bool:

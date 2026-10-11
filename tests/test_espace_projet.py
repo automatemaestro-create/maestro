@@ -609,6 +609,108 @@ def test_la_frontiere_ne_suit_aucun_lien_symbolique(tmp_path: Path) -> None:
     assert motif is not None and "lien symbolique" in motif
 
 
+#: Le nom que `mktemp -d` avait rendu à l'agent dans le refus relevé par #1406
+#: (sessions S6 du banc, 24-27/09) : `…\Temp\tmp.Vwp2egGgSK\petit.html`.
+NOM_MKTEMP = "tmp.Vwp2egGgSK"
+
+
+def _temporaire(tmp_path: Path) -> Path:
+    """Le temporaire du poste, **à côté** du projet — nommé `Temp`, comme sous Windows."""
+    temporaire = tmp_path / "Temp"
+    temporaire.mkdir(exist_ok=True)
+    return temporaire
+
+
+def test_la_frontiere_laisse_ecrire_dans_le_dossier_cree_par_mktemp(tmp_path: Path) -> None:
+    """#1406 : le cadre envoie l'agent ranger ses brouillons dans un dossier qu'il
+    crée par `mktemp -d` ; l'agent obéit, puis y écrit avec l'outil d'écriture,
+    qui refusait — « sort de la racine du projet », dix fois sur les passages S6.
+    Ce dossier est à lui pour l'écriture aussi, qu'on y écrive un fichier neuf ou
+    sous un sous-dossier qui n'existe pas encore."""
+    _, frontiere = _frontiere(tmp_path)
+    etabli = _temporaire(tmp_path) / NOM_MKTEMP
+    etabli.mkdir()
+
+    for chemin in (etabli / "petit.html", etabli / "harnais" / "verif.mjs"):
+        for outil in ("Write", "Edit"):
+            assert frontiere.refus(outil, {"file_path": str(chemin)}) is None, (outil, chemin)
+
+
+@pytest.mark.parametrize(
+    ("relatif", "a_l_agent"),
+    [
+        (f"Temp/{NOM_MKTEMP}/petit.html", True),
+        (f"Temp/{NOM_MKTEMP}/harnais/verif.mjs", True),
+        ("ailleurs/note.txt", False),  # pas un nom de `mktemp`
+        ("Temp/tmp.court/note.txt", False),  # pas le nom de `mktemp`
+        ("Temp/maestro-dev-carnet-v0iwvq4r/note.txt", False),  # l'espace d'une autre tâche
+        (f"Temp/{NOM_MKTEMP}/../note.txt", False),  # remonter hors de son dossier
+        (f"projets/voisin/{NOM_MKTEMP}/note.txt", False),  # pas sous un temporaire
+        ("projets/voisin/note.txt", False),  # le projet voisin
+    ],
+)
+def test_la_portee_et_la_frontiere_appliquent_le_meme_predicat(
+    tmp_path: Path, relatif: str, a_l_agent: bool
+) -> None:
+    """#1406 : la portée (qui juge le shell) ouvrait l'établi, la frontière (qui
+    juge l'outil d'écriture) non — #1348 n'avait touché que la première. Les deux
+    rendent désormais le même verdict sur le même chemin, ce qu'on écrit dans
+    l'établi comme ce qui reste dehors."""
+    projet, frontiere = _frontiere(tmp_path)
+    portee = portee_de(Path(projet.racine), projet)
+    (_temporaire(tmp_path) / NOM_MKTEMP).mkdir()
+    chemin = tmp_path / relatif
+
+    ecriture = frontiere.refus("Write", {"file_path": str(chemin)})
+    shell = portee.commande_hors_portee(f'echo essai > "{chemin.as_posix()}"')
+
+    assert (ecriture is None) is a_l_agent, ecriture
+    assert (shell == "") is a_l_agent, shell
+
+
+def test_l_etabli_ne_s_ouvre_par_aucun_lien_symbolique(tmp_path: Path) -> None:
+    """Un lien reste refusé, où qu'il soit : sous l'établi (un raccourci vers le
+    projet voisin), ou l'établi lui-même (un nom de `mktemp` posé sur le voisin).
+    Le nom se lit sur le texte ; ce que le disque met derrière se vérifie."""
+    _, frontiere = _frontiere(tmp_path)
+    voisin = tmp_path / "projets" / "voisin"
+    voisin.mkdir(parents=True)
+    temporaire = _temporaire(tmp_path)
+    etabli = temporaire / NOM_MKTEMP
+    etabli.mkdir()
+    try:
+        (etabli / "raccourci").symlink_to(voisin, target_is_directory=True)
+        (temporaire / "tmp.Faux0Faux0").symlink_to(voisin, target_is_directory=True)
+    except (OSError, NotImplementedError):  # pragma: no cover - dépend des droits Windows
+        pytest.skip("liens symboliques indisponibles sur ce poste")
+
+    for chemin in (etabli / "raccourci" / "note.txt", temporaire / "tmp.Faux0Faux0" / "note.txt"):
+        motif = frontiere.refus("Write", {"file_path": str(chemin)})
+        assert motif is not None and "lien symbolique" in motif, chemin
+    assert not (voisin / "note.txt").exists()
+
+
+def test_un_dossier_de_mktemp_qui_contient_la_racine_n_est_pas_un_etabli(
+    tmp_path: Path,
+) -> None:
+    """Un projet posé dans un dossier `mktemp` : ce dossier était là avant la
+    tâche, et ce qu'il porte à côté de la racine — un projet voisin — n'est pas à
+    l'agent. Ni à l'écriture, ni au shell, qui effacerait sinon le projet entier
+    avec son conteneur (`rm -rf /tmp/tmp.X`)."""
+    conteneur = _temporaire(tmp_path) / NOM_MKTEMP
+    racine = conteneur / "depensio"
+    racine.mkdir(parents=True)
+    _arborescence(racine)
+    projet = _projet(racine)
+    frontiere = FrontiereEcriture.pour(projet.racine, projet.perimetre)
+    portee = portee_de(racine, projet)
+
+    motif = frontiere.refus("Write", {"file_path": str(conteneur / "voisin" / "note.txt")})
+    assert motif is not None and "sort de la racine" in motif
+    assert "sort du" in portee.commande_hors_portee(f'rm -rf "{conteneur.as_posix()}"')
+    assert "sort du" in portee.commande_hors_portee(f'rm -rf "{conteneur.as_posix()}/voisin"')
+
+
 def test_la_frontiere_n_est_armee_que_sur_la_racine(tmp_path: Path) -> None:
     projet = _projet_copie(tmp_path)
     racine = Path(projet.racine)
@@ -643,6 +745,11 @@ def test_le_hook_du_fournisseur_refuse_sur_la_frontiere_meme_sans_politique(
     # Une écriture ordinaire passe, et sans politique il n'y a rien d'autre à juger.
     assert _joue("Write", "src/ok.py") == {}
     assert _joue("Bash", "") == {}
+    # Le dossier que l'agent a créé par `mktemp -d` aussi (#1406), et rien n'est tracé.
+    etabli = _temporaire(tmp_path) / NOM_MKTEMP
+    etabli.mkdir()
+    assert _joue("Write", str(etabli / "petit.html")) == {}
+    assert len(refus) == 1
 
 
 # --------------------------------------------------------------------------- #
