@@ -112,6 +112,7 @@ from maestro.providers.base import (
 from maestro.sandbox.confinement import ReleveConfinement, SessionConfinee
 from maestro.sandbox.container import IsolationConfig
 from maestro.sandbox.en_place import FrontiereEcriture, frontiere_de, portee_de
+from maestro.sandbox.ramassage import dossier_neutre
 
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
@@ -202,7 +203,10 @@ def sans_reglages_du_poste() -> list[SettingSource]:
     ⚠ Elle **ne remplace pas** `strict_mcp_config`, et l'inverse non plus :
     l'une ferme les serveurs MCP ambiants, l'autre les réglages et les fichiers
     d'instructions. Retirer l'une parce que l'autre est là rouvrirait une moitié
-    de la porte.
+    de la porte. Le **troisième verrou** est le `cwd`, passé par toute session
+    (#1397) : ce que le répertoire courant apporte d'autre — la mémoire d'un
+    dossier, mesurée sur p5 — n'est fermé par aucun réglage, et les chemins texte
+    tournent donc dans `dossier_neutre()`, jamais dans celui de l'API.
 
     Une **fonction** et non une constante partagée : le SDK garde la liste qu'on
     lui donne, et une liste de module se ferait modifier une fois pour toutes
@@ -421,12 +425,19 @@ class ClaudeProvider(ModelProvider):
         `EFFORTS` ferait échouer le CLI sur un réglage qui n'est qu'un conseil. Le
         tamis n'est pas une seconde règle — c'est la même, appelée là où le SDK
         est monté, et c'est aussi elle qui rend le type fermé qu'il exige.
+
+        `cwd=dossier_neutre()` (#1397) : un appel texte ne travaille sur aucun
+        projet, et le CLI ne doit donc hériter d'aucun dossier — sans lui, il
+        prenait celui de l'API et en joignait la mémoire au jugement d'un projet.
+        Les trois chemins texte le passent ; `generate_stream` et
+        `generate_with_images` en tiennent la même raison.
         """
         stderr = CollecteurStderr()
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
             env=self._auth_env(),
+            cwd=dossier_neutre(),
             tools=[],
             stderr=stderr,
             effort=self._effort_sdk(model, effort),
@@ -466,6 +477,7 @@ class ClaudeProvider(ModelProvider):
             model=model,
             system_prompt=system_prompt,
             env=self._auth_env(),
+            cwd=dossier_neutre(),
             tools=[],
             stderr=stderr,
             include_partial_messages=True,
@@ -501,6 +513,7 @@ class ClaudeProvider(ModelProvider):
             model=model,
             system_prompt=system_prompt,
             env=self._auth_env(),
+            cwd=dossier_neutre(),
             tools=[],
             stderr=stderr,
             setting_sources=sans_reglages_du_poste(),
