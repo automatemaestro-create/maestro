@@ -27,7 +27,9 @@ Trois conséquences qui sont des décisions, pas des oublis :
    pas, et c'est très exactement le prix que
    [docs/28 §7](../docs/28-decision-frontiere-execution-run.md) range dans « ce
    que nous ne payons pas ». La version est donc **dite inconnue** plutôt que
-   devinée (critère 4).
+   devinée (critère 4). L'interdit vaut pour **cette** sonde : sa seule levée,
+   bornée aux programmes de l'outillage d'un projet et à leur `--version`, une
+   fois par run, vit dans `maestro.machine` (#1403, docs/28 §7).
 2. **Rien n'est détecté par le nom d'un processus** — la leçon de #213 : un
    `claude.exe` repéré au nom peut être la session interactive de l'utilisateur.
    On résout un exécutable, on ne regarde pas qui tourne.

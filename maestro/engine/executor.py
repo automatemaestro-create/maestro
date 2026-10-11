@@ -114,6 +114,7 @@ from maestro.engine.verification import (
 from maestro.engine.verification import Verdict as VerdictVerification
 from maestro.equipe.manque import RoleManquant, role_manquant
 from maestro.equipe.proposition import OUTIL_EXECUTION
+from maestro.machine import Machine, constater, programmes_de_l_outillage
 from maestro.messaging.mailbox import (
     MESSAGE_NOTIFICATION,
     AgentMessage,
@@ -985,6 +986,16 @@ class LocalExecutor(TaskExecutor):
         # à côté de sa description — son vérificateur aussi. Jamais purgé : un
         # brief tient en quelques lignes.
         self._briefs: dict[str, Brief] = {}
+        # Ce que Maestro a constaté de la machine (#1403), **une fois par run** et par
+        # projet — les programmes sondés sont ceux de son outillage : la première
+        # tâche le fait constater, les suivantes le relisent. Indexé par `run_id`
+        # pour la raison des accords de fusion, et jamais purgé : quelques lignes par
+        # run. Le verrou de chaque clé suit la boucle, comme ceux des projets : deux
+        # tâches parallèles en tête de run attendent le même constat au lieu de le
+        # faire deux fois.
+        self._machines: dict[tuple[str, str], Machine] = {}
+        self._verrous_machine: dict[tuple[str, str], asyncio.Lock] = {}
+        self._boucle_machine: asyncio.AbstractEventLoop | None = None
         # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
         # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
         # par la couche SDK sur les exécutions outillées de l'agent. None :
@@ -2222,6 +2233,41 @@ class LocalExecutor(TaskExecutor):
             # `asyncio.Event` se lie à sa boucle comme un `Lock`.
             self._versionnements = {}
         return self._verrous_projet.setdefault(projet_id, asyncio.Lock())
+
+    async def _machine_du_run(
+        self, task: Task, journal: RunJournal | None, projet: Projet | None
+    ) -> Machine | None:
+        """Ce que Maestro constate de la machine pour le run de `task` — une fois (#1403).
+
+        La première tâche du run (et de son projet) fait constater, dans un fil à part
+        — le constat lance des bash, il ne doit pas tenir la boucle —, et les suivantes
+        relisent le constat retenu. Sans journal il n'y a pas de run à qui le retenir :
+        la tâche fait le sien.
+
+        None quand le fournisseur ne fait pas travailler l'agent sur ce poste
+        (`ModelProvider.commandes_sur_le_poste`, le conteneur du mode isolé) : sonder
+        ici dirait la machine d'à côté. Le runtime retient la même règle pour le
+        fournisseur qui l'exécute ; elle n'évite ici que des sondes pour rien.
+        """
+        if not self._provider.commandes_sur_le_poste:
+            return None
+        noms = programmes_de_l_outillage(projet)
+        if journal is None:
+            return await asyncio.to_thread(constater, noms)
+        cle = (journal.run_id, task.projet_id or "")
+        connue = self._machines.get(cle)
+        if connue is not None:
+            return connue
+        boucle = asyncio.get_running_loop()
+        if self._boucle_machine is not boucle:
+            self._boucle_machine = boucle
+            self._verrous_machine = {}
+        async with self._verrous_machine.setdefault(cle, asyncio.Lock()):
+            connue = self._machines.get(cle)
+            if connue is None:
+                connue = await asyncio.to_thread(constater, noms)
+                self._machines[cle] = connue
+        return connue
 
     def _consigne_fusion(
         self,
@@ -3883,6 +3929,10 @@ class LocalExecutor(TaskExecutor):
         deliberation = deliberation if deliberation is not None else Deliberation()
         runtime = self._runtime_de(agent)
         if runtime is not None:
+            projet = self._projet(task)
+            # Ce que Maestro sait de la machine (#1403), constaté une fois pour le run
+            # — avant d'ouvrir l'espace, comme l'outillage qu'il lit.
+            machine = await self._machine_du_run(task, journal, projet)
             try:
                 outcome = await runtime.execute(
                     description,
@@ -3982,13 +4032,14 @@ class LocalExecutor(TaskExecutor):
                             task, agent, releve, journal
                         )
                     ),
-                    projet=self._projet(task),
+                    projet=projet,
                     tache_id=task.id,
                     # Une tâche de tête d'un redécoupage (#1396) : sa branche part
                     # de celle de la tâche qu'elle remplace, pas de la base.
                     reprend=task.reprend,
                     effort=agent.effort,
                     on_livraison=recette,
+                    machine=machine,
                 )
                 return outcome.resume, outcome.fichiers
             except UnsupportedCapability:
