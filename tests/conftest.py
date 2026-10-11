@@ -250,6 +250,10 @@ CLE_JETON_FICHIER = "MAESTRO_API_JETON_FICHIER"
 #: compter que les vrais passages.
 CLE_HISTORIQUE_BANC = "MAESTRO_SCENARIOS_HISTORIQUE"
 
+#: Le dossier de la carte d'un passage du banc (#1463), que `start.sh` pose sur la
+#: stack d'un passage. Retiré par `_neutralise_carte_du_banc`.
+CLE_CARTE_DU_BANC = "MAESTRO_CARTE_DOSSIER"
+
 #: Variables posées d'office par les intégrations continues. `GITLAB_CI` reste de la liste bien
 #: après le retrait de la CI GitLab (#344) : ce qui est testé est « quelqu'un lira-t-il ce compte
 #: rendu ? », et un jeton de reconnaissance de plus ne coûte rien là où en manquer un coûte 285
@@ -485,6 +489,17 @@ def _neutralise_acces_api() -> None:
         os.environ[cle] = ""
 
 
+def _neutralise_carte_du_banc() -> None:
+    """Retire la carte du banc qu'une stack de passage aurait posée (#1463).
+
+    `start.sh --etat-banc --rejouer` l'exporte dans tout ce que la stack lance : une
+    suite jouée de là ferait borner chaque `banc.main` — une attente par scénario —
+    et écrire ses relevés dans la carte d'un vrai passage. Elle s'éprouve sur
+    `tmp_path`, injectée (`tests/test_carte_banc.py`).
+    """
+    os.environ.pop(CLE_CARTE_DU_BANC, None)
+
+
 def _fige_espace() -> None:
     """Fige l'espace de données à `commun` (#1164) — voir l'en-tête du module.
 
@@ -503,6 +518,7 @@ _neutralise_forge()
 _neutralise_reprise_agents()
 _neutralise_ramassage()
 _neutralise_acces_api()
+_neutralise_carte_du_banc()
 _fige_espace()
 
 

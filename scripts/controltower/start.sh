@@ -1047,6 +1047,32 @@ if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
   fi
 fi
 
+# La CARTE du code exécuté (#1463), seulement pour un passage : chaque processus Python de la
+# stack — l'API, l'hôte détaché et ses runs, l'API que S12 rallume, le banc lui-même — charge la
+# sonde de maestro/scenarios/sonde/ (un `sitecustomize` posé sur PYTHONPATH) et dit ce qu'il
+# exécute pendant chaque scénario ; le banc assemble `couverture.json` à côté de son rapport. Le
+# produit n'en sait rien : aucune branche « mode banc ». Posée ICI, avant l'API, pour que toute
+# la stack en hérite. Les noms et les chemins viennent de Python (`--preparer`), dans la forme
+# de l'OS : un processus lancé hors de la copie doit les lire tels quels. (La condition est
+# écrite dans l'autre ordre que celle du passage, plus bas : un test repère ce bloc-là par
+# sa première ligne.)
+if [ "$REJOUER" = 1 ] && [ "$DONNEES" = "banc" ]; then
+  if [ "${MAESTRO_BANC_CARTE:-1}" = "0" ]; then
+    echo "[banc] carte du code exécuté éteinte (MAESTRO_BANC_CARTE=0) : le passage n'écrira pas couverture.json"
+  elif carte_env="$("$PYTHON" -m maestro.scenarios.carte --preparer)"; then
+    while IFS= read -r ligne_carte; do
+      ligne_carte="${ligne_carte%$'\r'}"
+      if [ -n "$ligne_carte" ]; then
+        # shellcheck disable=SC2163 # `NOM=valeur` : les noms vivent dans Python, jamais recopiés ici
+        export "$ligne_carte"
+      fi
+    done <<<"$carte_env"
+    echo "[banc] carte du code exécuté : la stack porte la sonde, le passage écrira couverture.json (MAESTRO_BANC_CARTE=0 l'éteint)"
+  else
+    echo "[banc] ⚠ carte du code exécuté non préparée : le passage se joue sans elle" >&2
+  fi
+fi
+
 if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
   # La stack neuve est servie sur le jeu de données du banc, vidé juste au-dessus : l'API ne
   # connaît qu'un jeu à part, et c'est celui-là.

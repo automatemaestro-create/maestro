@@ -482,6 +482,10 @@ _HORS_INTERFACE = {
     # ils remontent la sortie au terminal. Un refus (« rien à rouvrir », « quelque chose
     # vit sur le banc ») n'a de suite que s'il nomme le geste qui débloque.
     "maestro/scenarios/etat.py": "l'état du banc, joué par le lanceur en terminal",
+    # La carte du code exécuté (#1463) : `--preparer` est lu par `start.sh`, et ses lignes
+    # vont à la sortie du banc. « Stack non mesurée » n'a de suite que si elle nomme le
+    # lanceur qui pose la sonde.
+    "maestro/scenarios/carte.py": "la carte du banc, lue au terminal et par le lanceur",
 }
 
 #: Le champ du registre MCP qui porte, pour une poignée d'entrées, un pointeur relatif

@@ -18,7 +18,10 @@ identifiant, le **sha** de `HEAD` de la copie, sa branche et l'iid qu'elle porte
 (`<type>/<iid>-<slug>`, la règle de `gl_branch_iid`), la copie elle-même, si son
 arbre portait des modifications non commitées, puis par scénario son verdict, son
 coût, sa durée, son rejeu et son empêchement. La ligne survit au worktree : elle
-n'est pas dans la copie.
+n'est pas dans la copie. La **carte** du passage (#1463, `maestro.scenarios.carte`),
+quand il en a une, la suit : recopiée sous `scenarios.cartes/<passage>.json` à côté
+du fichier, et nommée par le champ `carte` de la ligne (`carte_du_passage`) — trop
+grosse pour tenir dans une ligne que la série relit à chaque lecture.
 
 Trois choix, chacun avec sa raison :
 
@@ -60,6 +63,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -193,13 +197,14 @@ def _lire_git(racine: Path, *arguments: str, vide_admis: bool = False) -> str | 
 
 
 def ligne_du_passage(
-    rapport: Rapport, copie: Copie, *, source: str = SOURCE_PASSAGE
+    rapport: Rapport, copie: Copie, *, source: str = SOURCE_PASSAGE, carte: str | None = None
 ) -> dict[str, Any]:
     """La ligne d'historique d'un passage — sa forme est `VERSION`."""
     return _ligne(
         passage=rapport.horodatage,
         source=source,
         copie=copie,
+        carte=carte,
         scenarios=[
             {
                 "id": r.identifiant,
@@ -216,7 +221,12 @@ def ligne_du_passage(
 
 
 def _ligne(
-    *, passage: str, source: str, copie: Copie, scenarios: list[dict[str, Any]]
+    *,
+    passage: str,
+    source: str,
+    copie: Copie,
+    scenarios: list[dict[str, Any]],
+    carte: str | None = None,
 ) -> dict[str, Any]:
     return {
         "version": VERSION,
@@ -227,15 +237,47 @@ def _ligne(
         "iid": copie.iid,
         "copie": copie.racine,
         "modifiee": copie.modifiee,
+        "carte": carte,
         "scenarios": scenarios,
     }
 
 
-def consigner(rapport: Rapport, copie: Copie, *, chemin: Path | None = None) -> Path:
-    """Ajoute la ligne du passage à l'historique et rend le fichier. Lève `OSError`."""
+def consigner(
+    rapport: Rapport, copie: Copie, *, chemin: Path | None = None, carte: Path | None = None
+) -> Path:
+    """Ajoute la ligne du passage à l'historique et rend le fichier. Lève `OSError`.
+
+    `carte` (le `couverture.json` du passage, #1463) est recopiée à côté de
+    l'historique, et la ligne la nomme : le rapport part avec le worktree, la carte
+    reste avec sa ligne (`carte_du_passage`).
+    """
     fichier = chemin or chemin_historique()
-    _ajouter(fichier, [ligne_du_passage(rapport, copie)])
+    gardee = None
+    if carte is not None:
+        cible = _dossier_des_cartes(fichier) / f"{rapport.horodatage}{carte.suffix}"
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(carte, cible)
+        gardee = cible.relative_to(fichier.parent).as_posix()
+    _ajouter(fichier, [ligne_du_passage(rapport, copie, carte=gardee)])
     return fichier
+
+
+def _dossier_des_cartes(fichier: Path) -> Path:
+    """Les cartes gardées d'un historique : `<historique>.cartes/`, à côté de lui."""
+    return fichier.parent / f"{fichier.stem}.cartes"
+
+
+def carte_du_passage(ligne: Mapping[str, Any], chemin: Path | None = None) -> Path | None:
+    """La carte gardée avec une ligne de l'historique `chemin`, ou `None` s'il n'y en a pas.
+
+    `None` aussi quand le fichier a disparu : une ligne dit ce qui a été gardé, pas ce
+    qui reste. Se relit par `maestro.scenarios.carte.charger`.
+    """
+    nom = ligne.get("carte")
+    if not isinstance(nom, str) or not nom:
+        return None
+    cible = (chemin or chemin_historique()).parent / nom
+    return cible if cible.is_file() else None
 
 
 def _ajouter(fichier: Path, lignes: Iterable[dict[str, Any]]) -> None:

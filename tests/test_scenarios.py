@@ -42,6 +42,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -83,7 +84,8 @@ from maestro.outillage.detection import CHEMIN_MANIFESTE
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, USAGE_DEMARRER, VERIFIEE
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 from maestro.sandbox.verification import Execution
-from maestro.scenarios import banc, etat, redemarrage
+from maestro.scenarios import banc, etat, historique, redemarrage
+from maestro.scenarios import carte as carte_module
 from maestro.scenarios.api import (
     DELAI_REQUETE_S,
     DELAI_RUN_S,
@@ -165,6 +167,7 @@ from maestro.scenarios.scenarios import (
     jouer_commande,
     par_identifiant,
 )
+from maestro.scenarios.sonde import sitecustomize as sonde
 
 # --- La fausse API ------------------------------------------------------------
 
@@ -5233,6 +5236,172 @@ def test_un_historique_qui_ne_s_ecrit_pas_se_dit_sans_changer_le_verdict(tmp_pat
     assert code == banc.CODE_VERT
     assert "Historique du banc NON écrit" in erreur.texte
     assert len(list((tmp_path / "rapports").iterdir())) == 1
+
+
+# --- ③ter La carte du code exécuté (#1463) -----------------------------------
+#
+# La stack est doublée par de **vrais processus** sous la sonde, comme `start.sh` les
+# pose : un processus qui vit tout le passage (l'API) et un qui naît pendant S1 (le
+# run que l'API détache). Le banc les borne pour de vrai — ses attentes comprises :
+# c'est la borne vue par un autre processus qu'on éprouve.
+
+_PROCESSUS_DE_L_API = """
+import os, sys, time
+from maestro import espace
+espace.racine_de_la_copie()
+print("pret", flush=True)
+while not os.path.exists(sys.argv[1]):
+    espace.racine_de_la_copie()
+    time.sleep(0.02)
+"""
+
+_PROCESSUS_D_UN_RUN = """
+import pathlib, sys
+from maestro import fichiers
+pathlib.Path("pyproject.toml").read_bytes()
+fichiers.retirer_arbre(pathlib.Path(sys.argv[1]) / "absent")
+"""
+
+
+def _sous_la_sonde(dossier: Path) -> dict[str, str]:
+    """L'environnement que `start.sh` donne à la stack d'un passage (`carte --preparer`)."""
+    env = {cle: valeur for cle, valeur in os.environ.items() if cle != "PYTHONPATH"}
+    env.update(
+        {
+            sonde.VARIABLE_DOSSIER: str(dossier),
+            "PYTHONPATH": str(carte_module.DOSSIER_SONDE),
+            "PYTHONIOENCODING": "utf-8",
+        }
+    )
+    return env
+
+
+def test_un_passage_ecrit_la_carte_de_chaque_scenario_sur_tous_les_processus_de_la_stack(
+    tmp_path: Path,
+) -> None:
+    """Le critère 1 de #1463 : pour chaque scénario joué, les fonctions exécutées par
+    **tous** les processus de la stack et les fichiers de données lus, à côté du
+    rapport, et gardés avec la ligne de l'historique. Le démarrage est à part ; ce qui
+    a tourné pendant S1 n'est pas sous S3 ; ce que l'API refait sous chaque scénario y
+    est, chaque fois."""
+    dossier = tmp_path / "carte"
+    (dossier / sonde.DOSSIER_TRACES).mkdir(parents=True)
+    env = _sous_la_sonde(dossier)
+    stop = tmp_path / "stop"
+    api = subprocess.Popen(  # noqa: S603 - l'interpréteur de la suite, code écrit ici
+        [sys.executable, "-c", _PROCESSUS_DE_L_API, str(stop)],
+        cwd=racine_de_la_copie(),
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    runs: list[subprocess.CompletedProcess[bytes]] = []
+
+    def moteur(run: RunFactice, racine: Path) -> None:
+        if not runs:  # le premier run seulement : celui de S1
+            runs.append(
+                subprocess.run(  # noqa: S603 - l'interpréteur de la suite, code écrit ici
+                    [sys.executable, "-c", _PROCESSUS_D_UN_RUN, str(tmp_path)],
+                    cwd=racine_de_la_copie(),
+                    env=env,
+                    timeout=120,
+                    check=True,
+                )
+            )
+        _moteur_qui_vide(run, racine)
+
+    sortie = _Muet()
+    fichier = tmp_path / "historique.jsonl"
+    try:
+        assert api.stdout is not None and api.stdout.readline().strip() == "pret"
+        code = banc.main(
+            ["--scenario", "S1,S3"],
+            client=ClientAPI(FausseAPI(moteur=moteur)),
+            juge=_juge_oui(),
+            atelier=Atelier(tmp_path / "atelier"),
+            racine_rapports=tmp_path / "rapports",
+            horloge=lambda: 0.0,
+            dormir=lambda _s: None,
+            historique=fichier,
+            carte=carte_module.Carte(dossier),
+            sortie=sortie,
+            erreur=_Muet(),
+        )
+    finally:
+        stop.touch()
+        try:
+            api.wait(timeout=60)
+        finally:
+            api.kill()
+
+    assert code in (banc.CODE_VERT, banc.CODE_ROUGE), "un rouge est une mesure"
+    (rapport,) = (tmp_path / "rapports").iterdir()
+    lue = carte_module.charger(rapport / carte_module.FICHIER_CARTE)
+    assert list(lue.scenarios) == ["S1", "S3"], "chaque scénario joué, dans l'ordre"
+    assert "racine_de_la_copie" in lue.demarrage.fonctions["maestro/espace.py"]
+    for identifiant in ("S1", "S3"):
+        assert "racine_de_la_copie" in lue.scenarios[identifiant].fonctions["maestro/espace.py"]
+    s1 = lue.scenarios["S1"]
+    assert s1.fonctions["maestro/fichiers.py"] == ("<module>", "retirer_arbre"), (
+        "le run né pendant S1 : son import, puis sa fonction"
+    )
+    assert "pyproject.toml" in s1.fichiers
+    assert len(s1.processus) == 2, "l'API et le run"
+    assert "maestro/fichiers.py" not in lue.scenarios["S3"].fonctions
+    assert lue.stack_mesuree
+    assert "Carte du code exécuté" in sortie.texte
+    (ligne,) = _lignes(fichier)
+    gardee = historique.carte_du_passage(ligne, fichier)
+    assert gardee is not None, "la carte survit au rapport, avec sa ligne"
+    assert carte_module.charger(gardee) == lue
+
+
+def test_un_passage_sans_carte_posee_n_en_ecrit_pas(tmp_path: Path) -> None:
+    """Hors d'un passage de `start.sh --etat-banc --rejouer`, rien ne change : pas de
+    borne, pas de carte, et la ligne le dit (`carte` vide)."""
+    fichier = tmp_path / "historique.jsonl"
+
+    assert _passage_s1(tmp_path, historique=fichier) == banc.CODE_VERT
+
+    (rapport,) = (tmp_path / "rapports").iterdir()
+    assert not (rapport / carte_module.FICHIER_CARTE).exists()
+    (ligne,) = _lignes(fichier)
+    assert ligne["carte"] is None
+    assert historique.carte_du_passage(ligne, fichier) is None
+
+
+class _CarteEnPanne(carte_module.Carte):
+    def ecrire(self, *_args: Any, **_kwargs: Any) -> tuple[Path, carte_module.CarteDuPassage]:
+        raise OSError("disque plein")
+
+
+def test_une_carte_qui_ne_s_ecrit_pas_se_dit_sans_changer_le_verdict(tmp_path: Path) -> None:
+    """Comme l'historique : le rapport fait foi, la carte en échec se nomme."""
+    erreur = _Muet()
+    fichier = tmp_path / "historique.jsonl"
+    carte = _CarteEnPanne(tmp_path / "carte", dormir=lambda _s: None)
+
+    code = _passage_s1(tmp_path, historique=fichier, carte=carte, erreur=erreur)
+
+    assert code == banc.CODE_VERT
+    assert "Carte du code exécuté NON écrite : disque plein" in erreur.texte
+    (ligne,) = _lignes(fichier)
+    assert ligne["carte"] is None, "la ligne s'écrit quand même"
+
+
+def test_le_banc_borne_chaque_scenario_avant_de_le_jouer_puis_eteint_la_sonde(
+    tmp_path: Path,
+) -> None:
+    """Les bornes, dans l'ordre : chaque scénario avant son premier geste, puis la fin,
+    avant que la carte ne s'écrive."""
+    bornes: list[str] = []
+    carte = carte_module.Carte(tmp_path / "carte", dormir=lambda _s: None)
+    carte.borner = bornes.append  # type: ignore[method-assign]
+
+    _main(["--scenario", "S1,S3"], FausseAPI(moteur=_moteur_qui_vide), tmp_path, carte=carte)
+
+    assert bornes == ["S1", "S3", sonde.SEGMENT_FIN]
 
 
 # --- ④ La ligne de commande -------------------------------------------------

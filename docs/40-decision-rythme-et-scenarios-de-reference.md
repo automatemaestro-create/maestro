@@ -223,6 +223,39 @@ injouable ou un scénario empêché est une abstention, jamais un vert. Hors run
 `bash scripts/orchestrate/banc-main.sh` joue le même passage. Le détail est en
 [docs/10 §11.13](./10-workflow-git.md).
 
+**Chaque passage dit quel code chaque scénario a exécuté** (#1463). C'est la **carte**, écrite à
+côté du rapport (`.maestro/scenarios/<passage>/couverture.json`) et gardée avec la ligne de
+l'historique (`scenarios.cartes/<passage>.json`, champ `carte`). Elle contient, pour chaque
+scénario joué, et à part pour le **démarrage** de la stack (ce qui a tourné avant le premier
+scénario, donc sous chacun) :
+
+- les **fonctions Python exécutées**, par fichier et par nom qualifié (`Classe.methode`,
+  `<module>` pour un import). La granularité est la fonction, jamais la ligne : un diff décale les
+  lignes d'un fichier, pas les noms de ses fonctions. Le code de niveau module (une constante, un
+  gabarit de prompt en tête de fichier) s'exécute à l'import, souvent avant le scénario : il se
+  rattache à un scénario par son fichier ;
+- les **fichiers de données lus** (playbooks, `core/`, gabarits, réglages). La configuration que
+  le banc sert depuis sa copie (`.maestro/banc/`) est rendue au fichier suivi dont elle est la
+  copie ;
+- les **processus** qui y ont contribué : l'API, l'hôte détaché et ses runs, l'API que S12
+  rallume, le banc lui-même.
+
+N'y entrent que les fichiers que Git suit dans la copie. La mesure couvre tous ces processus parce
+que `start.sh --etat-banc --rejouer` pose, avant l'API, une **sonde** sur `PYTHONPATH`
+(`maestro/scenarios/sonde/`, un `sitecustomize` que Python charge dans chaque processus), et que
+tout ce que la stack lance en hérite. Le produit n'a aucune branche « mode banc ». Le banc
+**borne** chaque scénario par un fichier que chaque processus relit toutes les 0,2 s, puis il
+attend une seconde que tous l'aient vu. Sous Python 3.12 et après, la sonde passe par
+`sys.monitoring` et coûte un appel par fonction et par scénario. `_fin` l'éteint, et la stack
+laissée servie tourne sans elle. `MAESTRO_BANC_CARTE=0` joue le passage sans carte, en le
+disant. Une carte qui ne s'écrit pas se dit, sans changer le verdict. Un passage joué contre une
+stack démarrée sans la sonde le dit aussi (« stack non mesurée »). Deux limites sont assumées :
+ce qu'un processus exécute dans la période qui suit une borne peut rester rangé sous le scénario
+précédent, et ce que lit un processus non Python (le CLI de l'agent, l'UI) n'y est pas.
+`python -m maestro.scenarios.carte` résume la dernière carte de la copie. C'est elle qui
+remplacera le préfixe `GL_BANC_CHEMINS` comme définition du chemin d'un scénario (#1464) ; d'ici
+là, le préfixe reste le déclencheur.
+
 **Le banc ne garde que ses derniers passages** (#1457). Il les gardait tous — 208 dossiers le
 2026-10-09, projets complets et `node_modules` compris —, et leurs projets versionnés retenaient,
 par leurs worktrees, les espaces de tâches laissés sous la racine jetable, que le ramassage ne
