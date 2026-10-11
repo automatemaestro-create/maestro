@@ -29,7 +29,9 @@ worktrees, les espaces de tâches laissés sous la racine jetable : le ramassage
 (#992) conserve un worktree **tant que son dépôt existe**, donc à vie. Chaque
 passage ne garde donc que les `PASSAGES_GARDES` derniers (`retenir`), plus celui
 que `start.sh --etat-banc` rouvre, quel que soit son rang ; et retirer un passage
-retire d'abord les worktrees de ses tâches (`Atelier.retirer`). L'ancien atelier
+retire d'abord les worktrees de ses tâches (`Atelier.retirer`), puis les
+**déclarations** de ses projets (#1477) dans chaque dépôt du poste — le banc nu déclare
+dans la stack de la copie qui le joue, et rien ne les oubliait. L'ancien atelier
 est **repris** par la même règle tant qu'il porte des passages : ses plus récents
 comptent parmi les derniers, son état sauvé reste rouvrable, et il disparaît quand
 il ne porte plus rien — ce qui n'a pas la forme d'un passage y est nommé, jamais
@@ -49,7 +51,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +59,7 @@ from maestro.emplacements import maison, occupant, racine_ateliers, se_nommer_oc
 from maestro.fichiers import retirer_arbre
 from maestro.projets.modele import EXCLUS_DEFAUT, Perimetre
 from maestro.projets.perimetre import exclusions
+from maestro.projets.store import ProjetStore
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 from maestro.sandbox.ramassage import (
     PREFIXE_COMMUN,
@@ -379,6 +382,10 @@ class Retention:
     ancienne_passages: int = 0
     #: … et ce qu'il y reste qui n'est pas un passage.
     etrangers: tuple[str, ...] = ()
+    #: Les déclarations de projets oubliées parce que leur passage n'existe plus (#1477).
+    declarations: int = 0
+    #: Celles qui ont résisté à l'oubli, par leur fichier.
+    declarations_resistantes: tuple[str, ...] = ()
 
     def lignes(self) -> list[str]:
         """L'annonce : rien quand il n'y avait rien à faire, sinon ce qui est parti et resté."""
@@ -398,6 +405,17 @@ class Retention:
                 morceaux.append(f"{len(self.occupes)} encore en cours, gardé(s)")
             if self.echecs:
                 morceaux.append(f"{len(self.echecs)} résistant(s) : {', '.join(self.echecs)}")
+            lignes.append("Ateliers du banc : " + " · ".join(morceaux) + ".")
+        if self.declarations or self.declarations_resistantes:
+            morceaux = [
+                f"{self.declarations} déclaration(s) de projet oubliée(s) : leur passage "
+                "n'existe plus"
+            ]
+            if self.declarations_resistantes:
+                morceaux.append(
+                    f"{len(self.declarations_resistantes)} résistante(s) : "
+                    + ", ".join(self.declarations_resistantes)
+                )
             lignes.append("Ateliers du banc : " + " · ".join(morceaux) + ".")
         if self.ancienne is None:
             return lignes
@@ -428,6 +446,7 @@ def retenir(
     rouvert: Path | None = None,
     environnement: Mapping[str, str] | None = None,
     avant: Callable[[int], None] = lambda _nombre: None,
+    declarations: Sequence[Path] = (),
 ) -> Retention:
     """Ne garde que les derniers passages du poste — et celui qu'on rouvre (#1457).
 
@@ -443,6 +462,15 @@ def retenir(
     première rétention d'un poste qui a gardé deux cents passages prend du temps, et
     ce temps s'annonce (#418). Best-effort de bout en bout : un passage qui résiste
     se nomme et reste pour la prochaine fois.
+
+    Les **déclarations** des projets d'un passage parti partent avec lui (#1477) : dans
+    chaque dépôt de `declarations` — l'appelant les nomme, `maestro.menage.depots_de_
+    declarations` pour le banc —, celles dont la racine vit dans un passage qui n'existe
+    plus sont oubliées par `ProjetStore.supprimer`, le verbe de `DELETE /api/projets`.
+    Un passage déjà parti compte : c'est ce qui solde celles que les rétentions d'avant
+    ont laissées. Rien d'autre n'est touché — ni un passage gardé, occupé ou résistant
+    (son dossier est encore là), ni un projet hors des passages, même disparu : c'est au
+    ménage d'en juger, sur un « oui ».
     """
     env = os.environ if environnement is None else environnement
     gardes = passages_gardes(env)
@@ -450,8 +478,9 @@ def retenir(
         return Retention()
     ancienne = ancienne_racine_atelier(env)
     ancienne = ancienne if ancienne is not None and ancienne.is_dir() else None
+    racines = racines_des_passages(env)
     passages: list[tuple[tuple[str, int], Path]] = []
-    for racine in racines_des_passages(env):
+    for racine in racines:
         for chemin in _sous_dossiers(racine):
             rang = _rang_du_passage(chemin.name)
             if rang is not None:
@@ -479,6 +508,7 @@ def retenir(
         retrait = Atelier(chemin).retirer(environnement=env)
         worktrees += retrait.worktrees
         (retires if retrait else echecs).append(chemin.name)
+    oubliees, resistantes = _oublier_les_declarations(declarations, racines)
 
     ancienne_retiree = False
     ancienne_passages = 0
@@ -504,7 +534,59 @@ def retenir(
         ancienne_retiree=ancienne_retiree,
         ancienne_passages=ancienne_passages,
         etrangers=etrangers,
+        declarations=oubliees,
+        declarations_resistantes=resistantes,
     )
+
+
+def passage_disparu(racine_du_projet: Path | str, racines: Sequence[Path]) -> bool:
+    """La racine d'un projet vit-elle dans un passage du banc qui n'existe plus ?
+
+    Le passage est l'enfant d'une des `racines` (`racines_des_passages`) qui mène au
+    projet, et il doit en avoir la forme (`_PASSAGE`) : un essai posé à la main dans
+    l'atelier n'est pas au banc. Un dossier qu'on ne sait pas lire n'est pas « parti ».
+    """
+    cle = _cle(Path(racine_du_projet))
+    for racine in racines:
+        base = _cle(racine)
+        if not cle.startswith(base + os.sep):
+            continue
+        nom = cle[len(base) + 1 :].split(os.sep, 1)[0]
+        if _rang_du_passage(nom) is None:
+            return False
+        try:
+            return not (racine / nom).exists()
+        except OSError:  # pragma: no cover - dossier illisible : il n'est pas parti
+            return False
+    return False
+
+
+def _oublier_les_declarations(
+    depots: Sequence[Path], racines: Sequence[Path]
+) -> tuple[int, tuple[str, ...]]:
+    """Oublie, dans chaque dépôt, les projets dont le passage n'existe plus (voir `retenir`).
+
+    Best-effort comme le reste : une déclaration illisible n'est pas à nous de la juger
+    — le ménage la nomme —, et une qui résiste au retrait se nomme par son fichier.
+    """
+    oubliees = 0
+    resistantes: list[str] = []
+    for depot in depots:
+        store = ProjetStore(depot)
+        for id_ in store.ids():
+            try:
+                projet = store.lire(id_)
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+            if projet is None or not passage_disparu(projet.racine, racines):
+                continue
+            try:
+                store.supprimer(id_)
+            except OSError:
+                resistantes.append(str(store.fichier(id_)))
+                continue
+            oubliees += 1
+    return oubliees, tuple(resistantes)
 
 
 def _entrees(racine: Path) -> Iterator[Path]:

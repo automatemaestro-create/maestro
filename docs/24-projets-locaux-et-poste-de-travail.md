@@ -527,7 +527,10 @@ relecture visuelle sèment des **racines de projet** — que la validation des r
 agent : sa frontière est la racine de son projet. Chaque passage du banc ne garde que les cinq
 derniers, plus celui dont `start.sh --etat-banc` rouvre l'état, et un passage retiré emporte les
 worktrees que ses tâches ont laissés sous la racine jetable — le ramassage, lui, les garde tant que
-leur dépôt existe. Le projet neuf d'une relecture part à son `--fin`. Les anciens ateliers, à la
+leur dépôt existe —, et les **déclarations** de ses projets (#1477) : dans le `core/projets/` et le
+jeu du banc de **chaque** copie du dépôt, puisque le banc nu déclare dans la stack de la copie qui
+le joue, celles dont la racine vit dans un passage qui n'existe plus sont oubliées par le verbe de
+`DELETE /api/projets`. Le projet neuf d'une relecture part à son `--fin`. Les anciens ateliers, à la
 racine du profil (`~/maestro-scenarios`, `~/maestro-relecture`), sont repris au premier passage puis
 retirés quand ils ne portent plus rien ; ce qui n'y a pas la forme d'un passage du banc ou d'un
 dossier de relecture (`<iid>/`) est nommé, jamais touché.
@@ -554,7 +557,13 @@ des présentations), `ramassable` (le ramassage le retirera) et `à retirer` —
 mécanisme ne connaît. `--purger` ne retire que ces derniers, tous ou ceux qu'on nomme, après un
 « oui » tapé sur l'entrée standard, et **rejuge** chacun au moment de le retirer. Les projets
 déclarés se lisent dans **chaque** copie du dépôt (le clone principal et ses worktrees ont chacun
-leur `core/projets/`) ; une déclaration illisible suffit à refuser toute la purge. Le « oui » est
+leur `core/projets/` et leur jeu du banc) ; une déclaration illisible suffit à refuser toute la
+purge. Une déclaration dont la racine a **disparu** ne protège plus rien (#1477) — dix déclarations
+du banc, racines parties avec leur passage, gardaient `~/maestro-scenarios` « porteur d'un projet
+déclaré » : elle est montrée à part, avec sa copie et sa racine, et `--purger` l'oublie sur le même
+« oui » (son identifiant la désigne), par le verbe du produit et jamais en effaçant son fichier.
+Disparue veut dire **à coup sûr** : un lecteur débranché, un partage muet ou un accès refusé
+laissent la racine protéger comme si elle était là. Le « oui » est
 une réponse et non une option : une option se recopie d'une commande à l'autre sans que personne
 ait regardé la liste.
 

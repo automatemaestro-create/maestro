@@ -271,6 +271,14 @@ class ProjetStore:
         chemin.unlink()
         return True
 
+    def fichier(self, id_: str) -> Path:
+        """Le fichier qui porte la déclaration `id_` — de quoi la **montrer**, jamais l'écrire.
+
+        Le ménage du poste (#1477) nomme une déclaration par son fichier ; il la retire
+        par `supprimer`, comme tout le monde.
+        """
+        return self._chemin(id_)
+
     def _valide(self, projet: Projet) -> Projet:
         """Le projet normalisé (racine canonicalisée), ou `ValueError` si invalide."""
         if not ID_PROJET.match(projet.id):

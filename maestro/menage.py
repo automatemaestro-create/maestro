@@ -24,7 +24,9 @@ par élément, avec sa taille, son **propriétaire** quand on le connaît, et so
 - `<temp>/maestro/` — le jetable : chaque dossier avec son occupant, vivant ou non, et le
   verdict du ramassage (`maestro.sandbox.ramassage`), qui le retirera seul ;
 - **hors racine** — les `~/maestro-*` du profil et les `maestro-*` des anciennes adresses
-  du répertoire temporaire.
+  du répertoire temporaire ;
+- **les déclarations de projets dont la racine a disparu** (#1477) — une par ligne, avec sa
+  copie et sa racine.
 
 **Les sorts**, dans l'ordre où ils se décident :
 
@@ -44,9 +46,19 @@ standard : toute autre réponse, ou aucune, ne retire rien (code `3`). Seuls par
 éléments `à retirer` — tous, ou ceux qu'on nomme après `--purger`. Le sort de chacun est
 **rejugé au moment de le retirer** : un dossier devenu vivant entre la liste et la réponse
 reste. Jamais `~/Maestro/`, jamais un projet déclaré — dans **aucune** copie du dépôt : les
-déclarations vivent dans `core/projets/` de chaque copie, et un projet déclaré depuis un
-worktree n'en est pas moins un projet. Quand une de ces déclarations ne se lit pas, rien
-n'est retiré à l'aveugle : tout est `conservé`, et la raison le dit.
+déclarations vivent dans `core/projets/` et dans le jeu du banc de chaque copie
+(`depots_de_declarations`), et un projet déclaré depuis un worktree n'en est pas moins un
+projet. Quand une de ces déclarations ne se lit pas, rien n'est retiré à l'aveugle : tout est
+`conservé`, et la raison le dit.
+
+**Une déclaration dont la racine a disparu ne protège rien** (#1477). Le 2026-10-11, dix
+déclarations du banc, racines parties avec leur passage, gardaient `~/maestro-scenarios`
+« porteur d'un projet déclaré », et avec lui les worktrees de ses dépôts. Elle est `à retirer`
+à son tour : `--purger` l'oublie par le verbe du produit (`ProjetStore.supprimer`, celui de
+`DELETE /api/projets`), jamais en effaçant son fichier, et son identifiant la désigne. Disparue
+veut dire **à coup sûr** (`racine_disparue`) : un lecteur débranché, un partage qui ne répond
+pas, un accès refusé laissent la racine protéger comme si elle était là. La rétention du banc
+oublie d'elle-même celles de ses passages partis (`maestro.scenarios.projets.retenir`).
 
 **Pourquoi un « oui » lu par la commande, et non une option.** La purge est destructive et
 porte sur ce que personne n'a déclaré : la seule autorité est la personne qui regarde la
@@ -77,6 +89,7 @@ from typing import TextIO
 
 from maestro.config import Settings, load_settings
 from maestro.controltower.acces import FICHIER_JETON
+from maestro.controltower.donnees import donnees_du_banc
 from maestro.controltower.hote_detache import PREFIXE_ATELIER
 from maestro.controltower.persistence import SUFFIXE_SQLITE
 from maestro.emplacements import (
@@ -141,6 +154,7 @@ RACINE_PROJETS = f"~/{NOM_PROJETS}/"
 RACINE_ETAT = f"~/{NOM_ETAT}/"
 RACINE_JETABLE = f"<temp>/{NOM_JETABLE}/"
 HORS_RACINE = "hors racine"
+DECLARATIONS = "déclarations de projets"
 
 # Les sorts (voir l'en-tête), dans l'ordre où ils se décident.
 JAMAIS = "jamais retiré"
@@ -186,6 +200,20 @@ _IID_DE_WORKTREE = re.compile(r"^(\d+)(?:-|$)")
 
 
 @dataclass(frozen=True)
+class Orpheline:
+    """Une déclaration de projet dont la racine a disparu (#1477) : elle ne protège plus rien."""
+
+    depot: Path
+    id: str
+    nom: str
+    racine: str
+
+    @property
+    def fichier(self) -> Path:
+        return ProjetStore(self.depot).fichier(self.id)
+
+
+@dataclass(frozen=True)
 class Entree:
     """Un élément posé sur le poste : où, par qui, et ce qui en sera fait."""
 
@@ -195,6 +223,8 @@ class Entree:
     sort: str
     raison: str = ""
     taille: int | None = None
+    #: La déclaration que l'élément est, quand c'en est une : elle s'oublie par le dépôt.
+    declaration: Orpheline | None = None
 
     @property
     def a_retirer(self) -> bool:
@@ -208,12 +238,15 @@ class Protections:
     `projets` porte les racines des projets déclarés et les répertoires des projets
     réglés, `~/Maestro/` compris. `worktrees` porte les iids des worktrees vivants (un
     profil de navigateur part avec le sien). `illisible` dit ce qui n'a pas pu être lu —
-    et tant qu'il dit quelque chose, rien n'est retiré.
+    et tant qu'il dit quelque chose, rien n'est retiré. `orphelines` porte les
+    déclarations dont la racine a disparu à coup sûr (`racine_disparue`) : elles ne
+    protègent rien, et la purge les oublie.
     """
 
     projets: tuple[Path, ...] = ()
     worktrees: frozenset[str] = frozenset()
     illisible: tuple[str, ...] = field(default_factory=tuple)
+    orphelines: tuple[Orpheline, ...] = ()
 
 
 # ── Les copies du dépôt et leurs déclarations ─────────────────────────────────
@@ -252,6 +285,50 @@ def copies_du_depot(racine: Path = RACINE_DU_DEPOT) -> tuple[tuple[Path, ...], s
     return (tuple(copies) or (racine,)), ""
 
 
+def depots_de_declarations(
+    settings: Settings | None = None, copies: Sequence[Path] | None = None
+) -> tuple[tuple[Path, ...], str]:
+    """Les dépôts de déclarations de projets du poste, et ce qui a manqué pour les lister.
+
+    Dans **chaque** copie du dépôt : son `core/projets/` et celui de son jeu du banc
+    (`donnees_du_banc`, #1164) — le banc nu déclare dans le premier, le banc qui sauve
+    son état dans le second —, plus `MAESTRO_PROJETS_DIR` s'il est réglé. La rétention
+    du banc y oublie les projets de ses passages partis (#1477), ce module y lit ce qu'il
+    protège.
+    """
+    settings = settings or load_settings()
+    manque = ""
+    if copies is None:
+        copies, manque = copies_du_depot()
+    depots: list[Path] = []
+    for copie in copies:
+        depots.append(copie / DECLARATIONS_DANS_UNE_COPIE)
+        depots.append(donnees_du_banc(racine=copie).racines["projets"])
+    if settings.projets_dir:
+        depots.append(Path(settings.projets_dir))
+    return tuple(depots), manque
+
+
+def racine_disparue(racine: Path) -> bool:
+    """Vrai seulement quand la racine d'un projet manque **à coup sûr** (#1477).
+
+    À coup sûr : le système dit qu'elle n'existe pas, **et** son volume répond. Un
+    lecteur débranché, un partage qui ne répond pas, un accès refusé laissent la
+    question ouverte — et une racine indécidable protège comme si elle était là : un
+    projet qu'on ne voit pas n'en est pas moins un projet.
+    """
+    try:
+        os.stat(racine)
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    except OSError:
+        return False
+    else:
+        return False
+    ancre = racine.anchor
+    return bool(ancre) and os.path.isdir(ancre)
+
+
 def protections(
     settings: Settings | None = None, copies: Sequence[Path] | None = None
 ) -> Protections:
@@ -262,14 +339,13 @@ def protections(
         copies, manque = copies_du_depot()
         if manque:
             illisible.append(manque)
-    depots = [copie / DECLARATIONS_DANS_UNE_COPIE for copie in copies]
+    depots, _ = depots_de_declarations(settings, copies)
     reglages = [copie / REGLAGES_DANS_UNE_COPIE for copie in copies]
-    if settings.projets_dir:
-        depots.append(Path(settings.projets_dir))
     if settings.reglages_dir:
         reglages.append(Path(settings.reglages_dir))
 
     projets: list[Path] = []
+    orphelines: list[Orpheline] = []
     try:
         projets.append(racine_projets())
     except (RuntimeError, OSError):  # pragma: no cover - dépend de l'environnement
@@ -280,9 +356,13 @@ def protections(
             try:
                 projet = store.lire(id_)
             except (OSError, ValueError, TypeError, KeyError) as exc:
-                illisible.append(f"déclaration {depot / id_}.json illisible ({exc})")
+                illisible.append(f"déclaration {store.fichier(id_)} illisible ({exc})")
                 continue
-            if projet is not None:
+            if projet is None:
+                continue
+            if racine_disparue(Path(projet.racine)):
+                orphelines.append(Orpheline(depot, id_, projet.nom, projet.racine))
+            else:
                 projets.append(Path(projet.racine))
     for dossier in reglages:
         repertoire = ReglagesProjetsStore(dossier).lire().repertoire
@@ -292,7 +372,7 @@ def protections(
     worktrees = frozenset(
         trouve.group(1) for copie in copies if (trouve := _IID_DE_WORKTREE.match(copie.name))
     )
-    return Protections(tuple(projets), worktrees, tuple(illisible))
+    return Protections(tuple(projets), worktrees, tuple(illisible), tuple(orphelines))
 
 
 def _cle(chemin: Path) -> str:
@@ -511,6 +591,21 @@ def _hors_racine(
     return entrees
 
 
+def _declarations_orphelines(gardes: Protections) -> list[Entree]:
+    """Les déclarations dont la racine a disparu : à oublier — sauf si une autre ne se lit pas."""
+    entrees = []
+    for orpheline in gardes.orphelines:
+        sort, raison = A_RETIRER, f"racine disparue : {orpheline.racine}"
+        if gardes.illisible:
+            sort = CONSERVE
+            raison = "rien n'est retiré à l'aveugle : " + " ; ".join(gardes.illisible)
+        proprietaire = f"projet « {orpheline.nom} » ({orpheline.id})"
+        entrees.append(
+            Entree(orpheline.fichier, DECLARATIONS, proprietaire, sort, raison, None, orpheline)
+        )
+    return entrees
+
+
 def inventorier(
     gardes: Protections,
     *,
@@ -540,6 +635,7 @@ def inventorier(
         if entree.sort in (A_RETIRER, A_SON_PROPRIETAIRE):
             entree = _juger_candidat(entree, gardes, seuil_s=seuil_s, maintenant=maintenant)
         entrees.append(entree)
+    entrees.extend(_declarations_orphelines(gardes))
     if tailles:
         entrees = [replace(entree, taille=taille(entree.chemin)) for entree in entrees]
     return tuple(entrees)
@@ -567,6 +663,7 @@ def rendu(entrees: Sequence[Entree], environnement: Mapping[str, str] | None = N
         (RACINE_ETAT, f"{RACINE_ETAT} — l'état du poste"),
         (RACINE_JETABLE, f"{RACINE_JETABLE} — le jetable, ramassé seul"),
         (HORS_RACINE, "hors racine — ce qui n'aurait pas dû naître là"),
+        (DECLARATIONS, f"{DECLARATIONS} — dont la racine a disparu : elles ne protègent rien"),
     )
     lignes: list[str] = []
     for racine, titre in titres:
@@ -616,7 +713,9 @@ def _designes(entrees: Sequence[Entree], noms: Sequence[str]) -> tuple[list[Entr
         trouves = [
             entree
             for entree in a_retirer
-            if entree.chemin.name == nom or _cle(entree.chemin) == _cle(Path(nom).expanduser())
+            if entree.chemin.name == nom
+            or _cle(entree.chemin) == _cle(Path(nom).expanduser())
+            or (entree.declaration is not None and entree.declaration.id == nom)
         ]
         if not trouves:
             inconnus.append(nom)
@@ -625,8 +724,20 @@ def _designes(entrees: Sequence[Entree], noms: Sequence[str]) -> tuple[list[Entr
     return list(choisis.values()), inconnus
 
 
-def _retirer(chemin: Path) -> bool:
-    """Retire un dossier ou un fichier — `True` si plus rien ne subsiste à cette adresse."""
+def _retirer(entree: Entree) -> bool:
+    """Retire un élément — `True` si plus rien ne subsiste à cette adresse.
+
+    Une déclaration s'oublie par son dépôt (`ProjetStore.supprimer`, le verbe de
+    `DELETE /api/projets`), jamais en effaçant son fichier : son format est au produit.
+    """
+    if entree.declaration is not None:
+        store = ProjetStore(entree.declaration.depot)
+        try:
+            store.supprimer(entree.declaration.id)
+        except OSError:
+            return False
+        return entree.declaration.id not in store.ids()
+    chemin = entree.chemin
     if chemin.is_dir() and not _est_un_lien(chemin):
         return retirer_arbre(chemin)
     try:
@@ -640,6 +751,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     gardes: Protections | None = None,
+    copies: Sequence[Path] | None = None,
     anciennes_adresses: Iterable[Path] | None = None,
     environnement: Mapping[str, str] | None = None,
     entree: TextIO | None = None,
@@ -648,8 +760,10 @@ def main(
 ) -> int:
     """Point d'entrée — voir l'en-tête du module.
 
-    `gardes`, `anciennes_adresses`, `environnement` et les flux sont injectables **pour
-    les tests** : des déclarations choisies, des adresses jetables, une réponse écrite.
+    `gardes` (des protections figées), `copies` (des copies du dépôt dont les
+    déclarations sont relues à chaque jugement), `anciennes_adresses`, `environnement`
+    et les flux sont injectables **pour les tests** : des déclarations choisies, des
+    adresses jetables, une réponse écrite.
     """
     sortie = sortie or sys.stdout
     erreur = erreur or sys.stderr
@@ -667,7 +781,7 @@ def main(
     adresses = None if anciennes_adresses is None else tuple(anciennes_adresses)
     # Relues à chaque jugement : un projet déclaré entre la liste et la réponse protège.
     def lire_gardes() -> Protections:
-        return gardes if gardes is not None else protections()
+        return gardes if gardes is not None else protections(copies=copies)
 
     lues = lire_gardes()
     entrees = inventorier(lues, environnement=env, anciennes_adresses=adresses)
@@ -721,7 +835,7 @@ def main(
     for cible in cibles:
         if _cle(cible.chemin) not in encore:
             epargnes.append(cible)
-        elif _retirer(cible.chemin):
+        elif _retirer(cible):
             retires.append(cible)
         else:
             resistants.append(cible)

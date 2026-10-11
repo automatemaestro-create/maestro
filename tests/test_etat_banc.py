@@ -42,6 +42,7 @@ import pytest
 from fastapi.testclient import TestClient
 from redis_factice import ClientSynchrone, ServeurFactice, brancher
 
+from maestro import menage
 from maestro.agents.rangement import SEGMENT_PROJETS
 from maestro.controltower.app import create_app
 from maestro.controltower.battement import RegistreBattementsRedis, batteur_redis
@@ -61,6 +62,7 @@ from maestro.espace import COMMUN, VARIABLE_ESPACE, Espace
 from maestro.messaging.mailbox import RedisMailbox
 from maestro.projets.store import ProjetStore
 from maestro.sandbox.ramassage import porte_un_worktree
+from maestro.scenarios import banc as banc_module
 from maestro.scenarios import etat
 from maestro.scenarios.modele import Rapport, Resultat
 from maestro.scenarios.projets import (
@@ -796,6 +798,100 @@ def test_l_ancien_atelier_est_repris_puis_retire_quand_il_ne_porte_plus_rien(
     assert retention.ancienne_retiree and not ancien.exists()
     assert sorted(d.name for d in neuf.iterdir()) == ["20261009-100000", "20261009-110000"]
     assert f"Ancien atelier {ancien} retiré : il ne portait plus rien." in retention.lignes()
+
+
+def test_un_passage_retire_emporte_les_declarations_de_ses_projets(
+    maison: Path, ateliers: Path, temporaire: Path
+) -> None:
+    """Le constat de #1477 : la rétention retirait le passage et laissait les déclarations de ses
+    projets, dans le `core/projets/` de la copie qui avait joué le banc nu comme dans le jeu du
+    banc d'une autre copie — racines disparues, qui épinglaient l'atelier au ménage. Le passage
+    retiré les emporte, par le verbe du produit et dans chaque dépôt qu'on lui nomme ; celles
+    d'un passage déjà disparu aussi. Rien d'autre n'est touché : ni un passage gardé, ni un
+    projet hors des passages — même disparu, c'est au ménage d'en juger, sur un « oui »."""
+    env = regime(ateliers, temporaire, 2)
+    copie, banc_d_une_autre = maison / "copie" / "projets", maison / "autre" / "banc-projets"
+    vieux = un_passage(ateliers, "20261001-100000")
+    (vieux / "s2-application").mkdir()
+    un_passage(ateliers, "20261002-100000")
+    garde = un_passage(ateliers, "20261003-100000")
+    ancien = un_passage(ateliers, "20260922-100639")
+    hors_passage = ateliers / "essai-1158" / "brouillon"
+    hors_passage.mkdir(parents=True)
+    ailleurs = maison / "mon-projet"
+    ailleurs.mkdir()
+
+    def declarer(depot: Path, racine: Path) -> str:
+        return ProjetStore(depot).creer(racine.name, racine).id
+
+    oublies = {
+        declarer(copie, vieux / "s1-vider"),
+        declarer(banc_d_une_autre, vieux / "s2-application"),
+        declarer(copie, ancien / "s1-vider"),
+    }
+    restent = {
+        declarer(copie, garde / "s1-vider"),
+        declarer(copie, hors_passage),
+        declarer(copie, ailleurs),
+    }
+    shutil.rmtree(ancien)  # retiré par une rétention d'avant #1477
+    shutil.rmtree(hors_passage)  # disparu, mais hors des passages : au ménage
+
+    retention = retenir(environnement=env, declarations=(copie, banc_d_une_autre))
+
+    assert retention.retires == ("20261001-100000",)
+    assert retention.declarations == len(oublies)
+    assert set(ProjetStore(copie).ids()) | set(ProjetStore(banc_d_une_autre).ids()) == restent
+    assert ailleurs.is_dir() and garde.is_dir(), "oublier un projet ne touche pas au disque"
+    assert (
+        "3 déclaration(s) de projet oubliée(s) : leur passage n'existe plus"
+        in "\n".join(retention.lignes())
+    )
+
+
+def test_sans_passage_disparu_aucune_declaration_n_est_touchee(
+    maison: Path, ateliers: Path, temporaire: Path
+) -> None:
+    """Une rétention qui ne retire rien n'oublie rien, et ne dit rien ; éteinte, elle ne lit pas
+    même les déclarations."""
+    depot = maison / "copie" / "projets"
+    passage = un_passage(ateliers, "20261001-100000")
+    vivant = ProjetStore(depot).creer("s1", passage / "s1-vider").id
+    retention = retenir(environnement=regime(ateliers, temporaire, 3), declarations=(depot,))
+    assert retention.declarations == 0 and retention.lignes() == []
+    shutil.rmtree(passage)
+    eteinte = retenir(environnement=regime(ateliers, temporaire, 0), declarations=(depot,))
+    assert eteinte.declarations == 0
+    assert ProjetStore(depot).ids() == (vivant,)
+
+
+def test_la_retention_du_banc_oublie_dans_les_depots_du_poste(
+    monkeypatch: pytest.MonkeyPatch, maison: Path, ateliers: Path
+) -> None:
+    """Le câblage : la rétention que le banc joue en réservant son atelier reçoit les dépôts
+    de déclarations du poste (`maestro.menage.depots_de_declarations`) — et, éteinte, ne les
+    demande même pas."""
+    depot = maison / "copie" / "projets"
+    parti = un_passage(ateliers, "20261001-100000")
+    oubliee = ProjetStore(depot).creer("s1", parti / "s1-vider").id
+    shutil.rmtree(parti)
+    demandes: list[str] = []
+
+    def depots_du_poste() -> tuple[tuple[Path, ...], str]:
+        demandes.append("depots")
+        return (depot,), ""
+
+    monkeypatch.setattr(menage, "depots_de_declarations", depots_du_poste)
+    sortie = io.StringIO()
+
+    monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "0")
+    banc_module._retenir(sortie)
+    assert demandes == [] and ProjetStore(depot).ids() == (oubliee,)
+
+    monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "3")
+    banc_module._retenir(sortie)
+    assert demandes == ["depots"] and ProjetStore(depot).ids() == ()
+    assert "1 déclaration(s) de projet oubliée(s)" in sortie.getvalue()
 
 
 def test_un_atelier_regle_ne_lit_ni_ne_retire_l_ancien(
