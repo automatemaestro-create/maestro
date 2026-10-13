@@ -83,7 +83,8 @@ from maestro.projets.modele import Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
 from maestro.sandbox.ramassage import PREFIXE_COMMUN, racine_des_espaces
-from maestro.sandbox.workspace import Workspace, isolated_workspace
+from maestro.sandbox.verification import miroir_de_verification
+from maestro.sandbox.workspace import LieuSansTrace, Workspace, isolated_workspace
 
 #: Préfixe des branches de tâche (docs/24 §2.4) : une branche `maestro/<tâche>`
 #: par tâche, jamais supprimée par le moteur — elle est le livrable tant que la
@@ -367,8 +368,13 @@ class EspaceCopieDeTravail(Workspace):
                 yield fichier
 
     @contextmanager
-    def sans_trace(self) -> Iterator[None]:
+    def sans_trace(self) -> Iterator[LieuSansTrace]:
         """Ce que le bloc laisse dans la copie, et que la branche porterait, est défait (#1448).
+
+        Le bloc joue dans la copie elle-même (`LieuSansTrace.chemin` est `path`) : elle
+        est déjà l'environnement de l'agent, dépendances installées comprises, et ce
+        qui s'y écrit se défait — à la différence de la racine d'un projet non
+        versionné, qui fait jouer le sien dans un miroir (#1496).
 
         La vérification d'une tâche (#1177) joue ses commandes ici, l'espace encore
         ouvert, et son prompt lui demande de constater sans rien modifier. Ce n'est
@@ -394,7 +400,7 @@ class EspaceCopieDeTravail(Workspace):
         """
         instantane = _Instantane.prendre(self)
         try:
-            yield
+            yield LieuSansTrace(self.path)
         except BaseException:
             instantane.rendre()
             raise
@@ -591,7 +597,9 @@ def espace_de_travail(
     pas d'objet : la racine n'est **jamais** démontée ni nettoyée, une exception y
     laisse ce qui a été écrit — c'est le critère du ticket (« rien n'est perdu à
     la fermeture de l'espace »), et le `rmtree` d'un `finally` est précisément ce
-    qui a effacé le livrable de `squelette-p1` le 2026-08-28 (#568).
+    qui a effacé le livrable de `squelette-p1` le 2026-08-28 (#568). Seul le
+    **miroir** où ses vérifications ont joué est retiré (#1496) : il est sous la
+    racine jetable, jamais dans la racine.
 
     Lève `RacineRefusee` si la racine du projet n'est plus admissible (EF-38) —
     dans les deux régimes, c'est la dernière porte avant qu'un agent n'écrive —
@@ -611,8 +619,14 @@ def espace_de_travail(
         ouvre_atelier(racine, atelier)
         # `derive` et non `EspaceEnPlace(path=…)` : la racine n'est pas vide, et
         # sans cette empreinte de départ tout le projet de l'utilisateur
-        # ressortirait en « fichiers produits » du rapport de run.
-        yield EspaceEnPlace.derive(racine, perimetre=projet.perimetre, atelier=atelier)
+        # ressortirait en « fichiers produits » du rapport de run. Le miroir où se
+        # jouent ses vérifications (#1496) vit le temps de l'espace : il naît à la
+        # première, se resynchronise aux suivantes, et part avec l'espace — la
+        # racine, elle, n'est toujours ni démontée ni nettoyée.
+        with miroir_de_verification(racine) as miroir:
+            yield EspaceEnPlace.derive(
+                racine, perimetre=projet.perimetre, atelier=atelier, miroir=miroir
+            )
         return
 
     # La racine jetable (#1455) et non le défaut de `tempfile` (#992, S13) : la

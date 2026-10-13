@@ -66,7 +66,12 @@ from maestro.sandbox.projet import (
     sauver_le_travail_en_vol,
 )
 from maestro.sandbox.ramassage import Ramassage, racine_des_espaces, ramasser
-from maestro.sandbox.workspace import ProducedFile, Workspace, isolated_workspace
+from maestro.sandbox.workspace import (
+    LieuSansTrace,
+    ProducedFile,
+    Workspace,
+    isolated_workspace,
+)
 
 __all__ = [
     "DOSSIER_ATELIER",
@@ -77,6 +82,7 @@ __all__ = [
     "EspaceProjetIndisponible",
     "FrontiereEcriture",
     "IsolationConfig",
+    "LieuSansTrace",
     "ProducedFile",
     "Ramassage",
     "TravailAnterieur",

@@ -45,6 +45,15 @@ Ce module porte les deux pièces du régime :
   `Grep` qui traverserait un chemin exclu est refusé, avec les dossiers où
   chercher à la place.
 
+Ce que **Maestro** joue pour juger la tâche — sa vérification (#1177) — ne joue
+pas dans la racine (#1496) : un `ruff check --fix` y réécrivait un fichier de la
+personne, un `pytest` y laissait son cache, et rien ne peut se défaire après coup
+dans un dossier vivant. `EspaceEnPlace.sans_trace` la fait jouer dans un **miroir**
+de la racine, sous le répertoire jetable (`maestro.sandbox.verification.
+MiroirDeVerification`) : ce que l'agent a écrit reste ce qu'il a écrit, et c'est
+ce qui rend vraie, pour la vérification, la promesse que lui fait sa consigne —
+« Rien ne sera déplacé ni effacé après toi ».
+
 La frontière est **armée par la position, jamais par une option** : `frontiere_de`
 la rend si et seulement si l'espace de travail **est** la racine du projet — le
 régime en place, et lui seul. Un worktree ou un `mkdtemp()` n'en reçoivent aucune,
@@ -123,6 +132,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -131,7 +141,12 @@ from maestro.portee import PorteeProjet, etabli_de
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import RacineRefusee, canonique, chemin_dans_racine
-from maestro.sandbox.workspace import Workspace
+from maestro.sandbox.verification import (
+    CopieImpossible,
+    MiroirDeVerification,
+    miroir_de_verification,
+)
+from maestro.sandbox.workspace import LieuSansTrace, Workspace
 
 #: Les quatre gestes qu'un outil fait sur un chemin — ce que la frontière y juge.
 #:
@@ -276,12 +291,41 @@ class EspaceEnPlace(Workspace):
     `perimetre` est celui du projet : c'est par lui que l'espace s'énumère.
     `atelier` est le dossier de travail de la tâche (#944), relatif à la racine :
     l'agent y range ce qui n'est pas le livrable, et le recensement ne le voit
-    pas. Le reste du contrat de `Workspace` tient tel quel — `derive` relève
-    l'empreinte de départ, `produced_files` rend ce qui a changé depuis.
+    pas. `miroir` (#1496) est le reflet de la racine où se jouent les
+    vérifications de la tâche (`sans_trace`), tenu par qui ouvre l'espace
+    (`maestro.sandbox.projet.espace_de_travail`) pour qu'il se resynchronise d'une
+    livraison à l'autre au lieu de se recopier. Le reste du contrat de `Workspace`
+    tient tel quel — `derive` relève l'empreinte de départ, `produced_files` rend
+    ce qui a changé depuis.
     """
 
     perimetre: Perimetre = field(default_factory=Perimetre)
     atelier: str = ""
+    miroir: MiroirDeVerification | None = field(default=None, compare=False, repr=False)
+
+    @contextmanager
+    def sans_trace(self) -> Iterator[LieuSansTrace]:
+        """La vérification joue dans un **miroir** de la racine, jamais dans la racine (#1496).
+
+        La racine est le dossier vivant de la personne : ce qu'une vérification y
+        écrirait — un cache, un rapport, un fichier réécrit par `ruff check --fix` — y
+        resterait, compté à l'agent, et rien ne permet de le défaire après coup sans
+        effacer ce que la personne y aurait écrit entre-temps (docs/45 §2). Le miroir
+        tranche par construction : rien n'est écrit dans la racine, il n'y a rien à y
+        défaire. L'agent qui corrige retrouve donc ses fichiers tels qu'il les a
+        laissés, et les fichiers produits de la tâche ne relèvent que son travail.
+
+        Le miroir est synchronisé en entrant (`MiroirDeVerification.synchroniser`).
+        S'il ne peut pas l'être — au-delà de ses bornes, faute de place —, le lieu
+        rendu est **vide**, avec son motif : le contrôle n'est pas joué, et il n'est
+        jamais rejoué dans la racine. Sans miroir tenu par l'appelant, un miroir naît
+        pour le seul bloc.
+        """
+        if self.miroir is not None:
+            yield _lieu_dans(self.miroir)
+            return
+        with miroir_de_verification(self.path) as miroir:
+            yield _lieu_dans(miroir)
 
     def fichiers(self) -> Iterator[Path]:
         """Les fichiers de la racine **par le périmètre** : exclusions sautées, liens ignorés.
@@ -357,6 +401,14 @@ class EspaceEnPlace(Workspace):
             "les refusent, et une commande shell ne les atteint pas davantage. Vider ou "
             "nettoyer ce répertoire les laisse en place."
         )
+
+
+def _lieu_dans(miroir: MiroirDeVerification) -> LieuSansTrace:
+    """Le miroir conforme à la racine, à cet instant — ou nulle part, et pourquoi (#1496)."""
+    try:
+        return LieuSansTrace(miroir.synchroniser())
+    except CopieImpossible as exc:
+        return LieuSansTrace(None, empechement=str(exc))
 
 
 def fichiers_du_perimetre(

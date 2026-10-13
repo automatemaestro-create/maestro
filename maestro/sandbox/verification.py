@@ -39,6 +39,60 @@ dans son nom — le ramassage (`maestro.sandbox.ramassage`) l'emporte donc si le
 process meurt avant de la retirer — et elle est retirée en sortie, quoi qu'il
 arrive.
 
+## Le miroir d'une racine en place, pour vérifier une tâche (#1496)
+
+La vérification d'une tâche (#1177) rejoue ce qui dit si le travail de l'agent tient.
+Sur un projet **non versionné** (#839), l'espace de l'agent **est** la racine de la
+personne, et y jouer les contrôles y laissait ce qu'ils écrivent : `.pytest_cache/`,
+un rapport JUnit, un fichier de la personne réécrit par `ruff check --fix`, puis
+compté à l'agent. Défaire après coup ne se peut pas : rien ne distingue ce que la
+vérification a écrit de ce que la personne, son éditeur ou un client de
+synchronisation ont écrit pendant ce temps (docs/45 §2). La vérification joue donc
+dans un **miroir** de la racine (`MiroirDeVerification`), et rien n'est écrit dans la
+racine — la contrainte tient par construction, pas par un ménage.
+
+Le miroir n'est pas la copie d'outillage, parce qu'il ne répond pas à la même
+question : celle-ci reproduit ce qu'un agent trouve **en arrivant**, celui-là
+l'environnement que l'agent a **construit**, où « les tests passent » veut dire
+quelque chose. Il porte donc **toute** la racine, et c'est ce qui garde au verdict
+son sens :
+
+- les **dépendances**, en **vraie copie** — ni jonction, ni lien, ni lien dur vers la
+  racine : une écriture à travers eux (le cache de Vite dans `node_modules/.vite`, un
+  `npm install` du vérificateur) atterrirait dans la racine ;
+- le **`.env`** : un service démarré par une vérification le lisait dans la racine.
+  Le secret est dupliqué sous la racine jetable, dans un dossier que seul son
+  propriétaire lit (`tempfile.mkdtemp`), et retiré avec le miroir ;
+- l'**atelier** des tâches (`.maestro/`), qu'une commande de vérification peut nommer.
+
+Un **lien** de la racine est recréé, jamais suivi : s'il mène dans la racine —
+`node_modules/.bin/vite`, relatif, ou un lien absolu —, il mène au même endroit
+**du miroir** ; s'il en sort, il mène où il menait (l'interpréteur d'un `.venv`).
+Là où le poste refuse de créer un lien (Windows sans mode développeur), un lien vers
+un fichier est remplacé par une copie de ce fichier ; un lien vers un dossier manque.
+
+Le miroir naît à la **première** vérification, et se **resynchronise** avant chaque
+suivante, dans un seul sens : ce que la racine a de neuf ou de changé y entre, ce que
+la vérification précédente y a laissé ou réécrit en sort — chaque côté par son
+empreinte (taille, date à la nanoseconde), celle de `Workspace`. La copie se paie
+donc une fois par espace ouvert, et chaque vérification suivante ne recopie que ce
+qui a bougé. Mesuré le 2026-10-13 sur le poste : 20 000 fichiers de 1,2 Ko se copient
+en 13,1 s un à un, 5,1 s à huit fils (`FILS_DE_COPIE`), et se relèvent en 0,09 s.
+
+⚠ **Ce que le miroir ne ferme pas**, nommé plutôt que tu : un **chemin absolu** qui
+ramène à la racine. Une commande qui l'écrit en toutes lettres sort du dossier, et la
+portée ne la joue pas ; mais un lanceur de `.venv` (`.venv/Scripts/pytest.exe`
+embarque le chemin du `python.exe` de la racine) ou une installation éditable (un
+`.pth` qui nomme `src/` de la racine) font encore lire la racine, et Python peut y
+écrire ses `__pycache__`. Le `python` du `.venv` du miroir, lui, est celui du miroir.
+
+Ses bornes (`FICHIERS_MAX_MIROIR`, `OCTETS_MAX_MIROIR`) comptent les dépendances, à la
+différence de celles de la copie d'outillage : la racine de S12 (une application
+Next.js) en porte 24 776 fichiers et 505 Mo, que les bornes de la copie (20 000
+fichiers, 512 Mo) auraient rendue « non jouée » — une régression de #1177. Au-delà,
+`CopieImpossible` le dit, et le contrôle n'est pas joué : il n'est **jamais** rejoué
+dans la racine.
+
 ## L'interpréteur est celui des agents : bash
 
 Les commandes écrites dans un projet le sont dans un bloc ```` ```bash ```` et un
@@ -154,11 +208,13 @@ import random
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -169,8 +225,21 @@ from maestro.fichiers import retirer_arbre
 from maestro.sandbox.arbre import Arbre
 
 #: Le préfixe d'une copie de vérification — sous le préfixe commun des espaces de
-#: Maestro, donc candidate au ramassage si son process meurt avant de la retirer.
+#: Maestro, donc candidate au ramassage si son process meurt avant de la retirer. Le
+#: miroir d'une racine en place (#1496) naît sous le même.
 PREFIXE_COPIE = "maestro-verif-"
+
+#: Les bornes d'un miroir de vérification (#1496), **dépendances comprises**. La
+#: racine de S12 (une application Next.js, mesurée le 2026-10-13) : 24 776 fichiers,
+#: 505 Mo. Quatre fois cette mesure : un projet web non versionné se vérifie, une
+#: vérification ne vaut pas la copie d'un disque.
+FICHIERS_MAX_MIROIR = 100_000
+OCTETS_MAX_MIROIR = 2 * 1024 * 1024 * 1024
+
+#: Combien de fichiers le miroir copie de front. Mesuré sur le poste le 2026-10-13 :
+#: 20 000 fichiers de 1,2 Ko en 13,1 s un à un, 5,1 s à huit, 4,8 s à seize — copier
+#: un fichier, c'est surtout attendre le système, et des fils recouvrent ces attentes.
+FILS_DE_COPIE = 8
 
 #: La part de la sortie gardée, **la fin** : c'est là qu'une commande dit pourquoi
 #: elle a échoué. Assez pour lire une trace ou un résumé de tests, pas assez pour
@@ -385,6 +454,355 @@ def copie_de_verification(
         yield copie
     finally:
         retirer_arbre(parent)
+
+
+@dataclass(frozen=True)
+class _Entree:
+    """Ce qu'un chemin de la racine est, relevé pour que le miroir le reproduise (#1496).
+
+    `nature` vaut `dossier`, `fichier` ou `lien`. Un fichier porte son `empreinte`
+    (taille, date en ns). Un lien porte ce qu'il désigne : `interieur`, le chemin
+    relatif à la racine de ce qu'il désigne quand c'est dans la racine — le miroir le
+    fait mener au même endroit du miroir —, sinon `exterieur`, le chemin absolu où il
+    mène ; `dossier` dit s'il désigne un dossier.
+    """
+
+    nature: str
+    empreinte: tuple[int, int] = (0, 0)
+    interieur: str | None = None
+    exterieur: str = ""
+    dossier: bool = False
+
+
+class MiroirDeVerification:
+    """Le reflet d'une racine en place, où la vérification d'une tâche joue (#1496).
+
+    Voir l'en-tête : il porte **toute** la racine — dépendances et `.env` compris —,
+    recrée ses liens sans jamais les suivre, naît à la première `synchroniser`, suit la
+    racine à chaque suivante dans un seul sens, et disparaît à `fermer`. Il n'écrit
+    **rien** dans la racine : il la lit.
+    """
+
+    def __init__(
+        self,
+        racine: Path,
+        *,
+        fichiers_max: int | None = None,
+        octets_max: int | None = None,
+    ) -> None:
+        self._racine = Path(racine)
+        self._fichiers_max = fichiers_max
+        self._octets_max = octets_max
+        self._parent: Path | None = None
+        #: Ce que le miroir a reçu de la racine, chemin par chemin : ce qu'était le
+        #: chemin dans la racine, et l'empreinte de ce qu'il en a fait dans le miroir.
+        #: Les deux côtés comptent — une vérification réécrit le miroir sans que la
+        #: racine bouge, l'agent réécrit la racine sans que le miroir bouge.
+        self._recus: dict[str, tuple[_Entree, tuple[object, ...]]] = {}
+
+    @property
+    def chemin(self) -> Path | None:
+        """Le dossier du miroir — `None` tant qu'aucune vérification ne l'a fait naître."""
+        return None if self._parent is None else self._parent / "projet"
+
+    def synchroniser(self) -> Path:
+        """Rend le miroir conforme à la racine, à cet instant, et rend son chemin.
+
+        Lève `CopieImpossible` au-delà des bornes, si le poste n'a pas la place de la
+        copie, ou si le miroir naîtrait dans la racine ; rien n'est alors écrit dans
+        la racine, et c'est à l'appelant de dire que le contrôle n'a pas été joué.
+        """
+        source = self._racine.resolve()
+        attendu = _relever(
+            source,
+            FICHIERS_MAX_MIROIR if self._fichiers_max is None else self._fichiers_max,
+            OCTETS_MAX_MIROIR if self._octets_max is None else self._octets_max,
+        )
+        copie = self._naitre(source)
+        a_jour = self._elaguer(copie, attendu)
+        # Les dossiers du miroir où l'on peut écrire : ceux que l'élagage a parcourus,
+        # et ceux qu'on vient de créer. Un chemin qu'on n'a pas su effacer — un lien
+        # qu'une vérification aurait posé vers la racine — n'est jamais un passage :
+        # rien ne s'écrit à travers lui, ni dessous (trié, un dossier précède son contenu).
+        surs = {""}
+        a_copier: list[tuple[str, _Entree]] = []
+        for relatif, entree in sorted(attendu.items()):
+            if relatif.rpartition("/")[0] not in surs:
+                continue
+            if entree.nature == "dossier":
+                if relatif not in a_jour:
+                    try:
+                        (copie / relatif).mkdir()
+                    except OSError:
+                        continue
+                surs.add(relatif)
+            elif relatif in a_jour or os.path.lexists(copie / relatif):
+                continue
+            elif entree.nature == "lien":
+                self._lier(source, copie, relatif, entree)
+            else:
+                a_copier.append((relatif, entree))
+        self._copier(source, copie, a_copier)
+        return copie
+
+    def fermer(self) -> None:
+        """Retire le miroir — sans jamais suivre un lien vers ce qu'il désigne."""
+        if self._parent is not None:
+            retirer_arbre(self._parent)
+        self._parent = None
+        self._recus.clear()
+
+    def _naitre(self, source: Path) -> Path:
+        """Le dossier du miroir, créé à la première synchronisation, hors de la racine."""
+        if self._parent is not None:
+            return self._parent / "projet"
+        try:
+            parent = jetable(PREFIXE_COPIE)
+        except OSError as exc:
+            raise CopieImpossible(
+                "espace-indisponible",
+                "aucun répertoire temporaire n'a pu accueillir la copie de vérification : "
+                f"{exc}",
+            ) from exc
+        if _sous(parent.resolve(), source):
+            retirer_arbre(parent)
+            raise CopieImpossible(
+                "dans-la-racine",
+                f"la copie de vérification naîtrait dans le projet ({parent}) — le "
+                "répertoire temporaire du poste pointe dans sa racine.",
+            )
+        (parent / "projet").mkdir()
+        self._parent = parent
+        return parent / "projet"
+
+    def _elaguer(self, copie: Path, attendu: Mapping[str, _Entree]) -> set[str]:
+        """Retire du miroir ce qui n'est plus la racine ; rend les chemins déjà conformes.
+
+        Un chemin que la racine n'a pas — ce qu'une vérification a laissé, ce que
+        l'agent a retiré —, ou qu'elle a sous une autre nature, part. Un fichier ou un
+        lien reste s'il est ce que le miroir a reçu de la racine, inchangé des deux
+        côtés ; sinon il part aussi, et sera recopié. Un dossier conforme est parcouru,
+        jamais un lien.
+        """
+        a_jour: set[str] = set()
+        pile = [""]
+        while pile:
+            relatif_dossier = pile.pop()
+            base = copie / relatif_dossier if relatif_dossier else copie
+            try:
+                with os.scandir(base) as entrees:
+                    triees = list(entrees)
+            except OSError:
+                continue
+            for entree in triees:
+                relatif = f"{relatif_dossier}/{entree.name}" if relatif_dossier else entree.name
+                voulu = attendu.get(relatif)
+                lien = _est_un_lien(entree)
+                if not lien and entree.is_dir(follow_symlinks=False):
+                    if voulu is not None and voulu.nature == "dossier":
+                        a_jour.add(relatif)
+                        pile.append(relatif)
+                    else:
+                        retirer_arbre(Path(entree.path))
+                    continue
+                recu = self._recus.get(relatif)
+                if (
+                    voulu is not None
+                    and voulu.nature != "dossier"
+                    and recu is not None
+                    and recu == (voulu, _etat_dans_le_miroir(entree, lien))
+                ):
+                    a_jour.add(relatif)
+                    continue
+                self._recus.pop(relatif, None)
+                _effacer(Path(entree.path))
+        return a_jour
+
+    def _lier(self, source: Path, copie: Path, relatif: str, entree: _Entree) -> None:
+        """Recrée un lien de la racine — vers le miroir s'il menait dans la racine."""
+        lien = copie / relatif
+        if entree.interieur is not None:
+            cible = os.path.relpath(copie / entree.interieur, lien.parent)
+        else:
+            cible = entree.exterieur
+        try:
+            os.symlink(cible, lien, target_is_directory=entree.dossier)
+        except OSError:
+            # Le poste refuse les liens (Windows sans mode développeur) : un fichier
+            # désigné est recopié à la place, un dossier désigné manque au miroir.
+            designe = (
+                source / entree.interieur if entree.interieur is not None else Path(cible)
+            )
+            if entree.dossier or not designe.is_file():
+                return
+            try:
+                shutil.copy2(designe, lien)
+            except OSError:
+                return
+        try:
+            etat = os.stat(lien, follow_symlinks=False)
+        except OSError:
+            return
+        if lien.is_symlink():
+            self._recus[relatif] = (entree, ("lien", os.readlink(lien)))
+        else:
+            self._recus[relatif] = (entree, ("fichier", etat.st_size, etat.st_mtime_ns))
+
+    def _copier(self, source: Path, copie: Path, a_copier: list[tuple[str, _Entree]]) -> None:
+        """Copie de front les fichiers qui manquent au miroir, après avoir vu la place."""
+        if not a_copier:
+            return
+        besoin = sum(entree.empreinte[0] for _, entree in a_copier)
+        try:
+            libre = shutil.disk_usage(copie).free
+        except OSError:
+            libre = besoin
+        if besoin > libre:
+            raise CopieImpossible(
+                "espace-indisponible",
+                f"la copie de vérification demande {besoin // (1024 * 1024)} Mo, et le "
+                f"répertoire temporaire du poste n'en a que {libre // (1024 * 1024)} de libres.",
+            )
+
+        def un(relatif: str) -> tuple[object, ...] | None:
+            cible = copie / relatif
+            try:
+                shutil.copy2(source / relatif, cible, follow_symlinks=False)
+                etat = os.stat(cible, follow_symlinks=False)
+            except OSError:  # fichier verrouillé ou illisible : absent du miroir,
+                _effacer(cible)  # et pas à moitié
+                return None
+            return ("fichier", etat.st_size, etat.st_mtime_ns)
+
+        with ThreadPoolExecutor(max_workers=FILS_DE_COPIE) as fils:
+            etats = list(fils.map(un, (relatif for relatif, _ in a_copier)))
+        for (relatif, entree), etat in zip(a_copier, etats, strict=True):
+            if etat is not None:
+                self._recus[relatif] = (entree, etat)
+
+
+@contextmanager
+def miroir_de_verification(
+    racine: Path,
+    *,
+    fichiers_max: int | None = None,
+    octets_max: int | None = None,
+) -> Iterator[MiroirDeVerification]:
+    """Un miroir de `racine` (#1496), retiré en sortie quoi qu'il arrive.
+
+    Rien n'est copié tant qu'on ne le synchronise pas : un espace dont aucune
+    livraison n'est vérifiée ne coûte rien.
+    """
+    miroir = MiroirDeVerification(racine, fichiers_max=fichiers_max, octets_max=octets_max)
+    try:
+        yield miroir
+    finally:
+        miroir.fermer()
+
+
+def _relever(source: Path, fichiers_max: int, octets_max: int) -> dict[str, _Entree]:
+    """Ce que la racine porte, chemin par chemin — bornes comptées pendant le relevé.
+
+    Rien n'est exclu par son nom (voir l'en-tête), aucun lien n'est suivi ; un dossier
+    devenu illisible est sauté, jamais fatal. Un fichier spécial (tube, socket) n'est
+    pas un fichier du projet.
+    """
+    releve: dict[str, _Entree] = {}
+    fichiers = 0
+    octets = 0
+    pile = [""]
+    while pile:
+        relatif_dossier = pile.pop()
+        base = source / relatif_dossier if relatif_dossier else source
+        try:
+            with os.scandir(base) as entrees:
+                triees = list(entrees)
+        except OSError:
+            continue
+        for entree in triees:
+            relatif = f"{relatif_dossier}/{entree.name}" if relatif_dossier else entree.name
+            if _est_un_lien(entree):
+                lien = _entree_de_lien(entree, source)
+                if lien is not None:
+                    releve[relatif] = lien
+                continue
+            if entree.is_dir(follow_symlinks=False):
+                releve[relatif] = _Entree("dossier")
+                pile.append(relatif)
+                continue
+            if not entree.is_file(follow_symlinks=False):
+                continue
+            try:
+                etat = entree.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            fichiers += 1
+            octets += etat.st_size
+            if fichiers > fichiers_max:
+                raise CopieImpossible(
+                    "trop-de-fichiers",
+                    f"le projet compte plus de {fichiers_max} fichiers, dépendances "
+                    "comprises : trop pour une copie de vérification.",
+                )
+            if octets > octets_max:
+                raise CopieImpossible(
+                    "trop-lourd",
+                    f"le projet pèse plus de {octets_max // (1024 * 1024)} Mo, dépendances "
+                    "comprises : trop pour une copie de vérification.",
+                )
+            releve[relatif] = _Entree("fichier", (etat.st_size, etat.st_mtime_ns))
+    return releve
+
+
+def _est_un_lien(entree: os.DirEntry[str]) -> bool:
+    """Un lien symbolique, ou une jonction Windows — ce que le miroir recrée sans le suivre."""
+    if entree.is_symlink():
+        return True
+    jonction = getattr(entree, "is_junction", None)  # Python 3.12 et au-delà
+    return bool(jonction is not None and jonction())
+
+
+def _entree_de_lien(entree: os.DirEntry[str], source: Path) -> _Entree | None:
+    """Ce qu'un lien de la racine désigne, résolu jusqu'au bout — `None` s'il est illisible."""
+    try:
+        os.readlink(entree.path)
+    except OSError:
+        return None
+    reel = Path(os.path.realpath(entree.path))
+    dossier = reel.is_dir()
+    if _sous(reel, source):
+        return _Entree("lien", interieur=reel.relative_to(source).as_posix(), dossier=dossier)
+    return _Entree("lien", exterieur=str(reel), dossier=dossier)
+
+
+def _etat_dans_le_miroir(entree: os.DirEntry[str], lien: bool) -> tuple[object, ...] | None:
+    """L'empreinte d'un chemin du miroir : ce que désigne un lien, taille et date d'un fichier."""
+    try:
+        if lien:
+            return ("lien", os.readlink(entree.path))
+        etat = entree.stat(follow_symlinks=False)
+    except OSError:
+        return None
+    return ("fichier", etat.st_size, etat.st_mtime_ns)
+
+
+def _effacer(chemin: Path) -> None:
+    """Efface un fichier ou un lien du miroir — le lien, jamais ce qu'il désigne."""
+    try:
+        chemin.unlink()
+        return
+    except PermissionError:
+        pass
+    except OSError:
+        return
+    try:
+        if chemin.is_symlink() or chemin.is_dir():
+            os.rmdir(chemin)  # un lien vers un dossier, sous Windows
+        else:
+            os.chmod(chemin, stat.S_IWRITE)  # lecture seule, sous Windows
+            chemin.unlink()
+    except OSError:
+        pass
 
 
 @contextmanager
