@@ -762,6 +762,21 @@ def _creneau_des_services_isole(
 
 
 @pytest.fixture(autouse=True)
+def _ports_d_essai_au_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Les ports d'essai que ce process désigne, jamais ceux d'un autre (#1491).
+
+    Le premier candidat d'un port d'essai se dérive de l'identifiant de la tâche, et
+    sa réservation tient sur tout le poste. Or les tests nomment presque tous leur
+    tâche `t1` : deux workers, ou la suite d'une autre copie, qui l'exécutent ensemble
+    visent le même numéro, et l'un des deux tire au hasard — une reprise ne
+    retrouverait plus son port. Ce qui est remplacé est
+    `maestro.sandbox.ports.espace_des_cles`, relu à chaque tirage : le pid du process.
+    """
+    espace = f"{os.getpid()}:"
+    monkeypatch.setattr("maestro.sandbox.ports.espace_des_cles", lambda: espace)
+
+
+@pytest.fixture(autouse=True)
 def _clients_du_poste_fermes(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -455,9 +455,10 @@ class AgentRuntime:
         La même section porte le **port d'essai** de la tâche (#1491) : un port que
         Maestro lui réserve pour toute la durée de cette exécution, corrections
         comprises (`maestro.sandbox.ports.port_d_essai`), et ne donne à aucune autre —
-        des agents parallèles qui tiraient le leur de tête tombaient sur le même. Un
-        poste qui n'en a aucun de libre ne retient pas la tâche : la ligne manque, et
-        le cadre d'exécution dit alors d'en choisir un.
+        des agents parallèles qui tiraient le leur de tête tombaient sur le même. Il se
+        dérive d'abord de `tache_id` : une tâche reprise retrouve le sien, et son
+        message reste le même. Un poste qui n'en a aucun de libre ne retient pas la
+        tâche : la ligne manque, et le cadre d'exécution dit alors d'en choisir un.
         """
         description = description.strip()
         if not description:
@@ -503,7 +504,7 @@ class AgentRuntime:
                 keep=keep_workspace,
                 miroir=miroir,
             ) as ws,
-            _port_d_essai(sur_le_poste) as port,
+            _port_d_essai(sur_le_poste, tache_id) as port,
         ):
             # Le message est composé **une fois l'espace ouvert** (#944) : ce que
             # l'agent doit savoir de son espace dépend du régime (la racine d'un
@@ -582,9 +583,10 @@ class AgentRuntime:
 
 
 @contextmanager
-def _port_d_essai(sur_le_poste: bool) -> Iterator[int | None]:
+def _port_d_essai(sur_le_poste: bool, tache_id: str | None) -> Iterator[int | None]:
     """Le port d'essai réservé à l'exécution, ou None (#1491).
 
+    Le premier candidat se dérive de `tache_id` : une tâche reprise retrouve son port.
     None pour un agent qui ne travaille pas sur ce poste — un port du poste ne lui
     servirait à rien —, et pour un poste qui n'en a aucun de libre : une tâche ne
     s'arrête pas faute de port d'essai, elle n'en reçoit pas.
@@ -593,7 +595,7 @@ def _port_d_essai(sur_le_poste: bool) -> Iterator[int | None]:
         port: int | None = None
         if sur_le_poste:
             try:
-                port = reservation.enter_context(port_d_essai())
+                port = reservation.enter_context(port_d_essai(cle=tache_id))
             except PortIndisponible:
                 port = None
         yield port

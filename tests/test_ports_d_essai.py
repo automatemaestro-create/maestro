@@ -33,6 +33,7 @@ from maestro.sandbox.ports import (
     PORTS_D_ESSAI,
     PortIndisponible,
     port_d_essai,
+    port_de_cle,
     port_libre,
 )
 from maestro.sandbox.verification import PORTS_DE_VERIFICATION
@@ -168,6 +169,28 @@ def test_un_poste_sans_port_d_essai_libre_le_dit() -> None:
             pass
 
 
+def test_une_tache_rejouee_retrouve_son_port() -> None:
+    """Une tâche reprise après un prérequis levé garde son message, port compris : le
+    premier candidat se dérive de son identifiant."""
+    with port_d_essai(cle="page-accueil") as premier:
+        pass
+    with port_d_essai(cle="page-accueil") as second:
+        pass
+
+    assert premier == second == port_de_cle("page-accueil")
+    assert port_de_cle("page-accueil") in PORTS_D_ESSAI
+    assert port_de_cle("page-contact") != port_de_cle("page-accueil")
+
+
+def test_deux_taches_qui_designent_le_meme_port_se_departagent() -> None:
+    """Deux identifiants qui tombent sur le même numéro : la réservation tranche, la
+    seconde tire au hasard."""
+    with port_d_essai(cle="page-accueil") as premier, port_d_essai(cle="page-accueil") as second:
+        assert premier == port_de_cle("page-accueil")
+        assert second != premier
+        assert second in PORTS_D_ESSAI
+
+
 def test_la_plage_d_essai_ne_croise_pas_celle_des_verifications() -> None:
     """Un port d'essai ne tombe jamais sur le service d'une vérification (#1487)."""
     assert not set(PORTS_D_ESSAI) & set(PORTS_DE_VERIFICATION)
@@ -274,6 +297,21 @@ def test_deux_agents_simultanes_recoivent_chacun_leur_port(
         assert port is not None
         with port_d_essai(tirage=_Tirage([port], ensuite=False), essais=1) as rendu:
             assert rendu == port
+
+
+def test_une_tache_reprise_recoit_le_meme_message_port_compris() -> None:
+    """Une tâche reprise « telle quelle », après un prérequis levé
+    (`tests/test_prerequis_en_cours_de_run.py`) : même tâche, même message — le port
+    d'essai ne le fait pas changer."""
+    provider = _Temoin()
+    runtime = AgentRuntime(provider, DEVELOPER_PROFILE)
+
+    for _ in range(2):
+        asyncio.run(runtime.execute("Servir la page d'accueil", machine=MACHINE, tache_id="t1"))
+
+    premier, second = provider.prompts
+    assert _port_du_message(premier) == port_de_cle("t1")
+    assert premier == second
 
 
 def test_un_agent_qui_travaille_ailleurs_ne_recoit_aucun_port_du_poste() -> None:

@@ -33,6 +33,12 @@ autre process de Maestro (un worker, un autre run) — échoue et tire ailleurs.
 n'est posé sur le disque, et le système rend le socket quand son détenteur meurt :
 il n'y a pas de réservation orpheline à ramasser (#1454).
 
+**Le même pour une tâche rejouée.** Le premier candidat se dérive de l'identifiant de
+la tâche (`port_de_cle`) : une tâche reprise après un prérequis levé, ou relancée,
+retrouve le port qu'elle avait, et son message est celui de sa première exécution, à
+la ligne près. Deux tâches dont les identifiants tombent sur le même numéro se
+départagent par la réservation : la seconde tire au hasard.
+
 La plage est **voisine** de celle des vérifications, jamais la même : un port
 d'essai ne croise donc jamais le port d'une vérification, sans que l'un ait à
 constater l'autre.
@@ -41,6 +47,8 @@ constater l'autre.
 from __future__ import annotations
 
 import errno
+import hashlib
+import itertools
 import random
 import socket
 from collections.abc import Iterator
@@ -86,6 +94,23 @@ def tirages(
         yield hasard.randrange(plage.start, plage.stop)
 
 
+def espace_des_cles() -> str:
+    """Ce qui précède la clé d'un port d'essai avant d'en tirer l'empreinte — rien, ici.
+
+    Relu à chaque appel : c'est la couture par laquelle la suite de tests en donne un
+    à chacun de ses process (`tests/conftest.py`), qui rejouent tous des tâches nommées
+    `t1` et se disputeraient sinon le même premier candidat.
+    """
+    return ""
+
+
+def port_de_cle(cle: str) -> int:
+    """Le port d'essai que `cle` désigne d'abord — le même pour la même clé, partout."""
+    texte = f"{espace_des_cles()}{cle}"
+    empreinte = int.from_bytes(hashlib.sha256(texte.encode("utf-8")).digest()[:8], "big")
+    return PORTS_D_ESSAI.start + empreinte % len(PORTS_D_ESSAI)
+
+
 def port_libre(port: int) -> bool:
     """`port` est-il libre sur chaque adresse locale ? — un `bind` par adresse, aussitôt rendu.
 
@@ -110,18 +135,26 @@ def port_libre(port: int) -> bool:
 
 @contextmanager
 def port_d_essai(
-    *, tirage: random.Random | None = None, essais: int = ESSAIS_PORT
+    *,
+    cle: str | None = None,
+    tirage: random.Random | None = None,
+    essais: int = ESSAIS_PORT,
 ) -> Iterator[int]:
     """Le port d'essai d'un agent, réservé tant que le bloc dure (#1491).
 
-    Tiré dans `PORTS_D_ESSAI`, rendu seulement s'il est libre (`port_libre`) **et**
+    Pris dans `PORTS_D_ESSAI`, rendu seulement s'il est libre (`port_libre`) **et**
     qu'aucune autre réservation ne le tient, dans ce process ou un autre (voir
-    l'en-tête). La réservation est rendue en sortie du bloc, quelle qu'en soit
-    l'issue. `tirage` est la couture des tests.
+    l'en-tête). Le premier candidat est celui que `cle` désigne (`port_de_cle`), les
+    suivants sont tirés au hasard. La réservation est rendue en sortie du bloc,
+    quelle qu'en soit l'issue. `tirage` est la couture des tests.
 
-    Lève `PortIndisponible` si `essais` tirages n'en ont trouvé aucun.
+    Lève `PortIndisponible` si aucun candidat — celui de la clé, puis `essais`
+    tirages — n'a pu être réservé.
     """
-    for port in tirages(PORTS_D_ESSAI, tirage=tirage, essais=essais):
+    candidats = tirages(PORTS_D_ESSAI, tirage=tirage, essais=essais)
+    if cle:
+        candidats = itertools.chain((port_de_cle(cle),), candidats)
+    for port in candidats:
         reservation = _reserver(port)
         if reservation is None:
             continue
@@ -161,7 +194,9 @@ __all__ = [
     "ESSAIS_PORT",
     "PORTS_D_ESSAI",
     "PortIndisponible",
+    "espace_des_cles",
     "port_d_essai",
+    "port_de_cle",
     "port_libre",
     "tirages",
 ]
