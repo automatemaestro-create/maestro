@@ -70,7 +70,7 @@ import ast
 import re
 import subprocess
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -227,10 +227,18 @@ def _touches_du_fichier(depot: Path, base: str, fichier: _Fichier) -> set[Touche
         # mode : le fichier entier — c'est lui que la carte connaît.
         return {Touche(c) for c in chemins}
     touches: set[Touche] = set()
-    for chemin, lignes, source in (
-        (fichier.avant, fichier.lignes_avant, lambda c: _git(depot, "show", f"{base}:{c}")),
-        (fichier.apres, fichier.lignes_apres, lambda c: _lire(depot / c)),
-    ):
+
+    def avant(chemin: str) -> str:
+        return _git(depot, "show", f"{base}:{chemin}")
+
+    def apres(chemin: str) -> str:
+        return _lire(depot / chemin)
+
+    cotes: tuple[tuple[str | None, set[int], Callable[[str], str]], ...] = (
+        (fichier.avant, fichier.lignes_avant, avant),
+        (fichier.apres, fichier.lignes_apres, apres),
+    )
+    for chemin, lignes, source in cotes:
         if not chemin or not lignes:
             continue
         try:
@@ -326,9 +334,10 @@ def composer(
     # Deux tours : une empreinte d'un scénario empêché (coupé en route) ne sert qu'à défaut.
     for empeche_admis in (False, True):
         for ligne, lue in lues:
+            joues = ligne.get("scenarios")
             empeches = {
                 str(s.get("id"))
-                for s in ligne.get("scenarios", ())  # type: ignore[union-attr]
+                for s in (joues if isinstance(joues, list) else ())
                 if isinstance(s, Mapping) and s.get("empechement")
             }
             for ident, empreinte in lue.scenarios.items():
@@ -389,10 +398,10 @@ def croiser(
 
     def cout(ident: str) -> tuple[int, float, float, tuple[str, int, str]]:
         serie = par_id.get(ident)
-        connu = serie is not None and serie.cout_median_usd is not None
+        montant = serie.cout_median_usd if serie is not None else None
         return (
-            0 if connu else 1,
-            serie.cout_median_usd if connu else 0.0,  # type: ignore[union-attr]
+            0 if montant is not None else 1,
+            montant if montant is not None else 0.0,
             serie.duree_mediane_s if serie is not None else float("inf"),
             historique.ordre_naturel(ident),
         )
