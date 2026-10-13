@@ -41,8 +41,14 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+    nullcontext,
+)
 from dataclasses import dataclass, replace
+from pathlib import Path
 from time import monotonic, perf_counter
 from typing import Any, Protocol
 
@@ -148,6 +154,7 @@ from maestro.router.router import Router
 from maestro.sandbox import ProducedFile, branche_de_tache
 from maestro.sandbox.confinement import ReleveConfinement
 from maestro.sandbox.en_place import portee_de
+from maestro.sandbox.verification import MiroirDeVerification, RegistreDesMiroirs
 from maestro.telemetry import (
     ConsigneDepenseDuRun,
     PlafondDepense,
@@ -759,6 +766,22 @@ class TaskExecutor(ABC):
         dépôt le retiennent — en process, et jusqu'aux workers de la file.
         """
 
+    @asynccontextmanager
+    async def tient_le_run(self, run_id: str) -> AsyncIterator[None]:
+        """Le temps du run `run_id`, borné par la boucle autour de ses tâches (#1497).
+
+        Ce que l'exécuteur garde d'une tâche à l'autre du run vit dans ce bloc et part
+        à sa sortie — quelle qu'elle soit : run fini, tâche en échec, run annulé ou
+        levé. C'est le **miroir** où se vérifient les tâches d'un projet non versionné
+        (#1496) : copié à la première vérification du run, resynchronisé aux
+        suivantes, retiré ici une fois, au lieu d'une copie et d'un retrait par tâche.
+
+        Sans effet par défaut, et c'est une limite **dite** : un exécuteur distribué
+        (`maestro.queue.CeleryExecutor`) vérifie côté worker, où la fin du run ne
+        voyage pas — chaque tâche y garde son propre miroir, comme avant ce ticket.
+        """
+        yield
+
     def derive_les_instances(
         self, run_id: str, projet_id: str, largeur: int
     ) -> InstancesDerivees | None:
@@ -998,6 +1021,13 @@ class LocalExecutor(TaskExecutor):
         self._machines: dict[tuple[str, str], Machine] = {}
         self._verrous_machine: dict[tuple[str, str], asyncio.Lock] = {}
         self._boucle_machine: asyncio.AbstractEventLoop | None = None
+        # Les miroirs où se vérifient les tâches d'un projet non versionné (#1496),
+        # **un par run** et par racine (#1497) : la première vérification du run le
+        # copie, les suivantes le resynchronisent, et la fin du run le retire
+        # (`tient_le_run`). Purgé, lui : un miroir pèse ce que pèse la racine. Un run
+        # que la boucle ne tient pas — celui d'un worker de file — n'en a pas, et
+        # chaque tâche y garde le sien.
+        self._miroirs = RegistreDesMiroirs()
         # Serveurs MCP par agent (#104) : les déclarations sont relues à chaud
         # dans ce dépôt à chaque tâche — comme les playbooks (#78) — et montées
         # par la couche SDK sur les exécutions outillées de l'agent. None :
@@ -1400,6 +1430,20 @@ class LocalExecutor(TaskExecutor):
         peut que le préciser.
         """
         self._briefs[run_id] = brief
+
+    @asynccontextmanager
+    async def tient_le_run(self, run_id: str) -> AsyncIterator[None]:
+        """Cf. `TaskExecutor.tient_le_run` — les miroirs du run partent à sa sortie (#1497).
+
+        Le retrait d'un miroir dure le temps d'effacer un arbre (7,7 s pour la racine de
+        S12) : il se joue dans un fil, hors de la boucle asyncio. Un run annulé pendant
+        ce temps n'interrompt pas le retrait, qui finit dans son fil.
+        """
+        self._miroirs.ouvrir(run_id)
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(self._miroirs.retirer, run_id)
 
     def derive_les_instances(
         self, run_id: str, projet_id: str, largeur: int
@@ -2276,6 +2320,20 @@ class LocalExecutor(TaskExecutor):
                 connue = await asyncio.to_thread(constater, noms)
                 self._machines[cle] = connue
         return connue
+
+    def _miroir_du_run(
+        self, journal: RunJournal | None, projet: Projet | None
+    ) -> AbstractContextManager[MiroirDeVerification | None]:
+        """Le miroir du run pour la racine de `projet`, prêté le temps de la tâche (#1497).
+
+        Seul un projet **non versionné** en a un : c'est sa racine que la vérification
+        ne doit pas toucher (#1496) ; une copie de travail se vérifie sur place. Sans
+        journal il n'y a pas de run à qui le garder, et un run que personne ne tient
+        n'en a pas non plus (`RegistreDesMiroirs.prete`) : l'espace aura le sien.
+        """
+        if journal is None or projet is None or projet.versionne:
+            return nullcontext()
+        return self._miroirs.prete(journal.run_id, Path(projet.racine))
 
     def _consigne_fusion(
         self,
@@ -3941,117 +3999,122 @@ class LocalExecutor(TaskExecutor):
             # Ce que Maestro sait de la machine (#1403), constaté une fois pour le run
             # — avant d'ouvrir l'espace, comme l'outillage qu'il lit.
             machine = await self._machine_du_run(task, journal, projet)
-            try:
-                outcome = await runtime.execute(
-                    description,
-                    format_sortie=task.format_sortie,
-                    system_prompt=playbook.contenu if playbook is not None else None,
-                    mcp_serveurs=serveurs_mcp,
-                    environ=(
-                        self._secrets.environ(agent.nom) if self._secrets is not None else None
-                    ),
-                    politique=politique,
-                    on_refus=(
-                        None
-                        if journal is None
-                        else lambda outil, raison, decideur=None: self._consigne_refus(
-                            task, agent, outil, raison, journal, politique, decideur
-                        )
-                    ),
-                    # L'arbitrage ne dépend pas du journal (#583) : c'est la
-                    # **décision** qui garde l'acte, et un run sans journal doit
-                    # la demander comme les autres — seule sa trace manquerait.
-                    # Sans politique en revanche, aucun outil n'est classé `ask` :
-                    # il n'y a rien à arbitrer, et le hook n'existe même pas.
-                    on_arbitrage_acte=(
-                        None
-                        if politique is None
-                        else self._arbitre_acte(task, agent, journal, deliberation.memoire)
-                    ),
-                    on_activite=(
-                        None
-                        if journal is None
-                        else lambda texte: self._consigne_activite(
-                            task, agent, texte, journal
-                        )
-                    ),
-                    on_etapes=(
-                        None
-                        if journal is None or suivi is None
-                        else self._on_etapes(task, agent, suivi, journal)
-                    ),
-                    on_arbitrage=(
-                        None if journal is None else self._arbitre(task, agent, journal)
-                    ),
-                    # Sans journal, pas de canal (#719) : ce verbe ne fait
-                    # **que** consigner — à la différence de l'arbitrage
-                    # au-dessus, dont la décision garde l'acte même sans trace.
-                    # L'exposer sans journal servirait à l'agent un outil qui
-                    # n'aboutit nulle part, ce que `_outils_maestro` évite en ne
-                    # le montant pas du tout.
-                    on_blocage=(
-                        None
-                        if journal is None
-                        else lambda raison: self._consigne_blocage_signale(
-                            task, agent, raison, journal, blocages
-                        )
-                    ),
-                    # Même règle que le blocage (#1024) : ce verbe ne fait
-                    # **que** consigner, donc sans journal il n'aboutirait
-                    # nulle part. Le servir quand même ferait promettre à
-                    # l'agent une trace qui n'existe pas — or c'est la seule
-                    # chose que ce verbe promet.
-                    on_decision=(
-                        None
-                        if journal is None
-                        else lambda decision, raison: self._consigne_decision_autonome(
-                            task, agent, decision, raison, journal
-                        )
-                    ),
-                    # Le crédit descend, la mémoire non (#584) : le fournisseur
-                    # mesure une attente, il n'a pas à connaître les demandes.
-                    credit_arbitrage=deliberation.credit,
-                    # Le journal suffit, la messagerie n'est pas requise (#720) :
-                    # c'est lui qui livre, le transport ne fait que notifier.
-                    # Sans journal en revanche, il n'y aurait nulle part où
-                    # écrire — et un verbe qui ne consigne rien ne tient plus
-                    # aucune des promesses de sa description.
-                    on_courrier=(
-                        None if journal is None else self._courrier(task, agent, journal)
-                    ),
-                    # Deux conditions, et aucune n'est de confort (#1023) : sans
-                    # **canal**, la question n'atteindrait personne et l'agent
-                    # serait suspendu pour rien ; sans **journal**, sa reprise sur
-                    # hypothèse ne s'écrirait nulle part, ce que le troisième
-                    # critère interdit. Dans les deux cas le verbe n'est pas monté
-                    # du tout, plutôt que monté sans aboutir.
-                    on_question=(
-                        None
-                        if journal is None or self._questionneur is None
-                        else self._question(task, agent, journal, deliberation.memoire)
-                    ),
-                    # Sans journal, rien à dire (#1279) — mais l'arrêt a lieu
-                    # quand même : il vit chez le fournisseur et n'a jamais
-                    # dépendu de ce qu'on en raconte.
-                    on_processus=(
-                        None
-                        if journal is None
-                        else lambda releve: self._consigne_processus(
-                            task, agent, releve, journal
-                        )
-                    ),
-                    projet=projet,
-                    tache_id=task.id,
-                    # Une tâche de tête d'un redécoupage (#1396) : sa branche part
-                    # de celle de la tâche qu'elle remplace, pas de la base.
-                    reprend=task.reprend,
-                    effort=agent.effort,
-                    on_livraison=recette,
-                    machine=machine,
-                )
-                return outcome.resume, outcome.fichiers
-            except UnsupportedCapability:
-                pass  # fournisseur texte-seul : repli sur le livrable texte
+            # Le miroir du run où se vérifient les tâches d'un projet non versionné
+            # (#1497) : prêté à cette tâche, que la précédente a fait copier ; None
+            # hors d'un run tenu, ou s'il sert encore ailleurs — l'espace aura le sien.
+            with self._miroir_du_run(journal, projet) as miroir:
+                try:
+                    outcome = await runtime.execute(
+                        description,
+                        format_sortie=task.format_sortie,
+                        system_prompt=playbook.contenu if playbook is not None else None,
+                        mcp_serveurs=serveurs_mcp,
+                        environ=(
+                            self._secrets.environ(agent.nom) if self._secrets is not None else None
+                        ),
+                        politique=politique,
+                        on_refus=(
+                            None
+                            if journal is None
+                            else lambda outil, raison, decideur=None: self._consigne_refus(
+                                task, agent, outil, raison, journal, politique, decideur
+                            )
+                        ),
+                        # L'arbitrage ne dépend pas du journal (#583) : c'est la
+                        # **décision** qui garde l'acte, et un run sans journal doit
+                        # la demander comme les autres — seule sa trace manquerait.
+                        # Sans politique en revanche, aucun outil n'est classé `ask` :
+                        # il n'y a rien à arbitrer, et le hook n'existe même pas.
+                        on_arbitrage_acte=(
+                            None
+                            if politique is None
+                            else self._arbitre_acte(task, agent, journal, deliberation.memoire)
+                        ),
+                        on_activite=(
+                            None
+                            if journal is None
+                            else lambda texte: self._consigne_activite(
+                                task, agent, texte, journal
+                            )
+                        ),
+                        on_etapes=(
+                            None
+                            if journal is None or suivi is None
+                            else self._on_etapes(task, agent, suivi, journal)
+                        ),
+                        on_arbitrage=(
+                            None if journal is None else self._arbitre(task, agent, journal)
+                        ),
+                        # Sans journal, pas de canal (#719) : ce verbe ne fait
+                        # **que** consigner — à la différence de l'arbitrage
+                        # au-dessus, dont la décision garde l'acte même sans trace.
+                        # L'exposer sans journal servirait à l'agent un outil qui
+                        # n'aboutit nulle part, ce que `_outils_maestro` évite en ne
+                        # le montant pas du tout.
+                        on_blocage=(
+                            None
+                            if journal is None
+                            else lambda raison: self._consigne_blocage_signale(
+                                task, agent, raison, journal, blocages
+                            )
+                        ),
+                        # Même règle que le blocage (#1024) : ce verbe ne fait
+                        # **que** consigner, donc sans journal il n'aboutirait
+                        # nulle part. Le servir quand même ferait promettre à
+                        # l'agent une trace qui n'existe pas — or c'est la seule
+                        # chose que ce verbe promet.
+                        on_decision=(
+                            None
+                            if journal is None
+                            else lambda decision, raison: self._consigne_decision_autonome(
+                                task, agent, decision, raison, journal
+                            )
+                        ),
+                        # Le crédit descend, la mémoire non (#584) : le fournisseur
+                        # mesure une attente, il n'a pas à connaître les demandes.
+                        credit_arbitrage=deliberation.credit,
+                        # Le journal suffit, la messagerie n'est pas requise (#720) :
+                        # c'est lui qui livre, le transport ne fait que notifier.
+                        # Sans journal en revanche, il n'y aurait nulle part où
+                        # écrire — et un verbe qui ne consigne rien ne tient plus
+                        # aucune des promesses de sa description.
+                        on_courrier=(
+                            None if journal is None else self._courrier(task, agent, journal)
+                        ),
+                        # Deux conditions, et aucune n'est de confort (#1023) : sans
+                        # **canal**, la question n'atteindrait personne et l'agent
+                        # serait suspendu pour rien ; sans **journal**, sa reprise sur
+                        # hypothèse ne s'écrirait nulle part, ce que le troisième
+                        # critère interdit. Dans les deux cas le verbe n'est pas monté
+                        # du tout, plutôt que monté sans aboutir.
+                        on_question=(
+                            None
+                            if journal is None or self._questionneur is None
+                            else self._question(task, agent, journal, deliberation.memoire)
+                        ),
+                        # Sans journal, rien à dire (#1279) — mais l'arrêt a lieu
+                        # quand même : il vit chez le fournisseur et n'a jamais
+                        # dépendu de ce qu'on en raconte.
+                        on_processus=(
+                            None
+                            if journal is None
+                            else lambda releve: self._consigne_processus(
+                                task, agent, releve, journal
+                            )
+                        ),
+                        projet=projet,
+                        tache_id=task.id,
+                        # Une tâche de tête d'un redécoupage (#1396) : sa branche part
+                        # de celle de la tâche qu'elle remplace, pas de la base.
+                        reprend=task.reprend,
+                        effort=agent.effort,
+                        on_livraison=recette,
+                        machine=machine,
+                        miroir=miroir,
+                    )
+                    return outcome.resume, outcome.fichiers
+                except UnsupportedCapability:
+                    pass  # fournisseur texte-seul : repli sur le livrable texte
         # Le chemin texte ne sert aucun verbe à l'agent (#1291) : personne ne
         # pourra cocher la checklist, et la clôture le dira au lieu de rapporter
         # un écart que l'agent n'avait aucun moyen de combler.

@@ -168,6 +168,13 @@ def _executeur() -> LocalExecutor:
     fiche de l'agent routé, à chaque tâche — un agent personnalisé travaille donc
     outillé dans une activité durable comme ailleurs. Lui passer `default_runtimes(...)`
     le restreindrait aux cinq rôles du code.
+
+    Le **miroir** de vérification d'un projet non versionné (#1496, #1497) n'y est pas
+    gardé pour le run : le workflow ordonnance ses activités, aucune boucle ne tient
+    le run auprès de l'exécuteur (`TaskExecutor.tient_le_run`), et une activité de
+    clôture tomberait sur n'importe quel worker de la file. Une tâche de projet y
+    aurait le sien, retiré avec son espace ; en pratique un run durable ne porte pas
+    de projet (`DurableEngine.run` n'en reçoit aucun).
     """
     global _executor
     if _executor is None:

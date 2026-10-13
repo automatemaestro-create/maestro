@@ -184,6 +184,14 @@ def _executeur() -> LocalExecutor:
     agent** (#109, `MAESTRO_SECRETS_DIR` — stockage partagé, même exigence que
     les autres dépôts) dès qu'il est provisionné : un agent ne voit que les
     siens, côté workers comme en local.
+
+    Le **miroir** où se vérifie une tâche d'un projet non versionné (#1496) n'y est
+    pas gardé d'une tâche à l'autre du run, à la différence du moteur en process
+    (#1497) : aucune boucle ne tient le run ici (`TaskExecutor.tient_le_run`), et la
+    fin d'un run ne voyage pas jusqu'au worker. Chaque tâche a donc le sien, copié à
+    sa première vérification et retiré avec son espace — sans quoi un worker qui vit
+    des jours accumulerait un miroir par run. Le ramassage l'emporte si le worker
+    meurt avant.
     """
     global _executor
     if _executor is None:

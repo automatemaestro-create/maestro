@@ -294,7 +294,8 @@ class EspaceEnPlace(Workspace):
     pas. `miroir` (#1496) est le reflet de la racine où se jouent les
     vérifications de la tâche (`sans_trace`), tenu par qui ouvre l'espace
     (`maestro.sandbox.projet.espace_de_travail`) pour qu'il se resynchronise d'une
-    livraison à l'autre au lieu de se recopier. Le reste du contrat de `Workspace`
+    livraison à l'autre au lieu de se recopier — et, quand l'exécuteur le garde pour
+    le run, d'une tâche à l'autre (#1497). Le reste du contrat de `Workspace`
     tient tel quel — `derive` relève l'empreinte de départ, `produced_files` rend
     ce qui a changé depuis.
     """
