@@ -26,7 +26,10 @@ Critères couverts :
   système refuse de lancer est nommée sans jeter la livraison (#1432) ;
 ⑦ deux vérifications ne se disputent jamais un port (#1449) : un service démarré
   par une vérification à la fois sur le poste, et un port qu'un autre tient encore
-  est attendu avant d'être compté « non joué » — prouvé sur de vrais serveurs.
+  est attendu avant d'être compté « non joué » — prouvé sur de vrais serveurs ;
+⑧ le service d'une vérification joue sur un port que Maestro lui réserve (#1487) :
+  libre sur chaque adresse locale, hors de ceux qu'un agent prend, et jamais celui
+  que nomment les critères — un agent qui libère ce port-là ne l'atteint pas.
 """
 
 from __future__ import annotations
@@ -1107,7 +1110,7 @@ def test_un_demarrage_qui_tourne_encore_au_delai_tient(tmp_path):
         {"controles": [{"critere": "le serveur démarre", "commande": "serve", "demarrage": True}]}
     )
 
-    def joueur(commande, cwd, *, interprete, delai_s):
+    def joueur(commande, cwd, *, interprete, delai_s, environnement=None):
         assert delai_s == 2.0
         return Execution(code=None, sortie="écoute sur 8000", duree_s=2.0, expiree=True)
 
@@ -1737,11 +1740,17 @@ def test_une_livraison_que_le_juge_n_a_pas_pu_jouer_se_demande():
     assert salut.verification_en_panne and salut.sortie == "J'ai livré (session 1)."
 
 
-def _demarreur_qui_rend(resultat, appels: list[dict[str, Any]]):
-    def demarreur(commande, cwd, *, interprete, sonde, delai_s, delai_sonde_s):
+def _demarreur_qui_rend(
+    resultat, appels: list[dict[str, Any]], environnements: list[Any] | None = None
+):
+    def demarreur(
+        commande, cwd, *, interprete, sonde, delai_s, delai_sonde_s, environnement=None
+    ):
         appels.append(
             {"commande": commande, "sonde": sonde, "delai_s": delai_s, "sonde_s": delai_sonde_s}
         )
+        if environnements is not None:
+            environnements.append(environnement)
         if isinstance(resultat, BaseException):
             raise resultat
         return resultat
@@ -2506,3 +2515,277 @@ def test_un_service_arrete_a_rendu_son_port_quand_demarrer_rend_la_main(
 
     assert resultat.repondu, resultat.sortie
     assert not _ecoute(port)
+
+
+# --------------------------------------------------------------------------- #
+# ⑧ Le service d'une vérification joue sur un port que Maestro lui réserve (#1487)
+# --------------------------------------------------------------------------- #
+
+_SERVICE_RESERVE = "PORT=$MAESTRO_PORT npm start"
+_SONDE_RESERVEE = (
+    "curl -s -o /dev/null -w '%{http_code}' http://localhost:$MAESTRO_PORT/ | grep -qx 200"
+)
+_CONTROLE_RESERVE = {
+    "critere": _CRITERE_SERVEUR,
+    "commande": _SERVICE_RESERVE,
+    "sonde": _SONDE_RESERVEE,
+}
+
+
+def test_le_service_d_une_verification_joue_sur_un_port_que_maestro_lui_reserve(tmp_path):
+    """Le run `c05bf6263236` : la vérification servait le port que nomment les critères,
+    celui où les agents des tâches voisines se vérifient — et l'un d'eux l'a « libéré »
+    en tuant ce qui l'écoutait. Le service d'une vérification reçoit désormais son port,
+    que Maestro choisit libre et hors de ceux qu'un agent prend."""
+    from maestro.sandbox.verification import PORTS_DE_VERIFICATION, VARIABLE_PORT
+
+    environnements: list[Any] = []
+    demarreur = _demarreur_qui_rend(
+        _demarrage(repondu=True, sonde=Execution(0, "", 0.1)), [], environnements
+    )
+
+    _, verdict = _verifier_le_serveur(tmp_path, demarreur, controle=_CONTROLE_RESERVE)
+
+    assert verdict.tenue
+    (environnement,) = environnements
+    port = int(environnement[VARIABLE_PORT])
+    assert port in PORTS_DE_VERIFICATION
+    # La preuve dit sur quel port le service a joué : l'agent peut la rejouer.
+    assert f"sur le port {port}" in verdict.constats[0].preuve
+
+
+def test_un_service_qui_s_arrete_dit_sur_quel_port_il_jouait(tmp_path):
+    """« Le service a rendu la main » revient à l'agent avec le port réservé : il
+    rejoue le critère là, et non sur le port que les tâches voisines partagent."""
+    from maestro.sandbox.verification import VARIABLE_PORT
+
+    environnements: list[Any] = []
+    demarreur = _demarreur_qui_rend(
+        _demarrage(code=1, sortie="Carnet servi"), [], environnements
+    )
+
+    _, verdict = _verifier_le_serveur(tmp_path, demarreur, controle=_CONTROLE_RESERVE)
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_TENU
+    assert constat.preuve.startswith("le service a rendu la main (code 1)")
+    assert f"port {environnements[0][VARIABLE_PORT]}" in constat.preuve
+
+
+def test_un_service_au_port_ecrit_en_dur_ne_parle_pas_du_port_reserve(tmp_path):
+    """Un critère qui fixe le port (un serveur qui n'en lit aucun) garde le sien : le
+    port réservé est posé, mais la preuve ne prétend pas que le service l'a pris."""
+    from maestro.sandbox.verification import VARIABLE_PORT
+
+    environnements: list[Any] = []
+    demarreur = _demarreur_qui_rend(
+        _demarrage(repondu=True, sonde=Execution(0, "", 0.1)), [], environnements
+    )
+
+    _, verdict = _verifier_le_serveur(tmp_path, demarreur)
+
+    assert VARIABLE_PORT in environnements[0]
+    assert "sur le port" not in verdict.constats[0].preuve
+
+
+def test_un_demarrage_sans_sonde_recoit_aussi_son_port(tmp_path):
+    """« Le serveur démarre » tient un port autant que « le serveur répond »."""
+    from maestro.sandbox.verification import PORTS_DE_VERIFICATION, VARIABLE_PORT
+
+    recus: list[Any] = []
+
+    def joueur(commande, cwd, *, interprete, delai_s, environnement=None):
+        recus.append(environnement)
+        return Execution(code=None, sortie="", duree_s=2.0, expiree=True)
+
+    controle = {"critere": "le serveur démarre", "commande": _SERVICE_RESERVE, "demarrage": True}
+    verificateur = VerificateurTaches(
+        _Reponses(json.dumps({"controles": [controle]})),
+        joueur=joueur,
+        interprete=_INTERPRETE,
+    )
+
+    _, verdict = asyncio.run(
+        verificateur.verifier(
+            _TACHE,
+            Livraison(sortie="fait", espace=tmp_path, portee=PorteeProjet(racine=tmp_path)),
+            modele="m",
+        )
+    )
+
+    assert verdict.tenue
+    port = int(recus[0][VARIABLE_PORT])
+    assert port in PORTS_DE_VERIFICATION
+    assert f"sur le port {port}" in verdict.constats[0].preuve
+
+
+def test_sans_port_libre_le_service_n_est_pas_joue_et_le_dit(tmp_path, monkeypatch):
+    """Ne pas trouver de port n'est ni la faute de l'agent ni un vert : le contrôle
+    n'est pas joué, et rien n'est démarré."""
+    from maestro.sandbox import verification as execution
+
+    def aucun(**_: Any) -> int:
+        raise execution.PortIndisponible("aucun port libre parmi 64 essais")
+
+    monkeypatch.setattr(execution, "port_de_verification", aucun)
+    appels: list[dict[str, Any]] = []
+
+    _, verdict = _verifier_le_serveur(
+        tmp_path,
+        _demarreur_qui_rend(_demarrage(repondu=True), appels),
+        controle=_CONTROLE_RESERVE,
+    )
+
+    (constat,) = verdict.constats
+    assert constat.etat == CONSTAT_NON_JOUE
+    assert "aucun port libre" in constat.preuve
+    assert appels == []
+
+
+def test_le_juge_laisse_maestro_choisir_le_port_du_service():
+    """La règle d'écriture : un port que le critère laisse choisir s'écrit par la variable."""
+    from maestro.sandbox.verification import VARIABLE_PORT
+
+    assert f"${VARIABLE_PORT}" in SYSTEME
+
+
+def _ecouter_dans(plage: range, famille: int, hote: str):
+    """Une prise qui écoute `hote` sur un port de `plage` — `None` si la famille manque."""
+    import random
+    import socket
+
+    try:
+        prise = socket.socket(famille, socket.SOCK_STREAM)
+    except OSError:  # pragma: no cover — IPv6 coupé sur le poste
+        return None
+    for _ in range(200):
+        try:
+            prise.bind((hote, random.randrange(plage.start, plage.stop)))
+        except OSError:
+            continue
+        prise.listen()
+        return prise
+    prise.close()  # pragma: no cover
+    return None
+
+
+class _Tirage:
+    """Propose d'abord les ports donnés — en boucle si `ensuite` est faux —, puis au hasard."""
+
+    def __init__(self, proposes: list[int], *, ensuite: bool = True) -> None:
+        self.proposes = list(proposes)
+        self.ensuite = ensuite
+        self.tires = 0
+
+    def randrange(self, debut: int, fin: int) -> int:
+        import random
+
+        self.tires += 1
+        if self.proposes:
+            port = self.proposes.pop(0)
+            if not self.ensuite:
+                self.proposes.append(port)
+            return port
+        return random.randrange(debut, fin)
+
+
+def test_le_port_reserve_n_est_jamais_un_port_qu_un_processus_ecoute():
+    """Sous Windows, un `bind` sur 0.0.0.0 réussit à côté d'un serveur qui n'écoute que
+    127.0.0.1 (mesuré sur le poste en écrivant ce ticket) : un port libre se constate
+    adresse par adresse, sur chacune de celles où un serveur local écoute."""
+    import socket
+
+    from maestro.sandbox.verification import PORTS_DE_VERIFICATION, port_de_verification
+
+    adresses = [
+        (socket.AF_INET, "127.0.0.1"),
+        (socket.AF_INET, "0.0.0.0"),  # noqa: S104 - un serveur qui écoute partout
+        (socket.AF_INET6, "::1"),
+        (socket.AF_INET6, "::"),
+    ]
+    prises = [p for f, h in adresses if (p := _ecouter_dans(PORTS_DE_VERIFICATION, f, h))]
+    tenus = [prise.getsockname()[1] for prise in prises]
+    try:
+        port = port_de_verification(tirage=_Tirage(tenus))
+    finally:
+        for prise in prises:
+            prise.close()
+
+    assert len(tenus) >= 2
+    assert port in PORTS_DE_VERIFICATION
+    assert port not in tenus
+
+
+def test_un_poste_sans_port_libre_le_dit_au_lieu_de_jouer_au_hasard():
+    import socket
+
+    from maestro.sandbox.verification import (
+        PORTS_DE_VERIFICATION,
+        PortIndisponible,
+        port_de_verification,
+    )
+
+    prise = _ecouter_dans(PORTS_DE_VERIFICATION, socket.AF_INET, "127.0.0.1")
+    assert prise is not None
+    tirage = _Tirage([prise.getsockname()[1]], ensuite=False)
+    try:
+        with pytest.raises(PortIndisponible):
+            port_de_verification(tirage=tirage)
+    finally:
+        prise.close()
+    assert tirage.tires > 1, "un seul essai n'est pas une recherche"
+
+
+@pytest.mark.commandes_jouees
+def test_le_port_du_critere_tenu_par_un_agent_ne_croise_jamais_la_verification(
+    tmp_path, creneau_a_part
+):
+    """La preuve du ticket sur de vrais serveurs (run `c05bf6263236`) : l'agent d'une
+    tâche voisine sert sa page sur le port que nomment les critères, et le libère en
+    arrêtant ce qui l'écoute. Le service de la vérification n'y est jamais — il joue sur
+    le port que Maestro lui réserve : il n'attend pas que l'agent rende le port, ne lui
+    répond pas, et ce qu'un agent trouve sur le port du critère est toujours le sien."""
+    import shutil
+    import subprocess
+    import sys
+
+    bash = _bash_ou_rien()
+    port_du_critere = _port_libre()
+    agent, verifiee = _deux_espaces(tmp_path)
+    lanceur = _serveur_de_pages(agent)
+    _serveur_de_pages(verifiee)
+    extension = "js" if lanceur == "node" else "py"
+    programme = shutil.which("node") if lanceur == "node" else sys.executable
+    assert programme is not None
+    serveur_de_l_agent = subprocess.Popen(  # noqa: S603 - argv fixe
+        [programme, f"serveur.{extension}", str(port_du_critere)], cwd=agent
+    )
+    try:
+        _attendre_ecoute(port_du_critere, 30.0)
+        controle = {
+            "critere": f"avec le port {port_du_critere}, le service répond 200 sur /",
+            "commande": f"{lanceur} serveur.{extension} $MAESTRO_PORT",
+            "sonde": f"{lanceur} sonde.{extension} $MAESTRO_PORT '' 200",
+        }
+        _, verdict = asyncio.run(
+            VerificateurTaches(
+                _Reponses(json.dumps({"controles": [controle]})),
+                delais=DelaisVerification(commande_s=60.0, sonde_s=10.0, liberation_s=5.0),
+                interprete=bash,
+            ).verifier(_TACHE, Livraison(sortie="fait", espace=verifiee), modele="m")
+        )
+
+        assert verdict.tenue, verdict.preuves()
+        preuve = verdict.constats[0].preuve
+        assert "le port était tenu" not in preuve
+        trouve = re.search(r"sur le port (\d+)", preuve)
+        assert trouve, preuve
+        port_reserve = int(trouve[1])
+        assert port_reserve != port_du_critere
+        assert not _ecoute(port_reserve), "le service de la vérification a survécu"
+        # Le serveur de l'agent n'a jamais cédé le port du critère, et vit toujours.
+        assert serveur_de_l_agent.poll() is None
+        assert _ecoute(port_du_critere)
+    finally:
+        serveur_de_l_agent.kill()
+        serveur_de_l_agent.wait(timeout=10)
