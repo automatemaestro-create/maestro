@@ -19,7 +19,8 @@ d'un éventuel repli).
 from __future__ import annotations
 
 import os
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -42,6 +43,7 @@ from maestro.providers.decision import Consigneur
 from maestro.providers.question import Questionneur
 from maestro.sandbox import LieuSansTrace, ProducedFile, espace_de_travail
 from maestro.sandbox.confinement import ReleveConfinement
+from maestro.sandbox.ports import PortIndisponible, port_d_essai
 from maestro.sandbox.verification import MiroirDeVerification
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
@@ -449,6 +451,13 @@ class AgentRuntime:
         (`ModelProvider.commandes_sur_le_poste`) — dans le conteneur du mode isolé,
         ces faits seraient ceux d'une autre machine. None : rien n'en est dit, et le
         message est celui d'avant, à la ligne près.
+
+        La même section porte le **port d'essai** de la tâche (#1491) : un port que
+        Maestro lui réserve pour toute la durée de cette exécution, corrections
+        comprises (`maestro.sandbox.ports.port_d_essai`), et ne donne à aucune autre —
+        des agents parallèles qui tiraient le leur de tête tombaient sur le même. Un
+        poste qui n'en a aucun de libre ne retient pas la tâche : la ligne manque, et
+        le cadre d'exécution dit alors d'en choisir un.
         """
         description = description.strip()
         if not description:
@@ -482,14 +491,20 @@ class AgentRuntime:
         # Le régime de cette exécution, écrit depuis la politique qu'elle applique
         # (#1405) — jamais par le modèle qui a rédigé le playbook.
         prompt_systeme = avec_regime(system_prompt or self._system_prompt, politique)
-        with espace_de_travail(
-            projet,
-            tache_id=tache_id,
-            reprend=reprend,
-            prefix=self._profile.workspace_prefix,
-            keep=keep_workspace,
-            miroir=miroir,
-        ) as ws:
+        # Les faits du poste ne valent que pour un agent qui y travaille (#1403), et son
+        # port d'essai avec eux (#1491).
+        sur_le_poste = machine is not None and self._provider.commandes_sur_le_poste
+        with (
+            espace_de_travail(
+                projet,
+                tache_id=tache_id,
+                reprend=reprend,
+                prefix=self._profile.workspace_prefix,
+                keep=keep_workspace,
+                miroir=miroir,
+            ) as ws,
+            _port_d_essai(sur_le_poste) as port,
+        ):
             # Le message est composé **une fois l'espace ouvert** (#944) : ce que
             # l'agent doit savoir de son espace dépend du régime (la racine d'un
             # projet nomme son atelier, un worktree dit de quel projet il est la
@@ -510,8 +525,8 @@ class AgentRuntime:
                 ws.consigne_espace(),
                 outillage.consigne(espace=espace),
                 machine=(
-                    machine.consigne()
-                    if machine is not None and self._provider.commandes_sur_le_poste
+                    machine.consigne(port_d_essai=port)
+                    if machine is not None and sur_le_poste
                     else ""
                 ),
             )
@@ -564,6 +579,24 @@ class AgentRuntime:
                 fichiers=fichiers,
                 workspace=str(ws.path),
             )
+
+
+@contextmanager
+def _port_d_essai(sur_le_poste: bool) -> Iterator[int | None]:
+    """Le port d'essai réservé à l'exécution, ou None (#1491).
+
+    None pour un agent qui ne travaille pas sur ce poste — un port du poste ne lui
+    servirait à rien —, et pour un poste qui n'en a aucun de libre : une tâche ne
+    s'arrête pas faute de port d'essai, elle n'en reçoit pas.
+    """
+    with ExitStack() as reservation:
+        port: int | None = None
+        if sur_le_poste:
+            try:
+                port = reservation.enter_context(port_d_essai())
+            except PortIndisponible:
+                port = None
+        yield port
 
 
 def _build_prompt(

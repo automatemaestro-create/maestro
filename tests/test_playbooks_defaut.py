@@ -292,12 +292,20 @@ def test_le_cadre_outille_n_arrete_que_ce_que_l_agent_a_lance():
     tuait ce qui l'écoutait (`netstat … | taskkill //PID … //F`, run `c05bf6263236`).
 
     Le cadre dit le moyen : un port à lui pour essayer, arrêté par ce que son lancement
-    lui a rendu ou par ce port-là, jamais ce qui écoute un port partagé. Dit une fois."""
+    lui a rendu ou par ce port-là, jamais ce qui écoute un port partagé. Dit une fois.
+
+    #1491 : ce port, l'agent le tirait de tête, et trois tâches parallèles sur quatre
+    sont tombées sur 47931 (run `3e565990fca7`). Le cadre l'envoie au port que Maestro
+    lui réserve sous « La machine » (`maestro.machine`), et ne garde le choix libre
+    qu'à défaut."""
     cadre = _normalise(pdc.cadre_outille())
 
     assert "Ce que tu as lancé, et rien d'autre" in cadre
     assert "D'autres tâches tournent sur le même poste que toi" in cadre
-    assert "donne-lui un port libre que tu choisis plutôt que celui du critère" in cadre
+    assert (
+        "donne-lui ton port d'essai — celui que Maestro te réserve sous « La machine », "
+        "à défaut un port libre que tu choisis — plutôt que celui du critère"
+    ) in cadre
     assert "jamais en tuant ce qui écoute un port que d'autres partagent" in cadre
     assert cadre.count("même poste") == 1, "la règle est dite une fois"
 

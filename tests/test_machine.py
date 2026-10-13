@@ -361,11 +361,16 @@ def test_le_message_de_la_tache_porte_la_section_la_machine() -> None:
 
 
 def test_sans_constat_le_message_est_celui_d_avant_a_la_ligne_pres() -> None:
+    """La section, port d'essai compris (#1491), est tout ce que le constat ajoute."""
     avec = _execute(_Temoin(), MACHINE)
     sans = _execute(_Temoin(), None)
+    port = re.search(r"Ton port d'essai\*\* : `(\d+)`", avec)
+    assert port is not None
 
     assert TITRE_MACHINE not in sans
-    assert avec.replace(f"\n\n{MACHINE.consigne()}", "") == sans
+    assert "port d'essai" not in sans
+    section = MACHINE.consigne(port_d_essai=int(port.group(1)))
+    assert avec.replace(f"\n\n{section}", "") == sans
 
 
 def test_un_agent_qui_travaille_ailleurs_ne_recoit_pas_les_faits_du_poste() -> None:
