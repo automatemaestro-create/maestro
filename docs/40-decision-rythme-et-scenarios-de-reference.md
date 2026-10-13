@@ -252,9 +252,12 @@ disant. Une carte qui ne s'écrit pas se dit, sans changer le verdict. Un passag
 stack démarrée sans la sonde le dit aussi (« stack non mesurée »). Deux limites sont assumées :
 ce qu'un processus exécute dans la période qui suit une borne peut rester rangé sous le scénario
 précédent, et ce que lit un processus non Python (le CLI de l'agent, l'UI) n'y est pas.
-`python -m maestro.scenarios.carte` résume la dernière carte de la copie. C'est elle qui
-remplacera le préfixe `GL_BANC_CHEMINS` comme définition du chemin d'un scénario (#1464) ; d'ici
-là, le préfixe reste le déclencheur.
+`python -m maestro.scenarios.carte` résume la dernière carte de la copie. C'est elle qui définit,
+au ticket, le chemin d'un scénario (#1464) : `python -m maestro.scenarios.croisement` compose la
+dernière empreinte de chaque scénario dans l'historique du poste, rapporte le diff aux fonctions
+qu'il touche, et rend la couverture la moins chère — ce que `lib.sh criteres` annonce
+([docs/10 §6](./10-workflow-git.md)). Le préfixe `GL_BANC_CHEMINS` ne décide plus qu'à défaut de
+carte, et pour le banc par lot.
 
 **Le banc ne garde que ses derniers passages** (#1457). Il les gardait tous — 208 dossiers le
 2026-10-09, projets complets et `node_modules` compris —, et leurs projets versionnés retenaient,
@@ -619,9 +622,10 @@ La personne a retenu les six recommandations, en `prio::haute`, et les a **exclu
 > #1460). Son C2, « un ticket qui touche le chemin d'un scénario le joue avant de pousser », se
 > payait au prix de S1–S4 : S2 coûtait 0,41 $. Douze scénarios plus tard, S12 (≈ 26 min, 3 $) a
 > été joué six fois en un jour par trois tickets du même jalon, et le préfixe du chemin couvre tout
-> le produit. Le banc entier se jouera une fois par lot sur `main`. Au ticket, il ne se jouera plus
-> que sur le chemin dérivé de ce que chaque scénario exécute. La preuve exercée, le banc injouable
-> jamais compté vert et le bouclage d'un jalon par les scénarios (#1152) ne bougent pas.
+> le produit. Le banc entier se joue une fois par lot sur `main` (#1462). Au ticket, il ne se joue
+> plus que sur le chemin dérivé de ce que chaque scénario exécute, quand le changement touche ce
+> que le modèle reçoit ou fait (#1464). La preuve exercée, le banc injouable jamais compté vert et
+> le bouclage d'un jalon par les scénarios (#1152) ne bougent pas.
 
 L'ordre suit les dépendances : #1241 reprend la preuve exercée de #1240, et #1245 comprime en
 dernier le texte que les cinq autres ont modifié. Les six écrivent sous `.claude/`, donc ils sont

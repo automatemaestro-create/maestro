@@ -6,7 +6,8 @@
 Le banc au ticket se déclenchait sur un **préfixe** (`GL_BANC_CHEMINS`, `maestro/
 core/ packages/shared/`) : tout ticket du produit était « sur le chemin », et le
 scénario se choisissait au jugé, large par prudence (docs/47). La carte dit ce que
-chaque scénario **exécute vraiment** ; c'est elle qui remplacera le préfixe (#1464).
+chaque scénario **exécute vraiment** ; c'est elle qui remplace le préfixe au ticket
+(#1464, `maestro.scenarios.croisement`).
 
 ## Ce qu'elle contient
 

@@ -24,6 +24,8 @@ Le détail vit dans les modules, chacun sur une question :
   un rouge (#1462, `scripts/orchestrate/banc-main.sh`) ;
 - `carte` et `sonde` — quel code chaque scénario a exécuté, sur tous les processus de
   la stack : `couverture.json` à côté du rapport (#1463) ;
+- `croisement` — le banc dû au ticket : les scénarios dont la carte croise le diff, la
+  couverture la moins chère en tête (#1464, `lib.sh criteres`) ;
 - `modele` — les objets inertes du verdict.
 """
 

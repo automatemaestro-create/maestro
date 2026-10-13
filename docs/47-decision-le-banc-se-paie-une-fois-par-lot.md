@@ -141,8 +141,9 @@ juge, et elle le consigne. Aucune liste de fichiers « sensibles » ne remplace 
 - **Le banc par lot coûte ≈ 13,5 $ et ≈ 1 h 25 par run**, sur le même quota. Il remplace les
   passages répétés au ticket : le 08/10, ≈ 6 × 3 $ pour S12 seul.
 - **La carte d'une stack multi-processus** (l'API, l'hôte détaché) était un risque technique.
-  #1463 l'a levé : chaque processus Python de la stack charge la sonde. Tant que #1464 ne la lit
-  pas, le préfixe reste le déclencheur.
+  #1463 l'a levé : chaque processus Python de la stack charge la sonde, et #1464 la lit
+  (`maestro.scenarios.croisement`). Le préfixe ne décide plus, au ticket, que faute de carte
+  lisible sur le poste (§8).
 - **Un ticket traité hors run n'a pas de pilote pour jouer le banc par lot.** Le script de #1462 le
   joue à la main, sur la même copie dédiée.
 
@@ -153,7 +154,8 @@ Jusqu'à #1464, docs/10 §6, `/ticket-finish` (étape 4ter) et le prompt de run 
 un autre. Un renvoi ⚠ est posé à l'endroit de la décision, en
 [docs/10 §6](./10-workflow-git.md) et en
 [docs/40 §6](./40-decision-rythme-et-scenarios-de-reference.md). Chaque lot réécrit le texte qu'il
-rend faux, dans sa PR.
+rend faux, dans sa PR. #1464, dernier lot, a remplacé le renvoi de docs/10 §6 par la règle au
+présent, et réécrit l'étape 4ter de `/ticket-finish` et le prompt de run avec elle.
 
 ## 8. Ce qui rouvrirait la décision
 

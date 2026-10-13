@@ -2830,9 +2830,14 @@ GL_CRITERES_ANCRE="${GL_CRITERES_ANCRE:-Critères confrontés au diff}"
 # banc la sert — le paquet `maestro` (le seul que `pyproject.toml` installe), la configuration
 # `core/` qu'il lit (agents, permissions, playbooks…) et le schéma de tâche `packages/shared/` que
 # l'orchestrateur valide. N'en sont pas : `agents/`, qui ne porte que des README ; `apps/web/`, le
-# banc parlant à l'API, jamais à l'écran ; l'outillage et la doc. Un diff qui y touche fait jouer
-# le banc avant de pousser. C'est une DÉTECTION : QUEL scénario exerce le changement, et s'il en
-# existe un, reste un jugement de la session, qu'elle consigne (`| Banc | non joué | … |` le dit).
+# banc parlant à l'API, jamais à l'écran ; l'outillage et la doc.
+#
+# ⚠ AU TICKET, CE PRÉFIXE N'EST PLUS LE DÉCLENCHEUR (#1464, docs/47) : il couvrait tout le produit,
+# si bien que tout ticket du produit était « sur le chemin » et jouait un scénario choisi au jugé,
+# large par prudence (S12 six fois en un jour). Le banc dû au ticket se dérive de la CARTE de ce
+# que chaque scénario exécute (#1463), par `gl_banc_croisement`. Le préfixe reste deux choses : la
+# décision du banc par lot (`banc-main.sh`, #1462 — « main a-t-elle bougé sur le chemin ? »), et le
+# REPLI du ticket quand aucune carte ne se lit (docs/47 §8 : on ne retire pas un filet sans l'autre).
 # Les préfixes sont gardés par `tests/test_criteres_cloture.py`, qui vérifie qu'ils existent.
 GL_BANC_CHEMINS="maestro/ core/ packages/shared/"
 # Où un passage laisse son rapport, relatif à la racine d'où l'on joue — `RACINE_RAPPORTS` de
@@ -2916,14 +2921,74 @@ gl_criteres() {
     echo "  ni « $GL_ATTENDU_SECTION ») — rien à confronter : le signaler (criteres-note --aucun)." >&2
     return 3
   fi
-  # Le banc est-il dû ? Une ligne de plus, et seulement quand il l'est : la question ne coûte que
-  # le diff local, et `criteres-note` refusera un constat qui l'aurait tue. Base introuvable :
-  # rien ici, c'est `criteres-note` qui le dira (`1`).
-  local touches
-  touches="$(gl_criteres_chemins_du_diff 2>/dev/null | gl_banc_touches)"
-  if [ -n "$touches" ]; then
-    printf '# banc\tà jouer — le diff touche le chemin des scénarios de référence : %s\n' \
-      "$(printf '%s\n' "$touches" | gl_banc_resume)"
+  # Quels scénarios la carte fait-elle croiser au diff ? Des lignes `# banc`, et seulement quand il
+  # y en a : la question ne coûte que le diff local et la carte du poste, et `criteres-note`
+  # refusera un constat qui les aurait tues. Que le banc soit DÛ — le changement touche ce que le
+  # modèle reçoit ou fait —, c'est la session qui en juge (#1464). Base introuvable : rien ici,
+  # c'est `criteres-note` qui le dira (`1`).
+  local annonce rc touches
+  annonce="$(gl_banc_croisement 2>/dev/null)"; rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$annonce" | awk 'NF { printf "# banc\t%s\n", $0 }' ;;
+    3) ;;
+    *)
+      touches="$(gl_criteres_chemins_du_diff 2>/dev/null | gl_banc_touches)"
+      if [ -n "$touches" ]; then
+        printf '# banc\tà jouer si le changement touche ce que le modèle reçoit ou fait — faute de carte (%s), le préfixe décide : le diff touche le chemin des scénarios de référence : %s\n' \
+          "$(gl_banc_sans_carte "$rc" "$annonce")" "$(printf '%s\n' "$touches" | gl_banc_resume)"
+      fi ;;
+  esac
+}
+
+# gl_criteres_base -> la base commune de la branche avec `origin/main` (GL_CRITERES_BASE), d'où se
+# mesure le diff livré. Code 1 si elle est introuvable.
+gl_criteres_base() {
+  local base
+  base="$(git merge-base "${GL_CRITERES_BASE:-origin/main}" HEAD 2>/dev/null)" || return 1
+  [ -n "$base" ] || return 1
+  printf '%s\n' "$base"
+}
+
+# gl_banc_croisement [--court] -> LES SCÉNARIOS DONT LA CARTE CROISE LE DIFF (#1464, docs/47) : le
+# moins cher en tête, rendus par `python -m maestro.scenarios.croisement`, qui lit la carte de ce
+# que chaque scénario exécute (#1463) dans l'historique du banc du poste (#1461). `--court` rend
+# une ligne, pour le refus de `criteres-note`. Codes : 0 la carte croise (l'annonce sur stdout) ·
+# 3 elle ne croise pas (rien) · 4 aucune carte lisible (le motif sur stdout) · 1 base introuvable ·
+# tout autre code : le croisement n'a pas pu se jouer. Hors de 0 et 3, l'appelant retombe sur le
+# préfixe `GL_BANC_CHEMINS` (docs/47 §8).
+#
+# Le module se joue DEPUIS LA RACINE DE CE DÉPÔT (celle de `lib.sh`) — `-m` y trouve le paquet
+# `maestro` de cette copie, jamais celui du clone principal qu'un venv partagé installerait —, et
+# le diff se lit dans le répertoire courant (`--depot`). L'interpréteur est celui du venv du dépôt
+# (CLAUDE.md : le `python` du poste n'a pas les dépendances) ; `MAESTRO_BANC_PYTHON` le remplace,
+# comme pour `banc-main.sh` — pour la suite, dont le dépôt jetable n'a pas de venv.
+gl_banc_croisement() {
+  local court="" base racine python="${MAESTRO_BANC_PYTHON:-}" depot="$PWD" candidat
+  [ "${1:-}" = "--court" ] && court="--court"
+  base="$(gl_criteres_base)" || return 1
+  racine="${GL_ICI%/scripts/gitlab}"
+  [ "$racine" = "$GL_ICI" ] && racine="$GL_ICI/../.."
+  if [ -z "$python" ]; then
+    for candidat in "$racine/.venv/Scripts/python.exe" "$racine/.venv/bin/python"; do
+      if [ -x "$candidat" ]; then python="$candidat"; break; fi
+    done
+  fi
+  if [ -z "$python" ]; then
+    printf 'aucun python du venv sous %s/.venv (bash scripts/setup.sh)\n' "$racine"
+    return 4
+  fi
+  # shellcheck disable=SC2086 # `$court` est vide ou un seul mot : il disparaît quand il est vide.
+  (cd "$racine" && PYTHONIOENCODING=utf-8 "$python" -m maestro.scenarios.croisement \
+    --base "$base" --depot "$depot" $court)
+}
+
+# gl_banc_sans_carte <code> <sortie> — pourquoi la carte n'a pas décidé, en une ligne : le motif
+# du module (code 4), ou le code d'un croisement qui n'a pas pu se jouer.
+gl_banc_sans_carte() {
+  if [ "$1" = 4 ] && [ -n "$2" ]; then
+    printf '%s\n' "$2" | head -n 1
+  else
+    printf 'croisement injouable, code %s : python -m maestro.scenarios.croisement\n' "$1"
   fi
 }
 
@@ -2960,18 +3025,19 @@ gl_criteres_tests_nommes() {
 
 # gl_criteres_chemins_du_diff -> les fichiers que la branche livre, un par ligne : ce qui a changé
 # depuis sa base commune avec `origin/main`, travail non commité et fichiers nouveaux compris. C'est
-# sur lui que se juge si le banc est dû (`gl_banc_touches`). Code 1 si la base est introuvable.
+# sur lui que se juge le REPLI du banc dû, quand aucune carte ne se lit (`gl_banc_touches`). Code 1
+# si la base est introuvable.
 gl_criteres_chemins_du_diff() {
   local base
-  base="$(git merge-base "${GL_CRITERES_BASE:-origin/main}" HEAD 2>/dev/null)" || return 1
-  [ -n "$base" ] || return 1
+  base="$(gl_criteres_base)" || return 1
   { git diff --name-only "$base" && git ls-files --others --exclude-standard; } | sort -u
 }
 
 # gl_criteres_constat <inventaire> <fichier> — la FORME du constat, confrontée aux critères attendus
 # (ENVIRON ATTENDUS, « C1 C2 … »), aux tests de l'arbre (<inventaire>, `gl_criteres_tests_nommes`),
-# aux rapports du banc (ENVIRON RAPPORTS) et au chemin des scénarios (ENVIRON BANC_DU : le résumé
-# des fichiers du diff qui y touchent, vide sinon). Sur stdout : une ligne `!<TAB>Cn<TAB>motif` par
+# aux rapports du banc (ENVIRON RAPPORTS) et au banc dû (ENVIRON BANC_DU : ce qui le rend dû — les
+# scénarios que la carte fait croiser au diff, ou, faute de carte, les fichiers du diff sur le
+# chemin des scénarios —, vide sinon). Sur stdout : une ligne `!<TAB>Cn<TAB>motif` par
 # critère sans réponse recevable (`!<TAB>Banc<TAB>motif` pour le banc), puis
 # `=<TAB>✓<TAB>✗<TAB>hors-diff<TAB>banc` — `banc` vide quand le constat n'en porte pas.
 #
@@ -3037,6 +3103,14 @@ gl_criteres_constat() {
       }
       return (rouges == "") ? "vert" : "rouge" rouges
     }
+    # Le premier test que <piece> nomme et que l arbre ne définit pas : « » quand il n y en a pas.
+    # Un fichier de suite (`tests/test_x.py`) n est pas un test nommé : on le retire d abord.
+    function test_inconnu(piece,   t, n, i, sans_py) {
+      sans_py = piece; gsub("[A-Za-z0-9_./-]*[.]py", " ", sans_py)
+      n = jetons(sans_py, "test_[A-Za-z0-9_]+", t)
+      for (i = 1; i <= n; i++) if (!(t[i] in nommes)) return t[i]
+      return ""
+    }
     # La preuve exercée de ce ✓ : « » quand il en nomme une, sinon le motif du refus.
     function preuve(piece,   t, n, i, bas, v, ok, motif_test, sans_py) {
       ok = 0; motif_test = ""
@@ -3083,7 +3157,11 @@ gl_criteres_constat() {
         if (banc != "" || motif_banc != "") next
         bas = tolower(reponse)
         if (index(bas, "non jou") == 1) {
+          # La raison est libre — un banc injouable se dit comme il est —, mais les tests qu elle
+          # nomme pour dire la mécanique couverte existent (#1464).
           if (piece == "") motif_banc = "« non joué » sans sa raison"
+          else if ((inconnu = test_inconnu(piece)) != "")
+            motif_banc = "« non joué » : " inconnu " n\047est défini nulle part dans l\047arbre — la mécanique couverte se dit par des tests qui existent"
           else banc = "non joué"
           next
         }
@@ -3122,7 +3200,7 @@ gl_criteres_constat() {
       }
       if (motif_banc != "") printf "!\tBanc\t%s\n", motif_banc
       else if (ENVIRON["BANC_DU"] != "" && banc == "")
-        printf "!\tBanc\tle diff touche le chemin des scénarios de référence (%s) — joue le banc et consigne son verdict, ou dis-le « non joué » avec sa raison\n", ENVIRON["BANC_DU"]
+        printf "!\tBanc\t%s — si le changement touche ce que le modèle reçoit ou fait, joue le banc et consigne son verdict ; sinon dis-le « non joué » avec sa raison (mécanique couverte par <tests nommés> ; banc par lot sur main)\n", ENVIRON["BANC_DU"]
       printf "=\t%d\t%d\t%d\t%s\n", compte["ok"], compte["ko"], compte["hors"], banc
     }
   ' "$inventaire" "$fichier"
@@ -3137,9 +3215,10 @@ Les critères d'acceptation de ce ticket ont été confrontés, à sa clôture, 
 (`/ticket-finish`, #968). Chacun est **tenu** sur une preuve **exercée** qui est nommée — un test
 qui passe, ou une observation sur la vraie stack : passage du banc des scénarios, run, capture —
 (✓), **non tenu** (✗, avec pourquoi), ou tenu **hors du diff** — un geste de forge, une mesure —
-avec ce qui le montre (#1240). Quand le diff touche le chemin des scénarios de référence, la ligne
-**Banc** porte le verdict du passage joué avant de pousser, ou la raison pour laquelle il ne l'a
-pas été : un banc rouge ou injouable n'est jamais compté vert. Un critère non tenu est nommé ici,
+avec ce qui le montre (#1240). Quand la carte des scénarios de référence croise le diff, la ligne
+**Banc** porte le verdict du passage joué avant de pousser — le changement touchait ce que le
+modèle reçoit ou fait —, ou la raison pour laquelle il ne l'a pas été (#1464) : un banc rouge ou
+injouable n'est jamais compté vert. Un critère non tenu est nommé ici,
 jamais coché, et il n'a pas bloqué le merge : ce que le dispositif rend difficile est l'absence de
 trace, pas la livraison.
 
@@ -3241,11 +3320,19 @@ gl_criteres_note() {
     fi
     # L'inventaire des tests voyage par un fichier (voir `gl_criteres_tests_nommes`). Brouillon que
     # personne ne relit : temporaire du système, pas `.maestro/` (règle #234, docs/10 §8.5).
-    local inventaire touches banc_du="" verdict manques
+    local inventaire touches banc_du="" verdict manques croise rc_croise
     inventaire="$(mktemp "${TMPDIR:-/tmp}/maestro-tests-nommes.XXXXXX")" || return 1
     gl_criteres_tests_nommes > "$inventaire"
-    touches="$(printf '%s\n' "$chemins" | gl_banc_touches)"
-    [ -n "$touches" ] && banc_du="$(printf '%s\n' "$touches" | gl_banc_resume)"
+    # Le banc dû : ce que la carte fait croiser au diff (#1464), et, faute de carte, le préfixe.
+    croise="$(gl_banc_croisement --court 2>/dev/null)"; rc_croise=$?
+    case "$rc_croise" in
+      0) banc_du="$croise" ;;
+      3) ;;
+      *)
+        touches="$(printf '%s\n' "$chemins" | gl_banc_touches)"
+        [ -n "$touches" ] &&
+          banc_du="le diff touche le chemin des scénarios de référence ($(printf '%s\n' "$touches" | gl_banc_resume))" ;;
+    esac
     verdict="$(ATTENDUS="$attendus" BANC_DU="$banc_du" RAPPORTS="$GL_BANC_RAPPORTS" \
       gl_criteres_constat "$inventaire" "$fichier")"
     rm -f "$inventaire"
