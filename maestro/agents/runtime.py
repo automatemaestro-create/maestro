@@ -42,6 +42,7 @@ from maestro.providers.decision import Consigneur
 from maestro.providers.question import Questionneur
 from maestro.sandbox import LieuSansTrace, ProducedFile, espace_de_travail
 from maestro.sandbox.confinement import ReleveConfinement
+from maestro.sandbox.verification import MiroirDeVerification
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
 #: explorer, shell. Volontairement restreint (docs/02 §7 : permissions scopées) —
@@ -253,6 +254,7 @@ class AgentRuntime:
         effort: str | None = None,
         on_livraison: JugeLivraison | None = None,
         machine: Machine | None = None,
+        miroir: MiroirDeVerification | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -434,7 +436,10 @@ class AgentRuntime:
         qu'il rend : ce que ses commandes laissent dans une copie de travail n'atteint
         pas la branche, celles d'un projet non versionné jouent dans un miroir de sa
         racine, où rien de ce qu'elles écrivent n'atteint la personne (#1496) — et
-        l'agent qui corrige retrouve ses fichiers tels qu'il les a laissés.
+        l'agent qui corrige retrouve ses fichiers tels qu'il les a laissés. Ce miroir
+        est `miroir` quand l'appelant le garde d'une tâche à l'autre du run (#1497,
+        `maestro.sandbox.verification.RegistreDesMiroirs`) : copié une fois pour le
+        run, il n'est que resynchronisé ici, et pas retiré. None : l'espace a le sien.
 
         `machine` (#1403) est ce que Maestro a constaté de la machine au début du
         run (`maestro.machine`) — système, shell, temporaire, programmes de
@@ -483,6 +488,7 @@ class AgentRuntime:
             reprend=reprend,
             prefix=self._profile.workspace_prefix,
             keep=keep_workspace,
+            miroir=miroir,
         ) as ws:
             # Le message est composé **une fois l'espace ouvert** (#944) : ce que
             # l'agent doit savoir de son espace dépend du régime (la racine d'un

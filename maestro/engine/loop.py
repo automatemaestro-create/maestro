@@ -1282,8 +1282,11 @@ class OrchestrationEngine:
         try:
             # Créées dans l'ordre topologique, les tâches asyncio des dépendances
             # existent toujours avant celles qui les attendent. `execute` ne levant
-            # jamais, le TaskGroup ne se déclenche que sur un bug interne.
-            async with asyncio.TaskGroup() as tg:
+            # jamais, le TaskGroup ne se déclenche que sur un bug interne. Autour, le
+            # temps du run tenu par l'exécuteur (#1497) : ce qu'il garde d'une tâche à
+            # l'autre — le miroir où se vérifient celles d'un projet non versionné —
+            # part à la sortie, run en échec, annulé ou levé compris.
+            async with self._executor.tient_le_run(journal.run_id), asyncio.TaskGroup() as tg:
                 for task in ordered:
                     en_vol[task.id] = tg.create_task(_des_que_prete(task))
         finally:

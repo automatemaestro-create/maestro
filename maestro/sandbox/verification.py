@@ -75,9 +75,15 @@ Le miroir naît à la **première** vérification, et se **resynchronise** avant
 suivante, dans un seul sens : ce que la racine a de neuf ou de changé y entre, ce que
 la vérification précédente y a laissé ou réécrit en sort — chaque côté par son
 empreinte (taille, date à la nanoseconde), celle de `Workspace`. La copie se paie
-donc une fois par espace ouvert, et chaque vérification suivante ne recopie que ce
-qui a bougé. Mesuré le 2026-10-13 sur le poste : 20 000 fichiers de 1,2 Ko se copient
-en 13,1 s un à un, 5,1 s à huit fils (`FILS_DE_COPIE`), et se relèvent en 0,09 s.
+donc une fois par miroir, et chaque vérification suivante ne recopie que ce qui a
+bougé. Mesuré le 2026-10-13 sur le poste : 20 000 fichiers de 1,2 Ko se copient en
+13,1 s un à un, 5,1 s à huit fils (`FILS_DE_COPIE`), et se relèvent en 0,09 s.
+
+Un miroir vaut pour **toutes** les tâches d'un projet, puisqu'il suit la racine (#1497) :
+l'exécuteur en garde un par run et par racine (`RegistreDesMiroirs`), copié à la
+première vérification du run et retiré à sa fin, au lieu d'un par tâche — 20 s par
+tâche sur la racine de S12. Sans exécuteur pour le garder (le worker d'une file, qui
+ne voit pas la fin des runs), l'espace de la tâche a le sien et le retire avec lui.
 
 ⚠ **Ce que le miroir ne ferme pas**, nommé plutôt que tu : un **chemin absolu** qui
 ramène à la racine. Une commande qui l'écrit en toutes lettres sort du dossier, et la
@@ -501,6 +507,11 @@ class MiroirDeVerification:
         self._recus: dict[str, tuple[_Entree, tuple[object, ...]]] = {}
 
     @property
+    def racine(self) -> Path:
+        """La racine que ce miroir reflète."""
+        return self._racine
+
+    @property
     def chemin(self) -> Path | None:
         """Le dossier du miroir — `None` tant qu'aucune vérification ne l'a fait naître."""
         return None if self._parent is None else self._parent / "projet"
@@ -698,6 +709,90 @@ def miroir_de_verification(
         yield miroir
     finally:
         miroir.fermer()
+
+
+class RegistreDesMiroirs:
+    """Les miroirs qu'un exécuteur garde d'une tâche à l'autre : un par run et par racine (#1497).
+
+    Le miroir d'une racine (#1496) se resynchronise avant chaque usage : il vaut pour
+    toutes les tâches du projet, qui passent déjà une à une dans sa racine (l'atelier,
+    `maestro.engine.executor`). Tenu par l'espace d'une seule tâche, il se recopiait et
+    se retirait à chaque tâche — 20 s sur la racine de S12. Gardé ici, il se copie à la
+    première vérification du run, se resynchronise aux suivantes, et part à la fin du run.
+
+    Le temps d'un run est **borné par qui le tient** — `ouvrir`, puis `retirer`, que
+    `LocalExecutor.tient_le_run` joue autour des tâches de la boucle. Un run qu'on n'a
+    pas ouvert n'obtient aucun miroir, et l'espace de sa tâche garde le sien : c'est ce
+    qui empêche un exécuteur dont personne ne voit la fin des runs — le worker d'une
+    file — d'accumuler un miroir par run.
+
+    Un miroir ne sert qu'un espace à la fois (`prete`) : prêté, il est refusé au
+    suivant, qui a le sien. Une réalisation détachée par un time-out (#64), qui peut
+    encore jouer, ne le partage donc jamais avec la tâche d'après ; et un retrait
+    demandé pendant le prêt attend son retour. Si le process meurt avant, le miroir est
+    sous la racine jetable, marqué de son pid : le ramassage l'emporte
+    (`maestro.sandbox.ramassage`).
+
+    Sûr entre fils : un retrait, qui dure le temps d'effacer un arbre, se joue hors de
+    la boucle asyncio.
+    """
+
+    def __init__(self) -> None:
+        self._verrou = threading.Lock()
+        #: Les runs tenus, et par combien de bornes : un run tenu deux fois garde ses
+        #: miroirs jusqu'à la dernière sortie.
+        self._runs: dict[str, int] = {}
+        self._miroirs: dict[tuple[str, Path], MiroirDeVerification] = {}
+        self._pretes: set[tuple[str, Path]] = set()
+
+    def ouvrir(self, run_id: str) -> None:
+        """Le run `run_id` commence : ses tâches partageront le miroir de chaque racine."""
+        with self._verrou:
+            self._runs[run_id] = self._runs.get(run_id, 0) + 1
+
+    def retirer(self, run_id: str) -> None:
+        """Le run `run_id` finit : ses miroirs partent — un miroir prêté, à son retour."""
+        with self._verrou:
+            restantes = self._runs.get(run_id, 0) - 1
+            if restantes > 0:
+                self._runs[run_id] = restantes
+                return
+            self._runs.pop(run_id, None)
+            cles = [cle for cle in self._miroirs if cle[0] == run_id and cle not in self._pretes]
+            partants = [self._miroirs.pop(cle) for cle in cles]
+        for miroir in partants:
+            miroir.fermer()
+
+    @contextmanager
+    def prete(self, run_id: str, racine: Path) -> Iterator[MiroirDeVerification | None]:
+        """Le miroir de `racine` pour le run `run_id`, prêté le temps du bloc.
+
+        `None` quand le run n'est pas tenu, ou que le miroir sert déjà un autre espace :
+        l'espace aura alors le sien, comme avant #1497. Rien n'est copié ici — le miroir
+        naît à la première vérification qui le synchronise.
+        """
+        cle = (run_id, Path(racine).resolve())
+        with self._verrou:
+            miroir: MiroirDeVerification | None = None
+            if run_id in self._runs and cle not in self._pretes:
+                miroir = self._miroirs.get(cle)
+                if miroir is None:
+                    miroir = self._miroirs[cle] = MiroirDeVerification(racine)
+                self._pretes.add(cle)
+        if miroir is None:
+            yield None
+            return
+        try:
+            yield miroir
+        finally:
+            with self._verrou:
+                self._pretes.discard(cle)
+                # Le run s'est fini pendant le prêt : son retrait attendait ce retour.
+                orphelin = run_id not in self._runs
+                if orphelin:
+                    self._miroirs.pop(cle, None)
+            if orphelin:
+                miroir.fermer()
 
 
 def _relever(source: Path, fichiers_max: int, octets_max: int) -> dict[str, _Entree]:

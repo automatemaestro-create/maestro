@@ -83,7 +83,7 @@ from maestro.projets.modele import Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
 from maestro.sandbox.ramassage import PREFIXE_COMMUN, racine_des_espaces
-from maestro.sandbox.verification import miroir_de_verification
+from maestro.sandbox.verification import MiroirDeVerification, miroir_de_verification
 from maestro.sandbox.workspace import LieuSansTrace, Workspace, isolated_workspace
 
 #: Préfixe des branches de tâche (docs/24 §2.4) : une branche `maestro/<tâche>`
@@ -563,6 +563,7 @@ def espace_de_travail(
     reprend: str = "",
     prefix: str = "maestro-dev-",
     keep: bool = False,
+    miroir: MiroirDeVerification | None = None,
 ) -> Iterator[Workspace]:
     """Ouvre l'espace de travail de la tâche et le referme en sortie (EF-36).
 
@@ -601,6 +602,11 @@ def espace_de_travail(
     **miroir** où ses vérifications ont joué est retiré (#1496) : il est sous la
     racine jetable, jamais dans la racine.
 
+    `miroir` (#1497) est celui que l'appelant garde d'une tâche à l'autre du run
+    (`RegistreDesMiroirs`) : l'espace en place y joue ses vérifications et ne le
+    retire pas — c'est la fin du run qui le fera. None, ou un miroir d'une autre
+    racine : l'espace a le sien, qui part avec lui. Sans objet hors de la racine.
+
     Lève `RacineRefusee` si la racine du projet n'est plus admissible (EF-38) —
     dans les deux régimes, c'est la dernière porte avant qu'un agent n'écrive —
     et `EspaceProjetIndisponible` si le montage du worktree échoue (Git absent,
@@ -620,12 +626,18 @@ def espace_de_travail(
         # `derive` et non `EspaceEnPlace(path=…)` : la racine n'est pas vide, et
         # sans cette empreinte de départ tout le projet de l'utilisateur
         # ressortirait en « fichiers produits » du rapport de run. Le miroir où se
-        # jouent ses vérifications (#1496) vit le temps de l'espace : il naît à la
-        # première, se resynchronise aux suivantes, et part avec l'espace — la
+        # jouent ses vérifications (#1496) : celui du run, que l'appelant garde et
+        # retirera (#1497), sinon le sien, qui vit le temps de l'espace — il naît à
+        # la première, se resynchronise aux suivantes, et part avec l'espace. La
         # racine, elle, n'est toujours ni démontée ni nettoyée.
-        with miroir_de_verification(racine) as miroir:
+        if miroir is not None and miroir.racine.resolve() == racine.resolve():
             yield EspaceEnPlace.derive(
                 racine, perimetre=projet.perimetre, atelier=atelier, miroir=miroir
+            )
+            return
+        with miroir_de_verification(racine) as propre:
+            yield EspaceEnPlace.derive(
+                racine, perimetre=projet.perimetre, atelier=atelier, miroir=propre
             )
         return
 
