@@ -42,6 +42,16 @@ n'a encore préparé ; ici, il rejoue celles qui disent si le travail de l'agent
 tient, là où l'agent l'a fait. Les contrôles **constatent** et ne modifient rien,
 et c'est le prompt du vérificateur qui l'exige.
 
+Un prompt n'est pas une garantie (#1448) : sur le run `3a7fa26ba927`, un essai de
+Vitest avec le rapporteur `json` a laissé `.vitest/json/output.json` dans la copie
+de travail, et le démontage l'a commité sur la branche de la tâche, puis fusionné
+dans le projet. Le runtime joue donc chaque vérification sous
+`Workspace.sans_trace` : dans le worktree d'un projet versionné, ce que les
+contrôles laissent et que la branche porterait est défait aussitôt — la branche
+ne porte que le travail de l'agent, et l'agent qui corrige repart de ses fichiers
+tels qu'il les a laissés. Ce que le projet ignore (les dépendances qu'un contrôle
+installe) reste, et ne part sur aucune branche.
+
 Sous deux gardes, les mêmes que pour un agent : la **portée « projet »**
 (`maestro.portee`) — une commande qui sort du dossier ou qui détruirait ce que la
 personne avait posé n'est pas jouée, elle est dite — et un **délai** par commande,

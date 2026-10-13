@@ -67,6 +67,8 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import shutil
+import stat
 import subprocess
 import time
 from collections.abc import Iterator
@@ -363,6 +365,188 @@ class EspaceCopieDeTravail(Workspace):
             # plus un fichier de l'espace, et ne s'est jamais recensé comme tel.
             if fichier.is_file() and not fichier.is_symlink():
                 yield fichier
+
+    @contextmanager
+    def sans_trace(self) -> Iterator[None]:
+        """Ce que le bloc laisse dans la copie, et que la branche porterait, est défait (#1448).
+
+        La vérification d'une tâche (#1177) joue ses commandes ici, l'espace encore
+        ouvert, et son prompt lui demande de constater sans rien modifier. Ce n'est
+        pas une garantie : sur le run `3a7fa26ba927`, un essai de Vitest avec le
+        rapporteur `json` a écrit `.vitest/json/output.json`, que `create-next-app`
+        n'ignore pas — `_solder_la_branche` l'a commité sur `maestro/tests-donnees`,
+        et la fusion l'a appliqué au projet. La branche d'une tâche porte le travail
+        de l'agent, et rien de ce que Maestro a joué pour le juger.
+
+        D'où un **instantané**, pris en entrant, de ce que la branche porterait —
+        exactement ce que `git add -A` indexe, `.gitignore` du projet compris
+        (`_Instantane`) —, rendu en sortant : ce qui est apparu est retiré, ce qui a
+        changé ou disparu revient tel qu'il était, date comprise. L'agent dont la
+        livraison ne tient pas repart donc de ses fichiers tels qu'il les a laissés,
+        et c'est ce que son retour lui promet (`Recette.retour`). Ce que le projet
+        ignore n'est pas touché : les dépendances qu'un contrôle installe ne
+        partent sur aucune branche, et l'agent les trouve à son retour.
+
+        Lève `EspaceProjetIndisponible` si l'instantané ne se prend pas, ou si une
+        part de la copie n'a pas pu être rendue — un reste que la branche porterait
+        se nomme, il ne se tait pas. Pas quand le bloc lève déjà : c'est sa cause qui
+        condamne la tâche, et elle ne doit pas être masquée.
+        """
+        instantane = _Instantane.prendre(self)
+        try:
+            yield
+        except BaseException:
+            instantane.rendre()
+            raise
+        restes = instantane.rendre()
+        if restes:
+            raise EspaceProjetIndisponible(
+                "trace-de-verification",
+                f"Maestro n'a pas pu défaire, dans la copie de travail {self.path}, ce "
+                "qu'il y a joué pour vérifier la tâche — sa branche le porterait : "
+                + " ; ".join(restes),
+            )
+
+
+#: Le préfixe du dossier jetable qui porte l'index d'un instantané (#1448) — sous le
+#: préfixe commun des espaces, donc ramassé si son process meurt avant de le retirer.
+PREFIXE_INSTANTANE = "maestro-instantane-"
+
+
+@dataclass(frozen=True)
+class _Instantane:
+    """Ce que la branche d'une copie de travail porterait, pris à un instant (#1448).
+
+    Le contenu vit dans un **index Git à part** (`GIT_INDEX_FILE`), copié de celui
+    du worktree puis mis à jour par `git add -A` : Git ne relit que ce qui a changé
+    depuis son dernier passage, et l'ensemble capturé est celui que le démontage
+    commiterait (`_solder_la_branche`). Ni l'index du worktree, ni sa branche, ni
+    ses commits ne sont touchés. Les dates de chaque fichier sont relevées à côté :
+    un fichier rendu à son contenu mais pas à sa date ressortirait en « fichier
+    produit » à la livraison suivante (`Workspace.produced_files`).
+    """
+
+    racine: Path
+    dossier: Path
+    dates: dict[str, tuple[int, int]]
+
+    @property
+    def index(self) -> Path:
+        """L'index qui porte le contenu de l'instantané."""
+        return self.dossier / "index"
+
+    @classmethod
+    def prendre(cls, espace: EspaceCopieDeTravail) -> _Instantane:
+        """L'instantané de `espace` — `EspaceProjetIndisponible` si Git le refuse."""
+        dossier = jetable(PREFIXE_INSTANTANE)
+        try:
+            source = _git(espace.path, "rev-parse", "--git-path", "index")
+            index = Path(source.stdout.strip())
+            if source.returncode == 0 and not index.is_absolute():
+                index = espace.path / index
+            # Sans l'index du worktree, Git relit tout ce qu'il ne suit pas — plus
+            # lent, aussi juste.
+            if source.returncode == 0 and index.is_file():
+                shutil.copyfile(index, dossier / "index")
+            indexe = _git(espace.path, "add", "-A", index=dossier / "index")
+            if indexe.returncode != 0:
+                raise EspaceProjetIndisponible(
+                    "instantane-refuse",
+                    f"Git n'a pas pu relever l'état de la copie de travail {espace.path} "
+                    f"avant de la vérifier : {_message_git(indexe)}",
+                )
+            dates: dict[str, tuple[int, int]] = {}
+            for fichier in espace.fichiers():
+                try:
+                    etat = fichier.stat()
+                except OSError:
+                    continue  # illisible : son contenu sera rendu, pas sa date
+                dates[fichier.relative_to(espace.path).as_posix()] = (
+                    etat.st_atime_ns,
+                    etat.st_mtime_ns,
+                )
+        except BaseException:
+            retirer_arbre(dossier)
+            raise
+        return cls(racine=espace.path, dossier=dossier, dates=dates)
+
+    def rendre(self) -> tuple[str, ...]:
+        """Rend la copie telle qu'à l'instantané, et nomme ce qui a résisté. Ne lève jamais.
+
+        Ce qui est apparu sans que le projet l'ignore est retiré d'abord, avec les
+        dossiers qu'il laisse vides — un fichier remplacé par un dossier retrouve
+        ainsi sa place —, puis ce qui a changé ou disparu est réécrit depuis
+        l'index (`git checkout-index`), et sa date remise.
+        """
+        try:
+            apparus = self._chemins("ls-files", "-z", "--others", "--exclude-standard")
+            changes = self._chemins("diff-files", "-z", "--name-only")
+            restes = [
+                relatif
+                for relatif in sorted(apparus, key=lambda r: r.count("/"), reverse=True)
+                if not _retirer(self.racine, relatif)
+            ]
+            if changes:
+                rendus = _git(
+                    self.racine, "checkout-index", "-f", "-z", "--stdin",
+                    index=self.index, entree="\0".join(changes),
+                )
+                if rendus.returncode != 0:
+                    restes.append(f"réécriture refusée ({_message_git(rendus)})")
+                for relatif in changes:
+                    if relatif in self.dates:
+                        try:
+                            os.utime(self.racine / relatif, ns=self.dates[relatif])
+                        except OSError:
+                            pass  # le contenu est rendu ; la date n'est pas la branche
+            return tuple(restes)
+        except (EspaceProjetIndisponible, OSError) as panne:
+            return (str(panne),)
+        finally:
+            retirer_arbre(self.dossier)
+
+    def _chemins(self, *arguments: str) -> list[str]:
+        """Les chemins que rend `git <arguments>` sur l'index de l'instantané."""
+        resultat = _git(self.racine, *arguments, index=self.index)
+        if resultat.returncode != 0:
+            raise EspaceProjetIndisponible(
+                "instantane-illisible",
+                f"Git n'a pas pu comparer la copie à son instantané : {_message_git(resultat)}",
+            )
+        return [champ for champ in resultat.stdout.split("\0") if champ]
+
+
+def _retirer(racine: Path, relatif: str) -> bool:
+    """Retire `relatif` de `racine`, puis ses dossiers restés vides — `False` s'il résiste.
+
+    Un chemin qui finit par `/` est un dépôt imbriqué, que Git ne descend pas : il
+    part entier. Un fichier tenu un instant — l'antivirus relit ce qu'un contrôle
+    vient d'écrire — est réessayé après les mêmes pauses qu'un worktree à écarter.
+    """
+    chemin = racine / relatif.rstrip("/")
+    if relatif.endswith("/"):
+        if not retirer_arbre(chemin):
+            return False
+    else:
+        for pause in (*_PAUSES_ECART_S, None):
+            try:
+                os.chmod(chemin, stat.S_IWRITE)
+                chemin.unlink(missing_ok=True)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                if pause is None:
+                    return False
+                time.sleep(pause)
+    parent = chemin.parent
+    while parent != racine and racine in parent.parents:
+        try:
+            parent.rmdir()
+        except OSError:
+            break  # pas vide, ou tenu : il existait, ou porte autre chose
+        parent = parent.parent
+    return True
 
 
 @contextmanager
@@ -902,24 +1086,34 @@ def _ref_existe(racine: Path, branche: str) -> bool:
     return _git(racine, "rev-parse", "--verify", "--quiet", f"refs/heads/{branche}").returncode == 0
 
 
-def _git(racine: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _git(
+    racine: Path,
+    *arguments: str,
+    index: Path | None = None,
+    entree: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Lance `git <arguments>` dans `racine` et rend le processus achevé.
 
     Ne lève **que** pour ce qui n'est pas un verdict de Git (binaire absent, délai
     dépassé) : un code de retour non nul est une réponse, que l'appelant traduit
     en refus motivé — c'est ce qui permet à `_ref_existe` de poser une question
-    sans avoir à attraper une exception.
+    sans avoir à attraper une exception. `index` remplace l'index du dépôt pour
+    cet appel (`GIT_INDEX_FILE`, l'instantané de #1448), `entree` est ce que Git
+    lit sur son entrée standard.
     """
+    environ = None if index is None else {**os.environ, "GIT_INDEX_FILE": str(index)}
     try:
         return subprocess.run(
             ["git", *arguments],
             cwd=racine,
+            input=entree,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=_DELAI_GIT_S,
             check=False,
+            env=environ,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise EspaceProjetIndisponible(

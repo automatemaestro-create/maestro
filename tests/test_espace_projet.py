@@ -14,6 +14,11 @@ Les tests des lots de #703 sont différés à #707 ; ceux qui sont ici gardent l
 seule logique **critique** du lot — la frontière d'écriture (EF-38), la
 sérialisation d'un projet non versionné et la ligne de journal qui manquait.
 
+Depuis #1448, ce que la vérification d'une tâche joue dans sa copie de travail
+n'atteint pas sa branche, et l'agent qui corrige repart de son espace intact
+(`Workspace.sans_trace`) — la racine d'un projet non versionné, elle, n'est jamais
+défaite après coup.
+
 Aucun réseau, aucun modèle : les tests qui ont besoin d'un vrai dépôt en montent
 un jetable et sont sautés là où `git` manque ; les chemins d'échec de Git (binaire
 absent, worktree refusé) sont joués sur un `subprocess.run` factice, donc couverts
@@ -21,6 +26,7 @@ partout.
 """
 
 import asyncio
+import os
 import shutil
 import subprocess
 from dataclasses import replace
@@ -1618,3 +1624,185 @@ def test_deux_taches_du_meme_projet_non_versionne_ne_travaillent_jamais_ensemble
     resultats = asyncio.run(_deux(_executeur(serialise, depot), projet.id))
     assert all(r.ok for r in resultats)
     assert serialise.pic == 1
+
+
+# --------------------------------------------------------------------------- #
+# Ce que la vérification joue dans la copie n'atteint pas la branche (#1448)
+# --------------------------------------------------------------------------- #
+
+#: Ce que l'agent livre à chaque session — la seconde corrige la première.
+_TRAVAIL_1448 = (
+    {"tests/recettes.test.ts": "test('v1')\n", "src/app.py": "print('agent v1')\n"},
+    {"tests/recettes.test.ts": "test('v2')\n", "src/app.py": "print('agent v2')\n"},
+)
+
+
+def _verifier_en_laissant_des_traces(espace: Path) -> None:
+    """Ce qu'une vérification laisse en jouant ses contrôles — le run `3a7fa26ba927`, en petit.
+
+    Un essai de Vitest avec le rapporteur `json` (`.vitest/json/output.json`, que
+    `create-next-app` n'ignore pas), un formateur qui réécrit un fichier de l'agent,
+    un `npm install` qui retouche le manifeste sans le changer et remplit les
+    dépendances, que le projet ignore — tout ce que le prompt du vérificateur lui
+    interdit, et qu'un essai fait quand même.
+    """
+    (espace / ".vitest" / "json").mkdir(parents=True, exist_ok=True)
+    (espace / ".vitest" / "json" / "output.json").write_text(
+        '{"numFailedTests": 1}', encoding="utf-8"
+    )
+    (espace / "src" / "app.py").write_text("print( 'formaté' )\n", encoding="utf-8")
+    manifeste = espace / "package.json"
+    etat = manifeste.stat()
+    os.utime(manifeste, ns=(etat.st_atime_ns, etat.st_mtime_ns + 5_000_000_000))
+    (espace / "node_modules" / "vitest").mkdir(parents=True, exist_ok=True)
+    (espace / "node_modules" / "vitest" / "index.js").write_text("x", encoding="utf-8")
+
+
+def _visible(espace: Path) -> dict[str, str]:
+    """Ce que la branche porterait de `espace` à cet instant, chemin par chemin."""
+    relatifs = _git(espace, "ls-files", "--cached", "--others", "--exclude-standard")
+    return {
+        relatif: (espace / relatif).read_text(encoding="utf-8")
+        for relatif in relatifs.splitlines()
+        if (espace / relatif).is_file()
+    }
+
+
+class _AgentQuiCorrige(ModelProvider):
+    """Livre `_TRAVAIL_1448` session après session ; relève ce qu'il trouve et ce qu'il laisse."""
+
+    name = "agent-qui-corrige"
+
+    def __init__(self) -> None:
+        self.trouve: list[dict[str, str]] = []
+        self.laisse: list[dict[str, str]] = []
+        self.dependances: list[bool] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):  # pragma: no cover
+        raise AssertionError("un rôle outillé passe par run_agent")
+
+    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, **_):
+        espace = Path(workspace)
+        self.trouve.append(_visible(espace))
+        self.dependances.append((espace / "node_modules" / "vitest" / "index.js").is_file())
+        for chemin, contenu in _TRAVAIL_1448[len(self.trouve) - 1].items():
+            (espace / chemin).parent.mkdir(parents=True, exist_ok=True)
+            (espace / chemin).write_text(contenu, encoding="utf-8")
+        self.laisse.append(_visible(espace))
+        return f"Livré (session {len(self.trouve)})."
+
+
+async def _juge_qui_laisse_des_traces(espace: Path, sortie: str, fichiers) -> str | None:
+    """La recette, réduite à son geste sur l'espace : la première livraison ne tient pas."""
+    _verifier_en_laissant_des_traces(espace)
+    return None if "session 2" in sortie else "Ta livraison ne tient pas encore."
+
+
+def _livre_et_verifie(tmp_path: Path) -> tuple[Path, _AgentQuiCorrige, object]:
+    """Une tâche de tests sur un projet versionné, vérifiée deux fois, corrigée une fois."""
+    projet = _projet_git_qui_ignore(tmp_path)
+    agent = _AgentQuiCorrige()
+    issue = asyncio.run(
+        AgentRuntime(agent, DEVELOPER_PROFILE).execute(
+            "Écrire les tests des données",
+            projet=projet,
+            tache_id="tests-donnees",
+            on_livraison=_juge_qui_laisse_des_traces,
+        )
+    )
+    return Path(projet.racine), agent, issue
+
+
+@besoin_de_git
+def test_ce_que_la_verification_laisse_n_atteint_pas_la_branche(tmp_path: Path) -> None:
+    """Le défaut du run `3a7fa26ba927` : `.vitest/json/output.json` commité, puis fusionné.
+
+    La branche d'une tâche porte le travail de l'agent, et rien de ce que Maestro a
+    joué pour le juger : ni le rapport de Vitest, ni le fichier que le formateur a
+    réécrit après la dernière livraison, ni le manifeste qu'un `npm install` a
+    seulement retouché — qui n'entre pas davantage aux fichiers produits.
+    """
+    racine, _agent, issue = _livre_et_verifie(tmp_path)
+
+    portes = _git(racine, "diff", "--name-only", "main...maestro/tests-donnees").split()
+    assert sorted(portes) == ["src/app.py", "tests/recettes.test.ts"]
+    assert _git(racine, "show", "maestro/tests-donnees:src/app.py") == "print('agent v2')\n"
+    assert sorted(f.chemin for f in issue.fichiers) == ["src/app.py", "tests/recettes.test.ts"]
+
+
+@besoin_de_git
+def test_l_agent_qui_corrige_repart_de_son_espace_tel_qu_il_l_a_laisse(tmp_path: Path) -> None:
+    """Le retour d'une livraison qui ne tient pas part de l'espace de l'agent, intact.
+
+    Ce que la vérification a laissé n'y est plus, ce qu'elle a réécrit est revenu à
+    la version de l'agent — et ce que le projet ignore, les dépendances qu'un
+    contrôle a installées, est resté : ce n'est le livrable de personne.
+    """
+    _racine, agent, _issue = _livre_et_verifie(tmp_path)
+
+    assert len(agent.trouve) == 2
+    assert agent.trouve[1] == agent.laisse[0]
+    assert ".vitest/json/output.json" not in agent.trouve[1]
+    assert agent.dependances == [False, True]
+
+
+@besoin_de_git
+def test_une_verification_qui_leve_rend_quand_meme_la_copie(tmp_path: Path) -> None:
+    """Une livraison non tenue lève depuis la vérification : la copie est rendue quand même.
+
+    Et la cause garde sa route — c'est elle qui condamne la tâche.
+    """
+    projet = _projet_git_qui_ignore(tmp_path)
+    with espace_de_travail(projet, tache_id="t-1448") as ws:
+        (ws.path / "lib.ts").write_text("export {}\n", encoding="utf-8")
+        avant = _visible(ws.path)
+        with pytest.raises(RuntimeError, match="la cause de la tâche"):
+            with ws.sans_trace():
+                _verifier_en_laissant_des_traces(ws.path)
+                raise RuntimeError("la cause de la tâche")
+        assert _visible(ws.path) == avant
+        assert not (ws.path / ".vitest").exists()
+
+
+@besoin_de_git
+def test_un_reste_qui_ne_se_defait_pas_se_nomme(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un reste que la branche porterait se nomme, il ne se tait pas.
+
+    L'index de l'instantané, lui, ne reste pas sous la racine jetable.
+    """
+    import maestro.sandbox.projet as module
+
+    instantanes: list[Path] = []
+    jetable_reel = module.jetable
+
+    def jetable_releve(prefixe: str) -> Path:
+        dossier = jetable_reel(prefixe)
+        if prefixe == module.PREFIXE_INSTANTANE:
+            instantanes.append(dossier)
+        return dossier
+
+    monkeypatch.setattr(module, "jetable", jetable_releve)
+    monkeypatch.setattr(module, "_retirer", lambda racine, relatif: False)
+    projet = _projet_git_qui_ignore(tmp_path)
+    with espace_de_travail(projet, tache_id="t-1448") as ws:
+        with pytest.raises(EspaceProjetIndisponible, match=r"\.vitest/json/output\.json"):
+            with ws.sans_trace():
+                _verifier_en_laissant_des_traces(ws.path)
+
+    assert len(instantanes) == 1 and not instantanes[0].exists()
+
+
+def test_la_racine_d_un_projet_non_versionne_n_est_jamais_defaite(tmp_path: Path) -> None:
+    """En place, la racine est le dossier vivant de la personne : rien n'y est effacé après coup."""
+    projet = _projet_copie(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="t-1448") as ws:
+        with ws.sans_trace():
+            (racine / "ecrit-pendant.txt").write_text("par la personne", encoding="utf-8")
+
+    assert (racine / "ecrit-pendant.txt").read_text(encoding="utf-8") == "par la personne"
