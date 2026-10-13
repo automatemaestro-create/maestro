@@ -55,6 +55,22 @@ class ProducedFile:
 
 
 @dataclass(frozen=True)
+class LieuSansTrace:
+    """Où Maestro joue ce qui ne doit pas rester dans un espace — et pourquoi nulle part (#1496).
+
+    `chemin` est le dossier où jouer : l'espace lui-même quand ce qui s'y joue peut
+    être défait ou ne livre rien (le répertoire jetable, la copie de travail d'un
+    projet versionné), un **miroir** de la racine d'un projet non versionné, où rien ne
+    se défait (`maestro.sandbox.en_place.EspaceEnPlace.sans_trace`). `None` : nulle
+    part, et `empechement` dit pourquoi — le miroir dépasse ses bornes, le poste n'a
+    pas la place. Ce qui n'a pas de lieu n'est pas joué : jamais dans la racine.
+    """
+
+    chemin: Path | None
+    empechement: str = ""
+
+
+@dataclass(frozen=True)
 class Workspace:
     """Répertoire isolé où un agent exécute sa tâche et dépose son livrable.
 
@@ -122,24 +138,28 @@ class Workspace:
         return ""
 
     @contextmanager
-    def sans_trace(self) -> Iterator[None]:
-        """Ce que Maestro joue dans le bloc ne reste pas dans ce que l'espace livre (#1448).
+    def sans_trace(self) -> Iterator[LieuSansTrace]:
+        """Où jouer ce qui ne doit pas rester dans ce que l'espace livre (#1448, #1496).
 
-        Le geste de la **vérification** d'une tâche (#1177), qui joue ses commandes
-        dans l'espace de l'agent : un `vitest --reporter=json` y écrit son rapport,
-        un `npm install` réécrit le verrou des dépendances. Seul le worktree d'un
-        projet versionné le tient (`maestro.sandbox.projet.EspaceCopieDeTravail.
-        sans_trace`) : c'est là que ces restes partaient sur la branche de la tâche,
-        puis dans le projet.
+        Le geste de la **vérification** d'une tâche (#1177), qui rejoue ses commandes
+        là où l'agent a travaillé : un `vitest --reporter=json` écrit son rapport, un
+        `npm install` réécrit le verrou des dépendances, un `ruff check --fix` réécrit
+        les sources. Le bloc joue dans le lieu rendu (`LieuSansTrace.chemin`), et
+        chaque espace répond à sa façon :
 
-        **Rien n'est défait ici**, et ce n'est pas un oubli. Le répertoire jetable
-        n'est le projet de personne : ce qu'il livre est relevé avant chaque
-        vérification (`maestro.agents.runtime`). La racine d'un projet non versionné
-        (#839) est le dossier **vivant** de la personne : défaire ce qui y a changé
-        pendant un intervalle de temps, c'est effacer ce qu'elle y aurait écrit
-        entre-temps — ce que Git ne tranche pas pour un dossier qu'il ne suit pas.
+        - **ici, le répertoire jetable**, l'espace lui-même et rien n'est défait : il
+          n'est le projet de personne, et ce qu'il livre est relevé avant chaque
+          vérification (`maestro.agents.runtime`) ;
+        - **la copie de travail** d'un projet versionné, elle-même, défaite après coup
+          (`maestro.sandbox.projet.EspaceCopieDeTravail.sans_trace`) : c'est là que ces
+          restes partaient sur la branche de la tâche, puis dans le projet ;
+        - **la racine** d'un projet non versionné (#839), jamais : c'est le dossier
+          vivant de la personne, et défaire ce qui y a changé pendant un intervalle de
+          temps effacerait ce qu'elle y aurait écrit entre-temps. Le bloc joue dans un
+          **miroir** de la racine, où rien ne se défait parce que rien n'est écrit dans
+          la racine (`maestro.sandbox.en_place.EspaceEnPlace.sans_trace`).
         """
-        yield
+        yield LieuSansTrace(self.path)
 
     def produced_files(self) -> tuple[ProducedFile, ...]:
         """Recense les fichiers **produits**, triés par chemin relatif (déterministe).

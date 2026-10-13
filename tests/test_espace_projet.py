@@ -54,6 +54,7 @@ from maestro.sandbox import (
     EspaceCopieDeTravail,
     EspaceProjetIndisponible,
     FrontiereEcriture,
+    LieuSansTrace,
     branche_de_tache,
     espace_de_travail,
     frontiere_de,
@@ -1695,9 +1696,15 @@ class _AgentQuiCorrige(ModelProvider):
         return f"Livré (session {len(self.trouve)})."
 
 
-async def _juge_qui_laisse_des_traces(espace: Path, sortie: str, fichiers) -> str | None:
-    """La recette, réduite à son geste sur l'espace : la première livraison ne tient pas."""
-    _verifier_en_laissant_des_traces(espace)
+async def _juge_qui_laisse_des_traces(
+    espace: Path, sortie: str, fichiers, *, lieu: LieuSansTrace
+) -> str | None:
+    """La recette, réduite à son geste sur l'espace : la première livraison ne tient pas.
+
+    Elle joue là où l'espace le lui dit — dans une copie de travail, la copie elle-même.
+    """
+    assert lieu.chemin == espace
+    _verifier_en_laissant_des_traces(lieu.chemin)
     return None if "session 2" in sortie else "Ta livraison ne tient pas encore."
 
 

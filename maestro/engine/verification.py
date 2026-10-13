@@ -32,15 +32,15 @@ verification` (#1160), appliquée ici au livrable d'une tâche :
 
 ## Où l'on joue
 
-Dans **l'espace de travail de la tâche** (le ticket le dit en ces mots) : le
-répertoire jetable, le worktree de la branche `maestro/<tâche>` ou la racine d'un
-projet non versionné. C'est l'environnement que l'agent a construit —
-dépendances installées comprises —, donc le seul où « les tests passent » veuille
-dire quelque chose. Ce n'est pas une copie, à la différence de l'outillage (#1160)
-: là, Maestro joue des commandes qu'il a **écrites** dans un projet que personne
-n'a encore préparé ; ici, il rejoue celles qui disent si le travail de l'agent
-tient, là où l'agent l'a fait. Les contrôles **constatent** et ne modifient rien,
-et c'est le prompt du vérificateur qui l'exige.
+Dans **l'environnement que l'agent a construit** — dépendances installées
+comprises —, le seul où « les tests passent » veuille dire quelque chose : le
+répertoire jetable ou le worktree de la branche `maestro/<tâche>` eux-mêmes, et,
+pour un projet non versionné, un **miroir** de sa racine (plus bas, #1496). Ce
+n'est pas la copie de l'outillage (#1160) : là, Maestro joue des commandes qu'il a
+**écrites** dans un projet que personne n'a encore préparé, sur ce qu'un agent
+trouve en arrivant ; ici, il rejoue celles qui disent si le travail de l'agent
+tient, sur ce que l'agent a laissé. Les contrôles **constatent** et ne modifient
+rien, et c'est le prompt du vérificateur qui l'exige.
 
 Un prompt n'est pas une garantie (#1448) : sur le run `3a7fa26ba927`, un essai de
 Vitest avec le rapporteur `json` a laissé `.vitest/json/output.json` dans la copie
@@ -51,6 +51,22 @@ contrôles laissent et que la branche porterait est défait aussitôt — la bra
 ne porte que le travail de l'agent, et l'agent qui corrige repart de ses fichiers
 tels qu'il les a laissés. Ce que le projet ignore (les dépendances qu'un contrôle
 installe) reste, et ne part sur aucune branche.
+
+La racine d'un projet **non versionné** ne se défait pas : c'est le dossier vivant
+de la personne, et défaire après coup effacerait ce qu'elle y aurait écrit pendant
+ce temps. Reproduit le 2026-10-13 (#1496) : `.pytest_cache/`, `.ruff_cache/` et un
+rapport JUnit restaient dans la racine, `ruff check --fix` y réécrivait un fichier
+de la personne, tout cela était compté à l'agent, et l'agent qui corrigeait ne
+retrouvait pas son propre fichier. **Maestro n'efface ni ne réécrit jamais, dans la
+racine de la personne, ce qu'il n'y a pas lui-même écrit.** La vérification joue
+donc dans un **miroir** de la racine (`maestro.sandbox.verification.
+MiroirDeVerification`, tenu par `EspaceEnPlace.sans_trace`), qui porte tout ce que
+l'agent a construit — dépendances, `.env` — et se resynchronise avant chaque
+vérification : rien n'est écrit dans la racine, donc rien n'y est à défaire. La
+portée est celle du miroir, où ce qu'on détruit ne se perd pas ; les preuves
+disent les chemins de la racine (`Livraison.en_clair`) ; et un miroir impossible
+(au-delà de ses bornes, faute de place) rend chaque commande « non jouée » avec son
+motif (`Livraison.empechement`) — jamais rejouée dans la racine.
 
 Sous deux gardes, les mêmes que pour un agent : la **portée « projet »**
 (`maestro.portee`) — une commande qui sort du dossier ou qui détruirait ce que la
@@ -175,18 +191,19 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import os
 import re
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from maestro.orchestrator.schema import Brief, Task
 from maestro.portee import PorteeProjet
 from maestro.providers.base import ModelProvider
-from maestro.sandbox import ProducedFile
+from maestro.sandbox import LieuSansTrace, ProducedFile
 from maestro.sandbox import verification as execution
 from maestro.telemetry import PlafondDepenseDepasse
 
@@ -468,12 +485,35 @@ class Livraison:
     texte, qui n'en a pas. `portee` est la portée « projet » de cet espace
     (`maestro.sandbox.en_place.portee_de`) : ce qu'une commande ne peut pas y
     faire sans une personne.
+
+    `origine` (#1496) est le dossier que `espace` reflète quand la vérification joue
+    dans un **miroir** — la racine d'un projet non versionné, où l'agent a travaillé
+    : les preuves disent ses chemins à lui (`en_clair`), sans quoi l'agent
+    chercherait un fichier qui n'existe pas pour lui. `None` : l'espace est le lieu
+    même. `empechement` dit pourquoi rien ne se joue alors qu'il y a un espace — le
+    miroir n'a pas pu être fait : chaque commande est « non jouée » avec ce motif,
+    et aucune n'est jouée ailleurs.
     """
 
     sortie: str
     fichiers: tuple[ProducedFile, ...] = ()
     espace: Path | None = None
     portee: PorteeProjet | None = None
+    origine: Path | None = None
+    empechement: str = ""
+
+    def en_clair(self, constat: Constat) -> Constat:
+        """Le constat dont la preuve nomme `origine` là où la commande a écrit `espace`.
+
+        Toutes les graphies qu'un outil rend d'un même chemin sont reconnues — celle du
+        système, celle à barres obliques, celle de Git Bash (`/c/…`), et la forme
+        résolue (un nom court de Windows, `/private/var` de macOS) — et chacune
+        devient la même graphie de l'origine. C'est un chemin que Maestro a choisi,
+        jamais un message d'outil qu'on interpréterait (#1315).
+        """
+        if self.origine is None or self.espace is None or not constat.preuve:
+            return constat
+        return replace(constat, preuve=_traduire_chemins(constat.preuve, self.espace, self.origine))
 
 
 @dataclass(frozen=True)
@@ -802,7 +842,7 @@ class VerificateurTaches:
         Illisible ou hors portée se tranchent tous deux par la portée
         (`commande_hors_portee`), jamais par le texte de son motif.
         """
-        if livraison.espace is None or livraison.portee is None:
+        if livraison.espace is None or livraison.portee is None or livraison.empechement:
             return controles
         refus = _refus_de_portee(controles, livraison.portee)
         while refus:
@@ -824,8 +864,16 @@ class VerificateurTaches:
 
         Une commande que le système refuse de **lancer** n'est ni tenue ni non tenue :
         le juge n'a pas pu jouer son contrôle, et il le dit, avec la réponse du
-        système (#1432) — l'agent n'y est pour rien.
+        système (#1432) — l'agent n'y est pour rien. Une livraison sans lieu où jouer
+        (`Livraison.empechement`, #1496) ne joue rien, et ne joue jamais ailleurs. La
+        preuve nomme les chemins de la racine, pas ceux du miroir (`Livraison.en_clair`).
         """
+        if livraison.empechement:
+            return _non_joue(controle)(f"pas jouée — {livraison.empechement}")
+        return livraison.en_clair(await self._jouer_dans_l_espace(controle, livraison))
+
+    async def _jouer_dans_l_espace(self, controle: Controle, livraison: Livraison) -> Constat:
+        """`_jouer`, une fois établi qu'il y a un lieu où jouer."""
         non_joue = _non_joue(controle)
         if livraison.espace is None:
             return non_joue(_SANS_ESPACE)
@@ -1114,6 +1162,35 @@ def _lire_reecriture(
                 sonde=sonde,
             )
     return reecrits
+
+
+def _traduire_chemins(texte: str, de: Path, vers: Path) -> str:
+    """`texte` où chaque graphie du chemin `de` devient la même graphie de `vers` (#1496).
+
+    Les plus longues d'abord : la forme résolue d'un chemin en contient parfois une
+    autre. Sous Windows, la casse ne départage pas deux graphies d'un même chemin.
+    """
+    paires: dict[str, str] = {}
+    for source, cible in ((str(de), str(vers)), (os.path.realpath(de), os.path.realpath(vers))):
+        paires.setdefault(source, cible)
+        paires.setdefault(source.replace("\\", "/"), cible.replace("\\", "/"))
+        if _lecteur(source) and _lecteur(cible):
+            paires.setdefault(_graphie_git_bash(source), _graphie_git_bash(cible))
+    drapeaux = re.IGNORECASE if os.name == "nt" else 0
+    for source in sorted(paires, key=len, reverse=True):
+        cible = paires[source]
+        texte = re.sub(re.escape(source), lambda _trouve, cible=cible: cible, texte, flags=drapeaux)
+    return texte
+
+
+def _lecteur(chemin: str) -> bool:
+    """Le chemin commence-t-il par une lettre de lecteur (`C:`) ?"""
+    return len(chemin) > 1 and chemin[1] == ":" and chemin[0].isalpha()
+
+
+def _graphie_git_bash(chemin: str) -> str:
+    """`C:\\Users\\x` tel que l'écrit un outil lancé par Git Bash : `/c/Users/x`."""
+    return "/" + chemin[0].lower() + chemin[2:].replace("\\", "/")
 
 
 def _non_joue(controle: Controle) -> Callable[[str], Constat]:
@@ -1645,26 +1722,42 @@ class Recette:
         espace: Path | None,
         sortie: str,
         fichiers: tuple[ProducedFile, ...] = (),
+        *,
+        lieu: LieuSansTrace | None = None,
     ) -> str | None:
         """Vérifie une livraison — `None` si elle tient, le retour à l'agent sinon.
 
         Une livraison **vide** (ni compte-rendu, ni fichier) n'est pas vérifiée :
         c'est un aléa du fournisseur, que l'exécuteur relance depuis toujours
         (#91), et la juger coûterait un appel pour constater qu'il n'y a rien.
+
+        `espace` est où l'agent a travaillé ; `lieu` (#1448, #1496), où jouer ses
+        contrôles — l'espace lui-même, le miroir de la racine d'un projet non
+        versionné, ou nulle part et pourquoi (`Workspace.sans_trace`). La portée est
+        celle du lieu, et les preuves disent les chemins de l'espace. Sans `lieu`, on
+        joue dans l'espace.
         """
         if not sortie.strip() and not fichiers:
             return None
         self.livraisons += 1
         self._sortie = sortie
+        joue, empechement = espace, ""
+        if espace is not None and lieu is not None:
+            if lieu.chemin is None:
+                empechement = lieu.empechement or "aucun lieu où jouer la vérification"
+            else:
+                joue = lieu.chemin
         livraison = Livraison(
             sortie=sortie,
             fichiers=fichiers,
-            espace=espace,
+            espace=joue,
             portee=(
-                self.portee_de(espace)
-                if espace is not None and self.portee_de is not None
+                self.portee_de(joue)
+                if joue is not None and self.portee_de is not None and not empechement
                 else None
             ),
+            origine=espace if joue != espace else None,
+            empechement=empechement,
         )
         controles, verdict = await self._verifier(livraison)
         if controles:

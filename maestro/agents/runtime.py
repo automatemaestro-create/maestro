@@ -22,7 +22,7 @@ import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from maestro.agents.mcp import ServeurMcp, resolus
 from maestro.agents.permissions import PolitiqueOutils
@@ -40,7 +40,7 @@ from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
 from maestro.providers.decision import Consigneur
 from maestro.providers.question import Questionneur
-from maestro.sandbox import ProducedFile, espace_de_travail
+from maestro.sandbox import LieuSansTrace, ProducedFile, espace_de_travail
 from maestro.sandbox.confinement import ReleveConfinement
 
 #: Outils confiés par défaut à un rôle outillé : lire/écrire/éditer des fichiers,
@@ -65,11 +65,25 @@ DEFAULT_TOOLS: tuple[str, ...] = (
     "Bash",
 )
 
-#: Le juge d'une livraison (#1177) : reçoit l'espace de travail, le compte-rendu de
-#: l'agent et les fichiers produits, et rend `None` si la livraison tient, sinon le
-#: **retour** à donner à l'agent pour qu'il corrige. Il arrête la boucle en levant —
-#: le runtime ne sait ni ce qu'est un critère, ni quand renoncer.
-JugeLivraison = Callable[[Path, str, tuple[ProducedFile, ...]], Awaitable[str | None]]
+class JugeLivraison(Protocol):
+    """Le juge d'une livraison (#1177).
+
+    Reçoit l'espace de travail, le compte-rendu de l'agent, les fichiers produits et
+    le **lieu** où jouer ses contrôles (`Workspace.sans_trace`, #1448/#1496 : l'espace
+    lui-même, ou le miroir de la racine d'un projet non versionné, ou nulle part et
+    pourquoi). Rend `None` si la livraison tient, sinon le **retour** à donner à
+    l'agent pour qu'il corrige. Il arrête la boucle en levant — le runtime ne sait ni
+    ce qu'est un critère, ni quand renoncer.
+    """
+
+    def __call__(
+        self,
+        espace: Path,
+        sortie: str,
+        fichiers: tuple[ProducedFile, ...],
+        *,
+        lieu: LieuSansTrace,
+    ) -> Awaitable[str | None]: ...
 
 
 @dataclass(frozen=True)
@@ -416,8 +430,10 @@ class AgentRuntime:
         mêmes outils, mêmes canaux. Le runtime ne décide de rien : ni de ce qui
         tient, ni de quand renoncer (le juge lève, et l'exception traverse). None
         (le défaut) : la première livraison est la livraison, comme avant #1177.
-        Chaque jugement se joue sous `Workspace.sans_trace` (#1448) : ce que ses
-        commandes laissent dans une copie de travail n'atteint pas la branche, et
+        Chaque jugement se joue sous `Workspace.sans_trace` (#1448), dans le lieu
+        qu'il rend : ce que ses commandes laissent dans une copie de travail n'atteint
+        pas la branche, celles d'un projet non versionné jouent dans un miroir de sa
+        racine, où rien de ce qu'elles écrivent n'atteint la personne (#1496) — et
         l'agent qui corrige retrouve ses fichiers tels qu'il les a laissés.
 
         `machine` (#1403) est ce que Maestro a constaté de la machine au début du
@@ -526,11 +542,12 @@ class AgentRuntime:
             # et ce qui ne tient pas revient à l'agent dans ce même espace. Le
             # message repart **entier** — une session du fournisseur ne se souvient
             # pas de la précédente —, suivi du retour, qui porte les preuves. Ce
-            # que les contrôles y laissent n'y reste pas (#1448) : la branche de la
-            # tâche ne porte que le travail de l'agent, et l'agent repart du sien.
+            # que les contrôles y laissent n'y reste pas (#1448, #1496) : la branche
+            # de la tâche et la racine de la personne ne portent que le travail de
+            # l'agent, et l'agent repart du sien.
             while on_livraison is not None:
-                with ws.sans_trace():
-                    retour = await on_livraison(ws.path, resume.strip(), fichiers)
+                with ws.sans_trace() as lieu:
+                    retour = await on_livraison(ws.path, resume.strip(), fichiers, lieu=lieu)
                 if retour is None:
                     break
                 resume = await session(f"{prompt}\n\n{retour}")
