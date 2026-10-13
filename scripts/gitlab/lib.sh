@@ -45,9 +45,9 @@
 #   • gl_backlog_table       — la table plate TSV du backlog, pour les questions d'ENSEMBLE :
 #                              /backlog, queue.sh, doctor.sh, reconcile-workflow, reconcile-en-cours.
 #   • st_statuts <iid…>      — « <iid><TAB><libellé> » : le cycle de vie de N tickets NOMMÉS en UNE
-#                              lecture, pendant unitaire de la table. Même sortie colonne pour
-#                              colonne, mais SANS sa fenêtre de 100 ni la pagination des items du
-#                              projet — subtickets/startables s'y branchent (#577, docs/10 §3.6).
+#                              lecture, sans fenêtre ni pagination. subtickets/startables s'y
+#                              branchent (#577), et les tables elles-mêmes y recouvrent leur colonne
+#                              `statut` sur leurs propres iid (#1490, docs/10 §3.6).
 #   • gl_mr_brief <branche>  — « etat<TAB>numéro<TAB>sha » de la PR d'une branche, d'où mr-state,
 #                              cleanup-merged et worktree-done sortent inchangés.
 #
@@ -7264,10 +7264,6 @@ st_set_workflow() {
       echo "Échec de la pose du cycle de vie sur #$iid" >&2
       return 1 ;;
   esac
-  # La carte des états que ce processus a pu mémoriser vient de se périmer (#362) : l'oublier ici,
-  # au SEUL endroit qui écrit le champ, évite d'avoir à raisonner appelant par appelant sur « ce
-  # processus relit-il une table après avoir écrit ? ».
-  st_carte_oublie
   printf 'Cycle de vie de #%s → « %s »\n' "$iid" "$libelle"
 }
 
@@ -7375,16 +7371,20 @@ st_liberer_ticket() {
 # producteurs bascule les six appelants — `subtickets` et `startables` compris.
 #
 # LA MÉTHODE EST UN RECOUVREMENT, PAS UNE RÉÉCRITURE. Le JSON des tickets reste la source de QUI
-# EXISTE, et la carte des items celle de QUEL ÉTAT. Le contraire — lister les tickets depuis les
-# items du projet — ferait DISPARAÎTRE de `/backlog` tout ticket hors projet, c'est-à-dire
-# exactement ceux qu'on veut voir signalés. Un ticket hors projet sort donc avec un statut « - »,
-# qui était déjà, au caractère près, ce que rendait un ticket à 0 label du cycle de vie. Les six
-# appelants héritent de ce contrat sans le savoir, et la projection awk des tables n'existe toujours
-# qu'à un seul endroit (`gh_backlog_table`, `gh_milestone_issues`).
+# EXISTE, et `st_statuts` celle de QUEL ÉTAT. Le contraire — lister les tickets depuis les items du
+# projet — ferait DISPARAÎTRE de `/backlog` tout ticket hors projet, c'est-à-dire exactement ceux
+# qu'on veut voir signalés. Un ticket hors projet sort donc avec un statut « - », qui était déjà, au
+# caractère près, ce que rendait un ticket à 0 label du cycle de vie. Les six appelants héritent de
+# ce contrat sans le savoir, et la projection awk des tables n'existe toujours qu'à un seul endroit
+# (`gh_backlog_table`, `gh_milestone_issues`).
 #
-# LE COÛT EST LE VRAI RISQUE DU CHANTIER, et il est MESURÉ plutôt que supposé : un filtre par label
-# était UN appel REST rendu par le serveur, là où les items d'un projet se PAGINENT par 100 et se
-# filtrent chez nous. Mesure, verdict et raison de l'absence de cache : #362 et docs/10 §3.6.
+# LE COÛT EST LE VRAI RISQUE DU CHANTIER, et il est MESURÉ plutôt que supposé (docs/10 §3.6). Les
+# tables ont d'abord recouvert leurs statuts par une CARTE de tout le projet, paginée par 100 items
+# et mémorisée pour la durée d'un processus (#362). La carte grossissait avec l'HISTORIQUE (~1 000
+# items, 10 pages, ~20 s), pour des tables bornées à 100 tickets ; et la mémoire ne franchissait pas
+# les processus, si bien que `/etat-des-lieux` la relisait six fois (#1490). Depuis #1490, chaque
+# table demande l'état de SES PROPRES iid à `st_statuts`, en un aller quel que soit l'historique :
+# la carte et sa mémoire n'avaient plus de lecteur, elles sont parties.
 #
 # CE QUI N'EST PAS RECOUVERT, ET POURQUOI : `backlog` (le JSON brut). Son contrat est de rendre LA
 # RÉPONSE DE LA FORGE telle quelle — y injecter un Status en ferait une projection déguisée, et le
@@ -7394,133 +7394,20 @@ st_liberer_ticket() {
 # CE QUI RESTE À #363 : distinguer « hors projet » de « Status vide » et en faire un diagnostic.
 # `st_workflow_derives` ci-dessous porte la dérive, pas sa nouvelle sémantique.
 
-# st_projet_id -> l'id du projet dont le TITRE vaut GL_PROJET_TITRE. Résolu PAR NOM à chaque appel,
-# comme partout dans ce fichier (contrat en tête) : un id de projet figé est un clone qui ne démarre
-# pas. La comparaison est une ÉGALITÉ DE CHAMP faite dans le shell et non un `grep` — `projectsV2`
-# ne sait filtrer que par recherche FLOUE, où « Maestro » ramènerait « Maestro v2 ».
-st_projet_id() {
-  local lignes id
-  lignes="$(gh_graphql_read '{ repositoryOwner(login:"'"${GL_GH_REPO%%/*}"'") { ... on ProjectV2Owner { projectsV2(first:100){nodes{ id title }} } } }' \
-            --jq '["projets"] + [.data.repositoryOwner.projectsV2.nodes[]? | "projet\t" + .title + "\t" + .id] | .[]')" || return 1
-  id="$(printf '%s\n' "$lignes" | st_lignes projet "$GL_PROJET_TITRE" | head -1 | cut -f3)"
-  if [ -z "$id" ]; then
-    echo "Projet « $GL_PROJET_TITRE » introuvable chez ${GL_GH_REPO%%/*} — le monter : bash scripts/github/bootstrap-project.sh" >&2
-    return 1
-  fi
-  printf '%s\n' "$id"
-}
-
-# st_gql_items <id-projet> [curseur] -> la requête d'UNE PAGE d'items. Le projet est désigné par
-# `node(id:)` : l'id vient d'être résolu par st_projet_id, il n'est écrit nulle part.
-st_gql_items() {
-  local pid="$1" curseur="${2-}" apres=''
-  [ -n "$curseur" ] && apres=", after:\"$curseur\""
-  printf '{ node(id:"%s") { ... on ProjectV2 { items(first:100%s){ pageInfo{ hasNextPage endCursor } nodes{ content{ ... on Issue { number } } fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }' \
-    "$pid" "$apres"
-}
-
-# st_jq_items -> aplatit une page en lignes clé<TAB>…, même parti pris que st_jq_contexte (deux
-# niveaux d'imbrication et des valeurs à accents : un `grep -o` y serait un parseur déguisé) :
-#     erreur  projet
-#     page    <hasNextPage>  <curseur de fin>
-#     item    <numéro du ticket>  <libellé du Status, vide si non posé>
-# La ligne `page` est TOUJOURS émise, y compris sur un projet vide : quand un `--jq` est passé, la
-# garde « réponse vide » de gh_graphql_read porte sur la réponse RENDUE (cf. son commentaire), et un
-# projet sans item déclencherait sinon trois tentatives puis une erreur.
-st_jq_items() {
-  cat <<'JQ'
-[
-  (if .data.node == null then "erreur\tprojet"
-   else "page\t" + (.data.node.items.pageInfo.hasNextPage|tostring) + "\t" + (.data.node.items.pageInfo.endCursor // "") end),
-  (.data.node.items.nodes[]? | select(.content.number != null)
-   | "item\t" + (.content.number|tostring) + "\t" + (.fieldValueByName.name // ""))
-] | .[]
-JQ
-}
-
-# st_carte_statuts -> « <iid><TAB><libellé> » pour tout ticket qui est un item du projet, toutes
-# pages confondues. C'est LA lecture d'ensemble : une page de 100 items par appel, là où le backend
-# labels filtre côté serveur en un seul.
-#
-# Le libellé sort TEL QUEL quand il n'est pas l'un des six — même parti pris que st_issue_owner :
-# une lecture ne doit pas échouer sur un état exotique (option renommée dans l'UI), le signaler est
-# le rôle de doctor.sh (#363).
-#
-# ELLE EST MÉMORISÉE POUR LA DURÉE DU PROCESSUS, et la mesure est ce qui l'a décidé (#362, docs/10
-# §3.6) : la carte coûte ~13 s sur 366 items — un appel pour résoudre le projet, puis une page de
-# 100 par ~2,7 s — et `queue.sh` en demandait DEUX, une par table. Le prix n'est pas dans le nombre
-# d'appels (+11 sur un plan) mais dans le prix unitaire d'une page de Projects v2 ; le seul levier
-# est donc de ne pas la demander deux fois.
-#
-# LA MÉMOIRE EST OUBLIÉE À CHAQUE ÉCRITURE (`st_set_workflow`), ce qui règle la péremption par
-# construction plutôt que par un raisonnement sur les appelants : un processus qui pose un état puis
-# relit une table voit son écriture. Elle ne franchit ni les sous-shells (une substitution la
-# re-remplit, sans dommage) ni les processus, et `MAESTRO_CYCLE_MEMO=0` l'éteint. À ne pas étendre
-# aux verbes UNITAIRES : `gl_issue_owner` est appelé par `run.sh` pendant des heures, sur des
-# tickets dont l'état change entre deux appels — c'est le contraire de ce cas-ci.
-GL_ST_CARTE_MEMO=''
-GL_ST_CARTE_MEMO_POSEE=''
-
-st_carte_oublie() { GL_ST_CARTE_MEMO=''; GL_ST_CARTE_MEMO_POSEE=''; }
-
-# st_carte_charge -> remplit GL_ST_CARTE_MEMO, et rend 1 si la lecture échoue.
-#
-# ELLE NE S'APPELLE PAS PAR SUBSTITUTION, et c'est tout le sujet : `carte="$(st_carte_…)"` s'exécute
-# dans un SOUS-SHELL, où l'affectation meurt avec lui — une mémoire écrite là ne serait jamais
-# relue, et le cache mesurerait zéro gain (constaté avant de le corriger : 13 appels des deux
-# côtés). Les trois verbes appellent donc `st_carte_charge` DIRECTEMENT puis lisent la variable.
-# Ce qui la rend efficace là où il faut : `queue.sh` demande ses deux tables par REDIRECTION, donc
-# dans un seul et même shell. Un appelant qui capture par substitution garde une mémoire limitée à
-# son sous-shell — sans gain, mais sans dommage non plus.
-st_carte_charge() {
-  if [ "${MAESTRO_CYCLE_MEMO:-1}" != 0 ] && [ -n "$GL_ST_CARTE_MEMO_POSEE" ]; then return 0; fi
-  GL_ST_CARTE_MEMO="$(st_carte_lire)" || return 1
-  [ "${MAESTRO_CYCLE_MEMO:-1}" != 0 ] && GL_ST_CARTE_MEMO_POSEE=oui
-  return 0
-}
-
-# st_carte_statuts -> la carte sur la sortie standard. Reste exposée pour le diagnostic ; les verbes
-# du fichier passent par st_carte_charge, pour la raison ci-dessus.
-st_carte_statuts() {
-  st_carte_charge || return 1
-  [ -n "$GL_ST_CARTE_MEMO" ] && printf '%s\n' "$GL_ST_CARTE_MEMO"
-  return 0
-}
-
-# st_carte_lire -> le corps réseau de la carte, sans mémoire. Séparé pour que la mémorisation soit
-# lisible d'un coup d'œil et testable en l'éteignant.
-st_carte_lire() {
-  local pid curseur='' lignes page
-  pid="$(st_projet_id)" || return 1
-  while :; do
-    lignes="$(gh_graphql_read "$(st_gql_items "$pid" "$curseur")" --jq "$(st_jq_items)")" || return 1
-    case "$lignes" in
-      "erreur	projet"*)
-        echo "Projet « $GL_PROJET_TITRE » illisible (id résolu, node vide)" >&2; return 1 ;;
-    esac
-    printf '%s\n' "$lignes" | st_lignes item | cut -f2,3
-    page="$(printf '%s\n' "$lignes" | st_lignes page | head -1)"
-    [ "$(printf '%s' "$page" | cut -f2)" = "true" ] || break
-    curseur="$(printf '%s' "$page" | cut -f3)"
-    # Une page suivante annoncée sans curseur ferait REDEMANDER la première indéfiniment : mieux
-    # vaut une erreur franche qu'une boucle qui paginerait sur place.
-    if [ -z "$curseur" ]; then
-      echo "st_carte_lire : page suivante annoncée sans curseur — pagination interrompue" >&2
-      return 1
-    fi
-  done
-}
-
 # st_statuts <iid…> -> « <iid><TAB><libellé> » pour N tickets NOMMÉS, en UNE lecture. Les iid sont
 # demandés sous des ALIAS GraphQL (`i390: issue(number:390)`), exactement comme `gh_issues_state` —
 # le nom d'un alias ne pouvant pas commencer par un chiffre.
 #
-# C'EST LE PENDANT UNITAIRE DE LA CARTE, ET IL RÉPOND À UNE AUTRE QUESTION (#577, docs/10 §3.6).
-# `st_carte_lire` répond à « quel est l'état de TOUT le monde ? » et le paie en pages de 100 items ;
-# ce verbe répond à « quel est l'état de CES tickets-ci ? », qu'un appelant connaissant ses iid n'a
-# aucune raison de payer au prix de l'ensemble. Mesuré le 2026-08-26 sur les 8 lots d'un parent :
-# **1,6 s en un aller**, contre **20 à 32 s** pour la carte (6 allers : la résolution du projet, puis
-# 5 pages) — le facteur vingt tient au fait qu'on ne pagine plus 577 tickets pour en lire huit.
+# C'EST LA SEULE LECTURE D'ÉTAT D'ENSEMBLE, ET ELLE NE PAGINE RIEN (#577, #1490, docs/10 §3.6).
+# Elle est née pendant unitaire d'une CARTE de tout le projet, qui répondait à « quel est l'état de
+# TOUT le monde ? » en pages de 100 items ; ce verbe répond à « quel est l'état de CES tickets-ci ? »,
+# qu'un appelant connaissant ses iid n'a aucune raison de payer au prix de l'ensemble. Mesuré le
+# 2026-08-26 sur les 8 lots d'un parent : **1,6 s en un aller**, contre **20 à 32 s** pour la carte.
+# Les trois tables l'ont rejoint à #1490 — elles CONNAISSENT leurs iid, puisqu'elles viennent de les
+# lister : mesuré le 2026-10-13, **1,8 s pour 60 tickets ouverts et 2,3 s pour 100 fermés**, sortie
+# identique à la carte ligne pour ligne, là où la carte coûtait ~20 s à ~1 000 items. Cent alias font
+# une requête de ~16 Ko, sous le plafond d'une ligne de commande Windows (32 Ko) que `gh` reçoit ;
+# aucune table n'en demande davantage, toutes étant bornées à `first: 100`.
 #
 # ⚠ IL CORRIGE AUSSI UN FAUX SILENCE, et c'est la moitié qui ne se voit pas au chronomètre. La carte
 # se lisait à travers `gl_backlog_table`, bornée à `first: 100` : tout lot plus ancien que cette
@@ -7530,14 +7417,13 @@ st_carte_lire() {
 #
 # LE CONTRAT DE SORTIE EST CELUI DE LA TABLE, colonne pour colonne, pour que les appelants ne
 # changent pas : un ticket qui existe mais n'est pas un item du projet (ou dont le Status est vide)
-# sort « - », comme le rendait `st_overlay_statut`. Un ticket qui N'EXISTE PAS ne rend AUCUNE LIGNE —
-# même parti pris que `gh_issues_state`, et c'est l'appelant qui décide de ce que vaut ce silence
+# sort « - ». Un ticket qui N'EXISTE PAS ne rend AUCUNE LIGNE — même parti pris que
+# `gh_issues_state`, et c'est l'appelant qui décide de ce que vaut ce silence
 # (`gl_subtickets_enrich` le compte « ? », un iid de lot illisible n'étant pas un état).
 #
-# LE LIBELLÉ SORT TEL QUEL, sans renormalisation, exactement comme `st_carte_statuts` : une option
-# renommée à la main dans l'UI traverse, et la signaler est le rôle de `doctor.sh` (#363). C'est
-# aussi ce qui évite N forks de `gl_workflow_slug` pour une valeur que bootstrap-project.sh écrit
-# déjà au bon libellé.
+# LE LIBELLÉ SORT TEL QUEL, sans renormalisation : une option renommée à la main dans l'UI traverse,
+# et la signaler est le rôle de `doctor.sh` (#363). C'est aussi ce qui évite N forks de
+# `gl_workflow_slug` pour une valeur que bootstrap-project.sh écrit déjà au bon libellé.
 st_statuts() {
   if [ "$#" -eq 0 ]; then echo "usage: st_statuts <iid…>" >&2; return 2; fi
   local iid champs='' raw
@@ -7584,21 +7470,21 @@ st_statuts() {
   '
 }
 
-# st_overlay_statut <carte> (stdin = une table plate) -> la même table, colonne `statut` relue dans
-# la carte. C'est la 2e colonne des DEUX tables du fichier (`iid statut …`), et un ticket absent de
-# la carte sort « - ».
+# st_overlay_statut <statuts> (stdin = une table plate) -> la même table, colonne `statut` relue
+# dans « <iid><TAB><libellé> » (la sortie de `st_statuts`). C'est la 2e colonne des DEUX tables du
+# fichier (`iid statut …`), et un ticket absent des statuts sort « - ».
 #
-# La carte voyage par ENVIRON et jamais par `awk -v`, qui INTERPRÈTE les échappements de son
-# argument — un titre porteur d'un antislash y changerait de valeur en silence (#340).
+# Les statuts voyagent par ENVIRON et jamais par `awk -v`, qui INTERPRÈTE les échappements de son
+# argument — un libellé porteur d'un antislash y changerait de valeur en silence (#340).
 st_overlay_statut() {
-  ST_CARTE="$1" awk -F'\t' -v OFS='\t' '
+  ST_STATUTS="$1" awk -F'\t' -v OFS='\t' '
     BEGIN {
-      n = split(ENVIRON["ST_CARTE"], lignes, "\n")
+      n = split(ENVIRON["ST_STATUTS"], lignes, "\n")
       for (i = 1; i <= n; i++) {
         p = index(lignes[i], "\t")
         if (p == 0) continue
         val = substr(lignes[i], p + 1)
-        carte[substr(lignes[i], 1, p - 1)] = (val == "" ? "-" : val)
+        etat[substr(lignes[i], 1, p - 1)] = (val == "" ? "-" : val)
       }
     }
     /^#/ { print; next }
@@ -7606,12 +7492,29 @@ st_overlay_statut() {
     # la table gagnerait un ticket sans numéro que le consommateur suivant compterait. (Aucune
     # apostrophe dans ce bloc : il vit DANS le programme awk, lui-même entre apostrophes.)
     NF == 0 { next }
-    { $2 = (($1 in carte) ? carte[$1] : "-"); print }
+    { $2 = (($1 in etat) ? etat[$1] : "-"); print }
   '
 }
 
+# st_recouvre <table> -> la table, colonne `statut` relue par `st_statuts` sur SES PROPRES iid
+# (#1490) : un aller, quel que soit l'historique du projet. Une table sans ticket ne demande rien —
+# il n'y a aucun état à lire, et une lecture pour l'apprendre serait une lecture de trop.
+#
+# UNE LECTURE D'ÉTAT EN ÉCHEC FAIT ÉCHOUER LA TABLE, comme le faisait la carte : une table rendue
+# avec des « - » partout dirait « aucun ticket n'a d'état », et `queue.sh` y verrait un backlog où
+# rien n'est « À faire » — un plan vide au lieu d'une erreur.
+st_recouvre() {
+  local rows="$1" iids statuts=''
+  iids="$(printf '%s\n' "$rows" | awk -F'\t' '$1 ~ /^[0-9]+$/ { printf "%s ", $1 }')"
+  if [ -n "${iids// /}" ]; then
+    # shellcheck disable=SC2086  # découpage en mots VOULU : st_statuts prend N iid en arguments.
+    statuts="$(st_statuts $iids)" || return 1
+  fi
+  printf '%s\n' "$rows" | st_overlay_statut "$statuts"
+}
+
 # st_backlog_table [state] / st_milestone_issues <titre> -> les deux tables du contrat, colonne pour
-# colonne identiques à leurs jumelles `gh_`, la carte en plus. Le recouvrement est une SECONDE PASSE
+# colonne identiques à leurs jumelles `gh_`, l'état en plus. Le recouvrement est une SECONDE PASSE
 # et non une projection concurrente : la table garde une seule implémentation.
 #
 # LA TABLE EST CAPTURÉE AVANT D'ÊTRE RECOUVERTE, dans les trois verbes, et ce n'est pas un détail de
@@ -7622,17 +7525,15 @@ st_overlay_statut() {
 st_backlog_table() {
   local state="${1:-opened}" rows
   case "$state" in opened|closed|all) ;; *) echo "state invalide : $state (opened|closed|all)" >&2; return 2 ;; esac
-  st_carte_charge || return 1
   rows="$(gh_backlog_table "$state")" || return 1
-  printf '%s\n' "$rows" | st_overlay_statut "$GL_ST_CARTE_MEMO"
+  st_recouvre "$rows"
 }
 
 st_milestone_issues() {
   local title="$1" rows
   if [ -z "$title" ]; then echo "usage: st_milestone_issues <titre-exact-du-milestone>" >&2; return 2; fi
-  st_carte_charge || return 1
   rows="$(gh_milestone_issues "$title")" || return 1
-  printf '%s\n' "$rows" | st_overlay_statut "$GL_ST_CARTE_MEMO"
+  st_recouvre "$rows"
 }
 
 # st_workflow_derives [state] -> « <iid><TAB>0 » pour les tickets SANS état. Le portage est direct,
@@ -7643,10 +7544,9 @@ st_milestone_issues() {
 st_workflow_derives() {
   local state="${1:-opened}" rows
   case "$state" in opened|closed|all) ;; *) echo "state invalide : $state (opened|closed|all)" >&2; return 2 ;; esac
-  st_carte_charge || return 1
   rows="$(gh_backlog_table "$state")" || return 1
-  printf '%s\n' "$rows" | st_overlay_statut "$GL_ST_CARTE_MEMO" \
-    | awk -F'\t' '$1 !~ /^#/ && $2 == "-" { printf "%s\t0\n", $1 }'
+  rows="$(st_recouvre "$rows")" || return 1
+  printf '%s\n' "$rows" | awk -F'\t' '$1 !~ /^#/ && $2 == "-" { printf "%s\t0\n", $1 }'
 }
 
 # --- Lecture : backlog, ticket, propriétaire --------------------------------------------------------
@@ -7670,8 +7570,8 @@ gh_backlog() {
 #     iid <TAB> statut <TAB> prio <TAB> agent <TAB> assigne <TAB> titre
 #
 # ⚠ LA COLONNE `statut` SORT D'ICI TOUJOURS VIDE (« - »), ET C'EST VOULU. L'état ne vit pas sur
-# l'issue : ce verbe répond à « qui existe ? », et `st_backlog_table` RECOUVRE la colonne depuis la
-# carte des items du projet (cf. st_overlay_statut). La garder dans la table plutôt que de la
+# l'issue : ce verbe répond à « qui existe ? », et `st_backlog_table` RECOUVRE la colonne depuis l'état
+# de ses propres iid (`st_statuts`, cf. st_recouvre). La garder dans la table plutôt que de la
 # retirer tient au contrat : c'est la 2e colonne des deux tables du fichier, et ses six appelants
 # la lisent par sa position. Un producteur qui la supprimerait décalerait tout ce qui suit.
 gh_backlog_table() {
@@ -8409,7 +8309,7 @@ gh_milestones() {
 # résout donc le titre d'abord. Le contrat porte sur la sortie, pas sur le nombre d'allers-retours.
 #
 # ⚠ Comme gh_backlog_table, ce verbe répond à « qui existe ? » et rend la colonne `statut` VIDE :
-# c'est `st_milestone_issues` qui la recouvre depuis la carte des items du projet.
+# c'est `st_milestone_issues` qui la recouvre par `st_statuts` sur ses propres iid (#1490).
 # gh_milestone_number <titre-exact> -> le NUMÉRO du jalon, la seule prise que l'API REST accepte.
 # Extrait de gh_milestone_issues, qui le résolvait déjà : gh_create_issue en a besoin pour la même
 # raison, et deux résolutions à tenir d'accord seraient le premier moyen d'en voir une se périmer.
@@ -9384,15 +9284,14 @@ st_erreur_graphql() {
 # st_gql_derives -> la requête des tickets : les issues OUVERTES et, pour chacune, les items de
 # projet qui la représentent, avec la valeur courante du champ Status.
 #
-# POURQUOI PAS `st_carte_statuts` (#362), QUI CARTOGRAPHIE DÉJÀ LE PROJET. Parce que les deux
-# questions n'ont pas la même forme. La carte est CENTRÉE PROJET — elle pagine tous les items pour
-# rendre l'état de chacun (~5 appels, ~13 s sur 366 items) et ne peut pas, par construction, nommer
-# un ticket qui n'y est pas ; or « hors projet » est précisément la moitié qu'on cherche. Cette
-# requête-ci est CENTRÉE TICKET, part des issues ouvertes et regarde ce qui les représente : un seul
-# appel, et l'absence devient une réponse au lieu d'un silence. C'est aussi la forme qu'a
-# `st_cible`, donc celle par laquelle l'ÉCRITURE juge un ticket hors projet — diagnostiquer avec la
-# source qui décide plutôt qu'avec une autre. Enfin la mémoire de la carte ne franchit pas les
-# sous-shells (cf. son en-tête) : la capturer ici la re-remplirait sans rien réutiliser.
+# POURQUOI UNE REQUÊTE CENTRÉE TICKET, et pas la carte du projet que les tables lisaient jusqu'à
+# #1490. Parce que les deux questions n'avaient pas la même forme. La carte était CENTRÉE PROJET —
+# elle paginait tous les items pour rendre l'état de chacun — et ne pouvait pas, par construction,
+# nommer un ticket qui n'y est pas ; or « hors projet » est précisément la moitié qu'on cherche.
+# Cette requête-ci part des issues ouvertes et regarde ce qui les représente : un seul appel, et
+# l'absence devient une réponse au lieu d'un silence. C'est aussi la forme qu'a `st_cible`, donc
+# celle par laquelle l'ÉCRITURE juge un ticket hors projet — diagnostiquer avec la source qui décide
+# plutôt qu'avec une autre. (Les tables ont depuis pris le même chemin : `st_statuts`, #1490.)
 #
 # ⚠ LA BORNE EST ASSUMÉE, ET ELLE SE DIT. `first: 100` est la borne de tout ce fichier (`gh_backlog`,
 # `gh_issues_sans_milestone`…) et non un choix propre à ce verbe ; mais ici l'appelant est le fichier

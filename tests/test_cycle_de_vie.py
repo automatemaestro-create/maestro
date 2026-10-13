@@ -13,7 +13,7 @@ CE QUI EST GARDÉ ICI, LOT PAR LOT :
 | #359 | les six options du champ, **dans l'ordre du flux** ; idempotence et garde-fou du monteur |
 | #360 | l'aller-retour libellé → option → libellé ; l'asymétrie écriture/lecture |
 | #361 | `project-add` : rejouable, la valeur NOMMÉE et jamais devinée, appelé à la création |
-| #362 | le recouvrement des tables par la carte, sa mémoire, et le tube qui ne masque pas d'échec |
+| #362 | le recouvrement des tables (`st_statuts` depuis #1490), le tube qui ne masque pas d'échec |
 | #363 | chaque dérive sur un cas fabriqué, et **aucune** sur un dépôt sain |
 | #364 | le support est le champ Status, sans réglage à poser |
 | #365 | plus aucun label `workflow::` ni commutateur — un seul support, prouvé par `grep` |
@@ -82,7 +82,6 @@ from harnais_forge import (
     regle_owner,
     regle_pose_status,
     regles_backlog,
-    regles_carte,
     reponse_owner,
 )
 
@@ -698,14 +697,28 @@ def test_le_backfill_n_existe_plus_et_rien_ne_le_propose(depot: Depot) -> None:
 
 
 # =================================================================================================
-# #362 — Les lectures d'ensemble : le recouvrement par la carte
+# #362, #1490 — Les lectures d'ensemble : le recouvrement par `st_statuts`
 # =================================================================================================
 # « LA MÉTHODE EST UN RECOUVREMENT, PAS UNE RÉÉCRITURE » : le JSON des tickets reste la source de
-# QUI EXISTE, la carte des items celle de QUEL ÉTAT. Lister depuis les items ferait DISPARAÎTRE de
+# QUI EXISTE, `st_statuts` celle de QUEL ÉTAT. Lister depuis les items ferait DISPARAÎTRE de
 # /backlog tout ticket hors projet — c'est-à-dire exactement ceux qu'on veut voir signalés.
+#
+# Le recouvrement a d'abord lu une CARTE de tout le projet, paginée par 100 items et mémorisée pour
+# la durée d'un processus (#362). Elle grossissait avec l'historique pour des tables bornées à 100
+# tickets, et `/etat-des-lieux` la relisait six fois, un verbe étant un processus (#1490). Chaque
+# table demande désormais l'état de SES PROPRES iid, en un aller : il n'y a plus rien à mémoriser,
+# donc plus rien à périmer — les trois tests de la mémoire sont partis avec elle.
+
+#: Le fragment d'une page de la carte du projet : sa présence au journal est une carte relue.
+PAGE_DE_CARTE = "items(first:100"
 
 
-def test_la_table_du_backlog_porte_l_etat_lu_dans_la_carte(depot: Depot) -> None:
+def lectures_d_etat(depot: Depot) -> list[str]:
+    """Les allers de `st_statuts` reçus par le double : un par table recouverte."""
+    return [a for a in depot.appels() if "nodes{ project{title}" in a]
+
+
+def test_la_table_du_backlog_porte_l_etat_lu_par_ticket(depot: Depot) -> None:
     """Le contrat des six appelants d'ensemble tient dans cette colonne-là."""
     depot.pose_etat(graphql=regles_backlog({"11": "En cours", "12": "En revue"}))
 
@@ -723,10 +736,7 @@ def test_un_ticket_hors_projet_reste_dans_la_table_avec_un_etat_absent(depot: De
     « - » était déjà, au caractère près, ce que rendait un ticket à 0 label du cycle de vie : les
     six appelants héritent du contrat sans le savoir.
     """
-    depot.pose_etat(
-        graphql=regles_carte({"11": "En cours"})
-        + regles_backlog({"11": "En cours", "375": "En cours"})[-1:]
-    )
+    depot.pose_etat(graphql=regles_backlog({"11": "En cours"}, hors_projet=("375",)))
 
     acheve = depot.lib("backlog-table")
     assert acheve.returncode == 0, acheve.stderr
@@ -757,23 +767,35 @@ def test_les_derives_ne_rendent_que_les_tickets_sans_etat(depot: Depot) -> None:
     Un champ single-select ne peut pas porter deux valeurs : le « ≥ 2 » que traquait le backend
     labels est impossible par construction. Ne reste que le « 0 ».
     """
-    depot.pose_etat(
-        graphql=regles_carte({"11": "En cours", "12": ""})
-        + regles_backlog({"11": "", "12": "", "375": ""})[-1:]
-    )
+    depot.pose_etat(graphql=regles_backlog({"11": "En cours", "12": ""}, hors_projet=("375",)))
 
     acheve = depot.lib("workflow-derives")
     assert acheve.returncode == 0, acheve.stderr
     assert {ligne[0] for ligne in colonnes(acheve.stdout)} == {"12", "375"}
 
 
-def test_la_carte_n_est_demandee_qu_une_fois_pour_deux_tables(depot: Depot) -> None:
-    """LA raison d'être de la mémoire : `queue.sh` demandait la carte DEUX fois, une par table.
+def test_une_table_demande_l_etat_de_ses_seuls_tickets_en_un_aller(depot: Depot) -> None:
+    """LE test de #1490 côté table : l'état se demande pour les tickets listés, et pour eux seuls.
 
-    Le prix n'est pas dans le nombre d'appels mais dans le prix unitaire d'une page de Projects v2
-    (~13 s sur 366 items) : le seul levier est de ne pas la demander deux fois. La mémoire ne vit
-    que dans le PROCESSUS — d'où deux tables demandées par redirection dans un seul shell, ce que
-    fait `queue.sh` et ce que reproduit ce test.
+    La carte paginait tout l'historique du projet (~1 000 items, 10 pages, ~20 s) pour recouvrir
+    une table bornée à 100 tickets. Un aller par table, quel que soit l'historique : c'est ce que
+    garde le COMPTE (#602), jamais un chronomètre — et chaque iid demandé est un iid de la table.
+    """
+    depot.pose_etat(graphql=regles_backlog({"11": "En cours", "12": "En revue", "13": "À faire"}))
+
+    acheve = depot.lib("backlog-table")
+    assert acheve.returncode == 0, acheve.stderr
+    assert not [a for a in depot.appels() if PAGE_DE_CARTE in a], "la carte du projet est relue"
+    lectures = lectures_d_etat(depot)
+    assert len(lectures) == 1, f"{len(lectures)} lectures d'état pour une table"
+    assert sorted(re.findall(r"issue\(number:(\d+)\)", lectures[0])) == ["11", "12", "13"]
+
+
+def test_deux_tables_d_un_meme_processus_ne_relisent_aucune_carte(depot: Depot) -> None:
+    """Ce que la mémoire de #362 servait — `queue.sh`, deux tables dans un même shell — sans elle.
+
+    Deux tables, deux allers BORNÉS : aucun ne pagine le projet. La mémoire n'avait de sens que
+    parce qu'une lecture coûtait tout l'historique ; ce n'est plus le cas.
     """
     depot.pose_etat(graphql=regles_backlog({"11": "En cours"}))
 
@@ -783,47 +805,31 @@ def test_la_carte_n_est_demandee_qu_une_fois_pour_deux_tables(depot: Depot) -> N
         "gl_workflow_derives opened >/dev/null\n"
     )
     assert acheve.returncode == 0, acheve.stderr
-    pages = [a for a in depot.appels() if "items(first:100" in a]
-    assert len(pages) == 1, f"la carte a été relue {len(pages)} fois"
+    assert not [a for a in depot.appels() if PAGE_DE_CARTE in a]
+    assert len(lectures_d_etat(depot)) == 2
 
 
-def test_une_ecriture_perime_la_memoire_de_la_carte(depot: Depot) -> None:
-    """Oubliée au SEUL endroit qui écrit le champ — donc sans raisonner appelant par appelant.
+def test_une_table_sans_ticket_ne_demande_aucun_etat(depot: Depot) -> None:
+    """Il n'y a rien à recouvrir : une lecture pour l'apprendre serait une lecture de trop."""
+    depot.pose_etat(graphql=regles_backlog({}))
 
-    Un processus qui pose un état puis relit une table doit voir son écriture ; sans l'oubli, il
-    lirait la carte d'avant, et rien à l'écran ne le dirait.
+    acheve = depot.lib("backlog-table")
+    assert acheve.returncode == 0, acheve.stderr
+    assert not colonnes(acheve.stdout)
+    assert not lectures_d_etat(depot)
+
+
+def test_un_etat_illisible_fait_echouer_la_table(depot: Depot) -> None:
+    """Une table aux « - » partout dirait « aucun ticket n'a d'état » : un plan vide, sans erreur.
+
+    `queue.sh` y verrait un backlog où rien n'est « À faire », et partirait sans rien à prendre
+    sans que personne sache pourquoi. Le code de retour le dit, comme pour un backlog illisible.
     """
-    depot.pose_etat(
-        graphql=[
-            regle_owner("À faire", []),
-            regle_pose_status(),
-            *regles_backlog({"11": "À faire"}),
-        ]
-    )
+    depot.pose_etat(graphql=regles_backlog({"11": "En cours"})[1:])  # le backlog, pas les états
 
-    acheve = depot.bash_inline(
-        ". scripts/gitlab/lib.sh\n"
-        "gl_backlog_table opened >/dev/null\n"
-        "gl_set_workflow 11 'En cours' >/dev/null\n"
-        "gl_backlog_table opened >/dev/null\n"
-    )
-    assert acheve.returncode == 0, acheve.stderr
-    pages = [a for a in depot.appels() if "items(first:100" in a]
-    assert len(pages) == 2, "la table d'après l'écriture doit repartir d'une carte fraîche"
-
-
-def test_la_memoire_de_la_carte_s_eteint(depot: Depot) -> None:
-    """`MAESTRO_CYCLE_MEMO=0` — une mémoire qu'on ne peut éteindre est une mémoire qu'on subit."""
-    depot.pose_etat(graphql=regles_backlog({"11": "En cours"}))
-
-    acheve = depot.bash_inline(
-        ". scripts/gitlab/lib.sh\n"
-        "gl_backlog_table opened >/dev/null\n"
-        "gl_backlog_table opened >/dev/null\n",
-        reglages={"MAESTRO_CYCLE_MEMO": "0"},
-    )
-    assert acheve.returncode == 0, acheve.stderr
-    assert len([a for a in depot.appels() if "items(first:100" in a]) == 2
+    acheve = depot.lib("backlog-table")
+    assert acheve.returncode != 0, "un état illisible doit se voir dans le code de retour"
+    assert not colonnes(acheve.stdout), "et ne pas rendre de table"
 
 
 def test_un_backlog_illisible_n_est_jamais_rendu_comme_une_table_vide(depot: Depot) -> None:
@@ -834,7 +840,7 @@ def test_un_backlog_illisible_n_est_jamais_rendu_comme_une_table_vide(depot: Dep
     de succès — et `queue.sh`, dont le `|| exit 1` ne verrait rien, partirait sur un backlog vide où
     chaque ticket paraît LIBRE, c'est-à-dire prenable à quelqu'un d'autre.
     """
-    depot.pose_etat(graphql=regles_carte({"11": "En cours"}))  # la carte répond, le backlog non
+    depot.pose_etat(graphql=regles_backlog({"11": "En cours"})[:1])  # les états, pas le backlog
 
     acheve = depot.lib("backlog-table")
     assert acheve.returncode != 0, "un backlog illisible doit se voir dans le code de retour"
@@ -852,7 +858,7 @@ def test_le_json_brut_du_backlog_ne_porte_aucun_etat(depot: Depot) -> None:
     acheve = depot.lib("backlog")
     assert acheve.returncode == 0, acheve.stderr
     assert "En cours" not in acheve.stdout
-    assert not [a for a in depot.appels() if "items(first:100" in a], "aucune carte à lire ici"
+    assert not lectures_d_etat(depot), "aucun état à lire ici"
 
 
 # =================================================================================================
@@ -901,7 +907,7 @@ def regles_doctor(
     """Un dépôt vu par `doctor.sh` : le projet, ses options, le backlog ouvert et ses dérives.
 
     `hors_projet` liste les tickets qui EXISTENT sans être items du projet — ils sont dans le
-    backlog et dans la lecture des dérives, mais ni dans la carte ni dans les items par ticket.
+    backlog et dans la lecture des dérives, mais aucun item de projet ne les représente.
     """
     if options is None:
         lignes = lignes_projet()
@@ -913,8 +919,7 @@ def regles_doctor(
     return [
         {"contient": ["options{id name}"], "brut": "\n".join(lignes) + "\n"},
         regle_derives_par_ticket({**statuts, **absents}),
-        *regles_carte(statuts),
-        *regles_backlog({**statuts, **{iid: "" for iid in absents}})[-1:],
+        *regles_backlog(statuts, hors_projet=tuple(absents)),
     ]
 
 
@@ -1046,8 +1051,9 @@ def test_aucun_commutateur_ne_choisit_plus_de_support() -> None:
     du chantier, ce qui est exactement l'inverse du but. Ce module est exclu pour la même raison —
     il est celui qui l'explique, comme `scripts/migration/` l'est du contrôle des labels.
 
-    ⚠ `MAESTRO_CYCLE_MEMO` n'est pas un commutateur de support : il éteint la MÉMOIRE de la carte
-    (#362), qui est un cache, pas un backend. D'où la borne du motif.
+    ⚠ `MAESTRO_CYCLE_MEMO` n'était pas un commutateur de support : il éteignait la MÉMOIRE de la
+    carte (#362), un cache et non un backend, partie avec la carte à #1490. D'où la borne du motif,
+    qui reste : la réintroduire serait une question de coût, pas une résurrection de backend.
     """
     usage = re.compile(
         r"""\$\{?MAESTRO_CYCLE(?!_MEMO)\b|^\s*MAESTRO_CYCLE(?!_MEMO)\b\s*=|["']MAESTRO_CYCLE["']"""

@@ -818,7 +818,8 @@ producteurs (plus `workflow-derives`, qui compte au lieu de projeter) bascule **
 coup, `subtickets`, `startables` et `reconcile-en-cours` compris.
 
 **La méthode est un recouvrement, pas une réécriture.** Le JSON des tickets reste la source de *qui
-existe* ; une carte `iid → Status`, paginée sur les items du projet, dit *quel état*. Le contraire —
+existe* ; l'état des tickets listés, demandé par leur numéro (`st_statuts`, depuis #1490 — une carte
+`iid → Status` paginée sur tous les items du projet jusque-là), dit *quel état*. Le contraire —
 lister les tickets **depuis** les items — ferait disparaître de `/backlog` tout ticket hors projet,
 c'est-à-dire exactement ceux qu'on veut voir signalés. Un ticket hors projet sort donc « - », ce que
 rendait déjà, au caractère près, un ticket à 0 label du cycle de vie.
@@ -827,7 +828,10 @@ rendait déjà, au caractère près, un ticket à 0 label du cycle de vie.
 rendre la réponse de la forge *telle quelle*. Conséquence à connaître : on n'y lit **aucun état**,
 l'état ne vivant pas sur l'issue. Qui veut l'état lit la table.
 
-#### Le coût, mesuré — et pourquoi il y a un cache
+#### Le coût, mesuré — et pourquoi il y a eu un cache
+
+> Ce qui suit raconte la carte et sa mémoire telles que #362 les a posées. **Elles sont parties à
+> #1490**, faute de lecteur : voir « La carte relue six fois » en fin de section.
 
 C'était le seul risque technique identifié du chantier. Mesuré le 2026-08-18 contre un projet de
 mesure jetable peuplé des 367 tickets du dépôt (le peuplement du vrai projet est #361), médianes sur
@@ -900,7 +904,8 @@ D'où **`st_statuts <iid…>`**, le pendant unitaire de la carte : le Status de 
 **1,6 s pour huit lots**, contre 20 à 32 s. Il est exposé en verbe public, **`lib.sh statuts
 <iid…>`**, ce qui fixe la règle de lecture en trois cas, **selon la question posée** : **un** ticket →
 `issue-owner` ; **N tickets qu'on nomme** → `lib.sh statuts <iid…>` (un aller quel que soit N) ;
-**tout le monde** → `backlog-table`, qui pagine les items du projet. `st_statuts` rend la sortie de
+**tout le monde** → `backlog-table` (qui paginait alors les items du projet, et depuis #1490 demande
+à `st_statuts` l'état des tickets qu'elle liste). `st_statuts` rend la sortie de
 la table colonne pour colonne (« - » hors projet ou Status vide, **aucune ligne** pour un ticket
 inexistant — contrat de `gh_issues_state`), ce qui a permis de rebrancher l'enrichissement sans
 toucher à la règle de blocage des lots.
@@ -971,8 +976,9 @@ Quatre choses à ne pas défaire :
   décodeur à tenir d'accord avec le premier, pour économiser trois forks.
 - **Aucun cache n'a été ajouté**, et la mesure est ce qui l'a décidé : le remède est d'avoir
   supprimé des allers, pas de les avoir mémorisés. La mémoire de la carte (`GL_ST_CARTE_MEMO`)
-  n'a pas bougé — même portée, même oubli à l'écriture. Un cache **sur disque** aurait rendu une
-  réponse périmée pour un gain que ce ticket a obtenu sans en prendre le risque.
+  n'avait pas bougé — même portée, même oubli à l'écriture ; elle est partie avec la carte à #1490.
+  Un cache **sur disque** aurait rendu une réponse périmée pour un gain que ce ticket a obtenu sans
+  en prendre le risque.
 - **`gl_backlog_table` reste la source des questions d'ensemble** — `/backlog`, `queue.sh`,
   `doctor.sh`, `reconcile-workflow`. Rien n'y a changé, et ce n'est pas un oubli : leur question
   *est* l'ensemble.
@@ -1003,6 +1009,52 @@ que l'absence des lectures `states: [OPEN, CLOSED]` et `items(first:100` est la 
   une **resynchronisation des valeurs** juste avant de basculer. Elle a été faite le jour J
   (`project-backfill --realigner`, §3.8), et le sens de la dérive s'est inversé avec l'autorité :
   ce sont les **labels** qui vieillissent désormais.
+
+#### La carte relue six fois, et pourquoi elle est partie (#1490)
+
+`/etat-des-lieux` passait **~5 min sur ~6 à attendre ses lectures**. Rejouée verbe par verbe le
+2026-10-13 : **309 s et 113 appels `gh`, dont 60 pages de la même carte** — six lectures d'une carte
+de ~1 000 items (10 pages, ~20 s), parce que sa mémoire ne vivait que dans un **processus** et que
+chaque verbe de la commande en est un (`backlog-table`, `reconcile-en-cours`, `doctor.sh` ×2,
+`milestone-issues` ×2).
+
+**La carte n'était plus la bonne question.** Elle répondait à « quel est l'état de tout le projet ? »,
+et elle grossissait avec l'**historique** (366 items à #362, ~1 000 à #1490) ; or toutes les tables
+qu'elle recouvrait sont bornées à `first: 100`. Une table **connaît** ses iid — elle vient de les
+lister — : elle demande donc leur état à `st_statuts`, en un aller, comme `subtickets` depuis #577.
+Mesuré sur la vraie forge, ancien `lib.sh` contre nouveau, même heure :
+
+| lecture | avant | après | sortie |
+|---|---:|---:|---|
+| `backlog-table opened` (60 tickets) | 27,1 s | 3,6 s | identique |
+| `backlog-table closed` (100 tickets) | 26,6 s | 4,2 s | identique |
+| `milestone-issues` (jalon outillage, 100 tickets) | 41,3 s | 6,2 s | identique |
+| `doctor.sh` | 107,5 s | 38,3 s | identique |
+| `status.sh --list` (11 runs, 696 fichiers) | 50,9 s | 11,0 s | identique |
+
+**Le cache entre processus reste écarté**, pour la raison de #577 : il vivrait sur le disque, donc
+survivrait à ce qui le périme. Le remède structurel le rend sans objet — il n'y a plus rien à
+mémoriser —, et la carte, sa mémoire (`GL_ST_CARTE_MEMO`, `MAESTRO_CYCLE_MEMO`) et ses trois tests
+sont partis avec leur dernier lecteur. Cent alias font une requête d'environ 16 Ko, sous le plafond
+d'une ligne de commande Windows (32 Ko) que `gh` reçoit ; aucune table n'en demande davantage.
+
+Les deux autres postes de la mesure ne lisaient pas la carte, et se sont réglés à leur source :
+
+- **`status.sh --list` lisait la date de chaque fichier de journal** — un `stat` par fichier, 38 s
+  des 53 sous MSYS. `plus_recent` rend désormais la plus récente de N dates en **un** `stat`, et
+  `tickets_en_cours` lit le bilan une fois par run au lieu d'un `awk` par ticket.
+- **`doctor.sh` §5 lisait l'état d'une PR par branche locale** — 16 allers un par un. Il passe par
+  `mr-briefs`, le verbe groupé sur lequel la purge décide depuis #602 : un aller, mêmes verdicts.
+  Sa seconde passe de `reconcile-en-cours` reste (§4d) : `doctor.sh` ne peut pas savoir que la
+  commande vient de la jouer sans un cache entre processus ou un drapeau dans le prompt, et elle ne
+  coûte plus qu'un aller borné (~5 s, #602).
+
+Gardé par un **compte d'appels**, jamais par un chronomètre :
+[`tests/test_etat_des_lieux.py`](../tests/test_etat_des_lieux.py) rejoue les lectures de forge de la
+commande — **lues dans son fichier**, jamais listées — et compte : aucune page de carte, une lecture
+d'état par table ; et `doctor.sh` sur N branches, une lecture de PR. `status.sh --list` se compte dans
+[`tests/test_orchestrate.py`](../tests/test_orchestrate.py) : autant de `stat`/`date` à 3 fichiers de
+journal qu'à 60.
 
 ### 3.7 Peuplement du projet — tout ticket est un item
 
@@ -1159,7 +1211,7 @@ testant sur un double.
 | #359 | les six options du champ **dans l'ordre du flux** ; l'idempotence du monteur ; son garde-fou sur un projet peuplé ; le projet retrouvé par **égalité de titre** |
 | #360 | l'aller-retour libellé → option → libellé sur les **six** états ; l'asymétrie écriture/lecture ; l'ordre de `begin` ; **aucun identifiant figé** |
 | #361 | `project-add` rejouable, la valeur **nommée** et jamais devinée, l'appel dans la foulée de la création, le demi-échec qui se dit |
-| #362 | le recouvrement des tables par la carte, un ticket hors projet rendu « - » **sans disparaître**, la mémoire et sa péremption, le tube qui ne masque pas d'échec |
+| #362 | le recouvrement des tables — par `st_statuts` sur leurs propres iid depuis #1490, qui a retiré la carte et sa mémoire —, un ticket hors projet rendu « - » **sans disparaître**, un état illisible qui fait échouer la table, le tube qui ne masque pas d'échec |
 | #363 | les six options validées, l'option manquante nommée, le ticket sans état nommé — et **aucune dérive** sur un dépôt sain |
 | #364 | le support est le champ Status sans qu'aucun réglage soit à poser |
 | #365 | plus aucun label `workflow::` ni commutateur `MAESTRO_CYCLE` — prouvé par `grep` sur le dépôt |
