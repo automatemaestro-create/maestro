@@ -137,12 +137,6 @@ fi
 
 # --- Utilitaires ---------------------------------------------------------------------------------
 
-# mtime <fichier> : date de dernière modification en secondes Unix. GNU (`stat -c`) puis BSD
-# (`stat -f`) puis `date -r` : le script doit tourner aussi bien sous Git Bash que sur un serveur.
-mtime() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || date -r "$1" +%s 2>/dev/null
-}
-
 duree_lisible() {
   local s="${1:-0}"
   [ "$s" -ge 0 ] 2>/dev/null || s=0
@@ -162,14 +156,36 @@ titre_section() { printf '\n%s── %s%s\n' "$C_B" "$*" "$C_0"; }
 # plus_recent <fichier…> : la plus récente des dates de modification, ou rien si aucun fichier
 # lisible. Les arguments inexistants sont ignorés — l'appelant passe des globs qui peuvent ne rien
 # matcher : un `<iid>.jsonl` n'existe qu'une fois la session lancée.
+#
+# UN SEUL `stat` POUR TOUS LES FICHIERS (#1490), et non un par fichier. `etat_du_run` passe ici le
+# journal ENTIER d'un run (`"$dir"/*`), et `--list` le fait pour chaque run : ~700 fichiers sur 11
+# runs le 2026-10-13, donc ~700 forks — 38 s des 53 que pesait `status.sh --list`, sous MSYS où un
+# fork coûte ~120 ms (même écart que #372). `stat` accepte N fichiers et rend une date par ligne ;
+# le maximum se prend ensuite dans le shell, sans un processus de plus. Un fichier disparu entre le
+# test et la lecture (un `.jsonl` que `run.sh` compacte) fait sortir `stat` en erreur SANS taire les
+# autres : la sortie partielle est gardée, et seule une sortie VIDE fait essayer la forme suivante.
+# La longueur n'est pas une borne : `stat` est un binaire MSYS, l'appel ne passe pas par le plafond
+# de 32 Ko d'une ligne de commande Windows — 2 000 chemins absolus (~300 Ko) mesurés en un appel.
 plus_recent() {
-  local f t max=""
+  local f t max="" dates=""
+  local -a presents=()
   for f in "$@"; do
-    [ -e "$f" ] || continue
-    t="$(mtime "$f")" || continue
-    [ -n "$t" ] || continue
-    if [ -z "$max" ] || [ "$t" -gt "$max" ]; then max="$t"; fi
+    [ -e "$f" ] && presents+=("$f")
   done
+  [ "${#presents[@]}" -gt 0 ] || return 1
+  # GNU (`stat -c`) puis BSD (`stat -f`) : le script doit tourner aussi bien sous Git Bash que sur un
+  # serveur. `date -r` en dernier recours, un fichier à la fois — aucun poste du projet n'y descend.
+  dates="$(stat -c %Y -- "${presents[@]}" 2>/dev/null)"
+  [ -n "$dates" ] || dates="$(stat -f %m -- "${presents[@]}" 2>/dev/null)"
+  if [ -z "$dates" ]; then
+    for f in "${presents[@]}"; do
+      t="$(date -r "$f" +%s 2>/dev/null)" && dates="$dates$t"$'\n'
+    done
+  fi
+  while IFS= read -r t; do
+    case "$t" in ''|*[!0-9]*) continue ;; esac
+    if [ -z "$max" ] || [ "$t" -gt "$max" ]; then max="$t"; fi
+  done <<< "$dates"
   [ -n "$max" ] || return 1
   printf '%s' "$max"
 }
@@ -221,15 +237,28 @@ traite() {
 # montrer aucun : les N-1 autres tiennent un worktree et une session sans que rien ne le dise (#290).
 #
 # Rend 1 si la liste est vide, pour que l'appelant garde son « || R_EN_VOL='' » habituel.
+#
+# LE BILAN EST LU UNE FOIS, PAS UNE FOIS PAR TICKET (#1490). La boucle demandait `traite` — un `awk`
+# sur `resume.tsv` — pour chaque ticket du plan muni d'un témoin de session, c'est-à-dire pour
+# presque tous ceux d'un run terminé ; `--list` le faisait pour chaque run. Les iid du bilan sont
+# lus par une redirection, dans le shell même : aucun processus, quel que soit le plan.
 tickets_en_cours() {
-  local dir="$1" iid liste=""
+  local dir="$1" rang iid liste=""
+  local -A traites=()
   [ -f "$dir/plan.tsv" ] || return 1
-  while IFS=$'\t' read -r _ iid _ _ _ _; do
+  if [ -f "$dir/resume.tsv" ]; then
+    while IFS=$'\t' read -r iid _; do
+      case "$iid" in ''|'#'*) continue ;; esac
+      traites["$iid"]=1
+    done < "$dir/resume.tsv"
+  fi
+  while IFS=$'\t' read -r rang iid _; do
+    case "$rang" in '#'*) continue ;; esac
     [ -n "${iid:-}" ] || continue
     [ -e "$dir/$iid.session" ] || continue
-    traite "$dir" "$iid" && continue
+    [ -n "${traites[$iid]:-}" ] && continue
     liste="${liste:+$liste }$iid"
-  done < <(grep -v '^#' "$dir/plan.tsv" 2>/dev/null)
+  done < "$dir/plan.tsv"
   [ -n "$liste" ] || return 1
   printf '%s' "$liste"
 }

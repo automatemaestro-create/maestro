@@ -107,11 +107,11 @@ if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
     # (`milestones`, `current-milestone`) demandent « title » d'abord.
     *"nodes { number title }"*) cat "$FIX/milestones-numeros.json" 2>/dev/null; exit 0 ;;
     *"milestones("*)            cat "$FIX/milestones.json" 2>/dev/null; exit 0 ;;
-    # LA CARTE DES ÉTATS (#365) : deux lectures, le projet résolu par son TITRE puis sa page
-    # d'items. Elles passent AVANT `issues(first:` — la requête du backlog ne les capterait pas,
-    # mais l'ordre dit lequel des deux jeux de fixtures porte l'état.
-    *"projectsV2(first:100){nodes{ id title }}"*) cat "$FIX/projets.json" 2>/dev/null; exit 0 ;;
-    *"items(first:100"*)                          cat "$FIX/carte.json" 2>/dev/null; exit 0 ;;
+    # L'ÉTAT DES TICKETS (#365, #1490) : `st_statuts`, un aller pour les iid d'une table. AVANT
+    # `issue(number:`, que la requête porte aussi (un alias par ticket) et qui l'absorberait. La
+    # fixture rend TOUS les tickets déclarés : une table ne recouvre que ses lignes, et un ticket
+    # absent de la fixture est hors projet — il sort « - ».
+    *"nodes{ project{title}"*) cat "$FIX/statuts.json" 2>/dev/null; exit 0 ;;
     # La pose d'un état : le verbe ne lit que la présence de `projectV2Item` dans la réponse.
     *"updateProjectV2ItemFieldValue"*)
       printf '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_pose"}}}}'
@@ -592,8 +592,8 @@ class Depot:
     def _labels(self, iid: str) -> str:
         """Les labels d'un ticket déclaré — CATÉGORISATION SEULE.
 
-        L'état n'y est plus depuis #365 : il vit sur l'item de projet, et c'est la carte
-        (`carte.json`) qui le porte. Les tables plates le recouvrent sur cette réponse-ci.
+        L'état n'y est plus depuis #365 : il vit sur l'item de projet, et c'est `statuts.json`
+        (la réponse de `st_statuts`) qui le porte. Les tables plates le recouvrent sur celle-ci.
         """
         t = self.tickets[iid]
         return (
@@ -620,21 +620,31 @@ class Depot:
         )
 
     def publie(self) -> None:
-        """Compose ce que `queue.sh` lit : les deux tables, plus la CARTE qui porte les états.
+        """Compose ce que `queue.sh` lit : les deux tables, plus les ÉTATS de leurs tickets.
 
-        Trois fixtures et non deux depuis #365 : les issues disent QUI EXISTE, la carte du projet
-        dit QUEL ÉTAT. Un ticket absent de la carte sort des tables avec un statut « - » — c'est le
-        contrat, et c'est ce qui rend visible un ticket hors projet au lieu de le faire disparaître.
+        Trois fixtures et non deux depuis #365 : les issues disent QUI EXISTE, `st_statuts` dit
+        QUEL ÉTAT (#1490). Un ticket absent des états sort des tables avec un statut « - » — c'est
+        le contrat, et c'est ce qui rend visible un ticket hors projet au lieu de le faire
+        disparaître.
+
+        UN TICKET PAR LIGNE, et c'est ce qui permet à un test d'en retirer un d'un filtre de ligne :
+        `st_statuts` découpe sa réponse sur `"number":`, ligne à ligne, et un ticket n'y a de sens
+        qu'avec ses items — qui tiennent ici sur la même ligne que lui.
         """
-        (self.fixtures / "projets.json").write_text(
-            f"projets\nprojet\t{_PROJET}\t{_ID_PROJET}\n", encoding="utf-8"
-        )
-        # La ligne `page` est toujours émise, même sur un projet vide : sans elle, la garde
-        # « réponse vide » de gh_graphql_read déclencherait trois tentatives puis une erreur.
-        (self.fixtures / "carte.json").write_text(
-            "page\tfalse\t\n"
-            + "".join(f"item\t{iid}\t{t['statut']}\n" for iid, t in self.tickets.items()),
-            encoding="utf-8",
+        lignes = []
+        for iid, t in self.tickets.items():
+            # JSON COMPACT, comme l'API le rend : `st_statuts` lit `{"name":"…"}` sans espace.
+            valeur = "null"
+            if t["statut"]:
+                valeur = json.dumps(
+                    {"name": t["statut"]}, ensure_ascii=False, separators=(",", ":")
+                )
+            lignes.append(
+                f'"i{iid}":{{"number":{iid},"projectItems":{{"nodes":[{{"project":'
+                f'{{"title":"{_PROJET}"}},"fieldValueByName":{valeur}}}]}}}}'
+            )
+        (self.fixtures / "statuts.json").write_text(
+            '{"data":{"repository":{\n' + ",\n".join(lignes) + "\n}}}\n", encoding="utf-8"
         )
         (self.fixtures / "milestone-issues.json").write_text(
             '{{"data":{{"repository":{{"milestone":{{"issues":{{"nodes":[{}]}}}}}}}}}}'.format(
@@ -3239,6 +3249,75 @@ def test_la_liste_enumere_les_runs_connus(depot: Depot) -> None:
     assert "2 ticket(s)" in lignes[1] and "0 traité(s)" in lignes[1]
 
 
+#: Un `stat` et un `date` qui se comptent avant de passer la main aux vrais : ils sont posés en
+#: tête du `PATH`, et le vrai se retrouve en retirant cette première entrée. C'est par eux que la
+#: date de modification d'un fichier se lit (`stat`, `date -r` en repli) : les compter, c'est
+#: compter les lectures de date, donc les forks qu'elles coûtent.
+COMPTEUR = r"""#!/usr/bin/env bash
+printf '%s\n' "${0##*/}" >> "$MAESTRO_COMPTE_FORKS"
+PATH="${PATH#*:}"
+exec "${0##*/}" "$@"
+"""
+
+
+def _lectures_de_date(depot: Depot, compteurs: Path, fichiers_par_run: int) -> tuple[int, str]:
+    """`status.sh --list` sur deux runs dont le journal porte `fichiers_par_run` fichiers de plus.
+
+    Rend le nombre de `stat`/`date` lancés et la sortie. Les deux runs couvrent les deux chemins
+    qui lisent l'activité du journal : un run terminé, et un run interrompu — muet depuis une
+    heure, un ticket en vol, donc reprenable : c'est lui qui fait lire le silence.
+    """
+    for run_id in ("20260728-080000", "20260729-080000"):
+        shutil.rmtree(depot.racine / ".maestro/orchestrate" / run_id, ignore_errors=True)
+    for run_id, termine in (("20260728-080000", True), ("20260729-080000", False)):
+        bilan = [(130, "OK", "99", 60, "1", "-")]
+        if termine:
+            bilan.append((131, "OK", "98", 60, "1", "-"))
+        dossier = _run_dir(
+            depot, run_id, [(1, 130, "-", "haute"), (2, 131, "-", "haute")],
+            resume=bilan, sessions=(130, 131),
+        )
+        for k in range(fichiers_par_run):
+            (dossier / f"131.partie-{k}.log").write_text("", encoding="utf-8", newline="\n")
+        quand = time.time() - 3600
+        for chemin in (*sorted(dossier.rglob("*")), dossier):
+            os.utime(chemin, (quand, quand))
+    journal = compteurs / "forks.log"
+    journal.unlink(missing_ok=True)
+    r = depot.lance(
+        "status.sh", "--list",
+        env={
+            "PATH": f"{compteurs}{os.pathsep}{depot.env['PATH']}",
+            "MAESTRO_COMPTE_FORKS": str(journal),
+        },
+    )
+    assert r.returncode == 0, r.stderr
+    lectures = journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []
+    return len(lectures), r.stdout
+
+
+def test_la_liste_ne_lit_pas_une_date_par_fichier_de_journal(depot: Depot, tmp_path: Path) -> None:
+    """LE test de #1490 côté runs : `--list` lisait la date de CHAQUE fichier de chaque journal.
+
+    Un `stat` par fichier — ~700 sur 11 runs le 2026-10-13, 38 s des 53 de `status.sh --list` sous
+    MSYS. Le compte (#602, jamais un chronomètre) ne doit pas bouger quand le journal grossit : à
+    3 fichiers de plus par run comme à 60, autant de lectures de date, et la même sortie.
+    """
+    compteurs = tmp_path / "compteurs"
+    compteurs.mkdir()
+    for outil in ("stat", "date"):
+        (compteurs / outil).write_text(COMPTEUR, encoding="utf-8", newline="\n")
+        (compteurs / outil).chmod(0o755)
+
+    peu, sortie_peu = _lectures_de_date(depot, compteurs, 3)
+    beaucoup, sortie_beaucoup = _lectures_de_date(depot, compteurs, 60)
+
+    assert peu > 0, "les compteurs n'ont rien vu : la sonde ne sonde rien"
+    assert "↻ reprenable" in sortie_peu, "le run interrompu doit faire lire son silence"
+    assert beaucoup == peu, f"{peu} lectures de date à 3 fichiers, {beaucoup} à 60"
+    assert sortie_beaucoup == sortie_peu
+
+
 def test_le_suivi_ne_boucle_pas_sur_un_run_qui_ne_tourne_plus(depot: Depot) -> None:
     """`--watch` sur un run terminé doit rendre la main : une boucle infinie n'apprend plus rien."""
     _run_dir(
@@ -5072,16 +5151,21 @@ def test_le_plan_global_ne_lit_pas_un_ticket_qu_il_ecarte(depot: Depot) -> None:
     _backlog_deux_jalons(depot)
     journal = depot.fixtures / "gh.log"
 
+    def vue_lue(iid: str, appels: list[str]) -> bool:
+        # La VUE d'un ticket (`issue-raw`, terminée par `body }`), et non la lecture d'état
+        # groupée de la table (#1490), qui nomme chaque ticket du backlog sous un alias.
+        return any(f"issue(number:{iid})" in a and "body }" in a for a in appels)
+
     # Le motif : sous `--milestone`, la vue de 550 EST lue — le compte ci-dessous sait donc la voir.
     journal.unlink(missing_ok=True)
     depot.lance("queue.sh", "--milestone", "Outillage")
-    assert "issue(number:550)" in journal.read_text(encoding="utf-8")
+    assert vue_lue("550", journal.read_text(encoding="utf-8").splitlines())
 
     journal.unlink()
     r = depot.lance("queue.sh")
     assert r.returncode == 0, r.stderr
     appels = journal.read_text(encoding="utf-8").splitlines()
-    assert not any("issue(number:550)" in a or "issue(number:560)" in a for a in appels), \
+    assert not vue_lue("550", appels) and not vue_lue("560", appels), \
         "un ticket écarté par son jalon n'est jamais lu"
     assert sum("nodes { number milestone { jalon: title } }" in a for a in appels) == 1, \
         "le jalon de tout le backlog tient en une lecture"
@@ -5278,12 +5362,14 @@ def test_un_ticket_hors_projet_demande_se_dit_hors_projet(depot: Depot) -> None:
     _backlog_deux_jalons(depot)
     depot.ticket(805, "Créé dans l'interface", statut="")
     depot.publie()
-    carte = (depot.fixtures / "carte.json").read_text(encoding="utf-8")
-    (depot.fixtures / "carte.json").write_text(
-        "".join(ligne for ligne in carte.splitlines(keepends=True) if "\t805\t" not in ligne),
+    statuts = (depot.fixtures / "statuts.json").read_text(encoding="utf-8")
+    (depot.fixtures / "statuts.json").write_text(
+        "".join(
+            ligne for ligne in statuts.splitlines(keepends=True) if '"number":805,' not in ligne
+        ),
         encoding="utf-8",
     )
-    # Le motif : absent de la carte, le ticket sort de la table avec un statut « - ».
+    # Le motif : absent des états, le ticket sort de la table avec un statut « - ».
     assert "805\t-\t" in depot.lib("backlog-table").stdout
 
     r = depot.lance("queue.sh", "--ticket", "805")
@@ -5540,10 +5626,11 @@ def test_un_chantier_a_cheval_sur_les_jalons_reste_d_un_bloc_dans_le_plan_global
 
 
 #: Les lectures fixes d'un plan (`queue.sh`, en-tête « Coût en appels ») : le jeton lu en local
-#: (#602), la table des jalons, le jalon de chaque ticket ouvert, et le backlog ouvert — le projet
-#: résolu par son titre, la carte des états (#365), puis ses tickets. Un chiffre de plus ici est une
-#: lecture de plus à CHAQUE plan : elle se décide, elle ne se glisse pas.
-FIXES_DU_PLAN = 6
+#: (#602), la table des jalons, le jalon de chaque ticket ouvert, et le backlog ouvert — ses
+#: tickets, puis leurs états en un aller (`st_statuts`, #1490 : la carte de tout le projet en
+#: coûtait deux à elle seule, et autant de pages que l'historique en compte). Un chiffre de plus ici
+#: est une lecture de plus à CHAQUE plan : elle se décide, elle ne se glisse pas.
+FIXES_DU_PLAN = 5
 
 
 def test_le_compte_d_allers_du_plan_global_ne_suit_que_ses_candidats(depot: Depot) -> None:

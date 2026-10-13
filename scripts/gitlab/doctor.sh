@@ -301,18 +301,29 @@ fi
 section "5. Ménage des branches locales"
 if git rev-parse --git-dir >/dev/null 2>&1; then
   cleanup_found=0
-  while IFS= read -r b; do
+  # `gl_mr_briefs`, et non une lecture directe : c'est le MÊME verbe que celui sur lequel s'appuie
+  # la suppression (`cleanup-merged`, docs/10 §6). Diagnostiquer avec une autre source que celle
+  # qui décide, c'est signaler des branches que la purge refusera — ou taire celles qu'elle prendra.
+  #
+  # UNE LECTURE POUR TOUTES LES BRANCHES (#1490), comme la purge depuis #602 : ce contrôle en payait
+  # une par branche locale — 16 allers un par un sur le poste de référence, le plus gros poste réseau
+  # de ce bilan après la carte des Status. Une branche absente de la réponse n'a pas de PR, donc
+  # n'est pas « merged » : même verdict que l'ancien `gl_mr_state` vide. Une lecture en échec rend
+  # une table vide, donc « aucune branche mergée » — exactement ce que rendait l'échec de chacune
+  # des seize, et ce que la purge en conclut aussi : ne rien savoir n'autorise rien.
+  mapfile -t branches_locales < <(git branch --format='%(refname:short)' | grep -v '^main$')
+  briefs=''
+  if [ "${#branches_locales[@]}" -gt 0 ]; then
+    briefs="$(gl_mr_briefs "${branches_locales[@]}" 2>/dev/null)" || briefs=''
+  fi
+  while IFS=$'\t' read -r b st _; do
     [ -z "$b" ] && continue
-    # `gl_mr_state`, et non une lecture directe : c'est le MÊME verbe que celui sur lequel s'appuie
-    # la suppression (`cleanup-merged`, docs/10 §6). Diagnostiquer avec une autre source que celle
-    # qui décide, c'est signaler des branches que la purge refusera — ou taire celles qu'elle prendra.
-    st="$(gl_mr_state "$b" 2>/dev/null)"
     if [ "$st" = merged ]; then
       warn "branche locale « $b » : PR mergée → à nettoyer avec /branch-cleanup"
       cleanup_found=1
     fi
   done <<EOF
-$(git branch --format='%(refname:short)' | grep -v '^main$')
+$briefs
 EOF
   [ "$cleanup_found" = 0 ] && ok "aucune branche locale mergée en attente de nettoyage"
 else

@@ -502,11 +502,11 @@ def noeud_ticket(iid: str, titre: str, statut: str, labels: list[str], assignes:
 
     ⚠ `statut` n'est PAS porté ici, et c'est le sujet du chantier #358 : depuis #365 l'état vit
     dans le champ Status d'un ITEM DE PROJET, pas sur l'issue. Le paramètre est conservé — les
-    tests décrivent leurs tickets avec leur état, c'est lisible — mais il part alimenter la CARTE
-    (`regles_carte`), que `st_backlog_table` recouvre sur cette réponse-ci. Le laisser fabriquer un
+    tests décrivent leurs tickets avec leur état, c'est lisible — mais il part alimenter
+    `regle_statuts`, que `st_backlog_table` recouvre sur cette réponse-ci. Le laisser fabriquer un
     label rendrait des tests verts sur une donnée que plus personne ne lit.
     """
-    del statut  # → regles_carte : l'état ne vit pas sur l'issue
+    del statut  # → regle_statuts : l'état ne vit pas sur l'issue
     return {
         "number": int(iid),
         "title": titre,
@@ -519,27 +519,31 @@ def reponse_backlog(tickets: list[dict]) -> dict:
     return {"data": {"repository": {"issues": {"nodes": tickets}}}}
 
 
-def regles_backlog(statuts: dict[str, str], labels: list[str] | None = None) -> list[dict]:
+def regles_backlog(
+    statuts: dict[str, str],
+    labels: list[str] | None = None,
+    hors_projet: tuple[str, ...] = (),
+) -> list[dict]:
     """Règles de réponse au backlog OUVERT — « iid : cycle de vie » pour chaque ticket.
 
     DEUX SOURCES depuis #365, et c'est le recouvrement de `st_backlog_table` : les issues disent
-    QUI EXISTE, la carte du projet dit QUEL ÉTAT. Un iid dont le libellé est vide est un item au
-    Status non posé ; un iid absent du dictionnaire est un ticket hors projet — les deux sortent
+    QUI EXISTE, `st_statuts` dit QUEL ÉTAT (#1490). Un iid dont le libellé est vide est un item au
+    Status non posé ; un iid de `hors_projet` existe sans être un item du projet — les deux sortent
     « - » de la table, et les distinguer est le travail de doctor.sh (#363).
 
-    ⚠ LA LECTURE BORNÉE EST SERVIE AUSSI (`regle_statuts`, #602). Un appelant qui connaît ses iid
-    n'a plus à payer la table entière : `reconcile-en-cours --auto` demande l'état des seuls
-    tickets qui ont un worktree ici, en un aller. Les deux lectures répondent donc au MÊME
-    dictionnaire — c'est la seule façon qu'elles ne puissent pas se contredire selon le mode, et
-    c'est déjà le parti pris de la vue canonique et de `gh_issues_state` plus haut.
+    Les deux lectures répondent au MÊME dictionnaire : la table, et la lecture bornée d'un appelant
+    qui connaît ses iid (`reconcile-en-cours --auto`, #602). C'est la seule façon qu'elles ne
+    puissent pas se contredire selon le mode, et c'est déjà le parti pris de la vue canonique et de
+    `gh_issues_state` plus haut.
     """
-    return regles_carte(statuts) + [regle_statuts(statuts)] + [
+    tickets = {**statuts, **{iid: "" for iid in hors_projet}}
+    return [regle_statuts(statuts, hors_projet=hors_projet)] + [
         {
             "contient": ["states: [OPEN]"],
             "reponse": reponse_backlog(
                 [
                     noeud_ticket(iid, f"Ticket {iid}", statut, labels or ["type::infra"], [MOI])
-                    for iid, statut in statuts.items()
+                    for iid, statut in tickets.items()
                 ]
             ),
         }
@@ -567,15 +571,16 @@ def colonnes(sortie: str) -> list[list[str]]:
 # ⚠ CE QUI CHANGE POUR UN DOUBLE, ET QU'IL FAUT SAVOIR AVANT D'EN AJOUTER UN. Le backend Status
 # passe ses lectures par `gh api graphql --jq`, où le PROGRAMME JQ fait tout l'aplatissement — et le
 # `gh` factice ne l'exécute pas. Les règles rendent donc le résultat DÉJÀ APLATI, par leur clé
-# `brut` : des lignes `clé<TAB>…` copiées des en-têtes de `st_jq_contexte` et `st_jq_items`. Un
-# double qui rendrait du JSON ici passerait le filtre en silence et le verbe lirait zéro ligne,
-# c'est-à-dire « ticket sans état » — un feu vert sur une question jamais posée.
+# `brut` : des lignes `clé<TAB>…` copiées de l'en-tête de `st_jq_contexte`. Un double qui rendrait
+# du JSON ici passerait le filtre en silence et le verbe lirait zéro ligne, c'est-à-dire « ticket
+# sans état » — un feu vert sur une question jamais posée.
 #
 # Deux formes de lecture, deux jeux de règles :
 #   • L'UNITÉ (`issue-owner`, `set-workflow`, `begin`, `liberer-ticket`) passe par `st_contexte` :
 #     le ticket, ses assignés, ses items de projet, et les projets du compte avec leurs options.
-#   • L'ENSEMBLE (`backlog-table`, `milestone-issues`, `workflow-derives`) passe par la CARTE :
-#     un appel pour résoudre le projet par son titre, puis une page d'items.
+#   • L'ENSEMBLE (`backlog-table`, `milestone-issues`, `workflow-derives`, `subtickets`) passe par
+#     `st_statuts` : l'état des tickets NOMMÉS, en un aller (`regle_statuts`). La carte paginée de
+#     tout le projet que les tables lisaient jusqu'à #1490 est partie avec son dernier lecteur.
 #
 # Les identifiants sont inventés ici et n'ont aucune importance : lib.sh les résout PAR NOM à chaque
 # appel et n'en code aucun en dur (contrat en tête du fichier). C'est même ce qu'ils vérifient.
@@ -634,11 +639,16 @@ def regle_owner(
     }
 
 
-def regle_statuts(statuts: dict[str, str], inexistants: tuple[str, ...] = ()) -> dict:
+def regle_statuts(
+    statuts: dict[str, str],
+    inexistants: tuple[str, ...] = (),
+    hors_projet: tuple[str, ...] = (),
+) -> dict:
     """Règle de réponse à `st_statuts` — le Status de N tickets NOMMÉS, en UN aller (#577).
 
-    `statuts` est « iid -> libellé », même convention que `regles_carte` : un libellé VIDE est un
-    ticket présent dans le projet au Status non posé (« - » en sortie).
+    `statuts` est « iid -> libellé » : un libellé VIDE est un ticket présent dans le projet au
+    Status non posé (« - » en sortie). `hors_projet` porte les tickets qui EXISTENT sans être un
+    item du projet — aucun `projectItems`, donc « - » aussi, par l'autre cause (#363).
 
     `inexistants` porte les iid qui NE DÉSIGNENT AUCUNE ISSUE — le cas d'un numéro de PR rattaché
     par erreur. C'est le pire cas du verbe, et il n'est pas cosmétique : l'API rend alors
@@ -667,6 +677,8 @@ def regle_statuts(statuts: dict[str, str], inexistants: tuple[str, ...] = ()) ->
                 ]
             },
         }
+    for iid in hors_projet:
+        alias[f"i{iid}"] = {"number": int(iid), "projectItems": {"nodes": []}}
     reponse: dict[str, object] = {"data": {"repository": alias}}
     if inexistants:
         for iid in inexistants:
@@ -698,30 +710,6 @@ def regle_pose_status() -> dict:
             "data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_pose"}}}
         },
     }
-
-
-def regles_carte(statuts: dict[str, str]) -> list[dict]:
-    """Les DEUX règles de la carte d'ensemble : résolution du projet, puis sa page d'items.
-
-    `statuts` est « iid -> libellé ». Un ticket ABSENT de ce dictionnaire est hors du projet : les
-    tables le rendent alors avec un statut « - », ce qui est exactement le contrat (cf. l'en-tête de
-    `st_backlog_table`). Un libellé VIDE est un item présent au Status non posé — même « - » en
-    sortie, autre cause, et c'est #363 qui les distingue.
-
-    La ligne `page` est toujours émise, y compris sur un projet vide : sans elle, la garde « réponse
-    vide » de `gh_graphql_read` déclencherait trois tentatives puis une erreur.
-    """
-    items = "".join(f"item\t{iid}\t{statut}\n" for iid, statut in statuts.items())
-    return [
-        {
-            "contient": ["projectsV2(first:100){nodes{ id title }}"],
-            "brut": f"projets\nprojet\t{PROJET}\t{ID_PROJET}\n",
-        },
-        {
-            "contient": ["items(first:100"],
-            "brut": f"page\tfalse\t\n{items}",
-        },
-    ]
 
 
 # --- Le merge et ses prérequis (#414, chantier #413) ----------------------------------------------
@@ -1022,10 +1010,9 @@ class Depot:
     ) -> subprocess.CompletedProcess[str]:
         """Joue un fragment de shell DANS le dépôt jetable, `lib.sh` sourçable en chemin relatif.
 
-        Nécessaire dès qu'on veut plusieurs verbes DANS UN MÊME PROCESSUS : c'est le seul régime
-        où la mémoire de la carte (#362) existe — une substitution de commande la mettrait dans un
-        sous-shell, d'où aucune affectation ne remonte. C'est ainsi que `queue.sh` demande ses deux
-        tables, donc ainsi qu'il faut le tester.
+        Nécessaire dès qu'on veut plusieurs verbes DANS UN MÊME PROCESSUS, ou une fonction de
+        `lib.sh` qui n'est pas un verbe du répartiteur : c'est le régime où une affectation faite
+        par une fonction est visible de la suivante, et celui où `queue.sh` demande ses tables.
         """
         chemin = self.racine / ".maestro" / "session" / "fragment.sh"
         chemin.parent.mkdir(parents=True, exist_ok=True)
