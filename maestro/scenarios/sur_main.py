@@ -22,7 +22,9 @@ du clone principal sur `main` compte, celui d'une branche de ticket non, puisque
 le squash ne laisse jamais un commit de branche dans `main`.
 
 Le chemin est **donné par l'appelant** (`GL_BANC_CHEMINS` de `scripts/gitlab/lib.sh`),
-jamais recopié ici : il a un seul endroit, et la carte de #1463 le remplacera là.
+jamais recopié ici : il a un seul endroit. Au ticket, la carte de #1463 l'a remplacé
+(#1464, `maestro.scenarios.croisement`) ; ici, il dit encore si `main` a bougé là où le
+produit tourne.
 Sans passage complet consigné, on joue — c'est le premier passage par lot.
 
 ## À quoi rattacher un rouge ? (`verdict`)

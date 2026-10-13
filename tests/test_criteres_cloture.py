@@ -16,9 +16,11 @@ Ce module garde, sur le modèle de la relecture visuelle (#935, `test_relecture_
   un test défini dans l'arbre, un passage du banc que son rapport rend vert, un run, une capture
   (#1240, qui remplace le ✓ « nomme un fichier du diff » de #968). Ce qui se vérifie est une forme,
   jamais un sens (#746) ;
-* **le banc** (#1240) — un diff qui touche le chemin des scénarios porte une ligne `Banc` : le
-  verdict relu dans le rapport du passage écrit par le **vrai** `maestro.scenarios.rapport`, ou
-  « non joué » avec sa raison — un banc rouge ou injouable n'est jamais compté vert ;
+* **le banc** (#1240, #1464) — la question annonce les scénarios dont la **carte** croise le diff,
+  le moins cher en tête, et se tait quand aucun ne le croise ; faute de carte, le préfixe du
+  chemin décide. Le constat porte alors une ligne `Banc` : le verdict relu dans le rapport du
+  passage écrit par le **vrai** `maestro.scenarios.rapport`, ou « non joué » avec sa raison — les
+  tests qu'elle nomme existent, et un banc rouge ou injouable n'est jamais compté vert ;
 * **le signalement** (`criteres-note --aucun`) — un ticket sans critère se signale plutôt que de se
   taire (arbitré sur #968), mais ne se **déclare** pas : le verbe relit le ticket avant d'écrire ;
 * **le déclencheur** — l'étape 4ter de `/ticket-finish`, après la relecture visuelle et **avant** le
@@ -33,13 +35,19 @@ pour les refus gratuits, pas même une lecture (règle de `gl_reste_claude`).
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
+import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
 from harnais_forge import BASH, GIT, RACINE, Depot, ecritures, monte_depot
 
+from maestro.scenarios import historique
 from maestro.scenarios import rapport as rapport_du_banc
+from maestro.scenarios.carte import CarteDuPassage, Empreinte, Processus
 from maestro.scenarios.modele import VERDICT_ROUGE, VERDICT_VERT, Rapport, Resultat
 
 pytestmark = [
@@ -525,12 +533,15 @@ def forge_produit(forge: Depot) -> Depot:
     return forge
 
 
-def test_la_question_annonce_le_banc_quand_le_diff_touche_son_chemin(forge_produit: Depot) -> None:
+def test_faute_de_carte_le_prefixe_decide_et_le_dit(forge_produit: Depot) -> None:
+    """Le repli de docs/47 §8 : sans carte lisible — ici, ni historique ni venv dans le dépôt
+    jetable —, le préfixe du chemin décide encore, et la ligne dit pourquoi."""
     forge_produit.pose_etat(graphql=[regle_criteres("103", CORPS_TROIS)])
     acheve = forge_produit.lib("criteres", "103")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
     derniere = acheve.stdout.splitlines()[-1]
-    assert derniere.startswith("# banc\tà jouer"), derniere
+    assert derniere.startswith("# banc\tà jouer si le changement touche ce que le modèle"), derniere
+    assert "faute de carte (" in derniere and "le préfixe décide" in derniere
     assert "maestro/moteur.py" in derniere
 
 
@@ -618,6 +629,185 @@ def test_le_chemin_des_scenarios_nomme_ce_qui_existe() -> None:
     assert "maestro/" in prefixes, "le paquet du produit est le premier chemin des scénarios"
     for prefixe in prefixes:
         assert (RACINE / prefixe).is_dir(), f"{prefixe} n'existe plus dans le dépôt"
+
+
+# =================================================================================================
+# Le banc dû au ticket se dérive de la carte (#1464, docs/47)
+# =================================================================================================
+# La carte et l'historique sont écrits par les VRAIS écrivains (`CarteDuPassage.to_dict`,
+# `historique.consigner`), et lus par le vrai `python -m maestro.scenarios.croisement` que `lib.sh`
+# appelle — le Python de la suite (`MAESTRO_BANC_PYTHON`), le paquet du dépôt (`PYTHONPATH`) : le
+# dépôt jetable n'a ni venv ni `maestro`.
+
+#: Les coûts médians de l'historique : S4 le moins cher, S12 le plus cher (le poste au 2026-10-13).
+COUTS = {"S2": 0.35, "S4": 0.20, "S12": 2.66}
+
+#: La stack d'un passage mesuré : un processus qui n'est pas le banc.
+API = Processus(pid=10, commande="-m maestro.controltower.cli --port 8063 --etat-banc")
+
+
+def carte_du_poste(depot: Depot, scenarios: Mapping[str, Mapping[str, Sequence[str]]]) -> dict:
+    """Un passage du banc mesuré, consigné dans un historique jetable, sa carte avec lui. Rend les
+    réglages qui font lire cette carte par `lib.sh`."""
+    chemin = depot.racine.parent / "historique-banc" / "scenarios.jsonl"
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    carte = CarteDuPassage(
+        passage="20261011-181132",
+        copie=str(depot.racine),
+        demarrage=Empreinte(processus=(API,)),
+        scenarios={
+            ident: Empreinte(
+                fonctions={f: tuple(noms) for f, noms in fonctions.items()}, processus=(API,)
+            )
+            for ident, fonctions in scenarios.items()
+        },
+    )
+    couverture = chemin.parent / "couverture.json"
+    couverture.write_text(json.dumps(carte.to_dict()), encoding="utf-8")
+    rapport = Rapport(
+        horodatage="20261011-181132",
+        resultats=tuple(
+            Resultat(
+                identifiant=ident,
+                titre=ident,
+                verdict=VERDICT_VERT,
+                motif="m",
+                duree_s=60.0,
+                cout_usd=COUTS[ident],
+            )
+            for ident in scenarios
+        ),
+    )
+    historique.consigner(
+        rapport, historique.Copie(racine=str(depot.racine)), chemin=chemin, carte=couverture
+    )
+    return {
+        historique.VARIABLE_HISTORIQUE: str(chemin),
+        "MAESTRO_BANC_PYTHON": sys.executable,
+        "PYTHONPATH": str(RACINE),
+    }
+
+
+@pytest.fixture
+def forge_carte(forge: Depot) -> Depot:
+    """La branche touche deux fichiers du produit : le moteur, que S2, S4 et S12 exécutent, et
+    l'extinction, que seul S12 exécute."""
+    (forge.racine / "maestro").mkdir()
+    forge.commit("maestro/moteur.py", "def ouvrir():\n    return 1\n", "fix: moteur\n\nRefs #60")
+    return forge
+
+
+CARTE_DU_POSTE = {
+    "S2": {"maestro/moteur.py": ["ouvrir"]},
+    "S4": {"maestro/moteur.py": ["ouvrir"]},
+    "S12": {"maestro/moteur.py": ["ouvrir"], "maestro/extinction.py": ["rallumer"]},
+}
+
+
+def lignes_banc(acheve: subprocess.CompletedProcess[str]) -> list[str]:
+    return [ligne for ligne in acheve.stdout.splitlines() if ligne.startswith("# banc\t")]
+
+
+def test_la_question_annonce_le_moins_cher_que_la_carte_fait_croiser(forge_carte: Depot) -> None:
+    """Le moteur est exécuté par S2, S4 et S12 : la question propose S4, le moins cher, compte les
+    deux autres sans les nommer, et dit d'où vient la carte et ce qu'elle n'a jamais mesuré."""
+    reglages = carte_du_poste(forge_carte, CARTE_DU_POSTE)
+    forge_carte.pose_etat(graphql=[regle_criteres("110", CORPS_TROIS)])
+    acheve = forge_carte.lib("criteres", "110", reglages=reglages)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    banc = lignes_banc(acheve)
+    assert banc[0].startswith("# banc\tla carte croise le diff — si le changement touche"), banc
+    assert banc[0].endswith("le moins cher en tête : S4 (0,2000 $ · 1 min 00 s)"), banc[0]
+    assert "# banc\tS4 passe par maestro/moteur.py" in banc
+    assert "# banc\t2 autre(s) scénario(s) le croisent aussi, sans rien couvrir de plus" in banc
+    origine = "# banc\tcarte : S2, S4, S12 du passage 20261011-181132 ; jamais mesurés : S1, S3"
+    assert any(ligne.startswith(origine) for ligne in banc), banc
+    assert banc[-1] == (
+        "# banc\tsinon : | Banc | non joué | mécanique couverte par <tests nommés> ; banc par lot "
+        "sur main |"
+    )
+
+
+@pytest.mark.parametrize(
+    ("s12", "annonce"),
+    [
+        # S12 passe aussi par le moteur : le jouer seul couvre tout, et coûte moins que S4 et S12.
+        (CARTE_DU_POSTE["S12"], ": S12 (2,6600 $ · 1 min 00 s)"),
+        # S12 ne passe que par l'extinction : S4 pour le moteur, S12 pour elle, S4 en tête.
+        (
+            {"maestro/extinction.py": ["rallumer"]},
+            ": S4 (0,2000 $ · 1 min 00 s), S12 (2,6600 $ · 1 min 00 s)",
+        ),
+    ],
+)
+def test_s12_n_est_propose_que_s_il_est_seul_a_couvrir(
+    forge_carte: Depot, s12: Mapping[str, Sequence[str]], annonce: str
+) -> None:
+    """L'extinction n'est exécutée que par S12 : il est proposé pour elle, et pour elle seule — le
+    moins cher en tête quand il en faut deux."""
+    (forge_carte.racine / "maestro" / "extinction.py").write_text(
+        "def rallumer():\n    return 1\n", encoding="utf-8"
+    )
+    reglages = carte_du_poste(forge_carte, {**CARTE_DU_POSTE, "S12": s12})
+    forge_carte.pose_etat(graphql=[regle_criteres("111", CORPS_TROIS)])
+    banc = lignes_banc(forge_carte.lib("criteres", "111", reglages=reglages))
+    assert banc[0].endswith(annonce), banc[0]
+    assert any(ligne.startswith("# banc\tS12 passe par maestro/extinction.py") for ligne in banc)
+
+
+def test_la_question_se_tait_quand_la_carte_ne_croise_pas(forge_produit: Depot) -> None:
+    """Le contre-exemple du préfixe : `maestro/moteur.py` est « sur le chemin » pour lui, mais
+    aucun scénario de la carte ne l'exécute — rien n'est annoncé, le constat passe sans `Banc`."""
+    reglages = carte_du_poste(forge_produit, {"S4": {"maestro/autre.py": ["f"]}})
+    forge_produit.pose_etat(graphql=[regle_criteres("112", CORPS_TROIS)])
+    acheve = forge_produit.lib("criteres", "112", reglages=reglages)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "# banc" not in acheve.stdout
+    note = forge_produit.lib(
+        "criteres-note", "112", constat(forge_produit, CONSTAT_COMPLET), reglages=reglages
+    )
+    assert note.returncode == 0, note.stdout + note.stderr
+
+
+def test_un_banc_que_la_carte_rend_du_et_tu_est_refuse(forge_carte: Depot) -> None:
+    """Quand la carte croise le diff, le constat dit ce qu'il en a fait : un constat muet est
+    refusé, et le refus nomme les scénarios annoncés."""
+    reglages = carte_du_poste(forge_carte, CARTE_DU_POSTE)
+    forge_carte.pose_etat(graphql=[regle_criteres("113", CORPS_TROIS)])
+    acheve = forge_carte.lib(
+        "criteres-note", "113", constat(forge_carte, CONSTAT_COMPLET), reglages=reglages
+    )
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "- Banc : la carte des scénarios croise le diff : S4 à jouer" in acheve.stderr
+    assert "si le changement touche ce que le modèle reçoit ou fait" in acheve.stderr
+    assert ecritures(forge_carte) == []
+
+
+def test_un_non_joue_motive_par_la_mecanique_couverte_est_accepte(forge_carte: Depot) -> None:
+    """Le banc annoncé n'est pas dû quand le changement ne touche pas ce que le modèle reçoit ou
+    fait : la ligne le dit, par les tests qui couvrent la mécanique, et le titre la porte."""
+    reglages = carte_du_poste(forge_carte, CARTE_DU_POSTE)
+    forge_carte.pose_etat(graphql=[regle_criteres("114", CORPS_TROIS)])
+    texte = CONSTAT_COMPLET + (
+        f"| Banc | non joué | mécanique couverte par `{TEST_LIVRE}` ; banc par lot sur main |\n"
+    )
+    acheve = forge_carte.lib("criteres-note", "114", constat(forge_carte, texte), reglages=reglages)
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    titre = corps_poste(forge_carte, "114").splitlines()[0]
+    assert "1 ✓ · 1 ✗ · 1 hors diff · banc non joué — empreinte" in titre, titre
+
+
+def test_un_non_joue_qui_nomme_un_test_inexistant_est_refuse(forge_produit: Depot) -> None:
+    """« Mécanique couverte par <tests nommés> » ne vaut que si les tests existent : un nom inventé
+    est refusé, comme pour un ✓."""
+    forge_produit.pose_etat(graphql=[regle_criteres("115", CORPS_TROIS)])
+    texte = CONSTAT_COMPLET + (
+        "| Banc | non joué | mécanique couverte par test_invente ; banc par lot sur main |\n"
+    )
+    acheve = forge_produit.lib("criteres-note", "115", constat(forge_produit, texte))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert "« non joué » : test_invente n'est défini nulle part dans l'arbre" in acheve.stderr
+    assert ecritures(forge_produit) == []
 
 
 @pytest.mark.parametrize(
@@ -847,6 +1037,19 @@ def test_la_cloture_joue_le_banc_du_avant_de_pousser() -> None:
     assert texte.index("4ter. **Le ticket fait-il") < texte.index("7. **Pousse la branche.**")
 
 
+def test_la_cloture_dit_quand_le_banc_est_du() -> None:
+    """Critère 2 de #1464, côté commande : la question annonce ce que la carte croise, le banc est
+    dû quand le changement touche ce que le modèle reçoit ou fait — un jugement de la session —,
+    et un banc non dû se consigne par la mécanique que les tests couvrent."""
+    etape = etape_4ter()
+    assert "les scénarios dont la carte croise ton diff, le moins cher en tête" in etape
+    assert "Il est **dû** si ton changement touche ce que le modèle reçoit ou fait" in etape
+    assert "outils et verbes offerts, portée et permissions d'un agent" in etape
+    assert "non dû : `mécanique couverte par <tests nommés> ; banc par lot sur main`" in etape
+    assert "seul le banc dû reste un jugement, et se consigne" in etape
+    assert "le chemin" not in etape, "le préfixe du chemin n'est plus le déclencheur"
+
+
 def prompt_de_run() -> str:
     """Le prompt d'une session de ticket, tel que `run.sh` le rend — espaces normalisés."""
     texte = RUN.read_text(encoding="utf-8")
@@ -866,6 +1069,21 @@ def test_le_prompt_de_run_demande_la_preuve_exercee_et_le_banc() -> None:
     assert "start.sh --etat-banc" not in prompt, "la commande vit dans 4ter, une seule source"
 
 
+def test_le_prompt_de_run_dit_quand_le_banc_est_du() -> None:
+    """Critère 2 de #1464, côté run : personne ne relit une session de run, donc la règle du banc
+    dû y est dite en toutes lettres — la carte qui croise, et le jugement de la session."""
+    prompt = prompt_de_run()
+    assert (
+        "Le banc est dû quand la clôture annonce que la carte des scénarios croise ton diff ET que "
+        "ton changement touche ce que le modèle reçoit ou fait" in prompt
+    )
+    assert "c'est ton jugement" in prompt
+    assert "sur les scénarios annoncés" in prompt
+    assert "non dû, dis-le « non joué » : mécanique couverte par les tests nommés, banc par lot " \
+        "sur main" in prompt
+    assert "chemin des scénarios" not in prompt, "le préfixe du chemin n'est plus le déclencheur"
+
+
 def test_la_doc_du_workflow_decrit_la_regle() -> None:
     """Critère 3 de #1240 : docs/10 §6 décrit la règle — la preuve, le banc dû et ce qui ne bouge
     pas. Bornée à la section 6, où vivent les garde-fous."""
@@ -879,6 +1097,27 @@ def test_la_doc_du_workflow_decrit_la_regle() -> None:
     assert "`GL_BANC_CHEMINS`" in section
     assert "**Un banc injouable est nommé, jamais compté vert.**" in section
     assert "un critère **hors diff** garde sa réponse" in section
+
+
+def test_la_doc_du_workflow_decrit_le_banc_derive_de_la_carte() -> None:
+    """Critère 2 de #1464 : docs/10 §6 dit la règle au présent — la carte détecte, la session juge
+    le banc dû, le préfixe ne décide plus que faute de carte — et le renvoi « tient jusqu'à
+    #1464 » est parti avec elle."""
+    texte = DOC_WORKFLOW.read_text(encoding="utf-8")
+    debut, fin = texte.index("## 6. Garde-fous"), texte.index("## 7. Prérequis")
+    section = " ".join(texte[debut:fin].split())
+    for regle in (
+        "**le banc se paie une fois par lot, et au ticket seulement sur son chemin** (#1464",
+        "la **détection** est la **carte** de ce que chaque scénario exécute",
+        "**couverture la moins chère**, le moins cher en tête",
+        "n'est proposé que s'il est le seul à couvrir une partie du changement",
+        "**le banc est dû** quand le changement touche **ce que le modèle reçoit ou fait**",
+        "**jugement de la session**",
+        "`| Banc | non joué | mécanique couverte par <tests nommés> ; banc par lot sur main |`",
+        "**faute de carte**, le préfixe décide encore",
+    ):
+        assert regle in section, regle
+    assert "tient jusqu'à #1464" not in section
 
 
 def test_sans_critere_on_signale_sans_en_ecrire() -> None:

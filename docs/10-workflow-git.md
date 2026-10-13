@@ -2131,26 +2131,37 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     de vérifier : que le test est **défini dans l'arbre** (un nom inventé est refusé), que le
     rapport du passage est là et rend **verts** les scénarios cités. Qu'un test nommé passe, il ne
     le rejoue pas — c'est la session qui l'a vu passer, et qui le dit ;
-  - **le banc est dû** quand le diff touche le **chemin des scénarios** : ce que la stack réelle
-    charge — `maestro/`, `core/`, `packages/shared/` (`GL_BANC_CHEMINS`). La question `criteres`
-    le dit d'une ligne `# banc`, et le constat porte une ligne `| Banc | vert/rouge | passage <h> |`
-    — relue dans le rapport, un `vert` sur un passage qui ne l'est pas est refusé — ou `| Banc |
-    non joué | <raison> |`. **Un banc injouable est nommé, jamais compté vert.** Le banc se joue
-    **avant de pousser**, par `start.sh --etat-banc --rejouer=<S…>` sur la stack du worktree : le
-    même geste que docs/40 §5, et l'état qu'il laisse sert ensuite la relecture visuelle. Le chemin
-    est une **détection** ; **quel** scénario emprunte le changement — et s'il en est un — reste un
-    jugement de la session, qui se consigne (« non joué : aucun scénario ne passe par la purge ») ;
-
-    ⚠ **Renversé en partie le 2026-10-09** ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md),
-    #1460). Le banc entier se jouera une fois par lot, sur `main` intégrée, par le pilote (#1462).
-    Au ticket, il ne sera plus dû que quand le changement touche ce que le modèle reçoit ou fait, sur
-    le scénario le moins cher dont la carte croise le diff (#1463). Le préfixe `GL_BANC_CHEMINS`
-    cessera alors d'être le déclencheur. **La règle ci-dessus tient jusqu'à #1464**, qui réécrit ce
-    paragraphe : on ne retire pas le filet du ticket avant d'avoir posé celui du lot ;
+  - **le banc se paie une fois par lot, et au ticket seulement sur son chemin** (#1464,
+    [docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md), qui renverse en partie le C2 de
+    #1240). Le banc entier se joue sur `main` intégrée, par le pilote, après le drain final
+    (§11.13) : c'est lui qui attrape une mécanique cassée par un merge. Au ticket, la **détection**
+    est la **carte** de ce que chaque scénario exécute (#1463, docs/40 §5) : la question `criteres`
+    annonce, d'une ligne `# banc` et des suivantes, les scénarios dont la carte croise le diff
+    (`python -m maestro.scenarios.croisement`) — la fonction qui contient une ligne changée, le
+    niveau module par son fichier, un fichier de données lu —, en proposant la **couverture la
+    moins chère**, le moins cher en tête (coût médian de l'historique, #1461). Le plus cher, S12
+    aujourd'hui, n'est proposé que s'il est le seul à couvrir une partie du changement. Quand
+    aucun scénario ne croise le diff, elle **se tait**. Les scénarios que la carte n'a jamais
+    mesurés sont nommés : le banc par lot les mesure ;
+  - **le banc est dû** quand le changement touche **ce que le modèle reçoit ou fait** — prompts,
+    playbooks, gabarits, outils et verbes offerts, portée et permissions d'un agent. C'est un
+    **jugement de la session**, et il se consigne : aucune liste de fichiers « sensibles » ne le
+    remplace (docs/41). Dû, il se joue **avant de pousser**, par `start.sh --etat-banc
+    --rejouer=<S…>` sur la stack du worktree — le même geste que docs/40 §5, et l'état qu'il laisse
+    sert ensuite la relecture visuelle — et le constat porte `| Banc | vert/rouge | passage <h> |`,
+    relu dans le rapport : un `vert` sur un passage qui ne l'est pas est refusé. Non dû, la ligne
+    le dit : `| Banc | non joué | mécanique couverte par <tests nommés> ; banc par lot sur main |`,
+    et les tests qu'elle nomme doivent exister. **Un banc injouable est nommé, jamais compté
+    vert.** Quand la carte croise le diff, `criteres-note` refuse un constat sans ligne `Banc` ;
+  - **faute de carte**, le préfixe décide encore (docs/47 §8 : on ne retire pas un filet sans
+    l'autre) : un poste sans historique lisible, ou sans le venv qui le lit, retombe sur le chemin
+    des scénarios — `maestro/`, `core/`, `packages/shared/` (`GL_BANC_CHEMINS`) —, et la ligne
+    `# banc` le dit (« faute de carte (…), le préfixe décide ») ;
   - **ce qui ne bouge pas** : un ✗ est nommé, jamais coché, et ne bloque pas le merge ; un critère
-    **hors diff** garde sa réponse ; les critères ne s'écrivent jamais à la clôture. Le prix est
-    connu et assumé : un passage coûte du vrai modèle (S2 : 0,41 $ et 1 min 25 s sur #1226, qui
-    l'avait joué de lui-même avant que le flux le prévoie).
+    **hors diff** garde sa réponse ; les critères ne s'écrivent jamais à la clôture. Le prix du
+    banc au ticket est celui du scénario le moins cher qui couvre le changement (S4 ≈ 0,20 $ et
+    S2 ≈ 0,35 $ au 2026-10-13) ; un défaut de mécanique hors de ce que le modèle reçoit ou fait se
+    voit au banc par lot, quelques heures plus tard (docs/47 §6).
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
   vérifient, **avant toute écriture** (commit, push, PR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
@@ -8405,7 +8416,8 @@ joue à la main les semaines où l'on merge en interactif. Il fait cinq choses, 
 1. **Le sha joué** : `origin/main`, après un `fetch`.
 2. **La décision**, lue dans l'historique du banc (#1461) contre l'historique de `main`
    (`python -m maestro.scenarios.sur_main decider`). Il ne joue que si `main` a bougé **sur le
-   chemin des scénarios** (`GL_BANC_CHEMINS` de `lib.sh`, §6 — la carte de #1463 le remplacera)
+   chemin des scénarios** (`GL_BANC_CHEMINS` de `lib.sh`, §6 — au ticket, la carte l'a remplacé
+   par #1464 ; ici, il dit encore si `main` a bougé là où le produit tourne)
    depuis le **dernier passage complet sur `main`**. Complet : tout le catalogue, sans aucun
    empêchement. Sur `main` : un sha ancêtre de celui qu'on joue, sur un arbre non modifié — un
    passage du clone principal sur `main` compte, celui d'une branche de ticket non. Sinon il

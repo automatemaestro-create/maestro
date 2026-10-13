@@ -48,7 +48,7 @@ est déjà écrit, et c'est lui qui fait foi pour le passage.
 consigne) : le taux de réussite, le coût et la durée **médians**, les rejeux et
 les empêchements, et le **dernier vert** avec son sha. C'est l'entrée du banc par
 lot (lot 2 de #1460, le dernier vert sur `main`) et du choix du scénario le moins
-cher (lot 4). `--json` la rend à un script.
+cher (#1464, `maestro.scenarios.croisement`). `--json` la rend à un script.
 
 ## Les passages d'avant
 
@@ -401,7 +401,7 @@ def series(lignes: Sequence[dict[str, Any]], *, fenetre: int | None = None) -> t
         for scenario in ligne["scenarios"]:
             passages.setdefault(scenario["id"], []).append((ligne, scenario))
     rendu = []
-    for identifiant in sorted(passages, key=_ordre_naturel):
+    for identifiant in sorted(passages, key=ordre_naturel):
         tous = passages[identifiant]
         vus = tous[-fenetre:] if fenetre else tous
         couts = [s["cout_usd"] for _l, s in vus if isinstance(s.get("cout_usd"), int | float)]
@@ -430,7 +430,7 @@ def _dernier_vert(ligne: dict[str, Any]) -> DernierVert:
     )
 
 
-def _ordre_naturel(identifiant: str) -> tuple[str, int, str]:
+def ordre_naturel(identifiant: str) -> tuple[str, int, str]:
     """S2 avant S10 : le préfixe, puis le numéro comme un nombre."""
     trouve = re.match(r"^(\D*)(\d+)(.*)$", identifiant)
     if not trouve:

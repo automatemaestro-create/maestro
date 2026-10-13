@@ -62,14 +62,16 @@ merge), arrête-toi et demande si un point n'est pas clair.
      passer (la pièce donne son nom et son verdict) ; **une observation sur la vraie stack**, API ou
      UI de `start.sh` ou banc des scénarios (la pièce nomme le run, le passage ou la capture).
 
-     **Le banc est dû** quand la question l'annonce (`# banc  à jouer`) : joue **avant de pousser**
-     les scénarios dont ton changement est sur le chemin (docs/40 §5), puis `start.sh --stop` :
+     **Le banc** : la question annonce (`# banc`) les scénarios dont la carte croise ton diff, le
+     moins cher en tête. Il est **dû** si ton changement touche ce que le modèle reçoit ou
+     fait (prompts, playbooks, gabarits, outils et verbes offerts, portée et permissions d'un
+     agent) : joue **avant de pousser** les scénarios annoncés, puis `start.sh --stop` :
      ```
      bash scripts/controltower/start.sh --etat-banc --rejouer=<S…> --no-browser
      ```
      Son verdict entre par une ligne **Banc** : `vert`/`rouge` avec son passage, ou `non joué` avec
-     sa raison. **Un banc injouable est nommé, jamais compté vert** ; un rouge ne se rejoue pas
-     jusqu'au vert.
+     sa raison — non dû : `mécanique couverte par <tests nommés> ; banc par lot sur main`. **Un
+     banc injouable est nommé, jamais compté vert** ; un rouge ne se rejoue pas jusqu'au vert.
 
      Constat écrit avec `Write` dans `.maestro/session/criteres-<iid>.md`, une ligne par critère :
      ```
@@ -97,7 +99,7 @@ merge), arrête-toi et demande si un point n'est pas clair.
    pas : signale-le. **Un ✗ n'empêche pas le merge** : corrige ce qui se corrige ici, puis reprends
    à l'étape 4 ; ce qui dépasse le ticket se consigne ✗ avec sa suite, et se nomme au résumé —
    ouvrir un ticket reste une décision. **On ne demande pas, on joue**, à l'identique en run et
-   en interactif, banc dû compris ; seul le choix du scénario reste un jugement, et se consigne.
+   en interactif, banc compris ; seul le banc dû reste un jugement, et se consigne.
 
 5. **Filet CI local**, source unique des contrôles locaux :
    ```
