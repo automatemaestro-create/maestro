@@ -121,6 +121,26 @@ class Workspace:
         """
         return ""
 
+    @contextmanager
+    def sans_trace(self) -> Iterator[None]:
+        """Ce que Maestro joue dans le bloc ne reste pas dans ce que l'espace livre (#1448).
+
+        Le geste de la **vérification** d'une tâche (#1177), qui joue ses commandes
+        dans l'espace de l'agent : un `vitest --reporter=json` y écrit son rapport,
+        un `npm install` réécrit le verrou des dépendances. Seul le worktree d'un
+        projet versionné le tient (`maestro.sandbox.projet.EspaceCopieDeTravail.
+        sans_trace`) : c'est là que ces restes partaient sur la branche de la tâche,
+        puis dans le projet.
+
+        **Rien n'est défait ici**, et ce n'est pas un oubli. Le répertoire jetable
+        n'est le projet de personne : ce qu'il livre est relevé avant chaque
+        vérification (`maestro.agents.runtime`). La racine d'un projet non versionné
+        (#839) est le dossier **vivant** de la personne : défaire ce qui y a changé
+        pendant un intervalle de temps, c'est effacer ce qu'elle y aurait écrit
+        entre-temps — ce que Git ne tranche pas pour un dossier qu'il ne suit pas.
+        """
+        yield
+
     def produced_files(self) -> tuple[ProducedFile, ...]:
         """Recense les fichiers **produits**, triés par chemin relatif (déterministe).
 

@@ -36,6 +36,8 @@ Une tâche était verte **dès que son agent rendait quelque chose** (`maestro/e
 
 **Où l'on joue :** dans l'espace de travail de la tâche (répertoire jetable, worktree de la branche `maestro/<tâche>`, racine d'un projet non versionné). C'est l'environnement que l'agent a construit, donc le seul où « les tests passent » veuille dire quelque chose. Deux gardes, les mêmes que pour un agent : la **portée « projet »** (une commande qui sort du dossier n'est pas jouée, elle est dite) et un **délai par commande**, qui est un garde-fou et pas un verdict. Un livrable **texte**, qui n'a pas d'espace de travail, ne se vérifie que par des lectures.
 
+**Ce que la vérification joue ne reste pas sur la branche** (#1448). Les commandes constatent sans rien modifier, et le prompt du vérificateur l'exige — ce n'est pas une garantie : sur le run `3a7fa26ba927`, un essai de Vitest a laissé son rapport JSON (`.vitest/json/output.json`) dans la copie de travail, que le démontage a commité sur la branche de la tâche, puis la fusion appliqué au projet. Dans le worktree d'un projet versionné, Maestro relève donc, avant chaque vérification, ce que la branche porterait, et le rend après : ce qui est apparu est retiré, ce qui a été réécrit revient tel que l'agent l'a laissé. La branche ne porte que le travail de l'agent, et l'agent dont la livraison ne tient pas repart de ses propres fichiers. Ce que le projet ignore — les dépendances qu'un contrôle installe — reste en place et ne part sur aucune branche. La racine d'un projet non versionné n'est pas défaite après coup : c'est le dossier vivant de la personne, où l'on effacerait ce qu'elle aurait écrit entre-temps.
+
 ## 3. Ce qui arrête la boucle
 
 Pas un nombre de tentatives : un **fait**.

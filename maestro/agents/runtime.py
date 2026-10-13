@@ -416,6 +416,9 @@ class AgentRuntime:
         mêmes outils, mêmes canaux. Le runtime ne décide de rien : ni de ce qui
         tient, ni de quand renoncer (le juge lève, et l'exception traverse). None
         (le défaut) : la première livraison est la livraison, comme avant #1177.
+        Chaque jugement se joue sous `Workspace.sans_trace` (#1448) : ce que ses
+        commandes laissent dans une copie de travail n'atteint pas la branche, et
+        l'agent qui corrige retrouve ses fichiers tels qu'il les a laissés.
 
         `machine` (#1403) est ce que Maestro a constaté de la machine au début du
         run (`maestro.machine`) — système, shell, temporaire, programmes de
@@ -522,9 +525,12 @@ class AgentRuntime:
             # La recette (#1177) : chaque livraison est jugée ici, l'espace ouvert,
             # et ce qui ne tient pas revient à l'agent dans ce même espace. Le
             # message repart **entier** — une session du fournisseur ne se souvient
-            # pas de la précédente —, suivi du retour, qui porte les preuves.
+            # pas de la précédente —, suivi du retour, qui porte les preuves. Ce
+            # que les contrôles y laissent n'y reste pas (#1448) : la branche de la
+            # tâche ne porte que le travail de l'agent, et l'agent repart du sien.
             while on_livraison is not None:
-                retour = await on_livraison(ws.path, resume.strip(), fichiers)
+                with ws.sans_trace():
+                    retour = await on_livraison(ws.path, resume.strip(), fichiers)
                 if retour is None:
                     break
                 resume = await session(f"{prompt}\n\n{retour}")
