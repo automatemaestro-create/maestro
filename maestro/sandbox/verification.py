@@ -202,18 +202,18 @@ tirent jamais le même —, au hasard dans `PORTS_DE_VERIFICATION`, et constaté
 **adresse par adresse** : sous Windows, un `bind` sur `0.0.0.0` réussit à côté d'un
 serveur qui n'écoute que `127.0.0.1` (mesuré sur le poste). Un agent qui tue ce qui
 écoute le port de son critère ne l'atteint plus, et ne juge plus sa page sur la
-réponse d'un service qui n'est pas le sien.
+réponse d'un service qui n'est pas le sien. Les agents, eux, essaient leurs serveurs
+sur le port que Maestro réserve à chacun dans une plage voisine (`maestro.sandbox.ports`,
+#1491).
 """
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import os
 import random
 import re
 import shutil
-import socket
 import stat
 import subprocess
 import sys
@@ -229,6 +229,10 @@ from typing import IO
 from maestro.emplacements import jetable, racine_jetable
 from maestro.fichiers import retirer_arbre
 from maestro.sandbox.arbre import Arbre
+from maestro.sandbox.ports import ESSAIS_PORT, port_libre, tirages
+
+# Ré-exporté : le moteur de vérification en fait un contrôle « non joué » (#1487).
+from maestro.sandbox.ports import PortIndisponible as PortIndisponible
 
 #: Le préfixe d'une copie de vérification — sous le préfixe commun des espaces de
 #: Maestro, donc candidate au ramassage si son process meurt avant de la retirer. Le
@@ -278,20 +282,10 @@ VARIABLE_PORT = "MAESTRO_PORT"
 #: Linux, 49152 et au-delà sous Windows et macOS, où vivent aussi les plages que
 #: Hyper-V se réserve — : constaté libre, le port ne peut pas être repris par une
 #: connexion du service qui démarre (`npm ci` en ouvre des dizaines). **Au-dessus**
-#: des ports qu'un projet ou un agent choisit de lui-même (3000, 4321, 8080…).
+#: des ports qu'un projet choisit de lui-même (3000, 4321, 8080…) et de ceux que
+#: Maestro donne aux agents pour leurs essais (`maestro.sandbox.ports.PORTS_D_ESSAI`,
+#: #1491) : les deux plages ne se croisent pas.
 PORTS_DE_VERIFICATION = range(20_000, 32_768)
-
-#: Les adresses où un serveur local écoute, chacune constatée pour elle-même.
-_ADRESSES_LOCALES: tuple[tuple[socket.AddressFamily, str], ...] = (
-    (socket.AF_INET, "127.0.0.1"),
-    (socket.AF_INET, "0.0.0.0"),  # noqa: S104 - on constate, on n'écoute pas
-    (socket.AF_INET6, "::1"),
-    (socket.AF_INET6, "::"),
-)
-
-#: Combien de ports tirer avant de dire qu'aucun n'est libre : sur douze mille, un
-#: poste où soixante-quatre tirages tombent tous sur un port tenu n'en a plus.
-_ESSAIS_PORT = 64
 
 #: Le nom du mutex qui tient le créneau des services sous Windows (#1449), suivi
 #: d'une empreinte de la racine jetable. `Local\` : la session de la personne, où
@@ -350,14 +344,6 @@ class CreneauAbandonne(Exception):
     """L'attente du créneau des services a été abandonnée — la vérification est annulée.
 
     Pas une `OSError` : le système n'a rien refusé, personne n'attend plus ce service.
-    """
-
-
-class PortIndisponible(OSError):
-    """Aucun port libre n'a été trouvé pour le service d'une vérification (#1487).
-
-    Une `OSError` : c'est le poste qui n'a rien laissé, pas le service qui a échoué —
-    à l'appelant d'en faire un contrôle « non joué ».
     """
 
 
@@ -987,48 +973,25 @@ def nom_du_creneau(racine: Path) -> str:
 
 
 def port_de_verification(
-    *, tirage: random.Random | None = None, essais: int = _ESSAIS_PORT
+    *, tirage: random.Random | None = None, essais: int = ESSAIS_PORT
 ) -> int:
     """Un port libre pour le service d'une vérification, hors de ceux des agents (#1487).
 
     Tiré au hasard dans `PORTS_DE_VERIFICATION`, et rendu seulement s'il est libre
-    sur chacune des adresses où un serveur local écoute (`_ADRESSES_LOCALES`). À
+    sur chacune des adresses où un serveur local écoute (`maestro.sandbox.ports`). À
     prendre **dans le créneau** (`creneau_de_service`) : rien ne le tient entre ce
     constat et le démarrage, sinon le tour. `tirage` est la couture des tests.
 
-    Lève `PortIndisponible` si `essais` tirages n'en ont trouvé aucun.
+    Lève `PortIndisponible` si `essais` tirages n'en ont trouvé aucun — une `OSError`,
+    dont l'appelant fait un contrôle « non joué ».
     """
-    hasard = tirage if tirage is not None else random.SystemRandom()
-    for _ in range(essais):
-        port = hasard.randrange(PORTS_DE_VERIFICATION.start, PORTS_DE_VERIFICATION.stop)
-        if _port_libre(port):
+    for port in tirages(PORTS_DE_VERIFICATION, tirage=tirage, essais=essais):
+        if port_libre(port):
             return port
     raise PortIndisponible(
         f"aucun port libre pour le service de la vérification parmi {essais} tirés entre "
         f"{PORTS_DE_VERIFICATION.start} et {PORTS_DE_VERIFICATION.stop - 1}"
     )
-
-
-def _port_libre(port: int) -> bool:
-    """`port` est-il libre sur chaque adresse locale ? — un `bind` par adresse, aussitôt rendu.
-
-    Une adresse que le poste n'a pas (IPv6 coupé) ne retient rien : personne n'y
-    écoute. Tout autre refus — le port est tenu, ou réservé par le système (une plage
-    d'Hyper-V répond « accès refusé ») — le dit pris : un autre tirage suivra.
-    """
-    for famille, adresse in _ADRESSES_LOCALES:
-        try:
-            prise = socket.socket(famille, socket.SOCK_STREAM)
-        except OSError:  # famille absente du poste
-            continue
-        with prise:
-            try:
-                prise.bind((adresse, port))
-            except OSError as exc:
-                if exc.errno == errno.EADDRNOTAVAIL:  # adresse absente du poste
-                    continue
-                return False
-    return True
 
 
 def _copier(

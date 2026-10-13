@@ -143,12 +143,18 @@ class Machine:
     programmes: tuple[Programme, ...] = ()
     windows: bool = False
 
-    def consigne(self) -> str:
+    def consigne(self, *, port_d_essai: int | None = None) -> str:
         """La section « La machine » du message de la tâche.
 
         Toujours rendue : le système et le temporaire sont toujours connus. Les
         programmes n'y ont de ligne que si l'outillage du projet en appelle — sans
         outillage, Maestro n'a aucun programme à nommer sans en inventer la liste.
+
+        `port_d_essai` (#1491) est le port que Maestro réserve à **cette** tâche pour
+        essayer ses serveurs (`maestro.sandbox.ports.port_d_essai`) : propre à la
+        tâche, il ne fait pas partie du constat du run, et sa ligne vient en dernier.
+        Une ressource donnée, pas une borne : la ligne dit ce qu'il garantit, et ce
+        qu'un autre port ne garantit pas. None : aucune ligne, la section d'avant.
         """
         lignes = [
             TITRE_MACHINE,
@@ -166,6 +172,13 @@ class Machine:
                 "- **Programmes que les commandes de l'outillage du projet appellent** :",
                 *(f"  {programme.ligne()}" for programme in self.programmes),
             ]
+        if port_d_essai is not None:
+            lignes.append(
+                f"- **Ton port d'essai** : `{port_d_essai}`. Maestro le réserve à ta tâche "
+                "tant qu'elle dure, et ne le donne à aucune autre : c'est sur lui que tu "
+                "essaies tes serveurs. Un port que tu prendrais à sa place n'est réservé à "
+                "personne."
+            )
         return "\n".join(lignes)
 
     def _shell(self) -> str:
