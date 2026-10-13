@@ -104,6 +104,20 @@ répondent :
   `DelaisVerification.liberation_s`. Au-delà, le port est à quelqu'un d'autre, et
   le contrôle n'est pas joué, comme avant.
 
+## Le service d'une vérification ne joue pas sur le port des agents (#1487)
+
+Le créneau ne sérialise les vérifications qu'entre elles. Sur le run `c05bf6263236`,
+un agent en correction a « libéré son port » en tuant ce qui écoutait celui de son
+critère : c'était le service d'une vérification voisine. Elle a lu « le service a
+rendu la main (code 1) », et la tâche vérifiée a reçu un échec, et une preuve, qu'elle
+n'avait pas causés. Un code de sortie ne dit pas qui a arrêté le service : ce cas se
+prévient. Le service d'un démarrage reçoit donc, à son tour, un port que Maestro lui
+réserve (`maestro.sandbox.verification.port_de_verification`), par `$MAESTRO_PORT`,
+que le vérificateur écrit à la place du port d'un critère qui le laisse choisir. Les
+agents ne l'utilisent pas : ce qu'ils trouvent sur le port de leur critère est
+toujours à l'un d'eux, jamais à une vérification. La preuve dit le port, pour que
+l'agent rejoue le critère là où il a été joué.
+
 ## Un vérificateur en panne n'est pas un agent en échec (#1388)
 
 L'appel du vérificateur au fournisseur peut échouer — contexte dépassé,
@@ -214,6 +228,9 @@ _SANS_ESPACE = (
 )
 
 _FENCE = re.compile(r"```(?:json)?\s*(?P<corps>.*?)```", re.DOTALL)
+
+#: Un contrôle qui prend le port réservé à son service (#1487) : il nomme la variable.
+_NOMME_LE_PORT = re.compile(r"\$\{?" + execution.VARIABLE_PORT + r"\b")
 
 
 @dataclass(frozen=True)
@@ -516,13 +533,20 @@ dans l'espace avant de constater. Une commande qui démarre un service et ne ren
 la main quand il marche porte "demarrage": true — elle tient si elle tourne encore \
 après quelques secondes. Si le critère demande que ce service RÉPONDE (une page, une \
 route, un port), ajoute "sonde" : une commande qui le constate une seule fois, par \
-exemple curl -s -o /dev/null -w '%{http_code}' http://localhost:4123/ | grep -qx 200. \
-Maestro démarre le service, rejoue la sonde jusqu'à ce qu'elle rende 0, puis \
+exemple curl -s -o /dev/null -w '%{http_code}' http://localhost:$MAESTRO_PORT/ | grep \
+-qx 200. Maestro démarre le service, rejoue la sonde jusqu'à ce qu'elle rende 0, puis \
 l'arrête : le contrôle tient si elle a tenu pendant que le service tournait. La \
-commande ne fait donc que démarrer le service, avec ce qu'il lui faut (PORT=4123 npm \
-start, ou npm run build && npm start) : n'y écris ni l'attente, ni la sonde, ni \
-l'arrêt — pas de mise en arrière-plan, pas de kill, pas de script qui lance le \
-service à ta place.
+commande ne fait donc que démarrer le service, avec ce qu'il lui faut \
+(PORT=$MAESTRO_PORT npm start, ou npm run build && PORT=$MAESTRO_PORT npm start) : \
+n'y écris ni l'attente, ni la sonde, ni l'arrêt — pas de mise en arrière-plan, pas de \
+kill, pas de script qui lance le service à ta place.
+- Le port d'un service que tu démarres n'est pas celui du critère : là où le critère \
+nomme un port que le service sait changer (PORT=4123, --port 4123), écris \
+$MAESTRO_PORT, dans la commande comme dans sa sonde. Maestro y met un port libre qu'il \
+réserve à la vérification, où ne viennent jamais les agents des autres tâches, qui se \
+vérifient sur le port du critère. Ce n'est pas changer le critère : c'est le même \
+service, sur un port que personne d'autre n'interroge. Garde le port écrit seulement \
+si le service ne sait en prendre aucun autre.
 - Maestro ne joue une commande que s'il peut lire ce qu'elle exécute. Écris-la en \
 commandes simples enchaînées par |, &&, || ou ;, avec if/then au besoin : JAMAIS de \
 substitution $(…) ni d'accent grave, JAMAIS de redirection d'entrée < ni de heredoc. \
@@ -815,15 +839,18 @@ class VerificateurTaches:
             appel = functools.partial(
                 joueur, controle.commande, livraison.espace, interprete=interprete, delai_s=delai
             )
+            port: int | None = None
             if controle.demarrage:
                 debut = time.monotonic()
-                resultat, obtenu = await _a_son_tour(appel)
+                (port, resultat), obtenu = await _a_son_tour(_au_port_reserve(appel))
                 apres = _apres_attente(obtenu - debut, tour=True, port=False)
             else:
                 resultat, apres = await asyncio.to_thread(appel), ""
+        except execution.PortIndisponible as exc:
+            return non_joue(f"pas jouée — {exc}")
         except OSError as exc:
             return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
-        return _constat_joue(controle, resultat, delai, apres=apres)
+        return _constat_joue(controle, resultat, delai, apres=apres, port=port)
 
     async def _demarrer(
         self, controle: Controle, espace: Path, interprete: tuple[str, ...]
@@ -836,6 +863,10 @@ class VerificateurTaches:
         rejoue, jusqu'à ce que le port se libère ou que `liberation_s` s'écoule : le
         serveur qu'un agent voisin a lancé pour se vérifier finit par s'arrêter, et la
         tâche n'a pas à échouer sur un port qu'elle ne tenait pas.
+
+        Chaque essai reçoit aussi, à son tour, le port que Maestro réserve à son service
+        (`_au_port_reserve`, #1487) : un agent qui libère le port de son critère n'y
+        trouve jamais le service d'une vérification.
         """
         non_joue = _non_joue(controle)
         demarreur = self._demarreur if self._demarreur is not None else execution.demarrer
@@ -855,11 +886,13 @@ class VerificateurTaches:
         while True:
             essai = time.monotonic()
             try:
-                resultat, obtenu = await _a_son_tour(appel)
+                (port, resultat), obtenu = await _a_son_tour(_au_port_reserve(appel))
             except execution.SondeNonLancee as exc:
                 return non_joue(
                     f"le juge n'a pas pu lancer sa sonde — le système a répondu : {exc}"
                 )
+            except execution.PortIndisponible as exc:
+                return non_joue(f"pas joué — {exc}")
             except OSError as exc:
                 return non_joue(
                     f"le juge n'a pas pu lancer le service — le système a répondu : {exc}"
@@ -870,7 +903,7 @@ class VerificateurTaches:
                 apres = _apres_attente(
                     obtenu - debut, tour=tour, port=tenu_depuis is not None
                 )
-                return _constat_demarrage(controle, resultat, delai, apres=apres)
+                return _constat_demarrage(controle, resultat, delai, apres=apres, port=port)
             maintenant = time.monotonic()
             if tenu_depuis is None:
                 tenu_depuis = maintenant
@@ -902,6 +935,34 @@ async def _a_son_tour(appel: Callable[[], Any]) -> tuple[Any, float]:
     except asyncio.CancelledError:
         abandon.set()
         raise
+
+
+def _au_port_reserve(appel: Callable[..., Any]) -> Callable[[], tuple[int, Any]]:
+    """`appel`, joué avec le port que Maestro réserve au service d'une vérification (#1487).
+
+    Le port est tiré **quand l'appel est joué**, donc à son tour (`_a_son_tour`) : deux
+    vérifications n'en tirent jamais un même, et il est libre au moment où le service
+    démarre. Il passe au service et à sa sonde par `VARIABLE_PORT` ; l'appel rend le
+    port avec son résultat, pour que la preuve le dise. Lève `PortIndisponible` si
+    le poste n'en a aucun à donner.
+    """
+
+    def jouer() -> tuple[int, Any]:
+        port = execution.port_de_verification()
+        return port, appel(environnement={execution.VARIABLE_PORT: str(port)})
+
+    return jouer
+
+
+def _sur_le_port(controle: Controle, port: int | None) -> str:
+    """« sur le port 23456 (`$MAESTRO_PORT`) » — si le contrôle a pris le port réservé (#1487).
+
+    Un contrôle qui garde le port de son critère (un service qui n'en sait pas prendre
+    un autre) ne l'a pas pris : sa preuve n'en parle pas.
+    """
+    if port is None or not _NOMME_LE_PORT.search(f"{controle.commande}\n{controle.sonde}"):
+        return ""
+    return f" sur le port {port} (`${execution.VARIABLE_PORT}`)"
 
 
 def _apres_attente(secondes: float, *, tour: bool, port: bool) -> str:
@@ -1060,20 +1121,29 @@ def _non_joue(controle: Controle) -> Callable[[str], Constat]:
 
 
 def _constat_joue(
-    controle: Controle, resultat: execution.Execution, delai: float, *, apres: str = ""
+    controle: Controle,
+    resultat: execution.Execution,
+    delai: float,
+    *,
+    apres: str = "",
+    port: int | None = None,
 ) -> Constat:
     """Le constat d'une commande jouée — par son code de retour, jamais par sa sortie.
 
     `apres` : ce qui a retardé un démarrage (`_apres_attente`, #1449), ou rien.
+    `port` : celui que Maestro a réservé à un démarrage (#1487), ou `None`.
     """
     sortie = _fin(resultat.sortie, PREUVE_MAX)
+    sur = _sur_le_port(controle, port)
     if controle.demarrage and resultat.expiree:
         return Constat(
             critere=controle.critere,
             etat=CONSTAT_TENU,
-            preuve=f"démarrée{apres}, elle tournait encore au bout de {delai:g} s",
+            preuve=f"démarrée{sur}{apres}, elle tournait encore au bout de {delai:g} s",
             commande=controle.commande,
         )
+    if sur and resultat.code != 0:
+        sortie = f"jouée{sur}" + (f"\n{sortie}" if sortie else "")
     if resultat.expiree:
         return Constat(
             critere=controle.critere,
@@ -1098,6 +1168,7 @@ def _constat_demarrage(
     *,
     apres: str = "",
     tenu_s: float = 0.0,
+    port: int | None = None,
 ) -> Constat:
     """Le constat d'un service sondé (#1432) — la sonde tranche, par son code de retour.
 
@@ -1110,9 +1181,12 @@ def _constat_demarrage(
 
     Pour que le temps d'une vérification se lise sur elle (#1449) : `apres`, ce qui a
     retardé le service (`_apres_attente`) ; `tenu_s`, le temps passé à attendre que
-    ce que la sonde interroge se libère, en vain.
+    ce que la sonde interroge se libère, en vain. Et `port`, celui que Maestro a
+    réservé au service (#1487) : la preuve le dit quand le contrôle l'a pris, pour
+    que l'agent rejoue le critère là où la vérification l'a joué.
     """
     sonde = resultat.sonde
+    sur = _sur_le_port(controle, port)
     if resultat.deja:
         encore = (
             f", et tenait encore au bout de {_duree(tenu_s)} d'attente" if tenu_s > 0 else ""
@@ -1132,8 +1206,8 @@ def _constat_demarrage(
             critere=controle.critere,
             etat=CONSTAT_TENU,
             preuve=(
-                f"démarré{apres}, il a répondu à la sonde `{controle.sonde}` au bout de "
-                f"{resultat.duree_s:g} s ; Maestro l'a ensuite arrêté"
+                f"démarré{sur}{apres}, il a répondu à la sonde `{controle.sonde}` au bout "
+                f"de {resultat.duree_s:g} s ; Maestro l'a ensuite arrêté"
             ),
             commande=controle.commande,
         )
@@ -1150,6 +1224,8 @@ def _constat_demarrage(
             "Maestro l'a arrêté"
         )
     morceaux = [tete]
+    if sur:
+        morceaux.append(f"il jouait{sur}, que Maestro réserve au service de sa vérification")
     if apres:
         # Le délai court depuis son démarrage : l'attente n'en a rien pris.
         morceaux.append(f"il avait démarré{apres}")

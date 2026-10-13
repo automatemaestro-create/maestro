@@ -121,14 +121,39 @@ un process tué ne laisse aucun verrou à ramasser, et ni le ménage ni le ramas
 n'ont rien à juger (#1454). Les process qui partagent un répertoire temporaire
 partagent le créneau — c'est le poste, et c'est ce qui laisse une suite de tests en
 prendre un à elle.
+
+## Le port d'une vérification n'est pas celui des agents (#1487)
+
+Le créneau sérialise les vérifications **entre elles**, pas avec les agents. Or les
+agents des tâches parallèles (#1299) se vérifient eux-mêmes sur le port que nomment
+leurs critères — celui où la vérification démarrait aussi son service. Mesuré sur le
+run `c05bf6263236` : un agent en correction « libère son port » en tuant ce qui
+l'écoute (`netstat … | taskkill //PID … //F`), et c'est le service de la
+vérification voisine qui meurt. Elle lit « le service a rendu la main (code 1) »,
+et la tâche vérifiée reçoit un échec qu'elle n'a pas causé. Un code de sortie ne dit
+pas qui a arrêté le service (docs/44) : ce qui ne se distingue pas se **prévient**.
+
+Le service d'une vérification reçoit donc **son** port (`port_de_verification`),
+dans la variable `VARIABLE_PORT`, posée pour lui et pour sa sonde. Le vérificateur
+l'écrit à la place du port d'un critère qui laisse le choisir (`PORT=$MAESTRO_PORT
+npm start`) : c'est le modèle qui juge si le port est un réglage du service. Ce port
+est choisi **dans le créneau**, juste avant le démarrage — deux vérifications ne
+tirent jamais le même —, au hasard dans `PORTS_DE_VERIFICATION`, et constaté libre
+**adresse par adresse** : sous Windows, un `bind` sur `0.0.0.0` réussit à côté d'un
+serveur qui n'écoute que `127.0.0.1` (mesuré sur le poste). Un agent qui tue ce qui
+écoute le port de son critère ne l'atteint plus, et ne juge plus sa page sur la
+réponse d'un service qui n'est pas le sien.
 """
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
+import random
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -168,6 +193,30 @@ _OCTETS_GARDES = CARACTERES_SORTIE * 8
 #: L'intervalle entre deux passages de la sonde d'un service qui démarre (#1432). Un
 #: passage lance un bash : sous Windows, une à deux centaines de millisecondes.
 PERIODE_SONDE_S = 1.0
+
+#: La variable où le service d'une vérification et sa sonde trouvent le port que
+#: Maestro leur réserve (#1487) — posée pour eux seuls, jamais pour un agent.
+VARIABLE_PORT = "MAESTRO_PORT"
+
+#: Où Maestro tire le port d'une vérification (#1487). **Sous** les ports que le
+#: système distribue de lui-même aux connexions sortantes — 32768 et au-delà sous
+#: Linux, 49152 et au-delà sous Windows et macOS, où vivent aussi les plages que
+#: Hyper-V se réserve — : constaté libre, le port ne peut pas être repris par une
+#: connexion du service qui démarre (`npm ci` en ouvre des dizaines). **Au-dessus**
+#: des ports qu'un projet ou un agent choisit de lui-même (3000, 4321, 8080…).
+PORTS_DE_VERIFICATION = range(20_000, 32_768)
+
+#: Les adresses où un serveur local écoute, chacune constatée pour elle-même.
+_ADRESSES_LOCALES: tuple[tuple[socket.AddressFamily, str], ...] = (
+    (socket.AF_INET, "127.0.0.1"),
+    (socket.AF_INET, "0.0.0.0"),  # noqa: S104 - on constate, on n'écoute pas
+    (socket.AF_INET6, "::1"),
+    (socket.AF_INET6, "::"),
+)
+
+#: Combien de ports tirer avant de dire qu'aucun n'est libre : sur douze mille, un
+#: poste où soixante-quatre tirages tombent tous sur un port tenu n'en a plus.
+_ESSAIS_PORT = 64
 
 #: Le nom du mutex qui tient le créneau des services sous Windows (#1449), suivi
 #: d'une empreinte de la racine jetable. `Local\` : la session de la personne, où
@@ -226,6 +275,14 @@ class CreneauAbandonne(Exception):
     """L'attente du créneau des services a été abandonnée — la vérification est annulée.
 
     Pas une `OSError` : le système n'a rien refusé, personne n'attend plus ce service.
+    """
+
+
+class PortIndisponible(OSError):
+    """Aucun port libre n'a été trouvé pour le service d'une vérification (#1487).
+
+    Une `OSError` : c'est le poste qui n'a rien laissé, pas le service qui a échoué —
+    à l'appelant d'en faire un contrôle « non joué ».
     """
 
 
@@ -416,6 +473,51 @@ def nom_du_creneau(racine: Path) -> str:
     return PREFIXE_CRENEAU + hashlib.sha256(chemin.encode("utf-8")).hexdigest()[:16]
 
 
+def port_de_verification(
+    *, tirage: random.Random | None = None, essais: int = _ESSAIS_PORT
+) -> int:
+    """Un port libre pour le service d'une vérification, hors de ceux des agents (#1487).
+
+    Tiré au hasard dans `PORTS_DE_VERIFICATION`, et rendu seulement s'il est libre
+    sur chacune des adresses où un serveur local écoute (`_ADRESSES_LOCALES`). À
+    prendre **dans le créneau** (`creneau_de_service`) : rien ne le tient entre ce
+    constat et le démarrage, sinon le tour. `tirage` est la couture des tests.
+
+    Lève `PortIndisponible` si `essais` tirages n'en ont trouvé aucun.
+    """
+    hasard = tirage if tirage is not None else random.SystemRandom()
+    for _ in range(essais):
+        port = hasard.randrange(PORTS_DE_VERIFICATION.start, PORTS_DE_VERIFICATION.stop)
+        if _port_libre(port):
+            return port
+    raise PortIndisponible(
+        f"aucun port libre pour le service de la vérification parmi {essais} tirés entre "
+        f"{PORTS_DE_VERIFICATION.start} et {PORTS_DE_VERIFICATION.stop - 1}"
+    )
+
+
+def _port_libre(port: int) -> bool:
+    """`port` est-il libre sur chaque adresse locale ? — un `bind` par adresse, aussitôt rendu.
+
+    Une adresse que le poste n'a pas (IPv6 coupé) ne retient rien : personne n'y
+    écoute. Tout autre refus — le port est tenu, ou réservé par le système (une plage
+    d'Hyper-V répond « accès refusé ») — le dit pris : un autre tirage suivra.
+    """
+    for famille, adresse in _ADRESSES_LOCALES:
+        try:
+            prise = socket.socket(famille, socket.SOCK_STREAM)
+        except OSError:  # famille absente du poste
+            continue
+        with prise:
+            try:
+                prise.bind((adresse, port))
+            except OSError as exc:
+                if exc.errno == errno.EADDRNOTAVAIL:  # adresse absente du poste
+                    continue
+                return False
+    return True
+
+
 def _copier(
     source: Path,
     copie: Path,
@@ -511,21 +613,21 @@ def jouer(
     interprete: Sequence[str],
     delai_s: float,
     caracteres_sortie: int = CARACTERES_SORTIE,
+    environnement: Mapping[str, str] | None = None,
 ) -> Execution:
     """Joue `commande` dans `cwd` par `interprete`, et l'arrête au bout de `delai_s`.
 
     Entrée standard fermée (une commande qui attend une réponse la reçoit vide et
     s'arrête), sorties mêlées, environnement du process augmenté de
-    `ENVIRONNEMENT_AJOUTE`. Le verdict est pris sur **la fin du processus**, pas
-    sur celle de sa sortie ; puis tout l'arbre est arrêté — au délai, ou parce que
-    la commande a laissé derrière elle un démon qui tient la sortie (voir l'en-tête).
+    `ENVIRONNEMENT_AJOUTE` puis d'`environnement` (le port d'un service, #1487). Le
+    verdict est pris sur **la fin du processus**, pas sur celle de sa sortie ; puis
+    tout l'arbre est arrêté — au délai, ou parce que la commande a laissé derrière
+    elle un démon qui tient la sortie (voir l'en-tête).
     Lève `OSError` si l'interpréteur ne se lance pas — c'est à l'appelant d'en faire
     un verdict.
     """
     debut = time.monotonic()
-    arbre = Arbre.lancer(
-        [*interprete, commande], cwd=cwd, env={**os.environ, **ENVIRONNEMENT_AJOUTE}
-    )
+    arbre = Arbre.lancer([*interprete, commande], cwd=cwd, env=_environnement(environnement))
     tampon = bytearray()
     assert arbre.process.stdout is not None
     lecteur = threading.Thread(
@@ -563,8 +665,12 @@ def demarrer(
     delai_sonde_s: float,
     periode_s: float = PERIODE_SONDE_S,
     caracteres_sortie: int = CARACTERES_SORTIE,
+    environnement: Mapping[str, str] | None = None,
 ) -> Demarrage:
     """Démarre le service `commande`, rejoue `sonde` jusqu'à ce qu'elle tienne, puis l'arrête.
+
+    `environnement` vaut pour le service **et** sa sonde : c'est là qu'ils trouvent
+    tous deux le port que Maestro leur réserve (`VARIABLE_PORT`, #1487).
 
     La sonde est jouée par `jouer`, bornée par `delai_sonde_s`, toutes les
     `periode_s` ; l'ensemble est borné par `delai_s`. S'arrête au premier des trois
@@ -589,6 +695,7 @@ def demarrer(
                 interprete=interprete,
                 delai_s=borne_s,
                 caracteres_sortie=caracteres_sortie,
+                environnement=environnement,
             )
         except OSError as exc:
             raise SondeNonLancee(
@@ -605,9 +712,7 @@ def demarrer(
             duree_s=round(time.monotonic() - debut, 2),
             deja=True,
         )
-    arbre = Arbre.lancer(
-        [*interprete, commande], cwd=cwd, env={**os.environ, **ENVIRONNEMENT_AJOUTE}
-    )
+    arbre = Arbre.lancer([*interprete, commande], cwd=cwd, env=_environnement(environnement))
     tampon = bytearray()
     assert arbre.process.stdout is not None
     lecteur = threading.Thread(
@@ -663,6 +768,11 @@ def _arreter(arbre: Arbre) -> None:
     membres = arbre.membres()
     arbre.arreter()
     arbre.survivants(membres, delai_s=_DELAI_VIDANGE_S)
+
+
+def _environnement(ajoute: Mapping[str, str] | None) -> dict[str, str]:
+    """L'environnement d'une commande jouée : celui du process, `ENVIRONNEMENT_AJOUTE`, `ajoute`."""
+    return {**os.environ, **ENVIRONNEMENT_AJOUTE, **(ajoute or {})}
 
 
 def _texte(tampon: bytearray) -> str:

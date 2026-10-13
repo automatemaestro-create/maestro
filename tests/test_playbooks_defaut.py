@@ -285,6 +285,23 @@ def test_le_cadre_outille_dit_que_ce_qui_se_refabrique_n_est_pas_le_livrable():
     assert cadre.count("processus persistant") == 1, "la règle est dite une fois"
 
 
+def test_le_cadre_outille_n_arrete_que_ce_que_l_agent_a_lance():
+    """#1487 : le cadre disait « arrêter ce que tu as lancé », mais pas comment. Un
+    serveur lancé en tâche de fond n'a pas de PID que l'agent connaisse sous Windows : il
+    le retrouvait par le port de son critère — partagé avec les tâches voisines — et
+    tuait ce qui l'écoutait (`netstat … | taskkill //PID … //F`, run `c05bf6263236`).
+
+    Le cadre dit le moyen : un port à lui pour essayer, arrêté par ce que son lancement
+    lui a rendu ou par ce port-là, jamais ce qui écoute un port partagé. Dit une fois."""
+    cadre = _normalise(pdc.cadre_outille())
+
+    assert "Ce que tu as lancé, et rien d'autre" in cadre
+    assert "D'autres tâches tournent sur le même poste que toi" in cadre
+    assert "donne-lui un port libre que tu choisis plutôt que celui du critère" in cadre
+    assert "jamais en tuant ce qui écoute un port que d'autres partagent" in cadre
+    assert cadre.count("même poste") == 1, "la règle est dite une fois"
+
+
 def test_le_cadre_outille_envoie_le_jetable_dans_un_dossier_que_l_agent_cree():
     """#1348 : le cadre envoyait ce qui n'est pas le livrable « dans le répertoire
     temporaire du système », et l'agent l'y écrivait sous un nom fixe

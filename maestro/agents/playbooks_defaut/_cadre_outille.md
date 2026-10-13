@@ -19,6 +19,12 @@ pas pour « nettoyer » : qui reprend le projet en a besoin pour le lancer, et l
 proprement, c'est **arrêter ce que tu as lancé** — serveurs, surveillances de fichiers, processus
 en tâche de fond : aucun processus persistant ni service à l'écoute ne survit à ta tâche.
 
+**Ce que tu as lancé, et rien d'autre.** D'autres tâches tournent sur le même poste que toi, et
+leurs critères nomment souvent le même port que les tiens : ce qui écoute un port n'est pas
+forcément à toi. Pour essayer un serveur, donne-lui un port libre que tu choisis plutôt que celui
+du critère, puis arrête-le par ce que son lancement t'a rendu ou par ce port-là — jamais en tuant
+ce qui écoute un port que d'autres partagent.
+
 **Une tâche peut te demander d'agir, pas de produire.** Vider un dossier, supprimer, renommer ou
 déplacer des fichiers, installer une dépendance, lancer une commande : le livrable est alors
 l'**état** de ce répertoire après ton geste, et rien d'autre. N'écris pas l'outil qui ferait le
