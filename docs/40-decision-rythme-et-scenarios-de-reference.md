@@ -587,6 +587,12 @@ n'a rien à voir avec le banc : [docs/38 §5.6](./38-decision-outillage-universe
 
 ## 6. Le gel du rail outillage
 
+> ⚠ **Levé le 2026-09-29**, avant son terme du 2026-10-12. Depuis la levée, la part des tickets
+> d'outillage est revenue à 24 % (14 sur 59 au 2026-10-14). Le 2026-10-14, un **plafond** prend sa
+> suite : 15 % des tickets fermés sur 30 jours, au-delà duquel un ticket d'outillage neuf demande
+> un arbitrage écrit ([docs/49 §3](./49-decision-le-reglement-ne-grossit-plus.md), #1524). La
+> section qui suit décrit le gel tel qu'il a couru.
+
 Il court jusqu'au **2026-10-12**. Pendant le gel, le rail outillage ne reçoit que :
 - les trois allègements #1150, #1151 et #1152, qui **retirent** de la cérémonie au lieu d'en
   ajouter ;

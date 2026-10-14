@@ -449,6 +449,11 @@ pas sa déclaration se corrige **dans l'en-tête** de l'appelante (docs/10 §7.1
 allowlist. Et un `CLAUDE.md` qui dépasse est une décision : on relève le budget en connaissant le
 coût, ou on sort la démonstration vers `docs/`.
 
+> ⚠ **Renversé le 2026-10-14** ([docs/49 §2.1](./49-decision-le-reglement-ne-grossit-plus.md),
+> #1526) : le budget de `CLAUDE.md` devient un **cliquet**. Il ne se relève plus, et une règle qui
+> entre en fait sortir une, ou sort sa démonstration vers `docs/`. Ce paragraphe décrit le présent
+> jusqu'à ce que #1523 le réécrive avec la garde.
+
 **L'échantillon fautif est le vrai.** Chaque motif est éprouvé, avant le balayage, sur les phrases
 **exactes** que #961 et #962 ont retirées (`d742670^`, `85f42e5^`). Pour les chaînages,
 l'échantillon est celui de #964 : `/mr-review` ne contient pas `/ticket-finish`. Un échantillon

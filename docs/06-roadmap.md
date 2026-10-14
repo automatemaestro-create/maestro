@@ -71,6 +71,11 @@ gantt
 > - **la Phase 9 vient juste derrière, ancrée** : l'isolation par défaut et un retex de personnes
 >   extérieures y entrent ;
 > - **les quatre jalons de fonctionnalités reculent** derrière elle.
+>
+> Le même jour, le mode de travail du dépôt est rejugé : **le règlement ne grossit plus**
+> ([docs/49](./49-decision-le-reglement-ne-grossit-plus.md)). Le budget de `CLAUDE.md` devient un
+> cliquet, la part de l'outillage est plafonnée à 15 %, et la chaîne de développement du dépôt sert
+> de second étalon au go/no-go. Aucun jalon ne bouge.
 
 ---
 
@@ -1346,7 +1351,8 @@ Sont écartés ou différés :
 - **le découpage de `lib.sh` et `run.sh`** est écarté : les sessions les appellent, elles ne les
   lisent pas ;
 - **le découpage de `app.py`** est différé : lu 81 fois, mais 1,6 % du poids, et déjà par plages.
-  Il se rejuge avec les chiffres de #1465.
+  Il se rejuge avec les chiffres de #1465. Depuis le 2026-10-14, #1525 porte ce rejugement, en
+  `basse` (section « Le règlement ne grossit plus »).
 
 **Place dans la file**, sur le rail outillage. Tout va au jalon **« Outillage de la forge »**,
 échéance inchangée, et le rang se donne par `prio::` :
@@ -1356,6 +1362,9 @@ Sont écartés ou différés :
 | en tête du rail, avec les autres `haute` du jalon (#1413, #1415…) | #1460 et ses lots, #1465 | haute |
 | ensuite | #1466, #1467, #1468 | moyenne |
 | en dernier | #1469 | basse |
+
+> ⚠ **#1466 passe en `haute` le 2026-10-14** (section « Le règlement ne grossit plus ») : le
+> contexte relu est le premier poste de coût, et ce ticket est le moins cher à livrer.
 
 - **Pas de jalon neuf**, sur le précédent de #1239 : six tickets du flux d'un ticket, tous dans ce
   jalon, en `prio::haute`. Un jalon outillage neuf placé devant deviendrait le jalon courant du rail
@@ -1480,6 +1489,81 @@ mécanisme qui le dit est #1517.
 > ⚠ **Les critères de sortie des deux jalons sont dans leur description**, section
 > `## Critères de sortie` : C1 à C5 pour le go/no-go, C9 réécrit avec C10 et C11 pour la Phase 9.
 > C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+---
+
+## « Le règlement ne grossit plus » — le mode de travail rejugé (2026-10-14)
+
+La personne a demandé si le mode de travail du dépôt (commandes, scripts, skills, règles) est adapté
+à l'objectif de Maestro, et le plus efficace. Instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013), la réponse a été : le socle tient, mais le règlement grossit encore après avoir été déclaré
+trop lourd. Le plan a été **présenté avant toute écriture** (#1415), et la personne l'a validé tel
+que recommandé. Il est consigné par #1526, et la décision est
+[docs/49](./49-decision-le-reglement-ne-grossit-plus.md).
+
+Il n'ouvre **aucun jalon** et n'en déplace aucun.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| *Maestro fait mieux qu'un agent seul* (jalon existant, rail produit) | La chaîne de développement du dépôt devient un second étalon : comparée point par point, puis sur un même ticket réel | 2028-01-31 | note sur **#1508** ; **#1522**, lot parallèle de #1510 |
+| *Outillage de la forge* (jalon existant, rail outillage) | Le budget de `CLAUDE.md` devient un cliquet, et la part de l'outillage se dit et se plafonne | 2027-09-15 | **#1523** ; **#1524** (né assigné, après #1517) |
+| *Outillage de la forge* (même ajout) | Le contexte d'une session : #1466 relevé, le rejugement de `app.py` porté par un ticket | 2027-09-15 | #1466 (`haute`), #1525 (`basse`) |
+
+**Le constat, mesuré le 2026-10-14** :
+- **`CLAUDE.md` grossit encore.** 51 Ko le 2026-09-20, après la coupe de #965 ; 59 Ko aujourd'hui.
+  Au compteur du dépôt, il est passé de 15 830 à 20 169 tokens, sous un budget de 25 000 qui n'a
+  jamais rougi. Il cite 182 tickets.
+- **`docs/10` aussi** : 620 Ko le 2026-09-21, 664 Ko aujourd'hui.
+- **La part de l'outillage est revenue** : 23 % des tickets fermés en septembre, 24 % (14 sur 59)
+  depuis la levée du gel du 2026-09-29.
+- **L'outillage pèse presque la moitié du produit en lignes** : ~40 000 lignes de scripts, dont
+  35 000 de bash, et ~58 000 lignes de tests d'outillage, contre ~240 000 lignes de produit.
+- **La relecture visuelle au ticket trouve** : environ 17 ✗ sur 11 des 22 tickets fermés depuis le
+  2026-09-26 avec une note de relecture, dont un défaut fonctionnel (#1294).
+
+**Le contenu :**
+- **#1523** : le budget de `CLAUDE.md` devient un cliquet. Il vaut le coût du jour, une garde fait
+  rougir toute hausse, et une règle qui entre en fait sortir une. C'est le renversement de
+  docs/25 §9.4 (#965).
+- **#1524** : `/etat-des-lieux` dit la part des tickets d'outillage fermés sur 30 jours. Au-delà de
+  15 %, `/ticket-create` demande un arbitrage écrit pour un ticket d'outillage neuf, sur le patron de
+  #1517. Né assigné : il écrit sous `.claude/commands/`.
+- **#1508**, mis à jour : l'analyse de l'écart confronte aussi la chaîne de Maestro à celle du dépôt
+  (ce que l'agent reçoit, granularité, vérification, plan durable, reprise).
+- **#1522** (`lot::parallele`) : Maestro traite un vrai ticket de son propre dépôt depuis un clone à
+  part, `/ticket-start` traite le même, et les deux livrables se comparent sur la grille de #1512.
+  C'est la première fois que Maestro sert à construire Maestro. Le risque est annoncé tant que
+  l'isolation par défaut (#1515) n'est pas livrée.
+- **#1466** : `moyenne` → `haute`.
+- **#1525** : le découpage de `app.py`, **différé** le 2026-10-09 (section « Le coût d'un ticket »),
+  le reste. Ce ticket porte son rejugement et ne se démarre que si #1465 montre que `app.py` pèse.
+
+**Les abandons**, décidés par la personne, chacun avec sa raison consignée sur le ticket :
+- **#1129 et ses lots #1130 à #1133**, « le goût a un répondant » : ce chantier ajoute de la
+  cérémonie, et docs/40 §6 voulait qu'on le rejuge à la levée du gel ;
+- **#985**, la régression visuelle au pixel : une vérification de plus, quand la relecture trouve
+  déjà ;
+- **#1218** et **#843** : outillage de relecture et de présentation en `basse` ;
+- **#1378**, en doublon de #1526 : le gel levé est dit ici et dans docs/40 §6.
+
+**Sont écartés, sur mesure** :
+- **vérifier par lot plutôt qu'au ticket** : le banc l'est déjà (#1462, #1464), et la relecture au
+  ticket trouve ;
+- **réécrire le bash** : ce serait encore de l'outillage. On ne l'étend plus ;
+- **un troisième bras dans le banc comparatif #1512** : 60 à 250 $ par passage, quand #1522 donne
+  la comparaison pour le prix d'un run.
+
+**Place dans la file** :
+- **Sur le rail produit**, les lots de #1510 se rangent ainsi : #1508 → #1512 ∥ → #1522 ∥ → #1513.
+  #1522 ne dépend d'aucun autre : il ne lit que le produit et la forge.
+- **Sur le rail outillage**, tout va au jalon « Outillage de la forge », dont l'échéance ne bouge
+  pas. #1523 et #1466 rejoignent les `haute` du jalon. #1524 vient après #1517, dont il partage
+  les fichiers et le patron. #1525 est en `basse`, sous condition.
+- **Pas de jalon neuf** : chaque ticket sert un jalon existant, et la limite de quatre jalons produit
+  en chantier ([docs/48](./48-decision-produit-pro-exploitable.md)) n'a pas de place à donner.
+
+> ⚠ **Les critères de chaque ticket sont dans sa description**, et c'est elle qui fait foi à la
+> clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1526.
 
 ---
 
