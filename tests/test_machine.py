@@ -19,6 +19,7 @@ import json
 import platform
 import re
 import shutil
+import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -263,6 +264,37 @@ def test_sans_programme_la_section_n_en_invente_aucun() -> None:
     assert "Programmes" not in section
     assert "`/tmp`" in section
     assert "que bash appelle" not in section
+
+
+def test_la_section_dit_que_maestro_tourne_sur_ce_poste() -> None:
+    """Le second critère de #1502 : à défaut de rendre ses processus intouchables,
+    Maestro dit à l'agent qu'ils tournent ici, sous quel nom, et comment arrêter
+    ce qu'il a lancé sans les emporter — par le numéro, jamais par le nom."""
+    section = Machine(
+        systeme="Windows 11 (10.0.26300, AMD64)",
+        temporaire=r"C:\Users\x\AppData\Local\Temp",
+        processus_maestro="python.exe",
+        windows=True,
+    ).consigne()
+
+    assert "**Maestro tourne sur ce poste**" in section
+    assert "`python.exe`" in section
+    assert "`taskkill //PID <n>`" in section and "`taskkill //IM`" in section
+    assert "revient à une personne" in section
+
+    posix = Machine(
+        systeme="Linux 6.8 (x86_64)", temporaire="/tmp", processus_maestro="python3"
+    ).consigne()
+    assert "`python3`" in posix and "`kill <n>`" in posix and "`pkill`" in posix
+    assert "taskkill" not in posix
+
+
+def test_le_constat_nomme_l_interprete_de_maestro() -> None:
+    """Le nom vient du processus qui constate — celui de Maestro —, jamais d'une liste."""
+    machine = constater((), interprete=BASH, joueur=_Joueur())
+
+    assert machine.processus_maestro == Path(sys.executable).name
+    assert Machine(systeme="Linux", temporaire="/tmp").consigne().count("Maestro tourne") == 0
 
 
 # --------------------------------------------------------------------------- #

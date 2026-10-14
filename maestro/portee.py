@@ -25,7 +25,7 @@ juge un appel d'outil. Ce module est cette portée.
 ## Ce qu'il décide, et dans quel sens il se trompe
 
 Une seule question, sur le texte d'une commande : *peut-elle toucher autre chose
-que ce que l'agent a produit dans la racine qu'on lui a donnée ?* Deux familles
+que ce que l'agent a produit dans la racine qu'on lui a donnée ?* Trois familles
 remontent à la personne, et **elles seules** :
 
 1. **ce qui sort du projet** — un chemin hors de la racine, et les actes qui
@@ -33,7 +33,23 @@ remontent à la personne, et **elles seules** :
    paquets du système, installation globale d'un langage, machine distante) ;
 2. **ce qui détruit ce que l'agent n'a pas produit** — un verbe destructeur dont
    une cible était déjà là quand la tâche a commencé (`presents`), ou dont la
-   cible ne se résout pas (un `rm -rf *` ne se juge pas).
+   cible ne se résout pas (un `rm -rf *` ne se juge pas) ;
+3. **ce qui arrête des processus sans les désigner** (#1502) — par leur nom
+   d'image ou par un motif (`taskkill //IM`, `pkill`, `killall`,
+   `Stop-Process -Name`, ce qu'un pipeline passe à `Stop-Process`), tous à la
+   fois (`kill -1`), ou par un numéro tiré d'une recherche de processus
+   (`kill $(pgrep python)`, `… | xargs kill`).
+
+La troisième n'a aucun chemin, et c'est ce qui l'a laissée passer : le
+2026-10-14, pendant le bilan d'un jalon (run `fea601a5c629`), un agent a voulu
+arrêter le `python -` qu'il avait laissé bloqué et a joué
+`taskkill //IM python.exe //F`. Tous les `python.exe` du poste sont morts d'un
+coup — l'API de Maestro, l'hôte du run, et ce que la personne faisait tourner —,
+et le run est resté figé 32 minutes. Un processus désigné par son numéro, lui,
+passe, d'où qu'en vienne le numéro : un PID écrit (`taskkill //PID 41084`), celui
+du dernier processus lancé (`$!`), un job (`%1`), ou celui qui écoute sur le port
+de l'agent (`netstat … | awk …`) — c'est ainsi que les agents arrêtent leur
+serveur, et le relevé des sessions du poste en compte des dizaines.
 
 ⚠ **L'asymétrie est l'inverse de celle de `maestro.lecture`, et c'est délibéré.**
 Là-bas, ce qui n'était pas reconnu repartait vers l'arbitrage : le défaut sûr
@@ -50,7 +66,7 @@ Le prix de cette asymétrie est nommé : ce module ne prétend pas qu'une comman
 ne sortira pas du projet, il dit qu'elle **ne le dit pas**. Un shell peut écrire
 n'importe où (docs/24 §2.5), c'était déjà vrai de la copie et du worktree, et ce
 que cela ferme est le **mode isolé** (`maestro.sandbox.container`), pas une
-analyse de texte plus fine. Le réseau n'est ni l'une ni l'autre des deux
+analyse de texte plus fine. Le réseau n'est aucune des trois
 familles — un `curl` rapporte dans le projet plutôt qu'il n'en sort —, et le
 prétendre ici ferait croire à une garde qui n'existe pas.
 
@@ -163,6 +179,7 @@ from maestro.shell import (
     Simple,
     affectation,
     lis,
+    simples,
 )
 
 #: Le nom de la seule portée que le dépôt sache évaluer : *l'acte reste dans le
@@ -246,6 +263,40 @@ OPTION_UTILISATEUR_PIP = "--user"
 VERBES_DESTRUCTEURS: frozenset[str] = frozenset(
     {"rm", "rmdir", "unlink", "mv", "shred", "truncate", "dd", "del", "erase"}
 )
+
+#: Les verbes qui **arrêtent des processus** (#1502) — sous leur nom nu, en
+#: minuscules (`_nom_du_verbe`) : `taskkill.exe` est `taskkill`. `stop-process`
+#: et `spps` sont ceux de PowerShell, où `kill` est un alias de `Stop-Process`.
+VERBES_D_ARRET: frozenset[str] = frozenset(
+    {"kill", "taskkill", "pkill", "killall", "stop-process", "spps"}
+)
+
+#: Ceux qui ne désignent **jamais** un processus par son numéro, et comment ils
+#: désignent ce qu'ils arrêtent.
+ARRETS_SANS_NUMERO: dict[str, str] = {"pkill": "par un motif", "killall": "par leur nom"}
+
+#: Les options de `taskkill` qui désignent par autre chose qu'un numéro, sans
+#: leur préfixe (`/IM`, `//IM` sous Git Bash, `-im`) ni leur casse.
+OPTIONS_TASKKILL_SANS_NUMERO: dict[str, str] = {
+    "im": "par leur nom d'image",
+    "fi": "par un filtre",
+}
+
+#: Les cibles de `kill` qui en désignent plusieurs à la fois : `-1`, tous les
+#: processus qu'on peut atteindre ; `0`, le groupe entier du shell.
+CIBLES_DE_KILL_COLLECTIVES: frozenset[str] = frozenset({"-1", "0"})
+
+#: Les verbes qui **cherchent** des processus — par leur nom, un motif, une
+#: liste. Un numéro qu'ils rendent n'est pas désigné : il est trouvé, et
+#: `kill $(pgrep python)` est un `pkill python` écrit par un détour. Un numéro
+#: tiré d'une liste de **ports** (`netstat`, `lsof -i`) n'en est pas : il
+#: désigne le processus qui écoute là, et c'est ainsi qu'un agent libère le sien.
+RECHERCHES_DE_PROCESSUS: frozenset[str] = frozenset(
+    {"pgrep", "pidof", "ps", "tasklist", "wmic", "get-process", "gps"}
+)
+
+#: Comment un arrêt désigne ses cibles quand leurs numéros sortent d'une recherche.
+_PAR_UNE_RECHERCHE = "par un numéro tiré d'une recherche de processus"
 
 #: Les options qui font **agir** un `find` au lieu de lister (les mêmes que
 #: `maestro.lecture` lui refuse). Sa cible n'est alors pas un argument mais le
@@ -439,9 +490,14 @@ class _Etabli:
 
 @dataclass(frozen=True)
 class _Inconnu:
-    """Une valeur que le texte ne donne pas — sa source, pour le dire."""
+    """Une valeur que le texte ne donne pas — sa source, pour le dire.
+
+    `processus` : elle sort d'une recherche de processus (`$(pgrep python)`), et
+    le numéro qu'elle donnera n'est pas désigné mais trouvé (#1502).
+    """
 
     source: str
+    processus: bool = False
 
 
 @dataclass(frozen=True)
@@ -688,6 +744,7 @@ class PorteeProjet:
             verbe = premier.rendu()  # un programme que l'agent a posé dans son établi
         nom = _nom_du_verbe(verbe)
         motif = self._sort_par_le_verbe(valeur, verbe, nom, arguments, ctx)
+        motif = motif or _arret(verbe, nom, arguments, flux=flux)
         if motif:
             return motif
         if nom in ENVELOPPES:
@@ -1061,8 +1118,8 @@ class PorteeProjet:
 
     def _substitution(self, partie: Partie, ctx: _Contexte) -> _Valeur:
         """Ce que rend une substitution, quand son texte le dit : `mktemp`, `pwd`, `cygpath`…"""
-        inconnue: _Valeur = (_Inconnu(partie.source),)
         (script,) = partie.scripts
+        inconnue: _Valeur = (_Inconnu(partie.source, _cherche_des_processus(script)),)
         if len(script.commandes) != 1 or not isinstance(script.commandes[0], Simple):
             return inconnue
         simple = script.commandes[0]
@@ -1337,7 +1394,11 @@ def _coquille_etrangere(
                 "programme encodé, illisible dans son texte. Une personne tranche."
             )
         if rendu.lower() in options:
-            for segment in re.split(r"&&|\|\||[;|&\n]", " ".join(rendus[index + 1 :])):
+            programme = " ".join(rendus[index + 1 :])
+            motif_arret = _arret_etranger(nom, programme)
+            if motif_arret:
+                return motif_arret
+            for segment in re.split(r"&&|\|\||[;|&\n]", programme):
                 jetons = [j.strip("'\"()") for j in segment.split()]
                 while jetons and jetons[0] in ("&", ".", ""):
                     jetons.pop(0)
@@ -1355,6 +1416,139 @@ def _coquille_etrangere(
                     return motif
             return ""
     return ""
+
+
+def _arret(verbe: str, nom: str, arguments: list[tuple[Mot, _Valeur]], *, flux: bool) -> str:
+    """Le motif d'un arrêt de processus qui ne désigne pas ses cibles — `""` sinon (#1502).
+
+    Trois façons de ne pas désigner : la forme du verbe (`pkill`, `taskkill //IM`,
+    `kill -1`), des numéros lus sur son entrée (`xargs kill`), ou un numéro qu'une
+    recherche de processus a trouvé (`kill $(pgrep python)`, et la variable qui
+    l'a gardé). Un numéro dont le texte ne dit rien d'autre — `$!`, `$P` tiré de
+    `netstat` — désigne le processus que l'agent vise : il passe.
+    """
+    if nom not in VERBES_D_ARRET:
+        return ""
+    rendus = [_texte(v) or mot.rendu() for mot, v in arguments]
+    comment = _arret_sans_numero(nom, rendus, powershell=False)
+    if not comment and flux:
+        comment = "par des numéros lus sur son entrée (`xargs`)"
+    if not comment and any(
+        isinstance(morceau, _Inconnu) and morceau.processus
+        for _, valeur in arguments
+        for morceau in valeur
+    ):
+        comment = _PAR_UNE_RECHERCHE
+    return _motif_arret(ntpath.basename(verbe), comment) if comment else ""
+
+
+def _arret_sans_numero(nom: str, arguments: Sequence[str], *, powershell: bool) -> str:
+    """Comment `nom` désigne ce qu'il arrête, quand ce n'est pas par un numéro — `""` sinon.
+
+    `powershell` : le verbe est lu dans un programme PowerShell, où `kill` est
+    `Stop-Process`.
+    """
+    if nom in ARRETS_SANS_NUMERO:
+        return ARRETS_SANS_NUMERO[nom]
+    if nom == "taskkill":
+        for argument in arguments:
+            if argument.startswith(("/", "-")):
+                comment = OPTIONS_TASKKILL_SANS_NUMERO.get(argument.lstrip("/-").lower())
+                if comment:
+                    return comment
+        return ""
+    if nom in ("stop-process", "spps") or (powershell and nom == "kill"):
+        return _stop_process(arguments)
+    if nom == "kill" and any(c in CIBLES_DE_KILL_COLLECTIVES for c in _cibles_de_kill(arguments)):
+        return "tous à la fois"
+    return ""
+
+
+def _stop_process(arguments: Sequence[str]) -> str:
+    """Comment `Stop-Process` désigne ce qu'il arrête, quand ce n'est pas par un numéro.
+
+    Par son nom (`-Name`, `-ProcessName`, et leurs abréviations), ou par ce qu'un
+    pipeline lui passe (`-InputObject`, ou rien du tout) : `Get-Process python |
+    Stop-Process` arrête tous les `python`. Un numéro passe — par `-Id`, ou en
+    première position, écrit (`1234`) ou tenu par une variable (`$p.Id`).
+    """
+    options = [a.lower() for a in arguments if len(a) > 1 and a.startswith("-")]
+    if any("-name".startswith(option) or option == "-processname" for option in options):
+        return "par leur nom"
+    # `-in` seul est ambigu pour PowerShell (`-InformationAction`) : il n'agit pas.
+    if not any(len(option) > 3 and "-inputobject".startswith(option) for option in options):
+        if "-id" in options:
+            return ""
+        if arguments and not arguments[0].startswith("-"):
+            if arguments[0].isdigit() or arguments[0].startswith("$"):
+                return ""
+    return "par ce qu'un pipeline lui passe, sans désigner aucun numéro"
+
+
+def _cibles_de_kill(arguments: Sequence[str]) -> list[str]:
+    """Les cibles d'un `kill` de bash : ce qui suit le signal, et `--` s'il y est.
+
+    Le premier argument qui commence par un tiret est le signal (`-9`, `-KILL`,
+    `-s KILL`, `-n 9`) ; après lui, `-1` est une cible — `kill -9 -1` arrête tout
+    ce qu'on peut atteindre. `kill -l` liste les signaux et n'arrête rien.
+    """
+    index = 0
+    if arguments and arguments[0] in ("-l", "-L"):
+        return []
+    if arguments and arguments[0] in ("-s", "-n"):
+        index = 2
+    elif arguments and arguments[0].startswith("-") and arguments[0] != "--":
+        index = 1
+    if index < len(arguments) and arguments[index] == "--":
+        index += 1
+    return list(arguments[index:])
+
+
+def _arret_etranger(nom: str, programme: str) -> str:
+    """Un arrêt de processus sans désignation dans le programme donné à PowerShell ou à `cmd`.
+
+    Lu comme le reste de ce programme, grossièrement : chaque segment est cherché
+    pour un verbe d'arrêt **où qu'il soit** — dans `% { Stop-Process … }` ou après
+    le `do` d'un `for` de `cmd`, il n'est pas en tête. Et un programme qui cherche
+    des processus (`Get-Process python`, `tasklist`) et en arrête n'a pas désigné
+    ce qu'il arrête, même par `-Id` : `Get-Process python | % { Stop-Process -Id
+    $_.Id }` est un `Stop-Process -Name python`. Le défaut de ce grossier est de
+    demander, et un arrêt par numéro sans recherche passe.
+    """
+    arrete, cherche = "", False
+    for segment in re.split(r"&&|\|\||[;|&\n]", programme):
+        jetons = [jeton.strip("'\"(){}") for jeton in segment.split()]
+        noms = [_nom_du_verbe(jeton) for jeton in jetons]
+        cherche = cherche or any(n in RECHERCHES_DE_PROCESSUS for n in noms)
+        index = next((i for i, n in enumerate(noms) if n in VERBES_D_ARRET), None)
+        if index is None:
+            continue
+        arrete = arrete or jetons[index]
+        comment = _arret_sans_numero(noms[index], jetons[index + 1 :], powershell=nom != "cmd")
+        if comment:
+            return _motif_arret(jetons[index], comment)
+    if arrete and cherche:
+        return _motif_arret(arrete, _PAR_UNE_RECHERCHE)
+    return ""
+
+
+def _cherche_des_processus(script: Script) -> bool:
+    """`script` — celui d'une substitution — cherche-t-il des processus (`pgrep`, `tasklist`) ?"""
+    for simple in simples(script):
+        if simple.mots:
+            verbe = simple.mots[0].litteral()
+            if verbe is not None and _nom_du_verbe(verbe) in RECHERCHES_DE_PROCESSUS:
+                return True
+    return False
+
+
+def _motif_arret(ecrit: str, comment: str) -> str:
+    return (
+        f"commande hors de la portée « {PORTEE_PROJET} » : `{ecrit}` arrête des processus "
+        f"{comment}, et non par le numéro de celui que l'agent a lancé. Sur ce poste, cela "
+        "peut atteindre Maestro lui-même et les programmes de la personne : une personne "
+        "tranche."
+    )
 
 
 def _deballe(nom: str, arguments: list[tuple[Mot, _Valeur]]) -> list[tuple[Mot, _Valeur]] | None:

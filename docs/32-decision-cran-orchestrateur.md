@@ -542,6 +542,21 @@ distribuée. Cette porte rouvre la *portée*, pas le *décideur*.
 > la racine** n'est pas un établi. Il était là avant la tâche, et la portée laissait effacer, avec
 > lui, le projet entier. Ni le projet voisin, ni l'espace d'une autre tâche (`maestro-<agent>-…`)
 > ne s'ouvrent : leur nom n'est pas celui de `mktemp`.
+>
+> ⚠ **Ce que #1502 a corrigé le 2026-10-14, sur le run `fea601a5c629`** (bilan du jalon « Le run
+> livre un vrai projet », critère C2). Un agent qui voulait arrêter le `python -` qu'il avait laissé
+> bloqué a joué `taskkill //IM python.exe //F` : tous les `python.exe` du poste sont morts, l'API de
+> Maestro et l'hôte du run compris, et le run est resté figé 32 minutes. La portée jugeait des
+> chemins, et cet acte n'en porte aucun. Elle a désormais une **troisième famille** : ce qui arrête
+> des processus **sans les désigner par leur numéro** — par nom d'image ou par filtre (`taskkill
+> //IM`, `//FI`), par motif (`pkill`, `killall`, `Stop-Process -Name`, ce qu'un pipeline passe à
+> `Stop-Process`), tous à la fois (`kill -1`, `kill 0`), ou par un numéro qu'une recherche de
+> processus a trouvé (`kill $(pgrep python)`, `… | xargs kill`). Un numéro passe, d'où qu'il vienne
+> : écrit, `$!`, un job, ou celui qui écoute sur le port de l'agent — le relevé des sessions d'agents
+> du poste en compte des dizaines, et aucune ne doit attendre personne. Les processus de Maestro ne
+> deviennent pas intouchables pour autant (ils tournent sous le compte de l'agent, et le lanceur les
+> arrête lui-même par `taskkill`) : à défaut, l'agent apprend sous « La machine » qu'ils tournent sur
+> ce poste, sous quel nom, et comment arrêter le sien sans eux.
 
 **Porte 3 — un jugement contextuel dont on accepte le régime.** Un acte dont la légitimité dépend du
 **plan**, que la politique ne connaît pas (« ce `rm` est-il dans le périmètre de la tâche T3 ? »).

@@ -7,7 +7,7 @@ un projet neuf, une équipe proposée par Maestro et validée telle quelle, et
 ce ne sont pas des exemples inventés, ce sont les appels qui ont fait attendre
 une personne pour qu'un agent lance le code qu'il venait d'écrire.
 
-Huit parties :
+Neuf parties :
 
 ① les quatorze gestes observés, qui doivent tous passer ;
 ② ce qui **sort du projet** et remonte — chemin hors racine, installation
@@ -29,9 +29,13 @@ Huit parties :
 ⑧ **les formes ordinaires d'une commande d'agent** (#1348) : les 55 commandes
    que le passage `20260927-070605` a rendues à une personne, rejouées sur la
    racine de leur tâche. 44 restaient dans leur projet et y restent ; 11 en
-   sortaient vraiment et remontent toujours, chacune avec sa raison.
+   sortaient vraiment et remontent toujours, chacune avec sa raison ;
+⑨ **arrêter des processus sans les désigner** (#1502) : la commande qui a tué tous
+   les `python.exe` du poste, Maestro compris, revient à une personne, avec chaque
+   forme déclarée prouvée ; les arrêts que les agents du poste ont réellement joués
+   — un PID écrit, `$!`, celui qui écoute sur leur port — passent toujours.
 
-⑦ et ⑧ se jouent sur une racine **à la Windows** (`E:/…`, `C:/…`) quel que soit
+⑦, ⑧ et ⑨ se jouent sur une racine **à la Windows** (`E:/…`, `C:/…`) quel que soit
 l'OS du test : la portée rend le même verdict des deux côtés, et c'est ce qui
 permet au conteneur Linux du filet d'éprouver ce que seul un poste Windows
 produisait.
@@ -53,7 +57,12 @@ from maestro.agents.permissions import (
     politique_validee,
 )
 from maestro.decideur import Decideur
-from maestro.portee import PORTEE_PROJET, PorteeProjet, hors_de_portee
+from maestro.portee import (
+    PORTEE_PROJET,
+    RECHERCHES_DE_PROCESSUS,
+    PorteeProjet,
+    hors_de_portee,
+)
 from maestro.projets.modele import Perimetre, Projet
 from maestro.providers import claude as claude_mod
 from maestro.sandbox.en_place import portee_de, presents_de
@@ -1165,3 +1174,132 @@ def test_l_acte_de_s8_remonte_toujours() -> None:
     commande = f'echo "2026-09-27 depensio : total()" >> "{registre}"'
 
     assert "sort du" in PorteeProjet(racine).commande_hors_portee(commande)
+
+
+# --- ⑨ Arrêter des processus sans les désigner (#1502) ----------------------
+
+#: La racine de la tâche `page-detail` du run `fea601a5c629` (bilan du
+#: 2026-10-14, critère C2) : un worktree dans le temporaire de Maestro.
+RACINE_C2 = Path(
+    "C:/Users/Sam25/AppData/Local/Temp/maestro/maestro-dev-nextjs-pid11564-1etlfsxa/page-detail"
+)
+
+#: La commande que l'agent `dev-nextjs` a jouée à 07:05:02 UTC, telle qu'elle a
+#: été jouée (« Stop stuck python stub ») : tous les `python.exe` du poste sont
+#: morts d'un coup, l'API de Maestro et l'hôte du run compris, et le run est resté
+#: figé 32 minutes. La portée l'avait laissée passer : elle ne porte aucun chemin.
+INCIDENT_C2 = (
+    'taskkill //IM python.exe //F 2>&1 | head -2; grep -n "instant\\|notFound\\|await" '
+    '"src/app/recettes/[slug]/page.tsx"'
+)
+
+
+def test_tuer_python_par_son_nom_revient_a_une_personne() -> None:
+    """Le défaut du ticket, sur la commande jouée : elle arrête des processus que
+    l'agent ne désigne pas — dont Maestro —, et rien ne la rendait à une personne."""
+    motif = PorteeProjet(racine=RACINE_C2).commande_hors_portee(INCIDENT_C2)
+
+    assert "par leur nom" in motif
+    assert "taskkill" in motif
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        # Par nom d'image, sous toutes les orthographes d'option que Windows admet.
+        'taskkill //F //IM "python.exe"',
+        "taskkill /IM node.exe /F",
+        "taskkill -im python.exe -f",
+        "taskkill.exe //im python.exe",
+        # Par filtre.
+        'taskkill //F //FI "IMAGENAME eq python.exe"',
+        # Par motif.
+        'pkill -f "npm start"',
+        "pkill python",
+        "killall node",
+        "timeout 5 pkill -9 python",
+        # Tous à la fois.
+        "kill -9 -1",
+        "kill -- -1",
+        "kill 0",
+        # Un numéro tiré d'une recherche de processus : le nom, par un détour.
+        "kill $(pgrep python)",
+        "kill -9 `pidof node`",
+        "P=$(tasklist | grep python | awk '{print $2}'); taskkill //PID $P //F",
+        "for p in $(ps -W | grep python | awk '{print $1}'); do kill -f $p; done",
+        # Des cibles lues sur l'entrée.
+        "pgrep -f next | xargs kill",
+        "ps aux | grep python | awk '{print $2}' | xargs kill -9",
+        # Dans un autre langage.
+        'powershell -c "Stop-Process -Name python -Force"',
+        'powershell -NoProfile -Command "Get-Process python | Stop-Process -Force"',
+        'pwsh -c "spps -n node"',
+        'powershell -c "kill -Name node"',
+        "powershell -c \"Get-Process node | % { Stop-Process -Id $_.Id -Force }\"",
+        'cmd //c "taskkill /IM python.exe /F"',
+    ],
+)
+def test_arreter_des_processus_sans_les_designer_remonte(commande: str) -> None:
+    """Chaque forme est prouvée sur un échantillon fautif — une forme qu'on
+    déclarerait sans la prouver serait un garde-fou de façade."""
+    motif = PorteeProjet(racine=RACINE_C2).commande_hors_portee(commande)
+
+    assert "arrête des processus" in motif, commande
+
+
+#: Ce que les agents du poste ont joué pour arrêter **leur** serveur — relevé
+#: sur les 184 sessions d'agents de `~/.claude/projects` le 2026-10-14 : un PID
+#: écrit, celui du dernier processus lancé, ou celui qui écoute sur leur port.
+#: Aucun ne doit réveiller personne : c'est ce que le cadre de l'agent exige
+#: (aucun processus ne survit à la tâche), et une demande en plein run attend
+#: une personne qui n'est pas là (EF-08).
+ARRETS_DESIGNES = (
+    "taskkill //PID 41084 //T //F",
+    'kill 12194; sleep 2; netstat -ano | grep ":10687" | grep LISTEN',
+    "PORT=4321 node serveur.js > /dev/null 2>&1 & pid=$!; sleep 5; curl -s "
+    "http://localhost:4321/; kill $pid",
+    "kill %1 2>/dev/null",
+    'P=$(netstat -ano | grep ":10687 " | grep LISTEN | awk \'{print $5}\' | sort -u | head -1); '
+    '[ -n "$P" ] && taskkill //PID $P //T //F; sleep 1; netstat -ano | grep ":10687 " | '
+    'grep LISTEN || echo "port libéré"',
+    "for p in $(netstat -ano | grep ':4123 ' | grep LISTENING | awk '{print $5}' | sort -u); "
+    "do taskkill //PID $p //T //F; done",
+    'powershell -NoProfile -c "Get-NetTCPConnection -LocalPort 14689 -State Listen '
+    '-ErrorAction SilentlyContinue | % { Stop-Process -Id \\$_.OwningProcess -Force }"',
+    'powershell -c "Stop-Process -Id 1234 -Force"',
+    'powershell -c "Stop-Process 1234"',
+    "kill -l",
+)
+
+
+@pytest.mark.parametrize("commande", ARRETS_DESIGNES)
+def test_arreter_le_processus_qu_on_designe_passe(commande: str) -> None:
+    """Le témoin : reconnaître l'arrêt par nom ne rend pas à une personne
+    l'agent qui arrête ce qu'il a lancé."""
+    assert PorteeProjet(racine=RACINE_C2).commande_hors_portee(commande) == ""
+
+
+def test_au_hook_la_personne_est_consultee_et_rien_n_est_lance() -> None:
+    """Le critère, bout en bout : la politique d'un `dev` validé (`Bash: auto`
+    dans la portée « projet »), la commande de l'incident — l'appel est rendu à
+    une personne avec la raison de l'arrêt, et refusé faute de réponse."""
+    arbitrages: list[tuple[str, str]] = []
+    hook = _hook(
+        _politique_de_projet(), PorteeProjet(racine=RACINE_C2), arbitrages=arbitrages
+    )
+
+    sortie = _joue(hook, INCIDENT_C2)
+
+    assert sortie["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert arbitrages and "par leur nom" in arbitrages[0][1]
+    assert arbitrages[0][2] is Decideur.HUMAIN
+
+
+@pytest.mark.parametrize("verbe", sorted(RECHERCHES_DE_PROCESSUS))
+def test_chaque_recherche_de_processus_declaree_est_prouvee(verbe: str) -> None:
+    """Un numéro que la recherche trouve n'est pas désigné : chaque entrée de la
+    liste est prouvée, et le témoin qui lit un fichier de PID passe."""
+    portee = PorteeProjet(racine=RACINE_C2)
+
+    assert "recherche de processus" in portee.commande_hors_portee(f"kill $({verbe} x)"), verbe
+    assert portee.commande_hors_portee("kill $(cat .maestro/serveur.pid)") == ""

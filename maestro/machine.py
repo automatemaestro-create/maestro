@@ -19,7 +19,14 @@ Ce module rend ce que Maestro **constate**, une fois par run, et rien d'autre :
 - les **programmes que les commandes de l'outillage du projet appellent** — lus sur
   les commandes que le manifeste garde (`verifications`, docs/38 §4.1) par le lexique
   commun (`maestro.outillage.verification.programmes`), jamais sur un catalogue —,
-  présents ou absents, et leur **version**.
+  présents ou absents, et leur **version** ;
+- **Maestro lui-même** (#1502) — le nom d'image de l'interpréteur qui le fait tourner,
+  lu sur le processus qui constate : un agent a arrêté tous les `python.exe` du poste
+  pour arrêter le sien, et Maestro avec. Les rendre intouchables demanderait de
+  séparer leurs droits de ceux de l'agent, qui tourne sous le même compte — et le
+  lanceur les arrête lui-même par `taskkill` ; à défaut, l'agent sait qu'ils sont
+  là, et la portée (`maestro.portee`) rend à une personne l'arrêt qui ne désigne
+  pas ce qu'il arrête.
 
 ## Lire une version, c'est lancer le programme — et c'est voulu, ici seulement
 
@@ -134,6 +141,11 @@ class Machine:
 
     `shell` est le chemin du bash trouvé, `""` sans bash ; `version_shell` sa version,
     `None` inconnue. `programmes` suit l'ordre où l'outillage les appelle.
+
+    `processus_maestro` (#1502) est le nom d'image de l'interpréteur qui fait tourner
+    Maestro — celui du processus qui constate (`python.exe`) —, `""` s'il n'est pas
+    dit. Un agent qui l'ignore a tué tous les `python.exe` du poste pour arrêter le
+    sien, et Maestro avec.
     """
 
     systeme: str
@@ -142,6 +154,7 @@ class Machine:
     version_shell: str | None = None
     programmes: tuple[Programme, ...] = ()
     windows: bool = False
+    processus_maestro: str = ""
 
     def consigne(self, *, port_d_essai: int | None = None) -> str:
         """La section « La machine » du message de la tâche.
@@ -172,6 +185,8 @@ class Machine:
                 "- **Programmes que les commandes de l'outillage du projet appellent** :",
                 *(f"  {programme.ligne()}" for programme in self.programmes),
             ]
+        if self.processus_maestro:
+            lignes.append(self._maestro())
         if port_d_essai is not None:
             lignes.append(
                 f"- **Ton port d'essai** : `{port_d_essai}`. Maestro le réserve à ta tâche "
@@ -187,6 +202,28 @@ class Machine:
         nom = f"bash {self.version_shell}" if self.version_shell else "bash"
         provenance = " (Git Bash)" if self.windows else ""
         return f"{nom}{provenance}, `{self.shell}` — écris tes commandes pour lui"
+
+    def _maestro(self) -> str:
+        """La ligne qui dit que Maestro tourne ici, et comment ne pas l'arrêter (#1502).
+
+        Un fait et sa conséquence, pas une interdiction : un arrêt par nom ou par
+        motif reste possible, il revient seulement à une personne
+        (`maestro.portee`), et la ligne le dit pour que l'agent n'attende pas une
+        réponse qu'il pouvait s'éviter.
+        """
+        par_numero, par_nom = (
+            ("`taskkill //PID <n>`", "`taskkill //IM`")
+            if self.windows
+            else ("`kill <n>`", "`pkill`")
+        )
+        return (
+            f"- **Maestro tourne sur ce poste** : son API et l'hôte de ce run sont des "
+            f"processus `{self.processus_maestro}`, comme les programmes de la personne "
+            "écrits dans ce langage. Pour arrêter ce que tu as lancé, désigne-le par son "
+            f"numéro ({par_numero}, `$!`, celui qui écoute sur ton port) ; un arrêt par nom "
+            f"ou par motif ({par_nom}, `Stop-Process -Name`) les emporterait tous, et "
+            "revient à une personne."
+        )
 
     def _temporaire(self) -> str:
         if self.windows:
@@ -240,6 +277,7 @@ def constater(
         systeme=systeme(),
         temporaire=str(repertoire_temporaire()),
         windows=sys.platform == "win32",
+        processus_maestro=Path(sys.executable).name,
     )
     non_sondes = tuple(Programme(nom, NON_SONDE) for nom in uniques)
     if not interprete:

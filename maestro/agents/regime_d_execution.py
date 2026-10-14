@@ -52,8 +52,8 @@ décideur, la portée) : un régime qu'on corrige se corrige pour ses deux lecte
 dans le même fichier, et un décideur ou une portée qui n'aurait qu'une des deux
 formes fait rougir `tests/test_regime_d_execution.py`. Elles disent la portée
 **précisément** : ce qui reste dans le projet comprend l'installation de ses
-dépendances et le réseau — `maestro.portee` : « le réseau n'est ni l'une ni l'autre
-des deux familles ». C'est l'imprécision de « ce qui en sort » qui a laissé le
+dépendances et le réseau — `maestro.portee` : « le réseau n'est aucune des trois
+familles ». C'est l'imprécision de « ce qui en sort » qui a laissé le
 modèle y ranger un service extérieur.
 
 ## Ce qu'il ne décide pas
@@ -144,7 +144,7 @@ SANS_REPONSE_A_TEMPS = (
 #: Ce que la **portée** ajoute au cran `auto`, dit à l'agent (#1226). C'est la
 #: phrase que p5 n'avait pas : elle **énumère** ce qui reste dans le projet, réseau
 #: et dépendances compris, et dit en toutes lettres qu'aucun de ces actes ne se fait
-#: arbitrer — puis les deux familles de `maestro.portee`, et elles seules.
+#: arbitrer — puis les trois familles de `maestro.portee`, et elles seules.
 #:
 #: ⚠ L'énumération ne range plus le **ménage** dans le travail ordinaire (#1401). Elle
 #: disait « nettoyer ce que tes exécutions ont produit » : une invitation à effacer
@@ -159,10 +159,12 @@ PORTEE_DE_L_AGENT: dict[str, str] = {
         "lancer, construire et tester ce que tu écris, installer les dépendances du "
         "projet dans le projet, joindre le réseau pour cela, arrêter ce que tu as "
         "lancé. Ne demande d'arbitrage pour aucune de ces commandes. "
-        "Deux familles d'actes, et elles seules, attendent l'accord d'une personne : "
+        "Trois familles d'actes, et elles seules, attendent l'accord d'une personne : "
         "ce qui sort du dossier du projet — écrire ou installer ailleurs, une "
-        "installation globale, l'élévation de privilèges, une machine distante —, et "
-        "ce qui efface, écrase ou déplace ce qui s'y trouvait avant ta tâche."
+        "installation globale, l'élévation de privilèges, une machine distante —, "
+        "ce qui efface, écrase ou déplace ce qui s'y trouvait avant ta tâche, et ce qui "
+        "arrête des processus sans les désigner par leur numéro — par leur nom ou un "
+        "motif (`taskkill //IM`, `pkill`), ou tous à la fois."
     ),
 }
 
@@ -192,8 +194,9 @@ REGIME_PORTEE: dict[str, str] = {
     PORTEE_PROJET: (
         " Cela vaut dans le dossier du projet, l'installation de ses dépendances et le "
         "réseau compris : ce qui sort du dossier (écrire ou installer ailleurs, une "
-        "installation globale, une machine distante), ou ce qui efface ce qui s'y "
-        "trouvait avant lui, attend l'accord d'une personne."
+        "installation globale, une machine distante), ce qui efface ce qui s'y "
+        "trouvait avant lui, ou ce qui arrête des processus par leur nom plutôt que "
+        "par leur numéro, attend l'accord d'une personne."
     ),
 }
 

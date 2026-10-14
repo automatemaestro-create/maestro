@@ -11,7 +11,7 @@ passé. Couvre :
   que le playbook dit d'autre — le playbook de p5 tel qu'il était compris ;
 ② le texte et la règle disent la même chose : ce que `maestro.portee` laisse dans le
   projet (dont `npm install`), le bloc le dit passer sans arbitrage, et il ne nomme
-  comme revenant à une personne que les deux familles qui en sortent ;
+  comme revenant à une personne que les trois familles de la portée ;
 ③ chaque cran a sa phrase pour ses deux lecteurs — l'agent, l'orchestrateur —, sous
   les mêmes clés ;
 ④ les playbooks déjà écrits se réécrivent sans leur régime : la section des skills
@@ -256,18 +256,22 @@ def test_le_bloc_ne_range_plus_le_menage_dans_le_travail_ordinaire() -> None:
         ("npm install -g typescript", "une installation globale"),
         ("sudo apt-get install jq", "l'élévation de privilèges"),
         ("ssh serveur uptime", "une machine distante"),
+        ("taskkill //IM python.exe //F", "par leur nom ou un motif"),
+        ("pkill -f next", "par leur nom ou un motif"),
+        ("kill -9 -1", "tous à la fois"),
     ],
 )
 def test_ce_que_la_portee_fait_remonter_le_bloc_le_nomme_et_rien_d_autre(
     tmp_path: Path, commande: str, famille: str
 ) -> None:
     """L'autre sens : ce que la règle fait sortir du projet, le bloc le nomme parmi ce
-    qui attend une personne — et il annonce **deux** familles, « elles seules », celles
-    de `maestro.portee`. Aucune n'est un service extérieur."""
+    qui attend une personne — et il annonce **trois** familles, « elles seules », celles
+    de `maestro.portee` : la troisième, l'arrêt de processus sans les désigner, est
+    celle de #1502. Aucune n'est un service extérieur."""
     assert PorteeProjet(tmp_path).commande_hors_portee(commande) != ""
 
     bloc = _a_plat(regime_de_l_agent(POLITIQUE_DE_P5))
-    assert "Deux familles d'actes, et elles seules, attendent l'accord d'une personne" in bloc
+    assert "Trois familles d'actes, et elles seules, attendent l'accord d'une personne" in bloc
     assert famille in bloc
     assert "service extérieur" not in bloc
 
