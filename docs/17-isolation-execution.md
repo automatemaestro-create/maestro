@@ -9,6 +9,14 @@ process hôte. Cette page consigne la décision technique (conteneur vs micro-VM
 l'architecture, les **accès accordés** au conteneur (le contrat du mode), son
 activation et ses limites. Le mode **non isolé reste le défaut** à ce stade.
 
+> ⚠ **Renversé le 2026-10-14 par [docs/48 §2.1](./48-decision-produit-pro-exploitable.md)** (#1518),
+> à la demande de la personne : les agents tournent **isolés par défaut**. La portée reste
+> l'arbitrage, et cesse d'être la seule barrière.
+> - Le défaut sera un **mécanisme natif Windows**, choisi sur pièces par #1514. Docker et ce mode
+>   conteneur restent une option plus forte, jamais exigée.
+> - **Décidé, pas encore livré** : tant que #1515 n'est pas livré, ce qui suit décrit l'état
+>   présent, et le défaut reste le mode non isolé.
+
 > **Pourquoi** : les agents exécutent du code (outils `Bash`, fichiers produits,
 > serveurs MCP stdio) avec les droits du process qui les héberge. L'ouverture
 > MCP (#101) et le multi-instances (#100) élargissent cette exposition : un
@@ -166,6 +174,11 @@ consigné au journal, comme les autres échecs.
   pas. Ce que cela **implique** est écrit une fois et une seule, dans
   [docs/19 §2.4](./19-securite-modele-de-menace.md) : le filet y est alors le
   **périmètre du projet**, pas le conteneur ([docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md)).
+
+> ⚠ **Ce dernier point est renversé le 2026-10-14** ([docs/48 §2.1](./48-decision-produit-pro-exploitable.md),
+> #1518). En distribution bureau, le défaut deviendra le mode **isolé**, par le mécanisme natif
+> retenu (#1514, #1515). Le conteneur reste une option, et il n'a encore jamais tourné contre un
+> vrai démon Docker dans un test : #1514 le joue une fois pour de vrai.
 
 ## 6. Hors mode isolé : la session d'un agent est confinée (#1279)
 

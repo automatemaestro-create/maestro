@@ -313,6 +313,13 @@ l'ouvreur employé **et** l'ordre des gardes, et prouve son motif sur un échant
 
 #### L'isolation d'exécution en distribution bureau : le défaut est le mode non isolé
 
+> ⚠ **Renversé le 2026-10-14 par [docs/48 §2.1](./48-decision-produit-pro-exploitable.md)** (#1518) :
+> le remède que ce paragraphe nomme, « activer l'isolation sur un poste qui peut la porter », devient
+> le **défaut**.
+> - Un mécanisme natif Windows sera choisi sur pièces (#1514) puis posé par défaut (#1515), sans
+>   exiger Docker.
+> - **Décidé, pas encore livré** : ce qui suit décrit l'état présent jusqu'à #1515, qui le réécrira.
+
 [docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md) l'avait écrit au cadrage, et **rien
 ici ne le change** : une application qu'on double-clique ne peut pas exiger Docker sur le poste.
 En distribution bureau, `MAESTRO_ISOLATION` reste **non posé** par défaut, le mode isolé

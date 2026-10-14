@@ -884,6 +884,14 @@ Empaqueter Next.js est un problème résolu. Empaqueter **Python + le Claude Age
 - les **mises à jour** deviennent un sujet à part entière (front, backend, dépendances Python,
   version du CLI).
 
+> ⚠ **Le corollaire sur l'isolation est renversé le 2026-10-14** par
+> [docs/48 §2.1](./48-decision-produit-pro-exploitable.md) (#1518), à la demande de la personne.
+> - **Ce qui tient** : une application « double-clic » ne peut pas exiger Docker.
+> - **Ce qui tombe** : la conclusion. Le défaut en distribution bureau deviendra le mode **isolé**,
+>   par un mécanisme natif Windows choisi sur pièces (#1514, #1515). Le filet du mode bureau devient
+>   le poste qui borne l'agent, et le périmètre du projet reste l'arbitrage.
+> - **Décidé, pas encore livré** : jusqu'à #1515, le défaut reste le mode non isolé.
+
 C'est ce coût — pas la fenêtre — qui justifie de commencer par l'option 1.
 
 ### 4.7 Recommandation : **une enveloppe, pas une variante**
