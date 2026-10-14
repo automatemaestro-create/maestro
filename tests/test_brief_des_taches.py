@@ -20,7 +20,10 @@ Critères couverts :
   chacun de ses prompts ; les critères de la tâche restent son contrat ;
 ③ un run qui ne refait pas son cadrage — repris sur son plan (#1391) ou relancé sur
   son brief (#349) — garde le brief approuvé : il traverse l'ordre du run, l'hôte
-  et le moteur.
+  et le moteur ;
+④ le Chef de projet qui écrit les tâches le sait : son playbook ne dit plus que la
+  description est « tout ce que l'agent recevra » (#1395, solde du cadrage — la
+  décision que #1402 renversait était restée écrite là).
 
 La preuve sur le réel (critère 3 du ticket) n'est pas ici : c'est un run de la
 vraie stack, consigné sur le ticket.
@@ -69,6 +72,7 @@ from maestro.engine.verification import (
     VerificateurTaches,
 )
 from maestro.orchestrator import BRIEF_SYSTEM_PROMPT, Brief, Orchestrator
+from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT
 from maestro.orchestrator.schema import Task, validate_plan
 from maestro.providers.base import ModelProvider
 from maestro.sandbox.verification import Execution
@@ -643,3 +647,28 @@ def test_la_relance_donne_le_brief_approuve_au_moteur_du_nouveau_run():
     (run,) = moteur.runs
     assert run["brief_approuve"] == BRIEF
     assert run["objectif"] == BRIEF.synthese().strip()
+
+
+# --------------------------------------------------------------------------- #
+# ④ Le Chef de projet sait ce que l'agent reçoit à côté de sa description
+# --------------------------------------------------------------------------- #
+
+
+def test_le_chef_de_projet_sait_ce_que_l_agent_recoit_a_cote_de_sa_description():
+    """Le playbook du Chef de projet disait « La description est tout ce que l'agent
+    recevra » : la décision que #1402 renversait, restée écrite à l'endroit même où
+    les tâches s'écrivent. L'index du cadrage (#1395) la nommait, aucun lot ne l'a
+    retirée. Un Chef de projet qui le croit recopie dans chaque tâche le cadre du
+    run que l'agent reçoit déjà — la répétition que #1404 a chassée du message.
+
+    Il dit désormais ce qui est joint d'office, et que la description reste le
+    contrat sur lequel la livraison est vérifiée (critère ① : elle vient d'abord).
+    Même normalisation que `tests/test_orchestrator.py` : le document est enveloppé
+    et emphatise au fil du texte.
+    """
+    texte = " ".join(ORCHESTRATOR_SYSTEM_PROMPT.replace("**", "").replace("`", "").split())
+
+    assert "est tout ce que l'agent recevra" not in texte
+    assert "le contrat de la tâche" in texte
+    assert "brief approuvé" in texte
+    assert "tâches dont elle dépend" in texte
