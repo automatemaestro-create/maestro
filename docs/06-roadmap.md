@@ -1408,9 +1408,22 @@ Le constat, en cinq faits :
 
 | Milestone | Contenu | Échéance | Suivi |
 |---|---|---|---|
-| **Maestro fait mieux qu'un agent seul — sur un projet qui dépasse une session, mesuré sur plusieurs passages** | Un go/no-go. L'écart se mesure sur un banc comparatif, trois passages par côté. Il se réduit par des leviers tirés de la mesure, puis on tranche. Les réserves R2 à R7 du bilan y sont rangées | 2028-01-31 (neuf) | **#1510** — #1508 → #1512 ∥ → #1513, puis les leviers ; #1503 à #1507, sans parent |
+| **Maestro fait mieux qu'un agent seul — sur un projet qui dépasse une session, mesuré sur plusieurs passages** | Un go/no-go. L'écart se mesure sur un banc comparatif, trois passages par côté. Il se réduit par des leviers tirés de la mesure, puis on tranche. Les réserves R2 à R7 du bilan y sont rangées | 2028-01-31 (neuf) | **#1510** — #1508 → #1512 ∥ → #1513, puis les leviers (#1530 ∥, #1532 ∥, #1533 ∥, #1531) ; #1503 à #1507 et #1534, sans parent |
 | *Phase 9 — Poste de travail : distribution* (existant, **ancré**) | L'installeur, le premier lancement et les mises à jour. **L'isolation par défaut** et **un retex de deux ou trois personnes extérieures** s'y ajoutent | 2028-02-16 → **2028-02-01** | **#637** (#641, #642, #644, #645) ; **#1511** (#1514 → #1515) ; #1312 ; **#1516** |
 | *Outillage de la forge* (rail outillage) | Au plus quatre jalons produit en chantier, une ancre, et le verbe qui déplace un ticket de jalon | 2027-09-15 | **#1517** (né assigné : il écrit sous `.claude/`) |
+
+> ⚠ **L'écart, instruit par #1508 le 2026-10-14** ([docs/50](./50-ecart-face-a-un-agent-seul.md)).
+> - **C2 a coûté 15,97 $**, soit 2,0 fois C3, et non 12,40 $. Le grand livre ne voit ni le fil
+>   d'avant le run ni les tentatives coupées : c'est #1534.
+> - **L'exécution n'est pas plus chère** que la session seule. L'écart vient de ce qui l'entoure :
+>   la vérification à trois étages, le fil d'avant le run, les arbitrages et la chute.
+> - **Les leviers sont quatre lots de #1510**, rangés après #1513 :
+>   - #1530 ∥, la recette au niveau du run ;
+>   - #1532 ∥, le navigateur de l'équipe ;
+>   - #1533 ∥, l'outillage d'un bloc ;
+>   - puis #1531, le découpage à la taille d'une session.
+> - **Cumulés aux tickets ouverts**, ils ramènent p5 à environ 1,26 fois C3 en temps et 1,17 fois en
+>   coût. C'est une estimation : le banc (#1512) la rend vraie ou fausse.
 
 **Le go/no-go.** Le terrain est un projet qui **dépasse une session**, confié comme le dirait une
 personne **qui ne code pas**, et **repris le lendemain**. C'est la promesse de
