@@ -217,6 +217,33 @@ def verifier_cliquet(budget: int, livres: Sequence[tuple[str, int]]) -> None:
         )
 
 
+#: La règle relevable de #965, telle que `CLAUDE.md` et docs/25 §9.4 la disaient avant #1523
+#: (recopiée de `910d8a6`) : elle ne doit plus s'y lire au présent.
+_REGLE_RELEVABLE = (
+    "le budget de ce fichier (levé, jamais tronqué)",
+    "on relève le budget en connaissant le coût",
+)
+#: Ce que le cliquet dit, dans les deux textes qui décrivent la garde.
+_REGLE_DU_CLIQUET = ("cliquet", "une règle qui entre en fait sortir une", "sort sa démonstration")
+
+
+def ligne_de_la_garde() -> str:
+    """Le paragraphe de `CLAUDE.md` qui dit ce que `tests/test_audit_commandes.py` garde."""
+    lignes = CLAUDE_MD.read_text(encoding="utf-8").splitlines()
+    return aplatir(next(ligne for ligne in lignes if "Ce qu'un prompt affirme" in ligne))
+
+
+def section_9_4() -> str:
+    """docs/25 §9.4, aplatie — bornée sur le texte brut, comme `section_6_1`."""
+    texte = DOCS_25.read_text(encoding="utf-8")
+    debut = texte.index("\n### 9.4 ")
+    return aplatir(texte[debut : texte.index("\n### 9.5 ", debut)])
+
+
+def dit_la_regle_relevable(texte: str) -> bool:
+    return any(phrase in texte for phrase in _REGLE_RELEVABLE)
+
+
 #: Un budget annoncé en toutes lettres : « budget 25 000 tokens », « Budget : 25 000 tokens ».
 _BUDGET_ANNONCE = re.compile(r"(?i)budget\W{0,4}(\d{1,3}(?:\s\d{3})+|\d+) tokens")
 
@@ -296,6 +323,28 @@ class TestBudgetClaudeMd:
         verifier_cliquet(baisse, (*BUDGETS_LIVRES_CLAUDE_MD, ("#9999", baisse)))
         with pytest.raises(CliquetRemonte, match="sans sa ligne"):
             verifier_cliquet(baisse, BUDGETS_LIVRES_CLAUDE_MD)
+
+    def test_claude_md_et_docs_25_disent_le_cliquet(self) -> None:
+        """Les deux textes qui décrivent la garde disent le cliquet, plus la règle relevable.
+
+        L'échantillon fautif d'abord, et c'est le vrai : les deux phrases exactes de `910d8a6`,
+        dans leur paragraphe — une sonde qui ne les verrait pas dirait « remplacé » sans rien
+        avoir regardé.
+        """
+        assert dit_la_regle_relevable(
+            aplatir(
+                "allowlist. Et un `CLAUDE.md` qui dépasse est une décision : on relève le budget "
+                "en connaissant le\ncoût, ou on sort la démonstration vers `docs/`."
+            )
+        )
+        assert dit_la_regle_relevable(
+            "(#966, docs/25 §9.4) : le budget de ce fichier (levé, jamais tronqué), GitLab"
+        )
+        for nom, texte in (("CLAUDE.md", ligne_de_la_garde()), ("docs/25 §9.4", section_9_4())):
+            assert texte.count(" ") > 50, f"{nom} lu presque vide : ce n'est pas le bon passage"
+            assert not dit_la_regle_relevable(texte), f"{nom} dit encore la règle relevable"
+            for phrase in _REGLE_DU_CLIQUET:
+                assert phrase in texte, f"{nom} ne dit pas « {phrase} »"
 
     def test_le_budget_annonce_est_celui_qui_est_garde(self) -> None:
         """`CLAUDE.md` et docs/25 annoncent le budget en chiffres : ce sont les chiffres gardés.

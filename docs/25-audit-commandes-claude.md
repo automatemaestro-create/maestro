@@ -431,7 +431,8 @@ qui peut revenir :
   la garde ne peut pas lire celui de git : la CI clone à profondeur 1, et le conteneur du filet
   local ne résout pas le `.git` d'un worktree. Ses deux premières lignes sont épinglées. Réécrire
   une ligne livrée reste possible à la main : ce serait renverser docs/49 sans le dire, et le diff
-  le montre.
+  le montre. Enfin, la phrase de `CLAUDE.md` qui décrit la garde et ce paragraphe disent le
+  cliquet : la règle relevable, sous les mots exacts qu'elle avait avant #1523, n'y revient pas.
 - **`TestForgeAuPresent`** — toute mention de GitLab dans `.claude/**` versionné et dans
   `scripts/orchestrate/run.sh`. Le chemin `scripts/gitlab/`, où le helper vit toujours, n'est pas
   une mention. `.gitlab-ci.yml` n'est admis nulle part.
