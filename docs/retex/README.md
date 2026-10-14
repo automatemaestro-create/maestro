@@ -5,6 +5,11 @@ Un fichier par retex, `<AAAA-MM-JJ>-<slug>.md`, produit par la commande **`/rete
 qui **découvre Maestro** aurait vu en se servant de la Control Tower **réelle** — jamais `--demo` —
 par sa seule interface, du poste vide jusqu'au livrable exécuté.
 
+> ⚠ **Un retex humain s'ajoute le 2026-10-14** ([docs/48 §3](../48-decision-produit-pro-exploitable.md), #1518) :
+> deux ou trois personnes **hors du projet** installeront le produit et s'en serviront jusqu'à un
+> livrable, sans aide. C'est le critère C11 de la Phase 9. Son protocole sera écrit ici par #1516,
+> et il ne remplace pas le retex joué par `/retex-utilisateur` décrit ci-dessous.
+
 ## À quoi ça sert
 
 Les deux revues d'usage qui ont fait naître la vague front (2026-08-05) et « Le run, objet de

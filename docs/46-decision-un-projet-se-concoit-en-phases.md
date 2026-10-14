@@ -163,6 +163,16 @@ La personne invitait à en proposer un. Quatre contrôles sont retenus :
 
 <!-- documentation: développement -->
 
+> ⚠ **Cette place est renversée le 2026-10-14 par [docs/48 §2.2](./48-decision-produit-pro-exploitable.md)**
+> (#1518), à la demande de la personne.
+> - **Deux jalons passent devant** les trois jalons de ce document : le go/no-go « Maestro fait
+>   mieux qu'un agent seul » (2028-01-31), puis la **Phase 9**, ancrée (2028-02-01).
+> - **L'argument « on n'empaquette pas une cible mouvante » tombe** : les mises à jour (#644)
+>   livrent la suite à une installation.
+> - **Les nouvelles échéances** : « Le niveau visuel » 2028-02-07, « Maestro simple » 2028-02-08,
+>   « Le mode conception » 2028-02-09, « Indépendant du modèle » 2028-02-10.
+> - **Ce qui ne bouge pas** : ce que ce document décide en §2.
+
 | Jalon | Échéance |
 |---|---|
 | Le run livre un vrai projet | 2028-01-30 (inchangée) |

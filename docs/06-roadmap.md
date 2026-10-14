@@ -64,6 +64,13 @@ gantt
 > Le 2026-10-09, le chantier **« Le coût d'un ticket »** entre au jalon « Outillage de la forge »,
 > sans jalon neuf. Le banc s'y paie une fois par lot sur `main`, et au ticket seulement sur son
 > chemin ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md)).
+>
+> Le 2026-10-14, la file est réorientée pour que « tous les jalons soldés » veuille dire « produit
+> pro exploitable » ([docs/48](./48-decision-produit-pro-exploitable.md)) :
+> - **un go/no-go passe en tête** : « Maestro fait mieux qu'un agent seul » ;
+> - **la Phase 9 vient juste derrière, ancrée** : l'isolation par défaut et un retex de personnes
+>   extérieures y entrent ;
+> - **les quatre jalons de fonctionnalités reculent** derrière elle.
 
 ---
 
@@ -234,6 +241,17 @@ lanceur) passent eux aussi derrière les réserves. Aucun ordre ne peut placer l
 et #641, parce que les lots d'un parent restent contigus dans le plan. Ces trois lots ne sont pas de
 l'empaquetage : ils **restent démarrables à la main** sans attendre, et #638 ferme un trou ouvert
 aujourd'hui.
+
+> ⚠ **Sa place a changé à nouveau le 2026-10-14, cette fois vers l'avant**
+> ([docs/48](./48-decision-produit-pro-exploitable.md), #1518).
+> - **L'échéance** passe du 2028-02-16 au **2028-02-01**, juste derrière le go/no-go « Maestro fait
+>   mieux qu'un agent seul ».
+> - **Le jalon est ancré** : plus aucun jalon produit ne passe devant lui sans un arbitrage écrit
+>   (#1517).
+> - **Il porte en plus** l'isolation par défaut (#1511, avec C9 réécrit et C10) et un retex de deux
+>   ou trois personnes extérieures (#1516, C11).
+>
+> Voir la section « Maestro fait mieux qu'un agent seul », plus bas.
 
 ---
 
@@ -1245,6 +1263,9 @@ Ne bougent pas :
 - **« Maestro simple » devant « Le mode conception »** : la personne l'a dit très important, et le mode conception se construit dans le shell que #1410 décide.
 - **Devant « Indépendant du modèle »** : rien n'y dépend de lui, et l'écran d'un fournisseur (#1311) se posera dans l'architecture simplifiée.
 - **Devant la Phase 9** : on n'empaquette pas une cible mouvante. Le premier lancement (#642) mène au mode conception.
+  > ⚠ **Renversé le 2026-10-14** ([docs/48 §2.2](./48-decision-produit-pro-exploitable.md), #1518) :
+  > la Phase 9 passe devant ces trois jalons, et elle est ancrée. Les mises à jour (#644) livrent
+  > la suite à une installation, et #1417 redirigera le premier lancement vers le mode conception.
 - **L'échéance du niveau visuel a bougé deux fois** dans la même instruction : derrière la simplification d'abord, puis devant elle, après la précision de la personne. Aucune priorité existante n'a changé.
 
 > ⚠ **Les critères de sortie des deux jalons neufs sont dans leur description**, section
@@ -1357,6 +1378,111 @@ Sont écartés ou différés :
 
 ---
 
+## « Maestro fait mieux qu'un agent seul » — tous les jalons soldés veulent dire un produit pro exploitable (2026-10-14)
+
+La personne a demandé si la roadmap et le processus actuels donneraient un produit pro exploitable,
+une fois tous les jalons soldés. Instruite par [`/idee`](../.claude/commands/idee.md) (#1013), la
+réponse a été : pas en l'état. Le plan lui a été **présenté avant toute écriture** (#1415), et elle
+l'a validé tel que recommandé. Il est consigné par #1518, et la décision est
+[docs/48](./48-decision-produit-pro-exploitable.md).
+
+Le constat, en cinq faits :
+- **Face à une session d'agent seule, Maestro perd.** Sur p5, Maestro a mis environ 2,5 fois plus
+  de temps (1 h 04 contre 26 min) et coûté au moins 1,5 fois plus (12,40 $ contre 8,02 $), avec un
+  livrable moins bon sur quatre axes (bilan de « Le run livre un vrai projet », verdict NO-GO du
+  2026-10-14). Aucun jalon ne visait cet écart.
+- **La sûreté reposait sur la lecture du texte des commandes** (#1502, #1509), et le mode isolé
+  était opt-in.
+- **La Phase 9 a reculé quatre fois.**
+- **Aucune personne extérieure ne s'était servie du produit.**
+- **Huit jalons produit étaient ouverts en même temps.**
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Maestro fait mieux qu'un agent seul — sur un projet qui dépasse une session, mesuré sur plusieurs passages** | Un go/no-go. L'écart se mesure sur un banc comparatif, trois passages par côté. Il se réduit par des leviers tirés de la mesure, puis on tranche. Les réserves R2 à R7 du bilan y sont rangées | 2028-01-31 (neuf) | **#1510** — #1508 → #1512 ∥ → #1513, puis les leviers ; #1503 à #1507, sans parent |
+| *Phase 9 — Poste de travail : distribution* (existant, **ancré**) | L'installeur, le premier lancement et les mises à jour. **L'isolation par défaut** et **un retex de deux ou trois personnes extérieures** s'y ajoutent | 2028-02-16 → **2028-02-01** | **#637** (#641, #642, #644, #645) ; **#1511** (#1514 → #1515) ; #1312 ; **#1516** |
+| *Outillage de la forge* (rail outillage) | Au plus quatre jalons produit en chantier, une ancre, et le verbe qui déplace un ticket de jalon | 2027-09-15 | **#1517** (né assigné : il écrit sous `.claude/`) |
+
+**Le go/no-go.** Le terrain est un projet qui **dépasse une session**, confié comme le dirait une
+personne **qui ne code pas**, et **repris le lendemain**. C'est la promesse de
+[docs/00 §1.1](./00-cahier-des-charges.md), et c'est là qu'une session seule casse par
+construction : contexte borné, aucun plan durable, aucune recette, reprise à la main.
+
+p5 tient en une session. Sur un tel projet, l'orchestration ne peut que coûter : il sert de
+**plancher**. Les seuils sont posés avant l'épreuve, dans les critères du jalon :
+- **Sur le projet long**, Maestro fait strictement mieux sur la couverture des critères
+  d'acceptation **ou** sur les gestes de la personne. Il n'est pire sur aucun axe de qualité, et son
+  coût comme sa durée active restent au plus 1,2 fois ceux de la session seule.
+- **Sur p5**, l'écart ne dépasse pas 1,3 fois.
+
+**Un NO-GO bloque les jalons de fonctionnalités** tant que l'écart n'est pas comblé. La Phase 9 et
+les corrections continuent. Une mesure coûte environ 60 $ sur p5 et 150 à 250 $ sur le projet long,
+par bouclage : c'est une estimation tirée des coûts de C2 et de C3.
+
+**L'isolation par défaut.** Le défaut sera un **mécanisme natif Windows** choisi sur pièces (#1514),
+puis posé par défaut (#1515). Docker reste une option plus forte, jamais exigée, et la portée reste
+l'arbitrage. #1312, l'environnement d'une session en liste blanche, passe dans la Phase 9.
+
+**Le retex humain.** Deux ou trois personnes hors du projet installent le produit et s'en servent
+jusqu'à un livrable, sans aide (#1516). C'est le critère C11 de la Phase 9. Les personnes, c'est
+l'utilisatrice ou l'utilisateur du dépôt qui les trouve. Sans elles, le critère reste « non
+couvert », jamais coché.
+
+**Place dans la file**, sur le rail produit :
+
+| Jalon | Échéance |
+| --- | --- |
+| « Le run livre un vrai projet » (soldé, NO-GO) | 2028-01-30 (inchangée) |
+| **« Maestro fait mieux qu'un agent seul »** | **2028-01-31** (neuf) |
+| **« Phase 9 »** (ancrée) | 2028-02-16 → **2028-02-01** |
+| « Rien de figé », « Le run tient parole » (soldés) | 2028-02-02, 2028-02-03 (inchangées) |
+| « Le niveau visuel » | 2028-02-01 → **2028-02-07** |
+| « Maestro simple » | 2028-02-04 → **2028-02-08** |
+| « Le mode conception » | 2028-02-05 → **2028-02-09** |
+| « Indépendant du modèle » | 2028-02-06 → **2028-02-10** |
+
+Pourquoi ce rang :
+- **Le go/no-go d'abord** : on n'empaquette, on n'embellit et on ne conçoit pas un produit dont on ne
+  sait pas s'il bat un agent seul. Il ne bloque pas la Phase 9, qui touche d'autres fichiers. Les
+  deux avancent de front, la Phase 9 par `--milestone`.
+- **La Phase 9 ensuite, ancrée** : sans installeur, la personne visée ne peut pas se servir du
+  produit ([docs/24 §4.4](./24-projets-locaux-et-poste-de-travail.md)), et aucun retex humain n'est
+  possible. Les mises à jour (#644) lèvent l'argument de la cible mouvante.
+- **Les quatre jalons de fonctionnalités** gardent leur ordre relatif, celui de #1416.
+
+**Les priorités** changées le même jour, chacune avec sa raison :
+
+| Ticket | Prio | Raison |
+| --- | --- | --- |
+| #1508 | moyenne → haute | premier lot du go/no-go |
+| #1507 | moyenne → haute | quatre axes de qualité perdus |
+| #1504 | moyenne → haute | la reprise est sur le terrain mesuré |
+| #1506 | moyenne → haute | même raison |
+| #1505 | basse → moyenne | des gestes comptés par la mesure |
+| #1312 | moyenne → haute | l'héritage de l'environnement est une fuite réelle |
+| #642 | moyenne → haute | sans premier lancement, aucune personne extérieure ne va au bout |
+| #644 | basse → haute | les mises à jour répondent à la cible mouvante |
+
+**La limite.** Au plus quatre jalons produit **en chantier**, actifs et avec au moins un ticket
+ouvert. Le plan lui-même la dépasse (six en chantier) : la validation de la personne vaut arbitrage,
+et la dette est nommée. Aucun jalon produit neuf ne s'ouvre avant que deux des six soient soldés. Le
+mécanisme qui le dit est #1517.
+
+> ⚠ **Reste proposé, pas fait** : ce sont des décisions humaines, hors de `/idee`.
+> - Fermer « Le run livre un vrai projet » une fois ses passages p5 rejoués par le go/no-go. Sa
+>   condition, « C2 rejoué », y est absorbée.
+> - Reboucler « Rien de figé », dont les réserves bloquantes #1442 et #1443 sont fermées.
+> - Fermer « Le run tient parole » en le disant : il n'a pas de critères de sortie, donc il ne peut
+>   pas être bouclé.
+> - Recadrer ou abandonner #645, qui ne porte que des tests et date d'avant #1150.
+> - Clore #1127 en doublon de #1411.
+
+> ⚠ **Les critères de sortie des deux jalons sont dans leur description**, section
+> `## Critères de sortie` : C1 à C5 pour le go/no-go, C9 réécrit avec C10 et C11 pour la Phase 9.
+> C'est elle qui fait foi au bouclage (docs/10 §3.4), pas ce résumé.
+
+---
+
 ## Au-delà (idées V3+)
 
 - **Des outils pour un fournisseur non-Anthropic, dans Maestro** (objectif O7). Aujourd'hui, seuls les modèles Claude exécutent avec outils : `openai_compat.py` ne fait que du texte. L'outillage généré par « L'équipe sur mesure » est universel par son **format** et se lit par tout agent sur le poste de l'utilisateur. L'exécuter avec outils **dans** Maestro par un autre fournisseur est un chantier à lui seul. Il a été **différé** par l'instruction de #1044 et n'a pas encore de ticket.
@@ -1379,6 +1505,8 @@ Sont écartés ou différés :
 | ~~Avant Phase 7~~ **tranché le 2026-08-04** | Maestro travaille-t-il sur les **projets locaux** de l'utilisateur, et selon quel patron d'écriture ? → **oui**, par worktree/branche si versionné et copie + diff sinon, l'application restant une action sensible *(D1/D2, #218)* — *D2 révisée le 2026-09-04 (#703) : fusion continue sous un accord par run si versionné, écriture en place sinon ([docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md))* |
 | ~~Avant Phase 9~~ **tranché le 2026-08-04** | L'**application de bureau** est-elle la finalité, ou une enveloppe autour d'un produit qui reste web ? → **une enveloppe** ; lanceur/installeur d'abord, Tauri ensuite, Electron écarté *(D3/D4, #218)* — *D4 renversée le 2026-09-11 (#921) : c'est **Electron** qui est retenu et **Tauri** qui est écarté ; D3 et l'ordre (lanceur → installeur → enveloppe) ne bougent pas ([docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md))* |
 | **Fin Phase 7** | La Phase **10 — Continuité & multi-projet** se confirme-t-elle, et avec quel périmètre ? |
+| **« Maestro fait mieux qu'un agent seul »** *(rouvert le 2026-10-14, [docs/48](./48-decision-produit-pro-exploitable.md))* | Sur un projet qui dépasse une session, confié par une personne qui ne code pas et repris le lendemain, **Maestro fait-il mieux qu'une session d'agent seule** ? La mesure : trois passages par côté, avec un plancher sur p5. Un NO-GO bloque les jalons de fonctionnalités |
+| **Fin Phase 9** *(rouvert le 2026-10-14)* | **Des personnes extérieures** installent-elles le produit et s'en servent-elles **sans aide**, jusqu'à un livrable ? (C11, #1516) |
 
 > **Verdicts rendus.** Chaque jalon est tranché **sur pièces** dans la démo de fin de phase :
 > Phase 0 → [docs/11](./11-demo-poc.md), Phase 1 → [docs/12](./12-demo-mvp.md),
