@@ -307,7 +307,7 @@ composant React n'a aucun usage des 4 930 tokens de la boucle d'orchestration.
 > plus une marge — 16 000 aurait coupé des interdits utiles, 40 000 ne rendait que la moitié du gain.
 > Le test qui lève à un token près, sur le modèle de `BUDGET_CARTE_TOKENS`, est `TestBudgetClaudeMd`
 > ([`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py), #966). Après le tri,
-> CLAUDE.md pèse **~15 800 tokens**.
+> CLAUDE.md pèse **~15 800 tokens**. Le 2026-10-14, ce budget est devenu un cliquet (§9.4, #1523).
 
 ## 8. Rejouer les mesures
 
@@ -415,11 +415,24 @@ semaines : la même dérive était revenue, et rien ne pouvait la voir revenir.
 [`tests/test_audit_commandes.py`](../tests/test_audit_commandes.py) porte une garde par constat
 qui peut revenir :
 
-- **`TestBudgetClaudeMd`** — `estimer_tokens(CLAUDE.md) ≤ BUDGET_CLAUDE_MD_TOKENS` (25 000). La garde
-  **lève**, en disant de combien et où la décision a été prise (#965). Elle est prouvée **à un token
-  près sur le fichier réel** : au coût exact elle passe, un token en dessous elle lève. Le budget
-  annoncé par `CLAUDE.md` et par ce document est lu et comparé à la constante : la relever en
-  silence fait rougir la suite.
+- **`TestBudgetClaudeMd`** — `estimer_tokens(CLAUDE.md) ≤ BUDGET_CLAUDE_MD_TOKENS`
+  (budget : 20 164 tokens, le coût du fichier à la livraison de #1523). La garde **lève**, en disant de
+  combien et où la décision a été prise. Elle est prouvée **à un token près sur le fichier réel** :
+  au coût exact elle passe, un token en dessous elle lève. Le budget annoncé par `CLAUDE.md` et par
+  ce document est lu et comparé à la constante.
+
+  Le budget est un **cliquet** (#1523, [docs/49 §2.1](./49-decision-le-reglement-ne-grossit-plus.md)) :
+  il ne remonte jamais. `BUDGETS_LIVRES_CLAUDE_MD` inscrit chaque budget livré avec son ticket
+  (25 000 pour #965, 20 164 pour #1523), et `verifier_cliquet` lève si la constante dépasse la
+  dernière ligne, si une ligne n'est pas plus basse que la précédente, ou si la constante descend
+  sans sa ligne. Les deux portes d'une hausse sont éprouvées sur un échantillon fautif : la
+  constante rendue aux 25 000 de #965, le budget sous lequel `CLAUDE.md` a grossi sans que rien
+  rougisse, et la même hausse inscrite au registre. Le registre tient lieu d'historique parce que
+  la garde ne peut pas lire celui de git : la CI clone à profondeur 1, et le conteneur du filet
+  local ne résout pas le `.git` d'un worktree. Ses deux premières lignes sont épinglées. Réécrire
+  une ligne livrée reste possible à la main : ce serait renverser docs/49 sans le dire, et le diff
+  le montre. Enfin, la phrase de `CLAUDE.md` qui décrit la garde et ce paragraphe disent le
+  cliquet : la règle relevable, sous les mots exacts qu'elle avait avant #1523, n'y revient pas.
 - **`TestForgeAuPresent`** — toute mention de GitLab dans `.claude/**` versionné et dans
   `scripts/orchestrate/run.sh`. Le chemin `scripts/gitlab/`, où le helper vit toujours, n'est pas
   une mention. `.gitlab-ci.yml` n'est admis nulle part.
@@ -446,13 +459,13 @@ qu'une phrase qui existe.
 (#335). Une mention au passé, ou vraie au présent, s'inscrit avec sa raison. Une commande jouée en
 run qui prescrit le scratchpad se corrige vers `.maestro/session/`. Un chaînage qui ne transmet
 pas sa déclaration se corrige **dans l'en-tête** de l'appelante (docs/10 §7.1), jamais dans une
-allowlist. Et un `CLAUDE.md` qui dépasse est une décision : on relève le budget en connaissant le
-coût, ou on sort la démonstration vers `docs/`.
-
-> ⚠ **Renversé le 2026-10-14** ([docs/49 §2.1](./49-decision-le-reglement-ne-grossit-plus.md),
-> #1526) : le budget de `CLAUDE.md` devient un **cliquet**. Il ne se relève plus, et une règle qui
-> entre en fait sortir une, ou sort sa démonstration vers `docs/`. Ce paragraphe décrit le présent
-> jusqu'à ce que #1523 le réécrive avec la garde.
+allowlist. Et un `CLAUDE.md` qui dépasse ne fait pas relever son budget, qui est un cliquet
+([docs/49 §2.1](./49-decision-le-reglement-ne-grossit-plus.md), #1523) : une règle qui entre en
+fait sortir une, ou sort sa démonstration vers `docs/`. #1523 l'a fait pour sa propre phrase : il a
+sorti trois rappels de renversements que docs/10, docs/30 et docs/35 portaient déjà. Le relever
+serait renverser docs/49 par écrit, en disant ce que la règle neuve vaut de plus que celles
+qu'elle aurait remplacées. Avant le 2026-10-14, la règle de #965 permettait de relever le budget en
+connaissant le coût ; `CLAUDE.md` a ainsi rempli sa marge, de 15 830 à 20 169 tokens.
 
 **L'échantillon fautif est le vrai.** Chaque motif est éprouvé, avant le balayage, sur les phrases
 **exactes** que #961 et #962 ont retirées (`d742670^`, `85f42e5^`). Pour les chaînages,

@@ -52,8 +52,9 @@ revenue d'elle-même. Et le budget de 25 000 tokens posé par #965 laissait 9 00
 
 ### 2.1 Le budget de `CLAUDE.md` ne se relève plus
 
-> ⚠ **Décidé, pas encore livré.** Tant que #1523 n'est pas livré, `TestBudgetClaudeMd` garde le
-> budget de 25 000 tokens, et le texte de docs/25 §9.4 reste celui de #965.
+> **Livré par #1523** le 2026-10-14. Le budget vaut 20 164 tokens : #1523 a payé sa propre phrase
+> en sortant de `CLAUDE.md` trois rappels de renversements que `docs/` portait déjà. La garde est
+> décrite en [docs/25 §9.4](./25-audit-commandes-claude.md).
 
 **Renverse** [docs/25 §9.4](./25-audit-commandes-claude.md), décision de #965 : « un `CLAUDE.md`
 qui dépasse est une décision : on relève le budget en connaissant le coût, ou on sort la
@@ -68,7 +69,8 @@ démonstration vers `docs/` ». La seconde moitié reste. La première tombe.
   C'est la seule forme qui empêche le règlement de croître plus vite que ce qu'il encadre.
 
 **Le mécanisme** (#1523) : `BUDGET_CLAUDE_MD_TOKENS` vaut le coût mesuré à la livraison, et une
-garde fait rougir toute hausse de la constante.
+garde fait rougir toute hausse de la constante. Elle la confronte à `BUDGETS_LIVRES_CLAUDE_MD`, le
+registre des budgets livrés, qui ne fait que descendre.
 
 ## 3. Ce qui s'ajoute sans rien renverser
 
@@ -131,7 +133,8 @@ garde fait rougir toute hausse de la constante.
 
 - **[docs/06](./06-roadmap.md)** : la section « Le règlement ne grossit plus ».
 - **Un renvoi ⚠ à l'endroit de chaque décision renversée ou prolongée** :
-  - [docs/25 §9.4](./25-audit-commandes-claude.md), « Quand une garde rougit » ;
+  - [docs/25 §9.4](./25-audit-commandes-claude.md), « Quand une garde rougit », devenu le texte
+    présent avec #1523 ;
   - [docs/40 §6](./40-decision-rythme-et-scenarios-de-reference.md), le gel, levé le 2026-09-29.
-- **Le présent** de `CLAUDE.md` et de docs/25 §9.4 sera réécrit par #1523, celui de docs/10 §3.4 par
-  #1524, quand le code changera, pas ici.
+- **Le présent** de `CLAUDE.md` et de docs/25 §9.4 a été réécrit par #1523. Celui de docs/10 §3.4 le
+  sera par #1524, quand le code changera, pas ici.
