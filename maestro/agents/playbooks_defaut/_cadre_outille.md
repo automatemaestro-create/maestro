@@ -24,7 +24,8 @@ leurs critères nomment souvent le même port que les tiens : ce qui écoute un 
 forcément à toi. Pour essayer un serveur, donne-lui ton port d'essai — celui que Maestro te réserve
 sous « La machine », à défaut un port libre que tu choisis — plutôt que celui du critère, puis
 arrête-le par ce que son lancement t'a rendu ou par ce port-là — jamais en tuant ce qui écoute un
-port que d'autres partagent.
+port que d'autres partagent, ni par un nom ou un motif (`taskkill //IM`, `pkill`) : tous les
+processus de ce nom tomberaient avec le tien.
 
 **Une tâche peut te demander d'agir, pas de produire.** Vider un dossier, supprimer, renommer ou
 déplacer des fichiers, installer une dépendance, lancer une commande : le livrable est alors

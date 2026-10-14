@@ -509,9 +509,10 @@ def test_sur_un_projet_neuf_le_dev_recoit_le_droit_d_executer_dans_le_projet() -
     assert "sans vous demander de trancher chaque commande" in execution.raison
     assert "nettoi" not in execution.raison
     assert "arrête ce qu'il a lancé" in execution.raison
-    # …et ce qui vous revient quand même — les deux familles, nommées.
+    # …et ce qui vous revient quand même — les trois familles, nommées.
     assert "sort du dossier du projet" in execution.raison
     assert "effacerait ce que vous aviez posé là" in execution.raison
+    assert "arrêterait des programmes par leur nom" in execution.raison
 
 
 # --- Les instances : combien, et pourquoi -----------------------------------

@@ -364,13 +364,16 @@ def autorisations_du_role(
 
 
 #: Ce que la portée « projet » **garde** pour la personne, dit une fois et repris
-#: dans les deux raisons. Les deux moitiés sont celles du comportement attendu de
-#: #1226, et elles ne se paraphrasent pas d'un cas à l'autre : ce qui sort du
-#: dossier, et ce qui détruit ce que l'agent n'a pas produit.
+#: dans les deux raisons. Les trois familles sont celles de `maestro.portee`, et
+#: elles ne se paraphrasent pas d'un cas à l'autre : ce qui sort du dossier, ce qui
+#: détruit ce que l'agent n'a pas produit (#1226), et ce qui arrête des programmes
+#: sans les désigner (#1502).
 CE_QUI_VOUS_REVIENT = (
     "⚠ Ce que vous gardez : un acte qui **sort du dossier du projet** — un chemin "
-    "au-dessus ou à côté, une installation ailleurs sur la machine — et un acte qui "
-    "**effacerait ce que vous aviez posé là** avant lui vous reviennent, un par un. "
+    "au-dessus ou à côté, une installation ailleurs sur la machine —, un acte qui "
+    "**effacerait ce que vous aviez posé là** avant lui, et un acte qui **arrêterait "
+    "des programmes par leur nom** — tous ceux de ce nom, pas seulement les siens — "
+    "vous reviennent, un par un. "
     "C'est vous qui décidez tout cela ici, à froid, et cela se révoque"
 )
 
