@@ -10,9 +10,10 @@ cinq semaines). Cette suite est la moitié qui survit.
 **Quatre gardes, une par constat** :
 
 - `TestBudgetClaudeMd` — `CLAUDE.md` est chargé par chaque session et avait quadruplé sans que
-  personne le décide. #965 a fixé **25 000 tokens**, au compteur du dépôt (`estimer_tokens`), et le
-  dépassement **lève** : un fichier trop gros est une décision à prendre, pas un réglage à faire en
-  passant — même contrat que `BUDGET_CARTE_TOKENS` (`tests/test_documentation.py`).
+  personne le décide. #965 a fixé un budget au compteur du dépôt (`estimer_tokens`), et le
+  dépassement **lève** — même contrat que `BUDGET_CARTE_TOKENS` (`tests/test_documentation.py`).
+  Relevable, il a laissé le fichier remplir sa marge ; depuis #1523 c'est un **cliquet** (docs/49
+  §2.1) : le coût du jour de la livraison, qui ne remonte jamais.
 - `TestForgeAuPresent` — `.claude/**` et `scripts/orchestrate/run.sh` ne nomment plus GitLab au
   présent, ni `.gitlab-ci.yml` du tout (#961).
 - `TestAtelierDeSession` — les commandes qu'une session de run joue n'envoient plus ses fichiers de
@@ -38,8 +39,9 @@ Une autre, née d'un manque plutôt que d'une dérive :
 Et la dernière, née d'une mesure (#1245, R5 de #1239) :
 
 - `TestBudgetDesTextesDeCloture` — les textes que relit la phase la plus chère d'un ticket ont un
-  budget, gardé comme celui de `CLAUDE.md` : `/ticket-finish` pesait 16 560 tokens, dont
-  l'histoire de chaque étape, et la démonstration est partie dans docs/10 §6.1.
+  budget, qui lève comme celui de `CLAUDE.md` mais reste relevable (docs/49 §5) : `/ticket-finish`
+  pesait 16 560 tokens, dont l'histoire de chaque étape, et la démonstration est partie dans
+  docs/10 §6.1.
 
 **Le temps d'une phrase ne se juge pas par des mots.** « Au passé » n'a pas de forme lexicale
 fiable — « du temps de », « pendant la migration », « la version GitLab de cette boucle coûtait »
@@ -62,8 +64,9 @@ tête ; celui-ci prouve que la garde aurait arrêté celle qui a eu lieu.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -78,10 +81,23 @@ DOCS_10 = RACINE / "docs" / "10-workflow-git.md"
 DOCS_25 = RACINE / "docs" / "25-audit-commandes-claude.md"
 RUN_SH = "scripts/orchestrate/run.sh"
 
-#: Ce que `CLAUDE.md` peut coûter à chaque session, arbitré par #965 le 2026-09-17 : l'ordre de
-#: grandeur du jour de l'audit #304 (22 261) plus une marge — la place de ~150 interdits d'une
-#: phrase. 16 000 aurait coupé des interdits utiles ; 40 000 ne rendait que la moitié du gain.
-BUDGET_CLAUDE_MD_TOKENS = 25_000
+#: Chaque budget de `CLAUDE.md` livré sur `main`, du plus ancien au plus récent : le ticket qui l'a
+#: posé, et sa valeur. #965 avait arbitré 25 000 le 2026-09-17, une marge que le fichier a remplie
+#: (15 830 → 20 169 tokens en moins d'un mois, sans que la garde rougisse jamais). Depuis #1523 le
+#: budget est un **cliquet** (docs/49 §2.1) : une ligne ne s'ajoute que **plus basse** que la
+#: précédente, et une ligne livrée ne se retouche pas — la relever serait renverser docs/49 par
+#: écrit.
+#: Le registre tient lieu d'historique parce que la garde ne peut pas lire celui de git : la CI
+#: clone à profondeur 1, et le conteneur du filet local ne résout pas le `.git` d'un worktree.
+BUDGETS_LIVRES_CLAUDE_MD: tuple[tuple[str, int], ...] = (
+    ("#965", 25_000),
+    ("#1523", 20_164),
+)
+
+#: Ce que `CLAUDE.md` peut coûter à chaque session : le coût mesuré à la livraison de #1523, au
+#: compteur du dépôt. Il ne remonte jamais ; une règle qui entre en fait sortir une, ou sort sa
+#: démonstration vers `docs/`.
+BUDGET_CLAUDE_MD_TOKENS = 20_164
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -158,11 +174,47 @@ def verifier_budget(texte: str, budget: int = BUDGET_CLAUDE_MD_TOKENS) -> int:
         raise BudgetDepasse(
             f"CLAUDE.md coûte {cout} tokens pour un budget de {budget} "
             f"(BUDGET_CLAUDE_MD_TOKENS, arbitrage de #965) : {cout - budget} de trop, payés par "
-            "chaque session. Il ne garde que la règle et ce qu'il ne faut pas défaire : la "
-            "démonstration (mesures, pistes écartées, historique, incidents) va dans docs/. "
-            "Relever le budget est une décision qui se prend en connaissant ce coût."
+            "chaque session. Le budget est un cliquet (#1523, docs/49 §2.1) : il ne se relève "
+            "pas. Une règle qui entre en fait sortir une, ou sort sa démonstration (mesures, "
+            "pistes écartées, historique, incidents) vers docs/."
         )
     return cout
+
+
+class CliquetRemonte(AssertionError):
+    """Le budget de `CLAUDE.md` remonte au-dessus d'un budget déjà livré (#1523)."""
+
+
+def verifier_cliquet(budget: int, livres: Sequence[tuple[str, int]]) -> None:
+    """Lève si le registre remonte quelque part, ou si `budget` n'est pas sa dernière valeur.
+
+    Les deux portes d'une hausse : relever la constante seule (elle quitte le registre), ou
+    l'inscrire au registre (la ligne n'est pas plus basse que la précédente). Une baisse non
+    inscrite lève aussi : sans sa ligne, le budget suivant pourrait remonter jusqu'à l'ancien
+    sans que rien ne rougisse.
+    """
+    for (avant, precedent), (ticket, valeur) in pairwise(livres):
+        if valeur >= precedent:
+            raise CliquetRemonte(
+                f"BUDGETS_LIVRES_CLAUDE_MD remonte : {ticket} pose {valeur} tokens après les "
+                f"{precedent} de {avant}. Le budget de CLAUDE.md est un cliquet (#1523, docs/49 "
+                "§2.1) : une règle qui entre en fait sortir une, ou sort sa démonstration vers "
+                "docs/. Le relever, c'est renverser docs/49 par écrit."
+            )
+    ticket, dernier = livres[-1]
+    if budget > dernier:
+        raise CliquetRemonte(
+            f"BUDGET_CLAUDE_MD_TOKENS vaut {budget} tokens, au-dessus des {dernier} livrés par "
+            f"{ticket} : le budget de CLAUDE.md est un cliquet (#1523, docs/49 §2.1), il ne "
+            "remonte jamais. Une règle qui entre en fait sortir une, ou sort sa démonstration "
+            "vers docs/."
+        )
+    if budget < dernier:
+        raise CliquetRemonte(
+            f"BUDGET_CLAUDE_MD_TOKENS descend à {budget} tokens sans sa ligne dans "
+            f"BUDGETS_LIVRES_CLAUDE_MD (dernière : {dernier}, {ticket}) : inscris la baisse avec "
+            "son ticket, sans quoi le budget suivant pourrait remonter jusqu'à l'ancien."
+        )
 
 
 #: Un budget annoncé en toutes lettres : « budget 25 000 tokens », « Budget : 25 000 tokens ».
@@ -174,10 +226,11 @@ def budgets_annonces(texte: str) -> set[int]:
 
 
 class TestBudgetClaudeMd:
-    """Le budget est un contrat : mesuré sur le fichier chargé, et son dépassement lève."""
+    """Le budget est un contrat : mesuré sur le fichier chargé, son dépassement lève, et c'est un
+    cliquet — il ne remonte jamais (#1523)."""
 
     def test_claude_md_tient_sous_son_budget(self) -> None:
-        """Le fichier réel passe dessous — mesuré à 16 040 tokens le 2026-09-17.
+        """Le fichier réel passe dessous — il pesait exactement le budget à la livraison de #1523.
 
         Le plancher n'est pas décoratif : un `CLAUDE.md` vide ou mal lu passerait le plafond sans
         rien prouver.
@@ -204,12 +257,51 @@ class TestBudgetClaudeMd:
         message = str(leve.value)
         assert "10 tokens pour un budget de 3" in message
         assert "BUDGET_CLAUDE_MD_TOKENS" in message and "#965" in message
+        assert "cliquet" in message and "docs/49 §2.1" in message
+
+    def test_le_cliquet_tient_sur_le_registre_livre(self) -> None:
+        """La constante est la dernière ligne du registre, qui ne fait que descendre.
+
+        Les deux premières lignes sont l'histoire livrée, épinglée : la ligne de #965 et celle de
+        #1523 ne se réécrivent pas, sans quoi une hausse passerait en retouchant le registre.
+        """
+        assert BUDGETS_LIVRES_CLAUDE_MD[:2] == (("#965", 25_000), ("#1523", 20_164))
+        verifier_cliquet(BUDGET_CLAUDE_MD_TOKENS, BUDGETS_LIVRES_CLAUDE_MD)
+
+    def test_une_hausse_de_la_constante_rougit(self) -> None:
+        """L'échantillon fautif est le vrai : la constante rendue aux 25 000 de #965, le budget
+        sous lequel `CLAUDE.md` a grossi de 4 300 tokens sans que rien rougisse. Puis la plus
+        petite hausse possible, un token, pour qu'aucune marge ne se glisse sous la garde."""
+        with pytest.raises(CliquetRemonte) as leve:
+            verifier_cliquet(25_000, BUDGETS_LIVRES_CLAUDE_MD)
+        message = str(leve.value)
+        assert f"au-dessus des {BUDGET_CLAUDE_MD_TOKENS} livrés par" in message
+        assert "#1523" in message and "docs/49 §2.1" in message
+        with pytest.raises(CliquetRemonte):
+            verifier_cliquet(BUDGET_CLAUDE_MD_TOKENS + 1, BUDGETS_LIVRES_CLAUDE_MD)
+
+    def test_une_hausse_inscrite_au_registre_rougit(self) -> None:
+        """Relever la constante ET l'inscrire ne passe pas : une ligne neuve doit être plus basse
+        que la précédente — égale non plus, ce serait un budget qui ne descend pas."""
+        for releve in (BUDGET_CLAUDE_MD_TOKENS + 1, BUDGET_CLAUDE_MD_TOKENS):
+            registre = (*BUDGETS_LIVRES_CLAUDE_MD, ("#9999", releve))
+            with pytest.raises(CliquetRemonte) as leve:
+                verifier_cliquet(releve, registre)
+            assert "#9999 pose" in str(leve.value) and "renverser docs/49" in str(leve.value)
+
+    def test_une_baisse_s_inscrit_au_registre(self) -> None:
+        """Baisser passe, à condition d'inscrire la ligne : sans elle, le registre garderait
+        l'ancienne valeur comme plafond, et le budget suivant pourrait y remonter."""
+        baisse = BUDGET_CLAUDE_MD_TOKENS - 500
+        verifier_cliquet(baisse, (*BUDGETS_LIVRES_CLAUDE_MD, ("#9999", baisse)))
+        with pytest.raises(CliquetRemonte, match="sans sa ligne"):
+            verifier_cliquet(baisse, BUDGETS_LIVRES_CLAUDE_MD)
 
     def test_le_budget_annonce_est_celui_qui_est_garde(self) -> None:
         """`CLAUDE.md` et docs/25 annoncent le budget en chiffres : ce sont les chiffres gardés.
 
-        Sans ce lien, relever la constante en silence laisserait deux documents dire 25 000
-        tokens à une session qui en paie davantage.
+        Sans ce lien, changer la constante en silence laisserait deux documents annoncer à une
+        session un autre budget que celui qui est gardé.
         """
         assert budgets_annonces("(#965, budget 25 000 tokens)") == {25_000}
         assert budgets_annonces("**Budget : 25 000 tokens**, soit") == {25_000}
