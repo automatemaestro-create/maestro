@@ -28,6 +28,7 @@ import {
   EVENEMENT_AGENT_CAPACITE,
   EVENEMENT_CHAT_MESSAGE,
   EVENEMENT_EXECUTION_STATUT,
+  EVENEMENT_FIL_DEPENSE,
   EVENEMENT_MESSAGE_INTER_AGENTS,
   EVENEMENT_PLAYBOOK_PROPOSITION,
   EVENEMENT_RUN_PLAN,
@@ -70,6 +71,7 @@ const ICONES: Record<string, Icone> = {
   [EVENEMENT_AGENT_ACTIVITE]: IconeAgent,
   [EVENEMENT_AGENT_CAPACITE]: IconeCapacite,
   [EVENEMENT_MESSAGE_INTER_AGENTS]: IconeMessage,
+  [EVENEMENT_FIL_DEPENSE]: IconeMessage,
   [EVENEMENT_VALIDATION_DEMANDE]: IconeAlerte,
   [EVENEMENT_VALIDATION_DECISION]: IconeArbitrage,
 };
@@ -376,6 +378,17 @@ export function resumeEvenement(evenement: Evenement): string {
       return evenement.statut === CHAT_AUTEUR_UTILISATEUR
         ? `Vous avez écrit à ${fil}`
         : `${fil} vous a répondu`;
+    }
+    case EVENEMENT_FIL_DEPENSE: {
+      // #1534 : ce que le fil a payé, hors de tout run. `titre` dit quoi, et le
+      // montant est lu dans `detail`, où le backend l'a composé (« 0,0523 $ ·
+      // 12 480 tokens ») — comme pour `tache.usage`, et pour la même raison : le
+      // journal requêtable (#478) ne garde pas `cout_usd`, et un fil relu après
+      // rechargement n'aurait plus de montant à dire.
+      const quoi = evenement.titre || "un échange";
+      return evenement.detail
+        ? `Le fil a dépensé pour ${quoi} : ${evenement.detail}`
+        : `Le fil a dépensé pour ${quoi}`;
     }
     case EVENEMENT_PLAYBOOK_PROPOSITION: {
       // #183 : `statut` porte le numéro de brouillon, `detail` la justification.

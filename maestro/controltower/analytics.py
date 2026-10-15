@@ -8,7 +8,9 @@ la matière du tableau de bord coûts & analytics (`GET /api/analytics/couts`) :
 - le coût agrégé **par tâche** (toutes exécutions confondues), **par agent**,
   **par exécution**, et le poste de l'**orchestration** (#1028 : le cadrage et la
   planification sont une dépense, mais Maestro n'est pas un membre du parc — il a
-  donc son propre champ plutôt qu'une ligne parmi les agents) ;
+  donc son propre champ plutôt qu'une ligne parmi les agents), et celui du **fil**
+  (#1534 : ce que Maestro dépense en conversation pour un projet, hors de tout
+  run — `fil.depense`, la seule matière qui ne vienne pas des exécutions) ;
 - la **série temporelle** du coût (seaux par minute, heure ou jour) pour
   visualiser l'évolution de la dépense, sur une période sélectionnable
   (`depuis`).
@@ -33,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 from maestro.controltower.events import (
     ACTEUR_RUN,
     EVENEMENT_AGENT_ACTIVITE,
+    EVENEMENT_FIL_DEPENSE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_TACHE_STATUT,
     Event,
@@ -95,6 +98,10 @@ _TYPES_COMPTABLES = frozenset(
 #: Valeurs d'`Event.agent` qui ne désignent pas un acteur réel (tâche bloquée
 #: jamais exécutée : « — », routage sans élu…) : pas de ligne « par agent ».
 _AGENTS_NON_EXECUTANTS = frozenset({"", "—"})
+
+#: Le nom du poste du fil (#1534) dans `AnalyticsCouts.fil` — un poste, pas un
+#: agent : c'est sa place dans la réponse qui le distingue, comme l'orchestration.
+POSTE_FIL = "fil"
 
 
 @dataclass(frozen=True)
@@ -237,8 +244,16 @@ class AnalyticsCouts:
     #: lui, hors d'`agents`, parce qu'il n'est pas un membre du parc
     #: (docs/37 §4.2) : le confondre avec un exécutant donnait un parc de 6 au
     #: tableau de bord contre 5 sur `/agents`. Il reste dans `total` — c'est bien
-    #: de l'argent dépensé —, et `agents` + `orchestration` en font la somme.
+    #: de l'argent dépensé —, et `agents` + `orchestration` + `fil` en font la somme.
     orchestration: CoutAgent | None = None
+    #: Ce que le **fil** a dépensé pour les projets de la fenêtre (#1534) — la
+    #: déclaration, l'outillage, les pièces, l'équipe, les récits —, `None` quand
+    #: il n'a rien coûté de mesuré. Un poste à lui, à part de l'orchestration :
+    #: celle-ci est la dépense **d'un run** (cadrage, plan, sondes, bilans), le fil
+    #: n'appartient à aucun. Les confondre faisait additionner deux fois les
+    #: 0,88 $ d'orchestration du run de p5 au bilan de C2 (#1508). Il est dans
+    #: `total`, jamais dans `executions`.
+    fil: CoutAgent | None = None
     taches: tuple[CoutTacheAgregee, ...] = ()
     serie: tuple[PointCout, ...] = ()
 
@@ -255,6 +270,7 @@ class AnalyticsCouts:
             "orchestration": (
                 None if self.orchestration is None else self.orchestration.to_dict()
             ),
+            "fil": None if self.fil is None else self.fil.to_dict(),
             "taches": [t.to_dict() for t in self.taches],
             "serie": [p.to_dict() for p in self.serie],
         }
@@ -319,6 +335,17 @@ def _usage_de(event: Event) -> StepUsage | None:
     return None
 
 
+def _usage_du_fil(event: Event) -> StepUsage | None:
+    """L'usage d'une dépense du fil (#1534) — même convention qu'`_usage_de`, sur son seul type."""
+    if event.type != EVENEMENT_FIL_DEPENSE:
+        return None
+    if event.usage is not None:
+        return event.usage
+    if event.cout_usd is not None:
+        return StepUsage(cout_usd=event.cout_usd)
+    return None
+
+
 @dataclass
 class _Accumulateur:
     """L'état mutable d'une agrégation en cours (interne à `agrege_couts`)."""
@@ -351,6 +378,7 @@ def _tri_par_cout(usage: StepUsage) -> tuple[float, int]:
 def agrege_couts(
     executions: Sequence[EtatExecution],
     *,
+    fil: Sequence[Event] = (),
     depuis: datetime | None = None,
     pas: str = PAS_HEURE,
     portee: PorteeProjet | None = None,
@@ -373,6 +401,11 @@ def agrege_couts(
     comptée là où elle a été engagée même si un run venait à en mélanger. `None`
     vaut la vue transverse : comme pour la projection, refuser une question sans
     périmètre est le rôle des routes, pas celui du calcul.
+
+    `fil` (#1534) est la seconde matière : ce que le fil a dépensé hors de tout
+    run (`ControlTowerState.depenses_du_fil`). Chaque dépense est une part qui
+    entre au `total`, à la série et au poste `fil` — jamais aux `executions`,
+    puisqu'elle n'en a pas. Mêmes fenêtre et portée que les événements des runs.
     """
     if pas not in PAS_DEMANDABLES:
         raise ValueError(
@@ -490,6 +523,26 @@ def agrege_couts(
         if retenu is not None:
             retenu.nb_taches_du_run = len(execution.taches_vues)
 
+    # Le fil (#1534) : ses dépenses entrent au total et à la série comme celles
+    # des runs, sous leur propre poste, et à aucune exécution.
+    poste_fil = _Accumulateur()
+    for depense in fil:
+        if not portee.retient(depense.projet_id):
+            continue
+        date = _parse_horodatage(depense.horodatage)
+        if depuis is not None and (date is None or date < depuis):
+            continue
+        usage = _usage_du_fil(depense)
+        if usage is None:
+            continue
+        total = total.fusion(usage)
+        if date is not None:
+            usages_dates.append((date, usage))
+        # Même témoin que l'orchestration : le poste n'existe que s'il a été vu
+        # dépenser, sans quoi « 0,00 $ » dirait ce que l'API ignore.
+        poste_fil.agent = POSTE_FIL
+        poste_fil.usage = poste_fil.usage.fusion(usage)
+
     # Le pas retenu, puis la mise en seaux (#991). `auto` se résout sur l'étendue
     # **couverte par la série** — premier et dernier usage daté —, et non sur
     # `depuis` : une fenêtre de sept jours qui n'a vu travailler qu'une heure se
@@ -540,6 +593,11 @@ def agrege_couts(
                 usage=orchestration.usage,
             )
             if orchestration.agent
+            else None
+        ),
+        fil=(
+            CoutAgent(agent=poste_fil.agent, usage=poste_fil.usage)
+            if poste_fil.agent
             else None
         ),
         taches=tuple(

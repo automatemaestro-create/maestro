@@ -364,6 +364,9 @@ function etatParDefaut(): ControlTower {
     questions: [],
     executions: [],
     couts: [],
+    // Ce que le fil a dépensé (#1534) : rien de mesuré par défaut — le coût
+    // cumulé reste la seule somme des grands livres, comme avant ce lot.
+    fil: null,
     connecte: true,
     // Le pouls du shell (#475) : immobile par défaut, parce qu'un état factice ne
     // recharge rien. Un test qui exerce une vue abonnée au pouls

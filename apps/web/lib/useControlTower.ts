@@ -35,6 +35,7 @@ import {
   annulerExecution,
   chargerAgents,
   chargerCoutExecution,
+  chargerDepenseDuFil,
   chargerExecutions,
   chargerQuestions,
   chargerTaches,
@@ -56,6 +57,7 @@ import {
 } from "./api";
 import {
   ETENDUE_APPEL,
+  type CoutAgentAgrege,
   type CoutExecution,
   type DecisionBrief,
   type DecisionPlafond,
@@ -110,6 +112,13 @@ export type ControlTower = {
   executions: ResumeExecution[];
   /** Grands livres des exécutions connues (#57) : coût par tâche et agrégat. */
   couts: CoutExecution[];
+  /**
+   * Ce que le **fil** a dépensé pour le projet actif, hors de tout run (#1534) —
+   * `null` quand rien n'a été mesuré. Il rejoint les grands livres dans le coût
+   * cumulé (`coutCumule`), sans quoi la barre supérieure disait moins que Coûts
+   * & analytics pour le même projet.
+   */
+  fil: CoutAgentAgrege | null;
   /** WebSocket ouverte : les mises à jour arrivent en temps réel. */
   connecte: boolean;
   /**
@@ -223,6 +232,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [executions, setExecutions] = useState<ResumeExecution[]>([]);
   const [couts, setCouts] = useState<CoutExecution[]>([]);
+  const [fil, setFil] = useState<CoutAgentAgrege | null>(null);
   const [connecte, setConnecte] = useState(false);
   const [revision, setRevision] = useState(0);
   const [chargement, setChargement] = useState(true);
@@ -238,6 +248,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
         nouvellesValidations,
         nouvellesExecutions,
         nouvellesQuestions,
+        nouveauFil,
       ] = await Promise.all([
         chargerTaches(portee),
         // Sans portée : le parc d'agents est du poste, pas du projet.
@@ -245,6 +256,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
         chargerValidations(portee),
         chargerExecutions(portee),
         chargerQuestions(portee),
+        chargerDepenseDuFil(portee),
       ]);
       // Les grands livres (#57) se chargent après : les run_id connus en sont
       // dérivés. Des **deux** listes depuis #322, et pas des seules tâches — un
@@ -268,6 +280,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
       setExecutions(nouvellesExecutions);
       setQuestions(nouvellesQuestions);
       setCouts(nouveauxCouts);
+      setFil(nouveauFil);
       setErreur(null);
     } catch (e) {
       setErreur(panneDe(e));
@@ -492,6 +505,7 @@ export function useControlTower(portee: PorteeProjet): ControlTower {
     questions,
     executions,
     couts,
+    fil,
     connecte,
     revision,
     chargement,

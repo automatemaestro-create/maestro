@@ -114,6 +114,7 @@ export default function TableauDeBord() {
     validations,
     executions,
     couts,
+    fil,
     coutTotal,
     connecte,
     chargement,
@@ -214,6 +215,7 @@ export default function TableauDeBord() {
             taches={taches}
             agents={agents}
             couts={couts}
+            fil={fil}
             quiTournent={quiTournent}
           />
           {/* Le run qui tourne, **pipeline compris**, sans geste de navigation

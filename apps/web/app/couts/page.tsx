@@ -269,6 +269,7 @@ export default function PageCouts() {
                     <EtiquetteOrchestration
                       agents={vue.agents}
                       orchestration={vue.orchestration}
+                      fil={vue.fil}
                     />
                   }
                 />
@@ -276,6 +277,7 @@ export default function PageCouts() {
                   <RepartitionAgents
                     agents={vue.agents}
                     orchestration={vue.orchestration}
+                    fil={vue.fil}
                   />
                 </div>
               </Carte>

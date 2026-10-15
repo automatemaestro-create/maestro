@@ -2048,6 +2048,33 @@ exécutants** — qui l'exclut en toutes lettres.
 
 La veille, les trois variantes et le choix rendu par le regard neuf sont consignés sur #1028.
 
+#### 2.5.0 bis Le total d'un projet compte le fil et les tentatives coupées (#1534) — **livré**
+
+Sur le projet de p5 (run `fea601a5c629`, critère C2 du bilan du 2026-10-14), les sessions du projet
+coûtaient **15,97 $** et la page en montrait **11,52 $** : **28 %** manquaient
+([docs/50 § 1.2](./50-ecart-face-a-un-agent-seul.md)). Deux trous, deux corrections.
+
+- **Le fil a son poste.** Ce que Maestro dépense en conversation pour un projet — sa déclaration,
+  ses questions d'outillage, ses pièces, son équipe, les récits de ses runs — ne passait par aucun
+  collecteur d'usage : payé, jamais compté. Chaque échange du fil publie désormais sa dépense
+  (`fil.depense`), et `GET /api/analytics/couts` la rend sous un champ **`fil`**, à côté
+  d'`orchestration` (`null` quand rien n'a été mesuré). Il entre au `total` et à la série, jamais à
+  une ligne d'`executions` : le fil n'appartient à aucun run. `agents` + `orchestration` + `fil`
+  refont `total`. Les tours qui précèdent la naissance d'un projet reviennent à ce projet, celui
+  que leur conversation a fait naître.
+- **À l'écran, la forme de #1028** : « dont orchestration …, fil … » en en-tête de « Répartition
+  par agent », et les parts se comptent sur le tout. Le **coût cumulé** du shell — barre
+  supérieure, tuile « Dépense », Paramètres — ajoute le fil aux grands livres des runs
+  (`GET /api/fil/depense`) : sans lui, la barre disait 2,70 $ au-dessus des 3,83 $ du « Coût total »
+  de cette page (relecture visuelle de #1534). L'orchestration reste ce qu'elle était — la
+  dépense **d'un run** (brief, plan, sondes, bilans) — et le fil ne s'y confond plus : le bilan de
+  C2 les avait additionnés deux fois.
+- **Une tentative coupée garde ce qu'elle a coûté.** Une tâche que l'extinction de Maestro arrête
+  en vol est soldée `interrompue` (#1390) ; ce soldage porte désormais son dernier **relevé en
+  cours** (#835) — l'argent « engagé » et, faute de prix, ses tokens marqués non tarifés (#1280).
+  Avant, ce montant n'existait que dans le relevé, que la reprise de la tâche écrasait : 2,908 $
+  disparus sur p5. Le run ne se dit plus complet sans elle.
+
 #### 2.5.1 Une durée de tâche est son temps de travail (#989) — **livré**
 
 Le défaut, mesuré deux fois : **21 min 17 s** annoncées pour **8 min 05 s** de travail (revue du

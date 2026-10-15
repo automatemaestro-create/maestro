@@ -42,6 +42,7 @@ from maestro.controltower.events import (
     EVENEMENT_BRIEF_QUESTIONS,
     EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
+    EVENEMENT_FIL_DEPENSE,
     EVENEMENT_MESSAGE_INTER_AGENTS,
     EVENEMENT_PLAFOND_DECISION,
     EVENEMENT_PLAFOND_DEMANDE,
@@ -1158,7 +1159,7 @@ class EtatExecution:
             "fin": self.fin,
         }
 
-    def _couts(self) -> tuple[list[float], dict[str, float | None], bool]:
+    def _couts(self) -> tuple[list[float], dict[str, Event], bool]:
         """Les coûts **soldés** du run, le dernier **relevé** de chaque tâche en cours (#835),
         et si du soldé a laissé des tokens **sans coût** (#1280).
 
@@ -1176,12 +1177,12 @@ class EtatExecution:
         et affichait 1,17 $ pour un run dont 75 % des tokens n'étaient pas tarifés.
         """
         soldes: list[float] = []
-        releves: dict[str, float | None] = {}
+        releves: dict[str, Event] = {}
         sans_cout = False
         for event in self.evenements:
             if event.type == EVENEMENT_TACHE_USAGE:
                 if event.tache_id:
-                    releves[event.tache_id] = event.cout_usd
+                    releves[event.tache_id] = event
                 continue
             if event.cout_usd is not None:
                 soldes.append(event.cout_usd)
@@ -1202,8 +1203,27 @@ class EtatExecution:
         la fin de la tâche précédente.
         """
         soldes, releves, _ = self._couts()
-        connus = soldes + [cout for cout in releves.values() if cout is not None]
+        connus = soldes + [
+            releve.cout_usd for releve in releves.values() if releve.cout_usd is not None
+        ]
         return sum(connus) if connus else None
+
+    def releves_en_vol(self) -> dict[str, Event]:
+        """Le dernier relevé (#835) de chaque tâche que nulle issue n'a encore soldé (#1534).
+
+        C'est ce qu'une tentative a dépensé **jusqu'ici**, et c'est tout ce qu'on en
+        saura si elle est coupée avant son résultat : le soldage d'une tâche en vol
+        (`ServiceExecutions._solder_les_taches`) le reporte sur son issue
+        `interrompue`, qui le fait entrer au grand livre. Sans lui, la dépense d'une
+        tentative coupée n'existait que dans ces relevés, qu'aucun lecteur comptable
+        ne compte et que la reprise de la tâche écrasait à son premier relevé —
+        2,908 $ disparus sur p5 (#1508).
+
+        La même lecture que le cumul du run, pour qu'un relevé tenu pour en vol ici
+        le soit aussi là.
+        """
+        _, releves, _ = self._couts()
+        return releves
 
     @property
     def cout_partiel(self) -> bool:
@@ -1393,6 +1413,9 @@ class ControlTowerState:
         # tâche : une tâche en pose plusieurs, et deux peuvent attendre en même
         # temps (cf. `EtatQuestion`).
         self._questions: dict[str, EtatQuestion] = {}
+        # Ce que le fil a dépensé (#1534), dans l'ordre d'arrivée : des parts qui
+        # s'additionnent, hors de tout run (`EVENEMENT_FIL_DEPENSE`).
+        self._depenses_du_fil: list[Event] = []
 
     # ------------------------------------------------------------------ lecture
 
@@ -1759,6 +1782,18 @@ class ControlTowerState:
             return executions
         return [e for e in executions if portee.retient(e.projet_id)]
 
+    def depenses_du_fil(self, portee: PorteeProjet | None = None) -> list[Event]:
+        """Ce que le fil a dépensé (#1534), dans l'ordre d'arrivée — `None` rend tout.
+
+        La seconde matière de la vue coûts & analytics, à côté des exécutions :
+        le fil n'est pas un run, et sa dépense n'appartient à aucun. Même
+        convention de portée que les exécutions, pour que le total d'un projet
+        se lise sur les mêmes règles.
+        """
+        if portee is None:
+            return list(self._depenses_du_fil)
+        return [e for e in self._depenses_du_fil if portee.retient(e.projet_id)]
+
     def validations(self, portee: PorteeProjet | None = None) -> list[EtatValidation]:
         """Les demandes de validation humaine, dans l'ordre de première apparition.
 
@@ -1891,6 +1926,39 @@ class ControlTowerState:
             self._applique_brief_questions(event)
         elif event.type == EVENEMENT_BRIEF_REPONSES:
             self._applique_brief_reponses(event)
+        elif event.type == EVENEMENT_FIL_DEPENSE:
+            self._applique_depense_du_fil(event)
+
+    def _applique_depense_du_fil(self, event: Event) -> None:
+        """Garde ce que le fil a dépensé (#1534) — et le range au projet de sa conversation.
+
+        Une part, jamais un cumul : elle s'ajoute aux précédentes. Une dépense sans
+        mesure ne dit rien et ne se garde pas.
+
+        Les tours qui **précèdent la naissance** d'un projet n'en nomment aucun : on
+        y parle d'un projet qui n'existe pas encore. Ils lui appartiennent pourtant
+        — c'est sa déclaration —, et le total du projet ne rejoindrait jamais sa
+        dépense réelle sans eux. La première dépense de la conversation qui nomme
+        un projet le pose donc sur celles qui, avant elle, n'en nommaient aucun. Ce
+        n'est pas une devinette : c'est la même conversation, et le projet est
+        celui qu'elle a fait naître. Une dépense qui nomme déjà un projet n'est
+        jamais déplacée, et le rejeu du journal rend le même rangement, l'ordre
+        des événements étant celui de leur publication. Une conversation se
+        désigne par son agent **et** son identifiant : `origine` est celle de
+        chaque agent (`maestro.controltower.chat`).
+        """
+        if event.usage is None and event.cout_usd is None:
+            return
+        if event.projet_id is not None and event.conversation:
+            self._depenses_du_fil = [
+                replace(depense, projet_id=event.projet_id)
+                if depense.projet_id is None
+                and depense.agent == event.agent
+                and depense.conversation == event.conversation
+                else depense
+                for depense in self._depenses_du_fil
+            ]
+        self._depenses_du_fil.append(event)
 
     def _applique_statut_tache(self, event: Event) -> None:
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""

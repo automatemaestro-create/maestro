@@ -43,6 +43,7 @@ import { formatCout, partiesCoutPartiel, RAISON_COUT_PARTIEL } from "@/lib/forma
 import { entreeParLibelle } from "@/lib/navigation";
 import {
   AGENT_OCCUPE,
+  type CoutAgentAgrege,
   type CoutExecution,
   type EtatAgent,
   type ResumeExecution,
@@ -83,11 +84,18 @@ export function IndicateursTableauDeBord({
   taches,
   agents,
   couts,
+  fil = null,
   quiTournent = [],
 }: {
   taches: Tache[];
   agents: EtatAgent[];
   couts: CoutExecution[];
+  /**
+   * Ce que le fil a dépensé pour le projet, hors de tout run (#1534) : il rejoint
+   * les grands livres dans la tuile « Dépense », comme dans la barre supérieure
+   * (`coutCumule`). `null` quand rien n'a été mesuré.
+   */
+  fil?: CoutAgentAgrege | null;
   /**
    * Les runs **qui travaillent**, tels que l'écran les a rangés (#927) —
    * `runsParRegime(…).get(REGIME_TRAVAILLE)`, la carte dont `EtatDesRuns` et le
@@ -193,13 +201,13 @@ export function IndicateursTableauDeBord({
   // entier. La barre supérieure est passée à la même source (`coutCumule`) :
   // les deux montants s'accordent désormais au lieu d'afficher un écart à
   // expliquer. Aucun coût rapporté ≠ coût nul : `formatCout` rend « — ».
-  const depense = coutCumule(couts);
+  const depense = coutCumule(couts, fil);
   // Un cumul qui n'est qu'un plancher le dit (#1280), **collé au chiffre**,
   // en petit comme une unité : relégué en fin de légende, il arrivait après
   // qu'on avait déjà lu le montant comme un solde (relecture visuelle). Sans
   // aucun prix, « coût non tarifé » prend la place du chiffre, comme « Aucun »
   // prend celle d'un run. La raison va dans l'infobulle de la tuile.
-  const partiel = coutCumulePartiel(couts);
+  const partiel = coutCumulePartiel(couts, fil);
   const etatDepense = partiesCoutPartiel(depense, partiel);
   const valeurDepense =
     etatDepense.mention === null ? (
@@ -270,7 +278,9 @@ export function IndicateursTableauDeBord({
       icone: IconeMonnaie,
       valeur: valeurDepense,
       titre: partiel ? RAISON_COUT_PARTIEL : undefined,
-      detail: `${couts.length} exécution(s), planification comprise`,
+      // « et le fil » dès qu'il a dépensé (#1534) : le montant ne se lit plus
+      // comme la seule somme des runs qu'il dit compter.
+      detail: `${couts.length} exécution(s)${fil ? " et le fil" : ""}, planification comprise`,
       renvoi: pageCouts && {
         href: pageCouts.href,
         libelle: "Détail par période",

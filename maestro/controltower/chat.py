@@ -243,6 +243,7 @@ import unicodedata
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -253,6 +254,7 @@ from maestro.agents.playbook_du_code import registre
 from maestro.agents.playbooks import PlaybookStore
 from maestro.config import Settings, load_settings
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
+from maestro.controltower.depense_du_fil import au_compte_du_fil
 from maestro.controltower.estimation import EstimationRun
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, Event, EventBus
 from maestro.controltower.gestes import (
@@ -595,6 +597,49 @@ def projet_du_fil(fil: Sequence[MessageChat]) -> str | None:
         if nomme:
             return nomme
     return None
+
+
+def projet_de_la_depense(
+    fil: Sequence[MessageChat], projet_id: str | None = None
+) -> str | None:
+    """Le projet auquel revient ce qu'un échange du fil a dépensé (#1534) — `None` s'il n'en a pas.
+
+    Trois lectures, de la plus précise à la plus large :
+
+    - ce que la **réponse** de l'échange nomme — le projet né, la pièce, le run
+      proposé (`projet_vise`), l'équipe demandée : c'est de lui que l'échange a parlé ;
+    - sinon le projet de la **fenêtre** (`projet_id`), où la personne s'adressait au
+      fil ;
+    - sinon le dernier projet que la **conversation** nommait (`projet_du_fil`) : le
+      fil est transverse, et ses messages se rattachent ainsi depuis #1161.
+
+    Ce qui ne revient à aucun projet le dit (`None`) : les tours qui précèdent la
+    naissance d'un projet y seront rangés par la projection, quand la même
+    conversation le nommera (`ControlTowerState._applique_depense_du_fil`).
+    """
+    if fil:
+        nomme = _projet_de(fil[-1])
+        if nomme:
+            return nomme
+    if projet_id:
+        return projet_id
+    for message in reversed(fil):
+        nomme = _projet_de(message)
+        if nomme:
+            return nomme
+    return None
+
+
+def _projet_de(message: MessageChat) -> str:
+    """Tout projet qu'un message désigne — nommé, visé par un run ou par une équipe (#1534)."""
+    nomme = _projet_nomme(message)
+    if nomme:
+        return nomme
+    if message.projet_vise is not None:
+        return message.projet_vise.id
+    if message.recrutement is not None and message.recrutement.projet_id:
+        return message.recrutement.projet_id
+    return ""
 
 
 def _projet_nomme(message: MessageChat) -> str:
@@ -3274,6 +3319,28 @@ class ServiceChat:
         """Ouvre une conversation neuve chez `agent` — idempotente si la courante est vierge."""
         return self._store.ouvrir(agent)
 
+    def _au_compte_du_fil(
+        self, agent: Agent, conversation: str, titre: str, projet_id: str | None = None
+    ) -> AbstractAsyncContextManager[None]:
+        """Ce qu'un échange dépense, publié au grand livre du fil (#1534).
+
+        Posé autour de chaque échange — envoi, flux, gestes, demandes que le fil
+        reçoit d'un run — et non dans les répondeurs : la mesure suit le contexte,
+        si bien que tout ce qu'un répondeur appelle est compté sans qu'il ait à le
+        savoir. Le projet se lit **après** l'échange (`projet_de_la_depense`) : la
+        réponse l'a souvent appris.
+        """
+        return au_compte_du_fil(
+            self._bus,
+            titre=titre,
+            agent=agent.nom,
+            role=agent.role,
+            projet=lambda: projet_de_la_depense(
+                self._store.fil(agent.nom, conversation), projet_id
+            ),
+            conversation=conversation,
+        )
+
     async def envoyer(
         self,
         agent: Agent,
@@ -3320,8 +3387,9 @@ class ServiceChat:
         deux moitiés d'un même tour, les séparer n'aurait aucun sens.
         """
         fil = self._resoudre(agent, conversation)
-        message = await self._deposer(agent, contenu, sources, conversation=fil)
-        return message, await self._repondre(agent, conversation=fil, projet_id=projet_id)
+        async with self._au_compte_du_fil(agent, fil, "réponse du fil", projet_id):
+            message = await self._deposer(agent, contenu, sources, conversation=fil)
+            return message, await self._repondre(agent, conversation=fil, projet_id=projet_id)
 
     async def trancher_cadrage(
         self,
@@ -3381,27 +3449,28 @@ class ServiceChat:
             _geste_de_cadrage(approuve, retenu, demande, bornes),
             conversation=fil,
         )
-        try:
-            reponse = await self._repondeur.trancher_cadrage(
-                agent,
-                self._store.fil(agent.nom, fil),
-                approuve=approuve,
-                objectif=retenu,
-                projet_id=projet_id,
-                bornes=bornes,
+        async with self._au_compte_du_fil(agent, fil, "lancement d'un run", projet_id):
+            try:
+                reponse = await self._repondeur.trancher_cadrage(
+                    agent,
+                    self._store.fil(agent.nom, fil),
+                    approuve=approuve,
+                    objectif=retenu,
+                    projet_id=projet_id,
+                    bornes=bornes,
+                )
+            except CadrageIntrouvable:
+                # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+                # manque. Remonter tel quel plutôt que d'envelopper — l'API en fait
+                # un 409, pas un 502, et la conversation garde la trace du clic.
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu trancher le cadrage : {exc}"
+                ) from exc
+            return geste, await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except CadrageIntrouvable:
-            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
-            # manque. Remonter tel quel plutôt que d'envelopper — l'API en fait
-            # un 409, pas un 502, et la conversation garde la trace du clic.
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu trancher le cadrage : {exc}"
-            ) from exc
-        return geste, await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def repondre_question(
         self,
@@ -3471,25 +3540,26 @@ class ServiceChat:
             conversation=fil,
             choix=Choix(cle=question.cle, valeur=valeur, libre=libre),
         )
-        try:
-            reponse = await self._repondeur.repondre_question(
-                agent,
-                self._store.fil(agent.nom, fil),
-                question=question,
-                valeur=valeur,
+        async with self._au_compte_du_fil(agent, fil, "question d'outillage"):
+            try:
+                reponse = await self._repondeur.repondre_question(
+                    agent,
+                    self._store.fil(agent.nom, fil),
+                    question=question,
+                    valeur=valeur,
+                )
+            except QuestionIntrouvable:
+                # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+                # manque. Remonter tel quel plutôt que d'envelopper — l'API en fait un
+                # 409, pas un 502, comme pour le cadrage.
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu poursuivre le questionnaire : {exc}"
+                ) from exc
+            return geste, await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except QuestionIntrouvable:
-            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
-            # manque. Remonter tel quel plutôt que d'envelopper — l'API en fait un
-            # 409, pas un 502, comme pour le cadrage.
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu poursuivre le questionnaire : {exc}"
-            ) from exc
-        return geste, await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def recruter(
         self,
@@ -3525,26 +3595,27 @@ class ServiceChat:
         geste = await self._deposer(
             agent, _geste_de_recrutement(approuve, roles), conversation=fil
         )
-        try:
-            reponse = await self._repondeur.recruter(
-                agent,
-                self._store.fil(agent.nom, fil),
-                demande=attente.recrutement,
-                approuve=approuve,
-                roles=roles,
-                proposition_id=proposition_id,
+        async with self._au_compte_du_fil(agent, fil, "équipe"):
+            try:
+                reponse = await self._repondeur.recruter(
+                    agent,
+                    self._store.fil(agent.nom, fil),
+                    demande=attente.recrutement,
+                    approuve=approuve,
+                    roles=roles,
+                    proposition_id=proposition_id,
+                )
+            except RecrutementIntrouvable:
+                # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+                # manque — un 409, comme pour le cadrage, jamais un 502.
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu donner suite à l'équipe : {exc}"
+                ) from exc
+            return geste, await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except RecrutementIntrouvable:
-            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
-            # manque — un 409, comme pour le cadrage, jamais un 502.
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu donner suite à l'équipe : {exc}"
-            ) from exc
-        return geste, await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def declarer_projet(
         self,
@@ -3578,24 +3649,25 @@ class ServiceChat:
             _geste_de_declaration(approuve, attente.projet_propose.origine),
             conversation=fil,
         )
-        try:
-            reponse = await self._repondeur.declarer_projet(
-                agent,
-                self._store.fil(agent.nom, fil),
-                demande=attente.projet_propose,
-                approuve=approuve,
+        async with self._au_compte_du_fil(agent, fil, "déclaration du projet"):
+            try:
+                reponse = await self._repondeur.declarer_projet(
+                    agent,
+                    self._store.fil(agent.nom, fil),
+                    demande=attente.projet_propose,
+                    approuve=approuve,
+                )
+            except DeclarationIntrouvable:
+                # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+                # manque — un 409, comme pour le cadrage, jamais un 502.
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu donner suite au projet proposé : {exc}"
+                ) from exc
+            return geste, await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except DeclarationIntrouvable:
-            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
-            # manque — un 409, comme pour le cadrage, jamais un 502.
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu donner suite au projet proposé : {exc}"
-            ) from exc
-        return geste, await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def trancher_piece(
         self,
@@ -3651,24 +3723,26 @@ class ServiceChat:
         geste = await self._deposer(
             agent, _geste_de_piece(decision, visee), conversation=fil
         )
-        try:
-            reponse = await self._repondeur.trancher_piece(
-                agent,
-                self._store.fil(agent.nom, fil),
-                piece=visee,
-                decision=decision,
+        async with self._au_compte_du_fil(agent, fil, "pièce d'outillage"):
+            try:
+                reponse = await self._repondeur.trancher_piece(
+                    agent,
+                    self._store.fil(agent.nom, fil),
+                    piece=visee,
+                    decision=decision,
+                )
+            except PieceIntrouvable:
+                # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+                # manque — un 409, comme pour le cadrage, jamais un 502.
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu donner suite à la pièce "
+                    f"{visee.chemin} : {exc}"
+                ) from exc
+            return geste, await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except PieceIntrouvable:
-            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
-            # manque — un 409, comme pour le cadrage, jamais un 502.
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu donner suite à la pièce {visee.chemin} : {exc}"
-            ) from exc
-        return geste, await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def trancher_geste(
         self,
@@ -3699,25 +3773,26 @@ class ServiceChat:
         geste = await self._deposer(
             agent, _geste_sur_un_run(approuve, demande), conversation=fil
         )
-        try:
-            reponse = await self._repondeur.trancher_geste(
-                agent,
-                self._store.fil(agent.nom, fil),
-                demande=demande,
-                approuve=approuve,
+        async with self._au_compte_du_fil(agent, fil, "geste sur un run"):
+            try:
+                reponse = await self._repondeur.trancher_geste(
+                    agent,
+                    self._store.fil(agent.nom, fil),
+                    demande=demande,
+                    approuve=approuve,
+                )
+            except GesteRunIntrouvable:
+                # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+                # manque — un 409, comme pour le cadrage, jamais un 502.
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu donner suite au geste sur le run "
+                    f"{demande.run.run_id} : {exc}"
+                ) from exc
+            return geste, await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except GesteRunIntrouvable:
-            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
-            # manque — un 409, comme pour le cadrage, jamais un 502.
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu donner suite au geste sur le run "
-                f"{demande.run.run_id} : {exc}"
-            ) from exc
-        return geste, await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def trancher_reglement(
         self,
@@ -3748,25 +3823,26 @@ class ServiceChat:
         geste = await self._deposer(
             agent, _geste_de_reglement(approuve, demande), conversation=fil
         )
-        try:
-            reponse = await self._repondeur.trancher_reglement(
-                agent,
-                self._store.fil(agent.nom, fil),
-                demande=demande,
-                approuve=approuve,
+        async with self._au_compte_du_fil(agent, fil, "règlement d'une attente"):
+            try:
+                reponse = await self._repondeur.trancher_reglement(
+                    agent,
+                    self._store.fil(agent.nom, fil),
+                    demande=demande,
+                    approuve=approuve,
+                )
+            except ReglementIntrouvable:
+                # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
+                # manque — un 409, comme pour le cadrage, jamais un 502.
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu donner suite au règlement de "
+                    f"{demande.attente.identifiant} : {exc}"
+                ) from exc
+            return geste, await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except ReglementIntrouvable:
-            # Le geste est déjà au fil : il a bien eu lieu, c'est la suite qui
-            # manque — un 409, comme pour le cadrage, jamais un 502.
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu donner suite au règlement de "
-                f"{demande.attente.identifiant} : {exc}"
-            ) from exc
-        return geste, await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def poser_question(
         self,
@@ -3796,19 +3872,20 @@ class ServiceChat:
         formulaire.
         """
         fil = self._resoudre(agent, conversation)
-        try:
-            reponse = await self._repondeur.ouvrir_questionnaire(
-                agent, self._store.fil(agent.nom, fil), projet_id=projet_id
+        async with self._au_compte_du_fil(agent, fil, "question d'outillage", projet_id):
+            try:
+                reponse = await self._repondeur.ouvrir_questionnaire(
+                    agent, self._store.fil(agent.nom, fil), projet_id=projet_id
+                )
+            except QuestionIntrouvable:
+                raise
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu ouvrir le questionnaire : {exc}"
+                ) from exc
+            return await self._persister_reponse(
+                agent, conversation=fil, reponse=reponse
             )
-        except QuestionIntrouvable:
-            raise
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu ouvrir le questionnaire : {exc}"
-            ) from exc
-        return await self._persister_reponse(
-            agent, conversation=fil, reponse=reponse
-        )
 
     async def proposer_recrutement(
         self,
@@ -3858,19 +3935,20 @@ class ServiceChat:
         """
         fil = self._resoudre(agent, conversation)
         reponse = ReponseChat(contenu="", recrutement=demande)
-        try:
-            # La demande attend sous le message, avec ses gestes : le répondeur l'apprend
-            # du message lui-même, et ne les redit pas (#1339).
-            contenu = await self._repondeur.rediger(
-                agent, (), faits=faits_pour_la_redaction(faits, reponse)
+        async with self._au_compte_du_fil(agent, fil, "demande de renfort"):
+            try:
+                # La demande attend sous le message, avec ses gestes : le répondeur
+                # l'apprend du message lui-même, et ne les redit pas (#1339).
+                contenu = await self._repondeur.rediger(
+                    agent, (), faits=faits_pour_la_redaction(faits, reponse)
+                )
+            except Exception as exc:
+                raise ReponseIndisponible(
+                    f"l'agent {agent.nom} n'a pas pu rédiger la demande de renfort : {exc}"
+                ) from exc
+            return await self._persister_reponse(
+                agent, conversation=fil, reponse=replace(reponse, contenu=contenu)
             )
-        except Exception as exc:
-            raise ReponseIndisponible(
-                f"l'agent {agent.nom} n'a pas pu rédiger la demande de renfort : {exc}"
-            ) from exc
-        return await self._persister_reponse(
-            agent, conversation=fil, reponse=replace(reponse, contenu=contenu)
-        )
 
     async def raconter_la_fin(
         self,
@@ -3961,7 +4039,11 @@ class ServiceChat:
         voyage sur **toutes** les trames, `debut` comprise.
         """
         fil = self._resoudre(agent, conversation)
-        message = await self._deposer(agent, contenu, sources, conversation=fil)
+        # Deux comptes et non un (#1534) : la réponse s'écrit dans sa propre tâche,
+        # qui survit au client parti, et c'est donc elle qui solde sa dépense. Le
+        # dépôt — la lecture des pièces jointes, images comprises — solde la sienne.
+        async with self._au_compte_du_fil(agent, fil, "réponse du fil", projet_id):
+            message = await self._deposer(agent, contenu, sources, conversation=fil)
         # L'échange se nomme **après** le dépôt : un message refusé — conversation
         # mal formée, message vide, source hors bornes — n'a jamais de flux, donc
         # jamais d'identifiant à arrêter.
@@ -3992,13 +4074,14 @@ class ServiceChat:
 
         async def produire() -> MessageChat:
             try:
-                return await self._repondre(
-                    agent,
-                    conversation=fil,
-                    incrementer=incrementer,
-                    etapeur=etapeur,
-                    projet_id=projet_id,
-                )
+                async with self._au_compte_du_fil(agent, fil, "réponse du fil", projet_id):
+                    return await self._repondre(
+                        agent,
+                        conversation=fil,
+                        incrementer=incrementer,
+                        etapeur=etapeur,
+                        projet_id=projet_id,
+                    )
             finally:
                 # La sentinelle passe par le même canal que les incréments : elle
                 # arrive donc **après** eux, et le drainage ne peut pas s'arrêter
