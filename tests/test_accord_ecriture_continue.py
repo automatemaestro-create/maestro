@@ -8,6 +8,12 @@ première fusion, avec le diff et son origine (`run_id`, `projet_id` — #570) ;
 qu'on lui répond vaut pour ses fusions suivantes, refus compris ; un accord non
 rendu ne perd rien.
 
+Et depuis #1504, **ce qu'on lui répond survit à l'extinction** : un run repris sur
+son plan (#1391) est le même run, et la personne n'est pas consultée deux fois pour
+le même accord. Ces tests-là passent par la vraie boucle et un exécuteur **neuf** à
+la reprise — c'est ce qu'est un process rallumé —, le seul lien entre les deux
+étant le magasin d'état acquis.
+
 Vrai dépôt jetable, vrai worktree, vraie fusion (sautés sans `git`) ; le
 validateur est une fonction du test, comme dans `tests/test_application_projet.py`.
 """
@@ -15,14 +21,19 @@ validateur est une fonction du test, comme dans `tests/test_application_projet.p
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import shutil
 import subprocess
+from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from maestro.agents import DEVELOPER_PROFILE, AgentRuntime
+from maestro.engine import OrchestrationEngine
+from maestro.engine.acquis import MagasinAcquisMemoire
 from maestro.engine.executor import (
     STATUT_FUSION_FAITE,
     STATUT_FUSION_NON_ACCORDEE,
@@ -32,6 +43,7 @@ from maestro.engine.executor import (
     LocalExecutor,
 )
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
+from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.projets.modele import Projet
 from maestro.projets.store import ProjetStore
@@ -342,3 +354,185 @@ def test_un_run_interrompu_pendant_l_attente_laisse_la_branche_et_le_dit(tmp_pat
     assert f"git merge {branche_de_tache('t1')}" in etape.sortie
     # Rien n'a été rendu, donc rien n'est retenu : le run suivant reposera la question.
     assert executeur._accords_fusion == {}
+
+
+# --------------------------------------------------------------------------- #
+# Ce qu'on répond survit à l'extinction et à la reprise du run (#1504)
+# --------------------------------------------------------------------------- #
+
+RUN_REPRIS = "run-1504"
+
+
+class _EcrivainQuiCoupe(_Ecrivain):
+    """L'écrivain d'un run qu'on éteint : il ne rend jamais la main sur `coupe`.
+
+    `atteint` se lève quand la tâche à couper tourne — c'est l'instant où le test
+    éteint le run, comme Maestro qui tombe au milieu d'une tâche.
+    """
+
+    def __init__(self, coupe: str) -> None:
+        self._coupe = coupe
+        self.atteint = asyncio.Event()
+
+    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools, **canaux):
+        if f"livrable:{self._coupe}" in prompt:
+            self.atteint.set()
+            await asyncio.Event().wait()  # jamais levée : l'extinction vient avant
+        return await super().run_agent(
+            prompt, model=model, system_prompt=system_prompt, workspace=workspace, tools=tools
+        )
+
+
+class _Planificateur(_Muet):
+    """Rend le plan du run tel quel — la planification n'est pas ce qu'on éprouve ici."""
+
+    def __init__(self, plan: Sequence[Task]) -> None:
+        self._plan = json.dumps([t.to_dict() for t in plan], ensure_ascii=False)
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        return self._plan
+
+
+def _plan(projet_id: str) -> tuple[Task, ...]:
+    """Deux tâches en chaîne : la première fusionne avant l'extinction, la seconde après."""
+    return (
+        _tache("t1", projet_id, "t1.md"),
+        replace(_tache("t2", projet_id, "t2.md"), dependances=("t1",)),
+    )
+
+
+def _moteur(
+    plan: Sequence[Task], executeur: LocalExecutor, acquis: MagasinAcquisMemoire
+) -> OrchestrationEngine:
+    planificateur = _Planificateur(plan)
+    return OrchestrationEngine(
+        planificateur,
+        Orchestrator(planificateur, model="claude-opus-4-8"),
+        executor=executeur,
+        acquis=acquis,
+    )
+
+
+def _eteint_pendant_t2(
+    depot: ProjetStore, projet: Projet, validateur: Validateur | None
+) -> MagasinAcquisMemoire:
+    """Lance le run, laisse t1 fusionner (ou non), et l'éteint pendant t2."""
+    magasin = MagasinAcquisMemoire()
+    ecrivain = _EcrivainQuiCoupe("t2.md")
+    moteur = _moteur(_plan(projet.id), _executeur(ecrivain, depot, validateur), magasin)
+
+    async def scenario() -> None:
+        run = asyncio.create_task(
+            moteur.run("Un agenda", journal=RunJournal(run_id=RUN_REPRIS), projet_id=projet.id)
+        )
+        await asyncio.wait_for(ecrivain.atteint.wait(), timeout=30)
+        run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+
+    asyncio.run(scenario())
+    return magasin
+
+
+def _reprend(
+    depot: ProjetStore, projet: Projet, magasin: MagasinAcquisMemoire, validateur: Validateur
+) -> RunJournal:
+    """Rallume et reprend le run sur son plan : un exécuteur **neuf**, le même `run_id`."""
+    journal = RunJournal(run_id=RUN_REPRIS)
+
+    async def scenario() -> None:
+        etat = await magasin.lire(RUN_REPRIS)
+        assert etat is not None and etat.acquises == ("t1",)
+        moteur = _moteur(_plan(projet.id), _executeur(_Ecrivain(), depot, validateur), magasin)
+        rapport = await moteur.run(
+            "Un agenda", journal=journal, projet_id=projet.id, reprise=etat
+        )
+        assert all(r.ok for r in rapport.resultats)
+
+    asyncio.run(scenario())
+    return journal
+
+
+def test_l_accord_donne_avant_l_extinction_vaut_pour_le_run_repris(tmp_path: Path) -> None:
+    """Le cas du run `fea601a5c629` : l'accord donné à 09:46 n'est pas redemandé à 10:43."""
+    depot, projet = _projet_git(tmp_path)
+    avant = _Validateur(True)
+    magasin = _eteint_pendant_t2(depot, projet, avant)
+    racine = Path(projet.racine)
+    assert len(avant.demandes) == 1
+    assert (racine / "t1.md").read_text(encoding="utf-8") == "fait"
+
+    apres = _Validateur(True)
+    journal = _reprend(depot, projet, magasin, apres)
+
+    # La personne n'est pas consultée une seconde fois, et le projet avance quand même.
+    assert apres.demandes == []
+    assert (racine / "t2.md").read_text(encoding="utf-8") == "fait"
+    assert _etape(journal, "t2", ":fusion").statut == STATUT_FUSION_FAITE
+    assert not [r for r in journal.records if r.etape.endswith(":validation")]
+
+
+def test_un_refus_de_la_personne_vaut_aussi_pour_le_run_repris(tmp_path: Path) -> None:
+    """Un non est une décision comme un oui : la reprise ne le fait pas redire."""
+    depot, projet = _projet_git(tmp_path)
+    magasin = _eteint_pendant_t2(depot, projet, _Validateur(False))
+
+    apres = _Validateur(True)
+    journal = _reprend(depot, projet, magasin, apres)
+
+    assert apres.demandes == []
+    racine = Path(projet.racine)
+    assert not (racine / "t2.md").exists()
+    assert _sur_la_branche(racine, "t2", "t2.md") == "fait"
+    seconde = _etape(journal, "t2", ":fusion")
+    assert seconde.statut == STATUT_FUSION_NON_ACCORDEE
+    assert "à la tâche t1" in seconde.sortie
+
+
+def test_un_refus_par_defaut_ne_survit_pas_a_la_reprise(tmp_path: Path) -> None:
+    """Le fail-safe n'est pas une décision : personne n'a répondu, la reprise demande.
+
+    Sans validateur, ou canal en panne, la fusion est refusée par défaut (#9) et ce
+    refus vaut pour le reste **du process** (#706). Il dit l'état d'un déploiement,
+    que le rallumage a pu changer — le retenir au-delà ferait d'une panne passagère
+    un refus que la personne n'a jamais donné.
+    """
+    depot, projet = _projet_git(tmp_path)
+    magasin = _eteint_pendant_t2(depot, projet, None)
+
+    apres = _Validateur(True)
+    journal = _reprend(depot, projet, magasin, apres)
+
+    (demande,) = apres.demandes
+    assert (demande.task_id, demande.run_id) == ("t2", RUN_REPRIS)
+    assert _etape(journal, "t2", ":fusion").statut == STATUT_FUSION_FAITE
+    assert (Path(projet.racine) / "t2.md").read_text(encoding="utf-8") == "fait"
+
+
+def test_un_accord_qui_ne_se_range_pas_ne_fait_pas_echouer_le_run(tmp_path: Path) -> None:
+    """Le magasin rend un run reprenable, jamais l'inverse (#1391) — l'accord compris.
+
+    Redis injoignable à l'instant de ranger l'accord : le run va au bout et fusionne,
+    sous l'accord que ce process a retenu. Seule une reprise future reposerait la
+    question.
+    """
+
+    class MagasinEnPanne(MagasinAcquisMemoire):
+        async def retenir_accord(self, run_id, projet_id, accord):  # type: ignore[override]
+            raise ConnectionError("Redis injoignable")
+
+    depot, projet = _projet_git(tmp_path)
+    validateur = _Validateur(True)
+    moteur = _moteur(
+        _plan(projet.id), _executeur(_Ecrivain(), depot, validateur), MagasinEnPanne()
+    )
+
+    rapport = asyncio.run(
+        moteur.run("Un agenda", journal=RunJournal(run_id=RUN_REPRIS), projet_id=projet.id)
+    )
+
+    assert all(r.ok for r in rapport.resultats)
+    assert len(validateur.demandes) == 1
+    racine = Path(projet.racine)
+    assert (racine / "t1.md").read_text(encoding="utf-8") == "fait"
+    assert (racine / "t2.md").read_text(encoding="utf-8") == "fait"

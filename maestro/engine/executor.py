@@ -40,7 +40,14 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Mapping,
+    Sequence,
+)
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
@@ -94,6 +101,7 @@ from maestro.engine.guardrails import (
     ORIGINE_POLITIQUE,
     DemandeValidation,
     Guardrails,
+    RefusParDefaut,
     detail_accorde,
 )
 from maestro.engine.plafond import (
@@ -510,7 +518,7 @@ _CHEMINS_CITES_MAX = 8
 
 
 @dataclass(frozen=True)
-class _AccordFusion:
+class AccordFusion:
     """Ce qu'un run a obtenu à sa première fusion dans un projet (#706), et de quelle tâche.
 
     `detail` est le motif rendu par les garde-fous (« approuvée par le validateur
@@ -518,11 +526,46 @@ class _AccordFusion:
     tel quel dans les phrases des fusions suivantes ; `tache_id` dit à quelle
     tâche la question a été posée, pour que la ligne d'une tâche ultérieure
     renvoie à la décision et non à elle-même.
+
+    Public depuis #1504 : il voyage dans l'**état acquis** du run
+    (`maestro.engine.acquis`), pour qu'un run repris après une extinction ne
+    redemande pas ce que la personne a déjà tranché.
     """
 
     approuve: bool
     detail: str
     tache_id: str
+
+    @property
+    def par_defaut(self) -> bool:
+        """Un refus que personne n'a prononcé — le fail-safe (#9) —, lu sur le **type** du détail.
+
+        Retenu pour le reste du process comme toute réponse (#706), il ne survit
+        pas au-delà (#1504) : il dit l'état d'un déploiement, pas une décision.
+        """
+        return isinstance(self.detail, RefusParDefaut)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Réémet l'accord en dict JSON-sérialisable."""
+        return {"approuve": self.approuve, "detail": str(self.detail), "tache_id": self.tache_id}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> AccordFusion:
+        """Reconstruit l'accord depuis sa forme `to_dict` — lève sur ce qui manque.
+
+        Strict, parce qu'un accord qu'on ne sait pas relire ne se présume pas :
+        l'appelant l'écarte, et la question sera reposée.
+        """
+        return cls(
+            approuve=bool(data["approuve"]),
+            detail=str(data["detail"]),
+            tache_id=str(data["tache_id"]),
+        )
+
+
+#: Où un run range un accord d'écriture à l'instant où il est rendu (#1504) —
+#: `(projet_id, accord)`, fourni par la boucle, qui tient le magasin d'état acquis.
+RangerAccord = Callable[[str, AccordFusion], Awaitable[None]]
 
 #: Délai de grâce accordé à l'annulation d'une réalisation en dépassement (#64) :
 #: le temps, dans le cas nominal, que le SDK ferme son sous-processus. Au-delà,
@@ -766,6 +809,26 @@ class TaskExecutor(ABC):
         dépôt le retiennent — en process, et jusqu'aux workers de la file.
         """
 
+    def retient_les_accords(  # noqa: B027 — défaut assumé
+        self,
+        run_id: str,
+        obtenus: Mapping[str, AccordFusion],
+        ranger: RangerAccord,
+    ) -> None:
+        """Les accords d'écriture du run `run_id` survivent à son process (#1504).
+
+        Dit par la boucle une fois, avant la première tâche. `obtenus` sont les
+        accords qu'un run **repris** avait déjà reçus, par projet — relus de son
+        état acquis, ils valent comme si la question venait d'être tranchée :
+        la personne n'est pas consultée deux fois pour le même accord. `ranger`
+        est où porter, **à l'instant où il est rendu**, chaque accord nouveau —
+        le magasin d'état acquis, que la boucle tient.
+
+        Sans effet par défaut, et c'est une limite **dite** : un exécuteur
+        distribué (`maestro.queue.CeleryExecutor`) fusionne côté worker, où
+        l'accord se retient par process — un run repris y repose la question.
+        """
+
     @asynccontextmanager
     async def tient_le_run(self, run_id: str) -> AsyncIterator[None]:
         """Le temps du run `run_id`, borné par la boucle autour de ses tâches (#1497).
@@ -996,7 +1059,14 @@ class LocalExecutor(TaskExecutor):
         # projet, sans redemander. Indexé par `run_id` : un exécuteur qui sert
         # plusieurs runs ne fait pas hériter à l'un l'accord de l'autre. Jamais
         # purgé, comme `MemoireArbitrage` : deux chaînes et un booléen par run.
-        self._accords_fusion: dict[tuple[str, str], _AccordFusion] = {}
+        # Un run repris y retrouve ceux de son état acquis (#1504,
+        # `retient_les_accords`) : ce dictionnaire n'est que la mémoire de ce
+        # process, et un rallumage ne doit pas faire redemander une décision.
+        self._accords_fusion: dict[tuple[str, str], AccordFusion] = {}
+        # Où ranger un accord rendu, par run (#1504) : le magasin d'état acquis,
+        # vu à travers la boucle qui le tient. Retiré à la sortie du run
+        # (`tient_le_run`) — après elle, aucune fusion ne rend plus d'accord.
+        self._rangements_accords: dict[str, RangerAccord] = {}
         # Les runs qui travaillent avec l'équipe telle qu'elle est (#1260) : la
         # boucle l'a dit après avoir confronté l'équipe au plan sans rien
         # recruter. Indexé par `run_id` pour la raison des accords de fusion — un
@@ -1431,18 +1501,35 @@ class LocalExecutor(TaskExecutor):
         """
         self._briefs[run_id] = brief
 
+    def retient_les_accords(
+        self,
+        run_id: str,
+        obtenus: Mapping[str, AccordFusion],
+        ranger: RangerAccord,
+    ) -> None:
+        """Cf. `TaskExecutor.retient_les_accords` — relus par `_accord_de_fusion` (#1504).
+
+        Un accord déjà présent l'emporte sur celui qu'on rend : dans ce process, il
+        est au moins aussi frais que ce que le magasin a gardé de lui.
+        """
+        for projet_id, accord in obtenus.items():
+            self._accords_fusion.setdefault((run_id, projet_id), accord)
+        self._rangements_accords[run_id] = ranger
+
     @asynccontextmanager
     async def tient_le_run(self, run_id: str) -> AsyncIterator[None]:
         """Cf. `TaskExecutor.tient_le_run` — les miroirs du run partent à sa sortie (#1497).
 
         Le retrait d'un miroir dure le temps d'effacer un arbre (7,7 s pour la racine de
         S12) : il se joue dans un fil, hors de la boucle asyncio. Un run annulé pendant
-        ce temps n'interrompt pas le retrait, qui finit dans son fil.
+        ce temps n'interrompt pas le retrait, qui finit dans son fil. Où ranger ses
+        accords d'écriture (#1504) part avec lui.
         """
         self._miroirs.ouvrir(run_id)
         try:
             yield
         finally:
+            self._rangements_accords.pop(run_id, None)
             await asyncio.to_thread(self._miroirs.retirer, run_id)
 
     def derive_les_instances(
@@ -2186,7 +2273,7 @@ class LocalExecutor(TaskExecutor):
         projet: Projet,
         diff: DiffProjet,
         journal: RunJournal,
-    ) -> _AccordFusion:
+    ) -> AccordFusion:
         """L'accord humain d'écrire dans `projet` au nom de ce run (#706) — demandé une fois.
 
         C'est **le** régime d'accord de l'écriture continue, et il tient en une
@@ -2222,6 +2309,15 @@ class LocalExecutor(TaskExecutor):
         n'a pas été rendu : un run interrompu pendant l'attente lève
         `CancelledError`, que l'appelant consigne et laisse remonter — le run
         suivant sur le même projet repose la question.
+
+        **Le run, pas le process** (#1504). Un run repris après une extinction est
+        le même run (#1391) : l'accord rendu part donc, à l'instant où il l'est, dans
+        son état acquis (`retient_les_accords`), d'où la reprise le rend à
+        l'exécuteur du process rallumé. Sans quoi la personne qui avait dit oui à
+        09:46 se voyait redemander, à 10:43, l'accord de la « première fusion de ce
+        run » (run `fea601a5c629`). Seul le **refus par défaut** reste à ce process
+        (`AccordFusion.par_defaut`) : personne ne l'a prononcé, il dit l'état d'un
+        déploiement, et le rallumage a pu le changer.
 
         La décision est consignée sur `<tâche>:validation` comme les deux autres
         provenances (#9, #582) : même entité APPROVAL, et c'est là que la Control
@@ -2263,8 +2359,11 @@ class LocalExecutor(TaskExecutor):
             detail=detail,
             journal=journal,
         )
-        accord = _AccordFusion(approuve=approuve, detail=detail, tache_id=task.id)
+        accord = AccordFusion(approuve=approuve, detail=detail, tache_id=task.id)
         self._accords_fusion[cle] = accord
+        ranger = self._rangements_accords.get(journal.run_id)
+        if ranger is not None and not accord.par_defaut:
+            await ranger(projet.id, accord)
         return accord
 
     def _verrou_projet(self, projet_id: str) -> asyncio.Lock:

@@ -47,10 +47,11 @@ from maestro.engine.acquis import (
     EtatAcquis,
     MagasinAcquis,
     MagasinAcquisMemoire,
+    entree_de_l_accord,
     entree_du_plan,
     entree_du_resultat,
 )
-from maestro.engine.executor import TaskResult
+from maestro.engine.executor import AccordFusion, TaskResult
 from maestro.espace import nom_redis
 from maestro.orchestrator.schema import Task
 
@@ -97,6 +98,10 @@ class MagasinAcquisRedis(MagasinAcquis):
         cle, valeur = entree_du_resultat(resultat)
         await self._client.hset(self._cle(run_id), cle, valeur)
 
+    async def retenir_accord(self, run_id: str, projet_id: str, accord: AccordFusion) -> None:
+        cle, valeur = entree_de_l_accord(projet_id, accord)
+        await self._client.hset(self._cle(run_id), cle, valeur)
+
     async def lire(self, run_id: str) -> EtatAcquis | None:
         bruts = await self._client.hgetall(self._cle(run_id))
         return EtatAcquis.depuis_entrees({_texte(c): _texte(v) for c, v in bruts.items()})
@@ -127,6 +132,9 @@ class MagasinAcquisSqlite(MagasinAcquis):
     async def acquerir(self, run_id: str, resultat: TaskResult) -> None:
         if resultat.ok:
             await self._ecrire(run_id, *entree_du_resultat(resultat))
+
+    async def retenir_accord(self, run_id: str, projet_id: str, accord: AccordFusion) -> None:
+        await self._ecrire(run_id, *entree_de_l_accord(projet_id, accord))
 
     async def lire(self, run_id: str) -> EtatAcquis | None:
         async with self._verrou:

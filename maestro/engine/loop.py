@@ -983,7 +983,9 @@ class OrchestrationEngine:
         relais : la projection les a déjà —, et l'aval reçoit leurs sorties comme
         si le run ne s'était jamais arrêté. Leurs dépenses sont réintégrées au
         journal sans être republiées (`RunJournal.reprend`), si bien que le
-        plafond de dépense compte ce que le run a déjà payé. Une étape `reprise`
+        plafond de dépense compte ce que le run a déjà payé. Les accords d'écriture
+        qu'il avait reçus (#1504) valent sans être redemandés : la personne n'est pas
+        consultée deux fois pour la même décision. Une étape `reprise`
         dit au fil ce qui est acquis et ce qui reste. `mode_brief` et
         `contexte_sources` sont sans objet : ils nourrissaient un cadrage qui a eu
         lieu.
@@ -991,7 +993,8 @@ class OrchestrationEngine:
         Avec un magasin d'état acquis (`acquis=` à la construction), la boucle y
         range le plan **dès qu'il est figé** — avant la confrontation de l'équipe,
         qui peut attendre une personne —, puis chaque issue réussie à l'instant où
-        elle l'est, et **oublie** l'état d'un run dont toutes les tâches ont réussi :
+        elle l'est, chaque accord d'écriture à l'instant où l'exécuteur le rend
+        (#1504), et **oublie** l'état d'un run dont toutes les tâches ont réussi :
         il n'a plus rien à reprendre. Une écriture refusée ne fait jamais échouer le
         run (`_range`).
 
@@ -1036,6 +1039,18 @@ class OrchestrationEngine:
         cadre = brief if brief is not None else brief_approuve
         if cadre is not None:
             self._executor.retient_le_brief(journal.run_id, cadre)
+        # Les accords d'écriture du run (#1504) : ceux qu'un run repris a déjà reçus
+        # valent sans être redemandés, et chaque accord nouveau rejoint l'état acquis
+        # à l'instant où il est rendu — c'est l'exécuteur qui le rend.
+        self._executor.retient_les_accords(
+            journal.run_id,
+            reprise.accords if reprise is not None else {},
+            lambda projet, accord: self._range(
+                journal.run_id,
+                f"l'accord d'écriture dans {projet}",
+                lambda m: m.retenir_accord(journal.run_id, projet, accord),
+            ),
+        )
         if ticket is not None:
             tasks = [
                 task
