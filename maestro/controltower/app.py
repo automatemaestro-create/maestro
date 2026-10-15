@@ -350,7 +350,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -451,8 +451,10 @@ from maestro.controltower.chat import (
 )
 from maestro.controltower.consultation import Consultations, Demande, Lecture
 from maestro.controltower.decisions import decisions_du_run
+from maestro.controltower.depense_du_fil import au_compte_du_fil
 from maestro.controltower.equipe import CompositeurEquipe, EquipeRefusee, ServiceEquipe
 from maestro.controltower.events import (
+    ACTEUR_RUN,
     EVENEMENT_AGENT_CAPACITE,
     EVENEMENT_BRIEF_DECISION,
     EVENEMENT_BRIEF_REPONSES,
@@ -2584,6 +2586,31 @@ def create_app(
     # la main une fois la projection à jour.
     relais_renfort = RelaisRenfort(bus, orchestration, AGENT_ORCHESTRATION)
 
+    async def _raconter_au_compte_du_fil(run_id: str) -> None:
+        """Le récit de fin d'un run, sa dépense au grand livre du fil (#1534).
+
+        Le récit et la revue d'outillage qui le suit sont écrits **dans le fil**,
+        pour le projet du run, et non par le run : ils n'entrent pas à son grand
+        livre, ils entrent à celui du fil, comme tout ce que Maestro dit en
+        conversation. Le bilan, qu'il attend, a son propre collecteur et sa ligne
+        sur le run (#1284) : il n'est pas compté ici.
+        """
+        execution = state.execution(run_id)
+        projet_id = execution.projet_id if execution is not None else None
+        async with au_compte_du_fil(
+            bus, titre="récit de fin de run", agent=ACTEUR_RUN, projet=lambda: projet_id
+        ):
+            await conteur.raconter(run_id)
+
+    def au_compte_du_projet(id_projet: str, titre: str) -> AbstractAsyncContextManager[None]:
+        """Ce qu'une route du fil dépense pour `id_projet`, au grand livre du fil (#1534).
+
+        Les cartes du fil appellent aussi des routes à elles — l'équipe proposée et
+        corrigée, l'analyse, le questionnaire et la génération de l'outillage — : ce
+        sont des appels modèle pour un projet nommé dans le chemin, hors de tout run.
+        """
+        return au_compte_du_fil(bus, titre=titre, agent=ACTEUR_RUN, projet=lambda: id_projet)
+
     def raconter_la_fin(run_id: str) -> None:
         """Lance le bilan et le récit de `run_id` — sans faire attendre la pompe (#1224, #1284).
 
@@ -2603,7 +2630,7 @@ def create_app(
         if isinstance(en_vol, asyncio.Future):
             recits.add(en_vol)
             en_vol.add_done_callback(recits.discard)
-        tache = asyncio.create_task(conteur.raconter(run_id))
+        tache = asyncio.create_task(_raconter_au_compte_du_fil(run_id))
         recits.add(tache)
         tache.add_done_callback(recits.discard)
 
@@ -3683,9 +3710,14 @@ def create_app(
             if borne.tzinfo is None:
                 borne = borne.replace(tzinfo=UTC)
         # La portée est appliquée **événement par événement** par l'agrégat (un
-        # run peut en mélanger) : la liste des exécutions lui arrive entière.
+        # run peut en mélanger) : la liste des exécutions lui arrive entière, et
+        # ce que le fil a dépensé hors de tout run avec elle (#1534).
         return agrege_couts(
-            state.executions(), depuis=borne, pas=pas, portee=portee
+            state.executions(),
+            fil=state.depenses_du_fil(),
+            depuis=borne,
+            pas=pas,
+            portee=portee,
         ).to_dict()
 
     @app.post("/api/taches/{tache_id}/reassigner")
@@ -5710,7 +5742,8 @@ def create_app(
         figerait les flux SSE des autres écrans.
         """
         try:
-            return await outillage.analyser(id_projet)
+            async with au_compte_du_projet(id_projet, "analyse de l'outillage"):
+                return await outillage.analyser(id_projet)
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
@@ -5791,11 +5824,12 @@ def create_app(
         la fusion est refusée (racine occupée, conflit) — jamais un 500.
         """
         try:
-            return await outillage.generer(
-                id_projet,
-                retenus=None if requete is None else requete.retenus,
-                choix=() if requete is None else requete.choix_acquis(),
-            )
+            async with au_compte_du_projet(id_projet, "génération de l'outillage"):
+                return await outillage.generer(
+                    id_projet,
+                    retenus=None if requete is None else requete.retenus,
+                    choix=() if requete is None else requete.choix_acquis(),
+                )
         except (
             ValueError,
             ProjetInconnu,
@@ -6696,7 +6730,8 @@ def create_app(
         `502`, jamais une question inventée à sa place.
         """
         try:
-            return await outillage.question(id_projet, requete.choix_acquis())
+            async with au_compte_du_projet(id_projet, "question d'outillage"):
+                return await outillage.question(id_projet, requete.choix_acquis())
         except ComprehensionIllisible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (ValueError, ProjetInconnu) as exc:
@@ -6723,7 +6758,8 @@ def create_app(
         une proposition, et la génération est le lot 5 (#1033).
         """
         try:
-            return await outillage.recommandation(id_projet, requete.choix_acquis())
+            async with au_compte_du_projet(id_projet, "recommandation d'outillage"):
+                return await outillage.recommandation(id_projet, requete.choix_acquis())
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
@@ -6780,12 +6816,13 @@ def create_app(
         choix = requete.choix_acquis() if requete is not None else []
         renfort = requete.renfort if requete is not None else None
         try:
-            return await equipe.proposer(
-                id_projet,
-                choix,
-                renfort=renfort.role_manquant() if renfort is not None else None,
-                raison=renfort.raison if renfort is not None else "",
-            )
+            async with au_compte_du_projet(id_projet, "équipe proposée"):
+                return await equipe.proposer(
+                    id_projet,
+                    choix,
+                    renfort=renfort.role_manquant() if renfort is not None else None,
+                    raison=renfort.raison if renfort is not None else "",
+                )
         except (ValueError, ProjetInconnu) as exc:
             raise _refus_projet(exc) from exc
 
@@ -6813,9 +6850,10 @@ def create_app(
         rejoue sans conséquence.
         """
         try:
-            return await equipe.corriger(
-                id_projet, requete.demande, requete.membres(), requete.choix_acquis()
-            )
+            async with au_compte_du_projet(id_projet, "équipe corrigée"):
+                return await equipe.corriger(
+                    id_projet, requete.demande, requete.membres(), requete.choix_acquis()
+                )
         except GenerationIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (ValueError, ProjetInconnu) as exc:

@@ -175,6 +175,20 @@ EVENEMENT_VALIDATION_DECISION = "validation.decision"
 EVENEMENT_QUESTION_DEMANDE = "question.demande"
 EVENEMENT_QUESTION_REPONSE = "question.reponse"
 EVENEMENT_CHAT_MESSAGE = "chat.message"
+#: `fil.depense` (#1534) porte ce que le **fil** a dépensé pour un projet — sa
+#: déclaration, ses questions d'outillage, ses pièces, son équipe, ses récits :
+#: tout appel modèle que Maestro fait en conversation, hors de tout run. `usage`
+#: et `cout_usd` en portent la mesure, `projet_id` l'appartenance, `titre` ce
+#: qui a été payé, en mots d'écran.
+#:
+#: Un type à lui, et pas l'usage posé sur le `chat.message` de la réponse : une
+#: dépense du fil ne suit pas toujours une bulle (la lecture d'une pièce répond à
+#: un téléversement, un récit à la fin d'un run), et c'est une **part**, jamais un
+#: cumul — chaque événement s'additionne aux autres. Il n'a pas de `run_id` :
+#: c'est ce qui le range à part de tout run, comme l'orchestration l'est du parc
+#: (#1028). Avant lui, rien de ce que le fil dépense n'entrait au grand livre —
+#: 1,548 $ sur les 15,97 $ du projet de p5 (#1508, docs/50 § 1.2).
+EVENEMENT_FIL_DEPENSE = "fil.depense"
 EVENEMENT_PLAYBOOK_PROPOSITION = "playbook.proposition"
 EVENEMENT_EXECUTION_STATUT = "execution.statut"
 
@@ -628,6 +642,12 @@ class Event:
     # qui l'admet, et c'est l'accord écrit dans les permissions de l'agent qui la
     # fait valoir (`maestro.agents.accords`).
     etendue: str = ""
+    # La **conversation** du fil où une dépense a été faite (#1534), portée par le
+    # seul `fil.depense`. Elle sert à une chose : les tours qui précèdent la
+    # naissance d'un projet n'en nomment encore aucun, et la projection les range
+    # au projet que la même conversation finit par nommer
+    # (`ControlTowerState._applique_depense_du_fil`). Vide ailleurs.
+    conversation: str = ""
     horodatage: str = field(default_factory=_horodatage)
 
     def to_dict(self) -> dict[str, Any]:
@@ -686,6 +706,7 @@ class Event:
             "bilan": dict(self.bilan) if self.bilan is not None else None,
             "motif": self.motif,
             "etendue": self.etendue,
+            "conversation": self.conversation,
             "horodatage": self.horodatage,
         }
 
@@ -849,6 +870,7 @@ class Event:
             # un non, pour cet appel seul.
             motif=str(data.get("motif") or ""),
             etendue=str(data.get("etendue") or ""),
+            conversation=str(data.get("conversation") or ""),
             horodatage=data.get("horodatage", ""),
         )
 

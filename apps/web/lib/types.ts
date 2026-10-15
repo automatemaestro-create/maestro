@@ -378,9 +378,18 @@ export type AnalyticsCouts = {
    * Hors d'`agents`, et c'est tout le ticket : l'orchestration dépense, mais
    * elle n'est pas un membre du parc (docs/37 §4.2). Rangée parmi les agents,
    * elle y prenait 21 % d'un parc que `/agents` n'a jamais listé (constat C13 du
-   * retex du 2026-09-11). `agents` + `orchestration` font toujours `total`.
+   * retex du 2026-09-11). `agents` + `orchestration` + `fil` font toujours `total`.
    */
   orchestration: CoutAgentAgrege | null;
+  /**
+   * Ce que le **fil** a dépensé pour les projets de la fenêtre (#1534) — leur
+   * déclaration, leur outillage, leur équipe, les récits de leurs runs —, `null`
+   * quand il n'a rien coûté de mesuré. À part de l'orchestration, qui est la
+   * dépense d'un run : le fil n'appartient à aucun, et il n'entre dans aucune
+   * ligne d'`executions`. **Absent** d'une API d'avant #1534 : l'écran le lit
+   * comme `null`.
+   */
+  fil?: CoutAgentAgrege | null;
   taches: CoutTacheAgregee[];
   serie: PointCout[];
 };
@@ -1812,6 +1821,13 @@ export const EVENEMENT_VALIDATION_DECISION = "validation.decision";
 export const EVENEMENT_QUESTION_DEMANDE = "question.demande";
 export const EVENEMENT_QUESTION_REPONSE = "question.reponse";
 export const EVENEMENT_CHAT_MESSAGE = "chat.message";
+/**
+ * #1534 : ce que le **fil** a dépensé pour un projet, hors de tout run — sa
+ * déclaration, une question d'outillage, l'équipe, un récit de fin de run.
+ * `titre` dit ce qui a été payé, `usage`/`cout_usd` combien. Une part : chaque
+ * événement s'ajoute aux autres, au poste `fil` de Coûts & analytics.
+ */
+export const EVENEMENT_FIL_DEPENSE = "fil.depense";
 /**
  * Le cycle de vie d'un run piloté par l'API (#185, `EVENEMENT_EXECUTION_STATUT`
  * côté moteur) : `statut` l'état résultant (`EXECUTION_*`), `titre` l'objectif et

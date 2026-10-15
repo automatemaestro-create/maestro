@@ -1646,8 +1646,20 @@ class ServiceExecutions:
         la projection étant rejouée depuis un journal que ce correctif ne réécrit
         pas. Le geste de rattrapage est le même qu'en août — republier un
         `tache.statut` terminal par tâche restée en l'air.
+
+        **L'issue porte ce que la tentative a coûté** (#1534) : son dernier relevé
+        en cours (#835), l'argent « engagé » et, faute de prix, ses tokens marqués
+        non tarifés (#1280). C'est ce qui la fait entrer au grand livre — sans
+        mesure, un `tache.statut` ne solde rien (`_solde_le_cout`) —, et c'est la
+        seule trace qu'on aura d'elle : coupée avant son résultat, elle ne sera
+        jamais tarifée plus tard, et la reprise de la même tâche écrasait son relevé
+        au premier des siens. Sur p5, 2,908 $ des trois tâches coupées à 10:05
+        manquaient ainsi au run (#1508, docs/50 § 1.2).
         """
+        execution = self._state.execution(run_id)
+        releves = execution.releves_en_vol() if execution is not None else {}
         for tache in self._taches_en_vol(run_id):
+            releve = releves.get(tache.id)
             self._pousser(
                 Event(
                     type=EVENEMENT_TACHE_STATUT,
@@ -1662,6 +1674,8 @@ class ServiceExecutions:
                     role=tache.role,
                     statut=STATUT_INTERROMPUE,
                     detail=f"tâche interrompue en vol quand son run a été soldé — {motif}",
+                    usage=releve.usage if releve is not None else None,
+                    cout_usd=releve.cout_usd if releve is not None else None,
                     ticket=tache.ticket,
                     projet_id=tache.projet_id,
                     cause=cause,

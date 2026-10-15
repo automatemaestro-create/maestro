@@ -28,6 +28,13 @@
  * elles font donc toujours 100 %, et la liste des agents laisse visiblement la
  * place de ce qui n'en est pas un. Les recompter sur le parc seul ferait dire à
  * l'écran que les agents ont dépensé toute la fenêtre.
+ *
+ * **Le fil s'y range de la même façon** (#1534) : ce que Maestro dépense en
+ * conversation pour un projet — sa déclaration, son outillage, son équipe, ses
+ * récits — n'est ni un agent ni la dépense d'un run. Il prend donc la place de
+ * l'orchestration et son mot (« dont … fil »), à côté d'elle, et entre comme elle
+ * au dénominateur des parts. Aucune forme nouvelle : c'est la décision de #1028,
+ * appliquée à un second poste hors du parc.
  */
 
 import { Infobulle } from "@/components/Infobulle";
@@ -36,6 +43,9 @@ import type { CoutAgentAgrege } from "@/lib/types";
 
 /** Comment l'orchestration se nomme ici : ce qu'elle fait, pas qui elle est. */
 const LIBELLE_ORCHESTRATION = "orchestration";
+
+/** Comment le fil se nomme ici (#1534) : le mot que l'écran donne déjà à la conversation. */
+const LIBELLE_FIL = "fil";
 
 /** Le détail d'un poste : ce qu'il a consommé, sous l'infobulle de son nom. */
 function infobulle(poste: CoutAgentAgrege): string {
@@ -54,8 +64,16 @@ function infobulle(poste: CoutAgentAgrege): string {
  * différents de la même dépense, ce qui serait la première chose qu'un lecteur
  * verrait.
  */
-function repartir(agents: CoutAgentAgrege[], orchestration: CoutAgentAgrege | null) {
-  const postes = orchestration ? [...agents, orchestration] : agents;
+function repartir(
+  agents: CoutAgentAgrege[],
+  orchestration: CoutAgentAgrege | null,
+  fil: CoutAgentAgrege | null = null,
+) {
+  const postes = [
+    ...agents,
+    ...(orchestration ? [orchestration] : []),
+    ...(fil ? [fil] : []),
+  ];
   const coutTotal = postes.reduce((s, p) => s + (p.usage.cout_usd ?? 0), 0);
   // Part au coût quand il est rapporté, aux tokens sinon (coût inconnu ≠ nul).
   const surTokens = coutTotal <= 0;
@@ -81,6 +99,7 @@ function repartir(agents: CoutAgentAgrege[], orchestration: CoutAgentAgrege | nu
 export function RepartitionAgents({
   agents,
   orchestration = null,
+  fil = null,
 }: {
   agents: CoutAgentAgrege[];
   /**
@@ -91,6 +110,8 @@ export function RepartitionAgents({
    * passer quand même est ce qui garde les deux chiffres d'accord.
    */
   orchestration?: CoutAgentAgrege | null;
+  /** Le poste du fil (#1534) — même régime que l'orchestration : le dénominateur seul. */
+  fil?: CoutAgentAgrege | null;
 }) {
   if (agents.length === 0) {
     /* Deux vides, et deux phrases : l'orchestration est désormais une
@@ -105,7 +126,7 @@ export function RepartitionAgents({
        première rédaction à 71 caractères). */
     return (
       <p className="text-sm text-neutral-500 dark:text-neutral-400">
-        {orchestration
+        {orchestration || fil
           ? "Aucun agent n'a travaillé sur la période."
           : "Aucun usage sur la période."}
       </p>
@@ -115,6 +136,7 @@ export function RepartitionAgents({
   const { surTokens, reference, valeurDe, partDe, montantDe } = repartir(
     agents,
     orchestration,
+    fil,
   );
 
   return (
@@ -188,6 +210,7 @@ export function RepartitionAgents({
 export function EtiquetteOrchestration({
   agents,
   orchestration,
+  fil = null,
 }: {
   agents: CoutAgentAgrege[];
   /**
@@ -197,9 +220,19 @@ export function EtiquetteOrchestration({
    * celui d'avant plutôt que de s'effondrer sur un champ qu'il croyait dû.
    */
   orchestration?: CoutAgentAgrege | null;
+  /**
+   * Le poste du fil (#1534), dit **après** l'orchestration dans le même « dont » :
+   * « dont orchestration 0,88 $US · 7 %, fil 1,55 $US · 12 % ». `null` ou absent
+   * (API d'avant #1534) : il ne se dit pas.
+   */
+  fil?: CoutAgentAgrege | null;
 }) {
-  if (!orchestration) return null;
-  const { reference, partDe, montantDe } = repartir(agents, orchestration);
+  const postes = [
+    ...(orchestration ? [{ libelle: LIBELLE_ORCHESTRATION, poste: orchestration }] : []),
+    ...(fil ? [{ libelle: LIBELLE_FIL, poste: fil }] : []),
+  ];
+  if (postes.length === 0) return null;
+  const { reference, partDe, montantDe } = repartir(agents, orchestration ?? null, fil);
   return (
     /* Les tokens du socle et non une paire `neutral` + `dark:` : une couleur se
        choisit une fois, les deux thèmes viennent avec elle (apps/web/README.md,
@@ -207,13 +240,16 @@ export function EtiquetteOrchestration({
        que décroître — `tests/couleurs.test.ts` le compte, fichier par fichier. */
     <p className="text-annexe tabular-nums text-texte-secondaire">
       dont{" "}
-      <Infobulle texte={infobulle(orchestration)}>
-        <span>{LIBELLE_ORCHESTRATION}</span>
-      </Infobulle>{" "}
-      <span className="font-medium text-texte">
-        {montantDe(orchestration)}
-      </span>
-      {reference > 0 && <> · {Math.round(partDe(orchestration) * 100)}&nbsp;%</>}
+      {postes.map(({ libelle, poste }, rang) => (
+        <span key={libelle}>
+          {rang > 0 && ", "}
+          <Infobulle texte={infobulle(poste)}>
+            <span>{libelle}</span>
+          </Infobulle>{" "}
+          <span className="font-medium text-texte">{montantDe(poste)}</span>
+          {reference > 0 && <> · {Math.round(partDe(poste) * 100)}&nbsp;%</>}
+        </span>
+      ))}
     </p>
   );
 }
