@@ -22,7 +22,7 @@
 import { createContext, useContext } from "react";
 
 import type { PorteeProjet } from "./api";
-import type { CoutExecution, Projet } from "./types";
+import type { CoutAgentAgrege, CoutExecution, Projet } from "./types";
 import { useControlTower, type ControlTower } from "./useControlTower";
 
 export type EtatGlobal = ControlTower & {
@@ -50,11 +50,20 @@ export type EtatGlobal = ControlTower & {
  * part d'orchestration demandait d'être expliqué pour ne pas passer pour un bug.
  *
  * Aucun coût rapporté ≠ coût nul : `null` plutôt que 0, `formatCout` rend « — ».
+ *
+ * **Le fil s'y ajoute** depuis #1534 (`fil`, le poste de la vue analytique) : ce
+ * que Maestro dépense en conversation pour le projet — sa déclaration, son
+ * outillage, son équipe, ses récits — n'appartient à aucun run, donc à aucun
+ * grand livre. Sans lui, la barre disait 2,70 $ au-dessus d'un « Coût total » de
+ * 3,83 $ sur `/couts`, pour le même projet.
  */
-export function coutCumule(couts: CoutExecution[]): number | null {
-  const montants = couts
-    .map((c) => c.total.cout_usd)
-    .filter((c): c is number => c !== null);
+export function coutCumule(
+  couts: CoutExecution[],
+  fil: CoutAgentAgrege | null = null,
+): number | null {
+  const montants = [...couts.map((c) => c.total.cout_usd), fil?.usage.cout_usd ?? null].filter(
+    (c): c is number => c !== null,
+  );
   return montants.length > 0 ? montants.reduce((somme, c) => somme + c, 0) : null;
 }
 
@@ -67,8 +76,14 @@ export function coutCumule(couts: CoutExecution[]): number | null {
  * se contrediraient d'un écran à l'autre, et au-dessus d'un run qui se dit
  * partiel, un cumul nu se contredirait sur le même.
  */
-export function coutCumulePartiel(couts: CoutExecution[]): boolean {
-  return couts.some((c) => (c.total.tokens_non_tarifes ?? 0) > 0);
+export function coutCumulePartiel(
+  couts: CoutExecution[],
+  fil: CoutAgentAgrege | null = null,
+): boolean {
+  return (
+    couts.some((c) => (c.total.tokens_non_tarifes ?? 0) > 0) ||
+    (fil?.usage.tokens_non_tarifes ?? 0) > 0
+  );
 }
 
 const ContexteEtatGlobal = createContext<EtatGlobal | null>(null);
@@ -88,8 +103,8 @@ export function FournisseurEtatGlobal({
         ...etat,
         projet,
         portee: projet.id,
-        coutTotal: coutCumule(etat.couts),
-        coutPartiel: coutCumulePartiel(etat.couts),
+        coutTotal: coutCumule(etat.couts, etat.fil),
+        coutPartiel: coutCumulePartiel(etat.couts, etat.fil),
       }}
     >
       {children}

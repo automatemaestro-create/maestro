@@ -52,8 +52,8 @@ export function ParametresCouts() {
         libelle="Dépense cumulée"
         aide={
           coutPartiel
-            ? `Somme des grands livres des exécutions de ${projet.nom}, planification comprise. ${RAISON_COUT_PARTIEL}`
-            : `Somme des grands livres des exécutions de ${projet.nom}, planification comprise. « — » tant qu'aucun coût n'a été rapporté (inconnu n'est pas nul).`
+            ? `Somme des grands livres des exécutions de ${projet.nom} et de son fil, planification comprise. ${RAISON_COUT_PARTIEL}`
+            : `Somme des grands livres des exécutions de ${projet.nom} et de son fil, planification comprise. « — » tant qu'aucun coût n'a été rapporté (inconnu n'est pas nul).`
         }
       >
         <span className="whitespace-nowrap">

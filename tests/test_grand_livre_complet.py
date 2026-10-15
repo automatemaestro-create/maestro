@@ -41,7 +41,7 @@ from maestro.controltower import (
 )
 from maestro.controltower.analytics import PAS_AUTO, agrege_couts
 from maestro.controltower.chat import ChatStore, MessageChat, RepondeurScripte
-from maestro.controltower.depense_du_fil import au_compte_du_fil
+from maestro.controltower.depense_du_fil import au_compte_du_fil, en_clair
 from maestro.controltower.events import (
     EVENEMENT_FIL_DEPENSE,
     EVENEMENT_RUN_PLAN,
@@ -290,8 +290,11 @@ def test_au_compte_du_fil_publie_ce_que_le_bloc_a_depense() -> None:
     assert depense.cout_usd == pytest.approx(0.10)
     assert depense.usage is not None
     assert depense.usage.tokens_total == 25_600
-    # Le montant en clair : le journal requêtable ne garde que le texte.
-    assert depense.detail == "0,1000 $ · 25 600 tokens"
+    # Le montant en clair, écrit comme l'écran l'écrit : le journal requêtable ne
+    # garde que le texte.
+    assert depense.detail == "0,10 $US · 25 600 tokens"
+    assert en_clair(StepUsage(tokens_entree=900, cout_usd=0.004)) == "< 0,01 $US · 900 tokens"
+    assert en_clair(StepUsage(tokens_entree=900)) == "900 tokens · coût pas encore tarifé"
 
 
 def test_au_compte_du_fil_publie_meme_quand_l_echange_echoue_et_se_tait_sans_mesure() -> None:
@@ -429,3 +432,10 @@ def test_une_reponse_du_fil_entre_au_grand_livre_par_la_vraie_route(tmp_path: Pa
         assert vue["total"]["cout_usd"] == pytest.approx(0.10)
         assert vue["executions"] == []
         assert {e.projet_id for e in state.depenses_du_fil()} == {"prj-recettes"}
+
+        # La part que le cumul du shell ajoute aux grands livres des runs : le même
+        # poste, par le même calcul, sans la série ni les tables.
+        lecture = client.get("/api/fil/depense", params={"projet": "tous"})
+        assert lecture.status_code == 200, lecture.text
+        assert lecture.json()["fil"] == vue["fil"]
+        assert client.get("/api/fil/depense").status_code == 422  # portée exigée (#277)

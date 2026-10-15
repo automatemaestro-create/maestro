@@ -44,6 +44,7 @@ maestro-run --publier --validation-ui "<objectif>"
 | GET | `/api/executions` | runs connus, récents d'abord : état, objectif, **progression** par statut de tâche (#473), début, coût |
 | GET | `/api/executions/{run_id}` | détail d'une exécution : résumé (progression comprise), trace et coût agrégé |
 | GET | `/api/executions/{run_id}/cout` | grand livre du run (#57, critère MVP n°6) : coût par tâche (tokens entrée/sortie, coût estimé, durée), part de planification et agrégat |
+| GET | `/api/fil/depense` | ce que le **fil** a dépensé pour la portée (#1534) — déclaration, outillage, équipe, récits, hors de tout run : le poste `fil` de `GET /api/analytics/couts`, seul (`null` sans mesure). `?projet=` requis. Le shell l'ajoute aux grands livres pour dire le coût cumulé d'un projet |
 | POST | `/api/taches/{id}/reassigner` | réassignation manuelle `{"agent": "..."}` (Kanban) |
 | GET | `/api/validations` | demandes de validation humaine : contexte, statut, décision (#48) |
 | POST | `/api/validations/{tache_id}/decision` | décision humaine `{"approuve": true|false}` — 409 si déjà tranchée |

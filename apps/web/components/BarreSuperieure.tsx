@@ -210,8 +210,8 @@ export function BarreSuperieure({
         <Infobulle
           texte={
             coutPartiel
-              ? `Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise. ${RAISON_COUT_PARTIEL}`
-              : `Coût cumulé sur ${projet.nom} — somme des grands livres, planification comprise`
+              ? `Coût cumulé sur ${projet.nom} — somme des grands livres et du fil, planification comprise. ${RAISON_COUT_PARTIEL}`
+              : `Coût cumulé sur ${projet.nom} — somme des grands livres et du fil, planification comprise`
           }
           className="hidden whitespace-nowrap text-sm text-neutral-600 @3xl:inline-flex dark:text-neutral-400"
         >

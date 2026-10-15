@@ -51,19 +51,30 @@ def _a_depense(usage: StepUsage) -> bool:
     return bool(usage.appels or usage.tokens_total or usage.cout_usd)
 
 
+#: Sous le demi-centime, un montant s'arrondirait à « 0,00 $US » et se lirait nul :
+#: la même borne que l'écran (`formatCout`, `apps/web/lib/format.ts`).
+_DEMI_CENTIME = 0.005
+
+
 def en_clair(usage: StepUsage) -> str:
-    """La dépense en une phrase courte — « 0,0523 $ · 12 480 tokens » —, pour `detail`.
+    """La dépense en une phrase courte — « 0,05 $US · 12 480 tokens » —, pour `detail`.
 
     Composée ici et non par l'écran : le journal requêtable (#478) ne garde que les
     champs de texte d'un événement, si bien qu'un fil d'activité relu après
     rechargement n'aurait plus de montant à dire. Même partage que le relevé en
-    cours d'une tâche (`tache.usage`, #835). Un coût inconnu se dit tel, jamais
+    cours d'une tâche (`tache.usage`, #835). Le montant s'écrit comme l'écran les
+    écrit — deux décimales, « $US », « < 0,01 $US » pour une poussière —, sans
+    quoi la même dépense se lirait « 0,1922 $ » au journal et « 0,19 $US » sur
+    `/couts` (relecture visuelle de #1534). Un coût inconnu se dit tel, jamais
     « 0 $ ».
     """
     tokens = f"{usage.tokens_total:,}".replace(",", " ") + " tokens"
-    if usage.cout_usd is None:
+    cout = usage.cout_usd
+    if cout is None:
         return f"{tokens} · coût pas encore tarifé"
-    return f"{usage.cout_usd:.4f} $".replace(".", ",") + f" · {tokens}"
+    if 0 < cout < _DEMI_CENTIME:
+        return f"< 0,01 $US · {tokens}"
+    return f"{cout:.2f} $US".replace(".", ",") + f" · {tokens}"
 
 
 @asynccontextmanager

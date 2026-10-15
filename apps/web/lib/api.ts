@@ -22,6 +22,7 @@ import type {
   AnalyticsCouts,
   CatalogueFournisseurs,
   ChoixOutillage,
+  CoutAgentAgrege,
   CoutExecution,
   ChoixSelecteur,
   ConversationChat,
@@ -506,6 +507,24 @@ export function chargerAnalyticsCouts(options: {
   return chargerJson<AnalyticsCouts>(
     `/api/analytics/couts?${params.toString()}`,
   );
+}
+
+/**
+ * Ce que le **fil** a dépensé pour la portée (`GET /api/fil/depense`, #1534) — le
+ * poste `fil` de la vue analytique, seul : `null` quand rien n'a été mesuré.
+ *
+ * Le shell l'ajoute aux grands livres des runs pour dire le coût cumulé d'un
+ * projet (`coutCumule`) : sans lui, la barre supérieure disait 2,70 $ à côté des
+ * 3,83 $ de Coûts & analytics pour le même projet. Une réponse qui ne porte pas
+ * le champ (API d'avant #1534) vaut `null`.
+ */
+export async function chargerDepenseDuFil(
+  portee: PorteeProjet,
+): Promise<CoutAgentAgrege | null> {
+  const reponse = await chargerJson<{ fil?: CoutAgentAgrege | null }>(
+    `/api/fil/depense?projet=${encodeURIComponent(portee)}`,
+  );
+  return reponse?.fil ?? null;
 }
 
 /**

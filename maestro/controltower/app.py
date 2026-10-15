@@ -3720,6 +3720,26 @@ def create_app(
             portee=portee,
         ).to_dict()
 
+    @app.get("/api/fil/depense")
+    async def depense_du_fil(projet: str | None = None) -> dict[str, Any]:
+        """Ce que le fil a dépensé pour la portée (#1534) — le poste `fil` de la vue, seul.
+
+        Le shell additionne les grands livres des runs pour dire le coût cumulé
+        d'un projet (barre supérieure, tuile « Dépense ») ; sans le fil, il disait
+        2,70 $ à côté des 3,83 $ de Coûts & analytics pour le même projet. Cette
+        lecture lui donne la part qui manque **par le même calcul** que la vue
+        (`agrege_couts`, sans exécutions), à chaque rechargement et sans payer la
+        série ni les tables. `fil` vaut `null` quand rien n'a été mesuré.
+        `projet` est obligatoire, comme pour toute lecture qui agrège (#277).
+        """
+        portee = _portee(projet)
+        vue = agrege_couts((), fil=state.depenses_du_fil(), portee=portee)
+        return {
+            "projet": vue.projet,
+            "portee": vue.portee,
+            "fil": None if vue.fil is None else vue.fil.to_dict(),
+        }
+
     @app.post("/api/taches/{tache_id}/reassigner")
     async def reassigner(tache_id: str, requete: ReassignationRequete) -> dict[str, Any]:
         """Réassigne manuellement une tâche à un agent (glisser-déposer du Kanban).

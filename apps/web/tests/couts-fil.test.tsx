@@ -15,20 +15,26 @@
  * 2. les parts se comptent sur le **tout**, fil compris : la liste des agents et
  *    l'en-tête annoncent des pourcentages du même dénominateur ;
  * 3. le fil n'a **pas de ligne** parmi les agents ;
- * 4. le fil d'activité dit ce qu'une dépense du fil a payé, en toutes lettres.
+ * 4. le fil d'activité dit ce qu'une dépense du fil a payé, en toutes lettres ;
+ * 5. le **coût cumulé** du projet — barre supérieure, tuile « Dépense »,
+ *    Paramètres — compte le fil avec les grands livres : sans lui, la barre
+ *    disait 2,70 $ au-dessus d'un « Coût total » de 3,83 $ sur `/couts` (relecture
+ *    visuelle de #1534, sur le passage S12 du banc).
  */
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { IndicateursTableauDeBord } from "@/components/IndicateursTableauDeBord";
 import {
   EtiquetteOrchestration,
   RepartitionAgents,
 } from "@/components/RepartitionAgents";
+import { coutCumule, coutCumulePartiel } from "@/lib/etatGlobal";
 import { resumeEvenement } from "@/lib/evenements";
 import { EVENEMENT_FIL_DEPENSE, type CoutAgentAgrege } from "@/lib/types";
 
-import { evenementFactice, usageFactice } from "./aides";
+import { coutExecutionFactice, evenementFactice, usageFactice } from "./aides";
 
 function poste(agent: string, cout: number, role = ""): CoutAgentAgrege {
   return {
@@ -79,18 +85,50 @@ describe("la répartition des coûts et le fil", () => {
     expect(container).toHaveTextContent("Aucun agent n'a travaillé sur la période.");
   });
 
+  it("ajoute le fil aux grands livres dans le coût cumulé du projet", () => {
+    // La barre supérieure, la tuile « Dépense » et les Paramètres lisent ce cumul :
+    // sans le fil, la barre disait 2,70 $ au-dessus des 3,83 $ de `/couts`.
+    const couts = [
+      coutExecutionFactice({ run_id: "run-1", total: usageFactice({ cout_usd: 2.7 }) }),
+    ];
+    expect(coutCumule(couts, poste("fil", 1.13))).toBeCloseTo(3.83);
+    expect(coutCumule([], poste("fil", 1.13))).toBeCloseTo(1.13);
+    expect(coutCumule([], null)).toBeNull();
+    // Des tokens du fil sans prix font du cumul un plancher, comme ceux d'un run.
+    const sansPrix: CoutAgentAgrege = {
+      ...poste("fil", 0.2),
+      usage: usageFactice({ cout_usd: 0.2, tokens_non_tarifes: 900 }),
+    };
+    expect(coutCumulePartiel(couts, sansPrix)).toBe(true);
+    expect(coutCumulePartiel(couts, poste("fil", 0.2))).toBe(false);
+  });
+
+  it("dit dans la tuile « Dépense » qu'elle compte le fil", () => {
+    render(
+      <IndicateursTableauDeBord
+        taches={[]}
+        agents={[]}
+        couts={[coutExecutionFactice({ total: usageFactice({ cout_usd: 2.7 }) })]}
+        fil={poste("fil", 1.13)}
+      />,
+    );
+    const tuile = screen.getByText("Dépense").closest("article") as HTMLElement;
+    expect(tuile).toHaveTextContent(/3,83/);
+    expect(tuile).toHaveTextContent("1 exécution(s) et le fil, planification comprise");
+  });
+
   it("dit dans le fil d'activité ce qu'une dépense du fil a payé", () => {
     // Le montant est lu dans `detail`, composé par le backend : relu du journal
     // requêtable, qui ne garde pas `cout_usd`, l'événement dit encore combien.
     const relu = evenementFactice({
       type: EVENEMENT_FIL_DEPENSE,
       titre: "déclaration du projet",
-      detail: "0,4200 $ · 12 480 tokens",
+      detail: "0,42 $US · 12 480 tokens",
       cout_usd: null,
       usage: null,
     });
     expect(resumeEvenement(relu)).toBe(
-      "Le fil a dépensé pour déclaration du projet : 0,4200 $ · 12 480 tokens",
+      "Le fil a dépensé pour déclaration du projet : 0,42 $US · 12 480 tokens",
     );
   });
 });
