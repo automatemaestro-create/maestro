@@ -177,6 +177,22 @@ ORIGINE_AGENT = "agent"
 DETAIL_AUTO = "accordée d'office — décideur « auto », personne n'a été sollicité"
 
 
+class RefusParDefaut(str):
+    """Le détail d'un refus que **personne n'a prononcé** : le fail-safe (#9) du garde-fou.
+
+    Canal absent ou canal en panne — c'est `_tranche` qui le rend, et lui seul.
+
+    Sous-classe de `str`, comme `DetailDecision` : c'est la phrase d'avant, au
+    caractère près, pour le journal, l'agent et les tests qui la lisent. Le **type**
+    est ce que le code lit (#1504) — un accord d'écriture retenu au-delà du process
+    ne retient que ce qu'une personne, ou le cran `auto`, a rendu ; un refus par
+    défaut dit l'état d'un déploiement, que le rallumage a pu changer. Le
+    reconnaître à son texte serait le perdre au premier reformulage.
+    """
+
+    __slots__ = ()
+
+
 def detail_accorde(acte: str) -> str:
     """Le détail traçable d'un appel qui passe sur l'**accord de l'objectif** (#1198).
 
@@ -475,7 +491,7 @@ async def _tranche(
       **acte** : une demande sans outil (une tâche, un diff) reste à l'unité.
     """
     if canal is None:
-        return False, f"aucun {nom} configuré — refus par défaut"
+        return False, RefusParDefaut(f"aucun {nom} configuré — refus par défaut")
     try:
         decision: Any
         if inspect.iscoroutinefunction(canal):
@@ -491,7 +507,7 @@ async def _tranche(
             if inspect.isawaitable(decision):
                 decision = await decision
     except Exception as exc:  # fail-safe : un canal en panne ne laisse rien passer
-        return False, f"{nom} en erreur ({exc}) — refus par défaut"
+        return False, RefusParDefaut(f"{nom} en erreur ({exc}) — refus par défaut")
     if isinstance(decision, DecisionHumaine):
         return _detail_de(decision, demande, par=par)
     if decision:

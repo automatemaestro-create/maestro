@@ -15,7 +15,10 @@ prompt), les compétences (le routage) et le format de sortie. L'état acquis es
 
 - le **plan exécutable** — les `Task` entières, telles que le moteur les déroule, ticket
   et projet hérités compris ;
-- les **issues réussies** — un `TaskResult` par tâche terminée, sortie et usage compris.
+- les **issues réussies** — un `TaskResult` par tâche terminée, sortie et usage compris ;
+- les **accords d'écriture** que le run a reçus, un par projet (#1504) — la décision
+  d'une personne est payée elle aussi, et une reprise ne la redemande pas
+  (`maestro.engine.executor.AccordFusion`).
 
 Rien n'est inventé pour les transporter : `Task.to_dict` et `TaskResult.to_dict` sont
 déjà les formes qui voyagent entre process (la file #41, le mode durable #95). L'état
@@ -31,8 +34,9 @@ travail a été porté à l'interruption (#1392, `maestro.sandbox.projet`) : ce 
 pas à le tenir, Git le tient.
 
 **Qui écrit, qui lit.** Le moteur écrit, au fil du run : le plan une fois figé, puis
-chaque issue réussie à l'instant où elle l'est — du côté du **producteur**, la leçon de
-#699 (docs/28 §12.2) : un état acquis écrit par un consommateur serait troué exactement
+chaque issue réussie et chaque accord d'écriture à l'instant où ils le sont — du côté
+du **producteur**, la leçon de #699 (docs/28 §12.2) : un état acquis écrit par un
+consommateur serait troué exactement
 quand on en a besoin. La Control Tower relit, décide de reprendre, et rend l'état au
 moteur du run repris (`OrchestrationEngine.run(reprise=…)`). Une écriture qui échoue
 **ne fait jamais échouer le run** : elle lui coûte d'être moins reprenable, ce que le
@@ -47,7 +51,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from maestro.engine.executor import TaskResult
+from maestro.engine.executor import AccordFusion, TaskResult
 from maestro.orchestrator.schema import Task
 
 #: L'entrée du plan dans l'état acquis d'un run — une par run.
@@ -59,6 +63,10 @@ ENTREE_PLAN = "plan"
 #: l'autre — aucune mise à jour perdue, sans verrou.
 PREFIXE_TACHE = "tache:"
 
+#: Le préfixe de l'entrée d'un accord d'écriture (#1504) : `accord:<projet_id>`, un
+#: par projet où le run a fusionné — c'est la granularité de l'accord (#706).
+PREFIXE_ACCORD = "accord:"
+
 
 @dataclass(frozen=True)
 class EtatAcquis:
@@ -67,11 +75,13 @@ class EtatAcquis:
     `plan` est dans l'ordre où le moteur l'a figé ; `resultats` ne porte que des
     issues **réussies**, rangées par identifiant de tâche. Une issue qui ne
     désigne aucune tâche du plan est ignorée à la lecture (`depuis_entrees`) :
-    elle ne saurait être rendue à personne.
+    elle ne saurait être rendue à personne. `accords` (#1504) porte les accords
+    d'écriture que le run a reçus, par identifiant de projet.
     """
 
     plan: tuple[Task, ...]
     resultats: Mapping[str, TaskResult] = field(default_factory=dict)
+    accords: Mapping[str, AccordFusion] = field(default_factory=dict)
 
     @property
     def acquises(self) -> tuple[str, ...]:
@@ -84,25 +94,43 @@ class EtatAcquis:
         return tuple(t.id for t in self.plan if t.id not in self.resultats)
 
     def to_dict(self) -> dict[str, Any]:
-        """Réémet l'état en dict JSON-sérialisable (`{plan, resultats}`)."""
+        """Réémet l'état en dict JSON-sérialisable (`{plan, resultats, accords}`)."""
         return {
             "plan": [t.to_dict() for t in self.plan],
             "resultats": [self.resultats[i].to_dict() for i in self.acquises],
+            "accords": {projet: a.to_dict() for projet, a in self.accords.items()},
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> EtatAcquis:
-        """Reconstruit l'état depuis sa forme `to_dict` — l'aller-retour de l'ordre d'un run."""
+        """Reconstruit l'état depuis sa forme `to_dict` — l'aller-retour de l'ordre d'un run.
+
+        Un ordre émis avant #1504 n'a pas d'`accords` : le run repris repose alors la
+        question, ce qu'il faisait jusque-là.
+        """
         plan = tuple(Task.from_dict(t) for t in data.get("plan") or ())
-        return cls.depuis(plan, (TaskResult.from_dict(r) for r in data.get("resultats") or ()))
+        return cls.depuis(
+            plan,
+            (TaskResult.from_dict(r) for r in data.get("resultats") or ()),
+            {
+                str(projet): AccordFusion.from_dict(a)
+                for projet, a in (data.get("accords") or {}).items()
+            },
+        )
 
     @classmethod
-    def depuis(cls, plan: Sequence[Task], resultats: Any) -> EtatAcquis:
-        """L'état d'un plan et d'issues lues — les réussies du plan, et elles seules."""
+    def depuis(
+        cls,
+        plan: Sequence[Task],
+        resultats: Any,
+        accords: Mapping[str, AccordFusion] | None = None,
+    ) -> EtatAcquis:
+        """L'état d'un plan, d'issues et d'accords lus — les réussies du plan, et elles seules."""
         ids = {t.id for t in plan}
         return cls(
             plan=tuple(plan),
             resultats={r.task_id: r for r in resultats if r.ok and r.task_id in ids},
+            accords=dict(accords or {}),
         )
 
     @classmethod
@@ -114,7 +142,8 @@ class EtatAcquis:
         tient la règle. Un plan illisible ne se répare pas — sans lui il n'y a rien à
         reprendre, et le dire (`None`) vaut mieux que reprendre de travers. Une issue
         illisible, elle, est écartée seule : sa tâche sera refaite, ce qui est le prix
-        juste d'une donnée qu'on ne sait plus lire.
+        juste d'une donnée qu'on ne sait plus lire. Un accord illisible aussi (#1504) :
+        la question sera reposée — un accord qu'on ne sait pas relire ne se présume pas.
         """
         brut = entrees.get(ENTREE_PLAN)
         if brut is None:
@@ -126,14 +155,18 @@ class EtatAcquis:
         if not plan:
             return None
         resultats: list[TaskResult] = []
+        accords: dict[str, AccordFusion] = {}
         for cle, valeur in entrees.items():
-            if not cle.startswith(PREFIXE_TACHE):
-                continue
             try:
-                resultats.append(TaskResult.from_dict(json.loads(valeur)))
+                if cle.startswith(PREFIXE_TACHE):
+                    resultats.append(TaskResult.from_dict(json.loads(valeur)))
+                elif cle.startswith(PREFIXE_ACCORD):
+                    accords[cle.removeprefix(PREFIXE_ACCORD)] = AccordFusion.from_dict(
+                        json.loads(valeur)
+                    )
             except (ValueError, TypeError, KeyError):
                 continue
-        return cls.depuis(plan, resultats)
+        return cls.depuis(plan, resultats, accords)
 
 
 def entree_du_plan(tasks: Sequence[Task]) -> tuple[str, str]:
@@ -149,18 +182,28 @@ def entree_du_resultat(resultat: TaskResult) -> tuple[str, str]:
     )
 
 
+def entree_de_l_accord(projet_id: str, accord: AccordFusion) -> tuple[str, str]:
+    """L'entrée `(clé, JSON)` qui range l'accord d'écriture du run dans `projet_id` (#1504)."""
+    return (
+        f"{PREFIXE_ACCORD}{projet_id}",
+        json.dumps(accord.to_dict(), ensure_ascii=False),
+    )
+
+
 class MagasinAcquis(ABC):
     """Où un run garde son état acquis — hors de son process (#1391, docs/28 §12.6).
 
-    Quatre verbes, et c'est tout le contrat : le moteur **pose** le plan puis
-    **acquiert** chaque issue réussie ; la Control Tower **lit** l'état d'un run
-    pour le reprendre ; et un run qui n'a plus rien à reprendre est **oublié**.
+    Cinq verbes, et c'est tout le contrat : le moteur **pose** le plan, puis
+    **acquiert** chaque issue réussie et **retient** chaque accord d'écriture
+    (#1504) ; la Control Tower **lit** l'état d'un run pour le reprendre ; et un
+    run qui n'a plus rien à reprendre est **oublié**.
     Le stockage est un détail d'implémentation — mémoire, Redis, SQLite —, comme
     pour le journal durable (#97, #639), dont ce magasin suit le support.
 
     ⚠ Écrire est **idempotent** et **par entrée** : poser deux fois le même plan,
     acquérir deux fois la même tâche (une QA qui renvoie un livrable à son
-    producteur, #1177) remplace, ne cumule pas.
+    producteur, #1177), retenir deux fois l'accord d'un projet remplace, ne
+    cumule pas.
     """
 
     @abstractmethod
@@ -170,6 +213,10 @@ class MagasinAcquis(ABC):
     @abstractmethod
     async def acquerir(self, run_id: str, resultat: TaskResult) -> None:
         """Range une issue **réussie** du run — une issue qui ne l'est pas est ignorée."""
+
+    @abstractmethod
+    async def retenir_accord(self, run_id: str, projet_id: str, accord: AccordFusion) -> None:
+        """Range l'accord d'écriture que le run a reçu pour `projet_id` (#1504)."""
 
     @abstractmethod
     async def lire(self, run_id: str) -> EtatAcquis | None:
@@ -208,6 +255,10 @@ class MagasinAcquisMemoire(MagasinAcquis):
         cle, valeur = entree_du_resultat(resultat)
         self._runs.setdefault(run_id, {})[cle] = valeur
 
+    async def retenir_accord(self, run_id: str, projet_id: str, accord: AccordFusion) -> None:
+        cle, valeur = entree_de_l_accord(projet_id, accord)
+        self._runs.setdefault(run_id, {})[cle] = valeur
+
     async def lire(self, run_id: str) -> EtatAcquis | None:
         return EtatAcquis.depuis_entrees(dict(self._runs.get(run_id, {})))
 
@@ -217,10 +268,12 @@ class MagasinAcquisMemoire(MagasinAcquis):
 
 __all__ = [
     "ENTREE_PLAN",
+    "PREFIXE_ACCORD",
     "PREFIXE_TACHE",
     "EtatAcquis",
     "MagasinAcquis",
     "MagasinAcquisMemoire",
+    "entree_de_l_accord",
     "entree_du_plan",
     "entree_du_resultat",
 ]

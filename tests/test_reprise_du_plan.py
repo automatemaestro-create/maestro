@@ -10,7 +10,9 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
 
 ① **Le magasin** tient son contrat sur ses trois supports — mémoire, Redis (le
    double partagé `tests/redis_factice.py`), SQLite : le plan exécutable et les
-   seules issues **réussies**, sorties comprises ; rien sans plan ; l'oubli.
+   seules issues **réussies**, sorties comprises ; l'accord d'écriture du run
+   (#1504, éprouvé de bout en bout dans `tests/test_accord_ecriture_continue.py`) ;
+   rien sans plan ; l'oubli.
 
 ② **Le moteur** range son plan dès qu'il est figé et chaque issue réussie à
    l'instant où elle l'est ; un run interrompu garde ce qu'il a payé, un run
@@ -91,6 +93,7 @@ from maestro.engine import (
     TaskResult,
 )
 from maestro.engine.acquis import EtatAcquis, MagasinAcquis, MagasinAcquisMemoire
+from maestro.engine.executor import AccordFusion
 from maestro.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.plan_run import NoeudPlan
@@ -308,6 +311,52 @@ def test_sans_plan_rien_a_reprendre_et_l_oubli_efface_tout(
     assert apres is None
 
 
+@pytest.mark.parametrize("support", ["memoire", "redis", "sqlite"])
+def test_le_magasin_retient_l_accord_d_ecriture_du_run(
+    support: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L'accord d'écriture du run, un par projet, revient tel quel (#1504) ; réécrit, il remplace.
+
+    C'est ce qui permet à un run repris de ne pas redemander à la personne ce qu'elle a
+    déjà tranché. L'oubli l'efface avec le reste : un run fini n'a plus rien à reprendre.
+    """
+    magasin = _magasins(tmp_path, monkeypatch)[support]
+    oui = AccordFusion(approuve=True, detail="approuvée par le validateur humain", tache_id=SOCLE)
+    non = AccordFusion(approuve=False, detail="refusée par le validateur humain", tache_id=PAGES)
+
+    async def scenario() -> tuple[EtatAcquis | None, EtatAcquis | None]:
+        await magasin.poser_plan(RUN, PLAN)
+        await magasin.retenir_accord(RUN, "prj-autre", non)
+        await magasin.retenir_accord(RUN, PROJET, non)
+        await magasin.retenir_accord(RUN, PROJET, oui)
+        lu = await magasin.lire(RUN)
+        await magasin.oublier(RUN)
+        oublie = await magasin.lire(RUN)
+        await magasin.close()
+        return lu, oublie
+
+    lu, oublie = asyncio.run(scenario())
+
+    assert lu is not None
+    assert lu.accords == {PROJET: oui, "prj-autre": non}
+    # Un accord n'est pas une tâche : rien n'est acquis pour autant.
+    assert lu.acquises == ()
+    assert oublie is None
+
+
+def test_un_accord_illisible_ne_se_presume_pas() -> None:
+    """Écarté seul (#1504) : la question sera reposée, le reste de l'état tient."""
+    plan = json.dumps([t.to_dict() for t in PLAN])
+    socle = json.dumps(_issue(SOCLE).to_dict())
+
+    etat = EtatAcquis.depuis_entrees(
+        {"plan": plan, f"tache:{SOCLE}": socle, f"accord:{PROJET}": '{"approuve": true}'}
+    )
+
+    assert etat is not None and etat.acquises == (SOCLE,)
+    assert etat.accords == {}
+
+
 def test_une_issue_refaite_remplace_la_premiere() -> None:
     """Un livrable refait à la demande d'une QA (#1177) : c'est lui que l'aval lira."""
     magasin = MagasinAcquisMemoire()
@@ -337,7 +386,8 @@ def test_une_entree_illisible_ne_fait_perdre_qu_elle_meme() -> None:
 
 def test_l_etat_traverse_l_ordre_du_run_tel_quel() -> None:
     """L'ordre d'un run repris voyage en JSON vers le process détaché : rien ne s'y perd."""
-    etat = EtatAcquis.depuis(PLAN, [_issue(SOCLE, "le socle")])
+    accord = AccordFusion(approuve=True, detail="approuvée par un humain", tache_id=SOCLE)
+    etat = EtatAcquis.depuis(PLAN, [_issue(SOCLE, "le socle")], {PROJET: accord})
     ordre = OrdreRun(run_id=RUN, objectif="Un site de recettes", reprise=etat)
 
     relu = ordre_depuis_dict(json.loads(json.dumps(ordre_vers_dict(ordre))))
@@ -345,7 +395,13 @@ def test_l_etat_traverse_l_ordre_du_run_tel_quel() -> None:
     assert relu.reprise is not None
     assert relu.reprise.plan == PLAN
     assert relu.reprise.resultats[SOCLE].sortie == "le socle"
+    # L'accord d'écriture du run (#1504) arrive à l'hôte qui le reprend.
+    assert relu.reprise.accords == {PROJET: accord}
     assert ordre_depuis_dict(ordre_vers_dict(OrdreRun(run_id=RUN, objectif="x"))).reprise is None
+    # Un ordre émis avant #1504 n'en porte pas : la reprise reposera la question.
+    ancien = ordre_vers_dict(ordre)
+    del ancien["reprise"]["accords"]
+    assert ordre_depuis_dict(ancien).reprise.accords == {}  # type: ignore[union-attr]
 
 
 # ================================================================= ② le moteur
