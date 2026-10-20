@@ -1408,7 +1408,7 @@ Le constat, en cinq faits :
 
 | Milestone | Contenu | Échéance | Suivi |
 |---|---|---|---|
-| **Maestro fait mieux qu'un agent seul — sur un projet qui dépasse une session, mesuré sur plusieurs passages** | Un go/no-go. L'écart se mesure sur un banc comparatif, trois passages par côté. Il se réduit par des leviers tirés de la mesure, puis on tranche. Les réserves R2 à R7 du bilan y sont rangées | 2028-01-31 (neuf) | **#1510** — #1508 → #1512 ∥ → #1513, puis les leviers (#1530 ∥, #1532 ∥, #1533 ∥, #1531) ; #1503 à #1507, #1534 et #1538, sans parent |
+| **Maestro fait mieux qu'un agent seul — sur un projet qui dépasse une session, mesuré sur plusieurs passages** | Un go/no-go. L'écart se mesure sur un banc comparatif, trois passages par côté. Il se réduit par des leviers tirés de la mesure, puis on tranche. Les réserves R2 à R7 du bilan y sont rangées | 2028-01-31 (neuf) | **#1510** — #1508 → #1512 ∥ → #1513, puis les leviers (#1530 ∥, #1532 ∥, #1533 ∥, #1542 ∥, #1543 ∥, #1531) ; #1503 à #1507, #1534, #1538 et #1544, sans parent |
 | *Phase 9 — Poste de travail : distribution* (existant, **ancré**) | L'installeur, le premier lancement et les mises à jour. **L'isolation par défaut** et **un retex de deux ou trois personnes extérieures** s'y ajoutent | 2028-02-16 → **2028-02-01** | **#637** (#641, #642, #644, #645) ; **#1511** (#1514 → #1515) ; #1312 ; **#1516** |
 | *Outillage de la forge* (rail outillage) | Au plus quatre jalons produit en chantier, une ancre, et le verbe qui déplace un ticket de jalon | 2027-09-15 | **#1517** (né assigné : il écrit sous `.claude/`) |
 
@@ -1424,6 +1424,18 @@ Le constat, en cinq faits :
 >   - puis #1531, le découpage à la taille d'une session.
 > - **Cumulés aux tickets ouverts**, ils ramènent p5 à environ 1,26 fois C3 en temps et 1,17 fois en
 >   coût. C'est une estimation : le banc (#1512) la rend vraie ou fausse.
+
+> ⚠ **Le second étalon, mesuré par #1522 le 2026-10-20** ([docs/51](./51-maestro-face-a-la-chaine-du-depot.md)).
+> Le ticket #1505 a été traité deux fois : par Maestro, depuis un clone du dépôt, et par la chaîne
+> du dépôt.
+> - **La chaîne livre en 1 h 16, sur un geste**, pour 12,42 $.
+> - **Maestro travaille 2 h 48 sur 18 gestes**, pour 9,08 $. Son run échoue : sa dernière tâche est
+>   coupée par la limite d'usage, et rien n'est mergé.
+> - **Son livrable tient 13 critères sur 14**, avec 0 commit conforme sur 5.
+> - **Deux leviers deviennent des lots** :
+>   - #1542 ∥, les instructions qu'un projet importé porte déjà ;
+>   - #1543 ∥, la reprise d'une tâche coupée par la limite d'usage.
+> - **La grille de #1512 juge mal un dépôt existant** : c'est #1544.
 
 **Le go/no-go.** Le terrain est un projet qui **dépasse une session**, confié comme le dirait une
 personne **qui ne code pas**, et **repris le lendemain**. C'est la promesse de
