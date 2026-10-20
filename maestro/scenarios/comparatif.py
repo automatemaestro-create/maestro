@@ -2,7 +2,7 @@
 
     .venv/Scripts/python.exe -m maestro.scenarios.comparatif [--objectif p5] [--passages <n>]
                                                              [--cote maestro|seul] [--delai <s>]
-                                                             [--axes <a,b>]
+                                                             [--jour <s>] [--axes <a,b>]
     .venv/Scripts/python.exe -m maestro.scenarios.comparatif --rejouer <côté>=<dépôt> [...]
                                                              [--objectif p5] [--axes <a,b>]
     .venv/Scripts/python.exe -m maestro.scenarios.comparatif --liste
@@ -48,6 +48,35 @@ détaille les postes hors des agents (`POSTES_DU_GRAND_LIVRE`).
 
 Puis **chaque livrable se rejoue sur un clone propre**, selon la grille du bilan
 (`maestro.scenarios.grille`) : dix lignes, de l'installation à l'outillage suivi.
+
+## Le projet long, repris le lendemain (#1513)
+
+p5 tient en une session, et sur ce terrain l'orchestration ne peut que coûter. Le
+go/no-go se joue sur un projet qui **dépasse une session**, confié par une personne
+**qui ne code pas**, et **repris le lendemain** (docs/48) : l'objectif `club`. Il
+porte trois choses de plus que p5, et le banc s'en sert des deux côtés :
+
+- **ses critères d'acceptation** — jugés après le passage, par un modèle, sur le
+  livrable cloné (`maestro.scenarios.couverture`). La grille dit si le livrable
+  tient debout, les critères s'il fait ce que la personne a demandé ;
+- **la feuille de la personne** — ce qu'elle répond quand on lui demande quelque
+  chose, écrit d'avance et sans aide technique. Avec elle, la personne suit la
+  conversation : côté Maestro, elle répond aux questions d'outillage et à celles que
+  les agents lui posent pendant le run ; côté agent seul, chaque fois que la session
+  rend la main, elle en lit la fin (un modèle juge, jamais un lexique) et répond
+  comme elle le ferait — sa feuille à une question, « Continue. » à une session
+  arrêtée en chemin, rien quand le projet est dit terminé ;
+- **la longueur d'un jour** (`jour_s`, `--jour`) — à la fin du premier jour, chaque
+  côté passe une **nuit**. Maestro s'éteint comme quand on le ferme, se rallume sur
+  le même journal, et la personne clique sur « Reprendre ». La session seule est
+  fermée, en plein travail s'il le faut, puis **rouverte** le lendemain : la même
+  conversation, contexte intact, sous l'identifiant que Maestro lui a donné
+  (`SessionAgent`) — comme la chaîne du dépôt rouvre une session (docs/50 § 3).
+
+Le rapport compte les **critères tenus** de chaque côté, les gestes de la reprise,
+raconte chaque nuit, et dit pour l'agent seul s'il a bouclé le projet **d'un trait**
+(`Passage.d_un_trait`) : c'est ce qui vérifie que le projet dépasse une session. La
+durée comparée est la durée **active** : la nuit n'y entre pas.
 
 ## Trois issues, et la troisième ne compte pas
 
@@ -95,9 +124,24 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 from maestro.agents.runtime import DEFAULT_TOOLS
 from maestro.controltower.causes import CAUSE_LIMITE_USAGE, cause_de, cause_lisible
-from maestro.controltower.state import EXECUTION_TERMINEE
-from maestro.scenarios.api import ClientAPI, ErreurAPI, Transport, TransportHTTP, base_locale
+from maestro.controltower.state import EXECUTION_TERMINEE, STATUTS_EXECUTION_TERMINAUX
+from maestro.providers.base import SessionAgent
+from maestro.scenarios.api import (
+    ClientAPI,
+    ErreurAPI,
+    Transport,
+    TransportHTTP,
+    attendre_le_run,
+    base_locale,
+)
 from maestro.scenarios.banc import GESTE_PREALABLE
+from maestro.scenarios.couverture import (
+    Couverture,
+    JugeCouverture,
+    JugeCouvertureModele,
+    comptes_par_critere,
+    non_jugee,
+)
 from maestro.scenarios.grille import (
     AXES,
     LIBELLES,
@@ -106,7 +150,7 @@ from maestro.scenarios.grille import (
     PosteDuBanc,
     rejouer,
 )
-from maestro.scenarios.juge import Juge, JugeModele
+from maestro.scenarios.juge import FORME, Juge, JugeModele
 from maestro.scenarios.modele import Etape, Issue, Journal
 from maestro.scenarios.modele import horodatage as horodatage_courant
 from maestro.scenarios.projets import Atelier
@@ -114,9 +158,11 @@ from maestro.scenarios.scenarios import (
     REPONSE_OUTILLAGE,
     Contexte,
     _lancer_dans_le_fil,
+    _montant,
     _naitre_dans_l_atelier,
+    _reprendre,
     _revue_d_apres_le_run,
-    _suivre,
+    _runs_en_vol,
 )
 from maestro.telemetry import collect_usage
 
@@ -159,6 +205,16 @@ GESTE_RUN = "accord du run"
 GESTE_ARBITRAGE = "arbitrage"
 GESTE_VERSIONNER = "versionnement"
 GESTE_PLAFOND = "geste au plafond"
+#: Ceux du projet long (#1513) : répondre à une question (d'un agent de Maestro, ou de
+#: l'agent seul), relancer une session qui s'est arrêtée en chemin, reprendre le
+#: lendemain — le bouton « Reprendre » d'un côté, la session rouverte de l'autre.
+GESTE_REPONSE = "réponse à une question"
+GESTE_RELANCE = "relance"
+GESTE_REPRISE = "reprise"
+
+#: Ce que la personne dit à une session qui s'est arrêtée sans finir, ou qu'elle rouvre
+#: le lendemain : le mot du ticket, sans aide technique.
+RELANCE = "Continue."
 
 CODE_ECRIT = 0
 CODE_USAGE = 2
@@ -167,7 +223,7 @@ CODE_AUCUN_PASSAGE = 4
 
 _USAGE = (
     f"Usage : python -m {MODULE} [--objectif <nom|fichier.toml>] [--passages <n>] "
-    "[--cote maestro|seul] [--delai <secondes>] [--axes <a,b>]\n"
+    "[--cote maestro|seul] [--delai <secondes>] [--jour <secondes>] [--axes <a,b>]\n"
     f"        python -m {MODULE} --rejouer <côté>=<dépôt> [...] [--objectif …] [--axes …]\n"
     f"        python -m {MODULE} --liste"
 )
@@ -187,6 +243,14 @@ class Objectif:
     `versionner` demande un projet sous Git. `axes` restreint la grille (toutes ses
     lignes par défaut). `cout_estime_usd` est ce qu'un passage a coûté de chaque côté,
     annoncé avant de jouer — jamais une borne.
+
+    Le projet long (#1513) en porte quatre de plus. `criteres` sont ses critères
+    d'acceptation, jugés sur le livrable (`maestro.scenarios.couverture`).
+    `reponses` est la feuille de la personne : ce qu'elle répond quand on lui demande
+    quelque chose, écrit d'avance et sans aide technique — avec elle, la personne
+    **suit la conversation** (`converse`). `jour_s` est la longueur d'un « jour » de
+    travail actif, après lequel le banc interrompt chaque côté jusqu'au lendemain.
+    `delai_s` est ce que le banc laisse à un passage quand la commande ne le dit pas.
     """
 
     nom: str
@@ -197,11 +261,40 @@ class Objectif:
     versionner: bool = False
     axes: tuple[str, ...] = AXES
     cout_estime_usd: Mapping[str, float] = field(default_factory=dict)
+    criteres: tuple[str, ...] = ()
+    reponses: tuple[str, ...] = ()
+    jour_s: float | None = None
+    delai_s: float | None = None
 
     @property
     def demande_de_travail(self) -> str:
         """Ce que la personne demande au fil une fois le projet outillé."""
         return self.travail or self.message
+
+    @property
+    def converse(self) -> bool:
+        """La personne suit-elle la conversation — répondre quand on lui demande, relancer ?
+
+        Seulement si elle a préparé ses réponses. Sans elles, elle envoie son message
+        et attend la fin, comme dans C3 : p5 se mesure ainsi depuis #1512.
+        """
+        return bool(self.reponses)
+
+    @property
+    def reponse_de_la_personne(self) -> str:
+        """Ce qu'elle répond quand on lui demande quelque chose : sa feuille, avec ses mots.
+
+        La feuille entière, et non la ligne qui semblerait répondre : choisir une ligne
+        par ses mots serait juger une phrase par un lexique (#746). C'est à qui a posé
+        la question d'y lire sa réponse — des deux côtés, la même feuille.
+        """
+        if not self.reponses:
+            return REPONSE_OUTILLAGE
+        lignes = "\n".join(f"- {reponse}" for reponse in self.reponses)
+        return (
+            f"Je ne sais pas programmer, mais voici ce que je peux vous dire :\n{lignes}\n"
+            "Pour le reste, faites au mieux et continuez."
+        )
 
     @property
     def reponse_outillage(self) -> str:
@@ -210,10 +303,11 @@ class Objectif:
         Pas d'option de la carte, et pas de recherche de l'option qui ressemblerait à
         un choix : ce serait juger une phrase par ses mots (#746). La personne redit
         ce qu'elle a choisi, et c'est le fil qui comprend (docs/41). Sans choix, elle
-        n'a pas d'avis, comme dans S9.
+        répond par sa feuille quand elle en a une (#1513), et sinon elle n'a pas
+        d'avis, comme dans S9.
         """
         if not self.choix:
-            return REPONSE_OUTILLAGE
+            return self.reponse_de_la_personne
         return (
             f"Mes choix sont faits : {' ; '.join(self.choix)}. "
             "Pour le reste, choisissez ce qui convient le mieux à ce projet."
@@ -222,6 +316,10 @@ class Objectif:
     def repondre(self, _question: Mapping[str, Any]) -> tuple[str, bool]:
         """La réponse à une question d'outillage — toujours avec ses mots (`libre`)."""
         return self.reponse_outillage, True
+
+    def repondre_a_l_agent(self, _question: Mapping[str, Any]) -> str:
+        """La réponse à la question qu'un agent pose pendant le run : sa feuille (#1513)."""
+        return self.reponse_de_la_personne
 
 
 def objectifs_connus() -> tuple[str, ...]:
@@ -271,7 +369,29 @@ def objectif_depuis(nom: str, donnees: Mapping[str, Any]) -> Objectif:
         versionner=bool(donnees.get("versionner", False)),
         axes=tuple(axe for axe in AXES if axe in axes),
         cout_estime_usd={str(cote): float(montant) for cote, montant in couts.items()},
+        criteres=_textes(nom, donnees, "criteres"),
+        reponses=_textes(nom, donnees, "reponses"),
+        jour_s=_duree_de(nom, donnees, "jour_s"),
+        delai_s=_duree_de(nom, donnees, "delai_s"),
     )
+
+
+def _textes(nom: str, donnees: Mapping[str, Any], cle: str) -> tuple[str, ...]:
+    """Une liste de textes non vides de l'objectif — vide si la clé est absente."""
+    valeur = donnees.get(cle, [])
+    if not isinstance(valeur, list) or not all(isinstance(v, str) and v.strip() for v in valeur):
+        raise ValueError(f"objectif {nom} : `{cle}` doit être une liste de textes")
+    return tuple(v.strip() for v in valeur)
+
+
+def _duree_de(nom: str, donnees: Mapping[str, Any], cle: str) -> float | None:
+    """Une durée en secondes, strictement positive — `None` si la clé est absente."""
+    if cle not in donnees:
+        return None
+    valeur = donnees[cle]
+    if isinstance(valeur, bool) or not isinstance(valeur, int | float) or valeur <= 0:
+        raise ValueError(f"objectif {nom} : `{cle}` doit être une durée en secondes, > 0")
+    return float(valeur)
 
 
 # --- Les gestes de la personne ----------------------------------------------
@@ -359,8 +479,53 @@ class ClientCompteur(ClientAPI):
         self._geste(GESTE_PLAFOND)
         super().arreter_au_plafond(run_id)
 
+    def repondre_a_l_agent(self, question_id: str, reponse: str) -> None:
+        self._geste(GESTE_REPONSE)
+        super().repondre_a_l_agent(question_id, reponse)
+
+    def reprendre(self, run_id: str) -> dict[str, Any]:
+        self._geste(GESTE_REPRISE)
+        return super().reprendre(run_id)
+
 
 # --- Un passage -------------------------------------------------------------
+
+
+#: Comment une session de l'agent seul a fini (#1513).
+FIN_RENDUE = "rendue"
+FIN_NUIT = "coupée par la nuit"
+FIN_DELAI = "coupée au délai"
+FIN_ECHEC = "échouée"
+
+#: Ce que la personne lit dans le dernier message d'une session qui a rendu la main.
+LECTURE_TERMINE = "terminé"
+LECTURE_QUESTION = "question"
+LECTURE_EN_CHEMIN = "en chemin"
+
+
+@dataclass(frozen=True)
+class Tour:
+    """Une session de l'agent seul : le jour, ce qui l'a ouverte, comment elle a fini (#1513).
+
+    `geste` est ce que la personne a fait pour l'ouvrir (son message, une relance, une
+    réponse, la reprise du lendemain) ; `lecture` ce qu'elle a lu dans la fin, quand la
+    session a rendu la main et qu'elle suit la conversation.
+    """
+
+    jour: int
+    geste: str
+    fin: str
+    lecture: str = ""
+    duree_s: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "jour": self.jour,
+            "geste": self.geste,
+            "fin": self.fin,
+            "lecture": self.lecture,
+            "duree_s": round(self.duree_s, 3),
+        }
 
 
 @dataclass(frozen=True)
@@ -370,6 +535,11 @@ class Passage:
     `duree_s`, `cout_usd` et `gestes` valent `None` quand rien ne les a mesurés — un
     livrable seulement rejoué (`--rejouer`), un coût que personne n'a rapporté :
     inconnu, jamais zéro. `cout_source` dit d'où vient le coût.
+
+    `duree_s` est la durée **active** : la nuit (#1513) en est ôtée, et `nuit_s` dit
+    ce qu'elle a pris au banc — éteindre, rallumer, reprendre. `nuit` la raconte, vide
+    quand il n'y en a pas eu. `tours` sont les sessions de l'agent seul, et
+    `couverture` les critères d'acceptation jugés sur le livrable.
     """
 
     cote: str
@@ -387,11 +557,36 @@ class Passage:
     modele: str = ""
     grille: Grille | None = None
     etapes: tuple[Etape, ...] = ()
+    nuit: str = ""
+    nuit_s: float | None = None
+    tours: tuple[Tour, ...] = ()
+    couverture: Couverture | None = None
 
     @property
     def compte(self) -> bool:
         """Entre-t-il dans les médianes ? Un empêchement est une abstention."""
         return self.issue != EMPECHE
+
+    @property
+    def d_un_trait(self) -> bool | None:
+        """La session seule a-t-elle bouclé le projet d'un trait ? — `None` si rien ne le dit.
+
+        C'est ce qui vérifie qu'un projet **dépasse une session** (#1513) : non, dès que
+        sa première session n'a pas rendu la main en le disant terminé — coupée, ou
+        arrêtée en chemin, ou sur une question —, ou que le livrable ne tient pas tous
+        ses critères. Oui seulement si la première session l'a dit terminé et que la
+        couverture est complète.
+        """
+        if not self.tours:
+            return None
+        premier = self.tours[0]
+        if premier.fin != FIN_RENDUE or premier.lecture not in ("", LECTURE_TERMINE):
+            return False
+        if self.couverture is None or not self.couverture.verdicts:
+            return None
+        if self.couverture.juges < len(self.couverture.verdicts):
+            return False if self.couverture.tenus < self.couverture.juges else None
+        return self.couverture.complete
 
     def avec_grille(self, grille: Grille, etapes: Sequence[Etape]) -> Passage:
         """Le même passage, son livrable rejoué."""
@@ -414,7 +609,12 @@ class Passage:
             "run_id": self.run_id,
             "projet_id": self.projet_id,
             "modele": self.modele,
+            "nuit": self.nuit,
+            "nuit_s": None if self.nuit_s is None else round(self.nuit_s, 3),
+            "tours": [tour.to_dict() for tour in self.tours],
+            "d_un_trait": self.d_un_trait,
             "grille": None if self.grille is None else self.grille.to_dict(),
+            "couverture": None if self.couverture is None else self.couverture.to_dict(),
             "etapes": [etape.to_dict() for etape in self.etapes],
         }
 
@@ -430,6 +630,7 @@ def jouer_maestro(
     delai_s: float = DELAI_PASSAGE_S,
     horloge: Callable[[], float] = time.monotonic,
     dormir: Callable[[float], None] = time.sleep,
+    redemarrer: Callable[[], str] | None = None,
 ) -> Passage:
     """Le côté Maestro d'un passage : l'objectif confié par le fil, le run suivi jusqu'à son issue.
 
@@ -438,6 +639,14 @@ def jouer_maestro(
     rien de plus que l'objectif. La durée court du premier message au run soldé ;
     la revue de l'outillage que la fin du run propose est tranchée ensuite, comme
     la personne la verrait arriver.
+
+    Sur le projet long (#1513), la personne répond aussi aux questions que les agents
+    lui posent pendant le run (`Objectif.repondre_a_l_agent`), et le run passe une
+    **nuit** : à la fin du premier jour (`Objectif.jour_s`), s'il n'est pas soldé,
+    Maestro s'éteint comme quand on le ferme (`POST /api/extinction`), se rallume
+    sur le même journal (`redemarrer`, celui de S12), et la personne le reprend par
+    le bouton « Reprendre ». Le délai court sur le passage entier, du premier
+    message à la fin.
     """
     racine = atelier.dossier(f"{COTE_MAESTRO}-{rang}")
     ctx = Contexte(
@@ -448,19 +657,24 @@ def jouer_maestro(
         delai_run_s=delai_s,
         horloge=horloge,
         dormir=dormir,
+        redemarrer=redemarrer,
     )
     debut = horloge()
+    limite = debut + delai_s
     run_id, duree = "", None
+    nuit, nuit_s = "", None
     detail: dict[str, Any] = {}
+    repondre = objectif.repondre_a_l_agent if objectif.converse else None
 
     def passage(issue: str, motif: str) -> Passage:
         cout, source, postes = _cout_de_maestro(client, ctx.projet_id, detail)
+        total = duree if duree is not None else horloge() - debut
         return Passage(
             cote=COTE_MAESTRO,
             rang=rang,
             issue=issue,
             motif=motif,
-            duree_s=duree if duree is not None else horloge() - debut,
+            duree_s=total - (nuit_s or 0.0),
             cout_usd=cout,
             cout_source=source,
             cout_postes=postes,
@@ -469,6 +683,8 @@ def jouer_maestro(
             run_id=run_id,
             projet_id=ctx.projet_id,
             etapes=tuple(journal.etapes),
+            nuit=nuit,
+            nuit_s=nuit_s,
         )
 
     try:
@@ -494,7 +710,19 @@ def jouer_maestro(
         if isinstance(lance, Issue):
             return passage(*_issue_du_lancement(lance))
         run_id = lance.run_id
-        detail = _suivre(ctx, run_id, lance.projet_id)
+        fin_du_jour = None if objectif.jour_s is None else debut + objectif.jour_s
+        detail = _suivre_le_run(
+            ctx, run_id, lance.projet_id, limite=limite, repondre=repondre, jusqu_a=fin_du_jour
+        )
+        if fin_du_jour is not None and _en_vol(detail) and horloge() < limite:
+            avant = horloge()
+            try:
+                run_id, nuit = _nuit_de_maestro(ctx, run_id, jour_s=horloge() - debut)
+            finally:
+                nuit_s = horloge() - avant
+            detail = _suivre_le_run(
+                ctx, run_id, lance.projet_id, limite=limite + nuit_s, repondre=repondre
+            )
         duree = horloge() - debut
         statut, cause = str(detail.get("statut") or ""), str(detail.get("cause") or "")
         if statut == EXECUTION_TERMINEE:
@@ -506,6 +734,9 @@ def jouer_maestro(
             NON_ABOUTI,
             f"le run s'est soldé « {statut or 'sans statut'} » (cause « {cause or '—'} »)",
         )
+    except _NuitManquee as manquee:
+        nuit = f"manquée : {manquee.motif}"
+        return passage(manquee.issue, manquee.motif)
     except ErreurAPI as echec:
         return passage(EMPECHE, f"l'API a refusé : {echec}")
     except OSError as echec:  # disque, projet devenu illisible
@@ -515,6 +746,107 @@ def jouer_maestro(
 def _issue_du_lancement(issue: Issue) -> tuple[str, str]:
     """Un lancement qui n'a pas eu lieu : empêché s'il l'était, une perte sinon."""
     return (EMPECHE if issue.empechement else NON_ABOUTI), issue.motif
+
+
+def _en_vol(detail: Mapping[str, Any]) -> bool:
+    """Le run n'est-il pas soldé ?"""
+    return str(detail.get("statut") or "") not in STATUTS_EXECUTION_TERMINAUX
+
+
+def _suivre_le_run(
+    ctx: Contexte,
+    run_id: str,
+    projet_id: str,
+    *,
+    limite: float,
+    repondre: Callable[[Mapping[str, Any]], str] | None,
+    jusqu_a: float | None = None,
+) -> dict[str, Any]:
+    """Suit le run jusqu'à son issue — ou jusqu'à la fin du jour, `jusqu_a` (#1513).
+
+    Le suivi de `_suivre`, arbitrages approuvés, avec deux gestes de plus : la
+    personne répond aux questions des agents quand elle a sa feuille (`repondre`), et
+    le suivi rend la main à la fin du jour, run encore en vol.
+    """
+    arret = None if jusqu_a is None else (lambda _detail: ctx.horloge() >= jusqu_a)
+    detail = attendre_le_run(
+        ctx.client,
+        run_id,
+        projet_id=projet_id,
+        delai_s=max(limite - ctx.horloge(), 0.0),
+        note=ctx.note,
+        horloge=ctx.horloge,
+        dormir=ctx.dormir,
+        arbitrages=ctx.arbitrages,
+        arret=arret,
+        repondre=repondre,
+    )
+    statut = str(detail.get("statut") or "")
+    if jusqu_a is not None and _en_vol(detail) and ctx.horloge() >= jusqu_a:
+        ctx.note("fin du jour", f"run « {statut} », {_montant(detail)}")
+        return detail
+    ctx.note(
+        "run soldé",
+        f"statut « {statut} », cause « {detail.get('cause') or '—'} », "
+        f"{detail.get('nb_taches')} tâche(s), {_montant(detail)}",
+    )
+    return detail
+
+
+class _NuitManquee(Exception):
+    """La nuit n'a pas pu se passer jusqu'au bout : l'issue du passage, et pourquoi."""
+
+    def __init__(self, issue: str, motif: str) -> None:
+        super().__init__(motif)
+        self.issue, self.motif = issue, motif
+
+
+def _nuit_de_maestro(ctx: Contexte, run_id: str, *, jour_s: float) -> tuple[str, str]:
+    """La nuit de Maestro : éteint comme on le ferme, rallumé, le run repris — `(run, récit)`.
+
+    Les gestes de S12 (`maestro.scenarios.redemarrage`), sans la pause qui le
+    précède : le soir, la personne ferme Maestro, et c'est l'extinction qui solde
+    les runs en vol. Le lendemain elle le rouvre et clique sur « Reprendre » — le
+    seul de ces gestes qui compte pour elle. D'autres runs en vol sur la stack
+    seraient soldés aussi : le banc n'éteint pas Maestro sous eux, et le passage n'a
+    pas de nuit, ce que son récit dit.
+
+    Lève `_NuitManquee` : empêché si Maestro ne se rallume pas (le banc n'a rien
+    mesuré de la reprise), non abouti si le run interrompu ne se reprend pas.
+    """
+    autres = tuple(r for r in _runs_en_vol(ctx) if r != run_id)
+    if autres:
+        recit = (
+            f"aucune : d'autres runs étaient en vol sur la stack ({', '.join(autres)}), "
+            "Maestro n'a pas été éteint"
+        )
+        ctx.note("nuit sautée", recit)
+        return run_id, recit
+    eteinte = ctx.client.eteindre()
+    soldes = [
+        str(r.get("run_id") or "") for r in eteinte.get("runs") or [] if isinstance(r, Mapping)
+    ]
+    ctx.note(
+        "le soir : Maestro éteint",
+        f"`POST /api/extinction` après {_duree(jour_s)} — run(s) soldé(s) : "
+        f"{', '.join(soldes) or 'aucun'}",
+    )
+    try:
+        ctx.note("le lendemain : Maestro rallumé", ctx.rallumer())
+    except OSError as exc:
+        raise _NuitManquee(
+            EMPECHE, f"le banc n'a pas pu rallumer Maestro après l'extinction : {exc}"
+        ) from exc
+    try:
+        repris, geste = _reprendre(ctx, run_id)
+    except ErreurAPI as refus:
+        raise _NuitManquee(NON_ABOUTI, f"le run interrompu ne se reprend pas : {refus}") from refus
+    ctx.note("le lendemain : run repris", f"{geste} → {repris}")
+    suite = "le même run" if repris == run_id else f"un nouveau run, {repris}"
+    return repris, (
+        f"Maestro éteint après {_duree(jour_s)} de travail, rallumé, puis « Reprendre » : "
+        f"{suite} a continué"
+    )
 
 
 #: Les postes du grand livre d'un projet que le rapport détaille : ce que Maestro
@@ -569,41 +901,94 @@ def jouer_seul(
     journal: Journal,
     delai_s: float = DELAI_PASSAGE_S,
     horloge: Callable[[], float] = time.monotonic,
+    lecteur: Lecteur | None = None,
 ) -> Passage:
     """Le côté de l'agent seul : le même message, dans un établi vide, par l'adaptateur.
 
     Aucun prompt système, aucune politique, aucun canal : l'agent reçoit le message et
     les outils des agents de Maestro, et travaille jusqu'à rendre la main. Le délai
     passé, la session est annulée — l'adaptateur arrête ce qu'elle a lancé (#1279).
+
+    Sur le projet long (#1513), la personne **suit la conversation** quand elle a sa
+    feuille (`Objectif.converse`) : chaque fois que la session rend la main, elle en
+    lit la fin (`lire_la_fin`, un modèle — jamais un lexique) et répond comme elle
+    le ferait — sa feuille à une question, `RELANCE` à une session arrêtée en chemin,
+    rien quand le projet est dit terminé. Et la session passe une **nuit** : à la fin
+    du premier jour (`Objectif.jour_s`), la personne la ferme, en plein travail s'il
+    le faut, puis la **rouvre** le lendemain — la même conversation, son contexte
+    intact (`SessionAgent`), comme la chaîne du dépôt rouvre une session par son
+    identifiant (docs/50 § 3). Ce qu'elle lit de chaque fin ne coûte rien à l'agent
+    seul : c'est la dépense du banc, comptée à part.
     """
     etabli = atelier.dossier(f"{COTE_SEUL}-{rang}")
     journal.note("établi de l'agent seul", f"{etabli} — modèle {modele}")
     journal.note("message envoyé", objectif.message)
+    session = SessionAgent()
     debut = horloge()
+    limite = debut + delai_s
+    fin_du_jour = None if objectif.jour_s is None else debut + objectif.jour_s
+    message, geste, jour = objectif.message, GESTE_MESSAGE, 1
+    gestes: list[str] = []
+    tours: list[Tour] = []
     with collect_usage() as depense:
-        try:
-            compte_rendu = asyncio.run(
-                asyncio.wait_for(
-                    fournisseur.run_agent(
-                        objectif.message,
-                        model=modele,
-                        workspace=etabli,
-                        tools=DEFAULT_TOOLS,
-                        plafond_tours=None,
-                    ),
-                    timeout=delai_s,
+        while True:
+            gestes.append(geste)
+            depart = horloge()
+            nuit_a_venir = fin_du_jour is not None and jour == 1
+            echeance = min(limite, fin_du_jour) if nuit_a_venir and fin_du_jour else limite
+            try:
+                compte_rendu = asyncio.run(
+                    asyncio.wait_for(
+                        fournisseur.run_agent(
+                            message,
+                            model=modele,
+                            workspace=etabli,
+                            tools=DEFAULT_TOOLS,
+                            plafond_tours=None,
+                            session=session,
+                        ),
+                        timeout=max(echeance - horloge(), 0.0),
+                    )
                 )
-            )
-            issue, motif = ABOUTI, "la session a rendu la main"
+            except TimeoutError:
+                if nuit_a_venir and horloge() < limite:
+                    tours.append(Tour(jour, geste, FIN_NUIT, duree_s=horloge() - depart))
+                    journal.note("le soir : la session est fermée", "en plein travail")
+                    jour, message, geste = 2, RELANCE, GESTE_REPRISE
+                    journal.note("le lendemain : la session rouverte", f"« {message} »")
+                    continue
+                tours.append(Tour(jour, geste, FIN_DELAI, duree_s=horloge() - depart))
+                issue, motif = NON_ABOUTI, f"la session n'a pas fini en {delai_s:g} s"
+                break
+            except Exception as echec:  # le fournisseur, l'adaptateur : la session a échoué
+                tours.append(Tour(jour, geste, FIN_ECHEC, duree_s=horloge() - depart))
+                if cause_de(echec) == CAUSE_LIMITE_USAGE:
+                    issue, motif = EMPECHE, f"le fournisseur a opposé sa limite d'usage : {echec}"
+                else:
+                    issue = NON_ABOUTI
+                    motif = f"la session a échoué ({type(echec).__name__}) : {cause_lisible(echec)}"
+                break
+            duree_du_tour = horloge() - depart
             journal.note("compte rendu de l'agent", " ".join(compte_rendu.split())[:600])
-        except TimeoutError:
-            issue, motif = NON_ABOUTI, f"la session n'a pas fini en {delai_s:g} s"
-        except Exception as echec:  # le fournisseur, l'adaptateur : la session a échoué
-            if cause_de(echec) == CAUSE_LIMITE_USAGE:
-                issue, motif = EMPECHE, f"le fournisseur a opposé sa limite d'usage : {echec}"
+            if not objectif.converse:
+                tours.append(Tour(jour, geste, FIN_RENDUE, duree_s=duree_du_tour))
+                issue, motif = ABOUTI, "la session a rendu la main"
+                break
+            with collect_usage():  # la lecture est une dépense du banc, pas de l'agent seul
+                lecture = lire_la_fin(lecteur or JugeModele(), compte_rendu)
+            tours.append(Tour(jour, geste, FIN_RENDUE, lecture, duree_s=duree_du_tour))
+            journal.note("la personne lit la fin", lecture)
+            if lecture == LECTURE_TERMINE:
+                issue, motif = ABOUTI, "la session a dit le projet terminé"
+                break
+            question = lecture == LECTURE_QUESTION
+            message = objectif.reponse_de_la_personne if question else RELANCE
+            if nuit_a_venir and fin_du_jour is not None and horloge() >= fin_du_jour:
+                jour, geste = 2, GESTE_REPRISE
+                journal.note("le soir : la session a rendu la main", "la personne répond demain")
             else:
-                issue = NON_ABOUTI
-                motif = f"la session a échoué ({type(echec).__name__}) : {cause_lisible(echec)}"
+                geste = GESTE_REPONSE if question else GESTE_RELANCE
+            journal.note("la personne répond", " ".join(message.split())[:300])
     duree = horloge() - debut
     journal.note("session soldée", f"{issue} — {motif}")
     cout = depense.total.cout_usd
@@ -615,11 +1000,69 @@ def jouer_seul(
         duree_s=duree,
         cout_usd=cout,
         cout_source="rapporté par l'adaptateur" if cout is not None else "non rapporté",
-        gestes=(GESTE_MESSAGE,),
+        gestes=tuple(gestes),
         livrable=str(etabli),
         modele=modele,
         etapes=tuple(journal.etapes),
+        nuit=_nuit_de_la_session(tours),
+        nuit_s=0.0 if any(tour.jour == 2 for tour in tours) else None,
+        tours=tuple(tours),
     )
+
+
+def _nuit_de_la_session(tours: Sequence[Tour]) -> str:
+    """La nuit de l'agent seul, en mots — vide s'il n'en a pas eu."""
+    lendemain = next((tour for tour in tours if tour.jour == 2), None)
+    if lendemain is None:
+        return ""
+    veille = tours[tours.index(lendemain) - 1]
+    fermee = "en plein travail" if veille.fin == FIN_NUIT else "après avoir rendu la main"
+    return f"session fermée le soir {fermee}, puis rouverte le lendemain — la même conversation"
+
+
+#: Ce que la personne lit d'une fin : deux questions, chacune un jugement du modèle.
+#: Elles disent ce qui rend **oui** et ce qui rend **non** en toutes lettres — la leçon
+#: des lignes jugées de la grille (`maestro.scenarios.grille`).
+SYSTEME_ATTEND = (
+    "Tu lis le dernier message qu'un assistant a adressé à une personne qui lui a confié "
+    "un projet et qui ne sait pas programmer. Tu juges une seule chose : l'assistant "
+    "attend-il d'elle une réponse avant de poursuivre ?\n"
+    "C'est oui s'il lui pose une question, lui demande une décision, une information, une "
+    "confirmation ou son accord pour continuer. C'est non s'il ne lui demande rien : il "
+    "rend compte, dit ce qu'il a fait, ce qu'il reste à faire, ou que le travail est fini, "
+    "sans rien attendre d'elle.\n" + FORME
+)
+SYSTEME_TERMINE = (
+    "Tu lis le dernier message qu'un assistant a adressé à une personne qui lui a confié "
+    "un projet. Tu juges une seule chose : l'assistant y dit-il que le projet demandé est "
+    "terminé ?\n"
+    "C'est oui s'il présente le travail comme achevé et livré, même s'il suggère des "
+    "améliorations facultatives. C'est non s'il dit qu'il reste du travail, qu'il s'est "
+    "arrêté en chemin, qu'une partie n'est pas faite, ou s'il ne dit pas où il en est.\n"
+    + FORME
+)
+
+#: Ce que la lecture voit du dernier message : sa fin, qui dit où en est l'agent.
+FIN_LUE_MAX = 6000
+
+
+def lire_la_fin(lecteur: Lecteur, compte_rendu: str) -> str:
+    """Ce que la personne lit dans la fin d'une session : terminé, une question, ou en chemin.
+
+    Deux jugements, jamais un lexique (#746) : la question d'abord — une session qui
+    demande l'accord de continuer attend une réponse, même si elle dit le reste fini —,
+    puis la fin. Un juge qui s'abstient ne vaut pas un « oui » : une fin illisible se
+    lit « en chemin », et la personne relance.
+    """
+    texte = compte_rendu.strip()[-FIN_LUE_MAX:]
+    prompt = f"Le dernier message de l'assistant :\n<message>{texte}</message>"
+    attend = lecteur.juger(SYSTEME_ATTEND, prompt)
+    if attend.lisible and attend.nomme:
+        return LECTURE_QUESTION
+    termine = lecteur.juger(SYSTEME_TERMINE, prompt)
+    if termine.lisible and termine.nomme:
+        return LECTURE_TERMINE
+    return LECTURE_EN_CHEMIN
 
 
 # --- Ce qui se compare ------------------------------------------------------
@@ -672,7 +1115,16 @@ GRANDEUR_DUREE = "duree_s"
 GRANDEUR_COUT = "cout_usd"
 GRANDEUR_GESTES = "gestes"
 GRANDEUR_TENUES = "lignes_tenues"
-GRANDEURS: tuple[str, ...] = (GRANDEUR_DUREE, GRANDEUR_COUT, GRANDEUR_GESTES, GRANDEUR_TENUES)
+#: Les critères d'acceptation tenus (#1513) — ce sur quoi, avec les gestes, le go/no-go
+#: attend Maestro sur un projet long (docs/48).
+GRANDEUR_CRITERES = "criteres_tenus"
+GRANDEURS: tuple[str, ...] = (
+    GRANDEUR_DUREE,
+    GRANDEUR_COUT,
+    GRANDEUR_GESTES,
+    GRANDEUR_TENUES,
+    GRANDEUR_CRITERES,
+)
 
 
 @dataclass(frozen=True)
@@ -708,12 +1160,21 @@ class Comparatif:
             GRANDEUR_TENUES: mesurer(
                 None if p.grille is None else p.grille.tenues for p in comptes
             ),
+            GRANDEUR_CRITERES: mesurer(
+                None if p.couverture is None or not p.couverture.juges else p.couverture.tenus
+                for p in comptes
+            ),
         }
 
     @property
     def joue(self) -> bool:
         """Au moins un passage a-t-il été compté ?"""
         return any(p.compte for p in self.passages)
+
+    def criteres_du_cote(self, cote: str) -> dict[str, Mapping[str, int]]:
+        """Critère par critère : combien de passages comptés le tiennent, sur combien jugés."""
+        couvertures = [p.couverture for p in self.comptes(cote) if p.couverture is not None]
+        return comptes_par_critere(couvertures, self.objectif.criteres)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -724,6 +1185,9 @@ class Comparatif:
                 "message": self.objectif.message,
                 "choix": list(self.objectif.choix),
                 "axes": list(self.objectif.axes),
+                "criteres": list(self.objectif.criteres),
+                "reponses": list(self.objectif.reponses),
+                "jour_s": self.objectif.jour_s,
             },
             "rejeu": self.rejeu,
             "cotes": {
@@ -736,6 +1200,7 @@ class Comparatif:
                         for nom, mesure in self.mesures(cote).items()
                     },
                     "grille": _grille_du_cote(self.comptes(cote), self.objectif.axes),
+                    "criteres": self.criteres_du_cote(cote),
                 }
                 for cote in self.cotes()
             },
@@ -811,11 +1276,13 @@ def en_markdown(comparatif: Comparatif) -> str:
         + (" | |" if rapports else " |")
     )
     noms = {
-        GRANDEUR_DUREE: ("Durée", _duree),
+        GRANDEUR_DUREE: ("Durée active" if objectif.jour_s else "Durée", _duree),
         GRANDEUR_COUT: ("Coût", _dollars),
         GRANDEUR_GESTES: ("Gestes de la personne", _nombre),
         GRANDEUR_TENUES: (f"Lignes tenues (sur {len(objectif.axes)})", _nombre),
     }
+    if objectif.criteres:
+        noms[GRANDEUR_CRITERES] = (f"Critères tenus (sur {len(objectif.criteres)})", _nombre)
     for grandeur, (libelle, forme) in noms.items():
         cellules = [_mesure_en_mots(comparatif.mesures(c)[grandeur], forme) for c in cotes]
         fin = ""
@@ -842,10 +1309,39 @@ def en_markdown(comparatif: Comparatif) -> str:
             for c in cotes
         ]
         lignes.append(f"| {LIBELLES[axe]} | " + " | ".join(cellules) + " |")
+    if objectif.criteres:
+        lignes += _criteres_en_markdown(comparatif)
     lignes += ["", "## Passage par passage", ""]
     for passage in comparatif.passages:
         lignes += _passage_en_markdown(passage)
     return "\n".join(lignes).rstrip() + "\n"
+
+
+def _criteres_en_markdown(comparatif: Comparatif) -> list[str]:
+    """Les critères d'acceptation, un par un : combien de passages de chaque côté les tiennent."""
+    cotes = comparatif.cotes()
+    par_cote = {c: comparatif.criteres_du_cote(c) for c in cotes}
+    lignes = [
+        "",
+        "## Les critères d'acceptation, un par un",
+        "",
+        "Jugés par un modèle sur le livrable cloné, en lecture seule "
+        "(`maestro.scenarios.couverture`) : tenus sur jugés. Un critère que le juge n'a pas "
+        "pu trancher ne compte ni pour ni contre.",
+        "",
+        "| Critère | " + " | ".join(cotes) + " |",
+        "| --- | " + " | ".join("---" for _ in cotes) + " |",
+    ]
+    for rang, critere in enumerate(comparatif.objectif.criteres, start=1):
+        cle = f"C{rang}"
+        cellules = [
+            f"{par_cote[c][cle]['tenus']}/{par_cote[c][cle]['juges']}"
+            if par_cote[c][cle]["juges"]
+            else "non jugé"
+            for c in cotes
+        ]
+        lignes.append(f"| {cle} — {_cellule(critere, 160)} | " + " | ".join(cellules) + " |")
+    return lignes
 
 
 def _passage_en_markdown(passage: Passage) -> list[str]:
@@ -865,6 +1361,25 @@ def _passage_en_markdown(passage: Passage) -> list[str]:
         lignes.append(f"- **run** : `{passage.run_id}` · projet `{passage.projet_id}`")
     if passage.modele:
         lignes.append(f"- **modèle** : `{passage.modele}`")
+    if passage.nuit:
+        lignes.append(
+            f"- **nuit** : {passage.nuit}"
+            + (f" ({_duree(passage.nuit_s)} hors de la durée active)" if passage.nuit_s else "")
+        )
+    if passage.tours:
+        lignes.append(
+            "- **sessions** : "
+            + " ; ".join(
+                f"jour {t.jour}, {t.geste} → {t.fin}"
+                + (f", lue « {t.lecture} »" if t.lecture else "")
+                + f" ({_duree(t.duree_s)})"
+                for t in passage.tours
+            )
+        )
+    if passage.tours and passage.couverture is not None:
+        lignes.append(f"- **d'un trait** : {_d_un_trait_en_mots(passage.d_un_trait)}")
+    if passage.couverture is not None:
+        lignes += _couverture_en_markdown(passage.couverture)
     if passage.grille is not None:
         grille = passage.grille
         lignes += [
@@ -889,6 +1404,37 @@ def _passage_en_markdown(passage: Passage) -> list[str]:
         ]
         lignes += ["", "</details>"]
     lignes.append("")
+    return lignes
+
+
+def _d_un_trait_en_mots(d_un_trait: bool | None) -> str:
+    """Ce que dit `Passage.d_un_trait`, pour qui lit le rapport."""
+    if d_un_trait is None:
+        return "on ne sait pas — des critères n'ont pas pu être jugés"
+    if d_un_trait:
+        return (
+            "oui — la première session l'a dit terminé, et tous les critères sont tenus : "
+            "ce projet tient en une session"
+        )
+    return "non — la première session ne l'a pas bouclé : le projet dépasse une session"
+
+
+def _couverture_en_markdown(couverture: Couverture) -> list[str]:
+    """Les critères d'un passage, chacun avec son verdict et la pièce qui le dit."""
+    cout = f", jugement {_dollars(couverture.cout_usd)}" if couverture.cout_usd else ""
+    lignes = [
+        "",
+        f"**Critères** — {couverture.tenus}/{couverture.juges} tenu(s) sur "
+        f"{len(couverture.verdicts)}{cout}"
+        + (f" — {couverture.motif}" if couverture.motif else ""),
+        "",
+        "| Critère | État | Ce qui le dit |",
+        "| --- | --- | --- |",
+    ]
+    lignes += [
+        f"| {v.cle} — {_cellule(v.critere, 120)} | {v.etat} | {_cellule(v.piece)} |"
+        for v in couverture.verdicts
+    ]
     return lignes
 
 
@@ -952,10 +1498,16 @@ class _Options:
     objectif: str = OBJECTIF_DEFAUT
     passages: int = 1
     cotes: list[str] = field(default_factory=list)
-    delai_s: float = DELAI_PASSAGE_S
+    delai_s: float | None = None
+    jour_s: float | None = None
     axes: tuple[str, ...] | None = None
     rejouer: list[tuple[str, Path]] = field(default_factory=list)
     liste: bool = False
+
+    @property
+    def delai(self) -> float:
+        """Le délai d'un passage, une fois l'objectif lu (`main` le résout)."""
+        return DELAI_PASSAGE_S if self.delai_s is None else self.delai_s
 
 
 def main(
@@ -965,6 +1517,8 @@ def main(
     fournisseur: ModelProvider | None = None,
     modele: str | None = None,
     lecteur: Lecteur | None = None,
+    juge_couverture: JugeCouverture | None = None,
+    redemarrer: Callable[[], str] | None = None,
     atelier: Atelier | None = None,
     poste: PosteDuBanc | None = None,
     racine_rapports: Path | None = None,
@@ -975,10 +1529,11 @@ def main(
 ) -> int:
     """Point d'entrée : voir l'en-tête du module pour les options et les codes.
 
-    `client`, `fournisseur`, `modele`, `lecteur`, `atelier`, `poste`,
-    `racine_rapports`, `horloge` et `dormir` sont injectables **pour les tests** :
-    une fausse API, un faux fournisseur, un faux lecteur, des dossiers jetables,
-    aucune attente réelle — la couture de `maestro.scenarios.banc`.
+    `client`, `fournisseur`, `modele`, `lecteur`, `juge_couverture`, `redemarrer`,
+    `atelier`, `poste`, `racine_rapports`, `horloge` et `dormir` sont injectables
+    **pour les tests** : une fausse API, un faux fournisseur, de faux juges, une API
+    qu'on ne coupe pas, des dossiers jetables, aucune attente réelle — la couture de
+    `maestro.scenarios.banc`.
     """
     sortie = sortie or sys.stdout
     erreur = erreur or sys.stderr
@@ -994,11 +1549,15 @@ def main(
         return CODE_USAGE
     if options.axes is not None:
         objectif = replace(objectif, axes=options.axes)
+    if options.jour_s is not None:
+        objectif = replace(objectif, jour_s=options.jour_s)
+    if options.delai_s is None:
+        options.delai_s = objectif.delai_s
 
     cotes = tuple(c for c in COTES if c in options.cotes) if options.cotes else COTES
     if COTE_MAESTRO in cotes and not options.rejouer:
         client = client or ClientCompteur(
-            TransportHTTP(base_locale()), delai_modele_s=options.delai_s
+            TransportHTTP(base_locale()), delai_modele_s=options.delai
         )
         if not client.sante():
             print(
@@ -1012,11 +1571,12 @@ def main(
     atelier = atelier or Atelier.reserver(horodatage_courant())
     juge = JugeModele()
     lecteur = lecteur or juge
+    juge_couverture = juge_couverture or JugeCouvertureModele()
     poste = poste or PosteDuBanc(horloge=horloge, dormir=dormir)
 
     if options.rejouer:
         passages = _rejouer_les_livrables(
-            options.rejouer, objectif, atelier, lecteur, poste, sortie
+            options.rejouer, objectif, atelier, lecteur, juge_couverture, poste, sortie
         )
         comparatif = Comparatif(atelier.passage, objectif, passages, rejeu=True)
     else:
@@ -1034,6 +1594,8 @@ def main(
             modele=modele,
             lecteur=lecteur,
             juge=juge,
+            juge_couverture=juge_couverture,
+            redemarrer=redemarrer,
             atelier=atelier,
             poste=poste,
             horloge=horloge,
@@ -1066,10 +1628,15 @@ def _annonce(objectif: Objectif, cotes: Sequence[str], options: _Options, atelie
         if estimes
         else "coût attendu non renseigné — le vrai modèle"
     )
+    jours = (
+        f" · un jour de {objectif.jour_s:g} s, puis la nuit, puis le lendemain"
+        if objectif.jour_s
+        else ""
+    )
     return (
         f"Banc comparatif — {objectif.titre} · {', '.join(cotes)} · "
-        f"{options.passages} passage(s) par côté · délai {options.delai_s:g} s par passage · "
-        f"atelier {atelier.racine}\n  {cout}"
+        f"{options.passages} passage(s) par côté · délai {options.delai:g} s par passage"
+        f"{jours} · atelier {atelier.racine}\n  {cout}"
     )
 
 
@@ -1083,12 +1650,14 @@ def _jouer_les_passages(
     modele: str | None,
     lecteur: Lecteur,
     juge: Juge,
+    juge_couverture: JugeCouverture,
     atelier: Atelier,
     poste: PosteDuBanc,
     horloge: Callable[[], float],
     dormir: Callable[[float], None],
     sortie: TextIO,
     consigner: Callable[[tuple[Passage, ...]], None] = lambda _passages: None,
+    redemarrer: Callable[[], str] | None = None,
 ) -> tuple[Passage, ...]:
     """Les passages, côtés **alternés** : une dérive du fournisseur pèse sur les deux.
 
@@ -1111,9 +1680,10 @@ def _jouer_les_passages(
                     atelier=atelier,
                     juge=juge,
                     journal=journal,
-                    delai_s=options.delai_s,
+                    delai_s=options.delai,
                     horloge=horloge,
                     dormir=dormir,
+                    redemarrer=redemarrer,
                 )
             else:
                 fournisseur, modele = _fournisseur_et_modele(fournisseur, modele)
@@ -1124,13 +1694,14 @@ def _jouer_les_passages(
                     fournisseur=fournisseur,
                     modele=modele,
                     journal=journal,
-                    delai_s=options.delai_s,
+                    delai_s=options.delai,
                     horloge=horloge,
+                    lecteur=lecteur,
                 )
             print(f"  {passage.issue} — {passage.motif}", file=sortie)
             if passage.compte:
                 passage = _rejouer_le_livrable(
-                    passage, objectif, atelier, lecteur, poste, journal
+                    passage, objectif, atelier, lecteur, juge_couverture, poste, journal
                 )
             passages.append(passage)
             consigner(tuple(passages))
@@ -1162,10 +1733,16 @@ def _rejouer_le_livrable(
     objectif: Objectif,
     atelier: Atelier,
     lecteur: Lecteur,
+    juge_couverture: JugeCouverture,
     poste: PosteDuBanc,
     journal: Journal,
 ) -> Passage:
-    """Le livrable d'un passage rejoué sur un clone propre, et le déroulé qui l'a fait."""
+    """Le livrable d'un passage rejoué sur un clone propre, et le déroulé qui l'a fait.
+
+    Puis, quand l'objectif a des critères (#1513), leur couverture jugée sur ce même
+    clone — ce que le projet a commité, ou son dossier quand personne ne l'a demandé
+    sous Git.
+    """
     grille = rejouer(
         Path(passage.livrable),
         atelier.dossier(f"{passage.cote}-{passage.rang}-clone"),
@@ -1174,8 +1751,28 @@ def _rejouer_le_livrable(
         poste=poste,
         axes=objectif.axes,
         trace=journal.note,
+        versionne=objectif.versionner,
     )
-    return passage.avec_grille(grille, journal.etapes)
+    couverture = _couvrir(grille, objectif, juge_couverture, journal) if objectif.criteres else None
+    return replace(passage, grille=grille, couverture=couverture, etapes=tuple(journal.etapes))
+
+
+def _couvrir(
+    grille: Grille, objectif: Objectif, juge: JugeCouverture, journal: Journal
+) -> Couverture:
+    """Les critères jugés sur le clone de la grille — non jugés s'il n'y a pas eu de clone."""
+    copie = Path(grille.copie)
+    if not (copie / ".git").exists():
+        motif = grille.lignes[0].detail if grille.lignes else "le livrable n'a pas été cloné"
+        couverture = non_jugee(objectif.criteres, f"rien à lire : {motif}")
+    else:
+        couverture = juge.couvrir(copie, objectif.criteres)
+    journal.note(
+        "critères jugés sur le livrable",
+        f"{couverture.tenus}/{couverture.juges} tenu(s) sur {len(couverture.verdicts)}"
+        + (f" — {couverture.motif}" if couverture.motif else ""),
+    )
+    return couverture
 
 
 def _rejouer_les_livrables(
@@ -1183,6 +1780,7 @@ def _rejouer_les_livrables(
     objectif: Objectif,
     atelier: Atelier,
     lecteur: Lecteur,
+    juge_couverture: JugeCouverture,
     poste: PosteDuBanc,
     sortie: TextIO,
 ) -> tuple[Passage, ...]:
@@ -1196,7 +1794,11 @@ def _rejouer_les_livrables(
         passage = Passage(
             cote=cote, rang=rangs[cote], issue=ABOUTI, motif="livrable rejoué", livrable=str(depot)
         )
-        passages.append(_rejouer_le_livrable(passage, objectif, atelier, lecteur, poste, journal))
+        passages.append(
+            _rejouer_le_livrable(
+                passage, objectif, atelier, lecteur, juge_couverture, poste, journal
+            )
+        )
     return tuple(passages)
 
 
@@ -1212,6 +1814,10 @@ def _en_direct(etape: Etape) -> str:
     return f"    · {ligne}"
 
 
+#: Les options qui prennent une valeur.
+_NOMS_D_OPTIONS = ("--objectif", "--passages", "--cote", "--delai", "--jour", "--axes", "--rejouer")
+
+
 def _options(args: list[str]) -> _Options:
     """Lit la ligne de commande — lève `ValueError` avec son motif sur tout écart."""
     options = _Options()
@@ -1222,7 +1828,7 @@ def _options(args: list[str]) -> _Options:
         if arg == "--liste":
             options.liste = True
             continue
-        if nom not in ("--objectif", "--passages", "--cote", "--delai", "--axes", "--rejouer"):
+        if nom not in _NOMS_D_OPTIONS:
             raise ValueError(f"argument inconnu : {arg}")
         if not egal:
             if not reste:
@@ -1238,7 +1844,9 @@ def _options(args: list[str]) -> _Options:
                     raise ValueError(f"--cote attend {' ou '.join(COTES)} (reçu : {cote!r})")
                 options.cotes.append(cote)
         elif nom == "--delai":
-            options.delai_s = _secondes(valeur)
+            options.delai_s = _secondes(nom, valeur)
+        elif nom == "--jour":
+            options.jour_s = _secondes(nom, valeur)
         elif nom == "--axes":
             axes = tuple(v.strip() for v in valeur.split(",") if v.strip())
             inconnus = [axe for axe in axes if axe not in AXES]
@@ -1263,13 +1871,13 @@ def _entier_positif(nom: str, brut: str) -> int:
     return valeur
 
 
-def _secondes(brut: str) -> float:
+def _secondes(nom: str, brut: str) -> float:
     try:
         valeur = float(brut)
     except ValueError as exc:
-        raise ValueError(f"--delai attend un nombre de secondes (reçu : {brut!r})") from exc
+        raise ValueError(f"{nom} attend un nombre de secondes (reçu : {brut!r})") from exc
     if valeur <= 0:
-        raise ValueError(f"--delai doit être > 0 (reçu : {brut!r})")
+        raise ValueError(f"{nom} doit être > 0 (reçu : {brut!r})")
     return valeur
 
 

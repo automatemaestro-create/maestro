@@ -106,6 +106,7 @@ from maestro.providers.base import (
     ModelProvider,
     PlafondFluxDepasse,
     ServeurInjoignable,
+    SessionAgent,
     TurnLimitReached,
     attache_stderr,
 )
@@ -220,6 +221,21 @@ def sans_reglages_du_poste() -> list[SettingSource]:
     SDK attend une `list`.
     """
     return []
+
+
+def _reprise_de(session: SessionAgent | None) -> tuple[str | None, str | None]:
+    """`(resume, session_id)` du SDK pour ouvrir ou rouvrir `session` — rien sans session (#1513).
+
+    La session est marquée ouverte dès qu'elle est confiée au SDK : une exécution
+    coupée en route l'a déjà ouverte, et la suivante doit la reprendre, pas en ouvrir
+    une seconde sous le même nom.
+    """
+    if session is None:
+        return None, None
+    if session.ouverte:
+        return session.identifiant, None
+    session.ouverte = True
+    return None, session.identifiant
 
 
 def sans_skills_du_poste() -> list[str]:
@@ -559,6 +575,7 @@ class ClaudeProvider(ModelProvider):
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
+        session: SessionAgent | None = None,
     ) -> str:
         """Lance une exécution *agentique outillée* de l'Agent SDK dans `workspace`.
 
@@ -806,6 +823,12 @@ class ClaudeProvider(ModelProvider):
         `GardeFouInoperant` (jamais relancé) ou `SondeNonConcluante` (relancée
         par le moteur) **avant** que l'agent ne reçoive sa tâche, et c'est la
         cause que le journal consigne. Voir `_point_de_controle_verifie`.
+
+        `session` (#1513) se traduit en deux options publiques du SDK : la première
+        exécution ouvre la conversation sous l'identifiant que Maestro a choisi
+        (`session_id`), les suivantes la reprennent (`resume`) — le CLI la retrouve
+        par cet identifiant dans le même `workspace`. Rien n'est lu de ce que le CLI
+        rend pour la nommer.
         """
         env = self._auth_env()
         cli_path: Path | None = None
@@ -859,6 +882,7 @@ class ClaudeProvider(ModelProvider):
                 on_etapes=on_etapes,
             ),
         )
+        reprise, nommee = _reprise_de(session)
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
@@ -877,6 +901,8 @@ class ClaudeProvider(ModelProvider):
             skills=sans_skills_du_poste(),
             # Une capture relue par `Read` dépasse le défaut du SDK (#1277).
             max_buffer_size=PLAFOND_FLUX_OCTETS,
+            resume=reprise,
+            session_id=nommee,
             hooks=(
                 {
                     "PreToolUse": [

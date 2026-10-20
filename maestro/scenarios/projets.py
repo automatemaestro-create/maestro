@@ -1030,6 +1030,59 @@ def cloner(racine: Path, cible: Path) -> None:
         raise OSError(f"`git clone` du projet refusé : {_message(resultat)}")
 
 
+#: L'identité du commit d'instantané : celle d'un poste sans identité Git (#333).
+IDENTITE_INSTANTANE: tuple[str, ...] = (
+    "-c",
+    "user.name=banc",
+    "-c",
+    "user.email=banc@maestro.invalid",
+    "-c",
+    "commit.gpgsign=false",
+)
+MESSAGE_INSTANTANE = "instantané du dossier livré, pris par le banc"
+
+#: Ce qu'on laisse à l'instantané d'un dossier entier : un livrable qui n'ignore pas
+#: ses dépendances les inscrit toutes, et c'est plus long qu'une lecture Git.
+DELAI_INSTANTANE_S = 600.0
+
+
+def instantaner(dossier: Path, depot: Path, cible: Path) -> None:
+    """Clone dans `cible` ce que `dossier`, non versionné, livre — moins ce qu'il ignore (#1513).
+
+    Ce qu'une personne récupère d'un projet qu'elle n'a pas demandé sous Git, c'est
+    son dossier. Le banc l'inscrit dans un dépôt à part (`depot`), dont `dossier` est
+    l'arbre de travail : rien n'est écrit dans le dossier livré — ni `.git`, ni
+    index —, et ce que ses fichiers `.gitignore` excluent n'est pas pris, comme une
+    dépendance installée ou un build. Puis il clone ce dépôt comme il clonerait un
+    projet versionné (`cloner`). Lève `OSError` si Git refuse.
+    """
+    depot.mkdir(parents=True, exist_ok=True)
+    arbre = ("--git-dir", str(depot / ".git"), "--work-tree", str(dossier))
+    commit = ("commit", "--allow-empty", "--quiet", "-m", MESSAGE_INSTANTANE)
+    for arguments in (
+        ("init", "--quiet", str(depot)),
+        (*arbre, "add", "-A"),
+        (*arbre, *IDENTITE_INSTANTANE, *commit),
+    ):
+        try:
+            fait = subprocess.run(  # noqa: S603 - git, argv construit ici
+                ["git", *arguments],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=DELAI_INSTANTANE_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise OSError(
+                f"l'instantané du dossier n'a pas abouti en {DELAI_INSTANTANE_S:g} s"
+            ) from exc
+        if fait.returncode != 0:
+            raise OSError(f"l'instantané du dossier est refusé par Git : {_message(fait)}")
+    cloner(depot, cible)
+
+
 def fichiers_suivis(dossier: Path) -> tuple[str, ...]:
     """Ce que le dépôt de `dossier` suit — `git ls-files`, en chemins POSIX (#1512).
 

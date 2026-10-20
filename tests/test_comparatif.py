@@ -13,7 +13,12 @@ Ce qui est gardé ici, sans réseau ni modèle :
 ④ la grille — un livrable se rejoue sur un **clone**, par les commandes qu'il déclare ;
 ⑤ ce qui se compare — médianes et dispersion, sans les empêchements ;
 ⑥ la commande — le coût annoncé avant de jouer, les côtés alternés, le rapport écrit, les
-   refus et `--rejouer`.
+   refus et `--rejouer` ;
+⑦ le projet long (#1513) — dit sans choix technique, avec ses critères et la feuille de la
+   personne ; Maestro passe la nuit éteint puis reprend son run, la personne répond aux
+   questions des agents ; la session seule est fermée le soir puis rouverte, la personne
+   lit chaque fin et répond ; les critères se jugent sur le clone, et un dossier non
+   versionné se rejoue moins ce qu'il ignore.
 
 Les doubles : une fausse API du fil (`FilFactice`), un faux fournisseur
 (`FournisseurFactice`), un faux lecteur de commandes et de verdicts (`LecteurFactice`), un
@@ -32,6 +37,7 @@ import socket
 import subprocess
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -42,11 +48,14 @@ from maestro.controltower.causes import CAUSE_LIMITE_USAGE, CAUSE_TACHES_EN_ECHE
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_ATTENTE_ARBITRAGE,
+    EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
     VALIDATION_EN_ATTENTE,
 )
+from maestro.providers.base import SessionAgent
 from maestro.sandbox.verification import Execution
 from maestro.scenarios import comparatif as cmp
+from maestro.scenarios import couverture as cv
 from maestro.scenarios import grille as gr
 from maestro.scenarios.api import FIL, ErreurAPI, Reponse
 from maestro.scenarios.juge import Avis, JugeModele
@@ -970,8 +979,10 @@ def _main(
     fil: FilFactice | None = None,
     fournisseur: FournisseurFactice | None = None,
     lecteur: LecteurFactice | None = None,
+    juge_couverture: Any = None,
+    horloge: Horloge | None = None,
 ) -> tuple[int, str, str, Path]:
-    horloge = Horloge()
+    horloge = horloge or Horloge()
     fil = fil or FilFactice(
         tmp_path / "Maestro" / "recettes", horloge=horloge, moteur=_moteur_qui_commite
     )
@@ -983,6 +994,8 @@ def _main(
         fournisseur=fournisseur or FournisseurFactice(livrer=_livrer_seul),
         modele="claude-opus-5-5",
         lecteur=lecteur or LecteurFactice(),
+        juge_couverture=juge_couverture,
+        redemarrer=lambda: "API rallumée (banc)",
         atelier=Atelier(tmp_path / "atelier" / "20261015-120000"),
         poste=_poste(Joueur()),
         racine_rapports=rapports,
@@ -1115,6 +1128,7 @@ def test_rejouer_met_des_livrables_existants_cote_a_cote(tmp_path: Path) -> None
         (["--passages"], "attend une valeur"),
         (["--cote", "les-deux"], "--cote attend"),
         (["--delai=-3"], "> 0"),
+        (["--jour", "0"], "--jour doit être > 0"),
         (["--axes", "vitesse"], "--axes"),
         (["--rejouer", "c2"], "<côté>=<dépôt>"),
         (["--objectif", "inexistant"], "objectif inconnu"),
@@ -1132,4 +1146,559 @@ def test_un_usage_errone_est_refuse_avec_son_motif(
 def test_liste_nomme_les_objectifs(tmp_path: Path) -> None:
     code, sortie, _, _ = _main(tmp_path, "--liste")
     assert code == cmp.CODE_ECRIT
-    assert sortie.startswith("p5  Livre de recettes Next.js (p5)")
+    assert sortie.splitlines() == [
+        "club  L'application du club de randonnée (projet long)",
+        "p5  Livre de recettes Next.js (p5)",
+    ]
+
+
+# =================================================================================================
+# ⑦ Le projet long, repris le lendemain (#1513)
+# =================================================================================================
+
+#: Les choix d'outillage de p5 : une personne qui ne code pas n'en dit aucun.
+_CHOIX_DE_P5 = ("TypeScript", "Next.js", "npm", "Vitest", "ESLint", "Prettier", "GitHub")
+
+
+def test_le_projet_long_est_dit_sans_choix_technique_avec_ses_criteres_et_sa_feuille() -> None:
+    objectif = cmp.charger_objectif("club")
+    assert objectif.choix == ()
+    assert not [mot for mot in _CHOIX_DE_P5 if mot in objectif.message]
+    assert "Construisez l'application entière." in objectif.message
+    assert len(objectif.criteres) == 20 and len(set(objectif.criteres)) == 20
+    assert objectif.reponses and objectif.converse
+    # Un jour de travail actif, puis la nuit ; le délai couvre le passage entier.
+    assert objectif.jour_s == 1800 and objectif.delai_s == 21600
+    # Personne n'a demandé de dépôt versionné, ni de choix confrontés au livrable.
+    assert objectif.versionner is False
+    assert not {gr.AXE_CI, gr.AXE_COMMITS, gr.AXE_OUTILLAGE} & set(objectif.axes)
+    assert set(objectif.cout_estime_usd) == {cmp.COTE_MAESTRO, cmp.COTE_SEUL}
+
+
+def test_la_personne_repond_par_sa_feuille_a_toute_question() -> None:
+    """La feuille entière, des deux côtés — jamais la ligne qui semblerait répondre (#746)."""
+    objectif = cmp.charger_objectif("club")
+    feuille = objectif.reponse_de_la_personne
+    for reponse in objectif.reponses:
+        assert reponse in feuille
+    assert objectif.repondre({"cle": "pile"}) == (feuille, True)
+    assert objectif.repondre_a_l_agent({"question": "Quelle base de données ?"}) == feuille
+    # p5 n'a pas de feuille : la personne n'y suit pas la conversation.
+    assert cmp.charger_objectif("p5").converse is False
+
+
+@pytest.mark.parametrize(
+    "donnees, motif",
+    [
+        ({"message": "ok", "criteres": "tout"}, "criteres"),
+        ({"message": "ok", "reponses": ["", "oui"]}, "reponses"),
+        ({"message": "ok", "jour_s": 0}, "jour_s"),
+        ({"message": "ok", "delai_s": True}, "delai_s"),
+    ],
+)
+def test_un_projet_long_mal_forme_est_refuse(donnees: dict[str, Any], motif: str) -> None:
+    with pytest.raises(ValueError, match=motif):
+        cmp.objectif_depuis("x", donnees)
+
+
+# --- Côté Maestro : la nuit, et les questions des agents ---------------------------------------
+
+
+class FilLong(FilFactice):
+    """Le fil, avec un run qui dure plus d'un jour : il tourne, s'éteint, reprend, aboutit.
+
+    Un agent du run pose une question à la personne. `autres_runs` sont des runs d'autres
+    projets en vol sur la stack, que l'extinction solderait aussi.
+    """
+
+    def __init__(
+        self, ailleurs: Path, *, horloge: Horloge, autres_runs: tuple[str, ...] = ()
+    ) -> None:
+        super().__init__(ailleurs, horloge=horloge)
+        self.pas_s = 600.0
+        self.eteint = False
+        self.repris = False
+        self.autres_runs = autres_runs
+        self.extinctions = 0
+        self.reponses_aux_agents: list[str] = []
+
+    def demander(
+        self,
+        methode: str,
+        chemin: str,
+        *,
+        corps: Mapping[str, Any] | None = None,
+        params: Mapping[str, str] | None = None,
+        delai_s: float | None = None,
+    ) -> Reponse:
+        if chemin == "/api/executions":
+            vol = [] if self.eteint and not self.repris else [{"run_id": "run-1"}]
+            vol += [{"run_id": autre} for autre in self.autres_runs]
+            return Reponse(200, [{**r, "statut": EXECUTION_EN_COURS} for r in vol])
+        if chemin == "/api/extinction":
+            self.extinctions += 1
+            self.eteint = True
+            return Reponse(200, {"runs": [{"run_id": "run-1"}]})
+        if chemin == "/api/executions/run-1/reprendre":
+            assert self.eteint, "« Reprendre » ne vient qu'après l'extinction"
+            self.repris = True
+            return Reponse(200, {"run_id": "run-1", "statut": EXECUTION_EN_COURS})
+        if chemin == "/api/questions":
+            repondue = bool(self.reponses_aux_agents)
+            question = {
+                "question_id": "q-1",
+                "run_id": "run-1",
+                "tache_id": "adherents",
+                "agent": "dev",
+                "question": "Le tarif famille couvre-t-il les enfants ?",
+                "statut": "repondue" if repondue else "en_attente",
+            }
+            return Reponse(200, [question])
+        if chemin == "/api/questions/q-1/reponse":
+            self.reponses_aux_agents.append(str((corps or {}).get("reponse")))
+            return Reponse(200, {})
+        return super().demander(methode, chemin, corps=corps, params=params, delai_s=delai_s)
+
+    def _run(self) -> dict[str, Any]:
+        if self.repris:
+            self._horloge.maintenant += 300.0
+            if not self._fil:
+                self._fil.append({"auteur": "orchestrateur", "run_id": "run-1", "contenu": "fini"})
+            return {"statut": EXECUTION_TERMINEE, "cout_usd": 30.0, "nb_taches": 6}
+        if self.eteint:
+            return {"statut": EXECUTION_ECHEC, "cause": "extinction", "cout_usd": 8.0}
+        self._horloge.maintenant += self.pas_s
+        return {"statut": EXECUTION_EN_COURS, "cout_usd": 8.0}
+
+
+def _maestro_long(
+    tmp_path: Path,
+    *,
+    autres_runs: tuple[str, ...] = (),
+    redemarrer: Callable[[], str] | None = None,
+    jour_s: float = 1800.0,
+    delai_s: float = 21600.0,
+) -> tuple[cmp.Passage, FilLong, cmp.Objectif, list[str]]:
+    horloge = Horloge()
+    fil = FilLong(tmp_path / "Maestro" / "club", horloge=horloge, autres_runs=autres_runs)
+    rallumages: list[str] = []
+
+    def rallumer() -> str:
+        rallumages.append("rallumée")
+        horloge.maintenant += 45.0  # ce que la nuit prend au banc : couper, rallumer
+        return "API coupée puis rallumée"
+
+    objectif = replace(cmp.charger_objectif("club"), jour_s=jour_s)
+    passage = cmp.jouer_maestro(
+        objectif,
+        rang=1,
+        client=cmp.ClientCompteur(fil),
+        atelier=Atelier(tmp_path / "atelier"),
+        juge=JugeModele(),
+        journal=Journal(),
+        delai_s=delai_s,
+        horloge=horloge,
+        dormir=horloge.dormir,
+        redemarrer=redemarrer or rallumer,
+    )
+    return passage, fil, objectif, rallumages
+
+
+def test_maestro_passe_la_nuit_eteint_puis_reprend_son_run(tmp_path: Path) -> None:
+    passage, fil, _, rallumages = _maestro_long(tmp_path)
+
+    assert passage.issue == cmp.ABOUTI, passage.motif
+    # Le soir : Maestro éteint comme quand on le ferme, une fois ; le lendemain, rallumé.
+    assert fil.extinctions == 1 and rallumages == ["rallumée"]
+    assert fil.repris
+    assert "éteint" in passage.nuit and "le même run a continué" in passage.nuit
+    # La reprise est un geste de la personne, le seul de la nuit ; éteindre n'en est pas un.
+    assert passage.gestes is not None and passage.gestes.count(cmp.GESTE_REPRISE) == 1
+    # La nuit n'entre pas dans la durée active.
+    assert passage.nuit_s == pytest.approx(45.0)
+    libelles = [etape.libelle for etape in passage.etapes]
+    assert libelles.index("fin du jour") < libelles.index("le soir : Maestro éteint")
+    assert libelles.index("le lendemain : run repris") < libelles.index("run soldé")
+
+
+def test_maestro_fait_repondre_la_personne_aux_questions_des_agents(tmp_path: Path) -> None:
+    passage, fil, objectif, _ = _maestro_long(tmp_path)
+    # Une question, une réponse — sa feuille —, et une fois répondue, elle ne revient pas.
+    assert fil.reponses_aux_agents == [objectif.reponse_de_la_personne]
+    assert passage.gestes is not None and passage.gestes.count(cmp.GESTE_REPONSE) == 1
+    assert any(e.libelle.startswith("question d'un agent") for e in passage.etapes)
+
+
+def test_un_jour_plus_long_que_le_passage_ne_passe_pas_de_nuit(tmp_path: Path) -> None:
+    passage, fil, _, rallumages = _maestro_long(tmp_path, jour_s=100_000.0, delai_s=3000.0)
+    assert fil.extinctions == 0 and not rallumages
+    assert passage.nuit == "" and passage.nuit_s is None
+    assert passage.issue == cmp.NON_ABOUTI
+
+
+def test_d_autres_runs_en_vol_font_sauter_la_nuit(tmp_path: Path) -> None:
+    """L'extinction les solderait aussi : le banc n'éteint pas Maestro sous eux."""
+    passage, fil, _, rallumages = _maestro_long(tmp_path, autres_runs=("run-autre",))
+    assert fil.extinctions == 0 and not rallumages
+    assert "run-autre" in passage.nuit and "n'a pas été éteint" in passage.nuit
+
+
+def test_maestro_qui_ne_se_rallume_pas_rend_le_passage_empeche(tmp_path: Path) -> None:
+    def refuse() -> str:
+        raise OSError("le port :8013 ne se libère pas")
+
+    passage, fil, _, _ = _maestro_long(tmp_path, redemarrer=refuse)
+    assert fil.extinctions == 1
+    assert passage.issue == cmp.EMPECHE and not passage.compte
+    assert "rallumer Maestro" in passage.motif
+    assert passage.nuit.startswith("manquée")
+
+
+# --- Côté agent seul : la conversation, et la nuit -------------------------------------------
+
+
+class SessionScriptee(FournisseurFactice):
+    """L'adaptateur, qui joue une suite de sessions : chacune dort, puis rend un texte.
+
+    Chaque fin porte un repère que le faux lecteur lit (`LecteurDeFin`) : c'est le double
+    du jugement du modèle, pas un lexique du banc.
+    """
+
+    def __init__(
+        self, script: list[tuple[float, str]], *, livrer: Callable[[Path], None] | None = None
+    ) -> None:
+        super().__init__(cout_usd=7.5, livrer=livrer)
+        self._script = list(script)
+
+    async def run_agent(self, prompt: str, **reglages: Any) -> str:
+        self.appels.append({"prompt": prompt, **reglages})
+        report_usage(StepUsage(appels=1, tokens_sortie=100, cout_usd=7.5))
+        dort, texte = self._script.pop(0)
+        if dort:
+            await asyncio.sleep(dort)
+        if self._livrer is not None:
+            self._livrer(Path(reglages["workspace"]))
+        return texte
+
+
+class LecteurDeFin(LecteurFactice):
+    """Le modèle qui lit une fin pour la personne — il lit le repère que la session a mis.
+
+    Sa lecture coûte, et ce coût ne doit pas entrer dans celui de l'agent seul.
+    """
+
+    def __init__(self, *, lent_s: float = 0.0) -> None:
+        super().__init__()
+        self._lent_s = lent_s
+
+    def juger(self, systeme: str, prompt: str) -> Avis:
+        report_usage(StepUsage(appels=1, tokens_sortie=10, cout_usd=100.0))
+        if self._lent_s:
+            time.sleep(self._lent_s)
+        if systeme == cmp.SYSTEME_ATTEND:
+            return Avis(nomme="[QUESTION]" in prompt, pourquoi="lu")
+        if systeme == cmp.SYSTEME_TERMINE:
+            return Avis(nomme="[FINI]" in prompt, pourquoi="lu")
+        return super().juger(systeme, prompt)
+
+
+def _seul_long(
+    tmp_path: Path, script: list[tuple[float, str]], *, jour_s: float, lecteur: LecteurDeFin
+) -> tuple[cmp.Passage, SessionScriptee, cmp.Objectif]:
+    fournisseur = SessionScriptee(script)
+    objectif = replace(cmp.charger_objectif("club"), jour_s=jour_s)
+    passage = cmp.jouer_seul(
+        objectif,
+        rang=1,
+        atelier=Atelier(tmp_path / "atelier"),
+        fournisseur=fournisseur,
+        modele="claude-opus-5-5",
+        journal=Journal(),
+        delai_s=30.0,
+        lecteur=lecteur,
+    )
+    return passage, fournisseur, objectif
+
+
+def test_la_session_seule_est_fermee_le_soir_puis_rouverte_le_lendemain(tmp_path: Path) -> None:
+    passage, fournisseur, objectif = _seul_long(
+        tmp_path,
+        [
+            (10.0, "jamais rendu : la nuit tombe avant"),
+            (0.0, "Les adhérents sont faits. [QUESTION] Le tarif famille couvre-t-il qui ?"),
+            (0.0, "Il reste les comptes et le covoiturage."),
+            (0.0, "[FINI] Tout est livré."),
+        ],
+        jour_s=0.3,
+        lecteur=LecteurDeFin(),
+    )
+
+    assert passage.issue == cmp.ABOUTI, passage.motif
+    # Une seule conversation, rouverte d'une session à l'autre — jamais une neuve.
+    sessions = {id(appel["session"]) for appel in fournisseur.appels}
+    assert len(sessions) == 1 and isinstance(fournisseur.appels[0]["session"], SessionAgent)
+    # Ce que la personne a dit : son message, « Continue. » le lendemain, sa feuille à la
+    # question, « Continue. » à une session arrêtée en chemin — jamais d'aide technique.
+    assert [appel["prompt"] for appel in fournisseur.appels] == [
+        objectif.message,
+        cmp.RELANCE,
+        objectif.reponse_de_la_personne,
+        cmp.RELANCE,
+    ]
+    assert passage.gestes == (
+        cmp.GESTE_MESSAGE,
+        cmp.GESTE_REPRISE,
+        cmp.GESTE_REPONSE,
+        cmp.GESTE_RELANCE,
+    )
+    assert [(t.jour, t.fin, t.lecture) for t in passage.tours] == [
+        (1, cmp.FIN_NUIT, ""),
+        (2, cmp.FIN_RENDUE, cmp.LECTURE_QUESTION),
+        (2, cmp.FIN_RENDUE, cmp.LECTURE_EN_CHEMIN),
+        (2, cmp.FIN_RENDUE, cmp.LECTURE_TERMINE),
+    ]
+    assert "en plein travail" in passage.nuit
+    # La première session a été coupée : le projet ne s'est pas bouclé d'un trait.
+    assert passage.d_un_trait is False
+    # Le coût de l'agent seul est celui de ses sessions ; la lecture est la dépense du banc.
+    assert passage.cout_usd == pytest.approx(4 * 7.5)
+
+
+def test_une_session_qui_rend_la_main_le_soir_recoit_sa_reponse_le_lendemain(
+    tmp_path: Path,
+) -> None:
+    passage, fournisseur, objectif = _seul_long(
+        tmp_path,
+        [(0.0, "[QUESTION] Quelles couleurs ?"), (0.0, "[FINI] Livré.")],
+        jour_s=0.1,
+        lecteur=LecteurDeFin(lent_s=0.2),
+    )
+    assert passage.issue == cmp.ABOUTI
+    assert [appel["prompt"] for appel in fournisseur.appels] == [
+        objectif.message,
+        objectif.reponse_de_la_personne,
+    ]
+    assert passage.gestes == (cmp.GESTE_MESSAGE, cmp.GESTE_REPRISE)
+    assert "après avoir rendu la main" in passage.nuit
+
+
+def test_une_session_qui_finit_dans_la_journee_ne_passe_pas_de_nuit(tmp_path: Path) -> None:
+    passage, fournisseur, _ = _seul_long(
+        tmp_path, [(0.0, "[FINI] Tout est livré.")], jour_s=600.0, lecteur=LecteurDeFin()
+    )
+    assert passage.issue == cmp.ABOUTI
+    assert len(fournisseur.appels) == 1 and passage.gestes == (cmp.GESTE_MESSAGE,)
+    assert passage.nuit == "" and passage.nuit_s is None
+
+
+def _couverture(*etats: str) -> cv.Couverture:
+    return cv.Couverture(
+        verdicts=tuple(
+            cv.Verdict(rang, f"critère {rang}", etat) for rang, etat in enumerate(etats, start=1)
+        )
+    )
+
+
+def test_d_un_trait_se_juge_sur_la_premiere_session_et_les_criteres() -> None:
+    rendue = cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_RENDUE, cmp.LECTURE_TERMINE)
+    coupee = cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_NUIT)
+    en_chemin = cmp.Tour(1, cmp.GESTE_MESSAGE, cmp.FIN_RENDUE, cmp.LECTURE_EN_CHEMIN)
+
+    def passage(tour: cmp.Tour, couverture: cv.Couverture | None) -> cmp.Passage:
+        return _passage(cmp.COTE_SEUL, 1, tours=(tour,), couverture=couverture)
+
+    tenus = _couverture(cv.TENU, cv.TENU)
+    assert passage(rendue, tenus).d_un_trait is True
+    assert passage(rendue, _couverture(cv.TENU, cv.MANQUE)).d_un_trait is False
+    assert passage(coupee, tenus).d_un_trait is False
+    assert passage(en_chemin, tenus).d_un_trait is False
+    # Un critère que le juge n'a pas tranché ne fait pas dire « oui ».
+    assert passage(rendue, _couverture(cv.TENU, cv.NON_JUGE)).d_un_trait is None
+    assert passage(rendue, None).d_un_trait is None
+    assert _passage(cmp.COTE_MAESTRO, 1).d_un_trait is None
+
+
+def test_la_lecture_d_une_fin_demande_d_abord_si_l_agent_attend_une_reponse() -> None:
+    lecteur = LecteurDeFin()
+    assert cmp.lire_la_fin(lecteur, "[QUESTION] [FINI] Je continue ?") == cmp.LECTURE_QUESTION
+    assert cmp.lire_la_fin(lecteur, "[FINI] Livré.") == cmp.LECTURE_TERMINE
+    assert cmp.lire_la_fin(lecteur, "Il reste du travail.") == cmp.LECTURE_EN_CHEMIN
+
+
+def test_une_fin_illisible_se_lit_en_chemin() -> None:
+    """Un juge qui s'abstient ne vaut pas un « oui » : la personne relance."""
+
+    class Muet(LecteurFactice):
+        def juger(self, systeme: str, prompt: str) -> Avis:
+            return Avis(nomme=True, pourquoi="hors contrat", lisible=False)
+
+    assert cmp.lire_la_fin(Muet(), "[FINI]") == cmp.LECTURE_EN_CHEMIN
+
+
+# --- La couverture des critères ----------------------------------------------------------------
+
+
+def test_les_verdicts_se_lisent_ligne_par_ligne_et_la_derniere_l_emporte() -> None:
+    brut = (
+        "Je regarde d'abord C1.\n"
+        "C1: manqué — pas vu au premier abord\n"
+        "…\n"
+        "C1: tenu — app/adherents.py crée et modifie la fiche\n"
+        "- C2 : manque — aucune recherche par nom\n"
+        "C4: tenu — tarifs.py\n"
+    )
+    couverture = cv.couverture_depuis(brut, ["fiche", "recherche", "liste", "tarifs"])
+    assert [(v.cle, v.etat) for v in couverture.verdicts] == [
+        ("C1", cv.TENU),
+        ("C2", cv.MANQUE),
+        ("C3", cv.NON_JUGE),
+        ("C4", cv.TENU),
+    ]
+    assert couverture.verdicts[0].piece == "app/adherents.py crée et modifie la fiche"
+    assert (couverture.tenus, couverture.juges) == (2, 3)
+    assert not couverture.complete
+
+
+def test_le_juge_des_criteres_lit_le_clone_en_lecture_seule(tmp_path: Path) -> None:
+    class Juge(FournisseurFactice):
+        async def run_agent(self, prompt: str, **reglages: Any) -> str:
+            self.appels.append({"prompt": prompt, **reglages})
+            report_usage(StepUsage(appels=1, tokens_sortie=100, cout_usd=1.25))
+            return "C1: tenu — a.py\nC2: manqué — rien"
+
+    fournisseur = Juge()
+    juge = cv.JugeCouvertureModele(fournisseur, modele="claude-opus-5-5")
+    couverture = juge.couvrir(tmp_path, ["fiche", "recherche"])
+
+    (appel,) = fournisseur.appels
+    assert Path(appel["workspace"]) == tmp_path
+    assert tuple(appel["tools"]) == cv.OUTILS_DU_JUGE
+    assert not {"Write", "Edit", "Bash"} & set(cv.OUTILS_DU_JUGE)
+    assert appel["system_prompt"] == cv.SYSTEME_COUVERTURE
+    assert "C1. fiche" in appel["prompt"] and "C2. recherche" in appel["prompt"]
+    assert (couverture.tenus, couverture.juges) == (1, 2)
+    assert couverture.cout_usd == pytest.approx(1.25)
+
+
+def test_un_juge_des_criteres_injoignable_ne_juge_aucun_critere(tmp_path: Path) -> None:
+    juge = cv.JugeCouvertureModele(
+        FournisseurFactice(leve=RuntimeError("quota")),
+        modele="claude-opus-5-5",
+    )
+    couverture = juge.couvrir(tmp_path, ["fiche", "recherche"])
+    assert couverture.juges == 0 and couverture.tenus == 0
+    assert "juge injoignable" in couverture.motif
+
+
+class JugeDeCriteres:
+    """Le juge des critères, réduit à ce qu'il a lu et à ce qu'il rend."""
+
+    def __init__(self, *etats: str) -> None:
+        self._etats = etats
+        self.lus: list[Path] = []
+
+    def couvrir(self, depot: Path, criteres: Any) -> cv.Couverture:
+        self.lus.append(depot)
+        etats = list(self._etats) + [cv.MANQUE] * (len(criteres) - len(self._etats))
+        return cv.Couverture(
+            verdicts=tuple(
+                cv.Verdict(rang, critere, etat)
+                for rang, (critere, etat) in enumerate(zip(criteres, etats, strict=True), start=1)
+            )
+        )
+
+
+@AVEC_GIT
+def test_un_dossier_non_versionne_se_rejoue_moins_ce_qu_il_ignore(tmp_path: Path) -> None:
+    """Personne n'a demandé de dépôt versionné : le banc prend le dossier, sans y écrire."""
+    livrable = tmp_path / "seul-1"
+    (livrable / "node_modules" / "paquet").mkdir(parents=True)
+    (livrable / "node_modules" / "paquet" / "index.js").write_text("x\n", encoding="utf-8")
+    (livrable / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    (livrable / "app.py").write_text("print('club')\n", encoding="utf-8")
+    copie = tmp_path / "seul-1-clone"
+
+    grille = gr.rejouer(
+        livrable,
+        copie,
+        choix=(),
+        lecteur=LecteurFactice(),
+        poste=_poste(Joueur()),
+        axes=(gr.AXE_INSTALLATION,),
+        versionne=False,
+    )
+
+    assert (copie / "app.py").is_file() and (copie / ".git").exists()
+    assert not (copie / "node_modules").exists()
+    assert not (livrable / ".git").exists()
+    installation = grille.ligne(gr.AXE_INSTALLATION)
+    assert installation is not None and installation.etat == gr.TENU
+    # Demandé sous Git, le même dossier manque toutes ses lignes, comme avant.
+    exige = gr.rejouer(
+        livrable, tmp_path / "exige", choix=(), lecteur=LecteurFactice(), versionne=True
+    )
+    assert {ligne.etat for ligne in exige.lignes} == {gr.MANQUE}
+
+
+@AVEC_GIT
+def test_les_criteres_se_jugent_sur_le_clone_et_entrent_au_rapport(tmp_path: Path) -> None:
+    objectif = cmp.charger_objectif("club")
+    juge = JugeDeCriteres(cv.TENU, cv.TENU, cv.MANQUE)
+
+    def livrer(etabli: Path) -> None:
+        (etabli / "app.py").write_text("print('club')\n", encoding="utf-8")
+
+    fournisseur = SessionScriptee(
+        [(0.0, "Les adhérents sont faits."), (0.0, "[FINI] Livré.")], livrer=livrer
+    )
+    code, _, erreur, rapports = _main(
+        tmp_path,
+        "--objectif",
+        "club",
+        "--cote",
+        "seul",
+        "--jour",
+        "600",
+        fournisseur=fournisseur,
+        lecteur=LecteurDeFin(),
+        juge_couverture=juge,
+    )
+
+    assert code == cmp.CODE_ECRIT, erreur
+    (lu,) = juge.lus
+    assert lu.name == "seul-1-clone" and (lu / "app.py").is_file()
+    dossier = rapports / "20261015-120000"
+    donnees = json.loads((dossier / cmp.FICHIER_JSON).read_text("utf-8"))
+    (passage,) = donnees["passages"]
+    assert passage["couverture"]["tenus"] == 2
+    assert passage["couverture"]["juges"] == len(objectif.criteres)
+    assert donnees["cotes"]["seul"]["mesures"]["criteres_tenus"]["mediane"] == 2
+    assert donnees["cotes"]["seul"]["criteres"]["C1"] == {"tenus": 1, "juges": 1}
+    assert donnees["objectif"]["jour_s"] == 600
+    texte = (dossier / cmp.FICHIER_MARKDOWN).read_text("utf-8")
+    assert f"Critères tenus (sur {len(objectif.criteres)})" in texte
+    assert "## Les critères d'acceptation, un par un" in texte
+    # La session n'a rien dit de sa fin : « en chemin », relancée, et la première ne l'a
+    # pas bouclé d'un trait.
+    assert "**d'un trait** : non" in texte
+    assert "Durée active" in texte
+    assert passage["detail_gestes"] == [cmp.GESTE_MESSAGE, cmp.GESTE_RELANCE]
+
+
+@AVEC_GIT
+def test_le_banc_annonce_le_jour_et_le_cout_du_projet_long(tmp_path: Path) -> None:
+    code, sortie, erreur, _ = _main(
+        tmp_path,
+        "--objectif",
+        "club",
+        "--cote",
+        "seul",
+        fournisseur=SessionScriptee([(0.0, "[FINI] Livré.")]),
+        lecteur=LecteurDeFin(),
+        juge_couverture=JugeDeCriteres(),
+    )
+    assert code == cmp.CODE_ECRIT, erreur
+    premiere = sortie.splitlines()[0]
+    assert "délai 21600 s par passage" in premiere
+    assert "un jour de 1800 s, puis la nuit" in premiere
+    assert "~28 $ par passage côté seul" in sortie.splitlines()[1]

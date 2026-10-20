@@ -488,7 +488,7 @@ class AgentRuntime:
         # Le mot-clé ne part que s'il a quelque chose à dire (#253) : hors réglage
         # admis, l'appel au fournisseur est au bit près celui d'avant ce lot.
         reglage = self._provider.effort_admis(self._model, effort or self._effort)
-        reglage_effort = {"effort": reglage} if reglage else {}
+        reglage_effort: dict[str, Any] = {"effort": reglage} if reglage else {}
         # Le régime de cette exécution, écrit depuis la politique qu'elle applique
         # (#1405) — jamais par le modèle qui a rédigé le playbook.
         prompt_systeme = avec_regime(system_prompt or self._system_prompt, politique)
