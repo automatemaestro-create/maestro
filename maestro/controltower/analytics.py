@@ -247,7 +247,8 @@ class AnalyticsCouts:
     #: de l'argent dépensé —, et `agents` + `orchestration` + `fil` en font la somme.
     orchestration: CoutAgent | None = None
     #: Ce que le **fil** a dépensé pour les projets de la fenêtre (#1534) — la
-    #: déclaration, l'outillage, les pièces, l'équipe, les récits —, `None` quand
+    #: déclaration, l'outillage, les pièces, l'équipe, les récits, et les gestes
+    #: d'atelier, génération d'un agent ou révision d'un playbook (#1538) —, `None` quand
     #: il n'a rien coûté de mesuré. Un poste à lui, à part de l'orchestration :
     #: celle-ci est la dépense **d'un run** (cadrage, plan, sondes, bilans), le fil
     #: n'appartient à aucun. Les confondre faisait additionner deux fois les

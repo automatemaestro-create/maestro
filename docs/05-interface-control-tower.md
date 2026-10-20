@@ -2074,6 +2074,18 @@ coûtaient **15,97 $** et la page en montrait **11,52 $** : **28 %** manquaient
   cours** (#835) — l'argent « engagé » et, faute de prix, ses tokens marqués non tarifés (#1280).
   Avant, ce montant n'existait que dans le relevé, que la reprise de la tâche écrasait : 2,908 $
   disparus sur p5. Le run ne se dit plus complet sans elle.
+- **Les gestes d'atelier vont au même poste** (#1538). Générer un agent du catalogue
+  (`POST /api/catalogue/generation`), réviser un playbook à partir des échecs d'un run
+  (`POST /api/playbooks/{agent}/propositions`) et réécrire le brouillon de l'éditeur
+  (`…/redaction`), ce sont les derniers appels modèle qui n'avaient aucun collecteur. Ils entrent
+  au poste `fil`, au projet de `?projet=`, hors projet sans lui. Le poste `fil` est Maestro au
+  service d'un projet hors de tout run, et un poste à part aurait eu trois défauts. Le même
+  générateur écrit déjà les playbooks de l'équipe proposée sous `fil` : le même travail se
+  rangerait en deux endroits selon l'écran d'où il part. Chaque lecteur qui recompose le total
+  (`agents + orchestration + fil`, le coût cumulé du shell) devrait l'apprendre, et le premier oubli
+  referait l'écart de la relecture de #1534. Enfin, la révision lit un run mais se demande après
+  lui, d'un geste : elle ne réécrit pas le compte d'un run clos. Chaque dépense garde son `titre`
+  (« définition d'agent générée », « révision de playbook proposée », « playbook réécrit »).
 
 #### 2.5.1 Une durée de tâche est son temps de travail (#989) — **livré**
 

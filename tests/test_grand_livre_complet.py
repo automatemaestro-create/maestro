@@ -14,6 +14,11 @@ manquait 4,46 $, soit 28 %, en deux trous que ce fichier referme.
   pièces, son équipe, son lancement, ses récits. Les réponses du fil ne publiaient
   aucun usage, si bien que rien de ce qu'il dépense n'entrait au grand livre.
 
+Puis les **gestes d'atelier** (#1538), les derniers appels modèle sans collecteur :
+la génération d'un agent du catalogue, la révision d'un playbook tirée des échecs
+d'un run et la réécriture du brouillon de l'éditeur. Ils vont au poste du fil, celui
+de Maestro au service d'un projet hors de tout run.
+
 Les deux se lisent sur les **trois** lecteurs d'un même montant, qui ne doivent pas
 se contredire : le cumul du run (`EtatExecution.cout_usd`), son grand livre
 (`EtatExecution.cout`, #57) et la vue Coûts & analytics (`GET /api/analytics/couts`).
@@ -40,6 +45,11 @@ from maestro.controltower import (
     create_app,
 )
 from maestro.controltower.analytics import PAS_AUTO, agrege_couts
+from maestro.controltower.auto_amelioration import (
+    MARQUEUR_PLAYBOOK,
+    AnalyseurEchecs,
+    RedacteurPlaybook,
+)
 from maestro.controltower.chat import ChatStore, MessageChat, RepondeurScripte
 from maestro.controltower.depense_du_fil import au_compte_du_fil, en_clair
 from maestro.controltower.events import (
@@ -49,12 +59,16 @@ from maestro.controltower.events import (
     EVENEMENT_TACHE_USAGE,
     EventBus,
 )
+from maestro.controltower.generation_agent import GenerateurDefinitionAgent
 from maestro.controltower.hote import HoteMort, HoteRun, OrdreRun
 from maestro.controltower.orchestration import NOM_ORCHESTRATION
 from maestro.controltower.portee import PorteeProjet
 from maestro.controltower.progression import STATUT_INTERROMPUE
+from maestro.controltower.projets import ServiceProjets
 from maestro.engine import STATUT_EN_COURS
 from maestro.plan_run import NoeudPlan
+from maestro.projets import ProjetStore
+from maestro.providers.base import ModelProvider
 from maestro.telemetry.usage import StepUsage, report_usage
 
 #: Plafond d'attente d'un fait asynchrone (la pompe applique ce qu'on pousse).
@@ -439,3 +453,137 @@ def test_une_reponse_du_fil_entre_au_grand_livre_par_la_vraie_route(tmp_path: Pa
         assert lecture.status_code == 200, lecture.text
         assert lecture.json()["fil"] == vue["fil"]
         assert client.get("/api/fil/depense").status_code == 422  # portée exigée (#277)
+
+
+# ------------------------------------------------- les gestes d'atelier (#1538)
+
+#: Ce qu'un geste d'atelier coûte : un appel, signalé comme le ferait un fournisseur.
+APPEL_D_ATELIER = StepUsage(appels=1, tokens_entree=9_000, tokens_sortie=1_200, cout_usd=0.07)
+
+#: La réponse que chaque voie sait lire : un en-tête de définition (lu par la seule
+#: génération), le marqueur, puis le document intégral (lu par les trois).
+REPONSE_D_ATELIER = (
+    "NOM: relecteur-sql\n"
+    "ROLE: Relecteur de migrations SQL\n"
+    "COMPETENCES: sql, migrations, revue\n"
+    "FOURNISSEUR:\n"
+    "MODELE:\n"
+    "Le timeout revient : j'ajoute une consigne de patience.\n"
+    f"{MARQUEUR_PLAYBOOK}\n"
+    "Tu relis les migrations avant de les appliquer."
+)
+
+
+class FournisseurQuiDepense(ModelProvider):
+    """Le modèle derrière un geste d'atelier : chaque appel signale son usage, comme le vrai."""
+
+    name = "double"
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
+        report_usage(APPEL_D_ATELIER)
+        return REPONSE_D_ATELIER
+
+
+@pytest.mark.parametrize(
+    ("route", "corps", "titre"),
+    [
+        (
+            "/api/catalogue/generation",
+            {"intention": "Un agent qui relit les migrations SQL"},
+            "définition d'agent générée",
+        ),
+        (
+            "/api/playbooks/developpeur/propositions",
+            {"run_id": "run-1"},
+            "révision de playbook proposée",
+        ),
+        (
+            "/api/playbooks/developpeur/redaction",
+            {"contenu": "Tu développes.", "consigne": "Resserre les garde-fous"},
+            "playbook réécrit",
+        ),
+    ],
+)
+def test_un_geste_d_atelier_entre_au_grand_livre_du_projet_par_la_vraie_route(
+    route: str,
+    corps: dict[str, str],
+    titre: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La génération d'un agent et la révision d'un playbook se comptent au poste du fil.
+
+    Avant #1538, ces trois routes appelaient le modèle sans aucun collecteur ouvert :
+    `report_usage` ne trouvait personne, et l'appel payé n'existait nulle part. Le
+    poste est celui du fil, et non un poste à part : c'est Maestro qui travaille
+    pour un projet, hors de tout run, comme pour l'équipe proposée, dont le même
+    générateur écrit déjà les playbooks sous ce poste. `?projet=` nomme le projet.
+    Sans lui, la dépense se range hors projet et la vue transverse la compte quand
+    même.
+    """
+    maison = tmp_path / "maison"
+    (maison / "recettes").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
+    projets = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    projets.creer("recettes", str(maison / "recettes"))
+    projet = projets.lister()[0]["id"]
+
+    state = ControlTowerState()
+    # La matière de la révision : un échec du développeur, consigné par le run.
+    state.appliquer(
+        Event(
+            type=EVENEMENT_TACHE_STATUT,
+            run_id="run-1",
+            tache_id="page-liste",
+            titre="La page liste",
+            agent="developpeur",
+            statut="echec",
+            detail="Outil X en timeout.",
+            projet_id=projet,
+        )
+    )
+    fournisseur = FournisseurQuiDepense()
+    with TestClient(
+        create_app(
+            bus=InMemoryEventBus(),
+            state=state,
+            event_log=InMemoryEventLog(),
+            battements=RegistreBattementsMemoire(),
+            hote_run=HoteDouble(),
+            projets=projets,
+            analyseur=AnalyseurEchecs(provider=fournisseur),
+            redacteur_playbook=RedacteurPlaybook(provider=fournisseur),
+            generateur_agent=GenerateurDefinitionAgent(
+                provider=fournisseur, fournisseurs=lambda: ()
+            ),
+        )
+    ) as client:
+        reponse = client.post(route, params={"projet": projet}, json=corps)
+        assert reponse.status_code == 200, reponse.text
+        _attendre(lambda: len(state.depenses_du_fil()) == 1, "la dépense du geste")
+
+        vue = client.get("/api/analytics/couts", params={"projet": projet})
+        assert vue.status_code == 200, vue.text
+        assert vue.json()["fil"]["usage"]["cout_usd"] == pytest.approx(0.07)
+        assert vue.json()["fil"]["usage"]["tokens_total"] == 10_200
+        assert vue.json()["total"]["cout_usd"] == pytest.approx(0.07)
+        (depense,) = state.depenses_du_fil()
+        assert depense.titre == titre
+        assert depense.run_id == ""  # à part de tout run, même la révision qui lit un run
+
+        # Sans projet : hors projet, mais pas hors du compte.
+        reponse = client.post(route, json=corps)
+        assert reponse.status_code == 200, reponse.text
+        _attendre(lambda: len(state.depenses_du_fil()) == 2, "la dépense hors projet")
+
+        def fil(portee: str) -> float:
+            lecture = client.get("/api/analytics/couts", params={"projet": portee})
+            assert lecture.status_code == 200, lecture.text
+            return float(lecture.json()["fil"]["usage"]["cout_usd"])
+
+        assert fil(projet) == pytest.approx(0.07)
+        assert fil("aucun") == pytest.approx(0.07)
+        assert fil("tous") == pytest.approx(0.14)

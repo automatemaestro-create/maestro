@@ -1408,7 +1408,7 @@ Le constat, en cinq faits :
 
 | Milestone | Contenu | Échéance | Suivi |
 |---|---|---|---|
-| **Maestro fait mieux qu'un agent seul — sur un projet qui dépasse une session, mesuré sur plusieurs passages** | Un go/no-go. L'écart se mesure sur un banc comparatif, trois passages par côté. Il se réduit par des leviers tirés de la mesure, puis on tranche. Les réserves R2 à R7 du bilan y sont rangées | 2028-01-31 (neuf) | **#1510** — #1508 → #1512 ∥ → #1513, puis les leviers (#1530 ∥, #1532 ∥, #1533 ∥, #1531) ; #1503 à #1507 et #1534, sans parent |
+| **Maestro fait mieux qu'un agent seul — sur un projet qui dépasse une session, mesuré sur plusieurs passages** | Un go/no-go. L'écart se mesure sur un banc comparatif, trois passages par côté. Il se réduit par des leviers tirés de la mesure, puis on tranche. Les réserves R2 à R7 du bilan y sont rangées | 2028-01-31 (neuf) | **#1510** — #1508 → #1512 ∥ → #1513, puis les leviers (#1530 ∥, #1532 ∥, #1533 ∥, #1531) ; #1503 à #1507, #1534 et #1538, sans parent |
 | *Phase 9 — Poste de travail : distribution* (existant, **ancré**) | L'installeur, le premier lancement et les mises à jour. **L'isolation par défaut** et **un retex de deux ou trois personnes extérieures** s'y ajoutent | 2028-02-16 → **2028-02-01** | **#637** (#641, #642, #644, #645) ; **#1511** (#1514 → #1515) ; #1312 ; **#1516** |
 | *Outillage de la forge* (rail outillage) | Au plus quatre jalons produit en chantier, une ancre, et le verbe qui déplace un ticket de jalon | 2027-09-15 | **#1517** (né assigné : il écrit sous `.claude/`) |
 
