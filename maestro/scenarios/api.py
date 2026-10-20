@@ -58,6 +58,7 @@ from maestro.controltower.purge import port_api
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
     EXECUTION_EN_ATTENTE_PLAFOND,
+    QUESTION_EN_ATTENTE,
     STATUTS_EXECUTION_TERMINAUX,
     VALIDATION_EN_ATTENTE,
 )
@@ -763,6 +764,22 @@ class ClientAPI:
         )
         return demandes
 
+    def questions(self, *, projet_id: str) -> list[dict[str, Any]]:
+        """Les questions libres que les agents du projet ont posées (#1023), réponses comprises."""
+        posees: list[dict[str, Any]] = list(
+            self._appel("GET", "/api/questions", params={"projet": projet_id}) or []
+        )
+        return posees
+
+    def repondre_a_l_agent(self, question_id: str, reponse: str) -> None:
+        """Répond à la question d'un agent (#1023) — 409 si quelqu'un y a déjà répondu."""
+        self._appel(
+            "POST",
+            f"/api/questions/{question_id}/reponse",
+            corps={"reponse": reponse},
+            attendus=(200, 409),
+        )
+
     def decider(self, tache_id: str, *, approuve: bool = True) -> None:
         """Tranche un arbitrage en attente — 409 si quelqu'un l'a déjà tranché."""
         self._appel(
@@ -937,6 +954,7 @@ def attendre_le_run(
     approuve: bool = True,
     demandes: list[dict[str, Any]] | None = None,
     arret: Callable[[Mapping[str, Any]], bool] | None = None,
+    repondre: Callable[[Mapping[str, Any]], str] | None = None,
 ) -> dict[str, Any]:
     """Suit un run jusqu'à son issue et rend son détail — arbitrages tranchés au passage.
 
@@ -984,6 +1002,12 @@ def attendre_le_run(
     Un run soldé avant ce moment est rendu comme d'habitude — c'est à l'appelant de
     constater que le moment n'est jamais venu.
 
+    `repondre` (#1513) fait répondre le banc aux **questions libres** que les agents
+    du run posent à la personne (#1023), à chaque relevé : la question telle que
+    l'API la sert → le texte de la réponse. Sans lui, personne ne répond, et l'agent
+    poursuit sur l'hypothèse qu'il a annoncée — le régime des scénarios. Une question
+    ne suspend pas le run : elle se lit à chaque relevé, quel que soit son statut.
+
     À l'expiration du délai, le dernier état lu est rendu tel quel : c'est à
     l'oracle de juger qu'un run encore en vol n'est pas un run abouti.
     """
@@ -996,6 +1020,8 @@ def attendre_le_run(
             return detail
         if arret is not None and arret(detail):
             return detail
+        if repondre is not None:
+            _repondre_aux_agents(client, run_id, projet_id, repondre, note)
         if statut == EXECUTION_EN_ATTENTE_ARBITRAGE:
             for demande in client.validations(projet_id=projet_id):
                 if (
@@ -1039,3 +1065,29 @@ def attendre_le_run(
             return detail
         dormir(intervalle_s)
         detail = client.execution(run_id, projet_id=projet_id)
+
+
+def _repondre_aux_agents(
+    client: ClientAPI,
+    run_id: str,
+    projet_id: str,
+    repondre: Callable[[Mapping[str, Any]], str],
+    note: Callable[[str, str], None],
+) -> None:
+    """Répond aux questions en attente que les agents de `run_id` ont posées (#1513).
+
+    Une question ne revient pas deux fois : une fois répondue, l'API la sert
+    `repondue`, et c'est son statut qui la retire du compte — le banc ne retient rien.
+    """
+    for question in client.questions(projet_id=projet_id):
+        if (
+            str(question.get("run_id") or "") != run_id
+            or str(question.get("statut") or "") != QUESTION_EN_ATTENTE
+        ):
+            continue
+        client.repondre_a_l_agent(str(question.get("question_id") or ""), repondre(question))
+        note(
+            "question d'un agent, répondue par la personne",
+            f"{question.get('agent') or '—'} ({question.get('tache_id') or '—'}) : "
+            f"{' '.join(str(question.get('question') or '').split())[:300]}",
+        )

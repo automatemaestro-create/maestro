@@ -57,7 +57,12 @@ from typing import Any, Protocol
 from maestro.outillage.verification import Delais
 from maestro.sandbox import verification as execution
 from maestro.scenarios.juge import FORME, Avis
-from maestro.scenarios.projets import cloner, fichiers_suivis, sujets_des_commits
+from maestro.scenarios.projets import (
+    cloner,
+    fichiers_suivis,
+    instantaner,
+    sujets_des_commits,
+)
 from maestro.scenarios.scenarios import (
     PAGE_SERVIE,
     SANS_TERMINAL,
@@ -358,6 +363,7 @@ def rejouer(
     poste: PosteDuBanc | None = None,
     axes: Sequence[str] = AXES,
     trace: Callable[[str, str], None] = lambda _libelle, _detail: None,
+    versionne: bool = True,
 ) -> Grille:
     """Clone `depot` dans `copie` et y joue la grille — l'état de chaque ligne de `axes`.
 
@@ -365,17 +371,29 @@ def rejouer(
     confronte au livrable. Sans choix, les lignes qui en dépendent (convention de
     commit, outillage suivi) ne se jugent pas. `trace` reçoit chaque étape, pour le
     déroulé du rapport et l'écran du passage.
+
+    `versionne` dit si la personne a demandé un dépôt Git. Demandé, un livrable qui
+    n'en est pas un manque toutes ses lignes ; non demandé (#1513), il se rejoue comme
+    son dossier, moins ce qu'il déclare ignorer (`instantaner`) : la personne qui ne
+    code pas récupère un dossier, et n'a jamais dit qu'il fallait le versionner.
     """
     poste = poste or PosteDuBanc()
-    if not (depot / ".git").exists():
+    sous_git = (depot / ".git").exists()
+    if not sous_git and versionne:
         return _toutes(depot, copie, axes, MANQUE, "le livrable n'est pas un dépôt Git")
     try:
-        cloner(depot, copie)
+        if sous_git:
+            cloner(depot, copie)
+        else:
+            instantaner(depot, copie.with_name(f"{copie.name}-instantane"), copie)
     except OSError as exc:
         # Un dépôt qui ne se clone pas dit une panne du poste, pas un défaut du livrable :
         # mesuré le 2026-10-15, le poste a refusé de créer `git` (0xC0000142).
         return _toutes(depot, copie, axes, INJOUABLE, f"le clone a échoué : {exc}")
-    trace("livrable cloné", f"{depot} → {copie}")
+    trace(
+        "livrable cloné" if sous_git else "dossier livré cloné par instantané",
+        f"{depot} → {copie}",
+    )
     pieces = _pieces(copie)
     lignes: dict[str, Ligne] = {}
 

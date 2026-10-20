@@ -341,6 +341,50 @@ ticket (#1522). Comme le banc des scénarios, il n'est **pas en CI**. Sur p5, un
 l'ordre de 16 $ côté Maestro et 8 $ côté agent seul : la commande l'annonce avant de jouer, et un
 passage au vrai modèle s'annonce aussi à la personne.
 
+**Le projet long se reprend le lendemain, des deux côtés** (#1513). p5 tient en une session : sur
+ce terrain, l'orchestration ne peut que coûter. Le go/no-go se joue sur la promesse de
+[docs/00 §1.1](./00-cahier-des-charges.md) : un projet qui **dépasse une session**, confié par une
+personne **qui ne code pas**, et **repris le lendemain** (docs/48). C'est l'objectif `club`
+(`maestro/scenarios/objectifs/club.toml`) : l'application d'un club de randonnée, que sa trésorière
+décrit sans un mot technique — adhérents, cotisations, certificats médicaux, sorties avec liste
+d'attente, covoiturage, comptes, annonces, droits du bureau, exports. Il porte trois choses que p5
+n'a pas :
+
+- **vingt critères d'acceptation**, chacun rattaché à une phrase du message, donc tenables par un
+  agent qui ne pose aucune question. Après le passage, un modèle les juge **sur pièces** : un agent
+  en lecture seule (lire, chercher, rien d'autre) parcourt le livrable cloné, puis rend une ligne
+  par critère, tenu ou manqué, avec la pièce qui le montre (`maestro/scenarios/couverture.py`). Un
+  critère sans ligne lisible est non jugé, et un juge injoignable n'en juge aucun : une abstention
+  ne compte ni pour ni contre. La grille dit si le livrable tient debout ; les critères disent s'il
+  fait ce que la personne a demandé ;
+- **la feuille de la personne** : ce qu'elle répond quand on lui demande quelque chose, écrit
+  d'avance et sans aide technique. Elle la donne entière à qui pose une question, jamais la seule
+  ligne qui semblerait répondre (ce serait un lexique, #746). Côté Maestro, elle répond ainsi aux
+  questions d'outillage et à celles que les agents lui posent pendant le run (#1023). Côté agent
+  seul, chaque fois que la session rend la main, un modèle lit sa fin pour elle — attend-elle une
+  réponse ? dit-elle le projet terminé ? — et elle répond comme elle le ferait : sa feuille à une
+  question, « Continue. » à une session arrêtée en chemin, rien quand le projet est dit terminé.
+  Cette lecture est une dépense du banc, jamais celle de l'agent seul ;
+- **la longueur d'un jour** : trente minutes de travail actif (`jour_s`, `--jour`). Un jour du banc
+  n'est pas vingt-quatre heures : la nuit ne coûte rien à mesurer, ce qu'elle éprouve est
+  l'interruption puis la reprise. À la fin du premier jour, **Maestro** s'éteint comme quand on le
+  ferme (`POST /api/extinction`), se rallume sur le même journal (le geste de S12), et la personne
+  clique sur « Reprendre ». La **session seule** est fermée, en plein travail s'il le faut, puis
+  **rouverte** le lendemain : la même conversation, contexte intact, sous un identifiant que Maestro
+  lui a donné (`SessionAgent`, une option publique de l'adaptateur) — comme la chaîne du dépôt
+  rouvre une session (docs/50 § 3). D'autres runs en vol sur la stack font sauter la nuit de
+  Maestro, et le rapport le dit : l'extinction les solderait aussi.
+
+La personne n'a demandé ni dépôt Git ni outillage : la grille ne garde que ses lignes jouées, et un
+livrable non versionné s'y rejoue comme son dossier, moins ce qu'il déclare ignorer (un instantané
+pris sans rien écrire dans le dossier livré). Le rapport compte de chaque côté les **critères
+tenus**, critère par critère, les gestes de la reprise, raconte chaque nuit, et compare la durée
+**active** : la nuit n'y entre pas. Pour l'agent seul, il dit si le projet a été bouclé **d'un
+trait** : non dès que sa première session n'a pas rendu la main en le disant terminé, ou que le
+livrable manque un critère. C'est ce qui vérifie, passage après passage, que le projet dépasse une
+session. Un passage coûte de l'ordre de 56 $ côté Maestro et 28 $ côté agent seul, trois fois et
+demie p5 : une estimation annoncée avant de jouer.
+
 **S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
 dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on
 a généré une documentation »*. Le scénario demande un livrable exécutable, puis constate trois

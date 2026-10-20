@@ -1,0 +1,100 @@
+# Le projet long du go/no-go (#1513) — l'application d'un club de randonnée, confiée par
+# sa trésorière, qui ne code pas, et reprise le lendemain des deux côtés.
+#
+# p5 tient en une session : la session seule le boucle en 26 min, et sur ce terrain
+# l'orchestration ne peut que coûter (docs/48). Ce projet-ci est le terrain de la
+# promesse de Maestro (docs/00 § 1.1) : il dépasse une session, il est dit sans
+# vocabulaire technique, et il s'interrompt entre deux « jours » (`jour_s`).
+#
+# - `message` est ce que la personne écrit, une fois, des deux côtés. Il porte tout ce
+#   que les critères exigent : un agent qui ne pose aucune question peut tous les tenir.
+# - `criteres` sont les critères d'acceptation, chacun vérifiable sur le livrable et
+#   rattaché à une phrase du message. Un modèle les juge sur pièces, après le passage
+#   (`maestro.scenarios.couverture`).
+# - `reponses` sont ce que la personne répond quand on lui demande quelque chose,
+#   écrit d'avance et sans aide technique : la même feuille des deux côtés, donnée
+#   seulement à qui pose une question.
+#
+# Aucun choix d'outillage : la personne n'en a pas. La grille ne garde donc que ses
+# lignes jouées, et laisse celles qui confrontent le livrable à des choix (CI écrite,
+# convention de commit, outillage suivi).
+
+titre = "L'application du club de randonnée (projet long)"
+
+message = """Bonjour ! Je suis la trésorière bénévole d'un club de randonnée, « Les Sentiers du Vexin ». Nous sommes environ 120 adhérents, et quatre au bureau. Aujourd'hui tout est éparpillé entre des tableaux, des cahiers et des e-mails, et on s'y perd. Je voudrais une application à nous, que l'on ouvre dans un navigateur, sur un ordinateur comme sur un téléphone, et qui serve à tout le club. Je ne sais pas programmer : je vous dis ce dont on a besoin, et je vous fais confiance pour le reste.
+
+Ce qu'il nous faut :
+
+- Les adhérents : pour chacun, son nom, son prénom, sa date de naissance, son e-mail, son téléphone, son adresse, une personne à prévenir en cas d'accident, et la date de son certificat médical. On doit pouvoir chercher quelqu'un par son nom, et voir d'un coup d'œil qui est à jour de sa cotisation et qui ne l'est pas.
+- Les cotisations : la saison va du 1er septembre au 31 août. Il y a trois tarifs : 35 € pour un adulte, 20 € pour les moins de 25 ans, 60 € pour une famille. Quand quelqu'un paie, je note la date, le montant et comment il a payé (chèque, espèces ou virement). Je veux la liste de ceux qui n'ont pas encore payé, pour les relancer.
+- Le certificat médical est valable trois ans : l'application doit me prévenir de ceux qui sont périmés ou qui le seront dans le mois.
+- Les sorties : pour chaque randonnée, la date, le lieu de rendez-vous, la distance, le dénivelé, le niveau (facile, moyen ou difficile), l'animateur qui la mène et le nombre de places. Les adhérents s'y inscrivent eux-mêmes, et peuvent se désister. Quand c'est complet, les suivants passent sur une liste d'attente, et le premier de la liste prend la place libérée par un désistement. Seuls les adhérents à jour de cotisation peuvent s'inscrire, et il faut un certificat valide pour les sorties difficiles.
+- Le covoiturage : pour chaque sortie, ceux qui ont une voiture disent combien de places ils offrent, ceux qui n'en ont pas demandent une place, et on voit qui part avec qui.
+- Les comptes du club : je note les recettes et les dépenses avec une catégorie (cotisations, location du car, assurance, matériel…), et je veux voir le solde et, pour la saison, le total des recettes et des dépenses par catégorie.
+- Les annonces : le bureau publie des nouvelles que tous les adhérents voient en arrivant.
+- Qui voit quoi : chacun se connecte avec son e-mail et un mot de passe. Les membres du bureau ont accès à tout. Un adhérent voit les sorties et les annonces, s'inscrit, voit et corrige sa propre fiche, mais pas celles des autres, ni les comptes.
+- Je veux pouvoir sortir la liste des adhérents et le bilan de la saison dans un fichier que j'ouvre avec mon tableur.
+- Tout doit rester enregistré d'une fois sur l'autre, et tout doit être en français.
+
+Et dites-moi simplement comment la lancer sur l'ordinateur du club.
+
+Construisez l'application entière."""
+
+# Chaque critère reprend une phrase du message, et se vérifie sur le livrable.
+criteres = [
+  "La fiche d'un adhérent porte son nom, son prénom, sa date de naissance, son e-mail, son téléphone, son adresse, la personne à prévenir en cas d'accident et la date de son certificat médical ; elle se crée et se modifie.",
+  "On retrouve un adhérent en cherchant son nom.",
+  "La liste des adhérents montre qui est à jour de sa cotisation pour la saison en cours, qui court du 1er septembre au 31 août.",
+  "Les trois tarifs existent : 35 € pour un adulte, 20 € pour les moins de 25 ans, 60 € pour une famille.",
+  "Un paiement s'enregistre avec sa date, son montant et son moyen : chèque, espèces ou virement.",
+  "La liste des adhérents qui n'ont pas payé la saison en cours est disponible, pour les relancer.",
+  "L'application signale les certificats médicaux périmés (plus de trois ans) et ceux qui le seront dans le mois.",
+  "Une sortie porte sa date, son lieu de rendez-vous, sa distance, son dénivelé, son niveau (facile, moyen ou difficile), son animateur et son nombre de places.",
+  "Un adhérent s'inscrit lui-même à une sortie, et peut se désister.",
+  "Une sortie complète met les inscrits suivants sur une liste d'attente, et un désistement donne la place au premier de la liste.",
+  "Seuls les adhérents à jour de cotisation peuvent s'inscrire, et une sortie difficile exige un certificat médical valide.",
+  "Pour une sortie, un adhérent offre des places dans sa voiture ou en demande une, et l'on voit qui part avec qui.",
+  "Les recettes et les dépenses s'enregistrent avec une catégorie ; le solde se lit, ainsi que, pour la saison, le total des recettes et des dépenses par catégorie.",
+  "Le bureau publie des annonces, que tout adhérent connecté voit en arrivant.",
+  "Chacun se connecte avec son e-mail et un mot de passe.",
+  "Les membres du bureau ont accès à tout ; un adhérent voit et corrige sa propre fiche, mais ne voit ni les fiches des autres ni les comptes.",
+  "La liste des adhérents et le bilan de la saison se sortent dans un fichier qui s'ouvre dans un tableur.",
+  "Les données restent enregistrées d'un lancement de l'application à l'autre.",
+  "L'application est en français, et utilisable sur un téléphone comme sur un ordinateur.",
+  "La façon de lancer l'application sur l'ordinateur du club est écrite pour la personne, en mots simples.",
+]
+
+# Ce que la personne répond quand on lui demande quelque chose : sa feuille, écrite
+# d'avance, sans aide technique. Elle ne la donne qu'à qui pose une question.
+reponses = [
+  "Je ne sais pas programmer : pour tout ce qui est technique, choisissez ce qui vous paraît le plus simple et le plus solide, je vous fais confiance.",
+  "L'application tournera d'abord sur l'ordinateur du club, un portable sous Windows. Plus tard, on aimerait peut-être la mettre en ligne.",
+  "Le tarif famille couvre deux adultes et leurs enfants qui vivent sous le même toit.",
+  "Le certificat compte à partir de la date où le médecin l'a signé.",
+  "Au bureau, nous sommes quatre : la présidente, le secrétaire, moi qui suis trésorière, et un animateur. Les animateurs mènent les sorties.",
+  "Pas d'envoi d'e-mails depuis l'application pour l'instant : une liste que je peux copier me suffit pour les relances.",
+  "Pour les couleurs, quelque chose de clair et lisible, avec du vert, comme la nature, si c'est possible.",
+  "Pour essayer, vous pouvez inventer quelques adhérents et quelques sorties.",
+]
+
+# La personne n'a pas demandé de dépôt Git : le banc ne l'impose pas. Un livrable non
+# versionné se rejoue comme son dossier, moins ce qu'il déclare ignorer (`grille`).
+versionner = false
+
+# Les lignes jouées de la grille, celles qui ne dépendent d'aucun choix d'outillage.
+axes = ["installation", "lint", "formatage", "types", "tests", "build", "pages"]
+
+# Un « jour » du banc est une tranche de travail actif, pas vingt-quatre heures : la
+# nuit ne coûte rien à mesurer, ce qu'elle éprouve est l'interruption puis la reprise.
+# Trente minutes : la session seule a mis 26 min sur p5, trois à quatre fois plus petit,
+# et Maestro passe une vingtaine de minutes dans le fil avant son run (docs/50 § 1.3).
+jour_s = 1800
+
+# Ce que le banc laisse à un passage, nuit comprise : six heures. C2 a mis 64 min sur p5.
+delai_s = 21600
+
+# Trois fois et demie p5 de chaque côté (docs/50 § 1.3) : une estimation annoncée avant
+# de jouer, jamais une borne.
+[cout_estime_usd]
+maestro = 56.0
+seul = 28.0

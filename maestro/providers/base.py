@@ -11,10 +11,11 @@ registre (voir `maestro.providers.registry`) — sans toucher au moteur.
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
@@ -329,6 +330,21 @@ class Credentials:
             )
 
 
+@dataclass
+class SessionAgent:
+    """Une conversation d'agent que **Maestro** nomme, pour pouvoir la rouvrir (#1513).
+
+    L'identifiant est choisi ici, jamais lu dans ce que le fournisseur rend : la
+    première exécution ouvre la session sous ce nom, les suivantes la **reprennent**,
+    contexte intact — ce que fait une personne qui rouvre sa conversation le
+    lendemain. `ouverte` dit qu'une exécution l'a déjà ouverte ; c'est le
+    fournisseur qui la pose, au moment où il lance la session.
+    """
+
+    identifiant: str = field(default_factory=lambda: str(uuid.uuid4()))
+    ouverte: bool = False
+
+
 @dataclass(frozen=True)
 class ModelSpec:
     """Sélection `fournisseur + modèle` d'un agent (partie versionnable du contrat).
@@ -635,6 +651,7 @@ class ModelProvider(ABC):
         plafond_tours: int | None = PLAFOND_TOURS_DEFAUT,
         projet: Projet | None = None,
         effort: str | None = None,
+        session: SessionAgent | None = None,
     ) -> str:
         """Exécution *agentique outillée* : renvoie le compte-rendu final de l'agent.
 
@@ -904,6 +921,15 @@ class ModelProvider(ABC):
         transmet même pas le mot-clé quand il n'y a rien à transmettre : un
         fournisseur outillé qui ne connaît pas ce réglage — le nôtre d'hier, ou
         celui d'un tiers — n'a rien à changer pour rester conforme.
+
+        `session` (#1513) rouvre une conversation : la première exécution l'ouvre
+        sous l'identifiant que Maestro a choisi (`SessionAgent`), les suivantes la
+        reprennent avec ce qu'elle contenait. Sans `session`, chaque exécution part
+        d'une conversation neuve — le cas de toute tâche d'un run. Le banc comparatif
+        s'en sert pour l'agent seul, qui reprend le lendemain sa session de la veille
+        comme le ferait une personne. Un fournisseur qui ne sait pas rouvrir une
+        conversation lève `UnsupportedCapability` plutôt que d'en ouvrir une neuve
+        sans le dire.
 
         Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
         fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste

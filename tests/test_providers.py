@@ -23,7 +23,12 @@ from maestro.providers import (
     unregister,
 )
 from maestro.providers import claude as claude_mod
-from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider, TurnLimitReached
+from maestro.providers.base import (
+    PLAFOND_TOURS_DEFAUT,
+    ModelProvider,
+    SessionAgent,
+    TurnLimitReached,
+)
 from maestro.telemetry import collect_usage
 
 
@@ -414,6 +419,41 @@ def _max_turns_vu(monkeypatch, **kwargs):
         )
     )
     return vu["max_turns"]
+
+
+def _reprise_vue(monkeypatch, **kwargs):
+    """Lance `run_agent` sur un `query` factice et rend `(resume, session_id)` passés au SDK."""
+    vu: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options):
+        vu["reprise"] = (options.resume, options.session_id)
+        yield FakeAssistantMessage([FakeTextBlock("Livré.")])
+
+    _patch_sdk(monkeypatch, fake_query)
+    asyncio.run(
+        ClaudeProvider(Credentials()).run_agent(
+            "Continue.",
+            model="claude-sonnet-5",
+            workspace=Path("/tmp/ws-1513"),
+            tools=("Read",),
+            **kwargs,
+        )
+    )
+    return vu["reprise"]
+
+
+def test_claude_ouvre_puis_rouvre_la_session_que_maestro_nomme(monkeypatch):
+    # #1513 : l'identifiant est choisi par Maestro, jamais lu dans ce que le CLI rend. La
+    # première exécution ouvre la conversation sous ce nom, la suivante la reprend.
+    session = SessionAgent()
+    assert _reprise_vue(monkeypatch, session=session) == (None, session.identifiant)
+    assert session.ouverte
+    assert _reprise_vue(monkeypatch, session=session) == (session.identifiant, None)
+
+
+def test_claude_sans_session_ouvre_une_conversation_neuve(monkeypatch):
+    # Toute tâche d'un run : ni reprise, ni nom imposé — l'appel d'avant #1513, au bit près.
+    assert _reprise_vue(monkeypatch) == (None, None)
 
 
 def test_claude_borne_la_boucle_sur_le_plafond_recu(monkeypatch):
