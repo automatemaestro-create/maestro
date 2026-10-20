@@ -13,8 +13,10 @@ mesure.
 `au_compte_du_fil` est le seul geste : un bloc qui ouvre un collecteur, et qui à sa
 sortie publie ce qu'il a recueilli en `fil.depense` (`EVENEMENT_FIL_DEPENSE`). Il
 se pose là où le fil travaille pour quelqu'un — chaque échange de `ServiceChat`,
-les routes de l'équipe et de l'outillage, le récit de fin d'un run —, et nulle part
-dans les répondeurs eux-mêmes : la mesure suit le contexte, donc tout ce qui est
+les routes de l'équipe et de l'outillage, le récit de fin d'un run, et depuis #1538
+les gestes d'atelier : la génération d'un agent du catalogue, la révision et la
+réécriture d'un playbook —, et nulle part dans les répondeurs, les générateurs ou
+les réviseurs eux-mêmes : la mesure suit le contexte, donc tout ce qui est
 appelé dans le bloc est compté, lectures du disque, pièces et images comprises,
 sans qu'un appelant de plus ait à s'en souvenir.
 

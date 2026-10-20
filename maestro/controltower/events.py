@@ -177,7 +177,9 @@ EVENEMENT_QUESTION_REPONSE = "question.reponse"
 EVENEMENT_CHAT_MESSAGE = "chat.message"
 #: `fil.depense` (#1534) porte ce que le **fil** a dépensé pour un projet — sa
 #: déclaration, ses questions d'outillage, ses pièces, son équipe, ses récits :
-#: tout appel modèle que Maestro fait en conversation, hors de tout run. `usage`
+#: tout appel modèle que Maestro fait en conversation, hors de tout run. Les
+#: gestes d'atelier d'un projet aussi (#1538) : générer un agent, réviser ou
+#: réécrire un playbook. C'est Maestro au service d'un projet hors run. `usage`
 #: et `cout_usd` en portent la mesure, `projet_id` l'appartenance, `titre` ce
 #: qui a été payé, en mots d'écran.
 #:

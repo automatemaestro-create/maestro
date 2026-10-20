@@ -84,9 +84,11 @@ cet endpoint.
   même run, c'est deux appels, à décider séparément ;
 - le prompt embarque le playbook courant intégral **et** la liste des échecs : le
   coût suit la taille du playbook, pas la durée du run ;
-- cette dépense **n'entre pas au grand livre** du run (elle a lieu hors du moteur,
-  côté API — voir §6) : elle ne se voit pas dans les coûts affichés, raison de plus
-  pour la déclencher sciemment.
+- cette dépense **n'entre pas au grand livre du run** qu'elle analyse : elle a lieu
+  hors du moteur, côté API, après le run. Elle entre à celui du **projet**, sous le
+  poste `fil` de Coûts & analytics (#1538,
+  [docs/05 §2.5.0 bis](./05-interface-control-tower.md)), comme la réécriture
+  assistée de l'éditeur (`POST /api/playbooks/{agent}/redaction`, #261).
 
 ## 3. Provenance : une proposition n'est pas une version
 
@@ -178,10 +180,6 @@ sénior et garde-fous de chaque rôle — ce qu'une proposition appliquée ne do
 - **Le déclenchement n'a pas encore de bouton dans l'UI** : il passe par l'appel
   API du §2 (l'UI liste les propositions et les tranche). C'est cohérent avec la
   prudence sur le coût, mais c'est un manque d'ergonomie assumé.
-- **Le coût de l'analyse n'est pas comptabilisé** : l'appel a lieu dans l'API, hors
-  du collecteur d'usage d'un run (`collect_usage`, [docs/09](./09-exemple-chiffre.md)) —
-  les tokens consommés ne remontent ni au grand livre du run ni aux analytics.
-  À rattacher à la comptabilité (#57) quand la boucle sortira du POC.
 - **Une proposition par appel, sans déduplication** : rappeler l'endpoint sur le
   même run empile un second brouillon. Les brouillons en trop se rejettent.
 - **Aucune mesure d'efficacité** : rien ne vérifie qu'un playbook appliqué réduit

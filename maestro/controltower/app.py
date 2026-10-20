@@ -2602,12 +2602,22 @@ def create_app(
         ):
             await conteur.raconter(run_id)
 
-    def au_compte_du_projet(id_projet: str, titre: str) -> AbstractAsyncContextManager[None]:
-        """Ce qu'une route du fil dépense pour `id_projet`, au grand livre du fil (#1534).
+    def au_compte_du_projet(
+        id_projet: str | None, titre: str
+    ) -> AbstractAsyncContextManager[None]:
+        """Ce qu'une route dépense pour `id_projet`, au grand livre du fil (#1534).
 
         Les cartes du fil appellent aussi des routes à elles — l'équipe proposée et
         corrigée, l'analyse, le questionnaire et la génération de l'outillage — : ce
         sont des appels modèle pour un projet nommé dans le chemin, hors de tout run.
+
+        Les gestes d'atelier aussi (#1538) : la génération d'un agent du catalogue,
+        la révision et la réécriture d'un playbook. C'est Maestro qui travaille pour
+        un projet, hors de tout run, donc le même poste. Le même générateur écrit
+        déjà les playbooks de l'équipe proposée sous ce poste, et un poste à part
+        rangerait le même travail en deux endroits selon l'écran d'où il part. Leur
+        projet vient de `?projet=`, et `None` (le niveau des gabarits) range la
+        dépense hors projet, toujours comptée dans la vue transverse.
         """
         return au_compte_du_fil(bus, titre=titre, agent=ACTEUR_RUN, projet=lambda: id_projet)
 
@@ -4304,9 +4314,12 @@ def create_app(
                 ),
             )
         try:
-            proposition = await analyseur.proposer_revision(
-                _agent_du_catalogue(agent, cfg), requete.run_id, echecs, store=cfg.playbooks
-            )
+            # Au grand livre du fil, et non du run qu'elle lit (#1538) : demandée
+            # après lui, d'un geste, elle ne réécrit pas le compte d'un run clos.
+            async with au_compte_du_projet(cfg.projet_id, "révision de playbook proposée"):
+                proposition = await analyseur.proposer_revision(
+                    _agent_du_catalogue(agent, cfg), requete.run_id, echecs, store=cfg.playbooks
+                )
         except RevisionIndisponible as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return proposition.to_dict()
@@ -4331,9 +4344,10 @@ def create_app(
         cfg = _config(projet)
         _exige_playbook_connu(agent, cfg)
         try:
-            redaction = await redacteur_playbook.proposer_redaction(
-                _agent_du_catalogue(agent, cfg), requete.contenu, requete.consigne
-            )
+            async with au_compte_du_projet(cfg.projet_id, "playbook réécrit"):
+                redaction = await redacteur_playbook.proposer_redaction(
+                    _agent_du_catalogue(agent, cfg), requete.contenu, requete.consigne
+                )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RevisionIndisponible as exc:
@@ -6013,7 +6027,8 @@ def create_app(
         cfg = _config(projet)
         pris = set(NOMS_RESERVES) | {d.nom for d in cfg.agents.lister()}
         try:
-            proposition = await generateur_agent.proposer(requete.intention, noms_pris=pris)
+            async with au_compte_du_projet(cfg.projet_id, "définition d'agent générée"):
+                proposition = await generateur_agent.proposer(requete.intention, noms_pris=pris)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except GenerationIndisponible as exc:
