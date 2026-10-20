@@ -557,6 +557,20 @@ distribuée. Cette porte rouvre la *portée*, pas le *décideur*.
 > deviennent pas intouchables pour autant (ils tournent sous le compte de l'agent, et le lanceur les
 > arrête lui-même par `taskkill`) : à défaut, l'agent apprend sous « La machine » qu'ils tournent sur
 > ce poste, sous quel nom, et comment arrêter le sien sans eux.
+>
+> ⚠ **Ce que #1505 a corrigé le 2026-10-20, sur le même run `fea601a5c629`** (réserve du critère C2).
+> Deux actes sont revenus à la personne alors qu'ils ne touchaient que le travail de la tâche :
+> `rm public/*.svg`, les SVG que `create-next-app` venait de poser, écarté après 240 s ; et des
+> captures écrites dans `$D/cadre-$n.html`, `D` posé dans la même commande sur un nom de `mktemp`.
+> Un **motif** que le shell étendra ne nomme pas ses cibles, mais il les décrit : il se confronte
+> désormais au relevé de ce qui était là, comme un `rm` à ses arguments, lu aussi comme son texte
+> (sans `nullglob`, `rm -rf src/app/[slug]` efface la route `[slug]`), accolades d'un mot écrit en
+> entier étendues d'abord. Sous l'**établi**, une cible dont le texte ne donne que la fin du nom
+> est à l'agent, pourvu que le nom du dossier soit fini avant l'inconnu et qu'aucun `..` écrit après
+> lui ne remonte. Ce qui ne se confronte pas remonte toujours : une classe POSIX, un segment qui peut
+> valoir `..` (`.*`), des accolades citées. En chemin, deux angles morts se sont fermés : un `find`
+> dont la racine est un motif (`find src/* … -delete`) passait, rien ne commençant par « src/* » ;
+> et après `cd src/$x`, la portée oubliait `$x` et jugeait `rm -rf notes.md` comme `src/notes.md`.
 
 **Porte 3 — un jugement contextuel dont on accepte le régime.** Un acte dont la légitimité dépend du
 **plan**, que la politique ne connaît pas (« ce `rm` est-il dans le périmètre de la tâche T3 ? »).

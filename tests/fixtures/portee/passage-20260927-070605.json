@@ -557,9 +557,9 @@
   "commande": "cd \"C:/Users/Sam25/maestro-scenarios/20260927-070605/s6-renfort/.maestro/verification-rendu/captures\" && rm chrome-seek-no-preference-sombre-512-*.png && ls",
   "tronquee": "",
   "motif_avant": "commande hors de la portée : `rm chrome-seek-no-preference-sombre-512-*.png` vise un motif que le shell étendra, donc des chemins qu'on ne peut pas juger ici. Une personne tranche. Le décideur par déf",
-  "attendu": "dehors",
-  "motif_attendu": "ne peut pas juger",
-  "raison": "`rm` sur un motif que le shell étendra (#1226, inchangé)"
+  "attendu": "dedans",
+  "motif_attendu": "",
+  "raison": "`rm` sur un motif : confronté au relevé depuis #1505, il ne recouvre que des captures de la tâche"
  },
  {
   "demande": 30,
