@@ -781,6 +781,20 @@ class ClientAPI:
             attendus=(200, 409),
         )
 
+    def couts(self, projet_id: str) -> dict[str, Any]:
+        """La vue Coûts & analytics **d'un projet** : son grand livre entier (#1512).
+
+        La lecture de l'écran Coûts (`GET /api/analytics/couts?projet=…`), et non le
+        coût d'un run : le banc comparatif compte ce que le projet a dépensé, cadrage
+        et planification compris (`orchestration`, #1028). Ce que le grand livre ne
+        voit pas, il ne le voit pas non plus — c'est le compte du produit, pas une
+        mesure à côté.
+        """
+        vue: dict[str, Any] = dict(
+            self._appel("GET", "/api/analytics/couts", params={"projet": projet_id}) or {}
+        )
+        return vue
+
     # --- Interrompre et reprendre (#1408) --------------------------------
 
     def executions(self) -> list[dict[str, Any]]:

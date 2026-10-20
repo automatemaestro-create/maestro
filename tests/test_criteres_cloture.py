@@ -45,7 +45,7 @@ from pathlib import Path
 import pytest
 from harnais_forge import BASH, GIT, RACINE, Depot, ecritures, monte_depot
 
-from maestro.scenarios import historique
+from maestro.scenarios import comparatif, historique
 from maestro.scenarios import rapport as rapport_du_banc
 from maestro.scenarios.carte import CarteDuPassage, Empreinte, Processus
 from maestro.scenarios.modele import VERDICT_ROUGE, VERDICT_VERT, Rapport, Resultat
@@ -523,6 +523,38 @@ def test_un_passage_sans_rapport_ne_prouve_rien(forge: Depot) -> None:
     acheve = forge.lib("criteres-note", "102", constat(forge, texte))
     assert acheve.returncode == 5, acheve.stdout + acheve.stderr
     assert "rapport introuvable : .maestro/scenarios/20260923-000000/rapport.json" in acheve.stderr
+
+
+def passage_comparatif(forge: Depot, horodatage: str, *issues: str) -> str:
+    """Un passage du banc comparatif (#1512), écrit par son VRAI rapporteur, là où il l'écrit."""
+    passages = tuple(
+        comparatif.Passage(cote=comparatif.COTE_SEUL, rang=rang, issue=issue, motif="—")
+        for rang, issue in enumerate(issues, 1)
+    )
+    objectif = comparatif.Objectif(nom="p5", titre="p5", message="Construis-la.")
+    comparatif.ecrire(
+        comparatif.Comparatif(horodatage, objectif, passages),
+        racine=forge.racine / comparatif.RACINE_RAPPORTS,
+    )
+    return horodatage
+
+
+def test_un_passage_du_banc_comparatif_prouve_s_il_a_abouti(forge: Depot) -> None:
+    """Le banc comparatif ne rend ni vert ni rouge : il mesure. Un de ses passages prouve donc par
+    ce qu'il a joué — au moins un passage abouti —, et un passage tout empêché ne prouve rien."""
+    joue = passage_comparatif(forge, "20261015-075738", comparatif.ABOUTI, comparatif.EMPECHE)
+    empeche = passage_comparatif(forge, "20261015-080000", comparatif.EMPECHE)
+    forge.pose_etat(graphql=[regle_criteres("104", CORPS_TROIS)])
+    texte = tableau(
+        ("C1", "✓", f"passage comparatif {joue}, run `728afd3dae61`"),
+        ("C2", "✓", f"passage comparatif {empeche}"),
+        ("C3", "hors diff", "le wiki"),
+    )
+    acheve = forge.lib("criteres-note", "104", constat(forge, texte))
+    assert acheve.returncode == 5, acheve.stdout + acheve.stderr
+    assert f"le passage comparatif {empeche} n'a aucun passage abouti" in acheve.stderr
+    assert "C1" not in acheve.stderr, "un passage comparatif joué prouve"
+    assert ecritures(forge) == []
 
 
 @pytest.fixture

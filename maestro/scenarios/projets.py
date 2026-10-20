@@ -1030,6 +1030,32 @@ def cloner(racine: Path, cible: Path) -> None:
         raise OSError(f"`git clone` du projet refusé : {_message(resultat)}")
 
 
+def fichiers_suivis(dossier: Path) -> tuple[str, ...]:
+    """Ce que le dépôt de `dossier` suit — `git ls-files`, en chemins POSIX (#1512).
+
+    Ce que le banc comparatif montre d'un livrable rejoué : ce qui a été commité, et
+    rien de ce que ses commandes ont refabriqué. Lève `OSError` si Git ne répond pas.
+    """
+    resultat = _git(dossier, "ls-files", "-z")
+    if resultat.returncode != 0:
+        raise OSError(f"`git ls-files` illisible dans {dossier} : {_message(resultat)}")
+    return tuple(chemin for chemin in resultat.stdout.split("\0") if chemin)
+
+
+def sujets_des_commits(dossier: Path, *, nombre: int) -> tuple[str, ...]:
+    """Les sujets des `nombre` derniers commits de `dossier`, du plus récent au plus ancien (#1512).
+
+    Vide sur un dépôt sans commit. Lève `OSError` si Git ne répond pas.
+    """
+    resultat = _git(dossier, "log", f"-n{nombre}", "--format=%s")
+    if resultat.returncode != 0:
+        # Un dépôt sans commit : `git log` le dit en échouant, et il n'y a rien à lire.
+        if _git(dossier, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
+            return ()
+        raise OSError(f"`git log` illisible dans {dossier} : {_message(resultat)}")
+    return tuple(ligne for ligne in resultat.stdout.splitlines() if ligne.strip())
+
+
 def salissures(dossier: Path) -> tuple[str, ...]:
     """Ce que le dépôt de `dossier` montre de changé ou d'inconnu — `git status --porcelain`.
 

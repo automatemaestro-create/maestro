@@ -1,0 +1,47 @@
+# L'objectif de p5 — le livre de recettes Next.js du bilan de « Le run livre un vrai
+# projet » (2026-10-14, critères C2 et C3), joué par le banc comparatif (#1512).
+#
+# Le message est celui que la session seule de C3 a reçu, et la description du
+# projet celle que la personne avait donnée à p5, mot pour mot — sans la phrase qui
+# nommait le dossier de C3. Il ne nomme donc aucun dossier : chaque côté le reçoit
+# tel quel, l'agent seul dans un dossier vide qui est le sien, Maestro dans le fil
+# sans projet, où le projet naît.
+
+titre = "Livre de recettes Next.js (p5)"
+
+message = """Ce projet sera une application web, livre de recette moderne avec des images, des animations sympas, quelque chose de visuel et pratique pour les amoureux de la cuisine. Note bien : site moderne signifie design moderne, etc.
+
+Construis l'application entière.
+
+Les choix sont faits :
+- langage : TypeScript ;
+- cadre : Next.js ;
+- gestionnaire de paquets : npm ;
+- tests : Vitest ;
+- vérification du code : ESLint ; formatage : Prettier ;
+- dépôt Git (hébergement prévu sur GitHub, intégration continue GitHub Actions) ;
+- messages de commit : Conventional Commits."""
+
+# Les choix d'outillage, un par ligne : ce que Maestro reçoit quand il pose une
+# question d'outillage (la personne répond avec ses mots, sans aide technique), et
+# ce que la grille confronte au livrable.
+choix = [
+  "langage : TypeScript",
+  "cadre : Next.js",
+  "gestionnaire de paquets : npm",
+  "tests : Vitest",
+  "vérification du code : ESLint",
+  "formatage : Prettier",
+  "dépôt Git, hébergement prévu sur GitHub",
+  "intégration continue : GitHub Actions",
+  "messages de commit : Conventional Commits",
+]
+
+# Le message dit « dépôt Git » : le projet de Maestro naît versionné.
+versionner = true
+
+# Ce qu'un passage a coûté au bilan du 2026-10-14 (docs/50 § 1.3, arrondi) : ce que le
+# banc annonce avant de jouer, jamais une borne.
+[cout_estime_usd]
+maestro = 16.0
+seul = 8.0

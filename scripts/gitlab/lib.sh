@@ -2843,6 +2843,11 @@ GL_BANC_CHEMINS="maestro/ core/ packages/shared/"
 # Où un passage laisse son rapport, relatif à la racine d'où l'on joue — `RACINE_RAPPORTS` de
 # `maestro/scenarios/rapport.py`, que `start.sh --etat-banc --rejouer` sert depuis la racine.
 GL_BANC_RAPPORTS=".maestro/scenarios"
+# Où le banc comparatif laisse les siens (#1512) — `RACINE_RAPPORTS` de
+# `maestro/scenarios/comparatif.py`. Un horodatage qu'aucun passage des scénarios ne porte se
+# cherche là : un passage comparatif prouve s'il porte au moins un passage abouti
+# (`"issue": "abouti"`, que le banc range lui-même). Il ne rend ni vert ni rouge : il mesure.
+GL_COMPARATIF_RAPPORTS=".maestro/comparatif"
 
 # gl_empreintes_commentaires — les empreintes déjà consignées dans une réponse GraphQL brute (stdin),
 # une par ligne. Cherchées APRÈS la clé « comments » : un titre ou une description qui parlerait
@@ -3035,7 +3040,8 @@ gl_criteres_chemins_du_diff() {
 
 # gl_criteres_constat <inventaire> <fichier> — la FORME du constat, confrontée aux critères attendus
 # (ENVIRON ATTENDUS, « C1 C2 … »), aux tests de l'arbre (<inventaire>, `gl_criteres_tests_nommes`),
-# aux rapports du banc (ENVIRON RAPPORTS) et au banc dû (ENVIRON BANC_DU : ce qui le rend dû — les
+# aux rapports du banc (ENVIRON RAPPORTS, puis ENVIRON COMPARATIF pour le banc comparatif) et au
+# banc dû (ENVIRON BANC_DU : ce qui le rend dû — les
 # scénarios que la carte fait croiser au diff, ou, faute de carte, les fichiers du diff sur le
 # chemin des scénarios —, vide sinon). Sur stdout : une ligne `!<TAB>Cn<TAB>motif` par
 # critère sans réponse recevable (`!<TAB>Banc<TAB>motif` pour le banc), puis
@@ -3085,7 +3091,21 @@ gl_criteres_constat() {
       }
       if (r >= 0) close(f)
       etat[h] = (n > 0) ? "ok" : ((r < 0 && n == 0) ? "absent" : "vide")
+      if (etat[h] == "absent" && ENVIRON["COMPARATIF"] != "") etat[h] = comparatif(h)
       return etat[h]
+    }
+    # Le rapport du banc comparatif de ce passage (#1512) : « comparatif » s il porte un
+    # passage abouti, « comparatif-vide » sinon, « absent » s il n existe pas.
+    function comparatif(h,   f, ligne, r, aboutis, lu) {
+      f = ENVIRON["COMPARATIF"] "/" h "/rapport.json"
+      aboutis = 0; lu = 0
+      while ((r = (getline ligne < f)) > 0) {
+        lu = 1
+        if (ligne ~ /^[ \t]*"issue": "abouti"/) aboutis++
+      }
+      if (r >= 0) close(f)
+      if (!lu) return "absent"
+      return (aboutis > 0) ? "comparatif" : "comparatif-vide"
     }
     # Le verdict de ce passage sur les scénarios cités dans <texte> (tous, faute de citation) :
     # « vert », « rouge », ou « !<motif> » quand il ne peut pas être lu.
@@ -3093,6 +3113,8 @@ gl_criteres_constat() {
       e = passage(h)
       if (e == "absent") return "!rapport introuvable : " ENVIRON["RAPPORTS"] "/" h "/rapport.json"
       if (e == "vide") return "!le passage " h " ne porte aucun scénario — un passage vide n\047est pas vert"
+      if (e == "comparatif") return "vert"
+      if (e == "comparatif-vide") return "!le passage comparatif " h " n\047a aucun passage abouti — un passage empêché n\047est pas une preuve"
       nc = jetons(texte, "S[0-9]+", cites)
       if (nc == 0) nc = split(liste[h], cites, " ")
       rouges = ""
@@ -3334,7 +3356,7 @@ gl_criteres_note() {
           banc_du="le diff touche le chemin des scénarios de référence ($(printf '%s\n' "$touches" | gl_banc_resume))" ;;
     esac
     verdict="$(ATTENDUS="$attendus" BANC_DU="$banc_du" RAPPORTS="$GL_BANC_RAPPORTS" \
-      gl_criteres_constat "$inventaire" "$fichier")"
+      COMPARATIF="$GL_COMPARATIF_RAPPORTS" gl_criteres_constat "$inventaire" "$fichier")"
     rm -f "$inventaire"
     manques="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "!" { print "    - " $2 " : " $3 }')"
     if [ -n "$manques" ]; then

@@ -68,6 +68,10 @@ _FORME = (
     f"{MARQUEUR_POURQUOI} une phrase qui dit ce qui te fait trancher."
 )
 
+#: La même forme, pour les jugements que le banc comparatif pose lui-même (#1512,
+#: `maestro.scenarios.grille`) : une forme, un lecteur (`avis_depuis`).
+FORME = _FORME
+
 SYSTEME = (
     "Tu juges une seule chose : la réponse d'un assistant nomme-t-elle, pour "
     "quelqu'un qui la lit, la cause d'arrêt que le système a relevée ?\n"
@@ -181,6 +185,25 @@ class JugeModele:
         return self._juger(
             SYSTEME_PROJET, _prompt_projet(projet=projet, outillage=outillage, equipe=equipe)
         )
+
+    def juger(self, systeme: str, prompt: str) -> Avis:
+        """Un jugement dont l'appelant écrit la question, dans la forme du module (#1512).
+
+        Le banc comparatif juge ainsi trois lignes de sa grille — CI, convention de
+        commit, outillage suivi (`maestro.scenarios.grille`) —, avec la même asymétrie :
+        un juge injoignable s'abstient.
+        """
+        return self._juger(systeme, prompt)
+
+    def rediger(self, systeme: str, prompt: str) -> str:
+        """Une réponse libre du modèle de jugement — lève si le fournisseur ne répond pas (#1512).
+
+        Ce que le banc comparatif demande pour lire, dans un livrable, les commandes
+        qu'il déclare (`maestro.scenarios.grille`). L'appelant lit la réponse et en
+        répond : ici, rien n'est interprété.
+        """
+        provider, modele = self._resolu()
+        return asyncio.run(provider.generate(prompt, model=modele, system_prompt=systeme))
 
     def _juger(self, systeme: str, prompt: str) -> Avis:
         """L'appel, et les deux façons de n'avoir **aucun** avis.
