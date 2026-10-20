@@ -32,8 +32,9 @@ remontent à la personne, et **elles seules** :
    sortent sans nommer de chemin (élévation de privilèges, gestionnaire de
    paquets du système, installation globale d'un langage, machine distante) ;
 2. **ce qui détruit ce que l'agent n'a pas produit** — un verbe destructeur dont
-   une cible était déjà là quand la tâche a commencé (`presents`), ou dont la
-   cible ne se résout pas (un `rm -rf *` ne se juge pas) ;
+   une cible était déjà là quand la tâche a commencé (`presents`), qu'elle soit
+   nommée ou recouverte par un motif (`rm -rf *` recouvre tout ce qui était là),
+   ou dont la cible ne se résout pas (`rm -rf "$CIBLE"` ne se juge pas) ;
 3. **ce qui arrête des processus sans les désigner** (#1502) — par leur nom
    d'image ou par un motif (`taskkill //IM`, `pkill`, `killall`,
    `Stop-Process -Name`, ce qu'un pipeline passe à `Stop-Process`), tous à la
@@ -95,16 +96,26 @@ qui n'était pas une suite de mots — une substitution, un heredoc, une boucle 
 - **avec les valeurs que le texte donne** : une variable affectée plus haut, `$PWD`,
   `$HOME`, le temporaire (`$TEMP`, `$TMP`, `$TMPDIR`), ce que rendent `pwd`,
   `cygpath`, `dirname`. Une valeur que le texte ne donne pas **ne se juge pas** —
-  sauf quand elle est la cible d'une destruction ou d'une écriture : là, une
-  personne tranche ;
+  sauf quand elle est la cible d'une destruction ou d'une écriture hors de
+  l'établi : là, une personne tranche. Elle ne se perd pas non plus en chemin :
+  après `cd src/$x`, `rm notes.md` vise un fichier de `src/$x`, pas de `src` ;
+- **un motif que le shell étendra décrit ses cibles** (#1505) : `rm public/*.svg`
+  efface ce qui, sous `public`, répond au motif. Il se confronte au relevé de ce
+  qui était là, comme un `rm` à ses arguments, lu des deux façons dont bash le lit
+  — ce qui y répond, et son texte tel quel, qu'un motif qui ne recouvre rien passe
+  à la commande (`src/app/[slug]`). Les accolades d'un mot écrit en entier
+  (`{build,dist}`, `{1..3}`) s'étendent d'abord, comme bash le fait. Ce qui ne se
+  confronte pas remonte : une classe POSIX (`[[:alpha:]]`), un segment qui peut
+  valoir `..` (`.*`), des accolades citées ou trop nombreuses ;
 - **ce qu'une enveloppe lance** (`env`, `timeout`, `nohup`, `xargs`…) et ce qu'on
   donne à un autre shell (`bash -c`, un heredoc donné à `sh`) sont des commandes,
   jugées comme telles. Le programme donné à PowerShell ou à `cmd` est parcouru
   pour ses verbes qui sortent ; le reste est une donnée, comme celui de
   `python -c` ;
 - **un `find` qui efface décrit ses cibles** par ses racines et son `-name` : il
-  se confronte au relevé de ce qui était là, comme un `rm` à ses arguments. Ce qui
-  ne se confronte pas (aucun nom, un `-o`, un `-regex`) remonte comme avant ;
+  se confronte au relevé de ce qui était là, comme un `rm` à ses arguments — ses
+  racines écrites en motif (`find src/* …`) comme les autres. Ce qui ne se
+  confronte pas (aucun nom, un `-o`, un `-regex`, une classe POSIX) remonte ;
 - **une option que Git Bash fait passer** n'est pas un chemin : sous une racine
   Windows, `taskkill //PID 41084 //T //F` arrête le serveur que l'agent a lancé
   (#1394). `//serveur/partage`, lui, reste un chemin UNC.
@@ -120,6 +131,15 @@ d'une commande à l'autre — l'évaluation reste une fonction pure (docs/32 §8
 mais le nom qu'un `mktemp` sans gabarit fabrique (`/tmp/tmp.XXXXXXXXXX`) se
 reconnaît à lui seul : chaque appel `Bash` étant un shell neuf, l'agent réutilise
 en toutes lettres, dans l'appel suivant, le chemin que le précédent a créé.
+
+Rien n'était dans l'établi avant l'agent : ce qu'il y écrit ou y détruit est à lui
+même quand le texte ne donne que la fin de son nom (#1505). Le run `fea601a5c629`
+écrivait ses cadres dans `$D/cadre-$n.html`, `D` posé sur un nom de `mktemp` dans
+la même commande et `$n` tiré d'un `tr` : la cible est sous `$D`, quel que soit
+`$n`. Le texte doit dire deux choses — le nom du dossier est fini avant l'inconnu
+(`$D$n` peut en être un voisin), et aucun `..` écrit après lui ne remonte d'un
+nombre de dossiers qu'on ignore (`$D/$n/../..`) — faute de quoi une personne
+tranche.
 
 Ce nom-là est reconnu par **un seul** prédicat, `etabli_de`, que la frontière
 d'écriture applique aussi aux outils de fichiers (#1406) : l'établi où le shell
@@ -428,6 +448,17 @@ VARIABLES_MAISON: tuple[str, ...] = ("HOME", "USERPROFILE")
 #: corps d'une boucle n'a pas à être relu cent fois.
 MAX_VALEURS_DE_BOUCLE = 16
 
+#: Au-delà, des accolades (`{a,b}`, `{1..100}`) ne s'étendent pas : le motif ne se
+#: confronte pas, et remonte.
+MAX_ALTERNATIVES = 64
+
+#: Ce qu'une classe POSIX (`[[:alpha:]]`) ouvre dans un crochet : la comparaison de
+#: Python ne la lit pas, et y lirait moins de noms que bash.
+_CLASSES_POSIX = ("[:", "[=", "[.")
+
+#: Une suite d'accolades : `{1..5}`, `{01..10..2}`, `{a..e}`.
+_SEQUENCE = re.compile(r"(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?")
+
 #: Le nom qu'un `mktemp` **sans gabarit** fabrique (`tmp.` et dix caractères tirés
 #: au hasard), directement sous un dossier temporaire (`/tmp`, `…\Temp`). Chaque
 #: appel `Bash` est un shell neuf : un agent qui a créé `T=$(mktemp -d)` dans un
@@ -502,7 +533,8 @@ class _Inconnu:
 
 @dataclass(frozen=True)
 class _Motif:
-    """Du texte que le shell étendra (`*.png`) : il situe un dossier, il ne nomme pas une cible."""
+    """Du texte que le shell étendra (`*.png`) : il ne nomme pas ses cibles, il les
+    décrit — et c'est ainsi qu'il se confronte au relevé (`_presents_recouverts`)."""
 
     texte: str
 
@@ -516,7 +548,9 @@ _Valeur = tuple[_Morceau, ...]
 class _Lieu:
     """Où mène un chemin. `texte` : le chemin relatif POSIX sous la racine ou sous
     l'établi, le chemin écrit quand il est dehors. `incertain` : sa fin n'est pas
-    dans le texte (`src/$x`)."""
+    dans le texte (`src/$x`), et elle peut changer ce qu'il désigne. Sous un
+    établi, une fin qui n'y finit qu'un nom (`$D/cadre-$n.html`) ne le change pas :
+    tout ce qu'il porte est à l'agent (`_reste_dessous`, #1505)."""
 
     genre: str
     texte: str = ""
@@ -834,9 +868,9 @@ class PorteeProjet:
             "arguments. Une personne tranche."
         )
         index = 0
-        racines: list[_Valeur] = []
+        racines: list[tuple[Mot | None, _Valeur]] = []
         while index < len(rendus) and not rendus[index].startswith(("-", "(", ")", "!")):
-            racines.append(arguments[index][1])
+            racines.append(arguments[index])
             index += 1
         noms: list[tuple[str, bool]] = []
         exclus: list[tuple[str, bool]] = []
@@ -888,48 +922,74 @@ class PorteeProjet:
                 return self._appel(simple, sans_cible, ctx, flux=True) if sans_cible else ""
         if not supprime:
             return "" if lisible else illisible
-        if not lisible or not noms:
+        if not lisible or not noms or any(_classe_posix(nom) for nom, _ in noms):
             return illisible
-        for racine in racines or [(".",)]:
-            lieu = self._lieu(racine, ctx)
-            if lieu.genre == ETABLI and not lieu.incertain:
-                continue
-            if lieu.genre == DEHORS:
-                return _motif_hors_racine(_texte(racine) or ".", self.racine, lieu.texte)
-            if lieu.genre != RACINE or lieu.incertain:
+        for mot, racine in racines or [(None, (".",))]:
+            alternatives = _alternatives(racine, ecrit=mot is not None and _ecrit_en_entier(mot))
+            if alternatives is None:
                 return illisible
-            present = self._present_repondant(lieu.texte, noms, exclus)
-            if present is not None:
-                return (
-                    f"commande hors de la portée : `find` effacerait « {present} », qui se "
-                    "trouvait déjà dans le projet quand la tâche a commencé — l'agent ne "
-                    "l'a pas produit. En écriture en place, rien ne passe par une fusion ni "
-                    "par un diff : une personne tranche."
+            for alternative in alternatives:
+                lieu = self._lieu(alternative, ctx)
+                if lieu.genre == DEHORS:
+                    return _motif_hors_racine(_texte(alternative) or ".", self.racine, lieu.texte)
+                en_motif = any(isinstance(morceau, _Motif) for morceau in alternative)
+                if lieu.genre not in (RACINE, ETABLI) or lieu.incertain:
+                    return illisible
+                if en_motif and _inconfrontable(alternative):
+                    return illisible
+                if lieu.genre == ETABLI:
+                    continue
+                present = self._present_repondant(
+                    lieu.texte, noms, exclus, racine_en_motif=en_motif
                 )
+                if present is not None:
+                    return (
+                        f"commande hors de la portée : `find` effacerait « {present} », qui "
+                        "se trouvait déjà dans le projet quand la tâche a commencé — l'agent "
+                        "ne l'a pas produit. En écriture en place, rien ne passe par une "
+                        "fusion ni par un diff : une personne tranche."
+                    )
         return ""
 
     def _present_repondant(
-        self, racine: str, noms: list[tuple[str, bool]], exclus: list[tuple[str, bool]]
+        self,
+        racine: str,
+        noms: list[tuple[str, bool]],
+        exclus: list[tuple[str, bool]],
+        *,
+        racine_en_motif: bool,
     ) -> str | None:
-        """Une entrée présente avant la tâche, sous `racine`, dont le nom répond aux motifs."""
+        """Une entrée présente avant la tâche, sous `racine`, dont le nom répond aux motifs.
+
+        `racine_en_motif` : la racine est un motif que le shell étend (`find src/*
+        …`) — elle couvre alors ce qui y répond, et non ce qui commence par son texte.
+        """
         windows = _racine_windows(self.racine)
-        for present in sorted(self.presents):
-            if not present:
-                continue
-            dessous = not racine or present == racine or present.startswith(racine + "/")
-            if windows:
-                bas = present.casefold()
-                dessous = not racine or bas == racine.casefold() or bas.startswith(
-                    racine.casefold() + "/"
-                )
-            if not dessous:
-                continue
+        for present in self._presents_recouverts(racine, motif=racine_en_motif):
             nom = present.rsplit("/", 1)[-1]
             if all(_repond(nom, motif, casse or windows) for motif, casse in noms) and not any(
                 _repond(nom, motif, casse or windows) for motif, casse in exclus
             ):
                 return present
         return None
+
+    def _present_recouvert(self, relatif: str, *, motif: bool) -> str | None:
+        """La première entrée présente avant la tâche que `relatif` recouvre — `None` sinon."""
+        return next(iter(self._presents_recouverts(relatif, motif=motif)), None)
+
+    def _presents_recouverts(self, relatif: str, *, motif: bool) -> Iterator[str]:
+        """Les entrées présentes avant la tâche que `relatif` recouvre, elles ou un dossier
+        qui les porte — dans l'ordre, la racine elle-même exceptée.
+
+        Un motif se lit des **deux** façons dont bash peut le lire : ce qui y répond,
+        et son texte tel quel, qu'un motif qui ne recouvre rien passe à la commande
+        (sans `nullglob`) — `rm -rf src/[slug]` efface aussi le dossier `src/[slug]`.
+        """
+        windows = _racine_windows(self.racine)
+        lectures = (relatif, _echappe(relatif)) if motif else (_echappe(relatif),)
+        for present in sorted(self.presents):
+            if present and any(_atteint(lecture, present, windows) for lecture in lectures):
+                yield present
 
     # --- Les deux familles qui remontent -------------------------------------
 
@@ -1035,30 +1095,65 @@ class PorteeProjet:
                 "(`xargs`), donc des chemins qu'on ne peut pas juger ici. Une personne "
                 "tranche."
             )
-        for rendu, cible in _cibles(arguments, windows=_racine_windows(self.racine)):
-            if any(isinstance(morceau, _Motif) for morceau in cible):
-                return (
-                    f"commande hors de la portée : `{verbe} {rendu}` vise un motif "
-                    "que le shell étendra, donc des chemins qu'on ne peut pas juger "
-                    "ici. Une personne tranche."
+        for mot, rendu, cible in _cibles(arguments, windows=_racine_windows(self.racine)):
+            alternatives = _alternatives(cible, ecrit=_ecrit_en_entier(mot))
+            if alternatives is None:
+                return _motif_inconfrontable(verbe, rendu)
+            for alternative in alternatives:
+                motif = self._detruirait(
+                    verbe, rendu, alternative, ctx, etendue=len(alternatives) > 1
                 )
-            lieu = self._lieu(cible, ctx)
-            if lieu.genre == INCONNU or lieu.incertain:
-                return (
-                    f"commande hors de la portée : `{verbe} {rendu}` vise une cible que "
-                    "son texte ne donne pas, donc un chemin qu'on ne peut pas juger ici. "
-                    "Une personne tranche."
-                )
-            if lieu.genre == DEHORS:
-                return _motif_hors_racine(rendu, self.racine, self._ailleurs(lieu, ctx))
-            if lieu.genre == RACINE and self._presente(lieu.texte):
-                return (
-                    f"commande hors de la portée : `{verbe}` viserait « {rendu} », "
-                    "qui se trouvait déjà dans le projet quand la tâche a commencé — "
-                    "l'agent ne l'a pas produit. En écriture en place, rien ne passe "
-                    "par une fusion ni par un diff : une personne tranche."
-                )
+                if motif:
+                    return motif
         return ""
+
+    def _detruirait(
+        self, verbe: str, rendu: str, cible: _Valeur, ctx: _Contexte, *, etendue: bool
+    ) -> str:
+        """Ce qui fait remonter la destruction de `cible` — `""` si l'agent l'a produite.
+
+        Un motif que le shell étendra (`public/*.svg`) ne nomme pas ses cibles, mais
+        il les **décrit** : ce qui, sous ce dossier, répond au motif. Il se confronte
+        donc au relevé de ce qui était là, comme un nom à `presents` (#1505) — et
+        rien de présent n'y répondant, l'agent n'efface que ce que la tâche a créé.
+        Ce qui ne se confronte pas (`_inconfrontable`) remonte.
+
+        `etendue` : `cible` est l'une des valeurs que les accolades de `rendu`
+        donnent ; quand elle sort, le motif dit laquelle.
+        """
+        lieu = self._lieu(cible, ctx)
+        if lieu.genre == INCONNU or lieu.incertain:
+            return (
+                f"commande hors de la portée : `{verbe} {rendu}` vise une cible que "
+                "son texte ne donne pas, donc un chemin qu'on ne peut pas juger ici. "
+                "Une personne tranche."
+            )
+        if lieu.genre == DEHORS:
+            ailleurs = self._ailleurs(lieu, ctx) or (lieu.texte if etendue else "")
+            return _motif_hors_racine(rendu, self.racine, ailleurs)
+        motif = any(isinstance(morceau, _Motif) for morceau in cible)
+        if motif and _inconfrontable(cible):
+            return _motif_inconfrontable(verbe, rendu)
+        if lieu.genre != RACINE:
+            return ""
+        if not motif:
+            if not self._presente(lieu.texte):
+                return ""
+            return (
+                f"commande hors de la portée : `{verbe}` viserait « {rendu} », "
+                "qui se trouvait déjà dans le projet quand la tâche a commencé — "
+                "l'agent ne l'a pas produit. En écriture en place, rien ne passe "
+                "par une fusion ni par un diff : une personne tranche."
+            )
+        present = self._present_recouvert(lieu.texte, motif=True)
+        if present is None:
+            return ""
+        return (
+            f"commande hors de la portée : `{verbe} {rendu}` atteindrait « {present} », "
+            "qui se trouvait déjà dans le projet quand la tâche a commencé — l'agent "
+            "ne l'a pas produit. En écriture en place, rien ne passe par une fusion ni "
+            "par un diff : une personne tranche."
+        )
 
     def _redirections(self, redirections: Sequence[Redirection], ctx: _Contexte) -> str:
         """Une redirection qui sortirait, écrirait on ne sait où, ou écraserait du préexistant."""
@@ -1167,7 +1262,11 @@ class PorteeProjet:
     # --- Ce que la racine répond ------------------------------------------
 
     def _absolu(self, valeur: _Valeur, ctx: _Contexte) -> _Valeur:
-        """`valeur` relue depuis le dossier courant : un chemin absolu, un établi, ou l'inconnu."""
+        """`valeur` relue depuis le dossier courant : un chemin absolu, un établi, ou l'inconnu.
+
+        Un dossier courant dont le texte ne donne que le début (`cd src/$x`) garde
+        son inconnu : le perdre ferait lire `rm notes.md` comme `src/notes.md` (#1505).
+        """
         if not valeur:
             return ctx.ou
         tete = valeur[0]
@@ -1178,13 +1277,22 @@ class PorteeProjet:
         if texte.startswith("~"):
             texte = os.path.expanduser(texte)
         if self._est_absolu(texte):
-            return (self._canonique(texte), *reste)
+            return (self._tete(texte, suivie=bool(reste)), *reste)
         ou = ctx.ou
         if isinstance(ou[0], _Inconnu):
             return (ou[0],)
-        if isinstance(ou[0], _Etabli):
-            return (ou[0], _prefixe(ou[1:]) + "/" + texte, *reste)
-        return (self._canonique(self._joint(_prefixe(ou), texte)), *reste)
+        if isinstance(ou[0], _Etabli) or _texte(ou) is None:
+            return _fond([*ou, "/" + texte, *reste])
+        return (self._tete(self._joint(_prefixe(ou), texte), suivie=bool(reste)), *reste)
+
+    def _tete(self, texte: str, *, suivie: bool) -> str:
+        """`texte` canonique — et, quand ce que le texte ne donne pas le suit, son
+        séparateur final gardé : `$D/$n` est un nom **sous** `$D`, quand `$D$n` peut
+        en être un voisin (`_reste_dessous`)."""
+        canonique = self._canonique(texte)
+        if suivie and texte.endswith(("/", "\\")) and not canonique.endswith(("/", "\\")):
+            return canonique + ("\\" if _racine_windows(self.racine) else "/")
+        return canonique
 
     def _lieu(self, valeur: _Valeur, ctx: _Contexte) -> _Lieu:
         """Où mène `valeur`, lue depuis le dossier courant."""
@@ -1200,14 +1308,15 @@ class PorteeProjet:
             relatif = _sous_etabli(suite)
             if relatif is None:
                 return _Lieu(DEHORS, f"(dossier de mktemp){suite}")
-            return _Lieu(ETABLI, relatif, incertain)
+            return _Lieu(ETABLI, relatif, incertain and not _reste_dessous(bool(suite), absolu))
         texte = _prefixe(absolu)
         relatif = self._sous_la_racine(texte)
         if relatif is not None:
             return _Lieu(RACINE, relatif, incertain)
         etabli = etabli_de(texte, self.racine)
         if etabli is not None:
-            return _Lieu(ETABLI, etabli[1], incertain)
+            ferme = bool(etabli[1]) or texte.endswith(("/", "\\"))
+            return _Lieu(ETABLI, etabli[1], incertain and not _reste_dessous(ferme, absolu))
         return _Lieu(DEHORS, texte, incertain)
 
     def _ailleurs(self, lieu: _Lieu, ctx: _Contexte) -> str:
@@ -1585,7 +1694,8 @@ def _operandes(
     `-I/usr/include`) : `--headless=new` n'en nomme aucun. Le code d'un
     interpréteur (`-c`, `-m`) et le programme de `sed` ou d'`awk` n'en sont pas.
     Sous une racine Windows, une option que Git Bash fait passer (`//PID`) n'en
-    nomme aucun non plus (#1394).
+    nomme aucun non plus (#1394). Un opérande à accolades rend chacune des valeurs
+    qu'elles donnent (#1505).
     """
     nu = _forme_nue(nom)
     programme = OPTIONS_DE_PROGRAMME.get(nu, frozenset())
@@ -1618,7 +1728,9 @@ def _operandes(
         if attend_programme:
             attend_programme = False
             continue
-        yield valeur, rendu
+        # Les accolades s'étendent avant que le chemin se situe : `{a,/etc/x}` sort.
+        for alternative in _alternatives(valeur, ecrit=_ecrit_en_entier(mot)) or [valeur]:
+            yield alternative, rendu
 
 
 def _option_echappee(mot: Mot, windows: bool) -> bool:
@@ -1678,8 +1790,9 @@ def _valeur_d_option(
 
 def _cibles(
     arguments: list[tuple[Mot, _Valeur]], *, windows: bool
-) -> Iterator[tuple[str, _Valeur]]:
-    """Les arguments d'un verbe destructeur qui désignent ce qu'il va détruire.
+) -> Iterator[tuple[Mot, str, _Valeur]]:
+    """Les arguments d'un verbe destructeur qui désignent ce qu'il va détruire — le
+    mot écrit, son rendu, et sa valeur.
 
     Tout ce qui n'est pas une option : `rm -rf build .cache` vise `build` et
     `.cache`. Un nom nu compte ici — c'est la cible du geste. Une option que Git
@@ -1693,10 +1806,13 @@ def _cibles(
         rendu = mot.rendu()
         if rendu == "--" or rendu.startswith("-") or not valeur or _option_echappee(mot, windows):
             continue
-        yield rendu, valeur
+        yield mot, rendu, valeur
         tete = valeur[0] if valeur else ""
-        if isinstance(tete, str) and "=" in tete:
-            yield rendu, _fond([tete.partition("=")[2], *valeur[1:]])
+        texte = tete.texte if isinstance(tete, _Motif) else tete
+        if isinstance(texte, str) and "=" in texte:
+            # Aucun fichier ne s'appelle `of=…` : un motif n'y recouvre rien, et le
+            # verbe reçoit son texte tel quel — `dd of=*.img` écrit dans `*.img`.
+            yield mot, rendu, _fond([texte.partition("=")[2], *valeur[1:]])
 
 
 # --- Les valeurs ----------------------------------------------------------
@@ -1756,10 +1872,203 @@ def _fusionne(ctx: _Contexte, tours: Sequence[_Contexte]) -> None:
 
 
 def _repond(nom: str, motif: str, sans_casse: bool) -> bool:
-    """`nom` répond-il au motif d'un `-name` (à la casse près pour `-iname`, et sous Windows) ?"""
+    """`nom` répond-il au motif d'un `-name` (à la casse près pour `-iname`, et sous Windows) ?
+
+    `[^…]` est la négation de bash et de `find` : la comparaison de Python n'en
+    connaît que l'orthographe `[!…]`, et lirait l'autre comme un `^` littéral.
+    """
+    motif = motif.replace("[^", "[!")
     if sans_casse:
         return fnmatch.fnmatchcase(nom.casefold(), motif.casefold())
     return fnmatch.fnmatchcase(nom, motif)
+
+
+def _atteint(motif: str, chemin: str, sans_casse: bool) -> bool:
+    """`chemin` — ou l'un des dossiers qui le portent — répond-il à `motif` ?
+
+    Segment par segment, comme bash étend un motif : `*` ne franchit pas un `/`.
+    Un dossier qui répond emporte ce qu'il porte (`rm -rf src/*` efface
+    `src/a/b.py`), et `**` vaut ici autant de dossiers qu'on voudra — sans
+    `globstar` il n'en vaut qu'un, ce qui ne ferait jamais répondre moins.
+    """
+    return _atteint_segments(_segments(motif), _segments(chemin), sans_casse)
+
+
+def _atteint_segments(motifs: list[str], chemin: list[str], sans_casse: bool) -> bool:
+    if not motifs:
+        return True
+    tete, reste = motifs[0], motifs[1:]
+    if tete == "**":
+        return any(
+            _atteint_segments(reste, chemin[index:], sans_casse) for index in range(len(chemin) + 1)
+        )
+    return (
+        bool(chemin)
+        and _repond(chemin[0], tete, sans_casse)
+        and _atteint_segments(reste, chemin[1:], sans_casse)
+    )
+
+
+def _segments(chemin: str) -> list[str]:
+    """Les segments de `chemin` ; `**/**` vaut `**`, qu'on ne parcourt qu'une fois."""
+    segments: list[str] = []
+    for segment in chemin.split("/"):
+        if segment and not (segment == "**" and segments[-1:] == ["**"]):
+            segments.append(segment)
+    return segments
+
+
+def _echappe(texte: str) -> str:
+    """`texte` lu tel quel par la comparaison des motifs : `src/[slug]` n'y vaut que lui."""
+    return re.sub(r"[*?[]", lambda trouve: f"[{trouve.group(0)}]", texte)
+
+
+def _ecrit_en_entier(mot: Mot) -> bool:
+    """`mot` est-il écrit tel que bash le lira — ni guillemet, ni échappement, ni valeur ?"""
+    return mot.litteral() is not None and not any(signe in mot.source for signe in "'\"\\")
+
+
+def _alternatives(valeur: _Valeur, *, ecrit: bool) -> list[_Valeur] | None:
+    """Les valeurs que `valeur` désigne une fois ses accolades étendues — `None` si
+    l'on ne sait pas lesquelles (#1505).
+
+    Bash étend `{a,b}` avant tout le reste, sur le mot **écrit** : seul un mot écrit
+    tout entier (`ecrit`, `_ecrit_en_entier`) dit à coup sûr lesquelles de ses
+    accolades s'étendent — `"{a,b}"*` n'en étend aucune, et `{a,$x}` ne dit pas ce
+    que donnera la seconde.
+    """
+    if not any(isinstance(morceau, _Motif) for morceau in valeur):
+        return [valeur]
+    texte = "".join(
+        m.texte if isinstance(m, _Motif) else m if isinstance(m, str) else "\0" for m in valeur
+    )
+    etendus = _etend_accolades(texte)
+    if etendus == [texte]:
+        return [valeur]
+    if not ecrit or etendus is None:
+        return None
+    return [(_Motif(etendu),) for etendu in etendus]
+
+
+class _TropDAlternatives(Exception):
+    """Des accolades qui donneraient plus de `MAX_ALTERNATIVES` mots."""
+
+
+def _etend_accolades(texte: str) -> list[str] | None:
+    """Les mots que bash tire des accolades de `texte`, dans son ordre — `a{b,c}d`
+    donne `abd` et `acd`, `x{1..3}` donne `x1`, `x2`, `x3` —, ou `None` au-delà de
+    `MAX_ALTERNATIVES`. Une accolade qui ne s'étend pas (`{x}`, `{a`) reste du texte."""
+    try:
+        return _etend(texte)
+    except _TropDAlternatives:
+        return None
+
+
+def _etend(texte: str) -> list[str]:
+    for debut, caractere in enumerate(texte):
+        if caractere != "{":
+            continue
+        fin, virgules, profondeur = None, [], 0
+        for index in range(debut, len(texte)):
+            if texte[index] == "{":
+                profondeur += 1
+            elif texte[index] == "}":
+                profondeur -= 1
+                if profondeur == 0:
+                    fin = index
+                    break
+            elif texte[index] == "," and profondeur == 1:
+                virgules.append(index)
+        if fin is None:
+            continue
+        if virgules:
+            bornes = [debut, *virgules, fin]
+            choix = [
+                mot
+                for gauche, droite in zip(bornes, bornes[1:], strict=False)
+                for mot in _etend(texte[gauche + 1 : droite])
+            ]
+        else:
+            suite = _suite(texte[debut + 1 : fin])
+            if suite is None:
+                continue  # `{x}` reste du texte ; une accolade plus loin peut s'étendre
+            choix = suite
+        apres = _etend(texte[fin + 1 :])
+        if len(choix) * len(apres) > MAX_ALTERNATIVES:
+            raise _TropDAlternatives
+        return [texte[:debut] + mot + fin_de_mot for mot in choix for fin_de_mot in apres]
+    return [texte]
+
+
+def _suite(corps: str) -> list[str] | None:
+    """Les mots d'une suite d'accolades (`1..5`, `01..10..2`, `a..e`) — `None` si
+    `corps` n'en est pas une."""
+    trouve = _SEQUENCE.fullmatch(corps)
+    if trouve is None:
+        return None
+    debut, fin = trouve.group(1), trouve.group(2)
+    pas = abs(int(trouve.group(3) or 1)) or 1
+    numerique = debut.lstrip("-").isdigit()
+    if numerique != fin.lstrip("-").isdigit():
+        return None
+    a, b = (int(debut), int(fin)) if numerique else (ord(debut), ord(fin))
+    if abs(b - a) // pas + 1 > MAX_ALTERNATIVES:
+        raise _TropDAlternatives
+    sens = 1 if b >= a else -1
+    valeurs = range(a, b + sens, sens * pas)
+    if not numerique:
+        return [chr(valeur) for valeur in valeurs]
+    zero = any(len(x.lstrip("-")) > 1 and x.lstrip("-").startswith("0") for x in (debut, fin))
+    largeur = max(len(debut), len(fin)) if zero else 0
+    return [str(valeur).zfill(largeur) for valeur in valeurs]
+
+
+def _inconfrontable(valeur: _Valeur) -> bool:
+    """Ce motif ne se confronte-t-il pas au relevé ? Deux raisons, et seulement deux :
+
+    - une **classe POSIX** (`[[:alpha:]]`), que la comparaison de Python ne lit
+      pas — elle y verrait moins de noms que bash, et laisserait passer ce qu'il
+      efface ;
+    - un segment qui **peut valoir `..`** (`.*`, `.?`) : sans `globskipdots`, bash
+      y fait répondre le dossier parent, et le motif remonte hors du dossier qu'il
+      semble viser. Seul un segment qui commence par un point le peut — bash exige
+      que ce point soit écrit.
+    """
+    texte = "".join(morceau.texte for morceau in valeur if isinstance(morceau, _Motif))
+    if _classe_posix(texte):
+        return True
+    return any(
+        segment.startswith(".") and segment not in (".", "..") and _repond("..", segment, False)
+        for segment in re.split(r"[\\/]", texte)
+    )
+
+
+def _classe_posix(motif: str) -> bool:
+    return any(classe in motif for classe in _CLASSES_POSIX)
+
+
+def _reste_dessous(ferme: bool, absolu: _Valeur) -> bool:
+    """Ce que le texte ne donne pas, sous un établi, y reste-t-il ? (#1505)
+
+    L'établi est tout entier à l'agent : rien n'y était avant lui, et qui y écrit ou
+    y détruit `cadre-$n.html` ne touche qu'à son travail, quel que soit `$n`. Deux
+    conditions, que le texte dit : le nom du dossier est **fini** avant l'inconnu
+    (`ferme` — `$D/$n`, et non `$D$n`, qui peut en être un voisin), et aucun `..`
+    écrit après lui ne remonte d'autant de dossiers que l'inconnu en compte
+    (`$D/$n/../..`). Le prix est celui de tout le module : une valeur qui
+    porterait elle-même un `..` en sortirait, et le texte ne le dit pas.
+    """
+    if not ferme:
+        return False
+    apres_l_inconnu = False
+    for morceau in absolu[1:]:
+        if isinstance(morceau, (_Etabli, _Inconnu)):
+            apres_l_inconnu = True
+            continue
+        texte = morceau.texte if isinstance(morceau, _Motif) else morceau
+        if apres_l_inconnu and ".." in re.split(r"[\\/]", texte):
+            return False
+    return True
 
 
 def etabli_de(chemin: str, racine: Path | str) -> tuple[str, str] | None:
@@ -1826,6 +2135,15 @@ def _scripts_des(
     """Ce qu'exécutent les cibles de redirections et les heredocs non cités."""
     scripts = [s for redirection in redirections for s in redirection.cible.scripts()]
     return scripts + [s for document in documents for s in document.scripts]
+
+
+def _motif_inconfrontable(verbe: str, rendu: str) -> str:
+    return (
+        f"commande hors de la portée : `{verbe} {rendu}` vise un motif que le shell "
+        "étendra et qu'on ne sait pas confronter à ce qui était là (classe POSIX, "
+        "segment qui peut valoir `..`, accolades citées ou trop nombreuses), donc des "
+        "chemins qu'on ne peut pas juger ici. Une personne tranche."
+    )
 
 
 def _motif_programme_d_entree(ecrit: str) -> str:

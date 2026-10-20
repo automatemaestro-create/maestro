@@ -7,7 +7,7 @@ un projet neuf, une équipe proposée par Maestro et validée telle quelle, et
 ce ne sont pas des exemples inventés, ce sont les appels qui ont fait attendre
 une personne pour qu'un agent lance le code qu'il venait d'écrire.
 
-Neuf parties :
+Dix parties :
 
 ① les quatorze gestes observés, qui doivent tous passer ;
 ② ce qui **sort du projet** et remonte — chemin hors racine, installation
@@ -28,14 +28,20 @@ Neuf parties :
    chemin (#1394). Les commandes sont, là encore, celles de runs réels ;
 ⑧ **les formes ordinaires d'une commande d'agent** (#1348) : les 55 commandes
    que le passage `20260927-070605` a rendues à une personne, rejouées sur la
-   racine de leur tâche. 44 restaient dans leur projet et y restent ; 11 en
-   sortaient vraiment et remontent toujours, chacune avec sa raison ;
+   racine de leur tâche. 45 restaient dans leur projet et y restent — dont, depuis
+   #1505, le `rm` d'un motif qui ne recouvrait que des captures de la tâche — ; 10
+   en sortaient vraiment et remontent toujours, chacune avec sa raison ;
 ⑨ **arrêter des processus sans les désigner** (#1502) : la commande qui a tué tous
    les `python.exe` du poste, Maestro compris, revient à une personne, avec chaque
    forme déclarée prouvée ; les arrêts que les agents du poste ont réellement joués
-   — un PID écrit, `$!`, celui qui écoute sur leur port — passent toujours.
+   — un PID écrit, `$!`, celui qui écoute sur leur port — passent toujours ;
+⑩ **ce que la tâche a produit, désigné autrement que par son nom** (#1505) : un
+   motif que le shell étendra se confronte au relevé de ce qui était là, et ce que
+   l'agent écrit sous son établi y reste même quand le texte ne donne que la fin
+   de son nom. Les deux actes du run `fea601a5c629` qui sont revenus à une
+   personne sans raison passent ; ce qu'on ne sait pas confronter remonte.
 
-⑦, ⑧ et ⑨ se jouent sur une racine **à la Windows** (`E:/…`, `C:/…`) quel que soit
+⑦, ⑧, ⑨ et ⑩ se jouent sur une racine **à la Windows** (`E:/…`, `C:/…`) quel que soit
 l'OS du test : la portée rend le même verdict des deux côtés, et c'est ce qui
 permet au conteneur Linux du filet d'éprouver ce que seul un poste Windows
 produisait.
@@ -201,13 +207,15 @@ def test_nettoyer_ce_que_ses_propres_executions_ont_produit_passe(
     assert portee.commande_hors_portee("rm -rf __pycache__ .pytest_cache") == ""
 
 
-def test_une_cible_que_le_shell_etendra_ne_se_juge_pas(tmp_path: Path) -> None:
-    """`rm -rf *` ne nomme rien : on ne sait pas ce que l'étoile recouvrira. Au
-    moindre doute sur une destruction, c'est une personne qui tranche."""
+def test_une_cible_que_le_shell_etendra_se_confronte_au_releve(tmp_path: Path) -> None:
+    """`rm -rf *` ne nomme rien, mais il **décrit** ce qu'il efface : ce que
+    l'étoile recouvrira, c'est ce qui répond au motif (#1505). Ce qui était là
+    avant la tâche y répond-il ? Une personne tranche. Sinon, l'agent n'efface que
+    ce qu'il a produit — `build` n'existait pas."""
     portee = _portee(tmp_path, ("", "notes.md"))
 
-    assert "ne peut pas juger" in portee.commande_hors_portee("rm -rf *")
-    assert portee.commande_hors_portee("rm -rf build/*") != ""
+    assert "« notes.md »" in portee.commande_hors_portee("rm -rf *")
+    assert portee.commande_hors_portee("rm -rf build/*") == ""
 
 
 def test_une_redirection_qui_ecrase_du_preexistant_remonte(tmp_path: Path) -> None:
@@ -1303,3 +1311,240 @@ def test_chaque_recherche_de_processus_declaree_est_prouvee(verbe: str) -> None:
 
     assert "recherche de processus" in portee.commande_hors_portee(f"kill $({verbe} x)"), verbe
     assert portee.commande_hors_portee("kill $(cat .maestro/serveur.pid)") == ""
+
+
+# --- ⑩ Ce que la tâche a produit, désigné autrement que par son nom (#1505) ---
+
+#: Les racines des deux tâches du même run `fea601a5c629` (bilan du 2026-10-14,
+#: critère C2) dont un acte est revenu à la personne alors qu'il ne touchait que ce
+#: que la tâche avait produit : deux espaces de travail du temporaire de Maestro.
+RACINE_SOCLE_C2 = Path(
+    "C:/Users/Sam25/AppData/Local/Temp/maestro/maestro-dev-nextjs-pid11564-367p7z5o/socle-projet"
+)
+RACINE_CHARTE_C2 = Path(
+    "C:/Users/Sam25/AppData/Local/Temp/maestro/"
+    "maestro-designer-recettes-pid11564-o7m6g6ri/charte-ui"
+)
+
+#: 09:37, `dev-nextjs`, telle qu'elle a été jouée : les SVG du gabarit que
+#: `create-next-app` venait de poser, effacés avant d'écrire le `package.json`.
+#: Écartée après 240 s, rejouée en fin de tâche.
+SVG_DU_GABARIT_C2 = (
+    "rm public/*.svg && rmdir public 2>/dev/null; node -e '\n"
+    'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));\n'
+    'p.name="livre-recettes";p.scripts={dev:"next dev",build:"next build",'
+    'start:"next start",lint:"eslint .",typecheck:"tsc --noEmit"};\n'
+    'fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\\n");\'; cat package.json; ls'
+)
+
+#: 09:53, `designer-recettes`, telle qu'elle a été jouée : des captures d'écran
+#: dans le dossier qu'un `mktemp -d` de l'appel précédent avait créé, réutilisé en
+#: toutes lettres. Le nom de chaque cadre vient d'un `tr`, que le texte ne résout pas.
+CAPTURES_C2 = (
+    'D=/tmp/tmp.kXcWYdgUhF; E="/c/Program Files/Google/Chrome/Application/chrome.exe"\n'
+    "for p in essai-charte recettes/pizza-margherita; do n=$(echo $p | tr / -); "
+    "cat > $D/cadre-$n.html <<EOF\n"
+    '<html><body style="margin:0;background:#888"><iframe src="http://localhost:13147/$p" '
+    'width="375" height="1300" style="border:0;background:#fff"></iframe></body></html>\n'
+    "EOF\n"
+    '"$E" --headless=new --disable-gpu --hide-scrollbars --user-data-dir="$(cygpath -w $D)/profil" '
+    '--window-size=600,1300 --virtual-time-budget=8000 --screenshot="$(cygpath -w $D)/m-$n.png" '
+    '"file:///$(cygpath -m $D)/cadre-$n.html" 2>/dev/null; done; ls $D'
+)
+
+
+def test_effacer_par_un_motif_ce_que_la_tache_a_cree_ne_consulte_personne() -> None:
+    """Le premier défaut, sur la commande jouée et au hook : aucune entrée du
+    relevé ne répond à `public/*.svg`, donc l'agent n'efface que ce qu'il a
+    produit. Le même motif, sur un projet où la personne avait posé un logo,
+    revient à elle — et dit lequel."""
+    arbitrages: list[tuple[str, str]] = []
+    avant = frozenset({"", "README.md", "docs", "docs/brief.md"})
+    hook = _hook(
+        _politique_de_projet(), PorteeProjet(RACINE_SOCLE_C2, avant), arbitrages=arbitrages
+    )
+
+    assert _joue(hook, SVG_DU_GABARIT_C2) == {}
+    assert arbitrages == []
+    assert PorteeProjet(RACINE_SOCLE_C2).commande_hors_portee(SVG_DU_GABARIT_C2) == ""
+
+    logo = PorteeProjet(RACINE_SOCLE_C2, avant | {"public", "public/logo.svg"})
+    motif = logo.commande_hors_portee(SVG_DU_GABARIT_C2)
+    assert "ne l'a pas produit" in motif and "« public/logo.svg »" in motif
+
+
+#: Ce qui était là avant la tâche, pour les motifs qui suivent.
+PRESENTS_MOTIFS = (
+    "",
+    "notes.md",
+    "src",
+    "src/app.py",
+    "src/vieux",
+    "src/vieux/v1",
+    "src/vieux/v1/cache.pyc",
+)
+
+
+@pytest.mark.parametrize(
+    ("commande", "present"),
+    [
+        ("rm -rf *", "notes.md"),
+        ("rm -f *.md", "notes.md"),
+        ("rm -rf src/*", "src/app.py"),
+        ("cd src && rm -rf *", "src/app.py"),
+        ("rm -rf s?c", "src"),
+        ("rm -rf [st]*", "src"),
+        ("rm -rf [!s]*", "notes.md"),
+        # `[^…]` est la négation de bash : la comparaison de Python la lirait littérale.
+        ("rm -rf [^s]*", "notes.md"),
+        # Un dossier recouvert emporte ce qu'il porte.
+        ("rm -rf */vieux", "src/vieux"),
+        # `**` vaut autant de dossiers qu'on voudra : jamais moins de cibles.
+        ("rm -rf src/**/*.pyc", "src/vieux/v1/cache.pyc"),
+        # Sous Windows, `SRC` **est** `src`.
+        ("rm -f SRC/*.PY", "src/app.py"),
+        # Des accolades s'étendent avant le reste : `src` en est une.
+        ("rm -rf {build,src}", "src"),
+        ("mv src/{app,neuf}.py ailleurs", "src/app.py"),
+    ],
+)
+def test_un_motif_qui_recouvre_ce_qui_etait_la_remonte(commande: str, present: str) -> None:
+    motif = _portee_p3(PRESENTS_MOTIFS).commande_hors_portee(commande)
+
+    assert "ne l'a pas produit" in motif and f"« {present} »" in motif, commande
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "rm -rf build/*",
+        "rm -f public/*.svg",
+        "rm -f src/*.log",
+        "rm -rf src/vieux/v2*",
+        "cd .maestro/captures && rm chrome-*-sombre-512-*.png && ls",
+        "rm -rf {build,dist,.cache}",
+        "rm -f public/{next,vercel,file,globe,window}.svg",
+        "rm -rf build-{1..3}",
+    ],
+)
+def test_un_motif_qui_ne_recouvre_que_le_travail_de_la_tache_passe(commande: str) -> None:
+    assert _portee_p3(PRESENTS_MOTIFS).commande_hors_portee(commande) == "", commande
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        # Un segment qui commence par un point peut valoir `..` : le motif remonte.
+        "rm -rf .*/notes.md",
+        "rm -rf build/.?/x",
+        # Une classe POSIX, que la comparaison ne sait pas lire.
+        "rm -f [[:lower:]]*",
+        # Des accolades citées : on ne sait plus lesquelles s'étendront.
+        'rm -rf "{a,b}"*',
+        # Une partie que le texte ne donne pas.
+        "rm -f public/$x*.svg",
+        # Sortir par une accolade sort, comme par un chemin écrit.
+        "rm -rf {build,../voisin}",
+    ],
+)
+def test_un_motif_qu_on_ne_confronte_pas_remonte_toujours(commande: str) -> None:
+    """Chaque cas est prouvé sur un échantillon qui, faute de le reconnaître,
+    passerait : aucune de ces cibles ne répond **littéralement** au relevé."""
+    assert _portee_p3(("", "notes.md")).commande_hors_portee(commande) != "", commande
+
+
+def test_un_motif_qui_ne_recouvre_rien_vaut_son_texte() -> None:
+    """Sans `nullglob`, bash passe tel quel un motif qui ne recouvre rien : sur une
+    route dynamique de Next.js, `rm -rf src/app/[slug]` ne vise aucun dossier d'une
+    lettre, il efface `[slug]` lui-même. Le motif se lit donc aussi comme son texte."""
+    portee = _portee_p3(("", "src", "src/app", "src/app/[slug]", "src/app/[slug]/page.tsx"))
+
+    assert "« src/app/[slug] »" in portee.commande_hors_portee("rm -rf src/app/[slug]")
+    assert "ne l'a pas produit" in portee.commande_hors_portee('rm -rf "src/app/[slug]"')
+    assert "ne l'a pas produit" in portee.commande_hors_portee(
+        "find src/app/[slug] -name '*.tsx' -delete"
+    )
+    assert portee.commande_hors_portee("rm -rf src/app/[id]") == ""
+
+
+@pytest.mark.parametrize(
+    "commande", ["touch {a,/etc/x}", "cp notes.md {copie,../voisin}", "python app.py {a,~/b}"]
+)
+def test_un_chemin_qui_sort_par_une_accolade_sort(commande: str) -> None:
+    """Les accolades s'étendent avant que le chemin se situe, pour tout verbe : lu
+    d'un bloc, `{a,/etc/x}` restait un nom du projet."""
+    assert "sort du" in _portee_p3(("", "notes.md")).commande_hors_portee(commande), commande
+
+
+def test_un_find_confronte_aussi_ses_racines_ecrites_en_motif() -> None:
+    """La même lecture pour `find` : ses racines s'étendent (`src/*`, `{src,lib}`)
+    avant de se confronter au relevé, et un `-name` qu'on ne sait pas lire — une
+    classe POSIX — remonte. Une racine `src/*` passait : rien ne commence par
+    « src/* »."""
+    portee = _portee_p3(("", "src", "src/a", "src/a/x.py"))
+
+    assert "ne l'a pas produit" in portee.commande_hors_portee("find src/* -name '*.py' -delete")
+    assert "ne l'a pas produit" in portee.commande_hors_portee(
+        "find {src,lib} -name '*.py' -delete"
+    )
+    assert "ne l'a pas produit" in portee.commande_hors_portee("find . -name '[^_]*' -delete")
+    assert portee.commande_hors_portee("find . -name '[[:lower:]]*' -delete") != ""
+    assert portee.commande_hors_portee("find build/* {lib,dist} -name '*.py' -delete") == ""
+
+
+def test_ecrire_dans_son_etabli_ne_consulte_personne() -> None:
+    """Le second défaut, sur la commande jouée : `D` est posé dans la même
+    commande sur un nom de `mktemp`, et `$n` ne fait que finir le nom d'un fichier
+    **dans** ce dossier — tout entier à l'agent."""
+    arbitrages: list[tuple[str, str]] = []
+    hook = _hook(_politique_de_projet(), PorteeProjet(RACINE_CHARTE_C2), arbitrages=arbitrages)
+
+    assert _joue(hook, CAPTURES_C2) == {}
+    assert arbitrages == []
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "D=/tmp/tmp.kXcWYdgUhF; echo x > $D/cadre-$n.html",
+        "D=/tmp/tmp.kXcWYdgUhF; echo x > $D/$n",
+        'T=$(mktemp -d); echo x > "$T/$n.html"',
+        'T=$(mktemp -d); cd "$T/$n" && echo x > f.html',
+        'D=/tmp/tmp.kXcWYdgUhF; rm -f "$D/cadre-$n.html"',
+        "D=/tmp/tmp.kXcWYdgUhF; rm -f $D/*.png",
+        'T=$(mktemp -d); rm -rf "$T"/*',
+    ],
+)
+def test_un_nom_que_le_texte_ne_finit_pas_reste_dans_l_etabli(commande: str) -> None:
+    assert _portee_p3(("", "notes.md")).commande_hors_portee(commande) == "", commande
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        # Le nom du dossier lui-même n'est pas fini : `$n` peut en faire un voisin.
+        "D=/tmp/tmp.kXcWYdgUhF; echo x > $D$n",
+        'T=$(mktemp -d); echo x > "$T$n"',
+        # Un `..` écrit après l'inconnu remonte d'autant de dossiers qu'il en compte.
+        "D=/tmp/tmp.kXcWYdgUhF; echo x > $D/$n/../../voisin",
+        'T=$(mktemp -d); rm -rf "$T/$n/../.."',
+        # `.*` vaut aussi `..`.
+        "D=/tmp/tmp.kXcWYdgUhF; rm -rf $D/.*/x",
+        # Rien ne dit d'établi.
+        "echo x > /tmp/$n",
+        "echo x > $X/f",
+    ],
+)
+def test_ce_qui_peut_quitter_l_etabli_remonte_toujours(commande: str) -> None:
+    assert _portee_p3().commande_hors_portee(commande) != "", commande
+
+
+def test_un_dossier_courant_que_le_texte_ne_finit_pas_garde_son_inconnu() -> None:
+    """Après `cd src/$x`, le shell est dans un dossier dont le texte ne donne que
+    le début. La portée l'oubliait : elle jugeait `rm -rf notes.md` comme
+    `src/notes.md`, absent du relevé, et laissait passer une destruction dont
+    personne ne sait la cible. Ce qui n'en détruit aucune passe toujours."""
+    portee = _portee_p3(("", "notes.md", "src", "src/app.py"))
+
+    assert "ne donne pas" in portee.commande_hors_portee("cd src/$x && rm -rf notes.md")
+    assert portee.commande_hors_portee("cd src/$x && python app.py") == ""
