@@ -2129,8 +2129,11 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     la vraie stack** : le **passage** du banc (l'horodatage de `.maestro/scenarios/<h>/`), le
     **run** (`run <id>`) ou la **capture** qui la montre. Le verbe vérifie ce qu'une forme permet
     de vérifier : que le test est **défini dans l'arbre** (un nom inventé est refusé), que le
-    rapport du passage est là et rend **verts** les scénarios cités. Qu'un test nommé passe, il ne
-    le rejoue pas — c'est la session qui l'a vu passer, et qui le dit ;
+    rapport du passage est là et rend **verts** les scénarios cités. Un horodatage qu'aucun passage
+    des scénarios ne porte se cherche au **banc comparatif** (`.maestro/comparatif/<h>/`, #1512),
+    qui ne rend ni vert ni rouge : il prouve s'il porte au moins un passage abouti, jamais s'ils sont
+    tous empêchés. Qu'un test nommé passe, il ne le rejoue pas — c'est la session qui l'a vu passer,
+    et qui le dit ;
   - **le banc se paie une fois par lot, et au ticket seulement sur son chemin** (#1464,
     [docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md), qui renverse en partie le C2 de
     #1240). Le banc entier se joue sur `main` intégrée, par le pilote, après le drain final

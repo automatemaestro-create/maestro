@@ -26,6 +26,10 @@ Le détail vit dans les modules, chacun sur une question :
   la stack : `couverture.json` à côté du rapport (#1463) ;
 - `croisement` — le banc dû au ticket : les scénarios dont la carte croise le diff, la
   couverture la moins chère en tête (#1464, `lib.sh criteres`) ;
+- `comparatif` — le banc comparatif : un même objectif (`objectifs/*.toml`) joué sur
+  Maestro et sur un agent seul, en plusieurs passages, côte à côte
+  (`python -m maestro.scenarios.comparatif`, #1512) ;
+- `grille` — un livrable rejoué sur un clone propre, ligne par ligne (#1512) ;
 - `modele` — les objets inertes du verdict.
 """
 

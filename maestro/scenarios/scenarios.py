@@ -70,15 +70,17 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -235,6 +237,11 @@ ENCODAGE_DES_COMMANDES = ("PYTHONIOENCODING", "utf-8")
 #: Ce qu'un test double pour jouer une commande écrite : `(commande, dossier, délai)`
 #: → ce qu'elle a rendu, dans la forme de `maestro.sandbox.verification.jouer`.
 Joueur = Callable[[str, Path, float], execution.Execution]
+
+#: Ce que la personne répond à une question d'outillage : la question telle que le
+#: fil la sert → `(valeur, libre)`, `libre` quand elle répond avec ses mots plutôt
+#: que par une option de la carte (`_outiller_dans_le_fil`).
+Repondeur = Callable[[Mapping[str, Any]], tuple[str, bool]]
 
 
 @dataclass
@@ -1985,7 +1992,13 @@ def s10_un_depot_d_une_pile_hors_de_toute_table(ctx: Contexte) -> Issue:
 
 
 def _naitre_dans_l_atelier(
-    ctx: Contexte, conversation: str, demande: str, racine: Path, scenario: str
+    ctx: Contexte,
+    conversation: str,
+    demande: str,
+    racine: Path,
+    scenario: str,
+    *,
+    montage: Callable[[], AbstractContextManager[object]] = nullcontext,
 ) -> Issue | None:
     """Fait proposer un projet neuf par le fil **sans projet**, rangé dans `racine`.
 
@@ -1996,6 +2009,11 @@ def _naitre_dans_l_atelier(
     passage, comme S7. Rien n'est encore déclaré : c'est l'accord qui le fera
     (`_lancer_dans_le_fil`). Une correction qui ne prend pas est un **empêchement** —
     le scénario ne déclare rien ailleurs que dans l'atelier.
+
+    `montage` (#1512) encadre cette correction, et elle seule : c'est un geste du
+    banc, qui range le projet là où il le relira, et non un geste de la personne,
+    qui aurait accepté le dossier proposé. Le banc comparatif y suspend son compte
+    des gestes (`maestro.scenarios.comparatif.ClientCompteur.montage`).
     """
     proposee = _proposition_du_fil(ctx, conversation, _demander(ctx, conversation, "", demande))
     if proposee is None:
@@ -2006,11 +2024,14 @@ def _naitre_dans_l_atelier(
     ctx.note("projet proposé", _projet_en_mots(proposee))
     if _meme_dossier(str(proposee.get("racine") or ""), racine):
         return None
-    corrigee = _proposition_du_fil(
-        ctx,
-        conversation,
-        _demander(ctx, conversation, "", f"Mets-le plutôt dans le dossier {racine.as_posix()}."),
-    )
+    with montage():
+        corrigee = _proposition_du_fil(
+            ctx,
+            conversation,
+            _demander(
+                ctx, conversation, "", f"Mets-le plutôt dans le dossier {racine.as_posix()}."
+            ),
+        )
     if corrigee is None or not _meme_dossier(str(corrigee.get("racine") or ""), racine):
         return empeche(
             "le projet n'a pas pu être rangé dans l'atelier du banc (proposé : "
@@ -2135,6 +2156,7 @@ def _lancer_dans_le_fil(
     travail: str,
     *,
     versionner: bool = False,
+    repondre: Repondeur | None = None,
 ) -> Lancement | Issue:
     """L'accord, l'outillage, l'équipe, puis le run — le lancement, ou pourquoi il n'a pas eu lieu.
 
@@ -2146,6 +2168,10 @@ def _lancer_dans_le_fil(
     sa naissance quand le fil l'a proposé, sinon par le geste de l'écran Projets
     (`POST …/versionner`, le montage de S11) — un poste qui ne sait pas versionner est
     un empêchement, jamais un rouge du produit.
+
+    `repondre` est la personne qui répond aux questions d'outillage
+    (`_outiller_dans_le_fil`) : sans avis par défaut, ses propres choix pour le banc
+    comparatif (#1512).
     """
     accord = ctx.client.declarer_par_le_fil(conversation=conversation)
     ctx.note("accord donné", _extrait(accord))
@@ -2155,7 +2181,7 @@ def _lancer_dans_le_fil(
     projet_id = str(cree["id"])
     ctx.projet_id, ctx.racine = projet_id, racine
 
-    ecrites, inacheve = _outiller_dans_le_fil(ctx, conversation, accord)
+    ecrites, inacheve = _outiller_dans_le_fil(ctx, conversation, accord, repondre=repondre)
     if inacheve:
         return rouge(inacheve, cout_usd=None)
     if not ecrites:
@@ -2204,7 +2230,9 @@ def _lancer_dans_le_fil(
     return Lancement(projet_id, run_id, tuple(ecrites), proposition, validee)
 
 
-def _revue_d_apres_le_run(ctx: Contexte, conversation: str, run_id: str) -> str:
+def _revue_d_apres_le_run(
+    ctx: Contexte, conversation: str, run_id: str, *, repondre: Repondeur | None = None
+) -> str:
     """Tranche l'outillage que la fin du run a revu — `""`, ou pourquoi il ne s'est pas soldé.
 
     #1343 : ce qu'un projet neuf ne pouvait pas jouer se joue **dès que le projet le
@@ -2224,7 +2252,7 @@ def _revue_d_apres_le_run(ctx: Contexte, conversation: str, run_id: str) -> str:
         return ""
     if not isinstance(fin.get("piece"), Mapping):
         return ""
-    revues, inacheve = _outiller_dans_le_fil(ctx, conversation, fin)
+    revues, inacheve = _outiller_dans_le_fil(ctx, conversation, fin, repondre=repondre)
     if revues:
         ctx.note("outillage revu après le run", ", ".join(revues))
     return inacheve
@@ -2239,26 +2267,31 @@ def _projet_en_mots(proposee: Mapping[str, Any]) -> str:
 
 
 def _outiller_dans_le_fil(
-    ctx: Contexte, conversation: str, message: Mapping[str, Any]
+    ctx: Contexte,
+    conversation: str,
+    message: Mapping[str, Any],
+    *,
+    repondre: Repondeur | None = None,
 ) -> tuple[list[str], str]:
     """Conduit l'outillage que le fil ouvre, geste après geste — rend les pièces écrites (#1161).
 
     Le banc répond à ce que **le dernier message** demande, et à rien d'autre — la
     règle du canal (`question_en_attente`, `piece_en_attente`) : une question reçoit
-    sa réponse (`_reponse_a`), une pièce est écrite telle que la carte la montre, par
-    son empreinte, ou passée si cette version ne peut pas s'écrire. Le dernier message
-    qui ne demande plus rien clôt l'outillage.
+    sa réponse (`repondre`, sans avis par défaut : `_reponse_a`), une pièce est écrite
+    telle que la carte la montre, par son empreinte, ou passée si cette version ne peut
+    pas s'écrire. Le dernier message qui ne demande plus rien clôt l'outillage.
 
     Rend les chemins **écrits** — lus sur le fait que la réponse porte
     (`piece_ecrite`), jamais sur la pièce proposée —, et un motif quand l'outillage ne
     s'est pas soldé en `GESTES_OUTILLAGE` gestes.
     """
+    repondre = repondre or _reponse_a
     ecrites: list[str] = []
     for _geste in range(GESTES_OUTILLAGE):
         question = message.get("question")
         piece = message.get("piece")
         if isinstance(question, Mapping) and question.get("cle"):
-            valeur, libre = _reponse_a(question)
+            valeur, libre = repondre(question)
             ctx.note(
                 "question d'outillage",
                 f"« {question.get('intitule')} » → {valeur}{' (avec ses mots)' if libre else ''}",
@@ -3316,35 +3349,136 @@ def _le_livrable(ctx: Contexte, racine: Path) -> list[str]:
 
 
 def _servir(ctx: Contexte, copie: Path) -> tuple[dict[str, int | None], str]:
-    """Sert le livrable par `npm start` et sonde ses pages — leurs statuts, et la fin de sa sortie.
+    """Sert le livrable par `npm start` et sonde ses pages — leurs statuts, et sa sortie."""
+    return servir(
+        ctx, copie, commande=SERVIR_S12, attendus=dict.fromkeys(PAGES_S12, PAGE_SERVIE)
+    )
+
+
+class Poste(Protocol):
+    """Ce que servir un livrable demande au poste : jouer, sonder, attendre (#1512).
+
+    `Contexte` le satisfait ; le banc comparatif en a un à lui, qui ne parle à
+    aucune API (`maestro.scenarios.grille`).
+    """
+
+    @property
+    def horloge(self) -> Callable[[], float]: ...
+
+    @property
+    def dormir(self) -> Callable[[float], None]: ...
+
+    def jouer(self, commande: str, dossier: Path, delai_s: float) -> execution.Execution: ...
+
+    def sonder_la_page(self, url: str) -> int | None: ...
+
+
+def _a_redemander(statut: int | None, attendu: int) -> bool:
+    """La page doit-elle être redemandée ? Tant qu'elle n'a pas son statut — sauf une absente.
+
+    Une page **servie** se redemande jusqu'à rendre `200` : un serveur qui démarre peut
+    répondre autre chose le temps d'être prêt. Une page qui ne doit **pas** exister se
+    juge à sa **première réponse**, et ne se redemande que tant que personne ne répond
+    (#1512). Mesuré au rejeu de C3 le 2026-10-15 : une fiche inconnue rend `200` à la
+    première visite — le faux 404 du bilan —, puis `404` une fois en cache ; redemander
+    jusqu'au `404` effaçait le défaut que la personne voit.
+    """
+    if statut == attendu:
+        return False
+    return attendu == PAGE_SERVIE or statut is None
+
+
+#: Combien de ports le banc essaie, à partir du premier, pour servir un livrable.
+ESSAIS_PORT_SERVICE = 50
+
+
+def port_de_service(depuis: int = PORT_SERVICE_S12) -> int | None:
+    """Le port où servir un livrable, à partir de `depuis` — `None` s'il n'y en a aucun.
+
+    ⚠ **Libre en IPv4 comme en IPv6** (#1512). S'attacher à `127.0.0.1` ne suffit pas :
+    sous Windows, l'attachement réussit alors qu'un serveur Node écoute en double pile
+    sur `::` — ce que fait `next start`. Mesuré au rejeu de C3 le 2026-10-15 : le port
+    4600, jugé libre, était tenu ; le livrable est tombé sur `EADDRINUSE :::4600`, et la
+    sonde a interrogé le serveur d'un autre, dont elle a rendu les statuts comme ceux du
+    livrable. Le port retenu s'attache donc dans les deux familles. Par attachement
+    seulement, sans connexion d'essai : sous Windows, une connexion refusée attend son
+    délai entier, et un balayage en ouvrirait une par port (`Systeme.port_libre_depuis`).
+    Sur un poste sans IPv6, seule la famille IPv4 compte.
+    """
+    systeme = Systeme()
+    for port in range(depuis, min(depuis + ESSAIS_PORT_SERVICE, 65536)):
+        if systeme.attachable(HOTE_DEFAUT, port) and _libre_en_ipv6(port):
+            return port
+    return None
+
+
+def _libre_en_ipv6(port: int) -> bool:
+    """Peut-on écouter sur `[::]:port` **en double pile**, comme Node ? Vrai sans IPv6.
+
+    En double pile (`IPV6_V6ONLY` à 0) et non en IPv6 seul : c'est ainsi que Node
+    s'attache, et sous Windows un attachement IPv6 seul ne heurte pas un serveur qui
+    tient le port en double pile — mesuré en écrivant ce test, le port tenu passait.
+    """
+    if not socket.has_ipv6:
+        return True
+    try:
+        with _prise_double_pile() as prise:
+            prise.bind(("::", 0))
+    except OSError:
+        return True  # IPv6 indisponible : personne n'y écoute
+    try:
+        with _prise_double_pile() as prise:
+            prise.bind(("::", port))
+    except OSError:
+        return False
+    return True
+
+
+def _prise_double_pile() -> socket.socket:
+    """Une prise IPv6 qui accepte aussi l'IPv4 — l'option ignorée là où elle n'existe pas."""
+    prise = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    try:
+        prise.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    except (AttributeError, OSError):
+        pass
+    return prise
+
+
+def servir(
+    poste: Poste, copie: Path, *, commande: str, attendus: Mapping[str, int]
+) -> tuple[dict[str, int | None], str]:
+    """Sert `copie` par `commande` et sonde ses pages — leurs statuts, et la fin de sa sortie.
+
+    `attendus` donne, page par page, le statut qu'elle doit rendre : `200` pour une
+    page servie, `404` pour une page qui ne doit pas exister (le banc comparatif,
+    #1512). Le port est donné à `commande` par la variable `PORT`.
 
     Le serveur tourne dans un fil à part, borné par `DELAI_SERVICE_S` et arrêté avec
     sa descendance à son terme ; les pages sont sondées pendant ce temps, jusqu'à ce
-    qu'elles aient toutes répondu, que le serveur se soit arrêté, ou que la fenêtre
-    soit passée. Une sonde a toujours lieu, même sur un serveur déjà tombé : c'est ce
-    qui dit « sans réponse » plutôt que rien.
+    qu'elles aient toutes rendu leur statut attendu, que le serveur se soit arrêté, ou
+    que la fenêtre soit passée. Une sonde a toujours lieu, même sur un serveur déjà
+    tombé : c'est ce qui dit « sans réponse » plutôt que rien.
     """
-    port = Systeme().port_libre_depuis(HOTE_DEFAUT, PORT_SERVICE_S12)
-    vues: dict[str, int | None] = dict.fromkeys(PAGES_S12)
+    port = port_de_service()
+    vues: dict[str, int | None] = dict.fromkeys(attendus)
     if port is None:
         return vues, f"aucun port libre à partir de {PORT_SERVICE_S12} pour le servir"
     rendu: list[execution.Execution] = []
     serveur = threading.Thread(
-        target=lambda: rendu.append(
-            ctx.jouer(f"PORT={port} {SERVIR_S12}", copie, DELAI_SERVICE_S)
-        ),
+        target=lambda: rendu.append(poste.jouer(f"PORT={port} {commande}", copie, DELAI_SERVICE_S)),
         daemon=True,
     )
     serveur.start()
-    limite = ctx.horloge() + DELAI_SERVICE_S
+    limite = poste.horloge() + DELAI_SERVICE_S
     while True:
-        for page in PAGES_S12:
-            if vues[page] != PAGE_SERVIE:
-                vues[page] = ctx.sonder_la_page(f"http://{HOTE_DEFAUT}:{port}{page}")
-        servies = all(statut == PAGE_SERVIE for statut in vues.values())
-        if servies or not serveur.is_alive() or ctx.horloge() >= limite:
+        for page, attendu in attendus.items():
+            if not _a_redemander(vues[page], attendu):
+                continue
+            vues[page] = poste.sonder_la_page(f"http://{HOTE_DEFAUT}:{port}{page}")
+        rendues = all(not _a_redemander(vues[page], attendu) for page, attendu in attendus.items())
+        if rendues or not serveur.is_alive() or poste.horloge() >= limite:
             break
-        ctx.dormir(INTERVALLE_SERVICE_S)
+        poste.dormir(INTERVALLE_SERVICE_S)
     serveur.join(timeout=DELAI_SERVICE_S + DELAI_SONDE_PAGE_S)
     sortie = " ".join(rendu[0].sortie.split())[-300:] if rendu else ""
     return vues, sortie

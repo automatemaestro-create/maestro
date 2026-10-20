@@ -278,6 +278,69 @@ l'historique ci-dessus. L'ancien atelier est repris par la même règle, puis re
 porte plus rien ; ce qui n'y a pas la forme d'un passage est nommé, jamais touché. Le détail est
 dans `maestro/scenarios/projets.py`.
 
+**Un même objectif se joue sur Maestro et sur un agent seul, en plusieurs passages** (#1512). C'est
+la mesure du go/no-go de « Maestro fait mieux qu'un agent seul » ([docs/48](./48-decision-produit-pro-exploitable.md),
+[docs/50](./50-ecart-face-a-un-agent-seul.md)). Le bilan du 2026-10-14 l'avait jouée une fois de
+chaque côté, à la main ; `python -m maestro.scenarios.comparatif --objectif p5 --passages <n>` la
+joue en une commande, les côtés **alternés** d'un passage à l'autre :
+
+- **côté Maestro**, la vraie stack et le vrai modèle, l'objectif confié **par le fil** comme une
+  personne le ferait, sur le parcours de S9 et S12 : le projet naît du message, s'outille, se dote,
+  puis le run part et se suit jusqu'à son issue. La personne répond aux questions d'outillage par
+  **ses choix, avec ses mots**, jamais par une aide technique ;
+- **côté agent seul**, le même modèle, le même message et les mêmes outils que les agents de
+  Maestro, et rien d'autre : ni prompt système, ni plan, ni juge. L'agent passe par l'**adaptateur**
+  du fournisseur (`run_agent`), et aucun outil interne d'un CLI n'est lu
+  ([docs/44](./44-decision-maestro-possede-ses-contrats.md)). Il n'a **aucun garde-fou** : il
+  travaille dans un établi de l'atelier du banc, sous les racines déclarées (#1454), et ce qu'il
+  lance est confiné à sa session (#1279). L'isolation par défaut (#1511) s'y appliquera dès qu'elle
+  existera.
+
+Chaque passage range sa **durée** (du premier geste au run soldé, ou à la fin de la session), son
+**coût** et les **gestes de la personne** : chaque requête que le banc fait à sa place (un message,
+une réponse d'outillage, une pièce tranchée, un accord, un arbitrage). La correction qui range le
+projet dans l'atelier est un geste du banc et ne compte pas. L'agent seul en a un : son message. Le
+coût de Maestro est celui du **grand livre du projet** (Coûts & analytics), et le banc n'invente pas
+ce que ce grand livre ne voit pas. Depuis #1534, il y compte aussi le fil (la déclaration,
+l'outillage, l'équipe, les récits) et les tentatives coupées, qui manquaient pour 28 % de la dépense
+de C2 (docs/50 § 1.2). Le rapport détaille les deux postes hors des agents, le fil et la conduite des
+runs. Le coût de l'agent seul est celui que rapporte l'adaptateur.
+
+Puis **chaque livrable se rejoue sur un clone propre**, selon la grille du bilan
+(`maestro/scenarios/grille.py`). Ce qui se rejoue est ce que le projet a commité, jamais ce que le
+run a laissé dans sa racine. La grille a dix lignes :
+
+- **installation, lint, formatage, types, tests et build** passent par la commande que **le
+  livrable déclare** pour elle : ses scripts, son README, ses instructions ou son intégration
+  continue. Un modèle lit cette déclaration, et l'exécution tranche. Le banc ne tient aucune table
+  de piles, et un projet qui ne déclare rien pour une ligne la manque ;
+- **pages servies** : le livrable est servi par sa commande. Chaque page qu'il déclare répond `200`,
+  et une page qui ne doit pas exister répond `404` (le « faux 404 » du bilan). Une page absente se
+  juge à sa **première** réponse, celle que voit la personne : une fiche inconnue de C3 rend `200`
+  à la première visite, puis `404` une fois en cache. Le port de service est libre en IPv4 comme en
+  IPv6, faute de quoi la sonde interrogerait le serveur d'un autre ;
+- **CI écrite, convention de commit, outillage choisi suivi** : un modèle juge sur pièces.
+
+Une installation ratée laisse les lignes suivantes **non jouées**, comptées comme manquées. Un juge
+qui s'abstient ne compte ni pour ni contre.
+
+Un passage a trois issues. `abouti` veut dire que le run s'est terminé, ou que la session a rendu
+la main. `non abouti` est une perte : le passage est compté avec son coût, et son livrable est
+rejoué tel qu'il est. `empêché` veut dire que l'API a refusé, ou que le fournisseur a opposé sa
+limite d'usage, lue dans la `cause` du run ou par le classement du produit, jamais dans un texte.
+Un passage empêché est une **abstention** : il n'entre dans aucune médiane (#1529).
+
+Le rapport (`.maestro/comparatif/<passage>/rapport.md` et `rapport.json`) met les deux côtés
+côte à côte : pour la durée, le coût, les gestes et les lignes tenues, il donne la **médiane** des
+passages comptés, leur **étendue** (du plus petit au plus grand) et son rapport à la médiane, puis
+le rapport des médianes, Maestro sur l'agent seul. Vient ensuite la grille ligne par ligne, puis le
+déroulé de chaque passage. Le banc ne rend **aucun verdict** : le go/no-go se tranche sur ses
+chiffres. `--rejouer <côté>=<dépôt>` rejoue seulement la grille sur des livrables qui existent déjà,
+côte à côte, sans modèle pour les construire : les livrables de C2 et C3, ou les deux livrables d'un
+ticket (#1522). Comme le banc des scénarios, il n'est **pas en CI**. Sur p5, un passage coûte de
+l'ordre de 16 $ côté Maestro et 8 $ côté agent seul : la commande l'annonce avant de jouer, et un
+passage au vrai modèle s'annonce aussi à la personne.
+
 **S5 porte le dernier mètre** (#1224). Le retex du 2026-09-22 : la personne avait le lien du
 dossier — l'annonce de #928 le donne — et écrivait *« on ne me dit pas comment tester, pourtant on
 a généré une documentation »*. Le scénario demande un livrable exécutable, puis constate trois
