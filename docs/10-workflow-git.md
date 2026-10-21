@@ -6712,6 +6712,66 @@ bornée et se répare d'elle-même (au pire une session se réveille sur un pali
 se remet en attente), là où un verrou coûterait un fichier à nettoyer et un cas « verrou périmé » à
 trancher.
 
+#### La garde de quota : se mettre en pause **avant** la limite (#1551)
+
+La limite d'usage est une pause **subie** : un run tire sur le quota de la personne jusqu'au dernier
+pour cent, et elle n'en a plus pour travailler elle-même, ni dans cette fenêtre de 5 h, ni le reste
+de la semaine. La garde devance la limite. Elle a **deux seuils**, posés par la personne :
+
+| Fenêtre | Seuil par défaut | Au seuil |
+|---|---|---|
+| 5 h | **70 %** | le run se met en **pause** jusqu'à la remise à zéro de la fenêtre, puis repart |
+| semaine | **60 %** | le run **s'arrête**, reprenable par `--resume` |
+
+**Ce qu'elle lit.** Chaque session publie dans son flux des événements `rate_limit_event`. Leurs
+champs **typés** portent l'usage de chaque fenêtre et l'heure de sa remise à zéro :
+`"unifiedWindows":{"five_hour":{"utilization":0.79,"resetsAt":…},"seven_day":{…}}`. Rien n'est lu
+dans un texte. Le statut de l'événement n'y entre pas : la garde agit justement pendant que tout est
+encore `allowed`, et seul `"status":"rejected"` reste un refus (cf. plus haut).
+
+**Comment le run s'arrête.**
+- La session qui voit un seuil franchi le **déclare au run**, dans `<run-dir>/.seuil` : la fenêtre,
+  l'usage lu, sa remise à zéro, le seuil et le ticket.
+- Chaque formateur de flux relit ce témoin à chaque tick et **interrompt sa session**. Le PID de la
+  session est noté dans `<iid>.cpid` ; la session est arrêtée avec toute sa descendance, `claude.exe`
+  compris par son WINPID sous Windows.
+- Toutes les sessions s'arrêtent, même celles qui n'avaient encore rien publié.
+- Quand les deux seuils sont franchis, la semaine l'emporte, parce qu'elle arrête le run. Un témoin
+  dont la remise à zéro est passée ne vaut plus rien.
+
+**Ce qui suit.**
+- **Seuil de 5 h** : la session rejoint le rendez-vous `.limite` (ci-dessus). Elle y apporte l'heure
+  **exacte** de la remise à zéro, une information de source `reset`. Elle se rouvre ensuite **par son
+  uuid**. La pause n'entame pas les reprises du ticket (`--max-reprises`) et ne compte pas dans le
+  plafond des 5 h 30 : sa remise à zéro est lue, pas devinée. Aucun ticket n'est compté en échec.
+- **Seuil de la semaine** : la session rend un code à elle. Le pilote cesse de lancer **sans solder**
+  le ticket. Faute de ligne de bilan, ce ticket était « en vol » à la coupure, et `--resume` le rouvre
+  dans sa session (§11.8). Solder le ticket en échec, comme la limite hebdomadaire, l'aurait laissé
+  « En cours » et assigné : il aurait été sauté par tous les runs suivants.
+- **Au départ** : le dernier usage relevé se garde pour le poste dans `.maestro/orchestrate/usage`.
+  Ce fichier est écrit par chaque session et par la sonde du modèle, qui passe en flux pour
+  l'occasion. Au-delà du seuil de la semaine, le run **ne part pas** (code `3`) : aucun run en vol
+  n'est arrêté, aucune session n'est lancée. Au-delà de celui de 5 h, le pilote attend la remise à
+  zéro avant son premier ticket.
+- L'usage d'une fenêtre ne fait que croître jusqu'à sa remise à zéro. Une valeur relue dans sa
+  fenêtre est donc un **minimum**, jamais un faux positif.
+- **Le banc en fin de run** (§11.13) s'abstient au-delà d'un seuil, pour ne pas tirer sur le quota
+  que la garde réserve. Les sessions `/mr-fix` ne partent pas tant qu'un seuil est en cours.
+
+**Réglages.** `--seuil-5h <n>` et `--seuil-semaine <n>`, ou les variables
+`MAESTRO_ORCHESTRATE_SEUIL_5H` et `MAESTRO_ORCHESTRATE_SEUIL_SEMAINE`, en pourcentage entier.
+- `0` éteint la garde de sa fenêtre, et une valeur hors de 0-100 refuse le run.
+- La ligne `plan :` annonce les deux seuils, avec leur origine : par exemple
+  `garde de quota 5 h ≥ 70 %, semaine ≥ 60 % (défaut)`.
+
+**Ce qu'elle ne fait pas.**
+- Elle ne voit que ce que **le run** fait consommer. Le travail interactif de la personne n'apparaît
+  dans l'usage relevé que lorsqu'une session du run publie à nouveau.
+- Une session déjà lancée peut dépasser le seuil de quelques points avant son premier événement.
+  L'interruption se fait au tick suivant, en quelques secondes, et non au jeton près.
+- Elle ne lit aucun autre outil que le flux du CLI : rien de son état interne, aucun fichier
+  d'identifiants, aucun point d'accès non documenté.
+
 ### 11.5 Savoir où en est un run — `status.sh`
 
 La console d'un run répond très bien à « où ça en est ? » — depuis #240 elle y répond même très
