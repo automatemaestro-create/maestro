@@ -817,6 +817,63 @@ def regle_run_absent(branche: str) -> dict:
     return {"contient": [f"actions/runs?branch={branche}"], "reponse": {"workflow_runs": []}}
 
 
+def regle_run_par_id(
+    run: int = 900,
+    sha: str = "",
+    statut: str = "completed",
+    conclusion: str = "success",
+) -> dict:
+    """UN run lu par son identifiant (`gh_pipeline_status`, la cible de `/mr-fix`).
+
+    ⚠ Elle se place APRÈS `regle_jobs` du même run : son fragment `actions/runs/<id>` est aussi
+    celui des jobs, et la première règle qui matche répond.
+    """
+    return {
+        "contient": [f"actions/runs/{run}"],
+        "reponse": {"id": run, "status": statut, "conclusion": conclusion or None,
+                    "head_sha": sha},
+    }
+
+
+def regle_jobs(
+    run: int = 900,
+    en_cours: tuple[str, ...] = (),
+    termines: tuple[str, ...] = ("shellcheck", "python-lint", "mypy", "perimetre"),
+    apres: int = 0,
+) -> dict:
+    """Les jobs d'un run (`gh_jobs_en_cours`, #1553), dans l'ORDRE DES CLÉS de GitHub.
+
+    `en_cours` nomme les jobs qui tournent encore : c'est l'état du 2026-10-21 (run 39623249789),
+    où l'agrégat du run disait `completed/success` pendant que `pytest` et `shellcheck` restaient
+    `in_progress` dans ses jobs comme dans les check-runs de la tête — et GitHub refusait le merge.
+
+    Chaque job porte une ÉTAPE déjà terminée, y compris celui qui tourne : un parseur qui lirait le
+    statut d'une étape au lieu de celui du job tiendrait le job pour fini. `apres=N` : même
+    mécanique que `regle_run` — la règle ne répond qu'à partir du (N+1)ᵉ appel, une règle placée
+    après elle répondant avant (#648).
+    """
+    def job(numero: int, nom: str, statut: str) -> dict:
+        return {
+            "id": 7000 + numero,
+            "run_id": run,
+            "head_sha": "",
+            "status": statut,
+            "conclusion": "success" if statut == "completed" else None,
+            "name": nom,
+            "steps": [{"name": "Set up job", "status": "completed", "conclusion": "success",
+                       "number": 1}],
+        }
+    jobs = [job(i, nom, "completed") for i, nom in enumerate(termines)]
+    jobs += [job(len(jobs) + i, nom, "in_progress") for i, nom in enumerate(en_cours)]
+    regle: dict[str, object] = {
+        "contient": [f"actions/runs/{run}/jobs"],
+        "reponse": {"total_count": len(jobs), "jobs": jobs},
+    }
+    if apres:
+        regle["apres"] = apres
+    return regle
+
+
 def regle_merge(pr: int = 42, merge: bool = True) -> dict:
     """Le PUT qui merge.
 

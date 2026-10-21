@@ -47,12 +47,14 @@ from harnais_forge import (
     Depot,
     ecritures,
     monte_depot,
+    regle_jobs,
     regle_merge,
     regle_pr,
     regle_pr_fermante,
     regle_prs_ouvertes,
     regle_run,
     regle_run_absent,
+    regle_run_par_id,
 )
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -870,6 +872,171 @@ def test_merge_mr_nomme_la_naissance_dans_ses_deux_formes(depot: Depot) -> None:
     assert perime.returncode == 3, perime.stdout + perime.stderr
     assert "pas encore né" in perime.stderr
     assert "périmé" in perime.stderr, "la cause reste distinguable dans le même message"
+
+
+# =====================================================================================
+# Un vert qui PRÉCÈDE ses jobs (#1553)
+# =====================================================================================
+# Le fait du 2026-10-21, PR #1552 (run 39623249789, tête 0d07db5b) : l'agrégat du run disait
+# `completed/success` pendant que `pytest` et `shellcheck` restaient `in_progress` dans ses jobs
+# comme dans les check-runs de la tête. `pipeline-wait` rendait `0` aussitôt, en mode ref comme en
+# mode id, et `merge-mr` sortait en `6` : GitHub refusait le merge, « 2 of 7 required status checks
+# are in progress » (HTTP 405). Un merge DIFFÉRÉ devenait une ANOMALIE, sortie de la file du pilote.
+#
+# Le vert de l'agrégat se confirme donc sur les jobs du run, et c'est le SEUL statut qui se
+# confirme : c'est le seul qui ouvre un merge. Ce que ces tests gardent aussi, c'est le PRIX de la
+# confirmation (#602) — une lecture de plus, payée seulement sur un vert du run qu'on attend.
+
+RUN = 900
+
+
+def lectures_jobs(depot: Depot, run: int = RUN) -> list[str]:
+    """Les lectures des jobs d'un run — le surcoût de la confirmation, compté en appels (#602)."""
+    return [ligne for ligne in depot.appels() if f"actions/runs/{run}/jobs" in ligne]
+
+
+@pytest.mark.parametrize("cible", ["chore/1-x", str(RUN)], ids=["ref", "run-id"])
+def test_un_vert_dont_des_jobs_tournent_encore_n_est_pas_un_vert(depot: Depot, cible: str) -> None:
+    """Le défaut du ticket, dans ses deux modes : l'agrégat vert ne fait pas rendre `0`.
+
+    Les jobs tournent jusqu'au bout du plafond : le verbe doit sortir en `4` (« pas encore »), le
+    statut imprimé disant ce qu'il a vu — `running`, jamais le `success` d'un agrégat démenti.
+    """
+    depot.pose_etat(rest=[
+        regle_jobs(RUN, en_cours=("pytest", "shellcheck")),
+        regle_run_par_id(RUN),
+        regle_run("chore/1-x", sha="abc", run=RUN),
+    ])
+    r = depot.lib("pipeline-wait", cible, "--timeout", "1", reglages=VITE)
+    assert r.returncode == 4, (
+        "un agrégat vert dont des jobs tournent encore a été rendu vert — `merge-mr` se ferait "
+        f"refuser par GitHub et sortirait en 6\n{r.stdout}{r.stderr}"
+    )
+    assert r.stdout.strip() == "running"
+    assert "pytest" in r.stderr and "shellcheck" in r.stderr, (
+        f"le plafond nomme les jobs qui tournent encore, c'est ce qui le rend lisible\n{r.stderr}"
+    )
+
+
+def test_le_vert_est_rendu_quand_ses_jobs_ont_fini(depot: Depot) -> None:
+    """La transition, au rang du sondage (#648) : deux lectures « en cours », puis tout est fini.
+
+    Et son PRIX, en appels : une lecture des jobs par sondage tant que l'agrégat est vert — le temps
+    que GitHub mette ses deux vues d'accord —, et pas une de plus.
+    """
+    depot.pose_etat(rest=[
+        regle_jobs(RUN, apres=2),
+        regle_jobs(RUN, en_cours=("pytest", "shellcheck")),
+        regle_run("chore/1-x", sha="abc", run=RUN),
+    ])
+    r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=VITE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == "success"
+    assert len(sondages(depot)) == 3, sondages(depot)
+    assert len(lectures_jobs(depot)) == 3, lectures_jobs(depot)
+
+
+def test_la_confirmation_ne_se_paie_que_sur_un_vert_du_run_attendu(depot: Depot) -> None:
+    """Le critère #602 du ticket : le verbe n'appelle pas la forge plus souvent sans raison.
+
+    Trois décors, un compte : un vert nominal coûte UNE lecture des jobs ; un run qui tourne n'en
+    coûte aucune (l'agrégat suffit à dire « pas fini ») ; et le vieux vert de la push précédente non
+    plus — il est écarté avant d'être confirmé, faute de quoi chaque sondage d'une naissance de
+    trente minutes paierait une lecture pour un run qu'on jette.
+    """
+    depot.pose_etat(rest=[regle_jobs(RUN), regle_run("chore/1-x", sha="abc", run=RUN)])
+    vert = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "5", reglages=VITE)
+    assert vert.returncode == 0, vert.stdout + vert.stderr
+    assert len(lectures_jobs(depot)) == 1, f"un vert, une confirmation : {lectures_jobs(depot)}"
+
+    depot.pose_etat(rest=[
+        regle_jobs(RUN),
+        regle_run("chore/1-x", sha="abc", run=RUN, statut="in_progress", conclusion=""),
+    ])
+    avant = len(lectures_jobs(depot))
+    tourne = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "1", reglages=VITE)
+    assert tourne.returncode == 4, tourne.stdout + tourne.stderr
+    assert len(lectures_jobs(depot)) == avant, "un run qui tourne ne se confirme pas"
+
+    depot.pose_etat(
+        graphql=[regle_pr("chore/1-x", pr=PR, sha=SHA_TETE, ferme=(1,))],
+        rest=[regle_jobs(RUN), regle_run("chore/1-x", sha=SHA_AVANT, run=RUN)],
+    )
+    avant = len(lectures_jobs(depot))
+    naissance = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "600", reglages=NAISSANCE)
+    assert naissance.returncode == 6, naissance.stdout + naissance.stderr
+    assert len(lectures_jobs(depot)) == avant, (
+        "le vieux vert de la push précédente a été confirmé — une lecture par sondage pour un run "
+        f"qu'on écarte\n{lectures_jobs(depot)[avant:]}"
+    )
+
+
+def test_des_jobs_illisibles_laissent_l_agregat_decider(depot: Depot) -> None:
+    """La confirmation enrichit, elle ne devient jamais un prérequis.
+
+    Une forge qui ne rend pas les jobs laisse le verdict à l'agrégat, comme avant #1553 : en faire
+    un « pas encore » ferait attendre quinze minutes une lecture qui ne viendra pas. Le pire qui
+    reste possible est le refus de GitHub au merge, avec le `sha` du PUT — un merge refusé, jamais
+    un merge non vérifié.
+    """
+    depot.pose_etat(rest=[regle_run("chore/1-x", sha="abc", run=RUN)])
+    r = depot.lib("pipeline-wait", "chore/1-x", "--timeout", "5", reglages=VITE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == "success"
+    assert len(lectures_jobs(depot)) == 1, "la lecture a bien été tentée, et son échec toléré"
+
+
+def test_merge_mr_attend_des_jobs_qui_tournent_au_lieu_de_se_faire_refuser(depot: Depot) -> None:
+    """`3` et non `6` : le pilote merge aussi SANS `pipeline-wait` (drain au fil de l'eau, #419).
+
+    Sous un agrégat vert démenti par ses jobs, `merge-mr` tentait le PUT, GitHub le refusait, et la
+    PR sortait de la file comme une anomalie à confier à un humain. Le verdict « pas encore rendu »
+    la garde en file — c'est le seul code que le pilote y repasse.
+    """
+    sha = _mergeable(depot)
+    depot.pose_etat(rest=[
+        regle_jobs(RUN, en_cours=("pytest", "shellcheck")),
+        regle_run(BRANCHE, sha=sha, run=RUN),
+    ])
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert "pytest" in r.stderr and "shellcheck" in r.stderr
+    assert "pas encore né" not in r.stderr, (
+        "le run est né et tourne : ce n'est pas une attente de NAISSANCE, que le pilote nommerait "
+        "en proposant un dispatch inutile (#595)"
+    )
+    assert not [ligne for ligne in depot.appels() if f"pulls/{PR}/merge" in ligne], (
+        "le merge a été tenté sur un vert démenti par ses jobs"
+    )
+
+
+def test_merge_mr_apres_un_pipeline_wait_vert_ne_voit_plus_le_refus(depot: Depot) -> None:
+    """La séquence de `/ticket-finish` et du drain final : `pipeline-wait`, puis `merge-mr`.
+
+    Le `0` de l'attente ne tombe qu'une fois les jobs finis, et le merge qui suit passe — là où, le
+    2026-10-21, il prenait le refus de GitHub en pleine figure.
+
+    Le double accepte le PUT quoi qu'il arrive : ce qui prouve ici, c'est l'ORDRE du journal. Le
+    merge ne part qu'après la troisième lecture des jobs, la première à les voir finis ; avant
+    #1553, il partait sans qu'aucune n'ait eu lieu. La quatrième est celle de `merge-mr`, qui ne
+    s'en remet pas à l'attente qui le précède : son prérequis 4 est le sien.
+    """
+    sha = _mergeable(depot)
+    depot.pose_etat(rest=[
+        regle_jobs(RUN, apres=2),
+        regle_jobs(RUN, en_cours=("pytest", "shellcheck")),
+        regle_run(BRANCHE, sha=sha, run=RUN),
+    ])
+    attente = depot.lib("pipeline-wait", BRANCHE, "--timeout", "600", reglages=VITE)
+    assert attente.returncode == 0, attente.stdout + attente.stderr
+    r = depot.lib("merge-mr", BRANCHE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    journal = depot.appels()
+    merges = [i for i, ligne in enumerate(journal) if f"pulls/{PR}/merge" in ligne]
+    jobs = [i for i, ligne in enumerate(journal) if f"actions/runs/{RUN}/jobs" in ligne]
+    assert len(merges) == 1, merges
+    assert len(jobs) == 4, f"trois sondages de l'attente, une confirmation du merge : {jobs}"
+    assert jobs[2] < merges[0], "le merge est parti avant que les jobs ne soient vus finis"
 
 
 # =====================================================================================
