@@ -788,6 +788,65 @@ def commiter_en_attente(espace: Path, branche: str) -> None:
         )
 
 
+def deposer_sur_la_base(projet: Projet, relatif: str, contenu: str, *, message: str) -> Path:
+    """Écrit un fichier **de Maestro** dans un projet versionné et le commite sur sa base (#1530).
+
+    La recette du run (`maestro.engine.recette`) s'écrit dans le projet, et dans un
+    projet versionné un fichier laissé non commité rendrait la racine « occupée » :
+    la fusion suivante serait refusée (`_exige_racine_disponible`), donc le run
+    d'après n'écrirait plus rien. Le fichier est donc **commité**, seul, sur la
+    branche de travail — un commit que `git revert` défait, comme une fusion.
+
+    Mêmes exigences que la fusion, et pour la même raison : la racine est **propre
+    et posée sur sa base**, sinon rien n'est écrit — on ne commite pas sous les pieds
+    de quelqu'un. Le chemin est résolu sous la racine (EF-38). Les hooks du dépôt ne
+    sont pas contournés (`commiter_en_attente`) : un refus remonte motivé, et ce qui
+    a été écrit est défait — la racine est rendue telle qu'on l'a trouvée.
+
+    Ne décide pas qu'on a le droit d'écrire : c'est l'appelant qui le tient de
+    l'accord d'écriture du run (#706). Lève `ApplicationRefusee` ou `RacineRefusee`.
+    """
+    racine = valider_racine(projet.racine)
+    _exige_racine_disponible(racine, _base(projet))
+    cible = chemin_dans_racine(racine, relatif)
+    precedent = cible.read_bytes() if cible.is_file() else None
+    try:
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        cible.write_text(contenu, encoding="utf-8")
+    except OSError as exc:
+        raise ApplicationRefusee(
+            "ecriture-refusee", f"Écriture impossible dans le projet : {relatif} — {exc}"
+        ) from exc
+    indexe = _git(racine, "add", "--", relatif)
+    commit = (
+        _git(
+            racine,
+            "-c",
+            f"user.name={AUTEUR_NOM}",
+            "-c",
+            f"user.email={AUTEUR_COURRIEL}",
+            "commit",
+            "-m",
+            message,
+            "--",
+            relatif,
+        )
+        if indexe.returncode == 0
+        else indexe
+    )
+    if commit.returncode != 0:
+        # Rendre la racine telle qu'on l'a trouvée : ni index, ni fichier de Maestro.
+        _git(racine, "reset", "-q", "--", relatif)
+        if precedent is None:
+            cible.unlink(missing_ok=True)
+        else:
+            cible.write_bytes(precedent)
+        raise ApplicationRefusee(
+            "commit-refuse", f"Commit de {relatif} refusé : {_message_git(commit)}"
+        )
+    return cible
+
+
 def _exige_racine_disponible(racine: Path, base: str) -> None:
     """Refuse si la racine n'est pas propre, ou pas posée sur la branche de travail."""
     tete = _git(racine, "rev-parse", "--abbrev-ref", "HEAD")

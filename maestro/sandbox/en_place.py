@@ -242,7 +242,12 @@ DOSSIER_ATELIER = ".maestro"
 #: importer `maestro.outillage` d'ici refermerait un cycle (son paquet importe
 #: `FrontiereEcriture` pour écrire l'outillage). Le lien se lit dans les deux
 #: sens par ce commentaire, et il n'y a qu'un nom à tenir.
-ATELIERS_RESERVES: frozenset[str] = frozenset({"outillage"})
+#:
+#: `.maestro/recette/` porte les **recettes des runs** (#1530,
+#: `maestro.engine.recette.DOSSIER_RECETTE`) — sur p5, la tâche de recette
+#: s'appelait justement `recette-finale` : un plan qui nommerait la sienne
+#: `recette` partagerait sinon son atelier avec ce que la personne relit.
+ATELIERS_RESERVES: frozenset[str] = frozenset({"outillage", "recette"})
 
 #: Ce qu'un atelier au nom réservé devient. Suffixé plutôt que refusé : le nom
 #: d'une tâche n'est pas un geste de l'utilisateur, et faire échouer une tâche

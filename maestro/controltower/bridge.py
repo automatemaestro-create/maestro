@@ -60,7 +60,7 @@ from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depu
 from maestro.espace import nom_redis
 from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
-from maestro.telemetry import ETAPE_SONDE, LOGGER_NAME, redact_secrets
+from maestro.telemetry import ETAPE_RECETTE, ETAPE_SONDE, LOGGER_NAME, redact_secrets
 from maestro.telemetry.journal import SUFFIXE_ETAPE_USAGE
 from maestro.telemetry.usage import StepUsage
 
@@ -109,7 +109,10 @@ _ETAPE_PLAFOND = "plafond"
 #: l'équipe au plan et dit la cadence du run, le moteur reprend, le run attend sa
 #: décision au plafond, Maestro éprouve son point de contrôle — la **sonde**,
 #: #1398, **importée** comme le suffixe des relevés et pour la même raison : mal
-#: reconnue, elle ne serait pas perdue mais comptée dans une tâche fantôme).
+#: reconnue, elle ne serait pas perdue mais comptée dans une tâche fantôme —, et
+#: Maestro recette le livrable intégré contre le brief — la **recette**, #1530,
+#: importée pour la même raison, et qui porte son verdict structuré comme une
+#: vérification de tâche porte le sien).
 _ETAPES_RUN = (
     _ETAPE_PLANIFICATION,
     _ETAPE_BRIEF,
@@ -118,6 +121,7 @@ _ETAPES_RUN = (
     _ETAPE_CADENCE,
     _ETAPE_PLAFOND,
     ETAPE_SONDE,
+    ETAPE_RECETTE,
 )
 
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
@@ -462,9 +466,11 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
     # projection, un plan déjà posé par rien du tout.
     noeuds = noeuds_depuis(record.get("plan")) if etape == _ETAPE_PLANIFICATION else []
     # Le verdict d'une vérification (#1177), porté par la seule étape
-    # `:verification` : ailleurs, rien — donc None, et la projection ne touche à
-    # rien de ce que la tâche montrait déjà.
+    # `:verification` — et celui de la recette du run (#1530), porté par l'étape
+    # `recette` : ailleurs, rien — donc None, et la projection ne touche à rien de
+    # ce que la tâche ou le run montrait déjà.
     verification = record.get("verification")
+    porte_un_verdict = etape.endswith(_SUFFIXE_VERIFICATION) or etape == ETAPE_RECETTE
     # La cadence du run (#1298), portée par la seule étape `cadence`.
     cadence = record.get("cadence") if etape == _ETAPE_CADENCE else None
     return (
@@ -504,7 +510,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
             resultat=resultat,
             verification=(
                 dict(verification)
-                if etape.endswith(_SUFFIXE_VERIFICATION) and isinstance(verification, Mapping)
+                if porte_un_verdict and isinstance(verification, Mapping)
                 else None
             ),
             cadence=dict(cadence) if isinstance(cadence, Mapping) else None,
