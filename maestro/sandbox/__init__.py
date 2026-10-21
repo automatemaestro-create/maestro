@@ -57,11 +57,13 @@ from maestro.sandbox.en_place import (
 )
 from maestro.sandbox.projet import (
     PREFIXE_BRANCHE,
+    ConflitAvecLaBase,
     CopieDuProjet,
     EspaceCopieDeTravail,
     EspaceProjetIndisponible,
     TravailAnterieur,
     branche_de_tache,
+    conflit_avec_la_base,
     espace_de_travail,
     sauver_le_travail_en_vol,
 )
@@ -77,6 +79,7 @@ __all__ = [
     "DOSSIER_ATELIER",
     "PREFIXE_BRANCHE",
     "CopieDuProjet",
+    "ConflitAvecLaBase",
     "EspaceCopieDeTravail",
     "EspaceEnPlace",
     "EspaceProjetIndisponible",
@@ -89,6 +92,7 @@ __all__ = [
     "Workspace",
     "branche_de_tache",
     "chemin_atelier",
+    "conflit_avec_la_base",
     "espace_de_travail",
     "frontiere_de",
     "isolated_workspace",

@@ -79,7 +79,7 @@ from pathlib import Path
 from maestro.emplacements import jetable, repertoire_temporaire
 from maestro.fichiers import retirer_arbre
 from maestro.projets.application import ApplicationRefusee, commiter_en_attente
-from maestro.projets.modele import Projet
+from maestro.projets.modele import AUTEUR_COURRIEL, AUTEUR_NOM, Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
 from maestro.sandbox.ramassage import PREFIXE_COMMUN, racine_des_espaces
@@ -720,6 +720,208 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
         commiter_en_attente(abandonne, branche)
         trouve = True
     return trouve
+
+
+@dataclass(frozen=True)
+class ConflitAvecLaBase:
+    """Ce qui ferait refuser la fusion d'une tâche, constaté **à sa livraison** (#1548).
+
+    Constaté sur le run `afb6b43fffb6` (2026-10-20) : des tâches parties de la même
+    base réécrivaient les mêmes fichiers, la première fusionnait, et Git refusait les
+    suivantes — **après** le démontage de leur worktree, quand plus aucun agent n'était
+    là pour résoudre. La tâche restait « terminée » sans que son travail soit entré.
+
+    Le constat se fait donc là où l'agent peut encore agir : son espace ouvert, sa
+    livraison confrontée à la branche de travail **telle qu'elle est maintenant**
+    (`conflit_avec_la_base`). `tete` est le commit de la base confronté — ce qui dit,
+    d'une livraison à l'autre, si elle a bougé ; `fichiers` ceux que Git ne sait pas
+    fusionner ; `commits` les sujets de ce que la base a reçu depuis le départ de la
+    branche (bornés à `_COMMITS_DITS_MAX`, `nb_commits` les compte tous). `en_cours` :
+    l'agent a commencé d'intégrer la base et l'a laissée en conflit — ses `fichiers`
+    sont ceux qu'il n'a pas résolus.
+    """
+
+    branche: str
+    base: str
+    tete: str
+    fichiers: tuple[str, ...]
+    commits: tuple[str, ...] = ()
+    nb_commits: int = 0
+    en_cours: bool = False
+
+    def reduit(self, precedent: ConflitAvecLaBase) -> bool:
+        """Ce conflit est-il un progrès sur `precedent`, celui de la livraison d'avant ?
+
+        La même règle que la recette (#1177) : une correction qui ne fait rien tenir de
+        plus arrête la boucle. Sur une base qui n'a pas bougé, il faut moins de fichiers
+        en conflit ; une base qui a bougé pose un autre conflit — une tâche voisine a
+        fusionné entre-temps —, qui n'est pas l'échec de la correction, et une
+        intégration commencée (ou terminée) est un geste, pas une correction vaine.
+        """
+        if self.tete != precedent.tete or self.en_cours != precedent.en_cours:
+            return True
+        return len(self.fichiers) < len(precedent.fichiers)
+
+    def resume(self) -> str:
+        """Le conflit en une ligne — pour le fil, et pour la cause d'un arrêt."""
+        nommes = ", ".join(self.fichiers[:_FICHIERS_DITS_MAX])
+        reste = len(self.fichiers) - _FICHIERS_DITS_MAX
+        if reste > 0:
+            nommes += f" et {reste} autre(s)"
+        if self.en_cours:
+            return f"intégration de {self.base} dans {self.branche} non terminée : {nommes}"
+        return f"{self.branche} en conflit avec {self.base} : {nommes}"
+
+    def consigne(self) -> str:
+        """Le retour qui rend la livraison à l'agent : ce qui a bougé, ce qui bute, le geste."""
+        fichiers = "\n".join(f"- `{chemin}`" for chemin in self.fichiers[:_FICHIERS_DITS_MAX])
+        if len(self.fichiers) > _FICHIERS_DITS_MAX:
+            fichiers += f"\n- et {len(self.fichiers) - _FICHIERS_DITS_MAX} autre(s)"
+        if self.en_cours:
+            return (
+                f"Ta livraison n'entre pas encore dans le projet : l'intégration de "
+                f"`{self.base}` dans ta branche `{self.branche}` est commencée, mais ces "
+                f"fichiers sont toujours en conflit :\n{fichiers}\n"
+                "Résous chacun en gardant ton travail **et** ce que la base a reçu, puis "
+                "termine la fusion (`git add`, puis `git commit`). Ta livraison sera de "
+                f"nouveau vérifiée, puis de nouveau confrontée à `{self.base}`."
+            )
+        sujets = ", ".join(f"« {sujet} »" for sujet in self.commits)
+        if self.nb_commits > len(self.commits):
+            sujets += f" et {self.nb_commits - len(self.commits)} autre(s)"
+        recu = f" — {self.nb_commits} commit(s) : {sujets}" if self.nb_commits else ""
+        return (
+            f"Ta livraison n'entre pas dans le projet : depuis que ta branche "
+            f"`{self.branche}` est partie, sa branche de travail `{self.base}` a reçu le "
+            f"travail d'autres tâches ou de la personne{recu}. Git refuserait d'y "
+            f"fusionner le tien — conflit sur :\n{fichiers}\n"
+            "Commite d'abord ton travail sur ta branche (`git add -A`, puis `git commit`), "
+            f"puis intègre-y `{self.base}`, ici même (`git merge {self.base}`) : résous "
+            "chaque conflit en gardant ton travail **et** ce qu'elle a reçu, et termine la "
+            "fusion par un commit. Ne réécris pas l'historique (ni `rebase`, ni `reset`), "
+            "et n'écris pas dans le dossier d'origine du projet. Ta livraison sera de "
+            f"nouveau vérifiée, puis de nouveau confrontée à `{self.base}`."
+        )
+
+
+def conflit_avec_la_base(
+    espace: Path | str, projet: Projet, tache_id: str
+) -> ConflitAvecLaBase | None:
+    """Ce qui ferait refuser la fusion de la tâche dans son projet, à cet instant — ou None (#1548).
+
+    Ce que la branche de la tâche **porterait** — ses commits, et ce que la copie a
+    encore de non commité, que le démontage commitera (`_solder_la_branche`) — est
+    confronté à la branche de travail du projet par `git merge-tree`, qui fusionne
+    sans rien écrire : ni la copie, ni son index, ni sa branche, ni la racine ne
+    bougent. Le contenu passe par un **index à part**, comme l'instantané de #1448 ;
+    une intégration de la base que l'agent a commencée compte comme second parent,
+    exactement comme le commit du démontage la porterait.
+
+    None quand il n'y a rien à dire : la fusion passerait, `espace` n'est pas la
+    copie de travail de cette tâche (la racine d'un projet non versionné, un espace
+    jetable), la base n'est pas une branche, ou Git ne sait pas répondre — un Git
+    trop ancien pour `merge-tree --write-tree` compris. Ce constat sert l'agent ; ce
+    qui lui échappe, la fusion le refusera, et l'exécuteur le dira (`execute`).
+    """
+    espace = Path(espace)
+    base = _base(projet)
+    if not base:
+        return None
+    branche = _branche(tache_id)
+    try:
+        tete = _git(espace, "symbolic-ref", "--quiet", "HEAD")
+        if tete.returncode != 0 or tete.stdout.strip() != f"refs/heads/{branche}":
+            return None
+        cible = _git(espace, "rev-parse", "--verify", "--quiet", f"refs/heads/{base}")
+        if cible.returncode != 0:
+            return None
+        sommet = cible.stdout.strip()
+        en_conflit = _non_fusionnes(espace)
+        if en_conflit:
+            return ConflitAvecLaBase(
+                branche=branche, base=base, tete=sommet, fichiers=en_conflit, en_cours=True
+            )
+        livraison = _commit_de_la_livraison(espace)
+        if livraison is None:
+            return None
+        fusion = _git(
+            espace,
+            "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z",
+            sommet, livraison,
+        )
+        if fusion.returncode != 1:
+            return None  # 0 : la fusion passerait ; autre chose : Git ne sait pas dire
+        # `-z` : « arbre\0fichier\0fichier\0 » — chemins tels que Git les écrit, sans guillemets.
+        fichiers = tuple(dict.fromkeys(champ for champ in fusion.stdout.split("\0")[1:] if champ))
+        if not fichiers:
+            return None
+        plage = f"{livraison}..{sommet}"
+        compte = _git(espace, "rev-list", "--count", plage)
+        sujets = _git(espace, "log", f"-n{_COMMITS_DITS_MAX}", "--format=%s", plage)
+    except (EspaceProjetIndisponible, OSError):
+        # Un Git muet, un index qu'on n'a pas pu copier : rien de su, rien de dit.
+        return None
+    return ConflitAvecLaBase(
+        branche=branche,
+        base=base,
+        tete=sommet,
+        fichiers=fichiers,
+        commits=tuple(ligne for ligne in sujets.stdout.splitlines() if ligne.strip()),
+        nb_commits=int(compte.stdout.strip()) if compte.stdout.strip().isdigit() else 0,
+    )
+
+
+def _non_fusionnes(espace: Path) -> tuple[str, ...]:
+    """Les fichiers que l'index de la copie porte **en conflit** — une fusion laissée en plan."""
+    resultat = _git(espace, "ls-files", "-u", "-z")
+    if resultat.returncode != 0:
+        return ()
+    # « mode objet étage\tchemin\0 », une entrée par étage : un chemin, une fois.
+    return tuple(
+        dict.fromkeys(
+            entree.split("\t", 1)[1] for entree in resultat.stdout.split("\0") if "\t" in entree
+        )
+    )
+
+
+def _commit_de_la_livraison(espace: Path) -> str | None:
+    """Le commit que la branche porterait si la copie était soldée maintenant — sans la toucher.
+
+    `HEAD` lui-même quand la copie n'a rien en attente ; sinon un commit **hors de
+    toute branche**, fait d'un index à part (`git add -A`, ce que commite le
+    démontage) et de `HEAD` — plus `MERGE_HEAD` si une intégration est en cours.
+    Seul le magasin d'objets en reçoit, comme d'un `merge-tree` ; aucune référence
+    ne bouge. None si Git ne sait pas le construire.
+    """
+    dossier = jetable(PREFIXE_INSTANTANE)
+    try:
+        index = dossier / "index"
+        source = _git(espace, "rev-parse", "--git-path", "index")
+        actuel = Path(source.stdout.strip())
+        if source.returncode == 0 and not actuel.is_absolute():
+            actuel = espace / actuel
+        if source.returncode == 0 and actuel.is_file():
+            shutil.copyfile(actuel, index)
+        if _git(espace, "add", "-A", index=index).returncode != 0:
+            return None
+        arbre = _git(espace, "write-tree", index=index)
+        if arbre.returncode != 0:
+            return None
+        parents = ["-p", "HEAD"]
+        if _git(espace, "rev-parse", "--verify", "--quiet", "MERGE_HEAD").returncode == 0:
+            parents += ["-p", "MERGE_HEAD"]
+        elif _git(espace, "rev-parse", "HEAD^{tree}").stdout.strip() == arbre.stdout.strip():
+            return _git(espace, "rev-parse", "HEAD").stdout.strip() or None
+        commit = _git(
+            espace,
+            "-c", f"user.name={AUTEUR_NOM}",
+            "-c", f"user.email={AUTEUR_COURRIEL}",
+            "commit-tree", arbre.stdout.strip(), *parents,
+            "-m", "Maestro : livraison confrontée à la base",
+        )
+        return commit.stdout.strip() if commit.returncode == 0 else None
+    finally:
+        retirer_arbre(dossier)
 
 
 def branche_de_tache(tache_id: str) -> str:

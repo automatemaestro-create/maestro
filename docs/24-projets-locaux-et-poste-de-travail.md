@@ -179,7 +179,7 @@ tâche, sous trois propriétés tenues ensemble : temps réel, annulable, sans c
 
 | Projet | Espace de travail de la tâche | Ce qui atteint la racine, et quand | Accord humain | Retour arrière |
 |---|---|---|---|---|
-| **Versionné** | Option **B**, inchangée : un worktree Git **hors** de la racine, sur `maestro/<tâche>` (`maestro.sandbox.projet`) | La branche est **fusionnée dans la branche de base dès que la tâche est soldée en succès** (#705, `--no-ff`) ; une tâche en échec ne fusionne rien, et sa branche conserve le travail commité au démontage | **Un par run et par projet**, demandé à la **première** fusion, diff sous les yeux, par le validateur de toujours (EF-08) ; vaut pour les fusions suivantes du run, refus compris (#706) | Natif : un commit de fusion se défait par `git revert`, et la branche `maestro/<tâche>` n'est **jamais** supprimée |
+| **Versionné** | Option **B**, inchangée : un worktree Git **hors** de la racine, sur `maestro/<tâche>` (`maestro.sandbox.projet`) | La branche est **fusionnée dans la branche de base dès que la tâche est soldée en succès** (#705, `--no-ff`) ; une tâche en échec ne fusionne rien, et sa branche conserve le travail commité au démontage ; un conflit avec la base revient à l'agent à sa livraison, et une fusion refusée laisse la tâche en échec rattrapable (#1548) | **Un par run et par projet**, demandé à la **première** fusion, diff sous les yeux, par le validateur de toujours (EF-08) ; vaut pour les fusions suivantes du run, refus compris (#706) | Natif : un commit de fusion se défait par `git revert`, et la branche `maestro/<tâche>` n'est **jamais** supprimée |
 | **Non versionné** | **La racine elle-même**, en place (#839, `maestro.sandbox.en_place`) — rien n'est copié, rien n'est retiré —, plus un **atelier** `.maestro/<tâche>/` pour ce qui n'est pas le livrable (#944) | Ce que l'agent écrit, **pendant qu'il l'écrit** ; les tâches d'un même projet sont **sérialisées** (une seule à la fois dans l'arbre) | **Aucun** : il n'y a pas de moment de fusion où l'accrocher — ce qui garde est la frontière d'écriture, la sérialisation et le journal | Aucun historique : c'est le régime d'un projet **neuf**. Un projet qui a de la valeur se met sous Git (`versionner`, #704) et passe dans la ligne du dessus |
 | **Sans projet** | Le `mkdtemp()` jetable d'avant | Rien — il n'y a pas de racine | — | — |
 
@@ -202,6 +202,24 @@ désormais la tâche qu'elles reprennent (`Task.reprend`, posé par le moteur se
 **naît de la sienne** quand elle existe ; les autres partent de la base, où la fusion de celles
 qu'elles attendent a déjà porté ce travail. Une branche qui existe déjà se reprend telle quelle :
 `reprend` ne dit d'où partir qu'à la création.
+
+**Un conflit avec la base se résout par l'agent de la tâche (#1548).** Des tâches parties de la
+même base réécrivent parfois les mêmes fichiers : la première fusionne, et Git refuse les
+suivantes. La fusion n'a lieu qu'**après** le démontage du worktree, quand plus aucun agent n'est
+là pour résoudre — et jusqu'à #1548 le refus était seulement consigné : la tâche restait
+« terminée », le run aussi, sans ce travail dans le projet (run `afb6b43fffb6`, 2026-10-20 : trois
+fusions refusées sur quinze, un `lancer.bat` jamais livré). Le conflit se constate désormais **à la
+livraison**, l'espace encore ouvert, dans la boucle où la recette rend déjà à l'agent ce qui ne
+tient pas : ce que la branche porterait est confronté à la branche de travail **actuelle** par
+`git merge-tree`, sans rien écrire (`conflit_avec_la_base`). Si Git refuserait, la livraison
+revient à l'agent avec ce que la base a reçu et les fichiers disputés : il intègre la base dans sa
+branche (`git merge`) et résout en gardant les deux travaux, puis sa livraison est revérifiée et
+reconfrontée. Une correction qui ne réduit pas le conflit arrête la boucle, comme une correction
+vaine arrête la recette : la tâche est en échec, rien n'est fusionné. Ce qui passe encore — deux
+tâches qui livrent ensemble, une racine occupée, un chemin hors périmètre — est refusé à la fusion,
+et la tâche n'est plus « terminée » : c'est un **échec rattrapable**, sa branche porte le travail,
+et rejouée elle la remonte telle quelle — le conflit revient alors à son agent. Une fusion **non
+accordée** reste la décision d'une personne (#706) et ne change pas le verdict.
 
 **Une tâche coupée en vol (#1392).** Le commit du démontage vit dans un `finally`, et un process
 tué n'en déroule aucun : quand Maestro s'éteint pendant qu'une tâche écrit, son hôte est achevé au
@@ -394,9 +412,10 @@ et `apps/web/tests/arbitrage.test.tsx` (#572), et le contrat d'API est au
 > [`tests/test_ecriture_temps_reel.py`](../tests/test_ecriture_temps_reel.py) — mise sous Git sur
 > demande et refus de l'implicite, fusion sur succès et abstention sur échec, la tâche suivante qui
 > **voit** la précédente (le défaut B2 rejoué **sans** puis **avec** fusion, par l'exécuteur puis
-> par la vraie boucle), et trois refus qui laissent le projet intact sans faire échouer la tâche
-> (conflit, racine occupée, chemin hors périmètre) — sur de vrais dépôts, de vrais worktrees et de
-> vrais conflits. La frontière d'écriture et la sérialisation d'un projet non versionné sont dans
+> par la vraie boucle), et trois refus qui laissent le projet intact (conflit, racine occupée,
+> chemin hors périmètre) — et, depuis #1548, la tâche en échec, l'aval non lancé, le conflit rendu
+> à l'agent à sa livraison qui l'intègre, ou qui ne le réduit pas et s'arrête — sur de vrais
+> dépôts, de vrais worktrees et de vrais conflits. La frontière d'écriture et la sérialisation d'un projet non versionné sont dans
 > [`tests/test_espace_projet.py`](../tests/test_espace_projet.py) (#839 — et l'**atelier** de #944 :
 > ouvert dans la racine, jamais recensé, nommé au message de la tâche, muet dans les deux autres
 > régimes), l'accord par run dans

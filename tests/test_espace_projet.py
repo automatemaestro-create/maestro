@@ -51,11 +51,13 @@ from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import (
     DOSSIER_ATELIER,
+    ConflitAvecLaBase,
     EspaceCopieDeTravail,
     EspaceProjetIndisponible,
     FrontiereEcriture,
     LieuSansTrace,
     branche_de_tache,
+    conflit_avec_la_base,
     espace_de_travail,
     frontiere_de,
 )
@@ -1813,3 +1815,106 @@ def test_la_racine_d_un_projet_non_versionne_n_est_jamais_defaite(tmp_path: Path
             (racine / "ecrit-pendant.txt").write_text("par la personne", encoding="utf-8")
 
     assert (racine / "ecrit-pendant.txt").read_text(encoding="utf-8") == "par la personne"
+
+
+# --------------------------------------------------------------------------- #
+# La livraison se confronte à ce que la base a reçu, l'espace encore ouvert (#1548)
+# --------------------------------------------------------------------------- #
+
+_IDENTITE = ("-c", "user.email=tests@maestro", "-c", "user.name=Tests")
+
+
+def _la_base_avance(racine: Path, contenu: str) -> None:
+    """La base reçoit `src/app.py` = `contenu`, commité — une tâche voisine qui fusionne."""
+    (racine / "src" / "app.py").write_text(contenu, encoding="utf-8")
+    _git(racine, "add", "-A")
+    _git(racine, *_IDENTITE, "commit", "--quiet", "-m", "tache voisine")
+
+
+@besoin_de_git
+def test_une_livraison_qui_fusionnerait_ne_porte_aucun_conflit(tmp_path: Path) -> None:
+    projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        (ws.path / "nouveau.md").write_text("de l'agent\n", encoding="utf-8")
+        _la_base_avance(racine, "print('voisin')\n")  # ailleurs que ce que l'agent touche
+
+        assert conflit_avec_la_base(ws.path, projet, "t1") is None
+        # La racine n'est pas la copie d'une tâche : il n'y a rien à y confronter.
+        assert conflit_avec_la_base(racine, projet, "t1") is None
+
+
+@besoin_de_git
+def test_le_travail_non_commite_se_confronte_a_la_base_sans_que_rien_ne_bouge(
+    tmp_path: Path,
+) -> None:
+    """Ce que le démontage commiterait compte, et le constat n'écrit nulle part."""
+    projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        (ws.path / "src" / "app.py").write_text("print('agent')\n", encoding="utf-8")
+        _la_base_avance(racine, "print('voisin')\n")
+        avant = (
+            _git(ws.path, "status", "--porcelain"),
+            _git(ws.path, "rev-parse", "HEAD"),
+            _git(racine, "rev-parse", "main"),
+        )
+
+        conflit = conflit_avec_la_base(ws.path, projet, "t1")
+
+        assert conflit is not None
+        assert conflit.fichiers == ("src/app.py",)
+        assert (conflit.branche, conflit.base) == (branche_de_tache("t1"), "main")
+        assert (conflit.commits, conflit.nb_commits) == (("tache voisine",), 1)
+        assert not conflit.en_cours
+        assert "git merge main" in conflit.consigne() and "src/app.py" in conflit.consigne()
+        assert avant == (
+            _git(ws.path, "status", "--porcelain"),
+            _git(ws.path, "rev-parse", "HEAD"),
+            _git(racine, "rev-parse", "main"),
+        )
+
+
+@besoin_de_git
+def test_une_integration_laissee_en_conflit_est_rendue_et_resolue_elle_passe(
+    tmp_path: Path,
+) -> None:
+    """L'agent a commencé d'intégrer la base : en conflit il le reste, résolue elle entre."""
+    projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="t1") as ws:
+        (ws.path / "src" / "app.py").write_text("print('agent')\n", encoding="utf-8")
+        _git(ws.path, "add", "-A")
+        _git(ws.path, *_IDENTITE, "commit", "--quiet", "-m", "agent")
+        _la_base_avance(racine, "print('voisin')\n")
+        fusion = subprocess.run(
+            [GIT or "git", *_IDENTITE, "merge", "main"],
+            cwd=ws.path,
+            capture_output=True,
+            check=False,
+        )
+        assert fusion.returncode == 1
+
+        laissee = conflit_avec_la_base(ws.path, projet, "t1")
+        assert laissee is not None and laissee.en_cours
+        assert laissee.fichiers == ("src/app.py",)
+
+        # Résolue et indexée, la fusion pas encore commitée : le démontage la commitera
+        # avec la base pour second parent, et c'est ce qui est confronté.
+        (ws.path / "src" / "app.py").write_text(
+            "print('voisin')\nprint('agent')\n", encoding="utf-8"
+        )
+        _git(ws.path, "add", "-A")
+        assert conflit_avec_la_base(ws.path, projet, "t1") is None
+
+
+def test_une_correction_qui_ne_reduit_pas_le_conflit_n_est_pas_un_progres() -> None:
+    avant = ConflitAvecLaBase(branche="maestro/t1", base="main", tete="a", fichiers=("x", "y"))
+
+    assert replace(avant, fichiers=("x",)).reduit(avant)
+    assert not replace(avant).reduit(avant)
+    assert not replace(avant, fichiers=("x", "z")).reduit(avant)
+    # La base a bougé : c'est un autre conflit, pas l'échec de la correction.
+    assert replace(avant, tete="b").reduit(avant)
+    # L'intégration est commencée : un geste, pas une correction vaine.
+    assert replace(avant, en_cours=True).reduit(avant)
