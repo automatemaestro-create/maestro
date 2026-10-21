@@ -40,6 +40,7 @@ from maestro.projets.application import (
     Modification,
     ResultatApplication,
     appliquer,
+    commiter_en_attente,
     diff_du_travail,
     verifier_perimetre,
 )
@@ -477,6 +478,95 @@ def test_un_worktree_deja_commite_est_fusionne_sans_commit_de_rattrapage(
     appliquer(projet, diff, espace=espace)
     assert _git(espace, "rev-parse", "HEAD").strip() == avant  # rien à rattraper
     assert (racine / "note.md").read_text(encoding="utf-8") == "bonjour\n"
+
+
+# --------------------------------------------------------------------------- #
+# Les commits de Maestro suivent la convention du projet (#1507)
+# --------------------------------------------------------------------------- #
+
+
+def _sujets(cwd: Path, plage: str) -> list[str]:
+    """Les sujets des commits de `plage`, du plus récent au plus ancien."""
+    return _git(cwd, "log", "--format=%s", plage).splitlines()
+
+
+@besoin_de_git
+def test_le_reste_non_commite_rejoint_le_dernier_commit_de_l_agent(tmp_path: Path) -> None:
+    """Sur p5, 33 commits « Maestro : … » : le rattrapage n'invente plus de message.
+
+    L'agent a commité dans la convention du projet, puis laissé un fichier : il entre
+    dans **son** commit, dont le message reste le sien — aucun commit de Maestro.
+    """
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
+    _commiter(espace, "feat(notes): ajoute la note d'accueil")
+    (espace / "oubli.md").write_text("resté hors du commit\n", encoding="utf-8")
+    commiter_en_attente(espace, branche)
+    assert _sujets(espace, "main..HEAD") == ["feat(notes): ajoute la note d'accueil"]
+    assert "oubli.md" in _git(espace, "show", "--name-only", "--format=", "HEAD").split()
+    assert _git(espace, "status", "--porcelain").strip() == ""
+
+
+@besoin_de_git
+def test_sans_commit_de_l_agent_le_rattrapage_garde_le_message_de_maestro(
+    tmp_path: Path,
+) -> None:
+    """La base n'est jamais réécrite : sans commit à elle, la branche reçoit le sien."""
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    socle = _git(racine, "rev-parse", "main").strip()
+    (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
+    commiter_en_attente(espace, branche)
+    assert _sujets(espace, "main..HEAD") == [f"Maestro : travail de la tâche ({branche})"]
+    assert _git(racine, "rev-parse", "main").strip() == socle
+
+
+@besoin_de_git
+def test_un_commit_qu_une_autre_branche_porte_n_est_jamais_amende(tmp_path: Path) -> None:
+    """Un redécoupage part de la branche d'une autre tâche (#1396) : son commit n'est pas à lui."""
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    (espace / "package.json").write_text("{}\n", encoding="utf-8")
+    _commiter(espace, "feat: pose le socle")
+    socle = _git(espace, "rev-parse", "HEAD").strip()
+    reprise = tmp_path / "espaces" / "t1-r1"
+    _git(racine, "worktree", "add", "--quiet", "-b", "maestro/t1-r1", str(reprise), branche)
+    (reprise / "init.ts").write_text("export {}\n", encoding="utf-8")
+    commiter_en_attente(reprise, "maestro/t1-r1")
+    assert _git(reprise, "rev-parse", "HEAD~1").strip() == socle
+    assert _sujets(reprise, f"{branche}..HEAD") == [
+        "Maestro : travail de la tâche (maestro/t1-r1)"
+    ]
+
+
+@besoin_de_git
+def test_la_fusion_prend_le_sujet_redige_dans_la_convention(tmp_path: Path) -> None:
+    """Le sujet vient de la convention ; ce que Maestro en disait reste, dans le corps."""
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
+    _commiter(espace, "feat(notes): ajoute la note d'accueil")
+    diff = diff_du_travail(projet, branche=branche)
+    appliquer(projet, diff, message="feat(notes): intègre la note d'accueil")
+    assert _git(racine, "log", "-1", "--format=%s").strip() == (
+        "feat(notes): intègre la note d'accueil"
+    )
+    corps = _git(racine, "log", "-1", "--format=%b")
+    assert f"Maestro : application de {branche}" in corps
+    assert len(_git(racine, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
+
+
+@besoin_de_git
+def test_sans_message_redige_la_fusion_garde_celui_de_maestro(tmp_path: Path) -> None:
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
+    diff = diff_du_travail(projet, branche=branche, espace=espace)
+    appliquer(projet, diff, espace=espace)
+    assert _git(racine, "log", "-1", "--format=%s").strip().startswith(
+        f"Maestro : application de {branche}"
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -899,6 +899,48 @@ fois, dans la section de la création, sans aucune marque du vouvoiement.
 redite, et ce ticket n'y touche pas. Le vouvoiement qui reste dans `AGENTS.md` (« compris de vos
 réponses », le pied du fichier) s'adresse à la personne, pas à l'agent.
 
+### 5.10 Ce que la personne a choisi, le livrable le suit (#1507)
+
+Le bilan de « Le run livre un vrai projet » (2026-10-14, critère C2) a rejoué le livrable de p5 sur
+un clone propre : Prettier retenu et cinquante fichiers hors de son formatage, GitHub Actions retenu
+(« CI : `.github/workflows/ci.yml` » annoncé) et aucun workflow écrit, Conventional Commits retenu et
+33 commits « Maestro : … », un `npm run typecheck` qui ne passait que sur l'arbre de l'agent. Sur le
+même objectif, la session seule les tenait tous. Aucune pièce n'était fausse : chacune s'arrêtait
+avant le livrable. Quatre gestes y répondent, chacun à sa place.
+
+- **`AGENTS.md` dit ce qu'un travail rendu passe.** La section « Vérifier » disait « ne rends jamais
+  un travail sans avoir joué au moins les tests », qui se lisait « le reste est facultatif ». Quand le
+  projet déclare un formateur, un style ou des types, elle dit désormais d'appliquer le formatage à
+  ce qu'on a écrit puis de vérifier style et types avant de rendre (`redaction._avant_de_rendre`), et
+  que ces commandes passent sur un **clone neuf**, après la seule installation : une commande qui ne
+  tient que grâce à ce qu'un build a laissé ne tient pas, c'est elle qui génère ce dont elle a besoin
+  (`CLONE_NEUF`). La section « Conventions » dit, sous la convention de commit choisie, que les
+  commits du projet la suivent — ceux de l'agent compris (`COMMITS_DANS_LA_CONVENTION`).
+- **L'agent commite son travail lui-même**, dans cette convention : le message de sa tâche le lui
+  dit sur toute copie de travail (`CONSIGNE_COPIE_DE_TRAVAIL`, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)),
+  et sa session porte l'identité Git de Maestro par son environnement — un poste sans identité lui
+  refusait `git commit`, et rien n'est écrit dans la configuration du projet. Ce qu'il laisse non
+  commité rejoint son dernier commit au démontage, message compris, plutôt qu'un commit « Maestro :
+  travail de la tâche » ; un commit qu'une autre branche porte n'est jamais amendé.
+- **Les commits de Maestro suivent la convention**, rédigés par le modèle : la fusion d'une tâche, le
+  commit et la fusion d'une pièce d'outillage (`maestro.projets.commits`). La convention est une
+  phrase de la personne, lue dans la source du manifeste (`OutillageDuProjet.convention_de_commit`) :
+  aucune table, et un gabarit à trous ne tiendrait pas une convention qui impose sa langue. Le sujet
+  rendu est vérifié — une ligne, bornée — ; sinon, et sans convention, c'est le message de Maestro,
+  et le modèle n'est pas appelé. Ce que Maestro disait de la fusion passe dans le corps du commit.
+  **Limite dite** : le premier commit d'un projet mis sous Git par Maestro (« Maestro : état initial
+  du projet ») précède les réponses d'outillage, donc toute convention.
+- **Le Chef de projet lit l'outillage**, au cadrage comme au découpage (`bloc_outillage`), encadré
+  comme une donnée. Un fichier « prévu » ne se crée que si une tâche le demande (§5.9) : quand
+  l'objectif construit le projet, le brief fait entrer ce que l'outillage prévoit dans son périmètre,
+  et ses vérifications — sur un clone neuf — et sa convention dans ses critères ; le plan confie
+  chaque fichier prévu, nommément, à la tâche qui le livre, et met le clone neuf dans les critères
+  de celle qui écrit les commandes. Un objectif étroit n'y gagne pas un chantier d'outillage.
+
+Ce qui le constate à chaque livraison est le vérificateur ([docs/45 §2](./45-decision-une-tache-verifiee-en-l-executant.md),
+points 9 et 10) : formatage et style joués sur ce que la tâche a écrit, convention de commit lue sur
+l'état de la branche, commande jouée sur un clone neuf quand un critère le demande.
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |

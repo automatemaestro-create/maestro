@@ -89,7 +89,7 @@ from maestro.outillage.modele import (
     Entree,
     Recommandation,
 )
-from maestro.outillage.questionnaire import SOURCE_CHOIX
+from maestro.outillage.questionnaire import ROLE_CONVENTION_DE_COMMIT, SOURCE_CHOIX
 from maestro.outillage.recommandation import (
     DOSSIER_SKILLS,
     RAISON_AGENTS,
@@ -199,6 +199,28 @@ COMMANDES_VERIFIER: tuple[tuple[str, str], ...] = (
     ("lint", "Style"),
     ("formater", "Formatage"),
     ("types", "Types"),
+)
+
+#: Ce que valent les commandes de « Vérifier » : elles passent sur un **clone neuf**
+#: (#1507). Sur p5, `npm run typecheck` (`tsc --noEmit`) passait dans le répertoire de
+#: l'agent, où un `next build` avait laissé les types qu'il génère, et échouait sur le
+#: clone que la personne récupère. Aucun outil n'est nommé : l'agent connaît sa pile, et
+#: ce qui vaut pour des types générés vaut pour un client d'API ou une sortie de build.
+CLONE_NEUF = (
+    "Ces commandes passent aussi sur un **clone neuf** du projet, après la seule "
+    "installation de ses dépendances — c'est ce que récupère qui le reprend. Une commande "
+    "qui ne tient que grâce à ce qu'un build ou une génération a laissé dans ton "
+    "répertoire (types ou code générés, sortie de build) ne tient pas : si elle en a "
+    "besoin, c'est elle qui le génère. Sur un projet versionné, clone-le dans un dossier "
+    "créé par `mktemp -d` et joue-les là pour t'en assurer."
+)
+
+#: Ce qu'`AGENTS.md` dit des commits quand la personne a choisi une convention de message
+#: (#1507) : sur p5, elle était listée parmi les conventions « prévues », et aucun commit
+#: du livrable ne la suivait — aucun agent ne commitait.
+COMMITS_DANS_LA_CONVENTION = (
+    "Les commits de ce projet suivent sa **convention de message de commit**, ci-dessus — "
+    "les tiens aussi : commite ton travail toi-même, en messages de cette forme."
 )
 
 #: Les six sections d'`AGENTS.md` (docs/38 §3.1), dans l'ordre. La spécification
@@ -661,9 +683,42 @@ def _corps_verifier(
         *presentes,
         *_note_commune(note),
         "",
+        *_avant_de_rendre(constats),
         "Joue ce qui concerne ce que tu as changé plutôt que tout : une suite "
         "entière sur un changement d'une ligne coûte du temps à tout le monde. "
         "Mais ne rends jamais un travail sans avoir joué **au moins** les tests.",
+        "",
+        CLONE_NEUF,
+    ]
+
+
+def _avant_de_rendre(constats: Constats) -> list[str]:
+    """Ce que tout travail rendu passe au-delà des tests : formatage, style, types (#1507).
+
+    Sur p5, la compétence de vérification était écrite, et cinquante fichiers sont
+    partis hors du formatage que la personne avait choisi : « joue au moins les tests »
+    se lisait comme « le reste est facultatif ». Un formateur se **joue** sur ce qu'on a
+    écrit — sa commande réécrit, c'est voulu —, et le style et les types se vérifient
+    avant de rendre. Rien quand le projet ne déclare aucune de ces commandes.
+    """
+    formatage = constats.commande_de("formater") is not None
+    objets = [
+        objet
+        for usage, objet in (("lint", "son style"), ("types", "ses types"))
+        if constats.commande_de(usage) is not None
+    ]
+    if not formatage and not objets:
+        return []
+    verifie = f"vérifie {' et '.join(objets)}" if objets else ""
+    if formatage:
+        gestes = "applique le **formatage** du projet à ce que tu as écrit"
+        gestes += f", puis {verifie}" if verifie else ""
+    else:
+        gestes = verifie
+    return [
+        f"Avant de rendre un travail, {gestes} : ce que tu livres passe ces commandes, "
+        "comme il passe les tests.",
+        "",
     ]
 
 
@@ -755,6 +810,7 @@ def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
         if implique
         else "Ce projet écrit déjà ses conventions. Lis-les avant d'en inventer :"
     )
+    commits = any(piece.role.startswith(ROLE_CONVENTION_DE_COMMIT) for piece in lisibles)
     return [
         entete,
         "",
@@ -763,6 +819,7 @@ def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
             for piece in lisibles
         ],
         "",
+        *([COMMITS_DANS_LA_CONVENTION, ""] if commits else []),
         "Et, en toute circonstance, écris du code qui ressemble à celui qui "
         "l'entoure — nommage, densité de commentaires, idiomes.",
     ]

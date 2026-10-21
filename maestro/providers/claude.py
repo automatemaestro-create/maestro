@@ -66,6 +66,7 @@ from maestro.detail_tache import EtapeTache
 from maestro.familles_claude import familles_claude
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
+from maestro.projets.modele import ENV_IDENTITE_GIT
 from maestro.providers import blocage, checklist, controle, courrier, decision, question
 from maestro.providers.activite import Geste, RegulateurActivite
 from maestro.providers.arbitrage import (
@@ -830,7 +831,10 @@ class ClaudeProvider(ModelProvider):
         par cet identifiant dans le même `workspace`. Rien n'est lu de ce que le CLI
         rend pour la nommer.
         """
-        env = self._auth_env()
+        # L'identité de Maestro pour les commits que l'agent fait lui-même (#1507) : il
+        # commite son travail dans la convention du projet, et un poste sans identité
+        # Git le lui refusait. L'environnement de la session, jamais le dépôt.
+        env = self._auth_env() | ENV_IDENTITE_GIT
         cli_path: Path | None = None
         confinement: SessionConfinee | None = None
         if self._isolation is not None:

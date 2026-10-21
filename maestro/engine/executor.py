@@ -142,14 +142,17 @@ from maestro.messaging.mailbox import (
     consigne_message,
 )
 from maestro.orchestrator.schema import Brief, Task
+from maestro.outillage.contexte import outillage_du_projet
 from maestro.prerequis import PrerequisManquant, prerequis_du_mcp, prerequis_du_role
 from maestro.projets.application import (
     ApplicationRefusee,
     DiffProjet,
     appliquer,
     diff_du_travail,
+    sujets_de_la_branche,
     verifier_perimetre,
 )
+from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.modele import Projet
 from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
@@ -171,6 +174,7 @@ from maestro.sandbox import (
     ProducedFile,
     branche_de_tache,
     conflit_avec_la_base,
+    etat_de_la_branche,
 )
 from maestro.sandbox.confinement import ReleveConfinement
 from maestro.sandbox.en_place import portee_de
@@ -987,8 +991,15 @@ class LocalExecutor(TaskExecutor):
         suspendre_sur_prerequis: bool = False,
         registre_mcp: Callable[[], RegistreMcp] | None = None,
         plafonds: Plafonds | None = None,
+        redacteur: RedacteurDeCommits | None = None,
     ) -> None:
         self._provider = provider
+        # Qui rédige le message d'une fusion dans la convention de commit du projet
+        # (#1507) — le modèle du run, appelé seulement quand le projet en a une. Un
+        # double de test le remplace ; sans convention, il n'est jamais appelé.
+        self._redacteur = (
+            redacteur if redacteur is not None else RedacteurDeCommits(provider, modele=modele)
+        )
         # Une tâche à qui il manque un prérequis constaté (#1181) est **suspendue**
         # plutôt qu'échouée : son étape se consigne « en attente d'un humain »
         # (`STATUT_EN_ATTENTE_VALIDATION`), et la boucle propose le remède dans le
@@ -1655,10 +1666,19 @@ class LocalExecutor(TaskExecutor):
         l'espace de travail, celle-là même qui garde les commandes de l'agent
         (`portee_de`). Le projet est relu une fois, à la naissance de la recette.
         Le **brief** du run (#1402) y entre tel que l'agent l'a lu.
+
+        L'**outillage** du projet aussi (#1507), tel que l'agent l'a reçu : ses
+        vérifications et sa convention de commit valent pour la livraison. Sur une
+        copie de travail dont l'outillage nomme une convention de commit, chaque
+        livraison dit en plus l'état de sa branche (`etat_de_la_branche`) : ce qu'elle
+        porte, et ce qui n'est pas commité.
         """
         if self._verificateur is None:
             return None
         projet = self._projet(task)
+        outillage = outillage_du_projet(projet)
+        base = projet.vcs.branche_base if projet is not None and projet.vcs is not None else ""
+        branche_a_juger = bool(base) and bool(outillage.convention_de_commit)
         return Recette(
             verificateur=self._verificateur,
             tache=task,
@@ -1676,6 +1696,10 @@ class LocalExecutor(TaskExecutor):
             # la même politique —, mais seul : la session de l'agent ne se rejoue pas.
             relance=self._relance,
             brief=brief,
+            outillage=outillage.instructions,
+            etat_de_la_branche=(
+                (lambda espace: etat_de_la_branche(espace, base)) if branche_a_juger else None
+            ),
         )
 
     def _juge_de_livraison(
@@ -2287,6 +2311,7 @@ class LocalExecutor(TaskExecutor):
         # retenue par la première — et tant que la question est ouverte, rien
         # d'autre ne s'écrit dans ce projet, ce qui est exactement ce qu'elle
         # demande.
+        depense = StepUsage()
         async with self._verrou_projet(projet.id):
             diff, statut, detail = await asyncio.to_thread(_diff_a_fusionner, projet, branche)
             if diff is not None:
@@ -2310,8 +2335,9 @@ class LocalExecutor(TaskExecutor):
                     )
                     raise
                 if accord.approuve:
+                    message, depense = await self._message_de_fusion(task, projet, diff)
                     statut, detail = await asyncio.to_thread(
-                        _applique_la_fusion, projet, diff, branche
+                        _applique_la_fusion, projet, diff, branche, message
                     )
                 else:
                     statut = STATUT_FUSION_NON_ACCORDEE
@@ -2325,8 +2351,37 @@ class LocalExecutor(TaskExecutor):
                     )
                     detail = _phrase_non_accordee(cause, branche, diff.base)
         return self._consigne_fusion(
-            task, result, statut, entree=entree, detail=detail, journal=journal
+            task, result, statut, entree=entree, detail=detail, journal=journal, usage=depense
         )
+
+    async def _message_de_fusion(
+        self, task: Task, projet: Projet, diff: DiffProjet
+    ) -> tuple[str, StepUsage]:
+        """Le sujet du commit de fusion, dans la convention de commit du projet (#1507).
+
+        `""` — le message de Maestro — quand la personne n'a choisi aucune convention :
+        le modèle n'est alors pas appelé, et la fusion est celle d'avant au caractère
+        près. Sinon le rédacteur l'écrit (`maestro.projets.commits`), avec ce que la
+        branche porte des commits de l'agent sous les yeux. Rend aussi ce que l'appel a
+        coûté, que l'étape `:fusion` porte : hors du collecteur de la tâche, il serait
+        perdu pour le grand livre.
+        """
+        convention = await asyncio.to_thread(
+            lambda: outillage_du_projet(projet).convention_de_commit
+        )
+        if not convention:
+            return "", StepUsage()
+        commits = await asyncio.to_thread(sujets_de_la_branche, projet, diff.branche)
+        changement = (
+            f"fusionne dans `{diff.base}` la branche `{diff.branche}`, le travail de la "
+            f"tâche « {task.titre} » ({diff.fichiers} fichier(s), +{diff.ajouts} / "
+            f"−{diff.suppressions})"
+        )
+        with collect_usage() as recolte:
+            message = await self._redacteur.message(
+                convention=convention, changement=changement, commits=commits
+            )
+        return message, recolte.total
 
     async def _accord_de_fusion(
         self,
@@ -2505,6 +2560,7 @@ class LocalExecutor(TaskExecutor):
         entree: str,
         detail: str,
         journal: RunJournal,
+        usage: StepUsage | None = None,
     ) -> tuple[str, str]:
         """Trace ce qui est arrivé au projet au journal (#705, #839) ; rend statut et phrase.
 
@@ -2523,8 +2579,10 @@ class LocalExecutor(TaskExecutor):
         rendrait invisible exactement le défaut que #568 a mesuré — un run vert
         sur une racine vide.
 
-        Usage nul : le coût de la tâche est porté par son étape finale, et ni
-        une fusion ni un recensement ne dépensent de modèle.
+        Usage nul le plus souvent : le coût de la tâche est porté par son étape
+        finale, et ni une fusion ni un recensement ne dépensent de modèle — sauf le
+        message d'une fusion rédigé dans la convention du projet (#1507), dont
+        `usage` est le coût.
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_FUSION}",
@@ -2534,7 +2592,7 @@ class LocalExecutor(TaskExecutor):
             statut=statut,
             entree=entree,
             sortie=detail,
-            usage=StepUsage(),
+            usage=usage if usage is not None else StepUsage(),
             ticket=task.ticket,
             projet_id=task.projet_id,
         )
@@ -4359,16 +4417,19 @@ def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, 
     return diff, "", ""
 
 
-def _applique_la_fusion(projet: Projet, diff: DiffProjet, branche: str) -> tuple[str, str]:
+def _applique_la_fusion(
+    projet: Projet, diff: DiffProjet, branche: str, message: str = ""
+) -> tuple[str, str]:
     """Fusionne `diff` — la branche de tâche — dans la branche de travail ; rend statut et phrase.
 
     Seconde moitié, jouée **sur accord seulement** (#706) : `appliquer` contrôle
     le périmètre une seconde fois (EF-38 — il ne sait pas qu'on l'a déjà fait,
     et c'est très bien : c'est lui qui écrit) puis fusionne. Même contrat de
-    non-levée que la première moitié, pour la même raison.
+    non-levée que la première moitié, pour la même raison. `message` (#1507) est le
+    sujet rédigé dans la convention du projet, vide sans convention.
     """
     try:
-        appliquer(projet, diff)
+        appliquer(projet, diff, message=message)
     except (ApplicationRefusee, RacineRefusee) as refus:
         return STATUT_FUSION_REFUSEE, _phrase_refus(branche, refus)
     except Exception as exc:  # cf. le docstring : `execute` ne lève jamais

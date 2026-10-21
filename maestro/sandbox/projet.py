@@ -123,15 +123,20 @@ _COMMITS_DITS_MAX = 10
 #: est rendue telle que Git l'écrit, jamais tue.
 _STATUTS_GIT = {"A": "ajouté", "M": "modifié", "D": "supprimé", "T": "type changé"}
 
-#: Ce que le message d'une tâche dit de sa **copie de travail** (#1401) : ce que
-#: l'agent y laisse est commité, brouillons compris, et où vont les brouillons pour
-#: ne pas l'être. Voir `EspaceCopieDeTravail.consigne_espace`.
+#: Ce que le message d'une tâche dit de sa **copie de travail** (#1401) : l'agent
+#: commite son travail lui-même, dans la convention du projet (#1507) ; ce qu'il y
+#: laisse est commité pour lui, brouillons compris, et où vont les brouillons pour ne
+#: pas l'être. Voir `EspaceCopieDeTravail.consigne_espace`.
 CONSIGNE_COPIE_DE_TRAVAIL = (
-    "Dans cette copie de travail du projet, tout ce que tu laisses et que le "
-    "`.gitignore` du projet n'ignore pas est commité sur ta branche à la fin de ta "
-    "tâche — brouillons compris —, puis appliqué au projet avec elle. Ce qui n'est pas "
-    "le livrable — brouillons, essais, harnais de vérification, notes — ne se laisse "
-    "donc pas ici : mets-le dans un dossier que tu crées par `mktemp -d`, dans la "
+    "Dans cette copie de travail du projet, **commite ton travail toi-même** sur ta "
+    "branche, au fil des étapes qui le méritent, avec des messages qui suivent la "
+    "convention de commit du projet quand ses instructions en nomment une (son "
+    "`AGENTS.md`) : ce sont ces commits que le projet gardera, et la vérification de ta "
+    "livraison les relit. Tout ce que tu laisses non commité et que le `.gitignore` du "
+    "projet n'ignore pas est commité sur ta branche à la fin de ta tâche — dans ton "
+    "dernier commit, brouillons compris —, puis appliqué au projet avec elle. Ce qui "
+    "n'est pas le livrable — brouillons, essais, harnais de vérification, notes — ne se "
+    "laisse donc pas ici : mets-le dans un dossier que tu crées par `mktemp -d`, dans la "
     "commande même qui s'en sert, hors de cette copie — un nom fixe du répertoire "
     "temporaire du système sort de ton espace et revient à une personne. Ce qui mérite "
     "d'être relu, dis-le dans ton compte-rendu."
@@ -225,7 +230,12 @@ class CopieDuProjet:
         return cls(nom=projet.nom.strip(), dossier=projet.racine, branche=branche)
 
     def consigne(self) -> str:
-        """Le paragraphe qui dit à l'agent où il est, et ce que devient ce qu'il y laisse."""
+        """Le paragraphe qui dit à l'agent où il est.
+
+        Ce que devient ce qu'il y laisse — ses commits, et le reste commité pour lui —
+        suit dans le même message (`CONSIGNE_COPIE_DE_TRAVAIL`), une fois (#1507) : les
+        deux paragraphes le disaient chacun, l'un sous l'autre.
+        """
         nom_du_dossier = Path(self.dossier).name
         projet = self.nom or nom_du_dossier
         # Le nom du projet et celui de son dossier, une seule fois s'ils se confondent.
@@ -239,9 +249,7 @@ class CopieDuProjet:
             "répertoire** qu'elle désigne : travailles-y directement, sans y créer de "
             "sous-dossier de ce nom, et sans écrire dans le dossier d'origine — ce qui "
             "s'y écrirait échapperait à ta branche. Les chemins que ses instructions "
-            "disent relatifs à « la racine du projet » partent d'ici. Ce que tu y "
-            "laisses est commité sur ta branche à la fin de ta tâche, et c'est cette "
-            "branche qui est appliquée au projet."
+            "disent relatifs à « la racine du projet » partent d'ici."
         )
 
 
@@ -924,6 +932,56 @@ def _commit_de_la_livraison(espace: Path) -> str | None:
         retirer_arbre(dossier)
 
 
+#: Ce que l'état d'une branche nomme, au plus (#1507) : ses commits, ses fichiers en
+#: attente. Au-delà, le compte est dit — le vérificateur juge une convention, il n'a pas
+#: besoin de l'historique entier.
+_COMMITS_DE_L_ETAT_MAX = 20
+_EN_ATTENTE_DITS_MAX = 20
+
+
+def etat_de_la_branche(espace: Path, base: str) -> str:
+    """Ce que la branche de la copie `espace` porte au-delà de `base`, et ce qui n'est pas commité.
+
+    Le texte que le vérificateur d'une livraison lit pour juger la convention de commit
+    du projet (#1507) : les sujets des commits de la branche, du plus récent au plus
+    ancien, puis les fichiers que le `.gitignore` du projet n'ignore pas et que rien ne
+    commite encore. Sur p5, l'agent ne commitait rien — Maestro commitait pour lui, hors
+    de la convention choisie : c'est ce que ce relevé fait voir avant la fusion. Lu et
+    jamais écrit ; `""` quand Git ne répond pas, ou sans `base` à comparer — un relevé
+    muet ne fait rien juger.
+    """
+    if not base.strip():
+        return ""
+    try:
+        compte = _git(espace, "rev-list", "--count", f"{base}..HEAD")
+        sujets = _git(espace, "log", f"-n{_COMMITS_DE_L_ETAT_MAX}", "--format=%s", f"{base}..HEAD")
+        statut = _git(espace, "status", "--porcelain", "--untracked-files=all")
+    except EspaceProjetIndisponible:
+        return ""
+    if compte.returncode != 0 or sujets.returncode != 0 or statut.returncode != 0:
+        return ""
+    nb_commits = int(compte.stdout.strip()) if compte.stdout.strip().isdigit() else 0
+    if nb_commits:
+        lignes = [
+            f"La branche porte {nb_commits} commit(s) depuis `{base}`, du plus récent "
+            "au plus ancien :",
+            *(f"- {sujet}" for sujet in sujets.stdout.splitlines() if sujet.strip()),
+        ]
+    else:
+        lignes = [f"La branche ne porte aucun commit depuis `{base}`."]
+    if nb_commits > _COMMITS_DE_L_ETAT_MAX:
+        lignes.append(f"- et {nb_commits - _COMMITS_DE_L_ETAT_MAX} plus ancien(s)")
+    en_attente = [ligne[3:] for ligne in statut.stdout.splitlines() if len(ligne) > 3]
+    if en_attente:
+        lignes.append(f"Non commités : {len(en_attente)} fichier(s) —")
+        lignes += [f"- `{chemin}`" for chemin in en_attente[:_EN_ATTENTE_DITS_MAX]]
+        if len(en_attente) > _EN_ATTENTE_DITS_MAX:
+            lignes.append(f"- et {len(en_attente) - _EN_ATTENTE_DITS_MAX} autre(s)")
+    else:
+        lignes.append("Rien n'est en attente de commit.")
+    return "\n".join(lignes)
+
+
 def branche_de_tache(tache_id: str) -> str:
     """Le nom de la branche dédiée à la tâche `tache_id` — `maestro/<tâche>`.
 
@@ -1198,6 +1256,10 @@ def _normalise(chemin: Path) -> str:
 
 def _solder_la_branche(chemin: Path, branche: str) -> None:
     """Commite sur `branche` ce que le worktree porte encore, avant de le démonter (#705).
+
+    Dans le dernier commit de l'agent quand il n'est qu'à cette branche (#1507,
+    `commiter_en_attente`) : c'est un reste de son travail, et il entre sous son
+    message, dans la convention du projet.
 
     C'est ce qui rend **vraie** la phrase que ce module tient depuis #224 — « le
     worktree est retiré, jamais la branche : c'est elle qui porte le travail

@@ -65,6 +65,8 @@ from maestro.outillage import (
 from maestro.outillage.generation import REFUS_VERSION
 from maestro.outillage.questionnaire import comprehension_depuis_texte
 from maestro.outillage.redaction import (
+    CLONE_NEUF,
+    COMMITS_DANS_LA_CONVENTION,
     PREVU,
     REGLE_DU_PREVU,
     bloc,
@@ -518,6 +520,53 @@ def test_un_projet_neuf_ne_dit_jamais_constate_d_un_fichier_qui_n_existe_pas() -
     projet = agents.split("## Le projet\n\n", 1)[1].split("\n## ", 1)[0]
     assert "- **Langages** : TypeScript." in projet
     assert "%" not in projet
+
+
+def test_agents_md_dit_que_les_commits_suivent_la_convention_choisie() -> None:
+    """#1507 : sur p5, Conventional Commits était « prévu », et aucun commit ne le suivait.
+
+    La convention était listée comme un fichier à venir ; rien ne disait aux agents que
+    leurs commits la suivent, ni de commiter. C'est dit, sous la liste qui la nomme.
+    """
+    agents = _rediges_depuis_les_reponses()["AGENTS.md"]
+    conventions = agents.split("## Conventions\n\n", 1)[1].split("\n## ", 1)[0]
+    assert COMMITS_DANS_LA_CONVENTION in conventions
+    assert conventions.index("conventional-commits") < conventions.index(
+        COMMITS_DANS_LA_CONVENTION
+    )
+
+
+def test_agents_md_sans_convention_de_commit_n_en_parle_pas() -> None:
+    choix = [c for c in _choix_du_projet_neuf() if c.cle != "conventions"]
+    (agents, *_) = rediger(constats_depuis_choix(choix), recommandation_depuis_choix(choix))
+    assert COMMITS_DANS_LA_CONVENTION not in agents.contenu
+
+
+def test_agents_md_fait_appliquer_le_formatage_et_tenir_les_commandes_sur_un_clone_neuf() -> (
+    None
+):
+    """#1507 : « joue au moins les tests » laissait le reste facultatif.
+
+    Sur p5, cinquante fichiers sont partis hors du formatage choisi, et le typage ne
+    passait que sur l'arbre de l'agent (types générés par un build resté là).
+    """
+    choix = [*_choix_du_projet_neuf(), Choix(cle="formater", valeur="npx prettier --write .")]
+    (agents, *_) = rediger(constats_depuis_choix(choix), recommandation_depuis_choix(choix))
+    verifier = agents.contenu.split("## Vérifier\n\n", 1)[1].split("\n## ", 1)[0]
+    assert (
+        "Avant de rendre un travail, applique le **formatage** du projet à ce que tu as "
+        "écrit, puis vérifie son style et ses types" in verifier
+    )
+    assert CLONE_NEUF in verifier
+
+
+def test_sans_formateur_ni_controle_rien_n_est_exige_au_dela_des_tests() -> None:
+    choix = [
+        c for c in _choix_du_projet_neuf() if c.cle not in ("lint", "types", "formater")
+    ]
+    (agents, *_) = rediger(constats_depuis_choix(choix), recommandation_depuis_choix(choix))
+    assert "Avant de rendre un travail" not in agents.contenu
+    assert "**au moins** les tests" in agents.contenu
 
 
 def test_une_analyse_garde_ses_constats_quand_le_registre_des_reponses_existe() -> None:

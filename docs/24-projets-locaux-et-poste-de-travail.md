@@ -281,6 +281,19 @@ supprimé pour « nettoyer » ; finir proprement, c'est arrêter ce qu'on a lanc
 d'exécution et `AGENTS.md` disent la même chose. Le recensement, lui, n'a pas bougé : c'est celui
 de #1388.
 
+**L'agent commite son travail lui-même, dans la convention du projet (#1507).** « Ce que tu laisses
+est commité » avait un effet de bord : aucun agent ne commitait, et Maestro le faisait pour lui sous
+son propre message — sur p5, les 33 commits du livrable étaient « Maestro : travail de la tâche » ou
+« Maestro : application de … », quand la personne avait choisi Conventional Commits. Le message de
+la tâche dit désormais de **commiter soi-même**, au fil des étapes, en messages qui suivent la
+convention que nomme l'`AGENTS.md` du projet ; la session de l'agent porte l'identité Git de Maestro
+par son environnement. Ce qu'il laisse non commité est encore commité au démontage, mais **dans son
+dernier commit** quand aucune autre branche ne le porte (`commiter_en_attente`), sous son message ; un
+commit de Maestro ne naît plus que d'une branche où l'agent n'a rien commité. Les fusions de Maestro
+suivent la même convention, rédigées par le modèle, et gardent dans leur corps ce que Maestro en
+disait ([docs/38 §5.10](./38-decision-outillage-universel-du-projet.md)). La vérification de chaque
+livraison relit l'état de la branche quand une convention est choisie ([docs/45 §2](./45-decision-une-tache-verifiee-en-l-executant.md)).
+
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture
 directe pour trois raisons, et l'option C reposait sur un filet ; chacun reçoit une réponse qui le
 prend au sérieux plutôt qu'une dérogation :

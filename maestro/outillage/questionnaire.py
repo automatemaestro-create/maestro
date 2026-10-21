@@ -139,6 +139,17 @@ SUJET_NATURE = "nature"
 #: `maestro.outillage.clients.clients_depuis_texte`.
 SUJET_CLIENTS = "clients"
 
+#: Le sujet de la convention de message de commit — « Conventional Commits ». Nommé
+#: depuis #1507 : Maestro le relit pour écrire ses propres commits dans cette convention
+#: (`convention_de_commit`, `maestro.projets.commits`), et pas seulement pour la dire.
+SUJET_CONVENTIONS = "conventions"
+
+#: Ce que la pièce de convention d'un projet neuf dit d'elle-même (`constats_depuis_choix`)
+#: — le début de son rôle, que `AGENTS.md` relit pour dire aux agents que leurs commits la
+#: suivent (`maestro.outillage.redaction`, #1507). Écrit une fois : c'est notre propre
+#: mot, et deux orthographes ne se reconnaîtraient plus.
+ROLE_CONVENTION_DE_COMMIT = "convention de message de commit"
+
 #: Le **schéma** de ce qui fait l'outillage d'un projet — les sujets qu'une
 #: compréhension renseigne, avec le nom qu'on leur donne à l'écran. Ce n'est pas un
 #: catalogue de réponses : les valeurs sont libres. C'est la forme des `Constats` que
@@ -160,7 +171,7 @@ SUJETS: dict[str, str] = {
     "demarrer": "démarrage",
     "forge": "forge",
     "ci": "intégration continue",
-    "conventions": "convention de commit",
+    SUJET_CONVENTIONS: "convention de commit",
     # Les clients d'agents que la personne **dit** utiliser (#1295) : ils décident des ponts,
     # avec ceux que le poste révèle (`recommandation_depuis_choix`). Pas une commande.
     SUJET_CLIENTS: "outils d'agent",
@@ -877,15 +888,15 @@ def constats_depuis_choix(choix: Sequence[Choix]) -> Constats:
         else ()
     )
     forge_nom = valeur("forge")
-    convention = valeur("conventions")
+    convention = valeur(SUJET_CONVENTIONS)
     conventions = (
         (
             Piece(
                 nom="CONTRIBUTING.md",
                 chemin="CONTRIBUTING.md",
                 role=(
-                    f"convention de message de commit : {convention} — "
-                    f"{_extrait(acquis['conventions'])}"
+                    f"{ROLE_CONVENTION_DE_COMMIT} : {convention} — "
+                    f"{_extrait(acquis[SUJET_CONVENTIONS])}"
                 ),
             ),
         )
@@ -986,6 +997,21 @@ def choix_du_manifeste(source: Mapping[str, Any]) -> tuple[Choix, ...]:
     if source.get("type") != SOURCE_CHOIX:
         return ()
     return _constats_lus(source.get("choix"))
+
+
+def convention_de_commit(choix: Sequence[Choix]) -> str:
+    """La convention de message de commit que ces constats retiennent — `""` sinon (#1507).
+
+    Le sujet `conventions` acquis, tel que la personne l'a dit ou que le modèle l'a
+    compris, sur une ligne : c'est la phrase que Maestro donne au modèle pour écrire
+    ses propres commits dans cette convention (`maestro.projets.commits`). « aucun »
+    n'en est pas une.
+    """
+    acquis = {c.cle: c for c in acquis_de(choix)}
+    choisie = acquis.get(SUJET_CONVENTIONS)
+    if choisie is None or _est_aucun(choisie.valeur):
+        return ""
+    return _une_ligne(choisie.valeur, VALEUR_MAX)
 
 
 def clients_depuis_choix(choix: Sequence[Choix]) -> tuple[Client, ...]:

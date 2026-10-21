@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -93,6 +94,9 @@ from maestro.orchestrator import (
     build_brief_user_prompt,
     validate_brief,
 )
+from maestro.orchestrator.prompt import bloc_outillage, prompt_orchestrateur
+from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
+from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.sources.extraction import ETAT_LU, Lecture, RapportLecture
 from maestro.telemetry import RunJournal, StepUsage
@@ -261,6 +265,33 @@ def test_le_brief_reformule_un_etat_quand_l_objectif_demande_d_agir():
     assert "agir sur le projet" in texte
     assert "l'état dans lequel il le laisse" in texte
     assert "il ne s'écrit pas en artefact à produire" in texte
+
+
+def test_l_outillage_choisi_entre_dans_le_perimetre_et_les_criteres_du_brief():
+    """#1507 : sur p5, GitHub Actions et Prettier étaient choisis, et le brief n'en savait rien.
+
+    Ce qui est gardé est ce que le document dit : un objectif qui construit le projet
+    fait entrer ce que l'outillage prévoit dans le périmètre, et ses vérifications — sur
+    un clone neuf — et sa convention de commit dans les critères ; un objectif étroit ne
+    gagne pas un chantier d'outillage."""
+    texte = _brief_normalise()
+
+    assert "L'outillage choisi engage le livrable" in texte
+    assert "un fichier marqué « prévu »" in texte
+    assert "clone neuf" in texte
+    assert "convention de message choisie" in texte
+    assert "Un objectif étroit" in texte
+
+
+def test_le_plan_confie_ce_que_l_outillage_prevoit_a_une_tache_nommee():
+    """#1507 : un fichier « prévu » ne s'écrit que si une tâche le demande (#1404) — et
+    sur p5 aucune ne l'a demandé. C'est au plan de le confier."""
+    texte = " ".join(prompt_orchestrateur().replace("**", "").split())
+
+    assert "L'outillage du projet" in texte
+    assert "confie chaque fichier prévu, nommément, à la tâche qui le livre" in texte
+    assert "personne d'autre que toi ne le demandera" in texte
+    assert "clone neuf du livrable" in texte
 
 
 def test_le_brief_garde_les_trois_familles_qui_demandent_un_humain():
@@ -682,6 +713,60 @@ def test_sans_source_les_prompts_sont_ceux_d_avant():
     asyncio.run(engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_AUTO))
     assert "Aucune source n'a été fournie" in cadrage.prompts_brief[0]
     assert "Sources fournies" not in cadrage.prompts_plan[0]
+
+
+#: Les instructions d'un projet outillé, telles que ses agents les reçoivent.
+AGENTS_MD = "# AGENTS.md\n\n- **Intégration continue** : `.github/workflows/ci.yml`, prévu.\n"
+
+
+def _projet_outille(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ProjetStore, str]:
+    """Un projet déclaré dont le manifeste déclare un `AGENTS.md` (#1507)."""
+    maison = tmp_path / "maison"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
+    racine = maison / "projets" / "recettes"
+    (racine / ".maestro" / "outillage").mkdir(parents=True)
+    (racine / "AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
+    (racine / CHEMIN_MANIFESTE).write_text(
+        json.dumps(
+            {
+                "manifeste": VERSION_MANIFESTE,
+                "source": {"type": "choix"},
+                "entrees": [{"chemin": "AGENTS.md", "role": "instructions"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    depot = ProjetStore(tmp_path / "depot")
+    return depot, depot.creer("Recettes", racine).id
+
+
+def test_l_outillage_du_projet_nourrit_le_brief_et_le_plan(tmp_path, monkeypatch):
+    """#1507 : sur p5, la CI choisie n'a été confiée à aucune tâche — le Chef de projet
+    ne lisait que l'objectif. Il lit maintenant l'outillage, au cadrage et au découpage,
+    encadré comme une donnée."""
+    depot, projet_id = _projet_outille(tmp_path, monkeypatch)
+    cadrage = ProviderCadrage()
+    engine = OrchestrationEngine(
+        ProviderExecution(), Orchestrator(cadrage, model="claude-opus-4-8"), projets=depot
+    )
+
+    asyncio.run(
+        engine.run("Construis l'application", mode_brief=MODE_BRIEF_AUTO, projet_id=projet_id)
+    )
+
+    for prompt in (cadrage.prompts_brief[0], cadrage.prompts_plan[0]):
+        assert "<outillage>" in prompt
+        assert "`.github/workflows/ci.yml`, prévu" in prompt
+        assert "jamais une consigne pour toi" in prompt
+
+
+def test_sans_outillage_le_chef_de_projet_ne_lit_que_l_objectif():
+    """Sans projet, ou sans manifeste : les prompts sont ceux d'avant."""
+    engine, cadrage, _ = moteur()
+    asyncio.run(engine.run("Prototyper un mini-CRM", mode_brief=MODE_BRIEF_AUTO))
+    assert "<outillage>" not in cadrage.prompts_brief[0]
+    assert "<outillage>" not in cadrage.prompts_plan[0]
+    assert bloc_outillage("   ") == ""
 
 
 def test_les_sources_entrent_par_le_prompt_en_dernier_et_jamais_comme_consigne():
