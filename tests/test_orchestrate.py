@@ -2375,7 +2375,8 @@ def _evenement_usage(cinq: str, semaine: str, reset5: str, reset7: str) -> str:
 
 
 def _en_shell(evenement: str) -> str:
-    """L'événement entre guillemets DOUBLES, les siens échappés : ses remises à zéro s'y développent."""
+    """L'événement entre guillemets DOUBLES, les siens échappés : ses remises à zéro s'y
+    développent."""
     return '"' + evenement.replace('"', '\\"') + '"'
 
 
@@ -2532,9 +2533,11 @@ def test_la_sonde_releve_l_usage_et_le_run_ne_part_pas_au_dela_de_la_semaine(
     journal = depot.racine.parent / "appels-sonde-usage"
     evenement = _evenement_usage("0.3", "0.64", "$(( $(date +%s) + 3600 ))",
                                  "$(( $(date +%s) + 86400 ))")
+    resultat = ('{"type":"result","subtype":"success","is_error":false,'
+                '"modelUsage":{"' + OPUS + '":{}}}')
     claude = _claude_sonde(depot, journal, f"""
           printf '%s\\n' {_en_shell(evenement)}
-          printf '{{"type":"result","subtype":"success","is_error":false,"modelUsage":{{"{OPUS}":{{}}}}}}'
+          printf '%s' '{resultat}'
           exit 0""")
     plan = _plan(depot, [(1, 130, "-", "moyenne")])
     r = depot.lance("run.sh", "--plan", plan, "--run-id", "sonde-usage",

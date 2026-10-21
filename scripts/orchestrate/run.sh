@@ -1664,7 +1664,7 @@ patiente() {
 # par chaque session et par la sonde du modèle ; un run qui démarre au-delà d'un seuil le déclare
 # avant son premier ticket. L'usage d'une fenêtre ne fait que croître jusqu'à sa remise à zéro : une
 # valeur relue encore dans sa fenêtre est un minimum, jamais un faux positif.
-SEU_FENETRE=""; SEU_USAGE=""; SEU_RESET=""; SEU_SEUIL=""; SEU_IID=""
+SEU_FENETRE=""; SEU_USAGE=""; SEU_RESET=""; SEU_SEUIL=""
 USG_5H=""; USG_5H_RESET=""; USG_SEM=""; USG_SEM_RESET=""
 USAGE_POSTE="$ORCH_DIR/usage"
 
@@ -1762,7 +1762,7 @@ seuil_declare() {
   [ -n "$reset" ] || reset=$((MAINTENANT + PALIER_REPRISE_S))
   printf '%s\t%s\t%s\t%s\t%s\n' "$fenetre" "$usage" "$reset" "$seuil" "$1" >"$f.$BASHPID" 2>/dev/null &&
     mv -f "$f.$BASHPID" "$f" 2>/dev/null
-  SEU_FENETRE="$fenetre"; SEU_USAGE="$usage"; SEU_RESET="$reset"; SEU_SEUIL="$seuil"; SEU_IID="$1"
+  SEU_FENETRE="$fenetre"; SEU_USAGE="$usage"; SEU_RESET="$reset"; SEU_SEUIL="$seuil"
   return 0
 }
 
@@ -1771,12 +1771,12 @@ seuil_declare() {
 # — aucun seuil — ne coûte qu'un test de fichier.
 seuil_en_cours() {
   [ -f "$RUN_DIR/.seuil" ] || return 1
-  local fenetre usage reset seuil iid
-  IFS=$'\t' read -r fenetre usage reset seuil iid <"$RUN_DIR/.seuil" 2>/dev/null || return 1
+  local fenetre usage reset seuil _declarant
+  IFS=$'\t' read -r fenetre usage reset seuil _declarant <"$RUN_DIR/.seuil" 2>/dev/null || return 1
   case "$reset" in '' | *[!0-9]*) return 1 ;; esac
   maintenant_s
   [ "$reset" -gt "$MAINTENANT" ] || return 1
-  SEU_FENETRE="$fenetre"; SEU_USAGE="$usage"; SEU_RESET="$reset"; SEU_SEUIL="$seuil"; SEU_IID="$iid"
+  SEU_FENETRE="$fenetre"; SEU_USAGE="$usage"; SEU_RESET="$reset"; SEU_SEUIL="$seuil"
   return 0
 }
 
