@@ -4682,6 +4682,24 @@ gl_pipeline_failed_jobs() {
   gh_pipeline_failed_jobs "$@"
 }
 
+# gl_jobs_en_cours <pipeline-id> -> les jobs du pipeline qui tournent encore, un nom par ligne (rien :
+# tous terminés). Code 1 si la liste est illisible.
+#
+# LA CONFIRMATION D'UN VERT (#1553). L'agrégat d'un run peut se dire terminé AVANT ses jobs : le
+# 2026-10-21 (PR #1552, run 39623249789), il rendait `completed/success` pendant que `pytest` et
+# `shellcheck` restaient `in_progress`, et GitHub refusait le merge — « 2 of 7 required status
+# checks are in progress ». `pipeline-wait` et `merge-mr` confirment donc un vert ici avant d'en
+# faire un verdict, et un vert SEULEMENT : c'est le seul statut qui ouvre un merge.
+#
+# Une liste illisible ne confirme ni ne dément : l'agrégat garde le dernier mot, comme avant. En faire
+# un « pas encore » ferait attendre un plafond entier une lecture qui ne viendra pas, et le pire qui
+# reste possible est un merge REFUSÉ par GitHub, jamais un merge non vérifié (le `sha` du PUT, §6).
+gl_jobs_en_cours() {
+  local pid="$1"
+  if [ -z "$pid" ]; then echo "usage: gl_jobs_en_cours <pipeline-id>" >&2; return 2; fi
+  gh_jobs_en_cours "$@"
+}
+
 # gl_job_trace <job-id> [lignes] -> queue de la trace du job (défaut : 100 dernières lignes).
 # C'est la matière première du diagnostic ; l'appelant en extrait les lignes d'erreur utiles
 # plutôt que de recopier le log brut.
@@ -4763,6 +4781,13 @@ GL_PIPELINE_NAISSANCE_PR="${MAESTRO_PIPELINE_NAISSANCE_PR:-1800}" # naissance qu
 # reprise unique de `/ticket-finish` (§6) repassait alors sans avoir attendu une seule seconde, et
 # les deux appels rendaient le même verdict pour la même raison. Un `0` ici n'est toujours pas une
 # promesse de merge, c'est la fin d'une attente.
+#
+# UN VERT SE CONFIRME SUR SES JOBS (#1553). « Terminé », c'est le run ET chacun de ses jobs : un
+# agrégat `success` dont un job tourne encore se lit `running`, et l'attente continue (`4` au
+# plafond, qui nomme ces jobs). La lecture des jobs ne se paie que sur un vert du run attendu — un
+# run qui tourne n'en a pas besoin, et le vieux vert d'une push précédente est écarté avant —, donc
+# une seule de plus dans le cas nominal (#602). Illisible, elle laisse l'agrégat décider
+# (gl_jobs_en_cours).
 #
 # LA LECTURE QUI DIT LES DEUX. `gh_merge_facts <ref>`, UNE fois avant la boucle et jamais par tour,
 # répond du même coup à « un événement est-il dû ? » (une PR ouverte) et à « quel sha attend-on ? »
@@ -4850,9 +4875,9 @@ gl_pipeline_wait() {
   [ "$du" -eq 1 ] || [ "$naissance" -le "$timeout" ] || naissance="$timeout"
   [ "$timeout" -gt 0 ] || naissance=0
 
-  local attendu=0 vu=0 vu_a=0 statut="" ligne id sha url=""
+  local attendu=0 vu=0 vu_a=0 statut="" ligne id="" sha url="" en_cours=""
   while :; do
-    statut=""
+    statut=""; en_cours=""
     if [ "$mode" = "id" ]; then
       if ! statut="$(gl_pipeline_status "$cible" 2>/dev/null)" || [ -z "$statut" ]; then
         # Un id qu'on ne sait pas lire n'est pas « pas encore né » : il a été donné par un appelant
@@ -4878,6 +4903,16 @@ gl_pipeline_wait() {
           printf 'gl_pipeline_wait : run né après %s d'\''attente — le déclencheur a tardé (§8.9).\n' \
             "$(gl_duree_lisible "$attendu")" >&2
         fi
+      fi
+    fi
+
+    # Le vert de l'agrégat, démenti par un job qui tourne encore, n'est pas un verdict (#1553).
+    if [ "$statut" = "success" ]; then
+      [ "$mode" = "ref" ] || id="$cible"
+      if en_cours="$(gl_jobs_en_cours "$id" 2>/dev/null)" && [ -n "$en_cours" ]; then
+        statut="running"
+      else
+        en_cours=""
       fi
     fi
 
@@ -4912,6 +4947,8 @@ gl_pipeline_wait() {
     fi
     if [ "$vu" -eq 1 ] && [ $((attendu - vu_a)) -ge "$timeout" ]; then
       printf 'gl_pipeline_wait : plafond atteint (%ss) — dernier statut : %s\n' "$timeout" "${statut:-inconnu}" >&2
+      [ -z "$en_cours" ] || printf '  le run se dit vert, mais ses jobs tournent encore : %s\n' \
+        "$(printf '%s\n' "$en_cours" | paste -sd, - | sed 's/,/, /g')" >&2
       [ -z "$url" ] || printf '  %s\n' "$url" >&2
       printf '%s\n' "${statut:-inconnu}"
       return 4
@@ -6457,7 +6494,8 @@ gl_mr_conflict() {
 #      gh_pr_declare_fermer) : le verbe ferme alors le ticket lui-même après le merge ;
 #   2. rien de NON POUSSÉ — merger moins que ce qui existe est une perte silencieuse ;
 #   3. aucun CONFLIT réel avec origin/main ;
-#   4. un pipeline VERT, et vert SUR LA TÊTE DE LA PR.
+#   4. un pipeline VERT, et vert SUR LA TÊTE DE LA PR — vert jusque dans ses jobs : un agrégat
+#      `success` dont un job tourne encore se fait refuser par GitHub, et rend `3` (#1553).
 #
 # Codes de retour — une cause, un remède. Un booléen ne suffirait pas : c'est sur ce code que le
 # pilote (#419) décide entre « repasser plus tard », « faire réparer » et « laisser à un humain ».
@@ -6780,7 +6818,15 @@ gl_merge_mr() {
     return 3
   fi
   case "$statut" in
-    success) ;;
+    success)
+      # `3` et non le `6` d'un PUT refusé (#1553) : le pilote merge aussi sans `pipeline-wait` (drain
+      # au fil de l'eau, #419), et un `6` y sortait de la file une PR qui n'attendait que ses jobs.
+      local en_cours=""
+      if en_cours="$(gl_jobs_en_cours "$id" 2>/dev/null)" && [ -n "$en_cours" ]; then
+        printf '⏳ PR #%s (%s) : pipeline vert à l'\''agrégat, mais ses jobs tournent encore (%s) — %s\n' \
+          "$mr" "$branche" "$(printf '%s\n' "$en_cours" | paste -sd, - | sed 's/,/, /g')" "$url" >&2
+        return 3
+      fi ;;
     failed | canceled)
       printf '✗ PR #%s (%s) : pipeline %s — %s\n' "$mr" "$branche" "$statut" "$url" >&2
       return 4 ;;
@@ -9331,6 +9377,35 @@ gh_pipeline_failed_jobs() {
   if [ -z "$rows" ]; then echo "Aucun job en échec dans le run $pid." >&2; return 0; fi
   printf '# id\tname\tstage\tfailure_reason\n'
   printf '%s\n' "$rows"
+}
+
+# gh_jobs_en_cours <run-id> -> les jobs du run qui ne sont PAS terminés, un nom par ligne ; rien
+# quand tous le sont. Code 1 si la liste est illisible (forge muette, réponse sans « jobs »).
+#
+# Un job EST un check-run de son run : c'est ce que la protection de `main` juge au merge (#734),
+# lu sur le seul run qu'on attend — les check-runs du sha mêleraient ceux d'un autre run de la même
+# tête, un dispatch par exemple. Même découpage que gh_pipeline_failed_jobs : le premier « status »
+# d'un job est le sien, ses étapes (qui en portent aussi un) venant après.
+gh_jobs_en_cours() {
+  local pid="$1" raw
+  if [ -z "$pid" ]; then echo "usage: gh_jobs_en_cours <run-id>" >&2; return 2; fi
+  raw="$(gh api "repos/$GL_GH_REPO/actions/runs/$pid/jobs?per_page=100" 2>/dev/null)" || return 1
+  case "$raw" in *'"jobs":['*) ;; *) return 1 ;; esac
+  printf '%s' "$raw" | awk '
+    {
+      n = split($0, parts, /\{"id":/)
+      for (i = 2; i <= n; i++) {
+        node = parts[i]
+        if (node !~ /^[0-9]+,"run_id":/) continue
+        statut = ""
+        if (match(node, /"status":"[a-z_]*"/)) { statut = substr(node, RSTART, RLENGTH); sub(/.*:"/, "", statut); sub(/"$/, "", statut) }
+        if (statut == "completed") continue
+        nom = "-"
+        if (match(node, /"name":"[^"]*"/)) { nom = substr(node, RSTART, RLENGTH); sub(/^"name":"/, "", nom); sub(/"$/, "", nom) }
+        print nom
+      }
+    }
+  '
 }
 
 # gh_job_trace <job-id> [lignes] -> queue du journal du job. `gh api` suit la redirection vers le

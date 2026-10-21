@@ -1942,7 +1942,7 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   | 1 | une PR **ouverte**, **non brouillon**, qui **ferme le ticket** — par le lien de la forge, ou, s'il manque, par la fermeture qu'elle **déclare** (#1386, ci-dessous) | un merge qui laisserait le ticket ouvert **et sans état** — plus personne ne le poserait, le workflow `issues: closed` (§9.2) n'ayant aucun événement à écouter | `6` — geste humain · **`7` si elle est déjà mergée** |
   | 2 | rien de **non poussé** sur la branche | merger **moins que ce qui existe**, la seule perte que rien ne rattrape | `6` |
   | 3 | **aucun conflit réel** avec `origin/main` — verdict `git merge-tree --write-tree`, jamais l'heuristique de `behind-main` ni le champ asynchrone de la forge (§8.3) | un merge qui casserait `main` | `5` → `/mr-fix` |
-  | 4 | un **pipeline vert**, et vert **sur la tête de la PR** | le merge au rouge, et le faux vert d'un **run périmé** (le cas nominal juste après un push : le run précédent est fini, le nouveau n'a pas démarré) | `4` rouge → `/mr-fix` · `3` pas encore rendu → repasser |
+  | 4 | un **pipeline vert**, et vert **sur la tête de la PR** — jusque dans ses **jobs** (#1553, §8.9) | le merge au rouge, le faux vert d'un **run périmé** (le cas nominal juste après un push : le run précédent est fini, le nouveau n'a pas démarré), et le vert d'un **agrégat en avance sur ses jobs**, que GitHub refuserait | `4` rouge → `/mr-fix` · `3` pas encore rendu → repasser |
 
   ⚠ **Le lien que GitHub ne pose pas** (#1386). Le prérequis 1 se lit chez la forge
   (`closingIssuesReferences`) : c'est elle qui dit ce que le merge fermera. Le 2026-09-30, elle a
@@ -4331,6 +4331,46 @@ la peine au réveil.
 `3` (« verdict pas encore rendu ») au lieu de le compter bloqué — c'est ce comportement, et lui seul,
 qui a fini par merger #592 après 24 passes. Le ticket n'a pas changé la conduite, il a changé ce que
 la console en dit et ce que l'attente coûte.
+
+#### Un vert en avance sur ses jobs (#1553)
+
+**Le fait.** Le 2026-10-21, PR #1552 (run `39623249789`, tête `0d07db5b`) : l'agrégat du run rendait
+`status: completed, conclusion: success` (mis à jour à 15:17:38 UTC) pendant que `pytest` et
+`shellcheck` restaient `in_progress`, `completedAt` vide, dans ses jobs **comme** dans les check-runs
+de la tête. `pipeline-wait` rendait `0` aussitôt, en mode ref comme en mode id ; `merge-mr` tentait le
+PUT, et GitHub le refusait — « 2 of 7 required status checks are in progress », HTTP 405 — d'où un
+`6`. Relus plus tard, les sept jobs étaient terminés et leurs heures de fin antérieures à celle de
+l'agrégat : les deux vues de GitHub s'étaient simplement contredites un moment. Un merge **différé**
+devenait une **anomalie** — et dans le drain au fil de l'eau du pilote, qui appelle `merge-mr` sans
+`pipeline-wait` (§11.11), une PR sortie de la file que personne n'y remettait.
+
+**Ce que « terminé » veut dire.** Le run **et** chacun de ses jobs. `pipeline-wait` et `merge-mr`
+confirment un vert de l'agrégat sur les jobs du run (`gl_jobs_en_cours`) avant d'en faire un
+verdict : un job qui tourne encore fait lire `running` — l'attente continue, et son plafond (`4`)
+nomme ces jobs —, et `merge-mr` rend `3` (« repasser plus tard ») au lieu de tenter un PUT voué au
+refus. Les jobs plutôt que les check-runs du sha : un job **est** le check-run de son run, et c'est le
+run qu'on attend (§8.9 ci-dessus) ; les check-runs du sha y mêleraient ceux d'un autre run de la même
+tête.
+
+**Ce que la confirmation coûte**, compté en appels et non au chronomètre (§9.8) :
+
+| Situation | Lectures des jobs |
+|---|---|
+| vert nominal | **une**, au sondage qui le voit |
+| run qui tourne, rouge, run pas encore né | **aucune** — seul un vert se confirme, c'est le seul statut qui ouvre un merge |
+| vieux vert de la push précédente (attente de naissance sous PR) | **aucune** — il est écarté avant d'être confirmé, sans quoi chaque sondage d'une naissance de trente minutes paierait une lecture pour un run qu'on jette |
+| agrégat vert, jobs encore en cours | une par sondage, le temps que les deux vues de GitHub s'accordent |
+| `merge-mr` | une, sur un vert de la tête : son prérequis 4 est le sien, il ne s'en remet pas à l'attente qui le précède |
+
+**Une liste de jobs illisible ne confirme ni ne dément** : l'agrégat garde le dernier mot, comme
+avant. En faire un « pas encore » ferait attendre un plafond entier une lecture qui ne viendra pas ;
+le pire qui reste possible est un merge **refusé** par GitHub, jamais un merge non vérifié — le `sha`
+voyage avec le PUT et la protection de `main` juge ses checks (§8.8).
+
+> Gardé par `tests/test_merge_automatique.py` (section « Un vert qui précède ses jobs ») : le défaut
+> dans ses deux modes, la transition au rang du sondage (#648), le compte des lectures dans les trois
+> régimes, la tolérance d'une liste illisible, le `3` de `merge-mr`, et l'ordre du journal dans la
+> séquence `pipeline-wait` puis `merge-mr`.
 
 ## 9. Deux tickets en parallèle — un worktree par session
 
@@ -8205,7 +8245,7 @@ que ce qu'il ferait gagner.
 |---|---|---|
 | `0` | `mergee` | le ticket se ferme par son `Closes`, le workflow `issues: closed` pose « Terminé » (§9.2) |
 | `7` | `mergee` | **déjà mergée hors du run** — même état, même ramassage, et le journal dit que le merge n'est pas le sien |
-| `3` | `attente` | verdict pas encore rendu (en cours, absent, ou **périmé**) — la seule réponse qui laisse en file. Absent et périmé sont deux formes d'une **attente de naissance**, que la console nomme au bout de dix minutes au lieu de la laisser sous le mot « attente » (§8.9) |
+| `3` | `attente` | verdict pas encore rendu (en cours — un agrégat vert dont des jobs tournent encore compris, #1553 —, absent, ou **périmé**) — la seule réponse qui laisse en file. Absent et périmé sont deux formes d'une **attente de naissance**, que la console nomme au bout de dix minutes au lieu de la laisser sous le mot « attente » (§8.9) |
 | `4` / `5` | `bloquee` | pipeline rouge / conflit — **réparables**, d'où une session de déblocage |
 | autre | `bloquee` | geste humain : rien ne le tente, la PR est nommée au bilan avec sa cause |
 
