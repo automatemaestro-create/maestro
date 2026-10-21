@@ -66,6 +66,28 @@ L'idempotence, elle, est tenue **sur le fil** (`deja_raconte`) et non en mémoir
 un même `execution.statut` terminal reçu deux fois ne fait pas deux récits, et le
 marqueur est le fil lui-même — le seul endroit qui survit à un redémarrage.
 
+## Une fin qui n'en est pas une : la reprise (#1506)
+
+Un récit raconte **une fin** du run — son `execution.fin`, l'horodatage de l'issue —,
+et un run en a plusieurs quand on le reprend (#1391). Le 2026-10-14, le run
+`fea601a5c629` dont l'hôte s'était tu a été repris : la reprise l'a d'abord
+**soldé** (l'issue part sur le bus pour qu'un hôte encore vivant s'arrête), puis
+remis en vol dans la même seconde. La pompe a vu une fin. Une minute plus tard, run
+en cours, le fil recevait le récit de cette « fin » — « les vraies pages ne sont pas
+encore livrées », « une relance peut suffire » —, et à la vraie fin, `deja_raconte`
+comptait deux messages sur ce run : le seul récit juste n'a jamais été écrit.
+
+D'où deux règles, et aucune ne lit la cause de l'issue :
+
+- **le récit ne part que si le run est encore à la fin qu'il raconte** — relu une
+  fois le livrable et le bilan en main, avant d'appeler le modèle, puis de nouveau
+  au moment de poser le message. Un run reparti entre-temps n'a pas de récit pour
+  cette fin-là : il sera raconté à la prochaine ;
+- **« déjà raconté » se juge par fin** : le récit d'une fin est un message posé
+  **depuis** elle. Celui d'un arrêt d'avant la reprise — sur une borne, par
+  exemple, où le run est resté arrêté le temps que le récit s'écrive — reste vrai à
+  sa date, et ne tient pas lieu de celui de la vraie fin.
+
 ## Et l'outillage, que le projet construit fait changer (#1343)
 
 Un run donne au projet ses fichiers, et c'est le moment où « à vérifier » peut enfin
@@ -98,6 +120,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -285,27 +308,54 @@ def lire_le_livrable(
     )
 
 
-def deja_raconte(fil: Sequence[MessageChat], run_id: str) -> bool:
-    """Ce run a-t-il **déjà** son récit dans ce fil ?
+def deja_raconte(fil: Sequence[MessageChat], run_id: str, *, fin: str | None = None) -> bool:
+    """La fin `fin` de ce run a-t-elle **déjà** son récit dans ce fil ?
 
     Le marqueur est le fil lui-même, et il tient en une observation : un run
     ouvert depuis le fil y laisse **un** message d'agent portant son `run_id` —
-    la réponse qui l'a lancé (#268). Le récit en est un second. Au-delà d'un, il
-    y a donc déjà eu récit.
+    la réponse qui l'a lancé (#268). Un récit en est un autre. Le premier mis à
+    part, il y a donc déjà eu récit.
+
+    Un run repris a plusieurs fins (#1506) : le récit de **celle-ci** est un message
+    posé depuis elle — `fin` est l'horodatage de son issue, `execution.fin`. Celui
+    d'un arrêt d'avant la reprise est plus ancien qu'elle, et ne compte pas. Sans
+    `fin`, n'importe quel récit compte.
 
     Pas de registre en mémoire : il ne survivrait pas au redémarrage, et c'est
     précisément après un redémarrage qu'un doublon se verrait. Pas de champ neuf
     sur le message non plus — une ligne de JSONL écrite avant ce lot doit se
-    relire sans rien apprendre de nouveau.
+    relire sans rien apprendre de nouveau, et elle porte déjà son horodatage.
     """
     if not run_id:
         return False
-    porteurs = sum(
-        1
+    porteurs = [
+        message
         for message in fil
         if message.run_id == run_id and message.auteur != UTILISATEUR
-    )
-    return porteurs > 1
+    ]
+    depuis = _instant(fin)
+    for message in porteurs[1:]:
+        pose = _instant(message.horodatage)
+        # Un horodatage illisible compte : mieux vaut taire un récit que l'écrire deux fois.
+        if depuis is None or pose is None or pose >= depuis:
+            return True
+    return False
+
+
+def _instant(horodatage: str | None) -> datetime | None:
+    """Un horodatage du fil ou du bus en instant comparable — `None` s'il ne se lit pas.
+
+    Les deux s'écrivent en ISO-8601 UTC à la seconde, mais un producteur du bus peut
+    en poser un autre fuseau ou une autre précision : on compare des instants, pas
+    des chaînes. Sans fuseau, l'instant est réputé UTC, la convention du bus (#46).
+    """
+    if not horodatage:
+        return None
+    try:
+        instant = datetime.fromisoformat(horodatage)
+    except ValueError:
+        return None
+    return instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
 
 
 class RedacteurRecit(Protocol):
@@ -413,50 +463,88 @@ class ConteurDeFin:
         self._redacteur = redacteur if redacteur is not None else RedacteurModele()
         self._outillage = outillage
         self._bilan = bilan
-        # Les récits en cours d'écriture, par `run_id` : `deja_raconte` lit le
-        # fil **persisté**, donc il ne voit pas un récit encore en vol. Deux
-        # événements terminaux qui se suivent de près écriraient sinon deux fois.
-        self._en_vol: set[str] = set()
+        # Les récits en cours d'écriture, par fin de run (`run_id`, `fin`) : `deja_raconte`
+        # lit le fil **persisté**, donc il ne voit pas un récit encore en vol. Deux
+        # événements terminaux qui se suivent de près écriraient sinon deux fois. Par
+        # fin, et non par run (#1506) : le récit d'une fin qu'une reprise a déjà
+        # quittée peut encore être en vol quand la vraie fin arrive.
+        self._en_vol: set[tuple[str, str]] = set()
 
     async def raconter(self, run_id: str) -> MessageChat | None:
         """Écrit le récit de `run_id`, ou rend `None` en disant pourquoi au journal.
 
-        Cinq raisons de ne rien écrire, et aucune n'est une panne : le run n'est
-        pas soldé, il n'a été demandé dans aucun fil, son récit y est déjà, le
-        modèle n'a rien rendu, ou l'écriture au fil a échoué. Dans les cinq cas
-        l'annonce de #928 reste — elle est dérivée du persisté et ne dépend de
-        rien d'ici.
+        Six raisons de ne rien écrire, et aucune n'est une panne : le run n'est
+        pas soldé, il n'a été demandé dans aucun fil, le récit de cette fin y est
+        déjà, le run a repris avant que son récit soit prêt (#1506), le modèle n'a
+        rien rendu, ou l'écriture au fil a échoué. Dans les six cas l'annonce de
+        #928 reste — elle est dérivée du persisté et ne dépend de rien d'ici.
         """
-        if run_id in self._en_vol:
-            return None
         execution = self._state.execution(run_id)
         if execution is None or execution.statut not in STATUTS_EXECUTION_TERMINAUX:
+            return None
+        fin = execution.fin or ""
+        if (run_id, fin) in self._en_vol:
             return None
         conversation = self._chat.conversation_du_run(self._agent.nom, run_id)
         if conversation is None:
             return None  # run lancé ailleurs que dans un fil : la cloche est là pour lui
-        if deja_raconte(self._chat.fil(self._agent.nom, conversation), run_id):
+        if deja_raconte(self._chat.fil(self._agent.nom, conversation), run_id, fin=fin):
             return None
-        self._en_vol.add(run_id)
+        self._en_vol.add((run_id, fin))
         try:
-            return await self._ecrire(execution, conversation)
+            return await self._ecrire(execution, conversation, fin)
         finally:
-            self._en_vol.discard(run_id)
+            self._en_vol.discard((run_id, fin))
+
+    def _toujours_a_sa_fin(self, run_id: str, fin: str) -> bool:
+        """Le run est-il encore à la fin `fin` ? Sinon, son récit ne part pas (#1506).
+
+        La projection est relue, jamais l'objet reçu au départ : c'est le même objet
+        vivant, et la reprise l'a peut-être déjà remis en vol. Un run reparti sera
+        raconté à sa prochaine fin.
+        """
+        execution = self._state.execution(run_id)
+        if (
+            execution is not None
+            and execution.statut in STATUTS_EXECUTION_TERMINAUX
+            and (execution.fin or "") == fin
+        ):
+            return True
+        _LOGGER.info(
+            "Récit de fin du run %s non posé : le run a quitté la fin du %s "
+            "(repris depuis) — il sera raconté à sa prochaine fin.",
+            run_id,
+            fin,
+        )
+        return False
 
     async def _ecrire(
-        self, execution: EtatExecution, conversation: str
+        self, execution: EtatExecution, conversation: str, fin: str
     ) -> MessageChat | None:
-        """Fait rédiger le récit et revoir l'outillage **ensemble**, puis pose un seul message.
+        """Lit, puis fait rédiger le récit et revoir l'outillage **ensemble**, et pose un message.
 
-        Les deux ne dépendent pas l'un de l'autre, et les deux coûtent : un appel modèle
-        d'un côté, des commandes rejouées de l'autre (#1343). Les attendre l'un après
-        l'autre retarderait le récit de toute une vérification.
+        La rédaction et la revue ne dépendent pas l'une de l'autre, et les deux
+        coûtent : un appel modèle d'un côté, des commandes rejouées de l'autre (#1343).
+        Les attendre l'une après l'autre retarderait le récit de toute une vérification.
+
+        Elles partent **après** la lecture du livrable et du bilan, et seulement si le
+        run est encore à sa fin (#1506) : le bilan prend des dizaines de secondes, c'est
+        pendant ce temps qu'une reprise le remet en vol, et rejouer les commandes du
+        projet pendant que ses agents y retravaillent ne dirait rien de la fin. La fin
+        est relue une dernière fois avant de poser le message.
         """
         projet = self._projet(execution.projet_id)
+        livrable, bilan = await asyncio.gather(
+            self._lire(projet), self._bilan_du_run(execution.run_id)
+        )
+        if not self._toujours_a_sa_fin(execution.run_id, fin):
+            return None
         texte, revue = await asyncio.gather(
-            self._rediger(execution, projet), self._revoir(execution, conversation)
+            self._rediger(execution, livrable, bilan), self._revoir(execution, conversation)
         )
         if not texte and revue is None:
+            return None
+        if not self._toujours_a_sa_fin(execution.run_id, fin):
             return None
         outillage = revue.contenu if revue is not None else ""
         contenu = "\n\n".join(morceau for morceau in (texte, outillage) if morceau)
@@ -474,11 +562,10 @@ class ConteurDeFin:
             )
             return None
 
-    async def _rediger(self, execution: EtatExecution, projet: Projet | None) -> str:
-        """Lit le livrable et le bilan, puis fait rédiger le récit — `""` s'il n'a rien rendu."""
-        livrable, bilan = await asyncio.gather(
-            self._lire(projet), self._bilan_du_run(execution.run_id)
-        )
+    async def _rediger(
+        self, execution: EtatExecution, livrable: Livrable | None, bilan: BilanRun | None
+    ) -> str:
+        """Fait rédiger le récit sur le livrable et le bilan lus — `""` s'il n'a rien rendu."""
         try:
             texte = await self._redacteur.rediger(
                 agent=self._agent,

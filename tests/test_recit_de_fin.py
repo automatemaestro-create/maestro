@@ -35,13 +35,21 @@ Couvre :
    consigne (ENF-13) ;
 ⑥ **bout en bout par l'app** — un `execution.statut` terminal publié sur le bus
    fait paraître le récit dans `GET /api/chat/orchestrateur`, avec son
-   rattachement au run.
+   rattachement au run ;
+⑦ **la reprise** (#1506) — le solde qu'une reprise pose avant de repartir n'a pas
+   de récit, que le run reparte pendant le bilan ou pendant la rédaction ; la
+   vraie fin d'un run repris a le sien, même derrière le récit d'une fin passée ;
+   et, par la vraie pompe, la chronologie de `fea601a5c629` ne laisse qu'un récit,
+   posé à la fin.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +69,7 @@ from maestro.controltower.events import (
     Event,
     InMemoryEventBus,
 )
+from maestro.controltower.executions import DETAIL_HOTE_TU
 from maestro.controltower.orchestration import AGENT_ORCHESTRATION, NOM_ORCHESTRATION
 from maestro.controltower.projets import ServiceProjets
 from maestro.controltower.recit import (
@@ -71,6 +80,7 @@ from maestro.controltower.recit import (
     lire_le_livrable,
 )
 from maestro.controltower.state import (
+    EXECUTION_ANNULEE,
     EXECUTION_ECHEC,
     EXECUTION_EN_COURS,
     EXECUTION_TERMINEE,
@@ -80,6 +90,7 @@ from maestro.messaging import InMemoryMailbox
 from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.store import ProjetStore
 from maestro.sources.extraction import ETAT_LU, ETAT_TRONQUE, RapportLecture
+from maestro.telemetry import StepUsage
 
 RUN = "run-1224"
 RECIT = (
@@ -672,9 +683,288 @@ def _attendre_le_recit(depot: ChatStore) -> tuple[MessageChat, ...] | None:
     jamais dormir d'une durée choisie pour « laisser le temps ». Le plafond est
     là pour rendre un échec en secondes plutôt qu'en pendaison.
     """
+    return _attendre(lambda: _au_dela_du_lancement(depot))
+
+
+def _au_dela_du_lancement(depot: ChatStore) -> tuple[MessageChat, ...] | None:
+    """Le fil s'il porte plus que la paire du lancement, `None` sinon."""
+    fil = depot.fil(NOM_ORCHESTRATION, "origine")
+    return fil if len(fil) > 2 else None
+
+
+def _attendre(condition: Any) -> Any:
+    """La condition dès qu'elle tient — `None` si elle ne tient pas sous le plafond."""
     for _ in range(400):
-        fil = depot.fil(NOM_ORCHESTRATION, "origine")
-        if len(fil) > 2:
-            return fil
+        vu = condition()
+        if vu:
+            return vu
         time.sleep(0.01)
     return None
+
+
+# --------------------------------------------------------------------------
+# ⑦ La reprise d'un run (#1506)
+# --------------------------------------------------------------------------
+#
+# Le run `fea601a5c629` (p5-bilan, 2026-10-14) : son hôte s'était tu, et « Reprendre »
+# l'a d'abord **soldé** — l'issue part sur le bus pour qu'un hôte encore vivant
+# s'arrête —, puis remis en route dans la même seconde. La pompe a vu une fin ; le
+# récit de cette « fin » est arrivé dans le fil une minute plus tard, run en vol,
+# avec des faits faux. À la vraie fin, le fil portait déjà deux messages sur ce run,
+# et `deja_raconte` a tu le seul récit juste.
+
+#: Les instants du run repris : lancé, soldé par sa reprise, repris, fini.
+LANCE, SOLDE, REPRIS, FINI = (
+    "2026-10-14T06:32:29+00:00",
+    "2026-10-14T07:37:03+00:00",
+    "2026-10-14T07:37:04+00:00",
+    "2026-10-14T07:56:18+00:00",
+)
+
+
+def _issue(state: ControlTowerState, statut: str, detail: str, horodatage: str) -> None:
+    """Ce que la pompe projette d'un `execution.statut`, à l'instant donné."""
+    state.appliquer(
+        Event(
+            type=EVENEMENT_EXECUTION_STATUT,
+            run_id=RUN,
+            statut=statut,
+            detail=detail,
+            projet_id="p1",
+            horodatage=horodatage,
+        )
+    )
+
+
+def _solde_par_sa_reprise() -> ControlTowerState:
+    """Le run tel que la pompe le voit juste après le solde d'une reprise."""
+    state = ControlTowerState()
+    _issue(state, EXECUTION_EN_COURS, "lancée depuis la Control Tower", LANCE)
+    _issue(state, EXECUTION_ANNULEE, DETAIL_HOTE_TU, SOLDE)
+    return state
+
+
+def _reprendre(state: ControlTowerState) -> None:
+    """La seconde moitié de la reprise : le run repasse en vol."""
+    _issue(state, EXECUTION_EN_COURS, "run repris sur son plan", REPRIS)
+
+
+class BilanPendantLaReprise:
+    """Le bilan qu'attend le récit, rendu pendant que la reprise remet le run en route."""
+
+    def __init__(self, state: ControlTowerState) -> None:
+        self.state = state
+
+    async def rendre(self, run_id: str) -> None:
+        _reprendre(self.state)
+
+
+class RedacteurPendantLaReprise(RedacteurEspion):
+    """Un rédacteur qui écrit pendant que la reprise remet le run en route."""
+
+    def __init__(self, state: ControlTowerState) -> None:
+        super().__init__()
+        self.state = state
+
+    async def rediger(self, *, agent: Any, contexte: str) -> str:
+        _reprendre(self.state)
+        return await super().rediger(agent=agent, contexte=contexte)
+
+
+def _conteur_sur(
+    depot: ChatStore,
+    state: ControlTowerState,
+    racine: Path,
+    redacteur: RedacteurEspion,
+    bilan: Any = None,
+) -> ConteurDeFin:
+    projet = Projet(id="p1", nom="projet", racine=str(racine), perimetre=Perimetre())
+    return ConteurDeFin(
+        chat=_service_chat(depot),
+        state=state,
+        agent=AGENT_ORCHESTRATION,
+        projet=lambda projet_id: projet if projet_id == "p1" else None,
+        redacteur=redacteur,
+        bilan=bilan,
+    )
+
+
+def test_le_solde_d_une_reprise_ne_se_raconte_pas(depot: ChatStore, livrable: Path) -> None:
+    """Le run repart pendant que son bilan se rend : ni rédaction, ni message.
+
+    C'est la chronologie réelle — le récit attend le bilan, et le run est déjà
+    repris quand le bilan arrive. Le récit ne raconte que la fin où le run **est**
+    encore quand il est prêt.
+    """
+    for message in _lancement("c-du-run"):
+        depot.ajouter(message)
+    state = _solde_par_sa_reprise()
+    redacteur = RedacteurEspion()
+    conteur = _conteur_sur(depot, state, livrable, redacteur, BilanPendantLaReprise(state))
+
+    assert asyncio.run(conteur.raconter(RUN)) is None
+    assert redacteur.contextes == []
+    assert len(depot.fil(NOM_ORCHESTRATION, "c-du-run")) == 2
+
+
+def test_un_run_repris_pendant_la_redaction_ne_recoit_pas_son_recit(
+    depot: ChatStore, livrable: Path
+) -> None:
+    """Repris pendant que le modèle écrit : le texte est prêt, il ne part pas."""
+    for message in _lancement("c-du-run"):
+        depot.ajouter(message)
+    state = _solde_par_sa_reprise()
+    redacteur = RedacteurPendantLaReprise(state)
+
+    assert asyncio.run(_conteur_sur(depot, state, livrable, redacteur).raconter(RUN)) is None
+    assert len(redacteur.contextes) == 1
+    assert len(depot.fil(NOM_ORCHESTRATION, "c-du-run")) == 2
+
+
+def test_la_vraie_fin_d_un_run_repris_a_son_recit(depot: ChatStore, livrable: Path) -> None:
+    """Un récit d'une issue passée ne tient pas lieu de celui de la vraie fin.
+
+    Le fil porte le lancement et le récit d'un arrêt d'avant la reprise : le run
+    est reparti, puis il a fini. Cette fin-là n'a pas encore de récit.
+    """
+    for message in _lancement("c-du-run"):
+        depot.ajouter(replace(message, horodatage=LANCE))
+    depot.ajouter(
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            conversation="c-du-run",
+            auteur=NOM_ORCHESTRATION,
+            contenu="Le run s'est arrêté en route.",
+            run_id=RUN,
+            horodatage="2026-10-14T07:38:23+00:00",
+        )
+    )
+    state = _solde_par_sa_reprise()
+    _reprendre(state)
+    _issue(state, EXECUTION_TERMINEE, "9/9 tâche(s) réussie(s)", FINI)
+    redacteur = RedacteurEspion()
+
+    message = asyncio.run(_conteur_sur(depot, state, livrable, redacteur).raconter(RUN))
+
+    assert message is not None
+    assert message.horodatage >= FINI
+    assert "Terminée" in redacteur.contextes[0]
+    assert len(depot.fil(NOM_ORCHESTRATION, "c-du-run")) == 4
+
+
+def test_le_recit_d_une_issue_passee_ne_vaut_pas_pour_la_suivante() -> None:
+    """`deja_raconte` lit **l'issue** : un récit posé avant la fin qu'on raconte n'en est pas un."""
+    fil = [
+        *(replace(message, horodatage=LANCE) for message in _lancement("origine")),
+        MessageChat(
+            agent=NOM_ORCHESTRATION,
+            conversation="origine",
+            auteur=NOM_ORCHESTRATION,
+            contenu="Le run s'est arrêté en route.",
+            run_id=RUN,
+            horodatage="2026-10-14T07:38:23+00:00",
+        ),
+    ]
+
+    assert deja_raconte(fil, RUN, fin=SOLDE) is True
+    assert deja_raconte(fil, RUN, fin=FINI) is False
+    # Le lancement n'est le récit d'aucune fin : il la précède toujours.
+    assert deja_raconte(fil[:2], RUN, fin=SOLDE) is False
+
+
+class JugeRetenu:
+    """Un juge de bilan qui ne répond qu'au signal du test — le temps que la reprise passe.
+
+    Les deux drapeaux sont des `threading.Event` : le test tourne sur un autre fil
+    d'exécution que la boucle de l'app, et c'est lui qui donne le signal.
+    """
+
+    def __init__(self) -> None:
+        self.appele = threading.Event()
+        self.libere = threading.Event()
+
+    async def juger(self, *, agent: Any, prompt: str) -> tuple[str, StepUsage]:
+        self.appele.set()
+        while not self.libere.is_set():
+            await asyncio.sleep(0.01)
+        return '{"constats": []}', StepUsage()
+
+
+def test_un_run_solde_par_sa_reprise_n_a_qu_un_recit_a_sa_vraie_fin(
+    tmp_path: Path, maison: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """La chronologie de `fea601a5c629`, par la vraie pompe : un seul récit, à la fin.
+
+    Solde de la reprise, puis le run remis en vol **pendant** que le bilan de ce
+    solde se rend — c'est ce qu'a vu la pompe, l'issue étant arrivée une seconde
+    avant la remise en route. Le test attend que le récit de ce solde soit tranché
+    (posé, ou tu en le disant) avant de finir le run : sans quoi la vraie fin
+    pourrait passer avant lui, et le test ne dirait rien de l'ordre réel.
+    """
+    caplog.set_level(logging.INFO, logger="maestro.controltower.recit")
+    racine = maison / "livrable"
+    racine.mkdir()
+    (racine / "app.py").write_text("print('bonjour')\n", encoding="utf-8")
+    projets = ServiceProjets(ProjetStore(tmp_path / "depot"))
+    projet = projets.creer("livrable", str(racine))
+    depot = ChatStore(tmp_path / "chat")
+    for message in _lancement("origine"):
+        depot.ajouter(message)
+    bus = InMemoryEventBus()
+    redacteur = RedacteurEspion(RECIT.format(chemin=racine / "app.py"))
+    juge = JugeRetenu()
+
+    with TestClient(
+        create_app(
+            bus=bus,
+            chat_store=depot,
+            projets=projets,
+            recit_redacteur=redacteur,
+            bilan_juge=juge,
+        )
+    ) as client:
+
+        def publier(statut: str, detail: str) -> None:
+            client.portal.call(
+                bus.publish,
+                Event(
+                    type=EVENEMENT_EXECUTION_STATUT,
+                    run_id=RUN,
+                    statut=statut,
+                    detail=detail,
+                    projet_id=projet["id"],
+                ),
+            )
+
+        def tu() -> bool:
+            return any(
+                r.name == "maestro.controltower.recit" and RUN in r.getMessage()
+                for r in caplog.records
+            )
+
+        publier(EXECUTION_EN_COURS, "lancée depuis la Control Tower")
+        publier(EXECUTION_ANNULEE, DETAIL_HOTE_TU)
+        assert juge.appele.wait(5), "le bilan du solde n'a pas été demandé"
+        publier(EXECUTION_EN_COURS, "run repris sur son plan")
+        juge.libere.set()
+        assert _attendre(lambda: _au_dela_du_lancement(depot) or tu()), (
+            "le récit du solde n'a été ni posé ni tu"
+        )
+        publier(EXECUTION_TERMINEE, "1/1 tâche(s) réussie(s)")
+        fin = _attendre(lambda: client.get(f"/api/executions/{RUN}").json().get("fin"))
+        recits = _attendre(lambda: _recits(depot))
+
+    assert recits, "la vraie fin n'a pas de récit"
+    assert len(recits) == 1
+    assert recits[0].horodatage >= fin
+    assert len(redacteur.contextes) == 1
+    assert "Terminée" in redacteur.contextes[0]
+
+
+def _recits(depot: ChatStore) -> list[MessageChat]:
+    """Les messages d'agent du run, lancement exclu — ses récits."""
+    return [
+        message
+        for message in depot.fil(NOM_ORCHESTRATION, "origine")
+        if message.run_id == RUN and message.auteur == NOM_ORCHESTRATION
+    ][1:]

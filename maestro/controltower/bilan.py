@@ -59,9 +59,10 @@ run de `p3` en comptait 183, et la page du journal s'arrête à 200. Chaque piè
 garde l'identifiant des entrées dont elle vient (`j-0042`), celui que
 `GET /api/journal` sert : c'est ce qui permettra à la vue du run de relier un
 constat à ses pièces. Ce qui est **borné**, c'est ce qu'on donne au modèle
-(`PIECES_MAX`, `TEXTE_PIECE_MAX`) : les pièces décisives passent d'abord, le bruit
-de fond de l'activité en dernier, et ce que le budget laisse de côté est **compté
-et dit** au modèle comme au lecteur.
+(`PIECES_MAX`, `TEXTE_PIECE_MAX`) : l'histoire du run passe d'abord — ses statuts,
+l'issue de chaque tâche et ce qu'elle a écrit dans le projet (#1506) —, puis les
+pièces décisives, le bruit de fond de l'activité en dernier, et ce que le budget
+laisse de côté est **compté et dit** au modèle comme au lecteur.
 
 **3. Le bilan ne tranche rien** ([docs/32](../../docs/32-decision-cran-orchestrateur.md) §b).
 Il est rendu après le run, ne décide d'aucun appel d'outil, ne change aucun cran,
@@ -187,10 +188,20 @@ FAMILLE_ACTIVITE = "activite"  # le reste de l'activité des agents — le bruit
 #: décide d'un constat, puis ce qui l'éclaire, puis le contexte, et le bruit de fond
 #: en dernier. Un rang n'est pas un jugement sur le run : il dit seulement ce que le
 #: modèle doit lire s'il ne peut pas tout lire.
-PRIORITE_DECISIVE = 0
-PRIORITE_ECLAIRANTE = 1
-PRIORITE_CONTEXTE = 2
-PRIORITE_BRUIT = 3
+#:
+#: ⚠ **L'histoire du run passe avant tout** (#1506) : ses statuts, l'issue de chaque
+#: tâche, et ce qu'elle a écrit dans le projet — fusion, écriture en place, ou ce qui
+#: l'en a empêchée. Le run `fea601a5c629` a fait passer 203 appels d'outil arbitrés
+#: « auto » avant que sa page d'accueil ne fusionne : décisifs eux aussi, et plus
+#: anciens, ils ont pris les 120 places, la fusion est restée dehors, et le bilan a
+#: écrit « aucune fusion n'est relevée » d'une page fusionnée dans `master` — que le
+#: récit de fin a recopié. Ces faits sont au plus quelques-uns par tâche, et ce sont
+#: ceux qu'aucun constat ne peut contredire : les arbitrages, eux, se résument.
+PRIORITE_HISTOIRE = 0
+PRIORITE_DECISIVE = 1
+PRIORITE_ECLAIRANTE = 2
+PRIORITE_CONTEXTE = 3
+PRIORITE_BRUIT = 4
 
 #: Combien de pièces le modèle reçoit au plus. 120 lignes bornées à
 #: `TEXTE_PIECE_MAX` font ~12 000 tokens : de quoi porter tout ce qui décide d'un
@@ -404,10 +415,10 @@ def _classer(entree: EntreeJournal) -> tuple[str, int] | None:
     if type_ in _TYPES_SYNTHETISES:
         return None
     if type_ == EVENEMENT_EXECUTION_STATUT:
-        return FAMILLE_STATUT, PRIORITE_DECISIVE
+        return FAMILLE_STATUT, PRIORITE_HISTOIRE
     if type_ == EVENEMENT_TACHE_STATUT:
         if statut in STATUTS_TACHE_TERMINAUX:
-            return FAMILLE_STATUT, PRIORITE_DECISIVE
+            return FAMILLE_STATUT, PRIORITE_HISTOIRE
         # Les démarrages : la synthèse des tentatives les compte, ils restent du
         # contexte — « redémarrage (tentative 2/3) » se lit aussi dans la relance.
         return FAMILLE_STATUT, PRIORITE_CONTEXTE
@@ -431,7 +442,7 @@ def _classer(entree: EntreeJournal) -> tuple[str, int] | None:
     if statut in (STATUT_REFUS_OUTIL, STATUT_ARBITRAGE_OUTIL):
         return FAMILLE_ACTE, PRIORITE_DECISIVE
     if statut in _STATUTS_ECRITURE:
-        return FAMILLE_ACTE, PRIORITE_DECISIVE
+        return FAMILLE_ACTE, PRIORITE_HISTOIRE
     if statut in _STATUTS_PROCESSUS:
         return FAMILLE_ACTE, PRIORITE_ECLAIRANTE
     if statut in (STATUT_VALIDATION_APPROUVE, STATUT_VALIDATION_REFUSE):
@@ -1552,7 +1563,7 @@ class ServiceBilan:
         deja = self.bilan(run_id)
         if deja is not None and deja.fin == execution.fin:
             return deja
-        tache = asyncio.ensure_future(self._rendre(execution))
+        tache = asyncio.ensure_future(self._rendre(execution, execution.fin))
         self._en_vol[run_id] = tache
         tache.add_done_callback(lambda _fini: self._en_vol.pop(run_id, None))
         return tache
@@ -1568,12 +1579,28 @@ class ServiceBilan:
             return await lance
         return lance
 
-    async def _rendre(self, execution: EtatExecution) -> BilanRun | None:
-        """Assemble, fait juger, vérifie, publie — et rend le bilan, ou None."""
+    async def _rendre(self, execution: EtatExecution, fin: str | None) -> BilanRun | None:
+        """Assemble, fait juger, vérifie, publie — et rend le bilan de la fin `fin`, ou None.
+
+        `execution` est l'état **vivant** du run, et une reprise peut le remettre en
+        vol à tout moment (#1506) : elle le solde d'abord, pour qu'un hôte encore en
+        vie s'arrête, puis le relance dans la même seconde. Le bilan dit donc l'issue
+        qu'on lui a demandé de juger, relevée **avec son dossier**, et non celle que le
+        run porte quand le modèle a fini d'écrire. Un run déjà reparti quand l'appel
+        part n'a plus de fin à juger : aucun appel, rien de publié.
+        """
         run_id = execution.run_id
         juge = self._juge
         if juge is None:  # pragma: no cover - écarté par `rendre`
             return None
+        if execution.statut not in STATUTS_EXECUTION_TERMINAUX or execution.fin != fin:
+            _LOGGER.info(
+                "Bilan du run %s non rendu : le run a quitté la fin du %s avant le jugement.",
+                run_id,
+                fin,
+            )
+            return None
+        statut = execution.statut
         dossier = assembler_les_pieces(
             execution,
             self._journal.entrees_du_run(run_id),
@@ -1621,8 +1648,8 @@ class ServiceBilan:
         cites = {identifiant for constat in constats for identifiant in constat.pieces}
         bilan = BilanRun(
             run_id=run_id,
-            statut=execution.statut,
-            fin=execution.fin,
+            statut=statut,
+            fin=fin,
             constats=constats,
             ecartes=ecartes,
             pieces=tuple(piece for piece in dossier.pieces if piece.id in cites),
