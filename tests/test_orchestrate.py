@@ -2353,6 +2353,237 @@ def test_une_attente_trop_longue_est_lue_comme_la_limite_hebdomadaire(depot: Dep
 
 
 # =====================================================================================
+# La garde de quota : se mettre en pause AVANT la limite (#1551)
+# =====================================================================================
+# Chaque session publie l'usage de la fenêtre de 5 h et de la semaine dans les champs typés de ses
+# événements `rate_limit_event`. Les bouchons ci-dessous publient cet usage comme le CLI, puis
+# TRAVAILLENT (un `sleep` long) : seule la garde peut les arrêter à temps, et un bouchon qu'elle
+# n'aurait pas arrêté sortirait en échec — ce qui ferait rougir le verdict attendu.
+def _evenement_usage(cinq: str, semaine: str, reset5: str, reset7: str) -> str:
+    """Un `rate_limit_event` tel que le CLI l'écrit, champs `unifiedWindows` compris.
+
+    Les remises à zéro sont du SHELL (`$R5`, `$(( … ))`) : elles se calculent dans le bouchon, au
+    moment où il publie, et non au moment où le test l'écrit.
+    """
+    return (
+        '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":' + reset5
+        + ',"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false,'
+        '"unifiedWindows":{"five_hour":{"utilization":' + cinq + ',"resetsAt":' + reset5 + '},'
+        '"seven_day":{"utilization":' + semaine + ',"resetsAt":' + reset7 + '}}},'
+        '"session_id":"06cacb83"}'
+    )
+
+
+def _en_shell(evenement: str) -> str:
+    """L'événement entre guillemets DOUBLES, les siens échappés : ses remises à zéro s'y
+    développent."""
+    return '"' + evenement.replace('"', '\\"') + '"'
+
+
+def _usage_du_poste(depot: Depot, cinq: int, reset5: int, semaine: int, reset7: int) -> Path:
+    """Le dernier usage relevé pour le poste, comme une session ou la sonde l'auraient laissé."""
+    fichier = depot.racine / ".maestro/orchestrate/usage"
+    fichier.parent.mkdir(parents=True, exist_ok=True)
+    fichier.write_text(
+        f"{int(time.time())}\t{cinq}\t{reset5}\t{semaine}\t{reset7}\n", encoding="utf-8"
+    )
+    return fichier
+
+
+def test_au_seuil_de_5h_le_run_se_met_en_pause_et_reprend_la_session(depot: Depot) -> None:
+    """72 % de la fenêtre de 5 h : la session est interrompue en plein travail, attend la remise à
+    zéro, puis se rouvre PAR SON UUID — et le ticket finit livré, sans aucun échec compté."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    appels = depot.racine.parent / "appels-seuil-5h"
+    evenement_haut = _evenement_usage("0.72", "0.1", "$R5", "$(( $(date +%s) + 86400 ))")
+    evenement_bas = _evenement_usage("0.02", "0.1", "$(( $(date +%s) + 18000 ))",
+                                     "$(( $(date +%s) + 86400 ))")
+    claude = _claude_stub(depot, f"""
+        printf '%s\\n' "$*" | tr '\\n' ' ' >> "{appels}"; printf '\\n' >> "{appels}"
+        if printf '%s\\n' "$@" | grep -qx -- '--resume'; then
+          printf '%s\\n' {_en_shell(evenement_bas)}
+          printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+          printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+          exit 0
+        fi
+        R5=$(( $(date +%s) + 4 ))
+        printf '%s\\n' {_en_shell(evenement_haut)}
+        sleep 60
+        printf '{{"type":"result","is_error":true,"result":"la garde ne m a pas arrete"}}'
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    debut = time.monotonic()
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "seuil5h",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_MARGE": "0"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert time.monotonic() - debut < 50, "la session est arrêtée par la garde, pas par son sleep"
+
+    lignes = appels.read_text(encoding="utf-8").splitlines()
+    assert len(lignes) == 2, "une session, puis sa reprise — rien d'autre"
+    uuid = (depot.racine / ".maestro/orchestrate/seuil5h/130.session").read_text().strip()
+    assert f"--session-id {uuid}" in lignes[0]
+    assert f"--resume {uuid}" in lignes[1], "rouverte par SON uuid : le contexte est gardé"
+    assert "pause au seuil de quota" in r.stdout
+    assert "72 %" in r.stdout and "seuil 70 %" in r.stdout
+    assert "reprise de la session #130 après la pause au seuil de quota" in r.stdout
+    assert "reprise 1/3" not in r.stdout, "une pause de la garde n'entame pas les reprises"
+    resume = (depot.racine / ".maestro/orchestrate/seuil5h/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume and "ECHEC" not in resume, "aucun ticket compté en échec"
+    usage = (depot.racine / ".maestro/orchestrate/usage").read_text(encoding="utf-8").split("\t")
+    assert usage[1] == "2", "le dernier usage lu est gardé pour le poste"
+
+
+def test_au_seuil_de_la_semaine_le_run_s_arrete_et_reste_reprenable(depot: Depot) -> None:
+    """61 % de la semaine : le run s'arrête tout de suite, SANS solder le ticket en vol — c'est ce
+    qui le laisse à `--resume`, qui le rouvre dans sa session une fois la semaine remise à zéro."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.ticket(131, "Ticket suivant")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    depot.mr("feat/131-ticket-suivant", "opened")
+    appels = depot.racine.parent / "appels-seuil-semaine"
+    evenement = _evenement_usage("0.2", "0.61", "$(( $(date +%s) + 3600 ))",
+                                 "$(( $(date +%s) + 86400 ))")
+    # #130 publie 61 % de la semaine et travaille ; sa reprise, comme le ticket #131, livre.
+    claude = _claude_stub(depot, f"""
+        printf '%s\\n' "$*" | tr '\\n' ' ' >> "{appels}"; printf '\\n' >> "{appels}"
+        iid={_IID_DU_PROMPT}
+        if [ "$iid" = 131 ]; then
+          printf '%s' '{_statut_json("131", "En revue")}' > "$MAESTRO_FIXTURES/owner-131.json"
+          printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+          exit 0
+        fi
+        if printf '%s\\n' "$@" | grep -qx -- '--resume'; then
+          printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+          printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+          exit 0
+        fi
+        printf '%s' '{_statut_json("130", "En cours")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '%s\\n' {_en_shell(evenement)}
+        sleep 60
+        exit 1
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne"), (2, 131, "-", "moyenne")])
+    debut = time.monotonic()
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "semaine", "--concurrence", "1",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert time.monotonic() - debut < 50, "le run n'attend pas la remise à zéro de la semaine"
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Run en pause au seuil de quota de la semaine" in r.stdout
+    assert "la semaine à 61 % (seuil 60 %), remise à zéro le" in r.stdout
+    assert "/orchestrate --resume semaine" in r.stdout
+    run_dir = depot.racine / ".maestro/orchestrate/semaine"
+    resume = (run_dir / "resume.tsv").read_text(encoding="utf-8")
+    assert "130\t" not in resume, "le ticket suspendu n'a pas de verdict : il reste à reprendre"
+    assert "131\t" not in resume, "plus aucun ticket n'est parti"
+    assert len(appels.read_text(encoding="utf-8").splitlines()) == 1
+
+    # Tant que la semaine est au-delà du seuil, la reprise ne part pas : aucune session, aucun run.
+    r = depot.lance("run.sh", "--resume", "semaine", "--run-id", "trop-tot",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert "le run ne part pas (garde de quota" in r.stderr
+    assert not (depot.racine / ".maestro/orchestrate/trop-tot").exists()
+    assert len(appels.read_text(encoding="utf-8").splitlines()) == 1
+
+    # La semaine remise à zéro : la reprise rouvre le ticket suspendu DANS SA SESSION.
+    _usage_du_poste(depot, 5, int(time.time()) + 3600, 1, int(time.time()) + 600000)
+    r = depot.lance("run.sh", "--resume", "semaine", "--run-id", "suite", "--concurrence", "1",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    uuid = (run_dir / "130.session").read_text().strip()
+    lignes = appels.read_text(encoding="utf-8").splitlines()
+    assert f"--resume {uuid}" in lignes[1], "repris en vol, dans la session de la coupure"
+    suite = (depot.racine / ".maestro/orchestrate/suite/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in suite and "131\tOK" in suite
+
+
+def test_un_run_qui_part_au_dela_du_seuil_de_5h_attend_avant_son_premier_ticket(
+    depot: Depot,
+) -> None:
+    """Le dernier usage relevé est déjà à 75 % : aucune session ne part avant la remise à zéro."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    depart = depot.racine.parent / "depart-session"
+    claude = _claude_stub(depot, f"""
+        date +%s > "{depart}"
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+        exit 0
+    """)
+    reset5 = int(time.time()) + 4
+    _usage_du_poste(depot, 75, reset5, 10, int(time.time()) + 86400)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "depart",
+                    env={"MAESTRO_CLAUDE_BIN": claude, "MAESTRO_ORCHESTRATE_MARGE": "0"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Pause au seuil de quota" in r.stdout
+    assert "la fenêtre de 5 h à 75 % (seuil 70 %)" in r.stdout
+    assert int(depart.read_text().strip()) >= reset5, "la session part APRÈS la remise à zéro"
+    resume = (depot.racine / ".maestro/orchestrate/depart/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume
+
+
+def test_la_sonde_releve_l_usage_et_le_run_ne_part_pas_au_dela_de_la_semaine(
+    depot: Depot,
+) -> None:
+    """L'usage vient de la sonde du modèle, avant le premier ticket : aucune session ne part."""
+    depot.ticket(130, "Premier lot")
+    journal = depot.racine.parent / "appels-sonde-usage"
+    evenement = _evenement_usage("0.3", "0.64", "$(( $(date +%s) + 3600 ))",
+                                 "$(( $(date +%s) + 86400 ))")
+    resultat = ('{"type":"result","subtype":"success","is_error":false,'
+                '"modelUsage":{"' + OPUS + '":{}}}')
+    claude = _claude_sonde(depot, journal, f"""
+          printf '%s\\n' {_en_shell(evenement)}
+          printf '%s' '{resultat}'
+          exit 0""")
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "sonde-usage",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert "la semaine à 64 % (seuil 60 %)" in r.stderr
+    assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session de ticket"
+
+
+def test_les_seuils_s_annoncent_avec_leur_origine_et_0_eteint_la_garde(depot: Depot) -> None:
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan)
+    assert "garde de quota 5 h ≥ 70 %, semaine ≥ 60 % (défaut)" in r.stdout
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--seuil-5h", "80",
+                    env={"MAESTRO_ORCHESTRATE_SEUIL_SEMAINE": "0"})
+    assert ("garde de quota 5 h ≥ 80 % (--seuil-5h), semaine éteinte "
+            "(MAESTRO_ORCHESTRATE_SEUIL_SEMAINE)") in r.stdout
+    r = depot.lance("run.sh", "--dry-run", "--plan", plan, "--seuil-5h", "120")
+    assert r.returncode == 2
+    assert "seuil de quota invalide « 120 »" in r.stderr
+
+
+def test_une_garde_eteinte_laisse_la_session_aller_au_bout(depot: Depot) -> None:
+    """`0` éteint la garde de sa fenêtre : 99 % publiés, et la session n'est pas interrompue."""
+    depot.ticket(130, "Ticket a traiter")
+    depot.mr("feat/130-ticket-a-traiter", "opened")
+    evenement = _evenement_usage("0.99", "0.99", "$(( $(date +%s) + 3600 ))",
+                                 "$(( $(date +%s) + 86400 ))")
+    claude = _claude_stub(depot, f"""
+        printf '%s\\n' {_en_shell(evenement)}
+        sleep 3
+        printf '%s' '{_statut_json("130", "En revue")}' > "$MAESTRO_FIXTURES/owner-130.json"
+        printf '{{"type":"result","subtype":"success","is_error":false,"total_cost_usd":2}}'
+        exit 0
+    """)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "eteinte",
+                    "--seuil-5h", "0", "--seuil-semaine", "0",
+                    env={"MAESTRO_CLAUDE_BIN": claude})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "seuil de quota" not in r.stdout
+    resume = (depot.racine / ".maestro/orchestrate/eteinte/resume.tsv").read_text(encoding="utf-8")
+    assert "130\tOK" in resume
+
+
+# =====================================================================================
 # Le lancement détaché (#173)
 # =====================================================================================
 

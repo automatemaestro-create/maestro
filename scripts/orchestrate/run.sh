@@ -390,6 +390,14 @@ case "$MRFIX_MAX" in '' | *[!0-9]*) MRFIX_MAX=2 ;; esac
 # `MAESTRO_ORCHESTRATE_BANC=0` (ou `--sans-banc`) l'éteint, et l'en-tête le dit dans les deux sens.
 BANC="${MAESTRO_ORCHESTRATE_BANC:-1}"
 case "$BANC" in 0 | non | off | false) BANC=0 ;; *) BANC=1 ;; esac
+# La garde de quota (#1551) : le run se met en pause AVANT d'épuiser le quota de la personne, à 70 %
+# de la fenêtre de 5 h et à 60 % de la semaine — ses deux seuils, en pourcentage. `0` éteint la garde
+# de sa fenêtre ; l'option l'emporte sur la variable, la variable sur le défaut, et la ligne `plan :`
+# dit lequel a parlé. Le mécanisme est décrit à « La garde de quota », plus bas.
+SEUIL_5H="${MAESTRO_ORCHESTRATE_SEUIL_5H:-}"; SEUIL_5H_ORIGINE=MAESTRO_ORCHESTRATE_SEUIL_5H
+[ -n "$SEUIL_5H" ] || { SEUIL_5H=70; SEUIL_5H_ORIGINE=défaut; }
+SEUIL_SEMAINE="${MAESTRO_ORCHESTRATE_SEUIL_SEMAINE:-}"; SEUIL_SEMAINE_ORIGINE=MAESTRO_ORCHESTRATE_SEUIL_SEMAINE
+[ -n "$SEUIL_SEMAINE" ] || { SEUIL_SEMAINE=60; SEUIL_SEMAINE_ORIGINE=défaut; }
 
 usage() {
   cat <<'USAGE'
@@ -445,6 +453,11 @@ Options :
                        si main a bougé sur le chemin des scénarios, et un rouge nomme les PR
                        mergées depuis le dernier vert (#1462). MAESTRO_ORCHESTRATE_BANC=0 fait
                        de même ; hors run : bash scripts/orchestrate/banc-main.sh.
+  --seuil-5h <n>       Garde de quota : le run se met en pause dès que la fenêtre de 5 h atteint
+                       n % (défaut 70) — sessions interrompues, puis rouvertes par leur uuid après
+                       la remise à zéro. MAESTRO_ORCHESTRATE_SEUIL_5H fait de même ; 0 l'éteint.
+  --seuil-semaine <n>  Garde de quota : le run s'arrête, reprenable par --resume, dès que la semaine
+                       atteint n % (défaut 60). MAESTRO_ORCHESTRATE_SEUIL_SEMAINE ; 0 l'éteint.
   --sans-kill          Ne tue pas les runs encore en cours avant de démarrer (voir plus bas).
   --tuer-les-runs      Ne fait QUE ça : tue les runs en cours, dit lesquels, et sort.
   --max-reprises <n>   Reprises maximales après limite d'usage, par ticket. Défaut : 3.
@@ -464,6 +477,12 @@ unique fichier STOP. Les runs tués gardent leur journal intact et restent repre
 Limite d'usage : la boucle attend jusqu'au reset et reprend la même session Claude. Au-delà de
 5 h 30 d'attente cumulée sur un ticket, c'est la limite hebdomadaire : le run s'arrête proprement —
 et c'est « --resume » qui le rejoue plus tard. Les runs reprenables : status.sh --reprenables.
+
+Garde de quota : chaque session publie l'usage de la fenêtre de 5 h et de la semaine (champs typés
+de ses événements rate_limit_event). Au seuil de 5 h, plus aucun ticket ne part, les sessions en vol
+sont interrompues et rouvertes par leur uuid après la remise à zéro, sans compter d'échec. Au seuil
+de la semaine, le run s'arrête sans solder ses tickets en vol : « --resume » les reprend chacun dans
+sa session. Un run qui démarre au-delà d'un seuil ne lance aucun ticket.
 
 Arrêt d'urgence : créer .maestro/orchestrate/STOP (testé entre deux tickets et pendant l'attente).
 Il arrête de LANCER : un merge en cours n'est pas interrompu, et le drain final se joue alors sans
@@ -501,6 +520,8 @@ while [ $# -gt 0 ]; do
     --sans-merge) MERGE=0 ;;
     --sans-mrfix) MRFIX=0 ;;
     --sans-banc) BANC=0 ;;
+    --seuil-5h) SEUIL_5H="${2:-}"; SEUIL_5H_ORIGINE=--seuil-5h; shift ;;
+    --seuil-semaine) SEUIL_SEMAINE="${2:-}"; SEUIL_SEMAINE_ORIGINE=--seuil-semaine; shift ;;
     # La valeur est FACULTATIVE (« --resume » seul = le run reprenable le plus récent) : on ne
     # consomme l'argument suivant que s'il n'est pas lui-même une option, sans quoi
     # « --resume --detach » avalerait le mode de lancement.
@@ -548,6 +569,21 @@ case "$EFFORT" in
     exit 2
     ;;
 esac
+
+# Les seuils de la garde de quota (#1551) : un pourcentage entier, de 0 (garde éteinte) à 100. Une
+# valeur fautive se refuse ici, pour la raison de l'effort : une garde qui ne se lit pas ne garde rien,
+# et on le découvrirait quota épuisé.
+for seuil in "$SEUIL_5H" "$SEUIL_SEMAINE"; do
+  case "$seuil" in
+    '' | *[!0-9]*) ;;
+    *) [ "$seuil" -le 100 ] && continue ;;
+  esac
+  printf 'run.sh : seuil de quota invalide « %s » — attendu un pourcentage de 0 (garde éteinte) à 100.\n' \
+    "$seuil" >&2
+  exit 2
+done
+# En base 10 : « 070 » se lirait en octal dans une expression arithmétique.
+SEUIL_5H=$((10#$SEUIL_5H)); SEUIL_SEMAINE=$((10#$SEUIL_SEMAINE))
 
 # Les serveurs MCP d'une session s'épinglent comme le modèle et l'effort (#1245, docs/10 §11.3) :
 # sans `--strict-mcp-config`, une session charge ceux du projet (`.mcp.json`), ceux du poste et les
@@ -1585,10 +1621,195 @@ patiente() {
     vue_publie "$iid" '=' \
       "en attente de la fin de la limite d'usage — reprise vers $libelle (dans $(duree_lisible "$reste"))"
     [ "$reste" -gt 0 ] || break
+    # La garde de la semaine (#1551) sort de l'attente comme le plafond : le run s'arrête, et dormir
+    # jusqu'à la fin de la fenêtre de 5 h n'y changerait rien.
+    if seuil_en_cours && [ "$SEU_FENETRE" = semaine ]; then return 3; fi
     tranche=60
     [ "$reste" -lt 60 ] && tranche="$reste"
     sleep "$tranche"
   done
+  return 0
+}
+
+# --- La garde de quota : se mettre en pause AVANT la limite (#1551) ------------------------------------
+# La limite d'usage ci-dessus est une pause SUBIE : le run tire sur le quota de la personne jusqu'au
+# dernier pour cent, et elle n'en a plus pour travailler elle-même — ni cette fenêtre de 5 h, ni le
+# reste de la semaine. La garde la devance : à SEUIL_5H % de la fenêtre de 5 h, le run se met en pause
+# jusqu'à sa remise à zéro ; à SEUIL_SEMAINE % de la semaine, il s'arrête et laisse `--resume` le
+# rejouer plus tard.
+#
+# CE QU'ELLE LIT. Chaque session publie dans son flux des événements `rate_limit_event` (cf. #203),
+# dont les champs TYPÉS portent l'usage de chaque fenêtre et l'heure de sa remise à zéro :
+#
+#   "unifiedWindows":{"five_hour":{"utilization":0.79,"resetsAt":1791708000},
+#                     "seven_day":{"utilization":0.1,"resetsAt":1792288800}}
+#
+# Rien n'est lu dans un texte, et le statut de l'événement n'y entre pas : seul `"status":"rejected"`
+# est un refus (#203), et la garde agit justement pendant que tout est encore « allowed ».
+#
+# QUI DÉCLARE, QUI S'ARRÊTE. La session qui voit un seuil franchi le déclare au run dans
+# `<run-dir>/.seuil` — la fenêtre, l'usage lu, sa remise à zéro, le seuil, le ticket. Chaque formateur
+# de flux relit ce témoin à chaque tick et interrompt alors SA session : toutes s'arrêtent, celles
+# dont le flux n'a encore rien publié comprises. La semaine l'emporte sur la fenêtre de 5 h, parce
+# qu'elle arrête le run ; un témoin dont la remise à zéro est passée n'est plus en cours.
+#
+# CE QUI SUIT. Une session interrompue au seuil de 5 h rejoint le rendez-vous `.limite` avec l'heure
+# exacte de la remise à zéro (une information de source « reset ») et se rouvre par son uuid : c'est
+# la mécanique de #291, sans reprise comptée et sans plafond d'attente — la remise à zéro est connue,
+# et elle est par nature à moins de 5 h. Au seuil de la semaine, la session rend un code à elle et le
+# pilote cesse de lancer SANS solder le ticket : n'ayant pas de verdict, il est « en vol » pour la
+# reprise, qui le rouvrira dans sa session.
+#
+# AU DÉPART. Le dernier usage relevé se garde pour le poste dans `.maestro/orchestrate/usage`, écrit
+# par chaque session et par la sonde du modèle ; un run qui démarre au-delà d'un seuil le déclare
+# avant son premier ticket. L'usage d'une fenêtre ne fait que croître jusqu'à sa remise à zéro : une
+# valeur relue encore dans sa fenêtre est un minimum, jamais un faux positif.
+SEU_FENETRE=""; SEU_USAGE=""; SEU_RESET=""; SEU_SEUIL=""
+USG_5H=""; USG_5H_RESET=""; USG_SEM=""; USG_SEM_RESET=""
+USAGE_POSTE="$ORCH_DIR/usage"
+
+# maintenant_s : l'instant présent, en secondes Unix, SANS fork — `formate_flux` le demande à chaque
+# tick, cinq fois par seconde et par session, et un `date` y coûterait plus que tout le reste.
+maintenant_s() { printf -v MAINTENANT '%(%s)T' -1; }
+
+# pourcent <utilisation> : pose POURCENT — « 0.79 » → 79. Une fraction de 0 à 1, et pas une chaîne à
+# arrondir : la partie décimale est TRONQUÉE, pour qu'un 0.699 ne passe pas pour le 70 qu'il n'a pas
+# atteint. Une valeur au-delà de 1 est lue comme un pourcentage déjà fait — c'est la seule autre
+# écriture possible. Une variable et non une sortie : `$(…)` serait un fork par événement.
+pourcent() {
+  local entier="${1%%.*}" decimales=""
+  case "$1" in *.*) decimales="${1#*.}" ;; esac
+  entier=$((10#${entier:-0}))
+  if [ "$entier" -gt 1 ]; then POURCENT="$entier"; return 0; fi
+  decimales="${decimales}00"
+  POURCENT=$((entier * 100 + 10#${decimales:0:2}))
+}
+
+# fenetre_de <ligne> <clé> : pose FEN_USAGE (%) et FEN_RESET (epoch, vide si absent) depuis l'objet
+# `"<clé>":{…}` de l'événement. Rend 1 si la fenêtre n'y est pas.
+fenetre_de() {
+  local re="\"$2\"[[:space:]]*:[[:space:]]*\\{([^}]*)\\}" corps
+  [[ $1 =~ $re ]] || return 1
+  corps="${BASH_REMATCH[1]}"
+  re='"utilization"[[:space:]]*:[[:space:]]*([0-9]+(\.[0-9]+)?)'
+  [[ $corps =~ $re ]] || return 1
+  pourcent "${BASH_REMATCH[1]}"
+  FEN_USAGE="$POURCENT"
+  FEN_RESET=""
+  re='"resetsAt"[[:space:]]*:[[:space:]]*([0-9]{10,13})'
+  if [[ $corps =~ $re ]]; then
+    FEN_RESET="${BASH_REMATCH[1]}"
+    # 13 chiffres = millisecondes, comme dans `reset_epoch`.
+    [ "${#FEN_RESET}" -ge 13 ] && FEN_RESET="${FEN_RESET%???}"
+  fi
+  return 0
+}
+
+# usage_de <ligne> : pose USG_5H / USG_5H_RESET / USG_SEM / USG_SEM_RESET depuis un événement
+# `rate_limit_event`. Rend 1 si la ligne n'en porte aucune fenêtre lisible.
+usage_de() {
+  USG_5H=""; USG_5H_RESET=""; USG_SEM=""; USG_SEM_RESET=""
+  case "$1" in *'"rate_limit_event"'*) ;; *) return 1 ;; esac
+  if fenetre_de "$1" five_hour; then USG_5H="$FEN_USAGE"; USG_5H_RESET="$FEN_RESET"; fi
+  if fenetre_de "$1" seven_day; then USG_SEM="$FEN_USAGE"; USG_SEM_RESET="$FEN_RESET"; fi
+  [ -n "$USG_5H$USG_SEM" ]
+}
+
+# usage_note : garde le dernier usage lu pour le poste. Une écriture directe et non un `mv` : c'est le
+# formateur de flux qui l'appelle, à chaque événement, et un lecteur qui tomberait sur une ligne à
+# moitié écrite n'y lirait simplement rien — la ligne suivante la remplacera.
+usage_note() {
+  maintenant_s
+  printf '%s\t%s\t%s\t%s\t%s\n' "$MAINTENANT" "${USG_5H:--}" "${USG_5H_RESET:--}" \
+    "${USG_SEM:--}" "${USG_SEM_RESET:--}" >"$USAGE_POSTE" 2>/dev/null || true
+}
+
+# usage_relu : relit le dernier usage du poste dans USG_*. Une fenêtre déjà remise à zéro n'y compte
+# plus : sa valeur dit ce qu'elle était, pas ce qu'elle est.
+usage_relu() {
+  local _quand u5 r5 us rs
+  USG_5H=""; USG_5H_RESET=""; USG_SEM=""; USG_SEM_RESET=""
+  [ -r "$USAGE_POSTE" ] || return 1
+  IFS=$'\t' read -r _quand u5 r5 us rs <"$USAGE_POSTE" 2>/dev/null || return 1
+  maintenant_s
+  case "$u5$r5" in *[!0-9]* | '') ;; *) [ "$r5" -gt "$MAINTENANT" ] && { USG_5H="$u5"; USG_5H_RESET="$r5"; } ;; esac
+  case "$us$rs" in *[!0-9]* | '') ;; *) [ "$rs" -gt "$MAINTENANT" ] && { USG_SEM="$us"; USG_SEM_RESET="$rs"; } ;; esac
+  [ -n "$USG_5H$USG_SEM" ]
+}
+
+# seuil_franchi : depuis USG_*, pose SEU_FENETRE / SEU_USAGE / SEU_RESET / SEU_SEUIL. La semaine
+# d'abord : c'est elle qui arrête le run. Un seuil à 0 est une garde éteinte.
+seuil_franchi() {
+  if [ "$SEUIL_SEMAINE" -gt 0 ] && [ -n "$USG_SEM" ] && [ "$USG_SEM" -ge "$SEUIL_SEMAINE" ]; then
+    SEU_FENETRE=semaine; SEU_USAGE="$USG_SEM"; SEU_RESET="$USG_SEM_RESET"; SEU_SEUIL="$SEUIL_SEMAINE"
+    return 0
+  fi
+  if [ "$SEUIL_5H" -gt 0 ] && [ -n "$USG_5H" ] && [ "$USG_5H" -ge "$SEUIL_5H" ]; then
+    SEU_FENETRE=5h; SEU_USAGE="$USG_5H"; SEU_RESET="$USG_5H_RESET"; SEU_SEUIL="$SEUIL_5H"
+    return 0
+  fi
+  return 1
+}
+
+# seuil_declare <iid> : pose le témoin du run. Une remise à zéro inconnue vaut un palier — la fenêtre
+# de 5 h ne se rouvrirait sinon jamais. Une déclaration en cours n'est remplacée que par la semaine.
+seuil_declare() {
+  local f="$RUN_DIR/.seuil" fenetre="$SEU_FENETRE" usage="$SEU_USAGE" reset="$SEU_RESET" seuil="$SEU_SEUIL"
+  if seuil_en_cours; then
+    [ "$fenetre" = semaine ] && [ "$SEU_FENETRE" != semaine ] || return 0
+  fi
+  maintenant_s
+  [ -n "$reset" ] || reset=$((MAINTENANT + PALIER_REPRISE_S))
+  printf '%s\t%s\t%s\t%s\t%s\n' "$fenetre" "$usage" "$reset" "$seuil" "$1" >"$f.$BASHPID" 2>/dev/null &&
+    mv -f "$f.$BASHPID" "$f" 2>/dev/null
+  SEU_FENETRE="$fenetre"; SEU_USAGE="$usage"; SEU_RESET="$reset"; SEU_SEUIL="$seuil"
+  return 0
+}
+
+# seuil_en_cours : 0 si un seuil est déclaré pour ce run et que sa fenêtre n'est pas remise à zéro.
+# Sans fork : le formateur de flux le demande à chaque tick. Le `-f` d'abord, pour que le cas courant
+# — aucun seuil — ne coûte qu'un test de fichier.
+seuil_en_cours() {
+  [ -f "$RUN_DIR/.seuil" ] || return 1
+  local fenetre usage reset seuil _declarant
+  IFS=$'\t' read -r fenetre usage reset seuil _declarant <"$RUN_DIR/.seuil" 2>/dev/null || return 1
+  case "$reset" in '' | *[!0-9]*) return 1 ;; esac
+  maintenant_s
+  [ "$reset" -gt "$MAINTENANT" ] || return 1
+  SEU_FENETRE="$fenetre"; SEU_USAGE="$usage"; SEU_RESET="$reset"; SEU_SEUIL="$seuil"
+  return 0
+}
+
+# seuil_libelle : « la fenêtre de 5 h à 74 % (seuil 70 %), remise à zéro vers 18:00 » — pour la
+# console. `date` ici est un fork, payé une fois par annonce.
+seuil_libelle() {
+  local quand
+  if [ "$SEU_FENETRE" = semaine ]; then
+    quand="$(date -d "@$SEU_RESET" '+%d/%m à %H:%M' 2>/dev/null || echo '?')"
+    printf 'la semaine à %s %% (seuil %s %%), remise à zéro le %s' "$SEU_USAGE" "$SEU_SEUIL" "$quand"
+  else
+    quand="$(date -d "@$SEU_RESET" '+%H:%M' 2>/dev/null || echo '?')"
+    printf 'la fenêtre de 5 h à %s %% (seuil %s %%), remise à zéro vers %s' "$SEU_USAGE" "$SEU_SEUIL" "$quand"
+  fi
+}
+
+# interromps_session <clé> : arrête la session Claude de ce ticket — le sous-shell qui l'a lancée,
+# dont le PID est noté dans `<clé>.cpid`, et toute sa descendance, du plus profond au plus
+# superficiel. Même geste que `pilote_tue`, à l'échelle d'une session : sous Windows, `claude.exe` ne
+# se voit pas dans /proc, d'où le `taskkill //T` sur le WINPID de chaque maillon. Rend 1 si le PID
+# n'est pas encore noté — le formateur réessaiera au tick suivant.
+interromps_session() {
+  local pid cibles c w
+  read -r pid <"$RUN_DIR/$1.cpid" 2>/dev/null || return 1
+  case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+  cibles="$(pilote_descendants "$pid") $pid"
+  if pilote_windows; then
+    for c in $cibles; do
+      w="$(pilote_winpid "$c" 2>/dev/null)" || continue
+      [ -n "$w" ] && taskkill //T //F //PID "$w" >/dev/null 2>&1
+    done
+  fi
+  for c in $cibles; do kill -TERM "$c" 2>/dev/null; done
   return 0
 }
 
@@ -1715,7 +1936,7 @@ formate_flux() {
   : >"$RUN_DIR/$iid.json"
 
   local ecoule=0 action="$VUE_REPRISE" publiee='-' outils o
-  local dernier_battement=0
+  local dernier_battement=0 interrompue=0
 
   # Publié d'entrée : sans quoi la première frame d'un ticket repris serait indiscernable de celle
   # d'un ticket qui démarre — c'est tout l'objet de `VUE_REPRISE`.
@@ -1764,7 +1985,23 @@ formate_flux() {
             fi
           fi
           ;;
+        # La garde de quota (#1551) : l'usage publié par la session est gardé pour le poste, et un
+        # seuil franchi se déclare au run — c'est le tick ci-dessous qui en tire la conséquence.
+        *'"rate_limit_event"'*)
+          if usage_de "$ligne"; then
+            usage_note
+            seuil_franchi && seuil_declare "$iid"
+          fi
+          ;;
       esac
+    fi
+
+    # Un seuil est déclaré pour le run, par cette session ou par une autre : la session s'arrête ici,
+    # au tick, sans attendre qu'elle publie elle-même un usage — elle a pu ne plus rien publier depuis
+    # des minutes. Une fois : la fin du flux suit l'interruption.
+    if [ "$interrompue" = 0 ] && seuil_en_cours && interromps_session "$iid"; then
+      interrompue=1
+      action="pause — $(seuil_libelle)"
     fi
 
     ecoule=$((SECONDS - VUE_DEBUT_TICKET))
@@ -2058,10 +2295,17 @@ ecrit_resultat() {
 # un ticket les trois se confondent (l'iid), et c'est pourquoi les deux derniers paramètres ont un
 # défaut : le déblocage d'une PR (#420) est la seule tâche à les dissocier — clé `<iid>-mrfix`,
 # tâche `mrfix`, cible le numéro de la PR.
+#
+# Le sous-shell de la session note son PID dans `<clé>.cpid` avant de lancer le CLI : c'est par lui
+# que la garde de quota l'interrompt (#1551, `interromps_session`). Retiré avant et après, pour qu'un
+# PID d'une session passée ne désigne jamais un processus recyclé.
 lance_session() {
   local iid="$1" dest="$2" uuid="$3" mode="$4" tache="${5:-ticket}" cible="${6:-$1}" code
+  local cpid="$RUN_DIR/$1.cpid"
+  rm -f "$cpid" 2>/dev/null
   if [ "$mode" = "reprise" ]; then
-    ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_reprise_de "$tache" "$cible")" \
+    ( printf '%s\n' "$BASHPID" >"$cpid"
+      cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_reprise_de "$tache" "$cible")" \
         --resume "$uuid" \
         --output-format stream-json --verbose \
         --permission-mode acceptEdits \
@@ -2072,13 +2316,17 @@ lance_session() {
         --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid" "$dest"
     # Le code du CLI, pas celui du formateur : c'est lui qui dit si la session a abouti.
     code=${PIPESTATUS[0]}
+    rm -f "$cpid" 2>/dev/null
     [ "$code" -eq 0 ] && return 0
     if limite_atteinte "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log"; then return "$code"; fi
+    # Interrompue par la garde de quota : la session est intacte, il n'y a rien à redémarrer à froid.
+    seuil_en_cours && return "$code"
     dit '  reprise de session impossible — redémarrage à froid (le travail déjà commité est sur la branche).\n'
     uuid="$(genere_uuid)"
     printf '%s' "$uuid" >"$RUN_DIR/$iid.session"
   fi
-  ( cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_de "$tache" "$cible")" \
+  ( printf '%s\n' "$BASHPID" >"$cpid"
+    cd "$dest" && ${OPT_TIMEOUT[@]+"${OPT_TIMEOUT[@]}"} "$CLAUDE_BIN" -p "$(prompt_de "$tache" "$cible")" \
       --session-id "$uuid" \
       --output-format stream-json --verbose \
       --permission-mode acceptEdits \
@@ -2087,7 +2335,9 @@ lance_session() {
       ${OPT_BUDGET+"${OPT_BUDGET[@]}"} \
       --model "$MODELE" \
       --effort "$EFFORT" </dev/null ) 2>"$RUN_DIR/$iid.log" | formate_flux "$iid" "$dest"
-  return "${PIPESTATUS[0]}"
+  code=${PIPESTATUS[0]}
+  rm -f "$cpid" 2>/dev/null
+  return "$code"
 }
 
 # --- Le prompt d'une session ------------------------------------------------------------------------
@@ -2622,17 +2872,27 @@ sonde_modele() {
   # Dans le temporaire du système et non sous `.maestro/` (#234, docs/10 §8.5) : personne ne relit
   # ces deux fichiers — la réponse utile est recopiée dans le message, et ils sont retirés aussitôt.
   # C'est aussi le répertoire neutre d'où part la requête.
-  local tmp="${TMPDIR:-/tmp}" sortie erreurs code message version requise servi
+  local tmp="${TMPDIR:-/tmp}" sortie erreurs flux ligne code message version requise servi
   sortie="$(mktemp "$tmp/maestro-sonde.XXXXXX" 2>/dev/null)" || sortie="$tmp/maestro-sonde.$$"
   erreurs="$sortie.err"
+  flux="$sortie.flux"
   local -a delai=()
   [ "$SONDE_DELAI_S" -gt 0 ] && command -v timeout >/dev/null 2>&1 && delai=(timeout "$SONDE_DELAI_S")
+  # En flux, comme une session (#1551) : c'est le flux qui porte les événements `rate_limit_event`,
+  # donc l'usage du quota AVANT le premier ticket — la garde de quota s'en sert au départ. Le
+  # résultat est la ligne `result` du flux, que la suite lit comme elle lisait la sortie `json`.
   ( cd "$tmp" && ${delai[@]+"${delai[@]}"} "$CLAUDE_BIN" -p 'Réponds seulement : ok' \
       --model "$MODELE" --effort "$EFFORT" \
-      --output-format json --tools '' --no-session-persistence --strict-mcp-config \
+      --output-format stream-json --verbose --tools '' --no-session-persistence --strict-mcp-config \
       --system-prompt 'Sonde du modèle avant un run : réponds seulement « ok ».' </dev/null ) \
-    >"$sortie" 2>"$erreurs"
+    >"$flux" 2>"$erreurs"
   code=$?
+  mkdir -p "$ORCH_DIR" 2>/dev/null
+  while IFS= read -r ligne; do
+    usage_de "$ligne" && usage_note
+  done < <(grep '"rate_limit_event"' "$flux" 2>/dev/null)
+  grep '"type"[[:space:]]*:[[:space:]]*"result"' "$flux" 2>/dev/null | tail -n 1 >"$sortie"
+  [ -s "$sortie" ] || tail -n 1 "$flux" >"$sortie" 2>/dev/null
   version="$(version_cli)"
 
   if [ "$code" -eq 0 ] && [ "$(champ_json "$sortie" is_error)" != true ]; then
@@ -2643,16 +2903,17 @@ sonde_modele() {
     printf 'modèle : %s servi par le CLI installé%s%s\n' "$MODELE" \
       "$([ -n "$version" ] && printf ' (Claude Code %s)' "$version")" \
       "$([ -n "$servi" ] && [ "$servi" != "$MODELE" ] && printf ' — modèle servi : %s' "$servi")"
-    rm -f "$sortie" "$erreurs"
+    rm -f "$sortie" "$erreurs" "$flux"
     return 0
   fi
 
-  if limite_atteinte "$sortie" "$erreurs"; then
+  if limite_atteinte "$sortie" "$flux" "$erreurs"; then
     printf '%smodèle : %s non vérifié%s — la limite d'\''usage est atteinte ; le run part et attendra le reset.\n' \
       "$C_Y" "$MODELE" "$C_0"
-    rm -f "$sortie" "$erreurs"
+    rm -f "$sortie" "$erreurs" "$flux"
     return 1
   fi
+  rm -f "$flux"
 
   message="$(champ_json "$sortie" result)"
   [ -n "$message" ] || message="$(grep -v '^[[:space:]]*$' "$erreurs" 2>/dev/null | tail -1)"
@@ -2748,6 +3009,21 @@ if [ "$DRY" = 0 ] && [ "$SONDE_MODELE" = 1 ]; then
   fi
 fi
 [ "$DETACH" = 1 ] || unset MAESTRO_ORCHESTRATE_MODELE_SONDE
+
+# La garde de quota au départ (#1551), sur le dernier usage relevé pour le poste — par la sonde qui
+# vient de passer, ou par les sessions d'un run précédent. Au-delà du seuil de la semaine, le run ne
+# part pas : il ne lancerait aucun ticket, et c'est ICI, avant la place nette, que la personne qui
+# lance le voit — sans qu'aucun run en vol ait été arrêté pour rien. Au-delà de celui de 5 h, il part
+# et attend la remise à zéro avant son premier ticket (déclaration posée plus bas, une fois le
+# journal du run ouvert).
+if [ "$DRY" = 0 ] && usage_relu && seuil_franchi && [ "$SEU_FENETRE" = semaine ]; then
+  {
+    printf 'run.sh : %s — le run ne part pas (garde de quota, #1551).\n' "$(seuil_libelle)"
+    printf '  aucune session lancée, aucun run arrêté : à relancer après la remise à zéro.\n'
+    printf '  le seuil : --seuil-semaine <n> ou MAESTRO_ORCHESTRATE_SEUIL_SEMAINE (0 éteint la garde).\n'
+  } >&2
+  exit 3
+fi
 
 # --- La place nette : un seul run à la fois (#213) ----------------------------------------------------
 # AVANT la résolution de `--resume`, et l'ordre n'est pas indifférent : `status.sh --reprenables`
@@ -3204,14 +3480,29 @@ if [ "$nb_jalons" -gt 0 ]; then
   printf 'jalons : %s\n' "$(grep '^# milestone	' "$PLAN" |
     awk -F '\t' '{ printf "%s%s (%s)", (NR > 1 ? " → " : ""), $2, $3 }')"
 fi
+# La garde de quota (#1551), dite avec son origine comme la concurrence : « (défaut) » quand rien ne
+# l'a réglée, le nom de l'option ou de la variable sinon. Une fenêtre à 0 se dit « éteinte ».
+garde_libelle() {
+  local h s
+  if [ "$SEUIL_5H" -gt 0 ]; then h="5 h ≥ $SEUIL_5H %"; else h="5 h éteinte"; fi
+  if [ "$SEUIL_SEMAINE" -gt 0 ]; then s="semaine ≥ $SEUIL_SEMAINE %"; else s="semaine éteinte"; fi
+  if [ "$SEUIL_5H_ORIGINE" = défaut ] && [ "$SEUIL_SEMAINE_ORIGINE" = défaut ]; then
+    printf 'garde de quota %s, %s (défaut)' "$h" "$s"
+    return 0
+  fi
+  [ "$SEUIL_5H_ORIGINE" = défaut ] || h="$h ($SEUIL_5H_ORIGINE)"
+  [ "$SEUIL_SEMAINE_ORIGINE" = défaut ] || s="$s ($SEUIL_SEMAINE_ORIGINE)"
+  printf 'garde de quota %s, %s' "$h" "$s"
+}
+
 # Le modèle y est dit EN TOUTES LETTRES, avec d'où il vient (#1269) : « opus » ne dit pas sur quoi le
 # run a tourné, l'identifiant résolu si — et c'est ce qu'on relira dans `run.log`.
-printf 'plan : %s ticket(s) sur %s jalon(s), %s · modèle %s%s · effort %s · %s · %s · %s\n' \
+printf 'plan : %s ticket(s) sur %s jalon(s), %s · modèle %s%s · effort %s · %s · %s · %s · %s\n' \
   "$nb_plan" "$nb_jalons" "$(portee_du_plan)" \
   "$MODELE" "$([ -n "$MODELE_ORIGINE" ] && printf ' (%s)' "$MODELE_ORIGINE")" "$EFFORT" \
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
   "$([ "$TIMEOUT_S" -gt 0 ] && printf 'timeout %s/ticket' "$(duree_lisible "$TIMEOUT_S")" || printf 'sans délai')" \
-  "$(concurrence_libelle)"
+  "$(concurrence_libelle)" "$(garde_libelle)"
 # Le banc par lot (#1462) se dit dans les deux sens, comme le budget : il coûte du vrai modèle et une
 # heure et demie de mur APRÈS le dernier merge, et ne pas le jouer est un choix qu'on doit voir.
 if [ "$BANC" = 1 ]; then
@@ -3424,6 +3715,10 @@ WORKTREES=""
 # `arret_du_run` qui fait le partage — jamais un `[ -n "$ARRET_LANCEMENT" ]`, qui les confondait.
 ARRET_LANCEMENT=""
 ARRET_PLAFOND="plafond --max"
+# La garde de quota (#1551) : le seuil de la semaine a arrêté le run, et combien de tickets il a
+# laissés sans verdict — ceux que `--resume` rouvrira dans leur session.
+SEUIL_SEMAINE_ATTEINT=0
+NB_SUSPENDU=0
 # arret_du_run : 0 si le run a été ARRÊTÉ (STOP, limite hebdomadaire), et non simplement borné. Le
 # partage se fait par exclusion du plafond, et le sens est voulu : un motif ajouté plus tard sans y
 # penser retire l'attente — ce qui coûte au pire une PR laissée en file, nommée au bilan — plutôt que
@@ -3435,6 +3730,10 @@ arret_du_run() {
 # la frame se redessine plusieurs fois par seconde, et sous MSYS un fork y coûterait plus cher que
 # tout le reste du dessin.
 RUN_DEBUT_S=$SECONDS
+# La garde de quota au départ (#1551) : le dernier usage relevé est déjà au-delà d'un seuil — celui
+# de 5 h, celui de la semaine ayant refusé le run plus haut, sauf s'il a été franchi entre-temps. Le
+# déclarer au run suffit : la boucle ne lancera rien avant la remise à zéro.
+if usage_relu && seuil_franchi; then seuil_declare -; fi
 vue_ouvre
 
 # Le coût est arrondi ICI, à l'unique endroit qui écrit le bilan : `status.sh` le relit tel quel, et
@@ -3906,6 +4205,10 @@ mrfix_moissonne() {
         "$C_Y" "$C_0" "${Q_PR[$i]}"
       PLAFOND_ATTEINT=1
       ARRET_LANCEMENT="limite hebdomadaire"
+    elif [ "$code" -eq 5 ]; then
+      # La garde de quota de la semaine (#1551) : la PR reste en file, son déblocage se rejouera.
+      SEUIL_SEMAINE_ATTEINT=1
+      ARRET_LANCEMENT="seuil de quota de la semaine"
     elif [ "$code" -eq 2 ]; then
       ARRET_LANCEMENT="arrêt demandé"
     fi
@@ -3948,6 +4251,7 @@ mrfix_relance() {
   arret_du_run && return 1
   arret_demande >/dev/null 2>&1 && return 1
   limite_en_cours && return 1
+  seuil_en_cours && return 1
   compte_creneaux
   [ "$CRENEAUX_PRIS" -ge "$CONCURRENCE" ] && return 1
   local i
@@ -4228,12 +4532,14 @@ eligible() { # <index>
 #   1  idem, mais interrompue par le timeout — le pilote le dira dans la raison
 #   2  arrêt demandé (fichier STOP) pendant l'attente d'une limite d'usage
 #   3  plafond d'attente dépassé : c'est la limite hebdomadaire, le run s'arrête
+#   5  la garde de quota a atteint son seuil de la semaine (#1551) : le run s'arrête, et la session,
+#      interrompue sans verdict, reste à reprendre dans son uuid
 #
 # 2 et 3 remplacent les `break 2` d'avant ce lot : un `break` depuis un sous-shell ne sortirait que de
 # lui, et il n'y a plus une boucle à quitter mais N tickets à laisser finir.
 joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
   local iid="$1" dest="$2" uuid="$3" mode="$4" tache="${5:-ticket}" cible="${6:-$1}"
-  local reprises=0 attente_cumulee=0 code delai
+  local reprises=0 attente_cumulee=0 code delai pause_seuil
   local origine rendez_vous fin annonceur ouvreur attendu
 
   while :; do
@@ -4261,14 +4567,30 @@ joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
       return 0
     fi
 
+    # La garde de quota a interrompu la session (#1551) : ce n'est ni un échec ni une limite subie.
+    # À la semaine, le run s'arrête et ce ticket attend `--resume` ; à la fenêtre de 5 h, la pause
+    # prend le chemin d'une limite d'usage, mais avec l'heure EXACTE de la remise à zéro et sans
+    # entamer les reprises du ticket — elle n'a rien d'une session qui retombe sur sa limite.
+    pause_seuil=0
+    if seuil_en_cours; then
+      if [ "$SEU_FENETRE" = semaine ]; then
+        dit '  %spause au seuil de quota%s — %s : le run s'\''arrête, la session de #%s reprendra par --resume.\n' \
+          "$C_Y" "$C_0" "$(seuil_libelle)" "$iid"
+        bilan_des_reprises "$reprises" "$attente_cumulee"
+        return 5
+      fi
+      pause_seuil=1
+      maintenant_s
+      delai=$(( SEU_RESET - MAINTENANT + MARGE_REPRISE_S ))
+      origine=reset
     # Une limite d'usage n'est pas un échec du ticket : c'est une pause. On attend, puis on reprend
     # LA MÊME session — le travail déjà fait reste dans son contexte.
-    if ! delai="$(delai_avant_reprise "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"; then
+    elif ! delai="$(delai_avant_reprise "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"; then
       bilan_des_reprises "$reprises" "$attente_cumulee"
       return 0
     fi
 
-    if [ "$reprises" -ge "$MAX_REPRISES" ]; then
+    if [ "$pause_seuil" = 0 ] && [ "$reprises" -ge "$MAX_REPRISES" ]; then
       dit '  %s✗%s limite d'\''usage encore atteinte après %s reprise(s) — on passe au ticket suivant.\n' \
         "$C_R" "$C_0" "$reprises"
       bilan_des_reprises "$reprises" "$attente_cumulee"
@@ -4279,7 +4601,8 @@ joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
     # en vol, et c'est la meilleure information disponible — celle qui porte une heure de reset — qui
     # doit valoir pour toutes. Le délai retenu est donc celui du rendez-vous, pas celui qu'on vient de
     # calculer : rejoindre une attente déjà entamée, c'est n'en payer que ce qu'il en reste.
-    origine="$(source_de_limite "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"
+    [ "$pause_seuil" = 1 ] ||
+      origine="$(source_de_limite "$RUN_DIR/$iid.json" "$RUN_DIR/$iid.jsonl" "$RUN_DIR/$iid.log")"
     ouvreur=0
     rendez_vous="$(limite_partagee "$iid" "$delai" "$origine")" || ouvreur=$?
     fin="${rendez_vous%% *}"; annonceur="${rendez_vous##* }"
@@ -4293,7 +4616,10 @@ joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
     # protection : `vue_efface` s'appuie sur `VUE_HAUT`, désormais une variable du PILOTE, dont la
     # session n'a qu'une copie figée au fork ; la ligne s'écrivait donc SOUS un bloc qu'on n'avait pas
     # retiré, et la frame suivante comptait ses rangées depuis le mauvais endroit.
-    if [ "$ouvreur" = 0 ]; then
+    if [ "$pause_seuil" = 1 ]; then
+      dit '  %spause au seuil de quota%s — %s : session de #%s interrompue, reprise vers %s.\n' \
+        "$C_Y" "$C_0" "$(seuil_libelle)" "$iid" "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
+    elif [ "$ouvreur" = 0 ]; then
       dit '  %slimite d'\''usage atteinte%s — attente de %s avant reprise (fin vers %s).\n' \
         "$C_Y" "$C_0" "$(duree_lisible "$delai")" \
         "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
@@ -4302,7 +4628,9 @@ joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
         "$C_Y" "$C_0" "$annonceur" "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
     fi
 
-    attente_cumulee=$((attente_cumulee + delai))
+    # Le plafond des 5 h 30 ne compte pas une pause de la garde : sa remise à zéro est lue, pas
+    # devinée, et la dire « limite hebdomadaire » serait faux.
+    [ "$pause_seuil" = 1 ] || attente_cumulee=$((attente_cumulee + delai))
     if [ "$attente_cumulee" -gt "$PLAFOND_ATTENTE_S" ]; then
       # Le plafond est celui du RUN : la session qui l'atteint la première le déclare pour tout le
       # monde. Sans ce témoin, les N-1 autres continueraient de dormir des heures sur une limite
@@ -4328,9 +4656,19 @@ joue_session() { # <clé> <dest> <uuid> <mode> [<tâche>] [<cible>]
       bilan_des_reprises "$reprises" "$attente_cumulee"
       return 3
     fi
+    if [ "$attendu" = 3 ]; then
+      dit '  seuil de la semaine atteint pendant l'\''attente — la session de #%s reprendra par --resume.\n' "$iid"
+      bilan_des_reprises "$reprises" "$attente_cumulee"
+      return 5
+    fi
 
-    reprises=$((reprises + 1))
     mode=reprise
+    if [ "$pause_seuil" = 1 ]; then
+      VUE_REPRISE="reprise après la pause au seuil de quota"
+      dit '  reprise de la session #%s après la pause au seuil de quota…\n' "$iid"
+      continue
+    fi
+    reprises=$((reprises + 1))
     # La ligne va dans `run.log` ; la vue, elle, garde l'état sous les yeux tant que la session
     # rouverte n'a pas appelé son premier outil — l'écran ne doit pas laisser croire à un départ.
     VUE_REPRISE="reprise $reprises/$MAX_REPRISES après limite d'usage"
@@ -4497,6 +4835,21 @@ juge_ticket() { # <index> <code rendu par le sous-shell>
 
   cout="$(champ_json "$RUN_DIR/$iid.json" total_cost_usd)"
 
+  # La garde de quota, au seuil de la semaine (#1551) : le ticket N'EST PAS SOLDÉ. Aucune ligne de
+  # bilan, donc pour la reprise il était « en vol » à la coupure — et c'est exactement ce que
+  # `--resume` rouvre dans sa session (`reprend_en_vol`). Le solder en échec, comme la limite
+  # hebdomadaire, l'aurait laissé « En cours » et assigné : sauté par tous les runs suivants.
+  if [ "$code" -eq 5 ]; then
+    P_ETAT[$i]=suspendu
+    NB_SUSPENDU=$((NB_SUSPENDU + 1))
+    SEUIL_SEMAINE_ATTEINT=1
+    ARRET_LANCEMENT="seuil de quota de la semaine"
+    dit '  %s=%s #%s suspendu au seuil de la semaine — repris dans sa session par --resume\n' \
+      "$C_Y" "$C_0" "$iid"
+    vue_recompose
+    return 0
+  fi
+
   # Les deux sorties d'urgence d'une session arrêtent le RUN et pas seulement ce ticket : elles ne
   # passent donc pas par le verdict GitHub, qu'aucune session n'a eu le loisir de poser.
   if [ "$code" -eq 3 ]; then
@@ -4639,6 +4992,22 @@ vue_tick() {
   return 0
 }
 
+# attends_le_seuil : le pilote tient lui-même la pause de la fenêtre de 5 h (#1551) quand aucune
+# session ne la tient, jusqu'à la remise à zéro plus la marge des reprises. Le fichier STOP reste
+# entendu, et la vue continue d'être dessinée. Rend 1 sur un arrêt demandé.
+attends_le_seuil() {
+  local fin=$((SEU_RESET + MARGE_REPRISE_S))
+  dit '\n%sPause au seuil de quota%s — %s : aucun ticket ne part avant %s.\n' \
+    "$C_Y" "$C_0" "$(seuil_libelle)" "$(date -d "@$fin" '+%H:%M' 2>/dev/null || echo '?')"
+  while :; do
+    if arret_demande; then ARRET_LANCEMENT="arrêt demandé"; return 1; fi
+    maintenant_s
+    [ "$MAINTENANT" -ge "$fin" ] && return 0
+    vue_tick
+    sleep 1
+  done
+}
+
 # remplit_les_creneaux : lance ce qui peut l'être, dans l'ordre du plan. Balaye TOUT le plan à chaque
 # passage et non la seule ligne suivante — c'est là qu'un créneau qui se libère va chercher le prochain
 # ticket éligible plutôt que le prochain tout court.
@@ -4661,6 +5030,24 @@ remplit_les_creneaux() {
     # Une session de déblocage compte ici comme un ticket : elle aussi attend le rendez-vous, et
     # elle aussi finira par ramener le pilote dans sa boucle (#420).
     if [ -n "$EN_VOL$MRFIX_EN_VOL" ] && limite_en_cours; then return 0; fi
+
+    # La garde de quota (#1551) : un seuil est déclaré, aucun ticket ne part. Au seuil de la semaine
+    # le run cesse de lancer pour de bon ; à celui de la fenêtre de 5 h, les sessions en vol tiennent
+    # la pause (elles attendent au rendez-vous) — et quand aucune n'est en vol, au départ du run par
+    # exemple, c'est le pilote qui l'attend, sans quoi il sortirait de sa boucle sur un `EN_VOL` vide
+    # en laissant le reste du plan sans bilan.
+    if seuil_en_cours; then
+      if [ "$SEU_FENETRE" = semaine ]; then
+        dit '\n%sPause au seuil de quota%s — %s : plus aucun ticket ne part.\n' \
+          "$C_Y" "$C_0" "$(seuil_libelle)"
+        SEUIL_SEMAINE_ATTEINT=1
+        ARRET_LANCEMENT="seuil de quota de la semaine"
+        return 0
+      fi
+      [ -n "$EN_VOL$MRFIX_EN_VOL" ] && return 0
+      attends_le_seuil || return 0
+      continue
+    fi
 
     # Le fichier STOP est relu avant chaque lancement, comme il l'était avant chaque tour de boucle.
     if arret_demande; then ARRET_LANCEMENT="arrêt demandé"; return 0; fi
@@ -4886,6 +5273,12 @@ banc_sur_main() {
     printf '  banc sur main : abstention — limite hebdomadaire atteinte par le run : le banc tirerait sur le même quota.\n'
     return 0
   fi
+  # La garde de quota (#1551) vaut aussi pour le banc : une heure et demie de vrai modèle, lancée
+  # au-delà d'un seuil, épuiserait justement ce que la garde réserve à la personne.
+  if seuil_en_cours || { usage_relu && seuil_franchi; }; then
+    printf '  banc sur main : abstention — garde de quota : %s.\n' "$(seuil_libelle)"
+    return 0
+  fi
   bash "$RACINE/scripts/orchestrate/banc-main.sh" --sortie "$RUN_DIR" </dev/null || true
   return 0
 }
@@ -5043,6 +5436,13 @@ banc_bilan
 if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '\n  %sRun arrêté sur une limite hebdomadaire%s — le reste du plan est intact.\n' "$C_Y" "$C_0"
   printf '  Le rejouer plus tard, sans recalculer l'\''ordre : /orchestrate --resume %s\n' "$RUN_ID"
+  printf '  (hors Claude Code : bash scripts/orchestrate/run.sh --resume %s)\n' "$RUN_ID"
+fi
+if [ "$SEUIL_SEMAINE_ATTEINT" = 1 ]; then
+  seuil_en_cours || true
+  printf '\n  %sRun en pause au seuil de quota de la semaine%s — %s.\n' "$C_Y" "$C_0" "$(seuil_libelle)"
+  printf '  %s ticket(s) suspendu(s) sans verdict, et le reste du plan, sont intacts.\n' "$NB_SUSPENDU"
+  printf '  Le reprendre après la remise à zéro, chaque session dans son uuid : /orchestrate --resume %s\n' "$RUN_ID"
   printf '  (hors Claude Code : bash scripts/orchestrate/run.sh --resume %s)\n' "$RUN_ID"
 fi
 if [ -n "$WORKTREES" ]; then
