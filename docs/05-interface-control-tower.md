@@ -3875,9 +3875,9 @@ Quatre décisions, et les trois premières sont des refus :
   le rejeu du journal durable (#97), qui ne passe pas par la pompe : ce run-là
   n'aura pas de récit, et c'est précisément le cas que l'annonce dérivée couvre.
   L'idempotence, elle, se tient **sur le fil** — un run ouvert depuis le fil y
-  laisse *un* message d'agent portant son `run_id` ; le récit en est un second —
-  et non dans un registre en mémoire, qui ne survivrait pas au redémarrage après
-  lequel un doublon se verrait ;
+  laisse *un* message d'agent portant son `run_id` ; le récit d'une fin en est un
+  autre, posé **depuis** cette fin (#1506) — et non dans un registre en mémoire,
+  qui ne survivrait pas au redémarrage après lequel un doublon se verrait ;
 - **un fichier s'ouvre d'un geste, sans `file://`.** Une destination Markdown qui
   n'est pas une adresse `http(s)` mais un **chemin absolu** devient un geste et
   non une ancre : un `href` vers le disque n'est suivi ni par l'onglet ni par la
@@ -3894,6 +3894,19 @@ l'explorateur — sélectionné, jamais ouvert avec son application, ce qui revi
 à exécuter un `.exe` —, l'onglet **copie son chemin**, qui est le second geste de
 #928 et non un lot de consolation. Le **nom accessible** dit lequel des deux va se
 produire, et le geste **dit ce qu'il a fait**.
+
+⚠ **Un run repris n'a de récit qu'à sa vraie fin** (#1506). Un run a plusieurs fins
+quand on le reprend sur son plan (#1391), et l'une d'elles n'en est pas une : la
+reprise d'un run dont l'hôte s'est tu le **solde** d'abord — l'issue part sur le
+bus pour qu'un hôte encore vivant s'arrête —, puis le remet en vol dans la même
+seconde. Le 2026-10-14 (run `fea601a5c629`), le fil a reçu une minute plus tard, run
+en cours, le récit de ce solde, avec des faits faux, et la vraie fin n'en a pas eu.
+Le récit relit donc la fin qu'il raconte, une fois le livrable et le bilan en main
+puis au moment de poser le message : un run reparti entre-temps sera raconté à sa
+prochaine fin. Le récit d'un arrêt resté arrêté le temps qu'il s'écrive (une borne,
+par exemple) reste vrai à sa date, et ne tient pas lieu de celui de la vraie fin,
+qui raconte ce que le run a livré, reprise comprise. Aucune cause n'est lue : seule
+la fin, `execution.fin`, fait l'identité d'un récit.
 
 Implémentation : `maestro/controltower/recit.py` (le récit et sa lecture du
 livrable), `maestro/controltower/chat.py` (`raconter_la_fin`,
@@ -8237,8 +8250,14 @@ aléa, et le récit de fin a recopié « échec transitoire » puis conseillé d
   (validations, questions, cadrage, renfort), `checklist` (checklist au regard du verdict,
   vérifications), `decision` (décisions consignées, hypothèses, blocages), `activite` (le bruit de
   fond). Chaque pièce cite ses entrées `j-NNNN`, celles que `GET /api/journal` sert. Ce que le modèle
-  lit est **borné** (`PIECES_MAX`) : les pièces décisives d'abord, l'activité en dernier, et ce qui
-  reste dehors est compté.
+  lit est **borné** (`PIECES_MAX`) : l'**histoire du run** d'abord — ses statuts, l'issue de chaque
+  tâche et ce qu'elle a écrit dans le projet (#1506) —, puis les pièces décisives, l'activité en
+  dernier, et ce qui reste dehors est compté. Le run `fea601a5c629` avait fait passer 203
+  arbitrages « auto » avant ses dernières fusions : décisifs et plus anciens, ils prenaient toutes
+  les places, et le bilan disait « aucune fusion n'est relevée » de pages fusionnées dans `master`.
+- **Il dit l'issue qu'il a jugée** (#1506) : `statut` et `fin` sont ceux du run quand son dossier a
+  été assemblé, même si une reprise l'a remis en vol pendant le jugement ; un run déjà reparti quand
+  l'appel part n'a plus de fin à juger, et rien n'est rendu.
 - **Le modèle juge, l'exécution vérifie** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)).
   La nature d'un échec est jugée sur sa cause ; le libellé du moteur (« échec transitoire ») lui est
   présenté comme une présomption. Un constat sans pièce, ou qui en cite une absente du dossier, est

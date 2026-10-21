@@ -10,8 +10,9 @@ requêtable, comme la pompe le fait — et gardent, couche par couche :
 
 ① **les pièces** — lues au journal du run **en entier**, au-delà des 200 entrées
    qu'une page du journal sert ; les décisives passent avant le bruit de fond quand
-   le budget mord, et ce qu'il laisse dehors est compté ; chaque pièce garde les
-   entrées du journal dont elle vient ;
+   le budget mord, l'histoire du run (issues des tâches, fusions) avant tout le reste
+   (#1506), et ce qu'il laisse dehors est compté ; chaque pièce garde les entrées du
+   journal dont elle vient ;
 ② **`p3`** — ce qui atteint le juge : les trois tentatives, la cause verbatim de
    chacune, les 2 092 911 tokens sans prix, et le libellé du moteur présenté comme
    une présomption, jamais comme un verdict ;
@@ -19,7 +20,8 @@ requêtable, comme la pompe le fait — et gardent, couche par couche :
    écarté avec sa raison ; la sonde est prouvée sur un constat qui tient ;
 ④ **le service** — un bilan par issue, un seul appel au modèle même demandé deux
    fois, son coût compté au run hors de son temps de mur, rien de fabriqué quand le
-   modèle se tait ;
+   modèle se tait, et l'issue jugée gardée même si une reprise remet le run en vol
+   pendant le jugement (#1506) ;
 ⑤ **l'API et le journal durable** — le bilan servi, et relu après un redémarrage
    sans rappeler le modèle ;
 ⑥ **le récit de fin** — il lit le bilan, et sa consigne dit que, sur un échec
@@ -56,6 +58,7 @@ from maestro.controltower.bilan import (
     NATURE_ALEA,
     NATURE_DETERMINISTE,
     NATURE_INDETERMINEE,
+    PIECES_MAX,
     RAISON_AUCUNE_PIECE,
     RAISON_PIECE_INEXISTANTE,
     RAISON_RUBRIQUE_INCONNUE,
@@ -94,6 +97,7 @@ from maestro.controltower.recit import ConteurDeFin, contexte_du_recit
 from maestro.controltower.state import (
     EXECUTION_ECHEC,
     EXECUTION_EN_COURS,
+    EXECUTION_TERMINEE,
     ControlTowerState,
 )
 from maestro.engine.executor import (
@@ -102,6 +106,7 @@ from maestro.engine.executor import (
     STATUT_ECHEC,
     STATUT_ECRITURE_EN_PLACE,
     STATUT_EN_COURS,
+    STATUT_FUSION_FAITE,
     STATUT_QUESTION_SANS_REPONSE,
     STATUT_REFUS_OUTIL,
     STATUT_TERMINEE,
@@ -472,6 +477,112 @@ def test_sans_contrainte_de_budget_rien_n_est_laisse() -> None:
 
     assert dossier.nb_laissees == 0
     assert "laissées de côté" not in prompt_du_bilan(rejeu.state.execution(RUN), dossier)
+
+
+SOCLE = "socle-projet"
+ACCUEIL = "page-accueil"
+
+
+def _rejouer_fea601(*, arbitrages: int) -> Rejeu:
+    """Le run `fea601a5c629` (#1506) en raccourci : un socle bavard, puis une fusion tardive.
+
+    Le socle y a fait passer **203** appels d'outil arbitrés « auto » avant que la page
+    d'accueil ne fusionne : autant de pièces décisives, plus anciennes que la fusion.
+    """
+    rejeu = Rejeu()
+    rejeu.execution(EXECUTION_EN_COURS, "Lancement")
+    rejeu.ligne(f"{SOCLE}:debut", nom="Poser le socle", agent="dev", role="Développement",
+                statut=STATUT_EN_COURS, sortie="démarrage de la tâche")
+    for rang in range(arbitrages):
+        rejeu.ligne(f"{SOCLE}:refus-outil", nom="Outil arbitré (auto) — Poser le socle",
+                    agent="dev", role="Développement", statut=STATUT_ARBITRAGE_OUTIL,
+                    entree="Bash",
+                    sortie=f"appel de l'outil 'Bash' laissé passer — décideur « auto » ({rang})")
+    for tache, titre, fusion in (
+        (SOCLE, "Poser le socle", "20 fichier(s) — fusion de maestro/socle-projet vers master"),
+        (ACCUEIL, "Construire la page d'accueil",
+         "1 fichier(s), +281 / −7 — fusion de maestro/page-accueil vers master"),
+    ):
+        if tache == ACCUEIL:
+            rejeu.ligne(f"{tache}:debut", nom=titre, agent="dev", role="Développement",
+                        statut=STATUT_EN_COURS, sortie="démarrage de la tâche")
+        rejeu.ligne(f"{tache}:fusion", nom=f"Fusion — {titre}", agent="dev",
+                    role="Développement", statut=STATUT_FUSION_FAITE, sortie=fusion)
+        rejeu.ligne(tache, nom=titre, agent="dev", role="Développement",
+                    statut=STATUT_TERMINEE, sortie=f"{titre} : fait.")
+    rejeu.execution(EXECUTION_TERMINEE, "2/2 tâche(s) réussie(s)")
+    return rejeu
+
+
+def test_une_fusion_tardive_reste_au_dossier_derriere_des_centaines_d_arbitrages() -> None:
+    """Ce que le run a fait au projet ne sort jamais du budget (#1506).
+
+    Le bilan de `fea601a5c629` disait « aucune fusion n'est relevée » pour la page
+    d'accueil, fusionnée dans `master` : 203 arbitrages « auto », décisifs et plus
+    anciens, avaient pris les 120 places, et la fusion était partie avec le reste.
+    Le récit l'a recopié. Les écritures dans le projet et l'issue de chaque tâche
+    passent désormais devant : ce sont les faits qu'aucun constat ne peut contredire.
+    """
+    rejeu = _rejouer_fea601(arbitrages=PIECES_MAX + 83)
+
+    dossier = _dossier(rejeu)
+
+    # Le budget mord bien, et sur des pièces décisives : sans quoi rien n'est prouvé.
+    assert dossier.laissees.get(FAMILLE_ACTE, 0) > 0
+    fusions = {p.tache_id for p in dossier.pieces if f"statut {STATUT_FUSION_FAITE}" in p.texte}
+    assert fusions == {SOCLE, ACCUEIL}
+    issues = {
+        p.tache_id for p in dossier.pieces
+        if p.famille == FAMILLE_STATUT and p.tache_id and f"statut {STATUT_TERMINEE}" in p.texte
+    }
+    assert issues == {SOCLE, ACCUEIL}
+    # Les arbitrages restent au dossier, à la place qui reste : ils ne sont pas écartés.
+    assert any("laissé passer" in p.texte for p in dossier.pieces)
+
+
+def test_le_bilan_garde_l_issue_pour_laquelle_il_a_ete_rendu() -> None:
+    """Une reprise qui repasse le run en vol pendant le jugement ne réécrit pas son issue (#1506).
+
+    Le 2026-10-14, le bilan rendu à la « fin » qu'est le solde d'une reprise portait
+    `statut en_cours, fin None` : il relisait le run **après** l'appel au modèle, quand
+    la reprise l'avait déjà remis en route. Il dit l'issue qu'on lui a demandé de juger.
+    """
+    rejeu = _rejouer_fea601(arbitrages=3)
+    execution = rejeu.state.execution(RUN)
+    fin, statut = execution.fin, execution.statut
+
+    class JugeDurantLaReprise(JugeScripte):
+        async def juger(self, *, agent: Any, prompt: str) -> tuple[str, StepUsage]:
+            rejeu.execution(EXECUTION_EN_COURS, "run repris sur son plan")
+            return await super().juger(agent=agent, prompt=prompt)
+
+    service, _ = _service(rejeu, JugeDurantLaReprise())
+
+    bilan = asyncio.run(service.rendre(RUN))
+
+    assert bilan is not None
+    assert (bilan.statut, bilan.fin) == (statut, fin)
+    assert rejeu.state.execution(RUN).statut == EXECUTION_EN_COURS
+
+
+def test_un_run_reparti_avant_le_jugement_n_appelle_pas_le_modele() -> None:
+    """La fin passe, l'appel est mis en route, et la reprise arrive avant qu'il parte.
+
+    Il n'y a plus de fin à juger : aucun appel au modèle, rien de publié. Le bilan
+    sera rendu à la prochaine fin.
+    """
+    rejeu = _rejouer_fea601(arbitrages=3)
+    juge = JugeScripte()
+    service, bus = _service(rejeu, juge)
+
+    async def scenario() -> BilanRun | None:
+        en_vol = service.lancer(RUN)
+        rejeu.execution(EXECUTION_EN_COURS, "run repris sur son plan")
+        assert isinstance(en_vol, asyncio.Future)
+        return await en_vol
+
+    assert asyncio.run(scenario()) is None
+    assert juge.prompts == [] and bus.publies == []
 
 
 def test_chaque_piece_garde_les_entrees_du_journal_dont_elle_vient() -> None:
