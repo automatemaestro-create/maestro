@@ -659,11 +659,16 @@ def _phrase_de_fin(projet_nom: str) -> str:
 
 
 def _phrase_du_fait(fait: PieceEcrite) -> str:
-    """Ce qu'un geste a fait d'une pièce, en une phrase — le prélude de la suivante."""
+    """Ce qu'un geste a fait d'une pièce, en une phrase — le prélude de la suivante.
+
+    Une pièce écrite dit aussi ce que l'équipe du projet reçoit désormais, tel que
+    l'écriture l'a constaté (#1520) : c'est de ce constat, et de lui seul, que le fil
+    peut dire qu'une commande remplacée a quitté tout ce que les agents reçoivent.
+    """
     if fait.etat == PIECE_ECARTEE:
         return f"{fait.chemin} n'est pas écrit."
     if fait.ecrite:
-        return f"{fait.chemin} est écrit."
+        return _joint(f"{fait.chemin} est écrit.", fait.recu_en_phrase())
     return f"{fait.chemin} n'a pas été écrit : {fait.raison}"
 
 

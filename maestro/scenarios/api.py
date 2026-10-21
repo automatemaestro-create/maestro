@@ -571,6 +571,24 @@ class ClientAPI:
         )
         return rapport
 
+    def playbooks(self, projet_id: str) -> dict[str, str]:
+        """Ce que chaque agent de l'équipe du projet **reçoit** : le playbook que le moteur charge.
+
+        L'équipe par le catalogue du projet (#1038), puis le playbook courant de chacun
+        (`GET /api/playbooks/{agent}`) — la version publiée, sinon celui de sa fiche :
+        c'est le contenu que l'exécuteur relit à chaque tâche, pas la fiche seule (#1520).
+        """
+        params = {"projet": projet_id}
+        fiches = self._appel("GET", "/api/catalogue", params=params) or []
+        recus: dict[str, str] = {}
+        for fiche in fiches:
+            nom = str(fiche.get("nom") or "") if isinstance(fiche, Mapping) else ""
+            if not nom:
+                continue
+            courant = self._appel("GET", f"/api/playbooks/{nom}", params=params) or {}
+            recus[nom] = str(courant.get("contenu") or "")
+        return recus
+
     # --- Le fil ---------------------------------------------------------
 
     def ouvrir_conversation(self) -> str:

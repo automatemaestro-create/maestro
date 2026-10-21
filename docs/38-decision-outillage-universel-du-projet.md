@@ -899,6 +899,42 @@ fois, dans la section de la création, sans aucune marque du vouvoiement.
 redite, et ce ticket n'y touche pas. Le vouvoiement qui reste dans `AGENTS.md` (« compris de vos
 réponses », le pied du fichier) s'adresse à la personne, pas à l'agent.
 
+### 5.10 Une commande remplacée quitte tout ce que l'équipe reçoit (#1520)
+
+Réserve R1 du bouclage du 2026-10-14 (critère C3). La section des skills d'un playbook nommait,
+pour chaque skill, la commande qu'il « enveloppait », **recopiée au recrutement**. Une commande se
+remplace ensuite par deux chemins — la personne la corrige avec ses mots (§3.4 et #1443), la revue
+d'après un run en propose une autre, lue dans le projet construit (#1381) — et chacun réécrit les
+pièces sur accord et le manifeste. Pas les playbooks. Relevé deux fois : S9, passage
+`20261014-171347`, où la revue a remplacé `python assembler.py` par `python assembler_carnet.py`
+et où les trois playbooks gardaient l'ancienne ; « herbier-des-cimes », où une correction dite
+après la création de l'équipe laissait `python index_par_region.py fiches` dans les deux playbooks.
+Un agent du run suivant recevait deux commandes pour le même geste, et Maestro affirmait à la
+personne que l'outillage « appelle désormais partout » la nouvelle.
+
+**Ce qui est décidé.** La commande vit **une fois**, dans le skill, qui fait foi :
+
+- la section des skills **ne fige plus de commande** : elle nomme le skill et son chemin, et dit
+  que c'est lui qui porte la commande (`maestro.equipe.creation`). Une correction qui réécrit le
+  skill n'a plus de copie à rattraper ;
+- une équipe recrutée avant se **rebranche** à chaque pièce écrite : la section de chaque agent
+  perd ses commandes figées — dans sa fiche comme dans sa version publiée, que le moteur charge en
+  premier —, et rien d'autre de son playbook ne bouge (`maestro.controltower.recu_par_l_equipe`) ;
+- le fait de chaque écriture **constate** ce que l'équipe reçoit (`PieceEcrite.recu_en_phrase`) :
+  la commande remplacée, et où elle est encore prescrite — un skill pas encore réécrit, le corps
+  d'un playbook qu'une personne a écrit —, relu sur le disque après coup, selon la règle même du
+  manifeste (`prescrites_dans`). La rédaction du fil ne dit qu'une commande vaut « partout » que
+  si ce fait le dit ;
+- le banc confronte, dans S9 et S10, le playbook que le moteur charge pour chaque agent aux
+  commandes que l'outillage a montrées et ne prescrit plus : un écart y est un rouge
+  (`_confronter_les_playbooks`). C'est la sonde qui manquait — S9 était vert avec ce reste.
+
+**Ce qui le prouve** : le parcours de l'herbier, modèle doublé — outillage écrit, équipe recrutée
+dans la forme d'avant (l'une par sa fiche, l'autre par une version publiée), correction dite, pièces
+acceptées d'un geste —, jusqu'à ce que chaque agent reçoit et à ce que la rédaction lit
+([`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py), section ⑧), et la sonde de S9
+rouge sur le reste du passage `20261014-171347` ([`tests/test_scenarios.py`](../tests/test_scenarios.py)).
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |
@@ -915,6 +951,7 @@ réponses », le pied du fichier) s'adresse à la personne, pas à l'agent.
 | Compter les commandes que **Maestro** a écrites dans un skill du projet comme « déclarées » | Même raison, par une autre porte : elles n'y ont été décidées par personne, et le cran obtenu porterait sur l'outil, pas sur ces commandes (§5.5) |
 | Corriger #1197 en faisant passer `Bash` en `auto` pour ces rôles | Troisième porte de la même chose : le cran porte sur l'**outil**, donc `rm -rf` passerait avec `ls`. Ce qui est dispensé est la **lecture**, jugée appel par appel (§5.6) |
 | Retirer la dispense à une commande qui **nomme** un chemin exclu du périmètre | Réfuté sur pièces au premier passage : un agent nomme `.git` et `node_modules` *pour les éviter*, et un `grep -rn motif .` lit le `.env` sans le nommer — la garde refusait le geste juste sans fermer le mauvais (§5.6) |
+| Récrire la commande de chaque playbook à chaque correction | Deux copies d'une commande, dont l'une se rattrape et l'autre pas : un skill réécrit à la main, ou passé à la carte, et le playbook mentirait de nouveau. Le skill fait foi, la section n'en fige aucune (§5.10) |
 
 ## 7. Ce qui rouvrirait la décision
 

@@ -1160,8 +1160,9 @@ carte et ne dis pas comment confirmer. Sur "outillage", il redit
 en une phrase ce que la personne demande, avec ses mots et sans rien y deviner : tu
 parles avant la correction, et c'est elle qui dit juste en dessous ce qui en sort —
 la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la question
-qui en découle. Ne demande aucune précision, et ne dis jamais que c'est écrit ni
-que la commande marche : rien n'est écrit sans l'accord de la personne. Sur
+qui en découle. Ne demande aucune précision, et ne dis jamais que c'est écrit, que
+la commande marche ni que les agents la recevront : rien n'est écrit sans l'accord
+de la personne. Sur
 "projet", il
 dit en une ou deux phrases ce que tu as compris du projet, puis que ta
 proposition est juste en dessous, à accepter ou à corriger en quelques mots : ne
@@ -1389,6 +1390,10 @@ en clair, bref — une à trois phrases —, sans JSON, sans balise, sans titre.
 - Ce qui passera sans lui, ce qui lui reviendra et ce qui arrêtera le run ne se
   disent que depuis les faits qui le décrivent (« Ce qu'un run fera », les bornes
   de ce run) ; ce qu'ils ne disent pas, tu ne le sais pas.
+- Ce que les agents d'un projet recevront ne se dit que depuis le fait qui le
+  constate (« Ce que les agents du projet reçoivent ») : qu'une commande vaut
+  désormais partout, ou qu'un agent lancera la bonne, seulement s'il le dit ; s'il
+  la dit encore prescrite quelque part, dis où.
 - Ce que les faits disent affiché sous ton message (une carte, une équipe, un
   run) s'y lit déjà : ne le recopie pas, dis ce que cela change pour lui.
 - Quand les faits disent qu'une carte attend sa réponse juste sous ton message,
