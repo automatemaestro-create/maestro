@@ -14,6 +14,12 @@ n'avait aucun appelant en production. Ce module ne le réimplémente pas — il 
 **demande**, au seul instant où le verdict est connu et où la tâche suivante
 n'a pas encore monté son worktree.
 
+Et une tâche dont le travail n'entre pas n'est pas terminée (#1548) : la
+livraison est confrontée à la base pendant que l'espace est ouvert, et un
+conflit revient à l'agent qui l'intègre (`_ConfrontationALaBase`) ; ce que la
+fusion refuse encore fait de la tâche un échec rattrapable
+(`_livree_hors_du_projet`).
+
 Et c'est ici que se joue le **régime d'accord humain** de cette écriture continue
 (#706) : **un accord par run et par projet**, demandé à la **première** fusion —
 diff sous les yeux, par le validateur de toujours (EF-08) — et valant pour toutes
@@ -159,7 +165,13 @@ from maestro.providers.courrier import Courrier
 from maestro.providers.question import Questionneur
 from maestro.router.classifier import TaskClassifier
 from maestro.router.router import Router
-from maestro.sandbox import ProducedFile, branche_de_tache
+from maestro.sandbox import (
+    ConflitAvecLaBase,
+    LieuSansTrace,
+    ProducedFile,
+    branche_de_tache,
+    conflit_avec_la_base,
+)
 from maestro.sandbox.confinement import ReleveConfinement
 from maestro.sandbox.en_place import portee_de
 from maestro.sandbox.verification import MiroirDeVerification, RegistreDesMiroirs
@@ -456,10 +468,13 @@ STATUT_SESSION_NON_CONFINEE = "session_non_confinee"
 #: par tâche soldée en succès sur un projet **versionné** — le pont Control Tower
 #: les mue en activités d'agent, comme `:relance` et `:refus-outil`.
 #:
-#: Étape annexe et non statut de tâche, à dessein : ce qui arrive au projet de
-#: l'utilisateur ne décide pas de l'issue de la tâche. Une fusion refusée ne
-#: transforme pas en échec un travail qui a réussi (critère de #705) — elle se
-#: **dit**, à l'endroit exact où le reste de la vie de la tâche se dit déjà.
+#: Étape annexe et non statut de tâche, à dessein : elle **dit** ce qui est arrivé
+#: au projet, à l'endroit exact où le reste de la vie de la tâche se dit déjà.
+#: ⚠ Mais son issue n'est plus sans effet sur la tâche (#1548, qui renverse le
+#: dernier critère de #705) : une fusion **refusée** laisse un travail hors du
+#: projet, et la tâche n'est pas terminée — `execute` la solde en échec
+#: rattrapable. Le run `afb6b43fffb6` s'était soldé « terminé » avec trois
+#: fusions refusées, dont un `lancer.bat` que le projet n'a jamais reçu.
 SUFFIXE_ETAPE_FUSION = ":fusion"
 
 #: Statuts d'une étape `:fusion` (#705) — les trois issues, et il en faut trois.
@@ -1434,7 +1449,11 @@ class LocalExecutor(TaskExecutor):
         # tâche n'est annoncée terminée qu'une fois le geste tenté, et la boucle
         # ne libère les tâches qui en dépendent qu'au retour de `execute`, donc
         # leur worktree part d'une branche de base qui porte déjà ce travail.
-        await self._fusionne_dans_le_projet(task, result, journal, en_place=en_place)
+        fusion = await self._fusionne_dans_le_projet(task, result, journal, en_place=en_place)
+        # Et une fusion refusée ne se solde plus « terminée » (#1548) : le
+        # travail n'est pas dans le projet, l'aval ne doit pas partir comme s'il
+        # l'était, et le run ne doit pas le dire livré.
+        result = _livree_hors_du_projet(result, fusion)
         journal.consigne(
             etape=task.id,
             nom=task.titre,
@@ -1583,20 +1602,26 @@ class LocalExecutor(TaskExecutor):
         L'étape terminale est à **usage nul**, comme celle d'un redécoupage abouti :
         ce que la tâche a coûté est déjà porté par son étape d'échec. Le résultat
         garde `verification_en_panne` — terminée sur décision, elle n'a toujours
-        pas été vérifiée, et le rapport ne doit pas dire le contraire.
+        pas été vérifiée, et le rapport ne doit pas dire le contraire. Et une
+        livraison prise telle quelle dont la fusion est **refusée** n'est pas
+        terminée non plus (#1548) : la personne a accepté un travail, pas son
+        absence du projet.
         """
         accepte = replace(result, statut=STATUT_TERMINEE, erreur=None)
         projet = self._projet(task)
         if projet is not None and projet.versionne:
-            await self._fusionne_dans_le_projet(task, accepte, journal, en_place=False)
+            fusion = await self._fusionne_dans_le_projet(task, accepte, journal, en_place=False)
+            # Prise telle quelle, mais pas entrée dans le projet (#1548) : pas terminée.
+            accepte = _livree_hors_du_projet(accepte, fusion)
         journal.consigne(
             etape=task.id,
             nom=task.titre,
             agent=accepte.agent,
             role=accepte.role,
-            statut=STATUT_TERMINEE,
+            statut=accepte.statut,
             entree=task.description,
             sortie=accepte.sortie,
+            erreur=accepte.erreur,
             usage=StepUsage(),
             playbook_version=accepte.playbook_version,
             ticket=task.ticket,
@@ -1651,6 +1676,41 @@ class LocalExecutor(TaskExecutor):
             # la même politique —, mais seul : la session de l'agent ne se rejoue pas.
             relance=self._relance,
             brief=brief,
+        )
+
+    def _juge_de_livraison(
+        self,
+        task: Task,
+        agent: Agent,
+        projet: Projet | None,
+        recette: Recette | None,
+        journal: RunJournal | None,
+    ) -> Recette | _ConfrontationALaBase | None:
+        """Ce qui juge chaque livraison outillée : la recette, et sur un projet versionné, la base.
+
+        Sur un projet versionné, la livraison qui tient est confrontée à la branche
+        de travail du projet (#1548, `_ConfrontationALaBase`) — **avec ou sans
+        vérificateur** : ce que Git refuserait n'a rien à voir avec ce qu'un juge
+        dit du travail. Ailleurs il n'y a pas de fusion à préparer — la racine d'un
+        projet non versionné reçoit l'agent en place, un espace jetable n'entre
+        nulle part —, et la recette reste seule, comme avant.
+        """
+        if projet is None or not projet.versionne:
+            return recette
+        return _ConfrontationALaBase(
+            projet=projet,
+            tache_id=task.id,
+            recette=recette,
+            on_conflit=(
+                None
+                if journal is None
+                else lambda conflit: self._consigne_activite(
+                    task,
+                    agent,
+                    f"Livraison rendue à l'agent avant la fusion — {conflit.resume()}.",
+                    journal,
+                )
+            ),
         )
 
     def _consigne_verification(
@@ -2111,8 +2171,12 @@ class LocalExecutor(TaskExecutor):
 
     async def _fusionne_dans_le_projet(
         self, task: Task, result: TaskResult, journal: RunJournal, *, en_place: bool = False
-    ) -> None:
+    ) -> tuple[str, str] | None:
         """Fusionne la branche de la tâche dans le projet dès qu'elle est soldée (#705, D2).
+
+        Rend le statut et la phrase de l'étape `:fusion` consignée — None pour une
+        tâche sans projet, qui n'en consigne aucune. C'est sur eux que l'appelant
+        juge si le travail est entré (#1548, `_livree_hors_du_projet`).
 
         Le geste manquant du parent #703 : `maestro.projets.application` savait
         déjà fusionner, `maestro.sandbox.projet` gardait déjà la branche — il n'y
@@ -2162,14 +2226,14 @@ class LocalExecutor(TaskExecutor):
         qu'elle a écrit en place est déjà dans le premier commit.
         """
         if task.projet_id is None or self._projets is None:
-            return
+            return None
         projet = self._projet(task)
         if result.role == ROLE_A_ASSIGNER:
             # Personne n'a pris la tâche (#1146) : aucun agent n'a tourné, donc
             # aucun espace de travail, aucune branche, rien d'écrit. Les trois
             # phrases ci-dessous parlent toutes d'un agent qui a travaillé — même
             # « ce qu'il a écrit avant d'échouer » —, et aucune n'est vraie ici.
-            self._consigne_fusion(
+            return self._consigne_fusion(
                 task,
                 result,
                 _statut_sans_agent(projet),
@@ -2179,9 +2243,8 @@ class LocalExecutor(TaskExecutor):
                 detail=_phrase_sans_agent(projet, task.projet_id),
                 journal=journal,
             )
-            return
         if projet is None:
-            self._consigne_fusion(
+            return self._consigne_fusion(
                 task,
                 result,
                 STATUT_PROJET_INTROUVABLE,
@@ -2192,10 +2255,9 @@ class LocalExecutor(TaskExecutor):
                 ),
                 journal=journal,
             )
-            return
         if not projet.versionne or en_place:
             statut, detail = _ecriture_en_place(projet, result)
-            self._consigne_fusion(
+            return self._consigne_fusion(
                 task,
                 result,
                 statut,
@@ -2203,11 +2265,10 @@ class LocalExecutor(TaskExecutor):
                 detail=detail,
                 journal=journal,
             )
-            return
         branche = branche_de_tache(task.id)
         entree = f"fusion de {branche}"
         if not result.ok:
-            self._consigne_fusion(
+            return self._consigne_fusion(
                 task,
                 result,
                 STATUT_FUSION_NON_TENTEE,
@@ -2218,7 +2279,6 @@ class LocalExecutor(TaskExecutor):
                 ),
                 journal=journal,
             )
-            return
         # Le travail est du sous-processus Git, pas de l'attente réseau : sans
         # `to_thread` il bloquerait la boucle, donc les tâches qui tournent de
         # front — et ce lot existe précisément pour qu'un run avance. L'accord
@@ -2264,7 +2324,9 @@ class LocalExecutor(TaskExecutor):
                         )
                     )
                     detail = _phrase_non_accordee(cause, branche, diff.base)
-        self._consigne_fusion(task, result, statut, entree=entree, detail=detail, journal=journal)
+        return self._consigne_fusion(
+            task, result, statut, entree=entree, detail=detail, journal=journal
+        )
 
     async def _accord_de_fusion(
         self,
@@ -2443,8 +2505,8 @@ class LocalExecutor(TaskExecutor):
         entree: str,
         detail: str,
         journal: RunJournal,
-    ) -> None:
-        """Trace ce qui est arrivé au projet au journal (#705, #839) — donc au fil temps réel.
+    ) -> tuple[str, str]:
+        """Trace ce qui est arrivé au projet au journal (#705, #839) ; rend statut et phrase.
 
         Étape dédiée `<task.id>:fusion` (même modèle que `:relance` et
         `:refus-outil`), que le pont (`maestro.controltower.bridge`) mue en
@@ -2476,6 +2538,7 @@ class LocalExecutor(TaskExecutor):
             ticket=task.ticket,
             projet_id=task.projet_id,
         )
+        return statut, detail
 
     async def _realise_gardee(
         self,
@@ -4207,7 +4270,11 @@ class LocalExecutor(TaskExecutor):
                         # de celle de la tâche qu'elle remplace, pas de la base.
                         reprend=task.reprend,
                         effort=agent.effort,
-                        on_livraison=recette,
+                        # La recette, puis la base (#1548) : une livraison qui tient
+                        # mais que Git refuserait de fusionner revient à l'agent.
+                        on_livraison=self._juge_de_livraison(
+                            task, agent, projet, recette, journal
+                        ),
                         machine=machine,
                         miroir=miroir,
                     )
@@ -4268,8 +4335,9 @@ def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, 
     la branche d'une autre tâche.
 
     Ne lève **jamais** : `TaskExecutor.execute` ne lève jamais non plus (contrat
-    cardinal du module), et une tâche qui vient de réussir n'a pas à échouer
-    parce que le projet de quelqu'un est occupé. Les deux refus motivés du socle
+    cardinal du module) — un refus se **rend**, en statut et en phrase, et c'est
+    `execute` qui en tire le verdict de la tâche (#1548,
+    `_livree_hors_du_projet`). Les deux refus motivés du socle
     (`ApplicationRefusee`, `RacineRefusee`) portent leur cause ; le filet large
     derrière eux n'est pas de la méfiance envers ces deux-là mais la tenue du
     contrat — un `OSError` remonté d'un sous-processus ferait de ce geste annexe
@@ -4335,6 +4403,100 @@ def _phrase_non_accordee(cause: str, branche: str, base: str) -> str:
         f"fusion non accordée — {cause}. Le projet est intact et {branche} conserve "
         f"le travail ; à rattraper à la main : git merge {branche} depuis {base}."
     )
+
+
+def _livree_hors_du_projet(result: TaskResult, fusion: tuple[str, str] | None) -> TaskResult:
+    """`result`, en échec si sa fusion a été **refusée** : son travail n'est pas entré (#1548).
+
+    Ce que #705 tenait pour sans effet sur la tâche — « une fusion refusée ne fait
+    pas échouer la tâche qui vient de réussir » — soldait des tâches « terminées »
+    dont le travail n'était nulle part dans le projet, et un run « terminé » avec
+    elles (run `afb6b43fffb6`, 2026-10-20 : trois fusions refusées, un `lancer.bat`
+    jamais livré, deux écrans appliqués à la main par l'agent d'une autre tâche).
+
+    Un échec **rattrapable** : rien n'est perdu — la branche porte le travail, et
+    la tâche rejouée la remonte telle quelle (#1392) ; le conflit qui l'a fait
+    refuser revient alors à son agent, à la livraison (`_ConfrontationALaBase`).
+    Seul le refus change le verdict : une fusion **non accordée** est la décision
+    d'une personne (#706), et elle se dit déjà comme telle. L'usage, la sortie et
+    les fichiers de la tâche restent : c'est un travail fait, qui n'est pas entré.
+    """
+    if fusion is None or not result.ok:
+        return result
+    statut, detail = fusion
+    if statut != STATUT_FUSION_REFUSEE:
+        return result
+    return replace(
+        result,
+        statut=STATUT_ECHEC,
+        erreur=f"travail non livré au projet — {detail}",
+    )
+
+
+@dataclass
+class _ConfrontationALaBase:
+    """La livraison d'une tâche confrontée à la base de son projet, l'espace encore ouvert (#1548).
+
+    La fusion d'une tâche se joue **après** le démontage de son worktree (#705) : un
+    conflit avec ce que la base a reçu entre-temps n'y trouvait plus personne pour
+    le résoudre, et la tâche restait « terminée » sans que son travail soit entré
+    (run `afb6b43fffb6`). Ce juge de livraison le constate **avant**, là où l'agent
+    peut encore agir : dans la boucle où la recette (#1177) lui rend déjà ce qui ne
+    tient pas, et à sa suite — une livraison qui ne tient pas se corrige d'abord ;
+    celle qui tient se confronte à la base (`conflit_avec_la_base`), et un conflit
+    revient à l'agent, qui intègre la base dans sa branche et le résout. Le modèle
+    comprend les deux travaux ; l'exécution vérifie que Git les fusionnera.
+
+    La boucle s'arrête sur la règle de la recette : une correction qui ne réduit pas
+    le conflit (`ConflitAvecLaBase.reduit`) lève `LivraisonNonTenue`, que
+    l'exécuteur mue en échec motivé — rien n'est fusionné, la branche garde le
+    travail. Une base qui a bougé n'est pas un échec de la correction : c'est un
+    autre conflit, et il revient à l'agent.
+
+    Ce qui échappe à ce constat — une tâche voisine qui fusionne entre la livraison
+    et la fusion — est refusé à la fusion, et `_livree_hors_du_projet` en fait un
+    échec rattrapable. `on_conflit` dit au fil chaque conflit rendu.
+    """
+
+    projet: Projet
+    tache_id: str
+    recette: Recette | None = None
+    on_conflit: Callable[[ConflitAvecLaBase], None] | None = None
+    dernier: ConflitAvecLaBase | None = None
+
+    async def __call__(
+        self,
+        espace: Path,
+        sortie: str,
+        fichiers: tuple[ProducedFile, ...] = (),
+        *,
+        lieu: LieuSansTrace | None = None,
+    ) -> str | None:
+        """`None` si la livraison tient et entrerait dans le projet, le retour à l'agent sinon."""
+        if self.recette is not None:
+            retour = await self.recette(espace, sortie, fichiers, lieu=lieu)
+            if retour is not None:
+                return retour
+        # Une livraison vide n'est pas jugée (cf. `Recette`) : c'est un aléa que
+        # l'exécuteur relance, et il n'y a rien à confronter.
+        if not sortie.strip() and not fichiers:
+            return None
+        conflit = await asyncio.to_thread(
+            conflit_avec_la_base, espace, self.projet, self.tache_id
+        )
+        if conflit is None:
+            self.dernier = None
+            return None
+        if self.dernier is not None and not conflit.reduit(self.dernier):
+            raise LivraisonNonTenue(
+                f"livraison qui n'entre pas dans le projet — {conflit.resume()} ; la "
+                "dernière correction n'a pas réduit le conflit. Rien n'est fusionné, et "
+                f"{conflit.branche} conserve le travail."
+            )
+        self.dernier = conflit
+        if self.on_conflit is not None:
+            self.on_conflit(conflit)
+        return conflit.consigne()
 
 
 def _statut_sans_agent(projet: Projet | None) -> str:

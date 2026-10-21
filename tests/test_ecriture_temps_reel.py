@@ -17,8 +17,13 @@ l'ordre des lots :
    branche de base ; une tâche en **échec** ne fusionne rien et sa branche conserve
    le travail ; la tâche suivante **voit** le travail de la précédente (défaut B2 de
    #568, rejoué dans les deux sens) ; une fusion refusée — conflit, racine occupée,
-   chemin hors périmètre — laisse le projet intact, le dit, et ne fait pas échouer
-   la tâche qui vient de réussir.
+   chemin hors périmètre — laisse le projet intact et le dit.
+
+Et ce que #1548 a renversé du dernier critère de #705 : une fusion refusée ne laisse
+plus la tâche « terminée » — son travail n'est pas dans le projet, et le run ne se
+solde plus comme s'il l'était. Un conflit avec la base se constate **à la
+livraison**, l'espace encore ouvert, et revient à l'agent, qui intègre la base dans
+sa branche ; ce qui passe encore à la fusion fait de la tâche un échec rattrapable.
 
 Vrais dépôts jetables, vrais worktrees, vraies fusions et vrais conflits — rien
 n'est simulé côté Git (sautés sans `git`). Le seul refus **joué** est celui du
@@ -44,11 +49,13 @@ import pytest
 from maestro.agents import DEVELOPER_PROFILE, AgentRuntime
 from maestro.engine import OrchestrationEngine
 from maestro.engine.executor import (
+    STATUT_ECHEC,
     STATUT_ECRITURE_EN_PLACE,
     STATUT_FUSION_FAITE,
     STATUT_FUSION_NON_ACCORDEE,
     STATUT_FUSION_NON_TENTEE,
     STATUT_FUSION_REFUSEE,
+    STATUT_TERMINEE,
     LocalExecutor,
 )
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
@@ -260,15 +267,77 @@ class _PendantQueLHumainEdite(ModelProvider):
         return "Fait."
 
 
-class _Validateur:
-    """Le validateur du test : note chaque demande et répond toujours `reponse`."""
+class _QuiIntegreLaBase(ModelProvider):
+    """Écrit son livrable pendant que la base avance ; rendu en conflit, il intègre la base (#1548).
 
-    def __init__(self, reponse: bool) -> None:
+    Le double d'un agent qui fait ce que son retour lui dit : à la session qui porte
+    ce retour, il commite son travail, joue `git merge <base>` dans sa copie, garde
+    les deux versions de ce qui était disputé et termine la fusion par un commit — Git
+    refuse d'intégrer une base par-dessus un travail non commité. `resout=False` est
+    l'agent qui n'en fait rien et relivre la même chose. `prompts` garde chaque
+    message reçu : le retour est ce que le second a de plus que le premier.
+    """
+
+    name = "integrateur"
+
+    def __init__(self, geste, *, base: str = "main", resout: bool = True) -> None:
+        self._geste = geste
+        self._base = base
+        self._resout = resout
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):  # pragma: no cover
+        raise AssertionError("un rôle outillé passe par run_agent")
+
+    async def run_agent(self, prompt, *, model, system_prompt=None, workspace, tools, **canaux):
+        self.prompts.append(prompt)
+        espace = Path(workspace)
+        cible = espace / _livrable(prompt)
+        if len(self.prompts) == 1:
+            cible.write_text("version de l'agent\n", encoding="utf-8")
+            self._geste()
+            return "Fait."
+        if not self._resout:
+            cible.write_text("version de l'agent\n", encoding="utf-8")
+            return "Fait, à nouveau."
+        identite = ("-c", "user.email=agent@maestro", "-c", "user.name=Agent")
+        _git(espace, "add", "-A")
+        _git(espace, *identite, "commit", "--quiet", "-m", "travail de l'agent")
+        # Le conflit attendu : Git s'arrête en laissant la fusion à terminer.
+        fusion = subprocess.run(
+            [GIT or "git", *identite, "merge", "--no-edit", self._base],
+            cwd=espace,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert fusion.returncode == 1, fusion.stdout + fusion.stderr
+        cible.write_text("version de l'humain\nversion de l'agent\n", encoding="utf-8")
+        _git(espace, "add", "-A")
+        _git(espace, *identite, "commit", "--quiet", "--no-edit")
+        return f"{self._base} intégrée, les deux versions gardées."
+
+
+class _Validateur:
+    """Le validateur du test : note chaque demande et répond toujours `reponse`.
+
+    `avant` est joué à chaque demande, avant de répondre : c'est la fenêtre où la
+    base peut encore bouger **après** que la livraison a été confrontée à elle — ce
+    qu'une autre tâche du run, fusionnée entre-temps, fait en vrai (#1548).
+    """
+
+    def __init__(self, reponse: bool, avant=None) -> None:
         self.reponse = reponse
         self.demandes: list[DemandeValidation] = []
+        self._avant = avant
 
     async def __call__(self, demande: DemandeValidation) -> bool:
         self.demandes.append(demande)
+        if self._avant is not None:
+            self._avant()
         return self.reponse
 
 
@@ -657,28 +726,49 @@ def test_la_boucle_du_moteur_ne_libere_l_aval_qu_une_fois_la_fusion_faite(tmp_pa
 
 
 # --------------------------------------------------------------------------- #
-# Lot 2 (#705) — une fusion refusée laisse le projet intact, le dit, et la tâche reste réussie
+# Lot 2 (#705) — une fusion refusée laisse le projet intact et le dit ; et depuis #1548, la
+# tâche dont le travail n'est pas entré n'est plus « terminée »
 # --------------------------------------------------------------------------- #
 
 
-def test_un_conflit_refuse_la_fusion_et_laisse_le_projet_intact(tmp_path: Path):
+def _ligne_de_la_tache(journal: RunJournal, tache_id: str):
+    """L'étape terminale de la tâche — celle dont le statut fait sa colonne et le solde du run."""
+    return _etape(journal, tache_id, "")
+
+
+def test_une_fusion_refusee_par_git_laisse_le_projet_intact_et_la_tache_n_est_pas_terminee(
+    tmp_path: Path,
+):
+    """Le défaut de #1548 : la fusion refusée était consignée, et la tâche restait « terminée ».
+
+    Constaté le 2026-10-20 (run `afb6b43fffb6`) : `lancement-windows` « terminée », son
+    `lancer.bat` jamais arrivé dans le projet, et le run soldé « terminé ». Ici la base bouge
+    **après** la livraison — pendant que l'accord est demandé, comme une tâche voisine qui
+    fusionne entre-temps —, donc rien ne pouvait le voir avant la fusion elle-même.
+    """
     depot, projet = _projet_git(tmp_path)
     racine = Path(projet.racine)
 
     def _edition_concurrente() -> None:
-        # L'humain change la même ligne de son côté, et la commite : la fusion ne peut pas trancher.
+        # La même ligne change dans la base, commitée : la fusion ne peut pas trancher.
         (racine / "src" / "app.py").write_text("version de l'humain\n", encoding="utf-8")
         _commiter(racine, "édition concurrente")
 
-    validateur = _Validateur(True)
-    journal = RunJournal(run_id="run-705")
+    validateur = _Validateur(True, avant=_edition_concurrente)
+    journal = RunJournal(run_id="run-1548")
     (resultat,) = _joue(
-        _executeur(_PendantQueLHumainEdite(_edition_concurrente), depot, validateur),
+        _executeur(_PendantQueLHumainEdite(lambda: None), depot, validateur),
         journal,
         _tache("t1", projet.id, "src/app.py"),
     )
 
-    assert resultat.ok  # le sort du projet n'est pas le verdict de la tâche
+    # Le travail n'est pas dans le projet : la tâche n'est pas terminée, et sa ligne le dit.
+    assert not resultat.ok
+    assert resultat.statut == STATUT_ECHEC
+    assert _ligne_de_la_tache(journal, "t1").statut == STATUT_ECHEC
+    # Un échec que le rattrapage peut reprendre : la branche porte le travail, rien n'est perdu.
+    assert resultat.rattrapable
+    assert branche_de_tache("t1") in resultat.erreur and "fusion-refusee" in resultat.erreur
     # Le projet est intact : la version de l'humain, une racine propre, sur sa branche, sans
     # fusion — `merge --abort` a été joué.
     assert (racine / "src" / "app.py").read_text(encoding="utf-8") == "version de l'humain\n"
@@ -686,13 +776,85 @@ def test_un_conflit_refuse_la_fusion_et_laisse_le_projet_intact(tmp_path: Path):
     assert _git(racine, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
     assert _fusions(racine) == []
     assert not (racine / ".git" / "MERGE_HEAD").exists()
-    # La branche conserve le travail de l'agent, à reprendre à la main.
+    # La branche conserve le travail de l'agent.
     assert _sur_la_branche(racine, "t1", "src/app.py") == "version de l'agent"
     etape = _etape(journal, "t1", ":fusion")
     assert etape.statut == STATUT_FUSION_REFUSEE
     assert "fusion-refusee" in etape.sortie and "le projet est intact" in etape.sortie
     # L'accord avait été donné : c'est Git qui a refusé, et la phrase le distingue.
     assert len(validateur.demandes) == 1
+
+
+def test_une_livraison_en_conflit_avec_la_base_revient_a_l_agent_qui_l_integre(tmp_path: Path):
+    """La voie de #1548 : le conflit se constate à la livraison, et c'est l'agent qui le résout.
+
+    La base avance pendant que l'agent travaille, sur la ligne même qu'il réécrit. Sa
+    livraison lui revient, l'espace encore ouvert, avec le fichier disputé et la base à
+    intégrer ; il l'intègre, garde les deux versions, et la fusion passe — les deux travaux
+    sont dans le projet.
+    """
+    depot, projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+
+    def _edition_concurrente() -> None:
+        (racine / "src" / "app.py").write_text("version de l'humain\n", encoding="utf-8")
+        _commiter(racine, "édition concurrente")
+
+    agent = _QuiIntegreLaBase(_edition_concurrente)
+    journal = RunJournal(run_id="run-1548")
+    (resultat,) = _joue(
+        _executeur(agent, depot, _Validateur(True)),
+        journal,
+        _tache("t1", projet.id, "src/app.py"),
+    )
+
+    assert resultat.ok, resultat.erreur
+    # Une seconde session, et son message porte le retour : ce qui est disputé, et avec quoi.
+    assert len(agent.prompts) == 2
+    retour = agent.prompts[1].removeprefix(agent.prompts[0])
+    assert "src/app.py" in retour and "main" in retour
+    # Le fil l'a dit pendant que ça se passait.
+    activites = [r.sortie for r in journal.records if r.etape == "t1:activite"]
+    assert any("src/app.py" in texte for texte in activites), activites
+    # Et la fusion a eu lieu : les deux travaux sont dans le projet, la racine est propre.
+    assert _etape(journal, "t1", ":fusion").statut == STATUT_FUSION_FAITE
+    assert (racine / "src" / "app.py").read_text(encoding="utf-8") == (
+        "version de l'humain\nversion de l'agent\n"
+    )
+    assert _git(racine, "status", "--porcelain").strip() == ""
+    assert _ligne_de_la_tache(journal, "t1").statut == STATUT_TERMINEE
+
+
+def test_un_conflit_que_l_agent_ne_resout_pas_arrete_la_livraison_sans_rien_fusionner(
+    tmp_path: Path,
+):
+    """L'agent relivre le même conflit : la boucle s'arrête, comme la recette sur un essai vain."""
+    depot, projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+
+    def _edition_concurrente() -> None:
+        (racine / "src" / "app.py").write_text("version de l'humain\n", encoding="utf-8")
+        _commiter(racine, "édition concurrente")
+
+    agent = _QuiIntegreLaBase(_edition_concurrente, resout=False)
+    validateur = _Validateur(True)
+    journal = RunJournal(run_id="run-1548")
+    (resultat,) = _joue(
+        _executeur(agent, depot, validateur),
+        journal,
+        _tache("t1", projet.id, "src/app.py"),
+    )
+
+    assert not resultat.ok
+    assert "src/app.py" in resultat.erreur
+    assert len(agent.prompts) == 2  # rendu une fois, pas en boucle
+    assert _ligne_de_la_tache(journal, "t1").statut == STATUT_ECHEC
+    # Rien n'est fusionné, personne n'a été dérangé pour un accord, la branche garde le travail.
+    assert _etape(journal, "t1", ":fusion").statut == STATUT_FUSION_NON_TENTEE
+    assert validateur.demandes == []
+    assert _fusions(racine) == []
+    assert (racine / "src" / "app.py").read_text(encoding="utf-8") == "version de l'humain\n"
+    assert _sur_la_branche(racine, "t1", "src/app.py") == "version de l'agent"
 
 
 def test_une_racine_occupee_refuse_la_fusion_sans_toucher_aux_changements_en_cours(tmp_path):
@@ -709,7 +871,9 @@ def test_une_racine_occupee_refuse_la_fusion_sans_toucher_aux_changements_en_cou
         _tache("t1", projet.id, "t1.md"),
     )
 
-    assert resultat.ok
+    # Le travail n'est pas entré (#1548) : la tâche n'est pas terminée, et l'erreur dit pourquoi.
+    assert not resultat.ok
+    assert "racine-occupee" in resultat.erreur
     # Rien n'a été fusionné sous les pieds de l'humain : son édition est là, intacte, et rien
     # de l'agent n'est entré.
     assert (racine / "README.md").read_text(encoding="utf-8") == "# En cours d'édition\n"
@@ -743,7 +907,8 @@ def test_un_chemin_hors_perimetre_est_refuse_avant_l_accord_et_avant_d_ecrire(
         _tache("t1", projet.id, "t1.md"),
     )
 
-    assert resultat.ok
+    assert not resultat.ok  # #1548 : un travail refusé à l'entrée du projet n'est pas livré
+    assert "hors-racine" in resultat.erreur
     assert not (racine / "t1.md").exists()
     assert _commits(racine) == ["socle"]
     assert validateur.demandes == []  # refusé **avant** l'accord : personne n'a été dérangé
@@ -751,3 +916,55 @@ def test_un_chemin_hors_perimetre_est_refuse_avant_l_accord_et_avant_d_ecrire(
     etape = _etape(journal, "t1", ":fusion")
     assert etape.statut == STATUT_FUSION_REFUSEE
     assert "hors-racine" in etape.sortie and "le projet est intact" in etape.sortie
+
+
+def test_le_run_ne_libere_pas_l_aval_d_une_tache_dont_la_fusion_est_refusee(tmp_path: Path):
+    """Par la vraie boucle (#43) : le run ne se solde pas sur un travail absent du projet (#1548).
+
+    Le run `afb6b43fffb6` s'est soldé « terminé » avec trois fusions refusées, et l'aval était
+    parti sur une base qui n'avait pas leur travail. Ici, sans juge pour rattraper, l'échec
+    reste — la tâche suivante n'est pas lancée sur un projet qui n'a pas ce qu'elle attend.
+    """
+    depot, projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+
+    def _edition_concurrente() -> None:
+        (racine / "src" / "app.py").write_text("version de l'humain\n", encoding="utf-8")
+        _commiter(racine, "édition concurrente")
+
+    fournisseur = _Ecrivain()
+    plan = json.dumps(
+        [
+            {
+                "id": "socle",
+                "titre": "Socle",
+                "description": "livrable:src/app.py",
+                "competences_requises": ["backend"],
+                "format_sortie": "markdown",
+                "dependances": [],
+            },
+            {
+                "id": "suite",
+                "titre": "Suite",
+                "description": "livrable:suite.md",
+                "competences_requises": ["backend"],
+                "format_sortie": "markdown",
+                "dependances": ["socle"],
+            },
+        ],
+        ensure_ascii=False,
+    )
+    moteur = OrchestrationEngine(
+        fournisseur,
+        Orchestrator(_Planificateur(plan), model="factice"),
+        executor=_executeur(fournisseur, depot, _Validateur(True, avant=_edition_concurrente)),
+    )
+    journal = RunJournal(run_id="run-1548-boucle")
+
+    rapport = asyncio.run(moteur.run("Un agenda", journal=journal, projet_id=projet.id))
+
+    assert [r.task_id for r in rapport.echouees] == ["socle"]
+    assert [r.task_id for r in rapport.bloquees] == ["suite"]
+    assert "suite.md" not in fournisseur.vus  # jamais lancée
+    assert _etape(journal, "socle", ":fusion").statut == STATUT_FUSION_REFUSEE
+    assert not (racine / "suite.md").exists()
