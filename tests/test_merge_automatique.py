@@ -41,6 +41,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from balayage import fichiers_du_depot
 from harnais_forge import (
     BASH,
     GIT,
@@ -1316,8 +1317,8 @@ def test_aucun_prompt_ne_prescrit_le_merge_nu() -> None:
 
     fautifs = []
     for dossier in (RACINE / ".claude", RACINE / "scripts"):
-        for fichier in sorted(dossier.rglob("*")):
-            if "__pycache__" in fichier.parts or not fichier.is_file():
+        for fichier in fichiers_du_depot(dossier):
+            if not fichier.is_file():
                 continue
             script = fichier.suffix == ".sh"
             texte = fichier.read_text(encoding="utf-8", errors="replace")

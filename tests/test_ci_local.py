@@ -1707,6 +1707,23 @@ def test_le_conteneur_joue_n_auto_comme_la_ci(clone: Clone) -> None:
         "le filet s'aligne sur `-n auto` : le pipeline doit continuer de le jouer"
 
 
+def test_le_conteneur_recupere_ses_processus_orphelins(clone: Clone) -> None:
+    """Sans init, pytest est le PID 1 du conteneur — et c'est au PID 1 de récupérer les orphelins.
+
+    Les suites d'outillage lancent des `git` par centaines ; celui dont le parent meurt avant lui
+    est rattaché au PID 1, seul à pouvoir le récupérer. pytest ne le fait pas : mesuré le
+    2026-10-20, 692 `git <defunct>` accumulés en une suite, tous fils du PID 1 (#1546). `--init`
+    place devant pytest l'init que Docker livre avec lui.
+    """
+    clone.equipe_tout()
+    clone.equipe_conteneur()
+    clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
+    clone.lance("--only", "pytest")
+
+    lance = lancements_conteneur(clone.appels())[0]
+    assert " --init " in f"{lance} ", f"le conteneur doit tourner derrière un init : {lance}"
+
+
 def test_sans_docker_le_filet_retombe_en_natif_et_le_dit(clone: Clone) -> None:
     """Le repli existe — mais il est ANNONCÉ, et c'est là tout le sujet.
 

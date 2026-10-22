@@ -3585,6 +3585,16 @@ Les points de conception, à comprendre avant d'y toucher :
   Et **jamais à la racine** : monté à `/w`, le parent du dépôt est `/`, et
   `test_projets.py::test_depot_maestro_refuse` rend `racine-de-disque` au lieu de
   `au-dessus-du-depot-maestro`. Le montage est à `/maestro/depot`. Trouvé par les tests.
+- **Le montage se paie à chaque fichier lu** (#1546) : le dépôt arrive par le partage de fichiers
+  de Docker Desktop. Un balayage qui descendait dans `.claude/worktrees/` — 10 worktrees et leurs
+  `node_modules` sur le poste mesuré — a tenu la suite témoin plus de 20 min, un cœur à 100 % et
+  3,1 Go, et jugeait au passage le code d'**autres** branches ; en CI, sur un clone neuf, rien ne
+  se voyait. Les balayages des suites passent donc par un parcours partagé,
+  [`tests/balayage.py`](../tests/balayage.py), qui écarte worktrees, bytecode et dépendances
+  **avant** d'y descendre — jamais un `rglob` filtré après coup, qui paierait la descente entière.
+- **`--init` devant pytest** (#1546) : sans lui, pytest est le PID 1 du conteneur, à qui revient de
+  récupérer les processus dont le parent est mort ; il ne le fait pas, et 692 `git <defunct>`
+  s'étaient accumulés en une suite.
 - **L'image part de `python:3.11` PLEINE et sans identité git globale** — les deux moitiés
   indissociables de #333 (§8.7). L'image pleine porte git ; l'installer par `apt-get` mettrait les
   miroirs Debian sur le chemin critique de chaque construction (le pipeline de !269 est mort
