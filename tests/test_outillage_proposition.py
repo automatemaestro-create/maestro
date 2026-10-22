@@ -435,6 +435,11 @@ def test_le_prompt_demande_de_proposer_d_un_bloc_et_de_ne_demander_que_l_injugea
     assert "Un sujet est un constat, une proposition ou une question, jamais deux" in systeme
     assert '"propositions"' in systeme and f'"{SUJET_PROPOSITION}"' in systeme
     assert "Il n'y a pas de nombre de questions à atteindre" in systeme
+    # Vu sur la vraie stack : « retenez-le d'un geste » au-dessus de la question de la
+    # forge, quand la proposition ne vient qu'après elle.
+    assert "Tant qu'une question la précède, ne présente pas ta proposition" in systeme
+    # La raison s'affiche sous la valeur, dix fois de suite : elle se tient courte.
+    assert "quinze mots au plus" in systeme
 
 
 def test_une_pile_comprise_recoit_tout_son_outillage_en_une_proposition() -> None:

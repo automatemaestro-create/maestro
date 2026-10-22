@@ -349,7 +349,10 @@ Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code 
                              "outils": ["..."]}],
                 "recommande": "...", "pourquoi": "..."}]}
 
-- "message" : une phrase à la personne, facultative — vide s'il n'y a rien à dire ;
+- "message" : une phrase à la personne, facultative — vide s'il n'y a rien à dire. Elle
+  s'affiche juste au-dessus de ce qui vient ensuite : la première question s'il en reste,
+  sinon ta proposition. Tant qu'une question la précède, ne présente pas ta proposition :
+  la personne ne la voit pas encore ;
 - "constats" : TOUT ce qu'on sait à ce tour, réponses comprises, pas seulement ce qui est
   nouveau ;
 - "parce_que" : ce qui, dans ce qui a été dit, établit le constat, en quelques mots ;
