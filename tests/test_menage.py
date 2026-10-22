@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TextIO, cast
 
 import pytest
+from balayage import fichiers_du_depot
 
 from maestro import menage
 from maestro.controltower.donnees import donnees_du_banc
@@ -637,8 +638,8 @@ def test_le_motif_reconnait_chaque_chemin_du_profil_hors_des_racines() -> None:
 def _fichiers_du_perimetre() -> list[Path]:
     fichiers = [RACINE_DEPOT / chemin for chemin in _FICHIERS_ISOLES]
     for dossier in _PERIMETRE:
-        for chemin in (RACINE_DEPOT / dossier).rglob("*"):
-            if "node_modules" in chemin.parts or not chemin.is_file():
+        for chemin in fichiers_du_depot(RACINE_DEPOT / dossier):
+            if not chemin.is_file():
                 continue
             if chemin.suffix in _SUFFIXES or chemin.name.endswith(".Dockerfile"):
                 fichiers.append(chemin)

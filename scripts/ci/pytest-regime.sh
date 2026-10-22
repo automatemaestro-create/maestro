@@ -609,7 +609,11 @@ pytest_conteneur() { # <image> <args pytest…>
   # l'uid du conteneur, donc git le refuserait comme « dubious ownership » — mais c'est une
   # propriété de CET APPEL, pas de l'image, et l'image doit rester SANS identité git globale sous
   # peine de remasquer le bug de #332 (docs/10 §8.7).
-  MSYS_NO_PATHCONV=1 docker run --rm \
+  #
+  # `--init` (#1546) : sans lui, pytest est le PID 1 du conteneur, et c'est au PID 1 de récupérer
+  # les processus dont le parent est mort. pytest ne le fait pas — 692 `git <defunct>` accumulés en
+  # une suite, mesuré le 2026-10-20. L'init livré avec Docker s'en charge, et relaie les signaux.
+  MSYS_NO_PATHCONV=1 docker run --rm --init \
     "${identite[@]}" \
     -v "$(chemin_natif "$RACINE"):$PYTEST_MONTAGE" \
     -w "$PYTEST_MONTAGE" \

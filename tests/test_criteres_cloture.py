@@ -43,6 +43,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
+from balayage import fichiers_du_depot
 from harnais_forge import BASH, GIT, RACINE, Depot, ecritures, monte_depot
 
 from maestro.scenarios import comparatif, historique
@@ -1199,10 +1200,9 @@ OUVRE_UNE_PR = re.compile(r"lib\.sh create-mr\b")
 
 
 def prompts() -> list[Path]:
-    fichiers = sorted(DOSSIER_CLAUDE.rglob("*.md"))
     # Les worktrees de tickets vivent sous `.claude/worktrees/` : ce sont d'autres copies du dépôt,
-    # pas les prompts de celui-ci.
-    return [f for f in fichiers if "worktrees" not in f.relative_to(DOSSIER_CLAUDE).parts]
+    # pas les prompts de celui-ci — écartées AVANT d'y descendre par le parcours partagé (#1546).
+    return [f for f in fichiers_du_depot(DOSSIER_CLAUDE) if f.suffix == ".md"]
 
 
 def test_les_motifs_de_balayage_savent_dire_oui_et_non() -> None:
