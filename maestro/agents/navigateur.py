@@ -66,17 +66,21 @@ ID_INTEGRATION = "playwright"
 #: (`mcp__navigateur__browser_navigate`…).
 NOM_SERVEUR = "navigateur"
 
-#: Le nom du navigateur tel qu'on le dit à la personne et à l'agent.
+#: Le nom du navigateur dans une phrase (« Tu as le navigateur de Maestro »), et
+#: tel qu'il s'affiche seul, en tête d'une ligne de l'équipe proposée.
 LIBELLE = "le navigateur de Maestro"
+NOM = "Navigateur de Maestro"
 
-#: Ce qu'il permet, dans l'ordre où un agent qui regarde un écran s'en sert. La
-#: même liste est lue par la personne (la ligne d'un rôle, à l'étape d'équipe) et
-#: par l'agent (la section de son playbook) : deux formulations finiraient par ne
-#: plus promettre la même chose.
+#: Ce qu'il permet, dans l'ordre où un agent qui regarde un écran s'en sert, et
+#: **dans les mots de la personne** : c'est ce que l'équipe proposée lui montre, sur
+#: la face de la carte comme dans la ligne d'un rôle (variante B de #1532). L'agent
+#: lit les mêmes promesses, un geste par promesse, outils compris
+#: (`GESTES_DE_L_AGENT`) : deux listes qui ne tiendraient pas le même compte
+#: finiraient par ne plus promettre la même chose.
 CE_QU_IL_FAIT: tuple[str, ...] = (
-    "ouvrir une page et la parcourir — cliquer, remplir, naviguer",
+    "ouvrir et parcourir une page",
     "la capturer à une largeur donnée",
-    "émuler la réduction des animations (`prefers-reduced-motion`)",
+    "émuler la réduction des animations",
     "lire les erreurs de la console",
 )
 

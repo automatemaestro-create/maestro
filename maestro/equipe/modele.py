@@ -45,6 +45,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from maestro.agents.navigateur import CE_QU_IL_FAIT
+from maestro.agents.navigateur import NOM as NOM_NAVIGATEUR
 from maestro.agents.permissions import EntreeArbitrage, PolitiqueOutils
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur
 from maestro.outillage.modele import Piece
@@ -99,6 +101,17 @@ ORIGINE_COMPOSITION_REGLES = "regles"
 def nouvel_id() -> str:
     """Un identifiant de proposition d'équipe neuf, de la forme `equ-<8 hex>`."""
     return f"{PREFIXE_ID}{uuid.uuid4().hex[:8]}"
+
+
+def navigateur_de_maestro() -> dict[str, str]:
+    """Ce que la personne lit du navigateur de Maestro (#1532) — son nom, et son usage.
+
+    Servi **une fois**, à côté des rôles, et non recopié par l'écran : la face de la
+    carte et la ligne de chaque rôle disent la même chose parce qu'elles lisent la
+    même phrase (variante B retenue sur #1532, réserve 1 du regard neuf). La source
+    est `maestro.agents.navigateur`, qui la partage avec le playbook de l'agent.
+    """
+    return {"libelle": NOM_NAVIGATEUR, "usage": ", ".join(CE_QU_IL_FAIT)}
 
 
 @dataclass(frozen=True)
@@ -408,6 +421,7 @@ class PropositionEquipe:
                 "origine": self.composition_origine,
                 "raison": self.composition_raison,
             },
+            "navigateur_de_maestro": navigateur_de_maestro(),
             "roles": [role.to_dict() for role in self.roles],
             "ecartes": [ecarte.to_dict() for ecarte in self.ecartes],
             "instances_total": self.instances_total,

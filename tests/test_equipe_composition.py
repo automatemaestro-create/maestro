@@ -665,6 +665,13 @@ def test_une_equipe_qui_construit_une_interface_web_recoit_le_navigateur() -> No
     assert par_nom == {"dev": True, "charte": True, "tests": True, "ci": False}
     servi = {role["nom"]: role["navigateur"] for role in proposition.to_dict()["roles"]}
     assert servi == par_nom
+    # La personne lit son nom et son usage, servis une fois : la face de la carte et
+    # la ligne d'un rôle disent la même phrase (variante B retenue sur #1532).
+    assert proposition.to_dict()["navigateur_de_maestro"] == {
+        "libelle": "Navigateur de Maestro",
+        "usage": "ouvrir et parcourir une page, la capturer à une largeur donnée, "
+        "émuler la réduction des animations, lire les erreurs de la console",
+    }
     # Un outil de plus dans les mains du rôle — son profil outillé ne bouge pas.
     dev = next(r for r in proposition.roles if r.nom == "dev")
     assert not any("navigateur" in outil for outil in dev.outils)
