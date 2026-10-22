@@ -300,7 +300,10 @@ def test_le_verificateur_de_fin_de_tache_lit_le_meme_brief():
 
     asyncio.run(_moteur(agent, Cadrage()).run("Dis bonjour", mode_brief=MODE_BRIEF_AUTO))
 
-    assert len(agent.verifications) == 2  # une par tâche, chacune tenue d'emblée
+    # Une par tâche, chacune tenue d'emblée — puis la recette du run (#1530), qui
+    # confronte les critères du brief au livrable intégré et lit le même cadre.
+    assert len(agent.verifications) == 3
+    assert "Recette du run" in agent.verifications[-1]
     for prompt in agent.verifications:
         assert f"<brief>\n{BRIEF.cadre()}\n</brief>" in prompt
         # La tâche d'abord, son contrat ; le brief ensuite, son cadre.

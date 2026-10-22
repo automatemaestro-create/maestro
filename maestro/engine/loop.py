@@ -212,6 +212,7 @@ from maestro.engine.rattrapage import (
     question_du_prerequis,
     question_du_rattrapage,
 )
+from maestro.engine.recette import RecetteDuRun
 from maestro.engine.renfort import (
     STATUT_RENFORT_DECLINE,
     STATUT_RENFORT_RECRUTE,
@@ -318,6 +319,10 @@ class RunReport:
     l'usage de l'étape de brief, compté à part de la planification (deux appels
     modèle distincts, #318) mais entrant comme elle dans `usage_totale` — sans quoi
     le brief serait la seule dépense du run à ne figurer nulle part.
+
+    `recette` (#1530) est la **recette du run** : chaque critère du brief confronté au
+    livrable intégré, en l'exécutant — None pour un run sans brief, ou dont
+    l'exécuteur ne la joue pas. Son usage est au grand livre du journal, sur sa ligne.
     """
 
     objectif: str
@@ -330,6 +335,7 @@ class RunReport:
     brief: Brief | None = None
     cadrage: StepUsage = StepUsage()
     tours_clarification: int = 0
+    recette: RecetteDuRun | None = None
 
     @property
     def reussies(self) -> tuple[TaskResult, ...]:
@@ -429,6 +435,12 @@ class RunReport:
             f"Brief : {self.resume_brief()}",
             "",
         ]
+        if self.recette is not None:
+            # La recette du run (#1530), avant les tâches : c'est le verdict sur le
+            # livrable que la personne reçoit, critère du brief par critère.
+            lignes[-1:-1] = [f"Recette : {self.recette.resume()}"]
+            if self.recette.fichier:
+                lignes[-1:-1] = [f"Recette écrite dans : {self.recette.fichier}"]
         for r in self.resultats:
             # Marqueurs en texte (pas d'emoji) : portables sur une console Windows
             # héritée (cp1252) comme en UTF-8, sans faire planter l'affichage.
@@ -1294,6 +1306,7 @@ class OrchestrationEngine:
                 await relais.annonce(task, result, dependants[task.id])
             return result
 
+        recette: RecetteDuRun | None = None
         try:
             # Créées dans l'ordre topologique, les tâches asyncio des dépendances
             # existent toujours avant celles qui les attendent. `execute` ne levant
@@ -1301,9 +1314,22 @@ class OrchestrationEngine:
             # temps du run tenu par l'exécuteur (#1497) : ce qu'il garde d'une tâche à
             # l'autre — le miroir où se vérifient celles d'un projet non versionné —
             # part à la sortie, run en échec, annulé ou levé compris.
-            async with self._executor.tient_le_run(journal.run_id), asyncio.TaskGroup() as tg:
-                for task in ordered:
-                    en_vol[task.id] = tg.create_task(_des_que_prete(task))
+            async with self._executor.tient_le_run(journal.run_id):
+                async with asyncio.TaskGroup() as tg:
+                    for task in ordered:
+                        en_vol[task.id] = tg.create_task(_des_que_prete(task))
+                # La recette du run (#1530) : toutes les tâches soldées et fusionnées,
+                # chaque critère du brief est confronté au livrable intégré, en
+                # l'exécutant — **dans** le temps du run, où le miroir de ses tâches
+                # est encore là. C'est elle qui remplace la tâche de recette que le
+                # plan ne porte plus.
+                recette = await self._executor.recette_du_run(
+                    journal.run_id,
+                    projet_id,
+                    tuple(resultat_de(task.id) for task in ordered),
+                    journal,
+                    modele=self._orchestrator.modele,
+                )
         finally:
             if au_plafond is not None:
                 # Un run annulé pendant qu'il attend sa décision emporte la
@@ -1335,6 +1361,7 @@ class OrchestrationEngine:
             brief=brief,
             cadrage=cadrage,
             tours_clarification=tours_clarification,
+            recette=recette,
         )
 
     async def _range(
