@@ -1292,6 +1292,10 @@ export type OptionOutillage = {
  * Il n'y a plus de `total` : le plafond fixe de #1031 est retiré, le questionnaire
  * s'arrête quand plus rien ne manque. `rang` dit combien de réponses précèdent
  * celle-ci, plus un — jamais combien il en reste, que personne ne sait d'avance.
+ *
+ * `proposition` (#1533) fait de la question **la proposition de l'outillage entier** :
+ * sans options, elle se retient d'un geste (`PROPOSITION_RETENUE`, `lib/outillage`) ou
+ * se corrige avec ses mots. Absente d'une question ordinaire.
  */
 export type QuestionOutillage = {
   cle: string;
@@ -1300,6 +1304,28 @@ export type QuestionOutillage = {
   recommande: string;
   pourquoi: string;
   rang: number;
+  proposition?: ElementProposeOutillage[];
+};
+
+/**
+ * Un élément de la proposition d'outillage (`Proposee.to_dict`, #1533) : ce que Maestro
+ * propose pour un sujet que rien de ce qui a été dit ne tranche.
+ *
+ * `valeur` est ce qui sera écrit (une commande, un fichier), `libelle` le nom qui la
+ * lit (« Vitest » pour `npm test`), `raison` ce qui, **dans ce projet**, la désigne.
+ * `sujet` et `commande` sont servis par le moteur, comme sur un `ChoixOutillage` ;
+ * `absents` nomme les programmes que le poste n'a pas (#1343) — la raison le dit déjà.
+ */
+export type ElementProposeOutillage = {
+  cle: string;
+  valeur: string;
+  libelle: string;
+  raison: string;
+  sujet: string;
+  commande: boolean;
+  outils?: string[];
+  absents?: string[];
+  pour?: string;
 };
 
 /**

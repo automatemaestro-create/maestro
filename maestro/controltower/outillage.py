@@ -317,8 +317,9 @@ pour rester cohérent avec elle (« pnpm, pas npm » change aussi les commandes 
 appelaient npm). Si elle la retient telle quelle, tout ce que tu proposais devient constat.
 
 Une proposition dit "libelle" — le nom qui la lit, par exemple « Vitest » pour la commande
-qui lance Vitest — et "raison" : en une seule phrase courte, ce qui, dans CE projet, la
-désigne.
+qui lance Vitest — et "raison" : ce qui, dans CE projet, la désigne, en une seule phrase
+courte — quinze mots au plus : elle s'affiche sur une ligne sous la valeur, parfois dans une
+colonne étroite, et dix propositions se lisent l'une sous l'autre.
 
 Les options d'une question sont écrites POUR CE PROJET : deux à quatre options plausibles
 pour ce qui a été dit, chacune avec une raison d'une ligne — ce que ce choix entraîne.

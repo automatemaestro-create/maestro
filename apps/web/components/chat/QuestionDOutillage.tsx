@@ -105,8 +105,11 @@ function reduit(texte: string): string {
  *
  * « aucun » aussi : ce n'est pas une valeur à lire, et le nom dit déjà qu'il n'y a
  * rien (troisième relecture : un « aucun » gris à la place d'une commande).
+ *
+ * Partagée avec la proposition de l'outillage entier (`PropositionDOutillage`, #1533),
+ * dont chaque élément a lui aussi une valeur et un nom.
  */
-function valeurDite(valeur: string, libelle: string): string | null {
+export function valeurDite(valeur: string, libelle: string): string | null {
   const brute = reduit(valeur);
   return brute === reduit(libelle) || brute === "aucun" || brute === "aucune"
     ? null
@@ -290,8 +293,13 @@ export function QuestionDOutillage({
  * dans la colonne, lu ouvert au même moment sur `/chat`, faisait lire la même carte de
  * deux façons — pour une ligne qui ne menaçait rien. Jusqu'à `COMPRIS_DEPLIE_MAX`
  * entrées, la liste est dépliée partout.
+ *
+ * **Un point sépare deux entrées** (regard neuf de #1533) : séparées par le seul
+ * espacement, « sorte de projet Site web : livre de recettes… langage TypeScript » se
+ * lisait comme une seule phrase, la valeur longue venant buter sur le sujet suivant.
+ * Partagée avec la proposition de l'outillage entier, qui la pose en tête.
  */
-function ComprisDuProjet({
+export function ComprisDuProjet({
   compris,
   id,
 }: {
@@ -310,7 +318,9 @@ function ComprisDuProjet({
       )}
     </li>
   ));
-  const liste = "flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-annexe";
+  const liste =
+    "flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-annexe " +
+    "[&>li+li]:before:mr-2 [&>li+li]:before:text-texte-secondaire [&>li+li]:before:content-['·']";
   if (compris.length <= COMPRIS_DEPLIE_MAX) {
     return (
       <div className="mb-3 flex min-w-0 flex-col gap-1">
