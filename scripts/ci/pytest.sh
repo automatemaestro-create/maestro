@@ -64,8 +64,9 @@ Exemples :
   bash scripts/ci/pytest.sh tests/test_worktree.py -k ensure -x
   bash scripts/ci/pytest.sh tests/test_engine.py::test_boucle --natif
 
-Le parallélisme (« -n auto ») est ajouté d'office DANS LE CONTENEUR — c'est l'essentiel du
-gain, et le drapeau même de la CI. Jamais en natif : y démarrer les workers coûte ~5,5 s, soit
+Le parallélisme (« -n min(cœurs, 8) », MAESTRO_PYTEST_WORKERS pour le déplacer) est ajouté
+d'office DANS LE CONTENEUR — c'est l'essentiel du gain ; le plafond y tient la mémoire du poste
+(#1558). Jamais en natif : y démarrer les workers coûte ~5,5 s, soit
 plus qu'une suite applicative ciblée (test_engine.py : 6,3 s en série, 37,5 s à -n 8).
 Il n'est pas ajouté non plus si tes arguments portent déjà -n/--numprocesses/-p no:xdist, ni
 s'ils disent que tu veux REGARDER tourner : --pdb, -s, --capture=no.
@@ -176,8 +177,8 @@ args=()
 # DANS LE CONTENEUR SEULEMENT, et c'est la règle déjà écrite pour le filet : démarrer les workers
 # coûte ~5,5 s, soit plus qu'une suite applicative ciblée. Mesuré ici sur `tests/test_engine.py` en
 # natif — 6,3 s en série contre 37,5 s avec `-n 8` : le parallélisme d'office rendait SIX FOIS plus
-# lent le cas même qu'il devait servir. Dans le conteneur la question ne se pose pas (`-n auto`,
-# 46 s contre 177 s à `-n 4` sur les six suites du périmètre) ; en natif, une suite d'outillage assez
+# lent le cas même qu'il devait servir. Dans le conteneur la question ne se pose pas (63 s à `-n 8`
+# contre 177 s à `-n 4` sur les six suites du périmètre) ; en natif, une suite d'outillage assez
 # grosse pour rentabiliser des workers est de toute façon celle qu'il faut jouer AILLEURS.
 if [ "$ajoute_n" = 1 ] && [ "$PYTEST_REGIME" = conteneur ]; then
   args+=(-n "$(workers_pytest)")

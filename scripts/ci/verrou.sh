@@ -9,7 +9,7 @@
 # Rien n'empêchait N exécutions simultanées de `scripts/ci/local.sh` sur la même machine, et ce n'est
 # pas un cas de bord : c'est le régime NOMINAL depuis #455/#626. Un run tourne à concurrence 3, chaque
 # session passe le filet avant de pousser (`/ticket-finish`), et une session interactive peut en
-# lancer un par-dessus. Trois filets en vol, ce sont trois `docker run … pytest -n auto` sur le même
+# lancer un par-dessus. Trois filets en vol, ce sont trois `docker run … pytest -n 8` sur le même
 # démon, trois `npm run build`, et une machine qu'aucun des trois n'a plus à lui.
 #
 # Ce que ça coûte n'est pas d'abord du temps, c'est le VERDICT. `tests/test_orchestrate.py` mesure de

@@ -406,27 +406,25 @@ PYTEST_IMAGE=""
 # moins, rien ne change (4 cœurs ⇒ `-n 4`, ce que `-n auto` aurait donné). C'est ce qui permet de le
 # poser sans distinguer les plateformes — le gain est mesuré sous Windows, où créer un processus
 # coûte ~50 ms, mais le raisonnement mémoire, lui, n'a rien de propre à Windows. Le job CI garde
-# `-n auto` : il tourne dans un conteneur dédié où la mémoire n'est pas le facteur limitant
-# (1 min 53 s au lieu de ~10 min, docs/10 §8.4).
+# `-n auto` : le runner ne partage sa mémoire avec personne, et le nombre de workers ne change pas
+# le verdict (1 min 53 s au lieu de ~10 min, docs/10 §8.4).
 #
-# ⚠ CE PLAFOND NE VAUT QUE POUR LE RÉGIME NATIF (#372). Sa raison a toujours été la mémoire du
-# POSTE, jamais un fait sur pytest : dans le conteneur, la contrainte n'est pas la même et le
-# plafond coûte cher. Re-mesuré le 2026-08-21 sur les six suites du périmètre `scripts/**`
-# (598 tests), même machine, à la suite :
+# ⚠ LE PLAFOND VAUT AUSSI DANS LE CONTENEUR (#1558), qui tourne dans la mémoire du POSTE. #372 l'en
+# avait exempté sur la DURÉE seule, mesurée sur 598 tests (`-n 8` 63 s, `-n auto` 46 s). Re-mesuré
+# le 2026-10-22 sur la suite COMPLÈTE (8 379 tests), VM chaude, en relevant aussi la mémoire des
+# processus du conteneur (cgroup, cache de fichiers exclu) :
 #
-#              conteneur Linux        Windows/MSYS (#285, mémoire)
-#   -n 4          177,2 s              6 min 58
-#   -n 8           63,1 s              5 min 28
-#   -n 16          56,4 s             11 min 37  ET 4 ROUGES
-#   -n auto        46,1 s                  —
+#              pytest                      mémoire des processus
+#   -n 4       9 min 30                    1,2 Go
+#   -n 8       7 min 10 / 7 min 55         2,1 Go
+#   -n auto    6 min 46 / 6 min 49         3,8 Go   (16 workers)
 #
-# Sous Windows, `-n 16` faisait pire que `-n 8` et rougissait quatre tests de la vue console
-# (#284/#290/#325) par saturation du poste. Dans le conteneur, les mêmes 598 tests passent à tous
-# les régimes et `-n auto` est le plus rapide — il n'y a donc rien à plafonner, et c'est en prime
-# EXACTEMENT le drapeau que joue `.github/workflows/ci.yml`. Un écart de moins entre le filet et le
-# verdict qu'il prédit.
+# ~230 Mo par worker, sur un poste qui n'a que ~1 à 2 Go libres au repos : le plafond divise par
+# deux la mémoire des processus pour ~11 % de durée. Le cache de fichiers de la VM WSL, lui, ne
+# dépend pas des workers : seul le plafond de la VM le borne (`.wslconfig`, docs/10 §8.4).
 #
-# MAESTRO_PYTEST_WORKERS relève ou abaisse le plafond, pour un poste qui n'a pas ce profil-là.
+# MAESTRO_PYTEST_WORKERS relève ou abaisse le plafond, des deux côtés, pour un poste qui n'a pas ce
+# profil-là.
 PYTEST_WORKERS_PLAFOND="${MAESTRO_PYTEST_WORKERS:-8}"
 case "$PYTEST_WORKERS_PLAFOND" in
   '' | 0 | *[!0-9]*) PYTEST_WORKERS_PLAFOND=8 ;;
@@ -445,12 +443,6 @@ coeurs_logiques() {
 
 workers_pytest() {
   local coeurs
-  # Dans le conteneur : `auto`, comme la CI. Le plafond ci-dessus répond à une question du poste
-  # Windows (la mémoire) qui ne s'y pose pas — voir la table.
-  if [ "${PYTEST_REGIME:-}" = conteneur ] && [ -z "${MAESTRO_PYTEST_WORKERS:-}" ]; then
-    printf 'auto\n'
-    return 0
-  fi
   coeurs="$(coeurs_logiques)"
   if [ "$coeurs" -lt "$PYTEST_WORKERS_PLAFOND" ]; then
     printf '%s\n' "$coeurs"
