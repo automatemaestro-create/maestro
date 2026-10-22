@@ -239,6 +239,13 @@ class RolePropose:
     modèle avec lequel un rôle doit travailler, et le proposer serait inventer.
     Une fiche sans réglage prend le modèle par défaut des exécutants, et c'est
     exactement ce qu'on veut dire.
+
+    `navigateur` (#1532) dit si ce rôle reçoit **le navigateur de Maestro**
+    (`maestro.agents.navigateur`) : un projet qui construit une interface web le
+    donne aux rôles qui en écrivent, en conçoivent ou en vérifient le rendu, pour
+    qu'ils ne bâtissent pas leur propre banc. C'est un outil **de plus** dans les
+    mains du rôle, monté à chaque tâche ; il ne figure pas dans `outils`, qui dit
+    le profil outillé de son runtime (#1037) et que rien ici ne change.
     """
 
     nom: str
@@ -256,6 +263,7 @@ class RolePropose:
     outils: tuple[str, ...] = ()
     skills: tuple[SkillBranche, ...] = ()
     autorisations: tuple[AutorisationProposee, ...] = ()
+    navigateur: bool = False
 
     def politique(self) -> PolitiqueOutils:
         """Les autorisations proposées muées en `PolitiqueOutils` (#110).
@@ -309,6 +317,7 @@ class RolePropose:
             "instances": self.instances,
             "raison_instances": self.raison_instances,
             "outils": list(self.outils),
+            "navigateur": self.navigateur,
             "playbook": self.playbook,
             "playbook_origine": self.playbook_origine,
             "playbook_raison": self.playbook_raison,

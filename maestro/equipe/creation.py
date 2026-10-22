@@ -19,11 +19,17 @@ Un rôle validé se range dans **trois** des six dépôts de `ConfigurationAgent
 | les **autorisations** relues une à une | `PolitiqueOutils` | `permissions` |
 | le nombre d'**instances** | `CapaciteAgent` | `capacites` |
 
-Les trois autres — surcharges de réglages (#259), serveurs MCP (#104) — ne
-reçoivent rien : l'analyse d'un projet ne dit rien du modèle avec lequel un rôle
-doit travailler (`maestro.equipe.modele`), et aucun serveur MCP ne se déduit
-d'un projet. Une fiche sans réglage prend le modèle par défaut des exécutants, et
-c'est exactement ce qu'on veut dire.
+Les surcharges de réglages (#259) ne reçoivent rien : l'analyse d'un projet ne
+dit rien du modèle avec lequel un rôle doit travailler (`maestro.equipe.modele`).
+Une fiche sans réglage prend le modèle par défaut des exécutants, et c'est
+exactement ce qu'on veut dire.
+
+Les **serveurs MCP** (#104) ne reçoivent qu'une chose, depuis #1532 : **le
+navigateur de Maestro**, pour un rôle que l'équipe validée en équipe
+(`RoleValide.navigateur`). Il entre au pool du projet et s'active pour ce rôle —
+c'est `maestro.controltower.equipe` qui l'écrit, ce module ne fait que le nommer
+dans le playbook (`section_navigateur`). Aucun autre serveur ne se déduit d'un
+projet.
 
 ## Les skills branchés vivent dans le playbook, et c'est une décision
 
@@ -92,6 +98,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from maestro.agents.capacity import CapaciteAgent
+from maestro.agents.navigateur import CONSIGNE_DE_L_AGENT, GESTES_DE_L_AGENT, outils_du_navigateur
+from maestro.agents.navigateur import LIBELLE as LIBELLE_NAVIGATEUR
 from maestro.agents.permissions import PolitiqueOutils
 from maestro.agents.store import (
     NOMS_RESERVES,
@@ -192,6 +200,10 @@ class RoleValide:
     `skills_absents` n'est **jamais** servi ni rapporté par l'API : c'est
     `skills_constates()` qui le remplit, avec les skills validés que le projet ne
     porte pas, pour que la section du playbook dise pourquoi elle est vide.
+
+    `navigateur` (#1532) : ce rôle reçoit le navigateur de Maestro, tel que l'écran
+    l'a montré — proposé par la composition, retiré ou donné en mots. La création
+    l'active pour lui dans le pool du projet, et son playbook le nomme.
     """
 
     nom: str
@@ -203,6 +215,7 @@ class RoleValide:
     skills: tuple[SkillRetenu, ...] = ()
     politique: PolitiqueOutils | None = None
     skills_absents: tuple[SkillRetenu, ...] = ()
+    navigateur: bool = False
 
 
 @dataclass(frozen=True)
@@ -219,6 +232,7 @@ class AgentCree:
     gabarit: str = ""
     skills: tuple[str, ...] = ()
     politique: PolitiqueOutils | None = None
+    navigateur: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """L'agent créé en JSON."""
@@ -229,6 +243,7 @@ class AgentCree:
             "gabarit": self.gabarit,
             "skills": list(self.skills),
             "politique": None if self.politique is None else self.politique.to_dict(),
+            "navigateur": self.navigateur,
         }
 
 
@@ -397,15 +412,47 @@ def skills_constates(role: RoleValide, porte: Callable[[str], bool]) -> RoleVali
 
 
 def playbook_branche(role: RoleValide) -> str:
-    """Le playbook validé, sa section « skills » posée (ou reposée) en fin de document.
+    """Le playbook validé, ses sections posées (ou reposées) en fin de document.
 
-    Idempotent : une section déjà présente est **remplacée**, jamais empilée. La
-    coupe se fait au titre (`TITRE_SKILLS`) et court jusqu'au prochain titre de
-    même niveau, pour qu'un playbook qui aurait des sections après elle les garde
-    — un playbook est un prompt système, pas un fichier qu'on tronque.
+    Deux sections, que Maestro pose et que rien ne rédige : celle des **skills**,
+    toujours, et celle du **navigateur** (#1532) quand le rôle le reçoit.
+
+    Idempotent : une section déjà présente est **remplacée**, jamais empilée — et un
+    rôle à qui l'on a retiré le navigateur perd la sienne. La coupe se fait au titre
+    (`TITRE_SKILLS`, `TITRE_NAVIGATEUR`) et court jusqu'au prochain titre de même
+    niveau, pour qu'un playbook qui aurait des sections après elles les garde — un
+    playbook est un prompt système, pas un fichier qu'on tronque.
     """
-    corps = _sans_section_skills(role.playbook).rstrip()
-    return f"{corps}\n\n{_section_skills(role.skills, role.skills_absents)}\n"
+    corps = _sans_sections_posees(role.playbook).rstrip()
+    sections = [_section_skills(role.skills, role.skills_absents)]
+    if role.navigateur:
+        sections.append(section_navigateur())
+    return f"{corps}\n\n" + "\n\n".join(sections) + "\n"
+
+
+#: Le titre de la section que `playbook_branche()` pose pour un rôle qui reçoit le
+#: navigateur de Maestro (#1532). Une **ancre**, comme `TITRE_SKILLS` : c'est par lui
+#: que la section se retrouve pour être remplacée, ou retirée.
+TITRE_NAVIGATEUR = "## Le navigateur de Maestro"
+
+
+def section_navigateur() -> str:
+    """La section du navigateur, telle qu'elle apparaît dans le prompt système de l'agent.
+
+    Ses gestes et sa consigne viennent de `maestro.agents.navigateur`, seul module à
+    connaître les outils de l'adaptateur : la section les recopie, elle ne les écrit pas.
+    """
+    lignes = [
+        TITRE_NAVIGATEUR,
+        "",
+        f"Tu as {LIBELLE_NAVIGATEUR} : ses outils commencent par "
+        f"`{outils_du_navigateur()}`. Sers-t'en pour regarder ce que le projet affiche :",
+        "",
+        *(f"- {geste}" for geste in GESTES_DE_L_AGENT),
+        "",
+        CONSIGNE_DE_L_AGENT,
+    ]
+    return "\n".join(lignes)
 
 
 def _section_skills(
@@ -427,28 +474,32 @@ def _section_skills(
 
 
 def scinder_section_skills(playbook: str) -> tuple[str, str]:
-    """`(corps, section)` : le playbook sans sa section « skills », et cette section.
+    """`(corps, section)` : le playbook sans ses sections posées, et ces sections.
 
-    La section est **celle que Maestro a posée** (`playbook_branche`), coupée au
-    même titre et par le même motif : c'est ce qui permet de faire réécrire le
-    corps par un modèle (#1405, `maestro.controltower.regeneration_playbooks`) sans
-    qu'il touche jamais à l'inventaire des skills, qui ne se rédige pas. `section`
-    est vide quand le playbook n'en porte pas.
+    Les sections sont **celles que Maestro a posées** (`playbook_branche`) — les
+    skills, et le navigateur s'il y est (#1532) —, coupées aux mêmes titres et par le
+    même motif : c'est ce qui permet de faire réécrire le corps par un modèle (#1405,
+    `maestro.controltower.regeneration_playbooks`) sans qu'il touche jamais à ce qui ne
+    se rédige pas. `section` les rend dans leur ordre, et vide quand le playbook n'en
+    porte aucune.
     """
-    trouvee = _MOTIF_SECTION_SKILLS.search(playbook)
-    section = trouvee.group(0).strip() if trouvee else ""
-    return _sans_section_skills(playbook).strip(), section
+    sections = [trouvee.group(0).strip() for trouvee in _MOTIF_SECTIONS_POSEES.finditer(playbook)]
+    return _sans_sections_posees(playbook).strip(), "\n\n".join(sections)
 
 
-#: La section « skills » d'un playbook : son titre — l'actuel ou un antérieur —, jusqu'au
-#: prochain titre de même niveau ou la fin du document.
-_MOTIF_SECTION_SKILLS = re.compile(
-    rf"^(?:{'|'.join(re.escape(t) for t in (TITRE_SKILLS, *TITRES_SKILLS_ANTERIEURS))})"
-    r"\s*$.*?(?=^## |\Z)",
+#: Une section posée par Maestro : son titre — celui des skills, l'un de ses titres
+#: antérieurs, ou celui du navigateur —, jusqu'au prochain titre de même niveau ou la
+#: fin du document.
+_MOTIF_SECTIONS_POSEES = re.compile(
+    r"^(?:"
+    + "|".join(
+        re.escape(t) for t in (TITRE_SKILLS, *TITRES_SKILLS_ANTERIEURS, TITRE_NAVIGATEUR)
+    )
+    + r")\s*$.*?(?=^## |\Z)",
     re.MULTILINE | re.DOTALL,
 )
 
 
-def _sans_section_skills(playbook: str) -> str:
-    """Le playbook privé de sa section « skills », s'il en portait une."""
-    return _MOTIF_SECTION_SKILLS.sub("", playbook)
+def _sans_sections_posees(playbook: str) -> str:
+    """Le playbook privé des sections que Maestro y a posées, s'il en portait."""
+    return _MOTIF_SECTIONS_POSEES.sub("", playbook)

@@ -65,6 +65,9 @@ from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.configuration import ConfigurationAgents
+from maestro.agents.mcp import IntegrationMcp
+from maestro.agents.navigateur import ID_INTEGRATION as ID_NAVIGATEUR
+from maestro.agents.navigateur import canal_du_poste, integration_navigateur
 from maestro.agents.store import NOMS_RESERVES
 from maestro.controltower.generation_agent import (
     INTENTION_MAX,
@@ -216,6 +219,12 @@ class ServiceEquipe:
 
     `bornes` resserre la lecture de l'analyse, comme pour `ServiceOutillage` ;
     `None` laisse le défaut de `maestro.outillage`.
+
+    `navigateur` (#1532) fabrique l'intégration du navigateur de Maestro que la
+    création pose au pool du projet — `None` : celle du registre curé, le navigateur
+    résolu sur ce poste (`maestro.agents.navigateur`). Appelé au moment d'écrire,
+    jamais au câblage : la sonde du poste n'a rien à faire tant qu'aucune équipe
+    n'en a besoin. Les tests en injectent une qui ne regarde pas le poste.
     """
 
     def __init__(
@@ -227,6 +236,7 @@ class ServiceEquipe:
         generateur: GenerateurDefinitionAgent | None = None,
         compositeur: CompositeurEquipe | None = None,
         playbooks: bool = True,
+        navigateur: Callable[[], IntegrationMcp] | None = None,
     ) -> None:
         self._projets = projets
         self._gabarits = gabarits
@@ -234,6 +244,7 @@ class ServiceEquipe:
         self._generateur = generateur
         self._compositeur = compositeur
         self._playbooks = playbooks
+        self._navigateur = navigateur
 
     async def proposer(
         self,
@@ -425,6 +436,11 @@ class ServiceEquipe:
            *serait* une politique (liste `allow` vide = ouverte), et poser ce
            qu'on n'a pas décidé est ce que ce chantier évite.
 
+        Un rôle qui reçoit **le navigateur de Maestro** (#1532) l'a en plus dans le
+        dépôt MCP du projet : l'intégration entre au pool **avant la première
+        fiche** — un pool illisible refuse alors l'équipe sans rien avoir écrit —,
+        puis s'active pour lui après sa capacité.
+
         Rend le rapport de `EquipeCreee` : ce qui existe désormais dans le
         projet, à charge pour les écrans d'agents de prendre la suite (#1038).
 
@@ -440,6 +456,9 @@ class ServiceEquipe:
         blocages = refus_de(roles, noms_pris=cfg.agents.noms())
         if blocages:
             raise EquipeRefusee(blocages)
+        equipes = [role for role in roles if role.navigateur]
+        if equipes:
+            self._poser_le_navigateur(cfg, equipes)
         crees = [self._ecrire_role(cfg, role) for role in roles]
         return EquipeCreee(
             projet_id=projet.id,
@@ -447,21 +466,61 @@ class ServiceEquipe:
             agents=tuple(crees),
         ).to_dict()
 
+    def _poser_le_navigateur(
+        self, cfg: ConfigurationAgents, roles: Sequence[RoleValide]
+    ) -> None:
+        """Le navigateur de Maestro au pool du projet — s'il n'y est pas déjà (#1532).
+
+        Déjà au pool (une équipe précédente, ou la personne qui l'a réglé depuis
+        les intégrations) : on le **reprend tel quel**, sans le réécrire — ce qui
+        y est réglé a été décidé par quelqu'un. Un pool illisible, ou un navigateur
+        que l'allowlist ne permet plus d'instancier, refuse l'équipe **avant** toute
+        écriture : un rôle à qui l'on a promis le navigateur ne naît pas sans lui.
+        """
+        try:
+            pool = list(cfg.mcp.pool())
+            if any(integration.id == ID_NAVIGATEUR for integration in pool):
+                return
+            cfg.mcp.ecrire_pool([*pool, self._integration_navigateur()])
+        except ValueError as exc:
+            raise EquipeRefusee(
+                [
+                    Refus(
+                        role.nom,
+                        f"le navigateur de Maestro n'a pas pu être posé au projet : {exc}",
+                    )
+                    for role in roles
+                ]
+            ) from exc
+
+    def _integration_navigateur(self) -> IntegrationMcp:
+        """L'intégration du navigateur — celle qu'on a injectée, ou celle de ce poste."""
+        if self._navigateur is not None:
+            return self._navigateur()
+        return integration_navigateur(canal=canal_du_poste())
+
     @staticmethod
     def _ecrire_role(cfg: ConfigurationAgents, role: RoleValide) -> AgentCree:
-        """Les trois écritures d'un rôle, dans l'ordre qui laisse le moins de dette.
+        """Les écritures d'un rôle, dans l'ordre qui laisse le moins de dette.
 
         La **fiche d'abord** : c'est elle qui fait exister l'agent au catalogue,
-        et les deux autres ne sont que des réglages indexés par son nom. Une
+        et les autres ne sont que des réglages indexés par son nom. Une
         coupure après la fiche laisse un agent aux défauts (une instance, aucune
         politique dédiée) — lisible, modifiable, et que les écrans d'agents
         rattrapent. L'inverse laisserait une capacité et une politique orphelines
         que rien n'affiche.
+
+        L'activation du navigateur (#1532) vient en dernier, et **s'ajoute** à ce
+        que l'agent active déjà : c'est une union, jamais un remplacement.
         """
         fiche = cfg.agents.ecrire(definition(role))
         if role.politique is not None:
             cfg.permissions.ecrire(fiche.nom, role.politique)
         cfg.capacites.ecrire(capacite(role))
+        if role.navigateur:
+            actives = list(cfg.mcp.activations(fiche.nom))
+            if ID_NAVIGATEUR not in actives:
+                cfg.mcp.ecrire_activations(fiche.nom, [*actives, ID_NAVIGATEUR])
         return AgentCree(
             nom=fiche.nom,
             role=fiche.role,
@@ -469,6 +528,7 @@ class ServiceEquipe:
             gabarit=role.gabarit,
             skills=tuple(skill.nom for skill in role.skills),
             politique=role.politique,
+            navigateur=role.navigateur,
         )
 
     def _matiere_analysee(

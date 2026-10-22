@@ -898,6 +898,9 @@ def equipe_validee(proposition: Mapping[str, Any]) -> dict[str, Any]:
                     for s in role["skills"]
                 ],
                 "politique": role["politique"],
+                # Le navigateur de Maestro (#1532), tel que la proposition l'a donné :
+                # l'omettre ferait valider une équipe privée de l'outil qu'on lui a montré.
+                "navigateur": bool(role.get("navigateur", False)),
             }
             for role in proposition.get("roles") or []
         ],
