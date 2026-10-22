@@ -1683,28 +1683,21 @@ def test_le_depot_n_est_jamais_monte_a_la_racine_du_conteneur(clone: Clone) -> N
     )
 
 
-def test_le_conteneur_joue_n_auto_comme_la_ci(clone: Clone) -> None:
-    """Le plafond de #285 est un fait sur la MÉMOIRE DU POSTE Windows, pas un fait sur pytest.
+def test_le_conteneur_plafonne_ses_workers_comme_le_natif(clone: Clone) -> None:
+    """Le conteneur tourne dans la mémoire du POSTE : le plafond de #285 y vaut aussi (#1558).
 
-    Re-mesuré dans le conteneur le 2026-08-21 sur les six suites du périmètre (598 tests) :
-    `-n 4` 177 s · `-n 8` 63 s · `-n 16` 56 s · `-n auto` 46 s, tous VERTS. Sous Windows, `-n 16`
-    faisait pire que `-n 8` (11 min 37) ET rougissait quatre tests de la vue console par saturation.
-    Il n'y a donc rien à plafonner là-bas — et `-n auto` est en prime le drapeau du pipeline, soit
-    un écart de moins entre le filet et le verdict qu'il prédit.
+    #372 l'en avait exempté sur la durée seule, mesurée sur 598 tests. Re-mesuré le 2026-10-22 sur
+    la suite complète, VM chaude : la mémoire des processus du conteneur suit les workers — 3,8 Go à
+    16, 2,1 Go à 8, 1,2 Go à 4 — pour 6 min 46, ~7 min 30 et 9 min 30. Le pipeline garde `-n auto` :
+    le nombre de workers ne change pas le verdict, et le runner ne partage sa mémoire avec personne.
     """
     clone.equipe_tout()
     clone.equipe_conteneur()
     clone.modifie("scripts/gitlab/lib.sh", "echo encore\n")
     clone.lance("--only", "pytest")
 
-    lance = lancements_conteneur(clone.appels())[0]
-    assert " -n auto " in f"{lance} ", f"le conteneur doit jouer `-n auto` : {lance}"
-
-    # L'autre moitié de l'invariant, sur le VRAI pipeline : si la CI cessait de jouer `-n auto`,
-    # ce test-ci resterait vert en épinglant un accord qui n'existerait plus.
-    pipeline = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert re.search(r"pytest -n auto", pipeline), \
-        "le filet s'aligne sur `-n auto` : le pipeline doit continuer de le jouer"
+    workers = workers_pytest(lancements_conteneur(clone.appels())[0])
+    assert workers is not None and 1 <= workers <= 8, f"workers hors plafond : {workers}"
 
 
 def test_le_conteneur_recupere_ses_processus_orphelins(clone: Clone) -> None:
