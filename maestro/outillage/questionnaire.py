@@ -94,6 +94,32 @@ sans rien deviner (`au_poste`) :
 Ce que le poste a répondu est aussi **dit au modèle** (`poste_en_texte`), pour que ses
 constats et ses questions suivantes en tiennent compte : c'est lui qui comprend, le
 code ne fait que vérifier.
+
+## Une proposition d'un bloc, plutôt que neuf questions (#1533)
+
+Sur p5, le fil a posé neuf questions une à une — langage, gestionnaire, cadre, tests,
+vérification, formatage, forge, CI, convention — pour un projet Next.js dont le modèle
+savait juger l'ensemble : 6 min 13 s, 0,538 $ et neuf gestes, là où une session seule
+n'en demandait aucun (docs/50 § 2). Le modèle les tenait pour des « manques », parce que
+rien de ce qui avait été dit ne les tranchait ; il savait pourtant ce qui va ensemble.
+
+Une compréhension porte donc une troisième sorte de chose, entre ce qu'on sait et ce
+qu'on demande : **ce que Maestro propose** (`Proposee`) — une valeur pour chaque sujet
+que rien ne tranche mais qu'il sait juger pour cette pile, avec sa raison. Toutes
+ensemble, elles font **une** question (`question_de_proposition`), la proposition de
+l'outillage entier, qui se retient d'un geste (`PROPOSITION_RETENUE`) ou se corrige
+avec des mots (« pnpm, pas npm »). Un sujet est l'une des trois, jamais deux : un
+constat l'emporte sur une proposition, et une question séparée ne vient que pour ce
+que le modèle ne sait pas juger — il dit pourquoi dans `pourquoi`. Elle passe **avant**
+la proposition, parce que sa réponse peut changer ce qui va ensemble (la forge décide
+de la CI).
+
+Retenir la proposition, c'est **cliquer chacun de ses choix** (`choix_de_la_reponse`) :
+ses éléments deviennent des réponses cliquées, constats tels quels, et rien de ce qui
+suit — `acquis_de`, la recommandation, les pièces — ne sait qu'ils sont venus d'un seul
+geste. Une correction tapée, elle, est une phrase sur le sujet `SUJET_PROPOSITION`,
+hors du schéma : jamais un constat, toujours comprise par le tour suivant, qui relit
+la proposition corrigée (`proposition_en_texte`) et la repropose, confrontée au poste.
 """
 
 from __future__ import annotations
@@ -139,6 +165,20 @@ SUJET_NATURE = "nature"
 #: `maestro.outillage.clients.clients_depuis_texte`.
 SUJET_CLIENTS = "clients"
 
+#: Le sujet de la **proposition d'outillage** (#1533) : la question qui propose d'un bloc
+#: tout ce que rien n'a tranché. **Hors du schéma**, exprès : une phrase tapée sur elle
+#: est une correction à comprendre, jamais un constat, et aucune question du modèle ne
+#: peut le prendre pour clé.
+SUJET_PROPOSITION = "outillage"
+
+#: La valeur du geste qui retient la proposition telle quelle (#1533) — une seule, et
+#: c'est le code qui la pose : ce n'est pas une option que le modèle aurait écrite.
+PROPOSITION_RETENUE = "retenue"
+
+#: L'intitulé de la proposition — écrit ici, pas par le modèle : c'est le cadre de la
+#: carte, le même pour tout projet, et ce sont ses éléments qui parlent du projet.
+INTITULE_PROPOSITION = "L'outillage que je vous propose"
+
 #: Le **schéma** de ce qui fait l'outillage d'un projet — les sujets qu'une
 #: compréhension renseigne, avec le nom qu'on leur donne à l'écran. Ce n'est pas un
 #: catalogue de réponses : les valeurs sont libres. C'est la forme des `Constats` que
@@ -149,6 +189,12 @@ SUJET_CLIENTS = "clients"
 SUJETS: dict[str, str] = {
     SUJET_NATURE: "sorte de projet",
     "langages": "langage",
+    # Le cadre de l'application (#1533) — Next.js, Flutter, Django. Il ne nourrit aucun
+    # `Constats` (rien dans `recommander` ne le lit) : il se dit dans la ligne d'origine
+    # d'`AGENTS.md` (`resume_des_choix`), comme la sorte de projet et son langage. Sans
+    # lui, un cadre proposé puis retenu d'un geste ne s'écrivait nulle part — c'était
+    # l'une des neuf questions de p5 (docs/50 § 2).
+    "cadre": "cadre",
     "manifeste": "manifeste",
     "gestionnaire": "gestionnaire",
     "installer": "installation",
@@ -242,6 +288,67 @@ class Option:
 
 
 @dataclass(frozen=True)
+class Proposee:
+    """Ce que Maestro propose pour un sujet que rien de ce qui a été dit ne tranche (#1533).
+
+    Le pendant d'une `Option` recommandée, sans la question autour : `valeur` est la
+    valeur concrète du sujet (`npx vitest run`, `.github/workflows/ci.yml`), `libelle`
+    le nom qui la lit (« Vitest », « GitHub Actions »), `raison` ce qui, **dans ce
+    projet**, la désigne — en une ligne. `outils` et `absents` sont ceux d'une option
+    (#1343) ; `pour`, sur une commande seulement, ce qu'elle fait pour ce projet (#1350),
+    qui deviendra la description du skill qui la porte une fois la proposition retenue.
+    """
+
+    cle: str
+    valeur: str
+    libelle: str
+    raison: str
+    outils: tuple[str, ...] = ()
+    absents: tuple[str, ...] = ()
+    pour: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """La forme du REST — le `sujet` nommé et la `commande` dite, comme un `Choix`."""
+        forme: dict[str, Any] = {
+            "cle": self.cle,
+            "valeur": self.valeur,
+            "libelle": self.libelle,
+            "raison": self.raison,
+            "sujet": sujet_de(self.cle),
+            "commande": self.cle in USAGES and not _est_aucun(self.valeur),
+        }
+        if self.outils:
+            forme["outils"] = list(self.outils)
+        if self.absents:
+            forme["absents"] = list(self.absents)
+        if self.pour:
+            forme["pour"] = self.pour
+        return forme
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Proposee:
+        """Relit un élément de proposition depuis sa forme stockée — sans rejuger."""
+        return cls(
+            cle=str(data.get("cle") or ""),
+            valeur=str(data.get("valeur") or ""),
+            libelle=str(data.get("libelle") or data.get("valeur") or ""),
+            raison=str(data.get("raison") or ""),
+            outils=_outils_lus(data.get("outils")),
+            absents=_outils_lus(data.get("absents")),
+            pour=str(data.get("pour") or ""),
+        )
+
+    def retenue(self) -> Choix:
+        """Ce que l'élément devient quand la proposition est retenue : une réponse cliquée.
+
+        Sa raison voyage comme cause (`parce_que`) — c'est ce que le manifeste gardera
+        pour dire d'où vient la valeur —, et ce qu'une commande fait pour le projet
+        (`pour`) descend jusqu'au skill, exactement comme celui d'un constat compris.
+        """
+        return Choix(cle=self.cle, valeur=self.valeur, parce_que=self.raison, pour=self.pour)
+
+
+@dataclass(frozen=True)
 class QuestionOutillage:
     """Une question qui décide de l'outillage, avec la recommandation qu'elle porte.
 
@@ -257,6 +364,12 @@ class QuestionOutillage:
     `rang` dit combien de réponses précèdent celle-ci, plus un. Il n'y a plus de
     `total` : le plafond de #1031 est retiré, et une forme stockée qui en porte un
     se relit sans lui.
+
+    `proposition` (#1533) fait de la question la **proposition de l'outillage entier** :
+    ses éléments sont ce que Maestro propose, elle n'a pas d'options, et elle se répond
+    d'un geste qui la retient (`PROPOSITION_RETENUE`) ou avec des mots qui la corrigent.
+    Elle n'est écrite dans la forme REST que si elle porte quelque chose : une question
+    d'avant #1533 se relit à l'identique.
     """
 
     cle: str
@@ -265,10 +378,11 @@ class QuestionOutillage:
     recommande: str
     pourquoi: str
     rang: int = 1
+    proposition: tuple[Proposee, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """La forme du REST et du message de chat (`MessageChat.question`)."""
-        return {
+        forme: dict[str, Any] = {
             "cle": self.cle,
             "intitule": self.intitule,
             "options": [o.to_dict() for o in self.options],
@@ -276,6 +390,9 @@ class QuestionOutillage:
             "pourquoi": self.pourquoi,
             "rang": self.rang,
         }
+        if self.proposition:
+            forme["proposition"] = [p.to_dict() for p in self.proposition]
+        return forme
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> QuestionOutillage:
@@ -303,6 +420,11 @@ class QuestionOutillage:
             recommande=str(data.get("recommande") or ""),
             pourquoi=str(data.get("pourquoi") or ""),
             rang=int(data.get("rang") or 0),
+            proposition=tuple(
+                Proposee.from_dict(p)
+                for p in data.get("proposition") or ()
+                if isinstance(p, Mapping)
+            ),
         )
 
     def libelle_de(self, valeur: str) -> str:
@@ -407,6 +529,53 @@ def question_ouverte(rang: int = 1) -> QuestionOutillage:
     )
 
 
+def question_de_proposition(
+    propositions: Sequence[Proposee], rang: int = 1
+) -> QuestionOutillage:
+    """La proposition de l'outillage entier, posée comme **une** question (#1533).
+
+    Sans options : elle se retient d'un geste (`PROPOSITION_RETENUE`, la valeur que la
+    carte envoie) ou se corrige avec des mots. Son `pourquoi` dit les deux, et ce sont
+    ses éléments, chacun avec sa raison, qui disent pourquoi ce projet-ci.
+    """
+    return QuestionOutillage(
+        cle=SUJET_PROPOSITION,
+        intitule=INTITULE_PROPOSITION,
+        options=(),
+        recommande="",
+        pourquoi=(
+            "Rien de ce que vous avez dit ne tranche ces choix : voici ceux que je ferais "
+            "pour ce projet, et qui vont ensemble. Retenez-les d'un geste, ou dites avec "
+            "vos mots ce qui doit changer."
+        ),
+        rang=rang,
+        proposition=tuple(propositions),
+    )
+
+
+def est_retenue(question: QuestionOutillage | None, choix: Choix) -> bool:
+    """`choix` est-il le geste qui retient la proposition que `question` porte ? (#1533)"""
+    return (
+        question is not None
+        and bool(question.proposition)
+        and choix.cle == question.cle
+        and not choix.libre
+        and choix.valeur == PROPOSITION_RETENUE
+    )
+
+
+def choix_de_la_reponse(question: QuestionOutillage | None, choix: Choix) -> tuple[Choix, ...]:
+    """Ce qu'une réponse vaut, une fois lue avec la question qu'elle tranche (#1533).
+
+    Elle-même, le plus souvent. Le geste qui **retient une proposition** vaut chacun de
+    ses éléments, cliqué (`Proposee.retenue`) : c'est ce qui fait qu'un seul geste pèse
+    autant que neuf réponses, sans qu'aucun lecteur des réponses ait à le savoir.
+    """
+    if question is not None and est_retenue(question, choix):
+        return tuple(p.retenue() for p in question.proposition)
+    return (choix,)
+
+
 class ComprehensionIllisible(ValueError):
     """Ce que le modèle a rendu n'est pas une compréhension lisible.
 
@@ -424,8 +593,10 @@ class Comprehension:
     - `constats` : **tout** ce qu'on sait à ce tour, en `Choix` déduits — pas seulement
       ce qui est nouveau. C'est ce qui permet à la dernière compréhension de faire foi
       seule (`acquis_de`) ;
-    - `questions` : ce qui manque encore, dans l'ordre où le demander. Vide : plus rien
-      ne manque, et c'est la conclusion ;
+    - `questions` : ce que le modèle **ne sait pas juger**, dans l'ordre où le demander ;
+    - `propositions` (#1533) : ce qu'il propose pour les sujets que rien ne tranche et
+      qu'il sait juger — l'outillage entier, d'un bloc. Vides toutes les deux : plus
+      rien ne manque, et c'est la conclusion ;
     - `message` : ce que le modèle a à dire à la personne avant la question — une
       réponse à sa question en retour, un doute levé. Vide le plus souvent.
     """
@@ -433,25 +604,25 @@ class Comprehension:
     constats: tuple[Choix, ...] = ()
     questions: tuple[QuestionOutillage, ...] = ()
     message: str = ""
+    propositions: tuple[Proposee, ...] = ()
 
     @property
     def terminee(self) -> bool:
-        """Plus rien ne manque."""
-        return not self.questions
+        """Plus rien ne manque — ni question, ni proposition à retenir."""
+        return not self.questions and not self.propositions
 
     def question_suivante(self, rang: int) -> QuestionOutillage | None:
-        """La prochaine question à poser, à son rang — `None` quand plus rien ne manque."""
-        if not self.questions:
-            return None
-        premiere = self.questions[0]
-        return QuestionOutillage(
-            cle=premiere.cle,
-            intitule=premiere.intitule,
-            options=premiere.options,
-            recommande=premiere.recommande,
-            pourquoi=premiere.pourquoi,
-            rang=rang,
-        )
+        """La prochaine question à poser, à son rang — `None` quand plus rien ne manque.
+
+        Une question séparée **d'abord** : elle porte sur ce que le modèle ne sait pas
+        juger, et sa réponse peut changer ce qui va ensemble — la forge décide de la CI.
+        La proposition vient quand il ne reste plus qu'elle (#1533).
+        """
+        if self.questions:
+            return replace(self.questions[0], rang=rang)
+        if self.propositions:
+            return question_de_proposition(self.propositions, rang=rang)
+        return None
 
 
 def _objet_json(texte: str) -> Mapping[str, Any]:
@@ -577,7 +748,9 @@ def _questions_lues(brut: Any, tranches: set[str]) -> tuple[QuestionOutillage, .
             continue
         cle = _cle(entree.get("cle"))
         intitule = _une_ligne(entree.get("intitule") or "", VALEUR_MAX)
-        if not cle or not intitule or cle in tranches or cle in lues:
+        # La clé de la proposition est réservée (#1533) : une question qui la prendrait
+        # se lirait comme la proposition de l'outillage entier, sans en avoir aucune.
+        if not cle or not intitule or cle in tranches or cle in lues or cle == SUJET_PROPOSITION:
             continue
         options = _options_lues(entree.get("options"))
         recommande = str(entree.get("recommande") or "").strip()
@@ -594,6 +767,52 @@ def _questions_lues(brut: Any, tranches: set[str]) -> tuple[QuestionOutillage, .
     return tuple(lues.values())
 
 
+#: Les sujets du schéma qui ne se **proposent** jamais (#1533) : la sorte de projet se
+#: dit — on ne propose pas à quelqu'un ce qu'il veut construire —, et les outils d'agent
+#: se trouvent sur le poste ou se nomment, jamais ne se choisissent pour la personne.
+_JAMAIS_PROPOSES = frozenset({SUJET_NATURE, SUJET_CLIENTS})
+
+
+def _propositions_lues(brut: Any, exclus: set[str]) -> tuple[Proposee, ...]:
+    """Les propositions d'une compréhension, validées — une par sujet, jamais sur un sujet su.
+
+    Trois propriétés, qui font qu'un sujet est un constat, une question ou une
+    proposition, jamais deux :
+
+    - **un sujet hors du schéma est écarté** : il ne nourrirait aucune entrée de
+      l'outillage, et retenir la proposition l'écrirait pour rien ;
+    - **un sujet `exclus` aussi** — tranché d'un clic, déjà constaté, ou posé en
+      question : ce qui a été dit fait foi, et ce qu'on demande ne se propose pas en
+      même temps ;
+    - la sorte de projet et les outils d'agent ne se proposent jamais (`_JAMAIS_PROPOSES`).
+
+    `pour` n'est lu que sur une commande, comme sur un constat (`_constats_lus`).
+    """
+    lues: dict[str, Proposee] = {}
+    for entree in brut if isinstance(brut, list) else ():
+        if not isinstance(entree, Mapping):
+            continue
+        cle = _cle(entree.get("cle"))
+        valeur = _une_ligne(entree.get("valeur") or "", VALEUR_MAX)
+        if (
+            cle not in SUJETS
+            or cle in _JAMAIS_PROPOSES
+            or cle in exclus
+            or cle in lues
+            or not valeur
+        ):
+            continue
+        lues[cle] = Proposee(
+            cle=cle,
+            valeur=valeur,
+            libelle=_une_ligne(entree.get("libelle") or valeur, VALEUR_MAX),
+            raison=_une_ligne(entree.get("raison") or "", VALEUR_MAX),
+            outils=_outils_lus(entree.get("outils")),
+            pour=_une_ligne(entree.get("pour") or "", POUR_MAX) if cle in USAGES else "",
+        )
+    return tuple(lues.values())
+
+
 def comprehension_depuis_texte(texte: str, reponses: Sequence[Choix]) -> Comprehension:
     """Ce que le modèle a compris, **lu et vérifié** — la frontière entre son texte et le fil.
 
@@ -601,7 +820,10 @@ def comprehension_depuis_texte(texte: str, reponses: Sequence[Choix]) -> Compreh
     questions qu'on ne repose pas (`_questions_lues`). Tant que la sorte de projet n'est
     ni dite ni comprise, la seule question est la question ouverte — quoi que le modèle
     ait proposé d'autre : demander la CI d'un projet dont on ne sait pas ce qu'il est,
-    c'est poser des questions au hasard.
+    c'est poser des questions au hasard, et lui proposer un outillage, le deviner.
+
+    Les propositions (#1533) ne portent que sur ce qui n'est ni tranché, ni constaté,
+    ni demandé (`_propositions_lues`).
 
     Lève `ComprehensionIllisible` sur un texte qui ne porte pas d'objet JSON.
     """
@@ -610,13 +832,16 @@ def comprehension_depuis_texte(texte: str, reponses: Sequence[Choix]) -> Compreh
     tranches = {c.cle for c in donnees(reponses) if not c.libre}
     constats = _constats_lus(objet.get("constats"))
     questions = _questions_lues(objet.get("questions"), tranches)
+    message = _une_ligne(objet.get("message") or "", 2 * VALEUR_MAX)
     connus = repondus | {c.cle for c in constats}
     if SUJET_NATURE not in connus:
-        questions = (question_ouverte(),)
+        return Comprehension(constats=constats, questions=(question_ouverte(),), message=message)
+    propositions = _propositions_lues(
+        objet.get("propositions"),
+        tranches | {c.cle for c in constats} | {q.cle for q in questions},
+    )
     return Comprehension(
-        constats=constats,
-        questions=questions,
-        message=_une_ligne(objet.get("message") or "", 2 * VALEUR_MAX),
+        constats=constats, questions=questions, message=message, propositions=propositions
     )
 
 
@@ -632,6 +857,19 @@ def reponses_en_texte(reponses: Sequence[Choix]) -> str:
         for c in donnees(reponses)
     ]
     return "\n".join(lignes) if lignes else "(aucune réponse pour l'instant)"
+
+
+def proposition_en_texte(propositions: Sequence[Proposee]) -> str:
+    """La proposition posée, telle que le modèle la relit quand une phrase la corrige (#1533).
+
+    Une ligne par élément — sa clé, sa valeur, sa raison —, parce que le modèle ne se
+    souvient de rien d'un tour à l'autre : sans elle, « pnpm, pas npm » corrigerait une
+    proposition qu'il n'a plus sous les yeux, et il en referait une autre.
+    """
+    return "\n".join(
+        f"- {p.cle} : « {p.valeur} »" + (f" — {p.raison}" if p.raison else "")
+        for p in propositions
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -659,19 +897,31 @@ def _programmes_d_une_commande(cle: str, valeur: str) -> tuple[str, ...]:
     return programmes(valeur)
 
 
+def programmes_de_la_proposee(proposee: Proposee) -> tuple[str, ...]:
+    """Les programmes qu'un élément de proposition demande (#1533) — comme ceux d'une option."""
+    return tuple(
+        dict.fromkeys(
+            (*proposee.outils, *_programmes_d_une_commande(proposee.cle, proposee.valeur))
+        )
+    )
+
+
 def programmes_a_sonder(
     comprehension: Comprehension, acquis: Sequence[Choix] = ()
 ) -> tuple[str, ...]:
     """Tout ce que le poste doit dire pour juger une compréhension, chaque nom une fois.
 
-    Les outils de chaque option de chaque question, puis les programmes des commandes
-    **comprises** — les constats de `comprehension` et ceux déjà `acquis` : un constat
-    déduit (« tester : uv run pytest ») repose sur un outil aussi sûrement qu'une option.
+    Les outils de chaque option de chaque question, ceux de chaque élément proposé
+    (#1533), puis les programmes des commandes **comprises** — les constats de
+    `comprehension` et ceux déjà `acquis` : un constat déduit (« tester : uv run
+    pytest ») repose sur un outil aussi sûrement qu'une option.
     """
     noms: list[str] = []
     for question in comprehension.questions:
         for option in question.options:
             noms.extend(programmes_de_l_option(question, option))
+    for proposee in comprehension.propositions:
+        noms.extend(programmes_de_la_proposee(proposee))
     for choisi in (*comprehension.constats, *acquis):
         if not choisi.libre:
             noms.extend(_programmes_d_une_commande(choisi.cle, choisi.valeur))
@@ -681,7 +931,8 @@ def programmes_a_sonder(
 def repose_sur_un_absent(comprehension: Comprehension, absents: Iterable[str]) -> bool:
     """Ce que le modèle propose repose-t-il sur l'un de ces outils introuvables ?
 
-    La recommandation d'une question, ou une commande qu'il a **déduite** : c'est ce
+    La recommandation d'une question, un élément de la proposition (#1533) — qui n'a pas
+    d'autre option où se reporter —, ou une commande qu'il a **déduite** : c'est ce
     qu'il faut lui redire avec ce que le poste a répondu, pour qu'il se reprenne. Une
     option non recommandée qui en manque ne demande rien — elle le dira d'elle-même.
     """
@@ -694,6 +945,8 @@ def repose_sur_un_absent(comprehension: Comprehension, absents: Iterable[str]) -
                 programmes_de_l_option(question, option)
             ):
                 return True
+    if any(manquants & set(programmes_de_la_proposee(p)) for p in comprehension.propositions):
+        return True
     return any(
         manquants & set(_programmes_d_une_commande(choisi.cle, choisi.valeur))
         for choisi in comprehension.constats
@@ -706,15 +959,30 @@ def au_poste(comprehension: Comprehension, poste: Mapping[str, bool]) -> Compreh
     `poste` dit, programme par programme, s'il est installé (`True`) ou introuvable
     (`False`) ; un programme dont le poste n'a rien dit est **inconnu**, et rien n'en
     découle. Voir le module : une option qui repose sur un outil introuvable le dit, et
-    ne reste pas recommandée s'il en est une qui s'en passe. Idempotent — une option
-    qui porte déjà ses absents n'est pas annotée deux fois.
+    ne reste pas recommandée s'il en est une qui s'en passe. Un élément proposé (#1533)
+    le dit aussi : il n'a pas d'autre option où se reporter, et c'est le modèle, saisi
+    de nouveau, qui en propose un autre — ou la personne, qui le corrige. Idempotent —
+    ce qui porte déjà ses absents n'est pas annoté deux fois.
     """
     if not any(present is False for present in poste.values()):
         return comprehension
     return replace(
         comprehension,
         questions=tuple(_question_au_poste(q, poste) for q in comprehension.questions),
+        propositions=tuple(_proposee_au_poste(p, poste) for p in comprehension.propositions),
     )
+
+
+def _proposee_au_poste(proposee: Proposee, poste: Mapping[str, bool]) -> Proposee:
+    """L'élément proposé, et ce qui lui manque sur le poste — tel quel s'il ne manque rien."""
+    if proposee.absents:
+        return proposee
+    absents = tuple(p for p in programmes_de_la_proposee(proposee) if poste.get(p) is False)
+    if not absents:
+        return proposee
+    debut = proposee.raison.rstrip(". ")
+    fait = f"{_manquent(absents)} sur ce poste."
+    return replace(proposee, absents=absents, raison=f"{debut} — {fait}" if debut else fait)
 
 
 def _question_au_poste(
@@ -921,7 +1189,7 @@ def resume_des_choix(choix: Sequence[Choix], *, remplaces: Iterable[str] = ()) -
     tus = frozenset(remplaces)
     acquis = {c.cle: c.valeur for c in acquis_de(choix) if c.cle not in tus}
     morceaux: list[str] = []
-    for cle in (SUJET_NATURE, "langages"):
+    for cle in (SUJET_NATURE, "langages", "cadre"):
         if acquis.get(cle) and not _est_aucun(acquis[cle]):
             morceaux.append(acquis[cle])
     tests = acquis.get("tester", "")

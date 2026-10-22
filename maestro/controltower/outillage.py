@@ -54,6 +54,26 @@ Un seul cas se passe du modèle : **rien n'a encore été dit**. La question est
 la question ouverte (« Qu'est-ce que ce projet ? »), sans options — il n'y a rien à
 comprendre, et un appel ne rendrait que ce qu'on sait déjà.
 
+## Une proposition d'un bloc, puis les seules questions qu'il ne sait pas juger (#1533)
+
+Sur p5, la compréhension posait neuf questions une à une, chacune un tour du modèle :
+6 min 13 s, 0,538 $ et neuf gestes pour un outillage Next.js que le modèle savait juger
+d'un bloc (docs/50 § 2). Il **propose** désormais tout ce qu'il sait juger — l'outillage
+entier, cohérent pour la pile —, et ne demande à part que ce qu'il ne peut pas juger,
+en disant pourquoi (`maestro.outillage.questionnaire`, § « Une proposition d'un bloc »).
+La proposition est une question de plus pour le fil — même message, même attente, même
+phrase tapée qui y répond —, et deux gestes y répondent :
+
+- **la retenir** clique chacun de ses éléments (`chat.choix_du_fil`). Le tour suivant
+  conclut **sans rappeler le modèle** : il n'y a rien à comprendre de plus, et la
+  première pièce vient ;
+- **la corriger avec ses mots** (« pnpm, pas npm ») rappelle le modèle avec la
+  proposition qu'il corrige (`_proposition_corrigee`) : il en fait des constats, ajuste
+  le reste, et ce qu'il repropose est **revérifié** au poste comme toute proposition.
+
+Rien ne s'écrit pour autant (#1161) : la proposition retenue est ce que les pièces
+rédigent, et chacune se montre ensuite avec son diff, sur accord.
+
 ## Le fil est la seule mémoire, et c'est ce qui rend ce module si petit
 
 `ConducteurOutillage` **ne retient rien** du questionnaire. Son état est la suite des
@@ -188,17 +208,22 @@ from maestro.outillage.clients import Client, noms_en_texte
 from maestro.outillage.correction import corriger_les_choix
 from maestro.outillage.modele import Lecture, Recommandation
 from maestro.outillage.questionnaire import (
+    SUJET_PROPOSITION,
     Choix,
     Comprehension,
+    Proposee,
     QuestionOutillage,
     acquis_de,
     au_poste,
     comprehension_depuis_texte,
     constats_depuis_choix,
     donnees,
+    est_retenue,
     poste_en_texte,
     programmes_a_sonder,
     programmes_de_l_option,
+    programmes_de_la_proposee,
+    proposition_en_texte,
     question_ouverte,
     recommandation_depuis_choix,
     reponses_en_texte,
@@ -239,9 +264,18 @@ réponses.
    sans ambiguïté (un projet Flutter s'écrit en Dart, ses commandes vivent dans
    pubspec.yaml, ses tests se lancent par flutter test). N'invente rien : un choix encore
    ouvert n'est pas un constat.
-2. Ne pose que les QUESTIONS qui comblent un vrai manque : ce qui décide de l'outillage et
-   que rien de ce qui a été dit ne tranche. Une seule par sujet. Quand plus rien ne manque,
-   n'en pose aucune : c'est fini. Il n'y a pas de nombre de questions à atteindre.
+2. PROPOSE l'outillage entier pour ce qui reste ouvert : chaque sujet que rien de ce qui a
+   été dit ne tranche, mais que tu sais juger pour ce projet, reçoit la valeur que tu
+   retiendrais, avec sa raison. Ensemble, tes PROPOSITIONS forment un outillage cohérent
+   pour cette pile — un gestionnaire, un lanceur de tests, un analyseur, un formateur qui
+   vont ensemble. La personne les retient d'un geste, ou les corrige avec ses mots : c'est
+   ce qui lui évite une question par sujet.
+3. Ne pose une QUESTION que pour ce que tu ne sais pas juger : un choix qui dépend de la
+   personne et que rien, dans ce projet, ne désigne — le proposer serait le deviner. Dis
+   dans "pourquoi" ce qui t'empêche de le juger. Une seule par sujet, et le plus souvent
+   aucune. Il n'y a pas de nombre de questions à atteindre.
+Un sujet est un constat, une proposition ou une question, jamais deux. Quand plus rien ne
+reste à proposer ni à demander, c'est fini.
 
 Les sujets, et la clé à employer pour chacun :
 """
@@ -254,10 +288,11 @@ chemin de fichier relatif au projet. La valeur "aucun" dit explicitement qu'il n
 pas (« pas de tests pour l'instant ») : ce n'est pas un manque. Un constat ne s'écrit que
 sous l'une de ces clés : hors d'elles, il ne nourrirait aucune entrée de l'outillage.
 
-Chaque constat qui est une commande dit aussi, dans "pour", ce qu'elle fait POUR CE PROJET
-et quand un agent la joue : une phrase à l'infinitif, avec les mots du projet — ce qu'elle
-produit, ce qu'elle vérifie (par exemple, pour une application de réservation : « Jouer
-les tests des écrans de réservation et du paiement, avant de rendre un changement »).
+Chaque constat ou proposition qui est une commande dit aussi, dans "pour", ce qu'elle fait
+POUR CE PROJET et quand un agent la joue : une phrase à l'infinitif, avec les mots du
+projet — ce qu'elle produit, ce qu'elle vérifie (par exemple, pour une application de
+réservation : « Jouer les tests des écrans de réservation et du paiement, avant de rendre
+un changement »).
 Cette phrase devient la description de l'outil que les agents du projet ouvriront : jamais
 une phrase qui vaudrait pour n'importe quel projet, et rien que ce projet n'a pas — ni une
 CI qu'il n'a pas, ni une compilation qu'il ne fait pas, ni une interface qu'il n'a pas.
@@ -267,12 +302,23 @@ Pour "clients", la valeur liste les outils d'agent avec lesquels la personne dit
 travailler, séparés par des virgules, chacun par son nom — par exemple """
     + noms_en_texte()
     + """ — suivi de sa version si elle l'a dite. N'en ajoute aucun qu'elle n'a pas nommé, et ne
-pose jamais de question sur ce sujet : Maestro trouve lui-même ceux qui sont installés.
+pose jamais de question ni de proposition sur ce sujet : Maestro trouve lui-même ceux qui
+sont installés. La sorte de projet ne se propose pas non plus : elle se dit.
 
 Les réponses de la personne font foi. Une réponse CLIQUÉE vaut telle quelle, sauf si une
 réponse tapée plus tard la corrige. Une réponse TAPÉE est dite avec ses mots : comprends-la
 et traduis-la en constats. Si elle ne répond pas à la question — une question en retour,
 un doute —, réponds-y brièvement dans "message", et demande autrement ce qui manque.
+Une réponse tapée sur le sujet \""""
+    + SUJET_PROPOSITION
+    + """\" corrige ta dernière proposition, rappelée sous « La proposition que la personne
+corrige » : ce qu'elle y dit devient un constat, et tu proposes de nouveau le reste, ajusté
+pour rester cohérent avec elle (« pnpm, pas npm » change aussi les commandes qui
+appelaient npm). Si elle la retient telle quelle, tout ce que tu proposais devient constat.
+
+Une proposition dit "libelle" — le nom qui la lit, par exemple « Vitest » pour la commande
+qui lance Vitest — et "raison" : en une seule phrase courte, ce qui, dans CE projet, la
+désigne.
 
 Les options d'une question sont écrites POUR CE PROJET : deux à quatre options plausibles
 pour ce qui a été dit, chacune avec une raison d'une ligne — ce que ce choix entraîne.
@@ -283,18 +329,20 @@ Ne justifie jamais un choix par ce que Maestro utilise lui-même : Maestro n'est
 projet. Si rien ne désigne une option plutôt qu'une autre, dis-le. La personne peut
 toujours répondre autre chose avec ses mots : n'ajoute pas d'option « autre ».
 
-Chaque option dit dans "outils" les programmes qu'elle demande sur le poste, tels qu'on
-les tape (par exemple "uv", "mvn", "dotnet", "typst") — une liste vide si elle n'en demande
-aucun. Maestro les cherche sur le poste de la personne, et te dit ce qu'il a trouvé sous
-« Ce que le poste a répondu ». Un outil introuvable sur ce poste ne se recommande pas et
-ne fonde aucun constat, sauf si la personne l'a elle-même choisi : recommande une option
-qui s'en passe, et dis-le dans "pourquoi". Un outil installé est un argument pour ce
-projet-ci.
+Chaque option, et chaque proposition, dit dans "outils" les programmes qu'elle demande sur
+le poste, tels qu'on les tape (par exemple "uv", "mvn", "dotnet", "typst") — une liste vide
+si elle n'en demande aucun. Maestro les cherche sur le poste de la personne, et te dit ce
+qu'il a trouvé sous « Ce que le poste a répondu ». Un outil introuvable sur ce poste ne se
+recommande pas, ne se propose pas et ne fonde aucun constat, sauf si la personne l'a
+elle-même choisi : recommande ou propose ce qui s'en passe, et dis-le dans "pourquoi" ou
+"raison". Un outil installé est un argument pour ce projet-ci.
 
 Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code :
 
 {"message": "...",
  "constats": [{"cle": "...", "valeur": "...", "parce_que": "...", "pour": "..."}],
+ "propositions": [{"cle": "...", "valeur": "...", "libelle": "...", "raison": "...",
+                   "outils": ["..."], "pour": "..."}],
  "questions": [{"cle": "...", "intitule": "...",
                 "options": [{"valeur": "...", "libelle": "...", "raison": "...",
                              "outils": ["..."]}],
@@ -305,8 +353,10 @@ Réponds par un objet JSON et rien d'autre — ni texte autour, ni bloc de code 
   nouveau ;
 - "parce_que" : ce qui, dans ce qui a été dit, établit le constat, en quelques mots ;
 - "pour" : sur une commande seulement, ce qu'elle fait pour ce projet (voir plus haut) ;
+- "propositions" : TOUT ce que tu proposes à ce tour, vide quand rien ne reste à proposer ;
 - "questions" : dans l'ordre où les poser, vide quand plus rien ne manque. Tant que la
-  sorte de projet n'est pas dite, la seule question est "nature", sans options.
+  sorte de projet n'est pas dite, la seule question est "nature", sans options, et tu ne
+  proposes rien.
 
 """
     + registre()
@@ -357,11 +407,16 @@ class ComprehensionModele:
         reponses: Sequence[Choix],
         *,
         poste: Mapping[str, bool] | None = None,
+        corrigee: Sequence[Proposee] = (),
     ) -> Comprehension:
         """La compréhension de ce qui a été dit — `conversation` puis les `reponses`.
 
         `poste` (#1343) est ce que le poste a répondu des outils déjà en jeu :
         programme → installé. Il est dit au modèle, qui en tient compte.
+
+        `corrigee` (#1533) est la proposition qu'une phrase de la personne vient de
+        corriger : elle est redite au modèle, qui ne se souvient de rien d'un tour à
+        l'autre et doit savoir ce qu'il corrige.
         """
         from maestro.providers.factory import modele_du_canal, provider_from_settings
 
@@ -369,7 +424,7 @@ class ComprehensionModele:
             self._provider = provider_from_settings()
         fournisseur = self._provider
         texte = await fournisseur.generate(
-            _prompt_de_comprehension(conversation, reponses, poste or {}),
+            _prompt_de_comprehension(conversation, reponses, poste or {}, corrigee),
             model=modele_du_canal(MODELE_EXECUTANT_DEFAUT, fournisseur),
             system_prompt=_PROMPT_COMPREHENSION,
         )
@@ -377,9 +432,12 @@ class ComprehensionModele:
 
 
 def _prompt_de_comprehension(
-    conversation: str, reponses: Sequence[Choix], poste: Mapping[str, bool] | None = None
+    conversation: str,
+    reponses: Sequence[Choix],
+    poste: Mapping[str, bool] | None = None,
+    corrigee: Sequence[Proposee] = (),
 ) -> str:
-    """Le prompt d'utilisateur : ce qui a été dit, les réponses, puis ce que le poste a répondu."""
+    """Le prompt : ce qui a été dit, les réponses, la proposition corrigée, puis le poste."""
     dit = conversation.strip() or "(rien d'autre n'a été dit)"
     prompt = (
         "## Ce qui a été dit dans la conversation\n\n"
@@ -387,6 +445,11 @@ def _prompt_de_comprehension(
         "## Les réponses aux questions, dans l'ordre\n\n"
         f"{reponses_en_texte(reponses)}\n"
     )
+    if corrigee:
+        prompt += (
+            "\n## La proposition que la personne corrige\n\n"
+            f"{proposition_en_texte(corrigee)}\n"
+        )
     if poste:
         prompt += f"\n## Ce que le poste a répondu\n\n{poste_en_texte(poste)}\n"
     return prompt
@@ -423,8 +486,42 @@ def _programmes_du_fil(fil: Sequence[MessageChat]) -> tuple[str, ...]:
         if message.question is not None:
             for option in message.question.options:
                 noms.extend(programmes_de_l_option(message.question, option))
+            for proposee in message.question.proposition:
+                noms.extend(programmes_de_la_proposee(proposee))
     noms.extend(programmes_a_sonder(Comprehension(), acquis_du_fil(fil)))
     return tuple(dict.fromkeys(noms))
+
+
+def _proposition_corrigee(fil: Sequence[MessageChat]) -> tuple[Proposee, ...]:
+    """La proposition que le dernier message corrige avec des mots — `()` sinon (#1533).
+
+    Lue sur la structure : le dernier message est une réponse **tapée** de la
+    personne, et celui d'avant posait une proposition. Une phrase qui suit une question
+    ordinaire ne corrige aucune proposition.
+    """
+    if len(fil) < 2:
+        return ()
+    dernier, avant = fil[-1], fil[-2]
+    if dernier.auteur != UTILISATEUR or dernier.choix is None or not dernier.choix.libre:
+        return ()
+    if avant.question is None or avant.question.cle != dernier.choix.cle:
+        return ()
+    return avant.question.proposition
+
+
+def _proposition_retenue(fil: Sequence[MessageChat]) -> MessageChat | None:
+    """Le message qui posait la proposition que le dernier geste **retient** — `None` sinon.
+
+    C'est ce qui permet de conclure sans rappeler le modèle (#1533) : la proposition
+    était confrontée au poste quand elle a été posée, et la retenir clique chacun de ses
+    éléments (`choix_du_fil`). Il n'y a rien à comprendre de plus.
+    """
+    if len(fil) < 2:
+        return None
+    dernier, avant = fil[-1], fil[-2]
+    if dernier.auteur != UTILISATEUR or dernier.choix is None:
+        return None
+    return avant if est_retenue(avant.question, dernier.choix) else None
 
 
 def _retenue(
@@ -477,7 +574,14 @@ def _phrase_de_la_question(question: QuestionOutillage) -> str:
     c'est voulu : un message vide dans un fil est un trou, et `ServiceChat` refuse de
     toute façon une réponse vide. Une question sans option (la question ouverte) n'a
     pas de proposition à dire : elle dit comment y répondre.
+
+    La proposition de l'outillage entier (#1533) se dit par les **noms** de ce qu'elle
+    retient, en une ligne : la carte en porte les raisons, et les recopier dans la bulle
+    juste au-dessus d'elle la ferait lire deux fois.
     """
+    if question.proposition:
+        noms = ", ".join(p.libelle for p in question.proposition)
+        return f"{question.intitule} : {noms}."
     if not question.options:
         return f"{question.intitule}\n{question.pourquoi}"
     return (
@@ -774,58 +878,97 @@ class ConducteurOutillage:
             and await self._pieces.a_ses_fichiers(projet)
         ):
             return await self._piece(fil, projet)
+        retenue = _proposition_retenue(propre)
+        if retenue is not None:
+            # La proposition retenue d'un geste (#1533) : ses éléments sont cliqués
+            # (`choix_du_fil`), et ce qui était compris est sur le message qui la posait.
+            # Rien à demander au modèle — ni question, ni proposition ne restait.
+            return await self._conclure(
+                fil, projet, acquis_de([*reponses, *retenue.comprehension]), message=""
+            )
         conversation = _conversation_de(fil)
         if not conversation and not reponses:
             ouverte = question_ouverte()
             return ReponseChat(contenu=_phrase_de_la_question(ouverte), question=ouverte)
-        comprise = await self._comprendre(conversation, reponses, propre)
+        comprise = await self._comprendre(
+            conversation, reponses, propre, corrigee=_proposition_corrigee(propre)
+        )
         acquis = acquis_de([*reponses, *comprise.constats])
         suivante = comprise.question_suivante(rang=len(donnees(reponses)) + 1)
-        if suivante is None and self._pieces is not None and projet:
-            # La transition est celle du code, pas le dernier mot du modèle : vu sur la
-            # vraie stack, il invitait à « commencer par la page d'accueil » au-dessus
-            # de la première des sept pièces qui attendaient un geste.
-            return await self._piece(
-                fil, projet, acquis=acquis, prelude=_phrase_de_transition(acquis)
-            )
         if suivante is None:
-            poste = await _clients_du_poste(self._clients)
-            return ReponseChat(
-                contenu=_joint(
-                    comprise.message, _phrase_de_conclusion(acquis, poste, ecrit=self.ecrit)
-                ),
-                comprehension=acquis,
-            )
+            return await self._conclure(fil, projet, acquis, message=comprise.message)
         return ReponseChat(
             contenu=_joint(comprise.message, _phrase_de_la_question(suivante)),
             question=suivante,
             comprehension=acquis,
         )
 
+    async def _conclure(
+        self,
+        fil: Sequence[MessageChat],
+        projet: str | None,
+        acquis: Sequence[Choix],
+        *,
+        message: str,
+    ) -> ReponseChat:
+        """Ce qui suit un questionnaire où plus rien ne manque : la première pièce, ou la fin.
+
+        Deux chemins y mènent — le modèle qui ne demande ni ne propose plus rien, et la
+        proposition retenue d'un geste (#1533) —, et ils doivent mener au même endroit.
+        """
+        if self._pieces is not None and projet:
+            # La transition est celle du code, pas le dernier mot du modèle : vu sur la
+            # vraie stack, il invitait à « commencer par la page d'accueil » au-dessus
+            # de la première des sept pièces qui attendaient un geste.
+            return await self._piece(
+                fil, projet, acquis=acquis, prelude=_phrase_de_transition(acquis)
+            )
+        poste = await _clients_du_poste(self._clients)
+        return ReponseChat(
+            contenu=_joint(message, _phrase_de_conclusion(acquis, poste, ecrit=self.ecrit)),
+            comprehension=tuple(acquis),
+        )
+
     async def _comprendre(
-        self, conversation: str, reponses: Sequence[Choix], fil: Sequence[MessageChat]
+        self,
+        conversation: str,
+        reponses: Sequence[Choix],
+        fil: Sequence[MessageChat],
+        *,
+        corrigee: Sequence[Proposee] = (),
     ) -> Comprehension:
         """Ce que le modèle comprend, **confronté au poste** (#1343).
 
         Trois temps, et le modèle ne parle jamais d'un outil qu'on n'a pas cherché :
 
         1. ce que le fil met déjà en jeu — les options des questions posées, les
-           commandes comprises — est demandé au poste, et dit au modèle ;
+           éléments des propositions, les commandes comprises — est demandé au poste,
+           et dit au modèle ;
         2. ce qu'il propose de neuf est demandé à son tour. S'il repose sur un outil
-           **introuvable qu'il ne connaissait pas** — sa recommandation, une commande
-           qu'il a déduite —, il est saisi une seconde fois, avec ce que le poste a
-           répondu : c'est lui qui se reprend, pas le code qui choisit à sa place ;
+           **introuvable qu'il ne connaissait pas** — sa recommandation, un élément de
+           sa proposition (#1533), une commande qu'il a déduite —, il est saisi une
+           seconde fois, avec ce que le poste a répondu : c'est lui qui se reprend, pas
+           le code qui choisit à sa place ;
         3. le code vérifie ensuite (`au_poste`) : une option qui manque d'un outil le
-           dit, et ne reste pas recommandée s'il en est une qui s'en passe.
+           dit, et ne reste pas recommandée s'il en est une qui s'en passe ; un élément
+           proposé le dit aussi.
+
+        C'est ce qui fait qu'une **correction** de la proposition (`corrigee`, redite au
+        modèle) est revérifiée : « pnpm, pas npm » fait sonder `pnpm` avant de reproposer.
+        Les commandes, elles, se jouent quand leurs pièces s'écrivent (#1160).
 
         Sans bash sur le poste, rien ne se sonde, et c'est la compréhension d'avant.
         """
         connu = await self._sonder(_programmes_du_fil(fil))
-        comprise = await self._comprehension.comprendre(conversation, reponses, poste=connu)
+        comprise = await self._comprehension.comprendre(
+            conversation, reponses, poste=connu, corrigee=corrigee
+        )
         poste = {**connu, **await self._sonder(programmes_a_sonder(comprise), sauf=connu)}
         neufs = [nom for nom, present in poste.items() if not present and nom not in connu]
         if repose_sur_un_absent(comprise, neufs):
-            comprise = await self._comprehension.comprendre(conversation, reponses, poste=poste)
+            comprise = await self._comprehension.comprendre(
+                conversation, reponses, poste=poste, corrigee=corrigee
+            )
             poste.update(await self._sonder(programmes_a_sonder(comprise), sauf=poste))
         return au_poste(comprise, poste)
 
@@ -1450,8 +1593,10 @@ class ServiceOutillage:
         `deductions` rend ce qui a été **compris**, chaque constat avec sa cause : une
         question qu'on ne pose pas n'est pas une question qu'on cache. `question` vaut
         `None` quand plus rien ne manque, et c'est alors `recommandation` qui a
-        quelque chose à dire. `message` est ce que le modèle a à dire à la personne
-        avant la question — vide le plus souvent.
+        quelque chose à dire. Elle peut être la **proposition** de l'outillage entier
+        (#1533, `question.proposition`) : sans état, la retenir, c'est renvoyer ses
+        éléments comme autant de réponses cliquées. `message` est ce que le modèle a à
+        dire à la personne avant la question — vide le plus souvent.
 
         Le projet est résolu (404/422 motivés) sans que rien du disque soit lu, et
         avant tout appel au modèle : le questionnaire ne regarde aucun fichier.
