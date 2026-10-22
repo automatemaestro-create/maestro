@@ -1596,6 +1596,37 @@ _SORTS_EN_MOTS = {
 PIECE_ECARTEE = "ecartee"
 
 
+#: Le titre du constat qu'une écriture d'outillage porte sur ce que l'équipe du projet
+#: reçoit (#1520). Il ouvre la phrase du fait, la ligne de la transcription, et la règle
+#: de la rédaction le cite au mot près : le fait et la règle se reconnaissent ainsi.
+TITRE_RECU = "Ce que les agents du projet reçoivent"
+
+
+@dataclass(frozen=True)
+class CommandeRemplacee:
+    """Une commande que l'écriture remplace, et où l'équipe la reçoit **encore** (#1520).
+
+    `encore` nomme ce qui la prescrit toujours parmi ce que les agents du projet
+    reçoivent — un fichier de l'outillage pas encore réécrit, le playbook d'un agent —,
+    constaté sur le disque juste après l'écriture. Vide : plus rien ne la leur donne.
+    """
+
+    commande: str
+    encore: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """La commande remplacée en JSON."""
+        return {"commande": self.commande, "encore": list(self.encore)}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CommandeRemplacee:
+        """Relit une commande remplacée persistée."""
+        return cls(
+            commande=str(data.get("commande") or ""),
+            encore=tuple(str(o) for o in data.get("encore") or ()),
+        )
+
+
 @dataclass(frozen=True)
 class PieceEcrite:
     """Ce qu'un geste a fait d'une pièce — le fait qu'une réponse porte sous sa bulle (#1161).
@@ -1605,6 +1636,13 @@ class PieceEcrite:
     ou pas, avec la raison. `empreinte` est celle du contenu **proposé** : c'est ce qui
     fait qu'une pièce tranchée ne se repropose pas telle quelle (`pieces_tranchees`),
     et qu'elle se repropose dès qu'une correction l'a changée.
+
+    Et ce que l'écriture a fait à **l'équipe** du projet, constaté juste après (#1520) :
+    `equipe` les agents dont on a relu ce qu'ils reçoivent, `rebranches` ceux dont le
+    playbook a cessé de figer ses commandes à cette écriture, `remplacees` les commandes
+    qu'elle remplace et où l'équipe les reçoit encore. C'est ce qui permet au fil de
+    dire « partout » quand c'est vrai, et de ne pas le dire quand ce ne l'est pas.
+    Vides sur un fait écrit avant, ou sans équipe à relire : rien n'est constaté.
     """
 
     projet_id: str
@@ -1615,11 +1653,48 @@ class PieceEcrite:
     cible: str = ""
     regime: str = "en-place"
     empreinte: str = ""
+    equipe: tuple[str, ...] = ()
+    rebranches: tuple[str, ...] = ()
+    remplacees: tuple[CommandeRemplacee, ...] = ()
 
     @property
     def ecrite(self) -> bool:
         """La pièce est-elle, après ce geste, ce que le projet porte ?"""
         return self.etat in ("ecrit", "inchange")
+
+    def recu_en_phrase(self) -> str:
+        """Le constat sur ce que l'équipe reçoit, en phrases — `""` sans rien à constater.
+
+        Il ne dit que ce qui a été relu : une commande « plus prescrite » l'est dans
+        l'outillage écrit et dans le playbook de chaque agent nommé, et nulle part
+        ailleurs on ne l'a cherchée.
+        """
+        phrases: list[str] = []
+        if self.rebranches:
+            phrases.append(
+                f"les playbooks de {_enumeres(self.rebranches)} ne figent plus aucune "
+                "commande : ils renvoient aux skills du projet, qui font foi."
+            )
+        recu = (
+            f"l'outillage écrit dans le projet et les playbooks de {_enumeres(self.equipe)}"
+            if self.equipe
+            else "l'outillage écrit dans le projet (il n'a encore aucun agent)"
+        )
+        for remplacee in self.remplacees:
+            if remplacee.encore:
+                phrases.append(
+                    f"`{remplacee.commande}`, remplacée, est encore prescrite dans "
+                    f"{_enumeres(remplacee.encore)} : les agents l'y liront tant que ce "
+                    "n'est pas réécrit."
+                )
+            else:
+                phrases.append(
+                    f"`{remplacee.commande}`, remplacée, n'est plus prescrite dans rien "
+                    f"de ce qu'ils reçoivent — {recu}."
+                )
+        if not phrases:
+            return ""
+        return f"{TITRE_RECU}, constaté après l'écriture : {' '.join(phrases)}"
 
     def to_dict(self) -> dict[str, Any]:
         """Le fait en JSON — la forme du REST et du stockage."""
@@ -1633,6 +1708,9 @@ class PieceEcrite:
             "regime": self.regime,
             "empreinte": self.empreinte,
             "ecrite": self.ecrite,
+            "equipe": list(self.equipe),
+            "rebranches": list(self.rebranches),
+            "remplacees": [r.to_dict() for r in self.remplacees],
         }
 
     @classmethod
@@ -1647,7 +1725,21 @@ class PieceEcrite:
             cible=str(data.get("cible") or ""),
             regime=str(data.get("regime") or "en-place"),
             empreinte=str(data.get("empreinte") or ""),
+            equipe=tuple(str(n) for n in data.get("equipe") or ()),
+            rebranches=tuple(str(n) for n in data.get("rebranches") or ()),
+            remplacees=tuple(
+                CommandeRemplacee.from_dict(r)
+                for r in data.get("remplacees") or ()
+                if isinstance(r, Mapping)
+            ),
         )
+
+
+def _enumeres(noms: Sequence[str]) -> str:
+    """`a`, `a et b`, `a, b et c` — une énumération, en français."""
+    if len(noms) <= 1:
+        return "".join(noms)
+    return f"{', '.join(noms[:-1])} et {noms[-1]}"
 
 
 #: Le verbe de chaque geste, à l'infinitif — ce que la transcription dit d'une carte
@@ -4544,6 +4636,10 @@ def transcription(fil: Sequence[MessageChat]) -> str:
         if message.piece_ecrite is not None:
             fait = message.piece_ecrite
             lignes.append(f"[Pièce d'outillage {fait.etat} : {fait.chemin} — {fait.raison}]")
+            # Ce que l'écriture a constaté de ce que l'équipe reçoit (#1520) : sans lui,
+            # « Correction prise » se lisait au tour suivant comme « partout ».
+            if recu := fait.recu_en_phrase():
+                lignes.append(f"[{recu}]")
         lignes.extend(
             f"[Correction de l'outillage prise : {sujet_de(c.cle)} = {c.valeur}]"
             for c in message.corrections

@@ -346,7 +346,8 @@ def test_la_section_des_skills_se_met_de_cote_et_se_remet_telle_quelle() -> None
 
     assert corps == METIER_DE_P5
     assert section.startswith(TITRE_SKILLS)
-    assert "`npm install`" in section
+    # Le skill par son chemin ; sa commande, il la porte lui-même (#1520).
+    assert "`.agents/skills/mettre-en-route/SKILL.md`" in section
     assert scinder_section_skills(METIER_DE_P5) == (METIER_DE_P5, "")
 
 

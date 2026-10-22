@@ -41,7 +41,7 @@ from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.mcp import McpStore
 from maestro.agents.permissions import PermissionStore
 from maestro.agents.playbooks import PlaybookStore
-from maestro.agents.store import AgentStore, SurchargeStore
+from maestro.agents.store import AgentDefinition, AgentStore, SurchargeStore
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.controltower.chat import (
     DECISION_ECRIRE,
@@ -49,8 +49,10 @@ from maestro.controltower.chat import (
     DECISION_PLUS_TARD,
     FAIT_DE_LA_DEMANDE,
     ORIGINE_NOUVEAU,
+    TITRE_RECU,
     UTILISATEUR,
     ChatStore,
+    CommandeRemplacee,
     MessageChat,
     PieceEcrite,
     PieceProposee,
@@ -89,7 +91,9 @@ from maestro.controltower.pieces import (
     piece_ecartee,
 )
 from maestro.controltower.projets import ServiceProjets
+from maestro.controltower.recu_par_l_equipe import remplacees
 from maestro.engine.guardrails import DemandeValidation
+from maestro.equipe import TITRE_SKILLS
 from maestro.outillage import CHEMIN_MANIFESTE, Commande, Constats, Gestionnaire, recommander
 from maestro.outillage.clients import SOURCE_POSTE, Client
 from maestro.outillage.correction import (
@@ -275,11 +279,13 @@ def _service(
     modele: _Modele | None = None,
     *,
     poste: tuple[Client, ...] | None = None,
+    equipe: ConfigurationAgents | None = None,
 ) -> ServicePieces:
     """Le service des pièces, commandes jouées par le joueur doublé.
 
     `poste` : les clients d'agents du poste, doublés (#1295) ; `None` laisse le poste nu
-    de la suite (`tests/conftest.py`).
+    de la suite (`tests/conftest.py`). `equipe` : les dépôts d'agents où vivent les
+    équipes des projets (#1520) ; `None` n'en branche aucun.
     """
     return ServicePieces(
         ServiceOutillage(
@@ -290,6 +296,20 @@ def _service(
         projets,
         verificateur=Verificateur(joueur=joueur, interprete=FAUX_BASH),
         correction=CorrectionModele(modele or _Modele()),
+        equipe=equipe,
+    )
+
+
+def _gabarits(tmp_path: Path) -> ConfigurationAgents:
+    """Les six dépôts de configuration d'agent, jetables, au niveau des gabarits."""
+    racine = tmp_path / "core"
+    return ConfigurationAgents(
+        agents=AgentStore(racine / "agents"),
+        surcharges=SurchargeStore(racine / "surcharges"),
+        playbooks=PlaybookStore(racine / "playbooks"),
+        permissions=PermissionStore(racine / "permissions"),
+        mcp=McpStore(racine / "mcp"),
+        capacites=CapacityStore(racine / "capacite"),
     )
 
 
@@ -1066,9 +1086,13 @@ COMPRIS_FLUTTER = {
 
 
 def _repondeur(
-    projets: ServiceProjets, modele: _Modele, joueur: _Joueur | None = None
+    projets: ServiceProjets,
+    modele: _Modele,
+    joueur: _Joueur | None = None,
+    *,
+    equipe: ConfigurationAgents | None = None,
 ) -> RepondeurOrchestration:
-    service = _service(projets, joueur or _Joueur(), modele)
+    service = _service(projets, joueur or _Joueur(), modele, equipe=equipe)
     return RepondeurOrchestration(
         provider=modele,
         naissance=ServiceNaissance(projets, git_disponible=lambda: True),
@@ -2095,17 +2119,11 @@ class _CompositeurQuiNote(ModelProvider):
 
 def _equipe(projets: ServiceProjets, tmp_path: Path, compositeur: ModelProvider) -> ServiceEquipe:
     """Le service d'équipe du fil, sur des gabarits jetables — sans playbook à rédiger."""
-    racine = tmp_path / "core"
-    gabarits = ConfigurationAgents(
-        agents=AgentStore(racine / "agents"),
-        surcharges=SurchargeStore(racine / "surcharges"),
-        playbooks=PlaybookStore(racine / "playbooks"),
-        permissions=PermissionStore(racine / "permissions"),
-        mcp=McpStore(racine / "mcp"),
-        capacites=CapacityStore(racine / "capacite"),
-    )
     return ServiceEquipe(
-        projets, gabarits, compositeur=CompositeurEquipe(provider=compositeur), playbooks=False
+        projets,
+        _gabarits(tmp_path),
+        compositeur=CompositeurEquipe(provider=compositeur),
+        playbooks=False,
     )
 
 
@@ -2296,3 +2314,221 @@ def test_un_manifeste_d_avant_le_correctif_rend_la_reponse_en_vigueur(tmp_path: 
     assert (relus["construire"].valeur, relus["construire"].parce_que) == (INDEX, HERBIER)
     assert relus["construire"].pour == "Régénérer l'index"
     assert relus["tester"].valeur == "python -m pytest"
+
+
+# --------------------------------------------------------------------------- #
+# ⑧ Une commande remplacée gagne aussi l'équipe déjà créée (#1520)              #
+# --------------------------------------------------------------------------- #
+
+#: Le skill de construction de l'herbier, celui qui enveloppe la commande corrigée.
+SKILL_CONSTRUIRE = ".agents/skills/construire-le-projet/SKILL.md"
+ANCIENNE = f"python {ANCIEN_SCRIPT}"
+
+
+def _playbook_d_avant(metier: str) -> str:
+    """Un playbook d'agent recruté avant #1520 : sa section des skills fige la commande
+    que le skill de construction enveloppait au recrutement — l'état des équipes déjà
+    créées, relevé sur `prj-b6726e5e` (parcours `verify` du bilan du 2026-10-14)."""
+    return (
+        f"{metier}\n\n{TITRE_SKILLS}\n\n"
+        "L'outillage du projet t'est transmis en entier ; ceux-ci sont ceux que ton rôle "
+        "branche. Sers-t'en plutôt que de réinventer la commande.\n\n"
+        f"- **construire-le-projet** — `{SKILL_CONSTRUIRE}` (il enveloppe : `{ANCIENNE}`)\n"
+    )
+
+
+def _ce_que_l_agent_recoit(cfg: ConfigurationAgents, nom: str) -> str:
+    """Le playbook que le moteur charge : la version publiée, sinon celui de la fiche."""
+    publie = cfg.playbooks.lire(nom)
+    if publie is not None:
+        return publie.contenu
+    fiche = cfg.agents.lire(nom)
+    assert fiche is not None
+    return fiche.playbook
+
+
+def _accepter_tout(
+    repondeur: RepondeurOrchestration, fil: list[MessageChat]
+) -> list[PieceEcrite]:
+    """Chaque pièce que le fil propose, acceptée d'un geste jusqu'à la dernière — leurs faits."""
+    faits: list[PieceEcrite] = []
+    for _ in range(10):
+        piece = fil[-1].piece
+        if piece is None:
+            return faits
+        reponse = asyncio.run(
+            repondeur.trancher_piece(
+                AGENT_ORCHESTRATION, fil, piece=piece, decision=DECISION_ECRIRE
+            )
+        )
+        assert reponse.piece_ecrite is not None and reponse.piece_ecrite.ecrite, reponse.contenu
+        faits.append(reponse.piece_ecrite)
+        fil.append(
+            _message(
+                NOM_ORCHESTRATION,
+                reponse.contenu,
+                piece=reponse.piece,
+                piece_ecrite=reponse.piece_ecrite,
+            )
+        )
+    raise AssertionError("l'outillage ne s'est pas soldé en dix gestes")
+
+
+def test_une_commande_corrigee_apres_le_recrutement_quitte_les_playbooks_de_l_equipe(
+    projets: ServiceProjets, _maison: Path, tmp_path: Path
+) -> None:
+    """#1520, le chemin du parcours `verify` du bilan (« herbier-des-cimes »), le modèle doublé.
+
+    L'outillage est écrit, l'équipe recrutée — l'une de ses fiches par la création,
+    l'autre par une version publiée depuis l'écran des playbooks —, puis la personne
+    corrige la commande de construction. `AGENTS.md` et le skill se réécrivaient sur
+    accord, le manifeste suivait ; les deux playbooks gardaient « il enveloppe :
+    `python generer_index.py` », et Maestro affirmait que tout suivait. Désormais
+    chaque écriture rebranche l'équipe — la section ne fige plus de commande, le skill
+    fait foi —, et son fait **constate** ce que les agents reçoivent : la rédaction ne
+    peut plus dire « partout » sans l'avoir sous les yeux.
+    """
+    modele = _Modele(comprehension=COMPRIS_HERBIER, correction=CORRIGE_HERBIER)
+    gabarits = _gabarits(tmp_path)
+    repondeur = _repondeur(projets, modele, equipe=gabarits)
+    conducteur = repondeur._conducteur
+    racine = _maison / "Maestro" / "herbier-des-cimes"
+    projet_id = str(
+        projets.creer("herbier-des-cimes", str(racine), origine=ORIGINE_NOUVEAU)["id"]
+    )
+    fil = [_message(UTILISATEUR, "Un herbier de randonnée, avec un index par région")]
+    ouverture = asyncio.run(conducteur.ouvrir(fil, projet_id=projet_id))
+    fil.append(
+        _message(
+            NOM_ORCHESTRATION,
+            ouverture.contenu,
+            piece=ouverture.piece,
+            comprehension=ouverture.comprehension,
+        )
+    )
+    # L'outillage écrit tel que compris, avant toute équipe : rien à constater sur elle.
+    avant_l_equipe = _accepter_tout(repondeur, fil)
+    assert prescrit((racine / SKILL_CONSTRUIRE).read_text(encoding="utf-8"), ANCIENNE)
+    assert all(f.equipe == () and f.remplacees == () for f in avant_l_equipe)
+
+    # L'équipe recrutée ensuite, telle qu'avant #1520.
+    cfg = gabarits.pour_projet(projet_id)
+    for nom, metier in (
+        ("dev-generateur", "Tu tiens le générateur de l'index."),
+        ("testeur-pytest", "Tu tiens les tests."),
+    ):
+        cfg.agents.ecrire(
+            AgentDefinition(
+                nom=nom, role=metier, competences=("python",), playbook=_playbook_d_avant(metier)
+            )
+        )
+    cfg.playbooks.ecrire("testeur-pytest", _playbook_d_avant("Tu tiens les tests, relus."))
+    for nom in ("dev-generateur", "testeur-pytest"):
+        assert prescrit(_ce_que_l_agent_recoit(cfg, nom), ANCIENNE), "l'échantillon fautif"
+
+    # La correction, dite après le recrutement, puis chaque pièce reproposée acceptée.
+    fil.append(_message(UTILISATEUR, HERBIER))
+    corrigee = asyncio.run(conducteur.corriger(fil, projet_id=projet_id, phrase=HERBIER))
+    assert corrigee.piece is not None and corrigee.piece.chemin == "AGENTS.md"
+    fil.append(
+        _message(
+            NOM_ORCHESTRATION,
+            corrigee.contenu,
+            piece=corrigee.piece,
+            corrections=corrigee.corrections,
+            comprehension=corrigee.comprehension,
+        )
+    )
+    redactions_avant = len(modele.appels["redaction"])
+    faits = {f.chemin: f for f in _accepter_tout(repondeur, fil)}
+
+    # Ce que chaque agent reçoit ne nomme plus l'ancienne commande, et renvoie au skill.
+    for nom in ("dev-generateur", "testeur-pytest"):
+        recu = _ce_que_l_agent_recoit(cfg, nom)
+        assert not prescrit(recu, ANCIENNE), nom
+        assert f"`{SKILL_CONSTRUIRE}`" in recu and "(il enveloppe :" not in recu, nom
+    # La fiche sous la version publiée aussi : une restauration ne la ramènerait pas.
+    fiche = cfg.agents.lire("testeur-pytest")
+    assert fiche is not None and not prescrit(fiche.playbook, ANCIENNE)
+
+    # Le fait de chaque écriture le constate. `AGENTS.md` d'abord : l'équipe est
+    # rebranchée, mais le skill n'est pas encore réécrit — l'ancienne commande y reste.
+    agents = faits["AGENTS.md"]
+    assert set(agents.rebranches) == {"dev-generateur", "testeur-pytest"}
+    assert agents.remplacees == (CommandeRemplacee(ANCIENNE, (SKILL_CONSTRUIRE,)),)
+    # Le skill réécrit : plus rien de ce que l'équipe reçoit ne la prescrit.
+    construire = faits[SKILL_CONSTRUIRE]
+    assert construire.rebranches == ()
+    assert construire.remplacees == (CommandeRemplacee(ANCIENNE, ()),)
+    assert set(construire.equipe) == {"dev-generateur", "testeur-pytest"}
+
+    # La rédaction parle depuis ces constats, et d'eux seuls.
+    redactions = modele.appels["redaction"][redactions_avant:]
+    assert TITRE_RECU in redactions[0] and SKILL_CONSTRUIRE in redactions[0]
+    assert "dev-generateur" in redactions[0] and ANCIENNE in redactions[0]
+    assert TITRE_RECU in redactions[1] and "n'est plus prescrite" in redactions[1]
+    assert TITRE_RECU in _PROMPT_REDACTION
+    # Le tour suivant relit le constat dans la transcription du fil.
+    assert f"[{TITRE_RECU}" in transcription(fil)
+
+
+def test_le_constat_dit_ou_l_equipe_recoit_encore_une_commande_remplacee(tmp_path: Path) -> None:
+    """Le constat ne dit « plus prescrite » que de ce qu'il a lu : un skill qui la prescrit,
+    un fichier qu'il ne peut pas lire (dans le doute, il compte), le corps d'un playbook
+    qu'une personne a écrit. Une correction en « aucun » remplace toute commande de l'usage."""
+    racine = tmp_path / "herbier"
+    racine.mkdir()
+    source = source_manifeste_des_choix("prj-herbier", [])
+
+    def piece(chemin: str, contenu: str) -> Fichier:
+        return Fichier(chemin=chemin, role="skill", portee="fichier", contenu=contenu)
+
+    poser_piece(racine, piece(SKILL_CONSTRUIRE, f"Lancer `{ANCIENNE}`.\n"), source=source)
+    poser_piece(racine, piece(".agents/skills/x/SKILL.md", "Rien à lancer.\n"), source=source)
+    poser_piece(racine, piece(".agents/skills/perdu/SKILL.md", "Perdu.\n"), source=source)
+    (racine / ".agents/skills/perdu/SKILL.md").unlink()
+    avant = (
+        Verification(usage="construire", commande=ANCIENNE, etat=A_VERIFIER, raison="…"),
+        Verification(usage="tester", commande="python -m pytest", etat=A_VERIFIER, raison="…"),
+    )
+    corrections = (
+        CorrectionPrise("construire", INDEX, HERBIER),
+        CorrectionPrise("tester", "aucun", "pas de tests"),
+    )
+    recus = {
+        "dev-generateur": f"Tu lances toujours `{ANCIENNE}`.\n",
+        "testeur-pytest": "Tu tiens les tests.\n",
+    }
+
+    constat = remplacees(racine, avant, corrections, recus)
+
+    assert constat == (
+        CommandeRemplacee(
+            ANCIENNE,
+            (SKILL_CONSTRUIRE, ".agents/skills/perdu/SKILL.md", "le playbook de dev-generateur"),
+        ),
+        CommandeRemplacee("python -m pytest", (".agents/skills/perdu/SKILL.md",)),
+    )
+    # Sans correction qui change son usage, rien n'est « remplacé ».
+    assert remplacees(racine, avant, (), recus) == ()
+
+
+def test_le_constat_de_ce_que_l_equipe_recoit_se_relit_a_l_identique() -> None:
+    """Le fait d'une écriture se persiste avec ce qu'il constate (#1520) — et un fait
+    écrit avant se relit sans rien constater, plutôt que d'inventer un constat."""
+    fait = PieceEcrite(
+        projet_id="prj-1",
+        chemin="AGENTS.md",
+        nom="AGENTS.md",
+        etat="ecrit",
+        equipe=("dev-generateur",),
+        rebranches=("dev-generateur",),
+        remplacees=(CommandeRemplacee(ANCIENNE, (SKILL_CONSTRUIRE,)),),
+    )
+
+    assert PieceEcrite.from_dict(json.loads(json.dumps(fait.to_dict()))) == fait
+    neufs = {"equipe", "rebranches", "remplacees"}
+    relu = PieceEcrite.from_dict({k: v for k, v in fait.to_dict().items() if k not in neufs})
+    assert (relu.equipe, relu.rebranches, relu.remplacees) == ((), (), ())
+    assert relu.recu_en_phrase() == ""
+    assert fait.recu_en_phrase().startswith(TITRE_RECU)

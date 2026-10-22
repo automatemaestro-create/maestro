@@ -46,6 +46,7 @@ from maestro.equipe import (
     AUCUN_SKILL,
     AUCUN_SKILL_ECRIT,
     INSTANCES_MAX_CREEES,
+    INTRO_SKILLS,
     TITRE_SKILLS,
     EquipeCreee,
     RoleValide,
@@ -54,6 +55,7 @@ from maestro.equipe import (
     definition,
     playbook_branche,
     refus_de,
+    sans_commandes_figees,
     skills_constates,
 )
 from maestro.equipe.creation import TITRES_SKILLS_ANTERIEURS, scinder_section_skills
@@ -466,7 +468,6 @@ def test_un_projet_outille_garde_sa_section_intacte_chemins_compris(tmp_path: Pa
     rapport = service.creer(projet_id, [role])
 
     assert _playbook_ecrit(gabarits, projet_id) == playbook_branche(role)
-    assert "il enveloppe : `pip install -e .`" in _playbook_ecrit(gabarits, projet_id)
     assert rapport["agents"][0]["skills"] == ["mettre-en-route"]
 
 
@@ -532,3 +533,71 @@ def test_un_role_a_qui_rien_n_etait_recommande_garde_sa_phrase() -> None:
 
     assert AUCUN_SKILL in playbook_branche(constate)
     assert AUCUN_SKILL_ECRIT not in playbook_branche(constate)
+
+
+# --- ⑤ Le skill fait foi : le playbook ne fige aucune commande (#1520) ---------
+#
+# Réserve R1 du bouclage du 2026-10-14 : chaque playbook listait la commande qu'un
+# skill « enveloppe », figée au recrutement. Remplacée ensuite — dite par la personne,
+# proposée par la revue d'après le run —, elle changeait dans le skill et restait dans
+# le playbook : un agent du run suivant recevait deux commandes pour le même geste.
+
+#: La section des skills telle que la création l'écrivait avant #1520 — l'état des
+#: équipes déjà recrutées (S9, passage `20261014-171347`).
+SECTION_D_AVANT = (
+    f"{TITRE_SKILLS}\n\n"
+    "L'outillage du projet t'est transmis en entier ; ceux-ci sont ceux que ton rôle "
+    "branche. Sers-t'en plutôt que de réinventer la commande.\n\n"
+    "- **construire-le-projet** — `.agents/skills/construire-le-projet/SKILL.md` "
+    "(il enveloppe : `python assembler.py`)\n"
+    "- **verifier-le-style** — `.agents/skills/verifier-le-style/SKILL.md` "
+    "(il enveloppe : `python -m ruff check .`, `python -c \"print(1)\"`)\n"
+)
+
+
+def test_la_section_ne_fige_aucune_commande_le_skill_fait_foi(tmp_path: Path) -> None:
+    """Le skill nommé, son chemin à ouvrir — la commande vit dans le skill, et nulle part
+    ailleurs : une commande remplacée dans le projet n'a plus de copie à rattraper."""
+    service, gabarits, projet_id = _service(tmp_path)
+    _ecrire_skill(Path.home() / "depensio", CHEMIN_METTRE_EN_ROUTE)
+
+    service.creer(projet_id, [_role(skills=(METTRE_EN_ROUTE,))])
+
+    playbook = _playbook_ecrit(gabarits, projet_id)
+    assert f"**mettre-en-route** — `{CHEMIN_METTRE_EN_ROUTE}`" in playbook
+    assert "pip install -e ." not in playbook
+    assert INTRO_SKILLS in playbook
+
+
+def test_un_playbook_d_avant_cesse_de_figer_ses_commandes_et_garde_le_reste() -> None:
+    """Le rebranchement d'une équipe déjà créée : la section de Maestro perd ses commandes
+    figées — une commande qui porte des parenthèses comprise —, et rien d'autre ne bouge.
+    Le corps du playbook, écrit pour le projet et relu par la personne, n'est pas à
+    Maestro : ce qu'il cite y reste, et c'est le constat de l'écriture qui le dira."""
+    corps = "Tu assembles le carnet. On t'a dit un jour : `python assembler.py`."
+    avant = f"{corps}\n\n{SECTION_D_AVANT}\n## Garde-fous\n\nrien de destructif.\n"
+
+    apres = sans_commandes_figees(avant)
+
+    assert "(il enveloppe :" not in apres
+    assert "print(1)" not in apres and "ruff check" not in apres
+    assert "- **construire-le-projet** — `.agents/skills/construire-le-projet/SKILL.md`\n" in apres
+    assert INTRO_SKILLS in apres
+    assert apres.startswith(corps)
+    assert apres.endswith("## Garde-fous\n\nrien de destructif.\n")
+    assert sans_commandes_figees(apres) == apres
+
+
+@pytest.mark.parametrize(
+    "playbook",
+    [
+        "Tu écris le code.\n",
+        playbook_branche(_role()),
+        playbook_branche(_role(skills_absents=(METTRE_EN_ROUTE,))),
+        playbook_branche(_role(skills=(METTRE_EN_ROUTE,))),
+    ],
+    ids=["sans-section", "aucun-skill", "aucun-skill-ecrit", "section-d-aujourd-hui"],
+)
+def test_un_playbook_qui_ne_fige_rien_revient_tel_quel(playbook: str) -> None:
+    """Idempotent, et muet là où il n'a rien à faire : rebrancher n'écrit pas pour rien."""
+    assert sans_commandes_figees(playbook) == playbook
