@@ -42,6 +42,7 @@ from maestro.projets.application import (
     appliquer,
     commiter_en_attente,
     diff_du_travail,
+    message_de_sauvegarde,
     verifier_perimetre,
 )
 from maestro.projets.modele import Perimetre, Projet, Vcs
@@ -496,16 +497,53 @@ def test_le_reste_non_commite_rejoint_le_dernier_commit_de_l_agent(tmp_path: Pat
 
     L'agent a commité dans la convention du projet, puis laissé un fichier : il entre
     dans **son** commit, dont le message reste le sien — aucun commit de Maestro.
+    `depuis` est la tête de la branche au montage : le commit amendé est de cette
+    exécution.
     """
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    au_montage = _git(espace, "rev-parse", "HEAD").strip()
+    (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
+    _commiter(espace, "feat(notes): ajoute la note d'accueil")
+    (espace / "oubli.md").write_text("resté hors du commit\n", encoding="utf-8")
+    commiter_en_attente(espace, branche, depuis=au_montage)
+    assert _sujets(espace, "main..HEAD") == ["feat(notes): ajoute la note d'accueil"]
+    assert "oubli.md" in _git(espace, "show", "--name-only", "--format=", "HEAD").split()
+    assert _git(espace, "status", "--porcelain").strip() == ""
+
+
+@besoin_de_git
+def test_une_sauvegarde_de_maestro_n_est_jamais_amendee(tmp_path: Path) -> None:
+    """Le rouge de S12 (passage `20261022-075529`) : un travail sauvé à l'extinction disparaissait.
+
+    Maestro avait sauvé le travail en vol dans un commit ; à la reprise, ce commit est la
+    tête de la branche **au montage** — il n'est pas de cette exécution. Le reste laissé
+    au démontage va dans un commit neuf : le commit sauvé reste dans l'historique, et
+    tout ce qui a été dit de lui reste vrai.
+    """
+    projet, racine = _projet_git(tmp_path)
+    espace, branche = _worktree(racine, tmp_path)
+    (espace / "recettes.ts").write_text("export {}\n", encoding="utf-8")
+    commiter_en_attente(espace, branche)  # la sauvegarde de l'extinction
+    sauve = _git(espace, "rev-parse", "HEAD").strip()
+    assert _sujets(espace, "-1") == [message_de_sauvegarde(branche)]
+    (espace / "page.tsx").write_text("export default null\n", encoding="utf-8")
+    commiter_en_attente(espace, branche, depuis=sauve)  # le démontage, après la reprise
+    assert _git(espace, "rev-parse", "HEAD~1").strip() == sauve
+    _git(espace, "merge-base", "--is-ancestor", sauve, "HEAD")
+
+
+@besoin_de_git
+def test_sans_tete_au_montage_rien_n_est_amende(tmp_path: Path) -> None:
+    """Un appelant qui ne sait pas d'où la branche est partie ne réécrit rien."""
     projet, racine = _projet_git(tmp_path)
     espace, branche = _worktree(racine, tmp_path)
     (espace / "note.md").write_text("bonjour\n", encoding="utf-8")
     _commiter(espace, "feat(notes): ajoute la note d'accueil")
+    agent = _git(espace, "rev-parse", "HEAD").strip()
     (espace / "oubli.md").write_text("resté hors du commit\n", encoding="utf-8")
     commiter_en_attente(espace, branche)
-    assert _sujets(espace, "main..HEAD") == ["feat(notes): ajoute la note d'accueil"]
-    assert "oubli.md" in _git(espace, "show", "--name-only", "--format=", "HEAD").split()
-    assert _git(espace, "status", "--porcelain").strip() == ""
+    assert _git(espace, "rev-parse", "HEAD~1").strip() == agent
 
 
 @besoin_de_git
@@ -533,7 +571,8 @@ def test_un_commit_qu_une_autre_branche_porte_n_est_jamais_amende(tmp_path: Path
     reprise = tmp_path / "espaces" / "t1-r1"
     _git(racine, "worktree", "add", "--quiet", "-b", "maestro/t1-r1", str(reprise), branche)
     (reprise / "init.ts").write_text("export {}\n", encoding="utf-8")
-    commiter_en_attente(reprise, "maestro/t1-r1")
+    # Même en prétendant que la branche est partie de plus loin : `socle` est à une autre.
+    commiter_en_attente(reprise, "maestro/t1-r1", depuis=_git(racine, "rev-parse", "main").strip())
     assert _git(reprise, "rev-parse", "HEAD~1").strip() == socle
     assert _sujets(reprise, f"{branche}..HEAD") == [
         "Maestro : travail de la tâche (maestro/t1-r1)"

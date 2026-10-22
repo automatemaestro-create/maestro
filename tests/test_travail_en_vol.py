@@ -320,6 +320,37 @@ def test_ce_que_la_tache_avait_fait_compte_dans_sa_livraison(tmp_path: Path) -> 
 
 #: Ce que la consigne d'une branche reprise dit, et qu'une branche neuve ne dit pas : la
 #: copie de travail, elle, se présente toujours (#1399, #1401).
+def test_le_travail_sauve_reste_dans_l_historique_apres_la_reprise(tmp_path: Path) -> None:
+    """Le rouge de S12 (passage `20261022-075529`, #1507) : le commit sauvé disparaissait.
+
+    La tâche reprise laisse un reste au démontage : il entre dans un commit **neuf**,
+    jamais dans la sauvegarde, que cette exécution n'a pas faite — ce que l'extinction a
+    dit sauvé reste dans l'histoire de la branche, donc du projet qui la fusionne.
+    """
+    projet = _projet(tmp_path)
+    racine = Path(projet.racine)
+    _interrompue(projet)
+    sauve = _git(racine, "rev-parse", f"refs/heads/{branche_de_tache(TACHE)}").strip()
+
+    with espace_de_travail(projet, tache_id=TACHE) as ws:
+        (ws.path / "src" / "page.tsx").write_text("export default null\n", "utf-8")
+
+    _git(racine, "merge-base", "--is-ancestor", sauve, f"refs/heads/{branche_de_tache(TACHE)}")
+    assert _git(racine, "rev-parse", f"{branche_de_tache(TACHE)}~1").strip() == sauve
+
+
+def test_la_tache_reprise_garde_les_commits_de_sa_branche_tels_quels(tmp_path: Path) -> None:
+    """L'agent qui reprend ne réécrit pas ce que sa branche porte : il l'a amendé sur S12."""
+    projet = _projet(tmp_path)
+    _interrompue(projet)
+
+    with espace_de_travail(projet, tache_id=TACHE) as ws:
+        consigne = " ".join(ws.consigne_espace().split())
+
+    assert "garde ces commits tels quels" in consigne
+    assert "ni `--amend`" in consigne
+
+
 REPRISE = "n'est pas neuve"
 
 

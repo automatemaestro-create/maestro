@@ -288,8 +288,10 @@ son propre message — sur p5, les 33 commits du livrable étaient « Maestro : 
 la tâche dit désormais de **commiter soi-même**, au fil des étapes, en messages qui suivent la
 convention que nomme l'`AGENTS.md` du projet ; la session de l'agent porte l'identité Git de Maestro
 par son environnement. Ce qu'il laisse non commité est encore commité au démontage, mais **dans son
-dernier commit** quand aucune autre branche ne le porte (`commiter_en_attente`), sous son message ; un
-commit de Maestro ne naît plus que d'une branche où l'agent n'a rien commité. Les fusions de Maestro
+dernier commit** quand cette exécution l'a fait et qu'aucune autre branche ne le porte
+(`commiter_en_attente`), sous son message ; un commit de Maestro ne naît plus que d'une branche où
+l'agent n'a rien commité, ou de la sauvegarde d'une extinction — et celui-là ne se réécrit jamais,
+sans quoi le travail sauvé sortirait de l'histoire du projet (S12, #1507). Les fusions de Maestro
 suivent la même convention, rédigées par le modèle, et gardent dans leur corps ce que Maestro en
 disait ([docs/38 §5.10](./38-decision-outillage-universel-du-projet.md)). La vérification de chaque
 livraison relit l'état de la branche quand une convention est choisie ([docs/45 §2](./45-decision-une-tache-verifiee-en-l-executant.md)).

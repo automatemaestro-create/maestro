@@ -78,7 +78,11 @@ from pathlib import Path
 
 from maestro.emplacements import jetable, repertoire_temporaire
 from maestro.fichiers import retirer_arbre
-from maestro.projets.application import ApplicationRefusee, commiter_en_attente
+from maestro.projets.application import (
+    ApplicationRefusee,
+    commiter_en_attente,
+    message_de_sauvegarde,
+)
 from maestro.projets.modele import AUTEUR_COURRIEL, AUTEUR_NOM, Projet
 from maestro.projets.racine import valider_racine
 from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
@@ -194,6 +198,14 @@ class TravailAnterieur:
         lignes.append(
             "Pars de cet état : relis ce qui est fait, garde ce qui tient, termine ce "
             "qui manque — ne le refais pas depuis zéro."
+        )
+        # Sur S12 (#1507), l'agent qui reprenait a amendé le commit que Maestro avait
+        # sauvé à l'extinction, pour le mettre dans la convention : le travail sauvé
+        # n'était plus dans l'histoire du projet livré.
+        lignes.append(
+            "Et garde ces commits tels quels — ni `--amend`, ni rebase, ni reset : ce sont "
+            "eux qui disent que ce travail est sauvé. Ajoute les tiens par-dessus, dans la "
+            "convention de commit du projet."
         )
         return "\n".join(lignes)
 
@@ -661,6 +673,7 @@ def espace_de_travail(
     branche = _branche(tache_id)
     depart = _branche(reprend) if reprend.strip() else ""
     monte = False
+    au_montage = ""
     try:
         _verifie_hors_racine(chemin, racine)
         # Lu **avant** le montage, qui crée la branche quand elle manque : seule une
@@ -668,6 +681,9 @@ def espace_de_travail(
         existait = _ref_existe(racine, branche)
         _monter_worktree(racine, chemin, branche, _base(projet), depart=depart)
         monte = True
+        # La tête de la branche au montage (#1507) : ce que cette exécution n'a pas fait,
+        # et que le démontage n'amendera jamais — une sauvegarde d'extinction en est.
+        au_montage = _tete(chemin)
         # **Après** le montage, jamais avant : il vient de porter sur la branche ce
         # qu'un worktree abandonné retenait encore (`_liberer_la_branche`).
         anterieur = (
@@ -682,7 +698,7 @@ def espace_de_travail(
         if not keep:
             libre = True
             if monte:
-                _solder_la_branche(chemin, branche)
+                _solder_la_branche(chemin, branche, au_montage)
                 libre = _retirer_worktree(racine, chemin)
             # Un worktree resté intact (#1447) ne s'efface pas avec son parent : ce
             # serait refaire, à la main, la coquille que son retrait vient d'éviter.
@@ -938,6 +954,11 @@ def _commit_de_la_livraison(espace: Path) -> str | None:
 _COMMITS_DE_L_ETAT_MAX = 20
 _EN_ATTENTE_DITS_MAX = 20
 
+#: Ce que l'état d'une branche dit d'un commit de Maestro (#1507) : il n'est pas de
+#: l'agent, il ne compte pas contre la convention, et il se garde tel quel — le
+#: réécrire ferait sortir un travail sauvé de l'histoire du projet (S12).
+_MARQUE_SAUVEGARDE = " — commit de Maestro (sauvegarde du travail), à garder tel quel"
+
 
 def etat_de_la_branche(espace: Path, base: str) -> str:
     """Ce que la branche de la copie `espace` porte au-delà de `base`, et ce qui n'est pas commité.
@@ -956,16 +977,24 @@ def etat_de_la_branche(espace: Path, base: str) -> str:
         compte = _git(espace, "rev-list", "--count", f"{base}..HEAD")
         sujets = _git(espace, "log", f"-n{_COMMITS_DE_L_ETAT_MAX}", "--format=%s", f"{base}..HEAD")
         statut = _git(espace, "status", "--porcelain", "--untracked-files=all")
+        nom = _git(espace, "rev-parse", "--abbrev-ref", "HEAD")
     except EspaceProjetIndisponible:
         return ""
     if compte.returncode != 0 or sujets.returncode != 0 or statut.returncode != 0:
         return ""
     nb_commits = int(compte.stdout.strip()) if compte.stdout.strip().isdigit() else 0
+    # Un commit que Maestro a fait du travail de la tâche — la sauvegarde d'une
+    # extinction — se reconnaît à son message, le nôtre, comparé à l'identique.
+    sauvegarde = message_de_sauvegarde(nom.stdout.strip()) if nom.returncode == 0 else ""
     if nb_commits:
         lignes = [
             f"La branche porte {nb_commits} commit(s) depuis `{base}`, du plus récent "
             "au plus ancien :",
-            *(f"- {sujet}" for sujet in sujets.stdout.splitlines() if sujet.strip()),
+            *(
+                f"- {sujet}" + (_MARQUE_SAUVEGARDE if sujet == sauvegarde else "")
+                for sujet in sujets.stdout.splitlines()
+                if sujet.strip()
+            ),
         ]
     else:
         lignes = [f"La branche ne porte aucun commit depuis `{base}`."]
@@ -1254,12 +1283,14 @@ def _normalise(chemin: Path) -> str:
     return os.path.normcase(str(resolu))
 
 
-def _solder_la_branche(chemin: Path, branche: str) -> None:
+def _solder_la_branche(chemin: Path, branche: str, au_montage: str = "") -> None:
     """Commite sur `branche` ce que le worktree porte encore, avant de le démonter (#705).
 
-    Dans le dernier commit de l'agent quand il n'est qu'à cette branche (#1507,
+    Dans le dernier commit de l'agent quand cette exécution l'a fait — au-delà de
+    `au_montage`, la tête de la branche au montage — et que lui seul le porte (#1507,
     `commiter_en_attente`) : c'est un reste de son travail, et il entre sous son
-    message, dans la convention du projet.
+    message, dans la convention du projet. Un commit d'avant le montage, la
+    sauvegarde d'une extinction comprise, n'est jamais réécrit.
 
     C'est ce qui rend **vraie** la phrase que ce module tient depuis #224 — « le
     worktree est retiré, jamais la branche : c'est elle qui porte le travail
@@ -1286,7 +1317,7 @@ def _solder_la_branche(chemin: Path, branche: str) -> None:
     et détruire ce qui l'explique serait le pire des deux.
     """
     try:
-        commiter_en_attente(chemin, branche)
+        commiter_en_attente(chemin, branche, depuis=au_montage)
     except ApplicationRefusee:
         pass
 
@@ -1374,6 +1405,19 @@ def _oublier_les_worktrees_disparus(racine: Path) -> None:
 def _ref_existe(racine: Path, branche: str) -> bool:
     """La branche locale `branche` existe-t-elle dans le dépôt de `racine` ?"""
     return _git(racine, "rev-parse", "--verify", "--quiet", f"refs/heads/{branche}").returncode == 0
+
+
+def _tete(chemin: Path) -> str:
+    """Le commit de tête de la copie `chemin` — `""` si Git ne sait pas le dire (#1507).
+
+    `""` ne fait rien amender au démontage (`commiter_en_attente`) : dans le doute, un
+    commit de plus vaut mieux qu'un commit réécrit.
+    """
+    try:
+        resultat = _git(chemin, "rev-parse", "HEAD")
+    except EspaceProjetIndisponible:
+        return ""
+    return resultat.stdout.strip() if resultat.returncode == 0 else ""
 
 
 def _git(

@@ -599,7 +599,9 @@ a écrit », « le style du projet tient sur ce que la tâche a écrit » ;
 - quand il nomme une convention de message de commit et que l'état de la branche t'est \
 donné, une lecture : « le travail de la tâche est commité sur sa branche, en messages \
 qui suivent la convention du projet » — des fichiers restés hors de tout commit, ou un \
-sujet qui s'écarte de la convention, ne la tiennent pas.
+sujet de l'agent qui s'écarte de la convention, ne la tiennent pas. Un commit que \
+l'état de la branche marque comme un commit de Maestro ne compte pas : il se garde tel \
+quel, et ne se réécrit jamais.
 N'en ajoute aucun pour ce que l'outillage ne déclare pas, ni pour une livraison qui \
 n'est qu'un compte-rendu.
 

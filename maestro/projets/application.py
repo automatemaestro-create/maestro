@@ -787,24 +787,31 @@ def _message_fusion(diff: DiffProjet) -> str:
     )
 
 
-def commiter_en_attente(espace: Path, branche: str, *, message: str = "") -> None:
+def commiter_en_attente(
+    espace: Path, branche: str, *, message: str = "", depuis: str = ""
+) -> None:
     """Commite sur `branche` ce que le worktree porte encore, s'il porte quelque chose.
 
     `message`, quand il est donné, est celui du commit — un commit **neuf**, jamais un
     amendement : c'est Maestro qui commite son propre travail (une pièce d'outillage,
     #1507), sous un message rédigé dans la convention du projet.
 
-    **Dans le dernier commit de la branche quand il n'est qu'à elle** (#1507). L'agent
-    commite son travail lui-même, dans la convention du projet (le message de sa
-    tâche le lui dit, `maestro.sandbox.projet.CONSIGNE_COPIE_DE_TRAVAIL`) : ce qu'il
+    **Dans le dernier commit de l'agent quand cette exécution l'a fait** (#1507).
+    L'agent commite son travail lui-même, dans la convention du projet (le message de
+    sa tâche le lui dit, `maestro.sandbox.projet.CONSIGNE_COPIE_DE_TRAVAIL`) : ce qu'il
     laisse ensuite est un reste de **son** travail, et il entre dans son dernier
     commit, message compris — `git commit --amend --no-edit`. Un commit « Maestro :
     travail de la tâche » en plus faisait sortir le livrable de la convention que la
     personne avait choisie : sur p5, les 33 commits du projet étaient de Maestro.
-    Quand la tête de la branche est portée par une autre référence — l'agent n'a rien
-    commité, ou la branche reprend celle d'une autre tâche —, c'est le message de
-    Maestro, comme avant (`_commit_a_elle_seule`) : **on n'amende jamais un commit
-    qu'une autre branche porte**.
+    `depuis` est la tête de la branche **au montage** du worktree : seul un commit
+    fait depuis, et qu'aucune autre référence ne porte, s'amende (`_amendable`). Tout
+    le reste reçoit un commit neuf, sous le message de Maestro (`message_de_sauvegarde`)
+    — sans `depuis`, faute de savoir ce que l'exécution a fait ; et la **sauvegarde**
+    d'un travail interrompu (`maestro.sandbox.projet.sauver_le_travail_en_vol`), qui
+    est la tête au montage de l'exécution qui reprend. Mesuré sur S12 (passage
+    `20261022-075529`) : un commit sauvé, puis réécrit, sortait de l'historique, et le
+    travail « sauvé » n'était plus celui que le projet livrait. **On ne réécrit jamais
+    un commit que cette exécution n'a pas fait.**
 
     Les hooks du dépôt ne sont **pas** contournés : ce sont ceux de
     l'utilisateur, et un `pre-commit` qui refuse le travail d'un agent a
@@ -834,10 +841,10 @@ def commiter_en_attente(espace: Path, branche: str, *, message: str = "") -> Non
         return  # rien en attente : tout est déjà commité sur la branche
     if message.strip():
         forme = ["-m", message.strip()]
-    elif _commit_a_elle_seule(espace, branche):
+    elif _amendable(espace, branche, depuis):
         forme = ["--amend", "--no-edit"]
     else:
-        forme = ["-m", f"Maestro : travail de la tâche ({branche})"]
+        forme = ["-m", message_de_sauvegarde(branche)]
     resultat = _git(
         espace,
         "-c",
@@ -852,6 +859,32 @@ def commiter_en_attente(espace: Path, branche: str, *, message: str = "") -> Non
             "commit-refuse",
             f"Commit du travail sur {branche} refusé : {_message_git(resultat)}",
         )
+
+
+def message_de_sauvegarde(branche: str) -> str:
+    """Le message d'un commit que Maestro fait du travail d'une tâche — reste ou sauvegarde.
+
+    Une seule orthographe, parce qu'elle se **relit** (#1507) : l'état de la branche que
+    lit le vérificateur d'une livraison marque ces commits comme ceux de Maestro, à
+    garder tels quels (`maestro.sandbox.projet.etat_de_la_branche`). C'est notre propre
+    texte, comparé à l'identique — jamais un motif cherché dans le message d'un autre.
+    """
+    return f"Maestro : travail de la tâche ({branche})"
+
+
+def _amendable(espace: Path, branche: str, depuis: str) -> bool:
+    """La tête de `espace` est-elle un commit de cette exécution, et d'elle seule ?
+
+    De cette exécution : la branche porte des commits au-delà de `depuis`, sa tête au
+    montage. D'elle seule : aucune autre référence ne contient la tête
+    (`_commit_a_elle_seule`). Faux sans `depuis`, ou quand Git ne sait pas répondre.
+    """
+    if not depuis.strip():
+        return False
+    compte = _git(espace, "rev-list", "--count", f"{depuis}..HEAD")
+    if compte.returncode != 0 or not compte.stdout.strip().isdigit():
+        return False
+    return int(compte.stdout.strip()) > 0 and _commit_a_elle_seule(espace, branche)
 
 
 def _commit_a_elle_seule(espace: Path, branche: str) -> bool:

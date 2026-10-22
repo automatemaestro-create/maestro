@@ -921,7 +921,13 @@ avant le livrable. Quatre gestes y répondent, chacun à sa place.
   et sa session porte l'identité Git de Maestro par son environnement — un poste sans identité lui
   refusait `git commit`, et rien n'est écrit dans la configuration du projet. Ce qu'il laisse non
   commité rejoint son dernier commit au démontage, message compris, plutôt qu'un commit « Maestro :
-  travail de la tâche » ; un commit qu'une autre branche porte n'est jamais amendé.
+  travail de la tâche » — mais seulement un commit **fait par cette exécution** (au-delà de la tête
+  de la branche au montage) et qu'aucune autre branche ne porte. Le premier passage de S12 après ce
+  changement l'a montré (passage `20261022-075529`) : à la reprise, l'agent avait amendé le commit
+  que Maestro avait sauvé à l'extinction pour le mettre dans la convention, et le travail « sauvé »
+  n'était plus dans l'histoire du projet livré. Un commit de Maestro — la sauvegarde d'un travail
+  interrompu — ne se réécrit donc jamais : ni par le démontage, ni par l'agent, à qui l'annonce du
+  travail antérieur le dit, ni sur demande du vérificateur, à qui l'état de la branche le marque.
 - **Les commits de Maestro suivent la convention**, rédigés par le modèle : la fusion d'une tâche, le
   commit et la fusion d'une pièce d'outillage (`maestro.projets.commits`). La convention est une
   phrase de la personne, lue dans la source du manifeste (`OutillageDuProjet.convention_de_commit`) :

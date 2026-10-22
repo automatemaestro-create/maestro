@@ -44,6 +44,7 @@ from maestro.orchestrator.schema import Task
 from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
 from maestro.portee import PorteeProjet
 from maestro.projets import ProjetStore
+from maestro.projets.application import commiter_en_attente, message_de_sauvegarde
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import etat_de_la_branche
 from maestro.sandbox.verification import Execution
@@ -343,6 +344,31 @@ def test_une_branche_sans_commit_le_dit(tmp_path: Path) -> None:
     assert "La branche ne porte aucun commit depuis `main`." in etat
     assert "`accueil.tsx`" in etat
     assert etat_de_la_branche(copie, "") == ""
+
+
+@avec_git
+def test_une_sauvegarde_de_maestro_est_marquee_a_garder(tmp_path: Path) -> None:
+    """Le rouge de S12 : l'agent avait amendé la sauvegarde pour la mettre dans la convention.
+
+    Le juge lit qu'un commit est de Maestro, et le prompt lui dit qu'il ne compte pas et
+    ne se réécrit pas : il ne renvoie plus l'agent le réécrire.
+    """
+    racine = _depot(tmp_path / "projet")
+    copie = tmp_path / "copie"
+    _git(racine, "worktree", "add", "-q", "-b", "maestro/page", str(copie))
+    (copie / "accueil.tsx").write_text("export {}\n", encoding="utf-8")
+    commiter_en_attente(copie, "maestro/page")  # ce que fait l'extinction
+    (copie / "style.css").write_text("body {}\n", encoding="utf-8")
+    _commiter(copie, "feat(accueil): ajoute le style")
+
+    etat = etat_de_la_branche(copie, "main")
+
+    assert "- feat(accueil): ajoute le style\n" in etat + "\n"
+    assert (
+        f"- {message_de_sauvegarde('maestro/page')} — commit de Maestro (sauvegarde du "
+        "travail), à garder tel quel" in etat
+    )
+    assert "ne se réécrit jamais" in " ".join(SYSTEME.split())
 
 
 # --------------------------------------------------------------------------- #
