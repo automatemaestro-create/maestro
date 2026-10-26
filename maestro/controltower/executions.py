@@ -188,6 +188,7 @@ import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from maestro.appartenance import projet_id_valide
@@ -206,6 +207,7 @@ from maestro.controltower.brief import (
     ArbitreBriefControlTower,
     ArbitreClarificationControlTower,
 )
+from maestro.controltower.carte_hote import carte_de_ce_process, hote_eteint
 from maestro.controltower.causes import (
     CAUSE_ANNULATION,
     CAUSE_EXTINCTION,
@@ -332,6 +334,13 @@ MOTIF_RELANCE_SANS_CADRAGE = "cadrage-absent"
 MOTIF_GESTE_RUN_SUSPENDU = "run-suspendu"
 MOTIF_GESTE_RUN_NON_SUSPENDU = "run-non-suspendu"
 
+#: La pause d'un run **orphelin** (#1503) : son hôte s'est tu ou n'existe plus,
+#: personne ne recevrait l'ordre. L'écran ne la proposait déjà pas
+#: (`peutEtreSuspendu`), mais la route l'acceptait — et sur un hôte tué, avant le
+#: seuil, l'écran la proposait aussi : la pause puis la reprise y faisaient deux
+#: gestes sans effet. Ce run se **reprend**.
+MOTIF_GESTE_RUN_SANS_HOTE = "run-sans-hote"
+
 #: Un geste hors de `GESTES_RUN` — un modèle qui aurait inventé un verbe, une
 #: requête mal formée : refusé avant de toucher au run.
 MOTIF_GESTE_INCONNU = "geste-inconnu"
@@ -380,6 +389,19 @@ DETAIL_HOTE_TU = "son hôte s'était tu : le run est repris sur son plan"
 _JAMAIS_DEMARREES = frozenset({STATUT_BACKLOG, STATUT_PRETE})
 
 _LOGGER = logging.getLogger("maestro.controltower")
+
+
+@dataclass(frozen=True, slots=True)
+class _Veille:
+    """Ce que le service relit du registre pour juger ses runs : battements et cartes d'hôte.
+
+    Deux lectures, chacune en **un** aller pour tous les runs (#348, #1503) : la liste
+    a N runs à juger, pas un. Les deux voyagent ensemble jusqu'à `_vitalite`, seule à
+    en tirer un verdict.
+    """
+
+    battements: Mapping[str, str]
+    cartes: Mapping[str, str]
 
 
 class RelanceRefusee(GesteRefuse):
@@ -568,9 +590,9 @@ class ServiceExecutions:
         progression, début et coût y sont désormais tous, de quoi dresser la
         liste des runs d'un projet d'une seule lecture.
         """
-        connus = await self._registre()
+        veille = await self._veille()
         resumes = [
-            self._avec_vitalite(self._avec_progression(e.resume()), connus)
+            self._avec_vitalite(self._avec_progression(e.resume()), veille)
             for e in self._state.executions(portee)
         ]
         return sorted(resumes, key=lambda r: str(r["debut"]), reverse=True)
@@ -600,7 +622,7 @@ class ServiceExecutions:
         resume = self.resume(run_id)
         if resume is None:
             return None
-        return self._avec_vitalite(resume, await self._registre())
+        return self._avec_vitalite(resume, await self._veille())
 
     def _avec_progression(self, resume: dict[str, Any]) -> dict[str, Any]:
         """Ajoute la progression par statut de tâche à un résumé, sans toucher au reste.
@@ -623,9 +645,7 @@ class ServiceExecutions:
             "progression": self._state.progression(str(resume["run_id"])).to_dict(),
         }
 
-    def _avec_vitalite(
-        self, resume: dict[str, Any], battements: Mapping[str, str]
-    ) -> dict[str, Any]:
+    def _avec_vitalite(self, resume: dict[str, Any], veille: _Veille) -> dict[str, Any]:
         """Ajoute les **deux verdicts de veille** à un résumé, sans toucher au reste.
 
         Ils répondent de deux questions qu'il ne faut pas confondre (docs/33
@@ -643,11 +663,7 @@ class ServiceExecutions:
         """
         return {
             **resume,
-            "vitalite": vitalite(
-                str(resume["statut"]),
-                battements.get(str(resume["run_id"])),
-                seuil_s=self._seuil_orphelin_s,
-            ),
+            "vitalite": self._vitalite(str(resume["statut"]), str(resume["run_id"]), veille),
             "en_souffrance": en_souffrance(
                 str(resume["statut"]),
                 resume.get("attente_depuis"),
@@ -655,22 +671,49 @@ class ServiceExecutions:
             ),
         }
 
-    async def _registre(self) -> Mapping[str, str]:
-        """Les battements connus — **jamais une levée** : un registre muet dit `{}`.
+    def _vitalite(self, statut: str, run_id: str, veille: _Veille) -> str | None:
+        """Le verdict de vitalité d'un run — `vitalite`, la seule formule, et ses deux sources.
+
+        Le battement (#348) et la carte de l'hôte (#1503). Tous les lecteurs du
+        verdict passent par ici — la liste, la vue d'un run, les refus des gestes, la
+        relance —, sans quoi l'écran dirait `orphelin` d'un run que la reprise
+        refuserait, ou l'inverse. L'hôte n'est sondé que pour un run **non soldé** :
+        la question ne se pose pas pour les autres, et la sonde est un appel système.
+        """
+        return vitalite(
+            statut,
+            veille.battements.get(run_id),
+            seuil_s=self._seuil_orphelin_s,
+            hote_eteint=statut not in STATUTS_EXECUTION_TERMINAUX
+            and hote_eteint(veille.cartes.get(run_id)),
+        )
+
+    async def _veille(self) -> _Veille:
+        """Les battements et les cartes d'hôte connus — **jamais une levée** (registre muet : `{}`).
 
         Un Redis injoignable ne doit pas faire échouer `GET /api/executions` : la
         liste des runs est ce qu'on regarde *quand quelque chose ne va pas*.
         Faute de battements, tous les runs non soldés ressortent `indetermine`,
-        ce qui est la vérité — on ne sait pas.
+        ce qui est la vérité — on ne sait pas. Faute de cartes (#1503), rien ne
+        change à ce qu'on savait avant elles : la règle du seuil juge seule.
         """
         try:
-            return await self._battements.battements()
+            battements = await self._battements.battements()
         except Exception:
             _LOGGER.exception(
                 "Lecture des battements impossible : les runs en cours sont rendus "
                 "« indetermine » (leur vitalité est inconnue, pas leur statut)."
             )
-            return {}
+            battements = {}
+        try:
+            cartes = await self._battements.cartes()
+        except Exception:
+            _LOGGER.exception(
+                "Lecture des cartes d'hôte impossible : un hôte tué ne se verra qu'au "
+                "seuil d'orphelinat."
+            )
+            cartes = {}
+        return _Veille(battements=battements, cartes=cartes)
 
     def en_vol(self, run_id: str) -> bool:
         """Le run est-il porté par l'hôte de ce service, et encore en cours ?
@@ -937,7 +980,8 @@ class ServiceExecutions:
         - **annulation** — refusée sur un run soldé : il n'y a plus rien à interrompre ;
         - **pause** — refusée sur un run soldé, ou déjà suspendu : répondre oui à une
           pause qui n'était pas la première ferait passer pour un geste ce qui n'en
-          est pas un ;
+          est pas un ; et sur un run `orphelin` (#1503) : son hôte ne la recevrait
+          pas, ce run se reprend ;
         - **reprise** — elle passe sur deux runs depuis #1391 : le run **suspendu**
           qui tourne (la porte se rouvre, #477), et le run **interrompu** — soldé
           par un arrêt qui n'a pas jugé son travail (`CAUSES_RELANCABLES`, pause
@@ -986,13 +1030,10 @@ class ServiceExecutions:
                     f"{run_id} — il n'y a rien à reprendre d'un run qui a rendu son issue "
                     "ou qu'on a arrêté exprès.",
                 )
-            verdict = vitalite(
-                execution.statut,
-                (await self._registre()).get(run_id),
-                seuil_s=self._seuil_orphelin_s,
-            )
+            verdict = self._vitalite(execution.statut, run_id, await self._veille())
             if verdict == VITALITE_ORPHELIN:
-                # Son hôte s'est tu (#348) : rien ne le porte plus, il se reprend.
+                # Son hôte s'est tu (#348), ou n'existe plus (#1503) : rien ne le
+                # porte, il se reprend.
                 return None
             return GesteRefuse(
                 MOTIF_GESTE_RUN_NON_SUSPENDU,
@@ -1006,6 +1047,17 @@ class ServiceExecutions:
                 MOTIF_RELANCE_RUN_SOLDE,
                 f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
                 f"{run_id} — il n'y a rien à {quoi} d'un run qui a rendu son issue.",
+            )
+        if (
+            geste == GESTE_PAUSE
+            and self._vitalite(execution.statut, run_id, await self._veille())
+            == VITALITE_ORPHELIN
+        ):
+            return GesteRefuse(
+                MOTIF_GESTE_RUN_SANS_HOTE,
+                f"exécution sans hôte : {run_id} — le process qui la portait ne répond "
+                "plus, personne ne recevrait la pause. La reprendre la relance sur son "
+                "plan, sans refaire ce qui est fait.",
             )
         if geste == GESTE_PAUSE and execution.en_pause:
             return GesteRefuse(
@@ -1144,6 +1196,14 @@ class ServiceExecutions:
         if execution is None:
             return None
         if execution.statut in STATUTS_EXECUTION_TERMINAUX or not execution.en_pause:
+            return await self._reprendre_sur_son_plan(run_id)
+        if (
+            self._vitalite(execution.statut, run_id, await self._veille())
+            == VITALITE_ORPHELIN
+        ):
+            # En pause, mais plus personne ne tient sa porte (#1503) : la rouvrir ne
+            # réveillerait rien — c'était le « Reprendre » sans effet de p5. Il
+            # repart sur son plan, comme tout run dont l'hôte s'est tu.
             return await self._reprendre_sur_son_plan(run_id)
         self._demarrer()
         self._consigne(run_id, ORDRE_REPRISE, "", "exécution reprise depuis la Control Tower")
@@ -1406,11 +1466,7 @@ class ServiceExecutions:
                 f"exécution déjà soldée ({libelle_statut_execution(execution.statut)}) : "
                 f"{run_id} — il n'y a rien à reprendre d'un run qui a rendu son issue.",
             )
-        verdict = vitalite(
-            execution.statut,
-            (await self._registre()).get(run_id),
-            seuil_s=self._seuil_orphelin_s,
-        )
+        verdict = self._vitalite(execution.statut, run_id, await self._veille())
         if verdict == VITALITE_VIVANT:
             return RelanceRefusee(
                 MOTIF_RELANCE_RUN_VIVANT,
@@ -2007,6 +2063,29 @@ class ServiceExecutions:
                 run_id,
             )
 
+    async def _declarer(self, run_id: str) -> None:
+        """Pose la carte de **ce** process pour un run qu'il déroule lui-même (#1503).
+
+        Appelée par `_derouler`, donc par l'hôte en process et lui seul : c'est le
+        seul cas où l'API *est* l'hôte, et où sa mort emporte le run. Ni au
+        lancement ni dans le cœur — le cœur bat aussi les runs détachés que l'API
+        tient, et y poser sa carte désignerait un process qui n'est pas leur hôte ;
+        le process détaché pose la sienne (`batteur_redis`).
+
+        Best-effort, comme le battement : sans carte, un run tué sera vu au seuil
+        d'orphelinat, comme avant — jamais un motif d'échec du run.
+        """
+        try:
+            await self._battements.declarer(run_id, carte_de_ce_process().vers_texte())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOGGER.exception(
+                "Carte d'hôte du run %s non posée : s'il est tué, il ne se verra "
+                "qu'au seuil d'orphelinat.",
+                run_id,
+            )
+
     async def _oublier(self, run_id: str) -> None:
         """Retire le battement d'un run **soldé** — best-effort, jamais une levée.
 
@@ -2080,6 +2159,7 @@ class ServiceExecutions:
         """
         run_id = ordre.run_id
         self._portes[run_id] = PorteExecution()
+        await self._declarer(run_id)
         try:
             await self._derouler_sous_porte(ordre, self._portes[run_id])
         finally:

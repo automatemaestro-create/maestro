@@ -18,7 +18,8 @@ qu'il est au premier démarrage (`PosteVide`).
   qu'un poste oublie ;
 - les **battements** des runs (`battement.py`) — le hash où chaque hôte pose son
   signal de vie, sans lequel un run purgé laisserait derrière lui une entrée
-  définitive dans un hash relu à chaque `GET /api/executions` ;
+  définitive dans un hash relu à chaque `GET /api/executions` — et, à côté, les
+  **cartes d'hôte** (#1503) qui disent quel process porte chaque run ;
 - l'**état acquis** des runs (`acquis.py`, #1391) — un hash par run, son plan et
   les sorties de ses tâches réussies, de quoi le reprendre sur son plan : un run
   purgé n'a plus rien à reprendre, et ses sorties n'ont plus à occuper Redis ;
@@ -39,7 +40,7 @@ pas un poste désinstallé : ce qu'un utilisateur a réglé reste réglé.
 ⚠ **Les clés et les dossiers viennent des constantes Python, jamais recopiés.**
 Une constante recopiée des deux côtés d'une frontière est ce que #830 a vu
 casser : `captures.mjs` a attendu un mois un texte que l'UI ne rendait plus.
-Ici la purge **importe** `CLE_JOURNAL_EVENEMENTS`, `CLE_BATTEMENTS`,
+Ici la purge **importe** `CLE_JOURNAL_EVENEMENTS`, `CLE_BATTEMENTS`, `CLE_HOTES`,
 `PREFIXE_ACQUIS`, `FILE_TACHES`, `CANAL_BOITE_PREFIXE`, `CANAL_DIFFUSION`, et
 résout les dossiers
 par les mêmes `default()` / `racine_ingestion()` que l'API — le jour où l'un
@@ -53,8 +54,9 @@ vivante relit le sien en mémoire et continuerait de le servir. Le geste
 préalable est `bash scripts/controltower/start.sh --stop`, qui solde les runs
 et éteint les hôtes avec leur descendance ; le refus le nomme. La vitalité d'un
 hôte se lit au registre des battements (`vitalite`, #348) : ce qui bat est
-vivant et bloque, ce qui ne bat plus depuis le seuil est orphelin et ne bloque
-pas — c'est précisément ce qu'on veut ramasser.
+vivant et bloque, ce qui ne bat plus depuis le seuil — ou dont la carte désigne
+un process qui n'existe plus (#1503) — est orphelin et ne bloque pas : c'est
+précisément ce qu'on veut ramasser.
 
 `--check` dit ce qui partirait **sans rien écrire** — les mêmes comptes que le
 réel rend une fois fait —, et rend le même verdict de refus, pour qu'on sache
@@ -80,7 +82,13 @@ from urllib.request import urlopen
 
 from maestro.config import Settings, load_settings
 from maestro.controltower.acquis import PREFIXE_ACQUIS
-from maestro.controltower.battement import CLE_BATTEMENTS, VITALITE_VIVANT, vitalite
+from maestro.controltower.battement import (
+    CLE_BATTEMENTS,
+    CLE_HOTES,
+    VITALITE_VIVANT,
+    vitalite,
+)
+from maestro.controltower.carte_hote import hote_eteint
 from maestro.controltower.chat import ChatStore
 from maestro.controltower.cli import PORT_DEFAUT
 from maestro.controltower.events import REDIS_URL_DEFAUT
@@ -153,6 +161,7 @@ class Perimetre:
     espace: Espace
     journal: str
     battements: str
+    hotes: str
     prefixe_acquis: str
     file_taches: str
     prefixe_boites: str
@@ -185,6 +194,7 @@ def perimetre(settings: Settings | None = None) -> Perimetre:
         espace=espace,
         journal=espace.nommer(CLE_JOURNAL_EVENEMENTS),
         battements=espace.nommer(CLE_BATTEMENTS),
+        hotes=espace.nommer(CLE_HOTES),
         prefixe_acquis=espace.nommer(PREFIXE_ACQUIS),
         file_taches=espace.nommer(FILE_TACHES),
         prefixe_boites=espace.nommer(CANAL_BOITE_PREFIXE),
@@ -224,6 +234,7 @@ def hotes_vivants(
     client: ClientRedis,
     cle: str = CLE_BATTEMENTS,
     *,
+    cle_hotes: str | None = None,
     maintenant: datetime | None = None,
 ) -> tuple[str, ...]:
     """Les runs dont l'hôte **bat encore** — ceux qui interdisent la purge.
@@ -232,14 +243,26 @@ def hotes_vivants(
     l'entrée en partant) : on le juge donc comme un run en cours. Un battement
     périmé est un orphelin, et un orphelin ne bloque rien — le ramasser est
     exactement ce que la purge est là pour faire.
+
+    `cle_hotes` (#1503) est le hash des cartes d'hôte : un run dont la carte
+    désigne un process qui n'existe plus est orphelin tout de suite, comme l'API le
+    juge (`vitalite`, `hote_eteint`) — sans elle, un hôte tué bloquerait la purge
+    une demi-heure. Absente, la règle du seuil juge seule.
     """
     bruts = client.hgetall(cle) or {}
-    vivants = [
-        _texte(run_id)
-        for run_id, horodatage in bruts.items()
-        if vitalite(EXECUTION_EN_COURS, _texte(horodatage), maintenant=maintenant)
-        == VITALITE_VIVANT
-    ]
+    cartes_brutes = (client.hgetall(cle_hotes) or {}) if cle_hotes else {}
+    cartes = {_texte(run_id): _texte(carte) for run_id, carte in cartes_brutes.items()}
+    vivants: list[str] = []
+    for brut, horodatage in bruts.items():
+        run_id = _texte(brut)
+        verdict = vitalite(
+            EXECUTION_EN_COURS,
+            _texte(horodatage),
+            maintenant=maintenant,
+            hote_eteint=hote_eteint(cartes.get(run_id)),
+        )
+        if verdict == VITALITE_VIVANT:
+            vivants.append(run_id)
     return tuple(sorted(vivants))
 
 
@@ -304,7 +327,7 @@ def _elaguer(dossier: Path) -> None:
 def purger(client: ClientRedis, perimetre_: Perimetre, *, projets: bool) -> Inventaire:
     """Retire l'état d'exécution ; rend ce qui est parti, aux comptes d'`inventaire`."""
     compte = inventaire(client, perimetre_, projets=projets)
-    cles = [perimetre_.journal, perimetre_.battements, perimetre_.file_taches]
+    cles = [perimetre_.journal, perimetre_.battements, perimetre_.hotes, perimetre_.file_taches]
     cles.extend(_cles_de_l_acquis(client, perimetre_))
     cles.extend(_cles_des_boites(client, perimetre_))
     client.delete(*cles)
@@ -325,7 +348,11 @@ def _lignes(compte: Inventaire, perimetre_: Perimetre) -> list[str]:
     boites = f"{perimetre_.prefixe_boites}*, {perimetre_.diffusion}"
     postes = [
         ("journal des événements", perimetre_.journal, f"{compte.evenements} événement(s)"),
-        ("battements de runs", perimetre_.battements, f"{compte.battements} run(s)"),
+        (
+            "battements de runs",
+            f"{perimetre_.battements}, {perimetre_.hotes}",
+            f"{compte.battements} run(s)",
+        ),
         ("état acquis des runs", f"{perimetre_.prefixe_acquis}*", f"{compte.acquis} run(s)"),
         ("file de tâches", perimetre_.file_taches, f"{compte.taches} tâche(s)"),
         ("boîtes et diffusion", boites, f"{compte.boites} clé(s)"),
@@ -416,7 +443,9 @@ def main(
 
     api = (sonde_api or (lambda: api_repond(port_api())))()
     perimetre_ = perimetre(settings)
-    vivants = () if api else hotes_vivants(client, perimetre_.battements)
+    vivants = (
+        () if api else hotes_vivants(client, perimetre_.battements, cle_hotes=perimetre_.hotes)
+    )
 
     if check:
         compte = inventaire(client, perimetre_, projets=projets)
