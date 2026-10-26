@@ -185,6 +185,9 @@ def test_le_modele_apprend_quels_fichiers_d_instructions_les_tables_ont_vus(
     assert "INSTRUCTIONS:" in CADRE_LECTURE
     cadre = " ".join(CADRE_LECTURE.split())
     assert "quel que soit son nom" in cadre
+    # Vu sur le réel (#1542) : le prompt d'un sous-agent (`.claude/agents/…`) était retenu,
+    # et `AGENTS.md` envoyait tout agent suivre les consignes d'un seul.
+    assert "ni la définition d'un agent, d'un rôle ou d'une commande en particulier" in cadre
 
 
 # --------------------------------------------------------------------------- #

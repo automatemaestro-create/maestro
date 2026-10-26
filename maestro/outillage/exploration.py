@@ -185,10 +185,12 @@ Le fichier lu d'une COMMANDE est celui qui la justifie ; « ce que tu y as lu »
 quelques mots, sans barre verticale ; la commande vient en dernier. Un champ sans objet
 (pas de fichier de verrou, par exemple) reste vide : n'y écris rien, pas même « vide ».
 
-INSTRUCTIONS : un fichier que le projet écrit POUR LES AGENTS qui y travaillent — ses
-règles, ses conventions, sa façon de travailler —, quel que soit son nom ou son
-dossier. Un README qui présente le projet à des personnes n'en est pas un, ni un
-fichier qui ne fait qu'en importer un autre.
+INSTRUCTIONS : un fichier que le projet écrit pour TOUT AGENT qui y travaille, ou qui
+travaille dans l'un de ses dossiers — ses règles, ses conventions, sa façon de
+travailler —, quel que soit son nom ou son dossier. N'en sont pas : un README qui
+présente le projet à des personnes, un fichier qui ne fait qu'en importer un autre, ni
+la définition d'un agent, d'un rôle ou d'une commande en particulier (le prompt d'un
+sous-agent, d'une commande d'un outil) — elle ne vaut que pour lui.
 
 Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « declaree » : le fichier écrit cette commande (une cible, une tâche, un script) ;
