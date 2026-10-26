@@ -99,6 +99,41 @@ function questionDOutillageFactice(): MessageChat {
   });
 }
 
+/** La proposition de l'outillage entier d'un projet neuf, posée comme une question (#1533). */
+function propositionDOutillageFactice(): MessageChat {
+  return messageFactice({
+    agent: AGENT_ORCHESTRATION,
+    auteur: AGENT_ORCHESTRATION,
+    contenu: "L'outillage que je vous propose : npm, Vitest.",
+    question: {
+      cle: "outillage",
+      intitule: "L'outillage que je vous propose",
+      options: [],
+      recommande: "",
+      pourquoi: "Retenez-les d'un geste, ou dites ce qui doit changer.",
+      rang: 2,
+      proposition: [
+        {
+          cle: "gestionnaire",
+          valeur: "npm",
+          libelle: "npm",
+          raison: "Fourni avec Node.js.",
+          sujet: "gestionnaire",
+          commande: false,
+        },
+        {
+          cle: "tester",
+          valeur: "npm test",
+          libelle: "Vitest",
+          raison: "Natif pour TypeScript.",
+          sujet: "tests",
+          commande: true,
+        },
+      ],
+    },
+  });
+}
+
 const PIECE: PieceProposee = {
   projet_id: "prj-7f3a1c2b",
   projet_nom: "Dépensio",
@@ -216,6 +251,23 @@ describe("les gestes du fil, dans la colonne", () => {
     expect(
       within(fil).getByRole("region", { name: "Question d'outillage" }),
     ).toBeInTheDocument();
+  });
+
+  it("porte la proposition de l'outillage entier, et la retient d'ici (#1533)", async () => {
+    // Une question d'outillage de plus pour le fil, avec sa propre carte au même
+    // rang : un geste la retient, par le même verbe que toute réponse d'outillage.
+    const repondreQuestion = vi.fn<(valeur: string, libre?: boolean) => Promise<void>>(
+      async () => {},
+    );
+    poserFilAssistance({ messages: [propositionDOutillageFactice()], repondreQuestion });
+    const fil = await filDeLaColonne();
+
+    expect(gestesDe(fil)).toEqual(["Proposition d'outillage"]);
+    const carte = within(fil).getByRole("region", { name: "Proposition d'outillage" });
+    await userEvent.click(
+      within(carte).getByRole("button", { name: "Retenir cet outillage" }),
+    );
+    await waitFor(() => expect(repondreQuestion).toHaveBeenCalledWith("retenue", false));
   });
 
   it("porte la pièce d'outillage, et l'écrit d'ici (#1161)", async () => {
@@ -402,6 +454,16 @@ describe("la parité entre /chat et la colonne", () => {
     const fil = await filDeLaColonne();
     expect(gestesDe(fil)).toEqual(surLaPage);
     expect(surLaPage).toContain("Question d'outillage");
+  });
+
+  it("rend les mêmes gestes sur la proposition de l'outillage entier (#1533)", async () => {
+    poserFilAssistance({ messages: [propositionDOutillageFactice()] });
+    const surLaPage = gestesDeLaPage();
+    cleanupRendu();
+
+    const fil = await filDeLaColonne();
+    expect(gestesDe(fil)).toEqual(surLaPage);
+    expect(surLaPage).toEqual(["Proposition d'outillage"]);
   });
 
   it("rend les mêmes gestes sur une pièce d'outillage à écrire (#1161)", async () => {

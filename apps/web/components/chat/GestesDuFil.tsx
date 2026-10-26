@@ -13,7 +13,9 @@
  * d'un cran.
  *
  * ⚠ L'outillage a **deux moments**, et le second a changé de forme avec #1161 :
- * tant qu'une question attend, c'est `QuestionDOutillage` ; ensuite, ce sont les
+ * tant qu'une question attend, c'est `QuestionDOutillage` — ou, quand la question est
+ * la proposition de l'outillage entier (#1533), `PropositionDOutillage`, au même rang ;
+ * ensuite, ce sont les
  * **pièces**, une à la fois — `PieceDOutillage`, le fichier montré avec ce qui
  * changera, puis écrit sur accord. Elle remplace la carte qui concluait le
  * questionnaire en écrivant tout d'un coup (`ConclusionOutillage`, #1104), partie
@@ -121,6 +123,7 @@ import { EquipeDansLeFil } from "@/components/chat/EquipeDansLeFil";
 import { GesteSurUnRun } from "@/components/chat/GesteSurUnRun";
 import { PieceDOutillage } from "@/components/chat/PieceDOutillage";
 import { PlafondDansLeFil } from "@/components/chat/PlafondDansLeFil";
+import { PropositionDOutillage } from "@/components/chat/PropositionDOutillage";
 import { QuestionDOutillage } from "@/components/chat/QuestionDOutillage";
 import { QuestionsDuFil } from "@/components/chat/QuestionDansLeFil";
 import { ReglementDansLeFil } from "@/components/chat/ReglementDansLeFil";
@@ -131,7 +134,11 @@ import { gesteRunEnAttente } from "@/lib/gestesRun";
 import { useHorloge } from "@/lib/horloge";
 import { projetEnAttente } from "@/lib/naissance";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
-import { pieceEnAttente, questionEnAttente } from "@/lib/outillage";
+import {
+  estUneProposition,
+  pieceEnAttente,
+  questionEnAttente,
+} from "@/lib/outillage";
 import { runsAuPlafond } from "@/lib/plafond";
 import { questionsDuFil } from "@/lib/questions";
 import { reglementEnAttente } from "@/lib/reglements";
@@ -266,23 +273,36 @@ export function useGestesDuFil(
           trancher={trancherPlafond}
         />
       ))}
-      {outillage?.question && (
-        /* La `key` remet la carte à zéro d'une question à la suivante — même
-           geste et même raison que `FilDeCadrage` d'un tour de clarification au
-           suivant. Sans elle, React réutilise l'instance (même position dans
-           l'arbre), donc la sélection garde la recommandation de la question
-           **précédente** : elle n'est plus une option de celle-ci, plus rien
-           n'est coché, et le bouton enverrait une valeur que l'API refuserait.
-           Mesuré sur la stack de démo avant de le corriger (#1031). */
-        <QuestionDOutillage
-          key={outillage.question.cle}
-          question={outillage.question}
-          compris={outillage.comprehension ?? []}
-          repondre={fil.repondreQuestion}
-          depuisLeFil
-          enCours={fil.envoi}
-        />
-      )}
+      {outillage?.question &&
+        (estUneProposition(outillage.question) ? (
+          /* La proposition de l'outillage entier (#1533) : sa propre carte, au même
+             rang — c'est une question d'outillage de plus pour le fil, qui se
+             retient d'un geste ou se corrige avec ses mots. La `key` porte le rang :
+             une proposition corrigée garde la même clé de sujet. */
+          <PropositionDOutillage
+            key={`${outillage.question.cle}|${outillage.question.rang}`}
+            question={outillage.question}
+            compris={outillage.comprehension ?? []}
+            repondre={fil.repondreQuestion}
+            enCours={fil.envoi}
+          />
+        ) : (
+          /* La `key` remet la carte à zéro d'une question à la suivante — même
+             geste et même raison que `FilDeCadrage` d'un tour de clarification au
+             suivant. Sans elle, React réutilise l'instance (même position dans
+             l'arbre), donc la sélection garde la recommandation de la question
+             **précédente** : elle n'est plus une option de celle-ci, plus rien
+             n'est coché, et le bouton enverrait une valeur que l'API refuserait.
+             Mesuré sur la stack de démo avant de le corriger (#1031). */
+          <QuestionDOutillage
+            key={outillage.question.cle}
+            question={outillage.question}
+            compris={outillage.comprehension ?? []}
+            repondre={fil.repondreQuestion}
+            depuisLeFil
+            enCours={fil.envoi}
+          />
+        ))}
       {piece !== null && (
         /* La `key` est l'**empreinte** de la version montrée : une pièce corrigée
            revient au même chemin, et la carte doit repartir repliée sur son

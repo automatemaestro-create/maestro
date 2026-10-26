@@ -282,7 +282,14 @@ from maestro.messaging import (
 )
 from maestro.outillage.correction import CorrectionPrise
 from maestro.outillage.generation import empreinte
-from maestro.outillage.questionnaire import REPONSE_LIBRE_MAX, Choix, QuestionOutillage, sujet_de
+from maestro.outillage.questionnaire import (
+    PROPOSITION_RETENUE,
+    REPONSE_LIBRE_MAX,
+    Choix,
+    QuestionOutillage,
+    choix_de_la_reponse,
+    sujet_de,
+)
 from maestro.outillage.verification import Verification
 from maestro.providers.base import ModelProvider
 from maestro.sources import (
@@ -735,8 +742,20 @@ def choix_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
     C'est ce qui permet au conducteur de n'avoir aucune mémoire à lui : l'état du
     questionnaire **est** le fil, donc rouvrir la Control Tower, changer de poste ou
     recharger la page ne perd rien et ne reprend rien deux fois.
+
+    Chaque réponse est lue **avec la question qu'elle tranche** — la dernière posée
+    avant elle (#1533) : le geste qui retient une proposition vaut chacun de ses
+    éléments, cliqué (`choix_de_la_reponse`). Lu sur la structure, là encore : la
+    proposition est sur le message qui la posait, jamais recopiée dans la réponse.
     """
-    return tuple(m.choix for m in fil if m.choix is not None)
+    choix: list[Choix] = []
+    posee: QuestionOutillage | None = None
+    for message in fil:
+        if message.question is not None:
+            posee = message.question
+        if message.choix is not None:
+            choix.extend(choix_de_la_reponse(posee, message.choix))
+    return tuple(choix)
 
 
 def _question_repondue(
@@ -770,7 +789,14 @@ def _geste_de_reponse(question: QuestionOutillage, valeur: str) -> str:
     La valeur, elle, voyage sur `MessageChat.choix`, qui est ce que le conducteur
     relit. Le texte est pour l'œil, le champ pour la machine — et aucun des deux
     n'est dérivé de l'autre à la relecture.
+
+    Une proposition retenue (#1533) n'a pas d'option dont citer le libellé : le geste
+    dit qu'elle l'est, et ce qu'elle retient — les libellés de ses éléments, dans
+    l'ordre de la carte —, pour que le fil relu dise ce qui a été choisi.
     """
+    if question.proposition:
+        retenus = ", ".join(p.libelle for p in question.proposition)
+        return f"{question.intitule} → retenu tel quel : {retenus}"
     return f"{question.intitule} → {question.libelle_de(valeur)}"
 
 
@@ -3596,6 +3622,10 @@ class ServiceChat:
           `AskUserQuestion` : « use the user's custom text as the answer value »).
           Ce n'est pas un constat : le tour suivant la comprend.
 
+        Une **proposition** de l'outillage entier (#1533) n'a pas d'options : elle se
+        retient d'un geste (`PROPOSITION_RETENUE`, seule valeur admise sans mots), qui
+        vaut chacun de ses éléments cliqué (`choix_du_fil`), ou se corrige avec des mots.
+
         `QuestionIntrouvable` quand rien n'attend — c'est le `409` de l'API, et il
         couvre le double geste comme le geste tardif.
         """
@@ -3610,6 +3640,14 @@ class ServiceChat:
             valeur = " ".join(valeur.split())[:REPONSE_LIBRE_MAX]
             if not valeur:
                 raise ValueError("réponse vide : écrivez ce que vous voulez répondre.")
+        elif question.proposition:
+            # La proposition de l'outillage entier (#1533) n'a qu'un geste : la retenir.
+            # Tout autre valeur serait un constat que personne n'a vu proposer.
+            if valeur != PROPOSITION_RETENUE:
+                raise ValueError(
+                    f"cette proposition se retient telle quelle ({PROPOSITION_RETENUE!r}) "
+                    "ou se corrige avec vos mots."
+                )
         elif not question.options:
             raise ValueError(
                 "cette question se répond avec vos mots : elle n'a pas d'options."
