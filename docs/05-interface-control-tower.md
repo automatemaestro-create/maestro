@@ -7598,6 +7598,13 @@ chaque écran. Ce qu'on y fait :
 - **relire** : le récapitulatif dit combien d'agents seront créés, lesquels, et les autorisations
   décidées d'avance, sans rien ouvrir ; « Voir l'équipe » déplie chaque rôle — sa raison, l'endroit
   qui la prouve, ses instances, ses skills, ses autorisations, son playbook ;
+- **voir qui reçoit le navigateur de Maestro** (#1532) : quand le projet construit une interface web,
+  le récapitulatif nomme, sans rien ouvrir, les rôles qui le reçoivent, ce qu'ils en feront — ouvrir
+  et parcourir une page, la capturer à une largeur donnée, émuler la réduction des animations, lire
+  les erreurs de la console — et comment le retirer ; la ligne de chaque rôle le range à côté de ses
+  skills. « Retire le navigateur au testeur », dit avec ses mots, le lui retire. Une équipe sans
+  interface n'en dit rien. La forme a été tranchée sur pièces (variante B, d'après *Dust*, *Copilot
+  Studio* et *GitHub*, commentaires « Veille de conception » et « Variante retenue » de #1532) ;
 - **corriger en cochant** : décocher un rôle le retire, ses instances se règlent ;
 - **corriger avec ses mots** (#1331) : « Corriger avec vos mots », dans la rangée des gestes, ouvre
   la demande sur la carte. « Ajoute quelqu'un pour la sécurité » ajoute un rôle **composé pour ce

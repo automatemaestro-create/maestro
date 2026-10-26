@@ -621,6 +621,163 @@ def test_une_correction_muette_leve() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# ⑥ Le navigateur de Maestro (#1532) : qui construit une interface web le reçoit
+# --------------------------------------------------------------------------- #
+
+
+def _constats_web() -> Constats:
+    """Le livre de recettes de p5 : du TypeScript et des feuilles de style."""
+    return Constats(
+        langages=(
+            Langage(nom="TypeScript", fichiers=30, part=0.8, exemple="app/page.tsx"),
+            Langage(nom="CSS", fichiers=6, part=0.2, exemple="app/globals.css"),
+        ),
+        commandes=(
+            Commande(
+                usage="tester", commande="npm test", chemin="package.json", origine="declaree"
+            ),
+        ),
+    )
+
+
+def _role_web(nom: str, role: str, gabarit: str, navigateur: Any) -> dict[str, Any]:
+    return {
+        "nom": nom,
+        "role": role,
+        "raison": f"le livre de recettes a des pages (app/page.tsx) : {role} y travaille",
+        "gabarit": gabarit,
+        "navigateur": navigateur,
+    }
+
+
+EQUIPE_WEB = (
+    _role_web("dev", "Développeur Next.js", "developpeur", True),
+    _role_web("charte", "Designer UI", "designer", True),
+    _role_web("tests", "Testeur Vitest", "qa", True),
+    _role_web("ci", "Intégration continue", "devops", False),
+)
+
+
+def test_une_equipe_qui_construit_une_interface_web_recoit_le_navigateur() -> None:
+    """Le critère du ticket : le modèle juge qui regarde l'écran, et la proposition le
+    porte — rôle par rôle, dans la forme que l'écran reçoit."""
+    proposition = _compose(*EQUIPE_WEB, constats=_constats_web())
+
+    par_nom = {role.nom: role.navigateur for role in proposition.roles}
+    assert par_nom == {"dev": True, "charte": True, "tests": True, "ci": False}
+    servi = {role["nom"]: role["navigateur"] for role in proposition.to_dict()["roles"]}
+    assert servi == par_nom
+    # La personne lit son nom et son usage, servis une fois : la face de la carte et
+    # la ligne d'un rôle disent la même phrase (variante B retenue sur #1532).
+    assert proposition.to_dict()["navigateur_de_maestro"] == {
+        "libelle": "Navigateur de Maestro",
+        "usage": "ouvrir et parcourir une page, la capturer à une largeur donnée, "
+        "émuler la réduction des animations, lire les erreurs de la console",
+    }
+    # Un outil de plus dans les mains du rôle — son profil outillé ne bouge pas.
+    dev = next(r for r in proposition.roles if r.nom == "dev")
+    assert not any("navigateur" in outil for outil in dev.outils)
+
+
+def test_une_equipe_sans_interface_ne_recoit_pas_le_navigateur() -> None:
+    """Un pipeline d'apprentissage n'a rien à regarder dans un navigateur : le modèle ne
+    le donne pas, et un rôle qui ne dit rien n'en reçoit pas."""
+    proposition = _compose(ROLE_ML, constats=_constats_ml())
+    assert [role.navigateur for role in proposition.roles] == [False]
+
+
+@pytest.mark.parametrize("brut", ["true", "oui", 1, None])
+def test_un_navigateur_hors_contrat_n_est_pas_donne(brut: Any) -> None:
+    """« oui » écrit en toutes lettres n'est pas une décision qu'on lit : hors contrat,
+    le rôle ne reçoit rien — jamais deviné."""
+    proposition = _compose(
+        _role_web("dev", "Développeur Next.js", "developpeur", brut), constats=_constats_web()
+    )
+    assert proposition.roles[0].navigateur is False
+
+
+def test_le_cadre_nomme_le_navigateur_et_dit_qui_le_recoit() -> None:
+    cadre = " ".join(CADRE_COMPOSITION.split())
+    assert "Maestro a un navigateur" in cadre
+    assert '"navigateur": true' in cadre
+    assert "Un projet sans interface web n'en a pas besoin" in cadre
+    # Le contrat de correction le porte aussi : retirer ou donner, en mots.
+    assert '"navigateur": {"nom d\'un rôle de l\'équipe montrée": false}' in cadre
+
+
+EQUIPE_WEB_MONTREE = (
+    MembreActuel(nom="dev", role="Développeur Next.js", navigateur=True),
+    MembreActuel(nom="tests", role="Testeur Vitest", navigateur=True),
+    MembreActuel(nom="ci", role="Intégration continue"),
+)
+
+
+def test_retire_le_navigateur_au_testeur_est_compris() -> None:
+    """La personne le retire **en mots** : le modèle sait qui l'a (l'équipe montrée le
+    dit), et la correction ne nomme que des rôles montrés, d'un booléen strict."""
+    constats = _constats_web()
+    prompt = prompt_correction(
+        constats, recommander(constats), (), "retire le navigateur au testeur", EQUIPE_WEB_MONTREE
+    )
+    assert "- tests — Testeur Vitest (a le navigateur de Maestro)" in prompt
+    assert "- ci — Intégration continue\n" in prompt
+
+    correction = corriger_equipe(
+        constats,
+        recommander(constats),
+        lire_reponse(
+            _json(navigateur={"tests": False, "inconnu": False, "dev": "non"}, reponse="")
+        ),
+        equipe=EQUIPE_WEB_MONTREE,
+    )
+
+    assert correction.navigateur == {"tests": False}
+    assert correction.to_dict()["navigateur"] == {"tests": False}
+    # Muet, le modèle a quand même changé l'équipe : la phrase par défaut le dit.
+    assert "navigateur de Maestro retiré à : tests" in correction.reponse
+
+
+def test_donne_le_navigateur_a_l_integration_continue_est_compris() -> None:
+    constats = _constats_web()
+    correction = corriger_equipe(
+        constats,
+        recommander(constats),
+        lire_reponse(_json(navigateur={"ci": True}, reponse="C'est fait.")),
+        equipe=EQUIPE_WEB_MONTREE,
+    )
+    assert correction.navigateur == {"ci": True}
+
+
+def test_un_navigateur_mal_place_dans_une_composition_ne_la_fait_pas_tomber() -> None:
+    """Posé au mauvais niveau, il est ignoré : l'équipe ne se perd pas pour autant."""
+    reponse = lire_reponse(_json(roles=[ROLE_MOBILE], navigateur=True))
+    assert reponse.navigateur == {}
+    assert reponse.roles
+
+
+def test_les_regles_de_repli_donnent_le_navigateur_a_qui_regarde_l_ecran() -> None:
+    """Quand le modèle ne répond pas, les règles le donnent aux rôles qui écrivent,
+    conçoivent ou vérifient une interface constatée — à eux seuls."""
+    web = proposer_equipe(_constats_web(), recommander(_constats_web()), projet_id=PROJET)
+    assert {role.nom: role.navigateur for role in web.roles} == {
+        "dev": True,
+        "interface": True,
+        "tests": True,
+    }
+
+    ml = proposer_equipe(_constats_ml(), recommander(_constats_ml()), projet_id=PROJET)
+    assert not any(role.navigateur for role in ml.roles)
+
+
+def test_un_projet_neuf_declare_application_web_recoit_le_navigateur_par_les_regles() -> None:
+    """Sur un projet neuf, aucun fichier ne prouve encore l'interface : la réponse le dit."""
+    choix = (Choix(cle="nature", valeur="application-web"), Choix(cle="langages", valeur="ts"))
+    constats = constats_depuis_choix(choix)
+    proposition = proposer_equipe(constats, recommandation_depuis_choix(choix), choix=choix)
+    assert any(role.navigateur for role in proposition.roles)
+
+
+# --------------------------------------------------------------------------- #
 # Le service : le modèle d'abord, les règles en repli, dites comme telles
 # --------------------------------------------------------------------------- #
 
@@ -987,6 +1144,35 @@ def test_la_route_de_correction_refuse_une_demande_vide(
     )
 
     assert reponse.status_code == 422
+
+
+def test_la_route_de_correction_retire_le_navigateur_a_un_role_montre(
+    client_http: tuple[TestClient, _FournisseurEcrit], atelier: Path
+) -> None:
+    """#1532 : « retire le navigateur au testeur », par l'appel que la carte fait — le
+    modèle sait qui l'a, puisque l'équipe montrée le dit."""
+    client, fournisseur = client_http
+    projet = _declarer_flutter(client, atelier)
+    fournisseur._reponses.append(
+        _json(navigateur={"tests": False}, reponse="Le testeur n'a plus le navigateur.")
+    )
+
+    reponse = client.post(
+        f"/api/projets/{projet}/equipe/correction",
+        json={
+            "demande": "retire le navigateur au testeur",
+            "equipe": [
+                {"nom": "dev", "role": "Développeur", "navigateur": True},
+                {"nom": "tests", "role": "QA", "navigateur": True},
+            ],
+        },
+    )
+
+    assert reponse.status_code == 200, reponse.text
+    servi = reponse.json()
+    assert servi["navigateur"] == {"tests": False}
+    assert servi["retraits"] == []
+    assert "tests — QA (a le navigateur de Maestro)" in fournisseur.demandes[0][0]
 
 
 def test_la_route_de_correction_rend_502_quand_le_modele_ne_repond_pas(

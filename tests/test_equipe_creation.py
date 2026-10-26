@@ -33,7 +33,9 @@ import pytest
 
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.configuration import ConfigurationAgents
-from maestro.agents.mcp import McpStore
+from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp
+from maestro.agents.navigateur import ID_INTEGRATION as ID_NAVIGATEUR
+from maestro.agents.navigateur import integration_navigateur
 from maestro.agents.permissions import EntreeArbitrage, PermissionStore, PolitiqueOutils
 from maestro.agents.playbook_du_code import roles_du_code
 from maestro.agents.playbooks import PlaybookStore
@@ -47,6 +49,7 @@ from maestro.equipe import (
     AUCUN_SKILL_ECRIT,
     INSTANCES_MAX_CREEES,
     INTRO_SKILLS,
+    TITRE_NAVIGATEUR,
     TITRE_SKILLS,
     EquipeCreee,
     RoleValide,
@@ -58,7 +61,11 @@ from maestro.equipe import (
     sans_commandes_figees,
     skills_constates,
 )
-from maestro.equipe.creation import TITRES_SKILLS_ANTERIEURS, scinder_section_skills
+from maestro.equipe.creation import (
+    TITRES_SKILLS_ANTERIEURS,
+    scinder_section_skills,
+    section_navigateur,
+)
 from maestro.projets.store import ProjetStore
 
 
@@ -533,6 +540,125 @@ def test_un_role_a_qui_rien_n_etait_recommande_garde_sa_phrase() -> None:
 
     assert AUCUN_SKILL in playbook_branche(constate)
     assert AUCUN_SKILL_ECRIT not in playbook_branche(constate)
+
+
+# --- ④ Le navigateur de Maestro (#1532) --------------------------------------
+
+
+def _service_equipe(tmp_path: Path) -> tuple[ServiceEquipe, ConfigurationAgents, str]:
+    """Le service, son navigateur fabriqué sans regarder le poste."""
+    _, gabarits, projet_id = _service(tmp_path)
+    depot = ProjetStore(tmp_path / "projets")
+    service = ServiceEquipe(
+        ServiceProjets(depot),
+        gabarits,
+        playbooks=False,
+        navigateur=lambda: integration_navigateur(canal="msedge", sorties=tmp_path / "sorties"),
+    )
+    return service, gabarits, projet_id
+
+
+def test_un_role_equipe_du_navigateur_le_monte_a_sa_tache_et_son_playbook_le_nomme(
+    tmp_path: Path,
+) -> None:
+    """Le critère du ticket, de la validation au montage : le pool du projet porte le
+    navigateur, il s'active pour le rôle qui le reçoit, et l'exécuteur le monte à sa
+    tâche (`McpStore.lire`, ce que `_serveurs_mcp` appelle) — sous le nom de Maestro."""
+    service, gabarits, projet_id = _service_equipe(tmp_path)
+
+    rapport = service.creer(
+        projet_id,
+        [_role(navigateur=True), _role("infra", role="Intégration continue", gabarit="devops")],
+    )
+
+    assert [a["navigateur"] for a in rapport["agents"]] == [True, False]
+    mcp = gabarits.pour_projet(projet_id).mcp
+    (integration,) = mcp.pool()
+    assert integration.id == ID_NAVIGATEUR
+    assert mcp.activations("dev") == (ID_NAVIGATEUR,)
+    assert mcp.activations("infra") == ()
+    (monte,) = gabarits.mcp.pour_projet(projet_id).lire("dev")
+    assert monte.nom == "navigateur"
+    assert "--browser=msedge" in monte.args
+    assert gabarits.mcp.pour_projet(projet_id).lire("infra") == ()
+    # Le playbook le nomme ; celui qui ne l'a pas n'en dit rien.
+    playbook = _playbook_ecrit(gabarits, projet_id)
+    assert TITRE_NAVIGATEUR in playbook
+    assert "`mcp__navigateur__`" in playbook
+    assert "N'écris pas ton propre banc" in playbook
+    assert TITRE_NAVIGATEUR not in _playbook_ecrit(gabarits, projet_id, "infra")
+    # Rien au niveau des gabarits, qui n'appartiennent à personne.
+    assert gabarits.mcp.pool() == ()
+
+
+def test_une_equipe_sans_navigateur_ne_touche_pas_au_pool(tmp_path: Path) -> None:
+    fabrique: list[str] = []
+    _, gabarits, projet_id = _service(tmp_path)
+    service = ServiceEquipe(
+        ServiceProjets(ProjetStore(tmp_path / "projets")),
+        gabarits,
+        playbooks=False,
+        navigateur=lambda: fabrique.append("appelé") or integration_navigateur(),
+    )
+
+    service.creer(projet_id, [_role()])
+
+    assert fabrique == []
+    assert gabarits.pour_projet(projet_id).mcp.pool() == ()
+    assert not (gabarits.mcp.racine / SEGMENT_PROJETS / projet_id / "pool.json").exists()
+
+
+def test_un_navigateur_deja_au_pool_est_repris_tel_quel(tmp_path: Path) -> None:
+    """Réglé par la personne depuis les intégrations — ou par une équipe précédente : ce
+    qui y est a été décidé par quelqu'un, et la création ne le réécrit pas."""
+    service, gabarits, projet_id = _service_equipe(tmp_path)
+    mcp = gabarits.pour_projet(projet_id).mcp
+    regle = IntegrationMcp(
+        id=ID_NAVIGATEUR,
+        serveur=ServeurMcp(nom="mon-navigateur", type="stdio", commande="npx", args=("x",)),
+    )
+    mcp.ecrire_pool([regle])
+    mcp.ecrire_activations("dev", ["autre"])  # une activation que l'agent avait déjà
+
+    service.creer(projet_id, [_role(navigateur=True)])
+
+    assert mcp.pool() == (regle,)
+    assert mcp.activations("dev") == ("autre", ID_NAVIGATEUR)
+
+
+def test_un_pool_illisible_refuse_l_equipe_sans_rien_ecrire(tmp_path: Path) -> None:
+    """Un rôle à qui l'on a promis le navigateur ne naît pas sans lui — ni la demi-équipe
+    qu'un refus après la première fiche laisserait."""
+    service, gabarits, projet_id = _service_equipe(tmp_path)
+    racine = gabarits.mcp.racine / SEGMENT_PROJETS / projet_id
+    racine.mkdir(parents=True)
+    (racine / "pool.json").write_text("{pas du json", encoding="utf-8")
+
+    with pytest.raises(EquipeRefusee) as refus:
+        service.creer(projet_id, [_role("tests", role="QA"), _role(navigateur=True)])
+
+    assert [r.nom for r in refus.value.refus] == ["dev"]
+    assert "navigateur de Maestro" in refus.value.refus[0].raison
+    assert gabarits.pour_projet(projet_id).agents.noms() == ()
+
+
+def test_la_section_du_navigateur_se_repose_et_se_retire_sans_s_empiler() -> None:
+    """Idempotente comme celle des skills : reposée, elle remplace ; le navigateur retiré
+    en mots, elle part — et la régénération du corps la met de côté avec les skills."""
+    une_fois = playbook_branche(_role(navigateur=True))
+    deux_fois = playbook_branche(_role(playbook=une_fois, navigateur=True))
+    assert deux_fois == une_fois
+    assert deux_fois.count(TITRE_NAVIGATEUR) == 1
+
+    retire = playbook_branche(_role(playbook=une_fois, navigateur=False))
+    assert TITRE_NAVIGATEUR not in retire
+    assert TITRE_SKILLS in retire
+
+    corps, sections = scinder_section_skills(une_fois)
+    assert corps == "Tu écris le code de Dépensio."
+    assert sections.startswith(TITRE_SKILLS)
+    assert TITRE_NAVIGATEUR in sections
+    assert section_navigateur() in sections
 
 
 # --- ⑤ Le skill fait foi : le playbook ne fige aucune commande (#1520) ---------

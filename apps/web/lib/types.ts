@@ -3274,6 +3274,21 @@ export type RoleEquipe = {
   skills: SkillEquipe[];
   autorisations: AutorisationEquipe[];
   politique: PolitiqueEquipe;
+  /**
+   * Le rôle reçoit le navigateur de Maestro (#1532) — proposé par la composition
+   * à qui regarde l'écran d'un projet web. Absent d'une proposition servie avant.
+   */
+  navigateur?: boolean;
+};
+
+/**
+ * Ce que la personne lit du navigateur de Maestro (`navigateur_de_maestro()`,
+ * #1532) : son nom et son usage, servis une fois avec la proposition — la face de
+ * la carte et la ligne d'un rôle lisent la même phrase.
+ */
+export type NavigateurDeMaestro = {
+  libelle: string;
+  usage: string;
 };
 
 /**
@@ -3311,6 +3326,8 @@ export type PropositionEquipe = {
    * avant #1159.
    */
   composition?: { origine: string; raison: string };
+  /** Le navigateur de Maestro, dit une fois (#1532). Absent avant. */
+  navigateur_de_maestro?: NavigateurDeMaestro;
   roles: RoleEquipe[];
   ecartes: RoleEcarteEquipe[];
   instances_total: number;
@@ -3327,6 +3344,8 @@ export type MembreEquipe = {
   role: string;
   retenu: boolean;
   instances: number;
+  /** Le rôle a, à l'écran, le navigateur de Maestro (#1532). */
+  navigateur: boolean;
 };
 
 /**
@@ -3343,6 +3362,11 @@ export type CorrectionEquipe = {
   retraits: string[];
   remis: string[];
   instances: Record<string, number>;
+  /**
+   * À qui le navigateur de Maestro est donné (`true`) ou retiré (`false`), parmi
+   * les rôles montrés (#1532). Absent d'une correction servie avant.
+   */
+  navigateur?: Record<string, boolean>;
   cree: boolean;
 };
 
@@ -3399,6 +3423,8 @@ export type RoleValideEquipe = {
   gabarit: string;
   skills: { nom: string; chemin: string; commandes: string[] }[];
   politique: PolitiqueEquipe | null;
+  /** Le rôle reçoit le navigateur de Maestro, tel que la carte l'a montré (#1532). */
+  navigateur: boolean;
 };
 
 /** Un agent que la validation a créé dans le projet (`AgentCree.to_dict`, #1040). */

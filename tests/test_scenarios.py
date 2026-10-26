@@ -5949,6 +5949,16 @@ def test_l_equipe_validee_reprend_la_proposition_telle_quelle() -> None:
     ]
 
 
+def test_l_equipe_validee_garde_le_navigateur_que_la_proposition_a_donne() -> None:
+    """#1532 : le banc qui rejoue p5 valide l'équipe avec l'outil qu'on lui a montré —
+    l'omettre ferait mesurer une équipe privée du navigateur."""
+    proposition = {"roles": [{**_role("dev-1"), "navigateur": True}, _role("ci-1")]}
+
+    validee = equipe_validee(proposition)
+
+    assert [r["navigateur"] for r in validee["roles"]] == [True, False]
+
+
 def test_un_statut_inattendu_leve_avec_son_chemin() -> None:
     class ApiQuiRefuse:
         def demander(self, methode: str, chemin: str, **reste: Any) -> Reponse:

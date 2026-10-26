@@ -1203,12 +1203,14 @@ class MembreEquipeRequete(BaseModel):
     Le nom, le libellé, et les deux choses que la personne a pu ajuster : la case
     (`retenu`) et le nombre d'instances. Ni playbook ni politique : la correction
     ne les lit pas, et ce qui repart à la création reste ce que l'écran tient.
+    `navigateur` (#1532) : ce rôle a-t-il, à l'écran, le navigateur de Maestro.
     """
 
     nom: str
     role: str = ""
     retenu: bool = True
     instances: int = 1
+    navigateur: bool = False
 
 
 class CorrectionEquipeRequete(QuestionnaireOutillageRequete):
@@ -1224,7 +1226,13 @@ class CorrectionEquipeRequete(QuestionnaireOutillageRequete):
     def membres(self) -> list[MembreActuel]:
         """L'équipe montrée en objets du domaine."""
         return [
-            MembreActuel(nom=m.nom, role=m.role, retenu=m.retenu, instances=m.instances)
+            MembreActuel(
+                nom=m.nom,
+                role=m.role,
+                retenu=m.retenu,
+                instances=m.instances,
+                navigateur=m.navigateur,
+            )
             for m in self.equipe
         ]
 
@@ -1292,6 +1300,9 @@ class RoleEquipeRequete(BaseModel):
     celles de `maestro.equipe.creation` et se vérifient là-bas, avec les autres
     refus, pour qu'un refus de forme et un refus de fond se lisent au même
     endroit.
+
+    `navigateur` (#1532) : le rôle reçoit le navigateur de Maestro, tel que l'écran
+    l'a montré — proposé, puis retiré ou donné en mots. Absent : il ne le reçoit pas.
     """
 
     nom: str
@@ -1302,6 +1313,7 @@ class RoleEquipeRequete(BaseModel):
     gabarit: str = ""
     skills: list[SkillEquipeRequete] = []
     politique: dict[str, Any] | None = None
+    navigateur: bool = False
 
 
 class EquipeValideeRequete(BaseModel):
@@ -1343,6 +1355,7 @@ class EquipeValideeRequete(BaseModel):
                 politique=(
                     None if r.politique is None else PolitiqueOutils.from_dict(r.politique)
                 ),
+                navigateur=r.navigateur,
             )
             for r in self.roles
         ]
