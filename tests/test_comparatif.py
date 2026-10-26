@@ -52,7 +52,7 @@ from maestro.controltower.state import (
     EXECUTION_TERMINEE,
     VALIDATION_EN_ATTENTE,
 )
-from maestro.providers.base import SessionAgent
+from maestro.providers.base import LimiteUsageAtteinte, SessionAgent
 from maestro.sandbox.verification import Execution
 from maestro.scenarios import comparatif as cmp
 from maestro.scenarios import couverture as cv
@@ -515,7 +515,7 @@ def test_l_agent_seul_recoit_le_meme_message_par_l_adaptateur(tmp_path: Path) ->
 
 def test_l_agent_seul_arrete_par_la_limite_d_usage_est_empeche(tmp_path: Path) -> None:
     """Le classement du produit (`cause_de`), pas un motif relu ici."""
-    passage, _ = _seul(tmp_path, FournisseurFactice(leve=RuntimeError("Usage limit reached")))
+    passage, _ = _seul(tmp_path, FournisseurFactice(leve=LimiteUsageAtteinte("limite atteinte")))
     assert passage.issue == cmp.EMPECHE
     assert not passage.compte
 
@@ -1078,7 +1078,7 @@ def test_l_agent_seul_se_joue_sans_api(tmp_path: Path) -> None:
 
 
 def test_tous_les_passages_empeches_sont_une_abstention(tmp_path: Path) -> None:
-    fournisseur = FournisseurFactice(leve=RuntimeError("rate limit"))
+    fournisseur = FournisseurFactice(leve=LimiteUsageAtteinte("limite atteinte"))
     code, _, _, rapports = _main(tmp_path, "--cote", "seul", fournisseur=fournisseur)
     assert code == cmp.CODE_AUCUN_PASSAGE
     donnees = json.loads((rapports / "20261015-120000" / cmp.FICHIER_JSON).read_text("utf-8"))

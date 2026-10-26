@@ -728,7 +728,9 @@ def jouer_maestro(
         if statut == EXECUTION_TERMINEE:
             _revue_d_apres_le_run(ctx, conversation, run_id, repondre=objectif.repondre)
             return passage(ABOUTI, f"le run s'est terminé ({lance.equipe})")
-        if cause == CAUSE_LIMITE_USAGE:
+        # Soldé sur la limite, ou encore en pause sur elle quand le banc cesse de
+        # suivre (#1543) : dans les deux cas le fournisseur a empêché le passage.
+        if CAUSE_LIMITE_USAGE in (cause, str(detail.get("pause_cause") or "")):
             return passage(EMPECHE, "le fournisseur a opposé sa limite d'usage au run")
         return passage(
             NON_ABOUTI,

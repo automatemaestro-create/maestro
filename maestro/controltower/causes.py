@@ -18,35 +18,31 @@ Ce module ne crée aucune cause, il les **classe**. Le code qu'il rend voyage su
 d'origine reste intact à côté, parce qu'un code dit *de quoi* il s'agit et
 jamais *ce qui s'est passé* (quelle borne, quel montant, quel process).
 
-Deux choix à ne pas défaire.
+Un choix à ne pas défaire.
 
-**La classification est un `isinstance`, pas une lecture de texte** — sauf pour
-la limite d'usage, qui n'a aucun type. C'est un manque réel et non un oubli :
-rien dans `maestro/` ne détecte aujourd'hui un 429, une limite d'abonnement ou
-un solde épuisé ; `est_transitoire` les range même parmi les aléas relançables,
-faute de savoir les reconnaître. Les marqueurs ci-dessous sont donc **repris de
-l'outillage**, qui affronte la même question depuis #171
-(`scripts/orchestrate/run.sh`, `limite_atteinte`) — deux listes à tenir
-d'accord seraient le premier moyen pour que le produit et le pilote ne
-reconnaissent pas la même panne.
+**La classification est un `isinstance`, jamais une lecture de texte** — et
+depuis #1543, sans exception. La limite d'usage était la seule cause reconnue au
+texte, faute de type : un motif repris de `scripts/orchestrate/run.sh`
+(`usage limit reached|rate.?limit|…`) cherché dans le message de l'erreur. Le
+2026-10-15, le CLI a écrit « You've hit your session limit · resets 12pm », que
+le motif ne reconnaissait pas : la tâche s'est soldée en échec, et le run avec
+elle (`0300f3ffdddf`, docs/51 § 4.2). Lire une panne dans son texte est ce que
+docs/44 écarte. Chaque adaptateur mue désormais son signal natif — l'événement
+typé du flux du CLI, le statut 429 d'un endpoint — en `LimiteUsageAtteinte`, et
+c'est ce type que ce module reconnaît.
 
-**Le texte examiné est celui de l'exception, jamais le stderr collecté** (#346).
-La tentation est grande : le stderr en dit souvent plus. Mais il porte aussi la
-télémétrie du CLI, qui place en tête de chaque flux un
-`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed",…}}` — une
-ligne qui *rapporte* la fenêtre en cours et n'annonce aucune limite. C'est
-exactement le piège de #203, où un run est parti dormir jusqu'au reset après
-avoir livré son ticket. Chercher « rate limit » dans ce flux ferait donc nommer
-« limite d'usage » à peu près tous les échecs.
+Le piège que le motif devait éviter reste un piège, et il vit chez l'adaptateur
+qui lit le flux (`maestro.providers.claude._VeilleLimite`) : le CLI ouvre chaque
+session sur un `rate_limit_event` au statut `allowed`, qui *rapporte* la fenêtre
+en cours et n'annonce aucune limite (#203). Seul le statut `rejected` est un refus.
 """
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from maestro.controltower.hote import DemarrageHoteRate
-from maestro.providers.base import TurnLimitReached
+from maestro.providers.base import LimiteUsageAtteinte, TurnLimitReached
 from maestro.telemetry import PlafondDepenseDepasse
 
 if TYPE_CHECKING:
@@ -64,7 +60,10 @@ CAUSE_PLAFOND_TOURS = "plafond_tours"
 CAUSE_PLAFOND_COUT = "plafond_cout"
 
 #: Le fournisseur a refusé de servir : limite d'usage de l'abonnement, quota,
-#: 429, solde épuisé. La seule cause reconnue au texte (voir l'en-tête).
+#: 429, solde épuisé — `LimiteUsageAtteinte`, que chaque adaptateur lève (#1543).
+#: Elle nomme aussi la **pause** d'un run qui attend la levée de la limite
+#: (`maestro.controltower.limite`), et c'est le même fait : le run ne s'arrête plus
+#: dessus, il attend.
 CAUSE_LIMITE_USAGE = "limite_usage"
 
 #: L'hôte du run n'a pas démarré (#443, `DemarrageHoteRate`). À distinguer d'un
@@ -111,26 +110,12 @@ CAUSES = (
     CAUSE_TACHES_EN_ECHEC,
 )
 
-#: Ce qui trahit une limite d'usage du fournisseur dans le message d'un échec.
-#: **Repris tel quel** de `scripts/orchestrate/run.sh` (`limite_atteinte`, #171),
-#: qui pose la même question sur la même matière depuis plus longtemps que nous.
-#: Le motif est insensible à la casse et cherche une **sous-chaîne** : un message
-#: de CLI n'a pas de forme stable, et exiger un format le rendrait faux au
-#: premier changement de libellé.
-_MOTIF_LIMITE_USAGE = re.compile(
-    r"usage limit reached|rate.?limit|too many requests"
-    r"|\"?api_error_status\"?\s*:?\s*\"?429|credit balance",
-    re.IGNORECASE,
-)
-
-
 def cause_de(erreur: BaseException) -> str:
     """La cause nommée de `erreur` — chaîne vide si aucune ne s'applique.
 
-    L'ordre des tests est celui de la **précision** : les types d'abord, le texte
-    en dernier. Un `TurnLimitReached` dont le message citerait « rate limit »
-    reste un plafond de tours — c'est ce que le moteur *sait*, contre ce qu'un
-    message *suggère*.
+    Rien que des types : un message qui cite « rate limit » ne nomme rien, et un
+    `TurnLimitReached` qui le citerait reste un plafond de tours — c'est ce que le
+    moteur *sait*, contre ce qu'un message *suggère*.
 
     Rendre `""` plutôt qu'une cause fourre-tout est un choix. Un échec que ce
     module ne sait pas classer n'est pas « inconnu » au sens où il faudrait
@@ -144,14 +129,14 @@ def cause_de(erreur: BaseException) -> str:
         return CAUSE_PLAFOND_COUT
     if isinstance(erreur, DemarrageHoteRate):
         return CAUSE_HOTE
+    if isinstance(erreur, LimiteUsageAtteinte):
+        return CAUSE_LIMITE_USAGE
     # `CancelledError` hérite de `BaseException` et non d'`Exception` : la
     # nommer ici suppose qu'un appelant la rattrape, ce que `_derouler` fait
     # explicitement avant de la relancer. Elle est traitée pour les appelants
     # qui, eux, la soldent (l'hôte détaché).
     if isinstance(erreur, BaseException) and type(erreur).__name__ == "CancelledError":
         return CAUSE_ANNULATION
-    if _MOTIF_LIMITE_USAGE.search(str(erreur)):
-        return CAUSE_LIMITE_USAGE
     return ""
 
 

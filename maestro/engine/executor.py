@@ -79,7 +79,7 @@ from maestro.agents.permissions import (
     Verdict,
 )
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
-from maestro.agents.runtime import AgentRuntime
+from maestro.agents.runtime import AgentRuntime, AttenteReprise
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import AgentStore, catalogue_du_projet
 from maestro.decideur import Decideur
@@ -110,6 +110,12 @@ from maestro.engine.guardrails import (
     Guardrails,
     RefusParDefaut,
     detail_accorde,
+)
+from maestro.engine.limite import (
+    AttenteLimite,
+    LimiteDuRun,
+    RendezVousLimite,
+    phrase_de_la_limite,
 )
 from maestro.engine.plafond import (
     STATUT_TACHE_SUSPENDUE,
@@ -164,6 +170,7 @@ from maestro.projets.store import ProjetStore
 from maestro.providers.activite import PERIODE_ACTIVITE_S
 from maestro.providers.arbitrage import Arbitre, ArbitreActe, BornesArbitrage
 from maestro.providers.base import (
+    LimiteUsageAtteinte,
     McpServerUnavailable,
     ModelProvider,
     UnsupportedCapability,
@@ -1023,8 +1030,17 @@ class LocalExecutor(TaskExecutor):
         suspendre_sur_prerequis: bool = False,
         registre_mcp: Callable[[], RegistreMcp] | None = None,
         plafonds: Plafonds | None = None,
+        attente_limite: AttenteLimite | None = None,
     ) -> None:
         self._provider = provider
+        # L'attente du run à la limite d'usage du fournisseur (#1543) — en pratique
+        # `maestro.controltower.limite.AttenteLimiteControlTower`, derrière le
+        # rendez-vous qui en fait **une** attente par run, quel que soit le nombre
+        # de tâches que la limite coupe. None : personne pour tenir la pause, et une
+        # tâche coupée échoue sur sa limite, nommée par son type — la conduite d'avant.
+        self._rendez_vous_limite = (
+            RendezVousLimite(attente_limite) if attente_limite is not None else None
+        )
         # Une tâche à qui il manque un prérequis constaté (#1181) est **suspendue**
         # plutôt qu'échouée : son étape se consigne « en attente d'un humain »
         # (`STATUT_EN_ATTENTE_VALIDATION`), et la boucle propose le remède dans le
@@ -3419,8 +3435,12 @@ class LocalExecutor(TaskExecutor):
                         # Le budget du run est dépensé (#1178) : c'est une borne,
                         # pas un échec à rattraper — une tentative de plus coûterait.
                         # Et c'est la personne qui en décide (#1182) : la boucle
-                        # met la tâche de côté et lui demande.
-                        rattrapable=not isinstance(exc, PlafondDepenseDepasse),
+                        # met la tâche de côté et lui demande. Une limite d'usage
+                        # qu'aucune attente n'a pu tenir (#1543) non plus : une
+                        # tentative différente retomberait sur la même limite.
+                        rattrapable=not isinstance(
+                            exc, PlafondDepenseDepasse | LimiteUsageAtteinte
+                        ),
                         au_plafond=isinstance(exc, PlafondDepenseDepasse),
                         # Un serveur MCP injoignable (#1181) : ce qui manque est
                         # constaté, en données — la procédure d'accès que la
@@ -3828,6 +3848,54 @@ class LocalExecutor(TaskExecutor):
             )
 
         return arbitre
+
+    def _a_la_limite(
+        self,
+        task: Task,
+        agent: Agent,
+        journal: RunJournal | None,
+        credit: CreditArbitrage,
+    ) -> AttenteReprise | None:
+        """Ce que fait la tâche quand le fournisseur lui oppose sa limite d'usage (#1543).
+
+        Elle l'**attend**, et le run avec elle : le rendez-vous du run met le run en
+        pause et rend la main au reset ou sur « Reprendre » — une attente pour toutes
+        les tâches que la limite coupe (`maestro.engine.limite`). L'attente est dite
+        au fil de la tâche à son début et à sa fin, sur l'activité de la tâche, sans
+        rien changer à son statut : elle reste en cours, elle n'a rien raté.
+
+        Le temps passé à attendre ouvre une fenêtre du crédit de la tâche, comme une
+        décision humaine (#584) : un délai par tâche ne tue jamais une tâche qui
+        attend la levée d'une limite — elle ne consomme rien, et « Reprendre » est un
+        geste humain.
+
+        None quand personne ne tient la pause (aucune attente câblée) ou qu'aucun
+        journal ne la dirait : la limite remonte alors, et la tâche échoue sur elle.
+        """
+        rendez_vous = self._rendez_vous_limite
+        if rendez_vous is None or journal is None:
+            return None
+
+        async def attendre(limite: LimiteUsageAtteinte) -> None:
+            faits = LimiteDuRun(
+                run_id=journal.run_id,
+                projet_id=task.projet_id,
+                tache_id=task.id,
+                titre=task.titre,
+                reprise_a=limite.reprise_a,
+                detail=str(limite),
+            )
+            self._consigne_activite(task, agent, phrase_de_la_limite(faits), journal)
+            with credit.attente():
+                await rendez_vous.attendre(faits)
+            self._consigne_activite(
+                task,
+                agent,
+                "limite d'usage levée — la tâche reprend dans sa session",
+                journal,
+            )
+
+        return attendre
 
     def _consigne_activite(
         self,
@@ -4457,6 +4525,9 @@ class LocalExecutor(TaskExecutor):
                         ),
                         machine=machine,
                         miroir=miroir,
+                        # La limite d'usage (#1543) : la tâche l'attend dans son
+                        # espace, le run en pause, puis reprend dans sa session.
+                        on_limite=self._a_la_limite(task, agent, journal, deliberation.credit),
                     )
                     return outcome.resume, outcome.fichiers
                 except UnsupportedCapability:
@@ -4471,16 +4542,30 @@ class LocalExecutor(TaskExecutor):
         # texte-seul — l'appel est au bit près celui d'avant ce lot.
         reglage = self._provider.effort_admis(agent.modele, agent.effort)
         prompt = _build_task_prompt(description, task.format_sortie)
+        a_la_limite = self._a_la_limite(task, agent, journal, deliberation.credit)
 
         async def livrer(message: str) -> str:
-            return await self._provider.generate(
-                message,
-                model=agent.modele,
-                system_prompt=(
-                    playbook.contenu if playbook is not None else agent.prompt_systeme
-                ),
-                **({"effort": reglage} if reglage else {}),
-            )
+            while True:
+                try:
+                    return await self._provider.generate(
+                        message,
+                        model=agent.modele,
+                        system_prompt=(
+                            playbook.contenu if playbook is not None else agent.prompt_systeme
+                        ),
+                        **({"effort": reglage} if reglage else {}),
+                    )
+                except LimiteUsageAtteinte as limite:
+                    # Le chemin texte n'a pas de session à rouvrir (#1543) : la limite
+                    # levée, le même message repart — l'appel n'avait rien produit.
+                    if a_la_limite is None:
+                        raise
+                    try:
+                        await a_la_limite(limite)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as attente_en_panne:
+                        raise limite from attente_en_panne
 
         sortie = await livrer(prompt)
         # La recette d'un livrable texte (#1177) : aucune commande à jouer, rien que
