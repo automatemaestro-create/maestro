@@ -70,7 +70,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from maestro.outillage.detection import CHEMIN_MANIFESTE, lire_texte
-from maestro.projets.modele import Projet
+from maestro.projets.modele import Perimetre, Projet
 from maestro.projets.perimetre import motifs_compiles
 from maestro.sandbox.en_place import DOSSIER_ATELIER
 
@@ -399,6 +399,18 @@ def est_au_projet(chemin: str, declares: Collection[str]) -> bool:
     que sa racine ne porte que l'outillage (`OutillageDuProjet.seules_pieces`).
     """
     return not chemin.startswith(f"{DOSSIER_ATELIER}/") and chemin not in declares
+
+
+def fichier_du_projet(racine: Path, chemin: str, perimetre: Perimetre) -> Path | None:
+    """Le fichier `chemin` du projet s'il se lit dans ses bornes — `None` sinon (#1542).
+
+    Les mêmes quatre refus qu'une pièce déclarée au manifeste (`_cible_sure`) : hors de la
+    racine, lien symbolique, retiré par le périmètre, pas un fichier. C'est la question
+    qu'on pose à un fichier qu'une personne **nomme** en mots pour qu'`AGENTS.md` le dise
+    à lire : un agent ne doit pas être envoyé vers un fichier qu'il ne trouvera pas, ni
+    vers un chemin que le périmètre lui cache.
+    """
+    return _cible_sure(racine, chemin, motifs_compiles(perimetre.exclus))
 
 
 def _ou_sont_les_skills(*, designes: bool, a_lister: bool) -> str:

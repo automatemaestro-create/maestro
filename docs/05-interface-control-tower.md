@@ -7907,6 +7907,17 @@ suivi de ce que le modèle de correction n'a pas compris), la pièce qui attenda
 pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
 l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
 
+**Une correction change la pièce reproposée, ou le fil dit pourquoi** (#1542). Vu sur #1522, sur un
+clone du dépôt de Maestro : « retire `bash scripts/setup.sh` de ce skill » et « nomme `CLAUDE.md` en
+tête des conventions » revenaient sur une pièce identique, sous « Correction prise ». Désormais le
+modèle de correction voit tout ce qu'un skill prescrit — les scripts du projet qu'il appelle, puis la
+commande —, une commande dite remplace aussi ces scripts, et le sujet `instructions` nomme un
+fichier d'instructions du projet (vérifié sur le disque : un fichier absent ou hors du périmètre se
+dit, et rien n'est pris). Les pièces que la correction touche reviennent d'abord — celle que la
+personne corrigeait en tête —, et une correction sans effet, ou la même pièce qui revient, le dit
+derrière les mots du juge (« … ne change pas : … Rien n'a été écrit. ») **sans** porter de
+correction : « Correction prise » ne s'affiche jamais au-dessus d'une pièce identique.
+
 **Une correction reste acquise d'une conversation à l'autre** (#1334). Ce que la personne a dit
 est une propriété de **son projet**, pas du fil où elle l'a dit : dès qu'une pièce s'écrit, le
 manifeste de l'outillage garde les corrections dont elle a été rédigée — sujet, valeur, phrase,

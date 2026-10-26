@@ -173,7 +173,7 @@ def test_un_fichier_d_instructions_que_le_modele_n_a_pas_lu_est_ecarte(tmp_path:
 def test_le_modele_apprend_quels_fichiers_d_instructions_les_tables_ont_vus(
     tmp_path: Path,
 ) -> None:
-    """Les indices nomment ce que les tables ont constaté ; le cadre dit ce qu'est un tel fichier."""
+    """Les indices nomment ce que les tables ont vu ; le cadre dit ce qu'est un tel fichier."""
     racine = projet_python(tmp_path / "depensio")
     ecrire(racine, "CLAUDE.md", CLAUDE_MD)
     lecteur = _Lecteur(("FIN",))
@@ -207,7 +207,8 @@ def test_un_fichier_que_maestro_a_ecrit_en_entier_ne_se_nomme_pas(tmp_path: Path
 
 
 def test_un_fichier_qui_ne_fait_qu_importer_agents_md_ne_se_nomme_pas(tmp_path: Path) -> None:
-    """Un pont écrit par le projet (`@AGENTS.md`) n'a pas de règle à lui : le lire n'apprend rien."""
+    """Un pont écrit par le projet (`@AGENTS.md`) n'a pas de règle à lui : le lire n'apprend rien.
+    """
     racine = projet_python(tmp_path / "depensio")
     ecrire(racine, "AGENTS.md", f"# Nos règles\n\n- {REGLE}\n")
     ecrire(racine, "CLAUDE.md", "@AGENTS.md\n")
