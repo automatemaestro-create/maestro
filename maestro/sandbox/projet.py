@@ -85,7 +85,12 @@ from maestro.projets.application import (
 )
 from maestro.projets.modele import AUTEUR_COURRIEL, AUTEUR_NOM, Projet
 from maestro.projets.racine import valider_racine
-from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
+from maestro.sandbox.en_place import (
+    DOSSIER_ATELIER,
+    EspaceEnPlace,
+    chemin_atelier,
+    ouvre_atelier,
+)
 from maestro.sandbox.ramassage import PREFIXE_COMMUN, racine_des_espaces
 from maestro.sandbox.verification import MiroirDeVerification, miroir_de_verification
 from maestro.sandbox.workspace import LieuSansTrace, Workspace, isolated_workspace
@@ -964,6 +969,16 @@ _EN_ATTENTE_DITS_MAX = 20
 #: réécrire ferait sortir un travail sauvé de l'histoire du projet (S12).
 _MARQUE_SAUVEGARDE = " — commit de Maestro (sauvegarde du travail), à garder tel quel"
 
+#: Ce que l'état d'une branche dit quand elle touche à `.maestro/` (#1507). Dans une
+#: copie de travail, rien d'autre que la comptabilité de Maestro n'y vit — l'atelier
+#: d'une tâche n'existe qu'en place —, et elle est versionnée avec le projet : sur S12
+#: (2026-10-26), l'agent du socle a retiré le manifeste du dépôt dans le commit même de
+#: son travail, et la fusion l'a effacé de la racine.
+_COMPTABILITE_TOUCHEE = (
+    f"La branche touche à `{DOSSIER_ATELIER}/`, la comptabilité de Maestro — elle suit "
+    "le projet, et le travail d'une tâche n'y touche pas :"
+)
+
 
 def etat_de_la_branche(espace: Path, base: str) -> str:
     """Ce que la branche de la copie `espace` porte au-delà de `base`, et ce qui n'est pas commité.
@@ -972,9 +987,11 @@ def etat_de_la_branche(espace: Path, base: str) -> str:
     du projet (#1507) : les sujets des commits de la branche, du plus récent au plus
     ancien, puis les fichiers que le `.gitignore` du projet n'ignore pas et que rien ne
     commite encore. Sur p5, l'agent ne commitait rien — Maestro commitait pour lui, hors
-    de la convention choisie : c'est ce que ce relevé fait voir avant la fusion. Lu et
-    jamais écrit ; `""` quand Git ne répond pas, ou sans `base` à comparer — un relevé
-    muet ne fait rien juger.
+    de la convention choisie : c'est ce que ce relevé fait voir avant la fusion. Et, s'il
+    y en a, ce que la branche a changé de la comptabilité de Maestro sous `.maestro/`
+    (`_comptabilite_touchee`) : sur S12, le manifeste était parti avec le commit du socle.
+    Lu et jamais écrit ; `""` quand Git ne répond pas, ou sans `base` à comparer — un
+    relevé muet ne fait rien juger.
     """
     if not base.strip():
         return ""
@@ -1013,7 +1030,46 @@ def etat_de_la_branche(espace: Path, base: str) -> str:
             lignes.append(f"- et {len(en_attente) - _EN_ATTENTE_DITS_MAX} autre(s)")
     else:
         lignes.append("Rien n'est en attente de commit.")
+    touches = _comptabilite_touchee(espace, base)
+    if touches:
+        lignes += [_COMPTABILITE_TOUCHEE, *touches]
     return "\n".join(lignes)
+
+
+def _comptabilite_touchee(espace: Path, base: str) -> list[str]:
+    """Ce que la branche de `espace` a changé sous `.maestro/` depuis qu'elle a quitté `base`.
+
+    Comparé au **point de départ** de la branche (`merge-base`), et non à la pointe de
+    `base` : une régénération de l'outillage, posée sur la base pendant que la tâche
+    travaillait, n'est pas le fait de la branche. Et à l'**arbre de travail**, pas à
+    `HEAD` : ce qui n'est pas commité l'est au démontage, c'est donc l'état qui
+    fusionnera — un fichier retiré du dépôt sans être effacé du disque y compte comme
+    supprimé. Une ligne par fichier, son sort en toutes lettres ; vide quand Git ne
+    répond pas : rien n'est alors à juger.
+    """
+    try:
+        depart = _git(espace, "merge-base", base, "HEAD")
+        if depart.returncode != 0 or not depart.stdout.strip():
+            return []
+        changes = _git(
+            espace,
+            "diff",
+            "--name-status",
+            "--no-renames",
+            depart.stdout.strip(),
+            "--",
+            f"{DOSSIER_ATELIER}/",
+        )
+    except EspaceProjetIndisponible:
+        return []
+    if changes.returncode != 0:
+        return []
+    lignes = []
+    for ligne in changes.stdout.splitlines():
+        statut, _, chemin = ligne.partition("\t")
+        if chemin:
+            lignes.append(f"- `{chemin}` ({_STATUTS_GIT.get(statut[:1], statut)})")
+    return lignes
 
 
 def branche_de_tache(tache_id: str) -> str:

@@ -418,6 +418,22 @@ def test_agents_md_dit_ce_que_devient_ce_qui_se_refabrique() -> None:
     assert "s'il n'est pas déjà ignoré par le `.gitignore`, ajoute-le" in plat
 
 
+def test_agents_md_dit_que_la_comptabilite_de_maestro_suit_le_projet() -> None:
+    """#1507, S12 du 2026-10-26 : l'agent du socle a ajouté `/.maestro/` au `.gitignore`
+    (« Atelier de Maestro : jamais versionné ») et retiré le manifeste du dépôt. La ligne
+    disait « l'atelier de Maestro […]. Ce n'est pas le livrable du projet », juste sous
+    celle qui fait ignorer ce qui n'est pas à livrer : la fusion l'a effacé de la racine,
+    et les tâches suivantes n'ont plus reçu ni l'outillage ni la convention de commit."""
+    (instructions, *_) = rediger(_constats(), _recommandation())
+    section = instructions.contenu.split("## Ce qu'un agent ne touche pas", 1)[1]
+    plat = " ".join(section.split())
+
+    assert f"`{CHEMIN_MANIFESTE}` y dit ce qui vient de lui, et le projet le garde" in plat
+    assert "Ne le supprime pas, ne le retire pas du dépôt" in plat
+    assert "n'ajoute pas `.maestro/` au `.gitignore`" in plat
+    assert "Ce n'est pas le livrable du projet" not in plat
+
+
 def test_agents_md_porte_les_six_sections_et_les_constats_avec_leur_source() -> None:
     (instructions, *_) = rediger(_constats(), _recommandation())
     texte = instructions.contenu
@@ -558,6 +574,10 @@ def test_agents_md_fait_appliquer_le_formatage_et_tenir_les_commandes_sur_un_clo
         "écrit, puis vérifie son style et ses types" in verifier
     )
     assert CLONE_NEUF in verifier
+    # Le clone, c'est la vérification de la livraison qui le fait (`clone_neuf`) : la
+    # phrase qui le faisait faire à l'agent, par `mktemp -d`, l'envoyait demander à
+    # une personne d'arbitrer un clone hors de sa copie (S12 du 2026-10-26).
+    assert "clone-le" not in CLONE_NEUF and "mktemp" not in CLONE_NEUF
 
 
 def test_sans_formateur_ni_controle_rien_n_est_exige_au_dela_des_tests() -> None:

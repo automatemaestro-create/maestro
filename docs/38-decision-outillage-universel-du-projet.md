@@ -906,7 +906,7 @@ un clone propre : Prettier retenu et cinquante fichiers hors de son formatage, G
 (« CI : `.github/workflows/ci.yml` » annoncé) et aucun workflow écrit, Conventional Commits retenu et
 33 commits « Maestro : … », un `npm run typecheck` qui ne passait que sur l'arbre de l'agent. Sur le
 même objectif, la session seule les tenait tous. Aucune pièce n'était fausse : chacune s'arrêtait
-avant le livrable. Quatre gestes y répondent, chacun à sa place.
+avant le livrable. Cinq gestes y répondent, chacun à sa place.
 
 - **`AGENTS.md` dit ce qu'un travail rendu passe.** La section « Vérifier » disait « ne rends jamais
   un travail sans avoir joué au moins les tests », qui se lisait « le reste est facultatif ». Quand le
@@ -914,7 +914,9 @@ avant le livrable. Quatre gestes y répondent, chacun à sa place.
   ce qu'on a écrit puis de vérifier style et types avant de rendre (`redaction._avant_de_rendre`), et
   que ces commandes passent sur un **clone neuf**, après la seule installation : une commande qui ne
   tient que grâce à ce qu'un build a laissé ne tient pas, c'est elle qui génère ce dont elle a besoin
-  (`CLONE_NEUF`). La section « Conventions » dit, sous la convention de commit choisie, que les
+  (`CLONE_NEUF`). Le clone, c'est la vérification de la livraison qui le fait : une phrase qui le
+  faisait faire à l'agent, par `mktemp -d`, l'envoyait demander à une personne d'arbitrer un clone
+  hors de sa copie (S12, 2026-10-26). La section « Conventions » dit, sous la convention de commit choisie, que les
   commits du projet la suivent — ceux de l'agent compris (`COMMITS_DANS_LA_CONVENTION`).
 - **L'agent commite son travail lui-même**, dans cette convention : le message de sa tâche le lui
   dit sur toute copie de travail (`CONSIGNE_COPIE_DE_TRAVAIL`, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)),
@@ -946,10 +948,22 @@ avant le livrable. Quatre gestes y répondent, chacun à sa place.
   et ses vérifications — sur un clone neuf — et sa convention dans ses critères ; le plan confie
   chaque fichier prévu, nommément, à la tâche qui le livre, et met le clone neuf dans les critères
   de celle qui écrit les commandes. Un objectif étroit n'y gagne pas un chantier d'outillage.
+- **La comptabilité de Maestro suit le projet** (§4.3). Sur S12 (passage `20261026-083718`), l'agent
+  du socle a ajouté `/.maestro/` au `.gitignore` (« Atelier de Maestro : jamais versionné ») et
+  retiré le manifeste du dépôt, dans le commit même de son travail : `AGENTS.md` disait « l'atelier
+  de Maestro […]. Ce n'est pas le livrable du projet », juste sous la règle qui fait ignorer ce qui
+  ne se livre pas. La fusion a effacé le manifeste de la racine, et toutes les tâches suivantes ont
+  perdu l'outillage et la convention de commit — vingt commits de Maestro sont repartis en
+  « Maestro : … ». `AGENTS.md` dit désormais que le manifeste se garde, versionné avec le projet,
+  ni supprimé, ni retiré du dépôt, ni ignoré (`INTOUCHABLES`) ; l'état de la branche que lit le
+  vérificateur nomme ce qu'une branche a changé sous `.maestro/` depuis son point de départ, et une
+  telle livraison ne tient pas tant que le fichier n'est pas rétabli. Il est donné au vérificateur
+  sur tout projet outillé, convention de commit ou non.
 
 Ce qui le constate à chaque livraison est le vérificateur ([docs/45 §2](./45-decision-une-tache-verifiee-en-l-executant.md),
-points 9 et 10) : formatage et style joués sur ce que la tâche a écrit, convention de commit lue sur
-l'état de la branche, commande jouée sur un clone neuf quand un critère le demande.
+points 9 et 10) : formatage et style joués sur ce que la tâche a écrit, convention de commit et
+comptabilité de Maestro lues sur l'état de la branche, commande jouée sur un clone neuf quand un
+critère le demande.
 
 ## 6. Ce qui est écarté, et pourquoi
 

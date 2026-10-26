@@ -371,6 +371,62 @@ def test_une_sauvegarde_de_maestro_est_marquee_a_garder(tmp_path: Path) -> None:
     assert "ne se réécrit jamais" in " ".join(SYSTEME.split())
 
 
+def _branche_outillee(tmp_path: Path) -> Path:
+    """La copie de travail d'un projet dont le manifeste de Maestro est versionné."""
+    racine = _depot(tmp_path / "projet")
+    manifeste = racine / CHEMIN_MANIFESTE
+    manifeste.parent.mkdir(parents=True)
+    manifeste.write_text('{"manifeste": 1}\n', encoding="utf-8")
+    _commiter(racine, "chore: outillage")
+    copie = tmp_path / "copie"
+    _git(racine, "worktree", "add", "-q", "-b", "maestro/socle", str(copie))
+    return copie
+
+
+@avec_git
+def test_une_branche_qui_retire_la_comptabilite_de_maestro_le_dit(tmp_path: Path) -> None:
+    """Le défaut de S12 (2026-10-26) : l'agent du socle a ignoré `/.maestro/` et retiré le
+    manifeste du dépôt, dans le commit même de son travail. La fusion l'a effacé de la
+    racine, et les tâches suivantes n'ont plus reçu l'outillage. Le juge le lit, et le
+    prompt lui dit qu'une telle branche ne tient pas : elle se rétablit avant de fusionner."""
+    copie = _branche_outillee(tmp_path)
+    (copie / ".gitignore").write_text(".next/\n/.maestro/\n", encoding="utf-8")
+    _git(copie, "rm", "-q", "--cached", CHEMIN_MANIFESTE)
+    (copie / "package.json").write_text("{}\n", encoding="utf-8")
+    _commiter(copie, "chore: initialiser le projet Next.js")
+
+    etat = etat_de_la_branche(copie, "main")
+
+    assert "La branche touche à `.maestro/`, la comptabilité de Maestro" in etat
+    assert f"- `{CHEMIN_MANIFESTE}` (supprimé)" in etat
+    texte = " ".join(SYSTEME.split())
+    assert "la comptabilité de Maestro est intacte sur la branche" in texte
+    assert "se rétablit tel qu'il était" in texte
+
+
+@avec_git
+def test_une_suppression_non_commitee_de_la_comptabilite_se_dit_aussi(tmp_path: Path) -> None:
+    """Ce qui n'est pas commité l'est au démontage : le relevé dit l'état qui fusionnera."""
+    copie = _branche_outillee(tmp_path)
+    (copie / CHEMIN_MANIFESTE).unlink()
+
+    assert f"- `{CHEMIN_MANIFESTE}` (supprimé)" in etat_de_la_branche(copie, "main")
+
+
+@avec_git
+def test_une_comptabilite_intacte_ne_se_dit_pas(tmp_path: Path) -> None:
+    """Rien n'est dit de `.maestro/` tant que la branche n'y touche pas — même quand la base
+    l'a changé depuis : c'est le point de départ de la branche qui compte."""
+    copie = _branche_outillee(tmp_path)
+    racine = tmp_path / "projet"
+    (racine / CHEMIN_MANIFESTE).write_text('{"manifeste": 2}\n', encoding="utf-8")
+    _commiter(racine, "chore: outillage régénéré")
+    (copie / "accueil.tsx").write_text("export {}\n", encoding="utf-8")
+    _commiter(copie, "feat(accueil): ajoute la page d'accueil")
+
+    assert ".maestro/" not in etat_de_la_branche(copie, "main")
+
+
 # --------------------------------------------------------------------------- #
 # ④ L'exécuteur les donne au vérificateur, depuis le manifeste du projet
 # --------------------------------------------------------------------------- #
@@ -392,25 +448,29 @@ class _Ecrivain(ModelProvider):
         return "Fait."
 
 
-def _projet_outille(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, convention: str):
-    """Un projet versionné dont le manifeste retient (ou non) une convention de commit."""
+def _projet_outille(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, convention: str, manifeste: bool = True
+):
+    """Un projet versionné dont le manifeste retient (ou non) une convention de commit —
+    ou qui n'a pas de manifeste du tout (`manifeste=False`) : Maestro ne l'a pas outillé."""
     maison = tmp_path / "maison"
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
     racine = _depot(maison / "projets" / "recettes")
     (racine / "AGENTS.md").write_text(_OUTILLAGE, encoding="utf-8")
     choix = [{"cle": "conventions", "valeur": convention}] if convention else []
-    manifeste = racine / CHEMIN_MANIFESTE
-    manifeste.parent.mkdir(parents=True)
-    manifeste.write_text(
-        json.dumps(
-            {
-                "manifeste": VERSION_MANIFESTE,
-                "source": {"type": "choix", "choix": choix},
-                "entrees": [{"chemin": "AGENTS.md", "role": "instructions"}],
-            }
-        ),
-        encoding="utf-8",
-    )
+    if manifeste:
+        chemin = racine / CHEMIN_MANIFESTE
+        chemin.parent.mkdir(parents=True)
+        chemin.write_text(
+            json.dumps(
+                {
+                    "manifeste": VERSION_MANIFESTE,
+                    "source": {"type": "choix", "choix": choix},
+                    "entrees": [{"chemin": "AGENTS.md", "role": "instructions"}],
+                }
+            ),
+            encoding="utf-8",
+        )
     _commiter(racine, "chore: outillage")
     depot = ProjetStore(tmp_path / "depot")
     return depot, depot.creer("Recettes", racine)
@@ -458,12 +518,24 @@ def test_l_executeur_donne_au_juge_l_outillage_et_la_branche_a_juger(
 
 
 @avec_git
-def test_sans_convention_le_juge_lit_l_outillage_sans_la_branche(
+def test_sans_convention_le_juge_lit_encore_la_branche_pour_la_comptabilite_de_maestro(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Le manifeste se garde sur tout projet que Maestro a outillé, convention ou non."""
     depot, projet = _projet_outille(tmp_path, monkeypatch, convention="")
 
     juge = _verifie(depot, projet.id)
 
     assert "<outillage>" in juge.prompts[0]
+    assert "<branche>" in juge.prompts[0]
+
+
+@avec_git
+def test_un_projet_que_maestro_n_a_pas_outille_n_a_pas_de_branche_a_juger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    depot, projet = _projet_outille(tmp_path, monkeypatch, convention="", manifeste=False)
+
+    juge = _verifie(depot, projet.id)
+
     assert "<branche>" not in juge.prompts[0]

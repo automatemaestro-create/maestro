@@ -1669,16 +1669,18 @@ class LocalExecutor(TaskExecutor):
 
         L'**outillage** du projet aussi (#1507), tel que l'agent l'a reçu : ses
         vérifications et sa convention de commit valent pour la livraison. Sur une
-        copie de travail dont l'outillage nomme une convention de commit, chaque
+        copie de travail d'un projet que Maestro a outillé — son manifeste lu —, chaque
         livraison dit en plus l'état de sa branche (`etat_de_la_branche`) : ce qu'elle
-        porte, et ce qui n'est pas commité.
+        porte, ce qui n'est pas commité, et ce qu'elle a changé de la comptabilité de
+        Maestro. Pas seulement quand une convention de commit est retenue : le
+        manifeste se garde sur tout projet outillé (S12, 2026-10-26).
         """
         if self._verificateur is None:
             return None
         projet = self._projet(task)
         outillage = outillage_du_projet(projet)
         base = projet.vcs.branche_base if projet is not None and projet.vcs is not None else ""
-        branche_a_juger = bool(base) and bool(outillage.convention_de_commit)
+        branche_a_juger = bool(base) and bool(outillage.manifeste)
         return Recette(
             verificateur=self._verificateur,
             tache=task,

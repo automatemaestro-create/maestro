@@ -923,6 +923,8 @@ def test_une_racine_qui_ne_porte_que_l_outillage_le_dit_avec_ses_pieces(tmp_path
     assert -1 not in positions, section
     assert positions == sorted(positions)
     assert "`.maestro/`" in section
+    # #1507 : sur S12, l'agent du socle a ignoré `.maestro/` et retiré le manifeste.
+    assert "qui y reste tel quel, ni retiré ni ignoré" in " ".join(section.split())
     assert "dossier jetable" in section
     assert "`mktemp -d`" in section
     assert "sans toucher à l'outillage" in section

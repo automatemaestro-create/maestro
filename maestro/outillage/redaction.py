@@ -206,13 +206,16 @@ COMMANDES_VERIFIER: tuple[tuple[str, str], ...] = (
 #: l'agent, où un `next build` avait laissé les types qu'il génère, et échouait sur le
 #: clone que la personne récupère. Aucun outil n'est nommé : l'agent connaît sa pile, et
 #: ce qui vaut pour des types générés vaut pour un client d'API ou une sortie de build.
+#: Le clone lui-même, c'est la vérification de la livraison qui le fait
+#: (`maestro.sandbox.verification.clone_neuf`) : une phrase qui le faisait faire à
+#: l'agent, par `mktemp -d`, l'envoyait demander à une personne d'arbitrer un clone hors
+#: de sa copie (S12 du 2026-10-26).
 CLONE_NEUF = (
     "Ces commandes passent aussi sur un **clone neuf** du projet, après la seule "
     "installation de ses dépendances — c'est ce que récupère qui le reprend. Une commande "
     "qui ne tient que grâce à ce qu'un build ou une génération a laissé dans ton "
     "répertoire (types ou code générés, sortie de build) ne tient pas : si elle en a "
-    "besoin, c'est elle qui le génère. Sur un projet versionné, clone-le dans un dossier "
-    "créé par `mktemp -d` et joue-les là pour t'en assurer."
+    "besoin, c'est elle qui le génère."
 )
 
 #: Ce qu'`AGENTS.md` dit des commits quand la personne a choisi une convention de message
@@ -237,8 +240,8 @@ SECTIONS: tuple[str, ...] = (
 
 #: Ce qu'un agent ne touche pas, en toutes lettres. Les deux premières lignes
 #: sont les gisements de secrets de docs/24 §2.5 — les mêmes que le périmètre
-#: d'un projet retire d'office —, la dernière est l'atelier de Maestro
-#: (docs/38 §4.3) : il porte la comptabilité de la génération, pas le livrable.
+#: d'un projet retire d'office —, la dernière est `.maestro/` (docs/38 §4.3) : il
+#: porte la comptabilité de la génération, pas le livrable.
 #:
 #: La troisième dit **la même règle que le cadre d'exécution** des agents de
 #: Maestro (`maestro/agents/playbooks_defaut/_cadre_outille.md`, #1401) : ce qui se
@@ -246,6 +249,13 @@ SECTIONS: tuple[str, ...] = (
 #: ignoré. Elle disait seulement « cela ne s'édite pas », et sur p5 rien ne disait
 #: si `node_modules/` et `.next/` restaient ou s'effaçaient. `AGENTS.md` est lu par
 #: d'autres agents que ceux de Maestro : la règle y est entière, pas un renvoi.
+#:
+#: La dernière dit que le manifeste **suit le projet** (#1507). Elle disait « l'atelier
+#: de Maestro […]. Ce n'est pas le livrable du projet », juste sous la règle qui fait
+#: ignorer ce qui n'est pas à livrer : sur S12 (2026-10-26), l'agent du socle a ajouté
+#: `/.maestro/` au `.gitignore` (« Atelier de Maestro : jamais versionné ») et retiré le
+#: manifeste du dépôt. La fusion l'a effacé de la racine, et les tâches suivantes n'ont
+#: plus reçu ni l'outillage ni la convention de commit.
 INTOUCHABLES: tuple[str, ...] = (
     "`.env` et tout fichier d'environnement : ils portent des secrets. Lis "
     "`.env.example` s'il existe.",
@@ -254,8 +264,10 @@ INTOUCHABLES: tuple[str, ...] = (
     "caches — se refabrique : ne l'édite pas, ne le supprime pas pour faire le "
     "ménage, et ne le livre pas ; s'il n'est pas déjà ignoré par le `.gitignore`, "
     "ajoute-le.",
-    f"`.maestro/` : l'atelier de Maestro (dont `{CHEMIN_MANIFESTE}`, qui dit ce "
-    "qui vient de lui). Ce n'est pas le livrable du projet.",
+    f"`.maestro/` est à Maestro : `{CHEMIN_MANIFESTE}` y dit ce qui vient de lui, et "
+    "le projet le garde — versionné avec lui quand il l'est. Ne le supprime pas, ne le "
+    "retire pas du dépôt, n'ajoute pas `.maestro/` au `.gitignore` et ne le modifie "
+    "pas ; ce que tu livres ne va pas dessous.",
 )
 
 

@@ -446,8 +446,8 @@ def _section_racine_outillee(pieces: tuple[str, ...]) -> list[str]:
         "",
         *(f"- `{piece}`" for piece in pieces),
         "",
-        f"et, s'il est là, `{DOSSIER_ATELIER}/`, où Maestro range son manifeste et les "
-        "ateliers des tâches.",
+        f"et, s'il est là, `{DOSSIER_ATELIER}/`, où Maestro range son manifeste — qui y "
+        "reste tel quel, ni retiré ni ignoré — et les ateliers des tâches.",
         "",
         "Ce n'est pas une raison d'écrire à la main ce que produit l'outil "
         "d'initialisation standard du projet : lui choisit des versions qui vont "

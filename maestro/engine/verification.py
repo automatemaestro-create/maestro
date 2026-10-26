@@ -504,9 +504,9 @@ class Livraison:
     `outillage` (#1507) est ce que l'agent a reçu des instructions du projet — ses
     commandes de vérification, sa convention de commit —, que le vérificateur fait
     valoir sur la livraison. `branche` est l'état de la branche de la copie de
-    travail (`maestro.sandbox.projet.etat_de_la_branche`) : ses commits, et ce qui
-    n'est pas commité, pour juger de la convention. Vides, les prompts sont ceux
-    d'avant.
+    travail (`maestro.sandbox.projet.etat_de_la_branche`) : ses commits et ce qui
+    n'est pas commité, pour juger de la convention, et ce qu'elle a changé de la
+    comptabilité de Maestro. Vides, les prompts sont ceux d'avant.
     """
 
     sortie: str
@@ -601,7 +601,11 @@ donné, une lecture : « le travail de la tâche est commité sur sa branche, en
 qui suivent la convention du projet » — des fichiers restés hors de tout commit, ou un \
 sujet de l'agent qui s'écarte de la convention, ne la tiennent pas. Un commit que \
 l'état de la branche marque comme un commit de Maestro ne compte pas : il se garde tel \
-quel, et ne se réécrit jamais.
+quel, et ne se réécrit jamais ;
+- quand l'état de la branche dit qu'elle touche à `.maestro/`, la comptabilité de \
+Maestro, une lecture : « la comptabilité de Maestro est intacte sur la branche » — un \
+fichier de Maestro supprimé, retiré du dépôt ou modifié ne la tient pas : il se rétablit \
+tel qu'il était, sans que `.maestro/` soit ignoré par le `.gitignore`.
 N'en ajoute aucun pour ce que l'outillage ne déclare pas, ni pour une livraison qui \
 n'est qu'un compte-rendu.
 
@@ -1814,8 +1818,9 @@ class Recette:
     `outillage` (#1507) est ce que l'agent a reçu des instructions de son projet : ses
     vérifications et sa convention de commit valent pour sa livraison.
     `etat_de_la_branche` dit, à chaque livraison, ce que la branche de la copie de
-    travail porte et ce qui n'est pas commité — de quoi juger la convention ; `None`
-    hors d'une copie de travail, ou sans convention à juger.
+    travail porte et ce qui n'est pas commité — de quoi juger la convention —, et ce
+    qu'elle a changé de la comptabilité de Maestro ; `None` hors d'une copie de travail
+    d'un projet outillé.
     """
 
     verificateur: VerificateurTaches
