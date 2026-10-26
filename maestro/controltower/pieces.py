@@ -201,7 +201,7 @@ en a pas. Une phrase peut changer plusieurs sujets : « on utilise pnpm, pas npm
 le gestionnaire ET les commandes qui l'appellent (installer, tester…).
 
 Une de ces clés peut porter plusieurs commandes — un script du projet que l'outil appelle
-(« bash scripts/setup.sh »), puis la commande : la valeur que tu donnes les remplace
+(« bash outils/installer.sh »), puis la commande : la valeur que tu donnes les remplace
 TOUTES. Pour en retirer une, donne ce qui reste, en une seule commande ; pour les retirer
 toutes, "aucun".
 
