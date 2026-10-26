@@ -7663,7 +7663,7 @@ la même fonction. Il n'y a pas deux idées de « ce qu'il faut à ce projet » 
 | `POST /api/projets/{id}/outillage/questionnaire` | La prochaine question d'un projet neuf, vu les réponses acquises (#1031) | non |
 | `POST /api/projets/{id}/outillage/recommandation` | Ce que ces réponses recommandent — **la forme de l'analyse** (#1031) | non |
 | `POST /api/chat/{agent}/outillage/questionnaire` | Pose (ou reprend) le questionnaire **dans le fil** (#1031) | le fil |
-| `POST /api/chat/{agent}/outillage` | Répond d'un **geste** à la question que le fil porte (#1031) | le fil |
+| `POST /api/chat/{agent}/outillage` | Répond d'un **geste** à la question que le fil porte (#1031) — ou retient la proposition de l'outillage entier (`"retenue"`, #1533) | le fil |
 | `POST /api/chat/{agent}/outillage/piece` | Écrit, passe ou reporte d'un **geste** la pièce que le fil propose (#1161) | **oui** — une pièce |
 | `POST /api/projets/{id}/outillage/generation` | Écrit l'outillage dans le projet, au régime de docs/24 §2.4 (#1033) | **oui** |
 | `POST /api/projets/{id}/outillage/report` | Enregistre le « plus tard » de l'étape d'outillage (#1034) | la fiche |
@@ -7782,10 +7782,11 @@ si la fiche est illisible ou si la racine n'est plus un dossier lisible — jama
 **Sans catalogue depuis #1147** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)). La
 première question est **ouverte** — « Qu'est-ce que ce projet ? », sans options — et se répond avec
 ses mots. Le modèle comprend ensuite ce qui a été dit, en tire les **constats** (sorte de projet,
-langage, manifeste, gestionnaire, commande de chaque usage, forge, CI, convention — des valeurs
-libres, `flutter test` ou `terraform validate`), et ne pose que les questions qui comblent un vrai
-manque, avec des options écrites pour ce projet. Il n'y a plus de plafond : une compréhension sans
-question est la conclusion. Son prompt porte le registre de langue (#945), et ce qu'il rend est
+langage, cadre, manifeste, gestionnaire, commande de chaque usage, forge, CI, convention — des valeurs
+libres, `flutter test` ou `terraform validate`), **propose d'un bloc** tout ce qu'il sait juger pour
+cette pile (#1533, ci-dessous), et ne pose à part que les questions qu'il ne sait pas juger, avec
+des options écrites pour ce projet. Il n'y a plus de plafond : une compréhension sans question ni
+proposition est la conclusion. Son prompt porte le registre de langue (#945), et ce qu'il rend est
 lu et vérifié par `maestro/outillage/questionnaire.py` — un sujet tranché d'un clic n'est pas
 redemandé (des mots, eux, peuvent ne pas avoir tranché : le modèle en juge), une recommandation hors
 des options est ramenée dedans, la question ouverte passe en tête tant qu'on ne sait pas ce qu'est
@@ -7823,6 +7824,34 @@ question qui n'en a pas. **Une phrase tapée dans la zone de saisie** (`POST …
 `POST …/flux`) pendant qu'une question attend **est** la réponse à cette question : le message porte
 un `choix` libre sur son sujet, et la suite vient du questionnaire, pas du juge. Chaque message qui
 pose une question — et la conclusion — porte `comprehension` : ce que Maestro a compris à ce tour.
+
+**Une proposition d'un bloc, plutôt qu'une question par sujet** (#1533). Sur p5, le fil posait
+neuf questions une à une — langage, gestionnaire, cadre, tests, vérification, formatage, forge, CI,
+convention — pour un outillage Next.js que le modèle savait juger d'un bloc : 6 min 13 s, 0,538 $ et
+neuf gestes ([docs/50 § 2](./50-ecart-face-a-un-agent-seul.md)). Il **propose** désormais tout ce
+que rien de ce qui a été dit ne tranche mais qu'il sait juger, chaque élément avec sa raison — un
+ensemble cohérent pour la pile —, et ne demande à part que ce qu'il ne sait pas juger, en disant
+pourquoi (la forge, le plus souvent). Un sujet est un constat, une question ou une proposition,
+jamais deux ; la question séparée passe **avant** la proposition, parce que sa réponse peut changer
+ce qui va ensemble. La proposition est une question de plus pour le fil — même message, même
+attente, même phrase tapée qui y répond —, de clé `outillage`, sans options, qui porte
+`proposition` : une liste d'éléments `{cle, valeur, libelle, raison, sujet, commande, outils?,
+absents?, pour?}`. Deux gestes y répondent :
+
+- **la retenir** : `POST /api/chat/{agent}/outillage` avec `{"valeur": "retenue"}` — la seule valeur
+  admise sans mots (`422` sinon). Le geste vaut chacun des éléments **cliqué** (`choix_du_fil`) : ils
+  deviennent des réponses, constats tels quels, et le tour suivant conclut **sans rappeler le
+  modèle** — la première pièce vient, rédigée de ce qui a été proposé ;
+- **la corriger avec ses mots** — « pnpm, pas npm », « pas de CI pour l'instant » —, dans la zone de
+  saisie ou par `{"valeur": "…", "libre": true}` : le modèle relit la proposition qu'il corrige, fait
+  de la phrase des constats, ajuste le reste, et ce qu'il repropose est **revérifié** au poste comme
+  toute proposition (un élément qui repose sur un outil absent le dit, et le modèle est ressaisi).
+
+Rien ne s'écrit pour autant : chaque pièce se montre ensuite avec son diff, sur accord (#1161). La
+carte est `PropositionDOutillage` (variante A de #1533, retenue sur pièces) : ce qui a été compris en
+tête, puis une ligne par élément — le sujet, le nom, la commande en chasse fixe quand le nom ne la
+dit pas, la raison dessous —, une ligne qui invite à corriger avec ses mots, et **un seul** geste,
+« Retenir cet outillage ».
 
 > ⚠ **Renversé par #1161** : la voie du fil n'écrit plus tout en une fois. La fin du questionnaire
 > est la **première pièce**, et `ConclusionOutillage` est retirée — voir « Pièce par pièce, dans le
@@ -8090,9 +8119,11 @@ Implémentation : [`maestro/outillage/`](../maestro/outillage/) (le domaine),
 [`maestro/controltower/outillage.py`](../maestro/controltower/outillage.py) (le service et le
 conducteur du fil), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) (les
 pièces et leur correction, #1161), [`maestro/controltower/app.py`](../maestro/controltower/app.py)
-(les routes), `apps/web/components/chat/QuestionDOutillage.tsx` et
+(les routes), `apps/web/components/chat/QuestionDOutillage.tsx`,
+`apps/web/components/chat/PropositionDOutillage.tsx` (#1533) et
 `apps/web/components/chat/PieceDOutillage.tsx` (les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
 [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),
+[`test_outillage_proposition.py`](../tests/test_outillage_proposition.py),
 [`test_outillage_generation.py`](../tests/test_outillage_generation.py),
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) — cette dernière validant

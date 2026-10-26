@@ -1270,8 +1270,9 @@ class SkillEquipeRequete(BaseModel):
     """Un skill de l'outillage que le rôle validé branche (#1040).
 
     Repris de la proposition, jamais ressaisi : `chemin` et `commandes` sont ceux
-    de l'entrée d'outillage qui l'a recommandé, et c'est le playbook du rôle qui
-    les portera (`maestro.equipe.creation.playbook_branche`).
+    de l'entrée d'outillage qui l'a recommandé. Le playbook du rôle porte le chemin
+    (`maestro.equipe.creation.playbook_branche`) ; la commande, le skill la porte, et
+    lui seul (#1520).
     """
 
     nom: str
@@ -2159,17 +2160,6 @@ def create_app(
         provider=lecteur_outillage,
         comprehension=comprehension,
     )
-    # L'outillage s'écrit **pièce par pièce dans la conversation** (#1161) : le même
-    # service d'outillage lit le projet, les mêmes verdicts de commandes sont joués
-    # avant chaque carte, et une correction dite avec des mots est comprise par le
-    # modèle du poste — celui du lecteur d'outillage quand il est injecté.
-    pieces = ServicePieces(
-        outillage, projets, correction=CorrectionModele(lecteur_outillage)
-    )
-    # Un seul conducteur pour les deux moments où l'outillage se propose : pendant la
-    # conversation (#1161), et à la fin d'un run, quand le projet construit fait changer
-    # ce que ses commandes rendent (#1343, `ConteurDeFin`).
-    conducteur = ConducteurOutillage(comprehension, pieces=pieces)
     # La projection part du catalogue **hors projet** : les agents rangés à la
     # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
     # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
@@ -2198,6 +2188,19 @@ def create_app(
         mcp=mcp,
         capacites=capacites,
     )
+    # L'outillage s'écrit **pièce par pièce dans la conversation** (#1161) : le même
+    # service d'outillage lit le projet, les mêmes verdicts de commandes sont joués
+    # avant chaque carte, et une correction dite avec des mots est comprise par le
+    # modèle du poste — celui du lecteur d'outillage quand il est injecté. Chaque pièce
+    # écrite rebranche l'équipe du projet et constate ce qu'elle reçoit (#1520) : les
+    # **mêmes** dépôts d'agents que la création d'équipe, cadrés sur le projet.
+    pieces = ServicePieces(
+        outillage, projets, correction=CorrectionModele(lecteur_outillage), equipe=gabarits
+    )
+    # Un seul conducteur pour les deux moments où l'outillage se propose : pendant la
+    # conversation (#1161), et à la fin d'un run, quand le projet construit fait changer
+    # ce que ses commandes rendent (#1343, `ConteurDeFin`).
+    conducteur = ConducteurOutillage(comprehension, pieces=pieces)
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
     redacteur_playbook = (
         redacteur_playbook if redacteur_playbook is not None else RedacteurPlaybook()

@@ -40,7 +40,7 @@ tâche (#1032, `maestro.outillage.contexte`), bornes du manifeste comprises. Ce
 qui manque à un agent n'est donc pas l'accès aux skills — il les a tous — mais de
 savoir **lesquels sont les siens**. C'est une consigne, donc cela vit dans son
 playbook : `playbook_branche()` y ajoute une section qui les nomme, avec leur
-chemin et les commandes qu'ils enveloppent.
+chemin — et **sans** les commandes qu'ils enveloppent (voir plus bas).
 
 Trois raisons de préférer cela à un sixième dépôt :
 
@@ -57,6 +57,23 @@ Trois raisons de préférer cela à un sixième dépôt :
 La section est **idempotente** : la reposer remplace la précédente au lieu de
 l'empiler, pour qu'une équipe re-validée ne laisse pas deux inventaires
 contradictoires dans le même prompt.
+
+## Le skill fait foi : la section ne fige aucune commande (#1520)
+
+Jusqu'à #1520, chaque ligne disait aussi la commande que le skill enveloppait
+(« il enveloppe : `python assembler.py` »), recopiée au recrutement. Mais une
+commande se **remplace** après lui — dite par la personne (`maestro.outillage.correction`),
+proposée par la revue d'après un run (#1381) — et ce remplacement réécrit les pièces
+et le manifeste, pas une copie rangée dans le prompt système de chaque agent. Relevé
+au bouclage du 2026-10-14 (S9, passage `20261014-171347` ; « herbier-des-cimes ») :
+les playbooks de l'équipe gardaient l'ancienne commande, et un agent du run suivant
+en recevait deux pour le même geste — celle de son playbook, celle du skill.
+
+La section nomme donc le skill et son chemin, rien de plus : la commande vit **une
+fois**, dans le skill, que la correction réécrit. Une équipe recrutée avant ce
+correctif se **rebranche** (`sans_commandes_figees`) à chaque écriture d'outillage
+(`maestro.controltower.recu_par_l_equipe`) : sa section perd ses commandes figées,
+le reste de son playbook ne bouge pas.
 
 ## Ne sont branchés que les skills que le projet **porte** (#1212)
 
@@ -122,13 +139,22 @@ TITRE_SKILLS = "## Les skills du projet qui sont les tiens"
 #: remplacés — jamais écrits.
 TITRES_SKILLS_ANTERIEURS: tuple[str, ...] = ("## Les skills du projet qui sont les vôtres",)
 
-#: Ce que la section dit avant de lister. Une phrase, parce que le playbook d'un
+#: Ce que la section dit avant de lister. Deux phrases, parce que le playbook d'un
 #: agent n'est pas une documentation : elle rappelle que les skills sont ceux du
-#: **projet** (l'agent les reçoit tous, #1032) et que cette liste dit lesquels
-#: relèvent de son rôle.
+#: **projet** (l'agent les reçoit tous, #1032), que cette liste dit lesquels
+#: relèvent de son rôle, et que la commande se lit **dans le skill** (#1520) — c'est
+#: lui qui la porte, à jour de ce que le projet a corrigé.
 INTRO_SKILLS = (
     "L'outillage du projet t'est transmis en entier ; ceux-ci sont ceux que ton "
-    "rôle branche. Sers-t'en plutôt que de réinventer la commande."
+    "rôle branche. Chacun porte la commande qu'il enveloppe, et c'est lui qui fait "
+    "foi : ouvre-le plutôt que de réinventer la commande."
+)
+
+#: Les phrases d'introduction qu'une section des skills a portées avant `INTRO_SKILLS`,
+#: remplacées au rebranchement (`sans_commandes_figees`) — jamais écrites.
+INTROS_SKILLS_ANTERIEURES: tuple[str, ...] = (
+    "L'outillage du projet t'est transmis en entier ; ceux-ci sont ceux que ton "
+    "rôle branche. Sers-t'en plutôt que de réinventer la commande.",
 )
 
 #: Ce qu'on écrit pour un rôle qui ne branche **aucun** skill. La section reste
@@ -167,6 +193,7 @@ class SkillRetenu:
     recommandé (`maestro.outillage.modele`), au caractère près : le playbook
     nomme un chemin qui existe dans le projet, jamais une reformulation — et
     c'est `skills_constates()` qui s'assure qu'il **existe** (#1212).
+    `commandes` ne s'écrit pas dans le playbook (#1520) : le skill la porte.
     """
 
     nom: str
@@ -458,19 +485,56 @@ def section_navigateur() -> str:
 def _section_skills(
     skills: Sequence[SkillRetenu], absents: Sequence[SkillRetenu] = ()
 ) -> str:
-    """La section, telle qu'elle apparaît dans le prompt système de l'agent."""
+    """La section, telle qu'elle apparaît dans le prompt système de l'agent.
+
+    Chaque skill par son nom et son chemin — sa commande, il la porte (#1520).
+    """
     if not skills:
         return f"{TITRE_SKILLS}\n\n{AUCUN_SKILL_ECRIT if absents else AUCUN_SKILL}"
     lignes = [TITRE_SKILLS, "", INTRO_SKILLS, ""]
     for skill in skills:
         chemin = f" — `{skill.chemin}`" if skill.chemin else ""
-        commandes = (
-            f" (il enveloppe : {', '.join(f'`{c}`' for c in skill.commandes)})"
-            if skill.commandes
-            else ""
-        )
-        lignes.append(f"- **{skill.nom}**{chemin}{commandes}")
+        lignes.append(f"- **{skill.nom}**{chemin}")
     return "\n".join(lignes)
+
+
+def sans_commandes_figees(playbook: str) -> str:
+    """Le playbook, sa section des skills privée des commandes qu'elle figeait (#1520).
+
+    Le rebranchement d'une équipe recrutée avant #1520 : chaque ligne de skill y
+    portait « (il enveloppe : `…`) », recopié au recrutement, et sa phrase
+    d'introduction renvoyait à cette commande. Les deux se reposent dans la forme
+    d'aujourd'hui (`_section_skills`) ; rien d'autre ne bouge — ni le corps du
+    playbook, écrit pour le projet et relu par la personne, ni les sections qui
+    suivent, ni une section sans skill. C'est la forme que **Maestro** écrit qu'on
+    reconnaît ici, au caractère près, comme son titre (`_MOTIF_SECTION_SKILLS`) :
+    une ligne qu'une personne aurait réécrite n'est pas la sienne, et reste.
+
+    Idempotent : un playbook qui ne fige rien revient **identique**, ce qui permet à
+    l'appelant de n'écrire que ce qui change.
+    """
+    trouvee = _MOTIF_SECTION_SKILLS.search(playbook)
+    if trouvee is None:
+        return playbook
+    section = trouvee.group(0)
+    reposee = "\n".join(_ligne_reposee(ligne) for ligne in section.split("\n"))
+    if reposee == section:
+        return playbook
+    return f"{playbook[: trouvee.start()]}{reposee}{playbook[trouvee.end() :]}"
+
+
+def _ligne_reposee(ligne: str) -> str:
+    """Une ligne de la section des skills, dans la forme d'aujourd'hui — telle quelle sinon."""
+    if ligne.rstrip() in INTROS_SKILLS_ANTERIEURES:
+        return INTRO_SKILLS
+    if ligne.startswith("- **"):
+        return _MOTIF_ENVELOPPE.sub("", ligne)
+    return ligne
+
+
+#: Ce qu'une ligne de skill écrite avant #1520 ajoutait à son chemin : la commande
+#: figée, jusqu'au bout de la ligne — une commande peut porter ses propres parenthèses.
+_MOTIF_ENVELOPPE = re.compile(r" \(il enveloppe : .*\)(?=\r?$)")
 
 
 def scinder_section_skills(playbook: str) -> tuple[str, str]:
@@ -486,6 +550,16 @@ def scinder_section_skills(playbook: str) -> tuple[str, str]:
     sections = [trouvee.group(0).strip() for trouvee in _MOTIF_SECTIONS_POSEES.finditer(playbook)]
     return _sans_sections_posees(playbook).strip(), "\n\n".join(sections)
 
+
+#: La section « skills » seule : son titre — l'actuel ou un antérieur —, jusqu'au
+#: prochain titre de même niveau ou la fin du document. C'est elle que le rebranchement
+#: de #1520 repose (`sans_commandes_figees`) ; la section du navigateur, qui la suit,
+#: commence à un titre de même niveau, donc n'y entre pas.
+_MOTIF_SECTION_SKILLS = re.compile(
+    rf"^(?:{'|'.join(re.escape(t) for t in (TITRE_SKILLS, *TITRES_SKILLS_ANTERIEURS))})"
+    r"\s*$.*?(?=^## |\Z)",
+    re.MULTILINE | re.DOTALL,
+)
 
 #: Une section posée par Maestro : son titre — celui des skills, l'un de ses titres
 #: antérieurs, ou celui du navigateur —, jusqu'au prochain titre de même niveau ou la

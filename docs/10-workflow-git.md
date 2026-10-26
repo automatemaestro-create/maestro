@@ -3415,8 +3415,9 @@ poste pagine, et les deux réglages finissent **à égalité** (74 s chacun sur 
 du poste). Le filet **plafonne** donc à `min(cœurs, 8)`. C'est un plafond et non un forçage : une
 machine à 4 cœurs garde `-n 4`, ce que `-n auto` lui donnait déjà — d'où un réglage posé sans
 distinguer les plateformes, et un petit runner qui ne se retrouve jamais avec plus de workers
-qu'avant. `MAESTRO_PYTEST_WORKERS` déplace le plafond ; le **job CI garde `-n auto`**, il tourne
-dans un conteneur dédié où la mémoire n'est pas le facteur limitant.
+qu'avant. `MAESTRO_PYTEST_WORKERS` déplace le plafond ; le **job CI garde `-n auto`** : son runner
+ne partage sa mémoire avec personne. Depuis #1558, le plafond vaut aussi dans le conteneur du filet
+(§8.4, régime conteneur).
 
 Ce plafond ne rend pas les 6 min 28 s de pytest : il en supprime la moitié des processus pour le
 même temps. Ce qui les explique reste le coût unitaire d'un test d'outillage — **créer un processus
@@ -3585,6 +3586,16 @@ Les points de conception, à comprendre avant d'y toucher :
   Et **jamais à la racine** : monté à `/w`, le parent du dépôt est `/`, et
   `test_projets.py::test_depot_maestro_refuse` rend `racine-de-disque` au lieu de
   `au-dessus-du-depot-maestro`. Le montage est à `/maestro/depot`. Trouvé par les tests.
+- **Le montage se paie à chaque fichier lu** (#1546) : le dépôt arrive par le partage de fichiers
+  de Docker Desktop. Un balayage qui descendait dans `.claude/worktrees/` — 10 worktrees et leurs
+  `node_modules` sur le poste mesuré — a tenu la suite témoin plus de 20 min, un cœur à 100 % et
+  3,1 Go, et jugeait au passage le code d'**autres** branches ; en CI, sur un clone neuf, rien ne
+  se voyait. Les balayages des suites passent donc par un parcours partagé,
+  [`tests/balayage.py`](../tests/balayage.py), qui écarte worktrees, bytecode et dépendances
+  **avant** d'y descendre — jamais un `rglob` filtré après coup, qui paierait la descente entière.
+- **`--init` devant pytest** (#1546) : sans lui, pytest est le PID 1 du conteneur, à qui revient de
+  récupérer les processus dont le parent est mort ; il ne le fait pas, et 692 `git <defunct>`
+  s'étaient accumulés en une suite.
 - **L'image part de `python:3.11` PLEINE et sans identité git globale** — les deux moitiés
   indissociables de #333 (§8.7). L'image pleine porte git ; l'installer par `apt-get` mettrait les
   miroirs Debian sur le chemin critique de chaque construction (le pipeline de !269 est mort
@@ -3598,12 +3609,37 @@ Les points de conception, à comprendre avant d'y toucher :
   le `maestro-sandbox-shim` que `tests/test_isolation.py` exige à côté de l'interpréteur. La question de #194
   (« quel paquet `maestro` est testé ? ») y devient **sans objet** plutôt que résolue : la sonde
   n'est jouée que dans le régime natif, où le venv partagé par jonction la rend nécessaire.
-- **`-n auto` dans le conteneur, comme la CI.** Le plafond `min(cœurs, 8)` du levier 3 est un fait
-  sur la **mémoire du poste Windows**, jamais un fait sur pytest — re-mesuré là-bas sur les six
-  suites du périmètre (598 tests) : `-n 4` 177 s · `-n 8` 63 s · `-n 16` 56 s · **`-n auto` 46 s**,
-  tous verts. Sous Windows, `-n 16` faisait *pire* que `-n 8` (11 min 37) **et** rougissait quatre
-  tests de la vue console par saturation. Le plafond reste donc au régime natif, et disparaît de
-  l'autre. `MAESTRO_PYTEST_WORKERS` le déplace des deux côtés.
+- **`min(cœurs, 8)` dans le conteneur aussi** (#1558) — le conteneur tourne dans la mémoire du
+  poste. #372 l'avait exempté du plafond du levier 3 sur la **durée** seule, mesurée sur 598 tests
+  (`-n 8` 63 s, `-n auto` 46 s). Re-mesuré le 2026-10-22 sur la **suite complète** (8 379 tests),
+  VM chaude, avec la mémoire des processus du conteneur (cgroup, cache de fichiers exclu) :
+
+  | Workers | pytest | Mémoire des processus |
+  |---|---|---|
+  | `-n 4` | 9 min 30 | 1,2 Go |
+  | `-n 8` | 7 min 10 / 7 min 55 | 2,1 Go |
+  | `-n auto` (16) | 6 min 46 / 6 min 49 | 3,8 Go |
+
+  ~230 Mo par worker, sur un poste qui n'a que ~1 à 2 Go libres au repos : le plafond divise par
+  deux la mémoire des processus pour ~11 % de durée. ⚠ Une première mesure à `-n auto` donnait
+  10 min 11 : elle passait la première, sur une VM froide — l'ordre de passage pèse plus que les
+  workers, et une comparaison se rejoue à VM égale. `MAESTRO_PYTEST_WORKERS` déplace le plafond des
+  deux côtés ; le pipeline garde `-n auto`, le nombre de workers ne changeant pas le verdict.
+- **Le cache de fichiers de la VM WSL ne dépend pas des workers** (#1558) : à 4, 8 ou 16, la VM
+  monte vers 4 à 5 Go et la mémoire libre du poste tombe sous ~100 Mo pendant la suite complète.
+  Sans `.wslconfig`, WSL laisse la VM prendre **la moitié de la RAM** ; seul ce plafond la borne.
+  Réglage recommandé, posé à la main parce qu'il vit hors du dépôt et vaut pour toutes les
+  distributions WSL du poste — `%USERPROFILE%\.wslconfig` :
+
+  ```ini
+  [wsl2]
+  memory=4GB
+  ```
+
+  puis Docker Desktop quitté et `wsl --shutdown`. 4 Go tiennent les 2,1 Go de processus à `-n 8`
+  avec de la marge ; à `-n auto` (3,8 Go), ils frôleraient l'OOM — c'est pourquoi le plafond des
+  workers vient d'abord. `autoMemoryReclaim` (`dropCache` par défaut dans les WSL récents) rend le
+  cache à Windows une fois la VM au repos.
 
 Réglages : `MAESTRO_PYTEST_REGIME=auto|conteneur|natif`, `MAESTRO_PYTEST_IMAGE` pour le nom de
 l'image, `MAESTRO_DOCKER_DEMARRAGE=0` et `MAESTRO_DOCKER_DEMARRAGE_DELAI` pour le démarrage
@@ -3652,11 +3688,10 @@ problème sur son appelant, qui est `/ticket-finish` juste avant un push.
 
 Ce n'est pas un cas de bord, c'est le régime **nominal** depuis #455/#626 — un run tourne à
 concurrence 3, chaque session passe le filet avant de pousser (§6), et une session interactive peut
-en lancer un par-dessus. Trois filets en vol, ce sont trois `docker run … pytest -n auto` sur le
+en lancer un par-dessus. Trois filets en vol, ce sont trois `docker run … pytest -n 8` sur le
 même démon, trois `npm run build` et trois `ruff`/`mypy` qui se disputent les mêmes cœurs et la même
-mémoire — alors que le régime conteneur passe `-n auto` **précisément parce qu'il suppose la machine
-à lui** (#372), et que le plafond natif `min(cœurs, 8)` vient déjà d'une contrainte de **mémoire**
-(#285).
+mémoire — alors que le plafond `min(cœurs, 8)` vient déjà d'une contrainte de **mémoire** (#285,
+#1558) et suppose la machine à un seul filet.
 
 Ce que ça coûte n'est pas d'abord du temps, c'est le **verdict**.
 [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) mesure de la simultanéité *réelle* —

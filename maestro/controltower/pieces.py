@@ -94,6 +94,7 @@ from pathlib import Path
 from typing import Any
 
 from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
+from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.playbook_du_code import registre
 from maestro.controltower.chat import (
     PIECE_ECARTEE,
@@ -106,6 +107,7 @@ from maestro.controltower.chat import (
 )
 from maestro.controltower.outillage import ServiceOutillage
 from maestro.controltower.projets import ServiceProjets
+from maestro.controltower.recu_par_l_equipe import rebrancher, remplacees
 from maestro.controltower.validation import appliquer_sous_validation
 from maestro.engine.guardrails import DemandeValidation
 from maestro.outillage.clients import Client, reunir
@@ -335,6 +337,12 @@ class ServicePieces:
     montre (`None` : le réel, que la suite de tests neutralise d'un seul endroit).
     `correction` comprend une phrase de correction (`None` : le modèle du poste, résolu
     au premier usage).
+
+    `equipe` (#1520) est la configuration d'agent où vivent les équipes des projets —
+    celle des gabarits, que le service cadre sur le projet de la pièce. Branchée, chaque
+    écriture rebranche l'équipe du projet et constate ce qu'elle reçoit
+    (`maestro.controltower.recu_par_l_equipe`) ; `None` n'en touche aucune, et le fait
+    d'une écriture ne constate rien.
     """
 
     def __init__(
@@ -344,11 +352,13 @@ class ServicePieces:
         *,
         verificateur: Verificateur | None = None,
         correction: CorrectionModele | None = None,
+        equipe: ConfigurationAgents | None = None,
     ) -> None:
         self._outillage = outillage
         self._projets = projets
         self._verificateur = verificateur
         self._correction = correction or CorrectionModele()
+        self._equipe = equipe
         self._lues: dict[tuple[str, str], Analyse] = {}
 
     # ── lire ────────────────────────────────────────────────────────────────
@@ -564,9 +574,51 @@ class ServicePieces:
         Lève les refus motivés de ses couches (`ProjetInconnu`, `RacineRefusee`,
         `EspaceProjetIndisponible`, `ApplicationRefusee`) ; tout le reste est une ligne
         du fait rendu.
+
+        Une pièce que le projet porte désormais rebranche ensuite l'équipe du projet, et
+        son fait constate ce que les agents reçoivent (#1520, `_constater`) — c'est ce
+        qui fait qu'une commande remplacée ne reste pas dans leurs playbooks, et que le
+        fil ne dit « partout » que quand c'est vrai.
         """
         projet = self._outillage.entite(piece.projet_id)
         racine = valider_racine(projet.racine)
+        # Ce que le manifeste prescrivait avant l'écriture : ce qu'elle peut remplacer.
+        avant = await asyncio.to_thread(verifications_declarees, racine)
+        fait = await self._ecrire(projet, racine, piece)
+        if not fait.ecrite or self._equipe is None:
+            return fait
+        return await asyncio.to_thread(self._constater, projet, racine, piece, fait, avant)
+
+    def _constater(
+        self,
+        projet: Projet,
+        racine: Path,
+        piece: PieceProposee,
+        fait: PieceEcrite,
+        avant: Sequence[Verification],
+    ) -> PieceEcrite:
+        """Le fait, et ce que l'écriture a fait à l'équipe du projet — **bloquant** (#1520).
+
+        Rebrancher d'abord, constater ensuite : le constat relit ce que chaque agent
+        reçoit **après** le rebranchement, donc ce qu'un agent de la tâche suivante
+        recevra. Une panne de l'un ou de l'autre ne défait pas l'écriture, faite : le fait
+        reste celui de la pièce, sans rien constater — ce qui ne vaut jamais « partout ».
+        """
+        assert self._equipe is not None  # appelé derrière la garde d'`ecrire`
+        try:
+            rebranchement = rebrancher(self._equipe, projet.id)
+            constat = remplacees(racine, avant, piece.corrections_prises, rebranchement.recus)
+        except (OSError, ValueError):
+            return fait
+        return replace(
+            fait,
+            equipe=tuple(rebranchement.recus),
+            rebranches=rebranchement.rebranches,
+            remplacees=constat,
+        )
+
+    async def _ecrire(self, projet: Projet, racine: Path, piece: PieceProposee) -> PieceEcrite:
+        """L'écriture elle-même, au régime du projet — voir `ecrire`."""
         fichier = Fichier(
             chemin=piece.chemin,
             role=piece.role,

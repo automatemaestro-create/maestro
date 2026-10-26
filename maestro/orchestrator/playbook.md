@@ -153,7 +153,8 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    sections du site » est quatre tâches. Ce qu'ils partagent — une charte, une structure commune
    — se décide dans une tâche amont dont ils dépendent tous, ou s'écrit dans chacune de leurs
    descriptions ; ne les enchaîne jamais pour qu'ils se le transmettent. Ce qui les réunit
-   ensuite — l'intégration, l'assemblage — est une tâche qui dépend d'eux tous.
+   ensuite n'est une tâche que s'il y a quelque chose à **produire** — un assemblage à écrire,
+   une navigation qui relie les pages — ; elle dépend alors d'eux tous, et elle produit.
 5. **Les risques et les inconnues.** Nomme ce qui peut faire échouer le plan : ce que l'objectif
    ne dit pas, ce qui dépend d'un existant que tu ne connais pas, ce qui est techniquement
    incertain. Chaque risque atterrit quelque part — une tâche d'investigation placée en tête, ou
@@ -170,9 +171,20 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    qu'un livrable en rend une aussi. Ce qui ne se fait jamais, c'est inventer une tâche pour
    remplir la fourchette. Un objectif qui porte sur plus d'éléments indépendants qu'elle n'en
    compte en rend autant, un par élément : c'est la fourchette qui se relit, pas le découpage.
-7. **Relis ton plan** avant de le rendre : chaque livrable a sa tâche, chaque tâche porte les
+7. **Aucune tâche pour vérifier.** Une tâche dont le seul objet serait de vérifier ce que
+   d'autres livrent — recette, intégration qui ne fait que rejouer, validation finale, revue —
+   ne se planifie pas. Chaque tâche est déjà vérifiée en l'exécutant à sa livraison (voir
+   « Critères de réussite » plus bas), et **à la fin du run, Maestro confronte lui-même chaque
+   critère d'acceptation du brief au livrable intégré**, en l'exécutant, et en rend la recette
+   dans le projet. Une telle tâche referait ce travail une troisième fois, sur le chemin
+   critique. Ce qu'un critère du run demande de produire — une suite de tests, un document —
+   est un livrable comme un autre : il a sa tâche, ou entre dans celle du code qu'il concerne.
+8. **Relis ton plan** avant de le rendre : chaque livrable a sa tâche, chaque tâche porte les
    quatre sections ci-dessous, les identifiants sont uniques, les dépendances existent, le graphe
    est acyclique, et aucune tâche n'en attend une autre dont elle n'utilise pas le livrable.
+   Relis-le aussi contre le point 7 : une tâche dont le seul objet est de vérifier ce que
+   d'autres livrent se **retire** du plan — Maestro le vérifie à la fin du run —, ou se
+   réécrit autour de ce qu'elle produit si elle produit quelque chose.
 
 ## Ce que porte chaque tâche
 
@@ -227,6 +239,8 @@ fausse se lit comme une ossature vraie.
 - Un objectif d'**action** a rendu **une** tâche, qui agit — ni utilitaire, ni tests, ni validation —
   et cette tâche porte `acte_accorde`, l'acte tel que l'objectif le nomme.
 - Chaque livrable identifié a une tâche, et une seule.
+- Aucune tâche n'a pour seul objet de vérifier, recetter ou valider ce que d'autres livrent :
+  la recette des critères d'acceptation du run, c'est Maestro qui la fait, à la fin du run.
 - Chaque `description` porte ses quatre sections : objectif, périmètre et limites, latitude de
   décision, critères de réussite.
 - Chaque tâche est exécutable par un seul agent, sans avoir à te reposer une question.

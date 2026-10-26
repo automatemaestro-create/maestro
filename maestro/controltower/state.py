@@ -94,6 +94,7 @@ from maestro.telemetry.costs import (
     ETAPE_BILAN,
     ETAPE_BRIEF,
     ETAPE_CADENCE,
+    ETAPE_RECETTE,
     ETAPE_SONDE,
     RunCost,
     TaskCost,
@@ -1015,6 +1016,13 @@ class EtatExecution:
     # soldé avant ce lot. Il se reconstruit au rejeu du journal durable, comme le
     # reste : c'est là qu'il est gardé.
     bilan: dict[str, Any] | None = None
+    # La **recette** de ce run (#1530), sous la forme de
+    # `maestro.engine.recette.RecetteDuRun.to_dict` — un dict, pour la raison du
+    # bilan : chaque critère du brief, son verdict et sa preuve, et où elle s'est
+    # écrite dans le projet. Posée par l'activité `recette` qui la porte, la
+    # dernière l'emportant (un run repris se recette à sa vraie fin) ; None pour un
+    # run sans brief, en vol, ou soldé avant ce lot. Le récit de fin la lit.
+    recette: dict[str, Any] | None = None
 
     @property
     def debut(self) -> str:
@@ -1267,6 +1275,7 @@ class EtatExecution:
         brief = StepUsage()
         bilan = StepUsage()
         sonde = StepUsage()
+        recette = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Ce que le run a **occupé** (#989) : l'union des intervalles de ses
         # étapes, jamais leur somme. Les bornes se lisent par le même verbe que
@@ -1331,6 +1340,10 @@ class EtatExecution:
                     # La sonde du point de contrôle (#1398) : sa propre ligne,
                     # ni la tâche qui l'a armée, ni le cadrage.
                     sonde = sonde.fusion(usage)
+                elif event.etape_run == ETAPE_RECETTE:
+                    # La recette du run (#1530) : sa propre ligne, dans le temps
+                    # de mur — elle est sur le chemin du run.
+                    recette = recette.fusion(usage)
                 else:
                     planification = planification.fusion(usage)
             elif (
@@ -1349,6 +1362,7 @@ class EtatExecution:
             duree_mur_ms=union_ms(intervalles),
             bilan=bilan,
             sonde=sonde,
+            recette=recette,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1369,6 +1383,8 @@ class EtatExecution:
             # pour la raison du brief : `GET /api/executions` rend N résumés, et
             # seule la vue d'un run le lit. `null` tant qu'aucun n'a été rendu.
             "bilan": dict(self.bilan) if self.bilan is not None else None,
+            # La recette du run (#1530), au même régime que le bilan.
+            "recette": dict(self.recette) if self.recette is not None else None,
             "evenements": [e.to_dict() for e in self.evenements],
         }
 
@@ -2172,6 +2188,11 @@ class ControlTowerState:
             self._retient_brief_auto(event)
         if event.etape_run == ETAPE_CADENCE and event.cadence is not None and event.run_id:
             self._retient_cadence(event)
+        if event.etape_run == ETAPE_RECETTE and event.verification is not None:
+            # La recette du run (#1530) : au run qu'elle juge, jamais à une tâche.
+            execution = self._executions.get(event.run_id)
+            if execution is not None:
+                execution.recette = dict(event.verification)
         if event.tache_id:
             tache = self._taches.get(event.tache_id)
             if tache is not None:

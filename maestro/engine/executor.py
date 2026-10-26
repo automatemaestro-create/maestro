@@ -61,6 +61,7 @@ from contextlib import (
     nullcontext,
 )
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic, perf_counter
 from typing import Any, Protocol
@@ -121,10 +122,17 @@ from maestro.engine.questions import (
     DemandeQuestion,
     identifiant_question,
 )
+from maestro.engine.recette import (
+    RecetteDuRun,
+    ecrire_dans_le_projet,
+    recette_non_jouee,
+    recetter,
+)
 from maestro.engine.retry import PolitiqueRelance, est_transitoire
 from maestro.engine.verification import (
     SUFFIXE_ETAPE_VERIFICATION,
     Amont,
+    Livraison,
     LivraisonNonTenue,
     LivraisonNonVerifiee,
     Recette,
@@ -151,7 +159,7 @@ from maestro.projets.application import (
     verifier_perimetre,
 )
 from maestro.projets.modele import Projet
-from maestro.projets.racine import RacineRefusee
+from maestro.projets.racine import RacineRefusee, valider_racine
 from maestro.projets.store import ProjetStore
 from maestro.providers.activite import PERIODE_ACTIVITE_S
 from maestro.providers.arbitrage import Arbitre, ArbitreActe, BornesArbitrage
@@ -174,8 +182,14 @@ from maestro.sandbox import (
 )
 from maestro.sandbox.confinement import ReleveConfinement
 from maestro.sandbox.en_place import portee_de
-from maestro.sandbox.verification import MiroirDeVerification, RegistreDesMiroirs
+from maestro.sandbox.verification import (
+    CopieImpossible,
+    MiroirDeVerification,
+    RegistreDesMiroirs,
+    miroir_de_verification,
+)
 from maestro.telemetry import (
+    ETAPE_RECETTE,
     ConsigneDepenseDuRun,
     PlafondDepense,
     PlafondDepenseDepasse,
@@ -859,6 +873,28 @@ class TaskExecutor(ABC):
         voyage pas — chaque tâche y garde son propre miroir, comme avant ce ticket.
         """
         yield
+
+    async def recette_du_run(
+        self,
+        run_id: str,
+        projet_id: str | None,
+        resultats: Sequence[TaskResult],
+        journal: RunJournal,
+        *,
+        modele: str,
+    ) -> RecetteDuRun | None:
+        """Confronte le livrable intégré de `run_id` aux critères de son brief (#1530).
+
+        Dit par la boucle une fois, toutes les tâches soldées, **dans** le temps du run
+        (`tient_le_run`) : la recette joue dans le miroir du run quand il en a un. Rend
+        la recette — consignée au journal sur l'étape `recette` —, ou None quand il n'y
+        a rien à recetter : pas de brief, ou pas de vérificateur.
+
+        None par défaut, et c'est une limite **dite** : un exécuteur distribué
+        (`maestro.queue.CeleryExecutor`) vérifie côté worker, où ni le brief du run ni
+        la fin du run ne voyagent encore — ses runs finissent sans recette.
+        """
+        return None
 
     def derive_les_instances(
         self, run_id: str, projet_id: str, largeur: int
@@ -1550,6 +1586,150 @@ class LocalExecutor(TaskExecutor):
         finally:
             self._rangements_accords.pop(run_id, None)
             await asyncio.to_thread(self._miroirs.retirer, run_id)
+
+    async def recette_du_run(
+        self,
+        run_id: str,
+        projet_id: str | None,
+        resultats: Sequence[TaskResult],
+        journal: RunJournal,
+        *,
+        modele: str,
+    ) -> RecetteDuRun | None:
+        """Cf. `TaskExecutor.recette_du_run` — ici, dans le miroir du projet (#1530).
+
+        Le **livrable intégré** est la racine du projet, toutes les fusions faites. Il se
+        vérifie comme la livraison d'une tâche d'un projet non versionné : dans un
+        **miroir** de la racine (#1496) — celui du run quand il en a un (#1497), déjà
+        synchronisé par ses tâches, sinon le sien —, jamais dans la racine. Un miroir
+        impossible rend chaque commande « non jouée », avec son motif.
+
+        Le vérificateur juge au niveau de `modele` — celui du Chef de projet, qui
+        jugeait déjà les échecs du run —, sous le plafond de dépense en vigueur, et
+        son usage est mesuré sur l'étape `recette`, que le grand livre porte sur sa
+        propre ligne (`RunCost.recette`). Une recette sans aucune tâche aboutie ne
+        coûte rien : il n'y a rien d'intégré à confronter, et elle le dit.
+
+        La recette s'écrit ensuite dans le projet (`ecrire_dans_le_projet`) — sur un
+        projet versionné, sous l'accord d'écriture que le run a reçu (#706), et sous
+        le verrou de ses fusions.
+        """
+        brief = self._briefs.get(run_id)
+        if self._verificateur is None or brief is None or not brief.criteres_acceptation:
+            return None
+        debut = perf_counter()
+        criteres = brief.criteres_acceptation
+        projet = (
+            self._projets.lire(projet_id)
+            if projet_id is not None and self._projets is not None
+            else None
+        )
+        usage = StepUsage()
+        if not any(resultat.ok for resultat in resultats):
+            recette = recette_non_jouee(
+                criteres,
+                "aucune tâche du run n'a abouti : il n'y a pas de livrable intégré à confronter",
+            )
+        else:
+            with collect_usage(plafond=self._plafonds.controle(journal)) as recolte:
+                async with self._lieu_de_la_recette(run_id, projet) as (
+                    espace,
+                    origine,
+                    empechement,
+                ):
+                    livraison = Livraison(
+                        sortie=_compte_rendu_du_run(resultats),
+                        fichiers=_fichiers_du_run(resultats),
+                        espace=espace,
+                        portee=(
+                            portee_de(espace, projet)
+                            if espace is not None and not empechement
+                            else None
+                        ),
+                        origine=origine,
+                        empechement=empechement,
+                    )
+                    recette = await recetter(
+                        self._verificateur,
+                        criteres,
+                        livraison,
+                        modele=modele,
+                        brief=brief,
+                        relance=self._relance,
+                    )
+            usage = recolte.total
+        recette = await self._ecrit_la_recette(recette, projet, run_id, brief)
+        journal.consigne(
+            etape=ETAPE_RECETTE,
+            nom="Recette du run — les critères du brief",
+            agent=ACTEUR_ORCHESTRATEUR,
+            role=ROLE_ORCHESTRATEUR,
+            statut=recette.statut,
+            entree=f"{len(criteres)} critère(s) d'acceptation du brief, sur le livrable intégré",
+            sortie=recette.resume(),
+            description=recette.preuves(),
+            usage=usage.avec_duree(_ecoule_ms(debut)),
+            projet_id=projet_id,
+            verification=recette.to_dict(),
+        )
+        return recette
+
+    @asynccontextmanager
+    async def _lieu_de_la_recette(
+        self, run_id: str, projet: Projet | None
+    ) -> AsyncIterator[tuple[Path | None, Path | None, str]]:
+        """Où la recette joue : `(espace, origine, empechement)` — le miroir et la racine (#1530).
+
+        Sans projet, il n'y a pas d'espace : la recette ne juge que des lectures. Un
+        miroir qui ne se fait pas laisse l'espace sur la racine **avec un
+        empêchement**, la règle de `Recette` : aucune commande n'y est alors jouée,
+        chacune est dite non jouée avec ce motif.
+        """
+        if projet is None:
+            yield None, None, ""
+            return
+        try:
+            racine = valider_racine(projet.racine)
+        except RacineRefusee as refus:
+            yield None, None, f"la racine du projet n'est plus admissible : {refus}"
+            return
+        with self._miroirs.prete(run_id, racine) as du_run:
+            gere = nullcontext(du_run) if du_run is not None else miroir_de_verification(racine)
+            with gere as miroir:
+                try:
+                    chemin: Path | None = await asyncio.to_thread(miroir.synchroniser)
+                    empechement = ""
+                except CopieImpossible as exc:
+                    chemin, empechement = None, f"le miroir du projet n'a pas pu être fait — {exc}"
+                if chemin is None:
+                    yield racine, None, empechement
+                else:
+                    yield chemin, racine, ""
+
+    async def _ecrit_la_recette(
+        self, recette: RecetteDuRun, projet: Projet | None, run_id: str, brief: Brief
+    ) -> RecetteDuRun:
+        """La recette, écrite dans le projet du run — et ce qu'il en est advenu (#1530)."""
+        if projet is None:
+            return replace(
+                recette,
+                ecriture="ce run n'a pas de projet : la recette se lit au journal et dans le récit",
+            )
+        accord = self._accords_fusion.get((run_id, projet.id))
+        texte = recette.en_markdown(
+            objectif=brief.objectif,
+            run_id=run_id,
+            horodatage=datetime.now(UTC).strftime("%Y-%m-%d à %H:%M UTC"),
+        )
+        async with self._verrou_projet(projet.id):
+            fichier, raison = await asyncio.to_thread(
+                ecrire_dans_le_projet,
+                projet,
+                run_id,
+                texte,
+                accorde=accord is not None and accord.approuve,
+            )
+        return replace(recette, fichier=fichier, ecriture=raison)
 
     def derive_les_instances(
         self, run_id: str, projet_id: str, largeur: int
@@ -4759,6 +4939,43 @@ def _avec_recette(cause: str, recette: Recette | None) -> str:
     if recette is None or not recette.en_defaut:
         return cause
     return f"{cause}\n{recette.motif('la tâche a été arrêtée avant de tenir')}"
+
+
+def _compte_rendu_du_run(resultats: Sequence[TaskResult]) -> str:
+    """Ce que la recette du run lit en guise de compte-rendu : les tâches et leur issue (#1530).
+
+    Écrit par Maestro, et il le dit : ce n'est pas une preuve — la recette tranche
+    sur ce qu'elle exécute et lit dans le livrable, jamais sur ce qu'un compte-rendu
+    affirme (le prompt du vérificateur le dit d'un agent, et c'est vrai du run).
+    """
+    issues = {STATUT_TERMINEE: "terminée", STATUT_BLOQUEE: "bloquée"}
+    lignes = [
+        "Compte-rendu de Maestro — ce n'est pas une preuve : les tâches du run, et leur "
+        "issue. Les fichiers ci-dessous sont ceux qu'elles ont produits ; le livrable "
+        "intégré est l'espace de travail, où toutes ont été réunies."
+    ]
+    for resultat in resultats:
+        issue = issues.get(resultat.statut, "en échec")
+        ligne = f"- {resultat.task_id} — {resultat.titre} : {issue}"
+        if not resultat.ok and resultat.erreur:
+            ligne += f" ({resultat.erreur.strip().splitlines()[0][:200]})"
+        lignes.append(ligne)
+    return "\n".join(lignes)
+
+
+def _fichiers_du_run(resultats: Sequence[TaskResult]) -> tuple[ProducedFile, ...]:
+    """Les fichiers que les tâches abouties ont produits, la dernière version de chacun (#1530).
+
+    Dans l'ordre du plan : une tâche aval qui reprend un fichier en donne la version
+    que le livrable intégré porte. Le vérificateur les lit bornés (`_bloc_livraison`).
+    """
+    par_chemin: dict[str, ProducedFile] = {}
+    for resultat in resultats:
+        if resultat.ok:
+            for fichier in resultat.fichiers:
+                par_chemin.pop(fichier.chemin, None)
+                par_chemin[fichier.chemin] = fichier
+    return tuple(par_chemin.values())
 
 
 def _livree_non_verifiee(

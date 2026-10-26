@@ -542,6 +542,31 @@ def _verdicts_encore_ecrits(
     )
 
 
+def prescrites_dans(
+    cible: Path | str, commandes: Sequence[str]
+) -> dict[str, tuple[str, ...]]:
+    """Pour chaque commande, les fichiers de l'outillage de `cible` qui la prescrivent (#1520).
+
+    La règle de `_verdicts_encore_ecrits`, rendue fichier par fichier : les fichiers que
+    le manifeste déclare, lus en entier, et une commande écrite **comme Maestro la
+    prescrit** (`prescrit`) — citée ou contenue dans une autre, elle n'y est pas. C'est
+    ce que les agents du projet reçoivent de son outillage, et ce qu'on constate après
+    une écriture pour dire où une commande remplacée vit encore.
+
+    Dans le doute, le fichier compte : illisible, vide ou plus grand que ce qu'on en lit,
+    on ne peut pas affirmer qu'il ne la prescrit pas. Lecture pure, ordre du manifeste.
+    """
+    racine = Path(cible)
+    trouves: dict[str, list[str]] = {commande: [] for commande in commandes}
+    for chemin in _lire_manifeste(racine).entrees:
+        texte = lire_texte(racine / PurePosixPath(chemin), OCTETS_MAX + 1)
+        douteux = not texte or len(texte.encode("utf-8", errors="replace")) > OCTETS_MAX
+        for commande, fichiers in trouves.items():
+            if douteux or prescrit(texte, commande):
+                fichiers.append(chemin)
+    return {commande: tuple(fichiers) for commande, fichiers in trouves.items()}
+
+
 def _verdicts_fusionnes(
     declares: Sequence[Verification], neufs: Sequence[Verification]
 ) -> tuple[Verification, ...]:

@@ -3030,7 +3030,13 @@ class ApiQuiOutille(FausseAPI):
 
     `revue` (#1343) sont les pièces que **la fin du run** propose : l'outillage revu sur
     le projet construit. La première voyage sur le message du récit — le dernier du
-    fil —, les suivantes viennent geste après geste, comme avant le run.
+    fil —, les suivantes viennent geste après geste, comme avant le run. Une pièce qui
+    porte `remplace` fait quitter ces commandes au manifeste, comme une commande que
+    plus aucun fichier de Maestro ne prescrit (#1381).
+
+    `playbooks` (#1520) est ce que chaque agent recruté **reçoit** — le playbook que le
+    moteur charge, servi par `GET /api/playbooks/{agent}` ; sans entrée, celui que la
+    proposition lui donnait.
     """
 
     def __init__(
@@ -3047,8 +3053,10 @@ class ApiQuiOutille(FausseAPI):
         propose_une_equipe: bool = True,
         recit: str | None = None,
         revue: Sequence[Mapping[str, Any]] = (),
+        playbooks: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(moteur=moteur, propose_une_equipe=propose_une_equipe, recit=recit)
+        self._playbooks = dict(playbooks or {})
         self._revue = [dict(p) for p in revue]
         self._repertoire = repertoire
         self._questions = [dict(q) for q in questions]
@@ -3090,7 +3098,30 @@ class ApiQuiOutille(FausseAPI):
         if chemin == "/api/projets" and methode == "GET":
             self.appels.append((methode, chemin))
             return Reponse(statut=200, corps=list(self.declares))
+        equipe = chemin == "/api/catalogue" or chemin.startswith("/api/playbooks/")
+        if methode == "GET" and equipe:
+            self.appels.append((methode, chemin))
+            return self._equipe_recue(chemin, params or {})
         return super().demander(methode, chemin, corps=corps, params=params, delai_s=delai_s)
+
+    def _equipe_recue(self, chemin: str, params: Mapping[str, str]) -> Reponse:
+        """L'équipe recrutée de ce projet, et le playbook que le moteur charge pour chacun."""
+        if params.get("projet") != self._projet:
+            return Reponse(statut=200, corps=[]) if chemin == "/api/catalogue" else Reponse(
+                statut=404, corps={}, texte="agent inconnu"
+            )
+        roles = {
+            str(role["nom"]): str(role.get("playbook") or "")
+            for recrutement in self.recrutements
+            for role in recrutement.get("roles") or []
+        }
+        if chemin == "/api/catalogue":
+            return Reponse(statut=200, corps=[{"nom": nom} for nom in roles])
+        nom = chemin.rsplit("/", 1)[-1]
+        if nom not in roles:
+            return Reponse(statut=404, corps={}, texte="agent inconnu")
+        contenu = self._playbooks.get(nom, roles[nom])
+        return Reponse(statut=200, corps={"agent": nom, "contenu": contenu})
 
     def _message(self, corps: Mapping[str, Any]) -> Reponse:
         if str(corps.get("projet_id") or ""):
@@ -3219,6 +3250,8 @@ class ApiQuiOutille(FausseAPI):
         donnees["entrees"].append({"chemin": piece["chemin"]})
         par_commande = {v["commande"]: v for v in donnees["verifications"]}
         par_commande.update({v["commande"]: v for v in piece.get("verifications") or []})
+        for remplacee in piece.get("remplace") or ():
+            par_commande.pop(remplacee, None)
         donnees["verifications"] = list(par_commande.values())
         manifeste.parent.mkdir(parents=True, exist_ok=True)
         manifeste.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
@@ -3488,6 +3521,85 @@ def test_s9_sans_revue_a_la_fin_du_run_rejoue_ce_que_l_outillage_disait_avant(
     assert issue.verdict == "rouge"
     assert COMMANDE_TYPST in issue.motif
     assert [g["piece"] for g in api.gestes] == ["emp-1"]
+
+
+# La sonde qui a manqué (#1520) : sur le passage `20261014-171347`, la revue d'après le
+# run a remplacé `python assembler.py` par `python assembler_carnet.py` dans les pièces
+# et le manifeste ; les trois playbooks de l'équipe gardaient l'ancienne, et S9 était
+# vert. Un agent du run suivant aurait reçu deux commandes pour le même geste.
+ASSEMBLER = "python assembler.py"
+ASSEMBLER_CARNET = "python assembler_carnet.py"
+
+
+def _api_revue_qui_remplace(tmp_path: Path, playbook: str) -> ApiQuiOutille:
+    """S9 tel que le passage l'a vu : la commande de construction remplacée par la revue,
+    et `dev-1` qui reçoit `playbook`."""
+    avant = _piece("AGENTS.md", _verification(), _verification(ASSEMBLER, usage="construire"))
+    revue = {
+        **_piece(
+            "AGENTS.md",
+            _verification(etat=VERIFIEE),
+            _verification(ASSEMBLER_CARNET, usage="construire"),
+        ),
+        "remplace": [ASSEMBLER],
+    }
+    return ApiQuiOutille(
+        tmp_path / "Maestro",
+        moteur=_moteur_qui_construit,
+        pieces=(avant,),
+        recit="Voilà votre carnet.",
+        revue=(revue,),
+        playbooks={"dev-1": playbook},
+    )
+
+
+def _section_qui_fige(commande: str) -> str:
+    """Un playbook dont la section des skills fige `commande` — la forme d'avant #1520."""
+    return (
+        "# playbook\n\n## Les skills du projet qui sont les tiens\n\n"
+        "- **construire-le-projet** — `.agents/skills/construire-le-projet/SKILL.md` "
+        f"(il enveloppe : `{commande}`)\n"
+    )
+
+
+def test_s9_est_rouge_quand_un_playbook_de_l_equipe_nomme_une_commande_remplacee(
+    tmp_path: Path,
+) -> None:
+    """Les commandes que l'outillage a montrées dans la conversation et que son manifeste
+    ne prescrit plus ne doivent figurer dans rien de ce que l'équipe reçoit : le banc lit
+    le playbook que le moteur charge pour chaque agent, et un écart est un rouge qui nomme
+    l'agent et la commande — avant que le juge ne soit saisi."""
+    montage, api, _joueur = _banc_s9(tmp_path, _api_revue_qui_remplace(
+        tmp_path, _section_qui_fige(ASSEMBLER)
+    ))
+    issue, _ctx = montage.jouer(_scenario("S9"))
+
+    assert issue.verdict == "rouge" and not issue.empechement, issue.motif
+    assert "dev-1" in issue.motif and f"`{ASSEMBLER}`" in issue.motif
+    assert ASSEMBLER_CARNET in issue.motif
+    assert issue.run_id == "run-1"
+    assert montage.juge.saisines == []
+    assert ("GET", "/api/playbooks/dev-1") in api.appels
+
+
+@pytest.mark.parametrize(
+    "playbook",
+    ["# playbook\n", _section_qui_fige(ASSEMBLER_CARNET)],
+    ids=["ne-nomme-aucune-commande", "nomme-celle-du-manifeste"],
+)
+def test_s9_confronte_les_playbooks_et_reste_vert_quand_ils_suivent_le_manifeste(
+    tmp_path: Path, playbook: str
+) -> None:
+    """L'autre moitié : un playbook qui renvoie au skill sans commande, ou qui nomme celle
+    que le manifeste prescrit, ne fait pas d'écart — et la confrontation se lit au déroulé."""
+    montage, _api, _joueur = _banc_s9(tmp_path, _api_revue_qui_remplace(tmp_path, playbook))
+    issue, ctx = montage.jouer(_scenario("S9"))
+
+    assert issue.vert, issue.motif
+    (confrontation,) = [
+        e.detail for e in ctx.journal.etapes if e.libelle == "playbooks confrontés au manifeste"
+    ]
+    assert "dev-1" in confrontation and ASSEMBLER in confrontation
 
 
 def test_s9_est_rouge_quand_l_outillage_n_ecrit_aucune_commande(tmp_path: Path) -> None:

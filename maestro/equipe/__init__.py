@@ -95,6 +95,7 @@ from maestro.equipe.creation import (
     definition,
     playbook_branche,
     refus_de,
+    sans_commandes_figees,
     skills_constates,
 )
 from maestro.equipe.gabarits import (
@@ -180,5 +181,6 @@ __all__ = [
     "proposer_renfort",
     "refus_de",
     "role_manquant",
+    "sans_commandes_figees",
     "skills_constates",
 ]
