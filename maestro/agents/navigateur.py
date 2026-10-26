@@ -53,7 +53,7 @@ import os
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from maestro.agents.mcp import IntegrationMcp, ServeurMcp
 from maestro.agents.mcp_registry import RegistreMcp
@@ -98,12 +98,22 @@ GESTES_DE_L_AGENT: tuple[str, ...] = (
 )
 
 #: Ce qui suit les gestes : la consigne que p5 a montrée nécessaire (docs/50 § 4.1).
+#:
+#: ⚠ Sa dernière phrase vient de p5 **rejoué** avec le navigateur (run `6193eadac741`,
+#: 2026-10-22) : le serveur range son journal de console dans un fichier de son dossier
+#: de sorties, hors du projet, et y renvoie après chaque geste (« New console entries :
+#: …log#L5-L11 »). Deux agents l'ont lu au shell (`sed -n`, `cat`), et chaque lecture
+#: hors du projet a attendu qu'une personne tranche. L'outil `Read` le lit sans rien
+#: demander, et `browser_console_messages` rend la console sans fichier.
 CONSIGNE_DE_L_AGENT = (
     "N'écris pas ton propre banc pour regarder une page : ni Chrome piloté par CDP, ni "
     "puppeteer ou Playwright installés pour l'occasion, ni fichier d'essai posé hors du "
     "projet. Le navigateur est déjà là, sans fenêtre, sous un profil qui ne laisse rien "
     "derrière lui, et il s'arrête avec ta tâche. Lance le serveur du projet, ouvre son "
-    "adresse locale, regarde, puis arrête ce que tu as lancé."
+    "adresse locale, regarde, puis arrête ce que tu as lancé. Ce que le navigateur "
+    "écrit — captures, journal de la console — tombe hors du projet : demande la "
+    "console à `browser_console_messages`, lis un fichier qu'il te désigne avec l'outil "
+    "`Read`, jamais au shell, où une lecture hors du projet attend qu'une personne tranche."
 )
 
 #: Le sous-dossier du jetable où tombent ses captures (voir l'en-tête).
@@ -177,8 +187,11 @@ def _chemins(
     systeme: str,
 ) -> tuple[Path, ...]:
     if systeme == "win32":
+        # Composés à la Windows quel que soit l'OS qui joue la règle : la suite la
+        # joue aussi dans un conteneur Linux, où `/` joindrait un chemin de travers.
+        # Par sa forme texte : `Path(PureWindowsPath(…))` en reprendrait les morceaux.
         return tuple(
-            Path(env[variable]) / relatif
+            Path(str(PureWindowsPath(env[variable]) / relatif))
             for variable, relatif in emplacements
             if env.get(variable)
         )

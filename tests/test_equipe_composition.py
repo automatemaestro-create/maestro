@@ -633,7 +633,9 @@ def _constats_web() -> Constats:
             Langage(nom="CSS", fichiers=6, part=0.2, exemple="app/globals.css"),
         ),
         commandes=(
-            Commande(usage="tester", commande="npm test", chemin="package.json", origine="declaree"),
+            Commande(
+                usage="tester", commande="npm test", chemin="package.json", origine="declaree"
+            ),
         ),
     )
 

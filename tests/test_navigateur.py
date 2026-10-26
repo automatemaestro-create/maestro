@@ -27,6 +27,7 @@ import pytest
 from maestro.agents.mcp_registry import SEED, VERSION_PLAYWRIGHT_MCP, RegistreMcp
 from maestro.agents.navigateur import (
     CE_QU_IL_FAIT,
+    CONSIGNE_DE_L_AGENT,
     GESTES_DE_L_AGENT,
     ID_INTEGRATION,
     NOM_SERVEUR,
@@ -167,6 +168,15 @@ def test_l_agent_lit_un_geste_par_promesse_faite_a_la_personne() -> None:
     assert any("reducedMotion" in geste for geste in GESTES_DE_L_AGENT)
     assert any("browser_console_messages" in geste for geste in GESTES_DE_L_AGENT)
     assert any("browser_resize" in geste for geste in GESTES_DE_L_AGENT)
+
+
+def test_ce_que_le_navigateur_ecrit_se_lit_sans_passer_par_le_shell() -> None:
+    """p5 rejoué (run `6193eadac741`) : deux agents ont lu au shell le journal de console
+    que le serveur range hors du projet, et chaque lecture a attendu une personne. La
+    consigne les envoie vers ce qui lit sans rien demander."""
+    assert "`Read`" in CONSIGNE_DE_L_AGENT
+    assert "`browser_console_messages`" in CONSIGNE_DE_L_AGENT
+    assert "jamais au shell" in CONSIGNE_DE_L_AGENT
 
 
 # ── ④ le garde-fou du registre ────────────────────────────────────────────────
