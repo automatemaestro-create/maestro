@@ -101,6 +101,7 @@ from maestro.lanceur.lanceur import HOTE_DEFAUT
 from maestro.lanceur.systeme import Systeme
 from maestro.lecture import OUTIL_SHELL
 from maestro.outillage.detection import CHEMIN_MANIFESTE
+from maestro.outillage.questionnaire import PROPOSITION_RETENUE
 from maestro.outillage.redaction import prescrit
 from maestro.outillage.verification import ECHOUEE, USAGE_DEMARRER, Delais
 from maestro.plan_run import largeur_du_plan, noeuds_depuis
@@ -2346,8 +2347,12 @@ def _reponse_a(question: Mapping[str, Any]) -> tuple[str, bool]:
     """La réponse du banc à une question d'outillage — `(valeur, libre)`.
 
     La recommandation de la question quand elle en porte une qui est l'une de ses
-    options ; sinon, avec ses mots, qu'elle n'a pas d'avis (`REPONSE_OUTILLAGE`).
+    options ; sinon, avec ses mots, qu'elle n'a pas d'avis (`REPONSE_OUTILLAGE`). La
+    proposition de l'outillage entier (#1533), une personne sans avis la **retient**,
+    d'un geste : c'est la recommandation de Maestro, faite d'un bloc.
     """
+    if question.get("proposition"):
+        return PROPOSITION_RETENUE, False
     options = {
         str(option.get("valeur") or "")
         for option in question.get("options") or []

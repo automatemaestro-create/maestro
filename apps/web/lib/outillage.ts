@@ -33,7 +33,12 @@ import {
   type EntreeDiff,
   type LigneDiff,
 } from "@/lib/diff";
-import type { ChoixOutillage, MessageChat, PieceProposee } from "@/lib/types";
+import type {
+  ChoixOutillage,
+  MessageChat,
+  PieceProposee,
+  QuestionOutillage,
+} from "@/lib/types";
 
 /**
  * La **question d'outillage** que ce fil porte encore — `null` s'il n'y en a pas.
@@ -51,6 +56,21 @@ export function questionEnAttente(messages: MessageChat[]): MessageChat | null {
   const dernier = messages[messages.length - 1];
   if (dernier === undefined) return null;
   return dernier.question ? dernier : null;
+}
+
+/**
+ * La valeur du geste qui **retient** la proposition de l'outillage entier, telle quelle
+ * (#1533) — le miroir de `PROPOSITION_RETENUE` (`maestro/outillage/questionnaire.py`).
+ * La seule réponse sans mots qu'une proposition accepte : l'API refuse toute autre.
+ */
+export const PROPOSITION_RETENUE = "retenue";
+
+/**
+ * La question est-elle la **proposition de l'outillage entier** (#1533) plutôt qu'une
+ * question à options ? Lu sur ce que le moteur sert, jamais deviné de sa clé.
+ */
+export function estUneProposition(question: QuestionOutillage): boolean {
+  return (question.proposition?.length ?? 0) > 0;
 }
 
 /**
