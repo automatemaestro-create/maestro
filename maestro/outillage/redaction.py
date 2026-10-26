@@ -80,7 +80,7 @@ from typing import Any
 
 from maestro import __version__
 from maestro.outillage.contexte import BALISE_DEBUT, BALISE_FIN
-from maestro.outillage.detection import CHEMIN_MANIFESTE
+from maestro.outillage.detection import CHEMIN_MANIFESTE, ROLE_INSTRUCTIONS
 from maestro.outillage.modele import (
     ORIGINE_DITE,
     ORIGINE_PROPOSEE,
@@ -185,6 +185,18 @@ PREVU = "prévu"
 #: l'agent du socle trouvait la CI et `CONTRIBUTING.md` à créer, hors de sa tâche
 #: (#1404). Un fichier prévu dit ce que le projet attend, pas ce que la tâche commande.
 REGLE_DU_PREVU = f"un fichier marqué « {PREVU} » ne se crée que si ta tâche le demande"
+
+#: Ce qu'`AGENTS.md` dit des fichiers où le projet écrit **déjà** ses instructions pour
+#: ses agents (#1542), en tête de ses conventions. Les agents de Maestro ne chargent
+#: aucun de ces fichiers d'eux-mêmes (`sans_reglages_du_poste`, docs/38 §5.3) : c'est
+#: cette phrase, transmise dans le message de la tâche, qui les leur fait lire — par
+#: l'outil de lecture, comme un `SKILL.md`. Elle ne leur donne pas le dernier mot : la
+#: tâche le garde, comme le dit la consigne qui transmet ce fichier.
+ENTETE_INSTRUCTIONS = (
+    "Ce projet écrit déjà ses instructions pour les agents qui y travaillent. Lis-les en "
+    "entier avant de commencer, avec ton outil de lecture de fichier : leurs règles "
+    "valent pour ton travail ici, sauf là où ta tâche dit autre chose."
+)
 
 #: Les commandes de « Monter et lancer » puis de « Vérifier », avec leur libellé, dans
 #: l'ordre où une personne arrive sur un projet. Écrites une fois : c'est aussi la liste
@@ -305,12 +317,15 @@ def rediger(
     declarees = portees or {}
     index = _index_des_skills(recommandation)
     verdicts = _verdicts_par_commande(verifications)
+    # Ce que Maestro a écrit **en entier** n'est pas au projet : `AGENTS.md` ne renvoie
+    # pas un agent lire le pont ou l'`AGENTS.md` que Maestro a posés (#1542).
+    possedes = frozenset(c for c, portee in declarees.items() if portee == PORTEE_FICHIER)
     fichiers: list[Fichier] = []
     for entree in recommandation.entrees:
         declaree = declarees.get(entree.chemin)
         if entree.etat == "deja-present" and declaree is None:
             continue
-        fichier = _fichier(entree, constats, index, declaree, source, verdicts)
+        fichier = _fichier(entree, constats, index, declaree, source, verdicts, possedes)
         if fichier is not None:
             fichiers.append(fichier)
     return tuple(fichiers)
@@ -331,13 +346,14 @@ def _fichier(
     declaree: str | None,
     source: Mapping[str, Any] | None = None,
     verdicts: Mapping[str, Verification] | None = None,
+    possedes: frozenset[str] = frozenset(),
 ) -> Fichier | None:
     """Le fichier que rend une entrée recommandée, ou `None` si son type n'en rend pas.
 
     `declaree` — la portée que le manifeste garde pour ce chemin — l'emporte sur
     celle que l'état de l'entrée suggérerait : c'est **ce que Maestro possède**
     qui décide comment il le réécrit, et le disque ne sait pas le dire (docs/38
-    §4.2).
+    §4.2). `possedes` sont les chemins qu'il a écrits en entier.
     """
     portee = declaree or (PORTEE_BLOC if entree.etat == "a-completer" else PORTEE_FICHIER)
     if entree.type == "instructions":
@@ -345,7 +361,15 @@ def _fichier(
             chemin=entree.chemin,
             role="instructions",
             portee=portee,
-            contenu=texte_instructions(constats, index, source, verdicts=verdicts),
+            contenu=texte_instructions(
+                constats,
+                index,
+                source,
+                verdicts=verdicts,
+                possedes=possedes,
+                chemin=entree.chemin,
+                en_bloc=portee == PORTEE_BLOC,
+            ),
         )
     if entree.type == "pont":
         return Fichier(chemin=entree.chemin, role="pont", portee=portee, contenu=TEXTE_PONT)
@@ -467,6 +491,9 @@ def texte_instructions(
     source: Mapping[str, Any] | None = None,
     *,
     verdicts: Mapping[str, Verification] | None = None,
+    possedes: frozenset[str] = frozenset(),
+    chemin: str = "AGENTS.md",
+    en_bloc: bool = False,
 ) -> str:
     """Le texte d'`AGENTS.md` — les six sections de docs/38 §3.1, dans l'ordre.
 
@@ -486,6 +513,11 @@ def texte_instructions(
     à vérifier du fichier partagent se dit une fois (`raison_commune`, #1404), sous la
     première des deux sections qui en porte une : l'agent lit de haut en bas, et la
     seconde n'a plus qu'à marquer ses lignes.
+
+    `possedes`, `chemin` et `en_bloc` (#1542) disent ce qui, parmi les fichiers
+    d'instructions du projet, est à Maestro — les chemins qu'il a écrits en entier, et
+    ce fichier-ci, sauf quand il n'y écrit qu'un bloc : la section « Conventions » ne
+    renvoie l'agent lire que ce que le projet a écrit lui-même (`_instructions_du_projet`).
     """
     implique = _depuis_les_reponses(source)
     connus = verdicts or {}
@@ -516,7 +548,12 @@ def texte_instructions(
                 constats, implique, connus, commune, note="" if note_en_montant else commune
             ),
         ),
-        *_section("Conventions", _corps_conventions(constats, implique)),
+        *_section(
+            "Conventions",
+            _corps_conventions(
+                constats, implique, possedes=possedes, propre=chemin, en_bloc=en_bloc
+            ),
+        ),
         *_section("L'outillage de ce projet", _corps_outillage(constats, index)),
         *_section("Ce qu'un agent ne touche pas", [f"- {ligne}" for ligne in INTOUCHABLES]),
         "---",
@@ -728,7 +765,14 @@ def _note_commune(raison: str) -> list[str]:
     ]
 
 
-def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
+def _corps_conventions(
+    constats: Constats,
+    implique: bool = False,
+    *,
+    possedes: frozenset[str] = frozenset(),
+    propre: str = "AGENTS.md",
+    en_bloc: bool = False,
+) -> list[str]:
     """Les conventions du projet — **déjà écrites**, ou **prévues** quand elles sont impliquées.
 
     La section que #1105 vise en toutes lettres : « Ce projet écrit déjà ses
@@ -737,9 +781,19 @@ def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
     autre registre — la liste ne change pas, ce qu'on en dit change. Elles sont
     **prévues**, et plus « à créer » (#1404) : la convention vaut pour le travail de
     l'agent, le fichier qui l'écrira n'est pas sa tâche (`REGLE_DU_PREVU`).
+
+    **En tête, les instructions que le projet écrit pour ses agents** (#1542) —
+    `CLAUDE.md`, ou tout fichier que le modèle a reconnu en lisant le projet —, avec la
+    règle de les lire (`ENTETE_INSTRUCTIONS`). Elles en étaient retirées : sur #1522, un
+    dépôt qui écrit ses règles dans `CLAUDE.md` recevait un `AGENTS.md` qui ne le nommait
+    pas, et aucun agent de Maestro ne le lisait. Ce qui est à Maestro n'y est pas
+    (`_instructions_du_projet`). Elles sont nommées sans le registre du « prévu » : un
+    fichier d'instructions est toujours **lu** (par les tables, le modèle, ou vérifié sur
+    le disque quand une personne le nomme), jamais impliqué par des réponses.
     """
-    lisibles = [piece for piece in constats.conventions if piece.role != "instructions d'agent"]
-    if not lisibles:
+    instructions = _instructions_du_projet(constats, possedes, propre, en_bloc)
+    lisibles = [piece for piece in constats.conventions if piece.role != ROLE_INSTRUCTIONS]
+    if not lisibles and not instructions:
         return [
             "Les réponses données à Maestro ne désignent aucune convention de "
             "contribution. Tiens-toi au style du code que tu écris : ce sera la "
@@ -749,23 +803,53 @@ def _corps_conventions(constats: Constats, implique: bool = False) -> list[str]:
             "fichier de style). Tiens-toi au style du code que tu modifies : c'est "
             "la seule convention constatable ici."
         ]
-    entete = (
-        "Ces conventions viennent des réponses données à Maestro ; aucun fichier ne "
-        "les écrit encore :"
-        if implique
-        else "Ce projet écrit déjà ses conventions. Lis-les avant d'en inventer :"
-    )
+    lignes: list[str] = []
+    if instructions:
+        lignes += [ENTETE_INSTRUCTIONS, "", *instructions, ""]
+    if lisibles:
+        entete = (
+            "Ces conventions viennent des réponses données à Maestro ; aucun fichier ne "
+            "les écrit encore :"
+            if implique
+            else "Ce projet écrit déjà ses conventions. Lis-les avant d'en inventer :"
+        )
+        lignes += [
+            entete,
+            "",
+            *[
+                f"- {_endroit(piece.chemin, implique)} — {piece.role or 'convention'}."
+                for piece in lisibles
+            ],
+            "",
+        ]
     return [
-        entete,
-        "",
-        *[
-            f"- {_endroit(piece.chemin, implique)} — {piece.role or 'convention'}."
-            for piece in lisibles
-        ],
-        "",
+        *lignes,
         "Et, en toute circonstance, écris du code qui ressemble à celui qui "
         "l'entoure — nommage, densité de commentaires, idiomes.",
     ]
+
+
+def _instructions_du_projet(
+    constats: Constats, possedes: frozenset[str], propre: str, en_bloc: bool
+) -> list[str]:
+    """Les lignes qui nomment les fichiers d'instructions **du projet** — pas ceux de Maestro.
+
+    Trois cas à Maestro, et aucun ne se nomme : un fichier qu'il a écrit en entier
+    (`possedes`, relu du manifeste — son pont, son `AGENTS.md` à la régénération), et ce
+    fichier-ci quand il l'écrit en entier — l'agent est déjà en train de le lire. Quand
+    Maestro n'y écrit qu'un **bloc** (`en_bloc`), le reste est au projet, et seul le bloc
+    part dans le message de la tâche (`maestro.outillage.contexte`) : il se nomme, pour
+    ce qui entoure le bloc.
+    """
+    lignes: list[str] = []
+    for piece in constats.conventions:
+        if piece.role != ROLE_INSTRUCTIONS or piece.chemin in possedes:
+            continue
+        if piece.chemin != propre:
+            lignes.append(f"- `{piece.chemin}`.")
+        elif en_bloc:
+            lignes.append(f"- `{piece.chemin}`, hors du bloc que Maestro y écrit.")
+    return lignes
 
 
 def _corps_outillage(constats: Constats, index: tuple[tuple[str, str], ...]) -> list[str]:

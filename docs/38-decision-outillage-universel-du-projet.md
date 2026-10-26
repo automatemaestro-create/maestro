@@ -138,7 +138,7 @@ régénérer et à #1032 de lire :
 | `## Le projet` | Ce qu'il est, en un paragraphe. Un agent qui arrive ne le sait pas |
 | `## Monter et lancer` | Installation, build, exécution — les commandes du projet, constatées ou impliquées par ses réponses |
 | `## Vérifier` | Tests et lint, et comment n'en jouer qu'une partie |
-| `## Conventions` | Style, nommage, ce qu'on ne fait pas ici |
+| `## Conventions` | En tête, les fichiers où le projet écrit **déjà** ses instructions pour ses agents — `CLAUDE.md`, ou tout fichier que le modèle y reconnaît en le lisant —, avec la règle de les lire (#1542) ; puis style, nommage, ce qu'on ne fait pas ici |
 | `## L'outillage de ce projet` | **La désignation** (§3.3) : où sont les skills, où sont les scripts, et l'index des skills |
 | `## Ce qu'un agent ne touche pas` | Secrets, fichiers générés — ni édités, ni supprimés pour faire le ménage, ni livrés : ignorés par le `.gitignore` (#1401) —, et `.maestro/`, qui n'est pas le livrable |
 
@@ -411,7 +411,8 @@ corrige avec des mots dans la conversation (#1161, [`maestro/outillage/correctio
 « Nos tests tournent avec `node --test` » change la commande de tests, qui s'écrit dans `AGENTS.md` avec
 la phrase pour justification. Le fichier garde la commande ; le manifeste garde **la correction
 elle-même** — le sujet (`cle`, un de ceux que la correction change : une commande par usage, le
-gestionnaire, la forge, la CI), la `valeur` dite, la `phrase` de la personne telle qu'elle l'a tapée, et
+gestionnaire, la forge, la CI, les fichiers d'instructions qu'`AGENTS.md` nomme — `instructions`,
+#1542), la `valeur` dite, la `phrase` de la personne telle qu'elle l'a tapée, et
 `prise_le`, quand Maestro l'a prise. Sans elle, l'outillage du même projet rouvert dans une **autre
 conversation** se redérivait de l'analyse, et proposait de remplacer la commande dite par celle que le
 projet déclare. Avec elle :
@@ -537,7 +538,11 @@ pour ça qu'elle s'écrit ici en toutes lettres :
 Trois conséquences concrètes :
 
 1. Un `AGENTS.md`, `CLAUDE.md` ou `GEMINI.md` trouvé dans un projet **n'est pas** le prompt d'un
-   agent de Maestro. Son contenu peut lui être transmis ; il n'y entre pas tout seul.
+   agent de Maestro. Son contenu peut lui être transmis ; il n'y entre pas tout seul. Depuis #1542,
+   l'`AGENTS.md` que Maestro écrit **nomme** ceux que le projet a écrits lui-même, avec la règle de
+   les lire (§3.1) : transmis dans le message de la tâche, c'est lui qui les fait lire à l'agent —
+   par son outil de lecture, jamais parce que le CLI les aurait chargés. Sur #1522, un dépôt qui
+   écrit ses règles dans `CLAUDE.md` n'en faisait arriver aucune à ses agents.
 2. Un `.mcp.json` ou un `.claude/settings.json` du projet **ne monte aucun serveur** dans le
    runtime : c'est ce que `strict_mcp_config=True` ferme déjà
    ([`maestro/providers/claude.py`](../maestro/providers/claude.py)).
@@ -1025,6 +1030,7 @@ de la règle à la ligne qui l'exécute, et à la suite qui la garde.
 | #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) | ⚠ Renversé par #1161 ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)) : `EtapeOutillage.tsx` est retirée. Restent `POST …/outillage/report` et `outillage.a_faire` sur la fiche du projet |
 | #1161 — pièce par pièce, dans la conversation (renverse #1034) | Chaque pièce passe par les quatre cas de §4.2 **avant** d'être montrée (`prevoir`), s'écrit seule avec un manifeste **fusionné** (§4.1), et une commande corrigée avec des mots prend l'origine `dite` — la phrase de la personne pour justification — puis est **rejouée** (#1160) | [`maestro/outillage/generation.py`](../maestro/outillage/generation.py) (`prevoir`, `poser_piece`), [`correction.py`](../maestro/outillage/correction.py), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) ; `POST /api/chat/{agent}/outillage/piece` ; [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) ; l'écran : [`PieceDOutillage.tsx`](../apps/web/components/chat/PieceDOutillage.tsx) |
 | #1295 — un seul `AGENTS.md` (renverse les deux ponts d'office de §3.2) | Un pont ne s'écrit que pour un client utilisé — trouvé sur le poste avec sa version, ou nommé — qui ne lit pas `AGENTS.md` à cette version ; sinon il est écarté avec sa raison. La forme Gemini reste `GEMINI.md` (§3.2) | [`maestro/outillage/recommandation.py`](../maestro/outillage/recommandation.py) (`_ponts`), [`clients.py`](../maestro/outillage/clients.py) (ce que chaque client lit), [`maestro/clients_du_poste.py`](../maestro/clients_du_poste.py) (le `PATH` et `--version`) ; le sujet `clients` du questionnaire ; [`tests/test_outillage_clients.py`](../tests/test_outillage_clients.py) |
+| #1542 — les instructions du projet arrivent aux agents | `AGENTS.md` nomme en tête de ses conventions les fichiers d'instructions que le projet écrit (§3.1, §5.1), reconnus par le modèle quel que soit leur nom — la table de noms n'est qu'un indice ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)). Une correction en mots change la pièce reproposée — elle voit et remplace les scripts que son skill appelle, nomme un fichier vérifié sur le disque —, ou le fil dit pourquoi rien ne change, sans « correction prise » | [`maestro/outillage/exploration.py`](../maestro/outillage/exploration.py) (constat `INSTRUCTIONS`), [`redaction.py`](../maestro/outillage/redaction.py) (`_instructions_du_projet`), [`correction.py`](../maestro/outillage/correction.py), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) (`touchees`, `fichier_refuse`) ; [`tests/test_outillage_instructions.py`](../tests/test_outillage_instructions.py), [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) |
 | #1035 — tests + doc | Les faits de §2 se revérifient ; §7 dit lesquels | [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py), [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py), [`test_outillage_generation.py`](../tests/test_outillage_generation.py), [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py), [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) ; [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md) et [docs/05 §6.20](./05-interface-control-tower.md) |
 
 **Ce que les tests gardent de cette note, et pas ailleurs** (#1035) : les trois promesses de

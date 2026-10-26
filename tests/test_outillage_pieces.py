@@ -99,6 +99,7 @@ from maestro.outillage.clients import SOURCE_POSTE, Client
 from maestro.outillage.correction import (
     CorrectionPrise,
     Description,
+    constats_en_texte,
     corriger,
     corriger_les_choix,
     lire_correction,
@@ -110,7 +111,7 @@ from maestro.outillage.generation import (
     poser_piece,
     prevoir,
 )
-from maestro.outillage.modele import ORIGINE_DITE
+from maestro.outillage.modele import ORIGINE_DITE, DossierScripts, Piece
 from maestro.outillage.questionnaire import Choix, source_manifeste_des_choix
 from maestro.outillage.recommandation import RAISON_AGENTS
 from maestro.outillage.redaction import Fichier, prescrit, rediger
@@ -1387,6 +1388,252 @@ def test_une_correction_qui_retire_une_commande_porte_sa_phrase_sur_la_carte(
     assert piece.correction == phrase
 
 
+# --------------------------------------------------------------------------- #
+# #1542 — une correction change la pièce reproposée, ou le fil dit pourquoi    #
+# --------------------------------------------------------------------------- #
+
+
+def _projet_node_avec_setup(maison: Path) -> Path:
+    """Le projet Node, plus un script d'installation du projet — celui que #1522 voulait retirer."""
+    racine = _projet_node(maison)
+    (racine / "scripts").mkdir()
+    (racine / "scripts" / "setup.sh").write_text(
+        "#!/usr/bin/env bash\nnpm install\n", encoding="utf-8"
+    )
+    return racine
+
+
+def _section_conventions(texte: str) -> str:
+    """La section « Conventions » d'un `AGENTS.md`."""
+    return texte.split("## Conventions", 1)[1].split("\n## ", 1)[0]
+
+
+def test_corriger_un_usage_retire_du_skill_les_scripts_de_cet_usage() -> None:
+    """La personne sait comment son projet s'installe : sa commande remplace aussi le script."""
+    setup = Piece(nom="setup.sh", chemin="scripts/setup.sh", role="installer")
+    tests = Piece(nom="test.sh", chemin="scripts/test.sh", role="tester")
+    constats = replace(
+        _constats_node(),
+        dossier_scripts=DossierScripts(chemin="scripts", constate=True, scripts=(setup, tests)),
+    )
+    avant = {e.nom: e for e in recommander(constats).entrees}
+    assert avant["mettre-en-route"].commandes[0] == "bash scripts/setup.sh"
+
+    corriges = corriger(constats, [Choix(cle="installer", valeur="npm ci", deduit=True)])
+
+    apres = {e.nom: e for e in recommander(corriges).entrees}
+    assert apres["mettre-en-route"].commandes == ("npm ci",)
+    # Le script reste lu — il ne sert plus l'usage corrigé ; celui des tests est intact.
+    assert [p.chemin for p in corriges.dossier_scripts.scripts] == [setup.chemin, tests.chemin]
+    assert "bash scripts/test.sh" in apres["lancer-les-tests"].commandes
+
+
+def test_ce_que_le_modele_corrige_montre_les_scripts_et_les_fichiers_d_instructions() -> None:
+    """Le modèle ne corrige que ce qu'il voit : sur #1522, `bash scripts/setup.sh` n'y était pas."""
+    constats = replace(
+        _constats_node(),
+        dossier_scripts=DossierScripts(
+            chemin="scripts",
+            constate=True,
+            scripts=(Piece(nom="setup.sh", chemin="scripts/setup.sh", role="installer"),),
+        ),
+        conventions=(
+            Piece(nom="CLAUDE.md", chemin="CLAUDE.md", role="instructions d'agent"),
+            Piece(nom="README.md", chemin="README.md", role="présentation"),
+        ),
+    )
+
+    texte = constats_en_texte(constats)
+
+    assert 'clé "installer" (installation) : bash scripts/setup.sh ; npm install' in texte
+    assert 'clé "instructions" (instructions des agents) : CLAUDE.md' in texte
+    assert "README.md" not in texte
+
+
+def test_nommer_des_fichiers_d_instructions_les_met_en_tete_et_aucun_les_retire() -> None:
+    claude = Piece(nom="CLAUDE.md", chemin="CLAUDE.md", role="instructions d'agent")
+    readme = Piece(nom="README.md", chemin="README.md", role="présentation")
+    constats = replace(_constats_node(), conventions=(readme, claude))
+    lue = lire_correction(
+        json.dumps(
+            {
+                "comprise": True,
+                "corrections": [{"cle": "instructions", "valeur": "`./REGLES.md`, CLAUDE.md"}],
+            }
+        ),
+        "Nomme REGLES.md et CLAUDE.md",
+    )
+    assert [c.cle for c in lue.corrections] == ["instructions"]
+
+    nommes = corriger(constats, lue.corrections).conventions
+    retires = corriger(constats, [Choix(cle="instructions", valeur="aucun", deduit=True)])
+
+    assert [(p.chemin, p.role) for p in nommes] == [
+        ("REGLES.md", "instructions d'agent"),
+        ("CLAUDE.md", "instructions d'agent"),
+        ("README.md", "présentation"),
+    ]
+    assert retires.conventions == (readme,)
+
+
+def test_retirer_un_script_d_un_skill_en_mots_change_la_piece_reproposee(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Critère 2 de #1542, vu sur #1522 : « Retire `bash scripts/setup.sh` de ce skill » revenait
+    sur une pièce identique — le modèle ne voyait pas le script, et une commande corrigée
+    laissait les scripts de son usage dans le skill."""
+    joueur = _Joueur()
+    installer = {"cle": "installer", "valeur": "npm install"}
+    modele = _Modele(correction={"comprise": True, "corrections": [installer]})
+    projet_id = str(projets.creer("Dépensio", str(_projet_node_avec_setup(_maison)))["id"])
+    service = _service(projets, joueur, modele)
+    agents = asyncio.run(service.prochaine(projet_id, []))
+    assert agents is not None
+    fait = asyncio.run(service.ecrire(agents))
+    route = asyncio.run(service.prochaine(projet_id, _fil_d_une_piece(agents)))
+    assert route is not None and route.chemin == SKILL_ROUTE
+    assert "bash scripts/setup.sh" in route.contenu
+    fil = [
+        _message(NOM_ORCHESTRATION, "AGENTS.md ?", piece=agents),
+        _message(UTILISATEUR, "Oui, écris AGENTS.md."),
+        _message(NOM_ORCHESTRATION, "Écrit. La suite ?", piece_ecrite=fait, piece=route),
+    ]
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    phrase = "Retire `bash scripts/setup.sh` de ce skill"
+
+    reponse = asyncio.run(
+        conducteur.corriger(
+            [*fil, _message(UTILISATEUR, phrase)], projet_id=projet_id, phrase=phrase
+        )
+    )
+
+    (prompt,) = modele.appels["correction"]
+    assert 'clé "installer" (installation) : bash scripts/setup.sh ; npm install' in prompt
+    # La pièce que la personne corrigeait revient la première, changée.
+    piece = reponse.piece
+    assert piece is not None and piece.chemin == SKILL_ROUTE
+    bloc = piece.contenu.split("```bash\n", 1)[1].split("\n```", 1)[0]
+    assert bloc.splitlines() == ["npm install"]
+    assert piece.correction == phrase
+    assert [(c.cle, c.valeur) for c in reponse.corrections] == [("installer", "npm install")]
+
+
+def test_nommer_un_fichier_d_instructions_en_mots_le_fait_nommer_par_agents_md(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Critère 2 de #1542 : « nomme CLAUDE.md en tête des conventions » ne se refuse plus."""
+    nommer = {"cle": "instructions", "valeur": "REGLES.md"}
+    modele = _Modele(correction={"comprise": True, "corrections": [nommer]})
+    projet_id, racine, service, fil, _ = _apres_agents_ecrit(projets, _maison, _Joueur(), modele)
+    (racine / "REGLES.md").write_text("- Jamais de commit direct sur main.\n", encoding="utf-8")
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    phrase = "Nomme `REGLES.md` en tête des conventions"
+
+    reponse = asyncio.run(
+        conducteur.corriger(
+            [*fil, _message(UTILISATEUR, phrase)], projet_id=projet_id, phrase=phrase
+        )
+    )
+
+    piece = reponse.piece
+    assert piece is not None and piece.chemin == "AGENTS.md" and piece.sort == "reecrit"
+    section = _section_conventions(piece.texte_apres)
+    assert "`REGLES.md`" in section and "Lis-les en entier" in section
+    assert piece.correction == phrase
+    assert [(c.cle, c.valeur) for c in reponse.corrections] == [("instructions", "REGLES.md")]
+    assert "instructions" in _PROMPT_CORRECTION
+
+
+def test_un_fichier_nomme_qui_n_est_pas_dans_le_projet_n_est_pas_pris(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """L'exécution vérifie ce que le modèle écrit : un fichier nommé doit exister."""
+    modele = _Modele(
+        correction={
+            "comprise": True,
+            "corrections": [{"cle": "instructions", "valeur": "INEXISTANT.md"}],
+        }
+    )
+    projet_id, _, service, fil, en_attente = _apres_agents_ecrit(
+        projets, _maison, _Joueur(), modele
+    )
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    phrase = "Nomme INEXISTANT.md"
+
+    reponse = asyncio.run(
+        conducteur.corriger(
+            [*fil, _message(UTILISATEUR, phrase)], projet_id=projet_id, phrase=phrase
+        )
+    )
+
+    assert reponse.piece == en_attente and reponse.corrections == ()
+    assert "Rien n'a été écrit" in reponse.contenu and "`INEXISTANT.md`" in reponse.contenu
+
+
+@pytest.mark.parametrize(
+    "correction",
+    [
+        {"comprise": True, "corrections": []},
+        {"comprise": True, "corrections": [{"cle": "langages", "valeur": "Python"}]},
+    ],
+    ids=["rien-de-corrigeable", "sujet-qu-un-projet-lu-ne-corrige-pas"],
+)
+def test_une_phrase_qui_ne_change_aucune_piece_le_dit_sans_correction_prise(
+    projets: ServiceProjets, _maison: Path, correction: dict[str, Any]
+) -> None:
+    """Critère 2 de #1542 : « Correction prise » n'est jamais dit sur une pièce identique.
+
+    Sur #1522, le juge redisait la demande (« Vous demandez… »), puis la même pièce revenait
+    sans un mot : la personne n'avait d'autre issue que de la refuser.
+    """
+    modele = _Modele(correction=correction)
+    projet_id, _, service, fil, en_attente = _apres_agents_ecrit(
+        projets, _maison, _Joueur(), modele
+    )
+    conducteur = ConducteurOutillage(ComprehensionModele(modele), pieces=service)
+    phrase = "Retire ce truc de ce skill"
+
+    reponse = asyncio.run(
+        conducteur.corriger(
+            [*fil, _message(UTILISATEUR, phrase)], projet_id=projet_id, phrase=phrase
+        )
+    )
+
+    assert reponse.piece == en_attente
+    assert reponse.corrections == ()
+    assert "Rien n'a été écrit" in reponse.contenu
+
+
+def test_derriere_le_juge_le_fil_dit_pourquoi_la_piece_ne_change_pas(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Le juge parle avant la correction ; ce qui n'en sort pas se dit juste après lui."""
+    modele = _Modele(
+        _dicte("Vous demandez de retirer ce script de ce skill.", VERDICT_OUTILLAGE),
+        correction={"comprise": True, "corrections": []},
+    )
+    projet_id, _, service, fil, en_attente = _apres_agents_ecrit(
+        projets, _maison, _Joueur(), modele
+    )
+    repondeur = RepondeurOrchestration(
+        provider=modele,
+        pieces=service,
+        conducteur=ConducteurOutillage(ComprehensionModele(modele), pieces=service),
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(
+            AGENT_ORCHESTRATION,
+            [*fil, _message(UTILISATEUR, "Retire ce script de ce skill")],
+            projet_id=projet_id,
+        )
+    )
+
+    assert reponse.contenu.startswith("Vous demandez de retirer ce script de ce skill.")
+    assert "Rien n'a été écrit" in reponse.contenu
+    assert reponse.piece == en_attente and reponse.corrections == ()
+
+
 def test_deux_projets_outilles_dans_le_meme_fil_ne_se_melangent_pas(
     projets: ServiceProjets, _maison: Path
 ) -> None:
@@ -1935,11 +2182,12 @@ def test_une_correction_reprise_se_dit_sur_la_carte_et_se_corrige_encore(
     ]
     reponse = asyncio.run(conducteur.corriger(fil, projet_id=projet_id, phrase=encore))
 
+    # La pièce que la personne corrigeait revient la première, changée (#1542).
     piece = reponse.piece
-    assert piece is not None and piece.chemin == "AGENTS.md" and piece.sort == "reecrit"
+    assert piece is not None and piece.chemin == tests.chemin
     assert piece.correction == encore
-    assert "`npm test` — dite par la personne" in piece.texte_apres
-    assert "node --test" not in piece.texte_apres and "node --test" in piece.texte_avant
+    assert f"Dite par la personne qui a outillé ce projet : « {encore} »" in piece.contenu
+    assert "node --test" not in piece.contenu
     # Le modèle de correction a su ce qui avait été dit dans l'autre conversation.
     (prompt,) = modele.appels["correction"]
     assert f"« node --test » — dit : « {NODE} »" in prompt
@@ -1947,6 +2195,11 @@ def test_une_correction_reprise_se_dit_sur_la_carte_et_se_corrige_encore(
     assert asyncio.run(service.ecrire(piece)).ecrite
     (prise,) = _manifeste(racine)["corrections"]
     assert (prise["cle"], prise["valeur"], prise["phrase"]) == ("tester", "npm test", encore)
+    # …et `AGENTS.md`, que la même correction touche, vient ensuite, réécrit.
+    agents = asyncio.run(service.prochaine(projet_id, []))
+    assert agents is not None and agents.chemin == "AGENTS.md" and agents.sort == "reecrit"
+    assert "`npm test` — dite par la personne" in agents.texte_apres
+    assert "node --test" not in agents.texte_apres and "node --test" in agents.texte_avant
 
 
 def test_la_correction_la_plus_recente_l_emporte_entre_le_fil_et_le_manifeste(

@@ -84,11 +84,11 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from maestro.outillage.analyse import completer
-from maestro.outillage.detection import lire_texte
+from maestro.outillage.detection import ROLE_INSTRUCTIONS, lire_texte
 from maestro.outillage.modele import (
     ORIGINES_COMMANDE,
     USAGES,
@@ -118,11 +118,23 @@ LIRE = "LIRE"
 #: La ligne qui clôt les constats.
 FIN = "FIN"
 
-#: Les clés de constat que le modèle peut rendre — celles que `recommander`
-#: consomme et que les tables laissaient échapper. Les conventions, le dossier de
-#: scripts et l'outillage présent restent aux tables : ce sont des noms de
-#: fichiers connus d'avance (docs/38), pas une pile à comprendre.
-CLES_CONSTAT: tuple[str, ...] = ("LANGAGE", "GESTIONNAIRE", "COMMANDE", "CI", "POUR")
+#: Les clés de constat que le modèle peut rendre — celles que `recommander` et la
+#: rédaction consomment et que les tables laissaient échapper. Le dossier de scripts et
+#: l'outillage présent restent aux tables : ce sont des noms connus d'avance (docs/38),
+#: pas une pile à comprendre. Les **fichiers d'instructions d'agent**, non (#1542) : un
+#: dépôt écrit ses règles où il veut, sous le nom qu'il veut, et une liste de noms
+#: laissait échapper celui qu'elle ne connaît pas (docs/41).
+CLES_CONSTAT: tuple[str, ...] = (
+    "LANGAGE",
+    "GESTIONNAIRE",
+    "COMMANDE",
+    "CI",
+    "INSTRUCTIONS",
+    "POUR",
+)
+
+#: La clé d'un fichier que le projet écrit pour ses agents (#1542).
+INSTRUCTIONS = "INSTRUCTIONS"
 
 #: La clé qui dit ce qu'une commande rendue fait **pour ce projet** (#1350, #1381) — la
 #: description du skill qui la porte. Demandée par la revue d'après un run (`echecs`),
@@ -143,7 +155,8 @@ TEXTE_MAX = 300
 CADRE_LECTURE = """\
 Tu lis un projet logiciel pour Maestro, un orchestrateur d'agents, afin d'en tirer
 les constats qui décideront de son outillage : ses langages, ses gestionnaires de
-paquets ou de construction, ses commandes par usage et sa CI. Le projet peut être
+paquets ou de construction, ses commandes par usage, sa CI, et les fichiers où il
+écrit déjà ses instructions pour les agents qui y travaillent. Le projet peut être
 de n'importe quelle sorte : ne te limite pas aux piles les plus courantes, lis ce
 qui est là.
 
@@ -166,10 +179,18 @@ LANGAGE: <nom du langage> | <chemin d'un fichier de ce langage>
 GESTIONNAIRE: <nom de l'outil, en minuscules> | <fichier lu qui le prouve> | <fichier de verrou>
 COMMANDE: <usage> | <fichier lu> | <declaree ou convention> | <ce que tu y as lu> | <commande>
 CI: <nom de la CI> | <fichier lu qui la définit>
+INSTRUCTIONS: <fichier lu> | <ce qu'il prescrit aux agents, en quelques mots>
 FIN
 Le fichier lu d'une COMMANDE est celui qui la justifie ; « ce que tu y as lu » tient en
 quelques mots, sans barre verticale ; la commande vient en dernier. Un champ sans objet
 (pas de fichier de verrou, par exemple) reste vide : n'y écris rien, pas même « vide ».
+
+INSTRUCTIONS : un fichier que le projet écrit pour TOUT AGENT qui y travaille, ou qui
+travaille dans l'un de ses dossiers — ses règles, ses conventions, sa façon de
+travailler —, quel que soit son nom ou son dossier. N'en sont pas : un README qui
+présente le projet à des personnes, un fichier qui ne fait qu'en importer un autre, ni
+la définition d'un agent, d'un rôle ou d'une commande en particulier (le prompt d'un
+sous-agent, d'une commande d'un outil) — elle ne vaut que pour lui.
 
 Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 « declaree » : le fichier écrit cette commande (une cible, une tâche, un script) ;
@@ -177,9 +198,9 @@ Usages admis : installer, construire, tester, lint, formater, types, demarrer.
 que le projet l'écrive. Ne présente jamais une convention comme déclarée.
 
 Règles :
-- Chaque GESTIONNAIRE, COMMANDE et CI cite un fichier que tu as LU pendant cette
-  lecture ; un LANGAGE peut citer un fichier seulement listé. Un constat qui cite
-  un fichier que tu n'as pas lu sera écarté.
+- Chaque GESTIONNAIRE, COMMANDE, CI et INSTRUCTIONS cite un fichier que tu as LU
+  pendant cette lecture ; un LANGAGE peut citer un fichier seulement listé. Un
+  constat qui cite un fichier que tu n'as pas lu sera écarté.
 - Les indices fournis viennent des tables de Maestro : ils sont vrais mais
   incomplets. Ne les répète pas, complète-les.
 - N'invente rien : aucune commande que ni le fichier ni l'outil qu'il prouve ne
@@ -630,6 +651,11 @@ def _indices(analyse: Analyse) -> str:
         f"{c.usage} : {c.commande} ({c.chemin}, {c.origine})" for c in constats.commandes
     )
     ci = ", ".join(f"{p.nom} ({p.chemin})" for p in constats.ci)
+    # Les conventions que les tables ont vues, chacune avec son rôle (#1542) : le modèle
+    # n'a pas à redire `CLAUDE.md`, il cherche ce que leur liste de noms ignore.
+    conventions = ", ".join(
+        f"{p.chemin} ({p.role})" if p.role else p.chemin for p in constats.conventions
+    )
     extensions = ", ".join(f"{ext} ×{compte}" for ext, compte in parcours.extensions)
     vus = f"{parcours.fichiers_vus} fichier(s) vus par les tables"
     if parcours.tronque:
@@ -640,6 +666,7 @@ def _indices(analyse: Analyse) -> str:
             f"- gestionnaires : {gestionnaires or 'aucun'}",
             f"- commandes : {commandes or 'aucune'}",
             f"- CI : {ci or 'aucune'}",
+            f"- conventions et instructions d'agent : {conventions or 'aucune'}",
             f"- extensions vues dans le projet : {extensions or 'aucune'}",
             f"- {vus}",
         )
@@ -710,7 +737,7 @@ def _decoder(texte: str) -> _Reponse:
         if cle in (LISTER, LIRE):
             demandes.append(Demande(verbe=cle, chemin=reste.strip()))
         elif cle in CLES_CONSTAT:
-            coupes = 4 if cle == "COMMANDE" else 1 if cle == POUR else -1
+            coupes = 4 if cle == "COMMANDE" else 1 if cle in (POUR, INSTRUCTIONS) else -1
             champs = tuple(_sans_gaine(champ.strip()) for champ in reste.split("|", coupes))
             constats.append(_ConstatBrut(cle=cle, champs=champs, ligne=ligne[:TEXTE_MAX]))
     return _Reponse(demandes=tuple(demandes), constats=tuple(constats), fin=fin)
@@ -753,10 +780,12 @@ class _Confronteur:
         self._gestionnaires = {g.nom.casefold(): _TABLES for g in indices.gestionnaires}
         self._commandes = {(c.usage, c.commande): _TABLES for c in indices.commandes}
         self._ci = {cle: _TABLES for p in indices.ci for cle in (p.nom.casefold(), p.chemin)}
+        self._conventions = {p.chemin.casefold(): _TABLES for p in indices.conventions}
         self.langages: list[Langage] = []
         self.gestionnaires: list[tuple[str, str, str | None]] = []
         self.commandes: list[Commande] = []
         self.ci: list[Piece] = []
+        self.conventions: list[Piece] = []
         self.ecartes: list[ConstatEcarte] = []
         self._pours: dict[str, tuple[str, str]] = {}
 
@@ -767,6 +796,7 @@ class _Confronteur:
             "GESTIONNAIRE": self._gestionnaire,
             "COMMANDE": self._commande,
             "CI": self._ci_de,
+            INSTRUCTIONS: self._instructions_de,
             POUR: self._pour_de,
         }[brut.cle](brut.champs)
         if raison:
@@ -873,6 +903,26 @@ class _Confronteur:
         self.ci.append(Piece(nom=nom, chemin=chemin, role="intégration continue"))
         return ""
 
+    def _instructions_de(self, champs: tuple[str, ...]) -> str:
+        """Un fichier que le projet écrit pour ses agents (#1542) — lu, sinon écarté.
+
+        Il entre avec le rôle de tous les fichiers d'instructions (`ROLE_INSTRUCTIONS`),
+        pas avec la phrase du modèle : c'est ce rôle que la rédaction nomme, et deux
+        lectures du même projet doivent écrire le même `AGENTS.md` (sa propriété 1). Un
+        fichier que les tables avaient déjà rangé parmi les conventions y garde son rôle.
+        """
+        chemin, raison = self._preuve(champs[0] if champs else "", lu=True)
+        if chemin is None:
+            return raison
+        cle = chemin.casefold()
+        if cle in self._conventions:
+            return _deja(self._conventions[cle])
+        self._conventions[cle] = _LECTURE
+        self.conventions.append(
+            Piece(nom=PurePosixPath(chemin).name, chemin=chemin, role=ROLE_INSTRUCTIONS)
+        )
+        return ""
+
     def _pour_de(self, champs: tuple[str, ...]) -> str:
         """Ce qu'une commande fait pour le projet (#1381) — rattaché à la fin, à sa commande."""
         if len(champs) < 2 or not champs[0] or not champs[1].strip():
@@ -921,6 +971,7 @@ class _Confronteur:
             gestionnaires=gestionnaires,
             commandes=tuple(self.commandes),
             ci=tuple(self.ci),
+            conventions=tuple(self.conventions),
         )
         return retenus, tuple(self.ecartes)
 

@@ -212,6 +212,16 @@ SUJETS: dict[str, str] = {
     SUJET_CLIENTS: "outils d'agent",
 }
 
+#: Le sujet des fichiers où un projet écrit ses instructions pour ses agents (#1542) —
+#: `CLAUDE.md`, ou tout fichier qu'`AGENTS.md` leur dit de lire. Il ne se **corrige**
+#: qu'en mots, sur un projet qui le porte (`maestro.outillage.correction`) : il n'est pas
+#: une réponse du questionnaire — un projet neuf n'a encore aucun fichier à nommer —, et
+#: n'entre donc pas dans `SUJETS`, que le modèle du questionnaire renseigne.
+SUJET_INSTRUCTIONS = "instructions"
+
+#: Les sujets qu'une correction nomme **en plus** du schéma du questionnaire, avec leur nom.
+SUJETS_HORS_QUESTIONNAIRE: dict[str, str] = {SUJET_INSTRUCTIONS: "instructions des agents"}
+
 #: La longueur au-delà de laquelle un **constat** est tronqué. Un constat est une
 #: commande, un fichier ou un nom, et il finit entre accents graves dans un skill :
 #: une valeur de trois paragraphes n'en est pas un, c'est une réponse mal rangée.
@@ -246,9 +256,15 @@ def sujet_de(cle: str) -> str:
     """Le nom qu'on donne à un sujet — sa clé **en mots** s'il est hors du schéma.
 
     Hors du schéma, seule une réponse **cliquée** arrive jusqu'à l'écran (un constat ne
-    s'y lit pas, voir `_constats_lus`) : « point_entree » s'y lit « point entree ».
+    s'y lit pas, voir `_constats_lus`) : « point_entree » s'y lit « point entree ». Un
+    sujet qu'une correction nomme hors du questionnaire a son nom (#1542).
     """
-    return SUJETS.get(cle) or " ".join(re.split(r"[_-]+", cle)).strip() or cle
+    return (
+        SUJETS.get(cle)
+        or SUJETS_HORS_QUESTIONNAIRE.get(cle)
+        or " ".join(re.split(r"[_-]+", cle)).strip()
+        or cle
+    )
 
 
 @dataclass(frozen=True)

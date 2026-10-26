@@ -441,7 +441,8 @@ def test_agents_md_porte_les_six_sections_et_les_constats_avec_leur_source() -> 
     # L'index des skills est dérivé, et le dossier de scripts est celui du projet.
     assert f"`{DOSSIER_SKILLS}/lancer-les-tests/SKILL.md`" in texte
     assert "`bin/`" in texte
-    # Les instructions déjà écrites du projet ne sont pas listées comme convention à lire.
+    # `AGENTS.md`, que Maestro écrit ici en entier, ne renvoie pas l'agent à lui-même
+    # (#1542 : les instructions que le projet écrit, elles, se nomment en tête).
     assert "`CONTRIBUTING.md`" in texte
     assert "- `AGENTS.md` — instructions d'agent." not in texte
     assert GENERE_PAR in texte
