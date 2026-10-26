@@ -706,7 +706,7 @@ def espace_de_travail(
                 retirer_arbre(parent)
 
 
-def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
+def sauver_le_travail_en_vol(projet: Projet, tache_id: str, *, message: str = "") -> bool:
     """Porte sur sa branche ce qu'une tâche **tuée en vol** a laissé dans son worktree (#1392).
 
     Le démontage d'`espace_de_travail` commite le travail en attente avant de
@@ -727,6 +727,11 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
     dit l'adresse vide ou sans `.git` (`prunable`, #1447) n'en est pas un : rien n'y
     est commité (`_worktrees`).
 
+    `message` (#1507) est celui de la sauvegarde, rédigé dans la convention de commit
+    du projet par celui qui solde le run ; vide, celui de Maestro. Ce commit ne se
+    réécrit plus après coup (`commiter_en_attente`) : c'est ici qu'il doit naître
+    dans la convention.
+
     Rend `True` si un worktree de la tâche a été trouvé — son travail est alors sur
     la branche —, `False` s'il n'y en avait pas : projet non versionné (la tâche
     écrit en place, rien n'est hors du projet), ou démontage qui a eu le temps de
@@ -741,7 +746,7 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
     branche = _branche(tache_id)
     trouve = False
     for abandonne in _worktrees_abandonnes(racine, branche):
-        commiter_en_attente(abandonne, branche)
+        commiter_en_attente(abandonne, branche, message=message)
         trouve = True
     return trouve
 

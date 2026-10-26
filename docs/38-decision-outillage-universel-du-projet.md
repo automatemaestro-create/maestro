@@ -929,7 +929,11 @@ avant le livrable. Quatre gestes y répondent, chacun à sa place.
   interrompu — ne se réécrit donc jamais : ni par le démontage, ni par l'agent, à qui l'annonce du
   travail antérieur le dit, ni sur demande du vérificateur, à qui l'état de la branche le marque.
 - **Les commits de Maestro suivent la convention**, rédigés par le modèle : la fusion d'une tâche, le
-  commit et la fusion d'une pièce d'outillage (`maestro.projets.commits`). La convention est une
+  commit et la fusion d'une pièce d'outillage (`maestro.projets.commits`), et la **sauvegarde** du
+  travail en vol d'un run qu'on solde (extinction, hôte mort) — elle ne se réécrit plus après coup,
+  elle doit donc naître dans la convention. Celle-là se rédige sous un délai borné
+  (`DELAI_MESSAGES_SAUVEGARDE_S`) : un run qu'on éteint n'attend pas un modèle qui ne répond pas, et
+  la sauvegarde a lieu quoi qu'il arrive. La convention est une
   phrase de la personne, lue dans la source du manifeste (`OutillageDuProjet.convention_de_commit`) :
   aucune table, et un gabarit à trous ne tiendrait pas une convention qui impose sa langue. Le sujet
   rendu est vérifié — une ligne, bornée — ; sinon, et sans convention, c'est le message de Maestro,

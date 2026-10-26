@@ -584,6 +584,94 @@ def test_un_hote_mort_seul_laisse_son_travail_sur_sa_branche(tmp_path: Path) -> 
         assert _fichiers_de_la_branche(Path(projet.racine)) == {"src/recettes.ts"}
 
 
+class _Redacteur(ModelProvider):
+    """Le modèle qui rédige les messages de Maestro (#1507) — prompt retenu, réponse dictée."""
+
+    name = "redacteur"
+
+    def __init__(self, sujet: str, *, attente_s: float = 0.0) -> None:
+        self.sujet = sujet
+        self.attente_s = attente_s
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        self.prompts.append(prompt)
+        await asyncio.sleep(self.attente_s)
+        return self.sujet
+
+
+def _avec_convention(projet: Projet, convention: str) -> None:
+    """Le manifeste d'un outillage venu des réponses, commité, qui retient `convention`."""
+    racine = Path(projet.racine)
+    manifeste = racine / ".maestro" / "outillage" / "manifeste.json"
+    manifeste.parent.mkdir(parents=True, exist_ok=True)
+    manifeste.write_text(
+        '{"manifeste": 1, "source": {"type": "choix", "choix": '
+        f'[{{"cle": "conventions", "valeur": "{convention}"}}]}}, "entrees": []}}',
+        encoding="utf-8",
+    )
+    _commite(racine, "outillage")
+
+
+def _sauvegarde_par_un_hote_mort(
+    tmp_path: Path, redacteur: _Redacteur, monkeypatch: pytest.MonkeyPatch, delai_s: float = 20.0
+) -> str:
+    """Un hôte mort seul, le travail en vol porté : rend le sujet du commit de sauvegarde."""
+    from maestro.controltower import executions
+    from maestro.projets.commits import RedacteurDeCommits
+
+    monkeypatch.setattr(executions, "DELAI_MESSAGES_SAUVEGARDE_S", delai_s)
+    depot = ProjetStore(tmp_path / "depot")
+    projet = _projet(tmp_path, depot)
+    _avec_convention(projet, "Conventional Commits")
+    state = ControlTowerState()
+    run_id = "a1b2c3d4e5f6"
+    hote = HoteDouble(morts=(HoteMort(run_id=run_id, cause="code 1 : plus rien"),))
+    pilote = ServiceExecutions(
+        InMemoryEventBus(),
+        state,
+        hote=hote,
+        projets=depot,
+        redacteur=RedacteurDeCommits(redacteur, modele="modele-du-test"),
+    )
+    pilote._consigne(run_id, EXECUTION_EN_COURS, "Recettes", "lancée depuis la Control Tower")
+    _en_vol(state, run_id, projet)
+    with _tache_tuee(projet) as tuee:
+        (tuee / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
+        asyncio.run(pilote._ramasser())
+    racine = Path(projet.racine)
+    assert _fichiers_de_la_branche(racine) == {"src/recettes.ts"}
+    return _git(racine, "log", "-1", "--format=%s", branche_de_tache(TACHE)).strip()
+
+
+def test_la_sauvegarde_d_un_travail_en_vol_suit_la_convention_choisie(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1507 : la sauvegarde ne se réécrit plus après coup — elle naît dans la convention."""
+    redacteur = _Redacteur("chore(recettes): sauvegarde le travail en cours sur les données")
+
+    sujet = _sauvegarde_par_un_hote_mort(tmp_path, redacteur, monkeypatch)
+
+    assert sujet == "chore(recettes): sauvegarde le travail en cours sur les données"
+    (prompt,) = redacteur.prompts
+    assert "<convention>Conventional Commits</convention>" in prompt
+    assert "« Écrire les données »" in prompt
+
+
+def test_un_modele_trop_lent_laisse_la_sauvegarde_sous_le_message_de_maestro(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un run qu'on solde n'attend pas un modèle qui ne répond pas : le travail est sauvé."""
+    redacteur = _Redacteur("chore: trop tard", attente_s=1.0)
+
+    sujet = _sauvegarde_par_un_hote_mort(tmp_path, redacteur, monkeypatch, delai_s=0.05)
+
+    assert sujet == f"Maestro : travail de la tâche ({branche_de_tache(TACHE)})"
+
+
 def test_sans_depot_de_projets_rien_n_est_porte(tmp_path: Path) -> None:
     """Le défaut des tests du service : rien n'est porté, et rien ne casse."""
     depot = ProjetStore(tmp_path / "depot")
