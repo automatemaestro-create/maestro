@@ -1745,7 +1745,7 @@ class ServiceExecutions:
         if projets is None:
             return
         taches = [t for t in self._taches_en_vol(run_id) if t.projet_id]
-        en_vol = [(t.id, t.projet_id) for t in taches]
+        en_vol = [(t.id, t.projet_id) for t in taches if t.projet_id]
         if not en_vol:
             return
         messages = await self._messages_des_sauvegardes(projets, taches)
