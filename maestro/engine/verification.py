@@ -242,6 +242,7 @@ PREUVE_MAX = 1500
 #: leur nombre seul est dit. Sans cette seconde borne, chaque fichier non lu
 #: ajoutait sa ligne — 2,3 millions de caractères sur le run `da0a8ae6f1b2`.
 _COMPTE_RENDU_MAX = 8000
+_OUTILLAGE_MAX = 12000
 _FICHIER_MAX = 8000
 _FICHIERS_MAX = 40_000
 _NON_LUS_MAX = 50
@@ -293,7 +294,9 @@ class Controle:
     rend pas la main quand il marche. `sonde` (#1432) : la commande qui constate
     une fois que ce service **répond** — Maestro la rejoue tant qu'il tourne, puis
     l'arrête (`maestro.sandbox.verification.demarrer`) ; une sonde fait du
-    contrôle un démarrage.
+    contrôle un démarrage. `clone_neuf` (#1507) : la commande se joue dans un clone
+    de ce que la branche a commité, et non dans l'espace de l'agent
+    (`maestro.sandbox.verification.clone_neuf`) — ce que la personne récupère.
     """
 
     critere: str
@@ -301,6 +304,7 @@ class Controle:
     lecture: str = ""
     demarrage: bool = False
     sonde: str = ""
+    clone_neuf: bool = False
 
     @property
     def joue(self) -> bool:
@@ -311,6 +315,8 @@ class Controle:
         """Ce qui est joué, tel qu'un prompt ou une preuve le cite."""
         if self.sonde:
             return f"`{self.commande}` (sonde : `{self.sonde}`)"
+        if self.clone_neuf:
+            return f"`{self.commande}` (sur un clone neuf)"
         return f"`{self.commande}`"
 
     def to_dict(self) -> dict[str, Any]:
@@ -321,6 +327,7 @@ class Controle:
             "lecture": self.lecture,
             "demarrage": self.demarrage,
             "sonde": self.sonde,
+            "clone_neuf": self.clone_neuf,
         }
 
 
@@ -493,6 +500,13 @@ class Livraison:
     même. `empechement` dit pourquoi rien ne se joue alors qu'il y a un espace — le
     miroir n'a pas pu être fait : chaque commande est « non jouée » avec ce motif,
     et aucune n'est jouée ailleurs.
+
+    `outillage` (#1507) est ce que l'agent a reçu des instructions du projet — ses
+    commandes de vérification, sa convention de commit —, que le vérificateur fait
+    valoir sur la livraison. `branche` est l'état de la branche de la copie de
+    travail (`maestro.sandbox.projet.etat_de_la_branche`) : ses commits et ce qui
+    n'est pas commité, pour juger de la convention, et ce qu'elle a changé de la
+    comptabilité de Maestro. Vides, les prompts sont ceux d'avant.
     """
 
     sortie: str
@@ -501,6 +515,8 @@ class Livraison:
     portee: PorteeProjet | None = None
     origine: Path | None = None
     empechement: str = ""
+    outillage: str = ""
+    branche: str = ""
 
     def en_clair(self, constat: Constat) -> Constat:
         """Le constat dont la preuve nomme `origine` là où la commande a écrit `espace`.
@@ -573,6 +589,26 @@ pas ; il ne remplace pas son contrat — ne contrôle pas sur cette tâche un cr
 run qu'elle ne prend pas en charge. Une tâche qui demande de vérifier les critères du \
 run les prend en charge : ce sont alors ceux du brief.
 
+Quand l'outillage du projet t'est donné — les instructions que l'agent a reçues —, ce \
+qu'il déclare vaut pour la livraison, en plus des critères de la tâche, dès qu'elle \
+porte des fichiers que ses outils vérifient. Ajoutes-en les contrôles, un par geste :
+- son formatage, puis son style, joués sur les fichiers que la tâche a produits ou \
+modifiés, par la forme de l'outil qui constate sans réécrire (un formateur en \
+vérification, jamais en écriture) : « le formatage du projet tient sur ce que la tâche \
+a écrit », « le style du projet tient sur ce que la tâche a écrit » ;
+- quand il nomme une convention de message de commit et que l'état de la branche t'est \
+donné, une lecture : « le travail de la tâche est commité sur sa branche, en messages \
+qui suivent la convention du projet » — des fichiers restés hors de tout commit, ou un \
+sujet de l'agent qui s'écarte de la convention, ne la tiennent pas. Un commit que \
+l'état de la branche marque comme un commit de Maestro ne compte pas : il se garde tel \
+quel, et ne se réécrit jamais ;
+- quand l'état de la branche dit qu'elle touche à `.maestro/`, la comptabilité de \
+Maestro, une lecture : « la comptabilité de Maestro est intacte sur la branche » — un \
+fichier de Maestro supprimé, retiré du dépôt ou modifié ne la tient pas : il se rétablit \
+tel qu'il était, sans que `.maestro/` soit ignoré par le `.gitignore`.
+N'en ajoute aucun pour ce que l'outillage ne déclare pas, ni pour une livraison qui \
+n'est qu'un compte-rendu.
+
 - Un critère qui se constate en exécutant quelque chose devient une commande bash, \
 jouée dans l'espace de travail de l'agent, depuis sa racine. Son code de retour \
 tranche : 0, le critère tient ; autre chose, il ne tient pas. La commande CONSTATE et \
@@ -597,6 +633,11 @@ réserve à la vérification, où ne viennent jamais les agents des autres tâch
 vérifient sur le port du critère. Ce n'est pas changer le critère : c'est le même \
 service, sur un port que personne d'autre n'interroge. Garde le port écrit seulement \
 si le service ne sait en prendre aucun autre.
+- Un critère qui demande qu'une commande passe sur un clone neuf du projet — sans ce \
+qu'une installation ou une construction a laissé dans l'espace — porte "clone_neuf": \
+true : Maestro la joue dans un clone de ce que la branche a commité, et rien d'autre. \
+Elle installe donc d'abord les dépendances par la commande d'installation du projet \
+(npm ci && npm run typecheck).
 - Maestro ne joue une commande que s'il peut lire ce qu'elle exécute. Écris-la en \
 commandes simples enchaînées par |, &&, || ou ;, avec if/then au besoin : JAMAIS de \
 substitution $(…) ni d'accent grave, JAMAIS de redirection d'entrée < ni de heredoc. \
@@ -621,6 +662,7 @@ Forme de la réponse :
   {"critere": "le critère, tel que la tâche l'écrit", "commande": "..."},
   {"critere": "...", "commande": "...", "demarrage": true},
   {"critere": "...", "commande": "...", "demarrage": true, "sonde": "..."},
+  {"critere": "...", "commande": "...", "clone_neuf": true},
   {"critere": "...", "lecture": "ce qu'on doit constater", "tenu": true, \
 "preuve": "l'extrait, ou ce qui manque"}
 ], "renvois": []}"""
@@ -888,6 +930,8 @@ class VerificateurTaches:
                 return non_joue(f"pas jouée — {motif}")
         if controle.sonde:
             return await self._demarrer(controle, livraison.espace, interprete)
+        if controle.clone_neuf:
+            return await self._jouer_sur_un_clone(controle, livraison.espace, interprete)
         joueur = self._joueur if self._joueur is not None else execution.jouer
         delai = self._delais.demarrage_s if controle.demarrage else self._delais.commande_s
         try:
@@ -909,6 +953,44 @@ class VerificateurTaches:
         except OSError as exc:
             return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
         return _constat_joue(controle, resultat, delai, apres=apres, port=port)
+
+    async def _jouer_sur_un_clone(
+        self, controle: Controle, espace: Path, interprete: tuple[str, ...]
+    ) -> Constat:
+        """Joue la commande dans un clone neuf de ce que la branche a commité (#1507).
+
+        Le clone est celui que la personne récupère (`execution.clone_neuf`) : sans les
+        dépendances ni la sortie de build de l'espace, sans ce que l'agent n'a pas
+        commité. La portée, elle, a déjà été jugée sur la commande — c'est la même, et
+        le clone est à Maestro. Un clone impossible rend le contrôle « non joué », avec
+        ce que Git a répondu : il ne se rejoue jamais dans l'espace, où il ne
+        constaterait plus ce qu'il dit.
+        """
+        non_joue = _non_joue(controle)
+        joueur = self._joueur if self._joueur is not None else execution.jouer
+        delai = self._delais.commande_s
+
+        def jouer() -> execution.Execution:
+            with execution.clone_neuf(espace) as clone:
+                return joueur(controle.commande, clone, interprete=interprete, delai_s=delai)
+
+        try:
+            resultat = await asyncio.to_thread(jouer)
+        except execution.CloneImpossible as exc:
+            return non_joue(f"pas jouée — {exc}")
+        except OSError as exc:
+            return non_joue(f"le juge n'a pas pu la lancer — le système a répondu : {exc}")
+        constat = _constat_joue(controle, resultat, delai)
+        if constat.etat != CONSTAT_NON_TENU:
+            return constat
+        return replace(
+            constat,
+            preuve=(
+                "jouée sur un clone neuf de ce que la branche a commité — sans les "
+                "dépendances ni la construction de ton espace, sans ce que tu n'as pas "
+                f"commité :\n{constat.preuve}"
+            ).rstrip(),
+        )
 
     async def _demarrer(
         self, controle: Controle, espace: Path, interprete: tuple[str, ...]
@@ -1110,8 +1192,11 @@ def _prompt_contre_expertise(
         f"a rendu le code {constats[rang].code} :\n{constats[rang].preuve or '(aucune sortie)'}"
         for rang in fautifs
     )
+    contexte = "\n\n".join(
+        [_bloc_tache(tache, brief), *_bloc_outillage(livraison), _bloc_livraison(livraison)]
+    )
     return (
-        f"{_bloc_tache(tache, brief)}\n\n{_bloc_livraison(livraison)}\n\n"
+        f"{contexte}\n\n"
         "Ces commandes, que tu as écrites pour vérifier cette tâche, n'ont pas tenu. Pour "
         "CHACUNE, juge où est le défaut. Dans le LIVRABLE : la commande constate bien ce "
         "que dit son critère, et c'est le livrable qui ne le tient pas — n'y touche pas. "
@@ -1150,16 +1235,18 @@ def _lire_reecriture(
                 if "sonde" in element
                 else controles[rang].sonde
             )
+            demarrage = bool(sonde) or (
+                element["demarrage"] is True
+                if "demarrage" in element
+                else controles[rang].demarrage
+            )
             reecrits[rang] = Controle(
                 critere=controles[rang].critere,
                 commande=commande,
-                demarrage=bool(sonde)
-                or (
-                    element["demarrage"] is True
-                    if "demarrage" in element
-                    else controles[rang].demarrage
-                ),
+                demarrage=demarrage,
                 sonde=sonde,
+                # Réécrire une commande ne change pas où elle se joue (#1507).
+                clone_neuf=controles[rang].clone_neuf and not demarrage,
             )
     return reecrits
 
@@ -1341,7 +1428,7 @@ def _prompt_etablir(
     brief: Brief | None = None,
 ) -> str:
     """Ce que le vérificateur lit à la première livraison."""
-    lignes = [_bloc_tache(tache, brief), _bloc_livraison(livraison)]
+    lignes = [_bloc_tache(tache, brief), *_bloc_outillage(livraison), _bloc_livraison(livraison)]
     if livraison.espace is None:
         lignes.append(
             "Ce livrable est un texte : il n'y a aucun espace de travail où jouer une "
@@ -1366,7 +1453,7 @@ def _prompt_relire(
         f"{rang + 1}. « {controles[rang].critere} » — {controles[rang].lecture}"
         for rang in a_relire
     ) or "(aucune)"
-    lignes = [_bloc_tache(tache, brief), _bloc_livraison(livraison)]
+    lignes = [_bloc_tache(tache, brief), *_bloc_outillage(livraison), _bloc_livraison(livraison)]
     if amont:
         lignes.append(_FORME_RENVOIS.replace("{amont}", _bloc_amont(amont)))
     lignes.append(_FORME_RELIRE.format(lectures=lectures))
@@ -1391,12 +1478,32 @@ def _bloc_brief(brief: Brief) -> str:
     )
 
 
+def _bloc_outillage(livraison: Livraison) -> list[str]:
+    """Les instructions du projet que l'agent a reçues (#1507) — rien sans outillage.
+
+    Bornées comme le compte-rendu : un `AGENTS.md` est un fichier d'instructions, et
+    le prompt du vérificateur est borné en entier (#1388).
+    """
+    texte = livraison.outillage.strip()
+    if not texte:
+        return []
+    if len(texte) > _OUTILLAGE_MAX:
+        texte = texte[:_OUTILLAGE_MAX] + "\n[… instructions tronquées]"
+    return [
+        "L'outillage du projet — les instructions que l'agent a reçues, et ce qu'elles "
+        "déclarent vaut pour sa livraison :\n"
+        f"<outillage>\n{texte}\n</outillage>"
+    ]
+
+
 def _bloc_livraison(livraison: Livraison) -> str:
     """Le compte-rendu de l'agent puis ses fichiers, bornés — et la borne dite.
 
     Borné **en entier**, noms compris (#1388) : c'est le même bloc que relisent la
     relecture (`_prompt_relire`) et la contre-expertise (`_prompt_contre_expertise`),
-    donc la seule borne qui vaille pour les trois prompts.
+    donc la seule borne qui vaille pour les trois prompts. L'état de la branche de la
+    copie de travail le suit quand il est donné (#1507) : c'est sur lui que se juge
+    la convention de commit.
     """
     compte_rendu = livraison.sortie.strip() or "(aucun compte-rendu)"
     if len(compte_rendu) > _COMPTE_RENDU_MAX:
@@ -1407,6 +1514,8 @@ def _bloc_livraison(livraison: Livraison) -> str:
         morceaux.append("<fichiers>\n" + "\n".join(blocs) + "\n</fichiers>")
     else:
         morceaux.append("<fichiers>(aucun fichier produit)</fichiers>")
+    if livraison.branche.strip():
+        morceaux.append(f"<branche>\n{livraison.branche.strip()}\n</branche>")
     return (
         "Ce que l'agent a rendu — son compte-rendu, puis les fichiers qu'il a "
         "produits dans son espace de travail :\n" + "\n".join(morceaux)
@@ -1514,12 +1623,16 @@ def _lire_etablissement(
         commande = _texte(element.get("commande"))
         if commande:
             sonde = _texte(element.get("sonde"))
+            demarrage = element.get("demarrage") is True or bool(sonde)
             controles.append(
                 Controle(
                     critere=critere,
                     commande=commande,
-                    demarrage=element.get("demarrage") is True or bool(sonde),
+                    demarrage=demarrage,
                     sonde=sonde,
+                    # Un service se démarre là où l'agent l'a construit : un clone neuf
+                    # ne vaut que pour une commande qui rend la main (#1507).
+                    clone_neuf=element.get("clone_neuf") is True and not demarrage,
                 )
             )
             continue
@@ -1701,6 +1814,13 @@ class Recette:
 
     `brief` (#1402) est le brief approuvé du run, que chaque vérification lit à côté
     de la tâche — le même que l'agent a reçu. `None` : un run sans brief.
+
+    `outillage` (#1507) est ce que l'agent a reçu des instructions de son projet : ses
+    vérifications et sa convention de commit valent pour sa livraison.
+    `etat_de_la_branche` dit, à chaque livraison, ce que la branche de la copie de
+    travail porte et ce qui n'est pas commité — de quoi juger la convention —, et ce
+    qu'elle a changé de la comptabilité de Maestro ; `None` hors d'une copie de travail
+    d'un projet outillé.
     """
 
     verificateur: VerificateurTaches
@@ -1711,6 +1831,8 @@ class Recette:
     on_verdict: Callable[[Verdict, int], None] | None = None
     relance: PolitiqueRelance | None = None
     brief: Brief | None = None
+    outillage: str = ""
+    etat_de_la_branche: Callable[[Path], str] | None = None
     controles: tuple[Controle, ...] | None = None
     livraisons: int = 0
     meilleur: int = -1
@@ -1758,6 +1880,12 @@ class Recette:
             ),
             origine=espace if joue != espace else None,
             empechement=empechement,
+            outillage=self.outillage,
+            branche=(
+                self.etat_de_la_branche(espace)
+                if espace is not None and self.etat_de_la_branche is not None
+                else ""
+            ),
         )
         controles, verdict = await self._verifier(livraison)
         if controles:

@@ -570,6 +570,33 @@ def _exige_ref(racine: Path, branche: str, motif: str) -> None:
         )
 
 
+#: Combien de sujets de commit une branche de tâche dit d'elle, au plus
+#: (`sujets_de_la_branche`) : de quoi reconnaître une forme et une langue.
+_SUJETS_MAX = 10
+
+
+def sujets_de_la_branche(projet: Projet, branche: str) -> tuple[str, ...]:
+    """Les sujets des commits que `branche` porte au-delà de la branche de travail (#1507).
+
+    Du plus récent au plus ancien, bornés à `_SUJETS_MAX`. C'est ce qu'a écrit l'agent
+    de la tâche, dans la convention du projet : le message de la fusion que Maestro
+    fait rédiger s'y accorde (`maestro.projets.commits`). Muet — `()` — sur un projet
+    non versionné, une racine refusée ou un Git qui ne répond pas : ce relevé informe
+    une rédaction, il ne doit jamais empêcher la fusion qui suit.
+    """
+    base = projet.vcs.branche_base if projet.vcs is not None else ""
+    if not base or not branche:
+        return ()
+    try:
+        racine = valider_racine(projet.racine)
+        resultat = _git(racine, "log", f"-n{_SUJETS_MAX}", "--format=%s", f"{base}..{branche}")
+    except (ApplicationRefusee, RacineRefusee):
+        return ()
+    if resultat.returncode != 0:
+        return ()
+    return tuple(ligne for ligne in resultat.stdout.splitlines() if ligne.strip())
+
+
 def _git(cwd: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     """Lance `git <arguments>` dans `cwd` et rend le processus achevé.
 
@@ -642,7 +669,11 @@ def verifier_perimetre(projet: Projet, diff: DiffProjet) -> tuple[Path, ...]:
 
 
 def appliquer(
-    projet: Projet, diff: DiffProjet, *, espace: Path | str | None = None
+    projet: Projet,
+    diff: DiffProjet,
+    *,
+    espace: Path | str | None = None,
+    message: str = "",
 ) -> tuple[str, ...]:
     """Écrit `diff` dans le projet et rend les chemins appliqués (EF-37, D2).
 
@@ -652,6 +683,10 @@ def appliquer(
     vers la branche de travail déclarée ; sinon → les fichiers du diff sont
     recopiés dans la racine.
 
+    `message` (#1507) est le sujet du commit de fusion, rédigé dans la convention
+    du projet (`maestro.projets.commits`) ; vide, c'est celui de Maestro
+    (`_message_fusion`). Sans objet pour une recopie, qui ne commite rien.
+
     Le périmètre est vérifié en entier d'abord (`verifier_perimetre`) : lever
     ici, c'est laisser le projet intact.
     """
@@ -660,7 +695,9 @@ def appliquer(
     if diff.vide:
         return ()
     if diff.versionne:
-        return _fusionner(racine, diff, Path(espace) if espace is not None else None)
+        return _fusionner(
+            racine, diff, Path(espace) if espace is not None else None, message=message
+        )
     return _recopier(racine, diff, _exige_espace(espace))
 
 
@@ -689,7 +726,9 @@ def _recopier(racine: Path, diff: DiffProjet, espace: Path) -> tuple[str, ...]:
     return tuple(appliques)
 
 
-def _fusionner(racine: Path, diff: DiffProjet, espace: Path | None) -> tuple[str, ...]:
+def _fusionner(
+    racine: Path, diff: DiffProjet, espace: Path | None, *, message: str = ""
+) -> tuple[str, ...]:
     """Fusionne la branche de tâche vers la branche de travail déclarée (D2, option B).
 
     Trois gestes, dans cet ordre : le travail encore non commité du worktree est
@@ -701,10 +740,17 @@ def _fusionner(racine: Path, diff: DiffProjet, espace: Path | None) -> tuple[str
     copie de travail sur une autre branche pour les besoins d'un agent, sont
     précisément les destructions que EF-36/EF-37 existent pour empêcher. Le refus
     nomme ce qui bloque plutôt que de forcer.
+
+    `message` (#1507), quand il est donné, est le **sujet** du commit de fusion — la
+    convention du projet le veut ainsi —, et ce que Maestro en disait passe dans le
+    corps : la branche fusionnée et ses totaux restent lisibles dans `git log`.
     """
     if espace is not None and espace.is_dir():
         commiter_en_attente(espace, diff.branche)
     _exige_racine_disponible(racine, diff.base)
+    messages = ["-m", _message_fusion(diff)]
+    if message.strip():
+        messages = ["-m", message.strip(), *messages]
     # `--no-ff` écrit un COMMIT de fusion : il lui faut une identité, exactement comme au commit de
     # rattrapage ci-dessus. Elle manquait ici (#333) — la moitié non couverte de ce que le
     # commentaire d'`AUTEUR_NOM` annonce pourtant : « un user.email absent ferait échouer la
@@ -720,8 +766,7 @@ def _fusionner(racine: Path, diff: DiffProjet, espace: Path | None) -> tuple[str
         "merge",
         "--no-ff",
         "--no-edit",
-        "-m",
-        _message_fusion(diff),
+        *messages,
         diff.branche,
     )
     if resultat.returncode != 0:
@@ -742,8 +787,31 @@ def _message_fusion(diff: DiffProjet) -> str:
     )
 
 
-def commiter_en_attente(espace: Path, branche: str) -> None:
+def commiter_en_attente(
+    espace: Path, branche: str, *, message: str = "", depuis: str = ""
+) -> None:
     """Commite sur `branche` ce que le worktree porte encore, s'il porte quelque chose.
+
+    `message`, quand il est donné, est celui du commit — un commit **neuf**, jamais un
+    amendement : c'est Maestro qui commite son propre travail (une pièce d'outillage,
+    #1507), sous un message rédigé dans la convention du projet.
+
+    **Dans le dernier commit de l'agent quand cette exécution l'a fait** (#1507).
+    L'agent commite son travail lui-même, dans la convention du projet (le message de
+    sa tâche le lui dit, `maestro.sandbox.projet.CONSIGNE_COPIE_DE_TRAVAIL`) : ce qu'il
+    laisse ensuite est un reste de **son** travail, et il entre dans son dernier
+    commit, message compris — `git commit --amend --no-edit`. Un commit « Maestro :
+    travail de la tâche » en plus faisait sortir le livrable de la convention que la
+    personne avait choisie : sur p5, les 33 commits du projet étaient de Maestro.
+    `depuis` est la tête de la branche **au montage** du worktree : seul un commit
+    fait depuis, et qu'aucune autre référence ne porte, s'amende (`_amendable`). Tout
+    le reste reçoit un commit neuf, sous le message de Maestro (`message_de_sauvegarde`)
+    — sans `depuis`, faute de savoir ce que l'exécution a fait ; et la **sauvegarde**
+    d'un travail interrompu (`maestro.sandbox.projet.sauver_le_travail_en_vol`), qui
+    est la tête au montage de l'exécution qui reprend. Mesuré sur S12 (passage
+    `20261022-075529`) : un commit sauvé, puis réécrit, sortait de l'historique, et le
+    travail « sauvé » n'était plus celui que le projet livrait. **On ne réécrit jamais
+    un commit que cette exécution n'a pas fait.**
 
     Les hooks du dépôt ne sont **pas** contournés : ce sont ceux de
     l'utilisateur, et un `pre-commit` qui refuse le travail d'un agent a
@@ -771,6 +839,12 @@ def commiter_en_attente(espace: Path, branche: str) -> None:
         )
     if _git(espace, "diff", "--cached", "--quiet").returncode == 0:
         return  # rien en attente : tout est déjà commité sur la branche
+    if message.strip():
+        forme = ["-m", message.strip()]
+    elif _amendable(espace, branche, depuis):
+        forme = ["--amend", "--no-edit"]
+    else:
+        forme = ["-m", message_de_sauvegarde(branche)]
     resultat = _git(
         espace,
         "-c",
@@ -778,14 +852,56 @@ def commiter_en_attente(espace: Path, branche: str) -> None:
         "-c",
         f"user.email={AUTEUR_COURRIEL}",
         "commit",
-        "-m",
-        f"Maestro : travail de la tâche ({branche})",
+        *forme,
     )
     if resultat.returncode != 0:
         raise ApplicationRefusee(
             "commit-refuse",
             f"Commit du travail sur {branche} refusé : {_message_git(resultat)}",
         )
+
+
+def message_de_sauvegarde(branche: str) -> str:
+    """Le message d'un commit que Maestro fait du travail d'une tâche — reste ou sauvegarde.
+
+    Une seule orthographe, parce qu'elle se **relit** (#1507) : l'état de la branche que
+    lit le vérificateur d'une livraison marque ces commits comme ceux de Maestro, à
+    garder tels quels (`maestro.sandbox.projet.etat_de_la_branche`). C'est notre propre
+    texte, comparé à l'identique — jamais un motif cherché dans le message d'un autre.
+    """
+    return f"Maestro : travail de la tâche ({branche})"
+
+
+def _amendable(espace: Path, branche: str, depuis: str) -> bool:
+    """La tête de `espace` est-elle un commit de cette exécution, et d'elle seule ?
+
+    De cette exécution : la branche porte des commits au-delà de `depuis`, sa tête au
+    montage. D'elle seule : aucune autre référence ne contient la tête
+    (`_commit_a_elle_seule`). Faux sans `depuis`, ou quand Git ne sait pas répondre.
+    """
+    if not depuis.strip():
+        return False
+    compte = _git(espace, "rev-list", "--count", f"{depuis}..HEAD")
+    if compte.returncode != 0 or not compte.stdout.strip().isdigit():
+        return False
+    return int(compte.stdout.strip()) > 0 and _commit_a_elle_seule(espace, branche)
+
+
+def _commit_a_elle_seule(espace: Path, branche: str) -> bool:
+    """Le dernier commit de `espace` n'est-il porté **que** par `branche` ?
+
+    Vrai quand aucune autre référence du dépôt — la branche de travail, la branche
+    d'une tâche qu'un redécoupage reprend (#1396), une branche distante, une étiquette
+    — ne contient ce commit : l'amender ne réécrit rien que quelqu'un d'autre porte.
+    Sans commit à elle, la tête de la branche est celle d'où elle est partie, et une
+    autre référence la contient. Faux aussi quand Git ne sait pas répondre : dans le
+    doute, un commit de plus vaut mieux qu'un amendement de trop.
+    """
+    resultat = _git(espace, "for-each-ref", "--contains", "HEAD", "--format=%(refname)")
+    if resultat.returncode != 0:
+        return False
+    porteurs = {ligne.strip() for ligne in resultat.stdout.splitlines() if ligne.strip()}
+    return porteurs == {f"refs/heads/{branche}"}
 
 
 def deposer_sur_la_base(projet: Projet, relatif: str, contenu: str, *, message: str) -> Path:

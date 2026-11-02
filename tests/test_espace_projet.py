@@ -408,7 +408,7 @@ def test_la_copie_de_travail_dit_a_l_agent_qu_il_est_a_la_racine_du_projet_nomme
     assert "« la racine du projet »" in consigne
     # Le dossier d'origine n'est pas sur sa branche : il n'y écrit pas.
     assert "échapperait à ta branche" in consigne
-    # Et ce qu'il laisse n'est pas perdu : commité, puis appliqué.
+    # Et ce qu'il laisse n'est pas perdu : commité, puis appliqué (`CONSIGNE_COPIE_DE_TRAVAIL`).
     assert "commité sur ta branche" in consigne
 
 
@@ -1108,6 +1108,44 @@ def test_ce_que_la_copie_de_travail_annonce_est_ce_que_sa_branche_porte(tmp_path
 
     portes = set(_git(racine, "diff", "--name-only", "main...maestro/t-1").splitlines())
     assert portes == {"app/page.tsx", "notes-de-travail.md"}
+
+
+@besoin_de_git
+def test_la_copie_de_travail_dit_a_l_agent_de_commiter_dans_la_convention(
+    tmp_path: Path,
+) -> None:
+    """Le défaut de p5 (#1507) : les 33 commits du livrable étaient de Maestro.
+
+    La consigne disait « ce que tu laisses est commité » : aucun agent n'a commité, et
+    la convention que la personne avait choisie (Conventional Commits) n'a jamais été
+    suivie. Elle dit désormais de commiter soi-même, dans la convention du projet."""
+    projet = _projet_git_qui_ignore(tmp_path)
+    with espace_de_travail(projet, tache_id="socle-nextjs") as ws:
+        consigne = " ".join(ws.consigne_espace().split())
+    assert "commite ton travail toi-même" in consigne
+    assert "convention de commit du projet" in consigne
+    assert "`AGENTS.md`" in consigne
+    # Le reste n'est pas perdu : il rejoint le dernier commit de l'agent.
+    assert "dans ton dernier commit" in consigne
+    # Ce que la copie dit d'elle-même ne le redit pas (#1484) : une fois, pas deux.
+    assert consigne.count("à la fin de ta tâche") == 1
+
+
+@besoin_de_git
+def test_au_demontage_le_reste_rejoint_le_dernier_commit_de_l_agent(tmp_path: Path) -> None:
+    """La branche ne porte que les commits de l'agent : le reste entre dans le dernier."""
+    projet = _projet_git_qui_ignore(tmp_path)
+    racine = Path(projet.racine)
+    with espace_de_travail(projet, tache_id="page") as ws:
+        (ws.path / "app").mkdir()
+        (ws.path / "app" / "page.tsx").write_text("export default null\n", encoding="utf-8")
+        _commite(ws.path, "feat(app): ajoute la page d'accueil")
+        (ws.path / "app" / "style.css").write_text("body {}\n", encoding="utf-8")
+
+    sujets = _git(racine, "log", "--format=%s", "main..maestro/page").splitlines()
+    assert sujets == ["feat(app): ajoute la page d'accueil"]
+    portes = set(_git(racine, "diff", "--name-only", "main...maestro/page").splitlines())
+    assert portes == {"app/page.tsx", "app/style.css"}
 
 
 @besoin_de_git

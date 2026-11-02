@@ -347,6 +347,23 @@ class CreneauAbandonne(Exception):
     """
 
 
+#: Le préfixe d'un **clone neuf** (#1507) — sous le préfixe commun des espaces, donc
+#: ramassé si son process meurt avant de le retirer.
+PREFIXE_CLONE = "maestro-clone-"
+
+#: Le délai d'un clone neuf : une copie locale du dépôt, sans réseau. Une borne
+#: d'anomalie, pas un budget — au-delà, le contrôle n'est pas joué.
+DELAI_CLONE_S = 120.0
+
+
+class CloneImpossible(Exception):
+    """Le clone neuf d'une copie de travail n'a pas pu être fait — avec ce que Git a répondu.
+
+    Un contrôle qui le demandait n'est alors pas joué : ni tenu ni non tenu, et jamais
+    rejoué dans l'espace de l'agent, où il ne constaterait plus ce qu'il dit.
+    """
+
+
 class CopieImpossible(Exception):
     """La copie de vérification n'a pas pu être faite — avec son motif.
 
@@ -400,6 +417,58 @@ class SondeNonLancee(OSError):
     Même nature que l'`OSError` de `jouer` (l'interpréteur ne s'est pas lancé), même
     message ; le type dit seulement laquelle des deux commandes n'est pas partie.
     """
+
+
+@contextmanager
+def clone_neuf(espace: Path) -> Iterator[Path]:
+    """Un clone de ce que la branche de `espace` a **commité**, le temps du bloc (#1507).
+
+    Sur p5, `npm run typecheck` passait dans le répertoire de l'agent, où un build
+    avait laissé les types qu'il génère, et échouait sur le clone que la personne
+    récupère. Un contrôle qui le constate doit donc jouer **là où elle le jouera** :
+    un `git clone` de la copie de travail, qui porte sa branche et elle seule — ni
+    ce que le `.gitignore` retire (dépendances, sortie de build), ni ce que l'agent
+    n'a pas commité. Le clone naît sous la racine jetable, sans lien dur vers le
+    dépôt (`--no-hardlinks` : ce qu'on y écrit n'atteint jamais ses objets), et il est
+    retiré en sortie, quoi qu'il arrive.
+
+    Lève `CloneImpossible` si `espace` n'est pas une copie versionnée, ou si Git refuse
+    le clone : le contrôle est alors « non joué », avec ce que Git a répondu.
+    """
+    if not (Path(espace) / ".git").exists():
+        raise CloneImpossible(
+            "l'espace de travail n'est pas une copie versionnée du projet : il n'y a pas de "
+            "clone neuf à faire"
+        )
+    try:
+        parent = jetable(PREFIXE_CLONE)
+    except OSError as exc:
+        raise CloneImpossible(
+            f"aucun répertoire temporaire n'a pu accueillir le clone : {exc}"
+        ) from exc
+    try:
+        cible = parent / "clone"
+        try:
+            resultat = subprocess.run(
+                ["git", "clone", "--quiet", "--no-hardlinks", "--", str(espace), str(cible)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=DELAI_CLONE_S,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise CloneImpossible(f"Git n'a pas pu cloner la copie de travail : {exc}") from exc
+        if resultat.returncode != 0:
+            message = " ".join((resultat.stderr or resultat.stdout or "").split())
+            raise CloneImpossible(
+                f"Git a refusé le clone de la copie de travail : "
+                f"{message or f'code {resultat.returncode}'}"
+            )
+        yield cible
+    finally:
+        retirer_arbre(parent)
 
 
 @contextmanager

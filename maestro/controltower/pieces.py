@@ -148,8 +148,10 @@ from maestro.outillage.questionnaire import (
     SUJET_INSTRUCTIONS,
     Choix,
     acquis_de,
+    choix_du_manifeste,
     clients_depuis_choix,
     constats_depuis_choix,
+    convention_de_commit,
     schema_en_texte,
     source_manifeste_des_choix,
     sujet_de,
@@ -165,6 +167,8 @@ from maestro.outillage.verification import (
     commandes_ecrites,
 )
 from maestro.projets import Projet
+from maestro.projets.application import ApplicationRefusee, commiter_en_attente
+from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import valider_racine
 from maestro.providers.base import ModelProvider
@@ -175,6 +179,14 @@ from maestro.sandbox.projet import branche_de_tache, espace_de_travail
 SORT_CREE = "cree"
 SORT_REECRIT = "reecrit"
 SORT_BLOC = "bloc"
+
+#: Ce que fait le commit d'une pièce, selon son sort — la phrase que le rédacteur des
+#: commits de Maestro reçoit (#1507), jamais un message tout fait.
+_VERBE_DU_SORT: dict[str, str] = {
+    SORT_CREE: "ajoute",
+    SORT_REECRIT: "met à jour",
+    SORT_BLOC: "complète",
+}
 
 #: Le cadre de la compréhension d'une **correction** (#1161). Concaténé, comme
 #: `_PROMPT_COMPREHENSION` et pour la même raison : le contrat est un gabarit JSON,
@@ -353,7 +365,9 @@ class ServicePieces:
     tard », docs/37 §4.6). `verificateur` joue les commandes avant qu'une pièce ne se
     montre (`None` : le réel, que la suite de tests neutralise d'un seul endroit).
     `correction` comprend une phrase de correction (`None` : le modèle du poste, résolu
-    au premier usage).
+    au premier usage). `redacteur` écrit les messages des commits d'une pièce dans la
+    convention de commit choisie (#1507) — même résolution au premier usage, et il
+    n'est appelé que lorsqu'une convention est retenue.
 
     `equipe` (#1520) est la configuration d'agent où vivent les équipes des projets —
     celle des gabarits, que le service cadre sur le projet de la pièce. Branchée, chaque
@@ -369,12 +383,14 @@ class ServicePieces:
         *,
         verificateur: Verificateur | None = None,
         correction: CorrectionModele | None = None,
+        redacteur: RedacteurDeCommits | None = None,
         equipe: ConfigurationAgents | None = None,
     ) -> None:
         self._outillage = outillage
         self._projets = projets
         self._verificateur = verificateur
         self._correction = correction or CorrectionModele()
+        self._redacteur = redacteur or RedacteurDeCommits()
         self._equipe = equipe
         self._lues: dict[tuple[str, str], Analyse] = {}
 
@@ -736,8 +752,15 @@ class ServicePieces:
     async def _ecrire_sur_branche(
         self, projet: Projet, racine: Path, fichier: Fichier, piece: PieceProposee
     ) -> PieceEcrite:
-        """Le régime d'un projet versionné : la branche, fusionnée sous l'accord de la carte."""
+        """Le régime d'un projet versionné : la branche, fusionnée sous l'accord de la carte.
+
+        Le commit de la pièce et celui de sa fusion suivent la convention de commit que
+        la personne a choisie (#1507) : rédigés par le modèle quand la source de la
+        pièce en retient une (`_messages_de_la_piece`), ceux de Maestro sinon.
+        """
         tache = nouvel_id_de_generation()
+        branche = branche_de_tache(tache)
+        message_piece, message_fusion = await self._messages_de_la_piece(projet, piece, branche)
 
         def preparer() -> PieceEcrite | None:
             with espace_de_travail(projet, tache_id=tache) as espace:
@@ -749,8 +772,16 @@ class ServicePieces:
                     verifications=piece.verifications,
                     corrections=piece.corrections_prises,
                 )
-            ecriture = rapport.ecritures[0] if rapport.ecritures else None
-            if rapport.refus or ecriture is None or ecriture.etat != "ecrit":
+                ecriture = rapport.ecritures[0] if rapport.ecritures else None
+                ecrite = not rapport.refus and ecriture is not None and ecriture.etat == "ecrit"
+                # Commitée ici, sous son message, plutôt qu'au démontage sous celui de
+                # Maestro : ce qui part sur la branche est le même.
+                if ecrite and message_piece:
+                    try:
+                        commiter_en_attente(espace.path, branche, message=message_piece)
+                    except ApplicationRefusee:
+                        pass  # le démontage commitera, sous le message de Maestro
+            if not ecrite:
                 etat = ecriture.etat if ecriture is not None else "refuse"
                 raison = rapport.refus or (ecriture.raison if ecriture is not None else "")
                 return _fait(piece, etat, raison, str(racine), REGIME_BRANCHE)
@@ -763,14 +794,15 @@ class ServicePieces:
             projet,
             tache_id=tache,
             validateur=AccordDeLaCarte({piece.chemin, CHEMIN_MANIFESTE}),
-            branche=branche_de_tache(tache),
+            branche=branche,
             titre=f"Écrire {piece.chemin} dans {projet.nom}",
+            message=message_fusion,
         )
         if resultat.approuvee:
             return _fait(
                 piece,
                 "ecrit",
-                f"écrit sur la branche {branche_de_tache(tache)}, fusionnée sur votre accord.",
+                f"écrit sur la branche {branche}, fusionnée sur votre accord.",
                 str(racine),
                 REGIME_BRANCHE,
             )
@@ -781,6 +813,35 @@ class ServicePieces:
             str(racine),
             REGIME_BRANCHE,
         )
+
+    async def _messages_de_la_piece(
+        self, projet: Projet, piece: PieceProposee, branche: str
+    ) -> tuple[str, str]:
+        """Le commit de la pièce et celui de sa fusion, dans la convention du projet (#1507).
+
+        La convention se lit dans la **source de la pièce** — les réponses dont
+        l'outillage est écrit —, pas dans le manifeste du disque : la première pièce
+        s'écrit avant qu'il existe. `("", "")` sans convention, et le modèle n'est pas
+        appelé ; un message que le rédacteur n'a pas su écrire reste celui de Maestro.
+        Les deux se rédigent ensemble : la carte attend.
+        """
+        convention = convention_de_commit(choix_du_manifeste(piece.source))
+        if not convention:
+            return "", ""
+        verbe = _VERBE_DU_SORT.get(piece.sort, "écrit")
+        base = projet.vcs.branche_base if projet.vcs is not None else ""
+        quoi = f"`{piece.chemin}` ({piece.nom}), une pièce de l'outillage du projet pour ses agents"
+        piece_seule, fusion = await asyncio.gather(
+            self._redacteur.message(convention=convention, changement=f"{verbe} {quoi}"),
+            self._redacteur.message(
+                convention=convention,
+                changement=(
+                    f"fusionne dans `{base or 'la branche de travail'}` la branche "
+                    f"`{branche}`, qui {verbe} {quoi}"
+                ),
+            ),
+        )
+        return piece_seule, fusion
 
     # ── la matière ──────────────────────────────────────────────────────────
 

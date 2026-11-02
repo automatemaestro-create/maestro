@@ -189,6 +189,13 @@ class OutillageDuProjet:
     `declares` (#1400) est **tout** ce que le manifeste déclare, quel que soit le
     rôle et qu'il soit transmis ou non, dans l'ordre du fichier : un pont ou un
     script n'entre pas dans le contexte, mais il est à Maestro, pas au projet.
+
+    `convention_de_commit` (#1507) est la convention de message de commit que la
+    personne a choisie — lue dans la source du manifeste, celle d'un outillage venu
+    de ses réponses (`questionnaire.convention_de_commit`) —, `""` sans réponse ou
+    pour un projet analysé. Ce n'est pas du contexte d'agent (l'agent la lit dans
+    `AGENTS.md`) : c'est ce que **Maestro** suit quand il écrit ses propres commits
+    (`maestro.projets.commits`) et ce que la vérification d'une livraison relit.
     """
 
     manifeste: str = ""
@@ -200,6 +207,7 @@ class OutillageDuProjet:
     non_transmis: tuple[NonTransmis, ...] = ()
     declares: tuple[str, ...] = ()
     bornes: Bornes = field(default_factory=Bornes)
+    convention_de_commit: str = ""
 
     @property
     def vide(self) -> bool:
@@ -342,6 +350,7 @@ class OutillageDuProjet:
             "instructions_tronquees": self.instructions_tronquees,
             "skills": [skill.to_dict() for skill in self.skills],
             "non_transmis": [ecarte.to_dict() for ecarte in self.non_transmis],
+            "convention_de_commit": self.convention_de_commit,
             "bornes": {
                 "instructions_max": self.bornes.instructions_max,
                 "description_max": self.bornes.description_max,
@@ -449,8 +458,8 @@ def _section_racine_outillee(pieces: tuple[str, ...]) -> list[str]:
         "",
         *(f"- `{piece}`" for piece in pieces),
         "",
-        f"et, s'il est là, `{DOSSIER_ATELIER}/`, où Maestro range son manifeste et les "
-        "ateliers des tâches.",
+        f"et, s'il est là, `{DOSSIER_ATELIER}/`, où Maestro range son manifeste — qui y "
+        "reste tel quel, ni retiré ni ignoré — et les ateliers des tâches.",
         "",
         "Ce n'est pas une raison d'écrire à la main ce que produit l'outil "
         "d'initialisation standard du projet : lui choisit des versions qui vont "
@@ -549,7 +558,24 @@ def _depuis_entrees(
         non_transmis=tuple(non_transmis),
         declares=tuple(declares),
         bornes=bornes,
+        convention_de_commit=_convention_de_commit(donnees),
     )
+
+
+def _convention_de_commit(donnees: dict[str, Any]) -> str:
+    """La convention de commit que la source du manifeste retient — `""` sinon (#1507).
+
+    Relue par le lecteur des choix du manifeste (`choix_du_manifeste`), qui ne croit
+    rien de ce qu'un fichier du projet prétend sans le vérifier : le manifeste vit dans
+    le projet, et n'importe qui peut l'avoir touché. Importé ici et pas en tête : le
+    questionnaire dépend de la vérification, qui dépend de ce module.
+    """
+    from maestro.outillage.questionnaire import choix_du_manifeste, convention_de_commit
+
+    source = donnees.get("source")
+    if not isinstance(source, dict):
+        return ""
+    return convention_de_commit(choix_du_manifeste(source))
 
 
 def _manifeste(racine: Path, bornes: Bornes) -> dict[str, Any] | None:

@@ -118,6 +118,7 @@ from maestro.outillage.redaction import Fichier, prescrit, rediger
 from maestro.outillage.verification import A_VERIFIER, ECHOUEE, VERIFIEE, Verificateur, Verification
 from maestro.projets import ProjetStore
 from maestro.projets.application import DiffProjet, Modification
+from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.modele import Perimetre
 from maestro.projets.reglages import ReglagesProjetsStore
 from maestro.providers.base import ModelProvider
@@ -1023,6 +1024,89 @@ def test_sur_un_projet_versionne_la_piece_se_fusionne_sous_l_accord_de_la_carte(
         ["git", "log", "--oneline", "-3"], cwd=racine, check=True, capture_output=True, text=True
     )
     assert journal.stdout.count("\n") >= 2  # la fusion a laissé sa trace dans l'historique
+
+
+class _RedacteurDesCommits(ModelProvider):
+    """Le modèle qui rédige les messages de Maestro (#1507) : un sujet par geste."""
+
+    name = "redacteur-double"
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt: str, *, model: str, system_prompt: str | None = None) -> str:
+        self.prompts.append(prompt)
+        if "<commit>fusionne" in prompt:
+            return "chore(outillage): fusionne les instructions des agents"
+        return "chore(outillage): ajoute les instructions des agents"
+
+
+@avec_git
+@pytest.mark.usefixtures("_git_isole")
+def test_la_piece_et_sa_fusion_suivent_la_convention_de_commit_choisie(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """#1507 : sur p5, les pièces d'outillage laissaient douze commits « Maestro : … ».
+
+    Le projet est né versionné et la personne a choisi Conventional Commits : le commit de
+    la pièce et celui de sa fusion sont rédigés dans cette convention — la convention se
+    lit dans la source de la pièce, la première s'écrivant avant tout manifeste.
+    """
+    racine = _maison / "Maestro" / "recettes"
+    neuf = str(projets.creer("recettes", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+    projets.versionner(neuf)
+    modele = _RedacteurDesCommits()
+    service = _service(projets, _Joueur())
+    service._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    acquis = [
+        Choix(cle="langages", valeur="TypeScript"),
+        Choix(cle="conventions", valeur="Conventional Commits"),
+    ]
+    agents = asyncio.run(service.prochaine(neuf, [], acquis=acquis))
+    assert agents is not None and agents.chemin == "AGENTS.md" and agents.regime == "branche"
+
+    fait = asyncio.run(service.ecrire(agents))
+
+    assert fait.ecrite
+    sujets = subprocess.run(
+        ["git", "log", "--format=%s"],
+        cwd=racine,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.splitlines()
+    # La fusion en tête ; sous elle, la pièce et le premier commit, qu'une même seconde
+    # peut ordonner dans un sens ou dans l'autre.
+    assert sujets[0] == "chore(outillage): fusionne les instructions des agents"
+    assert sorted(sujets[1:]) == [
+        "Maestro : état initial du projet",
+        "chore(outillage): ajoute les instructions des agents",
+    ]
+    assert all("<convention>Conventional Commits</convention>" in p for p in modele.prompts)
+
+
+@avec_git
+@pytest.mark.usefixtures("_git_isole")
+def test_sans_convention_choisie_la_piece_ne_coute_aucun_appel(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    racine = _maison / "Maestro" / "recettes"
+    neuf = str(projets.creer("recettes", str(racine), origine=ORIGINE_NOUVEAU)["id"])
+    projets.versionner(neuf)
+    modele = _RedacteurDesCommits()
+    service = _service(projets, _Joueur())
+    service._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    agents = asyncio.run(
+        service.prochaine(neuf, [], acquis=[Choix(cle="langages", valeur="TypeScript")])
+    )
+    assert agents is not None
+
+    assert asyncio.run(service.ecrire(agents)).ecrite
+    assert modele.prompts == []
 
 
 @avec_git

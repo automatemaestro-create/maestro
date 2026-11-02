@@ -215,6 +215,7 @@ async def appliquer_sous_validation(
     role: str = "",
     titre: str = "",
     run_id: str = "",
+    message: str = "",
 ) -> ResultatApplication:
     """Applique le travail de la tâche dans `projet` — **après accord humain** (EF-37).
 
@@ -251,6 +252,10 @@ async def appliquer_sous_validation(
     `run_id` (#570) est le run au nom duquel on applique : seul l'appelant le
     sait, et sans lui la demande sort du journal de son run — le projet, lui, est
     déduit de `projet`, qui est le sujet même de la question.
+
+    `message` (#1507) est le sujet du commit de fusion, rédigé dans la convention de
+    commit du projet par l'appelant (`maestro.projets.commits`) ; vide, c'est celui de
+    Maestro.
 
     `branche` est la branche de tâche posée par l'espace de travail dérivé
     (#224, `branche_de_tache`) — requise pour un projet versionné, jamais
@@ -290,7 +295,7 @@ async def appliquer_sous_validation(
     approuve, detail = await Guardrails(validateur=validateur).demande_validation(demande)
     if not approuve:
         return ResultatApplication(statut=APPLICATION_REFUSEE, diff=diff, detail=detail)
-    appliques = appliquer(projet, diff, espace=espace)
+    appliques = appliquer(projet, diff, espace=espace, message=message)
     return ResultatApplication(
         statut=APPLICATION_APPROUVEE, diff=diff, detail=detail, appliques=appliques
     )

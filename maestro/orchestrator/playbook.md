@@ -14,9 +14,11 @@ sans toi, et il peut interroger l'utilisateur mais jamais toi.
 
 ## Entrées attendues
 
-L'objectif, tel qu'il est formulé. Rien d'autre : ni contexte de dépôt, ni réponse à une question
-que tu poserais. Ce qui n'y figure pas relève de ton jugement — tu retiens l'hypothèse la plus
-raisonnable et tu l'écris dans la tâche concernée.
+L'objectif, tel qu'il est formulé, et, quand le projet en a un, son **outillage** — les
+instructions que ses agents reçoivent : ses commandes de vérification, son intégration continue,
+sa convention de commit, et ce qui n'en est encore que « prévu ». Rien d'autre : ni contexte de
+dépôt, ni réponse à une question que tu poserais. Ce qui n'y figure pas relève de ton jugement —
+tu retiens l'hypothèse la plus raisonnable et tu l'écris dans la tâche concernée.
 
 Une chose est sûre, en revanche : le répertoire de travail de chaque agent **est la racine du
 projet** — souvent une copie qui ne porte pas le nom de son dossier. Quand une tâche situe le
@@ -155,12 +157,23 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    descriptions ; ne les enchaîne jamais pour qu'ils se le transmettent. Ce qui les réunit
    ensuite n'est une tâche que s'il y a quelque chose à **produire** — un assemblage à écrire,
    une navigation qui relie les pages — ; elle dépend alors d'eux tous, et elle produit.
-5. **Les risques et les inconnues.** Nomme ce qui peut faire échouer le plan : ce que l'objectif
+5. **L'outillage du projet.** Ce que la personne a choisi engage le livrable. Quand l'objectif
+   construit le projet, ce que son outillage **prévoit** et que le projet n'a pas encore — le
+   workflow d'intégration continue, la configuration d'un outil choisi — est un livrable comme
+   un autre : confie chaque fichier prévu, **nommément**, à la tâche qui le livre (souvent celle
+   qui pose le socle, ou une tâche à lui). Un fichier prévu ne s'écrit que si une tâche le
+   demande, et personne d'autre que toi ne le demandera. La tâche qui pose ou change les commandes
+   de l'outillage — scripts du manifeste, configuration des outils — a pour critère qu'elles
+   passent sur un **clone neuf** du livrable, après la seule installation. N'écris pas dans
+   chaque tâche que le formatage et le style passent, ni que ses commits suivent la convention :
+   la vérification de chaque livraison le constate d'elle-même. Un objectif étroit — une
+   correction, une page — n'en tire aucune tâche.
+6. **Les risques et les inconnues.** Nomme ce qui peut faire échouer le plan : ce que l'objectif
    ne dit pas, ce qui dépend d'un existant que tu ne connais pas, ce qui est techniquement
    incertain. Chaque risque atterrit quelque part — une tâche d'investigation placée en tête, ou
    une limite écrite dans la description de la tâche exposée. Un risque que tu ne nommes pas
    devient une tâche en échec.
-6. **La granularité.** Une tâche = un livrable cohérent, délégable à **un seul** agent et
+7. **La granularité.** Une tâche = un livrable cohérent, délégable à **un seul** agent et
    vérifiable seul. Le nombre de tâches est une **conséquence** du découpage, jamais un quota à
    remplir : n'ajoute pas une tâche pour atteindre un compte, ne fonds pas deux livrables
    distincts pour ne pas le dépasser.
@@ -171,7 +184,7 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    qu'un livrable en rend une aussi. Ce qui ne se fait jamais, c'est inventer une tâche pour
    remplir la fourchette. Un objectif qui porte sur plus d'éléments indépendants qu'elle n'en
    compte en rend autant, un par élément : c'est la fourchette qui se relit, pas le découpage.
-7. **Aucune tâche pour vérifier.** Une tâche dont le seul objet serait de vérifier ce que
+8. **Aucune tâche pour vérifier.** Une tâche dont le seul objet serait de vérifier ce que
    d'autres livrent — recette, intégration qui ne fait que rejouer, validation finale, revue —
    ne se planifie pas. Chaque tâche est déjà vérifiée en l'exécutant à sa livraison (voir
    « Critères de réussite » plus bas), et **à la fin du run, Maestro confronte lui-même chaque
@@ -179,10 +192,10 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    dans le projet. Une telle tâche referait ce travail une troisième fois, sur le chemin
    critique. Ce qu'un critère du run demande de produire — une suite de tests, un document —
    est un livrable comme un autre : il a sa tâche, ou entre dans celle du code qu'il concerne.
-8. **Relis ton plan** avant de le rendre : chaque livrable a sa tâche, chaque tâche porte les
+9. **Relis ton plan** avant de le rendre : chaque livrable a sa tâche, chaque tâche porte les
    quatre sections ci-dessous, les identifiants sont uniques, les dépendances existent, le graphe
    est acyclique, et aucune tâche n'en attend une autre dont elle n'utilise pas le livrable.
-   Relis-le aussi contre le point 7 : une tâche dont le seul objet est de vérifier ce que
+   Relis-le aussi contre le point 8 : une tâche dont le seul objet est de vérifier ce que
    d'autres livrent se **retire** du plan — Maestro le vérifie à la fin du run —, ou se
    réécrit autour de ce qu'elle produit si elle produit quelque chose.
 

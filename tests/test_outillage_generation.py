@@ -65,6 +65,8 @@ from maestro.outillage import (
 from maestro.outillage.generation import REFUS_VERSION
 from maestro.outillage.questionnaire import comprehension_depuis_texte
 from maestro.outillage.redaction import (
+    CLONE_NEUF,
+    COMMITS_DANS_LA_CONVENTION,
     PREVU,
     REGLE_DU_PREVU,
     bloc,
@@ -416,6 +418,22 @@ def test_agents_md_dit_ce_que_devient_ce_qui_se_refabrique() -> None:
     assert "s'il n'est pas déjà ignoré par le `.gitignore`, ajoute-le" in plat
 
 
+def test_agents_md_dit_que_la_comptabilite_de_maestro_suit_le_projet() -> None:
+    """#1507, S12 du 2026-10-26 : l'agent du socle a ajouté `/.maestro/` au `.gitignore`
+    (« Atelier de Maestro : jamais versionné ») et retiré le manifeste du dépôt. La ligne
+    disait « l'atelier de Maestro […]. Ce n'est pas le livrable du projet », juste sous
+    celle qui fait ignorer ce qui n'est pas à livrer : la fusion l'a effacé de la racine,
+    et les tâches suivantes n'ont plus reçu ni l'outillage ni la convention de commit."""
+    (instructions, *_) = rediger(_constats(), _recommandation())
+    section = instructions.contenu.split("## Ce qu'un agent ne touche pas", 1)[1]
+    plat = " ".join(section.split())
+
+    assert f"`{CHEMIN_MANIFESTE}` y dit ce qui vient de lui, et le projet le garde" in plat
+    assert "Ne le supprime pas, ne le retire pas du dépôt" in plat
+    assert "n'ajoute pas `.maestro/` au `.gitignore`" in plat
+    assert "Ce n'est pas le livrable du projet" not in plat
+
+
 def test_agents_md_porte_les_six_sections_et_les_constats_avec_leur_source() -> None:
     (instructions, *_) = rediger(_constats(), _recommandation())
     texte = instructions.contenu
@@ -519,6 +537,57 @@ def test_un_projet_neuf_ne_dit_jamais_constate_d_un_fichier_qui_n_existe_pas() -
     projet = agents.split("## Le projet\n\n", 1)[1].split("\n## ", 1)[0]
     assert "- **Langages** : TypeScript." in projet
     assert "%" not in projet
+
+
+def test_agents_md_dit_que_les_commits_suivent_la_convention_choisie() -> None:
+    """#1507 : sur p5, Conventional Commits était « prévu », et aucun commit ne le suivait.
+
+    La convention était listée comme un fichier à venir ; rien ne disait aux agents que
+    leurs commits la suivent, ni de commiter. C'est dit, sous la liste qui la nomme.
+    """
+    agents = _rediges_depuis_les_reponses()["AGENTS.md"]
+    conventions = agents.split("## Conventions\n\n", 1)[1].split("\n## ", 1)[0]
+    assert COMMITS_DANS_LA_CONVENTION in conventions
+    assert conventions.index("conventional-commits") < conventions.index(
+        COMMITS_DANS_LA_CONVENTION
+    )
+
+
+def test_agents_md_sans_convention_de_commit_n_en_parle_pas() -> None:
+    choix = [c for c in _choix_du_projet_neuf() if c.cle != "conventions"]
+    (agents, *_) = rediger(constats_depuis_choix(choix), recommandation_depuis_choix(choix))
+    assert COMMITS_DANS_LA_CONVENTION not in agents.contenu
+
+
+def test_agents_md_fait_appliquer_le_formatage_et_tenir_les_commandes_sur_un_clone_neuf() -> (
+    None
+):
+    """#1507 : « joue au moins les tests » laissait le reste facultatif.
+
+    Sur p5, cinquante fichiers sont partis hors du formatage choisi, et le typage ne
+    passait que sur l'arbre de l'agent (types générés par un build resté là).
+    """
+    choix = [*_choix_du_projet_neuf(), Choix(cle="formater", valeur="npx prettier --write .")]
+    (agents, *_) = rediger(constats_depuis_choix(choix), recommandation_depuis_choix(choix))
+    verifier = agents.contenu.split("## Vérifier\n\n", 1)[1].split("\n## ", 1)[0]
+    assert (
+        "Avant de rendre un travail, applique le **formatage** du projet à ce que tu as "
+        "écrit, puis vérifie son style et ses types" in verifier
+    )
+    assert CLONE_NEUF in verifier
+    # Le clone, c'est la vérification de la livraison qui le fait (`clone_neuf`) : la
+    # phrase qui le faisait faire à l'agent, par `mktemp -d`, l'envoyait demander à
+    # une personne d'arbitrer un clone hors de sa copie (S12 du 2026-10-26).
+    assert "clone-le" not in CLONE_NEUF and "mktemp" not in CLONE_NEUF
+
+
+def test_sans_formateur_ni_controle_rien_n_est_exige_au_dela_des_tests() -> None:
+    choix = [
+        c for c in _choix_du_projet_neuf() if c.cle not in ("lint", "types", "formater")
+    ]
+    (agents, *_) = rediger(constats_depuis_choix(choix), recommandation_depuis_choix(choix))
+    assert "Avant de rendre un travail" not in agents.contenu
+    assert "**au moins** les tests" in agents.contenu
 
 
 def test_une_analyse_garde_ses_constats_quand_le_registre_des_reponses_existe() -> None:
