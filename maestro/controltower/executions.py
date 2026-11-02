@@ -235,6 +235,7 @@ from maestro.controltower.gestes import (
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
+from maestro.controltower.limite import AttenteLimiteControlTower
 from maestro.controltower.plafond import ArbitrePlafondControlTower
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.progression import (
@@ -2195,6 +2196,11 @@ class ServiceExecutions:
                 # L'état acquis (#1391) : le magasin que ce service relit pour
                 # reprendre un run, rempli par le run lui-même au fil de l'eau.
                 acquis=self._acquis,
+                # La limite d'usage du fournisseur (#1543) : même bus, et la porte
+                # de **ce** run, que l'attente ferme et rouvre — ici, aucun guet ne
+                # la bascule sur les ordres du bus. Le run s'y met en pause au lieu
+                # d'échouer, et repart au reset ou sur « Reprendre ».
+                attente_limite=AttenteLimiteControlTower(self._bus, porte=porte),
             )
             rapport = await moteur.run(
                 ordre.objectif,

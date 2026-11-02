@@ -282,7 +282,14 @@ from maestro.messaging import (
 )
 from maestro.outillage.correction import CorrectionPrise
 from maestro.outillage.generation import empreinte
-from maestro.outillage.questionnaire import REPONSE_LIBRE_MAX, Choix, QuestionOutillage, sujet_de
+from maestro.outillage.questionnaire import (
+    PROPOSITION_RETENUE,
+    REPONSE_LIBRE_MAX,
+    Choix,
+    QuestionOutillage,
+    choix_de_la_reponse,
+    sujet_de,
+)
 from maestro.outillage.verification import Verification
 from maestro.providers.base import ModelProvider
 from maestro.sources import (
@@ -735,8 +742,20 @@ def choix_du_fil(fil: Sequence[MessageChat]) -> tuple[Choix, ...]:
     C'est ce qui permet au conducteur de n'avoir aucune mémoire à lui : l'état du
     questionnaire **est** le fil, donc rouvrir la Control Tower, changer de poste ou
     recharger la page ne perd rien et ne reprend rien deux fois.
+
+    Chaque réponse est lue **avec la question qu'elle tranche** — la dernière posée
+    avant elle (#1533) : le geste qui retient une proposition vaut chacun de ses
+    éléments, cliqué (`choix_de_la_reponse`). Lu sur la structure, là encore : la
+    proposition est sur le message qui la posait, jamais recopiée dans la réponse.
     """
-    return tuple(m.choix for m in fil if m.choix is not None)
+    choix: list[Choix] = []
+    posee: QuestionOutillage | None = None
+    for message in fil:
+        if message.question is not None:
+            posee = message.question
+        if message.choix is not None:
+            choix.extend(choix_de_la_reponse(posee, message.choix))
+    return tuple(choix)
 
 
 def _question_repondue(
@@ -770,7 +789,14 @@ def _geste_de_reponse(question: QuestionOutillage, valeur: str) -> str:
     La valeur, elle, voyage sur `MessageChat.choix`, qui est ce que le conducteur
     relit. Le texte est pour l'œil, le champ pour la machine — et aucun des deux
     n'est dérivé de l'autre à la relecture.
+
+    Une proposition retenue (#1533) n'a pas d'option dont citer le libellé : le geste
+    dit qu'elle l'est, et ce qu'elle retient — les libellés de ses éléments, dans
+    l'ordre de la carte —, pour que le fil relu dise ce qui a été choisi.
     """
+    if question.proposition:
+        retenus = ", ".join(p.libelle for p in question.proposition)
+        return f"{question.intitule} → retenu tel quel : {retenus}"
     return f"{question.intitule} → {question.libelle_de(valeur)}"
 
 
@@ -1596,6 +1622,37 @@ _SORTS_EN_MOTS = {
 PIECE_ECARTEE = "ecartee"
 
 
+#: Le titre du constat qu'une écriture d'outillage porte sur ce que l'équipe du projet
+#: reçoit (#1520). Il ouvre la phrase du fait, la ligne de la transcription, et la règle
+#: de la rédaction le cite au mot près : le fait et la règle se reconnaissent ainsi.
+TITRE_RECU = "Ce que les agents du projet reçoivent"
+
+
+@dataclass(frozen=True)
+class CommandeRemplacee:
+    """Une commande que l'écriture remplace, et où l'équipe la reçoit **encore** (#1520).
+
+    `encore` nomme ce qui la prescrit toujours parmi ce que les agents du projet
+    reçoivent — un fichier de l'outillage pas encore réécrit, le playbook d'un agent —,
+    constaté sur le disque juste après l'écriture. Vide : plus rien ne la leur donne.
+    """
+
+    commande: str
+    encore: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """La commande remplacée en JSON."""
+        return {"commande": self.commande, "encore": list(self.encore)}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CommandeRemplacee:
+        """Relit une commande remplacée persistée."""
+        return cls(
+            commande=str(data.get("commande") or ""),
+            encore=tuple(str(o) for o in data.get("encore") or ()),
+        )
+
+
 @dataclass(frozen=True)
 class PieceEcrite:
     """Ce qu'un geste a fait d'une pièce — le fait qu'une réponse porte sous sa bulle (#1161).
@@ -1605,6 +1662,13 @@ class PieceEcrite:
     ou pas, avec la raison. `empreinte` est celle du contenu **proposé** : c'est ce qui
     fait qu'une pièce tranchée ne se repropose pas telle quelle (`pieces_tranchees`),
     et qu'elle se repropose dès qu'une correction l'a changée.
+
+    Et ce que l'écriture a fait à **l'équipe** du projet, constaté juste après (#1520) :
+    `equipe` les agents dont on a relu ce qu'ils reçoivent, `rebranches` ceux dont le
+    playbook a cessé de figer ses commandes à cette écriture, `remplacees` les commandes
+    qu'elle remplace et où l'équipe les reçoit encore. C'est ce qui permet au fil de
+    dire « partout » quand c'est vrai, et de ne pas le dire quand ce ne l'est pas.
+    Vides sur un fait écrit avant, ou sans équipe à relire : rien n'est constaté.
     """
 
     projet_id: str
@@ -1615,11 +1679,48 @@ class PieceEcrite:
     cible: str = ""
     regime: str = "en-place"
     empreinte: str = ""
+    equipe: tuple[str, ...] = ()
+    rebranches: tuple[str, ...] = ()
+    remplacees: tuple[CommandeRemplacee, ...] = ()
 
     @property
     def ecrite(self) -> bool:
         """La pièce est-elle, après ce geste, ce que le projet porte ?"""
         return self.etat in ("ecrit", "inchange")
+
+    def recu_en_phrase(self) -> str:
+        """Le constat sur ce que l'équipe reçoit, en phrases — `""` sans rien à constater.
+
+        Il ne dit que ce qui a été relu : une commande « plus prescrite » l'est dans
+        l'outillage écrit et dans le playbook de chaque agent nommé, et nulle part
+        ailleurs on ne l'a cherchée.
+        """
+        phrases: list[str] = []
+        if self.rebranches:
+            phrases.append(
+                f"les playbooks de {_enumeres(self.rebranches)} ne figent plus aucune "
+                "commande : ils renvoient aux skills du projet, qui font foi."
+            )
+        recu = (
+            f"l'outillage écrit dans le projet et les playbooks de {_enumeres(self.equipe)}"
+            if self.equipe
+            else "l'outillage écrit dans le projet (il n'a encore aucun agent)"
+        )
+        for remplacee in self.remplacees:
+            if remplacee.encore:
+                phrases.append(
+                    f"`{remplacee.commande}`, remplacée, est encore prescrite dans "
+                    f"{_enumeres(remplacee.encore)} : les agents l'y liront tant que ce "
+                    "n'est pas réécrit."
+                )
+            else:
+                phrases.append(
+                    f"`{remplacee.commande}`, remplacée, n'est plus prescrite dans rien "
+                    f"de ce qu'ils reçoivent — {recu}."
+                )
+        if not phrases:
+            return ""
+        return f"{TITRE_RECU}, constaté après l'écriture : {' '.join(phrases)}"
 
     def to_dict(self) -> dict[str, Any]:
         """Le fait en JSON — la forme du REST et du stockage."""
@@ -1633,6 +1734,9 @@ class PieceEcrite:
             "regime": self.regime,
             "empreinte": self.empreinte,
             "ecrite": self.ecrite,
+            "equipe": list(self.equipe),
+            "rebranches": list(self.rebranches),
+            "remplacees": [r.to_dict() for r in self.remplacees],
         }
 
     @classmethod
@@ -1647,7 +1751,21 @@ class PieceEcrite:
             cible=str(data.get("cible") or ""),
             regime=str(data.get("regime") or "en-place"),
             empreinte=str(data.get("empreinte") or ""),
+            equipe=tuple(str(n) for n in data.get("equipe") or ()),
+            rebranches=tuple(str(n) for n in data.get("rebranches") or ()),
+            remplacees=tuple(
+                CommandeRemplacee.from_dict(r)
+                for r in data.get("remplacees") or ()
+                if isinstance(r, Mapping)
+            ),
         )
+
+
+def _enumeres(noms: Sequence[str]) -> str:
+    """`a`, `a et b`, `a, b et c` — une énumération, en français."""
+    if len(noms) <= 1:
+        return "".join(noms)
+    return f"{', '.join(noms[:-1])} et {noms[-1]}"
 
 
 #: Le verbe de chaque geste, à l'infinitif — ce que la transcription dit d'une carte
@@ -3504,6 +3622,10 @@ class ServiceChat:
           `AskUserQuestion` : « use the user's custom text as the answer value »).
           Ce n'est pas un constat : le tour suivant la comprend.
 
+        Une **proposition** de l'outillage entier (#1533) n'a pas d'options : elle se
+        retient d'un geste (`PROPOSITION_RETENUE`, seule valeur admise sans mots), qui
+        vaut chacun de ses éléments cliqué (`choix_du_fil`), ou se corrige avec des mots.
+
         `QuestionIntrouvable` quand rien n'attend — c'est le `409` de l'API, et il
         couvre le double geste comme le geste tardif.
         """
@@ -3518,6 +3640,14 @@ class ServiceChat:
             valeur = " ".join(valeur.split())[:REPONSE_LIBRE_MAX]
             if not valeur:
                 raise ValueError("réponse vide : écrivez ce que vous voulez répondre.")
+        elif question.proposition:
+            # La proposition de l'outillage entier (#1533) n'a qu'un geste : la retenir.
+            # Tout autre valeur serait un constat que personne n'a vu proposer.
+            if valeur != PROPOSITION_RETENUE:
+                raise ValueError(
+                    f"cette proposition se retient telle quelle ({PROPOSITION_RETENUE!r}) "
+                    "ou se corrige avec vos mots."
+                )
         elif not question.options:
             raise ValueError(
                 "cette question se répond avec vos mots : elle n'a pas d'options."
@@ -4544,6 +4674,10 @@ def transcription(fil: Sequence[MessageChat]) -> str:
         if message.piece_ecrite is not None:
             fait = message.piece_ecrite
             lignes.append(f"[Pièce d'outillage {fait.etat} : {fait.chemin} — {fait.raison}]")
+            # Ce que l'écriture a constaté de ce que l'équipe reçoit (#1520) : sans lui,
+            # « Correction prise » se lisait au tour suivant comme « partout ».
+            if recu := fait.recu_en_phrase():
+                lignes.append(f"[{recu}]")
         lignes.extend(
             f"[Correction de l'outillage prise : {sujet_de(c.cle)} = {c.valeur}]"
             for c in message.corrections

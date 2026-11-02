@@ -456,8 +456,10 @@ def test_le_plan_degage_le_travail_qui_se_fait_de_front():
     La règle positive, et l'exemple du ticket : des éléments de même nature qui se
     livrent séparément font une tâche chacun, sans dépendance entre eux, même pour
     un seul rôle. Ce qu'ils partagent monte dans une tâche amont ou s'écrit dans
-    chacun, jamais par une chaîne ; ce qui les réunit dépend d'eux tous. Et la
-    fourchette de tâches ne tient pas contre ce découpage.
+    chacun, jamais par une chaîne ; ce qui les réunit, quand il y a quelque chose à
+    produire, dépend d'eux tous — et n'est plus une tâche qui ne ferait que
+    vérifier (#1530, `tests/test_recette_du_run.py`). Et la fourchette de tâches ne
+    tient pas contre ce découpage.
     """
     texte = _playbook()
 
@@ -466,7 +468,7 @@ def test_le_plan_degage_le_travail_qui_se_fait_de_front():
     assert "une tâche par élément" in texte
     assert "« maquetter les quatre sections du site » est quatre tâches" in texte
     assert "ne les enchaîne jamais pour qu'ils se le transmettent" in texte
-    assert "une tâche qui dépend d'eux tous" in texte
+    assert "elle dépend alors d'eux tous, et elle produit" in texte
     assert "c'est la fourchette qui se relit, pas le découpage" in texte
 
 

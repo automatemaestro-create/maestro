@@ -60,6 +60,7 @@ from maestro.equipe.gabarits import (
     RAISON_UNE_INSTANCE,
     Gabarit,
     Justification,
+    interface_constatee,
 )
 from maestro.equipe.manque import RoleManquant
 from maestro.equipe.modele import (
@@ -138,6 +139,7 @@ def proposer_equipe(
     """
     reponses = {c.cle: c.valeur for c in choix}
     skills = _skills_recommandes(recommandation)
+    interface = interface_constatee(constats, reponses)
     pris = [*noms_pris]
     roles: list[RolePropose] = []
     ecartes: list[RoleEcarte] = [ECARTE_ORCHESTRATEUR]
@@ -148,7 +150,16 @@ def proposer_equipe(
             continue
         nom = _nom_libre(gabarit.nom, pris)
         pris.append(nom)
-        roles.append(_role(gabarit, nom, justification, constats, skills))
+        roles.append(
+            _role(
+                gabarit,
+                nom,
+                justification,
+                constats,
+                skills,
+                navigateur=interface and gabarit.regarde_l_ecran,
+            )
+        )
     return PropositionEquipe(
         id=nouvel_id(),
         projet_id=projet_id,
@@ -212,6 +223,9 @@ def proposer_renfort(
         Justification(raison=raison),
         constats,
         skills,
+        # Recruté en cours de run, le projet a ses fichiers : ce sont eux qui
+        # disent s'il a une interface, comme pour le reste de ce rôle.
+        navigateur=gabarit.regarde_l_ecran and interface_constatee(constats, {}),
     )
     return PropositionEquipe(
         id=nouvel_id(),
@@ -252,8 +266,15 @@ def _role(
     justification: Justification,
     constats: Constats,
     skills: Mapping[str, Entree],
+    *,
+    navigateur: bool = False,
 ) -> RolePropose:
-    """Le rôle proposé pour ce gabarit : ses skills, ses instances, ses autorisations."""
+    """Le rôle proposé pour ce gabarit : ses skills, ses instances, ses autorisations.
+
+    `navigateur` (#1532) : ce rôle reçoit-il le navigateur de Maestro. Les règles le
+    donnent aux gabarits qui regardent l'écran quand le projet a une interface
+    (`Gabarit.regarde_l_ecran`, `interface_constatee`) ; la personne le retire en mots.
+    """
     outils = profil_outille(gabarit.agent).outils
     branches = skills_par_usages(gabarit.usages, skills)
     autorisations = autorisations_du_role(outils, gabarit.usages, constats)
@@ -278,6 +299,7 @@ def _role(
         outils=outils,
         skills=branches,
         autorisations=autorisations,
+        navigateur=navigateur,
     )
 
 

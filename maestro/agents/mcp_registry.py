@@ -204,6 +204,14 @@ USAGE_TRES_COURANT = 70
 USAGE_COURANT = 50
 USAGE_SPECIALISE = 30
 
+#: La version du serveur navigateur que Maestro monte (#1532, #1313) — **figée**,
+#: jamais `@latest` : une version prise au lancement fait tourner sous chaque tâche
+#: un code que personne n'a vu, et une nouvelle version peut tout casser. C'est la
+#: version que l'outillage de ce dépôt épingle déjà pour le sien
+#: (`PLAYWRIGHT_MCP_VERSION`, `scripts/setup.sh`) : vue tourner, donc connue. La
+#: monter d'un cran est un geste relu, ici, en revue de code.
+VERSION_PLAYWRIGHT_MCP = "0.0.78"
+
 #: L'id réservé par la route `GET /api/mcp/registre/provenance`
 #: (`maestro.controltower.app`) : aucune entrée ne peut le porter, sans quoi
 #: elle deviendrait injoignable par `GET /api/mcp/registre/{id}`. Le registre
@@ -1774,20 +1782,28 @@ SEED: tuple[EntreeRegistre, ...] = (
         popularite=USAGE_SPECIALISE,
     ),
     # ── Navigateur, cartes et utilitaires locaux ──────────────────────────────
+    # Le navigateur de Maestro (#1532) : l'équipe d'un projet qui construit une
+    # interface web le reçoit à sa composition (`maestro.agents.navigateur`). Sa
+    # version est **figée** — `@latest` ferait tourner sous chaque tâche un code que
+    # personne n'a vu —, il tourne sans fenêtre et sous un profil tenu en mémoire,
+    # et sa procédure renvoie à l'éditeur, jamais à un fichier du dépôt de
+    # développement (#1313). Le navigateur qu'il pilote se résout sur le poste au
+    # moment d'équiper (`canal_du_poste`).
     EntreeRegistre(
         id="playwright",
         nom="Playwright",
         description=(
-            "Piloter un vrai navigateur : naviguer, remplir, cliquer, capturer — "
-            "sur l'arbre d'accessibilité plutôt que sur des pixels. "
-            "C'est le serveur derrière l'intégration « chrome-maestro »."
+            "Piloter un vrai navigateur : naviguer, remplir, cliquer, capturer à une "
+            "largeur donnée, lire les erreurs de la console — sur l'arbre "
+            "d'accessibilité plutôt que sur des pixels. Sans fenêtre, sous un profil "
+            "tenu en mémoire. C'est le navigateur de Maestro."
         ),
         mode_auth="sans_secret",
         transport="stdio",
         commande="npx",
-        args=("-y", "@playwright/mcp@latest"),
+        args=("-y", f"@playwright/mcp@{VERSION_PLAYWRIGHT_MCP}", "--headless", "--isolated"),
         tags=("navigateur", "web", "tests", "captures", "automatisation", "qa"),
-        procedure_url="scripts/mcp/playwright-mcp.mjs",
+        procedure_url="https://github.com/microsoft/playwright-mcp",
         editeur="Microsoft",
         popularite=USAGE_INCONTOURNABLE,
     ),

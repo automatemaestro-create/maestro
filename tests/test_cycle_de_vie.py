@@ -65,6 +65,7 @@ import re
 from pathlib import Path
 
 import pytest
+from balayage import fichiers_du_depot
 from harnais_forge import (
     BASH,
     GIT,
@@ -532,7 +533,7 @@ def test_aucun_identifiant_de_projets_v2_n_est_ecrit_dans_le_depot() -> None:
 
     fautifs = []
     for chemin in (RACINE / "scripts", RACINE / ".claude", RACINE / "docs"):
-        for fichier in chemin.rglob("*"):
+        for fichier in fichiers_du_depot(chemin):
             if not fichier.is_file() or fichier.suffix in {".png", ".jpg", ".gz"}:
                 continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")
@@ -1024,7 +1025,7 @@ def test_aucun_label_de_cycle_de_vie_ne_subsiste_dans_le_depot() -> None:
 
     fautifs = []
     for dossier in (RACINE / "scripts", RACINE / ".claude"):
-        for fichier in dossier.rglob("*"):
+        for fichier in fichiers_du_depot(dossier):
             if not fichier.is_file() or fichier.parent.name == "migration":
                 continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")
@@ -1066,16 +1067,13 @@ def test_aucun_commutateur_ne_choisit_plus_de_support() -> None:
     assert not usage.search('if [ "${MAESTRO_CYCLE_MEMO:-1}" != 0 ]; then')
     fautifs = []
     for dossier in (RACINE / "scripts", RACINE / ".claude", RACINE / "tests"):
-        for fichier in dossier.rglob("*"):
-            # ⚠ `__pycache__` est écarté par le RÉPERTOIRE et non par le suffixe (#345). Python
-            # écrit son bytecode sous `<nom>.pyc.<pid>` avant de le renommer, et un worker xdist
-            # tué en laisse derrière lui : `suffix` y vaut alors « .2594 », pas « .pyc ». Le
-            # balayage lisait donc le bytecode de CE module — qui contient forcément les littéraux
-            # `MAESTRO_CYCLE` du motif — et rendait un rouge dont la cause n'a rien à voir avec le
-            # dépôt. C'est le seul des trois `grep` de ce fichier qui inclut `tests/`, donc le seul
-            # concerné. Un cache n'est pas une source : l'exclure ne réduit pas la portée.
-            if "__pycache__" in fichier.parts:
-                continue
+        # ⚠ `__pycache__` est écarté par le RÉPERTOIRE, dans `fichiers_du_depot`, et non par le
+        # suffixe (#345) : un worker xdist tué laisse un `<nom>.pyc.<pid>`, dont le bytecode de CE
+        # module — qui contient forcément les littéraux `MAESTRO_CYCLE` du motif — rendait un rouge
+        # sans rapport avec le dépôt. C'est le seul des trois `grep` de ce fichier qui inclut
+        # `tests/`, donc le seul concerné. Un cache n'est pas une source : l'exclure ne réduit pas
+        # la portée.
+        for fichier in fichiers_du_depot(dossier):
             if not fichier.is_file() or fichier.suffix == ".pyc" or fichier == Path(__file__):
                 continue
             texte = fichier.read_text(encoding="utf-8", errors="replace")

@@ -293,7 +293,7 @@ dernier commit** quand cette exécution l'a fait et qu'aucune autre branche ne l
 l'agent n'a rien commité, ou de la sauvegarde d'une extinction — et celui-là ne se réécrit jamais,
 sans quoi le travail sauvé sortirait de l'histoire du projet (S12, #1507). Les fusions de Maestro
 suivent la même convention, rédigées par le modèle, et gardent dans leur corps ce que Maestro en
-disait ([docs/38 §5.10](./38-decision-outillage-universel-du-projet.md)). La vérification de chaque
+disait ([docs/38 §5.11](./38-decision-outillage-universel-du-projet.md)). La vérification de chaque
 livraison relit l'état de la branche quand une convention est choisie ([docs/45 §2](./45-decision-une-tache-verifiee-en-l-executant.md)).
 
 **Pourquoi l'objection de l'option A est satisfaite, et non écartée.** D2 écartait l'écriture

@@ -31,6 +31,7 @@ import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
@@ -47,6 +48,8 @@ from claude_agent_sdk import (
     HookMatcher,
     McpServerConfig,
     McpServerStatus,
+    RateLimitEvent,
+    ResultError,
     ResultMessage,
     SdkMcpTool,
     StreamEvent,
@@ -102,6 +105,7 @@ from maestro.providers.base import (
     Credentials,
     GardeFouInoperant,
     ImageJointe,
+    LimiteUsageAtteinte,
     McpServerUnavailable,
     ModeleDisponible,
     ModelProvider,
@@ -325,6 +329,10 @@ class ClaudeProvider(ModelProvider):
     #: Un modèle hors gamme reste exécutable (cf. `MODELES`) — il n'aura
     #: simplement aucun effort admis, faute de savoir ce qu'il accepte.
     MODELES_LIBRES: ClassVar[bool] = True
+
+    #: Le CLI rouvre une session par l'identifiant que Maestro lui a donné (#1513,
+    #: `_reprise_de`) : une tâche coupée par la limite d'usage reprend la sienne.
+    rouvre_les_sessions: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -1981,6 +1989,93 @@ def _depassement_flux(exc: BaseException) -> PlafondFluxDepasse | None:
     )
 
 
+#: Les erreurs typées d'un message de l'assistant (`AssistantMessage.error`) qui
+#: disent que le fournisseur **refuse de servir** (#1543) : la limite de sa fenêtre
+#: d'usage, et le solde épuisé. Les autres valeurs du même champ — authentification,
+#: requête invalide, panne du serveur — ne se lèvent pas en attendant, et restent
+#: ce qu'elles étaient.
+_ERREURS_LIMITE: frozenset[str] = frozenset({"rate_limit", "billing_error"})
+
+#: Le statut d'un `RateLimitEvent` qui annonce un **refus** (#1543). Les deux
+#: autres (`allowed`, `allowed_warning`) rapportent la fenêtre en cours : le CLI
+#: ouvre chaque session sur un `allowed`, limite atteinte ou non — le piège de
+#: #203, où un run est parti dormir après avoir livré son ticket.
+_STATUT_REFUS = "rejected"
+
+#: Le statut HTTP qu'un `ResultError` du SDK porte en attribut (`api_error_status`)
+#: quand l'API a refusé l'appel pour cause de limite.
+_STATUT_HTTP_LIMITE = 429
+
+
+class _VeilleLimite:
+    """Ce que le flux du CLI a dit, **en types**, d'une limite d'usage (#1543).
+
+    Elle relève trois signaux typés du flux, qui ne sont jamais le texte d'une
+    erreur (docs/44) : un `RateLimitEvent` au statut `rejected` (avec son heure de
+    reprise), un `AssistantMessage` dont l'erreur est une limite, et — à la
+    sortie — le statut 429 qu'un `ResultError` porte en attribut. Le run
+    `0300f3ffdddf` est ce qui l'a fait naître : son « You've hit your session
+    limit » ne correspondait à aucun des libellés cherchés, et la tâche s'est
+    soldée en échec.
+
+    Elle ne décide de rien pendant la session. Ce n'est qu'à son **échec**
+    qu'elle est consultée (`limite`), et c'est la règle de #203 : une session qui
+    va au bout de son tour n'a rien à reprendre, quoi qu'elle ait vu passer.
+    """
+
+    def __init__(self) -> None:
+        self.refus = False
+        self.reprise_a: datetime | None = None
+        self._texte = ""
+
+    def releve(self, message: object) -> None:
+        """Retient d'un message du flux ce qu'il dit d'une limite — rien s'il n'en dit rien.
+
+        Tolérante par construction, comme toute lecture du flux ici : un message d'un
+        SDK plus ancien, qui ne porte pas encore le champ, ne dit rien d'une limite.
+        """
+        if isinstance(message, RateLimitEvent):
+            info = message.rate_limit_info
+            if getattr(info, "status", None) == _STATUT_REFUS:
+                self.refus = True
+                self.reprise_a = _instant(getattr(info, "resets_at", None)) or self.reprise_a
+        elif (
+            isinstance(message, AssistantMessage)
+            and getattr(message, "error", None) in _ERREURS_LIMITE
+        ):
+            self.refus = True
+            texte = " ".join(
+                block.text for block in message.content if isinstance(block, TextBlock)
+            ).strip()
+            self._texte = texte or self._texte
+
+    def limite(self, exc: BaseException) -> LimiteUsageAtteinte | None:
+        """La limite qui a coupé la session, si c'en est une — `None` pour tout autre échec."""
+        statut_http = exc.api_error_status if isinstance(exc, ResultError) else None
+        if not self.refus and statut_http != _STATUT_HTTP_LIMITE:
+            return None
+        dit = self._texte or str(exc)
+        return LimiteUsageAtteinte(
+            f"le fournisseur a opposé sa limite d'usage : {dit}", reprise_a=self.reprise_a
+        )
+
+
+def _instant(valeur: object) -> datetime | None:
+    """L'instant d'un horodatage Unix du flux — `None` s'il n'en est pas un.
+
+    En secondes selon le contrat du SDK (`RateLimitInfo.resets_at`) ; une valeur
+    en millisecondes, que la chaîne du dépôt a déjà rencontrée (docs/10 § 11.4),
+    est ramenée aux secondes plutôt que lue mille fois trop loin.
+    """
+    if isinstance(valeur, bool) or not isinstance(valeur, int | float) or valeur <= 0:
+        return None
+    secondes = valeur / 1000 if valeur > 100_000_000_000 else valeur
+    try:
+        return datetime.fromtimestamp(secondes, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _avec_stderr(exc: _E, stderr: CollecteurStderr | None) -> _E:
     """Accroche à `exc` ce que le CLI a écrit sur stderr — ou la mention qu'il s'est tu (#346).
 
@@ -2062,18 +2157,26 @@ async def _collect_response(
     plus une fois au `ResultMessage` : c'est ce qui permet au moteur de relever
     ce qu'une tâche a consommé pendant qu'elle tourne. Le total soldé n'a pas
     bougé d'un token — voir `_absorbe`.
+
+    Une **limite d'usage** qui coupe la session est muée en `LimiteUsageAtteinte`
+    (#1543), sur les signaux typés du flux (`_VeilleLimite`) : c'est elle que le
+    moteur attend, puis reprend — jamais un échec à relancer.
     """
     parts: list[str] = []
     outils: list[str] = []
     compteur = _CompteurTours()
+    veille = _VeilleLimite()
     try:
         async for message in query(prompt=prompt, options=options):
+            veille.releve(message)
             _absorbe(message, parts, outils, regulateur, compteur=compteur)
     except Exception as exc:
         if _MARQUEUR_MAX_TURNS in str(exc):
             raise _avec_stderr(_erreur_plafond(plafond_tours, exc), stderr) from exc
         if (depassement := _depassement_flux(exc)) is not None:
             raise _avec_stderr(depassement, stderr) from exc
+        if (limite := veille.limite(exc)) is not None:
+            raise _avec_stderr(limite, stderr) from exc
         _avec_stderr(exc, stderr)
         raise
     return "".join(parts)
@@ -2113,8 +2216,10 @@ async def _stream_response(
     parts: list[str] = []
     outils: list[str] = []
     diffuse = False
+    veille = _VeilleLimite()
     try:
         async for message in query(prompt=prompt, options=options):
+            veille.releve(message)
             if isinstance(message, StreamEvent):
                 texte = _delta_texte(message.event)
                 if texte:
@@ -2133,6 +2238,8 @@ async def _stream_response(
             raise _avec_stderr(_erreur_plafond(None, exc), stderr) from exc
         if (depassement := _depassement_flux(exc)) is not None:
             raise _avec_stderr(depassement, stderr) from exc
+        if (limite := veille.limite(exc)) is not None:
+            raise _avec_stderr(limite, stderr) from exc
         _avec_stderr(exc, stderr)
         raise
     if not diffuse and parts:
@@ -2189,24 +2296,35 @@ async def _collect_response_pilotee(
     avec ce que le CLI a écrit. Le `try` enveloppe **tout** le bloc, l'ouverture
     de session comprise — un CLI qui meurt au démarrage est précisément le cas
     où l'exception du SDK n'apprend rien.
+
+    La **limite d'usage** (#1543) suit le régime des deux autres chemins : relevée
+    sur le flux typé, muée en `LimiteUsageAtteinte` à l'échec — jamais à la place
+    d'un plafond de tours, que le moteur sait déjà nommer.
     """
     parts: list[str] = []
     outils: list[str] = []
     compteur = _CompteurTours()
+    veille = _VeilleLimite()
     try:
         async with ClaudeSDKClient(options) as client:
             await _attend_serveurs_mcp(client, attendus)
             await client.query(prompt)
             async for message in client.receive_response():
+                veille.releve(message)
                 _absorbe(message, parts, outils, regulateur, compteur=compteur)
                 if isinstance(message, ResultMessage) and message.is_error:
                     detail = message.result or message.subtype
                     if _MARQUEUR_MAX_TURNS in message.subtype:
                         raise _erreur_plafond(plafond_tours, detail)
                     raise RuntimeError(f"Claude Code returned an error result: {detail}")
+    except TurnLimitReached as exc:
+        _avec_stderr(exc, stderr)
+        raise
     except Exception as exc:
         if (depassement := _depassement_flux(exc)) is not None:
             raise _avec_stderr(depassement, stderr) from exc
+        if (limite := veille.limite(exc)) is not None:
+            raise _avec_stderr(limite, stderr) from exc
         _avec_stderr(exc, stderr)
         raise
     return "".join(parts)

@@ -1450,18 +1450,51 @@ contenu de la décision :
 - la cause vient **en plus** du détail, jamais à sa place — le code dit *de quoi il
   s'agit*, le détail *ce qui s'est passé* ; un code que l'écran ne sait pas nommer
   ne rend **aucune** ligne plutôt qu'un identifiant brut ;
-- la **limite d'usage du fournisseur** est la seule reconnue **au texte**, faute de
-  type — rien dans `maestro/` ne la détectait, et le classement des aléas la range
-  même parmi les relançables. Ses marqueurs sont **repris** de
-  `scripts/orchestrate/run.sh` (#171) plutôt que réinventés, et le texte examiné est
-  celui de **l'exception**, jamais le `stderr` collecté (#346), qui porte la
-  télémétrie du CLI : un `rate_limit_event` de statut « allowed » y ferait nommer
-  « limite d'usage » à peu près tous les échecs (le piège de #203).
+- **aucune cause ne se reconnaît au texte** (#1543, docs/44). La limite d'usage du
+  fournisseur l'était, faute de type : un motif repris de `scripts/orchestrate/run.sh`
+  cherché dans le message de l'erreur, qui n'a pas reconnu « You've hit your session
+  limit » le 2026-10-15 — la tâche s'est soldée en échec, et le run avec elle
+  (docs/51 § 4.2). Chaque adaptateur mue désormais son signal natif en
+  `LimiteUsageAtteinte` : l'événement typé du flux du CLI (`rate_limit_event` au
+  statut `rejected`, jamais `allowed`, qui ne fait que rapporter la fenêtre — le piège
+  de #203), l'erreur typée d'un message de l'assistant, le statut 429 d'un endpoint.
+  Et la limite n'arrête plus le run : elle le **met en pause** (§2.4.3 bis).
 
-L'ordre de classement est celui de la **précision** — les types d'abord, le texte en
-dernier : un plafond de tours dont le message citerait « rate limit » reste un
-plafond de tours, ce que le moteur *sait* l'emportant sur ce qu'un message
-*suggère*.
+Le classement ne lit que des types : un plafond de tours dont le message citerait
+« rate limit » reste un plafond de tours, ce que le moteur *sait* l'emportant sur ce
+qu'un message *suggère*.
+
+#### 2.4.3 bis À la limite d'usage, le run se met en pause (#1543) — **livré**
+
+Une tâche que le fournisseur coupe par sa limite d'usage ne fait plus échouer son run.
+Le run se met **en pause** — l'ordre de pause de #477, posé par
+`maestro.controltower.limite.AttenteLimiteControlTower` —, et le résumé dit pourquoi
+et jusqu'à quand : `pause_cause` vaut `limite_usage`, `reprise_a` l'heure que le
+fournisseur a donnée (ISO 8601, `null` quand il ne l'a pas dite). Le statut ne bouge
+pas (`en_cours`) ; aucune tâche neuve ne part pendant la pause. Le fil la dit en mots
+(« en pause depuis 10:02 — limite d'usage du fournisseur, reprise prévue à 12:00 »).
+
+**À l'heure dite, le run reprend de lui-même** ; d'ici là, « Reprendre » le reprend
+aussi. La tâche coupée repart **dans sa session** : le fournisseur la rouvre par
+l'identifiant que Maestro lui avait donné (`SessionAgent`, #1513), contexte intact,
+dans son espace de travail resté ouvert, et l'agent n'y reçoit que la note de reprise.
+Rien de ce qui est fait n'est refait — ni les tâches soldées, ni ce que celle-ci avait
+écrit. Trois règles à ne pas défaire :
+
+- **une attente par run** (`maestro.engine.limite.RendezVousLimite`), que toutes les
+  tâches coupées rejoignent, et la meilleure information l'emporte — une heure connue
+  remplace une attente aveugle (la règle de #291) ;
+- **rien n'est inventé** : sans heure de reprise (un solde épuisé), ou avec une heure
+  déjà passée, le run attend « Reprendre » — aucun palier de quelques minutes ;
+- **la pause d'une personne n'est jamais levée par le reset** : la tâche coupée
+  reprend (une pause laisse finir ce qui est en vol), le run attend « Reprendre ».
+
+Sans Control Tower pour tenir la pause, la tâche échoue sur sa limite, nommée par son
+type (`limite_usage`), comme avant. Couverture :
+[`tests/test_limite_usage.py`](../tests/test_limite_usage.py) — l'adaptateur sur les
+signaux typés du CLI, le runtime qui rouvre la session, le rendez-vous, l'attente de
+la Control Tower, et de bout en bout un run coupé par la limite qui finit « terminé »
+au reset comme sur « Reprendre ».
 
 Couverture (#480) : `tests/test_run_activite.py` côté Python (les cinq causes et
 leur ordre, la cible d'un appel d'outil, le regroupement d'une salve, la fenêtre,
@@ -6994,7 +7027,9 @@ run.
 **`409` quand rien n'attend** (`GesteRunIntrouvable`), pour les mêmes trois raisons que le cadrage :
 le double clic n'interrompt pas deux fois, et ne relance pas deux runs.
 
-Le résumé d'un run porte `pause_depuis` (#1179), l'ancienneté de `en_pause`.
+Le résumé d'un run porte `pause_depuis` (#1179), l'ancienneté de `en_pause`, et depuis #1543
+`pause_cause` et `reprise_a` : pourquoi il est en pause quand ce n'est pas une personne (la limite
+d'usage du fournisseur, §2.4.3 bis), et l'heure à laquelle il reprendra de lui-même.
 
 Implémentation : [`maestro/controltower/gestes.py`](../maestro/controltower/gestes.py) (le
 vocabulaire et `GesteRefuse`),
@@ -7598,6 +7633,13 @@ chaque écran. Ce qu'on y fait :
 - **relire** : le récapitulatif dit combien d'agents seront créés, lesquels, et les autorisations
   décidées d'avance, sans rien ouvrir ; « Voir l'équipe » déplie chaque rôle — sa raison, l'endroit
   qui la prouve, ses instances, ses skills, ses autorisations, son playbook ;
+- **voir qui reçoit le navigateur de Maestro** (#1532) : quand le projet construit une interface web,
+  le récapitulatif nomme, sans rien ouvrir, les rôles qui le reçoivent, ce qu'ils en feront — ouvrir
+  et parcourir une page, la capturer à une largeur donnée, émuler la réduction des animations, lire
+  les erreurs de la console — et comment le retirer ; la ligne de chaque rôle le range à côté de ses
+  skills. « Retire le navigateur au testeur », dit avec ses mots, le lui retire. Une équipe sans
+  interface n'en dit rien. La forme a été tranchée sur pièces (variante B, d'après *Dust*, *Copilot
+  Studio* et *GitHub*, commentaires « Veille de conception » et « Variante retenue » de #1532) ;
 - **corriger en cochant** : décocher un rôle le retire, ses instances se règlent ;
 - **corriger avec ses mots** (#1331) : « Corriger avec vos mots », dans la rangée des gestes, ouvre
   la demande sur la carte. « Ajoute quelqu'un pour la sécurité » ajoute un rôle **composé pour ce
@@ -7656,7 +7698,7 @@ la même fonction. Il n'y a pas deux idées de « ce qu'il faut à ce projet » 
 | `POST /api/projets/{id}/outillage/questionnaire` | La prochaine question d'un projet neuf, vu les réponses acquises (#1031) | non |
 | `POST /api/projets/{id}/outillage/recommandation` | Ce que ces réponses recommandent — **la forme de l'analyse** (#1031) | non |
 | `POST /api/chat/{agent}/outillage/questionnaire` | Pose (ou reprend) le questionnaire **dans le fil** (#1031) | le fil |
-| `POST /api/chat/{agent}/outillage` | Répond d'un **geste** à la question que le fil porte (#1031) | le fil |
+| `POST /api/chat/{agent}/outillage` | Répond d'un **geste** à la question que le fil porte (#1031) — ou retient la proposition de l'outillage entier (`"retenue"`, #1533) | le fil |
 | `POST /api/chat/{agent}/outillage/piece` | Écrit, passe ou reporte d'un **geste** la pièce que le fil propose (#1161) | **oui** — une pièce |
 | `POST /api/projets/{id}/outillage/generation` | Écrit l'outillage dans le projet, au régime de docs/24 §2.4 (#1033) | **oui** |
 | `POST /api/projets/{id}/outillage/report` | Enregistre le « plus tard » de l'étape d'outillage (#1034) | la fiche |
@@ -7775,10 +7817,11 @@ si la fiche est illisible ou si la racine n'est plus un dossier lisible — jama
 **Sans catalogue depuis #1147** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)). La
 première question est **ouverte** — « Qu'est-ce que ce projet ? », sans options — et se répond avec
 ses mots. Le modèle comprend ensuite ce qui a été dit, en tire les **constats** (sorte de projet,
-langage, manifeste, gestionnaire, commande de chaque usage, forge, CI, convention — des valeurs
-libres, `flutter test` ou `terraform validate`), et ne pose que les questions qui comblent un vrai
-manque, avec des options écrites pour ce projet. Il n'y a plus de plafond : une compréhension sans
-question est la conclusion. Son prompt porte le registre de langue (#945), et ce qu'il rend est
+langage, cadre, manifeste, gestionnaire, commande de chaque usage, forge, CI, convention — des valeurs
+libres, `flutter test` ou `terraform validate`), **propose d'un bloc** tout ce qu'il sait juger pour
+cette pile (#1533, ci-dessous), et ne pose à part que les questions qu'il ne sait pas juger, avec
+des options écrites pour ce projet. Il n'y a plus de plafond : une compréhension sans question ni
+proposition est la conclusion. Son prompt porte le registre de langue (#945), et ce qu'il rend est
 lu et vérifié par `maestro/outillage/questionnaire.py` — un sujet tranché d'un clic n'est pas
 redemandé (des mots, eux, peuvent ne pas avoir tranché : le modèle en juge), une recommandation hors
 des options est ramenée dedans, la question ouverte passe en tête tant qu'on ne sait pas ce qu'est
@@ -7816,6 +7859,34 @@ question qui n'en a pas. **Une phrase tapée dans la zone de saisie** (`POST …
 `POST …/flux`) pendant qu'une question attend **est** la réponse à cette question : le message porte
 un `choix` libre sur son sujet, et la suite vient du questionnaire, pas du juge. Chaque message qui
 pose une question — et la conclusion — porte `comprehension` : ce que Maestro a compris à ce tour.
+
+**Une proposition d'un bloc, plutôt qu'une question par sujet** (#1533). Sur p5, le fil posait
+neuf questions une à une — langage, gestionnaire, cadre, tests, vérification, formatage, forge, CI,
+convention — pour un outillage Next.js que le modèle savait juger d'un bloc : 6 min 13 s, 0,538 $ et
+neuf gestes ([docs/50 § 2](./50-ecart-face-a-un-agent-seul.md)). Il **propose** désormais tout ce
+que rien de ce qui a été dit ne tranche mais qu'il sait juger, chaque élément avec sa raison — un
+ensemble cohérent pour la pile —, et ne demande à part que ce qu'il ne sait pas juger, en disant
+pourquoi (la forge, le plus souvent). Un sujet est un constat, une question ou une proposition,
+jamais deux ; la question séparée passe **avant** la proposition, parce que sa réponse peut changer
+ce qui va ensemble. La proposition est une question de plus pour le fil — même message, même
+attente, même phrase tapée qui y répond —, de clé `outillage`, sans options, qui porte
+`proposition` : une liste d'éléments `{cle, valeur, libelle, raison, sujet, commande, outils?,
+absents?, pour?}`. Deux gestes y répondent :
+
+- **la retenir** : `POST /api/chat/{agent}/outillage` avec `{"valeur": "retenue"}` — la seule valeur
+  admise sans mots (`422` sinon). Le geste vaut chacun des éléments **cliqué** (`choix_du_fil`) : ils
+  deviennent des réponses, constats tels quels, et le tour suivant conclut **sans rappeler le
+  modèle** — la première pièce vient, rédigée de ce qui a été proposé ;
+- **la corriger avec ses mots** — « pnpm, pas npm », « pas de CI pour l'instant » —, dans la zone de
+  saisie ou par `{"valeur": "…", "libre": true}` : le modèle relit la proposition qu'il corrige, fait
+  de la phrase des constats, ajuste le reste, et ce qu'il repropose est **revérifié** au poste comme
+  toute proposition (un élément qui repose sur un outil absent le dit, et le modèle est ressaisi).
+
+Rien ne s'écrit pour autant : chaque pièce se montre ensuite avec son diff, sur accord (#1161). La
+carte est `PropositionDOutillage` (variante A de #1533, retenue sur pièces) : ce qui a été compris en
+tête, puis une ligne par élément — le sujet, le nom, la commande en chasse fixe quand le nom ne la
+dit pas, la raison dessous —, une ligne qui invite à corriger avec ses mots, et **un seul** geste,
+« Retenir cet outillage ».
 
 > ⚠ **Renversé par #1161** : la voie du fil n'écrit plus tout en une fois. La fin du questionnaire
 > est la **première pièce**, et `ConclusionOutillage` est retirée — voir « Pièce par pièce, dans le
@@ -7906,6 +7977,17 @@ suivi de ce que le modèle de correction n'a pas compris), la pièce qui attenda
 **sans effet** sur ce qui s'écrit ; et une commande corrigée qui **échoue** à l'exécution — la
 pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
 l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
+
+**Une correction change la pièce reproposée, ou le fil dit pourquoi** (#1542). Vu sur #1522, sur un
+clone du dépôt de Maestro : « retire `bash scripts/setup.sh` de ce skill » et « nomme `CLAUDE.md` en
+tête des conventions » revenaient sur une pièce identique, sous « Correction prise ». Désormais le
+modèle de correction voit tout ce qu'un skill prescrit — les scripts du projet qu'il appelle, puis la
+commande —, une commande dite remplace aussi ces scripts, et le sujet `instructions` nomme un
+fichier d'instructions du projet (vérifié sur le disque : un fichier absent ou hors du périmètre se
+dit, et rien n'est pris). Les pièces que la correction touche reviennent d'abord — celle que la
+personne corrigeait en tête —, et une correction sans effet, ou la même pièce qui revient, le dit
+derrière les mots du juge (« … ne change pas : … Rien n'a été écrit. ») **sans** porter de
+correction : « Correction prise » ne s'affiche jamais au-dessus d'une pièce identique.
 
 **Une correction reste acquise d'une conversation à l'autre** (#1334). Ce que la personne a dit
 est une propriété de **son projet**, pas du fil où elle l'a dit : dès qu'une pièce s'écrit, le
@@ -8083,9 +8165,11 @@ Implémentation : [`maestro/outillage/`](../maestro/outillage/) (le domaine),
 [`maestro/controltower/outillage.py`](../maestro/controltower/outillage.py) (le service et le
 conducteur du fil), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) (les
 pièces et leur correction, #1161), [`maestro/controltower/app.py`](../maestro/controltower/app.py)
-(les routes), `apps/web/components/chat/QuestionDOutillage.tsx` et
+(les routes), `apps/web/components/chat/QuestionDOutillage.tsx`,
+`apps/web/components/chat/PropositionDOutillage.tsx` (#1533) et
 `apps/web/components/chat/PieceDOutillage.tsx` (les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
 [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),
+[`test_outillage_proposition.py`](../tests/test_outillage_proposition.py),
 [`test_outillage_generation.py`](../tests/test_outillage_generation.py),
 [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py) et
 [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) — cette dernière validant

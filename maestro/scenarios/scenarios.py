@@ -14,6 +14,7 @@
 | S8 | Un acte sort du projet | Il revient à la personne, qui refuse : rien n'est écrit dehors |
 | S9 | Un projet neuf hors de toute liste | Né, outillé et doté dans le fil, le run abouti : |
 | | | ses commandes écrites passent, et un modèle juge outillage et équipe pertinents |
+| | (et depuis #1520) | Aucun playbook de l'équipe ne nomme une commande remplacée |
 | S10 | Un dépôt d'une pile hors des tables | Le même oracle, sur une solution .NET reprise |
 | S11 | Des tâches indépendantes, de front | Sur un projet versionné, deux tâches en cours |
 | | | ensemble ; le plafond dérivé du plan s'annonce (#1299) |
@@ -100,6 +101,8 @@ from maestro.lanceur.lanceur import HOTE_DEFAUT
 from maestro.lanceur.systeme import Systeme
 from maestro.lecture import OUTIL_SHELL
 from maestro.outillage.detection import CHEMIN_MANIFESTE
+from maestro.outillage.questionnaire import PROPOSITION_RETENUE
+from maestro.outillage.redaction import prescrit
 from maestro.outillage.verification import ECHOUEE, USAGE_DEMARRER, Delais
 from maestro.plan_run import largeur_du_plan, noeuds_depuis
 from maestro.portee import PorteeProjet
@@ -2069,6 +2072,12 @@ def _la_suite_d_un_projet_ne(
        rejouer, le banc tranche l'outillage que **la fin du run a revu** sur le projet
        construit (#1343, `_revue_d_apres_le_run`) : ce qui échoue y est dit échoué avec
        sa sortie, et n'est plus rejoué ;
+    3bis. **l'équipe reçoit les commandes du manifeste, et aucune autre** (#1520) : une
+       commande que l'outillage a montrée dans la conversation et qu'il ne prescrit plus
+       — remplacée par une correction, ou par la revue d'après le run — ne doit figurer
+       dans le playbook d'aucun agent (`_confronter_les_playbooks`). Sur le passage
+       `20261014-171347`, les trois playbooks gardaient `python assembler.py`, remplacée
+       par la revue, et S9 était vert : c'est la sonde qui manquait ;
     4. **l'outillage et l'équipe correspondent au projet**, jugé par un modèle
        (`Juge.convient_au_projet`) et jamais par un lexique (#746). Une abstention
        du juge est un empêchement.
@@ -2095,6 +2104,11 @@ def _la_suite_d_un_projet_ne(
     if empechement:
         return empeche(empechement, run_id=run_id, cout_usd=cout)
     ecart = _ecart_des_rejeux(rejeux)
+    if ecart:
+        return rouge(ecart, run_id=run_id, cout_usd=cout)
+    ecart, empechement = _confronter_les_playbooks(ctx, conversation, projet_id, racine)
+    if empechement:
+        return empeche(empechement, run_id=run_id, cout_usd=cout)
     if ecart:
         return rouge(ecart, run_id=run_id, cout_usd=cout)
 
@@ -2333,8 +2347,12 @@ def _reponse_a(question: Mapping[str, Any]) -> tuple[str, bool]:
     """La réponse du banc à une question d'outillage — `(valeur, libre)`.
 
     La recommandation de la question quand elle en porte une qui est l'une de ses
-    options ; sinon, avec ses mots, qu'elle n'a pas d'avis (`REPONSE_OUTILLAGE`).
+    options ; sinon, avec ses mots, qu'elle n'a pas d'avis (`REPONSE_OUTILLAGE`). La
+    proposition de l'outillage entier (#1533), une personne sans avis la **retient**,
+    d'un geste : c'est la recommandation de Maestro, faite d'un bloc.
     """
+    if question.get("proposition"):
+        return PROPOSITION_RETENUE, False
     options = {
         str(option.get("valeur") or "")
         for option in question.get("options") or []
@@ -2515,6 +2533,63 @@ def _ecart_des_rejeux(rejeux: Sequence[Rejeu]) -> str:
             "run : " + " ; ".join(r.en_mots() for r in echouees[:4])
         )
     return ""
+
+
+def _confronter_les_playbooks(
+    ctx: Contexte, conversation: str, projet_id: str, racine: Path
+) -> tuple[str, str]:
+    """Ce que l'équipe reçoit, confronté au manifeste — `(écart, empêchement)` (#1520).
+
+    Les commandes **remplacées** sont celles que l'outillage a montrées dans la
+    conversation — les verdicts que chaque pièce portait sur sa carte, revue d'après le
+    run comprise — et que son manifeste ne prescrit plus. Aucune ne doit figurer dans le
+    playbook que le moteur charge pour un agent de l'équipe (`ClientAPI.playbooks`) : il
+    recevrait deux commandes pour le même geste, celle de son playbook et celle du skill.
+    « Figurer » s'entend comme la rédaction prescrit une commande (`prescrit`) — jamais
+    un lexique. Une commande que l'outillage n'a jamais écrite n'est pas jugée ici.
+
+    Une lecture impossible est un empêchement : le banc ne sait pas ce que l'équipe
+    reçoit, ce n'est pas le produit qui s'est trompé.
+    """
+    prescrites = [e["commande"] for e in _commandes_ecrites(racine) or []]
+    try:
+        montrees = _commandes_du_fil(ctx.client.fil(conversation))
+        recus = ctx.client.playbooks(projet_id)
+    except ErreurAPI as exc:
+        return "", f"le banc n'a pas pu lire ce que l'équipe reçoit : {exc}"
+    remplacees = sorted(montrees - set(prescrites))
+    ecarts = [
+        (nom, commande)
+        for nom, texte in recus.items()
+        for commande in remplacees
+        if prescrit(texte, commande)
+    ]
+    ctx.note(
+        "playbooks confrontés au manifeste",
+        f"{', '.join(recus) or 'aucun agent'} — commande(s) que l'outillage a montrée(s) "
+        f"et ne prescrit plus : {', '.join(f'`{c}`' for c in remplacees) or 'aucune'} ; "
+        f"{len(ecarts)} écart(s)",
+    )
+    if not ecarts:
+        return "", ""
+    nommes = " ; ".join(f"le playbook de {nom} nomme `{commande}`" for nom, commande in ecarts)
+    manifeste = ", ".join(f"`{c}`" for c in prescrites) or "aucune"
+    return (
+        f"{nommes}, que l'outillage ne prescrit plus (manifeste : {manifeste}) : un agent de "
+        "l'équipe recevrait deux commandes pour le même geste",
+        "",
+    )
+
+
+def _commandes_du_fil(messages: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Les commandes que les pièces d'outillage du fil ont portées sur leur carte."""
+    return {
+        str(verdict.get("commande") or "").strip()
+        for message in messages
+        if isinstance(piece := message.get("piece"), Mapping)
+        for verdict in piece.get("verifications") or []
+        if isinstance(verdict, Mapping) and str(verdict.get("commande") or "").strip()
+    }
 
 
 def _outillage_en_texte(racine: Path, ecrites: Sequence[str], rejeux: Sequence[Rejeu]) -> str:

@@ -49,7 +49,11 @@
 import type { ReactNode } from "react";
 
 import { BadgeEtat, CLASSE_CONTROLE } from "@/components/Primitives";
-import type { AutorisationEquipe, RoleEquipe } from "@/lib/types";
+import type {
+  AutorisationEquipe,
+  NavigateurDeMaestro,
+  RoleEquipe,
+} from "@/lib/types";
 
 /** Le ton d'un cran d'autorisation — il appuie le sens, il ne le porte jamais seul. */
 const TON_CRAN = {
@@ -159,6 +163,7 @@ export function LigneRole({
   fige,
   prefixe = "equipe",
   ajoute = false,
+  navigateur,
 }: {
   role: RoleEquipe;
   retenu: boolean;
@@ -172,6 +177,12 @@ export function LigneRole({
    * dit par un **mot** (« ajouté à votre demande »), jamais par la couleur seule.
    */
   ajoute?: boolean;
+  /**
+   * Le navigateur de Maestro, quand ce rôle l'a **à l'écran** (#1532) — tel que la
+   * carte le montre, une correction comprise ; absent sinon, et la ligne n'en dit
+   * rien (l'état se lit au texte, jamais à une couleur seule).
+   */
+  navigateur?: NavigateurDeMaestro;
 }) {
   const idCase = `${prefixe}-${role.nom}`;
   const idInstances = `${prefixe}-${role.nom}-instances`;
@@ -295,6 +306,17 @@ export function LigneRole({
                 {skill.etat === "a-generer" && " (à générer)"}
               </span>
             ))}
+          </p>
+        )}
+
+        {/* Un outil que Maestro donne se range dans l'inventaire, au rang de ce que
+            le rôle branche, avec ce qu'il en fera (#1532, variante B : d'après
+            *Dust* et *Copilot Studio*). La phrase est celle que l'API sert, la
+            même que sur la face de la carte. */}
+        {navigateur !== undefined && (
+          <p className="text-annexe text-texte-secondaire">
+            <span className="font-medium text-texte">{navigateur.libelle} :</span>{" "}
+            {navigateur.usage}.
           </p>
         )}
 

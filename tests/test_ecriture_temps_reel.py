@@ -56,10 +56,12 @@ from maestro.engine.executor import (
     STATUT_FUSION_NON_TENTEE,
     STATUT_FUSION_REFUSEE,
     STATUT_TERMINEE,
+    AccordFusion,
     LocalExecutor,
 )
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
-from maestro.orchestrator import Orchestrator
+from maestro.engine.recette import RecetteDuRun
+from maestro.orchestrator import Brief, Orchestrator
 from maestro.orchestrator.schema import Task
 from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
 from maestro.projets import (
@@ -677,6 +679,57 @@ def test_sans_convention_choisie_la_fusion_ne_coute_aucun_appel(tmp_path: Path):
     assert modele.prompts == []
     (fusion,) = _fusions(Path(projet.racine))
     assert fusion.startswith("Maestro : application de")
+
+
+def _ecrit_la_recette(executeur: LocalExecutor, projet: Projet, run_id: str):
+    """La recette d'un run qui a obtenu l'accord d'écrire, déposée dans `projet` (#1530)."""
+    executeur._accords_fusion[(run_id, projet.id)] = AccordFusion(
+        approuve=True, detail="approuvée par le validateur humain", tache_id="t1"
+    )
+    brief = Brief(
+        objectif="Un agenda", perimetre=(), hors_perimetre=(), criteres_acceptation=("C1",)
+    )
+    return asyncio.run(
+        executeur._ecrit_la_recette(RecetteDuRun(constats=()), projet, run_id, brief)
+    )
+
+
+def test_le_commit_de_la_recette_suit_la_convention_de_commit_choisie(tmp_path: Path):
+    """#1507 après #1530 : la recette est le dernier commit du run dans le projet.
+
+    Sur un projet en Conventional Commits, il s'écrivait encore « Maestro : recette du
+    run … » : son sujet est rédigé dans la convention, comme celui d'une fusion, et ce
+    que l'appel a coûté revient à l'étape `recette`.
+    """
+    depot, projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    _avec_convention(projet, "Conventional Commits")
+    modele = _Redacteur("docs(recette): dépose la recette du run")
+    executeur = _executeur(_Ecrivain(), depot)
+    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+
+    recette, cout = _ecrit_la_recette(executeur, projet, "run-1507")
+
+    assert recette.ecriture == "", recette
+    assert _commits(racine)[0] == "docs(recette): dépose la recette du run"
+    (prompt,) = modele.prompts
+    assert "<convention>Conventional Commits</convention>" in prompt
+    assert ".maestro/recette/run-1507.md" in prompt
+    assert cout.cout_usd == pytest.approx(0.002)
+
+
+def test_sans_convention_choisie_la_recette_garde_le_message_de_maestro(tmp_path: Path):
+    depot, projet = _projet_git(tmp_path)
+    modele = _Redacteur("docs: jamais demandé")
+    executeur = _executeur(_Ecrivain(), depot)
+    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+
+    recette, cout = _ecrit_la_recette(executeur, projet, "run-1507")
+
+    assert recette.ecriture == "", recette
+    assert modele.prompts == []
+    assert _commits(Path(projet.racine))[0] == "Maestro : recette du run run-1507"
+    assert cout == StepUsage()
 
 
 def test_une_tache_en_echec_ne_fusionne_rien_et_sa_branche_conserve_le_travail(tmp_path: Path):

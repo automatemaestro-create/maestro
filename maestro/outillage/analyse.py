@@ -60,6 +60,7 @@ plus seulement celles d'une table, et la règle d'ordre des commandes
 from __future__ import annotations
 
 import os
+import re
 from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -77,6 +78,7 @@ from maestro.outillage.detection import (
     LANGAGE_PAR_EXTENSION,
     MARQUEURS_COMMANDE,
     NODE_COMMANDES,
+    ROLE_INSTRUCTIONS,
     VERROU_NODE,
     VERROU_PYTHON,
     commandes_conventionnelles,
@@ -85,6 +87,7 @@ from maestro.outillage.detection import (
     commandes_pyproject,
     forge_depuis_distant,
     gestionnaire_python,
+    lire_texte,
     piece_de_convention,
     usage_de_script,
 )
@@ -212,7 +215,9 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
     `lecture.retenus` porte des constats déjà confrontés au disque
     (`maestro.outillage.exploration`) : ils s'**ajoutent** aux indices, un
     doublon (même langage, même gestionnaire, même commande pour le même usage,
-    même CI) n'entrant pas deux fois. Rien de ce que les tables ont lu n'est
+    même CI, même fichier de convention) n'entrant pas deux fois — les fichiers
+    d'instructions d'agent que le modèle a reconnus (#1542) rejoignent les
+    conventions que les tables ont lues. Rien de ce que les tables ont lu n'est
     retiré — elles ont ouvert le fichier qu'elles citent, et un modèle qui ne le
     mentionne pas n'en fait pas une erreur.
 
@@ -233,6 +238,7 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
     commandes_vues = {(c.usage, c.commande) for c in indices.commandes}
     ci_vues = {piece.chemin for piece in indices.ci}
     ci = indices.ci + tuple(p for p in retenus.ci if p.chemin not in ci_vues)
+    conventions_vues = {piece.chemin.casefold() for piece in indices.conventions}
     ajoutes = tuple(lg for lg in retenus.langages if lg.nom.casefold() not in noms_langages)
     constats = replace(
         indices,
@@ -245,6 +251,10 @@ def completer(analyse: Analyse, lecture: Lecture) -> Analyse:
         ),
         ci=ci,
         forge=_forge(indices.vcs, ci),
+        conventions=indices.conventions
+        + tuple(
+            p for p in retenus.conventions if p.chemin.casefold() not in conventions_vues
+        ),
     )
     return replace(
         analyse,
@@ -734,6 +744,11 @@ def _conventions(base: Path) -> tuple[Piece, ...]:
     À la racine seulement : c'est là que les fichiers de convention se posent,
     et les chercher en profondeur rendrait le `README.md` d'un exemple au même
     rang que celui du projet.
+
+    Un fichier d'instructions d'agent qui ne fait qu'**importer** un autre fichier — le
+    pont `@AGENTS.md` de docs/38 §3.2, que le projet l'ait écrit ou Maestro — n'en est
+    pas un (#1542) : `AGENTS.md` dit de lire les instructions du projet, et un pont n'en
+    porte aucune. C'est la syntaxe d'import que Maestro écrit lui-même (`TEXTE_PONT`).
     """
     pieces: list[Piece] = []
     try:
@@ -743,16 +758,32 @@ def _conventions(base: Path) -> tuple[Piece, ...]:
         noms = []
     for nom in noms:
         piece = piece_de_convention(nom, nom)
-        if piece is not None:
-            pieces.append(piece)
+        if piece is None:
+            continue
+        if piece.role == ROLE_INSTRUCTIONS and _ne_fait_qu_importer(base / nom):
+            continue
+        pieces.append(piece)
     copilote = ".github/copilot-instructions.md"
     if (base / copilote).is_file():
         pieces.append(
-            Piece(nom="copilot-instructions.md", chemin=copilote, role="instructions d'agent")
+            Piece(nom="copilot-instructions.md", chemin=copilote, role=ROLE_INSTRUCTIONS)
         )
     if (base / "docs").is_dir():
         pieces.append(Piece(nom="docs", chemin="docs", role="documentation"))
     return tuple(pieces)
+
+
+#: Ce qu'un pont peut peser au plus : une ligne d'import, et ses blancs.
+_PONT_OCTETS_MAX = 512
+
+#: Une ligne d'import `@chemin`, seule dans son fichier — la forme d'un pont.
+_IMPORT_SEUL = re.compile(r"@\S+")
+
+
+def _ne_fait_qu_importer(chemin: Path) -> bool:
+    """Le fichier n'est-il qu'une ligne d'import (`@AGENTS.md`) ? Faux s'il est illisible."""
+    texte = lire_texte(chemin, _PONT_OCTETS_MAX + 1)
+    return len(texte) <= _PONT_OCTETS_MAX and _IMPORT_SEUL.fullmatch(texte.strip()) is not None
 
 
 def _dossier_scripts(base: Path) -> DossierScripts:

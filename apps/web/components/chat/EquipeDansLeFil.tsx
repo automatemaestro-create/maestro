@@ -108,6 +108,7 @@ import { Bouton, Carte } from "@/components/Primitives";
 import { refusDepuis, RefusMotive } from "@/components/projets/ExplorateurDossiers";
 import { corrigerEquipe, proposerEquipe } from "@/lib/api";
 import {
+  aLeNavigateur,
   appliquerCorrection,
   autorisationsDecideesDavance,
   composition,
@@ -116,13 +117,16 @@ import {
   membresMontres,
   propositionPourDemande,
   retenirEquipe,
+  rolesAvecNavigateur,
   rolesValides,
 } from "@/lib/equipe";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import type {
   DemandeRecrutement,
+  NavigateurDeMaestro,
   PropositionEquipe,
   RefusProjet,
+  RoleEquipe,
   RoleValideEquipe,
 } from "@/lib/types";
 
@@ -154,6 +158,9 @@ export function EquipeDansLeFil({
   const [proposition, setProposition] = useState<PropositionEquipe | null>(null);
   const [retenus, setRetenus] = useState<Set<string>>(new Set());
   const [instances, setInstances] = useState<Record<string, number>>({});
+  // À qui une demande a retiré ou donné le navigateur de Maestro (#1532) — vide :
+  // celui que la proposition a donné.
+  const [navigateur, setNavigateur] = useState<Record<string, boolean>>({});
   const [chargement, setChargement] = useState(true);
   const [refus, setRefus] = useState<RefusProjet | null>(null);
   const [deplie, setDeplie] = useState(false);
@@ -201,6 +208,7 @@ export function EquipeDansLeFil({
           setProposition({ ...rendue, roles: deja.roles });
           setRetenus(new Set(deja.retenus));
           setInstances({ ...deja.instances });
+          setNavigateur({ ...deja.navigateur });
           setAjoutes(new Set(deja.ajoutes));
           setReponse(deja.reponse);
           setTexte(deja.texte);
@@ -259,12 +267,13 @@ export function EquipeDansLeFil({
       roles: proposition.roles,
       retenus,
       instances,
+      navigateur,
       ajoutes,
       reponse,
       texte,
       ouverte,
     });
-  }, [cle, proposition, retenus, instances, ajoutes, reponse, texte, ouverte]);
+  }, [cle, proposition, retenus, instances, navigateur, ajoutes, reponse, texte, ouverte]);
 
   useEffect(() => {
     if (!ouverte || !focaliser.current) return;
@@ -286,7 +295,7 @@ export function EquipeDansLeFil({
     // la demande précédente a changé, lui, reste sur l'équipe.
     setReponse(null);
     try {
-      const montree = { roles: proposition.roles, retenus, instances };
+      const montree = { roles: proposition.roles, retenus, instances, navigateur };
       const correction = await corrigerEquipe(
         demande.projet_id,
         texte,
@@ -296,6 +305,7 @@ export function EquipeDansLeFil({
       setProposition({ ...proposition, roles: apres.roles });
       setRetenus(new Set(apres.retenus));
       setInstances({ ...apres.instances });
+      setNavigateur({ ...apres.navigateur });
       setAjoutes((avant) => new Set([...avant, ...apres.ajoutes]));
       setReponse(correction.reponse);
       // Le champ ne se vide que si quelque chose a changé : une demande que le
@@ -324,7 +334,7 @@ export function EquipeDansLeFil({
     try {
       await recruter(
         true,
-        rolesValides(proposition, retenus, instances),
+        rolesValides(proposition, retenus, instances, navigateur),
         proposition.id,
       );
     } catch (e: unknown) {
@@ -394,6 +404,10 @@ export function EquipeDansLeFil({
             nomProjet={nomProjet}
           />
           <AutorisationsAuto roles={gardes} />
+          <NavigateurSurLaFace
+            roles={rolesAvecNavigateur(gardes, navigateur)}
+            navigateur={proposition.navigateur_de_maestro}
+          />
           <Carte
             balise="div"
             ton="attentionClaire"
@@ -438,6 +452,11 @@ export function EquipeDansLeFil({
                       fige={fige}
                       prefixe={`fil-equipe${idCarte}`}
                       ajoute={ajoutes.has(role.nom)}
+                      navigateur={
+                        aLeNavigateur(role, navigateur)
+                          ? proposition.navigateur_de_maestro
+                          : undefined
+                      }
                     />
                   ))}
                 </ul>
@@ -623,6 +642,43 @@ function CompteACreer({
       <strong>{compteAgents(total)}</strong>{" "}
       {total > 1 ? "seront créés" : "sera créé"} dans {nomProjet} :{" "}
       {composition}. Rien n&apos;est créé tant que vous n&apos;avez pas validé.
+    </p>
+  );
+}
+
+/**
+ * Le navigateur de Maestro, **nommé sans rien ouvrir** (#1532, variante B retenue).
+ *
+ * La forme vient d'une veille et d'un choix consignés sur #1532 (« Veille de
+ * conception », « Variante retenue ») : parmi trois directions rendues sur la vraie
+ * stack, le regard neuf a retenu B — la face dit **qui** le reçoit, **ce qu'il en
+ * fera** et **comment le retirer**, au rang de « Décidé d'avance par vous » ; le
+ * détail le range dans l'inventaire du rôle (`LigneRole`). D'après *GitHub* (ce qui
+ * est accordé se lit avant de valider, au banc depuis #1040), *Dust* (un outil se
+ * dit par ce que l'agent en fera) et *Copilot Studio* (dont l'interrupteur devient
+ * ici un geste dit, #1159). Écartées : A (rien sur la face d'une carte repliée par
+ * défaut), C (un badge d'en-tête qui sortait l'outil de l'inventaire à plat).
+ *
+ * L'usage est **celui que l'API sert** (`navigateur_de_maestro`), la même phrase que
+ * dans la ligne du rôle — réserve 1 du regard neuf. La fin, « À retirer avec … »,
+ * vient juste au-dessus du geste qu'elle nomme (réserve 3), et le nom du geste ne
+ * se coupe jamais de ses guillemets (réserve 2). Muette sans rôle qui le reçoit :
+ * une équipe sans interface n'a rien à en dire.
+ */
+function NavigateurSurLaFace({
+  roles,
+  navigateur,
+}: {
+  roles: RoleEquipe[];
+  navigateur: NavigateurDeMaestro | undefined;
+}) {
+  if (roles.length === 0 || navigateur === undefined) return null;
+  return (
+    <p className="mt-2 text-annexe text-texte-secondaire">
+      <span className="font-medium text-texte">{navigateur.libelle}</span> —{" "}
+      {navigateur.usage} — pour {roles.map((r) => r.role).join(" · ")}. À retirer
+      avec{" "}
+      <span className="whitespace-nowrap">« Corriger avec vos mots »</span>.
     </p>
   );
 }

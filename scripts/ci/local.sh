@@ -195,9 +195,9 @@ lent, et aveugle aux écarts Windows/Linux que la CI verra (docs/10 §8.7).
 MAESTRO_PYTEST_REGIME=auto|conteneur|natif ; MAESTRO_PYTEST_IMAGE nomme l'image ;
 MAESTRO_DOCKER_DEMARRAGE=0 n'essaie jamais de démarrer le démon.
 
-Workers : « -n auto » dans le conteneur, comme la CI. En natif, min(cœurs, $PYTEST_WORKERS_PLAFOND) :
-au-delà c'est la mémoire du poste qui borne, pas les cœurs (#285). MAESTRO_PYTEST_WORKERS déplace
-ce plafond et vaut pour les deux régimes.
+Workers : min(cœurs, $PYTEST_WORKERS_PLAFOND), dans le conteneur comme en natif : au-delà c'est la
+mémoire du poste qui borne, pas les cœurs (#285, #1558). MAESTRO_PYTEST_WORKERS déplace ce plafond
+et vaut pour les deux régimes ; la CI garde « -n auto ».
 
 UN FILET À LA FOIS (#745) : si un autre filet tourne déjà sur ce poste — clone principal ou n'importe
 lequel de ses worktrees —, celui-ci fait la QUEUE et joue dès que l'autre a terminé. Il ne refuse

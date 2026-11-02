@@ -16,9 +16,10 @@ l'information), et l'observateur **ne casse jamais l'observé**.
 (`TurnLimitReached`, `PlafondDepenseDepasse`, `DemarrageHoteRate`, l'annulation)
 mais trois appelants recopiaient `f"{type} : {exc}"`, si bien que la liste disait
 « Échec » à des pannes qui ne se réparent pas de la même façon. `causes.py` les
-classe, et **l'ordre des tests de `cause_de` est le contenu du contrat** : les
-types d'abord, le texte en dernier — ce que le moteur *sait* l'emporte sur ce
-qu'un message *suggère*.
+classe, et **par leur seul type** depuis #1543 : ce que le moteur *sait*
+l'emporte sur ce qu'un message *suggère*, et un message ne nomme plus rien — la
+limite d'usage, dernière cause reconnue au texte, a son type
+(`LimiteUsageAtteinte`).
 
 **Ni Redis, ni réseau, ni appel modèle** : le régulateur reçoit une horloge
 injectée (une cadence éprouvée avec de vraies secondes rendrait la suite lente
@@ -70,7 +71,7 @@ from maestro.providers.activite import (
     cible_depuis,
     resume_salve,
 )
-from maestro.providers.base import TurnLimitReached
+from maestro.providers.base import LimiteUsageAtteinte, TurnLimitReached
 from maestro.telemetry import PlafondDepenseDepasse, RunJournal, StepUsage
 
 RUN = "run-bavard"
@@ -411,7 +412,7 @@ def test_une_activite_ne_change_le_statut_d_aucune_tache():
         (PlafondDepenseDepasse("plafond de coût crevé : 5.02 $ / 5.00 $"), CAUSE_PLAFOND_COUT),
         (DemarrageHoteRate("le process n'est pas parti (code 1)"), CAUSE_HOTE),
         (asyncio.CancelledError(), CAUSE_ANNULATION),
-        (RuntimeError("Claude AI usage limit reached"), CAUSE_LIMITE_USAGE),
+        (LimiteUsageAtteinte("le fournisseur a opposé sa limite d'usage"), CAUSE_LIMITE_USAGE),
         (RuntimeError("boum"), ""),
     ],
 )
@@ -424,9 +425,7 @@ def test_le_plafond_de_tours_est_reconnu_par_son_type():
 
 
 def test_un_type_connu_l_emporte_sur_un_texte_qui_suggere_autre_chose():
-    """L'ordre des tests est celui de la **précision** : les types d'abord.
-
-    Un `TurnLimitReached` dont le message citerait « rate limit » reste un plafond
+    """Un `TurnLimitReached` dont le message citerait « rate limit » reste un plafond
     de tours — c'est ce que le moteur *sait*, contre ce qu'un message *suggère*.
     """
     assert cause_de(TurnLimitReached("rate limit")) == CAUSE_PLAFOND_TOURS
@@ -441,13 +440,15 @@ def test_un_type_connu_l_emporte_sur_un_texte_qui_suggere_autre_chose():
         "429 Too Many Requests",
         '{"api_error_status": 429}',
         "Your credit balance is too low",
+        "You've hit your session limit · resets 12pm",
     ],
 )
-def test_la_limite_d_usage_est_la_seule_cause_reconnue_au_texte(message):
-    """Faute de type : rien dans `maestro/` ne la détecte, et `est_transitoire`
-    la range même parmi les aléas relançables. Ses marqueurs sont **repris** de
-    `scripts/orchestrate/run.sh` (#171) plutôt que réinventés."""
-    assert cause_de(RuntimeError(message)) == CAUSE_LIMITE_USAGE
+def test_aucune_cause_ne_se_reconnait_plus_au_texte(message):
+    """La limite d'usage était la dernière, faute de type (#1543, docs/44) : le motif
+    repris de `scripts/orchestrate/run.sh` ne reconnaissait pas « session limit », et
+    le run `0300f3ffdddf` s'est soldé en échec. Elle se reconnaît à son type, que
+    l'adaptateur lève sur le signal typé du fournisseur."""
+    assert cause_de(RuntimeError(message)) == ""
 
 
 def test_un_echec_inclassable_rend_une_chaine_vide_et_non_une_cause_fourre_tout():

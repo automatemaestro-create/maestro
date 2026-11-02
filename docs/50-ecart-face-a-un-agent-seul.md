@@ -156,6 +156,14 @@ l'agent ne peut pas suivre la convention choisie. C'est #1507.
 | **B** — #1532 | **Une équipe qui construit une interface web reçoit le navigateur de Maestro** (registre, #1313), au lieu d'écrire son propre banc Chrome par CDP ou puppeteer | chez C2, 26 appels, 10 min 10 s, 0,83 $. Ôtée la recherche d'images de `jeu-recettes` (2 min 11 s, 0,13 $), il reste 8 min de bancs écrits à la main pour 0,70 $, dont celui de la recette (3 min 56 s, après 73 s pour y installer puppeteer). Chez C3, qui avait un navigateur : 5 appels, 19 s, 0,29 $ | ≈ −5 min tant que la recette reste une tâche ; ≈ 0 une fois A1 et #1505 livrés | **≈ −7 min 40 s** | **≈ −0,4 $** | −2 arbitrages, nés de fichiers du banc écrits hors du projet (charte 38 s, recette 59 s) |
 | **C** — #1533 | **Le fil propose l'outillage d'un bloc, cohérent pour la pile, que la personne corrige en mots**, au lieu de 9 questions une à une | 9 sessions, 6 min 13 s, 0,538 $, 9 gestes | **≈ −5 min 30 s** | même | ≈ −0,46 $ | **−8** (20 → 12) |
 
+> **B, mesuré** (#1532, p5 rejoué le 2026-10-22, run `6193eadac741`, un passage) : l'équipe a reçu le
+> navigateur sans geste de la personne, et aucun banc CDP ni puppeteer n'a été écrit. Le temps dans
+> l'outil tombe à 4 min 34 s, mais les agents regardent bien davantage — 101 appels dans 7 sessions,
+> 72 tours, **2,04 $** au lieu de 0,70 $ : le gain en coût attendu ci-dessus n'est pas au rendez-vous
+> sur ce passage. Deux arbitrages sont nés du journal de console du navigateur, lu au shell hors du
+> projet ; la consigne du playbook l'envoie désormais vers `Read` et `browser_console_messages`. Le
+> détail est consigné sur #1532.
+
 Les quatre lots sont rangés **après #1513**, comme le veut docs/48 (« puis les leviers »). #1530, #1532
 et #1533 sont parallèles. #1531 vient en dernier, sans le marqueur, parce qu'il dépend de #1530 :
 retirer la tâche de recette sans recette au niveau du run perdrait la preuve.

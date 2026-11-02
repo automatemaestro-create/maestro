@@ -74,6 +74,26 @@ Deux moitiés, et le partage est celui de tout le module :
   si la phrase ne le change pas, et c'est ce constat-là qui voyage sur le fil, que le
   manifeste garde et dont l'équipe se compose.
 
+## Ce que la pièce prescrit se corrige — script et fichier compris (#1542)
+
+Vu sur #1522, sur un clone du dépôt de Maestro : « retire `bash scripts/setup.sh` de ce
+skill » et « nomme `CLAUDE.md` en tête des conventions » revenaient sur une pièce
+identique. Le modèle ne voyait pas le script — ce qu'on lui montrait ne nommait que la
+commande de chaque usage, pas les scripts du projet que le skill appelle —, et rien ne
+nommait un fichier d'instructions. Deux règles, depuis :
+
+- **le modèle voit ce que la pièce prescrit** (`constats_en_texte`) : pour chaque usage,
+  les scripts du projet **et** la commande, dans l'ordre du skill, et les fichiers
+  d'instructions qu'`AGENTS.md` nomme (`SUJET_INSTRUCTIONS`) ;
+- **une commande dite remplace tout ce que son usage prescrivait** : la commande lue, et
+  les scripts du projet qui servaient cet usage — ils restent lus, ils ne le servent plus
+  (`_scripts_corriges`). « La personne sait comment son projet s'installe » vaut pour un
+  script comme pour une commande.
+
+Un fichier nommé se **vérifie** comme une commande se joue : il doit être un fichier du
+projet, dans son périmètre — c'est le service qui le regarde sur le disque
+(`maestro.controltower.pieces`), ce module ne lit rien.
+
 ## Ce que Maestro propose n'est pas ce qu'on lui a dit (#1381)
 
 Quand une commande de l'outillage échoue à la revue d'après un run, Maestro lit le projet
@@ -86,22 +106,27 @@ non `corriger`, qui la pose dans les constats.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import PurePosixPath
 from typing import Any
 
+from maestro.outillage.detection import ROLE_INSTRUCTIONS
 from maestro.outillage.modele import (
     ORIGINE_DITE,
     ORIGINE_PROPOSEE,
     USAGES,
     Commande,
     Constats,
+    DossierScripts,
     Forge,
     Gestionnaire,
     Piece,
 )
 from maestro.outillage.questionnaire import (
     POUR_MAX,
+    SUJET_INSTRUCTIONS,
     SUJETS,
     VALEUR_MAX,
     Choix,
@@ -109,12 +134,19 @@ from maestro.outillage.questionnaire import (
     _est_aucun,
     _objet_json,
     _une_ligne,
+    sujet_de,
 )
 
 #: Les sujets qu'une correction change **dans les constats** d'un projet, lu ou décrit.
 #: Ce sont ceux que la rédaction écrit : une commande par usage, le gestionnaire, la
-#: forge, l'intégration continue (voir le module pour ce qui n'y est pas).
-CLES_CORRIGEABLES: frozenset[str] = frozenset({*USAGES, "gestionnaire", "forge", "ci"})
+#: forge, l'intégration continue, et les fichiers d'instructions qu'`AGENTS.md` nomme
+#: (#1542) — voir le module pour ce qui n'y est pas.
+CLES_CORRIGEABLES: frozenset[str] = frozenset(
+    {*USAGES, "gestionnaire", "forge", "ci", SUJET_INSTRUCTIONS}
+)
+
+#: Ce qui sépare deux fichiers nommés dans une même valeur (« CLAUDE.md, docs/regles.md »).
+_SEPARATEURS_DE_FICHIERS = re.compile(r"[,;\n]+")
 
 #: La longueur au-delà de laquelle la phrase d'une correction est tronquée **dans la
 #: justification** : elle finit écrite à côté d'une commande, dans `AGENTS.md` et dans
@@ -320,7 +352,7 @@ def lire_correction(texte: str, phrase: str) -> CorrectionLue:
     for entree in _entrees(objet.get("corrections")):
         cle = _cle(entree.get("cle"))
         valeur = _une_ligne(entree.get("valeur") or "", VALEUR_MAX)
-        if cle not in SUJETS or not valeur:
+        if (cle not in SUJETS and cle != SUJET_INSTRUCTIONS) or not valeur:
             continue
         lues[cle] = Choix(cle=cle, valeur=valeur, deduit=True, parce_que=cause)
     descriptions: dict[str, Description] = {}
@@ -350,7 +382,7 @@ def corrections_en_texte(corrections: Sequence[CorrectionPrise]) -> str:
     personne.
     """
     lignes = [
-        f"- {SUJETS.get(c.cle, c.cle)} ({c.cle}) : « {c.valeur} » — "
+        f"- {sujet_de(c.cle)} ({c.cle}) : « {c.valeur} » — "
         + (
             f"proposée par Maestro, lue dans {c.chemin or 'le projet construit'}"
             if c.proposee
@@ -371,13 +403,25 @@ def constats_en_texte(constats: Constats) -> str:
     Une commande dit aussi ce qu'elle fait pour le projet (`Commande.pour`, #1350) : c'est
     ce que le modèle réécrit quand la phrase le rend faux (#1443), et il ne peut juger
     qu'une description qu'il lit.
+
+    Un usage montre **tout ce que son skill prescrit** (#1542) : les scripts du projet qui
+    le servent, puis sa commande — l'ordre du skill (`recommandation._skills`). Sur #1522,
+    seule la commande y était, et « retire `bash scripts/setup.sh` » ne désignait rien que
+    le modèle pût corriger. Les fichiers d'instructions qu'`AGENTS.md` nomme y sont aussi.
     """
     lignes: list[str] = []
     for usage in USAGES:
         commande = constats.commande_de(usage)
+        ecrites = [
+            f"bash {piece.chemin}"
+            for piece in constats.dossier_scripts.scripts
+            if piece.role == usage
+        ]
         if commande is not None:
-            pour = f" — pour : {commande.pour}" if commande.pour else ""
-            lignes.append(f'- clé "{usage}" ({SUJETS[usage]}) : {commande.commande}{pour}')
+            ecrites.append(commande.commande)
+        if ecrites:
+            pour = f" — pour : {commande.pour}" if commande is not None and commande.pour else ""
+            lignes.append(f'- clé "{usage}" ({SUJETS[usage]}) : {" ; ".join(ecrites)}{pour}')
     if constats.gestionnaires:
         noms = ", ".join(g.nom for g in constats.gestionnaires)
         lignes.append(f'- clé "gestionnaire" ({SUJETS["gestionnaire"]}) : {noms}')
@@ -386,6 +430,13 @@ def constats_en_texte(constats: Constats) -> str:
     if constats.ci:
         chemins = ", ".join(piece.chemin for piece in constats.ci)
         lignes.append(f'- clé "ci" ({SUJETS["ci"]}) : {chemins}')
+    instructions = ", ".join(
+        piece.chemin for piece in constats.conventions if piece.role == ROLE_INSTRUCTIONS
+    )
+    if instructions:
+        lignes.append(
+            f'- clé "{SUJET_INSTRUCTIONS}" ({sujet_de(SUJET_INSTRUCTIONS)}) : {instructions}'
+        )
     return "\n".join(lignes) if lignes else "(rien n'est encore établi)"
 
 
@@ -398,7 +449,11 @@ def corriger(constats: Constats, corrections: Sequence[Choix]) -> Constats:
     qu'elle remplace (le fichier où vivent les commandes du projet), et prend pour
     extrait la phrase, entre guillemets (`ORIGINE_DITE`). « aucun » retire la commande
     de l'usage : « pas de tests pour l'instant » est une correction comme une autre, et
-    `recommander` écartera le skill avec sa raison.
+    `recommander` écartera le skill avec sa raison. Dans les deux cas, les scripts du
+    projet qui servaient cet usage ne le servent plus (#1542, `_scripts_corriges`).
+
+    Les fichiers d'instructions nommés (`SUJET_INSTRUCTIONS`, #1542) passent en tête des
+    conventions ; « aucun » n'en laisse aucun.
 
     Les sujets hors de `CLES_CORRIGEABLES` sont ignorés ici (voir le module).
     """
@@ -415,6 +470,66 @@ def corriger(constats: Constats, corrections: Sequence[Choix]) -> Constats:
         gestionnaires=_gestionnaires_corriges(constats, derniers, commandes),
         forge=_forge_corrigee(constats, derniers),
         ci=_ci_corrigee(constats, derniers),
+        conventions=_conventions_corrigees(constats, derniers),
+        dossier_scripts=_scripts_corriges(constats, derniers),
+    )
+
+
+def chemins_nommes(valeur: str) -> tuple[str, ...]:
+    """Les fichiers qu'une valeur nomme, chacun relatif à la racine, en POSIX — sans doublon.
+
+    Le modèle les écrit comme on les cite : gainés (`` `CLAUDE.md` ``), précédés de `./`,
+    avec des antislashs, plusieurs séparés par des virgules. La forme rendue est celle du
+    manifeste et de toute pièce (docs/38 §3.4). « aucun » n'en nomme aucun.
+    """
+    if _est_aucun(valeur):
+        return ()
+    chemins: dict[str, None] = {}
+    for brut in _SEPARATEURS_DE_FICHIERS.split(valeur):
+        chemin = brut.strip().strip("`'\"").strip().replace("\\", "/")
+        while chemin.startswith("./"):
+            chemin = chemin[2:]
+        if chemin:
+            chemins[chemin] = None
+    return tuple(chemins)
+
+
+def _conventions_corrigees(constats: Constats, derniers: dict[str, Choix]) -> tuple[Piece, ...]:
+    """Les fichiers d'instructions nommés, en tête ; « aucun » les retire tous (#1542).
+
+    Nommés, ils prennent le rôle de tout fichier d'instructions (`ROLE_INSTRUCTIONS`) :
+    c'est lui qu'`AGENTS.md` nomme en tête de ses conventions, avec la règle de le lire.
+    Un fichier déjà constaté sous un autre rôle (un `README.md`) le prend à son tour.
+    """
+    choisi = derniers.get(SUJET_INSTRUCTIONS)
+    if choisi is None:
+        return constats.conventions
+    if _est_aucun(choisi.valeur):
+        return tuple(p for p in constats.conventions if p.role != ROLE_INSTRUCTIONS)
+    nommes = chemins_nommes(choisi.valeur)
+    return (
+        *(Piece(nom=PurePosixPath(c).name, chemin=c, role=ROLE_INSTRUCTIONS) for c in nommes),
+        *(p for p in constats.conventions if p.chemin not in nommes),
+    )
+
+
+def _scripts_corriges(constats: Constats, derniers: dict[str, Choix]) -> DossierScripts:
+    """Les scripts du projet, ceux d'un usage corrigé déchargés de cet usage (#1542).
+
+    Ils restent dans la liste — le dossier les porte toujours, c'est une lecture —, mais
+    sans usage : aucun skill ne les appelle plus. Ce que la personne a dit pour un usage
+    est ce que le skill prescrit, et lui seul.
+    """
+    corriges = {usage for usage in USAGES if usage in derniers}
+    dossier = constats.dossier_scripts
+    if not corriges or not any(piece.role in corriges for piece in dossier.scripts):
+        return dossier
+    return replace(
+        dossier,
+        scripts=tuple(
+            replace(piece, role="") if piece.role in corriges else piece
+            for piece in dossier.scripts
+        ),
     )
 
 
@@ -438,11 +553,13 @@ def corriger_les_choix(
     une commande que la phrase ne corrige pas. « aucun » n'a rien à faire pour le
     projet : sa description tombe. Un sujet que le questionnaire avait tu s'ajoute ;
     l'ordre des autres est gardé, celui dans lequel le manifeste les écrit. La dernière
-    correction d'un sujet l'emporte, comme dans `corriger`.
+    correction d'un sujet l'emporte, comme dans `corriger`. Un sujet hors du questionnaire
+    (`SUJET_INSTRUCTIONS`, #1542) n'est pas une réponse : il ne se range pas ici, c'est
+    `corriger` qui l'applique aux constats.
     """
     derniers: dict[str, Choix] = {}
     for dit in corrections:
-        if dit.cle and dit.valeur:
+        if dit.cle in SUJETS and dit.valeur:
             derniers[dit.cle] = dit
     pours = {d.cle: d.pour for d in descriptions if d.cle in USAGES and d.pour}
     connus = {c.cle for c in choix}

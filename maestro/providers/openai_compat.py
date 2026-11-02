@@ -44,6 +44,12 @@ L'authentification passe par le slot
 `Credentials` : une clé API envoyée en `Bearer` si fournie, sinon aucune en-tête —
 le cas des endpoints locaux sans auth (Ollama, vLLM). Un endpoint qui exige une
 clé absente répond 401, signalé tel quel.
+
+Un endpoint qui répond **429** oppose sa limite d'usage (#1543) : c'est un statut
+HTTP, donc un signal typé, et il devient `LimiteEndpoint` — une
+`LimiteUsageAtteinte` que le moteur attend au lieu de la relancer, avec l'heure
+que l'en-tête `Retry-After` donne quand l'endpoint en pose un. Le corps de la
+réponse n'est jamais lu pour le savoir.
 """
 
 from __future__ import annotations
@@ -51,6 +57,8 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import AsyncIterator, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from time import perf_counter
 from typing import Any, ClassVar
 
@@ -61,6 +69,7 @@ from maestro.providers.base import (
     AuthMode,
     Credentials,
     ImageJointe,
+    LimiteUsageAtteinte,
     ModeleDisponible,
     ModelProvider,
 )
@@ -91,6 +100,47 @@ _USAGE_EN_FLUX: dict[str, Any] = {"include_usage": True}
 
 class OpenAICompatError(RuntimeError):
     """Levée quand l'endpoint répond en erreur ou hors du dialecte chat completions."""
+
+
+class LimiteEndpoint(OpenAICompatError, LimiteUsageAtteinte):
+    """L'endpoint a répondu 429 : sa limite d'usage est atteinte (#1543).
+
+    Les deux à la fois : une erreur de l'endpoint pour qui la rattrapait comme
+    telle, et la limite typée que le moteur reconnaît et attend.
+    """
+
+
+#: Le statut HTTP d'une limite d'usage.
+_STATUT_LIMITE = 429
+
+
+def _erreur_http(exc: httpx2.HTTPStatusError, base_url: str, model: str) -> OpenAICompatError:
+    """L'erreur d'un statut HTTP en échec — la limite d'usage quand c'est un 429 (#1543)."""
+    reponse = exc.response
+    message = (
+        f"L'endpoint {base_url} a répondu {reponse.status_code} "
+        f"pour le modèle {model!r} : {reponse.text[:_EXTRAIT_ERREUR]}"
+    )
+    if reponse.status_code != _STATUT_LIMITE:
+        return OpenAICompatError(message)
+    return LimiteEndpoint(message, reprise_a=_reprise_de(reponse.headers.get("retry-after")))
+
+
+def _reprise_de(retry_after: str | None) -> datetime | None:
+    """L'instant que dit un en-tête `Retry-After` (RFC 9110 : secondes, ou date HTTP).
+
+    None quand il manque ou ne se lit pas : la reprise attendra alors un geste.
+    """
+    valeur = (retry_after or "").strip()
+    if not valeur:
+        return None
+    if valeur.isdigit():
+        return datetime.now(UTC) + timedelta(seconds=int(valeur))
+    try:
+        instant = parsedate_to_datetime(valeur)
+    except (TypeError, ValueError):
+        return None
+    return instant if instant.tzinfo is not None else instant.replace(tzinfo=UTC)
 
 
 class _OptionDeFluxRefusee(Exception):
@@ -219,11 +269,7 @@ class OpenAICompatProvider(ModelProvider):
                 )
                 reponse.raise_for_status()
             except httpx2.HTTPStatusError as exc:
-                extrait = exc.response.text[:_EXTRAIT_ERREUR]
-                raise OpenAICompatError(
-                    f"L'endpoint {self._base_url} a répondu {exc.response.status_code} "
-                    f"pour le modèle {model!r} : {extrait}"
-                ) from exc
+                raise _erreur_http(exc, self._base_url, model) from exc
             except httpx2.HTTPError as exc:
                 raise OpenAICompatError(
                     f"Endpoint {self._base_url} injoignable : {exc}"
@@ -315,11 +361,7 @@ class OpenAICompatProvider(ModelProvider):
                         if morceau:
                             yield morceau
             except httpx2.HTTPStatusError as exc:
-                extrait = exc.response.text[:_EXTRAIT_ERREUR]
-                raise OpenAICompatError(
-                    f"L'endpoint {self._base_url} a répondu {exc.response.status_code} "
-                    f"pour le modèle {model!r} : {extrait}"
-                ) from exc
+                raise _erreur_http(exc, self._base_url, model) from exc
             except httpx2.HTTPError as exc:
                 raise OpenAICompatError(
                     f"Endpoint {self._base_url} injoignable : {exc}"

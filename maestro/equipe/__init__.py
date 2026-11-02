@@ -84,6 +84,7 @@ from maestro.equipe.creation import (
     AUCUN_SKILL_ECRIT,
     INSTANCES_MAX_CREEES,
     INTRO_SKILLS,
+    TITRE_NAVIGATEUR,
     TITRE_SKILLS,
     AgentCree,
     EquipeCreee,
@@ -94,6 +95,7 @@ from maestro.equipe.creation import (
     definition,
     playbook_branche,
     refus_de,
+    sans_commandes_figees,
     skills_constates,
 )
 from maestro.equipe.gabarits import (
@@ -151,6 +153,7 @@ __all__ = [
     "PART_SUBSTANTIELLE",
     "PREFIXE_ID",
     "RAISON_UNE_INSTANCE",
+    "TITRE_NAVIGATEUR",
     "TITRE_SKILLS",
     "VERSION_PROPOSITION",
     "AgentCree",
@@ -178,5 +181,6 @@ __all__ = [
     "proposer_renfort",
     "refus_de",
     "role_manquant",
+    "sans_commandes_figees",
     "skills_constates",
 ]

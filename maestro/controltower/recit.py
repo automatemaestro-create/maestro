@@ -108,10 +108,20 @@ Le 2026-09-24, le récit du run `3fe501fc0878` a recopié le libellé du moteur 
 lit désormais aussi le **bilan** du run (`maestro.controltower.bilan`), rendu sur
 les pièces de son journal et vérifié contre elles : ce qui a failli, sa nature
 jugée sur la cause, et ce qu'il faut changer d'abord. La consigne (`SYSTEME`,
-point 3) dit lequel fait foi. Le bilan est rendu **en même temps** que le livrable
+point 4) dit lequel fait foi. Le bilan est rendu **en même temps** que le livrable
 se lit, et une seule fois par issue : le récit attend celui que la fin du run a mis
 en route, il n'en refait pas un. Sans bilan, rien ne change — le récit se rédige
 sur la fiche seule.
+
+## Et la recette du run, qu'il résume (#1530)
+
+La recette n'est plus une tâche du plan : à la fin du run, Maestro confronte chaque
+critère d'acceptation du brief au livrable intégré, en l'exécutant
+(`maestro.engine.recette`), et l'écrit dans le projet. Le récit la **résume** — combien
+de critères tiennent, chaque critère non tenu avec sa preuve — et la donne en lien.
+Elle arrive par la projection (`EtatExecution.recette`), portée par l'étape `recette`
+du journal, qui précède la fin du run : le récit n'a rien à attendre. La consigne
+(`SYSTEME`, point 2) dit qu'elle fait foi sur ce qui tient.
 """
 
 from __future__ import annotations
@@ -133,6 +143,7 @@ from maestro.controltower.state import (
     ControlTowerState,
     EtatExecution,
 )
+from maestro.engine.recette import recette_en_texte
 from maestro.projets.modele import Perimetre, Projet
 from maestro.providers.base import ModelProvider
 from maestro.sources.extraction import (
@@ -201,16 +212,22 @@ SYSTEME = (
     "vient de se terminer, et tu lui écris — dans le fil où elle l'a demandé — "
     "ce qu'elle a maintenant entre les mains.\n"
     "\n"
-    "Écris un message court, en français, à la deuxième personne. Quatre choses, "
+    "Écris un message court, en français, à la deuxième personne. Cinq choses, "
     "dans cet ordre, et tu sautes celles qui n'ont rien à dire :\n"
     "1. **ce que le run a produit** — une ou deux phrases, en nommant la chose "
     "par ce qu'elle est pour la personne, pas par le nombre de tâches ;\n"
-    "2. **comment l'essayer tout de suite** — la commande exacte, dans un bloc "
+    "2. **la recette** — quand la **recette du run** ci-dessous a confronté les "
+    "critères d'acceptation du brief au livrable, dis combien tiennent, puis chaque "
+    "critère non tenu ou non vérifiable en une ligne, avec sa preuve ou sa raison. "
+    "C'est elle qui fait foi sur ce qui tient : ne présente jamais comme acquis un "
+    "critère qu'elle ne dit pas tenu. Donne le lien de la recette quand elle est "
+    "écrite dans le projet ;\n"
+    "3. **comment l'essayer tout de suite** — la commande exacte, dans un bloc "
     "de code, telle que tu l'as LUE dans le livrable (un README, un "
     "`package.json`, un point d'entrée). N'invente jamais une commande : si le "
     "livrable n'en donne aucune, dis-le en une ligne et propose ce que tu vois "
     "de plus proche ;\n"
-    "3. **ce qui reste à faire**, s'il reste quelque chose — une tâche en échec, "
+    "4. **ce qui reste à faire**, s'il reste quelque chose — une tâche en échec, "
     "un fichier annoncé et absent, une dépendance à installer. Quand le **bilan "
     "du run** ci-dessous juge un échec, c'est son jugement qui fait foi, pas le "
     "libellé que le moteur a posé sur la tâche : un moteur qui relance présume un "
@@ -218,7 +235,7 @@ SYSTEME = (
     "ne conseille jamais de relancer tel quel : dis ce qui a failli, et ce qu'il "
     "faut changer d'abord, d'après ses recommandations. Sur un aléa, dire qu'une "
     "relance peut suffire reste juste ;\n"
-    "4. **les fichiers qui comptent**, en liens. Un lien s'écrit "
+    "5. **les fichiers qui comptent**, en liens. Un lien s'écrit "
     "`[nom lisible](<chemin absolu>)`, avec les chevrons, et le chemin doit être "
     "l'un de ceux de la liste « Fichiers du livrable » ci-dessous, recopié "
     "exactement. Ne fabrique aucun chemin.\n"
@@ -655,9 +672,13 @@ def contexte_du_recit(
     Le bilan vient **juste après** la fiche, et c'est ce qui le fait lire comme ce
     qu'il est : le jugement porté sur les faits qui précèdent. La fiche garde les
     libellés du moteur — « échec transitoire persistant » compris —, et c'est le
-    bilan, puis la consigne (`SYSTEME`, point 3), qui disent lequel fait foi. Sans
+    bilan, puis la consigne (`SYSTEME`, point 4), qui disent lequel fait foi. Sans
     bilan (modèle injoignable, réponse illisible), le bloc n'est pas écrit : le
     récit se rédige comme avant ce lot, sur la fiche seule.
+
+    La **recette** du run (#1530) suit le bilan : chaque critère du brief, son
+    verdict et sa preuve. Son fichier, sous `.maestro/` que la lecture du livrable ne
+    parcourt pas, s'ajoute aux fichiers offerts en lien. Sans recette, rien ne change.
 
     L'encadrement n'est pas refait ici : `Livrable.contexte` est la sortie de
     `contexte_markdown` et de rien d'autre. Les chemins, eux, sont hors du bloc
@@ -669,6 +690,19 @@ def contexte_du_recit(
     blocs = ["## Le run qui vient de finir", "", *fiche_du_run(state, execution)]
     if bilan is not None:
         blocs.extend(["", "## Le bilan du run, sur pièces", "", bilan_en_texte(bilan)])
+    recette = execution.recette
+    if recette is not None:
+        blocs.extend(
+            [
+                "",
+                "## La recette du run — les critères du brief, vérifiés en les exécutant",
+                "",
+                recette_en_texte(recette),
+            ]
+        )
+    # La recette écrite dans le projet s'offre en lien comme un fichier du livrable :
+    # sous `.maestro/`, la lecture du livrable ne la parcourt pas.
+    fichier_recette = str(recette.get("fichier") or "") if recette is not None else ""
     if livrable is None or livrable.vide:
         blocs.extend(
             [
@@ -679,10 +713,14 @@ def contexte_du_recit(
                 "est vide. Dis-le simplement, et ne propose aucune commande.",
             ]
         )
+        if fichier_recette:
+            blocs.extend(["", "## Fichiers du livrable", "", f"- {fichier_recette}"])
         return "\n".join(blocs)
     blocs.extend(["", "## Fichiers du livrable", "", f"Racine : {livrable.racine}"])
     blocs.extend(f"- {chemin}" for chemin in livrable.chemins)
-    if not livrable.chemins:
+    if fichier_recette and fichier_recette not in livrable.chemins:
+        blocs.append(f"- {fichier_recette}")
+    if not livrable.chemins and not fichier_recette:
         blocs.append("- (aucun fichier à offrir en lien)")
     blocs.extend(["", livrable.contexte])
     return "\n".join(blocs)

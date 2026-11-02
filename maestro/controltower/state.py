@@ -94,6 +94,7 @@ from maestro.telemetry.costs import (
     ETAPE_BILAN,
     ETAPE_BRIEF,
     ETAPE_CADENCE,
+    ETAPE_RECETTE,
     ETAPE_SONDE,
     RunCost,
     TaskCost,
@@ -978,6 +979,16 @@ class EtatExecution:
     # depuis 14:02 » après le geste, et non un simple « en pause » dont on ne sait
     # s'il date d'une minute ou d'hier.
     pause_depuis: str | None = None
+    # **Pourquoi** ce run est en pause (#1543) — `limite_usage` quand le fournisseur
+    # a opposé sa limite à une tâche, vide quand c'est une personne qui l'a mis en
+    # pause. Le régime de `pause_depuis`, avec une différence : c'est le **dernier**
+    # ordre de pause qui le dit, parce que la raison change en cours de pause (une
+    # limite qui tombe sur un run qu'on avait suspendu, puis qui se lève).
+    pause_cause: str = ""
+    # **Quand** il reprendra de lui-même (#1543) — l'heure que le fournisseur a dite
+    # (ISO 8601), None quand il n'a rien dit : il reprendra alors sur « Reprendre ».
+    # Même régime que `pause_cause`.
+    reprise_a: str | None = None
     # Le **graphe du plan** (#490), posé une fois par `run.plan` et jamais
     # retiré : nœuds, arêtes, ossatures de checklist, tels que la décomposition
     # les a écrits. Vide pour un run qui n'en a pas publié — moteur antérieur à
@@ -1015,6 +1026,13 @@ class EtatExecution:
     # soldé avant ce lot. Il se reconstruit au rejeu du journal durable, comme le
     # reste : c'est là qu'il est gardé.
     bilan: dict[str, Any] | None = None
+    # La **recette** de ce run (#1530), sous la forme de
+    # `maestro.engine.recette.RecetteDuRun.to_dict` — un dict, pour la raison du
+    # bilan : chaque critère du brief, son verdict et sa preuve, et où elle s'est
+    # écrite dans le projet. Posée par l'activité `recette` qui la porte, la
+    # dernière l'emportant (un run repris se recette à sa vraie fin) ; None pour un
+    # run sans brief, en vol, ou soldé avant ce lot. Le récit de fin la lit.
+    recette: dict[str, Any] | None = None
 
     @property
     def debut(self) -> str:
@@ -1143,6 +1161,11 @@ class EtatExecution:
             "en_pause": self.en_pause,
             # Et depuis quand (#1179), à côté du drapeau dont il est l'ancienneté.
             "pause_depuis": self.pause_depuis,
+            # Pourquoi, et jusqu'à quand (#1543) : la limite d'usage du fournisseur
+            # et l'heure qu'il a dite — la liste montre qu'un run en pause repartira
+            # de lui-même, et à quelle heure.
+            "pause_cause": self.pause_cause,
+            "reprise_a": self.reprise_a,
             # La cause d'arrêt (#479) dans le **résumé**, et c'est le critère du
             # ticket : « dans la liste comme dans sa vue ». Un run en échec dont
             # il faut ouvrir la page pour savoir s'il a manqué de budget ou
@@ -1267,6 +1290,7 @@ class EtatExecution:
         brief = StepUsage()
         bilan = StepUsage()
         sonde = StepUsage()
+        recette = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Ce que le run a **occupé** (#989) : l'union des intervalles de ses
         # étapes, jamais leur somme. Les bornes se lisent par le même verbe que
@@ -1331,6 +1355,10 @@ class EtatExecution:
                     # La sonde du point de contrôle (#1398) : sa propre ligne,
                     # ni la tâche qui l'a armée, ni le cadrage.
                     sonde = sonde.fusion(usage)
+                elif event.etape_run == ETAPE_RECETTE:
+                    # La recette du run (#1530) : sa propre ligne, dans le temps
+                    # de mur — elle est sur le chemin du run.
+                    recette = recette.fusion(usage)
                 else:
                     planification = planification.fusion(usage)
             elif (
@@ -1349,6 +1377,7 @@ class EtatExecution:
             duree_mur_ms=union_ms(intervalles),
             bilan=bilan,
             sonde=sonde,
+            recette=recette,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1369,6 +1398,8 @@ class EtatExecution:
             # pour la raison du brief : `GET /api/executions` rend N résumés, et
             # seule la vue d'un run le lit. `null` tant qu'aucun n'a été rendu.
             "bilan": dict(self.bilan) if self.bilan is not None else None,
+            # La recette du run (#1530), au même régime que le bilan.
+            "recette": dict(self.recette) if self.recette is not None else None,
             "evenements": [e.to_dict() for e in self.evenements],
         }
 
@@ -2172,6 +2203,11 @@ class ControlTowerState:
             self._retient_brief_auto(event)
         if event.etape_run == ETAPE_CADENCE and event.cadence is not None and event.run_id:
             self._retient_cadence(event)
+        if event.etape_run == ETAPE_RECETTE and event.verification is not None:
+            # La recette du run (#1530) : au run qu'elle juge, jamais à une tâche.
+            execution = self._executions.get(event.run_id)
+            if execution is not None:
+                execution.recette = dict(event.verification)
         if event.tache_id:
             tache = self._taches.get(event.tache_id)
             if tache is not None:
@@ -2338,8 +2374,16 @@ class ControlTowerState:
             # l'événement que le service a déjà appliqué) garde sa première heure.
             if not execution.en_pause:
                 execution.pause_depuis = None
-            elif execution.pause_depuis is None:
+                execution.pause_cause = ""
+                execution.reprise_a = None
+                return
+            if execution.pause_depuis is None:
                 execution.pause_depuis = event.horodatage or None
+            # Sa raison et son heure de reprise (#1543) sont celles du **dernier**
+            # ordre : une limite mieux informée rallonge l'heure, une limite levée
+            # sur un run suspendu rend la pause à la personne qui l'avait posée.
+            execution.pause_cause = event.cause
+            execution.reprise_a = event.echeance or None
             return
         # L'objectif **entier** est dans `description` depuis #991 (défaut S12),
         # `titre` ne portant plus que sa forme courte. Le repli sur `titre` n'est
@@ -2415,6 +2459,8 @@ class ControlTowerState:
             # `annulation`) la lève, comme toute annulation.
             execution.en_pause = False
             execution.pause_depuis = None
+            execution.pause_cause = ""
+            execution.reprise_a = None
         # Le run n'attend plus dès qu'il n'est plus dans un état d'attente (#321) —
         # au premier chef l'**annulation en pleine attente**, qui est le cas que la
         # troisième exigence du ticket protège. Laisser l'ancienneté derrière soi

@@ -229,6 +229,16 @@ def _besoin_designer(constats: Constats, reponses: Mapping[str, str]) -> Justifi
     return None
 
 
+def interface_constatee(constats: Constats, reponses: Mapping[str, str]) -> bool:
+    """Le projet a-t-il une interface — la question du designer, posée pour le navigateur.
+
+    Une seule règle, celle qui recrute le designer (`_besoin_designer`) : un projet
+    dont l'interface justifie un rôle de conception est un projet dont le rendu se
+    regarde. La redire ailleurs ferait deux réponses à la même question.
+    """
+    return _besoin_designer(constats, reponses) is not None
+
+
 def _besoin_bdd(constats: Constats, reponses: Mapping[str, str]) -> Justification | None:
     """Du SQL constaté — schéma, migration ou requête posée dans le dépôt."""
     for langage in constats.langages:
@@ -275,6 +285,12 @@ class Gabarit:
     rôles sauf un — veut dire *une instance*, ce qui est le défaut de
     `CapaciteAgent` (docs/09 : on augmente les instances pour absorber la
     charge, on ne les pose pas par principe).
+
+    `regarde_l_ecran` (#1532) dit si ce rôle reçoit le navigateur de Maestro
+    quand le projet a une interface (`interface_constatee`) — celui qui l'écrit,
+    celui qui la conçoit, celui qui la vérifie. Ne sert qu'aux **règles**, le
+    repli d'une composition qui n'a pas abouti : composée par le modèle, l'équipe
+    reçoit le navigateur selon son jugement (`maestro.equipe.composition`).
     """
 
     nom: str
@@ -282,6 +298,7 @@ class Gabarit:
     besoin: ReglesDeBesoin
     usages: tuple[tuple[str, str], ...] = ()
     instances_selon: Callable[[Constats], tuple[int, str]] | None = None
+    regarde_l_ecran: bool = False
 
     @property
     def agent(self) -> Agent:
@@ -394,6 +411,7 @@ GABARITS: tuple[Gabarit, ...] = (
             ("demarrer", "il lance le projet pour voir tourner ce qu'il vient de changer"),
         ),
         instances_selon=_instances_developpeur,
+        regarde_l_ecran=True,
     ),
     Gabarit(
         nom="donnees",
@@ -425,6 +443,7 @@ GABARITS: tuple[Gabarit, ...] = (
         gabarit="designer",
         besoin=_besoin_designer,
         usages=(("demarrer", "un écran ne se juge qu'en le regardant tourner"),),
+        regarde_l_ecran=True,
     ),
     Gabarit(
         nom="tests",
@@ -438,6 +457,7 @@ GABARITS: tuple[Gabarit, ...] = (
                 "de conclure",
             ),
         ),
+        regarde_l_ecran=True,
     ),
 )
 

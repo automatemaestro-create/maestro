@@ -128,6 +128,7 @@ export function rolesValides(
   proposition: PropositionEquipe,
   retenus: ReadonlySet<string>,
   instances: Readonly<Record<string, number>>,
+  navigateur: Readonly<Record<string, boolean>> = {},
 ): RoleValideEquipe[] {
   return proposition.roles
     .filter((r) => retenus.has(r.nom))
@@ -144,7 +145,23 @@ export function rolesValides(
         commandes: s.commandes,
       })),
       politique: r.politique,
+      // Le navigateur **tel que la carte le montre** (#1532) : proposé, puis
+      // retiré ou donné en mots — jamais celui de la proposition d'origine seule.
+      navigateur: aLeNavigateur(r, navigateur),
     }));
+}
+
+/**
+ * Le rôle a-t-il, **à l'écran**, le navigateur de Maestro (#1532) ?
+ *
+ * Ce qu'une correction a dit l'emporte sur la proposition : « retire le navigateur
+ * au testeur » change la ligne, la face et ce qui repart à la création.
+ */
+export function aLeNavigateur(
+  role: RoleEquipe,
+  navigateur: Readonly<Record<string, boolean>> = {},
+): boolean {
+  return navigateur[role.nom] ?? role.navigateur === true;
 }
 
 /**
@@ -161,17 +178,23 @@ export function equipeCreeeEnUneLigne(equipe: EquipeRecrutee): string {
   return `${roles} — ${compteAgents(equipe.instances_total)}`;
 }
 
-/** L'équipe **telle que la carte la montre** : ses lignes, ses cases, ses instances. */
+/**
+ * L'équipe **telle que la carte la montre** : ses lignes, ses cases, ses instances —
+ * et, depuis #1532, à qui le navigateur de Maestro a été retiré ou donné en mots
+ * (absent : celui que la proposition a donné).
+ */
 export type EquipeMontree = {
   roles: RoleEquipe[];
   retenus: ReadonlySet<string>;
   instances: Readonly<Record<string, number>>;
+  navigateur?: Readonly<Record<string, boolean>>;
 };
 
 /**
  * L'équipe montrée, dans la forme d'une demande de correction (#1159) — cases et
  * instances comprises, retraits aussi : « remets les tests » n'a de sens que si
- * le modèle sait qu'ils ont été retirés.
+ * le modèle sait qu'ils ont été retirés. Le navigateur aussi (#1532) : « retire-lui
+ * le navigateur » ne se comprend pas sans savoir qui l'a.
  */
 export function membresMontres(equipe: EquipeMontree): MembreEquipe[] {
   return equipe.roles.map((r) => ({
@@ -179,7 +202,19 @@ export function membresMontres(equipe: EquipeMontree): MembreEquipe[] {
     role: r.role,
     retenu: equipe.retenus.has(r.nom),
     instances: equipe.instances[r.nom] ?? r.instances,
+    navigateur: aLeNavigateur(r, equipe.navigateur),
   }));
+}
+
+/**
+ * Les rôles **gardés** qui ont le navigateur de Maestro à l'écran (#1532) — ceux
+ * que la face de la carte nomme (variante B retenue sur #1532).
+ */
+export function rolesAvecNavigateur(
+  roles: RoleEquipe[],
+  navigateur: Readonly<Record<string, boolean>> = {},
+): RoleEquipe[] {
+  return roles.filter((r) => aLeNavigateur(r, navigateur));
 }
 
 /**
@@ -205,6 +240,16 @@ export function appliquerCorrection(
   for (const nom of [...correction.remis, ...ajouts.map((r) => r.nom)]) {
     retenus.add(nom);
   }
+  // Le navigateur ne change que pour un rôle montré, et seulement s'il change :
+  // « donne-le au développeur » qui l'a déjà n'a rien changé (#1532).
+  const navigateur = Object.fromEntries(
+    Object.entries(correction.navigateur ?? {}).filter(([nom]) => montres.has(nom)),
+  );
+  const navigateurChange = equipe.roles.some(
+    (r) =>
+      navigateur[r.nom] !== undefined &&
+      navigateur[r.nom] !== aLeNavigateur(r, equipe.navigateur),
+  );
   return {
     roles: [...equipe.roles, ...ajouts],
     retenus,
@@ -213,12 +258,14 @@ export function appliquerCorrection(
       ...Object.fromEntries(ajouts.map((r) => [r.nom, r.instances])),
       ...correction.instances,
     },
+    navigateur: { ...equipe.navigateur, ...navigateur },
     ajoutes: ajouts.map((r) => r.nom),
     change:
       ajouts.length > 0 ||
       correction.retraits.length > 0 ||
       correction.remis.length > 0 ||
-      Object.keys(correction.instances).length > 0,
+      Object.keys(correction.instances).length > 0 ||
+      navigateurChange,
   };
 }
 

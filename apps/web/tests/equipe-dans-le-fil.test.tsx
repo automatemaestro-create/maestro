@@ -684,9 +684,9 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
 
     // La seconde demande est partie sur l'équipe **déjà** corrigée par la première.
     expect(corrigerEquipe.mock.calls[1][2]).toEqual([
-      { nom: "dev", role: "Développeur", retenu: true, instances: 1 },
-      { nom: "qa", role: "QA", retenu: true, instances: 1 },
-      { nom: "interface", role: "Designer", retenu: false, instances: 1 },
+      { nom: "dev", role: "Développeur", retenu: true, instances: 1, navigateur: false },
+      { nom: "qa", role: "QA", retenu: true, instances: 1, navigateur: false },
+      { nom: "interface", role: "Designer", retenu: false, instances: 1, navigateur: false },
     ]);
 
     await userEvent.click(within(carte).getByRole("button", { name: "Créer l'équipe (3)" }));
@@ -719,8 +719,8 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
     expect(projet).toBe("prj-autre0001");
     expect(texte).toBe("remets les tests");
     expect(equipe).toEqual([
-      { nom: "dev", role: "Développeur", retenu: true, instances: 3 },
-      { nom: "qa", role: "QA", retenu: false, instances: 1 },
+      { nom: "dev", role: "Développeur", retenu: true, instances: 3, navigateur: false },
+      { nom: "qa", role: "QA", retenu: false, instances: 1, navigateur: false },
     ]);
   });
 
@@ -1015,5 +1015,114 @@ describe("appliquerCorrection — la règle, sans écran", () => {
     const apres = appliquerCorrection(montree, correction({ remis: ["qa"] }));
 
     expect(apres.retenus.has("qa")).toBe(true);
+  });
+
+  it("le navigateur redonné à qui l'a déjà ne change rien ; retiré, il change", () => {
+    const web = { ...montree, roles: [role({ navigateur: true }), PROPOSITION.roles[1]] };
+
+    expect(appliquerCorrection(web, correction({ navigateur: { dev: true } })).change).toBe(false);
+    const retire = appliquerCorrection(web, correction({ navigateur: { dev: false, inconnu: true } }));
+    expect(retire.change).toBe(true);
+    expect(retire.navigateur).toEqual({ dev: false });
+  });
+});
+
+/**
+ * **Le navigateur de Maestro se lit dans l'équipe proposée, et se retire en mots** (#1532).
+ *
+ * La forme est la variante B, retenue sur pièces et consignée sur le ticket : la face
+ * repliée dit qui le reçoit, ce qu'il en fera et comment le retirer ; le détail le range
+ * dans l'inventaire du rôle, au rang des skills. La phrase est celle que l'API sert
+ * (`navigateur_de_maestro`), la même aux deux endroits.
+ */
+describe("le navigateur de Maestro (#1532)", () => {
+  const USAGE =
+    "ouvrir et parcourir une page, la capturer à une largeur donnée, émuler la réduction des animations, lire les erreurs de la console";
+  const WEB: PropositionEquipe = {
+    ...PROPOSITION,
+    navigateur_de_maestro: { libelle: "Navigateur de Maestro", usage: USAGE },
+    roles: [role({ navigateur: true }), { ...PROPOSITION.roles[1], navigateur: false }],
+  };
+
+  function ligne(carte: HTMLElement, libelle: string): HTMLElement {
+    return within(carte).getByText(libelle, { selector: "span" }).closest("li") as HTMLElement;
+  }
+
+  it("la face nomme qui le reçoit, ce qu'il en fera et comment le retirer — sans rien ouvrir", async () => {
+    proposerEquipe.mockResolvedValue(WEB);
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+
+    expect(carte).toHaveTextContent(
+      `Navigateur de Maestro — ${USAGE} — pour Développeur. À retirer avec « Corriger avec vos mots ».`,
+    );
+    // Le nom du geste ne se sépare jamais de ses guillemets (réserve 2 du regard neuf).
+    expect(within(carte).getByText("« Corriger avec vos mots »")).toHaveClass("whitespace-nowrap");
+
+    await userEvent.click(within(carte).getByRole("button", { name: "Voir l'équipe" }));
+    expect(ligne(carte, "Développeur")).toHaveTextContent(`Navigateur de Maestro : ${USAGE}.`);
+    expect(ligne(carte, "QA")).not.toHaveTextContent("Navigateur de Maestro");
+  });
+
+  it("une équipe sans interface n'en dit rien, ni sur la face ni dans le détail", async () => {
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+    await userEvent.click(within(carte).getByRole("button", { name: "Voir l'équipe" }));
+
+    expect(carte).not.toHaveTextContent("Navigateur de Maestro");
+  });
+
+  it("« retire le navigateur au développeur » le retire de la face, de sa ligne et de ce qui part", async () => {
+    proposerEquipe.mockResolvedValue(WEB);
+    corrigerEquipe.mockResolvedValue(
+      correction({ navigateur: { dev: false }, reponse: "Le développeur n'a plus le navigateur." }),
+    );
+    const recruter = vi.fn(async () => {});
+    poserFilAssistance({ messages: [demandeDeRecrutement()], recruter });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+
+    await demander(carte, "retire le navigateur au développeur");
+
+    // Le modèle a su qui l'avait : l'équipe montrée le dit.
+    await waitFor(() => expect(corrigerEquipe).toHaveBeenCalledTimes(1));
+    expect(corrigerEquipe.mock.calls[0][2]).toEqual([
+      { nom: "dev", role: "Développeur", retenu: true, instances: 1, navigateur: true },
+      { nom: "qa", role: "QA", retenu: true, instances: 1, navigateur: false },
+    ]);
+    await within(carte).findByText("Le développeur n'a plus le navigateur.");
+    expect(carte).not.toHaveTextContent("Navigateur de Maestro —");
+    await userEvent.click(within(carte).getByRole("button", { name: "Voir l'équipe" }));
+    expect(ligne(carte, "Développeur")).not.toHaveTextContent("Navigateur de Maestro");
+
+    await userEvent.click(within(carte).getByRole("button", { name: "Créer l'équipe (2)" }));
+    await waitFor(() => expect(recruter).toHaveBeenCalledTimes(1));
+    const [, roles] = recruter.mock.calls[0] as unknown as [
+      boolean,
+      { nom: string; navigateur: boolean }[],
+    ];
+    expect(roles.map((r) => [r.nom, r.navigateur])).toEqual([
+      ["dev", false],
+      ["qa", false],
+    ]);
+  });
+
+  it("validée telle quelle, l'équipe repart avec le navigateur qu'on lui a montré", async () => {
+    proposerEquipe.mockResolvedValue(WEB);
+    const recruter = vi.fn(async () => {});
+    poserFilAssistance({ messages: [demandeDeRecrutement()], recruter });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+
+    await userEvent.click(within(carte).getByRole("button", { name: "Créer l'équipe (2)" }));
+
+    await waitFor(() => expect(recruter).toHaveBeenCalledTimes(1));
+    const [, roles] = recruter.mock.calls[0] as unknown as [
+      boolean,
+      { nom: string; navigateur: boolean }[],
+    ];
+    expect(roles.map((r) => r.navigateur)).toEqual([true, false]);
   });
 });

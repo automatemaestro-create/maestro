@@ -178,6 +178,16 @@ ETAPE_BILAN = "bilan"
 #: ligne, la règle par défaut ouvrirait une tâche fantôme nommée « sonde ».
 ETAPE_SONDE = "sonde"
 
+#: Étape qui n'appartient à aucune tâche : la **recette du run** (#1530) — chaque
+#: critère d'acceptation du brief confronté au livrable intégré, en l'exécutant, une
+#: fois toutes les tâches soldées (`maestro.engine.recette`). Elle remplace la tâche
+#: de recette que le plan portait (p5 : 12 min 50 s et 1,633 $ sur le chemin), donc
+#: elle se compte **dans le temps de mur du run**, à la différence du bilan : le run
+#: n'est fini qu'une fois ses critères vérifiés. Sa propre ligne, pour qu'on lise ce
+#: que coûte la vérification de fin face à la tâche qu'elle remplace. À déclarer ici
+#: pour la raison d'`ETAPE_BRIEF` : sans cette ligne, une tâche fantôme « recette ».
+ETAPE_RECETTE = "recette"
+
 
 @dataclass(frozen=True)
 class TaskCost:
@@ -247,6 +257,11 @@ class RunCost:
     jouée pendant la première tâche, elle n'en est pas une part — la compter dans
     `socle-nextjs` lui faisait porter ≈ 20 k tokens qu'elle n'avait pas consommés.
     Nul tant qu'aucune sonde n'a coûté.
+
+    `recette` (#1530) porte l'usage de la **recette du run** — les critères du brief
+    vérifiés sur le livrable intégré, à la fin du run. À part pour qu'on lise ce que
+    coûte la vérification de fin, face à la tâche de recette qu'elle remplace ; dans
+    le temps de mur, puisqu'elle est sur le chemin du run. Nul sans recette.
     """
 
     run_id: str
@@ -260,6 +275,7 @@ class RunCost:
     duree_mur_ms: int | None = None
     bilan: StepUsage = StepUsage()
     sonde: StepUsage = StepUsage()
+    recette: StepUsage = StepUsage()
 
     @property
     def total(self) -> StepUsage:
@@ -281,9 +297,14 @@ class RunCost:
         **bilan** (#1284) s'y ajoute : il ne naît pas au journal du moteur, mais
         c'est une dépense du run, et un total qui la tairait ne serait plus celui
         que la liste des runs affiche. La **sonde** (#1398) aussi : elle a changé de
-        ligne, pas de run.
+        ligne, pas de run. Et la **recette** (#1530), qui est une dépense du run.
         """
-        total = self.planification.fusion(self.brief).fusion(self.bilan).fusion(self.sonde)
+        total = (
+            self.planification.fusion(self.brief)
+            .fusion(self.bilan)
+            .fusion(self.sonde)
+            .fusion(self.recette)
+        )
         for tache in self.taches:
             total = total.fusion(tache.usage)
         return replace(
@@ -307,6 +328,7 @@ class RunCost:
         brief = StepUsage()
         bilan = StepUsage()
         sonde = StepUsage()
+        recette = StepUsage()
         entrees: dict[str, TaskCost] = {}
         # Les intervalles de toutes les étapes comptées — planification et brief
         # compris : ils occupent le run comme le reste, et c'est le temps de mur
@@ -329,6 +351,11 @@ class RunCost:
                 # La sonde du point de contrôle (#1398) : une dépense du run, jouée
                 # pendant une tâche sans en être une part.
                 sonde = sonde.fusion(record.usage)
+                continue
+            if record.etape == ETAPE_RECETTE:
+                # La recette du run (#1530) : une étape du run, sur son chemin — son
+                # intervalle est pris ci-dessus, son usage sur sa propre ligne.
+                recette = recette.fusion(record.usage)
                 continue
             if record.etape == ETAPE_BRIEF:
                 # Une étape du run, pas une tâche (#318) — et fusionnée plutôt
@@ -380,6 +407,7 @@ class RunCost:
             duree_mur_ms=union_ms(intervalles),
             bilan=bilan,
             sonde=sonde,
+            recette=recette,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -390,6 +418,7 @@ class RunCost:
             "brief": self.brief.to_dict(),
             "bilan": self.bilan.to_dict(),
             "sonde": self.sonde.to_dict(),
+            "recette": self.recette.to_dict(),
             "total": self.total.to_dict(),
             "taches": [tache.to_dict() for tache in self.taches],
         }

@@ -42,6 +42,7 @@ composition entière ; chacun a sa conduite, et elle **se dit** :
 | l'orchestrateur | jamais recruté : c'est Maestro (docs/37 §4.2) |
 | un nom pris, réservé ou déjà montré | rendu libre par un suffixe |
 | des compétences en prose | ramenées aux tags que le routage sait apparier |
+| un navigateur qui n'est pas un booléen | le rôle ne le reçoit pas (#1532) |
 
 Une réponse qui ne laisse **aucun** rôle vérifié lève `CompositionIllisible` : ce
 n'est pas une équipe vide, c'est une réponse inexploitable — et le service retombe
@@ -142,6 +143,13 @@ par rôle par défaut ; davantage seulement si le projet a des surfaces indépen
 dis pourquoi. Ne propose jamais l'orchestrateur : c'est Maestro lui-même, présent dans
 tout projet, et c'est lui qui recrute.
 
+Maestro a un navigateur : il ouvre une page et la parcourt, la capture à une largeur
+donnée, émule la réduction des animations et lit les erreurs de la console. Si le
+projet construit une interface web — des pages qu'on ouvre dans un navigateur —,
+donne-le ("navigateur": true) aux rôles qui en écrivent, en conçoivent ou en
+vérifient le rendu : sans lui, ils écriraient leur propre banc pour la regarder. Un
+projet sans interface web n'en a pas besoin, ni un rôle qui ne regarde pas l'écran.
+
 Réponds par UN SEUL objet JSON, sans rien autour :
 
 {
@@ -155,20 +163,23 @@ Réponds par UN SEUL objet JSON, sans rien autour :
       "gabarit": "le nom du rôle type dont il descend, ou une chaîne vide",
       "instances": 1,
       "raison_instances": "pourquoi ce nombre, s'il dépasse un",
-      "skills": ["les skills du projet dont ce rôle se sert, parmi ceux listés"]
+      "skills": ["les skills du projet dont ce rôle se sert, parmi ceux listés"],
+      "navigateur": false
     }
   ],
   "ecartes": [{"gabarit": "un rôle type non retenu", "raison": "une phrase : pourquoi"}],
   "retraits": ["noms de rôles de l'équipe montrée à retirer"],
   "remis": ["noms de rôles retirés de l'équipe montrée à remettre"],
   "instances": {"nom d'un rôle de l'équipe montrée": 2},
+  "navigateur": {"nom d'un rôle de l'équipe montrée": false},
   "reponse": "une ou deux phrases adressées à la personne"
 }
 
 Quand on te demande de COMPOSER l'équipe, remplis "roles" et "ecartes" et laisse le
 reste vide. Quand on te transmet une DEMANDE de la personne sur l'équipe qu'elle a sous
-les yeux, ne mets dans "roles" que les rôles à ajouter ; remplis "retraits", "remis"
-et "instances" selon ce qu'elle demande, et dis-lui dans "reponse" ce que tu as fait —
+les yeux, ne mets dans "roles" que les rôles à ajouter ; remplis "retraits", "remis",
+"instances" et "navigateur" (true pour le donner à un rôle montré, false pour le lui
+retirer) selon ce qu'elle demande, et dis-lui dans "reponse" ce que tu as fait —
 ou, si sa demande ne porte pas sur l'équipe ou reste ambiguë, ce qu'il te faudrait
 savoir, sans rien changer. Ne devine jamais : ne change que ce qu'elle a demandé.
 
@@ -201,12 +212,16 @@ class MembreActuel:
     `retenu` distingue une ligne cochée d'une ligne retirée : « remets les tests » ne
     veut rien dire si le modèle ignore que les tests ont été retirés. Seuls ces noms
     peuvent être retirés, remis ou changés d'instances par une correction.
+
+    `navigateur` (#1532) dit si ce rôle a, à l'écran, le navigateur de Maestro :
+    « retire-lui le navigateur » ne se comprend pas sans savoir qui l'a.
     """
 
     nom: str
     role: str
     retenu: bool = True
     instances: int = 1
+    navigateur: bool = False
 
 
 @dataclass(frozen=True)
@@ -223,6 +238,7 @@ class ReponseModele:
     retraits: tuple[str, ...] = ()
     remis: tuple[str, ...] = ()
     instances: Mapping[str, Any] = field(default_factory=dict)
+    navigateur: Mapping[str, Any] = field(default_factory=dict)
     reponse: str = ""
 
 
@@ -232,8 +248,10 @@ class CorrectionEquipe:
 
     `ajouts` sont des rôles proposés **de plein droit** : même forme, mêmes
     autorisations, même playbook écrit pour le projet qu'un rôle de la composition.
-    `retraits`, `remis` et `instances` ne nomment que des rôles de l'équipe montrée.
-    `reponse` est la phrase que l'écran affiche à la personne.
+    `retraits`, `remis`, `instances` et `navigateur` ne nomment que des rôles de
+    l'équipe montrée — `navigateur` (#1532) dit à qui le navigateur de Maestro est
+    donné (`True`) ou retiré (`False`). `reponse` est la phrase que l'écran affiche à
+    la personne.
     """
 
     reponse: str
@@ -241,6 +259,7 @@ class CorrectionEquipe:
     retraits: tuple[str, ...] = ()
     remis: tuple[str, ...] = ()
     instances: Mapping[str, int] = field(default_factory=dict)
+    navigateur: Mapping[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """La correction en JSON — `cree: False`, comme toute proposition (#1040)."""
@@ -250,6 +269,7 @@ class CorrectionEquipe:
             "retraits": list(self.retraits),
             "remis": list(self.remis),
             "instances": dict(self.instances),
+            "navigateur": dict(self.navigateur),
             "cree": False,
         }
 
@@ -328,6 +348,8 @@ def _etat_du_membre(membre: MembreActuel) -> str:
     etat = [] if membre.retenu else ["retiré par la personne"]
     if membre.instances > 1:
         etat.append(f"{membre.instances} instances")
+    if membre.navigateur:
+        etat.append("a le navigateur de Maestro")
     return f" ({', '.join(etat)})" if etat else ""
 
 
@@ -445,12 +467,16 @@ def lire_reponse(texte: str) -> ReponseModele:
         raise CompositionIllisible(
             "la réponse du modèle n'a pas la forme attendue (des listes de rôles et de noms)"
         )
+    # Le navigateur (#1532) n'a de forme qu'en correction : une composition qui le
+    # poserait au mauvais niveau ne perd pas son équipe pour autant — il est ignoré.
+    navigateur = objet.get("navigateur")
     return ReponseModele(
         roles=tuple(r for r in roles if isinstance(r, dict)),
         ecartes=tuple(e for e in ecartes if isinstance(e, dict)),
         retraits=tuple(str(n) for n in retraits if isinstance(n, str)),
         remis=tuple(str(n) for n in remis if isinstance(n, str)),
         instances=instances,
+        navigateur=navigateur if isinstance(navigateur, dict) else {},
         reponse=_texte(objet.get("reponse")),
     )
 
@@ -546,17 +572,26 @@ def corriger_equipe(
         for nom, brut in reponse.instances.items()
         if nom in montres and (nombre := _instances_admises(brut)) is not None
     }
+    # Un booléen, et lui seul : « oui » écrit en toutes lettres n'est pas une
+    # décision qu'on lit, c'est une réponse hors contrat — ignorée, jamais devinée.
+    navigateur = {
+        nom: brut
+        for nom, brut in reponse.navigateur.items()
+        if nom in montres and isinstance(brut, bool)
+    }
     phrase = reponse.reponse
     if rejets:
         phrase = f"{phrase} ({'; '.join(rejets)})".strip()
-    if not (ajouts or retraits or remis or instances or phrase):
+    if not (ajouts or retraits or remis or instances or navigateur or phrase):
         raise CompositionIllisible("le modèle n'a rien changé et n'a rien répondu")
     return CorrectionEquipe(
-        reponse=phrase or _reponse_par_defaut(ajouts, retraits, remis, instances),
+        reponse=phrase
+        or _reponse_par_defaut(ajouts, retraits, remis, instances, navigateur),
         ajouts=tuple(ajouts),
         retraits=retraits,
         remis=remis,
         instances=instances,
+        navigateur=navigateur,
     )
 
 
@@ -565,6 +600,7 @@ def _reponse_par_defaut(
     retraits: Sequence[str],
     remis: Sequence[str],
     instances: Mapping[str, int],
+    navigateur: Mapping[str, bool] | None = None,
 ) -> str:
     """Ce qu'on dit quand le modèle a changé l'équipe sans rien en dire."""
     morceaux = []
@@ -578,6 +614,12 @@ def _reponse_par_defaut(
         morceaux.append(
             "instances : " + ", ".join(f"{nom} ×{n}" for nom, n in instances.items())
         )
+    donne = [nom for nom, oui in (navigateur or {}).items() if oui]
+    retire = [nom for nom, oui in (navigateur or {}).items() if not oui]
+    if donne:
+        morceaux.append("navigateur de Maestro donné à : " + ", ".join(donne))
+    if retire:
+        morceaux.append("navigateur de Maestro retiré à : " + ", ".join(retire))
     return "Équipe modifiée — " + " ; ".join(morceaux) + "."
 
 
@@ -699,6 +741,10 @@ def _role_compose(
         outils=outils,
         skills=branches,
         autorisations=autorisations,
+        # Le jugement du modèle, et lui seul (#1532, docs/41) : aucun lexique ne
+        # décide qu'un projet « a des écrans ». Un booléen strict — « oui » en
+        # toutes lettres est hors contrat, et ne donne rien.
+        navigateur=brut.get("navigateur") is True,
     )
 
 

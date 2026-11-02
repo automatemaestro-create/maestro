@@ -30,6 +30,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from balayage import fichiers_du_depot
 from harnais_forge import BASH, GIT, RACINE, Depot, emule_msys, monte_depot
 
 pytestmark = [
@@ -178,7 +179,8 @@ def test_le_motif_sait_dire_oui_et_non() -> None:
 def test_aucune_commande_n_appelle_gh_avec_un_texte_libre_en_tete() -> None:
     fautifs = [
         f"{prompt.relative_to(RACINE).as_posix()} : {appel}"
-        for prompt in sorted((RACINE / ".claude").rglob("*.md"))
+        for prompt in fichiers_du_depot(RACINE / ".claude")
+        if prompt.suffix == ".md"
         for appel in appels_fautifs(prompt.read_text(encoding="utf-8"))
     ]
     assert not fautifs, "texte libre en tête d'un argument de gh :\n" + "\n".join(fautifs)

@@ -52,6 +52,7 @@ import re
 from pathlib import Path
 
 import pytest
+from balayage import fichiers_du_depot
 from harnais_forge import (
     BASH,
     GIT,
@@ -1022,19 +1023,16 @@ def test_les_motifs_transversaux_departagent_l_usage_de_la_mention() -> None:
         assert not FORCE_UN_MILESTONE.search(licite), licite
 
 
-def fichiers_du_depot(*dossiers: Path):
-    """Les fichiers de `scripts/` et `.claude/`, bytecode exclu PAR RÉPERTOIRE.
+def fichiers_lisibles(*dossiers: Path):
+    """Les fichiers texte de `scripts/` et `.claude/`.
 
-    Python écrit son bytecode sous `<nom>.pyc.<pid>` avant de le renommer, et un worker xdist tué
-    en laisse derrière lui : filtrer sur le suffixe seul laisserait passer un `.2594` (#345).
+    Le bytecode est écarté PAR RÉPERTOIRE, avec les worktrees et les dépendances, par le parcours
+    partagé (`balayage.py`, #345, #1546) ; il ne reste ici que les suffixes illisibles.
     """
-    for dossier in dossiers:
-        for fichier in dossier.rglob("*"):
-            if "__pycache__" in fichier.parts or not fichier.is_file():
-                continue
-            if fichier.suffix in (".pyc", ".png", ".jpg", ".gz", ".ico"):
-                continue
-            yield fichier
+    for fichier in fichiers_du_depot(*dossiers):
+        if not fichier.is_file() or fichier.suffix in (".pyc", ".png", ".jpg", ".gz", ".ico"):
+            continue
+        yield fichier
 
 
 def test_aucune_commande_ne_ferme_un_milestone() -> None:
@@ -1044,7 +1042,7 @@ def test_aucune_commande_ne_ferme_un_milestone() -> None:
     une machine le geste final serait défaire, du même mouvement, le jalon go/no-go de la roadmap.
     """
     fautifs = []
-    for fichier in fichiers_du_depot(RACINE / "scripts", RACINE / ".claude"):
+    for fichier in fichiers_lisibles(RACINE / "scripts", RACINE / ".claude"):
         texte = fichier.read_text(encoding="utf-8", errors="replace")
         for numero, ligne in enumerate(texte.splitlines(), start=1):
             if "milestone" in ligne.lower() and FERME_UN_JALON.search(ligne):

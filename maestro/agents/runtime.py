@@ -18,6 +18,7 @@ d'un éventuel repli).
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
@@ -36,7 +37,12 @@ from maestro.outillage import outillage_du_projet
 from maestro.projets.modele import Projet
 from maestro.projets.secrets import enregistre_secrets_du_projet
 from maestro.providers.arbitrage import Arbitre, ArbitreActe, TraceOutil
-from maestro.providers.base import PLAFOND_TOURS_DEFAUT, ModelProvider
+from maestro.providers.base import (
+    PLAFOND_TOURS_DEFAUT,
+    LimiteUsageAtteinte,
+    ModelProvider,
+    SessionAgent,
+)
 from maestro.providers.blocage import Signaleur
 from maestro.providers.courrier import Courrier
 from maestro.providers.decision import Consigneur
@@ -67,6 +73,22 @@ DEFAULT_TOOLS: tuple[str, ...] = (
     "Grep",
     "Bash",
 )
+
+#: Ce que l'agent reçoit quand sa session, coupée par la limite d'usage du
+#: fournisseur, est rouverte (#1543) : la suite de **sa** conversation, et non une
+#: tâche neuve — le reste, il l'a déjà dans son contexte.
+NOTE_REPRISE_LIMITE = (
+    "Reprise : ta session a été interrompue par la limite d'usage du fournisseur, "
+    "qui est maintenant levée. Tu retrouves ta conversation et ton espace de "
+    "travail tels que tu les as laissés : reprends là où tu en étais, sans refaire "
+    "ce qui est fait."
+)
+
+#: L'attente d'une tâche coupée par la limite d'usage (#1543) : rend la main quand
+#: la tâche peut reprendre, lève quand personne ne peut tenir l'attente — la
+#: limite remonte alors telle quelle. Fournie par l'exécuteur, qui tient le run.
+AttenteReprise = Callable[[LimiteUsageAtteinte], Awaitable[None]]
+
 
 class JugeLivraison(Protocol):
     """Le juge d'une livraison (#1177).
@@ -257,6 +279,7 @@ class AgentRuntime:
         on_livraison: JugeLivraison | None = None,
         machine: Machine | None = None,
         miroir: MiroirDeVerification | None = None,
+        on_limite: AttenteReprise | None = None,
     ) -> AgentOutcome:
         """Réalise la tâche `description` de bout en bout et renvoie le livrable.
 
@@ -459,6 +482,19 @@ class AgentRuntime:
         dérive d'abord de `tache_id` : une tâche reprise retrouve le sien, et son
         message reste le même. Un poste qui n'en a aucun de libre ne retient pas la
         tâche : la ligne manque, et le cadre d'exécution dit alors d'en choisir un.
+
+        `on_limite` (#1543) est ce que la tâche fait quand le fournisseur lui oppose
+        sa **limite d'usage** (`LimiteUsageAtteinte`) : elle l'**attend**, l'espace
+        de travail ouvert, puis la session reprend. Sur un fournisseur qui rouvre
+        ses conversations (`ModelProvider.rouvre_les_sessions`), chaque session de
+        la tâche est **nommée** pour l'être (`SessionAgent`) : la reprise rouvre
+        celle que la limite a coupée, contexte intact, et l'agent n'y reçoit que
+        `NOTE_REPRISE_LIMITE`. Une session que la limite a coupée avant même de
+        l'ouvrir, ou un fournisseur qui ne rouvre pas, repart du message entier —
+        dans le même espace, où ce qui était écrit l'attend. Le runtime ne décide
+        ni de la durée ni de la pause : il attend ce que l'appelant lui rend, et une
+        attente qui lève laisse remonter la limite telle quelle. None (le défaut) :
+        la limite remonte, comme toute erreur du fournisseur.
         """
         description = description.strip()
         if not description:
@@ -495,6 +531,10 @@ class AgentRuntime:
         # Les faits du poste ne valent que pour un agent qui y travaille (#1403), et son
         # port d'essai avec eux (#1491).
         sur_le_poste = machine is not None and self._provider.commandes_sur_le_poste
+        # Une session se nomme pour être rouverte après la limite d'usage (#1543) — si
+        # quelqu'un l'attend, et si le fournisseur sait la rouvrir. Hors de là, l'appel
+        # au fournisseur est au bit près celui d'avant ce lot.
+        nommer = on_limite is not None and self._provider.rouvre_les_sessions
         with (
             espace_de_travail(
                 projet,
@@ -532,7 +572,10 @@ class AgentRuntime:
                 ),
             )
 
-            async def session(message: str) -> str:
+            async def appel(message: str, conversation: SessionAgent | None) -> str:
+                reglage_session: dict[str, Any] = (
+                    {"session": conversation} if conversation is not None else {}
+                )
                 return await self._provider.run_agent(
                     message,
                     model=self._model,
@@ -555,7 +598,32 @@ class AgentRuntime:
                     plafond_tours=self._plafond_tours,
                     projet=projet,
                     **reglage_effort,
+                    **reglage_session,
                 )
+
+            async def session(message: str) -> str:
+                # Chaque session part d'une conversation neuve, comme avant (#1177) ;
+                # c'est **la sienne** qu'une limite d'usage fait rouvrir (#1543).
+                conversation = SessionAgent() if nommer else None
+                envoi = message
+                while True:
+                    try:
+                        return await appel(envoi, conversation)
+                    except LimiteUsageAtteinte as limite:
+                        if on_limite is None:
+                            raise
+                        try:
+                            await on_limite(limite)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as attente_en_panne:
+                            raise limite from attente_en_panne
+                    # La conversation rouverte reprend où elle en était ; une session
+                    # que la limite a coupée avant de l'ouvrir — la sonde du point de
+                    # contrôle passe la première —, ou que le fournisseur ne rouvre
+                    # pas, repart du message entier.
+                    rouverte = conversation is not None and conversation.ouverte
+                    envoi = NOTE_REPRISE_LIMITE if rouverte else message
 
             resume = await session(prompt)
             # Capture *dans* le contexte : hors `keep`, l'espace disparaît à la sortie.

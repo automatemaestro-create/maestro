@@ -66,6 +66,11 @@ class Orchestrator:
         self._provider = provider
         self._model = model
 
+    @property
+    def modele(self) -> str:
+        """Le modèle du Chef de projet — celui auquel la recette du run juge aussi (#1530)."""
+        return self._model
+
     @classmethod
     def default(cls, settings: Settings | None = None) -> Orchestrator:
         """Orchestrateur par défaut : fournisseur et modèle issus de la config (#69).

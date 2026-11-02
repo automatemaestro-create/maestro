@@ -33,7 +33,9 @@ import pytest
 
 from maestro.agents.capacity import CapacityStore
 from maestro.agents.configuration import ConfigurationAgents
-from maestro.agents.mcp import McpStore
+from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp
+from maestro.agents.navigateur import ID_INTEGRATION as ID_NAVIGATEUR
+from maestro.agents.navigateur import integration_navigateur
 from maestro.agents.permissions import EntreeArbitrage, PermissionStore, PolitiqueOutils
 from maestro.agents.playbook_du_code import roles_du_code
 from maestro.agents.playbooks import PlaybookStore
@@ -46,6 +48,8 @@ from maestro.equipe import (
     AUCUN_SKILL,
     AUCUN_SKILL_ECRIT,
     INSTANCES_MAX_CREEES,
+    INTRO_SKILLS,
+    TITRE_NAVIGATEUR,
     TITRE_SKILLS,
     EquipeCreee,
     RoleValide,
@@ -54,9 +58,14 @@ from maestro.equipe import (
     definition,
     playbook_branche,
     refus_de,
+    sans_commandes_figees,
     skills_constates,
 )
-from maestro.equipe.creation import TITRES_SKILLS_ANTERIEURS, scinder_section_skills
+from maestro.equipe.creation import (
+    TITRES_SKILLS_ANTERIEURS,
+    scinder_section_skills,
+    section_navigateur,
+)
 from maestro.projets.store import ProjetStore
 
 
@@ -466,7 +475,6 @@ def test_un_projet_outille_garde_sa_section_intacte_chemins_compris(tmp_path: Pa
     rapport = service.creer(projet_id, [role])
 
     assert _playbook_ecrit(gabarits, projet_id) == playbook_branche(role)
-    assert "il enveloppe : `pip install -e .`" in _playbook_ecrit(gabarits, projet_id)
     assert rapport["agents"][0]["skills"] == ["mettre-en-route"]
 
 
@@ -532,3 +540,190 @@ def test_un_role_a_qui_rien_n_etait_recommande_garde_sa_phrase() -> None:
 
     assert AUCUN_SKILL in playbook_branche(constate)
     assert AUCUN_SKILL_ECRIT not in playbook_branche(constate)
+
+
+# --- ④ Le navigateur de Maestro (#1532) --------------------------------------
+
+
+def _service_equipe(tmp_path: Path) -> tuple[ServiceEquipe, ConfigurationAgents, str]:
+    """Le service, son navigateur fabriqué sans regarder le poste."""
+    _, gabarits, projet_id = _service(tmp_path)
+    depot = ProjetStore(tmp_path / "projets")
+    service = ServiceEquipe(
+        ServiceProjets(depot),
+        gabarits,
+        playbooks=False,
+        navigateur=lambda: integration_navigateur(canal="msedge", sorties=tmp_path / "sorties"),
+    )
+    return service, gabarits, projet_id
+
+
+def test_un_role_equipe_du_navigateur_le_monte_a_sa_tache_et_son_playbook_le_nomme(
+    tmp_path: Path,
+) -> None:
+    """Le critère du ticket, de la validation au montage : le pool du projet porte le
+    navigateur, il s'active pour le rôle qui le reçoit, et l'exécuteur le monte à sa
+    tâche (`McpStore.lire`, ce que `_serveurs_mcp` appelle) — sous le nom de Maestro."""
+    service, gabarits, projet_id = _service_equipe(tmp_path)
+
+    rapport = service.creer(
+        projet_id,
+        [_role(navigateur=True), _role("infra", role="Intégration continue", gabarit="devops")],
+    )
+
+    assert [a["navigateur"] for a in rapport["agents"]] == [True, False]
+    mcp = gabarits.pour_projet(projet_id).mcp
+    (integration,) = mcp.pool()
+    assert integration.id == ID_NAVIGATEUR
+    assert mcp.activations("dev") == (ID_NAVIGATEUR,)
+    assert mcp.activations("infra") == ()
+    (monte,) = gabarits.mcp.pour_projet(projet_id).lire("dev")
+    assert monte.nom == "navigateur"
+    assert "--browser=msedge" in monte.args
+    assert gabarits.mcp.pour_projet(projet_id).lire("infra") == ()
+    # Le playbook le nomme ; celui qui ne l'a pas n'en dit rien.
+    playbook = _playbook_ecrit(gabarits, projet_id)
+    assert TITRE_NAVIGATEUR in playbook
+    assert "`mcp__navigateur__`" in playbook
+    assert "N'écris pas ton propre banc" in playbook
+    assert TITRE_NAVIGATEUR not in _playbook_ecrit(gabarits, projet_id, "infra")
+    # Rien au niveau des gabarits, qui n'appartiennent à personne.
+    assert gabarits.mcp.pool() == ()
+
+
+def test_une_equipe_sans_navigateur_ne_touche_pas_au_pool(tmp_path: Path) -> None:
+    fabrique: list[str] = []
+    _, gabarits, projet_id = _service(tmp_path)
+    service = ServiceEquipe(
+        ServiceProjets(ProjetStore(tmp_path / "projets")),
+        gabarits,
+        playbooks=False,
+        navigateur=lambda: fabrique.append("appelé") or integration_navigateur(),
+    )
+
+    service.creer(projet_id, [_role()])
+
+    assert fabrique == []
+    assert gabarits.pour_projet(projet_id).mcp.pool() == ()
+    assert not (gabarits.mcp.racine / SEGMENT_PROJETS / projet_id / "pool.json").exists()
+
+
+def test_un_navigateur_deja_au_pool_est_repris_tel_quel(tmp_path: Path) -> None:
+    """Réglé par la personne depuis les intégrations — ou par une équipe précédente : ce
+    qui y est a été décidé par quelqu'un, et la création ne le réécrit pas."""
+    service, gabarits, projet_id = _service_equipe(tmp_path)
+    mcp = gabarits.pour_projet(projet_id).mcp
+    regle = IntegrationMcp(
+        id=ID_NAVIGATEUR,
+        serveur=ServeurMcp(nom="mon-navigateur", type="stdio", commande="npx", args=("x",)),
+    )
+    mcp.ecrire_pool([regle])
+    mcp.ecrire_activations("dev", ["autre"])  # une activation que l'agent avait déjà
+
+    service.creer(projet_id, [_role(navigateur=True)])
+
+    assert mcp.pool() == (regle,)
+    assert mcp.activations("dev") == ("autre", ID_NAVIGATEUR)
+
+
+def test_un_pool_illisible_refuse_l_equipe_sans_rien_ecrire(tmp_path: Path) -> None:
+    """Un rôle à qui l'on a promis le navigateur ne naît pas sans lui — ni la demi-équipe
+    qu'un refus après la première fiche laisserait."""
+    service, gabarits, projet_id = _service_equipe(tmp_path)
+    racine = gabarits.mcp.racine / SEGMENT_PROJETS / projet_id
+    racine.mkdir(parents=True)
+    (racine / "pool.json").write_text("{pas du json", encoding="utf-8")
+
+    with pytest.raises(EquipeRefusee) as refus:
+        service.creer(projet_id, [_role("tests", role="QA"), _role(navigateur=True)])
+
+    assert [r.nom for r in refus.value.refus] == ["dev"]
+    assert "navigateur de Maestro" in refus.value.refus[0].raison
+    assert gabarits.pour_projet(projet_id).agents.noms() == ()
+
+
+def test_la_section_du_navigateur_se_repose_et_se_retire_sans_s_empiler() -> None:
+    """Idempotente comme celle des skills : reposée, elle remplace ; le navigateur retiré
+    en mots, elle part — et la régénération du corps la met de côté avec les skills."""
+    une_fois = playbook_branche(_role(navigateur=True))
+    deux_fois = playbook_branche(_role(playbook=une_fois, navigateur=True))
+    assert deux_fois == une_fois
+    assert deux_fois.count(TITRE_NAVIGATEUR) == 1
+
+    retire = playbook_branche(_role(playbook=une_fois, navigateur=False))
+    assert TITRE_NAVIGATEUR not in retire
+    assert TITRE_SKILLS in retire
+
+    corps, sections = scinder_section_skills(une_fois)
+    assert corps == "Tu écris le code de Dépensio."
+    assert sections.startswith(TITRE_SKILLS)
+    assert TITRE_NAVIGATEUR in sections
+    assert section_navigateur() in sections
+
+
+# --- ⑤ Le skill fait foi : le playbook ne fige aucune commande (#1520) ---------
+#
+# Réserve R1 du bouclage du 2026-10-14 : chaque playbook listait la commande qu'un
+# skill « enveloppe », figée au recrutement. Remplacée ensuite — dite par la personne,
+# proposée par la revue d'après le run —, elle changeait dans le skill et restait dans
+# le playbook : un agent du run suivant recevait deux commandes pour le même geste.
+
+#: La section des skills telle que la création l'écrivait avant #1520 — l'état des
+#: équipes déjà recrutées (S9, passage `20261014-171347`).
+SECTION_D_AVANT = (
+    f"{TITRE_SKILLS}\n\n"
+    "L'outillage du projet t'est transmis en entier ; ceux-ci sont ceux que ton rôle "
+    "branche. Sers-t'en plutôt que de réinventer la commande.\n\n"
+    "- **construire-le-projet** — `.agents/skills/construire-le-projet/SKILL.md` "
+    "(il enveloppe : `python assembler.py`)\n"
+    "- **verifier-le-style** — `.agents/skills/verifier-le-style/SKILL.md` "
+    "(il enveloppe : `python -m ruff check .`, `python -c \"print(1)\"`)\n"
+)
+
+
+def test_la_section_ne_fige_aucune_commande_le_skill_fait_foi(tmp_path: Path) -> None:
+    """Le skill nommé, son chemin à ouvrir — la commande vit dans le skill, et nulle part
+    ailleurs : une commande remplacée dans le projet n'a plus de copie à rattraper."""
+    service, gabarits, projet_id = _service(tmp_path)
+    _ecrire_skill(Path.home() / "depensio", CHEMIN_METTRE_EN_ROUTE)
+
+    service.creer(projet_id, [_role(skills=(METTRE_EN_ROUTE,))])
+
+    playbook = _playbook_ecrit(gabarits, projet_id)
+    assert f"**mettre-en-route** — `{CHEMIN_METTRE_EN_ROUTE}`" in playbook
+    assert "pip install -e ." not in playbook
+    assert INTRO_SKILLS in playbook
+
+
+def test_un_playbook_d_avant_cesse_de_figer_ses_commandes_et_garde_le_reste() -> None:
+    """Le rebranchement d'une équipe déjà créée : la section de Maestro perd ses commandes
+    figées — une commande qui porte des parenthèses comprise —, et rien d'autre ne bouge.
+    Le corps du playbook, écrit pour le projet et relu par la personne, n'est pas à
+    Maestro : ce qu'il cite y reste, et c'est le constat de l'écriture qui le dira."""
+    corps = "Tu assembles le carnet. On t'a dit un jour : `python assembler.py`."
+    avant = f"{corps}\n\n{SECTION_D_AVANT}\n## Garde-fous\n\nrien de destructif.\n"
+
+    apres = sans_commandes_figees(avant)
+
+    assert "(il enveloppe :" not in apres
+    assert "print(1)" not in apres and "ruff check" not in apres
+    assert "- **construire-le-projet** — `.agents/skills/construire-le-projet/SKILL.md`\n" in apres
+    assert INTRO_SKILLS in apres
+    assert apres.startswith(corps)
+    assert apres.endswith("## Garde-fous\n\nrien de destructif.\n")
+    assert sans_commandes_figees(apres) == apres
+
+
+@pytest.mark.parametrize(
+    "playbook",
+    [
+        "Tu écris le code.\n",
+        playbook_branche(_role()),
+        playbook_branche(_role(skills_absents=(METTRE_EN_ROUTE,))),
+        playbook_branche(_role(skills=(METTRE_EN_ROUTE,))),
+    ],
+    ids=["sans-section", "aucun-skill", "aucun-skill-ecrit", "section-d-aujourd-hui"],
+)
+def test_un_playbook_qui_ne_fige_rien_revient_tel_quel(playbook: str) -> None:
+    """Idempotent, et muet là où il n'a rien à faire : rebrancher n'écrit pas pour rien."""
+    assert sans_commandes_figees(playbook) == playbook

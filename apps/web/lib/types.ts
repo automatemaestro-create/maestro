@@ -1292,6 +1292,10 @@ export type OptionOutillage = {
  * Il n'y a plus de `total` : le plafond fixe de #1031 est retiré, le questionnaire
  * s'arrête quand plus rien ne manque. `rang` dit combien de réponses précèdent
  * celle-ci, plus un — jamais combien il en reste, que personne ne sait d'avance.
+ *
+ * `proposition` (#1533) fait de la question **la proposition de l'outillage entier** :
+ * sans options, elle se retient d'un geste (`PROPOSITION_RETENUE`, `lib/outillage`) ou
+ * se corrige avec ses mots. Absente d'une question ordinaire.
  */
 export type QuestionOutillage = {
   cle: string;
@@ -1300,6 +1304,28 @@ export type QuestionOutillage = {
   recommande: string;
   pourquoi: string;
   rang: number;
+  proposition?: ElementProposeOutillage[];
+};
+
+/**
+ * Un élément de la proposition d'outillage (`Proposee.to_dict`, #1533) : ce que Maestro
+ * propose pour un sujet que rien de ce qui a été dit ne tranche.
+ *
+ * `valeur` est ce qui sera écrit (une commande, un fichier), `libelle` le nom qui la
+ * lit (« Vitest » pour `npm test`), `raison` ce qui, **dans ce projet**, la désigne.
+ * `sujet` et `commande` sont servis par le moteur, comme sur un `ChoixOutillage` ;
+ * `absents` nomme les programmes que le poste n'a pas (#1343) — la raison le dit déjà.
+ */
+export type ElementProposeOutillage = {
+  cle: string;
+  valeur: string;
+  libelle: string;
+  raison: string;
+  sujet: string;
+  commande: boolean;
+  outils?: string[];
+  absents?: string[];
+  pour?: string;
 };
 
 /**
@@ -3248,6 +3274,21 @@ export type RoleEquipe = {
   skills: SkillEquipe[];
   autorisations: AutorisationEquipe[];
   politique: PolitiqueEquipe;
+  /**
+   * Le rôle reçoit le navigateur de Maestro (#1532) — proposé par la composition
+   * à qui regarde l'écran d'un projet web. Absent d'une proposition servie avant.
+   */
+  navigateur?: boolean;
+};
+
+/**
+ * Ce que la personne lit du navigateur de Maestro (`navigateur_de_maestro()`,
+ * #1532) : son nom et son usage, servis une fois avec la proposition — la face de
+ * la carte et la ligne d'un rôle lisent la même phrase.
+ */
+export type NavigateurDeMaestro = {
+  libelle: string;
+  usage: string;
 };
 
 /**
@@ -3285,6 +3326,8 @@ export type PropositionEquipe = {
    * avant #1159.
    */
   composition?: { origine: string; raison: string };
+  /** Le navigateur de Maestro, dit une fois (#1532). Absent avant. */
+  navigateur_de_maestro?: NavigateurDeMaestro;
   roles: RoleEquipe[];
   ecartes: RoleEcarteEquipe[];
   instances_total: number;
@@ -3301,6 +3344,8 @@ export type MembreEquipe = {
   role: string;
   retenu: boolean;
   instances: number;
+  /** Le rôle a, à l'écran, le navigateur de Maestro (#1532). */
+  navigateur: boolean;
 };
 
 /**
@@ -3317,6 +3362,11 @@ export type CorrectionEquipe = {
   retraits: string[];
   remis: string[];
   instances: Record<string, number>;
+  /**
+   * À qui le navigateur de Maestro est donné (`true`) ou retiré (`false`), parmi
+   * les rôles montrés (#1532). Absent d'une correction servie avant.
+   */
+  navigateur?: Record<string, boolean>;
   cree: boolean;
 };
 
@@ -3373,6 +3423,8 @@ export type RoleValideEquipe = {
   gabarit: string;
   skills: { nom: string; chemin: string; commandes: string[] }[];
   politique: PolitiqueEquipe | null;
+  /** Le rôle reçoit le navigateur de Maestro, tel que la carte l'a montré (#1532). */
+  navigateur: boolean;
 };
 
 /** Un agent que la validation a créé dans le projet (`AgentCree.to_dict`, #1040). */
