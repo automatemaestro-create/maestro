@@ -175,6 +175,7 @@ from maestro.engine.executor import (
     _ecoule_ms,
 )
 from maestro.engine.guardrails import Guardrails
+from maestro.engine.limite import AttenteLimite
 from maestro.engine.pause import PorteExecution
 from maestro.engine.plafond import (
     STATUT_PLAFOND_ARRETE,
@@ -568,6 +569,7 @@ class OrchestrationEngine:
         registre_mcp: Callable[[], RegistreMcp] | None = None,
         arbitre_plafond: ArbitrePlafond | None = None,
         acquis: MagasinAcquis | None = None,
+        attente_limite: AttenteLimite | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -728,6 +730,11 @@ class OrchestrationEngine:
                 # Les plafonds en vigueur (#1182) : ceux que la boucle relève sur
                 # décision, relus par l'exécuteur à chaque tâche.
                 plafonds=self._plafonds,
+                # L'attente à la limite d'usage du fournisseur (#1543) : c'est
+                # l'exécuteur qui tient la tâche coupée, son espace ouvert, jusqu'à
+                # la reprise. Même nature que les arbitres : *qui* tient la pause
+                # est un câblage de déploiement. Ignorée si un exécuteur est injecté.
+                attente_limite=attente_limite,
             )
         )
 
@@ -749,6 +756,7 @@ class OrchestrationEngine:
         rattrapage: PolitiqueRattrapage | None = RATTRAPAGE_DEFAUT,
         arbitre_plafond: ArbitrePlafond | None = None,
         acquis: MagasinAcquis | None = None,
+        attente_limite: AttenteLimite | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -855,6 +863,13 @@ class OrchestrationEngine:
         `acquis` (#1391) est **où** le run range ce qu'il a payé — en pratique
         `maestro.controltower.acquis.magasin_acquis_configure()`. None (défaut) :
         rien n'est rangé, et le run interrompu ne se reprend pas sur son plan.
+
+        `attente_limite` (#1543) est **qui** tient la pause quand le fournisseur
+        oppose sa limite d'usage — en pratique
+        `maestro.controltower.limite.AttenteLimiteControlTower`. Le run se met en
+        pause, cause et heure de reprise dites, et la tâche coupée reprend dans sa
+        session au reset ou sur « Reprendre ». None (défaut) : personne, et la
+        tâche coupée échoue sur sa limite, nommée par son type.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -895,6 +910,7 @@ class OrchestrationEngine:
             registre_mcp=_allowlist_mcp_du_poste,
             arbitre_plafond=arbitre_plafond,
             acquis=acquis,
+            attente_limite=attente_limite,
         )
 
     async def run(

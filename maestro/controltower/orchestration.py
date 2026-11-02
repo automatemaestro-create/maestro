@@ -1619,6 +1619,27 @@ def heure_locale(horodatage: str | None) -> str:
     return instant.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+def pause_en_mots(depuis: str | None, cause: str, reprise_a: str | None) -> str:
+    """La pause d'un run en mots — depuis quand, et pourquoi si ce n'est pas une personne (#1543).
+
+    « en pause depuis 2026-10-15 10:02 — limite d'usage du fournisseur, reprise
+    prévue à 2026-10-15 12:00 ». Une pause posée par une personne se dit comme
+    avant, sans raison : c'est elle qui la connaît. Le fil la dit aux trois
+    endroits où il décrit un run, avec ces mots-là.
+    """
+    heure = heure_locale(depuis)
+    texte = f"en pause depuis {heure}" if heure else "en pause"
+    if cause != CAUSE_LIMITE_USAGE:
+        return texte
+    reprise = heure_locale(reprise_a)
+    quand = (
+        f"reprise prévue à {reprise}"
+        if reprise
+        else "le fournisseur n'a pas dit quand elle se lève : reprise sur « Reprendre »"
+    )
+    return f"{texte} — {_LIBELLES_CAUSE[CAUSE_LIMITE_USAGE].lower()}, {quand}"
+
+
 def etat_du_run(resume: Mapping[str, Any]) -> str:
     """L'état d'un run **en mots**, tel qu'on le relit après un geste (#1179).
 
@@ -1631,8 +1652,11 @@ def etat_du_run(resume: Mapping[str, Any]) -> str:
         str(resume.get("statut") or ""), str(resume.get("cause") or "")
     )
     if resume.get("en_pause"):
-        depuis = heure_locale(str(resume.get("pause_depuis") or ""))
-        etat += f" — en pause depuis {depuis}" if depuis else " — en pause"
+        etat += " — " + pause_en_mots(
+            str(resume.get("pause_depuis") or ""),
+            str(resume.get("pause_cause") or ""),
+            str(resume.get("reprise_a") or ""),
+        )
     # La cause d'une annulation (« Interrompu ») redit le statut « Annulée » : vu sur
     # la vraie stack, le fil citait « Annulée — Interrompu » mot pour mot. Les autres
     # causes, elles, disent pourquoi (un plafond, l'extinction de Maestro).
@@ -2387,8 +2411,10 @@ def fiche_du_run(state: ControlTowerState, execution: EtatExecution) -> list[str
     if lance:
         lignes.append(f"  lancé : {lance}")
     if execution.en_pause:
-        depuis = heure_locale(execution.pause_depuis)
-        lignes.append(f"  en pause depuis {depuis}" if depuis else "  en pause")
+        lignes.append(
+            "  "
+            + pause_en_mots(execution.pause_depuis, execution.pause_cause, execution.reprise_a)
+        )
     cause = libelle_cause(execution.cause)
     if cause:
         lignes.append(f"  cause : {cause}")
@@ -2582,8 +2608,9 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
         if lance:
             lignes.append(f"lancé : {lance}")
         if execution.en_pause:
-            depuis = heure_locale(execution.pause_depuis)
-            lignes.append(f"en pause depuis {depuis}" if depuis else "en pause")
+            lignes.append(
+                pause_en_mots(execution.pause_depuis, execution.pause_cause, execution.reprise_a)
+            )
         cause = libelle_cause(execution.cause)
         if cause:
             lignes.append(f"cause : {cause}")

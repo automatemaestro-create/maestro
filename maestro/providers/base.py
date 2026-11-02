@@ -16,6 +16,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
@@ -161,6 +162,32 @@ class PlafondFluxDepasse(RuntimeError):
     Le message dit ce qui a débordé et de combien : c'est la cause de l'échec de
     la tâche, telle que le journal, l'écran et le récit de fin la liront.
     """
+
+
+class LimiteUsageAtteinte(RuntimeError):
+    """Levée quand le fournisseur refuse de servir parce que sa limite d'usage est atteinte (#1543).
+
+    Limite de la fenêtre d'un abonnement, quota, 429, solde épuisé : le fournisseur
+    ne dit pas que la tâche est fausse, il dit qu'il ne la servira plus **pour
+    l'instant**. Chaque adaptateur mue son signal natif en cette exception — le CLI
+    de Claude en émet un typé dans son flux, un endpoint HTTP répond 429 —, et
+    c'est ce qui laisse le moteur reconnaître la limite **sans lire de texte**
+    (docs/44) : le run du 2026-10-15 (`0300f3ffdddf`) s'était soldé en échec parce
+    qu'un « You've hit your session limit » ne ressemblait à aucun des libellés
+    qu'on y cherchait.
+
+    `reprise_a` est l'instant où le fournisseur dit que la limite se lève — None
+    quand il ne le dit pas (un solde épuisé ne se lève pas avec le temps). Le
+    message est ce qu'il en a dit, pour qu'une personne le lise ; rien ne le relit.
+
+    Non transitoire par nature : relancer aussitôt retomberait sur la même limite.
+    Le moteur ne relance donc pas — il **attend** (`maestro.engine.limite`), puis la
+    tâche repart dans sa session.
+    """
+
+    def __init__(self, message: str, *, reprise_a: datetime | None = None) -> None:
+        super().__init__(message)
+        self.reprise_a = reprise_a
 
 
 class GardeFouInoperant(RuntimeError):
@@ -462,6 +489,14 @@ class ModelProvider(ABC):
     #: le fournisseur pour qu'un canal qui le résout sache quel modèle lui demander
     #: sans relire la configuration : les deux viennent d'une seule lecture.
     modele_configure: str | None = None
+
+    #: Ce fournisseur rouvre-t-il une conversation (`run_agent(session=…)`, #1513) ?
+    #: Faux par défaut, et c'est la règle de `run_agent` : un fournisseur qui ne sait
+    #: pas rouvrir lève `UnsupportedCapability` plutôt que d'en ouvrir une neuve sans
+    #: le dire. Le runtime le lit avant de nommer la session d'une tâche, pour la
+    #: reprendre après une limite d'usage (#1543) — sans lui, la tâche repart de son
+    #: message entier, dans le même espace de travail.
+    rouvre_les_sessions: ClassVar[bool] = False
 
     @property
     def commandes_sur_le_poste(self) -> bool:
@@ -925,11 +960,16 @@ class ModelProvider(ABC):
         `session` (#1513) rouvre une conversation : la première exécution l'ouvre
         sous l'identifiant que Maestro a choisi (`SessionAgent`), les suivantes la
         reprennent avec ce qu'elle contenait. Sans `session`, chaque exécution part
-        d'une conversation neuve — le cas de toute tâche d'un run. Le banc comparatif
-        s'en sert pour l'agent seul, qui reprend le lendemain sa session de la veille
-        comme le ferait une personne. Un fournisseur qui ne sait pas rouvrir une
-        conversation lève `UnsupportedCapability` plutôt que d'en ouvrir une neuve
-        sans le dire.
+        d'une conversation neuve. Le banc comparatif s'en sert pour l'agent seul, qui
+        reprend le lendemain sa session de la veille comme le ferait une personne ;
+        une tâche d'un run, pour reprendre la conversation que la limite d'usage a
+        coupée (#1543). Un fournisseur qui ne sait pas rouvrir une conversation lève
+        `UnsupportedCapability` plutôt que d'en ouvrir une neuve sans le dire, et le
+        déclare (`rouvre_les_sessions`).
+
+        Une **limite d'usage** du fournisseur lève `LimiteUsageAtteinte`, son instant
+        de reprise compris quand il le donne : c'est le signal natif de l'adaptateur,
+        mué dans les mots de Maestro, et jamais un message à relire.
 
         Capacité **optionnelle** : la base la refuse (`UnsupportedCapability`) ; un
         fournisseur outillé (Claude via l'Agent SDK) la surcharge. Le moteur reste
