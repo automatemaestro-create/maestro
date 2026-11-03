@@ -285,7 +285,9 @@ def bloc_outillage(instructions: str) -> str:
     )
 
 
-def build_user_prompt(objective: str, contexte_sources: str = "", outillage: str = "") -> str:
+def build_user_prompt(
+    objective: str, contexte_sources: str = "", outillage: str = "", demande: str = ""
+) -> str:
     """Compose le message utilisateur transmis au modèle pour un objectif donné.
 
     `contexte_sources` (#1172) est la sortie de `contexte_markdown`, jamais du
@@ -298,6 +300,13 @@ def build_user_prompt(objective: str, contexte_sources: str = "", outillage: str
     `outillage` (#1507) est le texte des instructions du projet (`bloc_outillage`),
     avec ou sans brief : c'est le plan qui confie à une tâche ce que l'outillage
     prévoit. Vide, rien n'en est dit.
+
+    `demande` (#1580) est la demande approuvée dont `objective` est le brief : on ne
+    décompose pas une reformulation sans son original. Elle vient **après** le brief,
+    qui fait autorité sur ce qu'il tranche, et garde ce qu'une reformulation a perdu
+    — au banc du 2026-11-03, « chaque section se publie dès qu'elle est validée,
+    sans attendre les autres » était devenu « chaque page reste autonome ». Vide
+    (un run sans brief, dont la demande est l'objectif), rien n'en est dit.
     """
     cleaned = objective.strip()
     prompt = (
@@ -307,6 +316,11 @@ def build_user_prompt(objective: str, contexte_sources: str = "", outillage: str
         "décision, critères de réussite.\n\n"
         f"Objectif :\n{cleaned}"
     )
+    if demande.strip():
+        prompt += (
+            "\n\nLa demande dont ce brief est né, telle que la personne l'a approuvée :\n"
+            f"{demande.strip()}"
+        )
     if bloc_outillage(outillage):
         prompt += f"\n\n{bloc_outillage(outillage)}"
     if contexte_sources.strip():

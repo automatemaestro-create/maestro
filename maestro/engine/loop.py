@@ -1059,13 +1059,16 @@ class OrchestrationEngine:
             # c'est le texte que l'humain a relu pour approuver, périmètre et
             # critères compris, et décomposer moins que ce qui a été approuvé rendrait
             # l'approbation trompeuse. Les sources suivent la même règle : le brief
-            # les a digérées, sinon le plan est le premier à les lire.
+            # les a digérées, sinon le plan est le premier à les lire. La demande
+            # voyage à côté du brief (#1580) : on ne décompose pas une reformulation
+            # sans son original.
             entree_plan = objective if brief is None else brief.synthese()
             plan_usage, tasks = await self._plan(
                 entree_plan,
                 journal,
                 projet_id,
                 contexte_sources=contexte_sources if brief is None else "",
+                demande="" if brief is None else objective,
             )
         # Le brief sous lequel les tâches de ce run travaillent (#1402) : celui que
         # le cadrage vient de retenir, sinon celui que le run a reçu sans recadrer.
@@ -1699,6 +1702,7 @@ class OrchestrationEngine:
         projet_id: str | None = None,
         *,
         contexte_sources: str = "",
+        demande: str = "",
     ) -> tuple[StepUsage, list[Task]]:
         """Planifie l'objectif en consignant l'étape (usage et issue) dans le journal.
 
@@ -1726,6 +1730,9 @@ class OrchestrationEngine:
         (`LocalExecutor._equipe`), par la même règle
         (`maestro.agents.store.catalogue_du_projet`). C'est ce qui fait qu'un tag
         proposé au découpage est un tag que quelqu'un sait prendre.
+
+        `demande` (#1580) est la demande approuvée quand `objective` est la synthèse
+        d'un brief : le plan la lit à côté de lui (`Orchestrator.plan`).
         """
         debut = perf_counter()
         with collect_usage() as recolte:
@@ -1735,6 +1742,7 @@ class OrchestrationEngine:
                     equipe=self._equipe(projet_id),
                     contexte_sources=contexte_sources,
                     outillage=self._outillage(projet_id),
+                    demande=demande,
                 )
             except Exception as exc:
                 journal.consigne(

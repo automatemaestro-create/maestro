@@ -294,6 +294,32 @@ def test_le_plan_confie_ce_que_l_outillage_prevoit_a_une_tache_nommee():
     assert "clone neuf du livrable" in texte
 
 
+def test_le_brief_garde_ce_que_la_personne_dit_de_la_livraison():
+    """#1580 : au banc du 2026-11-03, les deux briefs de S11 ont réécrit « chaque section
+    est relue par une personne différente et se publie sans attendre les autres » en
+    propriété des fichiers (« chaque page reste autonome »), et le plan y a lu l'autonomie
+    d'un fichier, pas une livraison séparée. Le document dit que c'est un besoin, où il
+    entre, et ce qu'il ne devient pas ; ce qu'un modèle en fait se mesure au banc (S11)."""
+    texte = _brief_normalise()
+
+    assert "Ce que la personne dit de la livraison est un besoin" in texte
+    assert "relu, validé, publié ou livré" in texte
+    assert "dans les contraintes, avec sa raison" in texte
+    assert "Ne le réécris pas en propriété des fichiers" in texte
+
+
+def test_le_plan_lit_la_demande_a_cote_du_brief_qui_fait_autorite():
+    """#1580 : le plan reçoit la demande d'origine avec le brief (cf. la boucle, plus bas).
+    Le document dit comment les lire ensemble : le brief tranche, la demande garde ce
+    qu'il a tu — jamais ce qu'il a mis hors périmètre."""
+    texte = " ".join(prompt_orchestrateur().replace("**", "").split())
+
+    assert "la demande dont il est né" in texte
+    assert "Le brief fait autorité sur ce qu'il tranche" in texte
+    assert "ce qu'elle dit et que le brief tait reste un besoin" in texte
+    assert "Ce que le brief met hors périmètre en est sorti" in texte
+
+
 def test_le_brief_garde_les_trois_familles_qui_demandent_un_humain():
     """Non-régression : #1149 retire une redondance, jamais l'escalade. Les trois
     familles restent, et le test du « même plan / deux plans » aussi."""
@@ -506,6 +532,45 @@ def test_c_est_la_synthese_du_brief_qui_part_en_decomposition():
     assert "# Brief" in entree
     assert "## Critères d'acceptation" in entree
     assert "Facturation" in entree  # le hors-périmètre voyage avec le reste
+
+
+#: Une demande qui dit comment son travail se livre (#1580) — la raison de S11.
+DEMANDE_LIVREE_A_PART = (
+    "Maquette les quatre sections du site. Chaque section est relue par une personne "
+    "différente de l'atelier, et se publie dès qu'elle est validée, sans attendre les autres."
+)
+
+
+def test_le_plan_recoit_la_demande_que_le_brief_a_reformulee():
+    """#1580 : on ne décompose pas une reformulation sans son original.
+
+    Au banc du 2026-11-03 (run `0b8d1f35382b`), le brief a réécrit la raison de
+    livraison de S11 en « chaque page s'ouvre, se relit et se valide seule », et le
+    plan, qui ne lisait que lui, en a fait une seule tâche — « l'exigence porte sur
+    l'autonomie de chaque fichier ». Un brief qui perd un besoin ne le fait plus
+    disparaître de ce que le plan reçoit : la demande approuvée voyage à côté de lui."""
+    perdu = brief(
+        objectif="Quatre pages HTML existent à la racine du projet.",
+        contraintes=["Chaque page s'ouvre, se relit et se valide seule."],
+        questions=[],
+    )
+    engine, cadrage, _ = moteur(
+        cadrage=ProviderCadrage(brief_json=json.dumps(perdu.to_dict(), ensure_ascii=False))
+    )
+
+    asyncio.run(engine.run(DEMANDE_LIVREE_A_PART, mode_brief=MODE_BRIEF_AUTO))
+
+    entree = cadrage.prompts_plan[0]
+    assert "# Brief" in entree  # le brief reste ce qui se décompose…
+    assert "se publie dès qu'elle est validée, sans attendre les autres" in entree  # …pas seul
+    assert entree.index("# Brief") < entree.index(DEMANDE_LIVREE_A_PART)
+
+
+def test_sans_brief_la_demande_ne_se_redit_pas():
+    """En mode « sans », la demande **est** l'objectif du plan : elle n'y paraît qu'une fois."""
+    engine, cadrage, _ = moteur()
+    asyncio.run(engine.run(DEMANDE_LIVREE_A_PART))
+    assert cadrage.prompts_plan[0].count(DEMANDE_LIVREE_A_PART) == 1
 
 
 def test_mode_humain_sans_arbitre_est_refuse_avant_tout_appel_modele():

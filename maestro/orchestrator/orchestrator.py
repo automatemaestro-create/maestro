@@ -91,6 +91,7 @@ class Orchestrator:
         equipe: Sequence[Agent] | None = None,
         contexte_sources: str = "",
         outillage: str = "",
+        demande: str = "",
     ) -> list[Task]:
         """Produit le plan de tâches pour `objective`.
 
@@ -108,6 +109,10 @@ class Orchestrator:
         `outillage` (#1507) : les instructions de l'outillage du projet — ce qu'il
         prévoit se confie à une tâche (cf. `build_user_prompt`). Vide hors projet.
 
+        `demande` (#1580) : quand `objective` est un brief, la demande approuvée dont
+        il est né — le plan la lit à côté de lui (cf. `build_user_prompt`). Vide pour
+        un run sans brief, dont l'objectif est la demande.
+
         Lève `ValueError` si l'objectif est vide, `PlanParsingError` si la réponse
         du modèle n'est pas un tableau JSON exploitable, `TaskValidationError` si le
         plan enfreint le schéma ou les règles inter-tâches.
@@ -116,7 +121,7 @@ class Orchestrator:
             raise ValueError("L'objectif est vide.")
 
         response = await self._provider.generate(
-            build_user_prompt(objective, contexte_sources, outillage),
+            build_user_prompt(objective, contexte_sources, outillage, demande),
             model=self._model,
             system_prompt=prompt_orchestrateur(equipe),
         )
