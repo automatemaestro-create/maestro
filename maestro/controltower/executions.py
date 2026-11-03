@@ -237,6 +237,7 @@ from maestro.controltower.gestes import (
 )
 from maestro.controltower.hote import DemarrageHoteRate, HoteRun, OrdreRun
 from maestro.controltower.hote_en_process import HoteRunEnProcess
+from maestro.controltower.limite import AttenteLimiteControlTower
 from maestro.controltower.plafond import ArbitrePlafondControlTower
 from maestro.controltower.portee import PorteeProjet, PorteeRun
 from maestro.controltower.progression import (
@@ -271,7 +272,9 @@ from maestro.engine.brief import (
 from maestro.engine.guardrails import GardeFousIngestion, Guardrails
 from maestro.engine.pause import PorteExecution
 from maestro.orchestrator.schema import Brief
+from maestro.outillage.contexte import outillage_du_projet
 from maestro.projets.application import ApplicationRefusee
+from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.racine import RacineRefusee
 from maestro.projets.store import ProjetStore
 from maestro.references import ReferenceTicket
@@ -388,6 +391,11 @@ DETAIL_HOTE_TU = "son hôte s'était tu : le run est repris sur son plan"
 #: restent à faire (`_solder_les_taches` dit pourquoi `assignee` n'en est pas).
 _JAMAIS_DEMARREES = frozenset({STATUT_BACKLOG, STATUT_PRETE})
 
+#: Ce qu'on laisse au modèle pour rédiger, dans la convention du projet, les messages
+#: des sauvegardes d'un run qu'on solde (#1507) — tous ensemble. Une extinction ne doit
+#: pas attendre un modèle qui ne répond pas : au-delà, le message de Maestro.
+DELAI_MESSAGES_SAUVEGARDE_S = 20.0
+
 _LOGGER = logging.getLogger("maestro.controltower")
 
 
@@ -492,6 +500,10 @@ class ServiceExecutions:
     — le défaut des tests — : rien n'est porté, et le travail d'une tâche tuée en
     vol attend le remontage de sa reprise, comme avant ce ticket. La production
     câble le dépôt de l'app (`create_app`).
+
+    `redacteur` (#1507) rédige le message de ces sauvegardes dans la convention de
+    commit du projet, quand la personne en a choisi une (`maestro.projets.commits`) ;
+    le fournisseur est résolu au premier usage. Sans convention, il n'est pas appelé.
     """
 
     def __init__(
@@ -510,9 +522,11 @@ class ServiceExecutions:
         hote: HoteRun | None = None,
         acquis: MagasinAcquis | None = None,
         projets: ProjetStore | None = None,
+        redacteur: RedacteurDeCommits | None = None,
     ) -> None:
         self._bus = bus
         self._projets = projets
+        self._redacteur = redacteur if redacteur is not None else RedacteurDeCommits()
         self._acquis = acquis if acquis is not None else MagasinAcquisMemoire()
         # Les runs dont une reprise sur le plan est **en train** de partir (#1391) —
         # le garde-fou du double clic, parce que la reprise relit son état hors du
@@ -1786,11 +1800,13 @@ class ServiceExecutions:
         projets = self._projets
         if projets is None:
             return
-        en_vol = [(t.id, t.projet_id) for t in self._taches_en_vol(run_id) if t.projet_id]
+        taches = [t for t in self._taches_en_vol(run_id) if t.projet_id]
+        en_vol = [(t.id, t.projet_id) for t in taches if t.projet_id]
         if not en_vol:
             return
+        messages = await self._messages_des_sauvegardes(projets, taches)
         try:
-            await asyncio.to_thread(_porter_sur_les_branches, projets, run_id, en_vol)
+            await asyncio.to_thread(_porter_sur_les_branches, projets, run_id, en_vol, messages)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1799,6 +1815,55 @@ class ServiceExecutions:
                 "du run le cherchera dans les worktrees restés montés.",
                 run_id,
             )
+
+    async def _messages_des_sauvegardes(
+        self, projets: ProjetStore, taches: Sequence[EtatTache]
+    ) -> dict[str, str]:
+        """Le message de chaque sauvegarde, dans la convention de commit du projet (#1507).
+
+        Ces commits **ne se réécrivent plus** après coup — le travail sauvé sortirait de
+        l'histoire du projet (S12, passage `20261022-075529`) : ils doivent donc naître
+        dans la convention que la personne a choisie. Le rédacteur les écrit tous
+        ensemble, sous `DELAI_MESSAGES_SAUVEGARDE_S` : un run qu'on éteint n'attend pas
+        un modèle qui ne répond pas, et ce qui n'est pas rédigé à temps garde le message
+        de Maestro. `{}` sans convention, sans rien demander au modèle — et jamais une
+        levée : une sauvegarde ne dépend pas de son message.
+        """
+
+        def conventions() -> dict[str, str]:
+            vues: dict[str, str] = {}
+            for tache in taches:
+                projet = projets.lire(tache.projet_id or "")
+                if projet is not None:
+                    vues[tache.id] = outillage_du_projet(projet).convention_de_commit
+            return vues
+
+        try:
+            par_tache = await asyncio.to_thread(conventions)
+            a_rediger = [t for t in taches if par_tache.get(t.id)]
+            if not a_rediger:
+                return {}
+            rediges = await asyncio.wait_for(
+                asyncio.gather(
+                    *(
+                        self._redacteur.message(
+                            convention=par_tache[t.id],
+                            changement=(
+                                "sauvegarde le travail en cours de la tâche "
+                                f"« {t.titre or t.id} », interrompue avant sa fin "
+                                f"(branche `{branche_de_tache(t.id)}`)"
+                            ),
+                        )
+                        for t in a_rediger
+                    )
+                ),
+                timeout=DELAI_MESSAGES_SAUVEGARDE_S,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — délai, lecture : le message de Maestro reste
+            return {}
+        return {t.id: message for t, message in zip(a_rediger, rediges, strict=True) if message}
 
     async def fermer(self) -> None:
         """Arrête le service : l'hôte se retire, pont déposé, pompe éteinte.
@@ -2211,6 +2276,11 @@ class ServiceExecutions:
                 # L'état acquis (#1391) : le magasin que ce service relit pour
                 # reprendre un run, rempli par le run lui-même au fil de l'eau.
                 acquis=self._acquis,
+                # La limite d'usage du fournisseur (#1543) : même bus, et la porte
+                # de **ce** run, que l'attente ferme et rouvre — ici, aucun guet ne
+                # la bascule sur les ordres du bus. Le run s'y met en pause au lieu
+                # d'échouer, et repart au reset ou sur « Reprendre ».
+                attente_limite=AttenteLimiteControlTower(self._bus, porte=porte),
             )
             rapport = await moteur.run(
                 ordre.objectif,
@@ -2371,20 +2441,26 @@ class ServiceExecutions:
 
 
 def _porter_sur_les_branches(
-    projets: ProjetStore, run_id: str, en_vol: Sequence[tuple[str, str]]
+    projets: ProjetStore,
+    run_id: str,
+    en_vol: Sequence[tuple[str, str]],
+    messages: Mapping[str, str] | None = None,
 ) -> None:
     """Ce que `ServiceExecutions._sauver_le_travail_en_vol` joue hors de la boucle (#1392).
 
     Tâche par tâche, et chacune pour son compte : un refus motivé pour l'une —
     racine refusée, Git absent, commit que le projet refuse — est dit, et
-    n'empêche pas la suivante d'être sauvée.
+    n'empêche pas la suivante d'être sauvée. `messages` (#1507) donne, par tâche, le
+    message rédigé dans la convention du projet ; absent, celui de Maestro.
     """
     for tache_id, projet_id in en_vol:
         projet = projets.lire(projet_id)
         if projet is None:
             continue
         try:
-            porte = sauver_le_travail_en_vol(projet, tache_id)
+            porte = sauver_le_travail_en_vol(
+                projet, tache_id, message=(messages or {}).get(tache_id, "")
+            )
         except (ApplicationRefusee, RacineRefusee, EspaceProjetIndisponible) as refus:
             _LOGGER.warning(
                 "Travail en vol de la tâche %s (run %s) non porté sur %s : %s",

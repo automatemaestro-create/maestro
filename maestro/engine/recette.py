@@ -381,15 +381,22 @@ def chemin_de_la_recette(run_id: str) -> str:
     return f"{DOSSIER_RECETTE}/{run_id}.md"
 
 
+def message_de_la_recette(run_id: str) -> str:
+    """Le message de Maestro pour le commit de la recette — celui d'un projet sans convention."""
+    return f"Maestro : recette du run {run_id}"
+
+
 def ecrire_dans_le_projet(
-    projet: Projet, run_id: str, texte: str, *, accorde: bool
+    projet: Projet, run_id: str, texte: str, *, accorde: bool, message: str = ""
 ) -> tuple[str, str]:
     """Écrit la recette dans le projet, au régime du projet — rend `(fichier, raison)`.
 
     `fichier` est le chemin absolu écrit, `raison` pourquoi rien ne l'a été : un seul
     des deux est non vide. `accorde` dit si le run a reçu l'accord d'écrire dans ce
-    projet (#706) — sans lui, un projet versionné ne reçoit rien. **Bloquant** (disque,
-    sous-processus Git) : l'appelant le joue hors de sa boucle. Ne lève pas.
+    projet (#706) — sans lui, un projet versionné ne reçoit rien. `message` est le sujet
+    du commit, rédigé dans la convention du projet (#1507) ; vide, c'est celui de Maestro
+    (`message_de_la_recette`). **Bloquant** (disque, sous-processus Git) : l'appelant le
+    joue hors de sa boucle. Ne lève pas.
     """
     relatif = chemin_de_la_recette(run_id)
     try:
@@ -409,7 +416,7 @@ def ecrire_dans_le_projet(
             )
         try:
             cible = deposer_sur_la_base(
-                projet, relatif, texte, message=f"Maestro : recette du run {run_id}"
+                projet, relatif, texte, message=message or message_de_la_recette(run_id)
             )
         except (ApplicationRefusee, RacineRefusee) as exc:
             return "", f"recette non commitée dans le projet : {exc}"

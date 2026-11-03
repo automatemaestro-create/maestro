@@ -979,6 +979,16 @@ class EtatExecution:
     # depuis 14:02 » après le geste, et non un simple « en pause » dont on ne sait
     # s'il date d'une minute ou d'hier.
     pause_depuis: str | None = None
+    # **Pourquoi** ce run est en pause (#1543) — `limite_usage` quand le fournisseur
+    # a opposé sa limite à une tâche, vide quand c'est une personne qui l'a mis en
+    # pause. Le régime de `pause_depuis`, avec une différence : c'est le **dernier**
+    # ordre de pause qui le dit, parce que la raison change en cours de pause (une
+    # limite qui tombe sur un run qu'on avait suspendu, puis qui se lève).
+    pause_cause: str = ""
+    # **Quand** il reprendra de lui-même (#1543) — l'heure que le fournisseur a dite
+    # (ISO 8601), None quand il n'a rien dit : il reprendra alors sur « Reprendre ».
+    # Même régime que `pause_cause`.
+    reprise_a: str | None = None
     # Le **graphe du plan** (#490), posé une fois par `run.plan` et jamais
     # retiré : nœuds, arêtes, ossatures de checklist, tels que la décomposition
     # les a écrits. Vide pour un run qui n'en a pas publié — moteur antérieur à
@@ -1151,6 +1161,11 @@ class EtatExecution:
             "en_pause": self.en_pause,
             # Et depuis quand (#1179), à côté du drapeau dont il est l'ancienneté.
             "pause_depuis": self.pause_depuis,
+            # Pourquoi, et jusqu'à quand (#1543) : la limite d'usage du fournisseur
+            # et l'heure qu'il a dite — la liste montre qu'un run en pause repartira
+            # de lui-même, et à quelle heure.
+            "pause_cause": self.pause_cause,
+            "reprise_a": self.reprise_a,
             # La cause d'arrêt (#479) dans le **résumé**, et c'est le critère du
             # ticket : « dans la liste comme dans sa vue ». Un run en échec dont
             # il faut ouvrir la page pour savoir s'il a manqué de budget ou
@@ -2359,8 +2374,16 @@ class ControlTowerState:
             # l'événement que le service a déjà appliqué) garde sa première heure.
             if not execution.en_pause:
                 execution.pause_depuis = None
-            elif execution.pause_depuis is None:
+                execution.pause_cause = ""
+                execution.reprise_a = None
+                return
+            if execution.pause_depuis is None:
                 execution.pause_depuis = event.horodatage or None
+            # Sa raison et son heure de reprise (#1543) sont celles du **dernier**
+            # ordre : une limite mieux informée rallonge l'heure, une limite levée
+            # sur un run suspendu rend la pause à la personne qui l'avait posée.
+            execution.pause_cause = event.cause
+            execution.reprise_a = event.echeance or None
             return
         # L'objectif **entier** est dans `description` depuis #991 (défaut S12),
         # `titre` ne portant plus que sa forme courte. Le repli sur `titre` n'est
@@ -2436,6 +2459,8 @@ class ControlTowerState:
             # `annulation`) la lève, comme toute annulation.
             execution.en_pause = False
             execution.pause_depuis = None
+            execution.pause_cause = ""
+            execution.reprise_a = None
         # Le run n'attend plus dès qu'il n'est plus dans un état d'attente (#321) —
         # au premier chef l'**annulation en pleine attente**, qui est le cas que la
         # troisième exigence du ticket protège. Laisser l'ancienneté derrière soi

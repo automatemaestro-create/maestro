@@ -138,7 +138,7 @@ régénérer et à #1032 de lire :
 | `## Le projet` | Ce qu'il est, en un paragraphe. Un agent qui arrive ne le sait pas |
 | `## Monter et lancer` | Installation, build, exécution — les commandes du projet, constatées ou impliquées par ses réponses |
 | `## Vérifier` | Tests et lint, et comment n'en jouer qu'une partie |
-| `## Conventions` | Style, nommage, ce qu'on ne fait pas ici |
+| `## Conventions` | En tête, les fichiers où le projet écrit **déjà** ses instructions pour ses agents — `CLAUDE.md`, ou tout fichier que le modèle y reconnaît en le lisant —, avec la règle de les lire (#1542) ; puis style, nommage, ce qu'on ne fait pas ici |
 | `## L'outillage de ce projet` | **La désignation** (§3.3) : où sont les skills, où sont les scripts, et l'index des skills |
 | `## Ce qu'un agent ne touche pas` | Secrets, fichiers générés — ni édités, ni supprimés pour faire le ménage, ni livrés : ignorés par le `.gitignore` (#1401) —, et `.maestro/`, qui n'est pas le livrable |
 
@@ -411,7 +411,8 @@ corrige avec des mots dans la conversation (#1161, [`maestro/outillage/correctio
 « Nos tests tournent avec `node --test` » change la commande de tests, qui s'écrit dans `AGENTS.md` avec
 la phrase pour justification. Le fichier garde la commande ; le manifeste garde **la correction
 elle-même** — le sujet (`cle`, un de ceux que la correction change : une commande par usage, le
-gestionnaire, la forge, la CI), la `valeur` dite, la `phrase` de la personne telle qu'elle l'a tapée, et
+gestionnaire, la forge, la CI, les fichiers d'instructions qu'`AGENTS.md` nomme — `instructions`,
+#1542), la `valeur` dite, la `phrase` de la personne telle qu'elle l'a tapée, et
 `prise_le`, quand Maestro l'a prise. Sans elle, l'outillage du même projet rouvert dans une **autre
 conversation** se redérivait de l'analyse, et proposait de remplacer la commande dite par celle que le
 projet déclare. Avec elle :
@@ -537,7 +538,11 @@ pour ça qu'elle s'écrit ici en toutes lettres :
 Trois conséquences concrètes :
 
 1. Un `AGENTS.md`, `CLAUDE.md` ou `GEMINI.md` trouvé dans un projet **n'est pas** le prompt d'un
-   agent de Maestro. Son contenu peut lui être transmis ; il n'y entre pas tout seul.
+   agent de Maestro. Son contenu peut lui être transmis ; il n'y entre pas tout seul. Depuis #1542,
+   l'`AGENTS.md` que Maestro écrit **nomme** ceux que le projet a écrits lui-même, avec la règle de
+   les lire (§3.1) : transmis dans le message de la tâche, c'est lui qui les fait lire à l'agent —
+   par son outil de lecture, jamais parce que le CLI les aurait chargés. Sur #1522, un dépôt qui
+   écrit ses règles dans `CLAUDE.md` n'en faisait arriver aucune à ses agents.
 2. Un `.mcp.json` ou un `.claude/settings.json` du projet **ne monte aucun serveur** dans le
    runtime : c'est ce que `strict_mcp_config=True` ferme déjà
    ([`maestro/providers/claude.py`](../maestro/providers/claude.py)).
@@ -935,6 +940,73 @@ acceptées d'un geste —, jusqu'à ce que chaque agent reçoit et à ce que la 
 ([`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py), section ⑧), et la sonde de S9
 rouge sur le reste du passage `20261014-171347` ([`tests/test_scenarios.py`](../tests/test_scenarios.py)).
 
+### 5.11 Ce que la personne a choisi, le livrable le suit (#1507)
+
+Le bilan de « Le run livre un vrai projet » (2026-10-14, critère C2) a rejoué le livrable de p5 sur
+un clone propre : Prettier retenu et cinquante fichiers hors de son formatage, GitHub Actions retenu
+(« CI : `.github/workflows/ci.yml` » annoncé) et aucun workflow écrit, Conventional Commits retenu et
+33 commits « Maestro : … », un `npm run typecheck` qui ne passait que sur l'arbre de l'agent. Sur le
+même objectif, la session seule les tenait tous. Aucune pièce n'était fausse : chacune s'arrêtait
+avant le livrable. Cinq gestes y répondent, chacun à sa place.
+
+- **`AGENTS.md` dit ce qu'un travail rendu passe.** La section « Vérifier » disait « ne rends jamais
+  un travail sans avoir joué au moins les tests », qui se lisait « le reste est facultatif ». Quand le
+  projet déclare un formateur, un style ou des types, elle dit désormais d'appliquer le formatage à
+  ce qu'on a écrit puis de vérifier style et types avant de rendre (`redaction._avant_de_rendre`), et
+  que ces commandes passent sur un **clone neuf**, après la seule installation : une commande qui ne
+  tient que grâce à ce qu'un build a laissé ne tient pas, c'est elle qui génère ce dont elle a besoin
+  (`CLONE_NEUF`). Le clone, c'est la vérification de la livraison qui le fait : une phrase qui le
+  faisait faire à l'agent, par `mktemp -d`, l'envoyait demander à une personne d'arbitrer un clone
+  hors de sa copie (S12, 2026-10-26). La section « Conventions » dit, sous la convention de commit choisie, que les
+  commits du projet la suivent — ceux de l'agent compris (`COMMITS_DANS_LA_CONVENTION`).
+- **L'agent commite son travail lui-même**, dans cette convention : le message de sa tâche le lui
+  dit sur toute copie de travail (`CONSIGNE_COPIE_DE_TRAVAIL`, [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)),
+  et sa session porte l'identité Git de Maestro par son environnement — un poste sans identité lui
+  refusait `git commit`, et rien n'est écrit dans la configuration du projet. Ce qu'il laisse non
+  commité rejoint son dernier commit au démontage, message compris, plutôt qu'un commit « Maestro :
+  travail de la tâche » — mais seulement un commit **fait par cette exécution** (au-delà de la tête
+  de la branche au montage) et qu'aucune autre branche ne porte. Le premier passage de S12 après ce
+  changement l'a montré (passage `20261022-075529`) : à la reprise, l'agent avait amendé le commit
+  que Maestro avait sauvé à l'extinction pour le mettre dans la convention, et le travail « sauvé »
+  n'était plus dans l'histoire du projet livré. Un commit de Maestro — la sauvegarde d'un travail
+  interrompu — ne se réécrit donc jamais : ni par le démontage, ni par l'agent, à qui l'annonce du
+  travail antérieur le dit, ni sur demande du vérificateur, à qui l'état de la branche le marque.
+- **Les commits de Maestro suivent la convention**, rédigés par le modèle : la fusion d'une tâche, le
+  commit et la fusion d'une pièce d'outillage (`maestro.projets.commits`), le commit de la **recette
+  du run** qu'il dépose dans le projet (#1530, `_message_de_recette`), et la **sauvegarde** du
+  travail en vol d'un run qu'on solde (extinction, hôte mort) — elle ne se réécrit plus après coup,
+  elle doit donc naître dans la convention. Celle-là se rédige sous un délai borné
+  (`DELAI_MESSAGES_SAUVEGARDE_S`) : un run qu'on éteint n'attend pas un modèle qui ne répond pas, et
+  la sauvegarde a lieu quoi qu'il arrive. La convention est une
+  phrase de la personne, lue dans la source du manifeste (`OutillageDuProjet.convention_de_commit`) :
+  aucune table, et un gabarit à trous ne tiendrait pas une convention qui impose sa langue. Le sujet
+  rendu est vérifié — une ligne, bornée — ; sinon, et sans convention, c'est le message de Maestro,
+  et le modèle n'est pas appelé. Ce que Maestro disait de la fusion passe dans le corps du commit.
+  **Limite dite** : le premier commit d'un projet mis sous Git par Maestro (« Maestro : état initial
+  du projet ») précède les réponses d'outillage, donc toute convention.
+- **Le Chef de projet lit l'outillage**, au cadrage comme au découpage (`bloc_outillage`), encadré
+  comme une donnée. Un fichier « prévu » ne se crée que si une tâche le demande (§5.9) : quand
+  l'objectif construit le projet, le brief fait entrer ce que l'outillage prévoit dans son périmètre,
+  et ses vérifications — sur un clone neuf — et sa convention dans ses critères ; le plan confie
+  chaque fichier prévu, nommément, à la tâche qui le livre, et met le clone neuf dans les critères
+  de celle qui écrit les commandes. Un objectif étroit n'y gagne pas un chantier d'outillage.
+- **La comptabilité de Maestro suit le projet** (§4.3). Sur S12 (passage `20261026-083718`), l'agent
+  du socle a ajouté `/.maestro/` au `.gitignore` (« Atelier de Maestro : jamais versionné ») et
+  retiré le manifeste du dépôt, dans le commit même de son travail : `AGENTS.md` disait « l'atelier
+  de Maestro […]. Ce n'est pas le livrable du projet », juste sous la règle qui fait ignorer ce qui
+  ne se livre pas. La fusion a effacé le manifeste de la racine, et toutes les tâches suivantes ont
+  perdu l'outillage et la convention de commit — vingt commits de Maestro sont repartis en
+  « Maestro : … ». `AGENTS.md` dit désormais que le manifeste se garde, versionné avec le projet,
+  ni supprimé, ni retiré du dépôt, ni ignoré (`INTOUCHABLES`) ; l'état de la branche que lit le
+  vérificateur nomme ce qu'une branche a changé sous `.maestro/` depuis son point de départ, et une
+  telle livraison ne tient pas tant que le fichier n'est pas rétabli. Il est donné au vérificateur
+  sur tout projet outillé, convention de commit ou non.
+
+Ce qui le constate à chaque livraison est le vérificateur ([docs/45 §2](./45-decision-une-tache-verifiee-en-l-executant.md),
+points 9 et 10) : formatage et style joués sur ce que la tâche a écrit, convention de commit et
+comptabilité de Maestro lues sur l'état de la branche, commande jouée sur un clone neuf quand un
+critère le demande.
+
 ## 6. Ce qui est écarté, et pourquoi
 
 | Écarté | Pourquoi |
@@ -1025,6 +1097,7 @@ de la règle à la ligne qui l'exécute, et à la suite qui la garde.
 | #1034 — parcours de création | L'étape d'outillage écrit ce que §3.6 décrit, et reste reportable ([docs/37 §4.6](./37-decision-equipe-sur-mesure.md)) | ⚠ Renversé par #1161 ([docs/43 §2.2](./43-decision-un-projet-nait-dans-la-conversation.md)) : `EtapeOutillage.tsx` est retirée. Restent `POST …/outillage/report` et `outillage.a_faire` sur la fiche du projet |
 | #1161 — pièce par pièce, dans la conversation (renverse #1034) | Chaque pièce passe par les quatre cas de §4.2 **avant** d'être montrée (`prevoir`), s'écrit seule avec un manifeste **fusionné** (§4.1), et une commande corrigée avec des mots prend l'origine `dite` — la phrase de la personne pour justification — puis est **rejouée** (#1160) | [`maestro/outillage/generation.py`](../maestro/outillage/generation.py) (`prevoir`, `poser_piece`), [`correction.py`](../maestro/outillage/correction.py), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) ; `POST /api/chat/{agent}/outillage/piece` ; [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) ; l'écran : [`PieceDOutillage.tsx`](../apps/web/components/chat/PieceDOutillage.tsx) |
 | #1295 — un seul `AGENTS.md` (renverse les deux ponts d'office de §3.2) | Un pont ne s'écrit que pour un client utilisé — trouvé sur le poste avec sa version, ou nommé — qui ne lit pas `AGENTS.md` à cette version ; sinon il est écarté avec sa raison. La forme Gemini reste `GEMINI.md` (§3.2) | [`maestro/outillage/recommandation.py`](../maestro/outillage/recommandation.py) (`_ponts`), [`clients.py`](../maestro/outillage/clients.py) (ce que chaque client lit), [`maestro/clients_du_poste.py`](../maestro/clients_du_poste.py) (le `PATH` et `--version`) ; le sujet `clients` du questionnaire ; [`tests/test_outillage_clients.py`](../tests/test_outillage_clients.py) |
+| #1542 — les instructions du projet arrivent aux agents | `AGENTS.md` nomme en tête de ses conventions les fichiers d'instructions que le projet écrit (§3.1, §5.1), reconnus par le modèle quel que soit leur nom — la table de noms n'est qu'un indice ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)). Une correction en mots change la pièce reproposée — elle voit et remplace les scripts que son skill appelle, nomme un fichier vérifié sur le disque —, ou le fil dit pourquoi rien ne change, sans « correction prise » | [`maestro/outillage/exploration.py`](../maestro/outillage/exploration.py) (constat `INSTRUCTIONS`), [`redaction.py`](../maestro/outillage/redaction.py) (`_instructions_du_projet`), [`correction.py`](../maestro/outillage/correction.py), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) (`touchees`, `fichier_refuse`) ; [`tests/test_outillage_instructions.py`](../tests/test_outillage_instructions.py), [`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py) |
 | #1035 — tests + doc | Les faits de §2 se revérifient ; §7 dit lesquels | [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py), [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py), [`test_outillage_generation.py`](../tests/test_outillage_generation.py), [`test_outillage_contexte.py`](../tests/test_outillage_contexte.py), [`test_outillage_skills_ref.py`](../tests/test_outillage_skills_ref.py) ; [docs/24 §2.6](./24-projets-locaux-et-poste-de-travail.md) et [docs/05 §6.20](./05-interface-control-tower.md) |
 
 **Ce que les tests gardent de cette note, et pas ailleurs** (#1035) : les trois promesses de

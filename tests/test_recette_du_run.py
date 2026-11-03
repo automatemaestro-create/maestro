@@ -705,8 +705,11 @@ def test_un_plan_qui_porte_une_tache_de_recette_se_relit() -> None:
     redisent."""
     texte = _playbook()
 
-    assert "8. **Relis ton plan**" in texte
-    assert "Relis-le aussi contre le point 7" in texte
+    # Le point que la relecture désigne est bien celui qui l'interdit : l'outillage du
+    # projet (#1507) s'est inséré avant lui, et la numérotation a suivi.
+    assert "8. **Aucune tâche pour vérifier.**" in texte
+    assert "9. **Relis ton plan**" in texte
+    assert "Relis-le aussi contre le point 8" in texte
     assert "se **retire** du plan" in texte
     assert (
         "Aucune tâche n'a pour seul objet de vérifier, recetter ou valider ce que d'autres "

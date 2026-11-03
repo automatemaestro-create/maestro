@@ -56,11 +56,14 @@ from maestro.engine.executor import (
     STATUT_FUSION_NON_TENTEE,
     STATUT_FUSION_REFUSEE,
     STATUT_TERMINEE,
+    AccordFusion,
     LocalExecutor,
 )
 from maestro.engine.guardrails import DemandeValidation, Guardrails, Validateur
-from maestro.orchestrator import Orchestrator
+from maestro.engine.recette import RecetteDuRun
+from maestro.orchestrator import Brief, Orchestrator
 from maestro.orchestrator.schema import Task
+from maestro.outillage import CHEMIN_MANIFESTE, VERSION_MANIFESTE
 from maestro.projets import (
     MESSAGE_PREMIER_COMMIT,
     ApplicationRefusee,
@@ -70,9 +73,10 @@ from maestro.projets import (
     detecter_vcs,
     initialiser_depot,
 )
+from maestro.projets.commits import RedacteurDeCommits
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import branche_de_tache
-from maestro.telemetry import RunJournal
+from maestro.telemetry import RunJournal, StepUsage, report_usage
 
 GIT = shutil.which("git")
 
@@ -596,6 +600,136 @@ def test_une_tache_soldee_en_succes_est_fusionnee_dans_la_base(tmp_path: Path):
     etape = _etape(journal, "t1", ":fusion")
     assert etape.statut == STATUT_FUSION_FAITE
     assert "docs/t1.md" in etape.sortie
+
+
+class _Redacteur(ModelProvider):
+    """Le modèle qui rédige les messages de Maestro (#1507) : sa réponse, et ce qu'il coûte."""
+
+    name = "redacteur"
+
+    def __init__(self, sujet: str) -> None:
+        self.sujet = sujet
+        self.prompts: list[str] = []
+
+    def supports(self, model: str) -> bool:
+        return True
+
+    async def generate(self, prompt, *, model, system_prompt=None):
+        self.prompts.append(prompt)
+        report_usage(StepUsage(appels=1, cout_usd=0.002))
+        return self.sujet
+
+
+def _avec_convention(projet: Projet, convention: str) -> None:
+    """Le manifeste d'un outillage venu des réponses, qui retient une convention de commit."""
+    racine = Path(projet.racine)
+    manifeste = racine / CHEMIN_MANIFESTE
+    manifeste.parent.mkdir(parents=True, exist_ok=True)
+    manifeste.write_text(
+        json.dumps(
+            {
+                "manifeste": VERSION_MANIFESTE,
+                "source": {
+                    "type": "choix",
+                    "choix": [{"cle": "conventions", "valeur": convention}],
+                },
+                "entrees": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    _commiter(racine, "outillage")
+
+
+def test_la_fusion_suit_la_convention_de_commit_choisie(tmp_path: Path):
+    """#1507 : sur p5, chaque fusion s'écrivait « Maestro : application de … ».
+
+    La personne avait choisi Conventional Commits : le sujet de la fusion est rédigé
+    dans cette convention, avec les commits de l'agent sous les yeux du modèle, et ce
+    que l'appel a coûté est porté par l'étape `:fusion`.
+    """
+    depot, projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    _avec_convention(projet, "Conventional Commits")
+    modele = _Redacteur("feat(docs): intègre la note t1")
+    executeur = _executeur(_Ecrivain(), depot, _Validateur(True))
+    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+    journal = RunJournal(run_id="run-1507")
+
+    (resultat,) = _joue(executeur, journal, _tache("t1", projet.id, "docs/t1.md"))
+
+    assert resultat.ok
+    assert _fusions(racine) == ["feat(docs): intègre la note t1"]
+    corps = _git(racine, "log", "-1", "--format=%b")
+    assert f"Maestro : application de {branche_de_tache('t1')}" in corps
+    (prompt,) = modele.prompts
+    assert "<convention>Conventional Commits</convention>" in prompt
+    assert "« Tâche t1 »" in prompt
+    assert _etape(journal, "t1", ":fusion").usage.cout_usd == pytest.approx(0.002)
+
+
+def test_sans_convention_choisie_la_fusion_ne_coute_aucun_appel(tmp_path: Path):
+    depot, projet = _projet_git(tmp_path)
+    modele = _Redacteur("feat: jamais demandé")
+    executeur = _executeur(_Ecrivain(), depot, _Validateur(True))
+    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+
+    _joue(executeur, RunJournal(run_id="run-1507"), _tache("t1", projet.id, "t1.md"))
+
+    assert modele.prompts == []
+    (fusion,) = _fusions(Path(projet.racine))
+    assert fusion.startswith("Maestro : application de")
+
+
+def _ecrit_la_recette(executeur: LocalExecutor, projet: Projet, run_id: str):
+    """La recette d'un run qui a obtenu l'accord d'écrire, déposée dans `projet` (#1530)."""
+    executeur._accords_fusion[(run_id, projet.id)] = AccordFusion(
+        approuve=True, detail="approuvée par le validateur humain", tache_id="t1"
+    )
+    brief = Brief(
+        objectif="Un agenda", perimetre=(), hors_perimetre=(), criteres_acceptation=("C1",)
+    )
+    return asyncio.run(
+        executeur._ecrit_la_recette(RecetteDuRun(constats=()), projet, run_id, brief)
+    )
+
+
+def test_le_commit_de_la_recette_suit_la_convention_de_commit_choisie(tmp_path: Path):
+    """#1507 après #1530 : la recette est le dernier commit du run dans le projet.
+
+    Sur un projet en Conventional Commits, il s'écrivait encore « Maestro : recette du
+    run … » : son sujet est rédigé dans la convention, comme celui d'une fusion, et ce
+    que l'appel a coûté revient à l'étape `recette`.
+    """
+    depot, projet = _projet_git(tmp_path)
+    racine = Path(projet.racine)
+    _avec_convention(projet, "Conventional Commits")
+    modele = _Redacteur("docs(recette): dépose la recette du run")
+    executeur = _executeur(_Ecrivain(), depot)
+    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+
+    recette, cout = _ecrit_la_recette(executeur, projet, "run-1507")
+
+    assert recette.ecriture == "", recette
+    assert _commits(racine)[0] == "docs(recette): dépose la recette du run"
+    (prompt,) = modele.prompts
+    assert "<convention>Conventional Commits</convention>" in prompt
+    assert ".maestro/recette/run-1507.md" in prompt
+    assert cout.cout_usd == pytest.approx(0.002)
+
+
+def test_sans_convention_choisie_la_recette_garde_le_message_de_maestro(tmp_path: Path):
+    depot, projet = _projet_git(tmp_path)
+    modele = _Redacteur("docs: jamais demandé")
+    executeur = _executeur(_Ecrivain(), depot)
+    executeur._redacteur = RedacteurDeCommits(modele, modele="modele-du-test")
+
+    recette, cout = _ecrit_la_recette(executeur, projet, "run-1507")
+
+    assert recette.ecriture == "", recette
+    assert modele.prompts == []
+    assert _commits(Path(projet.racine))[0] == "Maestro : recette du run run-1507"
+    assert cout == StepUsage()
 
 
 def test_une_tache_en_echec_ne_fusionne_rien_et_sa_branche_conserve_le_travail(tmp_path: Path):

@@ -79,7 +79,7 @@ from maestro.agents.permissions import (
     Verdict,
 )
 from maestro.agents.playbooks import PlaybookStore, PlaybookVersion
-from maestro.agents.runtime import AgentRuntime
+from maestro.agents.runtime import AgentRuntime, AttenteReprise
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import AgentStore, catalogue_du_projet
 from maestro.decideur import Decideur
@@ -111,6 +111,12 @@ from maestro.engine.guardrails import (
     RefusParDefaut,
     detail_accorde,
 )
+from maestro.engine.limite import (
+    AttenteLimite,
+    LimiteDuRun,
+    RendezVousLimite,
+    phrase_de_la_limite,
+)
 from maestro.engine.plafond import (
     STATUT_TACHE_SUSPENDUE,
     SUFFIXE_ETAPE_PLAFOND,
@@ -124,6 +130,7 @@ from maestro.engine.questions import (
 )
 from maestro.engine.recette import (
     RecetteDuRun,
+    chemin_de_la_recette,
     ecrire_dans_le_projet,
     recette_non_jouee,
     recetter,
@@ -150,20 +157,24 @@ from maestro.messaging.mailbox import (
     consigne_message,
 )
 from maestro.orchestrator.schema import Brief, Task
+from maestro.outillage.contexte import outillage_du_projet
 from maestro.prerequis import PrerequisManquant, prerequis_du_mcp, prerequis_du_role
 from maestro.projets.application import (
     ApplicationRefusee,
     DiffProjet,
     appliquer,
     diff_du_travail,
+    sujets_de_la_branche,
     verifier_perimetre,
 )
+from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.modele import Projet
 from maestro.projets.racine import RacineRefusee, valider_racine
 from maestro.projets.store import ProjetStore
 from maestro.providers.activite import PERIODE_ACTIVITE_S
 from maestro.providers.arbitrage import Arbitre, ArbitreActe, BornesArbitrage
 from maestro.providers.base import (
+    LimiteUsageAtteinte,
     McpServerUnavailable,
     ModelProvider,
     UnsupportedCapability,
@@ -179,6 +190,7 @@ from maestro.sandbox import (
     ProducedFile,
     branche_de_tache,
     conflit_avec_la_base,
+    etat_de_la_branche,
 )
 from maestro.sandbox.confinement import ReleveConfinement
 from maestro.sandbox.en_place import portee_de
@@ -1023,8 +1035,24 @@ class LocalExecutor(TaskExecutor):
         suspendre_sur_prerequis: bool = False,
         registre_mcp: Callable[[], RegistreMcp] | None = None,
         plafonds: Plafonds | None = None,
+        redacteur: RedacteurDeCommits | None = None,
+        attente_limite: AttenteLimite | None = None,
     ) -> None:
         self._provider = provider
+        # Qui rédige le message d'une fusion dans la convention de commit du projet
+        # (#1507) — le modèle du run, appelé seulement quand le projet en a une. Un
+        # double de test le remplace ; sans convention, il n'est jamais appelé.
+        self._redacteur = (
+            redacteur if redacteur is not None else RedacteurDeCommits(provider, modele=modele)
+        )
+        # L'attente du run à la limite d'usage du fournisseur (#1543) — en pratique
+        # `maestro.controltower.limite.AttenteLimiteControlTower`, derrière le
+        # rendez-vous qui en fait **une** attente par run, quel que soit le nombre
+        # de tâches que la limite coupe. None : personne pour tenir la pause, et une
+        # tâche coupée échoue sur sa limite, nommée par son type — la conduite d'avant.
+        self._rendez_vous_limite = (
+            RendezVousLimite(attente_limite) if attente_limite is not None else None
+        )
         # Une tâche à qui il manque un prérequis constaté (#1181) est **suspendue**
         # plutôt qu'échouée : son étape se consigne « en attente d'un humain »
         # (`STATUT_EN_ATTENTE_VALIDATION`), et la boucle propose le remède dans le
@@ -1658,7 +1686,8 @@ class LocalExecutor(TaskExecutor):
                         relance=self._relance,
                     )
             usage = recolte.total
-        recette = await self._ecrit_la_recette(recette, projet, run_id, brief)
+        recette, redaction = await self._ecrit_la_recette(recette, projet, run_id, brief)
+        usage = usage.fusion(redaction)
         journal.consigne(
             etape=ETAPE_RECETTE,
             nom="Recette du run — les critères du brief",
@@ -1708,28 +1737,53 @@ class LocalExecutor(TaskExecutor):
 
     async def _ecrit_la_recette(
         self, recette: RecetteDuRun, projet: Projet | None, run_id: str, brief: Brief
-    ) -> RecetteDuRun:
-        """La recette, écrite dans le projet du run — et ce qu'il en est advenu (#1530)."""
+    ) -> tuple[RecetteDuRun, StepUsage]:
+        """La recette, écrite dans le projet du run — et ce qu'il en est advenu (#1530).
+
+        Rend aussi ce qu'a coûté la rédaction de son commit dans la convention du projet
+        (#1507), que l'étape `recette` porte.
+        """
         if projet is None:
             return replace(
                 recette,
                 ecriture="ce run n'a pas de projet : la recette se lit au journal et dans le récit",
-            )
+            ), StepUsage()
         accord = self._accords_fusion.get((run_id, projet.id))
+        accorde = accord is not None and accord.approuve
         texte = recette.en_markdown(
             objectif=brief.objectif,
             run_id=run_id,
             horodatage=datetime.now(UTC).strftime("%Y-%m-%d à %H:%M UTC"),
         )
+        message, cout = (
+            await self._message_de_recette(projet, run_id)
+            if accorde and projet.versionne
+            else ("", StepUsage())
+        )
         async with self._verrou_projet(projet.id):
             fichier, raison = await asyncio.to_thread(
-                ecrire_dans_le_projet,
-                projet,
-                run_id,
-                texte,
-                accorde=accord is not None and accord.approuve,
+                ecrire_dans_le_projet, projet, run_id, texte, accorde=accorde, message=message
             )
-        return replace(recette, fichier=fichier, ecriture=raison)
+        return replace(recette, fichier=fichier, ecriture=raison), cout
+
+    async def _message_de_recette(self, projet: Projet, run_id: str) -> tuple[str, StepUsage]:
+        """Le sujet du commit de la recette, dans la convention de commit du projet (#1507).
+
+        Même règle que la fusion (`_message_de_fusion`) : `""` — le message de Maestro —
+        quand la personne n'a choisi aucune convention, et le modèle n'est pas appelé.
+        """
+        convention = await asyncio.to_thread(
+            lambda: outillage_du_projet(projet).convention_de_commit
+        )
+        if not convention:
+            return "", StepUsage()
+        changement = (
+            f"dépose `{chemin_de_la_recette(run_id)}`, la recette du run : chaque critère "
+            "d'acceptation du brief confronté au livrable intégré, avec son verdict"
+        )
+        with collect_usage() as recolte:
+            message = await self._redacteur.message(convention=convention, changement=changement)
+        return message, recolte.total
 
     def derive_les_instances(
         self, run_id: str, projet_id: str, largeur: int
@@ -1835,10 +1889,21 @@ class LocalExecutor(TaskExecutor):
         l'espace de travail, celle-là même qui garde les commandes de l'agent
         (`portee_de`). Le projet est relu une fois, à la naissance de la recette.
         Le **brief** du run (#1402) y entre tel que l'agent l'a lu.
+
+        L'**outillage** du projet aussi (#1507), tel que l'agent l'a reçu : ses
+        vérifications et sa convention de commit valent pour la livraison. Sur une
+        copie de travail d'un projet que Maestro a outillé — son manifeste lu —, chaque
+        livraison dit en plus l'état de sa branche (`etat_de_la_branche`) : ce qu'elle
+        porte, ce qui n'est pas commité, et ce qu'elle a changé de la comptabilité de
+        Maestro. Pas seulement quand une convention de commit est retenue : le
+        manifeste se garde sur tout projet outillé (S12, 2026-10-26).
         """
         if self._verificateur is None:
             return None
         projet = self._projet(task)
+        outillage = outillage_du_projet(projet)
+        base = projet.vcs.branche_base if projet is not None and projet.vcs is not None else ""
+        branche_a_juger = bool(base) and bool(outillage.manifeste)
         return Recette(
             verificateur=self._verificateur,
             tache=task,
@@ -1856,6 +1921,10 @@ class LocalExecutor(TaskExecutor):
             # la même politique —, mais seul : la session de l'agent ne se rejoue pas.
             relance=self._relance,
             brief=brief,
+            outillage=outillage.instructions,
+            etat_de_la_branche=(
+                (lambda espace: etat_de_la_branche(espace, base)) if branche_a_juger else None
+            ),
         )
 
     def _juge_de_livraison(
@@ -2467,6 +2536,7 @@ class LocalExecutor(TaskExecutor):
         # retenue par la première — et tant que la question est ouverte, rien
         # d'autre ne s'écrit dans ce projet, ce qui est exactement ce qu'elle
         # demande.
+        depense = StepUsage()
         async with self._verrou_projet(projet.id):
             diff, statut, detail = await asyncio.to_thread(_diff_a_fusionner, projet, branche)
             if diff is not None:
@@ -2490,8 +2560,9 @@ class LocalExecutor(TaskExecutor):
                     )
                     raise
                 if accord.approuve:
+                    message, depense = await self._message_de_fusion(task, projet, diff)
                     statut, detail = await asyncio.to_thread(
-                        _applique_la_fusion, projet, diff, branche
+                        _applique_la_fusion, projet, diff, branche, message
                     )
                 else:
                     statut = STATUT_FUSION_NON_ACCORDEE
@@ -2505,8 +2576,37 @@ class LocalExecutor(TaskExecutor):
                     )
                     detail = _phrase_non_accordee(cause, branche, diff.base)
         return self._consigne_fusion(
-            task, result, statut, entree=entree, detail=detail, journal=journal
+            task, result, statut, entree=entree, detail=detail, journal=journal, usage=depense
         )
+
+    async def _message_de_fusion(
+        self, task: Task, projet: Projet, diff: DiffProjet
+    ) -> tuple[str, StepUsage]:
+        """Le sujet du commit de fusion, dans la convention de commit du projet (#1507).
+
+        `""` — le message de Maestro — quand la personne n'a choisi aucune convention :
+        le modèle n'est alors pas appelé, et la fusion est celle d'avant au caractère
+        près. Sinon le rédacteur l'écrit (`maestro.projets.commits`), avec ce que la
+        branche porte des commits de l'agent sous les yeux. Rend aussi ce que l'appel a
+        coûté, que l'étape `:fusion` porte : hors du collecteur de la tâche, il serait
+        perdu pour le grand livre.
+        """
+        convention = await asyncio.to_thread(
+            lambda: outillage_du_projet(projet).convention_de_commit
+        )
+        if not convention:
+            return "", StepUsage()
+        commits = await asyncio.to_thread(sujets_de_la_branche, projet, diff.branche)
+        changement = (
+            f"fusionne dans `{diff.base}` la branche `{diff.branche}`, le travail de la "
+            f"tâche « {task.titre} » ({diff.fichiers} fichier(s), +{diff.ajouts} / "
+            f"−{diff.suppressions})"
+        )
+        with collect_usage() as recolte:
+            message = await self._redacteur.message(
+                convention=convention, changement=changement, commits=commits
+            )
+        return message, recolte.total
 
     async def _accord_de_fusion(
         self,
@@ -2685,6 +2785,7 @@ class LocalExecutor(TaskExecutor):
         entree: str,
         detail: str,
         journal: RunJournal,
+        usage: StepUsage | None = None,
     ) -> tuple[str, str]:
         """Trace ce qui est arrivé au projet au journal (#705, #839) ; rend statut et phrase.
 
@@ -2703,8 +2804,10 @@ class LocalExecutor(TaskExecutor):
         rendrait invisible exactement le défaut que #568 a mesuré — un run vert
         sur une racine vide.
 
-        Usage nul : le coût de la tâche est porté par son étape finale, et ni
-        une fusion ni un recensement ne dépensent de modèle.
+        Usage nul le plus souvent : le coût de la tâche est porté par son étape
+        finale, et ni une fusion ni un recensement ne dépensent de modèle — sauf le
+        message d'une fusion rédigé dans la convention du projet (#1507), dont
+        `usage` est le coût.
         """
         journal.consigne(
             etape=f"{task.id}{SUFFIXE_ETAPE_FUSION}",
@@ -2714,7 +2817,7 @@ class LocalExecutor(TaskExecutor):
             statut=statut,
             entree=entree,
             sortie=detail,
-            usage=StepUsage(),
+            usage=usage if usage is not None else StepUsage(),
             ticket=task.ticket,
             projet_id=task.projet_id,
         )
@@ -3419,8 +3522,12 @@ class LocalExecutor(TaskExecutor):
                         # Le budget du run est dépensé (#1178) : c'est une borne,
                         # pas un échec à rattraper — une tentative de plus coûterait.
                         # Et c'est la personne qui en décide (#1182) : la boucle
-                        # met la tâche de côté et lui demande.
-                        rattrapable=not isinstance(exc, PlafondDepenseDepasse),
+                        # met la tâche de côté et lui demande. Une limite d'usage
+                        # qu'aucune attente n'a pu tenir (#1543) non plus : une
+                        # tentative différente retomberait sur la même limite.
+                        rattrapable=not isinstance(
+                            exc, PlafondDepenseDepasse | LimiteUsageAtteinte
+                        ),
                         au_plafond=isinstance(exc, PlafondDepenseDepasse),
                         # Un serveur MCP injoignable (#1181) : ce qui manque est
                         # constaté, en données — la procédure d'accès que la
@@ -3828,6 +3935,54 @@ class LocalExecutor(TaskExecutor):
             )
 
         return arbitre
+
+    def _a_la_limite(
+        self,
+        task: Task,
+        agent: Agent,
+        journal: RunJournal | None,
+        credit: CreditArbitrage,
+    ) -> AttenteReprise | None:
+        """Ce que fait la tâche quand le fournisseur lui oppose sa limite d'usage (#1543).
+
+        Elle l'**attend**, et le run avec elle : le rendez-vous du run met le run en
+        pause et rend la main au reset ou sur « Reprendre » — une attente pour toutes
+        les tâches que la limite coupe (`maestro.engine.limite`). L'attente est dite
+        au fil de la tâche à son début et à sa fin, sur l'activité de la tâche, sans
+        rien changer à son statut : elle reste en cours, elle n'a rien raté.
+
+        Le temps passé à attendre ouvre une fenêtre du crédit de la tâche, comme une
+        décision humaine (#584) : un délai par tâche ne tue jamais une tâche qui
+        attend la levée d'une limite — elle ne consomme rien, et « Reprendre » est un
+        geste humain.
+
+        None quand personne ne tient la pause (aucune attente câblée) ou qu'aucun
+        journal ne la dirait : la limite remonte alors, et la tâche échoue sur elle.
+        """
+        rendez_vous = self._rendez_vous_limite
+        if rendez_vous is None or journal is None:
+            return None
+
+        async def attendre(limite: LimiteUsageAtteinte) -> None:
+            faits = LimiteDuRun(
+                run_id=journal.run_id,
+                projet_id=task.projet_id,
+                tache_id=task.id,
+                titre=task.titre,
+                reprise_a=limite.reprise_a,
+                detail=str(limite),
+            )
+            self._consigne_activite(task, agent, phrase_de_la_limite(faits), journal)
+            with credit.attente():
+                await rendez_vous.attendre(faits)
+            self._consigne_activite(
+                task,
+                agent,
+                "limite d'usage levée — la tâche reprend dans sa session",
+                journal,
+            )
+
+        return attendre
 
     def _consigne_activite(
         self,
@@ -4457,6 +4612,9 @@ class LocalExecutor(TaskExecutor):
                         ),
                         machine=machine,
                         miroir=miroir,
+                        # La limite d'usage (#1543) : la tâche l'attend dans son
+                        # espace, le run en pause, puis reprend dans sa session.
+                        on_limite=self._a_la_limite(task, agent, journal, deliberation.credit),
                     )
                     return outcome.resume, outcome.fichiers
                 except UnsupportedCapability:
@@ -4471,16 +4629,30 @@ class LocalExecutor(TaskExecutor):
         # texte-seul — l'appel est au bit près celui d'avant ce lot.
         reglage = self._provider.effort_admis(agent.modele, agent.effort)
         prompt = _build_task_prompt(description, task.format_sortie)
+        a_la_limite = self._a_la_limite(task, agent, journal, deliberation.credit)
 
         async def livrer(message: str) -> str:
-            return await self._provider.generate(
-                message,
-                model=agent.modele,
-                system_prompt=(
-                    playbook.contenu if playbook is not None else agent.prompt_systeme
-                ),
-                **({"effort": reglage} if reglage else {}),
-            )
+            while True:
+                try:
+                    return await self._provider.generate(
+                        message,
+                        model=agent.modele,
+                        system_prompt=(
+                            playbook.contenu if playbook is not None else agent.prompt_systeme
+                        ),
+                        **({"effort": reglage} if reglage else {}),
+                    )
+                except LimiteUsageAtteinte as limite:
+                    # Le chemin texte n'a pas de session à rouvrir (#1543) : la limite
+                    # levée, le même message repart — l'appel n'avait rien produit.
+                    if a_la_limite is None:
+                        raise
+                    try:
+                        await a_la_limite(limite)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as attente_en_panne:
+                        raise limite from attente_en_panne
 
         sortie = await livrer(prompt)
         # La recette d'un livrable texte (#1177) : aucune commande à jouer, rien que
@@ -4539,16 +4711,19 @@ def _diff_a_fusionner(projet: Projet, branche: str) -> tuple[DiffProjet | None, 
     return diff, "", ""
 
 
-def _applique_la_fusion(projet: Projet, diff: DiffProjet, branche: str) -> tuple[str, str]:
+def _applique_la_fusion(
+    projet: Projet, diff: DiffProjet, branche: str, message: str = ""
+) -> tuple[str, str]:
     """Fusionne `diff` — la branche de tâche — dans la branche de travail ; rend statut et phrase.
 
     Seconde moitié, jouée **sur accord seulement** (#706) : `appliquer` contrôle
     le périmètre une seconde fois (EF-38 — il ne sait pas qu'on l'a déjà fait,
     et c'est très bien : c'est lui qui écrit) puis fusionne. Même contrat de
-    non-levée que la première moitié, pour la même raison.
+    non-levée que la première moitié, pour la même raison. `message` (#1507) est le
+    sujet rédigé dans la convention du projet, vide sans convention.
     """
     try:
-        appliquer(projet, diff)
+        appliquer(projet, diff, message=message)
     except (ApplicationRefusee, RacineRefusee) as refus:
         return STATUT_FUSION_REFUSEE, _phrase_refus(branche, refus)
     except Exception as exc:  # cf. le docstring : `execute` ne lève jamais

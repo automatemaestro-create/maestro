@@ -59,6 +59,18 @@ ORIGINES: frozenset[str] = frozenset({"nouveau", "existant"})
 AUTEUR_NOM = "Maestro"
 AUTEUR_COURRIEL = "maestro@localhost"
 
+#: La même identité pour les commits que **l'agent** fait lui-même (#1507) : il commite
+#: son travail dans la convention du projet, et son `git commit` échouait sur un poste
+#: sans identité Git — celui d'une personne qui ne code pas. Posée dans l'environnement
+#: de sa session, jamais dans la configuration du projet : l'agent n'a ni à la connaître
+#: ni à l'écrire, et l'historique dit d'un seul nom ce que Maestro et ses agents ont fait.
+ENV_IDENTITE_GIT: dict[str, str] = {
+    "GIT_AUTHOR_NAME": AUTEUR_NOM,
+    "GIT_AUTHOR_EMAIL": AUTEUR_COURRIEL,
+    "GIT_COMMITTER_NAME": AUTEUR_NOM,
+    "GIT_COMMITTER_EMAIL": AUTEUR_COURRIEL,
+}
+
 #: Identifiant de projet admissible comme nom de fichier — même verrou que les
 #: autres dépôts (`maestro.agents.store`) : slug sûr, sans séparateur ni point,
 #: ce qui interdit toute traversée de chemin depuis un identifiant venu de l'API.

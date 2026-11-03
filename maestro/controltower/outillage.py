@@ -734,6 +734,40 @@ def _touchee(piece: PieceProposee, fil: Sequence[MessageChat]) -> bool:
     return any(chemin == piece.chemin and vue != piece.empreinte for chemin, vue in vues)
 
 
+def _d_abord(touchees: Sequence[str], reposee: PieceProposee | None) -> tuple[str, ...]:
+    """Les pièces qu'une correction a touchées, celle que la personne corrigeait en tête (#1542).
+
+    La personne corrige la pièce qu'elle a sous les yeux : si sa phrase la change, c'est
+    elle qui revient. Les autres pièces touchées suivent, dans l'ordre du plan.
+    """
+    if reposee is not None and reposee.chemin in touchees:
+        return (reposee.chemin, *(chemin for chemin in touchees if chemin != reposee.chemin))
+    return tuple(touchees)
+
+
+def _meme_piece(piece: PieceProposee | None, reposee: PieceProposee) -> bool:
+    """`piece` est-elle la pièce qui attendait, **telle quelle** — même chemin, même texte ?"""
+    return (
+        piece is not None
+        and piece.chemin == reposee.chemin
+        and piece.empreinte == reposee.empreinte
+    )
+
+
+def _phrase_inchangee(piece: PieceProposee, corrigee: bool) -> str:
+    """Pourquoi la pièce qui attendait revient telle quelle derrière une phrase (#1542).
+
+    Sur #1522, le juge redisait la demande, et la même pièce revenait sans un mot. Le
+    fait est dit, avec sa cause, et que rien n'a été pris ni écrit : la pièce reste à
+    accepter, à passer, ou à corriger avec d'autres mots.
+    """
+    if corrigee:
+        cause = "ce que vous corrigez ne s'écrit pas dans cette pièce"
+    else:
+        cause = "je n'ai rien trouvé dans votre phrase que l'outillage écrive autrement"
+    return f"{piece.chemin} ne change pas : {cause}. Rien n'a été écrit."
+
+
 def _phrase_de_revue(piece: PieceProposee) -> str:
     """Ce que le fil dit quand un run a fait changer l'outillage d'un projet (#1343).
 
@@ -999,8 +1033,11 @@ class ConducteurOutillage:
         phrase: str = "",
         faits: bool = False,
         apres_le_juge: bool = False,
+        d_abord: Sequence[str] = (),
     ) -> ReponseChat:
         """La pièce suivante — ou la fin de l'outillage —, avec ce qui la précède (#1161).
+
+        `d_abord` (#1542) : les chemins cherchés avant les autres (`ServicePieces.prochaine`).
 
         `acquis` voyage sur le message quand il vient d'être compris : c'est ce que
         les tours suivants relisent (`acquis_du_fil`) pour rédiger les pièces d'un
@@ -1016,7 +1053,12 @@ class ConducteurOutillage:
         """
         pieces = self._exige_pieces()
         suivante = await pieces.prochaine(
-            projet_id, fil, acquis=acquis, corrections=corrections, tranchees=tranchees
+            projet_id,
+            fil,
+            acquis=acquis,
+            corrections=corrections,
+            tranchees=tranchees,
+            d_abord=d_abord,
         )
         if (
             suivante is not None
@@ -1209,6 +1251,15 @@ class ConducteurOutillage:
         questionnaire qui s'ouvre, la phrase comprise avec le reste de la conversation
         — l'outillage d'un projet neuf ne se tire pas d'une analyse de dossier vide
         (#1100).
+
+        **Une correction change la pièce reproposée, ou le fil dit pourquoi** (#1542).
+        Sur #1522, le juge redisait la demande (« Vous demandez… »), puis la même pièce
+        revenait sans un mot, et « Correction prise » s'affichait au-dessus d'elle. Les
+        pièces qu'une correction touche sont donc calculées (`ServicePieces.touchees`) et
+        cherchées en premier, celle que la personne corrigeait en tête ; un fichier
+        nommé se vérifie sur le disque (`fichier_refuse`). Aucune pièce touchée, ou la
+        même pièce qui revient : la correction ne voyage **pas** sur le message — rien
+        n'est pris —, et le texte dit pourquoi, derrière les mots du juge.
         """
         pieces = self._exige_pieces()
         propre = fil_du_projet(fil, projet_id)
@@ -1231,29 +1282,55 @@ class ConducteurOutillage:
                 piece=reposee,
                 projet_outille=projet_id,
             )
+        sujets = ", ".join(sujet_de(c.cle) for c in lue.corrections)
         if lue.corrections and pieces.sans_effet(lue.corrections, propre):
-            sujets = ", ".join(sujet_de(c.cle) for c in lue.corrections)
             return ReponseChat(
                 contenu=(
                     f"C'est noté ({sujets}), mais cela ne change rien à ce que l'outillage "
                     "écrit : un projet lu garde ce qu'on y a constaté. Rien n'a été écrit."
                 ),
-                corrections=lue.corrections,
                 piece=reposee,
                 projet_outille=projet_id,
             )
+        refus = await pieces.fichier_refuse(projet_id, lue.corrections)
+        if refus:
+            return ReponseChat(
+                contenu=f"Rien n'a été écrit : {refus}", piece=reposee, projet_outille=projet_id
+            )
         compris = acquis_du_fil(propre)
-        return await self._piece(
+        acquis = (
+            corriger_les_choix(compris, lue.corrections, lue.descriptions) if compris else None
+        )
+        touchees: tuple[str, ...] = ()
+        if lue.corrections:
+            touchees = await pieces.touchees(
+                projet_id, fil, acquis=acquis, corrections=lue.corrections
+            )
+            if not touchees:
+                return ReponseChat(
+                    contenu=(
+                        f"C'est compris ({sujets}), mais l'outillage l'écrit déjà ainsi : "
+                        "aucune pièce ne change. Rien n'a été écrit."
+                    ),
+                    piece=reposee,
+                    projet_outille=projet_id,
+                )
+        reponse = await self._piece(
             fil,
             projet_id,
-            acquis=(
-                corriger_les_choix(compris, lue.corrections, lue.descriptions)
-                if compris
-                else None
-            ),
+            acquis=acquis,
             corrections=lue.corrections,
             phrase=phrase,
             apres_le_juge=True,
+            d_abord=_d_abord(touchees, reposee),
+        )
+        if reposee is None or not _meme_piece(reponse.piece, reposee):
+            return reponse
+        return replace(
+            reponse,
+            contenu=_joint(reponse.contenu, _phrase_inchangee(reposee, bool(lue.corrections))),
+            corrections=(),
+            comprehension=(),
         )
 
     async def repondre(

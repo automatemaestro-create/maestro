@@ -290,21 +290,31 @@ CI_PAR_MARQUEUR: dict[str, str] = {
     "bitbucket-pipelines.yml": "Bitbucket Pipelines",
 }
 
+#: Le rôle d'un fichier que le projet écrit **pour les agents** qui y travaillent —
+#: ses règles, sa façon de faire (#1542). Écrit une fois : les tables le posent sur les
+#: noms qu'elles connaissent, la lecture du modèle sur ceux qu'elles ignorent
+#: (`maestro.outillage.exploration`), une correction sur celui qu'une personne nomme
+#: (`maestro.outillage.correction`), et `AGENTS.md` nomme ce qui le porte en tête de ses
+#: conventions, avec la règle de le lire (`maestro.outillage.redaction`).
+ROLE_INSTRUCTIONS = "instructions d'agent"
+
 #: Fichier de convention → ce qu'il porte. Ce sont les conventions **déjà
 #: écrites** du ticket : ce qu'un agent qui arrive doit lire avant d'inventer
-#: les siennes, et ce que la génération ne doit pas contredire.
+#: les siennes, et ce que la génération ne doit pas contredire. Un **indice**, pas
+#: un plafond (#1542, docs/41) : un fichier d'instructions d'agent qu'aucun nom
+#: d'ici ne désigne, le modèle le reconnaît en lisant le projet.
 CONVENTIONS_CONNUES: dict[str, str] = {
     ".editorconfig": "style",
     ".eslintrc.json": "style",
     ".pre-commit-config.yaml": "vérifications",
     ".prettierrc": "style",
     ".rubocop.yml": "style",
-    "AGENTS.md": "instructions d'agent",
+    "AGENTS.md": ROLE_INSTRUCTIONS,
     "CHANGELOG.md": "historique",
-    "CLAUDE.md": "instructions d'agent",
+    "CLAUDE.md": ROLE_INSTRUCTIONS,
     "CODE_OF_CONDUCT.md": "communauté",
     "CONTRIBUTING.md": "contribution",
-    "GEMINI.md": "instructions d'agent",
+    "GEMINI.md": ROLE_INSTRUCTIONS,
     "LICENSE": "licence",
     "README.md": "présentation",
     "eslint.config.js": "style",

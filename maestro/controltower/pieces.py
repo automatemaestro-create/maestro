@@ -111,11 +111,13 @@ from maestro.controltower.recu_par_l_equipe import rebrancher, remplacees
 from maestro.controltower.validation import appliquer_sous_validation
 from maestro.engine.guardrails import DemandeValidation
 from maestro.outillage.clients import Client, reunir
+from maestro.outillage.contexte import fichier_du_projet
 from maestro.outillage.correction import (
     CLES_CORRIGEABLES,
     CorrectionLue,
     CorrectionPrise,
     adopter,
+    chemins_nommes,
     constats_en_texte,
     corrections_en_texte,
     corriger,
@@ -143,12 +145,16 @@ from maestro.outillage.modele import (
     Recommandation,
 )
 from maestro.outillage.questionnaire import (
+    SUJET_INSTRUCTIONS,
     Choix,
     acquis_de,
+    choix_du_manifeste,
     clients_depuis_choix,
     constats_depuis_choix,
+    convention_de_commit,
     schema_en_texte,
     source_manifeste_des_choix,
+    sujet_de,
 )
 from maestro.outillage.recommandation import recommander
 from maestro.outillage.redaction import PORTEE_FICHIER, Fichier, raison_stable, rediger
@@ -161,6 +167,8 @@ from maestro.outillage.verification import (
     commandes_ecrites,
 )
 from maestro.projets import Projet
+from maestro.projets.application import ApplicationRefusee, commiter_en_attente
+from maestro.projets.commits import RedacteurDeCommits
 from maestro.projets.perimetre import motifs_compiles
 from maestro.projets.racine import valider_racine
 from maestro.providers.base import ModelProvider
@@ -171,6 +179,14 @@ from maestro.sandbox.projet import branche_de_tache, espace_de_travail
 SORT_CREE = "cree"
 SORT_REECRIT = "reecrit"
 SORT_BLOC = "bloc"
+
+#: Ce que fait le commit d'une pièce, selon son sort — la phrase que le rédacteur des
+#: commits de Maestro reçoit (#1507), jamais un message tout fait.
+_VERBE_DU_SORT: dict[str, str] = {
+    SORT_CREE: "ajoute",
+    SORT_REECRIT: "met à jour",
+    SORT_BLOC: "complète",
+}
 
 #: Le cadre de la compréhension d'une **correction** (#1161). Concaténé, comme
 #: `_PROMPT_COMPREHENSION` et pour la même raison : le contrat est un gabarit JSON,
@@ -187,12 +203,25 @@ valeur.
 Les sujets, et la clé à employer pour chacun :
 """
     + schema_en_texte()
+    + f"""
+- clé "{SUJET_INSTRUCTIONS}" (à l'écran : {sujet_de(SUJET_INSTRUCTIONS)})"""
     + """
 
 Pour "installer", "construire", "tester", "lint", "formater", "types" et "demarrer", la
 valeur est la commande exacte, telle qu'on la taperait. La valeur "aucun" dit qu'il n'y
 en a pas. Une phrase peut changer plusieurs sujets : « on utilise pnpm, pas npm » change
 le gestionnaire ET les commandes qui l'appellent (installer, tester…).
+
+Une de ces clés peut porter plusieurs commandes — un script du projet que l'outil appelle
+(« bash outils/installer.sh »), puis la commande : la valeur que tu donnes les remplace
+TOUTES. Pour en retirer une, donne ce qui reste, en une seule commande ; pour les retirer
+toutes, "aucun".
+
+La clé "instructions" nomme les fichiers où le projet écrit ses instructions pour ses
+agents — ses règles, ses conventions —, qu'AGENTS.md leur dit de lire avant de
+travailler. Sa valeur est leur chemin depuis la racine du projet, séparés par des
+virgules : TOUS ceux qui doivent être nommés, ceux déjà nommés compris. "aucun" n'en
+nomme plus aucun.
 
 Tu reçois ce qu'on sait déjà de l'outillage et les corrections déjà prises. Ne corrige
 que ce que la phrase change. N'invente rien : une commande que la phrase ne donne pas,
@@ -336,7 +365,9 @@ class ServicePieces:
     tard », docs/37 §4.6). `verificateur` joue les commandes avant qu'une pièce ne se
     montre (`None` : le réel, que la suite de tests neutralise d'un seul endroit).
     `correction` comprend une phrase de correction (`None` : le modèle du poste, résolu
-    au premier usage).
+    au premier usage). `redacteur` écrit les messages des commits d'une pièce dans la
+    convention de commit choisie (#1507) — même résolution au premier usage, et il
+    n'est appelé que lorsqu'une convention est retenue.
 
     `equipe` (#1520) est la configuration d'agent où vivent les équipes des projets —
     celle des gabarits, que le service cadre sur le projet de la pièce. Branchée, chaque
@@ -352,12 +383,14 @@ class ServicePieces:
         *,
         verificateur: Verificateur | None = None,
         correction: CorrectionModele | None = None,
+        redacteur: RedacteurDeCommits | None = None,
         equipe: ConfigurationAgents | None = None,
     ) -> None:
         self._outillage = outillage
         self._projets = projets
         self._verificateur = verificateur
         self._correction = correction or CorrectionModele()
+        self._redacteur = redacteur or RedacteurDeCommits()
         self._equipe = equipe
         self._lues: dict[tuple[str, str], Analyse] = {}
 
@@ -387,6 +420,7 @@ class ServicePieces:
         corrections: Sequence[Choix] = (),
         tranchees: Iterable[tuple[str, str]] = (),
         revoir: bool = False,
+        d_abord: Sequence[str] = (),
     ) -> PieceProposee | None:
         """La prochaine pièce à proposer — vérifiée, avec son diff —, `None` s'il n'y en a plus.
 
@@ -395,6 +429,11 @@ class ServicePieces:
         le fil a compris (le tour qui conclut le questionnaire ne l'a pas encore
         écrit), `corrections` s'ajoute à celles du fil (la correction qu'on vient de
         comprendre), `tranchees` à ce que le fil a tranché (le geste en cours).
+
+        `d_abord` (#1542) sont les chemins cherchés **avant** les autres, dans cet ordre :
+        les pièces qu'une correction vient de toucher (`touchees`), celle que la personne
+        corrigeait en tête. Une correction change ainsi la pièce reproposée, quand elle
+        en change une ; les autres reviennent ensuite, dans l'ordre du plan.
 
         `revoir` (#1343) est la revue d'après un run : le projet a changé, donc seul un
         verdict **vérifié** est repris — tout ce qui avait échoué ou n'avait pas pu se
@@ -418,10 +457,12 @@ class ServicePieces:
         deja = set(dernieres.items())
         if not revoir:
             connues = _verdicts_du_fil(fil)
-            return await asyncio.to_thread(self._chercher, matiere, deja, connues)
+            return await asyncio.to_thread(
+                self._chercher, matiere, deja, connues, d_abord=tuple(d_abord)
+            )
         matiere, revus = await self._revue(matiere)
         return await asyncio.to_thread(
-            self._chercher, matiere, deja, {}, revoir=True, revus=revus
+            self._chercher, matiere, deja, {}, revoir=True, revus=revus, d_abord=tuple(d_abord)
         )
 
     async def _revue(self, matiere: _Matiere) -> tuple[_Matiere, dict[str, Verification]]:
@@ -563,6 +604,55 @@ class ServicePieces:
             return False
         return not any(c.cle in CLES_CORRIGEABLES for c in corrections)
 
+    async def fichier_refuse(self, projet_id: str, corrections: Sequence[Choix]) -> str:
+        """Pourquoi un fichier qu'une correction nomme ne se nommera pas — `""` s'il se lit (#1542).
+
+        L'exécution vérifie ce que le modèle écrit : une commande dite se joue avant d'être
+        montrée, un fichier d'instructions nommé doit être un fichier du projet, dans son
+        périmètre (`fichier_du_projet`). Sans quoi `AGENTS.md` enverrait chaque agent lire
+        un fichier qu'il ne trouvera pas.
+        """
+        nommes = [
+            chemin
+            for choisi in corrections
+            if choisi.cle == SUJET_INSTRUCTIONS
+            for chemin in chemins_nommes(choisi.valeur)
+        ]
+        if not nommes:
+            return ""
+        projet = self._outillage.entite(projet_id)
+        racine = await asyncio.to_thread(valider_racine, projet.racine)
+        for chemin in nommes:
+            if await asyncio.to_thread(fichier_du_projet, racine, chemin, projet.perimetre):
+                continue
+            return (
+                f"`{chemin}` n'est pas un fichier que je peux lire dans « {projet.nom} » — "
+                "dites-moi son chemin depuis la racine du projet."
+            )
+        return ""
+
+    async def touchees(
+        self,
+        projet_id: str,
+        fil: Sequence[MessageChat],
+        *,
+        acquis: Sequence[Choix] | None = None,
+        corrections: Sequence[Choix] = (),
+    ) -> tuple[str, ...]:
+        """Les pièces que `corrections` changent, dans l'ordre du plan — `()` si aucune (#1542).
+
+        Deux rédactions du même tour, sans puis avec la correction : ce qui diffère est ce
+        qu'elle touche, et rien d'autre ne le dit — sur #1522, une correction comprise
+        revenait sur une pièce identique sans que personne le sache. Rédigées **sans
+        verdicts** : aucune commande n'est jouée pour le savoir, et une commande corrigée
+        change déjà le texte qui la porte. Une pièce qui disparaît du plan (un skill dont
+        l'usage n'a plus de commande) compte : la correction l'a touchée.
+        """
+        fil = fil_du_projet(fil, projet_id)
+        avant = await self._matiere(projet_id, fil)
+        apres = await self._matiere(projet_id, fil, acquis=acquis, corrections=corrections)
+        return await asyncio.to_thread(_changees, avant, apres)
+
     # ── écrire ──────────────────────────────────────────────────────────────
 
     async def ecrire(self, piece: PieceProposee) -> PieceEcrite:
@@ -662,8 +752,15 @@ class ServicePieces:
     async def _ecrire_sur_branche(
         self, projet: Projet, racine: Path, fichier: Fichier, piece: PieceProposee
     ) -> PieceEcrite:
-        """Le régime d'un projet versionné : la branche, fusionnée sous l'accord de la carte."""
+        """Le régime d'un projet versionné : la branche, fusionnée sous l'accord de la carte.
+
+        Le commit de la pièce et celui de sa fusion suivent la convention de commit que
+        la personne a choisie (#1507) : rédigés par le modèle quand la source de la
+        pièce en retient une (`_messages_de_la_piece`), ceux de Maestro sinon.
+        """
         tache = nouvel_id_de_generation()
+        branche = branche_de_tache(tache)
+        message_piece, message_fusion = await self._messages_de_la_piece(projet, piece, branche)
 
         def preparer() -> PieceEcrite | None:
             with espace_de_travail(projet, tache_id=tache) as espace:
@@ -675,8 +772,16 @@ class ServicePieces:
                     verifications=piece.verifications,
                     corrections=piece.corrections_prises,
                 )
-            ecriture = rapport.ecritures[0] if rapport.ecritures else None
-            if rapport.refus or ecriture is None or ecriture.etat != "ecrit":
+                ecriture = rapport.ecritures[0] if rapport.ecritures else None
+                ecrite = not rapport.refus and ecriture is not None and ecriture.etat == "ecrit"
+                # Commitée ici, sous son message, plutôt qu'au démontage sous celui de
+                # Maestro : ce qui part sur la branche est le même.
+                if ecrite and message_piece:
+                    try:
+                        commiter_en_attente(espace.path, branche, message=message_piece)
+                    except ApplicationRefusee:
+                        pass  # le démontage commitera, sous le message de Maestro
+            if not ecrite:
                 etat = ecriture.etat if ecriture is not None else "refuse"
                 raison = rapport.refus or (ecriture.raison if ecriture is not None else "")
                 return _fait(piece, etat, raison, str(racine), REGIME_BRANCHE)
@@ -689,14 +794,15 @@ class ServicePieces:
             projet,
             tache_id=tache,
             validateur=AccordDeLaCarte({piece.chemin, CHEMIN_MANIFESTE}),
-            branche=branche_de_tache(tache),
+            branche=branche,
             titre=f"Écrire {piece.chemin} dans {projet.nom}",
+            message=message_fusion,
         )
         if resultat.approuvee:
             return _fait(
                 piece,
                 "ecrit",
-                f"écrit sur la branche {branche_de_tache(tache)}, fusionnée sur votre accord.",
+                f"écrit sur la branche {branche}, fusionnée sur votre accord.",
                 str(racine),
                 REGIME_BRANCHE,
             )
@@ -707,6 +813,35 @@ class ServicePieces:
             str(racine),
             REGIME_BRANCHE,
         )
+
+    async def _messages_de_la_piece(
+        self, projet: Projet, piece: PieceProposee, branche: str
+    ) -> tuple[str, str]:
+        """Le commit de la pièce et celui de sa fusion, dans la convention du projet (#1507).
+
+        La convention se lit dans la **source de la pièce** — les réponses dont
+        l'outillage est écrit —, pas dans le manifeste du disque : la première pièce
+        s'écrit avant qu'il existe. `("", "")` sans convention, et le modèle n'est pas
+        appelé ; un message que le rédacteur n'a pas su écrire reste celui de Maestro.
+        Les deux se rédigent ensemble : la carte attend.
+        """
+        convention = convention_de_commit(choix_du_manifeste(piece.source))
+        if not convention:
+            return "", ""
+        verbe = _VERBE_DU_SORT.get(piece.sort, "écrit")
+        base = projet.vcs.branche_base if projet.vcs is not None else ""
+        quoi = f"`{piece.chemin}` ({piece.nom}), une pièce de l'outillage du projet pour ses agents"
+        piece_seule, fusion = await asyncio.gather(
+            self._redacteur.message(convention=convention, changement=f"{verbe} {quoi}"),
+            self._redacteur.message(
+                convention=convention,
+                changement=(
+                    f"fusionne dans `{base or 'la branche de travail'}` la branche "
+                    f"`{branche}`, qui {verbe} {quoi}"
+                ),
+            ),
+        )
+        return piece_seule, fusion
 
     # ── la matière ──────────────────────────────────────────────────────────
 
@@ -799,8 +934,12 @@ class ServicePieces:
         *,
         revoir: bool = False,
         revus: Mapping[str, Verification] | None = None,
+        d_abord: tuple[str, ...] = (),
     ) -> PieceProposee | None:
         """La première pièce qui changerait le disque et n'a pas été tranchée — **bloquant**.
+
+        « La première » dans l'ordre du plan, `d_abord` passant devant (`prochaine`) ; le
+        rang d'une pièce reste celui du plan.
 
         Les verdicts connus sont ceux que le manifeste déclare (une pièce déjà écrite
         se reconnaît « à jour » sans rien rejouer) puis ceux que le fil a vus : une
@@ -826,7 +965,14 @@ class ServicePieces:
         )
         verificateur = self._verificateur or Verificateur()
         deja_revues = revus or {}
-        for rang, brouillon in enumerate(plan, start=1):
+        # Un tri stable : ce qui n'est pas cherché d'abord garde l'ordre du plan.
+        ordre = sorted(
+            enumerate(plan, start=1),
+            key=lambda paire: (
+                d_abord.index(paire[1].chemin) if paire[1].chemin in d_abord else len(d_abord)
+            ),
+        )
+        for rang, brouillon in ordre:
             entree = entrees.get(brouillon.chemin)
             if entree is None:  # pragma: no cover - `rediger` ne rend que des entrées
                 continue
@@ -867,6 +1013,27 @@ class ServicePieces:
 
 #: Les verdicts d'une commande **jouée** — les seuls qu'on ne rejoue pas.
 _JOUES = frozenset({VERIFIEE, ECHOUEE})
+
+
+def _changees(avant: _Matiere, apres: _Matiere) -> tuple[str, ...]:
+    """Les chemins dont le texte diffère d'une matière à l'autre — **bloquant** (#1542).
+
+    Ceux du plan d'après d'abord, dans son ordre, puis ceux qui en sont sortis. Les deux
+    plans se rédigent contre le même manifeste : seule la correction les sépare.
+    """
+    portees = portees_declarees(apres.racine)
+
+    def plan(matiere: _Matiere) -> dict[str, str]:
+        return {
+            fichier.chemin: fichier.contenu
+            for fichier in rediger(
+                matiere.constats, matiere.recommandation, portees=portees, source=matiere.source
+            )
+        }
+
+    ancien, neuf = plan(avant), plan(apres)
+    chemins = (*neuf, *(chemin for chemin in ancien if chemin not in neuf))
+    return tuple(chemin for chemin in chemins if ancien.get(chemin) != neuf.get(chemin))
 
 
 def _proposee(

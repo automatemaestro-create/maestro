@@ -175,6 +175,7 @@ from maestro.engine.executor import (
     _ecoule_ms,
 )
 from maestro.engine.guardrails import Guardrails
+from maestro.engine.limite import AttenteLimite
 from maestro.engine.pause import PorteExecution
 from maestro.engine.plafond import (
     STATUT_PLAFOND_ARRETE,
@@ -247,6 +248,7 @@ from maestro.orchestrator.rattrapage import (
     taches_redecoupees,
 )
 from maestro.orchestrator.schema import Brief, Clarification, Task, topological_order
+from maestro.outillage.contexte import outillage_du_projet
 from maestro.plan_run import largeur_du_plan, noeuds_du_plan
 from maestro.prerequis import GENRE_ROLE, PrerequisManquant, prerequis_du_role
 from maestro.projets.store import ProjetStore
@@ -568,6 +570,7 @@ class OrchestrationEngine:
         registre_mcp: Callable[[], RegistreMcp] | None = None,
         arbitre_plafond: ArbitrePlafond | None = None,
         acquis: MagasinAcquis | None = None,
+        attente_limite: AttenteLimite | None = None,
     ) -> None:
         if max_parallele is not None and max_parallele < 1:
             raise ValueError(f"max_parallele doit être ≥ 1 (reçu : {max_parallele}).")
@@ -587,6 +590,10 @@ class OrchestrationEngine:
         self._agents = tuple(agents)
         self._agents_store = agents_store
         self._modele = modele
+        # Le dépôt des projets, relu pour l'**outillage** que le Chef de projet lit au
+        # cadrage et au découpage (#1507) — le même que l'exécuteur relit à chaque
+        # tâche. None : ni brief ni plan n'en disent rien, comme avant.
+        self._projets = projets
         # À qui poser les questions du brief (#321) — None : personne, et les
         # questions partent alors telles quelles en validation (le comportement de
         # #320). Même nature que `arbitre_brief` : du câblage de déploiement.
@@ -728,6 +735,11 @@ class OrchestrationEngine:
                 # Les plafonds en vigueur (#1182) : ceux que la boucle relève sur
                 # décision, relus par l'exécuteur à chaque tâche.
                 plafonds=self._plafonds,
+                # L'attente à la limite d'usage du fournisseur (#1543) : c'est
+                # l'exécuteur qui tient la tâche coupée, son espace ouvert, jusqu'à
+                # la reprise. Même nature que les arbitres : *qui* tient la pause
+                # est un câblage de déploiement. Ignorée si un exécuteur est injecté.
+                attente_limite=attente_limite,
             )
         )
 
@@ -749,6 +761,7 @@ class OrchestrationEngine:
         rattrapage: PolitiqueRattrapage | None = RATTRAPAGE_DEFAUT,
         arbitre_plafond: ArbitrePlafond | None = None,
         acquis: MagasinAcquis | None = None,
+        attente_limite: AttenteLimite | None = None,
     ) -> OrchestrationEngine:
         """Moteur par défaut : fournisseur et modèle issus de la config (#69).
 
@@ -855,6 +868,13 @@ class OrchestrationEngine:
         `acquis` (#1391) est **où** le run range ce qu'il a payé — en pratique
         `maestro.controltower.acquis.magasin_acquis_configure()`. None (défaut) :
         rien n'est rangé, et le run interrompu ne se reprend pas sur son plan.
+
+        `attente_limite` (#1543) est **qui** tient la pause quand le fournisseur
+        oppose sa limite d'usage — en pratique
+        `maestro.controltower.limite.AttenteLimiteControlTower`. Le run se met en
+        pause, cause et heure de reprise dites, et la tâche coupée reprend dans sa
+        session au reset ou sur « Reprendre ». None (défaut) : personne, et la
+        tâche coupée échoue sur sa limite, nommée par son type.
         """
         from maestro.providers.factory import default_model, provider_from_settings
 
@@ -895,6 +915,7 @@ class OrchestrationEngine:
             registre_mcp=_allowlist_mcp_du_poste,
             arbitre_plafond=arbitre_plafond,
             acquis=acquis,
+            attente_limite=attente_limite,
         )
 
     async def run(
@@ -1713,6 +1734,7 @@ class OrchestrationEngine:
                     objective,
                     equipe=self._equipe(projet_id),
                     contexte_sources=contexte_sources,
+                    outillage=self._outillage(projet_id),
                 )
             except Exception as exc:
                 journal.consigne(
@@ -2187,6 +2209,24 @@ class OrchestrationEngine:
             raise
         except Exception as exc:  # noqa: BLE001 — un canal muet ne condamne rien de plus
             return None, f"la proposition n'a pas pu être posée dans le fil ({exc})"
+
+    def _outillage(self, projet_id: str | None) -> str:
+        """Les instructions de l'outillage du projet, pour le Chef de projet (#1507) — `""` sinon.
+
+        Le texte qu'un agent du projet reçoit (`outillage_du_projet`, dans la portée que
+        le manifeste déclare), relu ici une fois par cadrage et par découpage : sur p5,
+        ni le brief ni le plan ne savaient que la personne avait retenu une intégration
+        continue, si bien qu'aucune tâche ne l'a écrite. Rien sans projet, sans dépôt des
+        projets ou sans manifeste — et jamais une levée : un outillage illisible laisse
+        le cadrage tel qu'il était.
+        """
+        if projet_id is None or self._projets is None:
+            return ""
+        try:
+            projet = self._projets.lire(projet_id)
+            return outillage_du_projet(projet).instructions if projet is not None else ""
+        except Exception:  # noqa: BLE001 — cf. le docstring : jamais une levée
+            return ""
 
     def _equipe(self, projet_id: str | None) -> tuple[Agent, ...]:
         """L'équipe sur laquelle découper — celle du projet, sinon celle du câblage.
@@ -2973,6 +3013,7 @@ class OrchestrationEngine:
                     contexte_sources,
                     clarifications,
                     dernier_tour=dernier_tour,
+                    outillage=self._outillage(projet_id),
                 )
             except Exception as exc:
                 journal.consigne(

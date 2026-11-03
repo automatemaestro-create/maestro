@@ -51,6 +51,7 @@ from maestro.engine.executor import (
     SUFFIXE_ETAPE_PROCESSUS,
 )
 from maestro.orchestrator import Orchestrator
+from maestro.projets.modele import ENV_IDENTITE_GIT
 from maestro.providers import ClaudeProvider, Credentials, GardeFouInoperant
 from maestro.providers import claude as claude_mod
 from maestro.providers.base import ModelProvider
@@ -379,6 +380,37 @@ def test_sans_lanceur_installe_la_session_tourne_et_le_dit(monkeypatch, tmp_path
     (releve,) = releves
     assert "maestro-confinement" in releve.non_confinee
     assert releve.phrase().startswith("Session de l'agent non confinée")
+
+
+def test_la_session_de_l_agent_commite_sous_l_identite_de_maestro(monkeypatch, tmp_path):
+    # L'agent commite son travail dans la convention du projet (#1507) : sur un poste
+    # sans identité Git, son `git commit` échouait. La session porte celle de Maestro,
+    # par l'environnement — rien n'est écrit dans la configuration du projet.
+    monkeypatch.setattr(confinement, "chemin_lanceur", lambda: None)
+    vu: dict[str, object] = {}
+
+    class _Texte:
+        def __init__(self, text):
+            self.text = text
+
+    class _Message:
+        def __init__(self, content):
+            self.content = content
+
+    async def fake_query(*, prompt, options):
+        vu["env"] = dict(options.env)
+        yield _Message([_Texte("Livré.")])
+
+    monkeypatch.setattr(claude_mod, "query", fake_query)
+    monkeypatch.setattr(claude_mod, "AssistantMessage", _Message)
+    monkeypatch.setattr(claude_mod, "TextBlock", _Texte)
+
+    asyncio.run(_run_agent(ClaudeProvider(Credentials()), tmp_path, []))
+
+    env = vu["env"]
+    assert isinstance(env, dict)
+    assert {cle: env.get(cle) for cle in ENV_IDENTITE_GIT} == ENV_IDENTITE_GIT
+    assert ENV_IDENTITE_GIT["GIT_AUTHOR_NAME"] == "Maestro"
 
 
 async def _livre(*, prompt, options):

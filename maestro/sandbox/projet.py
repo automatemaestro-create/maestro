@@ -78,10 +78,19 @@ from pathlib import Path
 
 from maestro.emplacements import jetable, repertoire_temporaire
 from maestro.fichiers import retirer_arbre
-from maestro.projets.application import ApplicationRefusee, commiter_en_attente
+from maestro.projets.application import (
+    ApplicationRefusee,
+    commiter_en_attente,
+    message_de_sauvegarde,
+)
 from maestro.projets.modele import AUTEUR_COURRIEL, AUTEUR_NOM, Projet
 from maestro.projets.racine import valider_racine
-from maestro.sandbox.en_place import EspaceEnPlace, chemin_atelier, ouvre_atelier
+from maestro.sandbox.en_place import (
+    DOSSIER_ATELIER,
+    EspaceEnPlace,
+    chemin_atelier,
+    ouvre_atelier,
+)
 from maestro.sandbox.ramassage import PREFIXE_COMMUN, racine_des_espaces
 from maestro.sandbox.verification import MiroirDeVerification, miroir_de_verification
 from maestro.sandbox.workspace import LieuSansTrace, Workspace, isolated_workspace
@@ -123,15 +132,20 @@ _COMMITS_DITS_MAX = 10
 #: est rendue telle que Git l'écrit, jamais tue.
 _STATUTS_GIT = {"A": "ajouté", "M": "modifié", "D": "supprimé", "T": "type changé"}
 
-#: Ce que le message d'une tâche dit de sa **copie de travail** (#1401) : ce que
-#: l'agent y laisse est commité, brouillons compris, et où vont les brouillons pour
-#: ne pas l'être. Voir `EspaceCopieDeTravail.consigne_espace`.
+#: Ce que le message d'une tâche dit de sa **copie de travail** (#1401) : l'agent
+#: commite son travail lui-même, dans la convention du projet (#1507) ; ce qu'il y
+#: laisse est commité pour lui, brouillons compris, et où vont les brouillons pour ne
+#: pas l'être. Voir `EspaceCopieDeTravail.consigne_espace`.
 CONSIGNE_COPIE_DE_TRAVAIL = (
-    "Dans cette copie de travail du projet, tout ce que tu laisses et que le "
-    "`.gitignore` du projet n'ignore pas est commité sur ta branche à la fin de ta "
-    "tâche — brouillons compris —, puis appliqué au projet avec elle. Ce qui n'est pas "
-    "le livrable — brouillons, essais, harnais de vérification, notes — ne se laisse "
-    "donc pas ici : mets-le dans un dossier que tu crées par `mktemp -d`, dans la "
+    "Dans cette copie de travail du projet, **commite ton travail toi-même** sur ta "
+    "branche, au fil des étapes qui le méritent, avec des messages qui suivent la "
+    "convention de commit du projet quand ses instructions en nomment une (son "
+    "`AGENTS.md`) : ce sont ces commits que le projet gardera, et la vérification de ta "
+    "livraison les relit. Tout ce que tu laisses non commité et que le `.gitignore` du "
+    "projet n'ignore pas est commité sur ta branche à la fin de ta tâche — dans ton "
+    "dernier commit, brouillons compris —, puis appliqué au projet avec elle. Ce qui "
+    "n'est pas le livrable — brouillons, essais, harnais de vérification, notes — ne se "
+    "laisse donc pas ici : mets-le dans un dossier que tu crées par `mktemp -d`, dans la "
     "commande même qui s'en sert, hors de cette copie — un nom fixe du répertoire "
     "temporaire du système sort de ton espace et revient à une personne. Ce qui mérite "
     "d'être relu, dis-le dans ton compte-rendu."
@@ -190,6 +204,14 @@ class TravailAnterieur:
             "Pars de cet état : relis ce qui est fait, garde ce qui tient, termine ce "
             "qui manque — ne le refais pas depuis zéro."
         )
+        # Sur S12 (#1507), l'agent qui reprenait a amendé le commit que Maestro avait
+        # sauvé à l'extinction, pour le mettre dans la convention : le travail sauvé
+        # n'était plus dans l'histoire du projet livré.
+        lignes.append(
+            "Et garde ces commits tels quels — ni `--amend`, ni rebase, ni reset : ce sont "
+            "eux qui disent que ce travail est sauvé. Ajoute les tiens par-dessus, dans la "
+            "convention de commit du projet."
+        )
         return "\n".join(lignes)
 
 
@@ -225,7 +247,12 @@ class CopieDuProjet:
         return cls(nom=projet.nom.strip(), dossier=projet.racine, branche=branche)
 
     def consigne(self) -> str:
-        """Le paragraphe qui dit à l'agent où il est, et ce que devient ce qu'il y laisse."""
+        """Le paragraphe qui dit à l'agent où il est.
+
+        Ce que devient ce qu'il y laisse — ses commits, et le reste commité pour lui —
+        suit dans le même message (`CONSIGNE_COPIE_DE_TRAVAIL`), une fois (#1507) : les
+        deux paragraphes le disaient chacun, l'un sous l'autre.
+        """
         nom_du_dossier = Path(self.dossier).name
         projet = self.nom or nom_du_dossier
         # Le nom du projet et celui de son dossier, une seule fois s'ils se confondent.
@@ -239,9 +266,7 @@ class CopieDuProjet:
             "répertoire** qu'elle désigne : travailles-y directement, sans y créer de "
             "sous-dossier de ce nom, et sans écrire dans le dossier d'origine — ce qui "
             "s'y écrirait échapperait à ta branche. Les chemins que ses instructions "
-            "disent relatifs à « la racine du projet » partent d'ici. Ce que tu y "
-            "laisses est commité sur ta branche à la fin de ta tâche, et c'est cette "
-            "branche qui est appliquée au projet."
+            "disent relatifs à « la racine du projet » partent d'ici."
         )
 
 
@@ -653,6 +678,7 @@ def espace_de_travail(
     branche = _branche(tache_id)
     depart = _branche(reprend) if reprend.strip() else ""
     monte = False
+    au_montage = ""
     try:
         _verifie_hors_racine(chemin, racine)
         # Lu **avant** le montage, qui crée la branche quand elle manque : seule une
@@ -660,6 +686,9 @@ def espace_de_travail(
         existait = _ref_existe(racine, branche)
         _monter_worktree(racine, chemin, branche, _base(projet), depart=depart)
         monte = True
+        # La tête de la branche au montage (#1507) : ce que cette exécution n'a pas fait,
+        # et que le démontage n'amendera jamais — une sauvegarde d'extinction en est.
+        au_montage = _tete(chemin)
         # **Après** le montage, jamais avant : il vient de porter sur la branche ce
         # qu'un worktree abandonné retenait encore (`_liberer_la_branche`).
         anterieur = (
@@ -674,7 +703,7 @@ def espace_de_travail(
         if not keep:
             libre = True
             if monte:
-                _solder_la_branche(chemin, branche)
+                _solder_la_branche(chemin, branche, au_montage)
                 libre = _retirer_worktree(racine, chemin)
             # Un worktree resté intact (#1447) ne s'efface pas avec son parent : ce
             # serait refaire, à la main, la coquille que son retrait vient d'éviter.
@@ -682,7 +711,7 @@ def espace_de_travail(
                 retirer_arbre(parent)
 
 
-def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
+def sauver_le_travail_en_vol(projet: Projet, tache_id: str, *, message: str = "") -> bool:
     """Porte sur sa branche ce qu'une tâche **tuée en vol** a laissé dans son worktree (#1392).
 
     Le démontage d'`espace_de_travail` commite le travail en attente avant de
@@ -703,6 +732,11 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
     dit l'adresse vide ou sans `.git` (`prunable`, #1447) n'en est pas un : rien n'y
     est commité (`_worktrees`).
 
+    `message` (#1507) est celui de la sauvegarde, rédigé dans la convention de commit
+    du projet par celui qui solde le run ; vide, celui de Maestro. Ce commit ne se
+    réécrit plus après coup (`commiter_en_attente`) : c'est ici qu'il doit naître
+    dans la convention.
+
     Rend `True` si un worktree de la tâche a été trouvé — son travail est alors sur
     la branche —, `False` s'il n'y en avait pas : projet non versionné (la tâche
     écrit en place, rien n'est hors du projet), ou démontage qui a eu le temps de
@@ -717,7 +751,7 @@ def sauver_le_travail_en_vol(projet: Projet, tache_id: str) -> bool:
     branche = _branche(tache_id)
     trouve = False
     for abandonne in _worktrees_abandonnes(racine, branche):
-        commiter_en_attente(abandonne, branche)
+        commiter_en_attente(abandonne, branche, message=message)
         trouve = True
     return trouve
 
@@ -922,6 +956,120 @@ def _commit_de_la_livraison(espace: Path) -> str | None:
         return commit.stdout.strip() if commit.returncode == 0 else None
     finally:
         retirer_arbre(dossier)
+
+
+#: Ce que l'état d'une branche nomme, au plus (#1507) : ses commits, ses fichiers en
+#: attente. Au-delà, le compte est dit — le vérificateur juge une convention, il n'a pas
+#: besoin de l'historique entier.
+_COMMITS_DE_L_ETAT_MAX = 20
+_EN_ATTENTE_DITS_MAX = 20
+
+#: Ce que l'état d'une branche dit d'un commit de Maestro (#1507) : il n'est pas de
+#: l'agent, il ne compte pas contre la convention, et il se garde tel quel — le
+#: réécrire ferait sortir un travail sauvé de l'histoire du projet (S12).
+_MARQUE_SAUVEGARDE = " — commit de Maestro (sauvegarde du travail), à garder tel quel"
+
+#: Ce que l'état d'une branche dit quand elle touche à `.maestro/` (#1507). Dans une
+#: copie de travail, rien d'autre que la comptabilité de Maestro n'y vit — l'atelier
+#: d'une tâche n'existe qu'en place —, et elle est versionnée avec le projet : sur S12
+#: (2026-10-26), l'agent du socle a retiré le manifeste du dépôt dans le commit même de
+#: son travail, et la fusion l'a effacé de la racine.
+_COMPTABILITE_TOUCHEE = (
+    f"La branche touche à `{DOSSIER_ATELIER}/`, la comptabilité de Maestro — elle suit "
+    "le projet, et le travail d'une tâche n'y touche pas :"
+)
+
+
+def etat_de_la_branche(espace: Path, base: str) -> str:
+    """Ce que la branche de la copie `espace` porte au-delà de `base`, et ce qui n'est pas commité.
+
+    Le texte que le vérificateur d'une livraison lit pour juger la convention de commit
+    du projet (#1507) : les sujets des commits de la branche, du plus récent au plus
+    ancien, puis les fichiers que le `.gitignore` du projet n'ignore pas et que rien ne
+    commite encore. Sur p5, l'agent ne commitait rien — Maestro commitait pour lui, hors
+    de la convention choisie : c'est ce que ce relevé fait voir avant la fusion. Et, s'il
+    y en a, ce que la branche a changé de la comptabilité de Maestro sous `.maestro/`
+    (`_comptabilite_touchee`) : sur S12, le manifeste était parti avec le commit du socle.
+    Lu et jamais écrit ; `""` quand Git ne répond pas, ou sans `base` à comparer — un
+    relevé muet ne fait rien juger.
+    """
+    if not base.strip():
+        return ""
+    try:
+        compte = _git(espace, "rev-list", "--count", f"{base}..HEAD")
+        sujets = _git(espace, "log", f"-n{_COMMITS_DE_L_ETAT_MAX}", "--format=%s", f"{base}..HEAD")
+        statut = _git(espace, "status", "--porcelain", "--untracked-files=all")
+        nom = _git(espace, "rev-parse", "--abbrev-ref", "HEAD")
+    except EspaceProjetIndisponible:
+        return ""
+    if compte.returncode != 0 or sujets.returncode != 0 or statut.returncode != 0:
+        return ""
+    nb_commits = int(compte.stdout.strip()) if compte.stdout.strip().isdigit() else 0
+    # Un commit que Maestro a fait du travail de la tâche — la sauvegarde d'une
+    # extinction — se reconnaît à son message, le nôtre, comparé à l'identique.
+    sauvegarde = message_de_sauvegarde(nom.stdout.strip()) if nom.returncode == 0 else ""
+    if nb_commits:
+        lignes = [
+            f"La branche porte {nb_commits} commit(s) depuis `{base}`, du plus récent "
+            "au plus ancien :",
+            *(
+                f"- {sujet}" + (_MARQUE_SAUVEGARDE if sujet == sauvegarde else "")
+                for sujet in sujets.stdout.splitlines()
+                if sujet.strip()
+            ),
+        ]
+    else:
+        lignes = [f"La branche ne porte aucun commit depuis `{base}`."]
+    if nb_commits > _COMMITS_DE_L_ETAT_MAX:
+        lignes.append(f"- et {nb_commits - _COMMITS_DE_L_ETAT_MAX} plus ancien(s)")
+    en_attente = [ligne[3:] for ligne in statut.stdout.splitlines() if len(ligne) > 3]
+    if en_attente:
+        lignes.append(f"Non commités : {len(en_attente)} fichier(s) —")
+        lignes += [f"- `{chemin}`" for chemin in en_attente[:_EN_ATTENTE_DITS_MAX]]
+        if len(en_attente) > _EN_ATTENTE_DITS_MAX:
+            lignes.append(f"- et {len(en_attente) - _EN_ATTENTE_DITS_MAX} autre(s)")
+    else:
+        lignes.append("Rien n'est en attente de commit.")
+    touches = _comptabilite_touchee(espace, base)
+    if touches:
+        lignes += [_COMPTABILITE_TOUCHEE, *touches]
+    return "\n".join(lignes)
+
+
+def _comptabilite_touchee(espace: Path, base: str) -> list[str]:
+    """Ce que la branche de `espace` a changé sous `.maestro/` depuis qu'elle a quitté `base`.
+
+    Comparé au **point de départ** de la branche (`merge-base`), et non à la pointe de
+    `base` : une régénération de l'outillage, posée sur la base pendant que la tâche
+    travaillait, n'est pas le fait de la branche. Et à l'**arbre de travail**, pas à
+    `HEAD` : ce qui n'est pas commité l'est au démontage, c'est donc l'état qui
+    fusionnera — un fichier retiré du dépôt sans être effacé du disque y compte comme
+    supprimé. Une ligne par fichier, son sort en toutes lettres ; vide quand Git ne
+    répond pas : rien n'est alors à juger.
+    """
+    try:
+        depart = _git(espace, "merge-base", base, "HEAD")
+        if depart.returncode != 0 or not depart.stdout.strip():
+            return []
+        changes = _git(
+            espace,
+            "diff",
+            "--name-status",
+            "--no-renames",
+            depart.stdout.strip(),
+            "--",
+            f"{DOSSIER_ATELIER}/",
+        )
+    except EspaceProjetIndisponible:
+        return []
+    if changes.returncode != 0:
+        return []
+    lignes = []
+    for ligne in changes.stdout.splitlines():
+        statut, _, chemin = ligne.partition("\t")
+        if chemin:
+            lignes.append(f"- `{chemin}` ({_STATUTS_GIT.get(statut[:1], statut)})")
+    return lignes
 
 
 def branche_de_tache(tache_id: str) -> str:
@@ -1196,8 +1344,14 @@ def _normalise(chemin: Path) -> str:
     return os.path.normcase(str(resolu))
 
 
-def _solder_la_branche(chemin: Path, branche: str) -> None:
+def _solder_la_branche(chemin: Path, branche: str, au_montage: str = "") -> None:
     """Commite sur `branche` ce que le worktree porte encore, avant de le démonter (#705).
+
+    Dans le dernier commit de l'agent quand cette exécution l'a fait — au-delà de
+    `au_montage`, la tête de la branche au montage — et que lui seul le porte (#1507,
+    `commiter_en_attente`) : c'est un reste de son travail, et il entre sous son
+    message, dans la convention du projet. Un commit d'avant le montage, la
+    sauvegarde d'une extinction comprise, n'est jamais réécrit.
 
     C'est ce qui rend **vraie** la phrase que ce module tient depuis #224 — « le
     worktree est retiré, jamais la branche : c'est elle qui porte le travail
@@ -1224,7 +1378,7 @@ def _solder_la_branche(chemin: Path, branche: str) -> None:
     et détruire ce qui l'explique serait le pire des deux.
     """
     try:
-        commiter_en_attente(chemin, branche)
+        commiter_en_attente(chemin, branche, depuis=au_montage)
     except ApplicationRefusee:
         pass
 
@@ -1312,6 +1466,19 @@ def _oublier_les_worktrees_disparus(racine: Path) -> None:
 def _ref_existe(racine: Path, branche: str) -> bool:
     """La branche locale `branche` existe-t-elle dans le dépôt de `racine` ?"""
     return _git(racine, "rev-parse", "--verify", "--quiet", f"refs/heads/{branche}").returncode == 0
+
+
+def _tete(chemin: Path) -> str:
+    """Le commit de tête de la copie `chemin` — `""` si Git ne sait pas le dire (#1507).
+
+    `""` ne fait rien amender au démontage (`commiter_en_attente`) : dans le doute, un
+    commit de plus vaut mieux qu'un commit réécrit.
+    """
+    try:
+        resultat = _git(chemin, "rev-parse", "HEAD")
+    except EspaceProjetIndisponible:
+        return ""
+    return resultat.stdout.strip() if resultat.returncode == 0 else ""
 
 
 def _git(

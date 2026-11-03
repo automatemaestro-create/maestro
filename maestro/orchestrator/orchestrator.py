@@ -90,6 +90,7 @@ class Orchestrator:
         *,
         equipe: Sequence[Agent] | None = None,
         contexte_sources: str = "",
+        outillage: str = "",
     ) -> list[Task]:
         """Produit le plan de tâches pour `objective`.
 
@@ -104,6 +105,9 @@ class Orchestrator:
         `contexte_sources` (#1172) : les sources d'un run **sans brief**, déjà
         encadrées par `contexte_markdown` (cf. `build_user_prompt`).
 
+        `outillage` (#1507) : les instructions de l'outillage du projet — ce qu'il
+        prévoit se confie à une tâche (cf. `build_user_prompt`). Vide hors projet.
+
         Lève `ValueError` si l'objectif est vide, `PlanParsingError` si la réponse
         du modèle n'est pas un tableau JSON exploitable, `TaskValidationError` si le
         plan enfreint le schéma ou les règles inter-tâches.
@@ -112,7 +116,7 @@ class Orchestrator:
             raise ValueError("L'objectif est vide.")
 
         response = await self._provider.generate(
-            build_user_prompt(objective, contexte_sources),
+            build_user_prompt(objective, contexte_sources, outillage),
             model=self._model,
             system_prompt=prompt_orchestrateur(equipe),
         )
@@ -126,6 +130,7 @@ class Orchestrator:
         clarifications: Sequence[Clarification] = (),
         *,
         dernier_tour: bool = False,
+        outillage: str = "",
     ) -> Brief:
         """Rédige le **brief structuré** de `objectif`, validé contre son schéma (#318).
 
@@ -150,6 +155,9 @@ class Orchestrator:
         atteint (cf. `build_brief_user_prompt`) ; la borne, elle, est tenue par
         l'appelant.
 
+        `outillage` (#1507) : les instructions de l'outillage du projet, que le brief
+        fait entrer dans son périmètre et ses critères. Vide hors projet.
+
         Lève `ValueError` si l'objectif est vide, `BriefParsingError` si la réponse du
         modèle n'est pas un objet JSON exploitable, `BriefValidationError` si le brief
         enfreint le schéma partagé.
@@ -159,7 +167,11 @@ class Orchestrator:
 
         response = await self._provider.generate(
             build_brief_user_prompt(
-                objectif, contexte_sources, clarifications, dernier_tour=dernier_tour
+                objectif,
+                contexte_sources,
+                clarifications,
+                dernier_tour=dernier_tour,
+                outillage=outillage,
             ),
             model=self._model,
             system_prompt=BRIEF_SYSTEM_PROMPT,

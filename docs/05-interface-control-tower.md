@@ -1450,18 +1450,51 @@ contenu de la décision :
 - la cause vient **en plus** du détail, jamais à sa place — le code dit *de quoi il
   s'agit*, le détail *ce qui s'est passé* ; un code que l'écran ne sait pas nommer
   ne rend **aucune** ligne plutôt qu'un identifiant brut ;
-- la **limite d'usage du fournisseur** est la seule reconnue **au texte**, faute de
-  type — rien dans `maestro/` ne la détectait, et le classement des aléas la range
-  même parmi les relançables. Ses marqueurs sont **repris** de
-  `scripts/orchestrate/run.sh` (#171) plutôt que réinventés, et le texte examiné est
-  celui de **l'exception**, jamais le `stderr` collecté (#346), qui porte la
-  télémétrie du CLI : un `rate_limit_event` de statut « allowed » y ferait nommer
-  « limite d'usage » à peu près tous les échecs (le piège de #203).
+- **aucune cause ne se reconnaît au texte** (#1543, docs/44). La limite d'usage du
+  fournisseur l'était, faute de type : un motif repris de `scripts/orchestrate/run.sh`
+  cherché dans le message de l'erreur, qui n'a pas reconnu « You've hit your session
+  limit » le 2026-10-15 — la tâche s'est soldée en échec, et le run avec elle
+  (docs/51 § 4.2). Chaque adaptateur mue désormais son signal natif en
+  `LimiteUsageAtteinte` : l'événement typé du flux du CLI (`rate_limit_event` au
+  statut `rejected`, jamais `allowed`, qui ne fait que rapporter la fenêtre — le piège
+  de #203), l'erreur typée d'un message de l'assistant, le statut 429 d'un endpoint.
+  Et la limite n'arrête plus le run : elle le **met en pause** (§2.4.3 bis).
 
-L'ordre de classement est celui de la **précision** — les types d'abord, le texte en
-dernier : un plafond de tours dont le message citerait « rate limit » reste un
-plafond de tours, ce que le moteur *sait* l'emportant sur ce qu'un message
-*suggère*.
+Le classement ne lit que des types : un plafond de tours dont le message citerait
+« rate limit » reste un plafond de tours, ce que le moteur *sait* l'emportant sur ce
+qu'un message *suggère*.
+
+#### 2.4.3 bis À la limite d'usage, le run se met en pause (#1543) — **livré**
+
+Une tâche que le fournisseur coupe par sa limite d'usage ne fait plus échouer son run.
+Le run se met **en pause** — l'ordre de pause de #477, posé par
+`maestro.controltower.limite.AttenteLimiteControlTower` —, et le résumé dit pourquoi
+et jusqu'à quand : `pause_cause` vaut `limite_usage`, `reprise_a` l'heure que le
+fournisseur a donnée (ISO 8601, `null` quand il ne l'a pas dite). Le statut ne bouge
+pas (`en_cours`) ; aucune tâche neuve ne part pendant la pause. Le fil la dit en mots
+(« en pause depuis 10:02 — limite d'usage du fournisseur, reprise prévue à 12:00 »).
+
+**À l'heure dite, le run reprend de lui-même** ; d'ici là, « Reprendre » le reprend
+aussi. La tâche coupée repart **dans sa session** : le fournisseur la rouvre par
+l'identifiant que Maestro lui avait donné (`SessionAgent`, #1513), contexte intact,
+dans son espace de travail resté ouvert, et l'agent n'y reçoit que la note de reprise.
+Rien de ce qui est fait n'est refait — ni les tâches soldées, ni ce que celle-ci avait
+écrit. Trois règles à ne pas défaire :
+
+- **une attente par run** (`maestro.engine.limite.RendezVousLimite`), que toutes les
+  tâches coupées rejoignent, et la meilleure information l'emporte — une heure connue
+  remplace une attente aveugle (la règle de #291) ;
+- **rien n'est inventé** : sans heure de reprise (un solde épuisé), ou avec une heure
+  déjà passée, le run attend « Reprendre » — aucun palier de quelques minutes ;
+- **la pause d'une personne n'est jamais levée par le reset** : la tâche coupée
+  reprend (une pause laisse finir ce qui est en vol), le run attend « Reprendre ».
+
+Sans Control Tower pour tenir la pause, la tâche échoue sur sa limite, nommée par son
+type (`limite_usage`), comme avant. Couverture :
+[`tests/test_limite_usage.py`](../tests/test_limite_usage.py) — l'adaptateur sur les
+signaux typés du CLI, le runtime qui rouvre la session, le rendez-vous, l'attente de
+la Control Tower, et de bout en bout un run coupé par la limite qui finit « terminé »
+au reset comme sur « Reprendre ».
 
 Couverture (#480) : `tests/test_run_activite.py` côté Python (les cinq causes et
 leur ordre, la cible d'un appel d'outil, le regroupement d'une salve, la fenêtre,
@@ -7013,7 +7046,9 @@ run.
 **`409` quand rien n'attend** (`GesteRunIntrouvable`), pour les mêmes trois raisons que le cadrage :
 le double clic n'interrompt pas deux fois, et ne relance pas deux runs.
 
-Le résumé d'un run porte `pause_depuis` (#1179), l'ancienneté de `en_pause`.
+Le résumé d'un run porte `pause_depuis` (#1179), l'ancienneté de `en_pause`, et depuis #1543
+`pause_cause` et `reprise_a` : pourquoi il est en pause quand ce n'est pas une personne (la limite
+d'usage du fournisseur, §2.4.3 bis), et l'heure à laquelle il reprendra de lui-même.
 
 Implémentation : [`maestro/controltower/gestes.py`](../maestro/controltower/gestes.py) (le
 vocabulaire et `GesteRefuse`),
@@ -7961,6 +7996,17 @@ suivi de ce que le modèle de correction n'a pas compris), la pièce qui attenda
 **sans effet** sur ce qui s'écrit ; et une commande corrigée qui **échoue** à l'exécution — la
 pièce est montrée avec son échec, « Écrire ce fichier » n'est pas offert, et la route refuse
 l'écriture (`422`) : on redit la bonne commande, ou on passe la pièce.
+
+**Une correction change la pièce reproposée, ou le fil dit pourquoi** (#1542). Vu sur #1522, sur un
+clone du dépôt de Maestro : « retire `bash scripts/setup.sh` de ce skill » et « nomme `CLAUDE.md` en
+tête des conventions » revenaient sur une pièce identique, sous « Correction prise ». Désormais le
+modèle de correction voit tout ce qu'un skill prescrit — les scripts du projet qu'il appelle, puis la
+commande —, une commande dite remplace aussi ces scripts, et le sujet `instructions` nomme un
+fichier d'instructions du projet (vérifié sur le disque : un fichier absent ou hors du périmètre se
+dit, et rien n'est pris). Les pièces que la correction touche reviennent d'abord — celle que la
+personne corrigeait en tête —, et une correction sans effet, ou la même pièce qui revient, le dit
+derrière les mots du juge (« … ne change pas : … Rien n'a été écrit. ») **sans** porter de
+correction : « Correction prise » ne s'affiche jamais au-dessus d'une pièce identique.
 
 **Une correction reste acquise d'une conversation à l'autre** (#1334). Ce que la personne a dit
 est une propriété de **son projet**, pas du fil où elle l'a dit : dès qu'une pièce s'écrit, le

@@ -65,6 +65,7 @@ from maestro.sandbox.projet import (
     branche_de_tache,
     conflit_avec_la_base,
     espace_de_travail,
+    etat_de_la_branche,
     sauver_le_travail_en_vol,
 )
 from maestro.sandbox.ramassage import Ramassage, racine_des_espaces, ramasser
@@ -94,6 +95,7 @@ __all__ = [
     "chemin_atelier",
     "conflit_avec_la_base",
     "espace_de_travail",
+    "etat_de_la_branche",
     "frontiere_de",
     "isolated_workspace",
     "racine_des_espaces",

@@ -239,6 +239,54 @@ def test_un_manifeste_illisible_ne_se_distingue_pas_d_un_projet_non_outille(
     assert outillage_du_projet(projet).vide
 
 
+def _avec_source(racine: Path, source: dict[str, Any]) -> None:
+    """Remplace la source du manifeste de `racine`."""
+    chemin = racine / CHEMIN_MANIFESTE
+    donnees = json.loads(chemin.read_text(encoding="utf-8"))
+    donnees["source"] = source
+    chemin.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
+
+
+def test_la_convention_de_commit_choisie_se_lit_au_manifeste(tmp_path: Path) -> None:
+    """#1507 : Maestro relit la convention que la personne a choisie, pour ses propres commits."""
+    racine = tmp_path / "depensio"
+    projet = projet_outille(racine)
+    _avec_source(
+        racine,
+        {
+            "type": "choix",
+            "projet_id": "prj-0000dead",
+            "choix": [
+                {"cle": "langages", "valeur": "TypeScript", "parce_que": ""},
+                {"cle": "conventions", "valeur": "Conventional Commits", "parce_que": ""},
+            ],
+        },
+    )
+
+    outillage = outillage_du_projet(projet)
+
+    assert outillage.convention_de_commit == "Conventional Commits"
+    assert outillage.to_dict()["convention_de_commit"] == "Conventional Commits"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"type": "analyse", "projet_id": "prj-0000dead"},
+        {"type": "choix", "choix": [{"cle": "conventions", "valeur": "aucune"}]},
+        {"type": "choix", "choix": "pas une liste"},
+        "pas un objet",
+    ],
+)
+def test_sans_convention_choisie_maestro_n_en_suit_aucune(tmp_path: Path, source: Any) -> None:
+    """Une analyse, « aucune », un manifeste touché à la main : rien à suivre, rien de levé."""
+    racine = tmp_path / "depensio"
+    projet = projet_outille(racine)
+    _avec_source(racine, source)
+
+    assert outillage_du_projet(projet).convention_de_commit == ""
+
+
 def test_un_manifeste_d_une_version_inconnue_refuse_et_le_dit(tmp_path: Path) -> None:
     """Un refus n'est pas un silence : il se corrige autrement, donc il se nomme."""
     racine = tmp_path / "depensio"
@@ -875,6 +923,8 @@ def test_une_racine_qui_ne_porte_que_l_outillage_le_dit_avec_ses_pieces(tmp_path
     assert -1 not in positions, section
     assert positions == sorted(positions)
     assert "`.maestro/`" in section
+    # #1507 : sur S12, l'agent du socle a ignoré `.maestro/` et retiré le manifeste.
+    assert "qui y reste tel quel, ni retiré ni ignoré" in " ".join(section.split())
     assert "dossier jetable" in section
     assert "`mktemp -d`" in section
     assert "sans toucher à l'outillage" in section

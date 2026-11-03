@@ -1100,6 +1100,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
         ArbitreBriefControlTower,
         ArbitreClarificationControlTower,
     )
+    from maestro.controltower.limite import AttenteLimiteControlTower
     from maestro.controltower.plafond import ArbitrePlafondControlTower
     from maestro.controltower.question import ArbitreQuestionControlTower
     from maestro.controltower.renfort import ArbitreRenfortControlTower
@@ -1175,6 +1176,13 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
             # quand une tâche réussit. Le magasin est celui que l'API relira — le
             # même réglage, résolu au même endroit.
             acquis=magasin,
+            # La limite d'usage du fournisseur (#1543) : même bus, même règle — et
+            # la porte du run, que le guet bascule aussi sur les ordres qu'elle
+            # publie. Sans bus, `None` : personne ne pourrait reprendre le run, et
+            # la tâche coupée échoue sur sa limite, nommée.
+            attente_limite=(
+                None if bus is None else AttenteLimiteControlTower(bus, porte=porte)
+            ),
         )
         run = asyncio.create_task(
             moteur.run(

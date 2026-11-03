@@ -19,7 +19,9 @@ indépendante du fournisseur :
   (`PlafondFluxDepasse`, #1277 — le fichier trop gros que l'agent a lu est
   encore sur le disque à la tentative suivante), garde-fou que la sonde de
   démarrage a prouvé inopérant (`GardeFouInoperant`, #1304 — une propriété du
-  fournisseur, que la tentative suivante retrouverait). Sa voisine
+  fournisseur, que la tentative suivante retrouverait), limite d'usage du
+  fournisseur (`LimiteUsageAtteinte`, #1543 — relancer dans deux secondes
+  retomberait sur la même limite : le moteur l'**attend**, puis reprend). Sa voisine
   `SondeNonConcluante` reste transitoire, à dessein : rien n'y est prouvé, et
   c'est la relance qui rejoue la sonde.
 
@@ -41,6 +43,7 @@ from dataclasses import dataclass
 from maestro.engine.verification import LivraisonNonTenue, LivraisonNonVerifiee
 from maestro.providers.base import (
     GardeFouInoperant,
+    LimiteUsageAtteinte,
     McpServerUnavailable,
     PlafondFluxDepasse,
     TurnLimitReached,
@@ -123,6 +126,7 @@ def est_transitoire(erreur: BaseException) -> bool:
         | UnsupportedCapability
         | McpServerUnavailable
         | GardeFouInoperant
+        | LimiteUsageAtteinte
         | LivraisonNonTenue
         | LivraisonNonVerifiee,
     )
