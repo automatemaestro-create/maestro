@@ -472,6 +472,7 @@ from maestro.controltower.events import (
 )
 from maestro.controltower.executions import (
     MOTIF_GESTE_RUN_NON_SUSPENDU,
+    MOTIF_GESTE_RUN_SANS_HOTE,
     MOTIF_GESTE_RUN_SUSPENDU,
     MOTIF_RELANCE_RUN_INCONNU,
     MOTIF_RELANCE_RUN_SOLDE,
@@ -1611,12 +1612,13 @@ _CODE_REFUS_RELANCE: dict[str, int] = {
 #: Le statut HTTP des refus de la pause, de la reprise et de l'annulation (#1179) —
 #: ceux que leurs routes rendaient déjà, maintenant que les règles vivent dans le
 #: service (`refus_du_geste`) : `404` sur un run inconnu, `409` sur tout état qui
-#: interdit le geste (soldé, déjà suspendu, pas suspendu).
+#: interdit le geste (soldé, déjà suspendu, pas suspendu, sans hôte pour la pause).
 _CODE_REFUS_GESTE: dict[str, int] = {
     MOTIF_RELANCE_RUN_INCONNU: 404,
     MOTIF_RELANCE_RUN_SOLDE: 409,
     MOTIF_GESTE_RUN_SUSPENDU: 409,
     MOTIF_GESTE_RUN_NON_SUSPENDU: 409,
+    MOTIF_GESTE_RUN_SANS_HOTE: 409,
 }
 
 #: Ce que la **reprise sur le plan** peut refuser en plus, une fois passés les refus

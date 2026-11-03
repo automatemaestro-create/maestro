@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
@@ -66,6 +68,7 @@ from maestro.controltower.acquis import (
 )
 from maestro.controltower.battement import horodatage_battement
 from maestro.controltower.bornes import BornesRun
+from maestro.controltower.carte_hote import CarteHote, carte_de_ce_process, machine_courante
 from maestro.controltower.causes import CAUSE_ANNULATION, CAUSE_EXTINCTION
 from maestro.controltower.events import (
     EVENEMENT_EXECUTION_STATUT,
@@ -849,6 +852,103 @@ def test_un_run_dont_l_hote_s_est_tu_est_solde_puis_repris() -> None:
     assert [o.run_id for o in hote.ordres] == [RUN]
 
 
+def _carte_d_un_hote_tue() -> str:
+    """La carte d'un **vrai** process, né puis sorti — l'hôte de p5 tué à 10:05 (#1503).
+
+    Un process et non un pid inventé : c'est la sonde réelle du système qu'on exerce,
+    celle qui a dit « ce pid ne tourne plus » sur le poste. Il sort de lui-même, et
+    son attente est bornée : rien ne reste derrière le test.
+    """
+    process = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603 - argv fixe
+    process.wait(timeout=60)
+    return CarteHote(pid=process.pid, machine=machine_courante()).vers_texte()
+
+
+def _battu_a_l_instant(carte: str) -> RegistreBattementsMemoire:
+    """Un run qui **vient de battre** — loin du seuil — et dont l'hôte a laissé sa carte."""
+    battements = RegistreBattementsMemoire()
+    asyncio.run(battements.battre(RUN, horodatage=horodatage_battement()))
+    asyncio.run(battements.declarer(RUN, carte))
+    return battements
+
+
+def test_un_run_dont_l_hote_est_tue_se_lit_interrompu_sans_attendre_le_seuil() -> None:
+    """#1503, premier critère : l'hôte n'existe plus, le run n'est plus « En cours ».
+
+    Son dernier battement a moins d'une minute — le seuil (30 min) l'aurait dit
+    vivant une demi-heure encore. La carte dit quel process le portait, et ce process
+    ne tourne plus : la liste et la vue du run le disent `orphelin` tout de suite.
+    """
+    battements = _battu_a_l_instant(_carte_d_un_hote_tue())
+    with _app(
+        HoteEspion(), _journal_du_run(issue=None), _acquis(), battements=battements
+    ) as client:
+        resume = _resume(client)
+        liste = client.get("/api/executions?projet=tous").json()
+
+    assert resume["statut"] == EXECUTION_EN_COURS  # la projection ne sait rien de sa fin
+    assert resume["vitalite"] == "orphelin"
+    assert [r["vitalite"] for r in liste if r["run_id"] == RUN] == ["orphelin"]
+
+
+def test_un_run_sans_hote_refuse_la_pause_au_lieu_d_un_geste_sans_effet() -> None:
+    """#1503, deuxième critère : « Mettre en pause » n'atteignait personne — il est refusé.
+
+    Le refus vit dans le service (`refus_du_geste`), donc la route, le bouton et le
+    fil disent la même chose : il n'y a plus d'hôte à suspendre, le run se reprend.
+    """
+    battements = _battu_a_l_instant(_carte_d_un_hote_tue())
+    with _app(
+        HoteEspion(), _journal_du_run(issue=None), _acquis(), battements=battements
+    ) as client:
+        reponse = client.post(f"/api/executions/{RUN}/pause")
+        resume = _resume(client)
+
+    assert reponse.status_code == 409, reponse.text
+    assert "reprendre" in reponse.json()["detail"].lower()
+    assert resume["en_pause"] is False
+
+
+def test_un_run_mis_en_pause_dont_l_hote_est_tue_se_reprend_sur_son_plan() -> None:
+    """La séquence de p5 : pause, hôte tué, « Reprendre » — qui rouvrait une porte vide.
+
+    Le run en pause dont l'hôte n'existe plus ne se rouvre pas, il **repart** : soldé
+    d'abord (ses tâches en vol interrompues), puis confié à un hôte neuf, sous le même
+    identifiant, avec son état acquis — rien de fait n'est rejoué.
+    """
+    battements = _battu_a_l_instant(_carte_d_un_hote_tue())
+    hote = HoteEspion()
+    with _app(
+        hote, _journal_du_run(issue=None, en_pause=True), _acquis(), battements=battements
+    ) as client:
+        assert _resume(client)["en_pause"] is True
+
+        reponse = client.post(f"/api/executions/{RUN}/reprendre")
+
+        assert reponse.status_code == 200, reponse.text
+        repris = reponse.json()
+    assert repris["run_id"] == RUN
+    assert repris["statut"] == EXECUTION_EN_COURS
+    assert repris["en_pause"] is False
+    (ordre,) = hote.ordres
+    assert ordre.run_id == RUN
+    assert ordre.reprise is not None
+    assert ordre.reprise.acquises == (SOCLE,)
+
+
+def test_un_hote_qui_tourne_garde_son_run_vivant_et_suspendable() -> None:
+    """Le contre-test : la carte d'un process **vivant** ne change rien au verdict d'avant."""
+    battements = _battu_a_l_instant(carte_de_ce_process().vers_texte())
+    with _app(
+        HoteEspion(), _journal_du_run(issue=None), _acquis(), battements=battements
+    ) as client:
+        assert _resume(client)["vitalite"] == "vivant"
+        reponse = client.post(f"/api/executions/{RUN}/pause")
+
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["en_pause"] is True
+
+
 def test_un_run_sans_brief_approuve_se_reprend_sur_son_plan() -> None:
     """docs/28 §12.7 : un run éteint sans brief approuvé n'était reprenable **du tout**.
 
@@ -914,6 +1014,7 @@ def test_la_purge_vide_l_etat_acquis_des_runs(
         espace=purge.espace_courant(),
         journal="j",
         battements="b",
+        hotes="h",
         prefixe_acquis=nom_redis(PREFIXE_ACQUIS),
         file_taches="f",
         prefixe_boites="boite:",

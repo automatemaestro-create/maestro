@@ -42,6 +42,7 @@ derrière eux en tombant.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -49,6 +50,7 @@ import pytest
 import redis
 import redis.asyncio
 from fastapi.testclient import TestClient
+from redis_factice import brancher
 
 from maestro.controltower import (
     EVENEMENT_TACHE_STATUT,
@@ -65,12 +67,15 @@ from maestro.controltower import (
 )
 from maestro.controltower.battement import (
     CLE_BATTEMENTS,
+    CLE_HOTES,
     SEUIL_ORPHELIN_S,
     CoeurRun,
     RegistreBattementsRedis,
     batteur_redis,
     horodatage_battement,
+    oublieur_redis,
 )
+from maestro.controltower.carte_hote import CarteHote
 from maestro.controltower.events import EVENEMENT_EXECUTION_STATUT
 from maestro.controltower.executions import ServiceExecutions
 from maestro.controltower.state import (
@@ -128,6 +133,20 @@ def test_le_seuil_est_inclusif_et_genereux():
         == VITALITE_VIVANT
     )
     assert SEUIL_ORPHELIN_S >= 26 * 60
+
+
+def test_un_hote_eteint_rend_orphelin_sans_attendre_le_seuil():
+    """#1503 : le seuil est fait pour un hôte muet, pas pour un hôte qui n'existe plus.
+
+    Battu il y a cinq secondes, sans battement du tout : dès que son process n'existe
+    plus, le run est orphelin. Un run soldé, lui, n'a toujours pas de verdict.
+    """
+    assert (
+        vitalite(EXECUTION_EN_COURS, _il_y_a(5), maintenant=MAINTENANT, hote_eteint=True)
+        == VITALITE_ORPHELIN
+    )
+    assert vitalite(EXECUTION_EN_COURS, None, hote_eteint=True) == VITALITE_ORPHELIN
+    assert vitalite(EXECUTION_TERMINEE, _il_y_a(5), hote_eteint=True) is None
 
 
 def test_un_run_qui_n_a_jamais_battu_est_indetermine():
@@ -337,6 +356,30 @@ def test_le_detail_d_un_run_porte_le_meme_verdict_que_la_liste():
         assert detail["vitalite"] == VITALITE_ORPHELIN
 
 
+def test_l_hote_en_process_pose_la_carte_de_l_api_le_temps_de_son_run():
+    """Pour un run qu'elle déroule elle-même, l'API **est** l'hôte : sa carte le dit (#1503).
+
+    C'est ce qui fait qu'un run de l'hôte en process, emporté par la mort de l'API,
+    se lit orphelin dès qu'elle redémarre — sa carte désigne un process qui n'est
+    plus. Soldé, le run n'a plus d'hôte : la carte part avec le battement.
+    """
+    battements = RegistreBattementsMemoire()
+    with TestClient(_app(battements)) as client:
+        run_id = client.post("/api/executions", json={"objectif": "Prototyper"}).json()[
+            "run_id"
+        ]
+        echeance = time.monotonic() + DELAI_ATTENTE_S
+        while run_id not in asyncio.run(battements.cartes()):
+            assert time.monotonic() < echeance, "la carte de l'hôte en process n'est jamais posée"
+            time.sleep(0.01)
+        carte = CarteHote.depuis_texte(asyncio.run(battements.cartes())[run_id])
+        assert carte is not None and carte.pid == os.getpid()
+
+        client.post(f"/api/executions/{run_id}/annuler")
+
+        assert run_id not in asyncio.run(battements.cartes())
+
+
 def test_un_run_annule_n_a_plus_de_verdict_et_son_battement_est_retire():
     """Soldé : `vitalite` retombe à `null`, et le registre ne garde pas l'entrée."""
     battements = RegistreBattementsMemoire()
@@ -462,7 +505,8 @@ def test_le_batteur_de_la_cli_ecrit_dans_le_hash_que_l_api_relit(redis_factice):
     """
     batteur_redis()("run-cli")
 
-    assert set(redis_factice.hashes) == {CLE_BATTEMENTS}
+    # Le battement, et la carte de l'hôte qui bat (#1503) — deux hashes, une instance.
+    assert set(redis_factice.hashes) == {CLE_BATTEMENTS, CLE_HOTES}
 
     registre = RegistreBattementsRedis()
     battements = asyncio.run(registre.battements())
@@ -470,9 +514,28 @@ def test_le_batteur_de_la_cli_ecrit_dans_le_hash_que_l_api_relit(redis_factice):
     # Décodé, donc appariable avec un `run_id` de la projection — et lisible par
     # `vitalite`, qui attend un horodatage ISO-8601 et non des octets.
     assert vitalite(EXECUTION_EN_COURS, battements["run-cli"]) == VITALITE_VIVANT
+    # La carte désigne **ce** process — celui qui bat, donc l'hôte —, et se relit.
+    carte = CarteHote.depuis_texte(asyncio.run(registre.cartes())["run-cli"])
+    assert carte is not None and carte.pid == os.getpid()
 
     asyncio.run(registre.oublier("run-cli"))
     assert asyncio.run(registre.battements()) == {}
+    assert asyncio.run(registre.cartes()) == {}
+
+
+def test_l_oublieur_de_l_hote_retire_le_battement_et_la_carte(monkeypatch):
+    """`solder_le_run` retire les deux : un run soldé n'a plus d'hôte à désigner (#1503).
+
+    Sur le double partagé de Redis (`tests/redis_factice.py`), qui sert un vrai client
+    **synchrone** — celui de l'hôte —, et dont `cles()` ne compte qu'un hash non vide.
+    """
+    serveur = brancher(monkeypatch)
+    batteur_redis()("run-cli")
+    assert serveur.cles() == {CLE_BATTEMENTS, CLE_HOTES}
+
+    oublieur_redis()("run-cli")
+
+    assert serveur.cles() == set()
 
 
 def test_construire_les_clients_de_production_n_ouvre_aucune_connexion():

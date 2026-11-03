@@ -27,6 +27,8 @@ from __future__ import annotations
 import ast
 import io
 import re
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatch
@@ -36,7 +38,8 @@ import pytest
 
 from maestro.config import Settings
 from maestro.controltower import purge
-from maestro.controltower.battement import CLE_BATTEMENTS, horodatage_battement
+from maestro.controltower.battement import CLE_BATTEMENTS, CLE_HOTES, horodatage_battement
+from maestro.controltower.carte_hote import CarteHote, machine_courante
 from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.messaging.mailbox import CANAL_BOITE_PREFIXE, CANAL_DIFFUSION
 from maestro.queue.celery_app import FILE_TACHES
@@ -388,6 +391,7 @@ def test_le_perimetre_est_celui_des_constantes(settings: Settings, poste: Poste)
     perimetre = purge.perimetre(settings)
     assert perimetre.journal is CLE_JOURNAL_EVENEMENTS
     assert perimetre.battements is CLE_BATTEMENTS
+    assert perimetre.hotes is CLE_HOTES
     assert perimetre.file_taches is FILE_TACHES
     assert perimetre.prefixe_boites is CANAL_BOITE_PREFIXE
     assert perimetre.diffusion is CANAL_DIFFUSION
@@ -508,10 +512,36 @@ def test_hotes_vivants_lit_le_registre_comme_lapi() -> None:
                 "vif": horodatage_battement(maintenant),
                 "mort": horodatage_battement(maintenant - timedelta(hours=3)),
                 "illisible": "hier soir",
-            }
+                "tue": horodatage_battement(maintenant),
+            },
+            CLE_HOTES: {"tue": carte_d_un_process_sorti()},
         }
     )
-    assert purge.hotes_vivants(client, CLE_BATTEMENTS, maintenant=maintenant) == ("vif",)
+    assert purge.hotes_vivants(
+        client, CLE_BATTEMENTS, cle_hotes=CLE_HOTES, maintenant=maintenant
+    ) == ("vif",)
+    # Sans les cartes, l'hôte tué bat encore « à l'instant » : la règle du seuil seule.
+    assert purge.hotes_vivants(client, CLE_BATTEMENTS, maintenant=maintenant) == (
+        "tue",
+        "vif",
+    )
+
+
+def carte_d_un_process_sorti() -> str:
+    """La carte d'un vrai process, né puis sorti — un hôte tué (#1503)."""
+    process = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603 - argv fixe
+    process.wait(timeout=60)
+    return CarteHote(pid=process.pid, machine=machine_courante()).vers_texte()
+
+
+def test_un_hote_tue_ne_bloque_pas_la_purge(settings: Settings, poste: Poste) -> None:
+    """Il vient de battre, mais son process n'existe plus : orphelin, et la purge passe (#1503)."""
+    client = redis_peuple(battement=horodatage_battement())
+    client.hashes[CLE_HOTES] = {"run-orphelin": carte_d_un_process_sorti()}
+    code, _, erreur = joue(client=client, settings=settings)
+    assert code == purge.CODE_FAIT, erreur
+    assert CLE_HOTES in client.supprimees
+    assert CLE_HOTES not in client.cles()
 
 
 # ── La purge réelle ──────────────────────────────────────────────────────────────
@@ -527,6 +557,7 @@ def test_la_purge_retire_letat_et_rien_dautre(settings: Settings, poste: Poste) 
     assert set(client.supprimees) == {
         CLE_JOURNAL_EVENEMENTS,
         CLE_BATTEMENTS,
+        CLE_HOTES,
         FILE_TACHES,
         f"{CANAL_BOITE_PREFIXE}dev",
         CANAL_DIFFUSION,

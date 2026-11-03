@@ -39,6 +39,7 @@ from maestro import espace as espace_module
 from maestro.controltower.app import create_app
 from maestro.controltower.battement import (
     CLE_BATTEMENTS,
+    CLE_HOTES,
     RegistreBattementsRedis,
     batteur_redis,
 )
@@ -241,7 +242,8 @@ def test_les_battements_d_une_stack_ne_font_pas_vivre_les_runs_de_l_autre(
 
     assert set(asyncio.run(registre_a.battements())) == {"run-a"}
     assert asyncio.run(registre_b.battements()) == {}
-    assert serveur.cles() == {f"copie-a:{CLE_BATTEMENTS}"}
+    # La carte de l'hôte (#1503) vit dans le même espace que son battement.
+    assert serveur.cles() == {f"copie-a:{CLE_BATTEMENTS}", f"copie-a:{CLE_HOTES}"}
 
 
 def test_les_boites_aux_lettres_d_une_stack_ne_s_ouvrent_pas_sur_l_autre(

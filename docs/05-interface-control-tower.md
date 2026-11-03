@@ -2252,8 +2252,8 @@ que ce soit : le fait était lisible, il n'était pas opposable, et c'est ce qui
 | | `vitalite` (#348) | `en_souffrance` (#737) |
 | --- | --- | --- |
 | la question | son hôte est-il là ? | ce run avance-t-il ? |
-| ce qu'il lit | le dernier battement | `statut` + `attente_depuis` |
-| le seuil | 30 min (`SEUIL_ORPHELIN_S`) | **15 min** (`SEUIL_SOUFFRANCE_S`) |
+| ce qu'il lit | le dernier battement, et la carte de son hôte (#1503) | `statut` + `attente_depuis` |
+| le seuil | 30 min (`SEUIL_ORPHELIN_S`) — aucun pour un hôte qui n'existe plus | **15 min** (`SEUIL_SOUFFRANCE_S`) |
 | donnée illisible | `indetermine` — on ne sait pas | **`true`** — l'inverse, et c'est voulu |
 | sur un run soldé | `null` | `false` |
 
@@ -4604,11 +4604,13 @@ décrit le comportement réel, pas une fixture.
   journal — la sortir de là demande de republier un `tache.statut` terminal, comme en août.
 - `POST /api/executions/{run_id}/pause` → `ResumeExecution` — **suspend** un run en cours (#477,
   ci-dessous) : `en_pause` passe à `true`, le statut ne bouge pas. `404` si le run est inconnu,
-  `409` s'il est déjà soldé ou **déjà suspendu**.
+  `409` s'il est déjà soldé, **déjà suspendu**, ou `orphelin` (`run-sans-hote`, #1503 : personne
+  ne recevrait la pause — il se reprend).
 - `POST /api/executions/{run_id}/reprendre` → `ResumeExecution` — **reprend** un run là où il en
   était, **sous le même `run_id`**. Suspendu (#477) : `en_pause` repasse à `false` et les tâches qui
   attendaient repartent. **Interrompu** (#1391, [docs/28 §12.9](./28-decision-frontiere-execution-run.md))
-  — soldé par l'extinction ou une borne, en pause ou non, ou `orphelin` : il repart `en_cours` **sur
+  — soldé par l'extinction ou une borne, en pause ou non, ou `orphelin`, en pause comprise (#1503 :
+  une porte que plus aucun hôte ne tient ne se rouvre pas, le run repart) : il repart `en_cours` **sur
   son plan**, les tâches faites gardent leur état et leur sortie, seules la tâche interrompue et
   celles jamais démarrées s'exécutent. La tâche interrompue **repart de sa branche** (#1392) : ce
   qu'elle avait écrit y a été porté quand son run a été éteint, et le message de sa tâche dit à
@@ -4788,8 +4790,8 @@ constat du 2026-08-17, dont deux du 22 juillet). L'hôte publie donc un **battem
 
 | `vitalite` | ce que ça dit | ce qu'on en fait |
 | --- | --- | --- |
-| `vivant` | l'hôte a battu il y a moins de 30 min | rien : le run travaille |
-| `orphelin` | il a battu, puis s'est tu **sans publier d'issue** | plus personne ne veille sur ce run |
+| `vivant` | l'hôte a battu il y a moins de 30 min, et son process n'est pas connu pour mort | rien : le run travaille |
+| `orphelin` | il a battu, puis s'est tu **sans publier d'issue** — ou son process n'existe plus (#1503) | plus personne ne veille sur ce run : il se **reprend** |
 | `indetermine` | il n'a **jamais** battu (run antérieur à #348) | on ne sait pas, et on le dit |
 | `null` | le run est soldé (`terminee`/`annulee`/`echec`) | la question ne se pose pas |
 
@@ -4808,6 +4810,22 @@ seuil de six heures de [docs/10 §9.6](./10-workflow-git.md). Et la vitalité n'
 redémarrage de l'API** : un run vit dans son propre process, publie sur le même Redis sans passer par
 l'API, et reste donc reconnu vivant **à travers** un redémarrage — c'est tout l'intérêt d'un signal
 porté par l'hôte plutôt que d'une supposition faite par le lecteur.
+
+**Un hôte qui n'existe plus est `orphelin` sur-le-champ** (#1503). Le seuil est fait pour un hôte
+vivant mais muet ; il ne savait rien d'un hôte **tué**. Le 2026-10-14, tous les `python.exe` du poste
+arrêtés d'un coup, Maestro rallumé : l'écran Runs disait « En cours » d'un run que plus aucun process
+ne portait, « Mettre en pause » puis « Reprendre » n'atteignaient personne, et il a fallu attendre la
+demi-heure du seuil pour lire « Son hôte ne répond plus ». L'hôte pose donc, à côté de son battement,
+sa **carte** — le process qui porte le run : pid, machine, naissance. L'API la relit à chaque lecture
+et constate elle-même que ce process n'existe plus, ou que son numéro désigne désormais un autre
+process (né à un autre instant) : c'est un fait observé, et le run est `orphelin` aussitôt — donc
+« Interrompu », reprenable depuis le tableau de bord sur son plan, sans refaire ce qui est fait.
+La carte **ne parle que pour condamner un hôte certainement mort** : d'une autre machine, illisible,
+ou désignant un process qui tourne, elle se tait et le seuil juge comme avant — on se trompe toujours
+du côté qui ne détruit rien. Deux gestes en découlent, qui étaient sans effet : la **pause** d'un run
+`orphelin` est refusée (`409`, motif `run-sans-hote` — personne ne la recevrait), et « Reprendre » sur
+un run **en pause** dont l'hôte n'existe plus le relance sur son plan au lieu de rouvrir une porte que
+plus personne ne tient.
 
 **Et un hôte publie désormais son issue en partant** (#446). C'était le corollaire assumé de #348 :
 un run terminé normalement finissait quand même `orphelin`, faute d'un statut de fin — le verdict
@@ -4861,6 +4879,7 @@ de sa **machine**, et l'inventaire vaut alors mot pour mot :
 | **gardé** | objectif, statut, tâches, coûts, ticket, projet, sources | le journal durable (#97) les rejoue au démarrage suivant |
 | **gardé** | le **brief** et le fait qu'un humain l'ait approuvé | `brief_approuve` — c'est la matière de la reprise, et elle est déjà là |
 | **gardé** | le **dernier battement**, qui vieillit | seul un soldage l'efface : c'est ce vieillissement qui fait passer d'un `en_cours` éternel à `orphelin` |
+| **gardé** | la **carte de l'hôte** (#1503) | effacée avec le battement, au soldage seulement : c'est elle qui fait lire `orphelin` dès que son process n'existe plus |
 
 Le geste de rattrapage est `POST …/relancer` (ci-dessous), qui rejoue le cadrage approuvé dans un
 **nouveau** run. Ce qu'il ne rattrape pas, et il faut le savoir avant d'y compter : le **travail des
@@ -7024,7 +7043,7 @@ service corrige alors les mots du juge, qui avait annoncé le geste avant de sav
 
 **Les règles de refus vivent une fois**, dans le service (`refus_du_geste`) : les routes
 `…/pause`, `…/reprendre` et `…/annuler` les appellent aussi, et n'en gardent que le code HTTP
-(`404` inconnu, `409` soldé, déjà suspendu ou pas suspendu). La relance garde les siens (#349),
+(`404` inconnu, `409` soldé, déjà suspendu, pas suspendu, ou sans hôte pour la pause — #1503). La relance garde les siens (#349),
 à un élargissement près : un run soldé par une **borne** — plafond de dépense, plafond de tours,
 limite d'usage — se relance, comme celui que l'extinction a emporté (`CAUSES_RELANCABLES`),
 parce qu'un plafond atteint n'a pas jugé le travail ; et `relancer` accepte les bornes du nouveau

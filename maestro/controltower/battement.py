@@ -20,6 +20,17 @@ battu est *indéterminé*. Le troisième verdict n'est pas une commodité — c'
 refus explicite de deviner : un run antérieur à ce lot n'a pas d'hôte muet, il a
 un hôte dont personne n'a jamais écouté le cœur.
 
+**Depuis #1503, ce qui n'a plus d'hôte est orphelin sans attendre le seuil.** Le
+seuil est fait pour un hôte vivant mais muet ; un hôte **tué** — tous les
+`python.exe` du poste arrêtés d'un coup — laissait son run « En cours » une
+demi-heure, et l'écran proposait une pause et une reprise qui n'atteignaient
+personne. L'hôte pose donc, à côté de son battement, sa **carte** (`CLE_HOTES`,
+`maestro.controltower.carte_hote`) : quel process le porte. L'API, qui la relit,
+constate que ce process n'existe plus — un fait, pas une déduction de plus sur des
+horodatages — et `vitalite` rend `orphelin` sur-le-champ. Dans le doute (autre
+machine, carte illisible, process qui tourne), la carte se tait et la règle du
+seuil juge comme avant.
+
 Deux moitiés, et leur asymétrie est celle du reste de la Control Tower :
 
 - **Écrire** — un hôte pose un battement. Deux formes, comme le bus a un
@@ -110,6 +121,16 @@ SEUIL_ORPHELIN_S = 1800.0
 #: l'espace commun, rangé dans celui de la stack à la construction (#1164).
 CLE_BATTEMENTS = "maestro.runs:battements"
 
+#: Clé Redis des **cartes d'hôte** (#1503) — un hash `run_id → carte` à côté de
+#: celui des battements, sur la même instance et dans le même espace. La carte dit
+#: *quel process* porte le run (`maestro.controltower.carte_hote`) ; elle naît et
+#: meurt avec le battement — posée par l'hôte qui bat, effacée par le soldage — et
+#: elle est relue d'un `HGETALL`, comme lui. Un hash à part et non une valeur
+#: enrichie du battement : le cœur de l'API bat aussi les runs détachés qu'elle
+#: tient, et y poser sa propre identité désignerait un process qui n'est pas leur
+#: hôte.
+CLE_HOTES = "maestro.runs:hotes"
+
 _LOGGER = logging.getLogger("maestro.controltower")
 
 
@@ -124,6 +145,7 @@ def vitalite(
     *,
     maintenant: datetime | None = None,
     seuil_s: float = SEUIL_ORPHELIN_S,
+    hote_eteint: bool = False,
 ) -> str | None:
     """Le verdict de vitalité d'un run — `None` s'il est **soldé**.
 
@@ -153,9 +175,18 @@ def vitalite(
     - un horodatage **sans fuseau** est lu en UTC, la seule forme que ce module
       écrit ; une valeur venue d'ailleurs y serait de toute façon plus proche du
       vrai que naïvement comparée à un instant aware (qui lèverait).
+
+    `hote_eteint` (#1503) est le **fait** qu'on n'avait pas : le process qui porte
+    le run n'existe plus (`maestro.controltower.carte_hote.hote_eteint`). Il rend
+    `orphelin` sur-le-champ, quel que soit l'âge du battement — le seuil est fait
+    pour un hôte vivant mais muet, pas pour un hôte tué. Il ne peut qu'avancer ce
+    verdict, jamais en rendre un autre : `False` veut dire « on ne sait pas », et
+    laisse la règle du seuil juger comme avant.
     """
     if statut in STATUTS_EXECUTION_TERMINAUX:
         return None
+    if hote_eteint:
+        return VITALITE_ORPHELIN
     if not dernier_battement:
         return VITALITE_INDETERMINE
     try:
@@ -196,7 +227,29 @@ class RegistreBattements(ABC):
 
     @abstractmethod
     async def oublier(self, run_id: str) -> None:
-        """Retire le battement de `run_id` — sans effet s'il n'y en a pas."""
+        """Retire le battement **et la carte d'hôte** de `run_id` — sans effet s'il n'y en a pas.
+
+        Les deux ensemble, et c'est un seul geste à dessein (#1503) : une carte
+        laissée derrière un run soldé désignerait un process mort, et ce run, repris
+        sous le même `run_id` (#1391), serait lu `orphelin` avant que son nouvel hôte
+        n'ait posé la sienne.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def declarer(self, run_id: str, carte: str) -> None:
+        """Pose la **carte d'hôte** de `run_id` — le process qui le porte (#1503).
+
+        `carte` est la forme rangée de `CarteHote` (`vers_texte`). Seul le process
+        qui **déroule** le run la pose : un hôte détaché ou `maestro-run --publier`
+        par leur batteur (`batteur_redis`), l'API pour les seuls runs de son hôte en
+        process (cf. `maestro.controltower.carte_hote`).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def cartes(self) -> dict[str, str]:
+        """Toutes les cartes connues : `run_id → carte`, en **un** appel, comme `battements`."""
         raise NotImplementedError
 
     # Hook optionnel, pas un point du contrat : no-op assumé (d'où le noqa B027) —
@@ -218,6 +271,7 @@ class RegistreBattementsMemoire(RegistreBattements):
 
     def __init__(self) -> None:
         self._battements: dict[str, str] = {}
+        self._cartes: dict[str, str] = {}
 
     async def battre(self, run_id: str, *, horodatage: str | None = None) -> None:
         self._battements[run_id] = horodatage or horodatage_battement()
@@ -229,6 +283,13 @@ class RegistreBattementsMemoire(RegistreBattements):
 
     async def oublier(self, run_id: str) -> None:
         self._battements.pop(run_id, None)
+        self._cartes.pop(run_id, None)
+
+    async def declarer(self, run_id: str, carte: str) -> None:
+        self._cartes[run_id] = carte
+
+    async def cartes(self) -> dict[str, str]:
+        return dict(self._cartes)
 
 
 class RegistreBattementsRedis(RegistreBattements):
@@ -239,13 +300,20 @@ class RegistreBattementsRedis(RegistreBattements):
     premier appel), comme celle de `RedisEventLog`.
     """
 
-    def __init__(self, url: str | None = None, *, cle: str | None = None) -> None:
+    def __init__(
+        self,
+        url: str | None = None,
+        *,
+        cle: str | None = None,
+        cle_hotes: str | None = None,
+    ) -> None:
         # Import local : seule la branche Redis dépend du client (le registre
         # mémoire des tests n'en a pas besoin).
         import redis.asyncio as redis_asyncio
 
         self._client = redis_asyncio.Redis.from_url(url or REDIS_URL_DEFAUT)
         self._cle = cle if cle is not None else nom_redis(CLE_BATTEMENTS)
+        self._cle_hotes = cle_hotes if cle_hotes is not None else nom_redis(CLE_HOTES)
 
     async def battre(self, run_id: str, *, horodatage: str | None = None) -> None:
         await self._client.hset(self._cle, run_id, horodatage or horodatage_battement())
@@ -256,6 +324,14 @@ class RegistreBattementsRedis(RegistreBattements):
 
     async def oublier(self, run_id: str) -> None:
         await self._client.hdel(self._cle, run_id)
+        await self._client.hdel(self._cle_hotes, run_id)
+
+    async def declarer(self, run_id: str, carte: str) -> None:
+        await self._client.hset(self._cle_hotes, run_id, carte)
+
+    async def cartes(self) -> dict[str, str]:
+        bruts = await self._client.hgetall(self._cle_hotes)
+        return {_texte(cle): _texte(valeur) for cle, valeur in bruts.items()}
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -267,7 +343,7 @@ def _texte(valeur: bytes | str) -> str:
 
 
 def batteur_redis(
-    url: str | None = None, *, cle: str | None = None
+    url: str | None = None, *, cle: str | None = None, cle_hotes: str | None = None
 ) -> Callable[[str], None]:
     """Construit le poseur de battement **synchrone** — le pendant de `publieur_redis`.
 
@@ -275,21 +351,35 @@ def batteur_redis(
     disposition : `maestro-run --publier` publie déjà ses étapes par un handler
     `logging`, donc en synchrone (cf. `maestro.controltower.bridge`). La connexion
     est paresseuse (ouverte au premier `HSET`).
+
+    **Il pose aussi la carte de ce process** (#1503), à chaque battement : ses seuls
+    appelants sont des hôtes — le process détaché de #443 et `maestro-run
+    --publier` —, donc « qui bat » y est exactement « qui porte le run ». À chaque
+    battement et non une fois, pour la raison qui fait battre : un Redis redémarré
+    entre-temps retrouve la carte au tour suivant. Elle est calculée une fois, au
+    premier battement, dans le process qui battra.
     """
     # Import local : seule la publication Redis dépend du client.
     import redis
 
+    from maestro.controltower.carte_hote import carte_de_ce_process
+
     client = redis.Redis.from_url(url or REDIS_URL_DEFAUT)
     registre = cle if cle is not None else nom_redis(CLE_BATTEMENTS)
+    hotes = cle_hotes if cle_hotes is not None else nom_redis(CLE_HOTES)
+    carte: list[str] = []
 
     def battre(run_id: str) -> None:
+        if not carte:
+            carte.append(carte_de_ce_process().vers_texte())
+        client.hset(hotes, run_id, carte[0])
         client.hset(registre, run_id, horodatage_battement())
 
     return battre
 
 
 def oublieur_redis(
-    url: str | None = None, *, cle: str | None = None
+    url: str | None = None, *, cle: str | None = None, cle_hotes: str | None = None
 ) -> Callable[[str], None]:
     """Construit l'effaceur de battement **synchrone** — le pendant de `batteur_redis` (#446).
 
@@ -303,14 +393,19 @@ def oublieur_redis(
     c'est `maestro.controltower.bridge.solder_le_run` qui tient les deux ensemble
     (cf. l'en-tête du module). Appelé seul, il transformerait un orphelin en
     indéterminé, c'est-à-dire un verdict juste en absence d'information.
+
+    La carte d'hôte part avec le battement (#1503), comme dans
+    `RegistreBattements.oublier` : un run soldé n'a plus d'hôte à désigner.
     """
     import redis
 
     client = redis.Redis.from_url(url or REDIS_URL_DEFAUT)
     registre = cle if cle is not None else nom_redis(CLE_BATTEMENTS)
+    hotes = cle_hotes if cle_hotes is not None else nom_redis(CLE_HOTES)
 
     def oublier(run_id: str) -> None:
         client.hdel(registre, run_id)
+        client.hdel(hotes, run_id)
 
     return oublier
 
