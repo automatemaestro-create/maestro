@@ -661,13 +661,26 @@ def test_couper_l_api_la_fait_tomber_et_laisse_l_ui_servie() -> None:
 #: Un service d'essai : il consigne son pid là où la variable de l'API le lui demande, comme
 #: `maestro.controltower.cli` au démarrage, puis sert du HTTP sur le port de sa ligne de commande.
 #: Ses arguments portent ce qui fait reconnaître l'API (`maestro.controltower.cli --port <port>`),
-#: ou ne le portent pas : c'est alors l'innocent qu'un pid recyclé désignerait.
+#: ou ne le portent pas : c'est alors l'innocent qu'un pid recyclé désignerait. Avec
+#: `--hote <port> <témoin>`, il fait naître un second service, son enfant : l'hôte de run détaché
+#: qui doit survivre à son API (#441).
 _FAUX_SERVICE = f"""\
 import http.server
 import os
+import subprocess
 import sys
 
 port = int(sys.argv[sys.argv.index("--port") + 1])
+if "--hote" in sys.argv:
+    rang = sys.argv.index("--hote")
+    environnement = dict(os.environ)
+    environnement["{VARIABLE_FICHIER_PID}"] = sys.argv[rang + 2]
+    subprocess.Popen(
+        [sys.executable, __file__, "--port", sys.argv[rang + 1]],
+        env=environnement,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 class Reponse(http.server.BaseHTTPRequestHandler):
@@ -832,6 +845,49 @@ def test_l_arret_retrouve_l_api_par_son_temoin_quand_la_table_des_ports_ne_la_vo
         assert not temoin.exists(), "un témoin soldé ne désigne plus personne"
     finally:
         _achever(service, pid)
+
+
+@pytest.mark.parametrize("geste", ["--stop", "--couper-api"])
+def test_l_arret_par_temoin_epargne_les_hotes_detaches_de_l_api(
+    geste: str, tmp_path: Path
+) -> None:
+    """Le témoin désigne l'API seule, jamais son arbre : ses hôtes de run lui survivent (#441).
+
+    Ils sont ses enfants, et c'est par décision qu'ils restent debout quand elle tombe — à la
+    panne comme au redémarrage. Seule l'extinction de `--stop` (#700) les solde, et elle passe
+    par l'API, pas par le pid (éteinte ici : `MAESTRO_EXTINCTION=0`).
+    """
+    api, hote, ui = _port_libre(), _port_libre(), _port_libre()
+    temp = tmp_path / "temp"
+    temoin = _dossier_d_etat(temp, api, ui) / "api.pid"
+    temoin_hote = tmp_path / "hote.pid"
+    service = _lancer_service(
+        tmp_path,
+        "maestro.controltower.cli",
+        "--port",
+        str(api),
+        "--hote",
+        str(hote),
+        str(temoin_hote),
+        temoin=temoin,
+    )
+    pid = pid_hote = None
+    try:
+        assert _attendre(
+            lambda: _ecoute(api)
+            and _ecoute(hote)
+            and _pid_consigne(temoin) is not None
+            and _pid_consigne(temoin_hote) is not None
+        ), "le service d'essai ou son hôte n'a pas démarré"
+        pid, pid_hote = _pid_consigne(temoin), _pid_consigne(temoin_hote)
+
+        acheve = _jouer(geste, api, ui, temp, _aveugle(tmp_path))
+
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert _attendre(lambda: not _ecoute(api), 15), "l'API sert encore : " + acheve.stdout
+        assert _ecoute(hote), "l'hôte détaché est tombé avec son API : #441 est défait"
+    finally:
+        _achever(service, pid, pid_hote)
 
 
 def test_un_temoin_qui_designe_un_autre_processus_ne_tue_rien(tmp_path: Path) -> None:
