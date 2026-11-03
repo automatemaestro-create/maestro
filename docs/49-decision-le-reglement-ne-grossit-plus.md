@@ -102,6 +102,8 @@ registre des budgets livrés, qui ne fait que descendre.
 - **Le découpage de `app.py`**, différé le 2026-10-09 (docs/06, section « Le coût d'un ticket » :
   lu 81 fois, 1,6 % du poids), le reste. #1525 porte son rejugement, conditionné aux chiffres de
   #1465.
+  ⚠ **Renversé le 2026-11-03** ([docs/53](./53-decision-le-code-dit-le-present.md), #1578) : la
+  qualité est un critère de découpage à part entière, et #1525 se relance sans attendre #1465.
 - **Réécrire le bash.** Ce serait encore du travail d'outillage. On ne l'étend plus, et on ne le
   réécrit pas.
 - **Un troisième bras « chaîne de développement » dans le banc comparatif #1512.** Un passage coûte
