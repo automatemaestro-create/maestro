@@ -628,7 +628,9 @@ class ClientAPI:
         issues ne rendent aucune réponse, et chacune lève `ErreurAPI` — c'est-à-dire
         un **empêchement**, jamais un rouge du fil : un refus avant la première
         trame (statut HTTP), une trame `erreur` (aucune réponse ne viendra — le
-        pendant du 502 de `POST …/messages`), un flux clos sans sa trame `fin`.
+        pendant du 502 de `POST …/messages`), un flux clos sans sa trame `fin`. La
+        quatrième est celle des deux routes : une réponse qu'aucun modèle n'a jugée
+        (`_jugee`, #1529).
         """
         chemin = f"{FIL}/flux"
         echange = self._transport.flux(
@@ -657,6 +659,7 @@ class ClientAPI:
                 f"(dernière : {vu}{arret})",
                 chemin=chemin,
             )
+        _jugee(echange.reponse, chemin=chemin)
         return echange
 
     def fil(self, conversation: str) -> list[dict[str, Any]]:
@@ -890,6 +893,25 @@ def _reponse_de(corps: Any, *, chemin: str) -> dict[str, Any]:
             chemin=chemin,
         )
     reponse: dict[str, Any] = messages[-1]
+    return _jugee(reponse, chemin=chemin)
+
+
+def _jugee(reponse: dict[str, Any], *, chemin: str) -> dict[str, Any]:
+    """La réponse du fil, si un modèle l'a jugée — `ErreurAPI` sinon (#1529).
+
+    Le fil répond même quand le fournisseur de modèle ne répond plus : sa phrase
+    en dit la cause, et rien n'est proposé. C'est un **empêchement** — le scénario
+    n'a pas atteint son oracle —, et le lire comme la réponse d'un fil qui ne
+    propose rien en faisait un rouge : S9 à S12, au passage `20261011-102534`,
+    sous la limite de session du compte. Le fait se lit dans le champ typé que
+    l'API pose (`MessageChat.empechement`), jamais dans la phrase (docs/44).
+    """
+    empechement = str(reponse.get("empechement") or "")
+    if empechement:
+        raise ErreurAPI(
+            f"le fil n'a pu faire juger aucun message (POST {chemin}) : {empechement[:400]}",
+            chemin=chemin,
+        )
     return reponse
 
 

@@ -2158,6 +2158,39 @@ def test_un_flux_qui_se_clot_sur_une_erreur_est_un_empechement() -> None:
     assert leve.value.chemin == f"{FIL}/flux"
 
 
+def test_une_reponse_qu_aucun_modele_n_a_jugee_est_un_empechement_sur_les_deux_routes() -> None:
+    """Le fil a répondu, mais sa réponse porte le fait typé de #1529 : aucune n'est rendue.
+
+    La quatrième issue sans réponse, après les trois du flux : `ErreurAPI`, donc un
+    empêchement au banc comme au comparatif — et la cause, prise du champ, au motif.
+    """
+    reponse = {"auteur": "orchestrateur", "contenu": "…", "empechement": "quota épuisé"}
+
+    class ApiSansJuge:
+        def demander(self, methode: str, chemin: str, **reste: Any) -> Reponse:
+            return Reponse(statut=201, corps={"messages": [{"contenu": "?"}, reponse]})
+
+        def flux(self, chemin: str, **reste: Any) -> Echange:
+            return Echange(
+                statut=200,
+                trames=(
+                    Trame(0.0, {"type": FRAGMENT_CHAT_DEBUT, "message": {}}),
+                    Trame(0.1, {"type": FRAGMENT_CHAT_FIN, "message": reponse}),
+                ),
+            )
+
+    client = ClientAPI(ApiSansJuge())
+    with pytest.raises(ErreurAPI) as par_le_rest:
+        client.envoyer("?", projet_id="p", conversation="c")
+    with pytest.raises(ErreurAPI) as par_le_flux:
+        client.envoyer_en_direct("?", projet_id="p", conversation="c")
+
+    assert "quota épuisé" in str(par_le_rest.value)
+    assert par_le_rest.value.chemin == f"{FIL}/messages"
+    assert "quota épuisé" in str(par_le_flux.value)
+    assert par_le_flux.value.chemin == f"{FIL}/flux"
+
+
 def test_un_flux_refuse_leve_avec_son_statut() -> None:
     """Un 422 part avant la première trame : c'est un statut, comme sur les autres routes."""
 
@@ -2426,12 +2459,16 @@ class ApiQuiFaitNaitre(FausseAPI):
         prend_la_correction: bool = True,
         declare_a_la_proposition: bool = False,
         versionne: bool = True,
+        reponse_figee: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__()
         # Où le fil range sa première proposition — le répertoire des projets du
         # poste, jamais un vrai dossier de l'utilisateur dans un test.
         self._repertoire = repertoire
         self._questions = questions
+        # Ce que le fil répond à tout message, sans rien proposer — un fil dont le
+        # fournisseur ne répond plus (#1529), ou sa contrefaçon en texte seul.
+        self._figee = reponse_figee
         self._prend = prend_la_correction
         self._declare_tot = declare_a_la_proposition
         self._versionne = versionne
@@ -2459,6 +2496,8 @@ class ApiQuiFaitNaitre(FausseAPI):
     def _message(self, corps: Mapping[str, Any]) -> Reponse:
         contenu = str(corps.get("contenu") or "")
         self.messages.append(dict(corps))
+        if self._figee is not None:
+            return self._paire(contenu, {"run_id": "", **self._figee})
         if self._questions > 0:
             self._questions -= 1
             return self._paire(contenu, {"contenu": "Pour qui est ce site ?", "run_id": ""})
@@ -2557,6 +2596,61 @@ def test_s7_est_rouge_quand_un_projet_est_declare_avant_l_accord(tmp_path: Path)
 
     assert not issue.vert
     assert "avant l'accord" in issue.motif
+
+
+#: La réponse du fil au passage `20261011-102534` (#1529), quand la limite de session
+#: du compte coupait chaque appel au modèle — mot pour mot ce que S7 à S12 ont reçu.
+CAUSE_LIMITE_DE_SESSION = (
+    "le fournisseur de modèle n'a pas répondu (Claude Code returned an error result: "
+    "You've hit your session limit · resets 11:40am (exit code: 1))"
+)
+PHRASE_DU_FIL_INJOIGNABLE = (
+    f"Je ne peux pas juger votre message pour l'instant : {CAUSE_LIMITE_DE_SESSION}. "
+    "Aucun run n'a été ouvert, et je ne vous en ai proposé aucun."
+)
+
+
+def test_s7_est_un_empechement_quand_le_fil_n_a_pas_pu_joindre_le_fournisseur(
+    tmp_path: Path,
+) -> None:
+    """Le passage du 2026-10-11 (#1529) : sous la limite de session, S9 à S12 rougissaient.
+
+    Le fil répond, mais aucun modèle n'a jugé : la réponse porte le fait typé
+    (`empechement`), et le banc solde le scénario en empêchement — une abstention
+    du passage, que l'historique écarte de son taux. Le texte qui accompagne le
+    fait n'y est pour rien : il est ici sans aucun mot de panne.
+    """
+    api = ApiQuiFaitNaitre(
+        tmp_path / "Maestro",
+        reponse_figee={"contenu": "…", "empechement": CAUSE_LIMITE_DE_SESSION},
+    )
+    montage = _banc(tmp_path, api)
+
+    rapport = banc.jouer([_scenario("S7")], montage.contexte, horodatage="x", horloge=lambda: 0.0)
+
+    (resultat,) = rapport.resultats
+    assert resultat.empechement is True, resultat.motif
+    assert "fournisseur de modèle" in resultat.motif
+    assert "session limit" in resultat.motif, "la cause se lit au rapport"
+    assert api.declares == []
+
+
+def test_un_fil_qui_dit_la_panne_sans_le_fait_type_reste_rouge(tmp_path: Path) -> None:
+    """La contre-épreuve de #1529 : la même phrase, **sans** le champ, est un rouge du fil.
+
+    Le banc ne reconnaît jamais une panne à son texte (docs/44) : un fil qui
+    répond sans proposer de projet rougit, quoi qu'il écrive.
+    """
+    api = ApiQuiFaitNaitre(
+        tmp_path / "Maestro", reponse_figee={"contenu": PHRASE_DU_FIL_INJOIGNABLE}
+    )
+    montage = _banc(tmp_path, api)
+
+    rapport = banc.jouer([_scenario("S7")], montage.contexte, horodatage="x", horloge=lambda: 0.0)
+
+    (resultat,) = rapport.resultats
+    assert resultat.verdict == "rouge" and not resultat.empechement
+    assert "aucun projet" in resultat.motif
 
 
 # --- S8 — un acte qui sort du projet revient à la personne (#1324) -------------
