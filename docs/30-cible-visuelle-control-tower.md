@@ -2950,7 +2950,9 @@ Ce qui tient, et à ne pas défaire :
   l'autre, chaque API déclarant le sien. Plus une constante, plus un fichier écrit à la main.
 - **L'âge ne se corrige pas d'office.** Rejouer un passage coûte du vrai modèle (des dizaines de
   minutes) : sans état sur le poste, l'état `peuple` s'arrête en nommant
-  `start.sh --etat-banc --rejouer`, jamais en le jouant.
+  `start.sh --etat-banc --rejouer`, jamais en le jouant. ⚠ `--rejouer` se retire avec les
+  scénarios figés ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+  #1572) : l'état `peuple` viendra du dernier exercice construit et sauvé (#1569).
 - **Ce qu'`origin/main` sait servir, son lanceur le dit** : l'avant pose la question à son
   `--diagnostic-navigateur`, qui refuse une option inconnue sans rien démarrer. Aucune option n'est
   cherchée dans son source — c'était le `grep` sur le `demo.py` d'`origin/main`.

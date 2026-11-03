@@ -76,6 +76,12 @@ gantt
 > ([docs/49](./49-decision-le-reglement-ne-grossit-plus.md)). Le budget de `CLAUDE.md` devient un
 > cliquet, la part de l'outillage est plafonnée à 15 %, et la chaîne de développement du dépôt sert
 > de second étalon au go/no-go. Aucun jalon ne bouge.
+>
+> Le 2026-11-03, **plus de scénarios figés**
+> ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)). Quand une
+> vérification sur le réel est recommandée, la session construit l'exercice de ce qu'elle vient
+> d'implémenter, au ticket comme au bilan d'un jalon produit, et le banc rejoué après chaque run se
+> retire. Le chantier entre au jalon « Outillage de la forge ». Aucun jalon ne bouge.
 
 ---
 
@@ -659,6 +665,11 @@ La démonstration est dans [docs/40](./40-decision-rythme-et-scenarios-de-refere
   **décident** d'un écran. Les autres gardent leur relecture visuelle, jugée par la session.
 - **#1152 (outillage)** : `/milestone-bilan` joue les scénarios, et un rouge interdit un GO. À
   démarrer après #1148.
+
+> ⚠ **Les scénarios figés sont renversés le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> section « Plus de scénarios figés ») : le bilan construit ses exercices à partir des critères de
+> sortie du jalon (#1571), et S1 à S12 se retirent (#1572). La règle de #1152 tient : une épreuve
+> rouge interdit le GO.
 
 **Le gel du rail outillage, jusqu'au 2026-10-12.**
 - **Ce qui passe** : #1150, #1151, #1152, et les pannes qui bloquent réellement le travail. Un
@@ -1332,6 +1343,8 @@ Il n'ouvre **aucun jalon** : tout va au jalon courant du rail outillage.
   du poste. C'est le principe du régime épinglé par le dépôt, étendu au-delà des serveurs MCP
   (#1245).
 - **#1467** : un module par scénario. `scenarios.py` devient un paquet, en pur déplacement.
+  ⚠ **Abandonné le 2026-11-03**, rendu caduc par #1572, qui retire `scenarios.py` (section « Plus
+  de scénarios figés »).
 - **#1468** : `orchestration.py` et `chat.py` découpés selon leurs responsabilités, **avant** que les
   lots du mode conception (#1414) ne les touchent.
 - **#1469** : `executor.py` et `loop.py` découpés, **une fois** le jalon produit courant sorti de ces
@@ -1343,6 +1356,11 @@ Il n'ouvre **aucun jalon** : tout va au jalon courant du rail outillage.
 touche le chemin d'un scénario le joue avant de pousser ») est **renversé en partie**. Le banc
 entier se joue par lot sur `main`. Au ticket, il ne se joue plus que sur le chemin dérivé de la
 carte. Le présent de docs/10 §6 n'est réécrit que par #1464. D'ici là, un renvoi ⚠ y est posé.
+
+> ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> section « Plus de scénarios figés ») : le banc par lot se retire sans remplaçant, et au ticket la
+> session construit l'exercice de ce qu'elle vient d'implémenter, au lieu du scénario que la carte
+> désignait (#1568).
 
 Ne bougent pas :
 - la preuve exercée ;
@@ -1592,6 +1610,108 @@ Il n'ouvre **aucun jalon** et n'en déplace aucun.
 
 > ⚠ **Les critères de chaque ticket sont dans sa description**, et c'est elle qui fait foi à la
 > clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1526.
+
+---
+
+## « Plus de scénarios figés » — l'exercice construit pour ce qu'on vient d'implémenter (2026-11-03)
+
+Ce chantier est né d'une demande du 2026-11-03, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1574. Le plan a été **présenté avant toute écriture** (#1415), et la
+personne l'a validé tel que recommandé, avec ses trois réponses. La décision est
+[docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md).
+
+> *« je trouve que les scénarios de référence ralentissent beaucoup le développement. je voudrais
+> que, s'il est recommandé de tester Maestro sur un scénario, tu construises le scénario ou le prompt
+> à donner à Maestro pour tester sa capacité et surtout tester l'implémentation faite. je ne veux pas
+> de scénarios figés. »*
+
+Il n'ouvre **aucun jalon** et n'en déplace aucun.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| *Outillage de la forge* (jalon existant, rail outillage) | Une session construit l'exercice de ce qu'elle vient d'implémenter, au ticket comme au bilan d'un jalon produit ; le banc figé se retire, banc par lot compris | 2027-09-15 | **#1568** — 4 lots : #1569 → #1570 ∥ #1571 → #1572 |
+
+**Le constat** : le banc figé se paie à trois endroits, et il ne vise pas ce qu'on vient d'écrire.
+- **Au ticket** : S12 coûte ≈ 26 min et 3 $, et il a été joué six fois en un jour le 2026-10-08
+  (section « Le coût d'un ticket »).
+- **À chaque run** : le banc entier se rejoue sur `main`, pour ≈ 1 h 25 et 13,5 $ (#1462).
+- **À chaque bilan de jalon produit** : 89 à 94 min et 12 à 14 $ par passage (bouclages du
+  2026-10-07 et du 2026-10-14).
+- **On construisait déjà des exercices, à la main**, quand aucun scénario ne couvrait le cas (#1298,
+  #1381, #1390, #1183). Ils détournaient pour cela les aides privées de `scenarios.py` (3 724
+  lignes), et `criteres-note` refusait de les citer comme passage.
+
+**Le contenu** — **#1568** (suivi, `lot::arbitre`) :
+- **#1569** : l'outil d'exercice. Ce sont des verbes publics, une commande chacun : semer un projet
+  ou le faire naître dans le fil, dire un message, répondre en mots, arbitrer les validations, suivre
+  un run, relever les faits et sauver l'état. Chaque exercice laisse un relevé : le prompt, l'oracle
+  écrit **avant** de jouer, les faits, le coût et les `run_id`. La mécanique est tirée des aides du
+  banc, pas réécrite. Il peut partir en run ;
+- **#1570** (`lot::parallele`) : au ticket, la session construit l'exercice de ce qu'elle vient
+  d'implémenter, tiré des critères du ticket, quand le changement touche ce que le modèle reçoit ou
+  fait. `criteres-note` prend une ligne **Exercice**. Né assigné : il écrit sous `.claude/` ;
+- **#1571** (`lot::parallele`) : au bilan d'un jalon produit, les exercices se tirent des critères
+  de sortie. Un exercice rouge interdit le GO, et un exercice injouable est une abstention. Né
+  assigné ;
+- **#1572** : le banc figé se retire. Partent S1 à S12, la carte et sa sonde, le croisement,
+  l'historique, le banc par lot sur `main` et `start.sh --rejouer`, avec leurs suites. `CLAUDE.md`
+  maigrit. Né assigné.
+
+**Mis à jour** :
+- **#1311** et **#1422** : leur critère « un scénario de référence… » devient « un exercice
+  construit, joué sur la vraie stack… » ;
+- **les critères de sortie** : C6 de « Le mode conception » et C1 de « Indépendant du modèle » sont
+  réécrits de même.
+
+**Abandonné**, sur décision de la personne : **#1467** (un module par scénario), rendu caduc par
+#1572.
+
+**Les trois réponses de la personne** :
+- le banc par lot sur `main` se retire **sans remplaçant** ;
+- le banc comparatif **garde** ses objectifs `p5` et `club` : c'est l'instrument du go/no-go,
+  joué à la demande, jamais dans le flux d'un ticket ;
+- #1467 est abandonné.
+
+**Ne bougent pas** :
+- la vérification sur le réel, sur la vraie stack avec le vrai modèle, par le fil ;
+- la preuve exercée (#1240) ;
+- un exercice injouable n'est jamais compté vert ;
+- un rouge ne se rejoue pas jusqu'au vert ;
+- au bilan d'un jalon produit, une épreuve rouge interdit le GO (#1152) ;
+- le merge vérifié et la relecture visuelle.
+
+**Sont écartés** :
+- **renommer le paquet** `maestro/scenarios/` : ce serait du déplacement pur, payé en relectures,
+  pour un nom ;
+- **porter les oracles de S1 à S12 en tests** : chaque mécanique a ses tests, livrés avec son
+  ticket ;
+- **un regard neuf pour écrire l'exercice au ticket** : la personne veut une épreuve qui vise
+  l'implémentation. L'oracle écrit avant de jouer suffit à empêcher qu'elle soit taillée pour
+  passer.
+
+**Les risques acceptés** :
+- **une régression entre deux tickets se voit plus tard** : par l'exercice d'un ticket suivant qui la
+  traverse, ou au bilan du jalon. Ce n'est plus par un passage complet après chaque run ;
+- **il n'y a plus de série longue par scénario** : elle n'avait de sens que sur des épreuves
+  figées.
+
+**Place dans la file**, sur le rail outillage. Tout va au jalon **« Outillage de la forge »**, dont
+l'échéance ne bouge pas. Le chantier rejoint ses `prio::haute` (#1413, #1415, #1465, #1466, #1517,
+#1524).
+- **L'ordre des lots est la décision** : l'outil d'abord (#1569), puis l'exercice au ticket et au
+  bilan, en vague (#1570 ∥ #1571), puis le retrait (#1572). C'est le patron de docs/47 §0.4 : on ne
+  retire pas un filet avant d'avoir posé celui qui le remplace.
+- **En `haute`**, parce que chaque run et chaque bilan paie le banc figé tant qu'il est là. Le
+  retirer accélère tout ce qui suit.
+- **#1569 peut partir en run** par `--ticket 1569` ou `--parent 1568`. Les trois autres écrivent
+  sous `.claude/`, sont nés assignés, et se traitent en interactif (docs/10 §11.7).
+- **Pas de jalon neuf**, sur le précédent de la section « Le coût d'un ticket » : un jalon outillage
+  placé devant deviendrait le jalon courant du rail et y ferait tomber tout ticket à venir.
+- **Le plafond d'outillage** (docs/49 §3) n'est pas encore outillé (#1524). Son arbitrage écrit est
+  ici : le chantier **retire** de la cérémonie, à la demande explicite de la personne.
+
+> ⚠ **Les critères de chaque lot sont dans sa description**, et c'est elle qui fait foi à la
+> clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1574.
 
 ---
 
