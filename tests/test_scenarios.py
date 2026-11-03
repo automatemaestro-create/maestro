@@ -253,12 +253,15 @@ def _redige_par_le_modele(chemin: str) -> bool:
     (`…/messages`) ou au fil de l'eau (`…/flux`, #1265) ; la proposition d'équipe
     rédige un playbook par rôle (#257) ; la réponse à une question d'outillage est
     comprise par le modèle, et le geste sur une pièce fait vérifier puis rédiger la
-    suivante (#1161). Le cadrage et le recrutement n'appellent aucun modèle
-    (`maestro.controltower.orchestration`) : ils répondent comme une déclaration.
+    suivante (#1161). Le cadrage et le recrutement, eux, exécutent le geste puis
+    font rédiger leur réponse par le modèle depuis #1262
+    (`maestro.controltower.orchestration`, `_parole_sur`) — #1576.
     """
     return chemin in (
         f"{FIL}/messages",
         f"{FIL}/flux",
+        f"{FIL}/cadrage",
+        f"{FIL}/recrutement",
         f"{FIL}/outillage",
         f"{FIL}/outillage/piece",
     ) or chemin.endswith("/equipe/proposition")
@@ -906,12 +909,37 @@ def test_une_proposition_d_equipe_plus_lente_que_le_delai_ordinaire_ne_coupe_plu
     assert ("POST", f"{FIL}/messages") not in avant.appels
 
 
+def test_un_cadrage_ou_un_recrutement_plus_lent_que_le_delai_ordinaire_n_empeche_plus_rien(
+    tmp_path: Path,
+) -> None:
+    """Le comparatif p5 du 2026-11-03 : le cadrage a dépassé 30 s, et le passage s'est
+    rendu empêché avant que le run parte (#1576). Depuis #1262, le modèle rédige la
+    réponse au geste de cadrage comme à celui de recrutement : les deux ont sa marge."""
+    lente = DELAI_REQUETE_S + 15
+    for identifiant, moteur, geste in (
+        ("S1", _moteur_qui_vide, f"{FIL}/cadrage"),
+        ("S3", _moteur_muet, f"{FIL}/recrutement"),
+    ):
+        api = FausseAPI(moteur=moteur, duree_modele_s=lente)
+        issue, _ctx = _banc(tmp_path / identifiant, api).jouer(_scenario(identifiant))
+
+        assert issue.vert, f"{identifiant} : {issue.motif}"
+        assert (geste, DELAI_RUN_S) in api.delais, identifiant
+
+    # La contre-épreuve : la même route, attendue du délai ordinaire comme le
+    # client d'avant l'attendait, tombe — la lenteur du double n'est pas décorative.
+    avant = FausseAPI(moteur=_moteur_qui_vide, duree_modele_s=lente)
+    for geste in (f"{FIL}/cadrage", f"{FIL}/recrutement"):
+        with pytest.raises(ErreurAPI, match=f"n'a pas répondu en {DELAI_REQUETE_S:g} s"):
+            avant.demander("POST", geste, corps={"conversation": "conv-1"})
+
+
 def test_seuls_les_gestes_que_le_modele_redige_recoivent_sa_marge(tmp_path: Path) -> None:
-    """Une API figée doit encore arrêter vite tout le reste : déclarer, créer, trancher, lire.
+    """Une API figée doit encore arrêter vite tout le reste : déclarer, créer, lire.
 
     S1 et S3 à eux deux passent par toutes les routes du fil — message, cadrage,
-    recrutement — et par les deux gestes d'équipe : la proposition, que le modèle
-    rédige, et la création, qu'il ne touche pas.
+    recrutement, que le modèle rédige — et par les deux gestes d'équipe : la
+    proposition, qu'il rédige aussi, et la création, qu'il ne touche pas.
     """
     delais: list[tuple[str, float | None]] = []
     for identifiant, moteur in (("S1", _moteur_qui_vide), ("S3", _moteur_muet)):
@@ -924,10 +952,11 @@ def test_seuls_les_gestes_que_le_modele_redige_recoivent_sa_marge(tmp_path: Path
 
     du_modele = [(c, d) for c, d in delais if _redige_par_le_modele(c)]
     ordinaires = [(c, d) for c, d in delais if not _redige_par_le_modele(c)]
-    assert f"{FIL}/messages" in {c for c, _d in du_modele}
+    assert {f"{FIL}/messages", f"{FIL}/cadrage", f"{FIL}/recrutement"} <= {
+        c for c, _d in du_modele
+    }
     assert any(c.endswith("/equipe/proposition") for c, _d in du_modele)
     assert {d for _c, d in du_modele} == {321.0}
-    assert {f"{FIL}/cadrage", f"{FIL}/recrutement"} <= {c for c, _d in ordinaires}
     assert any(c.endswith("/equipe") for c, _d in ordinaires), "la création d'équipe"
     assert {d for _c, d in ordinaires} == {None}, "le délai ordinaire du transport"
 
