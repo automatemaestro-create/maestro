@@ -159,6 +159,12 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+# redis-py n'annote pas toutes ses méthodes : depuis redis 8, `PubSub.aclose` ne
+# l'est plus, et le mode strict refuse de l'appeler (`no-untyped-call`). L'appel
+# reste permis, le reste du mode strict aussi. Un `# type: ignore` en ligne
+# rougirait sous redis 6 (`warn_unused_ignores`), et borner la version ne ferait
+# que repousser la question.
+untyped_calls_exclude = ["redis"]
 
 # Le Claude Agent SDK n'expose pas (encore) de stubs typés : on tolère l'import.
 [[tool.mypy.overrides]]
