@@ -9,6 +9,7 @@ grossière (module qui ne s'importe plus, option renommée, câblage cassé) soi
 détectée même hors métrique. Aucun appel réseau, aucun serveur réellement lancé.
 """
 
+import os
 import sys
 import types
 from dataclasses import replace
@@ -235,6 +236,62 @@ def test_api_nominal_lance_uvicorn_sur_l_ecoute_demandee(monkeypatch):
     assert appels["app"] == "maestro.controltower.app:create_default_app"
     assert appels["factory"] is True
     assert (appels["host"], appels["port"]) == ("0.0.0.0", 9000)
+
+
+def _uvicorn_qui_regarde(monkeypatch, regard):
+    """Un uvicorn qui ne sert rien : il appelle `regard()` à la place de servir."""
+    factice = types.ModuleType("uvicorn")
+    factice.run = lambda app, **kwargs: regard()
+    monkeypatch.setitem(sys.modules, "uvicorn", factice)
+
+
+def test_api_consigne_son_pid_le_temps_de_servir(monkeypatch, tmp_path):
+    # #1579 : sous Windows, le pid de celui qui sert n'est connu que de lui (le lanceur du venv
+    # fait naître le Python du Store hors de son job) — c'est donc l'API qui le consigne.
+    temoin = tmp_path / "api.pid"
+    vu = []
+    _uvicorn_qui_regarde(monkeypatch, lambda: vu.append(temoin.read_text(encoding="utf-8")))
+    monkeypatch.setenv(controltower_cli.VARIABLE_FICHIER_PID, str(temoin))
+
+    assert controltower_cli.main(["--port", "9000"]) == 0
+    assert vu == [f"{os.getpid()}\n"], "consigné avant de servir"
+    assert not temoin.exists(), "retiré quand elle ne sert plus"
+
+
+def test_api_sans_fichier_demande_ne_consigne_rien(monkeypatch, tmp_path):
+    monkeypatch.delenv(controltower_cli.VARIABLE_FICHIER_PID, raising=False)
+    monkeypatch.chdir(tmp_path)
+    _uvicorn_qui_regarde(monkeypatch, lambda: None)
+
+    assert controltower_cli.main(["--port", "9000"]) == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_api_qui_ne_peut_servir_retire_son_temoin(monkeypatch, tmp_path):
+    # Le port déjà pris (`[Errno 10048]` du 2026-11-03) : uvicorn sort en `SystemExit`, et le
+    # témoin ne doit pas survivre à une API qui n'a jamais servi.
+    temoin = tmp_path / "api.pid"
+
+    def port_pris():
+        raise SystemExit(1)
+
+    _uvicorn_qui_regarde(monkeypatch, port_pris)
+    monkeypatch.setenv(controltower_cli.VARIABLE_FICHIER_PID, str(temoin))
+
+    with pytest.raises(SystemExit):
+        controltower_cli.main(["--port", "9000"])
+    assert not temoin.exists()
+
+
+def test_api_laisse_le_temoin_d_une_autre(monkeypatch, tmp_path):
+    # L'API que le banc S12 rallume réécrit le témoin : celle qui s'arrête ensuite ne retire
+    # que le sien, jamais celui d'une autre.
+    temoin = tmp_path / "api.pid"
+    _uvicorn_qui_regarde(monkeypatch, lambda: temoin.write_text("4242\n", encoding="utf-8"))
+    monkeypatch.setenv(controltower_cli.VARIABLE_FICHIER_PID, str(temoin))
+
+    assert controltower_cli.main(["--port", "9000"]) == 0
+    assert temoin.read_text(encoding="utf-8") == "4242\n"
 
 
 # --- maestro-temporal-demo (maestro/temporal_demo.py) -------------------------------------

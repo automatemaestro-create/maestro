@@ -41,22 +41,37 @@ par le levier qui l'expose sans rien lancer :
    états vide et erreur. `--etat-neuf` se demande comme ⑤ et ne se mêle ni à lui, ni à un
    rejeu ; `--couper-api` fait tomber l'API **seule**, sans rien solder — éprouvé
    sur deux vrais processus à l'écoute, puisque c'est un geste et non une sélection.
+
+⑦ **L'arrêt par témoin** (#1579) — `--stop` et `--couper-api` retrouvent l'API par le pid
+   qu'elle consigne elle-même au démarrage, et l'UI par la carte de la racine de son arbre,
+   même quand la table des ports ne voit pas leur écoute (le poste du 2026-11-03 : `netstat`
+   n'affichait aucune ligne pour elles). La table des ports est rendue AVEUGLE (`netstat` et
+   `lsof` factices, muets) : seul le témoin peut alors désigner le processus. Un témoin qui
+   désigne un autre processus ne tue rien, et un arrêt qui laisse l'API répondre le dit et
+   sort en erreur. Les vrais processus à l'écoute portent la ligne de commande de l'API.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import time
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from maestro.controltower.cli import COMMANDE_REDIS, endpoint_lisible, verifier_redis
+from maestro.controltower.cli import (
+    COMMANDE_REDIS,
+    VARIABLE_FICHIER_PID,
+    endpoint_lisible,
+    verifier_redis,
+)
 
 RACINE = Path(__file__).resolve().parent.parent
 SCRIPT = RACINE / "scripts" / "controltower" / "start.sh"
@@ -639,3 +654,349 @@ def test_couper_l_api_la_fait_tomber_et_laisse_l_ui_servie() -> None:
             if serveur.poll() is None:
                 serveur.kill()
                 serveur.wait(timeout=10)
+
+
+# ------------------------------------ ⑦ L'arrêt par témoin (#1579)
+
+#: Un service d'essai : il consigne son pid là où la variable de l'API le lui demande, comme
+#: `maestro.controltower.cli` au démarrage, puis sert du HTTP sur le port de sa ligne de commande.
+#: Ses arguments portent ce qui fait reconnaître l'API (`maestro.controltower.cli --port <port>`),
+#: ou ne le portent pas : c'est alors l'innocent qu'un pid recyclé désignerait. Avec
+#: `--hote <port> <témoin>`, il fait naître un second service, son enfant : l'hôte de run détaché
+#: qui doit survivre à son API (#441).
+_FAUX_SERVICE = f"""\
+import http.server
+import os
+import subprocess
+import sys
+
+port = int(sys.argv[sys.argv.index("--port") + 1])
+if "--hote" in sys.argv:
+    rang = sys.argv.index("--hote")
+    environnement = dict(os.environ)
+    environnement["{VARIABLE_FICHIER_PID}"] = sys.argv[rang + 2]
+    subprocess.Popen(
+        [sys.executable, __file__, "--port", sys.argv[rang + 1]],
+        env=environnement,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+class Reponse(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+
+    do_POST = do_GET
+
+    def log_message(self, *_):
+        pass
+
+
+serveur = http.server.HTTPServer(("127.0.0.1", port), Reponse)
+temoin = os.environ.get("{VARIABLE_FICHIER_PID}")
+if temoin:
+    with open(temoin, "w", encoding="utf-8") as fichier:
+        fichier.write(str(os.getpid()) + "\\n")
+serveur.serve_forever()
+"""
+
+
+def _aveugle(tmp_path: Path) -> Path:
+    """Une table des ports qui ne voit rien : `netstat` et `lsof` factices, muets.
+
+    C'est le poste du 2026-11-03 : l'écoute de l'API était bien dans la table TCP du système,
+    mais avec un état hors de `MIB_TCP_STATE`, et `netstat` n'en affichait aucune ligne.
+    """
+    dossier = tmp_path / "aveugle"
+    dossier.mkdir(exist_ok=True)
+    for outil in ("netstat", "lsof"):
+        faux = dossier / outil
+        faux.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
+        faux.chmod(0o755)
+    return dossier
+
+
+def _dossier_d_etat(temp: Path, api: int, ui: int) -> Path:
+    """Le dossier d'état de la stack : `<TMPDIR>/maestro/controltower-<api>-<ui>` (#1456)."""
+    dossier = temp / "maestro" / f"controltower-{api}-{ui}"
+    dossier.mkdir(parents=True, exist_ok=True)
+    return dossier
+
+
+def _script_du_service(tmp_path: Path) -> Path:
+    script = tmp_path / "faux_service.py"
+    if not script.exists():
+        script.write_text(_FAUX_SERVICE, encoding="utf-8")
+    return script
+
+
+def _lancer_service(
+    tmp_path: Path, *arguments: str, temoin: Path | None
+) -> subprocess.Popen[bytes]:
+    environnement = os.environ.copy()
+    environnement.pop(VARIABLE_FICHIER_PID, None)
+    if temoin is not None:
+        environnement[VARIABLE_FICHIER_PID] = str(temoin)
+    return subprocess.Popen(  # noqa: S603
+        [sys.executable, str(_script_du_service(tmp_path)), *arguments],
+        env=environnement,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _attendre(condition: Callable[[], bool], delai: float = 30.0) -> bool:
+    fin = time.monotonic() + delai
+    while time.monotonic() < fin:
+        if condition():
+            return True
+        time.sleep(0.2)
+    return condition()
+
+
+def _pid_consigne(temoin: Path) -> int | None:
+    try:
+        brut = temoin.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return int(brut) if brut.isdigit() else None
+
+
+def _jouer(
+    geste: str, api: int, ui: int, temp: Path, aveugle: Path
+) -> subprocess.CompletedProcess[str]:
+    """`start.sh <geste>` sur ces ports, son état sous `temp`, la table des ports aveugle."""
+    environnement = os.environ.copy()
+    for cle in (*_A_NETTOYER, VARIABLE_FICHIER_PID):
+        environnement.pop(cle, None)
+    environnement.update(
+        {
+            "MAESTRO_PORT_API": str(api),
+            "MAESTRO_PORT_UI": str(ui),
+            "TMPDIR": temp.as_posix(),
+            # Solder les runs parle à l'API (#700) : ce n'est pas l'objet de ces tests.
+            "MAESTRO_EXTINCTION": "0",
+            "MAESTRO_BROWSER_DEFAUT": "firefox",
+            "PATH": str(aveugle) + os.pathsep + environnement.get("PATH", ""),
+        }
+    )
+    assert BASH is not None
+    return subprocess.run(  # noqa: S603
+        [BASH, str(SCRIPT), geste],
+        cwd=str(RACINE),
+        env=environnement,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+
+
+def _achever(processus: subprocess.Popen[bytes], *pids: int | None) -> None:
+    """Termine ce que le test a lancé, jusqu'au python qui sert.
+
+    Sous Windows, le lanceur d'un venv adossé au Python du Store fait naître ce python hors de
+    son job (#1279) : `Popen.kill` n'atteint que le lanceur, d'où les pids consignés.
+    """
+    for pid in pids:
+        if pid is None:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    if processus.poll() is None:
+        processus.kill()
+    processus.wait(timeout=15)
+
+
+@pytest.mark.parametrize(
+    ("geste", "prefixe"), [("--stop", "[nettoyage]"), ("--couper-api", "[panne]")]
+)
+def test_l_arret_retrouve_l_api_par_son_temoin_quand_la_table_des_ports_ne_la_voit_pas(
+    geste: str, prefixe: str, tmp_path: Path
+) -> None:
+    """Le défaut du 2026-11-03 : « rien n'écoute sur :8031 (API) », et l'API servait encore.
+
+    `--couper-api` compte autant que `--stop` : c'est par lui que le banc S12 coupe l'API.
+    """
+    api, ui = _port_libre(), _port_libre()
+    temp = tmp_path / "temp"
+    temoin = _dossier_d_etat(temp, api, ui) / "api.pid"
+    service = _lancer_service(
+        tmp_path, "maestro.controltower.cli", "--port", str(api), temoin=temoin
+    )
+    pid = None
+    try:
+        assert _attendre(lambda: _ecoute(api) and _pid_consigne(temoin) is not None), (
+            "le service d'essai n'a pas démarré"
+        )
+        pid = _pid_consigne(temoin)
+
+        acheve = _jouer(geste, api, ui, temp, _aveugle(tmp_path))
+
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert f"{prefixe} " in acheve.stdout and f"PID {pid}" in acheve.stdout, acheve.stdout
+        assert _attendre(lambda: not _ecoute(api), 15), "l'API sert encore : " + acheve.stdout
+        assert service.wait(timeout=15) is not None
+        assert not temoin.exists(), "un témoin soldé ne désigne plus personne"
+    finally:
+        _achever(service, pid)
+
+
+@pytest.mark.parametrize("geste", ["--stop", "--couper-api"])
+def test_l_arret_par_temoin_epargne_les_hotes_detaches_de_l_api(
+    geste: str, tmp_path: Path
+) -> None:
+    """Le témoin désigne l'API seule, jamais son arbre : ses hôtes de run lui survivent (#441).
+
+    Ils sont ses enfants, et c'est par décision qu'ils restent debout quand elle tombe — à la
+    panne comme au redémarrage. Seule l'extinction de `--stop` (#700) les solde, et elle passe
+    par l'API, pas par le pid (éteinte ici : `MAESTRO_EXTINCTION=0`).
+    """
+    api, hote, ui = _port_libre(), _port_libre(), _port_libre()
+    temp = tmp_path / "temp"
+    temoin = _dossier_d_etat(temp, api, ui) / "api.pid"
+    temoin_hote = tmp_path / "hote.pid"
+    service = _lancer_service(
+        tmp_path,
+        "maestro.controltower.cli",
+        "--port",
+        str(api),
+        "--hote",
+        str(hote),
+        str(temoin_hote),
+        temoin=temoin,
+    )
+    pid = pid_hote = None
+    try:
+        assert _attendre(
+            lambda: _ecoute(api)
+            and _ecoute(hote)
+            and _pid_consigne(temoin) is not None
+            and _pid_consigne(temoin_hote) is not None
+        ), "le service d'essai ou son hôte n'a pas démarré"
+        pid, pid_hote = _pid_consigne(temoin), _pid_consigne(temoin_hote)
+
+        acheve = _jouer(geste, api, ui, temp, _aveugle(tmp_path))
+
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert _attendre(lambda: not _ecoute(api), 15), "l'API sert encore : " + acheve.stdout
+        assert _ecoute(hote), "l'hôte détaché est tombé avec son API : #441 est défait"
+    finally:
+        _achever(service, pid, pid_hote)
+
+
+def test_un_temoin_qui_designe_un_autre_processus_ne_tue_rien(tmp_path: Path) -> None:
+    """Un pid se recycle (#456) : le témoin d'une API morte peut désigner un innocent.
+
+    Sa ligne de commande ne porte pas celle de l'API sur ce port : rien n'est tué au jugé.
+    """
+    api, ui, autre = _port_libre(), _port_libre(), _port_libre()
+    temp = tmp_path / "temp"
+    temoin = _dossier_d_etat(temp, api, ui) / "api.pid"
+    innocent = _lancer_service(tmp_path, "--port", str(autre), temoin=temoin)
+    pid = None
+    try:
+        assert _attendre(lambda: _ecoute(autre) and _pid_consigne(temoin) is not None)
+        pid = _pid_consigne(temoin)
+
+        acheve = _jouer("--stop", api, ui, temp, _aveugle(tmp_path))
+
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert f"PID {pid}" in acheve.stdout and "rien n'est tué au jugé" in acheve.stdout
+        assert innocent.poll() is None and _ecoute(autre), "l'innocent a été tué"
+    finally:
+        _achever(innocent, pid)
+
+
+def test_un_arret_qui_laisse_l_api_repondre_le_dit_et_sort_en_erreur(tmp_path: Path) -> None:
+    """Une API qu'aucun témoin ne désigne — lancée avant #1579, ou par un tiers — et que la table
+    des ports ne voit pas : rien n'est tué au jugé, et l'arrêt ne se raconte pas réussi."""
+    api, ui = _port_libre(), _port_libre()
+    temp = tmp_path / "temp"
+    _dossier_d_etat(temp, api, ui)
+    # Le pid du service ne sert ici qu'au ménage du test : il est consigné hors de la stack.
+    hors_pile = tmp_path / "hors-pile.pid"
+    service = _lancer_service(
+        tmp_path, "maestro.controltower.cli", "--port", str(api), temoin=hors_pile
+    )
+    try:
+        assert _attendre(lambda: _ecoute(api) and _pid_consigne(hors_pile) is not None)
+
+        acheve = _jouer("--stop", api, ui, temp, _aveugle(tmp_path))
+
+        assert acheve.returncode != 0, acheve.stdout + acheve.stderr
+        assert "répond encore" in acheve.stdout + acheve.stderr
+        assert "Control Tower arrêtée." not in acheve.stdout
+        assert service.poll() is None and _ecoute(api)
+    finally:
+        _achever(service, _pid_consigne(hors_pile))
+
+
+def test_l_arret_retrouve_l_ui_par_la_carte_de_son_arbre(tmp_path: Path) -> None:
+    """L'UI n'a pas de témoin à elle : `start.sh` consigne la RACINE de l'arbre qu'il lance
+    (`npm run dev`), une fois qu'elle répond, par la carte de `pilote.sh` — pid, winpid,
+    naissance. L'arrêt la reconnaît par cette carte et descend l'arbre jusqu'au serveur."""
+    api, ui = _port_libre(), _port_libre()
+    temp = tmp_path / "temp"
+    carte = _dossier_d_etat(temp, api, ui) / "ui"
+    # Le pid du python qui sert, pour le seul ménage du test : la carte, elle, nomme la racine.
+    reel = tmp_path / "ui-reel.pid"
+    # Le geste de `start.sh` : lancée détachée, carte écrite une fois qu'elle répond.
+    harnais = (
+        ". scripts/orchestrate/pilote.sh\n"
+        'nohup "$PY" "$SERVICE" --port "$PORT" </dev/null >/dev/null 2>&1 &\n'
+        "racine=$!\n"
+        'for _ in $(seq 1 150); do [ -s "$REEL" ] && break; sleep 0.2; done\n'
+        'mkdir -p "$CARTE" && pilote_ecrit "$CARTE" "$racine"\n'
+    )
+    environnement = os.environ.copy()
+    environnement.update(
+        {
+            "PY": Path(sys.executable).as_posix(),
+            "SERVICE": _script_du_service(tmp_path).as_posix(),
+            "PORT": str(ui),
+            "REEL": reel.as_posix(),
+            "CARTE": carte.as_posix(),
+            VARIABLE_FICHIER_PID: str(reel),
+        }
+    )
+    assert BASH is not None
+    lance = subprocess.run(  # noqa: S603
+        [BASH, "-c", harnais],
+        cwd=str(RACINE),
+        env=environnement,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    try:
+        assert lance.returncode == 0, lance.stdout + lance.stderr
+        assert _attendre(lambda: _ecoute(ui)), "l'UI d'essai n'a pas démarré"
+        assert (carte / "pid").is_file()
+
+        acheve = _jouer("--stop", api, ui, temp, _aveugle(tmp_path))
+
+        assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+        assert "session UI" in acheve.stdout and "par sa carte" in acheve.stdout, acheve.stdout
+        assert _attendre(lambda: not _ecoute(ui), 15), "l'UI sert encore : " + acheve.stdout
+        assert not (carte / "pid").exists(), "une carte soldée ne désigne plus personne"
+    finally:
+        pid = _pid_consigne(reel)
+        if pid is not None:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+
+def test_start_sh_nomme_a_l_api_le_fichier_de_son_temoin() -> None:
+    """Le témoin de l'API s'écrit par l'API elle-même : seule à connaître le pid de celui qui
+    sert, derrière le lanceur d'un venv sous Windows. `start.sh` lui nomme le fichier par la
+    variable que le CLI lit — la même constante —, exportée pour que le banc et l'API que S12
+    rallume (`maestro/scenarios/redemarrage.py`) en héritent."""
+    assert f"export {VARIABLE_FICHIER_PID}=" in SCRIPT.read_text(encoding="utf-8")

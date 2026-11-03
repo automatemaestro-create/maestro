@@ -10,13 +10,17 @@ l'API, et il ne réécrit aucun geste :
   `ClientAPI.eteindre`), celle que poussent les gestes d'arrêt avant de libérer les
   ports. Le scénario l'appelle lui-même : c'est elle qui solde les runs en vol, et
   c'est elle que le scénario mesure ;
-- **couper le process** est le geste de `start.sh --couper-api` : les pids qui
-  écoutent sur le port de l'API, terminés net. Une fois les runs soldés, `--stop`
-  n'en fait pas d'autre (`arreter_session` → `liberer_port`). Le relevé des pids
-  par port vit là, une fois, et n'est pas réécrit ici ;
+- **couper le process** est le geste de `start.sh --couper-api` : l'API que son
+  témoin désigne, puis les pids qui écoutent encore sur son port, terminés net, et
+  un geste qui sort en erreur tant qu'elle répond (#1579). Une fois les runs soldés,
+  `--stop` n'en fait pas d'autre (`arreter_session` → `liberer_port`). Ce relevé vit
+  là, une fois, et n'est pas réécrit ici ;
 - **rallumer** est la ligne de démarrage de `start.sh` — `python -m
   maestro.controltower.cli --port <port> [--etat-banc]` —, détachée comme le
-  lanceur du produit détache ses services (`Systeme.demarrer`).
+  lanceur du produit détache ses services (`Systeme.demarrer`). Elle hérite de
+  l'environnement du banc, que `start.sh` a lancé : l'API rallumée consigne donc
+  son pid au même témoin (`MAESTRO_API_FICHIER_PID`), et le `--stop` d'après la
+  retrouve.
 
 ⚠ **Rallumer ne passe pas par `start.sh` entier.** Sur l'état du banc, le lanceur
 réécrirait d'abord le journal (`maestro.scenarios.etat --rouvrir`) : l'API repartirait
@@ -51,8 +55,8 @@ from maestro.scenarios.api import ClientAPI
 MODULE_API = "maestro.controltower.cli"
 OPTION_BANC = "--etat-banc"
 
-#: Le lanceur de développement, dont `--couper-api` relève et termine les pids qui
-#: écoutent sur le port de l'API (#1165).
+#: Le lanceur de développement, dont `--couper-api` termine l'API par son témoin, puis
+#: les pids qui écoutent sur son port (#1165, #1579).
 LANCEUR = Path("scripts") / "controltower" / "start.sh"
 GESTE_COUPER = "--couper-api"
 
@@ -119,7 +123,7 @@ def couper_l_api(port: int) -> None:
 
     Joué comme le banc joue déjà les commandes d'un projet (`maestro.sandbox.
     verification.jouer`) : Git Bash sous Windows, jamais le `bash.exe` de WSL — c'est
-    là que `start.sh` trouve ses outils (`netstat`, `taskkill`, ou `lsof`) —, et
+    là que `start.sh` trouve ses outils (`taskkill` et `netstat`, ou `lsof`) —, et
     l'arbre arrêté si le geste ne rend pas la main.
     """
     interprete = execution.interprete()

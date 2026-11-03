@@ -15,8 +15,9 @@
 # deux savent démarrer la même stack ; ils ne s'adressent pas à la même personne, et
 # aucun des deux n'est la version dégradée de l'autre.
 #
-# Nettoie d'abord les anciennes sessions (uniquement les processus qui écoutent
-# sur les ports Maestro — jamais de kill large), puis démarre :
+# Nettoie d'abord les anciennes sessions (celles que leurs témoins désignent, puis
+# les processus qui écoutent sur les ports Maestro — jamais de kill large, #1579),
+# puis démarre :
 #   - l'API — port 8000 —, en MODE RÉEL par défaut (maestro.controltower.cli,
 #     alias `maestro-api`) : bus Redis Pub/Sub et journal durable des événements
 #     (#97), donc l'historique rendu au redémarrage — ou, en mode local, un
@@ -170,6 +171,11 @@ LOG_DIR="$RACINE/$LOG_DIR_REL"
 # shellcheck disable=SC1091  # le lint appelle shellcheck fichier par fichier (#285) : la source
 # n'est pas sur sa ligne de commande, donc `source=` ne serait pas suivi de toute façon.
 . "$RACINE/scripts/controltower/etat-stack.sh"
+# La carte d'identité d'un processus — pid, winpid, naissance — et son arrêt avec sa descendance
+# vivent dans `pilote.sh`, seul endroit du dépôt qui sache les écrire et les relire (#456) : c'est
+# par elle que l'arrêt retrouve l'UI (#1579). Même délégation que `scripts/ci/verrou.sh`.
+# shellcheck disable=SC1091  # même raison que ci-dessus
+. "$RACINE/scripts/orchestrate/pilote.sh"
 ETAT_DIR="$ETAT_STACK_RACINE/${ETAT_STACK_PREFIXE}${PORT_API}-${PORT_UI}"
 URL_UI="http://localhost:${PORT_UI}"
 # Plafond d'attente du soldage des runs en vol (#486). L'API borne l'extinction de
@@ -183,6 +189,21 @@ DELAI_EXTINCTION="${MAESTRO_EXTINCTION_DELAI:-20}"
 # l'invalide, ce qui l'empêche d'arrêter une session qui n'est plus la sienne.
 FICHIER_SESSION="$ETAT_DIR/session"
 FICHIER_CHIEN="$ETAT_DIR/$ETAT_STACK_CHIEN"
+
+# Les TÉMOINS de la stack (#1579) — ce par quoi l'arrêt retrouve l'API et l'UI sans demander à la
+# table des ports du système qui écoute. Le 2026-11-03, sur un Windows 11 du parc, cette table
+# portait bien l'écoute de l'API, avec le bon pid, mais dans un état hors de `MIB_TCP_STATE` (0) :
+# `netstat` n'en affichait aucune ligne, `--stop` disait « rien n'écoute » et l'API servait encore.
+#   - L'API consigne ELLE-MÊME son pid dans FICHIER_PID_API (`maestro.controltower.cli`, variable
+#     MAESTRO_API_FICHIER_PID) : sous Windows, celui qui sert est un Python du Store que le
+#     lanceur du venv fait naître hors de son job (#1279), et seul lui connaît son pid.
+#   - L'UI n'a pas cette parole : on consigne la RACINE de l'arbre qu'on lance (`npm run dev`) par
+#     la carte de `pilote.sh`, et l'arrêt descend l'arbre jusqu'au serveur Next.
+FICHIER_PID_API="$ETAT_DIR/api.pid"
+CARTE_UI="$ETAT_DIR/ui"
+# Ce que le dernier `liberer_port` a visé, et les services qui répondent encore après lui.
+VISES=""
+SURVIVANTS=""
 
 # Profil jetable de la fenêtre ouverte par le script. Son nom sert aussi de
 # marqueur : c'est en cherchant les processus dont la ligne de commande le
@@ -220,22 +241,187 @@ pids_sur_port() {
   fi
 }
 
-# Termine les processus qui écoutent sur le port (ancienne session à remplacer).
+# Libère le port d'un service de la stack (« API » ou « UI ») : l'ancienne session qu'on remplace,
+# qu'on arrête ou — préfixe « panne » — qu'on coupe. Trois temps, dans cet ordre (#1579) :
+#   1. son TÉMOIN, qui est à nous (voir FICHIER_PID_API et CARTE_UI) ;
+#   2. la table des ports du système, pour ce qu'aucun témoin ne désigne — une session lancée
+#      avant eux. Elle peut ne rien voir, et c'est pourquoi elle passe en second ;
+#   3. le CONSTAT : le service répond-il encore ? Ce qu'aucun des deux ne désigne n'est pas tué au
+#      jugé, mais cela se dit, et SURVIVANTS le compte : l'appelant ne raconte pas un arrêt qui n'a
+#      pas eu lieu, et ne démarre pas une API neuve qu'une ancienne empêcherait de s'attacher.
 liberer_port() {
   port="$1"
   quoi="$2"
-  pids="$(pids_sur_port "$port")"
-  if [ -z "$pids" ]; then
-    echo "[nettoyage] rien n'écoute sur :${port} (${quoi})"
-    return 0
-  fi
-  for pid in $pids; do
-    echo "[nettoyage] ancienne session ${quoi} sur :${port} (PID ${pid}) — arrêt"
+  prefixe="${3:-nettoyage}"
+  VISES=""
+  case "$quoi" in
+    API) viser_l_api "$prefixe" ;;
+    UI) viser_l_ui "$prefixe" ;;
+  esac
+  for pid in $(pids_sur_port "$port"); do
+    case " $VISES " in *" $pid "*) continue ;; esac
+    annoncer_l_arret "$prefixe" "$quoi" "$port" "PID ${pid}"
     tuer_pid "$pid"
+    VISES="$VISES $pid"
   done
+  constater_l_arret "$prefixe" "$quoi" "$port"
 }
 
-# Termine net un PID relevé par pids_sur_port — celui qu'on remplace ou qu'on coupe.
+# La ligne qui dit ce qu'on arrête : « ancienne session » au nettoyage, « coupée net » à la panne.
+annoncer_l_arret() {
+  if [ "$1" = "panne" ]; then
+    echo "[panne] $2 sur :$3 ($4) — coupée net, sans soldage"
+  else
+    echo "[nettoyage] ancienne session $2 sur :$3 ($4) — arrêt"
+  fi
+}
+
+# Ce que le système dit d'un pid : « vivant » puis sa ligne de commande, ou « absent » ; rien
+# quand il ne sait pas répondre. Sous Windows, le pid est celui de Windows — celui que l'API
+# consigne —, et CIM le décrit comme il compte plus bas les fenêtres du navigateur.
+decrire_processus() {
+  pid="$1"
+  if [ "$WINDOWS" = 1 ]; then
+    powershell -NoProfile -NonInteractive -Command \
+      "\$p = Get-CimInstance Win32_Process -Filter 'ProcessId=$pid'; if (\$p) { 'vivant'; \$p.CommandLine } else { 'absent' }" \
+      2>/dev/null | tr -d '\r' || true
+  elif kill -0 "$pid" 2>/dev/null; then
+    echo "vivant"
+    if [ -r "/proc/$pid/cmdline" ]; then
+      tr '\0' ' ' <"/proc/$pid/cmdline"
+      echo
+    else
+      ps -p "$pid" -o command= 2>/dev/null || true
+    fi
+  else
+    echo "absent"
+  fi
+}
+
+# Le témoin de l'API : le pid qu'elle a consigné, s'il désigne encore ELLE. Rend 0 et pose
+# TEMOIN_API_PID ; sinon rend 1, et TEMOIN_API_AVIS dit pourquoi — « aucun », « illisible »,
+# « mort », « recyclé », « invérifiable » —, le pid lu dans TEMOIN_API_LU.
+#
+# Un pid seul ne suffit pas, il se recycle (#456) : le témoin d'IDENTITÉ est la ligne de commande
+# de l'API sur CE port — celle que ce script lance, et celle de l'API que le banc S12 rallume
+# (`maestro/scenarios/redemarrage.py`). Illisible, elle fait s'abstenir.
+temoin_de_l_api() {
+  TEMOIN_API_PID=""
+  TEMOIN_API_LU=""
+  TEMOIN_API_AVIS="aucun"
+  [ -f "$FICHIER_PID_API" ] || return 1
+  read -r TEMOIN_API_LU <"$FICHIER_PID_API" 2>/dev/null || true
+  TEMOIN_API_LU="${TEMOIN_API_LU%$'\r'}"
+  case "$TEMOIN_API_LU" in
+    '' | *[!0-9]*)
+      TEMOIN_API_AVIS="illisible"
+      return 1
+      ;;
+  esac
+  description="$(decrire_processus "$TEMOIN_API_LU")"
+  ligne_temoin=""
+  case "$description" in *$'\n'*) ligne_temoin="${description#*$'\n'}" ;; esac
+  case "${description%%$'\n'*}" in
+    absent)
+      TEMOIN_API_AVIS="mort"
+      return 1
+      ;;
+    vivant) ;;
+    *)
+      TEMOIN_API_AVIS="invérifiable"
+      return 1
+      ;;
+  esac
+  case " $ligne_temoin " in
+    *"maestro.controltower.cli"*" --port $PORT_API "*)
+      TEMOIN_API_PID="$TEMOIN_API_LU"
+      return 0
+      ;;
+  esac
+  if [ -n "${ligne_temoin//[[:space:]]/}" ]; then
+    TEMOIN_API_AVIS="recyclé"
+  else
+    TEMOIN_API_AVIS="invérifiable"
+  fi
+  return 1
+}
+
+# Premier temps pour l'API : son témoin. Le pid seul, jamais l'arbre — l'API est mère des hôtes de
+# run détachés, qui lui survivent par décision (#441), au redémarrage comme à la panne. Son lanceur
+# (le python.exe du venv, sous Windows) sort de lui-même quand celui qui sert meurt.
+viser_l_api() {
+  if temoin_de_l_api; then
+    annoncer_l_arret "$1" "API" "$PORT_API" "PID ${TEMOIN_API_PID}, par son témoin"
+    tuer_pid "$TEMOIN_API_PID"
+    VISES="$TEMOIN_API_PID"
+  else
+    case "$TEMOIN_API_AVIS" in
+      recyclé)
+        echo "[$1] le témoin de l'API désigne le PID ${TEMOIN_API_LU}, qui n'est plus elle (pid recyclé) — rien n'est tué au jugé"
+        ;;
+      invérifiable)
+        # Gardé : ce pid est peut-être bien l'API, et le prochain arrêt saura peut-être le lire.
+        echo "[$1] le témoin de l'API désigne le PID ${TEMOIN_API_LU}, qu'on ne sait pas reconnaître (ligne de commande illisible) — rien n'est tué au jugé"
+        return 0
+        ;;
+    esac
+  fi
+  rm -f "$FICHIER_PID_API"
+}
+
+# Premier temps pour l'UI : la carte de la racine de son arbre, et l'arbre entier avec elle — l'UI
+# n'a pas de descendance à épargner, et c'est un petit-fils de la racine qui tient le port.
+viser_l_ui() {
+  [ -f "$CARTE_UI/pid" ] || return 0
+  if pilote_vivant "$CARTE_UI"; then
+    racine_ui="$(pilote_champ "$CARTE_UI" pid)" || racine_ui=""
+    annoncer_l_arret "$1" "UI" "$PORT_UI" "PID ${racine_ui} et sa descendance, par sa carte"
+    pilote_tue "$CARTE_UI" || true
+    VISES="$racine_ui"
+  fi
+  pilote_retire "$CARTE_UI"
+  rmdir "$CARTE_UI" 2>/dev/null || true
+}
+
+# Un service répond-il sur cette URL ? Toute connexion acceptée compte, un refus HTTP (401)
+# compris : c'est ce témoin-là qui disait vrai le 2026-11-03, quand `netstat` disait « rien
+# n'écoute ». Seul « personne n'accepte la connexion » (code 7 de curl) vaut un port libre.
+repond() {
+  code_sonde=0
+  curl -s -o /dev/null --max-time 5 "$1" 2>/dev/null || code_sonde=$?
+  [ "$code_sonde" != 7 ]
+}
+
+# Troisième temps : le constat. Visé, le service a quelques secondes pour se taire ; non visé, on
+# regarde une fois. Ce qui répond encore se dit et entre dans SURVIVANTS.
+constater_l_arret() {
+  prefixe_constat="$1"
+  service="$2"
+  port_constat="$3"
+  case "$service" in
+    API) url_constat="http://127.0.0.1:${port_constat}/api/sante" journal_constat="$LOG_DIR_REL/api.log" ;;
+    *) url_constat="http://127.0.0.1:${port_constat}" journal_constat="$LOG_DIR_REL/ui.log" ;;
+  esac
+  if [ -n "$VISES" ]; then
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      repond "$url_constat" || return 0
+      sleep 1
+    done
+    echo "[$prefixe_constat] ⚠ ${service} répond encore sur :${port_constat} une fois arrêté ce qui la désignait — rien d'autre n'est tué au jugé (journal : $journal_constat)"
+  elif repond "$url_constat"; then
+    echo "[$prefixe_constat] ⚠ ${service} répond encore sur :${port_constat}, et ni son témoin ni la table des ports ne désignent qui la sert — rien n'est tué au jugé (journal : $journal_constat)"
+  elif [ "$prefixe_constat" = "panne" ]; then
+    echo "[panne] rien n'écoute sur :${port_constat} (${service}) — déjà coupée"
+    return 0
+  else
+    echo "[nettoyage] rien n'écoute sur :${port_constat} (${service})"
+    return 0
+  fi
+  SURVIVANTS="$SURVIVANTS $service"
+}
+
+# Termine net un PID désigné par un témoin ou par la table des ports — celui qu'on remplace ou
+# qu'on coupe.
 tuer_pid() {
   if [ "$WINDOWS" = 1 ]; then
     taskkill //F //PID "$1" >/dev/null 2>&1 || true
@@ -244,8 +430,8 @@ tuer_pid() {
   fi
 }
 
-# Termine un processus lancé par ce script (PID bash consigné dans un fichier —
-# les PID relevés par netstat, eux, passent par liberer_port).
+# Termine un processus bash lancé par ce script (PID consigné dans un fichier — l'API et l'UI,
+# elles, passent par liberer_port).
 terminer_processus() {
   pid="$1"
   quoi="$2"
@@ -302,6 +488,7 @@ arreter_session() {
   fi
   rm -f "$FICHIER_SESSION" "$FICHIER_CHIEN"
   fermer_navigateur
+  SURVIVANTS=""
   liberer_port "$PORT_API" "API"
   liberer_port "$PORT_UI" "UI"
 }
@@ -806,15 +993,16 @@ fi
 # arrêter ses runs : ils survivent à leur API depuis #441, et la relance les retrouve), ni UI, ni
 # chien de garde. Ce que l'écran montre alors est la vraie panne « API injoignable » (#996), celle
 # qu'aucun scénario n'imite. Rien à couper n'est pas une erreur : la panne est déjà là.
+#
+# L'API se retrouve comme à l'arrêt, par son témoin d'abord (#1579) : c'est par ce geste que le banc
+# S12 la coupe avant de la rallumer, et une API qui répond encore n'est pas une panne — on le dit,
+# et le code de sortie le porte.
 if [ "$MODE" = "couper-api" ]; then
-  pids="$(pids_sur_port "$PORT_API")"
-  if [ -z "$pids" ]; then
-    echo "[panne] rien n'écoute sur :${PORT_API} (API) — déjà coupée"
+  liberer_port "$PORT_API" "API" "panne"
+  if [ -n "$SURVIVANTS" ]; then
+    echo "API non coupée : elle répond encore sur :${PORT_API} (voir ci-dessus)." >&2
+    exit 1
   fi
-  for pid in $pids; do
-    echo "[panne] API sur :${PORT_API} (PID ${pid}) — coupée net, sans soldage"
-    tuer_pid "$pid"
-  done
   echo "API coupée — l'UI reste servie sur $URL_UI ; relancer la stack la rétablit."
   exit 0
 fi
@@ -1002,6 +1190,19 @@ fi
 
 arreter_session
 
+# Un arrêt qui laisse l'API ou l'UI répondre ne se raconte pas comme réussi (#1579). Et on ne
+# démarre pas par-dessus : la nouvelle API ne pourrait pas s'attacher au port (`[Errno 10048]`),
+# l'ancienne répondrait à sa place, et le démarrage la prendrait pour la sienne — c'est ainsi que le
+# banc a été refusé le 2026-11-03 (« l'API sert l'espace … et non … .banc »).
+if [ -n "$SURVIVANTS" ]; then
+  if [ "$MODE" = "arreter" ]; then
+    echo "Control Tower NON arrêtée :${SURVIVANTS} répond encore (voir ci-dessus)." >&2
+  else
+    echo "L'ancienne session répond encore (${SURVIVANTS# }) — rien n'est démarré par-dessus (voir ci-dessus)." >&2
+  fi
+  exit 1
+fi
+
 if [ "$MODE" = "arreter" ]; then
   echo "Control Tower arrêtée."
   exit 0
@@ -1026,6 +1227,15 @@ fi
 mkdir -p "$LOG_DIR" "$ETAT_DIR"
 # Le témoin de la copie qui tient cette stack : c'est lui qui fait partir l'état avec elle.
 printf '%s\n' "$RACINE" >"$ETAT_DIR/$ETAT_STACK_TEMOIN" 2>/dev/null || true
+
+# Le fichier où l'API consignera son pid (#1579), nommé dans la forme de l'OS : c'est un Python
+# natif qui l'écrit. EXPORTÉ, pas seulement passé à l'API : le banc que `--rejouer` lance en hérite,
+# et avec lui l'API que S12 rallume sans passer par ce script — l'arrêt suivant la retrouve aussi.
+FICHIER_PID_API_OS="$FICHIER_PID_API"
+if [ "$WINDOWS" = 1 ]; then
+  FICHIER_PID_API_OS="$(cygpath -w "$FICHIER_PID_API")"
+fi
+export MAESTRO_API_FICHIER_PID="$FICHIER_PID_API_OS"
 cd "$RACINE" || exit 1
 
 # L'état du banc s'écrit ICI, entre l'arrêt de l'ancienne session et le démarrage de
@@ -1098,9 +1308,16 @@ cd "$RACINE/apps/web" || exit 1
 NEXT_PUBLIC_MAESTRO_API_URL="http://127.0.0.1:${PORT_API}" \
   NEXT_PUBLIC_MAESTRO_API_JETON="$JETON_API" PORT="$PORT_UI" \
   nohup npm run dev >"$LOG_DIR/ui.log" 2>&1 &
+RACINE_UI=$!
 cd "$RACINE" || exit 1
 # Next.js (turbopack) peut mettre un moment à compiler la première page.
-if ! attendre_http "http://127.0.0.1:${PORT_UI}" 60; then
+UI_PRETE=1
+attendre_http "http://127.0.0.1:${PORT_UI}" 60 || UI_PRETE=0
+# La carte de la racine de l'UI (#1579), APRÈS l'attente, qu'elle ait répondu ou non : la chaîne de
+# lancement (`nohup` → `npm` → node) s'est installée, son winpid ne bougera plus, et l'arrêt
+# retrouvera même une UI qui n'a jamais répondu.
+mkdir -p "$CARTE_UI" && pilote_ecrit "$CARTE_UI" "$RACINE_UI" || true
+if [ "$UI_PRETE" = 0 ]; then
   echo "L'UI ne répond pas sur :${PORT_UI} — voir $LOG_DIR_REL/ui.log" >&2
   exit 1
 fi
