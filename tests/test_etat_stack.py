@@ -136,7 +136,9 @@ def test_start_sh_ramasse_au_demarrage_et_temoigne_de_sa_copie() -> None:
     ramassage = texte.index("etat_stack_ramasser --ancien\n")
     creation = texte.index('mkdir -p "$LOG_DIR" "$ETAT_DIR"\n# Le témoin')
     temoin = texte.index('printf \'%s\\n\' "$RACINE" >"$ETAT_DIR/$ETAT_STACK_TEMOIN"')
-    assert texte.index("arreter_session\n\nif [ \"$MODE\" = \"arreter\" ]") < arret
+    # L'appel, pas sa contiguïté : entre les deux se dit un arrêt qui laisse répondre (#1579).
+    assert texte.count("\narreter_session\n") == 1
+    assert texte.index("\narreter_session\n") < arret
     assert arret < ramassage < creation < temoin
     assert texte.count("etat_stack_ramasser") == 1
 

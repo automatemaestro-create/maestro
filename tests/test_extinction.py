@@ -777,7 +777,10 @@ def _fauxbin(
     doit savoir relire. Il tient le rôle entier : la réponse, puis le statut quand on
     le lui demande (`-w`), et ce qu'on lui passe sur l'entrée standard (`-H @-`) va
     dans `entetes.log`, à part des arguments. Sans statut nommé, une réponse vaut
-    `200` et le vide vaut `000` — ce que `curl` rend quand personne n'écoute.
+    `200` et le vide vaut `000` — ce que `curl` rend quand personne n'écoute. Seule
+    la porte est jouée : toute autre adresse — le constat d'arrêt qui sonde l'API et
+    l'UI (#1579) — trouve des ports où personne n'écoute, et `curl` sort alors en `7`
+    comme le vrai. Sans quoi le double ferait répondre une stack qu'aucun test ne sert.
     `netstat`/`lsof` rendent le vide, ce qui n'est pas du confort — sans eux, un
     `--stop` joué sur des ports arbitraires irait tuer les process qui les écoutent
     vraiment. `taskkill`/`kill` sont le filet de ce filet.
@@ -791,6 +794,8 @@ def _fauxbin(
     code = statut if statut is not None else ("200" if reponse else "000")
     for nom in ("curl", "taskkill", "kill"):
         rendu = (
+            "\ncase \" $* \" in *\"/api/extinction \"*) ;;"
+            "\n  *) case \" $* \" in *\" -w \"*) printf '000' ;; esac; exit 7 ;;\nesac"
             f'\ncase " $* " in *" @- "*) cat >> "{entetes.as_posix()}" ;; esac'
             f'\ncat "{corps.as_posix()}"'
             f"\ncase \" $* \" in *\" -w \"*) printf '\\n%s' \"{code}\" ;; esac"

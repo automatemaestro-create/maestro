@@ -135,15 +135,21 @@ pilote_winpid() {
   printf '%s' "$w"
 }
 
-# pilote_ecrit <run-dir> : pose la carte du processus COURANT. Appelé une fois, par le run lui-même
-# — jamais par le lanceur détaché, qui rend la main aussitôt et dont la carte serait périmée-née.
+# pilote_ecrit <run-dir> [<pid>] : pose la carte du processus COURANT. Appelé une fois, par le run
+# lui-même — jamais par le lanceur détaché, qui rend la main aussitôt et dont la carte serait
+# périmée-née.
+#
+# Le second argument pose la carte d'un AUTRE processus : `start.sh` y consigne la racine de l'arbre
+# de son UI (#1579), qu'il ne retrouverait pas autrement quand la table des ports ne voit pas son
+# écoute. La même règle vaut : la carte s'écrit une fois le processus installé — `start.sh` attend
+# que l'UI réponde —, sans quoi un `exec` encore à venir changerait son winpid.
 pilote_ecrit() {
-  local dir="$1"
+  local dir="$1" pid="${2:-$$}"
   [ -d "$dir" ] || return 1
   {
-    printf 'pid=%s\n' "$$"
-    printf 'winpid=%s\n' "$(pilote_winpid "$$" || true)"
-    printf 'naissance=%s\n' "$(pilote_naissance "$$" || true)"
+    printf 'pid=%s\n' "$pid"
+    printf 'winpid=%s\n' "$(pilote_winpid "$pid" || true)"
+    printf 'naissance=%s\n' "$(pilote_naissance "$pid" || true)"
     printf 'epoch=%s\n' "$(date +%s)"
     printf 'hote=%s\n' "$(hostname 2>/dev/null || true)"
   } >"$(pilote_fichier "$dir")" 2>/dev/null || return 1
@@ -231,7 +237,9 @@ pilote_table() {
   if [ -d /proc ]; then
     for d in /proc/[0-9]*; do
       p="${d##*/}"
-      read -r s <"$d/stat" 2>/dev/null || continue
+      # `2>/dev/null` AVANT l'entrée : bash applique les redirections de gauche à droite, et un
+      # processus parti entre le glob et la lecture ferait sinon parler l'ouverture de son `stat`.
+      read -r s 2>/dev/null <"$d/stat" || continue
       s="${s##*) }"    # « <état> <ppid> … »
       s="${s#* }"      # « <ppid> … »
       printf '%s %s\n' "$p" "${s%% *}"

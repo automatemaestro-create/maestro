@@ -35,6 +35,10 @@ sur chaque requête) ou ouvert, et les origines admises —
 `maestro.controltower.acces`. La ligne part sur la sortie standard, donc dans
 `api.log`, là où on vient la lire quand une requête est refusée.
 
+Le temps de servir, il **consigne son pid** dans le fichier que nomme
+`MAESTRO_API_FICHIER_PID` quand elle est posée (#1579, `consigner_le_pid`) : c'est
+le témoin par lequel `scripts/controltower/start.sh` retrouve l'API pour l'arrêter.
+
 `--jeton` ne démarre rien non plus : il rend le **jeton du poste** (engendré au
 besoin) sur la sortie standard et le régime sur l'erreur standard. C'est par là
 que `scripts/controltower/start.sh` l'obtient pour le passer au front, et c'est
@@ -46,8 +50,10 @@ raté.
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 # Le geste et le point de connexion vivent avec la panne de l'API (#1206) : le
@@ -73,6 +79,9 @@ DELAI_PING_S = 3.0
 #: Le nom du filtre qui tient le jeton d'API hors du journal (#1292), dans la
 #: configuration passée à uvicorn (`config_du_journal`).
 FILTRE_DU_JETON = "maestro_sans_jeton"
+
+#: La variable qui nomme le fichier où l'API consigne son pid le temps de servir (#1579).
+VARIABLE_FICHIER_PID = "MAESTRO_API_FICHIER_PID"
 
 
 def verifier_redis() -> int:
@@ -198,14 +207,60 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Import local : le CLI est le seul module à dépendre du serveur uvicorn.
     import uvicorn
 
-    uvicorn.run(
-        "maestro.controltower.app:create_default_app",
-        factory=True,
-        host=hote,
-        port=port,
-        log_config=config_du_journal(politique.jeton),
-    )
+    temoin = consigner_le_pid()
+    try:
+        uvicorn.run(
+            "maestro.controltower.app:create_default_app",
+            factory=True,
+            host=hote,
+            port=port,
+            log_config=config_du_journal(politique.jeton),
+        )
+    finally:
+        retirer_le_pid(temoin)
     return 0
+
+
+def consigner_le_pid() -> Path | None:
+    """Écrit le pid du process qui va servir dans le fichier que nomme `VARIABLE_FICHIER_PID`.
+
+    C'est le témoin par lequel `scripts/controltower/start.sh` retrouve l'API pour l'arrêter
+    (#1579). Seule l'API connaît ce pid : sous Windows, le lanceur d'un venv adossé au Python
+    du Store fait naître celui qui sert hors de son job (#1279), si bien que le pid du lanceur
+    ne désigne pas le process qui tient le port. Et la table des ports du système peut ne pas
+    voir l'écoute du tout : le 2026-11-03, `netstat` n'en affichait aucune ligne.
+
+    Variable absente : rien n'est écrit, c'est le cas de tout lancement hors de `start.sh`.
+    Elle est héritée par ce que `start.sh` lance, donc aussi par l'API que le banc S12
+    rallume (`maestro.scenarios.redemarrage`). Un fichier qu'on ne peut écrire se dit dans le
+    journal et n'empêche pas de servir : l'arrêt dira qu'aucun témoin ne la désigne.
+    """
+    chemin = os.environ.get(VARIABLE_FICHIER_PID, "").strip()
+    if not chemin:
+        return None
+    fichier = Path(chemin)
+    try:
+        fichier.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    except OSError as erreur:
+        print(f"[témoin] pid non consigné dans {fichier} : {erreur}", file=sys.stderr)
+        return None
+    return fichier
+
+
+def retirer_le_pid(fichier: Path | None) -> None:
+    """Retire le témoin à la fin du service — le sien seulement.
+
+    L'API que le banc S12 rallume réécrit le même fichier : celle qui s'arrête ensuite ne
+    retire pas le témoin d'une autre. Une API tuée net ne passe pas ici ; son témoin reste, et
+    `start.sh` le reconnaît pour mort ou recyclé avant d'en rien faire.
+    """
+    if fichier is None:
+        return
+    try:
+        if fichier.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            fichier.unlink()
+    except OSError:
+        pass
 
 
 def config_du_journal(jeton: str | None) -> dict[str, Any]:
