@@ -243,6 +243,10 @@ Qualité : `ruff check .` (lint, lancé aussi en CI) · `pytest` (tests) · `myp
 **Les scénarios de référence** — *est-ce que le produit fait ce qu'on lui demande ?*
 La Control Tower démarrée (`bash scripts/controltower/start.sh`) :
 
+> ⚠ **Plus de scénarios figés** depuis le 2026-11-03 ([docs/52](./docs/52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> #1568) : quand une vérification sur le réel est recommandée, la session construit l'exercice de
+> ce qu'elle vient d'implémenter (#1569). Le banc ci-dessous se retire avec #1572.
+
 ```bash
 .venv/Scripts/python.exe -m maestro.scenarios          # les quatre
 .venv/Scripts/python.exe -m maestro.scenarios --liste   # ce qu'ils vérifient

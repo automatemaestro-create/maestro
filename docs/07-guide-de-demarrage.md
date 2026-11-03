@@ -131,7 +131,7 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 │   ├── queue/          #   File de tâches Celery + Redis, workers parallèles (Phase 1)
 │   ├── router/         #   Auto-assignation des tâches aux agents
 │   ├── sandbox/        #   Espace de travail isolé par tâche
-│   ├── scenarios/      #   Banc des scénarios de référence (#1148, python -m maestro.scenarios)
+│   ├── scenarios/      #   Banc des scénarios de référence (#1148, python -m maestro.scenarios) — ⚠ scénarios figés retirés par #1572 (docs/52)
 │   ├── telemetry/      #   Journal des étapes, comptabilité de coût par tâche, secrets expurgés
 │   ├── check_env.py    #   Vérification d'environnement (maestro-check-env)
 │   └── config.py       #   Modes d'authentification (§2.1)
@@ -597,6 +597,10 @@ refus nomme les états réels ci-dessous. Ce qu'il faut savoir :
 
 **Les états qu'on regarde viennent du réel** (#1164, #1165). Pour voir l'écran ailleurs que
 dans l'état de la copie, sans rien fabriquer :
+
+> ⚠ **Plus de scénarios figés** depuis le 2026-11-03 ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> #1568) : l'état « peuplé » viendra du dernier **exercice construit** et sauvé (#1569), et
+> `--rejouer` se retire avec les scénarios (#1572). Ce qui suit vaut jusque-là.
 
 ```bash
 # L'état réel laissé par le dernier passage du banc des scénarios (#1148) — son âge est dit

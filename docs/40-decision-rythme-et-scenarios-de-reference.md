@@ -28,6 +28,11 @@ place.
 Et une décision produit, née du même essai : **une action simple sur le projet s'exécute**. Elle ne
 se transforme pas en outil à développer (§4).
 
+> ⚠ **Le point 2 est renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> #1568) : plus de scénarios figés. Le bouclage d'un jalon produit se joue sur des **exercices
+> construits** à partir de ses critères de sortie (#1571), et une épreuve rouge y interdit toujours
+> le GO. Les points 1, 3 et 4 ne bougent pas.
+
 ## 1. D'où vient la demande
 
 Elle est venue le 2026-09-21, pendant un essai réel sur un projet de l'utilisateur. « Vide le dossier
@@ -142,6 +147,14 @@ Ce n'est pas la portée étendue d'une approbation, qui reste un choix de la per
 la personne a déjà approuvé, et c'est son accord qu'on cesse de lui redemander.
 
 ## 5. Les scénarios de référence
+
+> ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> #1568) : plus de scénarios figés. Quand une vérification sur le réel est recommandée, la session
+> construit l'exercice de ce qu'elle vient d'implémenter (#1569, #1570), et le bilan d'un jalon
+> tire les siens de ses critères de sortie (#1571). S1 à S12, la carte, l'historique et le banc par
+> lot se retirent (#1572). Cette section reste l'histoire du banc et la raison de chacun de ses
+> oracles ; elle décrit le présent jusqu'à ce que ces lots soient livrés. Le banc comparatif et ses
+> objectifs `p5` et `club` ne bougent pas.
 
 Le retex du 2026-09-11 est la seule vérification qui ait trouvé de vrais défauts. Il était manuel et
 n'a été joué qu'une fois. Il devient une commande (#1148), jouée contre la vraie stack et le vrai

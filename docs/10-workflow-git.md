@@ -307,6 +307,11 @@ devinées), `captures.sh` pour les captures et les clips, le skill `verify` pour
 `banc-mise-en-page` pour la géométrie, pour un jalon **produit** le banc des scénarios de
 référence (#1148), et pour un jalon d'**outillage** les verbes joués et les suites qui les gardent.
 
+> ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> #1568) : un jalon produit ne joue plus les scénarios figés. Le bilan construit ses exercices à
+> partir des critères de sortie du jalon, et une épreuve rouge y interdit toujours le GO (#1571, qui
+> réécrit ce passage et la ligne « exercer » ci-dessus).
+
 `/milestone-verdict`, de son côté, **n'enregistre rien sans un « oui » explicite** — ni le verdict,
 ni un seul ticket de réserve : une réserve **acceptée telle quelle** est une décision, et un ticket
 ouvert d'office sur une réserve assumée est un ticket que personne ne fermera. Elle ne **fabrique
@@ -1285,6 +1290,10 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
   | erreur | une **vraie panne** | l'API coupée (« injoignable »), ou une API qui répond en erreur (#996) |
   | peuplé, charge | l'**état laissé par le banc** des scénarios | `start.sh --etat-banc`, qui dit son âge ; `--rejouer` le refait avec le vrai modèle ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)) |
 
+  ⚠ Depuis le 2026-11-03 ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)),
+  l'état « peuplé » viendra du **dernier exercice sauvé**, que la session construit pour produire
+  les états qu'elle doit regarder (#1569), et `--rejouer` se retire avec les scénarios (#1572).
+
   Un état que le réel ne sait pas produire se dit **non couvert** : il ne se fabrique pas. La
   largeur téléphone n'est pas un état des données, c'est une fenêtre. Les skills qui regardent
   l'écran (`control-tower`, `verify`, `banc-mise-en-page`) et `/design-veille` montent ces mêmes
@@ -2134,6 +2143,10 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     qui ne rend ni vert ni rouge : il prouve s'il porte au moins un passage abouti, jamais s'ils sont
     tous empêchés. Qu'un test nommé passe, il ne le rejoue pas — c'est la session qui l'a vu passer,
     et qui le dit ;
+  - ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+    #1568) : plus de scénarios figés. Au ticket, la session construira l'exercice de ce qu'elle vient
+    d'implémenter, et `criteres-note` prendra une ligne **Exercice** (#1570, qui réécrit ce point) ;
+    le banc par lot se retire (#1572). Ce qui suit vaut jusque-là ;
   - **le banc se paie une fois par lot, et au ticket seulement sur son chemin** (#1464,
     [docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md), qui renverse en partie le C2 de
     #1240). Le banc entier se joue sur `main` intégrée, par le pilote, après le drain final
@@ -8531,6 +8544,11 @@ renvoyer par un chemin absolu ferait refuser la lecture.
 > vérifie l'**ordre** : à l'instant où l'audit est écrit, le flux du ticket est déjà en `.jsonl.gz`.
 
 ### 11.13 Le banc entier sur `main`, une fois par lot (#1462, chantier #1460)
+
+> ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> #1568) : le banc par lot se retire **sans remplaçant**, avec les scénarios figés. #1572 retire
+> `banc-main.sh`, la section de `run.sh` et de `status.sh` qui le jouent, et cette section avec eux.
+> Ce qui suit vaut jusque-là.
 
 Le banc des scénarios de référence ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md))
 se paie **une fois par lot**, sur `main` intégrée, et non plus à chaque ticket qui touche son chemin

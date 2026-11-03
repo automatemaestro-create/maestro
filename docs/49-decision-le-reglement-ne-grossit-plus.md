@@ -113,6 +113,8 @@ registre des budgets livrés, qui ne fait que descendre.
 - **La relecture visuelle à la clôture** ([docs/30 §5.5](./30-cible-visuelle-control-tower.md), #935).
 - **Le merge vérifié**, en un seul endroit (`merge-mr`, #417).
 - **Le banc par lot** ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md)).
+  ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+  #1568) : le banc par lot se retire sans remplaçant, avec les scénarios figés (#1572).
 - **La règle d'écriture de `CLAUDE.md`** : la règle s'y écrit, jamais sa démonstration (#965).
 - **Le budget des textes de clôture** (#1245), qui reste relevable. L'étendre au cliquet serait une
   autre décision.

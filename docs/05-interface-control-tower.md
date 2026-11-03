@@ -899,7 +899,8 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > du flux qui coche quoi que ce soit, et le chemin entier jusqu'à la carte que sert
 > l'API. Sur la vraie stack, c'est le scénario **S2** du banc
 > (`python -m maestro.scenarios`) qui le garde : sa tâche doit finir à N/N par ce
-> verbe.
+> verbe. ⚠ Les scénarios figés se retirent ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+> #1572) : un exercice construit le vérifiera sur la vraie stack quand un ticket touchera ce verbe.
 
 > **Ce qui reste non coché à la clôture se dit (#944).** Un agent conclut souvent
 > sans cocher sa dernière ligne : la tâche 4 du run du
