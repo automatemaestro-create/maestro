@@ -2658,13 +2658,18 @@ def _lire_borne(chemin: Path, caracteres: int) -> str:
 
 #: La demande de S11 (#1299) : l'exemple du ticket, « maquetter les 4 sections d'un
 #: site », sur le site que le README du projet décrit. Elle dit ce que la personne
-#: veut — quatre pages — et **rien du découpage** : que le plan dégage le travail
-#: indépendant est justement ce qui se mesure.
+#: veut — quatre pages, chacune livrée pour elle-même — et **rien du découpage** :
+#: que le plan dégage le travail indépendant est justement ce qui se mesure.
+#:
+#: ⚠ Sa dernière phrase (#1531) est une raison d'indépendance, jamais une consigne de
+#: découpage. Elle est dans la demande, pas dans le README : le Chef de projet planifie
+#: sur la demande et son brief, avant que quiconque lise le projet.
 DEMANDE_S11 = (
     "Maquette les quatre sections du site décrit dans le README : accueil, créations, "
     "ateliers et contact. Chaque section est une page HTML statique à la racine "
     "(accueil.html, creations.html, ateliers.html, contact.html) qui reprend la charte "
-    "de styles.css."
+    "de styles.css. Chaque section est relue par une personne différente de l'atelier, "
+    "et se publie dès qu'elle est validée, sans attendre les autres."
 )
 
 #: Le dossier du projet de S11 dans l'atelier du passage.
@@ -2684,6 +2689,16 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
     (`POST …/versionner`, #855) — c'est le régime où chaque tâche travaille dans sa
     copie —, puis doté de l'équipe que l'analyse propose. Un versionnement que le
     poste refuse (pas de Git) est un empêchement, jamais un rouge du produit.
+
+    ⚠ **Depuis #1531, la demande dit pourquoi les sections se livrent séparément** :
+    chacune est relue par une personne différente et se publie sans attendre les
+    autres. Le plan découpe en capacités à la taille d'une session, et quatre pages
+    statiques y tiennent ensemble. Sans cette raison, elles font une seule tâche, et
+    rien ne se mène de front : c'est ce qu'a rendu le banc du 2026-11-03, même avec
+    la phrase écrite dans le README, que le Chef de projet ne lit pas avant de
+    planifier. L'oracle ne bouge pas, et la largeur reste due. Ce qui change : le
+    plan doit maintenant la **justifier** par la livraison séparée, comme le
+    playbook le demande à toute tâche par élément.
 
     L'oracle lit la **trace** du run, jamais une phrase (#746), dans cet ordre :
 

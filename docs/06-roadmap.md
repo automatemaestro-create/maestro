@@ -91,6 +91,9 @@ gantt
   de 3 tâches (`MIN_TASKS`, ticket #6) ne s'y applique plus. Porté par #1149 : le playbook du
   planificateur (`maestro/orchestrator/playbook.md`) distingue désormais **construire** et
   **agir**, et `MIN_TASKS` n'est plus qu'une fourchette visée par la construction.
+  ⚠ *La fourchette est retirée le 2026-11-03* (#1531, [docs/50 §4.1](./50-ecart-face-a-un-agent-seul.md)) :
+  le plan découpe en capacités visibles à la taille d'une session, tests compris, et c'est la
+  taille de chaque tâche qui se relit, jamais leur nombre.
 - **Deux agents** (ex. Développeur + BDD) qui exécutent une tâche chacun.
 - Exécution **en ligne de commande** (pas encore d'UI), résultats dans des fichiers.
 

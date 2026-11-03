@@ -28,7 +28,7 @@ exacts) parce que la sortie est ensuite parsée et validée par
 
 Le playbook lui-même est un **document Markdown** (`playbook.md`, à côté de ce module)
 depuis #298 : structuré, relisable et diffable, comme ceux des cinq rôles exécutants
-(#295). Ce module ne fait plus que le charger et y substituer la fourchette de tâches.
+(#295). Ce module ne fait plus que le charger et y substituer l'équipe du projet.
 
 ⚠ Il vit **ici** et non dans `maestro/agents/playbooks_defaut/`, à dessein — c'était la
 décision ouverte du ticket :
@@ -62,24 +62,17 @@ from maestro.equipe.gabarits import GABARITS
 from maestro.orchestrator.rattrapage import EchecDeTache, Tentative
 from maestro.orchestrator.schema import Clarification
 
-#: Fourchette visée par un objectif de **construction**. Guidage, pas une règle de
-#: schéma, et depuis #298 le playbook la présente comme une **conséquence** du
-#: découpage plutôt que comme un quota à remplir. MAX borne le découpage inutilement fin.
-#:
-#: ⚠ **MIN n'est plus un plancher** (#1149,
-#: [docs/40 §4](../../docs/40-decision-rythme-et-scenarios-de-reference.md)). Il l'a
-#: été, sur le critère d'acceptation du ticket #6 — « la boucle assigne et exécute au
-#: moins 3 tâches » —, qui visait la preuve de concept et son objectif de
-#: construction. Mesuré le 2026-09-21 sur le run `8a15f78f45d3` : « vide le dossier du
-#: projet » est ressorti en trois tâches — écrire un utilitaire de vidage, le tester,
-#: le faire valider —, parce que le plancher demandait un compte que l'objectif
-#: n'appelait pas. Un objectif qui demande une **action** sur le projet rend désormais
-#: **une** tâche qui agit, et le playbook l'écrit comme telle. La constante reste : la
-#: fourchette garde son sens là où elle en a un, et c'est le playbook — pas une borne
-#: de schéma — qui dit quand elle s'applique (`validate_plan` n'a jamais compté les
-#: tâches, et ne commence pas ici).
-MIN_TASKS = 3
-MAX_TASKS = 5
+#: ⚠ **Aucune fourchette de tâches** (#1531,
+#: [docs/50 §§ 2 et 4.1](../../docs/50-ecart-face-a-un-agent-seul.md)). Le document
+#: visait « 3 à 5 tâches » pour un objectif de construction (`MIN_TASKS`, `MAX_TASKS`,
+#: depuis le ticket #6), et la règle « une tâche par élément » l'emportait sur elle :
+#: sur p5, qui tient en une session, le plan a rendu 9 tâches sur 4 niveaux, et chacune
+#: coûtait environ 0,44 $ et 1 min 15 s par niveau en plus de son travail. #1149 en
+#: avait déjà retiré le plancher pour les objectifs d'action. Il découpe désormais en
+#: **capacités à la taille d'une session**, tests compris, et c'est la taille de chaque
+#: tâche qui se relit, jamais un compte : un compte visé, même présenté comme un
+#: signal, est un défaut arbitraire (docs/41) qui tire le plan vers lui.
+#: `validate_plan` n'a jamais compté les tâches, et ne commence pas ici.
 
 #: Le playbook « du code » du Chef de projet, livré avec le paquet (cf. `package-data`
 #: dans `pyproject.toml` — sans quoi une roue s'installerait sans lui).
@@ -104,8 +97,8 @@ CHEMIN_PLAYBOOK_RATTRAPAGE = Path(__file__).resolve().parent / "playbook_rattrap
 #: c'est là qu'un processus écrit ce qui l'a tué.
 BORNE_ERREUR_RATTRAPAGE = 4000
 
-#: Un marqueur dans le document : `{{min_taches}}`, `{{max_taches}}`, `{{roles}}`,
-#: `{{equipe}}`, `{{competences}}`, `{{competences_recrutables}}`.
+#: Un marqueur dans le document : `{{roles}}`, `{{equipe}}`, `{{competences}}`,
+#: `{{competences_recrutables}}`.
 _MARQUEUR = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
 
 
@@ -114,15 +107,12 @@ def _valeurs(equipe: Sequence[Agent]) -> dict[str, str]:
 
     Volontairement **fermée** : un marqueur hors de cette table lève, plutôt que
     de partir tel quel dans le prompt système. Elle est calculée par appel depuis
-    #1041, et non plus figée au module : quatre de ses six entrées décrivent
-    l'équipe du projet, qui change d'un projet à l'autre.
-
-    Les deux entrées de découpage (`min_taches`, `max_taches`) restent des
-    constantes de guidage : elles ne dépendent pas de qui exécute.
+    #1041, et non plus figée au module : ses entrées décrivent l'équipe du projet,
+    qui change d'un projet à l'autre. Les deux entrées de découpage (`min_taches`,
+    `max_taches`) en sont sorties avec la fourchette (#1531) : un marqueur resté
+    dans le document lève ici.
     """
     return {
-        "min_taches": str(MIN_TASKS),
-        "max_taches": str(MAX_TASKS),
         "roles": _roles(equipe),
         "equipe": _bloc_equipe(equipe),
         "competences": _liste_competences(equipe),

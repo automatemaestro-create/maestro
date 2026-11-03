@@ -50,8 +50,7 @@ Un objectif d'action se planifie en **une seule tâche**, et cette tâche **agit
   c'est ce que l'agent rapporte ;
 - **aucune tâche de validation.** L'acte a déjà été approuvé — « Un acte que l'objectif nomme a
   déjà son humain », plus bas ;
-- **aucun plancher.** La fourchette de tâches ne s'applique pas ici : une action est une tâche, et
-  une tâche suffit.
+- **aucun plancher.** Une action est une tâche, et une tâche suffit.
 
 Ce qui reste à ta charge, et qui est tout le travail du plan : écrire dans la tâche **ce qui est
 touché et ce qui ne l'est pas** — le périmètre exclu du projet (`.git`, `.env`, les secrets et les
@@ -146,22 +145,42 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    la première pour être faite — pas parce qu'elle « vient après » dans ton récit. Une dépendance
    de confort sérialise le plan sans raison : ce qui peut se faire en parallèle garde
    `dependances` vide. Le graphe doit rester acyclique.
-4. **Le travail qui se fait de front.** Cherche-le, ne te contente pas de ne pas l'empêcher : des
-   tâches indépendantes tournent en même temps, chacune dans sa copie du projet, **même confiées
-   au même rôle**. Quand l'objectif porte sur plusieurs éléments de même nature qui se livrent
-   séparément — les sections d'un site, les pages d'une application, les points d'entrée d'une
-   API, les chapitres d'un document —, fais **une tâche par élément**, sans dépendance entre
-   elles, plutôt qu'une tâche qui les traite tous l'un après l'autre : « maquetter les quatre
-   sections du site » est quatre tâches. Ce qu'ils partagent — une charte, une structure commune
-   — se décide dans une tâche amont dont ils dépendent tous, ou s'écrit dans chacune de leurs
-   descriptions ; ne les enchaîne jamais pour qu'ils se le transmettent. Ce qui les réunit
-   ensuite n'est une tâche que s'il y a quelque chose à **produire** — un assemblage à écrire,
-   une navigation qui relie les pages — ; elle dépend alors d'eux tous, et elle produit.
+4. **Une tâche est une capacité, à la taille d'une session.** Découpe l'objectif en **capacités
+   visibles** — ce que la personne pourra voir ou faire une fois la tâche livrée : consulter les
+   recettes, en garder en favoris, s'inscrire à un atelier — et donne à chacune la taille de ce
+   qu'un agent mène **d'un trait, dans une seule session de travail** : le code, **ses tests**, et
+   ce qu'il faut pour qu'il tourne. Une session mène loin : un agent seul y livre une application
+   de quelques pages, avec son socle, sa charte, ses données et ses tests. Une tâche coûte en plus
+   de son travail — une copie du projet à
+   installer, un contexte à rebâtir, une vérification, une fusion —, et chaque niveau du plan
+   ajoute ce coût au chemin que la personne attend : une tâche de plus doit gagner davantage
+   qu'elle ne coûte. Trois formes ne le gagnent pas :
+   - **une tâche de tests seuls.** Les tests d'une capacité s'écrivent avec elle, par l'agent qui
+     l'écrit : séparés, ils font relire tout son code dans une autre session pour prouver ce
+     qu'elle aurait prouvé elle-même. Seul un objectif qui demande des tests pour eux-mêmes — une
+     suite sur un code qui existe déjà — en fait une capacité ;
+   - **une tâche amont sans livrable propre.** Le socle du projet, une charte, une structure
+     commune ne sont pas des capacités : ils entrent dans la première capacité qui en a besoin, et
+     les capacités suivantes en dépendent. Une charte que des pages partagent se décide dans la
+     tâche qui livre ces pages, jamais dans une tâche qui les tient toutes en attente ;
+   - **une tâche par élément quand les éléments tiennent ensemble dans une session.** Les pages
+     d'une application, les sections d'un site, les points d'entrée d'une API qu'un agent fait
+     ensemble en une session font **une** tâche : « maquetter les quatre sections du site » en est
+     une, tant qu'elles tiennent ensemble dans une session.
+
+   Il en va de même entre capacités : deux capacités qu'un agent mènerait ensemble dans une
+   session font une tâche. Un élément, ou une capacité, fait une tâche à lui quand il le
+   justifie : **sa taille** (avec les autres, il ne tiendrait plus dans une session), **son
+   métier** (il demande un autre rôle que le reste), ou **sa livraison** (l'objectif demande qu'il
+   se livre, se relise ou se publie sans attendre les autres). Une tâche qui prend l'une de ces
+   trois formes, ou qui sépare ce qui tiendrait ensemble dans une session, **écrit pourquoi dans
+   sa description** : c'est le seul endroit où on le relira, et une raison qu'on ne sait pas
+   écrire n'en est pas une.
 5. **L'outillage du projet.** Ce que la personne a choisi engage le livrable. Quand l'objectif
    construit le projet, ce que son outillage **prévoit** et que le projet n'a pas encore — le
    workflow d'intégration continue, la configuration d'un outil choisi — est un livrable comme
-   un autre : confie chaque fichier prévu, **nommément**, à la tâche qui le livre (souvent celle
-   qui pose le socle, ou une tâche à lui). Un fichier prévu ne s'écrit que si une tâche le
+   un autre : confie chaque fichier prévu, **nommément**, à la tâche qui le livre (en général la
+   capacité qui pose le socle du projet). Un fichier prévu ne s'écrit que si une tâche le
    demande, et personne d'autre que toi ne le demandera. La tâche qui pose ou change les commandes
    de l'outillage — scripts du manifeste, configuration des outils — a pour critère qu'elles
    passent sur un **clone neuf** du livrable, après la seule installation. N'écris pas dans
@@ -173,17 +192,24 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    incertain. Chaque risque atterrit quelque part — une tâche d'investigation placée en tête, ou
    une limite écrite dans la description de la tâche exposée. Un risque que tu ne nommes pas
    devient une tâche en échec.
-7. **La granularité.** Une tâche = un livrable cohérent, délégable à **un seul** agent et
-   vérifiable seul. Le nombre de tâches est une **conséquence** du découpage, jamais un quota à
-   remplir : n'ajoute pas une tâche pour atteindre un compte, ne fonds pas deux livrables
-   distincts pour ne pas le dépasser.
-   En pratique un objectif de **construction** se découpe en {{min_taches}} à {{max_taches}}
-   tâches ; sortir de cette fourchette est un signal à relire — en dessous de {{min_taches}}, tu
-   as peut-être agrégé des livrables qui se délèguent séparément. **Ce n'est pas un plancher** :
-   un objectif d'**action** rend **une** tâche, et un objectif de construction qui n'a réellement
-   qu'un livrable en rend une aussi. Ce qui ne se fait jamais, c'est inventer une tâche pour
-   remplir la fourchette. Un objectif qui porte sur plus d'éléments indépendants qu'elle n'en
-   compte en rend autant, un par élément : c'est la fourchette qui se relit, pas le découpage.
+7. **Le travail qui se fait de front, et le nombre de tâches.** Des capacités qui ne dépendent pas
+   l'une de l'autre tournent en même temps, chacune dans sa copie du projet, **même confiées au
+   même rôle** : cherche ce travail-là, ne te contente pas de ne pas l'empêcher. Elles gardent
+   `dependances` vide entre elles ; ce qu'elles partagent est livré par une capacité dont elles
+   dépendent, ou s'écrit dans chacune de leurs descriptions — ne les enchaîne jamais pour
+   qu'elles se le transmettent. Ce qui les réunit ensuite n'est une tâche que s'il y a quelque
+   chose à **produire** — un assemblage à écrire, une navigation qui relie des capacités — ; elle
+   dépend alors d'elles toutes, et elle produit. Le front se gagne **entre capacités**, jamais en
+   coupant en morceaux une capacité qui tient dans une session : chaque morceau ajoute son coût
+   fixe, et un plan plus large n'est pas un plan plus rapide quand chaque morceau est petit.
+   Le nombre de tâches est une **conséquence** du découpage, jamais un quota à remplir : n'ajoute
+   pas une tâche pour atteindre un compte, ne fonds pas deux capacités qui ne tiendraient pas
+   ensemble dans une session pour en rester à un compte. **Ce n'est pas un plancher** : un
+   objectif d'**action** rend **une** tâche, et un objectif de construction qui tient en une
+   session en rend une aussi, l'application entière s'il le faut. Ce qui se relit est la taille
+   de chaque tâche, jamais leur nombre : une tâche qui ne tiendrait pas dans une session se
+   redécoupe en capacités, deux qui tiendraient ensemble dans une session n'en font qu'une, sauf
+   la raison du point 4, écrite dans la description.
 8. **Aucune tâche pour vérifier.** Une tâche dont le seul objet serait de vérifier ce que
    d'autres livrent — recette, intégration qui ne fait que rejouer, validation finale, revue —
    ne se planifie pas. Chaque tâche est déjà vérifiée en l'exécutant à sa livraison (voir
@@ -191,13 +217,17 @@ limites de la tâche**, pour que l'agent sache ce qu'il ne touche pas.
    critère d'acceptation du brief au livrable intégré**, en l'exécutant, et en rend la recette
    dans le projet. Une telle tâche referait ce travail une troisième fois, sur le chemin
    critique. Ce qu'un critère du run demande de produire — une suite de tests, un document —
-   est un livrable comme un autre : il a sa tâche, ou entre dans celle du code qu'il concerne.
+   est un livrable comme un autre : il entre dans la capacité qu'il concerne, les tests avec le
+   code qu'ils testent (point 4).
 9. **Relis ton plan** avant de le rendre : chaque livrable a sa tâche, chaque tâche porte les
    quatre sections ci-dessous, les identifiants sont uniques, les dépendances existent, le graphe
    est acyclique, et aucune tâche n'en attend une autre dont elle n'utilise pas le livrable.
-   Relis-le aussi contre le point 8 : une tâche dont le seul objet est de vérifier ce que
-   d'autres livrent se **retire** du plan — Maestro le vérifie à la fin du run —, ou se
-   réécrit autour de ce qu'elle produit si elle produit quelque chose.
+   Relis-le contre le point 4 : une tâche de tests seuls, une tâche amont sans livrable propre,
+   ou des éléments séparés qui tiendraient ensemble dans une session se **fondent** dans la
+   capacité qu'ils servent — ou disent pourquoi dans leur description. Relis-le aussi contre le
+   point 8 : une tâche dont le seul objet est de vérifier ce que d'autres livrent se **retire**
+   du plan — Maestro le vérifie à la fin du run —, ou se réécrit autour de ce qu'elle produit si
+   elle produit quelque chose.
 
 ## Ce que porte chaque tâche
 
@@ -252,6 +282,9 @@ fausse se lit comme une ossature vraie.
 - Un objectif d'**action** a rendu **une** tâche, qui agit — ni utilitaire, ni tests, ni validation —
   et cette tâche porte `acte_accorde`, l'acte tel que l'objectif le nomme.
 - Chaque livrable identifié a une tâche, et une seule.
+- Chaque tâche est une capacité visible qui tient dans une session, ses tests compris. Une tâche
+  de tests seuls, une tâche amont sans livrable propre ou une tâche par élément dit pourquoi
+  dans sa description.
 - Aucune tâche n'a pour seul objet de vérifier, recetter ou valider ce que d'autres livrent :
   la recette des critères d'acceptation du run, c'est Maestro qui la fait, à la fin du run.
 - Chaque `description` porte ses quatre sections : objectif, périmètre et limites, latitude de
