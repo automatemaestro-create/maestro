@@ -443,25 +443,28 @@ class ClientAPI:
     ## Deux délais, selon qui rédige la réponse (#1232)
 
     La plupart des routes répondent sans le modèle, et le délai ordinaire du
-    transport leur suffit. Six ne le peuvent pas : `envoyer` et
+    transport leur suffit. Huit ne le peuvent pas : `envoyer` et
     `envoyer_en_direct` (le fil juge le message et rédige sa réponse, rendue
     d'un coup ou au fil de l'eau), `proposition_equipe` (un playbook rédigé par
     rôle, #257), `declarer_par_le_fil` (la réponse rédigée sur le projet
-    déclaré, et la lecture d'un dossier importé, #1294), `repondre_question` et
-    `trancher_piece` (la suite comprise par le modèle, et la pièce suivante
+    déclaré, et la lecture d'un dossier importé, #1294), `trancher_cadrage` et
+    `recruter` (le geste exécuté, le modèle en parle, #1262), `repondre_question`
+    et `trancher_piece` (la suite comprise par le modèle, et la pièce suivante
     vérifiée par l'exécution, #1161). Elles durent ce que dure
     le modèle, et **l'écran ne les borne pas** : un banc qui les coupait à 30 s
     jugeait un produit plus pressé que celui qu'un utilisateur a sous les yeux.
     Mesuré le 2026-09-23 : la proposition d'équipe a tenu en 17 s, puis ≈ 26 s,
     puis a dépassé 30 s sur la première requête d'une API qui venait de démarrer
-    — et S1 n'a jamais envoyé sa demande.
+    — et S1 n'a jamais envoyé sa demande. Puis le 2026-11-03 (#1576) : le cadrage
+    a tenu entre 26 et 29 s, puis a dépassé 30 s, et le comparatif p5 s'est rendu
+    empêché avant que le run parte.
 
-    Ces six verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
+    Ces huit verbes reçoivent donc `delai_modele_s`, la borne que le banc accorde
     déjà au modèle pour un run (`--delai`, `DELAI_RUN_S`) : une borne contre une
     API figée, pas une attente. Le classement se fait **ici, sur le code des
-    routes** — `trancher_cadrage` et `recruter` n'appellent aucun modèle et
-    gardent le délai ordinaire —, et il se revoit quand une route change de
-    nature.
+    routes**, et il se revoit quand une route change de nature : `trancher_cadrage`
+    et `recruter` répondaient sans le modèle jusqu'à ce que #1262 lui rende leur
+    parole, et le banc ne l'a vu qu'en se faisant couper (#1576).
     """
 
     def __init__(self, transport: Transport, *, delai_modele_s: float = DELAI_RUN_S) -> None:
@@ -677,11 +680,16 @@ class ClientAPI:
     def recruter(
         self, *, conversation: str, validee: Mapping[str, Any], approuve: bool = True
     ) -> dict[str, Any]:
-        """Valide l'équipe que le fil propose (#1146) et rend la réponse qui suit."""
+        """Valide l'équipe que le fil propose (#1146) et rend la réponse qui suit.
+
+        Le modèle rédige ce qui suit la création (#1262) : la marge du modèle, pas
+        le délai ordinaire.
+        """
         corps = self._appel(
             "POST",
             f"{FIL}/recrutement",
             corps={"approuve": approuve, "conversation": conversation, **dict(validee)},
+            delai_s=self._delai_modele_s,
         )
         return _reponse_de(corps, chemin=f"{FIL}/recrutement")
 
@@ -693,7 +701,11 @@ class ClientAPI:
         approuve: bool = True,
         bornes: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Donne l'accord au cadrage proposé, bornes comprises (#990), et rend la réponse."""
+        """Donne l'accord au cadrage proposé, bornes comprises (#990), et rend la réponse.
+
+        Le run ouvert, le modèle en parle (#1262) : la marge du modèle, pas le délai
+        ordinaire (#1576).
+        """
         corps = self._appel(
             "POST",
             f"{FIL}/cadrage",
@@ -703,6 +715,7 @@ class ClientAPI:
                 "conversation": conversation,
                 **dict(bornes or {}),
             },
+            delai_s=self._delai_modele_s,
         )
         return _reponse_de(corps, chemin=f"{FIL}/cadrage")
 
