@@ -13,6 +13,11 @@ construire, ou agir. C'est un prompt système, donc ce qui se teste est ce qu'il
 plancher, une action se planifie en une tâche qui agit, et l'acte que l'objectif
 nomme ne se refait pas valider. Les phrases attendues sont courtes et prises au
 texte normalisé — reformuler reste possible, retirer la règle doit se voir.
+
+Et, depuis #1531 ([docs/50 §§ 2 et 4.1](../docs/50-ecart-face-a-un-agent-seul.md)),
+④ il découpe en **capacités à la taille d'une session**, tests compris, sans
+fourchette de tâches : ni tâche de tests seuls, ni tâche amont sans livrable
+propre, ni une tâche par élément quand les éléments tiennent ensemble.
 """
 
 import asyncio
@@ -24,8 +29,6 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from maestro.orchestrator import (
-    MAX_TASKS,
-    MIN_TASKS,
     ORCHESTRATOR_SYSTEM_PROMPT,
     Orchestrator,
     PlanParsingError,
@@ -128,14 +131,12 @@ def _canned_action_plan_json():
 # --- Critère ① : un objectif produit un plan de tâches valides ------------------------
 
 
-def test_plan_produces_tasks_within_configured_range():
+def test_plan_produces_tasks():
     provider = FakeProvider(_canned_plan_json())
     orchestrator = Orchestrator(provider, model="claude-opus-4-8")
 
     tasks = asyncio.run(orchestrator.plan("Créer une API REST de gestion de tâches"))
 
-    # Un objectif de **construction** : la fourchette visée reste ce qu'elle guide.
-    assert MIN_TASKS <= len(tasks) <= MAX_TASKS
     assert all(isinstance(t, Task) for t in tasks)
     assert [t.id for t in tasks] == ["migration-taches", "api-taches", "tests-api"]
     # Les dépendances déclarées sont bien résolues dans le plan.
@@ -363,18 +364,38 @@ def test_une_action_se_planifie_en_une_tache_qui_agit():
     assert "aucun plancher" in texte
 
 
-def test_la_fourchette_de_taches_n_est_plus_un_plancher():
-    """#1149 renverse le critère du ticket #6 (`MIN_TASKS`, docs/06 §Phase 0). La
-    fourchette reste **visée** pour un objectif de construction — elle est
-    substituée depuis les constantes, jamais recopiée dans le texte."""
+def test_aucune_fourchette_de_taches_n_est_visee():
+    """#1149 avait retiré le plancher du ticket #6 (`MIN_TASKS`, docs/06 §Phase 0) ;
+    #1531 retire la fourchette elle-même. « 3 à 5 tâches », même présentée comme un
+    signal à relire, tirait p5 — qui tient en une session — vers un compte que
+    l'objectif n'appelait pas (docs/50 § 2 : 9 tâches sur 4 niveaux). Ce qui se
+    relit est la taille de chaque tâche, et aucun marqueur de compte ne reste à
+    substituer."""
     texte = _playbook()
+    brut = prompt_orchestrateur()
 
-    assert f"{MIN_TASKS} à {MAX_TASKS} tâches" in texte
+    assert not re.search(r"\b\d+ à \d+ tâches\b", texte), "une fourchette est revenue"
+    assert "{{min_taches}}" not in brut and "{{max_taches}}" not in brut
     assert "pas un plancher" in texte
-    # La formulation renversée ne doit pas survivre quelque part dans le document.
     assert "reste le plancher" not in texte
-    # Et le nombre de tâches reste une conséquence, jamais un quota.
+    # Le nombre de tâches reste une conséquence, jamais un quota.
     assert "jamais un quota à remplir" in texte
+    assert "Ce qui se relit est la taille de chaque tâche, jamais leur nombre" in texte
+
+
+def test_le_nombre_de_taches_n_est_jamais_borne_par_le_code():
+    """La règle est un jugement du modèle (docs/41), jamais un quota : le plan de C2,
+    neuf tâches sur quatre niveaux, traverse la validation comme celui d'une tâche.
+    Ce que le playbook demande ne devient pas un refus de schéma."""
+    plan_c2 = [
+        _valid_task(id=identifiant, dependances=list(dependances))
+        for identifiant, dependances in _PLAN_C2
+    ]
+
+    taches = validate_plan(plan_c2)
+
+    assert len(taches) == _C2_TACHES
+    assert _niveaux(taches) == _C2_NIVEAUX
 
 
 def test_un_acte_nomme_par_l_objectif_ne_se_refait_pas_valider():
@@ -449,27 +470,177 @@ def test_le_format_de_sortie_d_une_action_est_un_etat():
     assert "jamais un fichier à produire" in texte
 
 
-def test_le_plan_degage_le_travail_qui_se_fait_de_front():
+def test_le_plan_degage_le_travail_qui_se_fait_de_front_entre_capacites():
     """#1299 : « ne relier que les dépendances réelles » ne suffisait pas à faire
     **dégager** l'indépendance — les deux runs de `p3` avaient une largeur de 1.
 
-    La règle positive, et l'exemple du ticket : des éléments de même nature qui se
-    livrent séparément font une tâche chacun, sans dépendance entre eux, même pour
-    un seul rôle. Ce qu'ils partagent monte dans une tâche amont ou s'écrit dans
-    chacun, jamais par une chaîne ; ce qui les réunit, quand il y a quelque chose à
-    produire, dépend d'eux tous — et n'est plus une tâche qui ne ferait que
-    vérifier (#1530, `tests/test_recette_du_run.py`). Et la fourchette de tâches ne
-    tient pas contre ce découpage.
+    La règle positive reste : des capacités indépendantes tournent de front, sans
+    dépendance entre elles, même pour un seul rôle ; ce qu'elles partagent vient
+    d'une capacité dont elles dépendent ou s'écrit dans chacune, jamais par une
+    chaîne ; ce qui les réunit, quand il y a quelque chose à produire, dépend
+    d'elles toutes — et n'est plus une tâche qui ne ferait que vérifier (#1530,
+    `tests/test_recette_du_run.py`).
+
+    Ce que #1531 renverse : le front se gagnait **par élément** (« maquetter les
+    quatre sections du site est quatre tâches »), et sur p5 cela a fait neuf tâches
+    sur quatre niveaux pour un objectif qui tient en une session. Il se gagne
+    désormais entre capacités, jamais en coupant une capacité qui tient dans une
+    session — le parallélisme reste dû à un objectif qui la dépasse (#1513).
     """
     texte = _playbook()
 
     assert "Le travail qui se fait de front" in texte
     assert "même confiées au même rôle" in texte
-    assert "une tâche par élément" in texte
-    assert "« maquetter les quatre sections du site » est quatre tâches" in texte
-    assert "ne les enchaîne jamais pour qu'ils se le transmettent" in texte
-    assert "elle dépend alors d'eux tous, et elle produit" in texte
-    assert "c'est la fourchette qui se relit, pas le découpage" in texte
+    assert "ne les enchaîne jamais pour qu'elles se le transmettent" in texte
+    assert "elle dépend alors d'elles toutes, et elle produit" in texte
+    assert "Le front se gagne entre capacités" in texte
+    assert "jamais en coupant en morceaux une capacité qui tient dans une session" in texte
+    # La règle renversée ne survit nulle part dans le document.
+    assert "est quatre tâches" not in texte
+    assert "fais une tâche par élément" not in texte
+    assert "se décide dans une tâche amont dont ils dépendent tous" not in texte
+
+
+def test_une_tache_est_une_capacite_a_la_taille_d_une_session():
+    """Critère ① de #1531 : la chaîne du dépôt découpe ainsi (docs/10 § 5.1, #1150),
+    et p5, qui tient en une session, y serait un ticket (docs/50 § 3, point 2).
+
+    Les trois formes que C2 a prises et que la règle écarte sont nommées une à une
+    — `tests-logique`, `charte-ui` et `socle-projet`, les quatre `page-*` —, parce
+    qu'une règle générale sur la « bonne granularité » les couvrait déjà mal. Et un
+    élément qui fait sa tâche le justifie par écrit : taille, métier ou livraison.
+    """
+    texte = _playbook()
+
+    assert "Une tâche est une capacité, à la taille d'une session" in texte
+    assert "capacités visibles" in texte
+    assert "dans une seule session de travail" in texte
+    assert "ses tests" in texte
+    # Ce qu'une tâche coûte en plus de son travail : la raison de la règle.
+    assert "chaque niveau du plan ajoute ce coût au chemin" in texte
+    # Les trois formes écartées.
+    assert "une tâche de tests seuls" in texte
+    assert "une tâche amont sans livrable propre" in texte
+    assert "une tâche par élément quand les éléments tiennent ensemble dans une session" in texte
+    # Les trois raisons qui font une tâche d'un élément, et la justification écrite.
+    assert "sa taille" in texte and "son métier" in texte and "sa livraison" in texte
+    assert "écrit pourquoi dans sa description" in texte
+    # La relecture du plan et les critères de « terminé » le redisent.
+    assert "Relis-le contre le point 4" in texte
+    assert "Chaque tâche est une capacité visible qui tient dans une session" in texte
+
+
+#: Le plan de C2, relu dans le journal du run `fea601a5c629` (docs/50 § 2) : neuf
+#: tâches, treize enchaînements, quatre niveaux — socle, puis charte, jeu de
+#: recettes et tests seuls, puis quatre pages, puis la recette.
+_PLAN_C2 = (
+    ("socle-projet", ()),
+    ("charte-ui", ("socle-projet",)),
+    ("jeu-recettes", ("socle-projet",)),
+    ("page-accueil", ("charte-ui",)),
+    ("page-liste", ("charte-ui",)),
+    ("page-detail", ("charte-ui",)),
+    ("page-favoris", ("charte-ui",)),
+    ("tests-logique", ("socle-projet",)),
+    (
+        "recette-finale",
+        (
+            "jeu-recettes",
+            "page-accueil",
+            "page-liste",
+            "page-detail",
+            "page-favoris",
+            "tests-logique",
+        ),
+    ),
+)
+_C2_TACHES = 9
+_C2_NIVEAUX = 4
+
+
+def _niveaux(taches) -> int:
+    """Le nombre de niveaux d'un plan, par la mesure du produit (`maestro.plan_run`)."""
+    from maestro.plan_run import niveaux_topologiques, noeuds_du_plan
+
+    return 1 + max(niveaux_topologiques(noeuds_du_plan(taches)).values(), default=-1)
+
+
+def _plan_p5_en_capacites_json() -> str:
+    """Un plan de **type p5** découpé en capacités : ce que le playbook demande.
+
+    Deux capacités visibles, chacune avec ses tests : parcourir les recettes —
+    socle, charte, données et les quatre pages, qui tiennent ensemble dans une
+    session — puis cuisiner une recette, qui en dépend et le dit. Aucune tâche de
+    tests seuls, aucune charte en amont, aucune recette au plan.
+    """
+    return json.dumps(
+        [
+            {
+                "id": "parcourir-les-recettes",
+                "titre": "Livrer le livre de recettes consultable",
+                "description": (
+                    "Objectif : à la racine du projet, l'application Next.js où l'on "
+                    "parcourt, recherche, filtre et consulte les recettes, et garde ses "
+                    "favoris. Périmètre et limites : socle TypeScript, charte visuelle, "
+                    "jeu de recettes, pages accueil, liste, détail et favoris, et leurs "
+                    "tests Vitest — une seule tâche, parce que ces pages partagent leur "
+                    "charte et tiennent ensemble dans une session. Latitude de décision : "
+                    "l'agent tranche la structure et les bibliothèques. Critères de "
+                    "réussite : npm run build et npm test passent sur un clone neuf."
+                ),
+                "competences_requises": ["frontend", "tests"],
+                "format_sortie": "Application Next.js et ses tests Vitest",
+                "dependances": [],
+            },
+            {
+                "id": "cuisiner-une-recette",
+                "titre": "Suivre une recette pas à pas",
+                "description": (
+                    "Objectif : le mode cuisine — étapes une à une, portions ajustées, "
+                    "minuteurs. Périmètre et limites : une tâche à part pour sa taille, "
+                    "l'application entière ne tenant plus dans une session ; elle part de "
+                    "la page détail livrée par parcourir-les-recettes. Latitude de "
+                    "décision : l'agent tranche l'interaction. Critères de réussite : "
+                    "passer de 2 à 4 portions double les quantités, ses tests le prouvent."
+                ),
+                "competences_requises": ["frontend", "tests"],
+                "format_sortie": "Mode cuisine et ses tests Vitest",
+                "dependances": ["parcourir-les-recettes"],
+            },
+        ],
+        ensure_ascii=False,
+    )
+
+
+def test_un_plan_de_type_p5_se_planifie_en_capacites():
+    """Critère ① de #1531, sur le modèle doublé : l'objectif de p5 — le message du
+    banc comparatif (`maestro/scenarios/objectifs/p5.toml`), mot pour mot — part au
+    modèle sous le playbook des capacités, et le plan qu'il rend traverse
+    l'orchestrateur entier avec moins de tâches **et** moins de niveaux que C2.
+
+    Le double rend ce que le playbook demande ; ce qui est éprouvé est le chemin :
+    la consigne que le modèle reçoit, puis la mesure des niveaux par le produit
+    (`maestro.plan_run`), la même que celle du graphe et du plafond de front.
+    """
+    from maestro.scenarios.comparatif import charger_objectif
+
+    p5 = charger_objectif("p5")
+    provider = FakeProvider(_plan_p5_en_capacites_json())
+    orchestrator = Orchestrator(provider, model="claude-opus-4-8")
+
+    taches = asyncio.run(orchestrator.plan(p5.message))
+
+    appel = provider.calls[0]
+    systeme = _normalise(appel["system_prompt"])
+    assert "Une tâche est une capacité, à la taille d'une session" in systeme
+    assert "une tâche de tests seuls" in systeme
+    assert "Construis l'application entière." in appel["prompt"]
+    assert len(taches) < _C2_TACHES
+    assert _niveaux(taches) < _C2_NIVEAUX
+    # Les tests vont avec la capacité qu'ils prouvent : aucune tâche n'est que tests.
+    assert all(set(t.competences_requises) != {"tests"} for t in taches)
+    # La tâche séparée dit pourquoi, dans sa description.
+    assert "pour sa taille" in taches[1].description
 
 
 def test_le_plan_designe_la_racine_du_projet_jamais_le_nom_de_son_dossier():

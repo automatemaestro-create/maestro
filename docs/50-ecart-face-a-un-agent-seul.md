@@ -164,6 +164,53 @@ l'agent ne peut pas suivre la convention choisie. C'est #1507.
 > projet ; la consigne du playbook l'envoie désormais vers `Read` et `browser_console_messages`. Le
 > détail est consigné sur #1532.
 
+> **A2, mesuré** (#1531, p5 rejoué le 2026-11-03, run `09b2a95fb3ed`, banc comparatif
+> `20261103-085830`, un passage, A1, B et C déjà livrés) : le plan tient en **2 tâches sur 2 niveaux
+> et 1 enchaînement**, contre 9 tâches, 4 niveaux et 13 enchaînements chez C2. Ni tâche de tests
+> seuls, ni tâche de socle, ni tâche par page. La première tâche livre l'application entière :
+> outillage, données, pages, tests et CI (25 min 20 s sur le chemin). La seconde porte le soin visuel
+> et les animations ; elle est confiée à un autre rôle et sa description dit pourquoi, « pour une
+> raison de métier » (15 min 44 s). La recette du run (A1) tient 6 critères du brief sur 7 en
+> 3 min 13 s. Le seul critère manqué est le commit initial « Maestro : état initial du projet », hors
+> convention.
+>
+> Ce qu'une tâche coûte en plus de son travail, face au § 2 :
+>
+> | | Tâche 1 | Tâche 2 | C2, moyenne par tâche |
+> | --- | --- | --- | --- |
+> | Juge | 0,311 $ | 0,280 $ | 0,167 $ |
+> | Vérification par l'agent | 82 s | 91 s | 63 s |
+> | Installation | 3 min 58 s | 1 min 35 s | 47 s |
+> | Vérification de Maestro, juge compris | 4 min 10 s | 1 min 47 s | 37 s |
+> | Fusion | 19 s | 20 s | 12 s |
+>
+> **Le surcoût d'une tâche n'est pas fixe : il suit sa taille.** Maestro rejoue les 7 critères de la
+> tâche, dont un clone neuf avec `npm install`, les tests, le lint, le formatage, les types et le
+> build. Le juge relit une tâche plus longue. Sur le chemin, en comptant départ, installation,
+> vérification de Maestro et fusion, un niveau coûte 8 min 49 s puis 3 min 47 s, contre environ
+> 1 min 15 s chez C2. L'installation en est la plus grosse part, et C3 la paie aussi une fois
+> (2 min 13 s). Le contexte relu monte comme prévu : 71 800 puis 55 500 tokens par tour (C2 :
+> 39 000), soit 13,3 millions de tokens relus pour 2,73 $.
+>
+> | | Chemin | Coût |
+> | --- | --- | --- |
+> | C2, hors chute et récit | 55 min 30 s | 12,84 $ |
+> | Estimation du § 4.3, tous leviers retirés | ≈ 32 min 45 s | ≈ 9,4 $ |
+> | **A2 mesuré** : fil 4 min 09 s, brief et plan 1 min 26 s, niveaux 25 min 20 s et 15 min 44 s, recette 3 min 13 s | **49 min 53 s** | **10,59 $** (tâches 7,90 $ contre 10,64 $, fil 1,71 $, orchestration 0,97 $) |
+> | **Rapport à C3** | **≈ 1,92** | **≈ 1,32** |
+>
+> **Le coût baisse de 2,25 $, mais le chemin ne raccourcit pas autant que prévu.** Trois raisons :
+> - **La seconde tâche reste séquentielle.** Le playbook l'admet quand une tâche dit pourquoi, et
+>   c'est le jugement du modèle (docs/41). Elle ajoute 15 min 44 s au chemin.
+> - **La vérification d'une tâche grandit avec elle**, comme le tableau le montre.
+> - **Le travail des agents dépasse à lui seul la session de C3** : 20 min 29 s plus 13 min 31 s,
+>   contre 25 min 52 s.
+>
+> Deux leviers du § 4.2 sont à rejuger sur ces pièces. Le juge coûte maintenant 0,21 à 0,31 $, sur
+> 4 appels (2 tâches, 2 recettes). La seconde copie réinstalle en 1 min 35 s sur le chemin. La grille
+> du banc tient 9 lignes sur 10 : « Pages servies » n'a pas répondu sur le clone
+> (`npm run start -- -p "$PORT"`).
+
 Les quatre lots sont rangés **après #1513**, comme le veut docs/48 (« puis les leviers »). #1530, #1532
 et #1533 sont parallèles. #1531 vient en dernier, sans le marqueur, parce qu'il dépend de #1530 :
 retirer la tâche de recette sans recette au niveau du run perdrait la preuve.
@@ -180,8 +227,8 @@ comparatif (#1512) lirait un Maestro 28 % moins cher qu'il ne l'est (§ 1.2).
 | Un agent ne tue plus les processus de Maestro ; l'hôte mort se reprend sans attendre 30 min | −8 min 54 s sur le chemin, −32 min d'arrêt, −2,91 $ | **#1509** (livré), **#1503** (existe) |
 | Le récit du fil n'est écrit qu'à la vraie fin | −0,22 $ | **#1506** (existe) |
 | Le livrable suit l'outillage choisi | qualité : formatage, CI, convention, typecheck sur clone neuf | **#1507** (existe) |
-| Un juge plus léger : son préfixe pèse 82 % de son coût | ≤ −0,7 $ sur 10 juges | à rejuger après A2, qui retire des juges |
-| Les dépendances installées une fois par run, pas par copie de tâche | ≈ −1 min 15 s sur le chemin, ≈ −7 min cumulées, ≈ 0 $ | à rejuger après A2, qui retire des copies |
+| Un juge plus léger : son préfixe pèse 82 % de son coût | ≤ −0,7 $ sur 10 juges | rejugé avec A2 mesuré (§ 4.1) : il reste 4 juges, à 0,21 à 0,31 $ chacun (1,04 $), soit ≤ −0,85 $ |
+| Les dépendances installées une fois par run, pas par copie de tâche | ≈ −1 min 15 s sur le chemin, ≈ −7 min cumulées, ≈ 0 $ | rejugé avec A2 mesuré (§ 4.1) : une seule copie réinstalle, ≈ −1 min 35 s sur le chemin |
 | Les tâches aval reçoivent le compte rendu des tâches amont, sans leur récit de travail | ≈ −0,5 $ (15 500 caractères par tâche, relus à chaque tour) | ne justifie pas un lot seul |
 | Une tâche coupée se reprend en rouvrant sa session, comme la chaîne du dépôt | au plus les 3 sessions refaites (1,80 $, 4 min 21 s sur le chemin), et seulement après une coupure | **nommé pour #1513**, dont le terrain est le projet repris le lendemain |
 | Le plafond de 3 instances par agent | `page-detail` partie 1 min 43 s en retard, `page-favoris` 4 min 31 s, tous deux hors du chemin final | ne justifie pas un lot |

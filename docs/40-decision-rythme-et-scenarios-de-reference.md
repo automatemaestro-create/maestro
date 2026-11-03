@@ -585,7 +585,12 @@ cadence du run dit déjà pourquoi ses tâches passent une à une (#1298).
 
 Le montage sème un site vitrine (un README qui décrit quatre sections, une charte commune), le
 **versionne par le geste de l'écran Projets** (`POST …/versionner`) et le dote de l'équipe que
-l'analyse propose. La demande est l'exemple du ticket, sans rien dire du découpage. L'oracle lit la
+l'analyse propose. La demande est l'exemple du ticket, sans rien dire du découpage. Depuis #1531,
+le plan découpe en capacités à la taille d'une session, et quatre pages statiques y tiennent
+ensemble. La demande dit donc aussi pourquoi les sections se livrent séparément : chacune est
+relue par une personne différente et se publie sans attendre les autres. La phrase est dans la
+demande, pas dans le README, que le Chef de projet ne lit pas avant de planifier. L'oracle ne
+change pas. Il lit la
 trace du run, jamais une phrase : le run aboutit, l'étape de run `equipe` porte l'annonce
 (`instances_derivees`), et au moins deux tâches sont en cours en même temps — entre leur
 `en_cours`, consigné une fois le créneau de l'agent obtenu, et le statut qui le clôt. Le motif

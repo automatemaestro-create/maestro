@@ -38,8 +38,6 @@ from maestro.orchestrator.errors import (
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.prompt import (
     BRIEF_SYSTEM_PROMPT,
-    MAX_TASKS,
-    MIN_TASKS,
     ORCHESTRATOR_SYSTEM_PROMPT,
     build_brief_user_prompt,
     build_user_prompt,
@@ -61,8 +59,6 @@ from maestro.orchestrator.schema import (
 __all__ = [
     "BRIEF_SCHEMA_PATH",
     "BRIEF_SYSTEM_PROMPT",
-    "MAX_TASKS",
-    "MIN_TASKS",
     "ORCHESTRATOR_SYSTEM_PROMPT",
     "SCHEMA_PATH",
     "Brief",
