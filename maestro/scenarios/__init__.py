@@ -11,7 +11,12 @@ puis accord —, avec un verdict, un coût, une durée et un `run_id` par scéna
 Le détail vit dans les modules, chacun sur une question :
 
 - `banc` — le déroulé, le rejeu d'un rouge non déterministe, la ligne de commande ;
-- `scenarios` — les scénarios et leurs oracles ;
+- `scenarios` — les scénarios et leurs oracles (retirés par #1572) ;
+- `exercice` — l'exercice qu'une session construit pour ce qu'elle vient d'implémenter :
+  une commande par geste, l'oracle écrit avant de jouer, un relevé sous
+  `.maestro/exercices/<id>/` (`python -m maestro.scenarios.exercice`, #1569) ;
+- `gestes` — les gestes d'une personne sur la vraie stack, que les scénarios, le
+  comparatif et l'exercice partagent (#1569) ;
 - `api` — la porte d'entrée : l'API de la Control Tower, en HTTP ;
 - `projets` — les projets jetables, et ce qu'on y lit après un run, dépôt compris ;
 - `redemarrage` — couper puis rallumer l'API qui sert le banc (S12, #1408) ;
@@ -41,13 +46,14 @@ from maestro.scenarios.banc import (
     jouer,
     main,
 )
+from maestro.scenarios.gestes import Contexte
 from maestro.scenarios.modele import (
     VERDICT_ROUGE,
     VERDICT_VERT,
     Rapport,
     Resultat,
 )
-from maestro.scenarios.scenarios import SCENARIOS, Contexte, Scenario
+from maestro.scenarios.scenarios import SCENARIOS, Scenario
 
 __all__ = [
     "CODE_API_MUETTE",

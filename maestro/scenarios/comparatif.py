@@ -16,8 +16,8 @@ même mesure en une commande, autant de fois qu'on la demande.
 ## Les deux côtés
 
 **Maestro** : la vraie stack et le vrai modèle, l'objectif confié **par le fil**
-comme une personne le ferait — le parcours de S9 et S12 (`_naitre_dans_l_atelier`,
-`_lancer_dans_le_fil`). Le projet naît du message, s'outille dans la conversation,
+comme une personne le ferait — le parcours de S9 et S12 (`naitre_dans_l_atelier`,
+`lancer_dans_le_fil`). Le projet naît du message, s'outille dans la conversation,
 se dote d'une équipe, puis le run part et se suit jusqu'à son issue, arbitrages
 approuvés au passage. La personne répond aux questions d'outillage par **ses choix,
 avec ses mots** (`Objectif.repondre`), jamais par une aide technique.
@@ -142,6 +142,17 @@ from maestro.scenarios.couverture import (
     comptes_par_critere,
     non_jugee,
 )
+from maestro.scenarios.gestes import (
+    REPONSE_OUTILLAGE,
+    Contexte,
+    cout_du_grand_livre,
+    lancer_dans_le_fil,
+    montant,
+    naitre_dans_l_atelier,
+    reprendre,
+    revue_d_apres_le_run,
+    runs_en_vol,
+)
 from maestro.scenarios.grille import (
     AXES,
     LIBELLES,
@@ -154,16 +165,6 @@ from maestro.scenarios.juge import FORME, Juge, JugeModele
 from maestro.scenarios.modele import Etape, Issue, Journal
 from maestro.scenarios.modele import horodatage as horodatage_courant
 from maestro.scenarios.projets import Atelier
-from maestro.scenarios.scenarios import (
-    REPONSE_OUTILLAGE,
-    Contexte,
-    _lancer_dans_le_fil,
-    _montant,
-    _naitre_dans_l_atelier,
-    _reprendre,
-    _revue_d_apres_le_run,
-    _runs_en_vol,
-)
 from maestro.telemetry import collect_usage
 
 if TYPE_CHECKING:
@@ -667,7 +668,7 @@ def jouer_maestro(
     repondre = objectif.repondre_a_l_agent if objectif.converse else None
 
     def passage(issue: str, motif: str) -> Passage:
-        cout, source, postes = _cout_de_maestro(client, ctx.projet_id, detail)
+        cout, source, postes = cout_du_grand_livre(client, ctx.projet_id, detail)
         total = duree if duree is not None else horloge() - debut
         return Passage(
             cote=COTE_MAESTRO,
@@ -689,7 +690,7 @@ def jouer_maestro(
 
     try:
         conversation = client.ouvrir_conversation()
-        non_ne = _naitre_dans_l_atelier(
+        non_ne = naitre_dans_l_atelier(
             ctx,
             conversation,
             objectif.message,
@@ -699,7 +700,7 @@ def jouer_maestro(
         )
         if non_ne is not None:
             return passage(*_issue_du_lancement(non_ne))
-        lance = _lancer_dans_le_fil(
+        lance = lancer_dans_le_fil(
             ctx,
             conversation,
             racine,
@@ -726,7 +727,7 @@ def jouer_maestro(
         duree = horloge() - debut
         statut, cause = str(detail.get("statut") or ""), str(detail.get("cause") or "")
         if statut == EXECUTION_TERMINEE:
-            _revue_d_apres_le_run(ctx, conversation, run_id, repondre=objectif.repondre)
+            revue_d_apres_le_run(ctx, conversation, run_id, repondre=objectif.repondre)
             return passage(ABOUTI, f"le run s'est terminé ({lance.equipe})")
         # Soldé sur la limite, ou encore en pause sur elle quand le banc cesse de
         # suivre (#1543) : dans les deux cas le fournisseur a empêché le passage.
@@ -785,12 +786,12 @@ def _suivre_le_run(
     )
     statut = str(detail.get("statut") or "")
     if jusqu_a is not None and _en_vol(detail) and ctx.horloge() >= jusqu_a:
-        ctx.note("fin du jour", f"run « {statut} », {_montant(detail)}")
+        ctx.note("fin du jour", f"run « {statut} », {montant(detail)}")
         return detail
     ctx.note(
         "run soldé",
         f"statut « {statut} », cause « {detail.get('cause') or '—'} », "
-        f"{detail.get('nb_taches')} tâche(s), {_montant(detail)}",
+        f"{detail.get('nb_taches')} tâche(s), {montant(detail)}",
     )
     return detail
 
@@ -816,7 +817,7 @@ def _nuit_de_maestro(ctx: Contexte, run_id: str, *, jour_s: float) -> tuple[str,
     Lève `_NuitManquee` : empêché si Maestro ne se rallume pas (le banc n'a rien
     mesuré de la reprise), non abouti si le run interrompu ne se reprend pas.
     """
-    autres = tuple(r for r in _runs_en_vol(ctx) if r != run_id)
+    autres = tuple(r for r in runs_en_vol(ctx) if r != run_id)
     if autres:
         recit = (
             f"aucune : d'autres runs étaient en vol sur la stack ({', '.join(autres)}), "
@@ -840,7 +841,7 @@ def _nuit_de_maestro(ctx: Contexte, run_id: str, *, jour_s: float) -> tuple[str,
             EMPECHE, f"le banc n'a pas pu rallumer Maestro après l'extinction : {exc}"
         ) from exc
     try:
-        repris, geste = _reprendre(ctx, run_id)
+        repris, geste = reprendre(ctx, run_id)
     except ErreurAPI as refus:
         raise _NuitManquee(NON_ABOUTI, f"le run interrompu ne se reprend pas : {refus}") from refus
     ctx.note("le lendemain : run repris", f"{geste} → {repris}")
@@ -849,48 +850,6 @@ def _nuit_de_maestro(ctx: Contexte, run_id: str, *, jour_s: float) -> tuple[str,
         f"Maestro éteint après {_duree(jour_s)} de travail, rallumé, puis « Reprendre » : "
         f"{suite} a continué"
     )
-
-
-#: Les postes du grand livre d'un projet que le rapport détaille : ce que Maestro
-#: dépense hors des agents — la conduite des runs (#1028) et le fil (#1534). Ce sont
-#: les noms des champs de la vue Coûts & analytics, et le rapport les reprend tels quels.
-POSTES_DU_GRAND_LIVRE: tuple[str, ...] = ("orchestration", "fil")
-
-
-def _cout_de_maestro(
-    client: ClientAPI, projet_id: str, detail: Mapping[str, Any]
-) -> tuple[float | None, str, dict[str, float]]:
-    """Ce que le projet a coûté, et ses postes — lu au grand livre du projet, du run à défaut.
-
-    Le total de la vue Coûts & analytics compte, depuis #1534, ce que le fil dépense
-    pour le projet et ce que coûtent les tentatives coupées en vol.
-    """
-    if projet_id:
-        try:
-            vue = client.couts(projet_id)
-        except ErreurAPI:
-            vue = {}
-        total = vue.get("total")
-        if isinstance(total, Mapping) and total.get("cout_usd") is not None:
-            return (
-                float(total["cout_usd"]),
-                "grand livre du projet (Coûts & analytics)",
-                _postes(vue),
-            )
-    if detail.get("cout_usd") is not None:
-        return float(detail["cout_usd"]), "grand livre du run", {}
-    return None, "non rapporté", {}
-
-
-def _postes(vue: Mapping[str, Any]) -> dict[str, float]:
-    """Le coût de chaque poste que la vue rapporte — un poste sans coût mesuré n'y est pas."""
-    postes: dict[str, float] = {}
-    for nom in POSTES_DU_GRAND_LIVRE:
-        poste = vue.get(nom)
-        usage = poste.get("usage") if isinstance(poste, Mapping) else None
-        if isinstance(usage, Mapping) and usage.get("cout_usd") is not None:
-            postes[nom] = float(usage["cout_usd"])
-    return postes
 
 
 def jouer_seul(

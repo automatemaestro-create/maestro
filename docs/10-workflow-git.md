@@ -2413,6 +2413,101 @@ Trois constats n'avaient pas encore de place dans la doc ; ils la trouvent ici.
   l'événement `pull_request` a mis 18 à 20 min à déclencher la CI sur trois PR consécutives — rien
   de rouge, rien en conflit. La mécanique de l'attente est au §8.9.
 
+### 6.2 L'exercice construit — jouer sur la vraie stack ce qu'on vient d'implémenter (#1569)
+
+Il n'y a plus de scénario figé (#1568, [docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)).
+Quand un changement demande à être vu sur la vraie stack, la session qui l'a écrit **construit**
+l'exercice qui l'exerce : le message à donner à Maestro, ce que la personne répondra, et ce qu'on
+doit constater. Puis elle le joue **geste par geste, une commande par geste**. Les verbes sont
+publics, et aucune liste de parcours ne vit dans le dépôt : la session décide de leur ordre. Quand
+l'exercice est dû au ticket, et ce que le constat en dit, c'est l'objet de #1570.
+
+```
+.venv/Scripts/python.exe -m maestro.scenarios.exercice ouvrir --oracle <fichier> [--personne <fichier>] [--titre <titre>]
+.venv/Scripts/python.exe -m maestro.scenarios.exercice semer <dossier> [--nom <nom>] [--versionner] [--equipe]
+.venv/Scripts/python.exe -m maestro.scenarios.exercice naitre <fichier-de-la-demande> [--nom <nom>] [--versionner]
+.venv/Scripts/python.exe -m maestro.scenarios.exercice dire <fichier-du-message>
+.venv/Scripts/python.exe -m maestro.scenarios.exercice repondre
+.venv/Scripts/python.exe -m maestro.scenarios.exercice arbitrer approuver|refuser|attendre
+.venv/Scripts/python.exe -m maestro.scenarios.exercice suivre [--jusqu-a issue|demande|question|statut=<statut>] [--delai <s>]
+.venv/Scripts/python.exe -m maestro.scenarios.exercice relever
+.venv/Scripts/python.exe -m maestro.scenarios.exercice sauver
+.venv/Scripts/python.exe -m maestro.scenarios.exercice conclure vert|rouge|empeche <fichier-du-motif>
+```
+
+Chaque verbe prend `--exercice <id>` ; sans lui, c'est le dernier ouvert. Un texte, qu'il s'agisse
+de l'oracle, de la feuille, d'une demande ou d'un motif, voyage **par un fichier** écrit dans
+`.maestro/session/` (§11.7).
+
+| Verbe | Ce qu'il fait |
+|---|---|
+| `ouvrir` | réserve l'atelier de l'exercice, range l'oracle et la feuille, ouvre une conversation neuve sur le fil |
+| `semer` | copie un projet existant dans l'atelier (sans `node_modules` ni `.venv`) et le déclare ; `--equipe` le dote de l'équipe que l'analyse propose |
+| `naitre` | fait proposer un projet par le fil, le range dans l'atelier, l'accepte, puis conduit son outillage pièce après pièce |
+| `dire` | dit un message au fil ; une équipe proposée est validée telle quelle, un run proposé est accordé |
+| `repondre` | répond par la feuille à ce qui attend la personne : la question ou la pièce d'outillage du fil, puis les questions des agents |
+| `arbitrer` | pose la consigne de la personne et tranche selon elle ce qui attend déjà |
+| `suivre` | suit le dernier run jusqu'à son issue ou au moment nommé, en tranchant et en répondant selon la consigne et la feuille |
+| `relever` | écrit `faits.json` et `faits.md` |
+| `sauver` | sauve l'état de la stack sous l'atelier, et `start.sh --etat-banc` le rouvre |
+| `conclure` | relève les faits, puis écrit `verdict.md` contre l'oracle |
+
+- **L'oracle s'écrit avant de jouer.** `ouvrir` refuse un exercice sans oracle (`2`) et en retient
+  l'empreinte. Chaque verbe suivant la confronte au fichier, et refuse (`5`) un oracle retouché : un
+  oracle écrit après coup se taille sur ce que le produit a fait, et ne prouve plus rien. Qui veut un
+  autre oracle ouvre un autre exercice. Un exercice n'a qu'un projet, pour la même raison : son
+  relevé doit dire de quoi il parle.
+- **La personne a une feuille, et elle répond toujours par la feuille entière.** Elle ne répond
+  jamais par la ligne qui semblerait convenir : choisir une ligne par ses mots serait juger une
+  phrase par un lexique (#746), et c'est au produit d'y lire sa réponse. C'est la règle du banc
+  comparatif (`Objectif.reponse_de_la_personne`). Sans feuille, la personne n'a pas d'avis : elle
+  retient ce que Maestro recommande et laisse le fil choisir. Elle ne répond pas non plus aux agents,
+  et `repondre` le dit. Elle accepte ce qu'on lui montre : le projet, l'équipe, le run.
+- **La consigne d'arbitrage** vaut `approuver` par défaut : le projet est jetable et vient d'être
+  déclaré pour l'exercice. `refuser` joue la personne qui refuse. `attendre` ne tranche rien, et le
+  run reste suspendu jusqu'à un geste ou jusqu'à sa borne d'arbitrage. Au plafond de dépense, la
+  personne arrête le run, comme le banc (#1182).
+- **Le temps est borné sous le plafond d'un appel Bash.** `suivre` attend 480 s au plus par défaut,
+  dans la limite de 10 min d'un appel. Un run plus long se suit en plusieurs appels, et le code `6`
+  dit qu'il est encore en vol : on rejoue `suivre`, on n'allonge pas l'attente. `naitre` et `dire`
+  attendent ce que le modèle rédige (l'outillage d'un projet né, pièce après pièce, peut prendre
+  plusieurs minutes). Quand ils risquent de dépasser l'appel, on les lance en tâche de fond et on lit
+  leur sortie au retour.
+- **Le relevé**, sous `.maestro/exercices/<id>/` (§8.5), contient :
+  - `oracle.md` et `personne.md`, écrits avant de jouer ;
+  - `prompt.md`, ce qui a été dit à Maestro ;
+  - `deroule.md`, chaque geste, ce que la stack a rendu et le code du verbe ;
+  - `faits.json` et `faits.md` : le projet, chaque run (statut, cause, cartes, coût), les
+    arbitrages, les questions des agents et leurs réponses, le fil entier, le **coût lu au grand
+    livre du projet** (fil et conduite des runs compris, `cout_du_grand_livre`), les fichiers et les
+    commits du projet, la durée et les `run_id` ;
+  - `verdict.md`.
+
+  Le coût se lit **au moment du relevé**. La recette du run et le récit du fil dépensent encore
+  quelques secondes après son issue : `conclure` relève donc à nouveau, et c'est son coût qui fait
+  foi. `sauver` range le verdict déjà rendu. On conclut avant de sauver, ou on sauve une seconde
+  fois après avoir conclu, sinon la réouverture annonce « non conclu ».
+
+  L'identifiant de l'exercice est celui de son **atelier** (`Atelier.reserver`), sous l'atelier du
+  banc. Ses projets y vivent, et son état sauvé aussi. Rien n'est posé hors du worktree, de l'atelier
+  et des racines déclarées (#1454).
+- **La stack est celle du banc de la copie** : `bash scripts/controltower/start.sh --etat-neuf`
+  (vide) ou `--etat-banc` (l'état du dernier passage), sur les ports du worktree, avec
+  `env MAESTRO_PORT_API=<port>` sur chaque verbe. `sauver` refuse (`5`) une API qui sert un autre
+  espace : l'état rangé ne serait pas celui de l'exercice. `--etat-banc` rouvre le dernier état
+  sauvé **du poste** (#1164) : si une autre copie sauve après vous, c'est le sien qui revient, et
+  l'annonce le dit par le nom du passage.
+- **Codes** : `0` fait · `1` un geste n'a pas abouti (l'API a refusé, ou le fil n'a pas fait ce
+  qu'on lui demandait, et la cause est dite) · `2` usage · `3` API muette · `4` aucun exercice, ou
+  ce qui manque pour jouer ce geste (projet, run) · `5` refusé (oracle retouché, API hors du banc,
+  état non sauvé) · `6` le délai de `suivre` a passé et le run est encore en vol.
+- **La mécanique est tirée, pas réécrite.** Les gestes que les scénarios partageaient vivent dans
+  `maestro.scenarios.gestes` (naître dans le fil, accepter le projet et l'outiller, valider l'équipe,
+  accorder, suivre, reprendre, lire le coût au grand livre, servir un livrable). Le comparatif et la
+  grille les importent de là, et `scenarios.py` les reprend sous leurs anciens noms jusqu'à son
+  retrait (#1572). Les tests sont dans [`tests/test_exercice.py`](../tests/test_exercice.py), qui
+  joue les verbes contre un double de l'API ; un exercice joué sur la vraie stack en est la preuve.
+
 ---
 
 ## 7. Prérequis

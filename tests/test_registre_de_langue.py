@@ -486,6 +486,10 @@ _HORS_INTERFACE = {
     # vont à la sortie du banc. « Stack non mesurée » n'a de suite que si elle nomme le
     # lanceur qui pose la sonde.
     "maestro/scenarios/carte.py": "la carte du banc, lue au terminal et par le lanceur",
+    # Les verbes de l'exercice construit (#1569) : joués geste par geste par une session de
+    # développement, en terminal. « Aucune API » ou « état sauvé » n'ont de suite que s'ils
+    # nomment le lanceur qui sert la stack du banc, ou celui qui rouvre l'état.
+    "maestro/scenarios/exercice.py": "l'exercice construit, joué geste par geste en terminal",
 }
 
 #: Le champ du registre MCP qui porte, pour une poignée d'entrées, un pointeur relatif

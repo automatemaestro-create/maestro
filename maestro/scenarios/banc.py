@@ -112,6 +112,7 @@ from maestro.scenarios.api import (
     TransportHTTP,
     base_locale,
 )
+from maestro.scenarios.gestes import Contexte
 from maestro.scenarios.juge import Juge, JugeModele
 from maestro.scenarios.modele import (
     Etape,
@@ -126,7 +127,6 @@ from maestro.scenarios.modele import (
 from maestro.scenarios.projets import Atelier, passages_gardes, retenir
 from maestro.scenarios.scenarios import (
     SCENARIOS,
-    Contexte,
     Scenario,
     nettoyer,
     par_identifiant,

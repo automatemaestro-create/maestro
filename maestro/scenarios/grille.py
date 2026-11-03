@@ -56,20 +56,20 @@ from typing import Any, Protocol
 
 from maestro.outillage.verification import Delais
 from maestro.sandbox import verification as execution
-from maestro.scenarios.juge import FORME, Avis
-from maestro.scenarios.projets import (
-    cloner,
-    fichiers_suivis,
-    instantaner,
-    sujets_des_commits,
-)
-from maestro.scenarios.scenarios import (
+from maestro.scenarios.gestes import (
     PAGE_SERVIE,
     SANS_TERMINAL,
     Joueur,
     jouer_commande,
     servir,
     sonder_page,
+)
+from maestro.scenarios.juge import FORME, Avis
+from maestro.scenarios.projets import (
+    cloner,
+    fichiers_suivis,
+    instantaner,
+    sujets_des_commits,
 )
 
 AXE_INSTALLATION = "installation"
@@ -249,7 +249,7 @@ class PosteDuBanc:
 
     Les vrais gestes par défaut — le bash des agents (`jouer_commande`), une vraie
     requête (`sonder_page`) ; les tests les doublent. Il satisfait le `Poste` de
-    `maestro.scenarios.scenarios.servir`, sans parler à aucune API.
+    `maestro.scenarios.gestes.servir`, sans parler à aucune API.
     """
 
     joueur: Joueur = jouer_commande

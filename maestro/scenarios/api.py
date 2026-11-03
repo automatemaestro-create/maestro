@@ -1007,7 +1007,7 @@ def attendre_le_run(
     dormir: Callable[[float], None] = time.sleep,
     intervalle_s: float = INTERVALLE_SUIVI_S,
     arbitrages: list[str] | None = None,
-    approuve: bool = True,
+    approuve: bool | None = True,
     demandes: list[dict[str, Any]] | None = None,
     arret: Callable[[Mapping[str, Any]], bool] | None = None,
     repondre: Callable[[Mapping[str, Any]], str] | None = None,
@@ -1052,6 +1052,9 @@ def attendre_le_run(
     l'API l'a servie : la file des validations s'indexe par tâche, donc une
     demande refusée peut y être **remplacée** par la suivante, et l'oracle qui
     doit dire « une demande est née » ne la retrouverait plus après coup.
+    `approuve=None` (#1569) fait jouer la personne qui **laisse attendre** : rien
+    n'est tranché, et le run reste suspendu jusqu'à ce qu'un geste vienne, ou que
+    sa borne d'arbitrage l'expire — l'exercice qui veut voir ce que le produit en fait.
 
     `arret` (#1408) rend la main **avant** l'issue, au premier détail lu qui le
     satisfait : S12 suit son run jusqu'au moment de l'interrompre, et pas au-delà.
@@ -1077,8 +1080,8 @@ def attendre_le_run(
         if arret is not None and arret(detail):
             return detail
         if repondre is not None:
-            _repondre_aux_agents(client, run_id, projet_id, repondre, note)
-        if statut == EXECUTION_EN_ATTENTE_ARBITRAGE:
+            repondre_aux_agents(client, run_id, projet_id, repondre, note)
+        if statut == EXECUTION_EN_ATTENTE_ARBITRAGE and approuve is not None:
             for demande in client.validations(projet_id=projet_id):
                 if (
                     str(demande.get("run_id") or "") == run_id
@@ -1123,7 +1126,7 @@ def attendre_le_run(
         detail = client.execution(run_id, projet_id=projet_id)
 
 
-def _repondre_aux_agents(
+def repondre_aux_agents(
     client: ClientAPI,
     run_id: str,
     projet_id: str,
