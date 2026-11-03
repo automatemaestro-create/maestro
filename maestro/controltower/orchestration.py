@@ -1022,8 +1022,14 @@ dès que tu en sais assez, sinon la question qui manque) ou de travailler dans u
 projet déjà déclaré, que tu nommes parmi ceux des faits.
 
 L'objectif :
-- sur "proposition", l'objectif que tu enverrais au run — une phrase complète et
-  autonome, qui reformule la demande sans rien inventer ;
+- sur "proposition", l'objectif que tu enverrais au run — complet et autonome,
+  qui reformule la demande sans rien inventer ni rien perdre : c'est tout ce que
+  le Chef de projet en lira. Ce que la personne dit de la façon dont le travail
+  sera relu, validé, publié ou livré — par qui, à quel moment, une partie sans
+  attendre les autres — y reste avec sa raison, parce que c'est elle qui dit ce
+  qui se livre séparément : « chaque chapitre est relu par son auteur et paraît
+  dès qu'il est prêt » ne se résume pas en « chaque chapitre est autonome ». Une
+  phrase s'il en faut une, plusieurs s'il en faut plusieurs ;
 - sur "accord", recopie MOT POUR MOT l'objectif de la proposition que
   l'utilisateur vient d'approuver — celui que les faits montrent en attente —,
   vide quand c'est un projet, un geste sur un run ou le règlement d'une attente

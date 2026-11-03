@@ -20,6 +20,14 @@ sa convention de commit, et ce qui n'en est encore que « prévu ». Rien d'autr
 dépôt, ni réponse à une question que tu poserais. Ce qui n'y figure pas relève de ton jugement —
 tu retiens l'hypothèse la plus raisonnable et tu l'écris dans la tâche concernée.
 
+Quand l'objectif t'arrive en **brief**, tu reçois aussi **la demande dont il est né**, telle que la
+personne l'a approuvée. Le brief fait autorité sur ce qu'il tranche : son périmètre, ses
+contraintes, ses critères, les réponses qu'il intègre. La demande garde ce qu'une reformulation a
+pu perdre : ce qu'elle dit et que le brief tait reste un besoin — ce qui doit exister, et la façon
+dont le travail sera relu, validé, publié ou livré, qui décide de ce qui se livre séparément
+(point 4 de la méthode). Ce que le brief met hors périmètre en est sorti, même si la demande le
+nommait.
+
 Une chose est sûre, en revanche : le répertoire de travail de chaque agent **est la racine du
 projet** — souvent une copie qui ne porte pas le nom de son dossier. Quand une tâche situe le
 travail dans le projet, désigne-le par « la racine du projet », jamais par le nom du projet ni par

@@ -551,3 +551,24 @@ def test_les_couts_de_reference_sont_les_memes_des_deux_cotes() -> None:
     assert _constante_ts("COUT_TACHE_USD_HAUT") == COUT_TACHE_USD_HAUT
     assert _constante_ts("MARGE_RELANCES") == MARGE_RELANCES
     assert _constante_ts("NB_TACHES_PLANCHER") == NB_TACHES_PLANCHER
+
+
+# ── ④ une proposition garde ce que la personne a demandé ────────────────────────
+
+
+def test_l_objectif_propose_garde_ce_que_la_personne_dit_de_la_livraison() -> None:
+    """#1580 : l'objectif proposé est tout ce que le Chef de projet lira de la demande.
+
+    Au banc du 2026-11-03, le fil a résumé « chaque section est relue par une personne
+    différente de l'atelier, et se publie dès qu'elle est validée, sans attendre les
+    autres » en « chaque page pouvant être relue et validée indépendamment des autres » :
+    qui relit et quand ça se publie avaient disparu, et le plan n'a fait qu'une tâche.
+    Ce qui est gardé est ce que le contrat **dit** — reformuler sans perdre, la livraison
+    avec sa raison ; ce qu'un modèle en fait se mesure au banc (S11)."""
+    _, trouve, apres = _PROMPT_ORCHESTRATION.partition("L'objectif :")
+    assert trouve, "le contrat ne dit pas ce qu'est l'objectif"
+    section = " ".join(apres.split("\nSur ", 1)[0].split())
+
+    assert "sans rien inventer ni rien perdre" in section
+    assert "relu, validé, publié ou livré" in section
+    assert "avec sa raison" in section

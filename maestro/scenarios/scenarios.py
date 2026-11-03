@@ -2698,7 +2698,10 @@ def s11_des_taches_independantes_tournent_de_front(ctx: Contexte) -> Issue:
     la phrase écrite dans le README, que le Chef de projet ne lit pas avant de
     planifier. L'oracle ne bouge pas, et la largeur reste due. Ce qui change : le
     plan doit maintenant la **justifier** par la livraison séparée, comme le
-    playbook le demande à toute tâche par élément.
+    playbook le demande à toute tâche par élément. Cette raison traverse trois
+    reformulations — l'objectif du fil, le brief, le plan — et chacune doit la
+    garder avec son contenu, qui relit et quand ça se publie (#1580) : le plan reçoit
+    pour cela la demande à côté du brief.
 
     L'oracle lit la **trace** du run, jamais une phrase (#746), dans cet ordre :
 
