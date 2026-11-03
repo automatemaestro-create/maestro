@@ -82,6 +82,12 @@ gantt
 > vérification sur le réel est recommandée, la session construit l'exercice de ce qu'elle vient
 > d'implémenter, au ticket comme au bilan d'un jalon produit, et le banc rejoué après chaque run se
 > retire. Le chantier entre au jalon « Outillage de la forge ». Aucun jalon ne bouge.
+>
+> Le même jour, **le code dit le présent**
+> ([docs/53](./53-decision-le-code-dit-le-present.md)). Une docstring dit ce qui est vrai et
+> pourquoi, et l'historique vit dans git, les tickets et `docs/`. La complexité passe en cliquet, et
+> le découpage de `app.py` se relance au nom de la qualité. Le chantier entre au jalon « Outillage
+> de la forge ». Aucun jalon ne bouge.
 
 ---
 
@@ -1375,6 +1381,11 @@ Sont écartés ou différés :
   Il se rejuge avec les chiffres de #1465. Depuis le 2026-10-14, #1525 porte ce rejugement, en
   `basse` (section « Le règlement ne grossit plus »).
 
+> ⚠ **Le différé de `app.py` est renversé le 2026-11-03** ([docs/53](./53-decision-le-code-dit-le-present.md),
+> section « Le code dit le présent ») : la qualité est un critère de découpage à part entière, pas
+> seulement le poids en tokens. #1525 se relance en `haute`, sans attendre #1465. Le reste de cette
+> liste tient.
+
 **Place dans la file**, sur le rail outillage. Tout va au jalon **« Outillage de la forge »**,
 échéance inchangée, et le rang se donne par `prio::` :
 
@@ -1584,6 +1595,10 @@ Il n'ouvre **aucun jalon** et n'en déplace aucun.
 - **#1525** : le découpage de `app.py`, **différé** le 2026-10-09 (section « Le coût d'un ticket »),
   le reste. Ce ticket porte son rejugement et ne se démarre que si #1465 montre que `app.py` pèse.
 
+  > ⚠ **Renversé le 2026-11-03** ([docs/53](./53-decision-le-code-dit-le-present.md), section
+  > « Le code dit le présent ») : #1525 passe en `haute` et ne dépend plus de #1465. Le critère est la
+  > qualité de `app.py`, pas son poids dans le contexte.
+
 **Les abandons**, décidés par la personne, chacun avec sa raison consignée sur le ticket :
 - **#1129 et ses lots #1130 à #1133**, « le goût a un répondant » : ce chantier ajoute de la
   cérémonie, et docs/40 §6 voulait qu'on le rejuge à la levée du gel ;
@@ -1712,6 +1727,98 @@ l'échéance ne bouge pas. Le chantier rejoint ses `prio::haute` (#1413, #1415, 
 
 > ⚠ **Les critères de chaque lot sont dans sa description**, et c'est elle qui fait foi à la
 > clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1574.
+
+---
+
+## « Le code dit le présent » — la qualité du code de `maestro/` rejugée (2026-11-03)
+
+Ce chantier est né d'une demande du 2026-11-03, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1578. Le plan a été **présenté avant toute écriture** (#1415), et la
+personne l'a accepté tel que recommandé. La décision est
+[docs/53](./53-decision-le-code-dit-le-present.md).
+
+> *« ne trouves-tu pas que dans maestro, on a bcp de lignes dans un même fichier? est-ce que la
+> qualité du code est au rendez-vous? il faudrait que tu me recommandes ce qui est préférable de
+> faire »*
+
+Il n'ouvre **aucun jalon** et n'en déplace aucun.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| *Outillage de la forge* (jalon existant, rail outillage) | La complexité du code ne monte plus, et `app.py` se découpe en routeurs | 2027-09-15 | **#1577** ; **#1525**, relancé |
+| *Outillage de la forge* (même ajout) | Le code dit le présent : la règle des docstrings, appliquée par les découpages | 2027-09-15 | #1578 ; notes sur #1468 et #1469 |
+
+**Le constat, mesuré le 2026-11-03** sur `maestro/` :
+- **La prose pèse autant que le code.** Sur 141 590 lignes, 44 % sont du code et 42 % de la prose
+  (docstrings et commentaires), avec 7 334 références à des tickets. Les docstrings racontent
+  l'historique : la route `agents` de `app.py` a 27 lignes de docstring pour une ligne de code.
+- **`create_app` est une seule fonction de 5 339 lignes**, qui pose les 102 routes de l'API en
+  closures. Sa complexité C901 vaut 384, et aucun `APIRouter` n'existe dans le dépôt.
+- **75 fonctions dépassent le seuil de C901**, dont 67 dans `maestro/`. Viennent en tête
+  `engine/cli.main` (54), `loop.run` (39) et `loop._rattrape` (32).
+- **Les garde-fous sont solides** : mypy strict, ruff, couverture ≥ 90 %, `tsc`, eslint et axe. Aucun
+  ne mesure la complexité.
+
+**Le contenu :**
+- **#1577** : la complexité ne monte plus. La règle C901 de ruff entre dans `ruff check .` au seuil de
+  l'outil. Chaque fonction qui le dépasse porte une dérogation nommée, et les dérogations ne peuvent
+  que décroître ;
+- **#1578** : la règle des docstrings. Une docstring dit le présent et sa raison, et l'historique vit
+  dans git, les tickets et `docs/`. Elle entre dans `CLAUDE.md` sous le cliquet de #1523, et la note
+  de décision l'écrit. Elle s'applique au code qu'on touche, jamais en réécriture d'ensemble ;
+- **#1525**, relancé : `app.py` découpé par domaine en routeurs, à comportement constant. Sa condition
+  sur #1465 est levée, et il passe de `basse` à `haute` ;
+- **#1468** et **#1469**, mis à jour par une note : ils gardent leur priorité et leurs conditions, et
+  appliquent la règle des docstrings au code qu'ils déplacent, dans un commit distinct du
+  déplacement.
+
+**Une décision tombe, à la demande de la personne** : le différé de `app.py` est **renversé**. Il
+avait été décidé sur le poids en tokens (sections « Le coût d'un ticket » et « Le règlement ne grossit
+plus », docs/49 §4). Le critère qui le relance est la qualité : une fonction de 5 339 lignes se relit,
+se teste et se merge mal, quel que soit son poids dans le contexte.
+
+**Ne bougent pas** :
+- les garde-fous existants ;
+- les découpages restent à comportement constant ;
+- l'ordre et les conditions de #1468 et #1469 ;
+- `lib.sh` et `run.sh` ne se découpent pas, et le bash ne se réécrit pas ;
+- `docs/` garde l'historique : c'est sa place.
+
+**Sont écartés** :
+- **un plafond de lignes par fichier** : le seuil serait arbitraire, et il punirait la prose avant le
+  code ;
+- **une passe d'ensemble sur les docstrings** : un diff de 60 000 lignes de prose ne se relit pas ;
+- **découper les gros fichiers de tests** avant les modules qu'ils testent ;
+- **une garde automatique sur les docstrings** : il faudrait un lexique du passé (#746) ;
+- **le cliquet côté front** : la complexité de `apps/web/` n'a pas été mesurée, et rien ne le
+  demande.
+
+**Place dans la file**, sur le rail outillage. Tout va au jalon **« Outillage de la forge »**, dont
+l'échéance ne bouge pas.
+
+| Rang | Tickets | `prio::` |
+| --- | --- | --- |
+| en tête, avec les `haute` du jalon | #1577, #1578, #1525 | haute |
+| ensuite | #1468 | moyenne |
+| en dernier | #1469 | basse |
+
+- **#1577 d'abord** : c'est le geste le moins cher du chantier, et il empêche la dette de grossir
+  pendant que les découpages se font. Il ne dépend de rien et se merge seul.
+- **#1525 devant #1468** : `create_app` porte à elle seule 27 % de la complexité cumulée des
+  fonctions de `maestro/` au-dessus du seuil, et son découpage est mécanique. Il démarre quand aucun
+  lot produit en vol ne touche `app.py`.
+- **#1468 et #1469 gardent leur rang** : leurs conditions tiennent à des lots produit, que ce
+  chantier ne change pas.
+- **Rail outillage**, sur le précédent de #1467 à #1469 : le code est dans `maestro/`, mais aucun
+  comportement du produit ne change. Un run sans consigne ne prend pas ces tickets : ils se lancent
+  par `--ticket`, `--milestone` ou en interactif.
+- **Pas de jalon neuf** : un jalon outillage placé devant deviendrait le jalon courant du rail.
+- **Le plafond d'outillage** (docs/49 §3) n'est pas encore outillé (#1524). Le relevé du jour donne
+  15 tickets d'outillage sur les 73 fermés depuis le 2026-10-04, soit ~20 %. L'arbitrage écrit est
+  celui de la personne, qui a accepté le plan nommant ces tickets.
+
+> ⚠ **Les critères de chaque ticket sont dans sa description**, et c'est elle qui fait foi à la
+> clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1578.
 
 ---
 
