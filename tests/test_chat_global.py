@@ -1331,6 +1331,25 @@ def test_un_fournisseur_injoignable_se_dit_dans_le_fil_et_n_ouvre_rien(
     assert "renvoyez-le tel quel" in reponse.contenu
     assert reponse.run_id == ""
     assert lanceur.objectifs == []
+    # Le fait est **typé** (#1529) : qui lit la réponse sait qu'aucun modèle n'a
+    # jugé sans lire la phrase, et la cause y est, sans la phrase qui l'entoure.
+    assert cause in reponse.empechement
+    assert "Aucun run" not in reponse.empechement
+
+
+def test_une_reponse_jugee_ne_porte_aucun_empechement() -> None:
+    """La contre-épreuve de #1529 : un modèle qui a répondu ne laisse aucun empêchement."""
+    repondeur = RepondeurOrchestration(
+        lanceur=LanceurEspion(),
+        provider=JugeScripte(_verdict(VERDICT_ECHANGE, "Aucun run en cours.")),
+    )
+
+    reponse = asyncio.run(
+        repondeur.produire(AGENT_ORCHESTRATION, _fil("Ajoute la pagination"))
+    )
+
+    assert reponse.contenu
+    assert reponse.empechement == ""
 
 
 def test_un_fournisseur_absent_est_un_reglage_et_non_une_panne_passagere(
@@ -1362,6 +1381,8 @@ def test_un_fournisseur_absent_est_un_reglage_et_non_une_panne_passagere(
     # configuration le plus probable serait sinon le moins lisible du fil.
     assert "\"MAESTRO_PROVIDER='inconnu' inconnu.\"" not in reponse.contenu
     assert lanceur.objectifs == []
+    # Un réglage absent empêche autant qu'une panne passagère (#1529).
+    assert "aucun fournisseur de modèle n'est utilisable" in reponse.empechement
 
 
 def test_un_oui_qui_ne_peut_pas_etre_juge_ne_lance_rien_et_le_dit() -> None:
@@ -1901,6 +1922,10 @@ def test_un_fournisseur_injoignable_laisse_la_demande_acquise(
     assert envoye["contenu"] == "Génère une application d'agenda"
     assert "fournisseur indisponible" in repondu["contenu"]
     assert repondu["run_id"] == "" and lanceur.objectifs == []
+    # Le fait typé voyage jusqu'au message servi et persisté (#1529) : le banc le lit
+    # là, sans reconnaître la panne à la phrase.
+    assert "fournisseur indisponible" in repondu["empechement"]
+    assert depot_chat.fil(NOM_ORCHESTRATION)[-1].empechement == repondu["empechement"]
     # Les deux messages sont au fil persisté, et les deux sont partis sur le bus.
     assert [message.auteur for message in depot_chat.fil(NOM_ORCHESTRATION)] == [
         UTILISATEUR,
@@ -4310,6 +4335,7 @@ _FAITS_DE_LA_REPONSE = {
     # Comme `projet_vise`, elle accompagne `proposition` sans rien demander seule.
     "estimation": "ce que le run proposé engagerait, en ordre de grandeur (#1184)",
     "bornes": "les bornes appliquées au run que la réponse a ouvert (#1184)",
+    "empechement": "la cause qui a empêché tout jugement du modèle (#1529)",
 }
 
 

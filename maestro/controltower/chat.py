@@ -2135,6 +2135,11 @@ class MessageChat:
     bornes **appliquées** au run que ce message a ouvert — celles que le lanceur a
     reçues, « aucune » comprise —, qu'un clic ou une phrase les ait posées. Un fait,
     lu sous la bulle ; `None` quand ce message n'a ouvert aucun run.
+
+    `empechement` (#1529) est la cause qui a empêché tout jugement du modèle, portée
+    comme `ReponseChat.empechement` : un fait typé, qui dit qu'aucun modèle n'a jugé
+    ce message sans qu'on ait à lire son texte. Vide partout ailleurs et sur une
+    ligne écrite avant ce lot.
     """
 
     agent: str
@@ -2169,6 +2174,7 @@ class MessageChat:
     attentes_candidates: tuple[AttenteVisee, ...] = ()
     estimation: EstimationRun | None = None
     bornes: BornesRun | None = None
+    empechement: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet le message en dict JSON-sérialisable (la forme du REST).
@@ -2218,6 +2224,7 @@ class MessageChat:
             "attentes_candidates": [a.to_dict() for a in self.attentes_candidates],
             "estimation": self.estimation.to_dict() if self.estimation is not None else None,
             "bornes": self.bornes.to_dict() if self.bornes is not None else None,
+            "empechement": self.empechement,
         }
 
     @property
@@ -2340,6 +2347,7 @@ class MessageChat:
                 EstimationRun.from_dict(estimation) if isinstance(estimation, Mapping) else None
             ),
             bornes=BornesRun.depuis(bornes) if isinstance(bornes, Mapping) else None,
+            empechement=str(data.get("empechement") or ""),
         )
 
 
@@ -2450,6 +2458,13 @@ class ReponseChat:
     `estimation` (#1184) accompagne `proposition` — ce que l'accord engagerait, en
     ordre de grandeur — et `bornes` accompagne `run_id` — les bornes appliquées au run
     ouvert. La première se lit sur la carte, la seconde sous la bulle.
+
+    `empechement` (#1529) ne demande rien : c'est la **cause** qui a empêché tout
+    jugement du modèle — fournisseur injoignable, muet ou absent —, quand le texte
+    dit cette cause plutôt qu'une réponse. Vide dès qu'un modèle a jugé. C'est ce
+    qui le fait savoir sans lire la phrase (docs/44 : une panne ne se reconnaît
+    jamais à son texte) : le banc des scénarios en fait une abstention, jamais un
+    rouge du fil.
     """
 
     contenu: str
@@ -2476,6 +2491,7 @@ class ReponseChat:
     attentes_candidates: tuple[AttenteVisee, ...] = ()
     estimation: EstimationRun | None = None
     bornes: BornesRun | None = None
+    empechement: str = ""
 
     @property
     def porte_une_demande(self) -> bool:
@@ -4500,7 +4516,7 @@ class ServiceChat:
         `comprehension`, `projet_propose`, `projet_cree`, `piece`, `piece_ecrite`,
         `corrections`, `projet_outille`, `geste_run`, `geste_fait`,
         `runs_candidats`, `reglement`, `reglement_fait`, `attentes_candidates`,
-        `estimation`, `bornes`) passent du répondeur au message.
+        `estimation`, `bornes`, `empechement`) passent du répondeur au message.
         """
         texte = reponse.contenu.strip()
         if not texte:
@@ -4540,6 +4556,7 @@ class ServiceChat:
             reglement=reponse.reglement,
             reglement_fait=reponse.reglement_fait,
             attentes_candidates=reponse.attentes_candidates,
+            empechement=reponse.empechement,
         )
         await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
         return message

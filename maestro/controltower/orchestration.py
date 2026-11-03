@@ -1756,11 +1756,14 @@ class _JugeInjoignable(RuntimeError):
 
     Elle ne sort jamais du module : `produire` la rattrape et rend son texte au
     fil, là où la laisser remonter la ferait traduire en `ReponseIndisponible`,
-    donc en 502 muet.
+    donc en 502 muet. Sa `cause` voyage à part, sur la réponse
+    (`ReponseChat.empechement`, #1529) : le fait typé que personne n'a à relire
+    dans la phrase.
     """
 
     def __init__(self, cause: str, reparation: str) -> None:
         super().__init__(_PHRASE_INJOIGNABLE.format(cause=cause, reparation=reparation))
+        self.cause = cause
 
 
 def _accord(nombre: int, singulier: str, pluriel: str) -> str:
@@ -3653,7 +3656,9 @@ class RepondeurOrchestration(RepondeurChat):
             # Ce qui a pu être publié reste à l'écran — il a été dit, le retirer
             # n'est pas au pouvoir de ce canal — et la cause s'écrit à sa suite.
             await redaction.ecrire(f" {injoignable}" if redaction.texte else str(injoignable))
-            return ReponseChat(contenu=redaction.texte, etapes=etapes)
+            return ReponseChat(
+                contenu=redaction.texte, etapes=etapes, empechement=injoignable.cause
+            )
         if not redaction.texte:
             # Le flux l'a déjà écrite quand il a servi ; sinon, elle part d'un
             # bloc — un modèle qui a répondu en JSON.

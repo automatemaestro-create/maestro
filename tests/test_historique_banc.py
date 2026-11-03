@@ -296,7 +296,10 @@ def test_la_serie_rend_taux_medianes_rejeux_empechements_et_dernier_vert() -> No
 
     (serie,) = series(lignes)
 
-    assert (serie.passages, serie.verts, serie.taux) == (4, 2, 0.5)
+    # L'empêchement est une abstention (#1529, docs/47 §5) : compté, mais pas jugé —
+    # deux verts sur les trois passages qui ont rendu un verdict.
+    assert (serie.passages, serie.juges, serie.verts) == (4, 3, 2)
+    assert serie.taux == pytest.approx(2 / 3)
     assert serie.cout_median_usd == 3.0, "un coût non rapporté n'entre pas dans la médiane"
     assert serie.duree_mediane_s == 200.0
     assert (serie.rejoues, serie.empechements) == (1, 1)
@@ -470,6 +473,39 @@ def test_la_commande_en_texte_nomme_son_fichier(tmp_path: Path) -> None:
     assert code == historique.CODE_OK
     assert str(fichier) in sortie
     assert "| S4 | 1 | 100% (1/1) |" in sortie
+
+
+def test_un_passage_empeche_n_abaisse_pas_la_reussite(tmp_path: Path) -> None:
+    """Le passage du 2026-10-11 (#1529) : S9 empêché par la limite de session du compte.
+
+    Il est compté (passages, empêchés) mais n'est pas jugé : la réussite reste celle
+    des passages qui ont rendu un verdict, et un scénario qui n'a jamais été jugé
+    n'a pas de taux — ni 0 %, qui le dirait rouge, ni 100 %.
+    """
+    fichier = _ecrire(
+        tmp_path / "h.jsonl",
+        _ligne("20261010-000000", [_scenario("S9"), _scenario("S12", "rouge", empechement=True)]),
+        _ligne(
+            "20261011-102534",
+            [
+                _scenario("S9", "rouge", cout=None, empechement=True),
+                _scenario("S12", "rouge", cout=None, empechement=True),
+            ],
+        ),
+    )
+
+    s9, s12 = series(lire(fichier).lignes)
+    code, sortie, _ = _main(fichier)
+    _, json_, _ = _main(fichier, "--json")
+
+    assert (s9.passages, s9.juges, s9.empechements, s9.taux) == (2, 1, 1, 1.0)
+    assert (s12.passages, s12.juges, s12.empechements, s12.taux) == (2, 0, 2, None)
+    assert code == historique.CODE_OK
+    assert "| S9 | 2 | 100% (1/1) |" in sortie
+    assert "| S12 | 2 | — (aucun passage jugé) |" in sortie
+    s9_json, s12_json = json.loads(json_)["scenarios"]
+    assert (s9_json["taux"], s9_json["juges"]) == (1.0, 1)
+    assert (s12_json["taux"], s12_json["juges"]) == (None, 0)
 
 
 def test_un_historique_vide_dit_comment_il_se_remplit(tmp_path: Path) -> None:

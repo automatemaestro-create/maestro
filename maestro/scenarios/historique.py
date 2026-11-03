@@ -50,6 +50,10 @@ les empêchements, et le **dernier vert** avec son sha. C'est l'entrée du banc 
 lot (lot 2 de #1460, le dernier vert sur `main`) et du choix du scénario le moins
 cher (#1464, `maestro.scenarios.croisement`). `--json` la rend à un script.
 
+Le taux se prend sur les passages **jugés** : un empêchement est compté, mais il
+est une abstention (docs/47 §5), et il n'abaisse pas la réussite (#1529). Un
+scénario qu'aucun passage n'a jugé n'a pas de taux.
+
 ## Les passages d'avant
 
 `--importer` fait entrer les `rapport.json` d'un dossier de rapports (celui de la
@@ -371,16 +375,31 @@ class Serie:
     dernier_vert: DernierVert | None
 
     @property
-    def taux(self) -> float:
-        """La part des passages où le scénario a fini vert (rejeu compris)."""
-        return self.verts / self.passages if self.passages else 0.0
+    def juges(self) -> int:
+        """Les passages qui ont rendu un verdict : tous, moins les empêchements.
+
+        Un empêchement est une **abstention** (docs/47 §5, #1529) : le scénario n'a
+        pas atteint son oracle — API, fournisseur, limite d'usage —, et le compter
+        en échec ferait payer au produit la limite de session d'un compte.
+        """
+        return self.passages - self.empechements
+
+    @property
+    def taux(self) -> float | None:
+        """La part des passages jugés où le scénario a fini vert (rejeu compris).
+
+        `None` quand aucun ne l'a été : un scénario toujours empêché n'a pas de taux,
+        et 0 % le dirait rouge.
+        """
+        return self.verts / self.juges if self.juges else None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.identifiant,
             "passages": self.passages,
+            "juges": self.juges,
             "verts": self.verts,
-            "taux": round(self.taux, 4),
+            "taux": round(self.taux, 4) if self.taux is not None else None,
             "rejoues": self.rejoues,
             "empechements": self.empechements,
             "cout_median_usd": self.cout_median_usd,
@@ -461,12 +480,19 @@ def en_texte(lecture: Lecture, chemin: Path, *, fenetre: int | None = None) -> s
     ]
     for serie in series(lecture.lignes, fenetre=fenetre):
         lignes.append(
-            f"| {serie.identifiant} | {serie.passages} | {serie.taux:.0%} "
-            f"({serie.verts}/{serie.passages}) | {cout_en_mots(serie.cout_median_usd)} | "
+            f"| {serie.identifiant} | {serie.passages} | {_reussite_en_mots(serie)} | "
+            f"{cout_en_mots(serie.cout_median_usd)} | "
             f"{duree_en_mots(serie.duree_mediane_s)} | {serie.rejoues} | "
             f"{serie.empechements} | {_dernier_vert_en_mots(serie.dernier_vert)} |"
         )
     return "\n".join(lignes) + "\n"
+
+
+def _reussite_en_mots(serie: Serie) -> str:
+    """« 67 % (2/3) » sur les passages jugés — ou le dire, quand aucun ne l'a été."""
+    if serie.taux is None:
+        return "— (aucun passage jugé)"
+    return f"{serie.taux:.0%} ({serie.verts}/{serie.juges})"
 
 
 def _dernier_vert_en_mots(dernier: DernierVert | None) -> str:

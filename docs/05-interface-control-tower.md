@@ -5666,6 +5666,12 @@ n'ouvrant **ni ne proposant** rien. Trois choses tiennent ensemble :
   compris quand le fournisseur tombe **entre** la proposition et l'accord, cas où le « oui » reste au
   fil sans rien ouvrir ni se perdre en silence.
 
+Et **l'empêchement est un fait du message**, pas seulement une phrase (#1529) : la réponse porte sa
+cause dans un champ typé (`MessageChat.empechement`, vide dès qu'un modèle a jugé). Qui la lit sait
+qu'aucun modèle n'a jugé ce message sans avoir à reconnaître la panne à son texte (docs/44). Le banc
+des scénarios en fait une abstention : au passage du 2026-10-11, la limite de session du compte
+avait fait compter S9 à S12 en rouges.
+
 ##### Le fil sait ce que ses runs ont fait (#1157)
 
 L'aperçu ci-dessus **compte** — « 1 run en cours, 3 tâches suivies » —, et c'était tout ce que le
