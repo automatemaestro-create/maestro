@@ -1925,8 +1925,9 @@ attendrait une mesure à venir et un lot de la Phase 9. Cette section la garde, 
 
 **Place dans la file**, sur le rail produit. Tout va au jalon **« Maestro fait mieux qu'un agent
 seul »**, dont l'échéance ne bouge pas.
-- **#1544 → #1587.** #1544 est en cours, et « En revue » suffit. Sans lui, la grille juge mal un
-  dépôt existant : elle a rendu 4/8 contre 1/8 sur #1505, pour des raisons qui sont les siennes.
+- **#1544 → #1587.** Sans #1544, la grille juge mal un dépôt existant : elle a rendu 4/8 contre 1/8
+  sur #1505, pour des raisons qui sont les siennes. #1544 est livré le jour même par la PR #1586 :
+  chaque livrable se rejoue contre sa base (`--base <côté>=<commit>`). #1587 est donc démarrable.
   #1521 est indépendant.
 - **En `haute`** : #1587 est la seule mesure de #1542 et #1543 sur leur propre terrain. Le jalon ne
   se boucle donc pas avant lui.
