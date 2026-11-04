@@ -4,9 +4,10 @@
  * Section « Général » des Paramètres (#121) : à quel backend l'interface est
  * branchée, et est-ce qu'il répond.
  *
- * Les deux URL sont inlinées au build (`NEXT_PUBLIC_MAESTRO_API_URL`) : elles se
- * lisent ici mais ne s'éditent pas — les rendre modifiables supposerait un
- * stockage côté client et un rechargement du flux, hors du périmètre de ce lot.
+ * Les deux URL sont celles que le lanceur a données au serveur du front
+ * (`lib/configPoste`, #641), sinon celles du build : elles se lisent ici mais ne
+ * s'éditent pas — les rendre modifiables supposerait un stockage côté client et
+ * un rechargement du flux, hors du périmètre de ce lot.
  * Le bouton, lui, est bien un contrôle : il sonde `GET /api/sante`, ce que le
  * badge temps réel ne dit pas (le WebSocket peut être coupé alors que le REST
  * répond, et réciproquement).
@@ -43,12 +44,7 @@ export function ParametresGeneral() {
     <div className="flex flex-col">
       <LigneReglage
         libelle="API Control Tower"
-        aide={
-          <>
-            Réglée au build par{" "}
-            <code className="font-mono">NEXT_PUBLIC_MAESTRO_API_URL</code>.
-          </>
-        }
+        aide="Celle que le lanceur a donnée à l'interface à son démarrage."
       >
         <code className="font-mono text-sm break-all">{urlApi()}</code>
       </LigneReglage>

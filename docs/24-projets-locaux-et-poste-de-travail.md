@@ -928,6 +928,13 @@ Empaqueter Next.js est un problème résolu. Empaqueter **Python + le Claude Age
 
 C'est ce coût — pas la fenêtre — qui justifie de commencer par l'option 1.
 
+> **Payé par #641** ([docs/54](./54-le-paquet-d-installation.md)) : le runtime est le paquet
+> embarquable officiel de CPython, **sans gel** — le SDK trouve le CLI `claude` dans son propre
+> paquet, et le produit se relance par `sys.executable` comme dans un clone. Le paquet pèse
+> **285 Mo** à télécharger et **921 Mo** installé, dont 536 Mo pour le produit et 241 Mo pour le
+> seul CLI. Ce que l'installation n'apporte pas — un compte pour le modèle, Git for Windows,
+> Docker, les mises à jour — est nommé en docs/54 §2.
+
 ### 4.7 Recommandation : **une enveloppe, pas une variante**
 
 > **Un seul front, un seul backend, deux modes de distribution.** La Control Tower reste

@@ -40,14 +40,13 @@ l'utilisateur n'a pas — et sous Windows, `bash` nu est le lanceur WSL
 
 ## Les trois promesses du ticket, et où elles vivent
 
-1. **Un geste démarre, et les ports sont choisis ou signalés** (`lanceur.demarrer`).
-   Le port de l'**UI** est *choisi* : s'il est pris, le lanceur en prend un libre et
-   l'annonce — l'adresse qu'on ouvre est celle qu'il vient de dire, rien d'autre n'en
-   dépend. Le port de l'**API**, lui, est *signalé* : l'URL de l'API est **inlinée
-   dans le front au build** (`NEXT_PUBLIC_MAESTRO_API_URL`, `apps/web/lib/api.ts`),
-   donc la déplacer en silence servirait une interface qui se charge et ne répond à
-   rien — la collision silencieuse que le critère interdit. Occupé, il est nommé,
-   avec ce qui le tient et les deux gestes qui lèvent le blocage.
+1. **Un geste démarre, et les ports sont choisis et dits** (`lanceur.demarrer`).
+   Pris, un port est remplacé par le premier libre au-dessus, et le déplacement
+   s'annonce — pour l'**UI** comme pour l'**API**, parce que tout ce qui en dépend le
+   reçoit du lanceur au démarrage : le front l'URL de l'API et son jeton
+   (`MAESTRO_API_URL`, `MAESTRO_API_JETON`, lus à chaque requête —
+   `apps/web/lib/configPoste.ts`, #641), l'API le port du front dont elle admet
+   l'origine (`MAESTRO_PORT_UI`, #638). Aucun port libre pour l'API rend le code `4`.
    Et **rien n'est tué au jugé** : le lanceur n'arrête que la session qu'il a lui-même
    inscrite. Un port tenu par quelqu'un d'autre se contourne ou se dit, jamais se libère.
 2. **L'arrêt est propre et complet** (`lanceur.arreter`). Il **solde les runs en vol**
@@ -74,10 +73,11 @@ l'utilisateur n'a pas — et sous Windows, `bash` nu est le lanceur WSL
 
 `apps/desktop/main.js` passe `--no-browser` au démarrage et `--stop` à la fermeture,
 et n'a besoin de rien d'autre (#923). Ces **deux options portent ici le même nom et
-le même sens** : le jour où l'empaquetage (#641) remplacera `start.sh` par ce lanceur,
-la coque changera d'exécutable et de rien d'autre. Elle n'est pas modifiée par ce lot —
-tant que la stack servie est celle d'un clone, `start.sh` et son rechargement à chaud
-restent ce qu'elle doit appeler.
+le même sens** que dans `start.sh` : la coque **installée** (#641) joue ce lanceur par
+le Python que le paquet embarque, celle d'un clone garde `start.sh` et son
+rechargement à chaud — elle change d'exécutable et de rien d'autre. Elle relit l'URL
+servie dans la session inscrite (`session.json`), puisque le port du front a pu se
+déplacer.
 """
 
 from __future__ import annotations

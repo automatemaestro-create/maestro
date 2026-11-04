@@ -23,7 +23,8 @@ Quatre volets :
 ② **la sûreté de la fenêtre** — les quatre réglages de `webPreferences`, la
    navigation bornée à l'origine locale, et un pont qui n'expose que des verbes
    nommés (jamais `ipcRenderer`, jamais un `invoke(canal, …)` générique) ;
-③ **le cycle de vie des processus** — `start.sh` source unique, l'arrêt qui
+③ **le cycle de vie des processus** — son lanceur source unique (`start.sh` dans
+   un clone, `maestro.lanceur` installée, #641), l'arrêt qui
    attend le démarrage en cours, l'instance unique **par stack** (#1275), aucun argument de la coque
    relayé au lanceur.
    C'est le premier critère d'acceptation : *se ferme sans laisser de processus
@@ -220,10 +221,14 @@ def test_la_fenetre_ne_quitte_jamais_l_origine_locale(main_js):
 def test_les_origines_locales_sont_les_deux_noms_de_l_hote_local_sur_le_port_de_l_ui(main_js):
     """L'API n'est **pas** une destination de navigation : elle est appelée par
     la page. Une origine de plus ici serait une surface de plus."""
-    origines = objet(main_js, "const ORIGINES_LOCALES = new Set([")
-    assert "`http://localhost:${PORT_UI}`" in origines
-    assert "`http://127.0.0.1:${PORT_UI}`" in origines
+    origines = objet(main_js, "function originesLocales(port) {")
+    assert "`http://localhost:${port}`" in origines
+    assert "`http://127.0.0.1:${port}`" in origines
     assert "PORT_API" not in origines
+    # Celles du port demandé, puis celles du port servi — jamais celles de l'API.
+    assert "let ORIGINES_LOCALES = originesLocales(PORT_UI);" in main_js
+    assert main_js.count("ORIGINES_LOCALES = originesLocales(") == 2
+    assert "originesLocales(PORT_API" not in main_js
 
 
 def test_aucune_seconde_fenetre_ne_s_ouvre_par_window_open(main_js):
@@ -346,17 +351,73 @@ def test_la_coque_ne_juge_jamais_si_un_chemin_est_declarable(main_js):
 # ==================================================================================================
 
 
-def test_la_coque_ne_lance_que_le_lanceur_du_depot(main_js):
-    """`start.sh` est la **source unique** du démarrage et de l'arrêt : préflight
-    Redis, remplacement de la session en place, ports dérivés du worktree, et
-    surtout le **soldage des runs en vol** (#700). Rejouer ces gestes ici en
+def test_la_coque_ne_lance_que_son_lanceur(main_js):
+    """Le lanceur est la **source unique** du démarrage et de l'arrêt : préflight
+    du support, remplacement de la session en place, ports dérivés ou déplacés,
+    et surtout le **soldage des runs en vol** (#700). Rejouer ces gestes ici en
     ferait deux à tenir d'accord, et le second oublierait ce point-là en
-    premier."""
-    assert "const LANCEUR = path.join(RACINE, 'scripts', 'controltower', 'start.sh');" in main_js
+    premier.
+
+    Deux lanceurs, et pas un de plus (#641) : `start.sh` dans un clone, le
+    lanceur du produit joué par le Python embarqué dans une installation."""
+    lanceur = objet(main_js, "const LANCEUR = INSTALLEE\n  ? {")
+    assert "executable: PYTHON_EMBARQUE, prefixe: ['-m', 'maestro.lanceur']" in lanceur
+    assert main_js.count("const LANCEUR = ") == 1
+    depot = "path.join(RACINE, 'scripts', 'controltower', 'start.sh')"
+    assert f": {{ executable: BASH, prefixe: [{depot}] }};" in main_js
     # Un seul `spawn`, et il vise le lanceur : aucun autre processus n'est
     # ouvert par la coque.
     assert main_js.count("spawn(") == 1
-    assert "spawn(BASH, [LANCEUR, ...args]" in main_js
+    assert "spawn(LANCEUR.executable, [...LANCEUR.prefixe, ...args]" in main_js
+
+
+def test_la_coque_installee_joue_le_python_que_le_paquet_embarque(main_js):
+    """Ni Python ni Node sur le poste (#641) : l'interpréteur est celui que le
+    paquet a posé sous `resources/produit/runtime/python/`, jamais un `python` du
+    PATH — celui-là serait le Python du poste, ou rien. Et l'installation se
+    reconnaît à ce qu'Electron sait d'elle (`app.isPackaged`), pas à un drapeau
+    qu'on lui passerait."""
+    assert "const INSTALLEE = app.isPackaged;" in main_js
+    assert "const RACINE_PRODUIT = path.join(process.resourcesPath, 'produit');" in main_js
+    assert (
+        "const PYTHON_EMBARQUE = path.join(RACINE_PRODUIT, 'runtime', 'python', 'python.exe');"
+        in main_js
+    )
+    assert "const RACINE = INSTALLEE ? RACINE_PRODUIT : RACINE_DEPOT;" in main_js
+
+
+def test_le_lanceur_du_produit_comprend_les_deux_arguments_de_la_coque():
+    """La coque installée passe à `maestro.lanceur` les mêmes deux arguments qu'à
+    `start.sh` : renommés d'un seul côté, la fenêtre démarrerait un lanceur qui
+    sort en « option inconnue », ou ne saurait plus l'arrêter."""
+    from maestro.lanceur.cli import analyser
+
+    assert analyser(["--no-browser"], {}).navigateur is False
+    assert analyser(["--stop"], {}).action == "arreter"
+
+
+def test_la_coque_installee_relit_la_session_ou_le_lanceur_l_inscrit(main_js):
+    """Le lanceur du produit déplace un port pris plutôt que d'échouer : la fenêtre
+    ouvre l'URL qu'il a **inscrite**, et ce chemin est une frontière avec
+    `maestro/lanceur/emplacement.py` — réécrit d'un seul côté, la coque ouvrirait
+    l'adresse demandée pendant que le produit sert ailleurs."""
+    from maestro.lanceur.emplacement import DOSSIER_LANCEUR
+
+    assert DOSSIER_LANCEUR.as_posix() == ".maestro/lanceur"
+    assert (
+        "const SESSION_DU_LANCEUR = path.join(RACINE, '.maestro', 'lanceur', 'session.json');"
+        in main_js
+    )
+    assert "fenetre.loadURL(urlServie())" in main_js
+    assert "fenetre.loadURL(URL_UI)" not in main_js
+
+
+def test_l_interpreteur_du_lanceur_ne_fait_pas_naitre_de_console(main_js):
+    """La coque installée n'a pas de console : sans `windowsHide`, Windows en
+    ouvrirait une pour l'interpréteur — une fenêtre noire qui arrêterait la stack
+    si on la fermait."""
+    appel = objet(main_js, "spawn(LANCEUR.executable, [...LANCEUR.prefixe, ...args], {")
+    assert reglage(appel, "windowsHide") == "true"
 
 
 def test_les_deux_seuls_jeux_d_arguments_sont_le_demarrage_et_l_arret(main_js):

@@ -143,10 +143,12 @@ elle **installe sur demande explicite** (`--only desktop`), pour que la coque so
 provisionnement du dépôt et pas seulement depuis son lanceur. Symétriquement, `setup.sh --derive` ne
 signale la coque que si elle est **installée** : ne pas l'avoir reste le cas nominal, pas une dérive.
 
-⚠ **Ce n'est toujours PAS la taille d'un installeur** (#641, Phase 9). Un paquet livré ne contient
-ni les en-têtes, ni les fichiers de debug, ni les locales inutiles de `dist/`, et il est compressé.
-La mesure ci-dessus borne le coût **en développement** ; celui de la distribution reste à faire,
-et le sidecar Python de §2.2 n'y est pas non plus.
+⚠ **Ce n'est pas la taille d'un installeur**, qui se mesure à part : la mesure ci-dessus borne le
+coût **en développement**. Celle du paquet livré, sidecar Python compris, est faite par #641
+([docs/54 §3.1](./54-le-paquet-d-installation.md)) : **285 Mo à télécharger, 921 Mo installés**,
+dont **385 Mo pour la coque** et **536 Mo pour le produit** — le CLI `claude` en fait à lui seul
+241 Mo, et une coque Tauri l'aurait embarqué tout autant. L'écart de coque est un tiers du paquet,
+pas son essentiel : la mesure renforce §2.2 au lieu de la relire.
 
 Ce qu'on accepte : **un installeur plus lourd et une empreinte mémoire plus élevée**, contre un
 moteur unique, une chaîne de construction déjà présente, et un filet visuel qui regarde ce qui est
@@ -365,8 +367,9 @@ Par honnêteté de méthode, comme docs/30 §7 :
 - ~~**L'empreinte mémoire**~~ — **mesurée le 2026-09-11** : **351 Mo sur 4 processus**, fenêtre
   ouverte sur la Control Tower en mode démo. Un seul relevé, sur un seul poste, à l'ouverture : ce
   n'est pas une courbe d'usage, et un run qui tourne n'a pas été observé.
-- **Le coût d'un sidecar Python empaqueté** : jamais mesuré dans ce dépôt. L'argument de §2.2
-  s'appuie sur l'affirmation de docs/24 §4.6, non sur un chiffre.
+- ~~**Le coût d'un sidecar Python empaqueté**~~ — **mesuré le 2026-11-04 par #641**
+  ([docs/54 §3.1](./54-le-paquet-d-installation.md)) : 536 Mo installés pour le produit (runtime,
+  dépendances, CLI `claude`, Node, front), contre 385 Mo pour la coque.
 - **Le comportement de `sobriete.test.tsx` face à une troisième zone** : la lecture du fichier montre
   qu'il compte `section, aside` dans l'écran rendu, mais **le cas n'a pas été joué**. C'est le lot 4
   qui le saura, et §3.4 dit dans quel sens trancher s'il rougit.

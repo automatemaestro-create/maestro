@@ -97,7 +97,28 @@ export const REDIRECTION_SOCLE_HORS_DEVELOPPEMENT =
     ? [{ source: "/socle", destination: "/", permanent: false }]
     : [];
 
+/**
+ * La **sortie autonome** du build, celle qu'un paquet d'installation embarque
+ * (#641) : un `server.js` et le seul sous-ensemble de `node_modules` que le
+ * traçage a retenu, servis par un Node sans rien installer. Demandée par
+ * `scripts/distribution/construire.sh` et par lui seul : `next start` (la stack
+ * de production de `scripts/presentation/captures.sh`) ne sert pas une sortie
+ * autonome, et le build ordinaire reste celui du dépôt.
+ *
+ * Le traçage part **de ce dossier** : sans racine posée, Next la déduit des
+ * fichiers de verrou qu'il trouve en remontant le disque — ceux d'un dossier
+ * parent du poste qui construit compris —, et `server.js` atterrirait sous un
+ * chemin qui dépend de ce poste au lieu d'être à la racine de la sortie.
+ */
+const FRONT_AUTONOME = process.env.MAESTRO_FRONT_AUTONOME === "1";
+
+export const SORTIE_DU_BUILD: NextConfig["output"] = FRONT_AUTONOME
+  ? "standalone"
+  : undefined;
+
 const nextConfig: NextConfig = {
+  output: SORTIE_DU_BUILD,
+  ...(FRONT_AUTONOME ? { outputFileTracingRoot: __dirname } : {}),
   redirects: async () => [
     ...REDIRECTIONS_NAVIGATION_V1,
     ...REDIRECTIONS_PORTE_UNIQUE,

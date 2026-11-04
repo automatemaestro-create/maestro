@@ -41,7 +41,7 @@ Options :
   --port-ui <port>    port du front (défaut 3000, ou MAESTRO_PORT_UI)
   --hote <adresse>    adresse d'écoute (défaut 127.0.0.1)
 
-Codes : 0 fait · 1 panne nommée · 2 usage · 3 rien à faire · 4 port de l'API occupé.
+Codes : 0 fait · 1 panne nommée · 2 usage · 3 rien à faire · 4 aucun port libre pour l'API.
 
 Dans un clone, la même commande s'écrit : python -m maestro.lanceur [options]."""
 

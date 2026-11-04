@@ -2214,6 +2214,11 @@ inlinée au build par Next.js) :
 NEXT_PUBLIC_MAESTRO_API_URL=http://mon-hote:8000 npm run dev
 ```
 
+Un front **servi par le lanceur** (`python -m maestro.lanceur`, l'installation de #641) n'en
+dépend pas : le lanceur passe au serveur du front `MAESTRO_API_URL` et `MAESTRO_API_JETON`, lus
+**à chaque requête** et posés dans la page (`lib/configPoste.ts`). L'URL de l'API et son jeton
+sont propres au poste qui sert le produit ; un build distribué ne peut pas les inliner.
+
 ## Modèle de données
 <!-- documentation: développement -->
 

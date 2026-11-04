@@ -12,7 +12,7 @@ ce que le poste a de particulier.
 | `0` | fait |
 | `1` | **panne nommée** — front absent, service mort, arrêt non prouvé complet |
 | `3` | **rien à faire** — aucune session inscrite (arrêt, état) |
-| `4` | **collision de port signalée** — le port de l'API est pris |
+| `4` | **aucun port libre pour l'API** à partir de celui qu'on demandait |
 
 `3` n'est pas un échec : arrêter ce qui est déjà arrêté est un non-événement, et un
 appelant (la coque, l'installeur) doit pouvoir le distinguer d'une panne. `4` se
@@ -119,6 +119,7 @@ def demarrer(
 
     port_api = _port_api(options, systeme, sortie)
     if port_api is None:
+        _dire_le_port_de_l_api_introuvable(options, sortie)
         return 4
     port_ui = _port_ui(options, systeme, sortie)
     if port_ui is None:
@@ -147,6 +148,11 @@ def demarrer(
     # UTF-8 par `cause` — arriverait en mojibake le jour où on en a besoin (#141).
     environ_api = dict(environ)
     environ_api.setdefault("PYTHONIOENCODING", "utf-8")
+    # L'API n'admet que les origines de son front (#638), qu'elle dérive de ce port :
+    # celui où le front va **écouter**, et non celui qu'on demandait. Laissé au défaut,
+    # un front déplacé sur :3001 verrait refuser chacun de ses appels (#1233). Un
+    # `MAESTRO_API_ORIGINES` réglé passe toujours devant (`acces.origines_reglees`).
+    environ_api["MAESTRO_PORT_UI"] = str(port_ui)
     process_api = systeme.demarrer(
         argv_api,
         cwd=emplacement.racine,
@@ -181,13 +187,22 @@ def demarrer(
 
     # Le serveur autonome lit son port dans l'environnement (c'est le contrat de la
     # sortie « standalone » de Next), `next start` sur sa ligne de commande. On pose les
-    # deux : l'URL de l'API, elle, n'a d'effet qu'au rendu serveur — celle du navigateur
-    # est figée dans le build, et c'est la raison pour laquelle le port de l'API ne se
-    # déplace pas (voir `_port_api`).
+    # deux.
+    #
+    # L'URL de l'API et son jeton voyagent par `MAESTRO_API_URL` / `MAESTRO_API_JETON`,
+    # que le serveur du front lit **à chaque requête** et pose dans la page
+    # (`apps/web/lib/configPoste.ts`, #641) : un paquet se construit une fois pour
+    # tous les postes, et ces deux valeurs sont propres à chacun. `NEXT_PUBLIC_*` n'a
+    # d'effet qu'au rendu serveur d'un front construit sans elles.
     environ_front = dict(environ)
     environ_front["PORT"] = str(port_ui)
     environ_front["HOSTNAME"] = options.hote
     environ_front["NEXT_PUBLIC_MAESTRO_API_URL"] = url_api
+    environ_front["MAESTRO_API_URL"] = url_api
+    environ_front.pop("MAESTRO_API_JETON", None)
+    jeton = _jeton_du_front(sortie)
+    if jeton is not None:
+        environ_front["MAESTRO_API_JETON"] = jeton
     if front.forme == "standalone":
         argv_ui = [node, str(front.cible)]
         dossier_ui = front.cible.parent
@@ -394,27 +409,28 @@ def cause(
 
 
 def _port_api(options: Options, systeme: Systeme, sortie: Sortie) -> int | None:
-    """Le port de l'API : celui qu'on demande, ou rien — **jamais** un autre.
+    """Le port de l'API : celui qu'on demande, sinon le premier libre au-dessus.
 
-    Il ne se déplace pas tout seul, et ce n'est pas une facilité qu'on s'est refusée :
-    l'URL de l'API est **inlinée dans le front au build** (`NEXT_PUBLIC_MAESTRO_API_URL`,
-    `apps/web/lib/api.ts`). Servir l'API ailleurs sans reconstruire le front ouvrirait
-    une interface qui se charge et ne répond à rien — la « collision silencieuse » que
-    le critère interdit. Pris, il est donc **signalé**, avec ce qui le lève.
+    Déplaçable comme celui du front, parce que tout ce qui en dépend le reçoit du
+    lanceur au démarrage : le front par `MAESTRO_API_URL` (#641,
+    `apps/web/lib/configPoste.ts`), l'arrêt par la session inscrite. Le déplacement est
+    **dit**, jamais subi — et sur un poste d'utilisateur, un :8000 déjà tenu par un autre
+    serveur n'empêche plus Maestro de démarrer.
     """
     if not systeme.port_tenu(options.hote, options.port_api):
         return options.port_api
-    sortie.alerter(f"Le port de l'API (:{options.port_api}) est déjà tenu.")
-    sortie.alerter(
-        "  Il ne peut pas être déplacé en silence : le front porte l'URL de l'API, "
-        "figée à sa construction."
-    )
-    sortie.alerter("  · libérer ce port (arrêter ce qui l'occupe), puis relancer ;")
-    sortie.alerter(
-        "  · ou le choisir ailleurs — python -m maestro.lanceur --port-api <port> —, "
-        "le front devant être construit pour cette URL."
-    )
-    return None
+    choisi = systeme.port_libre_depuis(options.hote, options.port_api + 1)
+    if choisi is None:
+        return None
+    sortie.dire(f"[port] :{options.port_api} est pris — l'API écoute sur :{choisi}")
+    return choisi
+
+
+def _dire_le_port_de_l_api_introuvable(options: Options, sortie: Sortie) -> None:
+    """Aucun port libre pour l'API : le code `4`, et les deux gestes qui le lèvent."""
+    sortie.alerter(f"Aucun port libre pour l'API à partir de :{options.port_api}.")
+    sortie.alerter("  · libérer un de ces ports (arrêter ce qui l'occupe), puis relancer ;")
+    sortie.alerter("  · ou en désigner un autre — option --port-api <port>.")
 
 
 def _port_ui(options: Options, systeme: Systeme, sortie: Sortie) -> int | None:
@@ -659,6 +675,27 @@ def _entetes_de_l_api(sortie: Sortie) -> dict[str, str]:
             f"[extinction] jeton de l'API illisible ({erreur}) — l'extinction part sans lui"
         )
         return {}
+
+
+def _jeton_du_front(sortie: Sortie) -> str | None:
+    """Le jeton que le front doit porter (#638), ou `None` en régime ouvert.
+
+    Résolu comme l'API le résout (`politique_depuis`) — une seule façon de le lire, et
+    le même fichier : l'API, démarrée avant le front, l'a déjà engendré. Illisible, il
+    se **dit** : l'interface partirait sans lui, et l'API refuserait chacun de ses
+    appels sans que rien ne nomme la cause.
+    """
+    from maestro.config import ConfigError
+    from maestro.controltower.acces import politique_depuis
+
+    try:
+        return politique_depuis().jeton
+    except (ConfigError, OSError) as erreur:
+        sortie.alerter(
+            f"[front] jeton de l'API illisible ({erreur}) — l'interface part sans lui, "
+            "et l'API refusera ses appels"
+        )
+        return None
 
 
 def _runs_soldes(reponse: str) -> tuple[str, ...] | None:

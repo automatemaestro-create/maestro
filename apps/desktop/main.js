@@ -3,16 +3,20 @@
 // Une fenêtre native remplace l'onglet de navigateur : on lance Maestro, on ne lance pas un script
 // (retex du 2026-09-11, constat G6). Ce que la coque fait tient en trois gestes, et rien de plus :
 //
-//   1. elle DÉMARRE la stack locale — `scripts/controltower/start.sh --no-browser` ;
+//   1. elle DÉMARRE la stack locale — son lanceur, avec `--no-browser` ;
 //   2. elle AFFICHE ce que cette stack sert, à l'origine locale et à elle seule ;
-//   3. elle l'ARRÊTE quand sa fenêtre se ferme — `start.sh --stop`.
+//   3. elle l'ARRÊTE quand sa fenêtre se ferme — le même lanceur, avec `--stop`.
 //
-// ⚠ ELLE NE RÉIMPLÉMENTE NI LE DÉMARRAGE NI L'ARRÊT. `start.sh` en est la source unique, et il en
-// sait déjà bien plus long que nous : préflight Redis, remplacement de la session en place, ports
-// dérivés du worktree, et surtout le SOLDAGE DES RUNS EN VOL (#700, docs/28 §11) — fermer la
-// fenêtre est un arrêt volontaire de la Control Tower, donc ses runs sont consignés « annulée »
-// plutôt que laissés « en cours » sans écran pour les suivre. Rejouer ces gestes ici en ferait
-// deux à tenir d'accord, et le second oublierait ce point-là en premier.
+// Le lanceur est `scripts/controltower/start.sh` dans un clone, et le lanceur du produit
+// (`python -m maestro.lanceur`, #640) dans une installation (#641) — § « deux lanceurs » plus bas.
+//
+// ⚠ ELLE NE RÉIMPLÉMENTE NI LE DÉMARRAGE NI L'ARRÊT. Son lanceur en est la source unique, et il
+// en sait déjà bien plus long que nous : préflight du support de persistance, remplacement de la
+// session en place, ports dérivés du worktree ou déplacés quand ils sont pris, et surtout le
+// SOLDAGE DES RUNS EN VOL (#700, docs/28 §11) — fermer la fenêtre est un arrêt volontaire de la
+// Control Tower, donc ses runs sont consignés « annulée » plutôt que laissés « en cours » sans
+// écran pour les suivre. Rejouer ces gestes ici en ferait deux à tenir d'accord, et le second
+// oublierait ce point-là en premier.
 //
 // La coque tient donc EXACTEMENT la place que tenait le chien de garde de `start.sh` (#149) : il
 // ouvrait une fenêtre Chromium sur un profil jetable et attendait sa disparition pour arrêter la
@@ -53,8 +57,26 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const RACINE = path.resolve(__dirname, '..', '..');
-const LANCEUR = path.join(RACINE, 'scripts', 'controltower', 'start.sh');
+// DEUX LANCEURS, UN SEUL CONTRAT (#641). La coque d'un clone sert la stack du dépôt par
+// `start.sh` — rechargement à chaud, venv et Redis du développement. La coque INSTALLÉE sert
+// le produit que le paquet a posé sous `resources/produit/` par le lanceur du produit,
+// `python -m maestro.lanceur` (#640), joué par le runtime Python que le paquet embarque : ni
+// Python, ni Node, ni clone sur le poste. Les deux reçoivent les deux mêmes jeux d'arguments
+// (`--no-browser`, `--stop`) et en font la même chose, soldage des runs compris ; la coque
+// change d'exécutable et de rien d'autre.
+const INSTALLEE = app.isPackaged;
+const RACINE_DEPOT = path.resolve(__dirname, '..', '..');
+const RACINE_PRODUIT = path.join(process.resourcesPath, 'produit');
+// `python.exe` : le paquet n'est construit que pour Windows, la plateforme de référence du dépôt
+// (#641 la borne là ; un installeur multi-plateforme est un second ticket).
+const PYTHON_EMBARQUE = path.join(RACINE_PRODUIT, 'runtime', 'python', 'python.exe');
+const RACINE = INSTALLEE ? RACINE_PRODUIT : RACINE_DEPOT;
+
+// Où le lanceur du produit inscrit la session qu'il a démarrée — `DOSSIER_LANCEUR` de
+// `maestro/lanceur/emplacement.py`, sous la racine du produit. La coque installée y relit
+// l'URL réellement servie : le lanceur déplace un port pris plutôt que d'échouer, et la
+// fenêtre doit ouvrir l'adresse qu'il a choisie, pas celle qu'on lui demandait.
+const SESSION_DU_LANCEUR = path.join(RACINE, '.maestro', 'lanceur', 'session.json');
 
 // Mêmes défauts que `start.sh`, et surtout mêmes VARIABLES : `worktree.sh ensure` les pose par
 // worktree (#152), sans quoi deux sessions se disputeraient la fenêtre et les ports.
@@ -77,14 +99,23 @@ const URL_UI = `http://localhost:${PORT_UI}`;
 // Ce que la fenêtre a le droit d'afficher. Tout le reste part au navigateur du système ou nulle
 // part (§ « navigation »). Les deux noms de l'hôte local y sont, sur le seul port de l'UI : l'API
 // n'est pas une destination de navigation, elle est appelée par la page.
-const ORIGINES_LOCALES = new Set([`http://localhost:${PORT_UI}`, `http://127.0.0.1:${PORT_UI}`]);
+function originesLocales(port) {
+  return new Set([`http://localhost:${port}`, `http://127.0.0.1:${port}`]);
+}
+// Celles du port DEMANDÉ, jusqu'à ce que le lanceur installé dise celui qu'il a servi (§ `servir`).
+let ORIGINES_LOCALES = originesLocales(PORT_UI);
 
 // Sous Windows, `bash` nu peut se résoudre en bash WSL — qui ne voit pas le même système de
 // fichiers, donc ne trouverait ni le dépôt ni le venv. `desktop.sh` nous passe le sien ; le repli
 // ne sert qu'à un lancement direct par `npm start` depuis un shell POSIX.
 const BASH = process.env.MAESTRO_BASH || 'bash';
 
-// Aucun argument de ce processus ne passe à `start.sh` : il reçoit aussi ceux d'Electron, et la
+// Le lanceur que la coque joue, et le seul (§ « deux lanceurs, un seul contrat » plus haut).
+const LANCEUR = INSTALLEE
+  ? { executable: PYTHON_EMBARQUE, prefixe: ['-m', 'maestro.lanceur'] }
+  : { executable: BASH, prefixe: [path.join(RACINE, 'scripts', 'controltower', 'start.sh')] };
+
+// Aucun argument de ce processus ne passe au lanceur : il reçoit aussi ceux d'Electron, et la
 // seule option qu'on lui relayait, celle du mode démo, a quitté le produit avec lui (#1168). La coque
 // joue donc deux jeux d'arguments écrits ici même, jamais autre chose.
 
@@ -98,26 +129,53 @@ function retenir(flux, donnees) {
 }
 
 /**
- * Joue `start.sh` avec les arguments donnés et rend son code de sortie.
- * La sortie est relayée telle quelle sur la console : c'est une coque de DÉVELOPPEMENT, lancée
- * depuis un terminal, et `start.sh` y dit des choses qu'on ne saurait pas redire mieux (le geste
- * exact pour lancer Redis, le chemin du log de l'API, ce que l'arrêt a soldé).
+ * Joue le lanceur avec les arguments donnés et rend son code de sortie.
+ * La sortie est relayée telle quelle sur la console, et retenue pour l'écran d'attente : le
+ * lanceur y dit des choses qu'on ne saurait pas redire mieux (ce qui manque pour démarrer, le
+ * chemin du journal d'un service mort, ce que l'arrêt a soldé).
+ *
+ * `windowsHide` : la coque installée n'a pas de console, et sans lui Windows en ouvrirait une
+ * pour l'interpréteur du lanceur — une fenêtre noire à côté de Maestro, qui l'arrêterait si on
+ * la fermait.
  */
 function jouerLanceur(args) {
   return new Promise((resoudre) => {
-    const enfant = spawn(BASH, [LANCEUR, ...args], {
+    const enfant = spawn(LANCEUR.executable, [...LANCEUR.prefixe, ...args], {
       cwd: RACINE,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
+      windowsHide: true,
     });
     enfant.stdout.on('data', (d) => retenir('stdout', d));
     enfant.stderr.on('data', (d) => retenir('stderr', d));
     enfant.on('error', (err) => {
-      retenir('stderr', `[coque] lancement impossible (${BASH}) : ${err.message}\n`);
+      retenir('stderr', `[coque] lancement impossible (${LANCEUR.executable}) : ${err.message}\n`);
       resoudre(127);
     });
     enfant.on('close', (code) => resoudre(code ?? 1));
   });
+}
+
+/**
+ * L'URL que la fenêtre ouvre une fois la stack démarrée.
+ *
+ * Dans un clone, celle que `start.sh` ouvrirait (§ `URL_UI`). Installée, celle que le lanceur
+ * du produit a INSCRITE : il déplace un port pris plutôt que d'échouer (#640), et c'est
+ * l'adresse qu'il a choisie qui sert. Les origines admises suivent, puisque c'est là que la
+ * fenêtre a désormais le droit d'aller. Une session illisible retombe sur l'URL demandée — le
+ * lanceur vient de rendre `0`, il sert donc quelque part, et le pire est la page d'attente.
+ */
+function urlServie() {
+  if (!INSTALLEE) return URL_UI;
+  try {
+    const { url } = JSON.parse(fs.readFileSync(SESSION_DU_LANCEUR, 'utf8'));
+    const lue = new URL(url);
+    ORIGINES_LOCALES = originesLocales(lue.port);
+    return lue.href;
+  } catch (err) {
+    retenir('stderr', `[coque] session du lanceur illisible (${err.message}) — ${URL_UI}\n`);
+    return URL_UI;
+  }
 }
 
 let fenetre = null;
@@ -371,7 +429,7 @@ async function demarrer() {
     return;
   }
   annoncer('chargement', null);
-  await fenetre.loadURL(URL_UI).catch(() => {});
+  await fenetre.loadURL(urlServie()).catch(() => {});
 }
 
 /**
