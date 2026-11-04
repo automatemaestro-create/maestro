@@ -88,6 +88,11 @@ gantt
 > pourquoi, et l'historique vit dans git, les tickets et `docs/`. La complexité passe en cliquet, et
 > le découpage de `app.py` se relance au nom de la qualité. Le chantier entre au jalon « Outillage
 > de la forge ». Aucun jalon ne bouge.
+>
+> Le 2026-11-04, **Maestro sur son propre dépôt**. Les leviers tirés du premier essai (#1522) sont
+> livrés, et #1587 rejoue la mesure, sur un ticket neuf, avec un seuil posé avant l'épreuve. La
+> routine, qui confierait à Maestro une part des tickets du dépôt, est différée. Elle s'ouvre quand
+> ce seuil est tenu et que l'isolation (#1515) est livrée. Aucun jalon ne bouge.
 
 ---
 
@@ -1819,6 +1824,125 @@ l'échéance ne bouge pas.
 
 > ⚠ **Les critères de chaque ticket sont dans sa description**, et c'est elle qui fait foi à la
 > clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1578.
+
+---
+
+## « Maestro sur son propre dépôt » — remesurer avant d'en faire une routine (2026-11-04)
+
+Ce chantier est né d'une demande du 2026-11-04, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1588. Le plan a été **présenté avant toute écriture** (#1415), et la
+personne l'a validé tel que recommandé, avec ses deux réponses. Rien n'est renversé, donc aucune
+note de décision n'est due.
+
+> *« je trouve que ce serait une bonne idée à un moment de faire développer maestro par maestro.
+> qu'en penses-tu? »*
+
+Il n'ouvre **aucun jalon** et n'en déplace aucun.
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| *Maestro fait mieux qu'un agent seul* (jalon existant, rail produit) | Maestro livre de nouveau un vrai ticket de son propre dépôt, en face de la chaîne. L'écart de #1522 est remesuré levier par levier, et un seuil décide de la routine | 2028-01-31 | **#1587** (né assigné, après #1544) |
+| *aucun, différé* | La routine : une part des tickets du dépôt confiée à Maestro | — | se rouvre par `/idee` quand #1587 tient son seuil **et** que #1515 est livré |
+
+**Le constat** : le premier essai a échoué, et cinq des six causes sont corrigées depuis.
+- **Le premier essai**, #1522, a eu lieu le 2026-10-15 ([docs/51](./51-maestro-face-a-la-chaine-du-depot.md)).
+  Le ticket #1505 a été traité deux fois :
+  - **la chaîne** a livré en 1 h 16, sur un geste, pour 12,42 $ ;
+  - **Maestro** a travaillé 2 h 48, sur 18 gestes, pour 9,08 $. Son run a échoué, sans rien de mergé.
+    Son livrable tenait 13 critères sur 14, et aucun de ses cinq commits ne suivait la convention.
+- **Les six mécanismes de l'écart** (docs/51 § 4), et ce qu'ils sont devenus :
+  - #1542, ce que l'agent reçoit d'un projet importé : **livré** ;
+  - #1543, la reprise après la limite d'usage : **livré** ;
+  - #1531, la granularité : **livré** ;
+  - #1530, la vérification une seule fois : **livré** ;
+  - #1507, les commits dans la convention : **livré** ;
+  - #1515, l'isolation, Phase 9, après #1514 : **à faire**.
+- **Le critère C4 du jalon** demande le gain **mesuré** de chaque levier. #1542 et #1543 sont nés
+  sur le dépôt de Maestro, et c'est là seulement que leur gain se mesure bien.
+
+**Le contenu :**
+- **#1587** (`haute`, né assigné) : Maestro livre de nouveau un vrai ticket de son propre dépôt, en
+  face de la chaîne.
+  - **Le protocole de #1522, inchangé** :
+    - un clone à part sous `~/Maestro/`, sans poussée ;
+    - la stack du worktree, sur son propre espace Redis ;
+    - Maestro joue avant la chaîne, et jamais en même temps qu'elle ;
+    - le livrable de la chaîne est mergé, et celui de Maestro est consigné.
+  - **Deux ajouts** :
+    - la session joue la personne par `maestro.scenarios.gestes` (#1569), donc les gestes sont
+      comptés et rejouables ;
+    - le rejeu passe par la grille corrigée par #1544.
+  - **Un seuil, posé avant l'épreuve**, décide de la routine :
+    - le livrable de Maestro passe le rejeu sur clone propre et la CI du dépôt ;
+    - il tient au moins autant de critères que la chaîne, et tous ses commits suivent la
+      convention ;
+    - aucun geste ne corrige l'outillage ni ne réécrit une branche ;
+    - son coût reste au plus 1,2 fois celui de la chaîne, et sa durée au plus 1,5 fois.
+
+    Le seuil de coût est celui de C3. La durée a plus de marge, parce qu'en routine ce qui coûte à
+    la personne, ce sont ses gestes, pas l'horloge.
+- **#1515**, mis à jour par une note : la routine l'attend. Sa priorité, déjà `haute`, et son rang
+  après #1514 ne bougent pas.
+
+**La routine, différée**, avec son déclencheur : #1587 tient son seuil **et** #1515 est livré. Elle
+se rouvre alors par `/idee`, sur trois pièces :
+- **B1 — la livraison hybride** (rail outillage) : la branche que Maestro a produite sur son clone
+  part vers la forge sous `<type>/<iid>-<slug>`, avec une PR `Closes #<iid>`, puis passe à
+  `merge-mr` ;
+- **B2 — le produit livre en PR** (rail produit) : le livrable d'un projet versionné qui a une forge
+  arrive en PR, et la CI est attendue. C'est utile à toute équipe sur GitHub, pas seulement à ce
+  dépôt. Aucun ticket, ouvert ou fermé, ne porte cette capacité aujourd'hui. Elle se décide sur ce
+  que B1 aura appris ;
+- **B3 — la part** : combien de tickets, choisis par qui, à quel rythme. La personne en décide, au
+  vu de #1587 et de B1.
+
+Elle ne naît pas en ticket aujourd'hui : un tel ticket ne pourrait pas démarrer, puisqu'il
+attendrait une mesure à venir et un lot de la Phase 9. Cette section la garde, avec son déclencheur.
+
+**Les deux réponses de la personne** :
+- le plan est validé tel que recommandé : #1587 créé, la routine différée, le seuil chiffré posé
+  avant l'épreuve ;
+- sur #1587, **la session joue la personne** dans le fil, comme sur #1522. La comparaison reste
+  nette, et le temps de la personne n'est pas pris.
+
+**Ne bougent pas** :
+- la chaîne du dépôt reste l'étalon et le filet ([docs/49](./49-decision-le-reglement-ne-grossit-plus.md) §3) ;
+- un merge passe toujours par `merge-mr`, vérifié ;
+- Maestro tourne depuis une copie stable, jamais depuis le clone qu'il modifie.
+
+**Sont écartés** :
+- **basculer d'un coup le développement sur Maestro** : la chaîne a livré environ 990 tickets, et
+  un Maestro qui régresserait bloquerait sa propre réparation ;
+- **faire passer un ticket à Maestro depuis le pilote** : la personne doit le confier dans le fil,
+  comme elle le ferait. C'est ce qu'on veut éprouver.
+
+**Le risque accepté** : #1587 joue avant l'isolation (#1515), comme #1522.
+- **Les cas connus** :
+  - un script du dépôt que la portée ne lit pas, comme `setup.sh` ;
+  - une stack lancée depuis le clone, qui tomberait dans l'espace `commun`.
+- **Les parades** : le clone ne peut pas pousser, et la demande ne requiert ni de lancer la stack
+  ni de toucher à la forge.
+
+**Place dans la file**, sur le rail produit. Tout va au jalon **« Maestro fait mieux qu'un agent
+seul »**, dont l'échéance ne bouge pas.
+- **#1544 → #1587.** Sans #1544, la grille juge mal un dépôt existant : elle a rendu 4/8 contre 1/8
+  sur #1505, pour des raisons qui sont les siennes. #1544 est livré le jour même par la PR #1586 :
+  chaque livrable se rejoue contre sa base (`--base <côté>=<commit>`). #1587 est donc démarrable.
+  #1521 est indépendant.
+- **En `haute`** : #1587 est la seule mesure de #1542 et #1543 sur leur propre terrain. Le jalon ne
+  se boucle donc pas avant lui.
+- **Né assigné** : #1587 lance `run.sh` pour le côté chaîne, et démarrer un run tue ceux qui sont en
+  vol (#213), dont celui qui le porterait. Il conduit aussi la Control Tower. Il se traite donc en
+  interactif. Le banc par lot ne s'y joue pas : `--sans-banc` tant qu'il existe, puisque #1572 le
+  retire.
+- **Pas de jalon neuf** : #1587 sert un critère de sortie du jalon courant du rail produit, et la
+  limite de quatre jalons produit en chantier ([docs/48](./48-decision-produit-pro-exploitable.md))
+  n'a pas de place à donner.
+- **Le plafond d'outillage** (docs/49 §3) ne s'applique pas : #1587 est du rail produit. B1 s'y
+  confrontera quand il naîtra.
+
+> ⚠ **Les critères de chaque ticket sont dans sa description**, et c'est elle qui fait foi à la
+> clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1588.
 
 ---
 
