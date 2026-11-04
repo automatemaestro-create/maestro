@@ -5021,6 +5021,24 @@ le message d'échec **distingue les deux échecs** — « désenregistré, son d
 « non retiré » : dire l'inverse de ce qui vient de se passer est précisément ce qui a laissé onze
 coquilles s'accumuler derrière autant de lignes rouges.
 
+#### Un chemin trop long n'arrête plus le retrait à mi-chemin (#1590)
+
+Sans `core.longpaths`, Git for Windows supprime les entrées du worktree **dans l'ordre** — son
+`.git` parmi les premières —, s'arrête au **premier chemin au-delà de MAX_PATH** (`Filename too
+long`, code 255) et désenregistre le worktree quand même. Il reste un dossier **plein** qu'aucun
+worktree ne revendique, que `gc` nomme sans y toucher : c'est la règle ci-dessus, et elle a raison,
+puisque plus rien ne prouve que ce dossier est un déchet. Observé le 2026-11-04 sur #1544 et #1580,
+deux tickets mergés : dans celui de #1580, tout ce qui précède `apps/web/node_modules` avait disparu,
+`node_modules` était entamé, et tout ce qui le suit (`CLAUDE.md`, `maestro/`, `tests/`…) était intact.
+Un `node_modules` installé sur place suffit à le déclencher, et les venvs d'un rejeu réel sous
+`.maestro/session/` aussi.
+
+Le retrait passe donc `-c core.longpaths=true` à `git worktree remove`, pour ce seul appel, dans
+`retire_worktree`, qui porte toute la séquence (`gc`, `remove`, retrait d'un avant). Ailleurs que
+sous Windows, l'option est sans effet. Deux suites, pour les cas où un dossier résiste malgré tout :
+la ligne de `gc` nomme la **cause rendue par git**, et `remove` ne promet plus le ramassage d'un
+dossier qui porte encore des fichiers, que rien ne ramassera. La garde de #422 ne bouge pas.
+
 #### L'état de la stack part avec son worktree (#1456)
 
 Chaque worktree a ses ports, donc sa stack, et `start.sh` range l'état de celle-ci — jeton de

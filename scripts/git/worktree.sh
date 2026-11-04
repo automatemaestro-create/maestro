@@ -97,7 +97,9 @@ Il écarte au passage les COQUILLES (#422) : les dossiers VIDES que `git worktre
 derrière lui quand un processus tient le dossier — il en supprime le contenu, échoue dessus, et
 désenregistre le worktree quand même. Personne ne les voyait (`git worktree list` ne les connaît
 plus), et une coquille BLOQUAIT le remontage de son ticket. Un dossier inconnu qui porte quelque
-chose est nommé, jamais touché.
+chose est nommé, jamais touché ; c'est pourquoi le retrait passe `core.longpaths` à git (#1590) —
+sous Windows, un chemin au-delà de MAX_PATH arrêtait la suppression à mi-chemin, worktree
+désenregistré et dossier plein.
 
 Après ses retraits, il retire l'ÉTAT DE LA STACK des copies parties (#1456) — jeton, chien de garde
 et profil de fenêtre que `start.sh` range sous `<temp>/maestro/controltower-<api>-<ui>` —, jamais
@@ -1029,8 +1031,15 @@ commande_remove() {
     # connaît plus), c'est un dossier à supprimer quand ce qui le tient l'aura lâché.
     erreur "worktree désenregistré, mais son dossier résiste :"
     printf '%s\n' "$RETRAIT_ERREUR" >&2
-    printf '  Il ne reste qu'\''une coquille vide : %s\n' "$(chemin_natif "$chemin")" >&2
-    printf '  Elle sera écartée au prochain ramassage (worktree.sh gc), ou à la main.\n' >&2
+    if [ -z "$(ls -A "$chemin" 2>/dev/null)" ]; then
+      printf '  Il ne reste qu'\''une coquille vide : %s\n' "$(chemin_natif "$chemin")" >&2
+      printf '  Elle sera écartée au prochain ramassage (worktree.sh gc), ou à la main.\n' >&2
+    else
+      # `gc` ne touche jamais à un dossier inconnu qui porte quelque chose (#422) : promettre son
+      # ramassage, c'est le laisser là sans que personne ne le sache.
+      printf '  Le dossier porte encore des fichiers : %s\n' "$(chemin_natif "$chemin")" >&2
+      printf '  Aucun ramassage ne le touchera plus : il se supprime à la main.\n' >&2
+    fi
     return 1
   else
     erreur "git worktree remove a échoué :"
@@ -2154,8 +2163,15 @@ occupe_par() {
 # retire_worktree <chemin> <force 0|1> <verbeux 0|1> : la séquence de retrait, écrite UNE FOIS —
 # délier PUIS retirer. L'ordre est le garde-fou de #152 : `git worktree remove` descend dans les
 # jonctions et viderait le .venv et le node_modules du CLONE PRINCIPAL. Rend 0 si le worktree est
-# parti ; sinon 1, la sortie de git étant laissée dans RETRAIT_ERREUR (sa cause varie : « Filename
-# too long » sur un node_modules profond, worktree verrouillé, dossier occupé par un shell…).
+# parti ; sinon 1, la sortie de git étant laissée dans RETRAIT_ERREUR (worktree verrouillé, dossier
+# occupé par un shell…).
+#
+# `core.longpaths` est passé à git pour ce seul appel (#1590) : sans lui, Git for Windows supprime
+# les entrées dans l'ordre — le `.git` du worktree parmi les premières —, s'arrête au premier chemin
+# au-delà de MAX_PATH (un `node_modules` installé sur place, les venvs d'un rejeu sous
+# `.maestro/session/`) et désenregistre quand même. Il resterait un dossier PLEIN qu'aucun worktree
+# ne revendique, que `ramasse_coquilles` nomme sans jamais y toucher. Ailleurs que sous Windows,
+# l'option est sans effet.
 #
 # En échec, RETRAIT_DESENREGISTRE dit LEQUEL des deux échecs : `0`, le worktree est intact et le
 # retrait reste à faire ; `1`, git l'a bel et bien désenregistré et seul le dossier résiste — dire
@@ -2165,7 +2181,7 @@ RETRAIT_ERREUR=""
 RETRAIT_DESENREGISTRE=0
 retire_worktree() {
   local chemin="$1" force="$2" verbeux="$3" principal artefact sortie
-  local args=(worktree remove)
+  local args=(-c core.longpaths=true worktree remove)
   principal="$(depot_principal)" || return 1
   RETRAIT_ERREUR=""
   for artefact in .venv .tools apps/web/node_modules; do
@@ -2474,10 +2490,11 @@ commande_gc() {
       # de son ordre). Ici tout le compte rendu part sur stdout, en un bloc.
       echecs=$((echecs + 1))
       if [ "$RETRAIT_DESENREGISTRE" = 1 ]; then
-        # « non retiré » serait faux : git ne le connaît plus. Ce qui reste est une coquille, et
-        # c'est le prochain passage ici qui l'écartera (#422).
-        rapport="$rapport$(printf '  ⚠ #%s désenregistré, son dossier résiste : %s' \
-          "$iid" "$(chemin_natif "$chemin")")"$'\n'
+        # « non retiré » serait faux : git ne le connaît plus. Ce qui reste est une coquille, que le
+        # prochain passage écartera si elle est vide (#422). La cause rendue par git suit sur sa
+        # ligne : sans elle, il faut reproduire la panne pour savoir ce qui retient le dossier.
+        rapport="$rapport$(printf '  ⚠ #%s désenregistré, son dossier résiste : %s\n    git : %s' \
+          "$iid" "$(chemin_natif "$chemin")" "$(printf '%s' "$RETRAIT_ERREUR" | head -1)")"$'\n'
       else
         rapport="$rapport$(printf '  ✗ #%s non retiré : %s' "$iid" "$(printf '%s' "$RETRAIT_ERREUR" | head -1)")"$'\n'
       fi
