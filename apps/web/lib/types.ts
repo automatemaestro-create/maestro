@@ -3346,7 +3346,21 @@ export type MembreEquipe = {
   instances: number;
   /** Le rôle a, à l'écran, le navigateur de Maestro (#1532). */
   navigateur: boolean;
+  /**
+   * Le playbook que la carte montre (#1521) : le modèle répond sur ce qu'il a lu,
+   * et une convention fixée en mots gagne chaque rôle qu'elle contredit.
+   */
+  playbook: string;
 };
+
+/**
+ * Le playbook d'un rôle montré, réécrit pour suivre ce que la personne a fixé
+ * (#1521) — nommé comme sur le rôle, pour se poser sur sa ligne tel quel.
+ */
+export type PlaybookCorrige = Pick<
+  RoleEquipe,
+  "playbook" | "playbook_origine" | "playbook_raison"
+>;
 
 /**
  * Ce qu'une demande en langage naturel change à l'équipe montrée
@@ -3367,6 +3381,11 @@ export type CorrectionEquipe = {
    * les rôles montrés (#1532). Absent d'une correction servie avant.
    */
   navigateur?: Record<string, boolean>;
+  /**
+   * Les playbooks des rôles montrés que la demande contredisait, réécrits pour la
+   * suivre (#1521). Absent d'une correction servie avant.
+   */
+  playbooks?: Record<string, PlaybookCorrige>;
   cree: boolean;
 };
 

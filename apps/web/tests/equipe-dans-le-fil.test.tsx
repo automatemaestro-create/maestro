@@ -683,10 +683,18 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
     expect(developpeur).not.toHaveTextContent("une instance suffit à ce volume");
 
     // La seconde demande est partie sur l'équipe **déjà** corrigée par la première.
+    const playbook = "Tu écris le code de Dépensio.";
     expect(corrigerEquipe.mock.calls[1][2]).toEqual([
-      { nom: "dev", role: "Développeur", retenu: true, instances: 1, navigateur: false },
-      { nom: "qa", role: "QA", retenu: true, instances: 1, navigateur: false },
-      { nom: "interface", role: "Designer", retenu: false, instances: 1, navigateur: false },
+      { nom: "dev", role: "Développeur", retenu: true, instances: 1, navigateur: false, playbook },
+      { nom: "qa", role: "QA", retenu: true, instances: 1, navigateur: false, playbook },
+      {
+        nom: "interface",
+        role: "Designer",
+        retenu: false,
+        instances: 1,
+        navigateur: false,
+        playbook,
+      },
     ]);
 
     await userEvent.click(within(carte).getByRole("button", { name: "Créer l'équipe (3)" }));
@@ -718,9 +726,63 @@ describe("corriger l'équipe avec ses mots (#1331)", () => {
     const [projet, texte, equipe] = corrigerEquipe.mock.calls[0];
     expect(projet).toBe("prj-autre0001");
     expect(texte).toBe("remets les tests");
+    // Chaque rôle part avec le playbook que la carte montre (#1521) : le modèle
+    // répond sur ce qu'il a lu.
+    const playbook = "Tu écris le code de Dépensio.";
     expect(equipe).toEqual([
-      { nom: "dev", role: "Développeur", retenu: true, instances: 3, navigateur: false },
-      { nom: "qa", role: "QA", retenu: false, instances: 1, navigateur: false },
+      { nom: "dev", role: "Développeur", retenu: true, instances: 3, navigateur: false, playbook },
+      { nom: "qa", role: "QA", retenu: false, instances: 1, navigateur: false, playbook },
+    ]);
+  });
+
+  it("une convention dite en mots réécrit chaque playbook qui la contredisait, sans remplacer de rôle", async () => {
+    // #1521 : la personne nomme le testeur, le développeur disait aussi « unittest ».
+    const pytest = (texte: string) => ({
+      playbook: texte,
+      playbook_origine: "genere" as const,
+      playbook_raison: "playbook réécrit pour suivre votre demande « les tests avec pytest »",
+    });
+    corrigerEquipe.mockResolvedValue(
+      correction({
+        playbooks: {
+          dev: pytest("Tu écris le code de Dépensio. Ses tests s'écrivent avec pytest."),
+          qa: pytest("Tu écris les tests de Dépensio avec pytest."),
+        },
+        reponse: "Le développeur et le testeur suivent désormais pytest.",
+      }),
+    );
+    const recruter = vi.fn(async () => {});
+    poserFilAssistance({ messages: [demandeDeRecrutement()], recruter });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteChargee();
+
+    await demander(carte, "les tests avec pytest");
+
+    expect(await within(carte).findByRole("status")).toHaveTextContent(
+      "Le développeur et le testeur suivent désormais pytest.",
+    );
+    // La demande a été prise : le champ se vide.
+    expect(champ(carte)).toHaveValue("");
+    await userEvent.click(within(carte).getByRole("button", { name: "Voir l'équipe" }));
+    const qa = within(carte).getByRole("checkbox", { name: /QA/ }).closest("li") as HTMLElement;
+    // La même ligne, toujours retenue, porte le playbook réécrit et sa raison — ni
+    // retrait, ni rôle « ajouté » à sa place.
+    expect(within(qa).getByRole("checkbox")).toBeChecked();
+    expect(qa).toHaveTextContent("Tu écris les tests de Dépensio avec pytest.");
+    expect(qa).toHaveTextContent("Voir le playbook (écrit pour ce projet)");
+    expect(qa).toHaveTextContent("réécrit pour suivre votre demande");
+    expect(within(carte).queryByText("ajouté à votre demande")).toBeNull();
+
+    await userEvent.click(within(carte).getByRole("button", { name: "Créer l'équipe (2)" }));
+    await waitFor(() => expect(recruter).toHaveBeenCalledTimes(1));
+    const [, roles] = recruter.mock.calls[0] as unknown as [
+      boolean,
+      { nom: string; playbook: string }[],
+    ];
+    // Ce qui est créé est ce qui a été montré : les deux playbooks réécrits.
+    expect(roles.map((r) => [r.nom, r.playbook])).toEqual([
+      ["dev", "Tu écris le code de Dépensio. Ses tests s'écrivent avec pytest."],
+      ["qa", "Tu écris les tests de Dépensio avec pytest."],
     ]);
   });
 
@@ -1017,6 +1079,29 @@ describe("appliquerCorrection — la règle, sans écran", () => {
     expect(apres.retenus.has("qa")).toBe(true);
   });
 
+  it("un playbook réécrit se pose sur sa ligne, qui garde sa place ; un nom inconnu ne crée rien", () => {
+    const reecrit = {
+      playbook: "Tu écris les tests avec pytest.",
+      playbook_origine: "genere" as const,
+      playbook_raison: "réécrit pour suivre votre demande",
+    };
+    const apres = appliquerCorrection(
+      montree,
+      correction({ playbooks: { qa: reecrit, inconnu: reecrit } }),
+    );
+
+    expect(apres.roles.map((r) => r.nom)).toEqual(["dev", "qa"]);
+    expect(apres.roles[1]).toMatchObject(reecrit);
+    expect(apres.roles[0].playbook).toBe(PROPOSITION.roles[0].playbook);
+    expect(apres.ajoutes).toEqual([]);
+    expect(apres.change).toBe(true);
+    // Le même texte rendu à l'identique n'a rien changé.
+    const identique = { ...reecrit, playbook: PROPOSITION.roles[1].playbook };
+    expect(appliquerCorrection(montree, correction({ playbooks: { qa: identique } })).change).toBe(
+      false,
+    );
+  });
+
   it("le navigateur redonné à qui l'a déjà ne change rien ; retiré, il change", () => {
     const web = { ...montree, roles: [role({ navigateur: true }), PROPOSITION.roles[1]] };
 
@@ -1088,9 +1173,10 @@ describe("le navigateur de Maestro (#1532)", () => {
 
     // Le modèle a su qui l'avait : l'équipe montrée le dit.
     await waitFor(() => expect(corrigerEquipe).toHaveBeenCalledTimes(1));
+    const playbook = "Tu écris le code de Dépensio.";
     expect(corrigerEquipe.mock.calls[0][2]).toEqual([
-      { nom: "dev", role: "Développeur", retenu: true, instances: 1, navigateur: true },
-      { nom: "qa", role: "QA", retenu: true, instances: 1, navigateur: false },
+      { nom: "dev", role: "Développeur", retenu: true, instances: 1, navigateur: true, playbook },
+      { nom: "qa", role: "QA", retenu: true, instances: 1, navigateur: false, playbook },
     ]);
     await within(carte).findByText("Le développeur n'a plus le navigateur.");
     expect(carte).not.toHaveTextContent("Navigateur de Maestro —");

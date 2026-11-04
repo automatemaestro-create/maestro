@@ -43,6 +43,7 @@ composition entière ; chacun a sa conduite, et elle **se dit** :
 | un nom pris, réservé ou déjà montré | rendu libre par un suffixe |
 | des compétences en prose | ramenées aux tags que le routage sait apparier |
 | un navigateur qui n'est pas un booléen | le rôle ne le reçoit pas (#1532) |
+| un playbook à réécrire hors de l'équipe montrée, ou sans consigne | rien n'est réécrit (#1521) |
 
 Une réponse qui ne laisse **aucun** rôle vérifié lève `CompositionIllisible` : ce
 n'est pas une équipe vide, c'est une réponse inexploitable — et le service retombe
@@ -75,6 +76,7 @@ from maestro.equipe.modele import (
     ORIGINE_COMPOSITION_MODELE,
     ORIGINE_PLAYBOOK_ESQUISSE,
     ORIGINE_PLAYBOOK_GABARIT,
+    ORIGINE_PLAYBOOK_GENERE,
     PropositionEquipe,
     RoleEcarte,
     RolePropose,
@@ -172,6 +174,7 @@ Réponds par UN SEUL objet JSON, sans rien autour :
   "remis": ["noms de rôles retirés de l'équipe montrée à remettre"],
   "instances": {"nom d'un rôle de l'équipe montrée": 2},
   "navigateur": {"nom d'un rôle de l'équipe montrée": false},
+  "playbooks": {"nom d'un rôle de l'équipe montrée": "ce que son playbook suivra, en une phrase"},
   "reponse": "une ou deux phrases adressées à la personne"
 }
 
@@ -182,6 +185,14 @@ les yeux, ne mets dans "roles" que les rôles à ajouter ; remplis "retraits", "
 retirer) selon ce qu'elle demande, et dis-lui dans "reponse" ce que tu as fait —
 ou, si sa demande ne porte pas sur l'équipe ou reste ambiguë, ce qu'il te faudrait
 savoir, sans rien changer. Ne devine jamais : ne change que ce qu'elle a demandé.
+
+Quand sa demande fixe une convention du projet — un outil, une bibliothèque, une façon
+de tester ou d'écrire —, relis le playbook de CHAQUE rôle montré : nomme dans
+"playbooks" tous ceux qui la contredisent, celui qu'elle cite comme les autres, avec ce
+que chacun doit désormais suivre. Maestro les réécrit, sans retirer ni remplacer le
+rôle. Ne dis jamais ce qu'un playbook prescrit, ni ce qu'un agent fera, sans l'avoir lu
+dans ce qu'on te donne : un playbook qu'on ne t'a pas transmis, tu ne sais pas ce qu'il
+dit.
 
 Les raisons — celles des rôles écartés comprises — et la réponse sont lues telles
 quelles par la personne : adresse-toi à elle, « vous avez répondu », « vos réponses »,
@@ -215,6 +226,12 @@ class MembreActuel:
 
     `navigateur` (#1532) dit si ce rôle a, à l'écran, le navigateur de Maestro :
     « retire-lui le navigateur » ne se comprend pas sans savoir qui l'a.
+
+    `playbook` (#1521) est celui que la personne lit sur la carte. Sans lui, le
+    modèle répondait sur ce qu'un agent ferait sans l'avoir lu — « la commande de
+    test est déjà pytest, c'est elle qu'il utilisera » d'un testeur à qui son
+    playbook imposait `unittest` —, et une convention corrigée en mots ne pouvait
+    gagner que le rôle nommé. Vide : non transmis, et le modèle le sait.
     """
 
     nom: str
@@ -222,6 +239,7 @@ class MembreActuel:
     retenu: bool = True
     instances: int = 1
     navigateur: bool = False
+    playbook: str = ""
 
 
 @dataclass(frozen=True)
@@ -239,7 +257,28 @@ class ReponseModele:
     remis: tuple[str, ...] = ()
     instances: Mapping[str, Any] = field(default_factory=dict)
     navigateur: Mapping[str, Any] = field(default_factory=dict)
+    playbooks: Mapping[str, Any] = field(default_factory=dict)
     reponse: str = ""
+
+
+@dataclass(frozen=True)
+class PlaybookCorrige:
+    """Le playbook d'un rôle montré, réécrit pour suivre ce que la personne a fixé (#1521).
+
+    Nommé comme sur un rôle (`playbook_origine`, `playbook_raison`) : la carte le pose
+    sur la ligne qu'il corrige sans rien traduire. L'origine est `genere` — écrit
+    pour ce projet par le modèle —, et la raison dit la demande qu'il suit.
+    """
+
+    playbook: str
+    raison: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "playbook": self.playbook,
+            "playbook_origine": ORIGINE_PLAYBOOK_GENERE,
+            "playbook_raison": self.raison,
+        }
 
 
 @dataclass(frozen=True)
@@ -252,6 +291,12 @@ class CorrectionEquipe:
     l'équipe montrée — `navigateur` (#1532) dit à qui le navigateur de Maestro est
     donné (`True`) ou retiré (`False`). `reponse` est la phrase que l'écran affiche à
     la personne.
+
+    `consignes` (#1521) nomme, parmi les rôles montrés, ceux dont le playbook
+    contredit la convention que la demande fixe, avec ce que chacun doit suivre ;
+    `playbooks` porte ceux que Maestro a réécrits. Les deux ne coïncident pas
+    toujours : un playbook non transmis ou une réécriture qui échoue reste tel qu'il
+    était, et la réponse le dit (`maestro.controltower.equipe`).
     """
 
     reponse: str
@@ -260,6 +305,8 @@ class CorrectionEquipe:
     remis: tuple[str, ...] = ()
     instances: Mapping[str, int] = field(default_factory=dict)
     navigateur: Mapping[str, bool] = field(default_factory=dict)
+    consignes: Mapping[str, str] = field(default_factory=dict)
+    playbooks: Mapping[str, PlaybookCorrige] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """La correction en JSON — `cree: False`, comme toute proposition (#1040)."""
@@ -270,6 +317,7 @@ class CorrectionEquipe:
             "remis": list(self.remis),
             "instances": dict(self.instances),
             "navigateur": dict(self.navigateur),
+            "playbooks": {nom: corrige.to_dict() for nom, corrige in self.playbooks.items()},
             "cree": False,
         }
 
@@ -309,6 +357,9 @@ def prompt_correction(
     La demande vient **en dernier**, juste avant la consigne : c'est la matière
     qu'on traite, et la règle du fil global vaut ici — ce qui ferme le prompt se lit
     comme une instruction, donc la consigne est la nôtre, pas la sienne.
+
+    Les playbooks montrés suivent l'équipe (#1521) : le modèle répond sur ce qu'il a
+    lu, et nomme chaque rôle qu'une convention fixée par la demande contredit.
     """
     lignes = [f"- {m.nom} — {m.role}{_etat_du_membre(m)}" for m in equipe]
     return "\n".join(
@@ -318,6 +369,7 @@ def prompt_correction(
             "",
             "\n".join(lignes) if lignes else "- (aucun rôle)",
             "",
+            *_playbooks_montres(equipe),
             "Demande de la personne, avec ses mots :",
             "",
             demande_valide(demande),
@@ -342,6 +394,24 @@ def demande_valide(demande: str) -> str:
             "dites en une phrase ce que vous voulez changer à l'équipe."
         )
     return phrase
+
+
+_PLAYBOOK_NON_TRANSMIS = "(playbook non transmis : tu ne sais pas ce qu'il dit)"
+
+
+def _playbooks_montres(equipe: Sequence[MembreActuel]) -> tuple[str, ...]:
+    """Le playbook de chaque rôle montré, tel que la personne le lit — ou qu'il manque.
+
+    Un playbook absent se **dit** au lieu de se taire : le modèle sait alors qu'il ne
+    sait pas ce qu'il prescrit, et le cadre lui interdit d'en rien affirmer.
+    """
+    if not equipe:
+        return ()
+    blocs: list[str] = ["Playbooks de l'équipe montrée, tels que la personne les lit :", ""]
+    for membre in equipe:
+        blocs += [f"### {membre.nom} — {membre.role}", ""]
+        blocs += [membre.playbook.strip() or _PLAYBOOK_NON_TRANSMIS, ""]
+    return tuple(blocs)
 
 
 def _etat_du_membre(membre: MembreActuel) -> str:
@@ -467,9 +537,11 @@ def lire_reponse(texte: str) -> ReponseModele:
         raise CompositionIllisible(
             "la réponse du modèle n'a pas la forme attendue (des listes de rôles et de noms)"
         )
-    # Le navigateur (#1532) n'a de forme qu'en correction : une composition qui le
-    # poserait au mauvais niveau ne perd pas son équipe pour autant — il est ignoré.
+    # Le navigateur (#1532) et les playbooks à réécrire (#1521) n'ont de forme qu'en
+    # correction : une composition qui les poserait au mauvais niveau ne perd pas son
+    # équipe pour autant — ils sont ignorés.
     navigateur = objet.get("navigateur")
+    playbooks = objet.get("playbooks")
     return ReponseModele(
         roles=tuple(r for r in roles if isinstance(r, dict)),
         ecartes=tuple(e for e in ecartes if isinstance(e, dict)),
@@ -477,6 +549,7 @@ def lire_reponse(texte: str) -> ReponseModele:
         remis=tuple(str(n) for n in remis if isinstance(n, str)),
         instances=instances,
         navigateur=navigateur if isinstance(navigateur, dict) else {},
+        playbooks=playbooks if isinstance(playbooks, dict) else {},
         reponse=_texte(objet.get("reponse")),
     )
 
@@ -579,19 +652,27 @@ def corriger_equipe(
         for nom, brut in reponse.navigateur.items()
         if nom in montres and isinstance(brut, bool)
     }
+    # Une consigne par rôle montré, en une ligne : un nom inventé ne réécrit rien, et
+    # une consigne vide ne dit pas quoi suivre (#1521).
+    consignes = {
+        nom: consigne
+        for nom, brut in reponse.playbooks.items()
+        if nom in montres and (consigne := _une_ligne(_texte(brut)))
+    }
     phrase = reponse.reponse
     if rejets:
         phrase = f"{phrase} ({'; '.join(rejets)})".strip()
-    if not (ajouts or retraits or remis or instances or navigateur or phrase):
+    if not (ajouts or retraits or remis or instances or navigateur or consignes or phrase):
         raise CompositionIllisible("le modèle n'a rien changé et n'a rien répondu")
     return CorrectionEquipe(
         reponse=phrase
-        or _reponse_par_defaut(ajouts, retraits, remis, instances, navigateur),
+        or _reponse_par_defaut(ajouts, retraits, remis, instances, navigateur, consignes),
         ajouts=tuple(ajouts),
         retraits=retraits,
         remis=remis,
         instances=instances,
         navigateur=navigateur,
+        consignes=consignes,
     )
 
 
@@ -601,6 +682,7 @@ def _reponse_par_defaut(
     remis: Sequence[str],
     instances: Mapping[str, int],
     navigateur: Mapping[str, bool] | None = None,
+    consignes: Mapping[str, str] | None = None,
 ) -> str:
     """Ce qu'on dit quand le modèle a changé l'équipe sans rien en dire."""
     morceaux = []
@@ -620,6 +702,8 @@ def _reponse_par_defaut(
         morceaux.append("navigateur de Maestro donné à : " + ", ".join(donne))
     if retire:
         morceaux.append("navigateur de Maestro retiré à : " + ", ".join(retire))
+    if consignes:
+        morceaux.append("playbook à réécrire pour suivre votre demande : " + ", ".join(consignes))
     return "Équipe modifiée — " + " ; ".join(morceaux) + "."
 
 

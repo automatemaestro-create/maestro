@@ -1202,9 +1202,12 @@ class MembreEquipeRequete(BaseModel):
     """Un rôle de l'équipe **telle que l'écran la montre** au moment d'une demande (#1159).
 
     Le nom, le libellé, et les deux choses que la personne a pu ajuster : la case
-    (`retenu`) et le nombre d'instances. Ni playbook ni politique : la correction
-    ne les lit pas, et ce qui repart à la création reste ce que l'écran tient.
+    (`retenu`) et le nombre d'instances. Pas de politique : la correction ne la lit
+    pas, et ce qui repart à la création reste ce que l'écran tient.
     `navigateur` (#1532) : ce rôle a-t-il, à l'écran, le navigateur de Maestro.
+    `playbook` (#1521) : celui que la carte montre — le modèle répond sur ce qu'il a
+    lu, et une convention fixée en mots gagne chaque rôle qu'elle contredit. Absent
+    d'une carte servie avant : non transmis, et le modèle le sait.
     """
 
     nom: str
@@ -1212,6 +1215,7 @@ class MembreEquipeRequete(BaseModel):
     retenu: bool = True
     instances: int = 1
     navigateur: bool = False
+    playbook: str = ""
 
 
 class CorrectionEquipeRequete(QuestionnaireOutillageRequete):
@@ -1233,6 +1237,7 @@ class CorrectionEquipeRequete(QuestionnaireOutillageRequete):
                 retenu=m.retenu,
                 instances=m.instances,
                 navigateur=m.navigateur,
+                playbook=m.playbook,
             )
             for m in self.equipe
         ]
@@ -6890,7 +6895,10 @@ def create_app(
         l'étape d'équipe la montre** (retraits et instances compris). Le modèle rend
         les rôles à **ajouter** — vérifiés comme une composition, playbooks écrits
         pour ce projet —, ceux à **retirer** ou à **remettre**, les **instances** à
-        changer, et une phrase qui répond à la personne (`reponse`).
+        changer, et une phrase qui répond à la personne (`reponse`). Une demande qui
+        fixe une convention du projet rend aussi les **playbooks** des rôles montrés
+        qu'elle contredisait, réécrits pour la suivre (#1521) : le modèle a lu ceux que
+        la carte montre, et la convention gagne tous les rôles, pas le seul nommé.
 
         **Rien n'est créé** (`cree: False`) : l'écran applique la correction à ce
         qu'il montre, et la création reste la validation (#1040). Retraits, remises

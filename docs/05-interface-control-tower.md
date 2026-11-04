@@ -7502,10 +7502,19 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
 - `POST /api/projets/{id}/equipe/correction` → `CorrectionEquipe` (#1159). La personne corrige
   l'équipe proposée **avec ses mots** — « ajoute quelqu'un pour la sécurité » — depuis la carte
   d'équipe du fil (#1331). Corps : `demande` (une phrase, 500 caractères au plus), `equipe`
-  (l'équipe **telle que la carte la montre** : `nom`, `role`, `retenu`, `instances`) et, facultatifs,
-  les `choix` d'un questionnaire d'outillage. Rien n'est créé : la carte applique la correction à ce
-  qu'elle montre, et la création reste la route suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
+  (l'équipe **telle que la carte la montre** : `nom`, `role`, `retenu`, `instances`, `navigateur`
+  et le `playbook` qu'on y lit) et, facultatifs, les `choix` d'un questionnaire d'outillage. Rien
+  n'est créé : la carte applique la correction à ce qu'elle montre, et la création reste la route
+  suivante. `422` sur une demande vide ou trop longue (refusée **avant** tout appel), **`502`** si le
   modèle ne répond pas — une correction n'a pas de repli, aucune règle ne comprend une phrase.
+  **Depuis #1521**, le modèle lit le playbook de chaque rôle montré : une demande qui fixe une
+  convention du projet — « le testeur écrit ses tests avec pytest » — **réécrit** chaque playbook
+  qui la contredit, celui que la phrase cite comme les autres, sans retirer ni remplacer le rôle ; et
+  il ne dit jamais ce qu'un playbook prescrit sans l'avoir lu. Une réécriture qui échoue laisse ce
+  playbook tel qu'il était, et la `reponse` le dit. À la proposition comme sur un rôle ajouté, le
+  playbook écrit pour le projet reçoit ce que la personne a répondu et ce que le projet montre : il
+  ne contredit aucune réponse, et une restriction bornée à une partie (« bibliothèque standard pour
+  le générateur ») n'y gagne pas tout le projet.
 - `POST /api/projets/{id}/equipe` → `EquipeCreee`, **201**. Le corps rapporte la proposition **telle
   que l'API l'a servie**, rôles retirés ou instances ajustées, rôles ajoutés par une correction
   compris.
@@ -7596,6 +7605,11 @@ l'équipe est refusée — jamais un `500`.
   "retraits": [],                     // des noms de l'équipe MONTRÉE, et eux seuls
   "remis": [],
   "instances": {},                    // { "dev": 2 }
+  "navigateur": {},                   // { "dev": false } (#1532)
+  // Les playbooks RÉÉCRITS pour suivre la demande (#1521), par nom de l'équipe
+  // montrée : la ligne garde sa place et sa case, seul son playbook change.
+  "playbooks": { "qa": { "playbook": "…", "playbook_origine": "genere",
+                         "playbook_raison": "playbook réécrit pour suivre votre demande « … » ; …" } },
   "cree": false
 }
 ```
