@@ -36,7 +36,7 @@ import shutil
 import socket
 import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -99,6 +99,29 @@ def _depot(racine: Path, message: str = "feat: socle", **fichiers: str) -> Path:
     _git(racine, "add", "-A")
     _git(racine, "commit", "--allow-empty", "-q", "-m", message)
     return racine
+
+
+def _historique(racine: Path, sujets: Sequence[str]) -> None:
+    """Des commits vides au bout de `main`, en un seul `git fast-import`.
+
+    Un long historique se fabrique en un processus : un `git commit` par sujet coûterait
+    une seconde par dizaine sous Windows.
+    """
+    flux = bytearray()
+    for rang, sujet in enumerate(sujets):
+        message = sujet.encode("utf-8")
+        flux += (
+            f"commit refs/heads/main\n"
+            f"committer banc <banc@exemple.invalid> {1_700_000_000 + rang} +0000\n"
+            f"data {len(message)}\n"
+        ).encode()
+        flux += message + b"\n"
+        if rang == 0:
+            flux += b"from refs/heads/main^0\n"
+        flux += b"\n"
+    subprocess.run(
+        ["git", "-C", str(racine), "fast-import", "--quiet"], input=bytes(flux), check=True
+    )
 
 
 class Horloge:
@@ -557,17 +580,22 @@ class LecteurFactice:
         self,
         *,
         commandes: str = _COMMANDES,
+        nommes: str = "",
         verdicts: Mapping[str, Avis] | None = None,
         injoignable: bool = False,
     ) -> None:
-        self._commandes, self._injoignable = commandes, injoignable
+        self._commandes, self._nommes, self._injoignable = commandes, nommes, injoignable
         self._verdicts = dict(verdicts or {})
         self.lus: list[str] = []
+        self.nominations: list[str] = []
         self.juges: list[str] = []
 
     def rediger(self, systeme: str, prompt: str) -> str:
         if self._injoignable:
             raise RuntimeError("fournisseur injoignable")
+        if systeme == gr.SYSTEME_LECTURES:
+            self.nominations.append(prompt)
+            return self._nommes
         self.lus.append(prompt)
         return self._commandes
 
@@ -697,6 +725,104 @@ def test_le_juge_lit_l_integration_continue_meme_sous_une_racine_chargee(tmp_pat
     _rejouer(tmp_path, lecteur, Joueur(), depot=depot)
     ci = next(prompt for prompt in lecteur.juges if "steps: [npm test]" in prompt)
     assert '<fichier chemin=".github/workflows/ci.yml">' in ci
+
+
+def _depot_au_long_historique(racine: Path) -> tuple[Path, str]:
+    """Le rejeu de #1505 dans le dépôt de Maestro (docs/51 § 3.2), en petit : plus de fichiers
+    que la liste n'en montre, des dossiers de configuration qui épuisent leur quota avant la CI,
+    des dizaines de titres de squash d'autres tickets — puis un livrable d'un seul commit.
+
+    Rend le dépôt et sa base : le commit d'où le livrable part.
+    """
+    fichiers = {f"src/module_{rang:03d}.py": "x = 1\n" for rang in range(gr.FICHIERS_LISTES + 10)}
+    fichiers |= {
+        f".claude/commands/c{rang:02d}.md": "# commande\n"
+        for rang in range(gr.FICHIERS_DE_CONFIGURATION_LUS + 2)
+    }
+    depot = _depot(
+        racine,
+        "chore: socle",
+        **fichiers,
+        **{
+            "CLAUDE.md": "Python : `.venv/Scripts/python.exe` sous Windows, "
+            "`.venv/bin/python` sous Unix.\n",
+            "src/portee.py": "def portee():\n    return None\n",
+            ".github/workflows/ci.yml": "jobs:\n  pytest:\n    steps: [pytest maestro]\n",
+        },
+    )
+    _historique(depot, [f"Titre du squash d'un autre ticket ({rang})" for rang in range(70)])
+    base = _git(depot, "rev-parse", "HEAD")
+    _depot(
+        depot,
+        "fix(portee): rendre le rm sur motif à une personne (Closes #1505)",
+        **{"src/portee.py": "def portee():\n    return 'personne'\n"},
+    )
+    return depot, base
+
+
+@AVEC_GIT
+def test_un_livrable_rejoue_contre_sa_base_est_juge_sur_ce_qu_il_change(tmp_path: Path) -> None:
+    """#1544 : la grille rendait 1/8 au livrable de la chaîne, jugé sur l'historique du dépôt,
+    sur une liste de fichiers où la CI n'apparaissait pas, et par la variante Unix d'une
+    commande sur un poste Windows."""
+    depot, base = _depot_au_long_historique(tmp_path / "depot")
+    lecteur = LecteurFactice(nommes="COMMANDES: aucun\nCI: .github/workflows/*\nOUTILLAGE: aucun")
+    poste = replace(_poste(Joueur()), systeme="Windows 11 (10.0.26300, AMD64)")
+
+    grille = gr.rejouer(
+        depot,
+        tmp_path / "clone",
+        choix=("tests : pytest",),
+        lecteur=lecteur,
+        poste=poste,
+        base=base[:8],
+    )
+
+    assert grille.base == base
+    # La liste montrée est tronquée, la CI n'y est pas et le quota des dossiers de
+    # configuration ne l'atteint pas : c'est la ligne qui l'a nommée, et elle est lue.
+    (nomination,) = lecteur.nominations
+    assert "… et" in nomination and "\n.github/workflows/ci.yml\n" not in nomination
+    assert '<fichier chemin=".github/workflows/ci.yml">' not in nomination
+    ci = next(prompt for prompt in lecteur.juges if "intégration continue écrite ?" in prompt)
+    assert '<fichier chemin=".github/workflows/ci.yml">' in ci and "pytest maestro" in ci
+    # Les commits jugés sont ceux du livrable depuis sa base, pas ceux du dépôt.
+    commits = next(prompt for prompt in lecteur.juges if "<commits>" in prompt)
+    assert "fix(portee)" in commits
+    assert "autre ticket" not in commits and "chore: socle" not in commits
+    # Ce que le livrable change depuis sa base est montré, et lu.
+    outillage = next(prompt for prompt in lecteur.juges if "chacun de ces choix" in prompt)
+    assert "src/portee.py" in outillage.split("Fichiers lus")[0]
+    assert '<fichier chemin="src/portee.py">' in outillage and "'personne'" in outillage
+    # Le lecteur de commandes sait sur quel système le clone se rejoue.
+    assert "Windows 11 (10.0.26300, AMD64)" in lecteur.lus[0]
+
+
+@AVEC_GIT
+def test_sans_base_les_commits_juges_sont_les_derniers_du_depot(tmp_path: Path) -> None:
+    """Un projet neuf (p5, #1512) n'a pas de base : son historique entier est le livrable."""
+    depot, _base = _depot_au_long_historique(tmp_path / "depot")
+    lecteur = LecteurFactice()
+    grille = _rejouer(tmp_path, lecteur, Joueur(), depot=depot)
+    assert grille.base == ""
+    commits = next(prompt for prompt in lecteur.juges if "<commits>" in prompt)
+    assert "fix(portee)" in commits and "autre ticket (69)" in commits
+
+
+@AVEC_GIT
+def test_une_base_que_le_livrable_ne_porte_pas_rend_la_grille_injouable(tmp_path: Path) -> None:
+    joueur = Joueur()
+    grille = gr.rejouer(
+        _livrable(tmp_path),
+        tmp_path / "clone",
+        choix=(),
+        lecteur=LecteurFactice(),
+        poste=_poste(joueur),
+        base="0123456789abcdef0123456789abcdef01234567",
+    )
+    assert all(ligne.etat == gr.INJOUABLE for ligne in grille.lignes)
+    assert "0123456789ab" in grille.lignes[0].detail
+    assert joueur.joues == []
 
 
 @AVEC_GIT
@@ -1121,6 +1247,32 @@ def test_rejouer_met_des_livrables_existants_cote_a_cote(tmp_path: Path) -> None
     assert "livrables rejoués seulement" in texte
 
 
+@AVEC_GIT
+def test_rejouer_juge_chaque_cote_depuis_sa_base(tmp_path: Path) -> None:
+    """Les deux livrables d'un ticket (#1522) : chacun part de sa propre base (docs/51 § 3.1)."""
+    chaine, base = _depot_au_long_historique(tmp_path / "chaine")
+    maestro = _depot(tmp_path / "maestro", "Maestro : socle", **{"README.md": "# m\n"})
+
+    code, sortie, erreur, rapports = _main(
+        tmp_path,
+        "--rejouer",
+        f"maestro={maestro}",
+        "--rejouer",
+        f"chaine={chaine}",
+        f"--base=chaine={base[:10]}",
+        "--axes",
+        "commits",
+    )
+    assert code == cmp.CODE_ECRIT, erreur
+    assert f"chaine · livrable {chaine} depuis {base[:10]}" in sortie
+    dossier = rapports / "20261015-120000"
+    donnees = json.loads((dossier / cmp.FICHIER_JSON).read_text("utf-8"))
+    bases = {p["cote"]: p["grille"]["base"] for p in donnees["passages"]}
+    assert bases == {"maestro": "", "chaine": base}
+    texte = (dossier / cmp.FICHIER_MARKDOWN).read_text("utf-8")
+    assert f"depuis la base `{base[:12]}`" in texte
+
+
 @pytest.mark.parametrize(
     "arguments, motif",
     [
@@ -1131,6 +1283,8 @@ def test_rejouer_met_des_livrables_existants_cote_a_cote(tmp_path: Path) -> None
         (["--jour", "0"], "--jour doit être > 0"),
         (["--axes", "vitesse"], "--axes"),
         (["--rejouer", "c2"], "<côté>=<dépôt>"),
+        (["--rejouer", "chaine=d", "--base", "de9564ce"], "<côté>=<commit>"),
+        (["--rejouer", "chaine=d", "--base", "seul=de9564ce"], "aucun --rejouer pour seul"),
         (["--objectif", "inexistant"], "objectif inconnu"),
         (["--verbeux"], "argument inconnu"),
     ],

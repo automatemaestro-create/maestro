@@ -350,7 +350,11 @@ le rapport des médianes, Maestro sur l'agent seul. Vient ensuite la grille lign
 déroulé de chaque passage. Le banc ne rend **aucun verdict** : le go/no-go se tranche sur ses
 chiffres. `--rejouer <côté>=<dépôt>` rejoue seulement la grille sur des livrables qui existent déjà,
 côte à côte, sans modèle pour les construire : les livrables de C2 et C3, ou les deux livrables d'un
-ticket (#1522). Comme le banc des scénarios, il n'est **pas en CI**. Sur p5, un passage coûte de
+ticket (#1522). Le livrable d'un ticket sur un dépôt existant se rejoue contre sa base
+(`--base <côté>=<commit>`) : ses commits et son diff se jugent depuis elle, pas sur l'historique du
+dépôt (#1544). Sur un gros dépôt, chaque ligne nomme les fichiers qu'elle doit lire, et le lecteur
+de commandes sait sur quel système le clone se rejoue. Comme le banc des scénarios, il n'est
+**pas en CI**. Sur p5, un passage coûte de
 l'ordre de 16 $ côté Maestro et 8 $ côté agent seul : la commande l'annonce avant de jouer, et un
 passage au vrai modèle s'annonce aussi à la personne.
 

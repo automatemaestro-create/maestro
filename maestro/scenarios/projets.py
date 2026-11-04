@@ -1095,18 +1095,55 @@ def fichiers_suivis(dossier: Path) -> tuple[str, ...]:
     return tuple(chemin for chemin in resultat.stdout.split("\0") if chemin)
 
 
-def sujets_des_commits(dossier: Path, *, nombre: int) -> tuple[str, ...]:
+def sujets_des_commits(dossier: Path, *, nombre: int, depuis: str = "") -> tuple[str, ...]:
     """Les sujets des `nombre` derniers commits de `dossier`, du plus récent au plus ancien (#1512).
 
+    `depuis` borne l'histoire à ce que `HEAD` ajoute à ce commit (`depuis..HEAD`) : le
+    livrable d'un ticket sur un dépôt existant, sans l'historique de ceux d'avant (#1544).
     Vide sur un dépôt sans commit. Lève `OSError` si Git ne répond pas.
     """
-    resultat = _git(dossier, "log", f"-n{nombre}", "--format=%s")
+    plage = (f"{depuis}..HEAD",) if depuis else ()
+    resultat = _git(dossier, "log", f"-n{nombre}", "--format=%s", *plage)
     if resultat.returncode != 0:
         # Un dépôt sans commit : `git log` le dit en échouant, et il n'y a rien à lire.
         if _git(dossier, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
             return ()
         raise OSError(f"`git log` illisible dans {dossier} : {_message(resultat)}")
     return tuple(ligne for ligne in resultat.stdout.splitlines() if ligne.strip())
+
+
+def commit_de(dossier: Path, reference: str) -> str | None:
+    """Le commit complet que `reference` désigne dans `dossier` — `None` s'il n'en désigne aucun.
+
+    Une référence qui commence par un tiret n'en désigne aucun : Git la lirait comme une
+    option. Lève `OSError` si Git ne répond pas.
+    """
+    if not reference or reference.startswith("-"):
+        return None
+    resultat = _git(dossier, "rev-parse", "--verify", "--quiet", f"{reference}^{{commit}}")
+    if resultat.returncode != 0:
+        return None
+    return resultat.stdout.strip() or None
+
+
+#: Les états d'un fichier dans un diff, en mots (`git diff --name-status`).
+ETATS_DU_DIFF: dict[str, str] = {"A": "ajouté", "M": "modifié", "D": "supprimé", "T": "modifié"}
+
+
+def changements_depuis(dossier: Path, base: str) -> tuple[tuple[str, str], ...]:
+    """Ce que `HEAD` change depuis `base` : `(état, chemin)` par fichier, en chemins POSIX (#1544).
+
+    L'état est celui de `ETATS_DU_DIFF` ; un renommage se lit comme une suppression et un
+    ajout. Lève `OSError` si Git ne répond pas.
+    """
+    resultat = _git(dossier, "diff", "--name-status", "--no-renames", "-z", base, "HEAD")
+    if resultat.returncode != 0:
+        raise OSError(f"`git diff` illisible dans {dossier} : {_message(resultat)}")
+    morceaux = [morceau for morceau in resultat.stdout.split("\0") if morceau]
+    return tuple(
+        (ETATS_DU_DIFF.get(etat[:1], etat), chemin)
+        for etat, chemin in zip(morceaux[::2], morceaux[1::2], strict=False)
+    )
 
 
 def salissures(dossier: Path) -> tuple[str, ...]:
