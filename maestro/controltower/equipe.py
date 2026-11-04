@@ -96,7 +96,9 @@ from maestro.equipe import (
 )
 from maestro.equipe.composition import (
     CADRE_COMPOSITION,
+    CorrectionEquipe,
     MembreActuel,
+    PlaybookCorrige,
     corriger_equipe,
     demande_valide,
     lire_reponse,
@@ -105,6 +107,7 @@ from maestro.equipe.composition import (
     proposer_equipe_composee,
 )
 from maestro.equipe.modele import ORIGINE_PLAYBOOK_ESQUISSE
+from maestro.equipe.proposition import faits_du_projet
 from maestro.outillage import Analyse, Bornes, analyser
 from maestro.outillage.generation import choix_declares
 from maestro.outillage.modele import Constats, Recommandation
@@ -124,6 +127,20 @@ from maestro.providers.base import ModelProvider
 RAISON_PLAYBOOK_GENERE = (
     "playbook écrit pour ce projet à partir de l'intention ci-dessous ; "
     "il se relit et se modifie avant la validation"
+)
+
+#: La même, quand le rédacteur a reçu ce que la personne a dit du projet et ce qu'il
+#: montre (#1521) : c'est ce qui rend le playbook contestable sur une réponse, et la
+#: raison ne le tait pas.
+RAISON_PLAYBOOK_GENERE_SUR_LES_FAITS = (
+    "playbook écrit pour ce projet à partir de l'intention ci-dessous et de {sources}, "
+    "qu'il ne contredit pas ; il se relit et se modifie avant la validation"
+)
+
+#: Ce qu'on écrit sur le playbook d'un rôle montré, réécrit pour suivre une demande.
+RAISON_PLAYBOOK_CORRIGE = (
+    "playbook réécrit pour suivre votre demande « {demande} » ; il se relit et se "
+    "modifie avant la validation"
 )
 
 
@@ -311,7 +328,8 @@ class ServiceEquipe:
             if renfort is not None
             else await self._composer(projet, constats, recommandation, acquis, source)
         )
-        return (await self._avec_playbooks(proposition)).to_dict()
+        faits = _faits_pour_les_playbooks(constats, acquis)
+        return (await self._avec_playbooks(proposition, faits)).to_dict()
 
     async def corriger(
         self,
@@ -328,6 +346,15 @@ class ServiceEquipe:
         répond. Les ajouts sont vérifiés comme une composition, puis leurs playbooks
         **écrits pour ce projet** par #257 — un rôle ajouté par la parole est un rôle
         de plein droit.
+
+        Une demande qui fixe une **convention** du projet (#1521) — « le testeur écrit
+        ses tests avec pytest » — gagne chaque rôle montré dont le playbook la
+        contredit, pas seulement celui qu'elle nomme : le modèle a lu ces playbooks
+        (`MembreActuel.playbook`) et nomme les rôles avec ce qu'ils doivent suivre, puis
+        #257 les réécrit (`GenerateurDefinitionAgent.appliquer`), tous en même temps.
+        Un playbook non transmis ou une réécriture qui échoue reste tel qu'il était,
+        et la réponse le dit : la personne ne lit jamais « c'est réglé » d'un rôle qui
+        ne l'est pas.
 
         La demande est refusée **avant** tout appel si elle est vide ou trop longue
         (`ValueError`, un 422). Un modèle qui ne répond pas, ou hors contrat, lève
@@ -362,8 +389,58 @@ class ServiceEquipe:
             raise GenerationIndisponible(
                 f"la demande n'a pas pu être comprise : {exc}"
             ) from exc
-        ajouts = await self._roles_avec_playbooks(correction.ajouts)
-        return replace(correction, ajouts=ajouts).to_dict()
+        ajouts, corrigee = await asyncio.gather(
+            self._roles_avec_playbooks(
+                correction.ajouts, _faits_pour_les_playbooks(constats, acquis, phrase)
+            ),
+            self._playbooks_corriges(correction, phrase, equipe),
+        )
+        return replace(corrigee, ajouts=ajouts).to_dict()
+
+    async def _playbooks_corriges(
+        self, correction: CorrectionEquipe, demande: str, equipe: Sequence[MembreActuel]
+    ) -> CorrectionEquipe:
+        """La correction, chaque playbook qu'elle nomme réécrit — ou ce qui l'en a empêché, dit.
+
+        Les réécritures partent **en même temps** : ce sont des appels indépendants, un
+        par rôle. Aucune ne fait tomber les autres ni la correction : un échec laisse son
+        playbook tel quel, et la réponse le nomme à la suite de ce que le modèle a dit.
+        """
+        if not correction.consignes:
+            return correction
+        playbooks = {m.nom: m.playbook for m in equipe}
+        noms = list(correction.consignes)
+        issues = await asyncio.gather(
+            *(
+                self._reecrire(playbooks.get(nom, ""), demande, correction.consignes[nom])
+                for nom in noms
+            ),
+            return_exceptions=True,
+        )
+        reecrits: dict[str, PlaybookCorrige] = {}
+        empeches: list[str] = []
+        for nom, issue in zip(noms, issues, strict=True):
+            if isinstance(issue, BaseException):
+                empeches.append(
+                    f"le playbook de « {nom} » n'a pas pu être réécrit ({issue}) : il reste "
+                    "tel qu'il était"
+                )
+                continue
+            reecrits[nom] = PlaybookCorrige(
+                playbook=issue, raison=RAISON_PLAYBOOK_CORRIGE.format(demande=demande)
+            )
+        reponse = correction.reponse
+        if empeches:
+            reponse = f"{reponse} ({' ; '.join(empeches)})".strip()
+        return replace(correction, reponse=reponse, playbooks=reecrits)
+
+    async def _reecrire(self, playbook: str, demande: str, consigne: str) -> str:
+        """Un playbook montré réécrit par #257 — lève s'il n'a pas été transmis."""
+        if not playbook.strip():
+            raise ValueError("son texte n'a pas été transmis avec l'équipe montrée")
+        return await self._generateur_actif().appliquer(
+            playbook, demande=demande, consigne=consigne
+        )
 
     async def _composer(
         self,
@@ -585,7 +662,9 @@ class ServiceEquipe:
             definis = ()
         return tuple(definis) + tuple(sorted(NOMS_RESERVES))
 
-    async def _avec_playbooks(self, proposition: PropositionEquipe) -> PropositionEquipe:
+    async def _avec_playbooks(
+        self, proposition: PropositionEquipe, faits: tuple[str, str]
+    ) -> PropositionEquipe:
         """La proposition, chaque playbook écrit pour ce projet quand c'est possible.
 
         Les rôles sont traités **en même temps** : ce sont trois à cinq appels
@@ -596,19 +675,22 @@ class ServiceEquipe:
         if not proposition.roles:
             return proposition
         return replace(
-            proposition, roles=await self._roles_avec_playbooks(proposition.roles)
+            proposition, roles=await self._roles_avec_playbooks(proposition.roles, faits)
         )
 
     async def _roles_avec_playbooks(
-        self, roles: Sequence[RolePropose]
+        self, roles: Sequence[RolePropose], faits: tuple[str, str]
     ) -> tuple[RolePropose, ...]:
         """Chaque rôle, son playbook écrit pour ce projet — en même temps, jamais à la suite."""
         if not self._playbooks or not roles:
             return tuple(roles)
-        return tuple(await asyncio.gather(*(self._playbook(role) for role in roles)))
+        return tuple(await asyncio.gather(*(self._playbook(role, faits) for role in roles)))
 
-    async def _playbook(self, role: RolePropose) -> RolePropose:
+    async def _playbook(self, role: RolePropose, faits: tuple[str, str]) -> RolePropose:
         """Le rôle, son playbook écrit par #257 — ou celui de son gabarit, dit comme tel.
+
+        `faits` est le couple de `_faits_pour_les_playbooks` : ce que le projet dit de
+        lui-même, que le playbook ne contredit pas (#1521), et la raison qui le dit.
 
         L'intention est **bornée ici**, où la borne vit (`INTENTION_MAX`, #257) :
         la composer est le travail de `maestro.equipe`, la connaître est celui de
@@ -621,9 +703,10 @@ class ServiceEquipe:
         et un modèle qui répond à côté produisent le même fait — ce rôle garde le
         playbook de son gabarit, et la proposition le dit.
         """
+        texte, raison = faits
         try:
             propose = await self._generateur_actif().proposer(
-                role.intention[:INTENTION_MAX]
+                role.intention[:INTENTION_MAX], faits=texte
             )
         except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
             # Le repli garde **son** origine (#1159) : un rôle composé hors des
@@ -648,7 +731,7 @@ class ServiceEquipe:
             role,
             propose.playbook,
             origine=ORIGINE_PLAYBOOK_GENERE,
-            raison=RAISON_PLAYBOOK_GENERE,
+            raison=raison,
         )
 
     def _generateur_actif(self) -> GenerateurDefinitionAgent:
@@ -662,6 +745,29 @@ class ServiceEquipe:
         if self._compositeur is None:
             self._compositeur = CompositeurEquipe()
         return self._compositeur
+
+
+def _faits_pour_les_playbooks(
+    constats: Constats, acquis: Sequence[Choix], demande: str = ""
+) -> tuple[str, str]:
+    """Ce que le rédacteur de playbooks reçoit du projet, et la raison qui le dit (#1521).
+
+    Le texte vient de `faits_du_projet` ; la raison nomme ce qui l'a nourri — vos
+    réponses, ou les commandes lues dans un projet analysé, et la demande d'une
+    correction — pour qu'un playbook se conteste sur ce qu'on lui a donné. Rien à
+    donner : la raison d'avant.
+    """
+    texte = faits_du_projet(constats, acquis, demande=demande)
+    if not texte:
+        return "", RAISON_PLAYBOOK_GENERE
+    sources = [
+        "vos réponses" if acquis else "",
+        "les commandes lues dans le projet" if not acquis and constats.commandes else "",
+        "votre demande" if demande.strip() else "",
+    ]
+    return texte, RAISON_PLAYBOOK_GENERE_SUR_LES_FAITS.format(
+        sources=" et ".join(s for s in sources if s)
+    )
 
 
 def choix_d_un_projet_decrit(projet: Projet) -> tuple[Choix, ...]:

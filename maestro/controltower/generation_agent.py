@@ -112,6 +112,13 @@ _SLUG_AGENT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 #: et ce cadre dit pourquoi le playbook n'a pas à le dire. Une règle d'autorisation
 #: qu'un playbook ajouterait serait au mieux un doublon, au pire une seconde règle
 #: que l'agent croirait.
+#:
+#: ⚠ **Ce que la personne a dit du projet fait foi** (#1521). Une intention d'une
+#: phrase ne dit rien des conventions : un playbook de testeur écrit pour « un projet
+#: écrit en Python » imposait `unittest` et proscrivait pytest, que la personne avait
+#: demandé. L'équipe lui passe désormais ses réponses et les commandes du projet
+#: (`faits`), et ce cadre dit qu'aucune règle ne les contredit — ni n'étend à tout le
+#: projet une restriction bornée à une partie.
 _CADRE_GENERATION = f"""\
 Tu conçois la définition d'un agent IA pour Maestro, un orchestrateur qui répartit
 du travail entre des agents autonomes. On te donne l'intention de l'utilisateur en
@@ -151,6 +158,14 @@ l'agent, ni le préalable de tout le reste : il lit d'abord ce dont il a besoin 
 avec son outil de lecture, jamais par le shell —, commence son travail, et lance
 une commande lorsqu'elle sert le livrable.
 
+⚠ Si l'on te donne ce que la personne a dit de son projet, et ce que le projet
+montre, le playbook s'y tient : n'y écris aucune règle qui contredise l'une de ses
+réponses, et ne prête pas à tout le projet une restriction qu'elle a bornée à une
+partie — la bibliothèque standard « pour le générateur » ne vaut pas pour les tests.
+Une convention qu'elle n'a pas fixée et que le projet ne montre pas — un outil, une
+bibliothèque, un framework de test — ne s'invente pas : le playbook dit de suivre
+celle du projet.
+
 N'écris dans FOURNISSEUR et MODELE que des noms de la liste qui t'est donnée. Si
 rien n'y convient, laisse les deux lignes vides : l'agent prendra les réglages par
 défaut. Ne devine jamais un nom."""
@@ -184,6 +199,28 @@ résume rien et n'ajoute rien. Un passage qui mêle les deux garde ce qui relèv
 métier — comment travailler, quoi rendre, ce qu'il ne fait jamais par principe — et
 perd ce qui relève de l'autorisation. Une section qui ne disait que le régime
 disparaît, titre compris. Un playbook qui n'en dit rien se rend tel quel.
+
+Réponds par la ligne {MARQUEUR_PLAYBOOK}, puis le playbook INTÉGRAL en Markdown, et
+rien après."""
+
+#: Le cadre de la **correction** d'un playbook déjà montré (#1521) : la personne a
+#: fixé une convention de son projet avec ses mots, et ce playbook la contredit.
+#:
+#: Le même partage que `_CADRE_SANS_REGIME` : le modèle juge quels passages la
+#: contredisent — « utilise `unittest` », « ni pytest ni bibliothèque tierce » ne se
+#: reconnaissent pas à un mot (#1169) —, et tout le reste du playbook est gardé.
+_CADRE_CORRECTION = f"""\
+Tu relis le playbook d'un agent IA de Maestro, un orchestrateur qui répartit du
+travail entre des agents autonomes. Ce playbook est le prompt système de l'agent,
+en Markdown.
+
+La personne qui forme l'équipe vient de fixer, avec ses mots, une convention de son
+projet, et ce playbook la contredit. Rends-le où chaque passage qui la contredit la
+suit désormais — une règle, une interdiction, un exemple, une commande —, et sans
+rien changer d'autre : ni le métier, ni la méthode, ni le registre, ni l'ordre des
+sections, ni les mots du reste. Ne résume rien. N'ajoute que ce qu'il faut pour que
+la convention soit dite là où le playbook en parlait, et ne prête pas à tout le
+projet ce que la personne a borné à une partie.
 
 Réponds par la ligne {MARQUEUR_PLAYBOOK}, puis le playbook INTÉGRAL en Markdown, et
 rien après."""
@@ -261,7 +298,7 @@ class GenerateurDefinitionAgent:
         self._modele = modele
 
     async def proposer(
-        self, intention: str, *, noms_pris: Collection[str] = ()
+        self, intention: str, *, noms_pris: Collection[str] = (), faits: str = ""
     ) -> DefinitionProposee:
         """La définition proposée pour `intention` — rien n'est enregistré.
 
@@ -269,6 +306,12 @@ class GenerateurDefinitionAgent:
         catalogue, acteurs système, personnalisés existants) : le nom proposé est
         rendu libre avant de sortir, pour qu'un « Créer l'agent » cliqué tout de
         suite ne tombe pas sur un 409 dont l'utilisateur n'est pas l'auteur.
+
+        `faits` (#1521) est ce que la personne a dit du projet et ce qu'il montre —
+        ses réponses, ses commandes —, que le playbook ne contredit pas. Composé par
+        Maestro (`maestro.equipe.proposition.faits_du_projet`), jamais saisi : il
+        n'est donc pas borné comme l'intention, qui vient d'un champ de formulaire.
+        Vide, le prompt est celui d'avant, au caractère près.
 
         Lève `ValueError` si l'intention est vide ou trop longue (l'appelant en
         tire un 422 : c'est une saisie, pas une panne) et `GenerationIndisponible`
@@ -284,7 +327,7 @@ class GenerateurDefinitionAgent:
             )
         registre = self._registre()
         try:
-            texte = await self._generer(_prompt_generation(phrase, registre))
+            texte = await self._generer(_prompt_generation(phrase, registre, faits))
         except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
             raise GenerationIndisponible(
                 f"la génération de la définition a échoué : {exc}"
@@ -321,10 +364,37 @@ class GenerateurDefinitionAgent:
         texte = playbook.strip()
         if not texte:
             raise ValueError("playbook vide : rien à réécrire.")
+        return await self._reecrire(_prompt_sans_regime(texte), cadre=_CADRE_SANS_REGIME)
+
+    async def appliquer(self, playbook: str, *, demande: str, consigne: str) -> str:
+        """`playbook` réécrit pour suivre la convention que la personne vient de fixer (#1521).
+
+        Le chemin d'une **correction en mots** sur l'équipe montrée : « le testeur écrit
+        ses tests avec pytest » gagne chaque rôle dont le playbook la contredit, pas
+        seulement celui qui est nommé. `demande` est la phrase de la personne, telle
+        qu'elle l'a dite ; `consigne` ce que le modèle de correction a jugé que **ce**
+        playbook doit désormais suivre. Rien n'est écrit : la carte d'équipe montre le
+        playbook réécrit, et la création reste la validation (#1040).
+
+        Lève `ValueError` sur un playbook vide et `GenerationIndisponible` comme
+        `sans_regime` : l'appelant garde alors le playbook tel qu'il était, et le dit.
+        """
+        texte = playbook.strip()
+        if not texte:
+            raise ValueError("playbook vide : rien à réécrire.")
+        return await self._reecrire(
+            _prompt_correction(texte, demande, consigne), cadre=_CADRE_CORRECTION
+        )
+
+    async def _reecrire(self, prompt: str, *, cadre: str) -> str:
+        """Le playbook que le modèle rend après `MARQUEUR_PLAYBOOK` — ce qui précède est écarté.
+
+        Un modèle qui annonce ce qu'il a changé ne fait pas entrer son annonce dans le
+        prompt de l'agent. Une réponse sans marqueur ou sans playbook lève : le playbook
+        reste tel qu'il était, jamais un texte amputé.
+        """
         try:
-            reponse = await self._generer(
-                _prompt_sans_regime(texte), cadre=_CADRE_SANS_REGIME
-            )
+            reponse = await self._generer(prompt, cadre=cadre)
         except Exception as exc:  # noqa: BLE001 — toute panne d'appel est la même ici
             raise GenerationIndisponible(
                 f"la réécriture du playbook a échoué : {exc}"
@@ -384,13 +454,13 @@ class GenerateurDefinitionAgent:
 
 
 def _prompt_generation(
-    intention: str, registre: tuple[FournisseurDisponible, ...]
+    intention: str, registre: tuple[FournisseurDisponible, ...], faits: str = ""
 ) -> str:
-    """L'intention, puis les fournisseurs recevables — la consigne, elle, est le cadre.
+    """L'intention, les faits du projet, puis les fournisseurs — la consigne est le cadre.
 
-    Le registre vient **après** l'intention et avant la demande finale : c'est de
-    la matière, et la règle du fil global vaut ici — ce qui ferme le prompt se lit
-    comme une instruction.
+    Les faits (#1521) et le registre viennent **après** l'intention et avant la
+    demande finale : c'est de la matière, et la règle du fil global vaut ici — ce
+    qui ferme le prompt se lit comme une instruction.
     """
     return "\n".join(
         (
@@ -398,6 +468,17 @@ def _prompt_generation(
             "",
             intention,
             "",
+            *(
+                (
+                    "Ce que la personne a dit de son projet, et ce qu'il montre — le "
+                    "playbook ne le contredit pas :",
+                    "",
+                    faits.strip(),
+                    "",
+                )
+                if faits.strip()
+                else ()
+            ),
             "Fournisseurs que Maestro sait servir (n'écris rien d'autre dans "
             "FOURNISSEUR et MODELE) :",
             "",
@@ -421,6 +502,32 @@ def _prompt_sans_regime(playbook: str) -> str:
             playbook,
             "",
             "Rends ce playbook sans son régime d'exécution, selon le format demandé.",
+        )
+    )
+
+
+def _prompt_correction(playbook: str, demande: str, consigne: str) -> str:
+    """Les mots de la personne, ce que ce playbook doit suivre, puis le playbook (#1521).
+
+    Même ordre que `_prompt_sans_regime` : la matière d'abord, et ce qui ferme le
+    prompt se lit comme l'instruction — la nôtre, jamais la phrase de la personne.
+    """
+    return "\n".join(
+        (
+            "Ce que la personne a demandé, avec ses mots :",
+            "",
+            " ".join(demande.split()),
+            "",
+            "Ce que ce playbook doit désormais suivre :",
+            "",
+            " ".join(consigne.split()),
+            "",
+            "Playbook à réécrire :",
+            "",
+            playbook,
+            "",
+            "Rends ce playbook où ce qui contredit cette convention la suit, selon le "
+            "format demandé.",
         )
     )
 

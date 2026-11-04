@@ -2093,9 +2093,10 @@ export function proposerEquipe(
  * cases et instances comprises : « remets les tests » n'a de sens que si l'on sait
  * qu'ils ont été retirés. `choix` ne sert qu'aux réponses d'un questionnaire
  * d'outillage ; sans elles, l'équipe se dérive de l'analyse du projet. La réponse porte les rôles à ajouter (playbooks écrits pour ce
- * projet), ceux à retirer ou à remettre, les instances à changer, et la phrase
- * qui répond à la personne. 502 si le modèle ne répond pas : l'équipe montrée
- * reste intacte, et la demande se rejoue.
+ * projet), ceux à retirer ou à remettre, les instances à changer, les playbooks
+ * montrés qu'une convention fixée en mots contredisait, réécrits pour la suivre
+ * (#1521), et la phrase qui répond à la personne. 502 si le modèle ne répond pas :
+ * l'équipe montrée reste intacte, et la demande se rejoue.
  */
 export function corrigerEquipe(
   id: string,

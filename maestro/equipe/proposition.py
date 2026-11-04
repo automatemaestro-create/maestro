@@ -27,7 +27,8 @@ des constats fabriqués, sans projet réel ni fournisseur de modèle.
 ## Ce que ce module ne décide pas
 
 **Le texte des playbooks.** Il pose le playbook du **gabarit** et l'`intention`
-qui servira à en écrire un pour ce projet ; l'écriture est la mécanique de #257
+qui servira à en écrire un pour ce projet, et compose les faits du projet que ce
+playbook ne contredira pas (`faits_du_projet`, #1521) ; l'écriture est la mécanique de #257
 (`GenerateurDefinitionAgent`), appelée par `maestro.controltower.equipe` — la
 seule couche qui connaisse un fournisseur de modèle. Un rôle dont la génération
 échoue garde donc le playbook de son gabarit, **et le dit**
@@ -582,6 +583,44 @@ def intention_du_role(
         ". Il travaille dans le dossier du projet.",
     ]
     return "".join(morceaux)
+
+
+def faits_du_projet(
+    constats: Constats, choix: Sequence[Choix] = (), *, demande: str = ""
+) -> str:
+    """Ce que la personne a dit du projet et ce qu'il montre — qu'un playbook ne contredit pas.
+
+    Le pendant de `intention_du_role`, et pas une seconde intention : l'intention dit
+    **le rôle**, ces faits disent **le projet**, pour tous ses rôles. Sans eux, le
+    modèle qui rédige un playbook ne savait d'un projet que son langage ; sur le
+    parcours du bilan, il imposait `unittest` et proscrivait pytest au testeur de qui
+    avait répondu « Les tests avec pytest ».
+
+    Les réponses sont reprises **telles quelles**, mots tapés compris : c'est là
+    qu'une restriction se borne (« la bibliothèque standard seulement pour le
+    générateur »), et une paraphrase l'étendrait. Sans réponses — un projet analysé
+    —, ce sont les commandes que l'analyse a lues qui disent ses conventions ; avec,
+    elles en sont tirées, et les redire ferait deux fois le même fait.
+
+    `demande` est la phrase d'une correction en mots : un rôle qu'elle ajoute suit
+    ce qu'elle vient de fixer. Vide quand il n'y a rien à dire — le rédacteur reçoit
+    alors le prompt d'avant, au caractère près.
+    """
+    lignes = [
+        f"- {c.cle} : {' '.join(c.valeur.split())}"
+        + (f" — {' '.join(c.pour.split())}" if c.pour else "")
+        for c in choix
+        if c.valeur.strip()
+    ]
+    if not choix:
+        lignes += [
+            f"- commande de « {c.usage} » : `{c.commande}` ({c.chemin})"
+            for c in constats.commandes
+        ]
+    phrase = " ".join(demande.split())
+    if phrase:
+        lignes.append(f"- ce que la personne vient de demander sur l'équipe : {phrase}")
+    return "\n".join(lignes)
 
 
 def _ecarte(gabarit: Gabarit, constats: Constats) -> RoleEcarte:

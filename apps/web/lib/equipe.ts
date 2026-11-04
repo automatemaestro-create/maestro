@@ -194,7 +194,8 @@ export type EquipeMontree = {
  * L'équipe montrée, dans la forme d'une demande de correction (#1159) — cases et
  * instances comprises, retraits aussi : « remets les tests » n'a de sens que si
  * le modèle sait qu'ils ont été retirés. Le navigateur aussi (#1532) : « retire-lui
- * le navigateur » ne se comprend pas sans savoir qui l'a.
+ * le navigateur » ne se comprend pas sans savoir qui l'a. Et le playbook (#1521) :
+ * le modèle répond sur ce qu'il a lu, jamais sur ce qu'il suppose qu'un agent fera.
  */
 export function membresMontres(equipe: EquipeMontree): MembreEquipe[] {
   return equipe.roles.map((r) => ({
@@ -203,6 +204,7 @@ export function membresMontres(equipe: EquipeMontree): MembreEquipe[] {
     retenu: equipe.retenus.has(r.nom),
     instances: equipe.instances[r.nom] ?? r.instances,
     navigateur: aLeNavigateur(r, equipe.navigateur),
+    playbook: r.playbook,
   }));
 }
 
@@ -225,7 +227,9 @@ export function rolesAvecNavigateur(
  * en fin de liste — l'ordre de la proposition ne bouge pas (variante retenue A de #1159) ;
  * un retrait décoche, une remise recoche, une instance change le compteur. Un
  * ajout dont le nom est déjà montré est ignoré — l'API les rend libres, et une
- * seconde ligne du même nom perdrait sa case (même `id`). `ajoutes` nomme les
+ * seconde ligne du même nom perdrait sa case (même `id`). Un playbook réécrit
+ * (#1521) se pose sur la ligne qu'il corrige, qui garde sa place et sa case : c'est
+ * le même rôle, qui suit désormais ce que la personne a fixé. `ajoutes` nomme les
  * lignes nées de la demande, que l'écran signale comme telles ; `change` dit si
  * la demande a touché quoi que ce soit.
  */
@@ -235,6 +239,13 @@ export function appliquerCorrection(
 ): EquipeMontree & { ajoutes: string[]; change: boolean } {
   const montres = new Set(equipe.roles.map((r) => r.nom));
   const ajouts = correction.ajouts.filter((r) => !montres.has(r.nom));
+  const reecrits = correction.playbooks ?? {};
+  const roles = equipe.roles.map((r) =>
+    reecrits[r.nom] === undefined ? r : { ...r, ...reecrits[r.nom] },
+  );
+  const playbookChange = equipe.roles.some(
+    (r) => reecrits[r.nom] !== undefined && reecrits[r.nom].playbook !== r.playbook,
+  );
   const retenus = new Set(equipe.retenus);
   for (const nom of correction.retraits) retenus.delete(nom);
   for (const nom of [...correction.remis, ...ajouts.map((r) => r.nom)]) {
@@ -251,7 +262,7 @@ export function appliquerCorrection(
       navigateur[r.nom] !== aLeNavigateur(r, equipe.navigateur),
   );
   return {
-    roles: [...equipe.roles, ...ajouts],
+    roles: [...roles, ...ajouts],
     retenus,
     instances: {
       ...equipe.instances,
@@ -265,7 +276,8 @@ export function appliquerCorrection(
       correction.retraits.length > 0 ||
       correction.remis.length > 0 ||
       Object.keys(correction.instances).length > 0 ||
-      navigateurChange,
+      navigateurChange ||
+      playbookChange,
   };
 }
 

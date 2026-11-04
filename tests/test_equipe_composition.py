@@ -17,7 +17,10 @@ Ce que cette suite tient, dans l'ordre du ticket :
    gabarits, et la proposition nomme la cause ;
 ④ **« ajoute quelqu'un pour la sécurité » est compris** — le rôle est ajouté avec son
    playbook, par la route que l'étape d'équipe appelle ;
-⑤ **le prompt porte le projet et les mots de la personne**, et le registre de langue.
+⑤ **le prompt porte le projet et les mots de la personne**, et le registre de langue ;
+⑦ **ce que la personne a fixé du projet, ses playbooks le suivent** (#1521) — le
+   rédacteur reçoit ses réponses, et une convention corrigée en mots gagne chaque rôle
+   montré dont le playbook la contredit, sur des playbooks que le modèle a lus.
 
 Le fournisseur est **factice** (§5 de docs/41 : les tests unitaires gardent leurs
 doubles) : il rend le texte qu'un modèle aurait rendu, et note ce qu'on lui a demandé.
@@ -42,6 +45,7 @@ from maestro.agents.playbook_du_code import registre
 from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.store import NOMS_RESERVES, AgentStore, SurchargeStore
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
+from maestro.controltower.auto_amelioration import MARQUEUR_PLAYBOOK
 from maestro.controltower.equipe import CompositeurEquipe, ServiceEquipe
 from maestro.controltower.generation_agent import (
     INTENTION_MAX,
@@ -73,6 +77,7 @@ from maestro.equipe.modele import (
     ORIGINE_PLAYBOOK_GABARIT,
     ORIGINE_PLAYBOOK_GENERE,
 )
+from maestro.equipe.proposition import faits_du_projet
 from maestro.outillage.generation import generer
 from maestro.outillage.modele import Commande, Constats, Langage
 from maestro.outillage.questionnaire import (
@@ -130,14 +135,23 @@ class _FournisseurEnPanne(ModelProvider):
 
 
 class _GenerateurEcrit(GenerateurDefinitionAgent):
-    """Un générateur de playbooks qui écrit un playbook reconnaissable par rôle."""
+    """Un générateur de playbooks qui écrit un playbook reconnaissable par rôle.
 
-    def __init__(self) -> None:
+    Il note aussi les faits du projet qu'on lui passe (#1521), et réécrit un playbook
+    montré en y posant la consigne reçue — sauf pour les rôles de `en_panne`, dont la
+    réécriture échoue comme un quota épuisé.
+    """
+
+    def __init__(self, *, en_panne: tuple[str, ...] = ()) -> None:
         super().__init__(provider=_FournisseurEnPanne())
         self.intentions: list[str] = []
+        self.faits: list[str] = []
+        self.corrections: list[tuple[str, str, str]] = []
+        self._en_panne = en_panne
 
     async def proposer(self, intention: str, **kwargs: Any) -> DefinitionProposee:
         self.intentions.append(intention)
+        self.faits.append(kwargs.get("faits", ""))
         return DefinitionProposee(
             intention=intention,
             nom="x",
@@ -146,11 +160,20 @@ class _GenerateurEcrit(GenerateurDefinitionAgent):
             playbook=f"Playbook écrit pour : {intention}",
         )
 
+    async def appliquer(self, playbook: str, *, demande: str, consigne: str) -> str:
+        self.corrections.append((playbook, demande, consigne))
+        if any(nom in playbook for nom in self._en_panne):
+            raise RuntimeError("quota épuisé (test)")
+        return f"{playbook}\n\nRéécrit : {consigne}"
+
 
 class _GenerateurHorsLigne(GenerateurDefinitionAgent):
     """Un générateur de playbooks qui ne répond jamais — le rôle garde son repli."""
 
     async def proposer(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("hors ligne (test)")
+
+    async def appliquer(self, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("hors ligne (test)")
 
 
@@ -1197,3 +1220,299 @@ def test_la_route_de_correction_rend_502_quand_le_modele_ne_repond_pas(
 
     assert reponse.status_code == 502
     assert "quota épuisé" in reponse.text
+
+
+# --------------------------------------------------------------------------- #
+# ⑦ Ce que la personne a fixé du projet, ses playbooks le suivent (#1521)
+# --------------------------------------------------------------------------- #
+
+#: La réponse de l'herbier du bilan, telle que la personne l'a tapée : une restriction
+#: bornée au générateur, et pytest pour les tests.
+REPONSE_DE_L_HERBIER = (
+    "Python, avec la bibliothèque standard seulement pour le générateur. "
+    "Les tests avec pytest."
+)
+
+ACQUIS_DE_L_HERBIER = (
+    Choix(
+        "nature",
+        "Un herbier de randonnées : une fiche Markdown par plante, un index par région généré",
+        deduit=True,
+    ),
+    Choix("langages", REPONSE_DE_L_HERBIER, libre=True),
+    Choix(
+        "tester",
+        ".venv/Scripts/python -m pytest",
+        deduit=True,
+        pour="Vérifier que l'index nomme chaque fiche",
+    ),
+)
+
+ROLE_TESTEUR = {
+    "nom": "testeur",
+    "role": "Testeur",
+    "competences": ["tests", "pytest"],
+    "raison": "vos réponses prévoient pytest pour vérifier le générateur d'index",
+    "gabarit": "qa",
+}
+
+#: Les deux playbooks du bilan, tels que la carte les montrait : chacun contredit
+#: « Les tests avec pytest », et la personne n'a nommé que le testeur.
+PLAYBOOK_TESTEUR = (
+    "Tu écris les tests de l'herbier. Utilise `unittest` de la bibliothèque standard. "
+    "N'introduis aucune dépendance externe : ni pytest ni bibliothèque tierce."
+)
+PLAYBOOK_DEV = (
+    "Tu écris le générateur d'index. N'ajoute aucune dépendance tierce, même pour les "
+    "tests. Utilise `unittest` sauf si le projet utilise déjà autre chose."
+)
+EQUIPE_DE_L_HERBIER = (
+    MembreActuel(nom="dev", role="Développeur", playbook=PLAYBOOK_DEV),
+    MembreActuel(nom="testeur", role="Testeur", playbook=PLAYBOOK_TESTEUR),
+)
+DEMANDE_PYTEST = "le testeur écrit ses tests avec pytest, comme je l'ai dit, pas avec unittest"
+
+
+def test_les_faits_du_projet_reprennent_les_reponses_telles_quelles() -> None:
+    """Une paraphrase étendrait la restriction : « seulement pour le générateur » se
+    perdrait. Les réponses passent mot pour mot, et ce qu'une commande fait aussi."""
+    faits = faits_du_projet(constats_depuis_choix(ACQUIS_DE_L_HERBIER), ACQUIS_DE_L_HERBIER)
+
+    assert f"- langages : {REPONSE_DE_L_HERBIER}" in faits
+    assert (
+        "- tester : .venv/Scripts/python -m pytest — Vérifier que l'index nomme chaque fiche"
+        in faits
+    )
+
+
+def test_sans_reponses_les_faits_sont_les_commandes_que_l_analyse_a_lues() -> None:
+    constats = Constats(
+        commandes=(
+            Commande(
+                usage="tests", commande="pytest -q", chemin="pyproject.toml", origine="declaree"
+            ),
+        )
+    )
+
+    assert faits_du_projet(constats) == "- commande de « tests » : `pytest -q` (pyproject.toml)"
+    assert faits_du_projet(Constats()) == ""
+
+
+def test_le_playbook_de_chaque_role_recoit_ce_que_la_personne_a_dit_du_projet(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Le défaut du bilan : le rédacteur ne recevait qu'« un projet écrit en Python », et
+    imposait `unittest` au testeur de qui avait répondu « Les tests avec pytest »."""
+    generateur = _GenerateurEcrit()
+    service, projet = _service(
+        tmp_path, atelier, gabarits, _FournisseurEcrit(_json(roles=[ROLE_TESTEUR])), generateur
+    )
+
+    (testeur,) = asyncio.run(service.proposer(projet, ACQUIS_DE_L_HERBIER))["roles"]
+
+    (faits,) = generateur.faits
+    assert REPONSE_DE_L_HERBIER in faits
+    assert testeur["playbook_origine"] == ORIGINE_PLAYBOOK_GENERE
+    # La raison dit ce qui a nourri le playbook : il se conteste sur une réponse.
+    assert "vos réponses, qu'il ne contredit pas" in testeur["playbook_raison"]
+
+
+def test_le_redacteur_met_les_faits_dans_son_prompt_sous_un_cadre_qui_les_fait_tenir() -> None:
+    redacteur = _FournisseurEcrit(
+        "NOM: testeur\nROLE: Testeur\nCOMPETENCES: tests, pytest\nFOURNISSEUR:\nMODELE:\n"
+        f"{MARQUEUR_PLAYBOOK}\nTu écris les tests avec pytest.\n"
+    )
+    generateur = GenerateurDefinitionAgent(provider=redacteur, fournisseurs=lambda: ())
+
+    asyncio.run(
+        generateur.proposer("Un agent « Testeur »", faits=f"- langages : {REPONSE_DE_L_HERBIER}")
+    )
+
+    prompt, cadre = redacteur.demandes[0]
+    assert REPONSE_DE_L_HERBIER in prompt
+    plat = " ".join((cadre or "").split())
+    assert "n'y écris aucune règle qui contredise l'une de ses réponses" in plat
+    assert "ne prête pas à tout le projet une restriction qu'elle a bornée à une partie" in plat
+
+
+def test_sans_faits_le_prompt_du_redacteur_est_celui_d_avant() -> None:
+    redacteur = _FournisseurEcrit(
+        f"NOM: a\nROLE: A\nCOMPETENCES: a\nFOURNISSEUR:\nMODELE:\n{MARQUEUR_PLAYBOOK}\nTu fais A.\n"
+    )
+    generateur = GenerateurDefinitionAgent(provider=redacteur, fournisseurs=lambda: ())
+
+    asyncio.run(generateur.proposer("Un agent « A »"))
+
+    assert "Ce que la personne a dit de son projet" not in redacteur.demandes[0][0]
+
+
+def test_le_prompt_de_correction_porte_les_playbooks_que_la_carte_montre() -> None:
+    """Sans eux, Maestro affirmait ce qu'un agent ferait sans avoir lu son playbook."""
+    constats = constats_depuis_choix(ACQUIS_DE_L_HERBIER)
+    equipe = (*EQUIPE_DE_L_HERBIER, MembreActuel(nom="doc", role="Rédacteur"))
+
+    prompt = prompt_correction(
+        constats, recommandation_depuis_choix(ACQUIS_DE_L_HERBIER), (), DEMANDE_PYTEST, equipe
+    )
+
+    assert PLAYBOOK_TESTEUR in prompt and PLAYBOOK_DEV in prompt
+    # Un playbook absent se dit : le modèle sait qu'il ne sait pas ce qu'il prescrit.
+    assert "### doc — Rédacteur\n\n(playbook non transmis" in prompt
+
+
+def test_le_cadre_demande_de_relire_chaque_playbook_et_n_affirmer_que_ce_qui_est_lu() -> None:
+    cadre = " ".join(CADRE_COMPOSITION.split())
+    assert "relis le playbook de CHAQUE rôle montré" in cadre
+    assert "celui qu'elle cite comme les autres" in cadre
+    assert "Ne dis jamais ce qu'un playbook prescrit, ni ce qu'un agent fera" in cadre
+
+
+def test_une_consigne_ne_vise_qu_un_role_montre_et_dit_quoi_suivre() -> None:
+    constats = _constats_mobile()
+    correction = corriger_equipe(
+        constats,
+        recommander(constats),
+        lire_reponse(
+            _json(playbooks={"dev": " suivre  pytest ", "fantome": "pytest", "testeur": "  "})
+        ),
+        equipe=EQUIPE_DE_L_HERBIER,
+    )
+
+    assert correction.consignes == {"dev": "suivre pytest"}
+    # Le modèle n'a rien dit : la réponse par défaut nomme ce qui sera réécrit.
+    assert "playbook à réécrire pour suivre votre demande : dev" in correction.reponse
+
+
+def test_une_convention_corrigee_en_mots_gagne_chaque_role_qui_la_contredit(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Le critère du ticket : la personne nomme le testeur, le développeur dit aussi
+    « même pour les tests… `unittest` » — les deux sont réécrits, du premier coup,
+    sans remplacer aucun rôle."""
+    fournisseur = _FournisseurEcrit(
+        _json(
+            playbooks={
+                "testeur": "écrire et lancer les tests avec pytest",
+                "dev": "pytest est la dépendance de test du projet ; le générateur reste "
+                "en bibliothèque standard",
+            },
+            reponse="Le testeur et le développeur suivent désormais pytest pour les tests.",
+        )
+    )
+    generateur = _GenerateurEcrit()
+    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
+
+    servi = asyncio.run(
+        service.corriger(projet, DEMANDE_PYTEST, EQUIPE_DE_L_HERBIER, ACQUIS_DE_L_HERBIER)
+    )
+
+    assert set(servi["playbooks"]) == {"dev", "testeur"}
+    assert servi["retraits"] == [] and servi["ajouts"] == []
+    testeur = servi["playbooks"]["testeur"]
+    assert testeur["playbook"].startswith(PLAYBOOK_TESTEUR)
+    assert "Réécrit : écrire et lancer les tests avec pytest" in testeur["playbook"]
+    assert testeur["playbook_origine"] == ORIGINE_PLAYBOOK_GENERE
+    assert DEMANDE_PYTEST in testeur["playbook_raison"]
+    # Le rédacteur a reçu le playbook montré et la phrase de la personne.
+    assert {(p, d) for p, d, _ in generateur.corrections} == {
+        (PLAYBOOK_TESTEUR, DEMANDE_PYTEST),
+        (PLAYBOOK_DEV, DEMANDE_PYTEST),
+    }
+    # Le modèle de correction a lu les playbooks avant de répondre.
+    assert PLAYBOOK_DEV in fournisseur.demandes[0][0]
+
+
+def test_un_playbook_qui_ne_se_reecrit_pas_reste_tel_quel_et_la_reponse_le_dit(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Jamais « c'est réglé » d'un rôle qui ne l'est pas : une réécriture qui échoue, ou
+    un playbook que la carte n'a pas transmis, se nomme dans la réponse."""
+    fournisseur = _FournisseurEcrit(
+        _json(
+            playbooks={"testeur": "pytest", "dev": "pytest", "doc": "pytest"},
+            reponse="Les trois rôles suivent pytest.",
+        )
+    )
+    generateur = _GenerateurEcrit(en_panne=("générateur d'index",))
+    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
+    equipe = (*EQUIPE_DE_L_HERBIER, MembreActuel(nom="doc", role="Rédacteur"))
+
+    servi = asyncio.run(service.corriger(projet, DEMANDE_PYTEST, equipe))
+
+    assert set(servi["playbooks"]) == {"testeur"}
+    assert servi["reponse"].startswith("Les trois rôles suivent pytest.")
+    assert (
+        "le playbook de « dev » n'a pas pu être réécrit (quota épuisé (test))" in servi["reponse"]
+    )
+    assert (
+        "le playbook de « doc » n'a pas pu être réécrit (son texte n'a pas été transmis"
+        in servi["reponse"]
+    )
+    assert "il reste tel qu'il était" in servi["reponse"]
+
+
+def test_un_role_ajoute_par_la_demande_suit_ce_qu_elle_vient_de_fixer(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    fournisseur = _FournisseurEcrit(_json(roles=[ROLE_TESTEUR], reponse="J'ajoute un testeur."))
+    generateur = _GenerateurEcrit()
+    service, projet = _service(tmp_path, atelier, gabarits, fournisseur, generateur)
+
+    servi = asyncio.run(service.corriger(projet, "ajoute un testeur qui écrit en pytest", ()))
+
+    assert "ajoute un testeur qui écrit en pytest" in generateur.faits[0]
+    assert "votre demande, qu'il ne contredit pas" in servi["ajouts"][0]["playbook_raison"]
+
+
+def test_le_redacteur_reecrit_un_playbook_sur_la_demande_et_la_consigne() -> None:
+    redacteur = _FournisseurEcrit(
+        f"J'ai remplacé unittest par pytest.\n{MARQUEUR_PLAYBOOK}\n"
+        "Tu écris les tests avec pytest.\n"
+    )
+    generateur = GenerateurDefinitionAgent(provider=redacteur, fournisseurs=lambda: ())
+
+    reecrit = asyncio.run(
+        generateur.appliquer(PLAYBOOK_TESTEUR, demande=DEMANDE_PYTEST, consigne="pytest")
+    )
+
+    # L'annonce du modèle n'entre pas dans le prompt de l'agent.
+    assert reecrit == "Tu écris les tests avec pytest."
+    prompt, cadre = redacteur.demandes[0]
+    assert DEMANDE_PYTEST in prompt and PLAYBOOK_TESTEUR in prompt
+    assert prompt.rstrip().endswith("selon le format demandé.")
+    assert "sans rien changer d'autre" in " ".join((cadre or "").split())
+
+
+def test_la_route_de_correction_rend_les_playbooks_reecrits(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """L'appel exact de la carte du fil : chaque membre porte son playbook."""
+    fournisseur = _FournisseurEcrit(
+        _json(playbooks={"testeur": "pytest", "dev": "pytest"}, reponse="Réécrits.")
+    )
+    app = create_app(
+        bus=InMemoryEventBus(),
+        state=ControlTowerState(),
+        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(atelier,)),
+        agents_store=gabarits.agents,
+        generateur_agent=_GenerateurEcrit(),
+        compositeur_equipe=CompositeurEquipe(provider=fournisseur),
+    )
+    with TestClient(app) as client:
+        projet = _declarer_flutter(client, atelier)
+        reponse = client.post(
+            f"/api/projets/{projet}/equipe/correction",
+            json={
+                "demande": DEMANDE_PYTEST,
+                "equipe": [
+                    {"nom": "dev", "role": "Développeur", "playbook": PLAYBOOK_DEV},
+                    {"nom": "testeur", "role": "Testeur", "playbook": PLAYBOOK_TESTEUR},
+                ],
+            },
+        )
+
+    assert reponse.status_code == 200, reponse.text
+    servi = reponse.json()
+    assert set(servi["playbooks"]) == {"dev", "testeur"}
+    assert servi["playbooks"]["dev"]["playbook"].startswith(PLAYBOOK_DEV)
+    assert PLAYBOOK_TESTEUR in fournisseur.demandes[0][0]
