@@ -310,10 +310,8 @@ class ServiceEquipe:
         # rien ne se re-déduit ici, et le modèle n'est pas rappelé. Sans elles — le fil
         # n'en passe pas —, un projet encore vide reprend celles que son manifeste garde.
         acquis = list(choix) or list(await asyncio.to_thread(choix_d_un_projet_decrit, projet))
-        constats, recommandation, source = (
-            await asyncio.to_thread(self._matiere_analysee, projet)
-            if not acquis
-            else self._matiere_choisie(projet, acquis)
+        constats, recommandation, source = await asyncio.to_thread(
+            self._matiere, projet, acquis
         )
         proposition = (
             proposer_renfort(
@@ -367,10 +365,8 @@ class ServiceEquipe:
         # Comme pour `proposer` : les réponses arrivent avec ce qui en a été compris (#1147),
         # ou se relisent au manifeste d'un projet encore vide (#1350).
         acquis = list(choix) or list(await asyncio.to_thread(choix_d_un_projet_decrit, projet))
-        constats, recommandation, _source = (
-            await asyncio.to_thread(self._matiere_analysee, projet)
-            if not acquis
-            else self._matiere_choisie(projet, acquis)
+        constats, recommandation, _source = await asyncio.to_thread(
+            self._matiere, projet, acquis
         )
         try:
             texte = await self._compositeur_actif().ecrire(
@@ -608,6 +604,19 @@ class ServiceEquipe:
             navigateur=role.navigateur,
         )
 
+    def _matiere(
+        self, projet: Projet, acquis: Sequence[Choix]
+    ) -> tuple[Constats, Recommandation, dict[str, Any]]:
+        """La matière de l'équipe : l'analyse sans réponses, les réponses sinon — bloquant.
+
+        Les deux lisent le disque — tout le projet pour l'analyse, la seule présence des
+        skills recommandés pour les réponses : elles se jouent hors de la boucle
+        d'événements.
+        """
+        if not acquis:
+            return self._matiere_analysee(projet)
+        return self._matiere_choisie(projet, acquis)
+
     def _matiere_analysee(
         self, projet: Projet
     ) -> tuple[Constats, Recommandation, dict[str, Any]]:
@@ -630,15 +639,24 @@ class ServiceEquipe:
     def _matiere_choisie(
         self, projet: Projet, acquis: Sequence[Choix]
     ) -> tuple[Constats, Recommandation, dict[str, Any]]:
-        """Ce qu'un projet **neuf** doit à ses réponses — aucun fichier n'est ouvert.
+        """Ce qu'un projet **neuf** doit à ses réponses — et les skills qu'il porte déjà.
 
         Les mêmes fonctions que `POST …/outillage/recommandation` (#1031), sans
         variante : l'équipe d'un projet neuf branche donc exactement les skills
         que son outillage lui recommandera.
+
+        Les réponses ne savent rien du disque, et toute entrée en sort `a-generer` :
+        or l'équipe se propose le plus souvent **après** que l'outillage a été écrit
+        sur accord. Chaque skill est donc confronté au projet (`_skills_au_disque`,
+        #1591) — aucun fichier n'est ouvert, seule leur présence est constatée —, pour
+        que la carte d'équipe ne dise pas « à générer » d'un skill écrit, ni la raison
+        du cran qu'aucune commande ne l'est.
         """
         return (
             constats_depuis_choix(acquis),
-            recommandation_depuis_choix(acquis),
+            _skills_au_disque(
+                recommandation_depuis_choix(acquis), _porte_dans(projet.racine_chemin)
+            ),
             source_manifeste_des_choix(projet.id, acquis),
         )
 
@@ -805,3 +823,26 @@ def _porte_dans(racine: Path) -> Callable[[str], bool]:
         return cible.is_relative_to(base) and cible.is_file()
 
     return porte
+
+
+def _skills_au_disque(
+    recommandation: Recommandation, porte: Callable[[str], bool]
+) -> Recommandation:
+    """La recommandation, chaque skill que le projet porte dit `deja-present` (#1591).
+
+    Celle qui sort des réponses (`recommandation_depuis_choix`) ne regarde pas le disque :
+    toute entrée y est `a-generer`, même quand l'outillage accepté vient de l'écrire. Un
+    skill dont le `SKILL.md` est un fichier du projet (`_porte_dans`) **est** écrit — son
+    chemin est celui où l'outillage l'écrit (`Entree.chemin`). Les autres entrées restent
+    telles quelles : seul le skill se branche sur un rôle, et c'est son état que la carte
+    d'équipe affiche.
+    """
+    return replace(
+        recommandation,
+        entrees=tuple(
+            replace(entree, etat="deja-present")
+            if entree.type == "skill" and entree.etat == "a-generer" and porte(entree.chemin)
+            else entree
+            for entree in recommandation.entrees
+        ),
+    )

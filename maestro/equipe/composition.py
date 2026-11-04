@@ -793,7 +793,7 @@ def _role_compose(
         )
     ).outils
     branches = skills_par_usages(usages, skills)
-    autorisations = autorisations_du_role(outils, usages, constats)
+    autorisations = autorisations_du_role(outils, usages, constats, branches)
     instances, raison_instances = _instances(brut)
     return RolePropose(
         nom=nom,

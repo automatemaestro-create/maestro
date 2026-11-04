@@ -278,7 +278,7 @@ def _role(
     """
     outils = profil_outille(gabarit.agent).outils
     branches = skills_par_usages(gabarit.usages, skills)
-    autorisations = autorisations_du_role(outils, gabarit.usages, constats)
+    autorisations = autorisations_du_role(outils, gabarit.usages, constats, branches)
     instances, raison_instances = (
         gabarit.instances_selon(constats)
         if gabarit.instances_selon is not None
@@ -357,13 +357,18 @@ def skills_par_usages(
 
 
 def autorisations_du_role(
-    outils: Sequence[str], usages: Sequence[tuple[str, str]], constats: Constats
+    outils: Sequence[str],
+    usages: Sequence[tuple[str, str]],
+    constats: Constats,
+    skills: Sequence[SkillBranche] = (),
 ) -> tuple[AutorisationProposee, ...]:
     """Les autorisations proposées pour ce rôle — chacune avec sa raison.
 
     Elles ne dépendent que de ce que le rôle **tient** (`outils`) et des usages
     qu'il branche : un rôle composé par le modèle hors des gabarits (#1159) les
-    reçoit donc exactement comme un rôle de gabarit, par la même règle.
+    reçoit donc exactement comme un rôle de gabarit, par la même règle. `skills`
+    sont ceux qu'il branche (`skills_par_usages`) : ceux que le projet porte disent
+    où ses commandes sont écrites (#1591).
 
     **Aucune entrée `allow`, et c'est une décision.** Une liste `allow` non vide
     est *fermée* (`PolitiqueOutils`) : la remplir avec les outils du profil
@@ -383,7 +388,7 @@ def autorisations_du_role(
     """
     if OUTIL_EXECUTION not in outils:
         return ()
-    return (_cran_execution(usages, constats),)
+    return (_cran_execution(usages, constats, skills),)
 
 
 #: Ce que la portée « projet » **garde** pour la personne, dit une fois et repris
@@ -400,9 +405,18 @@ CE_QUI_VOUS_REVIENT = (
     "C'est vous qui décidez tout cela ici, à froid, et cela se révoque"
 )
 
+#: Ce que la portée ne fait pas, dit dès qu'une raison nomme des commandes : elle borne
+#: **où** l'acte tombe, jamais **quelle** commande est lancée.
+PORTEE_SANS_LISTE = (
+    "⚠ La portée dit **où** l'acte tombe, pas quelle commande est lancée : elle ne le "
+    "borne pas à celles-là."
+)
+
 
 def _cran_execution(
-    usages: Sequence[tuple[str, str]], constats: Constats
+    usages: Sequence[tuple[str, str]],
+    constats: Constats,
+    skills: Sequence[SkillBranche] = (),
 ) -> AutorisationProposee:
     """Le cran proposé pour l'exécution de commandes — et **ce qu'il borne**.
 
@@ -431,8 +445,11 @@ def _cran_execution(
     Ce que le projet sépare n'est donc plus le cran mais la **raison**, et c'est
     la règle 1 de ce module qui l'exige : quand le projet déclare les commandes de
     ce rôle, la raison nomme les fichiers où elles ont été lues ; sinon elle dit
-    ce qu'elle autorise et ce qu'elle garde. Une autorisation se conteste en
-    ouvrant la pièce qui l'a désignée — quand il y en a une.
+    ce qu'elle autorise et ce qu'elle garde, et **où ses commandes sont écrites**
+    quand un skill qu'il branche est déjà dans le projet (`skills`, #1591) —
+    l'outillage accepté les y a mises, et affirmer qu'aucune ne l'est serait faux.
+    Une autorisation se conteste en ouvrant la pièce qui l'a désignée — quand il y
+    en a une.
 
     ⚠ La raison le dit, parce que c'est vrai : la portée borne **où** l'acte
     tombe, pas **quelle** commande est lancée. Ce n'est pas une liste de commandes
@@ -444,6 +461,15 @@ def _cran_execution(
     """
     declarees = _commandes_declarees(usages, constats)
     if not declarees:
+        ecrites = _skills_du_projet(skills)
+        ou = (
+            f"Ses commandes sont écrites dans l'outillage du projet ({', '.join(ecrites)}). "
+            f"{PORTEE_SANS_LISTE}"
+            if ecrites
+            # « de ce rôle » : un autre rôle peut avoir les siennes écrites (#1591).
+            else "Aucune commande de ce rôle n'est encore écrite dans le projet, donc "
+            "aucune n'a pu être lue : c'est le travail qui vient."
+        )
         return AutorisationProposee(
             outil=OUTIL_EXECUTION,
             cran="ask",
@@ -453,9 +479,8 @@ def _cran_execution(
                 "ce rôle travaille dans le dossier de ce projet : il y lance ce "
                 "qu'il écrit, le teste, crée les dossiers dont il a besoin et "
                 "arrête ce qu'il a lancé — **sans vous demander de trancher "
-                "chaque commande**, qui passent en étant tracées. "
-                "Aucune commande n'est encore écrite dans le projet, donc aucune "
-                f"n'a pu être lue : c'est le travail qui vient. {CE_QUI_VOUS_REVIENT}"
+                f"chaque commande**, qui passent en étant tracées. {ou} "
+                f"{CE_QUI_VOUS_REVIENT}"
             ),
         )
     return AutorisationProposee(
@@ -467,10 +492,20 @@ def _cran_execution(
             "les commandes de ce rôle sont écrites dans le projet et l'analyse les y "
             f"a lues ({', '.join(declarees)}). Il les joue dans le dossier de ce "
             "projet **en étant tracé**, au lieu de vous faire arbitrer chaque "
-            "exécution. ⚠ La portée dit **où** l'acte tombe, pas quelle commande "
-            f"est lancée : elle ne le borne pas à celles-là. {CE_QUI_VOUS_REVIENT}"
+            f"exécution. {PORTEE_SANS_LISTE} {CE_QUI_VOUS_REVIENT}"
         ),
     )
+
+
+def _skills_du_projet(skills: Sequence[SkillBranche]) -> tuple[str, ...]:
+    """Les chemins des skills branchés que le projet **porte** — où ses commandes sont écrites.
+
+    Un skill `deja-present` est dans le projet : l'outillage accepté l'y a écrit, ou la
+    personne. Ce n'est pas une commande *lue* (`_commandes_declarees`) — Maestro ne s'y
+    autorise rien —, mais c'est l'endroit qu'on ouvre pour savoir ce que le rôle jouera.
+    Un skill `a-generer` n'est encore nulle part, et n'est pas nommé.
+    """
+    return tuple(dict.fromkeys(s.chemin for s in skills if s.etat == "deja-present"))
 
 
 def _commandes_declarees(
@@ -495,7 +530,10 @@ def _commandes_declarees(
     d'une personne* — et le cran obtenu ne serait pas borné à cette commande, un
     cran portant sur un outil et non sur ses arguments. Ce que #1102 corrige est
     ailleurs, et sans toucher à ce cran : un agent n'a pas besoin d'exécuter pour
-    **lire** son outillage.
+    **lire** son outillage. La raison nomme pourtant le skill où elle est écrite
+    (`_skills_du_projet`, #1591) : c'est un endroit à ouvrir, pas une lecture qui
+    autoriserait — et taire qu'il existe ferait dire à la raison qu'aucune commande
+    n'est écrite.
 
     ⚠ #1102 avait confié cette correction au **texte** du playbook, et #1197 a
     mesuré qu'elle n'avait pas suivi sur un vrai run : l'agent lisait au shell
