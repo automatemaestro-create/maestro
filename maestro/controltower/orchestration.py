@@ -1135,8 +1135,9 @@ Sur "projet", ajoute à l'objet de ta ligne de décision une clé "projet" :
   projet, le justifie.
 
 Le code vérifie ta proposition avant de la montrer : un nom ou un dossier déjà
-pris est remplacé par une variante, et la carte le dit. Rien n'est créé tant que
-la personne n'a pas accepté.
+pris est remplacé par une variante, et la carte le dit ; un dossier que rien ne
+rend acceptable ne devient pas une carte. Rien n'est créé tant que la personne
+n'a pas accepté.
 
 La réponse : le texte affiché à l'utilisateur, en français, bref. Sur
 "proposition", il énonce l'objectif et demande explicitement l'accord. Sur
@@ -1169,10 +1170,12 @@ la pièce revérifiée par l'exécution, ou ce qu'elle n'a pas compris et la que
 qui en découle. Ne demande aucune précision, et ne dis jamais que c'est écrit, que
 la commande marche ni que les agents la recevront : rien n'est écrit sans l'accord
 de la personne. Sur
-"projet", il
-dit en une ou deux phrases ce que tu as compris du projet, puis que ta
-proposition est juste en dessous, à accepter ou à corriger en quelques mots : ne
-la recopie pas champ par champ, la carte les montre. Sur "echange", il répond —
+"projet", il dit en une ou deux phrases ce que tu as compris du projet et ce que
+tu proposes, sans recopier ta proposition champ par champ. N'annonce pas de
+carte, comme sur "geste", et ne dis pas comment l'accepter ou la corriger : le
+code vérifie ta proposition après toi, pose la carte — qui dit elle-même quoi en
+faire — quand le dossier l'accepte, et dit sinon pourquoi il n'y en aura pas.
+Sur "echange", il répond —
 en s'appuyant sur l'état de l'orchestration quand la question porte dessus.
 
 Avant la conversation, tu reçois DES FAITS : l'état de l'orchestration, puis les
@@ -1431,14 +1434,41 @@ _PHRASE_SANS_NAISSANCE = (
     "Aucune déclaration de projet n'est branchée sur ce fil : je peux en parler, pas "
     "encore le créer."
 )
+#: La correction qui suit une proposition de projet que la vérification refuse — la
+#: règle de `_PHRASE_GESTE_IMPOSSIBLE` (#1592) : le juge a déjà parlé, la phrase
+#: revient sur ses mots et dit qu'aucune carte ne suivra, parce qu'une consigne
+#: n'est pas une garantie. La cause n'a pas de fait où se marquer sous la bulle :
+#: elle est dite ici, en phrase entière (`_cause_en_phrase`).
 _PHRASE_PROPOSITION_REFUSEE = (
-    "Je ne peux pas vous proposer ce projet tel quel : {cause}. Dites-moi quel "
-    "dossier prendre à la place."
+    "Vérification faite, aucune carte ne suivra : je ne peux finalement pas vous "
+    "proposer ce projet tel quel. {cause} Dites-moi quel dossier prendre à la place."
 )
 _PHRASE_DECLARATION_EMPECHEE = (
-    "Je n'ai créé aucun projet : {cause}. La proposition est reposée ci-dessous : "
+    "Je n'ai créé aucun projet. {cause} La proposition est reposée ci-dessous : "
     "corrigez-la en quelques mots, ou acceptez-la à nouveau."
 )
+
+
+def _cause_en_phrase(cause: object) -> str:
+    """La cause d'un refus en phrase entière : une majuscule, une seule marque finale.
+
+    Les refus du dossier viennent de deux voix (#1592) : ceux d'EF-38
+    (`RacineRefusee`) sont des phrases qui portent leur point, ceux de la naissance
+    n'en portent pas. Une phrase d'empêchement qui ajouterait son propre point
+    doublerait celui des premiers : la ponctuation finale de la cause est donc
+    remplacée, jamais complétée — sauf une marque qui porte un sens (`!`, `?`, `…`).
+    """
+    texte = " ".join(str(cause).split()).rstrip(" .,;:")
+    if not texte:
+        return ""
+    if texte[-1] not in "!?…":
+        texte += "."
+    return texte[0].upper() + texte[1:]
+
+
+def _empechement(gabarit: str, cause: object) -> str:
+    """`gabarit` rempli de la cause en phrase — sans espace doublée si elle est vide."""
+    return " ".join(gabarit.format(cause=_cause_en_phrase(cause)).split())
 
 #: Les **empêchements** de l'outillage dans la conversation (#1161) — même règle que
 #: ceux de la naissance : rien ne s'est fait, et seul ce code le sait.
@@ -4018,7 +4048,7 @@ class RepondeurOrchestration(RepondeurChat):
             cree, compris = await self._declarer(demande)
         except Exception as echec:  # noqa: BLE001 — un refus se raconte, cf. docstring
             return ReponseChat(
-                contenu=_PHRASE_DECLARATION_EMPECHEE.format(cause=echec),
+                contenu=_empechement(_PHRASE_DECLARATION_EMPECHEE, echec),
                 projet_propose=demande,
             )
         ouverture, empechement = await self._ouvrir_outillage(fil, cree)
@@ -4042,7 +4072,9 @@ class RepondeurOrchestration(RepondeurChat):
         elle se joue hors de la boucle d'événements, comme les lectures du fil.
         Ce qu'elle refuse ne devient pas une carte — aucun accord ne pourrait
         l'honorer —, et la cause s'écrit derrière les mots du modèle, qui
-        n'avait aucun moyen de la connaître.
+        n'avait aucun moyen de la connaître. Elle s'écrit en **correction**, dans
+        son paragraphe (#1592) : le modèle a pu annoncer la carte malgré sa
+        consigne, et la phrase revient dessus.
         """
         if self._naissance is None:
             await redaction.ecrire(f" ⚠ {_PHRASE_SANS_NAISSANCE}")
@@ -4051,7 +4083,7 @@ class RepondeurOrchestration(RepondeurChat):
             demande = await asyncio.to_thread(self._naissance.verifier, verdict.projet or {})
         except Exception as refus:  # noqa: BLE001 — NaissanceRefusee et le disque qui résiste
             cause = refus if isinstance(refus, NaissanceRefusee) else cause_lisible(refus)
-            await redaction.ecrire(f" {_PHRASE_PROPOSITION_REFUSEE.format(cause=cause)}")
+            await redaction.ecrire("\n\n" + _empechement(_PHRASE_PROPOSITION_REFUSEE, cause))
             return ReponseChat(contenu=redaction.texte)
         return ReponseChat(contenu=redaction.texte, projet_propose=demande)
 
@@ -4077,7 +4109,7 @@ class RepondeurOrchestration(RepondeurChat):
         try:
             cree, compris = await self._declarer(demande)
         except Exception as echec:  # noqa: BLE001 — un refus se raconte, cf. `declarer_projet`
-            await redaction.ecrire(f" {_PHRASE_DECLARATION_EMPECHEE.format(cause=echec)}")
+            await redaction.ecrire(f" {_empechement(_PHRASE_DECLARATION_EMPECHEE, echec)}")
             return ReponseChat(contenu=redaction.texte, projet_propose=demande)
         ouverture, empechement = await self._ouvrir_outillage(fil, cree)
         outillage = _faits_de_l_outillage(ouverture, empechement)

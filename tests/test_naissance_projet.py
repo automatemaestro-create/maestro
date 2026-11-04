@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
@@ -52,6 +53,7 @@ from maestro.controltower.chat import (
 from maestro.controltower.naissance import NaissanceRefusee, ServiceNaissance
 from maestro.controltower.orchestration import (
     _MARQUEUR_VERDICT,
+    _PROMPT_ORCHESTRATION,
     _PROMPT_REDACTION,
     AGENT_ORCHESTRATION,
     NOM_ORCHESTRATION,
@@ -62,6 +64,7 @@ from maestro.controltower.orchestration import (
 )
 from maestro.controltower.projets import ServiceProjets
 from maestro.projets import ProjetStore
+from maestro.projets.racine import _depot_maestro
 from maestro.projets.reglages import ReglagesProjetsStore
 from maestro.providers.base import ModelProvider
 
@@ -469,8 +472,99 @@ def test_une_proposition_refusee_par_la_verification_ne_pose_aucune_carte(
 
     assert reponse.projet_propose is None
     assert reponse.contenu.startswith("Je l'importe.")
-    assert "Je ne peux pas vous proposer ce projet tel quel" in reponse.contenu
+    assert "je ne peux finalement pas vous proposer ce projet tel quel" in reponse.contenu
     assert "n'existe pas" in reponse.contenu
+
+
+#: Ce que le juge écrit en proposant, avant que le code ne vérifie le dossier : le
+#: constat de #1592, où la phrase de refus suivait une carte annoncée.
+ANNONCE = "Un herbier pour vos relevés d'altitude : ma proposition est juste en dessous."
+
+
+def test_la_consigne_du_juge_n_annonce_pas_une_carte_de_projet_avant_sa_verification() -> None:
+    """#1592 : la consigne faisait dire « ta proposition est juste en dessous » au juge.
+
+    Il parle avant que le code ne vérifie le dossier, et un dossier refusé ne devient
+    pas une carte : l'annonce restait sans rien dessous. La règle est celle d'un geste
+    sur un run — n'annonce pas de carte ; le code la pose, ou dit pourquoi il n'y en
+    aura pas.
+    """
+    prompt = " ".join(_PROMPT_ORCHESTRATION.split())
+    _, trouve, apres = prompt.partition('Sur "projet", il dit')
+    consigne = apres.partition('Sur "echange"')[0]
+
+    assert trouve
+    assert "juste en dessous" not in consigne
+    assert "N'annonce pas de carte" in consigne
+
+
+def test_un_dossier_refuse_revient_sur_la_carte_annoncee_et_ponctue_sa_cause_une_fois(
+    projets: ServiceProjets, _maison: Path
+) -> None:
+    """Le parcours de #1592 : le dossier proposé tombe dans le dépôt de Maestro.
+
+    Le juge a déjà parlé quand la vérification refuse : la phrase du code revient sur
+    ses mots et dit qu'aucune carte ne suivra. La cause (`RacineRefusee`) porte son
+    point final, et la phrase n'en ajoute pas un second.
+    """
+    dossier = _depot_maestro() / "herbier-des-cimes"
+    modele = ModeleScripte(
+        _dicte(
+            ANNONCE,
+            VERDICT_PROJET,
+            projet=_brute(nom="herbier-des-cimes", dossier=str(dossier)),
+        )
+    )
+
+    reponse = asyncio.run(
+        _repondeur(projets, modele).produire(
+            AGENT_ORCHESTRATION, [_message(UTILISATEUR, "un herbier de mes relevés d'altitude")]
+        )
+    )
+
+    assert reponse.projet_propose is None
+    assert reponse.contenu.startswith(ANNONCE)
+    correction = reponse.contenu.removeprefix(ANNONCE)
+    assert "aucune carte ne suivra" in correction
+    assert "herbier-des-cimes." in correction
+    assert ".." not in reponse.contenu
+    assert projets.lister() == []
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        "Le dépôt de Maestro ne se prend pas lui-même pour projet : herbier-des-cimes.",
+        "le dossier herbier-des-cimes est déjà le projet « herbier »",
+        "Le dossier herbier-des-cimes est pris...",
+        "Le dossier herbier-des-cimes est pris . ",
+        "Le dossier herbier-des-cimes est pris ;",
+    ],
+)
+def test_la_phrase_de_refus_est_ponctuee_une_seule_fois(
+    cause: str, projets: ServiceProjets, _maison: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le critère 2 de #1592 : un seul point, quelle que soit la ponctuation de la cause."""
+
+    def refuse(brute: Mapping[str, Any]) -> DemandeProjet:
+        raise NaissanceRefusee("dossier-refuse", cause)
+
+    naissance = _naissance(projets)
+    monkeypatch.setattr(naissance, "verifier", refuse)
+    modele = ModeleScripte(_dicte(ANNONCE, VERDICT_PROJET, projet=_brute()))
+
+    reponse = asyncio.run(
+        RepondeurOrchestration(provider=modele, naissance=naissance).produire(
+            AGENT_ORCHESTRATION, [_message(UTILISATEUR, KOMBUCHA)]
+        )
+    )
+
+    correction = reponse.contenu.removeprefix(ANNONCE)
+    assert "herbier-des-cimes" in correction
+    assert ".." not in correction
+    # Juste avant la suite, une marque finale, et une seule : ni point doublé, ni
+    # point posé derrière une espace ou un point-virgule.
+    assert re.search(r"[^\s.;:,!?…][.!?…] Dites-moi", correction), correction
 
 
 def test_une_correction_tapee_repropose_sans_rien_ecrire(
@@ -710,7 +804,10 @@ def test_une_declaration_empechee_reposee_la_proposition_sans_rien_creer(
 
     assert reponse.projet_cree is None
     assert reponse.projet_propose == propose.projet_propose
-    assert reponse.contenu.startswith("Je n'ai créé aucun projet :")
+    assert reponse.contenu.startswith("Je n'ai créé aucun projet.")
+    # La cause (« … n'existe pas. ») porte son point : la phrase n'en ajoute pas (#1592).
+    assert "n'existe pas." in reponse.contenu
+    assert ".." not in reponse.contenu
     assert projets.lister() == []
 
 
