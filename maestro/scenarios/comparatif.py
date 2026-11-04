@@ -4,6 +4,7 @@
                                                              [--cote maestro|seul] [--delai <s>]
                                                              [--jour <s>] [--axes <a,b>]
     .venv/Scripts/python.exe -m maestro.scenarios.comparatif --rejouer <côté>=<dépôt> [...]
+                                                             [--base <côté>=<commit>] [...]
                                                              [--objectif p5] [--axes <a,b>]
     .venv/Scripts/python.exe -m maestro.scenarios.comparatif --liste
 
@@ -100,7 +101,9 @@ et le go/no-go se tranche sur ses chiffres (docs/48).
 
 `--rejouer <côté>=<dépôt>` rejoue seulement la grille sur des livrables qui existent
 déjà — ceux de C2 et C3, ou les deux livrables d'un ticket (#1522) —, côte à côte,
-sans modèle pour les construire.
+sans modèle pour les construire. Le livrable d'un ticket sur un dépôt existant se
+rejoue **contre sa base** (`--base <côté>=<commit>`, pour chaque livrable du côté) :
+ses commits et son diff se jugent depuis elle, pas sur l'historique du dépôt (#1544).
 
 ## Codes de sortie
 
@@ -225,7 +228,8 @@ CODE_AUCUN_PASSAGE = 4
 _USAGE = (
     f"Usage : python -m {MODULE} [--objectif <nom|fichier.toml>] [--passages <n>] "
     "[--cote maestro|seul] [--delai <secondes>] [--jour <secondes>] [--axes <a,b>]\n"
-    f"        python -m {MODULE} --rejouer <côté>=<dépôt> [...] [--objectif …] [--axes …]\n"
+    f"        python -m {MODULE} --rejouer <côté>=<dépôt> [...] [--base <côté>=<commit>] "
+    "[--objectif …] [--axes …]\n"
     f"        python -m {MODULE} --liste"
 )
 
@@ -1346,7 +1350,8 @@ def _passage_en_markdown(passage: Passage) -> list[str]:
         lignes += [
             "",
             f"**Grille** — {grille.tenues}/{grille.jugees} ligne(s) tenue(s), "
-            f"clone `{grille.copie}`",
+            f"clone `{grille.copie}`"
+            + (f", depuis la base `{grille.base[:12]}`" if grille.base else ""),
             "",
             "| Ligne | État | Commande | Ce qui le dit |",
             "| --- | --- | --- | --- |",
@@ -1463,6 +1468,7 @@ class _Options:
     jour_s: float | None = None
     axes: tuple[str, ...] | None = None
     rejouer: list[tuple[str, Path]] = field(default_factory=list)
+    bases: dict[str, str] = field(default_factory=dict)
     liste: bool = False
 
     @property
@@ -1537,7 +1543,14 @@ def main(
 
     if options.rejouer:
         passages = _rejouer_les_livrables(
-            options.rejouer, objectif, atelier, lecteur, juge_couverture, poste, sortie
+            options.rejouer,
+            options.bases,
+            objectif,
+            atelier,
+            lecteur,
+            juge_couverture,
+            poste,
+            sortie,
         )
         comparatif = Comparatif(atelier.passage, objectif, passages, rejeu=True)
     else:
@@ -1697,12 +1710,13 @@ def _rejouer_le_livrable(
     juge_couverture: JugeCouverture,
     poste: PosteDuBanc,
     journal: Journal,
+    base: str = "",
 ) -> Passage:
     """Le livrable d'un passage rejoué sur un clone propre, et le déroulé qui l'a fait.
 
     Puis, quand l'objectif a des critères (#1513), leur couverture jugée sur ce même
     clone — ce que le projet a commité, ou son dossier quand personne ne l'a demandé
-    sous Git.
+    sous Git. `base` est le commit d'où part un livrable rejoué sur un dépôt existant.
     """
     grille = rejouer(
         Path(passage.livrable),
@@ -1713,6 +1727,7 @@ def _rejouer_le_livrable(
         axes=objectif.axes,
         trace=journal.note,
         versionne=objectif.versionner,
+        base=base,
     )
     couverture = _couvrir(grille, objectif, juge_couverture, journal) if objectif.criteres else None
     return replace(passage, grille=grille, couverture=couverture, etapes=tuple(journal.etapes))
@@ -1738,6 +1753,7 @@ def _couvrir(
 
 def _rejouer_les_livrables(
     livrables: Sequence[tuple[str, Path]],
+    bases: Mapping[str, str],
     objectif: Objectif,
     atelier: Atelier,
     lecteur: Lecteur,
@@ -1745,19 +1761,21 @@ def _rejouer_les_livrables(
     poste: PosteDuBanc,
     sortie: TextIO,
 ) -> tuple[Passage, ...]:
-    """`--rejouer` : la grille seule, sur des livrables qui existent déjà."""
+    """`--rejouer` : la grille seule, sur des livrables qui existent déjà — chacun contre la
+    base de son côté, s'il en a une (`--base`)."""
     passages: list[Passage] = []
     rangs: dict[str, int] = {}
     for cote, depot in livrables:
         rangs[cote] = rangs.get(cote, 0) + 1
-        print(f"— {cote} · livrable {depot}", file=sortie)
+        base = bases.get(cote, "")
+        print(f"— {cote} · livrable {depot}" + (f" depuis {base}" if base else ""), file=sortie)
         journal = Journal(echo=lambda etape: print(_en_direct(etape), file=sortie))
         passage = Passage(
             cote=cote, rang=rangs[cote], issue=ABOUTI, motif="livrable rejoué", livrable=str(depot)
         )
         passages.append(
             _rejouer_le_livrable(
-                passage, objectif, atelier, lecteur, juge_couverture, poste, journal
+                passage, objectif, atelier, lecteur, juge_couverture, poste, journal, base
             )
         )
     return tuple(passages)
@@ -1776,7 +1794,16 @@ def _en_direct(etape: Etape) -> str:
 
 
 #: Les options qui prennent une valeur.
-_NOMS_D_OPTIONS = ("--objectif", "--passages", "--cote", "--delai", "--jour", "--axes", "--rejouer")
+_NOMS_D_OPTIONS = (
+    "--objectif",
+    "--passages",
+    "--cote",
+    "--delai",
+    "--jour",
+    "--axes",
+    "--rejouer",
+    "--base",
+)
 
 
 def _options(args: list[str]) -> _Options:
@@ -1814,11 +1841,23 @@ def _options(args: list[str]) -> _Options:
             if not axes or inconnus:
                 raise ValueError(f"--axes attend des lignes de la grille parmi : {', '.join(AXES)}")
             options.axes = tuple(axe for axe in AXES if axe in axes)
+        elif nom == "--base":
+            cote, separe, commit = valeur.partition("=")
+            if not separe or not cote.strip() or not commit.strip():
+                raise ValueError("--base attend <côté>=<commit>")
+            options.bases[cote.strip()] = commit.strip()
         else:
             cote, separe, depot = valeur.partition("=")
             if not separe or not cote.strip() or not depot.strip():
                 raise ValueError("--rejouer attend <côté>=<dépôt>")
             options.rejouer.append((cote.strip(), Path(depot.strip())))
+    rejoues = {cote for cote, _ in options.rejouer}
+    orphelines = sorted(cote for cote in options.bases if cote not in rejoues)
+    if orphelines:
+        raise ValueError(
+            f"--base ne vaut que pour un livrable rejoué : aucun --rejouer pour "
+            f"{', '.join(orphelines)}"
+        )
     return options
 
 

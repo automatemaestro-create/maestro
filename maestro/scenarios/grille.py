@@ -43,17 +43,45 @@ servir. Une installation qui échoue laisse les lignes suivantes **non jouées**
 jouées, et une non jouée compte comme manquée. Les trois lignes jugées le sont
 **après**, sur ce que le dépôt porte : un juge injoignable s'abstient (« non
 jugé »), et une abstention ne compte ni pour ni contre.
+
+## Ce que le modèle lit du dépôt
+
+Les pièces sont bornées : la liste des fichiers suivis, le début de ceux de la racine
+et des dossiers de configuration, les sujets des commits. Sur un gros dépôt, la liste
+est tronquée et les quotas s'épuisent avant un fichier qui compte (`ci.yml` au rejeu
+de #1505, docs/51 § 3.2). Alors **chaque ligne nomme ce qu'elle doit lire** : avant
+de lire les commandes et de juger, le modèle reçoit les pièces — et, la liste
+tronquée, tous les dossiers suivis — et nomme, question par question, les fichiers
+ou les motifs à lire. Le banc les résout contre la liste **entière** des fichiers
+suivis, et seul un fichier suivi se lit. Aucune table de chemins : le modèle sait où
+une intégration continue s'écrit, le dépôt dit s'il en porte une.
+
+Le lecteur de commandes sait aussi **sur quel système** le clone se rejoue
+(`PosteDuBanc.systeme`) : un projet qui déclare une commande pour Windows et une
+pour Unix est rejoué par celle du poste.
+
+## Le livrable d'un ticket, sur un dépôt existant (#1544)
+
+Un livrable rejoué **contre une base** (`base`) est ce que `HEAD` ajoute à ce
+commit : ses commits se jugent depuis elle (`base..HEAD`), et ce qu'il change depuis
+elle est montré et lu d'abord. Sans base, le livrable est le dépôt entier — un projet
+né du passage (p5, #1512). Une base que le livrable ne porte pas rend la grille
+**injouable** : le banc a été mal appelé, le livrable n'y est pour rien.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import re
+import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from maestro.machine import systeme as systeme_du_poste
 from maestro.outillage.verification import Delais
 from maestro.sandbox import verification as execution
 from maestro.scenarios.gestes import (
@@ -66,7 +94,9 @@ from maestro.scenarios.gestes import (
 )
 from maestro.scenarios.juge import FORME, Avis
 from maestro.scenarios.projets import (
+    changements_depuis,
     cloner,
+    commit_de,
     fichiers_suivis,
     instantaner,
     sujets_des_commits,
@@ -148,6 +178,15 @@ FICHIERS_LUS = 12
 FICHIERS_DE_CONFIGURATION_LUS = 8
 OCTETS_LISIBLES = 64_000
 COMMITS_LUS = 60
+#: La liste tronquée, les dossiers suivis sont tous nommés, avec leur compte de fichiers :
+#: de quoi nommer un fichier que la liste ne montre pas.
+DOSSIERS_LISTES = 400
+#: Ce que le livrable change depuis sa base : la liste, et les premiers fichiers lus avant
+#: les autres — c'est eux qu'on juge.
+CHANGEMENTS_LISTES = 200
+FICHIERS_CHANGES_LUS = 8
+#: Les fichiers qu'une question nomme, lus en plus des autres pour elle seule.
+FICHIERS_NOMMES_LUS = 6
 
 #: Les en-têtes de la réponse du lecteur de commandes, une ligne chacun. Lire un champ
 #: que le modèle a été chargé de remplir est une **forme**, comme `VERDICT:` dans le
@@ -181,8 +220,9 @@ SYSTEME_COMMANDES = (
     "vérifie du même outil, tel que le projet l'installe. N'ajoute aucune option qui "
     "assouplirait la vérification.\n"
     "Les commandes se jouent par bash, depuis la racine d'un clone neuf du dépôt, l'une "
-    "après l'autre dans l'ordre ci-dessous. Le serveur reçoit son port dans la variable "
-    "d'environnement PORT.\n"
+    "après l'autre dans l'ordre ci-dessous, sur le système qu'on te donne. Quand le projet "
+    "déclare une même commande en plusieurs variantes selon le système, retiens celle de "
+    "ce système. Le serveur reçoit son port dans la variable d'environnement PORT.\n"
     "Réponds par exactement ces lignes, et rien d'autre :\n"
     f"{CHAMPS_COMMANDES[AXE_INSTALLATION]}: la commande qui installe les dépendances, ou {AUCUNE}\n"
     f"{CHAMPS_COMMANDES[AXE_LINT]}: la commande du linter, ou {AUCUNE}\n"
@@ -195,6 +235,37 @@ SYSTEME_COMMANDES = (
     f"(au plus {PAGES_MAX}, un exemple réel par route paramétrée), ou {AUCUNE}\n"
     f"{CHAMP_ABSENTES}: des chemins qui doivent répondre 404, par exemple un contenu "
     f"inconnu sous une route paramétrée (au plus {ABSENTES_MAX}), ou {AUCUNE}"
+)
+
+#: Les questions pour lesquelles le modèle nomme ce qu'il faut lire, et le champ de sa
+#: réponse : les commandes du projet, et les deux lignes jugées sur le dépôt. Les commits
+#: ne se lisent pas dans un fichier.
+LECTURE_COMMANDES = "commandes"
+QUESTIONS_DE_LECTURE: Mapping[str, tuple[str, str]] = {
+    LECTURE_COMMANDES: (
+        "COMMANDES",
+        "quelles commandes le projet déclare-t-il pour installer ses dépendances, se "
+        "vérifier (lint, formatage, types, tests), se construire et se servir ?",
+    ),
+    AXE_CI: (
+        "CI",
+        "le dépôt porte-t-il une intégration continue écrite, qui joue ses vérifications ?",
+    ),
+    AXE_OUTILLAGE: (
+        "OUTILLAGE",
+        "le livrable suit-il chacun des choix d'outillage de la personne ?",
+    ),
+}
+AUCUN = "aucun"
+
+SYSTEME_LECTURES = (
+    "Tu prépares la relecture d'un dépôt de logiciel. On te montre la liste de ses fichiers "
+    "suivis — tronquée sur un gros dépôt, ses dossiers étant alors tous nommés — et le "
+    "début de quelques-uns. Pour chaque question qu'on te pose, nomme les fichiers suivis "
+    "qu'il faut lire pour y répondre et dont le contenu n'est pas déjà montré : des chemins "
+    "exacts, ou des motifs (`dossier/*.yml`, `dossier/`). Tu ne réponds pas aux questions.\n"
+    "Réponds par une ligne par question, sous le champ qu'elle porte : "
+    f"`CHAMP: chemins séparés par des virgules`, ou `CHAMP: {AUCUN}`, et rien d'autre."
 )
 
 #: Les trois jugements disent ce qui rend **non** en toutes lettres (« c'est non si… ») :
@@ -212,13 +283,13 @@ SYSTEME_CI = (
 )
 
 SYSTEME_COMMITS = (
-    "Tu juges une seule chose : les messages de commit de ce dépôt suivent-ils la "
+    "Tu juges une seule chose : les messages de commit qu'on te montre suivent-ils la "
     "convention que la personne a choisie ?\n"
     "**Chaque commit compte**, quel qu'en soit l'auteur : une personne, un agent ou un "
     "outil qui écrit ses propres messages. Aucun ne s'écarte du compte. C'est oui si la "
     "quasi-totalité des sujets suit la convention. C'est non si des commits dans une autre "
     "forme sont plus que de rares exceptions — y compris ceux qu'un outil a écrits —, si la "
-    "convention n'est suivie que par une partie des commits, ou si le dépôt n'a aucun "
+    "convention n'est suivie que par une partie des commits, ou s'il n'y a aucun "
     "commit.\n" + FORME
 )
 
@@ -243,19 +314,27 @@ class Lecteur(Protocol):
     def juger(self, systeme: str, prompt: str) -> Avis: ...
 
 
+def systeme_du_rejeu() -> str:
+    """Le système de ce poste et le bash qui y joue les commandes — `Windows 11 (…), par …`."""
+    bash = "bash (Git Bash)" if sys.platform == "win32" else "bash"
+    return f"{systeme_du_poste()}, commandes jouées par {bash}"
+
+
 @dataclass
 class PosteDuBanc:
     """Le poste où le livrable se rejoue : jouer une commande, sonder une page, attendre.
 
     Les vrais gestes par défaut — le bash des agents (`jouer_commande`), une vraie
     requête (`sonder_page`) ; les tests les doublent. Il satisfait le `Poste` de
-    `maestro.scenarios.gestes.servir`, sans parler à aucune API.
+    `maestro.scenarios.gestes.servir`, sans parler à aucune API. `systeme` est ce que
+    le lecteur de commandes sait du poste, pour retenir la variante qui s'y joue.
     """
 
     joueur: Joueur = jouer_commande
     sonde: Callable[[str], int | None] = sonder_page
     horloge: Callable[[], float] = time.monotonic
     dormir: Callable[[float], None] = time.sleep
+    systeme: str = field(default_factory=systeme_du_rejeu)
 
     def jouer(self, commande: str, dossier: Path, delai_s: float) -> execution.Execution:
         """Joue `commande` dans `dossier`."""
@@ -321,12 +400,16 @@ class Commandes:
 
 @dataclass(frozen=True)
 class Grille:
-    """Le rejeu d'un livrable : où il a été cloné, et l'état de chaque ligne."""
+    """Le rejeu d'un livrable : où il a été cloné, et l'état de chaque ligne.
+
+    `base` est le commit complet d'où le livrable part, `""` s'il est le dépôt entier.
+    """
 
     depot: str
     copie: str
     lignes: tuple[Ligne, ...]
     commandes: Commandes | None = None
+    base: str = ""
 
     @property
     def tenues(self) -> int:
@@ -347,6 +430,7 @@ class Grille:
         return {
             "depot": self.depot,
             "copie": self.copie,
+            "base": self.base,
             "tenues": self.tenues,
             "jugees": self.jugees,
             "lignes": [ligne.to_dict() for ligne in self.lignes],
@@ -364,6 +448,7 @@ def rejouer(
     axes: Sequence[str] = AXES,
     trace: Callable[[str, str], None] = lambda _libelle, _detail: None,
     versionne: bool = True,
+    base: str = "",
 ) -> Grille:
     """Clone `depot` dans `copie` et y joue la grille — l'état de chaque ligne de `axes`.
 
@@ -376,37 +461,62 @@ def rejouer(
     n'en est pas un manque toutes ses lignes ; non demandé (#1513), il se rejoue comme
     son dossier, moins ce qu'il déclare ignorer (`instantaner`) : la personne qui ne
     code pas récupère un dossier, et n'a jamais dit qu'il fallait le versionner.
+
+    `base` est le commit d'où part le livrable d'un ticket sur un dépôt existant, tel
+    que `depot` le nomme (un sha, `de9564ce~1`) : le livrable est ce que `HEAD` lui
+    ajoute (#1544).
     """
     poste = poste or PosteDuBanc()
     sous_git = (depot / ".git").exists()
     if not sous_git and versionne:
         return _toutes(depot, copie, axes, MANQUE, "le livrable n'est pas un dépôt Git")
     try:
+        commit_base = _base(depot, base, sous_git)
         if sous_git:
             cloner(depot, copie)
         else:
             instantaner(depot, copie.with_name(f"{copie.name}-instantane"), copie)
+        if commit_base and commit_de(copie, commit_base) != commit_base:
+            raise _BaseInconnue(f"la base `{base}` n'est pas dans l'histoire clonée du livrable")
+    except _BaseInconnue as exc:
+        return _toutes(depot, copie, axes, INJOUABLE, str(exc))
     except OSError as exc:
         # Un dépôt qui ne se clone pas dit une panne du poste, pas un défaut du livrable :
         # mesuré le 2026-10-15, le poste a refusé de créer `git` (0xC0000142).
         return _toutes(depot, copie, axes, INJOUABLE, f"le clone a échoué : {exc}")
     trace(
         "livrable cloné" if sous_git else "dossier livré cloné par instantané",
-        f"{depot} → {copie}",
+        f"{depot} → {copie}" + (f", depuis la base {commit_base[:12]}" if commit_base else ""),
     )
-    pieces = _pieces(copie)
+    pieces = _pieces(copie, commit_base)
     lignes: dict[str, Ligne] = {}
 
     joues = [axe for axe in AXES_JOUES if axe in axes]
-    if joues or AXE_PAGES in axes:
-        commandes, illisible = _lire_commandes(lecteur, choix, pieces)
+    lit_les_commandes = bool(joues) or AXE_PAGES in axes
+    questions = [
+        question
+        for question, posee in (
+            (LECTURE_COMMANDES, lit_les_commandes),
+            (AXE_CI, AXE_CI in axes),
+            (AXE_OUTILLAGE, AXE_OUTILLAGE in axes and bool(choix)),
+        )
+        if posee
+    ]
+    nommes, detail = _lectures(copie, lecteur, choix, pieces, questions)
+    if questions:
+        trace("fichiers nommés pour chaque ligne", detail)
+
+    if lit_les_commandes:
+        commandes, illisible = _lire_commandes(
+            lecteur, choix, pieces, poste.systeme, nommes.get(LECTURE_COMMANDES, ())
+        )
         trace("commandes lues dans le livrable", illisible or _commandes_en_mots(commandes))
         lignes.update(_jouer_les_commandes(copie, commandes, illisible, joues, axes, poste, trace))
     else:
         commandes = None
 
     for axe in (a for a in AXES_JUGES if a in axes):
-        lignes[axe] = _juger(axe, lecteur, choix, pieces)
+        lignes[axe] = _juger(axe, lecteur, choix, pieces, nommes.get(axe, ()))
         trace(f"ligne jugée : {LIBELLES[axe]}", f"{lignes[axe].etat} — {lignes[axe].detail}")
 
     return Grille(
@@ -414,7 +524,27 @@ def rejouer(
         copie=str(copie),
         lignes=tuple(lignes[axe] for axe in AXES if axe in lignes),
         commandes=commandes,
+        base=commit_base,
     )
+
+
+class _BaseInconnue(Exception):
+    """La base demandée ne désigne aucun commit du livrable : le banc a été mal appelé."""
+
+
+def _base(depot: Path, base: str, sous_git: bool) -> str:
+    """Le commit complet que `base` nomme dans `depot`, `""` sans base — lève `_BaseInconnue`."""
+    if not base:
+        return ""
+    if not sous_git:
+        raise _BaseInconnue(
+            f"la base `{base}` se lit dans l'histoire d'un dépôt Git, "
+            "et le livrable n'en est pas un"
+        )
+    commit = commit_de(depot, base)
+    if commit is None:
+        raise _BaseInconnue(f"la base `{base}` ne désigne aucun commit du livrable")
+    return commit
 
 
 def _toutes(depot: Path, copie: Path, axes: Sequence[str], etat: str, detail: str) -> Grille:
@@ -431,29 +561,63 @@ def _toutes(depot: Path, copie: Path, axes: Sequence[str], etat: str, detail: st
 
 @dataclass(frozen=True)
 class Pieces:
-    """Ce que le lecteur et le juge voient du clone, déjà borné."""
+    """Ce que le lecteur et le juge voient du clone, déjà borné.
+
+    `fichiers` est la liste **entière** des fichiers suivis : seul le texte la tronque, et
+    c'est contre elle que se résout ce qu'une ligne nomme. `base` et `changements` disent
+    ce que le livrable change depuis sa base — vides sans base.
+    """
 
     fichiers: tuple[str, ...]
     contenus: tuple[tuple[str, str], ...]
     commits: tuple[str, ...]
+    base: str = ""
+    changements: tuple[tuple[str, str], ...] = ()
 
-    def en_texte(self) -> str:
-        """Les pièces en un bloc : la liste des fichiers, puis chaque fichier lu."""
+    def en_texte(self, nommes: Sequence[tuple[str, str]] = ()) -> str:
+        """Les pièces en un bloc : la liste des fichiers, ce que le livrable change, ce qui est lu.
+
+        `nommes` sont les fichiers que la question a nommés, lus pour elle seule.
+        """
         liste = "\n".join(self.fichiers[:FICHIERS_LISTES]) or "(aucun fichier suivi)"
         reste = len(self.fichiers) - FICHIERS_LISTES
+        blocs = []
         if reste > 0:
             liste += f"\n… et {reste} autre(s)"
+            blocs.append(f"Dossiers suivis, et leur nombre de fichiers :\n{self._dossiers()}")
+        if self.base:
+            changes = "\n".join(
+                f"{etat} {chemin}" for etat, chemin in self.changements[:CHANGEMENTS_LISTES]
+            )
+            if len(self.changements) > CHANGEMENTS_LISTES:
+                changes += f"\n… et {len(self.changements) - CHANGEMENTS_LISTES} autre(s)"
+            blocs.append(
+                f"Ce que le livrable change depuis sa base `{self.base[:12]}` :\n"
+                f"{changes or '(aucun fichier changé)'}"
+            )
         lus = "\n".join(
             f'<fichier chemin="{chemin}">\n{contenu}\n</fichier>'
-            for chemin, contenu in self.contenus
+            for chemin, contenu in (*self.contenus, *nommes)
         )
-        return f"Fichiers suivis :\n{liste}\n\nFichiers lus :\n{lus or '(aucun)'}"
+        return "\n\n".join(
+            [f"Fichiers suivis :\n{liste}", *blocs, f"Fichiers lus :\n{lus or '(aucun)'}"]
+        )
+
+    def _dossiers(self) -> str:
+        """Chaque dossier qui porte un fichier suivi, avec leur nombre."""
+        comptes = Counter(chemin.rsplit("/", 1)[0] for chemin in self.fichiers if "/" in chemin)
+        noms = sorted(comptes)
+        texte = "\n".join(f"{nom}/ ({comptes[nom]})" for nom in noms[:DOSSIERS_LISTES])
+        if len(noms) > DOSSIERS_LISTES:
+            texte += f"\n… et {len(noms) - DOSSIERS_LISTES} autre(s)"
+        return texte
 
 
-def _pieces(copie: Path) -> Pieces:
+def _pieces(copie: Path, base: str = "") -> Pieces:
     """Les fichiers suivis du clone, ceux qu'on lit, et les sujets des commits.
 
-    Lus : les fichiers de la racine, puis ceux des dossiers de configuration qui
+    Lus : ce que le livrable change depuis sa base, s'il en a une — c'est lui qu'on
+    juge —, puis les fichiers de la racine, puis ceux des dossiers de configuration qui
     commencent par un point (`.github/…`) — là où un dépôt dit comment il se
     construit et se vérifie —, les moins profonds d'abord, chacun borné et sans les
     gros fichiers (un verrou de dépendances ne dit rien qu'un manifeste ne dise).
@@ -463,21 +627,37 @@ def _pieces(copie: Path) -> Pieces:
     except OSError:
         suivis = ()
     try:
-        commits = sujets_des_commits(copie, nombre=COMMITS_LUS)
+        commits = sujets_des_commits(copie, nombre=COMMITS_LUS, depuis=base)
     except OSError:
         commits = ()
+    try:
+        changements = changements_depuis(copie, base) if base else ()
+    except OSError:
+        changements = ()
     fichiers = tuple(sorted(suivis, key=lambda chemin: (chemin.count("/"), chemin)))
+    presents = set(fichiers)
+    changes = [chemin for _etat, chemin in changements if chemin in presents]
     racine = [chemin for chemin in fichiers if "/" not in chemin]
     configuration = [
         chemin
         for chemin in fichiers
         if "/" in chemin and chemin.split("/", 1)[0].startswith(".")
     ]
-    contenus = [
-        *_lus(copie, racine, FICHIERS_LUS),
-        *_lus(copie, configuration, FICHIERS_DE_CONFIGURATION_LUS),
-    ]
-    return Pieces(fichiers=fichiers, contenus=tuple(contenus), commits=commits)
+    contenus: list[tuple[str, str]] = []
+    for chemins, maximum in (
+        (changes, FICHIERS_CHANGES_LUS),
+        (racine, FICHIERS_LUS),
+        (configuration, FICHIERS_DE_CONFIGURATION_LUS),
+    ):
+        deja = {chemin for chemin, _ in contenus}
+        contenus += _lus(copie, [chemin for chemin in chemins if chemin not in deja], maximum)
+    return Pieces(
+        fichiers=fichiers,
+        contenus=tuple(contenus),
+        commits=commits,
+        base=base,
+        changements=changements,
+    )
 
 
 def _lus(copie: Path, chemins: Sequence[str], maximum: int) -> list[tuple[str, str]]:
@@ -505,16 +685,90 @@ def _lire(chemin: Path) -> str | None:
     return texte
 
 
+def _lectures(
+    copie: Path,
+    lecteur: Lecteur,
+    choix: Sequence[str],
+    pieces: Pieces,
+    questions: Sequence[str],
+) -> tuple[dict[str, tuple[tuple[str, str], ...]], str]:
+    """Les fichiers que chaque question nomme, lus — et ce qui l'a été, en mots.
+
+    Une nomination qui n'a pas eu lieu (fournisseur injoignable) ne lit rien de plus :
+    chaque ligne se juge alors sur les seules pièces communes.
+    """
+    if not questions:
+        return {}, ""
+    demandes = "\n".join(
+        f"{QUESTIONS_DE_LECTURE[question][0]}: {QUESTIONS_DE_LECTURE[question][1]}"
+        for question in questions
+    )
+    prompt = (
+        f"Les choix d'outillage de la personne :\n<choix>{_choix_en_texte(choix)}</choix>\n"
+        f"Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte()}</depot>\n"
+        f"Les questions, chacune sous son champ :\n<questions>\n{demandes}\n</questions>\n"
+        "Quels fichiers faut-il lire pour répondre à chacune ?"
+    )
+    try:
+        brut = lecteur.rediger(SYSTEME_LECTURES, prompt)
+    except Exception as exc:  # fournisseur injoignable, quota : rien de plus n'est lu
+        return {}, f"aucun fichier nommé : {exc}"
+    champs = _champs(brut)
+    deja = {chemin for chemin, _ in pieces.contenus}
+    nommes: dict[str, tuple[tuple[str, str], ...]] = {}
+    for question in questions:
+        valeur = champs.get(QUESTIONS_DE_LECTURE[question][0], "")
+        motifs = [
+            motif
+            for motif in (morceau.strip().strip("`") for morceau in valeur.split(","))
+            if motif and motif.strip(" .").lower() != AUCUN
+        ]
+        designes = _designes(motifs, pieces.fichiers, deja)
+        nommes[question] = tuple(_lus(copie, designes, FICHIERS_NOMMES_LUS))
+    detail = " ; ".join(
+        f"{QUESTIONS_DE_LECTURE[question][0]} : "
+        + (", ".join(chemin for chemin, _ in nommes[question]) or AUCUN)
+        for question in questions
+    )
+    return nommes, detail
+
+
+def _designes(motifs: Sequence[str], fichiers: Sequence[str], deja: Collection[str]) -> list[str]:
+    """Les fichiers suivis que `motifs` désignent, dans leur ordre, sans ceux déjà lus.
+
+    Un motif est un chemin exact, un dossier (`dossier/`) ou un motif de shell
+    (`dossier/*.yml`). Seul un fichier suivi se désigne : un chemin hors du dépôt, ou
+    qu'il ne suit pas, n'en désigne aucun.
+    """
+    retenus: list[str] = []
+    for brut in motifs:
+        motif = brut.removeprefix("./").lstrip("/")
+        if not motif:
+            continue
+        dossier = motif.rstrip("/") + "/"
+        for chemin in fichiers:
+            if chemin in deja or chemin in retenus:
+                continue
+            if chemin == motif or chemin.startswith(dossier) or fnmatch.fnmatchcase(chemin, motif):
+                retenus.append(chemin)
+    return retenus
+
+
 # --- Les commandes ----------------------------------------------------------
 
 
 def _lire_commandes(
-    lecteur: Lecteur, choix: Sequence[str], pieces: Pieces
+    lecteur: Lecteur,
+    choix: Sequence[str],
+    pieces: Pieces,
+    systeme: str,
+    nommes: Sequence[tuple[str, str]] = (),
 ) -> tuple[Commandes, str]:
     """Ce que le livrable déclare, ligne par ligne — et pourquoi rien, si la lecture a échoué."""
     prompt = (
         f"Les choix d'outillage de la personne :\n<choix>{_choix_en_texte(choix)}</choix>\n"
-        f"Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte()}</depot>\n"
+        f"Le système où le clone se rejoue :\n<systeme>{systeme}</systeme>\n"
+        f"Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte(nommes)}</depot>\n"
         "Quelles commandes ce projet déclare-t-il ?"
     )
     try:
@@ -524,11 +778,17 @@ def _lire_commandes(
     return commandes_depuis(brut), ""
 
 
-def commandes_depuis(brut: str) -> Commandes:
-    """Les commandes lues dans la réponse du lecteur — un champ absent vaut « aucune »."""
+def _champs(brut: str) -> dict[str, str]:
+    """Les champs `CHAMP: valeur` d'une réponse du lecteur — le premier de chaque nom fait foi."""
     champs: dict[str, str] = {}
     for trouve in _LIGNE_CHAMP.finditer(brut or ""):
         champs.setdefault(trouve.group("champ"), trouve.group("valeur").strip().strip("`"))
+    return champs
+
+
+def commandes_depuis(brut: str) -> Commandes:
+    """Les commandes lues dans la réponse du lecteur — un champ absent vaut « aucune »."""
+    champs = _champs(brut)
 
     def valeur(champ: str) -> str:
         texte = champs.get(champ, "").strip()
@@ -655,29 +915,42 @@ def _commandes_en_mots(commandes: Commandes) -> str:
 # --- Les lignes jugées ------------------------------------------------------
 
 
-def _juger(axe: str, lecteur: Lecteur, choix: Sequence[str], pieces: Pieces) -> Ligne:
-    """Une ligne jugée sur pièces : tenue, manquée, ou non jugée si le juge s'abstient."""
+def _juger(
+    axe: str,
+    lecteur: Lecteur,
+    choix: Sequence[str],
+    pieces: Pieces,
+    nommes: Sequence[tuple[str, str]] = (),
+) -> Ligne:
+    """Une ligne jugée sur pièces : tenue, manquée, ou non jugée si le juge s'abstient.
+
+    `nommes` sont les fichiers que la ligne a nommés, lus pour elle (`_lectures`).
+    """
     if axe in (AXE_COMMITS, AXE_OUTILLAGE) and not choix:
         return Ligne(axe, NON_JUGE, "aucun choix d'outillage n'est déclaré pour ce livrable")
     choisi = f"Les choix d'outillage de la personne :\n<choix>{_choix_en_texte(choix)}</choix>\n"
+    depot = f"Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte(nommes)}</depot>\n"
     if axe == AXE_COMMITS:
         sujets = "\n".join(pieces.commits) or "(aucun commit)"
+        lesquels = (
+            f"Les sujets des commits du livrable depuis sa base `{pieces.base[:12]}`"
+            if pieces.base
+            else "Les sujets des derniers commits"
+        )
         systeme, prompt = (
             SYSTEME_COMMITS,
-            f"{choisi}Les sujets des derniers commits, du plus récent au plus ancien :\n"
+            f"{choisi}{lesquels}, du plus récent au plus ancien :\n"
             f"<commits>{sujets}</commits>\nCes commits suivent-ils la convention choisie ?",
         )
     elif axe == AXE_CI:
         systeme, prompt = (
             SYSTEME_CI,
-            f"{choisi}Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte()}</depot>\n"
-            "Ce dépôt porte-t-il une intégration continue écrite ?",
+            f"{choisi}{depot}Ce dépôt porte-t-il une intégration continue écrite ?",
         )
     else:
         systeme, prompt = (
             SYSTEME_OUTILLAGE,
-            f"{choisi}Le dépôt, tel qu'il est commité :\n<depot>{pieces.en_texte()}</depot>\n"
-            "Ce livrable suit-il chacun de ces choix ?",
+            f"{choisi}{depot}Ce livrable suit-il chacun de ces choix ?",
         )
     avis = lecteur.juger(systeme, prompt)
     if not avis.lisible:

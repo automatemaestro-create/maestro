@@ -169,8 +169,10 @@ chaine=<clone> --objectif <objectif de #1505>`. Elle a joué les axes que nomme 
 - **La convention de commit** est jugée sur les derniers commits **du dépôt**, pas sur ceux du
   livrable. Chez la chaîne, ce sont des titres de squash d'autres tickets qui la font manquer.
 
-Ces trois limites sont reprises par #1544. Sur un dépôt existant, la grille ne mesure pas encore le
-livrable d'un ticket. Le rejeu du § 3.1 en tient lieu ici.
+Ces trois limites sont reprises par #1544. Le jour de cette mesure, sur un dépôt existant, la grille
+ne mesurait pas encore le livrable d'un ticket, et le rejeu du § 3.1 en tient lieu ici. Depuis
+#1544, chaque livrable se rejoue contre sa base (`--base <côté>=<commit>`), chaque ligne nomme les
+fichiers qu'elle lit, et le lecteur de commandes sait sur quel système le clone se rejoue.
 
 ---
 
