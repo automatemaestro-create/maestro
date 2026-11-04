@@ -249,3 +249,6 @@ dont la part est plafonnée (docs/49 § 0) : elle est laissée à l'arbitrage, s
 - **#1542** et **#1543** : les deux lots neufs de #1510.
 - **#1507, #1515, #1530, #1531** : une note y verse les pièces de ce passage.
 - **#1544** : les limites de la grille de #1512 sur un dépôt existant.
+- **#1587** : la même mesure rejouée sur un ticket neuf, une fois livrés les cinq leviers (#1542,
+  #1543, #1531, #1530, #1507). Un seuil posé avant l'épreuve y décide si Maestro peut développer une
+  part de ce dépôt (docs/06, section « Maestro sur son propre dépôt »).
