@@ -53,6 +53,7 @@ from maestro.controltower.generation_agent import (
     GenerateurDefinitionAgent,
 )
 from maestro.controltower.projets import ServiceProjets
+from maestro.decideur import Decideur
 from maestro.equipe import (
     ECARTE_ORCHESTRATEUR,
     INSTANCES_MAX_CREEES,
@@ -88,6 +89,7 @@ from maestro.outillage.questionnaire import (
 )
 from maestro.outillage.recommandation import recommander
 from maestro.outillage.redaction import rediger
+from maestro.portee import PORTEE_PROJET
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
 
@@ -983,6 +985,85 @@ def test_un_projet_qui_a_ses_fichiers_compose_son_equipe_sur_sa_lecture(
     prompt, _ = fournisseur.demandes[0]
     assert "un projet existant, lu par l'analyse" in prompt
     assert "nature :" not in prompt
+
+
+#: Les deux skills que l'outillage du carnet écrit — sa construction et ses tests.
+SKILLS_DU_CARNET = {
+    "construire-le-projet": ".agents/skills/construire-le-projet/SKILL.md",
+    "lancer-les-tests": ".agents/skills/lancer-les-tests/SKILL.md",
+}
+
+
+def _skills_servis(servi: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Les skills que les rôles proposés branchent, par nom — tels que la carte les lit."""
+    return {skill["nom"]: skill for role in servi["roles"] for skill in role["skills"]}
+
+
+def _execution(servi: dict[str, Any], nom: str) -> dict[str, Any]:
+    """L'autorisation d'exécution du rôle `nom`, telle que la carte la déplie."""
+    role = next(r for r in servi["roles"] if r["nom"] == nom)
+    (execution,) = role["autorisations"]
+    return execution
+
+
+def test_un_skill_que_l_outillage_a_ecrit_est_dit_ecrit_sur_la_carte(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """#1591 : l'équipe d'un projet décrit se dérive de ses réponses, sans regarder le disque.
+
+    Sur le parcours `verify` de l'herbier, les pièces de l'outillage venaient d'être écrites
+    sur accord, et la carte d'équipe disait « mettre-en-route (à générer) » : la
+    recommandation tirée des réponses ne sait pas ce que le projet porte, si bien que toute
+    entrée y sortait `a-generer`. Ce que le projet porte est écrit.
+    """
+    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, _FournisseurEnPanne())
+
+    servi = asyncio.run(service.proposer(projet))
+
+    skills = _skills_servis(servi)
+    assert {nom: s["chemin"] for nom, s in skills.items()} == SKILLS_DU_CARNET
+    for skill in skills.values():
+        assert (atelier / "carnet" / skill["chemin"]).is_file()
+        assert skill["etat"] == "deja-present", skill["nom"]
+
+
+def test_un_skill_que_le_projet_ne_porte_pas_reste_a_generer(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """Le pendant de #1591 : « à générer » ne reste que sur un skill absent du disque."""
+    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, _FournisseurEnPanne())
+    (atelier / "carnet" / SKILLS_DU_CARNET["lancer-les-tests"]).unlink()
+
+    servi = asyncio.run(service.proposer(projet))
+
+    skills = _skills_servis(servi)
+    assert skills["lancer-les-tests"]["etat"] == "a-generer"
+    assert skills["construire-le-projet"]["etat"] == "deja-present"
+    # Ses commandes ne sont écrites nulle part : la raison le dit, comme avant.
+    assert "aucune n'a pu être lue" in _execution(servi, "tests")["raison"]
+
+
+def test_la_raison_du_cran_nomme_les_skills_ou_l_outillage_a_ecrit_les_commandes(
+    tmp_path: Path, atelier: Path, gabarits: ConfigurationAgents
+) -> None:
+    """#1591 : « Aucune commande n'est encore écrite dans le projet » était faux.
+
+    Les commandes du rôle venaient d'être écrites dans les skills de l'outillage accepté.
+    La raison dit où elles sont ; le cran, lui, ne bouge pas (#1226).
+    """
+    service, projet = _service_du_carnet(tmp_path, atelier, gabarits, _FournisseurEnPanne())
+
+    servi = asyncio.run(service.proposer(projet))
+
+    execution = _execution(servi, "tests")
+    assert SKILLS_DU_CARNET["lancer-les-tests"] in execution["raison"]
+    assert "aucune n'a pu être lue" not in execution["raison"]
+    assert "ne le borne pas à celles-là" in execution["raison"]
+    assert (execution["cran"], execution["decideur"], execution["portee"]) == (
+        "ask",
+        str(Decideur.AUTO),
+        PORTEE_PROJET,
+    )
 
 
 def test_le_cadre_demande_des_raisons_qui_ne_valent_que_pour_ce_projet() -> None:

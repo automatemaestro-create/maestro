@@ -275,6 +275,34 @@ describe("le récapitulatif, sans rien ouvrir", () => {
     expect(await within(carte).findByText(/Décidé d'avance par vous/)).toBeInTheDocument();
     expect(within(carte).getByText("Bash(pytest *)")).toBeInTheDocument();
   });
+
+  it("dit « à générer » d'un skill que le projet ne porte pas, jamais d'un skill écrit (#1591)", async () => {
+    const skill = (nom: string, etat: string) => ({
+      nom,
+      chemin: `.agents/skills/${nom}/SKILL.md`,
+      etat,
+      raison: "il s'en sert",
+      commandes: [],
+    });
+    proposerEquipe.mockResolvedValue({
+      ...PROPOSITION,
+      roles: [
+        role({
+          skills: [skill("mettre-en-route", "deja-present"), skill("construire-le-projet", "a-generer")],
+        }),
+      ],
+    });
+    poserFilAssistance({ messages: [demandeDeRecrutement()] });
+    rendreAvecEtat(<PageChat />);
+    const carte = await carteAttendue();
+    await userEvent.click(await within(carte).findByRole("button", { name: "Voir l'équipe" }));
+
+    const ligne = within(carte).getByText(/Skills branchés/).closest("p") as HTMLElement;
+    const ecrit = within(ligne).getByText("mettre-en-route").parentElement as HTMLElement;
+    const absent = within(ligne).getByText("construire-le-projet").parentElement as HTMLElement;
+    expect(ecrit.textContent).not.toContain("à générer");
+    expect(absent.textContent).toContain("(à générer)");
+  });
 });
 
 describe("ce que la validation envoie", () => {

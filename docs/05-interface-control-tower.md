@@ -7497,6 +7497,11 @@ sans agent, son analyse lui propose une équipe, l'utilisateur la valide*.
   analyser un disque qui ne porte que l'outillage de Maestro ne disait du projet que son nom, et les
   raisons des rôles valaient pour n'importe quel dépôt. C'est la règle même qui ouvre l'outillage
   dans le fil (décrit tant qu'il n'a pas de fichier à lui, lu ensuite).
+  **Depuis #1591**, les skills que ces réponses recommandent sont confrontés au disque — leur seule
+  présence, aucun fichier n'est ouvert : un skill que l'outillage accepté a déjà écrit sort
+  `deja-present`, et la carte d'équipe ne le dit plus « à générer ». La raison de l'autorisation
+  d'exécution nomme alors les skills où les commandes du rôle sont écrites, au lieu d'affirmer
+  qu'aucune ne l'est ; le cran, lui, ne change pas (#1226).
   **Depuis #1159** ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md)), c'est le **modèle**
   qui compose l'équipe pour le besoin réel du projet — ses constats, ce que la personne a répondu,
   les cinq gabarits comme matière et non comme liste fermée —, puis l'exécution **vérifie** ce qu'il

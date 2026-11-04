@@ -338,6 +338,45 @@ def test_une_commande_de_convention_n_est_pas_une_commande_lue() -> None:
     assert "aucune n'a pu être lue" in execution.raison
 
 
+def test_la_raison_nomme_le_skill_du_projet_ou_les_commandes_sont_ecrites() -> None:
+    """#1591 : un skill que le projet porte écrit les commandes du rôle — la raison le dit.
+
+    Sans commande déclarée, la raison affirmait qu'« aucune commande n'est encore écrite
+    dans le projet », alors que le skill branché, présent sur le disque, les porte. Le
+    cran ne bouge pas (#1226) : seule la raison servie dit où elles sont.
+    """
+    skill = ".agents/skills/lancer-les-tests/SKILL.md"
+    constats = _constats(
+        commandes=(
+            Commande(
+                usage="tester", commande="pytest", chemin="pyproject.toml", origine="convention"
+            ),
+        ),
+        outillage_present=(Piece(nom="lancer-les-tests", chemin=skill, role="skill"),),
+    )
+
+    proposition = _propose(constats)
+    tests = _role(proposition, "tests")
+
+    assert [(s.chemin, s.etat) for s in tests.skills] == [(skill, "deja-present")]
+    execution = next(a for a in tests.autorisations if a.outil == OUTIL_EXECUTION)
+    assert (execution.cran, execution.decideur_effectif, execution.portee) == (
+        "ask",
+        Decideur.AUTO,
+        PORTEE_PROJET,
+    )
+    assert skill in execution.raison
+    assert "aucune n'a pu être lue" not in execution.raison
+    # Une commande de convention reste une supposition : elle n'est pas citée comme lue.
+    assert "pyproject.toml" not in execution.raison
+    assert "sans vous demander de trancher chaque commande" in execution.raison
+    assert "sort du dossier du projet" in execution.raison
+    # Le développeur ne branche pas ce skill : la raison dit que **ses** commandes ne sont
+    # écrites nulle part, sans prétendre qu'aucune ne l'est dans le projet.
+    (dev,) = _role(proposition, "dev").autorisations
+    assert "Aucune commande de ce rôle n'est encore écrite dans le projet" in dev.raison
+
+
 def test_la_politique_proposee_laisse_allow_ouvert_et_porte_le_decideur() -> None:
     """Une liste `allow` non vide est *fermée* : la remplir avec les outils du rôle
     refuserait les canaux in-process de Maestro — poser une question, consigner une
