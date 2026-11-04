@@ -412,7 +412,11 @@ Un dossier neuf déjà occupé, un nom ou un dossier déjà déclarés sont remp
 numérotée, et **la carte le dit** (`ajustements`). Un dossier neuf nommé d'après un nom pris suit
 la variante du nom, s'il est libre. Git absent retire la mise sous Git, et le dit
 aussi. Ce qui ne se corrige pas n'est pas montré : un dossier à importer introuvable, ou déjà un
-projet. Le fil en dit la cause derrière les mots du modèle.
+projet, ou un dossier hors des frontières d'EF-38. Le fil en dit la cause derrière les mots du
+modèle (#1592). Le modèle parle avant la vérification : sa consigne lui interdit d'annoncer la
+carte, comme pour un geste sur un run (§2.9). Une consigne n'est pas une garantie, donc la phrase du
+code revient sur ses mots : « Vérification faite, aucune carte ne suivra », puis la cause en phrase
+entière, ponctuée une seule fois quelle que soit la sienne.
 
 **La carte d'accord** (`components/chat/DemandeDeProjet.tsx`) est une carte du pied du fil, comme
 la demande de cadrage (§2.9). Elle porte le titre « Créer ce projet ? » ou « Importer ce
