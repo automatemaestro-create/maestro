@@ -1,3 +1,5 @@
+import { configPoste } from "./configPoste";
+
 /**
  * Le **jeton de l'API locale** (#638) — le seul endroit qui nomme sa variable.
  *
@@ -18,7 +20,15 @@
  * un appel : `tests/jeton-api.test.ts` joue les deux régimes grâce à cette
  * lecture-là. Le pendant exact de `maestro.controltower.acces` côté Python :
  * une seule façon de résoudre le jeton, de chaque côté.
+ *
+ * **Le jeton que le serveur a posé dans la page passe devant** (#641,
+ * `lib/configPoste`) : un paquet d'installation est construit une fois pour tous
+ * les postes, et le jeton de chacun ne peut lui arriver qu'au moment où il est
+ * servi. La variable du build reste le repli de `start.sh` et de `next dev`.
  */
 export function jetonApi(): string {
-  return (process.env.NEXT_PUBLIC_MAESTRO_API_JETON ?? "").trim();
+  return (
+    configPoste().jeton ??
+    (process.env.NEXT_PUBLIC_MAESTRO_API_JETON ?? "").trim()
+  );
 }

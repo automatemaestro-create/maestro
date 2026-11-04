@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
+import { connection } from "next/server";
 
 import { Shell } from "@/components/Shell";
+import { configPosteServeur, scriptConfigPoste } from "@/lib/configPoste";
 import { SCRIPT_INIT_THEME } from "@/lib/theme";
 
 import "./globals.css";
@@ -51,11 +53,22 @@ export const viewport: Viewport = {
   interactiveWidget: "resizes-content",
 };
 
-export default function RootLayout({
+/**
+ * Le layout lit la **configuration du poste** à chaque requête (#641,
+ * `lib/configPoste`) : où est l'API et le jeton qui l'ouvre, que le lanceur
+ * donne au serveur du front au démarrage. `connection()` fait de chaque rendu un
+ * rendu **dynamique** — sans lui, `next build` évaluerait ces deux valeurs une
+ * fois pour toutes et les figerait dans le HTML, c'est-à-dire celles du poste qui
+ * a construit le paquet. C'est le prix d'un build qui sert tous les postes, et il
+ * est payé par un serveur local qui ne sert qu'une personne.
+ */
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  await connection();
+  const scriptPoste = scriptConfigPoste(configPosteServeur());
   return (
     // Le serveur ne connaît pas le choix de l'utilisateur : il rend le thème
     // clair, que le script ci-dessous corrige avant le premier rendu (#118).
@@ -69,6 +82,13 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        {/* Avant tout le reste : la page lit sa configuration au premier appel,
+            et ce script est le seul endroit où elle l'apprend. Absent quand le
+            serveur n'a rien reçu — `start.sh`, `next dev` : la page est alors
+            exactement celle d'avant #641. */}
+        {scriptPoste !== null ? (
+          <script dangerouslySetInnerHTML={{ __html: scriptPoste }} />
+        ) : null}
         <script dangerouslySetInnerHTML={{ __html: SCRIPT_INIT_THEME }} />
       </head>
       {/* `h-full` et non `min-h-full` (#248) : une hauteur **définie**, et non

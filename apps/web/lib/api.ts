@@ -1,17 +1,19 @@
 /**
  * Client REST du backend Control Tower (maestro/controltower/app.py).
  *
- * L'URL de l'API vient de `NEXT_PUBLIC_MAESTRO_API_URL` (inlinée au build par
- * Next.js) et retombe sur l'écoute locale par défaut du backend
- * (`maestro-api`, 127.0.0.1:8000). Le WebSocket dérive de la même URL.
+ * L'URL de l'API est celle que le serveur du front a posée dans la page
+ * (`lib/configPoste`, #641), sinon `NEXT_PUBLIC_MAESTRO_API_URL` (inlinée au
+ * build par Next.js), sinon l'écoute locale par défaut du backend (`maestro-api`,
+ * 127.0.0.1:8000). Le WebSocket dérive de la même URL.
  *
- * Le **jeton de l'API locale** (#638) vient de `lib/jetonApi`, posé de la même
+ * Le **jeton de l'API locale** (#638) vient de `lib/jetonApi`, résolu de la même
  * façon, et part sur chaque appel — en en-tête pour le REST, en paramètre d'URL
  * pour le WebSocket, qui n'admet pas d'en-tête. Tout passe par `appel()`
  * ci-dessous : c'est le seul `fetch` du module.
  */
 
 import { AUCUNE_BORNE, type BornesRun } from "./bornes";
+import { configPoste } from "./configPoste";
 import { jetonApi } from "./jetonApi";
 import { lireProjetActifId } from "./projetActif";
 import { ETENDUE_APPEL, type EtendueApprobation } from "./types";
@@ -86,13 +88,19 @@ import type {
   VersionPlaybookDetail,
 } from "./types";
 
-const API_URL = (
-  process.env.NEXT_PUBLIC_MAESTRO_API_URL ?? "http://localhost:8000"
-).replace(/\/+$/, "");
-
-/** L'URL du backend visé — celle qu'affiche la page Paramètres (#117). */
+/**
+ * L'URL du backend visé — celle qu'affiche la page Paramètres (#117).
+ *
+ * Celle que le serveur a posée dans la page passe devant celle du build (#641,
+ * `lib/configPoste`), et elle est relue **à chaque appel** : une constante
+ * d'import la figerait avant que la page ne l'ait reçue.
+ */
 export function urlApi(): string {
-  return API_URL;
+  return (
+    configPoste().api ??
+    process.env.NEXT_PUBLIC_MAESTRO_API_URL ??
+    "http://localhost:8000"
+  ).replace(/\/+$/, "");
 }
 
 /** L'en-tête du jeton (#638), ou rien du tout quand le poste sert en régime ouvert. */
@@ -175,7 +183,7 @@ export function urlEvenements(portee: PorteeProjet): string {
   const jeton = jetonApi();
   const porte = jeton === "" ? "" : `&jeton=${encodeURIComponent(jeton)}`;
   return (
-    API_URL.replace(/^http/, "ws") +
+    urlApi().replace(/^http/, "ws") +
     `/ws/evenements?projet=${encodeURIComponent(portee)}${porte}`
   );
 }
@@ -299,7 +307,7 @@ function etatMagasinDe(brut: unknown): EtatMagasin | null {
 async function chargerJson<T>(chemin: string): Promise<T> {
   let reponse: Response;
   try {
-    reponse = await appel(`${API_URL}${chemin}`, { cache: "no-store" });
+    reponse = await appel(`${urlApi()}${chemin}`, { cache: "no-store" });
   } catch {
     throw ErreurApi.injoignable(chemin);
   }
@@ -586,7 +594,7 @@ async function envoyerJson(
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<void> {
-  const reponse = await appel(`${API_URL}${chemin}`, {
+  const reponse = await appel(`${urlApi()}${chemin}`, {
     method: methode,
     ...(corps !== undefined && {
       headers: { "Content-Type": "application/json" },
@@ -969,7 +977,7 @@ export async function ouvrirConversationChat(
 ): Promise<ConversationChat> {
   const reponse = await appel(
     cadreProjet(
-      `${API_URL}/api/chat/${encodeURIComponent(agent)}/conversations`,
+      `${urlApi()}/api/chat/${encodeURIComponent(agent)}/conversations`,
     ),
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
@@ -1009,7 +1017,7 @@ export async function trancherCadrageChat(
 ): Promise<MessageChat[]> {
   const bornes = decision.bornes ?? AUCUNE_BORNE;
   const reponse = await appel(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/cadrage`,
+    `${urlApi()}/api/chat/${encodeURIComponent(agent)}/cadrage`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1050,7 +1058,7 @@ export async function declarerProjetDuFil(
   decision: { approuve: boolean; conversation?: string },
 ): Promise<MessageChat[]> {
   const reponse = await appel(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/projet`,
+    `${urlApi()}/api/chat/${encodeURIComponent(agent)}/projet`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1090,7 +1098,7 @@ export async function trancherGesteDuFil(
   const chemin = `/api/chat/${encodeURIComponent(agent)}/geste`;
   let reponse: Response;
   try {
-    reponse = await appel(`${API_URL}${chemin}`, {
+    reponse = await appel(`${urlApi()}${chemin}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1133,7 +1141,7 @@ export async function trancherReglementDuFil(
   const chemin = `/api/chat/${encodeURIComponent(agent)}/reglement`;
   let reponse: Response;
   try {
-    reponse = await appel(`${API_URL}${chemin}`, {
+    reponse = await appel(`${urlApi()}${chemin}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1179,7 +1187,7 @@ export async function recruterDansLeFil(
   },
 ): Promise<MessageChat[]> {
   const reponse = await appel(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/recrutement`,
+    `${urlApi()}/api/chat/${encodeURIComponent(agent)}/recrutement`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1223,7 +1231,7 @@ export async function repondreQuestionOutillage(
   reponseChoisie: { valeur: string; libre?: boolean; conversation?: string },
 ): Promise<MessageChat[]> {
   const reponse = await appel(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage`,
+    `${urlApi()}/api/chat/${encodeURIComponent(agent)}/outillage`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1262,7 +1270,7 @@ export async function trancherPieceDuFil(
   const chemin = `/api/chat/${encodeURIComponent(agent)}/outillage/piece`;
   let reponse: Response;
   try {
-    reponse = await appel(`${API_URL}${chemin}`, {
+    reponse = await appel(`${urlApi()}${chemin}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(decision),
@@ -1306,7 +1314,7 @@ export async function ouvrirQuestionnaireOutillage(
   if (projet) requete.set("projet", projet);
   const suffixe = requete.toString() ? `?${requete}` : "";
   const reponse = await appel(
-    `${API_URL}/api/chat/${encodeURIComponent(agent)}/outillage/questionnaire${suffixe}`,
+    `${urlApi()}/api/chat/${encodeURIComponent(agent)}/outillage/questionnaire${suffixe}`,
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
   if (!reponse.ok) {
@@ -1400,7 +1408,7 @@ export async function diffuserMessageChat(
   surTrame: (trame: FragmentChat) => void = () => {},
 ): Promise<void> {
   const reponse = await appel(
-    cadreProjet(`${API_URL}/api/chat/${encodeURIComponent(agent)}/flux`),
+    cadreProjet(`${urlApi()}/api/chat/${encodeURIComponent(agent)}/flux`),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1496,7 +1504,7 @@ export async function arreterFluxChat(
   try {
     await appel(
       cadreProjet(
-        `${API_URL}/api/chat/${encodeURIComponent(agent)}/flux/${encodeURIComponent(echange)}/arret`,
+        `${urlApi()}/api/chat/${encodeURIComponent(agent)}/flux/${encodeURIComponent(echange)}/arret`,
       ),
       { method: "POST" },
     );
@@ -1576,7 +1584,7 @@ async function envoyerJsonEtLire<T>(
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<T> {
-  const reponse = await appel(`${API_URL}${chemin}`, {
+  const reponse = await appel(`${urlApi()}${chemin}`, {
     method: methode,
     ...(corps !== undefined && {
       headers: { "Content-Type": "application/json" },
@@ -1848,7 +1856,7 @@ async function lireProjets<T>(
 ): Promise<T> {
   let reponse: Response;
   try {
-    reponse = await appel(`${API_URL}${chemin}`, { cache: "no-store" });
+    reponse = await appel(`${urlApi()}${chemin}`, { cache: "no-store" });
   } catch {
     throw ErreurApi.injoignable(chemin);
   }
@@ -1880,7 +1888,7 @@ async function ecrireProjet<T>(
 ): Promise<T> {
   let reponse: Response;
   try {
-    reponse = await appel(`${API_URL}${chemin}`, {
+    reponse = await appel(`${urlApi()}${chemin}`, {
       method: methode,
       ...(corps !== undefined && {
         headers: { "Content-Type": "application/json" },
@@ -2209,7 +2217,7 @@ export async function apercuSources(
   const corps = new FormData();
   corps.set("sources", JSON.stringify(sources));
   for (const fichier of fichiers) corps.append("fichier", fichier);
-  const reponse = await appel(`${API_URL}/api/sources/apercu`, {
+  const reponse = await appel(`${urlApi()}/api/sources/apercu`, {
     method: "POST",
     body: corps,
   });
@@ -2231,7 +2239,7 @@ export async function televerserSources(
 ): Promise<TeleversementSources> {
   const corps = new FormData();
   for (const fichier of fichiers) corps.append("fichier", fichier);
-  const reponse = await appel(`${API_URL}/api/sources`, {
+  const reponse = await appel(`${urlApi()}/api/sources`, {
     method: "POST",
     body: corps,
   });
@@ -2250,7 +2258,7 @@ export async function televerserSources(
 export async function lancerExecution(
   corps: LancementExecution,
 ): Promise<ResumeExecution> {
-  const reponse = await appel(`${API_URL}/api/executions`, {
+  const reponse = await appel(`${urlApi()}/api/executions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(corps),
@@ -2351,7 +2359,7 @@ export async function relancerExecution(
   runId: string,
 ): Promise<ResumeExecution> {
   const reponse = await appel(
-    `${API_URL}/api/executions/${encodeURIComponent(runId)}/relancer`,
+    `${urlApi()}/api/executions/${encodeURIComponent(runId)}/relancer`,
     { method: "POST" },
   );
   if (!reponse.ok) throw await refusSource(reponse, "relance refusée");

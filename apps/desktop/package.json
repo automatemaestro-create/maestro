@@ -1,13 +1,53 @@
 {
   "name": "desktop",
+  "productName": "Maestro",
   "version": "0.1.0",
   "private": true,
   "description": "Coque de bureau de Maestro : une fenetre native qui sert la stack locale (#923).",
+  "author": "Maestro",
   "main": "main.js",
   "scripts": {
     "start": "electron ."
   },
   "devDependencies": {
-    "electron": "44.3.0"
+    "electron": "44.3.0",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "maestro.poste-de-travail",
+    "productName": "Maestro",
+    "directories": {
+      "output": "../../.maestro/distribution/paquet"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "attente.html",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../.maestro/distribution/produit",
+        "to": "produit",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Maestro-${version}-installation-${arch}.${ext}"
+    }
   }
 }

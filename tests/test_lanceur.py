@@ -426,15 +426,89 @@ def test_le_port_du_front_se_deplace_et_se_dit(emplacement: Emplacement) -> None
     assert service_ui is not None and service_ui.port == 3001
 
 
-def test_le_port_de_l_api_ne_se_deplace_jamais_en_silence(emplacement: Emplacement) -> None:
-    """L'URL de l'API est figée dans le front au build : la déplacer servirait un écran muet."""
+def test_le_port_de_l_api_se_deplace_et_se_dit(emplacement: Emplacement) -> None:
+    """Le front reçoit l'URL de l'API à son démarrage (#641) : rien d'autre n'en dépend.
+
+    Un 8000 déjà tenu — le port le plus demandé des serveurs de développement — ne
+    doit pas empêcher une installation de démarrer.
+    """
     systeme = SystemeDouble(ports_tenus={8000})
+    sortie = SortieDouble()
+    environs = _environs_des_services(systeme)
+    assert _demarrer(emplacement, systeme, sortie) == 0
+    assert ":8000 est pris — l'API écoute sur :8001" in sortie.tout
+    inscrite = etat_session.lire(emplacement.session)
+    assert inscrite is not None
+    service_api = inscrite.service("api")
+    assert service_api is not None and service_api.port == 8001
+    assert environs[1]["MAESTRO_API_URL"] == "http://127.0.0.1:8001"
+
+
+def test_aucun_port_libre_pour_l_api(emplacement: Emplacement) -> None:
+    """Le code `4` reste celui du port de l'API : il se lève d'un geste (libérer, désigner)."""
+    systeme = SystemeDouble(ports_tenus=set(range(8000, 8100)))
     sortie = SortieDouble()
     assert _demarrer(emplacement, systeme, sortie) == 4
     assert systeme.demarrages == []
-    assert "Le port de l'API (:8000) est déjà tenu." in sortie.tout
+    assert "Aucun port libre pour l'API à partir de :8000" in sortie.tout
     assert "--port-api" in sortie.tout
     assert not emplacement.session.exists()
+
+
+def _environs_des_services(systeme: SystemeDouble) -> list[dict[str, str]]:
+    """Les environnements passés aux services, dans l'ordre : l'API, puis le front."""
+    environs: list[dict[str, str]] = []
+
+    def demarrer_espion(argv: Any, *, cwd: Path, journal: Path, environ: Any) -> Processus:
+        environs.append(dict(environ))
+        return SystemeDouble.demarrer(systeme, argv, cwd=cwd, journal=journal, environ=environ)
+
+    systeme.demarrer = demarrer_espion  # type: ignore[method-assign]
+    return environs
+
+
+def test_l_api_admet_le_front_sur_le_port_ou_il_ecoute(emplacement: Emplacement) -> None:
+    """L'API n'admet que les origines de son front (#638), qu'elle dérive de `MAESTRO_PORT_UI`.
+
+    Le front déplacé sur :3001 sans que l'API le sache, elle retombait sur :3000 et
+    refusait chaque appel de l'interface qu'on venait d'ouvrir — la panne de #1233,
+    vue cette fois depuis le lanceur.
+    """
+    systeme = SystemeDouble(ports_tenus={3000})
+    sortie = SortieDouble()
+    environs = _environs_des_services(systeme)
+    assert _demarrer(emplacement, systeme, sortie) == 0
+    assert environs[0]["MAESTRO_PORT_UI"] == "3001"
+
+
+def test_le_front_recoit_l_url_et_le_jeton_de_l_api_a_son_demarrage(
+    emplacement: Emplacement, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un paquet se construit une fois pour tous les postes (#641) : le jeton de l'API,
+    propre à chacun, ne peut arriver au front qu'au moment où il est servi."""
+    monkeypatch.setenv("MAESTRO_API_AUTH", "jeton")
+    monkeypatch.setenv("MAESTRO_API_JETON", JETON_DE_TEST)
+    systeme = SystemeDouble()
+    sortie = SortieDouble()
+    environs = _environs_des_services(systeme)
+    assert _demarrer(emplacement, systeme, sortie) == 0
+    assert environs[1]["MAESTRO_API_URL"] == "http://127.0.0.1:8000"
+    assert environs[1]["MAESTRO_API_JETON"] == JETON_DE_TEST
+    # L'API ne le reçoit pas par ce chemin : elle le résout elle-même.
+    assert "MAESTRO_API_JETON" not in environs[0]
+
+
+def test_en_regime_ouvert_le_front_ne_recoit_aucun_jeton(
+    emplacement: Emplacement, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Le régime ouvert n'exige rien : un jeton donné au front partirait pour rien."""
+    monkeypatch.setenv("MAESTRO_API_AUTH", "ouvert")
+    systeme = SystemeDouble()
+    sortie = SortieDouble()
+    environs = _environs_des_services(systeme)
+    assert _demarrer(emplacement, systeme, sortie, environ={"MAESTRO_API_JETON": "x"}) == 0
+    assert "MAESTRO_API_JETON" not in environs[1]
+    assert environs[1]["MAESTRO_API_URL"] == "http://127.0.0.1:8000"
 
 
 def test_aucun_port_libre_pour_le_front(emplacement: Emplacement) -> None:
@@ -817,9 +891,11 @@ def test_le_remplacement_attend_que_les_ports_se_liberent(emplacement: Emplaceme
     systeme.vivants = {11, 22}
     systeme.lignes_forcees = {11: "maestro.controltower.cli", 22: "/produit/web/server.js"}
     sortie = SortieDouble()
-    # Les ports restent tenus : le lanceur le dit, puis signale la collision de l'API.
-    assert _demarrer(emplacement, systeme, sortie) == 4
+    # Les ports restent tenus : le lanceur le dit, puis les contourne en le disant.
+    assert _demarrer(emplacement, systeme, sortie) == 0
     assert "ne se libèrent pas" in sortie.tout
+    assert ":8000 est pris — l'API écoute sur :8001" in sortie.tout
+    assert ":3000 est pris — le front écoute sur :3001" in sortie.tout
 
 
 # ------------------------------------------------------------------- l'état et le diagnostic

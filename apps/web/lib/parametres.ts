@@ -99,7 +99,8 @@ export const FAMILLES_PARAMETRES: FamilleParametres[] = [
         // **ce qu'il fait** : les faire dire la même chose donnait trois fois
         // la même phrase avant la valeur (constat de la relecture visuelle de
         // #1022). C'est le partage que tient déjà « Général » — « Backend visé
-        // par l'interface » au-dessus, « Réglée au build par … » dans la ligne.
+        // par l'interface » au-dessus, « Celle que le lanceur a donnée … » dans
+        // la ligne.
         description: "Où naissent les projets neufs déclarés depuis ce poste.",
       },
       {
