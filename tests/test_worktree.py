@@ -1820,6 +1820,107 @@ def test_gc_ne_touche_jamais_a_un_dossier_inconnu_non_vide(depot: Depot) -> None
     assert (inconnu / "notes.md").read_text(encoding="utf-8") == "ne pas perdre"
 
 
+# --- Un chemin trop long au retrait (#1590) ---------------------------------------------------
+# Sans `core.longpaths`, Git for Windows supprime les entrées du worktree dans l'ordre — son `.git`
+# parmi les premières —, s'arrête au premier chemin au-delà de MAX_PATH (« Filename too long ») et
+# désenregistre le worktree quand même. Il reste un dossier PLEIN qu'aucun worktree ne revendique :
+# `gc` le nomme et n'y touche plus (#422), il ne part qu'à la main. Un `node_modules` installé sur
+# place suffit à le déclencher.
+
+
+def _git_sans_chemins_longs(depot: Depot) -> None:
+    """Faux `git` qui se conduit comme Git for Windows devant un chemin au-delà de MAX_PATH.
+
+    Sans `-c core.longpaths=true`, `worktree remove` désenregistre le worktree et lui retire son
+    `.git`, mais laisse `apps/` en place et rend 255. Avec l'option, il délègue au vrai git, qui va
+    au bout. Joué partout : c'est ce qui épingle, sous Linux aussi, que le retrait passe l'option.
+    """
+    assert GIT is not None
+    garde = (depot.fauxbin / "garde").as_posix()
+    shim = depot.fauxbin / "git"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'VRAI="{Path(GIT).as_posix()}"\n'
+        'case " $* " in\n'
+        '  *" core.longpaths=true "*) ;;\n'
+        '  *" worktree remove "*)\n'
+        '    cible="${@: -1}"\n'
+        f'    rm -rf "{garde}" && mkdir -p "{garde}"\n'
+        f'    [ -d "$cible/apps" ] && cp -R "$cible/apps" "{garde}/"\n'
+        '    "$VRAI" "$@" || exit $?\n'
+        f'    mkdir -p "$cible" && cp -R "{garde}/." "$cible/"\n'
+        '    printf "error: failed to delete \'%s\': Filename too long\\n" "$cible" >&2\n'
+        "    exit 255 ;;\n"
+        "esac\n"
+        'exec "$VRAI" "$@"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    shim.chmod(0o755)
+
+
+def test_le_retrait_va_au_bout_malgre_un_chemin_trop_long(depot: Depot) -> None:
+    """Le défaut de #1590 : le dossier restait plein, et plus rien ne le ramassait."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    paquet = depot.worktree() / "apps" / "web" / "node_modules" / "paquet"
+    paquet.mkdir(parents=True)
+    (paquet / "index.js").write_text("module.exports = 1\n", encoding="utf-8", newline="\n")
+    _git_sans_chemins_longs(depot)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout, acheve.stdout
+    assert not depot.worktree().exists(), "le retrait ne devait pas laisser un dossier plein"
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="MAX_PATH est une limite de Windows : ailleurs, rien à reproduire",
+)
+def test_un_worktree_aux_chemins_trop_longs_se_retire_sous_windows(depot: Depot) -> None:
+    """Le vrai git sur le vrai système de fichiers : le cas de #1544 et de #1580, sans double."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    profond = depot.worktree() / "apps" / "web" / "node_modules"
+    rang = 0
+    while len(str(profond)) < 300:
+        rang += 1
+        profond = profond / f"un_paquet_au_nom_long_{rang}"
+    # Le préfixe `\\?\` est la seule façon d'écrire au-delà de MAX_PATH sans toucher au registre.
+    natif = "\\\\?\\" + str(profond)
+    os.makedirs(natif)
+    with open(natif + "\\module.js", "w", encoding="utf-8") as fichier:
+        fichier.write("module.exports = 1\n")
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "#152 retiré" in acheve.stdout, acheve.stdout
+    assert not depot.worktree().exists(), "le retrait ne devait pas laisser un dossier plein"
+
+
+def test_gc_nomme_la_cause_d_un_dossier_qui_resiste(depot: Depot) -> None:
+    """« son dossier résiste », sans sa cause, obligeait à reproduire la panne pour la connaître."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _git_qui_laisse_une_coquille(depot, vide=False)
+    depot.impose_verdicts({"152": _verdict_ligne("fini", "PR #42 mergée")})
+
+    acheve = depot.lance("gc")
+    assert "#152 désenregistré, son dossier résiste" in acheve.stdout, acheve.stdout
+    assert "Permission denied" in acheve.stdout, acheve.stdout
+
+
+def test_remove_ne_promet_pas_le_ramassage_d_un_dossier_encore_plein(depot: Depot) -> None:
+    """`gc` ne touche jamais à un dossier inconnu non vide : promettre son ramassage est faux."""
+    depot.lance("create", "152", "--branche", BRANCHE)
+    _git_qui_laisse_une_coquille(depot, vide=False)
+
+    acheve = depot.lance("remove", "152")
+    assert acheve.returncode == 1
+    assert "coquille vide" not in acheve.stderr, acheve.stderr
+    assert "à la main" in acheve.stderr, acheve.stderr
+
+
 def test_gc_check_ne_retire_aucune_coquille(depot: Depot) -> None:
     coquille = depot.worktree("183-partie-depuis-longtemps")
     coquille.mkdir(parents=True)
