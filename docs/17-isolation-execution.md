@@ -12,8 +12,11 @@ activation et ses limites. Le mode **non isolé reste le défaut** à ce stade.
 > ⚠ **Renversé le 2026-10-14 par [docs/48 §2.1](./48-decision-produit-pro-exploitable.md)** (#1518),
 > à la demande de la personne : les agents tournent **isolés par défaut**. La portée reste
 > l'arbitrage, et cesse d'être la seule barrière.
-> - Le défaut sera un **mécanisme natif Windows**, choisi sur pièces par #1514. Docker et ce mode
->   conteneur restent une option plus forte, jamais exigée.
+> - Le défaut sera un **mécanisme natif Windows**, choisi sur pièces par #1514 : l'**intégrité
+>   basse** ([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md)). Elle ferme l'arrêt d'un
+>   processus hors de l'arbre et l'écriture hors du projet. La lecture des secrets reste ouverte
+>   tant que #1515 n'a pas posé son complément. Docker et ce mode conteneur restent une option plus
+>   forte, jamais exigée.
 > - **Décidé, pas encore livré** : tant que #1515 n'est pas livré, ce qui suit décrit l'état
 >   présent, et le défaut reste le mode non isolé.
 
@@ -177,8 +180,13 @@ consigné au journal, comme les autres échecs.
 
 > ⚠ **Ce dernier point est renversé le 2026-10-14** ([docs/48 §2.1](./48-decision-produit-pro-exploitable.md),
 > #1518). En distribution bureau, le défaut deviendra le mode **isolé**, par le mécanisme natif
-> retenu (#1514, #1515). Le conteneur reste une option, et il n'a encore jamais tourné contre un
-> vrai démon Docker dans un test : #1514 le joue une fois pour de vrai.
+> retenu : l'intégrité basse ([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md), #1514),
+> posée par #1515. Le conteneur reste une option.
+> - **#1514 l'a joué une fois contre un vrai démon Docker**, par la commande de `commande_docker`
+>   puis le vrai shim. Il ferme les trois menaces du bilan.
+> - **Mais git y refuse le workspace** (`detected dubious ownership`) : le montage venu de Windows
+>   n'appartient pas à l'utilisateur `agent`.
+> - L'hôte ne joint pas un serveur lancé dedans, et l'image n'a pas de navigateur.
 
 ## 6. Hors mode isolé : la session d'un agent est confinée (#1279)
 
