@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import shutil
 import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
@@ -132,6 +133,8 @@ from maestro.telemetry import (
     report_usage,
     report_usage_du_run,
 )
+
+_LOG = logging.getLogger(__name__)
 
 #: Marqueur du plafond de tours dans les erreurs du SDK : le CLI rend un résultat
 #: `is_error=True` de sous-type `error_max_turns`, que le SDK relève en exception
@@ -968,6 +971,8 @@ class ClaudeProvider(ModelProvider):
                 regulateur.vider()
             if confinement is not None:
                 _rendre_compte(confinement.solder(), on_processus)
+            if self._isolation is not None:
+                await _rapatrier(self._isolation, workspace, env)
 
     async def _point_de_controle_verifie(
         self,
@@ -1169,6 +1174,25 @@ def _commande_du_cli() -> tuple[str, ...] | None:
         return (str(embarque),)
     trouve = shutil.which(nom)
     return (trouve,) if trouve else None
+
+
+async def _rapatrier(isolation: IsolationConfig, workspace: Path, env: Mapping[str, str]) -> None:
+    """Ramène dans le dépôt de la personne ce que l'agent a commité dans le conteneur (#1602).
+
+    Joué ici, en fin de session, et non par le shim : le SDK ne laisse au processus
+    du CLI que quelques secondes après la fin de session avant de le terminer, et un
+    rapatriement coupé en chemin laisserait la branche avancée sur un index périmé.
+    Hors de la boucle (`to_thread`) : il lance un conteneur jetable.
+
+    Best-effort, comme `_rendre_compte` : un refus — historique réécrit par l'agent,
+    démon qui ne répond plus — est journalisé, et ne perd rien, puisque le contenu de
+    l'espace est porté sur la branche par la sauvegarde du démontage. Lever ici
+    masquerait l'exception qui a peut-être condamné la session.
+    """
+    try:
+        await asyncio.to_thread(isolation.rapatrier, workspace, env)
+    except Exception as exc:  # noqa: BLE001 — le rapatriement ne casse jamais la session
+        _LOG.warning("Commits du conteneur non rapatriés (%s) : %s", workspace, exc)
 
 
 def _rendre_compte(

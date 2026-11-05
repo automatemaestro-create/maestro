@@ -15,9 +15,9 @@ posées par le fournisseur sur le sous-processus via `ClaudeAgentOptions.env`.
 
 Ce qui reste sur l'hôte : le moteur, le SDK, la télémétrie, le journal et les
 garde-fous — seul le sous-processus CLI change de monde. Les **accès accordés**
-au conteneur sont volontairement énumérés ici (montage du seul workspace,
-variables d'auth `ENV_TRANSMISES`, réseau sortant) et documentés dans
-docs/17-isolation-execution.md.
+au conteneur sont volontairement énumérés ici (montage du workspace, et du dépôt
+du conteneur pour un projet versionné ; variables d'auth `ENV_TRANSMISES` ;
+réseau sortant) et documentés dans docs/17-isolation-execution.md.
 
 **Le projet de l'utilisateur (#226, Phase 7)** déplace cette frontière, et c'est
 le seul endroit du contrat qui bouge. Jusqu'ici le workspace monté était un
@@ -44,7 +44,12 @@ conséquences, portées ici :
   étant recouvert d'un montage vide en lecture seule (`_masques`). Le cas n'est
   pas théorique — le **worktree** d'un projet versionné est une copie conforme
   de la branche, un `.env` ou un `secrets/` **versionnés** y sont bel et bien,
-  et la racine d'un projet non versionné porte tout ce que l'utilisateur y a mis.
+  et la racine d'un projet non versionné porte tout ce que l'utilisateur y a mis ;
+- le worktree d'un projet versionné n'est pas un dépôt pour le git du conteneur :
+  son `.git` pointe dans la racine, qui n'est pas montée. Le conteneur reçoit un
+  dépôt **à lui** (`maestro.sandbox.depot_conteneur`), monté sur `POINT_DEPOT`,
+  et le `.git` de l'espace est recouvert d'un pointeur vers lui, en lecture
+  seule. La fin de session rapatrie la branche de la tâche (`rapatrier`).
 
 La rédaction des secrets du projet, elle, ne dépend pas du mode isolé (une tâche
 sur l'hôte fuit tout autant) : elle vit dans `maestro.projets.secrets` et est
@@ -68,9 +73,16 @@ from pathlib import Path
 
 from maestro.config import ConfigError, Settings
 from maestro.emplacements import jetable
-from maestro.projets.modele import Projet
+from maestro.projets.modele import ENV_IDENTITE_GIT, Projet
 from maestro.projets.perimetre import Exclu, exclusions
 from maestro.projets.racine import canonique
+from maestro.sandbox.depot_conteneur import (
+    POINT_DEPOT,
+    Rapatriement,
+    pointeur,
+    preparer,
+    rapatrier,
+)
 
 #: Valeur de `MAESTRO_ISOLATION` qui active le mode isolé. Toute autre valeur non
 #: vide est une erreur de config explicite (pas d'isolation « silencieusement absente »).
@@ -104,6 +116,11 @@ ENV_PROJET = "MAESTRO_SANDBOX_PROJET"
 #: seul caractère qu'un nom de fichier ne porte pas en pratique, là où `;` et `:`
 #: sont l'un légal et l'autre partout dans les chemins Windows.
 ENV_MASQUES = "MAESTRO_SANDBOX_MASQUES"
+
+#: Le dépôt du conteneur d'un projet versionné (#1602), sur l'hôte : monté sur
+#: `POINT_DEPOT`, et désigné par le pointeur qui recouvre le `.git` de l'espace.
+#: Absente : tâche sans projet, ou projet non versionné.
+ENV_DEPOT = "MAESTRO_SANDBOX_DEPOT"
 
 #: Point de montage de l'espace de travail dans le conteneur — préfixe des masques.
 POINT_MONTAGE = "/workspace"
@@ -206,16 +223,20 @@ class IsolationConfig:
         #839 a déplacé. Projet **versionné** : l'espace est un worktree hors de
         la racine, celle-ci est transmise (`ENV_PROJET`) **pour être refusée** au
         dernier mètre, et un espace qui serait la racine ou vivrait dedans est
-        refusé ici même (EF-36). Projet **non versionné** : l'espace **est** la
-        racine — le régime en place (`maestro.sandbox.en_place`) —, elle est donc
-        montée telle quelle, **avec ses masques** : c'est ici que les exclusions
-        deviennent une clôture dure, là où sur l'hôte la frontière d'écriture ne
-        confronte que les outils de fichiers. `ENV_PROJET` n'est pas transmise :
+        refusé ici même (EF-36). Le dépôt du conteneur est alors construit à côté
+        de l'espace (`ENV_DEPOT`, #1602) : c'est le seul effet de cette méthode
+        sur le disque, refait à chaque session. Projet **non versionné** :
+        l'espace **est** la racine — le régime en place, `maestro.sandbox.en_place` —,
+        elle est donc montée telle quelle, **avec ses masques** : c'est ici que les
+        exclusions deviennent une clôture dure, là où sur l'hôte la frontière
+        d'écriture ne confronte que les outils de fichiers. `ENV_PROJET` n'est pas transmise :
         il n'y a rien à refuser, et la transmettre ferait refuser le montage
         même qu'on vient de décider.
 
         Lève `ConfigError` si le périmètre exclut plus de chemins que
-        `_MASQUES_MAX` — un refus franc plutôt qu'un montage approximatif.
+        `_MASQUES_MAX` — un refus franc plutôt qu'un montage approximatif —, et
+        `DepotIndisponible` (une `ConfigError`) si le dépôt du conteneur ne peut
+        pas être construit : sans lui, l'agent ne pourrait ni committer ni brancher.
         """
         protocole = {
             ENV_IMAGE: self.image,
@@ -237,9 +258,25 @@ class IsolationConfig:
                 "que ses fichiers) — l'exécution est refusée plutôt que de monter "
                 "une partie de ce qui est exclu."
             )
+        if projet.versionne:
+            protocole[ENV_DEPOT] = str(preparer(workspace, projet.perimetre))
         return protocole | {
             ENV_MASQUES: _SEPARATEUR_MASQUES.join(_encode(masque) for masque in masques),
         }
+
+    def rapatrier(self, workspace: Path, env: Mapping[str, str]) -> Rapatriement | None:
+        """Ramène la branche de la tâche du dépôt du conteneur, à la fin de la session (#1602).
+
+        `env` est l'environnement que `env_sandbox` a rendu pour cette session : sans
+        `ENV_DEPOT`, rien à ramener (None). Le côté serveur joue dans un conteneur
+        jetable de la même image (`_serveur_git`), jamais sur l'hôte. Lève
+        `RapatriementRefuse` quand la branche n'a pas pu avancer : son contenu reste
+        dans l'espace, que la sauvegarde du démontage porte sur la branche.
+        """
+        depot = (env.get(ENV_DEPOT) or "").strip()
+        if not depot:
+            return None
+        return rapatrier(workspace, Path(depot), _serveur_git(depot, self.image))
 
 
 def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> list[str]:
@@ -257,18 +294,24 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
       ce projet — **jamais la racine d'un projet versionné** (refus explicite),
       la racine elle-même pour un projet non versionné (#839) —, et les chemins
       que son périmètre exclut sont recouverts d'un montage vide en lecture
-      seule ;
+      seule. Pour un projet versionné s'y ajoute le dépôt du conteneur (#1602),
+      monté en lecture-écriture sur `POINT_DEPOT`, et le `.git` de l'espace est
+      recouvert, toujours, d'un pointeur vers lui en lecture seule : l'agent ne
+      peut pas réécrire le `.git` que le git de l'hôte suivra au démontage ;
     - **réseau restreint** : `bridge` (sortant seul, aucun port publié) ou `none` ;
     - **privilèges retirés** : utilisateur non-root (image), `--cap-drop ALL`,
       `--security-opt no-new-privileges`, plafonds pids/mémoire/CPU ;
     - **environnement minimal** : de l'hôte, seules les variables d'auth
-      `ENV_TRANSMISES` entrent — jamais l'environnement hôte entier ; s'y ajoute
-      la déclaration qui fait accepter `/workspace` par git (`_git_tient_pour_sur`).
+      `ENV_TRANSMISES` entrent — jamais l'environnement hôte entier ; s'y ajoutent
+      deux déclarations que la commande pose elle-même : `/workspace` sûr pour
+      git (`_git_tient_pour_sur`), et l'identité de Maestro pour les commits de
+      l'agent (`ENV_IDENTITE_GIT`, #1507).
 
     Lève `ConfigError` si le protocole `MAESTRO_SANDBOX_*` est absent : le shim
     ne s'invoque que via le mode isolé du fournisseur, pas à la main. Et si le
-    workspace à monter est la racine du projet (ou vit dedans) : c'est le dernier
-    contrôle avant `docker run`, celui que rien ne contourne.
+    workspace à monter, ou le dépôt du conteneur, est la racine du projet (ou vit
+    dedans) : c'est le dernier contrôle avant `docker run`, celui que rien ne
+    contourne.
     """
     image = (environ.get(ENV_IMAGE) or "").strip()
     reseau = (environ.get(ENV_RESEAU) or "").strip()
@@ -280,8 +323,11 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
             "(MAESTRO_ISOLATION=conteneur), pas directement."
         )
     racine = (environ.get(ENV_PROJET) or "").strip()
+    depot = (environ.get(ENV_DEPOT) or "").strip()
     if racine:
         _refuse_la_racine(Path(workspace), Path(racine))
+        if depot:
+            _refuse_la_racine(Path(depot), Path(racine))
     commande = [
         "docker",
         "run",
@@ -310,12 +356,64 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
         "--workdir",
         POINT_MONTAGE,
     ]
-    commande += _montages_masques(environ.get(ENV_MASQUES) or "")
+    commande += _montages_masques(environ.get(ENV_MASQUES) or "", sans_git=bool(depot))
+    if depot:
+        commande += _montages_depot(depot)
     commande += _git_tient_pour_sur(POINT_MONTAGE)
+    for variable, valeur in ENV_IDENTITE_GIT.items():
+        commande += ["--env", f"{variable}={valeur}"]
     for variable in ENV_TRANSMISES:
         if variable in environ:
             commande += ["--env", f"{variable}={environ[variable]}"]
     return [*commande, image, "claude", *arguments]
+
+
+def _montages_depot(depot: str) -> list[str]:
+    """Le dépôt du conteneur en lecture-écriture, et le pointeur qui le désigne (#1602).
+
+    Le pointeur recouvre le `.git` de l'espace, en lecture seule, que le périmètre
+    exclue `.git` ou non : l'agent ne peut ni le lire (il pointe dans la racine) ni
+    le remplacer par un dépôt à sa main, que le git de l'hôte suivrait ensuite.
+    """
+    return [
+        "--volume",
+        f"{depot}:{POINT_DEPOT}",
+        "--volume",
+        f"{_pointeur()}:{POINT_MONTAGE}/.git:ro",
+    ]
+
+
+def _serveur_git(depot: str, image: str) -> list[str]:
+    """La commande qui sert `upload-pack` sur le dépôt du conteneur, pour le rapatriement.
+
+    Un conteneur jetable de la même image, et non le git de l'hôte : ce dépôt a été
+    écrit par l'agent, et `upload-pack` y est restreint mais exposé. Dépôt en lecture
+    seule, aucun réseau, aucune capacité ; `%s` est le service que git y met.
+    """
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--interactive",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        str(_PIDS_MAX),
+        "--memory",
+        _MEMOIRE_MAX,
+        "--volume",
+        f"{depot}:{POINT_DEPOT}:ro",
+        *_git_tient_pour_sur(POINT_DEPOT),
+        image,
+        "git",
+        "%s",
+        POINT_DEPOT,
+    ]
 
 
 def _refuse_la_racine(workspace: Path, racine: Path) -> None:
@@ -357,8 +455,12 @@ def _encode(masque: Exclu) -> str:
     return f"{'d' if masque.dossier else 'f'}:{masque.chemin}"
 
 
-def _montages_masques(masques: str) -> list[str]:
+def _montages_masques(masques: str, *, sans_git: bool = False) -> list[str]:
     """Les `--volume` qui recouvrent d'un vide chaque chemin exclu du périmètre.
+
+    `sans_git` écarte le masque du `.git` de l'espace, que le pointeur vers le dépôt
+    du conteneur recouvre déjà (`_montages_depot`) : Docker refuse deux montages sur
+    une même destination.
 
     « Ce qui est exclu n'est pas monté » : Docker n'ayant pas de motif
     d'exclusion sur un montage, on monte le vide **par-dessus** — un fichier vide
@@ -377,7 +479,7 @@ def _montages_masques(masques: str) -> list[str]:
     montages: list[str] = []
     for entree in entrees:
         nature, _, chemin = entree.partition(":")
-        if not chemin:
+        if not chemin or (sans_git and chemin == ".git"):
             continue
         source = vide_dossier if nature == "d" else vide_fichier
         montages += ["--volume", f"{source}:{POINT_MONTAGE}/{chemin}:ro"]
@@ -419,13 +521,28 @@ def _vides() -> tuple[Path, Path]:
     masques du processus, retirés à sa sortie — et ramassés s'il est tué, le pid
     de ce process étant dans le nom (#1455).
     """
+    racine = _racine_des_masques()
+    return racine / "vide", racine / "vide.d"
+
+
+def _pointeur() -> Path:
+    """Le `.git` que le conteneur voit dans son espace : un pointeur vers `POINT_DEPOT` (#1602).
+
+    Son contenu ne dépend de rien : il vit avec les masques vides, sous la même racine.
+    """
+    return _racine_des_masques() / "gitdir"
+
+
+def _racine_des_masques() -> Path:
+    """La racine des masques du processus, créée et garnie une fois."""
     global _RACINE_VIDES
     if _RACINE_VIDES is None:
         _RACINE_VIDES = jetable("maestro-masque-")
         atexit.register(shutil.rmtree, _RACINE_VIDES, True)
         (_RACINE_VIDES / "vide").touch()
         (_RACINE_VIDES / "vide.d").mkdir()
-    return _RACINE_VIDES / "vide", _RACINE_VIDES / "vide.d"
+        (_RACINE_VIDES / "gitdir").write_text(pointeur(), encoding="ascii", newline="\n")
+    return _RACINE_VIDES
 
 
 def _chemin_shim() -> Path:

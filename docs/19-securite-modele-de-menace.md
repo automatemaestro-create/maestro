@@ -84,7 +84,10 @@ vigueur**, et non plus ce qui l'attend. Où chaque contre-mesure vit dans le cod
   worktree Git sur la branche `maestro/<tâche>` si le projet est versionné, **fusionnée dans la
   base dès que la tâche est soldée** (#705). La racine d'un projet **versionné** n'est jamais le
   répertoire de travail d'un agent (EF-36), ni un montage du conteneur en mode isolé (#226,
-  [docs/17 §3](./17-isolation-execution.md)). Un projet **non versionné** se remplit **en place**
+  [docs/17 §3](./17-isolation-execution.md)) — son `.git` non plus : le git du conteneur travaille
+  dans un dépôt **à lui**, construit par l'hôte sans le contenu des chemins exclus, dont seule la
+  branche de la tâche revient, en avance rapide, servie par un conteneur jetable en lecture seule
+  (#1602, [docs/17 §3.1](./17-isolation-execution.md)). Un projet **non versionné** se remplit **en place**
   (#839, D2 révisée — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)) : une tâche à
   la fois, derrière la frontière d'écriture de `maestro.sandbox.en_place` (hors racine, lien
   symbolique, exclusion du périmètre — refusés avec leur motif), et en mode isolé sa racine est

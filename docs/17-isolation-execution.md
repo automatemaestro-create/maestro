@@ -90,11 +90,40 @@ Tout ce qui entre ou sort est énuméré ici — et nulle part ailleurs
 
 | Accès | Accordé | Refusé |
 |---|---|---|
-| **Système de fichiers** | `/workspace` : l'espace de travail de la tâche, monté en lecture-écriture — c'est là que l'agent produit ses livrables. Sans projet, c'est le répertoire **jetable** créé vide (`maestro.sandbox.workspace`) ; rattachée à un projet (#224), la tâche y voit l'espace **dérivé** de ce projet — worktree Git sur la branche `maestro/<tâche>` si le projet est versionné, ou, pour un projet **non versionné**, **la racine elle-même** montée **avec ses masques** (#839, D2 révisée — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)). Deux tmpfs jetables : `/tmp` (512 Mo) et `/home/agent` (1 Go — état du CLI, caches npm/npx) | tout le reste : racine de l'image en **lecture seule** (`--read-only`), aucun autre chemin de l'hôte monté — **la racine d'un projet versionné en particulier n'est jamais montée** (#226, EF-36 : vérifié deux fois, au câblage du protocole puis au dernier mètre avant `docker run` ; depuis #839 la restriction vaut pour le projet **versionné**, la racine d'un projet non versionné étant son espace de travail), et les chemins **exclus** du périmètre (`.env`, `**/secrets/**`…) sont recouverts d'un montage vide en lecture seule |
+| **Système de fichiers** | `/workspace` : l'espace de travail de la tâche, monté en lecture-écriture — c'est là que l'agent produit ses livrables. Sans projet, c'est le répertoire **jetable** créé vide (`maestro.sandbox.workspace`) ; rattachée à un projet (#224), la tâche y voit l'espace **dérivé** de ce projet — worktree Git sur la branche `maestro/<tâche>` si le projet est versionné, ou, pour un projet **non versionné**, **la racine elle-même** montée **avec ses masques** (#839, D2 révisée — [docs/24 §2.4](./24-projets-locaux-et-poste-de-travail.md)). Projet versionné : son **dépôt du conteneur** (#1602), monté en lecture-écriture sur `/maestro/depot`, et `/workspace/.git` recouvert en lecture seule d'un pointeur `gitdir: /maestro/depot` — l'agent y committe et y branche (§3.1). Deux tmpfs jetables : `/tmp` (512 Mo) et `/home/agent` (1 Go — état du CLI, caches npm/npx) | tout le reste : racine de l'image en **lecture seule** (`--read-only`), aucun autre chemin de l'hôte monté — **la racine d'un projet versionné en particulier n'est jamais montée**, ni son `.git` (#226, EF-36 : vérifié deux fois, au câblage du protocole puis au dernier mètre avant `docker run`, qui refuse aussi un dépôt du conteneur posé dans la racine ; depuis #839 la restriction vaut pour le projet **versionné**, la racine d'un projet non versionné étant son espace de travail), et les chemins **exclus** du périmètre (`.env`, `**/secrets/**`…) sont recouverts d'un montage vide en lecture seule |
 | **Réseau** | sortant seul (`bridge`, défaut) : nécessaire pour joindre l'API du fournisseur et les serveurs MCP distants ; `none` le coupe entièrement (diagnostic) | tout entrant (aucun port publié), réseau de l'hôte |
-| **Environnement** | 3 variables d'authentification : `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (telles que posées par le fournisseur, y compris vides — la neutralisation de #30 est préservée). S'y ajoute une déclaration que la commande pose elle-même, sans rien prendre à l'hôte : `/workspace` est sûr pour git (`safe.directory`, portée « commande », #1599). Le montage d'un dossier de Windows appartient à root dans le conteneur, et git refuserait sans elle d'y committer | tout le reste de l'environnement hôte. Pour git, tout autre dépôt du conteneur : seul le point de montage est déclaré, jamais `*`. Les secrets MCP (#104) ne transitent pas par l'environnement du conteneur : résolus en mémoire côté hôte, ils voyagent dans la config MCP passée en argument au CLI |
+| **Environnement** | 3 variables d'authentification : `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (telles que posées par le fournisseur, y compris vides — la neutralisation de #30 est préservée). S'y ajoutent deux déclarations que la commande pose elle-même, sans rien prendre à l'hôte : `/workspace` est sûr pour git (`safe.directory`, portée « commande », #1599) — le montage d'un dossier de Windows appartient à root dans le conteneur, et git refuserait sans elle d'y committer —, et l'identité de Maestro pour les commits de l'agent (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`, #1507) | tout le reste de l'environnement hôte. Pour git, tout autre dépôt du conteneur : seul le point de montage est déclaré, jamais `*`. Les secrets MCP (#104) ne transitent pas par l'environnement du conteneur : résolus en mémoire côté hôte, ils voyagent dans la config MCP passée en argument au CLI |
 | **Privilèges** | utilisateur non-root `agent` (uid 10001) | toutes les capabilities (`--cap-drop ALL`), l'escalade (`no-new-privileges`) |
 | **Ressources** | 256 pids, 2 Go de mémoire, 2 CPU (plafonds fixes du POC) | au-delà : le conteneur est tué, l'échec consigné comme les autres |
+
+### 3.1 Le dépôt du conteneur d'un projet versionné (#1602)
+
+L'espace d'un projet versionné est un worktree hors de la racine : son `.git` est un pointeur vers
+le gitdir du worktree, **dans** la racine, que le conteneur ne voit pas. Lui monter ce gitdir et
+les objets du dépôt lui ferait écrire le `.git` de la personne — un hook ou une config posés là
+s'exécuteraient sur l'hôte au prochain git — et lui ouvrirait tout l'historique, que le périmètre
+exclut parce qu'il porte des secrets. Un clone autonome dans l'espace aurait le même défaut pour
+chaque git de l'hôte joué dans l'espace. Le conteneur reçoit donc un dépôt **à lui**
+(`maestro/sandbox/depot_conteneur.py`), sur trois règles :
+
+- **Le git de l'hôte ne lit jamais un dépôt que le conteneur a pu écrire.** Le dépôt est construit
+  par l'hôte à chaque câblage de session (`env_sandbox`), à côté de l'espace, avant tout conteneur,
+  et le précédent est effacé. Le worktree et le gitdir de l'hôte ne sont ni montés ni modifiés.
+- **Ce que le périmètre exclut n'y entre pas, même par git.** Le dépôt ne porte que la tête de
+  `maestro/<tâche>` (superficiel), ses arbres et les blobs **non exclus** (partiel, vers un distant
+  inexistant). Son index se construit sans lire un blob, les chemins exclus y sont marqués
+  `skip-worktree` : le masque vide d'un `.env` versionné ne se committe pas comme un effacement. Il
+  reprend les réglages de rendu du dépôt de la personne (`core.autocrlf`, `core.eol`,
+  `core.filemode`, `core.symlinks`, `core.ignorecase`), sans quoi chaque fichier extrait par un
+  poste Windows paraîtrait modifié.
+- **Le rapatriement passe par `upload-pack` hors de l'hôte.** À la fin de la session, le
+  fournisseur (pas le shim : le SDK ne laisse au CLI que quelques secondes pour finir) rapatrie
+  `maestro/<tâche>`, et elle seule, par un `git fetch` en avance rapide, objets vérifiés
+  (`transfer.fsckObjects`). Le côté serveur joue dans un **conteneur jetable** par le transport
+  `ext::` : dépôt monté en lecture seule, sans réseau, sans capacité — ce que la documentation de
+  git recommande pour servir un dépôt non fiable. L'index de l'hôte est ensuite réaligné, l'arbre
+  de travail reste tel que l'agent l'a laissé. Un refus ne casse pas la session : il se consigne
+  au journal, et le contenu de l'espace est porté sur la branche par la sauvegarde du démontage.
 
 ## 4. Activation (opt-in)
 
@@ -167,6 +196,14 @@ consigné au journal, comme les autres échecs.
 - **Arrêt brutal** : si le process hôte est tué net, un conteneur peut survivre
   jusqu'à la fermeture de son stdin (`--rm` le nettoie alors). Le time-out par
   tâche (#64) reste la borne nominale ;
+- **Dépôt du conteneur** (§3.1) : les **noms** des fichiers exclus restent visibles dans les
+  arbres, comme par les masques, et leur **empreinte** aussi — elle permet de confirmer une valeur
+  devinée d'un `.env` versionné, pas de la lire. Une branche créée par l'agent autre que
+  `maestro/<tâche>` reste dans le conteneur ; un historique réécrit (`--amend` de la tête, `reset`)
+  n'est pas rapatrié comme commits, son contenu l'est par la sauvegarde du démontage. Les hooks du
+  projet ne jouent pas pour les commits faits dans le conteneur, et Git LFS n'y est pas géré. La
+  construction coûte de l'ordre de 3 s sur un dépôt d'un millier de fichiers, plus un conteneur
+  jetable par rapatriement ;
 - **Tests** (#107) : câblage, commande durcie et shim couverts par
   `tests/test_isolation.py` ; le lancement **réel** d'un conteneur exige Docker,
   absent des runners CI — procédure de smoke test manuelle dans
@@ -186,6 +223,8 @@ consigné au journal, comme les autres échecs.
 >   puis le vrai shim. Il ferme les trois menaces du bilan.
 > - **git y accepte le workspace** : le montage venu de Windows appartient à root et non à
 >   l'utilisateur `agent`, et la commande déclare `/workspace` seul sûr pour git (§3, #1599).
+> - **git y trouve un dépôt pour un projet versionné** : le dépôt du conteneur (§3.1, #1602), où
+>   l'agent committe et branche, et dont la branche de la tâche revient sur l'hôte.
 > - L'hôte ne joint pas un serveur lancé dedans, et l'image n'a pas de navigateur.
 
 ## 6. Hors mode isolé : la session d'un agent est confinée (#1279)
