@@ -2841,8 +2841,16 @@ fi
 #   · servi — le run part, et la ligne dit par quel CLI (le modèle servi s'il diffère du demandé) ;
 #   · limite d'usage — ce n'est pas un verdict sur le modèle : le run part, et attendra le reset
 #     comme pour un ticket (le dire vaut mieux que refuser un run qui aurait marché) ;
-#   · tout autre échec — le CLI le rendrait à CHAQUE session : refusé, code 2, avec sa réponse, la
-#     version installée, la version requise quand sa réponse en nomme une autre, et ce qui débloque.
+#   · tout autre échec — le CLI le rendrait à CHAQUE session : le run ne part pas, code 2, avec sa
+#     réponse, la version installée et la version requise quand sa réponse en nomme une autre.
+#
+# Ce dernier échec n'accuse le modèle que si quelque chose l'établit (#1563). La cause se lit dans
+# le champ `error` du message assistant, un type fermé que le SDK publie (`AssistantMessageError`) ;
+# jamais dans le libellé, qui n'est pas un contrat (docs/44) et n'est recopié que pour la personne.
+# Trois valeurs ont un geste unique, qui est alors le seul nommé : `authentication_failed`
+# (se reconnecter), `billing_error` (le compte), `server_error` (relancer plus tard). Toute autre
+# issue — autre valeur, champ absent, délai dépassé, CLI muet — n'établit rien : le message dit que
+# le CLI n'a pas servi le modèle et nomme TOUS les déblocages, reconnexion comprise.
 #
 # La requête ne coûte presque rien (quelques milliers de jetons en cache, aucun outil) et part d'un
 # répertoire neutre : ni le CLAUDE.md ni les réglages du dépôt, qui ne décident pas du modèle, mais
@@ -2872,7 +2880,8 @@ sonde_modele() {
   # Dans le temporaire du système et non sous `.maestro/` (#234, docs/10 §8.5) : personne ne relit
   # ces deux fichiers — la réponse utile est recopiée dans le message, et ils sont retirés aussitôt.
   # C'est aussi le répertoire neutre d'où part la requête.
-  local tmp="${TMPDIR:-/tmp}" sortie erreurs flux ligne code message version requise servi
+  local tmp="${TMPDIR:-/tmp}" sortie erreurs flux ligne code message version requise servi erreur
+  local tete geste
   sortie="$(mktemp "$tmp/maestro-sonde.XXXXXX" 2>/dev/null)" || sortie="$tmp/maestro-sonde.$$"
   erreurs="$sortie.err"
   flux="$sortie.flux"
@@ -2913,6 +2922,10 @@ sonde_modele() {
     rm -f "$sortie" "$erreurs" "$flux"
     return 1
   fi
+  # Le champ typé du DERNIER message assistant qui en porte un. Le motif exige le guillemet ouvrant :
+  # `"is_error"` n'y répond pas, ni un `\"error\"` cité dans la prose d'un message.
+  erreur="$(grep '"type"[[:space:]]*:[[:space:]]*"assistant"' "$flux" 2>/dev/null |
+    grep -oE '"error"[[:space:]]*:[[:space:]]*"[a-z_]+"' | tail -n 1 | sed 's/.*"\([a-z_]*\)"$/\1/')"
   rm -f "$flux"
 
   message="$(champ_json "$sortie" result)"
@@ -2921,14 +2934,39 @@ sonde_modele() {
   # La version requise, quand la réponse en nomme une autre que celle installée — lue comme un
   # numéro, jamais comme une phrase : le libellé de l'erreur n'est pas un contrat.
   requise="$(printf '%s\n' "$message" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | grep -vxF "${version:-_}" | head -1)"
+  case "$erreur" in
+    authentication_failed)
+      tete="le CLI installé n'est pas authentifié"
+      geste='claude auth login — puis relancer (claude auth status le vérifie)' ;;
+    billing_error)
+      tete="le compte du CLI ne peut pas payer la requête"
+      geste="l'organisation et les crédits du compte (claude auth status les nomme) — puis relancer" ;;
+    server_error)
+      tete="le service du fournisseur est en panne"
+      geste='relancer plus tard' ;;
+    *) tete='' geste='' ;;
+  esac
   {
-    printf 'run.sh : le modèle %s est refusé par le CLI installé — le run ne part pas.\n' "$MODELE"
+    if [ -n "$tete" ]; then
+      printf 'run.sh : %s — le modèle %s n'\''a pas pu être vérifié, le run ne part pas.\n' "$tete" "$MODELE"
+    else
+      printf 'run.sh : le CLI installé n'\''a pas servi le modèle %s — le run ne part pas.\n' "$MODELE"
+    fi
     printf '  aucune session lancée, aucun run arrêté, aucun lot sauté.\n'
     printf '  réponse du CLI    %s\n' "${message:-(aucune, code $code)}"
     printf '  CLI installé      %s\n' "$([ -n "$version" ] && printf 'Claude Code %s' "$version" || printf '(version illisible)')"
     [ -n "$requise" ] && printf '  version requise   %s ou plus récente\n' "$requise"
-    printf '  débloquer         claude update — puis relancer ; ou --modele <famille|claude-…>\n'
-    printf '                    (familles du dépôt : %s)\n' "$(familles_connues)"
+    if [ -n "$geste" ]; then
+      printf '  cause établie     champ error du CLI : %s\n' "$erreur"
+      printf '  débloquer         %s\n' "$geste"
+    else
+      printf '  débloquer         selon la réponse du CLI, puis relancer :\n'
+      printf '                    · session absente ou expirée : claude auth login\n'
+      printf '                    · CLI trop ancien pour ce modèle : claude update\n'
+      printf '                    · modèle indisponible : --modele <famille|claude-…> (familles du dépôt : %s)\n' \
+        "$(familles_connues)"
+      printf '                    · aucune réponse, ou service en panne : relancer plus tard\n'
+    fi
   } >&2
   rm -f "$sortie" "$erreurs"
   return 2

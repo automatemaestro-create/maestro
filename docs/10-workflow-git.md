@@ -6435,15 +6435,29 @@ nulle part ailleurs.
   la console : un refus revient à celui qui lance, et n'a coupé personne. Trois issues :
   **servi** — le run part, la ligne dit par quel CLI et, pour un nom que le CLI a résolu, quel
   modèle il sert ; **limite d'usage** — ce n'est pas un verdict sur le modèle, le run part et
-  attendra le reset ; **tout autre échec** — refusé, code `2`, **aucune session lancée, aucun run
-  arrêté, aucun lot sauté**, avec la réponse du CLI, sa version installée, la version requise quand
-  sa réponse en nomme une autre, et ce qui débloque (`claude update`, ou un autre `--modele`).
+  attendra le reset ; **tout autre échec** — le run ne part pas, code `2`, **aucune session
+  lancée, aucun run arrêté, aucun lot sauté**, avec la réponse du CLI, sa version installée et la
+  version requise quand sa réponse en nomme une autre.
   Un run neuf comme une reprise y passent ; `--dry-run` n'y passe pas (il le dit). Le run détaché
   ne repose pas la question : l'appelant lui transmet le modèle vu servi **par l'environnement**
   (`MAESTRO_ORCHESTRATE_MODELE_SONDE`), jamais par le lanceur, qui reste rejouable tel quel et
   revérifie donc. `MAESTRO_ORCHESTRATE_SONDE_MODELE=0` éteint la sonde — ce que fait le harnais de
   [`tests/test_orchestrate.py`](../tests/test_orchestrate.py), dont les bouchons de `claude` jouent
   des scénarios de ticket ; `MAESTRO_ORCHESTRATE_SONDE_DELAI` (120 s) borne son attente.
+- **Un échec de la sonde n'accuse le modèle que si quelque chose l'établit** (#1563).
+  - **Où se lit la cause.** Dans le champ `error` du message assistant du flux : un type fermé que
+    le SDK publie (`AssistantMessageError`). Jamais dans le libellé, qui n'est recopié que pour la
+    personne (docs/44).
+  - **Trois valeurs ont un geste unique**, et c'est alors le seul nommé :
+    - `authentication_failed` → `claude auth login` ;
+    - `billing_error` → le compte et ses crédits ;
+    - `server_error` → relancer plus tard.
+  - **Toute autre issue n'établit rien** : une autre valeur, un champ absent, un délai dépassé, un
+    CLI muet. Le message dit que le CLI n'a pas servi le modèle et nomme tous les déblocages :
+    reconnexion, `claude update`, un autre `--modele`, relancer plus tard.
+  - **Le cas fondateur.** Le 2026-11-02, une reprise refusée pour « modèle refusé » renvoyait vers
+    `claude update` alors que la session OAuth avait expiré. Le flux de cette panne a été relevé sur
+    le réel le 2026-11-05 : `"error":"authentication_failed"`, `api_error_status` nul.
 
 **Le plafond de dépense, lui, ne s'applique plus par défaut (#286).** `run.sh` passait
 `--max-budget-usd 15` à chaque session — le garde-fou d'une boucle neuve, quand on craignait
