@@ -42,17 +42,20 @@ import asyncio
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from maestro.config import ConfigError, Settings
-from maestro.projets.modele import Perimetre, Projet, Vcs
+from maestro.projets.modele import ENV_IDENTITE_GIT, Perimetre, Projet, Vcs
 from maestro.providers import ClaudeProvider, Credentials
 from maestro.providers import claude as claude_mod
-from maestro.sandbox import confinement, container
+from maestro.sandbox import confinement, container, depot_conteneur
 from maestro.sandbox import shim as shim_mod
 from maestro.sandbox.container import (
+    ENV_DEPOT,
     ENV_IMAGE,
     ENV_MASQUES,
     ENV_PROJET,
@@ -221,10 +224,14 @@ def test_seules_les_variables_d_auth_entrent_dans_le_conteneur():
     assert "ANTHROPIC_API_KEY=" in transmises
     assert "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abcdef" in transmises
     assert not any(v.startswith(("GITLAB_TOKEN", "PATH")) for v in transmises)
-    # Hors auth, rien ne vient de l'hôte : seule la déclaration de git (#1599),
-    # que la commande pose elle-même, entre en plus.
+    # Hors auth, rien ne vient de l'hôte : seules entrent en plus les déclarations que
+    # la commande pose elle-même — `/workspace` sûr pour git (#1599), et l'identité de
+    # Maestro pour les commits de l'agent (#1507, #1602), prise à ses constantes.
     venues = {paire.split("=", 1)[0] for paire in transmises} - set(ENV_TRANSMISES)
-    assert venues == {"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"}
+    assert venues == {"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"} | set(
+        ENV_IDENTITE_GIT
+    )
+    assert {f"{cle}={valeur}" for cle, valeur in ENV_IDENTITE_GIT.items()} <= set(transmises)
     # La liste des accès accordés est fermée et documentée (docs/17 §3).
     assert set(ENV_TRANSMISES) == {
         "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
@@ -394,15 +401,13 @@ def test_sans_projet_le_protocole_reste_celui_d_avant(shim_resolu, tmp_path):
 _VERSIONNE = Vcs(type="git", branche_base="main")
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git introuvable")
 def test_avec_un_projet_la_racine_est_transmise_pour_etre_refusee(shim_resolu, tmp_path):
     """Elle voyage pour que le shim la vérifie au dernier mètre, jamais pour être montée."""
-    racine = tmp_path / "depensio"
-    racine.mkdir()
-    espace = tmp_path / "espace"
-    espace.mkdir()
+    racine, espace, projet = _projet_versionne(tmp_path)
     config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
 
-    env = config.env_sandbox(espace, projet=_projet_sur(racine, vcs=_VERSIONNE))
+    env = config.env_sandbox(espace, projet=projet)
 
     assert env[ENV_PROJET] == str(racine.resolve())
     assert env[ENV_WORKSPACE] == str(espace)
@@ -617,3 +622,365 @@ def test_git_accepte_l_espace_monte_et_garde_les_autres_depots(tmp_path, monkeyp
     ailleurs = _git_status(autre, conteneur)
     assert ailleurs.returncode == 128
     assert "dubious ownership" in ailleurs.stderr
+
+
+# --- ⑦ Un projet versionné : le conteneur reçoit un dépôt à lui (#1602) -----------------
+#
+# L'espace d'une tâche sur un projet versionné est un worktree hors de la racine : son
+# `.git` est un fichier qui pointe dans le `.git` de la racine, sur l'hôte, et ce `.git`
+# est exclu du périmètre, donc masqué. Monté seul, le worktree n'est pas un dépôt pour le
+# git du conteneur. Le conteneur reçoit un dépôt construit pour lui à côté de l'espace, et
+# la branche de la tâche est rapatriée dans le dépôt de la personne à la fin de la session.
+#
+# Sans démon Docker, la vue du conteneur se rejoue sur l'hôte à partir des montages de la
+# commande : chaque montage sous `/workspace` recouvre l'espace le temps de l'essai, et un
+# chemin du conteneur se lit à sa source. C'est la commande réelle qui est jugée.
+
+_IDENTITE_ESSAI = ("-c", "user.name=Personne", "-c", "user.email=personne@localhost")
+
+
+def _git_ok(depot: Path, *arguments: str) -> str:
+    """`git` dans `depot` avec l'environnement de l'hôte ; échoue le test s'il échoue."""
+    resultat = subprocess.run(
+        [GIT, *_IDENTITE_ESSAI, *arguments],
+        cwd=depot,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert resultat.returncode == 0, resultat.stderr
+    return resultat.stdout.strip()
+
+
+def _projet_versionne(tmp_path: Path) -> tuple[Path, Path, Projet]:
+    """Un projet versionné qui versionne un `.env` et un `secrets/`, et le worktree d'une tâche."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    _git_ok(racine, "init", "-q", "-b", "main")
+    (racine / "README.md").write_text("# Dépensio\n", encoding="utf-8")
+    (racine / ".env").write_text("SECRET=ne-doit-pas-sortir\n", encoding="utf-8")
+    (racine / "secrets").mkdir()
+    (racine / "secrets" / "cle.txt").write_text("cle-privee\n", encoding="utf-8")
+    _git_ok(racine, "add", "-A")
+    _git_ok(racine, "commit", "-q", "-m", "initial")
+    espace = tmp_path / "espaces" / "tache"
+    espace.parent.mkdir()
+    _git_ok(racine, "worktree", "add", "-q", "-b", "maestro/tache", str(espace), "main")
+    return racine, espace, _projet_sur(racine, vcs=_VERSIONNE)
+
+
+def _source_et_cible(volume: str) -> tuple[Path, str]:
+    """`source:/cible[:ro]` → (source, cible) ; la source peut porter un lecteur Windows."""
+    volume = volume.removesuffix(":ro")
+    source, cible = volume.rsplit(":/", 1)
+    return Path(source), "/" + cible
+
+
+@contextmanager
+def _vue_du_conteneur(commande: list[str], espace: Path, tmp_path: Path) -> Iterator[dict]:
+    """L'espace tel que le conteneur le voit, le temps du bloc ; rend l'environnement du dedans.
+
+    Un montage sous `/workspace` remplace ce qu'il recouvre (l'original est mis de côté
+    puis rendu) ; un pointeur `gitdir:` vers un chemin du conteneur est traduit vers la
+    source de ce montage. Ni la config du poste ni celle du système n'entrent : le
+    conteneur n'en a pas.
+    """
+    montages = [_source_et_cible(volume) for volume in _montages(commande)]
+    ailleurs = [
+        (source, cible) for source, cible in montages if not cible.startswith(POINT_MONTAGE)
+    ]
+    recouverts: list[tuple[Path, Path]] = []
+    de_cote = tmp_path / "recouverts"
+    de_cote.mkdir()
+    try:
+        for rang, (source, cible) in enumerate(montages):
+            if not cible.startswith(POINT_MONTAGE + "/"):
+                continue
+            dessous = espace / cible.removeprefix(POINT_MONTAGE + "/")
+            mis_de_cote = de_cote / str(rang)
+            dessous.rename(mis_de_cote)
+            recouverts.append((dessous, mis_de_cote))
+            if source.is_dir():
+                dessous.mkdir()
+                continue
+            contenu = source.read_text(encoding="utf-8")
+            for vrai, vu in ailleurs:
+                contenu = contenu.replace(vu, vrai.as_posix())
+            dessous.write_text(contenu, encoding="utf-8")
+        dedans = {cle: valeur for cle, valeur in os.environ.items() if not cle.startswith("GIT_")}
+        yield dedans | _env_du_conteneur(commande) | {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig-absent"),
+            "GIT_CEILING_DIRECTORIES": str(espace.parent),
+        }
+    finally:
+        for dessous, mis_de_cote in reversed(recouverts):
+            if dessous.is_dir():
+                shutil.rmtree(dessous)
+            else:
+                dessous.unlink(missing_ok=True)
+            mis_de_cote.rename(dessous)
+
+
+def _git_dans(espace: Path, dedans: dict, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """`git` joué dans `espace` avec l'environnement du conteneur."""
+    return subprocess.run(
+        [GIT, *arguments],
+        cwd=espace,
+        env=dedans,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+def _serveur_local(depot: str, _image: str) -> list[str]:
+    """Le côté serveur du rapatriement joué sur l'hôte, faute de démon : le même `upload-pack`."""
+    return [GIT, "%s", depot]
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_un_projet_versionne_donne_au_conteneur_un_depot_ou_committer_et_brancher(
+    shim_resolu, tmp_path, monkeypatch
+):
+    """Le défaut de #1602 : dans le conteneur, git ne trouvait aucun dépôt dans le worktree.
+
+    Le câblage réel (`env_sandbox`, puis `commande_docker`) est joué sur un vrai projet
+    versionné. Dans la vue du conteneur, l'agent constate un arbre propre (ni `.env` vidé
+    par son masque, ni fins de ligne), commite, branche, et ne lit pas le `.env` versionné
+    par git. La fin de session rapatrie la branche de la tâche, et elle seule.
+    """
+    racine, espace, projet = _projet_versionne(tmp_path)
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+    env = config.env_sandbox(espace, projet=projet)
+    commande = commande_docker(env, [])
+
+    with _vue_du_conteneur(commande, espace, tmp_path) as dedans:
+        statut = _git_dans(espace, dedans, "status", "--porcelain")
+        assert statut.returncode == 0, statut.stderr
+        assert statut.stdout == ""
+        secret = _git_dans(espace, dedans, "show", "HEAD:.env")
+        assert secret.returncode != 0
+        assert "ne-doit-pas-sortir" not in secret.stdout
+        (espace / "nouveau.txt").write_text("nouveau\n", encoding="utf-8")
+        (espace / "README.md").write_text("# Dépensio\nlivré\n", encoding="utf-8")
+        for geste in (
+            ("add", "-A"),
+            ("commit", "-q", "-m", "feat: livre le travail de l'agent"),
+            ("switch", "-q", "-c", "essai-agent"),
+            ("switch", "-q", "maestro/tache"),
+        ):
+            resultat = _git_dans(espace, dedans, *geste)
+            assert resultat.returncode == 0, resultat.stderr
+
+    monkeypatch.setattr(container, "_serveur_git", _serveur_local)
+    config.rapatrier(espace, env)
+
+    dernier = _git_ok(racine, "log", "-1", "--format=%s|%an", "maestro/tache")
+    assert dernier == "feat: livre le travail de l'agent|Maestro"
+    touches = _git_ok(racine, "show", "--name-only", "--format=", "maestro/tache").split()
+    assert set(touches) == {"README.md", "nouveau.txt"}
+    assert _git_ok(espace, "status", "--porcelain") == ""
+    assert _git_ok(racine, "branch", "--list", "essai-agent") == ""
+    assert (espace / ".env").read_text(encoding="utf-8") == "SECRET=ne-doit-pas-sortir\n"
+
+
+def _git_du_depot(depot: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """`git` sur le dépôt du conteneur, sans jamais tenter de rapatrier un objet absent."""
+    return subprocess.run(
+        [GIT, "--git-dir", str(depot), *arguments],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=os.environ | {"GIT_NO_LAZY_FETCH": "1"},
+        check=False,
+    )
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_le_depot_du_conteneur_ne_porte_aucun_blob_exclu(shim_resolu, tmp_path):
+    """La tête seule, sans le contenu de ce que le périmètre exclut : ni historique, ni `.env`."""
+    racine, espace, projet = _projet_versionne(tmp_path)
+    _git_ok(racine, "commit", "-q", "--allow-empty", "-m", "second")
+    _git_ok(espace, "merge", "-q", "--ff-only", "main")
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    depot = Path(config.env_sandbox(espace, projet=projet)[ENV_DEPOT])
+
+    assert depot.parent == espace.parent
+    tete = _git_ok(espace, "rev-parse", "HEAD")
+    assert _git_du_depot(depot, "symbolic-ref", "HEAD").stdout.strip() == "refs/heads/maestro/tache"
+    assert _git_du_depot(depot, "rev-parse", "HEAD").stdout.strip() == tete
+    assert (depot / "shallow").read_text(encoding="ascii").split() == [tete]
+    for exclu in (".env", "secrets/cle.txt"):
+        oid = _git_ok(espace, "rev-parse", f"HEAD:{exclu}")
+        assert _git_du_depot(depot, "cat-file", "-e", oid).returncode != 0, exclu
+    lisible = _git_ok(espace, "rev-parse", "HEAD:README.md")
+    assert _git_du_depot(depot, "cat-file", "-e", lisible).returncode == 0
+    drapeaux = _git_du_depot(depot, "ls-files", "-v").stdout.split("\n")
+    assert sorted(ligne for ligne in drapeaux if ligne.startswith("S ")) == [
+        "S .env",
+        "S secrets/cle.txt",
+    ]
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_le_depot_du_conteneur_reprend_les_reglages_de_rendu(shim_resolu, tmp_path):
+    """Sans eux, chaque fichier extrait par un poste Windows paraîtrait modifié au conteneur."""
+    racine, espace, projet = _projet_versionne(tmp_path)
+    _git_ok(racine, "config", "core.autocrlf", "input")
+    _git_ok(racine, "config", "core.filemode", "false")
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    depot = Path(config.env_sandbox(espace, projet=projet)[ENV_DEPOT])
+
+    assert _git_du_depot(depot, "config", "core.autocrlf").stdout.strip() == "input"
+    assert _git_du_depot(depot, "config", "core.filemode").stdout.strip() == "false"
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_chaque_session_reconstruit_le_depot_et_efface_le_precedent(shim_resolu, tmp_path):
+    """Le git de l'hôte ne relit jamais un dépôt que le conteneur a pu écrire."""
+    _, espace, projet = _projet_versionne(tmp_path)
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    premier = Path(config.env_sandbox(espace, projet=projet)[ENV_DEPOT])
+    second = Path(config.env_sandbox(espace, projet=projet)[ENV_DEPOT])
+
+    assert second != premier
+    assert not premier.exists()
+    assert second.is_dir()
+
+
+def test_un_espace_versionne_qui_n_est_pas_un_worktree_refuse_la_session(shim_resolu, tmp_path):
+    """Sans dépôt, l'agent ne pourrait ni committer ni brancher : la session ne démarre pas."""
+    racine = tmp_path / "depensio"
+    racine.mkdir()
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+
+    with pytest.raises(ConfigError, match="dépôt du conteneur"):
+        config.env_sandbox(espace, projet=_projet_sur(racine, vcs=_VERSIONNE))
+
+
+def _volumes_vers(commande: list[str], cible: str) -> list[str]:
+    """Les montages de la commande dont la destination est `cible`."""
+    return [v for v in _montages(commande) if _source_et_cible(v)[1] == cible]
+
+
+@pytest.mark.parametrize("exclus", [Perimetre().exclus, (".env",)])
+def test_le_git_de_l_espace_est_recouvert_d_un_pointeur_vers_le_depot(tmp_path, exclus):
+    """Que le périmètre exclue `.git` ou non : sinon l'agent pourrait le réécrire pour l'hôte."""
+    espace = tmp_path / "espace"
+    depot = tmp_path / "espace.depot-1"
+    masques = "f:.git\nf:.env" if ".git" in exclus else "f:.env"
+    environ = {**_protocole(str(espace)), ENV_MASQUES: masques, ENV_DEPOT: str(depot)}
+
+    commande = commande_docker(environ, [])
+
+    git_de_l_espace = _volumes_vers(commande, f"{POINT_MONTAGE}/.git")
+    assert len(git_de_l_espace) == 1
+    assert git_de_l_espace[0].endswith(":ro")
+    pointeur = _source_et_cible(git_de_l_espace[0])[0]
+    assert pointeur.read_text(encoding="ascii") == f"gitdir: {depot_conteneur.POINT_DEPOT}\n"
+    assert _volumes_vers(commande, depot_conteneur.POINT_DEPOT) == [
+        f"{depot}:{depot_conteneur.POINT_DEPOT}"
+    ]
+
+
+def test_sans_depot_aucun_pointeur_n_est_pose():
+    """Tâche sans projet, ou projet non versionné : le `.git` de l'espace est le sien (#1599)."""
+    commande = commande_docker(_protocole(), [])
+
+    assert _volumes_vers(commande, f"{POINT_MONTAGE}/.git") == []
+    assert _volumes_vers(commande, depot_conteneur.POINT_DEPOT) == []
+
+
+def test_le_dernier_metre_refuse_un_depot_dans_la_racine(tmp_path):
+    """Le dépôt du conteneur est monté en écriture : jamais dans la racine d'un projet versionné."""
+    racine = tmp_path / "depensio"
+    (racine / ".git").mkdir(parents=True)
+    espace = tmp_path / "espace"
+    espace.mkdir()
+    environ = {
+        **_protocole(str(espace)),
+        ENV_PROJET: str(racine),
+        ENV_DEPOT: str(racine / ".git"),
+    }
+
+    with pytest.raises(ConfigError, match="racine du projet"):
+        commande_docker(environ, [])
+
+
+def test_le_serveur_du_rapatriement_joue_dans_un_conteneur_jetable():
+    """`upload-pack` sur un dépôt écrit par l'agent : sans réseau, sans privilège, en lecture."""
+    serveur = container._serveur_git("C:/Mes Projets/espace.depot-1", "maestro-sandbox:latest")
+
+    assert serveur[:3] == ["docker", "run", "--rm"]
+    assert serveur[serveur.index("--network") + 1] == "none"
+    assert "--read-only" in serveur
+    assert serveur[serveur.index("--cap-drop") + 1] == "ALL"
+    assert "no-new-privileges" in serveur
+    assert f"C:/Mes Projets/espace.depot-1:{depot_conteneur.POINT_DEPOT}:ro" in serveur
+    assert serveur[-4:] == ["maestro-sandbox:latest", "git", "%s", depot_conteneur.POINT_DEPOT]
+    transport = depot_conteneur.transport_ext(serveur)
+    assert transport.startswith("ext::docker run --rm")
+    assert "C:/Mes% Projets/espace.depot-1" in transport
+    assert transport.endswith(f" git %s {depot_conteneur.POINT_DEPOT}")
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_le_rapatriement_refuse_un_historique_reecrit(shim_resolu, tmp_path, monkeypatch):
+    """Avance rapide seulement : un `--amend` de la tête ne réécrit pas la branche de l'hôte."""
+    racine, espace, projet = _projet_versionne(tmp_path)
+    tete = _git_ok(espace, "rev-parse", "HEAD")
+    config = IsolationConfig.from_settings(_settings(isolation="conteneur"))
+    env = config.env_sandbox(espace, projet=projet)
+
+    with _vue_du_conteneur(commande_docker(env, []), espace, tmp_path) as dedans:
+        reecrit = _git_dans(espace, dedans, "commit", "-q", "--amend", "-m", "réécrit")
+        assert reecrit.returncode == 0, reecrit.stderr
+
+    monkeypatch.setattr(container, "_serveur_git", _serveur_local)
+    with pytest.raises(depot_conteneur.RapatriementRefuse, match="maestro/tache"):
+        config.rapatrier(espace, env)
+    assert _git_ok(racine, "rev-parse", "maestro/tache") == tete
+
+
+def test_sans_depot_il_n_y_a_rien_a_rapatrier(tmp_path):
+    config = IsolationConfig(image="img", reseau="bridge", shim=Path("shim"))
+
+    assert config.rapatrier(tmp_path, _protocole(str(tmp_path))) is None
+
+
+def test_la_fin_de_session_rapatrie_le_travail_du_conteneur(monkeypatch, tmp_path):
+    """En processus, après la session : le SDK ne laisse au shim que quelques secondes.
+
+    Un refus ne casse pas la session — son contenu est dans l'espace, que la sauvegarde
+    du démontage porte sur la branche.
+    """
+    appels: list[tuple[Path, dict[str, str]]] = []
+
+    def _rapatrier(self, workspace, env):
+        appels.append((workspace, dict(env)))
+        raise depot_conteneur.RapatriementRefuse("historique réécrit")
+
+    monkeypatch.setattr(IsolationConfig, "rapatrier", _rapatrier)
+    isolation = IsolationConfig(
+        image="maestro-sandbox:latest", reseau="bridge", shim=Path("maestro-sandbox-shim")
+    )
+
+    vu = _run_agent_capture_options(
+        monkeypatch, ClaudeProvider(Credentials(), isolation=isolation), tmp_path
+    )
+
+    assert len(appels) == 1
+    workspace, env = appels[0]
+    assert workspace == tmp_path
+    assert env[ENV_WORKSPACE] == vu["env"][ENV_WORKSPACE] == str(tmp_path)
