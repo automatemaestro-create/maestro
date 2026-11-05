@@ -36,8 +36,8 @@ Windows a extrait, et l'agent les recommiterait tous.
 from __future__ import annotations
 
 import os
+import secrets
 import subprocess
-import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -130,7 +130,11 @@ def preparer(espace: Path, perimetre: Perimetre) -> Path:
     ]
     paquet = _git("pack-objects", "--stdout", cwd=espace, entree=_lignes(objets, b"\n"))
     _verifie(paquet, "paquet des objets")
-    depot = Path(tempfile.mkdtemp(prefix=f"{espace.name}{_SUFFIXE}", dir=espace.parent))
+    # À côté de l'espace, dans le jetable qui le porte (`maestro.emplacements`) : le
+    # dépôt part avec lui au démontage. Un nom neuf à chaque session, et une création
+    # qui refuse un dossier existant.
+    depot = espace.parent / f"{espace.name}{_SUFFIXE}{secrets.token_hex(6)}"
+    depot.mkdir()
     try:
         _monter(depot, espace, paquet.stdout, branche=branche, tete=tete)
         _indexer(depot, entrees, exclus)
