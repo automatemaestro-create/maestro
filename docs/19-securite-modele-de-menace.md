@@ -316,8 +316,16 @@ l'ouvreur employé **et** l'ordre des gardes, et prouve son motif sur un échant
 > ⚠ **Renversé le 2026-10-14 par [docs/48 §2.1](./48-decision-produit-pro-exploitable.md)** (#1518) :
 > le remède que ce paragraphe nomme, « activer l'isolation sur un poste qui peut la porter », devient
 > le **défaut**.
-> - Un mécanisme natif Windows sera choisi sur pièces (#1514) puis posé par défaut (#1515), sans
+> - Le mécanisme natif est choisi sur pièces par #1514 : l'**intégrité basse**
+>   ([docs/48 §2.1.1](./48-decision-produit-pro-exploitable.md)). #1515 le pose par défaut, sans
 >   exiger Docker.
+> - **Il ferme** l'arrêt d'un processus hors de l'arbre (la famille de #1502, scripts compris) et
+>   l'écriture hors du projet et de l'établi.
+> - **Il ne couvre pas** :
+>   - la lecture des secrets, tant que #1515 n'a pas posé l'étiquette `NO_READ_UP` qui la ferme ;
+>   - deux projets étiquetés bas en même temps, qui s'écrivent l'un l'autre ;
+>   - le réseau, bouclage compris ;
+>   - l'environnement passé à l'agent.
 > - **Décidé, pas encore livré** : ce qui suit décrit l'état présent jusqu'à #1515, qui le réécrira.
 
 [docs/24 §4.6](./24-projets-locaux-et-poste-de-travail.md) l'avait écrit au cadrage, et **rien
