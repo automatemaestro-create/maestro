@@ -39,6 +39,9 @@ procédure manuelle est documentée dans docs/19, §Vérification) :
 """
 
 import asyncio
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -218,6 +221,10 @@ def test_seules_les_variables_d_auth_entrent_dans_le_conteneur():
     assert "ANTHROPIC_API_KEY=" in transmises
     assert "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abcdef" in transmises
     assert not any(v.startswith(("GITLAB_TOKEN", "PATH")) for v in transmises)
+    # Hors auth, rien ne vient de l'hôte : seule la déclaration de git (#1599),
+    # que la commande pose elle-même, entre en plus.
+    venues = {paire.split("=", 1)[0] for paire in transmises} - set(ENV_TRANSMISES)
+    assert venues == {"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"}
     # La liste des accès accordés est fermée et documentée (docs/17 §3).
     assert set(ENV_TRANSMISES) == {
         "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
@@ -536,3 +543,77 @@ def test_un_perimetre_qui_deborde_est_un_refus_franc(shim_resolu, tmp_path, monk
 
     with pytest.raises(ConfigError, match="chemins exclus"):
         config.env_sandbox(espace, projet=projet)
+
+
+# --- ⑥ git dans le conteneur : l'espace monté est un dépôt utilisable (#1599) ----------
+#
+# Le montage d'un dossier de Windows appartient à root dans le conteneur, pas à
+# `agent` : sans déclaration, git y refuse tout (« detected dubious ownership »), et
+# un run en mode isolé ne peut ni committer ni brancher. La commande déclare le seul
+# point de montage sûr, dans une portée que git tient pour protégée.
+
+GIT = shutil.which("git")
+
+
+def _env_du_conteneur(commande: list[str]) -> dict[str, str]:
+    """Les variables que la commande fait entrer dans le conteneur (`--env CLE=valeur`)."""
+    paires = [commande[i + 1] for i, mot in enumerate(commande) if mot == "--env"]
+    return dict(paire.split("=", 1) for paire in paires)
+
+
+def _git_status(depot: Path, environ: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """`git status` dans `depot`, avec `environ` pour tout environnement."""
+    return subprocess.run(
+        [GIT, "status", "--short"],
+        cwd=depot,
+        env=environ,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+def test_la_commande_declare_le_seul_point_de_montage_sur_pour_git():
+    """`/workspace`, et lui seul : `*` éteindrait la garde de git pour tout le conteneur."""
+    env = _env_du_conteneur(commande_docker(_protocole(), []))
+
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_KEY_0"] == "safe.directory"
+    assert env["GIT_CONFIG_VALUE_0"] == POINT_MONTAGE == "/workspace"
+
+
+@pytest.mark.skipif(GIT is None, reason="git introuvable")
+def test_git_accepte_l_espace_monte_et_garde_les_autres_depots(tmp_path, monkeypatch):
+    """Le vrai git, sur un dépôt d'un autre propriétaire : refusé seul, accepté par la commande.
+
+    `GIT_TEST_ASSUME_DIFFERENT_OWNER` fait voir à git ce qu'il voit dans le conteneur — un
+    dépôt qui n'appartient pas à qui le lit — sans changer de propriétaire, ce qui demanderait
+    d'être root. Le point de montage, qui n'existe que dans le conteneur, est déplacé sur le
+    dépôt de l'essai : c'est la déclaration que porte la commande qui est jugée, telle quelle.
+    """
+    espace = tmp_path / "espace"
+    autre = tmp_path / "autre"
+    for depot in (espace, autre):
+        depot.mkdir()
+        subprocess.run([GIT, "init", "-q", str(depot)], check=True)
+    # Ni la config du poste ni celle du système : un `safe.directory = *` posé là
+    # masquerait le défaut.
+    hote = {cle: valeur for cle, valeur in os.environ.items() if not cle.startswith("GIT_")}
+    hote |= {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig-absent"),
+        "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+    }
+    monkeypatch.setattr(container, "POINT_MONTAGE", espace.resolve().as_posix())
+    conteneur = hote | _env_du_conteneur(commande_docker(_protocole(str(espace)), []))
+
+    sans_declaration = _git_status(espace, hote)
+    assert sans_declaration.returncode == 128
+    assert "dubious ownership" in sans_declaration.stderr
+
+    assert _git_status(espace, conteneur).returncode == 0
+    ailleurs = _git_status(autre, conteneur)
+    assert ailleurs.returncode == 128
+    assert "dubious ownership" in ailleurs.stderr

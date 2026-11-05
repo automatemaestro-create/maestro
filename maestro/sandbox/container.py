@@ -261,8 +261,9 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
     - **réseau restreint** : `bridge` (sortant seul, aucun port publié) ou `none` ;
     - **privilèges retirés** : utilisateur non-root (image), `--cap-drop ALL`,
       `--security-opt no-new-privileges`, plafonds pids/mémoire/CPU ;
-    - **environnement minimal** : seules les variables d'auth `ENV_TRANSMISES`
-      entrent — jamais l'environnement hôte entier.
+    - **environnement minimal** : de l'hôte, seules les variables d'auth
+      `ENV_TRANSMISES` entrent — jamais l'environnement hôte entier ; s'y ajoute
+      la déclaration qui fait accepter `/workspace` par git (`_git_tient_pour_sur`).
 
     Lève `ConfigError` si le protocole `MAESTRO_SANDBOX_*` est absent : le shim
     ne s'invoque que via le mode isolé du fournisseur, pas à la main. Et si le
@@ -310,6 +311,7 @@ def commande_docker(environ: Mapping[str, str], arguments: Sequence[str]) -> lis
         POINT_MONTAGE,
     ]
     commande += _montages_masques(environ.get(ENV_MASQUES) or "")
+    commande += _git_tient_pour_sur(POINT_MONTAGE)
     for variable in ENV_TRANSMISES:
         if variable in environ:
             commande += ["--env", f"{variable}={environ[variable]}"]
@@ -380,6 +382,31 @@ def _montages_masques(masques: str) -> list[str]:
         source = vide_dossier if nature == "d" else vide_fichier
         montages += ["--volume", f"{source}:{POINT_MONTAGE}/{chemin}:ro"]
     return montages
+
+
+def _git_tient_pour_sur(point: str) -> list[str]:
+    """Les `--env` qui déclarent `point` sûr pour git, et lui seul (#1599).
+
+    git refuse un dépôt dont le propriétaire n'est pas l'utilisateur qui le lit
+    (« detected dubious ownership »). Or le montage d'un dossier de Windows
+    appartient à root dans le conteneur, pas à `agent` : sans cette déclaration,
+    une tâche ne peut ni committer ni brancher dans son espace de travail.
+
+    La déclaration passe par la portée « commande » (`GIT_CONFIG_COUNT`), que git
+    tient pour protégée comme les portées système et globale. Elle vaut ainsi
+    pour toute image, sans la reconstruire, alors que le home de l'utilisateur
+    est un tmpfs vide et la racine en lecture seule. Seul le point de montage est
+    déclaré, jamais `*` : la garde de git tient pour tout autre dépôt du
+    conteneur.
+    """
+    return [
+        "--env",
+        "GIT_CONFIG_COUNT=1",
+        "--env",
+        "GIT_CONFIG_KEY_0=safe.directory",
+        "--env",
+        f"GIT_CONFIG_VALUE_0={point}",
+    ]
 
 
 def _vides() -> tuple[Path, Path]:

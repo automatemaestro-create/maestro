@@ -469,7 +469,9 @@ sur `python:3.11-slim` :
   `docker run` durcie (montages, réseau, privilèges, plafonds, environnement
   minimal), smoke test du shim (protocole absent → sortie 2 ; nominal →
   commande lancée, arguments relayés, code de sortie remonté), câblage
-  fournisseur (`cli_path` + protocole `MAESTRO_SANDBOX_*`).
+  fournisseur (`cli_path` + protocole `MAESTRO_SANDBOX_*`), et la déclaration
+  qui fait accepter `/workspace` par git, jugée par le vrai git sur un dépôt
+  d'un autre propriétaire : ce point accepté, tout autre dépôt refusé (#1599).
 
 Compléments existants : `tests/test_mcp.py` (références `${VAR}`, littéraux
 masqués, `strict_mcp_config`), `tests/test_telemetry.py` et
@@ -508,7 +510,8 @@ manuellement, sur un poste avec Docker Desktop démarré —
    `maestro-dev "Écris un fichier hello.txt contenant bonjour"` ;
 4. vérifier : la tâche livre son fichier ; pendant l'exécution, `docker ps`
    montre un conteneur `maestro-sandbox` ; après, `docker ps -a` n'en garde
-   aucun (`--rm`) ;
+   aucun (`--rm`) ; git commite et branche dans `/workspace`, que le montage
+   fait appartenir à root (#1599) ;
 5. contre-épreuve (échec propre attendu) : arrêter Docker et relancer — la
    tâche échoue, cause consignée au journal, le run n'emporte pas le moteur.
 
