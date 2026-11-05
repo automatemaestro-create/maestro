@@ -1575,6 +1575,37 @@ SONDE_A_LA_LIMITE = (
     " exit 1"
 )
 
+#: Ce que le CLI 2.1.281 a répondu à la sonde le 2026-11-05, sa session OAuth expirée (#1563) :
+#: le texte, et les deux événements du flux qui le portent, champs relevés tels quels — l'événement
+#: `system` d'ouverture et les compteurs à zéro sont omis. Le CLI est sorti en 1, stderr vide.
+SESSION_EXPIREE = "Failed to authenticate: OAuth session expired and could not be refreshed"
+
+
+def _flux_d_echec(texte: str, erreur: str | None) -> list[str]:
+    """Le flux d'une sonde en échec, sur le modèle du relevé du 2026-11-05 : un message assistant
+    synthétique, qui porte le champ typé `error` quand `erreur` est donné, puis la ligne
+    `result`."""
+    assistant = (
+        '{"type":"assistant","message":{"model":"<synthetic>","role":"assistant",'
+        '"content":[{"type":"text","text":"' + texte + '"}]}'
+        + (f',"error":"{erreur}","is_api_error_message":true' if erreur else "")
+        + "}"
+    )
+    resultat = (
+        '{"type":"result","subtype":"success","is_error":true,"api_error_status":null,'
+        '"terminal_reason":"api_error","modelUsage":{},"result":"' + texte + '"}'
+    )
+    return [assistant, resultat]
+
+
+def _sonde_qui_rend(lignes: list[str], code: int = 1) -> str:
+    """La réponse d'un bouchon de sonde : ces lignes sur stdout, puis ce code."""
+    citees = " ".join("'" + ligne.replace("'", "'\\''") + "'" for ligne in lignes)
+    return f"printf '%s\\n' {citees}; exit {code}"
+
+
+SONDE_SESSION_EXPIREE = _sonde_qui_rend(_flux_d_echec(SESSION_EXPIREE, "authentication_failed"))
+
 
 def _claude_sonde(depot: Depot, journal: Path, sonde: str, version: str = "2.1.281") -> str:
     """Bouchon qui distingue la sonde d'une session de ticket.
@@ -1704,12 +1735,89 @@ def test_un_modele_que_le_cli_ne_sert_pas_est_refuse_avant_le_premier_ticket(
     r = depot.lance("run.sh", "--plan", plan, "--run-id", "refus",
                     env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
     assert r.returncode == 2, r.stdout + r.stderr
-    assert f"le modèle {OPUS} est refusé par le CLI installé" in r.stderr
+    # Aucun champ typé ne dit la cause : la sonde ne l'affirme pas, et nomme tous les déblocages.
+    assert f"le CLI installé n'a pas servi le modèle {OPUS}" in r.stderr
     assert "Claude Code 2.1.260" in r.stderr, "la version installée"
     assert "version requise   2.1.280" in r.stderr, "la version requise, lue dans la réponse"
     assert "claude update" in r.stderr, "la commande qui débloque"
     assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session lancée"
     assert not (depot.racine / ".maestro/orchestrate/refus").exists(), "aucun run, aucun lot sauté"
+
+
+def test_une_session_expiree_a_la_sonde_n_accuse_pas_le_modele(depot: Depot) -> None:
+    """Le cas du 2026-11-02, sur la sortie relevée le 2026-11-05 (#1563) : la session OAuth du CLI
+    a expiré. Le run ne part pas, mais le modèle n'est pas en cause, et le seul geste qui débloque
+    est la reconnexion — ni `claude update`, ni un autre modèle."""
+    depot.ticket(130, "Premier lot")
+    journal = depot.racine.parent / "appels-expiree"
+    claude = _claude_sonde(depot, journal, SONDE_SESSION_EXPIREE)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "expiree",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "est refusé" not in r.stderr, r.stderr
+    assert "le CLI installé n'est pas authentifié" in r.stderr, r.stderr
+    assert f"le modèle {OPUS} n'a pas pu être vérifié" in r.stderr
+    assert SESSION_EXPIREE in r.stderr, "la réponse du CLI, recopiée pour la personne"
+    assert "authentication_failed" in r.stderr, "le champ qui établit la cause"
+    assert "claude auth login" in r.stderr, "le geste qui débloque"
+    assert "claude update" not in r.stderr and "--modele" not in r.stderr, r.stderr
+    assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session lancée"
+    assert not (depot.racine / ".maestro/orchestrate/expiree").exists(), "aucun run, aucun lot"
+
+
+@pytest.mark.parametrize(
+    "sonde, presents, absents",
+    [
+        # Le champ typé sans le texte connu : la cause est établie quand même.
+        (_sonde_qui_rend(_flux_d_echec("Something unexpected happened", "authentication_failed")),
+         ["le CLI installé n'est pas authentifié", "claude auth login"],
+         ["claude update", "n'a pas servi le modèle"]),
+        # Le texte connu sans le champ typé : rien n'est établi, tous les déblocages sont nommés.
+        (_sonde_qui_rend(_flux_d_echec(SESSION_EXPIREE, None)),
+         ["n'a pas servi le modèle", SESSION_EXPIREE, "claude auth login", "claude update",
+          "--modele", "relancer plus tard"],
+         ["n'est pas authentifié"]),
+        # Une valeur du type que la sonde ne sait pas traduire en un geste : le repli.
+        (_sonde_qui_rend(_flux_d_echec("Bad request", "invalid_request")),
+         ["n'a pas servi le modèle", "claude auth login", "claude update"],
+         ["n'est pas authentifié"]),
+        # Un libellé que `limite_atteinte` ne prend pas pour une limite d'usage, dont le chemin
+        # ne bouge pas : « credit balance » l'y ferait entrer.
+        (_sonde_qui_rend(_flux_d_echec("Payment required", "billing_error")),
+         ["le compte du CLI ne peut pas payer la requête", "claude auth status", "billing_error"],
+         ["claude update", "n'a pas servi le modèle"]),
+        (_sonde_qui_rend(_flux_d_echec("Internal server error", "server_error")),
+         ["le service du fournisseur est en panne", "relancer plus tard", "server_error"],
+         ["claude update", "n'a pas servi le modèle"]),
+        # Un CLI qui ne démarre pas : rien sur stdout, un mot sur stderr.
+        ("echo 'le CLI ne démarre pas' >&2; exit 1",
+         ["n'a pas servi le modèle", "le CLI ne démarre pas", "claude auth login", "claude update"],
+         []),
+    ],
+    ids=["champ-sans-texte", "texte-sans-champ", "invalid-request", "facturation", "panne",
+         "cli-muet"],
+)
+def test_la_cause_d_un_echec_de_sonde_se_lit_dans_le_champ_type_jamais_dans_le_texte(
+    depot: Depot, sonde: str, presents: list[str], absents: list[str]
+) -> None:
+    """La sonde n'affirme une cause que si le champ `error` du message assistant l'établit — un
+    type fermé que le SDK publie (`AssistantMessageError`) — et ne lit jamais le libellé pour
+    décider (#1563, docs/44). Quelle que soit l'issue, le garde-fou ne bouge pas : code 2, aucune
+    session."""
+    depot.ticket(130, "Premier lot")
+    journal = depot.racine.parent / "appels-cause"
+    claude = _claude_sonde(depot, journal, sonde)
+    plan = _plan(depot, [(1, 130, "-", "moyenne")])
+    r = depot.lance("run.sh", "--plan", plan, "--run-id", "cause",
+                    env={"MAESTRO_CLAUDE_BIN": claude, **SONDE})
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "est refusé" not in r.stderr, r.stderr
+    for attendu in presents:
+        assert attendu in r.stderr, (attendu, r.stderr)
+    for exclu in absents:
+        assert exclu not in r.stderr, (exclu, r.stderr)
+    assert [a.split()[0] for a in _appels(journal)] == ["sonde"], "aucune session lancée"
 
 
 def test_la_sonde_joue_sous_le_regime_des_sessions(depot: Depot) -> None:
