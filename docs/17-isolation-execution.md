@@ -184,8 +184,8 @@ consigné au journal, comme les autres échecs.
 > posée par #1515. Le conteneur reste une option.
 > - **#1514 l'a joué une fois contre un vrai démon Docker**, par la commande de `commande_docker`
 >   puis le vrai shim. Il ferme les trois menaces du bilan.
-> - **Mais git y refuse le workspace** (`detected dubious ownership`) : le montage venu de Windows
->   n'appartient pas à l'utilisateur `agent`.
+> - **git y accepte le workspace** : le montage venu de Windows appartient à root et non à
+>   l'utilisateur `agent`, et la commande déclare `/workspace` seul sûr pour git (§3, #1599).
 > - L'hôte ne joint pas un serveur lancé dedans, et l'image n'a pas de navigateur.
 
 ## 6. Hors mode isolé : la session d'un agent est confinée (#1279)
