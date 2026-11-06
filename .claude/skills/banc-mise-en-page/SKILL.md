@@ -45,13 +45,13 @@ hauteur ne se juge que sur le contenu que le produit rend. Deux états, selon ce
 que le ticket met en jeu (skill `control-tower`) :
 
 ```bash
-bash scripts/controltower/start.sh --etat-banc --no-browser   # peuplé, listes longues : l'état laissé par le banc
+bash scripts/controltower/start.sh --etat-banc --no-browser   # peuplé, listes longues : l'état sauvé par un exercice
 bash scripts/controltower/start.sh --no-browser               # vide : une stack neuve
 ```
 
 Le **peuplé** est le cas utile : un défaut de hauteur se cache sous une liste
-courte. `--etat-banc` sert l'état réel qu'un passage du banc des scénarios a
-laissé, et dit son âge. Redis est requis dans les deux cas.
+courte. `--etat-banc` sert l'état réel qu'un exercice a sauvé, et dit son
+âge. Redis est requis dans les deux cas.
 
 `--no-browser` est indispensable : sans lui le script ouvre sa propre fenêtre et
 **arrête la stack dès qu'elle est fermée** (#149), ce qui couperait l'API sous le
@@ -124,7 +124,7 @@ atteint sans projet actif**, et un identifiant inconnu renvoie à la porte
 d'entrée. Depuis #1293 il ne suffit plus seul : un onglet neuf est un
 **démarrage**, qui s'arrête sur la porte et son « Reprendre » tant que
 `maestro.session.entree` n'est pas posé au `sessionStorage` du même onglet
-(docs/05 §2.0.1). Sur l'**état du banc**, les projets du passage sont déjà
+(docs/05 §2.0.1). Sur l'**état du banc**, les projets de l'exercice sont déjà
 déclarés : lire leurs identifiants par `GET /api/projets` et prendre celui dont les runs
 peuplent la page. Sur une **stack neuve**, aucun projet n'est déclaré — en
 déclarer un, sur un dossier **hors du dépôt** (le dépôt de Maestro se refuse
@@ -146,8 +146,7 @@ Il laisse un `core/projets/<id>.json` dans le répertoire de travail — gitigno
 mais à retirer par le `DELETE` ci-dessus plutôt qu'à laisser traîner.
 
 L'atelier de ce banc est **`.maestro/mise-en-page/`**, et plus `.maestro/banc/` :
-ce dossier-là porte depuis #1164 le jeu de données du banc des scénarios, que
-`--etat-banc` réécrit.
+ce dossier-là porte le jeu de données que `--etat-banc` réécrit (#1164).
 
 Quand c'est **la visite guidée elle-même** qu'on mesure, c'est l'inverse : ne pas
 poser la clé, ou la retirer et recharger.

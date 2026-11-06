@@ -19,8 +19,8 @@ par élément, avec sa taille, son **propriétaire** quand on le connaît, et so
 
 - `~/Maestro/` — les projets de l'utilisateur : montrés, **jamais** retirés ;
 - `~/.maestro/` — l'état du poste : ce que le produit y déclare (jeton de l'API, journaux
-  locaux, ateliers, historique du banc, profils de navigateur) est à sa place ; tout autre
-  élément est **non déclaré** ;
+  locaux, ateliers, profils de navigateur) est à sa place ; tout autre élément est **non
+  déclaré** ;
 - `<temp>/maestro/` — le jetable : chaque dossier avec son occupant, vivant ou non, et le
   verdict du ramassage (`maestro.sandbox.ramassage`), qui le retirera seul ;
 - **hors racine** — les `~/maestro-*` du profil et les `maestro-*` des anciennes adresses
@@ -37,7 +37,7 @@ par élément, avec sa taille, son **propriétaire** quand on le connaît, et so
    commité), une activité de moins de six heures. La règle est celle du ramassage
    (`raison_de_garder`), lue et non recopiée ;
 4. `à son propriétaire` — un autre mécanisme le possède et le retire (l'état d'une stack,
-   l'ancien atelier du banc ou de la relecture, le cache des présentations) ;
+   l'ancien atelier des passages ou de la relecture, le cache des présentations) ;
 5. `ramassable` — un jetable dont l'occupant est mort : le ramassage le retirera ;
 6. `à retirer` — ce qu'aucun ramasseur ne connaît, et que seul ce geste solde.
 
@@ -57,8 +57,8 @@ déclarations du banc, racines parties avec leur passage, gardaient `~/maestro-s
 à son tour : `--purger` l'oublie par le verbe du produit (`ProjetStore.supprimer`, celui de
 `DELETE /api/projets`), jamais en effaçant son fichier, et son identifiant la désigne. Disparue
 veut dire **à coup sûr** (`racine_disparue`) : un lecteur débranché, un partage qui ne répond
-pas, un accès refusé laissent la racine protéger comme si elle était là. La rétention du banc
-oublie d'elle-même celles de ses passages partis (`maestro.scenarios.projets.retenir`).
+pas, un accès refusé laissent la racine protéger comme si elle était là. La rétention de
+l'atelier oublie d'elle-même celles de ses passages partis (`maestro.scenarios.projets.retenir`).
 
 **Pourquoi un « oui » lu par la commande, et non une option.** La purge est destructive et
 porte sur ce que personne n'a déclaré : la seule autorité est la personne qui regarde la
@@ -67,8 +67,8 @@ la réponse, elle, suit la liste qu'on vient d'imprimer. Une session qui a reçu
 conversation le transmet sur l'entrée standard, et le dit.
 
 Les noms ne sont **jamais recopiés** (#830, patron de `maestro.controltower.purge`) : les
-racines viennent de `maestro.emplacements`, le jeton, les journaux, les ateliers, l'historique
-et les familles tierces des modules qui les écrivent. Les deux noms qu'aucun module Python
+racines viennent de `maestro.emplacements`, le jeton, les journaux, les ateliers et les
+familles tierces des modules qui les écrivent. Les deux noms qu'aucun module Python
 n'écrit — posés par des scripts — vivent ici, et `tests/test_menage.py` vérifie que les
 scripts les posent tels quels.
 
@@ -118,7 +118,6 @@ from maestro.sandbox.ramassage import (
     raison_de_garder,
     seuil_du_poste,
 )
-from maestro.scenarios.historique import DOSSIER_HISTORIQUE
 from maestro.scenarios.projets import ANCIEN_NOM_ATELIER
 
 #: Le nom sous lequel ce module s'invoque (`python -m …`) — dérivé, jamais écrit.
@@ -291,10 +290,10 @@ def depots_de_declarations(
     """Les dépôts de déclarations de projets du poste, et ce qui a manqué pour les lister.
 
     Dans **chaque** copie du dépôt : son `core/projets/` et celui de son jeu du banc
-    (`donnees_du_banc`, #1164) — le banc nu déclare dans le premier, le banc qui sauve
-    son état dans le second —, plus `MAESTRO_PROJETS_DIR` s'il est réglé. La rétention
-    du banc y oublie les projets de ses passages partis (#1477), ce module y lit ce qu'il
-    protège.
+    (`donnees_du_banc`, #1164) — un passage sur la stack de la copie déclare dans le
+    premier, un exercice qui sauve son état dans le second —, plus `MAESTRO_PROJETS_DIR`
+    s'il est réglé. La rétention de l'atelier y oublie les projets de ses passages partis
+    (#1477), ce module y lit ce qu'il protège.
     """
     settings = settings or load_settings()
     manque = ""
@@ -505,8 +504,7 @@ def _etat_du_poste(gardes: Protections) -> list[Entree]:
     racine = racine_etat()
     declares = {
         FICHIER_JETON: "jeton de l'API (maestro.controltower.acces)",
-        NOM_ATELIERS: "ateliers du banc et de la relecture, gardés par rétention",
-        DOSSIER_HISTORIQUE: "historique des passages du banc (maestro.scenarios.historique)",
+        NOM_ATELIERS: "ateliers des passages et de la relecture, gardés par rétention",
         NOM_PROFIL_NAVIGATEUR: "profil de navigateur du clone principal (scripts/setup.sh)",
     }
     entrees = []
@@ -558,7 +556,7 @@ def _hors_racine(
     entrees = []
     anciens_ateliers = {
         ANCIEN_NOM_ATELIER: (
-            "ancien atelier du banc — sa rétention le reprend (maestro.scenarios.projets)"
+            "ancien atelier des passages — sa rétention le reprend (maestro.scenarios.projets)"
         ),
         ANCIEN_ATELIER_RELECTURE: (
             "ancien atelier de la relecture — scripts/design/relecture-visuelle.sh le reprend"

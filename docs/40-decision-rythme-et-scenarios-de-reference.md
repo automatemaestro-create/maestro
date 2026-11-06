@@ -151,11 +151,13 @@ la personne a déjà approuvé, et c'est son accord qu'on cesse de lui redemande
 > ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
 > #1568) : plus de scénarios figés. Quand une vérification sur le réel est recommandée, la session
 > construit l'exercice de ce qu'elle vient d'implémenter (#1569, #1570), et le bilan d'un jalon
-> tire les siens de ses critères de sortie (#1571). S1 à S12, la carte, l'historique et le banc par
-> lot se retirent (#1572). Cette section reste l'histoire du banc et la raison de chacun de ses
-> oracles. Elle ne décrit plus le présent au ticket ni au bouclage d'un jalon, qui se jouent sur des
-> exercices construits ([docs/10 §3.4 et §6](./10-workflow-git.md)) ; jusqu'à #1572, elle décrit
-> encore le banc par lot. Le banc comparatif et ses objectifs `p5` et `club` ne bougent pas.
+> tire les siens de ses critères de sortie (#1571). S1 à S12, leur lanceur, la carte et sa sonde,
+> le croisement, l'historique et le banc par lot ont quitté le dépôt le 2026-11-06 (#1572). Le
+> tableau et les paragraphes de chaque scénario restent l'histoire du banc et la raison de chacun
+> de ses oracles ; ils ne décrivent ni le ticket ni le bouclage d'un jalon, qui se jouent sur des
+> exercices construits ([docs/10 §3.4 et §6](./10-workflow-git.md)). Restent au présent : l'état
+> qu'un exercice a sauvé, rouvert par `start.sh --etat-banc`, les ateliers des passages et leur
+> rétention, et le banc comparatif avec ses objectifs `p5` et `club`.
 
 Le retex du 2026-09-11 est la seule vérification qui ait trouvé de vrais défauts. Il était manuel et
 n'a été joué qu'une fois. Il devient une commande (#1148), jouée contre la vraie stack et le vrai
@@ -182,97 +184,37 @@ dit pourquoi (personne pour prendre les tâches) et propose l'équipe que l'anal
 par la voie de l'étape d'équipe (#1040), puis le fil repropose la demande d'origine, et le run part
 sur un clic. Rien n'est recruté sans cette validation, ni pendant un run (docs/31 §3.5). Le parcours
 est joué de bout en bout, juge et moteur mis à part, par `tests/test_projet_outille_http.py` (section
-⑧). Le banc de #1148 le rejoue avec le vrai modèle.
+⑧). Le banc de #1148 le rejouait avec le vrai modèle, jusqu'à #1572.
 
-**L'état qu'un passage laisse se rouvre, sans rien rejouer** (#1164). L'écran peuplé que
-regardent la relecture visuelle et les captures n'est plus un scénario factice : c'est l'état réel
-qu'un passage du banc a laissé, servi par l'API réelle. `bash scripts/controltower/start.sh
---etat-banc` le rouvre sur la stack de la copie, dans un jeu de données à part (`<espace>.banc`,
-`.maestro/banc/`) qui ne touche ni aux données du worktree ni à celles du poste, et **dit son âge**.
-`--etat-banc --rejouer[=S2,S4]` le refait à la demande : banc remis à neuf, stack servie, passage
-joué au premier plan avec le vrai modèle, état sauvé dans l'atelier du passage. Un passage joué
-ailleurs (celui du bouclage, par exemple) ne sauve rien : son état serait mêlé à celui de la stack
-qui l'a servi. Le détail est dans `maestro/scenarios/etat.py`.
+**L'état qu'un exercice laisse se rouvre, sans rien rejouer** (#1164, #1569). L'écran peuplé
+que regardent la relecture visuelle et les captures n'est pas un scénario factice : c'est l'état
+réel qu'un exercice a sauvé (`python -m maestro.scenarios.exercice … sauver`), servi par l'API
+réelle. `bash scripts/controltower/start.sh --etat-banc` le rouvre sur la stack de la copie, dans
+un jeu de données à part (`<espace>.banc`, `.maestro/banc/`) qui ne touche ni aux données du
+worktree ni à celles du poste, et **dit son âge**. Il prend l'état que **cette copie** a sauvé ; à
+défaut, le dernier du poste, et il dit alors de quel espace il vient (#1572). Aucun parcours figé
+ne se rejoue : `--rejouer` est refusé, et le refus nomme l'exercice. Le détail est dans
+`maestro/scenarios/etat.py`.
 
-**Deux passages ne partagent rien, et un passage tué se dit** (#1365). Le dossier des ateliers
+**Deux passages ne partagent rien** (#1365). Le dossier des ateliers
 (`~/.maestro/ateliers/scenarios/` depuis #1457, `~/maestro-scenarios/` avant) est celui du poste :
 deux copies qui lançaient le banc dans la même seconde
 recevaient le même horodatage, donc le même atelier, et leurs scénarios semaient et vidaient les
 mêmes dossiers (mesuré le 2026-09-27 à 12:36:09). Un passage **réserve** désormais son atelier —
 création exclusive, `<horodatage>-2` si le nom est pris —, et ce nom est l'identifiant du passage.
-Un processus tué sortant en `1` sous Windows, le code d'un rouge, le lanceur ne lit plus ce code
-seul : le banc écrit un témoin en dernier geste, et sans lui le lanceur annonce un passage
-**interrompu**, jamais « état sauvé ».
+Le témoin que le banc figé écrivait en dernier geste, pour qu'un passage tué ne se lise pas
+« état sauvé », est parti avec son lanceur (#1572).
 
-**Chaque passage entre dans un historique, qui se lit** (#1461). Le rapport d'un passage reste
-dans la copie qui l'a joué (`.maestro/scenarios/<passage>/`). Il ne disait ni le code joué, ni la
-copie, ni le ticket, et celui d'un worktree partait avec lui. Le passage ajoute donc aussi **une
-ligne** à `~/.maestro/historique/scenarios.jsonl`, la racine de l'état du poste (#1454), hors des
-ateliers que le banc ramasse :
-
-- le **sha** de `HEAD`, la branche et l'iid qu'elle porte, la copie, et si son arbre portait des
-  modifications non commitées. Un vert sur un arbre modifié n'est pas le vert de ce sha ;
-- par scénario : verdict, coût, durée, rejeu, empêchement.
-
-C'est le point d'entrée du banc qui l'écrit, juste après le rapport. Clone principal, worktree ou
-pilote y entrent donc sans rien régler, et la ligne survit au retrait du worktree. Une copie sans
-Git écrit sa ligne sans sha, et un historique qui ne s'écrit pas se dit sans changer le verdict.
-`MAESTRO_SCENARIOS_HISTORIQUE` déplace le fichier. La suite de tests le fait, pour ne jamais
-écrire dans celui du poste.
-
-`python -m maestro.scenarios.historique` lit la série. Par scénario, elle rend le taux de réussite,
-le coût et la durée médians, les rejeux, les empêchements et le **dernier vert** avec son sha.
-`--fenetre <n>` la borne aux n derniers passages de chaque scénario, et `--json` la rend à un
-script : c'est l'entrée du banc par lot et du choix du scénario le moins cher (#1460).
-`--importer` y fait entrer les rapports d'une copie : les treize passages du clone principal
-d'avant ce ticket y sont entrés **sans sha**, et la lecture dit « sha inconnu » plutôt que de le
-deviner d'une date.
-
-**Le banc entier se joue une fois par lot, sur `main`** (#1462, [docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md)).
-Après son drain final, le pilote d'un run le joue dans une copie dédiée sur `origin/main`
-(`main.banc`), si `main` a bougé sur le chemin des scénarios depuis le dernier passage complet
-sur `main` que cet historique consigne ; sinon il s'abstient en le disant. Un rouge y nomme les PR
-mergées depuis le dernier vert du scénario sur `main` (`maestro.scenarios.sur_main`). Un passage
-injouable ou un scénario empêché est une abstention, jamais un vert. Hors run,
-`bash scripts/orchestrate/banc-main.sh` joue le même passage. Le détail est en
-[docs/10 §11.13](./10-workflow-git.md).
-
-**Chaque passage dit quel code chaque scénario a exécuté** (#1463). C'est la **carte**, écrite à
-côté du rapport (`.maestro/scenarios/<passage>/couverture.json`) et gardée avec la ligne de
-l'historique (`scenarios.cartes/<passage>.json`, champ `carte`). Elle contient, pour chaque
-scénario joué, et à part pour le **démarrage** de la stack (ce qui a tourné avant le premier
-scénario, donc sous chacun) :
-
-- les **fonctions Python exécutées**, par fichier et par nom qualifié (`Classe.methode`,
-  `<module>` pour un import). La granularité est la fonction, jamais la ligne : un diff décale les
-  lignes d'un fichier, pas les noms de ses fonctions. Le code de niveau module (une constante, un
-  gabarit de prompt en tête de fichier) s'exécute à l'import, souvent avant le scénario : il se
-  rattache à un scénario par son fichier ;
-- les **fichiers de données lus** (playbooks, `core/`, gabarits, réglages). La configuration que
-  le banc sert depuis sa copie (`.maestro/banc/`) est rendue au fichier suivi dont elle est la
-  copie ;
-- les **processus** qui y ont contribué : l'API, l'hôte détaché et ses runs, l'API que S12
-  rallume, le banc lui-même.
-
-N'y entrent que les fichiers que Git suit dans la copie. La mesure couvre tous ces processus parce
-que `start.sh --etat-banc --rejouer` pose, avant l'API, une **sonde** sur `PYTHONPATH`
-(`maestro/scenarios/sonde/`, un `sitecustomize` que Python charge dans chaque processus), et que
-tout ce que la stack lance en hérite. Le produit n'a aucune branche « mode banc ». Le banc
-**borne** chaque scénario par un fichier que chaque processus relit toutes les 0,2 s, puis il
-attend une seconde que tous l'aient vu. Sous Python 3.12 et après, la sonde passe par
-`sys.monitoring` et coûte un appel par fonction et par scénario. `_fin` l'éteint, et la stack
-laissée servie tourne sans elle. `MAESTRO_BANC_CARTE=0` joue le passage sans carte, en le
-disant. Une carte qui ne s'écrit pas se dit, sans changer le verdict. Un passage joué contre une
-stack démarrée sans la sonde le dit aussi (« stack non mesurée »). Deux limites sont assumées :
-ce qu'un processus exécute dans la période qui suit une borne peut rester rangé sous le scénario
-précédent, et ce que lit un processus non Python (le CLI de l'agent, l'UI) n'y est pas.
-`python -m maestro.scenarios.carte` résume la dernière carte de la copie, et
-`python -m maestro.scenarios.croisement` compose la dernière empreinte de chaque scénario dans
-l'historique du poste, rapporte un diff aux fonctions qu'il touche, et rend la couverture la moins
-chère. Au ticket, `lib.sh criteres` ne l'annonce plus : l'exercice construit y remplace le banc
-(#1570, [docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)), et les deux
-modules partent avec lui (#1572). Le préfixe `GL_BANC_CHEMINS` dit, pour le banc par lot, si `main`
-a bougé là où le produit tourne.
+**Ce qui choisissait et rejouait les scénarios a quitté le dépôt** (#1572). L'historique des
+passages (#1461, `~/.maestro/historique/scenarios.jsonl`), le banc entier rejoué sur `main` après
+le drain final d'un run (#1462, `banc-main.sh` et sa copie `main.banc`), la carte de ce que chaque
+scénario exécutait, prise par une sonde `sitecustomize` (#1463), et le croisement d'un diff avec
+elle (#1464) n'existaient que pour choisir un scénario figé ou le rejouer. Ils sont partis avec S1
+à S12, sans remplaçant ([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md),
+[docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)) ; leur démonstration
+se relit dans l'historique Git de ce document. Sur un poste qui les a joués, l'historique n'est
+plus déclaré : `python -m maestro.menage` le montre et `--purger` le solde, sur un « oui ». La
+copie `main.banc` se retire par `bash scripts/git/worktree.sh main-banc --retirer`.
 
 **Le banc ne garde que ses derniers passages** (#1457). Il les gardait tous — 208 dossiers le
 2026-10-09, projets complets et `node_modules` compris —, et leurs projets versionnés retenaient,
@@ -288,8 +230,7 @@ de sa copie, et rien ne les retirait — le 2026-10-11, dix déclarations du 202
 avec leur passage, gardaient l'ancien atelier au ménage du poste. La rétention oublie donc, dans le
 `core/projets/` et le jeu du banc de **chaque** copie, celles dont la racine vit dans un passage qui
 n'existe plus, retiré à l'instant ou avant ; une déclaration hors des passages n'est jamais touchée.
-Seuls les projets des passages partent : ni leurs rapports, dans la copie, ni
-l'historique ci-dessus. L'ancien atelier est repris par la même règle, puis retiré quand il ne
+Seuls les projets des passages partent, jamais leurs rapports, dans la copie. L'ancien atelier est repris par la même règle, puis retiré quand il ne
 porte plus rien ; ce qui n'y a pas la forme d'un passage est nommé, jamais touché. Le détail est
 dans `maestro/scenarios/projets.py`.
 

@@ -16,7 +16,7 @@ modèle rendrait.
    rappeler le modèle** — jusqu'à la première pièce, qui porte ce qui a été proposé ;
 ③ la **correction en mots** redit au modèle la proposition qu'elle corrige, et ce qu'il
    repropose est **revérifié** au poste ;
-④ les **routes du fil**, et le banc des scénarios qui, sans avis, retient la proposition.
+④ les **routes du fil**, et la personne d'un exercice qui, sans avis, retient la proposition.
 
 Ni réseau, ni Redis, ni vrai modèle : les routes tournent sur le bus mémoire via le
 TestClient de Starlette, et les commandes sont jouées par un joueur doublé.
@@ -71,7 +71,7 @@ from maestro.projets import ProjetStore
 from maestro.projets.reglages import ReglagesProjetsStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
-from maestro.scenarios.scenarios import _reponse_a
+from maestro.scenarios.gestes import reponse_a
 
 # --- Le modèle doublé, et ce qu'un modèle rendrait ----------------------------------
 
@@ -562,7 +562,7 @@ def test_une_proposition_ordinaire_ne_se_redit_pas_au_modele() -> None:
     assert _proposition(suite).rang == 2
 
 
-# --- ④ Les routes du fil, et le banc ------------------------------------------------
+# --- ④ Les routes du fil, et la personne d'un exercice ------------------------------
 
 
 @pytest.fixture()
@@ -653,9 +653,9 @@ def test_une_phrase_tapee_pendant_la_proposition_la_corrige(
     assert suite["question"]["proposition"][1]["valeur"] == "pnpm install"
 
 
-def test_le_banc_sans_avis_retient_la_proposition_d_un_geste() -> None:
-    """La personne sans avis des scénarios prend la recommandation — ici faite d'un bloc."""
+def test_la_personne_sans_avis_retient_la_proposition_d_un_geste() -> None:
+    """La personne sans avis d'un exercice prend la recommandation — ici faite d'un bloc."""
     question = _proposition_de(RECETTES).to_dict()
 
-    assert _reponse_a(question) == (PROPOSITION_RETENUE, False)
-    assert _reponse_a(QuestionOutillage.from_dict(QUESTION_FORGE).to_dict()) == ("github", False)
+    assert reponse_a(question) == (PROPOSITION_RETENUE, False)
+    assert reponse_a(QuestionOutillage.from_dict(QUESTION_FORGE).to_dict()) == ("github", False)

@@ -55,6 +55,9 @@ revenue d'elle-même. Et le budget de 25 000 tokens posé par #965 laissait 9 00
 > **Livré par #1523** le 2026-10-14. Le budget vaut 20 164 tokens : #1523 a payé sa propre phrase
 > en sortant de `CLAUDE.md` trois rappels de renversements que `docs/` portait déjà. La garde est
 > décrite en [docs/25 §9.4](./25-audit-commandes-claude.md).
+>
+> **Abaissé par #1572** le 2026-11-06 à 19 940 tokens : le banc figé retiré du dépôt, son
+> paragraphe « Banc par lot » et le rejeu de `start.sh` ont quitté `CLAUDE.md` avec lui.
 
 **Renverse** [docs/25 §9.4](./25-audit-commandes-claude.md), décision de #965 : « un `CLAUDE.md`
 qui dépasse est une décision : on relève le budget en connaissant le coût, ou on sort la

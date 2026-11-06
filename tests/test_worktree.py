@@ -3305,7 +3305,7 @@ def test_temps_ecarte_les_agents_du_produit(depot: Depot) -> None:
     """Les agents que Maestro lance dans le worktree (SDK Python) ne sont pas des sessions du
     ticket.
 
-    Dix-huit de leurs transcripts sur #1232 : comptés, ils feraient passer le banc des scénarios
+    Dix-huit de leurs transcripts sur #1232 : comptés, ils feraient passer les runs du produit
     pour du travail de développement.
     """
     dossier = _bucket(depot, "152")
@@ -3388,55 +3388,49 @@ def test_temps_sans_session_ne_rend_rien(depot: Depot) -> None:
     assert _temps(depot, "15x")[0] == 2
 
 
-# --- main-banc : la copie où le banc se joue sur main, une fois par lot (#1462) ------------------
+# --- main-banc --retirer : la copie qu'un poste porte encore (#1572) ------------------------------
 
 
-def _setup_sur_main(depot: Depot) -> str:
-    """Un `setup.sh` muet sur main : la copie l'appelle pour `apps/web` (ni npm ni réseau ici)."""
-    setup = depot.racine / "scripts/setup.sh"
-    setup.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
-    depot.git("add", "scripts/setup.sh")
-    depot.git("-c", "core.hooksPath=", "commit", "--quiet", "-m", "chore: setup muet")
-    return depot.git("rev-parse", "HEAD")
-
-
-def test_main_banc_monte_une_copie_detachee_sur_le_sha_et_l_y_ramene(depot: Depot) -> None:
-    """La copie du banc : détachée sur le sha demandé, équipée, nommée `main.banc` — puis
-    ramenée sur le sha suivant sans être remontée, et retirée sans toucher au clone principal."""
-    premier = _setup_sur_main(depot)
-    acheve = depot.lance("main-banc", "--sha", premier)
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+def _copie_main_banc(depot: Depot) -> Path:
+    """Ce qu'un poste porte encore : `main.banc`, un worktree DÉTACHÉ sur main."""
     copie = depot.worktrees / "main.banc"
-    derniere = acheve.stdout.strip().splitlines()[-1]
-    assert derniere.startswith("COPIE ") and Path(derniere[len("COPIE "):]).resolve() == (
-        copie.resolve()
-    )
-    assert depot.git("rev-parse", "HEAD", cwd=copie) == premier
-    assert depot.git("branch", "--show-current", cwd=copie) == "", "détachée, sans branche"
-    assert (copie / ".venv" / "marqueur.txt").read_text(encoding="utf-8") == ".venv"
-    assert "copie du banc sur main" in depot.lance("list").stdout
+    depot.git("worktree", "add", "--quiet", "--detach", str(copie), "HEAD")
+    return copie
 
-    (depot.racine / "README.md").write_text("main avance\n", encoding="utf-8", newline="\n")
-    depot.git("-c", "core.hooksPath=", "commit", "--quiet", "-am", "docs: main avance")
-    second = depot.git("rev-parse", "HEAD")
-    acheve = depot.lance("main-banc", "--sha", second)
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-    assert "déjà en place" in acheve.stdout
-    assert depot.git("rev-parse", "HEAD", cwd=copie) == second
+
+def test_main_banc_ne_monte_plus_rien(depot: Depot) -> None:
+    """Le banc par lot a quitté le dépôt : le verbe ne monte plus de copie, il le dit et nomme le
+    seul geste qui reste."""
+    sha = depot.git("rev-parse", "HEAD")
+    for args in (("main-banc",), ("main-banc", "--sha", sha)):
+        acheve = depot.lance(*args)
+        assert acheve.returncode == 2, acheve.stdout + acheve.stderr
+    assert "main-banc ne monte plus rien" in depot.lance("main-banc").stderr
+    assert not (depot.worktrees / "main.banc").exists(), "aucune copie montée"
+
+
+def test_main_banc_retire_la_copie_qu_un_poste_porte_encore(depot: Depot) -> None:
+    """La copie qu'un banc par lot avait laissée : nommée par `list` avec son geste, retirée sans
+    toucher au clone principal — et le geste rejoué ne trouve plus rien."""
+    copie = _copie_main_banc(depot)
+    assert "(copie que plus rien ne monte — main-banc --retirer)" in depot.lance("list").stdout
 
     acheve = depot.lance("main-banc", "--retirer")
     assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "copie main.banc retirée" in acheve.stdout
     assert not (copie / ".git").exists()
-    assert (depot.racine / ".venv" / "marqueur.txt").exists(), "la cible du lien reste intacte"
+    assert depot.git("branch", "--show-current") == "main", "le clone principal reste sur main"
+
+    acheve = depot.lance("main-banc", "--retirer")
+    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
+    assert "aucune copie main.banc en place" in acheve.stdout
 
 
 def test_main_banc_refuse_un_dossier_qui_porte_une_branche(depot: Depot) -> None:
     """Un `main.banc` qui porte une branche n'est pas la copie du banc : rien n'y est touché."""
-    sha = _setup_sur_main(depot)
     copie = depot.worktrees / "main.banc"
     depot.git("worktree", "add", "--quiet", "-b", "feat/9-travail", str(copie))
-    for args in (("main-banc", "--sha", sha), ("main-banc", "--retirer")):
-        acheve = depot.lance(*args)
-        assert acheve.returncode == 1, acheve.stdout + acheve.stderr
-        assert "porte une branche" in acheve.stderr
+    acheve = depot.lance("main-banc", "--retirer")
+    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
+    assert "porte une branche" in acheve.stderr
     assert depot.git("branch", "--show-current", cwd=copie) == "feat/9-travail"

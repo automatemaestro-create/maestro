@@ -58,10 +58,10 @@ from maestro.scenarios import comparatif as cmp
 from maestro.scenarios import couverture as cv
 from maestro.scenarios import grille as gr
 from maestro.scenarios.api import FIL, ErreurAPI, Reponse
+from maestro.scenarios.gestes import REPONSE_OUTILLAGE, port_de_service
 from maestro.scenarios.juge import Avis, JugeModele
 from maestro.scenarios.modele import Journal
 from maestro.scenarios.projets import Atelier
-from maestro.scenarios.scenarios import REPONSE_OUTILLAGE, port_de_service
 from maestro.telemetry import StepUsage, report_usage
 
 AVEC_GIT = pytest.mark.skipif(shutil.which("git") is None, reason="git absent du poste")

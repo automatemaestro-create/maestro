@@ -1,13 +1,14 @@
-"""La porte d'entrée réelle du banc : l'API de la Control Tower, en HTTP (#1148).
+"""La porte d'entrée réelle des passages : l'API de la Control Tower, en HTTP (#1148).
 
-Le banc **n'importe pas** l'application. Il parle à l'API qui tourne, par les
-appels exacts que l'écran envoie — `POST /api/chat/orchestrateur/messages`,
-l'accord, le suivi du run. C'est le point du ticket : ce qu'un utilisateur fait
-passe par le réseau, par le fil, par le vrai fournisseur ; une `TestClient`
-monterait une pile *ressemblante*, et c'est précisément ce qui n'a rien vu du
-défaut de #1146 pendant dix jours.
+Un passage — un exercice (`maestro.scenarios.exercice`) ou le banc comparatif
+(`maestro.scenarios.comparatif`) — **n'importe pas** l'application. Il parle à
+l'API qui tourne, par les appels exacts que l'écran envoie —
+`POST /api/chat/orchestrateur/messages`, l'accord, le suivi du run. Ce qu'un
+utilisateur fait passe par le réseau, par le fil, par le vrai fournisseur ; une
+`TestClient` monterait une pile *ressemblante*, et c'est précisément ce qui n'a
+rien vu du défaut de #1146 pendant dix jours.
 
-Deux couches, et la frontière entre elles est ce qui rend le banc testable sans
+Deux couches, et la frontière entre elles est ce qui rend un passage testable sans
 réseau :
 
 - `Transport` — « envoie cette requête, rends ce statut et ce corps », et rien de
@@ -16,7 +17,7 @@ réseau :
 - `ClientAPI` — les **verbes du banc** au-dessus d'un transport : déclarer un
   projet, ouvrir une conversation, envoyer un message, valider l'équipe, donner
   l'accord, lire un run. C'est ici que vivent les chemins et les formes de corps,
-  une seule fois, et c'est tout ce que les scénarios connaissent de l'API.
+  une seule fois, et c'est tout ce que les passages connaissent de l'API.
 
 ## Deux façons de recevoir une réponse du fil (#1265)
 
@@ -1044,8 +1045,8 @@ def attendre_le_run(
     y entre sous une chaîne vide : ce n'est pas une validation de commande, et la
     taire ferait perdre le total.
 
-    `approuve=False` (#1324) fait jouer au banc **la personne qui refuse** : S8
-    mesure qu'un acte hors du projet revient à quelqu'un, et le seul geste qui
+    `approuve=False` (#1324) fait jouer au banc **la personne qui refuse** : mesurer
+    qu'un acte hors du projet revient à quelqu'un passe par là, et le seul geste qui
     garantisse que le banc ne modifie pas le poste est de ne rien accorder. Le
     refus suit les mêmes règles que l'accord — son run seul, chaque acte une
     fois — et `demandes` reçoit une copie de chaque demande tranchée, telle que

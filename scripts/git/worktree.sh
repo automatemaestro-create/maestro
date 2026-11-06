@@ -71,7 +71,7 @@ Un worktree git par ticket — deux tickets, deux sessions, un seul dépôt.
   bash scripts/git/worktree.sh sessions [<iid>|--tous]
   bash scripts/git/worktree.sh temps <iid> [--depuis <instant>]
   bash scripts/git/worktree.sh avant [--retirer|--ramasser] [--sans-fetch] <iid>
-  bash scripts/git/worktree.sh main-banc [--retirer] [--sha <sha>] [--sans-fetch]
+  bash scripts/git/worktree.sh main-banc --retirer
 
 `avant` monte l'AVANT d'une relecture visuelle (#977) : un worktree DÉTACHÉ sur origin/main,
 nommé `<iid>.avant`, équipé pour servir sa Control Tower (dernière ligne « AVANT <chemin> »).
@@ -79,10 +79,8 @@ C'est `scripts/design/relecture-visuelle.sh` qui l'appelle et le range. `--retir
 (délier puis retirer) ; les avants dont le ticket n'a plus de worktree sur ce poste sont
 ramassés au montage suivant, ou par `--ramasser`.
 
-`main-banc` monte la copie où le banc des scénarios se joue sur main, une fois par lot (#1462) :
-un worktree DÉTACHÉ nommé `main.banc`, sur `--sha` (origin/main sans consigne), équipé comme un
-avant (dernière ligne « COPIE <chemin> »). Il reste en place d'un passage à l'autre — ses rapports
-y vivent — et c'est `scripts/orchestrate/banc-main.sh` qui l'appelle. `--retirer` le retire.
+`main-banc --retirer` retire `main.banc`, le worktree DÉTACHÉ qu'un poste peut porter encore :
+plus rien ne le monte (le banc figé a quitté le dépôt, #1572), et `gc` ne le voit pas.
 
 `ensure` est l'aiguillage de /ticket-start : il dit où la session doit travailler, en rendant
 en dernière ligne « ICI <chemin> » (le répertoire courant convient déjà — cas d'orchestrate,
@@ -945,7 +943,7 @@ commande_list() {
         nom="$(basename "$chemin")"
         case "$nom" in
           [0-9]*.avant) printf '  %-50s %s\n' "$chemin" "(avant de la relecture visuelle de #${nom%.avant} — origin/main, détaché)" ;;
-          "$NOM_MAIN_BANC") printf '  %-50s %s\n' "$chemin" "(copie du banc sur main, une fois par lot — détaché)" ;;
+          "$NOM_MAIN_BANC") printf '  %-50s %s\n' "$chemin" "(copie que plus rien ne monte — main-banc --retirer)" ;;
           *) printf '  %-50s %s\n' "$chemin" "(HEAD détaché)" ;;
         esac ;;
     esac
@@ -1224,14 +1222,13 @@ commande_avant() {
 
 # monte_detache <clone principal> <dest> <sha> <libellé du sha> : le worktree DÉTACHÉ `dest` sur
 # `sha`, monté ou ramené, puis équipé pour servir sa Control Tower. C'est le montage de l'avant
-# (#977), partagé depuis #1462 avec la copie du banc sur main (`main-banc`) : deux copies qu'on ne
-# monte que pour y servir une stack sur un état de main. Le refus d'un dossier qui porte une branche
-# reste à l'appelant, qui sait ce qu'il monte.
+# (#977) : une copie qu'on ne monte que pour y servir une stack sur un état de main. Le refus d'un
+# dossier qui porte une branche reste à l'appelant, qui sait ce qu'il monte.
 monte_detache() {
   local principal="$1" dest="$2" sha="$3" libelle="$4" sortie
   if [ -e "$dest/.git" ]; then
-    # Déjà là : une relecture rejouée (pipeline rouge, reprise), coupée avant `--fin`, ou le passage
-    # suivant du banc sur main. Ramené sur le sha sans rien réinstaller — `setup.sh` ne rejoue
+    # Déjà là : une relecture rejouée (pipeline rouge, reprise), ou coupée avant `--fin`. Ramené sur
+    # le sha sans rien réinstaller — `setup.sh` ne rejoue
     # `npm ci` que si le lockfile a bougé. `--force` ne met rien en jeu : cet arbre n'est à
     # personne, c'est une copie de main.
     if ! sortie="$(git -C "$dest" checkout --quiet --force --detach "$sha" 2>&1)"; then
@@ -1283,72 +1280,47 @@ monte_detache() {
   return 0
 }
 
-# --- main-banc : la copie où le banc se joue sur main, une fois par lot (#1462) ---------------------
-# Le pilote joue le banc entier sur `main` intégrée après son drain final, et `banc-main.sh` le joue
-# hors run (docs/10 §11.13, docs/47). Ni le clone principal — sa stack est celle de la personne, et
-# Next.js n'admet qu'un serveur de dev par `apps/web` (#1164) —, ni le worktree d'un ticket. Une
-# copie DÉDIÉE, détachée sur le sha de main joué, montée comme l'avant (`monte_detache`).
-#
-# Trois choses à ne pas défaire :
-#   - le NOM `main.banc` porte un point, donc ne peut être ni un worktree de ticket (`<iid>-<slug>`)
-#     ni un avant (`<iid>.avant`) : `gc` et le ramassage des avants ne le voient pas. Il est aussi
-#     le nom de son ESPACE Redis (`maestro.espace`, #1164) — ses données ne croisent aucune autre ;
-#   - il RESTE en place d'un passage à l'autre : les rapports vivent dans la copie
-#     (`.maestro/scenarios/`), et `start.sh --etat-banc` y rouvre l'état du dernier passage sur main
-#     (« la même copie dédiée », docs/47 §6). Le passage suivant le ramène sur son sha ;
-#   - on ne touche QU'À UN WORKTREE DÉTACHÉ à cet emplacement, comme pour l'avant : un dossier qui
-#     porte une branche est refusé avant la moindre écriture. `--retirer` passe par
-#     `retire_worktree` après avoir vidé `apps/web/node_modules` (MAX_PATH, cf. l'avant).
+# --- main-banc : retirer la copie `main.banc` qu'un poste porte encore -------------------------------
+# Un worktree DÉTACHÉ que plus rien ne monte (#1572) : son NOM porte un point, donc ni `gc` ni le
+# ramassage des avants ne le voient, et seul ce geste le retire. On ne touche QU'À UN WORKTREE
+# DÉTACHÉ à cet emplacement, comme pour l'avant : un dossier qui porte une branche est refusé avant la
+# moindre écriture, et le retrait passe par `retire_avant` (node_modules vidé d'abord, MAX_PATH).
 NOM_MAIN_BANC="main.banc"
 
 commande_main_banc() {
-  local mode="monter" sha="" fetch=1
+  local mode=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --retirer)   mode="retirer" ;;
-      --sha)       sha="${2:-}"; shift ;;
-      --sans-fetch) fetch=0 ;;
       -h|--help)   usage; return 0 ;;
       *) printf 'Option inconnue : %s\n\n' "$1" >&2; usage >&2; return 2 ;;
     esac
     shift
   done
+  if [ "$mode" != "retirer" ]; then
+    printf 'main-banc ne monte plus rien (#1572) : « main-banc --retirer » retire la copie laissée.\n' >&2
+    return 2
+  fi
 
   local principal dest
   principal="$(depot_principal)" || { erreur "hors d'un dépôt git"; return 1; }
   dest="$(base_worktrees "$principal")/$NOM_MAIN_BANC"
 
   if [ -e "$dest/.git" ] && git -C "$dest" symbolic-ref -q HEAD >/dev/null 2>&1; then
-    erreur "$(chemin_natif "$dest") porte une branche : ce n'est pas la copie du banc, rien n'est touché"
+    erreur "$(chemin_natif "$dest") porte une branche : ce n'est pas la copie main.banc, rien n'est touché"
     return 1
   fi
 
-  if [ "$mode" = "retirer" ]; then
-    if [ ! -e "$dest/.git" ]; then
-      deja "aucune copie du banc sur main en place"
-      return 0
-    fi
-    if retire_avant "$dest"; then
-      ok "copie du banc sur main retirée"
-      return 0
-    fi
-    erreur "copie du banc sur main non retirée : $(printf '%s' "$RETRAIT_ERREUR" | head -1)"
-    return 1
+  if [ ! -e "$dest/.git" ]; then
+    deja "aucune copie main.banc en place"
+    return 0
   fi
-
-  if [ -z "$sha" ]; then
-    if [ "$fetch" = 1 ]; then
-      GIT_TERMINAL_PROMPT=0 git -C "$principal" fetch origin main >/dev/null 2>&1
-    fi
-    sha="$(git -C "$principal" rev-parse --verify --quiet 'origin/main^{commit}')" || {
-      erreur "origin/main introuvable — pas de copie du banc à monter"
-      return 1
-    }
+  if retire_avant "$dest"; then
+    ok "copie main.banc retirée"
+    return 0
   fi
-
-  printf '\nCopie du banc sur main — %s\n\n' "${sha:0:7}"
-  monte_detache "$principal" "$dest" "$sha" "main" || return 1
-  printf 'COPIE %s\n' "$(chemin_natif "$dest")"
+  erreur "copie main.banc non retirée : $(printf '%s' "$RETRAIT_ERREUR" | head -1)"
+  return 1
 }
 
 # --- sessions : retrouver les transcripts d'un ticket (#385) ----------------------------------------
@@ -1727,8 +1699,8 @@ commande_sessions() {
 # (2026-09-23) : 39 773 lignes « user » et 60 092 « assistant », toutes à ce motif et horodatées,
 # aucune ne portant deux clés `timestamp`.
 #
-# LES AGENTS DU PRODUIT NE SONT PAS DES SESSIONS DU TICKET. Quand le banc des scénarios ou la Control
-# Tower jouent dans le worktree, Maestro lance ses agents par le SDK Python, et le CLI range leurs
+# LES AGENTS DU PRODUIT NE SONT PAS DES SESSIONS DU TICKET. Quand un exercice ou la Control Tower
+# jouent dans le worktree, Maestro lance ses agents par le SDK Python, et le CLI range leurs
 # transcripts dans le même répertoire — dix-huit sur #1232, au point d'entrée `sdk-py`. Tout `sdk-*`
 # est écarté, sauf `sdk-cli` : c'est le `claude -p` du pilote d'un run.
 #

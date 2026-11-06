@@ -6,7 +6,7 @@ parce que le dossier était vide, et personne ne les revérifiait une fois le pr
 construit. `AGENTS.md` prescrivait donc aux agents des commandes qui échouent, et
 l'équipe construisait autrement.
 
-Quatre étages, du moteur au banc :
+Trois étages, du moteur au fil :
 
 ① **ce que le poste répond se joue même sur un dossier vide** — une commande qui ne peut
    pas encore se jouer n'en appelle pas moins des programmes, et leur présence se
@@ -19,9 +19,10 @@ Quatre étages, du moteur au banc :
 ③ **ce qui ne pouvait pas encore se jouer se joue dès que le projet le permet** — à la
    fin d'un run, les commandes que l'outillage n'avait pas pu vérifier sont rejouées
    sur le projet construit, et la pièce qui change est proposée dans le fil, portée par
-   le récit de fin (`maestro.controltower.pieces`, `maestro.controltower.recit`) ;
-④ le banc (S9, S10) tranche cette pièce avant de rejouer lui-même les commandes — dans
-   `tests/test_scenarios.py`, avec les autres oracles des scénarios.
+   le récit de fin (`maestro.controltower.pieces`, `maestro.controltower.recit`).
+
+Ce que le modèle en fait sur la vraie stack ne se tient pas ici : c'est l'exercice que
+la session construit au ticket qui le dit (docs/52).
 
 Les commandes sont jouées par un joueur doublé, sauf sous `@pytest.mark.commandes_jouees`
 où un vrai bash répond.

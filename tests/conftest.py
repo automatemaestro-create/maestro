@@ -154,12 +154,7 @@ défaut (`maestro.controltower.bilan.juge_par_defaut`) rend donc « aucun juge �
 d'appel, pas d'événement, pas de coût ajouté au run. Un test qui veut le bilan injecte
 le sien.
 
-Treizième garde-fou (#1461) : **aucun test n'écrit dans l'historique du banc du poste**.
-Chaque passage du banc ajoute sa ligne sous `~/.maestro/`, et des dizaines de tests jouent
-`maestro.scenarios.banc.main` : sans garde, la série que lisent le banc par lot et le choix
-du scénario le moins cher compterait des passages de la suite. Un fichier jetable par test.
-
-Quatorzième garde-fou (#1449) : **aucun test n'attend le créneau des services du poste**.
+Treizième garde-fou (#1449) : **aucun test n'attend le créneau des services du poste**.
 Un service démarré par une vérification prend son tour sur le poste, et ce tour est un verrou
 partagé par tous les process de Maestro qui partagent le répertoire temporaire. Sans garde, un
 test qui vérifie un démarrage attendrait le service d'un run en vol sur la machine (jusqu'au
@@ -221,7 +216,8 @@ CLE_RAMASSAGE = "MAESTRO_RAMASSAGE_ESPACES"
 #: Le ramassage de l'état des stacks, joué par `worktree.sh gc` et `start.sh` (#1456).
 CLE_RAMASSAGE_ETAT_STACK = "MAESTRO_RAMASSAGE_ETAT_STACK"
 
-#: La rétention des passages du banc, jouée par chaque passage qui réserve son atelier (#1457).
+#: La rétention des ateliers des passages, jouée par chaque exercice ou comparatif qui
+#: réserve son atelier (#1457).
 CLE_PASSAGES_GARDES = "MAESTRO_SCENARIOS_PASSAGES_GARDES"
 
 #: Le **régime d'accès** de l'API et ses réglages (#638), plus le port du front
@@ -243,16 +239,6 @@ CLES_ACCES_API = (
 #: n'y lit pas non plus un jeton qui donnerait raison à un test pour la mauvaise
 #: raison.
 CLE_JETON_FICHIER = "MAESTRO_API_JETON_FICHIER"
-
-#: L'historique des passages du banc (#1461), sous `~/.maestro/` sans consigne. Pointé
-#: par `_historique_du_banc_isole` sur un fichier jetable : chaque test qui joue
-#: `maestro.scenarios.banc.main` y ajoute une ligne, et la série du poste ne doit
-#: compter que les vrais passages.
-CLE_HISTORIQUE_BANC = "MAESTRO_SCENARIOS_HISTORIQUE"
-
-#: Le dossier de la carte d'un passage du banc (#1463), que `start.sh` pose sur la
-#: stack d'un passage. Retiré par `_neutralise_carte_du_banc`.
-CLE_CARTE_DU_BANC = "MAESTRO_CARTE_DOSSIER"
 
 #: Variables posées d'office par les intégrations continues. `GITLAB_CI` reste de la liste bien
 #: après le retrait de la CI GitLab (#344) : ce qui est testé est « quelqu'un lira-t-il ce compte
@@ -467,11 +453,11 @@ def _neutralise_ramassage() -> None:
     l'éprouvent la rallument avec un `TMPDIR` à eux (`tests/test_etat_stack.py`,
     le ramassage de `tests/test_worktree.py`).
 
-    Même coupure pour la rétention des passages du banc (#1457) : un test qui joue
-    `banc.main` sans atelier réglé réserverait sous le `~/.maestro/` du poste, et y
-    **retirerait** ses passages au-delà des derniers — ceux d'un passage en cours
-    dans une autre copie compris. La rétention s'éprouve sur `tmp_path`, avec un
-    environnement explicite (`tests/test_etat_banc.py`).
+    Même coupure pour la rétention des ateliers des passages (#1457) : un test qui
+    ouvre un exercice ou joue le comparatif sans atelier réglé réserverait sous le
+    `~/.maestro/` du poste, et y **retirerait** ses passages au-delà des derniers —
+    ceux d'un passage en cours dans une autre copie compris. La rétention s'éprouve sur
+    `tmp_path`, avec un environnement explicite (`tests/test_etat_banc.py`).
     """
     os.environ[CLE_RAMASSAGE] = "0"
     os.environ[CLE_RAMASSAGE_ETAT_STACK] = "0"
@@ -487,17 +473,6 @@ def _neutralise_acces_api() -> None:
     """
     for cle in CLES_ACCES_API:
         os.environ[cle] = ""
-
-
-def _neutralise_carte_du_banc() -> None:
-    """Retire la carte du banc qu'une stack de passage aurait posée (#1463).
-
-    `start.sh --etat-banc --rejouer` l'exporte dans tout ce que la stack lance : une
-    suite jouée de là ferait borner chaque `banc.main` — une attente par scénario —
-    et écrire ses relevés dans la carte d'un vrai passage. Elle s'éprouve sur
-    `tmp_path`, injectée (`tests/test_carte_banc.py`).
-    """
-    os.environ.pop(CLE_CARTE_DU_BANC, None)
 
 
 def _fige_espace() -> None:
@@ -518,7 +493,6 @@ _neutralise_forge()
 _neutralise_reprise_agents()
 _neutralise_ramassage()
 _neutralise_acces_api()
-_neutralise_carte_du_banc()
 _fige_espace()
 
 
@@ -582,30 +556,6 @@ def _jeton_api_isole(
             os.environ.pop(CLE_JETON_FICHIER, None)
         else:
             os.environ[CLE_JETON_FICHIER] = ancienne
-
-
-@pytest.fixture(autouse=True)
-def _historique_du_banc_isole(
-    tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
-) -> Iterator[None]:
-    """Coupe l'historique du banc du `~/.maestro/` du poste (#1461).
-
-    Même forme que `_jeton_api_isole`, pour la même raison : un dossier pour la
-    session, un fichier par test, qui n'existe pas au départ — chaque test lit
-    donc un historique vide, et aucune ligne n'est héritée du test précédent.
-    """
-    ancienne = os.environ.get(CLE_HISTORIQUE_BANC)
-    racine = tmp_path_factory.getbasetemp() / "historiques-banc"
-    racine.mkdir(exist_ok=True)
-    empreinte = hashlib.sha1(request.node.nodeid.encode("utf-8")).hexdigest()[:16]
-    os.environ[CLE_HISTORIQUE_BANC] = str(racine / f"{empreinte}.jsonl")
-    try:
-        yield
-    finally:
-        if ancienne is None:
-            os.environ.pop(CLE_HISTORIQUE_BANC, None)
-        else:
-            os.environ[CLE_HISTORIQUE_BANC] = ancienne
 
 
 @pytest.fixture(autouse=True)

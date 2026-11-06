@@ -1290,11 +1290,10 @@ collision avec le paramètre `depot` de chaque test aux yeux de ruff (112 `F811`
   |---|---|---|
   | vide | une **stack neuve** | `start.sh` dans un worktree qui n'a encore rien servi (chaque copie a ses données, §9.1) ; ailleurs, la purge (§3.4) |
   | erreur | une **vraie panne** | l'API coupée (« injoignable »), ou une API qui répond en erreur (#996) |
-  | peuplé, charge | l'**état laissé par le banc** des scénarios | `start.sh --etat-banc`, qui dit son âge ; `--rejouer` le refait avec le vrai modèle ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)) |
+  | peuplé, charge | l'**état sauvé par un exercice** | `start.sh --etat-banc`, qui dit son âge et, s'il vient d'une autre copie, son espace ; un état neuf se fait par un exercice sauvé (§6.2, [docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)) |
 
-  ⚠ Depuis le 2026-11-03 ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)),
-  l'état « peuplé » viendra du **dernier exercice sauvé**, que la session construit pour produire
-  les états qu'elle doit regarder (#1569), et `--rejouer` se retire avec les scénarios (#1572).
+  La session construit l'exercice qui produit les états qu'elle doit regarder (#1569) ; aucun
+  parcours figé ne se rejoue (`--rejouer` est refusé, #1572).
 
   Un état que le réel ne sait pas produire se dit **non couvert** : il ne se fabrique pas. La
   largeur téléphone n'est pas un état des données, c'est une fenêtre. Les skills qui regardent
@@ -2141,10 +2140,10 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     le **run** (`run <id>`) ou la **capture** qui la montre. Le verbe vérifie ce qu'une forme permet
     de vérifier : que le test est **défini dans l'arbre** (un nom inventé est refusé), que le relevé
     de l'exercice est là et le rend **vert** — rouge, empêché ou non conclu, il ne prouve rien. Un
-    identifiant qu'aucun exercice ne porte se cherche parmi les passages du banc
-    (`.maestro/scenarios/<h>/`, dont le rapport rend verts les scénarios cités), puis au **banc
-    comparatif** (`.maestro/comparatif/<h>/`, #1512), qui ne rend ni vert ni rouge : il prouve s'il
-    porte au moins un passage abouti, jamais s'ils sont tous empêchés. Qu'un test nommé passe, le
+    identifiant qu'aucun exercice ne porte se cherche au **banc comparatif**
+    (`.maestro/comparatif/<h>/`, #1512), qui ne rend ni vert ni rouge : il prouve s'il porte au
+    moins un passage abouti, jamais s'ils sont tous empêchés. Un rapport du banc figé resté sur le
+    poste (`.maestro/scenarios/<h>/`) ne prouve plus rien (#1572). Qu'un test nommé passe, le
     verbe ne le rejoue pas — c'est la session qui l'a vu passer, et qui le dit ;
   - **au ticket, l'exercice construit remplace le banc** (#1570,
     [docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md), qui renverse
@@ -2485,11 +2484,11 @@ de l'oracle, de la feuille, d'une demande ou d'un motif, voyage **par un fichier
   banc. Ses projets y vivent, et son état sauvé aussi. Rien n'est posé hors du worktree, de l'atelier
   et des racines déclarées (#1454).
 - **La stack est celle du banc de la copie** : `bash scripts/controltower/start.sh --etat-neuf`
-  (vide) ou `--etat-banc` (l'état du dernier passage), sur les ports du worktree, avec
+  (vide) ou `--etat-banc` (l'état du dernier exercice sauvé), sur les ports du worktree, avec
   `env MAESTRO_PORT_API=<port>` sur chaque verbe. `sauver` refuse (`5`) une API qui sert un autre
-  espace : l'état rangé ne serait pas celui de l'exercice. `--etat-banc` rouvre le dernier état
-  sauvé **du poste** (#1164) : si une autre copie sauve après vous, c'est le sien qui revient, et
-  l'annonce le dit par le nom du passage.
+  espace : l'état rangé ne serait pas celui de l'exercice. `--etat-banc` rouvre l'état que
+  **cette copie** a sauvé ; à défaut, le dernier du poste, et l'annonce dit alors de quel espace il
+  vient (#1572).
 - **Codes** : `0` fait · `1` un geste n'a pas abouti (l'API a refusé, ou le fil n'a pas fait ce
   qu'on lui demandait, et la cause est dite) · `2` usage · `3` API muette · `4` aucun exercice, ou
   ce qui manque pour jouer ce geste (projet, run) · `5` refusé (oracle retouché, API hors du banc,
@@ -2497,8 +2496,7 @@ de l'oracle, de la feuille, d'une demande ou d'un motif, voyage **par un fichier
 - **La mécanique est tirée, pas réécrite.** Les gestes que les scénarios partageaient vivent dans
   `maestro.scenarios.gestes` (naître dans le fil, accepter le projet et l'outiller, valider l'équipe,
   accorder, suivre, reprendre, lire le coût au grand livre, servir un livrable). Le comparatif et la
-  grille les importent de là, et `scenarios.py` les reprend sous leurs anciens noms jusqu'à son
-  retrait (#1572). Les tests sont dans [`tests/test_exercice.py`](../tests/test_exercice.py), qui
+  grille les importent de là. Les tests sont dans [`tests/test_exercice.py`](../tests/test_exercice.py), qui
   joue les verbes contre un double de l'API ; un exercice joué sur la vraie stack en est la preuve.
 
 ---
@@ -6051,7 +6049,6 @@ bash scripts/orchestrate/run.sh --resume    # reprend un run qui ne s'est pas te
 bash scripts/orchestrate/run.sh --concurrence 3  # impose 3 créneaux — sinon dérivés du plan (§11.10)
 bash scripts/orchestrate/status.sh --watch  # où en est le run, depuis n'importe quel terminal
 bash scripts/orchestrate/journal.sh audit   # où est passé son temps, pendant ou après (§11.12)
-bash scripts/orchestrate/banc-main.sh       # le banc entier sur main, hors run (§11.13)
 touch .maestro/orchestrate/STOP             # arrêt d'urgence
 ```
 
@@ -6963,8 +6960,7 @@ encore `allowed`, et seul `"status":"rejected"` reste un refus (cf. plus haut).
   zéro avant son premier ticket.
 - L'usage d'une fenêtre ne fait que croître jusqu'à sa remise à zéro. Une valeur relue dans sa
   fenêtre est donc un **minimum**, jamais un faux positif.
-- **Le banc en fin de run** (§11.13) s'abstient au-delà d'un seuil, pour ne pas tirer sur le quota
-  que la garde réserve. Les sessions `/mr-fix` ne partent pas tant qu'un seuil est en cours.
+- Les sessions `/mr-fix` ne partent pas tant qu'un seuil est en cours.
 
 **Réglages.** `--seuil-5h <n>` et `--seuil-semaine <n>`, ou les variables
 `MAESTRO_ORCHESTRATE_SEUIL_5H` et `MAESTRO_ORCHESTRATE_SEUIL_SEMAINE`, en pourcentage entier.
@@ -8663,84 +8659,23 @@ renvoyer par un chemin absolu ferait refuser la lecture.
 > commande ; et `MAESTRO_AUDIT_FIN_RUN=0` l'**éteint**, sans rien retirer d'autre. Une quatrième
 > vérifie l'**ordre** : à l'instant où l'audit est écrit, le flux du ticket est déjà en `.jsonl.gz`.
 
-### 11.13 Le banc entier sur `main`, une fois par lot (#1462, chantier #1460)
+### 11.13 Aucun banc dans un run (#1572, docs/47 et docs/52)
 
-> ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
-> #1568) : le banc par lot se retire **sans remplaçant**, avec les scénarios figés. #1572 retire
-> `banc-main.sh`, la section de `run.sh` et de `status.sh` qui le jouent, et cette section avec eux.
-> Ce qui suit vaut jusque-là.
+Un run ne joue **aucun** banc, ni en fin de run ni ailleurs, et son en-tête n'en annonce aucun :
+le banc entier rejoué sur `main` après le drain final (#1462) est parti avec les scénarios figés,
+**sans remplaçant** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)
+§0.4, sur réponse de la personne). Le pilote est un script, jamais une session : il ne sait pas
+construire d'exercice. La vérification sur le réel se joue **au ticket**, par l'exercice que la
+session construit (§6, §6.2), et **au bilan** d'un jalon produit, sur ses critères de sortie (§3.4).
 
-Le banc des scénarios de référence ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md))
-se paie **une fois par lot**, sur `main` intégrée, et non plus à chaque ticket qui touche son chemin
-([docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md)). Le 08/10, S12 (≈ 26 min, ≈ 3 $)
-a été joué six fois par trois tickets du même jalon, chacun sur sa branche ; un passage complet
-coûte ≈ 13,5 $ et ≈ 1 h 25. Joué sur `main`, il vérifie en plus **ce qui sera livré** — le
-résultat des merges, pas une branche, le principe de la CI (#716).
+Ce qui en reste sur un poste qui l'a joué se solde à la main, sur un « oui » :
 
 ```bash
-bash scripts/orchestrate/banc-main.sh            # hors run : le passage sur origin/main
-bash scripts/orchestrate/banc-main.sh --forcer   # même si main n'a pas bougé sur le chemin
-bash scripts/orchestrate/banc-main.sh --retirer  # retire la copie dédiée
-bash scripts/orchestrate/run.sh --sans-banc      # un run qui ne le joue pas
+bash scripts/git/worktree.sh main-banc --retirer   # la copie main.banc ; plus rien ne la monte
+.venv/Scripts/python.exe -m maestro.menage         # l'historique du banc, désormais non déclaré
 ```
 
-**Le passage par lot.** En fin de run, **après le drain final** (§11.11) — c'est lui qui fait
-entrer le lot dans `main` — et **avant le résumé**, qui porte son verdict, le pilote appelle
-`banc-main.sh --sortie <run-dir>`. Le script, source unique du passage, est celui qu'une personne
-joue à la main les semaines où l'on merge en interactif. Il fait cinq choses, dans l'ordre :
-
-1. **Le sha joué** : `origin/main`, après un `fetch`.
-2. **La décision**, lue dans l'historique du banc (#1461) contre l'historique de `main`
-   (`python -m maestro.scenarios.sur_main decider`). Il ne joue que si `main` a bougé **sur le
-   chemin des scénarios** (`GL_BANC_CHEMINS` de `lib.sh` : ce que la vraie stack charge, là où le
-   ticket pose la question de l'exercice, §6 ; ici, il dit si `main` a bougé où le produit tourne)
-   depuis le **dernier passage complet sur `main`**. Complet : tout le catalogue, sans aucun
-   empêchement. Sur `main` : un sha ancêtre de celui qu'on joue, sur un arbre non modifié — un
-   passage du clone principal sur `main` compte, celui d'une branche de ticket non. Sinon il
-   **s'abstient en le disant**, avec le passage qui couvre encore `main`.
-3. **La copie dédiée** (`worktree.sh main-banc`) : un worktree **détaché** sur ce sha, nommé
-   `main.banc`, monté comme l'avant d'une relecture (§9, #977), sur ses ports (`MAESTRO_BANC_PORTS`,
-   `8400:3400`) et dans son espace Redis (le nom du worktree, #1164). Ni le clone principal — la
-   stack de la personne reste libre, et Next.js n'admet qu'un serveur de dev par `apps/web` —, ni
-   le worktree d'un ticket. Elle **reste en place** d'un passage à l'autre : ses rapports y vivent,
-   et `start.sh --etat-banc` y rouvre l'état du dernier passage sur `main`.
-4. **Le passage**, par le lanceur **de la copie** — c'est le code de `main` qui se joue :
-   `start.sh --etat-banc --rejouer --no-browser`, puis `--stop`, quoi qu'il arrive.
-5. **Le verdict** (`sur_main verdict`), lu dans le rapport : un **rouge nomme les PR mergées entre
-   son dernier vert sur `main` et le sha joué**, lues dans `git log --first-parent` — celles du
-   chemin une à une, avec leur ticket (`Closes #`), les autres comptées sur une ligne. Un vert au
-   même sha se dit « non déterministe », et l'absence de tout vert sur `main` se dit aussi. Comme
-   pour les butées sans ticket de reprise (#611), le pilote **nomme**, il ne crée aucun ticket.
-
-**Une abstention n'est jamais un vert** (docs/47 §5). `start.sh` sort en `0` sur un passage vert
-comme rouge : le verdict se lit dans le rapport, jamais dans un code. Un processus tué sort en `1`
-sous Windows : seul le **témoin** que le banc écrit en dernier dit qu'il est allé au bout (#1365),
-et celui d'un passage précédent est retiré avant de jouer. Pas de témoin — passage tué, Redis
-absent, API muette, copie impossible à monter : le banc est **injouable**, c'est une abstention.
-Un scénario **empêché** (API, fournisseur, limite d'usage) aussi, jamais rattaché à une PR. Le
-pilote s'abstient de lui-même sur un **arrêt demandé** (`STOP`) et sur la **limite
-hebdomadaire** que le run a touchée : le banc tirerait sur le même quota.
-
-**Où le lire.** Dans le répertoire du run : `banc.etat` (une ligne — état, sha, début, fin,
-motif ; `en-cours` pendant le passage), `banc.txt` (le verdict en mots) et `banc.log` (tout le
-montage et le passage). Le résumé du run porte la ligne `banc sur main`, et `status.sh` une section
-**Banc sur main** : le passage dure une heure et demie après que le plan est soldé et la file
-vidée, et sans elle ce temps-là ne se verrait nulle part. Hors run, la sortie va sous
-`.maestro/banc-main/<horodatage>/`.
-
-**Son extinction.** `--sans-banc` ou `MAESTRO_ORCHESTRATE_BANC=0`. L'en-tête du run annonce le
-régime **dans les deux sens**, comme le budget (§11.3) : ne pas payer le banc est un choix qu'on
-doit voir. Le passage est **best-effort**, au même titre qu'`audit.txt` (§11.12) : ni le verdict du
-run ni son code de sortie n'en dépendent — un rouge du banc est une information sur `main`, pas un
-échec du lot.
-
-> **Tests.** [`tests/test_banc_sur_main.py`](../tests/test_banc_sur_main.py) éprouve la décision et
-> le rattachement sur de vrais dépôts Git jetables et des lignes d'historique écrites à la main :
-> un passage incomplet, empêché, joué sur une branche ou sur un arbre modifié ne dispense pas de
-> jouer ; un rouge nomme les PR de l'intervalle, celles du chemin d'abord. Dans
-> [`tests/test_orchestrate.py`](../tests/test_orchestrate.py), le **banc est doublé** (un faux
-> montage, un faux lanceur dans la copie) et tout le reste est réel : le pilote joue le banc entier
-> sur le sha d'`origin/main` dans la copie, ou s'abstient en le disant ; un passage tué, un témoin
-> périmé, une copie impossible ou un scénario empêché valent abstention ; un rouge nomme ses PR au
-> journal du run et dans `status.sh` ; l'extinction se dit, et l'ordre — après le drain, avant le
-> résumé — est gardé.
+`status.sh` ne lit aucun `banc.etat` laissé par un run d'avant, et `--sans-banc` n'est plus une
+option. Gardé par [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) (section « Aucun
+banc dans un run ») et [`tests/test_worktree.py`](../tests/test_worktree.py) (`main-banc`, qui ne
+sait plus que retirer).

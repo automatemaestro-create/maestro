@@ -55,10 +55,9 @@ bash scripts/design/relecture-visuelle.sh <iid>
 
 Même plan, plus les **ports du worktree** (jamais 8000/3000) et la **vraie stack** — l'API réelle sur
 Redis et l'UI, sans navigateur (`start.sh --etat-banc --no-browser`). Par défaut, l'état `peuple` :
-l'état réel du dernier passage du banc, rouvert sans rien rejouer, sur un jeu de données à part. Le
-lanceur dit son **âge** ; il ne se rafraîchit pas d'office (`start.sh --etat-banc --rejouer` est un
-geste à part, vrai modèle, des dizaines de minutes). Sans état sur le poste, le script le dit et
-nomme ce geste.
+l'état réel qu'un exercice a sauvé, rouvert sans rien rejouer, sur un jeu de données à part. Le
+lanceur dit son **âge** ; il ne se rafraîchit pas d'office (un exercice neuf est un geste à part,
+vrai modèle). Sans état sur le poste, le script le dit et nomme ce geste.
 
 **Le projet actif vient de l'API** : la préparation liste les projets servis, chacun avec son nombre
 de runs — pose celui dont l'écran a quelque chose à montrer (étape 3).
@@ -140,7 +139,7 @@ bash scripts/design/relecture-visuelle.sh <iid> --etat <nom>
 
 | État | Ce que la vraie stack sert | Ce qu'on y cherche |
 | --- | --- | --- |
-| `peuple` | le défaut : l'état du dernier passage du banc — ses runs, ses fils, ses projets, et la **charge** qu'il a laissée | le rendu de ce que le produit a vraiment fait ; ce qui **déborde** |
+| `peuple` | le défaut : l'état qu'un exercice a sauvé — ses runs, ses fils, ses projets, et la **charge** qu'il a laissée | le rendu de ce que le produit a vraiment fait ; ce qui **déborde** |
 | `vide` | une **stack neuve** (`start.sh --etat-neuf`), puis un **projet neuf** déclaré par l'API | un état vide qui **explique** et propose la suite, pas un cadre blanc |
 | `injoignable` | l'API **coupée** sous la stack montée (`start.sh --couper-api`), l'UI encore servie | la panne **nommée**, lisible dans les deux thèmes, sans casser la mise en page |
 
@@ -150,7 +149,7 @@ refusé avec sa raison :
 | État non couvert | Pourquoi |
 | --- | --- |
 | `erreur` | une API qui **répond en erreur** : depuis #1206 la vraie stack la produit (magasin coupé, lectures refusées en 503), mais le script ne la monte pas encore |
-| `charge` | au-delà de ce que le passage du banc a laissé, rien n'est gonflé |
+| `charge` | au-delà de ce que l'exercice a laissé, rien n'est gonflé |
 
 Ils vont à « ce que je n'ai pas pu voir », nommés — une largeur téléphone de même.
 

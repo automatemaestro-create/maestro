@@ -557,10 +557,10 @@ def rendre_ecrans(
 def provenance(source: Any) -> str:
     """
     D'où viennent les visuels, dit au lecteur : « sur la vraie Control Tower, dans l'état laissé
-    par le passage des scénarios de référence du 22/09/2026 ».
+    par un exercice du 22/09/2026 ».
 
-    Depuis #1166, captures et clips tournent sur la stack réelle, rouverte sur ce qu'un passage du
-    banc a laissé. La page le dit parce qu'elle se partage : un lecteur doit pouvoir savoir que ce
+    Captures et clips tournent sur la stack réelle, rouverte sur ce qu'un exercice a laissé
+    (#1166, #1569). La page le dit parce qu'elle se partage : un lecteur doit pouvoir savoir que ce
     qu'il voit a été produit par le produit, et quand. Sans `source` lisible, elle dit la stack
     réelle et rien de plus — jamais une date devinée.
     """
@@ -573,7 +573,7 @@ def provenance(source: Any) -> str:
     except ValueError:
         return STACK_REELLE
     return (
-        f"{STACK_REELLE}, dans l'état laissé par le passage des scénarios de référence du {jour}"
+        f"{STACK_REELLE}, dans l'état laissé par un exercice du {jour}"
     )
 
 

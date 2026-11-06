@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from maestro import menage
 from maestro.controltower.donnees import DEPOTS, ORIGINE_BANC, Donnees
 from maestro.controltower.state import (
     EXECUTION_EN_ATTENTE_ARBITRAGE,
@@ -37,6 +38,7 @@ from maestro.scenarios import etat
 from maestro.scenarios import exercice as ex
 from maestro.scenarios.api import FIL, ClientAPI, ErreurAPI, Reponse
 from maestro.scenarios.juge import JugeModele
+from maestro.scenarios.projets import VARIABLE_ATELIER, VARIABLE_PASSAGES_GARDES
 
 ESPACE_DU_BANC = "copie.banc"
 
@@ -604,6 +606,9 @@ def test_sauver_range_l_etat_que_start_sh_rouvre(tmp_path: Path) -> None:
     assert instantane.passage == poste.etat()["identifiant"]
     assert instantane.scenarios == (("exercice", "non conclu"),)
     assert etat.GESTE_ROUVRIR in poste.sortie.getvalue()
+    # L'état porte l'espace du banc qui l'a sauvé : c'est le sien que la copie rouvre.
+    assert instantane.espace == ESPACE_DU_BANC
+    assert etat.choisir(ESPACE_DU_BANC, poste.atelier) == (instantane, False)
 
 
 def test_sauver_refuse_une_api_qui_ne_sert_pas_le_banc_de_la_copie(tmp_path: Path) -> None:
@@ -613,6 +618,51 @@ def test_sauver_refuse_une_api_qui_ne_sert_pas_le_banc_de_la_copie(tmp_path: Pat
     assert code == ex.CODE_REFUS
     assert etat.dernier(poste.atelier) is None
     assert ex.GESTE_STACK in poste.erreur.getvalue()
+
+
+def test_ouvrir_sans_atelier_injecte_fait_la_retention_du_poste(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La rétention de l'atelier (#1457) se joue quand un passage réserve le sien : à
+    l'ouverture d'un exercice. Les passages au-delà des derniers gardés partent, celui qui
+    s'ouvre reste, et la ligne le dit. Un atelier injecté, lui, ne fait pas le ménage."""
+    maison = tmp_path / "maison"
+    maison.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
+    ateliers = tmp_path / "ateliers-du-poste"
+    for nom in ("20261001-100000", "20261002-100000"):
+        (ateliers / nom / "carnet").mkdir(parents=True)
+    temporaire = tmp_path / "temp"
+    temporaire.mkdir()
+    monkeypatch.setenv(VARIABLE_ATELIER, str(ateliers))
+    monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "1")
+    monkeypatch.setenv("TMPDIR", str(temporaire))
+    monkeypatch.setattr(menage, "depots_de_declarations", lambda: ((), ""))
+    poste = _poste(tmp_path)
+
+    code = ex.main(
+        ["ouvrir", "--oracle", poste.ecrire("oracle.md", "Le run se solde « terminee ».")],
+        client=ClientAPI(poste.api),
+        juge=JugeModele(),
+        racine=poste.racine,
+        horloge=poste.horloge,
+        dormir=poste.horloge.dormir,
+        sortie=poste.sortie,
+        erreur=poste.erreur,
+    )
+
+    assert code == ex.CODE_FAIT, poste.erreur.getvalue()
+    assert [d.name for d in ateliers.iterdir()] == [poste.dossier.name], "seul l'ouvert reste"
+    sortie = poste.sortie.getvalue()
+    assert "Ateliers des passages : 2 passage(s) retiré(s) au-delà des 1 derniers gardés" in sortie
+
+    # L'atelier injecté des autres tests : rien n'y est retiré, rien n'est dit.
+    injecte = _poste(tmp_path / "injecte")
+    for nom in ("20261001-100000", "20261002-100000"):
+        (injecte.atelier / nom).mkdir(parents=True)
+    _ouvrir(injecte)
+    assert len(list(injecte.atelier.iterdir())) == 3
+    assert "Ateliers des passages" not in injecte.sortie.getvalue()
 
 
 # --- Les refus ----------------------------------------------------------------

@@ -35,7 +35,7 @@ manque, le script le dit avant de rien toucher (skill `control-tower`).
 
 ```bash
 bash scripts/controltower/start.sh --no-browser               # stack neuve : poste vide
-bash scripts/controltower/start.sh --etat-banc --no-browser   # l'état laissé par le banc, son âge dit
+bash scripts/controltower/start.sh --etat-banc --no-browser   # l'état sauvé par un exercice, son âge dit
 bash scripts/controltower/start.sh --stop                     # arrêt
 ```
 
@@ -50,13 +50,13 @@ les passer, `env MAESTRO_PORT_API=<api> MAESTRO_PORT_UI=<ui> bash scripts/contro
 avec les valeurs que `worktree.sh ensure` a annoncées.
 
 **Ce qui fait bouger l'écran est un vrai run.** Une stack neuve est vide, l'état
-du banc est figé : pour voir les cartes naître et évoluer, lancer un run
+sauvé est figé : pour voir les cartes naître et évoluer, lancer un run
 (`POST /api/executions` ou `maestro-run --publier "<objectif>"`, skill
 `control-tower`) ; pour une demande de validation humaine, un run qui en pose
 (`maestro-run --publier --validation-ui "<objectif>"`). Il se lance sur la stack
 de la copie, **sans** `--etat-banc` : `maestro-run` publie dans l'espace de la
 copie, que la stack du banc ne lit pas, et un run qu'on y lancerait par l'API se
-mêlerait à l'état du passage jusqu'à sa prochaine réouverture. Un run coûte du vrai
+mêlerait à l'état sauvé jusqu'à sa prochaine réouverture. Un run coûte du vrai
 modèle : un objectif court sur un projet jetable suffit. Un flux que le réel ne
 sait pas produire se **nomme non vérifié**, il ne se simule pas. L'UI lit
 `NEXT_PUBLIC_MAESTRO_API_URL` au démarrage du dev server (inlinée au build en

@@ -231,9 +231,10 @@ def consigner_le_pid() -> Path | None:
     voir l'écoute du tout : le 2026-11-03, `netstat` n'en affichait aucune ligne.
 
     Variable absente : rien n'est écrit, c'est le cas de tout lancement hors de `start.sh`.
-    Elle est héritée par ce que `start.sh` lance, donc aussi par l'API que le banc S12
-    rallume (`maestro.scenarios.redemarrage`). Un fichier qu'on ne peut écrire se dit dans le
-    journal et n'empêche pas de servir : l'arrêt dira qu'aucun témoin ne la désigne.
+    Elle est héritée par ce que `start.sh` lance, donc aussi par l'API que le banc
+    comparatif rallume après la nuit (`maestro.scenarios.redemarrage`). Un fichier qu'on ne
+    peut écrire se dit dans le journal et n'empêche pas de servir : l'arrêt dira qu'aucun
+    témoin ne la désigne.
     """
     chemin = os.environ.get(VARIABLE_FICHIER_PID, "").strip()
     if not chemin:
@@ -250,7 +251,7 @@ def consigner_le_pid() -> Path | None:
 def retirer_le_pid(fichier: Path | None) -> None:
     """Retire le témoin à la fin du service — le sien seulement.
 
-    L'API que le banc S12 rallume réécrit le même fichier : celle qui s'arrête ensuite ne
+    L'API que le banc comparatif rallume réécrit le même fichier : celle qui s'arrête ensuite ne
     retire pas le témoin d'une autre. Une API tuée net ne passe pas ici ; son témoin reste, et
     `start.sh` le reconnaît pour mort ou recyclé avant d'en rien faire.
     """

@@ -37,7 +37,7 @@
  *       filme, un saut ne se voit pas.
  *
  * ⚠ **Le réel, pas un scénario** (#1166). Les parcours tournent sur l'état qu'un
- * passage du banc des scénarios de référence a laissé, servi par l'API réelle.
+ * exercice a laissé (`start.sh --etat-banc`), servi par l'API réelle.
  * Personne n'a écrit cet état pour eux : un parcours s'ancre donc sur ce que
  * l'écran rend **toujours** (un titre de section, un onglet, une liste) et
  * désigne les objets du passage par leur **forme** (`a[href^="/runs/"]` : le
@@ -51,8 +51,8 @@
  * seraient une vraie décision et un vrai run. Aucun geste n'écrit donc, et ce
  * n'est pas qu'une convention — `captures.mjs` refuse toute requête d'écriture
  * vers l'API pendant le tournage, et la ligne du clip nomme ce qu'il a tenté.
- * Ce qui se démontre en agissant se démontre par le banc des scénarios
- * (`python -m maestro.scenarios`), dont c'est le métier, pas par un film.
+ * Ce qui se démontre en agissant se démontre par un exercice construit
+ * (`python -m maestro.scenarios.exercice`), dont c'est le métier, pas par un film.
  *
  * ⚠ **Jamais de délai fixe pour attendre un état.** L'API rejoue son journal au
  * démarrage et l'écran se peuple quand il se peuple : ce qui doit être là
@@ -108,7 +108,7 @@ export const PARCOURS = [
     duree_max_ms: 20_000,
     gestes: [
       { type: "attendre", texte: "Runs de", ms: 1200 },
-      // Par sa forme et non par son objectif : le passage du banc a choisi ses
+      // Par sa forme et non par son objectif : l'exercice sauvé a choisi ses
       // runs, ce fichier n'en connaît aucun.
       { type: "cliquer", selecteur: 'a[href^="/runs/"]', ms: 1200 },
       { type: "attendre", texte: "Pipeline", ms: 1800 },

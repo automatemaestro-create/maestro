@@ -1,8 +1,9 @@
-"""L'état qu'un passage du banc a laissé se rouvre sur une stack réelle (#1164).
+"""L'état qu'un exercice a laissé se rouvre sur une stack réelle (#1164, #1572).
 
-Le critère : l'état d'un passage du banc (#1148) **se rouvre** sur une stack
-réelle, **par l'API réelle**, **sans rien rejouer** ; on le rejoue à la demande, et
-**son âge est dit**. Ce fichier le prouve en quatre temps, sans modèle ni réseau :
+Le critère : l'état qu'un exercice a sauvé (`maestro.scenarios.exercice sauver`)
+**se rouvre** sur une stack réelle, **par l'API réelle**, **sans rien rejouer**,
+**son âge est dit**, et une copie rouvre **le sien** avant celui du poste. Ce fichier
+le prouve en cinq temps, sans modèle ni réseau :
 
 ① **Le cycle entier** — un passage laisse un run et un projet sur le banc, l'état
    est sauvé, le banc remis à neuf, l'état rouvert : une API réelle (`create_app`
@@ -12,12 +13,13 @@ réelle, **par l'API réelle**, **sans rien rejouer** ; on le rejoue à la deman
 ② **Ce que l'état contient** — le banc et lui seul : ni les données de la copie,
    ni les battements, et un état à moitié écrit ne se rouvre jamais.
 
-③ **Ce qui se dit** — l'âge, les verdicts, le geste pour rejouer.
+③ **Ce qui se dit** — l'âge, l'espace, les verdicts, le geste pour en refaire un.
 
 ④ **La ligne de commande** que `start.sh --etat-banc` joue : ses refus (rien à
-   rouvrir, quelque chose de vivant sur le banc) et ses gestes.
+   rouvrir, quelque chose de vivant sur le banc), ses gestes, et **lequel** elle
+   rouvre — celui de la copie d'abord, celui du poste à défaut, en le disant.
 
-⑤ **Les passages que le banc garde** (#1457) — les derniers, et celui dont l'état
+⑤ **Les passages que l'atelier garde** (#1457) — les derniers, et celui dont l'état
    se rouvre quel que soit son rang ; un passage retiré emporte les worktrees que
    ses tâches ont laissés sous la racine jetable ; l'ancien atelier
    (`~/maestro-scenarios`) est repris par la même règle, puis retiré.
@@ -62,7 +64,6 @@ from maestro.espace import COMMUN, VARIABLE_ESPACE, Espace
 from maestro.messaging.mailbox import RedisMailbox
 from maestro.projets.store import ProjetStore
 from maestro.sandbox.ramassage import porte_un_worktree
-from maestro.scenarios import banc as banc_module
 from maestro.scenarios import etat
 from maestro.scenarios.modele import Rapport, Resultat
 from maestro.scenarios.projets import (
@@ -70,6 +71,7 @@ from maestro.scenarios.projets import (
     VARIABLE_PASSAGES_GARDES,
     Atelier,
     retenir,
+    retenir_le_poste,
     worktrees_laisses,
 )
 
@@ -345,7 +347,7 @@ def test_l_age_se_dit_a_la_precision_qui_compte(secondes: float, attendu: str) -
     assert etat.age_lisible(secondes) == attendu
 
 
-def test_la_reouverture_dit_le_passage_son_age_ses_verdicts_et_le_rejeu(
+def test_la_reouverture_dit_le_passage_son_age_ses_verdicts_et_comment_le_refaire(
     client: ClientSynchrone, banc: Donnees, ateliers: Path
 ) -> None:
     sauve_le = datetime(2026, 9, 22, 10, 44, tzinfo=UTC)
@@ -362,8 +364,10 @@ def test_la_reouverture_dit_le_passage_son_age_ses_verdicts_et_le_rejeu(
     assert "il y a 2 h 13 min" in lignes[0]
     assert "2026-09-22 10:44 UTC" in lignes[0]
     assert "S1 rouge · S2 vert" in texte
-    assert etat.GESTE_REJOUER in texte
-    assert "20 min, 0,50 $" in texte, "le prix du rejeu est celui qu'a coûté ce passage"
+    assert f"espace     {instantane.espace}" in texte and instantane.espace
+    assert etat.GESTE_EXERCICE in texte, "on refait un état par un exercice neuf"
+    assert "--rejouer" not in texte, "aucun parcours figé ne se rejoue"
+    assert "20 min, 0,50 $" in texte, "le prix est celui qu'a coûté ce passage"
 
 
 # ── ④ La ligne de commande ───────────────────────────────────────────────────
@@ -406,7 +410,7 @@ def test_rien_a_rouvrir_est_un_refus_qui_donne_le_geste(
         monkeypatch, ["--verifier"], client=client, copie=copie, ateliers=ateliers
     )
     assert code == etat.CODE_AUCUN_ETAT
-    assert etat.GESTE_REJOUER in erreur
+    assert etat.GESTE_EXERCICE in erreur
 
 
 def test_le_preflight_dit_l_age_de_l_etat_a_rouvrir(
@@ -425,16 +429,6 @@ def test_le_preflight_dit_l_age_de_l_etat_a_rouvrir(
     )
     assert code == etat.CODE_FAIT
     assert f"passage {PASSAGE}, sauvé à l'instant" in sortie
-
-
-def test_rejouer_ne_demande_aucun_etat(
-    monkeypatch: pytest.MonkeyPatch, client: ClientSynchrone, copie: Path, ateliers: Path
-) -> None:
-    code, sortie, _erreur = commande(
-        monkeypatch, ["--verifier", "--rejouer"], client=client, copie=copie, ateliers=ateliers
-    )
-    assert code == etat.CODE_FAIT
-    assert "repart à neuf" in sortie
 
 
 def test_une_stack_neuve_ne_demande_aucun_etat_et_ne_promet_aucun_passage(
@@ -459,7 +453,7 @@ def test_un_run_en_vol_sur_le_banc_fait_refuser(
 ) -> None:
     """Il republierait dans le journal qu'on réécrit : même règle que la purge."""
     client.hset(etat.cles_du_banc(banc)[1], "run-vivant", datetime.now(UTC).isoformat())
-    for args in (["--rouvrir"], ["--vider"], ["--verifier", "--rejouer"], ["--verifier", "--neuf"]):
+    for args in (["--rouvrir"], ["--vider"], ["--verifier"], ["--verifier", "--neuf"]):
         code, _sortie, erreur = commande(
             monkeypatch, args, client=client, copie=copie, ateliers=ateliers
         )
@@ -556,7 +550,89 @@ def test_decrire_sans_etat_est_le_meme_refus_que_rouvrir(copie: Path, ateliers: 
     )
     assert code == etat.CODE_AUCUN_ETAT
     assert sortie.getvalue() == "", "rien sur la sortie : un fichier redirigé resterait vide"
-    assert etat.GESTE_REJOUER in erreur.getvalue()
+    assert etat.GESTE_EXERCICE in erreur.getvalue()
+
+
+def etat_d_une_autre_copie(
+    client: ClientSynchrone, ateliers: Path, tmp_path: Path, passage: str, *, sauve: datetime
+) -> etat.Instantane:
+    """Un état que le banc d'**une autre** copie a sauvé dans l'atelier du poste."""
+    autre = Donnees(
+        espace=Espace("autre-copie.banc", "banc d'une autre copie"),
+        racines={d.nom: tmp_path / "autre" / d.nom for d in DEPOTS},
+    )
+    atelier = ateliers / passage
+    atelier.mkdir(parents=True)
+    return etat.sauver(
+        rapport(("S9", "vert"), horodatage=passage), atelier, autre, client, maintenant=sauve
+    )
+
+
+def test_une_copie_rouvre_son_propre_etat_avant_celui_du_poste(
+    monkeypatch: pytest.MonkeyPatch,
+    client: ClientSynchrone,
+    banc: Donnees,
+    copie: Path,
+    tmp_path: Path,
+    ateliers: Path,
+) -> None:
+    """L'atelier est celui du poste : une autre copie y a sauvé un état **plus récent**, sur
+    un autre changement. `--etat-banc` rouvre pourtant celui de cette copie, et n'en dit rien
+    — c'est le cas nominal. `--decrire`, que lisent les présentations, désigne le même."""
+    maintenant = datetime.now(UTC)
+    atelier = ateliers / PASSAGE
+    atelier.mkdir(parents=True)
+    propre = etat.sauver(
+        rapport(("S2", "vert")), atelier, banc, client, maintenant=maintenant - timedelta(hours=5)
+    )
+    etat_d_une_autre_copie(client, ateliers, tmp_path, "20260923-080000", sauve=maintenant)
+    du_poste = etat.dernier(ateliers)
+    assert du_poste is not None and du_poste.passage == "20260923-080000", "plus récent"
+
+    code, sortie, _erreur = commande(
+        monkeypatch, ["--rouvrir"], client=client, copie=copie, ateliers=ateliers
+    )
+    assert code == etat.CODE_FAIT
+    assert f"Banc rouvert sur le passage {PASSAGE}" in sortie
+    assert "Aucun état sauvé par cette copie" not in sortie
+
+    decrit = io.StringIO()
+    code = etat.main(
+        ["--decrire"],
+        client=RedisInterdit(),  # type: ignore[arg-type]
+        copie=copie,
+        racine_ateliers=ateliers,
+        sortie=decrit,
+        erreur=io.StringIO(),
+    )
+    assert code == etat.CODE_FAIT
+    assert json.loads(decrit.getvalue())["passage"] == PASSAGE
+    assert json.loads(decrit.getvalue())["espace"] == propre.espace == banc.espace.nom
+
+
+def test_sans_etat_propre_la_copie_rouvre_celui_du_poste_en_le_disant(
+    monkeypatch: pytest.MonkeyPatch,
+    client: ClientSynchrone,
+    banc: Donnees,
+    copie: Path,
+    tmp_path: Path,
+    ateliers: Path,
+) -> None:
+    """Une copie qui n'a encore rien sauvé n'est pas un refus : elle rouvre le dernier état du
+    poste — et le dit, avec l'espace qui l'a sauvé, parce que ce n'est pas son changement."""
+    etat_d_une_autre_copie(
+        client, ateliers, tmp_path, "20260923-080000", sauve=datetime.now(UTC)
+    )
+
+    code, sortie, _erreur = commande(
+        monkeypatch, ["--verifier"], client=client, copie=copie, ateliers=ateliers
+    )
+    assert code == etat.CODE_FAIT
+    assert (
+        f"Aucun état sauvé par cette copie (espace « {banc.espace.nom} ») : celui du poste, "
+        "sauvé par l'espace « autre-copie.banc »" in sortie
+    )
+    assert "passage 20260923-080000" in sortie
 
 
 @pytest.mark.parametrize(
@@ -564,6 +640,8 @@ def test_decrire_sans_etat_est_le_meme_refus_que_rouvrir(copie: Path, ateliers: 
     [
         [],
         ["--rouvrir", "--vider"],
+        # Le rejeu d'un parcours figé a quitté le dépôt (#1572) : il n'est plus un geste.
+        ["--verifier", "--rejouer"],
         ["--rouvrir", "--rejouer"],
         ["--verifier", "--x"],
         ["--vider", "--neuf"],
@@ -586,7 +664,7 @@ def test_un_geste_mal_forme_est_un_usage(
     assert code == etat.CODE_USAGE
 
 
-# ── ⑤ Les passages que le banc garde (#1457) ─────────────────────────────────
+# ── ⑤ Les passages que l'atelier garde (#1457) ───────────────────────────────
 
 
 @pytest.fixture()
@@ -606,7 +684,7 @@ def regime(ateliers: Path | None, temporaire: Path, gardes: int) -> dict[str, st
 
 
 def un_passage(racine: Path, nom: str) -> Path:
-    """Un passage tel que le banc le laisse : un dossier par scénario joué."""
+    """Un passage tel qu'un exercice le laisse : un dossier par projet qu'il a déclaré."""
     dossier = racine / nom
     (dossier / "s1-vider").mkdir(parents=True)
     return dossier
@@ -630,7 +708,7 @@ def git(racine: Path, *arguments: str) -> None:
 
 
 def projet_versionne(racine: Path) -> Path:
-    """Un projet du passage sous Git, comme le banc en déclare (S12)."""
+    """Un projet du passage sous Git, comme un exercice en déclare."""
     racine.mkdir(parents=True, exist_ok=True)
     (racine / "app.py").write_text("print('salut')\n", encoding="utf-8")
     git(racine, "init", "--quiet")
@@ -644,7 +722,7 @@ def test_le_banc_ne_garde_que_ses_derniers_passages_et_celui_qu_on_rouvre(
     client: ClientSynchrone, banc: Donnees, ateliers: Path, temporaire: Path
 ) -> None:
     """Le critère : les derniers passages, et **jamais** celui que `start.sh --etat-banc`
-    rouvre — le rejouer coûte du vrai modèle. Ce qui n'a pas la forme d'un passage (un essai
+    rouvre — le refaire coûte du vrai modèle. Ce qui n'a pas la forme d'un passage (un essai
     posé là à la main) n'est pas à la rétention."""
     noms = [f"2026100{jour}-100000" for jour in range(1, 9)]
     for nom in noms:
@@ -683,9 +761,9 @@ def test_l_ordre_des_passages_est_celui_de_leur_rang_et_non_du_texte(
 
 def test_un_passage_en_cours_n_est_jamais_retire(ateliers: Path, temporaire: Path) -> None:
     """L'atelier est celui du poste : une autre copie peut jouer un passage plus ancien que les
-    derniers. Le banc se nomme dans le passage qu'il réserve, et ce nom le garde."""
+    derniers. Le passage se nomme dans l'atelier qu'il réserve, et ce nom le garde."""
     reserve = Atelier.reserver("20261001-100000", environnement=regime(ateliers, temporaire, 1))
-    assert occupant(reserve.racine) == os.getpid(), "le banc s'est nommé dans son passage"
+    assert occupant(reserve.racine) == os.getpid(), "le passage s'est nommé dans son atelier"
     abandonne = un_passage(ateliers, "20261002-100000")
     (abandonne / TEMOIN_PID).write_text(str(pid_mort()), encoding="utf-8")
     un_passage(ateliers, "20261003-100000")
@@ -693,7 +771,7 @@ def test_un_passage_en_cours_n_est_jamais_retire(ateliers: Path, temporaire: Pat
     retention = retenir(environnement=regime(ateliers, temporaire, 1))
 
     assert retention.occupes == ("20261001-100000",)
-    assert retention.retires == ("20261002-100000",), "son banc est mort : il part"
+    assert retention.retires == ("20261002-100000",), "son process est mort : il part"
     assert reserve.racine.is_dir()
     assert "1 encore en cours, gardé(s)" in "\n".join(retention.lignes())
 
@@ -711,7 +789,7 @@ def test_retirer_un_passage_retire_les_worktrees_que_ses_taches_ont_laisses(
     tmp_path: Path, ateliers: Path, temporaire: Path
 ) -> None:
     """Le défaut constaté : le ramassage garde un worktree **tant que son dépôt existe** — c'est
-    son refus de toujours —, et le dépôt est un projet du banc, gardé à vie avec son passage. Les
+    son refus de toujours —, et le dépôt est un projet du passage, gardé à vie avec lui. Les
     espaces de ses tâches restaient donc sous la racine jetable pour toujours. Le passage retiré
     les emporte ; un espace qu'une tâche vivante occupe garde son passage, et un worktree que la
     personne aurait ouvert ailleurs n'est jamais touché."""
@@ -742,7 +820,7 @@ def test_retirer_un_passage_retire_les_worktrees_que_ses_taches_ont_laisses(
     assert retention.worktrees == 1
     assert not vieux.exists()
     assert not laisse.parent.exists(), "l'espace de la tâche part avec son passage"
-    assert ailleurs.is_dir(), "un worktree ouvert hors de la racine jetable n'est pas au banc"
+    assert ailleurs.is_dir(), "un worktree ouvert hors de la racine jetable n'est pas au passage"
     assert retention.occupes == ("20261002-100000",), "une tâche y travaille encore"
     assert occupe.is_dir() and en_vol.is_dir()
     assert "avec 1 worktree(s) de tâches sous la racine jetable" in "\n".join(
@@ -804,7 +882,7 @@ def test_un_passage_retire_emporte_les_declarations_de_ses_projets(
     maison: Path, ateliers: Path, temporaire: Path
 ) -> None:
     """Le constat de #1477 : la rétention retirait le passage et laissait les déclarations de ses
-    projets, dans le `core/projets/` de la copie qui avait joué le banc nu comme dans le jeu du
+    projets, dans le `core/projets/` de la copie qui avait joué le passage comme dans le jeu du
     banc d'une autre copie — racines disparues, qui épinglaient l'atelier au ménage. Le passage
     retiré les emporte, par le verbe du produit et dans chaque dépôt qu'on lui nomme ; celles
     d'un passage déjà disparu aussi. Rien d'autre n'est touché : ni un passage gardé, ni un
@@ -865,12 +943,12 @@ def test_sans_passage_disparu_aucune_declaration_n_est_touchee(
     assert ProjetStore(depot).ids() == (vivant,)
 
 
-def test_la_retention_du_banc_oublie_dans_les_depots_du_poste(
+def test_la_retention_du_poste_oublie_dans_les_depots_du_poste(
     monkeypatch: pytest.MonkeyPatch, maison: Path, ateliers: Path
 ) -> None:
-    """Le câblage : la rétention que le banc joue en réservant son atelier reçoit les dépôts
-    de déclarations du poste (`maestro.menage.depots_de_declarations`) — et, éteinte, ne les
-    demande même pas."""
+    """Le câblage : la rétention qu'un exercice ou le comparatif joue en réservant son atelier
+    (`retenir_le_poste`) reçoit les dépôts de déclarations du poste
+    (`maestro.menage.depots_de_declarations`) — et, éteinte, ne les demande même pas."""
     depot = maison / "copie" / "projets"
     parti = un_passage(ateliers, "20261001-100000")
     oubliee = ProjetStore(depot).creer("s1", parti / "s1-vider").id
@@ -882,16 +960,16 @@ def test_la_retention_du_banc_oublie_dans_les_depots_du_poste(
         return (depot,), ""
 
     monkeypatch.setattr(menage, "depots_de_declarations", depots_du_poste)
-    sortie = io.StringIO()
+    lignes: list[str] = []
 
     monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "0")
-    banc_module._retenir(sortie)
+    retenir_le_poste(lignes.append)
     assert demandes == [] and ProjetStore(depot).ids() == (oubliee,)
 
     monkeypatch.setenv(VARIABLE_PASSAGES_GARDES, "3")
-    banc_module._retenir(sortie)
+    retenir_le_poste(lignes.append)
     assert demandes == ["depots"] and ProjetStore(depot).ids() == ()
-    assert "1 déclaration(s) de projet oubliée(s)" in sortie.getvalue()
+    assert "1 déclaration(s) de projet oubliée(s)" in "\n".join(lignes)
 
 
 def test_un_atelier_regle_ne_lit_ni_ne_retire_l_ancien(

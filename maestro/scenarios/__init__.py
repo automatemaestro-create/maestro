@@ -1,51 +1,30 @@
-"""Le banc des **scénarios de référence** — le produit fait-il ce qu'on lui demande ? (#1148)
+"""Maestro joué sur la **vraie stack**, par sa porte d'entrée réelle (docs/52).
 
-    .venv/Scripts/python.exe -m maestro.scenarios [--scenario S1[,S3]] [--delai <s>]
-                                                  [--nettoyer] [--liste]
+Rien ici n'est en CI : un passage coûte du vrai modèle. Deux usages, et aucun parcours
+figé (#1568) :
 
-Douze scénarios joués de bout en bout contre la **vraie stack** et le **vrai
-modèle**, par la porte d'entrée réelle — le fil de l'orchestrateur, proposition
-puis accord —, avec un verdict, un coût, une durée et un `run_id` par scénario
-(docs/40 §5). Il n'est **pas en CI** : un passage coûte du vrai modèle.
-
-Le détail vit dans les modules, chacun sur une question :
-
-- `banc` — le déroulé, le rejeu d'un rouge non déterministe, la ligne de commande ;
-- `scenarios` — les scénarios et leurs oracles (retirés par #1572) ;
-- `exercice` — l'exercice qu'une session construit pour ce qu'elle vient d'implémenter :
-  une commande par geste, l'oracle écrit avant de jouer, un relevé sous
+- `exercice` — l'exercice qu'une session **construit** pour ce qu'elle vient
+  d'implémenter : une commande par geste, l'oracle écrit avant de jouer, un relevé sous
   `.maestro/exercices/<id>/` (`python -m maestro.scenarios.exercice`, #1569) ;
-- `gestes` — les gestes d'une personne sur la vraie stack, que les scénarios, le
-  comparatif et l'exercice partagent (#1569) ;
-- `api` — la porte d'entrée : l'API de la Control Tower, en HTTP ;
-- `projets` — les projets jetables, et ce qu'on y lit après un run, dépôt compris ;
-- `redemarrage` — couper puis rallumer l'API qui sert le banc (S12, #1408) ;
-- `juge` — les oracles de S4, S5, S9 et S10, rendus par un modèle et jamais par un
-  lexique (#746) ;
-- `rapport` — `.maestro/scenarios/<horodatage>/`, en Markdown et en JSON ;
-- `historique` — une ligne par passage sous `~/.maestro/`, sha et copie compris, et la
-  série par scénario (`python -m maestro.scenarios.historique`, #1461) ;
-- `sur_main` — le banc par lot sur `main` : quand le jouer, et à quelles PR rattacher
-  un rouge (#1462, `scripts/orchestrate/banc-main.sh`) ;
-- `carte` et `sonde` — quel code chaque scénario a exécuté, sur tous les processus de
-  la stack : `couverture.json` à côté du rapport (#1463) ;
-- `croisement` — le banc dû au ticket : les scénarios dont la carte croise le diff, la
-  couverture la moins chère en tête (#1464, `lib.sh criteres`) ;
 - `comparatif` — le banc comparatif : un même objectif (`objectifs/*.toml`) joué sur
   Maestro et sur un agent seul, en plusieurs passages, côte à côte
-  (`python -m maestro.scenarios.comparatif`, #1512) ;
-- `grille` — un livrable rejoué sur un clone propre, ligne par ligne (#1512) ;
+  (`python -m maestro.scenarios.comparatif`, #1512).
+
+Ce qu'ils partagent, chacun sur une question :
+
+- `api` — la porte d'entrée : l'API de la Control Tower, en HTTP ;
+- `gestes` — les gestes d'une personne sur la vraie stack (#1569) ;
+- `projets` — les ateliers jetables des passages, leur rétention, et ce qu'on lit dans
+  le dépôt d'un projet après un run ;
+- `redemarrage` — couper puis rallumer l'API qui sert le banc (#1408) ;
+- `juge` — ce qui se juge sur une phrase, rendu par un modèle et jamais par un
+  lexique (#746) ;
+- `grille` et `couverture` — un livrable rejoué sur un clone propre, ligne par ligne,
+  et les critères de l'objectif qu'il couvre (#1512) ;
+- `etat` — l'état qu'un exercice a sauvé, que `start.sh --etat-banc` rouvre (#1164) ;
 - `modele` — les objets inertes du verdict.
 """
 
-from maestro.scenarios.banc import (
-    CODE_API_MUETTE,
-    CODE_ROUGE,
-    CODE_USAGE,
-    CODE_VERT,
-    jouer,
-    main,
-)
 from maestro.scenarios.gestes import Contexte
 from maestro.scenarios.modele import (
     VERDICT_ROUGE,
@@ -53,20 +32,11 @@ from maestro.scenarios.modele import (
     Rapport,
     Resultat,
 )
-from maestro.scenarios.scenarios import SCENARIOS, Scenario
 
 __all__ = [
-    "CODE_API_MUETTE",
-    "CODE_ROUGE",
-    "CODE_USAGE",
-    "CODE_VERT",
-    "SCENARIOS",
     "VERDICT_ROUGE",
     "VERDICT_VERT",
     "Contexte",
     "Rapport",
     "Resultat",
-    "Scenario",
-    "jouer",
-    "main",
 ]

@@ -29,14 +29,15 @@ Ce que ce fichier garde, et qui ne se voit nulle part ailleurs :
    aussi pendant que l'hôte effaçait un `node_modules/` complet, et laissait à
    l'adresse du worktree un dossier sans `.git` que Git tenait encore pour celui de
    la branche — S12 s'y arrêtait. Le worktree est désormais intact ou retiré à tout
-   instant, et une coquille d'avant le correctif n'arrête ni l'oracle de S12, ni la
+   instant, et une coquille d'avant le correctif n'arrête ni la lecture du travail en
+   vol (`en_cours_d_ecriture`), ni la
    sauvegarde, ni le montage suivant, ni le ramassage. La mort de l'hôte est jouée
    par une exception que rien n'attrape, au milieu de l'effacement.
 
 Aucun réseau, aucun modèle : les dépôts sont jetables, l'hôte est un double — ce qu'on
 éprouve est *ce qui est sauvé, et ce qui est dit*, pas l'extinction d'un groupe de
-process (`tests/test_hote_detache.py`). L'épreuve sur le réel est S12
-(`maestro.scenarios`, docs/28 §12.10).
+process (`tests/test_hote_detache.py`). L'épreuve sur le réel est un exercice joué au
+ticket sur la vraie stack (docs/52).
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ GIT = shutil.which("git")
 
 pytestmark = pytest.mark.skipif(GIT is None, reason="git introuvable")
 
-#: La tâche coupée en vol des scénarios — celle de S12, en petit.
+#: La tâche coupée en vol — celle d'un projet versionné, en petit.
 TACHE = "donnees-recettes"
 
 
@@ -762,7 +763,7 @@ def _mort_pendant_l_effacement(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 
 
 def _ecrit_avec_ses_dependances(espace: Path) -> None:
-    """Une tâche de S12 en vol : son travail, et un `npm install` complet que le projet ignore."""
+    """Une tâche en vol : son travail, et un `npm install` complet que le projet ignore."""
     (espace / "src" / "recettes.ts").write_text("export const recettes = []\n", "utf-8")
     (espace / "package.json").write_text('{"name": "recettes"}\n', "utf-8")
     (espace / BUTEE / "next").mkdir(parents=True)
@@ -853,7 +854,7 @@ def test_une_mort_entre_l_ecart_et_l_oubli_ne_laisse_rien_de_lisible_a_moitie(
 ) -> None:
     """L'autre instant du démontage : le worktree a quitté son adresse, Git ne l'a pas
     encore oublié. Son enregistrement est `prunable`, et rien ne s'y arrête — ni
-    l'oracle de S12, ni la sauvegarde de l'extinction, ni le montage suivant."""
+    la lecture du travail en vol, ni la sauvegarde de l'extinction, ni le montage suivant."""
     projet = _projet(tmp_path)
     racine = Path(projet.racine)
     arme: list[bool] = []
@@ -918,8 +919,8 @@ def test_un_worktree_qu_un_process_tient_encore_reste_intact(
 def test_une_coquille_d_avant_le_correctif_n_arrete_ni_l_oracle_ni_la_sauvegarde(
     tmp_path: Path,
 ) -> None:
-    """Le second critère : un poste antérieur au correctif en porte déjà. L'oracle de S12
-    lisait `git status` dedans (« not a git repository »), et la sauvegarde de
+    """Le second critère : un poste antérieur au correctif en porte déjà. La lecture du travail
+    en vol lisait `git status` dedans (« not a git repository »), et la sauvegarde de
     l'extinction y lançait `git add -A` — dans le premier dépôt trouvé en remontant."""
     projet = _projet(tmp_path)
     racine = Path(projet.racine)

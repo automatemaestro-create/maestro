@@ -13,9 +13,9 @@ Ce module garde, sur le modèle de la relecture visuelle (#935, `test_relecture_
   ticket inconnu qui ne se fait pas passer pour un ticket sans critère ;
 * **la trace** (`lib.sh criteres-note`) — l'ancre et son compte, l'idempotence, et la **forme** du
   constat : chaque `Cn` répondu, une pièce jamais vide, un **✓ qui nomme sa preuve exercée** —
-  un test défini dans l'arbre, un exercice que son relevé rend vert, un passage du banc que son
-  rapport rend vert, un run, une capture (#1240). Ce qui se vérifie est une forme, jamais un sens
-  (#746) ;
+  un test défini dans l'arbre, un exercice que son relevé rend vert, un passage du banc
+  comparatif qui a abouti, un run, une capture (#1240). Ce qui se vérifie est une forme, jamais un
+  sens (#746) ;
 * **l'exercice** (#1570, docs/52) — quand le diff touche ce que la vraie stack charge, la question
   le dit (`# exercice`) sans le trancher, et le constat porte une ligne `Exercice` : le verdict
   relu dans le relevé écrit par le **vrai** `maestro.scenarios.exercice`, avec l'un de ses runs, ou
@@ -45,8 +45,6 @@ from balayage import fichiers_du_depot
 from harnais_forge import BASH, GIT, RACINE, Depot, ecritures, monte_depot
 
 from maestro.scenarios import comparatif, exercice
-from maestro.scenarios import rapport as rapport_du_banc
-from maestro.scenarios.modele import VERDICT_ROUGE, VERDICT_VERT, Rapport, Resultat
 
 pytestmark = [
     pytest.mark.skipif(BASH is None, reason="bash introuvable"),
@@ -139,26 +137,6 @@ def forge(tmp_path: Path) -> Depot:
         "test: exerce le verbe\n\nRefs #60",
     )
     return depot
-
-
-def resultat(identifiant: str, verdict: str = VERDICT_VERT, **reste: object) -> Resultat:
-    return Resultat(
-        identifiant=identifiant,
-        titre=f"Scénario {identifiant}",
-        verdict=verdict,
-        motif="motif",
-        duree_s=85.0,
-        run_id="728afd3dae61",
-        **reste,  # type: ignore[arg-type]
-    )
-
-
-def passage(forge: Depot, horodatage: str, *resultats: Resultat) -> str:
-    """Un passage du banc, écrit par le VRAI rapporteur (`maestro.scenarios.rapport.ecrire`), là où
-    le banc l'écrit : si sa forme change, c'est ce test qui le dit, pas une clôture en run."""
-    racine = forge.racine / rapport_du_banc.RACINE_RAPPORTS
-    rapport_du_banc.ecrire(Rapport(horodatage=horodatage, resultats=resultats), racine=racine)
-    return horodatage
 
 
 def constat(forge: Depot, texte: str, nom: str = "criteres.md") -> str:
@@ -465,49 +443,32 @@ def test_une_capture_de_la_vraie_stack_prouve_si_elle_existe(forge: Depot) -> No
 
 
 # =================================================================================================
-# Le banc — un passage reste une preuve, quand un ✓ le cite (#1240)
+# Le banc figé n'est plus une preuve (#1572)
 # =================================================================================================
 
 
-def test_un_coche_prouve_par_un_passage_vert_est_accepte(forge: Depot) -> None:
-    """Le ✓ avec passage du banc ACCEPTÉ : l'horodatage nomme un rapport présent, et le scénario
-    cité y est vert. Le rapport est écrit par le vrai rapporteur du banc."""
-    h = passage(forge, "20260923-154349", resultat("S2"), resultat("S4", VERDICT_ROUGE))
+def test_un_rapport_du_banc_fige_laisse_sur_le_poste_ne_prouve_plus_rien(forge: Depot) -> None:
+    """Le banc figé a quitté le dépôt avec ses scénarios : un rapport qu'un de ses passages aurait
+    laissé sous `.maestro/scenarios/` — tout vert — ne tient plus un ✓, et le refus nomme les deux
+    lieux où une preuve se cherche aujourd'hui."""
+    dossier = forge.racine / ".maestro" / "scenarios" / "20260923-154349"
+    dossier.mkdir(parents=True)
+    (dossier / "rapport.json").write_text(
+        '{\n  "horodatage": "20260923-154349",\n  "resultats": [\n    {\n'
+        '      "identifiant": "S2",\n      "verdict": "vert"\n    }\n  ]\n}\n',
+        encoding="utf-8",
+        newline="\n",
+    )
     forge.pose_etat(graphql=[regle_criteres("100", CORPS_TROIS)])
     texte = tableau(
-        ("C1", "✓", f"S2 vert au passage {h}, run `728afd3dae61`"),
+        ("C1", "✓", "S2 vert au passage 20260923-154349, run `728afd3dae61`"),
         ("C2", "✗", "rien"),
         ("C3", "hors diff", "le wiki"),
     )
     acheve = forge.lib("criteres-note", "100", constat(forge, texte))
-    assert acheve.returncode == 0, acheve.stdout + acheve.stderr
-
-
-@pytest.mark.parametrize(
-    ("resultats", "cite", "motif"),
-    [
-        ((resultat("S2", VERDICT_ROUGE),), "S2", "rend S2 rouge"),
-        ((resultat("S2", VERDICT_ROUGE, empechement=True),), "S2", "rend S2 rouge"),
-        ((resultat("S2"), resultat("S4", VERDICT_ROUGE)), "", "rend S4 rouge"),
-        ((resultat("S2"),), "S3", "S3 n'est pas au passage"),
-    ],
-)
-def test_un_banc_rouge_ou_injouable_nest_jamais_compte_vert(
-    forge: Depot, resultats: tuple[Resultat, ...], cite: str, motif: str
-) -> None:
-    """Un ✓ qui cite un passage est relu dans son rapport. Un rouge, un empêché (rouge au rapport,
-    `empechement` vrai), un passage qui n'est pas vert en entier quand aucun scénario n'est cité,
-    un scénario absent du passage : aucun ne tient un ✓."""
-    h = passage(forge, "20260923-101010", *resultats)
-    forge.pose_etat(graphql=[regle_criteres("101", CORPS_TROIS)])
-    texte = tableau(
-        ("C1", "✓", f"{cite} au passage {h}".strip()),
-        ("C2", "✗", "rien"),
-        ("C3", "hors diff", "le wiki"),
-    )
-    acheve = forge.lib("criteres-note", "101", constat(forge, texte))
     assert acheve.returncode == 5, acheve.stdout + acheve.stderr
-    assert motif in acheve.stderr
+    assert "ni rapport du banc comparatif" in acheve.stderr
+    assert ".maestro/scenarios" not in acheve.stderr
     assert ecritures(forge) == []
 
 
@@ -524,7 +485,7 @@ def test_un_identifiant_sans_releve_ni_rapport_ne_prouve_rien(forge: Depot) -> N
     assert acheve.returncode == 5, acheve.stdout + acheve.stderr
     assert (
         "ni relevé d'exercice (.maestro/exercices/20260923-000000/exercice.json) ni rapport du "
-        "banc (.maestro/scenarios/20260923-000000/rapport.json)" in acheve.stderr
+        "banc comparatif (.maestro/comparatif/20260923-000000/rapport.json)" in acheve.stderr
     )
 
 
@@ -815,7 +776,6 @@ def test_une_ligne_exercice_se_relit_dans_son_releve(
 def test_une_ligne_banc_est_refusee_avec_ce_qui_la_remplace(forge_produit: Depot) -> None:
     """Au ticket, la ligne `Banc` a cédé la place à la ligne `Exercice` : un constat qui la porte
     encore est refusé avec ce qui la remplace, et la question qu'il tait reste nommée."""
-    passage(forge_produit, "20260923-154349", resultat("S2"))
     forge_produit.pose_etat(graphql=[regle_criteres("108", CORPS_TROIS)])
     texte = CONSTAT_COMPLET + "| Banc | vert | passage 20260923-154349 (S2) |\n"
     acheve = forge_produit.lib("criteres-note", "108", constat(forge_produit, texte))

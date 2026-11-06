@@ -103,10 +103,10 @@
 # scénarisé et pas ce que le produit fait (docs/41 §4). Chaque état vient désormais de la VRAIE stack,
 # et un état qu'elle ne sait pas produire est NOMMÉ NON COUVERT, jamais fabriqué :
 #
-#   - `peuple` (le défaut) — l'état réel que le dernier passage du banc des scénarios a laissé (#1148),
-#     rouvert par l'API réelle sans rien rejouer (`start.sh --etat-banc`, #1164). Son âge est dit au
-#     démarrage : un passage se rejoue à la demande (`--etat-banc --rejouer`, vrai modèle, des dizaines
-#     de minutes), JAMAIS d'office ici. C'est aussi la « charge » : celle que le passage a laissée.
+#   - `peuple` (le défaut) — l'état réel que le dernier exercice sauvé a laissé (#1569), rouvert par
+#     l'API réelle sans rien rejouer (`start.sh --etat-banc`, #1164). Son âge est dit au démarrage :
+#     un état neuf se fait par un exercice construit (vrai modèle), JAMAIS d'office ici. C'est aussi
+#     la « charge » : celle que l'exercice a laissée.
 #   - `vide` — une stack neuve (`start.sh --etat-neuf`), puis un projet neuf déclaré par l'API : ce
 #     que voit quelqu'un qui vient de déclarer son premier projet. Sans projet, le shell resterait sur
 #     sa porte (#279), et la porte d'une stack neuve n'est pas l'état vide des écrans.
@@ -244,7 +244,7 @@ La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder — sur l
 
 Options :
   --plan            N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
-  --etat <nom>      peuple (défaut) : l'état du dernier passage du banc · vide : une stack neuve et un
+  --etat <nom>      peuple (défaut) : l'état qu'un exercice a sauvé · vide : une stack neuve et un
                     projet neuf · injoignable : l'API coupée sous la stack montée, l'UI servie.
   --regime <nom>    decide : avant et après, les trois états, le regard neuf · applique : l'après
                     seul, les états montés (le défaut sinon), jugé par la session. Sans lui, le
@@ -368,7 +368,7 @@ TEMOIN_ETAT="$RACINE/$SOUS_DOSSIER/.etat"
 # Ce que montre chaque état, en une ligne : le plan, la couverture et la saisine disent la même.
 description_etat() {
   case "$1" in
-    peuple) printf "l'état du dernier passage du banc, rouvert par l'API réelle — son âge est dit au montage" ;;
+    peuple) printf "l'état qu'un exercice a sauvé, rouvert par l'API réelle — son âge est dit au montage" ;;
     vide) printf "une stack neuve, puis un projet neuf déclaré par l'API — rien n'y a été lancé" ;;
     injoignable) printf "l'API coupée sous la stack montée, l'UI encore servie — la vraie panne (#996)" ;;
   esac
@@ -386,7 +386,7 @@ options_start() {
 # partout où les autres se comptent (plan, couverture, saisine), et jamais imités (en-tête, §5).
 NON_COUVERTS="$(printf '%s\t%s\n%s\t%s' \
   erreur "une API qui répond en erreur : depuis #1206 la vraie stack la produit — son magasin (Redis) coupé, elle refuse ses lectures en 503 nommé —, mais ce script ne la monte pas encore ; à la main, REDIS_URL de la stack pointé sur un relais TCP qu'on coupe" \
-  charge "au-delà de ce que le dernier passage du banc a laissé — des listes de centaines de lignes, des noms de 80 caractères : rien n'est gonflé")"
+  charge "au-delà de ce que l'exercice sauvé a laissé — des listes de centaines de lignes, des noms de 80 caractères : rien n'est gonflé")"
 
 # Le dossier des captures d'un état, RELATIF à la racine. L'état par défaut garde le chemin d'avant
 # #978 — le dossier du ticket lui-même —, un autre état a le sien dessous : deux états d'un même écran
@@ -1581,7 +1581,7 @@ if [ "$ETAT" = "injoignable" ]; then
   exit 0
 fi
 
-# La vraie stack, sur le jeu de données du banc (#1164) : l'état du dernier passage rouvert, ou une
+# La vraie stack, sur le jeu de données du banc (#1164) : l'état d'un exercice sauvé rouvert, ou une
 # stack neuve. `--no-browser` est obligatoire : sans lui le lanceur ouvre sa propre fenêtre et arrête
 # la stack dès qu'elle se ferme (#149), ce qui couperait l'API sous le navigateur qu'on pilote. La
 # sortie du lanceur passe telle quelle : c'est elle qui dit l'âge de l'état du banc.
@@ -1619,11 +1619,12 @@ fi
 
 dire ""
 if [ "$ETAT" = "peuple" ] && [ "$code" -eq 4 ]; then
-  # Aucun passage n'a laissé d'état sur ce poste : l'en jouer un coûte du vrai modèle (des dizaines de
-  # minutes), ce qui ne se décide pas au détour d'une relecture — on le nomme, et on s'arrête.
-  dire "  ✗ état « peuple » non servi : aucun passage du banc n'a laissé d'état sur ce poste."
-  dire "    En jouer un est une demande, jamais un geste d'office (vrai modèle, des dizaines de minutes) :"
-  dire "        bash scripts/controltower/start.sh --etat-banc --rejouer"
+  # Aucun exercice n'a laissé d'état sur ce poste : en jouer un coûte du vrai modèle, ce qui ne se
+  # décide pas au détour d'une relecture — on le nomme, et on s'arrête.
+  dire "  ✗ état « peuple » non servi : aucun exercice n'a laissé d'état sur ce poste."
+  dire "    En laisser un est une demande, jamais un geste d'office (vrai modèle) : un exercice joué sur"
+  dire "        bash scripts/controltower/start.sh --etat-neuf --no-browser"
+  dire "    puis sauvé (.venv/Scripts/python.exe -m maestro.scenarios.exercice … sauver)."
   dire "    Les autres états restent montables (--etat vide) ; celui-ci va à « ce que je n'ai pas pu voir »."
 else
   dire "  ✗ la stack n'a pas démarré (code $code) — journaux sous .maestro/controltower/$PORT_API-$PORT_UI/"

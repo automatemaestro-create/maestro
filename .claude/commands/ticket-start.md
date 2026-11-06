@@ -103,8 +103,8 @@ de chaque étape : `docs/10-workflow-git.md` §5 et §6.1, à n'ouvrir qu'en cas
      pas qu'il attrape le défaut.
    - **Exerce chaque critère avant de clore** : un critère se clôt sur une preuve exercée — un test
      nommé que tu as vu passer, ou une observation sur la vraie stack —, jamais sur un fichier du
-     diff (#1240). La conduite, et le banc des scénarios quand le diff touche leur chemin, vivent à
-     l'étape 4ter de `/ticket-finish`, qui les consigne.
+     diff (#1240). La conduite, et l'exercice construit quand le changement touche ce que le
+     modèle reçoit ou fait, vivent à l'étape 4ter de `/ticket-finish`, qui les consigne.
 
 7. **Variantes — un ticket qui DÉCIDE de l'écran tranche sa forme sur pièces, puis l'implémente**
    (#1009, docs/30 §5.8). La question est celle du §7.2 de `/design-veille`, et son critère n'est

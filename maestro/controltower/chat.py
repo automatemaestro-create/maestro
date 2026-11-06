@@ -2463,8 +2463,8 @@ class ReponseChat:
     jugement du modèle — fournisseur injoignable, muet ou absent —, quand le texte
     dit cette cause plutôt qu'une réponse. Vide dès qu'un modèle a jugé. C'est ce
     qui le fait savoir sans lire la phrase (docs/44 : une panne ne se reconnaît
-    jamais à son texte) : le banc des scénarios en fait une abstention, jamais un
-    rouge du fil.
+    jamais à son texte) : un exercice ou le banc comparatif en fait un empêchement,
+    jamais un rouge du fil.
     """
 
     contenu: str

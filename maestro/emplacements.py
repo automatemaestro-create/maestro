@@ -10,7 +10,8 @@ répond tient en trois lignes, et ce module en est la seule source :
   défaut (#1022). Jamais ramassée.
 - `~/.maestro/` (`racine_etat`) — l'état du poste : jeton de l'API, journal
   SQLite, profil de navigateur, et sous `ateliers/` (`racine_ateliers`, #1457)
-  les ateliers du banc des scénarios et de la relecture visuelle. Seuls ces
+  les ateliers des passages (exercices, banc comparatif) et de la relecture
+  visuelle. Seuls ces
   ateliers sont vidés, et par **rétention** — leurs derniers passages restent,
   ce sont les pièces d'un rouge (`maestro.scenarios.projets.retenir`).
 - `<temp>/maestro/` (`racine_jetable`) — le jetable : ateliers d'hôte, espaces
@@ -98,7 +99,7 @@ def racine_etat() -> Path:
 
 
 def racine_ateliers() -> Path:
-    """`~/.maestro/ateliers` — sous quoi le banc et la relecture sèment leurs projets. Non créé.
+    """`~/.maestro/ateliers` — où les passages et la relecture sèment leurs projets. Non créé.
 
     Sous l'état du poste et non dans le jetable : un atelier porte des **racines de
     projet**, que `valider_racine` refuse sous `AppData` (#221), donc sous le

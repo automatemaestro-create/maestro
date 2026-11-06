@@ -705,7 +705,7 @@ def test_un_jalon_produit_construit_ses_exercices_et_un_jalon_d_outillage_non() 
 def test_le_bilan_ne_joue_plus_le_banc_fige() -> None:
     """Plus de `python -m maestro.scenarios` nu, ni de ce qui servait à le lire (#1571, docs/52).
 
-    Le banc part avec #1572 : un bilan qui l'appellerait encore jouerait une commande retirée.
+    Le banc est parti avec #1572 : un bilan qui l'appellerait encore jouerait une commande retirée.
     """
     # Le motif est prouvé d'abord : il attrape la commande d'avant, et laisse passer l'outil.
     assert BANC_FIGE.search(".venv/Scripts/python.exe -m maestro.scenarios\n")

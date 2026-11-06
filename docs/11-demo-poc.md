@@ -3,8 +3,10 @@
 
 > ⚠ **Archive.** La commande `maestro-demo` décrite ici quitte le produit avec le mode démo
 > ([docs/41](./41-decision-maestro-juge-il-ne-bride-pas.md), #1168). Elle jouait un vrai run, mais
-> sur un objectif figé et avec le verdict d'un POC. Son successeur est le banc des scénarios de
-> référence (#1148). Cette page reste le compte rendu de la Phase 0.
+> sur un objectif figé et avec le verdict d'un POC. Son successeur a été le banc des scénarios
+> de référence (#1148), retiré à son tour par #1572 au profit de l'exercice construit
+> ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)). Cette page reste
+> le compte rendu de la Phase 0.
 
 **Version :** 0.1
 Cette page boucle la **Phase 0** (ticket #10) : comment lancer la démo complète, ce qui se passe à chaque étape du parcours, et comment le **critère de sortie** de la phase est vérifié.

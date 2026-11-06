@@ -17,11 +17,11 @@ même mesure en une commande, autant de fois qu'on la demande.
 ## Les deux côtés
 
 **Maestro** : la vraie stack et le vrai modèle, l'objectif confié **par le fil**
-comme une personne le ferait — le parcours de S9 et S12 (`naitre_dans_l_atelier`,
-`lancer_dans_le_fil`). Le projet naît du message, s'outille dans la conversation,
-se dote d'une équipe, puis le run part et se suit jusqu'à son issue, arbitrages
-approuvés au passage. La personne répond aux questions d'outillage par **ses choix,
-avec ses mots** (`Objectif.repondre`), jamais par une aide technique.
+comme une personne le ferait (`naitre_dans_l_atelier`, `lancer_dans_le_fil`). Le
+projet naît du message, s'outille dans la conversation, se dote d'une équipe, puis le
+run part et se suit jusqu'à son issue, arbitrages approuvés au passage. La personne
+répond aux questions d'outillage par **ses choix, avec ses mots** (`Objectif.repondre`),
+jamais par une aide technique.
 
 **L'agent seul** : même modèle, même message, mêmes outils que les agents de Maestro
 (`DEFAULT_TOOLS`), et rien d'autre — ni prompt système, ni plan, ni juge. Il passe
@@ -137,7 +137,6 @@ from maestro.scenarios.api import (
     attendre_le_run,
     base_locale,
 )
-from maestro.scenarios.banc import GESTE_PREALABLE
 from maestro.scenarios.couverture import (
     Couverture,
     JugeCouverture,
@@ -167,7 +166,7 @@ from maestro.scenarios.grille import (
 from maestro.scenarios.juge import FORME, Juge, JugeModele
 from maestro.scenarios.modele import Etape, Issue, Journal
 from maestro.scenarios.modele import horodatage as horodatage_courant
-from maestro.scenarios.projets import Atelier
+from maestro.scenarios.projets import Atelier, retenir_le_poste
 from maestro.telemetry import collect_usage
 
 if TYPE_CHECKING:
@@ -219,6 +218,9 @@ GESTE_REPRISE = "reprise"
 #: Ce que la personne dit à une session qui s'est arrêtée sans finir, ou qu'elle rouvre
 #: le lendemain : le mot du ticket, sans aide technique.
 RELANCE = "Continue."
+
+#: Le geste qui allume la stack, nommé dans le refus — jamais deviné par l'appelant.
+GESTE_PREALABLE = "bash scripts/controltower/start.sh"
 
 CODE_ECRIT = 0
 CODE_USAGE = 2
@@ -309,7 +311,7 @@ class Objectif:
         un choix : ce serait juger une phrase par ses mots (#746). La personne redit
         ce qu'elle a choisi, et c'est le fil qui comprend (docs/41). Sans choix, elle
         répond par sa feuille quand elle en a une (#1513), et sinon elle n'a pas
-        d'avis, comme dans S9.
+        d'avis.
         """
         if not self.choix:
             return self.reponse_de_la_personne
@@ -639,9 +641,9 @@ def jouer_maestro(
 ) -> Passage:
     """Le côté Maestro d'un passage : l'objectif confié par le fil, le run suivi jusqu'à son issue.
 
-    Le parcours de S9 et S12, à deux différences près : la personne répond aux
-    questions d'outillage par ses choix (`Objectif.repondre`), et elle ne demande
-    rien de plus que l'objectif. La durée court du premier message au run soldé ;
+    Le parcours d'une personne du premier mot au run (`lancer_dans_le_fil`) : elle
+    répond aux questions d'outillage par ses choix (`Objectif.repondre`), et elle ne
+    demande rien de plus que l'objectif. La durée court du premier message au run soldé ;
     la revue de l'outillage que la fin du run propose est tranchée ensuite, comme
     la personne la verrait arriver.
 
@@ -649,7 +651,7 @@ def jouer_maestro(
     lui posent pendant le run (`Objectif.repondre_a_l_agent`), et le run passe une
     **nuit** : à la fin du premier jour (`Objectif.jour_s`), s'il n'est pas soldé,
     Maestro s'éteint comme quand on le ferme (`POST /api/extinction`), se rallume
-    sur le même journal (`redemarrer`, celui de S12), et la personne le reprend par
+    sur le même journal (`redemarrer`), et la personne le reprend par
     le bouton « Reprendre ». Le délai court sur le passage entier, du premier
     message à la fin.
     """
@@ -811,10 +813,10 @@ class _NuitManquee(Exception):
 def _nuit_de_maestro(ctx: Contexte, run_id: str, *, jour_s: float) -> tuple[str, str]:
     """La nuit de Maestro : éteint comme on le ferme, rallumé, le run repris — `(run, récit)`.
 
-    Les gestes de S12 (`maestro.scenarios.redemarrage`), sans la pause qui le
-    précède : le soir, la personne ferme Maestro, et c'est l'extinction qui solde
-    les runs en vol. Le lendemain elle le rouvre et clique sur « Reprendre » — le
-    seul de ces gestes qui compte pour elle. D'autres runs en vol sur la stack
+    Les gestes de `maestro.scenarios.redemarrage`, sans pause avant eux : le soir, la
+    personne ferme Maestro, et c'est l'extinction qui solde les runs en vol. Le
+    lendemain elle le rouvre et clique sur « Reprendre » — le seul de ces gestes qui
+    compte pour elle. D'autres runs en vol sur la stack
     seraient soldés aussi : le banc n'éteint pas Maestro sous eux, et le passage n'a
     pas de nuit, ce que son récit dit.
 
@@ -1499,8 +1501,8 @@ def main(
     `client`, `fournisseur`, `modele`, `lecteur`, `juge_couverture`, `redemarrer`,
     `atelier`, `poste`, `racine_rapports`, `horloge` et `dormir` sont injectables
     **pour les tests** : une fausse API, un faux fournisseur, de faux juges, une API
-    qu'on ne coupe pas, des dossiers jetables, aucune attente réelle — la couture de
-    `maestro.scenarios.banc`.
+    qu'on ne coupe pas, des dossiers jetables, aucune attente réelle. Un atelier
+    injecté ne fait pas la rétention du poste (`projets.retenir_le_poste`).
     """
     sortie = sortie or sys.stdout
     erreur = erreur or sys.stderr
@@ -1535,7 +1537,9 @@ def main(
             )
             return CODE_API_MUETTE
 
-    atelier = atelier or Atelier.reserver(horodatage_courant())
+    if atelier is None:
+        atelier = Atelier.reserver(horodatage_courant())
+        retenir_le_poste(lambda ligne: print(ligne, file=sortie))
     juge = JugeModele()
     lecteur = lecteur or juge
     juge_couverture = juge_couverture or JugeCouvertureModele()

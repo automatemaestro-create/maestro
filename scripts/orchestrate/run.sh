@@ -165,10 +165,6 @@
 #   audit.txt         où est passé le temps du run (#530) : la sortie de `journal.sh audit <run-id>`,
 #                     figée à la fin du run — après la compaction des flux, et best-effort (son
 #                     absence ne dit rien du verdict). `MAESTRO_AUDIT_FIN_RUN=0` l'éteint
-#   banc.etat         le banc entier sur main, joué après le drain final (#1462) : une ligne, état
-#                     (en-cours, vert, rouge, abstention), sha joué, début, fin, motif — écrite par
-#                     `banc-main.sh`, lue par `status.sh`. À côté : `banc.txt` (le verdict en mots,
-#                     chaque rouge avec les PR mergées depuis son dernier vert) et `banc.log`
 #   <iid>-mrfix.*     la session de déblocage d'une PR (#420) : mêmes fichiers qu'un ticket
 #                     (`.jsonl`, `.json`, `.resultat.txt`, `.log`, `.session`), sous une clé qui la
 #                     distingue de la session du ticket. La seconde tentative porte `-mrfix2`
@@ -385,11 +381,6 @@ case "$MRFIX" in 0 | non | off | false) MRFIX=0 ;; *) MRFIX=1 ;; esac
 # insister au-delà, c'est brûler du quota sur un blocage qui ne bougera pas.
 MRFIX_MAX="${MAESTRO_ORCHESTRATE_MRFIX_MAX:-2}"
 case "$MRFIX_MAX" in '' | *[!0-9]*) MRFIX_MAX=2 ;; esac
-# Le banc entier sur `main` intégrée, une fois par lot, après le drain final (#1462, docs/47). Actif
-# par défaut : c'est le filet qui permet de retirer le banc des tickets hors de son chemin (#1460).
-# `MAESTRO_ORCHESTRATE_BANC=0` (ou `--sans-banc`) l'éteint, et l'en-tête le dit dans les deux sens.
-BANC="${MAESTRO_ORCHESTRATE_BANC:-1}"
-case "$BANC" in 0 | non | off | false) BANC=0 ;; *) BANC=1 ;; esac
 # La garde de quota (#1551) : le run se met en pause AVANT d'épuiser le quota de la personne, à 70 %
 # de la fenêtre de 5 h et à 60 % de la semaine — ses deux seuils, en pourcentage. `0` éteint la garde
 # de sa fenêtre ; l'option l'emporte sur la variable, la variable sur le défaut, et la ligne `plan :`
@@ -448,11 +439,6 @@ Options :
                        le reste, avec sa cause au bilan. Par défaut, le run tente de la débloquer
                        PENDANT qu'il tourne, deux fois au plus par PR.
                        MAESTRO_ORCHESTRATE_MRFIX=0 fait de même.
-  --sans-banc          Ne joue pas le banc entier sur main en fin de run. Par défaut, après le
-                       drain final, le pilote le joue dans une copie dédiée (≈ 13,5 $, ≈ 1 h 25)
-                       si main a bougé sur le chemin des scénarios, et un rouge nomme les PR
-                       mergées depuis le dernier vert (#1462). MAESTRO_ORCHESTRATE_BANC=0 fait
-                       de même ; hors run : bash scripts/orchestrate/banc-main.sh.
   --seuil-5h <n>       Garde de quota : le run se met en pause dès que la fenêtre de 5 h atteint
                        n % (défaut 70) — sessions interrompues, puis rouvertes par leur uuid après
                        la remise à zéro. MAESTRO_ORCHESTRATE_SEUIL_5H fait de même ; 0 l'éteint.
@@ -519,7 +505,6 @@ while [ $# -gt 0 ]; do
     --plan) PLAN_IMPOSE="${2:-}"; shift ;;
     --sans-merge) MERGE=0 ;;
     --sans-mrfix) MRFIX=0 ;;
-    --sans-banc) BANC=0 ;;
     --seuil-5h) SEUIL_5H="${2:-}"; SEUIL_5H_ORIGINE=--seuil-5h; shift ;;
     --seuil-semaine) SEUIL_SEMAINE="${2:-}"; SEUIL_SEMAINE_ORIGINE=--seuil-semaine; shift ;;
     # La valeur est FACULTATIVE (« --resume » seul = le run reprenable le plus récent) : on ne
@@ -2498,8 +2483,8 @@ lance_session() {
 #
 # Et une EXIGENCE, à l'étape 2 : chaque critère se clôt sur une PREUVE EXERCÉE (#1240). En run
 # personne ne relit, donc le seul exercice qu'un ticket reçoit avant `main` est celui que sa
-# session fait : #1197, #1198, #1205 et #1212 ont été trouvés par le banc au jalon, un à deux jours
-# après leur merge. Le prompt dit l'exigence, la conduite reste celle de l'étape 4ter de la clôture
+# session fait : #1197, #1198, #1205 et #1212 ont été trouvés au jalon, un à deux jours après leur
+# merge. Le prompt dit l'exigence, la conduite reste celle de l'étape 4ter de la clôture
 # — une seule source, que le prompt ne nomme pas : `/ticket-finish` n'y entre que par `/ticket-ship`
 # (`test_audit_commandes.py`) —, et `criteres-note` refuse un ✓ qui ne nomme aucune preuve.
 # L'exercice s'y joue AU PREMIER PLAN : c'est un résultat que la session attend dans son tour, pas
@@ -3542,14 +3527,6 @@ printf 'plan : %s ticket(s) sur %s jalon(s), %s · modèle %s%s · effort %s · 
   "$([ -n "$BUDGET" ] && printf 'budget %s $/ticket' "$BUDGET" || printf 'budget illimité')" \
   "$([ "$TIMEOUT_S" -gt 0 ] && printf 'timeout %s/ticket' "$(duree_lisible "$TIMEOUT_S")" || printf 'sans délai')" \
   "$(concurrence_libelle)" "$(garde_libelle)"
-# Le banc par lot (#1462) se dit dans les deux sens, comme le budget : il coûte du vrai modèle et une
-# heure et demie de mur APRÈS le dernier merge, et ne pas le jouer est un choix qu'on doit voir.
-if [ "$BANC" = 1 ]; then
-  printf 'banc : le banc entier sur main après le drain final, si main a bougé sur le chemin des scénarios\n'
-  printf '       (copie dédiée, vrai modèle, ≈ 13,5 $ et ≈ 1 h 25) — --sans-banc l'\''éteint\n'
-else
-  printf 'banc : éteint (--sans-banc ou MAESTRO_ORCHESTRATE_BANC=0) — main n'\''est pas rejouée en fin de run\n'
-fi
 printf 'journal : %s\n\n' "$RUN_DIR"
 
 if [ "$nb_plan" -eq 0 ]; then
@@ -3634,12 +3611,6 @@ if [ "$DRY" = 1 ]; then
     printf '                        de mur, JAMAIS en quota : les sessions partagent la fenêtre de 5 h\n'
   else
     printf '                        --concurrence <n> pour en imposer un autre\n'
-  fi
-  if [ "$BANC" = 1 ]; then
-    printf '  8. fin de run         banc entier sur main (bash scripts/orchestrate/banc-main.sh), ou\n'
-    printf '                        abstention dite si main n'\''a pas bougé sur le chemin des scénarios\n'
-  else
-    printf '  8. fin de run         sans banc sur main (--sans-banc)\n'
   fi
   rm -rf "$RUN_DIR"
   exit 0
@@ -5279,66 +5250,6 @@ audit_ecrit() {
 }
 audit_ecrit
 
-# --- Le banc entier sur main, une fois par lot (#1462, docs/10 §11.13, docs/47) --------------------------
-# Le banc des scénarios se paie une fois par LOT, sur `main` intégrée, et non plus à chaque ticket qui
-# touche son chemin : le 08/10, S12 (≈ 26 min, ≈ 3 $) a été joué six fois par trois tickets du même
-# jalon, chacun sur sa branche. Un passage ici vérifie en plus ce qui sera livré — le résultat des
-# merges, pas une branche (le principe de la CI, #716).
-#
-# APRÈS LE DRAIN FINAL, parce que c'est lui qui fait entrer dans `main` ce que le run a livré : avant,
-# on jouerait un `main` qui n'a pas encore reçu les PR du lot. Et AVANT le résumé, pour que le verdict
-# y soit : un run détaché se lit d'un coup d'œil, des heures après, et le rouge doit être sous ce coup
-# d'œil — avec les PR mergées depuis le dernier vert, qu'il nomme.
-#
-# LE PILOTE NE FAIT QU'APPELER. La décision (jouer ou s'abstenir), la copie dédiée, le passage et le
-# verdict vivent dans `banc-main.sh`, que la personne joue aussi à la main hors run : un seul endroit.
-#
-# DEUX ABSTENTIONS SE DÉCIDENT ICI, parce que seul le pilote les connaît : un ARRÊT demandé (STOP) —
-# on ne lance pas une heure et demie de vrai modèle derrière quelqu'un qui a demandé l'arrêt — et la
-# LIMITE HEBDOMADAIRE que le run a touchée : le banc tirerait sur le même quota. Une abstention n'est
-# jamais un vert.
-#
-# BEST-EFFORT, au même titre qu'`audit.txt` : ni le verdict du run ni son code de sortie n'en
-# dépendent — un rouge du banc est une information sur `main`, pas un échec de ce run.
-banc_sur_main() {
-  [ "$BANC" = 1 ] || return 0
-  printf '\n%sBanc sur main%s — une fois par lot, après le drain final (#1462).\n' "$C_B" "$C_0"
-  if [ -f "$STOP" ]; then
-    printf '  banc sur main : abstention — arrêt demandé (%s) : le passage n'\''est pas lancé.\n' \
-      "${STOP#"$RACINE"/}"
-    return 0
-  fi
-  if [ "$PLAFOND_ATTEINT" = 1 ]; then
-    printf '  banc sur main : abstention — limite hebdomadaire atteinte par le run : le banc tirerait sur le même quota.\n'
-    return 0
-  fi
-  # La garde de quota (#1551) vaut aussi pour le banc : une heure et demie de vrai modèle, lancée
-  # au-delà d'un seuil, épuiserait justement ce que la garde réserve à la personne.
-  if seuil_en_cours || { usage_relu && seuil_franchi; }; then
-    printf '  banc sur main : abstention — garde de quota : %s.\n' "$(seuil_libelle)"
-    return 0
-  fi
-  bash "$RACINE/scripts/orchestrate/banc-main.sh" --sortie "$RUN_DIR" </dev/null || true
-  return 0
-}
-banc_sur_main
-
-# banc_bilan : la ligne du banc au résumé, lue dans `banc.etat` — le verdict détaillé a été écrit juste
-# au-dessus et vit dans `banc.txt`. Muet quand le banc n'a rien écrit (éteint, STOP, plafond : leur
-# abstention vient d'être dite).
-banc_bilan() {
-  [ -s "$RUN_DIR/banc.etat" ] || return 0
-  local etat motif
-  etat="$(cut -f1 "$RUN_DIR/banc.etat" | head -n 1)"
-  motif="$(cut -f5- "$RUN_DIR/banc.etat" | head -n 1)"
-  case "$etat" in
-    vert) printf '  banc sur main       : %s✓%s %s\n' "$C_G" "$C_0" "$motif" ;;
-    rouge) printf '  banc sur main       : %s✗%s %s — détail : %s\n' "$C_R" "$C_0" "$motif" \
-             "$RUN_DIR/banc.txt" ;;
-    *) printf '  banc sur main       : %s~%s %s\n' "$C_Y" "$C_0" "$motif" ;;
-  esac
-}
-
 # --- Les résidus `.claude/` du run, et leur ticket de reprise (#611, chantier #608) --------------------
 # Une session ne peut pas écrire sous `.claude/` — garde-fou du CLI, en amont de l'allowlist comme des
 # hooks (#238, re-mesuré par #614) —, et la conduite prescrite est de RENDRE le correctif au lieu de
@@ -5471,7 +5382,6 @@ if [ -n "$AUDIT_FICHIER" ]; then
 else
   printf '  où passe le temps   : bash scripts/orchestrate/journal.sh audit %s  (ou /run-audit)\n' "$RUN_ID"
 fi
-banc_bilan
 if [ "$PLAFOND_ATTEINT" = 1 ]; then
   printf '\n  %sRun arrêté sur une limite hebdomadaire%s — le reste du plan est intact.\n' "$C_Y" "$C_0"
   printf '  Le rejouer plus tard, sans recalculer l'\''ordre : /orchestrate --resume %s\n' "$RUN_ID"

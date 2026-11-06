@@ -550,7 +550,7 @@ def test_le_plan_necrit_rien_du_tout(depot: DepotRelecture) -> None:
 def test_la_preparation_monte_la_vraie_stack_sur_l_etat_du_banc_sans_navigateur(
     depot: DepotRelecture,
 ) -> None:
-    """L'état peuplé est celui qu'un vrai passage du banc a laissé (`--etat-banc`, #1164) — plus
+    """L'état peuplé est celui qu'un vrai exercice a sauvé (`--etat-banc`, #1164) — plus
     la démo (#1165). `--no-browser` parce que sans lui le lanceur ouvre sa propre fenêtre et arrête
     la stack dès qu'elle se ferme (#149), coupant l'API sous le navigateur qu'on pilote. Et rien
     n'est écrit dans les données de la copie : ni `core/projets/`, ni projet posé à la main."""
@@ -585,9 +585,10 @@ def test_sans_etat_du_banc_le_peuple_se_nomme_et_rien_ne_se_rejoue(depot: DepotR
     depot.ecris("apps/web/app/runs/page.tsx", "// en cours\n")
     resultat = depot.joue("53", env={"MAESTRO_FAUX_START_CODE": "4"})
     assert resultat.returncode == 1
-    assert "aucun passage du banc n'a laissé d'état sur ce poste" in resultat.stdout
-    assert "bash scripts/controltower/start.sh --etat-banc --rejouer" in resultat.stdout
-    assert all("--rejouer" not in appel for appel in depot.appels_start()), "rien n'est rejoué"
+    assert "aucun exercice n'a laissé d'état sur ce poste" in resultat.stdout
+    assert "bash scripts/controltower/start.sh --etat-neuf --no-browser" in resultat.stdout
+    assert "maestro.scenarios.exercice" in resultat.stdout, "on refait l'état par un exercice"
+    assert "--rejouer" not in resultat.stdout, "aucun parcours figé ne se rejoue"
 
 
 def test_les_projets_a_poser_viennent_de_l_api_avec_leurs_runs(tmp_path: Path) -> None:
