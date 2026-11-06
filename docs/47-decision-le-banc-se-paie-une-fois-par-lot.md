@@ -17,9 +17,10 @@ référence le joue avant de pousser »* —, et le déclencheur qui l'exprime :
 > ⚠ **Renversé en entier le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
 > #1568) : plus de scénarios figés. Le banc par lot se retire **sans remplaçant**, sur réponse de la
 > personne, et au ticket la session construit l'exercice de ce qu'elle vient d'implémenter, au lieu
-> du scénario que la carte désignait (#1570). La carte, le croisement et l'historique se retirent
-> avec les scénarios (#1572). Ce qui suit décrit le présent jusqu'à ce que ces lots soient livrés.
-> La preuve exercée et le banc injouable jamais compté vert (§5) ne bougent pas.
+> du scénario que la carte désignait : c'est fait depuis #1570, et §0.2 et §0.3 ne décrivent plus
+> le présent ([docs/10 §6](./10-workflow-git.md)). La carte, le croisement et l'historique se
+> retirent avec les scénarios (#1572) ; jusque-là, ce qui suit décrit encore le banc par lot. La
+> preuve exercée et l'épreuve injouable jamais comptée verte (§5) ne bougent pas.
 
 1. **Le banc entier se joue une fois par lot**, sur `main` intégrée, par le pilote, après le drain
    final (#1462). C'est ce passage qui attrape une mécanique cassée par un merge.

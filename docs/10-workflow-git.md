@@ -2135,49 +2135,39 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
   a été **remplacée**, pas doublée — une étape en remplace une autre :
   - **la preuve d'un ✓** est un **test nommé qui passe** — une fonction `test_…` de pytest, ou un
     fichier `*.test.tsx` de Vitest (dont les tests se nomment en prose) — ou une **observation sur
-    la vraie stack** : le **passage** du banc (l'horodatage de `.maestro/scenarios/<h>/`), le
-    **run** (`run <id>`) ou la **capture** qui la montre. Le verbe vérifie ce qu'une forme permet
-    de vérifier : que le test est **défini dans l'arbre** (un nom inventé est refusé), que le
-    rapport du passage est là et rend **verts** les scénarios cités. Un horodatage qu'aucun passage
-    des scénarios ne porte se cherche au **banc comparatif** (`.maestro/comparatif/<h>/`, #1512),
-    qui ne rend ni vert ni rouge : il prouve s'il porte au moins un passage abouti, jamais s'ils sont
-    tous empêchés. Qu'un test nommé passe, il ne le rejoue pas — c'est la session qui l'a vu passer,
-    et qui le dit ;
-  - ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
-    #1568) : plus de scénarios figés. Au ticket, la session construira l'exercice de ce qu'elle vient
-    d'implémenter, et `criteres-note` prendra une ligne **Exercice** (#1570, qui réécrit ce point) ;
-    le banc par lot se retire (#1572). Ce qui suit vaut jusque-là ;
-  - **le banc se paie une fois par lot, et au ticket seulement sur son chemin** (#1464,
-    [docs/47](./47-decision-le-banc-se-paie-une-fois-par-lot.md), qui renverse en partie le C2 de
-    #1240). Le banc entier se joue sur `main` intégrée, par le pilote, après le drain final
-    (§11.13) : c'est lui qui attrape une mécanique cassée par un merge. Au ticket, la **détection**
-    est la **carte** de ce que chaque scénario exécute (#1463, docs/40 §5) : la question `criteres`
-    annonce, d'une ligne `# banc` et des suivantes, les scénarios dont la carte croise le diff
-    (`python -m maestro.scenarios.croisement`) — la fonction qui contient une ligne changée, le
-    niveau module par son fichier, un fichier de données lu —, en proposant la **couverture la
-    moins chère**, le moins cher en tête (coût médian de l'historique, #1461). Le plus cher, S12
-    aujourd'hui, n'est proposé que s'il est le seul à couvrir une partie du changement. Quand
-    aucun scénario ne croise le diff, elle **se tait**. Les scénarios que la carte n'a jamais
-    mesurés sont nommés : le banc par lot les mesure ;
-  - **le banc est dû** quand le changement touche **ce que le modèle reçoit ou fait** — prompts,
-    playbooks, gabarits, outils et verbes offerts, portée et permissions d'un agent. C'est un
-    **jugement de la session**, et il se consigne : aucune liste de fichiers « sensibles » ne le
-    remplace (docs/41). Dû, il se joue **avant de pousser**, par `start.sh --etat-banc
-    --rejouer=<S…>` sur la stack du worktree — le même geste que docs/40 §5, et l'état qu'il laisse
-    sert ensuite la relecture visuelle — et le constat porte `| Banc | vert/rouge | passage <h> |`,
-    relu dans le rapport : un `vert` sur un passage qui ne l'est pas est refusé. Non dû, la ligne
-    le dit : `| Banc | non joué | mécanique couverte par <tests nommés> ; banc par lot sur main |`,
-    et les tests qu'elle nomme doivent exister. **Un banc injouable est nommé, jamais compté
-    vert.** Quand la carte croise le diff, `criteres-note` refuse un constat sans ligne `Banc` ;
-  - **faute de carte**, le préfixe décide encore (docs/47 §8 : on ne retire pas un filet sans
-    l'autre) : un poste sans historique lisible, ou sans le venv qui le lit, retombe sur le chemin
-    des scénarios — `maestro/`, `core/`, `packages/shared/` (`GL_BANC_CHEMINS`) —, et la ligne
-    `# banc` le dit (« faute de carte (…), le préfixe décide ») ;
+    la vraie stack** : l'**exercice** construit (l'identifiant de `.maestro/exercices/<id>/`, §6.2),
+    le **run** (`run <id>`) ou la **capture** qui la montre. Le verbe vérifie ce qu'une forme permet
+    de vérifier : que le test est **défini dans l'arbre** (un nom inventé est refusé), que le relevé
+    de l'exercice est là et le rend **vert** — rouge, empêché ou non conclu, il ne prouve rien. Un
+    identifiant qu'aucun exercice ne porte se cherche parmi les passages du banc
+    (`.maestro/scenarios/<h>/`, dont le rapport rend verts les scénarios cités), puis au **banc
+    comparatif** (`.maestro/comparatif/<h>/`, #1512), qui ne rend ni vert ni rouge : il prouve s'il
+    porte au moins un passage abouti, jamais s'ils sont tous empêchés. Qu'un test nommé passe, le
+    verbe ne le rejoue pas — c'est la session qui l'a vu passer, et qui le dit ;
+  - **au ticket, l'exercice construit remplace le banc** (#1570,
+    [docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md), qui renverse
+    docs/47 §0.2 et §0.3). Aucun scénario figé n'est à choisir. Quand le diff touche **ce que la
+    vraie stack charge** — `maestro/`, `core/`, `packages/shared/` (`GL_EXERCICE_CHEMINS`) —, la
+    question `criteres` le dit par des lignes `# exercice`, et `criteres-note` refuse un constat qui
+    tait la question. Il ne la tranche pas : l'exercice est **dû** quand le changement touche **ce
+    que le modèle reçoit ou fait** — prompts, playbooks, gabarits, outils et verbes offerts, portée
+    et permissions d'un agent — ou une **mécanique que seule la vraie stack montre** (hôte détaché,
+    bus, reprise, extinction). C'est un **jugement de la session**, et il se consigne : aucune liste
+    de fichiers « sensibles » ne le remplace (docs/41) ;
+  - **dû, la session le construit** avec les verbes du §6.2 et le joue **avant de pousser**. Il est
+    **tiré des critères** du ticket et taillé au changement (un projet semé minimal et un message,
+    plutôt qu'une application entière). Son **oracle est écrit avant de jouer**, puis `conclure`
+    rend son verdict. Le constat porte `| Exercice | vert/rouge | exercice <id>, run <id> |`, relu
+    dans `exercice.json` : le verdict dit doit être celui que l'exercice a rendu, et le run cité un
+    de ceux qu'il a lancés, quand il en a lancé un. Non dû, la ligne le dit : `| Exercice | non joué
+    | mécanique couverte par <tests nommés> |`, et les tests qu'elle nomme doivent exister. **Un
+    exercice injouable est nommé, jamais compté vert** : un exercice `empeche` se dit « non joué »
+    avec sa raison. Un rouge ne se rejoue pas jusqu'au vert. Une ligne `Banc` est refusée, avec ce
+    qui la remplace ;
   - **ce qui ne bouge pas** : un ✗ est nommé, jamais coché, et ne bloque pas le merge ; un critère
-    **hors diff** garde sa réponse ; les critères ne s'écrivent jamais à la clôture. Le prix du
-    banc au ticket est celui du scénario le moins cher qui couvre le changement (S4 ≈ 0,20 $ et
-    S2 ≈ 0,35 $ au 2026-10-13) ; un défaut de mécanique hors de ce que le modèle reçoit ou fait se
-    voit au banc par lot, quelques heures plus tard (docs/47 §6).
+    **hors diff** garde sa réponse ; les critères ne s'écrivent jamais à la clôture. Poser la
+    question coûte une ligne au constat, et un exercice coûte une fraction du scénario figé qu'il
+    remplace (docs/52 §2).
 - **Aucune clôture d'un ticket que la session ne traite pas.** `/ticket-finish` et `/ticket-ship`
   vérifient, **avant toute écriture** (commit, push, PR, statut, temps), que le ticket
   visé est bien celui de la session : `bash scripts/gitlab/lib.sh close-guard <iid> [branche]`.
@@ -2375,7 +2365,7 @@ démonstration, et que l'index de `/ticket-finish` ci-dessous en range chaque é
 | 3 | `close-guard` avant toute écriture | §6 (garde-fou de clôture) |
 | 4 | commit montré, confirmé, message par fichier | §2 ; §11.7 (#233, #962) |
 | 4bis | relecture visuelle, consignée sur le ticket | docs/30 §5.5 (#935), §5.6, §5.8 (#1151, #1243) |
-| 4ter | critères exercés, banc dû, constat consigné | §6 (#968, #1240) ; docs/40 §5 |
+| 4ter | critères exercés, exercice dû, constat consigné | §6 (#968, #1240, #1570) ; docs/52 |
 | 5 | filet CI local, jamais bloquant | §8.4 (#214, #1242) |
 | 6 | retard sur `origin/main`, jamais de rebase d'office | §6 (`behind-main`) |
 | 7 | push nu, jamais forcé | §6 ; §11.7 (#233, #235) |
@@ -2420,7 +2410,8 @@ Quand un changement demande à être vu sur la vraie stack, la session qui l'a �
 l'exercice qui l'exerce : le message à donner à Maestro, ce que la personne répondra, et ce qu'on
 doit constater. Puis elle le joue **geste par geste, une commande par geste**. Les verbes sont
 publics, et aucune liste de parcours ne vit dans le dépôt : la session décide de leur ordre. Quand
-l'exercice est dû au ticket, et ce que le constat en dit, c'est l'objet de #1570.
+l'exercice est dû au ticket, et ce que le constat en dit (la ligne **Exercice**), c'est la règle de
+la confrontation des critères, plus haut dans ce §6 (#1570).
 
 ```
 .venv/Scripts/python.exe -m maestro.scenarios.exercice ouvrir --oracle <fichier> [--personne <fichier>] [--titre <titre>]
@@ -8699,8 +8690,8 @@ joue à la main les semaines où l'on merge en interactif. Il fait cinq choses, 
 1. **Le sha joué** : `origin/main`, après un `fetch`.
 2. **La décision**, lue dans l'historique du banc (#1461) contre l'historique de `main`
    (`python -m maestro.scenarios.sur_main decider`). Il ne joue que si `main` a bougé **sur le
-   chemin des scénarios** (`GL_BANC_CHEMINS` de `lib.sh`, §6 — au ticket, la carte l'a remplacé
-   par #1464 ; ici, il dit encore si `main` a bougé là où le produit tourne)
+   chemin des scénarios** (`GL_BANC_CHEMINS` de `lib.sh` : ce que la vraie stack charge, là où le
+   ticket pose la question de l'exercice, §6 ; ici, il dit si `main` a bougé où le produit tourne)
    depuis le **dernier passage complet sur `main`**. Complet : tout le catalogue, sans aucun
    empêchement. Sur `main` : un sha ancêtre de celui qu'on joue, sur un arbre non modifié — un
    passage du clone principal sur `main` compte, celui d'une branche de ticket non. Sinon il

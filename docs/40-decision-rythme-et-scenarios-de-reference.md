@@ -265,12 +265,13 @@ disant. Une carte qui ne s'écrit pas se dit, sans changer le verdict. Un passag
 stack démarrée sans la sonde le dit aussi (« stack non mesurée »). Deux limites sont assumées :
 ce qu'un processus exécute dans la période qui suit une borne peut rester rangé sous le scénario
 précédent, et ce que lit un processus non Python (le CLI de l'agent, l'UI) n'y est pas.
-`python -m maestro.scenarios.carte` résume la dernière carte de la copie. C'est elle qui définit,
-au ticket, le chemin d'un scénario (#1464) : `python -m maestro.scenarios.croisement` compose la
-dernière empreinte de chaque scénario dans l'historique du poste, rapporte le diff aux fonctions
-qu'il touche, et rend la couverture la moins chère — ce que `lib.sh criteres` annonce
-([docs/10 §6](./10-workflow-git.md)). Le préfixe `GL_BANC_CHEMINS` ne décide plus qu'à défaut de
-carte, et pour le banc par lot.
+`python -m maestro.scenarios.carte` résume la dernière carte de la copie, et
+`python -m maestro.scenarios.croisement` compose la dernière empreinte de chaque scénario dans
+l'historique du poste, rapporte un diff aux fonctions qu'il touche, et rend la couverture la moins
+chère. Au ticket, `lib.sh criteres` ne l'annonce plus : l'exercice construit y remplace le banc
+(#1570, [docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)), et les deux
+modules partent avec lui (#1572). Le préfixe `GL_BANC_CHEMINS` dit, pour le banc par lot, si `main`
+a bougé là où le produit tourne.
 
 **Le banc ne garde que ses derniers passages** (#1457). Il les gardait tous — 208 dossiers le
 2026-10-09, projets complets et `node_modules` compris —, et leurs projets versionnés retenaient,

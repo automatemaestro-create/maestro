@@ -2786,13 +2786,16 @@ gl_relecture_attente() {
 #   · la pièce n'est jamais vide — un ✗ dit pourquoi, un « hors diff » dit ce qui le montre ;
 #   · un ✓ NOMME UNE PREUVE EXERCÉE (#1240) : un TEST qui existe dans l'arbre (une fonction
 #     `test_…` de pytest, ou un fichier `*.test.ts[x]` de Vitest, dont les tests se nomment en
-#     prose), un PASSAGE DU BANC dont le rapport est là et rend verts les scénarios cités, un RUN de
-#     la vraie stack (`run <id>`), ou une CAPTURE de la vraie stack (`*.png` présent). C'est la règle
-#     de `/milestone-bilan` — « un critère tenu sans pièce nommée n'est pas tenu » — portée de ce
-#     qui a été ÉCRIT à ce qui a été EXERCÉ : « ✓ | fait | » est refusé, et un critère que rien n'a
-#     exercé se dit ✗ ou « hors diff », jamais ✓.
-#   · un diff qui touche LE CHEMIN DES SCÉNARIOS porte une ligne `| Banc | … | … |` : le verdict du
-#     passage joué (`vert`/`rouge`, relu dans son rapport), ou `non joué` avec sa raison.
+#     prose), un EXERCICE dont le relevé est là et rend `vert` (#1570), un PASSAGE DU BANC dont le
+#     rapport est là et rend verts les scénarios cités, un RUN de la vraie stack (`run <id>`), ou une
+#     CAPTURE de la vraie stack (`*.png` présent). C'est la règle de `/milestone-bilan` — « un
+#     critère tenu sans pièce nommée n'est pas tenu » — portée de ce qui a été ÉCRIT à ce qui a été
+#     EXERCÉ : « ✓ | fait | » est refusé, et un critère que rien n'a exercé se dit ✗ ou « hors
+#     diff », jamais ✓.
+#   · un diff qui touche CE QUE LA VRAIE STACK CHARGE porte une ligne `| Exercice | … | … |` : le
+#     verdict de l'exercice construit (`vert`/`rouge`, relu dans son relevé, avec son run), ou
+#     `non joué` avec sa raison. Que l'exercice soit DÛ est un jugement de la session (docs/52) : la
+#     machine pose la question et refuse qu'elle soit tue, elle ne la tranche pas.
 # Qu'un ✓ soit MÉRITÉ, aucune machine n'en décide ici. Qu'un test NOMMÉ passe non plus : le verbe
 # vérifie qu'il existe, pas qu'il est vert — le jouer est l'affaire de la session, et le dire aussi.
 #
@@ -2826,22 +2829,25 @@ GL_ACCEPTATION_SECTION="Critères d'acceptation"
 GL_ATTENDU_SECTION="${MAESTRO_ATTENDU_SECTION:-Comportement attendu}"
 GL_CRITERES_ANCRE="${GL_CRITERES_ANCRE:-Critères confrontés au diff}"
 
-# LE CHEMIN DES SCÉNARIOS DE RÉFÉRENCE (#1240, docs/40 §5) : ce que la stack réelle charge quand le
-# banc la sert — le paquet `maestro` (le seul que `pyproject.toml` installe), la configuration
-# `core/` qu'il lit (agents, permissions, playbooks…) et le schéma de tâche `packages/shared/` que
-# l'orchestrateur valide. N'en sont pas : `agents/`, qui ne porte que des README ; `apps/web/`, le
-# banc parlant à l'API, jamais à l'écran ; l'outillage et la doc.
+# CE QUE LA VRAIE STACK CHARGE (#1570, docs/52) : le paquet `maestro` (le seul que `pyproject.toml`
+# installe), la configuration `core/` qu'il lit (agents, permissions, playbooks…) et le schéma de
+# tâche `packages/shared/` que l'orchestrateur valide. N'en sont pas : `agents/`, qui ne porte que
+# des README ; `apps/web/`, que la relecture visuelle regarde ; l'outillage et la doc.
 #
-# ⚠ AU TICKET, CE PRÉFIXE N'EST PLUS LE DÉCLENCHEUR (#1464, docs/47) : il couvrait tout le produit,
-# si bien que tout ticket du produit était « sur le chemin » et jouait un scénario choisi au jugé,
-# large par prudence (S12 six fois en un jour). Le banc dû au ticket se dérive de la CARTE de ce
-# que chaque scénario exécute (#1463), par `gl_banc_croisement`. Le préfixe reste deux choses : la
-# décision du banc par lot (`banc-main.sh`, #1462 — « main a-t-elle bougé sur le chemin ? »), et le
-# REPLI du ticket quand aucune carte ne se lit (docs/47 §8 : on ne retire pas un filet sans l'autre).
+# Un diff qui y touche POSE LA QUESTION de l'exercice : `criteres` l'annonce (`# exercice`), et
+# `criteres-note` refuse un constat qui la tait. Il ne la TRANCHE pas : l'exercice est dû quand le
+# changement touche ce que le modèle reçoit ou fait, ou une mécanique que seule la vraie stack
+# montre, et c'est la session qui en juge — « non joué » avec sa raison est une réponse. Le prix
+# d'une question tue est un défaut vu au bilan du jalon ; celui d'une question posée, une ligne.
 # Les préfixes sont gardés par `tests/test_criteres_cloture.py`, qui vérifie qu'ils existent.
-GL_BANC_CHEMINS="maestro/ core/ packages/shared/"
-# Où un passage laisse son rapport, relatif à la racine d'où l'on joue — `RACINE_RAPPORTS` de
-# `maestro/scenarios/rapport.py`, que `start.sh --etat-banc --rejouer` sert depuis la racine.
+GL_EXERCICE_CHEMINS="maestro/ core/ packages/shared/"
+# Le chemin que `banc-main.sh` regarde pour décider du banc par lot, jusqu'à son retrait (#1572).
+GL_BANC_CHEMINS="$GL_EXERCICE_CHEMINS"
+# Où un exercice laisse son relevé, relatif à la racine d'où l'on joue — `RACINE_EXERCICES` de
+# `maestro/scenarios/exercice.py`. Son état (`exercice.json`) porte son verdict et ses runs.
+GL_EXERCICES_RELEVES=".maestro/exercices"
+# Où un passage du banc laisse son rapport, relatif à la racine d'où l'on joue — `RACINE_RAPPORTS`
+# de `maestro/scenarios/rapport.py`, que `start.sh --etat-banc --rejouer` sert depuis la racine.
 GL_BANC_RAPPORTS=".maestro/scenarios"
 # Où le banc comparatif laisse les siens (#1512) — `RACINE_RAPPORTS` de
 # `maestro/scenarios/comparatif.py`. Un horodatage qu'aucun passage des scénarios ne porte se
@@ -2926,23 +2932,18 @@ gl_criteres() {
     echo "  ni « $GL_ATTENDU_SECTION ») — rien à confronter : le signaler (criteres-note --aucun)." >&2
     return 3
   fi
-  # Quels scénarios la carte fait-elle croiser au diff ? Des lignes `# banc`, et seulement quand il
-  # y en a : la question ne coûte que le diff local et la carte du poste, et `criteres-note`
-  # refusera un constat qui les aurait tues. Que le banc soit DÛ — le changement touche ce que le
-  # modèle reçoit ou fait —, c'est la session qui en juge (#1464). Base introuvable : rien ici,
-  # c'est `criteres-note` qui le dira (`1`).
-  local annonce rc touches
-  annonce="$(gl_banc_croisement 2>/dev/null)"; rc=$?
-  case "$rc" in
-    0) printf '%s\n' "$annonce" | awk 'NF { printf "# banc\t%s\n", $0 }' ;;
-    3) ;;
-    *)
-      touches="$(gl_criteres_chemins_du_diff 2>/dev/null | gl_banc_touches)"
-      if [ -n "$touches" ]; then
-        printf '# banc\tà jouer si le changement touche ce que le modèle reçoit ou fait — faute de carte (%s), le préfixe décide : le diff touche le chemin des scénarios de référence : %s\n' \
-          "$(gl_banc_sans_carte "$rc" "$annonce")" "$(printf '%s\n' "$touches" | gl_banc_resume)"
-      fi ;;
-  esac
+  # La question de l'exercice (#1570, docs/52) : des lignes `# exercice`, et seulement quand le diff
+  # touche ce que la vraie stack charge — elle ne coûte que le diff local, et `criteres-note`
+  # refusera un constat qui l'aurait tue. Que l'exercice soit DÛ, c'est la session qui en juge.
+  # Base introuvable : rien ici, c'est `criteres-note` qui le dira (`1`).
+  local touches
+  touches="$(gl_criteres_chemins_du_diff 2>/dev/null | gl_exercice_touches)"
+  if [ -n "$touches" ]; then
+    printf '# exercice\tle diff touche ce que la vraie stack charge (%s) : un exercice est dû si le changement touche ce que le modèle reçoit ou fait, ou une mécanique que seule la vraie stack montre — ton jugement\n' \
+      "$(printf '%s\n' "$touches" | gl_chemins_resume)"
+    printf '# exercice\tdû : construis-le depuis ces critères, oracle écrit avant de jouer (docs/10 §6.2) — | Exercice | vert/rouge | exercice <id>, run <id> |\n'
+    printf '# exercice\tnon dû : | Exercice | non joué | mécanique couverte par <tests nommés> |\n'
+  fi
 }
 
 # gl_criteres_base -> la base commune de la branche avec `origin/main` (GL_CRITERES_BASE), d'où se
@@ -2954,59 +2955,17 @@ gl_criteres_base() {
   printf '%s\n' "$base"
 }
 
-# gl_banc_croisement [--court] -> LES SCÉNARIOS DONT LA CARTE CROISE LE DIFF (#1464, docs/47) : le
-# moins cher en tête, rendus par `python -m maestro.scenarios.croisement`, qui lit la carte de ce
-# que chaque scénario exécute (#1463) dans l'historique du banc du poste (#1461). `--court` rend
-# une ligne, pour le refus de `criteres-note`. Codes : 0 la carte croise (l'annonce sur stdout) ·
-# 3 elle ne croise pas (rien) · 4 aucune carte lisible (le motif sur stdout) · 1 base introuvable ·
-# tout autre code : le croisement n'a pas pu se jouer. Hors de 0 et 3, l'appelant retombe sur le
-# préfixe `GL_BANC_CHEMINS` (docs/47 §8).
-#
-# Le module se joue DEPUIS LA RACINE DE CE DÉPÔT (celle de `lib.sh`) — `-m` y trouve le paquet
-# `maestro` de cette copie, jamais celui du clone principal qu'un venv partagé installerait —, et
-# le diff se lit dans le répertoire courant (`--depot`). L'interpréteur est celui du venv du dépôt
-# (CLAUDE.md : le `python` du poste n'a pas les dépendances) ; `MAESTRO_BANC_PYTHON` le remplace,
-# comme pour `banc-main.sh` — pour la suite, dont le dépôt jetable n'a pas de venv.
-gl_banc_croisement() {
-  local court="" base racine python="${MAESTRO_BANC_PYTHON:-}" depot="$PWD" candidat
-  [ "${1:-}" = "--court" ] && court="--court"
-  base="$(gl_criteres_base)" || return 1
-  racine="${GL_ICI%/scripts/gitlab}"
-  [ "$racine" = "$GL_ICI" ] && racine="$GL_ICI/../.."
-  if [ -z "$python" ]; then
-    for candidat in "$racine/.venv/Scripts/python.exe" "$racine/.venv/bin/python"; do
-      if [ -x "$candidat" ]; then python="$candidat"; break; fi
-    done
-  fi
-  if [ -z "$python" ]; then
-    printf 'aucun python du venv sous %s/.venv (bash scripts/setup.sh)\n' "$racine"
-    return 4
-  fi
-  # shellcheck disable=SC2086 # `$court` est vide ou un seul mot : il disparaît quand il est vide.
-  (cd "$racine" && PYTHONIOENCODING=utf-8 "$python" -m maestro.scenarios.croisement \
-    --base "$base" --depot "$depot" $court)
-}
-
-# gl_banc_sans_carte <code> <sortie> — pourquoi la carte n'a pas décidé, en une ligne : le motif
-# du module (code 4), ou le code d'un croisement qui n'a pas pu se jouer.
-gl_banc_sans_carte() {
-  if [ "$1" = 4 ] && [ -n "$2" ]; then
-    printf '%s\n' "$2" | head -n 1
-  else
-    printf 'croisement injouable, code %s : python -m maestro.scenarios.croisement\n' "$1"
-  fi
-}
-
-# gl_banc_touches — parmi les fichiers du diff (stdin, un par ligne), ceux qui sont sur le chemin
-# des scénarios (`GL_BANC_CHEMINS`). Les préfixes voyagent par ENVIRON, jamais par `awk -v`.
-gl_banc_touches() {
-  BANC_CHEMINS="$GL_BANC_CHEMINS" awk '
-    BEGIN { n = split(ENVIRON["BANC_CHEMINS"], p, " ") }
+# gl_exercice_touches — parmi les fichiers du diff (stdin, un par ligne), ceux qui sont dans ce
+# que la vraie stack charge (`GL_EXERCICE_CHEMINS`). Les préfixes voyagent par ENVIRON, jamais par
+# `awk -v`.
+gl_exercice_touches() {
+  EXERCICE_CHEMINS="$GL_EXERCICE_CHEMINS" awk '
+    BEGIN { n = split(ENVIRON["EXERCICE_CHEMINS"], p, " ") }
     { for (i = 1; i <= n; i++) if (index($0, p[i]) == 1) { print; next } }'
 }
 
-# gl_banc_resume — « 3 fichier(s) : a, b, c » (stdin, un par ligne), les trois premiers nommés.
-gl_banc_resume() {
+# gl_chemins_resume — « 3 fichier(s) : a, b, c » (stdin, un par ligne), les trois premiers nommés.
+gl_chemins_resume() {
   awk 'NF { f[++n] = $0 }
     END {
       s = n " fichier(s) : " f[1]
@@ -3030,8 +2989,8 @@ gl_criteres_tests_nommes() {
 
 # gl_criteres_chemins_du_diff -> les fichiers que la branche livre, un par ligne : ce qui a changé
 # depuis sa base commune avec `origin/main`, travail non commité et fichiers nouveaux compris. C'est
-# sur lui que se juge le REPLI du banc dû, quand aucune carte ne se lit (`gl_banc_touches`). Code 1
-# si la base est introuvable.
+# sur lui que se pose la question de l'exercice (`gl_exercice_touches`). Code 1 si la base est
+# introuvable.
 gl_criteres_chemins_du_diff() {
   local base
   base="$(gl_criteres_base)" || return 1
@@ -3040,19 +2999,21 @@ gl_criteres_chemins_du_diff() {
 
 # gl_criteres_constat <inventaire> <fichier> — la FORME du constat, confrontée aux critères attendus
 # (ENVIRON ATTENDUS, « C1 C2 … »), aux tests de l'arbre (<inventaire>, `gl_criteres_tests_nommes`),
-# aux rapports du banc (ENVIRON RAPPORTS, puis ENVIRON COMPARATIF pour le banc comparatif) et au
-# banc dû (ENVIRON BANC_DU : ce qui le rend dû — les
-# scénarios que la carte fait croiser au diff, ou, faute de carte, les fichiers du diff sur le
-# chemin des scénarios —, vide sinon). Sur stdout : une ligne `!<TAB>Cn<TAB>motif` par
-# critère sans réponse recevable (`!<TAB>Banc<TAB>motif` pour le banc), puis
-# `=<TAB>✓<TAB>✗<TAB>hors-diff<TAB>banc` — `banc` vide quand le constat n'en porte pas.
+# aux relevés des exercices (ENVIRON EXERCICES), aux rapports du banc (ENVIRON RAPPORTS, puis
+# ENVIRON COMPARATIF pour le banc comparatif) et à la question de l'exercice (ENVIRON EXERCICE_DU :
+# les fichiers du diff dans ce que la vraie stack charge, vide sinon). Sur stdout : une ligne
+# `!<TAB>Cn<TAB>motif` par critère sans réponse recevable (`!<TAB>Exercice<TAB>motif` pour
+# l'exercice), puis `=<TAB>✓<TAB>✗<TAB>hors-diff<TAB>exercice` — `exercice` vide quand le constat
+# n'en porte pas.
 #
 # Un nom compte s'il est BORNÉ — ni lettre, ni chiffre, ni `_`/`-` de part et d'autre : sans quoi
 # `test_verbe` serait « nommé » par `test_verbe_rend`, et un passage par un horodatage plus long.
-# Un passage se lit dans son `rapport.json` tel que `maestro/scenarios/rapport.py` l'écrit (indenté,
-# une clé par ligne : une valeur de chaîne ne passe jamais à la ligne en JSON), et un scénario cité
-# doit y être `vert` — un rouge, ou un empêché (un rouge au rapport), n'est jamais compté vert. Sans
-# scénario cité, c'est le passage entier qui doit l'être.
+# Un horodatage cité se cherche d'abord parmi les EXERCICES : leur `exercice.json`, tel que
+# `maestro/scenarios/exercice.py` l'écrit (indenté de deux espaces, une clé par ligne), porte le
+# verdict rendu par `conclure` et les `run_id` joués. Un exercice prouve s'il est conclu `vert` ;
+# rouge, empêché ou non conclu, il n'est jamais compté vert. À défaut d'exercice, l'horodatage se lit
+# dans le `rapport.json` d'un passage du banc tel que `maestro/scenarios/rapport.py` l'écrit, où un
+# scénario cité doit être `vert` (sans scénario cité, le passage entier), puis au banc comparatif.
 #
 # Lecture en LC_ALL=C, comme la grille de #980 : ✓ et ✗ se comparent octet à octet. Les motifs de
 # longueur fixe sont construits dans BEGIN : un intervalle `{12}` n'est pas compris de tous les awk
@@ -3107,11 +3068,42 @@ gl_criteres_constat() {
       if (!lu) return "absent"
       return (aboutis > 0) ? "comparatif" : "comparatif-vide"
     }
+    # Le relevé de cet exercice, lu une fois : ex_verdict[h] (vide s il n est pas conclu),
+    # ex_runs[h] (« r1 r2 », vide s il n a lancé aucun run) ; rend « ok » ou « absent ».
+    # `exercice.json` est indenté de deux espaces : la liste `runs` au premier niveau, le verdict
+    # au second, sous `conclusion` — la seule clé `verdict` du fichier.
+    function exercice(h,   f, ligne, r, dans_runs, lu, v) {
+      if (h in ex_etat) return ex_etat[h]
+      f = ENVIRON["EXERCICES"] "/" h "/exercice.json"
+      lu = 0; dans_runs = 0; ex_verdict[h] = ""; ex_runs[h] = ""
+      while ((r = (getline ligne < f)) > 0) {
+        lu = 1; sub(/\r$/, "", ligne)
+        if (dans_runs) {
+          if (ligne ~ /^[ \t]*\]/) { dans_runs = 0; continue }
+          v = ligne; gsub(/[ \t",]/, "", v)
+          if (v != "") ex_runs[h] = ex_runs[h] " " v
+          continue
+        }
+        if (ligne ~ /^  "runs": \[/) { if (ligne !~ /\][ \t,]*$/) dans_runs = 1; continue }
+        if (ligne ~ /^    "verdict": "/) {
+          v = ligne; sub(/^    "verdict": "/, "", v); sub(/".*/, "", v); ex_verdict[h] = v
+        }
+      }
+      if (r >= 0) close(f)
+      ex_etat[h] = lu ? "ok" : "absent"
+      return ex_etat[h]
+    }
+    # Le verdict rendu par cet exercice : « vert », « rouge », « empeche », ou « !<motif » quand il
+    # n est pas conclu. À n appeler que sur un exercice présent (`exercice(h) == "ok"`).
+    function verdict_exercice(h) {
+      if (ex_verdict[h] == "") return "!l\047exercice " h " n\047est pas conclu — `conclure vert|rouge|empeche` rend son verdict contre l\047oracle"
+      return ex_verdict[h]
+    }
     # Le verdict de ce passage sur les scénarios cités dans <texte> (tous, faute de citation) :
     # « vert », « rouge », ou « !<motif> » quand il ne peut pas être lu.
     function verdict_du(h, texte,   e, cites, nc, i, s, rouges) {
       e = passage(h)
-      if (e == "absent") return "!rapport introuvable : " ENVIRON["RAPPORTS"] "/" h "/rapport.json"
+      if (e == "absent") return "!ni relevé d\047exercice (" ENVIRON["EXERCICES"] "/" h "/exercice.json) ni rapport du banc (" ENVIRON["RAPPORTS"] "/" h "/rapport.json)"
       if (e == "vide") return "!le passage " h " ne porte aucun scénario — un passage vide n\047est pas vert"
       if (e == "comparatif") return "vert"
       if (e == "comparatif-vide") return "!le passage comparatif " h " n\047a aucun passage abouti — un passage empêché n\047est pas une preuve"
@@ -3141,6 +3133,12 @@ gl_criteres_constat() {
       sans_py = piece; gsub("[A-Za-z0-9_./-]*[.]py", " ", sans_py)
       n = jetons(piece, HORODATAGE, t)
       for (i = 1; i <= n; i++) {
+        if (exercice(t[i]) == "ok") {
+          v = verdict_exercice(t[i])
+          if (v ~ /^!/) return substr(v, 2)
+          if (v != "vert") return "l\047exercice " t[i] " rend " v " — un exercice rouge ou injouable n\047est jamais compté vert"
+          ok = 1; continue
+        }
         v = verdict_du(t[i], piece)
         if (v ~ /^!/) return substr(v, 2)
         if (v != "vert") return "le passage " t[i] " rend" substr(v, 6) " — un banc rouge ou injouable n\047est jamais compté vert"
@@ -3160,12 +3158,23 @@ gl_criteres_constat() {
       for (i = 1; i <= n; i++) if ((getline v < t[i]) >= 0) { close(t[i]); ok = 1 }
       if (ok) return ""
       if (motif_test != "") return motif_test
-      return "✓ sans preuve exercée — nommer le test qui passe, le passage du banc ou le run de la vraie stack"
+      return "✓ sans preuve exercée — nommer le test qui passe, l\047exercice, le passage du banc ou le run de la vraie stack"
+    }
+    # Le premier run de <texte> (« run <id> ») qui est au relevé de l exercice <h> : « » quand il
+    # n en cite aucun.
+    function run_du_releve(h, texte,   t, n, i, id) {
+      n = jetons(tolower(texte), "run[^a-z0-9]+" HEX12, t)
+      for (i = 1; i <= n; i++) {
+        id = substr(t[i], length(t[i]) - 11)
+        if (index(ex_runs[h] " ", " " id " ")) return id
+      }
+      return ""
     }
     BEGIN {
       na = split(ENVIRON["ATTENDUS"], attendus, " ")
       HEX12 = repete("[0-9a-f]", 12)
-      HORODATAGE = repete("[0-9]", 8) "-" repete("[0-9]", 6)
+      # Un horodatage peut porter un rang (`…-123609-2`) : deux passages dans la même seconde.
+      HORODATAGE = repete("[0-9]", 8) "-" repete("[0-9]", 6) "(-[0-9]+)?"
     }
     FILENAME == ARGV[1] { nommes[$0] = 1; next }
     {
@@ -3176,33 +3185,45 @@ gl_criteres_constat() {
       id = nu(cel[2]); gsub(/[*`]/, "", id)
       reponse = nu(cel[3]); piece = nu(cel[4])
       if (tolower(id) == "banc") {
-        if (banc != "" || motif_banc != "") next
+        motif_banc = "la ligne Banc a cédé la place à la ligne Exercice (#1570) : | Exercice | vert/rouge | exercice <id>, run <id> |, ou « non joué » avec sa raison"
+        next
+      }
+      if (tolower(id) == "exercice") {
+        if (exo != "" || motif_exo != "") next
         bas = tolower(reponse)
         if (index(bas, "non jou") == 1) {
-          # La raison est libre — un banc injouable se dit comme il est —, mais les tests qu elle
-          # nomme pour dire la mécanique couverte existent (#1464).
-          if (piece == "") motif_banc = "« non joué » sans sa raison"
+          # La raison est libre — un exercice injouable se dit comme il est —, mais les tests
+          # qu elle nomme pour dire la mécanique couverte existent.
+          if (piece == "") motif_exo = "« non joué » sans sa raison"
           else if ((inconnu = test_inconnu(piece)) != "")
-            motif_banc = "« non joué » : " inconnu " n\047est défini nulle part dans l\047arbre — la mécanique couverte se dit par des tests qui existent"
-          else banc = "non joué"
+            motif_exo = "« non joué » : " inconnu " n\047est défini nulle part dans l\047arbre — la mécanique couverte se dit par des tests qui existent"
+          else exo = "non joué"
           next
         }
         if (index(bas, "vert") != 1 && index(bas, "rouge") != 1) {
-          motif_banc = "réponse ni « vert », ni « rouge », ni « non joué »"; next
+          motif_exo = "réponse ni « vert », ni « rouge », ni « non joué »"; next
         }
+        dit = (index(bas, "vert") == 1) ? "vert" : "rouge"
         delete h
         if (jetons(reponse " " piece, HORODATAGE, h) == 0) {
-          motif_banc = "un verdict du banc nomme son passage (l\047horodatage de son rapport)"; next
+          motif_exo = "un verdict d\047exercice nomme son relevé (l\047identifiant de " ENVIRON["EXERCICES"] "/<id>/)"; next
         }
-        v = verdict_du(h[1], reponse " " piece)
-        if (v ~ /^!/) { motif_banc = substr(v, 2); next }
-        if (index(bas, "vert") == 1 && v != "vert") {
-          motif_banc = "le constat dit vert, le passage " h[1] " rend" substr(v, 6) " — un banc rouge ou injouable n\047est jamais compté vert"; next
+        if (exercice(h[1]) != "ok") {
+          motif_exo = "relevé introuvable : " ENVIRON["EXERCICES"] "/" h[1] "/exercice.json"; next
         }
-        if (index(bas, "rouge") == 1 && v == "vert") {
-          motif_banc = "le constat dit rouge, le passage " h[1] " est vert"; next
+        v = verdict_exercice(h[1])
+        if (v ~ /^!/) { motif_exo = substr(v, 2); next }
+        if (v != "vert" && v != "rouge") {
+          motif_exo = "l\047exercice " h[1] " rend " v " — un exercice injouable se dit « non joué » avec sa raison, jamais vert ni rouge"; next
         }
-        banc = ((v == "vert") ? "vert" : "rouge") " (passage " h[1] ")"
+        if (dit != v) {
+          motif_exo = "le constat dit " dit ", l\047exercice " h[1] " rend " v " — son verdict se relit dans son relevé"; next
+        }
+        run_cite = run_du_releve(h[1], reponse " " piece)
+        if (ex_runs[h[1]] != "" && run_cite == "") {
+          motif_exo = "un verdict d\047exercice nomme son run (run <id>), parmi ceux de son relevé :" ex_runs[h[1]]; next
+        }
+        exo = v " (" h[1] ((run_cite != "") ? ", run " run_cite : "") ")"
         next
       }
       if (id !~ /^C[0-9]+$/ || (id in rendu)) next
@@ -3221,9 +3242,10 @@ gl_criteres_constat() {
         printf "!\t%s\t%s\n", id, (id in motif) ? motif[id] : "sans réponse"
       }
       if (motif_banc != "") printf "!\tBanc\t%s\n", motif_banc
-      else if (ENVIRON["BANC_DU"] != "" && banc == "")
-        printf "!\tBanc\t%s — si le changement touche ce que le modèle reçoit ou fait, joue le banc et consigne son verdict ; sinon dis-le « non joué » avec sa raison (mécanique couverte par <tests nommés> ; banc par lot sur main)\n", ENVIRON["BANC_DU"]
-      printf "=\t%d\t%d\t%d\t%s\n", compte["ok"], compte["ko"], compte["hors"], banc
+      if (motif_exo != "") printf "!\tExercice\t%s\n", motif_exo
+      else if (ENVIRON["EXERCICE_DU"] != "" && exo == "")
+        printf "!\tExercice\t%s — si le changement touche ce que le modèle reçoit ou fait, ou une mécanique que seule la vraie stack montre, construis l\047exercice et consigne son verdict ; sinon dis-le « non joué » avec sa raison (mécanique couverte par <tests nommés>)\n", ENVIRON["EXERCICE_DU"]
+      printf "=\t%d\t%d\t%d\t%s\n", compte["ok"], compte["ko"], compte["hors"], exo
     }
   ' "$inventaire" "$fichier"
 }
@@ -3235,14 +3257,14 @@ gl_criteres_section() {
   cat <<'ENTETE'
 Les critères d'acceptation de ce ticket ont été confrontés, à sa clôture, au **diff livré**
 (`/ticket-finish`, #968). Chacun est **tenu** sur une preuve **exercée** qui est nommée — un test
-qui passe, ou une observation sur la vraie stack : passage du banc des scénarios, run, capture —
-(✓), **non tenu** (✗, avec pourquoi), ou tenu **hors du diff** — un geste de forge, une mesure —
-avec ce qui le montre (#1240). Quand la carte des scénarios de référence croise le diff, la ligne
-**Banc** porte le verdict du passage joué avant de pousser — le changement touchait ce que le
-modèle reçoit ou fait —, ou la raison pour laquelle il ne l'a pas été (#1464) : un banc rouge ou
-injouable n'est jamais compté vert. Un critère non tenu est nommé ici,
-jamais coché, et il n'a pas bloqué le merge : ce que le dispositif rend difficile est l'absence de
-trace, pas la livraison.
+qui passe, ou une observation sur la vraie stack : exercice construit, run, capture — (✓), **non
+tenu** (✗, avec pourquoi), ou tenu **hors du diff** — un geste de forge, une mesure — avec ce qui
+le montre (#1240). Quand le diff touche ce que la vraie stack charge, la ligne **Exercice** porte
+le verdict de l'exercice construit pour ce changement — tiré de ses critères, son oracle écrit
+avant de jouer — avec son relevé et son run, ou la raison pour laquelle il ne l'a pas été (#1570) :
+un exercice rouge ou injouable n'est jamais compté vert. Un critère non tenu est nommé ici, jamais
+coché, et il n'a pas bloqué le merge : ce que le dispositif rend difficile est l'absence de trace,
+pas la livraison.
 
 ENTETE
 }
@@ -3264,11 +3286,12 @@ AUCUN
 # `--aucun <iid>`, sans fichier, signale un ticket qui n'a aucun critère — après l'avoir vérifié.
 #
 # Codes : 0 consigné (ou déjà consigné à l'identique) · 2 usage · 3 iid inconnu · 4 fichier absent ou
-# vide · 5 le constat ne tient pas (un critère sans réponse recevable, un ✓ sans preuve exercée, un
-# banc dû sans ligne `Banc` ou compté vert sur un passage qui ne l'est pas, un constat sur un ticket
-# sans critère, un `--aucun` sur un ticket qui en a) · 1 forge muette, ou base du diff introuvable —
-# sans elle, on ne sait pas si le banc est dû. Les refus tombent AVANT toute écriture, et ceux qui ne coûtent rien (4, 3, un
-# fichier sans aucune ligne `Cn`) avant la première lecture de forge (règle de `gl_reste_claude`).
+# vide · 5 le constat ne tient pas (un critère sans réponse recevable, un ✓ sans preuve exercée, une
+# question de l'exercice tue, un verdict d'exercice qui n'est pas celui de son relevé, un constat sur
+# un ticket sans critère, un `--aucun` sur un ticket qui en a) · 1 forge muette, ou base du diff
+# introuvable — sans elle, on ne sait pas si la question de l'exercice se pose. Les refus tombent
+# AVANT toute écriture, et ceux qui ne coûtent rien (4, 3, un fichier sans aucune ligne `Cn`) avant
+# la première lecture de forge (règle de `gl_reste_claude`).
 gl_criteres_note() {
   local aucun=0
   while [ $# -gt 0 ]; do
@@ -3342,21 +3365,16 @@ gl_criteres_note() {
     fi
     # L'inventaire des tests voyage par un fichier (voir `gl_criteres_tests_nommes`). Brouillon que
     # personne ne relit : temporaire du système, pas `.maestro/` (règle #234, docs/10 §8.5).
-    local inventaire touches banc_du="" verdict manques croise rc_croise
+    local inventaire touches exercice_du="" verdict manques
     inventaire="$(mktemp "${TMPDIR:-/tmp}/maestro-tests-nommes.XXXXXX")" || return 1
     gl_criteres_tests_nommes > "$inventaire"
-    # Le banc dû : ce que la carte fait croiser au diff (#1464), et, faute de carte, le préfixe.
-    croise="$(gl_banc_croisement --court 2>/dev/null)"; rc_croise=$?
-    case "$rc_croise" in
-      0) banc_du="$croise" ;;
-      3) ;;
-      *)
-        touches="$(printf '%s\n' "$chemins" | gl_banc_touches)"
-        [ -n "$touches" ] &&
-          banc_du="le diff touche le chemin des scénarios de référence ($(printf '%s\n' "$touches" | gl_banc_resume))" ;;
-    esac
-    verdict="$(ATTENDUS="$attendus" BANC_DU="$banc_du" RAPPORTS="$GL_BANC_RAPPORTS" \
-      COMPARATIF="$GL_COMPARATIF_RAPPORTS" gl_criteres_constat "$inventaire" "$fichier")"
+    # La question de l'exercice : posée quand le diff touche ce que la vraie stack charge (#1570).
+    touches="$(printf '%s\n' "$chemins" | gl_exercice_touches)"
+    [ -n "$touches" ] &&
+      exercice_du="le diff touche ce que la vraie stack charge ($(printf '%s\n' "$touches" | gl_chemins_resume))"
+    verdict="$(ATTENDUS="$attendus" EXERCICE_DU="$exercice_du" EXERCICES="$GL_EXERCICES_RELEVES" \
+      RAPPORTS="$GL_BANC_RAPPORTS" COMPARATIF="$GL_COMPARATIF_RAPPORTS" \
+      gl_criteres_constat "$inventaire" "$fichier")"
     rm -f "$inventaire"
     manques="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "!" { print "    - " $2 " : " $3 }')"
     if [ -n "$manques" ]; then
@@ -3364,13 +3382,13 @@ gl_criteres_note() {
       printf '%s\n' "$manques" >&2
       echo "  Un critère que rien n'a exercé se dit ✗ (avec pourquoi) ou « hors diff » (avec ce qui le" >&2
       echo "  montre) — jamais ✓ pour faire passer le constat. Un ✓ nomme sa preuve : le test qui passe" >&2
-      echo "  (test_…, ou un fichier *.test.tsx), le passage du banc (son horodatage), le run de la vraie" >&2
+      echo "  (test_…, ou un fichier *.test.tsx), l'exercice (son identifiant), le run de la vraie" >&2
       echo "  stack (run <id>) ou sa capture." >&2
       return 5
     fi
     entete="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "=" {
       printf "%s ✓ · %s ✗ · %s hors diff", $2, $3, $4
-      if ($5 != "") printf " · banc %s", $5
+      if ($5 != "") printf " · exercice %s", $5
     }')"
     corps_note="$(cat "$fichier")"
   fi
@@ -9880,11 +9898,11 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
       echo "                                      commentaires « ## Veille de conception » / « ## Variante retenue » —, ce" >&2
       echo "                                      contre quoi le regard neuf juge, #980)" >&2
       echo "  criteres <iid>                     (lecture seule : les critères d'acceptation à confronter au diff, numérotés" >&2
-      echo "                                      C1…Cn ; repli bug sur « Comportement attendu » ; « # banc » quand le diff" >&2
-      echo "                                      touche le chemin des scénarios. 0=il y en a, 3=aucun — #968, #1240)" >&2
+      echo "                                      C1…Cn ; repli bug sur « Comportement attendu » ; « # exercice » quand le" >&2
+      echo "                                      diff touche ce que la vraie stack charge. 0=il y en a, 3=aucun — #968, #1570)" >&2
       echo "  criteres-note <iid> <fichier> | --aucun <iid>  (CONSIGNE la confrontation des critères au diff sur le" >&2
       echo "                                      ticket, ancrée et idempotente. 5 = un Cn sans réponse, un ✓ sans preuve" >&2
-      echo "                                      exercée, un banc dû tu ; --aucun signale un ticket sans critère — #968, #1240)" >&2
+      echo "                                      exercée, l'exercice tu ; --aucun signale un ticket sans critère — #968, #1570)" >&2
       echo "  current-milestone [produit|outillage] (titre du milestone courant du rail — le plus ancien actif portant" >&2
       echo "                                      encore un ticket ouvert ; soldé et vide sont sautés, chacun nommé sur stderr. Défaut produit)" >&2
       echo "  milestones                         (tous les milestones : titre/état/dates/avancement, TSV)" >&2

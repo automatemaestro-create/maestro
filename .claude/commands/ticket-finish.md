@@ -60,18 +60,16 @@ merge), arrête-toi et demande si un point n'est pas clair.
      attendu » vaut `C1`). **Exerce chacun** (#1240) : un critère se clôt sur une preuve exercée,
      plus sur un fichier du diff. Deux preuves valent : **un test nommé qui passe**, joué et vu
      passer (la pièce donne son nom et son verdict) ; **une observation sur la vraie stack**, API ou
-     UI de `start.sh` ou banc des scénarios (la pièce nomme le run, le passage ou la capture).
+     UI de `start.sh` ou exercice construit (la pièce nomme le run, l'exercice ou la capture).
 
-     **Le banc** : la question annonce (`# banc`) les scénarios dont la carte croise ton diff, le
-     moins cher en tête. Il est **dû** si ton changement touche ce que le modèle reçoit ou
-     fait (prompts, playbooks, gabarits, outils et verbes offerts, portée et permissions d'un
-     agent) : joue **avant de pousser** les scénarios annoncés, puis `start.sh --stop` :
-     ```
-     bash scripts/controltower/start.sh --etat-banc --rejouer=<S…> --no-browser
-     ```
-     Son verdict entre par une ligne **Banc** : `vert`/`rouge` avec son passage, ou `non joué` avec
-     sa raison — non dû : `mécanique couverte par <tests nommés> ; banc par lot sur main`. **Un
-     banc injouable est nommé, jamais compté vert** ; un rouge ne se rejoue pas jusqu'au vert.
+     **L'exercice** (docs/10 §6.2) : `# exercice` l'annonce quand ton diff touche ce que la vraie
+     stack charge. Il est **dû** si ton changement touche ce que le modèle reçoit ou fait (prompts,
+     playbooks, outils et verbes offerts, portée d'un agent) ou une mécanique que seule la vraie
+     stack montre : c'est ton jugement. Dû, joue-le **avant de pousser**, tiré des critères et
+     taillé au changement, son **oracle écrit avant de jouer**. Ligne **Exercice** :
+     `vert`/`rouge` avec son relevé et son run, ou `non joué` avec sa raison — non dû : `mécanique
+     couverte par <tests nommés>`. **Un exercice injouable est nommé, jamais compté vert** ; un
+     rouge ne se rejoue pas jusqu'au vert.
 
      Constat écrit avec `Write` dans `.maestro/session/criteres-<iid>.md`, une ligne par critère :
      ```
@@ -80,7 +78,7 @@ merge), arrête-toi et demande si un point n'est pas clair.
      | C1 | ✓ tenu | `tests/test_x.py::test_rend_0` passé |
      | C2 | ✗ non tenu | écrit dans `docs/…`, rien ne l'exerce |
      | C3 | hors diff | décision consignée sur le ticket |
-     | Banc | vert | passage 20260923-154349 (S2) |
+     | Exercice | vert | exercice 20261106-101500, run 728afd3dae61 |
      ```
      ✓ : la pièce **nomme sa preuve exercée**. ✗ : rien ne l'a exercé, ou l'exercice a échoué, dis
      pourquoi. hors diff : dis ce qui le montre. Puis :
@@ -93,13 +91,14 @@ merge), arrête-toi et demande si un point n'est pas clair.
    - **code `1`** : signale-le et poursuis.
 
    **Un critère non tenu est nommé, jamais coché.** `criteres-note` refuse (`5`) un ✓ sans preuve
-   exercée ou sur un passage non vert, un banc dû sans ligne **Banc** : on répare en exerçant, ou en
-   disant ✗ ou hors diff, jamais en cochant pour passer. Il vérifie qu'un test **existe**, pas qu'il
-   passe : le dire vert sans l'avoir vu passer est un ✓ fabriqué. Son `1` (forge muette) ne bloque
-   pas : signale-le. **Un ✗ n'empêche pas le merge** : corrige ce qui se corrige ici, puis reprends
-   à l'étape 4 ; ce qui dépasse le ticket se consigne ✗ avec sa suite, et se nomme au résumé —
-   ouvrir un ticket reste une décision. **On ne demande pas, on joue**, à l'identique en run et
-   en interactif, banc compris ; seul le banc dû reste un jugement, et se consigne.
+   exercée ou sur un exercice non vert, l'exercice annoncé sans ligne **Exercice** : on répare en
+   exerçant, ou en disant ✗ ou hors diff, jamais en cochant pour passer. Il vérifie qu'un test
+   **existe**, pas qu'il passe : le dire vert sans l'avoir vu passer est un ✓ fabriqué. Son `1`
+   (forge muette) ne bloque pas : signale-le. **Un ✗ n'empêche pas le merge** : corrige ce qui se
+   corrige ici, puis reprends à l'étape 4 ; ce qui dépasse le ticket se consigne ✗ avec sa suite,
+   et se nomme au résumé — ouvrir un ticket reste une décision. **On ne demande pas, on joue**, à
+   l'identique en run et en interactif, exercice compris ; seul l'exercice dû reste un jugement,
+   et se consigne.
 
 5. **Filet CI local**, source unique des contrôles locaux :
    ```
@@ -235,8 +234,8 @@ merge), arrête-toi et demande si un point n'est pas clair.
    lien de la PR, le filet CI s'il n'était pas vert (quel job, pourquoi tu as poussé quand même),
    les signalements (`1` d'un verbe), le retard sur `origin/main`, le **temps** loggé
    (ou pourquoi rien), le **ticket de reprise** de 9.3, la planche, et la **confrontation des
-   critères** sur sa ligne (`n ✓ · n ✗ · n hors diff`, chaque critère ✗ nommé, le banc s'il était
-   dû, ou « aucun critère — signalé sur le ticket »).
+   critères** sur sa ligne (`n ✓ · n ✗ · n hors diff`, chaque critère ✗ nommé, l'exercice s'il
+   était dû, ou « aucun critère — signalé sur le ticket »).
 
    | Issue | À rapporter |
    |---|---|
