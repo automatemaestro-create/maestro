@@ -2842,6 +2842,7 @@ GL_CRITERES_ANCRE="${GL_CRITERES_ANCRE:-Critères confrontés au diff}"
 # Les préfixes sont gardés par `tests/test_criteres_cloture.py`, qui vérifie qu'ils existent.
 GL_EXERCICE_CHEMINS="maestro/ core/ packages/shared/"
 # Le chemin que `banc-main.sh` regarde pour décider du banc par lot, jusqu'à son retrait (#1572).
+# shellcheck disable=SC2034  # lue par `banc-main.sh`, qui source ce fichier (lint par fichier).
 GL_BANC_CHEMINS="$GL_EXERCICE_CHEMINS"
 # Où un exercice laisse son relevé, relatif à la racine d'où l'on joue — `RACINE_EXERCICES` de
 # `maestro/scenarios/exercice.py`. Son état (`exercice.json`) porte son verdict et ses runs.
