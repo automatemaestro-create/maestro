@@ -1185,6 +1185,24 @@ def test_la_doc_du_workflow_decrit_l_exercice_au_ticket() -> None:
         assert passe not in section, passe
 
 
+def test_claude_md_decrit_l_exercice_a_la_cloture() -> None:
+    """C2 de #1570 : la ligne `/ticket-finish` de CLAUDE.md, que chaque session charge, dit la règle
+    au présent — l'exercice construit, ce qui le rend dû, l'oracle d'abord, la ligne `Exercice` —
+    et plus rien de la carte ni de la ligne `Banc`."""
+    texte = " ".join((RACINE / "CLAUDE.md").read_text(encoding="utf-8").split())
+    ligne = texte[texte.index("- `/ticket-finish` —") : texte.index("- `/ticket-ship` —")]
+    for regle in (
+        "un **exercice construit** se joue avant de pousser",
+        "si le changement touche **ce que le modèle reçoit ou fait** ou ce que seule la vraie "
+        "stack montre (jugement de la session, #1570, docs/52)",
+        "tiré des critères, oracle écrit avant de jouer, ligne `Exercice`",
+        "un exercice injouable jamais compté vert",
+    ):
+        assert regle in ligne, regle
+    for passe in ("**carte**", "ligne `Banc`", "banc injouable"):
+        assert passe not in ligne, passe
+
+
 def test_sans_critere_on_signale_sans_en_ecrire() -> None:
     """Les deux moitiés de l'arbitrage : le signalement (pas l'abstention muette de la relecture
     sans écran), et l'interdit d'écrire des critères à la clôture."""
