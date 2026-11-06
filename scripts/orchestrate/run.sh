@@ -2502,10 +2502,10 @@ lance_session() {
 # après leur merge. Le prompt dit l'exigence, la conduite reste celle de l'étape 4ter de la clôture
 # — une seule source, que le prompt ne nomme pas : `/ticket-finish` n'y entre que par `/ticket-ship`
 # (`test_audit_commandes.py`) —, et `criteres-note` refuse un ✓ qui ne nomme aucune preuve.
-# Le banc s'y joue AU PREMIER PLAN : c'est un résultat que la session attend dans son tour, pas un
-# résultat différé. Il n'est dû que si la carte des scénarios croise le diff ET que le changement
-# touche ce que le modèle reçoit ou fait (#1464, docs/47) : le reste, le banc par lot sur `main`
-# le rejoue en fin de run (#1462).
+# L'exercice s'y joue AU PREMIER PLAN : c'est un résultat que la session attend dans son tour, pas
+# un résultat différé. Il est dû quand le changement touche ce que le modèle reçoit ou fait, ou une
+# mécanique que seule la vraie stack montre — un jugement de la session (#1570, docs/52) —, et la
+# session le CONSTRUIT : aucun scénario figé ne vise ce qu'elle vient d'implémenter.
 #
 # Et une MÉTHODE, à la même étape (#1241, R2 de #1239). L'implémentation, cœur du ticket, tenait en
 # une ligne — « Implémente tous les critères d'acceptation du ticket » — quand tout le reste du
@@ -2523,15 +2523,16 @@ Tu traites intégralement le ticket GitHub #$1 de ce dépôt, seul et sans super
    le gardent. Un bug commence par son test : écris D'ABORD le test qui reproduit le défaut et
    vois-le échouer, puis corrige jusqu'à le voir passer. Implémente ainsi tous les critères
    d'acceptation du ticket, puis EXERCE chacun : un critère se clôt sur une preuve exercée — un
-   test nommé que tu as joué et vu passer, ou une observation sur la vraie stack (le run, le
-   passage du banc des scénarios, la capture qui le montre) —, jamais sur un fichier du diff. Le
-   banc est dû quand la clôture annonce que la carte des scénarios croise ton diff ET que ton
-   changement touche ce que le modèle reçoit ou fait (prompts, playbooks, gabarits, outils et
-   verbes offerts, portée et permissions d'un agent) : c'est ton jugement. Dû, joue le banc AVANT
-   de pousser, au premier plan, sur les scénarios annoncés, et consigne son verdict ; non dû,
-   dis-le « non joué » : mécanique couverte par les tests nommés, banc par lot sur main. Et un banc
-   injouable se dit « non joué » avec sa raison, jamais vert. La clôture que /ticket-ship enchaîne
-   porte la conduite et la commande, à son étape 4ter.
+   test nommé que tu as joué et vu passer, ou une observation sur la vraie stack (le run,
+   l'exercice construit, la capture qui le montre) —, jamais sur un fichier du diff. Un exercice
+   est dû quand ton changement touche ce que le modèle reçoit ou fait (prompts, playbooks,
+   gabarits, outils et verbes offerts, portée et permissions d'un agent), ou une mécanique que
+   seule la vraie stack montre (hôte détaché, bus, reprise, extinction) : c'est ton jugement. Dû,
+   CONSTRUIS-le depuis les critères du ticket, taillé à ce que tu viens d'implémenter, écris son
+   oracle AVANT de jouer, puis joue-le AVANT de pousser, au premier plan, et consigne son verdict ;
+   non dû, dis-le « non joué » : mécanique couverte par les tests nommés. Un exercice rouge ne se
+   rejoue pas jusqu'au vert, et un exercice injouable se dit « non joué » avec sa raison, jamais
+   vert. La clôture que /ticket-ship enchaîne porte la conduite et les verbes, à son étape 4ter.
 3. Clôture avec /ticket-ship.
 
 Règles de ce run autonome :
