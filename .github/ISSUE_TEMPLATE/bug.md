@@ -19,7 +19,7 @@ labels: "type::bug,prio::moyenne"
      - **Ce qui ne bouge pas** : ce que la correction laisse tel quel à l'écran.
      - **États à couvrir** : vide, erreur, charge (contenu long), largeur téléphone — lesquels, et ce qu'on y voit.
        Les trois premiers viennent du réel : vide, d'une stack neuve ; erreur, d'une vraie panne (API
-       coupée, ou qui répond en erreur) ; charge, de l'état laissé par le banc (`start.sh --etat-banc`).
+       coupée, ou qui répond en erreur) ; charge, de l'état qu'un exercice a sauvé (`start.sh --etat-banc`).
        Un état que le réel ne sait pas produire se dit « non couvert », il ne se fabrique pas. -->
 
 ## Étapes de reproduction

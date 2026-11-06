@@ -103,10 +103,10 @@
 # scénarisé et pas ce que le produit fait (docs/41 §4). Chaque état vient désormais de la VRAIE stack,
 # et un état qu'elle ne sait pas produire est NOMMÉ NON COUVERT, jamais fabriqué :
 #
-#   - `peuple` (le défaut) — l'état réel que le dernier passage du banc des scénarios a laissé (#1148),
-#     rouvert par l'API réelle sans rien rejouer (`start.sh --etat-banc`, #1164). Son âge est dit au
-#     démarrage : un passage se rejoue à la demande (`--etat-banc --rejouer`, vrai modèle, des dizaines
-#     de minutes), JAMAIS d'office ici. C'est aussi la « charge » : celle que le passage a laissée.
+#   - `peuple` (le défaut) — l'état réel que le dernier exercice sauvé a laissé (#1569), rouvert par
+#     l'API réelle sans rien rejouer (`start.sh --etat-banc`, #1164). Son âge est dit au démarrage :
+#     un état neuf se fait par un exercice construit (vrai modèle), JAMAIS d'office ici. C'est aussi
+#     la « charge » : celle que l'exercice a laissée.
 #   - `vide` — une stack neuve (`start.sh --etat-neuf`), puis un projet neuf déclaré par l'API : ce
 #     que voit quelqu'un qui vient de déclarer son premier projet. Sans projet, le shell resterait sur
 #     sa porte (#279), et la porte d'une stack neuve n'est pas l'état vide des écrans.
@@ -1619,11 +1619,12 @@ fi
 
 dire ""
 if [ "$ETAT" = "peuple" ] && [ "$code" -eq 4 ]; then
-  # Aucun passage n'a laissé d'état sur ce poste : l'en jouer un coûte du vrai modèle (des dizaines de
-  # minutes), ce qui ne se décide pas au détour d'une relecture — on le nomme, et on s'arrête.
-  dire "  ✗ état « peuple » non servi : aucun passage du banc n'a laissé d'état sur ce poste."
-  dire "    En jouer un est une demande, jamais un geste d'office (vrai modèle, des dizaines de minutes) :"
-  dire "        bash scripts/controltower/start.sh --etat-banc --rejouer"
+  # Aucun exercice n'a laissé d'état sur ce poste : en jouer un coûte du vrai modèle, ce qui ne se
+  # décide pas au détour d'une relecture — on le nomme, et on s'arrête.
+  dire "  ✗ état « peuple » non servi : aucun exercice n'a laissé d'état sur ce poste."
+  dire "    En laisser un est une demande, jamais un geste d'office (vrai modèle) : un exercice joué sur"
+  dire "        bash scripts/controltower/start.sh --etat-neuf --no-browser"
+  dire "    puis sauvé (.venv/Scripts/python.exe -m maestro.scenarios.exercice … sauver)."
   dire "    Les autres états restent montables (--etat vide) ; celui-ci va à « ce que je n'ai pas pu voir »."
 else
   dire "  ✗ la stack n'a pas démarré (code $code) — journaux sous .maestro/controltower/$PORT_API-$PORT_UI/"

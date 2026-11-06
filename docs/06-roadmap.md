@@ -1933,8 +1933,7 @@ seul »**, dont l'échéance ne bouge pas.
   se boucle donc pas avant lui.
 - **Né assigné** : #1587 lance `run.sh` pour le côté chaîne, et démarrer un run tue ceux qui sont en
   vol (#213), dont celui qui le porterait. Il conduit aussi la Control Tower. Il se traite donc en
-  interactif. Le banc par lot ne s'y joue pas : `--sans-banc` tant qu'il existe, puisque #1572 le
-  retire.
+  interactif. Aucun banc ne s'y joue : #1572 a retiré le banc par lot.
 - **Pas de jalon neuf** : #1587 sert un critère de sortie du jalon courant du rail produit, et la
   limite de quatre jalons produit en chantier ([docs/48](./48-decision-produit-pro-exploitable.md))
   n'a pas de place à donner.

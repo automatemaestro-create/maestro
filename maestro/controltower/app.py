@@ -2787,15 +2787,15 @@ def create_app(
         """Vitalité du service, l'**espace** qu'il sert (#1164) et son **magasin** (#1206).
 
         L'espace dit quelles données cette API voit — celles de sa copie de
-        travail, ou le jeu du banc. Le banc des scénarios le lit avant de sauver
-        l'état d'un passage : sauver les données d'une autre stack que celle où il
-        a joué ferait rouvrir un état qui n'est pas le sien.
+        travail, ou le jeu du banc. Un exercice le lit avant de sauver son état
+        (`maestro.scenarios.exercice sauver`) : sauver les données d'une autre stack
+        que celle où il a joué ferait rouvrir un état qui n'est pas le sien.
 
         Le **statut** ne dit « ok » que si le magasin répond et que l'historique
         a été relu ; sinon `"degrade"`, et `magasin` porte le motif et le geste.
-        La réponse reste un `200` : la purge, le lanceur, `start.sh` et le banc
-        lisent ici qu'**un process sert ce port**, et c'est vrai. Ce qui a cessé
-        est le « ok » menteur d'une API qui a perdu son magasin.
+        La réponse reste un `200` : la purge, le lanceur, `start.sh` et les passages
+        (exercice, comparatif) lisent ici qu'**un process sert ce port**, et c'est vrai.
+        Ce qui a cessé est le « ok » menteur d'une API qui a perdu son magasin.
         """
         etat = await magasin.etat()
         return {

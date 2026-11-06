@@ -20,9 +20,12 @@ référence le joue avant de pousser »* —, et le déclencheur qui l'exprime :
 > du scénario que la carte désignait : c'est fait depuis #1570, et §0.2 et §0.3 ne décrivent plus
 > le présent ([docs/10 §6](./10-workflow-git.md)). Au bilan d'un jalon produit, les exercices se
 > tirent des critères de sortie depuis #1571 : le bouclage de §5 se joue sur eux, plus sur les
-> scénarios ([docs/10 §3.4](./10-workflow-git.md)). La carte, le croisement et l'historique se
-> retirent avec les scénarios (#1572) ; jusque-là, ce qui suit décrit encore le banc par lot. La
-> preuve exercée et l'épreuve injouable jamais comptée verte (§5) ne bougent pas.
+> scénarios ([docs/10 §3.4](./10-workflow-git.md)). La carte, le croisement, l'historique, le banc
+> par lot (`banc-main.sh`, la copie `main.banc`, sa section de `run.sh` et de `status.sh`) et
+> `GL_BANC_CHEMINS` ont quitté le dépôt avec les scénarios le 2026-11-06 (#1572) : aucun run ne
+> joue ni n'annonce plus de banc ([docs/10 §11.13](./10-workflow-git.md)), et ce qui suit est
+> l'histoire de la décision, plus un mécanisme du dépôt. De §5 ne restent que la preuve exercée et
+> l'épreuve injouable jamais comptée verte, que l'exercice construit garde.
 
 1. **Le banc entier se joue une fois par lot**, sur `main` intégrée, par le pilote, après le drain
    final (#1462). C'est ce passage qui attrape une mécanique cassée par un merge.

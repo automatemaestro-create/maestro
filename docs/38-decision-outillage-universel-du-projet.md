@@ -938,7 +938,7 @@ personne que l'outillage « appelle désormais partout » la nouvelle.
 dans la forme d'avant (l'une par sa fiche, l'autre par une version publiée), correction dite, pièces
 acceptées d'un geste —, jusqu'à ce que chaque agent reçoit et à ce que la rédaction lit
 ([`tests/test_outillage_pieces.py`](../tests/test_outillage_pieces.py), section ⑧), et la sonde de S9
-rouge sur le reste du passage `20261014-171347` ([`tests/test_scenarios.py`](../tests/test_scenarios.py)).
+rouge sur le reste du passage `20261014-171347` (`tests/test_scenarios.py`, retiré avec le banc figé par #1572).
 
 ### 5.11 Ce que la personne a choisi, le livrable le suit (#1507)
 

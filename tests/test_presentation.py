@@ -946,7 +946,7 @@ def test_seules_les_captures_decident_du_code_de_retour(
 
 # --- La vraie stack, plus la démo (#1166) ---------------------------------------------------------
 #
-# La série tourne désormais sur la Control Tower réelle, rouverte sur l'état qu'un passage du banc
+# La série tourne désormais sur la Control Tower réelle, rouverte sur l'état qu'un exercice
 # a laissé. Trois décisions du script en découlent, et c'est elles qu'on épingle ici, toujours
 # contre le stub : le projet ouvert est CHOISI parmi ceux que l'API déclare (plus un `prj-demo`
 # écrit d'avance) ; la provenance voyage jusqu'au manifeste ; et une série sur le réel MONTRE sans
@@ -1805,7 +1805,7 @@ def test_la_page_dit_que_ses_pieces_viennent_de_la_vraie_stack(
     presentation: Presentation,
 ) -> None:
     """Le texte de la page suit le changement de #1166 : captures et clips tournent sur la vraie
-    Control Tower, dans l'état qu'un passage du banc a laissé — dont la date est dite, parce que la
+    Control Tower, dans l'état qu'un exercice a laissé — dont la date est dite, parce que la
     page se partage et que son lecteur doit savoir ce qu'il regarde. « Stack de démonstration »
     n'y a plus de sens."""
     clip = {"cle": "couts", "libelle": "Coûts", "affiche": None}
@@ -1821,7 +1821,7 @@ def test_la_page_dit_que_ses_pieces_viennent_de_la_vraie_stack(
     html = presentation.html()
 
     assert "stack de démonstration" not in html
-    attendu = "dans l'état laissé par le passage des scénarios de référence du 22/09/2026"
+    attendu = "dans l'état laissé par un exercice du 22/09/2026"
     assert html.count(escape(attendu)) == 2, "la galerie ET les clips disent d'où ils viennent"
     assert escape("Captures prises sur la vraie Control Tower") in html
     assert "Tournées sur la vraie Control Tower" in html
@@ -1847,7 +1847,7 @@ def test_sans_etat_lisible_la_page_dit_la_vraie_stack_sans_date(
     assert processus.returncode == 0, processus.stderr
     html = presentation.html()
     assert "Tournées sur la vraie Control Tower, jouables ici même." in html
-    assert "scénarios de référence du" not in html
+    assert "laissé par un exercice du" not in html
 
 
 def test_sans_clip_la_section_demonstrations_disparait(presentation: Presentation) -> None:
@@ -1973,7 +1973,7 @@ MOTIFS_REEL_PRESENTATION = (
     "l'état du banc",
     "la vraie Control Tower",
     "`source` se **recopie tel quel**",
-    "start.sh --etat-banc --rejouer",
+    "maestro.scenarios.exercice",
     "Ne le lance pas de toi-même",
 )
 

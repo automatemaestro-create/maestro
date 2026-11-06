@@ -54,7 +54,7 @@ esthétique se serait trompée de question.
 - **Ce qui ne va pas aujourd'hui**, en faits : ce que le ticket rapporte, ce qu'une capture montre,
   ce que le code fait. Si la surface est visible en local, regarde-la **sur la vraie stack** — le
   skill `control-tower` la monte, sur les ports que `worktree.sh ensure` a annoncés pour ce
-  worktree : `--etat-banc` pour la voir peuplée par l'état qu'un passage du banc a laissé, une
+  worktree : `--etat-banc` pour la voir peuplée par l'état qu'un exercice a sauvé, une
   stack neuve pour la voir vide. Un état que le réel ne produit pas se note « non vu », il ne se
   fabrique pas.
 

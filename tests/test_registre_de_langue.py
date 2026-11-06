@@ -473,19 +473,14 @@ _HORS_INTERFACE = {
     # terminal, et le propriétaire qu'il nomme est le script qui retirera ce qu'il montre.
     "maestro/menage.py": "le ménage du poste, joué depuis un terminal",
     "maestro/engine/cli.py": "la ligne de commande du moteur (`maestro-run`)",
-    # Même raison que la purge, et le même geste : le banc des scénarios (#1148) est
-    # joué dans un terminal, et son refus nomme la commande qui allume la stack.
-    # Taire `scripts/controltower/start.sh` laisserait « l'API ne répond pas » sans
-    # suite, sur le seul écart que ce banc ne peut pas réparer lui-même.
-    "maestro/scenarios/banc.py": "le banc des scénarios de référence, joué en terminal",
+    # Le banc comparatif (#1512) est joué dans un terminal, et son refus nomme la commande
+    # qui allume la stack. Taire `scripts/controltower/start.sh` laisserait « l'API ne
+    # répond pas » sans suite, sur le seul écart que le banc ne peut pas réparer lui-même.
+    "maestro/scenarios/comparatif.py": "le banc comparatif, joué en terminal",
     # Le préflight et les gestes de l'état du banc (#1164) : joués par `start.sh`, dont
     # ils remontent la sortie au terminal. Un refus (« rien à rouvrir », « quelque chose
     # vit sur le banc ») n'a de suite que s'il nomme le geste qui débloque.
     "maestro/scenarios/etat.py": "l'état du banc, joué par le lanceur en terminal",
-    # La carte du code exécuté (#1463) : `--preparer` est lu par `start.sh`, et ses lignes
-    # vont à la sortie du banc. « Stack non mesurée » n'a de suite que si elle nomme le
-    # lanceur qui pose la sonde.
-    "maestro/scenarios/carte.py": "la carte du banc, lue au terminal et par le lanceur",
     # Les verbes de l'exercice construit (#1569) : joués geste par geste par une session de
     # développement, en terminal. « Aucune API » ou « état sauvé » n'ont de suite que s'ils
     # nomment le lanceur qui sert la stack du banc, ou celui qui rouvre l'état.

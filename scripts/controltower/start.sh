@@ -40,13 +40,12 @@
 # LE MODE DÉMO A QUITTÉ LE PRODUIT (#1168, docs/41 §4). `--demo`, `--demonstration`
 # et `--scenario` servaient un scénario factice sur un bus mémoire ; ils sont
 # REFUSÉS, en nommant les états réels qui les remplacent : une stack neuve
-# (`--etat-neuf`), l'état du dernier passage du banc (`--etat-banc`) et une vraie
+# (`--etat-neuf`), l'état du dernier exercice sauvé (`--etat-banc`) et une vraie
 # panne (`--couper-api`). Ce que le réel ne produit pas se dit « non couvert ».
 #
 #   bash scripts/controltower/start.sh                     # (re)démarre tout + navigateur (réel)
 #   bash scripts/controltower/start.sh --no-browser        # sans navigateur ni arrêt auto
-#   bash scripts/controltower/start.sh --etat-banc         # réel, sur l'état du dernier passage du banc (#1164)
-#   bash scripts/controltower/start.sh --etat-banc --rejouer[=S2,S4]  # le banc repart à neuf et rejoue
+#   bash scripts/controltower/start.sh --etat-banc         # réel, sur l'état du dernier exercice sauvé (#1164)
 #   bash scripts/controltower/start.sh --etat-neuf         # réel, sur une stack NEUVE : aucun run, fil ni projet (#1165)
 #   bash scripts/controltower/start.sh --stop              # arrête seulement (et SOLDE les runs en vol)
 #   bash scripts/controltower/start.sh --couper-api        # l'API seule tombe, l'UI reste servie (#1165)
@@ -61,21 +60,21 @@
 # script n'en connaît aucun nom, Python résout.
 #
 # L'ÉTAT DU BANC (#1164, docs/40 §5). `--etat-banc` sert, par l'API réelle, l'état
-# que le dernier passage du banc des scénarios (#1148) a laissé, rouvert à chaque
-# démarrage sans rien rejouer, et DIT SON ÂGE. Il vit dans un jeu de données à
-# part (`<espace>.banc`, `.maestro/banc/`) : ni les données de la copie ni celles
-# du poste ne sont touchées. `--rejouer` le refait : banc remis à neuf, stack
-# servie, puis le banc joue ses scénarios au premier plan contre elle — le vrai
-# modèle, des dizaines de minutes — et sauve l'état qu'il laisse ; `=S2,S4` n'en
-# joue que certains. Le détail est dans `maestro/scenarios/etat.py`.
+# que le dernier exercice sauvé (`maestro.scenarios.exercice … sauver`, #1569) a
+# laissé — celui de cette copie d'abord, sinon celui du poste, en le disant —,
+# rouvert à chaque démarrage sans rien rejouer, et DIT SON ÂGE. Il vit dans un jeu
+# de données à part (`<espace>.banc`, `.maestro/banc/`) : ni les données de la copie
+# ni celles du poste ne sont touchées. Un état neuf se fait en jouant un exercice
+# neuf sur `--etat-neuf`, jamais un parcours figé (#1568). Le détail est dans
+# `maestro/scenarios/etat.py`.
 #
 # UNE STACK NEUVE ET UNE VRAIE PANNE (#1165). Deux gestes pour regarder le produit
 # ailleurs que dans son état peuplé, sans rien fabriquer — c'est ce que la relecture
 # visuelle ouvre :
 #   - `--etat-neuf` sert le banc de la copie REMIS À NEUF et rien de plus : aucun
-#     run, aucun fil, aucun projet, la configuration de la copie. Le geste qui
-#     précède un `--rejouer`, sans le passage qui le suit ; l'état sauvé d'un passage
-#     n'y perd rien, il vit dans son atelier.
+#     run, aucun fil, aucun projet, la configuration de la copie. C'est la stack sur
+#     laquelle un exercice se joue ; l'état sauvé d'un exercice n'y perd rien, il vit
+#     dans son atelier.
 #   - `--couper-api` arrête l'API SEULE et laisse l'UI servie : la panne « API
 #     injoignable » (#996) telle qu'un crash la fait voir. Ce n'est pas un arrêt de
 #     la Control Tower : rien n'est soldé (c'est un accident, pas une volonté) et le
@@ -303,7 +302,7 @@ decrire_processus() {
 # « mort », « recyclé », « invérifiable » —, le pid lu dans TEMOIN_API_LU.
 #
 # Un pid seul ne suffit pas, il se recycle (#456) : le témoin d'IDENTITÉ est la ligne de commande
-# de l'API sur CE port — celle que ce script lance, et celle de l'API que le banc S12 rallume
+# de l'API sur CE port — celle que ce script lance, et celle de l'API qu'un passage rallume
 # (`maestro/scenarios/redemarrage.py`). Illisible, elle fait s'abstenir.
 temoin_de_l_api() {
   TEMOIN_API_PID=""
@@ -921,13 +920,10 @@ MODE="demarrer"
 JETON_SURVEILLE=""
 NAVIGATEUR_AUTO=1
 # Les données que la stack réelle sert (#1164) : « copie » (celles de la copie de
-# travail) par défaut, « banc » sur `--etat-banc` (l'état du dernier passage du
-# banc), « neuf » sur `--etat-neuf` (le banc remis à neuf, #1165). REJOUER=1 refait
-# l'état du banc ; REJOUER_SCENARIOS borne le passage.
+# travail) par défaut, « banc » sur `--etat-banc` (l'état du dernier exercice
+# sauvé), « neuf » sur `--etat-neuf` (le banc remis à neuf, #1165).
 DONNEES="copie"
 DONNEES_DEMANDEES=""
-REJOUER=0
-REJOUER_SCENARIOS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --stop) MODE="arreter" ;;
@@ -938,20 +934,20 @@ while [ $# -gt 0 ]; do
       echo "$1 : le mode démo a quitté le produit (#1168) — la Control Tower se lance sur le réel." >&2
       echo "  Pour regarder un état, sans rien fabriquer :" >&2
       echo "    · vide   : bash scripts/controltower/start.sh --etat-neuf" >&2
-      echo "    · peuplé : bash scripts/controltower/start.sh --etat-banc   (l'état du dernier passage du banc)" >&2
+      echo "    · peuplé : bash scripts/controltower/start.sh --etat-banc   (l'état du dernier exercice sauvé)" >&2
       echo "    · panne  : bash scripts/controltower/start.sh --couper-api  (l'API seule tombe, l'UI reste servie)" >&2
       exit 2
       ;;
     --etat-banc) DONNEES="banc"; DONNEES_DEMANDEES="$DONNEES_DEMANDEES banc" ;;
     --etat-neuf) DONNEES="neuf"; DONNEES_DEMANDEES="$DONNEES_DEMANDEES neuf" ;;
-    --rejouer) REJOUER=1 ;;
-    --rejouer=*)
-      REJOUER=1
-      REJOUER_SCENARIOS="${1#--rejouer=}"
-      if [ -z "$REJOUER_SCENARIOS" ]; then
-        echo "--rejouer= attend des scénarios (ex. --rejouer=S2,S4), ou rien pour tous" >&2
-        exit 2
-      fi
+    # Le banc figé est parti (#1572) : aucun parcours ne se rejoue, on le dit et on nomme
+    # le geste qui fait un état neuf — un exercice construit, joué sur une stack neuve.
+    --rejouer | --rejouer=*)
+      echo "$1 : le banc figé a quitté le dépôt (#1568) — aucun parcours ne se rejoue." >&2
+      echo "  Un état neuf se fait par un exercice construit, sur une stack neuve :" >&2
+      echo "    bash scripts/controltower/start.sh --etat-neuf --no-browser" >&2
+      echo "    .venv/Scripts/python.exe -m maestro.scenarios.exercice ouvrir … puis sauver" >&2
+      exit 2
       ;;
     --no-browser | --sans-navigateur) NAVIGATEUR_AUTO=0 ;;
     # Dit quel navigateur serait ouvert, et comment, sans rien démarrer ni ouvrir.
@@ -970,23 +966,16 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Rejouer l'état du banc (#1164) ne se demande pas seul — c'est refaire CET état-là, et il coûte
-# du vrai modèle : un `--rejouer` égaré ne doit pas lancer un passage.
-#
 # La stack neuve (#1165) est une stack réelle sur un jeu de données à part. Elle ne se demande
 # pas avec l'état du banc — l'une vide ce que l'autre rouvre : servir les deux à la fois n'a pas
 # de sens.
 if [ "$MODE" != "arreter" ] && [ "$MODE" != "couper-api" ]; then
   case "$DONNEES_DEMANDEES" in
     *banc*neuf* | *neuf*banc*)
-      echo "--etat-banc rouvre l'état d'un passage, --etat-neuf sert une stack vide : l'un ou l'autre" >&2
+      echo "--etat-banc rouvre l'état d'un exercice, --etat-neuf sert une stack vide : l'un ou l'autre" >&2
       exit 2
       ;;
   esac
-  if [ "$REJOUER" = 1 ] && [ "$DONNEES" != "banc" ]; then
-    echo "--rejouer refait l'état du banc : bash scripts/controltower/start.sh --etat-banc --rejouer" >&2
-    exit 2
-  fi
 fi
 
 # La panne franche (#1165) : l'API SEULE tombe, comme sur un crash — ni soldage (personne n'a voulu
@@ -994,9 +983,9 @@ fi
 # chien de garde. Ce que l'écran montre alors est la vraie panne « API injoignable » (#996), celle
 # qu'aucun scénario n'imite. Rien à couper n'est pas une erreur : la panne est déjà là.
 #
-# L'API se retrouve comme à l'arrêt, par son témoin d'abord (#1579) : c'est par ce geste que le banc
-# S12 la coupe avant de la rallumer, et une API qui répond encore n'est pas une panne — on le dit,
-# et le code de sortie le porte.
+# L'API se retrouve comme à l'arrêt, par son témoin d'abord (#1579) : c'est par ce geste qu'un
+# passage la coupe avant de la rallumer (`maestro.scenarios.redemarrage`), et une API qui répond
+# encore n'est pas une panne — on le dit, et le code de sortie le porte.
 if [ "$MODE" = "couper-api" ]; then
   liberer_port "$PORT_API" "API" "panne"
   if [ -n "$SURVIVANTS" ]; then
@@ -1018,7 +1007,6 @@ if [ "$MODE" = "diagnostic" ]; then
   # pas demandés.
   if [ "$DONNEES" != "copie" ]; then
     printf 'donnees: %s\n' "$DONNEES"
-    if [ "$REJOUER" = 1 ]; then printf 'rejouer: %s\n' "${REJOUER_SCENARIOS:-tous}"; fi
   fi
   printf 'famille: %s\n' "$STRAT_FAMILLE"
   printf 'mode: %s\n' "$STRAT_MODE"
@@ -1133,7 +1121,7 @@ export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 #
 # Sur l'état du banc, le préflight est celui de `maestro.scenarios.etat` : le même
 # ping et la même annonce (celle du banc), plus ce qu'il faut pour le rouvrir —
-# rien en vol sur le banc, et un passage sauvé dont il DIT L'ÂGE. Son code dit
+# rien en vol sur le banc, et un exercice sauvé dont il DIT L'ÂGE. Son code dit
 # pourquoi il refuse (3 : quelque chose vit sur le banc ; 4 : aucun état à rouvrir).
 #
 # La stack neuve (#1165) passe par le même préflight, sans état à rouvrir : `--neuf`.
@@ -1142,8 +1130,6 @@ if [ "$MODE" = "demarrer" ]; then
     code_banc=0
     if [ "$DONNEES" = "neuf" ]; then
       (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --verifier --neuf) || code_banc=$?
-    elif [ "$REJOUER" = 1 ]; then
-      (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --verifier --rejouer) || code_banc=$?
     else
       (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --verifier) || code_banc=$?
     fi
@@ -1229,8 +1215,8 @@ mkdir -p "$LOG_DIR" "$ETAT_DIR"
 printf '%s\n' "$RACINE" >"$ETAT_DIR/$ETAT_STACK_TEMOIN" 2>/dev/null || true
 
 # Le fichier où l'API consignera son pid (#1579), nommé dans la forme de l'OS : c'est un Python
-# natif qui l'écrit. EXPORTÉ, pas seulement passé à l'API : le banc que `--rejouer` lance en hérite,
-# et avec lui l'API que S12 rallume sans passer par ce script — l'arrêt suivant la retrouve aussi.
+# natif qui l'écrit. EXPORTÉ, pas seulement passé à l'API : ce que la stack lance en hérite, et
+# avec lui l'API qu'un passage rallume sans passer par ce script — l'arrêt suivant la retrouve aussi.
 FICHIER_PID_API_OS="$FICHIER_PID_API"
 if [ "$WINDOWS" = 1 ]; then
   FICHIER_PID_API_OS="$(cygpath -w "$FICHIER_PID_API")"
@@ -1241,10 +1227,10 @@ cd "$RACINE" || exit 1
 # L'état du banc s'écrit ICI, entre l'arrêt de l'ancienne session et le démarrage de
 # l'API (#1164) : avant, une API encore en marche garderait l'ancien état en mémoire
 # et pourrait republier dans le journal réécrit ; après, elle aurait déjà rejoué le
-# mauvais. Rouvrir remet le banc dans l'état du dernier passage ; rejouer le remet à neuf, et la
-# stack neuve aussi (#1165) — sans passage derrière.
+# mauvais. Rouvrir remet le banc dans l'état du dernier exercice sauvé ; la stack neuve
+# (#1165) le remet à neuf.
 if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
-  if [ "$REJOUER" = 1 ] || [ "$DONNEES" = "neuf" ]; then
+  if [ "$DONNEES" = "neuf" ]; then
     geste_banc="--vider"
   else
     geste_banc="--rouvrir"
@@ -1254,32 +1240,6 @@ if [ "$DONNEES" = "banc" ] || [ "$DONNEES" = "neuf" ]; then
   if [ "$code_banc" != 0 ]; then
     echo "État du banc non préparé (code $code_banc) — la Control Tower n'est pas démarrée." >&2
     exit "$code_banc"
-  fi
-fi
-
-# La CARTE du code exécuté (#1463), seulement pour un passage : chaque processus Python de la
-# stack — l'API, l'hôte détaché et ses runs, l'API que S12 rallume, le banc lui-même — charge la
-# sonde de maestro/scenarios/sonde/ (un `sitecustomize` posé sur PYTHONPATH) et dit ce qu'il
-# exécute pendant chaque scénario ; le banc assemble `couverture.json` à côté de son rapport. Le
-# produit n'en sait rien : aucune branche « mode banc ». Posée ICI, avant l'API, pour que toute
-# la stack en hérite. Les noms et les chemins viennent de Python (`--preparer`), dans la forme
-# de l'OS : un processus lancé hors de la copie doit les lire tels quels. (La condition est
-# écrite dans l'autre ordre que celle du passage, plus bas : un test repère ce bloc-là par
-# sa première ligne.)
-if [ "$REJOUER" = 1 ] && [ "$DONNEES" = "banc" ]; then
-  if [ "${MAESTRO_BANC_CARTE:-1}" = "0" ]; then
-    echo "[banc] carte du code exécuté éteinte (MAESTRO_BANC_CARTE=0) : le passage n'écrira pas couverture.json"
-  elif carte_env="$("$PYTHON" -m maestro.scenarios.carte --preparer)"; then
-    while IFS= read -r ligne_carte; do
-      ligne_carte="${ligne_carte%$'\r'}"
-      if [ -n "$ligne_carte" ]; then
-        # shellcheck disable=SC2163 # `NOM=valeur` : les noms vivent dans Python, jamais recopiés ici
-        export "$ligne_carte"
-      fi
-    done <<<"$carte_env"
-    echo "[banc] carte du code exécuté : la stack porte la sonde, le passage écrira couverture.json (MAESTRO_BANC_CARTE=0 l'éteint)"
-  else
-    echo "[banc] ⚠ carte du code exécuté non préparée : le passage se joue sans elle" >&2
   fi
 fi
 
@@ -1356,11 +1316,7 @@ if [ "$DONNEES" = "neuf" ]; then
   echo "Control Tower prête (mode réel — stack neuve : aucun run, aucun fil, aucun projet) : $URL_UI"
 elif [ "$DONNEES" = "banc" ]; then
   # L'âge et le contenu de l'état ont été dits au préflight, en tête de sortie.
-  if [ "$REJOUER" = 1 ]; then
-    echo "Control Tower prête (mode réel — banc remis à neuf, le passage commence ci-dessous) : $URL_UI"
-  else
-    echo "Control Tower prête (mode réel — état du banc rouvert, voir son âge plus haut) : $URL_UI"
-  fi
+  echo "Control Tower prête (mode réel — état du banc rouvert, voir son âge plus haut) : $URL_UI"
 else
   echo "Control Tower prête (mode réel) : $URL_UI"
   # Sans run, le poste de pilotage est vide — l'UI l'explique elle-même (#186),
@@ -1386,57 +1342,3 @@ else
   echo "  runs en vol : soldés par l'arrêt, reprenables au redémarrage (MAESTRO_EXTINCTION=0 pour laisser tourner)"
 fi
 signaler_journaux_exposes
-
-# ── Rejouer l'état du banc (#1164) ───────────────────────────────────────────
-# Le passage se joue AU PREMIER PLAN, contre la stack qu'on vient de servir : c'est
-# une demande explicite, et son verdict est ce qu'on attend. La stack reste servie
-# après lui, sur l'état qu'il a laissé et qu'il a sauvé pour les réouvertures.
-# Le port est passé en toutes lettres : le banc parle à CETTE API, et à aucune autre.
-# Son code décide du nôtre : 0 ou 1 (vert ou rouge), le passage est joué et son
-# état sauvé — un rouge est une mesure, pas une panne du lanceur ; tout autre code
-# (usage, API muette, état non sauvé) remonte tel quel.
-#
-# ⚠ MAIS UN PROCESSUS TUÉ SORT EN 1 SOUS WINDOWS, le code d'un rouge (#1365) : le
-# 2026-09-27, deux passages tués à 12:41:25 ont été annoncés « état sauvé ». Ce qui
-# les distingue est le TÉMOIN que le banc écrit en dernier geste, une fois allé au
-# bout (rapport écrit, état traité) : pas de témoin, le passage a été interrompu, et
-# il n'a laissé ni verdict ni état. Le témoin est retiré avant le passage — celui
-# d'un passage précédent ferait passer un passage tué pour joué —, et vit à côté
-# des journaux de cette stack, en chemin relatif (le python du venv ne lit pas le
-# /tmp de Git Bash). Seuls 2 et 3 n'en attendent pas : le banc a refusé avant de
-# jouer. Sortie non tamponnée : les lignes d'un passage tué restent à l'écran (ou au
-# journal qui le capture), au lieu de mourir dans un tampon.
-if [ "$DONNEES" = "banc" ] && [ "$REJOUER" = 1 ]; then
-  echo
-  echo "[banc] passage des scénarios de référence contre :${PORT_API} — vrai modèle, des dizaines de minutes"
-  if [ "$ARRET_AUTO" = 1 ]; then
-    echo "[banc] ⚠ fermer la fenêtre du navigateur arrêterait la stack sous le banc"
-  fi
-  temoin_passage="$LOG_DIR_REL/banc.temoin"
-  rm -f "$temoin_passage"
-  code_passage=0
-  if [ -n "$REJOUER_SCENARIOS" ]; then
-    MAESTRO_PORT_API="$PORT_API" PYTHONUNBUFFERED=1 "$PYTHON" -m maestro.scenarios --sauver-etat \
-      --temoin "$temoin_passage" --scenario "$REJOUER_SCENARIOS" || code_passage=$?
-  else
-    MAESTRO_PORT_API="$PORT_API" PYTHONUNBUFFERED=1 "$PYTHON" -m maestro.scenarios --sauver-etat \
-      --temoin "$temoin_passage" || code_passage=$?
-  fi
-  if [ ! -s "$temoin_passage" ] && [ "$code_passage" != 2 ] && [ "$code_passage" != 3 ]; then
-    echo "[banc] passage INTERROMPU (code $code_passage) avant d'aller au bout — ni verdict ni état sauvé : le processus a été tué. La Control Tower reste servie : $URL_UI" >&2
-    if [ "$code_passage" = 0 ]; then
-      code_passage=1
-    fi
-    exit "$code_passage"
-  fi
-  case "$code_passage" in
-    0 | 1)
-      echo "[banc] état sauvé — la Control Tower le sert : $URL_UI"
-      exit 0
-      ;;
-    *)
-      echo "[banc] passage sans état sauvé (code $code_passage) — la Control Tower reste servie : $URL_UI" >&2
-      exit "$code_passage"
-      ;;
-  esac
-fi

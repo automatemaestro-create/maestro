@@ -28,14 +28,12 @@ par le levier qui l'expose sans rien lancer :
    —, donc il se saute là où il n'existe pas (l'image CI installe le paquet sans
    passer par `.venv/`) ; ② couvre le même diagnostic partout.
 
-⑤ **L'état du banc** (#1164) — `--etat-banc [--rejouer[=S…]]`, par le même
-   diagnostic que ① : il se **demande**, ne change que les données servies, et
-   `--rejouer` ne vaut qu'avec lui (un rejeu coûte du vrai modèle).
-   Son préflight passe, comme ③, avant tout nettoyage. Ce que l'état contient, et la
-   façon dont il se sauve et se rouvre, est gardé par `tests/test_etat_banc.py`.
-   Le verdict d'un rejeu (#1365) se lit sur le **témoin** du banc, pas sur son seul
-   code — un processus tué sort en `1` comme un rouge : le bloc de `start.sh` est
-   joué pour de bon, lu dans le fichier, contre un interpréteur factice.
+⑤ **L'état du banc** (#1164) — `--etat-banc`, par le même diagnostic que ① : il se
+   **demande** et ne change que les données servies. Aucun parcours figé ne se rejoue
+   (#1572) : `--rejouer` est refusé, avec ou sans lui, en nommant le geste qui fait un
+   état neuf — un exercice, sur une stack neuve. Son préflight passe, comme ③, avant
+   tout nettoyage. Ce que l'état contient, la façon dont il se sauve et se rouvre, et
+   **lequel** il rouvre, sont gardés par `tests/test_etat_banc.py`.
 
 ⑥ **La stack neuve et la vraie panne** (#1165) — ce que la relecture visuelle ouvre pour les
    états vide et erreur. `--etat-neuf` se demande comme ⑤ et ne se mêle ni à lui, ni à un
@@ -373,25 +371,26 @@ def test_l_etat_du_banc_se_demande_et_ne_change_que_les_donnees() -> None:
 
 
 @pytest.mark.parametrize(
-    ("option", "attendu"), [("--rejouer", "tous"), ("--rejouer=S2,S4", "S2,S4")]
+    "options",
+    [
+        ("--rejouer",),
+        ("--rejouer=S2",),
+        ("--etat-banc", "--rejouer"),
+        ("--etat-banc", "--rejouer=S2,S4"),
+        ("--etat-banc", "--rejouer="),
+        ("--etat-neuf", "--rejouer"),
+    ],
 )
-def test_rejouer_l_etat_du_banc_se_demande_avec_lui(option: str, attendu: str) -> None:
-    assert diagnostic("--etat-banc", option)["rejouer"] == attendu
-
-
-@pytest.mark.parametrize("option", ["--rejouer", "--rejouer=S2"])
-def test_rejouer_sans_l_etat_du_banc_est_refuse(option: str) -> None:
-    """Un rejeu égaré ne lance pas un passage du banc : il coûte du vrai modèle."""
-    acheve = lanceur(option, "--diagnostic-navigateur")
+def test_rejouer_n_existe_plus_et_nomme_l_exercice(options: tuple[str, ...]) -> None:
+    """Le banc figé a quitté le dépôt (#1572) : `--rejouer`, seul ou avec un état, est refusé
+    avant tout le reste, et le refus nomme le geste qui fait un état neuf — une stack neuve,
+    puis un exercice qu'on sauve."""
+    acheve = lanceur(*options, "--diagnostic-navigateur")
     assert acheve.returncode == 2, acheve.stdout + acheve.stderr
-    assert "--etat-banc --rejouer" in acheve.stderr
+    assert "le banc figé a quitté le dépôt" in acheve.stderr
+    assert "bash scripts/controltower/start.sh --etat-neuf --no-browser" in acheve.stderr
+    assert "-m maestro.scenarios.exercice ouvrir" in acheve.stderr
     assert "famille:" not in acheve.stdout, "refusé avant le diagnostic, donc avant tout le reste"
-
-
-def test_rejouer_sans_scenario_apres_le_egal_est_refuse() -> None:
-    acheve = lanceur("--etat-banc", "--rejouer=", "--diagnostic-navigateur")
-    assert acheve.returncode == 2, acheve.stdout + acheve.stderr
-    assert "famille:" not in acheve.stdout
 
 
 @pytest.mark.skipif(
@@ -431,121 +430,6 @@ def test_le_lanceur_refuse_l_etat_du_banc_sans_redis() -> None:
     assert "[api]" not in acheve.stdout
 
 
-#: Le début du bloc qui joue le passage, une fois la stack servie — et sa fin, le
-#: premier `fi` en colonne 0 qui le suit.
-_DEBUT_DU_PASSAGE = 'if [ "$DONNEES" = "banc" ] && [ "$REJOUER" = 1 ]; then'
-
-#: Un interpréteur factice : il note ce qu'il reçoit, puis fait ce que `STUB_ISSUE`
-#: lui dit — écrire le témoin que le vrai banc écrit en allant au bout, ou non.
-_FAUX_PYTHON = """#!/usr/bin/env bash
-printf '%s\\n' "PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-} MAESTRO_PORT_API=${MAESTRO_PORT_API:-} $*" \\
-  >> "$STUB_TRACE"
-temoin=""
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--temoin" ]; then temoin="$2"; fi
-  shift
-done
-case "$STUB_ISSUE" in
-  vert) echo rapport > "$temoin"; exit 0 ;;
-  rouge) echo rapport > "$temoin"; exit 1 ;;
-  tue) exit 1 ;;
-  refus) exit 3 ;;
-  etat) echo rapport > "$temoin"; exit 4 ;;
-esac
-exit 99
-"""
-
-
-def _bloc_du_passage() -> str:
-    """Le bloc de `start.sh` qui joue le banc, tel qu'il est écrit — jamais recopié."""
-    lignes = SCRIPT.read_text(encoding="utf-8").splitlines()
-    debut = lignes.index(_DEBUT_DU_PASSAGE)
-    fin = next(i for i in range(debut, len(lignes)) if lignes[i] == "fi")
-    return "\n".join(lignes[debut : fin + 1])
-
-
-def _passage(tmp_path: Path, issue: str, *, temoin_perime: bool = False) -> tuple[
-    subprocess.CompletedProcess[str], str
-]:
-    """Joue le bloc du passage dans bash, contre l'interpréteur factice."""
-    faux = tmp_path / "faux-python.sh"
-    faux.write_text(_FAUX_PYTHON, encoding="utf-8", newline="\n")
-    faux.chmod(0o755)
-    (tmp_path / "journaux").mkdir()
-    if temoin_perime:
-        (tmp_path / "journaux" / "banc.temoin").write_text("un passage d'avant\n", encoding="utf-8")
-    trace = tmp_path / "trace.txt"
-    script = (
-        "set -euo pipefail\n"
-        'DONNEES=banc REJOUER=1 REJOUER_SCENARIOS="" ARRET_AUTO=0\n'
-        "PORT_API=18097 URL_UI=http://localhost:18096 LOG_DIR_REL=journaux\n"
-        'PYTHON="$FAUX_PYTHON"\n' + _bloc_du_passage() + "\necho '[test] bloc sans issue'\n"
-    )
-    environnement = {
-        **os.environ,
-        "FAUX_PYTHON": faux.as_posix(),
-        "STUB_ISSUE": issue,
-        "STUB_TRACE": trace.as_posix(),
-    }
-    assert BASH is not None
-    acheve = subprocess.run(  # noqa: S603
-        [BASH, "-c", script],
-        cwd=str(tmp_path),
-        env=environnement,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=60,
-    )
-    return acheve, trace.read_text(encoding="utf-8") if trace.exists() else ""
-
-
-@pytest.mark.parametrize(
-    ("issue", "code", "annonce"),
-    [
-        ("vert", 0, "[banc] état sauvé"),
-        ("rouge", 0, "[banc] état sauvé"),
-        ("tue", 1, "[banc] passage INTERROMPU (code 1)"),
-        ("refus", 3, "[banc] passage sans état sauvé (code 3)"),
-        ("etat", 4, "[banc] passage sans état sauvé (code 4)"),
-    ],
-)
-def test_un_passage_tue_ne_se_lit_plus_etat_sauve(
-    tmp_path: Path, issue: str, code: int, annonce: str
-) -> None:
-    """Un rouge et un processus tué sortent tous deux en `1` sous Windows (#1365).
-
-    Mesuré le 2026-09-27 : deux passages tués à 12:41:25, sans rapport, que le
-    lanceur a annoncés « [banc] état sauvé ». Ce qui les sépare est le témoin que
-    le banc écrit en allant au bout (`maestro.scenarios.banc._temoigner`). Le bloc
-    joué ici est celui de `start.sh`, lu dans le fichier.
-    """
-    acheve, trace = _passage(tmp_path, issue)
-
-    sortie = acheve.stdout + acheve.stderr
-    assert acheve.returncode == code, sortie
-    assert annonce in sortie
-    assert "bloc sans issue" not in sortie, "chaque issue sort du bloc"
-    if issue == "tue":
-        assert "état sauvé —" not in acheve.stdout
-        assert "ni verdict ni état sauvé" in acheve.stderr
-    assert "--temoin journaux/banc.temoin" in trace, "le témoin voyage en chemin relatif"
-    assert "PYTHONUNBUFFERED=1" in trace, "les lignes d'un passage tué ne meurent pas en tampon"
-    assert "MAESTRO_PORT_API=18097" in trace
-
-
-def test_le_temoin_d_un_passage_precedent_ne_couvre_pas_un_passage_tue(
-    tmp_path: Path,
-) -> None:
-    """Le témoin est retiré avant le passage : celui d'avant ne vaut pas pour celui-ci."""
-    acheve, _trace = _passage(tmp_path, "tue", temoin_perime=True)
-
-    assert acheve.returncode == 1, acheve.stdout + acheve.stderr
-    assert "passage INTERROMPU" in acheve.stderr
-    assert "état sauvé —" not in acheve.stdout
-
-
 # ------------------------------------------- ⑥ La stack neuve et la vraie panne (#1165)
 
 
@@ -563,12 +447,10 @@ def test_la_stack_neuve_se_demande_et_ne_change_que_les_donnees() -> None:
     [
         (("--etat-neuf", "--etat-banc"), "l'un ou l'autre"),
         (("--etat-banc", "--etat-neuf"), "l'un ou l'autre"),
-        (("--etat-neuf", "--rejouer"), "--etat-banc --rejouer"),
     ],
 )
 def test_la_stack_neuve_ne_se_mele_a_rien(options: tuple[str, ...], motif: str) -> None:
-    """Neuve et rouverte s'excluent, et rejouer coûte du vrai modèle : aucun des deux ne se
-    demande avec elle."""
+    """Neuve et rouverte s'excluent : l'une ne se demande pas avec l'autre."""
     acheve = lanceur(*options, "--diagnostic-navigateur")
     assert acheve.returncode == 2, acheve.stdout + acheve.stderr
     assert motif in acheve.stderr

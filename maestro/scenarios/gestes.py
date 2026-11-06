@@ -1,34 +1,27 @@
 """Les gestes d'une personne sur la vraie stack, et ce qu'ils demandent au poste (#1569).
 
-Ce que les scénarios de référence, le banc comparatif et l'exercice construit
-partagent : dire un message au fil, faire naître un projet dans la conversation et le
-ranger, conduire son outillage, valider l'équipe qu'on propose, accorder un run et le
-suivre jusqu'à son issue, reprendre un run interrompu — puis, côté poste, jouer une
-commande écrite comme un agent la jouerait et servir un livrable pour sonder ses pages.
+Ce que le banc comparatif et l'exercice construit partagent : dire un message au fil,
+faire naître un projet dans la conversation et le ranger, conduire son outillage,
+valider l'équipe qu'on propose, accorder un run et le suivre jusqu'à son issue,
+reprendre un run interrompu — puis, côté poste, jouer une commande écrite comme un
+agent la jouerait et servir un livrable pour sonder ses pages.
 
 Tout passe par **la porte d'entrée réelle** : l'API de la Control Tower, en HTTP, par le
 fil de l'orchestrateur (`maestro.scenarios.api`). Rien ici ne choisit un parcours : ce
-module rend des gestes, et qui les compose décide de l'ordre — un scénario figé
-(`maestro.scenarios.scenarios`, retiré par #1572), une mesure côte à côte
+module rend des gestes, et qui les compose décide de l'ordre — une mesure côte à côte
 (`maestro.scenarios.comparatif`), ou l'exercice qu'une session construit pour ce
-qu'elle vient d'implémenter (`maestro.scenarios.exercice`).
-
-Ces gestes viennent des aides privées de `scenarios.py`, **déplacés tels quels**
-(#1569) : leur raison, leurs mesures et les défauts qu'ils ont appris à éviter restent
-dans leurs docstrings. `scenarios.py` les reprend sous leurs anciens noms jusqu'à son
-retrait.
+qu'elle vient d'implémenter (`maestro.scenarios.exercice`). Aucun parcours figé ne les
+compose (#1568) : leurs docstrings gardent la raison de chacun, et les défauts qu'il a
+appris à éviter sur la vraie stack.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 import socket
-import subprocess
-import sys
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -39,10 +32,9 @@ from urllib.request import urlopen
 
 from maestro.controltower.battement import VITALITE_ORPHELIN
 from maestro.controltower.chat import DECISION_ECRIRE, DECISION_PASSER
-from maestro.controltower.state import EXECUTION_ECHEC, STATUTS_EXECUTION_TERMINAUX
+from maestro.controltower.state import STATUTS_EXECUTION_TERMINAUX
 from maestro.lanceur.lanceur import HOTE_DEFAUT
 from maestro.lanceur.systeme import Systeme
-from maestro.lecture import OUTIL_SHELL
 from maestro.outillage.questionnaire import PROPOSITION_RETENUE
 from maestro.outillage.verification import Delais
 from maestro.sandbox import verification as execution
@@ -58,28 +50,20 @@ from maestro.scenarios.modele import Issue, Journal, empeche, rouge
 from maestro.scenarios.projets import Atelier
 from maestro.scenarios.redemarrage import redemarrer_l_api
 
-#: Ce qu'on laisse à une application de S2 pour démarrer, s'afficher et sortir.
-DELAI_APPLICATION_S = 60.0
-
-
 #: Ce qu'on laisse au récit de fin pour paraître dans le fil, et l'intervalle
 #: entre deux lectures (#1224). Le récit part **après** que le run est soldé — sa
-#: rédaction est un appel modèle —, donc le lire une seule fois rendrait S5 rouge
-#: sur un produit qui marche. Deux minutes : c'est la marge d'un appel modèle
+#: rédaction est un appel modèle —, donc le lire une seule fois le manquerait sur un
+#: produit qui marche. Deux minutes : c'est la marge d'un appel modèle
 #: unique sur un contexte borné, pas celle d'un run.
 ATTENTE_RECIT_S = 120.0
 INTERVALLE_RECIT_S = 2.0
 
 
-#: Ce qu'on laisse à la fin d'un run de S9 et S10 pour paraître (#1343) : le récit, et
+#: Ce qu'on laisse à la fin d'un run outillé pour paraître (#1343) : le récit, et
 #: l'outillage revu sur le projet construit — les commandes s'y rejouent pendant que le
 #: modèle rédige, et le message ne part qu'avec les deux. Le récit plus une
 #: vérification entière (`Delais.total_s`, lu et non recopié).
 ATTENTE_REVUE_S = ATTENTE_RECIT_S + Delais().total_s
-
-
-#: Ce qu'on laisse à un outil du poste pour dire sa version (`sonder_le_poste`).
-DELAI_SONDE_S = 60.0
 
 
 #: L'encodage sous lequel la stack de Maestro joue les commandes d'un projet — celui
@@ -102,8 +86,8 @@ DOSSIER_API = "_api"
 
 
 #: La réponse de la personne à une question du fil : elle ne sait rien de plus, et
-#: laisse Maestro choisir. Un scénario ne peut pas deviner ce qu'on lui demandera ;
-#: il peut dire ce que dirait quelqu'un qui n'a pas d'avis.
+#: laisse Maestro choisir. Un geste ne peut pas deviner ce qu'on lui demandera ; il
+#: peut dire ce que dirait quelqu'un qui n'a pas d'avis.
 REPONSE_SANS_PRECISION = (
     "Je n'ai pas d'autre précision : choisissez ce qui vous paraît le mieux et "
     "proposez-moi le projet."
@@ -136,28 +120,23 @@ REPONSE_OUTILLAGE = (
 
 @dataclass
 class Contexte:
-    """Tout ce qu'un scénario a besoin de connaître du monde — et rien d'autre.
+    """Tout ce que les gestes ont besoin de connaître du monde — et rien d'autre.
 
     Chaque dépendance est **injectable**, et c'est ce qui permet aux tests de
-    jouer les quatre déroulés contre une fausse API et un faux fournisseur, sans
-    réseau, sans horloge réelle et sans lancer de sous-process.
+    jouer les gestes contre une fausse API et un faux fournisseur, sans réseau,
+    sans horloge réelle et sans lancer de sous-process.
 
-    `projet_id` et `racine` sont **écrits par le scénario** et relus par le banc :
-    ils nomment le projet jetable qu'il a déclaré, et le rapport en a besoin même
-    quand le scénario s'arrête avant son oracle — c'est là que les pièces d'un
-    rouge sont restées.
+    `projet_id` et `racine` sont **écrits par les gestes** qui déclarent un projet,
+    et relus par qui les compose : ils nomment le projet jetable, et le relevé en a
+    besoin même quand le parcours s'arrête avant son issue — c'est là que les pièces
+    sont restées.
 
-    `arbitrages` (#1226) est ce que le banc a **tranché à la place de la
+    `arbitrages` (#1226) est ce que le passage a **tranché à la place de la
     personne** : un outil par demande approuvée. Il se remplit pendant le suivi du
-    run et se relit deux fois — par l'oracle de S2, dont c'est une moitié, et par
-    le rapport, qui le compte.
+    run, et le relevé le compte.
 
-    `jouer_commande` et `sonder_le_poste` (#1162) sont les deux gestes de S9 et S10
-    qui touchent au poste : rejouer une commande que l'outillage a écrite, lire la
-    version d'un outil. Les tests les doublent ; `None` prend les vrais.
-
-    `redemarrer` et `sonder_page` (#1408) sont les deux gestes de S12 qui touchent au
-    monde hors de l'API : couper puis rallumer l'API qui sert le banc
+    `redemarrer` et `sonder_page` (#1408) sont les deux gestes qui touchent au monde
+    hors de l'API : couper puis rallumer l'API qui sert le banc
     (`maestro.scenarios.redemarrage`), et demander une page au livrable servi.
     """
 
@@ -168,9 +147,6 @@ class Contexte:
     delai_run_s: float = DELAI_RUN_S
     horloge: Callable[[], float] = time.monotonic
     dormir: Callable[[float], None] = time.sleep
-    lancer_application: Callable[[Path, str], tuple[int, str]] | None = None
-    jouer_commande: Joueur | None = None
-    sonder_le_poste: Callable[[Sequence[str]], str | None] | None = None
     redemarrer: Callable[[], str] | None = None
     sonder_page: Callable[[str], int | None] | None = None
     projet_id: str = ""
@@ -180,32 +156,6 @@ class Contexte:
     def note(self, libelle: str, detail: str = "") -> None:
         """Consigne une étape du déroulé."""
         self.journal.note(libelle, detail)
-
-    @property
-    def validations_de_commande(self) -> tuple[str, ...]:
-        """Les demandes d'arbitrage portant sur l'**outil d'exécution**.
-
-        C'est ce que #1226 compte : une équipe validée exécute son travail dans
-        son projet sans réveiller personne, donc ce tuple doit rester vide sur un
-        projet neuf. Les autres arbitrages — une tâche, un accord d'écriture — ne
-        sont pas des validations de commande et n'y entrent pas.
-        """
-        return tuple(outil for outil in self.arbitrages if outil == OUTIL_SHELL)
-
-    def executer(self, racine: Path, point_d_entree: str) -> tuple[int, str]:
-        """Lance l'application produite — le vrai `subprocess`, sauf injection."""
-        lanceur = self.lancer_application or lancer_application
-        return lanceur(racine, point_d_entree)
-
-    def jouer(self, commande: str, dossier: Path, delai_s: float) -> execution.Execution:
-        """Joue une commande écrite dans `dossier` — le bash des agents, sauf injection."""
-        joueur = self.jouer_commande or jouer_commande
-        return joueur(commande, dossier, delai_s)
-
-    def sonder(self, argv: Sequence[str]) -> str | None:
-        """Ce qu'un outil du poste répond — `None` s'il n'y est pas, sauf injection."""
-        sonde = self.sonder_le_poste or sonder_le_poste
-        return sonde(argv)
 
     def rallumer(self) -> str:
         """Coupe puis rallume l'API qui sert le banc — le vrai process, sauf injection.
@@ -224,31 +174,6 @@ class Contexte:
         return sonde(url)
 
 
-def lancer_application(racine: Path, point_d_entree: str) -> tuple[int, str]:
-    """Exécute `point_d_entree` dans `racine` et rend `(code, sortie)`.
-
-    Avec `sys.executable` : c'est le Python du venv qui joue le banc, donc celui
-    dont on sait qu'il existe. Un délai dépassé rend un code non nul et le dit —
-    une application qui ne rend jamais la main ne s'exécute pas au sens de
-    l'oracle, et bloquer le banc dessus serait pire que la rendre rouge.
-    """
-    try:
-        fini = subprocess.run(  # noqa: S603 - l'interpréteur du banc, sur un projet jetable
-            [sys.executable, point_d_entree],
-            cwd=str(racine),
-            capture_output=True,
-            text=True,
-            timeout=DELAI_APPLICATION_S,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return 1, f"aucune sortie au bout de {DELAI_APPLICATION_S:.0f} s"
-    except OSError as echec:  # interpréteur introuvable, dossier disparu
-        return 1, f"lancement impossible : {echec}"
-    sortie = (fini.stdout or "") + (fini.stderr or "")
-    return fini.returncode, sortie.strip()
-
-
 def jouer_commande(commande: str, dossier: Path, delai_s: float) -> execution.Execution:
     """Joue une commande écrite par l'outillage, **comme un agent la jouerait** (#1162).
 
@@ -256,16 +181,15 @@ def jouer_commande(commande: str, dossier: Path, delai_s: float) -> execution.Ex
     retrouvé et lancé par la mécanique de la vérification du produit
     (`maestro.sandbox.verification`) : un démarrage arrêté au délai l'est avec sa
     descendance, et c'est une mécanique du système, pas un verdict. Le **verdict**, lui,
-    est celui du banc (`_rejouer`). Sans bash sur le poste, `OSError` : le banc n'a
-    pas pu jouer, ce n'est pas le produit qui s'est trompé.
+    est celui de qui rejoue (`maestro.scenarios.grille`). Sans bash sur le poste,
+    `OSError` : le rejeu n'a pas pu se jouer, ce n'est pas le produit qui s'est trompé.
 
     ⚠ **Dans l'environnement de la stack, pas dans celui du terminal qui lance le
-    banc.** Maestro joue les commandes d'un projet — sa vérification (#1160) comme ses
+    rejeu.** Maestro joue les commandes d'un projet — sa vérification (#1160) comme ses
     agents — sous `PYTHONIOENCODING=utf-8`, que `start.sh` et le lanceur exportent
-    (#141). Lancé à la main, le banc ne l'avait pas, et il mesurait son terminal :
-    mesuré le 2026-09-27 (passage `20260927-043104`), les tests du carnet de S9, verts
-    pour l'agent qui les avait écrits, rougissaient au rejeu sur une sortie cp1252.
-    Le réglage ne remplace jamais un choix explicite de l'environnement.
+    (#141) ; sans lui, le rejeu mesurerait son terminal, et des tests verts pour
+    l'agent qui les a écrits rougiraient sur une sortie cp1252 (#1162). Le réglage ne
+    remplace jamais un choix explicite de l'environnement.
     """
     interprete = execution.interprete()
     if interprete is None:
@@ -277,30 +201,8 @@ def jouer_commande(commande: str, dossier: Path, delai_s: float) -> execution.Ex
     return execution.jouer(commande, dossier, interprete=interprete, delai_s=delai_s)
 
 
-def sonder_le_poste(argv: Sequence[str]) -> str | None:
-    """La réponse d'un outil du poste (`dotnet --version`) — `None` s'il n'y est pas ou se tait.
-
-    Un fait du poste, lu avant de semer : c'est ce qui fait d'un outil absent un
-    empêchement dit d'emblée plutôt qu'un rouge constaté quarante minutes plus tard.
-    """
-    executable = shutil.which(argv[0]) if argv else None
-    if executable is None:
-        return None
-    try:
-        fini = subprocess.run(  # noqa: S603 - un outil du poste, trouvé sur son PATH
-            [executable, *argv[1:]],
-            capture_output=True,
-            text=True,
-            timeout=DELAI_SONDE_S,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return (fini.stdout or "").strip() if fini.returncode == 0 else None
-
-
 def declarer(ctx: Contexte, nom: str, racine: Path, *, origine: str) -> str:
-    """Déclare le projet jetable du scénario et le retient dans le contexte."""
+    """Déclare le projet jetable du passage et le retient dans le contexte."""
     projet_id = ctx.client.declarer_projet(nom, str(racine), origine=origine)
     ctx.projet_id, ctx.racine = projet_id, racine
     ctx.note("projet déclaré", f"{projet_id} — {racine}")
@@ -310,8 +212,8 @@ def declarer(ctx: Contexte, nom: str, racine: Path, *, origine: str) -> str:
 def doter_d_une_equipe(ctx: Contexte, projet_id: str) -> int:
     """Crée l'équipe que l'analyse du projet recommande — du **montage**, pas l'oracle.
 
-    Par la route d'équipe du projet (#1039 puis #1040), et non par le fil : ce que
-    S1, S2 et S4 mesurent commence après. L'équipe proposée est reprise **telle
+    Par la route d'équipe du projet (#1039 puis #1040), et non par le fil : ce qu'on
+    mesure commence après. L'équipe proposée est reprise **telle
     quelle** (`equipe_validee`), parce qu'un utilisateur qui découvre le produit
     accepte ce qu'on lui montre.
     """
@@ -357,9 +259,9 @@ def suivre(
 ) -> dict[str, Any]:
     """Suit le run jusqu'à son issue et note ce qu'elle a été.
 
-    `approuve` et `demandes` sont ceux d'`attendre_le_run` : S8 y joue la
-    personne qui refuse, et garde ce qu'elle a refusé. `delai_s` remplace le
-    délai par run quand une partie en a déjà été attendue (S8 attend son plan).
+    `approuve` et `demandes` sont ceux d'`attendre_le_run` : la personne qui refuse,
+    et ce qu'elle a refusé. `delai_s` remplace le délai par run quand une partie en a
+    déjà été attendue.
     """
     detail = attendre_le_run(
         ctx.client,
@@ -399,25 +301,6 @@ def cout(detail: Mapping[str, Any] | None) -> float | None:
         return None
     cout = detail.get("cout_usd")
     return None if cout is None else float(cout)
-
-
-def releve_de_l_echec(detail: Mapping[str, Any]) -> str:
-    """Ce que l'API dit de l'échec : sa cause, et les détails qu'elle a consignés.
-
-    C'est la matière que le juge de S4 confronte à la réponse du fil — **relue
-    dans l'API**, jamais reconstruite : si le banc racontait l'échec à sa façon, il
-    jugerait la réponse contre son propre récit.
-    """
-    morceaux: list[str] = []
-    cause = str(detail.get("cause") or "")
-    if cause:
-        morceaux.append(f"cause : {cause}")
-    for evenement in detail.get("evenements") or []:
-        if str(evenement.get("statut") or "") == EXECUTION_ECHEC:
-            texte = str(evenement.get("detail") or "").strip()
-            if texte and texte not in morceaux:
-                morceaux.append(texte)
-    return " | ".join(morceaux)
 
 
 def run_de(reponse: Mapping[str, Any]) -> str:
@@ -479,9 +362,9 @@ def naitre_dans_l_atelier(
 
     La première moitié de la naissance (#1294) : la phrase de la personne, la
     proposition, et la correction en mots qui range le dossier dans l'atelier du
-    passage, comme S7. Rien n'est encore déclaré : c'est l'accord qui le fera
+    passage. Rien n'est encore déclaré : c'est l'accord qui le fera
     (`lancer_dans_le_fil`). Une correction qui ne prend pas est un **empêchement** —
-    le scénario ne déclare rien ailleurs que dans l'atelier.
+    le passage ne déclare rien ailleurs que dans l'atelier.
 
     `montage` (#1512) encadre cette correction, et elle seule : c'est un geste du
     banc, qui range le projet là où il le relira, et non un geste de la personne,
@@ -524,9 +407,9 @@ def naitre_dans_l_atelier(
 class Lancement:
     """Un projet né dans le fil, outillé et doté, et le run que son travail a ouvert.
 
-    Le parcours d'une personne du premier mot au run, que S9, S10 et S12 partagent
-    (`lancer_dans_le_fil`), et ce que leurs oracles relisent ensuite : les pièces
-    écrites, l'équipe que l'analyse a proposée et celle qui a été validée.
+    Le parcours d'une personne du premier mot au run (`lancer_dans_le_fil`), et ce
+    qu'on relit ensuite : les pièces écrites, l'équipe que l'analyse a proposée et
+    celle qui a été validée.
     """
 
     projet_id: str
@@ -558,7 +441,7 @@ def lancer_dans_le_fil(
 
     `versionner` (#1408) demande un projet **sous Git** avant le travail : versionné à
     sa naissance quand le fil l'a proposé, sinon par le geste de l'écran Projets
-    (`POST …/versionner`, le montage de S11) — un poste qui ne sait pas versionner est
+    (`POST …/versionner`) — un poste qui ne sait pas versionner est
     un empêchement, jamais un rouge du produit.
 
     `repondre` est la personne qui répond aux questions d'outillage
@@ -677,7 +560,7 @@ def message_de_fin(
     est un appel modèle qui part *après* que le run est soldé. Mesuré le
     2026-09-23 sur le passage `20260923-185330` — le run était terminé, le fil
     relu dans la foulée ne portait encore que le lancement, et le récit y est
-    arrivé quelques secondes plus tard. Lire une seule fois rendait donc S5 rouge
+    arrivé quelques secondes plus tard. Lire une seule fois rendait donc un rouge
     sur un produit qui marche, ce qui est le pire des verdicts.
 
     L'attente est **bornée et dite** : passé `attente_s`, on rend `None` et l'oracle

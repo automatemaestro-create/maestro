@@ -1,6 +1,6 @@
 ---
 name: control-tower
-description: Lancer Maestro dans sa fenêtre de bureau (coque Electron), ou la Control Tower dans un onglet pour le mode web et les vérifications pilotées — la vraie stack sur Redis, vide ou sur l'état laissé par le banc —, et l'arrêter
+description: Lancer Maestro dans sa fenêtre de bureau (coque Electron), ou la Control Tower dans un onglet pour le mode web et les vérifications pilotées — la vraie stack sur Redis, vide ou sur l'état laissé par un exercice —, et l'arrêter
 ---
 
 # Lancer Maestro en local
@@ -114,19 +114,20 @@ démarrer. Deux stacks lancées depuis deux copies ne se voient pas.
 | Ce qu'on veut voir | D'où il vient | Le geste |
 | ------------------ | ------------- | -------- |
 | **vide** | une stack **neuve** | `start.sh --etat-neuf` (le banc de la copie remis à neuf, #1165) ; les données de la copie elles-mêmes, par la purge (plus bas) |
-| **peuplé**, **charge** (listes et textes longs) | l'**état laissé par le banc** des scénarios (#1148) | `start.sh --etat-banc` |
+| **peuplé**, **charge** (listes et textes longs) | l'**état laissé par un exercice** sauvé (#1569) | `start.sh --etat-banc` |
 | **erreur** | une **vraie panne** | `start.sh --couper-api` : l'API seule tombe, l'UI reste servie (l'écran dit « injoignable ») ; ce n'est pas un arrêt, rien n'est soldé |
 
-`--etat-banc` sert, par l'API réelle, l'état que le dernier passage du banc a
-laissé : rouvert à chaque démarrage **sans rien rejouer**, dans un jeu de données
-à part (ni celles de la copie ni celles du poste ne sont touchées), et **son âge
-est dit** — le relayer : un état ancien ne porte pas les données que les derniers
-tickets ont ajoutées. Sans
-passage sauvé, le lanceur le dit et s'arrête. `--etat-banc --rejouer[=S2,S4]` le
-refait : banc remis à neuf, puis passage joué au premier plan contre la stack,
-**avec le vrai modèle** (des dizaines de minutes, de l'ordre du dollar) — à
-lancer en tâche de fond, jamais sous le plafond d'un appel, et seulement quand
-l'état date ou manque. Le détail vit dans docs/40 §5 et `maestro/scenarios/etat.py`.
+`--etat-banc` sert, par l'API réelle, l'état qu'un exercice a sauvé — celui de
+cette copie d'abord, sinon le dernier du poste, et le lanceur dit alors de quel
+espace il vient : rouvert à chaque démarrage **sans rien rejouer**, dans un jeu de
+données à part (ni celles de la copie ni celles du poste ne sont touchées), et
+**son âge est dit** — le relayer : un état ancien ne porte pas les données que les
+derniers tickets ont ajoutées. Sans état sauvé, le lanceur le dit et s'arrête.
+Aucun parcours figé ne se rejoue (`--rejouer` est refusé, #1572) : un état neuf se
+fait par un **exercice** joué sur `--etat-neuf` puis sauvé
+(`.venv/Scripts/python.exe -m maestro.scenarios.exercice … sauver`), **avec le vrai
+modèle** — seulement quand l'état date ou manque. Le détail vit dans docs/40 §5 et
+`maestro/scenarios/etat.py`.
 
 Un état que le réel ne sait pas produire **se nomme non couvert** : il ne se
 fabrique pas.

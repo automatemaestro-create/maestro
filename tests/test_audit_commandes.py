@@ -92,12 +92,13 @@ RUN_SH = "scripts/orchestrate/run.sh"
 BUDGETS_LIVRES_CLAUDE_MD: tuple[tuple[str, int], ...] = (
     ("#965", 25_000),
     ("#1523", 20_164),
+    ("#1572", 19_940),
 )
 
-#: Ce que `CLAUDE.md` peut coûter à chaque session : le coût mesuré à la livraison de #1523, au
-#: compteur du dépôt. Il ne remonte jamais ; une règle qui entre en fait sortir une, ou sort sa
-#: démonstration vers `docs/`.
-BUDGET_CLAUDE_MD_TOKENS = 20_164
+#: Ce que `CLAUDE.md` peut coûter à chaque session : le coût mesuré à la livraison de #1572 (le
+#: banc figé et son banc par lot retirés), au compteur du dépôt. Il ne remonte jamais ; une règle
+#: qui entre en fait sortir une, ou sort sa démonstration vers `docs/`.
+BUDGET_CLAUDE_MD_TOKENS = 19_940
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────

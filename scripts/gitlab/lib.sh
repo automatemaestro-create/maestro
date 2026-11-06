@@ -2786,9 +2786,9 @@ gl_relecture_attente() {
 #   · la pièce n'est jamais vide — un ✗ dit pourquoi, un « hors diff » dit ce qui le montre ;
 #   · un ✓ NOMME UNE PREUVE EXERCÉE (#1240) : un TEST qui existe dans l'arbre (une fonction
 #     `test_…` de pytest, ou un fichier `*.test.ts[x]` de Vitest, dont les tests se nomment en
-#     prose), un EXERCICE dont le relevé est là et rend `vert` (#1570), un PASSAGE DU BANC dont le
-#     rapport est là et rend verts les scénarios cités, un RUN de la vraie stack (`run <id>`), ou une
-#     CAPTURE de la vraie stack (`*.png` présent). C'est la règle de `/milestone-bilan` — « un
+#     prose), un EXERCICE dont le relevé est là et rend `vert` (#1570), un passage du BANC
+#     COMPARATIF dont le rapport porte un passage abouti (#1512), un RUN de la vraie stack
+#     (`run <id>`), ou une CAPTURE de la vraie stack (`*.png` présent). C'est la règle de `/milestone-bilan` — « un
 #     critère tenu sans pièce nommée n'est pas tenu » — portée de ce qui a été ÉCRIT à ce qui a été
 #     EXERCÉ : « ✓ | fait | » est refusé, et un critère que rien n'a exercé se dit ✗ ou « hors
 #     diff », jamais ✓.
@@ -2800,7 +2800,7 @@ gl_relecture_attente() {
 # vérifie qu'il existe, pas qu'il est vert — le jouer est l'affaire de la session, et le dire aussi.
 #
 # ⚠ Jusqu'à #1240, un ✓ nommait un FICHIER DU DIFF, et l'en-tête du constat avouait « ce qui a été
-# écrit, pas ce qui a été exercé ». #1197, #1198, #1205 et #1212 ont tous été trouvés par le banc au
+# écrit, pas ce qui a été exercé ». #1197, #1198, #1205 et #1212 ont tous été trouvés au
 # bouclage d'un jalon, un à deux jours après le merge de ce qu'ils corrigeaient : un ✓ sur un
 # fichier du diff les aurait tous laissés passer. La règle a été REMPLACÉE, pas doublée — nommer le
 # fichier reste permis, il ne prouve plus rien.
@@ -2841,18 +2841,11 @@ GL_CRITERES_ANCRE="${GL_CRITERES_ANCRE:-Critères confrontés au diff}"
 # d'une question tue est un défaut vu au bilan du jalon ; celui d'une question posée, une ligne.
 # Les préfixes sont gardés par `tests/test_criteres_cloture.py`, qui vérifie qu'ils existent.
 GL_EXERCICE_CHEMINS="maestro/ core/ packages/shared/"
-# Le chemin que `banc-main.sh` regarde pour décider du banc par lot, jusqu'à son retrait (#1572).
-# shellcheck disable=SC2034  # lue par `banc-main.sh`, qui source ce fichier (lint par fichier).
-GL_BANC_CHEMINS="$GL_EXERCICE_CHEMINS"
 # Où un exercice laisse son relevé, relatif à la racine d'où l'on joue — `RACINE_EXERCICES` de
 # `maestro/scenarios/exercice.py`. Son état (`exercice.json`) porte son verdict et ses runs.
 GL_EXERCICES_RELEVES=".maestro/exercices"
-# Où un passage du banc laisse son rapport, relatif à la racine d'où l'on joue — `RACINE_RAPPORTS`
-# de `maestro/scenarios/rapport.py`, que `start.sh --etat-banc --rejouer` sert depuis la racine.
-GL_BANC_RAPPORTS=".maestro/scenarios"
-# Où le banc comparatif laisse les siens (#1512) — `RACINE_RAPPORTS` de
-# `maestro/scenarios/comparatif.py`. Un horodatage qu'aucun passage des scénarios ne porte se
-# cherche là : un passage comparatif prouve s'il porte au moins un passage abouti
+# Où le banc comparatif laisse ses rapports (#1512) — `RACINE_RAPPORTS` de
+# `maestro/scenarios/comparatif.py`. Un horodatage qu'aucun exercice ne porte se cherche là : un passage comparatif prouve s'il porte au moins un passage abouti
 # (`"issue": "abouti"`, que le banc range lui-même). Il ne rend ni vert ni rouge : il mesure.
 GL_COMPARATIF_RAPPORTS=".maestro/comparatif"
 
@@ -3000,8 +2993,8 @@ gl_criteres_chemins_du_diff() {
 
 # gl_criteres_constat <inventaire> <fichier> — la FORME du constat, confrontée aux critères attendus
 # (ENVIRON ATTENDUS, « C1 C2 … »), aux tests de l'arbre (<inventaire>, `gl_criteres_tests_nommes`),
-# aux relevés des exercices (ENVIRON EXERCICES), aux rapports du banc (ENVIRON RAPPORTS, puis
-# ENVIRON COMPARATIF pour le banc comparatif) et à la question de l'exercice (ENVIRON EXERCICE_DU :
+# aux relevés des exercices (ENVIRON EXERCICES), aux rapports du banc comparatif (ENVIRON
+# COMPARATIF) et à la question de l'exercice (ENVIRON EXERCICE_DU :
 # les fichiers du diff dans ce que la vraie stack charge, vide sinon). Sur stdout : une ligne
 # `!<TAB>Cn<TAB>motif` par critère sans réponse recevable (`!<TAB>Exercice<TAB>motif` pour
 # l'exercice), puis `=<TAB>✓<TAB>✗<TAB>hors-diff<TAB>exercice` — `exercice` vide quand le constat
@@ -3013,8 +3006,7 @@ gl_criteres_chemins_du_diff() {
 # `maestro/scenarios/exercice.py` l'écrit (indenté de deux espaces, une clé par ligne), porte le
 # verdict rendu par `conclure` et les `run_id` joués. Un exercice prouve s'il est conclu `vert` ;
 # rouge, empêché ou non conclu, il n'est jamais compté vert. À défaut d'exercice, l'horodatage se lit
-# dans le `rapport.json` d'un passage du banc tel que `maestro/scenarios/rapport.py` l'écrit, où un
-# scénario cité doit être `vert` (sans scénario cité, le passage entier), puis au banc comparatif.
+# au banc comparatif, dont un passage prouve s'il porte au moins un passage abouti.
 #
 # Lecture en LC_ALL=C, comme la grille de #980 : ✓ et ✗ se comparent octet à octet. Les motifs de
 # longueur fixe sont construits dans BEGIN : un intervalle `{12}` n'est pas compris de tous les awk
@@ -3037,28 +3029,10 @@ gl_criteres_constat() {
       }
       return n
     }
-    # Le rapport de ce passage, lu une fois : verdict[h, Sn], liste[h] ; rend « absent », « vide » ou « ok ».
-    function passage(h,   f, ligne, id, v, r, n) {
-      if (h in etat) return etat[h]
-      f = ENVIRON["RAPPORTS"] "/" h "/rapport.json"
-      n = 0; id = ""
-      while ((r = (getline ligne < f)) > 0) {
-        if (ligne ~ /^[ \t]*"id": "S[0-9]+"/) {
-          id = ligne; sub(/^[ \t]*"id": "/, "", id); sub(/".*/, "", id); continue
-        }
-        if (id != "" && ligne ~ /^[ \t]*"verdict": "/) {
-          v = ligne; sub(/^[ \t]*"verdict": "/, "", v); sub(/".*/, "", v)
-          verdict[h, id] = v; liste[h] = liste[h] " " id; n++; id = ""
-        }
-      }
-      if (r >= 0) close(f)
-      etat[h] = (n > 0) ? "ok" : ((r < 0 && n == 0) ? "absent" : "vide")
-      if (etat[h] == "absent" && ENVIRON["COMPARATIF"] != "") etat[h] = comparatif(h)
-      return etat[h]
-    }
     # Le rapport du banc comparatif de ce passage (#1512) : « comparatif » s il porte un
     # passage abouti, « comparatif-vide » sinon, « absent » s il n existe pas.
     function comparatif(h,   f, ligne, r, aboutis, lu) {
+      if (ENVIRON["COMPARATIF"] == "") return "absent"
       f = ENVIRON["COMPARATIF"] "/" h "/rapport.json"
       aboutis = 0; lu = 0
       while ((r = (getline ligne < f)) > 0) {
@@ -3100,23 +3074,13 @@ gl_criteres_constat() {
       if (ex_verdict[h] == "") return "!l\047exercice " h " n\047est pas conclu — `conclure vert|rouge|empeche` rend son verdict contre l\047oracle"
       return ex_verdict[h]
     }
-    # Le verdict de ce passage sur les scénarios cités dans <texte> (tous, faute de citation) :
-    # « vert », « rouge », ou « !<motif> » quand il ne peut pas être lu.
-    function verdict_du(h, texte,   e, cites, nc, i, s, rouges) {
-      e = passage(h)
-      if (e == "absent") return "!ni relevé d\047exercice (" ENVIRON["EXERCICES"] "/" h "/exercice.json) ni rapport du banc (" ENVIRON["RAPPORTS"] "/" h "/rapport.json)"
-      if (e == "vide") return "!le passage " h " ne porte aucun scénario — un passage vide n\047est pas vert"
-      if (e == "comparatif") return "vert"
+    # Le verdict d un horodatage qu aucun exercice ne porte : « vert » pour un passage comparatif
+    # abouti, « !<motif> » sinon.
+    function verdict_du(h,   e) {
+      e = comparatif(h)
+      if (e == "absent") return "!ni relevé d\047exercice (" ENVIRON["EXERCICES"] "/" h "/exercice.json) ni rapport du banc comparatif (" ENVIRON["COMPARATIF"] "/" h "/rapport.json)"
       if (e == "comparatif-vide") return "!le passage comparatif " h " n\047a aucun passage abouti — un passage empêché n\047est pas une preuve"
-      nc = jetons(texte, "S[0-9]+", cites)
-      if (nc == 0) nc = split(liste[h], cites, " ")
-      rouges = ""
-      for (i = 1; i <= nc; i++) {
-        s = cites[i]
-        if (!((h, s) in verdict)) return "!" s " n\047est pas au passage " h
-        if (verdict[h, s] != "vert") rouges = rouges " " s " " verdict[h, s]
-      }
-      return (rouges == "") ? "vert" : "rouge" rouges
+      return "vert"
     }
     # Le premier test que <piece> nomme et que l arbre ne définit pas : « » quand il n y en a pas.
     # Un fichier de suite (`tests/test_x.py`) n est pas un test nommé : on le retire d abord.
@@ -3140,9 +3104,8 @@ gl_criteres_constat() {
           if (v != "vert") return "l\047exercice " t[i] " rend " v " — un exercice rouge ou injouable n\047est jamais compté vert"
           ok = 1; continue
         }
-        v = verdict_du(t[i], piece)
+        v = verdict_du(t[i])
         if (v ~ /^!/) return substr(v, 2)
-        if (v != "vert") return "le passage " t[i] " rend" substr(v, 6) " — un banc rouge ou injouable n\047est jamais compté vert"
         ok = 1
       }
       delete t; n = jetons(sans_py, "test_[A-Za-z0-9_]+", t)
@@ -3159,7 +3122,7 @@ gl_criteres_constat() {
       for (i = 1; i <= n; i++) if ((getline v < t[i]) >= 0) { close(t[i]); ok = 1 }
       if (ok) return ""
       if (motif_test != "") return motif_test
-      return "✓ sans preuve exercée — nommer le test qui passe, l\047exercice, le passage du banc ou le run de la vraie stack"
+      return "✓ sans preuve exercée — nommer le test qui passe, l\047exercice, le run ou la capture de la vraie stack"
     }
     # Le premier run de <texte> (« run <id> ») qui est au relevé de l exercice <h> : « » quand il
     # n en cite aucun.
@@ -3374,7 +3337,7 @@ gl_criteres_note() {
     [ -n "$touches" ] &&
       exercice_du="le diff touche ce que la vraie stack charge ($(printf '%s\n' "$touches" | gl_chemins_resume))"
     verdict="$(ATTENDUS="$attendus" EXERCICE_DU="$exercice_du" EXERCICES="$GL_EXERCICES_RELEVES" \
-      RAPPORTS="$GL_BANC_RAPPORTS" COMPARATIF="$GL_COMPARATIF_RAPPORTS" \
+      COMPARATIF="$GL_COMPARATIF_RAPPORTS" \
       gl_criteres_constat "$inventaire" "$fichier")"
     rm -f "$inventaire"
     manques="$(printf '%s\n' "$verdict" | awk -F'\t' '$1 == "!" { print "    - " $2 " : " $3 }')"

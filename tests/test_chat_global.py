@@ -52,7 +52,7 @@ Couvre :
 ⑪ **agir est une demande de travail** (#1205) : vider, supprimer, renommer,
    déplacer atteignent le juge comme les autres demandes, et une action proposée
    se répond d'un geste qui ouvre le run dans le projet de la fenêtre — le chemin
-   de S1, que le banc des scénarios joue sur la vraie stack.
+   qu'un exercice joue sur la vraie stack.
 ⑫ **le fil n'écrit plus de phrase fixe sur les chemins du geste** (#1262) :
    accord, refus, équipe validée ou déclinée, renfort — ce que le fil dit est ce
    que le modèle a rédigé, à la lettre, et les faits sont des champs du message.
@@ -307,18 +307,17 @@ TEMOINS_NEGATIFS = [
     pytest.param("merci", id="salutation"),
 ]
 
-#: Le message de S1, mot pour mot : c'est celui que le banc des scénarios envoie
-#: (`maestro.scenarios.scenarios.s1_vider_un_dossier`), et celui que le juge
-#: refusait « étranger à Maestro » (#1205).
-DEMANDE_S1 = "Vide le dossier de ce projet : supprime tout son contenu."
+#: La demande de #1205, mot pour mot : celle que le juge refusait « étranger à
+#: Maestro ».
+DEMANDE_VIDER = "Vide le dossier de ce projet : supprime tout son contenu."
 
 #: Les demandes d'**agir** sur le projet (#1205) : rien à écrire, un geste à faire
 #: dans son dossier. Elles entrent au banc pour la même raison que celles de
 #: #682 — le canal ne doit en écarter aucune, ni avant le juge ni après lui. Ce
 #: que le juge **réel** en décide ne se tient pas ici (le juge est un double) :
-#: c'est S1, sur la vraie stack, qui le dit.
+#: c'est un exercice, sur la vraie stack, qui le dit.
 BANC_1205 = [
-    pytest.param(DEMANDE_S1, id="vider-le-dossier-S1"),
+    pytest.param(DEMANDE_VIDER, id="vider-le-dossier"),
     pytest.param("Supprime les fichiers de log", id="supprimer"),
     pytest.param("Renomme src en app", id="renommer"),
     pytest.param("Déplace les images dans assets", id="deplacer"),
@@ -3074,12 +3073,12 @@ def test_le_geste_ouvre_le_run_dans_le_projet_de_la_proposition(
 def test_une_demande_d_action_se_propose_puis_part_sur_l_accord_dans_son_projet(
     bus, depot_chat, lanceur
 ) -> None:
-    """S1 joué côté canal (#1205) : la porte exacte que le banc des scénarios emprunte.
+    """La demande de #1205 jouée côté canal : la porte qu'emprunte un client de l'API.
 
     Le juge propose l'action en disant qu'elle est irréversible, comme le fait le
     juge réel depuis ce ticket. Ce que le canal en fait ne dépend pas de la nature
     de la demande : la proposition devient un geste sur le message — c'est ce que
-    S1 lit (`reponse["proposition"]`) avant de donner l'accord —, rien ne s'ouvre
+    le client lit (`reponse["proposition"]`) avant de donner l'accord —, rien ne s'ouvre
     avant l'accord, et l'accord ouvre le run **sur l'action** et **dans le projet
     de la fenêtre**, là où l'agent qui l'exécutera a sa racine.
     """
@@ -3097,7 +3096,7 @@ def test_une_demande_d_action_se_propose_puis_part_sur_l_accord_dans_son_projet(
     ) as client:
         propose = client.post(
             f"/api/chat/{NOM_ORCHESTRATION}/messages",
-            json={"contenu": DEMANDE_S1, "projet_id": "prj-s1"},
+            json={"contenu": DEMANDE_VIDER, "projet_id": "prj-s1"},
         ).json()["messages"][-1]
         assert propose["proposition"] == action
         assert irreversible in propose["contenu"]

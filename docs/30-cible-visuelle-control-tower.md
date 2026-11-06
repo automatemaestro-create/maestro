@@ -1438,8 +1438,8 @@ le navigateur est celui du skill `relecture-visuelle`, et un skill garde ses out
 
 > ⚠ **La stack que ce geste regarde a changé** ([docs/41 §4](./41-decision-maestro-juge-il-ne-bride-pas.md),
 > 2026-09-21, livré par #1165). Il ne monte plus la démo (`start.sh --demo`) ni ne déclare de projet
-> à la main, mais la vraie stack, peuplée par l'état du dernier passage du banc des scénarios
-> (#1164) — le détail au §5.8, *Les états viennent de la vraie stack*. Ce qui suit décrit le geste
+> à la main, mais la vraie stack, peuplée par l'état qu'un exercice a sauvé
+> (#1164, #1569) — le détail au §5.8, *Les états viennent de la vraie stack*. Ce qui suit décrit le geste
 > tel que le lot 2 l'a livré : ce qu'il regarde et ce qu'il ne sait pas voir ne bougent pas, la démo
 > et son projet ne sont plus.
 
@@ -2924,7 +2924,7 @@ projets et runs d'un worktree ne sont jamais touchés :
 
 | État | Source réelle | Geste du lanceur |
 | --- | --- | --- |
-| `peuple` (défaut) | l'état du dernier passage du banc des scénarios, rouvert sans rien rejouer ; son âge est dit | `start.sh --etat-banc` |
+| `peuple` (défaut) | l'état qu'un exercice a sauvé, rouvert sans rien rejouer ; son âge est dit | `start.sh --etat-banc` |
 | `vide` | une stack neuve, puis un projet neuf **déclaré par l'API** (`origine: nouveau`) sous `~/.maestro/ateliers/relecture/<iid>/` (#1457 ; l'ancien `~/maestro-relecture` est repris au montage d'un état : ses dossiers `<iid>/` inactifs depuis 6 h retirés, le reste nommé) | `start.sh --etat-neuf` |
 | `injoignable` | l'API **coupée** sous la stack montée, l'UI encore servie (#996) — une coupure, pas un montage | `start.sh --couper-api` |
 
@@ -2940,19 +2940,18 @@ saisine ; demandés par `--etat`, ils sont refusés avec leur raison :
   **produit** donc cet état ; c'est le script qui ne le monte pas encore : #1206 l'a obtenu à la main,
   `REDIS_URL` de la stack pointé sur un relais TCP qu'on coupe. L'ajouter à `--etat` est un geste
   d'outillage, laissé à un ticket à part.
-- **`charge` au-delà du passage** : des listes de centaines de lignes, des noms de 80 caractères. La
-  charge regardée est celle que le passage du banc a laissée ; rien n'est gonflé.
+- **`charge` au-delà de l'exercice** : des listes de centaines de lignes, des noms de 80 caractères. La
+  charge regardée est celle que l'exercice sauvé a laissée ; rien n'est gonflé.
 
 Ce qui tient, et à ne pas défaire :
 
 - **Le projet actif vient de l'API.** La préparation liste les projets servis et leurs runs (l'état du
-  banc en porte un par scénario joué), et nomme celui de l'état `vide` — qui diffère d'une stack à
+  banc porte ceux de l'exercice sauvé), et nomme celui de l'état `vide` — qui diffère d'une stack à
   l'autre, chaque API déclarant le sien. Plus une constante, plus un fichier écrit à la main.
-- **L'âge ne se corrige pas d'office.** Rejouer un passage coûte du vrai modèle (des dizaines de
-  minutes) : sans état sur le poste, l'état `peuple` s'arrête en nommant
-  `start.sh --etat-banc --rejouer`, jamais en le jouant. ⚠ `--rejouer` se retire avec les
-  scénarios figés ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
-  #1572) : l'état `peuple` viendra du dernier exercice construit et sauvé (#1569).
+- **L'âge ne se corrige pas d'office.** Un exercice neuf coûte du vrai modèle : sans état sur le
+  poste, l'état `peuple` s'arrête en nommant l'exercice à sauver, jamais en le jouant. Aucun
+  parcours figé ne se rejoue ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
+  #1572).
 - **Ce qu'`origin/main` sait servir, son lanceur le dit** : l'avant pose la question à son
   `--diagnostic-navigateur`, qui refuse une option inconnue sans rien démarrer. Aucune option n'est
   cherchée dans son source — c'était le `grep` sur le `demo.py` d'`origin/main`.

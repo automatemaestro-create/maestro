@@ -131,7 +131,7 @@ un README qui renvoie vers le module réel du paquet (ex. `agents/developer/` �
 │   ├── queue/          #   File de tâches Celery + Redis, workers parallèles (Phase 1)
 │   ├── router/         #   Auto-assignation des tâches aux agents
 │   ├── sandbox/        #   Espace de travail isolé par tâche
-│   ├── scenarios/      #   Banc des scénarios de référence (#1148, python -m maestro.scenarios) — ⚠ scénarios figés retirés par #1572 (docs/52)
+│   ├── scenarios/      #   Exercice construit, état du banc, banc comparatif (#1569, python -m maestro.scenarios.exercice)
 │   ├── telemetry/      #   Journal des étapes, comptabilité de coût par tâche, secrets expurgés
 │   ├── check_env.py    #   Vérification d'environnement (maestro-check-env)
 │   └── config.py       #   Modes d'authentification (§2.1)
@@ -598,16 +598,9 @@ refus nomme les états réels ci-dessous. Ce qu'il faut savoir :
 **Les états qu'on regarde viennent du réel** (#1164, #1165). Pour voir l'écran ailleurs que
 dans l'état de la copie, sans rien fabriquer :
 
-> ⚠ **Plus de scénarios figés** depuis le 2026-11-03 ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
-> #1568) : l'état « peuplé » viendra du dernier **exercice construit** et sauvé (#1569), et
-> `--rejouer` se retire avec les scénarios (#1572). Ce qui suit vaut jusque-là.
-
 ```bash
-# L'état réel laissé par le dernier passage du banc des scénarios (#1148) — son âge est dit
+# L'état réel qu'un exercice a sauvé — celui de cette copie, sinon celui du poste ; son âge est dit
 bash scripts/controltower/start.sh --etat-banc
-
-# Le banc repart à neuf et rejoue ses scénarios : vrai modèle, des dizaines de minutes
-bash scripts/controltower/start.sh --etat-banc --rejouer        # ou --rejouer=S2,S4
 
 # Une stack neuve : aucun run, aucun fil, aucun projet
 bash scripts/controltower/start.sh --etat-neuf
@@ -620,7 +613,7 @@ bash scripts/controltower/start.sh --couper-api
 | --- | --- |
 | vide | une stack neuve (`--etat-neuf`) |
 | erreur | une vraie panne : l'API coupée (`--couper-api`, « API injoignable »). Une API qui **répond** en erreur ne se produit pas : mesuré le 2026-09-22, son magasin coupé, elle sert des listes vides et se dit « ok » (#1206, [docs/30 §5.8](./30-cible-visuelle-control-tower.md)) |
-| peuplé, charge | l'état réel laissé par le dernier passage du banc (`--etat-banc`, refait par `--rejouer`) |
+| peuplé, charge | l'état réel qu'un exercice a sauvé (`--etat-banc`) ; un état neuf se fait par un exercice joué sur `--etat-neuf` puis sauvé ([docs/10 §6.2](./10-workflow-git.md)) |
 | ce que le réel ne produit pas | **non couvert**, jamais fabriqué |
 
 `--etat-banc` et `--etat-neuf` servent un jeu de données à part (`<espace>.banc`,

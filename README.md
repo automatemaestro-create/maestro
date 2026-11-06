@@ -37,7 +37,7 @@ La documentation complète se trouve dans le dossier [`docs/`](./docs). Ordre de
 | 08 | [Glossaire](./docs/08-glossaire.md) | Le vocabulaire du projet |
 | 09 | [Exemple concret & coûts](./docs/09-exemple-chiffre.md) | Un projet déroulé : nombre d'agents, durée, budget (abonnement 20 $ vs API) |
 | 10 | [Workflow Git & tickets](./docs/10-workflow-git.md) | Convention de branches/commits, cycle de vie d'un ticket, commandes `/ticket-start`, `/ticket-finish`, `/branch-cleanup` |
-| 11 | [Démo de bout en bout du POC](./docs/11-demo-poc.md) | Archive de la Phase 0 : le parcours objectif → tâches → agents → fichiers, et la validation du critère de sortie. La commande `maestro-demo` a quitté le produit (#1168) ; le banc des scénarios de référence (`python -m maestro.scenarios`, #1148) lui succède |
+| 11 | [Démo de bout en bout du POC](./docs/11-demo-poc.md) | Archive de la Phase 0 : le parcours objectif → tâches → agents → fichiers, et la validation du critère de sortie. La commande `maestro-demo` a quitté le produit (#1168) ; le produit se vérifie aujourd'hui sur le réel par l'exercice construit (`python -m maestro.scenarios.exercice`, #1569) |
 | 12 | [Démo de bout en bout du MVP](./docs/12-demo-mvp.md) | Rejouer la démo supervisée (Control Tower, validation humaine, coûts), la vérification des 7 critères du MVP et le verdict go/no-go de fin de Phase 1 |
 | 13 | [Démo V1 : un projet réel de bout en bout](./docs/13-demo-v1.md) | Le projet « Dépensio » mené par l'équipe complète (validation UI, chat, capacité, analytics), le rapport de coûts des 6 runs et le verdict go/no-go de fin de Phase 2 |
 | 23 | [Démo V2 : fiabilité et durabilité](./docs/23-demo-v2.md) | « Dépensio » rejoué en 6/6 avec relance automatique, une reprise de run durable chiffrée (0 $ de re-paiement de l'amont) et le verdict go/no-go de fin de Phase 3 (LangGraph vs Agent SDK) |
@@ -240,30 +240,23 @@ structuré). Aperçu de l'implémentation : `maestro/agents/` (catalogue + comp�
 
 Qualité : `ruff check .` (lint, lancé aussi en CI) · `pytest` (tests) · `mypy maestro` (types).
 
-**Les scénarios de référence** — *est-ce que le produit fait ce qu'on lui demande ?*
-La Control Tower démarrée (`bash scripts/controltower/start.sh`) :
-
-> ⚠ **Plus de scénarios figés** depuis le 2026-11-03 ([docs/52](./docs/52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
-> #1568) : quand une vérification sur le réel est recommandée, la session construit l'exercice de
-> ce qu'elle vient d'implémenter (#1569). Le banc ci-dessous se retire avec #1572.
+**L'exercice construit** — *est-ce que le produit fait ce qu'on vient de lui faire faire ?*
+Il n'y a pas de scénarios figés ([docs/52](./docs/52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)) :
+quand une vérification sur le réel est recommandée, la session construit l'exercice de ce
+qu'elle vient d'implémenter — le message donné à Maestro par la porte d'entrée réelle, ce
+qu'il faut semer autour, et un **oracle écrit avant de jouer**. Sur une stack neuve
+(`bash scripts/controltower/start.sh --etat-neuf --no-browser`) :
 
 ```bash
-.venv/Scripts/python.exe -m maestro.scenarios          # les quatre
-.venv/Scripts/python.exe -m maestro.scenarios --liste   # ce qu'ils vérifient
-.venv/Scripts/python.exe -m maestro.scenarios --scenario S1
+.venv/Scripts/python.exe -m maestro.scenarios.exercice ouvrir --oracle <fichier>
+.venv/Scripts/python.exe -m maestro.scenarios.exercice suivre
+.venv/Scripts/python.exe -m maestro.scenarios.exercice conclure vert|rouge|empeche <fichier-du-motif>
 ```
 
-Quatre scénarios joués de bout en bout contre la **vraie stack** et le **vrai modèle**,
-par la porte d'entrée réelle — le fil de l'orchestrateur, proposition puis accord —,
-sur des projets jetables que le banc déclare lui-même : vider un dossier, créer une
-petite application exécutable, reprendre un projet sans équipe, demander pourquoi un
-run a échoué. Un verdict, un coût, une durée et un `run_id` par scénario, dans
-`.maestro/scenarios/<horodatage>/` ; le code de sortie dit si tout est vert.
-
-⚠ Il n'est **pas** en CI : un passage coûte du vrai modèle (~10 $ pour le run du retex
-du 2026-09-11). Il se joue au bouclage d'un jalon et à la demande. Un rouge est un
-résultat, pas une panne : c'est son rôle de les montrer. Décision et oracles :
-[docs/40 §5](./docs/40-decision-rythme-et-scenarios-de-reference.md).
+Le relevé vit dans `.maestro/exercices/<id>/` ; `sauver` laisse l'état que
+`start.sh --etat-banc` rouvre. ⚠ Il n'est **pas** en CI : un exercice coûte du vrai modèle.
+Un rouge est un résultat, pas une panne. Verbes et codes :
+[docs/10 §6.2](./docs/10-workflow-git.md).
 
 ---
 

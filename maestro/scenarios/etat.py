@@ -1,6 +1,6 @@
-"""L'état qu'un passage du banc a laissé : sauvé, rouvert, rejoué à la demande (#1164).
+"""L'état qu'un exercice a laissé sur le banc de sa copie : sauvé, puis rouvert (#1164).
 
-    .venv/Scripts/python.exe -m maestro.scenarios.etat --verifier [--rejouer | --neuf]
+    .venv/Scripts/python.exe -m maestro.scenarios.etat --verifier [--neuf]
     .venv/Scripts/python.exe -m maestro.scenarios.etat --rouvrir
     .venv/Scripts/python.exe -m maestro.scenarios.etat --vider
     .venv/Scripts/python.exe -m maestro.scenarios.etat --decrire
@@ -12,57 +12,61 @@ aussi, pour tourner sur ce même état.
 
 ## Pourquoi
 
-L'écran peuplé que regardent la relecture visuelle et les captures venait d'un
-scénario **factice** (la démo). Arbitrage de #1156 : il vient désormais de
-**l'état réel qu'un passage du banc (#1148) a laissé**, servi par l'API réelle.
-Rien n'est fabriqué — un passage coûte du vrai modèle (~1 $ et ~40 min pour les
-quatre scénarios d'alors, mesuré le 2026-09-22 ; S5 en ajoute un cinquième depuis
-#1224), on ne le rejoue donc pas à chaque
-regard : on **rouvre** ce qu'il a laissé, et on dit son âge.
+L'écran peuplé que regardent la relecture visuelle et les captures vient de
+**l'état réel qu'un exercice a laissé** (`maestro.scenarios.exercice`, #1569), servi
+par l'API réelle (#1156). Rien n'est fabriqué — un exercice coûte du vrai modèle, on
+ne le rejoue donc pas à chaque regard : on **rouvre** ce qu'il a laissé, et on dit
+son âge. Un état neuf se fait en jouant un exercice neuf, jamais un parcours figé
+(#1568).
 
 ## Le jeu de données du banc
 
-Un passage qui doit laisser un état se joue sur **le banc de la copie** — un
+Un exercice qui doit laisser un état se joue sur **le banc de la copie** — un
 espace Redis et des dépôts de fichiers à lui (`maestro.controltower.donnees.
 donnees_du_banc`), jamais ceux de la copie : l'état rouvert ne contient que ce
-que le passage a fait, et le rouvrir n'écrase ni un worktree en cours de travail
+que l'exercice a fait, et le rouvrir n'écrase ni un worktree en cours de travail
 ni les données du poste.
 
-- **`--vider`** remet le banc à neuf avant un passage : aucun run, aucun fil,
-  aucun projet ; la **configuration** de la copie (agents, autorisations,
-  playbooks, serveurs MCP, capacités) recopiée sans ses rangements `_projets/`,
-  qui appartiennent à des projets.
-- Le banc joue (`python -m maestro.scenarios --sauver-etat`) contre l'API servie
-  sur ce banc, puis **sauve** l'état : le journal durable de l'espace et chaque
-  dépôt, sous `<atelier du passage>/_etat/` — à côté des projets jetables du
-  passage, que les déclarations sauvées désignent. `--nettoyer` efface l'atelier,
-  donc l'état : un passage nettoyé n'a rien laissé à rouvrir. La rétention du
-  banc (#1457), elle, ne retire **jamais** le passage dont l'état se rouvre.
-- **`--rouvrir`** remet le banc dans l'état du dernier passage sauvé : le journal
+- **`--vider`** remet le banc à neuf : aucun run, aucun fil, aucun projet ; la
+  **configuration** de la copie (agents, autorisations, playbooks, serveurs MCP,
+  capacités) recopiée sans ses rangements `_projets/`, qui appartiennent à des
+  projets.
+- L'exercice joue contre l'API servie sur ce banc (`start.sh --etat-neuf`), puis
+  **sauve** l'état (`exercice sauver`) : le journal durable de l'espace et chaque
+  dépôt, sous `<atelier de l'exercice>/_etat/` — à côté de ses projets jetables, que
+  les déclarations sauvées désignent. La rétention de l'atelier (#1457) ne retire
+  **jamais** le passage dont l'état se rouvre.
+- **`--rouvrir`** remet le banc dans l'état sauvé (voir « Lequel ») : le journal
   réécrit dans l'espace du banc, les dépôts recopiés. L'API qui démarre ensuite
   rejoue ce journal comme après n'importe quel redémarrage — **rien n'est
   rejoué** du côté du modèle, et chaque ouverture repart du même état.
 - **`--verifier`** est le préflight du lanceur : Redis joignable, rien en vol sur
-  le banc, et — sauf `--rejouer` ou `--neuf` — un état à rouvrir, dont il **dit
-  l'âge**.
+  le banc, et — sauf `--neuf` — un état à rouvrir, dont il **dit l'âge**.
 - **`--decrire`** rend, en JSON sur une ligne, l'état que `--rouvrir` rouvrirait :
-  passage, date, âge, verdicts, contenu. Il ne lit que le disque — ni Redis, ni le
-  banc — et c'est ce qu'une présentation de jalon dit de ce qu'elle montre (#1166).
+  passage, espace, date, âge, verdicts, contenu. Il ne lit que le disque — ni Redis,
+  ni le banc — et c'est ce qu'une présentation de jalon dit de ce qu'elle montre
+  (#1166).
+
+## Lequel
+
+L'atelier est celui du **poste** : toutes les copies y sauvent leurs états, et le
+dernier du poste peut venir d'une autre copie, sauvé une minute plus tôt sur un tout
+autre changement. Chaque état porte l'espace qui l'a sauvé ; on rouvre donc **le
+dernier sauvé par cette copie**, et celui du poste seulement quand elle n'en a
+aucun — en le disant, avec l'espace d'où il vient (`choisir`).
 
 ## Une stack neuve (#1165)
 
 `start.sh --etat-neuf` sert le banc **remis à neuf, sans rien jouer** : aucun
 run, aucun fil, aucun projet, la configuration de la copie. C'est l'état « vide »
-que regarde la relecture visuelle — une stack réelle neuve, et non la démo qui
-simulait l'absence. Le geste est celui qui précède un rejeu (`--vider`) ; seul
-change qu'aucun passage ne suit, d'où `--verifier --neuf`, qui n'exige aucun état
-sauvé et le dit autrement que `--rejouer`. Le banc vidé ne perd rien : l'état
-d'un passage vit dans son atelier, et `--rouvrir` l'y reprend.
+que regarde la relecture visuelle — une stack réelle neuve —, et celle sur laquelle
+un exercice se joue. `--verifier --neuf` n'exige aucun état sauvé. Le banc vidé ne
+perd rien : l'état d'un exercice vit dans son atelier, et `--rouvrir` l'y reprend.
 
 ## Ce qu'il ne faut pas défaire
 
 **Les battements ne sont pas sauvés** : ce sont des signaux de vie, pas de
-l'état. Un run que le passage a laissé en vol se rouvre tel que l'API le juge
+l'état. Un run que l'exercice a laissé en vol se rouvre tel que l'API le juge
 sans hôte — c'est ce que le produit ferait de ce run-là.
 
 **On refuse tant que quelque chose vit sur le banc** — un hôte détaché qui bat,
@@ -111,7 +115,7 @@ from maestro.scenarios.projets import racine_atelier, racines_des_passages
 MODULE = __spec__.name if __spec__ is not None else __name__
 
 #: Où l'état d'un passage se range, dans l'atelier du passage. Le tiret bas le met
-#: hors d'atteinte d'un dossier de scénario (`s1-vider`…).
+#: hors d'atteinte d'un dossier de projet.
 DOSSIER_ETAT = "_etat"
 FICHIER_META = "etat.json"
 FICHIER_JOURNAL = "journal.jsonl"
@@ -123,7 +127,7 @@ VERSION_FORMAT = 1
 
 #: Les gestes, nommés dans les annonces et les refus.
 GESTE_ROUVRIR = "bash scripts/controltower/start.sh --etat-banc"
-GESTE_REJOUER = "bash scripts/controltower/start.sh --etat-banc --rejouer"
+GESTE_EXERCICE = ".venv/Scripts/python.exe -m maestro.scenarios.exercice"
 GESTE_ARRETER = "bash scripts/controltower/start.sh --stop"
 
 #: Le journal se réécrit par lots : un `RPUSH` par événement coûterait un aller
@@ -136,15 +140,13 @@ CODE_USAGE = 2
 CODE_REFUS = 3
 CODE_AUCUN_ETAT = 4
 
-_USAGE = (
-    f"Usage : python -m {MODULE} --verifier [--rejouer | --neuf] | --rouvrir | --vider | --decrire"
-)
+_USAGE = f"Usage : python -m {MODULE} --verifier [--neuf] | --rouvrir | --vider | --decrire"
 
 #: Les gestes qu'accepte la ligne de commande — un seul par appel.
 GESTES = ("--verifier", "--rouvrir", "--vider", "--decrire")
 
-#: Ce qui accompagne `--verifier`, et lui seul — l'un ou l'autre.
-MODES_VERIFIER = ("--rejouer", "--neuf")
+#: Ce qui accompagne `--verifier`, et lui seul.
+MODES_VERIFIER = ("--neuf",)
 
 
 class ClientRedis(ClientRedisPurge, Protocol):
@@ -168,10 +170,12 @@ class Instantane:
     sauve_le: datetime
     evenements: int
     projets: int
-    #: `(identifiant, verdict)` de chaque scénario joué, dans l'ordre du passage.
+    #: `(identifiant, verdict)` de ce que le passage a joué — `exercice` pour un exercice.
     scenarios: tuple[tuple[str, str], ...]
     duree_s: float
     cout_usd: float | None
+    #: L'espace de la copie qui l'a sauvé — `""` pour un état qui ne le dit pas.
+    espace: str = ""
 
     @classmethod
     def lire(cls, dossier: Path) -> Instantane | None:
@@ -190,6 +194,7 @@ class Instantane:
                 scenarios=tuple((str(s["id"]), str(s["verdict"])) for s in meta["scenarios"]),
                 duree_s=float(meta.get("duree_s") or 0.0),
                 cout_usd=None if cout is None else float(cout),
+                espace=str(meta.get("espace") or ""),
             )
         except (OSError, ValueError, KeyError, TypeError):
             return None
@@ -278,12 +283,12 @@ def sauver(
     return instantane
 
 
-def dernier(racine: Path | None = None) -> Instantane | None:
-    """Le dernier état sauvé parmi tous les passages du poste, ou None.
+def dernier(racine: Path | None = None, *, espace: str | None = None) -> Instantane | None:
+    """Le dernier état sauvé — par l'espace `espace` s'il est nommé, sinon du poste —, ou None.
 
     Sans `racine`, l'atelier **et** l'ancien (`~/maestro-scenarios`, #1457) tant qu'il
     existe : un poste mis à jour rouvre l'état qu'il avait sans rien rejouer, et la
-    rétention du banc garde ce passage-là (`maestro.scenarios.projets.retenir`).
+    rétention garde le dernier du poste (`maestro.scenarios.projets.retenir_le_poste`).
     """
     racines = (racine,) if racine is not None else racines_des_passages()
     etats = [
@@ -292,8 +297,22 @@ def dernier(racine: Path | None = None) -> Instantane | None:
         if dossier.is_dir()
         for passage in dossier.iterdir()
         if (etat := Instantane.lire(passage / DOSSIER_ETAT)) is not None
+        and (espace is None or etat.espace == espace)
     ]
     return max(etats, key=lambda e: e.sauve_le, default=None)
+
+
+def choisir(espace: str, racine: Path | None = None) -> tuple[Instantane | None, bool]:
+    """L'état qu'une copie rouvre, et s'il vient d'**une autre** copie (voir « Lequel »).
+
+    Le dernier sauvé par `espace` d'abord ; à défaut, le dernier du poste, et le second
+    terme vaut alors True pour que l'appelant le dise.
+    """
+    propre = dernier(racine, espace=espace)
+    if propre is not None:
+        return propre, False
+    autre = dernier(racine)
+    return autre, autre is not None
 
 
 # ── Le banc : vider, rouvrir ──────────────────────────────────────────────────
@@ -352,25 +371,36 @@ def _duree_lisible(secondes: float) -> str:
 
 
 def annonce(instantane: Instantane, *, maintenant: datetime | None = None) -> list[str]:
-    """Ce que dit la réouverture : quel passage, **quel âge**, ce qu'il contient, et le rejeu."""
+    """Ce que dit la réouverture : quel passage, **quel âge**, d'où, ce qu'il contient, son prix."""
     sauve = instantane.sauve_le.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    scenarios = " · ".join(f"{i} {v}" for i, v in instantane.scenarios) or "aucun"
+    verdicts = " · ".join(f"{i} {v}" for i, v in instantane.scenarios) or "aucun"
     prix = _duree_lisible(instantane.duree_s)
     if instantane.cout_usd is not None:
         prix += f", {instantane.cout_usd:.2f} $".replace(".", ",")
     return [
         f"État du banc — passage {instantane.passage}, sauvé "
         f"{age_lisible(instantane.age_s(maintenant))} ({sauve})",
-        f"  scénarios  {scenarios}",
+        f"  espace     {instantane.espace or 'non dit'}",
+        f"  verdicts   {verdicts}",
         f"  contenu    {instantane.evenements} événement(s) · {instantane.projets} projet(s)",
-        f"  rejouer    {GESTE_REJOUER}  (vrai modèle — ce passage : {prix})",
+        f"  refaire    un exercice neuf ({GESTE_EXERCICE} ouvrir … sauver) — vrai modèle, "
+        f"ce passage : {prix}",
     ]
+
+
+def provenance(instantane: Instantane, espace: str) -> str:
+    """La ligne qui dit qu'un état rouvert vient d'une autre copie que `espace`."""
+    return (
+        f"Aucun état sauvé par cette copie (espace « {espace} ») : celui du poste, sauvé par "
+        f"l'espace « {instantane.espace or 'non dit'} » — un autre changement que le tien."
+    )
 
 
 def description(instantane: Instantane, *, maintenant: datetime | None = None) -> dict[str, Any]:
     """L'état à rouvrir, tel qu'un autre outil le relit — ce que `annonce` dit en prose."""
     return {
         "passage": instantane.passage,
+        "espace": instantane.espace,
         "sauve_le": instantane.sauve_le.isoformat(timespec="seconds"),
         "age_s": round(instantane.age_s(maintenant)),
         "scenarios": [{"id": i, "verdict": v} for i, v in instantane.scenarios],
@@ -424,8 +454,9 @@ def _refus_vivant(
 
 def _aucun_etat(erreur: TextIO) -> int:
     print(
-        f"Aucun état du banc à rouvrir sous {racine_atelier()} — aucun passage n'en a "
-        f"sauvé (ou son atelier a été nettoyé).\n  En jouer un : {GESTE_REJOUER}",
+        f"Aucun état du banc à rouvrir sous {racine_atelier()} — aucun exercice n'en a "
+        f"sauvé (ou son atelier a été retiré).\n  En laisser un : jouer un exercice sur "
+        f"le banc ({GESTE_EXERCICE} ouvrir …), puis `sauver`.",
         file=erreur,
     )
     return CODE_AUCUN_ETAT
@@ -472,24 +503,23 @@ def main(
         print(_USAGE, file=erreur)
         return CODE_USAGE
     geste = gestes[0]
-    rejouer = modes == ["--rejouer"]
     neuf = modes == ["--neuf"]
 
+    # La copie avant que le process ne soit placé sur le banc : « les données de la
+    # stack » seraient sinon celles du banc. Ni l'une ni l'autre ne lit quoi que ce soit.
+    donnees_copie = donnees_de_la_stack()
+    banc = donnees_du_banc(racine=copie)
+
     # Décrire ne lit que le disque : ni Redis ni le banc n'ont à répondre pour dire
-    # ce qu'on rouvrirait.
+    # ce qu'on rouvrirait — l'espace du banc ne sert qu'à choisir lequel.
     if geste == "--decrire":
-        instantane = dernier(racine_ateliers)
+        instantane, _ = choisir(banc.espace.nom, racine_ateliers)
         if instantane is None:
             return _aucun_etat(erreur)
         # ASCII échappé : la ligne est faite pour être redirigée vers un fichier, et un
         # tube Windows l'écrirait sinon en cp1252 (#141).
         print(json.dumps(description(instantane, maintenant=maintenant)), file=sortie)
         return CODE_FAIT
-
-    # La copie d'abord, le banc ensuite : une fois le process placé sur le banc,
-    # « les données de la stack » seraient celles du banc.
-    donnees_copie = donnees_de_la_stack()
-    banc = donnees_du_banc(racine=copie)
 
     if geste == "--verifier":
         poser_sur_le_process(banc)
@@ -507,7 +537,7 @@ def main(
     if _refus_vivant(banc, client, sonde, erreur):
         return CODE_REFUS
 
-    if geste == "--vider" or (geste == "--verifier" and (rejouer or neuf)):
+    if geste == "--vider" or (geste == "--verifier" and neuf):
         if geste == "--vider":
             vider(banc, donnees_copie, client)
             print(
@@ -515,23 +545,19 @@ def main(
                 "de la copie, sans ses rangements de projets.",
                 file=sortie,
             )
-        elif neuf:
+        else:
             print(
                 "Une stack neuve : le banc repart à neuf et se sert tel quel, sans rien "
                 "jouer ni rouvrir — aucun run, aucun fil, aucun projet.",
                 file=sortie,
             )
-        else:
-            print(
-                "Le banc repart à neuf et rejoue ses scénarios contre la vraie stack "
-                "(vrai modèle) ; son état sera sauvé à la fin du passage.",
-                file=sortie,
-            )
         return CODE_FAIT
 
-    instantane = dernier(racine_ateliers)
+    instantane, d_ailleurs = choisir(banc.espace.nom, racine_ateliers)
     if instantane is None:
         return _aucun_etat(erreur)
+    if d_ailleurs:
+        print(provenance(instantane, banc.espace.nom), file=sortie)
     if geste == "--rouvrir":
         rouvrir(instantane, banc, client)
         print(

@@ -416,14 +416,15 @@ semaines : la même dérive était revenue, et rien ne pouvait la voir revenir.
 qui peut revenir :
 
 - **`TestBudgetClaudeMd`** — `estimer_tokens(CLAUDE.md) ≤ BUDGET_CLAUDE_MD_TOKENS`
-  (budget : 20 164 tokens, le coût du fichier à la livraison de #1523). La garde **lève**, en disant de
+  (budget : 19 940 tokens, le coût du fichier à la livraison de #1572). La garde **lève**, en disant de
   combien et où la décision a été prise. Elle est prouvée **à un token près sur le fichier réel** :
   au coût exact elle passe, un token en dessous elle lève. Le budget annoncé par `CLAUDE.md` et par
   ce document est lu et comparé à la constante.
 
   Le budget est un **cliquet** (#1523, [docs/49 §2.1](./49-decision-le-reglement-ne-grossit-plus.md)) :
   il ne remonte jamais. `BUDGETS_LIVRES_CLAUDE_MD` inscrit chaque budget livré avec son ticket
-  (25 000 pour #965, 20 164 pour #1523), et `verifier_cliquet` lève si la constante dépasse la
+  (25 000 pour #965, 20 164 pour #1523, 19 940 pour #1572), et `verifier_cliquet` lève si la
+  constante dépasse la
   dernière ligne, si une ligne n'est pas plus basse que la précédente, ou si la constante descend
   sans sa ligne. Les deux portes d'une hausse sont éprouvées sur un échantillon fautif : la
   constante rendue aux 25 000 de #965, le budget sous lequel `CLAUDE.md` a grossi sans que rien

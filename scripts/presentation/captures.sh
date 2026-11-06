@@ -6,9 +6,9 @@
 #   1. installe playwright-core — et ffmpeg, que le rendu vidéo exige et que
 #      `-core` n'embarque pas — dans un dossier TEMPORAIRE (jamais dans le dépôt :
 #      il n'a rien à faire dans le build de l'UI) — idempotent, réutilisé ensuite ;
-#   2. rouvre L'ÉTAT DU BANC — ce qu'un passage des scénarios de référence (#1148)
-#      a laissé, sur le jeu de données à part du banc (#1164) —, en dit l'âge et le
-#      décrit dans `<sortie>/etat.json` ;
+#   2. rouvre L'ÉTAT DU BANC — ce qu'un exercice (#1569) a laissé, sur le jeu de
+#      données à part du banc (#1164) —, en dit l'âge et le décrit dans
+#      `<sortie>/etat.json` ;
 #   3. démarre l'API RÉELLE sur cet état (`maestro.controltower.cli --etat-banc`), en lui
 #      donnant le port de l'UI servie au 4 : elle n'admet que l'origine de son front (#1233) ;
 #   4. construit l'UI (`next build`) et la sert (`next start`) ;
@@ -18,11 +18,11 @@
 # PLUS DE DÉMO (#1166, parent #1156). Jusque-là, la série tournait sur un scénario
 # factice (`maestro.controltower.demo`, projet `prj-demo` déclaré ici même) : elle
 # montrait ce qu'on avait scénarisé, pas ce que le produit fait. Elle montre
-# désormais ce qu'un vrai passage du banc a laissé, servi par la vraie API — rien
-# n'est fabriqué, et un parcours dont le geste ne trouve pas sa cible dans cet état
-# garde sa ligne au manifeste et le dit. L'état se ROUVRE, il ne se rejoue pas :
-# un passage coûte du vrai modèle (#1164). Le refaire est un geste à part, demandé :
-#   bash scripts/controltower/start.sh --etat-banc --rejouer
+# désormais ce qu'un vrai exercice a laissé (`start.sh --etat-banc`), servi par la vraie
+# API — rien n'est fabriqué, et un parcours dont le geste ne trouve pas sa cible dans cet
+# état garde sa ligne au manifeste et le dit. L'état se ROUVRE, il ne se rejoue pas : un
+# exercice coûte du vrai modèle (#1164). En laisser un neuf est un geste à part, demandé :
+# un exercice joué sur `start.sh --etat-neuf`, puis sauvé (`maestro.scenarios.exercice`).
 #
 #   bash scripts/presentation/captures.sh --sortie <dossier> \
 #        [--sans-demarrage] [--garder] [--sans-videos]
@@ -217,7 +217,7 @@ if [ "$DEMARRER" = 1 ]; then
 
   # Le préflight de `start.sh --etat-banc` : Redis joignable, rien de vivant sur le banc, un état
   # à rouvrir — dont il DIT L'ÂGE. Son refus nomme le geste qui le lève (lancer Redis, arrêter la
-  # stack, jouer un passage) : on le relaie tel quel, sans visuels plutôt que sur du factice.
+  # stack, sauver un exercice) : on le relaie tel quel, sans visuels plutôt que sur du factice.
   if ! (cd "$RACINE" && "$PYTHON" -m maestro.scenarios.etat --verifier); then
     echo "[captures] ⚠ l'état du banc ne peut pas être servi (voir ci-dessus) — pas de visuels" >&2
     exit 1

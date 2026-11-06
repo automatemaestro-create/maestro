@@ -22,7 +22,7 @@ geste par geste, une commande par geste. Aucune liste de parcours ne vit ici : c
 rend des **verbes**, et la session décide de leur ordre.
 
 Tout passe par **la porte d'entrée réelle** — l'API de la Control Tower, par le fil de
-l'orchestrateur — et par les gestes que les scénarios partageaient
+l'orchestrateur — et par les gestes partagés avec le comparatif
 (`maestro.scenarios.gestes`), tirés tels quels.
 
 ## L'oracle s'écrit avant de jouer
@@ -50,8 +50,9 @@ qui a été dit à Maestro), `deroule.md` (chaque geste et ce que la stack a ren
 `faits.json` et `faits.md` (`relever` : cartes, statuts, journal, validations, questions,
 fil, coût du grand livre, fichiers et commits du projet, durée, `run_id`) et `verdict.md`
 (`conclure`). L'identifiant de l'exercice est celui de son atelier — ses projets vivent
-sous l'atelier du banc (`maestro.scenarios.projets`), et son état sauvé y va aussi :
-`start.sh --etat-banc` le rouvre (`sauver`, sur une API servie par le banc de la copie).
+sous l'atelier des passages (`maestro.scenarios.projets`), qui garde les derniers
+(`retenir_le_poste`, à l'ouverture), et son état sauvé y va aussi : `start.sh --etat-banc`
+le rouvre (`sauver`, sur une API servie par le jeu du banc de la copie).
 
 ## Le temps
 
@@ -114,7 +115,7 @@ from maestro.scenarios.gestes import (
 )
 from maestro.scenarios.juge import Juge, JugeModele
 from maestro.scenarios.modele import Issue, Journal, Rapport, Resultat, horodatage
-from maestro.scenarios.projets import VARIABLE_ATELIER, Atelier
+from maestro.scenarios.projets import VARIABLE_ATELIER, Atelier, retenir_le_poste
 
 #: Où vivent les exercices — sous `.maestro/`, en chemin relatif (#234).
 RACINE_EXERCICES = Path(".maestro") / "exercices"
@@ -285,6 +286,10 @@ def _ouvrir(monde: _Monde, args: argparse.Namespace) -> int:
     )
     _exiger_l_api(monde)
     atelier = monde.reserver()
+    if monde.atelier is None:
+        # Après la réservation : l'exercice qui commence compte parmi les derniers, et
+        # s'est déjà nommé dans son atelier. Un atelier injecté ne fait pas le ménage.
+        retenir_le_poste(monde.dire)
     dossier = monde.racine / atelier.passage
     dossier.mkdir(parents=True)
     (dossier / FICHIER_ORACLE).write_text(oracle + "\n", encoding="utf-8")
@@ -1086,8 +1091,8 @@ def main(
     """Point d'entrée : voir l'en-tête du module pour les verbes et les codes.
 
     Tout ce qui touche au monde est injectable **pour les tests** — une fausse API, un
-    atelier et un dossier d'exercices jetables, aucune attente réelle —, la couture du
-    banc (`maestro.scenarios.banc.main`).
+    atelier et un dossier d'exercices jetables, aucune attente réelle. Un atelier injecté
+    ne fait pas la rétention du poste (`projets.retenir_le_poste`).
     """
     sortie = sortie or sys.stdout
     erreur = erreur or sys.stderr

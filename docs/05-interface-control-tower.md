@@ -901,10 +901,10 @@ replient en lignes en dessous, au lieu d'être toutes tassées de front.
 > appelé comme le SDK l'appelle, sans CLI ni quota (patron de
 > `tests/test_decisions_autonomes.py`), aucun `TodoWrite`/`TaskCreate`/`TaskUpdate`
 > du flux qui coche quoi que ce soit, et le chemin entier jusqu'à la carte que sert
-> l'API. Sur la vraie stack, c'est le scénario **S2** du banc
-> (`python -m maestro.scenarios`) qui le garde : sa tâche doit finir à N/N par ce
-> verbe. ⚠ Les scénarios figés se retirent ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
-> #1572) : un exercice construit le vérifiera sur la vraie stack quand un ticket touchera ce verbe.
+> l'API. Sur la vraie stack, c'est un exercice construit qui le
+> vérifie, quand un ticket touche ce verbe : sa tâche doit finir à N/N par lui
+> ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md) ; le scénario S2
+> qui le gardait est parti avec le banc figé, #1572).
 
 > **Ce qui reste non coché à la clôture se dit (#944).** Un agent conclut souvent
 > sans cocher sa dernière ligne : la tâche 4 du run du
@@ -8264,7 +8264,7 @@ hors du dépôt (`~/.maestro/jeton-api`, mode `0600`) ; `scripts/controltower/st
 passe au front par son environnement, qui l'envoie sur chaque appel
 ([`apps/web/lib/jetonApi.ts`](../apps/web/lib/jetonApi.ts) le résout,
 [`apps/web/lib/api.ts`](../apps/web/lib/api.ts) le pose). Les outils du poste qui frappent la vraie
-API — le banc des scénarios, les captures de présentation, la relecture visuelle — lisent le **même**
+API — les exercices, le banc comparatif, les captures de présentation, la relecture visuelle — lisent le **même**
 fichier : ils s'accordent sans se parler, comme deux programmes du même utilisateur.
 
 **Les réglages, et pourquoi l'ouvert se nomme.** `MAESTRO_API_AUTH` vaut `jeton` (le défaut, l'API

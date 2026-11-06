@@ -107,6 +107,9 @@ D'ici là, aucune session ne s'appuie plus sur la démo pour juger.
 | peuplé, charge | **l'état réel laissé par le dernier passage du banc des scénarios** (#1148), servi par l'API réelle, rejoué à la demande quand il date |
 | ce que le réel ne sait pas produire | nommé **non couvert** dans la note de relecture, jamais fabriqué |
 
+> ⚠ Depuis #1572 ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)),
+> l'état peuplé est celui qu'un **exercice** a sauvé : aucun parcours figé ne se rejoue.
+
 **`maestro-demo` part aussi.** C'est un vrai run, mais sur un objectif figé (le mini-CRM de la Phase 0), avec le verdict d'un POC. Le banc #1148 en est le successeur professionnel. Les démos de fin de phase ([docs/11](./11-demo-poc.md), 12, 13, 23) restent : ce sont des archives.
 
 ## 5. Ce qui a été demandé, et répondu
