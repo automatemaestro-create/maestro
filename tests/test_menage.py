@@ -264,7 +264,10 @@ def test_la_commande_imprime_tout_quand_sa_sortie_est_un_tube_sans_utf8(tmp_path
     assert "UnicodeEncodeError" not in erreur, erreur
     assert fini.returncode == CODE_FAIT, erreur
     assert "→" in sortie and "~/maestro-essais" in sortie
-    assert f"python -m {MODULE} --purger" in sortie, "le bilan sort aussi"
+    # Le bilan dépend de ce que les copies du dépôt laissent lire (tout est conservé quand une
+    # déclaration ne se lit pas) ; qu'il sorte, l'un ou l'autre, prouve l'inventaire entier.
+    bilans = ("À retirer sur un « oui »", "Rien à retirer")
+    assert any(bilan in sortie for bilan in bilans), "le bilan sort aussi"
 
 
 def test_chaque_famille_que_le_ramassage_laisse_a_un_autre_a_son_proprietaire() -> None:
