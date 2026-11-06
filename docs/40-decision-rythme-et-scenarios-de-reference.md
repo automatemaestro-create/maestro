@@ -153,8 +153,9 @@ la personne a déjà approuvé, et c'est son accord qu'on cesse de lui redemande
 > construit l'exercice de ce qu'elle vient d'implémenter (#1569, #1570), et le bilan d'un jalon
 > tire les siens de ses critères de sortie (#1571). S1 à S12, la carte, l'historique et le banc par
 > lot se retirent (#1572). Cette section reste l'histoire du banc et la raison de chacun de ses
-> oracles ; elle décrit le présent jusqu'à ce que ces lots soient livrés. Le banc comparatif et ses
-> objectifs `p5` et `club` ne bougent pas.
+> oracles. Elle ne décrit plus le présent au ticket ni au bouclage d'un jalon, qui se jouent sur des
+> exercices construits ([docs/10 §3.4 et §6](./10-workflow-git.md)) ; jusqu'à #1572, elle décrit
+> encore le banc par lot. Le banc comparatif et ses objectifs `p5` et `club` ne bougent pas.
 
 Le retex du 2026-09-11 est la seule vérification qui ait trouvé de vrais défauts. Il était manuel et
 n'a été joué qu'une fois. Il devient une commande (#1148), jouée contre la vraie stack et le vrai

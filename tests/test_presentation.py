@@ -1981,7 +1981,7 @@ MOTIFS_REEL_PRESENTATION = (
 #: pour un critère (non couvert, avec sa cause — jamais tenu, jamais en défaut par défaut).
 MOTIFS_REEL_BILAN = (
     "Ces pièces viennent du réel",
-    "dernier passage du banc",
+    "dernier état sauvé du poste",
     "pas un défaut du livrable",
     "Les parcours **n'exercent rien**",
 )
