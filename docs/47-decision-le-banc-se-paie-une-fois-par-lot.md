@@ -18,7 +18,9 @@ référence le joue avant de pousser »* —, et le déclencheur qui l'exprime :
 > #1568) : plus de scénarios figés. Le banc par lot se retire **sans remplaçant**, sur réponse de la
 > personne, et au ticket la session construit l'exercice de ce qu'elle vient d'implémenter, au lieu
 > du scénario que la carte désignait : c'est fait depuis #1570, et §0.2 et §0.3 ne décrivent plus
-> le présent ([docs/10 §6](./10-workflow-git.md)). La carte, le croisement et l'historique se
+> le présent ([docs/10 §6](./10-workflow-git.md)). Au bilan d'un jalon produit, les exercices se
+> tirent des critères de sortie depuis #1571 : le bouclage de §5 se joue sur eux, plus sur les
+> scénarios ([docs/10 §3.4](./10-workflow-git.md)). La carte, le croisement et l'historique se
 > retirent avec les scénarios (#1572) ; jusque-là, ce qui suit décrit encore le banc par lot. La
 > preuve exercée et l'épreuve injouable jamais comptée verte (§5) ne bougent pas.
 

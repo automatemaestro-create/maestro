@@ -34,10 +34,11 @@ Deux règles gouvernent tout le reste, et rien de ce qui suit ne les défait :
   fermer sur « ça a été écrit ». Tu ne conclus **que** sur ce que tu as exercé.
 
 Et une condition, pour un jalon du rail **produit** seulement : **il ne se boucle pas `GO` avec un
-scénario de référence rouge** (#1152, docs/40 §5). Les critères disent ce que chaque ticket
-annonce, les scénarios rejouent ce qu'un utilisateur fait — c'est par cet écart que « L'équipe sur
-mesure » a été bouclé pendant qu'un run sur un projet antérieur échouait sans prévenir (#1146).
-C'est l'étape 5c.
+exercice rouge** (#1152, docs/52 §5). Ses exercices, tu les **construis à partir de ses critères de
+sortie** : ce qu'un critère promet à une personne, un exercice le fait, sur la vraie stack et par le
+fil, comme elle. Les tickets disent ce que chacun annonce ; se servir du produit dit s'il le fait —
+c'est par cet écart que « L'équipe sur mesure » a été bouclé pendant qu'un run sur un projet
+antérieur échouait sans prévenir (#1146). C'est l'étape 5c.
 
 ---
 
@@ -121,11 +122,16 @@ C'est l'étape 5c.
    les critères**, jamais par ce que l'outillage sait faire. Un critère qui parle de temps réel
    s'exerce en coupant la WebSocket, pas en photographiant un écran.
 
-   ⚠ **Tu n'écris aucun pilotage de navigateur, aucun lanceur, aucune capture, aucun parcours.**
-   Cinq exécutants existent, ce sont les seuls : `ecrans-touches.sh`, `captures.sh` /
+   ⚠ **Tu n'écris aucun pilotage de navigateur, aucun lanceur, aucune capture, aucun parcours de
+   navigateur.** Cinq exécutants existent, ce sont les seuls : `ecrans-touches.sh`, `captures.sh` /
    `parcours.mjs`, le skill **`verify`**, le skill **`banc-mise-en-page`** et, pour un jalon
-   produit, le banc des scénarios **`maestro.scenarios`** (5c). Tu les **appelles** ; tu n'en
-   réécris aucun.
+   produit, l'outil d'exercice **`maestro.scenarios.exercice`** (5c), dont tu joues les verbes. Tu
+   les **appelles** ; tu n'en réécris aucun. Un exercice se **construit** — un oracle, un message,
+   une feuille, écrits dans des fichiers —, il ne se programme pas.
+
+   **L'ordre de jeu**, sur un jalon produit : **5c d'abord**, puis 5a, puis 5b. Les exercices
+   sauvent l'état que les captures rouvrent, et `verify` relance la stack sur les ports où leurs
+   runs tournent : un redémarrage pendant un exercice couperait son run.
 
    **5a. Les surfaces visibles** (les écrans dérivés à l'étape 4) :
    ```
@@ -136,19 +142,21 @@ C'est l'étape 5c.
    de `parcours.mjs` et arrête tout. Compte plusieurs minutes. `--sans-videos` s'en passe — à
    réserver aux cas où aucun critère ne porte sur un parcours.
 
-   ⚠ **Ces pièces viennent du réel** (#1166) : la vraie Control Tower, servie sur **l'état du
-   dernier passage du banc** — celui que le banc a sauvé, rouvert sans rien rejouer, dont le script
-   dit l'âge et que le bloc `source` du manifeste nomme. Plus aucun scénario factice : ce qu'une
-   capture montre, le produit l'a fait. Deux conséquences pour le bilan :
-   - un écran que ce passage n'a **pas peuplé** se photographie vide, et un parcours qui n'y trouve
+   ⚠ **Ces pièces viennent du réel** (#1166) : la vraie Control Tower, servie sur **le
+   dernier état sauvé du poste** — sur un jalon produit, celui que ton dernier exercice de 5c a
+   sauvé —, rouvert sans rien rejouer, dont le script dit l'âge et que le bloc `source` du
+   manifeste nomme. Ce qu'une capture montre, le produit l'a fait. Le script refuse un banc encore
+   vivant : arrête d'abord la stack des exercices (`bash scripts/controltower/start.sh --stop`).
+   Deux conséquences pour le bilan :
+   - un écran que cet état n'a **pas peuplé** se photographie vide, et un parcours qui n'y trouve
      pas sa cible le dit dans sa ligne (« … n'est pas à l'écran ») — c'est une pièce **sur l'état**,
      pas un défaut du livrable : un critère qu'elle seule devait porter reste **non couvert**, avec
      cette cause ;
    - **sans état à rouvrir** (ou Redis injoignable), il n'y a aucun visuel : les critères
-     d'écran sont non couverts, avec le geste que le script nomme. Ne rejoue pas le banc pour
-     l'occasion — 5c le joue déjà, et c'est son passage qui fait foi.
+     d'écran sont non couverts, avec le geste que le script nomme. Ne joue pas d'exercice pour
+     l'occasion : ceux de 5c sont tirés des critères, et c'est leur état qui fait foi.
    Les parcours **n'exercent rien** : une écriture vers l'API y est refusée à la source. Ce qui se
-   prouve en agissant se prouve par `verify` ou par les scénarios (5c), jamais par un clip.
+   prouve en agissant se prouve par `verify` ou par les exercices (5c), jamais par un clip.
 
    Le manifeste `captures.json` porte deux listes, `pages` et `videos`, et **ce qui a échoué y
    laisse sa ligne avec son erreur** : c'est une pièce à part entière. Une page `complet: false` a
@@ -175,57 +183,65 @@ C'est l'étape 5c.
    Un critère que rien ne peut atteindre reste **non couvert** ; le déclarer tenu sur lecture est
    la seule erreur que cette commande ne doit jamais commettre.
 
-   **5c. Les scénarios de référence — rail `produit` seulement** (#1152, docs/40 §5).
+   **5c. Les exercices construits — rail `produit` seulement** (#1571, docs/52, docs/10 §6.2).
 
-   Rail `outillage` : **non concerné**. Ne joue pas le banc — un jalon d'outillage ne livre aucun
-   parcours utilisateur — et dis-le d'une ligne dans le rapport.
+   Rail `outillage` : **non concerné**. Ne construis aucun exercice — un jalon d'outillage ne livre
+   aucun parcours utilisateur — et dis-le d'une ligne dans le rapport.
 
-   Rail `produit` : joue le banc de #1148, **sans option** —
+   Rail `produit` : **tu construis les exercices à partir des critères de sortie** (étape 3), et tu
+   les joues avec les verbes de l'outil d'exercice, une commande par geste —
    ```
-   .venv/Scripts/python.exe -m maestro.scenarios
+   .venv/Scripts/python.exe -m maestro.scenarios.exercice <verbe> [options]
    ```
-   (`.venv/bin/python` sous Unix). Quatre choses à savoir avant de le lancer :
-   - **Il parle à la Control Tower réelle**, sur son port, par le fil de l'orchestrateur et avec le
-     vrai modèle. Joue-le **après** 5a et 5b : `verify` relance et arrête la stack sur ces mêmes
-     ports, et un redémarrage pendant le passage couperait ses runs.
-   - **Il dure bien plus qu'un appel** — un run peut passer la demi-heure depuis que les agents
-     tournent sur la dernière Opus (#1270), et il y a plusieurs scénarios : lance-le en
-     arrière-plan, et attends sa fin avant l'étape 6.
-   - **Il coûte du vrai modèle** (~10 $ le passage du retex). C'est le prix du bouclage d'un jalon
-     produit, décidé (docs/40 §5) : ne le saute pas pour l'économiser, et ne le réduis pas par
-     `--scenario` — un passage partiel n'est pas le passage.
-   - **Pas de `--nettoyer`** : les projets jetables sont les pièces d'un rouge, et la réserve qui en
-     naîtra en aura besoin.
+   (`.venv/bin/python` sous Unix ; les verbes, le relevé et les codes sont en docs/10 §6.2). Il n'y a
+   aucun parcours figé à rejouer : ce que le jalon promettait, ses critères le disent.
 
-   Son **code de sortie** décide, son rapport nomme :
-   - `0` — tous verts : la condition est **tenue**.
-   - `1` — au moins un rouge : lis `rapport.json`, dans le dossier du `rapport.md` que sa dernière
-     ligne nomme — jamais le Markdown, qu'on ne jugerait que par un motif (#746). Pour chaque
-     scénario dont le `verdict` n'est pas `vert` :
-     - `empechement` faux → **rouge du produit**. Nomme-le : son `id`, son `titre`, son `run_id`,
-       son `motif`, et `rejoue` s'il a été rejoué.
-     - `empechement` vrai → le banc n'a pas pu le mener jusqu'à son oracle : **non joué**, avec son
-       motif.
+   - **Chaque critère qui décrit ce qu'une personne peut faire reçoit un exercice** qui le fait, sur
+     la vraie stack, par le fil — la porte d'entrée réelle, comme elle. Un exercice peut en couvrir
+     plusieurs, et le rapport dit lesquels (`E1` → `C2`, `C4`). Un critère qui ne décrit pas un geste
+     de personne — un écran, une géométrie, un contrat — s'exerce en 5a ou 5b : dis pour chacun
+     pourquoi il n'a pas d'exercice. Un critère qui en décrit un ne s'en passe pas pour l'économiser.
+   - **Tire-le du texte du critère, jamais du code des tickets.** Tu n'es pas l'auteur des tickets du
+     jalon, et c'est ce qui fait la valeur de ton exercice : il ne reprend pas l'angle de qui a codé.
+     Taille-le au critère — un projet semé minimal (`semer`) ou né dans le fil (`naitre`), le message
+     que dirait la personne (`dire`), sa feuille si elle doit répondre (`ouvrir --personne`), sa
+     consigne d'arbitrage (`arbitrer`).
+   - **L'oracle s'écrit avant de jouer, dans le rapport.** Avant le premier `ouvrir`, écris la
+     section **Exercices** de `docs/bilans/<slug>.md` (étape 8) : pour chaque exercice, les critères
+     qu'il couvre et son **oracle** — ce qui le rendra vert, tiré du texte du critère. Le même oracle,
+     écrit avec `Write` dans `.maestro/session/`, va ensuite à `ouvrir --oracle <fichier>` : l'outil
+     en retient l'empreinte et refuse (`5`) un oracle retouché. Un oracle écrit après avoir vu le
+     produit se taille sur ce qu'il a fait, et ne prouve plus rien.
+   - **La stack est celle du banc de la copie** : `bash scripts/controltower/start.sh --etat-neuf
+     --no-browser` — sans `--no-browser`, fermer la fenêtre qu'il ouvre arrêterait la stack sous
+     l'exercice. Joue chaque exercice jusqu'à son issue (`suivre` ; un `6` dit que le run est encore
+     en vol : rejoue `suivre`, n'allonge pas l'attente), puis `conclure vert|rouge|empeche <motif>`
+     contre l'oracle, puis `sauver`. L'état du **dernier** exercice sauvé est celui que 5a rouvre :
+     joue en dernier celui dont l'écran compte.
+   - **Il coûte du vrai modèle**, et c'est le prix du bouclage d'un jalon produit : ne saute pas un
+     exercice dû pour l'économiser.
 
-     Un rouge dont le **déroulé** montre que l'environnement a manqué, et non le produit —
-     fournisseur non configuré ou injoignable, quota —, se dit aussi **non joué**, avec l'étape du
-     déroulé où il a manqué. Dans le doute, c'est un rouge.
-   - `3` — l'API ne répond pas, rien n'a été joué. Allume la stack **réelle** —
-     `bash scripts/controltower/start.sh --no-browser`, jamais `--demo`, contre lequel le banc
-     jouerait un scénario factice ; sans `--no-browser`, fermer la fenêtre qu'il ouvre arrêterait la
-     stack sous le banc —, relaie sa ligne d'arrêt, et rejoue le banc **une** fois. Un second refus,
-     ou une stack qui ne démarre pas (Redis absent…) : **non joué**, avec sa cause et le geste qui
-     débloque.
-   - tout autre code (usage, trace Python) : **non joué**, avec la sortie.
+   **Son relevé décide**, jamais ta mémoire du déroulé : lis `exercice.json`, dans
+   `.maestro/exercices/<id>/` — sa `conclusion` (`verdict`, `motif`) et ses `runs` — jamais un
+   Markdown, qu'on ne jugerait que par un motif (#746). Pour chaque exercice :
+   - `vert` — les critères qu'il couvre sont **tenus**, l'exercice et son run pour pièce.
+   - `rouge` — **rouge du produit**. Nomme-le : son identifiant, les critères qu'il couvre, ses
+     `runs`, son `motif`.
+   - `empeche`, ou un exercice resté sans conclusion — **non joué**, avec sa cause. Un exercice dont
+     le relevé montre que l'environnement a manqué, et non le produit — fournisseur non configuré ou
+     injoignable, quota —, se conclut `empeche`, avec le geste où il a manqué. Dans le doute, c'est
+     un rouge.
+   - un verbe qui rend `3` (l'API ne répond pas) n'a rien joué : allume la stack par le geste
+     ci-dessus, relaie sa ligne d'arrêt, et rejoue le geste **une** fois. Un second refus, ou une
+     stack qui ne démarre pas (Redis absent…) : **non joué**, avec sa cause et le geste qui débloque.
 
-   ⚠ **Un rouge ne se rejoue pas jusqu'au vert.** Le banc a déjà rejoué une fois ses scénarios non
-   déterministes, et c'est son second passage qui fait foi (docs/40 §5). Relancer le passage
-   jusqu'à ce qu'il passe fabriquerait le verdict. Le seul rejeu permis est celui d'un banc qui n'a
-   **rien** joué (`3`).
+   ⚠ **Un rouge ne se rejoue pas jusqu'au vert.** Rejouer l'exercice, ou en ouvrir un plus doux,
+   jusqu'à ce qu'il passe fabriquerait le verdict : un second exercice n'efface pas le premier, et le
+   rapport les garde tous les deux. Le seul rejeu permis est celui d'un geste qui n'a **rien** joué
+   (`3`).
 
-   **Il n'y a pas de passage silencieux** : chaque scénario est vert, rouge ou non joué, et le
-   rapport le dit dans les trois cas. Un banc injouable est une **abstention** sur les scénarios,
-   jamais un vert.
+   **Il n'y a pas d'exercice silencieux** : chaque exercice est vert, rouge ou non joué, et le
+   rapport le dit dans les trois cas. Un exercice injouable est une **abstention**, jamais un vert.
 
 6. **Rattache chaque critère à ses pièces.** Reprends `C1`, `C2`, … et donne à chacun **un** état,
    avec la pièce qui le porte :
@@ -238,31 +254,33 @@ C'est l'étape 5c.
      de surface visible, stack qui n'a pas démarré, critère invérifiable de l'extérieur, ticket
      non mergé. Jamais coché par défaut, jamais fondu dans « tenu ».
 
-   Les **scénarios** (5c) ne sont pas des critères et n'en prennent pas les numéros : chacun se
-   rattache à son identifiant (`S1`, `S2`…). Un scénario **rouge** est une réserve **bloquante par
-   décision** (docs/40 §5), pas par ton jugement : tu ne la rétrogrades pas. Un scénario **non
-   joué** est une réserve « non joué », rattachée de même.
+   Les **exercices** (5c) ne prennent pas les numéros des critères : chacun garde le sien (`E1`,
+   `E2`…, avec l'identifiant de son relevé) et se rattache aux critères qu'il couvre. Un exercice
+   **rouge** est une réserve **bloquante par décision** (#1152, docs/52 §5), pas par ton jugement :
+   tu ne la rétrogrades pas, et les critères qu'il couvre sont **en défaut**. Un exercice **non
+   joué** est une réserve « non joué », rattachée de même, et les critères qu'il devait porter
+   restent **non couverts** si aucune autre pièce ne les porte.
 
    Puis, pour chaque réserve **de critère**, tranche : **bloquante** ou **non bloquante**. C'est
-   ce jugement-là, avec l'état des scénarios, qui décide du verdict — dis sur quoi tu le fondes.
+   ce jugement-là, avec l'état des exercices, qui décide du verdict — dis sur quoi tu le fondes.
 
 7. **Propose un verdict.**
-   - **`GO`** — tous les critères tenus, aucune réserve ; pour un jalon produit, les scénarios
+   - **`GO`** — tous les critères tenus, aucune réserve ; pour un jalon produit, les exercices
      **tous verts**.
    - **`GO avec réserves`** — aucune réserve bloquante. Les réserves et les critères non couverts
      sont nommés et suivis. Un critère **non couvert est une réserve à lui seul** (« non
-     vérifié ») : il ne laisse jamais un `GO` nu. **Jamais avec un scénario rouge ou non joué.**
-   - **`NO-GO`** — au moins une réserve bloquante. Un scénario rouge en est une.
+     vérifié ») : il ne laisse jamais un `GO` nu. **Jamais avec un exercice rouge ou non joué.**
+   - **`NO-GO`** — au moins une réserve bloquante. Un exercice rouge en est une.
    - **Aucun verdict (abstention)** — si **aucun** critère n'a pu être exercé : ne propose rien et
      dis pourquoi. Une abstention n'est pas un `NO-GO` — un livrable qu'on n'a pas su éprouver
      n'est pas un livrable jugé mauvais, et les confondre ferait rejeter une phase pour une panne
      de stack.
 
-     Pour un jalon produit, c'est aussi le verdict quand **un scénario n'a pas été joué** et
+     Pour un jalon produit, c'est aussi le verdict quand **un exercice n'a pas été joué** et
      qu'aucun n'est rouge, alors que les critères appelleraient un `GO` ou un `GO avec réserves` :
-     dis la conclusion que portent les critères, et que le bouclage attend le passage — avec le
+     dis la conclusion que portent les critères, et que le bouclage attend l'exercice — avec le
      geste qui débloque. Un `NO-GO` des critères, lui, reste un `NO-GO` : il n'a pas besoin des
-     scénarios pour tenir.
+     exercices pour tenir.
 
    Un `GO avec réserves` **n'est pas un `NO-GO`** : le jalon reste fermable, ses réserves restent
    nommées.
@@ -270,7 +288,8 @@ C'est l'étape 5c.
 8. **Écris le rapport** dans `docs/bilans/<slug>.md` — le `<slug>` du titre, comme les
    présentations (« Phase 3 — V2 » → `phase-3-v2`) ; crée le dossier s'il manque. Un verdict qui
    ne survit pas au terminal est un verdict perdu, et les quatre bilans qui ont tenu
-   (`docs/11`, `12`, `13`, `23`) ont tenu parce que c'étaient des **documents**.
+   (`docs/11`, `12`, `13`, `23`) ont tenu parce que c'étaient des **documents**. Sur un jalon
+   produit, 5c l'a ouvert avec ses oracles : tu le **complètes**, et tu n'y retouches aucun oracle.
 
    Le plan, dans cet ordre :
    1. **En-tête** — le jalon, son état (soldé `N/N`, ou **encore en cours** avec le nombre de
@@ -281,26 +300,28 @@ C'est l'étape 5c.
       `verify`, banc de mise en page, verbes joués, suites jouées) et **ce qui n'a pas pu
       l'être**, avec sa cause.
    4. **Critère par critère** — le tableau de l'étape 6 : état, pièce, observation.
-   5. **Scénarios de référence** — pour un jalon produit : le passage (horodatage, coût, durée),
-      l'état de la condition (**tenue**, **en défaut**, **non jouée**), et un tableau d'une ligne
-      par scénario — identifiant, titre, vert / rouge / non joué, `run_id`, motif. Pour un jalon
-      d'outillage, une ligne : non concerné.
-   6. **Réserves** — numérotées, chacune **rattachée à son critère** ou à son scénario, bloquante
+   5. **Exercices** — pour un jalon produit : pour chacun, les critères qu'il couvre, son
+      **oracle** tel qu'écrit avant de jouer et l'empreinte que son relevé en garde
+      (`oracle_sha256`), puis, une fois joué, vert / rouge / non joué, ses `runs`, son coût, sa
+      durée et son motif ; enfin l'état de la condition (**tenue**, **en défaut**, **non jouée**) et
+      les critères sans exercice, avec leur raison. Pour un jalon d'outillage, une ligne : non
+      concerné.
+   6. **Réserves** — numérotées, chacune **rattachée à son critère** ou à son exercice, bloquante
       ou non.
    7. **Verdict proposé** — avec son raisonnement, et la phrase qui dit que l'arbitrage revient à
       une personne.
-   8. **Annexe — rapport du banc** — pour un jalon produit, le `rapport.md` du passage **recopié
-      tel quel**, ses titres descendus de deux rangs, et son chemin. C'est ce qui **joint** le
-      rapport au bilan : il vit sous `.maestro/`, et un bilan qui ne ferait que le nommer perdrait
-      le déroulé de ses rouges au premier ménage.
+   8. **Annexe — relevés des exercices** — pour un jalon produit, le `verdict.md` et le `faits.md`
+      de chaque exercice **recopiés tels quels**, leurs titres descendus de deux rangs, et leur
+      chemin. C'est ce qui **joint** les relevés au bilan : ils vivent sous `.maestro/`, et un bilan
+      qui ne ferait que les nommer perdrait le déroulé de ses rouges au premier ménage.
 
    ⚠ **Le rapport ne consigne rien côté forge** : la section `## Verdict` du jalon n'est pas
    écrite ici, et le fichier **n'est pas commité** — c'est une décision humaine, comme pour
    `/milestone-presentation`. Dis-le dans le résumé.
 
 9. **Résumé court** : le jalon bouclé et son état, le compte de critères **tenus / en défaut / non
-   couverts**, pour un jalon produit les scénarios **verts / rouges / non joués** et le coût du
-   passage, les pièces produites (et celles qui ont manqué), les réserves avec le nombre de
+   couverts**, pour un jalon produit les exercices **verts / rouges / non joués** et ce qu'ils ont
+   coûté, les pièces produites (et celles qui ont manqué), les réserves avec le nombre de
    bloquantes, le **verdict proposé**, le chemin du rapport. Signale ce qui a échoué plutôt que de
    le taire.
 
@@ -321,11 +342,12 @@ C'est l'étape 5c.
 
 À dire dans le résumé quand le cas se présente, plutôt que de le laisser deviner :
 
-- **Les captures montrent l'application d'aujourd'hui, sur l'état du dernier passage du banc**,
-  pas l'écran tel qu'il était pendant la phase. Un défaut qu'on y voit est un défaut
-  **maintenant** — c'est bien ce qu'un bouclage cherche —, mais quelque chose de corrigé depuis
-  n'est pas un défaut de la phase. Et l'état est celui du passage **sauvé**, qui peut précéder le
-  passage que joue 5c : son âge est dans la sortie du script, dis-le quand il compte.
+- **Les captures montrent l'application d'aujourd'hui, sur le dernier état sauvé**, pas l'écran
+  tel qu'il était pendant la phase. Un défaut qu'on y voit est un défaut **maintenant** — c'est
+  bien ce qu'un bouclage cherche —, mais quelque chose de corrigé depuis n'est pas un défaut de la
+  phase. Et l'état est celui que le poste a sauvé **en dernier** : sur un jalon d'outillage, ou si
+  une autre copie a sauvé après tes exercices, il n'est pas le leur. Son âge et son nom sont dans
+  la sortie du script : dis-le quand il compte.
 - **Un composant partagé ne se rattache à aucune route.** `apps/web/components/**` rend une ligne
   « indéterminée » (`-`) plutôt qu'un écran tiré au hasard ; `apps/web/lib/**` — hooks
   compris, ils y vivent — n'est pas compté du tout.
@@ -333,9 +355,9 @@ C'est l'étape 5c.
   ticket sans surface visible. C'est `--check` qui les distingue, sur stderr.
 - **Un jalon d'outillage n'a rien à photographier.** Son livrable s'exerce en **jouant** ses
   verbes et les suites qui les gardent ; l'absence de capture n'y est pas une lacune du bouclage.
-- **Les scénarios jouent le produit d'aujourd'hui**, pas celui de la phase, et un rouge peut venir
+- **Les exercices jouent le produit d'aujourd'hui**, pas celui de la phase, et un rouge peut venir
   d'un ticket d'un autre jalon. Il bloque quand même : un jalon produit ne se ferme pas sur un
-  produit qui ne fait pas ce qu'on lui demande. Dis d'où il vient quand le déroulé le montre.
+  produit qui ne fait pas ce qu'on lui demande. Dis d'où il vient quand le relevé le montre.
 - **Elle ne juge pas la pertinence des critères**, seulement s'ils sont tenus. Un critère mal
   posé rendra un verdict juste sur une mauvaise question — et ça, c'est à dire à voix haute.
 

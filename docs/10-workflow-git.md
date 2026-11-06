@@ -298,19 +298,15 @@ Ce que l'absence a laissé passer, sur pièces : les contrats d'API de [docs/05 
 
 | geste | commande | ce qu'elle fait | ce qu'elle n'écrit pas |
 |---|---|---|---|
-| **exercer** | `/milestone-bilan "<titre>"` (#759) | monte la stack, prend les captures, joue les verbes et les suites, **joue les scénarios de référence** sur un jalon produit (#1152), rattache chaque critère à sa pièce, **propose** un verdict, écrit `docs/bilans/<slug>.md` | rien côté forge : rien n'y est encore arbitré |
+| **exercer** | `/milestone-bilan "<titre>"` (#759) | monte la stack, prend les captures, joue les verbes et les suites, **construit ses exercices à partir des critères de sortie** sur un jalon produit (#1571), rattache chaque critère à sa pièce, **propose** un verdict, écrit `docs/bilans/<slug>.md` | rien côté forge : rien n'y est encore arbitré |
 | **enregistrer** | `/milestone-verdict "<titre>"` (#760) | prend la réponse d'une personne, la consigne dans la section `## Verdict` du jalon, **propose** chaque réserve en ticket | ne ferme aucun jalon, ne rejoue aucune pièce |
 
 `/milestone-bilan` **n'a aucun navigateur en propre** : les exécutants existent, elle les
 **appelle** — `ecrans-touches.sh` pour les surfaces livrées (dérivées des commits, jamais
 devinées), `captures.sh` pour les captures et les clips, le skill `verify` pour le câblage,
-`banc-mise-en-page` pour la géométrie, pour un jalon **produit** le banc des scénarios de
-référence (#1148), et pour un jalon d'**outillage** les verbes joués et les suites qui les gardent.
-
-> ⚠ **Renversé le 2026-11-03** ([docs/52](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md),
-> #1568) : un jalon produit ne joue plus les scénarios figés. Le bilan construit ses exercices à
-> partir des critères de sortie du jalon, et une épreuve rouge y interdit toujours le GO (#1571, qui
-> réécrit ce passage et la ligne « exercer » ci-dessus).
+`banc-mise-en-page` pour la géométrie, pour un jalon **produit** l'outil d'exercice
+(`maestro.scenarios.exercice`, §6.2), et pour un jalon d'**outillage** les verbes joués et les
+suites qui les gardent.
 
 `/milestone-verdict`, de son côté, **n'enregistre rien sans un « oui » explicite** — ni le verdict,
 ni un seul ticket de réserve : une réserve **acceptée telle quelle** est une décision, et un ticket
@@ -377,25 +373,31 @@ Et une cinquième, qui tient à `/milestone-bilan` seule : **l'abstention n'est 
 jalon dont aucun critère n'est exerçable rend une abstention, parce qu'un livrable qu'on n'a pas su
 éprouver n'est pas un livrable jugé mauvais.
 
-**Un jalon du rail produit ne se boucle pas `GO` avec un scénario de référence rouge** (#1152,
-[docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)). Les critères disent ce que chaque
-ticket annonce ; aucun ne rejoue ce qu'un utilisateur fait, et c'est par cet écart que « L'équipe sur
-mesure » a été bouclé pendant qu'un run sur un projet antérieur échouait sans prévenir (#1146). Sur
-un jalon produit, `/milestone-bilan` joue donc le banc de #1148 —
-`.venv/Scripts/python.exe -m maestro.scenarios` : vraie stack, vrai modèle, porte d'entrée réelle —
-et **joint son rapport** au bilan. Le code de sortie du banc décide, son `rapport.json` nomme (jamais
-son Markdown, qu'on ne jugerait que par un motif, #746) :
+**Un jalon du rail produit ne se boucle pas `GO` avec un exercice rouge** (#1152, #1571,
+[docs/52 §5](./52-decision-l-exercice-construit-remplace-les-scenarios-figes.md)). Les critères de
+sortie disent ce que le jalon promet ; seul l'usage dit si le produit le fait, et c'est par cet écart
+que « L'équipe sur mesure » a été bouclé pendant qu'un run sur un projet antérieur échouait sans
+prévenir (#1146). Sur un jalon produit, `/milestone-bilan` **construit donc ses exercices à partir
+des critères de sortie**, avec l'outil d'exercice (§6.2) —
+`.venv/Scripts/python.exe -m maestro.scenarios.exercice` : vraie stack, vrai modèle, porte d'entrée
+réelle. Aucun parcours figé n'y est rejoué : chaque critère qui décrit ce qu'une personne peut faire
+reçoit un exercice qui le fait, un exercice peut en couvrir plusieurs, et le bilan dit lesquels. Le
+bilan n'est pas l'auteur des tickets : son exercice, tiré du texte du critère, ne reprend pas l'angle
+de qui a codé. **L'oracle de chaque exercice s'écrit avant de jouer**, dans le rapport de bouclage,
+et l'outil refuse un oracle retouché. Le relevé de l'exercice décide (`exercice.json`, jamais un
+Markdown, qu'on ne jugerait que par un motif, #746), et ses relevés sont **joints** au bilan :
 
 - **tous verts** → la condition est tenue, et le verdict se forme sur les critères ;
-- **un scénario rouge** → réserve **bloquante par décision**, nommée avec son scénario et son run :
+- **un exercice rouge** → réserve **bloquante par décision**, nommée avec son exercice et son run :
   ni `GO` ni `GO avec réserves` ;
-- **un banc injouable** — stack arrêtée après une tentative d'allumage, fournisseur absent, scénario
-  que le banc n'a pas mené jusqu'à son oracle → **abstention** sur les scénarios, **jamais un vert** :
-  aucun `GO` ne se propose, et un `NO-GO` des critères reste un `NO-GO`.
+- **un exercice injouable** — stack qui ne démarre pas après une tentative d'allumage, fournisseur
+  absent, exercice conclu `empeche` → **abstention**, **jamais un vert** : aucun `GO` ne se propose,
+  et un `NO-GO` des critères reste un `NO-GO`.
 
-Le banc n'est pas en CI : un passage coûte du vrai modèle (~10 $), et c'est le prix du bouclage. Il
-rejoue déjà une fois un rouge non déterministe ; relancer le passage jusqu'au vert fabriquerait le
-verdict. Un jalon du rail **outillage** n'est pas concerné : il ne livre aucun parcours utilisateur.
+Les exercices ne sont pas en CI : ils coûtent du vrai modèle, et c'est le prix du bouclage. Un rouge
+ne se rejoue pas jusqu'au vert : rejouer l'exercice, ou en ouvrir un plus doux, jusqu'à ce qu'il
+passe fabriquerait le verdict. L'état du dernier exercice sauvé est celui que les captures du bilan
+rouvrent. Un jalon du rail **outillage** n'est pas concerné : il ne livre aucun parcours utilisateur.
 
 Deux limites assumées plutôt que masquées. Le **rapport n'est pas commité** (décision alignée sur
 `/milestone-presentation`), donc son chemin dans la section consignée est un renvoi **local** que
