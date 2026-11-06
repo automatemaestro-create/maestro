@@ -847,4 +847,9 @@ def main(
 
 
 if __name__ == "__main__":
+    # L'inventaire part souvent dans un tube ou un fichier, dont l'encodage est celui du poste
+    # sous Windows (cp1252, sans « → ») : la commande écrit en UTF-8, quel que soit le flux (#1607).
+    for flux in (sys.stdout, sys.stderr):
+        if hasattr(flux, "reconfigure"):
+            flux.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())

@@ -235,6 +235,38 @@ def test_sans_option_la_commande_verifie_et_n_ecrit_rien(
     assert f"python -m {MODULE} --purger" in sortie
 
 
+def test_la_commande_imprime_tout_quand_sa_sortie_est_un_tube_sans_utf8(tmp_path: Path) -> None:
+    """Lancée comme on la lance, sortie dans un tube cp1252 (celui de Git Bash sous Windows) :
+    l'inventaire sort en entier, « → » compris, au lieu d'un `UnicodeEncodeError` (#1607)."""
+    dossier_maison = _dossier(tmp_path / "maison" / "maestro-essais").parent
+    (dossier_maison / NOM_PROJETS).mkdir()
+    temp_du_poste = tmp_path / "temp"
+    temp_du_poste.mkdir()
+    env = {cle: valeur for cle, valeur in os.environ.items() if cle != "PYTHONUTF8"}
+    env.update(
+        HOME=str(dossier_maison),
+        USERPROFILE=str(dossier_maison),
+        TMPDIR=str(temp_du_poste),
+        TEMP=str(temp_du_poste),
+        TMP=str(temp_du_poste),
+        PYTHONIOENCODING="cp1252",
+    )
+    fini = subprocess.run(
+        [sys.executable, "-m", MODULE, "--check"],
+        cwd=RACINE_DEPOT,
+        env=env,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    sortie = fini.stdout.decode("utf-8", errors="replace")
+    erreur = fini.stderr.decode("utf-8", errors="replace")
+    assert "UnicodeEncodeError" not in erreur, erreur
+    assert fini.returncode == CODE_FAIT, erreur
+    assert "→" in sortie and "~/maestro-essais" in sortie
+    assert f"python -m {MODULE} --purger" in sortie, "le bilan sort aussi"
+
+
 def test_chaque_famille_que_le_ramassage_laisse_a_un_autre_a_son_proprietaire() -> None:
     """Une famille tierce ajoutée au ramassage sans propriétaire ici serait montrée sans nom."""
     assert set(menage.PROPRIETAIRES_TIERS) == set(FAMILLES_TIERCES)
