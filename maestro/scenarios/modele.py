@@ -1,16 +1,14 @@
-"""Ce qu'un passage du banc produit : un verdict par scénario, et de quoi le relire (#1148).
+"""Ce qu'un passage sur la vraie stack produit : un verdict par épreuve, et de quoi le relire.
 
-Objets inertes — ils décrivent et sérialisent, ils ne touchent ni au disque ni à
-l'API. C'est ce qui permet de juger la forme du rapport sans jouer un scénario.
+Un passage est un exercice sauvé (`maestro.scenarios.exercice`, dont l'état se rouvre par
+`start.sh --etat-banc`) ou un passage du banc comparatif. Objets inertes — ils décrivent et
+sérialisent, ils ne touchent ni au disque ni à l'API. C'est ce qui permet de juger la forme d'un
+rapport sans rien jouer.
 
-**Deux verdicts, et pas trois.** Le code de sortie du banc répond à une seule
-question — *les quatre sont-ils verts ?* —, et un troisième état ne changerait pas
-la réponse : un scénario que le banc n'a pas pu jouer n'est pas vert, donc il
-bloque un bouclage (#1152) comme un scénario qui a échoué. Ce qui les distingue
-n'a pourtant pas à se perdre, parce qu'on ne les répare pas de la même façon :
-`Resultat.empechement` le porte à côté du motif, et le rapport le dit en mots. Une
-zone grise dans le **verdict** aurait fait le contraire — elle aurait laissé
-passer un « ni vert ni rouge » pour un vert.
+**Deux verdicts, et pas trois.** Une épreuve qu'on n'a pas pu jouer n'est pas verte, comme une
+épreuve qui a échoué. Ce qui les distingue n'a pourtant pas à se perdre, parce qu'on ne les répare
+pas de la même façon : `Resultat.empechement` le porte à côté du motif, et le rapport le dit en
+mots. Une zone grise dans le **verdict** aurait laissé passer un « ni vert ni rouge » pour un vert.
 """
 
 from __future__ import annotations

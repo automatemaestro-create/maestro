@@ -20,14 +20,14 @@ projets — relatifs à la copie quand ils y sont, **signalés** quand une varia
 les a déplacés ailleurs : deux copies réglées sur le même dossier le partagent,
 et une annonce qui le tairait mentirait sur la séparation.
 
-**Le jeu de données du banc** (`donnees_du_banc`) : l'état qu'un passage du banc
-des scénarios (#1148) a laissé se rouvre sur une stack réelle **sans toucher aux
+**Le jeu de données du banc** (`donnees_du_banc`) : l'état qu'un exercice a
+sauvé (#1569) se rouvre sur une stack réelle **sans toucher aux
 données de la copie** — celles d'un worktree en cours de travail, ou celles du
 poste dans le clone principal. Il a donc son propre espace (`<espace>.banc`) et
 ses propres dépôts, sous `.maestro/banc/` de la copie. Une API démarrée par
 `maestro-api --etat-banc` s'y place en posant `environnement()` sur son process —
 ses hôtes détachés en héritent, comme de tout le reste de son environnement.
-Le reste du geste (sauver, rouvrir, rejouer) est dans `maestro.scenarios.etat`.
+Le reste du geste (sauver, rouvrir) est dans `maestro.scenarios.etat`.
 
 ⚠ **Les variables ne sont pas recopiées en shell.** `start.sh` ne connaît aucun
 nom de dépôt ni de variable : il passe `--etat-banc`, et Python résout. Les noms

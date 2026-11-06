@@ -108,7 +108,7 @@ export const PARCOURS = [
     duree_max_ms: 20_000,
     gestes: [
       { type: "attendre", texte: "Runs de", ms: 1200 },
-      // Par sa forme et non par son objectif : le passage du banc a choisi ses
+      // Par sa forme et non par son objectif : l'exercice sauvé a choisi ses
       // runs, ce fichier n'en connaît aucun.
       { type: "cliquer", selecteur: 'a[href^="/runs/"]', ms: 1200 },
       { type: "attendre", texte: "Pipeline", ms: 1800 },

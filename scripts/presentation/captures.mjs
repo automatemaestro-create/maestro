@@ -24,7 +24,7 @@
  *        [--etat <etat.json>] [--projet <id>] [--sans-videos]
  *
  * **La vraie stack, plus la démo** (#1166). La série photographie et filme la
- * Control Tower réelle, sur l'état qu'un passage du banc a laissé (`captures.sh`
+ * Control Tower réelle, sur l'état qu'un exercice a sauvé (`captures.sh`
  * le rouvre et le décrit dans `--etat`). Deux conséquences, et c'est ici qu'elles
  * se tiennent :
  *
@@ -228,9 +228,9 @@ async function lireApi(api, chemin) {
  *
  * Sans projet actif, toute la série montre la porte d'entrée (#279). Du temps de
  * la démo, l'identifiant était celui du scénario factice (`prj-demo`) ; sur le
- * réel, ce sont les projets du passage du banc qui sont déclarés, avec des
+ * réel, ce sont les projets de l'exercice sauvé qui sont déclarés, avec des
  * identifiants engendrés. On prend **celui qui a bougé en dernier** — le dernier
- * où le passage a travaillé —, à défaut le dernier créé, puis l'identifiant pour
+ * où l'exercice a travaillé —, à défaut le dernier créé, puis l'identifiant pour
  * départager : deux séries sur le même état ouvrent le même projet.
  */
 function choisirProjet(projets) {

@@ -244,7 +244,7 @@ La relecture visuelle : ce qu'il faut regarder, et de quoi le regarder — sur l
 
 Options :
   --plan            N'écrit rien, ne démarre rien : dit seulement s'il y a matière, et laquelle.
-  --etat <nom>      peuple (défaut) : l'état du dernier passage du banc · vide : une stack neuve et un
+  --etat <nom>      peuple (défaut) : l'état qu'un exercice a sauvé · vide : une stack neuve et un
                     projet neuf · injoignable : l'API coupée sous la stack montée, l'UI servie.
   --regime <nom>    decide : avant et après, les trois états, le regard neuf · applique : l'après
                     seul, les états montés (le défaut sinon), jugé par la session. Sans lui, le
@@ -368,7 +368,7 @@ TEMOIN_ETAT="$RACINE/$SOUS_DOSSIER/.etat"
 # Ce que montre chaque état, en une ligne : le plan, la couverture et la saisine disent la même.
 description_etat() {
   case "$1" in
-    peuple) printf "l'état du dernier passage du banc, rouvert par l'API réelle — son âge est dit au montage" ;;
+    peuple) printf "l'état qu'un exercice a sauvé, rouvert par l'API réelle — son âge est dit au montage" ;;
     vide) printf "une stack neuve, puis un projet neuf déclaré par l'API — rien n'y a été lancé" ;;
     injoignable) printf "l'API coupée sous la stack montée, l'UI encore servie — la vraie panne (#996)" ;;
   esac
@@ -386,7 +386,7 @@ options_start() {
 # partout où les autres se comptent (plan, couverture, saisine), et jamais imités (en-tête, §5).
 NON_COUVERTS="$(printf '%s\t%s\n%s\t%s' \
   erreur "une API qui répond en erreur : depuis #1206 la vraie stack la produit — son magasin (Redis) coupé, elle refuse ses lectures en 503 nommé —, mais ce script ne la monte pas encore ; à la main, REDIS_URL de la stack pointé sur un relais TCP qu'on coupe" \
-  charge "au-delà de ce que le dernier passage du banc a laissé — des listes de centaines de lignes, des noms de 80 caractères : rien n'est gonflé")"
+  charge "au-delà de ce que l'exercice sauvé a laissé — des listes de centaines de lignes, des noms de 80 caractères : rien n'est gonflé")"
 
 # Le dossier des captures d'un état, RELATIF à la racine. L'état par défaut garde le chemin d'avant
 # #978 — le dossier du ticket lui-même —, un autre état a le sien dessous : deux états d'un même écran
@@ -1581,7 +1581,7 @@ if [ "$ETAT" = "injoignable" ]; then
   exit 0
 fi
 
-# La vraie stack, sur le jeu de données du banc (#1164) : l'état du dernier passage rouvert, ou une
+# La vraie stack, sur le jeu de données du banc (#1164) : l'état d'un exercice sauvé rouvert, ou une
 # stack neuve. `--no-browser` est obligatoire : sans lui le lanceur ouvre sa propre fenêtre et arrête
 # la stack dès qu'elle se ferme (#149), ce qui couperait l'API sous le navigateur qu'on pilote. La
 # sortie du lanceur passe telle quelle : c'est elle qui dit l'âge de l'état du banc.
