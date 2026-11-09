@@ -243,6 +243,19 @@ describe("② présent n'est pas éprouvé", () => {
     expect(within(carte(LOCAL)).getByText("Rien de détecté sur ce poste.")).toBeInTheDocument();
     expect(within(carte(CLE_ANTHROPIC)).getByText("Aucune clé enregistrée sur ce poste.")).
       toBeInTheDocument();
+    // La limite d'un accès absent se dit encore, mais au ton neutre : l'ambre
+    // ferait ressortir la carte que tout le reste atténue.
+    const limite = within(carte(LOCAL)).getByText("Conversation seulement");
+    expect(limite).toHaveClass("border-bord", "text-texte-secondaire", "font-normal");
+    expect(limite.className).not.toMatch(/amber/);
+  });
+
+  it("garde la limite d'un accès que la sonde a vu au ton de l'attention", async () => {
+    posteOutille();
+
+    await monter();
+
+    expect(within(carte(LOCAL)).getByText("Conversation seulement").className).toMatch(/amber/);
   });
 
   it("enregistre un choix éprouvé avec succès, et le dit pris sans redémarrage", async () => {

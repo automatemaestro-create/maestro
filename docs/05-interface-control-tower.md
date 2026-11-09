@@ -5417,7 +5417,8 @@ touche au front. Quatre règles tiennent la lecture :
   pour la fiche d'un agent. Ce n'est jamais un vert, et la carte cochée ne l'est pas non plus,
   bouton radio compris (à la couleur du texte). Un accès dont rien n'a été vu est atténué,
   jamais caché : son titre perd la graisse en plus de la couleur, faute de quoi le thème clair
-  ne le distingue presque pas. Les titres des accès sont au pas du corps, sous « Par défaut ».
+  ne le distingue presque pas, et son badge de limite passe au ton neutre. Les titres des accès
+  sont au pas du corps, sous « Par défaut ».
 - **Seule l'épreuve rend un verdict**, dans la carte choisie. « Éprouver » fait un tour de
   modèle sur la saisie, et seul un verdict réussi ouvre « Enregistrer ». Changer un champ efface
   le verdict. Un échec dit son motif, et le geste qui le répare quand il y en a un : « Lancez

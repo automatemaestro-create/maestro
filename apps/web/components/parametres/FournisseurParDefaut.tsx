@@ -506,8 +506,14 @@ function CarteAcces({
                 Enregistré, pas utilisé
               </BadgeEtat>
             )}
+            {/* La limite se dit toujours ; sur un accès que le poste n'offre pas, elle
+                s'atténue comme son titre, sans quoi elle ferait ressortir la carte. */}
             {!option.fournisseur.outille && (
-              <BadgeEtat ton="attention" contour>
+              <BadgeEtat
+                ton={vu || active || utilisee ? "attention" : "neutre"}
+                contour
+                className={vu || active || utilisee ? "" : "font-normal text-texte-secondaire"}
+              >
                 Conversation seulement
               </BadgeEtat>
             )}
