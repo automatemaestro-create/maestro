@@ -322,6 +322,8 @@ describe("③ le verdict dit son motif et son geste", () => {
     const local = within(carte(LOCAL));
     expect(local.getByText(/Ollama répond sur ce poste/)).toBeInTheDocument();
     expect(local.getByText("Conversation seulement")).toBeInTheDocument();
+    // Le défaut sert aussi les runs : la carte dit ce qu'un run fait d'un fournisseur sans outils.
+    expect(local.getByText(/Dans un run, ses agents rendent du texte/)).toBeInTheDocument();
     expect(local.getByText("Vus sur ce poste : qwen2.5.")).toBeInTheDocument();
     // Sans modèle, rien à éprouver : ce fournisseur n'a pas de défaut.
     expect(local.getByRole("button", { name: "Éprouver" })).toBeDisabled();

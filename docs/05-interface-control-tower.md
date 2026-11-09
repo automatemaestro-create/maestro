@@ -5414,8 +5414,10 @@ touche au front. Quatre règles tiennent la lecture :
   en a vu, dans les mots de la personne : « Claude Code est installé sur ce poste ; sa connexion
   à un compte se vérifie en l'éprouvant », « Ollama répond sur ce poste, avec 2 modèles », une
   clé gardée. La phrase se compose des champs typés du constat, jamais de son `detail`, écrit
-  pour la fiche d'un agent. Ce n'est jamais un vert, et la carte cochée ne l'est pas non plus.
-  Un accès dont rien n'a été vu est atténué, jamais caché.
+  pour la fiche d'un agent. Ce n'est jamais un vert, et la carte cochée ne l'est pas non plus,
+  bouton radio compris (à la couleur du texte). Un accès dont rien n'a été vu est atténué,
+  jamais caché : son titre perd la graisse en plus de la couleur, faute de quoi le thème clair
+  ne le distingue presque pas. Les titres des accès sont au pas du corps, sous « Par défaut ».
 - **Seule l'épreuve rend un verdict**, dans la carte choisie. « Éprouver » fait un tour de
   modèle sur la saisie, et seul un verdict réussi ouvre « Enregistrer ». Changer un champ efface
   le verdict. Un échec dit son motif, et le geste qui le répare quand il y en a un : « Lancez
@@ -5427,7 +5429,9 @@ touche au front. Quatre règles tiennent la lecture :
   la retire de tout journal dès qu'elle est tapée.
 
 Un fournisseur qui ne sait pas conduire un agent outillé (`outille: false`) reste choisissable,
-avec le badge « Conversation seulement ». Les agents y produisent leur livrable texte.
+avec le badge « Conversation seulement ». Les agents y produisent leur livrable texte. Sa carte
+le dit dès qu'elle est cochée ou en service : le sous-titre de la carte « Par défaut » annonce
+que le défaut sert aussi les runs, et l'écran se contredirait sans cette phrase.
 
 **L'environnement garde la main.** Une variable **renseignée** l'emporte sur l'écran :
 `MAESTRO_PROVIDER`, `MAESTRO_MODEL`, `CLAUDE_AUTH_MODE`, `OPENAI_BASE_URL` ou une clé d'API,

@@ -476,13 +476,18 @@ function CarteAcces({
           value={option.cle}
           checked={active}
           onChange={onChoisir}
-          className="mt-1 size-4 shrink-0 accent-accent"
+          className="mt-1 size-4 shrink-0 accent-texte"
         />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
+            {/* Au pas du corps : le titre de la carte, « Par défaut », reste au-dessus
+                de ses options. Un accès que le poste n'offre pas perd la graisse en plus
+                de la couleur — en clair, la couleur seule s'y lisait à peine. */}
             <label
               htmlFor={id}
-              className={`min-h-6 font-medium ${vu || active ? "" : "text-texte-secondaire"}`}
+              className={`min-h-6 text-corps ${
+                vu || active ? "font-medium" : "font-normal text-texte-secondaire"
+              }`}
             >
               {option.acces.libelle}
             </label>
@@ -505,10 +510,14 @@ function CarteAcces({
           <p className="mt-0.5 text-annexe wrap-anywhere text-texte-secondaire">
             {ceQueLaSondeAVu(option, constats, cleGardee)}
           </p>
-          {!option.fournisseur.outille && active && (
+          {/* Le sous-titre de la carte dit que le défaut sert aussi les runs : ce qu'un
+              run fait d'un fournisseur sans outils se dit ici, sans quoi l'écran se
+              contredirait. */}
+          {!option.fournisseur.outille && (active || utilisee) && (
             <p className="mt-0.5 text-annexe text-texte-secondaire">
-              Ce fournisseur répond dans le fil et l&apos;assistant, mais ne fait pas
-              travailler un agent sur un projet.
+              Il répond dans le fil et l&apos;assistant. Dans un run, ses agents
+              rendent du texte : sans outils, ils ne lisent ni n&apos;écrivent les
+              fichiers du projet.
             </p>
           )}
         </div>
