@@ -431,6 +431,35 @@ describe("④ une clé ne se réaffiche jamais", () => {
     expect(screen.queryByDisplayValue("sk-ant-essai-123")).toBeNull();
     expect(document.body.textContent).not.toContain("sk-ant-essai-123");
     expect(cle.getByText(/Une clé est enregistrée sur ce poste/)).toBeInTheDocument();
+
+    // Laissé vide, le champ garde la clé enregistrée : l'aide le dit, l'indication reste
+    // assez courte pour un champ à largeur de téléphone.
+    const vide = cle.getByLabelText("Clé");
+    expect(vide.getAttribute("placeholder")?.length).toBeLessThanOrEqual(INDICATION_MAX);
+    expect(vide).toHaveAccessibleDescription(/Laissée vide, la clé enregistrée reste/);
+  });
+});
+
+/**
+ * Ce qu'un champ montre à 375 px, demi-largeur de la carte (≈ 156 px, mesuré sur la
+ * vraie stack) : au-delà, l'indication est coupée.
+ */
+const INDICATION_MAX = 15;
+
+describe("un champ laissé vide dit ce qu'il garde sous lui, pas dans son indication", () => {
+  it("l'adresse d'un serveur local dit son défaut dans l'aide", async () => {
+    posteOutille();
+    const utilisateur = await monter();
+    await utilisateur.click(screen.getByRole("radio", { name: LOCAL }));
+    const local = within(carte(LOCAL));
+
+    for (const libelle of ["Modèle", "Adresse"]) {
+      const champ = local.getByLabelText(libelle);
+      expect(champ.getAttribute("placeholder")?.length).toBeLessThanOrEqual(INDICATION_MAX);
+    }
+    expect(local.getByLabelText("Adresse")).toHaveAccessibleDescription(
+      "Laissée vide : http://localhost:11434/v1.",
+    );
   });
 });
 

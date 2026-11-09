@@ -693,7 +693,9 @@ function Saisie({
             libelle="Adresse"
             value={adresse}
             onChange={(e) => onAdresse(e.target.value)}
-            placeholder={acces.adresse_defaut ?? ""}
+            // L'adresse par défaut se lit en entier dans l'aide : à largeur de
+            // téléphone, le champ n'en montrerait que le début.
+            placeholder={acces.adresse_defaut === null ? "" : "Par défaut"}
             monospace
             aide={
               acces.adresse_defaut === null
@@ -710,8 +712,14 @@ function Saisie({
             autoComplete="off"
             value={cle}
             onChange={(e) => onCle(e.target.value)}
-            placeholder={cleDisponible ? "Laisser vide pour garder la clé actuelle" : "Coller la clé"}
-            aide="Gardée chiffrée sur ce poste, jamais réaffichée."
+            // Ce que garde un champ vide se dit dans l'aide, qui ne s'efface pas à la
+            // saisie et tient à largeur de téléphone.
+            placeholder={cleDisponible ? "Inchangée" : "Coller la clé"}
+            aide={
+              cleDisponible
+                ? "Laissée vide, la clé enregistrée reste. Toute clé est gardée chiffrée sur ce poste, jamais réaffichée."
+                : "Gardée chiffrée sur ce poste, jamais réaffichée."
+            }
           />
         )}
       </div>
