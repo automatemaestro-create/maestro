@@ -530,7 +530,7 @@ function Saisie({
               libelle="Modèle"
               value={modele}
               onChange={(e) => onModele(e.target.value)}
-              placeholder="Le nom du modèle servi à cette adresse"
+              placeholder="Nom du modèle servi"
               list={vusIci.length > 0 ? `${base}-modeles-vus` : undefined}
               monospace
               aide={
@@ -553,10 +553,18 @@ function Saisie({
             libelle="Modèle"
             value={modele}
             onChange={(e) => onModele(e.target.value)}
+            // L'identifiant du défaut vit sous le champ : dans l'option, un champ à
+            // largeur de téléphone le tronquait (« Par défaut (claude »).
+            aide={
+              defautDuFournisseur === null ? undefined : (
+                <>
+                  « Par défaut » :{" "}
+                  <span className="font-mono whitespace-nowrap">{defautDuFournisseur}</span>.
+                </>
+              )
+            }
           >
-            <option value="">
-              {defautDuFournisseur === null ? "Par défaut" : `Par défaut (${defautDuFournisseur})`}
-            </option>
+            <option value="">Par défaut</option>
             {gamme.map((m) => (
               <option key={m.nom} value={m.nom}>
                 {m.libelle === m.nom ? m.nom : `${m.libelle} — ${m.nom}`}
