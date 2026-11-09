@@ -222,7 +222,10 @@ export function FournisseurParDefaut() {
       <Effectif etat={etat} option={optionEffective} />
       <Imposition etat={etat} />
 
-      <fieldset className="mt-3 flex flex-col gap-2">
+      {/* `min-w-0` : un fieldset a pour largeur minimale son contenu (`min-inline-size:
+          min-content`) ; sans lui, à largeur de téléphone, une adresse insécable pousse
+          les cartes hors de l'écran. */}
+      <fieldset className="mt-3 flex min-w-0 flex-col gap-2">
         <legend className="sr-only">Accès au fournisseur par défaut</legend>
         {options.map((option) => (
           <CarteAcces
@@ -315,7 +318,7 @@ function Imposition({ etat }: { etat: EtatFournisseurDefaut }) {
     <Carte balise="div" ton="attention" densite="normale" role="note" className="mt-3">
       <p className="flex gap-2 text-corps text-attention-texte">
         <IconeAlerte aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <span>
+        <span className="min-w-0 wrap-anywhere">
           L&apos;environnement du poste impose{" "}
           {etat.environnement.map((variable, rang) => (
             <span key={variable.variable}>
@@ -401,7 +404,7 @@ function CarteAcces({
               </BadgeEtat>
             )}
           </div>
-          <p className="mt-0.5 text-annexe text-texte-secondaire">
+          <p className="mt-0.5 text-annexe wrap-anywhere text-texte-secondaire">
             {ceQueLaSondeAVu(option, constats, cleGardee, empeche)}
           </p>
           {!option.fournisseur.outille && active && (
@@ -577,7 +580,7 @@ function Saisie({
           Enregistrer
         </Bouton>
       </div>
-      <div aria-live="polite" className="mt-3 flex flex-col gap-1">
+      <div aria-live="polite" className="mt-3 flex min-w-0 flex-col gap-1 wrap-anywhere">
         <VerdictEpreuve verdict={verdict} option={option} />
         {annonce !== null && <p className="text-corps">{annonce}</p>}
         {refus !== null && (
