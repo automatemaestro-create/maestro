@@ -154,6 +154,15 @@ export function FournisseurParDefaut() {
     verdictCourant.modele === modeleEnService
       ? verdictCourant.epreuve
       : null;
+  // La saisie est-elle le réglage enregistré ? Il a été éprouvé pour l'être, et
+  // la carte ne le redit pas « pas encore éprouvé ».
+  const saisieEnregistree =
+    choisie !== null &&
+    etat.choix !== null &&
+    choisie.cle === enregistree &&
+    modele.trim() === (etat.choix.modele ?? "") &&
+    adresse.trim() === (etat.choix.adresse ?? "") &&
+    cle === "";
 
   const choisir = (option: OptionAcces) => {
     setSelection(option.cle);
@@ -264,6 +273,7 @@ export function FournisseurParDefaut() {
                 onAdresse={setAdresse}
                 onCle={setCle}
                 verdict={verdictCourant}
+                saisieEnregistree={saisieEnregistree}
                 action={action}
                 annonce={annonce}
                 refus={refus}
@@ -340,9 +350,10 @@ function Effectif({
         geste={
           option === undefined
             ? null
-            : carteCochee
-              ? "« Éprouver », dans sa carte ci-dessous"
-              : "cochez sa carte ci-dessous, puis « Éprouver »"
+            : // Espaces insécables dans les guillemets : un « ne finit pas une ligne seul.
+              carteCochee
+              ? "« Éprouver », dans sa carte ci-dessous"
+              : "cochez sa carte ci-dessous, puis « Éprouver »"
         }
       />
       <p className="text-annexe text-texte-secondaire">
@@ -566,6 +577,7 @@ function Saisie({
   onAdresse,
   onCle,
   verdict,
+  saisieEnregistree,
   action,
   annonce,
   refus,
@@ -581,6 +593,7 @@ function Saisie({
   onAdresse: (valeur: string) => void;
   onCle: (valeur: string) => void;
   verdict: Verdict | null;
+  saisieEnregistree: boolean;
   action: Action | null;
   annonce: string | null;
   refus: string | null;
@@ -701,7 +714,7 @@ function Saisie({
         </Bouton>
       </div>
       <div aria-live="polite" className="mt-3 flex min-w-0 flex-col gap-1 wrap-anywhere">
-        <VerdictEpreuve verdict={verdict} option={option} />
+        <VerdictEpreuve verdict={verdict} option={option} saisieEnregistree={saisieEnregistree} />
         {annonce !== null && <p className="text-corps">{annonce}</p>}
         {refus !== null && (
           <p role="alert" className="text-corps text-alerte-texte">
@@ -720,10 +733,19 @@ function Saisie({
 function VerdictEpreuve({
   verdict,
   option,
+  saisieEnregistree,
 }: {
   verdict: Verdict | null;
   option: OptionAcces;
+  saisieEnregistree: boolean;
 }) {
+  if (verdict === null && saisieEnregistree) {
+    return (
+      <p className="text-annexe text-texte-secondaire">
+        C&apos;est le réglage enregistré : «&nbsp;Éprouver&nbsp;» le vérifie de nouveau.
+      </p>
+    );
+  }
   if (verdict === null) {
     return (
       <p className="text-annexe text-texte-secondaire">

@@ -266,6 +266,11 @@ describe("② présent n'est pas éprouvé", () => {
     );
     expect(screen.getByText(/^Accès éprouvé le /)).toBeInTheDocument();
     expect(screen.getByText(/^Choisi ici le /)).toBeInTheDocument();
+    // La carte ne redit pas « pas encore éprouvé » d'un réglage qui l'a été pour s'enregistrer.
+    expect(screen.queryByText(/Ce réglage n'est pas encore éprouvé/)).toBeNull();
+    expect(
+      screen.getByText("C'est le réglage enregistré : « Éprouver » le vérifie de nouveau."),
+    ).toBeInTheDocument();
   });
 
   it("efface le verdict dès que la saisie change", async () => {
