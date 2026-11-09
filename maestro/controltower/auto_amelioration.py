@@ -97,22 +97,24 @@ class RevisionIndisponible(RuntimeError):
 
 
 class _AppelModele:
-    """La part commune aux deux voies : un fournisseur résolu au **premier usage**.
+    """La part commune aux deux voies : un fournisseur résolu **à chaque appel**.
 
     Construire un analyseur ou un rédacteur ne doit rien coûter — l'app en instancie à
     chaque démarrage, y compris là où aucun fournisseur n'est configuré (poste neuf, tests). La
-    résolution passe donc par un import local, au moment où l'appel a réellement lieu.
+    résolution passe donc par un import local, au moment où l'appel a réellement lieu, et
+    n'est pas gardée : un fournisseur choisi dans les Paramètres sert l'appel suivant (#1609).
     """
 
     def __init__(self, *, provider: ModelProvider | None = None) -> None:
         self._provider = provider
 
     async def _generer(self, prompt: str, *, modele: str, cadre: str) -> str:
-        if self._provider is None:
+        fournisseur = self._provider
+        if fournisseur is None:
             from maestro.providers.factory import provider_from_settings
 
-            self._provider = provider_from_settings()
-        return await self._provider.generate(prompt, model=modele, system_prompt=cadre)
+            fournisseur = provider_from_settings()
+        return await fournisseur.generate(prompt, model=modele, system_prompt=cadre)
 
 
 @dataclass(frozen=True)

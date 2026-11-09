@@ -200,17 +200,12 @@ class CompositeurEquipe:
         Une réponse **vide** est un échec au même titre qu'une exception : un modèle
         qui n'a rien dit n'a rien composé (même conduite que #257).
         """
-        if self._provider is None:
-            from maestro.providers.factory import modele_du_canal, provider_from_settings
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-            fournisseur = provider_from_settings()
-            # Le modèle suit le fournisseur configuré (#1173), résolu avant de
-            # retenir le fournisseur — un échec laisse tout à résoudre au prochain appel.
-            self._modele = modele_du_canal(self._modele, fournisseur)
-            self._provider = fournisseur
-        texte = await self._provider.generate(
-            prompt, model=self._modele, system_prompt=CADRE_COMPOSITION
-        )
+        # Résolu à chaque appel (#1609), le modèle suivant le fournisseur (#1173) :
+        # un fournisseur changé dans les Paramètres sert la composition suivante.
+        fournisseur, modele = fournisseur_de_l_appel(self._provider, self._modele)
+        texte = await fournisseur.generate(prompt, model=modele, system_prompt=CADRE_COMPOSITION)
         if not (texte or "").strip():
             raise RuntimeError("le fournisseur de modèle a rendu une réponse vide")
         return texte

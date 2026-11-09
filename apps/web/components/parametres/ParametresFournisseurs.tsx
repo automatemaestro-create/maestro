@@ -16,12 +16,16 @@
  * agent consomme et en tait un tiers est une vue fausse — d'où sa colonne.
  *
  * ⚠ **Deux héritages qui ne se confondent pas** (#259). Un réglage absent partout
- * suit l'**exécution** (`MAESTRO_PROVIDER` / `MAESTRO_MODEL`, côté backend) ; un
- * réglage d'agent du code non surchargé suit le **code**, qui en déclare un. Les
- * dire d'un même mot ferait chercher dans le `.env` ce qui est écrit dans
- * `maestro/agents/catalog.py`. L'API tranche (`herite`, `reglages_du_code`), la
- * vue ne redéduit rien : une valeur affichée peut venir du code **ou** avoir été
- * surchargée à l'identique, et seule la première est héritée.
+ * suit le **fournisseur par défaut** du poste, choisi en tête de cette section
+ * (#1609, `FournisseurParDefaut`) ; un réglage d'agent du code non surchargé suit
+ * le **code**, qui en déclare un. Les dire d'un même mot ferait chercher dans le
+ * choix du poste ce qui est écrit dans `maestro/agents/catalog.py`. L'API tranche
+ * (`herite`, `reglages_du_code`), la vue ne redéduit rien : une valeur affichée
+ * peut venir du code **ou** avoir été surchargée à l'identique, et seule la
+ * première est héritée.
+ *
+ * Le choix par défaut se rend **avant** la table et quoi qu'il advienne d'elle :
+ * un catalogue d'agents illisible n'empêche pas de choisir son fournisseur.
  */
 
 import Link from "next/link";
@@ -31,6 +35,7 @@ import { chargerCatalogue } from "@/lib/api";
 import { libelleOrigine } from "@/lib/vueAgents";
 import type { AgentCatalogue } from "@/lib/types";
 
+import { FournisseurParDefaut } from "./FournisseurParDefaut";
 import { EtatVide } from "./SectionParametres";
 
 /**
@@ -64,24 +69,33 @@ export function ParametresFournisseurs() {
   }, []);
 
   if (chargement) {
-    return <p className="text-sm text-neutral-500">Chargement du catalogue…</p>;
+    return (
+      <>
+        <FournisseurParDefaut />
+        <p className="text-sm text-neutral-500">Chargement du catalogue…</p>
+      </>
+    );
   }
   if (erreur !== null || fiches.length === 0) {
     return (
-      <EtatVide
-        message={
-          erreur !== null
-            ? `Catalogue illisible : ${erreur}`
-            : "Aucun agent au catalogue."
-        }
-        releve="Le fournisseur et le modèle par défaut de l'exécution viennent de MAESTRO_PROVIDER et MAESTRO_MODEL, côté backend."
-        lien={{ href: "/agents", libelle: "Ouvrir la liste des agents" }}
-      />
+      <>
+        <FournisseurParDefaut />
+        <EtatVide
+          message={
+            erreur !== null
+              ? `Catalogue illisible : ${erreur}`
+              : "Aucun agent au catalogue."
+          }
+          releve="Un agent qui ne choisit ni fournisseur ni modèle suit le choix par défaut, ci-dessus."
+          lien={{ href: "/agents", libelle: "Ouvrir la liste des agents" }}
+        />
+      </>
     );
   }
 
   return (
     <>
+      <FournisseurParDefaut />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -118,9 +132,8 @@ export function ParametresFournisseurs() {
         </table>
       </div>
       <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-        « Hérité » : l&apos;agent suit le fournisseur et le modèle de
-        l&apos;exécution (<code className="font-mono">MAESTRO_PROVIDER</code> /{" "}
-        <code className="font-mono">MAESTRO_MODEL</code>). « Du code » : le
+        « Hérité » : l&apos;agent suit le fournisseur et le modèle par défaut,
+        choisis ci-dessus. « Du code » : le
         réglage vient de la définition livrée et la suit, tant qu&apos;on ne
         l&apos;a pas surchargé. Le choix par agent s&apos;édite sur l&apos;onglet
         Profil de la{" "}

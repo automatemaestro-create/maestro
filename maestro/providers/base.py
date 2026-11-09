@@ -31,6 +31,7 @@ from maestro.providers.question import Questionneur
 if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution vers agents
     from maestro.agents.mcp import ServeurMcp
     from maestro.agents.permissions import PolitiqueOutils
+    from maestro.config import Settings
     from maestro.detail_tache import EtapeTache
     from maestro.projets.modele import Projet
     from maestro.sandbox.confinement import ReleveConfinement
@@ -433,6 +434,114 @@ class ModeleDisponible:
 
 
 @dataclass(frozen=True)
+class AccesFournisseur:
+    """Une façon d'atteindre un fournisseur depuis ce poste (#1609).
+
+    Le fournisseur le déclare sur sa **classe**, comme sa gamme : l'écran des
+    Paramètres le lit au catalogue sans rien construire, et un fournisseur
+    ajouté au registre y apporte ses accès sans qu'on touche au front.
+
+    Un accès se dit en deux langues. `libelle` est celle de la personne
+    (« Abonnement Claude, par Claude Code sur ce poste »). `variables`, `secret` et
+    `adresse` sont celle de l'exécution : les variables que le choix pose, celle
+    qui porte la clé, celle qui porte l'adresse. Ce sont les mêmes que celles
+    d'un `.env`, et le choix du poste n'en est que le remplaçant
+    (`maestro.fournisseur_par_defaut`). Une variable renseignée dans
+    l'environnement l'emporte toujours, et l'écran le dit.
+
+    `temoins` sont les clés des constats de la sonde du poste (`maestro.poste`)
+    qui attestent cet accès ici : un CLI trouvé, une clé, un serveur qui répond.
+    `cle_requise` est vrai quand l'accès ne marche pas sans clé.
+    """
+
+    id: str
+    libelle: str
+    variables: tuple[tuple[str, str], ...] = ()
+    secret: str | None = None
+    cle_requise: bool = False
+    adresse: str | None = None
+    adresse_defaut: str | None = None
+    temoins: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """L'accès en dict JSON-sérialisable : des noms de variables, jamais une valeur secrète."""
+        return {
+            "id": self.id,
+            "libelle": self.libelle,
+            "secret": self.secret,
+            "cle_requise": self.cle_requise,
+            "adresse": self.adresse,
+            "adresse_defaut": self.adresse_defaut,
+            "temoins": list(self.temoins),
+        }
+
+
+#: Les motifs d'une épreuve d'accès (#1609). Chacun se lit dans un **champ typé**
+#: de la réponse du fournisseur, jamais dans son texte (docs/44) :
+#: - `ok` : le modèle a répondu ;
+#: - `outil-absent` : le programme que l'accès lance est introuvable ;
+#: - `authentification` : clé refusée, ou abonnement non connecté ;
+#: - `facturation` : le compte n'a plus de solde ;
+#: - `limite` : la limite d'usage est atteinte ;
+#: - `requete` : le modèle ou la requête est refusé ;
+#: - `injoignable` : rien ne répond à l'adresse ;
+#: - `serveur` : le service répond en panne ;
+#: - `inconnu` : un échec qu'aucun champ ne qualifie.
+MOTIFS_EPREUVE: tuple[str, ...] = (
+    "ok",
+    "outil-absent",
+    "authentification",
+    "facturation",
+    "limite",
+    "requete",
+    "injoignable",
+    "serveur",
+    "inconnu",
+)
+
+
+@dataclass(frozen=True)
+class Epreuve:
+    """Le verdict d'une épreuve d'accès : a-t-on obtenu une réponse du modèle, et sinon pourquoi.
+
+    `motif` est un élément de `MOTIFS_EPREUVE`. `precision` est un fait court
+    tiré d'un champ typé : un statut HTTP, un code de sortie, le nom d'une
+    erreur. Ce n'est jamais un texte de réponse recopié, qui pourrait porter
+    une clé.
+    """
+
+    motif: str
+    precision: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.motif == "ok"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"ok": self.ok, "motif": self.motif, "precision": self.precision}
+
+
+#: Ce qu'une épreuve demande au modèle. Une réponse, quelle qu'elle soit, suffit
+#: à prouver l'accès : on ne juge pas son contenu.
+PROMPT_EPREUVE = "Réponds seulement : OK."
+
+
+def motif_du_statut_http(statut: int) -> str:
+    """Le motif d'épreuve d'un statut HTTP en échec : un nombre lu, jamais un texte."""
+    if statut in (401, 403):
+        return "authentification"
+    if statut == 402:
+        return "facturation"
+    if statut == 429:
+        return "limite"
+    if statut >= 500:
+        return "serveur"
+    if 400 <= statut < 500:
+        return "requete"
+    return "inconnu"
+
+
+@dataclass(frozen=True)
 class FournisseurDisponible:
     """Un fournisseur du registre, tel que le catalogue le rend (#253).
 
@@ -442,11 +551,18 @@ class FournisseurDisponible:
     `llama3:8b`, `org/modele`) et ne peut en préjuger — sa gamme est vide **et**
     libre, ce qui veut dire « saisis le nom », jamais « aucun modèle ». Un
     fournisseur à gamme vide et non libre, lui, n'a rien à proposer.
+
+    `acces` sont les façons de l'atteindre depuis le poste (#1609). `outille`
+    dit s'il sait conduire un agent outillé (`run_agent`) : un fournisseur qui
+    ne le sait pas reste choisissable, mais les agents ne pourront pas y
+    travailler, et l'écran le dit.
     """
 
     nom: str
     modeles: tuple[ModeleDisponible, ...] = ()
     modeles_libres: bool = False
+    acces: tuple[AccesFournisseur, ...] = ()
+    outille: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet la fiche en dict JSON-sérialisable (forme servie par l'API)."""
@@ -454,6 +570,8 @@ class FournisseurDisponible:
             "nom": self.nom,
             "modeles": [m.to_dict() for m in self.modeles],
             "modeles_libres": self.modeles_libres,
+            "acces": [a.to_dict() for a in self.acces],
+            "outille": self.outille,
         }
 
 
@@ -510,12 +628,44 @@ class ModelProvider(ABC):
         """
         return True
 
+    #: Les façons d'atteindre ce fournisseur depuis le poste (#1609), déclarées
+    #: sur la classe comme la gamme : le catalogue les lit sans rien construire.
+    ACCES: ClassVar[tuple[AccesFournisseur, ...]] = ()
+
     @classmethod
     def catalogue(cls) -> FournisseurDisponible:
         """La fiche de ce fournisseur pour le catalogue (#253) — sans rien construire."""
         return FournisseurDisponible(
-            nom=cls.name, modeles=cls.MODELES, modeles_libres=cls.MODELES_LIBRES
+            nom=cls.name,
+            modeles=cls.MODELES,
+            modeles_libres=cls.MODELES_LIBRES,
+            acces=cls.ACCES,
+            outille=cls.run_agent is not ModelProvider.run_agent,
         )
+
+    @classmethod
+    def acces_retenu(cls, settings: Settings) -> str | None:
+        """L'accès (`AccesFournisseur.id`) que ces réglages font emprunter, None s'il ne se dit pas.
+
+        C'est ce qui permet à l'écran de marquer l'accès **utilisé maintenant**,
+        qu'il vienne du choix du poste ou d'un `.env`.
+        """
+        return None
+
+    async def eprouver(self, model: str) -> Epreuve:
+        """Demande une réponse au modèle, et dit pourquoi elle n'est pas venue (#1609).
+
+        Le défaut ne sait qualifier qu'un succès ou une limite d'usage : un
+        fournisseur dont les échecs portent des champs typés surcharge ce verbe
+        pour les lire. Il ne lit jamais le texte d'une erreur.
+        """
+        try:
+            await self.generate(PROMPT_EPREUVE, model=model)
+        except LimiteUsageAtteinte:
+            return Epreuve("limite")
+        except Exception as exc:  # noqa: BLE001 — l'échec devient un verdict, pas une panne
+            return Epreuve("inconnu", type(exc).__name__)
+        return Epreuve("ok")
 
     @classmethod
     def efforts_admis(cls, model: str) -> tuple[str, ...]:

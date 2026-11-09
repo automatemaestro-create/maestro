@@ -156,6 +156,8 @@ describe("① la création aboutit et mène à la fiche née", () => {
             { nom: "claude-opus-5", libelle: "Opus 5", efforts: ["high", "xhigh"] },
           ],
           modeles_libres: true,
+          acces: [],
+          outille: true,
           supporte: true,
           present_ici: true,
           utilisable_ici: true,

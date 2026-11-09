@@ -228,7 +228,12 @@ describe("④ le renvoi mène là où l'on écrit", () => {
 
     await monter();
 
-    expect(screen.getByText(/MAESTRO_PROVIDER/)).toBeInTheDocument();
+    // « Hérité » renvoie au choix par défaut de cette même section (#1609), plus
+    // à une variable d'environnement : le `.env` n'est plus le chemin pour choisir.
+    expect(
+      screen.getByText(/« Hérité » : l'agent suit le fournisseur et le modèle par défaut, choisis ci-dessus/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/MAESTRO_PROVIDER/)).toBeNull();
     expect(screen.getByText(/« Du code » : le réglage vient de la définition/)).
       toBeInTheDocument();
   });

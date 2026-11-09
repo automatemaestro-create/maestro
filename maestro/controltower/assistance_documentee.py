@@ -489,9 +489,8 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         sections_max: int = SECTIONS_MAX,
         budget_tokens: int = BUDGET_SECTIONS_TOKENS,
     ) -> None:
-        self._provider = provider
         # Le modèle suit le fournisseur (#1173) ; un fournisseur injecté garde celui de la fiche.
-        self._modele: str | None = None
+        self._provider = provider
         self._repli = repli if repli is not None else RepondeurAssistance()
         self._racine = racine
         self._sections_max = sections_max
@@ -524,12 +523,12 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         # fournisseur on va replier de toute façon, et analyser 1,58 Mio pour s'en
         # apercevoir ensuite ferait payer un poste non configuré à chaque question. Résoudre,
         # lui, ne coûte rien et ne touche aucun réseau.
-        fournisseur = self._fournisseur(agent.modele)
+        fournisseur, modele = self._fournisseur(agent.modele)
         carte = self._carte()
         choisis = identifiants_choisis(
             await self._appeler(
                 fournisseur,
-                agent,
+                modele,
                 _PROMPT_CHOIX,
                 f"{carte.markdown}\n{transcription(fil)}",
             )
@@ -539,7 +538,7 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
             choisis = identifiants_choisis(
                 await self._appeler(
                     fournisseur,
-                    agent,
+                    modele,
                     _PROMPT_DETAIL,
                     f"{detail}\n{transcription(fil)}",
                 )
@@ -554,7 +553,7 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
             return _AVEU_IGNORANCE
         reponse = await self._appeler(
             fournisseur,
-            agent,
+            modele,
             f"{agent.prompt_systeme}\n\n{_CONSIGNE_DOCUMENTEE}",
             prompt_reponse(carte, selection, fil),
         )
@@ -586,38 +585,33 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
                 _REPARATION_CORPUS,
             ) from echec
 
-    def _fournisseur(self, defaut_modele: str) -> ModelProvider:
-        """Le fournisseur des deux appels, résolu au premier usage.
+    def _fournisseur(self, defaut_modele: str) -> tuple[ModelProvider, str]:
+        """Le fournisseur des appels d'une question, et leur modèle — résolus par question.
 
         Ce qui casse **ici** n'a touché aucun réseau : c'est un réglage, et réessayer
         n'y changerait rien — d'où la famille de la cause, lue à l'endroit de l'échec
         et jamais à son texte (règle de `controltower.causes`, tenue par la structure).
 
-        Un échec de résolution **ne se mémorise pas** : `self._provider` reste `None`,
-        si bien que la question suivante retente. C'est ce qui rend la phrase de
-        réparation vraie — corriger la configuration suffit, sans redémarrer la
-        Control Tower.
+        Rien n'est gardé d'une question à l'autre (#1609) : c'est ce qui rend la
+        phrase de réparation vraie — corriger la configuration, ou choisir un autre
+        fournisseur dans les Paramètres, suffit, sans redémarrer la Control Tower.
+        Le modèle suit le fournisseur (#1173), jamais épinglé sur un nom Claude ; un
+        modèle manquant est un réglage absent, même famille.
         """
-        if self._provider is None:
-            # Import local : ne tire la couche fournisseur (SDK…) qu'au premier
-            # message — l'app se construit et se teste sans elle (#84).
-            from maestro.providers.factory import modele_du_canal, provider_from_settings
+        # Import local : ne tire la couche fournisseur (SDK…) qu'au premier
+        # message — l'app se construit et se teste sans elle (#84).
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-            try:
-                fournisseur = provider_from_settings()
-                # Le modèle suit le fournisseur (#1173), jamais épinglé sur un nom
-                # Claude ; un modèle manquant est un réglage absent, même famille.
-                self._modele = modele_du_canal(defaut_modele, fournisseur)
-                self._provider = fournisseur
-            except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
-                raise _ModeleInjoignable(
-                    f"aucun fournisseur de modèle n'est utilisable ({cause_lisible(echec)})",
-                    _REPARATION_CONFIGURATION,
-                ) from echec
-        return self._provider
+        try:
+            return fournisseur_de_l_appel(self._provider, defaut_modele)
+        except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
+            raise _ModeleInjoignable(
+                f"aucun fournisseur de modèle n'est utilisable ({cause_lisible(echec)})",
+                _REPARATION_CONFIGURATION,
+            ) from echec
 
     async def _appeler(
-        self, fournisseur: ModelProvider, agent: Agent, systeme: str, prompt: str
+        self, fournisseur: ModelProvider, modele: str, systeme: str, prompt: str
     ) -> str:
         """Un appel modèle, dont les deux façons d'échouer lèvent `_ModeleInjoignable`.
 
@@ -627,9 +621,7 @@ class RepondeurAssistanceDocumentee(RepondeurChat):
         appels en tirent la même conclusion.
         """
         try:
-            texte = await fournisseur.generate(
-                prompt, model=self._modele or agent.modele, system_prompt=systeme
-            )
+            texte = await fournisseur.generate(prompt, model=modele, system_prompt=systeme)
         except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
             raise _ModeleInjoignable(
                 f"le fournisseur de modèle n'a pas répondu ({cause_lisible(echec)})",

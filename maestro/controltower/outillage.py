@@ -391,10 +391,11 @@ class ComprehensionModele:
     modèle rend la compréhension **entière** (tous les constats, les questions qui
     restent). C'est ce qui permet à une correction tapée de défaire un clic antérieur.
 
-    Le fournisseur est résolu **au premier usage**, comme celui des répondeurs du
-    chat : construire le service ne coûte rien et ne lève aucune erreur de
-    configuration. Un fournisseur **injecté** — un double de test, un câblage
-    explicite — est pris tel quel. Le modèle suit le fournisseur (#1173,
+    Le fournisseur est résolu **à chaque appel**, comme celui des répondeurs du
+    chat (#1609) : construire le service ne coûte rien et ne lève aucune erreur de
+    configuration, et un fournisseur choisi dans les Paramètres sert l'appel suivant.
+    Un fournisseur **injecté** — un double de test, un câblage explicite — est pris
+    tel quel. Le modèle suit le fournisseur (#1173,
     `modele_du_canal`) : `MAESTRO_MODEL` s'il est posé, sinon le défaut du canal.
 
     Ce que rend le modèle est lu par `comprehension_depuis_texte`, qui ne croit rien
@@ -422,14 +423,14 @@ class ComprehensionModele:
         corriger : elle est redite au modèle, qui ne se souvient de rien d'un tour à
         l'autre et doit savoir ce qu'il corrige.
         """
-        from maestro.providers.factory import modele_du_canal, provider_from_settings
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-        if self._provider is None:
-            self._provider = provider_from_settings()
-        fournisseur = self._provider
+        # Résolu à chaque appel (#1609) : un fournisseur choisi dans les Paramètres
+        # sert la question suivante, sans redémarrage.
+        fournisseur, modele = fournisseur_de_l_appel(self._provider, MODELE_EXECUTANT_DEFAUT)
         texte = await fournisseur.generate(
             _prompt_de_comprehension(conversation, reponses, poste or {}, corrigee),
-            model=modele_du_canal(MODELE_EXECUTANT_DEFAUT, fournisseur),
+            model=modele,
             system_prompt=_PROMPT_COMPREHENSION,
         )
         return comprehension_depuis_texte(texte, reponses)
@@ -1621,11 +1622,11 @@ class ServiceOutillage:
         if gardee is not None and await asyncio.to_thread(gardee.vaut_pour, empreinte):
             return gardee.analyse
         try:
-            fournisseur = self._fournisseur()
+            fournisseur, modele = self._fournisseur()
         except Exception as exc:  # noqa: BLE001 — sans fournisseur, les tables seules
             return sans_lecture(indices, f"aucun fournisseur de modèle n'est utilisable : {exc}")
         analyse = await lire_le_projet(
-            indices, perimetre=projet.perimetre, provider=fournisseur, modele=self._modele
+            indices, perimetre=projet.perimetre, provider=fournisseur, modele=modele
         )
         if analyse.lecture is not None and analyse.lecture.etat == "lue":
             self._lues[projet.id] = await asyncio.to_thread(
@@ -1642,21 +1643,17 @@ class ServiceOutillage:
             bornes=self._bornes,
         )
 
-    def _fournisseur(self) -> ModelProvider:
-        """Le fournisseur de la lecture, résolu au premier usage (import local, comme #257).
+    def _fournisseur(self) -> tuple[ModelProvider, str]:
+        """Le fournisseur de la lecture et son modèle, résolus à chaque lecture (#1609).
 
-        Le modèle suit le fournisseur configuré (#1173) : le défaut de ce canal
-        est un nom Claude, qui n'a de sens que chez Claude. Résolu **avant** de
-        retenir le fournisseur, pour qu'un échec laisse tout à résoudre au
-        prochain appel plutôt qu'un fournisseur sans son modèle.
+        Import local, comme #257. Rien n'est gardé : un fournisseur choisi dans les
+        Paramètres sert la lecture suivante. Le modèle suit le fournisseur configuré
+        (#1173) : le défaut de ce canal est un nom Claude, qui n'a de sens que chez
+        Claude.
         """
-        if self._provider is None:
-            from maestro.providers.factory import modele_du_canal, provider_from_settings
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-            fournisseur = provider_from_settings()
-            self._modele = modele_du_canal(self._modele, fournisseur)
-            self._provider = fournisseur
-        return self._provider
+        return fournisseur_de_l_appel(self._provider, self._modele)
 
     async def question(self, id_projet: str, choix: Sequence[Choix]) -> dict[str, Any]:
         """La prochaine question du questionnaire, vu les réponses données (#1031, #1147).
@@ -1764,14 +1761,14 @@ class ServiceOutillage:
         """
         indices = await asyncio.to_thread(self._indices, projet)
         try:
-            fournisseur = self._fournisseur()
+            fournisseur, modele = self._fournisseur()
         except Exception as exc:  # noqa: BLE001 — sans fournisseur, les tables seules
             return sans_lecture(indices, f"aucun fournisseur de modèle n'est utilisable : {exc}")
         return await lire_le_projet(
             indices,
             perimetre=projet.perimetre,
             provider=fournisseur,
-            modele=self._modele,
+            modele=modele,
             echecs=echecs,
         )
 

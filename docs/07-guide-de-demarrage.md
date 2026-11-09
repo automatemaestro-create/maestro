@@ -241,7 +241,8 @@ construits ensuite ; workers et API doivent voir le même stockage. Les agents p
 défaut restent définis par le code : leur fiche est en lecture seule dans le catalogue
 (403 en modification/suppression), seul leur playbook s'édite — via `/api/playbooks`
 (§6.2). Au POC, le champ `fournisseur` est déclaratif (le moteur exécute sur le
-fournisseur configuré, `MAESTRO_PROVIDER`) et un agent personnalisé exécute par le
+fournisseur par défaut du poste, choisi dans *Paramètres › Fournisseurs*) et un agent
+personnalisé exécute par le
 chemin texte (pas de runtime outillé).
 Détails : [`core/agents/README.md`](../core/agents/README.md).
 
@@ -251,7 +252,9 @@ Chaque agent du catalogue — par défaut ou personnalisé (§6.3) — se **cont
 directement** depuis la Control Tower (EF-19) : la page `/chat` de l'UI (#85) ouvre un
 fil de conversation par agent, ou par l'API (`GET /api/chat/{agent}` relit le fil,
 `POST /api/chat/{agent}/messages` envoie un message et rend la paire message/réponse).
-La réponse est produite par le **fournisseur configuré** (`MAESTRO_PROVIDER`), cadrée
+La réponse est produite par le **fournisseur par défaut** du poste — choisi et éprouvé
+dans *Paramètres › Fournisseurs* (#1609, [docs/05 §6.4quater](./05-interface-control-tower.md)),
+`MAESTRO_PROVIDER` l'emportant quand il est renseigné —, cadrée
 par le **playbook courant** de l'agent (§6.2 : la version éditée fait foi, rechargée à
 chaque message) et par un cadre de conversation explicite — c'est un échange direct,
 pas une tâche à livrer.

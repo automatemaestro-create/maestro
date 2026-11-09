@@ -38,11 +38,16 @@ import {
   TAILLE_PAGE_JOURNAL_MAX,
 } from "@/lib/types";
 import type {
+  AccesFournisseur,
   AgentCatalogue,
   AreteGraphe,
   BilanRun,
   CatalogueFournisseurs,
   ConstatPoste,
+  DemandeFournisseurDefaut,
+  Epreuve,
+  EtatFournisseurDefaut,
+  ResultatEpreuve,
   CoutExecution,
   CoutTache,
   CoutTacheAgregee,
@@ -506,6 +511,52 @@ export function projetsDeclares(): Projet[] {
  * nu ne vide pas la gamme que Maestro annonce, c'est précisément ce que les deux
  * moitiés de la fiche distinguent.
  */
+/**
+ * Les accès que les deux fournisseurs du registre déclarent (#1609), recopiés de
+ * `ClaudeProvider.ACCES` et `OpenAICompatProvider.ACCES` : ce que l'API sert.
+ */
+export const ACCES_CLAUDE: AccesFournisseur[] = [
+  {
+    id: "abonnement",
+    libelle: "Abonnement Claude, par Claude Code sur ce poste",
+    secret: null,
+    cle_requise: false,
+    adresse: null,
+    adresse_defaut: null,
+    temoins: ["cli:claude", "cle:CLAUDE_CODE_OAUTH_TOKEN"],
+  },
+  {
+    id: "cle",
+    libelle: "Clé d'API Anthropic",
+    secret: "ANTHROPIC_API_KEY",
+    cle_requise: true,
+    adresse: null,
+    adresse_defaut: null,
+    temoins: ["cle:ANTHROPIC_API_KEY"],
+  },
+];
+
+export const ACCES_OPENAI: AccesFournisseur[] = [
+  {
+    id: "local",
+    libelle: "Serveur de modèles sur ce poste (Ollama…)",
+    secret: null,
+    cle_requise: false,
+    adresse: "OPENAI_BASE_URL",
+    adresse_defaut: "http://localhost:11434/v1",
+    temoins: ["serveur:ollama", "serveur:openai-configure"],
+  },
+  {
+    id: "cle",
+    libelle: "Service compatible OpenAI, avec une clé",
+    secret: "OPENAI_API_KEY",
+    cle_requise: true,
+    adresse: "OPENAI_BASE_URL",
+    adresse_defaut: "https://api.openai.com/v1",
+    temoins: ["cle:OPENAI_API_KEY"],
+  },
+];
+
 export const CATALOGUE_POSTE_NU: CatalogueFournisseurs = {
   fournisseurs: [
     {
@@ -515,6 +566,8 @@ export const CATALOGUE_POSTE_NU: CatalogueFournisseurs = {
         { nom: "claude-sonnet-5", libelle: "Sonnet 5", efforts: ["high"] },
       ],
       modeles_libres: true,
+      acces: ACCES_CLAUDE,
+      outille: true,
       supporte: true,
       present_ici: false,
       utilisable_ici: false,
@@ -527,6 +580,8 @@ export const CATALOGUE_POSTE_NU: CatalogueFournisseurs = {
       nom: "openai",
       modeles: [],
       modeles_libres: true,
+      acces: ACCES_OPENAI,
+      outille: false,
       supporte: true,
       present_ici: false,
       utilisable_ici: false,
@@ -537,6 +592,107 @@ export const CATALOGUE_POSTE_NU: CatalogueFournisseurs = {
   hors_registre: [],
   incertitudes: [],
 };
+
+// --- Fournisseur par défaut du poste (#1609) -------------------------------
+
+/**
+ * L'état d'un poste où **rien n'a été choisi** : l'exécution suit son défaut,
+ * Claude par l'abonnement, et aucune variable ne l'impose.
+ */
+export const ETAT_FOURNISSEUR_DEFAUT_NU: EtatFournisseurDefaut = {
+  choix: null,
+  effectif: {
+    fournisseur: "claude",
+    acces: "abonnement",
+    modele: null,
+    modele_par_defaut: "claude-opus-5",
+  },
+  environnement: [],
+  cles: [],
+};
+
+let etatFournisseurDefaut: EtatFournisseurDefaut = ETAT_FOURNISSEUR_DEFAUT_NU;
+let verdictEpreuve: Epreuve = { ok: true, motif: "ok", precision: "" };
+let panneFournisseurDefaut: string | null = null;
+
+/** Ce que l'écran a éprouvé, puis enregistré — dans l'ordre, pour les assertions. */
+export const demandesEprouvees: DemandeFournisseurDefaut[] = [];
+export const demandesEnregistrees: DemandeFournisseurDefaut[] = [];
+
+/** Ce que `chargerFournisseurDefaut` rendra — le mock vit dans `setup.ts`. */
+export function poserFournisseurDefaut(
+  partiel: Partial<EtatFournisseurDefaut> = {},
+): void {
+  etatFournisseurDefaut = { ...ETAT_FOURNISSEUR_DEFAUT_NU, ...partiel };
+  verdictEpreuve = { ok: true, motif: "ok", precision: "" };
+  panneFournisseurDefaut = null;
+  demandesEprouvees.length = 0;
+  demandesEnregistrees.length = 0;
+}
+
+/** Le verdict que la prochaine épreuve rendra — et que l'enregistrement opposera. */
+export function poserVerdictEpreuve(verdict: Epreuve): void {
+  verdictEpreuve = verdict;
+}
+
+/** L'API ne répond plus : la lecture du fournisseur par défaut lève ce message. */
+export function poserPanneFournisseurDefaut(message: string): void {
+  panneFournisseurDefaut = message;
+}
+
+export function fournisseurDefautDuPoste(): EtatFournisseurDefaut {
+  if (panneFournisseurDefaut !== null) throw new Error(panneFournisseurDefaut);
+  return etatFournisseurDefaut;
+}
+
+/** La double de `POST /api/fournisseurs/epreuve` : le verdict posé, et le modèle demandé. */
+export function epreuveFactice(demande: DemandeFournisseurDefaut): ResultatEpreuve {
+  demandesEprouvees.push(demande);
+  return {
+    epreuve: verdictEpreuve,
+    modele: demande.modele ?? etatFournisseurDefaut.effectif.modele_par_defaut ?? "",
+  };
+}
+
+/**
+ * La double de `PUT /api/fournisseurs/defaut` : refusé avec le verdict quand
+ * l'épreuve échoue, sinon le choix devient l'état — sans environnement qui
+ * l'impose, c'est aussi ce que l'exécution utilise.
+ */
+export function enregistrementFactice(
+  demande: DemandeFournisseurDefaut,
+): { etat: EtatFournisseurDefaut } | { refus: Epreuve } {
+  demandesEnregistrees.push(demande);
+  if (!verdictEpreuve.ok) return { refus: verdictEpreuve };
+  const secret = (demande.fournisseur === "claude" ? ACCES_CLAUDE : ACCES_OPENAI).find(
+    (acces) => acces.id === demande.acces,
+  )?.secret;
+  etatFournisseurDefaut = {
+    ...etatFournisseurDefaut,
+    choix: {
+      fournisseur: demande.fournisseur,
+      acces: demande.acces,
+      modele: demande.modele,
+      adresse: demande.adresse,
+      eprouve_le: "2026-11-09T10:00:00+00:00",
+      pose_le: "2026-11-09T10:00:00+00:00",
+    },
+    effectif:
+      etatFournisseurDefaut.environnement.length > 0
+        ? etatFournisseurDefaut.effectif
+        : {
+            ...etatFournisseurDefaut.effectif,
+            fournisseur: demande.fournisseur,
+            acces: demande.acces,
+            modele: demande.modele,
+          },
+    cles:
+      demande.cle === null || !secret
+        ? etatFournisseurDefaut.cles
+        : [...new Set([...etatFournisseurDefaut.cles, secret])],
+  };
+  return { etat: etatFournisseurDefaut };
+}
 
 /** Un constat de sonde, valeurs par défaut complètes (patron des fabriques). */
 export function constatPosteFactice(

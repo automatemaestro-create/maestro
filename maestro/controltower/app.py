@@ -485,6 +485,12 @@ from maestro.controltower.executions import (
     RelanceRefusee,
     ServiceExecutions,
 )
+from maestro.controltower.fournisseur_defaut import (
+    ChoixRefuse,
+    DemandeFournisseur,
+    EpreuveEchouee,
+    ServiceFournisseurParDefaut,
+)
 from maestro.controltower.fournisseurs import catalogue as catalogue_fournisseurs
 from maestro.controltower.frise import frise_du_run
 from maestro.controltower.generation_agent import (
@@ -999,6 +1005,30 @@ class RepertoireRequete(BaseModel):
     """
 
     chemin: str | None = None
+
+
+class FournisseurDefautRequete(BaseModel):
+    """Corps d'une épreuve ou d'un enregistrement du fournisseur par défaut (#1609).
+
+    `cle` n'est présente que si la personne vient de la taper : sans elle, on
+    éprouve avec la clé déjà gardée par le coffre du poste. Elle ne ressort
+    jamais d'une réponse.
+    """
+
+    fournisseur: str
+    acces: str
+    modele: str | None = None
+    adresse: str | None = None
+    cle: str | None = None
+
+    def demande(self) -> DemandeFournisseur:
+        return DemandeFournisseur(
+            fournisseur=self.fournisseur,
+            acces=self.acces,
+            modele=self.modele,
+            adresse=self.adresse,
+            cle=self.cle,
+        )
 
 
 class ChatEnvoiRequete(BaseModel):
@@ -1878,6 +1908,7 @@ def create_app(
     lecteur_sources: LecteurSources | None = None,
     hote_run: HoteRun | None = None,
     sonde_poste: SondePoste | None = None,
+    fournisseur_defaut: ServiceFournisseurParDefaut | None = None,
     acces: PolitiqueAcces | None = None,
     comprehension: ComprehensionModele | None = None,
     acquis: MagasinAcquis | None = None,
@@ -2082,6 +2113,11 @@ def create_app(
     backend, et la suite lui donne donc un poste décrit plutôt que le vrai. Elle
     n'est appelée qu'à la requête — une API qu'on ne consulte pas ne sonde rien.
 
+    `fournisseur_defaut` (#1609) lit, éprouve et enregistre le fournisseur par
+    défaut du poste (`/api/fournisseurs/defaut`, `/api/fournisseurs/epreuve`).
+    Par défaut il éprouve avec le vrai fournisseur : un test lui injecte son
+    éprouveur, comme il injecte une sonde.
+
     `hote_run` (#442) est **où** les exécutions se déroulent : le contrat d'hôte
     de run (`maestro.controltower.hote`). Même point d'injection que
     `fabrique_moteur`, et pour une raison voisine : la fabrique décide de *quoi*
@@ -2147,6 +2183,11 @@ def create_app(
     # ne dépendre d'aucun disque.
     admissions = admissions if admissions is not None else ServiceAdmission.default()
     secrets = secrets if secrets is not None else SecretStore.default()
+    fournisseur_defaut = (
+        fournisseur_defaut
+        if fournisseur_defaut is not None
+        else ServiceFournisseurParDefaut(coffre=secrets)
+    )
     permissions = permissions if permissions is not None else PermissionStore.default()
     projets = projets if projets is not None else ServiceProjets.default()
     # L'analyse d'outillage (#1030) se greffe sur le **même** service de projets :
@@ -5927,6 +5968,63 @@ def create_app(
         vides et un 200.
         """
         return catalogue_fournisseurs(await sonde_poste.rapport())
+
+    @app.get("/api/fournisseurs/defaut")
+    async def fournisseur_par_defaut() -> dict[str, Any]:
+        """Le fournisseur par défaut du poste (#1609) : le choix, l'effectif, ce qui l'impose.
+
+        `choix` est ce qui a été enregistré dans les Paramètres (null : rien) ;
+        `effectif` ce que l'exécution résout **maintenant** — fournisseur, accès,
+        modèle imposé, modèle par défaut —, qui diffère du choix quand une
+        variable de l'environnement l'impose ; `environnement` les variables qui
+        l'imposent (la valeur, jamais pour une clé) ; `cles` les clés que le
+        coffre du poste garde, par nom.
+        """
+        return fournisseur_defaut.etat()
+
+    @app.post("/api/fournisseurs/epreuve")
+    async def eprouver_fournisseur(corps: FournisseurDefautRequete) -> dict[str, Any]:
+        """Éprouve un choix avant de l'enregistrer (#1609) : un tour de modèle, et son verdict.
+
+        Toujours **200** quand l'épreuve a eu lieu, réussie ou non : le verdict
+        est la réponse (`epreuve.ok`, `epreuve.motif`, lu dans les champs typés
+        de la réponse du fournisseur). 422 quand le choix ne se tient pas
+        (fournisseur ou accès inconnu, modèle ou clé manquant).
+        """
+        try:
+            return await fournisseur_defaut.eprouver(corps.demande())
+        except ChoixRefuse as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/fournisseurs/defaut")
+    async def enregistrer_fournisseur(corps: FournisseurDefautRequete) -> dict[str, Any]:
+        """Enregistre le fournisseur par défaut du poste — seulement un choix éprouvé (#1609).
+
+        Pris sans redémarrage : la configuration le relit à chaque résolution.
+        409 avec le verdict quand l'épreuve échoue, et **rien n'est écrit**, ni
+        le choix ni la clé ; 422 quand le choix ne se tient pas.
+        """
+        try:
+            return await fournisseur_defaut.enregistrer(corps.demande())
+        except EpreuveEchouee as exc:
+            raise HTTPException(
+                status_code=409, detail={"epreuve": exc.epreuve.to_dict()}
+            ) from exc
+        except ChoixRefuse as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/api/fournisseurs/defaut")
+    async def effacer_fournisseur() -> dict[str, Any]:
+        """Retire le choix du poste : l'environnement seul décide de nouveau (#1609)."""
+        return fournisseur_defaut.effacer()
+
+    @app.delete("/api/fournisseurs/defaut/cles/{variable}")
+    async def retirer_cle_fournisseur(variable: str) -> dict[str, Any]:
+        """Retire une clé du coffre du poste (#1609) — 422 si elle n'est la clé d'aucun accès."""
+        try:
+            return fournisseur_defaut.retirer_cle(variable)
+        except ChoixRefuse as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/catalogue")
     async def catalogue_liste(projet: str | None = None) -> list[dict[str, Any]]:

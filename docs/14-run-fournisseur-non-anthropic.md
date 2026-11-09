@@ -48,6 +48,14 @@ ce qu'il fait, pour qui, et comment l'essayer."
 > Sans `MAESTRO_MODEL` hors Claude, le fil dit le réglage absent et ce que la sonde du poste
 > a trouvé, jamais une panne passagère.
 
+> ⚠ **Depuis #1609, ce réglage se fait à l'écran.** Le fournisseur, son accès (un serveur
+> sur ce poste comme cet Ollama, ou un service avec une clé) et son modèle se choisissent dans
+> *Paramètres › Fournisseurs*. Ils s'y éprouvent d'un geste, et le prochain appel s'en sert
+> sans redémarrage ([docs/05 §6.4quater](./05-interface-control-tower.md)). Les variables de la
+> commande ci-dessus restent des **surcharges** : renseignées dans l'environnement, elles
+> l'emportent sur l'écran, qui le dit. Un run en ligne de commande lit le choix de l'écran
+> comme la Control Tower.
+
 `MAESTRO_MODEL` (requis hors Claude) impose le modèle unique à l'orchestrateur **et**
 aux exécutants ; le fournisseur ne sachant pas exécuter d'agent outillé, chaque rôle
 retombe automatiquement sur son **livrable texte** (`UnsupportedCapability` → repli

@@ -1039,7 +1039,9 @@ plus composer une configuration qui n'existe pas*.
 
 - **Le fournisseur** se choisit dans une liste fermée sur le registre
   (`GET /api/fournisseurs`, §6.4bis), plus l'option « défaut de l'exécution » —
-  qui est un choix légitime et non un trou : l'agent suit alors `MAESTRO_PROVIDER`.
+  qui est un choix légitime et non un trou : l'agent suit alors le **fournisseur par
+  défaut du poste**, choisi et éprouvé dans *Paramètres › Fournisseurs* (§6.4quater,
+  #1609).
 - **Le modèle** n'offre que la gamme du fournisseur retenu. Une gamme **fermée**
   (`modeles_libres: false`) donne un `<select>` ; une gamme **libre** — le cas de
   Claude, dont la liste propose sans interdire — donne un champ de saisie à
@@ -5326,7 +5328,10 @@ fournisseur au registre suffit à l'y faire apparaître.
       "present_ici": true,                   // la sonde du poste l'a trouvé (#487)
       "utilisable_ici": true,
       "modeles_ici": ["qwen2.5:3b"],         // ce que ce poste sert, distinct de `modeles`
-      "constats": [ /* ce que la sonde a vu, sans aucune valeur de secret */ ]
+      "constats": [ /* ce que la sonde a vu, sans aucune valeur de secret */ ],
+      "acces": [ /* les façons de l'atteindre d'ici (#1609, §6.4quater) */ ],
+      "outille": true                        // sait conduire un agent outillé (`run_agent`) ;
+                                             // faux : conversation seulement, et l'écran le dit
     }
   ],
   "hors_registre": ["cli:gemini"],           // vu sur le poste, non supporté — montré, jamais proposé
@@ -5385,6 +5390,97 @@ peut réellement appeler, `permissions_erreur` porte la cause exacte quand la
 politique stockée est illisible, et `permissions_accords` (#1185) les accords
 étendus encore en vigueur — `{id, agent, outil, etendue, run_id, tache_id,
 accorde_le}`.
+
+### 6.4quater Le fournisseur par défaut du poste — le choisir, l'éprouver (#1609) — **livré**
+
+*Quel fournisseur et quel modèle Maestro utilise-t-il sur ce poste, et l'accès marche-t-il ?*
+La carte « Par défaut », en tête de *Paramètres › Fournisseurs*, répond à cette question.
+C'est le chemin pour choisir : on n'édite plus de `.env` et on ne redémarre plus.
+
+**L'écran.** Une carte par **accès**, pas par fournisseur. Pour Claude, l'abonnement par Claude
+Code sur ce poste, ou une clé d'API Anthropic. Pour le dialecte OpenAI, un serveur de modèles sur
+ce poste (Ollama…), ou un service distant avec une clé. Les accès viennent du registre
+(`acces` de `GET /api/fournisseurs`) : un fournisseur inscrit y apporte les siens sans qu'on
+touche au front. Quatre règles tiennent la lecture :
+
+- **Ce qui est utilisé se lit à part de ce qui est coché.** Une ligne dit ce que l'exécution
+  utilise *maintenant*, avec son modèle, et la carte correspondante porte « Utilisé
+  maintenant ». La coche n'est que la saisie. Un choix enregistré que l'environnement supplante
+  porte « Enregistré, pas utilisé ».
+- **Présent n'est pas éprouvé.** Chaque carte dit ce que la sonde du poste (`maestro/poste.py`)
+  en a vu : un CLI trouvé, un serveur qui répond, une clé gardée. Ce n'est jamais un vert. Un
+  accès dont rien n'a été vu est atténué, jamais caché.
+- **Seule l'épreuve rend un verdict**, dans la carte choisie. « Éprouver » fait un tour de
+  modèle sur la saisie, et seul un verdict réussi ouvre « Enregistrer ». Changer un champ efface
+  le verdict. Un échec dit son motif, et le geste qui le répare quand il y en a un : « Lancez
+  « claude auth login » dans un terminal » pour un abonnement non connecté, « Rien ne répond à
+  cette adresse » pour un serveur muet, « La clé est refusée » pour une clé.
+- **Une clé ne se réaffiche jamais.** Le champ est un mot de passe, vidé après
+  l'enregistrement. La clé va au **coffre du poste**, chiffrée (`SecretStore.enregistrer_poste`,
+  fichier `_poste.json`, qui ne provisionne pas les coffres d'agent). Le registre de rédaction
+  la retire de tout journal dès qu'elle est tapée.
+
+Un fournisseur qui ne sait pas conduire un agent outillé (`outille: false`) reste choisissable,
+avec le badge « Conversation seulement ». Les agents y produisent leur livrable texte.
+
+**L'environnement garde la main.** Une variable **renseignée** l'emporte sur l'écran :
+`MAESTRO_PROVIDER`, `MAESTRO_MODEL`, `CLAUDE_AUTH_MODE`, `OPENAI_BASE_URL` ou une clé d'API,
+venue du `.env` ou du shell. Une variable vide ne compte pas. L'écran nomme celles qui
+s'imposent, jamais la valeur d'une clé, et dit le geste qui rend la main : les retirer du
+`.env`, puis relancer Maestro.
+
+**Sans redémarrage.** Le choix est écrit dans le dépôt des réglages du poste
+(`fournisseur.json` sous `MAESTRO_REGLAGES_DIR`, à défaut `core/reglages/`), dans le
+vocabulaire d'un `.env`. `load_settings` le relit **à chaque appel** et ne remplit que les
+variables vides (`maestro/fournisseur_par_defaut.py`). Aucun service ne garde son fournisseur
+entre deux appels (`providers.factory.fournisseur_de_l_appel`) : le message suivant, la tâche
+suivante et un run détaché prennent le nouveau choix.
+
+**Le contrat.**
+
+- `GET /api/fournisseurs/defaut` → l'état :
+
+```jsonc
+{
+  "choix": {                                 // null : rien n'est choisi sur ce poste
+    "fournisseur": "openai", "acces": "local", "modele": "qwen2.5",
+    "adresse": "http://localhost:11434/v1",
+    "eprouve_le": "2026-11-09T10:00:00+00:00", "pose_le": "2026-11-09T10:00:00+00:00"
+  },
+  "effectif": {                              // ce que l'exécution résout MAINTENANT
+    "fournisseur": "openai", "acces": "local",
+    "modele": "qwen2.5",                     // le modèle imposé, null s'il n'y en a pas
+    "modele_par_defaut": "qwen2.5"           // celui qu'on interroge sans choix ; null hors gamme
+  },
+  "environnement": [                         // les variables qui s'imposent à l'écran
+    { "variable": "MAESTRO_PROVIDER", "valeur": "openai" },
+    { "variable": "ANTHROPIC_API_KEY", "valeur": null }   // une clé : jamais sa valeur
+  ],
+  "cles": ["OPENAI_API_KEY"]                 // les clés que le coffre du poste garde, par nom
+}
+```
+
+- `POST /api/fournisseurs/epreuve` → `{epreuve: {ok, motif, precision}, modele}`. Corps :
+  `{fournisseur, acces, modele?, adresse?, cle?}`. Sans `cle`, l'épreuve prend celle du coffre
+  du poste. Elle répond **toujours en 200** quand elle a eu lieu : le verdict est la réponse.
+  Elle répond `422` quand le choix ne se tient pas : fournisseur ou accès inconnu, modèle absent
+  pour un fournisseur sans gamme, clé absente pour un accès qui en demande une.
+- `PUT /api/fournisseurs/defaut` → l'état. Même corps. Il n'enregistre qu'un choix éprouvé avec
+  succès. Une épreuve réussie du même choix vaut quinze minutes, sinon il éprouve de nouveau.
+  Quand l'épreuve échoue, il répond `409` avec `detail.epreuve`, et **rien n'est écrit**, ni le
+  choix ni la clé. Il répond `422` comme l'épreuve.
+- `DELETE /api/fournisseurs/defaut` → l'état. Il retire le choix : l'environnement seul décide
+  de nouveau.
+- `DELETE /api/fournisseurs/defaut/cles/{variable}` → l'état. Il retire une clé du coffre du
+  poste, avec un `422` quand la variable n'est la clé d'aucun accès.
+
+**Les motifs d'un verdict** (`maestro.providers.base.MOTIFS_EPREUVE`) : `ok`,
+`outil-absent`, `authentification`, `facturation`, `limite`, `requete`, `injoignable`,
+`serveur`, `inconnu`. Chacun se lit dans un **champ typé** de la réponse du fournisseur, jamais
+dans son texte. Pour Claude, c'est l'erreur du SDK (`AssistantMessage.error`), le statut HTTP
+d'un résultat en erreur, ou la classe d'exception (`CLINotFoundError`). Pour le dialecte
+OpenAI, c'est le statut HTTP, ou l'absence de toute réponse à l'adresse. `precision` est un
+fait court (« HTTP 401 », « code de sortie 1 »), jamais un texte de réponse recopié.
 
 ### 6.5 Flux SSE d'un fil de chat — et le **fil global** (#268) — **livré**
 

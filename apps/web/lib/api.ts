@@ -23,6 +23,10 @@ import type {
   AgentCatalogueDetail,
   AnalyticsCouts,
   CatalogueFournisseurs,
+  DemandeFournisseurDefaut,
+  Epreuve,
+  EtatFournisseurDefaut,
+  ResultatEpreuve,
   ChoixOutillage,
   CoutAgentAgrege,
   CoutExecution,
@@ -781,6 +785,80 @@ export function redigerPlaybook(
  */
 export function chargerFournisseurs(): Promise<CatalogueFournisseurs> {
   return chargerJson<CatalogueFournisseurs>("/api/fournisseurs");
+}
+
+/**
+ * Le fournisseur par défaut du poste (`GET /api/fournisseurs/defaut`, #1609) :
+ * le choix enregistré, ce que l'exécution utilise maintenant, et les variables
+ * de l'environnement qui l'imposent.
+ */
+export function chargerFournisseurDefaut(): Promise<EtatFournisseurDefaut> {
+  return chargerJson<EtatFournisseurDefaut>("/api/fournisseurs/defaut");
+}
+
+/**
+ * Éprouve un choix avant de l'enregistrer (`POST /api/fournisseurs/epreuve`) :
+ * un tour de modèle, et son verdict. Une épreuve **échouée** est une réponse,
+ * pas une erreur — seul un choix qui ne se tient pas (422) ou une API muette
+ * lèvent.
+ */
+export function eprouverFournisseurDefaut(
+  demande: DemandeFournisseurDefaut,
+): Promise<ResultatEpreuve> {
+  return envoyerJsonEtLire<ResultatEpreuve>(
+    "/api/fournisseurs/epreuve",
+    demande,
+    "épreuve refusée",
+  );
+}
+
+/**
+ * Ce que rend l'enregistrement : l'état neuf, ou le verdict de l'épreuve qui l'a
+ * refusé (409) — rien n'a alors été écrit, ni le choix ni la clé.
+ */
+export type EnregistrementFournisseur =
+  | { etat: EtatFournisseurDefaut }
+  | { refus: Epreuve };
+
+/**
+ * Enregistre le fournisseur par défaut (`PUT /api/fournisseurs/defaut`) — pris
+ * sans redémarrage. Seul un choix éprouvé avec succès s'enregistre : le 409
+ * porte le verdict, rendu tel quel plutôt que levé.
+ */
+export async function enregistrerFournisseurDefaut(
+  demande: DemandeFournisseurDefaut,
+): Promise<EnregistrementFournisseur> {
+  const chemin = "/api/fournisseurs/defaut";
+  const reponse = await appel(`${urlApi()}${chemin}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(demande),
+  });
+  if (reponse.status === 409) {
+    const corps = (await reponse.json()) as { detail?: { epreuve?: Epreuve } };
+    if (corps.detail?.epreuve) return { refus: corps.detail.epreuve };
+  }
+  if (!reponse.ok) {
+    let detail = `enregistrement refusé (${reponse.status})`;
+    try {
+      const contenu = (await reponse.json()) as { detail?: unknown };
+      if (typeof contenu.detail === "string") detail = contenu.detail;
+    } catch {
+      // corps non JSON : on garde le message générique
+    }
+    throw new Error(detail);
+  }
+  return { etat: (await reponse.json()) as EtatFournisseurDefaut };
+}
+
+/** Retire le choix du poste (`DELETE /api/fournisseurs/defaut`) : l'environnement seul décide. */
+export function effacerFournisseurDefaut(): Promise<EtatFournisseurDefaut> {
+  return envoyerJsonEtLire<EtatFournisseurDefaut>(
+    "/api/fournisseurs/defaut",
+    undefined,
+    "retrait refusé",
+    "DELETE",
+  );
 }
 
 /** Le catalogue d'agents (#72) : les agents par défaut du code puis les personnalisés. */

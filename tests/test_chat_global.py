@@ -2550,7 +2550,6 @@ def test_le_silence_n_est_pas_un_accord() -> None:
         "_apercu",
         "_faits",
         "_provider",
-        "_modele",
         "_conducteur",
         "_sonde",
         "_equipe",
@@ -2586,7 +2585,6 @@ def test_le_silence_n_est_pas_un_accord() -> None:
     assert vars(repondeur._conducteur._comprehension) == {"_provider": juge}
     assert repondeur._conducteur._pieces is None
     assert repondeur._conducteur._verificateur is None
-    assert repondeur._modele is None
 
 
 def test_l_objectif_lance_est_celui_qui_a_ete_montre_pas_ce_que_le_fil_contient() -> None:

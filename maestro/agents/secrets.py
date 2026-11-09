@@ -92,6 +92,14 @@ _FICHIER_PROJET = "_projet.json"
 #: d'agent qui n'a pas de sens pour un coffre partagé par tous.
 _LABEL_PROJET = "projet"
 
+#: Fichier du coffre **poste** (#1609) : la clé du fournisseur par défaut, saisie
+#: dans les Paramètres (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Ce n'est pas un
+#: secret d'agent : il ne **compte pas** pour `provisionne`, car choisir un
+#: fournisseur ne doit pas changer la façon dont les agents résolvent leurs
+#: propres secrets.
+_FICHIER_POSTE = "_poste.json"
+_LABEL_POSTE = "poste"
+
 
 @dataclass(frozen=True)
 class EtatSecret:
@@ -208,7 +216,7 @@ class SecretStore:
         README sous `core/secrets/`, la racine existe donc partout. Le fichier
         de clé (`.cle`) n'est pas un coffre — il ne compte pas.
         """
-        return any(self._racine.glob("*.json"))
+        return any(chemin.name != _FICHIER_POSTE for chemin in self._racine.glob("*.json"))
 
     def lire(self, agent: str) -> dict[str, str]:
         """Les secrets **résolvables** du coffre de `agent` — vide s'il n'a pas de fichier.
@@ -234,6 +242,35 @@ class SecretStore:
         saisi une seule fois ».
         """
         return self._lire_chemin(self._racine / _FICHIER_PROJET, _LABEL_PROJET)
+
+    def lire_poste(self) -> dict[str, str]:
+        """Les secrets du coffre **poste** (`_poste.json`, #1609) — {} si absent.
+
+        Les clés du fournisseur par défaut, saisies dans les Paramètres. Mêmes
+        règles que `lire` : déchiffrement, et enregistrement au registre de
+        rédaction, qui les retire de tout journal.
+        """
+        return self._lire_chemin(self._racine / _FICHIER_POSTE, _LABEL_POSTE)
+
+    def etat_poste(self) -> tuple[EtatSecret, ...]:
+        """L'**état** des secrets du coffre poste (#1609), sans rien déchiffrer — () si absent."""
+        return self._etat_chemin(self._racine / _FICHIER_POSTE, _LABEL_POSTE)
+
+    def enregistrer_poste(self, cle: str, valeur: str) -> EtatSecret:
+        """Pose (ou remplace) la clé `cle` du coffre **poste** (#1609), chiffrée et d'un geste."""
+        return self._enregistrer(
+            self._racine / _FICHIER_POSTE,
+            _LABEL_POSTE,
+            cle,
+            valeur,
+            mode_auth="token_statique",
+            secret=True,
+            expire_le=None,
+        )
+
+    def supprimer_poste(self, cle: str) -> bool:
+        """Retire la clé `cle` du coffre **poste** (#1609) — vrai si elle existait."""
+        return self._supprimer(self._racine / _FICHIER_POSTE, _LABEL_POSTE, cle)
 
     def _lire_chemin(self, chemin: Path, label: str) -> dict[str, str]:
         """Les secrets résolvables du fichier `chemin` (coffre agent ou projet).

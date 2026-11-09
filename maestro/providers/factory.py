@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from maestro.config import ConfigError, Settings, load_settings
-from maestro.providers.base import ModelProvider
+from maestro.providers.base import Epreuve, ModelProvider
 from maestro.providers.claude import ClaudeProvider
 from maestro.providers.openai_compat import OpenAICompatProvider
 from maestro.providers.registry import UnknownProviderError
@@ -25,6 +25,33 @@ _FABRIQUES: Mapping[str, Callable[[Settings], ModelProvider]] = {
     ClaudeProvider.name: ClaudeProvider.from_settings,
     OpenAICompatProvider.name: OpenAICompatProvider.from_settings,
 }
+
+#: Les mêmes, par leur classe : leurs accès et leur gamme se lisent dessus sans
+#: rien construire (#1609).
+_CLASSES: Mapping[str, type[ModelProvider]] = {
+    ClaudeProvider.name: ClaudeProvider,
+    OpenAICompatProvider.name: OpenAICompatProvider,
+}
+
+
+def classes_configurables() -> Mapping[str, type[ModelProvider]]:
+    """Les fournisseurs qu'on peut choisir comme fournisseur par défaut, par nom (#1609)."""
+    return _CLASSES
+
+
+async def eprouver_reglages(settings: Settings, modele: str) -> Epreuve:
+    """Construit le fournisseur de `settings` et l'éprouve sur `modele` (#1609).
+
+    Les réglages sont **explicites** : ce sont ceux d'un choix qu'on n'a pas
+    encore enregistré, pas ceux du poste. Une configuration que le fournisseur
+    refuse de construire (clé absente pour un accès qui en demande une) est un
+    verdict, pas une panne.
+    """
+    try:
+        fournisseur = provider_from_settings(settings)
+    except ConfigError as exc:
+        return Epreuve("authentification", type(exc).__name__)
+    return await fournisseur.eprouver(modele)
 
 
 def provider_from_settings(settings: Settings | None = None) -> ModelProvider:
@@ -47,6 +74,26 @@ def provider_from_settings(settings: Settings | None = None) -> ModelProvider:
     # sait quel modèle demander sans relire la configuration.
     fournisseur.modele_configure = settings.model or None
     return fournisseur
+
+
+def fournisseur_de_l_appel(
+    injecte: ModelProvider | None, defaut_modele: str
+) -> tuple[ModelProvider, str]:
+    """Le fournisseur d'un appel et le modèle à lui demander (#1609).
+
+    Un fournisseur **injecté** (un double, un câblage explicite) sert tel quel,
+    avec `defaut_modele`. Sinon c'est celui du poste, **résolu à chaque appel** et
+    jamais gardé par l'appelant : un fournisseur choisi dans les Paramètres sert
+    donc l'appel suivant, sans redémarrage, et un réglage corrigé aussi. Le
+    modèle suit le fournisseur (`modele_du_canal`, #1173).
+
+    Lève ce que lève la résolution (`ConfigError`, `UnknownProviderError`) : à
+    l'appelant d'en dire la cause, à sa façon.
+    """
+    if injecte is not None:
+        return injecte, defaut_modele
+    fournisseur = provider_from_settings()
+    return fournisseur, modele_du_canal(defaut_modele, fournisseur)
 
 
 def default_model(settings: Settings) -> str:

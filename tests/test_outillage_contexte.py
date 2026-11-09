@@ -754,7 +754,9 @@ def test_les_verrous_ne_se_remplacent_pas_l_un_l_autre() -> None:
     assert "strict_mcp_config=True" in source
     assert "setting_sources=sans_reglages_du_poste()" in source
     assert "skills=sans_skills_du_poste()" in source
-    assert len(_options_au_dossier_neutre(source)) == 3, "les trois chemins texte (#1397)"
+    # Trois chemins texte (#1397), et l'épreuve d'un accès (#1609) : un tour sans
+    # outil, qui n'a pas plus de raison qu'eux de lire le dossier de l'API.
+    assert len(_options_au_dossier_neutre(source)) == 4, "les quatre chemins texte"
 
 
 def _options_au_dossier_neutre(source: str) -> list[int]:
