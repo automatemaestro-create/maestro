@@ -24,7 +24,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { ContenuIndisponible } from "@/components/BanniereErreurApi";
-import { IconeAlerte, IconeCoche } from "@/components/Icones";
+import { IconeAlerte, IconeCoche, IconeStatutAFaire } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
 import {
   chargerFournisseurDefaut,
@@ -142,6 +142,18 @@ export function FournisseurParDefaut() {
   const empreinte = demande === null ? null : empreinteDemande(demande);
   const verdictCourant =
     verdict !== null && verdict.empreinte === empreinte ? verdict : null;
+  // Le verdict de la saisie parle de ce qui est en service quand la saisie est
+  // celle-là : même accès, même modèle interrogé, même adresse, aucune clé neuve.
+  const modeleEnService = etat.effectif.modele ?? etat.effectif.modele_par_defaut ?? "";
+  const adresseEnService = enregistree === effective ? (etat.choix?.adresse ?? "") : "";
+  const epreuveEnService =
+    verdictCourant !== null &&
+    selection === effective &&
+    cle === "" &&
+    adresse.trim() === adresseEnService &&
+    verdictCourant.modele === modeleEnService
+      ? verdictCourant.epreuve
+      : null;
 
   const choisir = (option: OptionAcces) => {
     setSelection(option.cle);
@@ -201,7 +213,7 @@ export function FournisseurParDefaut() {
     setRefus(null);
     try {
       setEtat(await effacerFournisseurDefaut());
-      setAnnonce("Le choix est oublié : Maestro suit de nouveau son réglage par défaut.");
+      setAnnonce("Le choix est oublié : Maestro reprend son réglage d'origine.");
     } catch (e) {
       setRefus(e instanceof Error ? e.message : String(e));
     } finally {
@@ -218,7 +230,12 @@ export function FournisseurParDefaut() {
         Le fournisseur et le modèle de tout ce qui n&apos;en choisit pas un : les
         runs, le fil et l&apos;assistant.
       </p>
-      <Effectif etat={etat} option={optionEffective} />
+      <Effectif
+        etat={etat}
+        option={optionEffective}
+        epreuve={epreuveEnService}
+        carteCochee={selection === effective}
+      />
       <Imposition etat={etat} />
 
       {/* `min-w-0` : un fieldset a pour largeur minimale son contenu (`min-inline-size:
@@ -269,7 +286,7 @@ export function FournisseurParDefaut() {
             Oublier le choix enregistré
           </Bouton>
           <span className="text-annexe text-texte-secondaire">
-            Maestro reprend alors son réglage par défaut.
+            Maestro reprend alors son réglage d&apos;origine.
           </span>
         </div>
       )}
@@ -277,38 +294,102 @@ export function FournisseurParDefaut() {
   );
 }
 
-/** La ligne de tête : ce que l'exécution utilise maintenant, et d'où ça vient. */
+/**
+ * La tête de la carte, qui répond à sa question : ce que l'exécution utilise
+ * maintenant, si cet accès a été éprouvé, et d'où vient ce réglage.
+ */
 function Effectif({
   etat,
   option,
+  epreuve,
+  carteCochee,
 }: {
   etat: EtatFournisseurDefaut;
   option: OptionAcces | undefined;
+  epreuve: Epreuve | null;
+  carteCochee: boolean;
 }) {
   const { effectif, choix } = etat;
   const identifiant = effectif.modele ?? effectif.modele_par_defaut;
+  const choisiIci = choix !== null && cleEnregistree(etat) === cleEffective(etat);
   return (
-    <p className="mt-3 text-corps">
-      <span className="text-texte-secondaire">Utilisé maintenant : </span>
-      <span className="font-medium">{option?.acces.libelle ?? effectif.fournisseur}</span>
-      <span className="text-texte-secondaire"> · modèle </span>
-      {identifiant === null ? (
-        <span>aucun modèle réglé</span>
-      ) : (
-        <>
-          {/* Un identifiant ne se coupe pas à ses tirets : « claude-opus- / 5-5 »
-              ne se lit plus comme un nom. */}
-          <span className="font-mono whitespace-nowrap">{identifiant}</span>
-          {effectif.modele === null && (
-            <span className="text-texte-secondaire"> (par défaut)</span>
-          )}
-        </>
-      )}
-      <span className="block text-annexe text-texte-secondaire">
+    <div className="mt-3 flex flex-col gap-1">
+      <p className="text-corps">
+        <span className="text-texte-secondaire">Utilisé maintenant : </span>
+        <span className="font-medium">{option?.acces.libelle ?? effectif.fournisseur}</span>
+        <span className="text-texte-secondaire"> · </span>
+        {identifiant === null ? (
+          <span>aucun modèle réglé</span>
+        ) : (
+          <>
+            {/* « modèle » et son identifiant passent à la ligne ensemble, et un
+                identifiant ne se coupe pas à ses tirets. */}
+            <span className="whitespace-nowrap">
+              <span className="text-texte-secondaire">modèle </span>
+              <span className="font-mono">{identifiant}</span>
+            </span>
+            {effectif.modele === null && (
+              <span className="text-texte-secondaire">, retenu d&apos;office</span>
+            )}
+          </>
+        )}
+      </p>
+      <EtatEnService
+        epreuve={epreuve}
+        eprouveLe={choisiIci ? choix.eprouve_le : null}
+        geste={
+          option === undefined
+            ? null
+            : carteCochee
+              ? "« Éprouver », dans sa carte ci-dessous"
+              : "cochez sa carte ci-dessous, puis « Éprouver »"
+        }
+      />
+      <p className="text-annexe text-texte-secondaire">
         {choix === null
-          ? "Rien n'est choisi ici : Maestro suit son réglage par défaut."
-          : `Choisi ici${choix.eprouve_le ? `, éprouvé le ${dateLisible(choix.eprouve_le)}` : ""}.`}
-      </span>
+          ? "Rien n'est choisi ici : c'est le réglage d'origine de Maestro."
+          : choisiIci
+            ? `Choisi ici le ${dateLisible(choix.pose_le)}.`
+            : "Imposé par l'environnement du poste, qui l'emporte sur le choix enregistré ici."}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * L'accès en service a-t-il été éprouvé ? Une épreuve de cette session l'emporte
+ * sur celle de l'enregistrement, qui est datée : un accès qui répondait peut avoir
+ * cessé, et la date le laisse lire. L'état porte une forme, pas seulement une couleur.
+ */
+function EtatEnService({
+  epreuve,
+  eprouveLe,
+  geste,
+}: {
+  epreuve: Epreuve | null;
+  eprouveLe: string | null;
+  geste: string | null;
+}) {
+  const [Icone, ton, phrase]: [typeof IconeCoche, string, string] =
+    epreuve !== null
+      ? epreuve.ok
+        ? [IconeCoche, "text-positif-texte", "Accès éprouvé à l'instant."]
+        : [
+            IconeAlerte,
+            "text-alerte-texte",
+            "L'épreuve de cet accès vient d'échouer : son motif est dans sa carte, ci-dessous.",
+          ]
+      : eprouveLe !== null
+        ? [IconeCoche, "text-positif-texte", `Accès éprouvé le ${dateLisible(eprouveLe)}.`]
+        : [
+            IconeStatutAFaire,
+            "text-texte-secondaire",
+            geste === null ? "Accès pas encore éprouvé." : `Accès pas encore éprouvé : ${geste}.`,
+          ];
+  return (
+    <p className="flex gap-1.5 text-corps">
+      <Icone aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${ton}`} />
+      <span className="min-w-0">{phrase}</span>
     </p>
   );
 }
@@ -553,18 +634,18 @@ function Saisie({
             libelle="Modèle"
             value={modele}
             onChange={(e) => onModele(e.target.value)}
-            // L'identifiant du défaut vit sous le champ : dans l'option, un champ à
-            // largeur de téléphone le tronquait (« Par défaut (claude »).
+            // L'identifiant retenu d'office vit sous le champ : dans l'option, un champ
+            // à largeur de téléphone le tronquait.
             aide={
               defautDuFournisseur === null ? undefined : (
                 <>
-                  « Par défaut » :{" "}
+                  Sans préférence, Maestro interroge{" "}
                   <span className="font-mono whitespace-nowrap">{defautDuFournisseur}</span>.
                 </>
               )
             }
           >
-            <option value="">Par défaut</option>
+            <option value="">Sans préférence</option>
             {gamme.map((m) => (
               <option key={m.nom} value={m.nom}>
                 {m.libelle === m.nom ? m.nom : `${m.libelle} — ${m.nom}`}
@@ -646,8 +727,8 @@ function VerdictEpreuve({
   if (verdict === null) {
     return (
       <p className="text-annexe text-texte-secondaire">
-        Pas encore éprouvé : l&apos;épreuve fait un tour de modèle avec ce réglage,
-        avant tout enregistrement.
+        Ce réglage n&apos;est pas encore éprouvé : l&apos;épreuve fait un tour de modèle
+        avec lui, avant tout enregistrement.
       </p>
     );
   }
@@ -670,7 +751,11 @@ function VerdictEpreuve({
       </div>
       <p className="text-corps">{phraseDuVerdict(epreuve, option.acces)}</p>
       {!epreuve.ok && epreuve.precision !== "" && (
-        <p className="text-annexe text-texte-secondaire">Détail : {epreuve.precision}</p>
+        // Un fait court tiré d'un champ typé (statut, code, adresse) : il se lit comme
+        // un relevé, en chasse fixe, pas comme une phrase.
+        <p className="text-annexe text-texte-secondaire">
+          Relevé de l&apos;épreuve : <span className="font-mono">{epreuve.precision}</span>
+        </p>
       )}
     </div>
   );

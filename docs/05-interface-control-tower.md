@@ -5403,10 +5403,13 @@ ce poste, comme Ollama, ou un service distant avec une clé. Les accès viennent
 (`acces` de `GET /api/fournisseurs`) : un fournisseur inscrit y apporte les siens sans qu'on
 touche au front. Quatre règles tiennent la lecture :
 
-- **Ce qui est utilisé se lit à part de ce qui est coché.** Une ligne dit ce que l'exécution
-  utilise *maintenant*, avec son modèle, et la carte correspondante porte « Utilisé
-  maintenant ». La coche n'est que la saisie. Un choix enregistré que l'environnement supplante
-  porte « Enregistré, pas utilisé ».
+- **Ce qui est utilisé se lit à part de ce qui est coché.** La tête de la carte dit ce que
+  l'exécution utilise *maintenant*, avec son modèle (« retenu d'office » quand aucun n'est
+  choisi), si cet accès est éprouvé, et d'où vient le réglage. « Accès éprouvé le … » date
+  l'épreuve de l'enregistrement, « Accès éprouvé à l'instant » vient d'une épreuve faite sur ce
+  qui est en service, et sinon la tête nomme le geste (« Éprouver », dans sa carte). La carte
+  correspondante porte « Utilisé maintenant ». La coche n'est que la saisie. Un choix enregistré
+  que l'environnement supplante porte « Enregistré, pas utilisé ».
 - **Présent n'est pas éprouvé.** Chaque carte dit ce que la sonde du poste (`maestro/poste.py`)
   en a vu, dans les mots de la personne : « Claude Code est installé sur ce poste ; sa connexion
   à un compte se vérifie en l'éprouvant », « Ollama répond sur ce poste, avec 2 modèles », une

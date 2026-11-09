@@ -104,9 +104,11 @@ describe("① ce qui est utilisé se lit à part de ce qui est coché", () => {
     await monter();
 
     expect(screen.getByText(/Utilisé maintenant :/).closest("p")).toHaveTextContent(
-      `Utilisé maintenant : ${ABONNEMENT} · modèle claude-opus-5 (par défaut)`,
+      `Utilisé maintenant : ${ABONNEMENT} · modèle claude-opus-5, retenu d'office`,
     );
-    expect(screen.getByText(/Rien n'est choisi ici/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Rien n'est choisi ici : c'est le réglage d'origine de Maestro."),
+    ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: ABONNEMENT })).toBeChecked();
     expect(within(carte(ABONNEMENT)).getByText("Utilisé maintenant")).toBeInTheDocument();
   });
@@ -164,8 +166,61 @@ describe("② présent n'est pas éprouvé", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Accès éprouvé")).toBeNull();
-    expect(screen.getByText(/Pas encore éprouvé/)).toBeInTheDocument();
+    expect(screen.getByText(/Ce réglage n'est pas encore éprouvé/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+  });
+
+  it("dit en tête si l'accès en service est éprouvé, et le geste qui l'éprouve", async () => {
+    const utilisateur = await monter();
+
+    // Sa carte est cochée : le geste est dedans.
+    expect(
+      screen.getByText("Accès pas encore éprouvé : « Éprouver », dans sa carte ci-dessous."),
+    ).toBeInTheDocument();
+
+    // Une autre carte cochée et éprouvée ne parle pas de ce qui est en service.
+    await utilisateur.click(screen.getByRole("radio", { name: CLE_ANTHROPIC }));
+    expect(
+      screen.getByText("Accès pas encore éprouvé : cochez sa carte ci-dessous, puis « Éprouver »."),
+    ).toBeInTheDocument();
+    await utilisateur.type(screen.getByLabelText("Clé"), "sk-ant-essai");
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+    await screen.findByText("Accès éprouvé");
+    expect(screen.queryByText("Accès éprouvé à l'instant.")).toBeNull();
+
+    // L'accès en service, éprouvé sur son modèle retenu d'office : la tête le dit.
+    await utilisateur.click(screen.getByRole("radio", { name: ABONNEMENT }));
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+    expect(await screen.findByText("Accès éprouvé à l'instant.")).toBeInTheDocument();
+
+    // Un autre modèle n'est plus ce qui est en service.
+    await utilisateur.selectOptions(screen.getByRole("combobox", { name: "Modèle" }), "claude-sonnet-5");
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+    await screen.findByText("Accès éprouvé");
+    expect(screen.queryByText("Accès éprouvé à l'instant.")).toBeNull();
+  });
+
+  it("dit l'échec de l'accès en service en tête, par une forme", async () => {
+    poserVerdictEpreuve({ ok: false, motif: "authentification", precision: "authentication_failed" });
+    const utilisateur = await monter();
+
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+
+    expect(
+      await screen.findByText(
+        "L'épreuve de cet accès vient d'échouer : son motif est dans sa carte, ci-dessous.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("propose le modèle retenu d'office sans répéter « par défaut »", async () => {
+    await monter();
+
+    const liste = screen.getByRole("combobox", { name: "Modèle" });
+    expect(within(liste).getByRole("option", { name: "Sans préférence" })).toBeInTheDocument();
+    expect(screen.getByText(/^Sans préférence, Maestro interroge/)).toHaveTextContent(
+      "Sans préférence, Maestro interroge claude-opus-5.",
+    );
   });
 
   it("dit ce que la sonde a vu dans les mots de la personne, jamais dans ceux du code", async () => {
@@ -209,7 +264,8 @@ describe("② présent n'est pas éprouvé", () => {
     expect(screen.getByText(/Utilisé maintenant :/).closest("p")).toHaveTextContent(
       "modèle claude-sonnet-5",
     );
-    expect(screen.getByText(/Choisi ici, éprouvé le/)).toBeInTheDocument();
+    expect(screen.getByText(/^Accès éprouvé le /)).toBeInTheDocument();
+    expect(screen.getByText(/^Choisi ici le /)).toBeInTheDocument();
   });
 
   it("efface le verdict dès que la saisie change", async () => {
@@ -246,7 +302,9 @@ describe("③ le verdict dit son motif et son geste", () => {
 
     expect(await screen.findByText("Échec de l'épreuve")).toBeInTheDocument();
     expect(screen.getByText(/« claude auth login »/)).toBeInTheDocument();
-    expect(screen.getByText("Détail : authentication_failed")).toBeInTheDocument();
+    expect(screen.getByText("authentication_failed").closest("p")).toHaveTextContent(
+      "Relevé de l'épreuve : authentication_failed",
+    );
     expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
   });
 
