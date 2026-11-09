@@ -249,12 +249,16 @@ def test_un_modele_sans_libelle_se_nomme_par_son_identifiant():
     }
 
 
-def test_la_fiche_servie_porte_les_trois_cles_meme_a_gamme_vide():
+def test_la_fiche_servie_porte_ses_cles_meme_a_gamme_vide():
     # Les clés ne dépendent pas du contenu : un client n'a jamais à les deviner.
+    # `acces` et `outille` (#1609) sont présents même vides : aucun accès déclaré,
+    # et un fournisseur qui converse sans outils d'agent.
     assert FournisseurDisponible("vide").to_dict() == {
         "nom": "vide",
         "modeles": [],
         "modeles_libres": False,
+        "acces": [],
+        "outille": False,
     }
 
 

@@ -3205,8 +3205,10 @@ class RepondeurModele(RepondeurChat):
     Le prompt système est le playbook **courant** de l'agent (#76 : la version
     éditée du stockage si elle existe, sinon le prompt du code — relu à chaque
     message, comme l'exécuteur #78), complété du cadre de conversation. Le
-    fournisseur est résolu paresseusement (`MAESTRO_PROVIDER`) : construire le
-    répondeur ne coûte rien et ne lève pas d'erreur de config.
+    fournisseur est résolu à chaque message (`MAESTRO_PROVIDER`, ou le choix des
+    Paramètres, #1609) : construire le répondeur ne coûte rien et ne lève pas
+    d'erreur de config, et un fournisseur changé à l'écran sert le message
+    suivant sans redémarrage.
     """
 
     def __init__(
@@ -3216,18 +3218,13 @@ class RepondeurModele(RepondeurChat):
     ) -> None:
         self._provider = provider
         self._playbooks = playbooks
-        # `MAESTRO_MODEL` (#69), relu avec le fournisseur (#1173) : il prime sur le
-        # modèle de l'agent, exactement comme dans un run (`catalogue_*`). Sans lui,
-        # parler à un agent envoyait son modèle — `claude-sonnet-5` pour un
-        # gabarit — à un fournisseur qui n'est peut-être pas Claude.
-        self._modele_impose: str | None = None
 
     async def repondre(self, agent: Agent, fil: Sequence[MessageChat]) -> str:
         """La réponse en un aller — `produire` est la voie qui diffuse (#693)."""
-        fournisseur = self._resolu()
+        fournisseur, impose = self._resolu()
         return await fournisseur.generate(
             transcription(fil),
-            model=self._modele_impose or agent.modele,
+            model=impose or agent.modele,
             system_prompt=self._systeme(agent),
         )
 
@@ -3268,10 +3265,10 @@ class RepondeurModele(RepondeurChat):
         """
         redaction = Redaction(incrementer)
         try:
-            fournisseur = self._resolu()
+            fournisseur, impose = self._resolu()
             async for morceau in fournisseur.generate_stream(
                 transcription(fil),
-                model=self._modele_impose or agent.modele,
+                model=impose or agent.modele,
                 system_prompt=self._systeme(agent),
             ):
                 await redaction.ecrire(morceau)
@@ -3282,16 +3279,23 @@ class RepondeurModele(RepondeurChat):
             raise interrompu from exc
         return ReponseChat(contenu=redaction.texte)
 
-    def _resolu(self) -> ModelProvider:
-        """Le fournisseur configuré, résolu au premier usage (`MAESTRO_PROVIDER`)."""
-        if self._provider is None:
-            # Import local : ne tire la couche fournisseur (SDK…) qu'au premier
-            # message — l'app se construit et se teste sans elle.
-            from maestro.providers.factory import provider_from_settings
+    def _resolu(self) -> tuple[ModelProvider, str | None]:
+        """Le fournisseur de ce message, et le modèle que la configuration impose.
 
-            self._provider = provider_from_settings()
-            self._modele_impose = getattr(self._provider, "modele_configure", None)
-        return self._provider
+        Un fournisseur injecté sert tel quel, sans modèle imposé. Sinon il est
+        résolu **à chaque message**, jamais gardé (#1609) : c'est ce qui fait
+        qu'un choix enregistré dans les Paramètres sert dès le message suivant.
+        Le modèle imposé (`MAESTRO_MODEL`, #69) voyage avec lui (#1173) : il prime
+        sur le modèle de l'agent, exactement comme dans un run.
+        """
+        if self._provider is not None:
+            return self._provider, None
+        # Import local : ne tire la couche fournisseur (SDK…) qu'au premier
+        # message — l'app se construit et se teste sans elle.
+        from maestro.providers.factory import provider_from_settings
+
+        fournisseur = provider_from_settings()
+        return fournisseur, getattr(fournisseur, "modele_configure", None)
 
     def _systeme(self, agent: Agent) -> str:
         """Le prompt système des deux voies : playbook courant + cadre de conversation."""

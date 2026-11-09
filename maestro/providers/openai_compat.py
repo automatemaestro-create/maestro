@@ -66,12 +66,16 @@ import httpx2
 
 from maestro.config import Settings
 from maestro.providers.base import (
+    PROMPT_EPREUVE,
+    AccesFournisseur,
     AuthMode,
     Credentials,
+    Epreuve,
     ImageJointe,
     LimiteUsageAtteinte,
     ModeleDisponible,
     ModelProvider,
+    motif_du_statut_http,
 )
 from maestro.providers.registry import register
 from maestro.telemetry import StepUsage, report_usage
@@ -99,7 +103,15 @@ _USAGE_EN_FLUX: dict[str, Any] = {"include_usage": True}
 
 
 class OpenAICompatError(RuntimeError):
-    """Levée quand l'endpoint répond en erreur ou hors du dialecte chat completions."""
+    """Levée quand l'endpoint répond en erreur ou hors du dialecte chat completions.
+
+    Deux champs typés disent pourquoi, sans qu'on lise le message (#1609) :
+    `statut`, le statut HTTP d'une réponse en échec, et `injoignable`, vrai
+    quand rien n'a répondu à l'adresse.
+    """
+
+    statut: int | None = None
+    injoignable: bool = False
 
 
 class LimiteEndpoint(OpenAICompatError, LimiteUsageAtteinte):
@@ -121,9 +133,20 @@ def _erreur_http(exc: httpx2.HTTPStatusError, base_url: str, model: str) -> Open
         f"L'endpoint {base_url} a répondu {reponse.status_code} "
         f"pour le modèle {model!r} : {reponse.text[:_EXTRAIT_ERREUR]}"
     )
-    if reponse.status_code != _STATUT_LIMITE:
-        return OpenAICompatError(message)
-    return LimiteEndpoint(message, reprise_a=_reprise_de(reponse.headers.get("retry-after")))
+    erreur = (
+        OpenAICompatError(message)
+        if reponse.status_code != _STATUT_LIMITE
+        else LimiteEndpoint(message, reprise_a=_reprise_de(reponse.headers.get("retry-after")))
+    )
+    erreur.statut = reponse.status_code
+    return erreur
+
+
+def _erreur_transport(exc: httpx2.HTTPError, base_url: str) -> OpenAICompatError:
+    """L'erreur d'un appel qui n'a obtenu aucune réponse HTTP : l'adresse est injoignable."""
+    erreur = OpenAICompatError(f"Endpoint {base_url} injoignable : {exc}")
+    erreur.injoignable = True
+    return erreur
 
 
 def _reprise_de(retry_after: str | None) -> datetime | None:
@@ -165,6 +188,49 @@ class OpenAICompatProvider(ModelProvider):
     #: là où une gamme vide et fermée voudrait dire « rien à proposer ».
     MODELES: ClassVar[tuple[ModeleDisponible, ...]] = ()
     MODELES_LIBRES: ClassVar[bool] = True
+
+    #: Deux façons d'atteindre un service de ce dialecte (#1609) : un serveur sur
+    #: ce poste, qui ne demande pas de clé (Ollama, vLLM…), ou un service distant
+    #: qui en demande une. Les deux se règlent par une adresse.
+    ACCES: ClassVar[tuple[AccesFournisseur, ...]] = (
+        AccesFournisseur(
+            id="local",
+            libelle="Serveur de modèles sur ce poste, comme Ollama",
+            adresse="OPENAI_BASE_URL",
+            adresse_defaut="http://localhost:11434/v1",
+            temoins=("serveur:ollama", "serveur:openai-configure"),
+        ),
+        AccesFournisseur(
+            id="cle",
+            libelle="Service compatible OpenAI, avec une clé",
+            secret="OPENAI_API_KEY",
+            cle_requise=True,
+            adresse="OPENAI_BASE_URL",
+            adresse_defaut=DEFAULT_BASE_URL,
+            temoins=("cle:OPENAI_API_KEY",),
+        ),
+    )
+
+    @classmethod
+    def acces_retenu(cls, settings: Settings) -> str | None:
+        """`cle` quand une clé est posée, `local` sinon — ce dialecte n'a pas d'autre accès."""
+        return "cle" if settings.openai_api_key else "local"
+
+    async def eprouver(self, model: str) -> Epreuve:
+        """Un tour de chat completions, et le motif de son échec lu dans les champs typés (#1609).
+
+        `injoignable` quand rien n'a répondu à l'adresse, le statut HTTP sinon :
+        un 401 dit la clé refusée, un 404 un modèle que l'endpoint ne sert pas.
+        """
+        try:
+            await self.generate(PROMPT_EPREUVE, model=model)
+        except OpenAICompatError as exc:
+            if exc.injoignable:
+                return Epreuve("injoignable", self._base_url)
+            if exc.statut is not None:
+                return Epreuve(motif_du_statut_http(exc.statut), f"HTTP {exc.statut}")
+            return Epreuve("inconnu", "réponse hors du dialecte chat completions")
+        return Epreuve("ok")
 
     def __init__(self, credentials: Credentials, *, base_url: str = DEFAULT_BASE_URL) -> None:
         self._credentials = credentials
@@ -271,9 +337,7 @@ class OpenAICompatProvider(ModelProvider):
             except httpx2.HTTPStatusError as exc:
                 raise _erreur_http(exc, self._base_url, model) from exc
             except httpx2.HTTPError as exc:
-                raise OpenAICompatError(
-                    f"Endpoint {self._base_url} injoignable : {exc}"
-                ) from exc
+                raise _erreur_transport(exc, self._base_url) from exc
         duree_ms = int((perf_counter() - debut) * 1000)
 
         try:
@@ -363,9 +427,7 @@ class OpenAICompatProvider(ModelProvider):
             except httpx2.HTTPStatusError as exc:
                 raise _erreur_http(exc, self._base_url, model) from exc
             except httpx2.HTTPError as exc:
-                raise OpenAICompatError(
-                    f"Endpoint {self._base_url} injoignable : {exc}"
-                ) from exc
+                raise _erreur_transport(exc, self._base_url) from exc
         report_usage(_usage_depuis({"usage": usage}, int((perf_counter() - debut) * 1000)))
 
     def _corps(

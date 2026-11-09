@@ -1425,14 +1425,11 @@ class JugeModele:
         return (texte or "").strip(), usage
 
     def _resolu(self, agent: Agent) -> tuple[ModelProvider, str]:
-        """Le fournisseur et le modèle — ceux du poste, le modèle suivant le fournisseur."""
-        from maestro.providers.factory import modele_du_canal, provider_from_settings
+        """Le fournisseur et le modèle — ceux du poste, relus à chaque jugement (#1609)."""
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-        if self._provider is None:
-            fournisseur = provider_from_settings()
-            self._modele = modele_du_canal(agent.modele, fournisseur)
-            self._provider = fournisseur
-        return self._provider, self._modele or agent.modele
+        fournisseur, modele = fournisseur_de_l_appel(self._provider, agent.modele)
+        return fournisseur, self._modele or modele
 
 
 def juge_par_defaut() -> JugeBilan | None:

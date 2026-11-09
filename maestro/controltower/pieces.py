@@ -274,9 +274,9 @@ class CorrectionModele:
     modèle rend la clé et la valeur qu'il a comprises, `lire_correction` ne croit rien
     sans le vérifier, et la **phrase** — la justification — est posée par le code.
 
-    Le fournisseur est résolu **au premier usage**, comme celui de
-    `ComprehensionModele` : construire le service ne coûte rien et ne lève aucune erreur
-    de configuration. Un fournisseur injecté (un double de test) est pris tel quel.
+    Le fournisseur est résolu **à chaque appel**, comme celui de
+    `ComprehensionModele` (#1609) : construire le service ne coûte rien et ne lève aucune
+    erreur de configuration. Un fournisseur injecté (un double de test) est pris tel quel.
     """
 
     def __init__(self, provider: ModelProvider | None = None) -> None:
@@ -286,14 +286,12 @@ class CorrectionModele:
         self, *, projet: str, constats: str, corrections: str, phrase: str
     ) -> CorrectionLue:
         """Ce que `phrase` corrige, vu ce qu'on sait (`constats`) et déjà corrigé."""
-        from maestro.providers.factory import modele_du_canal, provider_from_settings
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-        if self._provider is None:
-            self._provider = provider_from_settings()
-        fournisseur = self._provider
+        fournisseur, modele = fournisseur_de_l_appel(self._provider, MODELE_EXECUTANT_DEFAUT)
         texte = await fournisseur.generate(
             _prompt_de_correction(projet, constats, corrections, phrase),
-            model=modele_du_canal(MODELE_EXECUTANT_DEFAUT, fournisseur),
+            model=modele,
             system_prompt=_PROMPT_CORRECTION,
         )
         return lire_correction(texte, phrase)

@@ -41,7 +41,11 @@ import {
   vueDesAgents,
 } from "@/lib/vueAgents";
 
-import { ficheCatalogueFactice, poserCatalogueAgents } from "./aides";
+import {
+  ficheCatalogueFactice,
+  poserCatalogueAgents,
+  poserPanneCatalogueAgents,
+} from "./aides";
 
 /** La ligne de la table qui parle de `nom`. */
 function ligne(nom: string): HTMLElement {
@@ -228,7 +232,12 @@ describe("④ le renvoi mène là où l'on écrit", () => {
 
     await monter();
 
-    expect(screen.getByText(/MAESTRO_PROVIDER/)).toBeInTheDocument();
+    // « Hérité » renvoie au choix par défaut de cette même section (#1609), plus
+    // à une variable d'environnement : le `.env` n'est plus le chemin pour choisir.
+    expect(
+      screen.getByText(/« Hérité » : l'agent suit le fournisseur et le modèle par défaut, choisis ci-dessus/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/MAESTRO_PROVIDER/)).toBeNull();
     expect(screen.getByText(/« Du code » : le réglage vient de la définition/)).
       toBeInTheDocument();
   });
@@ -279,5 +288,21 @@ describe("le filtre par origine, sur le même écart", () => {
       AGENT_SOURCE_DEFAUT,
       AGENT_SOURCE_PERSONNALISE,
     ]);
+  });
+});
+
+describe("un catalogue illisible dit sa panne lui-même", () => {
+  it("nomme ce qui manque et pourquoi, sans renvoyer à un bandeau que Paramètres n'a pas", async () => {
+    poserPanneCatalogueAgents(
+      "L'API n'a pas répondu. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
+
+    render(<ParametresFournisseurs />);
+
+    expect(
+      await screen.findByText(/^Catalogue des agents illisible — L'API n'a pas répondu\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/plus haut/)).toBeNull();
+    expect(screen.queryByText("Aucun agent au catalogue.")).toBeNull();
   });
 });

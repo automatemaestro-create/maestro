@@ -42,13 +42,16 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    CLIConnectionError,
     CLIJSONDecodeError,
+    CLINotFoundError,
     EffortLevel,
     HookContext,
     HookJSONOutput,
     HookMatcher,
     McpServerConfig,
     McpServerStatus,
+    ProcessError,
     RateLimitEvent,
     ResultError,
     ResultMessage,
@@ -101,9 +104,12 @@ from maestro.providers.base import (
     MCP_EN_ECHEC,
     MCP_SANS_REPONSE,
     PLAFOND_TOURS_DEFAUT,
+    PROMPT_EPREUVE,
+    AccesFournisseur,
     AuthMode,
     CollecteurStderr,
     Credentials,
+    Epreuve,
     GardeFouInoperant,
     ImageJointe,
     LimiteUsageAtteinte,
@@ -115,6 +121,7 @@ from maestro.providers.base import (
     SessionAgent,
     TurnLimitReached,
     attache_stderr,
+    motif_du_statut_http,
 )
 from maestro.sandbox.confinement import ReleveConfinement, SessionConfinee
 from maestro.sandbox.container import IsolationConfig
@@ -336,6 +343,91 @@ class ClaudeProvider(ModelProvider):
     #: Le CLI rouvre une session par l'identifiant que Maestro lui a donné (#1513,
     #: `_reprise_de`) : une tâche coupée par la limite d'usage reprend la sienne.
     rouvre_les_sessions: ClassVar[bool] = True
+
+    #: Deux façons d'atteindre Claude depuis le poste (#1609), et les deux passent
+    #: par le CLI que le SDK lance : l'abonnement auquel ce CLI est connecté (ou le
+    #: jeton d'abonnement d'un environnement sans écran), ou une clé d'API.
+    ACCES: ClassVar[tuple[AccesFournisseur, ...]] = (
+        AccesFournisseur(
+            id="abonnement",
+            libelle="Abonnement Claude, par Claude Code sur ce poste",
+            variables=(("CLAUDE_AUTH_MODE", AuthMode.SUBSCRIPTION.value),),
+            temoins=("cli:claude", "cle:CLAUDE_CODE_OAUTH_TOKEN"),
+        ),
+        AccesFournisseur(
+            id="cle",
+            libelle="Clé d'API Anthropic",
+            variables=(("CLAUDE_AUTH_MODE", AuthMode.API_KEY.value),),
+            secret="ANTHROPIC_API_KEY",
+            cle_requise=True,
+            temoins=("cle:ANTHROPIC_API_KEY",),
+        ),
+    )
+
+    @classmethod
+    def acces_retenu(cls, settings: Settings) -> str | None:
+        """`abonnement` ou `cle`, selon le mode d'authentification que ces réglages font retenir."""
+        try:
+            mode = _resolve_auth_mode(settings)
+        except ConfigError:
+            return None
+        return "cle" if mode is AuthMode.API_KEY else "abonnement"
+
+    async def eprouver(self, model: str) -> Epreuve:
+        """Un tour de modèle sans outil, et le motif de son échec lu dans les champs du SDK (#1609).
+
+        Trois sources, aucune n'est un texte : `AssistantMessage.error` (un
+        littéral du SDK : `authentication_failed`, `billing_error`…), le statut
+        HTTP qu'un résultat en erreur porte (`api_error_status`), et la classe
+        de l'exception (`CLINotFoundError` quand le CLI manque). Un CLI non
+        connecté à un abonnement répond `authentication_failed`, comme une clé
+        refusée : l'accès choisi dit lequel des deux, l'écran le formule.
+
+        Un seul tour, sans réglages ni skills du poste, dans un dossier neutre :
+        c'est la même enveloppe que `generate`, bornée à une réponse.
+        """
+        stderr = CollecteurStderr()
+        options = ClaudeAgentOptions(
+            model=model,
+            env=self._auth_env(),
+            cwd=dossier_neutre(),
+            tools=[],
+            stderr=stderr,
+            max_turns=1,
+            setting_sources=sans_reglages_du_poste(),
+            skills=sans_skills_du_poste(),
+            max_buffer_size=PLAFOND_FLUX_OCTETS,
+        )
+        erreur: str | None = None
+        statut: int | None = None
+        sous_type = ""
+        try:
+            async for message in query(prompt=PROMPT_EPREUVE, options=options):
+                if isinstance(message, AssistantMessage) and message.error:
+                    erreur = erreur or message.error
+                elif isinstance(message, RateLimitEvent):
+                    if getattr(message.rate_limit_info, "status", None) == _STATUT_REFUS:
+                        erreur = erreur or "rate_limit"
+                elif isinstance(message, ResultMessage) and message.is_error:
+                    statut = statut or message.api_error_status
+                    sous_type = message.subtype
+        except CLINotFoundError:
+            return Epreuve("outil-absent", "CLI claude introuvable")
+        except ResultError as exc:
+            statut = statut or exc.api_error_status
+            sous_type = sous_type or exc.subtype or ""
+        except ProcessError as exc:
+            if erreur is None and statut is None:
+                return Epreuve("inconnu", f"code de sortie {exc.exit_code}")
+        except CLIConnectionError as exc:
+            return Epreuve("inconnu", type(exc).__name__)
+        if erreur is not None and erreur in _MOTIF_ERREUR_SDK:
+            return Epreuve(_MOTIF_ERREUR_SDK[erreur], erreur)
+        if statut is not None:
+            return Epreuve(motif_du_statut_http(statut), f"HTTP {statut}")
+        if sous_type:
+            return Epreuve("inconnu", sous_type)
+        return Epreuve("ok")
 
     def __init__(
         self,
@@ -2019,6 +2111,17 @@ def _depassement_flux(exc: BaseException) -> PlafondFluxDepasse | None:
 #: requête invalide, panne du serveur — ne se lèvent pas en attendant, et restent
 #: ce qu'elles étaient.
 _ERREURS_LIMITE: frozenset[str] = frozenset({"rate_limit", "billing_error"})
+
+#: Le motif d'épreuve (#1609) de chaque erreur typée d'un message de l'assistant
+#: (`AssistantMessage.error`, un littéral du SDK).
+_MOTIF_ERREUR_SDK: dict[str, str] = {
+    "authentication_failed": "authentification",
+    "billing_error": "facturation",
+    "rate_limit": "limite",
+    "invalid_request": "requete",
+    "server_error": "serveur",
+    "unknown": "inconnu",
+}
 
 #: Le statut d'un `RateLimitEvent` qui annonce un **refus** (#1543). Les deux
 #: autres (`allowed`, `allowed_warning`) rapportent la fenêtre en cours : le CLI

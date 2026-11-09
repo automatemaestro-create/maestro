@@ -383,7 +383,8 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   rôle inédit : c'est une `<datalist>`, jamais un menu fermé. Le **fournisseur**
   vient **avant** le modèle et devient un `<select>` alimenté par le registre,
   augmenté de l'option explicite « **défaut de l'exécution** » — un agent sans
-  fournisseur ni modèle propre suit `MAESTRO_PROVIDER`/`MAESTRO_MODEL`, et c'est
+  fournisseur ni modèle propre suit le fournisseur par défaut du poste, choisi
+  dans *Paramètres › Fournisseurs* (#1609), et c'est
   un **défaut légitime** qu'il fallait offrir plutôt que laisser deviner. Le
   **modèle** n'offre alors que **les siens** — la gamme annoncée du fournisseur
   choisi, plus ce que la sonde a vu **pour lui** —, et sa forme suit le contrat :
@@ -588,10 +589,12 @@ refondue en backoffice complet par #116 (« Phase 4 — Control Tower UX ») :
   de #243 : une colonne **Effort** (troisième réglage depuis #253, tu par une vue
   qui prétendait résumer ce que chaque agent consomme), une **provenance en
   clair** (`defaut_surcharge` s'affichait tel quel), et les **deux héritages
-  distingués** — « Hérité » veut dire *de l'exécution*
-  (`MAESTRO_PROVIDER`/`MAESTRO_MODEL`), « du code » veut dire *de la définition
-  livrée*, et les dire d'un même mot ferait chercher dans le `.env` ce qui est
-  écrit dans `maestro/agents/catalog.py`. La provenance ne se **redéduit** pas en
+  distingués** — « Hérité » veut dire *du fournisseur par défaut*, choisi en tête
+  de la même section (#1609), « du code » veut dire *de la définition livrée*, et
+  les dire d'un même mot ferait chercher à l'écran ce qui est écrit dans
+  `maestro/agents/catalog.py`. La carte « Par défaut » elle-même (choisir un
+  accès, l'éprouver, lire ce qui s'impose) est décrite en
+  [docs/05 §6.4quater](../../docs/05-interface-control-tower.md). La provenance ne se **redéduit** pas en
   comparant la valeur affichée à celle du code : un réglage surchargé *à
   l'identique* ne suit plus le code, et seule la clé `herite` que l'API sert les
   distingue. Enfin le renvoi mène à l'**onglet Profil** de la fiche

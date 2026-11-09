@@ -38,14 +38,18 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import { oublierLesBrouillons } from "@/lib/brouillons";
+import type { DemandeFournisseurDefaut } from "@/lib/types";
 
 import {
   CATALOGUE_POSTE_NU,
   canauxDemandes,
   catalogueAgents,
   cheminCourant,
+  enregistrementFactice,
+  epreuveFactice,
   etatGlobalCourant,
   filAssistanceCourant,
+  fournisseurDefautDuPoste,
   fournisseursDuPoste,
   installerMatchMedia,
   navigations,
@@ -58,6 +62,7 @@ import {
   poserChemin,
   poserEtatGlobal,
   poserFilAssistance,
+  poserFournisseurDefaut,
   poserFournisseurs,
   poserJournal,
   poserProjets,
@@ -145,6 +150,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // défaut est un **poste nu** — la sonde ne trouve rien, les deux champs
     // restent en saisie libre, et tout test écrit avant ce lot dit encore vrai.
     chargerFournisseurs: () => Promise.resolve(fournisseursDuPoste()),
+    // #1609 : les Paramètres lisent, éprouvent et enregistrent le fournisseur par
+    // défaut. Défaut : rien de choisi, l'abonnement Claude suivi, et une épreuve
+    // qui réussit — `poserFournisseurDefaut` / `poserVerdictEpreuve` les règlent.
+    chargerFournisseurDefaut: () => Promise.resolve().then(fournisseurDefautDuPoste),
+    eprouverFournisseurDefaut: (demande: DemandeFournisseurDefaut) =>
+      Promise.resolve(epreuveFactice(demande)),
+    enregistrerFournisseurDefaut: (demande: DemandeFournisseurDefaut) =>
+      Promise.resolve(enregistrementFactice(demande)),
     // #255 : le même formulaire lit les **rôles connus** dans le catalogue des
     // agents. Défaut vide — aucun rôle suggéré, le champ reste celui d'avant —,
     // et les 18 fichiers qui mockent `@/lib/api` chez eux gardent le pas sur
@@ -196,6 +209,7 @@ beforeEach(() => {
   poserProjets([]);
   poserJournal([]);
   poserFournisseurs(CATALOGUE_POSTE_NU);
+  poserFournisseurDefaut();
   poserCatalogueAgents([]);
   navigations.length = 0;
   porteesDemandees.length = 0;

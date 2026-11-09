@@ -425,29 +425,23 @@ class GenerateurDefinitionAgent:
         return catalogue_fournisseurs()
 
     async def _generer(self, prompt: str, *, cadre: str = _CADRE_GENERATION) -> str:
-        """L'appel modèle, fournisseur résolu au premier usage (import local, comme #139).
+        """L'appel modèle, fournisseur résolu à chaque appel (import local, comme #139).
 
         `cadre` est le prompt système de l'appel : celui de la proposition par
         défaut, celui de la réécriture pour `sans_regime` — le même fournisseur, le
-        même modèle, résolus une fois.
+        même modèle.
 
         Une réponse **vide** est un échec au même titre qu'une exception : un
         modèle qui n'a rien dit n'a rien proposé, et laisser passer le vide ferait
         de l'échec un brouillon de formulaire effacé.
         """
-        if self._provider is None:
-            from maestro.providers.factory import modele_du_canal, provider_from_settings
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-            fournisseur = provider_from_settings()
-            # Le modèle suit le fournisseur configuré (#1173) : le défaut de ce
-            # canal est un nom Claude, qui n'a de sens que chez Claude. Résolu
-            # **avant** de retenir le fournisseur, pour qu'un échec laisse tout à
-            # résoudre au prochain appel plutôt qu'un fournisseur sans son modèle.
-            self._modele = modele_du_canal(self._modele, fournisseur)
-            self._provider = fournisseur
-        texte = await self._provider.generate(
-            prompt, model=self._modele, system_prompt=cadre
-        )
+        # Résolu à chaque appel (#1609) : un fournisseur changé dans les Paramètres
+        # sert la génération suivante. Le modèle suit le fournisseur (#1173) : le
+        # défaut de ce canal est un nom Claude, qui n'a de sens que chez Claude.
+        fournisseur, modele = fournisseur_de_l_appel(self._provider, self._modele)
+        texte = await fournisseur.generate(prompt, model=modele, system_prompt=cadre)
         if not (texte or "").strip():
             raise RuntimeError("le fournisseur de modèle a rendu une réponse vide")
         return texte

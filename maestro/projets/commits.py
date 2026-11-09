@@ -131,12 +131,9 @@ class RedacteurDeCommits:
         return sujet_lisible(texte)
 
     def _fournisseur(self) -> tuple[ModelProvider, str]:
-        """Le fournisseur et le modèle de l'appel, résolus au premier usage."""
+        """Le fournisseur et le modèle de l'appel, résolus à chaque appel (#1609)."""
         from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
-        from maestro.providers.factory import modele_du_canal, provider_from_settings
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-        if self._provider is None:
-            self._provider = provider_from_settings()
-        return self._provider, self._modele or modele_du_canal(
-            MODELE_EXECUTANT_DEFAUT, self._provider
-        )
+        fournisseur, modele = fournisseur_de_l_appel(self._provider, MODELE_EXECUTANT_DEFAUT)
+        return fournisseur, self._modele or modele

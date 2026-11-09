@@ -1,13 +1,18 @@
 """Configuration centrale de Maestro — lecture des variables d'environnement.
 
 Charge le fichier `.env` local (non versionné) puis expose les réglages sous
-forme d'un objet `Settings`. Aucun secret n'est écrit en dur ici : la clé API
-Anthropic est toujours lue depuis l'environnement (cf. .env.example).
+forme d'un objet `Settings`. Aucun secret n'est écrit en dur ici.
+
+Le fournisseur, son accès et son modèle se choisissent dans les Paramètres
+(#1609) : `load_settings` complète l'environnement par ce choix du poste
+(`maestro.fournisseur_par_defaut`), et une variable renseignée dans
+l'environnement l'emporte toujours sur lui.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -232,63 +237,70 @@ class Settings:
     langfuse_host: str = "https://cloud.langfuse.com"
 
     @classmethod
-    def from_env(cls) -> Settings:
-        raw_mode = os.getenv("CLAUDE_AUTH_MODE")
-        raw_provider = os.getenv("MAESTRO_PROVIDER")
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
+        """Les réglages lus dans `environ` — l'environnement du process quand rien n'est passé.
+
+        `load_settings` y passe l'environnement **complété** par le fournisseur
+        par défaut du poste (#1609) ; un test y passe le sien.
+        """
+        source = os.environ if environ is None else environ
+        getenv = source.get
+        raw_mode = getenv("CLAUDE_AUTH_MODE")
+        raw_provider = getenv("MAESTRO_PROVIDER")
         return cls(
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+            anthropic_api_key=getenv("ANTHROPIC_API_KEY") or None,
             anthropic_model=resoudre_famille(
-                (os.getenv("ANTHROPIC_MODEL") or "").strip() or "opus"
+                (getenv("ANTHROPIC_MODEL") or "").strip() or "opus"
             ),
             claude_auth_mode=raw_mode.strip().lower() if raw_mode and raw_mode.strip() else None,
-            claude_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
-            database_url=os.getenv("DATABASE_URL") or None,
-            redis_url=os.getenv("REDIS_URL") or None,
-            temporal_address=(os.getenv("TEMPORAL_ADDRESS") or "").strip() or "localhost:7233",
+            claude_oauth_token=getenv("CLAUDE_CODE_OAUTH_TOKEN") or None,
+            database_url=getenv("DATABASE_URL") or None,
+            redis_url=getenv("REDIS_URL") or None,
+            temporal_address=(getenv("TEMPORAL_ADDRESS") or "").strip() or "localhost:7233",
             provider=(raw_provider.strip().lower() if raw_provider else "") or "claude",
-            model=(os.getenv("MAESTRO_MODEL") or "").strip() or None,
-            playbooks_dir=(os.getenv("MAESTRO_PLAYBOOKS_DIR") or "").strip() or None,
-            agents_dir=(os.getenv("MAESTRO_AGENTS_DIR") or "").strip() or None,
-            chat_dir=(os.getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
-            capacite_dir=(os.getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
-            surcharges_dir=(os.getenv("MAESTRO_SURCHARGES_DIR") or "").strip() or None,
-            mcp_dir=(os.getenv("MAESTRO_MCP_DIR") or "").strip() or None,
-            mcp_amont_dir=(os.getenv("MAESTRO_MCP_AMONT_DIR") or "").strip() or None,
-            mcp_amont_url=(os.getenv("MAESTRO_MCP_AMONT_URL") or "").strip() or None,
-            mcp_amont_periode=(os.getenv("MAESTRO_MCP_AMONT_PERIODE") or "").strip() or None,
+            model=(getenv("MAESTRO_MODEL") or "").strip() or None,
+            playbooks_dir=(getenv("MAESTRO_PLAYBOOKS_DIR") or "").strip() or None,
+            agents_dir=(getenv("MAESTRO_AGENTS_DIR") or "").strip() or None,
+            chat_dir=(getenv("MAESTRO_CHAT_DIR") or "").strip() or None,
+            capacite_dir=(getenv("MAESTRO_CAPACITE_DIR") or "").strip() or None,
+            surcharges_dir=(getenv("MAESTRO_SURCHARGES_DIR") or "").strip() or None,
+            mcp_dir=(getenv("MAESTRO_MCP_DIR") or "").strip() or None,
+            mcp_amont_dir=(getenv("MAESTRO_MCP_AMONT_DIR") or "").strip() or None,
+            mcp_amont_url=(getenv("MAESTRO_MCP_AMONT_URL") or "").strip() or None,
+            mcp_amont_periode=(getenv("MAESTRO_MCP_AMONT_PERIODE") or "").strip() or None,
             mcp_admission_politique=(
-                (os.getenv("MAESTRO_MCP_ADMISSION_POLITIQUE") or "").strip() or None
+                (getenv("MAESTRO_MCP_ADMISSION_POLITIQUE") or "").strip() or None
             ),
-            secrets_dir=(os.getenv("MAESTRO_SECRETS_DIR") or "").strip() or None,
-            secrets_key=(os.getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
-            permissions_dir=(os.getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
-            projets_dir=(os.getenv("MAESTRO_PROJETS_DIR") or "").strip() or None,
-            reglages_dir=(os.getenv("MAESTRO_REGLAGES_DIR") or "").strip() or None,
-            ingestion_dir=(os.getenv("MAESTRO_INGESTION_DIR") or "").strip() or None,
-            explorateur_racines=(os.getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
-            selecteur_natif=(os.getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,
-            persistance=(os.getenv("MAESTRO_PERSISTANCE") or "").strip().lower() or None,
-            sqlite_fichier=(os.getenv("MAESTRO_SQLITE_FICHIER") or "").strip() or None,
-            hote_run=(os.getenv("MAESTRO_HOTE_RUN") or "").strip().lower() or None,
-            api_auth=(os.getenv("MAESTRO_API_AUTH") or "").strip().lower() or None,
-            api_jeton=(os.getenv("MAESTRO_API_JETON") or "").strip() or None,
-            api_jeton_fichier=(os.getenv("MAESTRO_API_JETON_FICHIER") or "").strip() or None,
-            api_origines=(os.getenv("MAESTRO_API_ORIGINES") or "").strip() or None,
-            port_ui=(os.getenv("MAESTRO_PORT_UI") or "").strip() or None,
-            arbitrage_attente=(os.getenv("MAESTRO_ARBITRAGE_ATTENTE") or "").strip() or None,
-            arbitrage_borne_hook=(os.getenv("MAESTRO_ARBITRAGE_BORNE_HOOK") or "").strip()
+            secrets_dir=(getenv("MAESTRO_SECRETS_DIR") or "").strip() or None,
+            secrets_key=(getenv("MAESTRO_SECRETS_KEY") or "").strip() or None,
+            permissions_dir=(getenv("MAESTRO_PERMISSIONS_DIR") or "").strip() or None,
+            projets_dir=(getenv("MAESTRO_PROJETS_DIR") or "").strip() or None,
+            reglages_dir=(getenv("MAESTRO_REGLAGES_DIR") or "").strip() or None,
+            ingestion_dir=(getenv("MAESTRO_INGESTION_DIR") or "").strip() or None,
+            explorateur_racines=(getenv("MAESTRO_EXPLORATEUR_RACINES") or "").strip() or None,
+            selecteur_natif=(getenv("MAESTRO_SELECTEUR_NATIF") or "").strip().lower() or None,
+            persistance=(getenv("MAESTRO_PERSISTANCE") or "").strip().lower() or None,
+            sqlite_fichier=(getenv("MAESTRO_SQLITE_FICHIER") or "").strip() or None,
+            hote_run=(getenv("MAESTRO_HOTE_RUN") or "").strip().lower() or None,
+            api_auth=(getenv("MAESTRO_API_AUTH") or "").strip().lower() or None,
+            api_jeton=(getenv("MAESTRO_API_JETON") or "").strip() or None,
+            api_jeton_fichier=(getenv("MAESTRO_API_JETON_FICHIER") or "").strip() or None,
+            api_origines=(getenv("MAESTRO_API_ORIGINES") or "").strip() or None,
+            port_ui=(getenv("MAESTRO_PORT_UI") or "").strip() or None,
+            arbitrage_attente=(getenv("MAESTRO_ARBITRAGE_ATTENTE") or "").strip() or None,
+            arbitrage_borne_hook=(getenv("MAESTRO_ARBITRAGE_BORNE_HOOK") or "").strip()
             or None,
-            isolation=(os.getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
-            isolation_image=(os.getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
-            isolation_reseau=(os.getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()
+            isolation=(getenv("MAESTRO_ISOLATION") or "").strip().lower() or None,
+            isolation_image=(getenv("MAESTRO_ISOLATION_IMAGE") or "").strip() or None,
+            isolation_reseau=(getenv("MAESTRO_ISOLATION_RESEAU") or "").strip().lower()
             or None,
-            slack_canal=(os.getenv("MAESTRO_SLACK_CANAL") or "").strip() or None,
-            openai_api_key=os.getenv("OPENAI_API_KEY") or None,
-            openai_base_url=os.getenv("OPENAI_BASE_URL", "").strip()
+            slack_canal=(getenv("MAESTRO_SLACK_CANAL") or "").strip() or None,
+            openai_api_key=getenv("OPENAI_API_KEY") or None,
+            openai_base_url=getenv("OPENAI_BASE_URL", "").strip()
             or "https://api.openai.com/v1",
-            langfuse_public_key=os.getenv("LANGFUSE_PUBLIC_KEY") or None,
-            langfuse_secret_key=os.getenv("LANGFUSE_SECRET_KEY") or None,
-            langfuse_host=os.getenv("LANGFUSE_HOST", "").strip()
+            langfuse_public_key=getenv("LANGFUSE_PUBLIC_KEY") or None,
+            langfuse_secret_key=getenv("LANGFUSE_SECRET_KEY") or None,
+            langfuse_host=getenv("LANGFUSE_HOST", "").strip()
             or "https://cloud.langfuse.com",
         )
 
@@ -303,5 +315,13 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    """Point d'entrée pratique : `from maestro.config import load_settings`."""
-    return Settings.from_env()
+    """Les réglages de l'exécution : l'environnement, complété par le choix du poste.
+
+    Le choix du poste (#1609) est relu **à chaque appel** : c'est ce qui le
+    fait prendre sans redémarrage par tout ce qui résout un fournisseur, l'API
+    comme les runs détachés. Il ne remplit que les variables vides ; une
+    variable renseignée dans l'environnement garde la main.
+    """
+    from maestro.fournisseur_par_defaut import environnement_du_poste
+
+    return Settings.from_env(environnement_du_poste(os.environ))

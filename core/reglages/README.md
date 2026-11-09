@@ -1,8 +1,19 @@
 # core/reglages — Réglages du poste
 
-Dépôt des **réglages de cette installation-ci** — un seul aujourd'hui, le
-**répertoire des projets** (ticket #1022) : le dossier où **naît** un projet
-neuf.
+Dépôt des **réglages de cette installation-ci**, un fichier par réglage :
+
+- `projets.json` — le **répertoire des projets** (ticket #1022) : le dossier où
+  **naît** un projet neuf. Décrit ci-dessous.
+- `fournisseur.json` — le **fournisseur par défaut** (ticket #1609) : le
+  fournisseur, son accès et son modèle, choisis et éprouvés dans *Paramètres ›
+  Fournisseurs*. Il porte les variables que le choix pose
+  (`MAESTRO_PROVIDER`, `MAESTRO_MODEL`, `CLAUDE_AUTH_MODE`, `OPENAI_BASE_URL`)
+  et le **nom** de la variable de clé, jamais sa valeur : la clé vit chiffrée
+  dans le coffre du poste (`core/secrets/_poste.json`). `load_settings` le relit
+  à chaque appel et ne remplit que les variables que l'environnement laisse
+  vides. Code : `maestro.fournisseur_par_defaut` ; HTTP :
+  `/api/fournisseurs/defaut` (docs/05 §6.4quater) ; tests :
+  `tests/test_fournisseur_par_defaut.py`.
 
 ⚠ **À ne pas confondre avec `core/projets/`**, et la confusion est facile parce
 que les deux parlent de « racines » : `core/projets/` porte les **déclarations**
@@ -11,10 +22,10 @@ ici vit un seul `projets.json`, qui dit **où le prochain sera créé**. D'où d
 dossiers plutôt qu'un fichier de réglages glissé parmi les déclarations, que
 `ProjetStore.lister()` relirait comme un projet illisible de plus.
 
-## Fonctionnement
+## Le répertoire des projets
 
-- **Un fichier unique** : `projets.json` (`repertoire`, horodaté). C'est un
-  objet de réglages, pas une collection.
+- **Un fichier** : `projets.json` (`repertoire`, horodaté). C'est un objet de
+  réglages, pas une collection.
 - `repertoire` à `null` ne veut pas dire « aucun » mais **« le défaut »** :
   `Maestro` sous le dossier personnel — un sous-dossier **nommé**, jamais le
   dossier personnel nu, que `valider_racine` refuse (`dossier-utilisateur-nu`).

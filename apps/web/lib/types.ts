@@ -1253,11 +1253,104 @@ export type ModeleFournisseur = {
  * C'est la **moitié registre** de `FournisseurCatalogue`, qui l'étend des
  * colonnes du poste (#487) : la route en rend une seule ligne par fournisseur,
  * ce type dit ce qu'elle en doit au code plutôt qu'à la machine.
+ *
+ * `acces` (#1609) sont les chemins par lesquels Maestro sait atteindre ce
+ * fournisseur ; `outille` dit s'il fait travailler un agent avec ses outils
+ * (lire, écrire, exécuter), ou seulement converser.
  */
 export type Fournisseur = {
   nom: string;
   modeles: ModeleFournisseur[];
   modeles_libres: boolean;
+  acces: AccesFournisseur[];
+  outille: boolean;
+};
+
+/**
+ * Un chemin vers un fournisseur (`AccesFournisseur.to_dict`, #1609) : l'abonnement
+ * par Claude Code, une clé d'API, un serveur de modèles sur le poste.
+ *
+ * `secret` est le **nom** de la variable que la clé remplit — jamais sa valeur,
+ * qui ne quitte pas le coffre du poste. `adresse` est le nom de la variable de
+ * l'adresse quand l'accès en a une, `adresse_defaut` celle qu'il prend sans
+ * réglage. `temoins` sont les clés des constats de la sonde du poste
+ * (`ConstatPoste.cle`) qui disent l'accès **présent ici** — présent, pas éprouvé.
+ */
+export type AccesFournisseur = {
+  id: string;
+  libelle: string;
+  secret: string | null;
+  cle_requise: boolean;
+  adresse: string | null;
+  adresse_defaut: string | null;
+  temoins: string[];
+};
+
+/** Les motifs d'une épreuve (`maestro.providers.base.MOTIFS_EPREUVE`). */
+export type MotifEpreuve =
+  | "ok"
+  | "outil-absent"
+  | "authentification"
+  | "facturation"
+  | "limite"
+  | "requete"
+  | "injoignable"
+  | "serveur"
+  | "inconnu";
+
+/**
+ * Le verdict d'une épreuve (`Epreuve.to_dict`, #1609). Le motif est **lu dans
+ * des champs typés** de la réponse du fournisseur, jamais dans un texte ;
+ * `precision` dit ce qui l'a établi (un statut HTTP, un type d'erreur).
+ */
+export type Epreuve = {
+  ok: boolean;
+  motif: MotifEpreuve;
+  precision: string;
+};
+
+/** Ce que `POST /api/fournisseurs/epreuve` rend : le verdict, et le modèle interrogé. */
+export type ResultatEpreuve = {
+  epreuve: Epreuve;
+  modele: string;
+};
+
+/**
+ * Le fournisseur par défaut du poste (`GET /api/fournisseurs/defaut`, #1609).
+ *
+ * `choix` est ce qui a été enregistré dans les Paramètres (null : rien) ;
+ * `effectif` ce que l'exécution utilise **maintenant** — il diffère du choix
+ * quand une variable de l'environnement l'impose, et `environnement` dit
+ * lesquelles (la valeur, jamais pour une clé). `cles` nomme les clés que le
+ * coffre du poste garde.
+ */
+export type EtatFournisseurDefaut = {
+  choix: {
+    fournisseur: string;
+    acces: string;
+    modele: string | null;
+    adresse: string | null;
+    eprouve_le: string;
+    pose_le: string;
+  } | null;
+  effectif: {
+    fournisseur: string;
+    acces: string | null;
+    modele: string | null;
+    modele_par_defaut: string | null;
+  };
+  environnement: { variable: string; valeur: string | null }[];
+  cles: string[];
+};
+
+/** Un choix saisi à l'écran : ce qu'on éprouve, puis ce qu'on enregistre. */
+export type DemandeFournisseurDefaut = {
+  fournisseur: string;
+  acces: string;
+  modele: string | null;
+  adresse: string | null;
+  /** Seulement quand la personne vient de la taper : sinon, celle du coffre. */
+  cle: string | null;
 };
 
 /**

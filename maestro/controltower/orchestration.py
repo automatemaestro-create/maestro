@@ -3608,10 +3608,6 @@ class RepondeurOrchestration(RepondeurChat):
         self._consultation = consultation
         self._roles = roles
         self._attentes = attentes
-        # Le modèle suit le fournisseur (#1173) : résolu avec lui depuis la
-        # configuration, jamais épinglé. Un fournisseur **injecté** (les tests,
-        # un câblage explicite) garde le modèle de la fiche.
-        self._modele: str | None = None
         # Le questionnaire comprend par le **même** fournisseur que le fil (#1147) :
         # un fournisseur injecté ici l'est pour les deux, et sans lui chacun résout
         # celui du poste au premier usage. Il écrit par les pièces (#1161).
@@ -4719,13 +4715,13 @@ class RepondeurOrchestration(RepondeurChat):
         un texte vide est un modèle qui n'a rien dit, donc rien à afficher, donc
         le 502 « réponse vide » de `ServiceChat` que ce lot supprime.
 
-        Un échec de résolution **ne se mémorise pas** : `self._provider` reste
-        `None`, si bien que le message suivant retente. C'est ce qui rend la
-        phrase de réparation vraie — corriger la configuration suffit, sans
-        redémarrer la Control Tower.
+        Rien de la résolution ne se garde d'un message à l'autre (#1609) : c'est
+        ce qui rend la phrase de réparation vraie — corriger la configuration, ou
+        choisir un autre fournisseur dans les Paramètres, suffit, sans redémarrer
+        la Control Tower.
         """
         try:
-            fournisseur = self._fournisseur(agent)
+            fournisseur, modele = self._fournisseur(agent)
         except Exception as echec:  # noqa: BLE001 — la position classe, cf. docstring
             raise _JugeInjoignable(
                 f"aucun fournisseur de modèle n'est utilisable ({cause_lisible(echec)})",
@@ -4736,7 +4732,6 @@ class RepondeurOrchestration(RepondeurChat):
         # quoi le second jugerait sur une projection que le premier ne
         # connaissait pas.
         prompt = _prompt(fil, contexte, lectures)
-        modele = self._modele or agent.modele
         lecture = _LectureDuFlux()
         try:
             async for morceau in fournisseur.generate_stream(
@@ -4860,7 +4855,8 @@ class RepondeurOrchestration(RepondeurChat):
         ticket demande — *répondre à partir de ce qu'on lit* — et le mesurer sur
         le seul cas qui n'en profite pas (« oui ») reviendrait à ne jamais lire.
         """
-        if self._consultation is None or not self._resolu(agent):
+        resolu = self._resolu(agent) if self._consultation is not None else None
+        if resolu is None:
             return "", ()
         lues: list[Lecture] = []
         etapes: list[EtapeFil] = []
@@ -4871,7 +4867,7 @@ class RepondeurOrchestration(RepondeurChat):
         # garde-fou : c'est le doublon que le fil montrerait.
         faites: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
         for tour in range(_TOURS_DE_LECTURE):
-            demandes = await self._demandes(agent, fil, contexte, lues)
+            demandes = await self._demandes(resolu, fil, contexte, lues)
             neuves = [d for d in demandes if _signature(d) not in faites]
             if not neuves:
                 break
@@ -4889,24 +4885,25 @@ class RepondeurOrchestration(RepondeurChat):
 
     async def _demandes(
         self,
-        agent: Agent,
+        resolu: tuple[ModelProvider, str],
         fil: Sequence[MessageChat],
         contexte: _Contexte,
         lues: Sequence[Lecture],
     ) -> tuple[Demande, ...]:
         """Ce que le modèle demande à lire — `()` quand il ne demande rien, ou qu'il rate.
 
+        `resolu` est le fournisseur du message et son modèle (`_resolu`).
+
         L'échec est **silencieux par construction** : un fournisseur muet ne doit
         pas empêcher de répondre, seulement de lire. C'est la seule place du
         module où une exception se ravale sans rien écrire au fil, et elle le
         peut parce que ce qu'elle protège est une préparation, jamais la réponse.
         """
-        if self._provider is None:
-            return ()
+        fournisseur, modele = resolu
         try:
-            texte = await self._provider.generate(
+            texte = await fournisseur.generate(
                 _prompt(fil, contexte, _bloc_des_lectures(lues)),
-                model=self._modele or agent.modele,
+                model=modele,
                 system_prompt=_PROMPT_CONSULTATION,
             )
         except Exception:  # noqa: BLE001 — lire est facultatif, répondre ne l'est pas
@@ -4925,7 +4922,7 @@ class RepondeurOrchestration(RepondeurChat):
                 contenu=f"La lecture a échoué : {echec}.",
             )
 
-    def _resolu(self, agent: Agent) -> bool:
+    def _resolu(self, agent: Agent) -> tuple[ModelProvider, str] | None:
         """Résout le fournisseur **sans lever** — le tour de lecture s'en passe s'il manque.
 
         `_juger` le résout aussi, et c'est lui qui **dit** l'empêchement (#686) :
@@ -4933,28 +4930,24 @@ class RepondeurOrchestration(RepondeurChat):
         phrases, et que celle du juge arrive une ligne plus loin.
         """
         try:
-            self._fournisseur(agent)
+            return self._fournisseur(agent)
         except Exception:  # noqa: BLE001 — l'empêchement se dit au juge, pas ici
-            return False
-        return True
+            return None
 
-    def _fournisseur(self, agent: Agent) -> ModelProvider:
-        """Le fournisseur, résolu **au premier usage** — lève ce que la fabrique lève.
+    def _fournisseur(self, agent: Agent) -> tuple[ModelProvider, str]:
+        """Le fournisseur et son modèle, résolus **à chaque appel** — lève ce que la fabrique lève.
 
-        Une seule résolution pour les trois appels du canal (le tour de lecture, le
-        juge, la rédaction d'un geste), chacun disant l'empêchement à sa façon. Le
-        modèle suit le fournisseur (#1173) : `claude-sonnet-5` n'a de sens que chez
-        Claude, et un modèle manquant est un réglage absent, de la même famille
-        que le fournisseur manquant. Un échec **ne se mémorise pas** : l'appel
-        suivant retente, si bien que corriger la configuration suffit.
+        Les trois appels du canal (le tour de lecture, le juge, la rédaction d'un
+        geste) le résolvent chacun et disent l'empêchement à leur façon. Rien
+        n'est gardé (#1609) : corriger la configuration, ou choisir un autre
+        fournisseur dans les Paramètres, sert l'appel suivant. Le modèle suit le
+        fournisseur (#1173) : `claude-sonnet-5` n'a de sens que chez Claude, et un
+        modèle manquant est un réglage absent, de la même famille que le
+        fournisseur manquant. Un fournisseur **injecté** garde le modèle de la fiche.
         """
-        if self._provider is None:
-            from maestro.providers.factory import modele_du_canal, provider_from_settings
+        from maestro.providers.factory import fournisseur_de_l_appel
 
-            fournisseur = provider_from_settings()
-            self._modele = modele_du_canal(agent.modele, fournisseur)
-            self._provider = fournisseur
-        return self._provider
+        return fournisseur_de_l_appel(self._provider, agent.modele)
 
     def _regime_de(self, projet_id: str | None) -> str:
         """Ce qu'un run de `projet_id` fera, `""` sans lecture branchée — jamais une levée.
@@ -5060,7 +5053,7 @@ class RepondeurOrchestration(RepondeurChat):
         second contrat, c'est le même lecteur, qui sait déjà ne rien laisser fuir.
         """
         try:
-            fournisseur = self._fournisseur(agent)
+            fournisseur, modele = self._fournisseur(agent)
         except Exception as echec:  # noqa: BLE001 — l'empêchement se dit, cf. docstring
             return _PHRASE_SANS_REDACTION.format(
                 cause=f"aucun fournisseur de modèle n'est utilisable ({cause_lisible(echec)})"
@@ -5068,7 +5061,7 @@ class RepondeurOrchestration(RepondeurChat):
         try:
             texte = await fournisseur.generate(
                 _prompt_de_redaction(fil, faits),
-                model=self._modele or agent.modele,
+                model=modele,
                 system_prompt=_PROMPT_REDACTION,
             )
         except Exception as echec:  # noqa: BLE001 — l'empêchement se dit, cf. docstring
