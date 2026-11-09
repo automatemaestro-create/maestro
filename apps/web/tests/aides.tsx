@@ -749,9 +749,18 @@ let catalogueAgentsPose: AgentCatalogue[] = [];
  */
 export function poserCatalogueAgents(fiches: AgentCatalogue[]): void {
   catalogueAgentsPose = fiches;
+  panneCatalogueAgents = null;
+}
+
+let panneCatalogueAgents: string | null = null;
+
+/** `chargerCatalogue` échouera avec ce message, jusqu'au prochain `poserCatalogueAgents`. */
+export function poserPanneCatalogueAgents(message: string): void {
+  panneCatalogueAgents = message;
 }
 
 export function catalogueAgents(): AgentCatalogue[] {
+  if (panneCatalogueAgents !== null) throw new Error(panneCatalogueAgents);
   return catalogueAgentsPose;
 }
 

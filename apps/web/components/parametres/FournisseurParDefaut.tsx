@@ -23,9 +23,9 @@
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
-import { ContenuIndisponible } from "@/components/BanniereErreurApi";
 import { IconeAlerte, IconeCoche, IconeStatutAFaire } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
+import { RefusMotive, refusDepuis } from "@/components/projets/ExplorateurDossiers";
 import {
   chargerFournisseurDefaut,
   chargerFournisseurs,
@@ -49,6 +49,7 @@ import type {
   DemandeFournisseurDefaut,
   Epreuve,
   EtatFournisseurDefaut,
+  RefusProjet,
 } from "@/lib/types";
 
 /** Le verdict d'une épreuve, et la saisie qu'il a éprouvée. */
@@ -63,7 +64,7 @@ const MESSAGE_ENREGISTRE =
 export function FournisseurParDefaut() {
   const [catalogue, setCatalogue] = useState<CatalogueFournisseurs | null>(null);
   const [etat, setEtat] = useState<EtatFournisseurDefaut | null>(null);
-  const [panne, setPanne] = useState<string | null>(null);
+  const [panne, setPanne] = useState<RefusProjet | null>(null);
   const [selection, setSelection] = useState<string | null>(null);
   const [modele, setModele] = useState("");
   const [adresse, setAdresse] = useState("");
@@ -96,7 +97,7 @@ export function FournisseurParDefaut() {
           }
           setPanne(null);
         } catch (e) {
-          setPanne(e instanceof Error ? e.message : String(e));
+          setPanne(refusDepuis(e));
         }
       })();
     }, 0);
@@ -109,11 +110,11 @@ export function FournisseurParDefaut() {
   );
 
   if (panne !== null) {
-    // La forme de tout écran en panne (#1217), celle du catalogue juste dessous :
-    // la place est réservée, et le bandeau du shell reste le seul message de la panne.
+    // Paramètres n'a pas de bandeau qui dirait la panne plus haut : la carte la
+    // dit elle-même, dans la forme de « Répertoire illisible » de la même page.
     return (
       <div className="mb-4">
-        <ContenuIndisponible quoi="le fournisseur par défaut du poste" />
+        <RefusMotive refus={panne} titre="Fournisseur par défaut illisible" />
       </div>
     );
   }
@@ -653,7 +654,6 @@ function Saisie({
               // Court : à largeur de téléphone, le champ n'en montre pas davantage.
               placeholder="Nom du modèle"
               list={vusIci.length > 0 ? `${base}-modeles-vus` : undefined}
-              monospace
               aide={
                 vusIci.length > 0
                   ? `Vus sur ce poste : ${vusIci.join(", ")}.`
@@ -700,9 +700,8 @@ function Saisie({
             value={adresse}
             onChange={(e) => onAdresse(e.target.value)}
             // L'adresse par défaut se lit en entier dans l'aide : à largeur de
-            // téléphone, le champ n'en montrerait que le début.
-            placeholder={acces.adresse_defaut === null ? "" : "Par défaut"}
-            monospace
+            // téléphone, le champ n'en montrerait que le début, et une indication
+            // « Par défaut » s'y lisait comme une adresse saisie.
             aide={
               acces.adresse_defaut === null
                 ? undefined

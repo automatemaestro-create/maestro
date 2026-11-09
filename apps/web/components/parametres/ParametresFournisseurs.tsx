@@ -31,10 +31,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { ContenuIndisponible } from "@/components/BanniereErreurApi";
+import { RefusMotive, refusDepuis } from "@/components/projets/ExplorateurDossiers";
 import { chargerCatalogue } from "@/lib/api";
 import { libelleOrigine } from "@/lib/vueAgents";
-import type { AgentCatalogue } from "@/lib/types";
+import type { AgentCatalogue, RefusProjet } from "@/lib/types";
 
 import { FournisseurParDefaut } from "./FournisseurParDefaut";
 import { EtatVide } from "./SectionParametres";
@@ -49,7 +49,7 @@ type Reglage = "fournisseur" | "modele" | "effort";
 export function ParametresFournisseurs() {
   const [fiches, setFiches] = useState<AgentCatalogue[]>([]);
   const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<RefusProjet | null>(null);
 
   // Chargement différé d'un tick (même mécanique que les autres pages) :
   // l'effet lui-même ne déclenche aucun setState synchrone.
@@ -60,7 +60,7 @@ export function ParametresFournisseurs() {
           setFiches(await chargerCatalogue());
           setErreur(null);
         } catch (e) {
-          setErreur(e instanceof Error ? e.message : String(e));
+          setErreur(refusDepuis(e));
         } finally {
           setChargement(false);
         }
@@ -78,12 +78,12 @@ export function ParametresFournisseurs() {
     );
   }
   if (erreur !== null) {
-    // Un catalogue illisible n'est pas un catalogue vide (#1217) : la forme de
-    // tout écran en panne, la même que la carte « Par défaut » au-dessus.
+    // Un catalogue illisible n'est pas un catalogue vide (#1217). Paramètres n'a
+    // pas de bandeau qui dirait la panne plus haut : la section la dit elle-même.
     return (
       <>
         <FournisseurParDefaut />
-        <ContenuIndisponible quoi="le catalogue des agents" />
+        <RefusMotive refus={erreur} titre="Catalogue des agents illisible" />
       </>
     );
   }

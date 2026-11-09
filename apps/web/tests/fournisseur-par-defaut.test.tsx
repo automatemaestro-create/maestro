@@ -464,11 +464,29 @@ describe("un champ laissé vide dit ce qu'il garde sous lui, pas dans son indica
 
     for (const libelle of ["Modèle", "Adresse"]) {
       const champ = local.getByLabelText(libelle);
-      expect(champ.getAttribute("placeholder")?.length).toBeLessThanOrEqual(INDICATION_MAX);
+      expect((champ.getAttribute("placeholder") ?? "").length).toBeLessThanOrEqual(
+        INDICATION_MAX,
+      );
     }
     expect(local.getByLabelText("Adresse")).toHaveAccessibleDescription(
       "Laissée vide : http://localhost:11434/v1.",
     );
+    // L'aide dit l'adresse en entier : une indication « Par défaut » dans le champ
+    // se lisait comme une adresse saisie.
+    expect(local.getByLabelText("Adresse")).not.toHaveAttribute("placeholder");
+  });
+
+  it("les champs d'un serveur local ont la police de la liste des autres cartes", async () => {
+    posteOutille();
+    const utilisateur = await monter();
+    await utilisateur.click(screen.getByRole("radio", { name: LOCAL }));
+    const local = within(carte(LOCAL));
+
+    // La chasse fixe annonce du code : dans une carte, le modèle et l'adresse
+    // sont des réglages, comme le modèle choisi dans une liste à côté.
+    for (const libelle of ["Modèle", "Adresse"]) {
+      expect(local.getByLabelText(libelle)).not.toHaveClass("font-mono");
+    }
   });
 });
 
@@ -497,16 +515,21 @@ describe("⑤ l'environnement qui impose se dit", () => {
 });
 
 describe("⑥ une API coupée se dit", () => {
-  it("rend la panne dans la forme de tout écran en panne, au lieu d'une carte vide", async () => {
-    poserPanneFournisseurDefaut("/api/fournisseurs/defaut n'a pas répondu");
+  it("dit sa panne elle-même, au lieu d'une carte vide", async () => {
+    poserPanneFournisseurDefaut(
+      "L'API n'a pas répondu. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
 
     render(<FournisseurParDefaut />);
 
-    // La forme de #1217, la même que le catalogue des agents juste dessous ; le
-    // bandeau du shell est le seul à dire la panne elle-même.
-    expect(
-      await screen.findByText(/^Impossible de lire le fournisseur par défaut du poste\./),
-    ).toBeInTheDocument();
+    // Paramètres n'a pas de bandeau qui dirait la panne plus haut : la carte la
+    // dit, dans la forme de « Répertoire illisible » de la même page.
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      /^Fournisseur par défaut illisible — L'API n'a pas répondu\./,
+    );
+    expect(alerte).toHaveTextContent("motif : API injoignable");
+    expect(screen.queryByText(/plus haut/)).toBeNull();
     expect(screen.queryByRole("radio")).toBeNull();
   });
 });
