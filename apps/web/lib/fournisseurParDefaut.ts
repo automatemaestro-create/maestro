@@ -86,6 +86,19 @@ export function empreinteDemande(demande: DemandeFournisseurDefaut): string {
   ]);
 }
 
+/**
+ * Ce que le champ « Adresse » porte d'une adresse : rien quand c'est celle de
+ * l'accès. L'API enregistre une adresse laissée vide sous celle-là, et l'aide sous
+ * le champ la dit déjà ; la saisie et le réglage se comparent sous cette forme.
+ */
+export function adresseSaisie(
+  adresse: string | null | undefined,
+  acces: AccesFournisseur,
+): string {
+  const nette = (adresse ?? "").trim();
+  return nette === acces.adresse_defaut ? "" : nette;
+}
+
 /** Les trois sortes d'accès, que le verdict raconte chacune à sa façon. */
 type SorteAcces = "outil" | "serveur" | "cle";
 

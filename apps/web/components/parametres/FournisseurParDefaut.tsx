@@ -35,6 +35,7 @@ import {
 } from "@/lib/api";
 import {
   type OptionAcces,
+  adresseSaisie,
   cleEffective,
   cleEnregistree,
   constatsDe,
@@ -90,7 +91,7 @@ export function FournisseurParDefaut() {
             setSelection(option.cle);
             if (poste.choix !== null && cleEnregistree(poste) === option.cle) {
               setModele(poste.choix.modele ?? "");
-              setAdresse(poste.choix.adresse ?? "");
+              setAdresse(adresseSaisie(poste.choix.adresse, option.acces));
             }
           }
           setPanne(null);
@@ -145,12 +146,16 @@ export function FournisseurParDefaut() {
   // Le verdict de la saisie parle de ce qui est en service quand la saisie est
   // celle-là : même accès, même modèle interrogé, même adresse, aucune clé neuve.
   const modeleEnService = etat.effectif.modele ?? etat.effectif.modele_par_defaut ?? "";
-  const adresseEnService = enregistree === effective ? (etat.choix?.adresse ?? "") : "";
+  const adresseEnService =
+    enregistree === effective && optionEffective !== undefined
+      ? adresseSaisie(etat.choix?.adresse, optionEffective.acces)
+      : "";
   const epreuveEnService =
     verdictCourant !== null &&
     selection === effective &&
+    choisie !== null &&
     cle === "" &&
-    adresse.trim() === adresseEnService &&
+    adresseSaisie(adresse, choisie.acces) === adresseEnService &&
     verdictCourant.modele === modeleEnService
       ? verdictCourant.epreuve
       : null;
@@ -161,14 +166,14 @@ export function FournisseurParDefaut() {
     etat.choix !== null &&
     choisie.cle === enregistree &&
     modele.trim() === (etat.choix.modele ?? "") &&
-    adresse.trim() === (etat.choix.adresse ?? "") &&
+    adresseSaisie(adresse, choisie.acces) === adresseSaisie(etat.choix.adresse, choisie.acces) &&
     cle === "";
 
   const choisir = (option: OptionAcces) => {
     setSelection(option.cle);
     const memeQueLeChoix = enregistree === option.cle && etat.choix !== null;
     setModele(memeQueLeChoix ? (etat.choix?.modele ?? "") : "");
-    setAdresse(memeQueLeChoix ? (etat.choix?.adresse ?? "") : "");
+    setAdresse(memeQueLeChoix ? adresseSaisie(etat.choix?.adresse, option.acces) : "");
     setCle("");
     setVerdict(null);
     setAnnonce(null);
@@ -205,10 +210,11 @@ export function FournisseurParDefaut() {
       } else {
         setEtat(resultat.etat);
         // La saisie reprend ce qui a été enregistré, comme à la réouverture de
-        // l'écran : une adresse laissée vide l'est sous celle de l'accès, et sans
-        // cela la saisie ne se reconnaîtrait plus comme le réglage enregistré.
+        // l'écran ; une adresse laissée vide le reste.
         setModele(resultat.etat.choix?.modele ?? "");
-        setAdresse(resultat.etat.choix?.adresse ?? "");
+        setAdresse(
+          choisie === null ? "" : adresseSaisie(resultat.etat.choix?.adresse, choisie.acces),
+        );
         // La clé est au coffre : le champ se vide, et le verdict tient pour la
         // saisie sans clé — c'est celle du coffre qu'on éprouverait désormais.
         setCle("");
@@ -736,7 +742,12 @@ function Saisie({
           Éprouver
         </Bouton>
         <div aria-live="polite" className="flex min-w-0 flex-col gap-1 self-stretch wrap-anywhere">
-          <VerdictEpreuve verdict={verdict} option={option} saisieEnregistree={saisieEnregistree} />
+          <VerdictEpreuve
+            verdict={verdict}
+            option={option}
+            saisieEnregistree={saisieEnregistree}
+            vientDEtreEnregistree={annonce !== null}
+          />
         </div>
         <div className="min-w-0 self-stretch">
           <Bouton
@@ -768,12 +779,16 @@ function VerdictEpreuve({
   verdict,
   option,
   saisieEnregistree,
+  vientDEtreEnregistree,
 }: {
   verdict: Verdict | null;
   option: OptionAcces;
   saisieEnregistree: boolean;
+  /** L'annonce sous « Enregistrer » le dit déjà : la carte ne le redit pas. */
+  vientDEtreEnregistree: boolean;
 }) {
   if (verdict === null && saisieEnregistree) {
+    if (vientDEtreEnregistree) return null;
     return (
       <p className="text-annexe text-texte-secondaire">
         C&apos;est le réglage enregistré : «&nbsp;Éprouver&nbsp;» le vérifie de nouveau.

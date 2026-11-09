@@ -19,7 +19,7 @@
  * `poserVerdictEpreuve`) tiennent lieu de serveur.
  */
 
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -297,9 +297,8 @@ describe("② présent n'est pas éprouvé", () => {
     expect(screen.getByText(/^Choisi ici le /)).toBeInTheDocument();
     // La carte ne redit pas « pas encore éprouvé » d'un réglage qui l'a été pour s'enregistrer.
     expect(screen.queryByText(/Ce réglage n'est pas encore éprouvé/)).toBeNull();
-    expect(
-      screen.getByText("C'est le réglage enregistré : « Éprouver » le vérifie de nouveau."),
-    ).toBeInTheDocument();
+    // L'annonce dit l'enregistrement : la carte ne le redit pas au-dessus d'elle.
+    expect(screen.queryByText(/^C'est le réglage enregistré/)).toBeNull();
   });
 
   it("reconnaît le réglage enregistré d'un serveur local dont l'adresse est restée vide", async () => {
@@ -317,8 +316,18 @@ describe("② présent n'est pas éprouvé", () => {
 
     expect(await screen.findByText(/sans redémarrer Maestro/)).toBeInTheDocument();
     expect(local.queryByText(/Ce réglage n'est pas encore éprouvé/)).toBeNull();
+    // L'annonce dit l'enregistrement, une fois ; l'adresse laissée vide le reste.
+    expect(local.queryByText(/^C'est le réglage enregistré/)).toBeNull();
+    expect(local.getByLabelText("Adresse")).toHaveValue("");
+
+    // Rouverte, la carte reconnaît le réglage enregistré, adresse vide comprise.
+    cleanup();
+    await monter();
+    const rouverte = within(carte(LOCAL));
+    expect(rouverte.getByLabelText("Adresse")).toHaveValue("");
+    expect(rouverte.getByRole("combobox", { name: "Modèle" })).toHaveValue("qwen2.5");
     expect(
-      local.getByText("C'est le réglage enregistré : « Éprouver » le vérifie de nouveau."),
+      rouverte.getByText("C'est le réglage enregistré : « Éprouver » le vérifie de nouveau."),
     ).toBeInTheDocument();
   });
 
