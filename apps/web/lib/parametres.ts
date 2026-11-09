@@ -130,7 +130,8 @@ export const FAMILLES_PARAMETRES: FamilleParametres[] = [
       {
         id: "fournisseurs",
         libelle: "Fournisseurs & modèles",
-        description: "Le fournisseur et le modèle de chaque agent du catalogue.",
+        description:
+          "Le fournisseur et le modèle par défaut, puis ceux de chaque agent du catalogue.",
       },
     ],
   },
