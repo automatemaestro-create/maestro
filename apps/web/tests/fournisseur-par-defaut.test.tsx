@@ -258,6 +258,22 @@ describe("② présent n'est pas éprouvé", () => {
     expect(within(carte(LOCAL)).getByText("Conversation seulement").className).toMatch(/amber/);
   });
 
+  it("rend le verdict juste sous « Éprouver », avant « Enregistrer »", async () => {
+    const utilisateur = await monter();
+    const eprouver = screen.getByRole("button", { name: "Éprouver" });
+
+    await utilisateur.click(eprouver);
+    const verdict = await screen.findByText("Accès éprouvé");
+    const suit = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+    // L'ordre de la variante retenue : Éprouver, son verdict, puis Enregistrer — à
+    // largeur de téléphone, les deux boutons ne s'intercalent plus entre le geste et
+    // ce qu'il a rendu.
+    expect(suit(eprouver, verdict)).toBe(true);
+    expect(suit(verdict, screen.getByRole("button", { name: "Enregistrer" }))).toBe(true);
+  });
+
   it("enregistre un choix éprouvé avec succès, et le dit pris sans redémarrage", async () => {
     const utilisateur = await monter();
 

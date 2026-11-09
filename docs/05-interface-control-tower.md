@@ -5420,7 +5420,8 @@ touche au front. Quatre règles tiennent la lecture :
   ne le distingue presque pas, et son badge de limite passe au ton neutre. Les titres des accès
   sont au pas du corps, sous « Par défaut ».
 - **Seule l'épreuve rend un verdict**, dans la carte choisie. « Éprouver » fait un tour de
-  modèle sur la saisie, et seul un verdict réussi ouvre « Enregistrer ». Changer un champ efface
+  modèle sur la saisie, et seul un verdict réussi ouvre « Enregistrer ». Le verdict tombe juste
+  sous « Éprouver », et « Enregistrer » vient après lui, à toute largeur. Changer un champ efface
   le verdict. Un échec dit son motif, et le geste qui le répare quand il y en a un : « Lancez
   « claude auth login » dans un terminal » pour un abonnement non connecté, « Rien ne répond à
   cette adresse » pour un serveur muet, « La clé est refusée » pour une clé.

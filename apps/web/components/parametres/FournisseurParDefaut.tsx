@@ -644,7 +644,8 @@ function Saisie({
               libelle="Modèle"
               value={modele}
               onChange={(e) => onModele(e.target.value)}
-              placeholder="Nom du modèle servi"
+              // Court : à largeur de téléphone, le champ n'en montre pas davantage.
+              placeholder="Nom du modèle"
               list={vusIci.length > 0 ? `${base}-modeles-vus` : undefined}
               monospace
               aide={
@@ -715,7 +716,9 @@ function Saisie({
         )}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+      {/* L'ordre de la variante retenue, à toute largeur : le geste, ce qu'il a rendu,
+          puis l'enregistrement qu'il ouvre. */}
+      <div className="mt-3 flex flex-col items-start gap-3">
         <Bouton
           variante="contour"
           onClick={onEprouver}
@@ -724,23 +727,26 @@ function Saisie({
         >
           Éprouver
         </Bouton>
-        <Bouton
-          onClick={onEnregistrer}
-          occupe={action === "enregistrement"}
-          disabled={verdict?.epreuve.ok !== true || (action !== null && action !== "enregistrement")}
-          className="@xl:ml-auto"
-        >
-          Enregistrer
-        </Bouton>
-      </div>
-      <div aria-live="polite" className="mt-3 flex min-w-0 flex-col gap-1 wrap-anywhere">
-        <VerdictEpreuve verdict={verdict} option={option} saisieEnregistree={saisieEnregistree} />
-        {annonce !== null && <p className="text-corps">{annonce}</p>}
-        {refus !== null && (
-          <p role="alert" className="text-corps text-alerte-texte">
-            {refus}
-          </p>
-        )}
+        <div aria-live="polite" className="flex min-w-0 flex-col gap-1 self-stretch wrap-anywhere">
+          <VerdictEpreuve verdict={verdict} option={option} saisieEnregistree={saisieEnregistree} />
+        </div>
+        <div className="min-w-0 self-stretch">
+          <Bouton
+            onClick={onEnregistrer}
+            occupe={action === "enregistrement"}
+            disabled={verdict?.epreuve.ok !== true || (action !== null && action !== "enregistrement")}
+          >
+            Enregistrer
+          </Bouton>
+          <div aria-live="polite" className="min-w-0 wrap-anywhere">
+            {annonce !== null && <p className="mt-2 text-corps">{annonce}</p>}
+            {refus !== null && (
+              <p role="alert" className="mt-2 text-corps text-alerte-texte">
+                {refus}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
