@@ -273,6 +273,26 @@ describe("② présent n'est pas éprouvé", () => {
     ).toBeInTheDocument();
   });
 
+  it("reconnaît le réglage enregistré d'un serveur local dont l'adresse est restée vide", async () => {
+    // L'API enregistre une adresse laissée vide sous celle de l'accès : la saisie
+    // vide est pourtant le réglage enregistré, et la carte ne le redit pas « pas encore éprouvé ».
+    posteOutille();
+    const utilisateur = await monter();
+
+    await utilisateur.click(screen.getByRole("radio", { name: LOCAL }));
+    const local = within(carte(LOCAL));
+    await utilisateur.type(local.getByRole("combobox", { name: "Modèle" }), "qwen2.5");
+    await utilisateur.click(local.getByRole("button", { name: "Éprouver" }));
+    expect(await local.findByText("Accès éprouvé")).toBeInTheDocument();
+    await utilisateur.click(local.getByRole("button", { name: "Enregistrer" }));
+
+    expect(await screen.findByText(/sans redémarrer Maestro/)).toBeInTheDocument();
+    expect(local.queryByText(/Ce réglage n'est pas encore éprouvé/)).toBeNull();
+    expect(
+      local.getByText("C'est le réglage enregistré : « Éprouver » le vérifie de nouveau."),
+    ).toBeInTheDocument();
+  });
+
   it("efface le verdict dès que la saisie change", async () => {
     const utilisateur = await monter();
 

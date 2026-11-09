@@ -664,16 +664,18 @@ export function enregistrementFactice(
 ): { etat: EtatFournisseurDefaut } | { refus: Epreuve } {
   demandesEnregistrees.push(demande);
   if (!verdictEpreuve.ok) return { refus: verdictEpreuve };
-  const secret = (demande.fournisseur === "claude" ? ACCES_CLAUDE : ACCES_OPENAI).find(
-    (acces) => acces.id === demande.acces,
-  )?.secret;
+  const acces = (demande.fournisseur === "claude" ? ACCES_CLAUDE : ACCES_OPENAI).find(
+    (candidat) => candidat.id === demande.acces,
+  );
+  const secret = acces?.secret;
   etatFournisseurDefaut = {
     ...etatFournisseurDefaut,
     choix: {
       fournisseur: demande.fournisseur,
       acces: demande.acces,
       modele: demande.modele,
-      adresse: demande.adresse,
+      // Comme l'API : une adresse laissée vide est enregistrée sous celle de l'accès.
+      adresse: acces?.adresse ? (demande.adresse ?? acces.adresse_defaut) : null,
       eprouve_le: "2026-11-09T10:00:00+00:00",
       pose_le: "2026-11-09T10:00:00+00:00",
     },

@@ -204,6 +204,11 @@ export function FournisseurParDefaut() {
         });
       } else {
         setEtat(resultat.etat);
+        // La saisie reprend ce qui a été enregistré, comme à la réouverture de
+        // l'écran : une adresse laissée vide l'est sous celle de l'accès, et sans
+        // cela la saisie ne se reconnaîtrait plus comme le réglage enregistré.
+        setModele(resultat.etat.choix?.modele ?? "");
+        setAdresse(resultat.etat.choix?.adresse ?? "");
         // La clé est au coffre : le champ se vide, et le verdict tient pour la
         // saisie sans clé — c'est celle du coffre qu'on éprouverait désormais.
         setCle("");
