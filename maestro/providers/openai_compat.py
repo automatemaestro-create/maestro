@@ -195,7 +195,7 @@ class OpenAICompatProvider(ModelProvider):
     ACCES: ClassVar[tuple[AccesFournisseur, ...]] = (
         AccesFournisseur(
             id="local",
-            libelle="Serveur de modèles sur ce poste (Ollama…)",
+            libelle="Serveur de modèles sur ce poste, comme Ollama",
             adresse="OPENAI_BASE_URL",
             adresse_defaut="http://localhost:11434/v1",
             temoins=("serveur:ollama", "serveur:openai-configure"),

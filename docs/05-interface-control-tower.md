@@ -5399,7 +5399,7 @@ C'est le chemin pour choisir : on n'édite plus de `.env` et on ne redémarre pl
 
 **L'écran.** Une carte par **accès**, pas par fournisseur. Pour Claude, l'abonnement par Claude
 Code sur ce poste, ou une clé d'API Anthropic. Pour le dialecte OpenAI, un serveur de modèles sur
-ce poste (Ollama…), ou un service distant avec une clé. Les accès viennent du registre
+ce poste, comme Ollama, ou un service distant avec une clé. Les accès viennent du registre
 (`acces` de `GET /api/fournisseurs`) : un fournisseur inscrit y apporte les siens sans qu'on
 touche au front. Quatre règles tiennent la lecture :
 
@@ -5408,8 +5408,11 @@ touche au front. Quatre règles tiennent la lecture :
   maintenant ». La coche n'est que la saisie. Un choix enregistré que l'environnement supplante
   porte « Enregistré, pas utilisé ».
 - **Présent n'est pas éprouvé.** Chaque carte dit ce que la sonde du poste (`maestro/poste.py`)
-  en a vu : un CLI trouvé, un serveur qui répond, une clé gardée. Ce n'est jamais un vert. Un
-  accès dont rien n'a été vu est atténué, jamais caché.
+  en a vu, dans les mots de la personne : « Claude Code est installé sur ce poste ; sa connexion
+  à un compte se vérifie en l'éprouvant », « Ollama répond sur ce poste, avec 2 modèles », une
+  clé gardée. La phrase se compose des champs typés du constat, jamais de son `detail`, écrit
+  pour la fiche d'un agent. Ce n'est jamais un vert, et la carte cochée ne l'est pas non plus.
+  Un accès dont rien n'a été vu est atténué, jamais caché.
 - **Seule l'épreuve rend un verdict**, dans la carte choisie. « Éprouver » fait un tour de
   modèle sur la saisie, et seul un verdict réussi ouvre « Enregistrer ». Changer un champ efface
   le verdict. Un échec dit son motif, et le geste qui le répare quand il y en a un : « Lancez

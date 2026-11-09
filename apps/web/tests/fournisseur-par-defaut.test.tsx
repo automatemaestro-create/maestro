@@ -19,7 +19,7 @@
  * `poserVerdictEpreuve`) tiennent lieu de serveur.
  */
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -41,7 +41,7 @@ import {
 
 const ABONNEMENT = "Abonnement Claude, par Claude Code sur ce poste";
 const CLE_ANTHROPIC = "Clé d'API Anthropic";
-const LOCAL = "Serveur de modèles sur ce poste (Ollama…)";
+const LOCAL = "Serveur de modèles sur ce poste, comme Ollama";
 
 /** Monte la carte et attend que l'état du poste soit arrivé. */
 async function monter() {
@@ -59,6 +59,14 @@ function carte(libelle: string): HTMLElement {
   return bloc;
 }
 
+/**
+ * Ce que la sonde écrit dans `detail` pour la fiche d'un agent — le vocabulaire
+ * du code, que la carte ne doit jamais rendre (les deux de `maestro/poste.py`).
+ */
+const DETAIL_CLI = "runtime des agents Claude — le SDK le lance en sous-processus";
+const DETAIL_OLLAMA =
+  "servi par le fournisseur `openai` — MAESTRO_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1";
+
 /** Un poste où la sonde a vu Claude Code et un Ollama qui sert `qwen2.5`. */
 function posteOutille() {
   const [claude, openai] = CATALOGUE_POSTE_NU.fournisseurs;
@@ -69,7 +77,7 @@ function posteOutille() {
         ...claude,
         present_ici: true,
         utilisable_ici: true,
-        constats: [constatPosteFactice({ detail: "Claude Code trouvé dans le PATH" })],
+        constats: [constatPosteFactice({ detail: DETAIL_CLI })],
       },
       {
         ...openai,
@@ -82,7 +90,7 @@ function posteOutille() {
             cle: "serveur:ollama",
             libelle: "Ollama",
             fournisseur: "openai",
-            detail: "Ollama répond sur localhost:11434",
+            detail: DETAIL_OLLAMA,
             modeles: ["qwen2.5"],
           }),
         ],
@@ -149,10 +157,29 @@ describe("② présent n'est pas éprouvé", () => {
     await monter();
 
     const abonnement = within(carte(ABONNEMENT));
-    expect(abonnement.getByText(/Présent sur ce poste : Claude Code trouvé/)).toBeInTheDocument();
+    // Un programme trouvé ne dit pas qu'il est connecté : la phrase le dit.
+    expect(
+      abonnement.getByText(
+        "Claude Code est installé sur ce poste ; sa connexion à un compte se vérifie en l'éprouvant.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Accès éprouvé")).toBeNull();
     expect(screen.getByText(/Pas encore éprouvé/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Enregistrer" })).toBeDisabled();
+  });
+
+  it("dit ce que la sonde a vu dans les mots de la personne, jamais dans ceux du code", async () => {
+    posteOutille();
+
+    await monter();
+
+    const texte = screen.getByRole("group", { name: "Accès au fournisseur par défaut" }).textContent;
+    expect(texte).not.toContain(DETAIL_CLI);
+    expect(texte).not.toContain(DETAIL_OLLAMA);
+    expect(texte).not.toMatch(/MAESTRO_PROVIDER|OPENAI_BASE_URL|SDK|`/);
+    expect(
+      within(carte(LOCAL)).getByText("Ollama répond sur ce poste, avec 1 modèle : qwen2.5."),
+    ).toBeInTheDocument();
   });
 
   it("atténue ce que la sonde n'a pas vu, sans le cacher", async () => {
@@ -230,7 +257,7 @@ describe("③ le verdict dit son motif et son geste", () => {
 
     await utilisateur.click(screen.getByRole("radio", { name: LOCAL }));
     const local = within(carte(LOCAL));
-    expect(local.getByText(/Présent sur ce poste : Ollama répond/)).toBeInTheDocument();
+    expect(local.getByText(/Ollama répond sur ce poste/)).toBeInTheDocument();
     expect(local.getByText("Conversation seulement")).toBeInTheDocument();
     expect(local.getByText("Vus sur ce poste : qwen2.5.")).toBeInTheDocument();
     // Sans modèle, rien à éprouver : ce fournisseur n'a pas de défaut.
@@ -318,16 +345,16 @@ describe("⑤ l'environnement qui impose se dit", () => {
 });
 
 describe("⑥ une API coupée se dit", () => {
-  it("rend la panne au lieu d'une carte vide", async () => {
+  it("rend la panne dans la forme de tout écran en panne, au lieu d'une carte vide", async () => {
     poserPanneFournisseurDefaut("/api/fournisseurs/defaut n'a pas répondu");
 
     render(<FournisseurParDefaut />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "Le fournisseur par défaut est illisible : /api/fournisseurs/defaut n'a pas répondu",
-      ),
-    );
+    // La forme de #1217, la même que le catalogue des agents juste dessous ; le
+    // bandeau du shell est le seul à dire la panne elle-même.
+    expect(
+      await screen.findByText(/^Impossible de lire le fournisseur par défaut du poste\./),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("radio")).toBeNull();
   });
 });

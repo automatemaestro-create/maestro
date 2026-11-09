@@ -23,6 +23,7 @@
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
+import { ContenuIndisponible } from "@/components/BanniereErreurApi";
 import { IconeAlerte, IconeCoche } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
 import {
@@ -43,6 +44,7 @@ import {
 } from "@/lib/fournisseurParDefaut";
 import type {
   CatalogueFournisseurs,
+  ConstatPoste,
   DemandeFournisseurDefaut,
   Epreuve,
   EtatFournisseurDefaut,
@@ -106,15 +108,12 @@ export function FournisseurParDefaut() {
   );
 
   if (panne !== null) {
+    // La forme de tout écran en panne (#1217), celle du catalogue juste dessous :
+    // la place est réservée, et le bandeau du shell reste le seul message de la panne.
     return (
-      <Carte balise="section" aria-labelledby="defaut-titre" className="mb-4">
-        <h3 id="defaut-titre" className="text-titre font-semibold">
-          Par défaut
-        </h3>
-        <p role="alert" className="mt-1 text-corps text-alerte-texte">
-          Le fournisseur par défaut est illisible : {panne}
-        </p>
-      </Carte>
+      <div className="mb-4">
+        <ContenuIndisponible quoi="le fournisseur par défaut du poste" />
+      </div>
     );
   }
   if (catalogue === null || etat === null) {
@@ -287,17 +286,24 @@ function Effectif({
   option: OptionAcces | undefined;
 }) {
   const { effectif, choix } = etat;
-  const modele =
-    effectif.modele ??
-    (effectif.modele_par_defaut === null
-      ? "aucun modèle réglé"
-      : `${effectif.modele_par_defaut} (par défaut)`);
+  const identifiant = effectif.modele ?? effectif.modele_par_defaut;
   return (
     <p className="mt-3 text-corps">
       <span className="text-texte-secondaire">Utilisé maintenant : </span>
       <span className="font-medium">{option?.acces.libelle ?? effectif.fournisseur}</span>
       <span className="text-texte-secondaire"> · modèle </span>
-      <span className="font-mono">{modele}</span>
+      {identifiant === null ? (
+        <span>aucun modèle réglé</span>
+      ) : (
+        <>
+          {/* Un identifiant ne se coupe pas à ses tirets : « claude-opus- / 5-5 »
+              ne se lit plus comme un nom. */}
+          <span className="font-mono whitespace-nowrap">{identifiant}</span>
+          {effectif.modele === null && (
+            <span className="text-texte-secondaire"> (par défaut)</span>
+          )}
+        </>
+      )}
       <span className="block text-annexe text-texte-secondaire">
         {choix === null
           ? "Rien n'est choisi ici : Maestro suit son réglage par défaut."
@@ -359,15 +365,15 @@ function CarteAcces({
   children: ReactNode;
 }) {
   const constats = constatsDe(option);
-  const present = constats.length > 0;
-  const empeche = present && constats.every((c) => !c.utilisable);
   const cleGardee = option.acces.secret !== null && etat.cles.includes(option.acces.secret);
-  const vu = present || cleGardee;
+  const vu = constats.length > 0 || cleGardee;
   const id = `defaut-${option.fournisseur.nom}-${option.acces.id}`;
   return (
+    // La carte choisie se distingue sans le vert : le vert dirait « ça marche »,
+    // et seule l'épreuve le dit.
     <div
       className={`rounded-carte border p-3 ${
-        active ? "border-accent bg-accent-creux/40" : "border-bord"
+        active ? "border-bord-fort bg-surface-creuse" : "border-bord"
       }`}
     >
       <div className="flex items-start gap-3">
@@ -405,7 +411,7 @@ function CarteAcces({
             )}
           </div>
           <p className="mt-0.5 text-annexe wrap-anywhere text-texte-secondaire">
-            {ceQueLaSondeAVu(option, constats, cleGardee, empeche)}
+            {ceQueLaSondeAVu(option, constats, cleGardee)}
           </p>
           {!option.fournisseur.outille && active && (
             <p className="mt-0.5 text-annexe text-texte-secondaire">
@@ -420,18 +426,18 @@ function CarteAcces({
   );
 }
 
-/** La ligne de constat d'une carte : ce que la sonde a vu, sans jamais conclure. */
+/**
+ * La ligne de constat d'une carte : ce que la sonde a vu, dans les mots de la
+ * personne, sans jamais conclure. Elle se compose des champs typés du constat
+ * (genre, libellé, modèles vus) : son `detail` sert la fiche d'un agent et parle
+ * le vocabulaire du code — variables, fournisseur, SDK.
+ */
 function ceQueLaSondeAVu(
   option: OptionAcces,
-  constats: ReturnType<typeof constatsDe>,
+  constats: ConstatPoste[],
   cleGardee: boolean,
-  empeche: boolean,
 ): string {
-  const vus = constats.map((c) => c.detail).filter(Boolean);
-  const parties: string[] = [];
-  if (vus.length > 0) {
-    parties.push(`${empeche ? "Présent, mais empêché" : "Présent sur ce poste"} : ${vus.join(" ; ")}`);
-  }
+  const parties = constats.map((constat) => constatEnMots(constat, option));
   if (cleGardee) parties.push("Une clé est enregistrée sur ce poste");
   if (parties.length === 0) {
     return option.acces.secret !== null
@@ -439,6 +445,33 @@ function ceQueLaSondeAVu(
       : "Rien de détecté sur ce poste.";
   }
   return `${parties.join(". ")}.`;
+}
+
+/**
+ * Un constat en une proposition. Un programme trouvé ne dit pas qu'il est
+ * connecté — la sonde ne lance aucun binaire —, et la phrase le dit plutôt que
+ * de le laisser supposer.
+ */
+function constatEnMots(constat: ConstatPoste, option: OptionAcces): string {
+  const { libelle, modeles, utilisable } = constat;
+  switch (constat.genre) {
+    case "cli":
+      return utilisable
+        ? `${libelle} est installé sur ce poste ; sa connexion à un compte se vérifie en l'éprouvant`
+        : `${libelle} est installé sur ce poste, mais Maestro ne s'en sert pas`;
+    case "serveur_local":
+      if (!utilisable) return `${libelle} : la sonde ne l'a pas joint`;
+      if (modeles.length === 0) return `${libelle} répond sur ce poste, sans nommer de modèle`;
+      return `${libelle} répond sur ce poste, avec ${modeles.length} ${
+        modeles.length > 1 ? "modèles" : "modèle"
+      } : ${modeles.join(", ")}`;
+    case "cle":
+      return option.acces.secret === null
+        ? "L'environnement du poste fournit un jeton de connexion"
+        : "L'environnement du poste fournit une clé";
+    default:
+      return libelle;
+  }
 }
 
 /** Ce qu'on règle dans la carte choisie, l'épreuve, et son verdict. */
@@ -522,9 +555,7 @@ function Saisie({
             onChange={(e) => onModele(e.target.value)}
           >
             <option value="">
-              {defautDuFournisseur === null
-                ? "Le modèle par défaut"
-                : `Le modèle par défaut (${defautDuFournisseur})`}
+              {defautDuFournisseur === null ? "Par défaut" : `Par défaut (${defautDuFournisseur})`}
             </option>
             {gamme.map((m) => (
               <option key={m.nom} value={m.nom}>

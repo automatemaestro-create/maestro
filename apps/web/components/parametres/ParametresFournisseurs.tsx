@@ -31,6 +31,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { ContenuIndisponible } from "@/components/BanniereErreurApi";
 import { chargerCatalogue } from "@/lib/api";
 import { libelleOrigine } from "@/lib/vueAgents";
 import type { AgentCatalogue } from "@/lib/types";
@@ -76,16 +77,22 @@ export function ParametresFournisseurs() {
       </>
     );
   }
-  if (erreur !== null || fiches.length === 0) {
+  if (erreur !== null) {
+    // Un catalogue illisible n'est pas un catalogue vide (#1217) : la forme de
+    // tout écran en panne, la même que la carte « Par défaut » au-dessus.
+    return (
+      <>
+        <FournisseurParDefaut />
+        <ContenuIndisponible quoi="le catalogue des agents" />
+      </>
+    );
+  }
+  if (fiches.length === 0) {
     return (
       <>
         <FournisseurParDefaut />
         <EtatVide
-          message={
-            erreur !== null
-              ? `Catalogue illisible : ${erreur}`
-              : "Aucun agent au catalogue."
-          }
+          message="Aucun agent au catalogue."
           releve="Un agent qui ne choisit ni fournisseur ni modèle suit le choix par défaut, ci-dessus."
           lien={{ href: "/agents", libelle: "Ouvrir la liste des agents" }}
         />

@@ -539,7 +539,7 @@ export const ACCES_CLAUDE: AccesFournisseur[] = [
 export const ACCES_OPENAI: AccesFournisseur[] = [
   {
     id: "local",
-    libelle: "Serveur de modèles sur ce poste (Ollama…)",
+    libelle: "Serveur de modèles sur ce poste, comme Ollama",
     secret: null,
     cle_requise: false,
     adresse: "OPENAI_BASE_URL",
