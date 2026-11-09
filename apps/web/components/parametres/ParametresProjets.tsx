@@ -23,6 +23,12 @@
  *
  * Un échec de lecture n'est pas une panne de la page : la section dit ce qui
  * manque et laisse les autres réglages intacts.
+ *
+ * Le second réglage de la section : **les dossiers autorisés** depuis
+ * l'explorateur (#1610), quand il refusait un dossier hors des dossiers
+ * explorables. Ils se relisent ici, la portée dite une fois en tête, et se
+ * retirent ligne à ligne — la liste des dossiers de confiance de VS Code, celle
+ * des partages de Docker Desktop (veille du ticket).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -33,10 +39,121 @@ import {
   refusDepuis,
   RefusMotive,
 } from "@/components/projets/ExplorateurDossiers";
-import { chargerRepertoireProjets, reglerRepertoireProjets } from "@/lib/api";
-import type { RefusProjet, RepertoireProjets } from "@/lib/types";
+import {
+  chargerDossiersAutorises,
+  chargerRepertoireProjets,
+  reglerRepertoireProjets,
+  retirerDossierAutorise,
+} from "@/lib/api";
+import { libelleMotif } from "@/lib/projets";
+import type {
+  DossierAutorise,
+  RefusProjet,
+  RepertoireProjets,
+} from "@/lib/types";
 
 import { LigneReglage } from "./SectionParametres";
+
+/**
+ * Les dossiers autorisés depuis l'explorateur, et leur retrait (#1610).
+ *
+ * `version` est incrémentée par le parent quand l'explorateur de la section
+ * vient d'en autoriser un : la liste se relit, au lieu d'attendre un
+ * rechargement de la page.
+ */
+function DossiersAutorises({ version }: { version: number }) {
+  const [dossiers, setDossiers] = useState<DossierAutorise[] | null>(null);
+  const [echecLecture, setEchecLecture] = useState<RefusProjet | null>(null);
+  const [refusRetrait, setRefusRetrait] = useState<RefusProjet | null>(null);
+  const [retraitEnCours, setRetraitEnCours] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivant = true;
+    void chargerDossiersAutorises()
+      .then((lu) => {
+        if (!vivant) return;
+        setDossiers(lu.dossiers);
+        setEchecLecture(null);
+      })
+      .catch((erreur) => {
+        if (vivant) setEchecLecture(refusDepuis(erreur));
+      });
+    return () => {
+      vivant = false;
+    };
+  }, [version]);
+
+  const retirer = useCallback(async (chemin: string) => {
+    setRetraitEnCours(chemin);
+    setRefusRetrait(null);
+    try {
+      setDossiers((await retirerDossierAutorise(chemin)).dossiers);
+    } catch (erreur) {
+      // L'autorisation reste en place : la route n'écrit rien quand elle refuse.
+      setRefusRetrait(refusDepuis(erreur));
+    } finally {
+      setRetraitEnCours(null);
+    }
+  }, []);
+
+  return (
+    <>
+      <LigneReglage
+        libelle="Dossiers autorisés"
+        // La portée, dite **une fois** et invariante — comme l'aide du
+        // répertoire : elle décrit le réglage, pas son état du moment.
+        aide="Autorisés depuis l'explorateur quand il les refusait : Maestro peut parcourir ces dossiers et leurs sous-dossiers sur ce poste. Les zones protégées y restent refusées."
+      >
+        {dossiers === null ? (
+          <p className="text-corps text-texte-secondaire">
+            {echecLecture !== null ? "—" : "…"}
+          </p>
+        ) : dossiers.length === 0 ? (
+          <p className="text-annexe text-texte-secondaire">
+            Aucun dossier autorisé.
+          </p>
+        ) : (
+          <ul className="flex flex-col items-end gap-2">
+            {dossiers.map((dossier) => (
+              <li
+                key={dossier.chemin}
+                className="flex flex-wrap items-center justify-end gap-2"
+              >
+                <code className="font-mono text-corps break-all">
+                  {dossier.chemin}
+                </code>
+                {/* Une autorisation qui ne sert plus (disque débranché,
+                    dossier supprimé) se dit, et se retire comme les autres. */}
+                {dossier.refus !== null && (
+                  <span className="text-annexe text-attention-texte">
+                    inutilisable — {libelleMotif(dossier.refus.motif)}
+                  </span>
+                )}
+                <Bouton
+                  variante="contour"
+                  ton="neutre"
+                  taille="petite"
+                  occupe={retraitEnCours === dossier.chemin}
+                  disabled={retraitEnCours !== null}
+                  aria-label={`Retirer ${dossier.chemin}`}
+                  onClick={() => void retirer(dossier.chemin)}
+                >
+                  Retirer
+                </Bouton>
+              </li>
+            ))}
+          </ul>
+        )}
+      </LigneReglage>
+      {echecLecture && (
+        <RefusMotive refus={echecLecture} titre="Dossiers autorisés illisibles" />
+      )}
+      {refusRetrait && (
+        <RefusMotive refus={refusRetrait} titre="Retrait refusé" />
+      )}
+    </>
+  );
+}
 
 export function ParametresProjets() {
   const [repertoire, setRepertoire] = useState<RepertoireProjets | null>(null);
@@ -47,6 +164,7 @@ export function ParametresProjets() {
   // à quelqu'un qui n'avait rien réglé.
   const [echecLecture, setEchecLecture] = useState<RefusProjet | null>(null);
   const [refus, setRefus] = useState<RefusProjet | null>(null);
+  const [versionAutorises, setVersionAutorises] = useState(0);
 
   useEffect(() => {
     let vivant = true;
@@ -140,9 +258,12 @@ export function ParametresProjets() {
             cheminInitial={repertoire?.chemin ?? null}
             onChoisir={(chemin) => void regler(chemin)}
             onFermer={() => setExplorateurOuvert(false)}
+            onAutorise={() => setVersionAutorises((v) => v + 1)}
           />
         </div>
       )}
+
+      <DossiersAutorises version={versionAutorises} />
     </div>
   );
 }

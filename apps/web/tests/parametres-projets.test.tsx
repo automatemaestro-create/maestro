@@ -16,7 +16,7 @@
  *    quelque chose à défaire.
  */
 
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,11 +29,17 @@ const chargerRepertoireProjets = vi.fn();
 const reglerRepertoireProjets = vi.fn();
 const chargerExplorateur = vi.fn();
 const chargerDisponibiliteSelecteur = vi.fn();
+const chargerDossiersAutorises = vi.fn();
+const retirerDossierAutorise = vi.fn();
+const autoriserDossier = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const reel = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...reel,
+    chargerDossiersAutorises: () => chargerDossiersAutorises(),
+    retirerDossierAutorise: (chemin: string) => retirerDossierAutorise(chemin),
+    autoriserDossier: (chemin: string) => autoriserDossier(chemin),
     chargerRepertoireProjets: () => chargerRepertoireProjets(),
     reglerRepertoireProjets: (chemin: string | null) =>
       reglerRepertoireProjets(chemin),
@@ -57,6 +63,12 @@ function repertoireFactice(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  chargerDossiersAutorises.mockResolvedValue({ dossiers: [] });
+  retirerDossierAutorise.mockResolvedValue({ dossiers: [] });
+  autoriserDossier.mockImplementation(async (chemin: string) => ({
+    chemin,
+    dossiers: [{ chemin, refus: null }],
+  }));
   chargerRepertoireProjets.mockResolvedValue(repertoireFactice());
   reglerRepertoireProjets.mockResolvedValue(
     repertoireFactice({ chemin: "D:/projets", par_defaut: false }),
@@ -210,5 +222,146 @@ describe("③ ce qui rate se dit", () => {
       await screen.findByText(/Dossier utilisateur refusé tel quel/),
     ).toBeInTheDocument();
     expect(screen.getByText("C:/Users/moi/Maestro")).toBeInTheDocument();
+  });
+});
+
+describe("④ les dossiers autorisés se relisent et se retirent (#1610)", () => {
+  /** La ligne « Dossiers autorisés », une fois la section montée. */
+  async function ligneDesAutorises() {
+    render(<ParametresProjets />);
+    const libelle = await screen.findByText("Dossiers autorisés");
+    // La ligne de réglage est le bloc qui porte le libellé, son aide et sa valeur.
+    return libelle.parentElement?.parentElement as HTMLElement;
+  }
+
+  it("dit en toutes lettres qu'aucun dossier n'est autorisé", async () => {
+    const ligne = await ligneDesAutorises();
+
+    expect(
+      await within(ligne).findByText("Aucun dossier autorisé."),
+    ).toBeInTheDocument();
+    // La portée est dite une fois, en tête, et ne change pas avec l'état.
+    expect(ligne).toHaveTextContent(/zones protégées y restent refusées/);
+  });
+
+  it("liste chaque dossier avec un retrait nommé, et le retire", async () => {
+    chargerDossiersAutorises.mockResolvedValue({
+      dossiers: [
+        { chemin: "D:/clients/acme", refus: null },
+        { chemin: "E:/archives", refus: null },
+      ],
+    });
+    retirerDossierAutorise.mockResolvedValue({
+      dossiers: [{ chemin: "E:/archives", refus: null }],
+    });
+    const utilisateur = userEvent.setup();
+    await ligneDesAutorises();
+
+    await utilisateur.click(
+      await screen.findByRole("button", { name: "Retirer D:/clients/acme" }),
+    );
+
+    expect(retirerDossierAutorise).toHaveBeenCalledWith("D:/clients/acme");
+    await waitFor(() =>
+      expect(screen.queryByText("D:/clients/acme")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("E:/archives")).toBeInTheDocument();
+  });
+
+  it("dit qu'une autorisation ne sert plus, sans la cacher", async () => {
+    chargerDossiersAutorises.mockResolvedValue({
+      dossiers: [
+        {
+          chemin: "F:/debranche",
+          refus: {
+            motif: "dossier-absent",
+            message: "Racine introuvable : F:/debranche.",
+          },
+        },
+      ],
+    });
+    await ligneDesAutorises();
+
+    expect(await screen.findByText("F:/debranche")).toBeInTheDocument();
+    expect(screen.getByText(/inutilisable — Dossier absent/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retirer F:/debranche" }),
+    ).toBeInTheDocument();
+  });
+
+  it("garde le dossier à l'écran quand le retrait est refusé", async () => {
+    const { ErreurProjet } = await import("@/lib/api");
+    chargerDossiersAutorises.mockResolvedValue({
+      dossiers: [{ chemin: "D:/clients/acme", refus: null }],
+    });
+    retirerDossierAutorise.mockRejectedValue(
+      new ErreurProjet(
+        "autorisation-inconnue",
+        "Ce dossier n'est pas autorisé sur ce poste.",
+      ),
+    );
+    const utilisateur = userEvent.setup();
+    await ligneDesAutorises();
+
+    await utilisateur.click(
+      await screen.findByRole("button", { name: "Retirer D:/clients/acme" }),
+    );
+
+    expect(await screen.findByText(/Retrait refusé/)).toBeInTheDocument();
+    expect(screen.getByText("D:/clients/acme")).toBeInTheDocument();
+  });
+
+  it("distingue une lecture en panne d'une liste vide", async () => {
+    const { ErreurApi } = await import("@/lib/api");
+    chargerDossiersAutorises.mockRejectedValue(
+      ErreurApi.injoignable("/api/projets/dossiers-autorises"),
+    );
+    await ligneDesAutorises();
+
+    expect(
+      await screen.findByText(/Dossiers autorisés illisibles/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Aucun dossier autorisé."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("se relit quand l'explorateur de la section vient d'en autoriser un", async () => {
+    const { ErreurProjet } = await import("@/lib/api");
+    const utilisateur = userEvent.setup();
+    await monter();
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Changer de dossier/ }),
+    );
+    const explorateur = await screen.findByRole("region", {
+      name: "Explorateur de dossiers",
+    });
+    await within(explorateur).findByText("depensio");
+    chargerExplorateur.mockRejectedValueOnce(
+      new ErreurProjet(
+        "hors-racines-explorables",
+        "Dossier hors des dossiers explorables : D:/projets/depensio.",
+        { chemin: "D:/projets/depensio", refus: null },
+      ),
+    );
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Ouvrir depensio" }),
+    );
+    await utilisateur.click(
+      await within(explorateur).findByRole("button", {
+        name: "Autoriser ce dossier…",
+      }),
+    );
+    chargerDossiersAutorises.mockResolvedValue({
+      dossiers: [{ chemin: "D:/projets/depensio", refus: null }],
+    });
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Autoriser ce dossier" }),
+    );
+
+    expect(autoriserDossier).toHaveBeenCalledWith("D:/projets/depensio");
+    expect(
+      await screen.findByRole("button", { name: "Retirer D:/projets/depensio" }),
+    ).toBeInTheDocument();
   });
 });

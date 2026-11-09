@@ -3589,14 +3589,21 @@ export type DossierExplorateur = {
    * répertoire des projets (#1022) ; `utilisateur` : le dossier utilisateur ;
    * `recent` : le parent d'un projet récemment déclaré ; `projet` : une racine
    * déjà déclarée ; `volume` : un disque du poste ; `configuree` : une racine
-   * de `MAESTRO_EXPLORATEUR_RACINES`.
+   * de `MAESTRO_EXPLORATEUR_RACINES` ; `autorise` : un dossier autorisé depuis
+   * l'écran (#1610).
    */
   origine: OrigineDossier | null;
 };
 
 /** Les origines qu'un point d'entrée de l'explorateur peut porter (#278). */
 export type OrigineDossier =
-  "repertoire" | "utilisateur" | "recent" | "projet" | "volume" | "configuree";
+  | "repertoire"
+  | "utilisateur"
+  | "recent"
+  | "projet"
+  | "volume"
+  | "configuree"
+  | "autorise";
 
 /**
  * Le **répertoire des projets** (`GET`/`PUT /api/projets/repertoire`, #1022) :
@@ -3679,4 +3686,31 @@ export type PageExplorateur = {
 export type RefusProjet = {
   motif: string;
   message: string;
+  /**
+   * Porté par `hors-racines-explorables` seulement (#1610) : le dossier refusé
+   * peut-il s'autoriser d'ici ? `refus` à `null` dit que `valider_racine`
+   * l'accepterait — l'écran propose alors le geste ; sinon il dit pourquoi.
+   */
+  autorisation?: AutorisationDossier;
+};
+
+/** Ce qu'un refus hors frontière dit de son dossier (#1610) : son chemin, et le verdict d'EF-38. */
+export type AutorisationDossier = {
+  chemin: string;
+  refus: RefusProjet | null;
+};
+
+/**
+ * Un dossier autorisé depuis l'écran (`GET /api/projets/dossiers-autorises`,
+ * #1610), avec son verdict du moment : `refus` dit qu'il ne sert plus de
+ * frontière (disque débranché, dossier supprimé).
+ */
+export type DossierAutorise = {
+  chemin: string;
+  refus: RefusProjet | null;
+};
+
+/** La liste des dossiers autorisés, dans l'ordre de leur autorisation (#1610). */
+export type DossiersAutorises = {
+  dossiers: DossierAutorise[];
 };

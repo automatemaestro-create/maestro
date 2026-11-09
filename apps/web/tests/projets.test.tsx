@@ -76,6 +76,7 @@ const chargerDisponibiliteSelecteur = vi.fn();
 const ouvrirSelecteurNatif = vi.fn();
 const chargerRepertoireProjets = vi.fn();
 const ouvrirQuestionnaireOutillage = vi.fn();
+const autoriserDossier = vi.fn();
 
 // `importOriginal` plutôt qu'un objet nu : `ErreurProjet` doit rester **la**
 // classe du module, sinon le `instanceof` qui distingue un refus motivé d'une
@@ -95,6 +96,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     chargerDisponibiliteSelecteur: () => chargerDisponibiliteSelecteur(),
     ouvrirSelecteurNatif: (depart: string | null) => ouvrirSelecteurNatif(depart),
     chargerRepertoireProjets: () => chargerRepertoireProjets(),
+    autoriserDossier: (chemin: string) => autoriserDossier(chemin),
     ouvrirQuestionnaireOutillage: (
       agent: string,
       conversation?: string,
@@ -154,6 +156,10 @@ beforeEach(() => {
   versionnerProjet.mockResolvedValue(projetFactice());
   chargerDisponibiliteSelecteur.mockResolvedValue(selecteurIndisponible());
   chargerRepertoireProjets.mockResolvedValue(repertoireFactice());
+  autoriserDossier.mockImplementation(async (chemin: string) => ({
+    chemin,
+    dossiers: [{ chemin, refus: null }],
+  }));
   ouvrirSelecteurNatif.mockResolvedValue({
     annule: true,
     chemin: null,
@@ -640,7 +646,7 @@ describe("un refus motivé (EF-38)", () => {
     chargerExplorateur.mockRejectedValueOnce(
       new ErreurProjet(
         "hors-racines-explorables",
-        "Dossier hors des racines explorables : C:/ailleurs",
+        "Dossier hors des dossiers explorables : C:/ailleurs",
       ),
     );
     await utilisateur.click(
@@ -651,7 +657,9 @@ describe("un refus motivé (EF-38)", () => {
     // Le motif en mots, pas son identifiant d'API (#946, C7).
     expect(refus).toHaveTextContent("Hors des dossiers explorables");
     expect(refus).not.toHaveTextContent("hors-racines-explorables");
-    expect(refus).toHaveTextContent("MAESTRO_EXPLORATEUR_RACINES");
+    // Plus de consigne d'administrateur (#1610) : ni variable, ni redémarrage.
+    expect(refus).not.toHaveTextContent("MAESTRO_EXPLORATEUR_RACINES");
+    expect(refus).not.toHaveTextContent(/relancer/);
     // La page précédente est toujours là, et une porte de sortie est offerte.
     expect(within(explorateur).getByText("depensio")).toBeInTheDocument();
     expect(
@@ -686,6 +694,174 @@ describe("un refus motivé (EF-38)", () => {
     expect(
       await within(explorateur).findByText(/plus de 500 sous-dossiers/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
+  /** Ouvre « depensio », que l'API refuse hors des dossiers explorables. */
+  async function refuserDepensio(
+    utilisateur: ReturnType<typeof userEvent.setup>,
+    autorisation: { chemin: string; refus: { motif: string; message: string } | null } | null,
+    motif = "hors-racines-explorables",
+  ) {
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+    await within(explorateur).findByText("depensio");
+    chargerExplorateur.mockRejectedValueOnce(
+      new ErreurProjet(
+        motif,
+        "Dossier hors des dossiers explorables : C:/ailleurs — explorables : D:/projets.",
+        autorisation,
+      ),
+    );
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Ouvrir depensio" }),
+    );
+    await within(explorateur).findByRole("alert");
+    return explorateur;
+  }
+
+  it("confirme le dossier exact, puis l'autorise et l'ouvre dans le même geste", async () => {
+    const utilisateur = userEvent.setup();
+    const explorateur = await refuserDepensio(utilisateur, {
+      chemin: "C:/ailleurs",
+      refus: null,
+    });
+
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
+    );
+    const confirmation = within(explorateur).getByRole("group", {
+      name: "Autoriser ce dossier sur ce poste ?",
+    });
+    // Le focus entre dans la confirmation : le bouton qui l'a ouverte a disparu.
+    expect(confirmation).toHaveFocus();
+    expect(within(confirmation).getByText("C:/ailleurs")).toBeInTheDocument();
+    expect(confirmation).toHaveTextContent(/zones protégées/);
+    expect(confirmation).toHaveTextContent(/Paramètres › Projets/);
+    // La sortie du refus reste offerte pendant la confirmation.
+    expect(
+      within(explorateur).getByRole("button", {
+        name: "Revenir aux dossiers explorables",
+      }),
+    ).toBeInTheDocument();
+    expect(autoriserDossier).not.toHaveBeenCalled();
+
+    chargerExplorateur.mockResolvedValueOnce(
+      pageExplorateurFactice({ chemin: "C:/ailleurs", dossiers: [] }),
+    );
+    await utilisateur.click(
+      within(confirmation).getByRole("button", { name: "Autoriser ce dossier" }),
+    );
+
+    expect(autoriserDossier).toHaveBeenCalledWith("C:/ailleurs");
+    await waitFor(() => expect(chargerExplorateur).toHaveBeenLastCalledWith("C:/ailleurs"));
+    expect(await within(explorateur).findByText("C:/ailleurs")).toBeInTheDocument();
+    expect(within(explorateur).queryByRole("alert")).toBeNull();
+    expect(within(explorateur).queryByRole("group")).toBeNull();
+  });
+
+  it("n'écrit rien quand on renonce, et rend le focus au geste", async () => {
+    const utilisateur = userEvent.setup();
+    const explorateur = await refuserDepensio(utilisateur, {
+      chemin: "C:/ailleurs",
+      refus: null,
+    });
+
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
+    );
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Ne pas autoriser" }),
+    );
+
+    expect(autoriserDossier).not.toHaveBeenCalled();
+    expect(within(explorateur).queryByRole("group")).toBeNull();
+    expect(
+      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
+    ).toHaveFocus();
+  });
+
+  it("dit dans la confirmation ce qui a empêché l'autorisation", async () => {
+    const { ErreurApi } = await import("@/lib/api");
+    autoriserDossier.mockRejectedValueOnce(
+      ErreurApi.injoignable("/api/projets/dossiers-autorises"),
+    );
+    const utilisateur = userEvent.setup();
+    const explorateur = await refuserDepensio(utilisateur, {
+      chemin: "C:/ailleurs",
+      refus: null,
+    });
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
+    );
+    const confirmation = within(explorateur).getByRole("group");
+    await utilisateur.click(
+      within(confirmation).getByRole("button", { name: "Autoriser ce dossier" }),
+    );
+
+    expect(
+      await within(confirmation).findByText(/L'API n'a pas répondu/),
+    ).toBeInTheDocument();
+    expect(within(confirmation).getByRole("alert")).toHaveTextContent(
+      "Dossier non autorisé",
+    );
+    // Rien n'a été ouvert : la page d'avant reste, la confirmation aussi.
+    expect(within(explorateur).getByText("depensio")).toBeInTheDocument();
+  });
+
+  it("n'offre pas le geste pour un dossier hors frontière que valider_racine refuserait", async () => {
+    const utilisateur = userEvent.setup();
+    const explorateur = await refuserDepensio(utilisateur, {
+      chemin: "//serveur/partage",
+      refus: {
+        motif: "ancre-non-standard",
+        message:
+          "Racine refusée : //serveur/partage n'est pas sur un disque local (partage réseau ou chemin de périphérique).",
+      },
+    });
+
+    expect(
+      within(explorateur).queryByRole("button", { name: /Autoriser ce dossier/ }),
+    ).toBeNull();
+    expect(
+      within(explorateur).getByText(/Ce dossier ne peut pas être autorisé/),
+    ).toHaveTextContent(/Hors d'un disque local : Racine refusée/);
+  });
+
+  it("n'offre pas le geste pour un refus d'un autre motif, qui garde sa raison", async () => {
+    const utilisateur = userEvent.setup();
+    const explorateur = await refuserDepensio(utilisateur, null, "chemin-sensible");
+
+    expect(within(explorateur).getByRole("alert")).toHaveTextContent(
+      "motif : Zone protégée",
+    );
+    expect(
+      within(explorateur).queryByRole("button", { name: /Autoriser ce dossier/ }),
+    ).toBeNull();
+    expect(
+      within(explorateur).queryByText(/ne peut pas être autorisé/),
+    ).toBeNull();
+  });
+
+  it("nomme un dossier autorisé parmi les points d'entrée", async () => {
+    chargerExplorateur.mockResolvedValue(
+      pageExplorateurFactice({
+        chemin: null,
+        dossiers: [
+          dossierFactice({
+            nom: "acme",
+            chemin: "C:/clients/acme",
+            origine: "autorise",
+          }),
+        ],
+      }),
+    );
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+
+    expect(
+      await within(explorateur).findByRole("button", { name: "Ouvrir acme" }),
+    ).toHaveTextContent("dossier autorisé");
   });
 });
 

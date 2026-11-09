@@ -33,8 +33,18 @@ chemin que l'explorateur refuserait ensuite (`dossier-absent`) serait pire que
 le créer. La réponse **dit** qu'elle l'a créé plutôt que de le faire en
 silence.
 
+## Les dossiers autorisés (#1610)
+
+Le second réglage du même fichier : les dossiers que l'utilisateur a **autorisés
+depuis l'écran** parce que l'explorateur les refusait, hors des dossiers
+explorables. Ils **s'ajoutent** à la frontière (`MAESTRO_EXPLORATEUR_RACINES` ou
+le défaut) sans la remplacer, valent dès l'appel suivant — aucun redémarrage — et
+se retirent dans *Paramètres › Projets*.
+
 Tout passe par `valider_racine` (EF-38) : il n'y a pas de seconde porte de
-validation, ici pas plus qu'ailleurs (docs/24 §2.5).
+validation, ici pas plus qu'ailleurs (docs/24 §2.5). Un dossier ne s'autorise que
+si `valider_racine` l'accepterait comme racine de projet : une autorisation
+n'ouvre donc aucune zone interdite, et le service la rejuge à chaque lecture.
 """
 
 from __future__ import annotations
@@ -77,28 +87,47 @@ def repertoire_par_defaut() -> Path:
 
 @dataclass(frozen=True)
 class ReglagesProjets:
-    """Les réglages du poste côté projets — un seul pour l'instant.
+    """Les réglages du poste côté projets : le répertoire et les dossiers autorisés.
 
     `repertoire` à `None` signifie « le défaut », **et non** « aucun » : le
     stocker nul plutôt que résolu est ce qui fait suivre un déménagement du
     dossier personnel sans réécrire le fichier.
+
+    `dossiers_autorises` porte les dossiers autorisés depuis l'écran (#1610),
+    en POSIX et dans l'ordre de leur autorisation.
     """
 
     repertoire: str | None = None
+    dossiers_autorises: tuple[str, ...] = ()
     modifie_le: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Réémet les réglages en dict JSON-sérialisable (le fichier stocké)."""
-        return {"repertoire": self.repertoire, "modifie_le": self.modifie_le}
+        return {
+            "repertoire": self.repertoire,
+            "dossiers_autorises": list(self.dossiers_autorises),
+            "modifie_le": self.modifie_le,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReglagesProjets:
-        """Reconstruit les réglages depuis leur forme `to_dict`."""
+        """Reconstruit les réglages depuis leur forme `to_dict`.
+
+        Une entrée de `dossiers_autorises` qui n'est pas un texte non vide est
+        ignorée : un fichier abîmé à la main n'empêche pas de lire le reste.
+        """
         brut = data.get("repertoire")
         repertoire = brut.strip() if isinstance(brut, str) and brut.strip() else None
+        autorises = data.get("dossiers_autorises")
+        dossiers = (
+            tuple(d.strip() for d in autorises if isinstance(d, str) and d.strip())
+            if isinstance(autorises, list)
+            else ()
+        )
         modifie = data.get("modifie_le")
         return cls(
             repertoire=repertoire,
+            dossiers_autorises=dossiers,
             modifie_le=modifie if isinstance(modifie, str) else "",
         )
 
@@ -156,7 +185,45 @@ class ReglagesProjetsStore:
             # dans l'explorateur, et l'écran ne saurait plus qu'il s'agit du
             # même — constat de la relecture visuelle de #1022.
             valeur = valider_racine(repertoire, creer=True).as_posix()
-        propre = replace(ReglagesProjets(repertoire=valeur), modifie_le=_maintenant())
+        return self._ecrire(replace(self.lire(), repertoire=valeur))
+
+    def autoriser(self, dossier: str | Path) -> tuple[ReglagesProjets, str]:
+        """Ajoute `dossier` aux dossiers autorisés ; rend `(réglages, chemin POSIX)`.
+
+        Le dossier est validé comme une racine de projet (`valider_racine`, sans
+        création : on autorise un dossier qui existe). Lève `RacineRefusee`
+        motivée sinon, et **rien n'est écrit**. Autoriser deux fois le même
+        dossier ne l'inscrit qu'une fois et ne réécrit pas le fichier.
+        """
+        valeur = valider_racine(dossier).as_posix()
+        reglages = self.lire()
+        if any(_meme(valeur, d) for d in reglages.dossiers_autorises):
+            return reglages, valeur
+        ajout = replace(reglages, dossiers_autorises=(*reglages.dossiers_autorises, valeur))
+        return self._ecrire(ajout), valeur
+
+    def retirer(self, dossier: str | Path) -> ReglagesProjets:
+        """Retire `dossier` des dossiers autorisés et rend les réglages.
+
+        Le dossier n'est **pas** revalidé : une autorisation devenue invalide
+        (disque débranché, dossier supprimé) se retire aussi. Lève
+        `RacineRefusee` (`autorisation-inconnue`) quand rien ne correspond, et
+        rien n'est écrit.
+        """
+        cible = Path(str(dossier).strip()).as_posix()
+        reglages = self.lire()
+        restants = tuple(d for d in reglages.dossiers_autorises if not _meme(cible, d))
+        if len(restants) == len(reglages.dossiers_autorises):
+            raise RacineRefusee(
+                "autorisation-inconnue",
+                f"Ce dossier n'est pas autorisé sur ce poste : {cible}.",
+                cible,
+            )
+        return self._ecrire(replace(reglages, dossiers_autorises=restants))
+
+    def _ecrire(self, reglages: ReglagesProjets) -> ReglagesProjets:
+        """Écrit les réglages datés, atomiquement (temporaire puis renommage)."""
+        propre = replace(reglages, modifie_le=_maintenant())
         self._racine.mkdir(parents=True, exist_ok=True)
         chemin = self._racine / _FICHIER
         temporaire = chemin.with_suffix(".json.tmp")
@@ -184,6 +251,11 @@ class ReglagesProjetsStore:
         existait = Path(brut).expanduser().is_dir()
         resolu = valider_racine(brut, creer=creer)
         return resolu, par_defaut, creer and not existait
+
+
+def _meme(a: str, b: str) -> bool:
+    """Deux chemins désignent-ils le même dossier ? — la casse ne compte pas sous Windows."""
+    return os.path.normcase(Path(a).as_posix()) == os.path.normcase(Path(b).as_posix())
 
 
 def _maintenant() -> str:

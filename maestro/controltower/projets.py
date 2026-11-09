@@ -32,7 +32,9 @@ frontière, pas comme un confort. Elle en porte deux, superposées :
 1. **les racines explorables** — le dossier utilisateur par défaut, remplaçable
    par `MAESTRO_EXPLORATEUR_RACINES`, et **toujours** les racines des projets
    déjà déclarés (elles ont passé `valider_racine`, elles sont explorables par
-   construction). Hors d'elles, refus ;
+   construction) et les **dossiers autorisés depuis l'écran** (#1610), rejugés
+   par `valider_racine` à chaque lecture. Hors d'elles, refus — qui dit si le
+   dossier peut s'autoriser d'ici (`autorisation`) ;
 2. **les zones interdites** de `maestro.projets.racine` (`.ssh`, `AppData`,
    dossiers système, dépôt de Maestro) — qui s'appliquent *à l'intérieur* des
    racines : le dossier utilisateur est traversable, `~/.ssh` ne l'est pas.
@@ -103,6 +105,7 @@ STATUT_HTTP_PAR_MOTIF: dict[str, int] = {
     "acces-refuse": 403,
     "projet-inconnu": 404,
     "run-inconnu": 404,
+    "autorisation-inconnue": 404,
     "depot-englobant": 409,
     "git-indisponible": 503,
 }
@@ -158,18 +161,51 @@ def statut_http(refus: Exception, *, explorateur: bool = False) -> int:
     return STATUT_HTTP_PAR_MOTIF.get(motif, STATUT_HTTP_DEFAUT)
 
 
-def detail_refus(refus: Exception) -> dict[str, str]:
+class DossierHorsFrontiere(RacineRefusee):
+    """Le refus `hors-racines-explorables`, qui dit en plus si le dossier s'autorise d'ici.
+
+    `autorisation` vaut `{chemin, refus}` : `chemin` est le dossier en POSIX,
+    `refus` est `None` quand `valider_racine` l'accepterait comme racine de
+    projet, et sinon le refus motivé qu'il rendrait (#1610). L'écran ne
+    propose le geste que dans le premier cas : il ne devine rien.
+    """
+
+    def __init__(self, cible: Path, racines: tuple[Path, ...]) -> None:
+        explorables = (
+            ", ".join(r.as_posix() for r in racines) if racines else "aucun sur ce poste"
+        )
+        super().__init__(
+            "hors-racines-explorables",
+            f"Dossier hors des dossiers explorables : {cible.as_posix()} — "
+            f"explorables : {explorables}.",
+            cible,
+        )
+        try:
+            valider_racine(cible)
+        except RacineRefusee as refus:
+            verdict: dict[str, str] | None = detail_refus(refus)
+        else:
+            verdict = None
+        self.autorisation: dict[str, Any] = {"chemin": cible.as_posix(), "refus": verdict}
+
+
+def detail_refus(refus: Exception) -> dict[str, Any]:
     """Le corps d'erreur servi par les routes projets : `{motif, message}`.
 
     Le `motif` est un code stable et court (`chemin-sensible`, `hors-racines-explorables`…),
     le `message` la phrase lisible. L'écran Projets doit pouvoir dire *pourquoi*
     une racine est refusée ([docs/05 §2.7](../../docs/05-interface-control-tower.md)) :
     le laisser deviner à partir d'une phrase libre reviendrait à ne rien lui dire.
+    Un dossier hors de la frontière porte en plus son `autorisation` (#1610).
     """
-    return {
+    corps: dict[str, Any] = {
         "motif": getattr(refus, "motif", "requete-invalide"),
         "message": str(refus),
     }
+    autorisation = getattr(refus, "autorisation", None)
+    if autorisation is not None:
+        corps["autorisation"] = autorisation
+    return corps
 
 
 class ServiceProjets:
@@ -276,6 +312,52 @@ class ServiceProjets:
         except RacineRefusee:
             return None
         return chemin
+
+    # --- Dossiers autorisés (#1610) --------------------------------------
+
+    def dossiers_autorises(self) -> dict[str, Any]:
+        """Les dossiers autorisés depuis l'écran, chacun avec son verdict du moment.
+
+        Rend `{dossiers: [{chemin, refus}]}`, dans l'ordre d'autorisation. Le
+        `refus` est celui que `valider_racine` rend **aujourd'hui** (disque
+        débranché, dossier supprimé) : une autorisation devenue invalide ne sert
+        plus de frontière, et l'écran le dit au lieu de la taire.
+        """
+        dossiers = []
+        for chemin in self._reglages.lire().dossiers_autorises:
+            try:
+                valider_racine(chemin)
+            except RacineRefusee as refus:
+                dossiers.append({"chemin": chemin, "refus": detail_refus(refus)})
+            else:
+                dossiers.append({"chemin": chemin, "refus": None})
+        return {"dossiers": dossiers}
+
+    def autoriser_dossier(self, chemin: str) -> dict[str, Any]:
+        """Autorise `chemin` sur ce poste ; rend `{chemin, dossiers}`.
+
+        Validé par `valider_racine` dans le dépôt : un dossier qu'on ne pourrait
+        pas déclarer comme projet ne s'autorise pas, et `RacineRefusee` motivée
+        remonte sans rien écrire. `chemin` est le dossier en POSIX, celui que
+        l'explorateur ouvre ensuite.
+        """
+        _, valeur = self._reglages.autoriser(chemin)
+        return {"chemin": valeur, **self.dossiers_autorises()}
+
+    def retirer_dossier(self, chemin: str) -> dict[str, Any]:
+        """Retire une autorisation ; rend `{dossiers}`. `autorisation-inconnue` sinon."""
+        self._reglages.retirer(chemin)
+        return self.dossiers_autorises()
+
+    def _dossiers_autorises_valides(self) -> tuple[Path, ...]:
+        """Les dossiers autorisés que `valider_racine` accepte encore, canonicalisés."""
+        valides = []
+        for chemin in self._reglages.lire().dossiers_autorises:
+            try:
+                valides.append(valider_racine(chemin))
+            except RacineRefusee:
+                continue
+        return tuple(valides)
 
     # --- CRUD ------------------------------------------------------------
 
@@ -459,6 +541,10 @@ class ServiceProjets:
         """
         base = self._racines if self._racines is not None else _racines_defaut()
         candidates = list(base) + [p.racine_chemin for p in self._projets_lisibles()]
+        # Les dossiers autorisés depuis l'écran **s'ajoutent** à la base sans la
+        # remplacer (#1610), et seulement ceux que `valider_racine` accepte
+        # encore : une autorisation n'ouvre aucune zone interdite.
+        candidates.extend(self._dossiers_autorises_valides())
         # Le répertoire des projets entre dans la frontière comme une racine de
         # projet déclaré (#1022) : c'est un dossier que l'écran **propose**, et
         # proposer un parent que l'explorateur refuserait d'ouvrir serait un
@@ -491,14 +577,17 @@ class ServiceProjets:
         bien qu'elle se réduirait à `C:/` (ou `/`) — un point d'entrée unique
         d'où il faudrait redescendre tout l'arbre à chaque fois.
 
-        Cinq origines, dans cet ordre :
+        Six origines, dans cet ordre :
 
         - `repertoire` — le **répertoire des projets** (#1022), celui que le
           formulaire propose d'office à un projet neuf : c'est le premier
           endroit à regarder, puisque c'est celui d'où l'on vient. Absent tant
           qu'il n'existe pas sur le disque ;
         - `utilisateur` — le dossier utilisateur, là où sont la plupart des
-          projets ;
+          projets (`configuree` à sa place quand `MAESTRO_EXPLORATEUR_RACINES`
+          est posée) ;
+        - `autorise` — les dossiers autorisés depuis l'écran (#1610), dans
+          l'ordre de leur autorisation ;
         - `recent` — les **parents** des projets déclarés, du plus récemment
           déclaré au plus ancien. C'est le dossier où l'on range ses dépôts :
           y avoir déclaré un projet est le meilleur indice qu'on y déclarera le
@@ -546,6 +635,8 @@ class ServiceProjets:
                 retenir(Path.home(), "utilisateur")
             except (RuntimeError, OSError):  # pragma: no cover - dépend de l'environnement
                 pass
+        for autorise in self._dossiers_autorises_valides():
+            retenir(autorise, "autorise")
 
         projets = sorted(
             self._projets_lisibles(),
@@ -576,14 +667,17 @@ class ServiceProjets:
         ou n'est pas lisible (`acces-refuse`).
         """
         racines = self.racines()
-        if not racines:
+        brut = (chemin or "").strip()
+        # Sans aucune racine, la page d'entrée n'a rien à montrer ; un chemin
+        # donné, lui, passe par la frontière et revient `hors-racines-explorables`
+        # avec son `autorisation` — la sortie de ce cul-de-sac (#1610).
+        if not racines and not brut:
             raise RacineRefusee(
                 "aucune-racine-explorable",
-                "Aucun dossier explorable : renseignez MAESTRO_EXPLORATEUR_RACINES "
-                "(le dossier utilisateur est introuvable et aucun projet n'est déclaré).",
+                "Aucun dossier explorable sur ce poste : le dossier utilisateur est "
+                "introuvable, et aucun projet ni aucun dossier autorisé n'est déclaré.",
             )
         par_racine = self._projets_par_racine()
-        brut = (chemin or "").strip()
         if not brut:
             # La page d'entrée montre les **points d'entrée**, pas la frontière :
             # depuis #278 celle-ci contient les volumes, qui avaleraient le
@@ -625,13 +719,7 @@ class ServiceProjets:
         cible = canonique(brut)
         verifier_zone_interdite(cible)
         if not _sous_une_racine(cible, racines):
-            raise RacineRefusee(
-                "hors-racines-explorables",
-                f"Dossier hors des racines explorables : {cible} — autorisées : "
-                f"{', '.join(r.as_posix() for r in racines)} "
-                "(élargissez avec MAESTRO_EXPLORATEUR_RACINES).",
-                cible,
-            )
+            raise DossierHorsFrontiere(cible, racines)
         if not cible.exists():
             raise RacineRefusee("dossier-absent", f"Dossier introuvable : {cible}.", cible)
         if not cible.is_dir():
