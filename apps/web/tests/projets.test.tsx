@@ -727,9 +727,13 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
       refus: null,
     });
 
-    await utilisateur.click(
-      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
-    );
+    // Le libellé ne donne que le nom du dossier ; le chemin entier est en
+    // infobulle, et la confirmation le redit.
+    const geste = within(explorateur).getByRole("button", {
+      name: "Autoriser ailleurs…",
+    });
+    expect(geste).toHaveAttribute("title", "C:/ailleurs");
+    await utilisateur.click(geste);
     const confirmation = within(explorateur).getByRole("group", {
       name: "Autoriser ce dossier sur ce poste ?",
     });
@@ -760,6 +764,43 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     expect(within(explorateur).queryByRole("group")).toBeNull();
   });
 
+  it("n'a qu'un bouton plein à la fois, sur le dossier qu'on traite", async () => {
+    /** Les boutons pleins de l'explorateur : la forme pleine porte le fond d'accent. */
+    const pleins = (zone: HTMLElement) =>
+      within(zone)
+        .getAllByRole("button")
+        .filter((bouton) => bouton.className.includes("bg-accent"))
+        .map((bouton) => bouton.textContent);
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+    await within(explorateur).findByText("depensio");
+    // Sans refus, l'action de l'explorateur est de choisir le dossier courant.
+    expect(pleins(explorateur)).toEqual(["Choisir ce dossier"]);
+
+    chargerExplorateur.mockRejectedValueOnce(
+      new ErreurProjet(
+        "hors-racines-explorables",
+        "Dossier hors des dossiers explorables : C:/ailleurs — explorables : D:/projets.",
+        { chemin: "C:/ailleurs", refus: null },
+      ),
+    );
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Ouvrir depensio" }),
+    );
+    await within(explorateur).findByRole("alert");
+    // Le refus offre d'autoriser le dossier saisi : ce geste prend le plein, et
+    // « Choisir ce dossier », qui vise un autre dossier, reste en contour.
+    expect(pleins(explorateur)).toEqual(["Autoriser ailleurs…"]);
+    expect(
+      within(explorateur).getByRole("button", { name: "Choisir ce dossier" }),
+    ).toBeEnabled();
+
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Autoriser ailleurs…" }),
+    );
+    expect(pleins(explorateur)).toEqual(["Autoriser ce dossier"]);
+  });
+
   it("n'écrit rien quand on renonce, et rend le focus au geste", async () => {
     const utilisateur = userEvent.setup();
     const explorateur = await refuserDepensio(utilisateur, {
@@ -768,7 +809,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     });
 
     await utilisateur.click(
-      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
+      within(explorateur).getByRole("button", { name: "Autoriser ailleurs…" }),
     );
     await utilisateur.click(
       within(explorateur).getByRole("button", { name: "Ne pas autoriser" }),
@@ -777,7 +818,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     expect(autoriserDossier).not.toHaveBeenCalled();
     expect(within(explorateur).queryByRole("group")).toBeNull();
     expect(
-      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
+      within(explorateur).getByRole("button", { name: "Autoriser ailleurs…" }),
     ).toHaveFocus();
   });
 
@@ -792,7 +833,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
       refus: null,
     });
     await utilisateur.click(
-      within(explorateur).getByRole("button", { name: "Autoriser ce dossier…" }),
+      within(explorateur).getByRole("button", { name: "Autoriser ailleurs…" }),
     );
     const confirmation = within(explorateur).getByRole("group");
     await utilisateur.click(
@@ -802,9 +843,11 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     expect(
       await within(confirmation).findByText(/L'API n'a pas répondu/),
     ).toBeInTheDocument();
-    expect(within(confirmation).getByRole("alert")).toHaveTextContent(
-      "Dossier non autorisé",
-    );
+    // Une panne de l'action, pas un jugement sur le dossier : le titre dit que
+    // l'autorisation n'a pas abouti, jamais « Dossier non autorisé ».
+    const alerte = within(confirmation).getByRole("alert");
+    expect(alerte).toHaveTextContent("L'autorisation n'a pas abouti");
+    expect(alerte).not.toHaveTextContent("Dossier non autorisé");
     // Rien n'a été ouvert : la page d'avant reste, la confirmation aussi.
     expect(within(explorateur).getByText("depensio")).toBeInTheDocument();
   });
@@ -821,11 +864,34 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     });
 
     expect(
-      within(explorateur).queryByRole("button", { name: /Autoriser ce dossier/ }),
+      within(explorateur).queryByRole("button", { name: /^Autoriser/ }),
     ).toBeNull();
-    expect(
-      within(explorateur).getByText(/Ce dossier ne peut pas être autorisé/),
-    ).toHaveTextContent(/Hors d'un disque local : Racine refusée/);
+    // Le « non » se dit dans le bandeau, à la place de la promesse « s'autorise
+    // d'ici » : on ne lit jamais l'offre avant le refus.
+    const bandeau = within(explorateur).getByRole("alert");
+    expect(bandeau).toHaveTextContent(
+      "Ce dossier ne peut pas être autorisé — Hors d'un disque local.",
+    );
+    expect(bandeau).not.toHaveTextContent("s'autorise d'ici");
+  });
+
+  it("dit pourquoi une racine de disque ne s'autorise pas, sans redite ni chemin Windows", async () => {
+    const utilisateur = userEvent.setup();
+    const explorateur = await refuserDepensio(utilisateur, {
+      chemin: "E:/",
+      refus: {
+        motif: "racine-de-disque",
+        message:
+          "Racine de disque refusée : E:\\ — choisissez un dossier de projet.",
+      },
+    });
+
+    const bandeau = within(explorateur).getByRole("alert");
+    expect(bandeau).toHaveTextContent(
+      "Ce dossier ne peut pas être autorisé — Racine de disque. Descendre d'un cran",
+    );
+    expect(bandeau.textContent).not.toContain("E:\\");
+    expect(bandeau.textContent?.match(/Racine de disque/g)).toHaveLength(1);
   });
 
   it("n'offre pas le geste pour un refus d'un autre motif, qui garde sa raison", async () => {
@@ -836,7 +902,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
       "motif : Zone protégée",
     );
     expect(
-      within(explorateur).queryByRole("button", { name: /Autoriser ce dossier/ }),
+      within(explorateur).queryByRole("button", { name: /^Autoriser/ }),
     ).toBeNull();
     expect(
       within(explorateur).queryByText(/ne peut pas être autorisé/),

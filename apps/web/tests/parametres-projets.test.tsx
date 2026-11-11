@@ -349,7 +349,7 @@ describe("④ les dossiers autorisés se relisent et se retirent (#1610)", () =>
     );
     await utilisateur.click(
       await within(explorateur).findByRole("button", {
-        name: "Autoriser ce dossier…",
+        name: "Autoriser depensio…",
       }),
     );
     chargerDossiersAutorises.mockResolvedValue({
@@ -363,5 +363,134 @@ describe("④ les dossiers autorisés se relisent et se retirent (#1610)", () =>
     expect(
       await screen.findByRole("button", { name: "Retirer D:/projets/depensio" }),
     ).toBeInTheDocument();
+  });
+
+  it("fait relire l'explorateur ouvert quand on en retire un", async () => {
+    // Constat de la relecture visuelle : après « Retirer », l'explorateur ouvert
+    // au-dessus gardait la pastille « dossier autorisé » sur le dossier retiré
+    // tant qu'on ne naviguait pas — deux vues du même réglage qui se contredisent.
+    chargerDossiersAutorises.mockResolvedValue({
+      dossiers: [{ chemin: "D:/clients/acme", refus: null }],
+    });
+    // L'arrivée, puis un dossier où l'on descend : c'est lui qu'on regarde au
+    // moment du retrait, et lui seul doit se relire.
+    chargerExplorateur.mockImplementation(async (chemin: string | null) =>
+      chemin === "D:/clients"
+        ? pageExplorateurFactice({
+            chemin: "D:/clients",
+            parent: null,
+            dossiers: [
+              dossierFactice({
+                nom: "acme",
+                chemin: "D:/clients/acme",
+                origine: "autorise",
+              }),
+            ],
+          })
+        : pageExplorateurFactice({
+            chemin: "C:/Users/moi/Maestro",
+            parent: null,
+            dossiers: [dossierFactice({ nom: "clients", chemin: "D:/clients" })],
+          }),
+    );
+    const utilisateur = userEvent.setup();
+    await monter();
+    await utilisateur.click(
+      screen.getByRole("button", { name: /Changer de dossier/ }),
+    );
+    const explorateur = await screen.findByRole("region", {
+      name: "Explorateur de dossiers",
+    });
+    await utilisateur.click(
+      await within(explorateur).findByRole("button", { name: "Ouvrir clients" }),
+    );
+    expect(
+      await within(explorateur).findByText("dossier autorisé"),
+    ).toBeInTheDocument();
+    const lecturesAvant = chargerExplorateur.mock.calls.length;
+    chargerExplorateur.mockResolvedValue(
+      pageExplorateurFactice({
+        chemin: "D:/clients",
+        parent: null,
+        dossiers: [dossierFactice({ nom: "acme", chemin: "D:/clients/acme" })],
+      }),
+    );
+
+    await utilisateur.click(
+      await screen.findByRole("button", { name: "Retirer D:/clients/acme" }),
+    );
+
+    await waitFor(() =>
+      expect(chargerExplorateur.mock.calls.length).toBe(lecturesAvant + 1),
+    );
+    // La page relue est celle qu'on regardait, pas un retour à l'arrivée.
+    expect(chargerExplorateur.mock.calls.at(-1)?.[0]).toBe("D:/clients");
+    await waitFor(() =>
+      expect(
+        within(explorateur).queryByText("dossier autorisé"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("revient aux dossiers explorables quand le retrait sort la page affichée", async () => {
+    // Constat de la relecture visuelle : relu après son retrait, le dossier
+    // ouvert était refusé, et l'explorateur gardait sa liste sous « Dossier non
+    // exploré » — le contenu d'un dossier qu'on dit ne plus explorer.
+    const { ErreurProjet } = await import("@/lib/api");
+    chargerDossiersAutorises.mockResolvedValue({
+      dossiers: [{ chemin: "D:/clients/acme", refus: null }],
+    });
+    chargerRepertoireProjets.mockResolvedValue(
+      repertoireFactice({ chemin: "D:/clients/acme", par_defaut: false }),
+    );
+    chargerExplorateur.mockResolvedValue(
+      pageExplorateurFactice({
+        chemin: "D:/clients/acme",
+        parent: null,
+        dossiers: [dossierFactice({ nom: "src", chemin: "D:/clients/acme/src" })],
+      }),
+    );
+    const utilisateur = userEvent.setup();
+    render(<ParametresProjets />);
+    await utilisateur.click(
+      await screen.findByRole("button", { name: /Changer de dossier/ }),
+    );
+    const explorateur = await screen.findByRole("region", {
+      name: "Explorateur de dossiers",
+    });
+    await within(explorateur).findByText("src");
+    chargerExplorateur.mockImplementation(async (chemin: string | null) => {
+      if (chemin === null) {
+        return pageExplorateurFactice({
+          chemin: null,
+          parent: null,
+          dossiers: [dossierFactice({ nom: "Maestro", chemin: "C:/Users/moi/Maestro" })],
+        });
+      }
+      throw new ErreurProjet(
+        "hors-racines-explorables",
+        "Dossier hors des dossiers explorables : D:/clients/acme.",
+        { chemin: "D:/clients/acme", refus: null },
+      );
+    });
+
+    await utilisateur.click(
+      await screen.findByRole("button", { name: "Retirer D:/clients/acme" }),
+    );
+
+    expect(await within(explorateur).findByText("Maestro")).toBeInTheDocument();
+    expect(within(explorateur).queryByText("src")).not.toBeInTheDocument();
+    expect(within(explorateur).getByRole("alert")).toHaveTextContent(
+      "D:/clients/acme",
+    );
+    expect(
+      within(explorateur).getByRole("button", { name: "Autoriser acme…" }),
+    ).toBeInTheDocument();
+    // On y est déjà : le refus n'offre pas d'y revenir.
+    expect(
+      within(explorateur).queryByRole("button", {
+        name: "Revenir aux dossiers explorables",
+      }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -52,16 +52,23 @@ import type {
   RepertoireProjets,
 } from "@/lib/types";
 
-import { LigneReglage } from "./SectionParametres";
+import { LigneReglage, ProlongementReglage } from "./SectionParametres";
 
 /**
  * Les dossiers autorisés depuis l'explorateur, et leur retrait (#1610).
  *
  * `version` est incrémentée par le parent quand l'explorateur de la section
  * vient d'en autoriser un : la liste se relit, au lieu d'attendre un
- * rechargement de la page.
+ * rechargement de la page. `onRetire` dit l'inverse au parent, qui fait relire
+ * l'explorateur ouvert — les deux vues du même réglage ne se contredisent pas.
  */
-function DossiersAutorises({ version }: { version: number }) {
+function DossiersAutorises({
+  version,
+  onRetire,
+}: {
+  version: number;
+  onRetire: () => void;
+}) {
   const [dossiers, setDossiers] = useState<DossierAutorise[] | null>(null);
   const [echecLecture, setEchecLecture] = useState<RefusProjet | null>(null);
   const [refusRetrait, setRefusRetrait] = useState<RefusProjet | null>(null);
@@ -88,13 +95,14 @@ function DossiersAutorises({ version }: { version: number }) {
     setRefusRetrait(null);
     try {
       setDossiers((await retirerDossierAutorise(chemin)).dossiers);
+      onRetire();
     } catch (erreur) {
       // L'autorisation reste en place : la route n'écrit rien quand elle refuse.
       setRefusRetrait(refusDepuis(erreur));
     } finally {
       setRetraitEnCours(null);
     }
-  }, []);
+  }, [onRetire]);
 
   return (
     <>
@@ -113,13 +121,16 @@ function DossiersAutorises({ version }: { version: number }) {
             Aucun dossier autorisé.
           </p>
         ) : (
-          <ul className="flex flex-col items-end gap-2">
+          // Alignée au début, comme les contrôles des autres lignes quand la
+          // ligne se replie sous son libellé (téléphone) : un chemin long ne
+          // pousse pas la liste contre le bord droit.
+          <ul className="flex flex-col items-start gap-2">
             {dossiers.map((dossier) => (
               <li
                 key={dossier.chemin}
-                className="flex flex-wrap items-center justify-end gap-2"
+                className="flex flex-wrap items-center gap-2"
               >
-                <code className="font-mono text-corps break-all">
+                <code className="font-mono text-corps wrap-anywhere">
                   {dossier.chemin}
                 </code>
                 {/* Une autorisation qui ne sert plus (disque débranché,
@@ -165,6 +176,8 @@ export function ParametresProjets() {
   const [echecLecture, setEchecLecture] = useState<RefusProjet | null>(null);
   const [refus, setRefus] = useState<RefusProjet | null>(null);
   const [versionAutorises, setVersionAutorises] = useState(0);
+  const [versionRetraits, setVersionRetraits] = useState(0);
+  const retire = useCallback(() => setVersionRetraits((v) => v + 1), []);
 
   useEffect(() => {
     let vivant = true;
@@ -208,7 +221,7 @@ export function ParametresProjets() {
         // proposé », qui n'apparaît que lorsqu'il y a quelque chose à défaire.
         aide="Le dossier parent d'un projet neuf en est rempli d'office. En choisir un autre pour un projet ne change pas ce réglage."
       >
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* « … » dit « ça arrive », et il ne doit donc pas rester à l'écran
               quand plus rien n'arrive : une lecture en panne rend « — », le
               tiret de l'inconnu qu'emploie déjà la dépense cumulée. */}
@@ -252,18 +265,20 @@ export function ParametresProjets() {
       )}
       {refus && <RefusMotive refus={refus} titre="Réglage refusé" />}
 
+      {/* L'explorateur prolonge la ligne du répertoire. */}
       {explorateurOuvert && (
-        <div className="pt-3">
+        <ProlongementReglage>
           <ExplorateurDossiers
             cheminInitial={repertoire?.chemin ?? null}
             onChoisir={(chemin) => void regler(chemin)}
             onFermer={() => setExplorateurOuvert(false)}
             onAutorise={() => setVersionAutorises((v) => v + 1)}
+            actualisation={versionRetraits}
           />
-        </div>
+        </ProlongementReglage>
       )}
 
-      <DossiersAutorises version={versionAutorises} />
+      <DossiersAutorises version={versionAutorises} onRetire={retire} />
     </div>
   );
 }

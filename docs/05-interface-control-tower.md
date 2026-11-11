@@ -2618,7 +2618,10 @@ c'est un geste normal, qui ne touche à rien.
 `hors-racines-explorables` dit si le dossier pourrait être la racine d'un projet (son
 `autorisation`, §6.7) :
 
-- **Il le pourrait** : un bouton « Autoriser ce dossier… » apparaît sous le refus. Il ouvre une
+- **Il le pourrait** : un bouton plein « Autoriser <dossier>… » apparaît sous le refus, nommé par
+  le dossier refusé, son chemin entier en infobulle ; un nom long y passe à la ligne sans sortir de
+  l'explorateur. Tant que le refus l'offre, « Choisir ce dossier », qui vise le dossier
+  courant, passe en contour : l'explorateur n'a qu'un bouton plein à la fois. Il ouvre une
   confirmation **dans l'explorateur**, jamais une boîte modale au milieu d'une navigation. Elle
   nomme :
   - le dossier exact, en monospace sur sa propre ligne ;
@@ -2629,15 +2632,22 @@ c'est un geste normal, qui ne touche à rien.
   Ses deux issues sont « Autoriser ce dossier » et « Ne pas autoriser », et « Revenir aux dossiers
   explorables » reste offert pendant la confirmation. Autoriser **ouvre le dossier dans le même
   geste**. Le dossier rejoint ensuite les points d'entrée avec la pastille « dossier autorisé ».
-- **Il ne le pourrait pas** (partage réseau, dossier absent, dossier utilisateur nu…) : aucun
-  bouton. Une ligne dit pourquoi, avec le motif que `valider_racine` rendrait.
+  Si l'écriture échoue, la confirmation reste ouverte et dit que l'autorisation n'a pas abouti :
+  une API injoignable y prend le ton de panne des autres écrans, pas celui d'un refus.
+- **Il ne le pourrait pas** (partage réseau, racine de disque, dossier absent…) : aucun bouton.
+  Le bandeau le dit à la place de son offre, avec le motif en mots que `valider_racine` rendrait
+  et son conseil (« Ce dossier ne peut pas être autorisé — Racine de disque. Descendre d'un
+  cran… »).
 - **Tout autre motif** (zone protégée, dossier système, dépôt de Maestro…) n'offre pas le geste,
   et garde son texte.
 
 L'autorisation est un **réglage du poste**, rangé avec le répertoire des projets (`MAESTRO_REGLAGES_DIR`).
 Elle prend effet sans redémarrage et **s'ajoute** aux dossiers explorables sans les remplacer. Elle se
 relit et se retire dans *Paramètres › Projets* (« Dossiers autorisés », un « Retirer » par ligne) ;
-une autorisation devenue inutilisable, disque débranché par exemple, y est signalée. Elle ne crée
+une autorisation devenue inutilisable, disque débranché par exemple, y est signalée. Un retrait
+fait relire l'explorateur ouvert au-dessus, pour que ses deux vues ne se contredisent pas : si la
+page affichée sort des dossiers explorables, il y revient, le refus en tête, qui propose d'autoriser
+le dossier de nouveau. L'autorisation ne crée
 **aucune seconde porte** : le dossier passe par `valider_racine` à l'autorisation et y repasse à
 chaque lecture de la frontière, et les zones interdites restent refusées sous un dossier autorisé.
 Un poste sans aucun dossier explorable (`aucune-racine-explorable`) en sort de même : un chemin

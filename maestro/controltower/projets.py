@@ -174,10 +174,12 @@ class DossierHorsFrontiere(RacineRefusee):
         explorables = (
             ", ".join(r.as_posix() for r in racines) if racines else "aucun sur ce poste"
         )
+        # Espace insécable avant les deux-points : à la largeur d'un téléphone,
+        # un « : » ne passe pas seul à la ligne devant un chemin long.
         super().__init__(
             "hors-racines-explorables",
-            f"Dossier hors des dossiers explorables : {cible.as_posix()} — "
-            f"explorables : {explorables}.",
+            f"Dossier hors des dossiers explorables : {cible.as_posix()} — "
+            f"explorables : {explorables}.",
             cible,
         )
         try:
@@ -323,7 +325,7 @@ class ServiceProjets:
         débranché, dossier supprimé) : une autorisation devenue invalide ne sert
         plus de frontière, et l'écran le dit au lieu de la taire.
         """
-        dossiers = []
+        dossiers: list[dict[str, Any]] = []
         for chemin in self._reglages.lire().dossiers_autorises:
             try:
                 valider_racine(chemin)

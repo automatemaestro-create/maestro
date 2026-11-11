@@ -127,15 +127,32 @@ const LIBELLE_ORIGINE: Record<OrigineDossier, string> = {
 export function RefusMotive({
   refus,
   titre,
+  conseil: conseilImpose,
+  ton = "attention",
 }: {
   refus: RefusProjet;
   titre: string;
+  /** Remplace le conseil du motif quand l'appelant en sait plus (#1610). */
+  conseil?: string;
+  /**
+   * `attention` pour un refus motivé ; `alerte` pour une panne (API
+   * injoignable), au ton de la bannière que les autres écrans lui donnent.
+   */
+  ton?: "attention" | "alerte";
 }) {
-  const conseil = conseilMotif(refus.motif);
+  const conseil = conseilImpose ?? conseilMotif(refus.motif);
+  // `wrap-anywhere` : un message porte des chemins sans espace, qui doivent se
+  // couper au bord du bandeau plutôt que d'en sortir à la largeur d'un téléphone.
+  // Seules les couleurs changent d'un ton à l'autre : la forme est celle du
+  // bandeau de refus, écrite une fois.
+  const couleurs =
+    ton === "alerte"
+      ? "border-alerte bg-alerte-creux text-alerte-texte"
+      : "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200";
   return (
     <div
       role="alert"
-      className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+      className={`rounded-md border px-3 py-2 text-xs wrap-anywhere ${couleurs}`}
     >
       <p className="font-medium">
         {titre} — {refus.message}
@@ -147,11 +164,37 @@ export function RefusMotive({
           pas se rend encore brut — un code affiché sans fard vaut mieux qu'une
           phrase inventée —, et le `font-mono` part avec la traduction : il
           annonçait justement du code. */}
-      <p className="mt-1 text-amber-700 dark:text-amber-400">
+      <p
+        className={
+          ton === "alerte"
+            ? "mt-1 text-alerte-texte"
+            : "mt-1 text-amber-700 dark:text-amber-400"
+        }
+      >
         motif : {libelleMotif(refus.motif)}
       </p>
     </div>
   );
+}
+
+/**
+ * Pourquoi un dossier hors de la frontière ne s'autorise pas, en mots (#1610).
+ *
+ * Le libellé du motif et son conseil, jamais le message de `valider_racine` :
+ * il redit le motif et écrit le chemin à la façon du système (`E:\`), quand
+ * tout l'explorateur l'écrit en POSIX. Un motif que la table ne connaît pas
+ * garde son message, faute de mieux.
+ */
+/** Le dernier segment d'un chemin POSIX : ce qu'on lit d'un dossier dans un bouton. */
+function nomDuDossier(chemin: string): string {
+  return chemin.replace(/\/+$/, "").split("/").pop() || chemin;
+}
+
+function phraseIndeclarable(refus: { motif: string; message: string }): string {
+  const libelle = libelleMotif(refus.motif);
+  const raison = libelle === refus.motif ? refus.message : libelle;
+  const suite = conseilMotif(refus.motif);
+  return `Ce dossier ne peut pas être autorisé — ${raison}.${suite ? ` ${suite}` : ""}`;
 }
 
 export function ExplorateurDossiers({
@@ -159,6 +202,7 @@ export function ExplorateurDossiers({
   onChoisir,
   onFermer,
   onAutorise,
+  actualisation,
 }: {
   /** Le dossier ouvert à l'arrivée — `null` : les racines explorables. */
   cheminInitial: string | null;
@@ -166,6 +210,12 @@ export function ExplorateurDossiers({
   onFermer: () => void;
   /** Un dossier vient d'être autorisé (#1610) : qui en tient la liste la relit. */
   onAutorise?: (chemin: string) => void;
+  /**
+   * Change quand une autorisation a été retirée hors de l'explorateur (#1610) :
+   * la page ouverte se relit, pour que ses pastilles « dossier autorisé » ne
+   * contredisent pas la liste qui vient de perdre le dossier.
+   */
+  actualisation?: number;
 }) {
   const [page, setPage] = useState<PageExplorateur | null>(null);
   const [chargement, setChargement] = useState(true);
@@ -277,6 +327,52 @@ export function ExplorateurDossiers({
     return () => clearTimeout(tick);
   }, [ouvrir, cheminInitial]);
 
+  // Ce que la relecture d'après un retrait rouvre : la page affichée, et le
+  // refus qu'elle porte.
+  const vue = useRef<{ chemin: string | null; refus: RefusProjet | null }>({
+    chemin: cheminInitial,
+    refus: null,
+  });
+  useEffect(() => {
+    vue.current = { chemin: page === null ? cheminInitial : page.chemin, refus };
+  }, [page, refus, cheminInitial]);
+
+  /**
+   * Relit la page affichée après un retrait fait ailleurs (#1610).
+   *
+   * Le retrait a pu la sortir des dossiers explorables — c'était le dossier
+   * retiré, ou l'un de ses sous-dossiers. La garder à l'écran sous son refus
+   * montrerait le contenu d'un dossier qu'on dit ne plus explorer : on revient
+   * aux dossiers explorables, le refus en tête, qui nomme le dossier et propose
+   * de l'autoriser de nouveau. Tout autre échec garde la page, comme une
+   * navigation qui échoue.
+   */
+  const relire = useCallback(async () => {
+    const { chemin, refus: refusAffiche } = vue.current;
+    try {
+      const relue = await chargerExplorateur(chemin);
+      setPage(relue);
+      setRefus(refusAffiche);
+    } catch (erreur) {
+      const refusRelu = refusDepuis(erreur);
+      if (chemin !== null && refusRelu.motif === "hors-racines-explorables") {
+        await ouvrir(null, refusRelu);
+      } else {
+        setRefus(refusRelu);
+      }
+    }
+  }, [ouvrir]);
+
+  // La valeur reçue au montage n'est pas un retrait : l'ouverture initiale
+  // s'en charge déjà.
+  const actualisationVue = useRef(actualisation);
+  useEffect(() => {
+    if (actualisation === actualisationVue.current) return;
+    actualisationVue.current = actualisation;
+    const tick = setTimeout(() => void relire(), 0);
+    return () => clearTimeout(tick);
+  }, [actualisation, relire]);
+
   useEffect(() => {
     // L'état du sélecteur natif est demandé une fois, à l'arrivée : il dépend
     // du poste et du backend, pas du dossier ouvert. Son échec n'est pas une
@@ -299,6 +395,9 @@ export function ExplorateurDossiers({
 
   const courant = page?.chemin ?? null;
   const dossiers = page?.dossiers ?? [];
+  // Une page lue, et c'est l'entrée : pas une page qui n'a jamais chargé, d'où
+  // revenir aux dossiers explorables reste la sortie.
+  const surLesExplorables = page !== null && page.chemin === null;
 
   /**
    * Le dialogue natif, et ce qu'on fait de son verdict. Trois issues, toutes
@@ -344,7 +443,9 @@ export function ExplorateurDossiers({
             {courant ?? "dossiers explorables"}
           </code>
         </p>
-        <div className="flex shrink-0 flex-wrap gap-2">
+        {/* Sans `shrink-0` : à la largeur d'un téléphone, les boutons passent
+            à la ligne au lieu de pousser « Fermer » hors de la carte. */}
+        <div className="flex flex-wrap gap-2">
           <Bouton
             variante="contour"
             ton="neutre"
@@ -364,7 +465,13 @@ export function ExplorateurDossiers({
               ? "Dossiers explorables"
               : "Remonter"}
           </Bouton>
+          {/* Un seul bouton plein à la fois, sur le dossier qu'on traite : tant
+              qu'un refus offre d'autoriser le dossier saisi, c'est ce geste qui
+              est plein, et celui-ci, qui vise le dossier courant, passe en
+              contour. */}
           <Bouton
+            variante={autorisable ? "contour" : "plein"}
+            ton={autorisable ? "neutre" : "accent"}
             taille="petite"
             onClick={() => courant !== null && onChoisir(courant)}
             disabled={chargement || courant === null}
@@ -407,8 +514,10 @@ export function ExplorateurDossiers({
         )}
         {/* Un `<div>`, et la soumission tenue à la main : voir l'en-tête du
             fichier — un `<form>` ici serait imbriqué dans celui du formulaire
-            de projet (#312). */}
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+            de projet (#312). Sa largeur minimale le fait passer sous « Parcourir
+            sur mon poste… » quand la ligne est étroite, au lieu d'écraser le
+            champ jusqu'à ne plus lire le chemin tapé. */}
+        <div className="flex min-w-48 flex-1 items-center gap-2">
           <label className="sr-only" htmlFor="explorateur-chemin">
             Aller à un chemin absolu
           </label>
@@ -453,17 +562,20 @@ export function ExplorateurDossiers({
 
       {refus && (
         <div className="mt-3">
-          <RefusMotive refus={refus} titre="Dossier non exploré" />
-          {/* Hors frontière, mais pas déclarable (partage réseau, dossier
-              absent, dossier utilisateur nu) : aucun geste, et la raison en
-              mots — un bouton qui échouerait ferait croire à une panne. */}
-          {autorisation !== null && autorisation.refus !== null && (
-            <p className="mt-2 text-annexe text-texte-secondaire">
-              Ce dossier ne peut pas être autorisé —{" "}
-              {libelleMotif(autorisation.refus.motif)} :{" "}
-              {autorisation.refus.message}
-            </p>
-          )}
+          {/* Hors frontière, mais pas déclarable (partage réseau, racine de
+              disque, dossier absent) : aucun geste, et la raison dite dans le
+              bandeau, à la place de la promesse « s'autorise d'ici » — un
+              bouton qui échouerait ferait croire à une panne, une ligne sous le
+              bandeau se lirait après l'offre. */}
+          <RefusMotive
+            refus={refus}
+            titre="Dossier non exploré"
+            conseil={
+              autorisation !== null && autorisation.refus !== null
+                ? phraseIndeclarable(autorisation.refus)
+                : undefined
+            }
+          />
           {/* La confirmation, en place et sur la surface du contenu : le refus
               garde seul la teinte d'alerte, la question ne se lit pas comme
               une seconde alerte. Un `div` aux classes de `Carte` et non une
@@ -486,7 +598,7 @@ export function ExplorateurDossiers({
               >
                 Autoriser ce dossier sur ce poste ?
               </p>
-              <code className="block font-mono break-all text-texte">
+              <code className="block font-mono wrap-anywhere text-texte">
                 {autorisation.chemin}
               </code>
               <p>
@@ -495,10 +607,17 @@ export function ExplorateurDossiers({
                 restent refusées. L&apos;autorisation se retire dans Paramètres ›
                 Projets.
               </p>
+              {/* L'échec de l'écriture, pas un jugement sur le dossier : une
+                  API injoignable prend le ton de panne des autres écrans. */}
               {refusAutorisation && (
                 <RefusMotive
                   refus={refusAutorisation}
-                  titre="Dossier non autorisé"
+                  titre="L'autorisation n'a pas abouti"
+                  ton={
+                    refusAutorisation.motif === "api-injoignable"
+                      ? "alerte"
+                      : "attention"
+                  }
                 />
               )}
               <div className="flex flex-wrap gap-2">
@@ -522,20 +641,37 @@ export function ExplorateurDossiers({
             </div>
           )}
           <div ref={rangeeRefus} className="mt-2 flex flex-wrap gap-2">
+            {/* Plein et nommé : c'est l'action de l'explorateur tant que le
+                refus est là (« Choisir ce dossier » passe en contour), et il
+                dit quel dossier il vise — ce n'est pas le dossier courant.
+                Le nom vient du disque, donc de n'importe quelle longueur :
+                à 390 px, un nom de 50 caractères sortirait du cadre.
+                Borné à la colonne, le libellé passe à la ligne ; le chemin
+                entier est en infobulle, et la confirmation le redit. */}
             {autorisable && !confirmation && (
-              <Bouton taille="petite" onClick={() => setConfirmation(true)}>
-                Autoriser ce dossier…
+              <Bouton
+                taille="petite"
+                title={autorisation.chemin}
+                className="max-w-full text-left wrap-anywhere"
+                onClick={() => setConfirmation(true)}
+              >
+                Autoriser {nomDuDossier(autorisation.chemin)}…
               </Bouton>
             )}
-            <Bouton
-              variante="contour"
-              ton="neutre"
-              taille="petite"
-              disabled={autorisationEnVol}
-              onClick={() => void ouvrir(null)}
-            >
-              Revenir aux dossiers explorables
-            </Bouton>
+            {/* Sur la page des dossiers explorables, il n'y a nulle part où
+                revenir : le refus y arrive d'une saisie, ou d'un retrait qui a
+                sorti la page qu'on regardait. */}
+            {!surLesExplorables && (
+              <Bouton
+                variante="contour"
+                ton="neutre"
+                taille="petite"
+                disabled={autorisationEnVol}
+                onClick={() => void ouvrir(null)}
+              >
+                Revenir aux dossiers explorables
+              </Bouton>
+            )}
           </div>
         </div>
       )}
@@ -556,7 +692,9 @@ export function ExplorateurDossiers({
               onClick={() => void ouvrir(dossier.chemin)}
               disabled={chargement}
               aria-label={`Ouvrir ${dossier.nom}`}
-              className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left text-corps disabled:opacity-50"
+              // `flex-wrap` : à la largeur d'un téléphone, les pastilles
+              // passent sous le nom au lieu de déborder sur « Choisir ».
+              className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-left text-corps disabled:opacity-50"
             >
               <IconeDossier className="size-4 shrink-0 text-neutral-400 dark:text-neutral-500" />
               <span className="truncate">{dossier.nom}</span>
