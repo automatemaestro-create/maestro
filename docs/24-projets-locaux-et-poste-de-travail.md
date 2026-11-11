@@ -457,6 +457,16 @@ un projet local **déplace la frontière** ; il faut le consigner plutôt que le
 | Fuite de secrets du projet | `.env`, clés, tokens présents dans le dépôt de l'utilisateur | Exclusions par défaut au périmètre (`.env`, `**/secrets/**`) ; rédaction existante (#109) élargie aux valeurs lues dans le projet |
 | **Un processus d'agent survit à sa tâche** (#1279) | un serveur ou un navigateur headless lancé en arrière-plan par `Bash` — un port de débogage resté ouvert au poste | Session **confinée** hors mode isolé : tout ce qu'elle lance est arrêté à sa clôture, ce qui résiste est nommé au journal du run ([docs/17 §6](./17-isolation-execution.md)) |
 
+**Élargir ce que l'explorateur parcourt n'élargit pas ce qui se déclare** (#1610). Un dossier
+refusé parce qu'il est hors des dossiers explorables s'autorise depuis l'écran, après une
+confirmation qui le nomme, et devient une racine de lecture du poste (`projets.json` de
+`core/reglages/`, retrait dans *Paramètres › Projets*). L'autorisation passe par `valider_racine`,
+sans seconde porte : un dossier qui ne pourrait pas être la racine d'un projet (partage réseau,
+dossier utilisateur nu, zone protégée) n'est pas autorisable, et le refus le dit. Chaque lecture
+de la frontière rejuge les autorisations : une entrée devenue inutilisable ne sert plus. Sous un
+dossier autorisé, les racines interdites du tableau restent refusées, parce que la zone interdite
+se juge **avant** la frontière.
+
 **Le poste hôte reste l'actif à protéger** ([docs/19 §1](./19-securite-modele-de-menace.md)) —
 il gagne simplement un voisin : **le projet de l'utilisateur**. En mode isolé, le conteneur
 gagne un second montage (la racine du projet, ou le worktree de la tâche) ; tout le reste du

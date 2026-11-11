@@ -3,7 +3,8 @@
 Dépôt des **réglages de cette installation-ci**, un fichier par réglage :
 
 - `projets.json` — le **répertoire des projets** (ticket #1022) : le dossier où
-  **naît** un projet neuf. Décrit ci-dessous.
+  **naît** un projet neuf ; et les **dossiers autorisés** (ticket #1610) que
+  l'explorateur parcourt en plus de ses dossiers explorables. Décrit ci-dessous.
 - `fournisseur.json` — le **fournisseur par défaut** (ticket #1609) : le
   fournisseur, son accès et son modèle, choisis et éprouvés dans *Paramètres ›
   Fournisseurs*. Il porte les variables que le choix pose
@@ -44,9 +45,33 @@ dossiers plutôt qu'un fichier de réglages glissé parmi les déclarations, que
   **prérempli** du formulaire de déclaration d'un projet neuf.
 - Racine remplaçable par `MAESTRO_REGLAGES_DIR` (cf. `.env.example`).
 
+## Les dossiers autorisés
+
+- **Le même fichier** : `projets.json` (`dossiers_autorises`, une liste de
+  chemins POSIX dans l'ordre de leur autorisation). Régler le répertoire ne les
+  touche pas, et inversement.
+- **Autorisés depuis l'écran** : quand l'explorateur refuse un dossier parce
+  qu'il est hors des dossiers explorables, le refus propose de l'autoriser,
+  après une confirmation qui nomme le dossier. Aucune variable à renseigner,
+  aucun redémarrage : la frontière se relit à chaque appel.
+- Ils **s'ajoutent** à `MAESTRO_EXPLORATEUR_RACINES` (ou au défaut) sans la
+  remplacer.
+- L'autorisation passe par `valider_racine` : pas de seconde porte. Un dossier
+  qui ne pourrait pas être la racine d'un projet n'est pas autorisable, et chaque
+  lecture rejuge la liste — une entrée devenue inutilisable (disque débranché) ne
+  sert plus de frontière, et l'écran le dit. Les zones interdites restent
+  refusées sous un dossier autorisé.
+- Lecture/écriture par le code : `ReglagesProjetsStore.autoriser` et `retirer` ;
+  par HTTP : `GET`, `POST` et `DELETE /api/projets/dossiers-autorises`
+  (docs/05 §6.7) ; depuis l'UI : le refus de l'explorateur, et la ligne
+  **« Dossiers autorisés »** de *Paramètres › Projets*, où chacun se retire.
+
 Les réglages écrits ici sont des **données d'exécution** : ils ne sont pas
 commités (voir `.gitignore`).
 
 Tests (#1022) : `tests/test_reglages_projets.py` (dépôt, API, explorateur),
 `apps/web/tests/parametres-projets.test.tsx` et le bloc « le répertoire des
-projets » de `apps/web/tests/projets.test.tsx`.
+projets » de `apps/web/tests/projets.test.tsx`. Tests (#1610) :
+`tests/test_dossiers_autorises.py`, les blocs « dossiers autorisés » de
+`apps/web/tests/parametres-projets.test.tsx` et de
+`apps/web/tests/projets.test.tsx`.

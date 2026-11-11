@@ -2577,8 +2577,8 @@ repropose. Un seul geste s'arme à la fois : armer la suppression range la mise 
 inversement.
 
 **Un refus est une réponse** (EF-38), et il en porte trois choses : la **phrase** du backend, le
-**geste** qui en sort quand l'écran le connaît (élargir `MAESTRO_EXPLORATEUR_RACINES`, descendre
-d'un cran, choisir un sous-dossier…) et le **motif** brut, affiché tel quel — un code stable vaut
+**geste** qui en sort quand l'écran le connaît (autoriser le dossier d'ici, descendre d'un cran,
+choisir un sous-dossier…) et le **motif** brut, affiché tel quel — un code stable vaut
 mieux qu'une traduction approximative quand il faut chercher de l'aide. Un refus s'affiche **à
 l'endroit du geste refusé** (dans le formulaire, sur la carte, dans l'explorateur), **conserve la
 saisie en cours** et **laisse la page précédente** de l'explorateur à l'écran : l'erreur ne casse ni
@@ -2614,6 +2614,45 @@ pas en erreur mais **avec son motif**, et l'écran ouvre l'explorateur **dessus*
 descendre d'un cran plutôt que de tout recommencer. Fermer la fenêtre, enfin, n'est pas une erreur :
 c'est un geste normal, qui ne touche à rien.
 
+**Un dossier refusé hors des dossiers explorables s'autorise d'ici** (#1610). Le refus
+`hors-racines-explorables` dit si le dossier pourrait être la racine d'un projet (son
+`autorisation`, §6.7) :
+
+- **Il le pourrait** : un bouton plein « Autoriser <dossier>… » apparaît sous le refus, nommé par
+  le dossier refusé, son chemin entier en infobulle ; un nom long y passe à la ligne sans sortir de
+  l'explorateur. Tant que le refus l'offre, « Choisir ce dossier », qui vise le dossier
+  courant, passe en contour : l'explorateur n'a qu'un bouton plein à la fois. Il ouvre une
+  confirmation **dans l'explorateur**, jamais une boîte modale au milieu d'une navigation. Elle
+  nomme :
+  - le dossier exact, en monospace sur sa propre ligne ;
+  - ce que l'autorisation ouvre (ce dossier et ses sous-dossiers) ;
+  - ce qu'elle n'ouvre pas (les zones protégées) ;
+  - où elle se retire.
+
+  Ses deux issues sont « Autoriser ce dossier » et « Ne pas autoriser », et « Revenir aux dossiers
+  explorables » reste offert pendant la confirmation. Autoriser **ouvre le dossier dans le même
+  geste**. Le dossier rejoint ensuite les points d'entrée avec la pastille « dossier autorisé ».
+  Si l'écriture échoue, la confirmation reste ouverte et dit que l'autorisation n'a pas abouti :
+  une API injoignable y prend le ton de panne des autres écrans, pas celui d'un refus.
+- **Il ne le pourrait pas** (partage réseau, racine de disque, dossier absent…) : aucun bouton.
+  Le bandeau le dit à la place de son offre, avec le motif en mots que `valider_racine` rendrait
+  et son conseil (« Ce dossier ne peut pas être autorisé — Racine de disque. Descendre d'un
+  cran… »).
+- **Tout autre motif** (zone protégée, dossier système, dépôt de Maestro…) n'offre pas le geste,
+  et garde son texte.
+
+L'autorisation est un **réglage du poste**, rangé avec le répertoire des projets (`MAESTRO_REGLAGES_DIR`).
+Elle prend effet sans redémarrage et **s'ajoute** aux dossiers explorables sans les remplacer. Elle se
+relit et se retire dans *Paramètres › Projets* (« Dossiers autorisés », un « Retirer » par ligne) ;
+une autorisation devenue inutilisable, disque débranché par exemple, y est signalée. Un retrait
+fait relire l'explorateur ouvert au-dessus, pour que ses deux vues ne se contredisent pas : si la
+page affichée sort des dossiers explorables, il y revient, le refus en tête, qui propose d'autoriser
+le dossier de nouveau. L'autorisation ne crée
+**aucune seconde porte** : le dossier passe par `valider_racine` à l'autorisation et y repasse à
+chaque lecture de la frontière, et les zones interdites restent refusées sous un dossier autorisé.
+Un poste sans aucun dossier explorable (`aucune-racine-explorable`) en sort de même : un chemin
+saisi revient `hors-racines-explorables`, et se propose à l'autorisation.
+
 Le sélecteur natif de l'**enveloppe de bureau** n'est plus une échéance de Phase 9 : l'enveloppe est
 **Electron** et elle est livrée par **#923** ([docs/35 §2](./35-decision-poste-de-bureau-et-disposition.md),
 qui renverse D4 le 2026-09-11 — le cadrage de [docs/24 §4.4](./24-projets-locaux-et-poste-de-travail.md)
@@ -2623,10 +2662,14 @@ lot-ci ne l'a pas attendu pour lever le blocage, et ce qu'il livre ne devient pa
 un backend distant n'aura jamais de dialogue natif, et les trois voies ci-dessus restent les trois
 voies.
 
-Implémentation : `maestro/controltower/selecteur.py` et `projets.py` (`points_entree`),
-`apps/web/components/projets/ExplorateurDossiers.tsx`. Couverture :
+Implémentation : `maestro/controltower/selecteur.py` et `projets.py` (`points_entree`,
+`DossierHorsFrontiere`), `maestro/projets/reglages.py` (`autoriser`, `retirer`),
+`apps/web/components/projets/ExplorateurDossiers.tsx` et
+`apps/web/components/parametres/ParametresProjets.tsx`. Couverture :
 [`tests/test_selecteur.py`](../tests/test_selecteur.py),
-[`tests/test_projets_api.py`](../tests/test_projets_api.py) et `apps/web/tests/projets.test.tsx`.
+[`tests/test_projets_api.py`](../tests/test_projets_api.py),
+[`tests/test_dossiers_autorises.py`](../tests/test_dossiers_autorises.py),
+`apps/web/tests/projets.test.tsx` et `apps/web/tests/parametres-projets.test.tsx`.
 
 #### 2.7.3 Composer un objectif (#319) — **livré**
 
@@ -5954,6 +5997,17 @@ comportement réel.
   avant d'être stocké : un réglage posé est toujours déclarable, jamais une intention qui échouerait
   plus tard et ailleurs. Refus motivé (422/403/404) — et **rien n'est écrit**, le réglage précédent
   reste en place.
+- `GET /api/projets/dossiers-autorises` → `DossiersAutorises` (#1610) — les **dossiers autorisés
+  depuis l'écran**, dans l'ordre de leur autorisation. Chacun porte son `refus` **du moment** :
+  `valider_racine` les rejuge à chaque lecture, et une autorisation devenue inutilisable (disque
+  débranché) ne sert plus de frontière — l'écran le dit.
+- `POST /api/projets/dossiers-autorises` → `DossiersAutorises` + `chemin` (#1610) — autorise un
+  dossier sur ce poste. Corps `{ "chemin": "D:/clients/acme" }`. Le dossier passe par
+  `valider_racine` (sans création) : refus motivé (422/403/404) d'un dossier qui ne pourrait pas
+  être la racine d'un projet, et **rien n'est écrit**. Idempotent ; effet **sans redémarrage** — la
+  frontière se relit à chaque appel.
+- `DELETE /api/projets/dossiers-autorises?chemin=…` → `DossiersAutorises` (#1610) — retire une
+  autorisation, même devenue inutilisable. `404` `autorisation-inconnue` si rien ne correspond.
 
 Le `vcs` n'est **jamais** un champ de requête : il est constaté sur le disque à chaque écriture.
 Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron d'écriture de
@@ -6022,6 +6076,25 @@ Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron 
   "cree": false,                    // true : CET appel vient de le créer — jamais en silence
   "refus": null                     // motivé quand le répertoire réglé n'est plus déclarable
 }
+
+// DossiersAutorises (réponse de GET, POST et DELETE /api/projets/dossiers-autorises) — #1610
+{
+  "dossiers": [
+    { "chemin": "D:/clients/acme", "refus": null },   // refus : motivé quand il ne sert plus
+  ]
+}
+
+// Le refus hors frontière (403 de GET /api/projets/explorateur) — #1610
+{
+  "detail": {
+    "motif": "hors-racines-explorables",
+    "message": "Dossier hors des dossiers explorables : D:/clients/acme — explorables : C:/Users/moi.",
+    "autorisation": {
+      "chemin": "D:/clients/acme",  // le dossier en POSIX, celui qu'on autoriserait
+      "refus": null                 // null : valider_racine l'accepte, l'écran propose le geste
+    }                               // sinon le refus qu'il rendrait (partage réseau, absent…)
+  }
+}
 ```
 
 **La frontière et les points d'entrée sont deux choses** (#278). `racines` dit ce qu'on a le
@@ -6030,7 +6103,7 @@ Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron 
 dédoublonne par contenance, donc elle se réduirait à `C:/` (ou `/`), et il faudrait redescendre
 tout l'arbre à chaque fois. Chaque point d'entrée porte son `origine` — `repertoire` (le répertoire
 des projets, #1022 : le premier endroit à regarder, puisque c'est celui d'où l'on vient),
-`utilisateur`, `recent`
+`utilisateur`, `autorise` (un dossier autorisé depuis l'écran, #1610), `recent`
 (le **parent** d'un projet récemment déclaré : là où l'on range ses dépôts), `projet`, `volume`,
 `configuree` — et reste **dans** la frontière : un point qui refuserait au clic serait pire que
 son absence. C'est aussi ce qui garde `MAESTRO_EXPLORATEUR_RACINES` **restrictif** — les volumes
@@ -6056,16 +6129,18 @@ coûtait ici plus cher que l'absence, puisqu'il bloquait aussi le geste suivant.
 
 **Un refus porte toujours son motif**, jamais une liste vide : « ce dossier n'a pas de
 sous-dossier » et « je refuse de regarder là » sont deux réponses différentes, et les confondre
-rend un explorateur inutilisable. Le corps d'erreur de ces six routes est donc un **objet** et non
+rend un explorateur inutilisable. Le corps d'erreur de ces routes est donc un **objet** et non
 une phrase — `{ "motif": "chemin-sensible", "message": "…" }` — pour que l'écran puisse dire
-*pourquoi* (§2.7, EF-38) sans analyser du texte.
+*pourquoi* (§2.7, EF-38) sans analyser du texte. Le seul motif qui porte un champ de plus est
+`hors-racines-explorables` : son `autorisation` (#1610, plus haut).
 
 | Motif | Code | Quand |
 |---|---|---|
 | `chemin-relatif`, `chemin-vide`, `pas-un-dossier`, `ancre-non-standard` | 422 | la saisie n'est pas un chemin de dossier absolu et local |
 | `racine-de-disque`, `dossier-utilisateur-nu`, `au-dessus-du-dossier-utilisateur`, `au-dessus-du-depot-maestro` | 422 | racine techniquement valide, mais trop haute pour un projet |
 | `chemin-sensible`, `chemin-systeme`, `depot-maestro` | 403 | zone interdite : `.ssh`, `AppData`, dossiers système, dépôt de Maestro |
-| `hors-racines-explorables`, `aucune-racine-explorable` | 403 | l'explorateur refuse de sortir de ses racines |
+| `hors-racines-explorables`, `aucune-racine-explorable` | 403 | l'explorateur refuse de sortir de ses racines — le premier dit si le dossier s'autorise d'ici (`autorisation`) |
+| `autorisation-inconnue` | 404 | `DELETE /api/projets/dossiers-autorises` : ce dossier n'est pas autorisé |
 | `selecteur-hors-poste`, `selecteur-desactive`, `selecteur-sans-outil`, `selecteur-en-cours`, `selecteur-expire` | 403 sur `POST /api/projets/selecteur` | le dialogue natif ne s'ouvre pas — et dit lequel des cinq empêchements (sur le `GET`, les trois premiers sont un **200** motivé) |
 | `acces-refuse` | 403 | l'OS refuse d'énumérer le dossier |
 | `dossier-absent` | 404 sur l'explorateur, 422 sur `POST`/`PUT` | le dossier n'existe pas — « pas là » côté lecture, saisie fautive côté déclaration |
@@ -6080,17 +6155,18 @@ en porte deux, superposées :
 
 1. **les racines explorables** — le dossier utilisateur par défaut, remplaçable par
    `MAESTRO_EXPLORATEUR_RACINES` (séparateur `;` sous Windows, `:` sous POSIX), et **toujours**
-   les racines des projets déjà déclarés, explorables par construction. Une racine contenue dans
-   une autre est retirée de la liste : elle n'ajoute aucune permission ;
+   les racines des projets déjà déclarés, explorables par construction, et les **dossiers
+   autorisés depuis l'écran** (#1610), que `valider_racine` rejuge à chaque lecture. Une racine
+   contenue dans une autre est retirée de la liste : elle n'ajoute aucune permission ;
 2. **les zones interdites** de `maestro.projets.racine`, qui s'appliquent *à l'intérieur* des
    racines — le dossier utilisateur se **traverse**, `~/.ssh` non. C'est la même liste que celle
    qui refuse une racine de projet (#221), extraite en `verifier_zone_interdite` pour être
    partagée : une zone interdite à la déclaration ne peut pas devenir lisible par l'explorateur.
 
-Le défaut mérite d'être connu **avant** le premier essai : sous Windows, les projets vivent
-souvent hors du dossier utilisateur (`D:/projets`). L'explorateur les refuse alors — avec un motif
-qui **nomme la variable à renseigner**, plutôt qu'un mur muet. Élargir est un geste explicite,
-c'était le but.
+Quand une restriction est posée, un projet qui vit hors d'elle (`D:/projets`) est refusé, avec son
+motif plutôt qu'un mur muet, et le refus propose de l'**autoriser d'ici** (#1610, §2.7.2). Élargir
+reste un geste explicite : il passe par une confirmation qui nomme le dossier exact, et se défait
+dans *Paramètres › Projets*.
 
 ### 6.8 Sources d'un objectif — téléversement et rapport de lecture (#317) — **livré**
 

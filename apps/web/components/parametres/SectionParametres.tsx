@@ -86,6 +86,18 @@ export function SectionParametres({
   );
 }
 
+/** Le filet qui sépare deux lignes de réglage. */
+const FILET_LIGNE = "border-b border-neutral-100 dark:border-neutral-800/60";
+
+/**
+ * Ce qu'une ligne de réglage déplie sous elle, sur toute la largeur — un
+ * explorateur de dossiers (#1610) : clos par le même filet que les lignes, pour
+ * que la suivante ne s'y colle pas.
+ */
+export function ProlongementReglage({ children }: { children: ReactNode }) {
+  return <div className={`py-3 ${FILET_LIGNE}`}>{children}</div>;
+}
+
 /**
  * Un réglage : son libellé, son aide, et le contrôle (ou la valeur) à droite.
  * En colonne étroite le contrôle passe dessous plutôt que d'écraser le texte.
@@ -100,7 +112,9 @@ export function LigneReglage({
   children?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-neutral-100 py-3 first:pt-0 last:border-b-0 last:pb-0 dark:border-neutral-800/60">
+    <div
+      className={`flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-3 first:pt-0 last:border-b-0 last:pb-0 ${FILET_LIGNE}`}
+    >
       <div className="min-w-48 flex-1">
         <p className="text-sm font-medium">{libelle}</p>
         {aide && (

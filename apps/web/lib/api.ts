@@ -75,6 +75,8 @@ import type {
   RapportLecture,
   RedactionPlaybook,
   RefusProjet,
+  AutorisationDossier,
+  DossiersAutorises,
   ReglagesModele,
   RepertoireProjets,
   ReponsesBrief,
@@ -1872,7 +1874,7 @@ export function definirPermissions(
 
 // --- Projets de l'utilisateur (#225, API #223) ----------------------------
 //
-// Ces six routes n'empruntent pas les enveloppes ci-dessus parce qu'elles ne
+// Ces routes n'empruntent pas les enveloppes ci-dessus parce qu'elles ne
 // refusent pas de la même façon : leur `detail` est un **objet**
 // `{motif, message}` et non une phrase (docs/05 §6.7). Le `motif` est un code
 // stable — c'est lui qui permet à l'écran de dire *pourquoi* une racine est
@@ -1888,12 +1890,34 @@ export function definirPermissions(
  */
 export class ErreurProjet extends Error {
   readonly motif: string;
+  /** Ce qu'un refus hors frontière dit de son dossier (#1610), sinon `null`. */
+  readonly autorisation: AutorisationDossier | null;
 
-  constructor(motif: string, message: string) {
+  constructor(
+    motif: string,
+    message: string,
+    autorisation: AutorisationDossier | null = null,
+  ) {
     super(message);
     this.name = "ErreurProjet";
     this.motif = motif;
+    this.autorisation = autorisation;
   }
+}
+
+/** L'`autorisation` d'un refus, si elle a la forme attendue — rien d'inventé sinon. */
+function autorisationDepuis(brut: unknown): AutorisationDossier | null {
+  if (brut === null || typeof brut !== "object") return null;
+  const { chemin, refus } = brut as { chemin?: unknown; refus?: unknown };
+  if (typeof chemin !== "string") return null;
+  if (refus === null) return { chemin, refus: null };
+  if (refus !== null && typeof refus === "object") {
+    const { motif, message } = refus as Partial<RefusProjet>;
+    if (typeof motif === "string" && typeof message === "string") {
+      return { chemin, refus: { motif, message } };
+    }
+  }
+  return null;
 }
 
 /** Le refus porté par une réponse en échec — motif compris quand il y en a un. */
@@ -1903,6 +1927,7 @@ async function refusProjet(
 ): Promise<ErreurProjet> {
   let motif = "requete-invalide";
   let message = `${refusParDefaut} (${reponse.status})`;
+  let autorisation: AutorisationDossier | null = null;
   try {
     const contenu = (await reponse.json()) as { detail?: unknown };
     const detail = contenu.detail;
@@ -1912,11 +1937,12 @@ async function refusProjet(
       const refus = detail as Partial<RefusProjet>;
       if (typeof refus.motif === "string") motif = refus.motif;
       if (typeof refus.message === "string") message = refus.message;
+      autorisation = autorisationDepuis(refus.autorisation);
     }
   } catch {
     // corps non JSON : on garde le motif et le message génériques
   }
-  return new ErreurProjet(motif, message);
+  return new ErreurProjet(motif, message, autorisation);
 }
 
 /**
@@ -2029,6 +2055,42 @@ export function reglerRepertoireProjets(
     { chemin },
     "répertoire refusé",
     "PUT",
+  );
+}
+
+/**
+ * Les **dossiers autorisés** depuis l'écran (`GET /api/projets/dossiers-autorises`,
+ * #1610), chacun avec son verdict du moment — ce que Paramètres › Projets liste.
+ */
+export function chargerDossiersAutorises(): Promise<DossiersAutorises> {
+  return lireProjets<DossiersAutorises>(
+    "/api/projets/dossiers-autorises",
+    "dossiers autorisés illisibles",
+  );
+}
+
+/**
+ * Autorise un dossier sur ce poste (`POST /api/projets/dossiers-autorises`,
+ * #1610) : l'explorateur l'ouvre dès l'appel suivant, sans redémarrage. Le
+ * chemin vient du refus de l'explorateur, jamais d'une saisie de l'écran.
+ */
+export function autoriserDossier(
+  chemin: string,
+): Promise<DossiersAutorises & { chemin: string }> {
+  return ecrireProjet<DossiersAutorises & { chemin: string }>(
+    "/api/projets/dossiers-autorises",
+    { chemin },
+    "autorisation refusée",
+  );
+}
+
+/** Retire une autorisation (`DELETE /api/projets/dossiers-autorises?chemin=`, #1610). */
+export function retirerDossierAutorise(chemin: string): Promise<DossiersAutorises> {
+  return ecrireProjet<DossiersAutorises>(
+    `/api/projets/dossiers-autorises?chemin=${encodeURIComponent(chemin)}`,
+    undefined,
+    "retrait refusé",
+    "DELETE",
   );
 }
 

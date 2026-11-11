@@ -51,7 +51,7 @@ const CONSEILS: Record<string, string> = {
   "au-dessus-du-depot-maestro":
     "Ce dossier contient le dépôt de Maestro : choisir un dossier à côté, pas au-dessus.",
   "hors-racines-explorables":
-    "Élargir les dossiers explorables avec MAESTRO_EXPLORATEUR_RACINES (séparateur « ; » sous Windows, « : » sous POSIX), puis relancer le backend.",
+    "Maestro ne parcourt que les dossiers explorables de ce poste. Un dossier qui peut être la racine d'un projet s'autorise d'ici.",
   "selecteur-hors-poste":
     "Backend distant : le dialogue s'ouvrirait sur le serveur. Parcourir avec l'explorateur, ou coller le chemin — l'API le vérifie.",
   "selecteur-desactive":
@@ -63,7 +63,9 @@ const CONSEILS: Record<string, string> = {
   "selecteur-expire":
     "La fenêtre est restée ouverte trop longtemps et a été abandonnée : relancer le choix.",
   "aucune-racine-explorable":
-    "Aucun dossier explorable n'est configuré : renseigner MAESTRO_EXPLORATEUR_RACINES, puis relancer le backend.",
+    "Saisir ci-dessus le chemin d'un dossier : s'il peut être la racine d'un projet, il s'autorise d'ici.",
+  "autorisation-inconnue":
+    "Ce dossier n'est plus autorisé — recharger la liste pour repartir de l'état réel.",
   "acces-refuse": "Le système d'exploitation refuse d'ouvrir ce dossier.",
   "dossier-absent":
     "Le dossier n'est pas là — l'origine « Nouveau dossier » le crée à la déclaration.",
@@ -116,6 +118,8 @@ const LIBELLES_MOTIF: Record<string, string> = {
   "au-dessus-du-depot-maestro": "Au-dessus du dépôt de Maestro",
   "hors-racines-explorables": "Hors des dossiers explorables",
   "aucune-racine-explorable": "Aucun dossier explorable",
+  "ancre-non-standard": "Hors d'un disque local",
+  "autorisation-inconnue": "Dossier non autorisé",
   // Ce que l'exploration a rencontré.
   "acces-refuse": "Accès refusé",
   "dossier-absent": "Dossier absent",

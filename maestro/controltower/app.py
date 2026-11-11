@@ -154,6 +154,10 @@ Endpoints :
   (`cree`) — « créé à la première utilisation » ;
 - `PUT  /api/projets/repertoire` — pose ce répertoire ; `chemin: null` revient au
   défaut. Validé et créé avant d'être stocké, sinon rien n'est écrit ;
+- `GET`/`POST`/`DELETE /api/projets/dossiers-autorises` — les **dossiers
+  autorisés** depuis l'écran (#1610) : un dossier que l'explorateur refusait
+  hors des dossiers explorables s'y ajoute, validé par `valider_racine`, sans
+  redémarrage ; il se retire par `DELETE ?chemin=` ;
 - `GET  /api/projets/{id}` — un projet déclaré ;
 - `POST /api/projets` — déclare un projet : racine **validée** (EF-38, refus
   motivé en 422) et VCS **constaté** sur le disque ;
@@ -1005,6 +1009,16 @@ class RepertoireRequete(BaseModel):
     """
 
     chemin: str | None = None
+
+
+class DossierAutoriseRequete(BaseModel):
+    """Corps d'une autorisation de dossier (#1610) : le dossier que l'explorateur a refusé.
+
+    Non canonicalisé, pour la même raison que `RacineRequete` : la
+    canonicalisation appartient à `valider_racine`.
+    """
+
+    chemin: str
 
 
 class FournisseurDefautRequete(BaseModel):
@@ -5670,6 +5684,40 @@ def create_app(
         """
         try:
             return projets.regler_repertoire(corps.chemin)
+        except ValueError as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.get("/api/projets/dossiers-autorises")
+    async def dossiers_autorises() -> dict[str, Any]:
+        """Les dossiers autorisés depuis l'écran (#1610), chacun avec son verdict du moment.
+
+        Ce que *Paramètres › Projets* liste pour qu'on les retire. Une
+        autorisation devenue invalide (disque débranché) revient avec son
+        `refus` : elle ne sert plus de frontière, et l'écran le dit.
+        """
+        return projets.dossiers_autorises()
+
+    @app.post("/api/projets/dossiers-autorises")
+    async def autoriser_dossier(corps: DossierAutoriseRequete) -> dict[str, Any]:
+        """Autorise un dossier sur ce poste : l'explorateur l'ouvre dès l'appel suivant (#1610).
+
+        Un réglage **du poste**, qui **s'ajoute** aux dossiers explorables
+        (`MAESTRO_EXPLORATEUR_RACINES` ou le défaut) sans les remplacer, et sans
+        redémarrage. Le dossier passe par `valider_racine` (EF-38) : 422/403/404
+        motivés quand il ne pourrait pas être la racine d'un projet, et rien
+        n'est écrit. Les zones interdites restent refusées sous un dossier
+        autorisé.
+        """
+        try:
+            return projets.autoriser_dossier(corps.chemin)
+        except ValueError as exc:
+            raise _refus_projet(exc) from exc
+
+    @app.delete("/api/projets/dossiers-autorises")
+    async def retirer_dossier_autorise(chemin: str) -> dict[str, Any]:
+        """Retire une autorisation (#1610) ; 404 `autorisation-inconnue` si rien ne correspond."""
+        try:
+            return projets.retirer_dossier(chemin)
         except ValueError as exc:
             raise _refus_projet(exc) from exc
 

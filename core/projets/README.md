@@ -63,9 +63,10 @@ produire des livrables à recopier à la main : l'espace de travail d'une tâche
 - Racine du dépôt remplaçable par `MAESTRO_PROJETS_DIR` (cf. `.env.example`).
   Les dossiers que l'explorateur accepte d'énumérer, eux, sont fixés par
   `MAESTRO_EXPLORATEUR_RACINES` — défaut : le dossier utilisateur, plus les
-  racines des projets déjà déclarés. C'est une frontière de lecture : hors
+  racines des projets déjà déclarés et les dossiers autorisés depuis l'écran
+  (#1610, `core/reglages/README.md`). C'est une frontière de lecture : hors
   d'elles, la route refuse **avec son motif** plutôt que de rendre une liste
-  vide.
+  vide, et propose d'autoriser le dossier quand il pourrait être une racine.
 
 Les projets écrits ici sont des **données d'exécution** — et des chemins du
 poste de leur propriétaire : ils ne sont pas commités (voir `.gitignore`).
