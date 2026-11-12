@@ -47,7 +47,7 @@ def _poste(requete: Request) -> bool:
 # Enregistrées **avant** `/api/projets/{id_projet}` : « explorateur » et
 # « selecteur » sont des identifiants de projet valides au regard du slug
 # `ID_PROJET`, la capture les avalerait donc si elle passait la première
-# (même piège qu'au-dessus avec `/api/playbooks/lexique`).
+# (même piège que `/api/playbooks/lexique` dans `routes/playbooks.py`).
 @router.get("/api/projets/selecteur")
 async def selecteur_disponible(requete: Request) -> dict[str, Any]:
     """Le sélecteur de dossier **natif du poste** est-il ouvrable ici — et sinon, pourquoi ?
@@ -317,7 +317,7 @@ async def creer_projet(ctx: Ctx, requete: ProjetRequete) -> dict[str, Any]:
 
     `origine="nouveau"` crée le dossier s'il manque ; `existant` exige qu'il
     soit là. 422 avec son **motif** si la racine est refusée par la
-    validation du lot 1 (racine de disque, dossier utilisateur nu, `.ssh`,
+    validation d'EF-38 (racine de disque, dossier utilisateur nu, `.ssh`,
     `AppData`, dossier système, dépôt de Maestro, chemin relatif, dossier
     absent) ou déjà déclarée par un autre projet — jamais un 500.
     """

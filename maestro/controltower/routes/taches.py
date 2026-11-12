@@ -25,8 +25,8 @@ def _portee_run(ctx: Contexte, run: str | None) -> PorteeRun:
     Le second périmètre, qui **s'ajoute** au premier sans le remplacer :
     `?run=<run_id>` restreint aux tâches que ce run a portées, `?projet=`
     restant obligatoire à côté. Omis, il ne restreint rien — c'est un
-    paramètre facultatif, et l'absence y est la lecture normale d'avant ce
-    lot, non le mélange silencieux que #277 refusait. Un run dont la
+    paramètre facultatif, et son absence y est une lecture normale, non le
+    mélange silencieux que `projet` refuse (#277). Un run dont la
     projection n'a aucune trace sort en 404 `run-inconnu`, par la porte de
     `projet-inconnu` et pour la même raison : une liste vide se lirait « ce
     run n'a rien fait ».

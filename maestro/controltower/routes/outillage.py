@@ -145,8 +145,8 @@ async def generer_outillage_du_projet(
 
     **Le corps est facultatif** (#1034). `retenus` porte les chemins que
     l'étape d'outillage a gardés cochés. Absent — un appel qui ne vient pas
-    d'un écran —, tout ce qui est recommandé est écrit, ce qui est le
-    comportement d'origine. Ce qui n'y est pas n'est pas écrit, et **quitte
+    d'un écran —, tout ce qui est recommandé est écrit. Ce qui n'y est pas
+    n'est pas écrit, et **quitte
     le manifeste sans quitter le disque** : c'est déjà la règle de docs/38
     §4.2 pour un fichier que l'analyse ne recommande plus. Un chemin qui ne
     désigne aucune entrée revient dans `retenus_inconnus` (#1100) : jamais
@@ -198,8 +198,8 @@ async def question_outillage(
     un projet inconnu, `422` sur un identifiant mal formé — les mêmes refus que
     `GET …/outillage/analyse`, traduits par la même fonction.
 
-    Depuis #1147 la suite se **comprend** (un appel au modèle dès qu'une réponse a
-    été donnée) : un fournisseur injoignable ou une compréhension illisible est un
+    La suite se **comprend** (#1147, un appel au modèle dès qu'une réponse a été
+    donnée) : un fournisseur injoignable ou une compréhension illisible est un
     `502`, jamais une question inventée à sa place.
     """
     outillage = ctx.outillage
@@ -257,8 +257,8 @@ async def proposition_equipe(
     **skills** de l'outillage qu'il branche et ses **autorisations
     proposées** — chacune avec sa raison, le cran `auto` compris (#716,
     docs/37 §4.3). `politique` porte les mêmes autorisations sous la forme
-    que #1040 persistera, pour que ce qu'on valide soit exactement ce qu'on
-    a lu.
+    que la création (#1040) persiste, pour que ce qu'on valide soit exactement
+    ce qu'on a lu.
 
     **Une route, deux provenances.** Corps vide (ou `choix` vide) : le projet
     est **analysé** (#1030) — c'est le cas d'un projet existant. Avec des
@@ -272,8 +272,8 @@ async def proposition_equipe(
 
     **Rien n'est créé**, et la réponse le dit (`cree`, `validation`) : aucun
     agent, aucun playbook, aucune politique, aucune capacité n'est écrit. La
-    validation et la création sont le lot 4 (#1040) ; d'ici là l'équipe se
-    relit, se modifie et se redemande sans conséquence.
+    validation et la création passent par `POST …/equipe` (#1040) : avant
+    elles, l'équipe se relit, se modifie et se redemande sans conséquence.
 
     `ecartes` nomme les rôles **non** proposés avec leur raison —
     l'orchestrateur en fait partie *par décision* : c'est Maestro, et c'est
@@ -284,7 +284,7 @@ async def proposition_equipe(
     (`playbook_origine`) : une équipe entière perdue parce qu'un quota est
     épuisé serait une bien pire réponse.
 
-    **Une troisième demande depuis #1227** : `renfort` fait proposer **un seul
+    **Une troisième demande** (#1227) : `renfort` fait proposer **un seul
     rôle**, celui qu'un plan appelle et que l'équipe n'a pas, justifié par le
     plan et non par un constat. C'est ce que la carte du fil demande quand un
     run l'attend — sans lui, le rôle manquant serait `ecarte` par l'analyse,
@@ -403,7 +403,7 @@ async def creer_equipe(
         # connaître) et peuplent le parc transverse. C'est
         # `creer_equipe_du_projet` qui tient les deux, parce que le fil de
         # l'orchestration crée une équipe par la même voie (#1146).
-        # ⚠ La vue de l'équipe, elle, n'en dépend plus (#1101) :
+        # ⚠ La vue de l'équipe, elle, n'en dépend pas (#1101) :
         # `GET /api/agents?projet=` la dérive du catalogue du projet et de ses
         # capacités. C'est ce qui la rend juste au redémarrage, quand la
         # projection repart vide.

@@ -52,8 +52,8 @@ class Diffusion:
     def connecter(self, portee: PorteeProjet | None = None) -> asyncio.Queue[Event]:
         """Enregistre une connexion : sa file recevra les événements de sa portée.
 
-        `None` vaut la vue transverse — le comportement d'avant #277, conservé
-        pour les appels internes ; les routes, elles, exigent une portée.
+        `None` vaut la vue transverse, pour les appels internes (#277) ; les
+        routes, elles, exigent une portée.
         """
         file: asyncio.Queue[Event] = asyncio.Queue()
         self._connexions[file] = portee if portee is not None else PorteeProjet.tous()
@@ -150,7 +150,7 @@ def _portee(ctx: Contexte, projet: str | None) -> PorteeProjet:
     validations, journal, flux temps réel : `?projet=<id>` pour un projet,
     `?projet=tous` pour la vue transverse, `?projet=aucun` pour les travaux
     hors projet. **Omis, le paramètre est refusé** (422 `projet-requis`) :
-    une lecture sans périmètre n'est plus un mélange silencieux de tous les
+    une lecture sans périmètre serait un mélange silencieux de tous les
     projets, et un refus motivé se diagnostique là où une liste vide se
     confondrait avec un projet sans activité. Un identifiant inconnu du
     dépôt sort en 404 `projet-inconnu`, par la même porte que les refus de
@@ -171,9 +171,9 @@ def _config(ctx: Contexte, projet: str | None) -> ConfigurationAgents:
     playbook, autorisations, serveurs MCP, capacité — plutôt que pour ce
     qu'il fait. Deux différences, et chacune est une décision (voir
     `resoudre_projet_configuration`) : `tous`/`aucun` sont refusés, une
-    configuration appartenant à un projet réel ; et `?projet=` **omis** rend
-    le niveau des **gabarits**, qui est exactement ce que ces routes
-    servaient avant ce lot — un appel d'avant répond donc la même chose.
+    configuration appartenant à un projet réel ; et `?projet=` **omis** n'est
+    pas refusé : il rend le niveau des **gabarits**, un niveau à part entière
+    et celui d'un appel qui ne nomme aucun projet.
     """
     gabarits = ctx.gabarits
     projets = ctx.projets
@@ -198,14 +198,14 @@ def _integration_pool_dict(
     est **présent** dans le coffre projet et **valide** (un token OAuth
     expiré ne l'est plus). Aucune valeur de secret n'est jamais réémise.
 
-    Depuis #678 elle porte aussi **ce qui a changé sous elle** : `admission`
+    Elle porte aussi **ce qui a changé sous elle** (#678) : `admission`
     (par quel geste elle est montable), `signaux` (ce que l'amont en dit
     depuis), et `alerte` quand elle n'est plus dans l'allowlist — révoquée,
     ou disparue de la bibliothèque. C'est la moitié « sans le dire » du
     critère 2 : le serveur reste monté, mais l'écran qui le liste ne peut
-    plus l'afficher comme si de rien n'était. `curee: false` le disait déjà
-    et ne suffisait pas — il ne dit pas *pourquoi*, et une intégration
-    montée hier qui devient « non curée » sans un mot se lit comme un bug.
+    pas l'afficher comme si de rien n'était. `curee: false` ne suffit pas à
+    le dire : il ne dit pas *pourquoi*, et une intégration montée hier qui
+    devient « non curée » sans un mot se lit comme un bug.
     """
     courant = registre(ctx)
     entree = courant.get(integration.id)
@@ -340,8 +340,6 @@ def _personnalise_ou_none(
         return None
 
 
-
-# --- Projets de l'utilisateur (#223) : CRUD et explorateur de dossiers ---
 def _refus_projet(exc: Exception, *, explorateur: bool = False) -> HTTPException:
     """Un refus du service des projets en `HTTPException` — motif compris.
 
@@ -372,8 +370,8 @@ def _exige_agent_du_catalogue(
 
     Au niveau **gabarit**, les gabarits de rôle en font partie (#1042) : ce
     niveau est celui qu'on consulte et qu'on règle, et leurs serveurs MCP,
-    autorisations et fils de chat s'y adressent comme avant. Dans un projet,
-    non — il n'a que son équipe.
+    autorisations et fils de chat s'y adressent. Dans un projet, non — il
+    n'a que son équipe.
     """
     gabarits = ctx.gabarits
     niveau = cfg if cfg is not None else gabarits

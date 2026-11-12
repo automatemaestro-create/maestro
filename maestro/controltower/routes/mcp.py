@@ -39,7 +39,7 @@ router = APIRouter()
 
 @router.get("/api/mcp/registre")
 async def mcp_registre(ctx: Ctx, q: str = "", source: str = SOURCE_TOUTES) -> list[dict[str, Any]]:
-    """La bibliothèque de serveurs MCP (#131, #271), **à trois sources** depuis #678.
+    """La bibliothèque de serveurs MCP (#131, #271, #678), **à trois sources**.
 
     `q` filtre par nom, id, éditeur, description ou tag (recherche libre,
     insensible à la casse et aux accents ; vide → tout le registre). Chaque
@@ -51,9 +51,9 @@ async def mcp_registre(ctx: Ctx, q: str = "", source: str = SOURCE_TOUTES) -> li
     `source` sert à n'en demander qu'une : `toutes` (défaut), `curee`,
     `admise` ou `decouverte` — une valeur inconnue est un **422**, jamais
     une liste silencieusement autre que celle demandée. Sans le paramètre,
-    la réponse est celle d'avant #677 **augmentée** : curées d'abord, puis
-    admises, puis découvertes (tri `_rang`), donc un appelant qui ignore le
-    paramètre lit toujours la même tête de liste.
+    la réponse porte les trois sources : curées d'abord, puis admises, puis
+    découvertes (tri `_rang`), donc un appelant qui ignore le paramètre lit en
+    tête les entrées curées (#677).
 
     ⚠ `curee` et `source` ne disent **pas** la même chose (#678) : le
     booléen marque l'appartenance à l'**allowlist** — c'est lui qui répond à
@@ -81,39 +81,36 @@ async def mcp_registre_provenance(ctx: Ctx) -> dict[str, Any]:
     sortie du cul-de-sac du critère 2 — les pistes qu'une recherche sans
     résultat propose, plutôt que de répéter qu'elle n'a rien trouvé.
 
-    Depuis #677 la bibliothèque a plusieurs sources, donc plusieurs
-    provenances, et elles ne répondent pas à la même question : la curée se
-    date par sa **revue humaine**, la découverte par le **rafraîchissement**
-    du miroir et le nombre d'entrées qu'il porte. `provenances` les rend côte à côte ;
-    `moissonnee` dit si le miroir a effectivement rapporté quelque chose —
-    c'est ce qui fait cesser le « jamais moissonnée » du critère 5 du parent
-    sans le remplacer par une promesse que personne n'a tenue.
+    La bibliothèque a trois sources, donc trois provenances (#677, #678), et
+    elles ne répondent pas à la même question : la curée se date par sa
+    **revue humaine**, la découverte par le **rafraîchissement** du miroir et
+    le nombre d'entrées qu'il porte. `provenances` les rend côte à côte ;
+    `moissonnee` dit si le miroir a effectivement rapporté quelque chose, et
+    l'écran ne cesse de dire « jamais moissonnée » que sur ce fait, jamais sur
+    une promesse.
 
-    Depuis #678 il y a **trois** sources, donc une troisième provenance : les
-    entrées **admises**, qui ne se datent ni par une revue de code ni par un
-    rafraîchissement de miroir mais par le **geste** qui les a fait entrer.
+    Les entrées **admises** ne se datent ni par une revue de code ni par un
+    rafraîchissement de miroir mais par le **geste** qui les a fait entrer :
     `derniere_le` est la date de la plus récente, `revoquees` ce qu'on a
     retiré, `signaux` ce que l'amont dit de tout ça depuis — l'écran a de
     quoi dire l'état de l'allowlist locale sans recharger le journal entier.
 
-    ⚠ Les clés historiques (`resume`, `sources`, `revue_le`, `tags`,
-    `total`) sont **conservées à plat et inchangées de sens** : elles parlent
-    de la curation, que l'écran affiche déjà. L'ajout est purement additif —
-    `total` reste le compte servi par `GET /api/mcp/registre` sans filtre, et
+    ⚠ Les clés `resume`, `sources`, `revue_le`, `tags` et `total` sont **à
+    plat** et parlent de la curation, que l'écran affiche. `total` est le
+    compte servi par `GET /api/mcp/registre` sans filtre, et
     `total_curees`/`total_admises`/`total_decouvertes` le détaillent.
 
-    ⚠ `total_curees` compte le **seed seul** : une entrée admise n'y est plus,
-    elle est dans `total_admises`. C'est le seul endroit du contrat où un
-    chiffre a changé de portée, et la raison est la même que pour le filtre
+    ⚠ `total_curees` compte le **seed seul** : une entrée admise n'y est pas,
+    elle est dans `total_admises`. La raison est la même que pour le filtre
     `source=curee` — ce qui répond à « montable ? » n'est pas la source mais
     le champ `curee` de chaque entrée.
 
-    ⚠ La forme de `GET /api/mcp/registre` n'a **pas** bougé : elle rend
-    toujours une liste nue. Emballer la liste pour y loger la provenance
-    aurait cassé tous ses appelants pour une donnée qui ne change qu'à
-    chaque revue — d'où une route sœur. `provenance` est un id **réservé**
-    du registre (`ID_RESERVES`), donc aucune entrée ne peut être masquée par
-    cette route et l'ordre de déclaration ci-dessous ne porte aucune règle.
+    ⚠ `GET /api/mcp/registre` rend une **liste nue**, d'où une route sœur pour
+    la provenance : emballer la liste pour l'y loger casserait tous ses
+    appelants pour une donnée qui ne change qu'à chaque revue. `provenance`
+    est un id **réservé** du registre (`ID_RESERVES`), donc aucune entrée ne
+    peut être masquée par cette route et l'ordre de déclaration ci-dessous ne
+    porte aucune règle.
     """
     courant = registre(ctx)
     curees = courant.lister(SOURCE_CUREE)
@@ -161,9 +158,9 @@ async def mcp_registre_entree(ctx: Ctx, id: str) -> dict[str, Any]:
 
     Sert une entrée découverte ou admise aussi bien qu'une curée (#677,
     #678) : c'est la fiche de ce que l'écran vient de lister, `source` dit
-    laquelle des trois on regarde et `curee` si elle est montable. Ouvrir
-    cette lecture n'ouvre aucune voie de montage — `instancier` ne passe pas
-    par ici, et `POST /api/mcp/pool` continue de n'accepter que l'allowlist.
+    laquelle des trois on regarde et `curee` si elle est montable. Cette
+    lecture n'ouvre aucune voie de montage — `instancier` ne passe pas par
+    ici, et `POST /api/mcp/pool` n'accepte que l'allowlist.
     """
     entree = registre(ctx).trouver(id)
     if entree is None:
@@ -346,8 +343,8 @@ async def mcp_pool(ctx: Ctx, projet: str | None = None) -> dict[str, Any]:
     valeur de secret. `erreur` porte la cause si le pool stocké est invalide.
     C'est ce que liste la section « Intégrations MCP » des Paramètres.
 
-    Le mot « pool **projet** » devient exact avec #1038 : `?projet=<id>` rend
-    celui de ce projet — celui du gabarit tant qu'il n'a pas le sien.
+    Le pool est **par projet** (#1038) : `?projet=<id>` rend celui de ce
+    projet — celui du gabarit tant qu'il n'a pas le sien.
     """
     return _pool_mcp(ctx, _config(ctx, projet))
 
@@ -369,11 +366,11 @@ async def ajouter_integration_pool(
     (le secret reste à configurer). 404 si l'id est hors allowlist, 422 si
     une valeur/échéance est invalide.
 
-    ⚠ Le 404 **nomme le geste qui manque** depuis #678 : une entrée
+    ⚠ Le 404 **nomme le geste qui manque** (#678) : une entrée
     découverte y renvoie vers l'admission (`POST /api/mcp/admissions`), une
     entrée révoquée dit qui l'a retirée et quand. La phrase vient de
     `RegistreMcp.cause_non_instanciable` et n'est pas recopiée ici — c'est
-    exactement celle que lèverait `instancier` deux lignes plus bas, et deux
+    exactement celle que lèverait `instancier` plus bas, et deux
     formulations pour un même refus finiraient par se contredire.
     """
     secrets = ctx.secrets
@@ -473,9 +470,9 @@ async def definir_activations_mcp(
 
     Remplacement intégral : `integrations` (des ids du pool) devient
     l'ensemble activé de l'agent, vide pour tout désactiver. C'est l'écriture
-    derrière l'interrupteur par agent qui remplace l'affichage lecture seule
-    des serveurs MCP. 404 si l'agent n'est pas au catalogue, 422 si un id
-    n'est pas dans le pool (une activation orpheline casserait la lecture).
+    derrière l'interrupteur par agent. 404 si l'agent n'est pas au catalogue,
+    422 si un id n'est pas dans le pool (une activation orpheline casserait la
+    lecture).
 
     Écrit **dans le projet** demandé (#1038) : activer une intégration ici
     n'en active aucune ailleurs.
@@ -541,8 +538,8 @@ async def migrer_declarations_mcp(
 ) -> dict[str, Any]:
     """Migre la déclaration héritée `core/mcp/{agent}.json` vers le pool projet (#263).
 
-    L'issue qui manquait au bloc « hérités » de la fiche d'un agent : ses
-    serveurs rejoignent le **pool**, activés pour lui, et le fichier part.
+    L'issue du bloc « hérités » de la fiche d'un agent : ses serveurs
+    rejoignent le **pool**, activés pour lui, et le fichier part.
     Additif (`McpStore.migrer_agent`) — le pool et les activations des autres
     agents ne bougent pas —, et **mutualisant** : un serveur déjà au pool sous
     la même déclaration est repris, pas dupliqué. Chaque serveur que la

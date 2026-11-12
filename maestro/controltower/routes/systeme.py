@@ -26,7 +26,7 @@ async def sante(ctx: Ctx) -> dict[str, Any]:
     a été relu ; sinon `"degrade"`, et `magasin` porte le motif et le geste.
     La réponse reste un `200` : la purge, le lanceur, `start.sh` et les passages
     (exercice, comparatif) lisent ici qu'**un process sert ce port**, et c'est vrai.
-    Ce qui a cessé est le « ok » menteur d'une API qui a perdu son magasin.
+    Seul le « ok » est refusé à une API qui a perdu son magasin.
     """
     magasin = ctx.magasin
     etat = await magasin.etat()
@@ -72,11 +72,11 @@ async def eteindre(ctx: Ctx) -> dict[str, Any]:
     ⚠ **Ce n'est pas l'arrêt de l'API.** Relancer après une modification (le
     démarrage remplace la session précédente), planter, recevoir un `SIGTERM` :
     ceux-là passent par le `lifespan`, où l'hôte détaché ne touche à rien — c'est
-    la propriété de #441 et elle n'est pas défaite. La distinction ne se déduit
-    d'aucun signal reçu ici : elle **descend** de l'appelant, seul à savoir qu'il
-    arrête exprès (docs/28 §11). Fermer la fenêtre a changé de camp le
-    2026-08-28 parce que c'est un geste d'**arrêt** — pas parce que la
-    distinction aurait faibli (docs/28 §11.2).
+    la propriété de #441. La distinction ne se déduit d'aucun signal reçu ici :
+    elle **descend** de l'appelant, seul à savoir qu'il arrête exprès
+    (docs/28 §11). Fermer la fenêtre relève de l'arrêt volontaire parce que
+    c'est un geste d'**arrêt**, pas parce que la distinction faiblirait
+    (docs/28 §11.2).
 
     Rend les résumés des runs soldés — vide quand rien ne tournait, ce qui est
     le cas courant. `200` dans les deux cas : éteindre une Control Tower au

@@ -4,349 +4,33 @@ Le backend du poste de pilotage (docs/05) : expose l'**état courant** de
 l'orchestration en REST et **pousse les événements** en temps réel par
 WebSocket. Stack retenue : FastAPI + WebSocket + Redis Pub/Sub (docs/02 §4).
 
-Endpoints :
-
-- `GET  /api/sante` — vitalité du service ;
-- `GET  /api/installation` — ce que l'installation fait tourner (#1622) : la
-  version du produit et le CLI `claude` qu'il lance, avec sa provenance ;
-- `GET  /api/taches` — les tâches (statut, agent, coût détaillé — tokens,
-  durée) : la source du Kanban ;
-- `GET  /api/agents` — l'état des agents (libre/occupé, charge, compteurs,
-  capacité : actif/instances) ;
-- `POST /api/agents/{nom}/capacite` — le contrôle de capacité (#86, EF-21) :
-  active/désactive l'agent et/ou ajuste son plafond d'instances — persisté
-  (`maestro.agents.capacity`) et relu à chaud par moteur et workers ;
-- `GET  /api/executions` — les runs connus (en cours et passés), récents d'abord :
-  objectif, statut, volume, coût, bornes temporelles (#185) et, sur un run non
-  soldé, sa **vitalité** (#348) — `vivant` / `orphelin` / `indetermine`, selon que
-  l'hôte du run bat encore, ne bat plus depuis le seuil, ou n'a jamais battu ;
-- `POST /api/executions` — **lance** une exécution (objectif + garde-fous + les
-  **sources** de l'objectif, #317) chez l'**hôte de run** du déploiement — un
-  process détaché depuis #446 — et rend son `run_id` immédiatement (#185), avec le
-  **rapport de lecture** de sa matière ;
-- `POST /api/sources` — **téléverse** un ou plusieurs fichiers (multipart) et
-  rend leurs identifiants de source (#317, EF-39) : les octets attendent dans le
-  dépôt de téléversement, hors de tout projet, jusqu'au lancement qui les
-  rattachera à son run. Refus motivé au-delà des plafonds d'ingestion (ENF-07),
-  jamais de troncature silencieuse ;
-- `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
-- `POST /api/executions/{run_id}/brief/decision` — tranche le **brief** d'un run
-  suspendu (#320, décision D5) : approuver (avec un brief éventuellement corrigé,
-  qui devient l'entrée de la décomposition) ou refuser (run « annulée », aucune
-  tâche créée) ;
-- `GET  /api/executions/{run_id}` — le détail d'une exécution (état, trace, coût)
-  et, depuis #320, le **brief** soumis ou retenu ;
-- `GET  /api/executions/{run_id}/cout` — le grand livre du run (#57) : coût
-  par tâche (tokens entrée/sortie, coût estimé, durée) et agrégat ;
-- `GET  /api/executions/{run_id}/graphe` — le **graphe** du run (#490) : un nœud
-  par tâche du plan, une arête par dépendance, les nœuds rangés par niveaux —
-  deux tâches indépendantes y tombent au même niveau, donc se lisent comme
-  parallèles ;
-- `GET  /api/analytics/couts` — la vue coûts & analytics (#87) : agrégats par
-  tâche, par agent et par exécution, total et série temporelle du coût
-  (`depuis` pour la période, `pas` pour la granularité des seaux) ;
-- `POST /api/taches/{tache_id}/reassigner` — réassignation manuelle (Kanban) ;
-- `GET  /api/validations` — les demandes de validation humaine (#48 : en
-  attente d'abord le contexte, puis l'issue une fois tranchée). Une demande
-  d'**application dans le projet** (#227, EF-37) y porte en plus son `diff` :
-  les fichiers que l'accord écrirait et la branche qu'il fusionnerait ;
-- `POST /api/validations/{tache_id}/decision` — la décision humaine
-  (approuver/refuser) : le moteur, en attente sur le bus, reprend ou annule. Un
-  refus peut porter un `motif` (#272), facultatif, qui rejoint le `detail` de
-  l'événement — donc le journal et la `decision` de la demande — et, depuis
-  #1185, revient à l'agent comme **consigne** : il replanifie son geste au lieu
-  d'abandonner. Une approbation d'acte peut porter une `etendue` (`run`,
-  `projet`) : l'outil n'est plus redemandé à cet agent pour la suite ;
-- `GET  /api/questions` — les questions **libres** posées par les agents pendant
-  leur tâche (#1023) : la question, ses choix facultatifs, l'hypothèse que
-  l'agent suivra sans réponse, puis la réponse une fois écrite. Une question
-  reste servie tant que personne n'y a répondu, même après que l'agent a repris ;
-- `POST /api/questions/{question_id}/reponse` — la réponse humaine, du **texte**
-  : l'agent, suspendu sur le bus, la reçoit et reprend. Répondre n'approuve
-  aucun acte — un outil classé `ask` reste refusé sans arbitrage (EF-08). Ces
-  deux gestes se règlent aussi depuis le fil de l'orchestrateur, par le même
-  service (#1183, `ServiceAttentes`, `POST /api/chat/{agent}/reglement`) ;
-- `GET  /api/playbooks` — les playbooks des agents (#76 : version courante et
-  provenance — défaut du code ou stockage versionné) ;
-- `GET  /api/playbooks/{agent}` — le playbook courant d'un agent (contenu) ;
-- `PUT  /api/playbooks/{agent}` — publie une nouvelle version du playbook ;
-- `GET  /api/playbooks/{agent}/versions` — l'historique des versions ;
-- `GET  /api/playbooks/{agent}/versions/{version}` — une version passée ;
-- `POST /api/playbooks/{agent}/restaurer` — retour arrière (EF-25) : republie
-  une version passée comme nouvelle version courante ;
-- `GET  /api/playbooks/{agent}/propositions` — les propositions d'auto-amélioration
-  en brouillon (#111 : jamais courantes, jamais chargées tant que non appliquées) ;
-- `POST /api/playbooks/{agent}/propositions` — analyse **à la demande** les échecs
-  d'un run (`run_id`) et génère une proposition de révision du playbook (#139) ;
-- `GET  /api/playbooks/{agent}/propositions/{numero}` — une proposition, contenu compris ;
-- `POST /api/playbooks/{agent}/propositions/{numero}/appliquer` — l'action humaine (#140) :
-  la proposition devient la version courante (chargée à chaud, #78) et quitte les brouillons ;
-- `POST /api/playbooks/{agent}/propositions/{numero}/rejeter` — écarte la proposition sans
-  toucher à la version courante ;
-- `GET  /api/mcp/registre` — la bibliothèque de serveurs MCP (#131), **à trois
-  sources** depuis #678 : templates recherchables (`q`, par nom/tag/éditeur)
-  portant transport, gabarit `${VAR}`, mode d'auth (docs/21), variables à
-  fournir et procédure côté outil. `source=toutes|curee|admise|decouverte` n'en
-  sert qu'une ; `curee` (le booléen) dit ce qui est **montable**, `source` dit
-  **d'où ça vient** — garde-fou supply-chain, docs/19 ;
-- `GET  /api/mcp/registre/provenance` — les **trois** provenances : le seed relu
-  à la main avec sa date de revue, les admissions avec leur dernier geste, le
-  miroir avec son rafraîchissement et son compte (#271, #677, #678) ;
-- `GET  /api/mcp/registre/{id}` — une entrée, quelle que soit sa source (404 sinon) ;
-- `GET  /api/mcp/admissions` — le **journal des admissions** (#678) : ce qu'un
-  humain a fait entrer dans l'allowlist (actives et révoquées), les signaux que
-  l'amont a émis depuis, et la politique qui garde la porte ;
-- `POST /api/mcp/admissions` — **admet** une entrée découverte : enregistre
-  l'entrée traduite figée avec sa source (nom amont, version épinglée, éditeur,
-  dépôt, horodatage du miroir) et le geste (qui, quand, pourquoi) ;
-- `POST /api/mcp/admissions/{id}/revocation` — **révoque** une admission :
-  l'entrée sort de l'allowlist, rien n'est effacé ni démonté, et la réponse dit
-  ce qui reste monté (un `POST` parce qu'une révocation est un acte tracé, pas
-  une suppression) ;
-- `GET  /api/mcp/pool` — le **pool projet** des intégrations MCP configurées
-  (#133) : chaque intégration avec son mode d'auth et l'état (présent/valide)
-  de ses secrets côté coffre projet — jamais une valeur de secret —, plus depuis
-  #678 son `admission`, ses `signaux` d'amont et son `alerte` si elle n'est plus
-  dans l'allowlist ;
-- `POST /api/mcp/pool` — ajoute (ou reconfigure) une intégration au pool depuis
-  la bibliothèque : instancie l'entrée de l'allowlist (garde-fou supply-chain)
-  et pose ses secrets **une seule fois** dans le coffre projet chiffré (#133).
-  Un 404 y **nomme le geste manquant** — l'admission — depuis #678 ;
-- `DELETE /api/mcp/pool/{id}` — retire une intégration du pool, désactive son id
-  chez chaque agent et purge les secrets qu'elle était seule à référencer ;
-- `PUT  /api/mcp/activations/{agent}` — fixe les intégrations du pool **activées**
-  pour un agent (#133) : l'écriture derrière l'interrupteur par agent qui
-  remplace l'affichage lecture seule des serveurs MCP ;
-- `POST /api/mcp/migration/{agent}` — migre la déclaration **héritée**
-  `core/mcp/{agent}.json` vers le pool projet (#263) : ses serveurs y entrent
-  (sous l'id de leur entrée de bibliothèque quand elle les décrit exactement),
-  l'agent les active et le fichier part. **Additif** — le reste du pool et les
-  autres agents ne bougent pas — et sans aucun secret à ressaisir ;
-- `PUT  /api/permissions/{agent}` — écrit la politique allow/ask/deny d'un agent
-  (#262, source `core/permissions/<agent>.json`) : remplacement intégral, 422
-  **motivé** sur une entrée mal formée, et aucune lecture préalable — c'est ce
-  qui permet de réparer depuis l'écran une politique que le moteur refuse ;
-- `DELETE /api/permissions/{agent}/accords/{id}` — retire un **accord étendu**
-  (#1185) : l'outil qu'une personne avait approuvé « pour la suite du run » ou
-  « du projet » repasse à l'arbitrage dès l'appel suivant ;
-- `GET  /api/projets` — les projets déclarés de l'utilisateur (#223, EF-35) :
-  racine canonicalisée sur le disque, origine, `vcs` détecté et périmètre ;
-- `GET  /api/projets/explorateur` — l'**explorateur de dossiers servi par
-  l'API** (docs/05 §2.7) : énumère les sous-dossiers d'un chemin (marqueur
-  « dépôt Git », projet déjà déclaré), borné aux **racines explorables** et aux
-  zones non sensibles — un dépassement est un **refus motivé**, jamais une
-  liste vide. Sans `chemin`, il rend les **points d'entrée** (#278) : dossier
-  utilisateur, dossiers récents, projets déclarés, volumes du poste, chacun
-  avec son `origine` ;
-- `GET  /api/projets/selecteur` — le **sélecteur de dossier natif** est-il
-  ouvrable ici (#278) ? Toujours 200 : une indisponibilité (backend distant,
-  réglage à `0`, aucun dialogue sur le poste) est une réponse motivée, que
-  l'écran affiche au lieu d'un bouton mort ;
-- `POST /api/projets/selecteur` — ouvre le dialogue de dossier de l'OS et rend
-  le chemin choisi, confronté à EF-38 (`racine_valide`, `refus`). Annuler rend
-  200 (`annule: true`) — fermer une fenêtre n'est pas une erreur ;
-- `POST /api/projets/racine` — ce qu'EF-38 dit d'un chemin **qu'on lui apporte**
-  (#938) : celui du dialogue ouvert par la **fenêtre** de bureau, celui d'un
-  **dossier déposé** sur l'écran de déclaration. Même corps que la route
-  ci-dessus, `annule` en moins. C'est la **porte unique** : aucun chemin réel
-  n'entre sans passer par elle ;
-- `GET  /api/projets/repertoire` — le **répertoire des projets** (#1022) : où
-  naît un projet neuf. `par_defaut` dit qu'aucun réglage n'a été posé (c'est
-  alors `~/Maestro`) ; la lecture **crée** le dossier s'il manque et le dit
-  (`cree`) — « créé à la première utilisation » ;
-- `PUT  /api/projets/repertoire` — pose ce répertoire ; `chemin: null` revient au
-  défaut. Validé et créé avant d'être stocké, sinon rien n'est écrit ;
-- `GET`/`POST`/`DELETE /api/projets/dossiers-autorises` — les **dossiers
-  autorisés** depuis l'écran (#1610) : un dossier que l'explorateur refusait
-  hors des dossiers explorables s'y ajoute, validé par `valider_racine`, sans
-  redémarrage ; il se retire par `DELETE ?chemin=` ;
-- `GET  /api/projets/{id}` — un projet déclaré ;
-- `POST /api/projets` — déclare un projet : racine **validée** (EF-38, refus
-  motivé en 422) et VCS **constaté** sur le disque ;
-- `PUT  /api/projets/{id}` — remplace la déclaration (l'intégrale, pas un diff) ;
-- `DELETE /api/projets/{id}` — oublie un projet, sans jamais toucher au dossier
-  sur le disque ;
-- `POST /api/projets/{id}/versionner` — met un projet **non versionné** sous
-  Git (#855, verbe de #704) : `git init` puis un premier commit de toute la
-  racine, `.gitignore` respecté, et rend la fiche relue — `vcs` constaté. Sans
-  corps : le `vcs` ne se déclare pas (EF-38), il se déclenche. Un projet déjà
-  versionné rend sa fiche telle quelle ; un refus (`depot-englobant` 409,
-  `commit-refuse` 422, `git-indisponible` 503…) porte son motif, jamais un 500 ;
-- `GET  /api/projets/{id}/outillage/analyse` — l'**analyse** d'un projet
-  existant et l'outillage qu'elle recommande (#1030, docs/38) : la racine lue
-  **en lecture seule**, dans des bornes qui voyagent dans la réponse, sans
-  jamais exécuter le code du projet. Rend les langages, les gestionnaires, les
-  commandes de construction/test/lint, la CI, la forge et les conventions déjà
-  écrites — puis chaque skill, script ou fichier d'instructions recommandé avec
-  sa **raison** et l'**endroit du projet** qui la justifie, ce que le projet
-  porte déjà étant reconnu (`deja-present`) plutôt que dupliqué. Depuis #1158
-  les tables n'en sont que les indices : le **modèle lit** le projet (lister,
-  lire — dans le périmètre, sans lien suivi) et ce qu'il tire des fichiers lus
-  complète les constats ; `lecture` en dit la provenance. N'écrit rien :
-  la génération est #1033 ;
-- `POST /api/projets/{id}/outillage/report` — le « **plus tard** » de l'étape
-  d'outillage (#1034, docs/37 §4.6) : sans corps, idempotent, il n'écrit rien
-  dans le dossier de l'utilisateur et rend la fiche relue. Celle-ci porte
-  `outillage.a_faire` — reporté **et** manifeste absent —, ce qui fait qu'une
-  génération suffit à faire taire le rappel ;
-- `POST /api/projets/{id}/equipe/proposition` — l'**équipe** que ce projet
-  appelle (#1039, docs/37) : chaque rôle avec sa **raison** et l'endroit du
-  projet qui la prouve, son nombre d'**instances** et pourquoi ce nombre, son
-  **playbook** (écrit par la mécanique de #257, à défaut celui de son gabarit —
-  `playbook_origine` le dit), les **skills** de l'outillage qu'il branche et ses
-  **autorisations proposées**, chacune avec sa raison, cran `auto` compris
-  (#716). Corps vide : le projet est analysé — sauf un projet encore vide, qui
-  reprend les réponses que son manifeste d'outillage garde (#1350) ; avec les
-  réponses du questionnaire d'outillage : l'équipe se dérive d'elles. `ecartes` nomme ce qui
-  n'est **pas** proposé — l'orchestrateur en fait partie par décision. Avec
-  `renfort` (#1227) : **un seul rôle**, celui qu'un plan de run appelle et que
-  l'équipe n'a pas, justifié par ce plan et non par un constat — sans quoi il
-  serait `ecarte`, aucun constat d'un projet en Python ne désignant un designer.
-  **Rien n'est créé** (`cree`, `validation`) : valider et créer est la route
-  suivante. Depuis #1159 l'équipe est **composée par le modèle** pour le besoin
-  réel du projet — les cinq gabarits n'en sont plus qu'une matière —, et
-  `composition` dit qui l'a composée : le modèle, ou les règles des gabarits en
-  repli, avec la cause ;
-- `POST /api/projets/{id}/equipe/correction` — la personne corrige l'équipe
-  proposée **avec ses mots** (#1159) : « ajoute quelqu'un pour la sécurité ». Le
-  modèle rend les rôles à ajouter (playbooks écrits pour ce projet), à retirer, à
-  remettre, les instances à changer, et une phrase qui lui répond. Rien n'est
-  créé ; 502 si le modèle ne répond pas — une phrase n'a pas de règle de repli ;
-- `POST /api/projets/{id}/equipe` — **crée** dans le projet l'équipe validée
-  (#1040, docs/37) : par rôle gardé, sa fiche et son playbook (les skills
-  branchés y sont nommés), sa politique d'autorisations et sa capacité. Le corps
-  rapporte la proposition **telle qu'elle a été servie** — la rejouer rendrait un
-  autre playbook, donc un agent que personne n'a validé. L'équipe entière est
-  vérifiée avant la première écriture : un refus (`equipe-refusee`) les nomme
-  tous et **rien** n'est créé. L'équipe se revoit ensuite depuis
-  `GET /api/catalogue?projet=…` ;
-- `GET  /api/fournisseurs` — ce qui existe côté modèles (#253) **et ce qui est
-  déjà là** (#487) : les fournisseurs du **registre**, leurs modèles annoncés et,
-  pour chacun, les niveaux d'effort admis (liste vide quand le fournisseur
-  n'expose pas ce réglage) ; `modeles_libres` dit qu'un nom hors gamme reste
-  recevable ; et, sur la même ligne, ce que la **sonde du poste** en a trouvé
-  (`present_ici`, `utilisable_ici`, `modeles_ici`, `constats`), plus
-  `hors_registre` — l'outillage présent que Maestro ne sait pas piloter — et les
-  `incertitudes` de la sonde ;
-- `GET  /api/catalogue` — le catalogue d'agents (#72, EF-03) : les agents par
-  défaut du code et les personnalisés persistés, avec leur provenance
-  (`source`, **trois** valeurs depuis #259 : `defaut`, `defaut_surcharge`,
-  `personnalise`), leurs réglages de modèle **effectifs**
-  (`fournisseur`/`modele`/`effort` — #253) et d'où chacun vient (`herite`,
-  `reglages_du_code` — #259), leurs serveurs MCP effectifs (#104 —
-  `mcp_serveurs`/`mcp_erreur`), ce que leur **seule déclaration héritée** porte
-  encore (#263 — `mcp_herites`, ce que la migration ferait passer au pool) et
-  leur politique de permissions effective (#110 —
-  `permissions`/`permissions_erreur`, écrite par `PUT /api/permissions/{agent}`
-  depuis #262, qui sert avec elle les outils **réellement exposés** à l'agent
-  dans `permissions_outils`) ;
-- `GET  /api/catalogue/{nom}` — la définition complète d'un agent (playbook
-  compris) ;
-- `POST /api/catalogue` — crée un agent personnalisé (persisté hors du code,
-  routable et exécutable par les moteurs construits ensuite) ;
-- `POST /api/catalogue/generation` — **propose** une définition d'agent à partir
-  d'une intention en une phrase (#257) : rôle, compétences, playbook et réglages
-  suggérés, confrontés au registre des fournisseurs. Rien n'est créé — la
-  proposition est un brouillon que le formulaire reçoit, et la création reste le
-  `POST /api/catalogue` ci-dessus ;
-- `PUT  /api/catalogue/{nom}` — remplace la définition d'un agent personnalisé ;
-- `DELETE /api/catalogue/{nom}` — supprime un agent personnalisé ;
-- `PUT  /api/catalogue/{nom}/reglages` — surcharge les réglages de modèle d'un
-  agent **du code** (#259) sans le dupliquer : le rôle, les compétences et le
-  playbook restent au code et continuent d'en suivre les évolutions ; ce qui
-  n'est pas envoyé reste hérité ;
-- `DELETE /api/catalogue/{nom}/reglages` — **annule** cette surcharge (retour aux
-  réglages du code). Annuler n'est pas supprimer : l'agent reste au catalogue, et
-  la suppression demeure réservée aux personnalisés ;
-- `GET  /api/chat/{agent}` — le fil de conversation utilisateur ↔ agent (#84),
-  persisté et relu du `ChatStore` ; `?conversation=` en désigne une (#694),
-  sinon la plus récente ;
-- `GET  /api/chat/{agent}/conversations` — les conversations de l'agent, la plus
-  récente d'abord (#694) : identifiant, titre dérivé, ouverture, dernière
-  activité, nombre de messages ;
-- `POST /api/chat/{agent}/conversations` — en ouvre une neuve et rend sa carte
-  (idempotent tant que la plus récente est vierge) ;
-- `POST /api/chat/{agent}/messages` — envoie un message à l'agent et rend la
-  paire message/réponse (le fil est aussi diffusé en `chat.message` sur le
-  WebSocket, réponse comprise) ; `assistance` (#123) y désigne le **canal
-  d'aide** — mêmes endpoints, fiche hors catalogue et réponses sans modèle
-  (`maestro.controltower.assistance`) — et `orchestrateur` (#268) le **fil
-  global** : on y adresse une demande à l'orchestration, qui répond et **ouvre
-  un run** quand c'en est une (`maestro.controltower.orchestration`). Le corps
-  porte le `projet_id` de la fenêtre (#683) : le run ouvert **appartient** au
-  projet actif, donc il figure dans sa liste de runs et s'ouvre en détail. Sans
-  projet, le fil ne propose ni n'ouvre aucun run (#1180) ;
-- `POST /api/chat/{agent}/cadrage` — **tranche** la demande de cadrage que le
-  fil porte (#943) : accepter, refuser, ou accepter un objectif **amendé**, sans
-  repasser par la zone de saisie ni par le juge. Le run s'ouvre dans le projet
-  **de la proposition** (`projet_vise`, #1180), et non dans celui de la fenêtre
-  du clic. Même paire rendue qu'un envoi ;
-  `409` quand rien n'attend. Le corps porte aussi les quatre **bornes** du run
-  (#990) — coût, tokens, délai par tâche, parallélisme —, aux mêmes noms que sur
-  `POST /api/executions` : c'est par ce geste qu'un run lancé depuis l'interface
-  se borne, la conversation en étant la seule porte depuis #666 ;
-- `POST /api/chat/{agent}/recrutement` — **valide** ou décline l'équipe que le
-  fil propose à un projet sans agent (#1146), au lieu d'un run qui n'aurait
-  personne pour prendre ses tâches. Le corps porte l'équipe retenue dans la forme
-  de `POST /api/projets/{id}/equipe` ; la création passe par la même voie
-  (#1040), puis le fil repropose le run demandé. Même paire rendue qu'un envoi ;
-  `409` quand rien n'attend. **Le même geste complète l'équipe d'un run
-  suspendu** (#1227) : quand la demande du fil porte un `run_id`, la décision est
-  publiée sur le bus (`renfort.decision`) et le run repart — accepté avec
-  l'équipe complétée, décliné avec celle qu'il a. Rien n'est reproposé alors : le
-  run tourne déjà ;
-- `GET  /api/chat/{agent}/flux` — la même réponse rendue **au fur et à mesure**
-  (SSE, trames `debut`/`fragment`/`fin`/`interrompu`/`erreur`, #268) : un canal,
-  valable pour les trois fils ; `?projet_id=` y porte le même rattachement que le
-  corps du POST — et n'est pas le `?projet=` des lectures, qui est une portée
-  (#277) ;
-- `POST /api/chat/{agent}/flux` — le **même flux** pour un message qui embarque
-  des sources (#692) : corps de `POST …/messages`, réponse en `text/event-stream`.
-  Une URL ne pouvant porter ni identifiants de sources ni corps, le GET reste la
-  voie du cas sans source ; les deux verbes appellent le même `ServiceChat.diffuser`
-  (arbitrage écrit en tête de `maestro.controltower.chat`) ;
-- `POST /api/chat/{agent}/flux/{echange}/arret` — **arrête** la génération en vol
-  (#695). Rien n'y est envoyé : c'est le seul verbe qui retire quelque chose au
-  canal, et le seul geste qui annule une production — une déconnexion, elle, la
-  laisse s'achever (#268). Ce qui a été reçu avant l'arrêt est **persisté** comme
-  réponse et porté par la trame `interrompu` ; 404 quand il n'y a rien à arrêter ;
-- `WS   /ws/evenements` — le flux d'événements (statuts de tâches, activité
-  des agents, messages inter-agents, validations, chat), au format
-  `Event.to_dict`.
-
-Contrats d'API **v2** (#183 — formes figées des Phases 5/6, servies pour de vrai
-à mesure que leur lot a été livré) :
-
-- `GET  /api/executions` — la liste des runs (résumés : statut, coût, dates,
-  ticket) ; `POST /api/executions` — lance un run (objectif + garde-fous) ;
-  `POST /api/executions/{run_id}/annuler` — interrompt un run en cours (#185) ;
-- `GET  /api/journal` — le journal requêtable (filtres agent / type / run /
-  période, tri, pagination) — servi **pour de bon** depuis #478.
-
-Les deux autres, `GET /api/configuration` et `GET /api/playbooks/propositions`,
-ne répondaient qu'en fixtures du mode démo et `501` en réel : elles sont parties
-avec lui (#1168).
+Ce module **assemble** l'application : les services et le contexte qu'ils
+partagent, le portier, la garde du magasin et CORS, la pompe des événements, le
+cycle de vie, et les aides que l'assemblage passe aux services (le lanceur du fil,
+le récit de fin d'un run…). Les routes vivent dans `maestro.controltower.routes`,
+un module par domaine : la carte des modules est la docstring de ce paquet, et le
+contrat de chaque route est décrit dans docs/05 §6.
 
 Assemblage : une **pompe** unique s'abonne au bus (`EventBus`), projette chaque
 événement sur l'état (`ControlTowerState`), l'ajoute au journal requêtable
 (`ServiceJournal`, #478) puis le rediffuse aux WebSockets connectées — l'ordre
 « état d'abord, diffusion ensuite » garantit qu'un client qui reçoit un
 événement lit un REST déjà à jour. La **consignation** au journal durable
-(`EventLog`, #97) n'est plus la sienne depuis #699 : elle a lieu à la
-**publication** (`BusDurable`, dont `create_app` enveloppe le bus reçu), parce
-qu'un run vit hors de l'API et publie pendant qu'elle est arrêtée — faire
-dépendre la durabilité d'un consommateur vivant perdait alors tout, et
-définitivement. Au démarrage, le lifespan **rejoue** le journal pour
-reconstruire la projection (exécutions, grands livres, analytics, tâches,
-agents, validations) **et l'historique requêtable** d'avant un redémarrage de
-l'API : l'état survit à la vie du process (#97). `create_app` s'injecte bus, état
-et journal (les tests d'API tournent sur `InMemoryEventBus`/`InMemoryEventLog`,
-sans Redis) ; `create_default_app` câble les supports que le **déploiement**
-désigne (`_supports_configures`, #639) : `RedisEventBus` + `RedisEventLog` en
-serveur — le défaut, canal `maestro.evenements` alimenté par
-`maestro.controltower.bridge` côté moteur, journal persistant sur la liste
-`maestro.evenements:journal` —, `InMemoryEventBus` + `SqliteEventLog` en local,
-où plus aucun service n'est à installer.
+(`EventLog`, #97) n'est pas la sienne : elle a lieu à la **publication**
+(`BusDurable`, dont `create_app` enveloppe le bus reçu, #699), parce qu'un run vit
+hors de l'API et publie pendant qu'elle est arrêtée — une durabilité qui
+dépendrait d'un consommateur vivant perdrait tout ce qu'il publie alors, et
+définitivement. Au démarrage, le lifespan **rejoue** le journal pour reconstruire
+la projection (exécutions, grands livres, analytics, tâches, agents, validations)
+**et l'historique requêtable** d'avant un redémarrage de l'API : l'état survit à
+la vie du process (#97). `create_app` s'injecte bus, état et journal (les tests
+d'API tournent sur `InMemoryEventBus`/`InMemoryEventLog`, sans Redis) ;
+`create_default_app` câble les supports que le **déploiement** désigne
+(`_supports_configures`, #639) : `RedisEventBus` + `RedisEventLog` en serveur —
+le défaut, canal `maestro.evenements` alimenté par `maestro.controltower.bridge`
+côté moteur, journal persistant sur la liste `maestro.evenements:journal` —,
+`InMemoryEventBus` + `SqliteEventLog` en local, où aucun service n'est à
+installer.
 """
 
 from __future__ import annotations
@@ -541,24 +225,23 @@ async def _pompe(  # noqa: C901
     recharge sur un événement qu'il vient de recevoir en direct doit le
     retrouver dans son historique, jamais l'inverse.
 
-    **Une panne du bus ne l'arrête plus** (#1206). Elle s'arrêtait pour de bon :
-    un Redis coupé puis relancé laissait l'API servir une projection figée,
-    sans flux, jusqu'au redémarrage — et sans le dire. Elle réessaie désormais,
-    en espaçant ses essais (`reprise_s` → `reprise_max_s`), et rejoue d'abord le
-    journal si le démarrage n'avait pas pu (`magasin.rejeu_fait`). La panne est
-    tracée une fois par coupure, pas à chaque essai ; pendant ce temps le
-    magasin la sert aux écrans (`GardeMagasin`). Un abonnement qui se **termine**
-    sans erreur est un bus refermé : la pompe s'arrête avec lui.
+    **Une panne du bus ne l'arrête pas** (#1206) : sans quoi un Redis coupé puis
+    relancé laisserait l'API servir une projection figée, sans flux, jusqu'au
+    redémarrage — et sans le dire. Elle réessaie, en espaçant ses essais
+    (`reprise_s` → `reprise_max_s`), et rejoue d'abord le journal si le
+    démarrage n'a pas pu (`magasin.rejeu_fait`). La panne est tracée une fois
+    par coupure, pas à chaque essai ; pendant ce temps le magasin la sert aux
+    écrans (`GardeMagasin`). Un abonnement qui se **termine** sans erreur est un
+    bus refermé : la pompe s'arrête avec lui.
 
-    ⚠ **Elle ne consigne plus au journal durable** (#699). Elle en fut le seul
-    écrivain de #97 à ce lot, et c'est ce qui faisait dépendre la durabilité
-    d'un **consommateur vivant** : le pub/sub Redis ne bufferise rien, donc tout
-    ce qu'un run détaché publiait pendant que l'API était arrêtée n'était
-    consigné par personne, puis perdu. La consignation a suivi la publication
-    (`persistence.BusDurable`, `bridge.publieur_redis`), et la retirer d'ici
-    n'est pas une conséquence mais la **moitié** du remède : deux écrivains sans
-    dédoublonnage — un `Event` n'a pas d'identifiant — auraient doublé chaque
-    ligne du journal requêtable au lieu d'en perdre.
+    ⚠ **Elle ne consigne pas au journal durable** (#699) : la consignation a lieu
+    à la publication (`persistence.BusDurable`, `bridge.publieur_redis`). Une
+    durabilité qui dépendrait d'un **consommateur vivant** perdrait tout ce
+    qu'un run détaché publie pendant que l'API est arrêtée : le pub/sub Redis ne
+    bufferise rien, donc personne ne le consignerait. Et la pompe ne consigne
+    pas **en plus** de la publication : deux écrivains sans dédoublonnage — un
+    `Event` n'a pas d'identifiant — doubleraient chaque ligne du journal
+    requêtable.
 
     `sur_fin_de_run` (#1224) est appelé **après** la projection, et c'est tout ce
     qui le justifie ici plutôt que dans un second abonné au bus : le récit de fin
@@ -705,8 +388,8 @@ def create_app(
 
     `assistance_repondeur` (#123) porte le **canal d'aide** `/api/chat/assistance` :
     un second `ServiceChat` sur le même fil persisté, la même messagerie et le même
-    bus que le chat, mais avec son propre répondeur — depuis #764
-    `RepondeurAssistanceDocumentee`, qui choisit ses sections dans la documentation
+    bus que le chat, mais avec son propre répondeur —
+    `RepondeurAssistanceDocumentee` (#764), qui choisit ses sections dans la documentation
     du produit (#763) et cite ce qu'il a lu, avec le déterministe
     `RepondeurAssistance` en **repli** quand aucun fournisseur n'est joignable.
     Les questions portent sur l'outil, pas sur le projet ; voir
@@ -778,7 +461,7 @@ def create_app(
     Par défaut elle est **fédérée** (#677) : le seed curé en code — l'allowlist
     supply-chain du garde-fou docs/19, seule instanciable — plus les entrées
     découvertes dans le miroir du registre officiel, s'il y en a un sur le
-    disque. Sans miroir, le résultat est exactement le seed d'avant. Un registre
+    disque. Sans miroir, le résultat est exactement le seed curé. Un registre
     **injecté** court-circuite la fédération : c'est ainsi que les tests servent
     une allowlist restreinte, et la valeur injectée est alors la seule servie.
 
@@ -815,14 +498,14 @@ def create_app(
     quel puis reçoit le rejeu par-dessus (idempotent : les événements
     reconstruisent le même état).
 
-    ⚠ Depuis #699 il est aussi ce que le **bus marie à la publication** : le bus
+    ⚠ Il est aussi ce que le **bus marie à la publication** (#699) : le bus
     reçu est enveloppé dans un `BusDurable` sur ce journal-là, si bien que tout
-    ce que l'API publie est consigné à l'instant où elle le publie, et non plus
+    ce que l'API publie est consigné à l'instant où elle le publie, et non
     quand sa pompe le reçoit. Le bus passé ici doit donc être un **transport
     nu** — l'envelopper une seconde fois en amont doublerait chaque ligne.
     Corollaire pour un appelant qui garde la main sur le bus qu'il injecte
     (quelques tests) : ce qu'il publie **par sa propre référence** est
-    diffusé et projeté comme avant, mais n'est pas consigné — il court-circuite
+    diffusé et projeté, mais n'est pas consigné — il court-circuite
     le producteur, donc le geste qui consigne.
 
     `journal` (#478) est le **journal requêtable** servi par `GET /api/journal` :
@@ -936,7 +619,7 @@ def create_app(
     ctx.sonde_poste = sonde_poste
     mcp = mcp if mcp is not None else McpStore.default()
     ctx.mcp = mcp
-    # La bibliothèque MCP a **trois sources** depuis #678 : le seed curé (en
+    # La bibliothèque MCP a **trois sources** (#678) : le seed curé (en
     # code), les entrées admises (le journal, sur le disque) et le miroir du
     # registre officiel (sur le disque aussi). Un registre **injecté**
     # l'emporte toujours — c'est ainsi que les tests servent une allowlist
@@ -997,15 +680,15 @@ def create_app(
     )
     ctx.outillage = outillage
     # La projection part du catalogue **hors projet** : les agents rangés à la
-    # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
-    # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
+    # racine du dépôt. Elle est vide sur un poste neuf — le code n'y range aucun
+    # rôle (#1042) —, et c'est voulu : le parc d'agents se peuple projet par
     # projet, par l'équipe que chacun valide.
     # ⚠ Ce vide est donc l'état **normal** de la projection, et c'est pourquoi
-    # `GET /api/agents?projet=` ne s'y adosse plus (#1101) : elle la filtrait sur
-    # l'équipe demandée, si bien qu'une équipe validée disparaissait de l'écran au
-    # redémarrage suivant. La vue d'un projet se dérive désormais de son catalogue
-    # et de ses capacités (`ControlTowerState.equipe`), la projection n'y apportant
-    # que l'activité — la seule chose qu'elle soit seule à savoir.
+    # `GET /api/agents?projet=` ne s'y adosse pas (#1101) : filtrer la projection
+    # sur l'équipe demandée ferait disparaître de l'écran une équipe validée au
+    # redémarrage suivant. La vue d'un projet se dérive de son catalogue et de ses
+    # capacités (`ControlTowerState.equipe`), la projection n'y apportant que
+    # l'activité — la seule chose qu'elle soit seule à savoir.
     state = (
         state
         if state is not None
@@ -1013,7 +696,7 @@ def create_app(
     )
     ctx.state = state
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
-    # Les six dépôts d'un bloc (#1038) : c'est cet objet-là que `_config` cadre sur
+    # Les six dépôts d'un bloc (#1038) : c'est cet objet-là que `routes.communs._config` cadre sur
     # le projet demandé, une fois par requête. Les variables individuelles restent
     # pour ce qui n'a pas de projet à connaître — le démarrage, le chat, l'analyse
     # d'auto-amélioration —, et elles désignent le **même** niveau : les gabarits.
@@ -1076,7 +759,7 @@ def create_app(
     # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets et
     # pour tout service qui les rattache : deux instances pointeraient le même
     # disque, mais l'injection des tests n'en tiendrait qu'une. Résolu **avant**
-    # les services parce que le fil en dépend désormais aussi (#482) — un message
+    # les services parce que le fil en dépend aussi (#482) — un message
     # peut porter des sources, et il les résout par la même chaîne qu'un
     # lancement.
     televersements = (
@@ -1099,11 +782,11 @@ def create_app(
     # dépôt en fait partie : l'assistance sert les mêmes endpoints, donc le même
     # contrat, et lui refuser les sources ferait dépendre un 422 du nom du fil.
     #
-    # Il est servi par le **répondeur documenté** depuis #764 : le modèle choisit ses
+    # Il est servi par le **répondeur documenté** (#764) : le modèle choisit ses
     # sections sur la carte de `docs/` (#763) puis répond à partir d'elles, en citant
-    # ce qu'il a lu. Le déterministe de #123 lui est passé en **repli** plutôt que
-    # d'être remplacé — sans fournisseur ni authentification, le canal répond
-    # encore, et le dit. Construire ce répondeur ne résout aucun fournisseur
+    # ce qu'il a lu. Le déterministe (`RepondeurAssistance`, #123) lui sert de
+    # **repli** : sans fournisseur ni authentification, le canal répond encore, et
+    # le dit. Construire ce répondeur ne résout aucun fournisseur
     # et ne lit aucun fichier : les deux sont paresseux, comme partout ailleurs ici.
     assistance = ServiceChat(
         store=chat_store,
@@ -1188,7 +871,7 @@ def create_app(
                 roles=partial(roles_du_projet, ctx),
                 attentes=attentes_de(state),
                 # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
-                # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
+                # cadrage du lanceur, la règle des bornes — lus, jamais devinés.
                 regime=partial(regime_du_projet, ctx),
                 # Le projet de la conversation (#1180) : nommé par sa fiche, avec son
                 # outillage — et sans lui, aucun run ne part du fil.
@@ -1270,9 +953,9 @@ def create_app(
     app.add_middleware(GardeAcces, politique=acces)
     # L'UI (apps/web, ticket #47) est servie sur une autre origine que l'API
     # (Next.js sur :3000, API sur :8000) : sans CORS le navigateur bloque les
-    # appels REST. La liste n'est plus `["*"]` depuis #638 — c'est un réglage
-    # (`MAESTRO_API_ORIGINES`), dont le défaut local est l'origine du front, et
-    # le mode serveur se règle par la même variable (ENF-12).
+    # appels REST. La liste vient de la politique d'accès : un réglage
+    # (`MAESTRO_API_ORIGINES`, #638), dont le défaut local est l'origine du front,
+    # et le mode serveur se règle par la même variable (ENF-12).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(acces.origines),
@@ -1310,12 +993,11 @@ async def ouvrir_un_run(
     Le fil ne l'appelle jamais sans projet (#1180, `_ouvrir_un_run`) ; l'écran
     des exécutions, lui, garde le rattachement pour une donnée (#222).
 
-    `bornes` (#990) achève le rapprochement des deux portes : les quatre
-    garde-fous que `POST /api/executions` transmettait depuis #185 passent
-    désormais aussi par celle-ci, qui est **la seule qu'un écran offre**
-    depuis #666. Elles arrivent du geste de cadrage, où l'écran les a
-    posées ; `AUCUNE_BORNE` — le défaut — rend exactement l'appel d'avant ce
-    ticket, et c'est `lancer` qui refuse une valeur hors bornes.
+    `bornes` (#990) : les quatre garde-fous que `POST /api/executions`
+    transmet (#185) passent aussi par cette porte-ci, qui est **la seule
+    qu'un écran offre** (#666). Elles arrivent du geste de cadrage, où
+    l'écran les a posées ; `AUCUNE_BORNE` — le défaut — ne borne rien, et
+    c'est `lancer` qui refuse une valeur hors bornes.
 
     `contexte_sources` (#1172) : les pièces jointes de la conversation, déjà
     lues par le fil. Elles passent en contexte et non en `sources` à relire
@@ -1355,9 +1037,9 @@ def roles_du_projet(ctx: Contexte, projet_id: str | None) -> str:
     """L'équipe du projet **en clair** pour le fil — rôles, agents, instances (#1223).
 
     La même règle que la sonde du recrutement (`catalogue_du_projet`), lue
-    pour **dire** au lieu de compter : « qui travaille sur ce projet ? » ne
-    trouvait aucune réponse dans le prompt, où l'équipe n'existait que par un
-    `_sans_equipe` booléen. Rend `""` quand il n'y a rien à dire — aucun
+    pour **dire** au lieu de compter : sans elle, « qui travaille sur ce
+    projet ? » ne trouverait aucune réponse dans le prompt, qui ne saurait de
+    l'équipe que son absence. Rend `""` quand il n'y a rien à dire — aucun
     projet, projet inconnu, dépôt illisible —, et la phrase qui dit qu'il n'y
     a **personne** quand le catalogue est vide : c'est un fait, pas un vide.
     """
@@ -1469,9 +1151,10 @@ def outillage_du_fil(ctx: Contexte, projet_id: str) -> str:
 async def consulter(ctx: Contexte, demande: Demande, projet_id: str | None) -> Lecture:
     """Exécute une lecture du fil, **hors boucle** — elle touche le disque (#1223).
 
-    `asyncio.to_thread` pour la même raison que la création d'équipe juste
-    au-dessus : lire un fichier ou balayer un dossier est bloquant, et
-    l'API sert d'autres requêtes pendant qu'un fil réfléchit.
+    `asyncio.to_thread` pour la même raison que la création d'équipe
+    (`routes.communs.creer_equipe_du_projet`) : lire un fichier ou balayer un
+    dossier est bloquant, et l'API sert d'autres requêtes pendant qu'un fil
+    réfléchit.
     """
     consultations = ctx.consultations
     return await asyncio.to_thread(consultations.executer, demande, projet_id)
@@ -1569,7 +1252,7 @@ async def lifespan(ctx: Contexte, app: FastAPI) -> AsyncIterator[None]:
     # stockage — et ce qui lui donne des rangs, donc des identifiants
     # d'entrée, stables d'un redémarrage à l'autre.
     # Un journal illisible (Redis absent au démarrage…) ne bloque pas l'API,
-    # mais il ne se tait plus (#1206) : tant que l'historique n'est pas relu,
+    # mais il ne se tait pas (#1206) : tant que l'historique n'est pas relu,
     # le magasin se dit indisponible, et la pompe retente le rejeu dès que
     # le magasin revient.
     # Un journal qui refuse son fichier (schéma plus récent que le code,
@@ -1597,11 +1280,12 @@ async def lifespan(ctx: Contexte, app: FastAPI) -> AsyncIterator[None]:
             "du magasin et retentera dès qu'il répondra."
         )
     # Reprise des agents et réglages globaux dans le projet qui les utilise
-    # (#1038, critère 2). Ici parce que c'est le seul moment où une
-    # installation d'avant ce lot croise le nouveau code sans que personne ait
-    # rien à taper — et **best-effort** : elle n'ajoute jamais, ne supprime
-    # jamais, et une reprise impossible ne doit pas empêcher l'API de
-    # démarrer. Idempotente, donc rejouée à chaque démarrage sans effet.
+    # (#1038, critère 2). Ici parce que le démarrage est le seul moment où une
+    # installation qui porte des réglages globaux croise le code qui les range
+    # par projet, sans que personne ait rien à taper — et **best-effort** :
+    # elle n'ajoute jamais, ne supprime jamais, et une reprise impossible ne
+    # doit pas empêcher l'API de démarrer. Idempotente, donc rejouée à chaque
+    # démarrage sans effet.
     # `MAESTRO_REPRISE_AGENTS=0` s'en passe ; la CLI
     # `python -m maestro.agents.reprise [--check]` la rejoue et la détaille.
     if _reprise_agents_activee():
@@ -1673,9 +1357,9 @@ class _SupportsDeploiement:
 def _supports_configures(settings: Settings) -> _SupportsDeploiement:
     """Résout `MAESTRO_PERSISTANCE` en infrastructure — **Redis** par défaut (#639).
 
-    `redis` (le défaut, et le silence) rend exactement les quatre objets d'avant
-    ce lot : rien de ce qui marche aujourd'hui ne change, ni l'URL, ni les clés,
-    ni le canal.
+    `redis` (le défaut, et le silence) est le **mode serveur** : bus, messagerie,
+    journal durable, battements et magasin d'état acquis, tous sur l'instance
+    `REDIS_URL`.
 
     `sqlite` est le **mode local** : le journal durable vit dans un fichier
     (`SqliteEventLog`), et le reste passe aux implémentations mono-process. Ce
@@ -1734,14 +1418,14 @@ def create_default_app() -> FastAPI:
     embranchement (ENF-12), et `_supports_configures` est le seul endroit qui le
     lit.
 
-    L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs. Depuis #446
-    le défaut est l'hôte **détaché** : chaque run vit dans un process indépendant,
+    L'**hôte des runs** (#443) se choisit ici, et nulle part ailleurs. Le défaut
+    est l'hôte **détaché** (#446) : chaque run vit dans un process indépendant,
     qui survit à l'arrêt **subi** de `maestro-api` — relancer après une
-    modification, planter, recevoir un `SIGTERM` n'emportent plus le run. Il ne
+    modification, planter, recevoir un `SIGTERM` n'emportent pas le run. Il ne
     survit pas à l'arrêt **volontaire** (#486, `POST /api/extinction`), qui est une
-    décision et non un accident : `start.sh --stop`, et depuis #700 la fermeture de
-    la fenêtre du navigateur.
-    `MAESTRO_HOTE_RUN=process` ramène la tâche de fond de l'API, dont les runs
+    décision et non un accident : `start.sh --stop`, et la fermeture de la fenêtre
+    du navigateur (#700).
+    `MAESTRO_HOTE_RUN=process` désigne la tâche de fond de l'API, dont les runs
     meurent avec elle. C'est le seul endroit du dépôt qui *nomme* un hôte : le
     service ne connaît que le contrat, et le résoudre là où sont déjà résolus le
     bus, le journal et le registre met la frontière d'exécution parmi les autres
@@ -1772,28 +1456,24 @@ def create_default_app() -> FastAPI:
 
 
 def _hote_configure(settings: Settings) -> HoteRun | None:
-    """Résout `MAESTRO_HOTE_RUN` en hôte — **détaché** par défaut depuis #446.
+    """Résout `MAESTRO_HOTE_RUN` en hôte — **détaché** par défaut (#446).
 
-    La bascule du chantier #441 tient dans la valeur de repli de la première
-    ligne, et c'est voulu : les quatre lots précédents ont livré du code inerte
-    pour que celui-ci n'ait rien d'autre à changer. Ce que ce défaut promet est
-    écrit dans `hote_detache` — un run survit à l'accident, pas à l'extinction ni
-    à sa machine (#486) ; ce
-    qu'il exige est un Redis joignable, sur lequel le process publie ses étapes,
-    bat son cœur, reçoit les décisions humaines et consigne son issue.
+    Le choix du défaut tient dans la seule valeur de repli `defaut` (chantier
+    #441). Ce que ce défaut promet est écrit dans `hote_detache` — un run
+    survit à l'accident, pas à l'extinction ni à sa machine (#486) ; ce qu'il
+    exige est un Redis joignable, sur lequel le process publie ses étapes, bat
+    son cœur, reçoit les décisions humaines et consigne son issue.
 
-    `process` reste disponible et **doit se nommer** : le silence ne le désigne
-    plus. C'est le sens de la bascule — un déploiement qui veut des runs mourant
-    avec l'API le dit, là où c'était jusqu'ici ce qu'on obtenait sans rien dire.
+    `process` est disponible et **doit se nommer** : le silence ne le désigne
+    pas, parce qu'un déploiement qui veut des runs mourant avec l'API le dit.
     `None` est rendu pour lui, et non `HoteRunEnProcess()` : le service en fabrique
     un autour de son propre dérouleur, qu'on n'a pas ici.
 
     Une valeur inconnue est une **erreur franche** et non un repli silencieux :
     `MAESTRO_HOTE_RUN=procesus` laisserait sinon croire que les runs meurent avec
-    l'API alors qu'ils lui survivent — et depuis la bascule, l'erreur se lit dans
-    l'autre sens qu'avant, ce qui ne change rien à sa nature : une frontière
-    d'exécution mal orthographiée ne doit jamais ressembler à un choix. Même parti
-    pris que `MAESTRO_ISOLATION` (#108).
+    l'API alors qu'ils lui survivent. Une frontière d'exécution mal orthographiée
+    ne doit jamais ressembler à un choix. Même parti pris que `MAESTRO_ISOLATION`
+    (#108).
 
     L'import de l'hôte détaché est **local** à cette branche : il tire
     `subprocess` et, par la ligne de commande du fils, tout le moteur — une app

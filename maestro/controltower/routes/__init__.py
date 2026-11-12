@@ -55,7 +55,8 @@ from maestro.controltower.routes import (
 
 #: Les routeurs, dans l'ordre où `create_app` les inclut. FastAPI essaie les routes dans
 #: l'ordre de leur inclusion : une route littérale doit donc précéder la route paramétrée qui la
-#: recouvrirait. Entre deux modules, cet ordre est celui que l'API a toujours eu.
+#: recouvrirait. Toutes les paires de routes qui peuvent répondre à une même requête vivent dans
+#: un même module, qui les ordonne : l'ordre entre modules ne départage aucune requête.
 ROUTEURS: tuple[APIRouter, ...] = (
     systeme.router,
     journal.router,

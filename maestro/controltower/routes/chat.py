@@ -71,9 +71,9 @@ def _canal_chat(ctx: Contexte, nom: str, projet: str | None = None) -> tuple[Age
     if projet is None:
         return _exige_agent_du_catalogue(ctx, nom), chat
     # L'agent **d'une équipe de projet** (#1175) : résolu dans la
-    # configuration de ce projet, comme toutes les routes d'agent depuis #1038.
-    # Sans elle, `developpeur-2` rendait 404 et un `developpeur` de projet
-    # parlait avec la fiche du gabarit homonyme — playbook, compétences et
+    # configuration de ce projet, comme toutes les routes d'agent (#1038).
+    # Sans elle, `developpeur-2` rendrait 404 et un `developpeur` de projet
+    # parlerait avec la fiche du gabarit homonyme — playbook, compétences et
     # serveurs d'un autre agent, sans que rien ne le signale.
     cfg = _config(ctx, projet)
     return _exige_agent_du_catalogue(ctx, nom, cfg), _chat_du_projet(ctx, cfg)
@@ -127,8 +127,8 @@ def _conversation_demandee(
     formé** est un 422 (la garde de traversée de chemin, note technique du
     ticket — même famille qu'un message vide), un identifiant **bien formé
     mais inconnu** est un 404 (on ne peut pas adresser un fil qui n'existe
-    pas), et l'absence n'est pas une erreur du tout — c'est le cas nominal,
-    celui d'un appelant d'avant ce lot.
+    pas), et l'absence n'est pas une erreur du tout — c'est le cas nominal :
+    la conversation courante.
     """
     if not demandee:
         return service.courante(fiche.nom)
@@ -159,14 +159,14 @@ async def fil_chat(
     pas au catalogue. `assistance` (#123) désigne le canal d'aide.
 
     `?conversation=` désigne **laquelle** de ses conversations relire (#694) ;
-    sans elle, la plus récente — donc, pour un agent qui n'en a qu'une, le
-    fil exact d'avant ce lot. 404 si l'identifiant est inconnu, 422 s'il est
+    sans elle, la plus récente — donc, pour un agent qui n'en a qu'une, son
+    fil entier. 404 si l'identifiant est inconnu, 422 s'il est
     mal formé. La réponse **nomme** la conversation servie, ce dont un client
     qui n'en a demandé aucune a besoin pour savoir dans laquelle il est.
 
     `?projet=` (#1175) désigne le projet dont l'agent est membre, comme sur
     toute route d'agent (#1038) : son équipe, sa fiche, ses conversations.
-    Omis, les gabarits — le fil d'avant ce ticket.
+    Omis, le fil est celui du niveau des gabarits.
     """
     fiche, service = _canal_chat(ctx, agent, projet)
     fil = _conversation_demandee(service, fiche, conversation)
@@ -320,7 +320,7 @@ async def trancher_cadrage_chat(
             objectif=requete.objectif,
             # Normalisé **ici**, à la frontière, comme sur un envoi : c'est
             # le projet de la fenêtre. Il ne rattache le run que si la
-            # proposition n'a pas de projet à elle (#1180, écrite avant ce lot).
+            # proposition n'a pas de projet à elle (sans `projet_vise`, #1180).
             projet_id=projet_id_valide(requete.projet_id),
             bornes=requete.bornes_posees(),
             conversation=fil,
@@ -604,7 +604,7 @@ async def ouvrir_questionnaire_chat(
     même voie que n'importe quelle réponse d'agent. `projet` nomme le projet à
     outiller quand le fil ne le dit pas : « Outiller maintenant » sur la carte
     d'un projet dont l'outillage a été reporté (#1161) — l'outillage se construit
-    dans la conversation, plus dans une étape de formulaire.
+    dans la conversation, pas dans une étape de formulaire.
 
     **Idempotente** : rappelée sur un questionnaire en cours, elle repose la
     question là où il en est plutôt que d'en recommencer un second. La propriété
@@ -752,14 +752,14 @@ async def flux_chat(
     conversation: str | None = None,
     projet: str | None = None,
 ) -> StreamingResponse:
-    """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
+    """Flux SSE d'une réponse de chat — le contrat de #183 (#268).
 
     `GET /api/chat/{agent}/flux?contenu=…` : la voie **sans source**, et le
     seul verbe qu'un `EventSource` sache ouvrir. Une URL ne pouvant porter ni
     identifiants de sources ni corps, un message qui embarque de la matière
     (#482) passe par `POST …/flux` — voir l'arbitrage en tête de
     `maestro.controltower.chat`. Ce n'est pas une voie dégradée : c'est le cas
-    courant, gardé tel quel plutôt que retiré.
+    courant.
 
     `?projet_id=` porte le **projet de la fenêtre** (#683), comme le corps de
     `POST …/messages` : un run ouvert par cette voie se rattache donc comme
@@ -786,8 +786,7 @@ async def flux_chat_poste(
     `projet_id` (#683) — et même `text/event-stream` que `GET …/flux` : c'est
     exactement l'envoi du POST, rendu au fur et à mesure au lieu d'être rendu
     d'un coup. Le client n'a donc **pas** à choisir entre le direct et ses
-    pièces jointes, ce qui était le seul motif du choix écrit dans
-    `app/chat/page.tsx`.
+    pièces jointes.
 
     Le message utilisateur **résolu** — ses sources et leur rapport de
     lecture (#316) — voyage sur la trame `debut`, la réponse sur la trame

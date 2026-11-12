@@ -76,10 +76,10 @@ _CODE_REFUS_RELANCE: dict[str, int] = {
 
 
 
-#: Le statut HTTP des refus de la pause, de la reprise et de l'annulation (#1179) —
-#: ceux que leurs routes rendaient déjà, maintenant que les règles vivent dans le
-#: service (`refus_du_geste`) : `404` sur un run inconnu, `409` sur tout état qui
-#: interdit le geste (soldé, déjà suspendu, pas suspendu, sans hôte pour la pause).
+#: Le statut HTTP des refus de la pause, de la reprise et de l'annulation (#1179).
+#: Les règles vivent dans le service (`refus_du_geste`), la route n'en garde que le
+#: code : `404` sur un run inconnu, `409` sur tout état qui interdit le geste (soldé,
+#: déjà suspendu, pas suspendu, sans hôte pour la pause).
 _CODE_REFUS_GESTE: dict[str, int] = {
     MOTIF_RELANCE_RUN_INCONNU: 404,
     MOTIF_RELANCE_RUN_SOLDE: 409,
@@ -189,8 +189,8 @@ async def executions_liste(ctx: Ctx, projet: str | None = None) -> list[dict[str
 async def lancer_execution(ctx: Ctx, requete: LancementExecutionRequete) -> dict[str, Any]:
     """Lance une exécution (#185) et rend son résumé, `run_id` compris, **aussitôt**.
 
-    Le run se déroule **hors** de la requête HTTP — et, depuis #446, hors du
-    process de l'API : il part chez son **hôte** (`MAESTRO_HOTE_RUN`, un
+    Le run se déroule **hors** de la requête HTTP, et hors du process de
+    l'API (#446) : il part chez son **hôte** (`MAESTRO_HOTE_RUN`, un
     process détaché par défaut), qui lui survit. La réponse ne dit donc ni ce
     qu'il a produit ni même qu'il ira au bout : elle dit qu'il est parti. La
     suite arrive par le flux d'événements existant — chaque étape devient un
@@ -226,7 +226,7 @@ async def _refuser_le_geste(ctx: Contexte, geste: str, run_id: str) -> None:
 
     Les règles sont celles du service (`ServiceExecutions.refus_du_geste`), que
     le fil appelle aussi : la route n'en garde que la traduction en code, et le
-    `detail` reste la phrase du refus, comme avant que les règles n'y déménagent.
+    `detail` est la phrase du refus.
     """
     executions = ctx.executions
     refus = await executions.refus_du_geste(geste, run_id)
@@ -345,9 +345,9 @@ async def relancer_execution(ctx: Ctx, run_id: str) -> dict[str, Any]:
     — de qui il est la suite. Le run repris, lui, est soldé en `annulee` : rien
     n'a raté, son hôte est tombé et quelqu'un a repris la main.
 
-    Depuis #1391 c'est le geste de **recommencer** : reprendre un run interrompu
-    sur son plan, sous le même identifiant et sans refaire ce qui est fait, passe
-    par `…/reprendre`.
+    C'est le geste de **recommencer** : reprendre un run interrompu sur son plan,
+    sous le même identifiant et sans refaire ce qui est fait, passe par
+    `…/reprendre` (#1391).
 
     `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre —
     sauf un arrêt qui n'a pas jugé son travail : l'extinction, une borne
@@ -660,8 +660,8 @@ async def graphe_execution(ctx: Ctx, run_id: str) -> dict[str, Any]:
     Le nœud `en_cours` porte un **signe de vie** (`activite` : horodatage et
     libellé court du dernier geste de son agent), `null` sur tout nœud qui
     ne travaille pas : entre deux gestes d'agent, deux lectures rendent
-    deux valeurs — c'est ce qui manquait à un graphe immobile pendant toute
-    la durée d'une tâche. 404 si aucune trace reçue pour ce `run_id`.
+    deux valeurs, sans quoi le graphe resterait immobile pendant toute la
+    durée d'une tâche. 404 si aucune trace reçue pour ce `run_id`.
     """
     state = ctx.state
     if state.execution(run_id) is None:
@@ -688,10 +688,9 @@ async def frise_execution(ctx: Ctx, run_id: str) -> dict[str, Any]:
     dans la liste servie : aucune entrée ne se perd faute de file.
 
     Une tâche **bloquée**, une tâche **en attente de validation humaine** et
-    une tâche **en cours** portent trois `statut` distincts — c'est le cas
-    d'usage qui a motivé le ticket : une attente de décision y cesse d'être
-    indiscernable d'un travail en cours. `en_attente_validation` est résolu
-    depuis `validation.demande`, qui **est** l'instant où la tâche s'arrête
+    une tâche **en cours** portent trois `statut` distincts : une attente de
+    décision ne se confond pas avec un travail en cours. `en_attente_validation`
+    est résolu depuis `validation.demande`, qui **est** l'instant où la tâche s'arrête
     sur un humain ; la file `GET /api/validations` en dit l'état courant, pas
     la seconde.
 
@@ -779,8 +778,9 @@ async def bilan_execution(ctx: Ctx, run_id: str) -> dict[str, Any]:
     raison de leur écart.
 
     `bilan` vaut `null` tant qu'il n'y en a pas : un run en vol, un modèle qui
-    n'a pas répondu, un run soldé avant ce lot. Ce n'est pas une erreur — le
-    run existe, son bilan pas encore. 404 si aucune trace reçue pour ce `run_id`.
+    n'a pas répondu, un run soldé avant que Maestro ne rédige des bilans (#1284).
+    Ce n'est pas une erreur — le run existe, son bilan pas encore. 404 si aucune
+    trace reçue pour ce `run_id`.
     """
     bilans = ctx.bilans
     state = ctx.state
@@ -804,6 +804,6 @@ async def bilan_execution(ctx: Ctx, run_id: str) -> dict[str, Any]:
         "taches": state.titres_du_run(run_id),
         # Ce que le bilan a coûté (#1285), compté au run après sa fin : la tête
         # du run l'inclut, la vue du bilan le dit — sans quoi le coût « jusqu'à
-        # sa fin » que cite le bilan contredisait la tête. `null` : inconnu.
+        # sa fin » que cite le bilan contredirait la tête. `null` : inconnu.
         "cout_bilan": execution.cout.bilan.cout_usd,
     }

@@ -72,9 +72,9 @@ async def depense_du_fil(ctx: Ctx, projet: str | None = None) -> dict[str, Any]:
     """Ce que le fil a dépensé pour la portée (#1534) — le poste `fil` de la vue, seul.
 
     Le shell additionne les grands livres des runs pour dire le coût cumulé
-    d'un projet (barre supérieure, tuile « Dépense ») ; sans le fil, il disait
-    2,70 $ à côté des 3,83 $ de Coûts & analytics pour le même projet. Cette
-    lecture lui donne la part qui manque **par le même calcul** que la vue
+    d'un projet (barre supérieure, tuile « Dépense ») ; sans le fil, il dirait
+    moins que Coûts & analytics pour le même projet. Cette lecture lui donne
+    la part qui manque **par le même calcul** que la vue
     (`agrege_couts`, sans exécutions), à chaque rechargement et sans payer la
     série ni les tables. `fil` vaut `null` quand rien n'a été mesuré.
     `projet` est obligatoire, comme pour toute lecture qui agrège (#277).

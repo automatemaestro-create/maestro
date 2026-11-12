@@ -55,8 +55,8 @@ def _volet_mcp(ctx: Contexte, nom: str, cfg: ConfigurationAgents | None = None) 
     publique à secrets masqués) ; `mcp_erreur` porte la cause exacte si une
     source est invalide. `mcp_pool`/`mcp_pool_erreur` exposent le **pool
     projet** (les intégrations configurables, avec l'état de leurs secrets)
-    et `mcp_activations` les ids **activés** pour cet agent — de quoi
-    remplacer l'affichage lecture seule par des interrupteurs par agent (#133).
+    et `mcp_activations` les ids **activés** pour cet agent — de quoi les
+    régler par des interrupteurs, agent par agent (#133).
 
     `mcp_herites` (#263) porte les serveurs de la **seule** déclaration
     héritée. Il est servi parce que l'écran ne peut pas le déduire :
@@ -108,7 +108,7 @@ def _outils_exposes(
     Trois origines, et aucune n'est écrite en dur ici : les outils
     **intégrés** de son profil de rôle (`RoleProfile.outils` — le cadre que
     le code déclare pour ce rôle, sinon `DEFAULT_TOOLS`, ceux que le cadre
-    générique d'une fiche sert depuis #1037 : tout agent du catalogue est
+    générique d'une fiche sert (#1037) : tout agent du catalogue est
     outillé, seules ses consignes de métier lui sont propres), les verbes du serveur
     in-process **maestro** (arbitrage, blocage, courrier, décision
     consignée, question, checklist — leurs constantes existent précisément
@@ -168,15 +168,15 @@ def _volet_permissions(
     ctx: Contexte,
     nom: str, cfg: ConfigurationAgents | None = None
 ) -> dict[str, Any]:
-    """Le volet « permissions » d'une fiche catalogue (#110), **écrivable** depuis #262.
+    """Le volet « permissions » d'une fiche catalogue (#110), **écrivable** (#262).
 
     `permissions` porte la politique allow/ask/deny effective (celle que le
     moteur applique à l'exécution — None : aucune politique, tout ce que
     le profil expose est permis) ; `permissions_erreur` porte la cause
     exacte si la politique stockée est invalide — même contrat de
-    visibilité que `mcp_erreur`. Les **trois** listes sont servies depuis
-    #580, `ask` comprise et vide par défaut : une politique écrite avant ce
-    lot se relit sous le régime d'hier.
+    visibilité que `mcp_erreur`. Les **trois** listes sont servies (#580),
+    `ask` comprise et vide par défaut : une politique écrite sans `ask` se
+    relit sur ses deux seules listes.
 
     `permissions_outils` (#262) est ce que l'agent peut réellement appeler :
     de quoi **suggérer** des entrées à qui règle la politique, plutôt que de
@@ -238,8 +238,8 @@ def _fiche_defaut(
     surcharge, ou None si l'agent n'en a pas. `cree_le` reste None : un
     agent du code n'est pas créé, il est là.
 
-    Les deux formes de fiche portent les **mêmes champs**, ici comme depuis
-    #253 : un client n'a jamais à deviner ses clés d'après la `source`.
+    Les deux formes de fiche portent les **mêmes champs** (#253) : un client
+    n'a jamais à deviner ses clés d'après la `source`.
 
     `cfg` cadre les volets sur un projet (#1038) — surcharge, serveurs MCP
     et autorisations viennent alors de lui.
@@ -345,7 +345,7 @@ def _exige_du_code(ctx: Contexte, nom: str, cfg: ConfigurationAgents | None = No
     que #259 supprime côté playbook. 403 aussi sur `orchestrateur` et
     `assistance`, qui n'ont pas de fiche au catalogue. 404 sur un inconnu.
 
-    Depuis #1042 ce qu'il rend est un **gabarit** et non un agent, et il ne se
+    Ce qu'il rend est un **gabarit** et non un agent (#1042), et il ne se
     règle donc qu'au niveau gabarit : demandé sur un projet il sort en 404, au
     même titre que sa fiche et pour la même raison — le projet ne l'a pas, et
     un réglage écrit là ne recouvrirait aucun agent du projet.
@@ -641,7 +641,8 @@ async def annuler_surcharge(ctx: Ctx, nom: str, projet: str | None = None) -> di
 
     Cadré sur un projet (#1038), « retour aux réglages du code » veut dire
     retour au **gabarit** — c'est-à-dire au code tant que rien n'y est
-    surchargé, ce qui est l'invariant du #259 dans le nouveau rangement.
+    surchargé, ce qui garde l'invariant de #259 quand les réglages se rangent
+    par projet.
     """
     cfg = _config(ctx, projet)
     agent = _exige_du_code(ctx, nom, cfg)

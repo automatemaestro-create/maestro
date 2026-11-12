@@ -21,8 +21,8 @@ router = APIRouter()
 
 
 #: Le statut HTTP des refus d'une réponse à une question et d'une décision sur une
-#: validation (#1183) — ceux que leurs routes rendaient déjà, maintenant que les
-#: règles vivent dans le service des attentes (`ServiceAttentes`) : `404` sur une
+#: validation (#1183). Les règles vivent dans le service des attentes
+#: (`ServiceAttentes`), et les routes n'en gardent que la traduction : `404` sur une
 #: attente inconnue, `409` sur une attente déjà réglée, `422` sur une réponse vide.
 _CODE_REFUS_REGLEMENT: dict[str, int] = {
     MOTIF_ATTENTE_INCONNUE: 404,
@@ -59,8 +59,8 @@ async def decider(ctx: Ctx, tache_id: str, requete: DecisionRequete) -> dict[str
 
     Le `motif` d'un refus (#272) voyage dans le `detail` de l'événement : c'est
     le champ que la projection recopie dans `decision`, donc celui que l'UI
-    relit et que le journal durable conserve. Depuis #1185 il voyage **aussi**
-    dans `motif`, le fait que le moteur rend à l'agent comme consigne — lire la
+    relit et que le journal durable conserve. Il voyage **aussi** dans `motif`
+    (#1185), le fait que le moteur rend à l'agent comme consigne — lire la
     consigne dans la phrase de `detail` serait juger du texte par un motif.
 
     `etendue` (#1185) étend une approbation à l'outil pour la suite du run ou du

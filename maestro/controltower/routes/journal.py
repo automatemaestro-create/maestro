@@ -37,9 +37,8 @@ async def journal_requetable(
 ) -> dict[str, Any]:
     """Le journal requêtable : filtres (agent / type / run / projet / période), tri, pagination.
 
-    Servi **en mode réel** depuis #478 : l'historique des événements consignés
-    par la pompe et rejoués au démarrage (`ServiceJournal`, journal durable
-    #97).
+    Servi sur l'historique des événements consignés par la pompe et rejoués
+    au démarrage (`ServiceJournal`, journal durable #97, #478).
 
     `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
     `ids` (#1285) est une liste d'identifiants d'entrée séparés par des

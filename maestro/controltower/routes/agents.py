@@ -23,14 +23,13 @@ def _parc(ctx: Contexte, cfg: ConfigurationAgents) -> list[EtatAgent]:
     Le pendant d'`_config` pour la vue des agents, **écrit une fois** (#1101)
     parce que deux routes le lisent et qu'elles doivent le lire pareil :
     `GET /api/agents` et `POST /api/agents/{nom}/capacite`, qui décide de son
-    404. Les avoir laissées diverger est précisément ce qui a produit le
-    symptôme du ticket — une équipe qu'un écran ne montrait plus et dont la
-    capacité ne se réglait donc plus.
+    404. Deux lectures qui divergeraient montreraient une équipe que l'autre
+    route ignore : absente de l'écran, ou listée sans capacité réglable.
 
     Cadré sur un projet, il part du **disque** (`state.equipe`) : c'est là
     que vit l'équipe validée, quand la projection, elle, repart vide à chaque
     redémarrage. Sans projet, c'est le niveau des gabarits, et le parc rendu
-    est celui de la projection — ce que cette route servait avant #1038.
+    est celui de la projection.
     """
     state = ctx.state
     if cfg.projet_id is None:
@@ -43,9 +42,8 @@ def _parc(ctx: Contexte, cfg: ConfigurationAgents) -> list[EtatAgent]:
 async def agents(ctx: Ctx, projet: str | None = None) -> list[dict[str, Any]]:
     """L'état des agents : libre/occupé, tâche courante, compteurs, coût cumulé.
 
-    `projet` cadre le **parc** sur l'équipe de ce projet (#1038, renverse la
-    première ligne du tableau « ce qui reste global » de docs/05 §2.0) : la
-    vue rend les agents de son catalogue, jamais ceux d'un autre projet.
+    `projet` cadre le **parc** sur l'équipe de ce projet (#1038) : la vue
+    rend les agents de son catalogue, jamais ceux d'un autre projet.
 
     Ce qui est cadré est l'**appartenance**, pas les compteurs : ceux-ci
     restent ceux que la projection a vus, et ils ne se recalculent pas par
@@ -53,21 +51,20 @@ async def agents(ctx: Ctx, projet: str | None = None) -> list[dict[str, Any]]:
     « qu'a fait cet agent ici ». Le **routage** sur l'équipe d'un projet,
     lui, est le lot #1041.
 
-    ⚠ Cadrée sur un projet, la vue est **dérivée du disque** depuis #1101 :
-    son catalogue et ses capacités, la projection n'y apportant que
-    l'activité. Elle filtrait auparavant la projection, qui repart vide à
-    chaque redémarrage de l'API (le catalogue de la racine est vide depuis
-    #1042) : l'équipe validée d'un projet disparaissait de l'écran au
-    redémarrage, et portait une instance là où son projet en avait rangé
-    deux. Le routage, lui, lisait déjà la bonne — c'est bien la vue qui
-    mentait.
+    ⚠ Cadrée sur un projet, la vue est **dérivée du disque** (#1101) : son
+    catalogue et ses capacités, la projection n'y apportant que l'activité.
+    La projection repart vide à chaque redémarrage de l'API, et le catalogue
+    de la racine est vide (#1042) : filtrer la projection ferait disparaître
+    de l'écran l'équipe validée d'un projet au redémarrage, et lui donnerait
+    une instance là où son projet en a rangé deux. La vue lit donc ce que le
+    routage lit.
 
     Un projet qu'on vient de créer rend une liste **vide** (#1042) : il n'a
     aucun agent tant que son équipe n'a pas été validée, et une vue vide le
-    dit mieux que cinq rôles que personne n'a recrutés. Même phrase qu'avant
-    #1101, et pour une raison de plus : un catalogue vide n'a rien à rendre.
+    dit mieux que cinq rôles que personne n'a recrutés. Un catalogue vide
+    n'a rien à rendre.
 
-    Omis, la vue rend le parc entier, comme avant ce lot.
+    Omis, la vue rend le parc entier.
     """
     return [a.to_dict() for a in _parc(ctx, _config(ctx, projet))]
 
@@ -95,9 +92,9 @@ async def regler_capacite(
 
     L'agent est cherché dans le **parc du projet demandé** (`_parc`, #1101),
     le même que `GET /api/agents` rend : réglable est exactement ce qui est
-    montré. Le chercher dans la seule projection revenait à 404 sur toute
-    l'équipe d'un projet au redémarrage de l'API — l'écran la listait déjà
-    (depuis ce lot), et aucun de ses curseurs n'aurait répondu.
+    montré. La seule projection rendrait 404 sur toute l'équipe d'un projet
+    au redémarrage de l'API, alors que l'écran la liste : aucun de ses
+    curseurs ne répondrait.
     """
     bus = ctx.bus
     state = ctx.state

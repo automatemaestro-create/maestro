@@ -24,11 +24,11 @@ async def definir_permissions(
 ) -> dict[str, Any]:
     """Écrit la politique allow/ask/deny d'un agent (#262) — remplacement intégral.
 
-    L'écriture derrière la fiche, là où la section était en lecture seule
-    depuis #110 : régler ce qu'un agent a le droit d'appeler ne demande plus
-    d'éditer `core/permissions/<agent>.json` à la main puis de relancer. La
-    politique écrite vaut pour la **tâche suivante** — l'exécuteur la relit à
-    chaud, comme les playbooks.
+    L'écriture derrière la section permissions de la fiche (#110) : régler ce
+    qu'un agent a le droit d'appeler se fait depuis l'écran, sans éditer
+    `core/permissions/<agent>.json` à la main ni relancer. La politique écrite
+    vaut pour la **tâche suivante** — l'exécuteur la relit à chaud, comme les
+    playbooks.
 
     404 si l'agent n'est pas au catalogue (une politique orpheline ne serait
     jamais appliquée), 422 sur une entrée mal formée, **avec la cause exacte

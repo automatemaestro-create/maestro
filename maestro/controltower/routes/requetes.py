@@ -74,14 +74,14 @@ class LancementExecutionRequete(BaseModel):
     tâche, parallélisme —, chacun optionnel, None laissant le défaut du moteur.
     `ticket` rattache le run à un ticket externe (optionnel). `projet_id` (#222)
     le rattache au **projet** dans lequel il travaille (optionnel, `null` :
-    aucun projet — le comportement d'avant ce lot). Une requête invalide
+    aucun projet). Une requête invalide
     (objectif vide, garde-fou hors bornes) est refusée en 422 ; un `projet_id`
     mal formé, lui, est **écarté** (le run part sans projet) plutôt que de faire
     échouer le lancement — cf. `maestro.appartenance`.
 
     `sources` (#317, EF-39) porte la **matière** de l'objectif : fichiers
     téléversés au préalable (§6.8), dossier de références, URL. Absente ou vide,
-    le lancement est exactement celui d'avant la Phase 8 ; une source refusée
+    le lancement part sur l'objectif seul ; une source refusée
     (racine interdite, plafond dépassé, téléversement inconnu) sort en 422
     **motivé**, index de la source fautive compris.
     """
@@ -97,16 +97,15 @@ class LancementExecutionRequete(BaseModel):
     # Le régime du brief (#320) — `humain` par défaut : la Control Tower est la
     # voie de lancement qui a quelqu'un devant, et la décision D5 veut le brief
     # validé avant décomposition. `auto` rédige le brief sans attendre, `sans`
-    # décompose l'objectif brut (le comportement d'avant ce lot). Un mode inconnu
-    # est refusé en 422, jamais traité comme un `sans` silencieux.
+    # décompose l'objectif brut. Un mode inconnu est refusé en 422, jamais traité
+    # comme un `sans` silencieux.
     brief: str | None = MODE_BRIEF_HUMAIN
 
     def sources_declarees(self) -> list[dict[str, Any]] | None:
         """Les sources en dicts pour la résolution — `None` quand il n'y en a pas.
 
         `None` et non `[]` : c'est ce qui fait qu'un lancement sans matière émet
-        un événement sans le champ `sources` (#315), donc strictement celui
-        d'avant la Phase 8.
+        un événement sans le champ `sources` (#315).
         """
         if self.sources is None:
             return None
@@ -126,24 +125,25 @@ class DecisionRequete(BaseModel):
 
     `motif` (#272) est la raison **facultative** d'un refus, telle que la personne
     l'a écrite. Il rejoint le `detail` de l'événement, donc le journal durable et la
-    `decision` de la demande projetée : sans lui, un refus revenait plus tard comme
-    un fait sans cause, et rien ne distinguait « trop risqué avant la démo » d'une
-    erreur de clic.
+    `decision` de la demande projetée : sans lui, un refus reviendrait plus tard
+    comme un fait sans cause, et rien ne distinguerait « trop risqué avant la démo »
+    d'une erreur de clic.
 
-    ⚠ Depuis #1185 le moteur le **lit** : c'est une **consigne**. Elle voyage aussi
+    ⚠ Le moteur le **lit** (#1185) : c'est une **consigne**. Elle voyage aussi
     dans `Event.motif`, le validateur la rend à l'agent, et celui-ci replanifie son
     geste à partir d'elle — « archive au lieu de supprimer » réoriente le travail au
     lieu de l'arrêter ; la nouvelle action repasse par l'arbitrage.
 
-    `etendue` (#1185) est la portée d'une **approbation** : `appel` (le défaut, le
-    geste d'avant), ou l'outil pour la suite du `run` ou du `projet`. Choisie par la
+    `etendue` (#1185) est la portée d'une **approbation** : `appel` (le défaut, cet
+    appel seul), ou l'outil pour la suite du `run` ou du `projet`. Choisie par la
     personne, jamais par défaut ; admise seulement sur une demande qui porte un
     acte, et écrite dans les permissions de l'agent, où elle se relit et se retire.
 
     Sur une **approbation** le motif est ignoré, sur un refus l'étendue — comme le
     `brief` d'une décision de brief l'est sur un refus (`DecisionBriefRequete`) : le
     canal porte les deux gestes, chacun ne lit que ce qui le concerne. Vides ou
-    absents, la décision est celle d'avant ces lots, au caractère près.
+    absents, la décision se réduit à `approuve` : un refus sans cause, une
+    approbation pour cet appel seul.
     """
 
     approuve: bool
@@ -353,7 +353,7 @@ class SurchargeRequete(BaseModel):
 class AgentGenerationRequete(BaseModel):
     """Corps d'une génération assistée de définition (#257) : l'intention, en une phrase.
 
-    Un seul champ, et c'est le sujet du lot : décrire ce qu'on veut plutôt que
+    Un seul champ, et c'est le principe du geste : décrire ce qu'on veut plutôt que
     remplir rôle, compétences et playbook. La borne de longueur est posée par le
     générateur (`INTENTION_MAX`) et non ici — c'est lui qui la connaît, et le
     dépassement est un 422 au même titre qu'une intention vide.
@@ -467,18 +467,17 @@ class ChatEnvoiRequete(BaseModel):
     (#316). Même forme qu'au lancement (`LancementExecutionRequete.sources`), et
     pour la même raison : un fichier y voyage par l'`id` que `POST /api/sources`
     lui a rendu, seule façon d'en désigner de vrais octets. Absente ou vide, le
-    fil est exactement celui d'avant ce lot.
+    message part sans matière.
 
     `projet_id` (#683) est le **projet de la fenêtre** d'où part le message —
     à ne pas confondre avec le `?projet=` des lectures (#277), qui est une
     portée et porte les mots réservés `tous`/`aucun` : ici c'est un identifiant
     de projet, et rien d'autre. Le fil ne s'en trouve ni cadré ni filtré ; il
     n'intéresse que ce que la réponse **ouvre** — l'orchestration y rattache son
-    run et y cadre son aperçu. Absent, le run part sans projet, comme avant.
+    run et y cadre son aperçu. Absent, le run part sans projet.
 
     `conversation` (#694) est le fil de l'agent où l'échange se range. Absent,
-    l'envoi rejoint la **plus récente** — le comportement d'avant ce lot, où un
-    agent n'avait qu'un fil.
+    l'envoi rejoint la **plus récente**.
     """
 
     contenu: str
@@ -671,7 +670,7 @@ class MembreEquipeRequete(BaseModel):
     `navigateur` (#1532) : ce rôle a-t-il, à l'écran, le navigateur de Maestro.
     `playbook` (#1521) : celui que la carte montre — le modèle répond sur ce qu'il a
     lu, et une convention fixée en mots gagne chaque rôle qu'elle contredit. Absent
-    d'une carte servie avant : non transmis, et le modèle le sait.
+    — une carte servie sans lui —, il n'est pas transmis, et le modèle le sait.
     """
 
     nom: str
@@ -988,8 +987,7 @@ class ActivationsMcpRequete(BaseModel):
 
     Remplacement intégral : la liste `integrations` (des ids du pool) devient
     l'ensemble activé de l'agent — une liste vide le désactive de toutes. C'est
-    ce que pose l'interrupteur par agent qui **remplace** l'affichage lecture
-    seule des serveurs MCP (critère #133).
+    ce que pose l'interrupteur par agent (critère #133).
     """
 
     integrations: list[str]
@@ -1012,7 +1010,7 @@ class PolitiquePermissionsRequete(BaseModel):
 
     `ask` accepte les deux formes que la lecture accepte (#586) — objet
     `{"<outil>": "<décideur>"}` ou liste, `humain` par défaut : un client qui
-    renvoie ce qu'il a lu d'une politique d'avant ce lot n'a rien à convertir.
+    renvoie ce qu'il a lu, sous l'une ou l'autre forme, n'a rien à convertir.
 
     `portees` (#1226) est ici pour la raison qui la fait **toujours sortir** de
     `to_dict` : un écran qui renvoie ce qu'il a lu ne doit pas perdre en chemin

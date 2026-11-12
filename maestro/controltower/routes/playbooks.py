@@ -38,14 +38,11 @@ def _playbook_origine(
     en le créant. Dans les deux cas c'est le contenu qui vaut **tant que
     rien n'a été publié** dans le stockage versionné.
 
-    Cette symétrie n'est pas une extension du moteur, c'est le rattrapage
-    d'un retard de l'API sur lui : `LocalExecutor._playbook_courant` lit
-    `PlaybookStore.lire(agent)` sans regarder d'où vient l'agent, et retombe
-    sur son `prompt_systeme` sinon — une version publiée pour un agent
-    personnalisé s'appliquait donc **déjà**, elle n'était simplement pas
-    publiable. C'est ce qui rendait l'onglet Playbook 404 sur un agent
-    personnalisé, et donc son champ du Profil irremplaçable ; #259 le
-    remplace, il fallait d'abord qu'il y ait où aller.
+    Cette symétrie n'est pas une extension du moteur, elle suit ce qu'il fait :
+    `LocalExecutor._playbook_courant` lit `PlaybookStore.lire(agent)` sans
+    regarder d'où vient l'agent, et retombe sur son `prompt_systeme` sinon.
+    Une version publiée pour un agent personnalisé s'applique donc comme une
+    autre, et l'onglet Playbook est le chemin d'écriture de son playbook (#259).
     """
     defaut = PLAYBOOK_DEFAUTS.get(agent)
     if defaut is not None:
@@ -122,9 +119,9 @@ async def playbooks_liste(ctx: Ctx, projet: str | None = None) -> list[dict[str,
     """Les playbooks des agents (#76) : version courante et provenance de chacun.
 
     Les agents du code d'abord, puis les personnalisés — l'ordre du
-    catalogue. Ces derniers y figurent depuis #259 : leur playbook s'édite
-    et se versionne comme les autres, l'onglet Playbook étant devenu le
-    chemin d'écriture unique.
+    catalogue. Ces derniers y figurent (#259) : leur playbook s'édite et se
+    versionne comme les autres, l'onglet Playbook étant son chemin
+    d'écriture unique.
 
     `projet` cadre la lecture (#1038) : les agents **de ce projet** et leurs
     playbooks. Omis, ce sont les gabarits.
@@ -310,7 +307,7 @@ def _agent_du_catalogue(ctx: Contexte, nom: str, cfg: ConfigurationAgents | None
     catalogue effectif est interrogé **d'abord** — c'est lui qui porte les
     agents du projet —, les **gabarits** restant le repli qui garantit une
     fiche aux rôles du code, dont le playbook reste éditable au niveau gabarit
-    même si plus aucun projet ne les reçoit d'office (#1042).
+    même si aucun projet ne les reçoit d'office (#1042).
     """
     gabarits = ctx.gabarits
     cfg = cfg if cfg is not None else gabarits
@@ -382,8 +379,8 @@ async def rediger_playbook(
     Le pendant « au clavier » de la proposition d'après-run : même cadre, même
     fournisseur, mais la matière est le texte que l'utilisateur a sous les yeux et
     le résultat lui revient — l'éditeur l'affiche en différentiel, l'applique à son
-    brouillon s'il le veut, et la publication reste le geste séparé qu'elle a
-    toujours été (`PUT /api/playbooks/{agent}`).
+    brouillon s'il le veut, et la publication reste un geste séparé
+    (`PUT /api/playbooks/{agent}`).
 
     **Aucune écriture**, en succès comme en échec : ni version, ni proposition en
     brouillon. 404 si l'agent n'a pas de playbook, 422 si le brouillon est vide ou
