@@ -476,9 +476,14 @@ bash scripts/distribution/verifier.sh --mise-a-jour .maestro/distribution/flux
 `latest.yml` et l'installeur dans le dossier du canal. La phase de mise à jour de `verifier.sh`
 sert ce dossier sur le poste, puis ouvre la version installée dessus. Elle lance un run, pour que le
 journal porte quelque chose, et attend que la fenêtre annonce la version suivante prête. Elle lit
-alors le dialogue et presse **Plus tard** d'un clic de souris. Les boutons d'un dialogue de tâches
-Windows n'exposent aucun motif UI Automation : on ne peut pas les invoquer, seulement cliquer
-dessus. Elle ferme ensuite Maestro et attend que la version suivante se pose, après l'arrêt et
+alors le dialogue et presse **Plus tard**, sans la souris (`scripts/distribution/dialogue.sh`).
+Les boutons d'un dialogue de tâches Windows n'exposent aucun motif UI Automation, mais ce sont de
+vraies fenêtres Win32 de classe `Button`. Elle envoie donc au parent du bouton la notification
+qu'un clic lui enverrait (`WM_COMMAND`, `BN_CLICKED`). Ni le curseur, ni le premier plan, ni ce
+qui couvre le dialogue n'y entrent : un clic d'écran pouvait tomber dans la fenêtre de la personne
+au poste. Un bouton sans fenêtre `Button` n'est pas pressé, et le rapport le dit
+(`bouton sans fenetre`), sans cliquer au jugé (#1647). Elle ferme ensuite Maestro et attend que la
+version suivante se pose, après l'arrêt et
 sans relance. Enfin elle rouvre Maestro, comme la personne le ferait, et constate ce qui tourne et
 ce qui a survécu. Dans les autres phases, la mise à jour est éteinte (`MAESTRO_MISES_A_JOUR_FLUX=0`).
 
@@ -519,6 +524,14 @@ stack, puis lancé l'installeur avec `--updated --force-run`. La 0.1.1 s'est pos
 0.1.1 s'est relancé de lui-même un peu plus d'une minute après le clic, avec son API et son front
 de l'installation.
 Il l'a fait par l'Explorateur, sur le profil réel du poste, et non sur le poste simulé (§6.4).
+
+Une passe suivante, le même jour (#1644), a relevé `clic sans effet : Plus tard` : le clic de
+souris d'alors n'avait pas atteint le dialogue, et rien ne disait où il était tombé. Rejoué sur un
+vrai dialogue Electron aux options de la coque, en arrière-plan et couvert par une fenêtre toujours
+devant, ce clic tombe dans la fenêtre qui le couvre, et le dialogue reste ouvert. La notification
+de §6.4 ferme le dialogue sur le bouton visé : la fenêtre qui le couvre ne reçoit rien, et le
+curseur comme le premier plan ne bougent pas. La vérification de bout en bout, rejouée avec elle,
+rend 60 constats, tous ✓, dont `presse : Plus tard` (#1647).
 
 Le run lancé avant la mise à jour avait déjà échoué quand Maestro s'est fermé : le profil vierge
 n'a aucun compte. L'arrêt d'un run **en cours** par la mise à jour n'a donc pas été vu (§3.4).

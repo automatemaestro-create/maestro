@@ -40,7 +40,7 @@
 # l'installeur d'une version PLUS RÉCENTE (`construire.sh --version <x.y.z> --flux <dossier>`). Le
 # script le sert sur le poste, ouvre la version vérifiée sur lui, lance un run pour que le journal
 # ait de quoi être retrouvé, et attend qu'elle annonce la suivante prête. Il presse « Plus tard »
-# dans son dialogue, d'un clic de souris, ferme Maestro, et attend que la version suivante se pose
+# dans son dialogue, sans la souris (`dialogue.sh`), ferme Maestro, et attend que la suivante se pose
 # après l'arrêt, sans rien relancer. Il rouvre alors Maestro et regarde la version de chaque
 # composant, et ce que la personne avait : projet, réglage, journal et run. « Redémarrer
 # maintenant » n'y est pas joué : l'installeur relance par l'Explorateur, hors du poste simulé
@@ -65,6 +65,9 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$RACINE/scripts/orchestrate/pilote.sh"
 # shellcheck disable=SC1091  # même raison que ci-dessus
 . "$RACINE/scripts/distribution/canal.sh"
+# Le dialogue de la mise à jour se presse sans la souris, ni l'écran (`dialogue.sh`, #1647).
+# shellcheck disable=SC1091  # même raison que ci-dessus
+. "$RACINE/scripts/distribution/dialogue.sh"
 POSTE="$RACINE/.maestro/session/poste vierge"
 INSTALLEUR=""
 ANCIEN=""
@@ -407,63 +410,6 @@ attendre_la_mise_a_jour() {
   return 1
 }
 
-# `presser <pid de la fenêtre> <début du nom du bouton>` : le dialogue de la coque, lu puis pressé
-# d'un clic de souris, comme la personne le ferait. C'est un dialogue de tâches Windows (classe
-# `#32770`, sous la fenêtre) : ses boutons (`CCPushButton`) n'exposent aucun motif UI Automation, si
-# bien qu'on ne peut pas les « invoquer », seulement cliquer dessus. Le dialogue passe devant, le
-# curseur va au centre du bouton, clique, puis revient où il était. Écrit les textes du dialogue
-# (`texte : …`), puis `presse : <bouton>` quand le dialogue s'est fermé sous le clic. Le script est
-# en ASCII, et ses guillemets doubles sont des `[char]34` : il traverse la ligne de commande.
-presser() {
-  env MSYS2_ARG_CONV_EXCL='*' "$PS" -NoProfile -NonInteractive -Command "
-    [Console]::OutputEncoding = [Text.Encoding]::UTF8
-    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
-    \$dll = '[DllImport(' + [char]34 + 'user32.dll' + [char]34 + ')] public static extern '
-    Add-Type -Namespace Verification -Name Souris -MemberDefinition (
-      \$dll + 'bool SetProcessDPIAware(); ' +
-      \$dll + 'bool SetForegroundWindow(IntPtr h); ' +
-      \$dll + 'bool SetCursorPos(int x, int y); ' +
-      \$dll + 'void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);')
-    [void][Verification.Souris]::SetProcessDPIAware()
-    \$A = [System.Windows.Automation.AutomationElement]
-    \$tous = [System.Windows.Automation.Condition]::TrueCondition
-    \$duProcessus = New-Object System.Windows.Automation.PropertyCondition(\$A::ProcessIdProperty, $1)
-    \$dialogue = New-Object System.Windows.Automation.PropertyCondition(\$A::ClassNameProperty, '#32770')
-    for (\$i = 0; \$i -lt 120; \$i++) {
-      foreach (\$haut in \$A::RootElement.FindAll('Children', \$duProcessus)) {
-        foreach (\$d in @(\$haut) + @(\$haut.FindAll('Descendants', \$dialogue))) {
-          if (\$d.Current.ClassName -ne '#32770') { continue }
-          \$elements = @(\$d.FindAll('Descendants', \$tous))
-          \$bouton = \$elements | Where-Object {
-            \$_.Current.ClassName -eq 'CCPushButton' -and \$_.Current.Name -like '$2'
-          } | Select-Object -First 1
-          if (-not \$bouton) { continue }
-          \$elements | ForEach-Object { \$_.Current.Name } | Where-Object { \$_ } | ForEach-Object { 'texte : ' + \$_ }
-          \$nom = \$bouton.Current.Name
-          \$r = \$bouton.Current.BoundingRectangle
-          \$avant = [System.Windows.Forms.Cursor]::Position
-          [void][Verification.Souris]::SetForegroundWindow([IntPtr]\$d.Current.NativeWindowHandle)
-          Start-Sleep -Milliseconds 300
-          [void][Verification.Souris]::SetCursorPos([int](\$r.X + \$r.Width / 2), [int](\$r.Y + \$r.Height / 2))
-          [Verification.Souris]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-          [Verification.Souris]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
-          Start-Sleep -Milliseconds 200
-          [System.Windows.Forms.Cursor]::Position = \$avant
-          for (\$j = 0; \$j -lt 20; \$j++) {
-            Start-Sleep -Milliseconds 250
-            if (@(\$haut.FindAll('Descendants', \$dialogue)).Count -eq 0) { 'presse : ' + \$nom; exit 0 }
-          }
-          'clic sans effet : ' + \$nom
-          exit 1
-        }
-      }
-      Start-Sleep -Milliseconds 500
-    }
-    'aucun dialogue de mise a jour'
-    exit 1
-  " | tr -d '\r'
-}
-
 # `installeur_en_vol` : les processus de l'installeur de la mise à jour — celui que la coque a lancé
 # depuis son cache, et l'ancien désinstalleur qu'il joue, recopié sous le TEMP du poste. L'un et
 # l'autre jouent un exécutable du profil, sous la lettre de lecteur ou sous son vrai chemin. Rien
@@ -756,7 +702,7 @@ if [ -n "$FLUX_DOSSIER" ]; then
     constat "$(contient "$presse" "texte : Maestro $VERSION_SUIVANTE est prête à s'installer." &&
       contient "$presse" "texte : Redémarrer maintenant" &&
       contient "$presse" "presse : Plus tard" && echo 0 || echo 1)" \
-      "la coque propose $VERSION_SUIVANTE (« Redémarrer maintenant » ou « Plus tard »), et « Plus tard » est pressé d'un clic"
+      "la coque propose $VERSION_SUIVANTE (« Redémarrer maintenant » ou « Plus tard »), et « Plus tard » est pressé, sans souris ni premier plan"
     constat "$(contient "$presse" "un run en cours s'arrête avec lui" && echo 0 || echo 1)" \
       "le dialogue dit, avant le choix, qu'un run en cours s'arrête avec Maestro"
     # « Plus tard » ne change rien : Maestro sert toujours, à la même version.
