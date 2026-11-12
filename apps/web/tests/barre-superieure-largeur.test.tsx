@@ -137,3 +137,76 @@ describe("la barre supérieure se règle sur sa propre largeur (#1108)", () => {
     expect(nom.className).not.toContain("hidden");
   });
 });
+
+/**
+ * Au téléphone, la barre tient dans l'écran (#1615).
+ *
+ * La géométrie a été mesurée au banc (`banc-mise-en-page`), et ce relevé ne se
+ * rejoue pas en CI : à 390 px de fenêtre, la barre fait 316 px, et ses minima
+ * en demandaient 330. Ce test garde les deux règles qui ont refermé l'écart.
+ * Aucune ne se voit au lint, au build ni dans un test de rendu :
+ *
+ *   1. le sélecteur de projet a un **plancher déclaré** sous `@sm`. Sa taille
+ *      minimale automatique n'est pas le préfixe `min-w-8` qu'on croit lire :
+ *      un texte en `truncate` (donc en `nowrap`) a pour taille minimale son
+ *      palier `max-w-*` entier, si bien que le sélecteur ne cédait rien ;
+ *   2. sous `@sm`, le titre de page **quitte l'écran sans quitter la page**. Il
+ *      n'y avait plus que 0 px, et il gardait pourtant ses deux espacements. Il
+ *      reste le titre de niveau 1 que lit un lecteur d'écran : `sr-only`, jamais
+ *      `hidden`, qui le retirerait de l'arbre d'accessibilité.
+ *
+ * Et une troisième, qui garde les deux autres : la barre ne pose **aucune**
+ * variante de conteneur sur elle-même. Une requête `@sm:` interroge le
+ * conteneur le plus proche parmi les **ancêtres**, et la barre n'en a aucun :
+ * posée sur le `<header>`, elle ne s'applique à aucune largeur, sans erreur ni
+ * avertissement. Ses marges vivent donc sur son premier enfant.
+ */
+describe("au téléphone, la barre supérieure tient dans l'écran (#1615)", () => {
+  beforeEach(() => {
+    marquerGuideVu();
+    poserProjetActif(
+      projetFactice({ nom: "Refonte du portail client — Groupe Vallée" }),
+    );
+  });
+
+  it("donne au sélecteur de projet un plancher déclaré sous @sm, et non son contenu", async () => {
+    await monter();
+    const selecteur = screen.getByRole("button", { name: /^Projet actif :/ });
+    // Le plancher est porté par la boîte du sélecteur, l'élément flex de la
+    // barre, et non par le bouton : c'est elle qui cède quand la barre se
+    // resserre, et `max-w-full` fait suivre le bouton.
+    const boite = selecteur.parentElement;
+    expect(boite?.className ?? "").toMatch(/(?:^|\s)@max-sm:min-w-\S+/);
+    // Pas de `min-w-0` sans condition : le sélecteur tomberait à zéro, et le
+    // nom du projet avec lui (voir l'en-tête de `SelecteurProjet`).
+    expect(boite?.className.split(/\s+/)).not.toContain("min-w-0");
+  });
+
+  it("ne pose aucune variante de conteneur sur le conteneur lui-même", async () => {
+    // L'échantillon fautif d'abord : la sonde reconnaît une variante de
+    // conteneur, et pas le marqueur `@container` qui déclare la barre.
+    const VARIANTE_DE_CONTENEUR = /(?:^|\s)@(?:max-)?[\w-]+:/;
+    expect(VARIANTE_DE_CONTENEUR.test("px-4 @2xl:px-6")).toBe(true);
+    expect(VARIANTE_DE_CONTENEUR.test("@max-sm:sr-only")).toBe(true);
+    expect(VARIANTE_DE_CONTENEUR.test("@container sticky top-0")).toBe(false);
+
+    await monter();
+    const barre = screen.getByRole("banner");
+    expect(barre.className).toContain("@container");
+    expect(
+      barre.className,
+      "une variante `@…:` posée sur la barre interroge un conteneur ANCÊTRE, " +
+        "et la barre n'en a aucun : elle ne s'applique jamais — la poser sur " +
+        "son premier enfant",
+    ).not.toMatch(VARIANTE_DE_CONTENEUR);
+  });
+
+  it("retire le titre de l'écran sous @sm, sans le retirer de la page", async () => {
+    await monter();
+    const titre = screen.getByRole("heading", { level: 1 });
+    expect(titre.className).toMatch(/(?:^|\s)@max-sm:sr-only(?:\s|$)/);
+    expect(titre.className).not.toMatch(/(?:^|\s|:)hidden(?:\s|$)/);
+    // Au-dessus du seuil, rien ne change : il tronque comme avant.
+    expect(titre.className).toContain("truncate");
+  });
+});

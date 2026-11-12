@@ -81,10 +81,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 import time
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from maestro.config import ConfigError, Settings, load_settings
@@ -94,7 +96,7 @@ from maestro.controltower.events import (
     EventBus,
     RedisEventBus,
 )
-from maestro.controltower.magasin import endpoint_lisible
+from maestro.controltower.magasin import MagasinRefuse, endpoint_lisible
 from maestro.emplacements import NOM_ETAT, racine_etat
 from maestro.espace import espace_courant, nom_redis
 
@@ -130,10 +132,18 @@ SUFFIXE_SQLITE = ".sqlite3"
 #: consignation, donc l'ordre du rejeu.
 TABLE_EVENEMENTS = "evenements"
 
-#: Version du schéma, posée dans `PRAGMA user_version` : ce par quoi une reprise
-#: ultérieure (PostgreSQL, rétention) saura à quoi elle a affaire. `1` est le
-#: schéma de ce lot.
-SCHEMA_VERSION = 1
+#: La table de l'état acquis des runs (`maestro.controltower.acquis`, #1391), dans
+#: le même fichier — une ligne par entrée `(run_id, cle)`, remplacée sur réécriture.
+#: Déclarée ici parce que le schéma du fichier n'a qu'un auteur, `MIGRATIONS`.
+TABLE_ACQUIS = "acquis"
+
+#: Le suffixe de la sauvegarde qu'une mise à niveau prend avant de migrer (#1621) :
+#: `<fichier>-sauvegarde`, à côté du fichier, sous l'état du poste — à la manière de
+#: `-wal`, si bien que le ménage la range avec son journal (`maestro.menage`).
+#: **Conservation** : une seule par fichier, gardée jusqu'à la mise à niveau suivante
+#: de ce fichier, qui la remplace. Elle porte le fichier tel qu'il était avant sa
+#: dernière migration. Un fichier qui ne porte encore aucune table n'en a pas.
+SUFFIXE_SAUVEGARDE = "-sauvegarde"
 
 #: Ce qu'une écriture attend que l'autre process rende le verrou d'écriture, en
 #: millisecondes (`PRAGMA busy_timeout`) — voir `SqliteEventLog` pour le régime.
@@ -257,6 +267,10 @@ class SqliteEventLog(EventLog):
     `sqlite3` est dans la bibliothèque standard, et c'est tout l'intérêt pour un
     produit qu'on installe en double-cliquant (docs/24 §4.6).
 
+    **Le schéma du fichier** n'a qu'un auteur, `MIGRATIONS` : à l'ouverture, le
+    fichier est mis à niveau après sauvegarde, ou refusé s'il est plus récent que le
+    code (`ouvrir_sqlite`, #1621). Un refus se dit au démarrage (`SchemaLocalRefuse`).
+
     **Le régime de concurrence, écrit ici plutôt que découvert en production.**
     SQLite n'a pas le modèle de Redis : un seul écrivain à la fois sur la base,
     là où Redis sérialise N clients. Trois réglages, et ce qu'ils promettent :
@@ -292,15 +306,27 @@ class SqliteEventLog(EventLog):
     disque.
     """
 
-    def __init__(self, chemin: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        chemin: Path | str | None = None,
+        *,
+        migrations: Sequence[Migration] | None = None,
+    ) -> None:
         self._chemin = Path(chemin) if chemin is not None else chemin_sqlite()
+        # `None` : le schéma du code (`MIGRATIONS`). Nommées, ce sont celles d'une
+        # version à venir — ce par quoi les tests jouent une migration qui échoue.
+        self._migrations = migrations
         self._connexion: sqlite3.Connection | None = None
+        self._refus: SchemaLocalRefuse | None = None
         self._verrou = asyncio.Lock()
 
     @property
     def chemin(self) -> Path:
         """Le fichier de ce journal — ce que l'annonce du démarrage montre."""
         return self._chemin
+
+    def lieu(self) -> str | None:
+        return f"SQLite, {self._chemin}"
 
     async def consigner(self, event: Event) -> None:
         charge = event.to_json()
@@ -320,19 +346,23 @@ class SqliteEventLog(EventLog):
 
     # ── Ce qui tourne dans le thread ──────────────────────────────────────────
 
-    def _ouvrir(self) -> sqlite3.Connection:
-        """Ouvre (et crée au besoin) le fichier, ses réglages et sa table."""
-        connexion = ouvrir_sqlite(self._chemin)
-        connexion.execute(
-            f"CREATE TABLE IF NOT EXISTS {TABLE_EVENEMENTS} "
-            "(rang INTEGER PRIMARY KEY, charge TEXT NOT NULL)"
-        )
-        connexion.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-        return connexion
-
     def _connexion_ouverte(self) -> sqlite3.Connection:
+        """La connexion, ouverte au premier accès — le fichier mis au schéma du code.
+
+        Un refus du schéma est **retenu** pour la vie du journal : la pompe de l'API
+        retente le rejeu, et chaque essai rejouerait sur le fichier de la personne
+        sauvegarde, migration et restauration pour le même échec. Relancer Maestro
+        réessaie, et c'est le geste que le refus nomme.
+        """
+        if self._refus is not None:
+            # Sans sa pile : relevé à chaque essai, il l'allongerait d'autant.
+            raise self._refus.with_traceback(None)
         if self._connexion is None:
-            self._connexion = self._ouvrir()
+            try:
+                self._connexion = ouvrir_sqlite(self._chemin, migrations=self._migrations)
+            except SchemaLocalRefuse as refus:
+                self._refus = refus
+                raise
         return self._connexion
 
     def _inserer(self, charge: str) -> None:
@@ -352,27 +382,376 @@ class SqliteEventLog(EventLog):
             self._connexion = None
 
 
-def ouvrir_sqlite(chemin: Path) -> sqlite3.Connection:
-    """Ouvre (et crée au besoin) un fichier SQLite au régime du journal local (#639).
+# ── Le schéma du fichier local (#1621) ────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Migration:
+    """Une marche du schéma du fichier local : la version qu'elle atteint, et son geste.
+
+    `appliquer` reçoit la connexion **dans la transaction de la mise à niveau** et
+    n'y fait que des `execute` : ni `commit`, ni `rollback`, ni `executescript`, qui
+    validerait en passant tout ce qui précède. Une marche qui referme la transaction
+    est une marche en échec — ses effets ne s'annuleraient plus (`_mettre_a_niveau`).
+    """
+
+    #: La version que le fichier porte une fois la marche passée (`user_version`).
+    version: int
+    #: Ce qu'elle pose, en mots — ce que dit un échec.
+    objet: str
+    appliquer: Callable[[sqlite3.Connection], None]
+
+
+def _poser_le_journal(connexion: sqlite3.Connection) -> None:
+    connexion.execute(
+        f"CREATE TABLE IF NOT EXISTS {TABLE_EVENEMENTS} "
+        "(rang INTEGER PRIMARY KEY, charge TEXT NOT NULL)"
+    )
+
+
+def _poser_l_etat_acquis(connexion: sqlite3.Connection) -> None:
+    # `IF NOT EXISTS` : un fichier en v1 peut déjà la porter — l'état acquis la
+    # créait lui-même, sans que la version du fichier bouge (#1391).
+    connexion.execute(
+        f"CREATE TABLE IF NOT EXISTS {TABLE_ACQUIS} "
+        "(run_id TEXT NOT NULL, cle TEXT NOT NULL, charge TEXT NOT NULL, "
+        "PRIMARY KEY (run_id, cle))"
+    )
+
+
+#: Les marches du schéma, dans l'ordre : la n-ième porte le fichier à la version n.
+#: Une marche passée **ne change plus** — un fichier qui l'a reçue ne la rejoue
+#: jamais. Changer le schéma, c'est ajouter une marche en fin de liste.
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(1, "journal des événements", _poser_le_journal),
+    Migration(2, "état acquis des runs", _poser_l_etat_acquis),
+)
+
+#: Version du schéma du code, posée dans `PRAGMA user_version` : la marche la plus
+#: haute. Un fichier qui porte moins se met à niveau à l'ouverture ; un fichier qui
+#: porte plus est refusé, sans être touché.
+SCHEMA_VERSION = MIGRATIONS[-1].version
+
+#: Codes de `sqlite3_backup_step` qui disent « verrou pris, repasser » — SQLITE_BUSY
+#: et SQLITE_LOCKED.
+_COPIE_OCCUPEE = frozenset({5, 6})
+
+
+class SchemaLocalRefuse(MagasinRefuse):
+    """Le fichier local n'est pas servi : son schéma ne se met pas au code (#1621).
+
+    Une panne qui se nomme (`MagasinRefuse`) : le démarrage sert son titre, son
+    motif et son geste tels qu'écrits ici, là où l'on sait ce qui s'est passé.
+    """
+
+    def __init__(self, chemin: Path, *, titre: str, motif: str, geste: str) -> None:
+        super().__init__(titre=titre, motif=motif, geste=geste)
+        self.chemin = chemin
+
+
+class SchemaPlusRecent(SchemaLocalRefuse):
+    """Le fichier porte un schéma que ce code ne connaît pas : il n'est ni réécrit ni rétrogradé."""
+
+    def __init__(self, chemin: Path, *, version: int, connue: int) -> None:
+        super().__init__(
+            chemin,
+            titre="Journal local écrit par une version plus récente de Maestro",
+            motif=(
+                f"le fichier porte le schéma v{version}, et cette version de Maestro ne "
+                f"connaît que jusqu'au v{connue}. Il n'a pas été touché : l'ouvrir ici le "
+                "rétrograderait"
+            ),
+            geste=(
+                "mettre Maestro à jour : la version qui a écrit ce fichier, ou une plus "
+                "récente, le rouvre avec tout son historique"
+            ),
+        )
+        self.version = version
+        self.connue = connue
+
+
+class MigrationEchouee(SchemaLocalRefuse):
+    """La mise à niveau a échoué : le fichier est remis tel qu'il était, ou le refus dit comment."""
+
+    def __init__(
+        self,
+        chemin: Path,
+        *,
+        depuis: int,
+        vers: int,
+        etape: str,
+        cause: str,
+        sauvegarde: Path | None,
+        restauration: str | None,
+    ) -> None:
+        if restauration is None:
+            motif = (
+                f"{etape} a échoué : {cause}. Le fichier a été remis tel qu'il était, au "
+                f"schéma v{depuis} : rien n'est perdu, mais l'historique n'est pas servi"
+            )
+            geste = (
+                f"relancer Maestro réessaie la mise à niveau vers v{vers} ; si elle échoue "
+                "encore, la version précédente de Maestro rouvre ce fichier sans perte"
+            )
+        else:
+            motif = (
+                f"{etape} a échoué : {cause}, et le fichier n'a pas pu être remis "
+                f"({restauration}). Il est peut-être à moitié migré"
+            )
+            geste = (
+                f"Maestro arrêté, remettre la sauvegarde « {sauvegarde} » à la place de "
+                f"« {chemin} », puis relancer"
+                if sauvegarde is not None
+                else f"Maestro arrêté, supprimer « {chemin} », qui ne portait encore aucun "
+                "historique, puis relancer"
+            )
+        super().__init__(
+            chemin, titre="Mise à niveau du journal local impossible", motif=motif, geste=geste
+        )
+        self.depuis = depuis
+        self.vers = vers
+        self.sauvegarde = sauvegarde
+        self.restauree = restauration is None
+
+
+def chemin_sauvegarde(chemin: Path) -> Path:
+    """La sauvegarde d'avant migration de `chemin` — à côté de lui (`SUFFIXE_SAUVEGARDE`)."""
+    return chemin.with_name(chemin.name + SUFFIXE_SAUVEGARDE)
+
+
+def ouvrir_sqlite(
+    chemin: Path, *, migrations: Sequence[Migration] | None = None
+) -> sqlite3.Connection:
+    """Ouvre (et crée au besoin) un fichier SQLite au régime du journal local, au schéma du code.
 
     Le régime de `SqliteEventLog`, écrit une fois pour tout ce qui vit dans ce
-    fichier — le journal, et depuis #1391 l'état acquis des runs
-    (`maestro.controltower.acquis`) : deux écrivains du même fichier qui ne
-    s'ouvriraient pas pareil seraient deux régimes de concurrence à tenir d'accord.
-    Chacun crée ensuite **sa** table.
+    fichier — le journal, et l'état acquis des runs (`maestro.controltower.acquis`) :
+    deux écrivains du même fichier qui ne s'ouvriraient pas pareil seraient deux
+    régimes de concurrence à tenir d'accord. Le **schéma** a le même auteur unique :
+    `migrations` (`MIGRATIONS` par défaut), jouées ici, quel que soit l'écrivain qui
+    ouvre le premier.
+
+    Dans cet ordre :
+
+    1. la version du fichier est **lue avant tout geste qui écrit**. Plus récente
+       que le code : refus (`SchemaPlusRecent`), le fichier n'est pas touché — pas
+       même passé en WAL ;
+    2. le régime : WAL, `synchronous=NORMAL` ;
+    3. en retard : mise à niveau (`_mettre_a_niveau`), sous le verrou d'écriture,
+       après sauvegarde ; un échec remet le fichier tel qu'il était
+       (`MigrationEchouee`).
 
     `isolation_level=None` : autocommit. Chaque écriture est une transaction, et
     il n'existe aucun geste à regrouper — la transaction implicite de `sqlite3` ne
-    ferait que retenir une écriture qu'on vient de promettre.
+    ferait que retenir une écriture qu'on vient de promettre. La mise à niveau
+    ouvre la sienne, explicitement.
     """
+    marches = tuple(MIGRATIONS if migrations is None else migrations)
+    cible = _version_cible(marches)
     chemin.parent.mkdir(parents=True, exist_ok=True)
     connexion = sqlite3.connect(str(chemin), check_same_thread=False, isolation_level=None)
-    # `busy_timeout` **en premier**, avant tout geste qui peut trouver le
-    # verrou pris : il ne vaut que pour les instructions qui le suivent.
-    connexion.execute(f"PRAGMA busy_timeout={ATTENTE_VERROU_MS}")
-    _passer_en_wal(connexion, chemin)
-    connexion.execute("PRAGMA synchronous=NORMAL")
+    try:
+        # `busy_timeout` **en premier**, avant tout geste qui peut trouver le
+        # verrou pris : il ne vaut que pour les instructions qui le suivent.
+        connexion.execute(f"PRAGMA busy_timeout={ATTENTE_VERROU_MS}")
+        version = _version(connexion)
+        if version > cible:
+            raise SchemaPlusRecent(chemin, version=version, connue=cible)
+        _passer_en_wal(connexion, chemin)
+        connexion.execute("PRAGMA synchronous=NORMAL")
+        if version < cible:
+            _mettre_a_niveau(connexion, chemin, marches, cible)
+    except BaseException:
+        connexion.close()
+        raise
     return connexion
+
+
+def _version_cible(marches: Sequence[Migration]) -> int:
+    """La version que `marches` atteint — refusées si elles ne vont pas de 1 à n, sans trou."""
+    versions = [marche.version for marche in marches]
+    if versions != list(range(1, len(versions) + 1)):
+        raise ValueError(f"migrations du journal local hors d'ordre : versions {versions}")
+    return len(versions)
+
+
+def _version(connexion: sqlite3.Connection) -> int:
+    # Curseur refermé tout de suite : une instruction laissée ouverte garderait un
+    # instantané de lecture, et la prise du verrou d'écriture qui suit le heurterait.
+    curseur = connexion.execute("PRAGMA user_version")
+    try:
+        ligne = curseur.fetchone()
+    finally:
+        curseur.close()
+    return int(ligne[0]) if ligne is not None else 0
+
+
+def _mettre_a_niveau(
+    connexion: sqlite3.Connection, chemin: Path, marches: Sequence[Migration], cible: int
+) -> None:
+    """Joue les marches qui manquent au fichier, une fois, sous le verrou, après sauvegarde.
+
+    **Une seule fois**, même à deux écrivains : `BEGIN IMMEDIATE` prend le verrou
+    d'écriture avant de relire la version. Le second à ouvrir attend ici
+    (`busy_timeout`), puis relit une version déjà à jour et n'a rien à faire.
+
+    **Tout ou rien** : toutes les marches et leurs `user_version` vivent dans une
+    seule transaction, et le fichier ne porte la version cible qu'au `COMMIT`. Un
+    échec l'annule, puis **remet la sauvegarde** : l'annulation ne couvre pas une
+    marche qui aurait validé en route, la sauvegarde si. Un fichier vide n'a pas de
+    sauvegarde ; il est remis vide.
+    """
+    connexion.execute("BEGIN IMMEDIATE")
+    try:
+        depuis = _version(connexion)
+        if depuis > cible:
+            raise SchemaPlusRecent(chemin, version=depuis, connue=cible)
+        if depuis == cible:
+            connexion.execute("COMMIT")
+            return
+        a_sauver = _porte_un_schema(connexion)
+    except BaseException:
+        _annuler(connexion)
+        raise
+    sauvegarde: Path | None = None
+    if a_sauver:
+        try:
+            sauvegarde = _sauvegarder(chemin)
+        except Exception as cause:
+            _annuler(connexion)
+            raise MigrationEchouee(
+                chemin,
+                depuis=depuis,
+                vers=cible,
+                etape=f"la sauvegarde d'avant migration (« {chemin_sauvegarde(chemin)} »)",
+                cause=_cause(cause),
+                sauvegarde=None,
+                restauration=None,
+            ) from cause
+    etape = f"la validation de la mise à niveau vers v{cible}"
+    try:
+        for marche in marches:
+            if marche.version <= depuis:
+                continue
+            etape = f"la migration v{marche.version} ({marche.objet})"
+            marche.appliquer(connexion)
+            if not connexion.in_transaction:
+                raise sqlite3.ProgrammingError(
+                    "elle a validé la transaction de la mise à niveau, ses effets ne "
+                    "s'annulent plus"
+                )
+            connexion.execute(f"PRAGMA user_version={marche.version}")
+        etape = f"la validation de la mise à niveau vers v{cible}"
+        connexion.execute("COMMIT")
+    except Exception as cause:
+        _annuler(connexion)
+        raise MigrationEchouee(
+            chemin,
+            depuis=depuis,
+            vers=cible,
+            etape=etape,
+            cause=_cause(cause),
+            sauvegarde=sauvegarde,
+            restauration=_restaurer(connexion, sauvegarde, depuis),
+        ) from cause
+    except BaseException:
+        _annuler(connexion)
+        raise
+
+
+def _porte_un_schema(connexion: sqlite3.Connection) -> bool:
+    """Le fichier porte au moins une table, un index, une vue — il y a quelque chose à sauver."""
+    curseur = connexion.execute("SELECT 1 FROM sqlite_master LIMIT 1")
+    try:
+        return curseur.fetchone() is not None
+    finally:
+        curseur.close()
+
+
+def _sauvegarder(chemin: Path) -> Path:
+    """Copie `chemin` dans sa sauvegarde par l'API de sauvegarde de SQLite, et la rend.
+
+    Depuis une **seconde** connexion : celle qui migre tient le verrou d'écriture,
+    et SQLite refuse de sauvegarder depuis la connexion qui écrit (`SQLITE_LOCKED`,
+    que `Connection.backup` réessaierait sans fin). En WAL, ce lecteur voit le
+    fichier d'avant la migration, et le verrou tenu garantit que personne ne l'a
+    changé depuis. Écrite sous un nom provisoire puis renommée : une copie coupée
+    en route ne prend jamais la place de la sauvegarde.
+    """
+    sauvegarde = chemin_sauvegarde(chemin)
+    provisoire = sauvegarde.with_name(sauvegarde.name + ".partielle")
+    provisoire.unlink(missing_ok=True)
+    source = sqlite3.connect(str(chemin), check_same_thread=False)
+    try:
+        destination = sqlite3.connect(str(provisoire), isolation_level=None)
+        try:
+            _copier(source, destination)
+            # Une copie qui se suffit à elle-même : elle hérite du mode WAL de la
+            # source, et un `-wal` à côté d'elle serait une moitié qu'on oublie.
+            destination.execute("PRAGMA journal_mode=DELETE").fetchall()
+        finally:
+            destination.close()
+    finally:
+        source.close()
+    # Les voisins d'une sauvegarde précédente rouverte à la main : laissés là, SQLite
+    # les rejouerait sur la nouvelle.
+    for voisin in ("-wal", "-shm"):
+        sauvegarde.with_name(sauvegarde.name + voisin).unlink(missing_ok=True)
+    os.replace(provisoire, sauvegarde)
+    return sauvegarde
+
+
+def _restaurer(
+    connexion: sqlite3.Connection, sauvegarde: Path | None, depuis: int
+) -> str | None:
+    """Remet le fichier tel qu'il était : `None` si c'est fait, sinon ce qui l'a empêché."""
+    try:
+        source = (
+            sqlite3.connect(str(sauvegarde))
+            if sauvegarde is not None
+            # Pas de sauvegarde : le fichier ne portait rien, une base vide le remet.
+            else sqlite3.connect(":memory:")
+        )
+        try:
+            _copier(source, connexion)
+        finally:
+            source.close()
+        remise = _version(connexion)
+    except Exception as erreur:  # noqa: BLE001 - le refus dit ce qui a manqué
+        return _cause(erreur)
+    if remise != depuis:
+        return f"le fichier remis porte le schéma v{remise}, et non v{depuis}"
+    return None
+
+
+def _copier(source: sqlite3.Connection, destination: sqlite3.Connection) -> None:
+    """`Connection.backup` borné : un verrou qui ne se rend pas lève au lieu d'attendre sans fin.
+
+    `sqlite3` repasse indéfiniment sur `SQLITE_BUSY`/`SQLITE_LOCKED` ; la borne est
+    celle des écritures, `ATTENTE_VERROU_MS`.
+    """
+    echeance = time.monotonic() + ATTENTE_VERROU_MS / 1000
+
+    def _borner(statut: int, _restantes: int, _total: int) -> None:
+        if statut in _COPIE_OCCUPEE and time.monotonic() >= echeance:
+            raise sqlite3.OperationalError(
+                f"copie interrompue : verrou non rendu après {ATTENTE_VERROU_MS} ms"
+            )
+
+    source.backup(destination, progress=_borner)
+
+
+def _annuler(connexion: sqlite3.Connection) -> None:
+    """Annule la transaction en cours, s'il y en a une — sans jamais masquer la cause."""
+    if connexion.in_transaction:
+        try:
+            connexion.execute("ROLLBACK")
+        except sqlite3.Error:
+            _LOGGER.warning("Annulation de la mise à niveau du journal local impossible.")
+
+
+def _cause(erreur: BaseException) -> str:
+    return str(erreur) or type(erreur).__name__
 
 
 def _passer_en_wal(connexion: sqlite3.Connection, chemin: Path) -> None:

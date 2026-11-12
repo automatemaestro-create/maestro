@@ -525,7 +525,7 @@ from maestro.controltower.journal import (
     TRIS_JOURNAL,
     ServiceJournal,
 )
-from maestro.controltower.magasin import GardeMagasin, Magasin
+from maestro.controltower.magasin import GardeMagasin, Magasin, MagasinRefuse
 from maestro.controltower.naissance import ServiceNaissance
 from maestro.controltower.orchestration import (
     AGENT_ORCHESTRATION,
@@ -2772,8 +2772,12 @@ def create_app(
         # mais il ne se tait plus (#1206) : tant que l'historique n'est pas relu,
         # le magasin se dit indisponible, et la pompe retente le rejeu dès que
         # le magasin revient.
+        # Un journal qui refuse son fichier (schéma plus récent que le code,
+        # migration en échec, #1621) se nomme : l'API sert sa panne et son geste.
         try:
             await rejouer()
+        except MagasinRefuse as refus:
+            _LOGGER.error("Journal des événements refusé au démarrage : %s", refus, exc_info=True)
         except Exception:
             _LOGGER.exception(
                 "Rejeu du journal des événements impossible : l'API sert la panne "

@@ -65,6 +65,29 @@
  * du rail de gauche, qui est imposé sous `lg` par la fenêtre. Gardé par
  * `tests/barre-superieure-largeur.test.tsx`, qui refuse toute autre variante de
  * viewport dans cette barre.
+ *
+ * ── Au téléphone : sous `@sm`, ce qui cède est l'espace, jamais une cible ───
+ *
+ * Sous `@sm` (moins de 384 px de contenu, soit une barre de moins de 416 px :
+ * un téléphone, jamais une tablette ni un poste, même colonne de conversation
+ * ouverte), il ne reste à la barre que ce que lui laissent le rail imposé
+ * (64 px) et l'ascenseur de la colonne : 316 px à 390 px de fenêtre. Ses deux
+ * bouts ne rétrécissent pas, et le groupe de droite pèse à lui seul 150 px de
+ * cibles de 36 px. Trois règles l'y font tenir, sans retirer ni réordonner un
+ * contrôle (#1615) :
+ *
+ *   - le **titre de page quitte l'écran** (`@max-sm:sr-only`). Il n'y aurait
+ *     que quelques pixels, de quoi peindre une ellipse seule, et il garderait
+ *     pourtant ses deux espacements. Il reste le titre de niveau 1 que lit un
+ *     lecteur d'écran ;
+ *   - le **sélecteur de projet devient le milieu** : c'est lui qui rétrécit,
+ *     jusqu'au plancher déclaré dans `SelecteurProjet` ;
+ *   - les **espacements se resserrent** : marges de la barre, écarts entre les
+ *     groupes, séparateur, pastille de reconnexion réduite à son point. Les
+ *     boutons gardent leur `p-2` : au téléphone, une cible ne rapetisse pas.
+ *
+ * Au-dessus de `@sm`, rien de ce paragraphe ne s'applique, et la barre des
+ * tablettes et des postes de travail reste celle décrite plus haut.
  */
 
 import { usePathname } from "next/navigation";
@@ -130,172 +153,182 @@ export function BarreSuperieure({
   const titre = entreeCourante(chemin)?.libelle ?? "Control Tower";
 
   return (
-    <header className="@container sticky top-0 z-10 flex h-14 shrink-0 items-center gap-x-3 gap-y-2 border-b border-neutral-200 bg-white/90 px-4 backdrop-blur @2xl:px-6 dark:border-neutral-800 dark:bg-neutral-950/90">
-      <button
-        type="button"
-        onClick={basculerRepli}
-        aria-expanded={!repliee}
-        aria-controls="navigation-principale"
-        aria-label={repliee ? "Déplier la navigation" : "Replier la navigation"}
-        // Le rail est imposé sous `lg` : le bouton n'y aurait rien à basculer.
-        className="-ml-1 hidden rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 lg:block dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-      >
-        {repliee ? (
-          <IconeDeplier className="size-5" />
-        ) : (
-          <IconeReplier className="size-5" />
-        )}
-      </button>
-      {selecteurProjet}
-      {/* Le milieu de la barre — le seul endroit qui rétrécit. Le sélecteur
-          cède d'abord (il garde un préfixe lisible, voir `SelecteurProjet`),
-          le titre en dernier : `min-w-0 truncate` lui laisse prendre tout ce
-          qui reste et tronquer plutôt que déborder. */}
-      <h1
-        // Pas de `title` (#536) : il ne répétait que le texte du titre, donc
-        // n'apprenait rien à personne — ni à la souris, ni au lecteur d'écran,
-        // qui lit le `<h1>` en entier même tronqué à l'écran.
-        className="min-w-0 truncate text-base font-semibold tracking-tight"
-      >
-        {titre}
-      </h1>
-
-      {/* `shrink-0` (#1108) : l'extrémité droite ne rétrécit pas. Sans lui, le
-          groupe se serait mis à disputer la place au titre dès que la barre se
-          resserre — or ce qu'il porte ne se tronque pas (des icônes, un montant
-          en `whitespace-nowrap`) : il aurait simplement débordé. Ce qui doit
-          céder ici cède en **disparaissant** (le coût, `@3xl`), jamais en se
-          comprimant. */}
-      <div className="ml-auto flex shrink-0 items-center gap-2 @xl:gap-3">
-        {/* ⚠ **Ce qui va bien ne s'affiche plus** (#691). Cette pastille a porté
-            « Temps réel connecté » en permanence depuis #117, sur les onze
-            écrans, à la place la plus visible de la fenêtre — pour dire, en
-            régime nominal, que rien n'allait mal. La revue du 2026-08-28 l'a
-            nommée deux fois sur `/chat`, où l'en-tête du fil la doublait ; le
-            fil a rendu la sienne, celle-ci se tait.
-            Ce qui reste est ce qui **apprend** quelque chose : la coupure. Elle
-            explique un écran qui ne bouge plus, et c'est la seule chose que
-            l'utilisateur ne peut pas déduire de ce qu'il voit. Même règle que le
-            reste du produit (docs/30 §4) : une place se gagne, elle ne se garde
-            pas parce qu'on l'avait.
-            Le texte reste masqué quand la barre est étroite (`@xl` depuis
-            #1108, `sm` avant lui) — la pastille seule y suffit, et le titre de
-            page a la priorité sur une barre étroite. */}
-        {!connecte && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-            <span className="size-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" />
-            <span className="hidden @xl:inline">Reconnexion…</span>
-          </span>
-        )}
-
-        {/* Le **premier** à s'effacer quand la barre se resserre (#1108) : le
-            titre de page a la priorité, et le coût reste lisible dans la page
-            elle-même (`/couts`, tableau de bord). Seuil sur la largeur de la
-            barre et non de la fenêtre — `@3xl`, celui à partir duquel il tient
-            sans faire tronquer le titre, pas celui où il tiendrait tout juste.
-            Depuis #281 c'est la dépense **du projet actif** — le titre le dit,
-            un montant qui suit l'utilisateur de page en page ne pouvant pas
-            rester le seul chiffre de l'écran à parler de tous les projets. */}
-        {/* Ce que le montant recouvre ne se lit nulle part ailleurs — c'est
-            donc une infobulle et non un `title` (#536), atteignable au clavier
-            comme à la souris. */}
-        {/* Un cumul qui n'est qu'un plancher le dit (#1280), de la même façon
-            que le run dont il additionne le montant : sans quoi « 0,21 $US »
-            s'affichait nu au-dessus d'un run qui se disait partiel. La raison
-            rejoint l'infobulle déjà là, plutôt qu'une seconde. L'état prend la
-            forme **courte** — le libellé dit déjà « Coût » — et le ton du
-            libellé, pas le gras du montant : la relecture visuelle l'a vu
-            peser autant que le chiffre, et tronquer le titre de la page à
-            côté de la pastille « Reconnexion… ». */}
-        <Infobulle
-          texte={
-            coutPartiel
-              ? `Coût cumulé sur ${projet.nom} — somme des grands livres et du fil, planification comprise. ${RAISON_COUT_PARTIEL}`
-              : `Coût cumulé sur ${projet.nom} — somme des grands livres et du fil, planification comprise`
-          }
-          className="hidden whitespace-nowrap text-sm text-neutral-600 @3xl:inline-flex dark:text-neutral-400"
+    // La marge reste sur la barre : ses requêtes `@…:` mesurent sa boîte de
+    // **contenu**, et c'est sur elle que les seuils de #1108 ont été calés.
+    <header className="@container sticky top-0 z-10 h-14 shrink-0 border-b border-neutral-200 bg-white/90 px-4 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/90">
+      {/* Ce qui varie avec la largeur vit sur cet enfant, pas sur le
+          `<header>` : une requête `@sm:` interroge le conteneur le plus proche
+          **parmi les ancêtres**, jamais l'élément lui-même. Posée sur la barre,
+          elle ne s'appliquerait à aucune largeur. Au téléphone, la rangée mord
+          de 4 px sur chaque marge (`-mx-1`) et resserre son écart. */}
+      <div className="flex h-full items-center gap-x-3 gap-y-2 @max-sm:-mx-1 @max-sm:gap-x-2">
+        <button
+          type="button"
+          onClick={basculerRepli}
+          aria-expanded={!repliee}
+          aria-controls="navigation-principale"
+          aria-label={repliee ? "Déplier la navigation" : "Replier la navigation"}
+          // Le rail est imposé sous `lg` : le bouton n'y aurait rien à basculer.
+          className="-ml-1 hidden rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 lg:block dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
         >
-          <span data-guide="cout-cumule">
-            Coût cumulé :{" "}
-            {cumul.montant !== null && (
-              <span className="font-medium tabular-nums">{cumul.montant}</span>
-            )}
-            {cumul.mention !== null &&
-              `${cumul.montant !== null ? " · " : ""}${cumul.mention}`}
-          </span>
-        </Infobulle>
+          {repliee ? (
+            <IconeDeplier className="size-5" />
+          ) : (
+            <IconeReplier className="size-5" />
+          )}
+        </button>
+        {selecteurProjet}
+        {/* Le milieu de la barre — le seul endroit qui rétrécit. Le sélecteur
+            cède d'abord (il garde un préfixe lisible, voir `SelecteurProjet`),
+            le titre en dernier : `min-w-0 truncate` lui laisse prendre tout ce
+            qui reste et tronquer plutôt que déborder. Sous `@sm`, il n'y a plus
+            rien à lui laisser : il sort de l'écran et reste lu (voir l'en-tête). */}
+        <h1
+          // Pas de `title` (#536) : il ne répétait que le texte du titre, donc
+          // n'apprenait rien à personne — ni à la souris, ni au lecteur d'écran,
+          // qui lit le `<h1>` en entier même tronqué à l'écran.
+          className="min-w-0 truncate text-base font-semibold tracking-tight @max-sm:sr-only"
+        >
+          {titre}
+        </h1>
 
-        <div className="flex items-center gap-1 border-l border-neutral-200 pl-2 @xl:pl-3 dark:border-neutral-800">
-          {notifications ?? (
-            <EmplacementReserve
-              libelle="Notifications"
-              lot={119}
-              Icone={IconeNotifications}
-            />
+        {/* `shrink-0` (#1108) : l'extrémité droite ne rétrécit pas. Sans lui, le
+            groupe se serait mis à disputer la place au titre dès que la barre se
+            resserre — or ce qu'il porte ne se tronque pas (des icônes, un montant
+            en `whitespace-nowrap`) : il aurait simplement débordé. Ce qui doit
+            céder ici cède en **disparaissant** (le coût, `@3xl`), jamais en se
+            comprimant. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1 @sm:gap-2 @xl:gap-3">
+          {/* ⚠ **Ce qui va bien ne s'affiche plus** (#691). Cette pastille a porté
+              « Temps réel connecté » en permanence depuis #117, sur les onze
+              écrans, à la place la plus visible de la fenêtre — pour dire, en
+              régime nominal, que rien n'allait mal. La revue du 2026-08-28 l'a
+              nommée deux fois sur `/chat`, où l'en-tête du fil la doublait ; le
+              fil a rendu la sienne, celle-ci se tait.
+              Ce qui reste est ce qui **apprend** quelque chose : la coupure. Elle
+              explique un écran qui ne bouge plus, et c'est la seule chose que
+              l'utilisateur ne peut pas déduire de ce qu'il voit. Même règle que le
+              reste du produit (docs/30 §4) : une place se gagne, elle ne se garde
+              pas parce qu'on l'avait.
+              Le texte reste masqué quand la barre est étroite (`@xl` depuis
+              #1108, `sm` avant lui) — la pastille seule y suffit, et le titre de
+              page a la priorité sur une barre étroite. */}
+          {!connecte && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 @max-sm:px-1.5 dark:bg-amber-950 dark:text-amber-300">
+              <span className="size-1.5 animate-pulse rounded-full bg-amber-500 motion-reduce:animate-none" />
+              <span className="hidden @xl:inline">Reconnexion…</span>
+            </span>
           )}
-          {theme}
-          {aide}
-          {/* La bascule de la troisième zone (#925), à l'extrémité droite de la
-              barre : le miroir exact du bouton de navigation, à l'autre bout.
-              ⚠ Les deux chevrons sont **croisés** par rapport à leur nom, qui
-              date de la sidebar de gauche : pour une colonne de *droite*,
-              l'ouvrir la tire vers l'intérieur (chevron vers la gauche,
-              `IconeReplier`) et la fermer la renvoie au bord (chevron vers la
-              droite, `IconeDeplier`). Les noms disent le geste à gauche, les
-              dessins disent la direction — ce sont ces derniers qui comptent
-              ici, et c'est ce qui évite une paire d'icônes de plus.
-              Pas de `lg:block` comme à gauche : sous ce seuil le rail est imposé
-              et le bouton de navigation n'aurait rien à basculer, alors que la
-              conversation, elle, s'ouvre à toutes les largeurs — en recouvrement
-              quand la fenêtre est étroite. */}
-          {basculerConversation !== undefined && (
-            <button
-              type="button"
-              onClick={basculerConversation}
-              aria-expanded={conversationOuverte}
-              aria-controls={ID_COLONNE_CONVERSATION}
-              aria-label={
-                conversationOuverte
-                  ? "Replier la conversation"
-                  : "Déplier la conversation"
-              }
-              className="flex items-center gap-1.5 rounded-md p-2 text-texte-secondaire hover:bg-survol hover:text-texte"
-            >
-              {conversationOuverte ? (
-                <IconeDeplier className="size-5" />
-              ) : (
-                <IconeReplier className="size-5" />
+
+          {/* Le **premier** à s'effacer quand la barre se resserre (#1108) : le
+              titre de page a la priorité, et le coût reste lisible dans la page
+              elle-même (`/couts`, tableau de bord). Seuil sur la largeur de la
+              barre et non de la fenêtre — `@3xl`, celui à partir duquel il tient
+              sans faire tronquer le titre, pas celui où il tiendrait tout juste.
+              Depuis #281 c'est la dépense **du projet actif** — le titre le dit,
+              un montant qui suit l'utilisateur de page en page ne pouvant pas
+              rester le seul chiffre de l'écran à parler de tous les projets. */}
+          {/* Ce que le montant recouvre ne se lit nulle part ailleurs — c'est
+              donc une infobulle et non un `title` (#536), atteignable au clavier
+              comme à la souris. */}
+          {/* Un cumul qui n'est qu'un plancher le dit (#1280), de la même façon
+              que le run dont il additionne le montant : sans quoi « 0,21 $US »
+              s'affichait nu au-dessus d'un run qui se disait partiel. La raison
+              rejoint l'infobulle déjà là, plutôt qu'une seconde. L'état prend la
+              forme **courte** — le libellé dit déjà « Coût » — et le ton du
+              libellé, pas le gras du montant : la relecture visuelle l'a vu
+              peser autant que le chiffre, et tronquer le titre de la page à
+              côté de la pastille « Reconnexion… ». */}
+          <Infobulle
+            texte={
+              coutPartiel
+                ? `Coût cumulé sur ${projet.nom} — somme des grands livres et du fil, planification comprise. ${RAISON_COUT_PARTIEL}`
+                : `Coût cumulé sur ${projet.nom} — somme des grands livres et du fil, planification comprise`
+            }
+            className="hidden whitespace-nowrap text-sm text-neutral-600 @3xl:inline-flex dark:text-neutral-400"
+          >
+            <span data-guide="cout-cumule">
+              Coût cumulé :{" "}
+              {cumul.montant !== null && (
+                <span className="font-medium tabular-nums">{cumul.montant}</span>
               )}
-              {/* **Le repli se nomme** (#1107). Depuis #1107 la colonne est
-                  ouverte au premier passage, mais seulement au large : sous
-                  `lg`, et pour qui l'a repliée, il reste un chevron — et un
-                  chevron à l'extrémité d'une barre ne dit pas ce qu'il ouvre.
-                  C'est le parti pris que la veille a pris à Grafana, dont
-                  l'assistant n'est jamais ouvert d'office mais dont le bouton
-                  est **nommé et à la même place partout** : un défaut fermé ne
-                  se rattrape pas par un onboarding, il se rattrape par un bouton
-                  qui ne bouge pas. Le regard neuf de #1107 l'a explicitement
-                  repris de la variante C.
-                  Seulement quand la colonne est **repliée** : ouverte, elle est
-                  sous les yeux et se titre elle-même — le libellé ne dirait
-                  qu'une seconde fois ce que l'écran montre déjà. Et masqué
-                  quand la barre est étroite, où le titre de page a la priorité,
-                  comme le coût cumulé et « Reconnexion… » juste au-dessus. Le
-                  nom accessible, lui, ne dépend pas de la largeur : il reste
-                  porté par l'`aria-label`.
-                  ⚠ Ce seuil est lu sur la **barre** (`@xl`) depuis #1108, et
-                  non plus sur la fenêtre (`sm`) : « comme le coût cumulé et
-                  Reconnexion… juste au-dessus » était l'intention de #1107, ce
-                  n'était plus le cas depuis que ces deux-là se mesurent à la
-                  barre. Un libellé de 110 px qui apparaît sur la foi d'une
-                  largeur de fenêtre est précisément ce que ce ticket corrige :
-                  la colonne repliée rend la barre large, mais c'est la barre
-                  qui doit le dire. */}
-              {!conversationOuverte && (
-                <span className="hidden text-corps @xl:inline">Conversation</span>
-              )}
-            </button>
-          )}
+              {cumul.mention !== null &&
+                `${cumul.montant !== null ? " · " : ""}${cumul.mention}`}
+            </span>
+          </Infobulle>
+
+          <div className="flex items-center gap-0 border-l border-neutral-200 pl-1 @sm:gap-1 @sm:pl-2 @xl:pl-3 dark:border-neutral-800">
+            {notifications ?? (
+              <EmplacementReserve
+                libelle="Notifications"
+                lot={119}
+                Icone={IconeNotifications}
+              />
+            )}
+            {theme}
+            {aide}
+            {/* La bascule de la troisième zone (#925), à l'extrémité droite de la
+                barre : le miroir exact du bouton de navigation, à l'autre bout.
+                ⚠ Les deux chevrons sont **croisés** par rapport à leur nom, qui
+                date de la sidebar de gauche : pour une colonne de *droite*,
+                l'ouvrir la tire vers l'intérieur (chevron vers la gauche,
+                `IconeReplier`) et la fermer la renvoie au bord (chevron vers la
+                droite, `IconeDeplier`). Les noms disent le geste à gauche, les
+                dessins disent la direction — ce sont ces derniers qui comptent
+                ici, et c'est ce qui évite une paire d'icônes de plus.
+                Pas de `lg:block` comme à gauche : sous ce seuil le rail est imposé
+                et le bouton de navigation n'aurait rien à basculer, alors que la
+                conversation, elle, s'ouvre à toutes les largeurs — en recouvrement
+                quand la fenêtre est étroite. */}
+            {basculerConversation !== undefined && (
+              <button
+                type="button"
+                onClick={basculerConversation}
+                aria-expanded={conversationOuverte}
+                aria-controls={ID_COLONNE_CONVERSATION}
+                aria-label={
+                  conversationOuverte
+                    ? "Replier la conversation"
+                    : "Déplier la conversation"
+                }
+                className="flex items-center gap-1.5 rounded-md p-2 text-texte-secondaire hover:bg-survol hover:text-texte"
+              >
+                {conversationOuverte ? (
+                  <IconeDeplier className="size-5" />
+                ) : (
+                  <IconeReplier className="size-5" />
+                )}
+                {/* **Le repli se nomme** (#1107). Depuis #1107 la colonne est
+                    ouverte au premier passage, mais seulement au large : sous
+                    `lg`, et pour qui l'a repliée, il reste un chevron — et un
+                    chevron à l'extrémité d'une barre ne dit pas ce qu'il ouvre.
+                    C'est le parti pris que la veille a pris à Grafana, dont
+                    l'assistant n'est jamais ouvert d'office mais dont le bouton
+                    est **nommé et à la même place partout** : un défaut fermé ne
+                    se rattrape pas par un onboarding, il se rattrape par un bouton
+                    qui ne bouge pas. Le regard neuf de #1107 l'a explicitement
+                    repris de la variante C.
+                    Seulement quand la colonne est **repliée** : ouverte, elle est
+                    sous les yeux et se titre elle-même — le libellé ne dirait
+                    qu'une seconde fois ce que l'écran montre déjà. Et masqué
+                    quand la barre est étroite, où le titre de page a la priorité,
+                    comme le coût cumulé et « Reconnexion… » juste au-dessus. Le
+                    nom accessible, lui, ne dépend pas de la largeur : il reste
+                    porté par l'`aria-label`.
+                    ⚠ Ce seuil est lu sur la **barre** (`@xl`) depuis #1108, et
+                    non plus sur la fenêtre (`sm`) : « comme le coût cumulé et
+                    Reconnexion… juste au-dessus » était l'intention de #1107, ce
+                    n'était plus le cas depuis que ces deux-là se mesurent à la
+                    barre. Un libellé de 110 px qui apparaît sur la foi d'une
+                    largeur de fenêtre est précisément ce que ce ticket corrige :
+                    la colonne repliée rend la barre large, mais c'est la barre
+                    qui doit le dire. */}
+                {!conversationOuverte && (
+                  <span className="hidden text-corps @xl:inline">Conversation</span>
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </header>

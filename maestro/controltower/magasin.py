@@ -15,6 +15,8 @@ Ce module tient la réponse en un seul endroit :
   (`EventLog.sonder`, un `PING` sur le client du journal), gardée quelques
   instants pour ne pas pinguer à chaque requête, et **une seule en vol** — et si
   le rejeu du démarrage a abouti ;
+- `MagasinRefuse` est la panne qui se nomme elle-même — un journal local au schéma
+  refusé (#1621) : son titre, son motif et son geste sont servis tels quels ;
 - `GardeMagasin` refuse en `503` motivé les requêtes de l'API tant que le
   magasin manque : le `detail` nomme la panne et le geste qui la lève, et c'est
   ce que l'écran affiche au lieu d'un vide ;
@@ -132,6 +134,25 @@ class EtatMagasin:
         }
 
 
+class MagasinRefuse(Exception):
+    """Une panne du magasin qui se nomme elle-même : l'API la sert champ par champ (#1621).
+
+    Levée là où l'on sait ce qui s'est passé — le journal local qui refuse son
+    fichier (`persistence.SchemaLocalRefuse`) —, elle porte son titre, son motif et
+    son geste. Le rejeu qui échoue sur elle les sert tels quels, au lieu d'un
+    « historique illisible » suivi d'un geste générique qui ne dirait pas quoi faire.
+    """
+
+    def __init__(
+        self, *, titre: str, motif: str, geste: str, commande: str | None = None
+    ) -> None:
+        super().__init__(f"{titre} : {motif} — {geste}")
+        self.titre = titre
+        self.motif = motif
+        self.geste = geste
+        self.commande = commande
+
+
 Sonde = Callable[[], Awaitable[None]]
 
 
@@ -164,6 +185,7 @@ class Magasin:
         self._verdict: tuple[float, str | None] | None = None
         self._rejeu_fait = False
         self._echec_rejeu: str | None = None
+        self._refus: MagasinRefuse | None = None
 
     @property
     def rejeu_fait(self) -> bool:
@@ -173,10 +195,16 @@ class Magasin:
         """L'historique durable a été relu : l'état servi est complet."""
         self._rejeu_fait = True
         self._echec_rejeu = None
+        self._refus = None
 
     def rejeu_echoue(self, erreur: BaseException) -> None:
-        """Le rejeu a échoué : la cause est retenue, c'est elle que la panne dira."""
+        """Le rejeu a échoué : la cause est retenue, c'est elle que la panne dira.
+
+        Un refus qui se nomme (`MagasinRefuse`) est gardé entier : c'est sa panne,
+        et non la générique, que l'API sert.
+        """
         self._echec_rejeu = redact_secrets(str(erreur)) or type(erreur).__name__
+        self._refus = erreur if isinstance(erreur, MagasinRefuse) else None
 
     def oublier(self) -> None:
         """Oublie le dernier verdict : la question suivante sonde à nouveau.
@@ -199,6 +227,16 @@ class Magasin:
                 ),
                 geste="relancer Redis, l'API reprend seule",
                 commande=COMMANDE_REDIS,
+            )
+        if not self._rejeu_fait and self._refus is not None:
+            refus = self._refus
+            return EtatMagasin(
+                disponible=False,
+                lieu=self._lieu,
+                titre=refus.titre,
+                motif=redact_secrets(refus.motif),
+                geste=refus.geste,
+                commande=refus.commande,
             )
         if not self._rejeu_fait:
             # Le magasin répond, mais l'historique n'est pas dans l'état servi :

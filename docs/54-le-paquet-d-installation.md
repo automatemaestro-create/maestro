@@ -237,3 +237,49 @@ Les accords dont dépend l'installation — le `._pth`, les fichiers **suivis** 
 donnée locale de `core/`), l'emplacement du Node embarqué, le dossier du produit vu de
 l'assembleur, d'electron-builder et de la coque, le fichier de version que l'API et la coque
 relisent — sont gardés par `tests/test_distribution.py` et `tests/test_coque_bureau.py`.
+
+## 5. Le journal local d'une version à l'autre
+
+Le journal durable des runs et l'état acquis de leurs tâches vivent dans un fichier SQLite de l'état
+du poste (`%USERPROFILE%\.maestro\commun.sqlite3`). Ce fichier porte le numéro de son schéma, et
+chaque version de Maestro connaît le sien (#1621). À l'ouverture, Maestro lit ce numéro avant
+d'écrire quoi que ce soit, puis :
+
+| Le fichier porte… | Ce que fait Maestro |
+|---|---|
+| le schéma du code | il l'ouvre tel quel |
+| un schéma plus ancien | il le **sauvegarde**, puis le met à niveau par des migrations ordonnées, chacune jouée une seule fois, toutes dans une seule transaction |
+| un schéma plus récent | il **refuse** de l'ouvrir et n'y touche pas : ni réécrit, ni rétrogradé. L'écran dit de mettre Maestro à jour |
+
+**La sauvegarde** passe par l'API de sauvegarde de SQLite, jamais par une copie du fichier pendant
+qu'un écrivain le tient. Elle est posée à côté du fichier, sous le nom
+`commun.sqlite3-sauvegarde`, et contient le fichier tel qu'il était avant la mise à niveau. Elle se
+suffit à elle-même : aucun `-wal` ne l'accompagne. **Durée de conservation : une seule par
+fichier, gardée jusqu'à la mise à niveau suivante de ce fichier, qui la remplace.** Un fichier
+neuf, qui ne porte encore rien, n'a pas de sauvegarde.
+
+**Une migration qui échoue** remet le fichier tel qu'il était, depuis sa sauvegarde : même
+schéma, mêmes lignes, même numéro. La restauration couvre aussi une migration qui aurait validé
+une partie de son travail en route, ce que l'annulation de la transaction ne rattraperait pas.
+L'API démarre quand même : elle sert la panne au lieu de l'historique, l'écran affiche la cause
+et ce qu'il reste possible de faire, et le journal de `maestro-api` la consigne. Relancer Maestro
+retente la mise à niveau. Réinstaller la version précédente rouvre le fichier sans perte. Si la
+restauration elle-même échoue, le message nomme la sauvegarde à remettre à la place du fichier,
+Maestro arrêté.
+
+Le **mode serveur** (Redis) n'a pas de schéma à migrer : il range des listes et des hachages
+dont la forme est celle des événements eux-mêmes. Il est hors de ce mécanisme.
+
+### 5.1 Changer le schéma
+
+<!-- documentation: développement -->
+
+Changer le schéma, c'est ajouter une marche en fin de `MIGRATIONS`
+(`maestro/controltower/persistence.py`). La n-ième marche porte le fichier à la version n. Une
+marche publiée ne change plus. Une marche ne fait que des `execute` dans la transaction qu'on lui
+donne : un `executescript` validerait en passant ce qui précède, et une marche qui referme la
+transaction compte comme un échec. Le fichier a deux écrivains, le journal et l'état acquis
+(`maestro.controltower.acquis`), et les migrations se jouent dans `ouvrir_sqlite`, quel que soit
+celui qui ouvre le premier. `BEGIN IMMEDIATE` prend le verrou d'écriture avant de relire le
+numéro : à deux écrivains, la mise à niveau ne passe qu'une fois. Les tests jouent sur de vrais
+fichiers, avec des migrations qui échouent pour de vrai : `tests/test_schema_journal_local.py`.

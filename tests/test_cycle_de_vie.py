@@ -14,6 +14,7 @@ CE QUI EST GARDÉ ICI, LOT PAR LOT :
 | #360 | l'aller-retour libellé → option → libellé ; l'asymétrie écriture/lecture |
 | #361 | `project-add` : rejouable, la valeur NOMMÉE et jamais devinée, appelé à la création |
 | #362 | le recouvrement des tables (`st_statuts` depuis #1490), le tube qui ne masque pas d'échec |
+| #1618 | un jalon de plus de 100 tickets rendu en entier : pages et paquets d'états comptés |
 | #363 | chaque dérive sur un cas fabriqué, et **aucune** sur un dépôt sain |
 | #364 | le support est le champ Status, sans réglage à poser |
 | #365 | plus aucun label `workflow::` ni commutateur — un seul support, prouvé par `grep` |
@@ -82,6 +83,7 @@ from harnais_forge import (
     monte_depot,
     regle_owner,
     regle_pose_status,
+    regle_statuts,
     regles_backlog,
     reponse_owner,
 )
@@ -860,6 +862,188 @@ def test_le_json_brut_du_backlog_ne_porte_aucun_etat(depot: Depot) -> None:
     assert acheve.returncode == 0, acheve.stderr
     assert "En cours" not in acheve.stdout
     assert not lectures_d_etat(depot), "aucun état à lire ici"
+
+
+# =================================================================================================
+# #1618 — La table d'un jalon le rend en entier, au-delà de 100 tickets
+# =================================================================================================
+# Mesuré le 2026-11-12 : « Outillage de la forge » comptait 155 tickets et `milestone-issues` en
+# rendait 100 — les 55 plus anciens manquaient, dont trois ouverts, sans que rien ne le dise. La
+# liste se lit désormais par pages de 100, et l'état par paquets de 100 alias : deux comptes, l'un
+# et l'autre ⌈N/100⌉, qui gardent la borne de docs/10 §9.8 sans borner la table.
+
+#: Le numéro du jalon du décor, résolu depuis son titre par la première lecture du verbe.
+NUMERO_GROS_JALON = 7
+GROS_JALON = "Outillage G"
+
+#: Le fragment de la lecture qui LISTE les tickets d'un jalon (une par page).
+LISTE_DU_JALON = f"milestone(number: {NUMERO_GROS_JALON})"
+
+
+def regles_gros_jalon(iids: list[str], pages_servies: int | None = None) -> list[dict]:
+    """La forge d'un jalon de `len(iids)` tickets, servis par pages de 100, plus récents d'abord.
+
+    Chaque page au-delà de la première se reconnaît au curseur que la précédente a rendu
+    (`after: "C<rang>"`), écrit EN CLAIR dans la requête : le double matche sur le texte et ne
+    substitue aucune variable. La première page répond à toute autre lecture du jalon — c'est elle
+    qu'un verbe qui ne pagine pas reçoit, et ce qui fait échouer le test pour la bonne raison.
+    Au-delà de `pages_servies`, une page demandée rend une réponse VIDE : la panne de la forge.
+    """
+    pages = [iids[i:i + 100] for i in range(0, len(iids), 100)]
+
+    def page(rang: int) -> dict:
+        suivante = rang + 1 < len(pages)
+        curseur = f"C{rang + 1}" if suivante else None
+        return {"data": {"repository": {"milestone": {"issues": {
+            "pageInfo": {"hasNextPage": suivante, "endCursor": curseur},
+            "nodes": [
+                {"number": int(iid), "title": f"Ticket {iid}",
+                 "labels": {"nodes": [{"name": "type::infra"}]}}
+                for iid in pages[rang]
+            ],
+        }}}}}
+
+    servies = len(pages) if pages_servies is None else pages_servies
+    regles = [
+        {"contient": [LISTE_DU_JALON, f'after: "C{rang}"'], "reponse": page(rang)}
+        if rang < servies else
+        {"contient": [LISTE_DU_JALON, f'after: "C{rang}"'], "brut": ""}
+        for rang in range(1, len(pages))
+    ]
+    return [
+        regle_statuts({iid: "À faire" for iid in iids}),
+        {
+            "contient": ["nodes { number title }"],
+            "reponse": {"data": {"repository": {"milestones": {"nodes": [
+                {"number": NUMERO_GROS_JALON, "title": GROS_JALON},
+            ]}}}},
+        },
+        *regles,
+        {"contient": [LISTE_DU_JALON], "reponse": page(0)},
+    ]
+
+
+def info_de_page(regle: dict) -> dict:
+    """Le `pageInfo` d'une page du décor, que les tests de la panne retouchent."""
+    return regle["reponse"]["data"]["repository"]["milestone"]["issues"]["pageInfo"]
+
+
+def test_un_jalon_de_plus_de_cent_tickets_est_rendu_en_entier(depot: Depot) -> None:
+    """LE test de #1618 : 155 tickets au jalon, 155 lignes à la table, les plus anciens compris.
+
+    Les pages se suivent dans l'ordre de la forge (plus récent d'abord), et chaque ligne porte
+    l'état lu par `st_statuts` : la pagination ne fait perdre ni un ticket ni son état.
+    """
+    iids = [str(n) for n in range(1700, 1545, -1)]  # 155 tickets, du plus récent au plus ancien
+    depot.pose_etat(graphql=regles_gros_jalon(iids))
+
+    acheve = depot.lib("milestone-issues", GROS_JALON)
+    assert acheve.returncode == 0, acheve.stderr
+    lignes = colonnes(acheve.stdout)
+    assert [ligne[0] for ligne in lignes] == iids, f"{len(lignes)} lignes pour {len(iids)} tickets"
+    assert {ligne[1] for ligne in lignes} == {"À faire"}, "un ticket a perdu son état"
+
+
+def test_un_gros_jalon_paie_une_lecture_par_page_et_par_paquet_d_etats(depot: Depot) -> None:
+    """Le compte d'appels reste borné (docs/10 §9.8) : ⌈N/100⌉ pages, ⌈N/100⌉ lectures d'état.
+
+    Une lecture d'état porte au plus 100 alias : c'est la borne qui la tient sous le plafond de la
+    ligne de commande Windows que `gh` reçoit (~16 Ko pour 100 alias, 32 Ko au plafond). Chaque iid
+    de la table est demandé une fois, et un seul.
+    """
+    iids = [str(n) for n in range(1900, 1650, -1)]  # 250 tickets : trois pages, trois paquets
+    depot.pose_etat(graphql=regles_gros_jalon(iids))
+
+    acheve = depot.lib("milestone-issues", GROS_JALON)
+    assert acheve.returncode == 0, acheve.stderr
+    assert len(colonnes(acheve.stdout)) == 250
+
+    pages = [a for a in depot.appels() if LISTE_DU_JALON in a]
+    assert len(pages) == 3, f"{len(pages)} lectures de la liste pour 250 tickets"
+    lectures = lectures_d_etat(depot)
+    assert len(lectures) == 3, f"{len(lectures)} lectures d'état pour 250 tickets"
+    demandes = [re.findall(r"issue\(number:(\d+)\)", lecture) for lecture in lectures]
+    assert max(len(d) for d in demandes) <= 100, [len(d) for d in demandes]
+    assert sorted(sum(demandes, [])) == sorted(iids), "un iid demandé deux fois, ou jamais"
+
+
+def test_un_jalon_hors_de_la_premiere_page_des_jalons_est_resolu(depot: Depot) -> None:
+    """La première lecture du verbe — le titre vers le numéro — se pagine aussi.
+
+    Un dépôt de plus de cent jalons rangerait le sien sur la seconde page : sans pagination, il
+    serait « introuvable » alors qu'il existe, et la table vide.
+    """
+    iids = ["1601", "1600"]
+    regles = regles_gros_jalon(iids)
+    resolution = next(r for r in regles if r.get("contient") == ["nodes { number title }"])
+    resolution["reponse"] = {"data": {"repository": {"milestones": {
+        "pageInfo": {"hasNextPage": True, "endCursor": "M1"},
+        "nodes": [{"number": n, "title": f"Jalon {n}"} for n in range(100, 200)],
+    }}}}
+    regles.insert(regles.index(resolution), {
+        "contient": ["nodes { number title }", 'after: "M1"'],
+        "reponse": {"data": {"repository": {"milestones": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "nodes": [{"number": NUMERO_GROS_JALON, "title": GROS_JALON}],
+        }}}},
+    })
+    depot.pose_etat(graphql=regles)
+
+    acheve = depot.lib("milestone-issues", GROS_JALON)
+    assert acheve.returncode == 0, acheve.stderr
+    assert [ligne[0] for ligne in colonnes(acheve.stdout)] == iids
+    assert len([a for a in depot.appels() if "nodes { number title }" in a]) == 2
+
+
+def test_une_page_illisible_fait_echouer_la_table_au_lieu_de_la_tronquer(depot: Depot) -> None:
+    """Le défaut de #1618 était un SILENCE : une table à 100 lignes avait l'air complète.
+
+    Une page suivante que la forge annonce et ne rend pas fait échouer le verbe — jamais une table
+    rendue à moitié avec un code de succès, que `/etat-des-lieux` lirait comme le jalon entier.
+    """
+    iids = [str(n) for n in range(1700, 1545, -1)]
+    depot.pose_etat(graphql=regles_gros_jalon(iids, pages_servies=1))
+
+    acheve = depot.lib("milestone-issues", GROS_JALON)
+    assert acheve.returncode != 0, "une page manquante doit se voir dans le code de retour"
+    assert not colonnes(acheve.stdout), "et ne pas rendre de table"
+
+
+def test_une_page_suivante_sans_curseur_est_une_panne_nommee(depot: Depot) -> None:
+    """« Il y a une suite » sans dire où elle commence : le verbe s'arrête et le dit.
+
+    Relire la première page en boucle, ou rendre ce qu'on a, seraient les deux façons de cacher la
+    réponse incohérente de la forge.
+    """
+    iids = [str(n) for n in range(1700, 1545, -1)]
+    regles = regles_gros_jalon(iids, pages_servies=1)
+    info_de_page(regles[-1])["endCursor"] = None
+    depot.pose_etat(graphql=regles)
+
+    acheve = depot.lib("milestone-issues", GROS_JALON)
+    assert acheve.returncode != 0
+    assert not colonnes(acheve.stdout)
+    assert "curseur" in acheve.stderr, acheve.stderr
+    assert len([a for a in depot.appels() if LISTE_DU_JALON in a]) == 1, "la page est relue"
+
+
+def test_un_curseur_qui_ne_progresse_pas_arrete_la_lecture(depot: Depot) -> None:
+    """Une page qui renvoie au curseur qu'on vient de lui passer ferait tourner le verbe sans fin.
+
+    Il s'arrête à la première redite, le dit, et ne rend rien : le compte d'appels reste borné même
+    quand la forge se trompe.
+    """
+    iids = [str(n) for n in range(1700, 1545, -1)]
+    regles = regles_gros_jalon(iids)
+    seconde = next(r for r in regles if 'after: "C1"' in r.get("contient", []))
+    info_de_page(seconde).update({"hasNextPage": True, "endCursor": "C1"})
+    depot.pose_etat(graphql=regles)
+
+    acheve = depot.lib("milestone-issues", GROS_JALON)
+    assert acheve.returncode != 0
+    assert not colonnes(acheve.stdout)
+    assert "curseur" in acheve.stderr, acheve.stderr
+    assert len([a for a in depot.appels() if LISTE_DU_JALON in a]) == 2
 
 
 # =================================================================================================

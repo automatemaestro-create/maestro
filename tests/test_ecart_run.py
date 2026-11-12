@@ -576,7 +576,7 @@ def regle_jalons(courant: str = "Phase 8 — Control Tower", numero: int = 21) -
             ]}}}},
         },
         {
-            "contient": ["milestones(first: 50) { nodes { number title }"],
+            "contient": ["milestones(first: 100", "nodes { number title }"],
             "reponse": {"data": {"repository": {"milestones": {"nodes": [
                 {"number": numero, "title": courant},
             ]}}}},

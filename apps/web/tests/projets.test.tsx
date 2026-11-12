@@ -495,12 +495,12 @@ describe("le sélecteur de dossier natif (#278)", () => {
 
     await utilisateur.click(bouton()!);
 
-    // Le message du backend **et** le motif en mots (#946, C7) disent tous deux
-    // « racine de disque » : viser le bandeau plutôt qu'un texte, qui en
-    // trouverait deux.
+    // La phrase du backend dit la raison en mots, le code la nomme pour qui
+    // dépanne (#1613) : le libellé n'est pas redit.
     const bandeau = await screen.findByRole("alert");
     expect(bandeau).toHaveTextContent("Une racine de disque ne peut pas être un projet.");
-    expect(bandeau).toHaveTextContent("motif : Racine de disque");
+    expect(bandeau).toHaveTextContent("code : racine-de-disque");
+    expect(bandeau.textContent?.match(/racine de disque/gi)).toHaveLength(1);
     await waitFor(() => expect(chargerExplorateur).toHaveBeenLastCalledWith("D:/"));
   });
 
@@ -539,8 +539,7 @@ describe("le sélecteur de dossier natif (#278)", () => {
     // backend, le geste qui en sort, et le motif brut affiché tel quel.
     const bandeau = await screen.findByRole("alert");
     expect(bandeau).toHaveTextContent("Un dialogue de dossier est déjà ouvert.");
-    expect(bandeau).toHaveTextContent("motif : Une fenêtre de choix est déjà ouverte");
-    expect(bandeau).not.toHaveTextContent("selecteur-en-cours");
+    expect(bandeau).toHaveTextContent("code : selecteur-en-cours");
   });
 
   it("reste un explorateur utilisable quand la disponibilité est injoignable", async () => {
@@ -626,8 +625,7 @@ describe("un refus motivé (EF-38)", () => {
 
     const refus = await screen.findByRole("alert");
     expect(refus).toHaveTextContent("Zone sensible");
-    expect(refus).toHaveTextContent("motif : Zone protégée");
-    expect(refus).not.toHaveTextContent("chemin-sensible");
+    expect(refus).toHaveTextContent("code : chemin-sensible");
     // Le conseil prolonge le message du backend, il ne le remplace pas.
     expect(refus).toHaveTextContent(/Zone protégée/);
 
@@ -638,6 +636,38 @@ describe("un refus motivé (EF-38)", () => {
     expect(screen.getByLabelText("Nom du projet")).toHaveValue("Ancien revu");
   });
 
+  it("lit un refus en une fois : le titre seul en gras, la phrase dessous, le code au second plan (#1613)", async () => {
+    // Le bandeau écrivait « <titre> — <phrase> » tout en gras, puis
+    // « motif : Dossier système » : la phrase se lisait deux fois, la seconde
+    // en libellé. Seul le titre accroche l'œil ; le motif est le code de la
+    // panne, en mono, pour qui dépanne (veille de #1036, docs/30).
+    const utilisateur = userEvent.setup();
+    const explorateur = await formulaireAvecExplorateur(utilisateur);
+    await within(explorateur).findByText("depensio");
+    chargerExplorateur.mockRejectedValueOnce(
+      new ErreurProjet(
+        "chemin-systeme",
+        "Dossier système refusé : C:/Windows est dans C:/Windows.",
+      ),
+    );
+    await utilisateur.click(
+      within(explorateur).getByRole("button", { name: "Ouvrir depensio" }),
+    );
+
+    const refus = await within(explorateur).findByRole("alert");
+    const gras = Array.from(refus.querySelectorAll(".font-medium"));
+    expect(gras.map((noeud) => noeud.textContent)).toEqual(["Dossier non exploré"]);
+    expect(
+      within(refus).getByText("Dossier système refusé : C:/Windows est dans C:/Windows."),
+    ).not.toHaveClass("font-medium");
+    // Le motif ne redit pas la phrase en libellé : il donne son code.
+    expect(refus).not.toHaveTextContent("motif :");
+    expect(within(refus).queryByText(/^Dossier système$/)).toBeNull();
+    expect(within(refus).getByText("chemin-systeme")).toHaveClass("font-mono");
+    // Le conseil reste, entre la phrase et le code.
+    expect(refus).toHaveTextContent("Maestro n'y travaille pas.");
+  });
+
   it("garde la navigation de l'explorateur quand un dossier est refusé", async () => {
     const utilisateur = userEvent.setup();
     const explorateur = await formulaireAvecExplorateur(utilisateur);
@@ -646,7 +676,7 @@ describe("un refus motivé (EF-38)", () => {
     chargerExplorateur.mockRejectedValueOnce(
       new ErreurProjet(
         "hors-racines-explorables",
-        "Dossier hors des dossiers explorables : C:/ailleurs",
+        "C:/ailleurs est hors des dossiers explorables : D:/projets.",
       ),
     );
     await utilisateur.click(
@@ -654,9 +684,9 @@ describe("un refus motivé (EF-38)", () => {
     );
 
     const refus = await within(explorateur).findByRole("alert");
-    // Le motif en mots, pas son identifiant d'API (#946, C7).
-    expect(refus).toHaveTextContent("Hors des dossiers explorables");
-    expect(refus).not.toHaveTextContent("hors-racines-explorables");
+    // La phrase dit la raison, le code la nomme au second plan (#1613).
+    expect(refus).toHaveTextContent("C:/ailleurs est hors des dossiers explorables : D:/projets.");
+    expect(refus).toHaveTextContent("code : hors-racines-explorables");
     // Plus de consigne d'administrateur (#1610) : ni variable, ni redémarrage.
     expect(refus).not.toHaveTextContent("MAESTRO_EXPLORATEUR_RACINES");
     expect(refus).not.toHaveTextContent(/relancer/);
@@ -709,7 +739,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     chargerExplorateur.mockRejectedValueOnce(
       new ErreurProjet(
         motif,
-        "Dossier hors des dossiers explorables : C:/ailleurs — explorables : D:/projets.",
+        "C:/ailleurs est hors des dossiers explorables : D:/projets.",
         autorisation,
       ),
     );
@@ -780,7 +810,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     chargerExplorateur.mockRejectedValueOnce(
       new ErreurProjet(
         "hors-racines-explorables",
-        "Dossier hors des dossiers explorables : C:/ailleurs — explorables : D:/projets.",
+        "C:/ailleurs est hors des dossiers explorables : D:/projets.",
         { chemin: "C:/ailleurs", refus: null },
       ),
     );
@@ -899,7 +929,7 @@ describe("autoriser un dossier refusé depuis l'explorateur (#1610)", () => {
     const explorateur = await refuserDepensio(utilisateur, null, "chemin-sensible");
 
     expect(within(explorateur).getByRole("alert")).toHaveTextContent(
-      "motif : Zone protégée",
+      "code : chemin-sensible",
     );
     expect(
       within(explorateur).queryByRole("button", { name: /^Autoriser/ }),
@@ -1011,10 +1041,10 @@ describe("la modification et la suppression", () => {
     const carte = screen.getByRole("listitem", { name: "Projet Dépensio" });
     const refus = await within(carte).findByRole("alert");
     expect(refus).toHaveTextContent("Projet inconnu : prj-7f3a1c2b");
-    // Le motif se lit en mots (#946, C7) : « motif : projet-inconnu » rendait à
-    // l'utilisateur l'identifiant de l'API.
-    expect(refus).toHaveTextContent("motif : Projet inconnu");
-    expect(refus).not.toHaveTextContent("projet-inconnu");
+    // La phrase dit la raison ; le motif ne la redit pas en libellé, il donne
+    // son code au second plan (#1613).
+    expect(refus).toHaveTextContent("code : projet-inconnu");
+    expect(refus.textContent?.match(/Projet inconnu/g)).toHaveLength(1);
   });
 });
 
@@ -1121,8 +1151,7 @@ describe("la mise sous Git d'un projet non versionné (#855)", () => {
     const refus = await within(carte).findByRole("alert");
     expect(refus).toHaveTextContent("Mise sous Git refusée");
     expect(refus).toHaveTextContent("dépôt imbriqué");
-    expect(refus).toHaveTextContent("motif : Dépôt Git englobant");
-    expect(refus).not.toHaveTextContent("depot-englobant");
+    expect(refus).toHaveTextContent("code : depot-englobant");
     // Le conseil prolonge le message du backend, il ne le remplace pas.
     expect(refus).toHaveTextContent(/racine de ce dépôt/);
     // La carte reste utilisable : le projet est toujours non versionné, le

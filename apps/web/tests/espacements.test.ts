@@ -378,7 +378,6 @@ const RESIDU = new Map<string, number>([
   ["components/chat/FilDeCadrage.tsx", 1],
   ["components/composer/ComposerObjectif.tsx", 3],
   ["components/composer/RapportExtraction.tsx", 1],
-  ["components/composer/RefusSource.tsx", 1],
   ["components/integrations/BibliothequeMcp.tsx", 5],
   ["components/integrations/PoolProjet.tsx", 2],
   ["components/parametres/NavigationParametres.tsx", 1],
@@ -390,7 +389,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 69;
+const TOTAL_ANNONCE = 68;
 
 /** Les sources jugées : le produit, moins le fichier qui porte le barème. */
 const sourcesJugees = (): string[] =>

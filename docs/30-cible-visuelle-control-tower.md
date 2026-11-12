@@ -2675,6 +2675,13 @@ passage** — le reste technique n'est plus dans le motif mais dans la **phrase 
 `maestro/` l'écrivent ainsi. La même phrase sert le client d'API et l'écran. Les tickets #946 et
 #1036 portent `veille::arbitree` depuis cette veille.
 
+**Appliquée par #1613** (2026-11-12) aux deux bandeaux, `RefusSource` rendant désormais celui de
+`RefusMotive` : le titre seul en gras, la phrase dessous, le conseil, puis `code : <motif>` en mono
+et en `text-micro`. Écart assumé au parti pris 1 : la ligne garde la teinte de second plan de
+son ton (ambre, ou alerte), celle qu'elle avait déjà, plutôt que `text-texte-secondaire` — le
+ton du bandeau ne bouge pas, et un gris neutre y ferait une troisième couleur. Le passage sur
+`Carte` (parti pris 4) reste au ticket des encarts.
+
 #### Le fil de la Control Tower — 2026-09-23 (#1225, lot 4 de #1221, jouée en run)
 
 Surface : le fil de conversation — `components/Conversation.tsx` et `components/chat/*` —, donc

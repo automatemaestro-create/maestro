@@ -499,7 +499,6 @@ const RESIDU = new Map<string, number>([
   ["components/chat/TexteMarkdown.tsx", 1],
   ["components/composer/ComposerObjectif.tsx", 3],
   ["components/composer/RapportExtraction.tsx", 2],
-  ["components/composer/RefusSource.tsx", 1],
   ["components/integrations/BibliothequeMcp.tsx", 9],
   ["components/integrations/PoolProjet.tsx", 3],
   ["components/parametres/NavigationParametres.tsx", 1],
@@ -516,7 +515,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 162;
+const TOTAL_ANNONCE = 161;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

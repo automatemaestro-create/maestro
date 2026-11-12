@@ -111,6 +111,22 @@ def test_le_refus_hors_frontiere_dit_que_le_dossier_s_autorise(
     assert dehors.resolve().as_posix() in detail["message"]
 
 
+def test_le_refus_hors_frontiere_se_lit_en_une_phrase(
+    client: TestClient, dehors: Path
+) -> None:
+    """Le dossier, puis les dossiers explorables, dans une seule phrase (#1613).
+
+    Le message écrivait « … : <dossier> — explorables : <liste>. », où le
+    second fragment se lisait comme un adjectif orphelin sous le titre du
+    bandeau.
+    """
+    message = _explorer(client, dehors).json()["detail"]["message"]
+
+    assert message.startswith(f"{dehors.resolve().as_posix()} est hors des dossiers explorables")
+    assert "— explorables" not in message
+    assert message.count("explorables") == 1
+
+
 def test_autoriser_ouvre_le_dossier_sans_redemarrage(
     client: TestClient, reglages: ReglagesProjetsStore, dehors: Path
 ) -> None:

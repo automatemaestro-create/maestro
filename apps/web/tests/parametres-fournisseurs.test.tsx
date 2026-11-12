@@ -299,9 +299,11 @@ describe("un catalogue illisible dit sa panne lui-même", () => {
 
     render(<ParametresFournisseurs />);
 
-    expect(
-      await screen.findByText(/^Catalogue des agents illisible — L'API n'a pas répondu\./),
-    ).toBeInTheDocument();
+    // Le titre, puis la phrase sur sa propre ligne (#1613).
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      /^Catalogue des agents illisibleL'API n'a pas répondu\./,
+    );
     expect(screen.queryByText(/plus haut/)).toBeNull();
     expect(screen.queryByText("Aucun agent au catalogue.")).toBeNull();
   });

@@ -525,10 +525,11 @@ describe("⑥ une API coupée se dit", () => {
     // Paramètres n'a pas de bandeau qui dirait la panne plus haut : la carte la
     // dit, dans la forme de « Répertoire illisible » de la même page.
     const alerte = await screen.findByRole("alert");
+    // Le titre, puis la phrase sur sa propre ligne (#1613).
     expect(alerte).toHaveTextContent(
-      /^Fournisseur par défaut illisible — L'API n'a pas répondu\./,
+      /^Fournisseur par défaut illisibleL'API n'a pas répondu\./,
     );
-    expect(alerte).toHaveTextContent("motif : API injoignable");
+    expect(alerte).toHaveTextContent("code : api-injoignable");
     expect(screen.queryByText(/plus haut/)).toBeNull();
     expect(screen.queryByRole("radio")).toBeNull();
   });
