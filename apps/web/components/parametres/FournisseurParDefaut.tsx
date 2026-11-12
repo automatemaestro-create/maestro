@@ -27,9 +27,15 @@
  * cartes d'accès non plus (#1617) : ni le badge « Utilisé maintenant », ni la phrase
  * qui précède toute épreuve. `onEtat` lui dit chaque état lu ou enregistré, pour
  * qu'elle se coche sur le fait.
+ *
+ * À largeur de téléphone, l'étape ne montre que la carte de l'accès choisi
+ * (`autresReplies`, #1629) : les autres attendent derrière un repli qui dit leur
+ * compte, et l'accès enregistré quand il en fait partie. En cocher un en fait la
+ * carte ouverte, et le focus le suit. Les Paramètres montrent toujours toutes les
+ * cartes.
  */
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { IconeAlerte, IconeCoche, IconeStatutAFaire } from "@/components/Icones";
 import { BadgeEtat, Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
@@ -71,13 +77,23 @@ const MESSAGE_ENREGISTRE =
 
 export function FournisseurParDefaut({
   enEtape = false,
+  autresReplies = false,
   onEtat,
 }: {
   /** Montée dans l'étape du premier lancement : sans cadre, sans titre ni tête. */
   enEtape?: boolean;
+  /**
+   * Seule la carte de l'accès choisi se montre, les autres derrière un repli qui
+   * en dit le compte : l'étape du modèle à largeur de téléphone (#1629).
+   */
+  autresReplies?: boolean;
   /** Chaque état lu ou enregistré — ce sur quoi l'étape du modèle se coche. */
   onEtat?: (etat: EtatFournisseurDefaut) => void;
 } = {}) {
+  const [autresOuverts, setAutresOuverts] = useState(false);
+  // L'accès coché dans le repli : sa carte est remontée en tête, et le focus,
+  // perdu avec la radio démontée, va à la sienne.
+  const choisiDansLeRepli = useRef<string | null>(null);
   const [catalogue, setCatalogue] = useState<CatalogueFournisseurs | null>(null);
   const [etat, setEtat] = useState<EtatFournisseurDefaut | null>(null);
   const [panne, setPanne] = useState<RefusProjet | null>(null);
@@ -123,6 +139,12 @@ export function FournisseurParDefaut({
   useEffect(() => {
     if (etat !== null) onEtat?.(etat);
   }, [etat, onEtat]);
+
+  useEffect(() => {
+    if (choisiDansLeRepli.current === null || choisiDansLeRepli.current !== selection) return;
+    choisiDansLeRepli.current = null;
+    document.querySelector<HTMLInputElement>(`input[name="defaut-acces"][value="${selection}"]`)?.focus();
+  }, [selection]);
 
   const options = useMemo(
     () => (catalogue === null ? [] : optionsAcces(catalogue)),
@@ -262,6 +284,51 @@ export function FournisseurParDefaut({
     }
   };
 
+  // Un accès au moins à replier, et une carte choisie à montrer à sa place : sans
+  // elle, tout replier ne laisserait rien à choisir à l'écran.
+  const replie = autresReplies && choisie !== null && options.length > 1;
+  const repliees = replie ? options.filter((o) => o.cle !== choisie.cle) : [];
+
+  const carte = (option: OptionAcces, dansLeRepli = false) => (
+    <CarteAcces
+      key={option.cle}
+      option={option}
+      etat={etat}
+      active={option.cle === selection}
+      utilisee={option.cle === effective}
+      enregistree={option.cle === enregistree}
+      enEtape={enEtape}
+      onChoisir={() => {
+        if (dansLeRepli) {
+          choisiDansLeRepli.current = option.cle;
+          setAutresOuverts(false);
+        }
+        choisir(option);
+      }}
+    >
+      {option.cle === selection && (
+        <Saisie
+          option={option}
+          etat={etat}
+          modele={modele}
+          adresse={adresse}
+          cle={cle}
+          onModele={setModele}
+          onAdresse={setAdresse}
+          onCle={setCle}
+          verdict={verdictCourant}
+          saisieEnregistree={saisieEnregistree}
+          enEtape={enEtape}
+          action={action}
+          annonce={annonce}
+          refus={refus}
+          onEprouver={() => void eprouver()}
+          onEnregistrer={() => void enregistrer()}
+        />
+      )}
+    </CarteAcces>
+  );
+
   const contenu = (
     <>
       {!enEtape && (
@@ -288,39 +355,33 @@ export function FournisseurParDefaut({
           les cartes hors de l'écran. */}
       <fieldset className="mt-3 flex min-w-0 flex-col gap-2">
         <legend className="sr-only">Accès au fournisseur par défaut</legend>
-        {options.map((option) => (
-          <CarteAcces
-            key={option.cle}
-            option={option}
-            etat={etat}
-            active={option.cle === selection}
-            utilisee={option.cle === effective}
-            enregistree={option.cle === enregistree}
-            enEtape={enEtape}
-            onChoisir={() => choisir(option)}
-          >
-            {option.cle === selection && (
-              <Saisie
-                option={option}
-                etat={etat}
-                modele={modele}
-                adresse={adresse}
-                cle={cle}
-                onModele={setModele}
-                onAdresse={setAdresse}
-                onCle={setCle}
-                verdict={verdictCourant}
-                saisieEnregistree={saisieEnregistree}
-                enEtape={enEtape}
-                action={action}
-                annonce={annonce}
-                refus={refus}
-                onEprouver={() => void eprouver()}
-                onEnregistrer={() => void enregistrer()}
-              />
-            )}
-          </CarteAcces>
-        ))}
+        {replie ? (
+          <>
+            {carte(choisie)}
+            {/* Le repli natif du fil (`chat/EtapesDuFil`) : un second niveau qui dit
+                son compte, jamais un retrait. Ouvert, il rend les cartes telles
+                quelles, constat et badges compris. */}
+            <details
+              open={autresOuverts}
+              onToggle={(e) => setAutresOuverts(e.currentTarget.open)}
+              className="min-w-0"
+            >
+              <summary className="min-h-6 cursor-pointer text-corps font-medium text-texte">
+                Autres accès · {repliees.length}
+                {repliees.some((o) => o.cle === enregistree) && (
+                  <span className="font-normal text-texte-secondaire">
+                    , dont l&apos;accès enregistré
+                  </span>
+                )}
+              </summary>
+              <div className="mt-2 flex min-w-0 flex-col gap-2">
+                {repliees.map((option) => carte(option, true))}
+              </div>
+            </details>
+          </>
+        ) : (
+          options.map((option) => carte(option))
+        )}
       </fieldset>
 
       {etat.choix !== null && (

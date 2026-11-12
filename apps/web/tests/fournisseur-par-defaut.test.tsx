@@ -35,6 +35,7 @@ import {
   demandesEprouvees,
   poserFournisseurDefaut,
   poserFournisseurs,
+  poserLargeurFenetre,
   poserPanneFournisseurDefaut,
   poserVerdictEpreuve,
 } from "./aides";
@@ -111,6 +112,16 @@ describe("① ce qui est utilisé se lit à part de ce qui est coché", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: ABONNEMENT })).toBeChecked();
     expect(within(carte(ABONNEMENT)).getByText("Utilisé maintenant")).toBeInTheDocument();
+  });
+
+  it("montre toutes ses cartes, même à largeur de téléphone", async () => {
+    // Le repli des accès non choisis n'appartient qu'à l'étape du modèle (#1629).
+    poserLargeurFenetre(390);
+    await monter();
+
+    expect(screen.getAllByRole("radio")).toHaveLength(4);
+    expect(screen.queryByText(/^Autres accès/)).toBeNull();
+    expect(document.querySelector("details")).toBeNull();
   });
 
   it("coche une autre carte sans déplacer « Utilisé maintenant »", async () => {

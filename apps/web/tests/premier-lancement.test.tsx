@@ -16,6 +16,9 @@
  * Et la place de l'écran de l'étape ouverte (#1617) : à côté de la liste au large,
  * sous la ligne de son étape plus étroit, jamais monté deux fois ; l'état dit une
  * fois, par la ligne ; l'étape du dossier dans les mots de qui découvre Maestro.
+ * Au téléphone, l'étape du modèle ne montre que l'accès choisi, les autres derrière
+ * un repli qui dit leur compte (#1629) ; la géométrie qui en résulte se mesure sur
+ * la vraie stack.
  *
  * Le moteur derrière (`/api/accueil`) est gardé par `tests/test_accueil.py`.
  */
@@ -441,6 +444,107 @@ describe("l'écran de l'étape ouverte, contre son étape (#1617)", () => {
     expect(ecran(1)).toHaveClass("row-start-1");
   });
 });
+
+describe("au téléphone, l'étape du modèle ne montre que l'accès choisi (#1629)", () => {
+  const ABONNEMENT = "Abonnement Claude, par Claude Code sur ce poste";
+  const CLE_ANTHROPIC = "Clé d'API Anthropic";
+
+  /** Le repli des accès non choisis, et son résumé. */
+  const repli = (dans: HTMLElement) => {
+    const resume = within(dans).getByText(/^Autres accès · \d/);
+    const details = resume.closest("details");
+    if (details === null) throw new Error("aucun repli autour du résumé");
+    return { resume, details };
+  };
+
+  it("garde la carte choisie entière, et replie les autres derrière leur compte", async () => {
+    poserLargeurFenetre(390);
+    monter();
+    await parcours();
+    const premier = await screen.findByRole("region", { name: TITRES[1] });
+    await within(premier).findByRole("button", { name: "Éprouver" });
+
+    const { resume, details } = repli(premier);
+    expect(resume).toHaveTextContent(/^Autres accès · 3$/);
+    expect(details.open).toBe(false);
+    // La carte choisie, sa saisie comprise, est hors du repli.
+    const choisi = within(premier).getByRole("radio", { name: ABONNEMENT });
+    expect(choisi).toBeChecked();
+    expect(details).not.toContainElement(choisi);
+    expect(details).not.toContainElement(within(premier).getByRole("button", { name: "Éprouver" }));
+    // Les autres sont dans le repli, telles quelles, constat compris : un second
+    // niveau, jamais un retrait.
+    const cle = within(premier).getByRole("radio", { name: CLE_ANTHROPIC });
+    expect(details).toContainElement(cle);
+    expect(within(details).getAllByRole("radio")).toHaveLength(3);
+    expect(within(details).getAllByText("Aucune clé enregistrée sur ce poste.")).toHaveLength(2);
+    // L'écran reste sous la ligne de son étape, et les étapes suivantes le suivent.
+    expect(within(lignesDesEtapes()[0]).getByRole("region", { name: TITRES[1] })).toBe(premier);
+    expect(screen.getAllByRole("region", { name: TITRES[1] })).toHaveLength(1);
+  });
+
+  it("fait d'un accès coché dans le repli la carte ouverte, et y porte le focus", async () => {
+    poserLargeurFenetre(390);
+    const utilisateur = userEvent.setup();
+    monter();
+    await parcours();
+    const premier = await screen.findByRole("region", { name: TITRES[1] });
+    await within(premier).findByRole("button", { name: "Éprouver" });
+
+    await utilisateur.click(repli(premier).resume);
+    expect(repli(premier).details.open).toBe(true);
+    await utilisateur.click(within(premier).getByRole("radio", { name: CLE_ANTHROPIC }));
+
+    const cle = within(premier).getByRole("radio", { name: CLE_ANTHROPIC });
+    const { resume, details } = repli(premier);
+    expect(cle).toBeChecked();
+    expect(cle).toHaveFocus();
+    expect(details).not.toContainElement(cle);
+    expect(within(premier).getByLabelText("Clé")).toBeInTheDocument();
+    // L'accès quitté passe sous le repli, qui se referme sur le choix fait.
+    expect(details).toContainElement(within(premier).getByRole("radio", { name: ABONNEMENT }));
+    expect(details.open).toBe(false);
+    expect(resume).toHaveTextContent(/^Autres accès · 3$/);
+  });
+
+  it("dit dans son résumé que l'accès enregistré est replié", async () => {
+    poserLargeurFenetre(390);
+    poserFournisseurDefaut(CHOIX_ENREGISTRE);
+    const utilisateur = userEvent.setup();
+    monter();
+    await parcours();
+    // Fait, le modèle cède la place à l'étape suivante : sa ligne le rouvre.
+    await waitFor(() => expect(etape(1)).toHaveTextContent("éprouvé le 9 novembre 2026."));
+    await utilisateur.click(etape(1));
+    const premier = ecran(1);
+    await within(premier).findByRole("button", { name: "Éprouver" });
+    expect(repli(premier).resume).toHaveTextContent(/^Autres accès · 3$/);
+
+    await utilisateur.click(repli(premier).resume);
+    await utilisateur.click(within(premier).getByRole("radio", { name: CLE_ANTHROPIC }));
+
+    expect(repli(premier).resume).toHaveTextContent(
+      /^Autres accès · 3, dont l'accès enregistré$/,
+    );
+  });
+
+  it("au large, montre toutes les cartes sans repli", async () => {
+    monter();
+    await parcours();
+    const premier = await screen.findByRole("region", { name: TITRES[1] });
+    await within(premier).findByRole("button", { name: "Éprouver" });
+
+    expect(within(premier).queryByText(/^Autres accès/)).toBeNull();
+    expect(premier.querySelector("details")).toBeNull();
+    expect(within(premier).getAllByRole("radio")).toHaveLength(4);
+  });
+});
+
+/** Les lignes de la liste des étapes, dans l'ordre. */
+const lignesDesEtapes = () =>
+  within(screen.getByRole("list", { name: "Étapes du premier lancement" })).getAllByRole(
+    "listitem",
+  );
 
 describe("l'état des étapes (lib/premierLancement)", () => {
   it("ouvre la première étape qui reste à faire, et garde une étape ouverte d'un clic", () => {
