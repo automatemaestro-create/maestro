@@ -3,6 +3,14 @@
 #
 #   bash scripts/distribution/construire.sh            # front, produit, paquet
 #   bash scripts/distribution/construire.sh --produit  # s'arrête au produit assemblé
+#   bash scripts/distribution/construire.sh --version <x.y.z> [--flux <dossier>]
+#
+# `--version` construit le paquet sous une autre version que celle de apps/desktop/package.json —
+# le produit (`version.json`) et la coque ensemble : deux paquets du même code, pour vérifier
+# qu'une installation passe de l'un à l'autre (#644, `verifier.sh --mise-a-jour`). Une version qui
+# se publie se change dans package.json, par une Pull Request (docs/54 §6.3).
+# `--flux <dossier>` y recopie ce que le canal des mises à jour sert pour ce paquet : `latest.yml`
+# et l'installeur qu'il nomme.
 #
 # Trois étapes, dans cet ordre, chacune refusant de continuer sur l'échec de la précédente :
 #
@@ -33,20 +41,40 @@ set -euo pipefail
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SORTIE="$RACINE/.maestro/distribution"
 JUSQU_AU_PRODUIT=0
+VERSION=""
+FLUX=""
 
-for argument in "$@"; do
-  case "$argument" in
-    --produit) JUSQU_AU_PRODUIT=1 ;;
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --produit) JUSQU_AU_PRODUIT=1; shift ;;
+    --version | --flux)
+      if [ $# -lt 2 ]; then
+        echo "[distribution] $1 attend une valeur" >&2
+        exit 2
+      fi
+      if [ "$1" = --version ]; then VERSION="$2"; else FLUX="$2"; fi
+      shift 2
+      ;;
     -h | --help)
-      sed -n '2,6p' "$0"
+      sed -n '2,15p' "$0"
       exit 0
       ;;
     *)
-      echo "[distribution] argument inconnu : $argument" >&2
+      echo "[distribution] argument inconnu : $1" >&2
       exit 2
       ;;
   esac
 done
+
+# Une version que le canal compare : trois nombres, comme celle de package.json.
+if [ -n "$VERSION" ] && ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "[distribution] --version attend trois nombres (x.y.z) : « $VERSION »" >&2
+  exit 2
+fi
+if [ -n "$FLUX" ] && [ "$JUSQU_AU_PRODUIT" = 1 ]; then
+  echo "[distribution] --flux recopie l'installeur : il ne va pas avec --produit" >&2
+  exit 2
+fi
 
 case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*) ;;
@@ -94,7 +122,8 @@ echo "[produit] assemblage sous .maestro/distribution/produit"
   --front "$RACINE/apps/web/.next/standalone" \
   --node "$NODE_DIR/node.exe" \
   --cache "$SORTIE/cache" \
-  --rapport "$SORTIE/poids-produit.json" || exit 1
+  --rapport "$SORTIE/poids-produit.json" \
+  ${VERSION:+--version "$VERSION"} || exit 1
 
 if [ "$JUSQU_AU_PRODUIT" = 1 ]; then
   echo "[distribution] produit assemblé : .maestro/distribution/produit"
@@ -116,7 +145,8 @@ echo "[paquet] electron-builder (NSIS, x64)"
     ELECTRON_CACHE="$SORTIE/cache/electron" \
     ELECTRON_BUILDER_CACHE="$SORTIE/cache/electron-builder" \
     CSC_IDENTITY_AUTO_DISCOVERY=false \
-    ./node_modules/.bin/electron-builder --win nsis --x64 --publish never
+    ./node_modules/.bin/electron-builder --win nsis --x64 --publish never \
+    ${VERSION:+"-c.extraMetadata.version=$VERSION"}
 ) || {
   echo "[paquet] electron-builder en échec" >&2
   exit 1
@@ -132,3 +162,16 @@ octets_installeur="$(wc -c <"$INSTALLEUR" | tr -d ' ')"
 octets_deplie="$(du -sb "$SORTIE/paquet/win-unpacked" | cut -f1)"
 echo "[poids] installeur : $((octets_installeur / 1000000)) Mo ($octets_installeur octets) — ${INSTALLEUR#"$RACINE"/}"
 echo "[poids] installé   : $((octets_deplie / 1000000)) Mo ($octets_deplie octets) — win-unpacked"
+
+# --- ce que le canal des mises à jour sert (#644) ------------------------------------------------
+# `latest.yml` nomme l'installeur et son empreinte : c'est ce que la coque installée lit d'abord.
+# Un paquet sans lui ne se publierait pas (`publier.sh` le refuse) : le dire ici, où il naît.
+if [ ! -f "$SORTIE/paquet/latest.yml" ]; then
+  echo "[paquet] latest.yml absent — le canal des mises à jour n'aurait rien à servir" >&2
+  exit 1
+fi
+if [ -n "$FLUX" ]; then
+  mkdir -p "$FLUX"
+  cp "$SORTIE/paquet/latest.yml" "$INSTALLEUR" "$FLUX/"
+  echo "[flux] latest.yml et $(basename "$INSTALLEUR") recopiés sous $FLUX"
+fi

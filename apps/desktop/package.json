@@ -9,6 +9,9 @@
   "scripts": {
     "start": "electron ."
   },
+  "dependencies": {
+    "electron-updater": "6.8.10"
+  },
   "devDependencies": {
     "electron": "44.3.0",
     "electron-builder": "26.17.0"
@@ -16,6 +19,9 @@
   "build": {
     "appId": "maestro.poste-de-travail",
     "productName": "Maestro",
+    "extraMetadata": {
+      "name": "maestro"
+    },
     "directories": {
       "output": "../../.maestro/distribution/paquet"
     },
@@ -49,6 +55,12 @@
       "perMachine": false,
       "include": "installer.nsh",
       "artifactName": "Maestro-${version}-installation-${arch}.${ext}"
-    }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/automatemaestro-create/maestro/releases/latest/download"
+      }
+    ]
   }
 }

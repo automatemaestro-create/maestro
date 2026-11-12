@@ -309,7 +309,22 @@ def test_l_assemblage_pose_la_version_que_le_produit_installe_relit(
     assert assembleur.poser_version(RACINE, produit) == attendue
     assert (produit / FICHIER_VERSION).is_file()
     assert version_du_produit(produit, "installation").version == attendue
-    assert "poser_version(depot, sortie)" in ASSEMBLER.read_text(encoding="utf-8")
+    assert "poser_version(depot, sortie, version)" in ASSEMBLER.read_text(encoding="utf-8")
+
+
+def test_une_version_demandee_va_jusqu_au_produit(assembleur: ModuleType, tmp_path: Path) -> None:
+    """#644 : `construire.sh --version` fait deux paquets du même code. La version demandée doit
+    arriver dans `version.json` — celle que l'API et la coque relisent —, pas seulement dans le nom
+    de l'installeur (le premier paquet construit ainsi disait encore celle de package.json)."""
+    from maestro.installation import FICHIER_VERSION
+
+    assert assembleur.poser_version(RACINE, tmp_path, " 9.8.7 ") == "9.8.7"
+    assert json.loads((tmp_path / FICHIER_VERSION).read_text(encoding="utf-8")) == {
+        "version": "9.8.7"
+    }
+    assert "version=arguments.version" in ASSEMBLER.read_text(encoding="utf-8")
+    with pytest.raises(assembleur.Refus, match="vide"):
+        assembleur.poser_version(RACINE, tmp_path, "  ")
 
 
 def test_un_depot_sans_version_arrete_l_assemblage(assembleur: ModuleType, tmp_path: Path) -> None:
@@ -351,3 +366,252 @@ def test_le_front_se_construit_sans_le_jeton_ni_l_url_du_poste() -> None:
     assert "-u NEXT_PUBLIC_MAESTRO_API_JETON" in construire
     assert "-u NEXT_PUBLIC_MAESTRO_API_URL" in construire
     assert "MAESTRO_FRONT_AUTONOME=1" in construire
+
+
+# ------------------------------------------------------------------ la mise à jour (#644)
+
+PUBLIER = RACINE / "scripts" / "distribution" / "publier.sh"
+VERIFIER = RACINE / "scripts" / "distribution" / "verifier.sh"
+BASH = shutil.which("bash")
+sans_bash = pytest.mark.skipif(BASH is None, reason="bash introuvable")
+
+
+def _jouer(script: Path, *argv: str, cwd: Path, env: dict[str, str] | None = None):
+    assert BASH is not None
+    return subprocess.run(
+        [BASH, str(script), *argv],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=120,
+    )
+
+
+@sans_bash
+@pytest.mark.parametrize(
+    ("argv", "motif"),
+    [
+        (["--version", "1.2"], "trois nombres"),
+        (["--version", "v1.2.3"], "trois nombres"),
+        (["--version"], "attend une valeur"),
+        (["--flux", "ailleurs", "--produit"], "ne va pas avec --produit"),
+    ],
+)
+def test_construire_refuse_une_version_ou_un_canal_mal_formes(argv: list[str], motif: str) -> None:
+    """Refusé avant toute étape — et avant la plateforme : l'usage se dit partout pareil. Le canal
+    compare des versions x.y.z ; une autre forme y passerait pour plus ancienne ou plus récente."""
+    sortie = _jouer(CONSTRUIRE, *argv, cwd=RACINE)
+    assert sortie.returncode == 2, sortie.stderr
+    assert motif in sortie.stderr
+
+
+def test_construire_donne_la_version_demandee_au_produit_et_a_la_coque() -> None:
+    construire = CONSTRUIRE.read_text(encoding="utf-8")
+    assert '${VERSION:+--version "$VERSION"}' in construire
+    assert '${VERSION:+"-c.extraMetadata.version=$VERSION"}' in construire
+    assert 'cp "$SORTIE/paquet/latest.yml" "$INSTALLEUR" "$FLUX/"' in construire
+
+
+def test_la_publication_n_est_jamais_celle_de_la_ci() -> None:
+    """Ce qui part s'installe chez chacun : c'est un geste humain, depuis main (docs/54 §6.3)."""
+    for workflow in (RACINE / ".github" / "workflows").glob("*.y*ml"):
+        texte = workflow.read_text(encoding="utf-8")
+        assert "publier.sh" not in texte, workflow.name
+        assert "gh release create" not in texte, workflow.name
+
+
+def test_la_verification_du_paquet_sert_le_canal_que_la_coque_lit() -> None:
+    """La variable de la coque, éteinte hors de la phase de mise à jour, et le cache que le
+    désinstalleur emporte : trois fichiers qui doivent dire le même nom."""
+    verifier = VERIFIER.read_text(encoding="utf-8")
+    main = (COQUE / "main.js").read_text(encoding="utf-8")
+    construction = json.loads((COQUE / "package.json").read_text(encoding="utf-8"))["build"]
+    nom = construction["extraMetadata"]["name"]
+
+    assert "const VARIABLE_FLUX = 'MAESTRO_MISES_A_JOUR_FLUX';" in main
+    assert 'MAESTRO_MISES_A_JOUR_FLUX="$FLUX_COQUE"' in verifier
+    assert "\nFLUX_COQUE=0\n" in verifier
+    assert f'CACHE_DES_MISES_A_JOUR="$PROFIL/AppData/Local/{nom}-updater"' in verifier
+    assert f"updaterCacheDirName: {nom}-updater" in verifier
+    # La ligne que le script guette est celle que la coque écrit.
+    assert "direDeLaMiseAJour('stdout', `prête : ${info.version}`);" in main
+    assert '"[mise à jour] prête : $VERSION_SUIVANTE"' in verifier
+
+
+def test_la_verification_lit_le_dialogue_et_la_pose_que_la_coque_ecrit() -> None:
+    """Le script presse « Plus tard » puis juge la pose sur le journal de la coque : les textes
+    qu'il cherche sont ceux que `main.js` montre et écrit, sans quoi il échouerait sur un paquet
+    juste, ou passerait sur un dialogue qui ne dit plus ce que coûte le redémarrage."""
+    verifier = VERIFIER.read_text(encoding="utf-8")
+    main = (COQUE / "main.js").read_text(encoding="utf-8")
+
+    assert "buttons: ['Redémarrer maintenant', 'Plus tard']" in main
+    assert "presser \"$PID_FENETRE\" 'Plus*'" in verifier
+    assert "message: `Maestro ${version} est prête à s'installer.`" in main
+    assert "texte : Maestro $VERSION_SUIVANTE est prête à s'installer." in verifier
+    assert "un run en cours \" +\n        \"s'arrête avec lui" in main
+    assert "un run en cours s'arrête avec lui" in verifier
+    pose = "`installation de ${versionPrete}${relancer ? ', puis redémarrage' : ', en silence'}`"
+    assert pose in main
+    assert '"[mise à jour] installation de $VERSION_SUIVANTE, en silence"' in verifier
+    assert "redémarrage demandé sur ${version}" in main
+    assert "grep -qF 'redémarrage demandé'" in verifier
+
+
+VERSION_PUBLIEE = "1.2.3"
+
+
+def _ecrire(chemin: Path, texte: str) -> None:
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text(texte, encoding="utf-8")
+
+
+def _empreinte(chemin: Path) -> str:
+    """Le `sha512` de `latest.yml` : l'empreinte binaire, en base64 — mesurée ici sans openssl."""
+    import base64
+    import hashlib
+
+    return base64.b64encode(hashlib.sha512(chemin.read_bytes()).digest()).decode("ascii")
+
+
+@pytest.fixture
+def depot_a_publier(tmp_path: Path) -> dict[str, object]:
+    """Un dépôt sur `main`, propre et à jour de son `origin`, avec un paquet construit — et un `gh`
+    factice qui consigne ce qu'on lui demande : aucun appel ne quitte le poste."""
+    if shutil.which("git") is None or shutil.which("openssl") is None:
+        pytest.skip("git et openssl sont requis")
+    depot = tmp_path / "depot"
+    script = depot / "scripts" / "distribution" / "publier.sh"
+    _ecrire(script, PUBLIER.read_text(encoding="utf-8"))
+    paquet_npm = {"name": "desktop", "version": VERSION_PUBLIEE, "dependencies": {"x": "6.8.10"}}
+    _ecrire(depot / "apps" / "desktop" / "package.json", json.dumps(paquet_npm, indent=2) + "\n")
+    _ecrire(depot / ".gitignore", ".maestro/\n")
+    origine = tmp_path / "origine.git"
+    _git(tmp_path, "init", "--bare", "-q", str(origine))
+    _git(tmp_path, "init", "-q", "-b", "main", str(depot))
+    _git(depot, "add", "-A")
+    identite = ("-c", "user.name=essai", "-c", "user.email=essai@exemple.invalid")
+    _git(depot, *identite, "commit", "-qm", "paquet")
+    _git(depot, "remote", "add", "origin", str(origine))
+    _git(depot, "push", "-q", "origin", "main")
+
+    paquet = depot / ".maestro" / "distribution" / "paquet"
+    installeur = paquet / f"Maestro-{VERSION_PUBLIEE}-installation-x64.exe"
+    _ecrire(installeur, "octets de l'installeur\n")
+    empreinte = _empreinte(installeur)
+    _ecrire(
+        paquet / "latest.yml",
+        f"version: {VERSION_PUBLIEE}\nfiles:\n  - url: {installeur.name}\n"
+        f"    sha512: {empreinte}\npath: {installeur.name}\nsha512: {empreinte}\n",
+    )
+
+    outils = tmp_path / "outils"
+    journal = tmp_path / "gh.log"
+    _ecrire(
+        outils / "gh",
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >>"{journal.as_posix()}"\n'
+        '[ "$1 $2" = "release view" ] && exit "${GH_VUE:-1}"\n'
+        "exit 0\n",
+    )
+    (outils / "gh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{outils}{os.pathsep}{os.environ['PATH']}"}
+    return {"depot": depot, "script": script, "env": env, "journal": journal, "paquet": paquet}
+
+
+def _publier(contexte: dict[str, object], *argv: str, **env: str):
+    return _jouer(
+        contexte["script"],  # type: ignore[arg-type]
+        *argv,
+        cwd=contexte["depot"],  # type: ignore[arg-type]
+        env={**contexte["env"], **env},  # type: ignore[dict-item]
+    )
+
+
+def _demandes(contexte: dict[str, object]) -> list[str]:
+    journal = contexte["journal"]
+    assert isinstance(journal, Path)
+    return journal.read_text(encoding="utf-8").splitlines() if journal.exists() else []
+
+
+@sans_bash
+def test_la_publication_part_de_main_et_de_main_seulement(depot_a_publier) -> None:
+    _git(depot_a_publier["depot"], "switch", "-q", "-c", "feat/1-essai")
+    sortie = _publier(depot_a_publier, "--essai", "--sans-construire")
+    assert sortie.returncode == 4
+    assert "depuis main" in sortie.stderr
+    assert _demandes(depot_a_publier) == []
+
+
+@sans_bash
+def test_la_publication_refuse_un_arbre_sale(depot_a_publier) -> None:
+    _ecrire(depot_a_publier["depot"] / "apps" / "desktop" / "main.js", "// non commité\n")
+    sortie = _publier(depot_a_publier, "--essai", "--sans-construire")
+    assert sortie.returncode == 4
+    assert "non commités" in sortie.stderr
+
+
+@sans_bash
+def test_une_version_ne_se_publie_qu_une_fois(depot_a_publier) -> None:
+    sortie = _publier(depot_a_publier, "--sans-construire", GH_VUE="0")
+    assert sortie.returncode == 4
+    assert f"v{VERSION_PUBLIEE} est déjà publiée" in sortie.stderr
+    assert not any(d.startswith("release create") for d in _demandes(depot_a_publier))
+
+
+@sans_bash
+@pytest.mark.parametrize(
+    ("alteration", "motif"),
+    [
+        ("version", "le paquet n'est pas celui de cette version"),
+        ("installeur", "l'empreinte"),
+        ("absent", "aucun latest.yml"),
+    ],
+)
+def test_un_paquet_qui_ne_dit_pas_cette_version_ne_part_pas(
+    depot_a_publier, alteration: str, motif: str
+) -> None:
+    paquet = depot_a_publier["paquet"]
+    assert isinstance(paquet, Path)
+    canal = paquet / "latest.yml"
+    if alteration == "version":
+        canal.write_text(canal.read_text(encoding="utf-8").replace("1.2.3", "1.2.4", 1), "utf-8")
+    elif alteration == "installeur":
+        (paquet / f"Maestro-{VERSION_PUBLIEE}-installation-x64.exe").write_text("autre\n", "utf-8")
+    else:
+        canal.unlink()
+    sortie = _publier(depot_a_publier, "--sans-construire")
+    assert sortie.returncode == 4
+    assert motif in sortie.stderr
+    assert not any(d.startswith("release create") for d in _demandes(depot_a_publier))
+
+
+@sans_bash
+def test_l_essai_dit_ce_qui_partirait_sans_rien_envoyer(depot_a_publier) -> None:
+    sortie = _publier(depot_a_publier, "--essai", "--sans-construire")
+    assert sortie.returncode == 0, sortie.stderr
+    assert f"v{VERSION_PUBLIEE}" in sortie.stdout
+    assert "rien n'est envoyé" in sortie.stdout
+    assert _demandes(depot_a_publier) == [f"release view v{VERSION_PUBLIEE}"]
+
+
+@sans_bash
+def test_la_publication_envoie_l_installeur_et_le_canal_sur_la_tete_de_main(
+    depot_a_publier,
+) -> None:
+    depot = depot_a_publier["depot"]
+    assert isinstance(depot, Path)
+    tete = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=depot, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    sortie = _publier(depot_a_publier, "--sans-construire")
+    assert sortie.returncode == 0, sortie.stderr
+
+    (creation,) = [d for d in _demandes(depot_a_publier) if d.startswith("release create")]
+    assert creation.startswith(f"release create v{VERSION_PUBLIEE} ")
+    assert f"Maestro-{VERSION_PUBLIEE}-installation-x64.exe" in creation
+    assert "latest.yml" in creation
+    assert f"--target {tete}" in creation
+    assert "--latest" in creation

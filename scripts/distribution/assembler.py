@@ -362,13 +362,14 @@ def copier_le_front(autonome: Path, depot: Path, produit: Path) -> None:
         shutil.copytree(front / "public", web / "public")
 
 
-def poser_version(depot: Path, produit: Path) -> str:
+def poser_version(depot: Path, produit: Path, version: str | None = None) -> str:
     """La version du paquet, écrite à la racine du produit (#1622), et rendue.
 
     L'API installée la sert aux Paramètres (`GET /api/installation`) et la coque la compare à
     la sienne au démarrage (`apps/desktop/main.js`). Sa source est celle qui donne aussi sa
     version au paquet, `apps/desktop/package.json` : l'écriture vit dans
     `maestro.installation`, qui sait aussi la relire, pour qu'il n'y ait qu'une formule.
+    `version` la remplace (`--version`, #644).
     """
     sys.path.insert(0, str(RACINE_DEPOT))
     try:
@@ -376,7 +377,7 @@ def poser_version(depot: Path, produit: Path) -> str:
     finally:
         sys.path.pop(0)
     try:
-        return ecrire_version(depot, produit)
+        return ecrire_version(depot, produit, version)
     except VersionIllisible as erreur:
         raise Refus(str(erreur)) from erreur
 
@@ -428,8 +429,12 @@ def assembler(
     node: Path,
     cache: Path,
     embarquable: Embarquable = PYTHON_EMBARQUE,
+    version: str | None = None,
 ) -> dict[str, int]:
-    """Pose le produit sous `sortie`, et rend le poids de chacune de ses parties."""
+    """Pose le produit sous `sortie`, et rend le poids de chacune de ses parties.
+
+    `version` remplace celle de `apps/desktop/package.json` (`construire.sh --version`, #644).
+    """
     if sys.version_info[:2] != embarquable.mineure:
         raise Refus(
             f"l'interpréteur qui construit est un Python {sys.version_info[0]}."
@@ -456,7 +461,7 @@ def assembler(
     print(f"[produit] {nombre} fichiers suivis copiés")
     copier_le_front(autonome, depot, sortie)
     (sortie / ".env").write_text(REGLAGES_DISTRIBUTION, encoding="utf-8")
-    print(f"[produit] version {poser_version(depot, sortie)}")
+    print(f"[produit] version {poser_version(depot, sortie, version)}")
 
     trop_longs = chemins_trop_longs(sortie)
     if trop_longs:
@@ -505,6 +510,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     lecteur.add_argument("--node", type=Path, required=True, help="l'exécutable Node à embarquer")
     lecteur.add_argument("--cache", type=Path, required=True, help="où garder l'archive Python")
     lecteur.add_argument("--rapport", type=Path, help="où écrire le poids des parties (JSON)")
+    lecteur.add_argument(
+        "--version", help="la version du produit, à la place de celle de apps/desktop/package.json"
+    )
     arguments = lecteur.parse_args(argv)
     try:
         parties = assembler(
@@ -513,6 +521,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             autonome=arguments.front,
             node=arguments.node,
             cache=arguments.cache,
+            version=arguments.version,
         )
     except Refus as refus:
         print(f"[assemblage] refusé : {refus}", file=sys.stderr)

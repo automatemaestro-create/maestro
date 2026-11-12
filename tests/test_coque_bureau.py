@@ -40,6 +40,7 @@ CI joue `npm ci` et `node --check` sur ces mêmes sources (#948).
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -707,6 +708,209 @@ def test_le_premier_geste_du_skill_est_la_fenetre_et_non_l_onglet():
     geste = premier_geste(SKILL_CONTROL_TOWER.read_text(encoding="utf-8"))
     assert geste == "bash scripts/controltower/desktop.sh"
     assert (RACINE / geste.split()[-1]).is_file()
+
+
+# ==================================================================================================
+# ③ bis La mise à jour (#644, docs/54 §6)
+# ==================================================================================================
+#
+# Ce qui ne doit jamais arriver : un installeur qui part pendant que la stack sert — il efface le
+# dossier d'où elle tourne (#1620) —, une version posée sans geste, un retour en arrière, et la
+# mise à jour d'un clone. Le passage réel d'une version à la suivante se joue sur le poste
+# (`scripts/distribution/verifier.sh --mise-a-jour`) ; ce qui se garde ici est l'ordre écrit.
+
+PACKAGE_JSON = COQUE / "package.json"
+INSTALLER_NSH = COQUE / "installer.nsh"
+
+
+@pytest.fixture(scope="module")
+def mise_a_jour(main_js: str) -> str:
+    return objet(main_js, "function armerMisesAJour() {")
+
+
+@pytest.fixture(scope="module")
+def installation_de_la_mise_a_jour(main_js: str) -> str:
+    return objet(main_js, "function installerLaMiseAJour(codeArret) {")
+
+
+def test_un_clone_ne_se_met_jamais_a_jour(mise_a_jour):
+    """Un clone se met à jour par git : la garde est la première ligne, et le module n'est chargé
+    qu'après elle — le lire en tête du fichier le ferait charger par chaque `npm start`."""
+    assert mise_a_jour.strip().startswith("if (!INSTALLEE) return;")
+    assert mise_a_jour.index("if (!INSTALLEE) return;") < mise_a_jour.index(
+        "require('electron-updater')"
+    )
+
+
+def test_le_module_de_mise_a_jour_n_est_charge_nulle_part_ailleurs(main_js, mise_a_jour):
+    assert main_js.count("require('electron-updater')") == 1
+    assert "require('electron-updater')" in mise_a_jour
+
+
+def test_l_installation_a_la_sortie_n_est_jamais_celle_du_module(mise_a_jour):
+    """Celle du module part sur l'événement `quit`, sans attendre que la stack soit arrêtée : elle
+    effacerait le dossier sous des processus encore vivants."""
+    assert "autoUpdater.autoInstallOnAppQuit = false;" in mise_a_jour
+    assert "quitAndInstall" not in mise_a_jour
+
+
+def test_jamais_de_retour_en_arriere_ni_de_preversion(mise_a_jour):
+    assert "autoUpdater.allowDowngrade = false;" in mise_a_jour
+    assert "autoUpdater.allowPrerelease = false;" in mise_a_jour
+
+
+def test_la_version_ne_se_pose_qu_apres_l_arret_de_la_stack(
+    main_js, installation_de_la_mise_a_jour
+):
+    """Le seul appel qui pose une version est dans `installerLaMiseAJour`, et `before-quit` ne
+    l'appelle qu'avec le code rendu par `--stop` : la stack est arrêtée, ses runs soldés."""
+    fermeture = objet(main_js, "app.on('before-quit', (evenement) => {")
+
+    # Un seul appel dans le fichier (la définition, puis lui), enchaîné sur le code de `--stop`.
+    assert main_js.count("installerLaMiseAJour(") == 2
+    assert re.search(
+        r"jouerLanceur\(\['--stop'\]\)\)\s*\.then\(\(code\) => \{\s*"
+        r"if \(installerLaMiseAJour\(code\)\) return;",
+        fermeture,
+    )
+    assert main_js.count(".install(") == 1
+    assert "miseAJour.install(" in installation_de_la_mise_a_jour
+
+
+def test_un_arret_qui_n_a_pas_abouti_ne_pose_rien(installation_de_la_mise_a_jour):
+    """Une stack à demi arrêtée tient encore des fichiers du dossier que l'installeur efface."""
+    corps = installation_de_la_mise_a_jour
+
+    assert "if (codeArret !== 0) {" in corps
+    garde = objet(corps, "if (codeArret !== 0) {")
+    assert "return false;" in garde
+    assert corps.index("if (codeArret !== 0) {") < corps.index("miseAJour.install(")
+
+
+def test_redemarrer_passe_par_la_fermeture_et_par_elle_seule(main_js):
+    """« Redémarrer maintenant » ne connaît aucun autre chemin pour éteindre Maestro : il demande la
+    sortie, et c'est `before-quit` qui arrête puis installe."""
+    proposition = objet(main_js, "function proposerLeRedemarrage(version) {")
+
+    assert "app.quit();" in proposition
+    assert "redemarrageDemande = true;" in proposition
+    assert "jouerLanceur" not in proposition
+    assert ".install(" not in proposition
+
+
+def test_rien_ne_s_interrompt_sans_un_geste(main_js):
+    """« Plus tard » est le défaut, et fermer le dialogue y revient."""
+    proposition = objet(main_js, "function proposerLeRedemarrage(version) {")
+    boutons = objet(proposition, "buttons: [")
+
+    assert [b.strip().strip("'") for b in boutons.split(",")] == [
+        "Redémarrer maintenant",
+        "Plus tard",
+    ]
+    assert reglage(proposition, "defaultId") == "1"
+    assert reglage(proposition, "cancelId") == "1"
+    assert "if (response !== 0 || arretEnCours) return;" in proposition
+
+
+def test_le_dialogue_dit_ce_que_coute_le_redemarrage(main_js):
+    """Le redémarrage coûte ce que coûte la fermeture : le texte le dit, avec le geste qui reprend
+    un run (« Reprendre », `PanneauRunsImmobiles`) et ce qui est conservé."""
+    proposition = objet(main_js, "function proposerLeRedemarrage(version) {")
+    panneau = (RACINE / "apps" / "web" / "components" / "PanneauRunsImmobiles.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "(« Reprendre »)" in proposition
+    assert '"Reprendre"' in panneau
+    for conserve in ("projets", "réglages", "historique"):
+        assert conserve in proposition
+
+
+def test_une_version_se_propose_une_fois(main_js):
+    """La vérification repasse toutes les six heures et retrouve la version déjà téléchargée : sans
+    cette garde, le dialogue reviendrait sur un « Plus tard » déjà donné."""
+    proposition = objet(main_js, "function proposerLeRedemarrage(version) {")
+    assert "version === versionProposee" in proposition
+
+
+def test_la_mise_a_jour_s_arme_avant_le_demarrage_de_la_stack(main_js):
+    """Une version qui ne démarre plus doit encore pouvoir recevoir celle qui la corrige."""
+    demarrage = objet(main_js, "async function demarrer() {")
+    assert demarrage.index("armerMisesAJour();") < demarrage.index(
+        "demarrageStack = jouerLanceur(['--no-browser']);"
+    )
+
+
+ECHANTILLON_FLUX_FAUTIF = """
+function fluxDesMisesAJour(valeur) {
+  const brut = (valeur ?? '').trim();
+  if (brut === '') return { actif: true, url: null };
+  return { actif: true, url: brut };
+}
+"""
+
+
+def _gardes_du_flux(source: str) -> dict[str, bool]:
+    corps = objet(source, "function fluxDesMisesAJour(valeur) {")
+    return {
+        "eteinte": "if (brut === '0') return { actif: false" in corps,
+        "https": "adresse.protocol === 'https:'" in corps,
+        "http local": "adresse.protocol === 'http:' && HOTES_LOCAUX.has(adresse.hostname)" in corps,
+        "refus dit": "return {\n    actif: false," in corps,
+    }
+
+
+def test_la_sonde_du_canal_voit_un_canal_qui_prend_tout():
+    assert not any(_gardes_du_flux(ECHANTILLON_FLUX_FAUTIF).values())
+
+
+def test_le_canal_s_eteint_et_n_admet_que_https_ou_le_poste(main_js):
+    """Ce qu'on télécharge s'exécute : `http:` n'est admis que vers le poste lui-même, et une valeur
+    illisible éteint la mise à jour en le disant au lieu de retomber sur le canal du paquet."""
+    assert all(_gardes_du_flux(main_js).values()), _gardes_du_flux(main_js)
+    hotes = objet(main_js, "const HOTES_LOCAUX = new Set([")
+    assert sorted(h.strip().strip("'") for h in hotes.split(",")) == [
+        "127.0.0.1",
+        "[::1]",
+        "localhost",
+    ]
+
+
+def test_le_canal_du_paquet_est_les_publications_du_depot():
+    """`build.publish` est ce que l'empaquetage écrit dans `resources/app-update.yml`, et ce que
+    `publier.sh` alimente ; `latest/download` sert toujours la dernière publication."""
+    construction = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))["build"]
+
+    assert construction["publish"] == [
+        {
+            "provider": "generic",
+            "url": "https://github.com/automatemaestro-create/maestro/releases/latest/download",
+        }
+    ]
+
+
+def test_le_module_de_mise_a_jour_est_une_dependance_epinglee():
+    """Une dépendance d'exécution (electron-builder ne met dans le paquet que celles-là), à une
+    version exacte : ce qui pose une version chez chacun ne change pas sans une Pull Request."""
+    paquet = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
+    version = paquet["dependencies"]["electron-updater"]
+
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version), version
+    assert "electron-updater" not in paquet.get("devDependencies", {})
+
+
+def test_le_desinstalleur_emporte_le_cache_et_jamais_pendant_une_mise_a_jour():
+    """Le cache porte `<nom du paquet empaqueté>-updater` (electron-builder ne le laisse pas
+    régler) ; l'installeur qui joue l'ancien désinstalleur vit dans ce dossier."""
+    nom = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))["build"]["extraMetadata"]["name"]
+    texte = INSTALLER_NSH.read_bytes().decode("ascii")
+    macro = texte[texte.index("!macro customUnInstall") :]
+    macro = macro[: macro.index("!macroend")]
+
+    assert nom == "maestro"
+    assert "${ifNot} ${isUpdated}" in macro
+    assert f'RMDir /r "$LOCALAPPDATA\\{nom}-updater"' in macro
+    assert macro.index("${ifNot} ${isUpdated}") < macro.index("RMDir")
 
 
 # ==================================================================================================
