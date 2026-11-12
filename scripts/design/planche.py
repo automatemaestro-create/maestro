@@ -127,7 +127,7 @@ def cellules(ligne: str) -> list[str]:
     return [c.strip() for c in brut.split("|")]
 
 
-def rendre_markdown(texte: str) -> str:
+def rendre_markdown(texte: str) -> str:  # noqa: C901
     lignes = texte.splitlines()
     blocs: list[str] = []
     i = 0

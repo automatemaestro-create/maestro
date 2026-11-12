@@ -335,7 +335,7 @@ def racine_disparue(racine: Path) -> bool:
     return bool(ancre) and os.path.isdir(ancre)
 
 
-def protections(
+def protections(  # noqa: C901
     settings: Settings | None = None, copies: Sequence[Path] | None = None
 ) -> Protections:
     """Les projets déclarés, les répertoires des projets et les worktrees, de toutes les copies."""
@@ -764,7 +764,7 @@ def _retirer(entree: Entree) -> bool:
     return not chemin.exists()
 
 
-def main(
+def main(  # noqa: C901
     argv: Sequence[str] | None = None,
     *,
     gardes: Protections | None = None,

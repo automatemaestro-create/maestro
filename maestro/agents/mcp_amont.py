@@ -415,7 +415,7 @@ class ClientRegistreOfficiel:
             self._client.close()
             self._client = None
 
-    def moissonner(self, *, depuis: str = "") -> Moisson:
+    def moissonner(self, *, depuis: str = "") -> Moisson:  # noqa: C901
         """Toutes les pages de `GET /v0.1/servers`, du curseur vide à l'épuisement.
 
         `depuis` vide → moissonnage complet ; sinon rafraîchissement incrémental

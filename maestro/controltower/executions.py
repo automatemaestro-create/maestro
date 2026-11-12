@@ -981,7 +981,7 @@ class ServiceExecutions:
             raise RuntimeError(f"run {run_id} absent de la projection après son lancement")
         return {**resume, "rapport": rapport.to_dict()}
 
-    async def refus_du_geste(self, geste: str, run_id: str) -> GesteRefuse | None:
+    async def refus_du_geste(self, geste: str, run_id: str) -> GesteRefuse | None:  # noqa: C901
         """Le refus qu'un geste sur `run_id` recevrait **maintenant** — `None` s'il passe (#1179).
 
         Les règles de la pause, de la reprise et de l'annulation vivaient dans leurs

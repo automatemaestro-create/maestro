@@ -97,7 +97,7 @@ def preflight_api() -> int:
 Reprise = Callable[[dict[str, str]], Bilan]
 
 
-def demarrer(
+def demarrer(  # noqa: C901
     options: Options,
     *,
     emplacement: Emplacement,

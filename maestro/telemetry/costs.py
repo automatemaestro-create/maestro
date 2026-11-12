@@ -316,7 +316,7 @@ class RunCost:
         )
 
     @classmethod
-    def depuis_journal(cls, journal: RunJournal) -> RunCost:
+    def depuis_journal(cls, journal: RunJournal) -> RunCost:  # noqa: C901
         """Comptabilise `journal` : chaque ligne attribuée à sa tâche, comptée une fois.
 
         S'appuie sur `RunJournal.records` (l'agrégat mémoire) : utilisable en

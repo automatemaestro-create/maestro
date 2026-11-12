@@ -129,7 +129,7 @@ def environnement() -> dict[str, str]:
     return env
 
 
-def lance(
+def lance(  # noqa: C901
     exe: str,
     cwd: Path,
     allow: list[str],

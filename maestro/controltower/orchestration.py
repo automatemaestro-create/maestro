@@ -2613,7 +2613,7 @@ def _resultat_en_retrait(resultat: str, part: int) -> str:
     )
 
 
-def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
+def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:  # noqa: C901
     """Le détail **complet** d'un run — ce que la borne de `faits_des_runs` coupe (#1223).
 
     La même fiche que `_fiche_du_run`, sans aucune des trois bornes : toutes les
@@ -2633,7 +2633,7 @@ def detail_du_run(state: ControlTowerState) -> Callable[[str], str]:
     Rend `""` sur un run inconnu, que `consultation` traduit en « aucun run … ».
     """
 
-    def detail(run_id: str) -> str:
+    def detail(run_id: str) -> str:  # noqa: C901
         execution = state.execution(run_id)
         if execution is None:
             return ""
@@ -3620,7 +3620,7 @@ class RepondeurOrchestration(RepondeurChat):
         """La réponse seule — `produire` est la voie complète (rattachement compris)."""
         return (await self.produire(agent, fil)).contenu
 
-    async def produire(
+    async def produire(  # noqa: C901
         self,
         agent: Agent,
         fil: Sequence[MessageChat],

@@ -8706,7 +8706,7 @@ def test_une_reprise_rejoue_le_regime_derive_du_run_qu_elle_reprend(depot: Depot
 SEQUENCE = re.compile(r"\x1b\[([0-9;?]*)([A-Za-z])")
 
 
-def _ecrans(flux: str, largeur: int, hauteur: int) -> list[list[str]]:
+def _ecrans(flux: str, largeur: int, hauteur: int) -> list[list[str]]:  # noqa: C901
     """Rejoue un flux de frames dans un terminal de <largeur>×<hauteur>, écran par écran.
 
     Un instantané est pris à chaque « ESC[J » — la séquence qui ferme une frame comme un

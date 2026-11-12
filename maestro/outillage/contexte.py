@@ -474,7 +474,7 @@ def _section_racine_outillee(pieces: tuple[str, ...]) -> list[str]:
     ]
 
 
-def _depuis_entrees(
+def _depuis_entrees(  # noqa: C901
     racine: Path, projet: Projet, donnees: dict[str, Any], bornes: Bornes
 ) -> OutillageDuProjet:
     """Les entrées déclarées, une à une, dans l'ordre du manifeste.

@@ -99,7 +99,7 @@ class RacineRefusee(ValueError):
         self.chemin = str(chemin)
 
 
-def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:
+def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:  # noqa: C901
     """La racine canonicalisée de `chemin`, ou `RacineRefusee` motivée (EF-38).
 
     Exige un chemin **absolu** : un chemin relatif serait résolu contre le

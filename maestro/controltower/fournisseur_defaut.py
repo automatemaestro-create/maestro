@@ -191,7 +191,7 @@ class ServiceFournisseurParDefaut:
 
     # ---------------------------------------------------------------- interne
 
-    def _reglages(self, demande: DemandeFournisseur) -> tuple[Settings, str, AccesFournisseur]:
+    def _reglages(self, demande: DemandeFournisseur) -> tuple[Settings, str, AccesFournisseur]:  # noqa: C901
         """Les réglages qu'aurait l'exécution avec ce choix, le modèle à éprouver, l'accès retenu.
 
         Ici le choix saisi l'emporte sur l'environnement : on éprouve ce que la

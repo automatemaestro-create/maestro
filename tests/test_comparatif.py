@@ -257,7 +257,7 @@ class FilFactice:
         self._valide = False
         self._fil: list[dict[str, Any]] = []
 
-    def demander(
+    def demander(  # noqa: C901
         self,
         methode: str,
         chemin: str,

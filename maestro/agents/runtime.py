@@ -251,7 +251,7 @@ class AgentRuntime:
         settings = settings or load_settings()
         return cls(provider_from_settings(settings), profile, model=settings.model)
 
-    async def execute(
+    async def execute(  # noqa: C901
         self,
         description: str,
         *,

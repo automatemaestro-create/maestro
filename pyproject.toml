@@ -154,7 +154,10 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# C90, la complexité de McCabe, au seuil de ruff : aucun `max-complexity` ici (docs/53 §5). Une
+# fonction au-dessus porte un `# noqa: C901` à sa définition, et le nombre de ces dérogations est
+# un cliquet gardé par tests/test_complexite.py (#1577).
+select = ["E", "F", "I", "UP", "B", "C90"]
 
 [tool.mypy]
 python_version = "3.11"

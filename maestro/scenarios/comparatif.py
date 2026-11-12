@@ -1311,7 +1311,7 @@ def _criteres_en_markdown(comparatif: Comparatif) -> list[str]:
     return lignes
 
 
-def _passage_en_markdown(passage: Passage) -> list[str]:
+def _passage_en_markdown(passage: Passage) -> list[str]:  # noqa: C901
     lignes = [
         f"### {passage.cote} · passage {passage.rang} — {passage.issue}",
         "",
@@ -1479,7 +1479,7 @@ class _Options:
         return DELAI_PASSAGE_S if self.delai_s is None else self.delai_s
 
 
-def main(
+def main(  # noqa: C901
     argv: Sequence[str] | None = None,
     *,
     client: ClientCompteur | None = None,
@@ -1810,7 +1810,7 @@ _NOMS_D_OPTIONS = (
 )
 
 
-def _options(args: list[str]) -> _Options:
+def _options(args: list[str]) -> _Options:  # noqa: C901
     """Lit la ligne de commande — lève `ValueError` avec son motif sur tout écart."""
     options = _Options()
     reste = list(args)

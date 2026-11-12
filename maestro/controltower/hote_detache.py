@@ -877,7 +877,7 @@ def _cause(journal: Path, *, lignes: int = LIGNES_CAUSE, longueur: int = LONGUEU
 # ---------------------------------------------------------------------- le fils
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
     """Le process détaché : déroule le run décrit par l'ordre de son atelier.
 
     Le pendant de `ServiceExecutions._derouler`, de l'autre côté de la frontière —
@@ -1232,7 +1232,7 @@ async def _derouler(ordre: OrdreRun, atelier: Path) -> RunReport:
                 await magasin.close()
 
 
-async def _observer_ordres(
+async def _observer_ordres(  # noqa: C901
     run_id: str,
     *,
     bus: EventBus | None = None,

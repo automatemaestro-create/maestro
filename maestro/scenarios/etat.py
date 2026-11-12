@@ -480,7 +480,7 @@ def _verifier_redis_du_banc() -> int:
     return verifier_redis()
 
 
-def main(
+def main(  # noqa: C901
     argv: Sequence[str] | None = None,
     *,
     client: ClientRedis | None = None,

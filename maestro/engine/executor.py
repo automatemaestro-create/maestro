@@ -3403,7 +3403,7 @@ class LocalExecutor(TaskExecutor):
             projet_id=task.projet_id,
         )
 
-    async def _realise(
+    async def _realise(  # noqa: C901
         self,
         agent: Agent,
         task: Task,
@@ -4370,7 +4370,7 @@ class LocalExecutor(TaskExecutor):
 
         return signale
 
-    async def _produce(
+    async def _produce(  # noqa: C901
         self,
         agent: Agent,
         task: Task,

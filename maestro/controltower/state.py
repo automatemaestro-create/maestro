@@ -1262,7 +1262,7 @@ class EtatExecution:
         return bool(releves) or sans_cout
 
     @property
-    def cout(self) -> RunCost:
+    def cout(self) -> RunCost:  # noqa: C901
         """Le grand livre du run (#57) : coût par tâche et agrégat, depuis les événements.
 
         Même convention d'attribution que `RunCost.depuis_journal` (#55),
@@ -1881,7 +1881,7 @@ class ControlTowerState:
         """
         self._agents.pop(nom, None)
 
-    def appliquer(self, event: Event) -> None:
+    def appliquer(self, event: Event) -> None:  # noqa: C901
         """Projette `event` sur l'état : tâches, agents et trace d'exécution.
 
         Un type inconnu est tracé dans l'exécution (s'il porte un `run_id`)
@@ -1991,7 +1991,7 @@ class ControlTowerState:
             ]
         self._depenses_du_fil.append(event)
 
-    def _applique_statut_tache(self, event: Event) -> None:
+    def _applique_statut_tache(self, event: Event) -> None:  # noqa: C901
         """Met à jour la tâche visée et la fiche de l'agent qui l'a portée."""
         tache = self._taches.setdefault(event.tache_id, EtatTache(id=event.tache_id))
         _retient_l_anterieur(tache, event)
@@ -2348,7 +2348,7 @@ class ControlTowerState:
                 projet_id=event.projet_id,
             )
 
-    def _applique_execution_statut(self, event: Event) -> None:
+    def _applique_execution_statut(self, event: Event) -> None:  # noqa: C901
         """Pose le cycle de vie d'un run (#185) : objectif, statut, heure de fin.
 
         L'exécution existe déjà (`appliquer` l'a créée en rattachant l'événement
