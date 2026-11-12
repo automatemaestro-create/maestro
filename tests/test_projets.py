@@ -45,6 +45,7 @@ from maestro.projets import (
     detecter_vcs,
     nouvel_id,
     valider_racine,
+    verifier_zone_interdite,
 )
 
 
@@ -296,7 +297,102 @@ def test_refus_porte_toujours_un_motif_et_le_chemin(tmp_path: Path) -> None:
     with pytest.raises(RacineRefusee) as refus:
         valider_racine(tmp_path / "absent")
     assert refus.value.motif
-    assert str(tmp_path) in str(refus.value)
+    assert tmp_path.resolve().as_posix() in str(refus.value)
+
+
+# --- ②bis Un refus écrit ses chemins d'une seule façon, en POSIX (#1614) -----
+
+
+def test_refus_chemin_sensible_ecrit_ses_deux_chemins_en_posix(_maison_isolee: Path) -> None:
+    """Le dossier refusé et la zone protégée qui le contient se comparent d'un coup d'œil.
+
+    Sous Windows, un `Path` formaté s'écrit avec des `\\` : la phrase écrivait
+    alors le dossier et la zone autrement que le champ de l'explorateur.
+    """
+    cible = _maison_isolee / ".ssh" / "cles"
+    cible.mkdir(parents=True)
+    with pytest.raises(RacineRefusee) as refus:
+        valider_racine(cible)
+
+    zone = _maison_isolee.resolve() / ".ssh"
+    assert refus.value.motif == "chemin-sensible"
+    assert str(refus.value) == (
+        f"Chemin sensible refusé : {cible.resolve().as_posix()} est dans {zone.as_posix()}."
+    )
+
+
+@pytest.mark.parametrize("source", ["liste", "environnement"])
+def test_refus_dossier_systeme_ecrit_ses_deux_chemins_en_posix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    """`C:/Windows` (liste en dur) comme `%SystemRoot%` (écrit en `\\` par Windows) : tout en `/`.
+
+    Le cas `liste` est la reproduction du ticket — « C:\\Windows est dans
+    C:/Windows » ; le cas `environnement` couvre un interdit lu dans
+    l'environnement, que Windows écrit avec des barres obliques inverses.
+    """
+    if source == "liste":
+        interdit = Path("C:/Windows")
+    else:
+        interdit = tmp_path / "Windows"
+        monkeypatch.setenv("SystemRoot", str(interdit))
+    with pytest.raises(RacineRefusee) as refus:
+        verifier_zone_interdite(interdit / "System32")
+
+    assert refus.value.motif == "chemin-systeme"
+    assert str(refus.value) == (
+        f"Dossier système refusé : {(interdit / 'System32').as_posix()} "
+        f"est dans {interdit.as_posix()}."
+    )
+
+
+def _fichier(chemin: Path) -> Path:
+    chemin.write_text("x", encoding="utf-8")
+    return chemin
+
+
+@pytest.mark.parametrize(
+    ("fabrique", "motif"),
+    [
+        (lambda maison, tmp: Path(tmp.resolve().anchor), "racine-de-disque"),
+        (lambda maison, tmp: maison, "dossier-utilisateur-nu"),
+        (lambda maison, tmp: tmp, "au-dessus-du-dossier-utilisateur"),
+        (lambda maison, tmp: tmp / "absent", "dossier-absent"),
+        (lambda maison, tmp: _fichier(tmp / "notes.txt"), "pas-un-dossier"),
+        (lambda maison, tmp: Path(__file__).resolve().parents[1], "depot-maestro"),
+        (lambda maison, tmp: Path(__file__).resolve().parents[2], "au-dessus-du-depot-maestro"),
+    ],
+    ids=[
+        "racine-de-disque",
+        "dossier-utilisateur-nu",
+        "au-dessus-du-dossier-utilisateur",
+        "dossier-absent",
+        "pas-un-dossier",
+        "depot-maestro",
+        "au-dessus-du-depot-maestro",
+    ],
+)
+def test_tout_refus_de_racine_ecrit_ses_chemins_en_posix(
+    _maison_isolee: Path,
+    tmp_path: Path,
+    fabrique,  # noqa: ANN001 - fabrique paramétrée
+    motif: str,
+) -> None:
+    """Chaque message de `valider_racine` écrit ses chemins comme l'écran les écrit."""
+    with pytest.raises(RacineRefusee) as refus:
+        valider_racine(fabrique(_maison_isolee, tmp_path))
+
+    assert refus.value.motif == motif
+    assert "\\" not in str(refus.value)
+
+
+def test_refus_hors_racine_ecrit_ses_chemins_en_posix(projet_disque: Path) -> None:
+    with pytest.raises(RacineRefusee) as refus:
+        chemin_dans_racine(projet_disque, "../dehors")
+
+    assert refus.value.motif == "hors-racine"
+    assert "\\" not in str(refus.value)
+    assert projet_disque.resolve().as_posix() in str(refus.value)
     assert isinstance(refus.value, ValueError)
 
 

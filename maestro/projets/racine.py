@@ -12,7 +12,8 @@ la racine déclarée ») :
    ancêtres, `.ssh`/`AppData` et leurs cousins, dossiers système, et le dépôt
    Maestro lui-même. Un refus **porte son motif** (`RacineRefusee.motif`), jamais
    un `False` muet : l'écran Projets doit pouvoir dire *pourquoi*
-   ([docs/05 §2.7](../../docs/05-interface-control-tower.md)).
+   ([docs/05 §2.7](../../docs/05-interface-control-tower.md)). Son message
+   écrit ses chemins en POSIX (`_lisible`), comme l'écran qui l'affiche.
    La part de ces refus qui vaut pour **tout** chemin — et pas seulement pour
    une racine de projet — est isolée dans `verifier_zone_interdite` : c'est
    elle que réutilise l'explorateur de dossiers de l'API (#223), pour qu'une
@@ -124,7 +125,7 @@ def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:
     if not _ANCRE_ADMISE.match(resolu.anchor):
         raise RacineRefusee(
             "ancre-non-standard",
-            f"Racine refusée : {resolu} n'est pas sur un disque local "
+            f"Racine refusée : {_lisible(resolu)} n'est pas sur un disque local "
             "(partage réseau ou chemin de périphérique).",
             resolu,
         )
@@ -132,7 +133,7 @@ def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:
     if resolu == Path(resolu.anchor):
         raise RacineRefusee(
             "racine-de-disque",
-            f"Racine de disque refusée : {resolu} — choisissez un dossier de projet.",
+            f"Racine de disque refusée : {_lisible(resolu)} — choisissez un dossier de projet.",
             resolu,
         )
 
@@ -141,15 +142,15 @@ def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:
         if resolu == utilisateur:
             raise RacineRefusee(
                 "dossier-utilisateur-nu",
-                f"Dossier utilisateur refusé tel quel : {resolu} — choisissez un "
+                f"Dossier utilisateur refusé tel quel : {_lisible(resolu)} — choisissez un "
                 "sous-dossier de projet.",
                 resolu,
             )
         if _contient(resolu, utilisateur):
             raise RacineRefusee(
                 "au-dessus-du-dossier-utilisateur",
-                f"Racine trop haute : {resolu} contient le dossier utilisateur "
-                f"{utilisateur}.",
+                f"Racine trop haute : {_lisible(resolu)} contient le dossier utilisateur "
+                f"{_lisible(utilisateur)}.",
                 resolu,
             )
 
@@ -159,21 +160,22 @@ def valider_racine(chemin: Path | str, *, creer: bool = False) -> Path:
     if _contient(resolu, depot):
         raise RacineRefusee(
             "au-dessus-du-depot-maestro",
-            f"Racine trop haute : {resolu} contient le dépôt de Maestro ({depot}).",
+            f"Racine trop haute : {_lisible(resolu)} contient le dépôt de Maestro "
+            f"({_lisible(depot)}).",
             resolu,
         )
 
     if resolu.exists() and not resolu.is_dir():
         raise RacineRefusee(
             "pas-un-dossier",
-            f"Racine invalide : {resolu} n'est pas un dossier.",
+            f"Racine invalide : {_lisible(resolu)} n'est pas un dossier.",
             resolu,
         )
     if not resolu.exists():
         if not creer:
             raise RacineRefusee(
                 "dossier-absent",
-                f"Racine introuvable : {resolu} n'existe pas.",
+                f"Racine introuvable : {_lisible(resolu)} n'existe pas.",
                 resolu,
             )
         resolu.mkdir(parents=True, exist_ok=True)
@@ -206,7 +208,8 @@ def verifier_zone_interdite(chemin: Path) -> None:
             if _est_sous(chemin, utilisateur / nom):
                 raise RacineRefusee(
                     "chemin-sensible",
-                    f"Chemin sensible refusé : {chemin} est dans {utilisateur / nom}.",
+                    f"Chemin sensible refusé : {_lisible(chemin)} est dans "
+                    f"{_lisible(utilisateur / nom)}.",
                     chemin,
                 )
 
@@ -214,7 +217,7 @@ def verifier_zone_interdite(chemin: Path) -> None:
         if _est_sous(chemin, Path(interdit)):
             raise RacineRefusee(
                 "chemin-systeme",
-                f"Dossier système refusé : {chemin} est dans {interdit}.",
+                f"Dossier système refusé : {_lisible(chemin)} est dans {_lisible(interdit)}.",
                 chemin,
             )
 
@@ -222,7 +225,7 @@ def verifier_zone_interdite(chemin: Path) -> None:
     if _est_sous(chemin, depot):
         raise RacineRefusee(
             "depot-maestro",
-            f"Le dépôt de Maestro ne se prend pas lui-même pour projet : {chemin}.",
+            f"Le dépôt de Maestro ne se prend pas lui-même pour projet : {_lisible(chemin)}.",
             chemin,
         )
 
@@ -248,7 +251,7 @@ def chemin_dans_racine(racine: Path | str, chemin: Path | str) -> Path:
     if not _est_sous(cible, base):
         raise RacineRefusee(
             "hors-racine",
-            f"Chemin hors du projet : {cible} sort de la racine {base}.",
+            f"Chemin hors du projet : {_lisible(cible)} sort de la racine {_lisible(base)}.",
             cible,
         )
     return cible
@@ -285,6 +288,16 @@ def canonique(chemin: Path | str) -> Path:
     deux fois sous deux écritures du même chemin.
     """
     return Path(_sans_prefixe_windows(str(chemin).strip())).expanduser().resolve()
+
+
+def _lisible(chemin: Path | str) -> str:
+    """`chemin` tel qu'un message de refus l'écrit : en POSIX, comme l'écran (#1614).
+
+    L'explorateur, la confirmation et la liste des dossiers autorisés écrivent
+    leurs chemins en `/` ; un `Path` Windows formaté tel quel s'écrirait en `\\`,
+    et une même phrase écrirait alors un même dossier de deux façons.
+    """
+    return Path(chemin).as_posix()
 
 
 def _sans_prefixe_windows(brut: str) -> str:

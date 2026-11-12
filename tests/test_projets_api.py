@@ -575,6 +575,58 @@ def test_un_fichier_n_est_pas_un_dossier_explorable(client: TestClient, atelier:
     assert reponse.json()["detail"]["motif"] == "pas-un-dossier"
 
 
+@pytest.mark.parametrize(
+    "motif",
+    [
+        "chemin-sensible",
+        "hors-racines-explorables",
+        "dossier-absent",
+        "pas-un-dossier",
+        "acces-refuse",
+    ],
+)
+def test_un_refus_de_l_explorateur_ecrit_ses_chemins_en_posix(
+    tmp_path: Path, maison: Path, monkeypatch: pytest.MonkeyPatch, motif: str
+) -> None:
+    """Le bandeau écrit ses chemins comme le champ de l'explorateur, en `/` (#1614).
+
+    Sous Windows, un `Path` formaté s'écrit en `\\` : le dossier refusé ne se
+    comparait alors ni au champ ni à la zone protégée nommée dans la même phrase.
+    """
+    if motif == "chemin-sensible":
+        cible = _dossier(maison, ".ssh")
+    elif motif == "hors-racines-explorables":
+        cible = _dossier(tmp_path, "dehors")
+    elif motif == "dossier-absent":
+        cible = maison / "jamais-vu"
+    elif motif == "pas-un-dossier":
+        cible = maison / "notes.md"
+        cible.write_text("des notes", encoding="utf-8")
+    else:
+        cible = _dossier(maison, "verrouille")
+        vrai_scandir = os.scandir
+        verrouille = cible.resolve()
+
+        def scandir(chemin):  # noqa: ANN001, ANN202 - double de `os.scandir`
+            if Path(chemin) == verrouille:
+                raise PermissionError(13, "Accès refusé", str(chemin))
+            return vrai_scandir(chemin)
+
+        monkeypatch.setattr(os, "scandir", scandir)
+    app = create_app(
+        bus=InMemoryEventBus(),
+        state=ControlTowerState(),
+        projets=ServiceProjets(ProjetStore(tmp_path / "depot"), racines_exploration=(maison,)),
+    )
+    with TestClient(app) as explorable:
+        reponse = explorable.get("/api/projets/explorateur", params={"chemin": str(cible)})
+
+    detail = reponse.json()["detail"]
+    assert detail["motif"] == motif
+    assert "\\" not in detail["message"]
+    assert cible.resolve().as_posix() in detail["message"]
+
+
 def test_sans_aucune_racine_explorable_le_refus_le_dit(
     tmp_path: Path, store: ProjetStore
 ) -> None:

@@ -723,11 +723,13 @@ class ServiceProjets:
         if not _sous_une_racine(cible, racines):
             raise DossierHorsFrontiere(cible, racines)
         if not cible.exists():
-            raise RacineRefusee("dossier-absent", f"Dossier introuvable : {cible}.", cible)
+            raise RacineRefusee(
+                "dossier-absent", f"Dossier introuvable : {cible.as_posix()}.", cible
+            )
         if not cible.is_dir():
             raise RacineRefusee(
                 "pas-un-dossier",
-                f"Chemin invalide : {cible} n'est pas un dossier.",
+                f"Chemin invalide : {cible.as_posix()} n'est pas un dossier.",
                 cible,
             )
         return cible
@@ -891,13 +893,13 @@ def _sous_dossiers(cible: Path) -> list[str]:
     except PermissionError as exc:
         raise RacineRefusee(
             "acces-refuse",
-            f"Dossier illisible : {cible} — accès refusé par le système.",
+            f"Dossier illisible : {cible.as_posix()} — accès refusé par le système.",
             cible,
         ) from exc
     except OSError as exc:
         raise RacineRefusee(
             "acces-refuse",
-            f"Dossier illisible : {cible} ({exc.strerror or exc}).",
+            f"Dossier illisible : {cible.as_posix()} ({exc.strerror or exc}).",
             cible,
         ) from exc
     return sorted(noms, key=str.casefold)
