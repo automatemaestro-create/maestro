@@ -31,9 +31,9 @@
  * des walkthroughs de VS Code et l'`OnboardingView` de Stripe) :
  *
  * - **au large**, dans un volet à côté de la liste, bordé d'un filet sur lequel la
- *   ligne ouverte s'ouvre comme un onglet. Les trois étapes restent à l'écran
- *   quand celle du modèle est ouverte, et les cartes d'accès s'y posent sans
- *   cadre autour ;
+ *   ligne ouverte s'ouvre comme un onglet. Le volet commence à la hauteur de cette
+ *   ligne, quelle que soit l'étape. Les trois étapes restent à l'écran quand celle
+ *   du modèle est ouverte, et les cartes d'accès s'y posent sans cadre autour ;
  * - **plus étroit**, sous la ligne de son étape, le long du même filet.
  *
  * L'écran n'est jamais monté deux fois : sa place se décide en JavaScript, sur la
@@ -163,11 +163,32 @@ function abonnerAuLarge(rappel: () => void): () => void {
 }
 
 /**
- * Le filet qui borde l'écran de l'étape ouverte, à côté de la liste ou sous sa
- * ligne. Au large, l'écran s'étire sur toute la hauteur des étapes : le filet
- * longe ainsi la ligne ouverte, même quand l'écran est court.
+ * La grille du parcours au large. Les lignes de la liste en sont les trois
+ * premières rangées (sous-grille, `CLASSE_LISTE`), et la quatrième, flexible,
+ * reçoit ce que l'écran a de plus haut qu'elles. L'écran part de la rangée de son
+ * étape et s'étend jusqu'à la dernière, si bien que :
+ *
+ * - son haut s'aligne sur la ligne ouverte, à chaque étape ;
+ * - la hauteur d'une étape ne dépend jamais de l'écran ouvert à côté. Un élément
+ *   qui traverse une rangée flexible ne grandit pas les rangées `auto` qu'il
+ *   traverse aussi (CSS Grid, dimensionnement des pistes).
  */
-const CLASSE_VOLET = "min-w-0 self-stretch border-l border-bord-fort pl-8";
+const CLASSE_GRILLE =
+  "grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[auto_auto_auto_1fr] lg:gap-x-0 lg:gap-y-2";
+/** Les trois lignes, une par rangée de la grille (`NUMEROS_ETAPES`). */
+const CLASSE_LISTE = "flex flex-col gap-2 lg:row-span-3 lg:grid lg:grid-rows-subgrid";
+/**
+ * Le filet qui borde l'écran de l'étape ouverte, à côté de la liste ou sous sa
+ * ligne. Au large, il longe l'écran depuis le haut de la ligne ouverte, et pas
+ * les lignes fermées.
+ */
+const CLASSE_VOLET = "col-start-2 row-end-5 min-w-0 self-start border-l border-bord-fort pl-8";
+/** La rangée où part le volet : celle de la ligne ouverte. */
+const RANGEE_VOLET: Record<NumeroEtape, string> = {
+  1: "row-start-1",
+  2: "row-start-2",
+  3: "row-start-3",
+};
 /** Sous sa ligne, le filet part du symbole de l'étape. */
 const CLASSE_SOUS_LIGNE = "ml-[1.3125rem] min-w-0 border-l border-bord-fort pt-3 pb-4 pl-4";
 
@@ -309,7 +330,7 @@ export function PremierLancement({
         // Nommé par le titre de l'étape seul : son état et son résumé sont dans
         // la ligne, et ne se relisent pas à l'entrée de l'écran.
         aria-labelledby={`${idLigne(courante)}-titre`}
-        className={auLarge ? CLASSE_VOLET : CLASSE_SOUS_LIGNE}
+        className={auLarge ? `${CLASSE_VOLET} ${RANGEE_VOLET[courante]}` : CLASSE_SOUS_LIGNE}
       >
         {courante === 1 && <FournisseurParDefaut enEtape onEtat={recevoirModele} />}
         {courante === 2 && <ParametresProjets enEtape onRepertoire={recevoirRepertoire} />}
@@ -343,8 +364,8 @@ export function PremierLancement({
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start lg:gap-0">
-        <ol aria-label="Étapes du premier lancement" className="flex flex-col gap-2">
+      <div className={CLASSE_GRILLE}>
+        <ol aria-label="Étapes du premier lancement" className={CLASSE_LISTE}>
           {NUMEROS_ETAPES.map((numero) => (
             <LigneEtape
               key={numero}
@@ -362,7 +383,7 @@ export function PremierLancement({
         </ol>
         {auLarge && ecran}
         {lu && courante === null && (
-          <div className="lg:pl-8">
+          <div className="self-start lg:col-start-2 lg:row-start-1 lg:row-end-5 lg:pl-8">
             <ToutEstEnPlace onRevenir={onRevenir} />
           </div>
         )}

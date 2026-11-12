@@ -415,10 +415,31 @@ describe("l'écran de l'étape ouverte, contre son étape (#1617)", () => {
     expect(within(deuxieme).queryByText("Répertoire des projets")).toBeNull();
     expect(within(deuxieme).queryByText(REPERTOIRE_PROPOSE.chemin)).toBeNull();
     expect(within(deuxieme).getByRole("button", { name: "Changer de dossier…" })).toBeEnabled();
+    // L'aide part du geste que l'étape montre, et pas d'un explorateur encore fermé.
     expect(
-      await within(deuxieme).findByText(/Si l'explorateur refuse un dossier, vous pouvez l'y autoriser/),
+      await within(deuxieme).findByText(/En changeant de dossier, vous pourrez autoriser un dossier/),
     ).toBeInTheDocument();
+    expect(within(deuxieme).queryByText(/l'explorateur/)).toBeNull();
     expect(within(deuxieme).getByText("Aucun pour l'instant.")).toBeInTheDocument();
+  });
+
+  it("au large, fait partir l'écran de la rangée de l'étape ouverte", async () => {
+    // La géométrie se mesure sur la vraie stack (relecture visuelle) ; ici, le
+    // contrat qui la porte : la liste partage les rangées de la grille, et l'écran
+    // part de celle de son étape.
+    poserFournisseurDefaut(CHOIX_ENREGISTRE);
+    const utilisateur = userEvent.setup();
+    monter();
+    await parcours();
+    expect(screen.getByRole("list", { name: "Étapes du premier lancement" })).toHaveClass(
+      "lg:grid-rows-subgrid",
+    );
+    await waitFor(() => expect(etape(2)).toHaveTextContent("Vos projets naissent dans"));
+
+    await utilisateur.click(etape(2));
+    expect(ecran(2)).toHaveClass("row-start-2");
+    await utilisateur.click(etape(1));
+    expect(ecran(1)).toHaveClass("row-start-1");
   });
 });
 

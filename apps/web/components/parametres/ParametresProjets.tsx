@@ -112,69 +112,84 @@ function DossiersAutorises({
     }
   }, [onRetire]);
 
+  const contenu =
+    dossiers === null ? (
+      <p className="text-corps text-texte-secondaire">
+        {echecLecture !== null ? "—" : "…"}
+      </p>
+    ) : dossiers.length === 0 ? (
+      <p className="text-annexe text-texte-secondaire">
+        {enEtape ? "Aucun pour l'instant." : "Aucun dossier autorisé."}
+      </p>
+    ) : (
+      // Alignée au début, comme les contrôles des autres lignes quand la ligne se
+      // replie sous son libellé (téléphone) : un chemin long ne pousse pas la
+      // liste contre le bord droit.
+      <ul className="flex flex-col items-start gap-2">
+        {dossiers.map((dossier) => (
+          <li key={dossier.chemin} className="flex flex-wrap items-center gap-2">
+            <code className="font-mono text-corps wrap-anywhere">{dossier.chemin}</code>
+            {/* Une autorisation qui ne sert plus (disque débranché, dossier
+                supprimé) se dit, et se retire comme les autres. */}
+            {dossier.refus !== null && (
+              <span className="text-annexe text-attention-texte">
+                inutilisable — {libelleMotif(dossier.refus.motif)}
+              </span>
+            )}
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              taille="petite"
+              occupe={retraitEnCours === dossier.chemin}
+              disabled={retraitEnCours !== null}
+              aria-label={`Retirer ${dossier.chemin}`}
+              onClick={() => void retirer(dossier.chemin)}
+            >
+              Retirer
+            </Bouton>
+          </li>
+        ))}
+      </ul>
+    );
+
+  const refus = (
+    <>
+      {echecLecture && (
+        <RefusMotive refus={echecLecture} titre="Dossiers autorisés illisibles" />
+      )}
+      {refusRetrait && <RefusMotive refus={refusRetrait} titre="Retrait refusé" />}
+    </>
+  );
+
+  if (enEtape) {
+    // Dans l'étape, une annexe : son nom au rang des aides, et son état juste
+    // après lui, pour que l'œil aille d'abord à la phrase et au geste du dossier.
+    // L'aide part du geste que l'étape montre, « Changer de dossier… ».
+    return (
+      <div className="flex flex-col items-start gap-1 border-t border-bord pt-3">
+        <p className="text-annexe font-medium text-texte-secondaire">Dossiers autorisés</p>
+        {contenu}
+        <p className="text-annexe text-texte-secondaire">
+          En changeant de dossier, vous pourrez autoriser un dossier que Maestro
+          refuse d&apos;ouvrir : il le parcourt alors, sous-dossiers compris, et il
+          s&apos;ajoute ici. Les zones protégées du poste restent fermées.
+        </p>
+        {refus}
+      </div>
+    );
+  }
+
   return (
     <>
       <LigneReglage
         libelle="Dossiers autorisés"
         // La portée, dite **une fois** et invariante — comme l'aide du
-        // répertoire : elle décrit le réglage, pas son état du moment. Dans
-        // l'étape, elle dit ce qui y mène à qui n'a encore rien autorisé.
-        aide={
-          enEtape
-            ? "Si l'explorateur refuse un dossier, vous pouvez l'y autoriser : Maestro le parcourt alors, sous-dossiers compris, et il s'ajoute ici. Les zones protégées du poste restent fermées."
-            : "Autorisés depuis l'explorateur quand il les refusait : Maestro peut parcourir ces dossiers et leurs sous-dossiers sur ce poste. Les zones protégées y restent refusées."
-        }
+        // répertoire : elle décrit le réglage, pas son état du moment.
+        aide="Autorisés depuis l'explorateur quand il les refusait : Maestro peut parcourir ces dossiers et leurs sous-dossiers sur ce poste. Les zones protégées y restent refusées."
       >
-        {dossiers === null ? (
-          <p className="text-corps text-texte-secondaire">
-            {echecLecture !== null ? "—" : "…"}
-          </p>
-        ) : dossiers.length === 0 ? (
-          <p className="text-annexe text-texte-secondaire">
-            {enEtape ? "Aucun pour l'instant." : "Aucun dossier autorisé."}
-          </p>
-        ) : (
-          // Alignée au début, comme les contrôles des autres lignes quand la
-          // ligne se replie sous son libellé (téléphone) : un chemin long ne
-          // pousse pas la liste contre le bord droit.
-          <ul className="flex flex-col items-start gap-2">
-            {dossiers.map((dossier) => (
-              <li
-                key={dossier.chemin}
-                className="flex flex-wrap items-center gap-2"
-              >
-                <code className="font-mono text-corps wrap-anywhere">
-                  {dossier.chemin}
-                </code>
-                {/* Une autorisation qui ne sert plus (disque débranché,
-                    dossier supprimé) se dit, et se retire comme les autres. */}
-                {dossier.refus !== null && (
-                  <span className="text-annexe text-attention-texte">
-                    inutilisable — {libelleMotif(dossier.refus.motif)}
-                  </span>
-                )}
-                <Bouton
-                  variante="contour"
-                  ton="neutre"
-                  taille="petite"
-                  occupe={retraitEnCours === dossier.chemin}
-                  disabled={retraitEnCours !== null}
-                  aria-label={`Retirer ${dossier.chemin}`}
-                  onClick={() => void retirer(dossier.chemin)}
-                >
-                  Retirer
-                </Bouton>
-              </li>
-            ))}
-          </ul>
-        )}
+        {contenu}
       </LigneReglage>
-      {echecLecture && (
-        <RefusMotive refus={echecLecture} titre="Dossiers autorisés illisibles" />
-      )}
-      {refusRetrait && (
-        <RefusMotive refus={refusRetrait} titre="Retrait refusé" />
-      )}
+      {refus}
     </>
   );
 }
@@ -276,7 +291,7 @@ export function ParametresProjets({
         // Dans l'étape, ce que ce dossier change pour qui découvre Maestro, puis
         // le geste : le titre de l'étape nomme déjà le réglage.
         <div className="flex flex-col items-start gap-3 pb-3">
-          <p className="text-corps text-texte-secondaire">
+          <p className="text-corps text-texte">
             Chaque projet que Maestro crée pour vous y reçoit son dossier. Pour un
             projet donné, vous pourrez toujours en choisir un autre.
           </p>
