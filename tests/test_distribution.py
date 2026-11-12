@@ -465,6 +465,25 @@ def test_la_verification_lit_le_dialogue_et_la_pose_que_la_coque_ecrit() -> None
     assert "grep -qF 'redémarrage demandé'" in verifier
 
 
+DIALOGUE = RACINE / "scripts" / "distribution" / "dialogue.sh"
+
+
+def test_le_dialogue_se_presse_sans_la_souris() -> None:
+    """Un clic aux coordonnées du bouton tombe dans la fenêtre qui le couvre, ou se perd quand
+    Windows refuse le premier plan (#1647). Le bouton se presse par la notification qu'il enverrait
+    à son parent sous un clic (`WM_COMMAND`, `BN_CLICKED`) : ni curseur, ni premier plan, ni écran.
+    Un bouton sans fenêtre ne se presse pas, et la vérification le dit."""
+    for script in (VERIFIER, DIALOGUE):
+        texte = script.read_text(encoding="utf-8")
+        for geste in ("mouse_event", "SetCursorPos", "SetForegroundWindow", "Cursor]::Position"):
+            assert geste not in texte, f"{script.name} touche à l'écran : {geste}"
+    presser = DIALOGUE.read_text(encoding="utf-8")
+    assert "GetParent(" in presser
+    assert "0x0111" in presser  # WM_COMMAND, wParam = MAKEWPARAM(id, BN_CLICKED = 0)
+    assert "'bouton sans fenetre : '" in presser
+    assert '. "$RACINE/scripts/distribution/dialogue.sh"' in VERIFIER.read_text(encoding="utf-8")
+
+
 CANAL = RACINE / "scripts" / "distribution" / "canal.sh"
 PILOTE = RACINE / "scripts" / "orchestrate" / "pilote.sh"
 
