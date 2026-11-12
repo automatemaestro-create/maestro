@@ -59,8 +59,10 @@ import {
   creerAgent,
   GESTE_ABOUTI_SANS_RELECTURE,
   genererDefinitionAgent,
+  lectureEnMots,
   modifierAgent,
   refusEnMots,
+  sansReponse,
   supprimerAgent,
   surchargerAgent,
 } from "@/lib/api";
@@ -98,6 +100,9 @@ const SUPPRESSION_SANS_API =
   "L'API n'a pas répondu : l'agent n'a pas été supprimé. Vérifiez que maestro-api tourne, puis réessayez.";
 const REGLAGES_SANS_API =
   "L'API n'a pas répondu : les réglages de l'agent n'ont pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
+/** L'assistant n'a rien rendu (#1640) : il n'écrit rien, les champs sont ceux d'avant. */
+const GENERATION_SANS_API =
+  "L'API n'a pas répondu : aucune définition n'a été proposée, le formulaire est intact. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /**
  * Les champs du formulaire.
@@ -1023,8 +1028,7 @@ function AssistantDefinition({
       )}
       {erreur && (
         <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
-          {erreur} — le formulaire est intact, vous pouvez réessayer ou remplir
-          les champs à la main.
+          {erreur}
         </p>
       )}
     </div>
@@ -1125,7 +1129,11 @@ export function CreationAgent({
       setNom(proposition.nom);
       setChamps(champsDepuisProposition(proposition));
     } catch (e) {
-      setErreurGeneration(e instanceof Error ? e.message : String(e));
+      setErreurGeneration(
+        sansReponse(e)
+          ? GENERATION_SANS_API
+          : `${e instanceof Error ? e.message : String(e)} — le formulaire est intact, vous pouvez réessayer ou remplir les champs à la main.`,
+      );
     } finally {
       setGeneration(false);
     }
@@ -1265,7 +1273,7 @@ export function EditeurAgent({
           if (!abandonne) setChamps(champsDepuis(nouvelle));
         })
         .catch((e) => {
-          if (!abandonne) setErreur(e instanceof Error ? e.message : String(e));
+          if (!abandonne) setErreur(lectureEnMots(e));
         })
         .finally(() => {
           if (!abandonne) setChargement(false);

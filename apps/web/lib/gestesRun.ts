@@ -60,6 +60,22 @@ export const PHRASE_INTERRUPTION =
 export const PHRASE_INTERRUPTION_EN_PAUSE =
   "Les tâches qui attendaient ne partiront plus, et une tâche partie avant la pause, si elle tourne encore, perd son travail. C'est sans retour.";
 
+/**
+ * Ce qu'un geste sur un run dit quand l'API ne l'a pas reçu (#1640) : ce qui n'a pas
+ * eu lieu, puis le geste qui y répond. Les écrans des runs, le panneau des runs
+ * immobiles et les cartes du fil les lisent ici, pour ne pas dire deux fois la même
+ * panne de deux façons.
+ */
+export const PAUSE_SANS_API =
+  "L'API n'a pas répondu : le run n'a pas été mis en pause. Vérifiez que maestro-api tourne, puis réessayez.";
+export const REPRISE_SANS_API =
+  "L'API n'a pas répondu : le run n'a pas repris. Vérifiez que maestro-api tourne, puis réessayez.";
+export const INTERRUPTION_SANS_API =
+  "L'API n'a pas répondu : le run n'a pas été interrompu. Vérifiez que maestro-api tourne, puis réessayez.";
+/** La carte d'un geste du fil : confirmer comme écarter est une décision qui n'est pas partie. */
+export const DECISION_DU_FIL_SANS_API =
+  "L'API n'a pas répondu : votre décision n'a pas été transmise. Vérifiez que maestro-api tourne, puis réessayez.";
+
 /** Les mots d'un geste : sa question, son verbe, ce qu'il fait, et comment il se dit fait. */
 export type LibellesDuGeste = {
   /** Le titre de la carte — la question que la confirmation tranche. */

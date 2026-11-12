@@ -36,6 +36,13 @@ import {
  */
 export const PAGE_DU_PLAFOND = "Chat";
 
+/**
+ * Ce que la carte du plafond dit quand l'API n'a pas reçu la décision (#1640) : elle
+ * n'est pas partie, et le run reste arrêté sur son budget.
+ */
+export const PLAFOND_SANS_API =
+  "L'API n'a pas répondu : votre décision n'a pas été transmise, le run attend toujours. Vérifiez que maestro-api tourne, puis réessayez.";
+
 /** Un run qui attend une décision sur son budget, avec la question qu'il pose. */
 export type RunAuPlafond = ResumeExecution & { plafond: DemandePlafond };
 

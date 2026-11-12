@@ -57,10 +57,16 @@ import {
 } from "@/components/Icones";
 import { Bouton, Carte, LienRenvoi, type Icone } from "@/components/Primitives";
 import { BadgeRun } from "@/components/runs/EtatRun";
+import { refusEnMots } from "@/lib/api";
 import { AUCUNE_BORNE, phraseDesBornes } from "@/lib/bornes";
 import { causeDAttente, regimeDuRun } from "@/lib/execution";
 import { formatHeureCourte, libelleStatutExecution } from "@/lib/format";
-import { consequenceDuGeste, libellesDuGeste, resumeDuRunVise } from "@/lib/gestesRun";
+import {
+  consequenceDuGeste,
+  DECISION_DU_FIL_SANS_API,
+  libellesDuGeste,
+  resumeDuRunVise,
+} from "@/lib/gestesRun";
 import { hrefRun } from "@/lib/navigation";
 import type { GesteRunFait, GesteRunPropose, RunVise } from "@/lib/types";
 
@@ -117,7 +123,7 @@ export function GesteSurUnRun({
     try {
       await trancher(approuve);
     } catch (e: unknown) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, DECISION_DU_FIL_SANS_API));
     }
   };
 

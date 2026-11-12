@@ -281,6 +281,27 @@ export function refusEnMots(e: unknown, sansApi: string): string {
 }
 
 /**
+ * Ce qu'une lecture en échec dit sous son titre (« Registre illisible : … ») quand
+ * l'API n'a pas répondu (#1640). Le titre dit déjà ce qui n'a pas pu être lu.
+ */
+export const LECTURE_SANS_API =
+  "L'API n'a pas répondu. Vérifiez que maestro-api tourne, puis réessayez.";
+
+/**
+ * Ce qu'une lecture en échec dit à l'écran (#1640) : sur une API qui n'a pas
+ * répondu, `sansApi` ; sur une API qui a refusé, son motif, ou son code faute de
+ * motif. Le message d'une `ErreurApi` nomme sa route, et une route n'est pas une
+ * explication : il ne s'affiche jamais.
+ */
+export function lectureEnMots(e: unknown, sansApi: string = LECTURE_SANS_API): string {
+  if (sansReponse(e)) return sansApi;
+  if (e instanceof ErreurApi) {
+    return e.motif !== "" ? e.motif : `L'API a répondu ${e.statut}.`;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
  * Ce que dit un geste dont l'écriture a abouti mais dont la **relecture** n'a
  * pas eu de réponse : dire alors que rien n'a changé serait faux.
  */

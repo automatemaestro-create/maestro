@@ -72,9 +72,12 @@ import {
   chargerAgentCatalogue,
   definirActivationsMcp,
   definirPermissions,
+  GESTE_ABOUTI_SANS_RELECTURE,
+  lectureEnMots,
   migrerDeclarationsMcp,
   refusEnMots,
   retirerAccord,
+  sansReponse,
 } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
 import { entreesHorsPortee } from "@/lib/permissions";
@@ -98,6 +101,10 @@ const ACTIVATION_SANS_API =
   "L'API n'a pas répondu : l'activation n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
 const POLITIQUE_SANS_API =
   "L'API n'a pas répondu : la politique de permissions n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
+const MIGRATION_SANS_API =
+  "L'API n'a pas répondu : les déclarations n'ont pas été migrées. Vérifiez que maestro-api tourne, puis réessayez.";
+const RETRAIT_ACCORD_SANS_API =
+  "L'API n'a pas répondu : l'accord n'a pas été retiré. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /**
  * L'onglet : charge la fiche, la recharge après chaque écriture, et monte les
@@ -143,7 +150,7 @@ export function McpEtPermissionsAgent({ nom }: { nom: string }) {
           if (!abandonne) setFiche(nouvelle);
         })
         .catch((e) => {
-          if (!abandonne) setErreur(e instanceof Error ? e.message : String(e));
+          if (!abandonne) setErreur(lectureEnMots(e));
         })
         .finally(() => {
           if (!abandonne) setChargement(false);
@@ -546,12 +553,20 @@ function BlocHerites({
   const migrer = async () => {
     setEnCours(true);
     setErreur(null);
+    let migree = false;
     try {
       const faite = await migrerDeclarationsMcp(fiche.nom);
+      migree = true;
       onMigration(faite);
       await recharger();
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      // Sans réponse, rien n'a été refusé : la phrase dit ce qui n'a pas eu lieu, ou
+      // que la migration a eu lieu et que seule la relecture de la fiche manque.
+      if (sansReponse(e)) {
+        setErreur(migree ? GESTE_ABOUTI_SANS_RELECTURE : MIGRATION_SANS_API);
+      } else {
+        setErreur(`Migration refusée : ${e instanceof Error ? e.message : String(e)}`);
+      }
       setEnCours(false);
     }
   };
@@ -592,7 +607,7 @@ function BlocHerites({
       </div>
       {erreur !== null && (
         <p className="text-annexe text-rose-600 dark:text-rose-400" role="alert">
-          Migration refusée : {erreur}
+          {erreur}
         </p>
       )}
     </BlocIntegrations>
@@ -928,7 +943,11 @@ function ListeAccords({
     try {
       setAccords(await retirerAccord(agent, id));
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(
+        sansReponse(e)
+          ? RETRAIT_ACCORD_SANS_API
+          : `Retrait refusé : ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setEnCours(null);
     }
@@ -984,7 +1003,7 @@ function ListeAccords({
       )}
       {erreur !== null && (
         <p role="alert" className="text-annexe font-medium text-alerte-texte">
-          Retrait refusé : {erreur}
+          {erreur}
         </p>
       )}
       <p className="text-annexe text-texte-secondaire">

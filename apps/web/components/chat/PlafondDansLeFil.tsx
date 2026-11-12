@@ -53,6 +53,7 @@ import { useId, useState } from "react";
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeMonnaie } from "@/components/Icones";
 import { BadgeEtat, Bouton, Champ, TuileChiffre } from "@/components/Primitives";
+import { refusEnMots } from "@/lib/api";
 import { nomDuRun } from "@/lib/execution";
 import {
   formatCout,
@@ -65,6 +66,7 @@ import {
   coutDuReste,
   decisionDeReprise,
   depenseEn,
+  PLAFOND_SANS_API,
   plafondPropose,
   unitesFranchies,
   type RunAuPlafond,
@@ -190,7 +192,7 @@ export function PlafondDansLeFil({
       // Succès : le run sort de l'attente au rechargement et la carte se
       // démonte. En cas d'échec seulement, on rend la main pour réessayer.
     } catch (e: unknown) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, PLAFOND_SANS_API));
       setEnCours(null);
     }
   };

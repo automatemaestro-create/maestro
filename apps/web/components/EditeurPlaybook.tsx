@@ -112,10 +112,12 @@ import {
   chargerVersionsPlaybook,
   ecrirePlaybook,
   GESTE_ABOUTI_SANS_RELECTURE,
+  lectureEnMots,
   redigerPlaybook,
   refusEnMots,
   rejeterPropositionPlaybook,
   restaurerPlaybook,
+  sansReponse,
 } from "@/lib/api";
 import {
   accepter,
@@ -140,6 +142,17 @@ import {
  */
 const PLAYBOOK_SANS_API =
   "L'API n'a pas répondu : le playbook n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
+
+/** L'assistant n'a rien rendu (#1640) : il n'écrit rien, le brouillon est donc celui d'avant. */
+const REDACTION_SANS_API =
+  "L'API n'a pas répondu : aucune réécriture n'a été proposée, votre brouillon est intact. Vérifiez que maestro-api tourne, puis réessayez.";
+
+/**
+ * Une version ou une proposition dont l'API n'a pas servi le texte (#1640) : son
+ * titre (« Version 2 », « Proposition 1 ») est juste au-dessus.
+ */
+const APERCU_SANS_API =
+  "L'API n'a pas répondu : ce texte n'a pas pu être lu. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /* ------------------------------------------------------------------ *
  * Ce que le sélecteur désigne
@@ -255,7 +268,7 @@ export function EditeurPlaybook({
           if (!abandonne) setContenu(nouvelleFiche.contenu);
         })
         .catch((e) => {
-          if (!abandonne) setErreur(e instanceof Error ? e.message : String(e));
+          if (!abandonne) setErreur(lectureEnMots(e));
         })
         .finally(() => {
           if (!abandonne) setChargement(false);
@@ -356,7 +369,11 @@ export function EditeurPlaybook({
     try {
       setRedaction(await redigerPlaybook(agent, contenu, consigne.trim()));
     } catch (e) {
-      setErreurRedaction(e instanceof Error ? e.message : String(e));
+      setErreurRedaction(
+        sansReponse(e)
+          ? REDACTION_SANS_API
+          : `${e instanceof Error ? e.message : String(e)} — votre brouillon est intact, vous pouvez réessayer.`,
+      );
     } finally {
       setRedactionEnCours(false);
     }
@@ -407,9 +424,7 @@ export function EditeurPlaybook({
           : await chargerPropositionPlaybook(agent, entree.numero);
       if (demande.current === cle) setApercu(detail.contenu);
     } catch (e) {
-      if (demande.current === cle) {
-        setErreurApercu(e instanceof Error ? e.message : String(e));
-      }
+      if (demande.current === cle) setErreurApercu(lectureEnMots(e, APERCU_SANS_API));
     } finally {
       if (demande.current === cle) setChargementApercu(false);
     }
@@ -993,7 +1008,7 @@ function PanneauAssistant({
       )}
       {erreur && (
         <p className="mt-2 text-annexe text-alerte-texte" role="alert">
-          {erreur} — votre brouillon est intact, vous pouvez réessayer.
+          {erreur}
         </p>
       )}
       {redaction && (

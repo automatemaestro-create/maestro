@@ -113,18 +113,25 @@ const ajouterIntegrationPoolMcp = vi.fn();
 const chargerProvenanceRegistreMcp = vi.fn();
 const admettreEntreeMcp = vi.fn();
 
-vi.mock("@/lib/api", () => ({
-  chargerRegistreMcp: (q?: string) => chargerRegistreMcp(q),
-  chargerPoolMcp: () => chargerPoolMcp(),
-  chargerProvenanceRegistreMcp: () => chargerProvenanceRegistreMcp(),
-  ajouterIntegrationPoolMcp: (charge: unknown) =>
-    ajouterIntegrationPoolMcp(charge),
-  // Le mock de ce fichier est **total** (pas de `importOriginal`) : un export
-  // que la bibliothèque importe et qui manquerait ici ferait échouer l'accès,
-  // pas seulement le clic. La porte d'admission (#678) est arrivée avec #679.
-  admettreEntreeMcp: (charge: unknown) => admettreEntreeMcp(charge),
-  supprimerIntegrationPoolMcp: vi.fn(() => Promise.resolve()),
-}));
+vi.mock("@/lib/api", async (importOriginal) => {
+  // Ce qu'un échec dit à l'écran vient du vrai client (#1640) : ces aides ne
+  // touchent pas au réseau, et un double les ferait mentir.
+  const { lectureEnMots, refusEnMots } = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    lectureEnMots,
+    refusEnMots,
+    chargerRegistreMcp: (q?: string) => chargerRegistreMcp(q),
+    chargerPoolMcp: () => chargerPoolMcp(),
+    chargerProvenanceRegistreMcp: () => chargerProvenanceRegistreMcp(),
+    ajouterIntegrationPoolMcp: (charge: unknown) =>
+      ajouterIntegrationPoolMcp(charge),
+    // Hors des aides ci-dessus, le mock de ce fichier est **total** : un export
+    // que la bibliothèque importe et qui manquerait ici ferait échouer l'accès,
+    // pas seulement le clic. La porte d'admission (#678) est arrivée avec #679.
+    admettreEntreeMcp: (charge: unknown) => admettreEntreeMcp(charge),
+    supprimerIntegrationPoolMcp: vi.fn(() => Promise.resolve()),
+  };
+});
 
 /** La provenance servie par l'API sœur (#271, #677, #678) — les trois sources, et quand. */
 const PROVENANCE: ProvenanceRegistreMcp = {

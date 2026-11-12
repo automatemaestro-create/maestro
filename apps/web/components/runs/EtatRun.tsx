@@ -64,6 +64,7 @@ import {
   type TonBadge,
   type TonCarte,
 } from "@/components/Primitives";
+import { refusEnMots } from "@/lib/api";
 import { PAGE_DU_CADRAGE } from "@/lib/brief";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import {
@@ -95,7 +96,13 @@ import {
   libelleStatutExecution,
   RAISON_COUT_PARTIEL,
 } from "@/lib/format";
-import { PHRASE_INTERRUPTION, PHRASE_PAUSE } from "@/lib/gestesRun";
+import {
+  INTERRUPTION_SANS_API,
+  PAUSE_SANS_API,
+  PHRASE_INTERRUPTION,
+  PHRASE_PAUSE,
+  REPRISE_SANS_API,
+} from "@/lib/gestesRun";
 import { useHorloge } from "@/lib/horloge";
 import { entreeParLibelle, hrefRun } from "@/lib/navigation";
 import { PAGE_DU_PLAFOND } from "@/lib/plafond";
@@ -436,7 +443,7 @@ export function BoutonsPause({
     try {
       await (enPause ? reprendreRun(run.run_id) : suspendreRun(run.run_id));
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, enPause ? REPRISE_SANS_API : PAUSE_SANS_API));
     } finally {
       // Réarmé dans tous les cas, succès compris : le bouton qui reste est
       // l'**autre** — un run repris se resuspend, et laisser le geste inverse
@@ -514,7 +521,7 @@ export function BoutonInterrompre({
     try {
       await interrompreRun(run.run_id);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, INTERRUPTION_SANS_API));
       // Désarmé **et** réarmable sur refus : un `409` veut dire que la question
       // n'avait plus lieu d'être, et laisser la confirmation ouverte inviterait à
       // recliquer sur un ordre qu'on vient de voir refuser.
