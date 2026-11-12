@@ -160,8 +160,10 @@ export const CLE_CONVERSATION_OUVERTE = "maestro.conversation.ouverte";
  * `max-lg:` / `lg:` de `ColonneConversation` : c'est la **même** frontière, dite
  * une fois en CSS et une fois en JavaScript, parce qu'aucun des deux ne sait
  * lire l'autre. Un test la garde (`shell.test.tsx`, « résout le défaut sur le
- * seuil même du recouvrement »). Le jour où un troisième appelant en a besoin,
- * c'est cette constante qu'il importe — jamais la chaîne recopiée.
+ * seuil même du recouvrement »). Le parcours du premier lancement s'y adosse
+ * aussi, pour poser l'écran de l'étape ouverte à côté de la liste ou dans sa
+ * ligne (#1617) : un appelant de plus importe cette constante, jamais la chaîne
+ * recopiée.
  */
 export const REQUETE_COLONNE_AU_LARGE = "(min-width: 64rem)";
 

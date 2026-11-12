@@ -111,6 +111,18 @@ export function poserLargeurFenetre(pixels: number): void {
   largeurFenetre = pixels;
 }
 
+/**
+ * Change la largeur **en cours de session** et notifie les abonnés : la fenêtre
+ * qu'on redimensionne au-delà d'un seuil, que l'écran doit suivre sans recharger.
+ * Les abonnés ne sont pas rangés par requête : chacun relit la sienne.
+ */
+export function basculerLargeurFenetre(pixels: number): void {
+  largeurFenetre = pixels;
+  for (const ecouteur of [...ecouteursMedia]) {
+    ecouteur({ media: "largeur" } as MediaQueryListEvent);
+  }
+}
+
 /** Évalue une requête média contre l'état posé par les aides ci-dessus. */
 function evaluerRequete(requete: string): boolean {
   if (requete === REQUETE_SOMBRE) return systemeSombre;

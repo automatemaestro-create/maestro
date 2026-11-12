@@ -22,10 +22,11 @@
  *
  * La même carte est l'**étape du modèle** du premier lancement (#642, `enEtape`) :
  * l'étape réutilise l'écran du produit, elle ne le recopie pas (d'après AnythingLLM).
- * Montée dans une étape, elle perd son cadre, son titre et sa tête « Utilisé
- * maintenant » : l'étape porte déjà le titre, et son résumé dit l'état — une fois
- * (réserves 2 et 3 du regard neuf). `onEtat` lui dit chaque état lu ou enregistré,
- * pour qu'elle se coche sur le fait.
+ * Montée dans une étape, elle perd son cadre, son titre et sa tête : l'étape porte
+ * déjà le titre, et son résumé dit l'état, une fois. Rien ne le redit dans les
+ * cartes d'accès non plus (#1617) : ni le badge « Utilisé maintenant », ni la phrase
+ * qui précède toute épreuve. `onEtat` lui dit chaque état lu ou enregistré, pour
+ * qu'elle se coche sur le fait.
  */
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -295,6 +296,7 @@ export function FournisseurParDefaut({
             active={option.cle === selection}
             utilisee={option.cle === effective}
             enregistree={option.cle === enregistree}
+            enEtape={enEtape}
             onChoisir={() => choisir(option)}
           >
             {option.cle === selection && (
@@ -309,6 +311,7 @@ export function FournisseurParDefaut({
                 onCle={setCle}
                 verdict={verdictCourant}
                 saisieEnregistree={saisieEnregistree}
+                enEtape={enEtape}
                 action={action}
                 annonce={annonce}
                 refus={refus}
@@ -489,6 +492,7 @@ function CarteAcces({
   active,
   utilisee,
   enregistree,
+  enEtape,
   onChoisir,
   children,
 }: {
@@ -497,6 +501,8 @@ function CarteAcces({
   active: boolean;
   utilisee: boolean;
   enregistree: boolean;
+  /** Dans l'étape du modèle, le résumé de l'étape dit déjà ce qui est utilisé. */
+  enEtape: boolean;
   onChoisir: () => void;
   children: ReactNode;
 }) {
@@ -535,7 +541,7 @@ function CarteAcces({
             >
               {option.acces.libelle}
             </label>
-            {utilisee && (
+            {utilisee && !enEtape && (
               <BadgeEtat ton="info" pastille>
                 Utilisé maintenant
               </BadgeEtat>
@@ -642,6 +648,7 @@ function Saisie({
   refus,
   onEprouver,
   onEnregistrer,
+  enEtape,
 }: {
   option: OptionAcces;
   etat: EtatFournisseurDefaut;
@@ -658,6 +665,7 @@ function Saisie({
   refus: string | null;
   onEprouver: () => void;
   onEnregistrer: () => void;
+  enEtape: boolean;
 }) {
   const { fournisseur, acces } = option;
   const base = `defaut-${fournisseur.nom}-${acces.id}`;
@@ -772,8 +780,14 @@ function Saisie({
         >
           Éprouver
         </Bouton>
-        <div aria-live="polite" className="flex min-w-0 flex-col gap-1 self-stretch wrap-anywhere">
+        {/* Vide, la région reste montée pour annoncer le verdict à venir : elle
+            rend alors l'écart qu'elle prendrait entre les deux boutons. */}
+        <div
+          aria-live="polite"
+          className="flex min-w-0 flex-col gap-1 self-stretch wrap-anywhere empty:-mt-3"
+        >
           <VerdictEpreuve
+            enEtape={enEtape}
             verdict={verdict}
             option={option}
             saisieEnregistree={saisieEnregistree}
@@ -811,13 +825,20 @@ function VerdictEpreuve({
   option,
   saisieEnregistree,
   vientDEtreEnregistree,
+  enEtape,
 }: {
   verdict: Verdict | null;
   option: OptionAcces;
   saisieEnregistree: boolean;
   /** L'annonce sous « Enregistrer » le dit déjà : la carte ne le redit pas. */
   vientDEtreEnregistree: boolean;
+  /**
+   * Dans l'étape du modèle, le résumé de l'étape dit déjà ce que l'épreuve
+   * établit et ce qui est enregistré : seul un verdict rendu se dit ici.
+   */
+  enEtape: boolean;
 }) {
+  if (verdict === null && enEtape) return null;
   if (verdict === null && saisieEnregistree) {
     if (vientDEtreEnregistree) return null;
     return (

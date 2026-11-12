@@ -13,6 +13,10 @@
  * - C3 — le parcours ne s'ouvre ni à un poste qui l'a terminé ni à un poste qui a
  *   des projets, et se revoit à la demande depuis les Paramètres.
  *
+ * Et la place de l'écran de l'étape ouverte (#1617) : à côté de la liste au large,
+ * sous la ligne de son étape plus étroit, jamais monté deux fois ; l'état dit une
+ * fois, par la ligne ; l'étape du dossier dans les mots de qui découvre Maestro.
+ *
  * Le moteur derrière (`/api/accueil`) est gardé par `tests/test_accueil.py`.
  */
 
@@ -29,6 +33,7 @@ import type { ProjetCree } from "@/lib/types";
 
 import {
   ACCES_CLAUDE,
+  basculerLargeurFenetre,
   demandesEnregistrees,
   ETAT_FOURNISSEUR_DEFAUT_NU,
   finsDuPremierLancement,
@@ -36,12 +41,14 @@ import {
   poserAccueil,
   poserFilAssistance,
   poserFournisseurDefaut,
+  poserLargeurFenetre,
   poserPanneAccueil,
   poserProjetActif,
   poserProjets,
   poserRepertoire,
   poserVerdictEpreuve,
   projetFactice,
+  REPERTOIRE_PROPOSE,
   retenirRepertoire,
 } from "./aides";
 
@@ -324,6 +331,94 @@ describe("le parcours ne se rejoue pas, et se revoit à la demande (C3)", () => 
     await act(async () => relacher());
     expect(await screen.findByText(/Tout est en place/)).toBeInTheDocument();
     expect(etape(2)).not.toHaveFocus();
+  });
+});
+
+describe("l'écran de l'étape ouverte, contre son étape (#1617)", () => {
+  /** Les lignes de la liste des étapes, dans l'ordre. */
+  const lignes = () =>
+    within(screen.getByRole("list", { name: "Étapes du premier lancement" })).getAllByRole(
+      "listitem",
+    );
+
+  it("au large, pose l'écran à côté de la liste, une seule fois", async () => {
+    monter();
+    await parcours();
+
+    await within(await screen.findByRole("region", { name: TITRES[1] })).findByRole("group", {
+      name: "Accès au fournisseur par défaut",
+    });
+    expect(screen.getAllByRole("region", { name: TITRES[1] })).toHaveLength(1);
+    // Le volet est hors de la liste : la ligne ouverte en est l'onglet.
+    expect(
+      within(screen.getByRole("list", { name: "Étapes du premier lancement" })).queryByRole(
+        "region",
+      ),
+    ).toBeNull();
+    expect(etape(1)).toHaveAttribute("aria-controls", ecran(1).id);
+  });
+
+  it("plus étroit, pose l'écran sous la ligne de son étape", async () => {
+    poserLargeurFenetre(420);
+    monter();
+    await parcours();
+
+    const premiere = lignes()[0];
+    expect(
+      await within(premiere).findByRole("group", { name: "Accès au fournisseur par défaut" }),
+    ).toBeInTheDocument();
+    expect(within(premiere).getByRole("region", { name: TITRES[1] })).toBe(ecran(1));
+    expect(within(lignes()[1]).queryByRole("region")).toBeNull();
+  });
+
+  it("suit la fenêtre redimensionnée sans monter l'écran deux fois", async () => {
+    monter();
+    await parcours();
+    await within(await screen.findByRole("region", { name: TITRES[1] })).findByRole("group", {
+      name: "Accès au fournisseur par défaut",
+    });
+
+    await act(async () => basculerLargeurFenetre(420));
+    expect(within(lignes()[0]).getByRole("region", { name: TITRES[1] })).toBeInTheDocument();
+    expect(screen.getAllByRole("region", { name: TITRES[1] })).toHaveLength(1);
+
+    await act(async () => basculerLargeurFenetre(1440));
+    expect(within(lignes()[0]).queryByRole("region")).toBeNull();
+    expect(screen.getAllByRole("region", { name: TITRES[1] })).toHaveLength(1);
+  });
+
+  it("ne redit pas dans les cartes d'accès l'état que la ligne de l'étape porte", async () => {
+    // Rien de choisi : l'exécution suit l'abonnement Claude. Dans les Paramètres, sa
+    // carte le dit « Utilisé maintenant », et la saisie « pas encore éprouvé ».
+    monter();
+    await parcours();
+    const premier = await screen.findByRole("region", { name: TITRES[1] });
+    await within(premier).findByRole("button", { name: "Éprouver" });
+
+    expect(within(premier).queryByText("Utilisé maintenant")).toBeNull();
+    expect(within(premier).queryByText(/pas encore éprouvé/)).toBeNull();
+  });
+
+  it("dit le dossier des projets dans les mots de qui découvre Maestro", async () => {
+    poserFournisseurDefaut(CHOIX_ENREGISTRE);
+    const utilisateur = userEvent.setup();
+    monter();
+    await parcours();
+    await waitFor(() => expect(etape(2)).toHaveTextContent("Vos projets naissent dans"));
+    await utilisateur.click(etape(2));
+
+    const deuxieme = ecran(2);
+    expect(
+      await within(deuxieme).findByText(/Chaque projet que Maestro crée pour vous y reçoit son dossier/),
+    ).toBeInTheDocument();
+    // Ni le libellé du réglage ni le chemin : le titre et le résumé de l'étape les disent.
+    expect(within(deuxieme).queryByText("Répertoire des projets")).toBeNull();
+    expect(within(deuxieme).queryByText(REPERTOIRE_PROPOSE.chemin)).toBeNull();
+    expect(within(deuxieme).getByRole("button", { name: "Changer de dossier…" })).toBeEnabled();
+    expect(
+      await within(deuxieme).findByText(/Si l'explorateur refuse un dossier, vous pouvez l'y autoriser/),
+    ).toBeInTheDocument();
+    expect(within(deuxieme).getByText("Aucun pour l'instant.")).toBeInTheDocument();
   });
 });
 
