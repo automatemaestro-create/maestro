@@ -31,6 +31,7 @@ from balayage import fichiers_du_depot
 
 from maestro import menage
 from maestro.controltower.donnees import donnees_du_banc
+from maestro.controltower.persistence import SUFFIXE_SQLITE, chemin_sauvegarde
 from maestro.emplacements import (
     NOM_ETAT,
     NOM_JETABLE,
@@ -219,6 +220,27 @@ def test_le_check_montre_chaque_racine_et_le_hors_racine_avec_taille_et_propriet
     assert poste["etranger"] not in entrees, "un dossier sans le préfixe n'est pas à Maestro"
     assert "pid" in entrees[poste["hote_mort"]].proprietaire, "l'occupant d'un jetable est nommé"
     assert entrees[poste["essais"]].taille == 2048
+
+
+def test_la_sauvegarde_d_un_journal_local_reste_avec_son_journal_et_se_nomme(
+    maison: Path, temporaire: Path
+) -> None:
+    """La sauvegarde d'avant migration (#1621) est déclarée, comme son journal, et dite telle."""
+    journal = racine_etat() / f"commun{SUFFIXE_SQLITE}"
+    sauvegarde = chemin_sauvegarde(journal)
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_bytes(b"journal")
+    sauvegarde.write_bytes(b"sauvegarde")
+
+    entrees = _par_chemin(
+        inventorier(_gardes(), environnement={"TMPDIR": str(temporaire)},
+                    anciennes_adresses=(temporaire,))
+    )
+
+    assert entrees[journal].sort == DECLARE
+    assert entrees[sauvegarde].sort == DECLARE
+    assert entrees[sauvegarde].proprietaire.startswith("sauvegarde d'un journal local")
+    assert entrees[journal].proprietaire.startswith("journal local")
 
 
 def test_sans_option_la_commande_verifie_et_n_ecrit_rien(
