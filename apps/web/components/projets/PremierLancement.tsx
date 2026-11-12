@@ -34,7 +34,12 @@
  *   ligne ouverte s'ouvre comme un onglet. Le volet commence à la hauteur de cette
  *   ligne, quelle que soit l'étape. Les trois étapes restent à l'écran quand celle
  *   du modèle est ouverte, et les cartes d'accès s'y posent sans cadre autour ;
- * - **plus étroit**, sous la ligne de son étape, le long du même filet.
+ * - **plus étroit**, sous la ligne de son étape, le long du même filet. L'étape du
+ *   modèle n'y montre que la carte de l'accès choisi, les autres derrière un repli
+ *   qui en dit le compte (#1629, variante A retenue par le regard neuf, d'après le
+ *   « More » du Payment Element de Stripe et la révélation sous l'option cochée de
+ *   GOV.UK) : les étapes suivantes restent à portée de vue au lieu de passer sous
+ *   toute la liste des fournisseurs.
  *
  * L'écran n'est jamais monté deux fois : sa place se décide en JavaScript, sur la
  * frontière `lg` du shell (`REQUETE_COLONNE_AU_LARGE`). L'état n'est dit qu'une
@@ -189,8 +194,12 @@ const RANGEE_VOLET: Record<NumeroEtape, string> = {
   2: "row-start-2",
   3: "row-start-3",
 };
-/** Sous sa ligne, le filet part du symbole de l'étape. */
-const CLASSE_SOUS_LIGNE = "ml-[1.3125rem] min-w-0 border-l border-bord-fort pt-3 pb-4 pl-4";
+/**
+ * Sous sa ligne, le filet part du symbole de l'étape. L'espace autour de l'écran
+ * est compté au plus juste : à 390 × 844, c'est ce qui laisse lire le titre de
+ * l'étape 3 sans défiler quand l'étape du modèle est ouverte (#1629).
+ */
+const CLASSE_SOUS_LIGNE = "ml-[1.3125rem] min-w-0 border-l border-bord-fort py-2 pl-4";
 
 const ETAPES: Record<NumeroEtape, string> = {
   1: "Le modèle qui fait le travail",
@@ -332,7 +341,9 @@ export function PremierLancement({
         aria-labelledby={`${idLigne(courante)}-titre`}
         className={auLarge ? `${CLASSE_VOLET} ${RANGEE_VOLET[courante]}` : CLASSE_SOUS_LIGNE}
       >
-        {courante === 1 && <FournisseurParDefaut enEtape onEtat={recevoirModele} />}
+        {courante === 1 && (
+          <FournisseurParDefaut enEtape autresReplies={!auLarge} onEtat={recevoirModele} />
+        )}
         {courante === 2 && <ParametresProjets enEtape onRepertoire={recevoirRepertoire} />}
         {courante === 3 && (
           <NaissanceProjet enEtape onNe={noterLaFinDuParcours} parUnGeste={choisie === 3} />
@@ -341,7 +352,7 @@ export function PremierLancement({
     );
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 lg:gap-6">
       {onRevenir !== undefined && courante !== null && (
         <div>
           <Bouton
