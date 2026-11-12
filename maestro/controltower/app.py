@@ -7,6 +7,8 @@ WebSocket. Stack retenue : FastAPI + WebSocket + Redis Pub/Sub (docs/02 §4).
 Endpoints :
 
 - `GET  /api/sante` — vitalité du service ;
+- `GET  /api/installation` — ce que l'installation fait tourner (#1622) : la
+  version du produit et le CLI `claude` qu'il lance, avec sa provenance ;
 - `GET  /api/taches` — les tâches (statut, agent, coût détaillé — tokens,
   durée) : la source du Kanban ;
 - `GET  /api/agents` — l'état des agents (libre/occupé, charge, compteurs,
@@ -603,6 +605,7 @@ from maestro.engine.plafond import (
 from maestro.equipe import GABARITS, RoleManquant, RoleValide, SkillRetenu
 from maestro.equipe.composition import MembreActuel
 from maestro.espace import espace_courant
+from maestro.installation import LecteurInstallation
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
 from maestro.orchestrator.errors import BriefValidationError
 from maestro.orchestrator.schema import validate_brief
@@ -1925,6 +1928,7 @@ def create_app(
     sonde_poste: SondePoste | None = None,
     fournisseur_defaut: ServiceFournisseurParDefaut | None = None,
     accueil: ServiceAccueil | None = None,
+    installation: LecteurInstallation | None = None,
     acces: PolitiqueAcces | None = None,
     comprehension: ComprehensionModele | None = None,
     acquis: MagasinAcquis | None = None,
@@ -2138,6 +2142,11 @@ def create_app(
     (`/api/accueil`) : par défaut, le dépôt des réglages du poste et les projets
     déclarés par `projets`.
 
+    `installation` (#1622) dit ce que cette installation fait tourner
+    (`/api/installation`) : la version du produit et le CLI `claude` que le
+    produit lance. Injectable parce qu'il sort du process — il lance le CLI
+    avec `--version` : un test lui décrit un poste, comme il décrit une sonde.
+
     `hote_run` (#442) est **où** les exécutions se déroulent : le contrat d'hôte
     de run (`maestro.controltower.hote`). Même point d'injection que
     `fabrique_moteur`, et pour une raison voisine : la fabrique décide de *quoi*
@@ -2212,6 +2221,7 @@ def create_app(
     projets = projets if projets is not None else ServiceProjets.default()
     # Le premier lancement (#642) se juge sur les projets **de ce service** : un
     # poste qui en déclare un n'est plus à son premier lancement.
+    installation = installation if installation is not None else LecteurInstallation()
     accueil = (
         accueil
         if accueil is not None
@@ -2875,6 +2885,21 @@ def create_app(
             "espace": espace_courant().nom,
             "magasin": etat.en_json(),
         }
+
+    @app.get("/api/installation")
+    async def installation_courante() -> dict[str, Any]:
+        """Ce que cette installation fait tourner (#1622) : le produit et son CLI `claude`.
+
+        `forme` dit si le produit est une installation ou un clone du dépôt ;
+        `produit.version` celle que l'assemblage a écrite (dans un clone, celle de
+        `apps/desktop/package.json`), ou `null` avec son `releve`. `cli_claude` est
+        le CLI que le produit lance : sa `provenance` (`paquet` — celui que le SDK
+        embarque —, `poste` — un `claude` du `PATH`, hors de l'installation —, ou
+        `absent`), son `chemin` et la `version` que le binaire a dite (`null` :
+        inconnue, jamais devinée). Hors de la boucle : lire la version lance le CLI.
+        """
+        etat = await asyncio.to_thread(installation.lire)
+        return etat.en_json()
 
     @app.post("/api/extinction")
     async def eteindre() -> dict[str, Any]:

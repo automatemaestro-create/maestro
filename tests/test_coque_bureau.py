@@ -412,6 +412,35 @@ def test_la_coque_installee_relit_la_session_ou_le_lanceur_l_inscrit(main_js):
     assert "fenetre.loadURL(URL_UI)" not in main_js
 
 
+def test_la_coque_compare_sa_version_a_celle_du_produit_qu_elle_lance(main_js):
+    """#1622 : la coque lit la version du produit là où l'assemblage l'écrit — le fichier
+    que l'API installée relit (`maestro.installation`) —, et dans un clone la source même
+    de la sienne. Réécrit d'un seul côté, la coque comparerait sa version à un fichier
+    que personne n'écrit, et signalerait un écart à chaque démarrage."""
+    from maestro.installation import FICHIER_VERSION, SOURCE_DE_LA_VERSION
+
+    source = "', '".join(SOURCE_DE_LA_VERSION.parts)
+    assert f"? path.join(RACINE, '{FICHIER_VERSION}')" in main_js
+    assert f": path.join(RACINE, '{source}');" in main_js
+    corps = objet(main_js, "function ecartDeVersions() {")
+    assert "const coque = app.getVersion();" in corps
+    assert "fs.readFileSync(VERSION_DU_PRODUIT, 'utf8')" in corps
+    assert "if (produit === coque) return null;" in corps
+
+
+def test_l_ecart_se_dit_dans_la_fenetre_sans_retenir_le_demarrage(main_js):
+    """Un dialogue natif posé sur la fenêtre, jamais un écran du front (ENF-12), et jamais
+    attendu : Maestro démarre quand même (docs/41), le constat ne bride rien."""
+    corps = objet(main_js, "function signalerEcart(ecart) {")
+    assert re.search(r"dialog\s*\.showMessageBox\(fenetre,", corps)
+    assert "await" not in corps
+    demarrer = objet(main_js, "async function demarrer() {")
+    assert "if (ecart !== null) signalerEcart(ecart);" in demarrer
+    assert "await signalerEcart" not in demarrer
+    # Avant le lancement du produit : le dialogue s'ouvre sur la page d'attente.
+    assert demarrer.index("signalerEcart(ecart)") < demarrer.index("jouerLanceur(['--no-browser'])")
+
+
 def test_l_interpreteur_du_lanceur_ne_fait_pas_naitre_de_console(main_js):
     """La coque installée n'a pas de console : sans `windowsHide`, Windows en
     ouvrirait une pour l'interpréteur — une fenêtre noire qui arrêterait la stack

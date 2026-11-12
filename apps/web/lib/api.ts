@@ -26,6 +26,7 @@ import type {
   DemandeFournisseurDefaut,
   Epreuve,
   EtatAccueil,
+  EtatInstallation,
   EtatFournisseurDefaut,
   ResultatEpreuve,
   ChoixOutillage,
@@ -333,6 +334,16 @@ async function chargerJson<T>(chemin: string): Promise<T> {
  */
 export function chargerSante(): Promise<Sante> {
   return chargerJson<Sante>("/api/sante");
+}
+
+/**
+ * Ce que l'installation fait tourner (`GET /api/installation`, #1622) : la
+ * version du produit, et le CLI `claude` qu'il lance, avec sa provenance. Les
+ * Paramètres la montrent dans « Général » ; elle ne vient que de l'API, jamais
+ * de l'enveloppe qui sert la page.
+ */
+export function chargerInstallation(): Promise<EtatInstallation> {
+  return chargerJson<EtatInstallation>("/api/installation");
 }
 
 /**

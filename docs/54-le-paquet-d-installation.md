@@ -62,6 +62,43 @@ Nommé ici plutôt que découvert à l'usage :
 - **Une signature de code.** L'installeur n'est pas signé : Windows SmartScreen le signale comme
   une application d'éditeur inconnu au premier lancement.
 
+## 2bis. Les quatre composants : ce qui suit le paquet, et comment lire sa version
+
+Une installation porte quatre composants dont les versions pourraient diverger (docs/24 §4.4,
+§4.6). Le paquet les pose **tous les quatre ensemble**, à une seule version : celle que porte le
+nom de l'installeur. Aucun n'a de mise à jour à lui aujourd'hui (la mise à jour automatique est
+#644). Un composant peut pourtant ne pas suivre : une fenêtre de Maestro réinstallée seule devant
+un produit resté à l'ancienne version, ou un CLI `claude` trouvé ailleurs que dans le paquet.
+Maestro le **signale**, il ne le suppose pas (#1622).
+
+| Composant | Suit le paquet ? | Comment lire sa version |
+|---|---|---|
+| **La coque et le front** | Oui. La coque est l'exécutable que le paquet installe, et le front est posé sous `resources\produit\web\` par le même assemblage que le backend : il n'a pas de version à lui. | La coque compare elle-même sa version à celle du produit qu'elle lance, à chaque démarrage (ci-dessous). Les Paramètres ne la montrent pas : l'interface ne sait pas dans quoi elle tourne (ENF-12, docs/35 §2.5). |
+| **Le backend Python** | Oui. Il est posé sous `resources\produit\maestro\`, et l'assemblage écrit sa version dans `resources\produit\version.json`. | *Paramètres › Général › Version de Maestro*, que l'API sert (`GET /api/installation`, docs/05 §6.4sexies). |
+| **Ses dépendances Python** | Oui. Elles sont installées à l'assemblage sous `resources\produit\runtime\python\Lib\site-packages\`, aux versions du venv où la suite passe (§3.2). | Par l'interpréteur de l'installation, paquet par paquet : `resources\produit\runtime\python\python.exe -c "import importlib.metadata as m; print(m.version('claude-agent-sdk'))"`. |
+| **Le CLI `claude`** | Oui s'il est celui que le SDK embarque (`claude_agent_sdk\_bundled\claude.exe`) : il change avec la version du SDK, donc avec le paquet. Non s'il est pris sur le `PATH` du poste : il a alors son propre installeur et sa propre cadence. | *Paramètres › Général › CLI claude* : la version que le binaire dit (`claude --version`), son chemin et sa provenance. Elle se lit sur le binaire, jamais d'après celle du SDK. |
+
+Le SDK `claude-agent-sdk` 0.2.159 embarque le CLI **2.1.281**. C'était le cas sur le paquet de §3.1
+(2026-11-04), et c'est encore le cas sur le venv du dépôt le 2026-11-12.
+
+**Ce qui se signale, et où :**
+
+- **Une fenêtre et un produit de versions différentes.** Au démarrage, la coque lit
+  `version.json` sous `resources\produit\` et le compare à sa propre version. En cas d'écart, ou si
+  la version est illisible, un dialogue de la fenêtre donne les deux versions et le geste à faire :
+  réinstaller Maestro, dont l'installeur pose les deux ensemble. Maestro démarre quand même :
+  l'écart est un constat, pas un verrou.
+- **Un CLI `claude` qui ne suit pas l'installation.** Dans *Paramètres › Général*, la ligne
+  *CLI claude* le signale à l'endroit de la propriété, avec ce qu'il faut faire. Elle couvre trois
+  cas : un CLI introuvable (aucun agent ne peut démarrer), un CLI pris sur le poste, et un CLI qui
+  ne dit pas sa version.
+- **Une API qui ne répond pas.** Les deux lignes disent « Illisible ». Une version ne s'invente
+  pas.
+
+Dans un clone du dépôt, il n'y a pas d'assemblage. La version est lue dans
+`apps/desktop/package.json`, la source dont l'assemblage la tire, et le CLI embarqué est celui du
+SDK installé dans `.venv`.
+
 ## 3. Ce qui a été vérifié, et comment
 
 <!-- documentation: développement -->
@@ -192,9 +229,14 @@ sans `NEXT_PUBLIC_MAESTRO_API_JETON`, l'interface le reçoit au démarrage
 (`apps/web/lib/configPoste.ts`), et l'assembleur cherche octet par octet le jeton du poste qui
 construit dans le front embarqué — le trouver arrête l'assemblage.
 
+L'assemblage écrit aussi la version du paquet à la racine du produit (`version.json`, #1622). La
+formule vit dans `maestro/installation.py`, qui sait aussi la relire, et un dépôt dont
+`apps/desktop/package.json` ne porte pas de version arrête l'assemblage.
+
 Les accords dont dépend l'installation — le `._pth`, les fichiers **suivis** seulement (jamais une
 donnée locale de `core/`), l'emplacement du Node embarqué, le dossier du produit vu de
-l'assembleur, d'electron-builder et de la coque — sont gardés par `tests/test_distribution.py`.
+l'assembleur, d'electron-builder et de la coque, le fichier de version que l'API et la coque
+relisent — sont gardés par `tests/test_distribution.py` et `tests/test_coque_bureau.py`.
 
 ## 5. Le journal local d'une version à l'autre
 

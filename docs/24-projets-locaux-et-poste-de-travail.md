@@ -943,7 +943,9 @@ C'est ce coût — pas la fenêtre — qui justifie de commencer par l'option 1.
 > paquet, et le produit se relance par `sys.executable` comme dans un clone. Le paquet pèse
 > **285 Mo** à télécharger et **921 Mo** installé, dont 536 Mo pour le produit et 241 Mo pour le
 > seul CLI. Ce que l'installation n'apporte pas — un compte pour le modèle, Git for Windows,
-> Docker, les mises à jour — est nommé en docs/54 §2.
+> Docker, les mises à jour — est nommé en docs/54 §2. Les quatre composants du dernier point
+> (front, backend, dépendances Python, CLI) suivent le paquet. Chacun dit comment se lit sa
+> version, et un composant qui ne suit pas le paquet se signale (#1622, docs/54 §2bis).
 
 ### 4.7 Recommandation : **une enveloppe, pas une variante**
 

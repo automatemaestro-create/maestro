@@ -53,6 +53,7 @@ import {
   finDuPremierLancementFactice,
   fournisseurDefautDuPoste,
   fournisseursDuPoste,
+  installationDuPoste,
   installerMatchMedia,
   navigations,
   noterCanal,
@@ -67,6 +68,7 @@ import {
   poserFilAssistance,
   poserFournisseurDefaut,
   poserFournisseurs,
+  poserInstallation,
   poserJournal,
   poserProjets,
   poserRepertoire,
@@ -167,6 +169,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // à faire. Défaut : terminé — une liste vide ouvre la création, et tout test
     // écrit avant ce lot dit encore vrai. `poserAccueil` règle le poste neuf.
     chargerAccueil: () => Promise.resolve().then(accueilDuPoste),
+    // #1622 : « Général » dit ce que l'installation fait tourner. Défaut : une
+    // installation cohérente — `poserInstallation` / `poserPanneInstallation`.
+    chargerInstallation: () => Promise.resolve().then(installationDuPoste),
     terminerAccueil: () => Promise.resolve().then(finDuPremierLancementFactice),
     // L'étape du dossier du parcours lit le répertoire des projets (#1022) et les
     // dossiers autorisés (#1610). Défaut : le répertoire proposé, déjà créé.
@@ -225,6 +230,7 @@ beforeEach(() => {
   poserFournisseurs(CATALOGUE_POSTE_NU);
   poserFournisseurDefaut();
   poserAccueil();
+  poserInstallation();
   poserRepertoire();
   poserCatalogueAgents([]);
   navigations.length = 0;

@@ -1,8 +1,15 @@
 "use client";
 
 /**
- * Section « Général » des Paramètres (#121) : à quel backend l'interface est
- * branchée, et est-ce qu'il répond.
+ * Section « Général » des Paramètres (#121) : ce qui tourne ici, à quel backend
+ * l'interface est branchée, et est-ce qu'il répond.
+ *
+ * Les deux premières lignes (#1622) disent la version de Maestro et le CLI
+ * `claude` qu'il lance, lues dans `GET /api/installation` et composées par
+ * `lib/installation`. Un composant qui ne suit pas l'installation s'y signale
+ * comme l'épreuve en échec d'un fournisseur (#1609) : une alerte, le motif et le
+ * geste, à l'endroit de la propriété — pas un bloc de plus. L'API coupée, elles
+ * disent « Illisible » : une version ne s'invente pas.
  *
  * Les deux URL sont celles que le lanceur a données au serveur du front
  * (`lib/configPoste`, #641), sinon celles du build : elles se lisent ici mais ne
@@ -19,17 +26,27 @@
  * réglage tel qu'il est, et il ne se rejoue pas au démarrage suivant.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { IconeAlerte } from "@/components/Icones";
 import { Bouton } from "@/components/Primitives";
-import { chargerSante, urlApi, urlEvenements } from "@/lib/api";
+import { chargerInstallation, chargerSante, urlApi, urlEvenements } from "@/lib/api";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { useProjetActifFacultatif } from "@/lib/etatProjetActif";
+import {
+  type LigneInstallation,
+  ligneCli,
+  ligneVersion,
+  lignesSansApi,
+} from "@/lib/installation";
 import { demanderPremierLancement } from "@/lib/premierLancement";
 
 import { LigneReglage } from "./SectionParametres";
 
 type Verdict = { ok: boolean; message: string };
+
+/** Les deux lignes de l'installation, une fois lues — ou ce qui en tient lieu. */
+type Installation = [LigneInstallation, LigneInstallation];
 
 export function ParametresGeneral() {
   const { connecte, portee } = useEtatGlobal();
@@ -38,6 +55,23 @@ export function ParametresGeneral() {
   const projetActif = useProjetActifFacultatif();
   const [enCours, setEnCours] = useState(false);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [installation, setInstallation] = useState<Installation | null>(null);
+
+  // Lue une fois à l'ouverture, différée d'un tick (même mécanique que les
+  // autres sections) : l'effet lui-même ne déclenche aucun setState synchrone.
+  useEffect(() => {
+    const tick = setTimeout(() => {
+      void (async () => {
+        try {
+          const etat = await chargerInstallation();
+          setInstallation([ligneVersion(etat), ligneCli(etat)]);
+        } catch (e) {
+          setInstallation(lignesSansApi(e instanceof Error ? e.message : String(e)));
+        }
+      })();
+    }, 0);
+    return () => clearTimeout(tick);
+  }, []);
 
   const tester = async () => {
     setEnCours(true);
@@ -54,6 +88,9 @@ export function ParametresGeneral() {
 
   return (
     <div className="flex flex-col">
+      <LigneDInstallation libelle="Version de Maestro" ligne={installation?.[0] ?? null} />
+      <LigneDInstallation libelle="CLI claude" ligne={installation?.[1] ?? null} />
+
       <LigneReglage
         libelle="API Control Tower"
         aide="Celle que le lanceur a donnée à l'interface à son démarrage."
@@ -136,5 +173,55 @@ export function ParametresGeneral() {
         </LigneReglage>
       )}
     </div>
+  );
+}
+
+/**
+ * Une propriété de l'installation : sa valeur en regard du libellé, et dans
+ * l'aide, le motif — avec l'alerte quand elle signale un écart — puis le chemin
+ * ou le relevé, en chasse fixe. L'état porte une forme, pas seulement une
+ * couleur.
+ */
+function LigneDInstallation({
+  libelle,
+  ligne,
+}: {
+  libelle: string;
+  ligne: LigneInstallation | null;
+}) {
+  if (ligne === null) {
+    return <LigneReglage libelle={libelle} aide="Lecture…" />;
+  }
+  return (
+    <LigneReglage
+      libelle={libelle}
+      aide={
+        <>
+          {ligne.ecart ? (
+            <span className="flex gap-1.5 text-alerte-texte">
+              <IconeAlerte aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              <span className="min-w-0">{ligne.phrase}</span>
+            </span>
+          ) : (
+            ligne.phrase
+          )}
+          {ligne.detail !== null && (
+            // Un chemin n'a pas d'espace où se couper : il se coupe n'importe où
+            // plutôt que d'élargir la page à la largeur d'un téléphone.
+            <span className="mt-0.5 block font-mono wrap-anywhere">{ligne.detail}</span>
+          )}
+        </>
+      }
+    >
+      {ligne.estVersion ? (
+        <code className="font-mono text-corps break-all">{ligne.valeur}</code>
+      ) : (
+        <span
+          className={`text-corps font-medium ${ligne.ecart ? "text-alerte-texte" : ""}`}
+        >
+          {ligne.valeur}
+        </span>
+      )}
+    </LigneReglage>
   );
 }

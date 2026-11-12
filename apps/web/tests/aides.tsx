@@ -47,6 +47,7 @@ import type {
   DemandeFournisseurDefaut,
   Epreuve,
   EtatAccueil,
+  EtatInstallation,
   EtatFournisseurDefaut,
   RepertoireProjets,
   ResultatEpreuve,
@@ -763,6 +764,42 @@ export function poserPanneAccueil(message: string): void {
 export function accueilDuPoste(): EtatAccueil {
   if (panneAccueil !== null) throw new Error(panneAccueil);
   return accueilPose;
+}
+
+/**
+ * Une installation cohérente (#1622) : le produit à sa version, et le CLI que son
+ * SDK embarque — ce qu'une installation neuve sert.
+ */
+export const INSTALLATION_COHERENTE: EtatInstallation = {
+  forme: "installation",
+  produit: { version: "0.1.0", releve: "" },
+  cli_claude: {
+    provenance: "paquet",
+    chemin:
+      "C:/Users/camille/AppData/Local/Programs/Maestro/resources/produit/runtime/python/Lib/site-packages/claude_agent_sdk/_bundled/claude.exe",
+    version: "2.1.281",
+  },
+};
+
+let installationPosee: EtatInstallation = INSTALLATION_COHERENTE;
+let panneInstallation: string | null = null;
+
+/** Ce que `chargerInstallation` rendra — le mock vit dans `setup.ts`. */
+export function poserInstallation(
+  partiel: Partial<EtatInstallation> = {},
+): void {
+  installationPosee = { ...INSTALLATION_COHERENTE, ...partiel };
+  panneInstallation = null;
+}
+
+/** L'API ne répond plus : la lecture de l'installation lève ce message. */
+export function poserPanneInstallation(message: string): void {
+  panneInstallation = message;
+}
+
+export function installationDuPoste(): EtatInstallation {
+  if (panneInstallation !== null) throw new Error(panneInstallation);
+  return installationPosee;
 }
 
 /** La double de `POST /api/accueil/terminer` : le parcours est fini, une fois noté. */
