@@ -35,6 +35,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { McpEtPermissionsAgent } from "@/components/OngletMcpAgent";
+import { ErreurApi } from "@/lib/api";
 import type {
   AgentCatalogueDetail,
   IntegrationPoolMcp,
@@ -149,6 +150,29 @@ describe("l'onglet MCP & permissions d'un agent", () => {
         "gitlab",
       ]),
     );
+  });
+
+  it("dit en mots une activation que l'API n'a pas reçue (#1638)", async () => {
+    chargerAgentCatalogue.mockResolvedValue(fiche());
+    chargerRegistreMcp.mockResolvedValue([]);
+    chargerProvenanceRegistreMcp.mockRejectedValue(new Error("hors banc"));
+    definirActivationsMcp.mockRejectedValueOnce(ErreurApi.injoignable("/api/mcp/activations/qa"));
+
+    render(<McpEtPermissionsAgent nom="qa" />);
+    await screen.findByRole("region", { name: "Intégrations MCP de qa" });
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Activer gitlab pour cet agent" }),
+    );
+
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      "L'API n'a pas répondu : l'activation n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
+    expect(alerte).not.toHaveTextContent(/Failed to fetch|\/api\//);
+    expect(
+      screen.getByRole("switch", { name: "Activer gitlab pour cet agent" }),
+    ).not.toBeChecked();
   });
 
   it("migre les héritées en un geste, et rend ce que la migration a fait", async () => {

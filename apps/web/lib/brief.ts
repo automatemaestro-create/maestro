@@ -282,6 +282,16 @@ export const AUTEUR_CADRAGE = "Chef de projet";
 export const PAGE_DU_CADRAGE = "Chat";
 
 /**
+ * Ce qu'un geste sur le brief dit quand l'API ne l'a pas reçu (#1638) : ce qui
+ * n'a pas eu lieu, puis le geste qui y répond. L'écran `/brief` et le fil du
+ * cadrage le disent avec les mêmes mots.
+ */
+export const DECISION_BRIEF_SANS_API =
+  "L'API n'a pas répondu : le brief n'a pas été tranché. Vérifiez que maestro-api tourne, puis réessayez.";
+export const REPONSES_BRIEF_SANS_API =
+  "L'API n'a pas répondu : vos réponses n'ont pas été envoyées. Vérifiez que maestro-api tourne, puis réessayez.";
+
+/**
  * Un aller-retour de clarification déjà joué (#321), reconstitué de la trace du
  * run : les questions posées, et les réponses qui leur ont été faites.
  *

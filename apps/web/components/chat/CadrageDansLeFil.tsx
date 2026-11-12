@@ -53,13 +53,15 @@ import {
   EnTeteSection,
   EtatVide,
 } from "@/components/Primitives";
-import { chargerExecution } from "@/lib/api";
+import { chargerExecution, refusEnMots } from "@/lib/api";
 import {
   AUTEUR_CADRAGE,
   briefDepuisEdition,
+  DECISION_BRIEF_SANS_API,
   editionDepuis,
   estCorrige,
   manquesDuBrief,
+  REPONSES_BRIEF_SANS_API,
   toursDeClarification,
   type BriefEdite,
   type CleSectionListe,
@@ -144,7 +146,7 @@ export function CadrageDansLeFil({
         approuve && estCorrige(brief, edite) ? briefDepuisEdition(edite) : null;
       await trancherBrief(runId, { approuve, brief: corrige });
     } catch (e: unknown) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, DECISION_BRIEF_SANS_API));
     } finally {
       setEnCours(false);
     }
@@ -163,7 +165,7 @@ export function CadrageDansLeFil({
         brief.questions.map((_, rang) => reponses[rang] ?? ""),
       );
     } catch (e: unknown) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, REPONSES_BRIEF_SANS_API));
     } finally {
       setEnCours(false);
     }

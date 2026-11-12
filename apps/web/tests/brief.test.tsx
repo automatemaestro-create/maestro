@@ -30,6 +30,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ValidationBriefs } from "@/components/brief/ValidationBriefs";
 import { CentreNotifications } from "@/components/CentreNotifications";
 import { PanneauBriefs } from "@/components/PanneauBriefs";
+import { ErreurApi } from "@/lib/api";
 import type { Brief, DetailExecution, Evenement, ResumeExecution } from "@/lib/types";
 
 import { rendreAvecEtat, usageFactice, validationFactice } from "./aides";
@@ -339,5 +340,46 @@ describe("critère 2 — ce qui attend se voit", () => {
     expect(
       within(panneau).getByRole("link", { name: /Relire/ }),
     ).toHaveProperty("pathname", "/chat");
+  });
+});
+
+describe("un geste que l'API n'a pas reçu se dit en mots (#1638)", () => {
+  it("une décision sans réponse dit que le brief n'a pas été tranché, et le geste", async () => {
+    const trancherBrief = vi
+      .fn()
+      .mockRejectedValue(ErreurApi.injoignable("/api/executions/run-1/brief/decision"));
+    await ecran({ trancherBrief });
+
+    await userEvent.click(screen.getByRole("button", { name: "Approuver" }));
+
+    expect(
+      await screen.findByText(
+        "L'API n'a pas répondu : le brief n'a pas été tranché. Vérifiez que maestro-api tourne, puis réessayez.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Failed to fetch|\/api\//)).toBeNull();
+  });
+
+  it("des réponses sans réponse disent qu'elles ne sont pas parties, et le geste", async () => {
+    chargerExecution.mockResolvedValue(
+      detailFactice({ ...BRIEF, questions: ["Quel fournisseur d'e-mail ?"] }),
+    );
+    const repondreAuBrief = vi
+      .fn()
+      .mockRejectedValue(ErreurApi.injoignable("/api/executions/run-1/brief/reponses"));
+    await ecran({
+      executions: [runFactice({ statut: "en_attente_reponses" })],
+      repondreAuBrief,
+    });
+
+    await userEvent.type(screen.getByLabelText("Quel fournisseur d'e-mail ?"), "SendGrid");
+    await userEvent.click(screen.getByRole("button", { name: "Envoyer les réponses" }));
+
+    expect(
+      await screen.findByText(
+        "L'API n'a pas répondu : vos réponses n'ont pas été envoyées. Vérifiez que maestro-api tourne, puis réessayez.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Failed to fetch|\/api\//)).toBeNull();
   });
 });

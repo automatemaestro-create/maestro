@@ -57,8 +57,10 @@ import {
   chargerCatalogue,
   chargerFournisseurs,
   creerAgent,
+  GESTE_ABOUTI_SANS_RELECTURE,
   genererDefinitionAgent,
   modifierAgent,
+  refusEnMots,
   supprimerAgent,
   surchargerAgent,
 } from "@/lib/api";
@@ -83,6 +85,19 @@ import {
 
 /** Miroir du slug accepté par le backend (`_NOM_AGENT`, maestro/agents/store.py). */
 const SLUG_NOM = /^[a-z0-9][a-z0-9_-]*$/;
+
+/**
+ * Ce qu'un geste que l'API n'a pas reçu dit à l'écran (#1638) : ce qui n'a pas eu
+ * lieu, puis le geste qui y répond.
+ */
+const CREATION_SANS_API =
+  "L'API n'a pas répondu : l'agent n'a pas été créé. Vérifiez que maestro-api tourne, puis réessayez.";
+const MODIFICATION_SANS_API =
+  "L'API n'a pas répondu : rien n'a été enregistré. Vérifiez que maestro-api tourne, puis réessayez.";
+const SUPPRESSION_SANS_API =
+  "L'API n'a pas répondu : l'agent n'a pas été supprimé. Vérifiez que maestro-api tourne, puis réessayez.";
+const REGLAGES_SANS_API =
+  "L'API n'a pas répondu : les réglages de l'agent n'ont pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /**
  * Les champs du formulaire.
@@ -1131,7 +1146,7 @@ export function CreationAgent({
       await creerAgent(nom, definitionDepuis(champs));
       await onCreation(nom);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, CREATION_SANS_API));
       setEnCours(false);
     }
     // Succès : la page remplace ce formulaire par la fiche créée — ne plus
@@ -1265,13 +1280,17 @@ export function EditeurAgent({
   const enregistrer = async () => {
     setEnCours(true);
     setErreur(null);
+    let ecrit = false;
     try {
       await modifierAgent(nom, definitionDepuis(champs));
+      ecrit = true;
       // Resynchronisation sur la définition normalisée par le dépôt
       // (rôle épuré, compétences dédoublonnées, date de modification).
       setChamps(champsDepuis(await recharger()));
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(
+        refusEnMots(e, ecrit ? GESTE_ABOUTI_SANS_RELECTURE : MODIFICATION_SANS_API),
+      );
     } finally {
       setEnCours(false);
     }
@@ -1285,7 +1304,7 @@ export function EditeurAgent({
       onSuppression();
       // Succès : la fiche n'a plus d'objet — la navigation démonte ce composant.
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, SUPPRESSION_SANS_API));
       setEnCours(false);
       setSuppressionArmee(false);
     }
@@ -1459,11 +1478,13 @@ function FicheDefaut({
   const ecrire = async (action: () => Promise<void>) => {
     setEnCours(true);
     setErreur(null);
+    let ecrit = false;
     try {
       await action();
+      ecrit = true;
       setChamps(champsDepuis(await recharger()));
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, ecrit ? GESTE_ABOUTI_SANS_RELECTURE : REGLAGES_SANS_API));
     } finally {
       setEnCours(false);
     }

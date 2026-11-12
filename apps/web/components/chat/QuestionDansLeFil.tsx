@@ -73,12 +73,17 @@ import { useId, useState } from "react";
 import { CarteDuFil } from "@/components/chat/CarteDuFil";
 import { IconeAide } from "@/components/Icones";
 import { BadgeEtat, Bouton, ChampTexte } from "@/components/Primitives";
+import { refusEnMots } from "@/lib/api";
 import { AUTEUR_CADRAGE } from "@/lib/brief";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { AGENT_ORCHESTRATION } from "@/lib/orchestration";
 import { questionEchue } from "@/lib/questions";
 import type { Question } from "@/lib/types";
+
+/** Ce qu'une réponse que l'API n'a pas reçue dit sur la carte (#1638). */
+const REPONSE_SANS_API =
+  "L'API n'a pas répondu : votre réponse n'a pas été envoyée. Vérifiez que maestro-api tourne, puis réessayez.";
 
 export function QuestionDansLeFil({
   question,
@@ -135,7 +140,7 @@ export function QuestionDansLeFil({
       // démonte — inutile de rétablir `enCours`. En cas d'échec seulement, on
       // rend la main pour réessayer.
     } catch (e: unknown) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, REPONSE_SANS_API));
       setEnCours(false);
     }
   };

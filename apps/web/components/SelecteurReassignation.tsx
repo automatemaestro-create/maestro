@@ -19,9 +19,14 @@
 
 import { useState } from "react";
 
+import { refusEnMots } from "@/lib/api";
 import type { EtatAgent, Tache } from "@/lib/types";
 
 export type Reassigner = (tacheId: string, agent: string) => Promise<void>;
+
+/** Ce qu'une réassignation que l'API n'a pas reçue dit à l'écran (#1638). */
+const REASSIGNATION_SANS_API =
+  "L'API n'a pas répondu : la tâche n'a pas été réassignée. Vérifiez que maestro-api tourne, puis réessayez.";
 
 export function SelecteurReassignation({
   tache,
@@ -44,7 +49,7 @@ export function SelecteurReassignation({
     try {
       await reassigner(tache.id, agent);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, REASSIGNATION_SANS_API));
     } finally {
       setEnCours(false);
     }

@@ -111,7 +111,9 @@ import {
   chargerVersionPlaybook,
   chargerVersionsPlaybook,
   ecrirePlaybook,
+  GESTE_ABOUTI_SANS_RELECTURE,
   redigerPlaybook,
+  refusEnMots,
   rejeterPropositionPlaybook,
   restaurerPlaybook,
 } from "@/lib/api";
@@ -131,6 +133,13 @@ import {
   type RedactionPlaybook,
   type VersionPlaybook,
 } from "@/lib/types";
+
+/**
+ * Ce que publier, restaurer, appliquer ou rejeter disent quand l'API n'a pas reçu
+ * le geste (#1638) : la version en vigueur est celle d'avant, le brouillon reste.
+ */
+const PLAYBOOK_SANS_API =
+  "L'API n'a pas répondu : le playbook n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /* ------------------------------------------------------------------ *
  * Ce que le sélecteur désigne
@@ -420,14 +429,16 @@ export function EditeurPlaybook({
   ) => {
     setEnCours(true);
     setErreur(null);
+    let ecrit = false;
     try {
       await action();
+      ecrit = true;
       const nouvelleFiche = await recharger();
       if (resynchroniser) setContenu(nouvelleFiche.contenu);
       revenirALEdition();
       await onPublication?.();
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, ecrit ? GESTE_ABOUTI_SANS_RELECTURE : PLAYBOOK_SANS_API));
     } finally {
       setEnCours(false);
     }

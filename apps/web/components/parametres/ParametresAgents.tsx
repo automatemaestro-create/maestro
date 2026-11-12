@@ -16,10 +16,15 @@
 
 import { useState } from "react";
 
+import { refusEnMots } from "@/lib/api";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import type { EtatAgent } from "@/lib/types";
 
 import { EtatVide, Interrupteur } from "./SectionParametres";
+
+/** Ce qu'un réglage que l'API n'a pas reçu dit sur la ligne de l'agent (#1638). */
+const REGLAGE_SANS_API =
+  "L'API n'a pas répondu : la capacité de l'agent n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
 
 export function ParametresAgents() {
   const { agents, chargement, reglerCapacite } = useEtatGlobal();
@@ -81,7 +86,7 @@ function LigneAgent({
     try {
       await reglerCapacite(agent.nom, reglage);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, REGLAGE_SANS_API));
     } finally {
       setEnCours(false);
     }

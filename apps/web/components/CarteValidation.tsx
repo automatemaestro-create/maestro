@@ -67,6 +67,7 @@ import {
   type DensiteCarte,
 } from "@/components/Primitives";
 import { cheminOnglet } from "@/lib/agents";
+import { refusEnMots } from "@/lib/api";
 import { formatAttente } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
 import { usePiegeDeFocus } from "@/lib/usePiegeDeFocus";
@@ -95,6 +96,10 @@ export type Decider = (
   motif?: string,
   etendue?: EtendueApprobation,
 ) => Promise<void>;
+
+/** Ce qu'une décision que l'API n'a pas reçue dit sur la carte (#1638). */
+const DECISION_SANS_API =
+  "L'API n'a pas répondu : la décision n'a pas été transmise. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /** Le libellé de chaque étendue durable, tel que l'encart l'offre (#1185). */
 const LIBELLE_ETENDUE: Record<EtendueApprobation, string> = {
@@ -168,7 +173,7 @@ export function CarteValidation({
       // sans quoi un rechargement lent rouvrirait les boutons sur une décision
       // déjà partie, et le second clic reviendrait en 409.
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, DECISION_SANS_API));
       setEnCours(false);
     }
   };

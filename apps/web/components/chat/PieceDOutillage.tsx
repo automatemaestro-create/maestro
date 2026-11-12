@@ -86,7 +86,7 @@ import {
   RecapitulatifVerifications,
   TexteAvecCode,
 } from "@/components/projets/VerificationsOutillage";
-import { ErreurApi } from "@/lib/api";
+import { refusEnMots } from "@/lib/api";
 import {
   apercuDeLaPiece,
   commandesMisesEnAvant,
@@ -175,7 +175,7 @@ export function PieceDOutillage({
     try {
       await trancher(decision, piece.empreinte);
     } catch (e: unknown) {
-      setRefus(refusEnMots(e));
+      setRefus(refusEnMots(e, ECRITURE_SANS_API));
     }
   };
 
@@ -360,17 +360,12 @@ export function phraseDeProposition(luesDans: string[]): string {
 }
 
 /**
- * Ce qu'un geste refusé dit sur la carte. Une API qui n'a **pas répondu** (la panne est
- * typée à la source, `ErreurApi.injoignable`) se dit avec ce qu'elle implique — rien
- * n'a été écrit — et le geste qui y répond ; un refus motivé garde son motif. Vu à la
- * relecture de #1161 : l'API coupée, la carte affichait « Failed to fetch ».
+ * Ce qu'un geste refusé dit sur la carte quand l'API n'a **pas répondu** : ce que la
+ * panne implique — rien n'a été écrit — et le geste qui y répond (#1161). Un refus
+ * motivé garde son motif (`refusEnMots`).
  */
-function refusEnMots(e: unknown): string {
-  if (e instanceof ErreurApi && e.statut === null) {
-    return "L'API n'a pas répondu : rien n'a été écrit. Vérifiez que maestro-api tourne, puis réessayez.";
-  }
-  return e instanceof Error ? e.message : String(e);
-}
+const ECRITURE_SANS_API =
+  "L'API n'a pas répondu : rien n'a été écrit. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /**
  * Le sort d'une pièce, en mots — la fin de sa trace sous la bulle.
