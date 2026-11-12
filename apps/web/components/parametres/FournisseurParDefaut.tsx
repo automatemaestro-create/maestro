@@ -19,6 +19,13 @@
  * fournisseur) : aucune liste n'est écrite ici. Une clé tapée part à l'épreuve
  * puis au coffre du poste ; elle n'est jamais réaffichée, et le champ se vide
  * dès qu'elle est enregistrée.
+ *
+ * La même carte est l'**étape du modèle** du premier lancement (#642, `enEtape`) :
+ * l'étape réutilise l'écran du produit, elle ne le recopie pas (d'après AnythingLLM).
+ * Montée dans une étape, elle perd son cadre, son titre et sa tête « Utilisé
+ * maintenant » : l'étape porte déjà le titre, et son résumé dit l'état — une fois
+ * (réserves 2 et 3 du regard neuf). `onEtat` lui dit chaque état lu ou enregistré,
+ * pour qu'elle se coche sur le fait.
  */
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -61,7 +68,15 @@ type Action = "epreuve" | "enregistrement" | "retrait";
 const MESSAGE_ENREGISTRE =
   "Enregistré. Le prochain appel de modèle s'en sert, sans redémarrer Maestro.";
 
-export function FournisseurParDefaut() {
+export function FournisseurParDefaut({
+  enEtape = false,
+  onEtat,
+}: {
+  /** Montée dans l'étape du premier lancement : sans cadre, sans titre ni tête. */
+  enEtape?: boolean;
+  /** Chaque état lu ou enregistré — ce sur quoi l'étape du modèle se coche. */
+  onEtat?: (etat: EtatFournisseurDefaut) => void;
+} = {}) {
   const [catalogue, setCatalogue] = useState<CatalogueFournisseurs | null>(null);
   const [etat, setEtat] = useState<EtatFournisseurDefaut | null>(null);
   const [panne, setPanne] = useState<RefusProjet | null>(null);
@@ -103,6 +118,10 @@ export function FournisseurParDefaut() {
     }, 0);
     return () => clearTimeout(tick);
   }, []);
+
+  useEffect(() => {
+    if (etat !== null) onEtat?.(etat);
+  }, [etat, onEtat]);
 
   const options = useMemo(
     () => (catalogue === null ? [] : optionsAcces(catalogue)),
@@ -242,21 +261,25 @@ export function FournisseurParDefaut() {
     }
   };
 
-  return (
-    <Carte balise="section" aria-labelledby="defaut-titre" className="mb-4">
-      <h3 id="defaut-titre" className="text-titre font-semibold">
-        Par défaut
-      </h3>
-      <p className="mt-1 text-corps text-texte-secondaire">
-        Le fournisseur et le modèle de tout ce qui n&apos;en choisit pas un : les
-        runs, le fil et l&apos;assistant.
-      </p>
-      <Effectif
-        etat={etat}
-        option={optionEffective}
-        epreuve={epreuveEnService}
-        carteCochee={selection === effective}
-      />
+  const contenu = (
+    <>
+      {!enEtape && (
+        <>
+          <h3 id="defaut-titre" className="text-titre font-semibold">
+            Par défaut
+          </h3>
+          <p className="mt-1 text-corps text-texte-secondaire">
+            Le fournisseur et le modèle de tout ce qui n&apos;en choisit pas un : les
+            runs, le fil et l&apos;assistant.
+          </p>
+          <Effectif
+            etat={etat}
+            option={optionEffective}
+            epreuve={epreuveEnService}
+            carteCochee={selection === effective}
+          />
+        </>
+      )}
       <Imposition etat={etat} />
 
       {/* `min-w-0` : un fieldset a pour largeur minimale son contenu (`min-inline-size:
@@ -312,6 +335,15 @@ export function FournisseurParDefaut() {
           </span>
         </div>
       )}
+    </>
+  );
+
+  // Dans l'étape, le premier bloc ne garde pas la marge qui le séparait de la tête.
+  return enEtape ? (
+    <div className="[&>:first-child]:mt-0">{contenu}</div>
+  ) : (
+    <Carte balise="section" aria-labelledby="defaut-titre" className="mb-4">
+      {contenu}
     </Carte>
   );
 }

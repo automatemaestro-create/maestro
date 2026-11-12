@@ -25,6 +25,7 @@ import type {
   CatalogueFournisseurs,
   DemandeFournisseurDefaut,
   Epreuve,
+  EtatAccueil,
   EtatFournisseurDefaut,
   ResultatEpreuve,
   ChoixOutillage,
@@ -796,6 +797,27 @@ export function chargerFournisseurs(): Promise<CatalogueFournisseurs> {
  */
 export function chargerFournisseurDefaut(): Promise<EtatFournisseurDefaut> {
   return chargerJson<EtatFournisseurDefaut>("/api/fournisseurs/defaut");
+}
+
+/**
+ * Le premier lancement du poste (`GET /api/accueil`, #642) : le parcours
+ * d'accueil reste-t-il à faire ? La porte ne le demande qu'à un poste sans
+ * projet — un poste qui en déclare un n'y entre jamais.
+ */
+export function chargerAccueil(): Promise<EtatAccueil> {
+  return chargerJson<EtatAccueil>("/api/accueil");
+}
+
+/**
+ * Note la fin du premier lancement (`POST /api/accueil/terminer`, #642) : la
+ * porte l'appelle quand le projet né dans le parcours s'ouvre. Idempotent.
+ */
+export function terminerAccueil(): Promise<EtatAccueil> {
+  return envoyerJsonEtLire<EtatAccueil>(
+    "/api/accueil/terminer",
+    undefined,
+    "Fin du premier lancement refusée",
+  );
 }
 
 /**

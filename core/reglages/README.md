@@ -15,6 +15,15 @@ Dépôt des **réglages de cette installation-ci**, un fichier par réglage :
   vides. Code : `maestro.fournisseur_par_defaut` ; HTTP :
   `/api/fournisseurs/defaut` (docs/05 §6.4quater) ; tests :
   `tests/test_fournisseur_par_defaut.py`.
+- `accueil.json` — la **fin du premier lancement** (ticket #642) : la date
+  (`termine_le`) à laquelle le parcours d'accueil d'un poste neuf a été mené à
+  son premier projet. C'est elle qui empêche le parcours de se rejouer au
+  démarrage suivant. Le fichier ne porte **que** cette date : chaque étape du
+  parcours se lit sur le réglage qu'elle pose (`fournisseur.json`,
+  `projets.json`, les projets déclarés). Un fichier absent ou abîmé se lit comme
+  un parcours jamais terminé, et un poste qui déclare déjà un projet n'y entre
+  pas. Code : `maestro.controltower.accueil` ; HTTP : `/api/accueil` (docs/05
+  §6.4quinquies) ; tests : `tests/test_accueil.py`.
 
 ⚠ **À ne pas confondre avec `core/projets/`**, et la confusion est facile parce
 que les deux parlent de « racines » : `core/projets/` porte les **déclarations**

@@ -414,6 +414,7 @@ from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
 from maestro.controltower import selecteur
 from maestro.controltower.acces import GardeAcces, PolitiqueAcces, politique_depuis
+from maestro.controltower.accueil import DepotAccueil, ServiceAccueil
 from maestro.controltower.acquis import magasin_acquis_configure
 from maestro.controltower.analytics import PAS_DEMANDABLES, PAS_HEURE, agrege_couts
 from maestro.controltower.assistance import (
@@ -1923,6 +1924,7 @@ def create_app(
     hote_run: HoteRun | None = None,
     sonde_poste: SondePoste | None = None,
     fournisseur_defaut: ServiceFournisseurParDefaut | None = None,
+    accueil: ServiceAccueil | None = None,
     acces: PolitiqueAcces | None = None,
     comprehension: ComprehensionModele | None = None,
     acquis: MagasinAcquis | None = None,
@@ -2132,6 +2134,10 @@ def create_app(
     Par défaut il éprouve avec le vrai fournisseur : un test lui injecte son
     éprouveur, comme il injecte une sonde.
 
+    `accueil` (#642) dit si le premier lancement reste à faire sur ce poste
+    (`/api/accueil`) : par défaut, le dépôt des réglages du poste et les projets
+    déclarés par `projets`.
+
     `hote_run` (#442) est **où** les exécutions se déroulent : le contrat d'hôte
     de run (`maestro.controltower.hote`). Même point d'injection que
     `fabrique_moteur`, et pour une raison voisine : la fabrique décide de *quoi*
@@ -2204,6 +2210,13 @@ def create_app(
     )
     permissions = permissions if permissions is not None else PermissionStore.default()
     projets = projets if projets is not None else ServiceProjets.default()
+    # Le premier lancement (#642) se juge sur les projets **de ce service** : un
+    # poste qui en déclare un n'est plus à son premier lancement.
+    accueil = (
+        accueil
+        if accueil is not None
+        else ServiceAccueil(DepotAccueil.default(), lambda: len(projets.lister()))
+    )
     # L'analyse d'outillage (#1030) se greffe sur le **même** service de projets :
     # elle n'a pas de dépôt à elle, et un second lecteur de fiches finirait par ne
     # plus refuser les mêmes racines que le premier. La **génération** (#1033) y
@@ -6065,6 +6078,34 @@ def create_app(
     async def effacer_fournisseur() -> dict[str, Any]:
         """Retire le choix du poste : l'environnement seul décide de nouveau (#1609)."""
         return fournisseur_defaut.effacer()
+
+    @app.get("/api/accueil")
+    async def accueil_etat() -> dict[str, Any]:
+        """Le premier lancement reste-t-il à faire sur ce poste ? (#642)
+
+        `a_faire` est vrai tant qu'aucun projet n'est déclaré **et** que le
+        parcours n'a jamais été terminé ; `termine_le` date sa fin (null : jamais).
+        Les étapes du parcours ne sont pas ici : chacune se lit sur la route du
+        réglage qu'elle pose (fournisseur par défaut, répertoire des projets,
+        projets déclarés).
+        """
+        return accueil.etat()
+
+    @app.post("/api/accueil/terminer")
+    async def accueil_terminer() -> dict[str, Any]:
+        """Note la fin du premier lancement (#642) — idempotent, la première date reste.
+
+        L'écran l'appelle quand le projet né dans le parcours s'ouvre. 503 si le
+        dépôt des réglages du poste refuse l'écriture : rien n'est alors noté, et
+        un poste qui a un projet n'est de toute façon plus à son premier lancement.
+        """
+        try:
+            return accueil.terminer()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"La fin du premier lancement n'a pas pu être notée : {exc}",
+            ) from exc
 
     @app.delete("/api/fournisseurs/defaut/cles/{variable}")
     async def retirer_cle_fournisseur(variable: str) -> dict[str, Any]:

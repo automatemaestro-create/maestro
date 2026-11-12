@@ -726,6 +726,42 @@ export function IconeStatutEchec(props: Props) {
   );
 }
 
+/*
+ * Les étapes d'un parcours (#642) — le premier lancement. Le cercle de la famille,
+ * d'après les walkthroughs de VS Code : **vide** pour ce qui reste à faire, et une
+ * forme par état, pour que l'étape en cours ne se confonde ni avec celle qui reste
+ * à faire ni avec celle qui attend (réserve 5 du regard neuf). Faite, une étape
+ * prend la coche d'`IconeStatutTerminee`.
+ */
+
+/** Une étape qui reste à faire : le cercle vide, rien n'y est encore posé. */
+export function IconeEtapeAFaire(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="9.5" />
+    </Trait>
+  );
+}
+
+/** L'étape dont l'écran est ouvert : le cercle, et le point plein de « vous êtes ici ». */
+export function IconeEtapeCourante(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="9.5" />
+      <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+    </Trait>
+  );
+}
+
+/** Une étape qui attend une étape d'avant : le cercle en pointillé, pas encore ouvert. */
+export function IconeEtapeEnAttente(props: Props) {
+  return (
+    <Trait {...props}>
+      <circle cx="12" cy="12" r="9.5" strokeDasharray="2.5 3" />
+    </Trait>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Actions et repères — ce qu'on fait (#245)
  * ------------------------------------------------------------------ */

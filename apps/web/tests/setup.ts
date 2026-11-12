@@ -41,6 +41,7 @@ import { oublierLesBrouillons } from "@/lib/brouillons";
 import type { DemandeFournisseurDefaut } from "@/lib/types";
 
 import {
+  accueilDuPoste,
   CATALOGUE_POSTE_NU,
   canauxDemandes,
   catalogueAgents,
@@ -49,6 +50,7 @@ import {
   epreuveFactice,
   etatGlobalCourant,
   filAssistanceCourant,
+  finDuPremierLancementFactice,
   fournisseurDefautDuPoste,
   fournisseursDuPoste,
   installerMatchMedia,
@@ -58,6 +60,7 @@ import {
   noterProjetDuFil,
   pageJournalCourante,
   porteesDemandees,
+  poserAccueil,
   poserCatalogueAgents,
   poserChemin,
   poserEtatGlobal,
@@ -66,8 +69,10 @@ import {
   poserFournisseurs,
   poserJournal,
   poserProjets,
+  poserRepertoire,
   projetsDeclares,
   projetsDuFil,
+  repertoireDuPoste,
   reponseBilanFactice,
   routeurFactice,
 } from "./aides";
@@ -158,6 +163,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
       Promise.resolve(epreuveFactice(demande)),
     enregistrerFournisseurDefaut: (demande: DemandeFournisseurDefaut) =>
       Promise.resolve(enregistrementFactice(demande)),
+    // #642 : la porte d'un poste sans projet demande si le premier lancement reste
+    // à faire. Défaut : terminé — une liste vide ouvre la création, et tout test
+    // écrit avant ce lot dit encore vrai. `poserAccueil` règle le poste neuf.
+    chargerAccueil: () => Promise.resolve().then(accueilDuPoste),
+    terminerAccueil: () => Promise.resolve().then(finDuPremierLancementFactice),
+    // L'étape du dossier du parcours lit le répertoire des projets (#1022) et les
+    // dossiers autorisés (#1610). Défaut : le répertoire proposé, déjà créé.
+    chargerRepertoireProjets: () => Promise.resolve().then(repertoireDuPoste),
+    chargerDossiersAutorises: () => Promise.resolve({ dossiers: [] }),
     // #255 : le même formulaire lit les **rôles connus** dans le catalogue des
     // agents. Défaut vide — aucun rôle suggéré, le champ reste celui d'avant —,
     // et les 18 fichiers qui mockent `@/lib/api` chez eux gardent le pas sur
@@ -210,6 +224,8 @@ beforeEach(() => {
   poserJournal([]);
   poserFournisseurs(CATALOGUE_POSTE_NU);
   poserFournisseurDefaut();
+  poserAccueil();
+  poserRepertoire();
   poserCatalogueAgents([]);
   navigations.length = 0;
   porteesDemandees.length = 0;

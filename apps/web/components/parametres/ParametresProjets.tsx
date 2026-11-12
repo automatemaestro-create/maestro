@@ -29,6 +29,10 @@
  * explorables. Ils se relisent ici, la portée dite une fois en tête, et se
  * retirent ligne à ligne — la liste des dossiers de confiance de VS Code, celle
  * des partages de Docker Desktop (veille du ticket).
+ *
+ * La même section est l'**étape du dossier** du premier lancement (#642) : montée
+ * telle quelle, dossiers autorisés compris, elle dit chaque répertoire lu ou réglé
+ * par `onRepertoire`, pour que l'étape se coche sur le fait.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -166,7 +170,12 @@ function DossiersAutorises({
   );
 }
 
-export function ParametresProjets() {
+export function ParametresProjets({
+  onRepertoire,
+}: {
+  /** Chaque répertoire lu ou réglé — ce sur quoi l'étape du dossier se coche. */
+  onRepertoire?: (repertoire: RepertoireProjets) => void;
+} = {}) {
   const [repertoire, setRepertoire] = useState<RepertoireProjets | null>(null);
   const [explorateurOuvert, setExplorateurOuvert] = useState(false);
   const [enCours, setEnCours] = useState(false);
@@ -192,6 +201,10 @@ export function ParametresProjets() {
       vivant = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (repertoire !== null) onRepertoire?.(repertoire);
+  }, [repertoire, onRepertoire]);
 
   const regler = useCallback(async (chemin: string | null) => {
     setEnCours(true);
