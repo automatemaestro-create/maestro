@@ -93,6 +93,13 @@ gantt
 > livrés, et #1587 rejoue la mesure, sur un ticket neuf, avec un seuil posé avant l'épreuve. La
 > routine, qui confierait à Maestro une part des tickets du dépôt, est différée. Elle s'ouvre quand
 > ce seuil est tenu et que l'isolation (#1515) est livrée. Aucun jalon ne bouge.
+>
+> Le 2026-11-12, **le code s'écrit en anglais**
+> ([docs/55](./55-decision-le-code-s-ecrit-en-anglais.md)). Les identifiants, les docstrings et les
+> commentaires changent de langue paquet par paquet, à comportement constant, avec un nom par concept
+> tenu par le glossaire de docs/08. Ce que la personne lit reste en français. Le chantier ouvre le
+> jalon « Le code parle anglais », sur le rail outillage, juste après « Outillage de la forge ».
+> Aucun jalon produit ne bouge.
 
 ---
 
@@ -1793,6 +1800,9 @@ se teste et se merge mal, quel que soit son poids dans le contexte.
 - **un plafond de lignes par fichier** : le seuil serait arbitraire, et il punirait la prose avant le
   code ;
 - **une passe d'ensemble sur les docstrings** : un diff de 60 000 lignes de prose ne se relit pas ;
+  > ⚠ **Renversé en partie le 2026-11-12** ([docs/55](./55-decision-le-code-s-ecrit-en-anglais.md),
+  > #1659) : la prose passe à l'anglais paquet par paquet, chaque lot de #1649 se relisant seul. Une
+  > passe d'un seul diff reste écartée.
 - **découper les gros fichiers de tests** avant les modules qu'ils testent ;
 - **une garde automatique sur les docstrings** : il faudrait un lexique du passé (#746) ;
 - **le cliquet côté front** : la complexité de `apps/web/` n'a pas été mesurée, et rien ne le
@@ -1942,6 +1952,73 @@ seul »**, dont l'échéance ne bouge pas.
 
 > ⚠ **Les critères de chaque ticket sont dans sa description**, et c'est elle qui fait foi à la
 > clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1588.
+
+---
+
+## « Le code parle anglais » — un nom par concept, paquet par paquet (2026-11-12)
+
+Ce chantier est né d'une demande du 2026-11-12, instruite par [`/idee`](../.claude/commands/idee.md)
+(#1013) et consignée par #1659. Le plan a été **présenté avant toute écriture** (#1415), et la
+personne l'a accepté tel que recommandé. La décision est
+[docs/55](./55-decision-le-code-s-ecrit-en-anglais.md).
+
+> *« je pense qu'il faudrait qu'on internationalise le code et les commentaires en anglais, je pense
+> que c'est un frein au développement de maestro. peux-tu planifier cela? »*
+
+| Milestone | Contenu | Échéance | Suivi |
+|---|---|---|---|
+| **Le code parle anglais — un nom par concept, paquet par paquet, à comportement constant** (jalon neuf, rail outillage) | Le code de `maestro/`, `tests/` et `apps/web/` se lit en anglais, un concept par nom, sans rien changer pour la personne | 2027-09-22 | **#1649** ; lots #1659, #1650 à #1658 |
+
+**Le constat, mesuré le 2026-11-12** :
+- **le mélange existe déjà**. Les noms du métier sont en français et ceux de la technique en
+  anglais, si bien qu'un même concept porte deux noms : `events` et `evenements`, `costs` et
+  `couts`, `catalog` et `catalogue`, « exécution » et « run » ;
+- **une bonne part de ce qui est nommé en français est un contrat** : 92 routes et les clés JSON de
+  l'API, les clés Redis, la tâche Celery, les noms d'activités Temporal, les fichiers d'état du poste,
+  ce que le modèle reçoit ;
+- **le volume** : 140 911 lignes dans `maestro/`, 181 136 dans `tests/` et 115 663 dans `apps/web/`.
+
+**Le contenu**, en lots tous en série (chacun renomme ce que d'autres paquets importent) :
+1. **#1659** : la note docs/55, le glossaire « Les noms dans le code » de docs/08, et la règle dans
+   `CLAUDE.md` ;
+2. **#1650, le pilote** : `messaging`, `queue`, `router` et `durable`. Il éprouve la recette sur
+   toutes les sortes de noms qui voyagent, et mesure ce que coûte un lot ;
+3. **#1651 à #1658** : `telemetry` et `sources`, puis `projets`, `equipe` et `orchestrator`, puis
+   `scenarios`, `outillage`, `providers` (aucun lot de #1307 en vol), `sandbox` (après #1515),
+   `agents`, et enfin la racine de `maestro/` avec `lanceur` (après #1647) ;
+4. **restent à découper après le pilote**, sur sa mesure : `engine` (après #1469), `controltower`
+   (après #1468), le contrat de l'API (Python et TypeScript ensemble) et `apps/web/`.
+
+**Sa place dans la file** : un jalon neuf, parce qu'il porte ses propres critères de sortie.
+- **Le rail outillage**, comme le découpage de `app.py` et le cliquet de complexité (docs/53) : le
+  chantier n'apporte aucune capacité à l'utilisateur du produit, et `/orchestrate` sans consigne ne
+  le prend pas.
+- **L'échéance du 2027-09-22**, juste après « Outillage de la forge » (2027-09-15), le seul autre
+  jalon actif du rail. Placé avant, il deviendrait le jalon courant de l'outillage, et chaque ticket
+  d'outillage neuf y tomberait.
+- **Aucun jalon produit ne bouge.** Les lots sont en `prio::haute`, puisque la personne nomme le
+  français comme un frein. Le rythme se décide sur la mesure du pilote.
+
+**Une décision tombe, à la demande de la personne** : le « plus tard » du 2026-10-15, qui n'avait
+jamais été écrit, et la convention implicite des noms du métier en français. docs/53 §0.4 et §7 sont
+renversés en partie, puisque la prose d'un paquet se réécrit d'un coup quand son lot passe.
+
+**Ne bougent pas** :
+- ce que la personne lit : écrans, messages, prompts et playbooks des agents ;
+- ce qui voyage ou s'enregistre, qui garde sa valeur (la constante change, pas la chaîne) ;
+- l'outillage de la forge, `docs/`, les tickets et les commits ;
+- les labels en français (docs/10 §3.2), et le bash qui ne se réécrit pas.
+
+**Sont écartés ou différés** :
+- tout d'un coup, ou au fil de l'eau ;
+- une garde automatique de la langue (#746) ;
+- **l'i18n du produit**, c'est-à-dire des écrans en anglais et des agents qui répondent dans la
+  langue de la personne. Elle se rouvre par `/idee` quand un utilisateur non francophone est en vue ;
+- l'outillage, `docs/` et les tickets en anglais, qui se rouvrent quand un contributeur non
+  francophone arrive.
+
+> ⚠ **Les critères de chaque ticket sont dans sa description**, et c'est elle qui fait foi à la
+> clôture (docs/10 §6), pas ce résumé. L'analyse entière, mesures comprises, est le corps de #1659.
 
 ---
 

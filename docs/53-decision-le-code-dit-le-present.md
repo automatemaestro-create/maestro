@@ -30,6 +30,9 @@
    qui est « comme avant ce lot » sortent.
 4. **La règle s'applique au code qu'on touche**, jamais en réécriture d'ensemble. Un découpage la
    fait sur le code qu'il déplace, dans un **commit distinct** du déplacement.
+   ⚠ **Renversé en partie le 2026-11-12** ([docs/55](./55-decision-le-code-s-ecrit-en-anglais.md),
+   #1659) : un lot de traduction du chantier #1649 réécrit toute la prose de son paquet, et la règle
+   s'y applique d'un coup. Hors de ces lots, elle reste celle du code qu'on touche.
 5. **Aucune garde ne la juge.** Distinguer l'histoire du présent dans un texte est un jugement, et ce
    dépôt ne juge pas un texte par un lexique (#746).
 6. **La complexité ne monte plus** (#1577). La règle C901 de ruff entre au seuil de l'outil. Chaque
@@ -143,6 +146,9 @@ l'a imposée est parti, et `#1101` y mène.
   code.
 - **Une passe d'ensemble sur les docstrings.** Un diff de 60 000 lignes de prose ne se relit pas, et
   les découpages touchent déjà le plus gros.
+  ⚠ **Renversé en partie le 2026-11-12** ([docs/55](./55-decision-le-code-s-ecrit-en-anglais.md),
+  #1659) : la prose passe à l'anglais, **paquet par paquet**. Chaque lot du chantier #1649 se relit
+  seul, ce qui répond à l'objection. Une passe d'ensemble d'un seul diff reste écartée.
 - **Découper les gros fichiers de tests** (`test_orchestrate.py`, 9 991 lignes) avant les modules
   qu'ils testent.
 - **Une garde automatique sur les docstrings** : il faudrait un lexique du passé (#746).
