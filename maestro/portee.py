@@ -757,7 +757,7 @@ class PorteeProjet:
                 return motif
         return ""
 
-    def _appel(
+    def _appel(  # noqa: C901
         self,
         simple: Simple,
         mots: list[tuple[Mot, _Valeur]],
@@ -844,7 +844,7 @@ class PorteeProjet:
             return self._find(simple, arguments, ctx)
         return self._destruction(verbe, nom, arguments, ctx, flux=flux)
 
-    def _find(self, simple: Simple, arguments: list[tuple[Mot, _Valeur]], ctx: _Contexte) -> str:
+    def _find(self, simple: Simple, arguments: list[tuple[Mot, _Valeur]], ctx: _Contexte) -> str:  # noqa: C901
         """Un `find` qui agit : ce que ses tests désignent, confronté à ce qui était là.
 
         Le geste que #1226 voulait laisser passer — le ménage des caches que ses
@@ -1046,7 +1046,7 @@ class PorteeProjet:
             return lieu.genre in (RACINE, ETABLI) and nom.startswith("activate")
         return False
 
-    def _coquille(
+    def _coquille(  # noqa: C901
         self, simple: Simple, nom: str, arguments: list[tuple[Mot, _Valeur]], ctx: _Contexte
     ) -> str | None:
         """Ce qu'on donne à un shell POSIX — `None` s'il lance un script, jugé comme un fichier."""
@@ -1211,7 +1211,7 @@ class PorteeProjet:
             return ctx.avant
         return ctx.variables.get(nom, (_Inconnu(f"${nom}"),))
 
-    def _substitution(self, partie: Partie, ctx: _Contexte) -> _Valeur:
+    def _substitution(self, partie: Partie, ctx: _Contexte) -> _Valeur:  # noqa: C901
         """Ce que rend une substitution, quand son texte le dit : `mktemp`, `pwd`, `cygpath`…"""
         (script,) = partie.scripts
         inconnue: _Valeur = (_Inconnu(partie.source, _cherche_des_processus(script)),)
@@ -1482,7 +1482,7 @@ def _installe_hors_projet(nom: str, arguments: list[str]) -> bool:
     return not drapeaux or any(argument in drapeaux for argument in arguments)
 
 
-def _coquille_etrangere(
+def _coquille_etrangere(  # noqa: C901
     nom: str, ecrit: str, rendus: Sequence[str], du_projet: Callable[[str], bool]
 ) -> str:
     """Le programme donné à PowerShell ou à `cmd`, parcouru pour ses verbes qui sortent.
@@ -1682,7 +1682,7 @@ def _deballe(nom: str, arguments: list[tuple[Mot, _Valeur]]) -> list[tuple[Mot, 
     return arguments[index:] or None
 
 
-def _operandes(
+def _operandes(  # noqa: C901
     nom: str, arguments: list[tuple[Mot, _Valeur]], *, windows: bool
 ) -> Iterator[tuple[_Valeur, str]]:
     """Ce que les arguments **nomment** comme chemins, à situer depuis le dossier courant.
@@ -1964,7 +1964,7 @@ def _etend_accolades(texte: str) -> list[str] | None:
         return None
 
 
-def _etend(texte: str) -> list[str]:
+def _etend(texte: str) -> list[str]:  # noqa: C901
     for debut, caractere in enumerate(texte):
         if caractere != "{":
             continue

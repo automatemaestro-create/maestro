@@ -343,7 +343,7 @@ class Retention:
     #: Celles qui ont résisté à l'oubli, par leur fichier.
     declarations_resistantes: tuple[str, ...] = ()
 
-    def lignes(self) -> list[str]:
+    def lignes(self) -> list[str]:  # noqa: C901
         """L'annonce : rien quand il n'y avait rien à faire, sinon ce qui est parti et resté."""
         lignes: list[str] = []
         if self.retires or self.echecs or self.occupes:
@@ -397,7 +397,7 @@ class Retention:
         return lignes
 
 
-def retenir(
+def retenir(  # noqa: C901
     *,
     rouvert: Path | None = None,
     environnement: Mapping[str, str] | None = None,

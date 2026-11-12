@@ -997,7 +997,7 @@ def cle_demande(demande: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
     )
 
 
-def attendre_le_run(
+def attendre_le_run(  # noqa: C901
     client: ClientAPI,
     run_id: str,
     *,

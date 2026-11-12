@@ -345,7 +345,7 @@ class _Lecteur:
             document.corps = ""
         return script
 
-    def _liste(
+    def _liste(  # noqa: C901
         self, arrets: frozenset[str], *, parenthese: bool, branche: bool = False
     ) -> Script:
         """Des commandes jusqu'à l'un des `arrets` — ou jusqu'à `;;` dans une branche de `case`."""
@@ -379,7 +379,7 @@ class _Lecteur:
             raise Illisible(f"« {jeton.texte} » inattendu après une commande")
         return Script(tuple(commandes), frozenset(operateurs))
 
-    def _selon(self) -> Selon:
+    def _selon(self) -> Selon:  # noqa: C901
         """`case sujet in [(]motif[|motif…]) liste ;; … esac`."""
         self._prends()
         sujet = self._prends()
@@ -418,7 +418,7 @@ class _Lecteur:
             raise Illisible("`case` jamais fermé")
         return Selon(sujet.mot, tuple(branches), *self._redirections())
 
-    def _commande(self) -> Commande:
+    def _commande(self) -> Commande:  # noqa: C901
         jeton = self._regarde()
         reserve = self._reserve(jeton)
         if reserve in ("!", "time"):
@@ -678,7 +678,7 @@ class _Lecteur:
                 lecteur._guillemets(parties, [], fin=None)
                 document.scripts = tuple(s for partie in parties for s in partie.scripts)
 
-    def _mot(self) -> _Jeton:
+    def _mot(self) -> _Jeton:  # noqa: C901
         debut = self.i
         parties: list[Partie] = []
         tampon: list[str] = []

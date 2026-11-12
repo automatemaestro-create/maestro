@@ -850,7 +850,7 @@ class RegistreDesMiroirs:
                 miroir.fermer()
 
 
-def _relever(source: Path, fichiers_max: int, octets_max: int) -> dict[str, _Entree]:
+def _relever(source: Path, fichiers_max: int, octets_max: int) -> dict[str, _Entree]:  # noqa: C901
     """Ce que la racine porte, chemin par chemin — bornes comptées pendant le relevé.
 
     Rien n'est exclu par son nom (voir l'en-tête), aucun lien n'est suivi ; un dossier
@@ -1063,7 +1063,7 @@ def port_de_verification(
     )
 
 
-def _copier(
+def _copier(  # noqa: C901
     source: Path,
     copie: Path,
     exclus: tuple[re.Pattern[str], ...],

@@ -571,7 +571,7 @@ class ServiceProjets:
             if _sous_une_racine(racine, tuple(a for a in triees if a != racine)) is None
         )
 
-    def points_entree(self) -> tuple[tuple[Path, str], ...]:
+    def points_entree(self) -> tuple[tuple[Path, str], ...]:  # noqa: C901
         """Ce que l'écran montre en arrivant : `(dossier, origine)`, dans l'ordre d'affichage.
 
         À distinguer de `racines()`, qui est la **frontière** — ce qu'on a le

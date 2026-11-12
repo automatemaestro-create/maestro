@@ -371,7 +371,7 @@ class ClaudeProvider(ModelProvider):
             return None
         return "cle" if mode is AuthMode.API_KEY else "abonnement"
 
-    async def eprouver(self, model: str) -> Epreuve:
+    async def eprouver(self, model: str) -> Epreuve:  # noqa: C901
         """Un tour de modèle sans outil, et le motif de son échec lu dans les champs du SDK (#1609).
 
         Trois sources, aucune n'est un texte : `AssistantMessage.error` (un
@@ -1742,7 +1742,7 @@ def _attendus_mcp(mcp_serveurs: Sequence[ServeurMcp]) -> frozenset[str]:
     return frozenset(s.nom for s in mcp_serveurs)
 
 
-def _hook_permissions(
+def _hook_permissions(  # noqa: C901
     politique: PolitiqueOutils | None,
     on_refus: TraceOutil | None,
     on_arbitrage_acte: ArbitreActe | None = None,
@@ -2303,7 +2303,7 @@ async def _collect_response(
     return "".join(parts)
 
 
-async def _stream_response(
+async def _stream_response(  # noqa: C901
     prompt: str,
     options: ClaudeAgentOptions,
     *,
@@ -2513,7 +2513,7 @@ async def _attend_serveurs_mcp(client: ClaudeSDKClient, attendus: frozenset[str]
         await asyncio.sleep(_MCP_SONDAGE_S)
 
 
-def _absorbe(
+def _absorbe(  # noqa: C901
     message: Any,
     parts: list[str],
     outils: list[str],

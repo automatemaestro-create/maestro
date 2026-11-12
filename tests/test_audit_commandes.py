@@ -66,10 +66,11 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from itertools import pairwise
 from pathlib import Path
 
 import pytest
+from cliquet import Cliquet, CliquetRemonte
+from cliquet import verifier_cliquet as verifier_un_cliquet
 
 from maestro.sources.extraction import estimer_tokens
 
@@ -87,8 +88,7 @@ RUN_SH = "scripts/orchestrate/run.sh"
 #: budget est un **cliquet** (docs/49 §2.1) : une ligne ne s'ajoute que **plus basse** que la
 #: précédente, et une ligne livrée ne se retouche pas — la relever serait renverser docs/49 par
 #: écrit.
-#: Le registre tient lieu d'historique parce que la garde ne peut pas lire celui de git : la CI
-#: clone à profondeur 1, et le conteneur du filet local ne résout pas le `.git` d'un worktree.
+#: Pourquoi un registre plutôt que l'historique de git : `tests/cliquet.py`.
 BUDGETS_LIVRES_CLAUDE_MD: tuple[tuple[str, int], ...] = (
     ("#965", 25_000),
     ("#1523", 20_164),
@@ -182,40 +182,24 @@ def verifier_budget(texte: str, budget: int = BUDGET_CLAUDE_MD_TOKENS) -> int:
     return cout
 
 
-class CliquetRemonte(AssertionError):
-    """Le budget de `CLAUDE.md` remonte au-dessus d'un budget déjà livré (#1523)."""
+#: Le cliquet du budget, et les mots de ses refus : le mécanisme est celui de `tests/cliquet.py`,
+#: partagé avec le compte des dérogations C901 (#1577).
+CLIQUET_CLAUDE_MD = Cliquet(
+    registre="BUDGETS_LIVRES_CLAUDE_MD",
+    valeur="BUDGET_CLAUDE_MD_TOKENS",
+    unite="tokens",
+    livre="livrés",
+    regle=(
+        "Le budget de CLAUDE.md est un cliquet (#1523, docs/49 §2.1), il ne remonte jamais : une "
+        "règle qui entre en fait sortir une, ou sort sa démonstration vers docs/."
+    ),
+    decision="docs/49",
+)
 
 
 def verifier_cliquet(budget: int, livres: Sequence[tuple[str, int]]) -> None:
-    """Lève si le registre remonte quelque part, ou si `budget` n'est pas sa dernière valeur.
-
-    Les deux portes d'une hausse : relever la constante seule (elle quitte le registre), ou
-    l'inscrire au registre (la ligne n'est pas plus basse que la précédente). Une baisse non
-    inscrite lève aussi : sans sa ligne, le budget suivant pourrait remonter jusqu'à l'ancien
-    sans que rien ne rougisse.
-    """
-    for (avant, precedent), (ticket, valeur) in pairwise(livres):
-        if valeur >= precedent:
-            raise CliquetRemonte(
-                f"BUDGETS_LIVRES_CLAUDE_MD remonte : {ticket} pose {valeur} tokens après les "
-                f"{precedent} de {avant}. Le budget de CLAUDE.md est un cliquet (#1523, docs/49 "
-                "§2.1) : une règle qui entre en fait sortir une, ou sort sa démonstration vers "
-                "docs/. Le relever, c'est renverser docs/49 par écrit."
-            )
-    ticket, dernier = livres[-1]
-    if budget > dernier:
-        raise CliquetRemonte(
-            f"BUDGET_CLAUDE_MD_TOKENS vaut {budget} tokens, au-dessus des {dernier} livrés par "
-            f"{ticket} : le budget de CLAUDE.md est un cliquet (#1523, docs/49 §2.1), il ne "
-            "remonte jamais. Une règle qui entre en fait sortir une, ou sort sa démonstration "
-            "vers docs/."
-        )
-    if budget < dernier:
-        raise CliquetRemonte(
-            f"BUDGET_CLAUDE_MD_TOKENS descend à {budget} tokens sans sa ligne dans "
-            f"BUDGETS_LIVRES_CLAUDE_MD (dernière : {dernier}, {ticket}) : inscris la baisse avec "
-            "son ticket, sans quoi le budget suivant pourrait remonter jusqu'à l'ancien."
-        )
+    """Lève si le registre remonte quelque part, ou si `budget` n'est pas sa dernière valeur."""
+    verifier_un_cliquet(budget, livres, CLIQUET_CLAUDE_MD)
 
 
 #: La règle relevable de #965, telle que `CLAUDE.md` et docs/25 §9.4 la disaient avant #1523

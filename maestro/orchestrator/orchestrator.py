@@ -343,7 +343,7 @@ def _unwrap_brief(payload: Any) -> Any:
     return payload
 
 
-def _first_json_substring(text: str) -> str | None:
+def _first_json_substring(text: str) -> str | None:  # noqa: C901
     """Isole la première sous-chaîne `[...]` ou `{...}` équilibrée, hors chaînes JSON."""
     start = _first_index(text, "[{")
     if start is None:

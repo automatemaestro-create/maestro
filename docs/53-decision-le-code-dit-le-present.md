@@ -116,6 +116,12 @@ l'a imposée est parti, et `#1101` y mène.
   puis #1468 et #1469. Chaque dérogation disparaît avec la fonction qui la portait.
 - **Activer RUF100 sur tout le dépôt n'est pas le chemin.** Il retirerait 221 `noqa` qui visent des
   règles non activées (BLE001, S603…) et portent une intention. Le mécanisme se choisit dans #1577.
+- **Le mécanisme retenu par #1577.** Une dérogation est un `# noqa: C901` sur la ligne du `def`.
+  `tests/test_complexite.py` les confronte à ce que ruff signale quand on lui retire toutes les
+  dérogations, `noqa` comme réglages (`--isolated --ignore-noqa`). Une dérogation inutile y rougit,
+  comme un dépassement passé sous silence. Leur nombre suit un registre qui ne fait que descendre,
+  sur le mécanisme du budget de `CLAUDE.md` (`tests/cliquet.py`). Au départ, 70 fonctions dépassent
+  le seuil : 61 sous `maestro/`, 5 sous `scripts/`, 4 sous `tests/`.
 
 ## 6. Ce qui ne bouge pas
 

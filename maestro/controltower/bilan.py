@@ -401,7 +401,7 @@ def _borne(texte: str, limite: int = TEXTE_PIECE_MAX) -> str:
     return propre[: limite - 1].rstrip() + "…"
 
 
-def _classer(entree: EntreeJournal) -> tuple[str, int] | None:
+def _classer(entree: EntreeJournal) -> tuple[str, int] | None:  # noqa: C901
     """La famille et la priorité de la pièce que fait `entree` — None si elle n'en fait pas.
 
     Le classement lit le **type** de l'entrée, puis, pour une activité d'agent, son

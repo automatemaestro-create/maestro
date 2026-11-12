@@ -1781,7 +1781,7 @@ REPRISE_POMPE_S = 1.0
 REPRISE_POMPE_MAX_S = 10.0
 
 
-async def _pompe(
+async def _pompe(  # noqa: C901
     bus: EventBus,
     state: ControlTowerState,
     diffusion: Diffusion,
@@ -1892,7 +1892,7 @@ async def _pompe(
         attente = min(attente * 2, reprise_max_s)
 
 
-def create_app(
+def create_app(  # noqa: C901
     *,
     bus: EventBus | None = None,
     state: ControlTowerState | None = None,

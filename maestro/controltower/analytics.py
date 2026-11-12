@@ -376,7 +376,7 @@ def _tri_par_cout(usage: StepUsage) -> tuple[float, int]:
     return (usage.cout_usd or 0.0, usage.tokens_total)
 
 
-def agrege_couts(
+def agrege_couts(  # noqa: C901
     executions: Sequence[EtatExecution],
     *,
     fil: Sequence[Event] = (),

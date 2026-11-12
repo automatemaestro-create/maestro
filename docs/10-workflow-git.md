@@ -3007,6 +3007,17 @@ lieu de ~10, §8.4, avec **couverture** pytest-cov : taux remonté dans le résu
 GitLab (§8.8). Les jobs Python partagent le **cache pip** natif de `setup-python` (clé sur
 `pyproject.toml`). Un **pipeline vert est la condition de passage `En revue` → merge**.
 
+**La complexité ne monte plus** (#1577, [docs/53 §5](./53-decision-le-code-dit-le-present.md)).
+`ruff check .` porte la règle C901 au seuil de ruff, et `pyproject.toml` ne règle aucun
+`max-complexity`. Une fonction au-dessus du seuil porte un `# noqa: C901` à la ligne de son `def`.
+Le nombre de ces dérogations est un cliquet, `DEROGATIONS_C901_LIVREES` dans
+[`tests/test_complexite.py`](../tests/test_complexite.py), sur le mécanisme du budget de
+`CLAUDE.md` (`tests/cliquet.py`, #1523). Une fonction neuve au-dessus du seuil fait rougir
+`python-lint`, et la taire par un `# noqa: C901` fait rougir `pytest`. La suite confronte chaque
+dérogation à ce que ruff signale quand on lui retire toutes les dérogations
+(`--isolated --ignore-noqa`). Une fonction repassée sous le seuil perd donc la sienne, et la baisse
+s'inscrit au registre. RUF100 reste inactif : il jugerait aussi les `noqa` des règles non activées.
+
 Le **front** (`apps/web`) a son propre job, `web-build`, qui enchaîne `npm run lint` (ESLint),
 `npm run typecheck` (`tsc --noEmit`, #236), `npm test` (la suite **Vitest** de l'interface, #124)
 puis `npm run build` (`next build`, qui vérifie aussi le typage TypeScript). Le `typecheck` fait

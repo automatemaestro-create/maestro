@@ -308,7 +308,7 @@ class Explorateur:
         )
         return f"{demande.ligne()}\n(refusé : {_EXPLICATION_REFUS.get(motif, motif)})"
 
-    def _resoudre(self, brut: str, *, dossier: bool) -> tuple[str | None, str]:
+    def _resoudre(self, brut: str, *, dossier: bool) -> tuple[str | None, str]:  # noqa: C901
         """Le chemin relatif **réel** qu'on peut servir, ou `(None, motif)`.
 
         L'ordre compte, et chaque étape ferme une porte que la suivante suppose

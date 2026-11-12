@@ -4147,7 +4147,7 @@ class ServiceChat:
         """La conversation de `agent` où `run_id` a été demandé — `None` si aucune (#1224)."""
         return self._store.conversation_du_run(agent, run_id)
 
-    async def diffuser(
+    async def diffuser(  # noqa: C901
         self,
         agent: Agent,
         contenu: str,
@@ -4651,7 +4651,7 @@ class ServiceChat:
         )
 
 
-def transcription(fil: Sequence[MessageChat]) -> str:
+def transcription(fil: Sequence[MessageChat]) -> str:  # noqa: C901
     """Le fil rendu en prompt : la conversation puis la consigne de réponse.
 
     Publique pour la même raison que `normaliser` : deux canaux la partagent

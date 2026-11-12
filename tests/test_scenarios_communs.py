@@ -278,7 +278,7 @@ class FausseAPI:
 
     # --- Le transport -----------------------------------------------------
 
-    def demander(
+    def demander(  # noqa: C901
         self,
         methode: str,
         chemin: str,

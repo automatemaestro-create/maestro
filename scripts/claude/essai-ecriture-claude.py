@@ -320,7 +320,7 @@ def environnement() -> dict[str, str]:
     return env
 
 
-def lance(
+def lance(  # noqa: C901
     exe: str,
     projet: Path,
     allow: list[str],
@@ -529,7 +529,7 @@ def joue(nom: str, exe: str, racine: Path, args: argparse.Namespace) -> dict:
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     analyseur = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

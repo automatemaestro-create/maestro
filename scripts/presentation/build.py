@@ -1126,7 +1126,7 @@ def selectionner_clips(
 # --- Assemblage -----------------------------------------------------------------------------------
 
 
-def construire(donnees: dict[str, Any], racine_captures: Path) -> str:
+def construire(donnees: dict[str, Any], racine_captures: Path) -> str:  # noqa: C901
     milestone = donnees["milestone"]
     base_url = donnees.get("projet", {}).get("url", "").rstrip("/")
     tickets: list[dict[str, Any]] = donnees.get("tickets", [])

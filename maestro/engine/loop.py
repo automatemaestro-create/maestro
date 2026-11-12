@@ -413,7 +413,7 @@ class RunReport:
             self.plafond_cout_usd, self.plafond_tokens, self.usage_totale
         )
 
-    def synthese(self) -> str:
+    def synthese(self) -> str:  # noqa: C901
         """Rend l'agrégat en Markdown : récap chiffré puis livrable par tâche.
 
         Chaque section porte le `task_id` de sa tâche (#721). `tache_id` est la
@@ -918,7 +918,7 @@ class OrchestrationEngine:
             attente_limite=attente_limite,
         )
 
-    async def run(
+    async def run(  # noqa: C901
         self,
         objective: str,
         *,
@@ -1237,7 +1237,7 @@ class OrchestrationEngine:
                 if commencee:
                     courante = _reprise_au_plafond(courante)
 
-        async def _des_que_prete(task: Task) -> TaskResult:
+        async def _des_que_prete(task: Task) -> TaskResult:  # noqa: C901
             if task.id in acquises:
                 # Payée avant l'interruption (#1391) : son issue est rendue telle
                 # quelle — sortie comprise, c'est elle que l'aval lira —, sans
@@ -2259,7 +2259,7 @@ class OrchestrationEngine:
             or self._agents
         )
 
-    async def _rattrape(
+    async def _rattrape(  # noqa: C901
         self,
         task: Task,
         echec: TaskResult,

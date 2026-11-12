@@ -586,7 +586,7 @@ def _version(connexion: sqlite3.Connection) -> int:
     return int(ligne[0]) if ligne is not None else 0
 
 
-def _mettre_a_niveau(
+def _mettre_a_niveau(  # noqa: C901
     connexion: sqlite3.Connection, chemin: Path, marches: Sequence[Migration], cible: int
 ) -> None:
     """Joue les marches qui manquent au fichier, une fois, sous le verrou, après sauvegarde.

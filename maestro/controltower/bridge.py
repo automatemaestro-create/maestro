@@ -287,7 +287,7 @@ def _sans_suffixe_dactivite(etape: str) -> str:
     return etape
 
 
-def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:
+def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:  # noqa: C901
     """Convertit une ligne de journal (`StepRecord.to_dict`) en événements du bus.
 
     - les étapes `<tache>:message` (#44) deviennent des **messages
