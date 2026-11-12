@@ -59,6 +59,12 @@
 set -uo pipefail
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Le canal local (`canal.sh`) s'arrête par la carte et l'arrêt de `pilote.sh` (#1644).
+# shellcheck disable=SC1091  # le lint appelle shellcheck fichier par fichier (#285) : la source
+# n'est pas sur sa ligne de commande, donc `source=` ne serait pas suivi de toute façon.
+. "$RACINE/scripts/orchestrate/pilote.sh"
+# shellcheck disable=SC1091  # même raison que ci-dessus
+. "$RACINE/scripts/distribution/canal.sh"
 POSTE="$RACINE/.maestro/session/poste vierge"
 INSTALLEUR=""
 ANCIEN=""
@@ -156,10 +162,10 @@ if ! env MSYS2_ARG_CONV_EXCL='*' subst "$LECTEUR" "$(cygpath -w "$POSTE")"; then
   echo "[verification] subst $LECTEUR refusé" >&2
   exit 2
 fi
-# À la sortie : la lettre de lecteur défaite, et le canal local arrêté s'il a été servi.
-PID_FLUX=""
+# À la sortie, même interrompue : la lettre de lecteur défaite, et le canal local arrêté s'il est
+# encore en vol.
 defaire_le_lecteur() {
-  [ -n "$PID_FLUX" ] && kill "$PID_FLUX" >/dev/null 2>&1
+  canal_en_vol "$TRACE" && canal_arreter "$PORT_FLUX" "$TRACE" >/dev/null 2>&1
   env MSYS2_ARG_CONV_EXCL='*' subst "$LECTEUR" /D >/dev/null 2>&1 || true
 }
 trap defaire_le_lecteur EXIT
@@ -366,20 +372,6 @@ version_du_produit() {
 version_de_la_coque() {
   env MSYS2_ARG_CONV_EXCL='*' "$PS" -NoProfile -NonInteractive -Command \
     "(Get-Item -LiteralPath '$W_INSTALL\\Maestro.exe').VersionInfo.ProductVersion" 2>/dev/null | tr -d '\r'
-}
-
-# `servir_le_flux` : le canal, sur le poste et sur l'hôte local seul. Le serveur est celui du venv du
-# dépôt : il joue le rôle des publications GitHub, il n'appartient pas au poste vierge. Rend 0 quand
-# `latest.yml` y répond.
-servir_le_flux() {
-  "$RACINE/.venv/Scripts/python.exe" -m http.server "$PORT_FLUX" --bind 127.0.0.1 \
-    --directory "$(cygpath -w "$FLUX_DOSSIER")" >"$TRACE/canal.log" 2>&1 &
-  PID_FLUX=$!
-  for _ in $(seq 1 20); do
-    [ "$(sonde "http://127.0.0.1:$PORT_FLUX/latest.yml")" = 200 ] && return 0
-    sleep 1
-  done
-  return 1
 }
 
 # `lancer_un_run` : un run dans le projet déclaré, par l'API, pour que le journal porte quelque
@@ -738,8 +730,13 @@ CACHE_DES_MISES_A_JOUR="$PROFIL/AppData/Local/maestro-updater"
 if [ -n "$FLUX_DOSSIER" ]; then
   version_avant="$(version_du_produit)"
   echo "[verification] mise à jour : $version_avant → $VERSION_SUIVANTE (canal ${FLUX_DOSSIER#"$RACINE"/})"
-  constat "$(servir_le_flux && echo 0 || echo 1)" \
-    "le canal local sert latest.yml (version $VERSION_SUIVANTE) sur http://127.0.0.1:$PORT_FLUX/"
+  # Le canal sur le poste et sur l'hôte local seul, servi par le venv du dépôt (`canal.sh`).
+  canal_servir "$RACINE/.venv/Scripts/python.exe" "$PORT_FLUX" "$(cygpath -w "$FLUX_DOSSIER")" "$TRACE"
+  servi=$?
+  refus=""
+  [ "$servi" = 3 ] && refus=" — refusé : le port répondait déjà, un autre serveur (celui d'une vérification interrompue ?) l'occupe"
+  constat "$([ "$servi" = 0 ] && echo 0 || echo 1)" \
+    "le canal local sert latest.yml (version $VERSION_SUIVANTE) sur http://127.0.0.1:$PORT_FLUX/$refus"
   FLUX_COQUE="http://127.0.0.1:$PORT_FLUX/"
   ouvrir mise-a-jour
   FLUX_COQUE=0
@@ -846,8 +843,10 @@ if [ -n "$FLUX_DOSSIER" ]; then
     constat 1 "rien à presser : aucune version annoncée prête, ou aucune fenêtre (PID ${PID_FENETRE:-aucun})"
     fermer mise-a-jour
   fi
-  kill "$PID_FLUX" >/dev/null 2>&1
-  PID_FLUX=""
+  if [ "$servi" != 3 ]; then
+    canal_arreter "$PORT_FLUX" "$TRACE"
+    constat "$?" "le canal local est arrêté : plus rien ne répond sur http://127.0.0.1:$PORT_FLUX/"
+  fi
 fi
 
 desinstaller finale
