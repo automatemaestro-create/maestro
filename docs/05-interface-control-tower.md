@@ -4485,6 +4485,13 @@ routes livrées après lui y sont documentées au même endroit et au même nive
 dans un second chapitre concurrent (§6.7, les projets de la Phase 7). Une section porte la mention
 **livré** quand elle décrit du code réel.
 
+**Où vit le code d'une route** (#1525) : dans le module de son domaine, sous
+[`maestro/controltower/routes/`](../maestro/controltower/routes) — exécutions, fil, projets,
+outillage, MCP… —, dont la docstring du paquet
+([`routes/__init__.py`](../maestro/controltower/routes/__init__.py)) tient la carte et l'ordre
+d'inclusion. [`maestro/controltower/app.py`](../maestro/controltower/app.py) n'assemble que
+l'application : services, montage, CORS, portier et pompe des événements.
+
 Convention partagée avec les routes existantes : un champ **`null`** vaut « inconnu » et se
 distingue d'un zéro ou d'une absence ; les horodatages sont en **ISO-8601 UTC**.
 
@@ -6532,7 +6539,7 @@ canal existant, pas un second » —, et c'est ce qui a permis à #484 de retire
 réponse juste quand les deux surfaces sont ouvertes côte à côte et que l'une tranche — les deux
 restent joignables, `/brief` par sa redirection (§1.1) et le fil par le menu.
 
-Implémentation : [`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes,
+Implémentation : [`maestro/controltower/routes/executions.py`](../maestro/controltower/routes/executions.py) pour les routes,
 [`maestro/controltower/brief.py`](../maestro/controltower/brief.py) pour les arbitres et
 [`maestro/engine/brief.py`](../maestro/engine/brief.py) pour les régimes et l'appariement.
 Couverture : [`tests/test_brief.py`](../tests/test_brief.py) et
@@ -6737,7 +6744,7 @@ Implémentation : [`maestro/plan_run.py`](../maestro/plan_run.py) (la forme tran
 feuille comme `detail_tache.py`), [`maestro/controltower/graphe.py`](../maestro/controltower/graphe.py)
 (la composition, module feuille comme `progression.py`),
 `ControlTowerState.graphe(run_id)` pour la jointure et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route.
+[`maestro/controltower/routes/executions.py`](../maestro/controltower/routes/executions.py) pour la route.
 
 Vérification : [`tests/test_graphe_run.py`](../tests/test_graphe_run.py) (#492) — la forme
 transportée et sa tolérance, la composition (le niveau comme plus long chemin, le graphe plat, les
@@ -6976,7 +6983,7 @@ cinq cents lignes.
 Implémentation : [`maestro/controltower/frise.py`](../maestro/controltower/frise.py) (la composition,
 module feuille comme `progression.py`), `ServiceJournal.entrees_du_run` pour la source,
 `ControlTowerState.agents_du_run` pour les couloirs déclarés, et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route.
+[`maestro/controltower/routes/executions.py`](../maestro/controltower/routes/executions.py) pour la route.
 
 Vérification : [`tests/test_frise_run.py`](../tests/test_frise_run.py) — la résolution d'une entrée
 (dont le tiret qui n'ouvre aucun couloir), le tri **prouvé par deux présentations inverses de la même
@@ -7160,7 +7167,7 @@ WebSocket n'a pas changé : il ne porte pas la conversation, un client relisant 
 Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`Conversation`,
 `ChatStore.conversations`/`courante`/`ouvrir`, `titre_conversation`, le champ `conversation` de
 `MessageChat` et de `FragmentChat`) et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour les routes.
+[`maestro/controltower/routes/chat.py`](../maestro/controltower/routes/chat.py) pour les routes.
 
 Couverture (lot 8, #698) : [`tests/test_chat_pleine_page.py`](../tests/test_chat_pleine_page.py),
 sections ③ et ④. ③ garde ce que ce lot promet de **ne pas** faire — un `<agent>.jsonl` écrit avant
@@ -7260,7 +7267,7 @@ Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.
 (`MessageChat.proposition`, `proposition_en_attente`, `ServiceChat.trancher_cadrage`),
 [`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
 (`RepondeurOrchestration.trancher_cadrage`) et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) pour la route ; côté UI
+[`maestro/controltower/routes/chat.py`](../maestro/controltower/routes/chat.py) pour la route ; côté UI
 `apps/web/lib/brief`, `apps/web/components/chat/DemandeDeCadrage.tsx` et le pied de
 `apps/web/components/Conversation.tsx`. Couverture :
 [`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑨ et
@@ -7310,7 +7317,7 @@ Implémentation : [`maestro/controltower/chat.py`](../maestro/controltower/chat.
 [`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
 (`VERDICT_PROJET`, `RepondeurOrchestration.declarer_projet`),
 [`maestro/controltower/naissance.py`](../maestro/controltower/naissance.py) et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`maestro/controltower/routes/chat.py`](../maestro/controltower/routes/chat.py). Couverture :
 [`tests/test_naissance_projet.py`](../tests/test_naissance_projet.py).
 
 #### 6.15.2 Agir sur un run depuis le fil (#1179)
@@ -7373,7 +7380,7 @@ vocabulaire et `GesteRefuse`),
 `GesteRunFait`, `RunVise`, `geste_run_en_attente`, `ServiceChat.trancher_geste`),
 [`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
 (`VERDICT_GESTE`, `PiloteDesRuns`, `RepondeurOrchestration.trancher_geste`) et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`maestro/controltower/routes/chat.py`](../maestro/controltower/routes/chat.py). Couverture :
 [`tests/test_gestes_du_fil.py`](../tests/test_gestes_du_fil.py).
 
 #### 6.15.3 Régler une attente depuis le fil — répondre à un agent, trancher une validation (#1183)
@@ -7436,7 +7443,7 @@ vocabulaire, `AttenteVisee`, `ReglementPropose`, `ReglementFait`, `ReglementRefu
 `ServiceChat.trancher_reglement`),
 [`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
 (`VERDICT_ATTENTE`, `PiloteDesAttentes`, `RepondeurOrchestration.trancher_reglement`) et
-[`maestro/controltower/app.py`](../maestro/controltower/app.py). Couverture :
+[`maestro/controltower/routes/chat.py`](../maestro/controltower/routes/chat.py). Couverture :
 [`tests/test_attentes_du_fil.py`](../tests/test_attentes_du_fil.py).
 
 ### 6.16 Borner un run depuis le chat (#990) — **livré**
@@ -7504,8 +7511,8 @@ elle **dit où** (`/chat`), ce qui est le travail d'un écran de réglages dont 
 Implémentation : [`maestro/controltower/bornes.py`](../maestro/controltower/bornes.py) (`BornesRun`),
 [`maestro/controltower/chat.py`](../maestro/controltower/chat.py) (`ServiceChat.trancher_cadrage`,
 `_geste_de_cadrage`), [`maestro/controltower/orchestration.py`](../maestro/controltower/orchestration.py)
-(`LanceurRun`, `_ouvrir_un_run`) et [`maestro/controltower/app.py`](../maestro/controltower/app.py)
-(`CadrageDecisionRequete`, `ouvrir_un_run`) ; côté UI `apps/web/lib/bornes.ts`,
+(`LanceurRun`, `_ouvrir_un_run`), [`maestro/controltower/app.py`](../maestro/controltower/app.py)
+(`ouvrir_un_run`) et [`maestro/controltower/routes/requetes.py`](../maestro/controltower/routes/requetes.py) (`CadrageDecisionRequete`) ; côté UI `apps/web/lib/bornes.ts`,
 `apps/web/components/chat/DemandeDeCadrage.tsx` et
 `apps/web/components/parametres/ParametresCouts.tsx`. Couverture :
 [`tests/test_chat_global.py`](../tests/test_chat_global.py) section ⑦ et
@@ -7685,7 +7692,7 @@ du verbe `mcp__maestro__poser_une_question` et ses deux frontières),
 `identifiant_question`), [`maestro/engine/executor.py`](../maestro/engine/executor.py) (`_question`,
 `_consigne_question` — c'est là que vit la **borne**, avec le journal),
 [`maestro/controltower/question.py`](../maestro/controltower/question.py)
-(`ArbitreQuestionControlTower`) et [`maestro/controltower/app.py`](../maestro/controltower/app.py)
+(`ArbitreQuestionControlTower`) et [`maestro/controltower/routes/validations.py`](../maestro/controltower/routes/validations.py)
 pour les deux routes. Gardé par
 [`tests/test_questions_agents.py`](../tests/test_questions_agents.py) (#1027) — la suspension et sa
 borne, l'hypothèse écrite à l'échéance dans ses deux champs, la réponse tardive retrouvée **sans
@@ -7778,7 +7785,7 @@ gouttière, l'agent et le renvoi vers la tâche en colonne à droite. Le choix, 
 raisons sont consignés sur le ticket (commentaire `## Variante retenue`).
 
 Implémentation : [`maestro/controltower/decisions.py`](../maestro/controltower/decisions.py)
-(la composition), [`maestro/controltower/app.py`](../maestro/controltower/app.py) (la route),
+(la composition), [`maestro/controltower/routes/executions.py`](../maestro/controltower/routes/executions.py) (la route),
 `apps/web/components/runs/DecisionsRun.tsx` et `apps/web/lib/vuesRun.ts` (l'écran). Gardé par
 [`tests/test_decisions_autonomes.py`](../tests/test_decisions_autonomes.py) (#1027) — les deux
 familles jamais mêlées, la question **répondue** qui n'y entre pas, le sens de lecture, le plafond
@@ -7970,7 +7977,7 @@ une politique orphelines que rien n'affiche.
 Implémentation : [`maestro/equipe/`](../maestro/equipe/) (la dérivation et la création, **pures** —
 aucun module n'y ouvre un fichier en écriture), [`maestro/controltower/equipe.py`](../maestro/controltower/equipe.py)
 (la seule couche qui touche un dépôt et connaisse un fournisseur de modèle),
-[`maestro/controltower/app.py`](../maestro/controltower/app.py) (les routes),
+[`maestro/controltower/routes/outillage.py`](../maestro/controltower/routes/outillage.py) (les routes),
 `apps/web/components/chat/EquipeDansLeFil.tsx` (la carte qui propose, corrige et valide),
 `apps/web/components/chat/LigneRole.tsx` (la ligne d'un rôle) et
 `apps/web/components/chat/DemandeSurLEquipe.tsx` (la demande en mots). Gardé par
@@ -8518,8 +8525,9 @@ contexte au même agent.
 Implémentation : [`maestro/outillage/`](../maestro/outillage/) (le domaine),
 [`maestro/controltower/outillage.py`](../maestro/controltower/outillage.py) (le service et le
 conducteur du fil), [`maestro/controltower/pieces.py`](../maestro/controltower/pieces.py) (les
-pièces et leur correction, #1161), [`maestro/controltower/app.py`](../maestro/controltower/app.py)
-(les routes), `apps/web/components/chat/QuestionDOutillage.tsx`,
+pièces et leur correction, #1161), [`maestro/controltower/routes/outillage.py`](../maestro/controltower/routes/outillage.py)
+et [`maestro/controltower/routes/chat.py`](../maestro/controltower/routes/chat.py) (les routes, du projet et du fil),
+`apps/web/components/chat/QuestionDOutillage.tsx`,
 `apps/web/components/chat/PropositionDOutillage.tsx` (#1533) et
 `apps/web/components/chat/PieceDOutillage.tsx` (les écrans). Gardé par [`tests/test_outillage_analyse.py`](../tests/test_outillage_analyse.py),
 [`test_outillage_questionnaire.py`](../tests/test_outillage_questionnaire.py),

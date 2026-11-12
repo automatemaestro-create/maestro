@@ -352,76 +352,43 @@ où plus aucun service n'est à installer.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Annotated, Any
+from functools import partial
+from typing import Any
 
 from fastapi import (
     FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Request,
-    UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from maestro.agents import DEFAULT_TOOLS, TOOLED_PROFILES
-from maestro.agents.capacity import CapaciteAgent, CapacityStore
-from maestro.agents.catalog import GABARITS_DU_CODE, Agent
+from maestro.agents.capacity import CapacityStore
 from maestro.agents.configuration import ConfigurationAgents
-from maestro.agents.lexique_playbook import lexique_dict
-from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp, references_env
+from maestro.agents.mcp import McpStore
 from maestro.agents.mcp_admission import (
-    MOTIF_NON_ADMISE,
-    RefusAdmission,
     ServiceAdmission,
-    etat_politique,
 )
-from maestro.agents.mcp_federation import federer_memo, oublier_memo
 from maestro.agents.mcp_registry import (
-    SOURCE_ADMISE,
-    SOURCE_CUREE,
-    SOURCE_DECOUVERTE,
-    SOURCE_TOUTES,
     RegistreMcp,
 )
-from maestro.agents.permissions import PermissionStore, PolitiqueOutils, entree_valide
-from maestro.agents.playbooks import PLAYBOOK_DEFAUTS, PlaybookDefaut, PlaybookStore
+from maestro.agents.permissions import PermissionStore
+from maestro.agents.playbooks import PlaybookStore
 from maestro.agents.reprise import reprendre
 from maestro.agents.secrets import SecretStore
 from maestro.agents.store import (
-    AGENT_SOURCE_DEFAUT,
-    AGENT_SOURCE_PERSONNALISE,
-    AGENT_SOURCE_SURCHARGE,
-    NOMS_DU_CODE,
-    NOMS_RESERVES,
-    AgentDefinition,
     AgentStore,
-    SurchargeAgent,
     SurchargeStore,
     catalogue,
     catalogue_du_projet,
 )
-from maestro.appartenance import projet_id_valide
 from maestro.config import ConfigError, Settings, load_settings
-from maestro.controltower import selecteur
 from maestro.controltower.acces import GardeAcces, PolitiqueAcces, politique_depuis
 from maestro.controltower.accueil import DepotAccueil, ServiceAccueil
 from maestro.controltower.acquis import magasin_acquis_configure
-from maestro.controltower.analytics import PAS_DEMANDABLES, PAS_HEURE, agrege_couts
 from maestro.controltower.assistance import (
-    AGENT_ASSISTANCE,
-    NOM_ASSISTANCE,
     RepondeurAssistance,
 )
 from maestro.controltower.assistance_documentee import RepondeurAssistanceDocumentee
@@ -429,8 +396,6 @@ from maestro.controltower.attentes import ServiceAttentes
 from maestro.controltower.auto_amelioration import (
     AnalyseurEchecs,
     RedacteurPlaybook,
-    RevisionIndisponible,
-    echecs_du_run,
 )
 from maestro.controltower.battement import (
     RegistreBattements,
@@ -439,76 +404,35 @@ from maestro.controltower.battement import (
 )
 from maestro.controltower.bilan import JugeBilan, ServiceBilan
 from maestro.controltower.bornes import AUCUNE_BORNE, BornesRun
-from maestro.controltower.brief import ACTEUR_BRIEF, ROLE_BRIEF
 from maestro.controltower.chat import (
-    CadrageIntrouvable,
     ChatStore,
-    DeclarationIntrouvable,
-    GesteRunIntrouvable,
-    PieceIntrouvable,
     ProjetVise,
-    QuestionIntrouvable,
-    RecrutementIntrouvable,
-    ReglementIntrouvable,
     RepondeurChat,
     RepondeurModele,
-    ReponseIndisponible,
     ServiceChat,
-    recrutement_en_attente,
 )
 from maestro.controltower.consultation import Consultations, Demande, Lecture
-from maestro.controltower.decisions import decisions_du_run
 from maestro.controltower.depense_du_fil import au_compte_du_fil
-from maestro.controltower.equipe import CompositeurEquipe, EquipeRefusee, ServiceEquipe
+from maestro.controltower.equipe import CompositeurEquipe, ServiceEquipe
 from maestro.controltower.events import (
     ACTEUR_RUN,
-    EVENEMENT_AGENT_CAPACITE,
-    EVENEMENT_BRIEF_DECISION,
-    EVENEMENT_BRIEF_REPONSES,
     EVENEMENT_EXECUTION_STATUT,
-    EVENEMENT_RENFORT_DECISION,
     EVENEMENT_RENFORT_DEMANDE,
-    EVENEMENT_TACHE_REASSIGNATION,
-    EVENEMENT_TACHE_REFERENCE,
     Event,
     EventBus,
     InMemoryEventBus,
     RedisEventBus,
-    brief_depuis,
-    titre_court,
 )
 from maestro.controltower.executions import (
-    MOTIF_GESTE_RUN_NON_SUSPENDU,
-    MOTIF_GESTE_RUN_SANS_HOTE,
-    MOTIF_GESTE_RUN_SUSPENDU,
-    MOTIF_RELANCE_RUN_INCONNU,
-    MOTIF_RELANCE_RUN_SOLDE,
-    MOTIF_RELANCE_RUN_VIVANT,
-    MOTIF_RELANCE_SANS_CADRAGE,
-    MOTIF_REPRISE_EN_COURS,
-    MOTIF_REPRISE_ETAT_ILLISIBLE,
     FabriqueMoteur,
     LecteurSources,
-    RelanceRefusee,
     ServiceExecutions,
 )
 from maestro.controltower.fournisseur_defaut import (
-    ChoixRefuse,
-    DemandeFournisseur,
-    EpreuveEchouee,
     ServiceFournisseurParDefaut,
 )
-from maestro.controltower.fournisseurs import catalogue as catalogue_fournisseurs
-from maestro.controltower.frise import frise_du_run
 from maestro.controltower.generation_agent import (
     GenerateurDefinitionAgent,
-    GenerationIndisponible,
-)
-from maestro.controltower.gestes import (
-    GESTE_ANNULATION,
-    GESTE_PAUSE,
-    GESTE_REPRISE,
-    GesteRefuse,
 )
 from maestro.controltower.hote import (
     HOTE_RUN_DETACHE,
@@ -517,19 +441,12 @@ from maestro.controltower.hote import (
     HoteRun,
 )
 from maestro.controltower.journal import (
-    ORDRE_DESC,
-    ORDRES_JOURNAL,
-    TAILLE_PAGE_DEFAUT,
-    TAILLE_PAGE_MAX,
-    TRI_JOURNAL_HORODATAGE,
-    TRIS_JOURNAL,
     ServiceJournal,
 )
 from maestro.controltower.magasin import GardeMagasin, Magasin, MagasinRefuse
 from maestro.controltower.naissance import ServiceNaissance
 from maestro.controltower.orchestration import (
     AGENT_ORCHESTRATION,
-    NOM_ORCHESTRATION,
     RepondeurOrchestration,
     apercu_de,
     attentes_de,
@@ -551,1088 +468,33 @@ from maestro.controltower.persistence import (
     support_persistance,
 )
 from maestro.controltower.pieces import CorrectionModele, ServicePieces
-from maestro.controltower.plafond import evenement_decision
-from maestro.controltower.portee import (
-    PorteeProjet,
-    PorteeRefusee,
-    PorteeRun,
-    resoudre_portee,
-    resoudre_portee_run,
-    resoudre_projet_configuration,
-)
 from maestro.controltower.projets import (
     ProjetIllisible,
     ProjetInconnu,
     ServiceProjets,
-    detail_refus,
-    statut_http,
 )
 from maestro.controltower.recit import ConteurDeFin, RedacteurRecit
 from maestro.controltower.regime import MembreDeLEquipe, regime_d_un_run
-from maestro.controltower.reglements import (
-    MOTIF_ATTENTE_INCONNUE,
-    MOTIF_ATTENTE_REGLEE,
-    MOTIF_ETENDUE_REFUSEE,
-    MOTIF_REPONSE_VIDE,
-    ReglementRefuse,
-)
 from maestro.controltower.renfort import RelaisRenfort
+from maestro.controltower.routes import ROUTEURS
+from maestro.controltower.routes.communs import Diffusion, creer_equipe_du_projet
+from maestro.controltower.routes.contexte import Contexte
 from maestro.controltower.state import (
-    BRIEF_APPROUVE,
-    BRIEF_REFUSE,
-    CAPACITE_ACTIVE,
-    CAPACITE_DESACTIVE,
-    EXECUTION_EN_ATTENTE_BRIEF,
-    EXECUTION_EN_ATTENTE_PLAFOND,
-    EXECUTION_EN_ATTENTE_REPONSES,
-    RENFORT_ACCORDE,
-    RENFORT_DECLINE,
     STATUTS_EXECUTION_TERMINAUX,
     ControlTowerState,
-    EtatAgent,
 )
 from maestro.controltower.validation import ValidateurControlTower
-from maestro.decision_humaine import ETENDUE_APPEL, ETENDUE_RUN
 from maestro.engine.acquis import MagasinAcquis
-from maestro.engine.brief import MODE_BRIEF_AUTO, MODE_BRIEF_HUMAIN
-from maestro.engine.plafond import (
-    GESTE_ARRETER,
-    GESTE_REDUIRE,
-    GESTE_RELEVER,
-    DecisionPlafond,
-    DemandePlafond,
-)
-from maestro.equipe import GABARITS, RoleManquant, RoleValide, SkillRetenu
-from maestro.equipe.composition import MembreActuel
-from maestro.espace import espace_courant
+from maestro.engine.brief import MODE_BRIEF_AUTO
 from maestro.installation import LecteurInstallation
 from maestro.messaging import InMemoryMailbox, Mailbox, RedisMailbox
-from maestro.orchestrator.errors import BriefValidationError
-from maestro.orchestrator.schema import validate_brief
 from maestro.outillage.contexte import outillage_du_projet
-from maestro.outillage.questionnaire import Choix, ComprehensionIllisible
 from maestro.poste import SondePoste
 from maestro.projets import (
-    ApplicationRefusee,
     Projet,
-    RacineRefusee,
-    VersionnementRefuse,
-    canonique,
-    valider_racine,
 )
-from maestro.providers.arbitrage import OUTIL_ARBITRAGE
 from maestro.providers.base import ModelProvider
-from maestro.providers.blocage import OUTIL_BLOCAGE
-from maestro.providers.checklist import OUTIL_CHECKLIST
-from maestro.providers.courrier import OUTIL_COURRIER
-from maestro.providers.decision import OUTIL_DECISION
-from maestro.providers.question import OUTIL_QUESTION
-from maestro.references import ReferenceTicket
-from maestro.sandbox import EspaceProjetIndisponible
-from maestro.sources import DepotTeleversements, SourceRefusee, apercu_sources
-
-
-class ReferenceTicketRequete(BaseModel):
-    """La référence d'un ticket externe posée au lancement d'un run (#185, contrat #183).
-
-    Générique : un identifiant lisible (`id`, ex. « #185 », « PROJ-42 ») et son
-    `url` — vide quand seul l'identifiant est connu. GitLab, Jira ou Linear
-    passent par la même forme, aucun champ propre à un outil. La référence
-    descend ensuite jusqu'aux tâches du run (contrat #183).
-    """
-
-    id: str
-    url: str = ""
-
-    def en_reference(self) -> ReferenceTicket | None:
-        """La référence du modèle métier — None si elle n'apprend rien (ni id, ni URL).
-
-        Passe par `ReferenceTicket.depuis`, donc par la normalisation (#187) :
-        identifiant borné, URL non suivable (`javascript:`, chemin relatif)
-        jetée. Ce qui entre par l'API est traité comme ce qui arrive par le
-        flux — non fiable jusqu'à validation.
-        """
-        return ReferenceTicket.depuis({"id": self.id, "url": self.url})
-
-
-class SourceRequete(BaseModel):
-    """Une source déclarée au lancement (#317, EF-39) — docs/05 §6.1.
-
-    Deux formes pour un `fichier`, et une seule est complète : le **renvoi** à un
-    téléversement (`id`, rendu par `POST /api/sources`), qui seul désigne de
-    vrais octets, et la déclaration nue de docs/24 §3.2 (`nom` + `taille`), qui
-    résout mais ressortira `source-absente` au rapport de lecture. Un `dossier`
-    porte son `chemin`, une `url` sa `valeur`.
-
-    **Aucun champ n'est requis**, `type` compris : un corps mal formé doit
-    ressortir en refus **motivé** de la résolution (`type-inconnu` à l'index
-    fautif) et non en erreur de schéma Pydantic, dont la forme n'a ni motif ni
-    index. Le reste des contrôles appartient à `maestro.sources.resolution` :
-    ce qui arrive ici est une saisie, jamais une vérité.
-    """
-
-    type: str = ""
-    id: str = ""
-    nom: str = ""
-    chemin: str = ""
-    valeur: str = ""
-    taille: int | None = None
-
-
-class LancementExecutionRequete(BaseModel):
-    """Corps de lancement d'une exécution (#185) : objectif, garde-fous, ticket.
-
-    `objectif` est l'énoncé en langage naturel que l'orchestrateur décompose ;
-    les garde-fous (#9) plafonnent l'exécution — coût, tokens, time-out par
-    tâche, parallélisme —, chacun optionnel, None laissant le défaut du moteur.
-    `ticket` rattache le run à un ticket externe (optionnel). `projet_id` (#222)
-    le rattache au **projet** dans lequel il travaille (optionnel, `null` :
-    aucun projet — le comportement d'avant ce lot). Une requête invalide
-    (objectif vide, garde-fou hors bornes) est refusée en 422 ; un `projet_id`
-    mal formé, lui, est **écarté** (le run part sans projet) plutôt que de faire
-    échouer le lancement — cf. `maestro.appartenance`.
-
-    `sources` (#317, EF-39) porte la **matière** de l'objectif : fichiers
-    téléversés au préalable (§6.8), dossier de références, URL. Absente ou vide,
-    le lancement est exactement celui d'avant la Phase 8 ; une source refusée
-    (racine interdite, plafond dépassé, téléversement inconnu) sort en 422
-    **motivé**, index de la source fautive compris.
-    """
-
-    objectif: str
-    plafond_cout_usd: float | None = None
-    plafond_tokens: int | None = None
-    timeout_tache_s: float | None = None
-    parallelisme: int | None = None
-    ticket: ReferenceTicketRequete | None = None
-    projet_id: str | None = None
-    sources: list[SourceRequete] | None = None
-    # Le régime du brief (#320) — `humain` par défaut : la Control Tower est la
-    # voie de lancement qui a quelqu'un devant, et la décision D5 veut le brief
-    # validé avant décomposition. `auto` rédige le brief sans attendre, `sans`
-    # décompose l'objectif brut (le comportement d'avant ce lot). Un mode inconnu
-    # est refusé en 422, jamais traité comme un `sans` silencieux.
-    brief: str | None = MODE_BRIEF_HUMAIN
-
-    def sources_declarees(self) -> list[dict[str, Any]] | None:
-        """Les sources en dicts pour la résolution — `None` quand il n'y en a pas.
-
-        `None` et non `[]` : c'est ce qui fait qu'un lancement sans matière émet
-        un événement sans le champ `sources` (#315), donc strictement celui
-        d'avant la Phase 8.
-        """
-        if self.sources is None:
-            return None
-        return [source.model_dump() for source in self.sources]
-
-
-class ReassignationRequete(BaseModel):
-    """Corps de la réassignation manuelle : l'agent qui reprend la tâche."""
-
-    agent: str
-
-
-class DecisionRequete(BaseModel):
-    """Corps de la décision humaine (#48) : approuver ou refuser l'action sensible.
-
-    `motif` (#272) est la raison **facultative** d'un refus, telle que la personne
-    l'a écrite. Il rejoint le `detail` de l'événement, donc le journal durable et la
-    `decision` de la demande projetée : sans lui, un refus revenait plus tard comme
-    un fait sans cause, et rien ne distinguait « trop risqué avant la démo » d'une
-    erreur de clic.
-
-    ⚠ Depuis #1185 le moteur le **lit** : c'est une **consigne**. Elle voyage aussi
-    dans `Event.motif`, le validateur la rend à l'agent, et celui-ci replanifie son
-    geste à partir d'elle — « archive au lieu de supprimer » réoriente le travail au
-    lieu de l'arrêter ; la nouvelle action repasse par l'arbitrage.
-
-    `etendue` (#1185) est la portée d'une **approbation** : `appel` (le défaut, le
-    geste d'avant), ou l'outil pour la suite du `run` ou du `projet`. Choisie par la
-    personne, jamais par défaut ; admise seulement sur une demande qui porte un
-    acte, et écrite dans les permissions de l'agent, où elle se relit et se retire.
-
-    Sur une **approbation** le motif est ignoré, sur un refus l'étendue — comme le
-    `brief` d'une décision de brief l'est sur un refus (`DecisionBriefRequete`) : le
-    canal porte les deux gestes, chacun ne lit que ce qui le concerne. Vides ou
-    absents, la décision est celle d'avant ces lots, au caractère près.
-    """
-
-    approuve: bool
-    motif: str = ""
-    etendue: str = ETENDUE_APPEL
-
-
-class ReponseQuestionRequete(BaseModel):
-    """Corps de la réponse à une question d'agent (#1023) : du **texte**, rien d'autre.
-
-    Pas de booléen, et c'est tout ce qui sépare ce geste de `DecisionRequete` :
-    une question ne soumet aucun acte, il n'y a donc ni oui, ni non, ni motif de
-    refus — il y a ce qu'on répond. Un choix retenu se répond en le recopiant :
-    l'agent a écrit ses options, il sait les relire, et un index de choix ferait
-    voyager un numéro dont la signification vivrait dans un autre événement.
-
-    La réponse est **obligatoire et non vide** (refusée en 422 par le contrôle
-    ci-dessous) : une réponse vide n'apprend rien à l'agent, qui reprendrait sur
-    son hypothèse en croyant qu'on lui a répondu — c'est-à-dire pire que le
-    silence, qui lui dit au moins la vérité.
-    """
-
-    reponse: str
-
-
-class DecisionPlafondRequete(BaseModel):
-    """Corps de la décision au plafond de dépense (#1182) : relever, réduire, arrêter.
-
-    `geste` est l'une des trois réponses (`maestro.engine.plafond.GESTES_PLAFOND`).
-    **Relever** et **réduire** portent le nouveau plafond — en dollars
-    (`plafond_cout_usd`) et/ou en tokens (`plafond_tokens`), selon celui que le run
-    a atteint ; **réduire** nomme en plus les tâches à écarter (`ecartees`, des
-    identifiants pris dans la question en vol). **Arrêter** ne porte rien.
-
-    Typé et non du texte libre, à la différence d'une réponse à une question
-    d'agent : ce qui repart est un **montant** et une liste de tâches, que le
-    moteur applique tels quels. Les recopier d'une phrase serait juger du texte
-    par un motif (#746) ; le choix se fait sur la carte, qui a les chiffres.
-    """
-
-    geste: str
-    plafond_cout_usd: float | None = None
-    plafond_tokens: int | None = None
-    ecartees: list[str] = []
-
-
-class DecisionBriefRequete(BaseModel):
-    """Corps de la décision sur un brief (#320) : approuver — corrigé ou non — ou refuser.
-
-    `brief` porte la **version corrigée** que l'humain veut voir décomposée ; absent
-    (`null`), le brief proposé est approuvé tel quel. C'est ce qui distingue ce
-    canal de la validation d'action sensible (#48), dont le corps se résume à un
-    booléen : ici la personne ne fait pas que dire oui, elle réécrit avant de le
-    dire — et c'est son texte qui part en décomposition.
-
-    Le brief corrigé est validé contre la **JSON Schema partagée** (#318) avant de
-    partir : une correction qui casse la forme doit coûter un 422 à celui qui la
-    soumet, pas un échec de run une seconde plus tard, quand plus personne ne
-    regarde. Sur un **refus**, il est ignoré — il n'y a rien à décomposer.
-    """
-
-    approuve: bool
-    brief: dict[str, Any] | None = None
-
-
-class ReponsesBriefRequete(BaseModel):
-    """Corps des réponses aux questions de clarification d'un brief (#321).
-
-    `reponses` est une liste de chaînes **appariée par position** aux questions du
-    brief stocké du run. Pas de clé, pas d'identifiant de question : le brief est
-    régénéré en entier à chaque tour, donc une question n'a pas d'identité stable
-    d'une version à l'autre (#318, note du schéma) — un identifiant laisserait croire
-    le contraire. Ce qui rend la position sûre est que les réponses s'adressent au
-    brief **stocké**, dont la liste de questions est figée entre sa publication
-    (`brief.questions`) et sa réponse.
-
-    D'où le contrôle de longueur exigé par la route : une liste qui ne fait pas le
-    compte est refusée en 422. C'est le seul moment où quelqu'un est là pour corriger
-    sa requête — plus loin, en plein run, l'appariement est volontairement tolérant
-    (une réponse manquante vaut « sans réponse »), parce que lever y coûterait le run.
-
-    Une chaîne **vide est licite** et veut dire « je ne sais pas » : la question sera
-    inscrite en hypothèse explicite plutôt que reposée au tour suivant. C'est ce qui
-    permet de répondre à trois questions sur cinq sans bloquer le run.
-    """
-
-    reponses: list[str]
-
-
-class CapaciteRequete(BaseModel):
-    """Corps du contrôle de capacité (#86) : les réglages à poser, champ par champ.
-
-    Chaque champ est optionnel — None laisse la valeur en place : on peut
-    désactiver sans toucher aux instances, et inversement. Au moins un champ
-    doit être renseigné (sinon 422 : il n'y a rien à régler).
-    """
-
-    actif: bool | None = None
-    instances: int | None = None
-
-
-class PlaybookEcritureRequete(BaseModel):
-    """Corps d'écriture d'un playbook (#76) : le nouveau contenu Markdown, intégral."""
-
-    contenu: str
-
-
-class PlaybookRestaurationRequete(BaseModel):
-    """Corps du retour arrière (#76) : la version passée à republier comme courante."""
-
-    version: int
-
-
-class PlaybookPropositionRequete(BaseModel):
-    """Corps d'une demande de proposition d'auto-amélioration (#139) : le run à analyser.
-
-    `run_id` désigne l'exécution dont les échecs de l'agent alimentent l'analyse. Le
-    déclenchement est **à la demande** (ce POST), jamais automatique en fin de run.
-    """
-
-    run_id: str
-
-
-class PlaybookRedactionRequete(BaseModel):
-    """Corps d'une demande de rédaction assistée (#261) : le brouillon, et ce qu'on en veut.
-
-    `contenu` est le texte **en cours d'édition**, pas la version publiée : l'assistance
-    travaille sur ce que l'utilisateur a sous les yeux. `consigne` est libre et
-    facultative — sans elle, la demande reste « complète et structure ». Les bornes
-    (`BROUILLON_MAX`, `CONSIGNE_MAX`) sont vérifiées par le rédacteur, comme #257 borne
-    l'intention côté générateur.
-    """
-
-    contenu: str
-    consigne: str | None = None
-
-
-class AgentCreationRequete(BaseModel):
-    """Corps de création d'un agent personnalisé (#72) : sa définition complète.
-
-    `modele` est optionnel (None : le modèle par défaut des exécutants) ;
-    `fournisseur` est déclaratif au POC (le moteur est mono-fournisseur).
-    `effort` (#253) est le niveau d'effort demandé au modèle — ce que le
-    fournisseur retenu admet se lit sur `GET /api/fournisseurs`. Il n'est **pas
-    validé ici** : un effort que le fournisseur ne connaît pas est ignoré à
-    l'exécution, sans erreur, plutôt que de faire échouer l'enregistrement d'une
-    définition par ailleurs correcte.
-    """
-
-    nom: str
-    role: str
-    competences: list[str]
-    playbook: str
-    modele: str | None = None
-    fournisseur: str | None = None
-    effort: str | None = None
-
-
-class AgentModificationRequete(BaseModel):
-    """Corps de modification d'un agent personnalisé (#72) : la définition intégrale.
-
-    Un remplacement, pas un diff — le nom, lui, vit dans l'URL et ne change pas
-    (c'est la clé de routage et de stockage).
-    """
-
-    role: str
-    competences: list[str]
-    playbook: str
-    modele: str | None = None
-    fournisseur: str | None = None
-    effort: str | None = None
-
-
-class SurchargeRequete(BaseModel):
-    """Corps de surcharge des réglages d'un agent du code (#259) : les trois, entiers.
-
-    Un remplacement et pas un diff, comme `AgentModificationRequete` : ce qui
-    n'est pas envoyé est **hérité du code**, pas « laissé tel quel ». Sans cette
-    règle, retirer une surcharge de modèle en laissant celle d'effort demanderait
-    un verbe de plus, et « champ absent » voudrait dire deux choses selon le
-    réglage. Pour tout rendre au code, `DELETE` sur la même URL.
-
-    Aucun des trois n'est validé ici — même raison qu'à la création d'un agent :
-    ce que le fournisseur admet se lit sur `GET /api/fournisseurs`, se trie à
-    l'exécution, et une gamme qui bouge ne doit pas rendre irrecevable une
-    surcharge par ailleurs correcte.
-    """
-
-    fournisseur: str | None = None
-    modele: str | None = None
-    effort: str | None = None
-
-
-class AgentGenerationRequete(BaseModel):
-    """Corps d'une génération assistée de définition (#257) : l'intention, en une phrase.
-
-    Un seul champ, et c'est le sujet du lot : décrire ce qu'on veut plutôt que
-    remplir rôle, compétences et playbook. La borne de longueur est posée par le
-    générateur (`INTENTION_MAX`) et non ici — c'est lui qui la connaît, et le
-    dépassement est un 422 au même titre qu'une intention vide.
-    """
-
-    intention: str
-
-
-class ProjetRequete(BaseModel):
-    """Corps de déclaration d'un projet (#223) : sa racine sur le disque et son périmètre.
-
-    `racine` est le chemin **absolu** du projet sur le poste ; il est
-    canonicalisé et confronté aux racines interdites côté serveur (EF-38) — ce
-    qui arrive ici est une saisie, jamais une vérité. `origine` vaut `existant`
-    (on reprend un dossier) ou `nouveau` (on l'initie : le dossier est créé s'il
-    manque). `inclus`/`exclus` sont des motifs **relatifs à la racine** ; `null`
-    laisse les défauts du modèle (`.`, et l'exclusion de `.git`, `node_modules`,
-    `.env`, `**/secrets/**`).
-
-    Le `vcs` n'est délibérément **pas** un champ de requête : il est constaté sur
-    le disque, jamais déclaré — un client qui l'annoncerait pourrait mentir.
-    """
-
-    nom: str
-    racine: str
-    origine: str = "existant"
-    inclus: list[str] | None = None
-    exclus: list[str] | None = None
-
-
-class SelecteurRequete(BaseModel):
-    """Corps (facultatif) d'une ouverture du sélecteur natif (#278).
-
-    `depart` est le dossier où le dialogue s'ouvre — un confort, jamais une
-    permission : le chemin **rendu** par le dialogue est confronté à EF-38 quel
-    que soit l'endroit d'où l'utilisateur est parti.
-    """
-
-    depart: str | None = None
-
-
-class RacineRequete(BaseModel):
-    """Corps d'un verdict de racine (#938) : le chemin proposé, tel que l'OS l'a rendu.
-
-    Non canonicalisé, et c'est voulu : la canonicalisation fait partie de ce
-    qu'EF-38 vérifie (`valider_racine`), pas de ce que l'appelant prépare.
-    """
-
-    chemin: str
-
-
-class RepertoireRequete(BaseModel):
-    """Corps d'un réglage du répertoire des projets (#1022).
-
-    `chemin` à `null` **revient au défaut** (`~/Maestro`) — ce n'est pas « pas
-    de répertoire », c'est « celui que Maestro propose ». Non canonicalisé, pour
-    la même raison que `RacineRequete` : la canonicalisation appartient à
-    `valider_racine`.
-    """
-
-    chemin: str | None = None
-
-
-class DossierAutoriseRequete(BaseModel):
-    """Corps d'une autorisation de dossier (#1610) : le dossier que l'explorateur a refusé.
-
-    Non canonicalisé, pour la même raison que `RacineRequete` : la
-    canonicalisation appartient à `valider_racine`.
-    """
-
-    chemin: str
-
-
-class FournisseurDefautRequete(BaseModel):
-    """Corps d'une épreuve ou d'un enregistrement du fournisseur par défaut (#1609).
-
-    `cle` n'est présente que si la personne vient de la taper : sans elle, on
-    éprouve avec la clé déjà gardée par le coffre du poste. Elle ne ressort
-    jamais d'une réponse.
-    """
-
-    fournisseur: str
-    acces: str
-    modele: str | None = None
-    adresse: str | None = None
-    cle: str | None = None
-
-    def demande(self) -> DemandeFournisseur:
-        return DemandeFournisseur(
-            fournisseur=self.fournisseur,
-            acces=self.acces,
-            modele=self.modele,
-            adresse=self.adresse,
-            cle=self.cle,
-        )
-
-
-class ChatEnvoiRequete(BaseModel):
-    """Corps d'un envoi de chat (#84) : le message de l'utilisateur à l'agent.
-
-    `sources` (#482) est la matière que le message embarque — fichiers déposés,
-    dossier de références, adresses —, **dans l'ordre où l'écran l'a composée** :
-    c'est lui qui décide de ce qui entre quand le budget de tokens s'épuise
-    (#316). Même forme qu'au lancement (`LancementExecutionRequete.sources`), et
-    pour la même raison : un fichier y voyage par l'`id` que `POST /api/sources`
-    lui a rendu, seule façon d'en désigner de vrais octets. Absente ou vide, le
-    fil est exactement celui d'avant ce lot.
-
-    `projet_id` (#683) est le **projet de la fenêtre** d'où part le message —
-    à ne pas confondre avec le `?projet=` des lectures (#277), qui est une
-    portée et porte les mots réservés `tous`/`aucun` : ici c'est un identifiant
-    de projet, et rien d'autre. Le fil ne s'en trouve ni cadré ni filtré ; il
-    n'intéresse que ce que la réponse **ouvre** — l'orchestration y rattache son
-    run et y cadre son aperçu. Absent, le run part sans projet, comme avant.
-
-    `conversation` (#694) est le fil de l'agent où l'échange se range. Absent,
-    l'envoi rejoint la **plus récente** — le comportement d'avant ce lot, où un
-    agent n'avait qu'un fil.
-    """
-
-    contenu: str
-    sources: list[dict[str, Any]] | None = None
-    projet_id: str | None = None
-    conversation: str | None = None
-
-
-class CadrageDecisionRequete(BaseModel):
-    """Corps du geste qui tranche une demande de cadrage du fil (#943, #990).
-
-    La **même forme** que `DecisionBrief` (§6.10), parce que c'est la même
-    décision un cran plus tôt : `approuve` dit oui ou non, et le second champ
-    porte la version **corrigée** ou `null` pour « la proposition tient ». Le
-    corps ne recopie jamais un objectif non touché — et `null` n'est pas une
-    omission, c'est une affirmation.
-
-    Les quatre **garde-fous** (#990) sont ceux de `LancementExecutionRequete`,
-    aux mêmes noms et avec le même contrat : chacun optionnel, `null` laissant
-    le run aller jusqu'au bout. Les mêmes noms parce que c'est le même moteur
-    qui les reçoit — un second vocabulaire pour la même chose se paierait au
-    premier écran qui voudrait afficher les deux. Ils sont **refusés hors
-    bornes** par `lancer` et non ici : la règle « un plafond est un maximum »
-    vit là où elle est appliquée, et le refus se raconte dans le fil comme tout
-    lancement qui échoue (`orchestration._ouvrir_un_run`).
-
-    `objectif` et les bornes sont ignorés sur un refus : il n'y a rien à lancer.
-    `projet_id` et `conversation` ont exactement le sens qu'ils ont sur un envoi —
-    à ceci près que le run suit le projet **de la proposition** quand elle en porte
-    un (#1180) : le fil est transverse, et la fenêtre du clic n'est pas forcément
-    celle où la proposition a été faite.
-    """
-
-    approuve: bool
-    objectif: str | None = None
-    plafond_cout_usd: float | None = None
-    plafond_tokens: int | None = None
-    timeout_tache_s: float | None = None
-    parallelisme: int | None = None
-    projet_id: str | None = None
-    conversation: str | None = None
-
-    def bornes_posees(self) -> BornesRun:
-        """Les quatre garde-fous d'un bloc — `AUCUNE_BORNE` quand aucun n'est posé."""
-        return BornesRun.depuis(
-            {
-                "plafond_cout_usd": self.plafond_cout_usd,
-                "plafond_tokens": self.plafond_tokens,
-                "timeout_tache_s": self.timeout_tache_s,
-                "parallelisme": self.parallelisme,
-            }
-        )
-
-
-class ReponseOutillageRequete(BaseModel):
-    """Corps du geste qui répond à une question d'outillage du fil (#1031).
-
-    Un seul champ de fond, `valeur` : la clé de la question **n'est pas** dans le
-    corps, et c'est une décision. La question à laquelle on répond est celle que le
-    fil porte encore (`chat.question_en_attente`) ; la laisser désigner par le client
-    ouvrirait la porte à une réponse qui vise une question déjà tranchée — le geste
-    tardif et le double clic, exactement ce que le `409` existe pour attraper.
-
-    `conversation` a le sens qu'il a partout ailleurs sur ce canal.
-
-    `libre` (#1147) dit que `valeur` est une réponse **avec ses mots** — le choix
-    « Autre chose » de la carte — et non une option : toute phrase non vide est
-    alors acceptée, et le questionnaire la comprend au tour suivant.
-    """
-
-    valeur: str
-    libre: bool = False
-    conversation: str | None = None
-
-
-class ChoixOutillageRequete(BaseModel):
-    """Une réponse, ou un constat compris, tel qu'il voyage vers les routes sans état (#1031).
-
-    La forme de `maestro.outillage.questionnaire.Choix` : `cle` et `valeur` disent ce
-    que vaut le sujet ; `libre` qu'il a été dit avec des mots plutôt que cliqué ;
-    `deduit` et `parce_que` qu'il a été **compris** par le questionnaire plutôt que
-    donné (#1147).
-
-    Les constats compris voyagent **et font foi** vers la recommandation, la
-    génération et l'équipe : ce sont eux que l'écran a montrés, et rappeler le modèle
-    à l'écriture pourrait comprendre autre chose. La route du questionnaire, elle, ne
-    lit que les réponses **données** et recomprend le reste.
-    """
-
-    cle: str
-    valeur: str
-    deduit: bool = False
-    parce_que: str = ""
-    libre: bool = False
-
-    def en_choix(self) -> Choix:
-        """Le choix du domaine, tel qu'il a été envoyé."""
-        return Choix(
-            cle=self.cle,
-            valeur=self.valeur,
-            deduit=self.deduit,
-            parce_que=self.parce_que,
-            libre=self.libre,
-        )
-
-
-class QuestionnaireOutillageRequete(BaseModel):
-    """Les réponses acquises, dont on veut la suite ou la recommandation (#1031).
-
-    Sans état côté serveur, et c'est le contrat : le client dit ce qu'il a, l'API dit
-    ce qui en découle. C'est ce qui permet au fil (qui tient ses réponses dans ses
-    messages) et au parcours de création (#1034, qui les tiendra à l'écran) de servir
-    du **même** questionnaire sans partager de session.
-    """
-
-    choix: list[ChoixOutillageRequete] = []
-
-    def choix_acquis(self) -> list[Choix]:
-        """Les réponses et les constats en objets du domaine, tels qu'envoyés."""
-        return [c.en_choix() for c in self.choix]
-
-
-class RenfortRequete(BaseModel):
-    """Le rôle manquant dont la carte du fil demande la proposition (#1227).
-
-    C'est la forme **servie** sur la demande de recrutement du fil
-    (`DemandeRecrutement.gabarit`/`raison`), rapportée telle quelle — même régime
-    que `RoleEquipeRequete` (#1040), et pour la même raison : ce que la personne
-    valide doit être ce qu'on lui a montré, et le manque n'est connu que du run
-    qui a écrit cette demande. Le serveur revalide le `gabarit` contre son
-    catalogue (422 sinon), donc rien d'inventé n'en sort.
-
-    `raison` est la justification affichée : le **plan** qui demande ce métier, et
-    les tâches qui l'attendent. Elle voyage parce qu'aucun constat du projet ne la
-    porte — c'est tout ce qui distingue un renfort d'une proposition d'équipe.
-    """
-
-    gabarit: str
-    raison: str = ""
-
-    def role_manquant(self) -> RoleManquant:
-        """Le manque en objet du domaine — compétences dérivées du gabarit.
-
-        Les compétences ne voyagent pas : elles sont celles du gabarit, que le
-        catalogue porte déjà (`Gabarit.competences`). Les laisser venir du
-        navigateur ferait deux sources pour ce que sait faire un rôle, et la
-        proposition pourrait annoncer un métier que la fiche créée n'aurait pas.
-        """
-        gabarit = next((g for g in GABARITS if g.nom == self.gabarit), None)
-        if gabarit is None:
-            raise ValueError(
-                f"gabarit de renfort inconnu : {self.gabarit!r} (attendus : "
-                f"{', '.join(g.nom for g in GABARITS)})."
-            )
-        return RoleManquant(
-            competences=gabarit.competences,
-            role=gabarit.role,
-            gabarit=gabarit.nom,
-            couvre=gabarit.competences,
-        )
-
-
-class PropositionEquipeRequete(QuestionnaireOutillageRequete):
-    """Le corps — facultatif — de `POST …/equipe/proposition`.
-
-    Les réponses du questionnaire (#1031), plus `renfort` (#1227) : demander **un
-    seul rôle**, celui qu'un plan appelle et que l'équipe n'a pas, au lieu de
-    l'équipe entière. Les deux ne se combinent pas en pratique — un renfort
-    s'adresse à un projet qui a déjà une équipe, donc déjà analysé — mais rien
-    n'a à l'interdire : `renfort` décide seul de ce qui est proposé, les choix
-    restent la provenance de la matière.
-    """
-
-    renfort: RenfortRequete | None = None
-
-
-class MembreEquipeRequete(BaseModel):
-    """Un rôle de l'équipe **telle que l'écran la montre** au moment d'une demande (#1159).
-
-    Le nom, le libellé, et les deux choses que la personne a pu ajuster : la case
-    (`retenu`) et le nombre d'instances. Pas de politique : la correction ne la lit
-    pas, et ce qui repart à la création reste ce que l'écran tient.
-    `navigateur` (#1532) : ce rôle a-t-il, à l'écran, le navigateur de Maestro.
-    `playbook` (#1521) : celui que la carte montre — le modèle répond sur ce qu'il a
-    lu, et une convention fixée en mots gagne chaque rôle qu'elle contredit. Absent
-    d'une carte servie avant : non transmis, et le modèle le sait.
-    """
-
-    nom: str
-    role: str = ""
-    retenu: bool = True
-    instances: int = 1
-    navigateur: bool = False
-    playbook: str = ""
-
-
-class CorrectionEquipeRequete(QuestionnaireOutillageRequete):
-    """Le corps de `POST …/equipe/correction` — la demande, l'équipe montrée, les réponses.
-
-    `choix` a le sens qu'il a sur la proposition : vide, le projet est analysé ;
-    renseigné (un projet neuf), l'équipe se corrige sur ses réponses.
-    """
-
-    demande: str = ""
-    equipe: list[MembreEquipeRequete] = []
-
-    def membres(self) -> list[MembreActuel]:
-        """L'équipe montrée en objets du domaine."""
-        return [
-            MembreActuel(
-                nom=m.nom,
-                role=m.role,
-                retenu=m.retenu,
-                instances=m.instances,
-                navigateur=m.navigateur,
-                playbook=m.playbook,
-            )
-            for m in self.equipe
-        ]
-
-
-class GenerationOutillageRequete(BaseModel):
-    """Corps — facultatif — de la génération d'outillage (#1034, #1100).
-
-    `retenus` : les **chemins** des entrées que l'étape d'outillage a gardées
-    cochées. Pas les entrées elles-mêmes — le quoi, le où et le contenu se
-    rederivent côté serveur, et les laisser voyager depuis un écran ouvrirait une
-    seconde façon de décider ce qu'on écrit dans le dossier de quelqu'un.
-
-    `None` (le champ absent, ou pas de corps du tout) et une **liste vide** ne
-    disent pas la même chose : le premier veut dire « je n'ai rien à trier, écris
-    ce qui est recommandé », le second « je n'ai rien gardé ». Un défaut à `[]`
-    confondrait les deux, et un appel sans corps n'écrirait plus rien.
-
-    `choix` (#1100) : les réponses au questionnaire d'un projet **neuf**, dans la
-    forme de `…/outillage/recommandation`. Ce ne sont pas des entrées, et c'est ce
-    qui les laisse voyager sans rouvrir la porte fermée plus haut : une réponse
-    est une **donnée d'entrée** de la dérivation, au même titre que la racine
-    qu'on analyse. Vide — le défaut —, l'outillage se dérive de l'analyse, comme
-    pour la proposition d'équipe.
-    """
-
-    retenus: list[str] | None = None
-    choix: list[ChoixOutillageRequete] = []
-
-    def choix_acquis(self) -> list[Choix]:
-        """Les réponses et les constats en objets du domaine, tels qu'envoyés."""
-        return [c.en_choix() for c in self.choix]
-
-
-class SkillEquipeRequete(BaseModel):
-    """Un skill de l'outillage que le rôle validé branche (#1040).
-
-    Repris de la proposition, jamais ressaisi : `chemin` et `commandes` sont ceux
-    de l'entrée d'outillage qui l'a recommandé. Le playbook du rôle porte le chemin
-    (`maestro.equipe.creation.playbook_branche`) ; la commande, le skill la porte, et
-    lui seul (#1520).
-    """
-
-    nom: str
-    chemin: str = ""
-    commandes: list[str] = []
-
-
-class RoleEquipeRequete(BaseModel):
-    """Un rôle que l'utilisateur a **gardé** dans l'équipe proposée (#1040).
-
-    C'est délibérément la forme **servie** par `…/equipe/proposition`, rapportée
-    telle quelle — pas un identifiant à re-dériver. Deux champs portent tout le
-    poids de ce choix :
-
-    - `playbook` est le texte qu'on a lu à l'écran. Le regénérer à la validation
-      rendrait un **autre** playbook (c'est un appel modèle), donc créerait un
-      agent que personne n'a validé ;
-    - `politique` est la `PolitiqueOutils` que `RolePropose.politique()` a
-      rendue à la proposition — la traduction « autorisations → politique » a
-      donc lieu **une seule fois**, côté serveur, et ce qui est écrit est le cran
-      qu'on a lu avec sa raison (#716). `None` : ce rôle ne pose aucune
-      politique, ce qui n'est pas la même chose qu'une politique vide.
-
-    `instances` est le seul champ que l'écran ajuste librement ; les bornes sont
-    celles de `maestro.equipe.creation` et se vérifient là-bas, avec les autres
-    refus, pour qu'un refus de forme et un refus de fond se lisent au même
-    endroit.
-
-    `navigateur` (#1532) : le rôle reçoit le navigateur de Maestro, tel que l'écran
-    l'a montré — proposé, puis retiré ou donné en mots. Absent : il ne le reçoit pas.
-    """
-
-    nom: str
-    role: str
-    competences: list[str] = []
-    playbook: str = ""
-    instances: int = 1
-    gabarit: str = ""
-    skills: list[SkillEquipeRequete] = []
-    politique: dict[str, Any] | None = None
-    navigateur: bool = False
-
-
-class EquipeValideeRequete(BaseModel):
-    """L'équipe validée : ce qui doit être créé dans le projet (#1040).
-
-    `proposition_id` ne conditionne rien — il **trace** de quelle proposition
-    cette équipe sort, et se relit dans le rapport. Le lier à un état serveur
-    demanderait de garder les propositions en mémoire, ce que #1039 a refusé
-    (« l'équipe se relit, se modifie et se redemande sans conséquence »).
-
-    Une liste `roles` vide est refusée : « je ne veux aucune équipe » se dit en
-    ne validant pas, pas en validant le vide.
-    """
-
-    proposition_id: str = ""
-    roles: list[RoleEquipeRequete] = []
-
-    def roles_valides(self) -> list[RoleValide]:
-        """Les rôles en objets du domaine — la politique relue, jamais reconstruite.
-
-        `PolitiqueOutils.from_dict` est le même lecteur que celui du dépôt : une
-        politique mal formée lève ici avec le motif exact (« décideur inconnu »,
-        « entrée deny … »), avant qu'aucun agent ne soit écrit.
-        """
-        return [
-            RoleValide(
-                nom=r.nom,
-                role=r.role,
-                competences=tuple(r.competences),
-                playbook=r.playbook,
-                instances=r.instances,
-                gabarit=r.gabarit,
-                skills=tuple(
-                    SkillRetenu(
-                        nom=s.nom, chemin=s.chemin, commandes=tuple(s.commandes)
-                    )
-                    for s in r.skills
-                ),
-                politique=(
-                    None if r.politique is None else PolitiqueOutils.from_dict(r.politique)
-                ),
-                navigateur=r.navigateur,
-            )
-            for r in self.roles
-        ]
-
-
-class RecrutementDecisionRequete(EquipeValideeRequete):
-    """Corps du geste qui valide — ou décline — l'équipe proposée dans le fil (#1146).
-
-    L'équipe validée **dans la forme de `POST /api/projets/{id}/equipe`**, parce
-    que c'est la même création (#1040) : ce qui repart est ce qui a été montré,
-    playbook et politique compris. S'y ajoutent `approuve` — décliner ne porte
-    aucun rôle, `roles` est alors ignoré — et `conversation`, au sens qu'elle a
-    sur un envoi.
-
-    Ni projet ni objectif : les deux sont sur la demande que le fil porte
-    (`DemandeRecrutement`), et un corps qui les redirait ouvrirait une seconde
-    façon de décider où l'équipe naît.
-    """
-
-    approuve: bool
-    conversation: str | None = None
-
-
-class DeclarationProjetRequete(BaseModel):
-    """Corps du geste qui accepte — ou refuse — le projet que le fil propose (#1294).
-
-    `approuve`, et rien d'autre de fond : nom, dossier et versionnement sont sur la
-    proposition que le fil porte (`DemandeProjet`), et c'est elle qui fait foi. Une
-    correction ne passe pas par ici — elle se dit dans la conversation et appelle
-    une proposition nouvelle, revérifiée (veille de #1294). `conversation` a le
-    sens qu'elle a partout ailleurs sur ce canal.
-    """
-
-    approuve: bool
-    conversation: str | None = None
-
-
-class GesteRunRequete(BaseModel):
-    """Corps du geste qui confirme — ou écarte — le geste sur un run que le fil propose (#1179).
-
-    `approuve`, et rien d'autre de fond : l'action, le run et les bornes d'une
-    relance sont sur la proposition que le fil porte (`GesteRunPropose`), et c'est
-    elle qui s'exécute. « Plutôt 10 $ » ne passe pas par ici : il se dit dans la
-    conversation, et appelle une carte nouvelle. `conversation` a le sens qu'elle a
-    partout ailleurs sur ce canal.
-    """
-
-    approuve: bool
-    conversation: str | None = None
-
-
-class ReglementRequete(BaseModel):
-    """Corps du geste qui confirme — ou écarte — le règlement que le fil propose (#1183).
-
-    `approuve`, et rien d'autre de fond : la question ou la validation visée, la
-    réponse qui partira et la raison d'un refus sont sur la proposition que le fil
-    porte (`ReglementPropose`), et c'est elle qui se règle. « Dis-lui plutôt MySQL »
-    ne passe pas par ici : il se dit dans la conversation, et appelle une carte
-    nouvelle — la règle du geste sur un run (#1179). `conversation` a le sens qu'elle
-    a partout ailleurs sur ce canal.
-    """
-
-    approuve: bool
-    conversation: str | None = None
-
-
-class DecisionPieceRequete(BaseModel):
-    """Corps du geste qui tranche la pièce d'outillage que le fil propose (#1161).
-
-    `decision` — `ecrire`, `passer` ou `plus-tard` —, et rien d'autre de fond : le
-    chemin, le contenu et le diff sont sur la pièce que le fil porte
-    (`PieceProposee`), et c'est elle qui s'écrit. `piece` est l'**empreinte** de la
-    version que la carte montrait : une désignation, qui fait tomber sur le `409` le
-    double clic qui écrirait sinon la pièce suivante, déjà proposée. Une correction
-    ne passe pas par ici : elle se **dit** dans la conversation, et appelle une pièce
-    revérifiée.
-    """
-
-    decision: str
-    piece: str = ""
-    conversation: str | None = None
-
-
-class SecretPoolRequete(BaseModel):
-    """Une valeur de secret saisie pour une intégration du pool (#133).
-
-    `cle` est le nom de la variable `${VAR}` du gabarit (ex. `GITLAB_TOKEN`),
-    `valeur` ce que l'humain saisit (token, canal d'appairage, token OAuth
-    importé). `expire_le` (ISO 8601) n'a de sens que pour un token OAuth
-    importé (`oauth_importe`) : c'est l'échéance qui rend sa validité visible.
-    Une valeur vide est ignorée (le secret reste à configurer).
-    """
-
-    cle: str
-    valeur: str
-    expire_le: str | None = None
-
-
-class IntegrationPoolRequete(BaseModel):
-    """Corps d'ajout d'une intégration au pool projet (#133) depuis la bibliothèque.
-
-    `registre_id` désigne l'entrée **curée** à instancier (garde-fou
-    supply-chain, docs/19 — un id hors registre est refusé). `nom` nomme la
-    liaison (le préfixe d'outils `mcp__<nom>__…`, défaut : l'id) ; `secrets`
-    porte les valeurs saisies **une seule fois**, stockées chiffrées côté
-    serveur dans le coffre projet partagé.
-    """
-
-    registre_id: str
-    nom: str | None = None
-    secrets: list[SecretPoolRequete] = []
-
-
-class AdmissionRequete(BaseModel):
-    """Corps de l'admission d'une entrée découverte dans l'allowlist (#678).
-
-    `registre_id` désigne l'entrée **découverte** à admettre — celle que l'écran
-    vient de lister avec ses signaux de confiance (éditeur, version, dépôt,
-    statut). `par` est qui admet, `note` pourquoi : l'admission est un geste
-    **tracé**, et une trace sans auteur ni raison ne sert à rien six mois plus
-    tard. Aucun des deux n'est **exigé** — refuser une admission faute de nom
-    n'ajouterait aucune sécurité (rien ne prouve un nom saisi ici) et
-    déplacerait la porte du côté du formulaire.
-    """
-
-    registre_id: str
-    par: str = ""
-    note: str = ""
-
-
-class RevocationRequete(BaseModel):
-    """Corps de la révocation d'une admission (#678).
-
-    `par` et `motif` sont la trace du geste inverse — pourquoi on retire de
-    l'allowlist ce qu'on y avait fait entrer. Ils ne conditionnent rien : ce qui
-    compte est que la révocation ait lieu, pas qu'elle soit bien remplie.
-    """
-
-    par: str = ""
-    motif: str = ""
-
-
-class ActivationsMcpRequete(BaseModel):
-    """Corps de l'activation des intégrations du pool pour un agent (#133).
-
-    Remplacement intégral : la liste `integrations` (des ids du pool) devient
-    l'ensemble activé de l'agent — une liste vide le désactive de toutes. C'est
-    ce que pose l'interrupteur par agent qui **remplace** l'affichage lecture
-    seule des serveurs MCP (critère #133).
-    """
-
-    integrations: list[str]
-
-
-class PolitiquePermissionsRequete(BaseModel):
-    """Corps de la politique de permissions écrite pour un agent (#262).
-
-    Remplacement intégral, comme les activations MCP au-dessus : les trois
-    listes deviennent la politique de l'agent, toutes vides valant « rien
-    d'interdit, rien d'arbitré, tout ce que le profil expose ».
-
-    Les valeurs ne sont **pas** jugées ici : le modèle ne fixe que la forme du
-    corps, et c'est `PermissionStore.ecrire` qui refuse une entrée mal formée
-    avec **son** motif (« entrée deny 'mon outil' — nom d'outil attendu… »).
-    Recopier la règle en validateur Pydantic donnerait deux définitions de ce
-    qu'est une entrée admissible, dont la seconde finirait par diverger du
-    moteur qui l'applique.
-
-    `ask` accepte les deux formes que la lecture accepte (#586) — objet
-    `{"<outil>": "<décideur>"}` ou liste, `humain` par défaut : un client qui
-    renvoie ce qu'il a lu d'une politique d'avant ce lot n'a rien à convertir.
-
-    `portees` (#1226) est ici pour la raison qui la fait **toujours sortir** de
-    `to_dict` : un écran qui renvoie ce qu'il a lu ne doit pas perdre en chemin
-    la borne d'un cran. Un corps qui l'omet écrit une politique sans portée — ce
-    que veut dire, par exemple, « repartir d'une politique vide ».
-    """
-
-    allow: list[str] = []
-    ask: dict[str, str] | list[str] = {}
-    portees: dict[str, str] = {}
-    deny: list[str] = []
-
-
-class Diffusion:
-    """Fan-out des événements vers les WebSockets connectées, **à leur portée**.
-
-    Une file par connexion, alimentée par la pompe ; chaque handler WebSocket
-    draine la sienne. Files non bornées : le POC diffuse peu d'événements et
-    une connexion les consomme au fil de l'eau.
-
-    Chaque connexion déclare sa **portée projet** à l'ouverture (#277) et ne
-    reçoit que les événements que celle-ci retient — le tri se fait donc **à
-    l'entrée de la file**, pas à l'émission : une socket cadrée sur un projet
-    n'est même pas réveillée par le travail d'un autre, et aucun événement
-    étranger ne peut être servi par erreur en aval. C'est la même règle que les
-    vues REST (`PorteeProjet.retient`), appliquée au flux : un client qui
-    recharge son état puis suit les événements voit deux fois le même périmètre.
-    """
-
-    def __init__(self) -> None:
-        self._connexions: dict[asyncio.Queue[Event], PorteeProjet] = {}
-
-    def connecter(self, portee: PorteeProjet | None = None) -> asyncio.Queue[Event]:
-        """Enregistre une connexion : sa file recevra les événements de sa portée.
-
-        `None` vaut la vue transverse — le comportement d'avant #277, conservé
-        pour les appels internes ; les routes, elles, exigent une portée.
-        """
-        file: asyncio.Queue[Event] = asyncio.Queue()
-        self._connexions[file] = portee if portee is not None else PorteeProjet.tous()
-        return file
-
-    def deconnecter(self, file: asyncio.Queue[Event]) -> None:
-        """Retire la connexion ; ses événements en attente disparaissent avec elle."""
-        self._connexions.pop(file, None)
-
-    def diffuser(self, event: Event) -> None:
-        """Pousse `event` aux connexions dont la portée le retient."""
-        for file, portee in self._connexions.items():
-            if portee.retient(event.projet_id):
-                file.put_nowait(event)
-
+from maestro.sources import DepotTeleversements
 
 _LOGGER = logging.getLogger("maestro.controltower")
 
@@ -1649,135 +511,12 @@ def _reprise_agents_activee() -> bool:
     return (os.environ.get("MAESTRO_REPRISE_AGENTS") or "").strip() != "0"
 
 
-#: Le code HTTP de chaque motif de refus d'une **relance** (#349). La table vit
-#: ici et non dans le service : c'est la route qui parle HTTP, le service ne
-#: connaît que ses motifs. Repli à `422` pour un motif non listé — un refus qu'on
-#: n'a pas su classer reste une requête que l'API n'a pas honorée, jamais un
-#: succès.
-_CODE_REFUS_RELANCE: dict[str, int] = {
-    MOTIF_RELANCE_RUN_INCONNU: 404,
-    # Les deux mêmes 409 que l'annulation, et pour la même raison : l'état du run
-    # interdit le geste, sans que la requête soit malformée.
-    MOTIF_RELANCE_RUN_SOLDE: 409,
-    MOTIF_RELANCE_RUN_VIVANT: 409,
-}
-
-#: Le statut HTTP des refus de la pause, de la reprise et de l'annulation (#1179) —
-#: ceux que leurs routes rendaient déjà, maintenant que les règles vivent dans le
-#: service (`refus_du_geste`) : `404` sur un run inconnu, `409` sur tout état qui
-#: interdit le geste (soldé, déjà suspendu, pas suspendu, sans hôte pour la pause).
-_CODE_REFUS_GESTE: dict[str, int] = {
-    MOTIF_RELANCE_RUN_INCONNU: 404,
-    MOTIF_RELANCE_RUN_SOLDE: 409,
-    MOTIF_GESTE_RUN_SUSPENDU: 409,
-    MOTIF_GESTE_RUN_NON_SUSPENDU: 409,
-    MOTIF_GESTE_RUN_SANS_HOTE: 409,
-}
-
-#: Ce que la **reprise sur le plan** peut refuser en plus, une fois passés les refus
-#: du geste (#1391) : une reprise déjà en train de partir (`409`, l'état du run),
-#: un état acquis qu'on n'a pas pu relire (`503`, le stockage — la requête n'y est
-#: pour rien, et elle passera une fois le stockage revenu) et, par son repli sur la
-#: relance, un run sans plan ni brief approuvé (`422`, comme `…/relancer`).
-_CODE_REFUS_REPRISE: dict[str, int] = {
-    **_CODE_REFUS_GESTE,
-    **_CODE_REFUS_RELANCE,
-    MOTIF_REPRISE_EN_COURS: 409,
-    MOTIF_REPRISE_ETAT_ILLISIBLE: 503,
-    MOTIF_RELANCE_SANS_CADRAGE: 422,
-}
-
-#: Le statut HTTP des refus d'une réponse à une question et d'une décision sur une
-#: validation (#1183) — ceux que leurs routes rendaient déjà, maintenant que les
-#: règles vivent dans le service des attentes (`ServiceAttentes`) : `404` sur une
-#: attente inconnue, `409` sur une attente déjà réglée, `422` sur une réponse vide.
-_CODE_REFUS_REGLEMENT: dict[str, int] = {
-    MOTIF_ATTENTE_INCONNUE: 404,
-    MOTIF_ATTENTE_REGLEE: 409,
-    MOTIF_REPONSE_VIDE: 422,
-    MOTIF_ETENDUE_REFUSEE: 422,
-}
-
-
-def _detail_refus(exc: Exception) -> dict[str, Any]:
-    """Le corps d'un refus de source ou de lancement : `{motif, message[, index]}`.
-
-    `detail_refus` (#223) donne les deux premiers champs — même convention que
-    les routes projets, un code stable plutôt qu'une phrase à analyser, et
-    `requete-invalide` en repli pour ce qui n'a pas de motif propre (objectif
-    vide, garde-fou hors bornes). L'`index` s'y ajoute quand le refus **vise une
-    source** (#315) : « une source est trop grosse » sans dire laquelle
-    obligerait à tout relire pour savoir quoi retirer.
-    """
-    detail: dict[str, Any] = dict(detail_refus(exc))
-    index = getattr(exc, "index", None)
-    if isinstance(index, int) and not isinstance(index, bool):
-        detail["index"] = index
-    return detail
-
-
-#: Ce que le journal du run dira de chaque geste au plafond (#1182) — qui a décidé,
-#: et d'où. Le chiffre, lui, est dans la ligne que le moteur écrit.
-_DETAIL_GESTE_PLAFOND = {
-    GESTE_RELEVER: "plafond relevé depuis la Control Tower",
-    GESTE_REDUIRE: "portée réduite depuis la Control Tower",
-    GESTE_ARRETER: "run arrêté depuis la Control Tower",
-}
-
-
-def _detail_decision_plafond(geste: str) -> str:
-    """La phrase qu'une décision au plafond porte au journal — vide pour un geste inconnu."""
-    return _DETAIL_GESTE_PLAFOND.get(geste, "")
-
-
-def _refus_plafond(decision: DecisionPlafond, demande: DemandePlafond) -> str:
-    """Pourquoi `decision` ne se tient pas face à la question en vol — "" si elle se tient.
-
-    Trois refus, chacun pour ce qu'il éviterait :
-
-    - une tâche écartée que la question ne nommait pas : la personne n'a décidé
-      que de ce qu'on lui a montré ;
-    - une réduction qui écarte **tout** ce qui reste : c'est un arrêt, et le dire
-      autrement ferait relever un plafond pour ne rien faire ;
-    - un plafond, relevé ou laissé tel quel, que la dépense **atteint déjà** : le
-      run retomberait dessus à sa première mesure, c'est-à-dire reposerait la même
-      question aussitôt.
-    """
-    if not decision.reprend:
-        return ""
-    connues = {tache.tache_id for tache in demande.restantes}
-    inconnues = [tache for tache in decision.ecartees if tache not in connues]
-    if inconnues:
-        return (
-            f"tâche(s) à écarter inconnue(s) de la question en vol : {', '.join(inconnues)}."
-        )
-    if connues and set(decision.ecartees) >= connues:
-        return "écarter tout ce qui reste revient à arrêter le run : choisissez « arrêter »."
-    cout = (
-        decision.plafond_cout_usd
-        if decision.plafond_cout_usd is not None
-        else demande.plafond_cout_usd
-    )
-    jetons = (
-        decision.plafond_tokens if decision.plafond_tokens is not None else demande.plafond_tokens
-    )
-    if cout is not None and demande.depense_usd is not None and demande.depense_usd >= cout:
-        return (
-            f"un plafond de {cout:.2f} $ ne couvre pas ce qui est déjà dépensé "
-            f"({demande.depense_usd:.2f} $) : le run s'y arrêterait aussitôt."
-        )
-    if jetons is not None and demande.depense_tokens >= jetons:
-        return (
-            f"un plafond de {jetons} tokens ne couvre pas ce qui est déjà dépensé "
-            f"({demande.depense_tokens} tokens) : le run s'y arrêterait aussitôt."
-        )
-    return ""
-
-
 #: Attente entre deux reprises de la pompe après une perte du bus (#1206), en
 #: secondes : on repart vite, puis on espace jusqu'au plafond — un Redis éteint
 #: pour la nuit ne doit pas remplir le journal technique.
 REPRISE_POMPE_S = 1.0
+
+
 REPRISE_POMPE_MAX_S = 10.0
 
 
@@ -1892,7 +631,7 @@ async def _pompe(  # noqa: C901
         attente = min(attente * 2, reprise_max_s)
 
 
-def create_app(  # noqa: C901
+def create_app(
     *,
     bus: EventBus | None = None,
     state: ControlTowerState | None = None,
@@ -2166,11 +905,15 @@ def create_app(  # noqa: C901
     donc durcie ; le portier vit en middleware ASGI, devant toutes les routes et
     devant le WebSocket.
     """
+    ctx = Contexte()
+    ctx.chat_repondeur = chat_repondeur
     acces = acces if acces is not None else PolitiqueAcces.ouverte()
     event_log = event_log if event_log is not None else InMemoryEventLog()
+    ctx.event_log = event_log
     # Ce que l'API sait de son magasin (#1206) : la sonde est celle du journal
     # lui-même, donc un journal en process (les tests) ne tombe jamais.
     magasin = Magasin(event_log.sonder, lieu=event_log.lieu())
+    ctx.magasin = magasin
     # Le mariage du transport et de la mémoire longue (#699), fait **ici** et une
     # seule fois : tout ce qui publie en aval — routes, services, hôte en process
     # — reçoit ce bus-là, donc consigne en publiant, sans que rien n'ait à s'en
@@ -2178,15 +921,21 @@ def create_app(  # noqa: C901
     # démarrage et le referme en partant, d'où `possede_le_journal` laissé à
     # False.
     bus = BusDurable(bus if bus is not None else InMemoryEventBus(), event_log)
+    ctx.bus = bus
     journal = journal if journal is not None else ServiceJournal()
+    ctx.journal = journal
     battements = battements if battements is not None else RegistreBattementsMemoire()
+    ctx.battements = battements
     agents_store = agents_store if agents_store is not None else AgentStore.default()
+    ctx.agents_store = agents_store
     surcharges = surcharges if surcharges is not None else SurchargeStore.default()
     capacites = capacites if capacites is not None else CapacityStore.default()
     # Construire la sonde ne sonde rien (#487) : elle n'a ni état ni cache, et ne
     # regarde le poste qu'au moment où `GET /api/fournisseurs` le demande.
     sonde_poste = sonde_poste if sonde_poste is not None else SondePoste()
+    ctx.sonde_poste = sonde_poste
     mcp = mcp if mcp is not None else McpStore.default()
+    ctx.mcp = mcp
     # La bibliothèque MCP a **trois sources** depuis #678 : le seed curé (en
     # code), les entrées admises (le journal, sur le disque) et le miroir du
     # registre officiel (sur le disque aussi). Un registre **injecté**
@@ -2196,13 +945,7 @@ def create_app(  # noqa: C901
     # un rafraîchissement sans redémarrage, et ne repaie la traduction de
     # 25 000 entrées qu'au moment où le miroir a effectivement bougé.
     registre_mcp_injecte = registre_mcp
-
-    def registre() -> RegistreMcp:
-        """La bibliothèque du moment : celle injectée, sinon la fédérée (mémoïsée)."""
-        if registre_mcp_injecte is not None:
-            return registre_mcp_injecte
-        return federer_memo().registre
-
+    ctx.registre_mcp_injecte = registre_mcp_injecte
     # La **porte d'admission** (#678) : le geste humain tracé qui fait entrer une
     # entrée découverte dans l'allowlist. Le service écrit le journal
     # (`admissions.json`, à côté du pool) ; la bibliothèque le relit à la
@@ -2211,22 +954,29 @@ def create_app(  # noqa: C901
     # effet ne s'y verra pas — le contrat d'un registre injecté est justement de
     # ne dépendre d'aucun disque.
     admissions = admissions if admissions is not None else ServiceAdmission.default()
+    ctx.admissions = admissions
     secrets = secrets if secrets is not None else SecretStore.default()
+    ctx.secrets = secrets
     fournisseur_defaut = (
         fournisseur_defaut
         if fournisseur_defaut is not None
         else ServiceFournisseurParDefaut(coffre=secrets)
     )
+    ctx.fournisseur_defaut = fournisseur_defaut
     permissions = permissions if permissions is not None else PermissionStore.default()
+    ctx.permissions = permissions
     projets = projets if projets is not None else ServiceProjets.default()
+    ctx.projets = projets
     # Le premier lancement (#642) se juge sur les projets **de ce service** : un
     # poste qui en déclare un n'est plus à son premier lancement.
     installation = installation if installation is not None else LecteurInstallation()
+    ctx.installation = installation
     accueil = (
         accueil
         if accueil is not None
         else ServiceAccueil(DepotAccueil.default(), lambda: len(projets.lister()))
     )
+    ctx.accueil = accueil
     # L'analyse d'outillage (#1030) se greffe sur le **même** service de projets :
     # elle n'a pas de dépôt à elle, et un second lecteur de fiches finirait par ne
     # plus refuser les mêmes racines que le premier. La **génération** (#1033) y
@@ -2245,6 +995,7 @@ def create_app(  # noqa: C901
         provider=lecteur_outillage,
         comprehension=comprehension,
     )
+    ctx.outillage = outillage
     # La projection part du catalogue **hors projet** : les agents rangés à la
     # racine du dépôt. Vide sur un poste neuf depuis #1042 — les cinq rôles du
     # code n'y sont plus —, et c'est voulu : le parc d'agents se peuple projet par
@@ -2260,6 +1011,7 @@ def create_app(  # noqa: C901
         if state is not None
         else ControlTowerState(catalogue(agents_store), capacites=capacites.lister())
     )
+    ctx.state = state
     playbooks = playbooks if playbooks is not None else PlaybookStore.default()
     # Les six dépôts d'un bloc (#1038) : c'est cet objet-là que `_config` cadre sur
     # le projet demandé, une fois par requête. Les variables individuelles restent
@@ -2273,6 +1025,7 @@ def create_app(  # noqa: C901
         mcp=mcp,
         capacites=capacites,
     )
+    ctx.gabarits = gabarits
     # L'outillage s'écrit **pièce par pièce dans la conversation** (#1161) : le même
     # service d'outillage lit le projet, les mêmes verdicts de commandes sont joués
     # avant chaque carte, et une correction dite avec des mots est comprise par le
@@ -2287,12 +1040,15 @@ def create_app(  # noqa: C901
     # ce que ses commandes rendent (#1343, `ConteurDeFin`).
     conducteur = ConducteurOutillage(comprehension, pieces=pieces)
     analyseur = analyseur if analyseur is not None else AnalyseurEchecs(playbooks=playbooks)
+    ctx.analyseur = analyseur
     redacteur_playbook = (
         redacteur_playbook if redacteur_playbook is not None else RedacteurPlaybook()
     )
+    ctx.redacteur_playbook = redacteur_playbook
     generateur_agent = (
         generateur_agent if generateur_agent is not None else GenerateurDefinitionAgent()
     )
+    ctx.generateur_agent = generateur_agent
     # La proposition d'équipe (#1039) se greffe sur les trois pièces qu'elle a
     # besoin de connaître et sur aucune autre : le service de projets (pour
     # résoudre et analyser le projet visé), la configuration d'agent au niveau
@@ -2312,8 +1068,11 @@ def create_app(  # noqa: C901
             compositeur_equipe if compositeur_equipe is not None else CompositeurEquipe()
         ),
     )
+    ctx.equipe = equipe
     mailbox = mailbox if mailbox is not None else InMemoryMailbox()
+    ctx.mailbox = mailbox
     chat_store = chat_store if chat_store is not None else ChatStore.default()
+    ctx.chat_store = chat_store
     # Un seul dépôt de téléversement (#317) pour la route qui reçoit les octets et
     # pour tout service qui les rattache : deux instances pointeraient le même
     # disque, mais l'injection des tests n'en tiendrait qu'une. Résolu **avant**
@@ -2323,6 +1082,7 @@ def create_app(  # noqa: C901
     televersements = (
         televersements if televersements is not None else DepotTeleversements.default()
     )
+    ctx.televersements = televersements
     chat = ServiceChat(
         store=chat_store,
         repondeur=(
@@ -2332,6 +1092,7 @@ def create_app(  # noqa: C901
         bus=bus,
         televersements=televersements,
     )
+    ctx.chat = chat
     # Le canal d'aide (#123) : mêmes rouages que le chat — persistance, messagerie,
     # bus — pour que le fil se relise et se diffuse à l'identique ; seul le
     # répondeur change, l'assistant ne parlant pas du projet mais de l'outil. Le
@@ -2355,8 +1116,9 @@ def create_app(  # noqa: C901
         bus=bus,
         televersements=televersements,
     )
+    ctx.assistance = assistance
     diffusion = Diffusion()
-
+    ctx.diffusion = diffusion
     # Pilotage des exécutions (#185) : lance sur le bus et la projection de
     # cette app — le run est donc suivi par les mêmes rouages que n'importe
     # quelle orchestration observée.
@@ -2374,201 +1136,15 @@ def create_app(  # noqa: C901
         # même dépôt que celui des écrans, jamais un second qui pourrait diverger.
         projets=projets.store,
     )
-
+    ctx.executions = executions
     # Le régime de brief des runs ouverts depuis le fil — **une** valeur, lue par
     # le lanceur qui l'applique et par le régime qui le dit (#1323) : deux
     # écritures du même choix finiraient par faire annoncer au fil un autre
     # cadrage que celui du run.
     mode_brief_du_fil = MODE_BRIEF_AUTO
-
-    async def ouvrir_un_run(
-        objectif: str,
-        projet_id: str | None = None,
-        bornes: BornesRun = AUCUNE_BORNE,
-        contexte_sources: str = "",
-    ) -> dict[str, Any]:
-        """Le lanceur du fil global (#268) — un run sur l'objectif dicté au chat.
-
-        `MODE_BRIEF_AUTO` et non le `humain` des lancements par l'écran : le
-        cadrage d'une demande **est** la conversation qu'on est en train d'avoir,
-        et renvoyer vers un écran de validation de brief pour la poursuivre
-        couperait le fil en deux. Le run part donc, brief rédigé sans attendre ;
-        l'écran des exécutions reste la voie de celui qui veut le valider avant.
-
-        `projet_id` (#683) est le projet du run — celui de la proposition
-        approuvée (#1180), à défaut celui de la fenêtre, **normalisé à la
-        frontière** (`envoyer_chat`). Il est passé à `lancer` exactement comme le
-        fait `POST /api/executions` — même paramètre, même validation de forme
-        (`projet_id_valide`), donc une seule règle pour les deux portes d'entrée.
-        Le fil ne l'appelle jamais sans projet (#1180, `_ouvrir_un_run`) ; l'écran
-        des exécutions, lui, garde le rattachement pour une donnée (#222).
-
-        `bornes` (#990) achève le rapprochement des deux portes : les quatre
-        garde-fous que `POST /api/executions` transmettait depuis #185 passent
-        désormais aussi par celle-ci, qui est **la seule qu'un écran offre**
-        depuis #666. Elles arrivent du geste de cadrage, où l'écran les a
-        posées ; `AUCUNE_BORNE` — le défaut — rend exactement l'appel d'avant ce
-        ticket, et c'est `lancer` qui refuse une valeur hors bornes.
-
-        `contexte_sources` (#1172) : les pièces jointes de la conversation, déjà
-        lues par le fil. Elles passent en contexte et non en `sources` à relire
-        (cf. `orchestration.contexte_du_fil`).
-        """
-        return await executions.lancer(
-            objectif,
-            plafond_cout_usd=bornes.plafond_cout_usd,
-            plafond_tokens=bornes.plafond_tokens,
-            timeout_tache_s=bornes.timeout_tache_s,
-            parallelisme=bornes.parallelisme,
-            projet_id=projet_id,
-            mode_brief=mode_brief_du_fil,
-            contexte_sources=contexte_sources,
-        )
-
-    def equipe_du_projet(projet_id: str) -> int | None:
-        """Combien d'agents le routeur trouvera pour ce projet — `None` : je ne sais pas (#1146).
-
-        La **règle unique** de l'exécuteur et de la boucle (`catalogue_du_projet`),
-        sur le même dépôt : le fil compte exactement les agents vers lesquels les
-        tâches seront routées. Un projet non déclaré n'est pas « sans équipe »,
-        il est inconnu — le fil n'en tire rien, et c'est la portée qui le dira.
-        """
-        if not projets.existe(projet_id):
-            return None
-        agents = catalogue_du_projet(agents_store, projet_id)
-        return None if agents is None else len(agents)
-
-    def roles_du_projet(projet_id: str | None) -> str:
-        """L'équipe du projet **en clair** pour le fil — rôles, agents, instances (#1223).
-
-        La même règle que la sonde du recrutement (`catalogue_du_projet`), lue
-        pour **dire** au lieu de compter : « qui travaille sur ce projet ? » ne
-        trouvait aucune réponse dans le prompt, où l'équipe n'existait que par un
-        `_sans_equipe` booléen. Rend `""` quand il n'y a rien à dire — aucun
-        projet, projet inconnu, dépôt illisible —, et la phrase qui dit qu'il n'y
-        a **personne** quand le catalogue est vide : c'est un fait, pas un vide.
-        """
-        if not projet_id or not projets.existe(projet_id):
-            return ""
-        agents = catalogue_du_projet(agents_store, projet_id)
-        if agents is None:
-            return ""
-        if not agents:
-            return (
-                "Équipe du projet : aucun agent recruté — personne ne peut prendre "
-                "une tâche de run aujourd'hui."
-            )
-        lignes = ["Équipe du projet (les agents vers qui les tâches sont routées) :"]
-        for agent in agents:
-            competences = ", ".join(sorted(agent.competences))
-            ligne = f"- {agent.role} « {agent.nom} » — modèle {agent.modele}"
-            if competences:
-                ligne += f" — compétences : {competences}"
-            lignes.append(ligne)
-        return "\n".join(lignes)
-
-    def regime_du_projet(projet_id: str | None) -> str:
-        """Ce qu'un run de ce projet fera, pour le fil — lu, jamais deviné (#1323).
-
-        L'équipe par la règle unique du routeur (`catalogue_du_projet`), comme
-        `roles_du_projet`, et la politique de chaque agent par l'appel exact de
-        l'exécution (`permissions.pour_projet(…).lire`, relu à chaque message
-        comme l'exécuteur le relit à chaque tâche) : le fil dit ce que la tâche
-        appliquera. Une politique que la lecture refuse n'est pas tue —
-        l'exécution en ferait un échec de tâche, et c'est ce que le fil en dira.
-        Sans projet, ou sur un projet inconnu, le bloc ne parle que de ce qui ne
-        dépend d'aucune équipe : le cadrage et les bornes.
-
-        Le **versionnement** du projet est relu ici aussi (#1299), par le seul
-        lecteur de projets : c'est lui qui décide si les tâches indépendantes
-        partiront de front, et un projet versionné depuis le dernier message doit
-        se dire tel. Illisible, il se tait plutôt que deviner.
-        """
-        if not projet_id or not projets.existe(projet_id):
-            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
-        agents = catalogue_du_projet(agents_store, projet_id)
-        if agents is None:
-            return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
-        politiques = permissions.pour_projet(projet_id)
-        membres: list[MembreDeLEquipe] = []
-        for agent in agents:
-            try:
-                politique = politiques.lire(agent.nom)
-            except ValueError as refus:
-                membres.append(MembreDeLEquipe(agent.role, agent.nom, illisible=str(refus)))
-            else:
-                membres.append(MembreDeLEquipe(agent.role, agent.nom, politique))
-        try:
-            versionne: bool | None = projets.entite(projet_id).versionne
-        except (ProjetInconnu, ProjetIllisible):
-            versionne = None
-        return regime_d_un_run(membres, mode_brief=mode_brief_du_fil, versionne=versionne)
-
-    def projet_du_fil(projet_id: str) -> Projet | None:
-        """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.
-
-        `ServiceProjets.entite` et lui seul (#1223) : les lectures de
-        l'orchestrateur sont bornées à la racine que ce service déclare, et son
-        **périmètre** est ce qui ferme `.env` et `secrets/`. Relire la fiche à
-        côté ouvrirait une seconde définition de « où a-t-on le droit de lire ».
-        """
-        try:
-            return projets.entite(projet_id)
-        except (ValueError, ProjetInconnu, ProjetIllisible):
-            return None
-
-    consultations = Consultations(projet=projet_du_fil, detail=detail_du_run(state))
-
-    def projet_nomme(projet_id: str) -> ProjetVise | None:
-        """Le projet de la fenêtre tel que le fil le nomme — `None` s'il n'est pas déclaré (#1180).
-
-        Le même lecteur que les lectures du fil (`projet_du_fil`, `ServiceProjets`) :
-        un projet que l'API ne déclare pas n'est pas un projet où un run peut partir,
-        et c'est la seule réponse qui ferme la porte. Ce qu'il rend est ce qu'une
-        proposition écrit sur elle (`ProjetVise`) : l'identifiant que l'accord suit,
-        et le nom et le dossier que la carte affiche.
-        """
-        projet = projet_du_fil(projet_id)
-        if projet is None:
-            return None
-        return ProjetVise(id=projet.id, nom=projet.nom, racine=projet.racine)
-
-    def outillage_du_fil(projet_id: str) -> str:
-        """L'outillage du projet pour le fil, lu **comme un agent le reçoit** (#1180).
-
-        `outillage_du_projet` est la lecture qui part dans le message de chaque
-        tâche : le fil dit donc de l'outillage exactement ce que l'équipe en
-        recevra, et rien qu'une seconde analyse du disque pourrait inventer.
-        """
-        projet = projet_du_fil(projet_id)
-        return outillage_en_clair(outillage_du_projet(projet)) if projet is not None else ""
-
-    async def consulter(demande: Demande, projet_id: str | None) -> Lecture:
-        """Exécute une lecture du fil, **hors boucle** — elle touche le disque (#1223).
-
-        `asyncio.to_thread` pour la même raison que la création d'équipe juste
-        au-dessus : lire un fichier ou balayer un dossier est bloquant, et
-        l'API sert d'autres requêtes pendant qu'un fil réfléchit.
-        """
-        return await asyncio.to_thread(consultations.executer, demande, projet_id)
-
-    async def creer_equipe_du_projet(
-        projet_id: str, roles: Sequence[RoleValide], proposition_id: str = ""
-    ) -> dict[str, Any]:
-        """Crée l'équipe validée — la voie de #1040, que la route et le fil partagent.
-
-        Une seule écriture d'équipe, et ses deux conséquences ensemble : les
-        fichiers du projet (`ServiceEquipe.creer`, hors de la boucle d'événements),
-        puis la projection, où les agents deviennent cibles de réassignation
-        comme ceux du `POST /api/catalogue`.
-        """
-        rapport = await asyncio.to_thread(
-            equipe.creer, projet_id, roles, proposition_id=proposition_id
-        )
-        for agent in rapport["agents"]:
-            state.ajouter_agent(agent["nom"], agent["role"])
-        return rapport
-
+    ctx.mode_brief_du_fil = mode_brief_du_fil
+    consultations = Consultations(projet=partial(projet_du_fil, ctx), detail=detail_du_run(state))
+    ctx.consultations = consultations
     # Ce qui attend quelqu'un — questions d'agent et validations — se règle par un
     # seul service (#1183) : les deux routes de leurs écrans et le fil de
     # l'orchestrateur l'appellent, aucun ne recopie ses règles.
@@ -2580,7 +1156,7 @@ def create_app(  # noqa: C901
         bus,
         accords=lambda projet_id: gabarits.permissions.pour_projet(projet_id).accords(),
     )
-
+    ctx.attentes = attentes
     # Le fil global (#268) : mêmes rouages que le chat — persistance, messagerie,
     # bus —, un répondeur qui peut ouvrir un run, et rien de plus côté REST. Il se
     # construit ici, et pas avec les deux autres, parce qu'il tient son lanceur du
@@ -2591,7 +1167,7 @@ def create_app(  # noqa: C901
             orchestration_repondeur
             if orchestration_repondeur is not None
             else RepondeurOrchestration(
-                lanceur=ouvrir_un_run,
+                lanceur=partial(ouvrir_un_run, ctx),
                 apercu=apercu_de(state),
                 # Ce que les runs ont **fait** (#1157) : la même projection, lue
                 # pour raconter au lieu de compter — sans quoi « pourquoi le run
@@ -2603,21 +1179,21 @@ def create_app(  # noqa: C901
                 # Un projet sans équipe se la voit proposer au lieu d'un run
                 # voué à l'échec (#1146) — comptée comme le routeur la comptera,
                 # créée par la même voie que l'étape d'équipe du parcours.
-                equipe=equipe_du_projet,
-                recruteur=creer_equipe_du_projet,
+                equipe=partial(equipe_du_projet, ctx),
+                recruteur=partial(creer_equipe_du_projet, ctx),
                 # Ce qui fait que l'orchestrateur **sait** (#1223) : les lectures
                 # qu'il demande (fichiers du projet, détail complet d'un run),
                 # l'équipe réelle et ce qui attend quelqu'un.
-                consultation=consulter,
-                roles=roles_du_projet,
+                consultation=partial(consulter, ctx),
+                roles=partial(roles_du_projet, ctx),
                 attentes=attentes_de(state),
                 # Ce qu'un run fera (#1323) : la politique réelle de l'équipe, le
                 # cadrage du lanceur, la règle des bornes — ce que le fil devinait.
-                regime=regime_du_projet,
+                regime=partial(regime_du_projet, ctx),
                 # Le projet de la conversation (#1180) : nommé par sa fiche, avec son
                 # outillage — et sans lui, aucun run ne part du fil.
-                projet=projet_nomme,
-                outillage=outillage_du_fil,
+                projet=partial(projet_nomme, ctx),
+                outillage=partial(outillage_du_fil, ctx),
                 conducteur=conducteur,
                 # Un projet naît dans la conversation (#1294) : déclaré par le
                 # **même** service que `POST /api/projets`, et un dossier importé
@@ -2636,22 +1212,7 @@ def create_app(  # noqa: C901
         mailbox=mailbox,
         bus=bus,
     )
-
-    def projet_du_run(projet_id: str | None) -> Projet | None:
-        """Le projet d'un run — `None` s'il n'en relève d'aucun, ou s'il a disparu.
-
-        Un `None` et non une exception : un run hors projet est un cas normal
-        (#222), et un projet retiré après coup ne doit pas empêcher de raconter
-        ce que le run a fait. C'est la même asymétrie que l'annonce de #928, qui
-        écrit sa raison à la place du chemin plutôt que de se taire.
-        """
-        if not projet_id:
-            return None
-        try:
-            return projets.entite(projet_id)
-        except Exception:  # noqa: BLE001 — projet retiré, illisible, ou jamais déclaré
-            return None
-
+    ctx.orchestration = orchestration
     # Le bilan sur pièces d'un run (#1284) : rendu à la fin de **tout** run, qu'un
     # fil l'ait demandé ou non, et publié sur le bus — donc gardé au journal durable.
     bilans = ServiceBilan(
@@ -2661,6 +1222,7 @@ def create_app(  # noqa: C901
         agent=AGENT_ORCHESTRATION,
         juge=bilan_juge,
     )
+    ctx.bilans = bilans
     # Le récit de fin d'un run (#1224) : il écrit dans le fil ci-dessus, donc il
     # se construit après lui. Rien ne l'abonne au bus — c'est la pompe qui lui
     # passe la main, une fois la projection à jour (voir `_pompe`).
@@ -2668,7 +1230,7 @@ def create_app(  # noqa: C901
         chat=orchestration,
         state=state,
         agent=AGENT_ORCHESTRATION,
-        projet=projet_du_run,
+        projet=partial(projet_du_run, ctx),
         redacteur=recit_redacteur,
         # La fin d'un run revoit aussi l'outillage de son projet (#1343) : ce qui ne
         # pouvait pas se jouer sur un dossier vide se joue sur le projet construit.
@@ -2677,170 +1239,24 @@ def create_app(  # noqa: C901
         # en route, jamais un second.
         bilan=bilans,
     )
+    ctx.conteur = conteur
     # Les récits en vol, tenus par l'app : `asyncio.create_task` ne garde qu'une
     # référence faible, et une tâche ramassée en cours de route perdrait le
     # message sans rien dire.
     recits: set[asyncio.Future[Any]] = set()
+    ctx.recits = recits
     # Le relais du renfort (#1260) : il pose dans le fil ci-dessus la demande
     # qu'un run a publiée sur le bus — quel que soit l'hôte du run, en process
     # ou détaché. Même patron que le récit : rien ne l'abonne, la pompe lui passe
     # la main une fois la projection à jour.
     relais_renfort = RelaisRenfort(bus, orchestration, AGENT_ORCHESTRATION)
-
-    async def _raconter_au_compte_du_fil(run_id: str) -> None:
-        """Le récit de fin d'un run, sa dépense au grand livre du fil (#1534).
-
-        Le récit et la revue d'outillage qui le suit sont écrits **dans le fil**,
-        pour le projet du run, et non par le run : ils n'entrent pas à son grand
-        livre, ils entrent à celui du fil, comme tout ce que Maestro dit en
-        conversation. Le bilan, qu'il attend, a son propre collecteur et sa ligne
-        sur le run (#1284) : il n'est pas compté ici.
-        """
-        execution = state.execution(run_id)
-        projet_id = execution.projet_id if execution is not None else None
-        async with au_compte_du_fil(
-            bus, titre="récit de fin de run", agent=ACTEUR_RUN, projet=lambda: projet_id
-        ):
-            await conteur.raconter(run_id)
-
-    def au_compte_du_projet(
-        id_projet: str | None, titre: str
-    ) -> AbstractAsyncContextManager[None]:
-        """Ce qu'une route dépense pour `id_projet`, au grand livre du fil (#1534).
-
-        Les cartes du fil appellent aussi des routes à elles — l'équipe proposée et
-        corrigée, l'analyse, le questionnaire et la génération de l'outillage — : ce
-        sont des appels modèle pour un projet nommé dans le chemin, hors de tout run.
-
-        Les gestes d'atelier aussi (#1538) : la génération d'un agent du catalogue,
-        la révision et la réécriture d'un playbook. C'est Maestro qui travaille pour
-        un projet, hors de tout run, donc le même poste. Le même générateur écrit
-        déjà les playbooks de l'équipe proposée sous ce poste, et un poste à part
-        rangerait le même travail en deux endroits selon l'écran d'où il part. Leur
-        projet vient de `?projet=`, et `None` (le niveau des gabarits) range la
-        dépense hors projet, toujours comptée dans la vue transverse.
-        """
-        return au_compte_du_fil(bus, titre=titre, agent=ACTEUR_RUN, projet=lambda: id_projet)
-
-    def raconter_la_fin(run_id: str) -> None:
-        """Lance le bilan et le récit de `run_id` — sans faire attendre la pompe (#1224, #1284).
-
-        La rédaction est un appel modèle et la lecture du livrable touche le
-        disque : les faire dans la pompe figerait le flux temps réel de tous les
-        écrans pendant plusieurs secondes.
-
-        Le bilan part **à côté** du récit, et non dedans : tout run en a un, y
-        compris celui qu'aucun fil n'a demandé et qui n'aura donc pas de récit. Le
-        récit, lui, attend le même bilan (`ServiceBilan.rendre` partage l'appel en
-        vol) : il n'y a qu'un appel au modèle pour les deux.
-        """
-        # Le bilan est **lancé** ici, sans attendre (#1285) : l'appel est en vol dès
-        # cette ligne, donc la vue du run qui relit juste après lit « en
-        # rédaction », jamais « absent ».
-        en_vol = bilans.lancer(run_id)
-        if isinstance(en_vol, asyncio.Future):
-            recits.add(en_vol)
-            en_vol.add_done_callback(recits.discard)
-        tache = asyncio.create_task(_raconter_au_compte_du_fil(run_id))
-        recits.add(tache)
-        tache.add_done_callback(recits.discard)
-
-    async def rejouer() -> None:
-        """Relit le journal durable dans la projection — une seule fois par process."""
-        try:
-            evenements = await event_log.relire()
-        except Exception as erreur:
-            magasin.rejeu_echoue(erreur)
-            raise
-        for event in evenements:
-            state.appliquer(event)
-            # Le même rattachement que la pompe (#1290) : le journal durable
-            # garde l'issue d'un run telle qu'elle a été publiée, sans projet.
-            journal.consigner(state.au_projet_de_son_run(event))
-        magasin.rejeu_abouti()
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # Rejeu du journal durable (#97) **avant** d'ouvrir la pompe : la
-        # projection retrouve l'historique (exécutions, grands livres, analytics)
-        # d'avant le redémarrage, puis la pompe prend le relais du flux à venir.
-        # Le journal requêtable (#478) se remplit du **même** parcours : c'est ce
-        # qui fait de lui une vue de l'historique durable et non un second
-        # stockage — et ce qui lui donne des rangs, donc des identifiants
-        # d'entrée, stables d'un redémarrage à l'autre.
-        # Un journal illisible (Redis absent au démarrage…) ne bloque pas l'API,
-        # mais il ne se tait plus (#1206) : tant que l'historique n'est pas relu,
-        # le magasin se dit indisponible, et la pompe retente le rejeu dès que
-        # le magasin revient.
-        # Un journal qui refuse son fichier (schéma plus récent que le code,
-        # migration en échec, #1621) se nomme : l'API sert sa panne et son geste.
-        try:
-            await rejouer()
-        except MagasinRefuse as refus:
-            _LOGGER.error("Journal des événements refusé au démarrage : %s", refus, exc_info=True)
-        except Exception:
-            _LOGGER.exception(
-                "Rejeu du journal des événements impossible : l'API sert la panne "
-                "du magasin et retentera dès qu'il répondra."
-            )
-        # Reprise des agents et réglages globaux dans le projet qui les utilise
-        # (#1038, critère 2). Ici parce que c'est le seul moment où une
-        # installation d'avant ce lot croise le nouveau code sans que personne ait
-        # rien à taper — et **best-effort** : elle n'ajoute jamais, ne supprime
-        # jamais, et une reprise impossible ne doit pas empêcher l'API de
-        # démarrer. Idempotente, donc rejouée à chaque démarrage sans effet.
-        # `MAESTRO_REPRISE_AGENTS=0` s'en passe ; la CLI
-        # `python -m maestro.agents.reprise [--check]` la rejoue et la détaille.
-        if _reprise_agents_activee():
-            try:
-                rapport = reprendre(projets=projets.store, configuration=gabarits)
-                if rapport.nb_reprises:
-                    _LOGGER.info("%s", rapport)
-            except Exception:
-                _LOGGER.exception(
-                    "Reprise des agents dans leur projet impossible : les réglages "
-                    "globaux restent lisibles comme gabarits (rien n'est perdu). "
-                    "La rejouer : python -m maestro.agents.reprise --check"
-                )
-        pompe = asyncio.create_task(
-            _pompe(
-                bus,
-                state,
-                diffusion,
-                journal,
-                magasin=magasin,
-                rejouer=rejouer,
-                sur_fin_de_run=raconter_la_fin,
-                sur_demande_de_renfort=relais_renfort,
-            )
-        )
-        try:
-            yield
-        finally:
-            # Les runs en vol s'arrêtent **avant** la pompe et le bus : leur
-            # issue (annulation) a encore un canal pour être consignée.
-            await executions.fermer()
-            # Les récits encore en vol s'arrêtent avec le reste : un appel modèle
-            # qui survivrait à l'arrêt écrirait dans un fil dont plus personne ne
-            # pompe les événements.
-            for recit in list(recits):
-                recit.cancel()
-            # Les relais de renfort aussi : un run détaché qui attend encore tient
-            # sa propre borne, et repart avec l'équipe actuelle à l'échéance.
-            relais_renfort.fermer()
-            pompe.cancel()
-            with suppress(asyncio.CancelledError):
-                await pompe
-            await mailbox.close()
-            await bus.close()
-            await event_log.close()
-            await battements.close()
-
+    ctx.relais_renfort = relais_renfort
     app = FastAPI(
         title="Maestro — Control Tower",
         description="État de l'orchestration (REST) et flux d'événements (WebSocket).",
-        lifespan=lifespan,
+        lifespan=partial(lifespan, ctx),
     )
+    app.state.contexte = ctx
     # Ce que l'API accepte (#638), en deux couches montées dans cet ordre —
     # `add_middleware` empile par le haut, donc CORS, ajouté en second, est
     # **au-dessus** du portier. C'est ce qu'on veut : un préflight `OPTIONS` est
@@ -2863,4560 +1279,375 @@ def create_app(  # noqa: C901
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
-
-    @app.get("/api/sante")
-    async def sante() -> dict[str, Any]:
-        """Vitalité du service, l'**espace** qu'il sert (#1164) et son **magasin** (#1206).
-
-        L'espace dit quelles données cette API voit — celles de sa copie de
-        travail, ou le jeu du banc. Un exercice le lit avant de sauver son état
-        (`maestro.scenarios.exercice sauver`) : sauver les données d'une autre stack
-        que celle où il a joué ferait rouvrir un état qui n'est pas le sien.
-
-        Le **statut** ne dit « ok » que si le magasin répond et que l'historique
-        a été relu ; sinon `"degrade"`, et `magasin` porte le motif et le geste.
-        La réponse reste un `200` : la purge, le lanceur, `start.sh` et les passages
-        (exercice, comparatif) lisent ici qu'**un process sert ce port**, et c'est vrai.
-        Ce qui a cessé est le « ok » menteur d'une API qui a perdu son magasin.
-        """
-        etat = await magasin.etat()
-        return {
-            "statut": "ok" if etat.disponible else "degrade",
-            "espace": espace_courant().nom,
-            "magasin": etat.en_json(),
-        }
-
-    @app.get("/api/installation")
-    async def installation_courante() -> dict[str, Any]:
-        """Ce que cette installation fait tourner (#1622) : le produit et son CLI `claude`.
-
-        `forme` dit si le produit est une installation ou un clone du dépôt, sur le
-        réglage qui range aussi sa configuration (`MAESTRO_INSTALLATION`, #1633) ;
-        `produit.version` celle que l'assemblage a écrite (dans un clone, celle de
-        `apps/desktop/package.json`), ou `null` avec son `releve`. `cli_claude` est
-        le CLI que le produit lance : sa `provenance` (`paquet` — celui que le SDK
-        embarque —, `poste` — un `claude` du `PATH`, hors de l'installation —, ou
-        `absent`), son `chemin` et la `version` que le binaire a dite (`null` :
-        inconnue, jamais devinée). Hors de la boucle : lire la version lance le CLI.
-        """
-        etat = await asyncio.to_thread(installation.lire)
-        return etat.en_json()
-
-    @app.post("/api/extinction")
-    async def eteindre() -> dict[str, Any]:
-        """**Maestro s'éteint** : ses runs en vol sont soldés avec lui (#486).
-
-        La porte de l'arrêt **volontaire**, et la seule. `scripts/controltower/
-        start.sh` la pousse avant de libérer les ports, depuis ses **deux** gestes
-        d'arrêt — `--stop`, et la **fermeture de la fenêtre** du navigateur par le
-        chien de garde #149 (#700) —, et la fermeture de l'enveloppe le fera le jour
-        où elle existera. Chaque hôte détaché est éteint avec sa **descendance**, son
-        run consigné `annulee` avec la cause `extinction` — donc jamais laissé
-        `en_cours` —, et ses tâches soldées avec lui.
-
-        ⚠ **Ce n'est pas l'arrêt de l'API.** Relancer après une modification (le
-        démarrage remplace la session précédente), planter, recevoir un `SIGTERM` :
-        ceux-là passent par le `lifespan`, où l'hôte détaché ne touche à rien — c'est
-        la propriété de #441 et elle n'est pas défaite. La distinction ne se déduit
-        d'aucun signal reçu ici : elle **descend** de l'appelant, seul à savoir qu'il
-        arrête exprès (docs/28 §11). Fermer la fenêtre a changé de camp le
-        2026-08-28 parce que c'est un geste d'**arrêt** — pas parce que la
-        distinction aurait faibli (docs/28 §11.2).
-
-        Rend les résumés des runs soldés — vide quand rien ne tournait, ce qui est
-        le cas courant. `200` dans les deux cas : éteindre une Control Tower au
-        repos n'est pas une erreur, et un code d'échec ferait chercher une panne là
-        où il n'y avait simplement rien à éteindre. Ce que le run **redevient** est
-        décrit par `POST …/relancer`, qui accepte un run soldé de la sorte.
-        """
-        soldes = await executions.eteindre()
-        return {"runs": soldes, "nb": len(soldes)}
-
-    def _portee(projet: str | None) -> PorteeProjet:
-        """La **portée projet** d'une lecture (#277), ou un refus motivé.
-
-        Le contrat unique des vues qui agrègent — Kanban, exécutions, coûts,
-        validations, journal, flux temps réel : `?projet=<id>` pour un projet,
-        `?projet=tous` pour la vue transverse, `?projet=aucun` pour les travaux
-        hors projet. **Omis, le paramètre est refusé** (422 `projet-requis`) :
-        une lecture sans périmètre n'est plus un mélange silencieux de tous les
-        projets, et un refus motivé se diagnostique là où une liste vide se
-        confondrait avec un projet sans activité. Un identifiant inconnu du
-        dépôt sort en 404 `projet-inconnu`, par la même porte que les refus de
-        `ServiceProjets` (#223) — motif, message, code.
-        """
-        try:
-            return resoudre_portee(projet, projet_connu=projets)
-        except PorteeRefusee as exc:
-            raise _refus_projet(exc) from exc
-
-    def _config(projet: str | None) -> ConfigurationAgents:
-        """La configuration d'agent cadrée par le projet demandé (#1038), ou un refus motivé.
-
-        Le pendant d'`_portee` pour ce qu'un agent **est** — définition,
-        playbook, autorisations, serveurs MCP, capacité — plutôt que pour ce
-        qu'il fait. Deux différences, et chacune est une décision (voir
-        `resoudre_projet_configuration`) : `tous`/`aucun` sont refusés, une
-        configuration appartenant à un projet réel ; et `?projet=` **omis** rend
-        le niveau des **gabarits**, qui est exactement ce que ces routes
-        servaient avant ce lot — un appel d'avant répond donc la même chose.
-        """
-        try:
-            projet_id = resoudre_projet_configuration(projet, projet_connu=projets)
-        except PorteeRefusee as exc:
-            raise _refus_projet(exc) from exc
-        return gabarits.pour_projet(projet_id)
-
-    def _parc(cfg: ConfigurationAgents) -> list[EtatAgent]:
-        """Le parc que `cfg` désigne : l'équipe d'un projet, ou la projection entière.
-
-        Le pendant d'`_config` pour la vue des agents, **écrit une fois** (#1101)
-        parce que deux routes le lisent et qu'elles doivent le lire pareil :
-        `GET /api/agents` et `POST /api/agents/{nom}/capacite`, qui décide de son
-        404. Les avoir laissées diverger est précisément ce qui a produit le
-        symptôme du ticket — une équipe qu'un écran ne montrait plus et dont la
-        capacité ne se réglait donc plus.
-
-        Cadré sur un projet, il part du **disque** (`state.equipe`) : c'est là
-        que vit l'équipe validée, quand la projection, elle, repart vide à chaque
-        redémarrage. Sans projet, c'est le niveau des gabarits, et le parc rendu
-        est celui de la projection — ce que cette route servait avant #1038.
-        """
-        if cfg.projet_id is None:
-            return state.agents()
-        return state.equipe(cfg.catalogue(), cfg.capacites.lister())
-
-    def _portee_run(run: str | None) -> PorteeRun:
-        """La **portée run** d'une lecture (#473), ou un refus motivé.
-
-        Le second périmètre, qui **s'ajoute** au premier sans le remplacer :
-        `?run=<run_id>` restreint aux tâches que ce run a portées, `?projet=`
-        restant obligatoire à côté. Omis, il ne restreint rien — c'est un
-        paramètre facultatif, et l'absence y est la lecture normale d'avant ce
-        lot, non le mélange silencieux que #277 refusait. Un run dont la
-        projection n'a aucune trace sort en 404 `run-inconnu`, par la porte de
-        `projet-inconnu` et pour la même raison : une liste vide se lirait « ce
-        run n'a rien fait ».
-        """
-        try:
-            return resoudre_portee_run(
-                run, run_connu=lambda run_id: state.execution(run_id) is not None
-            )
-        except PorteeRefusee as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.get("/api/journal")
-    async def journal_requetable(
-        agent: str | None = None,
-        type: str | None = None,
-        run_id: str | None = None,
-        projet: str | None = None,
-        depuis: str | None = None,
-        jusqua: str | None = None,
-        tri: str = TRI_JOURNAL_HORODATAGE,
-        ordre: str = ORDRE_DESC,
-        page: int = 1,
-        taille: int = TAILLE_PAGE_DEFAUT,
-        ids: str | None = None,
-    ) -> dict[str, Any]:
-        """Le journal requêtable : filtres (agent / type / run / projet / période), tri, pagination.
-
-        Servi **en mode réel** depuis #478 : l'historique des événements consignés
-        par la pompe et rejoués au démarrage (`ServiceJournal`, journal durable
-        #97).
-
-        `depuis`/`jusqua` sont des horodatages ISO-8601 (bornes incluses).
-        `ids` (#1285) est une liste d'identifiants d'entrée séparés par des
-        virgules (`j-0042,j-0055`) : les entrées qu'une pièce du bilan d'un run
-        cite, que la vue du run ouvre — où qu'elles soient dans le journal.
-        `projet` est **obligatoire** (#277) et suit le contrat commun :
-        `<id>` | `tous` | `aucun` — 422 `projet-requis` s'il manque, 404
-        `projet-inconnu` sur un identifiant non déclaré. 422 aussi sur un
-        `tri`/`ordre` inconnu, une `page` < 1 ou une `taille` hors [1, {max}].
-        """
-        portee = _portee(projet)
-        if tri not in TRIS_JOURNAL:
-            raise HTTPException(
-                status_code=422,
-                detail=f"tri invalide : {tri} (attendus : {', '.join(TRIS_JOURNAL)}).",
-            )
-        if ordre not in ORDRES_JOURNAL:
-            raise HTTPException(
-                status_code=422,
-                detail=f"ordre invalide : {ordre} (attendus : {', '.join(ORDRES_JOURNAL)}).",
-            )
-        if page < 1:
-            raise HTTPException(status_code=422, detail=f"page invalide : {page} (attendu ≥ 1).")
-        if not 1 <= taille <= TAILLE_PAGE_MAX:
-            raise HTTPException(
-                status_code=422,
-                detail=f"taille invalide : {taille} (attendu entre 1 et {TAILLE_PAGE_MAX}).",
-            )
-        return journal.page(
-            agent=agent,
-            type=type,
-            run_id=run_id,
-            portee=portee,
-            depuis=depuis,
-            jusqua=jusqua,
-            tri=tri,
-            ordre=ordre,
-            page=page,
-            taille=taille,
-            ids=(
-                [i.strip() for i in ids.split(",") if i.strip()] if ids is not None else None
-            ),
-        )
-
-    @app.get("/api/taches")
-    async def taches(projet: str | None = None, run: str | None = None) -> list[dict[str, Any]]:
-        """Les tâches connues : statut, agent, coût détaillé (#57) — la source du Kanban.
-
-        `projet` est **obligatoire** (#277) : `<id>` cadre le Kanban sur un
-        projet, `tous` rend la vue transverse, `aucun` les tâches hors projet.
-        Omis, 422 `projet-requis` ; inconnu, 404 `projet-inconnu`. Une tâche
-        sans projet n'apparaît dans la vue d'aucun projet — on ne devine pas à
-        quel projet elle appartiendrait.
-
-        `run` est **facultatif** et s'**ajoute** au précédent (#473) : il
-        restreint aux tâches que ce run a portées, sans dispenser de dire sur
-        quel projet on lit — un run appartient à un projet, les deux filtres se
-        composent donc au lieu de se relayer. C'est la source du Kanban **d'un
-        run**, et elle compte exactement les tâches que sa `progression` répartit
-        (`GET /api/executions/{run_id}`). 404 `run-inconnu` sur un run dont la
-        projection n'a aucune trace.
-        """
-        return [t.to_dict() for t in state.taches(_portee(projet), _portee_run(run))]
-
-    @app.get("/api/agents")
-    async def agents(projet: str | None = None) -> list[dict[str, Any]]:
-        """L'état des agents : libre/occupé, tâche courante, compteurs, coût cumulé.
-
-        `projet` cadre le **parc** sur l'équipe de ce projet (#1038, renverse la
-        première ligne du tableau « ce qui reste global » de docs/05 §2.0) : la
-        vue rend les agents de son catalogue, jamais ceux d'un autre projet.
-
-        Ce qui est cadré est l'**appartenance**, pas les compteurs : ceux-ci
-        restent ceux que la projection a vus, et ils ne se recalculent pas par
-        projet — c'est la vue des tâches (`/api/taches?projet=`) qui répond à
-        « qu'a fait cet agent ici ». Le **routage** sur l'équipe d'un projet,
-        lui, est le lot #1041.
-
-        ⚠ Cadrée sur un projet, la vue est **dérivée du disque** depuis #1101 :
-        son catalogue et ses capacités, la projection n'y apportant que
-        l'activité. Elle filtrait auparavant la projection, qui repart vide à
-        chaque redémarrage de l'API (le catalogue de la racine est vide depuis
-        #1042) : l'équipe validée d'un projet disparaissait de l'écran au
-        redémarrage, et portait une instance là où son projet en avait rangé
-        deux. Le routage, lui, lisait déjà la bonne — c'est bien la vue qui
-        mentait.
-
-        Un projet qu'on vient de créer rend une liste **vide** (#1042) : il n'a
-        aucun agent tant que son équipe n'a pas été validée, et une vue vide le
-        dit mieux que cinq rôles que personne n'a recrutés. Même phrase qu'avant
-        #1101, et pour une raison de plus : un catalogue vide n'a rien à rendre.
-
-        Omis, la vue rend le parc entier, comme avant ce lot.
-        """
-        return [a.to_dict() for a in _parc(_config(projet))]
-
-    @app.get("/api/executions")
-    async def executions_liste(projet: str | None = None) -> list[dict[str, Any]]:
-        """Les runs connus (#185) : résumés, **récents d'abord**.
-
-        En cours comme passés, lancés depuis la Control Tower comme publiés par
-        un autre process (`maestro-run --publier`) : le suivi ne distingue pas
-        leur origine — la projection est la même. C'est la source de l'écran
-        *Exécutions & traces* (docs/05 §2.4). `projet` est **obligatoire**
-        (#277), au contrat commun : `<id>` | `tous` | `aucun`.
-
-        Chaque résumé porte de quoi **dresser une liste utile** sans un appel par
-        ligne (#473) : état, objectif, `progression` par statut de tâche, début
-        et coût cumulé.
-        """
-        return await executions.resumes(_portee(projet))
-
-    @app.post("/api/executions", status_code=202)
-    async def lancer_execution(requete: LancementExecutionRequete) -> dict[str, Any]:
-        """Lance une exécution (#185) et rend son résumé, `run_id` compris, **aussitôt**.
-
-        Le run se déroule **hors** de la requête HTTP — et, depuis #446, hors du
-        process de l'API : il part chez son **hôte** (`MAESTRO_HOTE_RUN`, un
-        process détaché par défaut), qui lui survit. La réponse ne dit donc ni ce
-        qu'il a produit ni même qu'il ira au bout : elle dit qu'il est parti. La
-        suite arrive par le flux d'événements existant — chaque étape devient un
-        `tache.statut` du WebSocket et une ligne du Kanban — et se relit sur
-        `GET /api/executions/{run_id}`. 422 sur un objectif vide, un garde-fou
-        hors bornes (les plafonds sont des maximums : ils doivent être > 0) ou
-        une **source** refusée (#317).
-
-        Avec des `sources`, la réponse porte en plus le **rapport de lecture**
-        (#316) et n'est plus instantanée : la matière est lue avant qu'elle ne
-        parte, sans quoi le rapport n'aurait rien à dire (docs/05 §6.1).
-        """
-        try:
-            return await executions.lancer(
-                requete.objectif,
-                plafond_cout_usd=requete.plafond_cout_usd,
-                plafond_tokens=requete.plafond_tokens,
-                timeout_tache_s=requete.timeout_tache_s,
-                parallelisme=requete.parallelisme,
-                ticket=None if requete.ticket is None else requete.ticket.en_reference(),
-                projet_id=requete.projet_id,
-                sources=requete.sources_declarees(),
-                mode_brief=requete.brief,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
-
-    @app.post("/api/sources", status_code=201)
-    async def televerser_sources(
-        fichier: Annotated[list[UploadFile], File()],
-    ) -> dict[str, Any]:
-        """Téléverse un ou plusieurs fichiers (#317) et rend leurs **identifiants de source**.
-
-        Le champ `fichier` est répétable : un formulaire qui dépose trois
-        documents fait un appel, pas trois. Les octets vont dans le dépôt de
-        téléversement — hors de tout projet et hors de tout run —, et c'est le
-        lancement qui les rattachera au run qui les consomme (docs/05 §6.8).
-
-        Les plafonds d'ingestion (ENF-07) s'appliquent **pendant** la réception :
-        le nombre de fichiers d'abord, sans toucher au disque, puis la taille de
-        chacun et le cumul de l'appel, tranche par tranche. Un refus est motivé
-        (422, `{motif, message, index}`) et **ne laisse rien** : les fichiers
-        déjà acceptés dans le même appel sont retirés du dépôt, faute de quoi ils
-        y resteraient sous des identifiants que personne n'a reçus.
-        """
-        plafond = televersements.garde_fous.nb_max_sources
-        if plafond is not None and len(fichier) > plafond:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "motif": "trop-de-sources",
-                    "message": (
-                        f"Trop de fichiers dans un même téléversement : {len(fichier)} "
-                        f"reçus, {plafond} au maximum."
-                    ),
-                },
-            )
-        recus: list[dict[str, Any]] = []
-        total = 0
-        try:
-            for index, envoi in enumerate(fichier):
-                # Dans un fil : la copie des octets est du disque, pas de
-                # l'attente réseau — la boucle de l'API ne doit pas la porter.
-                televerse = await asyncio.to_thread(
-                    televersements.accueillir,
-                    envoi.filename or "",
-                    envoi.file,
-                    index=index,
-                    deja_recu=total,
-                )
-                total += televerse.taille
-                recus.append(televerse.to_dict())
-        except SourceRefusee as exc:
-            for accepte in recus:
-                televersements.oublier(str(accepte["id"]))
-            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
-        return {"sources": recus, "total_octets": total}
-
-    async def _refuser_le_geste(geste: str, run_id: str) -> None:
-        """Lève le statut HTTP du refus qu'un geste recevrait — rien s'il passe (#1179).
-
-        Les règles sont celles du service (`ServiceExecutions.refus_du_geste`), que
-        le fil appelle aussi : la route n'en garde que la traduction en code, et le
-        `detail` reste la phrase du refus, comme avant que les règles n'y déménagent.
-        """
-        refus = await executions.refus_du_geste(geste, run_id)
-        if refus is not None:
-            raise HTTPException(
-                status_code=_CODE_REFUS_GESTE.get(refus.motif, 409), detail=str(refus)
-            )
-
-    @app.post("/api/executions/{run_id}/annuler")
-    async def annuler_execution(run_id: str) -> dict[str, Any]:
-        """Interrompt un run en cours (#185) : rend son résumé passé à « annulée ».
-
-        L'issue est consignée comme n'importe quel fait du run : elle apparaît
-        dans la projection (statut `annulee`, `fin` posée) **et** sur le flux
-        d'événements. 404 si le run est inconnu, 409 s'il est déjà soldé — un run
-        terminé n'est plus interruptible, et le dire vaut mieux que faire croire
-        à une annulation.
-        """
-        await _refuser_le_geste(GESTE_ANNULATION, run_id)
-        annulee = await executions.annuler(run_id)
-        if annulee is None:  # pragma: no cover - le résumé vient d'être lu
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return annulee
-
-    @app.post("/api/executions/{run_id}/pause")
-    async def suspendre_execution(run_id: str) -> dict[str, Any]:
-        """Suspend un run en cours (#477) : rend son résumé passé à « en pause ».
-
-        **Aucune tâche nouvelle n'est lancée ; celles qui sont en vol vont à leur
-        terme.** C'est ce qui sépare cette route d'`…/annuler`, où les tâches sont
-        tuées là où elles en sont et perdent leur travail. Le run n'est pas soldé,
-        il ne change même pas de statut : `en_pause` est un drapeau **à côté** du
-        statut, si bien qu'un run suspendu pendant l'attente de son brief continue
-        de montrer qu'il attend ce brief.
-
-        L'ordre traverse la frontière d'exécution par le **bus**, comme
-        l'annulation (#444) : l'événement consigné ici est celui que le process
-        détaché guette. Il survit donc au redémarrage de l'API — il est dans le
-        journal durable (#97), rejoué au démarrage suivant.
-
-        Le run **bat toujours** pendant sa pause (#348) : un run suspendu qui
-        cesserait de battre ressortirait `orphelin` au bout d'une demi-heure, et
-        #349 proposerait de le relancer depuis son brief, c'est-à-dire de repayer
-        le cadrage d'un run qui n'a rien perdu.
-
-        `404` si le run est inconnu, `409` s'il est **déjà soldé** (il n'y a plus
-        rien à suspendre) ou **déjà suspendu** — répondre 200 à une pause qui
-        n'était pas la première ferait passer pour un geste ce qui n'en est pas un.
-        """
-        await _refuser_le_geste(GESTE_PAUSE, run_id)
-        suspendue = await executions.mettre_en_pause(run_id)
-        if suspendue is None:  # pragma: no cover - le résumé vient d'être lu
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return suspendue
-
-    @app.post("/api/executions/{run_id}/reprendre")
-    async def reprendre_execution(run_id: str) -> dict[str, Any]:
-        """Reprend un run **là où il en était** (#477, #1391) : son résumé remis en route.
-
-        Deux runs se reprennent, et c'est le **même** run qui repart dans les deux :
-
-        - **suspendu** (#477) — rien n'a bougé pendant la pause, puisque rien n'a été
-          tué. La route ne reconstruit rien : elle rouvre la porte, et les tâches
-          qui attendaient repartent ;
-        - **interrompu** (#1391) — Maestro éteint, une borne atteinte, en pause ou
-          non, ou son hôte qui s'est tu. Il reprend **sur son plan, sous le même
-          identifiant** : les tâches faites gardent leur état et leur sortie, l'aval
-          lit celles-ci, et seules restent à faire la tâche interrompue et celles
-          jamais démarrées. Un run interrompu **sans rien d'acquis** (arrêté avant
-          son plan) repart de son brief approuvé — c'est l'endroit où il en était.
-
-        ⚠ À ne pas confondre avec `…/relancer` (#349), qui **recommence** un run
-        depuis son brief approuvé : c'est un **nouveau** run, avec un nouvel
-        identifiant, qui re-planifie et refait tout.
-
-        `404` si le run est inconnu ; `409` s'il travaille ou attend quelqu'un (rien
-        à reprendre), s'il est soldé par son issue ou une annulation voulue, ou si sa
-        reprise est déjà en train de partir ; `503` si son état acquis n'a pas pu
-        être relu — jamais un repli sur la relance, qui referait un plan existant ;
-        `422` s'il n'a ni plan ni brief approuvé.
-        """
-        await _refuser_le_geste(GESTE_REPRISE, run_id)
-        try:
-            reprise = await executions.reprendre(run_id)
-        except GesteRefuse as refus:
-            raise HTTPException(
-                status_code=_CODE_REFUS_REPRISE.get(refus.motif, 409), detail=str(refus)
-            ) from refus
-        if reprise is None:  # pragma: no cover - le résumé vient d'être lu
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return reprise
-
-    @app.post("/api/executions/{run_id}/relancer", status_code=202)
-    async def relancer_execution(run_id: str) -> dict[str, Any]:
-        """Rejoue un run interrompu **sur son brief approuvé** (#349) : le nouveau résumé.
-
-        Un run dont l'hôte est tombé emporte un cadrage **payé et validé par un
-        humain** — clarification, brief, approbation. Ce cadrage est intégralement
-        conservé dans la projection : cette route le rejoue en mode `sans`, donc sans
-        repasser par la clarification ni par la validation, en conservant le projet
-        et le ticket du run repris.
-
-        La réponse est celle d'un lancement (`202` + `ResumeExecution`) parce que
-        c'en est un : le run relancé est un **nouveau** run, qui porte `reprise_de`
-        — de qui il est la suite. Le run repris, lui, est soldé en `annulee` : rien
-        n'a raté, son hôte est tombé et quelqu'un a repris la main.
-
-        Depuis #1391 c'est le geste de **recommencer** : reprendre un run interrompu
-        sur son plan, sous le même identifiant et sans refaire ce qui est fait, passe
-        par `…/reprendre`.
-
-        `404` si le run est inconnu, `409` s'il est **déjà soldé** (rien à reprendre —
-        sauf un arrêt qui n'a pas jugé son travail : l'extinction, une borne
-        atteinte, `CAUSES_RELANCABLES`, #1179) ou **encore vivant** (verdict de
-        `vitalite`, #348 — l'interrompre d'abord si c'est bien voulu), `422` si son
-        brief n'a **jamais été approuvé** : le
-        relancer reviendrait à repartir de son objectif brut en silence, c'est-à-dire
-        à sauter la validation qu'il attendait encore. Le refus est motivé à la
-        convention du reste (`{motif, message}`, §6.1).
-        """
-        try:
-            return await executions.relancer(run_id)
-        except RelanceRefusee as refus:
-            raise HTTPException(
-                status_code=_CODE_REFUS_RELANCE.get(refus.motif, 422),
-                detail=_detail_refus(refus),
-            ) from refus
-
-    @app.post("/api/executions/{run_id}/plafond")
-    async def decider_plafond(
-        run_id: str, requete: DecisionPlafondRequete
-    ) -> dict[str, Any]:
-        """Tranche un run arrêté sur son plafond de dépense (#1182) : il reprend, ou il se solde.
-
-        **Relever** pose le nouveau plafond et reprend les tâches mises de côté là
-        où elles en étaient ; **réduire** fait de même en écartant les tâches
-        désignées ; **arrêter** solde le run sur ce qui est fait. Même mécanique
-        que la décision sur un brief (#320) : l'état est appliqué **d'abord** (le
-        REST répond déjà à jour) puis l'événement est publié — le moteur, en
-        attente sur ce même bus, reprend ou s'arrête, et la pompe réapplique
-        l'événement sans effet.
-
-        404 si le run est inconnu, **409 s'il n'attend pas de décision au
-        plafond** (jamais tranché deux fois, jamais un run soldé ramené en vol),
-        422 si la décision ne se tient pas : geste inconnu, reprise sans nouveau
-        plafond, **nouveau plafond qui ne couvre même pas ce qui est déjà
-        dépensé** (le run retomberait dessus à sa première mesure — c'est reposer
-        la même question), réduction qui n'écarte rien ou qui écarte une tâche que
-        la question ne nommait pas.
-        """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        detail = state.execution(run_id)
-        en_vol = detail.plafond if detail is not None else None
-        if resume["statut"] != EXECUTION_EN_ATTENTE_PLAFOND or en_vol is None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"cette exécution n'attend pas de décision au plafond de dépense "
-                    f"({resume['statut']}) : {run_id}."
-                ),
-            )
-        demande = DemandePlafond.from_dict(en_vol)
-        try:
-            decision = DecisionPlafond(
-                geste=requete.geste,
-                plafond_cout_usd=requete.plafond_cout_usd,
-                plafond_tokens=requete.plafond_tokens,
-                ecartees=tuple(requete.ecartees),
-                detail=_detail_decision_plafond(requete.geste),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        refus = _refus_plafond(decision, demande)
-        if refus:
-            raise HTTPException(status_code=422, detail=refus)
-        event = evenement_decision(run_id, decision, projet_id=resume["projet_id"])
-        state.appliquer(event)
-        await bus.publish(event)
-        return await executions.resume_vivant(run_id) or resume
-
-    @app.post("/api/executions/{run_id}/brief/decision")
-    async def decider_brief(
-        run_id: str, requete: DecisionBriefRequete
-    ) -> dict[str, Any]:
-        """Tranche le brief d'un run suspendu (#320, décision D5) : il repart, ou il s'arrête.
-
-        **Approuver** relance la décomposition, et ce qui sera décomposé est le
-        brief tel qu'il vient d'être approuvé — la version corrigée si le corps en
-        porte une. **Refuser** solde le run en « annulée » : rien de payant n'aura
-        été engagé au-delà du brief lui-même.
-
-        Même mécanique que la décision de validation (#48) et pour les mêmes
-        raisons : l'état est appliqué **d'abord** (le REST répond déjà à jour) puis
-        l'événement est publié — le moteur, en attente sur ce même bus, reprend ou
-        s'arrête, et la pompe réapplique l'événement sans effet (idempotence).
-
-        404 si le run est inconnu, **409 s'il n'attend pas de décision** (jamais
-        tranché deux fois, et surtout pas un run soldé ramené en vol), 422 si le
-        brief corrigé n'est pas conforme au schéma partagé — un refus qui coûte un
-        aller-retour à celui qui le soumet, plutôt qu'un run qui échoue plus tard.
-        """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if resume["statut"] != EXECUTION_EN_ATTENTE_BRIEF:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"cette exécution n'attend pas de décision sur son brief "
-                    f"({resume['statut']}) : {run_id}."
-                ),
-            )
-        corrige = None
-        if requete.approuve and requete.brief is not None:
-            try:
-                validate_brief(requete.brief, where="brief corrigé")
-            except BriefValidationError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-            corrige = brief_depuis(requete.brief)
-        event = Event(
-            type=EVENEMENT_BRIEF_DECISION,
-            run_id=run_id,
-            # Le titre court à montrer, l'objectif entier à lire (#991) : la
-            # projection tient déjà celui-ci, l'événement ne fait que le porter.
-            titre=titre_court(resume["objectif"]),
-            description=resume["objectif"],
-            agent=ACTEUR_BRIEF,
-            role=ROLE_BRIEF,
-            statut=BRIEF_APPROUVE if requete.approuve else BRIEF_REFUSE,
-            detail=(
-                "brief approuvé depuis la Control Tower"
-                if requete.approuve
-                else "brief refusé depuis la Control Tower : rien n'a été décomposé"
-            ),
-            # La **correction**, ou None quand il n'y en a pas — jamais une recopie
-            # du brief proposé. « Absent » veut dire « celui d'avant tient », et
-            # cette lecture-là est faite au même endroit par la projection et par le
-            # moteur (`DecisionBrief.retenu`), donc énoncée une seule fois.
-            brief=corrige,
-            projet_id=resume["projet_id"],
-        )
-        state.appliquer(event)
-        await bus.publish(event)
-        return await executions.resume_vivant(run_id) or resume
-
-    @app.post("/api/executions/{run_id}/brief/reponses")
-    async def repondre_brief(
-        run_id: str, requete: ReponsesBriefRequete
-    ) -> dict[str, Any]:
-        """Répond aux questions de clarification d'un brief (#321) : le run repart.
-
-        Le run avait publié ses questions et s'était suspendu (`en_attente_reponses`,
-        état non terminal — il est resté annulable tout du long). Les réponses le
-        relancent : il **régénère son brief entier** en les intégrant, puis repose
-        des questions s'il en reste et que le plafond le permet, sinon passe en
-        validation.
-
-        Même mécanique que la décision de brief (#320) et pour les mêmes raisons :
-        l'état est appliqué **d'abord** (le REST répond déjà à jour) puis l'événement
-        est publié — le moteur, en attente sur ce même bus, reprend, et la pompe
-        réapplique l'événement sans effet (idempotence).
-
-        404 si le run est inconnu, **409 s'il n'attend pas de réponses** (jamais
-        répondu deux fois, jamais un run soldé ramené en vol), 422 si le nombre de
-        réponses ne correspond pas aux questions du brief stocké — l'appariement est
-        positionnel, donc une liste décalée affecterait des réponses aux mauvaises
-        questions sans que rien ne le signale.
-        """
-        resume = executions.resume(run_id)
-        if resume is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"exécution inconnue : {run_id} (voir GET /api/executions).",
-            )
-        if resume["statut"] != EXECUTION_EN_ATTENTE_REPONSES:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"cette exécution n'attend pas de réponses sur son brief "
-                    f"({resume['statut']}) : {run_id}."
-                ),
-            )
-        detail = state.execution(run_id)
-        attendues = len(detail.brief.questions) if detail and detail.brief else 0
-        if len(requete.reponses) != attendues:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"{len(requete.reponses)} réponse(s) pour {attendues} question(s) : "
-                    "les réponses s'apparient par position aux questions du brief en "
-                    "attente. Répondre « » (chaîne vide) laisse une question sans "
-                    "réponse ; elle partira en hypothèse."
-                ),
-            )
-        event = Event(
-            type=EVENEMENT_BRIEF_REPONSES,
-            run_id=run_id,
-            # Même partage qu'à la décision ci-dessus (#991).
-            titre=titre_court(resume["objectif"]),
-            description=resume["objectif"],
-            agent=ACTEUR_BRIEF,
-            role=ROLE_BRIEF,
-            detail=(
-                f"{sum(1 for r in requete.reponses if r.strip())}/{attendues} "
-                "question(s) répondue(s) depuis la Control Tower"
-            ),
-            # **Pas** expurgées, et c'est le même choix assumé que pour le brief
-            # (cf. `evenement_demande_brief`, #320) : ces réponses ne voyagent pas
-            # pour être affichées, elles voyagent pour **atteindre le moteur**, qui
-            # les intègre au brief régénéré. Les masquer ici ne protégerait rien —
-            # le brief qui en sort circule déjà en clair sur le même bus — mais
-            # corromprait l'entrée de la régénération, et un `[REDACTED]` au milieu
-            # d'une réponse produirait un brief faux sans que personne le voie.
-            reponses=list(requete.reponses),
-            tour=resume.get("tour_clarification", 0),
-            tours_max=resume.get("tours_clarification_max", 0),
-            projet_id=resume["projet_id"],
-        )
-        state.appliquer(event)
-        await bus.publish(event)
-        return await executions.resume_vivant(run_id) or resume
-
-    @app.get("/api/executions/{run_id}")
-    async def execution(run_id: str) -> dict[str, Any]:
-        """L'état d'une exécution (#185) : son résumé, sa trace et son coût.
-
-        Le résumé de `GET /api/executions` (objectif, statut, volume, bornes,
-        **vitalité** #348, **progression** #473) enrichi de ce qu'il ne porte
-        pas : le grand livre du run (#57) et sa trace événement par événement.
-
-        La `progression` est comptée **ici**, sur la machine à états du moteur
-        (docs/03 §3) : à faire, en cours, bloquées, terminées, échecs — jamais
-        recomptée par le front, qui ne verrait de toute façon que les tâches
-        qu'il a chargées. Les tâches ainsi comptées sont exactement celles que
-        rend `GET /api/taches?projet=…&run=<run_id>`.
-        """
-        detail = state.execution(run_id)
-        if detail is None:
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return {**detail.to_dict(), **(await executions.resume_vivant(run_id) or {})}
-
-    @app.get("/api/executions/{run_id}/cout")
-    async def cout_execution(run_id: str) -> dict[str, Any]:
-        """Le grand livre d'une exécution (#57) : coût par tâche et agrégat du run.
-
-        La comptabilité du lot #55 (forme `RunCost.to_dict`) reconstruite du
-        flux d'événements : `planification` (l'usage de l'orchestrateur),
-        `taches` (tokens entrée/sortie, coût estimé, durée par tâche) et
-        `total` (l'agrégat de l'exécution) — sans la trace événement par
-        événement du détail. 404 si aucune trace reçue pour ce `run_id`.
-        """
-        detail = state.execution(run_id)
-        if detail is None:
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return detail.cout.to_dict()
-
-    @app.get("/api/executions/{run_id}/graphe")
-    async def graphe_execution(run_id: str) -> dict[str, Any]:
-        """Le **graphe** d'une exécution (#490) : nœuds, arêtes, branches parallèles.
-
-        La troisième lecture d'un run, à côté du Kanban (« combien dans quel
-        état ») et de la progression (« où en est-on ») : celle qui dit **quoi
-        après quoi**. Un nœud par tâche du plan — agent, statut, checklist, coût,
-        durée —, une arête par dépendance, et les nœuds rangés par `niveaux` :
-        deux tâches sans dépendance entre elles y tombent au **même** niveau,
-        donc se lisent comme parallèles au lieu de paraître séquentielles.
-
-        Rien n'est à recalculer côté client : `niveau`/`rang` par nœud,
-        `compartiment` (la table partagée de la progression, #473),
-        `profondeur`, `largeur` et `plat` sont servis.
-
-        Un plan **sans aucune dépendance** rend un graphe plat et le dit
-        (`plat: true`, tous les nœuds au niveau 0) : c'est le cas courant, pas un
-        graphe vide. `plan_connu: false` marque le cas qu'on ne peut pas
-        deviner — un run qui n'a jamais publié son plan, dont les nœuds sont
-        alors reconstruits de ses seules tâches vues, sans arête.
-
-        La mise à jour **en direct** passe par le flux existant, sans second
-        canal : le graphe se recompose à chaque lecture depuis la projection, et
-        ce sont donc `run.plan` (le plan est connu), `tache.statut` (un nœud
-        démarre, une arête s'allume), `tache.detail` (une étape se coche, #489)
-        et `agent.activite` (le nœud en cours **vit**, #836) qui le font bouger.
-
-        Le nœud `en_cours` porte un **signe de vie** (`activite` : horodatage et
-        libellé court du dernier geste de son agent), `null` sur tout nœud qui
-        ne travaille pas : entre deux gestes d'agent, deux lectures rendent
-        deux valeurs — c'est ce qui manquait à un graphe immobile pendant toute
-        la durée d'une tâche. 404 si aucune trace reçue pour ce `run_id`.
-        """
-        if state.execution(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return state.graphe(run_id).to_dict()
-
-    @app.get("/api/executions/{run_id}/frise")
-    async def frise_execution(run_id: str) -> dict[str, Any]:
-        """La **frise d'activité** d'une exécution (#355) : ce que les agents font et se disent.
-
-        La quatrième lecture d'un run, à côté du Kanban (« combien dans quel
-        état »), de la progression (« où en est-on ») et du graphe (« quoi après
-        quoi ») : celle qui dit **dans quel ordre**. Les changements de statut de
-        tâche et les messages inter-agents sur une même frise, triés dans le
-        temps, chaque entrée portant son agent, son horodatage et son objet.
-
-        Les entrées sont rangées en **couloirs** — un par agent que le run a
-        employé, y compris muet —, et un couloir de **repli** recueille ce qui n'a
-        pas d'agent résoluble : une tâche bloquée n'a jamais été routée, donc le
-        moteur y consigne un tiret (`_consigne_blocage`), qui n'est pas un nom
-        d'agent. Chaque entrée porte son `couloir`, et ce couloir est toujours
-        dans la liste servie : aucune entrée ne se perd faute de file.
-
-        Une tâche **bloquée**, une tâche **en attente de validation humaine** et
-        une tâche **en cours** portent trois `statut` distincts — c'est le cas
-        d'usage qui a motivé le ticket : une attente de décision y cesse d'être
-        indiscernable d'un travail en cours. `en_attente_validation` est résolu
-        depuis `validation.demande`, qui **est** l'instant où la tâche s'arrête
-        sur un humain ; la file `GET /api/validations` en dit l'état courant, pas
-        la seconde.
-
-        Rien n'est créé : les trois flux fusionnés sont déjà persistés et déjà
-        servis par `GET /api/journal?run_id=…`, dont chaque entrée garde ici son
-        identifiant. Comme le graphe, la frise **n'a pas d'événement à elle** :
-        elle se recompose à la lecture, donc la mise à jour en direct passe par
-        le flux existant, sans second canal.
-
-        Chaque couloir dont une tâche **travaille** porte un **signe de vie**
-        (#836) — `activite` : horodatage et libellé court du dernier geste de
-        son agent, le même que celui du nœud en cours du graphe —, `null` sur
-        un couloir arrêté. C'est un attribut de l'en-tête et jamais une entrée :
-        `agent.activite` reste hors de `entrees`, le tri de la frise est intact.
-
-        Bornée à `PLAFOND_FRISE` entrées, les plus **récentes** : `total` et
-        `tronquee` disent ce qui a été laissé de côté — une borne muette ferait
-        passer un run d'une heure pour un run de cinq cents lignes. 404 si aucune
-        trace reçue pour ce `run_id`.
-        """
-        if state.execution(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return frise_du_run(
-            run_id,
-            journal.entrees_du_run(run_id),
-            agents=state.agents_du_run(run_id),
-            activites=state.signes_de_vie_du_run(run_id),
-        ).to_dict()
-
-    @app.get("/api/executions/{run_id}/decisions")
-    async def decisions_execution(run_id: str) -> dict[str, Any]:
-        """Ce que les agents de ce run ont tranché **seuls** (#1026, docs/05 §6.18).
-
-        La cinquième lecture d'un run, à côté du Kanban (« combien dans quel
-        état »), de la progression (« où en est-on »), du graphe (« quoi après
-        quoi ») et de la frise (« dans quel ordre ») : celle qui dit **ce qui a
-        été décidé sans moi, et pourquoi**. C'est la condition que le parent
-        #1019 pose à l'autonomie — elle n'est acceptable que si elle se vérifie
-        après coup.
-
-        Deux familles, séparées par `origine` et jamais mêlées : une décision que
-        l'agent a jugée sienne (`tranchee`, #1024 — il n'avait à demander à
-        personne) et une **hypothèse prise faute de réponse** (`hypothese`,
-        #1023 — il a demandé, personne n'a répondu avant la borne, il est reparti
-        sur ce qu'il avait annoncé). `decision` et `raison` sortent des deux
-        champs que le moteur sépare à l'écriture : cette route ne redécoupe rien.
-
-        Rien n'est créé : les deux flux sont déjà persistés et déjà servis par
-        `GET /api/journal?run_id=…`, dont chaque entrée garde ici son identifiant.
-        Comme le graphe et la frise, cette liste **n'a pas d'événement à elle** —
-        elle se recompose à la lecture, donc la mise à jour en direct passe par le
-        flux existant, sans second canal.
-
-        Rendue **du plus récent au plus ancien**, comme le journal du run et non
-        comme la frise : les deux lectures chronologiques de la bascule vont dans
-        le même sens. Bornée à `PLAFOND_DECISIONS` entrées, les plus récentes :
-        `total`, `hypotheses` et `tronquee` comptent **avant** la borne et disent
-        ce qui a été laissé de côté. 404 si aucune trace reçue pour ce `run_id`.
-        """
-        if state.execution(run_id) is None:
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        return decisions_du_run(
-            run_id,
-            journal.entrees_du_run(run_id),
-            taches=state.titres_du_run(run_id),
-        ).to_dict()
-
-    @app.get("/api/executions/{run_id}/bilan")
-    async def bilan_execution(run_id: str) -> dict[str, Any]:
-        """Le **bilan sur pièces** d'un run terminé (#1284, docs/05 §6.23).
-
-        Rendu à la fin du run par un appel au modèle, vérifié contre les pièces du
-        journal du run, puis publié — donc gardé au journal durable, et relu d'ici
-        après un redémarrage. Chaque constat cite ses pièces (`P7`), et chaque pièce
-        les entrées du journal dont elle vient (`j-0042`, celles de
-        `GET /api/journal`) ; les constats sans pièce sont rendus à part, avec la
-        raison de leur écart.
-
-        `bilan` vaut `null` tant qu'il n'y en a pas : un run en vol, un modèle qui
-        n'a pas répondu, un run soldé avant ce lot. Ce n'est pas une erreur — le
-        run existe, son bilan pas encore. 404 si aucune trace reçue pour ce `run_id`.
-        """
-        execution = state.execution(run_id)
-        if execution is None:
-            raise HTTPException(status_code=404, detail=f"exécution inconnue : {run_id}")
-        bilan = bilans.bilan(run_id)
-        # Ce que la vue du run dit quand `bilan` est nul (#1285) : `attendu` (run en
-        # vol), `en_redaction` (l'appel est parti), `absent` — avec sa `raison`
-        # quand on la sait (`modele_muet`, `reponse_illisible`) ; `rendu` sinon.
-        etat, raison = bilans.etat(run_id)
-        return {
-            "run_id": run_id,
-            "bilan": bilan.to_dict() if bilan is not None else None,
-            "etat": etat,
-            "raison": raison,
-            # Le titre de chaque tâche du run (#1285) : un constat nomme sa tâche
-            # par son identifiant, la vue la nomme par son titre — servi ici avec
-            # le bilan, pour ne pas dépendre du moment où la liste des tâches arrive,
-            # ni d'une panne qui l'aurait vidée.
-            "taches": state.titres_du_run(run_id),
-            # Ce que le bilan a coûté (#1285), compté au run après sa fin : la tête
-            # du run l'inclut, la vue du bilan le dit — sans quoi le coût « jusqu'à
-            # sa fin » que cite le bilan contredisait la tête. `null` : inconnu.
-            "cout_bilan": execution.cout.bilan.cout_usd,
-        }
-
-    @app.post("/api/sources/apercu")
-    async def apercu_ingestion(
-        sources: Annotated[str, Form()] = "[]",
-        fichier: Annotated[list[UploadFile] | None, File()] = None,
-    ) -> dict[str, Any]:
-        """Ce que des sources **donneraient**, sans lancer et sans rien conserver (#319).
-
-        Le pendant gratuit du rapport rendu par le lancement (docs/05 §6.1) :
-        même résolution (#315), même extraction (#316), mêmes plafonds — et rien
-        au bout. C'est ce qui rend le geste de composer un objectif **réversible
-        tant qu'il est gratuit** : on voit ce qui sera lu, ignoré ou tronqué, et
-        ce que ça coûtera, avant de dépenser la première tâche.
-
-        Le corps est un **multipart** parce qu'un aperçu porte des octets et non
-        des identifiants : il ne dépose rien dans le dépôt de téléversement
-        (§6.8), qui n'existe que pour faire **survivre** une matière jusqu'au run
-        qui la consomme. `sources` est le JSON des sources déclarées, **dans
-        l'ordre de l'écran** — celui qui décide de ce qui entre quand le budget de
-        tokens s'épuise — et `fichier` est répétable : le n-ième correspond à la
-        n-ième source de type `fichier`.
-
-        Toujours du texte, jamais une panne : une source illisible est une
-        **ligne** du rapport (« ignoré », avec son motif). Le 422 motivé
-        (`{motif, message, index}`) est réservé à ce que la résolution **refuse**
-        — un type inconnu, une racine interdite, un plafond dépassé —, c'est-à-dire
-        à ce qu'une correction de saisie répare.
-        """
-        try:
-            declarations = json.loads(sources or "[]")
-        except json.JSONDecodeError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "motif": "sources-illisibles",
-                    "message": f"Sources illisibles : {exc.msg}.",
-                },
-            ) from exc
-        envois = [(envoi.filename or "", envoi.file) for envoi in fichier or []]
-        try:
-            # Dans un fil : l'extraction ouvre des fichiers et peut récupérer une
-            # page (#316), ce que la boucle de l'API ne doit pas porter.
-            rapport = await asyncio.to_thread(
-                apercu_sources, declarations, fichiers=envois
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
-        return rapport.to_dict()
-
-    @app.get("/api/analytics/couts")
-    async def analytics_couts(
-        depuis: str | None = None, pas: str = PAS_HEURE, projet: str | None = None
-    ) -> dict[str, Any]:
-        """La vue coûts & analytics (#87) : agrégats transverses et série temporelle.
-
-        Recalculée des exécutions projetées, avec la même convention
-        d'attribution que le grand livre d'un run (#57) : coût agrégé par
-        tâche, par agent (planification comprise) et par exécution, total, et
-        série temporelle du coût en seaux de `pas` (minute/heure/jour), ou
-        `auto` : le pas se **déduit alors de l'étendue** couverte (#991), ce que
-        l'appelant ne peut pas faire sur une fenêtre sans borne. La réponse rend
-        toujours le pas **retenu**, jamais `auto`.
-        `depuis` (ISO-8601, réputé UTC sans fuseau) restreint la fenêtre — la
-        période sélectionnable de l'UI. `projet` est **obligatoire** (#277) et
-        restreint la dépense : seuls les événements que la portée retient
-        comptent, planification comprise — un travail sans projet n'entre dans
-        le total d'aucun projet. La réponse rappelle la `portee` servie, un
-        total ne se lisant pas sans savoir de quoi il est le total. 422 sur un
-        `pas` ou un `depuis` invalide.
-        """
-        portee = _portee(projet)
-        if pas not in PAS_DEMANDABLES:
-            raise HTTPException(
-                status_code=422,
-                detail=f"pas invalide : {pas} (attendus : {', '.join(PAS_DEMANDABLES)})",
-            )
-        borne = None
-        if depuis is not None:
-            try:
-                borne = datetime.fromisoformat(depuis)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"depuis invalide : {depuis} (attendu : horodatage ISO-8601)",
-                ) from exc
-            if borne.tzinfo is None:
-                borne = borne.replace(tzinfo=UTC)
-        # La portée est appliquée **événement par événement** par l'agrégat (un
-        # run peut en mélanger) : la liste des exécutions lui arrive entière, et
-        # ce que le fil a dépensé hors de tout run avec elle (#1534).
-        return agrege_couts(
-            state.executions(),
-            fil=state.depenses_du_fil(),
-            depuis=borne,
-            pas=pas,
-            portee=portee,
-        ).to_dict()
-
-    @app.get("/api/fil/depense")
-    async def depense_du_fil(projet: str | None = None) -> dict[str, Any]:
-        """Ce que le fil a dépensé pour la portée (#1534) — le poste `fil` de la vue, seul.
-
-        Le shell additionne les grands livres des runs pour dire le coût cumulé
-        d'un projet (barre supérieure, tuile « Dépense ») ; sans le fil, il disait
-        2,70 $ à côté des 3,83 $ de Coûts & analytics pour le même projet. Cette
-        lecture lui donne la part qui manque **par le même calcul** que la vue
-        (`agrege_couts`, sans exécutions), à chaque rechargement et sans payer la
-        série ni les tables. `fil` vaut `null` quand rien n'a été mesuré.
-        `projet` est obligatoire, comme pour toute lecture qui agrège (#277).
-        """
-        portee = _portee(projet)
-        vue = agrege_couts((), fil=state.depenses_du_fil(), portee=portee)
-        return {
-            "projet": vue.projet,
-            "portee": vue.portee,
-            "fil": None if vue.fil is None else vue.fil.to_dict(),
-        }
-
-    @app.post("/api/taches/{tache_id}/reassigner")
-    async def reassigner(tache_id: str, requete: ReassignationRequete) -> dict[str, Any]:
-        """Réassigne manuellement une tâche à un agent (glisser-déposer du Kanban).
-
-        Applique l'événement à l'état (le REST répond déjà à jour) puis le
-        publie sur le bus — les clients WebSocket voient la réassignation, et
-        la pompe la réapplique sans effet (idempotence). 404 si la tâche est
-        inconnue, 422 si l'agent ne l'est pas — ou s'il est **désactivé** (#86 :
-        un agent désactivé ne reçoit plus de tâches, réassignation comprise).
-        """
-        tache = state.tache(tache_id)
-        if tache is None:
-            raise HTTPException(status_code=404, detail=f"tâche inconnue : {tache_id}")
-        agent = state.agent(requete.agent)
-        if agent is None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"agent inconnu : {requete.agent} (voir GET /api/agents)",
-            )
-        if not agent.actif:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"agent désactivé : {agent.nom} — il ne reçoit plus de tâches "
-                    "(le réactiver via POST /api/agents/{nom}/capacite)."
-                ),
-            )
-        event = Event(
-            type=EVENEMENT_TACHE_REASSIGNATION,
-            run_id=tache.run_id,
-            tache_id=tache_id,
-            titre=tache.titre,
-            agent=agent.nom,
-            role=agent.role,
-            statut="assignee",
-            detail="réassignation manuelle (Control Tower)",
-            # Le projet de la tâche (#277) voyage avec l'événement : sans lui,
-            # un geste posé **depuis** la Control Tower d'un projet sortirait de
-            # son propre flux temps réel, la portée ne retenant que ce qui porte
-            # l'appartenance. La projection l'a déjà, la relayer suffit.
-            projet_id=tache.projet_id,
-        )
-        state.appliquer(event)
-        await bus.publish(event)
-        return tache.to_dict()
-
-    @app.post("/api/taches/{tache_id}/reference")
-    async def poser_reference(
-        tache_id: str, requete: ReferenceTicketRequete
-    ) -> dict[str, Any]:
-        """Rattache une tâche au **ticket externe** dont elle relève (#187).
-
-        Le second chemin de pose, celui de l'exécution en cours : un agent
-        équipé du serveur MCP de son outil de ticketing (#104) découvre le
-        ticket au fil de sa tâche et le pose ici — l'autre chemin étant le
-        lancement du run, qui part déjà d'un ticket. Ni cette route ni le moteur
-        ne connaissent l'outil : ils transportent un identifiant et une URL.
-
-        N'affecte **que** le ticket : ni statut, ni agent, ni coût ne bougent —
-        dire d'où vient une tâche ne la fait pas changer de colonne. Applique
-        l'événement à l'état (le REST répond déjà à jour) puis le publie sur le
-        bus, où le journal durable le reprend : le ticket survit au redémarrage.
-        404 si la tâche est inconnue, 422 si la référence n'apprend rien (ni
-        identifiant, ni URL en http(s)).
-        """
-        tache = state.tache(tache_id)
-        if tache is None:
-            raise HTTPException(status_code=404, detail=f"tâche inconnue : {tache_id}")
-        reference = requete.en_reference()
-        if reference is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "référence vide : il faut au moins un identifiant lisible, "
-                    "ou une URL en http(s)."
-                ),
-            )
-        event = Event(
-            type=EVENEMENT_TACHE_REFERENCE,
-            run_id=tache.run_id,
-            tache_id=tache_id,
-            titre=tache.titre,
-            detail=f"ticket externe {reference.id or reference.url}",
-            ticket=reference,
-            # Même raison qu'à la réassignation (#277) : l'appartenance de la
-            # tâche accompagne l'événement, faute de quoi il n'atteindrait pas
-            # le flux temps réel du projet dont il parle.
-            projet_id=tache.projet_id,
-        )
-        state.appliquer(event)
-        await bus.publish(event)
-        return tache.to_dict()
-
-    @app.post("/api/agents/{nom}/capacite")
-    async def regler_capacite(
-        nom: str, requete: CapaciteRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Règle la capacité d'un agent (#86, EF-21) : actif/désactivé, instances.
-
-        Persiste le réglage dans le dépôt partagé — celui que moteur et workers
-        relisent à chaque tâche : un agent désactivé ne reçoit plus de tâches,
-        le plafond d'instances borne ses exécutions simultanées. Applique
-        l'événement `agent.capacite` à l'état (le REST répond déjà à jour) puis
-        le publie sur le bus — les fiches agents des clients WebSocket suivent
-        en temps réel, et la pompe le réapplique sans effet (idempotence).
-        404 si l'agent est inconnu, 422 si la requête ne règle rien ou si le
-        plafond d'instances est invalide (< 1).
-
-        Le réglage est écrit **dans le projet** demandé (#1038) : le même agent
-        peut avoir trois instances ici et une ailleurs — c'est le « nombre
-        d'instances rangé par projet » du critère.
-
-        L'agent est cherché dans le **parc du projet demandé** (`_parc`, #1101),
-        le même que `GET /api/agents` rend : réglable est exactement ce qui est
-        montré. Le chercher dans la seule projection revenait à 404 sur toute
-        l'équipe d'un projet au redémarrage de l'API — l'écran la listait déjà
-        (depuis ce lot), et aucun de ses curseurs n'aurait répondu.
-        """
-        cfg = _config(projet)
-        fiche = next((a for a in _parc(cfg) if a.nom == nom), None)
-        if fiche is None:
-            raise HTTPException(
-                status_code=404, detail=f"agent inconnu : {nom} (voir GET /api/agents)"
-            )
-        if requete.actif is None and requete.instances is None:
-            raise HTTPException(
-                status_code=422,
-                detail="rien à régler : renseigner `actif` et/ou `instances`.",
-            )
-        courante = cfg.capacites.lire(nom)
-        try:
-            capacite = cfg.capacites.ecrire(
-                CapaciteAgent(
-                    nom=nom,
-                    actif=courante.actif if requete.actif is None else requete.actif,
-                    instances=(
-                        courante.instances
-                        if requete.instances is None
-                        else requete.instances
-                    ),
-                    # Des instances posées ici sont un **choix** de la personne, et le
-                    # run le garde au lieu d'en dériver un de son plan (#1299) — une
-                    # seule instance comprise. Régler seulement `actif` ne fixe rien.
-                    instances_fixees=(
-                        courante.fixe_ses_instances if requete.instances is None else True
-                    ),
-                )
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        event = Event(
-            type=EVENEMENT_AGENT_CAPACITE,
-            agent=nom,
-            role=fiche.role,
-            statut=CAPACITE_ACTIVE if capacite.actif else CAPACITE_DESACTIVE,
-            instances=capacite.instances,
-            detail="capacité réglée depuis la Control Tower",
-        )
-        state.appliquer(event)
-        await bus.publish(event)
-        # La réponse porte le réglage **qu'on vient d'écrire**, et pas celui que
-        # la projection tient : cadrée sur un projet, la fiche est une copie dont
-        # `actif`/`instances` viennent du dépôt du projet, que l'événement appliqué
-        # ci-dessus ne touche pas (#1101). Au niveau des gabarits, `avec_capacite`
-        # rend la même chose que la fiche partagée — `_applique_capacite` vient
-        # d'y poser les deux mêmes valeurs.
-        return fiche.avec_capacite(capacite).to_dict()
-
-    @app.get("/api/validations")
-    async def validations(projet: str | None = None) -> list[dict[str, Any]]:
-        """Les demandes de validation humaine (#48) : contexte, statut, décision.
-
-        `projet` est **obligatoire** (#277), au contrat commun
-        (`<id>` | `tous` | `aucun`) : une validation appartient au projet de sa
-        tâche, et une Control Tower cadrée sur un projet n'a pas à faire
-        arbitrer une action qui se déroule ailleurs.
-        """
-        return [v.to_dict() for v in state.validations(_portee(projet))]
-
-    @app.post("/api/validations/{tache_id}/decision")
-    async def decider(tache_id: str, requete: DecisionRequete) -> dict[str, Any]:
-        """Tranche une demande de validation (#48) : la décision part vers le moteur.
-
-        Applique la décision à l'état (le REST répond déjà à jour) puis la
-        publie sur le bus — le moteur, en attente sur ce même bus, reprend la
-        tâche (approbation) ou l'annule proprement (refus), et la pompe
-        réapplique l'événement sans effet (idempotence). 404 si aucune demande
-        pour cette tâche, 409 si elle est déjà tranchée (jamais deux décisions).
-
-        Le `motif` d'un refus (#272) voyage dans le `detail` de l'événement : c'est
-        le champ que la projection recopie dans `decision`, donc celui que l'UI
-        relit et que le journal durable conserve. Depuis #1185 il voyage **aussi**
-        dans `motif`, le fait que le moteur rend à l'agent comme consigne — lire la
-        consigne dans la phrase de `detail` serait juger du texte par un motif.
-
-        `etendue` (#1185) étend une approbation à l'outil pour la suite du run ou du
-        projet : l'accord s'écrit dans les permissions de l'agent avant que la
-        décision parte. `422` si la demande ne le permet pas (pas d'acte, pas de run,
-        pas de projet, étendue inconnue).
-
-        Les règles vivent dans le service des attentes (#1183,
-        `ServiceAttentes.trancher`), que le fil de l'orchestrateur appelle aussi :
-        la route n'en garde que la traduction en statut HTTP.
-        """
-        try:
-            demande = await attentes.trancher(
-                tache_id,
-                approuve=requete.approuve,
-                motif=requete.motif,
-                etendue=requete.etendue,
-            )
-        except ReglementRefuse as refus:
-            raise HTTPException(
-                status_code=_CODE_REFUS_REGLEMENT.get(refus.motif, 409), detail=str(refus)
-            ) from refus
-        return demande.to_dict()
-
-    @app.get("/api/questions")
-    async def questions(projet: str | None = None) -> list[dict[str, Any]]:
-        """Les questions posées par les agents (#1023) : contexte, hypothèse, réponse.
-
-        `projet` est **obligatoire** (#277), au contrat commun
-        (`<id>` | `tous` | `aucun`) : une question appartient au projet de la
-        tâche qui la pose, et une Control Tower cadrée sur un projet n'a pas à
-        faire répondre pour un travail qui se déroule ailleurs.
-
-        Une question **reste servie tant que personne n'y a répondu**, y compris
-        après que l'agent a repris sur son hypothèse : une réponse tardive sert
-        encore (`MemoireArbitrage`, #584 — le même appel rejoué la retrouvera).
-        Ce que l'agent a fait entre-temps se lit au journal du run, étape
-        `<tache>:question`.
-        """
-        return [q.to_dict() for q in state.questions(_portee(projet))]
-
-    @app.post("/api/questions/{question_id}/reponse")
-    async def repondre_question(
-        question_id: str, requete: ReponseQuestionRequete
-    ) -> dict[str, Any]:
-        """Répond à la question d'un agent (#1023) : la réponse part vers le moteur.
-
-        Même patron que `POST /api/validations/{tache_id}/decision` : la réponse
-        est appliquée à l'état (le REST répond déjà à jour) puis publiée sur le
-        bus — l'agent, suspendu sur ce même bus, la reçoit et reprend. La pompe
-        réapplique l'événement sans effet (idempotence).
-
-        `404` si aucune question ne porte cet identifiant ; `409` si elle a déjà
-        reçu une réponse — jamais deux fois répondu, l'agent n'ayant lu que la
-        première. `422` si la réponse est vide : ce serait dire à l'agent qu'on
-        lui a répondu sans rien lui apprendre, c'est-à-dire pire que le silence.
-
-        ⚠ **Répondre n'approuve rien.** Le texte écrit ici n'autorise aucun acte :
-        un outil classé `ask` reste refusé sans canal d'arbitrage, et la file des
-        validations est le seul endroit où un acte se tranche (EF-08, docs/32 §5).
-
-        Une réponse **tardive** est acceptée, et ce n'est pas une tolérance : la
-        question est restée posée précisément parce qu'elle sert encore. L'agent
-        a peut-être déjà repris sur son hypothèse — le journal du run le dit —, et
-        la réponse le rattrapera au prochain appel identique.
-
-        La réponse voyage dans `detail`, et nulle part ailleurs : c'est le champ que
-        la projection recopie et que le journal durable conserve. Les règles vivent
-        dans le service des attentes (#1183, `ServiceAttentes.repondre`), que le fil
-        de l'orchestrateur appelle aussi : la route n'en garde que la traduction en
-        statut HTTP.
-        """
-        try:
-            question = await attentes.repondre(question_id, requete.reponse)
-        except ReglementRefuse as refus:
-            raise HTTPException(
-                status_code=_CODE_REFUS_REGLEMENT.get(refus.motif, 409), detail=str(refus)
-            ) from refus
-        return question.to_dict()
-
-    def _playbook_origine(
-        agent: str, cfg: ConfigurationAgents | None = None
-    ) -> PlaybookDefaut | None:
-        """Le playbook **d'origine** de `agent` — code ou personnalisé —, None si inconnu.
-
-        Deux origines, un seul contrat (#259) : pour un agent du code, le
-        document Markdown livré (`PLAYBOOK_DEFAUTS`, #295) ; pour un agent
-        personnalisé, le `playbook` de sa définition (#72), celui qu'on a saisi
-        en le créant. Dans les deux cas c'est le contenu qui vaut **tant que
-        rien n'a été publié** dans le stockage versionné.
-
-        Cette symétrie n'est pas une extension du moteur, c'est le rattrapage
-        d'un retard de l'API sur lui : `LocalExecutor._playbook_courant` lit
-        `PlaybookStore.lire(agent)` sans regarder d'où vient l'agent, et retombe
-        sur son `prompt_systeme` sinon — une version publiée pour un agent
-        personnalisé s'appliquait donc **déjà**, elle n'était simplement pas
-        publiable. C'est ce qui rendait l'onglet Playbook 404 sur un agent
-        personnalisé, et donc son champ du Profil irremplaçable ; #259 le
-        remplace, il fallait d'abord qu'il y ait où aller.
-        """
-        defaut = PLAYBOOK_DEFAUTS.get(agent)
-        if defaut is not None:
-            return defaut
-        definition = _personnalise_ou_none(agent, cfg)
-        if definition is None:
-            return None
-        return PlaybookDefaut(
-            agent=agent, role=definition.role, contenu=definition.playbook
-        )
-
-    def _exige_playbook_connu(
-        agent: str, cfg: ConfigurationAgents | None = None
-    ) -> PlaybookDefaut:
-        """404 si `agent` n'est pas un agent du catalogue — et son origine sinon.
-
-        L'API n'édite que les playbooks des agents du catalogue, du code comme
-        personnalisés : pas de création de playbook orphelin par une simple
-        faute de frappe dans l'URL. Cadré sur un projet (#1038), « du catalogue »
-        veut dire de **son** catalogue : un agent d'un autre projet y est inconnu.
-        """
-        origine = _playbook_origine(agent, cfg)
-        if origine is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"playbook inconnu : {agent} (voir GET /api/playbooks)",
-            )
-        return origine
-
-    def _fiche_playbook(
-        agent: str, *, avec_contenu: bool, cfg: ConfigurationAgents | None = None
-    ) -> dict[str, Any]:
-        """La fiche du playbook d'un agent : version courante et provenance.
-
-        `version` 0 et `source` « defaut » tant que le playbook n'a jamais été
-        édité : le contenu effectif est alors celui d'origine (#76, repli) — le
-        prompt du code, ou la définition pour un agent personnalisé (#259).
-        `provenance` est celle de la version courante (« humain » — une proposition
-        n'est jamais courante, #111), None quand le contenu vient de l'origine.
-
-        Cadré sur un projet (#1038), c'est le playbook **de ce projet** — celui
-        du gabarit tant qu'il n'a rien publié par-dessus.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        origine = _playbook_origine(agent, cfg)
-        courant = cfg.playbooks.lire(agent)
-        fiche: dict[str, Any] = {
-            "agent": agent,
-            "role": origine.role if origine else agent,
-            "version": courant.version if courant else 0,
-            "nb_versions": len(cfg.playbooks.numeros(agent)),
-            "source": "stockage" if courant else "defaut",
-            "provenance": courant.provenance if courant else None,
-            "cree_le": courant.cree_le if courant else None,
-            "projet": cfg.projet_id,
-        }
-        if avec_contenu:
-            fiche["contenu"] = (
-                courant.contenu if courant else (origine.contenu if origine else "")
-            )
-        return fiche
-
-    @app.get("/api/playbooks")
-    async def playbooks_liste(projet: str | None = None) -> list[dict[str, Any]]:
-        """Les playbooks des agents (#76) : version courante et provenance de chacun.
-
-        Les agents du code d'abord, puis les personnalisés — l'ordre du
-        catalogue. Ces derniers y figurent depuis #259 : leur playbook s'édite
-        et se versionne comme les autres, l'onglet Playbook étant devenu le
-        chemin d'écriture unique.
-
-        `projet` cadre la lecture (#1038) : les agents **de ce projet** et leurs
-        playbooks. Omis, ce sont les gabarits.
-        """
-        cfg = _config(projet)
-        return [
-            _fiche_playbook(agent, avec_contenu=False, cfg=cfg)
-            for agent in (*PLAYBOOK_DEFAUTS, *(d.nom for d in cfg.agents.lister()))
-        ]
-
-    @app.get("/api/playbooks/lexique")
-    async def lexique_playbook() -> dict[str, list[dict[str, object]]]:
-        """Structures et tournures récurrentes des playbooks du dépôt (#261).
-
-        Ce que l'éditeur propose en cours de frappe. **Dérivé** des documents livrés
-        avec le paquet (`maestro.agents.lexique_playbook`), jamais recopié côté front :
-        renommer une section dans `_socle.md` change ce qui est proposé, sans toucher
-        une ligne de TypeScript.
-
-        Déclarée **avant** `/api/playbooks/{agent}`, sans quoi « lexique » serait pris
-        pour un nom d'agent et rendrait un 404.
-        """
-        return lexique_dict()
-
-    @app.get("/api/playbooks/{agent}")
-    async def playbook_courant(agent: str, projet: str | None = None) -> dict[str, Any]:
-        """Le playbook courant d'un agent : le contenu effectivement chargé par le moteur."""
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        return _fiche_playbook(agent, avec_contenu=True, cfg=cfg)
-
-    @app.put("/api/playbooks/{agent}")
-    async def ecrire_playbook(
-        agent: str, requete: PlaybookEcritureRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Publie une nouvelle version du playbook (le contenu intégral, pas un diff).
-
-        La version créée devient la courante : elle sera chargée par les moteurs
-        construits ensuite (l'application à chaud d'un moteur déjà en vie est le
-        lot #78). 422 si le contenu est vide.
-
-        Écrit **dans le projet** demandé (#1038) : publier pour un projet ne
-        change rien au gabarit ni aux autres projets. Le numéro poursuit celui
-        du gabarit tant que le projet n'avait rien publié.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        try:
-            version = cfg.playbooks.ecrire(agent, requete.contenu)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return version.to_dict()
-
-    @app.get("/api/playbooks/{agent}/versions")
-    async def versions_playbook(
-        agent: str, projet: str | None = None
-    ) -> list[dict[str, Any]]:
-        """L'historique consultable (EF-25) : les versions, de la première à la courante.
-
-        Métadonnées seules — le contenu d'une version passée se lit sur
-        `GET /api/playbooks/{agent}/versions/{version}`. Cadré sur un projet
-        (#1038), c'est l'historique hérité du gabarit tant qu'il n'a rien publié,
-        le sien ensuite.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        return [v.to_dict(avec_contenu=False) for v in cfg.playbooks.versions(agent)]
-
-    @app.get("/api/playbooks/{agent}/versions/{version}")
-    async def version_playbook(
-        agent: str, version: int, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Une version passée du playbook, contenu compris. 404 si elle n'existe pas."""
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        lue = cfg.playbooks.lire(agent, version)
-        if lue is None:
-            raise HTTPException(
-                status_code=404, detail=f"version inconnue : {agent} v{version}"
-            )
-        return lue.to_dict()
-
-    @app.get("/api/playbooks/{agent}/propositions")
-    async def propositions_playbook(
-        agent: str, projet: str | None = None
-    ) -> list[dict[str, Any]]:
-        """Les propositions d'auto-amélioration en brouillon (#111), listées à part des versions.
-
-        Métadonnées + justification (sans le contenu) — une proposition n'est jamais la
-        version courante et le moteur ne la charge pas tant qu'elle n'est pas appliquée.
-
-        ⚠ Les propositions ne s'héritent **pas** du gabarit (#1038) : un
-        brouillon est un geste en attente, et l'appliquer écrit une version — on
-        l'applique là où il a été déposé.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        return [p.to_dict(avec_contenu=False) for p in cfg.playbooks.propositions(agent)]
-
-    @app.get("/api/playbooks/{agent}/propositions/{numero}")
-    async def proposition_playbook(
-        agent: str, numero: int, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Une proposition en brouillon, contenu compris — de quoi la relire avant d'agir.
-
-        404 si elle n'existe pas (jamais créée, ou déjà appliquée/rejetée).
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        lue = cfg.playbooks.lire_proposition(agent, numero)
-        if lue is None:
-            raise HTTPException(
-                status_code=404, detail=f"proposition inconnue : {agent} p{numero}"
-            )
-        return lue.to_dict()
-
-    @app.post("/api/playbooks/{agent}/propositions/{numero}/appliquer")
-    async def appliquer_proposition_playbook(
-        agent: str, numero: int, projet: str | None = None
-    ) -> dict[str, Any]:
-        """L'action humaine qui adopte une proposition (#140) : elle devient la courante.
-
-        Le contenu candidat rejoint l'historique comme version ordinaire — donc chargée
-        à chaud par le moteur dès la tâche suivante (#78) — et sort des brouillons.
-        Renvoie la version publiée. 404 si la proposition n'existe pas.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        try:
-            version = cfg.playbooks.appliquer_proposition(agent, numero)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return version.to_dict()
-
-    @app.post("/api/playbooks/{agent}/propositions/{numero}/rejeter")
-    async def rejeter_proposition_playbook(
-        agent: str, numero: int, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Écarte une proposition (#140) : elle disparaît, la version courante ne bouge pas.
-
-        Renvoie la proposition rejetée (contenu compris — l'appelant garde une trace de
-        ce qu'il vient d'écarter). 404 si elle n'existe pas.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        try:
-            rejetee = cfg.playbooks.rejeter_proposition(agent, numero)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return rejetee.to_dict()
-
-    def _agent_du_catalogue(nom: str, cfg: ConfigurationAgents | None = None) -> Agent:
-        """La fiche catalogue de `nom` (modèle, prompt du code) — un rôle du code au pire.
-
-        Sert à l'analyse d'auto-amélioration, qui a besoin du modèle de l'agent. Le
-        catalogue effectif est interrogé **d'abord** — c'est lui qui porte les
-        agents du projet —, les **gabarits** restant le repli qui garantit une
-        fiche aux rôles du code, dont le playbook reste éditable au niveau gabarit
-        même si plus aucun projet ne les reçoit d'office (#1042).
-        """
-        cfg = cfg if cfg is not None else gabarits
-        for agent in (*cfg.catalogue(), *cfg.gabarits_du_code()):
-            if agent.nom == nom:
-                return agent
-        # Injoignable en pratique : `_exige_playbook_connu` a déjà garanti un agent connu.
-        raise HTTPException(  # pragma: no cover - garanti connu en amont
-            status_code=404, detail=f"agent inconnu : {nom}"
-        )
-
-    @app.post("/api/playbooks/{agent}/propositions")
-    async def proposer_playbook(
-        agent: str, requete: PlaybookPropositionRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Analyse **à la demande** les échecs d'un run → proposition de révision (#139).
-
-        L'analyse relit les échecs consignés du run `run_id` imputables à `agent`, confie
-        à la couche fournisseur la rédaction d'une version révisée du playbook, et
-        l'enregistre en **brouillon** (provenance « proposition », #138) — jamais la version
-        courante, jamais appliquée sans action humaine (lot UI #140). Renvoie la proposition
-        créée (métadonnées + justification + contenu). 404 si le run est inconnu, 422 s'il
-        n'a aucun échec pour cet agent, 502 si la génération échoue.
-
-        La proposition est déposée **dans le projet** demandé (#1038) — là où
-        elle sera relue, et où l'appliquer publiera une version.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        execution = state.execution(requete.run_id)
-        if execution is None:
-            raise HTTPException(
-                status_code=404, detail=f"exécution inconnue : {requete.run_id}"
-            )
-        echecs = echecs_du_run(execution, agent)
-        if not echecs:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"aucun échec consigné pour l'agent {agent} dans le run "
-                    f"{requete.run_id} : rien à proposer."
-                ),
-            )
-        try:
-            # Au grand livre du fil, et non du run qu'elle lit (#1538) : demandée
-            # après lui, d'un geste, elle ne réécrit pas le compte d'un run clos.
-            async with au_compte_du_projet(cfg.projet_id, "révision de playbook proposée"):
-                proposition = await analyseur.proposer_revision(
-                    _agent_du_catalogue(agent, cfg), requete.run_id, echecs, store=cfg.playbooks
-                )
-        except RevisionIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return proposition.to_dict()
-
-    @app.post("/api/playbooks/{agent}/redaction")
-    async def rediger_playbook(
-        agent: str, requete: PlaybookRedactionRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Réécrit le **brouillon en cours** d'un playbook, sans rien enregistrer (#261).
-
-        Le pendant « au clavier » de la proposition d'après-run : même cadre, même
-        fournisseur, mais la matière est le texte que l'utilisateur a sous les yeux et
-        le résultat lui revient — l'éditeur l'affiche en différentiel, l'applique à son
-        brouillon s'il le veut, et la publication reste le geste séparé qu'elle a
-        toujours été (`PUT /api/playbooks/{agent}`).
-
-        **Aucune écriture**, en succès comme en échec : ni version, ni proposition en
-        brouillon. 404 si l'agent n'a pas de playbook, 422 si le brouillon est vide ou
-        hors bornes, 502 si la génération échoue — dans tous les cas le texte de
-        l'utilisateur est intact, il n'a jamais quitté son écran.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        try:
-            async with au_compte_du_projet(cfg.projet_id, "playbook réécrit"):
-                redaction = await redacteur_playbook.proposer_redaction(
-                    _agent_du_catalogue(agent, cfg), requete.contenu, requete.consigne
-                )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except RevisionIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return redaction.to_dict()
-
-    @app.post("/api/playbooks/{agent}/restaurer")
-    async def restaurer_playbook(
-        agent: str, requete: PlaybookRestaurationRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Retour arrière (EF-25) : republie une version passée comme nouvelle courante.
-
-        L'historique reste linéaire — rien n'est supprimé, la restauration crée
-        une version de plus. 404 si la version demandée n'existe pas. Cadré sur
-        un projet (#1038), restaurer une version **héritée** la republie dans le
-        projet : l'historique y bifurque plutôt que de toucher au gabarit.
-        """
-        cfg = _config(projet)
-        _exige_playbook_connu(agent, cfg)
-        try:
-            version = cfg.playbooks.restaurer(agent, requete.version)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return version.to_dict()
-
-    def _integration_pool_dict(
-        integration: IntegrationMcp, etats: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Une intégration du pool + l'état de ses secrets côté coffre projet (#133).
-
-        Enrichit `IntegrationMcp.to_dict` (id + déclaration à secrets masqués) de
-        ce dont l'UI a besoin pour dire *où en est* l'intégration : son
-        `mode_auth` et sa `procedure_url` (repris de l'entrée curée quand l'id y
-        correspond), et pour **chaque** variable `${VAR}` requise, si son secret
-        est **présent** dans le coffre projet et **valide** (un token OAuth
-        expiré ne l'est plus). Aucune valeur de secret n'est jamais réémise.
-
-        Depuis #678 elle porte aussi **ce qui a changé sous elle** : `admission`
-        (par quel geste elle est montable), `signaux` (ce que l'amont en dit
-        depuis), et `alerte` quand elle n'est plus dans l'allowlist — révoquée,
-        ou disparue de la bibliothèque. C'est la moitié « sans le dire » du
-        critère 2 : le serveur reste monté, mais l'écran qui le liste ne peut
-        plus l'afficher comme si de rien n'était. `curee: false` le disait déjà
-        et ne suffisait pas — il ne dit pas *pourquoi*, et une intégration
-        montée hier qui devient « non curée » sans un mot se lit comme un bug.
-        """
-        courant = registre()
-        entree = courant.get(integration.id)
-        requis = (
-            {v.cle: v for v in entree.secrets}
-            if entree is not None
-            else {cle: None for cle in references_env(integration.serveur)}
-        )
-        secrets_etat: list[dict[str, Any]] = []
-        for cle in requis:
-            variable = requis[cle]
-            etat = etats.get(cle)
-            secrets_etat.append(
-                {
-                    "cle": cle,
-                    "description": variable.description if variable is not None else "",
-                    "secret": variable.secret if variable is not None else True,
-                    "present": etat is not None,
-                    "valide": etat["valide"] if etat is not None else False,
-                    "ephemere": etat["ephemere"] if etat is not None else False,
-                    "expire_le": etat["expire_le"] if etat is not None else None,
-                }
-            )
-        revocation = courant.revocation_de(integration.id)
-        if entree is not None:
-            alerte = ""
-        elif revocation is not None:
-            alerte = (
-                f"admission révoquée le {revocation.revoquee_le or '?'} par "
-                f"{revocation.revoquee_par or '?'}"
-                f"{f' — {revocation.motif}' if revocation.motif else ''} : ce serveur "
-                "reste monté mais n'est plus dans l'allowlist. Le retirer du pool : "
-                f"DELETE /api/mcp/pool/{integration.id}."
-            )
-        else:
-            # ⚠ Trois causes, pas deux (#263) : une intégration **migrée** d'une
-            # déclaration héritée que la bibliothèque ne reconnaît pas arrive ici
-            # par un chemin parfaitement normal. Ne nommer que les deux premières
-            # ferait lire « quelque chose a disparu » là où rien n'a bougé.
-            alerte = (
-                "ce serveur est monté mais ne figure pas dans la bibliothèque : "
-                "il a pu être retiré du seed, son entrée admise devenir illisible, "
-                "ou provenir d'une déclaration de fichier migrée qu'aucune entrée "
-                "ne décrit. Il reste monté tel qu'il a été configuré."
-            )
-        return {
-            **integration.to_dict(),
-            "mode_auth": entree.mode_auth if entree is not None else None,
-            "procedure_url": entree.procedure_url if entree is not None else "",
-            "curee": entree is not None,
-            "source": entree.source if entree is not None else None,
-            "admission": (
-                entree.admission.trace()
-                if entree is not None and entree.admission is not None
-                else revocation.trace()
-                if revocation is not None
-                else None
-            ),
-            "signaux": [s.to_dict() for s in courant.signaux_de(integration.id)],
-            "alerte": alerte,
-            "secrets": secrets_etat,
-        }
-
-    def _pool_mcp(cfg: ConfigurationAgents | None = None) -> dict[str, Any]:
-        """Le pool projet des intégrations MCP + l'état de leurs secrets (#133).
-
-        `{integrations: [...], erreur}` : chaque intégration est enrichie de
-        l'état de ses secrets (coffre projet). `erreur` porte la cause si le
-        pool stocké est invalide — même contrat de visibilité que `mcp_erreur`
-        (la misconfiguration s'affiche sans casser la fiche ni le listing).
-
-        `cfg` est la configuration cadrée sur le projet demandé (#1038) ; son
-        absence désigne le niveau des **gabarits**, ici comme dans les autres
-        fabricants de fiche — c'est un niveau, pas un cas particulier.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        try:
-            integrations = cfg.mcp.pool()
-        except ValueError as exc:
-            return {"integrations": [], "erreur": str(exc)}
-        try:
-            etats = {e.cle: e.to_dict() for e in secrets.etat_projet()}
-        except ValueError:
-            # Coffre projet illisible : on sert le pool sans état de secret
-            # plutôt que de masquer les intégrations déjà configurées.
-            etats = {}
-        return {
-            "integrations": [_integration_pool_dict(i, etats) for i in integrations],
-            "erreur": None,
-        }
-
-    def _volet_mcp(nom: str, cfg: ConfigurationAgents | None = None) -> dict[str, Any]:
-        """Le volet « serveurs MCP » d'une fiche catalogue (#104, #133).
-
-        `mcp_serveurs` porte les serveurs **effectifs** montés pour l'agent
-        (déclaration héritée `<agent>.json` composée avec le pool activé, forme
-        publique à secrets masqués) ; `mcp_erreur` porte la cause exacte si une
-        source est invalide. `mcp_pool`/`mcp_pool_erreur` exposent le **pool
-        projet** (les intégrations configurables, avec l'état de leurs secrets)
-        et `mcp_activations` les ids **activés** pour cet agent — de quoi
-        remplacer l'affichage lecture seule par des interrupteurs par agent (#133).
-
-        `mcp_herites` (#263) porte les serveurs de la **seule** déclaration
-        héritée. Il est servi parce que l'écran ne peut pas le déduire :
-        retrancher des serveurs montés ceux des intégrations activées se fait par
-        leur **nom**, et une intégration renommée à l'ajout au pool fait alors
-        réapparaître l'héritée comme un serveur de plus. C'est aussi ce sur quoi
-        la fiche décide de proposer la migration — donc une liste qu'on lit, pas
-        qu'on devine.
-
-        `cfg` cadre le volet sur un projet (#1038) : le pool, les activations et
-        la déclaration héritée sont alors ceux de ce projet — ceux du gabarit
-        tant qu'il n'a rien posé par-dessus.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        try:
-            serveurs = cfg.mcp.lire(nom)
-            volet_serveurs: dict[str, Any] = {
-                "mcp_serveurs": [s.to_dict() for s in serveurs],
-                "mcp_herites": [s.to_dict() for s in cfg.mcp.heritees(nom)],
-                "mcp_erreur": None,
-            }
-        except ValueError as exc:
-            volet_serveurs = {
-                "mcp_serveurs": [],
-                "mcp_herites": [],
-                "mcp_erreur": str(exc),
-            }
-        pool = _pool_mcp(cfg)
-        try:
-            activations = list(cfg.mcp.activations(nom))
-        except ValueError:
-            activations = []
-        return {
-            **volet_serveurs,
-            "mcp_pool": pool["integrations"],
-            "mcp_pool_erreur": pool["erreur"],
-            "mcp_activations": activations,
-        }
-
-    def _outils_exposes(
-        nom: str, cfg: ConfigurationAgents | None = None
-    ) -> list[dict[str, str]]:
-        """Ce que l'agent `nom` peut réellement appeler — de quoi **suggérer** (#262).
-
-        Trois origines, et aucune n'est écrite en dur ici : les outils
-        **intégrés** de son profil de rôle (`RoleProfile.outils` — le cadre que
-        le code déclare pour ce rôle, sinon `DEFAULT_TOOLS`, ceux que le cadre
-        générique d'une fiche sert depuis #1037 : tout agent du catalogue est
-        outillé, seules ses consignes de métier lui sont propres), les verbes du serveur
-        in-process **maestro** (arbitrage, blocage, courrier, décision
-        consignée, question, checklist — leurs constantes existent précisément
-        pour qu'une politique les désigne, #805, #1023, #1291) et les
-        **serveurs MCP** effectivement montés pour lui, cités en entier
-        (`mcp__<serveur>`, qui couvre tous leurs outils).
-
-        Une suggestion n'est jamais une contrainte : la saisie reste libre — un
-        outil MCP précis (`mcp__slack__send_message`) se désigne à la frappe,
-        et l'API ne juge que la **forme** de l'entrée. On écarte en revanche les
-        noms qu'elle refuserait (`entree_valide`) : proposer une entrée
-        impossible à écrire serait pire que de n'en proposer aucune.
-
-        Les serveurs MCP se lisent au mieux : une source invalide a déjà sa
-        cause dans `mcp_erreur`, et une liste de suggestions n'est pas l'endroit
-        où la redire. Ils se lisent aussi **dans le projet demandé** (#1038) :
-        suggérer un serveur qu'un autre projet a monté n'aiderait personne.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        profil = next((p for p in TOOLED_PROFILES if p.nom == nom), None)
-        outils: list[dict[str, str]] = [
-            {"nom": outil, "origine": "integre", "libelle": "outil intégré du profil"}
-            for outil in (profil.outils if profil is not None else DEFAULT_TOOLS)
-        ]
-        outils += [
-            {"nom": OUTIL_ARBITRAGE, "origine": "maestro", "libelle": "demander un arbitrage"},
-            {"nom": OUTIL_BLOCAGE, "origine": "maestro", "libelle": "signaler un blocage"},
-            {"nom": OUTIL_COURRIER, "origine": "maestro", "libelle": "écrire à un pair"},
-            {
-                "nom": OUTIL_DECISION,
-                "origine": "maestro",
-                "libelle": "consigner une décision tranchée seul",
-            },
-            {"nom": OUTIL_QUESTION, "origine": "maestro", "libelle": "poser une question"},
-            {"nom": OUTIL_CHECKLIST, "origine": "maestro", "libelle": "tenir sa checklist"},
-        ]
-        try:
-            serveurs = cfg.mcp.lire(nom)
-        except ValueError:
-            serveurs = ()
-        for serveur in serveurs:
-            entree = f"mcp__{serveur.nom}"
-            if entree_valide(entree):
-                outils.append(
-                    {
-                        "nom": entree,
-                        "origine": "mcp",
-                        "libelle": f"serveur MCP {serveur.nom} (tous ses outils)",
-                    }
-                )
-        return outils
-
-    def _volet_permissions(
-        nom: str, cfg: ConfigurationAgents | None = None
-    ) -> dict[str, Any]:
-        """Le volet « permissions » d'une fiche catalogue (#110), **écrivable** depuis #262.
-
-        `permissions` porte la politique allow/ask/deny effective (celle que le
-        moteur applique à l'exécution — None : aucune politique, tout ce que
-        le profil expose est permis) ; `permissions_erreur` porte la cause
-        exacte si la politique stockée est invalide — même contrat de
-        visibilité que `mcp_erreur`. Les **trois** listes sont servies depuis
-        #580, `ask` comprise et vide par défaut : une politique écrite avant ce
-        lot se relit sous le régime d'hier.
-
-        `permissions_outils` (#262) est ce que l'agent peut réellement appeler :
-        de quoi **suggérer** des entrées à qui règle la politique, plutôt que de
-        lui faire retrouver les noms exacts ailleurs. Servi **avec la fiche**, et
-        pas par une route à lui : c'est la même question, posée du même écran, au
-        même moment — un second aller n'apprendrait rien de plus.
-
-        `cfg` cadre la politique sur un projet (#1038) : celle qu'il a posée,
-        sinon celle du gabarit — l'absence d'une politique vaut « tout permis »,
-        et c'est le repli le moins discutable des six dépôts.
-
-        `permissions_accords` (#1185) : les **accords étendus** de l'agent à ce
-        niveau — « ne plus demander pour cet outil » —, servis avec la fiche
-        parce qu'ils prolongent la politique et se relisent au même endroit. Un
-        accord de run dont le run est soldé n'est plus servi : il ne couvre plus
-        rien, et le montrer ferait lire un laissez-passer qui n'existe plus.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        outils = _outils_exposes(nom, cfg)
-        accords = _accords_en_vigueur(nom, cfg)
-        try:
-            politique = cfg.permissions.lire(nom)
-        except ValueError as exc:
-            return {
-                "permissions": None,
-                "permissions_erreur": str(exc),
-                "permissions_outils": outils,
-                "permissions_accords": accords,
-            }
-        return {
-            "permissions": politique.to_dict() if politique is not None else None,
-            "permissions_erreur": None,
-            "permissions_outils": outils,
-            "permissions_accords": accords,
-        }
-
-    def _accords_en_vigueur(nom: str, cfg: ConfigurationAgents) -> list[dict[str, Any]]:
-        """Les accords étendus de `nom` qui couvrent encore quelque chose (#1185).
-
-        Un accord de projet vaut tant qu'on ne l'a pas retiré ; un accord de run,
-        tant que son run n'est pas soldé — un run inconnu de la projection reste
-        servi, on ne sait pas dire qu'il est fini. Un dépôt illisible rend une
-        liste vide : l'agent est alors redemandé à chaque appel, le sens sûr.
-        """
-        try:
-            accords = cfg.permissions.accords().lire(nom)
-        except ValueError:
-            return []
-        en_vigueur = []
-        for accord in accords:
-            if accord.etendue == ETENDUE_RUN:
-                execution = state.execution(accord.run_id)
-                if execution is not None and execution.statut in STATUTS_EXECUTION_TERMINAUX:
-                    continue
-            en_vigueur.append(accord.to_dict())
-        return en_vigueur
-
-    def _fiche_defaut(
-        agent: Agent, *, avec_playbook: bool, cfg: ConfigurationAgents | None = None
-    ) -> dict[str, Any]:
-        """La fiche catalogue d'un agent du code — surchargé ou non (#259).
-
-        La définition vit dans le code (`maestro.agents.catalog`) : rôle,
-        compétences et playbook n'en bougent pas ici (le playbook s'édite par le
-        stockage versionné, `/api/playbooks`). Ce qui bouge, ce sont les **trois
-        réglages de modèle**, qu'une surcharge peut recouvrir sans dupliquer
-        l'agent — d'où le troisième état de `source` : « defaut » tant que rien
-        n'est posé, « defaut_surcharge » dès qu'un réglage l'est.
-
-        Les valeurs servies sont donc les **effectives** (surcharge d'abord,
-        code ensuite), et trois clés disent d'où elles viennent : `herite` nomme
-        les réglages qui restent au code — de quoi les marquer comme tels
-        plutôt que de le faire deviner —, `reglages_du_code` donne ce que le
-        code dit de chacun, y compris quand il est recouvert (c'est ce que
-        « revenir au défaut » rendrait), et `modifie_le` porte la date de la
-        surcharge, ou None si l'agent n'en a pas. `cree_le` reste None : un
-        agent du code n'est pas créé, il est là.
-
-        Les deux formes de fiche portent les **mêmes champs**, ici comme depuis
-        #253 : un client n'a jamais à deviner ses clés d'après la `source`.
-
-        `cfg` cadre les volets sur un projet (#1038) — surcharge, serveurs MCP
-        et autorisations viennent alors de lui.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        surcharge = cfg.surcharges.lire(agent.nom)
-        fiche: dict[str, Any] = {
-            "nom": agent.nom,
-            "role": agent.role,
-            "competences": sorted(agent.competences),
-            "modele": surcharge.modele or agent.modele,
-            "fournisseur": surcharge.fournisseur,
-            "effort": surcharge.effort if surcharge.effort is not None else agent.effort,
-            "source": AGENT_SOURCE_DEFAUT if surcharge.vide else AGENT_SOURCE_SURCHARGE,
-            "herite": list(surcharge.herite()),
-            "reglages_du_code": {
-                "fournisseur": None,
-                "modele": agent.modele,
-                "effort": agent.effort,
-            },
-            "cree_le": None,
-            "modifie_le": surcharge.modifie_le or None,
-            "projet": cfg.projet_id,
-            **_volet_mcp(agent.nom, cfg),
-            **_volet_permissions(agent.nom, cfg),
-        }
-        if avec_playbook:
-            fiche["playbook"] = agent.prompt_systeme
-        return fiche
-
-    def _fiche_personnalise(
-        definition: AgentDefinition,
-        *,
-        avec_playbook: bool,
-        cfg: ConfigurationAgents | None = None,
-    ) -> dict[str, Any]:
-        """La fiche catalogue d'un agent personnalisé : sa définition persistée (#72).
-
-        `herite` est **vide** et `reglages_du_code` **null** : un agent
-        personnalisé ne tient rien du code, sa définition est son réglage. Les
-        deux clés sont servies quand même — voir `_fiche_defaut` : une fiche
-        dont les champs dépendraient de la `source` obligerait chaque client à
-        les deviner.
-
-        `projet` (#1038) dit à quel projet la fiche appartient — None pour un
-        **gabarit**, c'est-à-dire une fiche rangée hors de tout projet. La clé
-        est servie sur les deux formes, par la même règle que les deux
-        précédentes.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        fiche = definition.to_dict(avec_playbook=avec_playbook)
-        fiche["source"] = AGENT_SOURCE_PERSONNALISE
-        fiche["herite"] = []
-        fiche["reglages_du_code"] = None
-        fiche["projet"] = cfg.projet_id
-        fiche.update(_volet_mcp(definition.nom, cfg))
-        fiche.update(_volet_permissions(definition.nom, cfg))
-        return fiche
-
-    def _personnalise_ou_none(
-        nom: str, cfg: ConfigurationAgents | None = None
-    ) -> AgentDefinition | None:
-        """La définition persistée de `nom`, ou None (nom hors slug compris — jamais levé)."""
-        cfg = cfg if cfg is not None else gabarits
-        try:
-            return cfg.agents.lire(nom)
-        except ValueError:
-            return None
-
-    def _exige_personnalise(
-        nom: str, cfg: ConfigurationAgents | None = None
-    ) -> AgentDefinition:
-        """La définition personnalisée de `nom`, ou l'erreur HTTP qui explique son absence.
-
-        403 sur un agent par défaut (défini par le code : ni modifiable ni
-        supprimable ici — son playbook s'édite via `/api/playbooks`), 404 sur
-        un nom inconnu du dépôt.
-        """
-        if nom in NOMS_RESERVES:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"agent par défaut ou acteur système : {nom} — défini par le "
-                    "code, ni modifiable ni supprimable (playbook éditable via "
-                    "PUT /api/playbooks/{agent})."
-                ),
-            )
-        definition = _personnalise_ou_none(nom, cfg)
-        if definition is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"agent personnalisé inconnu : {nom} (voir GET /api/catalogue)",
-            )
-        return definition
-
-    def _exige_du_code(nom: str, cfg: ConfigurationAgents | None = None) -> Agent:
-        """Le **gabarit de rôle** `nom`, ou l'erreur HTTP qui explique son absence (#259).
-
-        Le **symétrique** d'`_exige_personnalise`, et ses refus se répondent :
-        403 sur un agent personnalisé — sa définition *est* son réglage et
-        s'édite par `PUT /api/catalogue/{nom}` ; le surcharger ouvrirait un
-        second chemin d'écriture vers les trois mêmes valeurs, le doublon même
-        que #259 supprime côté playbook. 403 aussi sur `orchestrateur` et
-        `assistance`, qui n'ont pas de fiche au catalogue. 404 sur un inconnu.
-
-        Depuis #1042 ce qu'il rend est un **gabarit** et non un agent, et il ne se
-        règle donc qu'au niveau gabarit : demandé sur un projet il sort en 404, au
-        même titre que sa fiche et pour la même raison — le projet ne l'a pas, et
-        un réglage écrit là ne recouvrirait aucun agent du projet.
-        """
-        cfg = cfg if cfg is not None else gabarits
-        if cfg.projet_id is None:
-            # Le gabarit **nu** : c'est `_fiche_defaut` qui pose la surcharge
-            # par-dessus, et la lui donner déjà recouverte ferait afficher
-            # l'ancien réglage juste après l'avoir remplacé.
-            agent = next((a for a in GABARITS_DU_CODE if a.nom == nom), None)
-            if agent is not None:
-                return agent
-        elif nom in NOMS_DU_CODE:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"gabarit de rôle : {nom} — un gabarit se règle hors projet "
-                    "(sans ?projet=) ; un projet règle les agents de son équipe."
-                ),
-            )
-        if _personnalise_ou_none(nom, cfg) is not None:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"agent personnalisé : {nom} — ses réglages font partie de sa "
-                    "définition et se modifient via PUT /api/catalogue/{nom} ; "
-                    "seul un agent du code se surcharge."
-                ),
-            )
-        if nom in NOMS_RESERVES:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"acteur système : {nom} — hors catalogue, il n'a pas de "
-                    "réglage de modèle à surcharger."
-                ),
-            )
-        raise HTTPException(
-            status_code=404,
-            detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
-        )
-
-    @app.get("/api/mcp/registre")
-    async def mcp_registre(q: str = "", source: str = SOURCE_TOUTES) -> list[dict[str, Any]]:
-        """La bibliothèque de serveurs MCP (#131, #271), **à trois sources** depuis #678.
-
-        `q` filtre par nom, id, éditeur, description ou tag (recherche libre,
-        insensible à la casse et aux accents ; vide → tout le registre). Chaque
-        entrée est un **template** : transport, gabarit d'exécution `${VAR}`
-        (jamais de secret), mode d'auth (docs/21), variables à fournir
-        (`secrets`) et lien de procédure côté outil (`procedure_url`) — de quoi
-        guider la configuration.
-
-        `source` sert à n'en demander qu'une : `toutes` (défaut), `curee`,
-        `admise` ou `decouverte` — une valeur inconnue est un **422**, jamais
-        une liste silencieusement autre que celle demandée. Sans le paramètre,
-        la réponse est celle d'avant #677 **augmentée** : curées d'abord, puis
-        admises, puis découvertes (tri `_rang`), donc un appelant qui ignore le
-        paramètre lit toujours la même tête de liste.
-
-        ⚠ `curee` et `source` ne disent **pas** la même chose (#678) : le
-        booléen marque l'appartenance à l'**allowlist** — c'est lui qui répond à
-        « montable ? », garde-fou supply-chain, docs/19 —, la source dit d'où
-        l'entrée vient. Une entrée `admise` est donc `curee: true` : un humain
-        l'a fait entrer par la porte d'admission. Une entrée `decouverte` se
-        lit, se cherche, porte ses signaux d'amont (`editeur`, `version`,
-        `depot`, `statut`) — et ne se monte pas.
-        """
-        try:
-            entrees = registre().rechercher(q, source)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return [e.to_dict() for e in entrees]
-
-    @app.get("/api/mcp/registre/provenance")
-    async def mcp_registre_provenance() -> dict[str, Any]:
-        """D'où vient la bibliothèque, quand elle a été revue, et par quoi chercher (#271).
-
-        Le critère 1 de #271 demande que la provenance de la liste et sa date de
-        revue soient **dites à l'écran** : un registre curé sans provenance
-        affichée demande une confiance qu'il ne justifie pas. `tags` est la
-        sortie du cul-de-sac du critère 2 — les pistes qu'une recherche sans
-        résultat propose, plutôt que de répéter qu'elle n'a rien trouvé.
-
-        Depuis #677 la bibliothèque a plusieurs sources, donc plusieurs
-        provenances, et elles ne répondent pas à la même question : la curée se
-        date par sa **revue humaine**, la découverte par le **rafraîchissement**
-        du miroir et le nombre d'entrées qu'il porte. `provenances` les rend côte à côte ;
-        `moissonnee` dit si le miroir a effectivement rapporté quelque chose —
-        c'est ce qui fait cesser le « jamais moissonnée » du critère 5 du parent
-        sans le remplacer par une promesse que personne n'a tenue.
-
-        Depuis #678 il y a **trois** sources, donc une troisième provenance : les
-        entrées **admises**, qui ne se datent ni par une revue de code ni par un
-        rafraîchissement de miroir mais par le **geste** qui les a fait entrer.
-        `derniere_le` est la date de la plus récente, `revoquees` ce qu'on a
-        retiré, `signaux` ce que l'amont dit de tout ça depuis — l'écran a de
-        quoi dire l'état de l'allowlist locale sans recharger le journal entier.
-
-        ⚠ Les clés historiques (`resume`, `sources`, `revue_le`, `tags`,
-        `total`) sont **conservées à plat et inchangées de sens** : elles parlent
-        de la curation, que l'écran affiche déjà. L'ajout est purement additif —
-        `total` reste le compte servi par `GET /api/mcp/registre` sans filtre, et
-        `total_curees`/`total_admises`/`total_decouvertes` le détaillent.
-
-        ⚠ `total_curees` compte le **seed seul** : une entrée admise n'y est plus,
-        elle est dans `total_admises`. C'est le seul endroit du contrat où un
-        chiffre a changé de portée, et la raison est la même que pour le filtre
-        `source=curee` — ce qui répond à « montable ? » n'est pas la source mais
-        le champ `curee` de chaque entrée.
-
-        ⚠ La forme de `GET /api/mcp/registre` n'a **pas** bougé : elle rend
-        toujours une liste nue. Emballer la liste pour y loger la provenance
-        aurait cassé tous ses appelants pour une donnée qui ne change qu'à
-        chaque revue — d'où une route sœur. `provenance` est un id **réservé**
-        du registre (`ID_RESERVES`), donc aucune entrée ne peut être masquée par
-        cette route et l'ordre de déclaration ci-dessous ne porte aucune règle.
-        """
-        courant = registre()
-        curees = courant.lister(SOURCE_CUREE)
-        admises = courant.lister(SOURCE_ADMISE)
-        decouvertes = courant.lister(SOURCE_DECOUVERTE)
-        journal = courant.admissions()
-        return {
-            **courant.provenance.to_dict(),
-            "tags": list(courant.tags()),
-            "total": len(courant.lister()),
-            "total_curees": len(curees),
-            "total_admises": len(admises),
-            "total_decouvertes": len(decouvertes),
-            "provenances": [
-                {
-                    **courant.provenance.to_dict(),
-                    "source": SOURCE_CUREE,
-                    "total": len(curees),
-                },
-                {
-                    "source": SOURCE_ADMISE,
-                    "resume": (
-                        "Entrées du registre officiel qu'un humain a fait entrer dans "
-                        "l'allowlist par un geste tracé — chacune figée à la version "
-                        "admise, avec sa source et qui l'a admise. Révocable ; une "
-                        "nouvelle version amont ne remplace rien sans un nouveau geste."
-                    ),
-                    "total": len(admises),
-                    "revoquees": len(courant.admissions(revoquees=True)),
-                    "derniere_le": max((a.le for a in journal), default=""),
-                    "signaux": len(courant.signaux),
-                },
-                {
-                    **courant.provenance_decouverte.to_dict(),
-                    "total": len(decouvertes),
-                },
-            ],
-        }
-
-    @app.get("/api/mcp/registre/{id}")
-    async def mcp_registre_entree(id: str) -> dict[str, Any]:
-        """Une entrée du registre MCP (#131) — 404 si l'id n'est d'**aucune** source.
-
-        Sert une entrée découverte ou admise aussi bien qu'une curée (#677,
-        #678) : c'est la fiche de ce que l'écran vient de lister, `source` dit
-        laquelle des trois on regarde et `curee` si elle est montable. Ouvrir
-        cette lecture n'ouvre aucune voie de montage — `instancier` ne passe pas
-        par ici, et `POST /api/mcp/pool` continue de n'accepter que l'allowlist.
-        """
-        entree = registre().trouver(id)
-        if entree is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"serveur MCP inconnu du registre : {id} (voir GET /api/mcp/registre)",
-            )
-        return entree.to_dict()
-
-    def _impact_pool(id: str) -> dict[str, Any]:
-        """Ce qu'une révocation de `id` laisse **debout** dans le pool projet (#678).
-
-        Le « sans le dire » du critère 2 : révoquer ne démonte rien — casser un
-        run en cours pour appliquer une décision d'allowlist serait un remède
-        pire que le mal —, donc la route doit dire ce qui reste monté, chez qui,
-        et par quel geste le retirer. Un pool illisible n'est pas une raison de
-        faire échouer la révocation : on rend l'ignorance plutôt qu'une fausse
-        réponse (`erreur` non nul, `montee` faux).
-        """
-        try:
-            pool = mcp.pool()
-        except ValueError as exc:
-            return {"montee": False, "agents": [], "erreur": str(exc)}
-        if not any(i.id == id for i in pool):
-            return {"montee": False, "agents": [], "erreur": None}
-        agents = [agent for agent in mcp.agents() if id in mcp.activations(agent)]
-        return {"montee": True, "agents": sorted(agents), "erreur": None}
-
-    @app.get("/api/mcp/admissions")
-    async def mcp_admissions() -> dict[str, Any]:
-        """Le journal des admissions (#678) : ce qu'un humain a fait entrer dans l'allowlist.
-
-        `admissions` porte les **actives** (ce qui est montable aujourd'hui) et
-        `revoquees` ce qui l'a été puis retiré, avec qui, quand et pourquoi. Les
-        deux listes plutôt qu'une à filtrer : ce ne sont pas les mêmes lectures —
-        l'une répond à « qu'est-ce qu'on autorise ? », l'autre à « qu'a-t-on
-        retiré, et pour quel motif ? ».
-
-        `signaux` porte ce que l'amont dit **depuis** de ces entrées
-        (dépréciation, suppression, disparition, version plus récente) : rien
-        n'est jamais retiré en silence, c'est le critère 3 du ticket. `politique`
-        nomme qui garde la porte — une porte dont on ignore le gardien n'en est
-        pas une, et le défaut du dépôt (le geste humain suffit) doit se
-        distinguer d'une politique d'entreprise branchée.
-
-        `erreur` porte la cause si le journal est illisible : ce cas-là **retire
-        de l'allowlist** tout ce qu'il autorisait, il ne se tait pas.
-        """
-        courant = registre()
-        try:
-            journal = admissions.lister()
-            erreur = None
-        except ValueError as exc:
-            journal, erreur = (), str(exc)
-        return {
-            "admissions": [a.to_dict() for a in journal if a.active],
-            "revoquees": [a.to_dict() for a in journal if not a.active],
-            "signaux": [s.to_dict() for s in courant.signaux],
-            "politique": etat_politique(admissions.politique),
-            "erreur": erreur,
-        }
-
-    @app.post("/api/mcp/admissions", status_code=201)
-    async def admettre_entree(requete: AdmissionRequete) -> dict[str, Any]:
-        """**Admet** une entrée découverte dans l'allowlist — le geste du ticket (#678).
-
-        C'est la porte : après elle, et seulement après elle, `POST
-        /api/mcp/pool` accepte l'entrée. Elle enregistre l'entrée **traduite et
-        figée** avec sa source (nom amont, version épinglée, éditeur, dépôt,
-        horodatage du miroir) et le geste (qui, quand, pourquoi).
-
-        Rend l'entrée telle que la bibliothèque la sert **après** l'admission —
-        `curee: true`, `source: "admise"`, `admission` renseignée : l'appelant
-        n'a pas à recharger pour savoir ce qu'il a obtenu.
-
-        404 si l'id n'est d'aucune source (une entrée que la traduction a refusée
-        n'est pas dans la bibliothèque, donc pas admissible — la porte ne fabrique
-        pas ce que le gabarit ne sait pas exprimer) ; 409 si elle est déjà curée
-        au seed, supprimée chez l'amont, ou refusée par la politique. Ré-admettre
-        une entrée déjà admise **à la même version** est idempotent ; à une autre
-        version, c'est le nouveau geste qui promeut cette version-là.
-        """
-        courant = registre()
-        entree = courant.trouver(requete.registre_id)
-        if entree is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"serveur MCP inconnu de la bibliothèque : {requete.registre_id} — "
-                    "rien à admettre. Une entrée que la traduction a refusée n'y "
-                    "figure pas (voir GET /api/mcp/registre)."
-                ),
-            )
-        provenance = courant.provenance_decouverte
-        try:
-            admission = admissions.admettre(
-                entree,
-                par=requete.par,
-                note=requete.note,
-                amont=provenance.amont,
-                miroir_le=provenance.rafraichi_le,
-            )
-        except RefusAdmission as exc:
-            raise HTTPException(status_code=409, detail=exc.cause) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        # Le journal vient de changer : la bibliothèque doit servir l'entrée
-        # admise **à la requête suivante**, sans attendre que le mtime du
-        # système de fichiers se distingue (cf. `federer_memo`).
-        oublier_memo()
-        admise = registre().trouver(admission.id)
-        return admise.to_dict() if admise is not None else admission.to_dict()
-
-    @app.post("/api/mcp/admissions/{id}/revocation")
-    async def revoquer_admission(id: str, requete: RevocationRequete) -> dict[str, Any]:
-        """**Révoque** une admission (#678, critère 2) — sans rien démonter.
-
-        ⚠ Un `POST …/revocation` et non un `DELETE …/{id}`, pour deux raisons qui
-        vont dans le même sens : **rien n'est effacé** — l'admission reste au
-        journal avec qui l'a révoquée, quand et pourquoi, et c'est ce qui permet
-        au refus d'instanciation de la nommer —, et le geste porte un corps
-        (l'auteur, le motif) qu'un `DELETE` transporte mal, certains
-        intermédiaires HTTP le laissant tomber en route.
-
-        L'entrée sort de l'allowlist : `POST /api/mcp/pool` la refuse à nouveau,
-        et `instancier` **nomme** la révocation au lieu de rendre le refus d'un
-        id inconnu.
-
-        ⚠ Un serveur **déjà monté** dans le pool projet y reste, et la réponse le
-        dit (`pool`) : les agents qui l'ont activée, et le geste pour le retirer
-        (`DELETE /api/mcp/pool/{id}`). Le démonter d'office couperait un run en
-        cours pour appliquer une décision d'allowlist ; ce qui est promis est
-        « jamais sans le dire », pas « jamais sans casser ».
-
-        404 si l'id n'a jamais été admis (une entrée curée du seed se retire en
-        revue de code, pas ici), 409 si l'admission est déjà révoquée.
-        """
-        try:
-            admission = admissions.revoquer(id, par=requete.par, motif=requete.motif)
-        except RefusAdmission as exc:
-            code = 404 if exc.motif == MOTIF_NON_ADMISE else 409
-            raise HTTPException(status_code=code, detail=exc.cause) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        oublier_memo()
-        impact = _impact_pool(id)
-        return {
-            "admission": admission.to_dict(),
-            "pool": impact,
-            "message": (
-                f"« {id} » est sortie de l'allowlist mais reste montée dans le pool "
-                "projet : rien n'a été démonté. Pour la retirer aussi du pool, "
-                f"DELETE /api/mcp/pool/{id}."
-                if impact["montee"]
-                else f"« {id} » est sortie de l'allowlist ; elle n'était pas dans le pool."
-            ),
-        }
-
-    @app.get("/api/mcp/pool")
-    async def mcp_pool(projet: str | None = None) -> dict[str, Any]:
-        """Le pool projet des intégrations MCP configurées (#133), avec l'état des secrets.
-
-        `{integrations: [...], erreur}` : les intégrations ajoutées au pool
-        depuis la bibliothèque, chacune enrichie de son mode d'auth et de
-        l'état (présent/valide) de ses secrets côté coffre projet — jamais une
-        valeur de secret. `erreur` porte la cause si le pool stocké est invalide.
-        C'est ce que liste la section « Intégrations MCP » des Paramètres.
-
-        Le mot « pool **projet** » devient exact avec #1038 : `?projet=<id>` rend
-        celui de ce projet — celui du gabarit tant qu'il n'a pas le sien.
-        """
-        return _pool_mcp(_config(projet))
-
-    @app.post("/api/mcp/pool", status_code=201)
-    async def ajouter_integration_pool(
-        requete: IntegrationPoolRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Ajoute (ou reconfigure) une intégration du registre dans le pool projet (#133).
-
-        Le parcours **configuration** du critère 1 : instancie l'entrée de
-        l'**allowlist** `registre_id` (garde-fou supply-chain — 404 si elle n'y
-        est pas, docs/19), l'inscrit au pool (remplacement si l'id y est déjà —
-        reconfiguration) et pose ses secrets **une seule fois** dans le coffre
-        projet chiffré, selon le mode d'auth de l'entrée (token
-        statique/appairage/OAuth importé). Une valeur de secret vide est ignorée
-        (le secret reste à configurer). 404 si l'id est hors allowlist, 422 si
-        une valeur/échéance est invalide.
-
-        ⚠ Le 404 **nomme le geste qui manque** depuis #678 : une entrée
-        découverte y renvoie vers l'admission (`POST /api/mcp/admissions`), une
-        entrée révoquée dit qui l'a retirée et quand. La phrase vient de
-        `RegistreMcp.cause_non_instanciable` et n'est pas recopiée ici — c'est
-        exactement celle que lèverait `instancier` deux lignes plus bas, et deux
-        formulations pour un même refus finiraient par se contredire.
-        """
-        cfg = _config(projet)
-        courant = registre()
-        entree = courant.get(requete.registre_id)
-        if entree is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"{courant.cause_non_instanciable(requete.registre_id)} "
-                    "Voir GET /api/mcp/registre."
-                ),
-            )
-        try:
-            serveur = registre().instancier(requete.registre_id, nom=requete.nom or None)
-            integration = IntegrationMcp(id=requete.registre_id, serveur=serveur)
-            pool = [i for i in cfg.mcp.pool() if i.id != integration.id]
-            pool.append(integration)
-            cfg.mcp.ecrire_pool(pool)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        # Les secrets, une seule fois, dans le coffre projet partagé. On ne
-        # retient que les variables déclarées par l'entrée curée (les autres
-        # n'ont pas de sens pour ce serveur) et on ignore les valeurs vides.
-        variables = {v.cle: v for v in entree.secrets}
-        for saisi in requete.secrets:
-            variable = variables.get(saisi.cle)
-            if variable is None or not saisi.valeur:
-                continue
-            try:
-                secrets.enregistrer_projet(
-                    saisi.cle,
-                    saisi.valeur,
-                    mode_auth=entree.mode_auth,
-                    secret=variable.secret,
-                    expire_le=saisi.expire_le or None,
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-        try:
-            etats = {e.cle: e.to_dict() for e in secrets.etat_projet()}
-        except ValueError:
-            etats = {}
-        return _integration_pool_dict(integration, etats)
-
-    @app.delete("/api/mcp/pool/{id}")
-    async def retirer_integration_pool(id: str, projet: str | None = None) -> dict[str, Any]:
-        """Retire une intégration du pool projet (#133) et fait le ménage derrière elle.
-
-        Sort l'intégration du pool, **désactive** son id chez tout agent qui
-        l'avait activée (sinon `McpStore.lire` casserait sur une activation
-        orpheline) et **supprime** du coffre projet les secrets qu'elle était
-        seule à référencer (un secret encore utilisé par une autre intégration
-        du pool reste). 404 si l'id n'est pas dans le pool.
-
-        Cadré sur un projet (#1038), le retrait **descend le pool hérité** dans
-        le projet amputé de cette intégration : le gabarit n'est pas touché, et
-        retirer chez soi n'enlève rien aux autres projets.
-        """
-        cfg = _config(projet)
-        try:
-            pool = list(cfg.mcp.pool())
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        cible = next((i for i in pool if i.id == id), None)
-        if cible is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"intégration inconnue du pool : {id} (voir GET /api/mcp/pool).",
-            )
-        cfg.mcp.ecrire_pool([i for i in pool if i.id != id])
-        for agent in cfg.mcp.agents():
-            actives = cfg.mcp.activations(agent)
-            if id in actives:
-                cfg.mcp.ecrire_activations(agent, [a for a in actives if a != id])
-        # Secrets : ne retirer que ceux qu'aucune intégration restante ne référence.
-        references_restantes = {
-            cle for i in cfg.mcp.pool() for cle in references_env(i.serveur)
-        }
-        for cle in references_env(cible.serveur):
-            if cle not in references_restantes:
-                secrets.supprimer_projet(cle)
-        return {"id": id, "supprime": True}
-
-    @app.put("/api/mcp/activations/{agent}")
-    async def definir_activations_mcp(
-        agent: str, requete: ActivationsMcpRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Fixe les intégrations du pool **activées** pour un agent (#133) — critère 2.
-
-        Remplacement intégral : `integrations` (des ids du pool) devient
-        l'ensemble activé de l'agent, vide pour tout désactiver. C'est l'écriture
-        derrière l'interrupteur par agent qui remplace l'affichage lecture seule
-        des serveurs MCP. 404 si l'agent n'est pas au catalogue, 422 si un id
-        n'est pas dans le pool (une activation orpheline casserait la lecture).
-
-        Écrit **dans le projet** demandé (#1038) : activer une intégration ici
-        n'en active aucune ailleurs.
-        """
-        cfg = _config(projet)
-        _exige_agent_du_catalogue(agent, cfg)
-        try:
-            pool_ids = {i.id for i in cfg.mcp.pool()}
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        inconnues = sorted(set(requete.integrations) - pool_ids)
-        if inconnues:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"intégration(s) absente(s) du pool : {', '.join(inconnues)} "
-                    "(voir GET /api/mcp/pool)."
-                ),
-            )
-        try:
-            activees = cfg.mcp.ecrire_activations(agent, requete.integrations)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {"agent": agent, "integrations": list(activees)}
-
-    def _id_registre_de(serveur: ServeurMcp) -> str | None:
-        """L'entrée de l'allowlist qui décrit **exactement** ce serveur, s'il y en a une (#263).
-
-        Ce qu'une migration gagne à la poser : l'intégration migrée entre au pool
-        sous l'id de son entrée, donc avec son mode d'auth, sa procédure et ses
-        variables — la même ligne que si elle avait été ajoutée depuis la
-        bibliothèque. Sans elle, `figma-officiel` et `slack` y arriveraient bien
-        (leur nom de serveur *est* l'id de leur entrée) mais `forge`, qui nomme le
-        serveur GitHub autrement, entrerait hors bibliothèque et porterait une
-        alerte pour une situation parfaitement saine.
-
-        Le rapprochement est une **égalité stricte** sur la déclaration
-        instanciée *sous le nom du serveur d'origine*, jamais une ressemblance :
-        un id de registre qui décrirait autre chose donnerait à l'intégration la
-        fiche et les secrets d'un autre serveur. Le nom, lui, est **conservé** —
-        c'est le préfixe d'outils (`mcp__<nom>__…`) que les playbooks emploient
-        déjà, et le renommer au passage changerait le comportement d'un agent au
-        milieu d'une migration qui prétend ne rien changer.
-        """
-        for entree in registre().lister(SOURCE_TOUTES):
-            if not entree.curee:
-                continue  # hors allowlist : ce serait promettre ce que le pool refuse
-            try:
-                if entree.vers_serveur(nom=serveur.nom) == serveur:
-                    return entree.id
-            except ValueError:
-                continue
-        return None
-
-    @app.post("/api/mcp/migration/{agent}")
-    async def migrer_declarations_mcp(
-        agent: str, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Migre la déclaration héritée `core/mcp/{agent}.json` vers le pool projet (#263).
-
-        L'issue qui manquait au bloc « hérités » de la fiche d'un agent : ses
-        serveurs rejoignent le **pool**, activés pour lui, et le fichier part.
-        Additif (`McpStore.migrer_agent`) — le pool et les activations des autres
-        agents ne bougent pas —, et **mutualisant** : un serveur déjà au pool sous
-        la même déclaration est repris, pas dupliqué. Chaque serveur que la
-        bibliothèque décrit exactement entre sous l'**id de son entrée**, donc
-        avec son mode d'auth et l'état de ses secrets.
-
-        Aucun secret n'est demandé ni redemandé : une déclaration héritée porte
-        déjà ses références `${VAR}`, qui se résolvent au montage comme avant.
-        C'est ce qui fait de la migration un geste et non un formulaire.
-
-        404 si l'agent n'est pas au catalogue, 422 s'il n'a rien à migrer ou si
-        une source est invalide (rien n'est écrit dans ce cas).
-
-        ⚠ Elle ne migre que les fichiers **du niveau demandé** (#1038) : la
-        déclaration d'un projet cadré, celle du gabarit sinon. Migrer depuis un
-        projet un fichier qu'il *hérite* le laisserait en place — donc
-        autoritaire à la lecture —, ce qui ferait une migration invisible.
-        """
-        cfg = _config(projet)
-        _exige_agent_du_catalogue(agent, cfg)
-        try:
-            heritees = cfg.mcp.heritees(agent)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        ids = {
-            serveur.nom: id_registre
-            for serveur in heritees
-            if (id_registre := _id_registre_de(serveur)) is not None
-        }
-        try:
-            migration = cfg.mcp.migrer_agent(agent, ids=ids)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        try:
-            etats = {e.cle: e.to_dict() for e in secrets.etat_projet()}
-        except ValueError:
-            etats = {}
-        return {
-            "agent": migration.agent,
-            "ajoutees": [_integration_pool_dict(i, etats) for i in migration.ajoutees],
-            "reprises": [_integration_pool_dict(i, etats) for i in migration.reprises],
-            "activations": list(migration.activations),
-            "fichier_retire": migration.fichier_retire,
-        }
-
-    @app.put("/api/permissions/{agent}")
-    async def definir_permissions(
-        agent: str, requete: PolitiquePermissionsRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Écrit la politique allow/ask/deny d'un agent (#262) — remplacement intégral.
-
-        L'écriture derrière la fiche, là où la section était en lecture seule
-        depuis #110 : régler ce qu'un agent a le droit d'appeler ne demande plus
-        d'éditer `core/permissions/<agent>.json` à la main puis de relancer. La
-        politique écrite vaut pour la **tâche suivante** — l'exécuteur la relit à
-        chaud, comme les playbooks.
-
-        404 si l'agent n'est pas au catalogue (une politique orpheline ne serait
-        jamais appliquée), 422 sur une entrée mal formée, **avec la cause exacte
-        du dépôt** : c'est ce motif que l'écran affiche, et il nomme la liste et
-        l'entrée en faute.
-
-        ⚠ Elle ne lit **pas** la politique en place avant de la remplacer, et
-        c'est ce qui permet de réparer depuis l'écran un fichier que `lire`
-        refuse — un `GET` préalable échouerait précisément là où le geste est
-        nécessaire.
-
-        Écrit **dans le projet** demandé (#1038) : régler les autorisations d'un
-        agent ici ne touche ni au gabarit ni aux autres projets. C'est tout le
-        point du jalon — un agent partagé porterait les autorisations de l'un
-        chez l'autre.
-        """
-        cfg = _config(projet)
-        _exige_agent_du_catalogue(agent, cfg)
-        try:
-            politique = cfg.permissions.ecrire(agent, requete.model_dump())
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {"agent": agent, "permissions": politique.to_dict()}
-
-    @app.delete("/api/permissions/{agent}/accords/{accord_id}")
-    async def retirer_accord(
-        agent: str, accord_id: str, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Retire un accord étendu d'un agent (#1185) — le prochain appel redemande.
-
-        L'accord a été donné en approuvant une demande « pour la suite du run » ou
-        « du projet » ; le retirer rend l'outil à l'arbitrage **dès l'appel
-        suivant**, même au milieu d'une tâche, parce que le moteur le relit à chaque
-        appel arbitré. Rien d'autre ne bouge : la politique de l'agent reste celle
-        qu'elle était.
-
-        Dans le **projet** demandé, comme les autres routes de la fiche (#1038).
-        `404` si l'agent n'est pas au catalogue ou si aucun accord ne porte cet
-        identifiant — y compris déjà retiré : il n'y a rien à redire. Rend les
-        accords qui restent en vigueur, pour que l'écran n'ait rien à recomposer.
-        """
-        cfg = _config(projet)
-        _exige_agent_du_catalogue(agent, cfg)
-        try:
-            retire = cfg.permissions.accords().retirer(agent, accord_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if retire is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"aucun accord {accord_id!r} pour l'agent {agent} — déjà retiré ?",
-            )
-        return {
-            "agent": agent,
-            "retire": retire.to_dict(),
-            "accords": _accords_en_vigueur(agent, cfg),
-        }
-
-    # --- Projets de l'utilisateur (#223) : CRUD et explorateur de dossiers ---
-    def _refus_projet(exc: Exception, *, explorateur: bool = False) -> HTTPException:
-        """Un refus du service des projets en `HTTPException` — motif compris.
-
-        Le corps est `{motif, message}` et non une phrase libre : l'écran
-        Projets doit pouvoir dire *pourquoi* une racine est refusée (docs/05
-        §2.7), ce qu'un texte à analyser ne lui permettrait pas. Le code vient
-        du motif (`statut_http`), avec 422 en repli — **jamais un 500** : une
-        racine hors périmètre est une réponse, pas une panne (critère #223).
-        """
-        return HTTPException(
-            status_code=statut_http(exc, explorateur=explorateur),
-            detail=detail_refus(exc),
-        )
-
-    def _motifs(valeur: list[str] | None) -> tuple[str, ...] | None:
-        """Les motifs de périmètre d'une requête — None laissant les défauts du modèle."""
-        return None if valeur is None else tuple(valeur)
-
-    def _poste(requete: Request) -> bool:
-        """La requête vient-elle du poste ? — le discriminant « poste » vs « serveur ».
-
-        Lu sur le **client TCP**, jamais sur un en-tête : `X-Forwarded-For` et
-        consorts sont posés par le client, donc un `127.0.0.1` déclaré ouvrirait
-        une fenêtre sur la machine du serveur depuis n'importe où.
-        """
-        return selecteur.hote_du_poste(requete.client.host if requete.client else None)
-
-    # Enregistrées **avant** `/api/projets/{id_projet}` : « explorateur » et
-    # « selecteur » sont des identifiants de projet valides au regard du slug
-    # `ID_PROJET`, la capture les avalerait donc si elle passait la première
-    # (même piège qu'au-dessus avec `/api/playbooks/lexique`).
-    @app.get("/api/projets/selecteur")
-    async def selecteur_disponible(requete: Request) -> dict[str, Any]:
-        """Le sélecteur de dossier **natif du poste** est-il ouvrable ici — et sinon, pourquoi ?
-
-        C'est la réponse que l'écran lit **avant** d'afficher quoi que ce soit :
-        un bouton quand `disponible`, la phrase de `message` sinon (#278). Jamais
-        un bouton mort, jamais un silence — l'explorateur servi par l'API reste
-        dans les deux cas la voie complète.
-
-        Toujours **200** : une indisponibilité est une réponse, pas une erreur.
-        Trois motifs — `selecteur-desactive` (`MAESTRO_SELECTEUR_NATIF=0`),
-        `selecteur-hors-poste` (backend joint depuis le réseau : le dialogue
-        s'ouvrirait sur le serveur, devant personne) et `selecteur-sans-outil`
-        (ni PowerShell, ni osascript, ni zenity/kdialog, ou pas de session
-        graphique).
-        """
-        return selecteur.disponibilite(
-            poste=_poste(requete),
-            reglage=load_settings().selecteur_natif,
-        )
-
-    @app.post("/api/projets/selecteur")
-    async def ouvrir_selecteur(
-        requete: Request,
-        corps: SelecteurRequete | None = None,
-    ) -> dict[str, Any]:
-        """Ouvre le dialogue de dossier de l'OS et rend le chemin choisi (#278).
-
-        Le pas d'après l'explorateur : un navigateur ne livre jamais de chemin
-        absolu, mais le backend **tourne sur le poste** et peut ouvrir le
-        dialogue natif. `depart` (facultatif) est le dossier d'ouverture.
-
-        Le chemin rendu est **confronté aux frontières d'EF-38** avant de
-        revenir : `chemin` porte le dossier canonicalisé et `racine_valide` dit
-        s'il est déclarable tel quel — un dossier explorable mais non déclarable
-        (une racine de disque, le dossier utilisateur nu) revient avec son
-        `refus` motivé plutôt qu'en 4xx, l'écran ayant besoin de le montrer dans
-        le formulaire, pas de le traiter en panne.
-
-        **Annuler n'est pas une erreur** : fermer la fenêtre rend
-        `{"annule": true}` en 200. Les vrais empêchements sont des 403 motivés
-        (`selecteur-hors-poste`, `selecteur-desactive`, `selecteur-sans-outil`,
-        `selecteur-en-cours`, `selecteur-expire`).
-        """
-        etat = selecteur.disponibilite(
-            poste=_poste(requete),
-            reglage=load_settings().selecteur_natif,
-        )
-        if not etat["disponible"]:
-            raise HTTPException(
-                status_code=403,
-                detail={"motif": etat["motif"], "message": etat["message"]},
-            )
-        try:
-            chemin = await asyncio.to_thread(
-                selecteur.choisir_dossier,
-                depart=(corps.depart if corps else None),
-            )
-        except selecteur.SelecteurRefuse as exc:
-            raise HTTPException(
-                status_code=403,
-                detail={"motif": exc.motif, "message": str(exc)},
-            ) from exc
-        if chemin is None:
-            return {"annule": True, "chemin": None, "racine_valide": False, "refus": None}
-        return {"annule": False, **_verdict_racine(chemin)}
-
-    @app.post("/api/projets/racine")
-    async def verdict_racine(corps: RacineRequete) -> dict[str, Any]:
-        """Ce qu'EF-38 dit d'un chemin proposé comme racine (#938) — **la porte unique**.
-
-        Le pendant de `POST /api/projets/selecteur` pour les chemins que le
-        backend n'a pas ouverts lui-même : celui que le dialogue de la **fenêtre**
-        a rendu, celui d'un **dossier déposé** sur l'écran de déclaration. Les
-        deux arrivent avec un chemin réel que le navigateur, lui, ne sait pas
-        fabriquer — et ils doivent passer par la **même** porte que les autres
-        voies, faute de quoi il y aurait deux formules de validation à tenir
-        d'accord et c'est la garde qui perdrait.
-
-        Même corps que la route du sélecteur, `annule` en moins : `chemin` porte
-        le dossier canonicalisé, `racine_valide` dit s'il est déclarable tel
-        quel, et un dossier lisible mais non déclarable (une racine de disque, le
-        dossier utilisateur nu) revient avec son `refus` motivé plutôt qu'en 4xx
-        — l'écran a besoin de le **montrer**, pas de le traiter en panne.
-
-        Toujours **200** : c'est un verdict, pas une exécution. Rien n'est ouvert,
-        rien n'est écrit, et refuser fait partie des réponses.
-        """
-        return _verdict_racine(corps.chemin)
-
-    def _verdict_racine(chemin: str) -> dict[str, Any]:
-        """Le chemin choisi, canonicalisé, et ce qu'EF-38 en dit — sans jamais lever.
-
-        Deux questions distinctes, et c'est tout l'intérêt de les séparer : le
-        dossier est-il **lisible** (canonicalisable), et est-il **déclarable**
-        comme racine de projet ? Un `D:/` choisi au dialogue répond oui à la
-        première et non à la seconde ; l'écran doit pouvoir le dire au lieu de
-        laisser l'utilisateur découvrir le refus à la soumission.
-        """
-        try:
-            resolu = valider_racine(chemin)
-        except RacineRefusee as exc:
-            try:
-                lisible = canonique(chemin).as_posix()
-            except OSError:  # pragma: no cover - chemin illisible pour l'OS
-                lisible = chemin
-            return {
-                "chemin": lisible,
-                "racine_valide": False,
-                "refus": {"motif": exc.motif, "message": str(exc)},
-            }
-        return {"chemin": resolu.as_posix(), "racine_valide": True, "refus": None}
-
-    @app.get("/api/projets/repertoire")
-    async def repertoire_des_projets() -> dict[str, Any]:
-        """Le **répertoire des projets** : où naît un projet neuf (#1022).
-
-        Ce que le formulaire lit pour **remplir d'office** le dossier parent
-        d'un projet neuf, et ce que les Paramètres affichent. Rend `chemin`,
-        `par_defaut` (aucun réglage posé — c'est `~/Maestro`), `existe`, `cree`
-        et `refus`.
-
-        ⚠ **Cette lecture crée le dossier s'il manque**, et le dit (`cree`).
-        C'est la décision de #1022 : « créé à la première utilisation », la
-        première utilisation étant la première fois qu'on demande *où naît un
-        projet neuf*. Rendre un chemin qui n'existe pas serait pire — le bouton
-        « Changer de dossier… » s'ouvre dessus, et l'explorateur le refuserait
-        (`dossier-absent`). La création est idempotente et porte sur un dossier
-        que Maestro propose ; elle n'est jamais silencieuse.
-
-        Toujours **200** : un répertoire devenu indéclarable (disque débranché,
-        dossier devenu fichier) revient avec son `refus` motivé plutôt qu'en
-        4xx — l'écran doit le **montrer** et laisser parcourir ailleurs, pas
-        traiter la page en panne.
-        """
-        return projets.repertoire(creer=True)
-
-    @app.put("/api/projets/repertoire")
-    async def regler_repertoire_des_projets(corps: RepertoireRequete) -> dict[str, Any]:
-        """Pose le répertoire des projets — `chemin: null` revient au défaut (#1022).
-
-        Le dossier est **validé et créé** avant d'être stocké : un réglage posé
-        est toujours un dossier déclarable, jamais une intention qui échouerait
-        plus tard et ailleurs. Comme partout, le chemin **ne se tape pas** côté
-        écran (#225) — il vient de l'explorateur ou du dialogue du poste ; la
-        route, elle, valide ce qu'on lui donne.
-
-        422/403/404 motivés quand la racine est refusée (`valider_racine`,
-        EF-38) — et dans ce cas **rien n'est écrit** : le réglage précédent
-        reste en place.
-        """
-        try:
-            return projets.regler_repertoire(corps.chemin)
-        except ValueError as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.get("/api/projets/dossiers-autorises")
-    async def dossiers_autorises() -> dict[str, Any]:
-        """Les dossiers autorisés depuis l'écran (#1610), chacun avec son verdict du moment.
-
-        Ce que *Paramètres › Projets* liste pour qu'on les retire. Une
-        autorisation devenue invalide (disque débranché) revient avec son
-        `refus` : elle ne sert plus de frontière, et l'écran le dit.
-        """
-        return projets.dossiers_autorises()
-
-    @app.post("/api/projets/dossiers-autorises")
-    async def autoriser_dossier(corps: DossierAutoriseRequete) -> dict[str, Any]:
-        """Autorise un dossier sur ce poste : l'explorateur l'ouvre dès l'appel suivant (#1610).
-
-        Un réglage **du poste**, qui **s'ajoute** aux dossiers explorables
-        (`MAESTRO_EXPLORATEUR_RACINES` ou le défaut) sans les remplacer, et sans
-        redémarrage. Le dossier passe par `valider_racine` (EF-38) : 422/403/404
-        motivés quand il ne pourrait pas être la racine d'un projet, et rien
-        n'est écrit. Les zones interdites restent refusées sous un dossier
-        autorisé.
-        """
-        try:
-            return projets.autoriser_dossier(corps.chemin)
-        except ValueError as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.delete("/api/projets/dossiers-autorises")
-    async def retirer_dossier_autorise(chemin: str) -> dict[str, Any]:
-        """Retire une autorisation (#1610) ; 404 `autorisation-inconnue` si rien ne correspond."""
-        try:
-            return projets.retirer_dossier(chemin)
-        except ValueError as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.get("/api/projets/explorateur")
-    async def explorer_dossiers(chemin: str | None = None) -> dict[str, Any]:
-        """Énumère les **dossiers** de `chemin`, ou les racines explorables sans `chemin`.
-
-        La brique sans laquelle l'écran Projets ne peut pas exister : un
-        navigateur ne livre jamais de chemin absolu, c'est donc le backend — qui
-        tourne déjà sur le poste — qui énumère (docs/05 §2.7). Chaque entrée
-        porte son marqueur « dépôt Git » et l'identifiant du projet qui l'a déjà
-        déclarée. `parent` est `null` quand remonter sortirait des racines.
-
-        Ce n'est **pas** un « lis n'importe quel chemin » : hors des racines
-        explorables (dossier utilisateur par défaut, `MAESTRO_EXPLORATEUR_RACINES`,
-        et les racines des projets déclarés) ou dans une zone sensible (`.ssh`,
-        `AppData`, dossiers système, dépôt de Maestro), la route **refuse avec
-        son motif** — 403 — au lieu de rendre une liste vide. 404 sur un dossier
-        absent, 422 sur un chemin relatif ou un fichier.
-        """
-        try:
-            return projets.explorer(chemin)
-        except ValueError as exc:
-            raise _refus_projet(exc, explorateur=True) from exc
-
-    @app.get("/api/projets")
-    async def projets_liste() -> list[dict[str, Any]]:
-        """Les projets déclarés (#223), dans l'ordre des identifiants.
-
-        Forme du fichier stocké (docs/24 §2.3) : racine canonicalisée, origine,
-        `vcs` détecté (`null` si le projet n'est pas versionné) et périmètre. Un
-        fichier du dépôt illisible est **sauté** plutôt que de rendre la page
-        entière inutilisable ; `GET /api/projets/{id}` l'explique.
-        """
-        return projets.lister()
-
-    @app.get("/api/projets/{id_projet}")
-    async def projet_detail(id_projet: str) -> dict[str, Any]:
-        """Un projet déclaré. 404 s'il est inconnu, 422 si son fichier est illisible."""
-        try:
-            return projets.detail(id_projet)
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.post("/api/projets", status_code=201)
-    async def creer_projet(requete: ProjetRequete) -> dict[str, Any]:
-        """Déclare un projet : racine validée (EF-38), VCS détecté, identifiant engendré.
-
-        `origine="nouveau"` crée le dossier s'il manque ; `existant` exige qu'il
-        soit là. 422 avec son **motif** si la racine est refusée par la
-        validation du lot 1 (racine de disque, dossier utilisateur nu, `.ssh`,
-        `AppData`, dossier système, dépôt de Maestro, chemin relatif, dossier
-        absent) ou déjà déclarée par un autre projet — jamais un 500.
-        """
-        try:
-            return projets.creer(
-                requete.nom,
-                requete.racine,
-                origine=requete.origine,
-                inclus=_motifs(requete.inclus),
-                exclus=_motifs(requete.exclus),
-            )
-        except ValueError as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.put("/api/projets/{id_projet}")
-    async def modifier_projet(id_projet: str, requete: ProjetRequete) -> dict[str, Any]:
-        """Remplace la déclaration d'un projet — l'intégrale, pas un diff (cf. `/api/catalogue`).
-
-        Le `vcs` est **re-détecté** sur la racine servie et `cree_le` est
-        préservé. 404 si le projet est inconnu, 422 motivé si la nouvelle racine
-        est refusée ou déjà déclarée ailleurs.
-        """
-        try:
-            return projets.remplacer(
-                id_projet,
-                requete.nom,
-                requete.racine,
-                origine=requete.origine,
-                inclus=_motifs(requete.inclus),
-                exclus=_motifs(requete.exclus),
-            )
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.delete("/api/projets/{id_projet}")
-    async def supprimer_projet(id_projet: str) -> dict[str, Any]:
-        """Oublie un projet. Ne touche **jamais** au dossier sur le disque (#221).
-
-        Supprimer une déclaration n'est pas supprimer le travail de
-        l'utilisateur : seul le fichier du dépôt part. 404 si le projet est
-        inconnu.
-        """
-        try:
-            return projets.supprimer(id_projet)
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.post("/api/projets/{id_projet}/versionner")
-    async def versionner_projet(id_projet: str) -> dict[str, Any]:
-        """Met un projet non versionné sous Git et rend sa fiche relue (#855).
-
-        Le geste qui fait passer un projet du régime « écriture en place » (#839)
-        au régime « worktree + fusion sous accord » (#705/#706, docs/24 §2.4) :
-        `git init` puis un premier commit de toute la racine — `git add -A`, donc
-        le `.gitignore` du projet respecté — pour que la branche de base résolve.
-        Rien n'est réimplémenté ici : la route appelle le verbe de #704
-        (`ProjetStore.versionner`) et traduit ses refus.
-
-        **Sans corps**, à dessein : le `vcs` n'est jamais un champ de requête
-        (EF-38 — constaté sur le disque, jamais déclaré), et c'est ce qui
-        distingue ce geste d'un `PUT` élargi. Un projet **déjà versionné** rend
-        sa fiche telle quelle (aucune commande, `modifie_le` intact). 404 si le
-        projet est inconnu ; un refus porte son **motif** — `depot-englobant`
-        (409, la racine est dans un autre dépôt), `commit-refuse` (422, un
-        `pre-commit` de l'utilisateur a dit non — la racine est dans l'état
-        d'avant), `git-indisponible` (503, le poste n'a pas Git), ou une racine
-        devenue inadmissible (`dossier-absent`…) — jamais un 500.
-
-        Joué **hors de la boucle d'événements** : le premier commit indexe tout ce
-        que la racine porte, jusqu'à cinq minutes sur un projet lourd, et une
-        route qui bloquerait la boucle figerait les flux SSE des autres écrans.
-        """
-        try:
-            return await asyncio.to_thread(projets.versionner, id_projet)
-        except (ValueError, ProjetInconnu, VersionnementRefuse) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.get("/api/projets/{id_projet}/outillage/analyse")
-    async def analyser_outillage(id_projet: str) -> dict[str, Any]:
-        """L'analyse d'un projet existant et l'outillage qu'elle recommande (#1030, docs/38).
-
-        Le premier geste du chantier « outillage universel » (#1020) : avant de
-        proposer quoi que ce soit à écrire dans le dossier de quelqu'un, on
-        regarde ce qu'il y a. La racine est lue **en lecture seule** et le code
-        du projet n'est **jamais exécuté** — le VCS lui-même est lu dans
-        `.git/config` plutôt qu'obtenu d'un `git remote`.
-
-        La réponse porte ses propres **bornes** (nombre de fichiers, profondeur,
-        octets par fichier, dossiers ignorés) et ce que le parcours a vu : une
-        analyse tronquée le dit, là où un plafond resté dans le code ferait lire
-        un projet plus petit qu'il n'est. Le périmètre déclaré du projet
-        s'applique en plus, donc ni `.env` ni `**/secrets/**` ne sont ouverts.
-
-        `constats` porte les langages, les gestionnaires (avec leur verrou), les
-        commandes de construction/test/lint — chacune avec le fichier et
-        l'extrait qui la justifient, et son `origine` : `declaree` par le projet
-        ou `convention` de l'outil —, la CI, la forge, les conventions déjà
-        écrites et le **dossier de scripts constaté**. `recommandation` porte
-        chaque skill, script ou fichier d'instructions avec sa raison et son
-        `etat` : ce que le projet porte déjà sort en `deja-present`, avec son
-        chemin, jamais dupliqué. `ecartes` nomme ce qui n'est pas recommandé et
-        pourquoi — les commandes le sont par décision (docs/38 §3.5).
-
-        **Les tables ne sont que des indices** (#1158) : le modèle lit ensuite le
-        projet — deux verbes, lister et lire, servis dans le périmètre, sans lien
-        suivi ni rien d'exécuté — et ce qu'il en tire complète les constats, chacun
-        avec le fichier qu'il a lu. `lecture` dit ce qu'il a ouvert, ce qui lui a
-        été refusé, ce qui a été coupé et ce qui a été écarté ; un modèle qui ne
-        répond pas laisse l'analyse aux tables, `lecture.etat` le dit.
-
-        **Rien n'est écrit** : la génération est #1033. 404 si le projet est
-        inconnu, 422 motivé si sa fiche est illisible ou si sa racine n'est plus
-        un dossier lisible — jamais un 500.
-
-        Le parcours est joué **hors de la boucle d'événements** : parcourir un
-        projet réel prend des secondes, et une route qui bloquerait la boucle
-        figerait les flux SSE des autres écrans.
-        """
-        try:
-            async with au_compte_du_projet(id_projet, "analyse de l'outillage"):
-                return await outillage.analyser(id_projet)
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.post("/api/projets/{id_projet}/outillage/report")
-    async def reporter_outillage_du_projet(id_projet: str) -> dict[str, Any]:
-        """Enregistre le « plus tard » de l'étape d'outillage (#1034, docs/37 §4.6).
-
-        L'étape d'outillage est **première et proposée d'office, mais
-        reportable** : importer un projet pour seulement le regarder ne doit pas
-        imposer une génération. Cette route est l'autre issue de l'étape, celle
-        qui ne produit rien — la seule chose qu'elle écrit est la date de la
-        décision, dans la fiche du projet.
-
-        **Sans corps**, comme `versionner`, et pour la même raison : il n'y a
-        rien à déclarer, seulement un verbe à appeler. Idempotente — la première
-        date gagne, un second appel rend la fiche telle quelle.
-
-        La fiche rendue porte `outillage.a_faire` : reporté **et** pas encore
-        généré. C'est ce que la carte du projet affiche, et c'est pourquoi
-        générer suffit à faire taire le rappel sans qu'aucun code de génération
-        (#1033) connaisse ce champ.
-
-        404 si le projet est inconnu, 422 motivé si sa fiche est illisible.
-        """
-        try:
-            return projets.reporter_outillage(id_projet)
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.post("/api/projets/{id_projet}/outillage/generation")
-    async def generer_outillage_du_projet(
-        id_projet: str, requete: GenerationOutillageRequete | None = None
-    ) -> dict[str, Any]:
-        """Écrit dans le projet l'outillage que son analyse recommande (#1033, docs/38).
-
-        Le second geste du chantier, et celui qui touche au dossier de
-        quelqu'un : `AGENTS.md`, un pont d'une ligne par client du poste qui ne
-        le lit pas (#1295), les skills dans
-        `.agents/skills/` et le manifeste `.maestro/outillage/manifeste.json`,
-        qui dit ce qui vient de Maestro.
-
-        **Rien n'est jamais écrasé en silence** (docs/38 §4.2). Un fichier que le
-        projet portait et que Maestro n'a pas écrit n'est pas touché ; un fichier
-        qu'il avait écrit et que quelqu'un a modifié depuis n'est pas réécrit — la
-        version neuve est déposée dans `.maestro/outillage/refuses/`, et le
-        rapport la nomme. Un `AGENTS.md` déjà présent reçoit un **bloc délimité**
-        plutôt qu'un remplacement, et c'est ce bloc-là, et lui seul, que Maestro
-        possède ensuite. Régénérer ne duplique rien : ce que le manifeste déclare
-        déjà à jour n'est pas réécrit.
-
-        **Le régime d'écriture est celui du projet** (docs/24 §2.4), et la
-        réponse le dit (`regime`) : un projet **non versionné** est servi *en
-        place* et c'est fait à la réponse ; un projet **versionné** reçoit son
-        outillage sur une branche `maestro/outillage-…` que la **validation
-        humaine** fusionne (`application`), diff sous les yeux. ⚠ Dans ce second
-        cas la requête **attend la décision**, sans time-out : c'est le contrat du
-        validateur (#9), et l'attente se voit sur l'écran des validations. Un
-        refus laisse la branche intacte — le travail reste consultable et se
-        récupère d'un `git merge`.
-
-        **Le corps est facultatif** (#1034). `retenus` porte les chemins que
-        l'étape d'outillage a gardés cochés. Absent — un appel qui ne vient pas
-        d'un écran —, tout ce qui est recommandé est écrit, ce qui est le
-        comportement d'origine. Ce qui n'y est pas n'est pas écrit, et **quitte
-        le manifeste sans quitter le disque** : c'est déjà la règle de docs/38
-        §4.2 pour un fichier que l'analyse ne recommande plus. Un chemin qui ne
-        désigne aucune entrée revient dans `retenus_inconnus` (#1100) : jamais
-        perdu en silence.
-
-        `choix` porte les réponses d'un projet **neuf** (#1100) : l'outillage se
-        dérive alors d'elles, et non de l'analyse d'une racine encore vide — la
-        même dérivation que `…/outillage/recommandation`, donc ce que l'écran a
-        montré est ce qui s'écrit. `source` dit d'où il sort (`analyse` ou
-        `choix`), et le manifeste le garde.
-
-        404 si le projet est inconnu, 422 motivé si sa fiche est illisible, si sa
-        racine n'est plus un dossier lisible, si le worktree ne se monte pas ou si
-        la fusion est refusée (racine occupée, conflit) — jamais un 500.
-        """
-        try:
-            async with au_compte_du_projet(id_projet, "génération de l'outillage"):
-                return await outillage.generer(
-                    id_projet,
-                    retenus=None if requete is None else requete.retenus,
-                    choix=() if requete is None else requete.choix_acquis(),
-                )
-        except (
-            ValueError,
-            ProjetInconnu,
-            ApplicationRefusee,
-            EspaceProjetIndisponible,
-        ) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.get("/api/fournisseurs")
-    async def fournisseurs() -> dict[str, Any]:
-        """Le catalogue des fournisseurs (#253 + #487) : le registre, éclairé par le poste.
-
-        **Une route, deux moitiés qui ne se confondent pas.** *Supporté par
-        Maestro* vient du **registre des fournisseurs**
-        (`maestro.providers.registry.catalogue_fournisseurs`, #253) et de rien
-        d'autre : chaque fiche porte le **nom** à écrire dans `fournisseur`, ses
-        **modèles** annoncés — nom, libellé, et les **niveaux d'effort** admis sur
-        chacun, liste vide quand le fournisseur n'expose pas ce réglage — et
-        `modeles_libres`, qui dit qu'un nom hors gamme reste recevable (le cas
-        d'`openai`, qui fédère des endpoints aux nommages hétéroclites : gamme
-        vide **et** libre, c'est-à-dire « saisis le nom »). Inscrire un
-        fournisseur au registre suffit à le faire apparaître ici, donc à l'écran,
-        sans toucher à cette fonction ni au front.
-
-        *Présent ici* vient de la **sonde** (#487) : ce qui arme le fournisseur
-        sur cette machine — un CLI sur le `PATH`, un serveur local qui répond,
-        une clé dans l'environnement —, avec `modeles_ici`, les modèles que la
-        sonde a **vus**, à ne jamais confondre avec la gamme annoncée. Un outil
-        trouvé que Maestro ne sait pas piloter sort dans `hors_registre` :
-        montré, jamais proposé.
-
-        Les deux sont **lecture seule** et **sans effet de bord** : rien n'est
-        démarré, installé ni écrit, aucun binaire n'est exécuté, aucune clé n'est
-        validée (la sonde ne joint que la boucle locale ; le registre ne joint
-        rien du tout). Ce que la sonde ne peut pas savoir remonte dans
-        `incertitudes` et dans le champ homonyme de chaque constat, plutôt que
-        d'être deviné. Un poste nu rend le registre entier, des colonnes de poste
-        vides et un 200.
-        """
-        return catalogue_fournisseurs(await sonde_poste.rapport())
-
-    @app.get("/api/fournisseurs/defaut")
-    async def fournisseur_par_defaut() -> dict[str, Any]:
-        """Le fournisseur par défaut du poste (#1609) : le choix, l'effectif, ce qui l'impose.
-
-        `choix` est ce qui a été enregistré dans les Paramètres (null : rien) ;
-        `effectif` ce que l'exécution résout **maintenant** — fournisseur, accès,
-        modèle imposé, modèle par défaut —, qui diffère du choix quand une
-        variable de l'environnement l'impose ; `environnement` les variables qui
-        l'imposent (la valeur, jamais pour une clé) ; `cles` les clés que le
-        coffre du poste garde, par nom.
-        """
-        return fournisseur_defaut.etat()
-
-    @app.post("/api/fournisseurs/epreuve")
-    async def eprouver_fournisseur(corps: FournisseurDefautRequete) -> dict[str, Any]:
-        """Éprouve un choix avant de l'enregistrer (#1609) : un tour de modèle, et son verdict.
-
-        Toujours **200** quand l'épreuve a eu lieu, réussie ou non : le verdict
-        est la réponse (`epreuve.ok`, `epreuve.motif`, lu dans les champs typés
-        de la réponse du fournisseur). 422 quand le choix ne se tient pas
-        (fournisseur ou accès inconnu, modèle ou clé manquant).
-        """
-        try:
-            return await fournisseur_defaut.eprouver(corps.demande())
-        except ChoixRefuse as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.put("/api/fournisseurs/defaut")
-    async def enregistrer_fournisseur(corps: FournisseurDefautRequete) -> dict[str, Any]:
-        """Enregistre le fournisseur par défaut du poste — seulement un choix éprouvé (#1609).
-
-        Pris sans redémarrage : la configuration le relit à chaque résolution.
-        409 avec le verdict quand l'épreuve échoue, et **rien n'est écrit**, ni
-        le choix ni la clé ; 422 quand le choix ne se tient pas.
-        """
-        try:
-            return await fournisseur_defaut.enregistrer(corps.demande())
-        except EpreuveEchouee as exc:
-            raise HTTPException(
-                status_code=409, detail={"epreuve": exc.epreuve.to_dict()}
-            ) from exc
-        except ChoixRefuse as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.delete("/api/fournisseurs/defaut")
-    async def effacer_fournisseur() -> dict[str, Any]:
-        """Retire le choix du poste : l'environnement seul décide de nouveau (#1609)."""
-        return fournisseur_defaut.effacer()
-
-    @app.get("/api/accueil")
-    async def accueil_etat() -> dict[str, Any]:
-        """Le premier lancement reste-t-il à faire sur ce poste ? (#642)
-
-        `a_faire` est vrai tant qu'aucun projet n'est déclaré **et** que le
-        parcours n'a jamais été terminé ; `termine_le` date sa fin (null : jamais).
-        Les étapes du parcours ne sont pas ici : chacune se lit sur la route du
-        réglage qu'elle pose (fournisseur par défaut, répertoire des projets,
-        projets déclarés).
-        """
-        return accueil.etat()
-
-    @app.post("/api/accueil/terminer")
-    async def accueil_terminer() -> dict[str, Any]:
-        """Note la fin du premier lancement (#642) — idempotent, la première date reste.
-
-        L'écran l'appelle quand le projet né dans le parcours s'ouvre. 503 si le
-        dépôt des réglages du poste refuse l'écriture : rien n'est alors noté, et
-        un poste qui a un projet n'est de toute façon plus à son premier lancement.
-        """
-        try:
-            return accueil.terminer()
-        except OSError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail=f"La fin du premier lancement n'a pas pu être notée : {exc}",
-            ) from exc
-
-    @app.delete("/api/fournisseurs/defaut/cles/{variable}")
-    async def retirer_cle_fournisseur(variable: str) -> dict[str, Any]:
-        """Retire une clé du coffre du poste (#1609) — 422 si elle n'est la clé d'aucun accès."""
-        try:
-            return fournisseur_defaut.retirer_cle(variable)
-        except ChoixRefuse as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.get("/api/catalogue")
-    async def catalogue_liste(projet: str | None = None) -> list[dict[str, Any]]:
-        """Le catalogue d'agents (#72), dans l'ordre que les moteurs chargent.
-
-        Métadonnées seules (le playbook d'une fiche se lit sur
-        `GET /api/catalogue/{nom}`).
-
-        `projet` cadre la lecture (#1038) : **l'équipe de ce projet**, jamais
-        celle d'un autre — et rien d'autre. Un projet qu'on vient de créer ou
-        d'importer rend donc une liste **vide** (#1042) : il n'a aucun agent tant
-        que son équipe n'a pas été proposée et validée (#1039, #1040). C'est le
-        critère, et c'est ici qu'il se lit.
-
-        Omis, la lecture est celle du niveau **gabarit** : les gabarits de rôle du
-        code, puis les fiches rangées hors de tout projet. Ce niveau se consulte
-        et se règle — l'analyse d'équipe y puise —, il ne travaille pas.
-        """
-        cfg = _config(projet)
-        fiches = [
-            _fiche_personnalise(d, avec_playbook=False, cfg=cfg)
-            for d in cfg.agents.lister()
-        ]
-        if cfg.projet_id is not None:
-            return fiches
-        return [
-            _fiche_defaut(a, avec_playbook=False, cfg=cfg)
-            for a in GABARITS_DU_CODE
-        ] + fiches
-
-    @app.get("/api/catalogue/{nom}")
-    async def catalogue_fiche(nom: str, projet: str | None = None) -> dict[str, Any]:
-        """La définition complète d'un agent du catalogue, playbook compris.
-
-        Symétrique de la liste (#1042) : un **gabarit** de rôle ne se lit qu'au
-        niveau gabarit. Demandé sur un projet, il sort en 404 — le projet ne l'a
-        pas, et le servir ferait dire à la fiche le contraire de la liste.
-        """
-        cfg = _config(projet)
-        defaut = (
-            None
-            if cfg.projet_id is not None
-            else next((a for a in GABARITS_DU_CODE if a.nom == nom), None)
-        )
-        if defaut is not None:
-            return _fiche_defaut(defaut, avec_playbook=True, cfg=cfg)
-        definition = _personnalise_ou_none(nom, cfg)
-        if definition is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
-            )
-        return _fiche_personnalise(definition, avec_playbook=True, cfg=cfg)
-
-    @app.post("/api/catalogue", status_code=201)
-    async def creer_agent(
-        requete: AgentCreationRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Crée un agent personnalisé (#72) : définition persistée hors du code.
-
-        L'agent entre immédiatement dans la vue `GET /api/agents` (cible de
-        réassignation manuelle) ; il est routable et exécutable par les moteurs
-        et workers construits ensuite, qui chargent le catalogue effectif à
-        leur démarrage. 409 si le nom est déjà pris (agent par défaut, acteur
-        système ou personnalisé existant), 422 si la définition est invalide.
-
-        L'agent naît **dans le projet** demandé (#1038) : c'est son équipe, et un
-        homonyme peut exister dans un autre projet sans conflit. Le nom reste
-        unique **dans ce projet-là**, et les noms du code restent réservés
-        partout — ils désignent le même rôle d'un projet à l'autre.
-        """
-        cfg = _config(projet)
-        if (
-            requete.nom in NOMS_RESERVES
-            or _personnalise_ou_none(requete.nom, cfg) is not None
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"nom déjà pris : {requete.nom} — modification d'un agent "
-                    "personnalisé via PUT /api/catalogue/{nom}."
-                ),
-            )
-        try:
-            definition = cfg.agents.ecrire(
-                AgentDefinition(
-                    nom=requete.nom,
-                    role=requete.role,
-                    competences=tuple(requete.competences),
-                    playbook=requete.playbook,
-                    modele=requete.modele,
-                    fournisseur=requete.fournisseur,
-                    effort=requete.effort,
-                )
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        state.ajouter_agent(definition.nom, definition.role)
-        return _fiche_personnalise(definition, avec_playbook=True, cfg=cfg)
-
-    @app.post("/api/catalogue/generation")
-    async def generer_definition_agent(
-        requete: AgentGenerationRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Propose une définition d'agent à partir d'une intention (#257) — sans rien créer.
-
-        Le modèle rend rôle, compétences, playbook et — confrontés au registre
-        (#253) — un fournisseur et un modèle. La réponse est un **brouillon** : elle
-        n'écrit rien, n'ajoute aucun agent au catalogue et ne réserve aucun nom. La
-        création reste le `POST /api/catalogue` ordinaire, à partir des champs que
-        l'utilisateur a relus (et modifiés) dans le formulaire.
-
-        Le `nom` proposé est libre **au moment de la réponse** : les noms réservés
-        et les agents personnalisés existants en sont écartés. Ce n'est pas une
-        réservation — un homonyme créé entre-temps rendra le 409 habituel.
-
-        422 si l'intention est vide ou plus longue qu'une phrase, 502 si le modèle
-        est injoignable, muet, ou répond hors contrat : dans les trois cas rien
-        n'est écrit et l'appel se rejoue sans conséquence.
-        """
-        cfg = _config(projet)
-        pris = set(NOMS_RESERVES) | {d.nom for d in cfg.agents.lister()}
-        try:
-            async with au_compte_du_projet(cfg.projet_id, "définition d'agent générée"):
-                proposition = await generateur_agent.proposer(requete.intention, noms_pris=pris)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except GenerationIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return proposition.to_dict()
-
-    @app.put("/api/catalogue/{nom}")
-    async def modifier_agent(
-        nom: str, requete: AgentModificationRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Remplace la définition d'un agent personnalisé (l'intégrale, pas un diff).
-
-        La définition modifiée vaut pour les moteurs construits ensuite. 403
-        sur un agent par défaut (défini par le code), 404 si l'agent n'existe
-        pas, 422 si la nouvelle définition est invalide — 404 aussi sur l'agent
-        d'un **autre** projet, qui est inconnu d'ici (#1038).
-        """
-        cfg = _config(projet)
-        _exige_personnalise(nom, cfg)
-        try:
-            definition = cfg.agents.ecrire(
-                AgentDefinition(
-                    nom=nom,
-                    role=requete.role,
-                    competences=tuple(requete.competences),
-                    playbook=requete.playbook,
-                    modele=requete.modele,
-                    fournisseur=requete.fournisseur,
-                    effort=requete.effort,
-                )
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        state.ajouter_agent(definition.nom, definition.role)
-        return _fiche_personnalise(definition, avec_playbook=True, cfg=cfg)
-
-    @app.delete("/api/catalogue/{nom}")
-    async def supprimer_agent(nom: str, projet: str | None = None) -> dict[str, Any]:
-        """Supprime un agent personnalisé du catalogue.
-
-        Sa fiche quitte la vue `GET /api/agents` ; les moteurs construits
-        ensuite ne le chargent plus. Son réglage de capacité (#86) part avec
-        lui — un homonyme recréé plus tard repartira des défauts. 403 sur un
-        agent par défaut, 404 s'il n'existe pas.
-
-        Le retrait ne touche que **ce projet-là** (#1038) : un homonyme d'un
-        autre projet, et le gabarit du même nom, restent.
-        """
-        cfg = _config(projet)
-        _exige_personnalise(nom, cfg)
-        cfg.agents.supprimer(nom)
-        cfg.capacites.supprimer(nom)
-        cfg.surcharges.supprimer(nom)
-        state.retirer_agent(nom)
-        return {"nom": nom, "supprime": True}
-
-    @app.put("/api/catalogue/{nom}/reglages")
-    async def surcharger_agent(
-        nom: str, requete: SurchargeRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Surcharge les réglages de modèle d'un agent du code (#259), sans le dupliquer.
-
-        Le troisième état du catalogue : l'agent reste celui du code — rôle,
-        compétences et playbook continuent d'en venir et d'en suivre les
-        évolutions —, seuls `fournisseur`, `modele` et `effort` sont recouverts.
-        Ce qui n'est pas envoyé retourne au code et se relit dans `herite`.
-        Poser les trois à `null` **annule** la surcharge, comme `DELETE`.
-
-        `modele` et `effort` valent pour les moteurs construits ensuite ;
-        `fournisseur` reste déclaratif au POC. 403 sur un agent personnalisé
-        (ses réglages s'éditent par `PUT /api/catalogue/{nom}`) ou un acteur
-        système, 404 sur un nom inconnu.
-
-        La surcharge est posée **dans le projet** demandé (#1038) : le même
-        agent du code peut tourner sur deux modèles dans deux projets.
-        """
-        cfg = _config(projet)
-        agent = _exige_du_code(nom, cfg)
-        cfg.surcharges.ecrire(
-            SurchargeAgent(
-                nom=nom,
-                fournisseur=requete.fournisseur,
-                modele=requete.modele,
-                effort=requete.effort,
-            )
-        )
-        return _fiche_defaut(agent, avec_playbook=True, cfg=cfg)
-
-    @app.delete("/api/catalogue/{nom}/reglages")
-    async def annuler_surcharge(nom: str, projet: str | None = None) -> dict[str, Any]:
-        """Annule la surcharge d'un agent du code : retour à ses réglages du code (#259).
-
-        ⚠ **Annule, ne supprime pas** — et c'est tout le sujet du critère 3 de
-        #259 : l'agent reste au catalogue, il redevient simplement celui du
-        code. La suppression, elle, reste réservée aux agents personnalisés
-        (`DELETE /api/catalogue/{nom}`, qui refuse un agent du code en 403).
-        Deux verbes voisins pour deux gestes que rien ne doit confondre.
-
-        Idempotent : annuler une surcharge absente rend la même fiche, sans
-        erreur — il n'y a rien à signaler à qui demande un état déjà atteint.
-        403/404 comme `PUT`.
-
-        Cadré sur un projet (#1038), « retour aux réglages du code » veut dire
-        retour au **gabarit** — c'est-à-dire au code tant que rien n'y est
-        surchargé, ce qui est l'invariant du #259 dans le nouveau rangement.
-        """
-        cfg = _config(projet)
-        agent = _exige_du_code(nom, cfg)
-        cfg.surcharges.supprimer(nom)
-        return _fiche_defaut(agent, avec_playbook=True, cfg=cfg)
-
-    def _exige_agent_du_catalogue(
-        nom: str, cfg: ConfigurationAgents | None = None
-    ) -> Agent:
-        """La fiche catalogue de `nom` (défaut ou personnalisé), ou l'erreur 404.
-
-        Le chat ne s'adresse qu'aux agents du catalogue effectif — celui que
-        les moteurs chargent : un nom inconnu n'ouvre pas de fil orphelin.
-        Cadré sur un projet (#1038), « du catalogue » veut dire de **son**
-        catalogue : un agent d'un autre projet y est inconnu, ce qui est
-        exactement ce qu'on veut d'une route de configuration.
-
-        Au niveau **gabarit**, les gabarits de rôle en font partie (#1042) : ce
-        niveau est celui qu'on consulte et qu'on règle, et leurs serveurs MCP,
-        autorisations et fils de chat s'y adressent comme avant. Dans un projet,
-        non — il n'a que son équipe.
-        """
-        niveau = cfg if cfg is not None else gabarits
-        defaut = (
-            None
-            if niveau.projet_id is not None
-            else next((a for a in GABARITS_DU_CODE if a.nom == nom), None)
-        )
-        if defaut is not None:
-            return defaut
-        definition = _personnalise_ou_none(nom, cfg)
-        if definition is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"agent inconnu : {nom} (voir GET /api/catalogue)",
-            )
-        return definition.to_agent()
-
-    def _canal_chat(nom: str, projet: str | None = None) -> tuple[Agent, ServiceChat]:
-        """La fiche et le service du fil `nom` — agent, assistant (#123), orchestration (#268).
-
-        Les trois canaux se servent des mêmes endpoints : `assistance` résout sur
-        une fiche hors catalogue et sur son propre `ServiceChat`, `orchestrateur`
-        de même, tout autre nom sur l'agent du catalogue et le chat ordinaire.
-        L'UI n'a donc qu'un seul contrat REST à connaître, le nom du fil départage
-        — et les deux noms système sont **réservés** côté catalogue
-        (`maestro.agents.store.NOMS_RESERVES`), donc aucun agent personnalisé ne
-        peut venir prendre l'un de ces fils.
-        """
-        if nom == NOM_ASSISTANCE:
-            return AGENT_ASSISTANCE, assistance
-        if nom == NOM_ORCHESTRATION:
-            return AGENT_ORCHESTRATION, orchestration
-        if projet is None:
-            return _exige_agent_du_catalogue(nom), chat
-        # L'agent **d'une équipe de projet** (#1175) : résolu dans la
-        # configuration de ce projet, comme toutes les routes d'agent depuis #1038.
-        # Sans elle, `developpeur-2` rendait 404 et un `developpeur` de projet
-        # parlait avec la fiche du gabarit homonyme — playbook, compétences et
-        # serveurs d'un autre agent, sans que rien ne le signale.
-        cfg = _config(projet)
-        return _exige_agent_du_catalogue(nom, cfg), _chat_du_projet(cfg)
-
     #: Un service de chat par projet (#1175), construit au premier fil ouvert.
     chats_de_projet: dict[str, ServiceChat] = {}
-
-    def _chat_du_projet(cfg: ConfigurationAgents) -> ServiceChat:
-        """Le chat des agents de `cfg` : leurs fils, et leurs playbooks à eux.
-
-        Le **dépôt** est propre au projet — deux projets ont chacun leur
-        `developpeur`, et leurs conversations ne se mêlent pas. Il vit sous
-        `_projets/` dans la racine du chat : un nom qu'aucun agent ne peut porter
-        (un nom d'agent commence par une lettre ou un chiffre), donc jamais pris
-        pour le dossier de conversations d'un agent. Le **répondeur** lit les
-        playbooks du projet, pour la raison qui fait résoudre la fiche dans le
-        projet : un playbook édité du gabarit n'est pas celui de l'agent.
-        """
-        if cfg.projet_id is None:
-            return chat
-        service = chats_de_projet.get(cfg.projet_id)
-        if service is None:
-            service = ServiceChat(
-                store=ChatStore(chat_store.racine / "_projets" / cfg.projet_id),
-                repondeur=(
-                    chat_repondeur
-                    if chat_repondeur is not None
-                    else RepondeurModele(playbooks=cfg.playbooks)
-                ),
-                mailbox=mailbox,
-                bus=bus,
-                televersements=televersements,
-            )
-            chats_de_projet[cfg.projet_id] = service
-        return service
-
-    def _conversation_demandee(
-        service: ServiceChat, fiche: Agent, demandee: str | None
-    ) -> str:
-        """L'identifiant à servir : celui demandé, sinon la conversation courante (#694).
-
-        Trois réponses, et elles ne se confondent pas : un identifiant **mal
-        formé** est un 422 (la garde de traversée de chemin, note technique du
-        ticket — même famille qu'un message vide), un identifiant **bien formé
-        mais inconnu** est un 404 (on ne peut pas adresser un fil qui n'existe
-        pas), et l'absence n'est pas une erreur du tout — c'est le cas nominal,
-        celui d'un appelant d'avant ce lot.
-        """
-        if not demandee:
-            return service.courante(fiche.nom)
-        try:
-            connue = service.existe(fiche.nom, demandee)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if not connue:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"conversation inconnue : {demandee} "
-                    f"(voir GET /api/chat/{fiche.nom}/conversations)"
-                ),
-            )
-        return demandee
-
-    @app.get("/api/chat/{agent}")
-    async def fil_chat(
-        agent: str, conversation: str | None = None, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Le fil de conversation utilisateur ↔ agent (#84), relu de la persistance.
-
-        Vide tant que l'agent n'a jamais été contacté ; 404 si l'agent n'est
-        pas au catalogue. `assistance` (#123) désigne le canal d'aide.
-
-        `?conversation=` désigne **laquelle** de ses conversations relire (#694) ;
-        sans elle, la plus récente — donc, pour un agent qui n'en a qu'une, le
-        fil exact d'avant ce lot. 404 si l'identifiant est inconnu, 422 s'il est
-        mal formé. La réponse **nomme** la conversation servie, ce dont un client
-        qui n'en a demandé aucune a besoin pour savoir dans laquelle il est.
-
-        `?projet=` (#1175) désigne le projet dont l'agent est membre, comme sur
-        toute route d'agent (#1038) : son équipe, sa fiche, ses conversations.
-        Omis, les gabarits — le fil d'avant ce ticket.
-        """
-        fiche, service = _canal_chat(agent, projet)
-        fil = _conversation_demandee(service, fiche, conversation)
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [m.to_dict() for m in service.fil(fiche.nom, fil)],
-        }
-
-    @app.get("/api/chat/{agent}/conversations")
-    async def conversations_chat(agent: str, projet: str | None = None) -> dict[str, Any]:
-        """Les conversations d'un fil, **la plus récente d'abord** (#694).
-
-        De quoi peupler un historique sans charger un seul message : identifiant,
-        titre dérivé du premier message, ouverture, dernière activité et nombre
-        de messages. Jamais vide — un agent a toujours au moins la conversation
-        `origine`, fût-elle vierge —, et la première de la liste est celle qu'un
-        envoi sans précision rejoindrait. 404 si l'agent n'est pas au catalogue.
-        `?projet=` (#1175) : comme `GET /api/chat/{agent}`.
-        """
-        fiche, service = _canal_chat(agent, projet)
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversations": [c.to_dict() for c in service.conversations(fiche.nom)],
-        }
-
-    @app.post("/api/chat/{agent}/conversations", status_code=201)
-    async def ouvrir_conversation_chat(agent: str, projet: str | None = None) -> dict[str, Any]:
-        """Ouvre une conversation neuve sur un fil et rend sa carte (#694).
-
-        **Idempotent tant que rien n'a été dit** : si la plus récente est vierge,
-        elle *est* la conversation neuve et c'est elle qui revient — deux clics
-        sur « nouvelle conversation » ne laissent donc pas deux fils vides
-        derrière eux. Le 201 vaut pour les deux cas : la conversation demandée
-        existe et elle est prête, que l'appel l'ait créée ou reconnue.
-
-        L'écrire ne rend pas l'ancienne moins accessible : elle reste listée et
-        relisible par `?conversation=`. 404 si l'agent n'est pas au catalogue.
-        `?projet=` (#1175) : comme `GET /api/chat/{agent}`.
-        """
-        fiche, service = _canal_chat(agent, projet)
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": service.ouvrir_conversation(fiche.nom).to_dict(),
-        }
-
-    @app.post("/api/chat/{agent}/messages", status_code=201)
-    async def envoyer_chat(
-        agent: str, requete: ChatEnvoiRequete, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Envoie un message utilisateur à l'agent et rend la paire message/réponse.
-
-        Le message et la réponse sont persistés au fil, passés par la
-        messagerie inter-agents (#44) et diffusés en `chat.message` sur le
-        WebSocket — les clients temps réel voient le message dès l'envoi puis
-        la réponse quand elle tombe. 404 si l'agent n'est pas au catalogue,
-        422 sur un message vide, 502 si la réponse n'a pas pu être produite
-        (le message utilisateur reste acquis : relancer ne perd pas le fil).
-        `assistance` (#123) désigne le canal d'aide, qui répond sans modèle.
-
-        Le message peut porter des **sources** (#482) : elles empruntent la chaîne
-        d'ingestion du lancement — mêmes plafonds, mêmes racines interdites, mêmes
-        motifs — et le message rendu porte leur **rapport de lecture** (#316). Un
-        refus est un **422 motivé** (`{motif, message, index}`), la forme déjà
-        servie par `POST /api/sources` et `POST /api/executions` : c'est ce qui
-        permet à l'écran de l'afficher sur la source fautive. Un message **sans
-        texte mais avec des sources** est accepté — le dépôt *est* le message.
-
-        `conversation` (#694) range l'échange dans **un** des fils de l'agent ;
-        absente, il rejoint la plus récente. La réponse la nomme, et message
-        comme réponse la portent : les deux moitiés d'un tour vont ensemble.
-        `?projet=` (#1175) : comme `GET /api/chat/{agent}`.
-        """
-        fiche, service = _canal_chat(agent, projet)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        try:
-            message, reponse = await service.envoyer(
-                fiche,
-                requete.contenu,
-                requete.sources,
-                # Normalisé **ici**, à la frontière, comme tout ce qui entre
-                # (#222) : un identifiant mal formé vaut « aucun projet » et ne
-                # fait pas échouer un message. En dessous, plus personne n'a à se
-                # demander d'où vient la chaîne qu'il porte.
-                projet_id=projet_id_valide(requete.projet_id),
-                conversation=fil,
-            )
-        except SourceRefusee as exc:
-            # Avant le `ValueError` nu dont elle hérite : une source refusée porte
-            # un motif et un index, et les aplatir en chaîne perdrait l'endroit où
-            # l'écran doit afficher le refus.
-            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [message.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/cadrage", status_code=201)
-    async def trancher_cadrage_chat(
-        agent: str, requete: CadrageDecisionRequete
-    ) -> dict[str, Any]:
-        """Tranche la demande de cadrage que le fil porte, et rend la paire (#943).
-
-        Le **geste** qui répond à une proposition de l'orchestration — « Je
-        lance ? » — sans repasser par la zone de saisie : `approuve` dit oui ou
-        non, `objectif` porte la version corrigée ou `null` pour « la
-        proposition tient ». Même forme et même réponse que
-        `POST …/messages` — l'acte est écrit au fil, la réponse suit —, parce
-        que c'est bien un tour de conversation : ce qui change est que la
-        décision vient d'un clic.
-
-        Les quatre **garde-fous** (#990) voyagent avec l'accord : c'est le même
-        geste qui dit « lance » et « jusque-là ». Ils ne sont pas jugés ici —
-        `lancer` refuse une valeur hors bornes, et son refus se raconte dans le
-        fil plutôt que de remonter en statut, parce que le geste, lui, a bien eu
-        lieu et reste acquis au fil.
-
-        `409` quand rien n'attend : aucune proposition, une déjà tranchée, ou un
-        fil dont le répondeur n'en fait pas — c'est le `409` de §6.10 un cran
-        plus tôt, et il couvre le double geste comme le geste tardif. `404` hors
-        catalogue, `422` sur une conversation mal formée, `502` si la décision
-        n'a pas pu être exécutée (le geste, lui, reste acquis au fil).
-        """
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        try:
-            geste, reponse = await service.trancher_cadrage(
-                fiche,
-                approuve=requete.approuve,
-                objectif=requete.objectif,
-                # Normalisé **ici**, à la frontière, comme sur un envoi : c'est
-                # le projet de la fenêtre. Il ne rattache le run que si la
-                # proposition n'a pas de projet à elle (#1180, écrite avant ce lot).
-                projet_id=projet_id_valide(requete.projet_id),
-                bornes=requete.bornes_posees(),
-                conversation=fil,
-            )
-        except CadrageIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [geste.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/recrutement", status_code=201)
-    async def recruter_chat(
-        agent: str, requete: RecrutementDecisionRequete
-    ) -> dict[str, Any]:
-        """Valide — ou décline — l'équipe que le fil propose, et rend la paire (#1146).
-
-        Le geste qui répond à « ce projet n'a encore aucun agent » : `approuve`
-        dit oui ou non, `roles` porte l'équipe **retenue** telle que l'écran l'a
-        montrée — la forme de `POST /api/projets/{id}/equipe`, parce que c'est la
-        même création (#1040). Le projet et le travail à reprendre ne sont pas
-        dans le corps : ils sont sur la demande que le fil porte, et c'est elle
-        qui fait foi.
-
-        Même forme et même réponse que `POST …/cadrage` — l'acte est écrit au
-        fil, la réponse suit —, et même traitement d'une équipe refusée par la
-        création : elle se **raconte** dans le fil (rien n'a été créé, la demande
-        reste posée), parce que le geste, lui, a bien eu lieu.
-
-        ⚠ **Un run peut attendre cette décision** (#1227) : quand la demande porte
-        un `run_id`, elle a été posée par un run suspendu entre son plan et sa
-        première tâche, et la décision lui est publiée sur le bus
-        (`renfort.decision`) juste après l'écriture au fil. L'ordre compte et c'est
-        le même que partout ici — le fil d'abord, la diffusion ensuite : un run qui
-        repartirait avant que sa trace soit écrite laisserait le fil en retard sur
-        ce qui se passe. L'issue est **dérivée du fil** et non du corps de la
-        requête : l'équipe est recrutée si la réponse porte l'équipe **créée**
-        (`MessageChat.equipe`, #1262) — une création refusée repose la demande sans
-        rien créer, et un run relancé sur une équipe qui n'existe pas serait le pire
-        des deux mondes. Le `detail` de la décision est ce fait-là, la composition,
-        et non les mots de la réponse : il finit au journal du run, où l'on relit
-        ce qui a été recruté, pas ce que l'orchestrateur en a dit.
-
-        `422` sur une validation sans rôle (« ne pas recruter » se dit en
-        déclinant) ou une conversation mal formée, `409` quand rien n'attend —
-        le double clic ne crée pas deux équipes —, `404` hors catalogue, `502` si
-        la suite n'a pas pu être produite.
-        """
-        if requete.approuve and not requete.roles:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "aucun rôle validé : ne pas recruter se dit en déclinant "
-                    "l'équipe, pas en validant une équipe vide."
-                ),
-            )
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        # La demande **avant** le geste : c'est elle qui dit si un run attend, et
-        # le geste la solde (un message suit, donc `recrutement_en_attente` ne la
-        # rendra plus). La lire après serait la lire trop tard.
-        attente = recrutement_en_attente(service.fil(fiche.nom, fil))
-        en_attente = attente.recrutement if attente is not None else None
-        try:
-            geste, reponse = await service.recruter(
-                fiche,
-                approuve=requete.approuve,
-                roles=requete.roles_valides() if requete.approuve else (),
-                proposition_id=requete.proposition_id,
-                conversation=fil,
-            )
-        except RecrutementIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        if en_attente is not None and en_attente.pendant_un_run:
-            creee = reponse.equipe
-            await bus.publish(
-                Event(
-                    type=EVENEMENT_RENFORT_DECISION,
-                    run_id=en_attente.run_id,
-                    projet_id=en_attente.projet_id,
-                    titre=en_attente.role,
-                    statut=RENFORT_ACCORDE if creee is not None else RENFORT_DECLINE,
-                    detail=f"recruté : {creee.composition()}" if creee is not None else "",
-                )
-            )
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [geste.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/projet", status_code=201)
-    async def declarer_projet_chat(
-        agent: str, requete: DeclarationProjetRequete
-    ) -> dict[str, Any]:
-        """Accepte — ou refuse — le projet que le fil propose, et rend la paire (#1294).
-
-        Le geste qui fait **naître** un projet dans la conversation : nom, dossier
-        et versionnement sont ceux de la proposition que le fil porte, déjà
-        vérifiés, et c'est elle qui est déclarée — par le chemin de
-        `POST /api/projets`, puis de `POST …/versionner` si la mise sous Git était
-        proposée. La réponse porte ce qui a été déclaré (`projet_cree`) : c'est ce
-        que l'écran lit pour ouvrir le projet.
-
-        Même forme et même réponse que `POST …/cadrage`. Une déclaration refusée
-        par le disque se **raconte** dans le fil (rien n'est créé, la proposition
-        est reposée), parce que le geste, lui, a bien eu lieu.
-
-        `409` quand rien n'attend — le double clic ne déclare pas deux projets —,
-        `404` hors catalogue, `422` sur une conversation mal formée, `502` si la
-        suite n'a pas pu être produite.
-        """
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        try:
-            geste, reponse = await service.declarer_projet(
-                fiche, approuve=requete.approuve, conversation=fil
-            )
-        except DeclarationIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [geste.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/geste", status_code=201)
-    async def trancher_geste_chat(agent: str, requete: GesteRunRequete) -> dict[str, Any]:
-        """Confirme — ou écarte — le geste sur un run que le fil propose ; rend la paire (#1179).
-
-        Le geste qui **agit** sur un run depuis la conversation : suspendre,
-        reprendre, annuler, relancer. L'action, le run et les bornes d'une relance
-        sont ceux de la carte que le fil porte, relus du fil ; la confirmation les
-        exécute par le service des boutons (`ServiceExecutions.agir`), puis relit
-        le run — l'état relu voyage sur la réponse (`geste_fait`), et une relance y
-        rattache le run qu'elle ouvre (`run_id`).
-
-        Même forme et même réponse que `POST …/projet`. Un geste **refusé** par le
-        service (l'état du run a changé depuis la carte) ne lève pas : il se
-        raconte dans le fil, motivé, parce que la confirmation, elle, a bien eu lieu.
-
-        `409` quand rien n'attend — le double clic n'annule pas deux fois, ne
-        relance pas deux runs —, `404` hors catalogue, `422` sur une conversation
-        mal formée, `502` si la suite n'a pas pu être produite.
-        """
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        try:
-            geste, reponse = await service.trancher_geste(
-                fiche, approuve=requete.approuve, conversation=fil
-            )
-        except GesteRunIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [geste.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/reglement", status_code=201)
-    async def trancher_reglement_chat(agent: str, requete: ReglementRequete) -> dict[str, Any]:
-        """Confirme — ou écarte — le règlement que le fil propose ; rend la paire (#1183).
-
-        Le geste qui **règle** depuis la conversation ce qui attend quelqu'un :
-        répondre à la question d'un agent, approuver ou refuser une validation. La
-        question ou la validation, la réponse et la raison d'un refus sont ceux de la
-        carte que le fil porte, relus du fil ; la confirmation les passe au service
-        des écrans (`ServiceAttentes`), et ce qui en sort voyage sur la réponse
-        (`reglement_fait`) — ce qui a repris, ou le refus du service.
-
-        Même forme et même réponse que `POST …/geste`. Un règlement **refusé** par le
-        service (l'attente a été réglée ailleurs depuis la carte) ne lève pas : il se
-        raconte dans le fil, motivé, parce que la confirmation, elle, a bien eu lieu.
-
-        `409` quand rien n'attend — le double clic ne répond pas deux fois —, `404`
-        hors catalogue, `422` sur une conversation mal formée, `502` si la suite n'a
-        pas pu être produite.
-        """
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        try:
-            geste, reponse = await service.trancher_reglement(
-                fiche, approuve=requete.approuve, conversation=fil
-            )
-        except ReglementIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [geste.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/outillage/piece", status_code=201)
-    async def trancher_piece_chat(agent: str, requete: DecisionPieceRequete) -> dict[str, Any]:
-        """Tranche d'un **geste** la pièce d'outillage que le fil propose (#1161).
-
-        Le jumeau de `POST …/projet` sur la cinquième demande du canal, et la même
-        réponse : l'acte est écrit au fil, la suite vient derrière — la pièce écrite
-        (`piece_ecrite`, sous la bulle), puis la suivante, déjà vérifiée. La pièce
-        visée n'est pas dans le corps : c'est celle qui attend, si bien qu'un double
-        clic tombe sur le `409` au lieu d'écrire deux fois.
-
-        `422` sur une décision inconnue, et sur l'écriture d'une version dont la
-        **correction a échoué à l'exécution** — elle ne s'écrit pas, et le fil le
-        dit. `409` quand rien n'attend, `404` hors catalogue, `502` si la suite n'a
-        pas pu être produite (le geste, lui, reste acquis au fil).
-        """
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        try:
-            geste, reponse = await service.trancher_piece(
-                fiche, decision=requete.decision, piece=requete.piece, conversation=fil
-            )
-        except PieceIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [geste.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/outillage/questionnaire", status_code=201)
-    async def ouvrir_questionnaire_chat(
-        agent: str, conversation: str | None = None, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Ouvre l'outillage d'un projet dans le fil — ou le reprend (#1031, #1161).
-
-        Elle n'écrit **aucun message d'utilisateur** — personne n'a rien demandé —,
-        seulement ce qui vient : la question qui manque, ou la première pièce, par la
-        même voie que n'importe quelle réponse d'agent. `projet` nomme le projet à
-        outiller quand le fil ne le dit pas : « Outiller maintenant » sur la carte
-        d'un projet dont l'outillage a été reporté (#1161) — l'outillage se construit
-        dans la conversation, plus dans une étape de formulaire.
-
-        **Idempotente** : rappelée sur un questionnaire en cours, elle repose la
-        question là où il en est plutôt que d'en recommencer un second. La propriété
-        vient de ce que le fil est la seule mémoire du canal, pas d'une garde.
-
-        `409` sur un fil dont le répondeur ne conduit pas de questionnaire — un
-        aparté avec un agent du catalogue, par exemple. `404` hors catalogue, `422`
-        sur une conversation mal formée.
-        """
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, conversation)
-        try:
-            message = await service.poser_question(fiche, conversation=fil, projet_id=projet)
-        except QuestionIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [message.to_dict()],
-        }
-
-    @app.post("/api/chat/{agent}/outillage", status_code=201)
-    async def repondre_question_chat(
-        agent: str, requete: ReponseOutillageRequete
-    ) -> dict[str, Any]:
-        """Répond d'un **geste** à la question d'outillage que le fil porte (#1031).
-
-        Le jumeau de `POST …/cadrage` sur l'autre demande du canal, et la même
-        réponse : l'acte est écrit au fil, la suite vient derrière. La question
-        visée n'est pas dans le corps — c'est celle qui attend —, si bien qu'un
-        geste tardif ou un double clic tombe sur le `409` au lieu de répondre à une
-        question déjà tranchée.
-
-        `422` si la valeur n'est pas une option de la question posée — sauf réponse
-        **avec ses mots** (`libre`, #1147), acceptée dès qu'elle n'est pas vide. `409`
-        quand rien n'attend, `404` hors catalogue, `502` si la suite n'a pas pu être
-        produite (le geste, lui, reste acquis au fil).
-        """
-        fiche, service = _canal_chat(agent)
-        fil = _conversation_demandee(service, fiche, requete.conversation)
-        try:
-            geste, reponse = await service.repondre_question(
-                fiche, valeur=requete.valeur, libre=requete.libre, conversation=fil
-            )
-        except QuestionIntrouvable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ReponseIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {
-            "agent": fiche.nom,
-            "role": fiche.role,
-            "conversation": fil,
-            "messages": [geste.to_dict(), reponse.to_dict()],
-        }
-
-    @app.post("/api/projets/{id_projet}/outillage/questionnaire")
-    async def question_outillage(
-        id_projet: str, requete: QuestionnaireOutillageRequete
-    ) -> dict[str, Any]:
-        """La prochaine question qui décide de l'outillage d'un projet neuf (#1031).
-
-        La voie **sans état** du questionnaire, à côté de celle du fil : le client dit
-        ce qu'il a, l'API dit ce qui en découle. C'est ce qui permet au fil — qui
-        tient ses réponses dans ses messages — et au parcours de création (#1034) —
-        qui les tiendra à l'écran — de servir du même questionnaire sans partager de
-        session.
-
-        Rangée sous le projet, comme l'analyse : les deux décident du même outillage,
-        et un projet déclaré est la seule chose qu'elles prennent du dehors. `404` sur
-        un projet inconnu, `422` sur un identifiant mal formé — les mêmes refus que
-        `GET …/outillage/analyse`, traduits par la même fonction.
-
-        Depuis #1147 la suite se **comprend** (un appel au modèle dès qu'une réponse a
-        été donnée) : un fournisseur injoignable ou une compréhension illisible est un
-        `502`, jamais une question inventée à sa place.
-        """
-        try:
-            async with au_compte_du_projet(id_projet, "question d'outillage"):
-                return await outillage.question(id_projet, requete.choix_acquis())
-        except ComprehensionIllisible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-        except Exception as exc:  # noqa: BLE001 — le fournisseur, pas la requête
-            raise HTTPException(
-                status_code=502,
-                detail=f"le projet n'a pas pu être compris : {exc}",
-            ) from exc
-
-    @app.post("/api/projets/{id_projet}/outillage/recommandation")
-    async def recommandation_outillage(
-        id_projet: str, requete: QuestionnaireOutillageRequete
-    ) -> dict[str, Any]:
-        """L'outillage que ces réponses recommandent — **la forme de l'analyse** (#1031).
-
-        Le second critère du ticket : les réponses produisent la *même* recommandation
-        structurée que l'analyse d'un projet existant (#1030), servie par l'API. Elles
-        la produisent par la **même fonction** — les réponses deviennent des
-        `Constats`, et `recommander` fait le reste —, si bien qu'il n'y a pas deux
-        formes à tenir d'accord mais une seule et deux façons de la remplir.
-
-        Rendue à **tout moment**, questionnaire fini ou non. Rien n'est écrit : c'est
-        une proposition, et la génération est le lot 5 (#1033).
-        """
-        try:
-            async with au_compte_du_projet(id_projet, "recommandation d'outillage"):
-                return await outillage.recommandation(id_projet, requete.choix_acquis())
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.post("/api/projets/{id_projet}/equipe/proposition")
-    async def proposition_equipe(
-        id_projet: str, requete: PropositionEquipeRequete | None = None
-    ) -> dict[str, Any]:
-        """L'équipe que ce projet appelle — **proposée**, jamais créée (#1039, docs/37).
-
-        Le troisième geste du chantier « équipe sur mesure » (#1021) : un projet
-        naît sans agent, et c'est son analyse qui lui propose son équipe. Chaque
-        rôle sort avec **sa raison** et l'endroit du projet qui la prouve, son
-        **nombre d'instances** et pourquoi ce nombre, son **playbook**, les
-        **skills** de l'outillage qu'il branche et ses **autorisations
-        proposées** — chacune avec sa raison, le cran `auto` compris (#716,
-        docs/37 §4.3). `politique` porte les mêmes autorisations sous la forme
-        que #1040 persistera, pour que ce qu'on valide soit exactement ce qu'on
-        a lu.
-
-        **Une route, deux provenances.** Corps vide (ou `choix` vide) : le projet
-        est **analysé** (#1030) — c'est le cas d'un projet existant. Avec des
-        réponses au questionnaire d'outillage (#1031) : l'équipe se dérive de
-        ces **réponses**, sans qu'aucun fichier soit ouvert — c'est le cas d'un
-        projet neuf. Les deux passent par la même dérivation, et `source` dit
-        laquelle a servi. Un corps vide sur un projet **encore vide** (aucun
-        fichier que son manifeste ne déclare) reprend les réponses que ce
-        manifeste garde (#1350, `choix_d_un_projet_decrit`) : c'est ainsi que le
-        fil, qui n'en passe pas, compose l'équipe sur ce que le projet est.
-
-        **Rien n'est créé**, et la réponse le dit (`cree`, `validation`) : aucun
-        agent, aucun playbook, aucune politique, aucune capacité n'est écrit. La
-        validation et la création sont le lot 4 (#1040) ; d'ici là l'équipe se
-        relit, se modifie et se redemande sans conséquence.
-
-        `ecartes` nomme les rôles **non** proposés avec leur raison —
-        l'orchestrateur en fait partie *par décision* : c'est Maestro, et c'est
-        lui qui recrute (docs/37 §4.2).
-
-        Les playbooks sont écrits par la mécanique de #257. Un rôle dont la
-        rédaction échoue garde le playbook de son **gabarit** et le dit
-        (`playbook_origine`) : une équipe entière perdue parce qu'un quota est
-        épuisé serait une bien pire réponse.
-
-        **Une troisième demande depuis #1227** : `renfort` fait proposer **un seul
-        rôle**, celui qu'un plan appelle et que l'équipe n'a pas, justifié par le
-        plan et non par un constat. C'est ce que la carte du fil demande quand un
-        run l'attend — sans lui, le rôle manquant serait `ecarte` par l'analyse,
-        aucun constat d'un projet en Python ne justifiant un designer. Le gabarit
-        est revalidé contre le catalogue (422 sinon).
-
-        404 si le projet est inconnu, 422 motivé si sa fiche est illisible ou si
-        sa racine n'est plus un dossier lisible — jamais un 500.
-        """
-        choix = requete.choix_acquis() if requete is not None else []
-        renfort = requete.renfort if requete is not None else None
-        try:
-            async with au_compte_du_projet(id_projet, "équipe proposée"):
-                return await equipe.proposer(
-                    id_projet,
-                    choix,
-                    renfort=renfort.role_manquant() if renfort is not None else None,
-                    raison=renfort.raison if renfort is not None else "",
-                )
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.post("/api/projets/{id_projet}/equipe/correction")
-    async def correction_equipe(
-        id_projet: str, requete: CorrectionEquipeRequete
-    ) -> dict[str, Any]:
-        """Ce que la personne demande de changer à l'équipe proposée, **compris** (#1159).
-
-        « Ajoute quelqu'un pour la sécurité », « retire le designer », « deux
-        développeurs » : la demande, en langage naturel, et l'équipe **telle que
-        l'étape d'équipe la montre** (retraits et instances compris). Le modèle rend
-        les rôles à **ajouter** — vérifiés comme une composition, playbooks écrits
-        pour ce projet —, ceux à **retirer** ou à **remettre**, les **instances** à
-        changer, et une phrase qui répond à la personne (`reponse`). Une demande qui
-        fixe une convention du projet rend aussi les **playbooks** des rôles montrés
-        qu'elle contredisait, réécrits pour la suivre (#1521) : le modèle a lu ceux que
-        la carte montre, et la convention gagne tous les rôles, pas le seul nommé.
-
-        **Rien n'est créé** (`cree: False`) : l'écran applique la correction à ce
-        qu'il montre, et la création reste la validation (#1040). Retraits, remises
-        et instances ne nomment que des rôles de l'équipe montrée.
-
-        422 si la demande est vide ou plus longue qu'une phrase — refusée avant
-        tout appel —, 404/422 motivés sur le projet, **502** si le modèle ne répond
-        pas ou répond hors contrat : une correction n'a pas de repli, aucune règle
-        ne comprend une phrase. L'équipe montrée reste intacte, et l'appel se
-        rejoue sans conséquence.
-        """
-        try:
-            async with au_compte_du_projet(id_projet, "équipe corrigée"):
-                return await equipe.corriger(
-                    id_projet, requete.demande, requete.membres(), requete.choix_acquis()
-                )
-        except GenerationIndisponible as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        except (ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    @app.post("/api/projets/{id_projet}/equipe", status_code=201)
-    async def creer_equipe(
-        id_projet: str, requete: EquipeValideeRequete
-    ) -> dict[str, Any]:
-        """Crée dans le projet l'équipe que l'utilisateur a **validée** (#1040, docs/37).
-
-        Le quatrième geste du chantier (#1021), et le premier qui écrit quelque
-        chose : `…/equipe/proposition` ne crée rien, celui-ci crée tout. Pour
-        chaque rôle gardé, trois écritures **dans le projet** (#1038) — sa fiche
-        et son playbook, sa politique d'autorisations, sa capacité (le nombre
-        d'instances validé). L'équipe se revoit et se modifie ensuite depuis les
-        écrans d'agents du projet (`/api/catalogue?projet=…`).
-
-        **Ce qui est créé est ce qui a été montré.** Le corps rapporte la
-        proposition telle que l'API l'a servie — playbook compris, `politique`
-        comprise —, plutôt qu'un identifiant à re-dériver : rejouer la
-        proposition appellerait à nouveau un modèle et rendrait un *autre*
-        playbook, c'est-à-dire un agent que personne n'a validé. Et la
-        traduction « autorisations proposées → politique » reste unique
-        (`RolePropose.politique()`), si bien que le cran `auto` qu'on a lu avec
-        sa raison est le cran qui est écrit : *c'est l'utilisateur qui le décide,
-        à froid* (#716, docs/37 §4.3).
-
-        **Tout ou rien.** L'équipe entière est vérifiée avant que le premier
-        fichier ne soit écrit — nom déjà pris dans ce projet ou réservé,
-        doublon dans la liste, instances hors bornes, fiche ou politique que les
-        dépôts refuseraient. Un seul blocage rend un 422 `equipe-refusee` qui
-        les nomme **tous**, et rien n'a été créé : sans transaction de système de
-        fichiers, une demi-équipe serait pire qu'un refus.
-
-        404 si le projet est inconnu, 422 motivé s'il est illisible ou si
-        l'équipe est refusée — jamais un 500.
-        """
-        if not requete.roles:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "motif": "equipe-vide",
-                    "message": (
-                        "aucun rôle validé : ne pas recruter se dit en ne validant "
-                        "pas l'équipe, pas en validant une équipe vide."
-                    ),
-                },
-            )
-        try:
-            # Les agents créés entrent aussi dans la **projection**, comme ceux
-            # du `POST /api/catalogue` : même geste, même conséquence — ils y
-            # deviennent cibles de réassignation manuelle
-            # (`POST /api/taches/{id}/reassigner`, qui n'a pas de projet à
-            # connaître) et peuplent le parc transverse. C'est
-            # `creer_equipe_du_projet` qui tient les deux, parce que le fil de
-            # l'orchestration crée une équipe par la même voie (#1146).
-            # ⚠ La vue de l'équipe, elle, n'en dépend plus (#1101) :
-            # `GET /api/agents?projet=` la dérive du catalogue du projet et de ses
-            # capacités. C'est ce qui la rend juste au redémarrage, quand la
-            # projection repart vide.
-            return await creer_equipe_du_projet(
-                id_projet, requete.roles_valides(), requete.proposition_id
-            )
-        except (EquipeRefusee, ValueError, ProjetInconnu) as exc:
-            raise _refus_projet(exc) from exc
-
-    async def _flux_reponse(
-        agent: str,
-        contenu: str,
-        sources: list[dict[str, Any]] | None,
-        projet_id: str | None,
-        conversation: str | None,
-        projet: str | None = None,
-    ) -> StreamingResponse:
-        """Le flux SSE d'une réponse — la mécanique des **deux** verbes (#268, #692).
-
-        Écrite une fois et appelée par `GET …/flux` comme par `POST …/flux` :
-        deux façons de déclarer l'envoi, un seul chemin d'envoi. Elle ouvre un
-        `text/event-stream` où chaque `data: <json>` est un `FragmentChat` —
-        `debut` (portant le message utilisateur), des `fragment` (incréments
-        `delta`), puis `fin` (portant la réponse complète) ou `interrompu`
-        (portant ce qui a été persisté d'une réponse arrêtée, #695). Une réponse
-        impossible sort en trame `erreur` plutôt qu'en statut HTTP : les en-têtes
-        sont déjà partis quand elle se découvre, et le message utilisateur, lui,
-        est déjà persisté et diffusé.
-
-        Même échange que `POST …/messages` — même persistance, même messagerie,
-        mêmes `chat.message` sur le WebSocket —, rendu au fur et à mesure. Le
-        canal vaut pour les **trois** fils : un agent du catalogue, `assistance`
-        (#123) et `orchestrateur` (#268). 404 si le fil n'existe pas.
-
-        Deux refus se tranchent **avant** la première trame, donc en statut HTTP
-        et sans rien persister : un message vide (422 nu) et une source hors
-        bornes (422 `{motif, message, index}`, #315 — la forme que `POST
-        …/messages` sert déjà, celle qui permet à l'écran d'afficher le refus sur
-        la source fautive).
-
-        `conversation` désigne le fil où diffuser (#694) — même contrat que sur
-        `POST …/messages`, et **toutes** les trames la portent, `debut` comprise :
-        un client sait dès la première si ce qui arrive est le fil qu'il affiche.
-        Un identifiant inconnu est un 404, mal formé un 422, absent le cas
-        nominal (la conversation la plus récente).
-        """
-        fiche, service = _canal_chat(agent, projet)
-        projet = projet_id_valide(projet_id)
-        fil = _conversation_demandee(service, fiche, conversation)
-
-        async def flux() -> AsyncIterator[str]:
-            async for trame in service.diffuser(
-                fiche, contenu, sources, projet_id=projet, conversation=fil
-            ):
-                yield f"data: {json.dumps(trame.to_dict(), ensure_ascii=False)}\n\n"
-
-        try:
-            # Le premier fragment est tiré **ici**, avant de rendre la réponse :
-            # c'est ce qui fait qu'un contenu vide sort en 422 et non en flux
-            # ouvert sur une erreur — `diffuser` lève avant sa première trame.
-            trames = flux()
-            premiere = await anext(trames)
-        except SourceRefusee as exc:
-            # Avant le `ValueError` nu dont elle hérite, pour la raison qui vaut
-            # sur `POST …/messages` : aplatir le refus en chaîne perdrait l'index
-            # de la source fautive, donc l'endroit où l'écran doit l'afficher.
-            raise HTTPException(status_code=422, detail=_detail_refus(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-        async def flux_complet() -> AsyncIterator[str]:
-            yield premiere
-            async for trame in trames:
-                yield trame
-
-        return StreamingResponse(flux_complet(), media_type="text/event-stream")
-
-    @app.get("/api/chat/{agent}/flux")
-    async def flux_chat(
-        agent: str,
-        contenu: str = "",
-        projet_id: str | None = None,
-        conversation: str | None = None,
-        projet: str | None = None,
-    ) -> StreamingResponse:
-        """Flux SSE d'une réponse de chat — le contrat #183, servi pour de bon (#268).
-
-        `GET /api/chat/{agent}/flux?contenu=…` : la voie **sans source**, et le
-        seul verbe qu'un `EventSource` sache ouvrir. Une URL ne pouvant porter ni
-        identifiants de sources ni corps, un message qui embarque de la matière
-        (#482) passe par `POST …/flux` — voir l'arbitrage en tête de
-        `maestro.controltower.chat`. Ce n'est pas une voie dégradée : c'est le cas
-        courant, gardé tel quel plutôt que retiré.
-
-        `?projet_id=` porte le **projet de la fenêtre** (#683), comme le corps de
-        `POST …/messages` : un run ouvert par cette voie se rattache donc comme
-        un run ouvert par l'autre. Il n'est pas nommé `?projet=` à dessein — ce
-        nom-là désigne partout ailleurs une **portée** de lecture, avec ses mots
-        réservés `tous`/`aucun` (#277), et deux contrats sous un même nom seraient
-        la première façon de les confondre.
-
-        `?conversation=` désigne le fil où diffuser (#694), comme sur les deux
-        autres verbes ; absent, la conversation la plus récente.
-        """
-        return await _flux_reponse(agent, contenu, None, projet_id, conversation, projet)
-
-    @app.post("/api/chat/{agent}/flux")
-    async def flux_chat_poste(
-        agent: str, requete: ChatEnvoiRequete, projet: str | None = None
-    ) -> StreamingResponse:
-        """Le flux d'une réponse pour un message qui **embarque** quelque chose (#692).
-
-        Même corps que `POST …/messages` — `contenu`, `sources` (#482),
-        `projet_id` (#683) — et même `text/event-stream` que `GET …/flux` : c'est
-        exactement l'envoi du POST, rendu au fur et à mesure au lieu d'être rendu
-        d'un coup. Le client n'a donc **pas** à choisir entre le direct et ses
-        pièces jointes, ce qui était le seul motif du choix écrit dans
-        `app/chat/page.tsx`.
-
-        Le message utilisateur **résolu** — ses sources et leur rapport de
-        lecture (#316) — voyage sur la trame `debut`, la réponse sur la trame
-        `fin` : la paire que le POST rend d'un coup, rendue en deux trames. 404 si
-        le fil n'existe pas, 422 sur un message vide, 422 motivé sur une source
-        refusée.
-
-        Le corps porte aussi la `conversation` (#694) : mêmes clés que
-        `POST …/messages`, donc les deux façons de poster un message se
-        rattachent au fil de la même manière.
-        """
-        return await _flux_reponse(
-            agent,
-            requete.contenu,
-            requete.sources,
-            requete.projet_id,
-            requete.conversation,
-            projet,
-        )
-
-    @app.post("/api/chat/{agent}/flux/{echange}/arret")
-    async def arreter_flux_chat(
-        agent: str, echange: str, projet: str | None = None
-    ) -> dict[str, Any]:
-        """Arrête la génération en vol de `echange` — le geste, pas l'accident (#695).
-
-        L'`echange` est celui que les trames du flux portent (`FragmentChat`). La
-        génération est annulée, **ce qui en a déjà été reçu est persisté** comme
-        réponse et le flux se clôt sur une trame `interrompu` qui la porte : la
-        portion reçue reste au fil au lieu d'être un état d'écran.
-
-        Ce n'est pas un second chemin d'envoi — rien n'est envoyé ici, et rien
-        n'est produit : c'est le seul verbe qui **retire** quelque chose au canal.
-        Il n'annule pas non plus ce qu'une déconnexion laisse vivre (arbitrage de
-        #268, repris en tête de `maestro.controltower.chat`) : une déconnexion est
-        un accident dont aucune intention ne se déduit, un arrêt est un acte.
-
-        404 si le fil n'existe pas, et 404 aussi quand il n'y a **rien à
-        arrêter** — identifiant inconnu ou échange qui vient de se terminer. Les
-        deux se ressemblent d'ici et appellent la même conduite côté client :
-        cliquer au moment où la réponse tombe est une course normale, pas une
-        panne.
-        """
-        _, service = _canal_chat(agent, projet)
-        if not service.interrompre(echange):
-            raise HTTPException(
-                status_code=404,
-                detail=f"aucune génération en vol pour l'échange {echange!r}.",
-            )
-        return {"agent": agent, "echange": echange, "arrete": True}
-
-    @app.websocket("/ws/evenements")
-    async def evenements(websocket: WebSocket, projet: str | None = None) -> None:
-        """Flux temps réel : les événements de la portée demandée, en JSON sur la socket.
-
-        Émission et écoute de la déconnexion courent en parallèle : sans cela,
-        un client parti resterait connecté jusqu'à la prochaine émission.
-
-        `?projet=` suit **le même contrat que le REST** (#277) —
-        `<id>` | `tous` | `aucun`, obligatoire : un client qui charge son état
-        filtré puis suit le flux voit deux fois le même périmètre, et un
-        événement d'un autre projet n'arrive jamais dans une vue filtrée. Un
-        événement **sans** projet n'entre pas non plus dans une vue de projet,
-        exactement comme une tâche sans projet n'entre dans aucun Kanban filtré —
-        une fois la pompe passée : celui d'un run qui relève d'un projet y a été
-        rattaché (`ControlTowerState.au_projet_de_son_run`, #1290).
-
-        Le refus se dit **sur la socket** avant de la fermer : la connexion est
-        acceptée, le motif part en une trame `{"erreur": {motif, message}}`,
-        puis la fermeture porte le code 1008 (violation de politique). Refuser
-        la poignée de main laisserait le client devant un échec réseau muet,
-        alors que la cause tient en un mot.
-        """
-        await websocket.accept()
-        try:
-            portee = resoudre_portee(projet, projet_connu=projets)
-        except PorteeRefusee as exc:
-            await websocket.send_json({"erreur": detail_refus(exc)})
-            await websocket.close(code=1008, reason=exc.motif)
-            return
-        file = diffusion.connecter(portee)
-        emission = asyncio.create_task(_emet(websocket, file))
-        deconnexion = asyncio.create_task(_attend_deconnexion(websocket))
-        try:
-            _, en_attente = await asyncio.wait(
-                {emission, deconnexion}, return_when=asyncio.FIRST_COMPLETED
-            )
-            for tache_asyncio in en_attente:
-                tache_asyncio.cancel()
-                with suppress(asyncio.CancelledError):
-                    await tache_asyncio
-        finally:
-            diffusion.deconnecter(file)
-
+    ctx.chats_de_projet = chats_de_projet
+    for routeur in ROUTEURS:
+        app.include_router(routeur)
     return app
 
 
-async def _emet(websocket: WebSocket, file: asyncio.Queue[Event]) -> None:
-    """Draine la file de la connexion : chaque événement part en JSON."""
-    while True:
-        event = await file.get()
-        await websocket.send_json(event.to_dict())
+async def ouvrir_un_run(
+    ctx: Contexte,
+    objectif: str,
+    projet_id: str | None = None,
+    bornes: BornesRun = AUCUNE_BORNE,
+    contexte_sources: str = "",
+) -> dict[str, Any]:
+    """Le lanceur du fil global (#268) — un run sur l'objectif dicté au chat.
+
+    `MODE_BRIEF_AUTO` et non le `humain` des lancements par l'écran : le
+    cadrage d'une demande **est** la conversation qu'on est en train d'avoir,
+    et renvoyer vers un écran de validation de brief pour la poursuivre
+    couperait le fil en deux. Le run part donc, brief rédigé sans attendre ;
+    l'écran des exécutions reste la voie de celui qui veut le valider avant.
+
+    `projet_id` (#683) est le projet du run — celui de la proposition
+    approuvée (#1180), à défaut celui de la fenêtre, **normalisé à la
+    frontière** (`envoyer_chat`). Il est passé à `lancer` exactement comme le
+    fait `POST /api/executions` — même paramètre, même validation de forme
+    (`projet_id_valide`), donc une seule règle pour les deux portes d'entrée.
+    Le fil ne l'appelle jamais sans projet (#1180, `_ouvrir_un_run`) ; l'écran
+    des exécutions, lui, garde le rattachement pour une donnée (#222).
+
+    `bornes` (#990) achève le rapprochement des deux portes : les quatre
+    garde-fous que `POST /api/executions` transmettait depuis #185 passent
+    désormais aussi par celle-ci, qui est **la seule qu'un écran offre**
+    depuis #666. Elles arrivent du geste de cadrage, où l'écran les a
+    posées ; `AUCUNE_BORNE` — le défaut — rend exactement l'appel d'avant ce
+    ticket, et c'est `lancer` qui refuse une valeur hors bornes.
+
+    `contexte_sources` (#1172) : les pièces jointes de la conversation, déjà
+    lues par le fil. Elles passent en contexte et non en `sources` à relire
+    (cf. `orchestration.contexte_du_fil`).
+    """
+    executions = ctx.executions
+    mode_brief_du_fil = ctx.mode_brief_du_fil
+    return await executions.lancer(
+        objectif,
+        plafond_cout_usd=bornes.plafond_cout_usd,
+        plafond_tokens=bornes.plafond_tokens,
+        timeout_tache_s=bornes.timeout_tache_s,
+        parallelisme=bornes.parallelisme,
+        projet_id=projet_id,
+        mode_brief=mode_brief_du_fil,
+        contexte_sources=contexte_sources,
+    )
 
 
-async def _attend_deconnexion(websocket: WebSocket) -> None:
-    """Rend la main dès que le client ferme (on ne lit rien du flux entrant)."""
-    with suppress(WebSocketDisconnect):
-        while True:
-            await websocket.receive_text()
+def equipe_du_projet(ctx: Contexte, projet_id: str) -> int | None:
+    """Combien d'agents le routeur trouvera pour ce projet — `None` : je ne sais pas (#1146).
+
+    La **règle unique** de l'exécuteur et de la boucle (`catalogue_du_projet`),
+    sur le même dépôt : le fil compte exactement les agents vers lesquels les
+    tâches seront routées. Un projet non déclaré n'est pas « sans équipe »,
+    il est inconnu — le fil n'en tire rien, et c'est la portée qui le dira.
+    """
+    agents_store = ctx.agents_store
+    projets = ctx.projets
+    if not projets.existe(projet_id):
+        return None
+    agents = catalogue_du_projet(agents_store, projet_id)
+    return None if agents is None else len(agents)
+
+
+def roles_du_projet(ctx: Contexte, projet_id: str | None) -> str:
+    """L'équipe du projet **en clair** pour le fil — rôles, agents, instances (#1223).
+
+    La même règle que la sonde du recrutement (`catalogue_du_projet`), lue
+    pour **dire** au lieu de compter : « qui travaille sur ce projet ? » ne
+    trouvait aucune réponse dans le prompt, où l'équipe n'existait que par un
+    `_sans_equipe` booléen. Rend `""` quand il n'y a rien à dire — aucun
+    projet, projet inconnu, dépôt illisible —, et la phrase qui dit qu'il n'y
+    a **personne** quand le catalogue est vide : c'est un fait, pas un vide.
+    """
+    agents_store = ctx.agents_store
+    projets = ctx.projets
+    if not projet_id or not projets.existe(projet_id):
+        return ""
+    agents = catalogue_du_projet(agents_store, projet_id)
+    if agents is None:
+        return ""
+    if not agents:
+        return (
+            "Équipe du projet : aucun agent recruté — personne ne peut prendre "
+            "une tâche de run aujourd'hui."
+        )
+    lignes = ["Équipe du projet (les agents vers qui les tâches sont routées) :"]
+    for agent in agents:
+        competences = ", ".join(sorted(agent.competences))
+        ligne = f"- {agent.role} « {agent.nom} » — modèle {agent.modele}"
+        if competences:
+            ligne += f" — compétences : {competences}"
+        lignes.append(ligne)
+    return "\n".join(lignes)
+
+
+def regime_du_projet(ctx: Contexte, projet_id: str | None) -> str:
+    """Ce qu'un run de ce projet fera, pour le fil — lu, jamais deviné (#1323).
+
+    L'équipe par la règle unique du routeur (`catalogue_du_projet`), comme
+    `roles_du_projet`, et la politique de chaque agent par l'appel exact de
+    l'exécution (`permissions.pour_projet(…).lire`, relu à chaque message
+    comme l'exécuteur le relit à chaque tâche) : le fil dit ce que la tâche
+    appliquera. Une politique que la lecture refuse n'est pas tue —
+    l'exécution en ferait un échec de tâche, et c'est ce que le fil en dira.
+    Sans projet, ou sur un projet inconnu, le bloc ne parle que de ce qui ne
+    dépend d'aucune équipe : le cadrage et les bornes.
+
+    Le **versionnement** du projet est relu ici aussi (#1299), par le seul
+    lecteur de projets : c'est lui qui décide si les tâches indépendantes
+    partiront de front, et un projet versionné depuis le dernier message doit
+    se dire tel. Illisible, il se tait plutôt que deviner.
+    """
+    agents_store = ctx.agents_store
+    mode_brief_du_fil = ctx.mode_brief_du_fil
+    permissions = ctx.permissions
+    projets = ctx.projets
+    if not projet_id or not projets.existe(projet_id):
+        return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+    agents = catalogue_du_projet(agents_store, projet_id)
+    if agents is None:
+        return regime_d_un_run(None, mode_brief=mode_brief_du_fil)
+    politiques = permissions.pour_projet(projet_id)
+    membres: list[MembreDeLEquipe] = []
+    for agent in agents:
+        try:
+            politique = politiques.lire(agent.nom)
+        except ValueError as refus:
+            membres.append(MembreDeLEquipe(agent.role, agent.nom, illisible=str(refus)))
+        else:
+            membres.append(MembreDeLEquipe(agent.role, agent.nom, politique))
+    try:
+        versionne: bool | None = projets.entite(projet_id).versionne
+    except (ProjetInconnu, ProjetIllisible):
+        versionne = None
+    return regime_d_un_run(membres, mode_brief=mode_brief_du_fil, versionne=versionne)
+
+
+def projet_du_fil(ctx: Contexte, projet_id: str) -> Projet | None:
+    """Le projet de la fenêtre en **entité**, ou `None` — le seul lecteur de projets.
+
+    `ServiceProjets.entite` et lui seul (#1223) : les lectures de
+    l'orchestrateur sont bornées à la racine que ce service déclare, et son
+    **périmètre** est ce qui ferme `.env` et `secrets/`. Relire la fiche à
+    côté ouvrirait une seconde définition de « où a-t-on le droit de lire ».
+    """
+    projets = ctx.projets
+    try:
+        return projets.entite(projet_id)
+    except (ValueError, ProjetInconnu, ProjetIllisible):
+        return None
+
+
+def projet_nomme(ctx: Contexte, projet_id: str) -> ProjetVise | None:
+    """Le projet de la fenêtre tel que le fil le nomme — `None` s'il n'est pas déclaré (#1180).
+
+    Le même lecteur que les lectures du fil (`projet_du_fil`, `ServiceProjets`) :
+    un projet que l'API ne déclare pas n'est pas un projet où un run peut partir,
+    et c'est la seule réponse qui ferme la porte. Ce qu'il rend est ce qu'une
+    proposition écrit sur elle (`ProjetVise`) : l'identifiant que l'accord suit,
+    et le nom et le dossier que la carte affiche.
+    """
+    projet = projet_du_fil(ctx, projet_id)
+    if projet is None:
+        return None
+    return ProjetVise(id=projet.id, nom=projet.nom, racine=projet.racine)
+
+
+def outillage_du_fil(ctx: Contexte, projet_id: str) -> str:
+    """L'outillage du projet pour le fil, lu **comme un agent le reçoit** (#1180).
+
+    `outillage_du_projet` est la lecture qui part dans le message de chaque
+    tâche : le fil dit donc de l'outillage exactement ce que l'équipe en
+    recevra, et rien qu'une seconde analyse du disque pourrait inventer.
+    """
+    projet = projet_du_fil(ctx, projet_id)
+    return outillage_en_clair(outillage_du_projet(projet)) if projet is not None else ""
+
+
+async def consulter(ctx: Contexte, demande: Demande, projet_id: str | None) -> Lecture:
+    """Exécute une lecture du fil, **hors boucle** — elle touche le disque (#1223).
+
+    `asyncio.to_thread` pour la même raison que la création d'équipe juste
+    au-dessus : lire un fichier ou balayer un dossier est bloquant, et
+    l'API sert d'autres requêtes pendant qu'un fil réfléchit.
+    """
+    consultations = ctx.consultations
+    return await asyncio.to_thread(consultations.executer, demande, projet_id)
+
+
+def projet_du_run(ctx: Contexte, projet_id: str | None) -> Projet | None:
+    """Le projet d'un run — `None` s'il n'en relève d'aucun, ou s'il a disparu.
+
+    Un `None` et non une exception : un run hors projet est un cas normal
+    (#222), et un projet retiré après coup ne doit pas empêcher de raconter
+    ce que le run a fait. C'est la même asymétrie que l'annonce de #928, qui
+    écrit sa raison à la place du chemin plutôt que de se taire.
+    """
+    projets = ctx.projets
+    if not projet_id:
+        return None
+    try:
+        return projets.entite(projet_id)
+    except Exception:  # noqa: BLE001 — projet retiré, illisible, ou jamais déclaré
+        return None
+
+
+async def _raconter_au_compte_du_fil(ctx: Contexte, run_id: str) -> None:
+    """Le récit de fin d'un run, sa dépense au grand livre du fil (#1534).
+
+    Le récit et la revue d'outillage qui le suit sont écrits **dans le fil**,
+    pour le projet du run, et non par le run : ils n'entrent pas à son grand
+    livre, ils entrent à celui du fil, comme tout ce que Maestro dit en
+    conversation. Le bilan, qu'il attend, a son propre collecteur et sa ligne
+    sur le run (#1284) : il n'est pas compté ici.
+    """
+    bus = ctx.bus
+    conteur = ctx.conteur
+    state = ctx.state
+    execution = state.execution(run_id)
+    projet_id = execution.projet_id if execution is not None else None
+    async with au_compte_du_fil(
+        bus, titre="récit de fin de run", agent=ACTEUR_RUN, projet=lambda: projet_id
+    ):
+        await conteur.raconter(run_id)
+
+
+def raconter_la_fin(ctx: Contexte, run_id: str) -> None:
+    """Lance le bilan et le récit de `run_id` — sans faire attendre la pompe (#1224, #1284).
+
+    La rédaction est un appel modèle et la lecture du livrable touche le
+    disque : les faire dans la pompe figerait le flux temps réel de tous les
+    écrans pendant plusieurs secondes.
+
+    Le bilan part **à côté** du récit, et non dedans : tout run en a un, y
+    compris celui qu'aucun fil n'a demandé et qui n'aura donc pas de récit. Le
+    récit, lui, attend le même bilan (`ServiceBilan.rendre` partage l'appel en
+    vol) : il n'y a qu'un appel au modèle pour les deux.
+    """
+    bilans = ctx.bilans
+    recits = ctx.recits
+    # Le bilan est **lancé** ici, sans attendre (#1285) : l'appel est en vol dès
+    # cette ligne, donc la vue du run qui relit juste après lit « en
+    # rédaction », jamais « absent ».
+    en_vol = bilans.lancer(run_id)
+    if isinstance(en_vol, asyncio.Future):
+        recits.add(en_vol)
+        en_vol.add_done_callback(recits.discard)
+    tache = asyncio.create_task(_raconter_au_compte_du_fil(ctx, run_id))
+    recits.add(tache)
+    tache.add_done_callback(recits.discard)
+
+
+async def rejouer(ctx: Contexte) -> None:
+    """Relit le journal durable dans la projection — une seule fois par process."""
+    event_log = ctx.event_log
+    journal = ctx.journal
+    magasin = ctx.magasin
+    state = ctx.state
+    try:
+        evenements = await event_log.relire()
+    except Exception as erreur:
+        magasin.rejeu_echoue(erreur)
+        raise
+    for event in evenements:
+        state.appliquer(event)
+        # Le même rattachement que la pompe (#1290) : le journal durable
+        # garde l'issue d'un run telle qu'elle a été publiée, sans projet.
+        journal.consigner(state.au_projet_de_son_run(event))
+    magasin.rejeu_abouti()
+
+
+@asynccontextmanager
+async def lifespan(ctx: Contexte, app: FastAPI) -> AsyncIterator[None]:
+    # Rejeu du journal durable (#97) **avant** d'ouvrir la pompe : la
+    # projection retrouve l'historique (exécutions, grands livres, analytics)
+    # d'avant le redémarrage, puis la pompe prend le relais du flux à venir.
+    # Le journal requêtable (#478) se remplit du **même** parcours : c'est ce
+    # qui fait de lui une vue de l'historique durable et non un second
+    # stockage — et ce qui lui donne des rangs, donc des identifiants
+    # d'entrée, stables d'un redémarrage à l'autre.
+    # Un journal illisible (Redis absent au démarrage…) ne bloque pas l'API,
+    # mais il ne se tait plus (#1206) : tant que l'historique n'est pas relu,
+    # le magasin se dit indisponible, et la pompe retente le rejeu dès que
+    # le magasin revient.
+    # Un journal qui refuse son fichier (schéma plus récent que le code,
+    # migration en échec, #1621) se nomme : l'API sert sa panne et son geste.
+    battements = ctx.battements
+    bus = ctx.bus
+    diffusion = ctx.diffusion
+    event_log = ctx.event_log
+    executions = ctx.executions
+    gabarits = ctx.gabarits
+    journal = ctx.journal
+    magasin = ctx.magasin
+    mailbox = ctx.mailbox
+    projets = ctx.projets
+    recits = ctx.recits
+    relais_renfort = ctx.relais_renfort
+    state = ctx.state
+    try:
+        await rejouer(ctx)
+    except MagasinRefuse as refus:
+        _LOGGER.error("Journal des événements refusé au démarrage : %s", refus, exc_info=True)
+    except Exception:
+        _LOGGER.exception(
+            "Rejeu du journal des événements impossible : l'API sert la panne "
+            "du magasin et retentera dès qu'il répondra."
+        )
+    # Reprise des agents et réglages globaux dans le projet qui les utilise
+    # (#1038, critère 2). Ici parce que c'est le seul moment où une
+    # installation d'avant ce lot croise le nouveau code sans que personne ait
+    # rien à taper — et **best-effort** : elle n'ajoute jamais, ne supprime
+    # jamais, et une reprise impossible ne doit pas empêcher l'API de
+    # démarrer. Idempotente, donc rejouée à chaque démarrage sans effet.
+    # `MAESTRO_REPRISE_AGENTS=0` s'en passe ; la CLI
+    # `python -m maestro.agents.reprise [--check]` la rejoue et la détaille.
+    if _reprise_agents_activee():
+        try:
+            rapport = reprendre(projets=projets.store, configuration=gabarits)
+            if rapport.nb_reprises:
+                _LOGGER.info("%s", rapport)
+        except Exception:
+            _LOGGER.exception(
+                "Reprise des agents dans leur projet impossible : les réglages "
+                "globaux restent lisibles comme gabarits (rien n'est perdu). "
+                "La rejouer : python -m maestro.agents.reprise --check"
+            )
+    pompe = asyncio.create_task(
+        _pompe(
+            bus,
+            state,
+            diffusion,
+            journal,
+            magasin=magasin,
+            rejouer=partial(rejouer, ctx),
+            sur_fin_de_run=partial(raconter_la_fin, ctx),
+            sur_demande_de_renfort=relais_renfort,
+        )
+    )
+    try:
+        yield
+    finally:
+        # Les runs en vol s'arrêtent **avant** la pompe et le bus : leur
+        # issue (annulation) a encore un canal pour être consignée.
+        await executions.fermer()
+        # Les récits encore en vol s'arrêtent avec le reste : un appel modèle
+        # qui survivrait à l'arrêt écrirait dans un fil dont plus personne ne
+        # pompe les événements.
+        for recit in list(recits):
+            recit.cancel()
+        # Les relais de renfort aussi : un run détaché qui attend encore tient
+        # sa propre borne, et repart avec l'équipe actuelle à l'échéance.
+        relais_renfort.fermer()
+        pompe.cancel()
+        with suppress(asyncio.CancelledError):
+            await pompe
+        await mailbox.close()
+        await bus.close()
+        await event_log.close()
+        await battements.close()
 
 
 @dataclass(frozen=True)

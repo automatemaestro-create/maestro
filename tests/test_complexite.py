@@ -46,7 +46,7 @@ RACINE = Path(__file__).resolve().parents[1]
 #: l'a posé, et sa valeur. Le premier est le relevé du jour où C901 est entré dans le lint : 70
 #: fonctions au-dessus du seuil, 61 sous `maestro/`, 5 sous `scripts/`, 4 sous `tests/`. Une ligne
 #: ne s'ajoute que plus basse que la précédente, et la première ne se retouche pas.
-DEROGATIONS_C901_LIVREES: tuple[tuple[str, int], ...] = (("#1577", 70),)
+DEROGATIONS_C901_LIVREES: tuple[tuple[str, int], ...] = (("#1577", 70), ("#1525", 69))
 
 #: Le cliquet des dérogations, et les mots de ses refus.
 CLIQUET_C901 = Cliquet(

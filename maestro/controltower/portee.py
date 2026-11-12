@@ -46,7 +46,7 @@ sont refusés (une configuration appartient à un projet réel), et l'omission r
 le niveau des **gabarits** au lieu d'un refus. Voir sa docstring.
 
 Ce module est volontairement une **feuille de la couche lecture** : il ne connaît
-ni FastAPI ni HTTP (la traduction du motif en code est le rôle d'`app.py`, via
+ni FastAPI ni HTTP (la traduction du motif en code est le rôle des routes, via
 `maestro.controltower.projets.statut_http`), et il n'importe du dépôt de projets
 que de quoi répondre « cet identifiant existe-t-il ? ». C'est ce qui permet à la
 projection (`ControlTowerState`), aux analytics et à la diffusion temps réel de
@@ -78,7 +78,7 @@ class PorteeRefusee(ValueError):
     Deux motifs, et deux seulement : `projet-requis` (le paramètre manque) et
     `projet-inconnu` (l'identifiant ne désigne aucun projet déclaré). Le `motif`
     est un code court et stable — c'est lui que l'UI teste, pas la phrase —, le
-    message la raison lisible. `app.py` en tire le code HTTP par la même table
+    message la raison lisible. Les routes en tirent le code HTTP par la même table
     que les refus de `ServiceProjets` (`statut_http`), pour que deux refus de
     même nature ne sortent pas par deux portes différentes.
     """
