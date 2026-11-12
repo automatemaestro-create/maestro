@@ -27,8 +27,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import shutil
-import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
@@ -37,7 +35,6 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
-import claude_agent_sdk
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -71,6 +68,7 @@ from maestro.decideur import DECIDEUR_DEFAUT, Decideur
 from maestro.deliberation import CreditArbitrage
 from maestro.detail_tache import EtapeTache
 from maestro.familles_claude import familles_claude
+from maestro.installation import cli_claude_resolu
 from maestro.lecture import OUTIL_LECTURE, lecture_sans_arbitrage
 from maestro.portee import PorteeProjet, hors_de_portee
 from maestro.projets.modele import ENV_IDENTITE_GIT
@@ -1254,18 +1252,14 @@ def _commande_du_cli() -> tuple[str, ...] | None:
 
     Le SDK ne lance plus lui-même le CLI d'une session outillée : il lance le
     lanceur du confinement, à qui il faut nommer la commande à confiner. C'est le
-    choix que le SDK faisait sans `cli_path`, et celui qu'il documente — le CLI
-    **embarqué** dans son paquet, utilisé par défaut —, sinon le `claude` du PATH
-    (`claude.exe` sous Windows : le SDK y refuse le `claude.cmd` de npm). Repris
-    ici parce que le SDK n'expose pas le sien ; `None` quand il n'y a ni l'un ni
-    l'autre, et la session tourne alors sans confinement — en le disant.
+    choix que le SDK faisait sans `cli_path` — le CLI **embarqué** dans son
+    paquet, sinon le `claude` du PATH —, résolu par `maestro.installation`, qui
+    le montre aussi dans les Paramètres (#1622) : un seul endroit pour les deux.
+    `None` quand il n'y a ni l'un ni l'autre, et la session tourne alors sans
+    confinement — en le disant.
     """
-    nom = "claude.exe" if sys.platform == "win32" else "claude"
-    embarque = Path(claude_agent_sdk.__file__).resolve().parent / "_bundled" / nom
-    if embarque.is_file():
-        return (str(embarque),)
-    trouve = shutil.which(nom)
-    return (trouve,) if trouve else None
+    _, chemin = cli_claude_resolu()
+    return (str(chemin),) if chemin is not None else None
 
 
 async def _rapatrier(isolation: IsolationConfig, workspace: Path, env: Mapping[str, str]) -> None:

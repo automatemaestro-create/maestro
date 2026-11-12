@@ -78,6 +78,15 @@ const RACINE = INSTALLEE ? RACINE_PRODUIT : RACINE_DEPOT;
 // fenêtre doit ouvrir l'adresse qu'il a choisie, pas celle qu'on lui demandait.
 const SESSION_DU_LANCEUR = path.join(RACINE, '.maestro', 'lanceur', 'session.json');
 
+// Où le produit dit sa version (#1622). Le paquet pose la coque et le produit ensemble, à la même
+// version : celle de `package.json`, que l'assemblage écrit aussi à la racine du produit
+// (`version.json`, `FICHIER_VERSION` de `maestro/installation.py`, que l'API sert aux Paramètres).
+// Dans un clone, le produit la tire de la source même de la coque : les deux ne peuvent pas
+// diverger, et la comparaison se tait (§ `ecartDeVersions`).
+const VERSION_DU_PRODUIT = INSTALLEE
+  ? path.join(RACINE, 'version.json')
+  : path.join(RACINE, 'apps', 'desktop', 'package.json');
+
 // Mêmes défauts que `start.sh`, et surtout mêmes VARIABLES : `worktree.sh ensure` les pose par
 // worktree (#152), sans quoi deux sessions se disputeraient la fenêtre et les ports.
 const PORT_UI_DEFAUT = '3000';
@@ -186,6 +195,65 @@ function annoncer(etat, message) {
   const charge = JSON.stringify({ etat, message });
   fenetre.webContents
     .executeJavaScript(`window.maestroAttente && window.maestroAttente(${charge})`)
+    .catch(() => {});
+}
+
+/**
+ * La coque et le produit qu'elle lance ont-ils la même version (#1622) ? Rend `null` quand oui,
+ * sinon les deux versions — celle du produit vaut `null` quand elle ne se lit pas, avec le relevé
+ * qui dit pourquoi : une installation qui ne sait pas dire ce qu'elle lance est aussi incohérente
+ * qu'une installation à moitié mise à jour.
+ */
+function ecartDeVersions() {
+  const coque = app.getVersion();
+  let produit = null;
+  let releve = '';
+  try {
+    const { version } = JSON.parse(fs.readFileSync(VERSION_DU_PRODUIT, 'utf8'));
+    if (typeof version === 'string' && version.trim() !== '') produit = version.trim();
+    else releve = `${path.basename(VERSION_DU_PRODUIT)} ne porte pas de version`;
+  } catch (err) {
+    releve = err.message;
+  }
+  if (produit === coque) return null;
+  return { coque, produit, releve };
+}
+
+/**
+ * Dire l'écart dans la fenêtre, par un dialogue natif — et seulement le dire.
+ *
+ * Le front n'en sait rien et ne doit rien en savoir (ENF-12) : il lit la version du produit dans
+ * l'API, jamais celle de la coque. C'est donc ici que l'écart se voit, et nulle part ailleurs. La
+ * page d'attente ne le porte pas : elle disparaît dès que l'interface répond, et rien n'y doit
+ * grandir. Le dialogue reste, lui, jusqu'à ce qu'on l'ait lu.
+ *
+ * Maestro démarre quand même : l'écart est un constat, pas un verrou (docs/41). Il n'est pas
+ * attendu, et la ligne part aussi au journal de la coque — que la fenêtre d'attente montre si le
+ * démarrage échoue, où elle explique peut-être pourquoi.
+ */
+function signalerEcart(ecart) {
+  const produit = ecart.produit === null ? 'illisible' : ecart.produit;
+  const releve = ecart.releve === '' ? '' : ` (${ecart.releve})`;
+  retenir(
+    'stderr',
+    `[coque] installation incohérente — coque ${ecart.coque}, produit ${produit}${releve}\n`,
+  );
+  if (!fenetre || fenetre.isDestroyed()) return;
+  dialog
+    .showMessageBox(fenetre, {
+      type: 'warning',
+      title: 'Maestro',
+      message:
+        ecart.produit === null
+          ? 'Maestro ne peut pas lire la version du produit que cette fenêtre lance.'
+          : "Cette fenêtre et le produit qu'elle lance n'ont pas la même version.",
+      detail:
+        `Fenêtre de Maestro : ${ecart.coque}\nProduit : ${produit}${releve}\n\n` +
+        'Maestro démarre quand même, mais une installation à moitié mise à jour peut mal se ' +
+        'comporter. Réinstallez Maestro : son installeur pose les deux ensemble.',
+      buttons: ['Compris'],
+      noLink: true,
+    })
     .catch(() => {});
 }
 
@@ -416,6 +484,11 @@ async function demarrer() {
   ouvrirFenetre();
   await chargerAttente();
   annoncer('demarrage', null);
+
+  // Avant de lancer le produit, et sans l'attendre : le dialogue reste ouvert pendant que la
+  // stack démarre derrière lui (§ `signalerEcart`).
+  const ecart = ecartDeVersions();
+  if (ecart !== null) signalerEcart(ecart);
 
   demarrageStack = jouerLanceur(['--no-browser']);
   const code = await demarrageStack;

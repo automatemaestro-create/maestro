@@ -14,6 +14,7 @@ le lanceur du produit (`python -m maestro.lanceur`, #640) :
       runtime/python/         le CPython embarquable officiel, ses dépendances sous Lib/
       runtime/node.exe        le Node du dépôt, qui sert le front
       .env                    les réglages de la distribution bureau
+      version.json            la version du paquet, que l'API et la coque relisent (#1622)
 
 ## Un runtime embarqué, et non un gel
 
@@ -352,6 +353,25 @@ def copier_le_front(autonome: Path, depot: Path, produit: Path) -> None:
         shutil.copytree(front / "public", web / "public")
 
 
+def poser_version(depot: Path, produit: Path) -> str:
+    """La version du paquet, écrite à la racine du produit (#1622), et rendue.
+
+    L'API installée la sert aux Paramètres (`GET /api/installation`) et la coque la compare à
+    la sienne au démarrage (`apps/desktop/main.js`). Sa source est celle qui donne aussi sa
+    version au paquet, `apps/desktop/package.json` : l'écriture vit dans
+    `maestro.installation`, qui sait aussi la relire, pour qu'il n'y ait qu'une formule.
+    """
+    sys.path.insert(0, str(RACINE_DEPOT))
+    try:
+        from maestro.installation import VersionIllisible, ecrire_version
+    finally:
+        sys.path.pop(0)
+    try:
+        return ecrire_version(depot, produit)
+    except VersionIllisible as erreur:
+        raise Refus(str(erreur)) from erreur
+
+
 def jeton_du_poste() -> str | None:
     """Le jeton de l'API de **ce** poste, s'il en a un — lu, jamais engendré."""
     sys.path.insert(0, str(RACINE_DEPOT))
@@ -427,6 +447,7 @@ def assembler(
     print(f"[produit] {nombre} fichiers suivis copiés")
     copier_le_front(autonome, depot, sortie)
     (sortie / ".env").write_text(REGLAGES_DISTRIBUTION, encoding="utf-8")
+    print(f"[produit] version {poser_version(depot, sortie)}")
 
     trop_longs = chemins_trop_longs(sortie)
     if trop_longs:

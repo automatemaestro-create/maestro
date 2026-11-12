@@ -282,6 +282,30 @@ def test_le_paquet_prend_le_produit_la_ou_l_assembleur_le_pose(assembleur: Modul
     assert f"resources/{ressource['to']}/" == assembleur.SOUS_L_INSTALLATION
 
 
+def test_l_assemblage_pose_la_version_que_le_produit_installe_relit(
+    assembleur: ModuleType, tmp_path: Path
+) -> None:
+    """#1622 : la version du paquet, écrite à la racine du produit — là où l'API installée
+    la relit pour les Paramètres, et où la coque la compare à la sienne."""
+    from maestro.installation import FICHIER_VERSION, version_du_depot, version_du_produit
+
+    produit = tmp_path / "produit"
+    produit.mkdir()
+    attendue = version_du_depot(RACINE)
+
+    assert assembleur.poser_version(RACINE, produit) == attendue
+    assert (produit / FICHIER_VERSION).is_file()
+    assert version_du_produit(produit).version == attendue
+    assert "poser_version(depot, sortie)" in ASSEMBLER.read_text(encoding="utf-8")
+
+
+def test_un_depot_sans_version_arrete_l_assemblage(assembleur: ModuleType, tmp_path: Path) -> None:
+    (tmp_path / "apps" / "desktop").mkdir(parents=True)
+    (tmp_path / "apps" / "desktop" / "package.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(assembleur.Refus, match="version"):
+        assembleur.poser_version(tmp_path, tmp_path)
+
+
 def test_l_installeur_ne_demande_aucun_droit_d_administrateur() -> None:
     nsis = json.loads((COQUE / "package.json").read_text(encoding="utf-8"))["build"]["nsis"]
     assert nsis["perMachine"] is False

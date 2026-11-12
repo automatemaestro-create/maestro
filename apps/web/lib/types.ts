@@ -92,6 +92,31 @@ export type Sante = {
 };
 
 /**
+ * D'où vient le CLI `claude` que le produit lance (#1622) : `paquet` — celui que
+ * le SDK de Maestro embarque, qui suit l'installation —, `poste` — un `claude` du
+ * `PATH`, qui a son propre installeur —, ou `absent`.
+ */
+export type ProvenanceCli = "paquet" | "poste" | "absent";
+
+/**
+ * Ce que l'installation fait tourner (`GET /api/installation`, #1622).
+ *
+ * `forme` dit si le produit est une installation ou un clone du dépôt : c'est ce
+ * qui décide du geste à proposer. `produit.version` vaut `null` quand elle ne se
+ * lit pas, `releve` dit alors pourquoi. `cli_claude.version` est celle que le
+ * binaire a dite — `null` : inconnue, jamais devinée.
+ */
+export type EtatInstallation = {
+  forme: "installation" | "depot";
+  produit: { version: string | null; releve: string };
+  cli_claude: {
+    provenance: ProvenanceCli;
+    chemin: string | null;
+    version: string | null;
+  };
+};
+
+/**
  * Une tâche telle que servie par `GET /api/taches` — la carte du Kanban.
  * `ticket` (#183/#187) porte la référence du ticket externe dont elle relève —
  * `null` quand aucune n'a été transportée (inconnu ≠ absent). La vue reste

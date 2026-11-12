@@ -5627,6 +5627,31 @@ pas ici.** Chacune se lit sur la route du réglage qu'elle pose : `GET /api/four
 une seconde vérité. Revoir le parcours depuis les Paramètres n'appelle aucune route : c'est une
 demande de la session de l'écran.
 
+### 6.4sexies Ce que l'installation fait tourner (#1622) — **livré**
+
+*Quelle version de Maestro tourne ici, et quel CLI `claude` emploie-t-il ?* La section
+*Paramètres › Général* pose la question en tête de sa colonne. Le module est
+`maestro/installation.py`.
+
+- `GET /api/installation` → `{ forme, produit: { version, releve }, cli_claude: { provenance,
+  chemin, version } }`.
+  - `forme` vaut `installation` (un produit posé par le paquet) ou `depot` (un clone ou un
+    worktree, reconnu à son `.git`). C'est elle qui décide du geste proposé.
+  - `produit.version` est celle que l'assemblage a écrite dans `version.json`, à la racine du
+    produit. Dans un clone, c'est celle de `apps/desktop/package.json`. Illisible, elle vaut
+    `null`, et `releve` dit pourquoi.
+  - `cli_claude` décrit le CLI que le produit **lance**. C'est la même résolution que le
+    confinement d'une session (`_commande_du_cli`) : le CLI que le SDK embarque, sinon le
+    `claude` du `PATH`. `provenance` vaut `paquet`, `poste` ou `absent`. `version` est ce que le
+    binaire a dit à `--version`, et `null` quand elle n'est pas venue : elle n'est jamais devinée,
+    ni d'après celle du SDK. Le chemin est écrit en `/`.
+
+La lecture lance le CLI, hors de la boucle de l'API. La version lue est retenue par l'identité du
+binaire (chemin, date, taille) : rouvrir les Paramètres ne relance rien, et un CLI remplacé est
+relu. **La version de la coque n'est pas servie.** L'interface ne sait pas dans quoi elle tourne
+(ENF-12). C'est la coque qui compare sa version à celle du produit et dit l'écart dans sa fenêtre
+(docs/54 §2bis).
+
 ### 6.5 Flux SSE d'un fil de chat — et le **fil global** (#268) — **livré**
 
 Le rendu **en streaming** d'une réponse de chat (items 2/4/12 : assistant, chat global, chat

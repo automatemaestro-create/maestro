@@ -90,7 +90,7 @@ export const FAMILLES_PARAMETRES: FamilleParametres[] = [
       {
         id: "general",
         libelle: "Général",
-        description: "Backend visé par l'interface et vitalité du service.",
+        description: "Ce qui tourne ici, le backend visé par l'interface et la vitalité du service.",
       },
       {
         id: "projets",
