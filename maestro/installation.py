@@ -18,6 +18,11 @@ signale au lieu d'être supposé.
   de celle du SDK, et aucun outil interne du CLI n'est lu (#1315, docs/44).
 
 Un CLI qui ne dit pas sa version la laisse **inconnue** (`None`) : elle n'est jamais devinée.
+
+**La forme du produit** — installé ou clone — se lit sur le réglage que le paquet pose
+(`maestro.emplacements.installation`), celui qui range aussi la configuration de la personne : un
+seul signal décide de « installé » (#1633). La présence d'un `.git` n'en décide pas : une archive
+du dépôt n'en porte pas, et un `.git` peut traîner dans une installation.
 """
 
 from __future__ import annotations
@@ -26,12 +31,13 @@ import importlib.util
 import json
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from maestro.clients_du_poste import lire_version
+from maestro.emplacements import installation
 from maestro.espace import racine_de_la_copie
 
 #: Le fichier où l'assemblage écrit la version du produit, à la racine de celui-ci. La coque le
@@ -42,7 +48,8 @@ FICHIER_VERSION = "version.json"
 #: paquet (electron-builder la lit là). L'assemblage la recopie, un clone la lit en place.
 SOURCE_DE_LA_VERSION = PurePosixPath("apps/desktop/package.json")
 
-#: `installation` : un produit posé par le paquet ; `depot` : un clone (ou un worktree) du dépôt.
+#: `installation` : un produit posé par le paquet, qui le dit par son réglage ; `depot` : tout
+#: autre — un clone, un worktree, une copie du dépôt (`forme_du_produit`).
 Forme = Literal["installation", "depot"]
 
 #: D'où vient le CLI que le produit lance : `paquet` (celui que le SDK embarque, qui suit
@@ -60,9 +67,14 @@ class VersionIllisible(Exception):
     """La source de la version ne la donne pas — le message dit pourquoi."""
 
 
-def forme_du_produit(racine: Path) -> Forme:
-    """Un clone porte `.git` (dossier, ou fichier dans un worktree) ; une installation jamais."""
-    return "depot" if (racine / ".git").exists() else "installation"
+def forme_du_produit(environnement: Mapping[str, str] | None = None) -> Forme:
+    """`installation` quand le paquet l'a dit (`MAESTRO_INSTALLATION`), `depot` sinon.
+
+    Le réglage qui range la configuration (`maestro.emplacements.installation`), et lui seul :
+    le produit ne se présente jamais autrement qu'il ne range ce qu'il écrit. Une valeur
+    illisible lève `InstallationIllisible`, sans être rabattue sur l'une ou l'autre forme.
+    """
+    return "installation" if installation(environnement) else "depot"
 
 
 def version_du_depot(depot: Path) -> str:
@@ -99,8 +111,12 @@ class VersionProduit:
     releve: str = ""
 
 
-def version_du_produit(racine: Path) -> VersionProduit:
-    """`version.json` s'il a été écrit à l'assemblage ; sinon la source d'un clone."""
+def version_du_produit(racine: Path, forme: Forme) -> VersionProduit:
+    """`version.json` s'il a été écrit à l'assemblage ; sinon la source d'un clone.
+
+    Une installation sans `version.json` le dit : elle ne se rabat pas sur une source qu'un
+    paquet ne porte pas.
+    """
     ecrite = racine / FICHIER_VERSION
     if ecrite.is_file():
         try:
@@ -110,7 +126,7 @@ def version_du_produit(racine: Path) -> VersionProduit:
         if isinstance(version, str) and version.strip():
             return VersionProduit(version.strip())
         return VersionProduit(None, f"{FICHIER_VERSION} ne porte pas de version")
-    if forme_du_produit(racine) == "installation":
+    if forme == "installation":
         return VersionProduit(None, f"{FICHIER_VERSION} absent de l'installation")
     try:
         return VersionProduit(version_du_depot(racine))
@@ -187,24 +203,27 @@ class EtatInstallation:
 class LecteurInstallation:
     """Lit l'état de l'installation à la demande — la seule porte vers le poste de ce sujet.
 
-    Ses trois sorties hors du process (le paquet du SDK, le `PATH`, le binaire lancé avec
-    `--version`) sont des paramètres, pour que les tests décrivent un poste au lieu de lire le
-    vrai. La version lue est retenue par **identité du binaire** (chemin, date de modification,
-    taille) : rouvrir les Paramètres ne relance rien, et un CLI remplacé est relu. Une lecture
-    en échec n'est pas retenue — elle peut réussir à la suivante.
+    Ses sorties hors du process (l'environnement, le paquet du SDK, le `PATH`, le binaire lancé
+    avec `--version`) sont des paramètres, pour que les tests décrivent un poste au lieu de lire
+    le vrai ; `environnement` à `None`, c'est celui du process, relu à chaque lecture. La version
+    lue est retenue par **identité du binaire** (chemin, date de modification, taille) : rouvrir
+    les Paramètres ne relance rien, et un CLI remplacé est relu. Une lecture en échec n'est pas
+    retenue — elle peut réussir à la suivante.
     """
 
     racine: Path = field(default_factory=racine_de_la_copie)
+    environnement: Mapping[str, str] | None = None
     sdk: Path | None = None
     resolveur: Resolveur = shutil.which
     versionneur: Versionneur = lire_version
     _versions: dict[tuple[str, int, int], str] = field(default_factory=dict, repr=False)
 
     def lire(self) -> EtatInstallation:
+        forme = forme_du_produit(self.environnement)
         provenance, chemin = cli_claude_resolu(sdk=self.sdk, resolveur=self.resolveur)
         return EtatInstallation(
-            forme=forme_du_produit(self.racine),
-            produit=version_du_produit(self.racine),
+            forme=forme,
+            produit=version_du_produit(self.racine, forme),
             cli=CliClaude(provenance, chemin, self._version_du_cli(chemin)),
         )
 

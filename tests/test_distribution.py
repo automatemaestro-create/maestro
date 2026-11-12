@@ -198,6 +198,7 @@ def test_les_reglages_de_la_distribution_sont_le_mode_local_installe(
     """Mode local (#639), et le produit se sait installé (#1620) : c'est le paquet qui le
     dit, jamais un chemin deviné ni la coque."""
     from maestro.emplacements import VALEUR_INSTALLATION, VARIABLE_INSTALLATION, installation
+    from maestro.installation import forme_du_produit
 
     reglages = dict(
         ligne.split("=", 1)
@@ -209,6 +210,8 @@ def test_les_reglages_de_la_distribution_sont_le_mode_local_installe(
         VARIABLE_INSTALLATION: VALEUR_INSTALLATION,
     }
     assert installation(reglages) is True
+    # Et le même réglage le présente installé (#1633) : `GET /api/installation` ne devine rien.
+    assert forme_du_produit(reglages) == "installation"
 
 
 def test_un_front_qui_porte_le_jeton_est_trouve(assembleur: ModuleType, tmp_path: Path) -> None:
@@ -305,7 +308,7 @@ def test_l_assemblage_pose_la_version_que_le_produit_installe_relit(
 
     assert assembleur.poser_version(RACINE, produit) == attendue
     assert (produit / FICHIER_VERSION).is_file()
-    assert version_du_produit(produit).version == attendue
+    assert version_du_produit(produit, "installation").version == attendue
     assert "poser_version(depot, sortie)" in ASSEMBLER.read_text(encoding="utf-8")
 
 
