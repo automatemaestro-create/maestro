@@ -263,6 +263,30 @@ export function panneDe(e: unknown): PanneApi {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** L'API n'a pas répondu du tout : la panne est typée à la source, pas lue dans un texte. */
+export function sansReponse(e: unknown): e is ErreurApi {
+  return e instanceof ErreurApi && e.statut === null;
+}
+
+/**
+ * Ce qu'un geste d'écriture refusé dit à l'écran : sur une API qui n'a pas
+ * répondu, la phrase du geste (`sansApi` : ce qui n'a pas eu lieu, puis quoi
+ * faire), sinon le motif que l'API a rendu. Le message d'une `ErreurApi`
+ * injoignable nomme une route, et celui du navigateur est « Failed to fetch » :
+ * aucun des deux ne s'affiche (#1638).
+ */
+export function refusEnMots(e: unknown, sansApi: string): string {
+  if (sansReponse(e)) return sansApi;
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Ce que dit un geste dont l'écriture a abouti mais dont la **relecture** n'a
+ * pas eu de réponse : dire alors que rien n'a changé serait faux.
+ */
+export const GESTE_ABOUTI_SANS_RELECTURE =
+  "Le geste a abouti, mais l'API n'a plus répondu pour relire l'écran. Rechargez la page quand maestro-api répond.";
+
 /**
  * Ce qu'une réponse en échec dit d'elle-même : son `detail` quand il est
  * lisible, et le magasin quand l'API **nomme** cette panne-là (#1206).
@@ -605,6 +629,10 @@ export function chargerJournal(
  * dont l'échec relaye le `detail` du backend : c'est le message montré à
  * l'utilisateur (404 tâche inconnue, 409 demande déjà tranchée, 422 contenu
  * vide…).
+ *
+ * Une API qui ne répond pas lève `ErreurApi.injoignable`, comme
+ * `envoyerJsonEtLire` : l'écran nomme la panne par sa classe (`refusEnMots`),
+ * et le « Failed to fetch » du navigateur n'arrive jamais jusqu'à lui (#1638).
  */
 async function envoyerJson(
   chemin: string,
@@ -612,13 +640,18 @@ async function envoyerJson(
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<void> {
-  const reponse = await appel(`${urlApi()}${chemin}`, {
-    method: methode,
-    ...(corps !== undefined && {
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(corps),
-    }),
-  });
+  let reponse: Response;
+  try {
+    reponse = await appel(`${urlApi()}${chemin}`, {
+      method: methode,
+      ...(corps !== undefined && {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corps),
+      }),
+    });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) {
     let detail = `${refusParDefaut} (${reponse.status})`;
     try {

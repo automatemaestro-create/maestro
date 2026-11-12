@@ -33,6 +33,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContenuOngletAgent } from "@/components/ContenuOngletAgent";
+import { ErreurApi } from "@/lib/api";
 import {
   PLAYBOOK_SOURCE_DEFAUT,
   type LexiquePlaybook,
@@ -56,11 +57,15 @@ let redaction: RedactionPlaybook | Error;
 
 /** Les écritures faites, dans l'ordre : c'est là qu'on lit ce qui a été publié. */
 const gestes: { verbe: string; argument: unknown }[] = [];
+/** L'erreur que lèveront les écritures (#1638), puis les relectures de la fiche. */
+let coupure: unknown = null;
+let coupureRelecture: unknown = null;
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const reel = await importOriginal<typeof import("@/lib/api")>();
   const aides = await import("./aides");
   const noter = (verbe: string) => (_agent: string, argument?: unknown) => {
+    if (coupure !== null) return Promise.reject(coupure);
     gestes.push({ verbe, argument });
     return Promise.resolve();
   };
@@ -70,7 +75,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     chargerJournal: () => Promise.resolve(aides.pageJournalCourante()),
     chargerFournisseurs: () => Promise.resolve(aides.fournisseursDuPoste()),
     chargerCatalogue: () => Promise.resolve(aides.catalogueAgents()),
-    chargerPlaybook: () => Promise.resolve(fiche),
+    chargerPlaybook: () =>
+      coupureRelecture === null ? Promise.resolve(fiche) : Promise.reject(coupureRelecture),
     chargerVersionsPlaybook: () => Promise.resolve(versions),
     chargerPropositionsPlaybook: () => Promise.resolve(propositions),
     chargerLexiquePlaybook: () =>
@@ -142,6 +148,8 @@ function historique() {
 
 beforeEach(() => {
   gestes.length = 0;
+  coupure = null;
+  coupureRelecture = null;
   contenus = {};
   versions = [];
   propositions = [];
@@ -223,6 +231,35 @@ describe("① la version en vigueur se lit sans rien ouvrir", () => {
         { verbe: "publier", argument: "## Mission\nTu écris des tests." },
       ]),
     );
+  });
+
+  it("dit en mots une publication que l'API n'a pas reçue, et garde le brouillon (#1638)", async () => {
+    const { utilisateur } = await monter();
+    coupure = ErreurApi.injoignable("/api/playbooks/dev");
+    await utilisateur.type(zone(), "\nTu écris des tests.");
+
+    await utilisateur.click(screen.getByRole("button", { name: "Publier la version 1" }));
+
+    const alerte = await within(section()).findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      "L'API n'a pas répondu : le playbook n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
+    expect(alerte).not.toHaveTextContent(/Failed to fetch|\/api\//);
+    expect(zone()).toHaveValue("## Mission\nTu écris du code.\nTu écris des tests.");
+  });
+
+  it("ne dit pas « rien n'a changé » quand seule la relecture est restée sans réponse (#1638)", async () => {
+    const { utilisateur } = await monter();
+    coupureRelecture = ErreurApi.injoignable("/api/playbooks/dev");
+    await utilisateur.type(zone(), "\nTu écris des tests.");
+
+    await utilisateur.click(screen.getByRole("button", { name: "Publier la version 1" }));
+
+    const alerte = await within(section()).findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      "Le geste a abouti, mais l'API n'a plus répondu pour relire l'écran. Rechargez la page quand maestro-api répond.",
+    );
+    expect(gestes).toHaveLength(1);
   });
 });
 

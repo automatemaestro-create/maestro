@@ -51,14 +51,16 @@ import {
 } from "@/components/Primitives";
 import {
   briefDepuisEdition,
+  DECISION_BRIEF_SANS_API,
   editionDepuis,
   estCorrige,
   manquesDuBrief,
+  REPONSES_BRIEF_SANS_API,
   toursDeClarification,
   type BriefEdite,
   type CleSectionListe,
 } from "@/lib/brief";
-import { chargerExecution } from "@/lib/api";
+import { chargerExecution, refusEnMots } from "@/lib/api";
 import { useEtatGlobal } from "@/lib/etatGlobal";
 import { formatHeureRelative } from "@/lib/format";
 import { useHorloge } from "@/lib/horloge";
@@ -147,7 +149,7 @@ export function ValidationBrief({ execution }: { execution: ResumeExecution }) {
         approuve && estCorrige(brief, edite) ? briefDepuisEdition(edite) : null;
       await trancherBrief(runId, { approuve, brief: corrige });
     } catch (e: unknown) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, DECISION_BRIEF_SANS_API));
     } finally {
       setEnCours(false);
     }
@@ -166,7 +168,7 @@ export function ValidationBrief({ execution }: { execution: ResumeExecution }) {
         brief.questions.map((_, rang) => reponses[rang] ?? ""),
       );
     } catch (e: unknown) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, REPONSES_BRIEF_SANS_API));
     } finally {
       setEnCours(false);
     }

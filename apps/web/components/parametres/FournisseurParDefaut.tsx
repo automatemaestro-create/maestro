@@ -46,12 +46,13 @@ import { IconeAlerte, IconeCoche, IconeStatutAFaire } from "@/components/Icones"
 import { BadgeEtat, Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
 import { RefusMotive, refusDepuis } from "@/components/projets/ExplorateurDossiers";
 import {
-  ErreurApi,
   chargerFournisseurDefaut,
   chargerFournisseurs,
   effacerFournisseurDefaut,
   enregistrerFournisseurDefaut,
   eprouverFournisseurDefaut,
+  refusEnMots,
+  sansReponse,
 } from "@/lib/api";
 import {
   type OptionAcces,
@@ -90,17 +91,6 @@ const ENREGISTREMENT_SANS_API =
   "L'API n'a pas répondu : rien n'a été enregistré. Vérifiez que maestro-api tourne, puis réessayez.";
 const RETRAIT_SANS_API =
   "L'API n'a pas répondu : le choix enregistré reste en place. Vérifiez que maestro-api tourne, puis réessayez.";
-
-/** L'API n'a pas répondu du tout : la panne est typée à la source, pas lue dans un texte. */
-function sansReponse(e: unknown): boolean {
-  return e instanceof ErreurApi && e.statut === null;
-}
-
-/** Ce qu'un geste refusé dit : la panne de transport en mots, sinon le motif rendu. */
-function refusEnMots(e: unknown, sansApi: string): string {
-  if (sansReponse(e)) return sansApi;
-  return e instanceof Error ? e.message : String(e);
-}
 
 export function FournisseurParDefaut({
   enEtape = false,

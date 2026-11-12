@@ -2177,6 +2177,20 @@ sur la vraie stack à la relecture de #1217 :
   la transition (`auRetour`), et le shell y branche `relire`
   (`tests/magasin.test.tsx`, ④).
 
+**Un geste que l'API n'a pas reçu se dit à l'endroit du geste** (#1638). Les
+helpers d'écriture (`envoyerJson`, `envoyerJsonEtLire`, `ecrireProjet`) lèvent
+`ErreurApi.injoignable(chemin)` quand le `fetch` rejette, comme les lectures.
+Un écran qui écrit ne montre ni ce message, qui nomme une route, ni le « Failed
+to fetch » du navigateur : son `catch` passe par `refusEnMots(e, phrase)`. La
+phrase dit ce qui n'a pas eu lieu, puis le geste (« L'API n'a pas répondu : la
+décision n'a pas été transmise. Vérifiez que maestro-api tourne, puis
+réessayez. »). Un refus motivé (4xx, 5xx) garde son `detail`. Quand l'écriture
+a abouti et que seule la relecture qui suit est restée sans réponse, l'écran
+dit `GESTE_ABOUTI_SANS_RELECTURE`, jamais « rien n'a changé ». La panne se
+reconnaît à sa classe (`sansReponse`), jamais à son texte. Les écritures de
+`envoyerJson` sont gardées côté client et à l'écran par
+`tests/ecriture-sans-reponse.test.tsx`.
+
 Les pannes se regardent sur la vraie stack
 ([docs/41 §4](../../docs/41-decision-maestro-juge-il-ne-bride-pas.md)). **API
 injoignable** : `bash scripts/controltower/start.sh --couper-api` coupe l'API

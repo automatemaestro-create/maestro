@@ -73,6 +73,7 @@ import {
   definirActivationsMcp,
   definirPermissions,
   migrerDeclarationsMcp,
+  refusEnMots,
   retirerAccord,
 } from "@/lib/api";
 import { formatDateHeure } from "@/lib/format";
@@ -88,6 +89,15 @@ import type {
 
 /** L'écran d'où une intégration s'ajoute au projet, se reconfigure et se retire. */
 const CHEMIN_INTEGRATIONS = "/integrations";
+
+/**
+ * Ce qu'une écriture que l'API n'a pas reçue dit dans sa section (#1638) : ce qui
+ * n'a pas eu lieu, puis le geste qui y répond.
+ */
+const ACTIVATION_SANS_API =
+  "L'API n'a pas répondu : l'activation n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
+const POLITIQUE_SANS_API =
+  "L'API n'a pas répondu : la politique de permissions n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /**
  * L'onglet : charge la fiche, la recharge après chaque écriture, et monte les
@@ -211,7 +221,7 @@ function SectionIntegrations({
       setActivations(cible);
       return true;
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, ACTIVATION_SANS_API));
       return false;
     } finally {
       setEnCours(null);
@@ -728,7 +738,7 @@ function SectionPermissions({ fiche }: { fiche: AgentCatalogueDetail }) {
       setInvalide(null);
       setDediee(true);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, POLITIQUE_SANS_API));
     } finally {
       setEnCours(false);
     }

@@ -37,6 +37,7 @@ import { ATTENTES } from "@/components/runs/EtatRun";
 import { PAGE_DU_CADRAGE } from "@/lib/brief";
 import { ATTENTE_BRIEF, ATTENTE_REPONSES } from "@/lib/execution";
 import { entreeParLibelle } from "@/lib/navigation";
+import { ErreurApi } from "@/lib/api";
 import type { Brief, DetailExecution, Evenement, ResumeExecution } from "@/lib/types";
 
 import { rendreAvecEtat, usageFactice } from "./aides";
@@ -195,6 +196,22 @@ describe("critère 1 — le brief se lit, se corrige et se tranche dans le fil",
     });
   });
 
+  it("une décision que l'API n'a pas reçue le dit en mots (#1638)", async () => {
+    const trancherBrief = vi
+      .fn()
+      .mockRejectedValue(ErreurApi.injoignable("/api/executions/run-1/brief/decision"));
+    await fil(runFactice(), { trancherBrief });
+
+    await userEvent.click(screen.getByRole("button", { name: "Refuser" }));
+
+    expect(
+      await screen.findByText(
+        "L'API n'a pas répondu : le brief n'a pas été tranché. Vérifiez que maestro-api tourne, puis réessayez.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Failed to fetch|\/api\//)).toBeNull();
+  });
+
   it("bloque l'approbation d'un brief que le schéma refuserait, en le disant", async () => {
     await fil();
     await userEvent.clear(screen.getByLabelText(/^Critères d'acceptation/));
@@ -247,6 +264,24 @@ describe("critère 2 — les questions se répondent dans le fil", () => {
     // chaque réponse à la question suivante. Ne pas savoir est une réponse — la
     // question part en hypothèse explicite plutôt que d'être reposée.
     expect(repondreAuBrief).toHaveBeenCalledWith("run-1", ["SendGrid", ""]);
+  });
+
+  it("des réponses que l'API n'a pas reçues le disent en mots (#1638)", async () => {
+    chargerExecution.mockResolvedValue(detailFactice(AVEC_QUESTIONS));
+    const repondreAuBrief = vi
+      .fn()
+      .mockRejectedValue(ErreurApi.injoignable("/api/executions/run-1/brief/reponses"));
+    await fil(RUN_QUESTIONS, { repondreAuBrief });
+
+    await userEvent.type(screen.getByLabelText("Quel fournisseur d'e-mail ?"), "SendGrid");
+    await userEvent.click(screen.getByRole("button", { name: "Envoyer les réponses" }));
+
+    expect(
+      await screen.findByText(
+        "L'API n'a pas répondu : vos réponses n'ont pas été envoyées. Vérifiez que maestro-api tourne, puis réessayez.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Failed to fetch|\/api\//)).toBeNull();
   });
 
   it("déroule les tours déjà joués dans le fil, sans replier, et nomme le sans-réponse", async () => {

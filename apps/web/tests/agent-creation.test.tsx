@@ -27,6 +27,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CreationAgentEcran } from "@/components/CreationAgentEcran";
+import { ErreurApi } from "@/lib/api";
 import type { DefinitionAgent, DefinitionAgentProposee } from "@/lib/types";
 
 import { navigations, poserFournisseurs } from "./aides";
@@ -37,8 +38,8 @@ const creations: { nom: string; definition: DefinitionAgent }[] = [];
 const intentions: string[] = [];
 /** Ce que l'assistant rendra, ou l'échec posé ici. */
 let proposition: DefinitionAgentProposee | Error;
-/** Ce que la création fera : réussir, ou refuser avec ce motif. */
-let refusCreation: string | null = null;
+/** Ce que la création fera : réussir, refuser avec ce motif, ou lever cette erreur. */
+let refusCreation: string | Error | null = null;
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const reel = await importOriginal<typeof import("@/lib/api")>();
@@ -51,9 +52,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
     chargerCatalogue: () => Promise.resolve(aides.catalogueAgents()),
     creerAgent: (nom: string, definition: DefinitionAgent) => {
       creations.push({ nom, definition });
-      return refusCreation === null
-        ? Promise.resolve()
-        : Promise.reject(new Error(refusCreation));
+      if (refusCreation === null) return Promise.resolve();
+      return Promise.reject(
+        refusCreation instanceof Error ? refusCreation : new Error(refusCreation),
+      );
     },
     genererDefinitionAgent: (intention: string) => {
       intentions.push(intention);
@@ -203,6 +205,22 @@ describe("① la création aboutit et mène à la fiche née", () => {
     expect(alerte).toHaveTextContent("nom d'agent réservé : qa");
     // Rien n'a été créé, donc rien à ouvrir : rester sur la saisie est la seule
     // conduite qui ne perde pas le travail.
+    expect(navigations).toHaveLength(0);
+    expect(screen.getByRole("textbox", { name: /^Nom/ })).toHaveValue("dev-front");
+  });
+
+  it("dit en mots une création que l'API n'a pas reçue, et garde la saisie (#1638)", async () => {
+    refusCreation = ErreurApi.injoignable("/api/catalogue");
+    const { utilisateur } = monter();
+    await remplir(utilisateur);
+
+    await utilisateur.click(screen.getByRole("button", { name: "Créer l'agent" }));
+
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      "L'API n'a pas répondu : l'agent n'a pas été créé. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
+    expect(alerte).not.toHaveTextContent(/Failed to fetch|\/api\//);
     expect(navigations).toHaveLength(0);
     expect(screen.getByRole("textbox", { name: /^Nom/ })).toHaveValue("dev-front");
   });

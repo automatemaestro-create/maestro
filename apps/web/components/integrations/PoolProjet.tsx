@@ -33,7 +33,7 @@ import {
 import { cheminOnglet } from "@/lib/agents";
 import { formatDateHeure } from "@/lib/format";
 import { entreeParLibelle } from "@/lib/navigation";
-import { supprimerIntegrationPoolMcp } from "@/lib/api";
+import { refusEnMots, supprimerIntegrationPoolMcp } from "@/lib/api";
 import type {
   AgentCatalogue,
   EtatSecretPool,
@@ -43,6 +43,10 @@ import { useState } from "react";
 
 import { libelleMode } from "./modes";
 import type { UsageDuPool } from "./usage";
+
+/** Ce qu'un retrait que l'API n'a pas reçu dit sur la ligne du pool (#1638). */
+const RETRAIT_SANS_API =
+  "L'API n'a pas répondu : l'intégration reste au pool. Vérifiez que maestro-api tourne, puis réessayez.";
 
 export function PoolProjet({
   pool,
@@ -144,7 +148,7 @@ function LignePool({
       await supprimerIntegrationPoolMcp(integration.id);
       onRetrait();
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, RETRAIT_SANS_API));
       setEnCours(false);
     }
   };

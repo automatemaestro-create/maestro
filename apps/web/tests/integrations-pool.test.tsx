@@ -38,6 +38,7 @@ import userEvent from "@testing-library/user-event";
 import { PoolProjet } from "@/components/integrations/PoolProjet";
 import { libelleMode } from "@/components/integrations/modes";
 import { USAGE_INCONNU, usageDuPool } from "@/components/integrations/usage";
+import { ErreurApi } from "@/lib/api";
 import type {
   AgentCatalogue,
   EtatSecretPool,
@@ -307,6 +308,25 @@ describe("retirer du pool (#270)", () => {
     );
     expect(onChangement).not.toHaveBeenCalled();
     // Rendue : le pool n'a pas bougé, la ligne est toujours là et retirable.
+    expect(screen.getByRole("button", { name: "Retirer" })).toBeEnabled();
+  });
+
+  it("dit en mots un retrait que l'API n'a pas reçu (#1638)", async () => {
+    const utilisateur = userEvent.setup();
+    const onChangement = vi.fn();
+    supprimerIntegrationPoolMcp.mockRejectedValueOnce(
+      ErreurApi.injoignable("/api/mcp/pool/github"),
+    );
+    monterLePool({ onChangement });
+
+    await utilisateur.click(screen.getByRole("button", { name: "Retirer" }));
+
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      "L'API n'a pas répondu : l'intégration reste au pool. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
+    expect(alerte).not.toHaveTextContent(/Failed to fetch|\/api\//);
+    expect(onChangement).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Retirer" })).toBeEnabled();
   });
 });

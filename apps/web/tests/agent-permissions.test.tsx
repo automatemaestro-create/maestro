@@ -31,6 +31,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContenuOngletAgent } from "@/components/ContenuOngletAgent";
+import { ErreurApi } from "@/lib/api";
 import type {
   AccordEtendu,
   AgentCatalogueDetail,
@@ -47,6 +48,8 @@ const ecrites: { agent: string; politique: PolitiquePermissions }[] = [];
 
 /** Ce que la prochaine écriture fera : rien, ou le refus posé ici. */
 let refus: string | null = null;
+/** L'erreur que lèvera l'écriture de la politique quand l'API ne répond pas (#1638). */
+let coupure: unknown = null;
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const reel = await importOriginal<typeof import("@/lib/api")>();
@@ -59,6 +62,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     chargerCatalogue: () => Promise.resolve(aides.catalogueAgents()),
     chargerAgentCatalogue: () => Promise.resolve(ficheServie),
     definirPermissions: (agent: string, politique: PolitiquePermissions) => {
+      if (coupure !== null) return Promise.reject(coupure);
       ecrites.push({ agent, politique });
       return refus === null
         ? Promise.resolve()
@@ -131,6 +135,7 @@ beforeEach(() => {
   retraits.length = 0;
   accordsServis = [];
   refus = null;
+  coupure = null;
   poserFiche();
 });
 
@@ -292,6 +297,19 @@ describe("② le motif affiché est celui du dépôt", () => {
     const alerte = await within(section()).findByRole("alert");
     expect(alerte).toHaveTextContent("entrée deny");
     expect(alerte).toHaveTextContent("mon outil");
+  });
+
+  it("dit en mots une politique que l'API n'a pas reçue (#1638)", async () => {
+    coupure = ErreurApi.injoignable("/api/permissions/dev");
+    const { utilisateur } = await monter();
+
+    await utilisateur.type(screen.getByLabelText("deny — l'emporte sur tout"), "Bash{Enter}");
+
+    const alerte = await within(section()).findByRole("alert");
+    expect(alerte).toHaveTextContent(
+      "L'API n'a pas répondu : la politique de permissions n'a pas changé. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
+    expect(alerte).not.toHaveTextContent(/Failed to fetch|\/api\//);
   });
 
   it("signale une entrée hors des outils exposés sans l'interdire", async () => {
