@@ -91,7 +91,7 @@ from maestro.config import Settings, load_settings
 from maestro.controltower.acces import FICHIER_JETON
 from maestro.controltower.donnees import donnees_du_banc
 from maestro.controltower.hote_detache import PREFIXE_ATELIER
-from maestro.controltower.persistence import SUFFIXE_SQLITE
+from maestro.controltower.persistence import SUFFIXE_SAUVEGARDE, SUFFIXE_SQLITE
 from maestro.emplacements import (
     NOM_ATELIERS,
     NOM_ETAT,
@@ -512,6 +512,12 @@ def _etat_du_poste(gardes: Protections) -> list[Entree]:
         nom = chemin.name
         if nom in declares:
             entrees.append(Entree(chemin, RACINE_ETAT, declares[nom], DECLARE))
+        elif nom.endswith(SUFFIXE_SQLITE + SUFFIXE_SAUVEGARDE):
+            sauvegarde = (
+                "sauvegarde d'un journal local avant sa dernière migration, gardée "
+                "jusqu'à la suivante (maestro.controltower.persistence)"
+            )
+            entrees.append(Entree(chemin, RACINE_ETAT, sauvegarde, DECLARE))
         elif nom.endswith(SUFFIXE_SQLITE) or f"{SUFFIXE_SQLITE}-" in nom:
             journal = "journal local d'un espace (maestro.controltower.persistence)"
             entrees.append(Entree(chemin, RACINE_ETAT, journal, DECLARE))

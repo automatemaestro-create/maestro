@@ -39,6 +39,7 @@ from maestro.config import Settings, load_settings
 from maestro.controltower.events import REDIS_URL_DEFAUT
 from maestro.controltower.persistence import (
     SUPPORT_SQLITE,
+    TABLE_ACQUIS,
     chemin_sqlite,
     ouvrir_sqlite,
     support_persistance,
@@ -59,10 +60,6 @@ from maestro.orchestrator.schema import Task
 #: run. Nom de l'espace commun, rangé dans celui de la copie à la construction
 #: (#1164) — la purge le relit d'ici, jamais recopié (#830).
 PREFIXE_ACQUIS = "maestro.acquis:"
-
-#: La table de l'état acquis dans le fichier du journal local — une ligne par
-#: entrée `(run_id, cle)`, remplacée sur réécriture.
-TABLE_ACQUIS = "acquis"
 
 
 def _texte(valeur: bytes | str) -> str:
@@ -118,7 +115,8 @@ class MagasinAcquisSqlite(MagasinAcquis):
 
     Même régime que `SqliteEventLog`, et par le même code (`ouvrir_sqlite`) :
     connexion paresseuse, accès sérialisés par un verrou asyncio, chaque geste dans
-    un thread — `sqlite3` est synchrone.
+    un thread — `sqlite3` est synchrone. Sa table vient du schéma du fichier
+    (`persistence.MIGRATIONS`), mis à niveau par l'écrivain qui ouvre le premier.
     """
 
     def __init__(self, chemin: Path | str | None = None) -> None:
@@ -173,13 +171,7 @@ class MagasinAcquisSqlite(MagasinAcquis):
 
     def _connexion_ouverte(self) -> sqlite3.Connection:
         if self._connexion is None:
-            connexion = ouvrir_sqlite(self._chemin)
-            connexion.execute(
-                f"CREATE TABLE IF NOT EXISTS {TABLE_ACQUIS} "
-                "(run_id TEXT NOT NULL, cle TEXT NOT NULL, charge TEXT NOT NULL, "
-                "PRIMARY KEY (run_id, cle))"
-            )
-            self._connexion = connexion
+            self._connexion = ouvrir_sqlite(self._chemin)
         return self._connexion
 
 
