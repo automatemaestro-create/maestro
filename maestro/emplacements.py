@@ -17,6 +17,16 @@ répond tient en trois lignes, et ce module en est la seule source :
 - `<temp>/maestro/` (`racine_jetable`) — le jetable : ateliers d'hôte, espaces
   des tâches, copies de vérification. Ramassée (`maestro.sandbox.ramassage`).
 
+**Où vit ce que le produit écrit en fonctionnant** (#1620) — projets déclarés,
+réglages, secrets, surcharges, conversations, playbooks, permissions, serveurs
+MCP ajoutés : dans un clone, sous le `core/` de la copie (`racine_livree`), à
+côté de ce que le dépôt y suit ; **installé**, sous `~/.maestro/configuration/`
+(`configuration_du_poste`), parce que le dossier d'installation ne garde que ce
+que le paquet a posé — l'installeur l'efface en entier à chaque mise à jour.
+`racine_configuration` tranche entre les deux, sur le réglage que le paquet pose
+(`VARIABLE_INSTALLATION`), jamais sur un chemin deviné ni sur Electron (ENF-12).
+Ce n'est pas une quatrième racine : c'est un dossier de l'état du poste.
+
 Tout autre dossier que le produit crée hors d'un projet est un défaut, et
 `tests/test_emplacements.py` le fait rougir : sous `maestro/`, aucun module ne
 compose un chemin sous le dossier personnel ni n'ouvre un dossier temporaire
@@ -64,6 +74,34 @@ NOM_ATELIERS = "ateliers"
 #: Le sous-dossier du répertoire temporaire qui porte tout le jetable.
 NOM_JETABLE = "maestro"
 
+#: Le réglage par lequel le produit apprend qu'il est **installé** (#1620). Le paquet
+#: le pose dans les réglages de la distribution (`scripts/distribution/assembler.py`) ;
+#: vide ou absent, le produit est un clone. Toute autre valeur que `VALEUR_INSTALLATION`
+#: est une erreur de configuration, jamais un repli sur l'un ou l'autre rangement.
+VARIABLE_INSTALLATION = "MAESTRO_INSTALLATION"
+VALEUR_INSTALLATION = "1"
+
+#: Le dossier de l'état du poste où une installation range ce qu'elle écrit : la même
+#: arborescence que le `core/` du dépôt (`projets/`, `reglages/`, `secrets/`…), plus le
+#: `.env` de la personne (`NOM_ENV`).
+NOM_CONFIGURATION = "configuration"
+
+#: Le dossier de l'état du poste où le lanceur d'une installation tient ses journaux et
+#: sa session (`maestro.lanceur.emplacement`).
+NOM_LANCEUR = "lanceur"
+
+#: Le dossier de l'état du poste où l'installeur dépose, avant que l'ancienne version ne
+#: soit désinstallée, ce qu'elle avait écrit sous son dossier (`apps/desktop/installer.nsh`)
+#: — repris une fois au démarrage suivant (`maestro.lanceur.reprise`), puis retiré.
+NOM_REPRISE = "reprise"
+
+#: Le nom du fichier de réglages, dans le produit comme dans la configuration du poste.
+NOM_ENV = ".env"
+
+#: Le dossier du code qui porte la configuration **livrée** : les défauts suivis par le
+#: dépôt, que le paquet embarque tels quels (`core/mcp/*.json`, `core/permissions/*.json`).
+NOM_LIVREE = "core"
+
 #: Le témoin par lequel l'occupant d'un jetable **non marqué** se nomme : son pid,
 #: en texte. Un fichier et non le nom, parce que l'occupant naît après le dossier
 #: (voir l'en-tête) ; jamais dans un espace de tâche, où l'agent le verrait dans
@@ -108,6 +146,103 @@ def racine_ateliers() -> Path:
     `maestro.portee`), et le jeton en est aussi loin d'ici que de `~/maestro-scenarios`.
     """
     return racine_etat() / NOM_ATELIERS
+
+
+# ── Ce que le produit écrit en fonctionnant (#1620) ───────────────────────────
+
+
+class InstallationIllisible(ValueError):
+    """`MAESTRO_INSTALLATION` porte une valeur que le produit ne sait pas lire."""
+
+
+def installation(environnement: Mapping[str, str] | None = None) -> bool:
+    """Le produit tourne-t-il depuis une installation ? Lu sur `VARIABLE_INSTALLATION`.
+
+    Lève `InstallationIllisible` sur une valeur inconnue : se croire clone quand on est
+    installé rangerait les projets de la personne dans le dossier que la prochaine
+    mise à jour efface, et l'inverse les chercherait là où ils ne sont pas.
+    """
+    env = os.environ if environnement is None else environnement
+    brut = (env.get(VARIABLE_INSTALLATION) or "").strip()
+    if not brut:
+        return False
+    if brut == VALEUR_INSTALLATION:
+        return True
+    raise InstallationIllisible(
+        f"{VARIABLE_INSTALLATION}={brut!r} : seule la valeur "
+        f"{VALEUR_INSTALLATION!r} est reconnue (vide ou absente : un clone du dépôt)."
+    )
+
+
+def racine_du_code() -> Path:
+    """Le dossier qui porte `maestro/` — la copie du dépôt, ou le produit installé."""
+    return Path(__file__).resolve().parents[1]
+
+
+def racine_livree() -> Path:
+    """`core/` du code : la configuration que le dépôt suit et que le paquet embarque.
+
+    Dans un clone, c'est aussi là qu'on écrit (`racine_configuration`) ; installé, on
+    n'y fait plus que lire les défauts livrés.
+    """
+    return racine_du_code() / NOM_LIVREE
+
+
+def configuration_du_poste() -> Path:
+    """`~/.maestro/configuration` — où une installation range ce qu'elle écrit. Non créé."""
+    return racine_etat() / NOM_CONFIGURATION
+
+
+def racine_configuration(environnement: Mapping[str, str] | None = None) -> Path:
+    """Où le produit écrit sa configuration : `core/` d'un clone, l'état du poste installé.
+
+    Chaque dépôt (`ProjetStore`, `SecretStore`, `ChatStore`…) y prend son dossier
+    (`depot_configuration`), à moins que sa propre variable `MAESTRO_*_DIR` ne le
+    déplace — elle passe devant, dans les deux cas.
+    """
+    if installation(environnement):
+        return configuration_du_poste()
+    return racine_livree()
+
+
+def depot_configuration(nom: str, environnement: Mapping[str, str] | None = None) -> Path:
+    """Le dossier du dépôt `nom` (`projets`, `reglages`…) là où le produit écrit. Non créé."""
+    return racine_configuration(environnement) / nom
+
+
+def depot_livre(nom: str, environnement: Mapping[str, str] | None = None) -> Path | None:
+    """Les défauts livrés du dépôt `nom`, **quand ils ne sont pas là où l'on écrit**.
+
+    None dans un clone : on y écrit à côté des fichiers suivis, rien n'est à relire
+    ailleurs. Installé, `core/<nom>` du produit, que les dépôts qui en ont
+    (`PermissionStore`, `McpStore`) relisent sous ce qu'on a écrit
+    (`maestro.agents.rangement`).
+    """
+    if not installation(environnement):
+        return None
+    return racine_livree() / nom
+
+
+def env_du_poste(environnement: Mapping[str, str] | None = None) -> Path | None:
+    """Le `.env` de la personne, installé : `~/.maestro/configuration/.env`. None dans un clone.
+
+    Les réglages du paquet (`<produit>/.env`) sont des **défauts** que chaque
+    installation remplace ; ce fichier-ci est ce que la personne y ajoute, et
+    l'installeur n'y touche jamais (`maestro.config`).
+    """
+    if not installation(environnement):
+        return None
+    return configuration_du_poste() / NOM_ENV
+
+
+def journaux_du_lanceur() -> Path:
+    """`~/.maestro/lanceur` — les journaux et la session du lanceur installé. Non créé."""
+    return racine_etat() / NOM_LANCEUR
+
+
+def reprise_du_poste() -> Path:
+    """`~/.maestro/reprise` — ce que l'installeur a sauvé d'une version antérieure. Non créé."""
+    return racine_etat() / NOM_REPRISE
 
 
 # ── Le répertoire temporaire ──────────────────────────────────────────────────

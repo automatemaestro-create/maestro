@@ -210,6 +210,11 @@ CLE_REGLAGES_DIR = "MAESTRO_REGLAGES_DIR"
 #: La reprise des agents dans leur projet, jouée au démarrage de l'API (#1038).
 CLE_REPRISE_AGENTS = "MAESTRO_REPRISE_AGENTS"
 
+#: Le réglage qui dit au produit qu'il est installé (#1620). Écrit ici et non importé de
+#: `maestro.emplacements`, pour la même raison que `CLE_ESPACE` ;
+#: `tests/test_emplacements.py` les confronte.
+CLE_INSTALLATION = "MAESTRO_INSTALLATION"
+
 #: Le ramassage des jetables du poste, joué au démarrage de chaque hôte (#992, #1455).
 CLE_RAMASSAGE = "MAESTRO_RAMASSAGE_ESPACES"
 
@@ -475,6 +480,16 @@ def _neutralise_acces_api() -> None:
         os.environ[cle] = ""
 
 
+def _neutralise_installation() -> None:
+    """Vide `MAESTRO_INSTALLATION` (#1620) : la suite joue le produit tel qu'un clone.
+
+    Posé dans un `.env` ou un shell, il enverrait chaque dépôt sous le `~/.maestro/` du
+    poste. Vidé et non supprimé, comme les clés Langfuse : `load_dotenv(override=False)`
+    recomplèterait une clé absente. Un test d'installation passe son environnement.
+    """
+    os.environ[CLE_INSTALLATION] = ""
+
+
 def _fige_espace() -> None:
     """Fige l'espace de données à `commun` (#1164) — voir l'en-tête du module.
 
@@ -493,6 +508,7 @@ _neutralise_forge()
 _neutralise_reprise_agents()
 _neutralise_ramassage()
 _neutralise_acces_api()
+_neutralise_installation()
 _fige_espace()
 
 

@@ -63,6 +63,7 @@ from typing import Any
 from maestro.agents.chiffrement import Chiffreur
 from maestro.agents.mcp_registry import MODES_AUTH
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration
 from maestro.telemetry.redact import enregistre_secret
 
 #: Nom d'agent admissible comme fichier de stockage — même verrou que les
@@ -191,7 +192,10 @@ class SecretStore:
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> SecretStore:
-        """Le coffre configuré : `MAESTRO_SECRETS_DIR`, sinon `core/secrets/` du dépôt.
+        """Le coffre configuré : `MAESTRO_SECRETS_DIR`, sinon `secrets/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
 
         La **clé maîtresse** vient de `MAESTRO_SECRETS_KEY` si elle est posée
         (chiffreur injecté) ; sinon le coffre gère une clé locale `<racine>/.cle`
@@ -202,8 +206,7 @@ class SecretStore:
         chiffreur = Chiffreur(cle) if cle else None
         if settings.secrets_dir:
             return cls(Path(settings.secrets_dir), chiffreur=chiffreur)
-        racine = Path(__file__).resolve().parents[2] / "core" / "secrets"
-        return cls(racine, chiffreur=chiffreur)
+        return cls(depot_configuration("secrets"), chiffreur=chiffreur)
 
     @property
     def provisionne(self) -> bool:

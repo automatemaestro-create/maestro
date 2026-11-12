@@ -55,6 +55,7 @@
 const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 // DEUX LANCEURS, UN SEUL CONTRAT (#641). La coque d'un clone sert la stack du dépôt par
@@ -72,11 +73,12 @@ const RACINE_PRODUIT = path.join(process.resourcesPath, 'produit');
 const PYTHON_EMBARQUE = path.join(RACINE_PRODUIT, 'runtime', 'python', 'python.exe');
 const RACINE = INSTALLEE ? RACINE_PRODUIT : RACINE_DEPOT;
 
-// Où le lanceur du produit inscrit la session qu'il a démarrée — `DOSSIER_LANCEUR` de
-// `maestro/lanceur/emplacement.py`, sous la racine du produit. La coque installée y relit
-// l'URL réellement servie : le lanceur déplace un port pris plutôt que d'échouer, et la
-// fenêtre doit ouvrir l'adresse qu'il a choisie, pas celle qu'on lui demandait.
-const SESSION_DU_LANCEUR = path.join(RACINE, '.maestro', 'lanceur', 'session.json');
+// Où le lanceur installé inscrit la session qu'il a démarrée — `journaux_du_lanceur` de
+// `maestro/emplacements.py`, sous l'état du poste : le dossier d'installation ne porte que le
+// paquet, et une mise à jour l'efface (#1620). La coque installée y relit l'URL réellement
+// servie : le lanceur déplace un port pris plutôt que d'échouer, et la fenêtre doit ouvrir
+// l'adresse qu'il a choisie, pas celle qu'on lui demandait.
+const SESSION_DU_LANCEUR = path.join(os.homedir(), '.maestro', 'lanceur', 'session.json');
 
 // Mêmes défauts que `start.sh`, et surtout mêmes VARIABLES : `worktree.sh ensure` les pose par
 // worktree (#152), sans quoi deux sessions se disputeraient la fenêtre et les ports.

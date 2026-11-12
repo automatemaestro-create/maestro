@@ -7,6 +7,14 @@ Le fournisseur, son accès et son modèle se choisissent dans les Paramètres
 (#1609) : `load_settings` complète l'environnement par ce choix du poste
 (`maestro.fournisseur_par_defaut`), et une variable renseignée dans
 l'environnement l'emporte toujours sur lui.
+
+**Deux `.env` dans une installation** (#1620). Celui du produit
+(`<produit>/.env`) porte les réglages de la distribution, que le paquet écrit et
+que chaque installation remplace. Celui de la personne
+(`~/.maestro/configuration/.env`, `maestro.emplacements.env_du_poste`) porte ce
+qu'elle y ajoute, et l'installeur n'y touche jamais. L'ordre de préséance :
+l'environnement du process, puis le `.env` de la personne, puis celui du produit.
+Dans un clone, seul le `.env` de la copie compte, comme avant.
 """
 
 from __future__ import annotations
@@ -15,12 +23,50 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, find_dotenv, load_dotenv
 
+from maestro.emplacements import NOM_ENV, InstallationIllisible, env_du_poste, racine_du_code
 from maestro.familles_claude import resoudre_famille
 
-# Charge .env s'il existe, sans écraser une variable déjà présente dans le shell.
-load_dotenv(override=False)
+
+def charger_les_env() -> None:
+    """Charge les `.env` sans écraser une variable déjà présente dans l'environnement.
+
+    Idempotent : rejoué, il ne change rien (`override=False`). Le `.env` du produit
+    est lu d'abord, sans rien poser, pour savoir s'il annonce une installation
+    (`MAESTRO_INSTALLATION`) ; c'est alors le `.env` de la personne qui se charge en
+    premier, et la première valeur chargée gagne.
+    """
+    du_produit = _env_du_produit()
+    if not du_produit:
+        return
+    valeurs = {cle: val for cle, val in dotenv_values(du_produit).items() if val is not None}
+    try:
+        personne = env_du_poste({**valeurs, **os.environ})
+    except InstallationIllisible:
+        # Refusée là où elle décide (un dépôt, le lanceur), avec son motif : lever ici
+        # ferait tomber l'import de la configuration, sans rien dire de la valeur.
+        personne = None
+    if personne is not None and personne.is_file():
+        load_dotenv(personne, override=False)
+    load_dotenv(du_produit, override=False)
+
+
+def _env_du_produit() -> str:
+    """Le `.env` du produit : celui qui voisine `maestro/`, sinon le premier en remontant.
+
+    Le voisin d'abord, parce que `find_dotenv` part du répertoire courant quand
+    l'interpréteur joue `-c` : un `python -c` lancé depuis le profil ne trouverait
+    pas les réglages de l'installation qui le porte. La remontée reste le repli
+    d'un clone sans `.env` à sa racine (un worktree le trouve chez son clone).
+    """
+    voisin = racine_du_code() / NOM_ENV
+    if voisin.is_file():
+        return str(voisin)
+    return find_dotenv(usecwd=False)
+
+
+charger_les_env()
 
 
 class ConfigError(RuntimeError):

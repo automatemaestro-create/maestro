@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vérifie le PAQUET D'INSTALLATION sur un poste sans Python, sans Node et sans clone (#641).
 #
-#   bash scripts/distribution/verifier.sh [--poste <dossier>] [--installeur <exe>]
+#   bash scripts/distribution/verifier.sh [--poste <dossier>] [--installeur <exe>] [--ancien <exe>]
 #
 # Le poste n'a pas de machine vierge à offrir : ce script en fabrique les conditions, et chacune
 # est un fait qu'on peut contester, pas une supposition.
@@ -26,6 +26,13 @@
 # sert : chaque processus né de l'installation avec le chemin de son exécutable — un seul pris au
 # poste ou au clone, et la vérification échoue.
 #
+# Et ce que la personne y a mis SURVIT (#1620) : on déclare un projet et on pose un réglage par
+# l'API, on constate qu'ils vivent sous l'état du poste et que le dossier d'installation ne porte
+# que le paquet ; puis on réinstalle par-dessus — l'effacement du dossier par l'installeur se
+# constate sur un témoin qu'on y pose —, on désinstalle, on réinstalle, et chaque fois on les
+# retrouve. `--ancien <exe>` installe d'abord une version antérieure, qui écrit sous son dossier :
+# la version vérifiée s'installe par-dessus, et ce que l'ancienne avait écrit doit être repris.
+#
 # Le CLI `claude` : le SDK le trouve dans son paquet (`claude_agent_sdk/_bundled/`), et le produit
 # aussi (`maestro/providers/claude.py`, `_commande_du_cli`). `sonde_cli.py` le fait lancer par le
 # SDK, avec l'interpréteur de l'installation, jusqu'à la poignée de main du protocole — sans rien
@@ -40,6 +47,7 @@ set -uo pipefail
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 POSTE="$RACINE/.maestro/session/poste vierge"
 INSTALLEUR=""
+ANCIEN=""
 PORT_API=8041
 PORT_UI=3041
 
@@ -47,6 +55,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --poste) POSTE="$2/poste vierge"; shift 2 ;;
     --installeur) INSTALLEUR="$2"; shift 2 ;;
+    --ancien) ANCIEN="$2"; shift 2 ;;
     --port-api) PORT_API="$2"; shift 2 ;;
     --port-ui) PORT_UI="$2"; shift 2 ;;
     -h | --help) sed -n '2,4p' "$0"; exit 0 ;;
@@ -65,6 +74,10 @@ if [ -z "$INSTALLEUR" ]; then
 fi
 if [ -z "$INSTALLEUR" ] || [ ! -f "$INSTALLEUR" ]; then
   echo "[verification] aucun installeur — bash scripts/distribution/construire.sh" >&2
+  exit 2
+fi
+if [ -n "$ANCIEN" ] && [ ! -f "$ANCIEN" ]; then
+  echo "[verification] installeur de la version antérieure introuvable : $ANCIEN" >&2
   exit 2
 fi
 
@@ -176,12 +189,155 @@ sonde() { # sonde <url> [jeton] → code HTTP
   fi
 }
 
+JETON_FICHIER="$PROFIL/.maestro/jeton-api"
+# Ce que la personne écrit, sous l'état du poste d'une installation (`maestro.emplacements`).
+CONFIGURATION="$PROFIL/.maestro/configuration"
+
+# `installer <exe> <nom>` : l'installation silencieuse, dans le dossier du poste vierge. L'installeur
+# rend la main une fois tout posé, ancienne version désinstallée comprise.
+installer() {
+  vierge "$1" /S "/D=$W_INSTALL" >"$TRACE/installation-$2.log" 2>&1
+}
+
+# `ouvrir <nom>` : ouvre Maestro et attend que l'API et l'interface répondent (240 s au plus). Pose
+# PID_COQUE, jeton, api et ui ; rend 0 quand les deux répondent.
+ouvrir() {
+  vierge "$U_INSTALL/Maestro.exe" >"$TRACE/coque-$1.log" 2>&1 &
+  PID_COQUE=$!
+  api=000
+  ui=000
+  jeton=""
+  for _ in $(seq 1 120); do
+    [ -z "$jeton" ] && [ -f "$JETON_FICHIER" ] && jeton="$(tr -d '\r\n' <"$JETON_FICHIER")"
+    if [ -n "$jeton" ]; then
+      api="$(sonde "http://127.0.0.1:$PORT_API/api/sante" "$jeton")"
+    fi
+    ui="$(sonde "http://127.0.0.1:$PORT_UI/")"
+    [ "$api" = 200 ] && [ "$ui" = 200 ] && return 0
+    kill -0 "$PID_COQUE" 2>/dev/null || return 1
+    sleep 2
+  done
+  return 1
+}
+
+# La fenêtre est le Maestro.exe dont le parent n'en est pas un : les autres (rendu, GPU) sont ses
+# enfants. `$!` ne la désigne pas — c'est le relais MSYS de `env -i`, sans fenêtre à fermer.
+fenetre() { # fenetre <processus.tsv>
+  awk -F'\t' '$3 == "Maestro.exe" { parent[$1] = $2 }
+    END { for (p in parent) if (!(parent[p] in parent)) print p }' "$1" | head -n 1
+}
+
+# `fermer <nom>` : ferme la fenêtre comme le bouton de sa barre de titre (`taskkill` sans `/F`),
+# puis attend que plus rien de l'installation ne tourne. Pose `restants` ; rend 0 quand c'est fait.
+fermer() {
+  releve_processus >"$TRACE/processus-$1.tsv"
+  local pid
+  pid="$(fenetre "$TRACE/processus-$1.tsv")"
+  [ -n "$pid" ] && env MSYS2_ARG_CONV_EXCL='*' taskkill /PID "$pid" >>"$TRACE/arret.log" 2>&1
+  restants=""
+  for _ in $(seq 1 60); do
+    restants="$(releve_processus)"
+    [ -z "$restants" ] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# `desinstaller <nom>` : le désinstalleur se recopie sous TEMP et rend la main aussitôt ; on attend
+# qu'il ait fini — le dossier vidé, raccourcis compris —, sans quoi la lettre de lecteur, défaite à
+# la sortie, l'interromprait au milieu.
+desinstaller() {
+  vierge "$U_INSTALL/Uninstall Maestro.exe" /S >"$TRACE/desinstallation-$1.log" 2>&1
+  for _ in $(seq 1 120); do
+    [ -z "$(find "$INSTALL" -type f 2>/dev/null | head -n 1)" ] &&
+      [ -z "$(find "$PROFIL" -iname 'Maestro.lnk' 2>/dev/null | head -n 1)" ] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# `appel <méthode> <chemin> [corps JSON]` : l'API de l'installation, avec le jeton du profil.
+appel() {
+  local corps=()
+  [ -n "${3:-}" ] && corps=(-H 'Content-Type: application/json' --data "$3")
+  curl -s --max-time 30 -X "$1" -H "Authorization: Bearer $jeton" "${corps[@]}" \
+    "http://127.0.0.1:$PORT_API$2"
+}
+
+# Ce que la personne déclare et règle, puis cherche après chaque réinstallation (#1620) : un
+# projet sous le répertoire des projets, et un répertoire des projets réglé ailleurs que le défaut.
+# En barres obliques : le chemin traverse le JSON sans échappement, et Windows le lit tel quel.
+NOM_PROJET="Verification 1620"
+RACINE_PROJET="${LECTEUR}/profil/Maestro/verification-1620"
+REPERTOIRE_REGLE="${LECTEUR}/profil/Projets-1620"
+
+declarer() { # declarer <nom> : déclare le projet et pose le réglage ; rend 0 si l'API les prend
+  local projet reglage
+  projet="$(appel POST /api/projets \
+    "{\"nom\": \"$NOM_PROJET\", \"racine\": \"$RACINE_PROJET\", \"origine\": \"nouveau\"}")"
+  reglage="$(appel PUT /api/projets/repertoire "{\"chemin\": \"$REPERTOIRE_REGLE\"}")"
+  printf '%s\n%s\n' "$projet" "$reglage" >"$TRACE/declaration-$1.json"
+  contient "$projet" "\"$NOM_PROJET\"" && contient "$reglage" "projets-1620"
+}
+
+retrouver() { # retrouver <nom> : le projet est-il listé, et le réglage relu ?
+  local projets repertoire
+  projets="$(appel GET /api/projets)"
+  repertoire="$(appel GET /api/projets/repertoire)"
+  printf '%s\n%s\n' "$projets" "$repertoire" >"$TRACE/retrouve-$1.json"
+  # Le JSON de l'API est compact (`"par_defaut":false`) ; on ôte les espaces pour ne pas en dépendre.
+  repertoire="${repertoire// /}"
+  contient "$projets" "\"$NOM_PROJET\"" && contient "$repertoire" "projets-1620" &&
+    contient "$repertoire" '"par_defaut":false'
+}
+
+# `sous_la_configuration` : les fichiers que la personne a écrits sous l'état du poste, en clair.
+sous_la_configuration() {
+  find "$CONFIGURATION/projets" "$CONFIGURATION/reglages" -type f -name '*.json' 2>/dev/null |
+    sed "s|^$PROFIL/||" | sort | tr '\n' ' '
+}
+
+# Ce que le lanceur a dit de la reprise, dans ses journaux (ligne `[reprise]`).
+dit_de_la_reprise() {
+  cat "$PROFIL/.maestro/lanceur/"*.log "$TRACE/coque-$1.log" 2>/dev/null | tr -d '\r' |
+    grep -F '[reprise]' | head -n 5
+}
+
+# Les fichiers sous le dossier d'installation que le paquet n'a pas posés. Le cache de compilation
+# de Python (`__pycache__/*.pyc`) est compté à part : l'interpréteur le rebâtit à la demande, et le
+# perdre à une réinstallation ne perd rien.
+etrangers() {
+  local attendus poses
+  attendus="$(cd "$PAQUET/win-unpacked" && find . -type f | sort)"
+  poses="$(cd "$INSTALL" && find . -type f ! -name 'Uninstall Maestro.exe' | sort)"
+  comm -13 <(printf '%s\n' "$attendus") <(printf '%s\n' "$poses")
+}
+
 echo "[verification] installeur : ${INSTALLEUR#"$RACINE"/}"
 echo "[verification] poste vierge : $LECTEUR → $(cygpath -w "$POSTE")"
 
+# --- 0. une version antérieure, qui écrit sous son dossier (--ancien) --------------------------
+if [ -n "$ANCIEN" ]; then
+  echo "[verification] version antérieure : $ANCIEN"
+  installer "$ANCIEN" ancienne
+  ouvrir ancienne
+  constat "$([ "$api" = 200 ] && [ "$ui" = 200 ] && echo 0 || echo 1)" \
+    "la version antérieure s'ouvre (API HTTP $api, interface HTTP $ui)"
+  constat "$(declarer ancienne && echo 0 || echo 1)" \
+    "la version antérieure déclare le projet et pose le réglage"
+  ecrits="$(find "$PRODUIT/core/projets" "$PRODUIT/core/reglages" -name '*.json' 2>/dev/null |
+    sed "s|^$PRODUIT/||" | tr '\n' ' ')"
+  constat "$([ -n "$ecrits" ] && echo 0 || echo 1)" \
+    "la version antérieure les écrit sous son dossier d'installation : ${ecrits:-rien}"
+  fermer ancienne
+  mkdir -p "$TRACE/ancienne"
+  cp "$PRODUIT/.maestro/lanceur/"*.log "$TRACE/ancienne/" 2>/dev/null || true
+fi
+
 # --- 1. installer ------------------------------------------------------------------------------
-vierge "$INSTALLEUR" /S "/D=$W_INSTALL" >"$TRACE/installation.log" 2>&1
+installer "$INSTALLEUR" premiere
 code_installation=$?
+cp "$TRACE/installation-premiere.log" "$TRACE/installation.log" 2>/dev/null || true
 constat "$([ "$code_installation" = 0 ] && [ -f "$INSTALL/Maestro.exe" ] && echo 0 || echo 1)" \
   "installation silencieuse dans « $W_INSTALL » (code $code_installation)"
 if [ ! -f "$INSTALL/Maestro.exe" ]; then
@@ -206,28 +362,9 @@ constat "$(dans_l_installation "$sortie_python" && echo 0 || echo 1)" \
   "le Python embarqué démarre malgré PYTHONHOME/PYTHONPATH empoisonnés, et importe maestro de l'installation"
 
 # --- 3. ouvrir Maestro -------------------------------------------------------------------------
-vierge "$U_INSTALL/Maestro.exe" >"$TRACE/coque.log" 2>&1 &
-PID_COQUE=$!
 debut=$SECONDS
-
-JETON_FICHIER="$PROFIL/.maestro/jeton-api"
-api=000
-ui=000
-jeton=""
-for _ in $(seq 1 120); do
-  [ -z "$jeton" ] && [ -f "$JETON_FICHIER" ] && jeton="$(tr -d '\r\n' <"$JETON_FICHIER")"
-  if [ -n "$jeton" ]; then
-    api="$(sonde "http://127.0.0.1:$PORT_API/api/sante" "$jeton")"
-  fi
-  ui="$(sonde "http://127.0.0.1:$PORT_UI/")"
-  if [ "$api" = 200 ] && [ "$ui" = 200 ]; then
-    break
-  fi
-  if ! kill -0 "$PID_COQUE" 2>/dev/null; then
-    break
-  fi
-  sleep 2
-done
+ouvrir premiere
+cp "$TRACE/coque-premiere.log" "$TRACE/coque.log" 2>/dev/null || true
 echo "démarrage : $((SECONDS - debut)) s jusqu'à l'API et l'interface" | tee -a "$RAPPORT"
 constat "$([ "$api" = 200 ] && echo 0 || echo 1)" "l'API répond sur :$PORT_API (/api/sante, avec le jeton du profil neuf) — HTTP $api"
 constat "$([ "$ui" = 200 ] && echo 0 || echo 1)" "l'interface répond sur :$PORT_UI — HTTP $ui"
@@ -245,8 +382,31 @@ if [ "$api" = 200 ]; then
   constat "$(contient "$(cat "$TRACE/sante.json")" '"ok"' && echo 0 || echo 1)" \
     "l'API se dit « ok » : son magasin (mode local, SQLite) répond — $(head -c 300 "$TRACE/sante.json")"
 fi
-cp "$PRODUIT/.maestro/lanceur/"*.log "$TRACE/" 2>/dev/null || true
-cp "$PRODUIT/.maestro/lanceur/session.json" "$TRACE/" 2>/dev/null || true
+cp "$PROFIL/.maestro/lanceur/"*.log "$TRACE/" 2>/dev/null || true
+cp "$PROFIL/.maestro/lanceur/session.json" "$TRACE/" 2>/dev/null || true
+
+# --- 3 bis. ce que la personne y met vit sous l'état du poste (#1620) ---------------------------
+if [ -n "$ANCIEN" ]; then
+  reprise_dite="$(dit_de_la_reprise premiere)"
+  printf 'le lanceur, au premier démarrage :\n%s\n' "${reprise_dite:-(rien dit de la reprise)}" |
+    tee -a "$RAPPORT"
+  constat "$(retrouver reprise && echo 0 || echo 1)" \
+    "ce que la version antérieure avait écrit sous son dossier est repris au premier démarrage : le projet « $NOM_PROJET » et le répertoire des projets réglé"
+  constat "$([ -f "$PROFIL/.maestro/reprise/reprise.json" ] && echo 0 || echo 1)" \
+    "la reprise laisse son témoin (~/.maestro/reprise/reprise.json) : elle ne se rejouera pas"
+else
+  constat "$(declarer premiere && echo 0 || echo 1)" \
+    "on déclare le projet « $NOM_PROJET » et on règle le répertoire des projets, par l'API"
+fi
+ranges="$(sous_la_configuration)"
+constat "$([ -n "$(find "$CONFIGURATION/projets" -name '*.json' 2>/dev/null)" ] &&
+  [ -n "$(find "$CONFIGURATION/reglages" -name '*.json' 2>/dev/null)" ] && echo 0 || echo 1)" \
+  "le projet et le réglage vivent sous l'état du poste : ${ranges:-rien}"
+# Contre le paquet : `core/projets/` et `core/reglages/` y portent leur README et leur .gitignore.
+sous_le_paquet="$(etrangers | sed 's|^\./||' |
+  grep -E '^resources/produit/(core/(projets|reglages)/|\.maestro/)' | head -n 5 | tr '\n' ' ' || true)"
+constat "$([ -z "$sous_le_paquet" ] && echo 0 || echo 1)" \
+  "rien n'en est écrit sous le dossier d'installation${sous_le_paquet:+ — trouvés : $sous_le_paquet}"
 
 # --- 4. qui sert ---------------------------------------------------------------------------------
 releve_processus >"$TRACE/processus.tsv"
@@ -269,10 +429,7 @@ for attendu in Maestro.exe python.exe node.exe; do
 done
 constat "$(contient "$(cat "$TRACE/processus.tsv")" "$W_RACINE" && echo 1 || echo 0)" \
   "aucun processus ne joue un fichier du clone"
-# La fenêtre est le Maestro.exe dont le parent n'en est pas un : les autres (rendu, GPU) sont ses
-# enfants. `$!` ne la désigne pas — c'est le relais MSYS de `env -i`, sans fenêtre à fermer.
-PID_FENETRE="$(awk -F'\t' '$3 == "Maestro.exe" { parent[$1] = $2 }
-  END { for (p in parent) if (!(parent[p] in parent)) print p }' "$TRACE/processus.tsv" | head -n 1)"
+PID_FENETRE="$(fenetre "$TRACE/processus.tsv")"
 
 # --- 5. le CLI claude, depuis l'installation ---------------------------------------------------
 # Le lanceur du confinement (#1279) d'abord : sans lui, une session d'agent tourne non confinée.
@@ -312,20 +469,44 @@ constat "$([ -z "$restants" ] && echo 0 || echo 1)" \
   "fermer la fenêtre arrête l'API, le front et la coque, en $((SECONDS - debut_arret)) s${restants:+ — restent : $restants}"
 constat "$([ "$(sonde "http://127.0.0.1:$PORT_UI/")" = 000 ] && [ "$(sonde "http://127.0.0.1:$PORT_API/api/sante")" = 000 ] && echo 0 || echo 1)" \
   "les ports :$PORT_API et :$PORT_UI sont libérés"
-cp "$PRODUIT/.maestro/lanceur/"*.log "$TRACE/" 2>/dev/null || true
+cp "$PROFIL/.maestro/lanceur/"*.log "$TRACE/" 2>/dev/null || true
 
-# --- 7. désinstaller ---------------------------------------------------------------------------
+# Le dossier d'installation, une fois Maestro passé dessus : le paquet, et rien d'autre (#1620).
+etrangers >"$TRACE/fichiers-etrangers.txt"
+caches="$(grep -c '/__pycache__/' "$TRACE/fichiers-etrangers.txt" || true)"
+autres="$(grep -v '/__pycache__/' "$TRACE/fichiers-etrangers.txt" | grep . | sed 's|^\./||' || true)"
+constat "$([ -z "$autres" ] && echo 0 || echo 1)" \
+  "le dossier d'installation ne porte que les fichiers du paquet ($caches fichier(s) du cache de compilation de Python à part)${autres:+ — étrangers : $(printf '%s\n' "$autres" | head -n 8 | tr '\n' ' ')}"
+
+# --- 7. réinstaller par-dessus ---------------------------------------------------------------
+# Un témoin posé dans le dossier d'installation dit ce que l'installeur en fait : on constate
+# l'effacement, on ne le suppose pas.
+TEMOIN="$INSTALL/temoin-verification.txt"
+echo "posé par scripts/distribution/verifier.sh avant la réinstallation" >"$TEMOIN"
+installer "$INSTALLEUR" par-dessus
+code_par_dessus=$?
+constat "$([ "$code_par_dessus" = 0 ] && [ -f "$INSTALL/Maestro.exe" ] && echo 0 || echo 1)" \
+  "réinstaller par-dessus l'installation en place (code $code_par_dessus)"
+if [ -f "$TEMOIN" ]; then
+  echo "réinstaller par-dessus n'efface pas le dossier d'installation : le témoin qu'on y a posé est resté" |
+    tee -a "$RAPPORT"
+else
+  echo "réinstaller par-dessus efface le dossier d'installation : le témoin qu'on y a posé a disparu" |
+    tee -a "$RAPPORT"
+fi
+ouvrir par-dessus
+constat "$([ "$api" = 200 ] && [ "$ui" = 200 ] && echo 0 || echo 1)" \
+  "la version réinstallée s'ouvre (API HTTP $api, interface HTTP $ui)"
+constat "$(retrouver par-dessus && echo 0 || echo 1)" \
+  "après la réinstallation par-dessus, le projet « $NOM_PROJET » et le réglage sont retrouvés"
+fermer par-dessus
+constat "$([ -z "$restants" ] && echo 0 || echo 1)" "la version réinstallée se ferme${restants:+ — restent : $restants}"
+
+# --- 8. désinstaller ---------------------------------------------------------------------------
 if [ -f "$INSTALL/Uninstall Maestro.exe" ]; then
-  # Le désinstalleur se recopie sous TEMP et rend la main aussitôt : on attend qu'il ait fini — le
-  # dossier vidé, raccourcis compris —, sans quoi la lettre de lecteur, défaite à la sortie,
-  # l'interromprait au milieu.
-  vierge "$U_INSTALL/Uninstall Maestro.exe" /S >"$TRACE/desinstallation.log" 2>&1
   debut_desinstallation=$SECONDS
-  for _ in $(seq 1 120); do
-    [ -z "$(find "$INSTALL" -type f 2>/dev/null | head -n 1)" ] &&
-      [ -z "$(find "$PROFIL" -iname 'Maestro.lnk' 2>/dev/null | head -n 1)" ] && break
-    sleep 2
-  done
+  desinstaller premiere
+  cp "$TRACE/desinstallation-premiere.log" "$TRACE/desinstallation.log" 2>/dev/null || true
   reste="$(find "$INSTALL" -type f 2>/dev/null | sed "s|^$INSTALL/||" | head -n 5 | tr '\n' ' ')"
   constat "$([ -z "$reste" ] && echo 0 || echo 1)" \
     "la désinstallation silencieuse retire Maestro, en $((SECONDS - debut_desinstallation)) s${reste:+ — restent : $reste}"
@@ -340,6 +521,26 @@ else
 fi
 etat_poste="$(find "$PROFIL/.maestro" -maxdepth 1 2>/dev/null | sed "s|^$PROFIL/||" | tr '\n' ' ')"
 echo "l'état du poste reste sous le profil : ${etat_poste:-rien}" | tee -a "$RAPPORT"
+ranges_apres="$(sous_la_configuration)"
+constat "$([ -n "$ranges_apres" ] && [ "$ranges_apres" = "$ranges" ] && echo 0 || echo 1)" \
+  "la désinstallation laisse ce que la personne a écrit sous l'état du poste : ${ranges_apres:-rien}"
+
+# --- 9. réinstaller après la désinstallation -------------------------------------------------
+installer "$INSTALLEUR" apres-desinstallation
+code_reinstallation=$?
+constat "$([ "$code_reinstallation" = 0 ] && [ -f "$INSTALL/Maestro.exe" ] && echo 0 || echo 1)" \
+  "réinstaller après la désinstallation (code $code_reinstallation)"
+ouvrir apres-desinstallation
+constat "$([ "$api" = 200 ] && [ "$ui" = 200 ] && echo 0 || echo 1)" \
+  "la version réinstallée s'ouvre (API HTTP $api, interface HTTP $ui)"
+constat "$(retrouver apres-desinstallation && echo 0 || echo 1)" \
+  "après désinstallation et réinstallation, le projet « $NOM_PROJET » et le réglage sont encore retrouvés"
+fermer apres-desinstallation
+constat "$([ -z "$restants" ] && echo 0 || echo 1)" "elle se ferme${restants:+ — restent : $restants}"
+desinstaller finale
+reste="$(find "$INSTALL" -type f 2>/dev/null | sed "s|^$INSTALL/||" | head -n 5 | tr '\n' ' ')"
+constat "$([ -z "$reste" ] && echo 0 || echo 1)" \
+  "la dernière désinstallation laisse le poste sans Maestro${reste:+ — restent : $reste}"
 
 echo
 echo "[verification] $ECHECS constat(s) ✗ — rapport : ${RAPPORT#"$RACINE"/}"

@@ -118,13 +118,22 @@ CONTENU_DU_PRODUIT: tuple[tuple[str, str], ...] = (
 #: fichier que `maestro.config` charge sans écraser l'environnement. Le mode **local**
 #: (SQLite, aucun service à installer, #639) est le défaut d'un produit posé sur un poste
 #: (docs/24 §4.7) : la distribution change les défauts, pas les fonctions.
+#:
+#: `MAESTRO_INSTALLATION` dit au produit qu'il est installé (#1620,
+#: `maestro.emplacements.installation`) : il écrit alors sous l'état du poste, jamais
+#: dans ce dossier qu'une mise à jour efface. Le dire ici, plutôt que de le deviner d'un
+#: chemin ou de la coque, garde le même produit derrière la fenêtre et derrière un shell.
 REGLAGES_DISTRIBUTION = (
     "# Réglages de la distribution bureau de Maestro (#641) — écrits par l'installeur.\n"
-    "# Une variable d'environnement du même nom passe devant.\n"
+    "# Une variable d'environnement du même nom passe devant. Ce fichier est remplacé à\n"
+    "# chaque installation : un réglage à garder va dans ~/.maestro/configuration/.env.\n"
     "#\n"
     "# Mode local : le journal durable est un fichier SQLite sous ~/.maestro/, et\n"
     "# aucun service (Redis) n'est à installer (#639).\n"
     "MAESTRO_PERSISTANCE=sqlite\n"
+    "#\n"
+    "# Installé : ce que Maestro écrit va sous ~/.maestro/, jamais dans ce dossier (#1620).\n"
+    "MAESTRO_INSTALLATION=1\n"
 )
 
 

@@ -29,7 +29,8 @@ geste qui rend la main. Une variable vide (`MAESTRO_PROVIDER=` dans un `.env`
 copié du modèle) ne compte pas comme renseignée.
 
 Le fichier vit dans le dépôt des réglages du poste (`MAESTRO_REGLAGES_DIR`, à
-défaut `core/reglages/`), à côté du répertoire des projets
+défaut `reglages/` de la configuration — le `core/` d'un clone, l'état du poste
+d'une installation, #1620), à côté du répertoire des projets
 (`maestro.projets.reglages`).
 """
 
@@ -42,6 +43,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from maestro.emplacements import depot_configuration
 
 #: Le fichier du choix, dans le dépôt des réglages du poste.
 FICHIER = "fournisseur.json"
@@ -120,12 +123,12 @@ class DepotFournisseurParDefaut:
 
     @classmethod
     def default(cls, environ: Mapping[str, str] | None = None) -> DepotFournisseurParDefaut:
-        """Le dépôt des réglages du poste : `MAESTRO_REGLAGES_DIR`, sinon `core/reglages/`."""
+        """Le dépôt des réglages : `MAESTRO_REGLAGES_DIR`, sinon `reglages/` de la configuration."""
         source = os.environ if environ is None else environ
         racine = (source.get(_VARIABLE_DEPOT) or "").strip()
         if racine:
             return cls(Path(racine))
-        return cls(Path(__file__).resolve().parents[1] / "core" / "reglages")
+        return cls(depot_configuration("reglages", source))
 
     @property
     def chemin(self) -> Path:

@@ -192,13 +192,23 @@ def test_le_node_embarque_est_celui_que_le_lanceur_trouve(
     assert trouve is not None and Path(trouve) == pose
 
 
-def test_les_reglages_de_la_distribution_sont_le_mode_local(assembleur: ModuleType) -> None:
+def test_les_reglages_de_la_distribution_sont_le_mode_local_installe(
+    assembleur: ModuleType,
+) -> None:
+    """Mode local (#639), et le produit se sait installé (#1620) : c'est le paquet qui le
+    dit, jamais un chemin deviné ni la coque."""
+    from maestro.emplacements import VALEUR_INSTALLATION, VARIABLE_INSTALLATION, installation
+
     reglages = dict(
         ligne.split("=", 1)
         for ligne in assembleur.REGLAGES_DISTRIBUTION.splitlines()
         if ligne and not ligne.startswith("#")
     )
-    assert reglages == {"MAESTRO_PERSISTANCE": SUPPORT_SQLITE}
+    assert reglages == {
+        "MAESTRO_PERSISTANCE": SUPPORT_SQLITE,
+        VARIABLE_INSTALLATION: VALEUR_INSTALLATION,
+    }
+    assert installation(reglages) is True
 
 
 def test_un_front_qui_porte_le_jeton_est_trouve(assembleur: ModuleType, tmp_path: Path) -> None:
@@ -285,6 +295,27 @@ def test_le_paquet_prend_le_produit_la_ou_l_assembleur_le_pose(assembleur: Modul
 def test_l_installeur_ne_demande_aucun_droit_d_administrateur() -> None:
     nsis = json.loads((COQUE / "package.json").read_text(encoding="utf-8"))["build"]["nsis"]
     assert nsis["perMachine"] is False
+
+
+def test_l_installeur_sauve_l_ancien_core_la_ou_la_reprise_le_cherche() -> None:
+    """Le crochet NSIS et `maestro.lanceur.reprise` se parlent par des noms : réécrits d'un seul
+    côté, une mise à jour effacerait les données d'une 0.1.0 sans que rien ne les ait copiées."""
+    from maestro.emplacements import NOM_ENV, NOM_ETAT, NOM_LIVREE, NOM_REPRISE
+    from maestro.lanceur.reprise import TEMOIN
+
+    nsis = json.loads((COQUE / "package.json").read_text(encoding="utf-8"))["build"]["nsis"]
+    crochet = COQUE / nsis["include"]
+    octets = crochet.read_bytes()
+    assert octets.isascii(), "makensis lit le fichier dans le jeu de caractères du poste"
+    texte = octets.decode("ascii")
+    # Le dossier personnel du produit : `USERPROFILE`, que lisent `Path.home()` et `os.homedir()`.
+    assert "ReadEnvStr $0 USERPROFILE" in texte
+    copie = rf"$0\{NOM_ETAT}\{NOM_REPRISE}"
+    produit = r"$INSTDIR\resources\produit"
+    assert "!macro customInit" in texte
+    assert f'IfFileExists "{copie}\\{TEMOIN}" maestro_reprise_fin' in texte
+    assert f'CopyFiles /SILENT "{produit}\\{NOM_LIVREE}\\*.*" "{copie}\\{NOM_LIVREE}"' in texte
+    assert f'CopyFiles /SILENT "{produit}\\{NOM_ENV}" "{copie}\\{NOM_ENV}"' in texte
 
 
 def test_le_front_se_construit_sans_le_jeton_ni_l_url_du_poste() -> None:

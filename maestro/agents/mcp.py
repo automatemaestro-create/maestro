@@ -78,6 +78,7 @@ from typing import Any
 
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration, depot_livre
 from maestro.providers.base import (
     MCP_NON_MONTABLE,
     McpServerUnavailable,
@@ -292,11 +293,17 @@ class McpStore(RangeParProjet):
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> McpStore:
-        """Le dépôt configuré : `MAESTRO_MCP_DIR`, sinon `core/mcp/` du dépôt."""
+        """Le dépôt configuré : `MAESTRO_MCP_DIR`, sinon `mcp/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620). Installé, les
+        déclarations héritées que le dépôt suit se relisent dans l'installation
+        tant que le poste ne les a pas migrées (`livres`, `_retirer_heritee`).
+        """
         settings = settings or load_settings()
         if settings.mcp_dir:
             return cls(Path(settings.mcp_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "mcp")
+        return cls(depot_configuration("mcp"), livres=depot_livre("mcp"))
 
     def lire(self, agent: str) -> tuple[ServeurMcp, ...]:
         """Les serveurs MCP effectifs de `agent` : la composition pool ∩ activations (#130).
@@ -523,7 +530,7 @@ class McpStore(RangeParProjet):
             self.ecrire_activations(agent, ids)
         if retirer_fichiers:
             for agent in activations:
-                self._chemin(agent).unlink(missing_ok=True)
+                self._retirer_heritee(agent)
         return integrations
 
     def migrer_agent(
@@ -601,7 +608,7 @@ class McpStore(RangeParProjet):
                 activations.append(id_)
         self.ecrire_activations(agent, activations)
         if retirer_fichier:
-            self._chemin(agent).unlink(missing_ok=True)
+            self._retirer_heritee(agent)
         return MigrationAgent(
             agent=agent,
             ajoutees=tuple(ajoutees),
@@ -626,16 +633,33 @@ class McpStore(RangeParProjet):
         return tuple(sorted(noms))
 
     def _agents_fichiers(self) -> tuple[str, ...]:
-        """Les stems des fichiers hérités `<agent>.json`, triés — hors fichiers réservés."""
-        if not self._racine.is_dir():
-            return ()
+        """Les stems des fichiers hérités `<agent>.json`, triés — hors fichiers réservés.
+
+        Défauts livrés compris (#1620) : une installation relit ceux du paquet.
+        """
+        stems = self._stems_livres()
+        if self._racine.is_dir():
+            stems.update(chemin.stem for chemin in self._racine.glob("*.json"))
         return tuple(
             sorted(
-                chemin.stem
-                for chemin in self._racine.glob("*.json")
-                if _NOM_AGENT.match(chemin.stem) and chemin.stem not in _STEMS_RESERVES
+                stem
+                for stem in stems
+                if _NOM_AGENT.match(stem) and stem not in _STEMS_RESERVES
             )
         )
+
+    def _retirer_heritee(self, agent: str) -> None:
+        """Retire la déclaration héritée de `agent` de ce dépôt-ci.
+
+        Le fichier part. Quand l'installation en livre un (#1620), on ne peut pas
+        l'effacer — le dossier d'installation ne s'écrit pas — et il redeviendrait
+        autoritaire à la lecture : une déclaration vide le recouvre alors.
+        """
+        chemin = self._chemin(agent)
+        if self._livres is not None and (self._livres / chemin.name).is_file():
+            self._ecrire_json(chemin, {"serveurs": []})
+            return
+        chemin.unlink(missing_ok=True)
 
     def _lire_fichier_agent(self, agent: str) -> tuple[ServeurMcp, ...]:
         """Les serveurs de la déclaration héritée `<agent>.json` (#104), validés — () si absente.
@@ -645,7 +669,7 @@ class McpStore(RangeParProjet):
         l'appelant (exécuteur, API) la mue en échec propre plutôt que de monter
         une configuration douteuse.
         """
-        chemin = self._chemin(agent)
+        chemin = self._lisible(self._chemin(agent))
         if not chemin.is_file():
             return ()
         try:

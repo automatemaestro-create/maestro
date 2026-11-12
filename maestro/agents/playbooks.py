@@ -48,6 +48,7 @@ from maestro.agents.catalog import GABARITS_DU_CODE, Agent
 from maestro.agents.playbook_du_code import playbook_du_code
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration
 
 #: Nom d'agent admissible comme dossier de stockage : slug sûr, sans séparateur ni
 #: point — verrouille toute traversée de chemin depuis un nom venu de l'API.
@@ -157,11 +158,15 @@ class PlaybookStore(RangeParProjet):
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> PlaybookStore:
-        """Le dépôt configuré : `MAESTRO_PLAYBOOKS_DIR`, sinon `core/playbooks/` du dépôt."""
+        """Le dépôt configuré : `MAESTRO_PLAYBOOKS_DIR`, sinon `playbooks/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         settings = settings or load_settings()
         if settings.playbooks_dir:
             return cls(Path(settings.playbooks_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "playbooks")
+        return cls(depot_configuration("playbooks"))
 
     def numeros(self, agent: str) -> tuple[int, ...]:
         """Les numéros de version de `agent`, croissants — ceux du gabarit à défaut."""

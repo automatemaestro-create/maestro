@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.projets.racine import RacineRefusee, chemin_dans_racine, valider_racine
 from maestro.references import SCHEMAS_URL
@@ -80,17 +81,18 @@ _CARACTERES_INTERDITS_NOM = frozenset('/\\<>:"|?*')
 
 
 def racine_ingestion(settings: Settings | None = None) -> Path:
-    """La racine du stockage d'ingestion : `MAESTRO_INGESTION_DIR`, sinon `core/ingestion/`.
+    """La racine de l'ingestion : `MAESTRO_INGESTION_DIR`, sinon `ingestion/` de la configuration.
 
-    Même patron que les autres dépôts du POC (`maestro.projets.store`,
-    `maestro.agents.store`) : un dossier du dépôt par défaut, déplaçable par
+    Même patron que les autres dépôts (`maestro.projets.store`,
+    `maestro.agents.store`) : le `core/` d'un clone, l'état du poste d'une
+    installation (`maestro.emplacements.racine_configuration`, #1620), déplaçable par
     l'environnement pour qui range ses données ailleurs. Rien n'est créé ici —
     la racine peut ne pas exister tant qu'aucun fichier n'a été téléversé.
     """
     settings = settings or load_settings()
     if settings.ingestion_dir:
         return Path(settings.ingestion_dir)
-    return Path(__file__).resolve().parents[2] / "core" / "ingestion"
+    return depot_configuration("ingestion")
 
 
 def emplacement_ingestion(
