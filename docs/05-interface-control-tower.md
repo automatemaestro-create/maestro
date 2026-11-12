@@ -2650,7 +2650,11 @@ inversement.
 **Un refus est une réponse** (EF-38), et il en porte trois choses : la **phrase** du backend, le
 **geste** qui en sort quand l'écran le connaît (autoriser le dossier d'ici, descendre d'un cran,
 choisir un sous-dossier…) et le **motif** brut, affiché tel quel — un code stable vaut
-mieux qu'une traduction approximative quand il faut chercher de l'aide. Un refus s'affiche **à
+mieux qu'une traduction approximative quand il faut chercher de l'aide. Le bandeau se lit **en
+deux étages** (#1613, veille de #1036 en docs/30) : d'abord l'explication en clair — un titre
+qui dit ce qui est arrivé, **seul en gras**, la phrase dessous, puis le conseil —, ensuite, au
+second plan, `code : <motif>` en mono. Le motif n'y est jamais redit en libellé : la phrase le dit
+déjà en mots. Un refus s'affiche **à
 l'endroit du geste refusé** (dans le formulaire, sur la carte, dans l'explorateur), **conserve la
 saisie en cours** et **laisse la page précédente** de l'explorateur à l'écran : l'erreur ne casse ni
 la navigation ni le reste de l'écran. Corollaire tenu par les tests : « ce dossier n'a pas de
@@ -6178,7 +6182,7 @@ Un client qui l'annoncerait pourrait mentir, et c'est lui qui décide du patron 
 {
   "detail": {
     "motif": "hors-racines-explorables",
-    "message": "Dossier hors des dossiers explorables : D:/clients/acme — explorables : C:/Users/moi.",
+    "message": "D:/clients/acme est hors des dossiers explorables : C:/Users/moi.",
     "autorisation": {
       "chemin": "D:/clients/acme",  // le dossier en POSIX, celui qu'on autoriserait
       "refus": null                 // null : valider_racine l'accepte, l'écran propose le geste

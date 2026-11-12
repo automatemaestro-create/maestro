@@ -1215,7 +1215,9 @@ conversation) : le choix de l'origine et le dossier parent prérempli du
 formulaire, et la phrase « aucun projet déclaré » de la porte, emportaient
 quatre paires. Puis **635** depuis #1398, qui a écrit une fois en constante le
 filet des lignes du grand livre quand la sonde du point de contrôle les a
-rejointes, au lieu d'en recopier la paire sur une troisième. Ce ticket ne les
+rejointes, au lieu d'en recopier la paire sur une troisième. Puis **631** depuis
+#1613 : le bandeau d'un refus de source rend celui des projets au lieu d'en
+recopier les quatre paires. Ce ticket ne les
 migre pas — il pose le compte et **refuse la suivante** (`tests/couleurs.test.ts`),
 comme #832 l'a fait pour les contrôles de saisie et #534 pour le contraste. La
 689ᵉ est arrivée pendant l'attente de merge de ce lot (#894, une cinquième
@@ -1399,7 +1401,8 @@ marges, les `gap`, les paddings dirigés (`pt-`, `pl-`…), un `px-`/`py-` seul 
 
 Ce qui reste, mesuré le **2026-09-20** : **70 paddings hors barème dans 39
 fichiers** ; **69** depuis #939, qui a retiré le bloc de commande de la page
-d'accueil et son `px-2 py-1.5`. Le tableau vit **dans le test** (`RESIDU`), fichier par fichier, le
+d'accueil et son `px-2 py-1.5` ; **68** depuis #1613, dont le bandeau d'un refus de
+source ne recopie plus celui des projets. Le tableau vit **dans le test** (`RESIDU`), fichier par fichier, le
 README ne le recopie pas. Le compte y est **exact et non un plafond** : un de plus
 rougit, un de **moins** rougit aussi tant que la ligne n'est pas mise à jour —
 c'est ce qui fait qu'un résidu ne peut que décroître, et que chaque décroissance
@@ -1523,7 +1526,8 @@ fichier.
 page d'accueil portait un `rounded` nu, et **162** depuis #1228 : la carte d'une
 demande de validation, devenue un composant unique, a replié ses deux
 `rounded-md` sur `rounded-controle` au passage — le même pixel, le nom du
-barème. Le socle (`components/Primitives.tsx`) en est déjà sorti
+barème ; **161** depuis #1613, dont le bandeau d'un refus de source rend celui
+des projets au lieu d'en recopier le `rounded-md`. Le socle (`components/Primitives.tsx`) en est déjà sorti
 pour ses huit rayons, qui ont pris leur nom de rôle à valeur constante ; ses
 trois ombres y restent, parce que les retirer changerait le rendu. Un manque du
 barème est **nommé et non toléré** : le voile du guide de prise en main
