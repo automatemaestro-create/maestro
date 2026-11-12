@@ -143,6 +143,8 @@ Puis il éprouve **ce qui survit** (§3.3.3) : il déclare un projet et règle l
 projets par l'API, réinstalle par-dessus, désinstalle, réinstalle, et les cherche chaque fois.
 `--ancien <installeur>` installe d'abord une version antérieure, qui écrit sous son dossier : la
 version vérifiée s'installe par-dessus, et doit reprendre ce que l'autre avait écrit.
+`--tenir-ouvert <secondes>` laisse Maestro ouvert après la dernière réinstallation, le temps de le
+regarder de ses yeux.
 
 #### 3.3.1 Ce que la première vérification a trouvé : l'installeur perd des fichiers en silence
 

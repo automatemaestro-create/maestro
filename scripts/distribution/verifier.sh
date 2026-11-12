@@ -2,6 +2,7 @@
 # Vérifie le PAQUET D'INSTALLATION sur un poste sans Python, sans Node et sans clone (#641).
 #
 #   bash scripts/distribution/verifier.sh [--poste <dossier>] [--installeur <exe>] [--ancien <exe>]
+#                                         [--tenir-ouvert <secondes>]
 #
 # Le poste n'a pas de machine vierge à offrir : ce script en fabrique les conditions, et chacune
 # est un fait qu'on peut contester, pas une supposition.
@@ -32,6 +33,8 @@
 # constate sur un témoin qu'on y pose —, on désinstalle, on réinstalle, et chaque fois on les
 # retrouve. `--ancien <exe>` installe d'abord une version antérieure, qui écrit sous son dossier :
 # la version vérifiée s'installe par-dessus, et ce que l'ancienne avait écrit doit être repris.
+# `--tenir-ouvert <s>` laisse Maestro ouvert, après la dernière réinstallation, le temps de le
+# regarder de ses yeux (`http://127.0.0.1:<port-ui>/`) ; poser `<sortie>/fermer` abrège l'attente.
 #
 # Le CLI `claude` : le SDK le trouve dans son paquet (`claude_agent_sdk/_bundled/`), et le produit
 # aussi (`maestro/providers/claude.py`, `_commande_du_cli`). `sonde_cli.py` le fait lancer par le
@@ -48,6 +51,7 @@ RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 POSTE="$RACINE/.maestro/session/poste vierge"
 INSTALLEUR=""
 ANCIEN=""
+TENIR_OUVERT=0
 PORT_API=8041
 PORT_UI=3041
 
@@ -56,6 +60,7 @@ while [ $# -gt 0 ]; do
     --poste) POSTE="$2/poste vierge"; shift 2 ;;
     --installeur) INSTALLEUR="$2"; shift 2 ;;
     --ancien) ANCIEN="$2"; shift 2 ;;
+    --tenir-ouvert) TENIR_OUVERT="$2"; shift 2 ;;
     --port-api) PORT_API="$2"; shift 2 ;;
     --port-ui) PORT_UI="$2"; shift 2 ;;
     -h | --help) sed -n '2,4p' "$0"; exit 0 ;;
@@ -535,6 +540,11 @@ constat "$([ "$api" = 200 ] && [ "$ui" = 200 ] && echo 0 || echo 1)" \
   "la version réinstallée s'ouvre (API HTTP $api, interface HTTP $ui)"
 constat "$(retrouver apres-desinstallation && echo 0 || echo 1)" \
   "après désinstallation et réinstallation, le projet « $NOM_PROJET » et le réglage sont encore retrouvés"
+if [ "$TENIR_OUVERT" -gt 0 ] 2>/dev/null; then
+  echo "[verification] Maestro reste ouvert $TENIR_OUVERT s : http://127.0.0.1:$PORT_UI/ — ${TRACE#"$RACINE"/}/fermer l'abrège"
+  fin_attente=$((SECONDS + TENIR_OUVERT))
+  while [ "$SECONDS" -lt "$fin_attente" ] && [ ! -e "$TRACE/fermer" ]; do sleep 2; done
+fi
 fermer apres-desinstallation
 constat "$([ -z "$restants" ] && echo 0 || echo 1)" "elle se ferme${restants:+ — restent : $restants}"
 desinstaller finale
