@@ -90,13 +90,19 @@ export function SelecteurProjet() {
   };
 
   return (
-    // Pas de `min-w-0` (#1108) : sans lui, la taille minimale automatique de cet
-    // élément flex est son contenu minimal — icône, préfixe de nom, chevron —,
-    // et c'est ce **plancher** qui garde le sélecteur lisible quand la barre se
-    // resserre. Avec `min-w-0` il pouvait tomber à zéro, et le nom du projet
-    // avec lui : la barre aurait dit sur quelle page on est, plus sur quel
-    // projet.
-    <div ref={conteneur} className="relative">
+    // Pas de `min-w-0` (#1108) : avec lui, cet élément flex pouvait tomber à
+    // zéro, et le nom du projet avec lui. La barre aurait dit sur quelle page on
+    // est, plus sur quel projet.
+    //
+    // ⚠ Sans plancher déclaré, sa taille minimale automatique n'est pas « icône,
+    // préfixe, chevron » : un texte en `truncate` (donc `nowrap`) a pour taille
+    // minimale son palier `max-w-*` entier, pas son `min-w-8`. Le sélecteur ne
+    // cède donc rien, et c'est voulu au-dessus de `@sm`, où les paliers règlent
+    // seuls l'ordre de cession. Au téléphone, il est le milieu de la barre
+    // (#1615, voir `BarreSuperieure`) : `@max-sm:min-w-24` le laisse rétrécir
+    // jusqu'à son plancher réel. 96 px, c'est l'icône, le chevron, leurs
+    // espacements, le cadre du bouton et le préfixe `min-w-8` du nom.
+    <div ref={conteneur} className="relative @max-sm:min-w-24">
       <button
         ref={declencheur}
         type="button"
