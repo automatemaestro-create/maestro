@@ -98,14 +98,24 @@ const CLASSE_CADRE =
  */
 function CadrePorte({
   etiquette,
+  large = false,
   children,
 }: {
   etiquette: string;
+  /**
+   * Au large, la colonne s'élargit pour le parcours du premier lancement, qui
+   * pose l'écran de son étape à côté de la liste (#1617). Les autres portes
+   * gardent leur colonne.
+   */
+  large?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <main aria-label={etiquette} className={CLASSE_CADRE}>
+      <main
+        aria-label={etiquette}
+        className={large ? `${CLASSE_CADRE} lg:max-w-5xl` : CLASSE_CADRE}
+      >
         {children}
       </main>
     </div>
@@ -290,7 +300,7 @@ export function ChoixProjet() {
 
   if (revoir || premierLancement === "a-faire") {
     return (
-      <CadrePorte etiquette="Premier lancement">
+      <CadrePorte etiquette="Premier lancement" large>
         <EnTetePorte />
         <PremierLancement
           projetsDeclares={projets.length}

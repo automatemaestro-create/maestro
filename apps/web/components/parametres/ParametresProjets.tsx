@@ -31,8 +31,10 @@
  * des partages de Docker Desktop (veille du ticket).
  *
  * La même section est l'**étape du dossier** du premier lancement (#642) : montée
- * telle quelle, dossiers autorisés compris, elle dit chaque répertoire lu ou réglé
- * par `onRepertoire`, pour que l'étape se coche sur le fait.
+ * avec ses gestes et ses dossiers autorisés, elle dit chaque répertoire lu ou réglé
+ * par `onRepertoire`, pour que l'étape se coche sur le fait. En étape (`enEtape`,
+ * #1617), elle parle à qui découvre Maestro : ce que ce dossier change pour lui,
+ * sans libellé de réglage ni le chemin, que le résumé de l'étape dit déjà.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -69,9 +71,11 @@ import { LigneReglage, ProlongementReglage } from "./SectionParametres";
 function DossiersAutorises({
   version,
   onRetire,
+  enEtape,
 }: {
   version: number;
   onRetire: () => void;
+  enEtape: boolean;
 }) {
   const [dossiers, setDossiers] = useState<DossierAutorise[] | null>(null);
   const [echecLecture, setEchecLecture] = useState<RefusProjet | null>(null);
@@ -108,6 +112,73 @@ function DossiersAutorises({
     }
   }, [onRetire]);
 
+  const contenu =
+    dossiers === null ? (
+      <p className="text-corps text-texte-secondaire">
+        {echecLecture !== null ? "—" : "…"}
+      </p>
+    ) : dossiers.length === 0 ? (
+      <p className="text-annexe text-texte-secondaire">
+        {enEtape ? "Aucun pour l'instant." : "Aucun dossier autorisé."}
+      </p>
+    ) : (
+      // Alignée au début, comme les contrôles des autres lignes quand la ligne se
+      // replie sous son libellé (téléphone) : un chemin long ne pousse pas la
+      // liste contre le bord droit.
+      <ul className="flex flex-col items-start gap-2">
+        {dossiers.map((dossier) => (
+          <li key={dossier.chemin} className="flex flex-wrap items-center gap-2">
+            <code className="font-mono text-corps wrap-anywhere">{dossier.chemin}</code>
+            {/* Une autorisation qui ne sert plus (disque débranché, dossier
+                supprimé) se dit, et se retire comme les autres. */}
+            {dossier.refus !== null && (
+              <span className="text-annexe text-attention-texte">
+                inutilisable — {libelleMotif(dossier.refus.motif)}
+              </span>
+            )}
+            <Bouton
+              variante="contour"
+              ton="neutre"
+              taille="petite"
+              occupe={retraitEnCours === dossier.chemin}
+              disabled={retraitEnCours !== null}
+              aria-label={`Retirer ${dossier.chemin}`}
+              onClick={() => void retirer(dossier.chemin)}
+            >
+              Retirer
+            </Bouton>
+          </li>
+        ))}
+      </ul>
+    );
+
+  const refus = (
+    <>
+      {echecLecture && (
+        <RefusMotive refus={echecLecture} titre="Dossiers autorisés illisibles" />
+      )}
+      {refusRetrait && <RefusMotive refus={refusRetrait} titre="Retrait refusé" />}
+    </>
+  );
+
+  if (enEtape) {
+    // Dans l'étape, une annexe : son nom au rang des aides, et son état juste
+    // après lui, pour que l'œil aille d'abord à la phrase et au geste du dossier.
+    // L'aide part du geste que l'étape montre, « Changer de dossier… ».
+    return (
+      <div className="flex flex-col items-start gap-1 border-t border-bord pt-3">
+        <p className="text-annexe font-medium text-texte-secondaire">Dossiers autorisés</p>
+        {contenu}
+        <p className="text-annexe text-texte-secondaire">
+          En changeant de dossier, vous pourrez autoriser un dossier que Maestro
+          refuse d&apos;ouvrir : il le parcourt alors, sous-dossiers compris, et il
+          s&apos;ajoute ici. Les zones protégées du poste restent fermées.
+        </p>
+        {refus}
+      </div>
+    );
+  }
+
   return (
     <>
       <LigneReglage
@@ -116,65 +187,21 @@ function DossiersAutorises({
         // répertoire : elle décrit le réglage, pas son état du moment.
         aide="Autorisés depuis l'explorateur quand il les refusait : Maestro peut parcourir ces dossiers et leurs sous-dossiers sur ce poste. Les zones protégées y restent refusées."
       >
-        {dossiers === null ? (
-          <p className="text-corps text-texte-secondaire">
-            {echecLecture !== null ? "—" : "…"}
-          </p>
-        ) : dossiers.length === 0 ? (
-          <p className="text-annexe text-texte-secondaire">
-            Aucun dossier autorisé.
-          </p>
-        ) : (
-          // Alignée au début, comme les contrôles des autres lignes quand la
-          // ligne se replie sous son libellé (téléphone) : un chemin long ne
-          // pousse pas la liste contre le bord droit.
-          <ul className="flex flex-col items-start gap-2">
-            {dossiers.map((dossier) => (
-              <li
-                key={dossier.chemin}
-                className="flex flex-wrap items-center gap-2"
-              >
-                <code className="font-mono text-corps wrap-anywhere">
-                  {dossier.chemin}
-                </code>
-                {/* Une autorisation qui ne sert plus (disque débranché,
-                    dossier supprimé) se dit, et se retire comme les autres. */}
-                {dossier.refus !== null && (
-                  <span className="text-annexe text-attention-texte">
-                    inutilisable — {libelleMotif(dossier.refus.motif)}
-                  </span>
-                )}
-                <Bouton
-                  variante="contour"
-                  ton="neutre"
-                  taille="petite"
-                  occupe={retraitEnCours === dossier.chemin}
-                  disabled={retraitEnCours !== null}
-                  aria-label={`Retirer ${dossier.chemin}`}
-                  onClick={() => void retirer(dossier.chemin)}
-                >
-                  Retirer
-                </Bouton>
-              </li>
-            ))}
-          </ul>
-        )}
+        {contenu}
       </LigneReglage>
-      {echecLecture && (
-        <RefusMotive refus={echecLecture} titre="Dossiers autorisés illisibles" />
-      )}
-      {refusRetrait && (
-        <RefusMotive refus={refusRetrait} titre="Retrait refusé" />
-      )}
+      {refus}
     </>
   );
 }
 
 export function ParametresProjets({
   onRepertoire,
+  enEtape = false,
 }: {
   /** Chaque répertoire lu ou réglé — ce sur quoi l'étape du dossier se coche. */
   onRepertoire?: (repertoire: RepertoireProjets) => void;
+  /** Montée dans l'étape du dossier : dans les mots de qui découvre Maestro. */
+  enEtape?: boolean;
 } = {}) {
   const [repertoire, setRepertoire] = useState<RepertoireProjets | null>(null);
   const [explorateurOuvert, setExplorateurOuvert] = useState(false);
@@ -221,51 +248,70 @@ export function ParametresProjets({
     }
   }, []);
 
+  const gestes = (
+    <div className="flex flex-wrap items-center gap-2">
+      {/* « … » dit « ça arrive », et il ne doit donc pas rester à l'écran
+          quand plus rien n'arrive : une lecture en panne rend « — », le
+          tiret de l'inconnu qu'emploie déjà la dépense cumulée. Dans l'étape,
+          le chemin n'est pas redit : le résumé de l'étape le porte. */}
+      {!enEtape && (
+        <code className="font-mono text-corps break-all">
+          {repertoire !== null
+            ? repertoire.chemin
+            : echecLecture !== null
+              ? "—"
+              : "…"}
+        </code>
+      )}
+      <Bouton
+        variante="contour"
+        ton="neutre"
+        onClick={() => setExplorateurOuvert(!explorateurOuvert)}
+        disabled={enCours || repertoire === null}
+        aria-expanded={explorateurOuvert}
+      >
+        Changer de dossier…
+      </Bouton>
+      {repertoire !== null && !repertoire.par_defaut && (
+        <Bouton
+          variante="contour"
+          ton="neutre"
+          onClick={() => void regler(null)}
+          disabled={enCours}
+        >
+          Revenir au dossier proposé
+        </Bouton>
+      )}
+    </div>
+  );
+
   return (
     <div className="flex flex-col">
-      <LigneReglage
-        libelle="Répertoire des projets"
-        // Une phrase, **invariante** : elle décrit le réglage, pas son état du
-        // moment. La faire changer selon que la valeur est le défaut ou non
-        // donnait deux libellés pour un même réglage — et, quand la lecture
-        // échouait, la description changeait sans que rien n'ait changé
-        // (constat de la relecture visuelle). Ce que le défaut a de particulier
-        // se dit là où c'est actionnable : le bouton « Revenir au dossier
-        // proposé », qui n'apparaît que lorsqu'il y a quelque chose à défaire.
-        aide="Le dossier parent d'un projet neuf en est rempli d'office. En choisir un autre pour un projet ne change pas ce réglage."
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          {/* « … » dit « ça arrive », et il ne doit donc pas rester à l'écran
-              quand plus rien n'arrive : une lecture en panne rend « — », le
-              tiret de l'inconnu qu'emploie déjà la dépense cumulée. */}
-          <code className="font-mono text-corps break-all">
-            {repertoire !== null
-              ? repertoire.chemin
-              : echecLecture !== null
-                ? "—"
-                : "…"}
-          </code>
-          <Bouton
-            variante="contour"
-            ton="neutre"
-            onClick={() => setExplorateurOuvert(!explorateurOuvert)}
-            disabled={enCours || repertoire === null}
-            aria-expanded={explorateurOuvert}
-          >
-            Changer de dossier…
-          </Bouton>
-          {repertoire !== null && !repertoire.par_defaut && (
-            <Bouton
-              variante="contour"
-              ton="neutre"
-              onClick={() => void regler(null)}
-              disabled={enCours}
-            >
-              Revenir au dossier proposé
-            </Bouton>
-          )}
+      {enEtape ? (
+        // Dans l'étape, ce que ce dossier change pour qui découvre Maestro, puis
+        // le geste : le titre de l'étape nomme déjà le réglage.
+        <div className="flex flex-col items-start gap-3 pb-3">
+          <p className="text-corps text-texte">
+            Chaque projet que Maestro crée pour vous y reçoit son dossier. Pour un
+            projet donné, vous pourrez toujours en choisir un autre.
+          </p>
+          {gestes}
         </div>
-      </LigneReglage>
+      ) : (
+        <LigneReglage
+          libelle="Répertoire des projets"
+          // Une phrase, **invariante** : elle décrit le réglage, pas son état du
+          // moment. La faire changer selon que la valeur est le défaut ou non
+          // donnait deux libellés pour un même réglage — et, quand la lecture
+          // échouait, la description changeait sans que rien n'ait changé
+          // (constat de la relecture visuelle). Ce que le défaut a de particulier
+          // se dit là où c'est actionnable : le bouton « Revenir au dossier
+          // proposé », qui n'apparaît que lorsqu'il y a quelque chose à défaire.
+          aide="Le dossier parent d'un projet neuf en est rempli d'office. En choisir un autre pour un projet ne change pas ce réglage."
+        >
+          {gestes}
+        </LigneReglage>
+      )}
 
       {echecLecture && (
         <RefusMotive refus={echecLecture} titre="Répertoire illisible" />
@@ -291,7 +337,7 @@ export function ParametresProjets({
         </ProlongementReglage>
       )}
 
-      <DossiersAutorises version={versionAutorises} onRetire={retire} />
+      <DossiersAutorises version={versionAutorises} onRetire={retire} enEtape={enEtape} />
     </div>
   );
 }

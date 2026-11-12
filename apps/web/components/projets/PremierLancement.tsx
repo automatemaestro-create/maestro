@@ -24,13 +24,24 @@
  *   projet naît (#1294). Leurs épreuves sont les seules ;
  * - **la fin est le premier projet**, pas un écran de félicitations.
  *
- * Ce que l'implémentation lève des réserves du regard neuf : l'écran de l'étape
- * courante vient **sous** la liste, et non dans sa ligne. Ainsi les étapes 2 et 3
- * restent à l'écran quand l'étape du modèle est ouverte (réserve 1). La carte du
- * fournisseur s'y monte sans son cadre ni sa tête, et l'état n'est dit qu'une
- * fois, par le résumé de l'étape (réserves 2 et 3). Ce résumé dit à quoi sert le
- * choix (4). Une forme distingue chaque état (5). Une étape repliée n'a aucun
- * geste, et sa coche dit le même fait que sa phrase (6).
+ * ## L'écran de l'étape ouverte, contre son étape
+ *
+ * L'écran se pose contre son étape, sans cadre, et de la même façon aux trois
+ * étapes (#1617, variante B retenue par le regard neuf, d'après la colonne voisine
+ * des walkthroughs de VS Code et l'`OnboardingView` de Stripe) :
+ *
+ * - **au large**, dans un volet à côté de la liste, bordé d'un filet sur lequel la
+ *   ligne ouverte s'ouvre comme un onglet. Le volet commence à la hauteur de cette
+ *   ligne, quelle que soit l'étape. Les trois étapes restent à l'écran quand celle
+ *   du modèle est ouverte, et les cartes d'accès s'y posent sans cadre autour ;
+ * - **plus étroit**, sous la ligne de son étape, le long du même filet.
+ *
+ * L'écran n'est jamais monté deux fois : sa place se décide en JavaScript, sur la
+ * frontière `lg` du shell (`REQUETE_COLONNE_AU_LARGE`). L'état n'est dit qu'une
+ * fois, par le résumé de l'étape, qui dit aussi à quoi sert le choix. Une forme
+ * distingue chaque état, et celle de l'étape ouverte ne se lit pas comme un bouton
+ * radio. Une étape repliée n'a aucun geste, et sa coche dit le même fait que sa
+ * phrase.
  *
  * ## Quand il se montre
  *
@@ -40,7 +51,15 @@
  * (`POST /api/accueil/terminer`) : il ne se rejoue pas au démarrage suivant.
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import {
   IconeEtapeAFaire,
@@ -51,7 +70,7 @@ import {
 } from "@/components/Icones";
 import { FournisseurParDefaut } from "@/components/parametres/FournisseurParDefaut";
 import { ParametresProjets } from "@/components/parametres/ParametresProjets";
-import { Bouton, classesCarte } from "@/components/Primitives";
+import { Bouton } from "@/components/Primitives";
 import {
   chargerAccueil,
   chargerFournisseurDefaut,
@@ -59,6 +78,7 @@ import {
   chargerRepertoireProjets,
   terminerAccueil,
 } from "@/lib/api";
+import { REQUETE_COLONNE_AU_LARGE } from "@/lib/preferences";
 import {
   dossierFait,
   type EtatEtape,
@@ -119,6 +139,58 @@ export function usePremierLancement(demander: boolean): LecturePremierLancement 
 function noterLaFinDuParcours(): void {
   void terminerAccueil().catch(() => {});
 }
+
+/**
+ * La fenêtre est-elle assez large pour poser l'écran de l'étape à côté de la
+ * liste ? La même frontière que les `lg:` du rendu, lue en JavaScript parce que
+ * l'écran change de **place** dans l'arbre, et pas seulement d'apparence : le
+ * monter aux deux endroits doublerait ses lectures et ses épreuves.
+ */
+function useAuLarge(): boolean {
+  return useSyncExternalStore(
+    abonnerAuLarge,
+    () => window.matchMedia(REQUETE_COLONNE_AU_LARGE).matches,
+    // Rien ne s'ouvre avant que les réglages soient lus, donc jamais au rendu
+    // serveur : la valeur n'y place aucun écran.
+    () => true,
+  );
+}
+
+function abonnerAuLarge(rappel: () => void): () => void {
+  const media = window.matchMedia(REQUETE_COLONNE_AU_LARGE);
+  media.addEventListener("change", rappel);
+  return () => media.removeEventListener("change", rappel);
+}
+
+/**
+ * La grille du parcours au large. Les lignes de la liste en sont les trois
+ * premières rangées (sous-grille, `CLASSE_LISTE`), et la quatrième, flexible,
+ * reçoit ce que l'écran a de plus haut qu'elles. L'écran part de la rangée de son
+ * étape et s'étend jusqu'à la dernière, si bien que :
+ *
+ * - son haut s'aligne sur la ligne ouverte, à chaque étape ;
+ * - la hauteur d'une étape ne dépend jamais de l'écran ouvert à côté. Un élément
+ *   qui traverse une rangée flexible ne grandit pas les rangées `auto` qu'il
+ *   traverse aussi (CSS Grid, dimensionnement des pistes).
+ */
+const CLASSE_GRILLE =
+  "grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-[auto_auto_auto_1fr] lg:gap-x-0 lg:gap-y-2";
+/** Les trois lignes, une par rangée de la grille (`NUMEROS_ETAPES`). */
+const CLASSE_LISTE = "flex flex-col gap-2 lg:row-span-3 lg:grid lg:grid-rows-subgrid";
+/**
+ * Le filet qui borde l'écran de l'étape ouverte, à côté de la liste ou sous sa
+ * ligne. Au large, il longe l'écran depuis le haut de la ligne ouverte, et pas
+ * les lignes fermées.
+ */
+const CLASSE_VOLET = "col-start-2 row-end-5 min-w-0 self-start border-l border-bord-fort pl-8";
+/** La rangée où part le volet : celle de la ligne ouverte. */
+const RANGEE_VOLET: Record<NumeroEtape, string> = {
+  1: "row-start-1",
+  2: "row-start-2",
+  3: "row-start-3",
+};
+/** Sous sa ligne, le filet part du symbole de l'étape. */
+const CLASSE_SOUS_LIGNE = "ml-[1.3125rem] min-w-0 border-l border-bord-fort pt-3 pb-4 pl-4";
 
 const ETAPES: Record<NumeroEtape, string> = {
   1: "Le modèle qui fait le travail",
@@ -250,6 +322,24 @@ export function PremierLancement({
     setChoisie(numero);
   };
 
+  const auLarge = useAuLarge();
+  const ecran =
+    courante === null ? null : (
+      <section
+        id={idEcran}
+        // Nommé par le titre de l'étape seul : son état et son résumé sont dans
+        // la ligne, et ne se relisent pas à l'entrée de l'écran.
+        aria-labelledby={`${idLigne(courante)}-titre`}
+        className={auLarge ? `${CLASSE_VOLET} ${RANGEE_VOLET[courante]}` : CLASSE_SOUS_LIGNE}
+      >
+        {courante === 1 && <FournisseurParDefaut enEtape onEtat={recevoirModele} />}
+        {courante === 2 && <ParametresProjets enEtape onRepertoire={recevoirRepertoire} />}
+        {courante === 3 && (
+          <NaissanceProjet enEtape onNe={noterLaFinDuParcours} parUnGeste={choisie === 3} />
+        )}
+      </section>
+    );
+
   return (
     <div className="flex flex-col gap-6">
       {onRevenir !== undefined && courante !== null && (
@@ -274,50 +364,39 @@ export function PremierLancement({
         </p>
       </div>
 
-      <ol aria-label="Étapes du premier lancement" className="flex flex-col gap-2">
-        {NUMEROS_ETAPES.map((numero) => (
-          <LigneEtape
-            key={numero}
-            numero={numero}
-            titre={ETAPES[numero]}
-            resume={resumes[numero]}
-            etat={etats[numero]}
-            courante={courante === numero}
-            id={idLigne(numero)}
-            idEcran={idEcran}
-            onOuvrir={() => ouvrir(numero)}
-          />
-        ))}
-      </ol>
-
-      {!lu ? null : courante === null ? (
-        <ToutEstEnPlace onRevenir={onRevenir} />
-      ) : (
-        <section
-          id={idEcran}
-          // Nommé par le titre de l'étape seul : son état et son résumé sont dans
-          // la ligne, au-dessus, et ne se relisent pas à l'entrée de l'écran.
-          aria-labelledby={`${idLigne(courante)}-titre`}
-          // La conversation de l'étape 3 se pose sur le fond de la page, comme hors du
-          // parcours : son composeur a un fond opaque (celui de la page), qui tracerait
-          // une bande dans une carte en thème sombre.
-          className={courante === 3 ? undefined : classesCarte({ densite: "aeree" })}
-        >
-          {courante === 1 && <FournisseurParDefaut enEtape onEtat={recevoirModele} />}
-          {courante === 2 && <ParametresProjets onRepertoire={recevoirRepertoire} />}
-          {courante === 3 && (
-            <NaissanceProjet enEtape onNe={noterLaFinDuParcours} parUnGeste={choisie === 3} />
-          )}
-        </section>
-      )}
+      <div className={CLASSE_GRILLE}>
+        <ol aria-label="Étapes du premier lancement" className={CLASSE_LISTE}>
+          {NUMEROS_ETAPES.map((numero) => (
+            <LigneEtape
+              key={numero}
+              numero={numero}
+              titre={ETAPES[numero]}
+              resume={resumes[numero]}
+              etat={etats[numero]}
+              courante={courante === numero}
+              id={idLigne(numero)}
+              idEcran={idEcran}
+              onOuvrir={() => ouvrir(numero)}
+              ecran={!auLarge && courante === numero ? ecran : null}
+            />
+          ))}
+        </ol>
+        {auLarge && ecran}
+        {lu && courante === null && (
+          <div className="self-start lg:col-start-2 lg:row-start-1 lg:row-end-5 lg:pl-8">
+            <ToutEstEnPlace onRevenir={onRevenir} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 /**
  * Une étape de la liste. Son titre est un bouton dans un titre, la forme d'un
- * accordéon (APG) : il ouvre l'écran de l'étape, qui vient sous la liste. Une
- * étape qui attend ne s'ouvre pas, et sa phrase dit ce qu'elle attend.
+ * accordéon (APG) : il ouvre l'écran de l'étape, à côté de la liste au large, et
+ * sous la ligne (`ecran`) plus étroit. Une étape qui attend ne s'ouvre pas, et sa
+ * phrase dit ce qu'elle attend.
  */
 function LigneEtape({
   numero,
@@ -328,6 +407,7 @@ function LigneEtape({
   id,
   idEcran,
   onOuvrir,
+  ecran,
 }: {
   numero: NumeroEtape;
   titre: string;
@@ -337,6 +417,8 @@ function LigneEtape({
   id: string;
   idEcran: string;
   onOuvrir: () => void;
+  /** L'écran de l'étape, quand il se pose sous sa ligne. */
+  ecran: ReactNode;
 }) {
   const [Icone, ton]: [typeof IconeEtapeAFaire, string] =
     etat === "fait"
@@ -357,12 +439,18 @@ function LigneEtape({
           disabled={etat === "attend"}
           aria-expanded={courante}
           aria-controls={courante ? idEcran : undefined}
-          // La ligne courante se distingue par son bord et son fond, en plus de sa
-          // forme : le même couple que la carte d'accès choisie, à côté.
-          className={`flex w-full items-start gap-3 rounded-carte border p-3 text-left ${
+          // La ligne ouverte se distingue par son bord, en plus de sa forme, et prend
+          // le fond de la page, celui de son écran. Au large, c'est un onglet : elle
+          // déborde d'un pixel sur le filet du volet et y peint son bord droit à la
+          // couleur de la page, si bien qu'elle s'ouvre sur son écran. Les autres
+          // lignes s'arrêtent avant le filet. L'onglet n'arrondit que ses coins de
+          // gauche, et son retrait de droite compense sa largeur : le texte de chaque
+          // ligne garde la même largeur, et la hauteur des étapes ne bouge pas selon
+          // celle qui est ouverte.
+          className={`flex w-full items-start gap-3 border p-3 text-left ${
             courante
-              ? "border-bord-fort bg-surface-creuse"
-              : "border-bord bg-surface enabled:hover:bg-survol"
+              ? "rounded-l-carte border-bord-fort bg-background max-lg:rounded-r-carte lg:relative lg:z-10 lg:w-[calc(100%+1px)] lg:border-r-background lg:pr-[calc(1.75rem+1px)]"
+              : "rounded-carte border-bord bg-surface enabled:hover:bg-survol lg:w-[calc(100%-1rem)]"
           } disabled:cursor-default`}
         >
           <Icone className={`mt-0.5 size-5 shrink-0 ${ton}`} />
@@ -382,6 +470,7 @@ function LigneEtape({
           </span>
         </button>
       </h2>
+      {ecran}
     </li>
   );
 }
