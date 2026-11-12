@@ -459,7 +459,8 @@ const RESIDU = new Map<string, number>([
   ["components/chat/SourcesDuFil.tsx", 1],
   ["components/composer/ComposerObjectif.tsx", 14],
   ["components/composer/RapportExtraction.tsx", 14],
-  ["components/composer/RefusSource.tsx", 4],
+  // `components/composer/RefusSource.tsx` a quitté ce tableau avec #1613 : il
+  // rend le bandeau de `RefusMotive` au lieu d'en recopier les quatre paires.
   ["components/integrations/BibliothequeMcp.tsx", 49],
   ["components/integrations/PoolProjet.tsx", 16],
   ["components/parametres/NavigationParametres.tsx", 6],
@@ -487,7 +488,7 @@ const RESIDU = new Map<string, number>([
 ]);
 
 /** Le compte du README — épinglé ici pour qu'il ne puisse pas dériver en silence. */
-const TOTAL_ANNONCE = 635;
+const TOTAL_ANNONCE = 631;
 
 /** Ce que le produit porte aujourd'hui, fichier par fichier. */
 function residuMesure(): Map<string, string[]> {

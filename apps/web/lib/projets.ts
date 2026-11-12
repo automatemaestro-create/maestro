@@ -98,9 +98,11 @@ export function conseilMotif(motif: string): string | null {
 }
 
 /**
- * Ce que dit un motif de refus **en mots d'interface** (#946, C7 du retex du
- * 2026-09-11) — le bandeau affichait `projet-inconnu` tel quel, c'est-à-dire
- * l'identifiant de l'API rendu à quelqu'un qui ne l'a jamais lu.
+ * Ce que dit un motif de refus **en mots d'interface** (#946) — là où un écran
+ * nomme une raison dans sa propre phrase (« ne peut pas être autorisé — Racine
+ * de disque », un dossier autorisé devenu inutilisable). Le bandeau d'un refus
+ * n'en a pas besoin : la phrase du backend y dit déjà la raison en mots, et le
+ * motif s'y montre comme un code (#1613).
  *
  * Même règle que `libelleOrigine` et `libelleStatut` : un motif absent de la
  * table se rend **brut** plutôt que traduit à l'aveugle. L'API en gagnera, et

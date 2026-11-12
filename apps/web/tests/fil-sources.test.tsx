@@ -145,10 +145,10 @@ describe("le fil accepte des sources (#482)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Envoyer" }));
 
     // Le refus est rendu **sur la ligne** de la source fautive (index 0), avec
-    // son motif — en mots depuis #946 (C7) —, pas dans une console.
+    // son motif — le code au second plan (#1613) —, pas dans une console.
     const ligne = await screen.findByRole("alert");
     expect(ligne).toHaveTextContent("Source refusée");
-    expect(ligne).toHaveTextContent("motif : Source trop volumineuse");
+    expect(ligne).toHaveTextContent("code : source-trop-volumineuse");
     expect(
       within(
         screen.getByRole("list", { name: "Sources jointes au message" }),
@@ -378,8 +378,7 @@ describe("les deux autres types de source, et le cycle de la composition (#485)"
     // sous le formulaire, et jamais collé à une source prise au hasard.
     const bandeau = await screen.findByRole("alert");
     expect(bandeau).toHaveTextContent("Sources refusées");
-    expect(bandeau).toHaveTextContent("motif : Trop de sources");
-    expect(bandeau).not.toHaveTextContent("trop-de-sources");
+    expect(bandeau).toHaveTextContent("code : trop-de-sources");
     expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 });

@@ -340,7 +340,7 @@ describe("④ les dossiers autorisés se relisent et se retirent (#1610)", () =>
     chargerExplorateur.mockRejectedValueOnce(
       new ErreurProjet(
         "hors-racines-explorables",
-        "Dossier hors des dossiers explorables : D:/projets/depensio.",
+        "D:/projets/depensio est hors des dossiers explorables : C:/Users/moi.",
         { chemin: "D:/projets/depensio", refus: null },
       ),
     );
@@ -469,7 +469,7 @@ describe("④ les dossiers autorisés se relisent et se retirent (#1610)", () =>
       }
       throw new ErreurProjet(
         "hors-racines-explorables",
-        "Dossier hors des dossiers explorables : D:/clients/acme.",
+        "D:/clients/acme est hors des dossiers explorables : C:/Users/moi.",
         { chemin: "D:/clients/acme", refus: null },
       );
     });

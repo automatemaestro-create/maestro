@@ -275,8 +275,8 @@ describe("les refus (#319, critère 3)", () => {
 
     const refus = await screen.findByRole("alert");
     expect(refus).toHaveTextContent("trop volumineuse");
-    expect(refus).toHaveTextContent("motif : Source trop volumineuse");
-    expect(refus).not.toHaveTextContent("source-trop-volumineuse");
+    // Le motif est le code de la panne, au second plan (#1613).
+    expect(refus).toHaveTextContent("code : source-trop-volumineuse");
     // Le refus est **dans la ligne** de la source fautive, pas en tête d'écran.
     const ligne = screen.getByText("enorme.pdf").closest("li");
     expect(ligne).not.toBeNull();
@@ -297,9 +297,14 @@ describe("les refus (#319, critère 3)", () => {
     await utilisateur.click(screen.getByRole("button", { name: "Lancer l'orchestration" }));
 
     const refus = await screen.findByRole("alert");
-    expect(refus).toHaveTextContent("Lancement refusé");
-    // Le motif en mots depuis #946 (C7), plus son identifiant d'API.
-    expect(refus).toHaveTextContent("motif : Demande invalide");
+    // Le pendant exact du bandeau des projets (#1613) : le titre seul en gras,
+    // la phrase du backend dessous, et le motif en code au second plan — pas
+    // en libellé, qui redisait la phrase.
+    const gras = Array.from(refus.querySelectorAll(".font-medium"));
+    expect(gras.map((noeud) => noeud.textContent)).toEqual(["Lancement refusé"]);
+    expect(refus).toHaveTextContent("objectif vide : il n'y a rien à orchestrer.");
+    expect(refus).not.toHaveTextContent("motif :");
+    expect(within(refus).getByText("requete-invalide")).toHaveClass("font-mono");
     expect(screen.getByLabelText("Objectif")).toHaveValue("   .");
   });
 
@@ -312,7 +317,7 @@ describe("les refus (#319, critère 3)", () => {
     await utilisateur.click(screen.getByRole("button", { name: "Voir ce qui sera lu" }));
 
     const refus = await screen.findByRole("alert");
-    expect(refus).toHaveTextContent("motif : API injoignable");
+    expect(refus).toHaveTextContent("code : api-injoignable");
   });
 });
 

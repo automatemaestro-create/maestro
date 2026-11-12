@@ -227,11 +227,10 @@ describe("ce qui est recueilli est vérifié (C2)", () => {
     );
     // L'étape qui reste à faire est ouverte, avec le refus motivé de #1022.
     expect(etape(2)).toHaveAttribute("aria-expanded", "true");
-    expect(
-      await within(ecran(2)).findByText(
-        "Répertoire indisponible — Le dossier n'existe pas sur ce poste.",
-      ),
-    ).toBeInTheDocument();
+    const refus = await within(ecran(2)).findByRole("alert");
+    expect(refus).toHaveTextContent(
+      /^Répertoire indisponibleLe dossier n'existe pas sur ce poste\./,
+    );
     // Les dossiers autorisés (#1610) se montrent là où le répertoire se règle.
     expect(within(ecran(2)).getByText("Dossiers autorisés")).toBeInTheDocument();
   });

@@ -172,14 +172,15 @@ class DossierHorsFrontiere(RacineRefusee):
 
     def __init__(self, cible: Path, racines: tuple[Path, ...]) -> None:
         explorables = (
-            ", ".join(r.as_posix() for r in racines) if racines else "aucun sur ce poste"
+            ", ".join(r.as_posix() for r in racines) if racines else "ce poste n'en a aucun"
         )
-        # Espace insécable avant les deux-points : à la largeur d'un téléphone,
-        # un « : » ne passe pas seul à la ligne devant un chemin long.
+        # Une phrase : le dossier, puis les dossiers explorables qu'il ne
+        # rejoint pas (#1613). L'écran la pose sous son propre titre, qui dit
+        # déjà « Dossier non exploré ». Espace insécable avant les deux-points :
+        # à la largeur d'un téléphone, un « : » ne passe pas seul à la ligne.
         super().__init__(
             "hors-racines-explorables",
-            f"Dossier hors des dossiers explorables : {cible.as_posix()} — "
-            f"explorables : {explorables}.",
+            f"{cible.as_posix()} est hors des dossiers explorables : {explorables}.",
             cible,
         )
         try:

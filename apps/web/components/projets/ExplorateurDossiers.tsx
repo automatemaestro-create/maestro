@@ -123,7 +123,17 @@ const LIBELLE_ORIGINE: Record<OrigineDossier, string> = {
   autorise: "dossier autorisé",
 };
 
-/** Le bandeau d'un refus : sa phrase, le geste qui en sort, et son code. */
+/**
+ * Le bandeau d'un refus, qui se lit en deux étages (veille de #1036, docs/30).
+ *
+ * D'abord l'explication en clair : le **titre** dit ce qui est arrivé — seul en
+ * gras, c'est ce qui doit accrocher l'œil —, la **phrase** du backend le
+ * précise sur sa propre ligne, le **conseil** dit quoi faire. Puis, au second
+ * plan, le **code** du motif tel que l'API le rend, en mono : un repère pour qui
+ * dépanne, jamais l'explication. Son libellé traduit n'y figure pas — la phrase
+ * dit déjà la même chose en mots, et le bandeau la lisait deux fois (#1613). Un
+ * motif que l'écran ne connaît pas s'y montre de la même façon, comme un code.
+ */
 export function RefusMotive({
   refus,
   titre,
@@ -154,24 +164,21 @@ export function RefusMotive({
       role="alert"
       className={`rounded-md border px-3 py-2 text-xs wrap-anywhere ${couleurs}`}
     >
-      <p className="font-medium">
-        {titre} — {refus.message}
-      </p>
+      <p className="font-medium">{titre}</p>
+      <p>{refus.message}</p>
       {conseil && <p className="mt-1">{conseil}</p>}
-      {/* Le motif **en mots**, pas son identifiant (#946, C7) : la ligne
-          affichait « motif : projet-inconnu », soit le code de l'API rendu tel
-          quel à quelqu'un qui ne l'a jamais lu. Un motif que la table ne connaît
-          pas se rend encore brut — un code affiché sans fard vaut mieux qu'une
-          phrase inventée —, et le `font-mono` part avec la traduction : il
-          annonçait justement du code. */}
+      {/* La ligne de diagnostic : « code », puis le motif en mono et en
+          `text-micro`, dans la teinte de second plan du ton. Ce que #946
+          reprochait — un identifiant rendu **comme l'explication** — ne revient
+          pas : la phrase et le conseil la portent au-dessus. */}
       <p
         className={
           ton === "alerte"
-            ? "mt-1 text-alerte-texte"
-            : "mt-1 text-amber-700 dark:text-amber-400"
+            ? "mt-1 text-micro text-alerte-texte"
+            : "mt-1 text-micro text-amber-700 dark:text-amber-400"
         }
       >
-        motif : {libelleMotif(refus.motif)}
+        code : <code className="font-mono">{refus.motif}</code>
       </p>
     </div>
   );
