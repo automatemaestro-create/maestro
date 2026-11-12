@@ -122,7 +122,7 @@ def regle_jalons(courant: str = "Outillage de la forge", numero: int = 17) -> li
             ]}}}},
         },
         {
-            "contient": ["milestones(first: 50) { nodes { number title }"],
+            "contient": ["milestones(first: 100", "nodes { number title }"],
             "reponse": {"data": {"repository": {"milestones": {"nodes": [
                 {"number": numero, "title": courant},
             ]}}}},
