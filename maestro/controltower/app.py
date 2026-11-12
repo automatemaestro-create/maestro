@@ -2890,7 +2890,8 @@ def create_app(
     async def installation_courante() -> dict[str, Any]:
         """Ce que cette installation fait tourner (#1622) : le produit et son CLI `claude`.
 
-        `forme` dit si le produit est une installation ou un clone du dépôt ;
+        `forme` dit si le produit est une installation ou un clone du dépôt, sur le
+        réglage qui range aussi sa configuration (`MAESTRO_INSTALLATION`, #1633) ;
         `produit.version` celle que l'assemblage a écrite (dans un clone, celle de
         `apps/desktop/package.json`), ou `null` avec son `releve`. `cli_claude` est
         le CLI que le produit lance : sa `provenance` (`paquet` — celui que le SDK

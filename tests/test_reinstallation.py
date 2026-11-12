@@ -49,6 +49,7 @@ from maestro.emplacements import (
     reprise_du_poste,
 )
 from maestro.fournisseur_par_defaut import DepotFournisseurParDefaut
+from maestro.installation import LecteurInstallation
 from maestro.lanceur import emplacement as lieu
 from maestro.lanceur import lanceur
 from maestro.lanceur.emplacement import Emplacement
@@ -118,6 +119,31 @@ def test_la_suite_joue_le_produit_tel_qu_un_clone() -> None:
     assert conftest.CLE_INSTALLATION == VARIABLE_INSTALLATION
     assert os.environ.get(VARIABLE_INSTALLATION) == ""
     assert installation() is False
+
+
+def test_la_forme_que_l_api_sert_suit_le_reglage_qui_range_la_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, maison: Path, defauts: None
+) -> None:
+    """Un seul signal décide de « installé » (#1633) : le réglage qui range la configuration
+    donne aussi sa forme au produit (`GET /api/installation`). Ni un `.git` qui traîne dans
+    une installation, ni une copie du dépôt qui n'en porte pas n'en décident."""
+    avec_git = tmp_path / "avec-git"
+    (avec_git / ".git").mkdir(parents=True)
+    sans_git = tmp_path / "sans-git"
+    sans_git.mkdir()
+
+    for valeur, forme, rangement in (
+        ("", "depot", racine_livree()),
+        ("1", "installation", configuration_du_poste()),
+    ):
+        monkeypatch.setenv(VARIABLE_INSTALLATION, valeur)
+        assert emplacements.racine_configuration() == rangement
+        for racine in (avec_git, sans_git):
+            # Le lecteur de la route, sur l'environnement du process ; aucun CLI à lancer.
+            lecteur = LecteurInstallation(
+                racine=racine, sdk=tmp_path / "sans-sdk", resolveur=lambda _nom: None
+            )
+            assert lecteur.lire().forme == forme, f"{racine.name}, réglage {valeur!r}"
 
 
 # =================================================================================================

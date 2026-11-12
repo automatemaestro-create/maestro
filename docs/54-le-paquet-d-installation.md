@@ -46,7 +46,13 @@ remplace ou retire ce dossier sans rien perdre de ce qui précède (§3.3.3). Se
 compilation de Python (`__pycache__`) y naît en marchant : l'interpréteur le rebâtit à la demande.
 
 L'installation se sait installée par son réglage `MAESTRO_INSTALLATION=1`, que le paquet pose dans
-`resources\produit\.env`. Sans lui — un clone du dépôt —, tout reste où il était, sous `core\`.
+`resources\produit\.env`. C'est le **seul** signal (#1633). Il range ce que la personne y met. Il
+donne aussi au produit la forme que *Paramètres › Général* montre (`GET /api/installation`, docs/05
+§6.4sexies), avec le geste proposé et la source de la version. Un `.git` présent ou absent n'en
+décide pas : une archive du dépôt reste un clone, et une installation où un `.git` traînerait reste
+une installation. Sans le réglage — un clone du dépôt —, tout reste où il était, sous `core\`. Une
+autre valeur que `1` est refusée avec son motif par le lanceur et par chaque dépôt : elle ne
+devient ni l'une ni l'autre forme.
 
 Les ports par défaut sont `8000` (l'API) et `3000` (l'interface). L'un ou l'autre pris, le lanceur
 prend le premier libre au-dessus et le dit dans son journal ; l'interface reçoit l'adresse de

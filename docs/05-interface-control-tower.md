@@ -5639,8 +5639,10 @@ demande de la session de l'écran.
 
 - `GET /api/installation` → `{ forme, produit: { version, releve }, cli_claude: { provenance,
   chemin, version } }`.
-  - `forme` vaut `installation` (un produit posé par le paquet) ou `depot` (un clone ou un
-    worktree, reconnu à son `.git`). C'est elle qui décide du geste proposé.
+  - `forme` vaut `installation` (un produit posé par le paquet) ou `depot` (un clone, un
+    worktree ou une copie du dépôt). Elle se lit sur `MAESTRO_INSTALLATION`, le réglage qui range
+    aussi la configuration de la personne (docs/54 §1), et jamais sur la présence d'un `.git`
+    (#1633). C'est elle qui décide du geste proposé.
   - `produit.version` est celle que l'assemblage a écrite dans `version.json`, à la racine du
     produit. Dans un clone, c'est celle de `apps/desktop/package.json`. Illisible, elle vaut
     `null`, et `releve` dit pourquoi.
