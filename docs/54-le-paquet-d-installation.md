@@ -482,6 +482,13 @@ dessus. Elle ferme ensuite Maestro et attend que la version suivante se pose, ap
 sans relance. Enfin elle rouvre Maestro, comme la personne le ferait, et constate ce qui tourne et
 ce qui a survécu. Dans les autres phases, la mise à jour est éteinte (`MAESTRO_MISES_A_JOUR_FLUX=0`).
 
+Le canal est servi et arrêté par `scripts/distribution/canal.sh`. En fin de phase, et à toute
+sortie de la vérification, même interrompue, son serveur s'arrête avec l'interpréteur qui écoute
+vraiment. Sous Windows, c'est l'enfant du lanceur du venv, qu'un simple `kill` n'atteint pas. Le
+rapport constate ensuite que plus rien ne répond sur le port. Si ce port répondait déjà au départ,
+un autre serveur l'occupe, par exemple celui d'une vérification tuée, qui servirait l'ancien canal :
+la phase le dit, et ne le prend pas pour le sien (#1644).
+
 **Redémarrer maintenant** n'y est pas joué. L'installeur relance Maestro par l'Explorateur
 (`ExecShellAsUser` d'electron-builder), donc dans l'environnement de la session Windows. Chez
 quelqu'un, c'est celui d'où Maestro avait été ouvert, et rien ne change. Sur le poste simulé, c'est

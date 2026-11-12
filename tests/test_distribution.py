@@ -16,13 +16,18 @@ et qu'un changement d'un seul côté casserait sans bruit :
 
 from __future__ import annotations
 
+import functools
+import http.server
 import importlib.util
 import json
 import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType
 
@@ -458,6 +463,133 @@ def test_la_verification_lit_le_dialogue_et_la_pose_que_la_coque_ecrit() -> None
     assert '"[mise à jour] installation de $VERSION_SUIVANTE, en silence"' in verifier
     assert "redémarrage demandé sur ${version}" in main
     assert "grep -qF 'redémarrage demandé'" in verifier
+
+
+CANAL = RACINE / "scripts" / "distribution" / "canal.sh"
+PILOTE = RACINE / "scripts" / "orchestrate" / "pilote.sh"
+
+
+def _port_libre() -> int:
+    with socket.socket() as prise:
+        prise.bind(("127.0.0.1", 0))
+        return prise.getsockname()[1]
+
+
+def _repond(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def _arreter_ce_qui_sert(dossier: Path) -> None:
+    """Le filet du test, qui ne doit rien au code éprouvé : tout processus dont la ligne de
+    commande nomme le dossier servi. Sans lui, un test rouge laisserait un serveur au poste."""
+    if os.name == "nt":
+        powershell = shutil.which("powershell") or "powershell.exe"
+        filtre = (
+            "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+            f"$_.CommandLine.Contains('{dossier}') -and "
+            "-not $_.CommandLine.Contains('Get-CimInstance') } | ForEach-Object { "
+            "Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+        )
+        subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", filtre],
+            capture_output=True,
+            timeout=60,
+        )
+        return
+    for ligne in Path("/proc").glob("[0-9]*/cmdline"):
+        pid = int(ligne.parent.name)
+        try:
+            if pid != os.getpid() and str(dossier).encode() in ligne.read_bytes():
+                os.kill(pid, signal.SIGKILL)
+        except OSError:
+            continue
+
+
+def _jouer_le_canal(script: str, **variables: str) -> subprocess.CompletedProcess[str]:
+    assert BASH is not None
+    entete = f'. "{PILOTE.as_posix()}"\n. "{CANAL.as_posix()}"\n'
+    return subprocess.run(
+        [BASH, "-c", entete + script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, **variables},
+        timeout=120,
+    )
+
+
+def test_la_verification_arrete_le_canal_qu_elle_a_servi() -> None:
+    """Le canal se sert et s'arrête par `canal.sh`, à la fin de la phase comme à toute sortie, et
+    l'arrêt est un constat du rapport : il ne se suppose plus."""
+    verifier = VERIFIER.read_text(encoding="utf-8")
+    assert '. "$RACINE/scripts/orchestrate/pilote.sh"' in verifier
+    assert '. "$RACINE/scripts/distribution/canal.sh"' in verifier
+    assert 'canal_en_vol "$TRACE" && canal_arreter "$PORT_FLUX" "$TRACE"' in verifier
+    arret = '"le canal local est arrêté : plus rien ne répond sur http://127.0.0.1:$PORT_FLUX/"'
+    assert arret in verifier
+    assert "http.server" not in verifier
+
+
+@sans_bash
+def test_le_canal_s_arrete_avec_le_serveur_qui_ecoute(tmp_path: Path) -> None:
+    """Le serveur du canal est lancé par l'interpréteur du venv. Sous Windows, ce `python.exe` est
+    un lanceur : celui qui écoute est son enfant Windows, que `kill` n'atteint pas (#1644). Le
+    canal arrêté, plus rien ne répond sur son port."""
+    dossier = tmp_path / "canal"
+    _ecrire(dossier / "latest.yml", "version: 0.0.1\n")
+    trace = tmp_path / "trace"
+    trace.mkdir()
+    port = _port_libre()
+    try:
+        sortie = _jouer_le_canal(
+            'canal_servir "$PY" "$PORT" "$DOSSIER" "$TRACE"; echo "servir=$?"\n'
+            'canal_arreter "$PORT" "$TRACE"; echo "arreter=$?"\n',
+            PY=sys.executable,
+            PORT=str(port),
+            DOSSIER=str(dossier),
+            TRACE=trace.as_posix(),
+        )
+        reste = _repond(port)
+    finally:
+        _arreter_ce_qui_sert(dossier)
+    assert "servir=0" in sortie.stdout, sortie.stdout + sortie.stderr
+    assert "arreter=0" in sortie.stdout, sortie.stdout + sortie.stderr
+    assert not reste, f"le port {port} répond encore après l'arrêt du canal"
+
+
+@sans_bash
+def test_le_canal_refuse_un_port_qu_un_autre_serveur_sert_deja(tmp_path: Path) -> None:
+    """Un serveur resté d'une vérification tuée servirait l'ANCIEN `latest.yml` : le canal ne le
+    prend pas pour le sien, le dit (`3`) et n'y touche pas."""
+    ancien = tmp_path / "ancien"
+    _ecrire(ancien / "latest.yml", "version: 0.0.0\n")
+    nouveau = tmp_path / "nouveau"
+    _ecrire(nouveau / "latest.yml", "version: 0.0.1\n")
+    trace = tmp_path / "trace"
+    trace.mkdir()
+    gestionnaire = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ancien))
+    serveur = http.server.ThreadingHTTPServer(("127.0.0.1", 0), gestionnaire)
+    fil = threading.Thread(target=serveur.serve_forever, daemon=True)
+    fil.start()
+    port = serveur.server_address[1]
+    try:
+        sortie = _jouer_le_canal(
+            'canal_servir "$PY" "$PORT" "$DOSSIER" "$TRACE"; echo "servir=$?"\n',
+            PY=sys.executable,
+            PORT=str(port),
+            DOSSIER=str(nouveau),
+            TRACE=trace.as_posix(),
+        )
+        assert "servir=3" in sortie.stdout, sortie.stdout + sortie.stderr
+        assert _repond(port), "le serveur déjà là a été arrêté"
+    finally:
+        serveur.shutdown()
+        serveur.server_close()
+        _arreter_ce_qui_sert(nouveau)
 
 
 VERSION_PUBLIEE = "1.2.3"
