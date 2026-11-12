@@ -4,8 +4,8 @@ Le lot 1 (#221) a posé l'entité `Projet`, sa racine validée et sa persistance
 mais **personne ne pouvait l'atteindre** : la Control Tower n'avait aucune route
 pour lire ou écrire un projet. Ce module est la pièce que les routes
 `/api/projets` appellent, au patron de `maestro.controltower.executions` : le
-service tient les formes JSON et les refus, `app.py` ne fait que les traduire en
-codes HTTP.
+service tient les formes JSON et les refus, ses routes (`routes/projets.py`) ne font que
+les traduire en codes HTTP.
 
 Deux responsabilités :
 
@@ -44,7 +44,7 @@ liste vide : « ce dossier n'a pas de sous-dossier » et « je refuse de regarde
 là » sont deux réponses différentes, et les confondre est ce qui rend un
 explorateur inutilisable. `STATUT_HTTP_PAR_MOTIF` donne à chaque motif son code
 HTTP — c'est la seule connaissance de HTTP de ce module, et elle est ici plutôt
-que dans `app.py` pour que motif et code se lisent au même endroit.
+que dans les routes pour que motif et code se lisent au même endroit.
 """
 
 from __future__ import annotations

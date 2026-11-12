@@ -22,7 +22,7 @@ la version courante à chaque tâche et trace la version utilisée sur le résul
 comme au journal ; une édition publiée vaut pour l'exécution suivante, moteur et
 workers ne redémarrent pas. `avec_playbooks` et `default_runtimes(playbooks=...)`
 restent le chargement **figé au câblage** (un instantané, pour les usages
-une-fois). L'API de lecture/écriture vit dans `maestro.controltower.app`.
+une-fois). L'API de lecture/écriture vit dans `maestro.controltower.routes.playbooks`.
 
 Les **propositions** d'auto-amélioration (#111) sont des brouillons versionnés à part
 (`proposer`/`propositions`, sous-dossier `propositions/`, provenance « proposition ») :

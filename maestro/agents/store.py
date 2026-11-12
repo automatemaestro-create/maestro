@@ -3,7 +3,7 @@
 Matérialise la moitié « configuration » d'EF-03 (création d'agents personnalisés,
 parent #70) : la définition d'un agent — nom, rôle, playbook, compétences,
 fournisseur/modèle/effort — devient un document **persisté hors du code**, créé et
-modifié depuis l'API Control Tower (`maestro.controltower.app`, endpoints
+modifié depuis l'API Control Tower (`maestro.controltower.routes.catalogue`, endpoints
 `/api/catalogue`). Ce que ces trois réglages de modèle peuvent valoir se lit, lui,
 sur `GET /api/fournisseurs` (#253) — le dépôt stocke un choix, il ne dit pas
 l'offre.
@@ -104,7 +104,7 @@ NOMS_RESERVES: frozenset[str] = NOMS_DU_CODE | NOMS_SYSTEME
 
 #: Les **trois états** d'une fiche du catalogue, tels que l'API les nomme (#259).
 #: Ils vivent ici, avec la règle qui les produit, plutôt qu'en littéraux dans
-#: `maestro.controltower.app` : le troisième est né d'avoir eu à écrire deux fois
+#: `maestro.controltower.routes` : le troisième est né d'avoir eu à écrire deux fois
 #: la même chaîne, et le front en tient déjà le miroir (`apps/web/lib/types.ts`).
 AGENT_SOURCE_DEFAUT = "defaut"
 AGENT_SOURCE_SURCHARGE = "defaut_surcharge"

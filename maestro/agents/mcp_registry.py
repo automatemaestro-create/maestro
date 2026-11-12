@@ -213,7 +213,7 @@ USAGE_SPECIALISE = 30
 VERSION_PLAYWRIGHT_MCP = "0.0.78"
 
 #: L'id réservé par la route `GET /api/mcp/registre/provenance`
-#: (`maestro.controltower.app`) : aucune entrée ne peut le porter, sans quoi
+#: (`maestro.controltower.routes.mcp`) : aucune entrée ne peut le porter, sans quoi
 #: elle deviendrait injoignable par `GET /api/mcp/registre/{id}`. Le registre
 #: refuse cet id à la construction — la route n'a donc pas à parier sur l'ordre
 #: de déclaration de ses voisines.

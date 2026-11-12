@@ -3,7 +3,7 @@
 Premier lot du chat de la Control Tower (#82) : un utilisateur envoie un message
 à un agent du catalogue et reçoit sa réponse, le fil étant **persisté** et
 consultable par agent. Quatre briques, assemblées par `ServiceChat` et servies
-par les endpoints `/api/chat` de l'app (`maestro.controltower.app`) :
+par les endpoints `/api/chat` de `maestro.controltower.routes.chat` :
 
 - `MessageChat` : un message du fil (auteur « utilisateur » ou l'agent), prêt à
   voyager en JSON — la forme du REST et du stockage ;

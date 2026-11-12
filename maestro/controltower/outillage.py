@@ -118,7 +118,8 @@ une phrase de conclusion qui dit où il est.
 La pièce que les routes `GET /api/projets/{id}/outillage/analyse` et
 `POST /api/projets/{id}/outillage/generation` appellent, au patron de
 [`maestro.controltower.projets`](./projets.py) : le service tient la forme JSON
-et les refus, `app.py` ne fait que les traduire en codes HTTP.
+et les refus, ses routes (`routes/outillage.py`, `routes/chat.py`) ne font que les
+traduire en codes HTTP.
 
 **Une couche mince, et c'est voulu.** Toute l'analyse vit dans
 `maestro.outillage` — qui ne connaît ni HTTP ni projet déclaré. Ce module n'en

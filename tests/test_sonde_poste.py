@@ -385,11 +385,13 @@ def test_la_route_repond_200_sur_un_poste_nu() -> None:
 def test_le_catalogue_est_la_seule_route_du_sujet() -> None:
     # Le critère 3 en une assertion : la détection *alimente* le catalogue. Une
     # seconde route « ce que le poste a » serait la double source qu'il interdit.
+    # Les chemins se lisent dans l'OpenAPI, qui porte toutes les routes `/api/` : les routes
+    # vivent dans des routeurs inclus (#1525), que `app.routes` ne déroule pas.
     with TestClient(create_app(sonde_poste=_sonde())) as client:
         chemins = {
-            route.path  # type: ignore[attr-defined]
-            for route in client.app.routes  # type: ignore[attr-defined]
-            if getattr(route, "path", "").startswith("/api/")
+            chemin
+            for chemin in client.app.openapi()["paths"]  # type: ignore[attr-defined]
+            if chemin.startswith("/api/")
         }
 
     assert "/api/fournisseurs" in chemins

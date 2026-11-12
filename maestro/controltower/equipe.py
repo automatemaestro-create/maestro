@@ -3,7 +3,7 @@
 La pièce que `POST /api/projets/{id}/equipe/proposition` (#1039) et
 `POST /api/projets/{id}/equipe` (#1040) appellent, au patron de
 [`maestro.controltower.outillage`](./outillage.py) : le service tient la forme
-JSON et les refus, `app.py` ne fait que les traduire en codes HTTP.
+JSON et les refus, ses routes (`routes/outillage.py`) ne font que les traduire en codes HTTP.
 
 **Une couche mince, et trois choses qu'elle seule peut faire.** Toute la
 dérivation vit dans `maestro.equipe`, qui ne connaît ni HTTP, ni projet déclaré,
@@ -151,7 +151,7 @@ class EquipeRefusee(ValueError):
     instances hors bornes, fiche ou politique que les dépôts refuseraient) :
     ce que l'appelant doit distinguer n'est pas la famille du refus mais **quel
     rôle** l'a provoqué, et `refus` le porte rôle par rôle. La traduction en 422
-    motivé est celle des routes projets, dans `app.py`.
+    motivé est celle de ses routes, dans `routes/outillage.py`.
     """
 
     #: Le code stable que les routes projets servent en `{motif, message}` — il

@@ -7,6 +7,11 @@ interface consommatrice : `docs/05-interface-control-tower.md`).
 
 Le code vit dans le paquet [`maestro/controltower`](../../maestro/controltower)
 (couvert par la CI : pytest + mypy strict) ; ce dossier documente l'app déployable.
+L'application s'assemble dans [`app.py`](../../maestro/controltower/app.py) (`create_app`) :
+services, montage, CORS et portier. Ses routes vivent dans
+[`routes/`](../../maestro/controltower/routes), un module par domaine ; la carte des
+modules et l'ordre où l'application les inclut sont la docstring du paquet,
+[`routes/__init__.py`](../../maestro/controltower/routes/__init__.py).
 
 ## Démarrer
 

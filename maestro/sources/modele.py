@@ -1,7 +1,7 @@
 """Les sources d'un objectif : le modèle (ticket #315, EF-39, entité SOURCE de docs/03).
 
 Un lancement ne portait qu'un `objectif` **texte**
-(`LancementExecutionRequete`, `maestro/controltower/app.py`) : il n'existait
+(`LancementExecutionRequete`, `maestro/controltower/routes/requetes.py`) : il n'existait
 aucun endroit où dire ce qu'un objectif embarque — le cahier des charges à
 reprendre, le dossier de maquettes à consulter, la page de spécification à
 lire —, donc aucune frontière à ce qui entre dans le contexte. Une **source**
