@@ -629,6 +629,7 @@ export const ETAT_FOURNISSEUR_DEFAUT_NU: EtatFournisseurDefaut = {
 let etatFournisseurDefaut: EtatFournisseurDefaut = ETAT_FOURNISSEUR_DEFAUT_NU;
 let verdictEpreuve: Epreuve = { ok: true, motif: "ok", precision: "" };
 let panneFournisseurDefaut: string | null = null;
+let coupureFournisseurDefaut: unknown = null;
 
 /** Ce que l'écran a éprouvé, puis enregistré — dans l'ordre, pour les assertions. */
 export const demandesEprouvees: DemandeFournisseurDefaut[] = [];
@@ -641,8 +642,18 @@ export function poserFournisseurDefaut(
   etatFournisseurDefaut = { ...ETAT_FOURNISSEUR_DEFAUT_NU, ...partiel };
   verdictEpreuve = { ok: true, motif: "ok", precision: "" };
   panneFournisseurDefaut = null;
+  coupureFournisseurDefaut = null;
   demandesEprouvees.length = 0;
   demandesEnregistrees.length = 0;
+}
+
+/**
+ * L'API ne reçoit plus les gestes : l'épreuve et l'enregistrement lèvent cette
+ * erreur. Le test la construit lui-même, `ErreurApi` comprise : ce module ne doit
+ * pas importer `@/lib/api` (voir `setup.ts`).
+ */
+export function poserCoupureFournisseurDefaut(erreur: unknown): void {
+  coupureFournisseurDefaut = erreur;
 }
 
 /** Le verdict que la prochaine épreuve rendra — et que l'enregistrement opposera. */
@@ -662,6 +673,7 @@ export function fournisseurDefautDuPoste(): EtatFournisseurDefaut {
 
 /** La double de `POST /api/fournisseurs/epreuve` : le verdict posé, et le modèle demandé. */
 export function epreuveFactice(demande: DemandeFournisseurDefaut): ResultatEpreuve {
+  if (coupureFournisseurDefaut !== null) throw coupureFournisseurDefaut;
   demandesEprouvees.push(demande);
   return {
     epreuve: verdictEpreuve,
@@ -677,6 +689,7 @@ export function epreuveFactice(demande: DemandeFournisseurDefaut): ResultatEpreu
 export function enregistrementFactice(
   demande: DemandeFournisseurDefaut,
 ): { etat: EtatFournisseurDefaut } | { refus: Epreuve } {
+  if (coupureFournisseurDefaut !== null) throw coupureFournisseurDefaut;
   demandesEnregistrees.push(demande);
   if (!verdictEpreuve.ok) return { refus: verdictEpreuve };
   const acces = (demande.fournisseur === "claude" ? ACCES_CLAUDE : ACCES_OPENAI).find(

@@ -161,10 +161,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // défaut. Défaut : rien de choisi, l'abonnement Claude suivi, et une épreuve
     // qui réussit — `poserFournisseurDefaut` / `poserVerdictEpreuve` les règlent.
     chargerFournisseurDefaut: () => Promise.resolve().then(fournisseurDefautDuPoste),
+    // Une coupure posée par `poserCoupureFournisseurDefaut` rejette la promesse,
+    // comme le vrai client : elle ne se lève pas avant elle.
     eprouverFournisseurDefaut: (demande: DemandeFournisseurDefaut) =>
-      Promise.resolve(epreuveFactice(demande)),
+      Promise.resolve(demande).then(epreuveFactice),
     enregistrerFournisseurDefaut: (demande: DemandeFournisseurDefaut) =>
-      Promise.resolve(enregistrementFactice(demande)),
+      Promise.resolve(demande).then(enregistrementFactice),
     // #642 : la porte d'un poste sans projet demande si le premier lancement reste
     // à faire. Défaut : terminé — une liste vide ouvre la création, et tout test
     // écrit avant ce lot dit encore vrai. `poserAccueil` règle le poste neuf.
