@@ -12,7 +12,8 @@
  * ③ **le verdict dit son motif et son geste**, par accès ;
  * ④ **une clé ne se réaffiche jamais** ;
  * ⑤ **l'environnement qui impose se dit**, avec le geste qui rend la main ;
- * ⑥ **une API coupée se dit** au lieu d'un écran vide.
+ * ⑥ **une API coupée se dit** au lieu d'un écran vide ;
+ * ⑦ **un geste que l'API n'a pas reçu se dit en mots**, à l'endroit du geste.
  *
  * Le va-et-vient réel avec l'API et le modèle est exercé sur la vraie stack à la
  * clôture du ticket ; ici, les doubles de `setup.ts` (`poserFournisseurDefaut`,
@@ -21,10 +22,12 @@
 
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FournisseurParDefaut } from "@/components/parametres/FournisseurParDefaut";
+import { ErreurApi } from "@/lib/api";
 import { phraseDuVerdict } from "@/lib/fournisseurParDefaut";
+import type { DemandeFournisseurDefaut } from "@/lib/types";
 
 import {
   ACCES_CLAUDE,
@@ -33,6 +36,7 @@ import {
   constatPosteFactice,
   demandesEnregistrees,
   demandesEprouvees,
+  poserCoupureFournisseurDefaut,
   poserFournisseurDefaut,
   poserFournisseurs,
   poserLargeurFenetre,
@@ -543,5 +547,135 @@ describe("⑥ une API coupée se dit", () => {
     expect(alerte).toHaveTextContent("code : api-injoignable");
     expect(screen.queryByText(/plus haut/)).toBeNull();
     expect(screen.queryByRole("radio")).toBeNull();
+  });
+});
+
+// Vu à la relecture de #1629, l'API coupée après le chargement : « Éprouver » ne
+// rendait qu'un « Failed to fetch » rouge, sous « Enregistrer » (#1636). La panne
+// est typée à la source (`ErreurApi.injoignable`) et se reconnaît à sa classe,
+// jamais à son texte.
+const EPREUVE_SANS_API =
+  "L'API n'a pas répondu : l'épreuve n'a pas pu se faire. Vérifiez que maestro-api tourne, puis éprouvez de nouveau.";
+const ENREGISTREMENT_SANS_API =
+  "L'API n'a pas répondu : rien n'a été enregistré. Vérifiez que maestro-api tourne, puis réessayez.";
+const RETRAIT_SANS_API =
+  "L'API n'a pas répondu : le choix enregistré reste en place. Vérifiez que maestro-api tourne, puis réessayez.";
+
+/** `b` vient-il après `a` dans le document ? */
+const suit = (a: Node, b: Node) =>
+  (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+describe("⑦ un geste que l'API n'a pas reçu se dit en mots (#1636)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("une épreuve que l'API n'a pas reçue se dit comme un échec d'épreuve, sous « Éprouver »", async () => {
+    const utilisateur = await monter();
+    poserCoupureFournisseurDefaut(ErreurApi.injoignable("/api/fournisseurs/epreuve"));
+    const eprouver = screen.getByRole("button", { name: "Éprouver" });
+
+    await utilisateur.click(eprouver);
+
+    const badge = await screen.findByText("Échec de l'épreuve");
+    const phrase = screen.getByText(EPREUVE_SANS_API);
+    const enregistrer = screen.getByRole("button", { name: "Enregistrer" });
+    expect(suit(eprouver, badge)).toBe(true);
+    expect(suit(badge, phrase)).toBe(true);
+    expect(suit(phrase, enregistrer)).toBe(true);
+    expect(enregistrer).toBeDisabled();
+    expect(screen.queryByText(/Failed to fetch|n'a pas répondu$|\/api\//)).toBeNull();
+    // C'est Maestro qui n'a pas répondu, pas l'accès : la tête ne le dit pas en échec.
+    expect(screen.queryByText(/L'épreuve de cet accès vient d'échouer/)).toBeNull();
+    expect(screen.queryByText("Rien ne répond à cette adresse. Le serveur est-il démarré ?")).toBeNull();
+  });
+
+  it("se dit aussi dans l'étape du modèle, à largeur de téléphone", async () => {
+    // L'étape tait un verdict absent (son résumé le dit) : la panne, elle, se dit.
+    poserLargeurFenetre(390);
+    const utilisateur = userEvent.setup();
+    render(<FournisseurParDefaut enEtape autresReplies />);
+    await screen.findByRole("group", { name: "Accès au fournisseur par défaut" });
+    poserCoupureFournisseurDefaut(ErreurApi.injoignable("/api/fournisseurs/epreuve"));
+
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+
+    expect(await screen.findByText("Échec de l'épreuve")).toBeInTheDocument();
+    expect(screen.getByText(EPREUVE_SANS_API)).toBeInTheDocument();
+  });
+
+  it("la panne s'efface dès que la saisie change, comme un verdict", async () => {
+    const utilisateur = await monter();
+    poserCoupureFournisseurDefaut(ErreurApi.injoignable("/api/fournisseurs/epreuve"));
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+    await screen.findByText(EPREUVE_SANS_API);
+
+    await utilisateur.selectOptions(screen.getByRole("combobox", { name: "Modèle" }), "claude-sonnet-5");
+
+    expect(screen.queryByText(EPREUVE_SANS_API)).toBeNull();
+    expect(screen.queryByText("Échec de l'épreuve")).toBeNull();
+  });
+
+  it("un enregistrement que l'API n'a pas reçu se dit en mots, sous « Enregistrer »", async () => {
+    const utilisateur = await monter();
+    await utilisateur.click(screen.getByRole("button", { name: "Éprouver" }));
+    await screen.findByText("Accès éprouvé");
+    poserCoupureFournisseurDefaut(ErreurApi.injoignable("/api/fournisseurs/defaut"));
+
+    await utilisateur.click(screen.getByRole("button", { name: "Enregistrer" }));
+
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(ENREGISTREMENT_SANS_API);
+    expect(alerte).not.toHaveTextContent(/Failed to fetch|\/api\//);
+  });
+
+  it("un retrait que l'API n'a pas reçu se dit en mots, à côté de son bouton", async () => {
+    poserFournisseurDefaut({
+      choix: {
+        fournisseur: "claude",
+        acces: "abonnement",
+        modele: null,
+        adresse: null,
+        eprouve_le: "2026-11-09T10:00:00+00:00",
+        pose_le: "2026-11-09T10:00:00+00:00",
+      },
+    });
+    const utilisateur = await monter();
+    // Le vrai client : c'est le rejet du `fetch` qu'il doit typer.
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+    const oublier = screen.getByRole("button", { name: "Oublier le choix enregistré" });
+
+    await utilisateur.click(oublier);
+
+    const alerte = await screen.findByRole("alert");
+    expect(alerte).toHaveTextContent(RETRAIT_SANS_API);
+    expect(alerte).not.toHaveTextContent(/Failed to fetch|\/api\//);
+    expect(suit(oublier, alerte)).toBe(true);
+  });
+});
+
+describe("⑦ côté client : la panne de transport est typée à la source (#1636)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const DEMANDE: DemandeFournisseurDefaut = {
+    fournisseur: "claude",
+    acces: "abonnement",
+    modele: null,
+    adresse: null,
+    cle: null,
+  };
+
+  it.each([
+    ["l'épreuve", "/api/fournisseurs/epreuve", (api: typeof import("@/lib/api")) => api.eprouverFournisseurDefaut(DEMANDE)],
+    ["l'enregistrement", "/api/fournisseurs/defaut", (api: typeof import("@/lib/api")) => api.enregistrerFournisseurDefaut(DEMANDE)],
+    ["le retrait", "/api/fournisseurs/defaut", (api: typeof import("@/lib/api")) => api.effacerFournisseurDefaut()],
+  ])("%s, sans réponse, lève une panne « injoignable », pas l'erreur du navigateur", async (_, chemin, geste) => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+    // Le vrai client, et non les doubles de `setup.ts`.
+    const reel = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+
+    const echec = await geste(reel).catch((erreur: unknown) => erreur);
+
+    expect(echec).toBeInstanceOf(reel.ErreurApi);
+    expect((echec as InstanceType<typeof reel.ErreurApi>).statut).toBeNull();
+    expect((echec as InstanceType<typeof reel.ErreurApi>).chemin).toBe(chemin);
   });
 });

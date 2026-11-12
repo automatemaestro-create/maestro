@@ -33,6 +33,11 @@
  * compte, et l'accès enregistré quand il en fait partie. En cocher un en fait la
  * carte ouverte, et le focus le suit. Les Paramètres montrent toujours toutes les
  * cartes.
+ *
+ * Un geste que l'API n'a pas reçu se dit à l'endroit du geste, en mots (#1636) :
+ * une épreuve qui n'a pas pu partir rend un échec d'épreuve sous « Éprouver », et
+ * un enregistrement ou un retrait sans réponse le dit sous son bouton. La panne se
+ * reconnaît à sa classe, `ErreurApi.injoignable`, jamais au texte du navigateur.
  */
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -41,6 +46,7 @@ import { IconeAlerte, IconeCoche, IconeStatutAFaire } from "@/components/Icones"
 import { BadgeEtat, Bouton, Carte, Champ, ChampListe } from "@/components/Primitives";
 import { RefusMotive, refusDepuis } from "@/components/projets/ExplorateurDossiers";
 import {
+  ErreurApi,
   chargerFournisseurDefaut,
   chargerFournisseurs,
   effacerFournisseurDefaut,
@@ -75,6 +81,27 @@ type Action = "epreuve" | "enregistrement" | "retrait";
 const MESSAGE_ENREGISTRE =
   "Enregistré. Le prochain appel de modèle s'en sert, sans redémarrer Maestro.";
 
+// Ce que chaque geste dit quand l'API de Maestro n'a pas répondu : ce qu'il en
+// coûte, puis le geste qui y répond. Ce n'est pas « Rien ne répond à cette
+// adresse », qui parle du fournisseur.
+const EPREUVE_SANS_API =
+  "L'API n'a pas répondu : l'épreuve n'a pas pu se faire. Vérifiez que maestro-api tourne, puis éprouvez de nouveau.";
+const ENREGISTREMENT_SANS_API =
+  "L'API n'a pas répondu : rien n'a été enregistré. Vérifiez que maestro-api tourne, puis réessayez.";
+const RETRAIT_SANS_API =
+  "L'API n'a pas répondu : le choix enregistré reste en place. Vérifiez que maestro-api tourne, puis réessayez.";
+
+/** L'API n'a pas répondu du tout : la panne est typée à la source, pas lue dans un texte. */
+function sansReponse(e: unknown): boolean {
+  return e instanceof ErreurApi && e.statut === null;
+}
+
+/** Ce qu'un geste refusé dit : la panne de transport en mots, sinon le motif rendu. */
+function refusEnMots(e: unknown, sansApi: string): string {
+  if (sansReponse(e)) return sansApi;
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function FournisseurParDefaut({
   enEtape = false,
   autresReplies = false,
@@ -105,6 +132,10 @@ export function FournisseurParDefaut({
   const [action, setAction] = useState<Action | null>(null);
   const [annonce, setAnnonce] = useState<string | null>(null);
   const [refus, setRefus] = useState<string | null>(null);
+  // L'empreinte de la saisie dont l'épreuve n'a pas pu partir : comme un verdict,
+  // elle cesse de valoir dès que la saisie change.
+  const [epreuveSansApi, setEpreuveSansApi] = useState<string | null>(null);
+  const [refusRetrait, setRefusRetrait] = useState<string | null>(null);
 
   // Chargement différé d'un tick (même mécanique que la section) : l'effet
   // lui-même ne déclenche aucun setState synchrone.
@@ -186,6 +217,7 @@ export function FournisseurParDefaut({
   const empreinte = demande === null ? null : empreinteDemande(demande);
   const verdictCourant =
     verdict !== null && verdict.empreinte === empreinte ? verdict : null;
+  const sansApiCourante = epreuveSansApi !== null && epreuveSansApi === empreinte;
   // Le verdict de la saisie parle de ce qui est en service quand la saisie est
   // celle-là : même accès, même modèle interrogé, même adresse, aucune clé neuve.
   const modeleEnService = etat.effectif.modele ?? etat.effectif.modele_par_defaut ?? "";
@@ -219,6 +251,7 @@ export function FournisseurParDefaut({
     setAdresse(memeQueLeChoix ? adresseSaisie(etat.choix?.adresse, option.acces) : "");
     setCle("");
     setVerdict(null);
+    setEpreuveSansApi(null);
     setAnnonce(null);
     setRefus(null);
   };
@@ -228,11 +261,19 @@ export function FournisseurParDefaut({
     setAction("epreuve");
     setAnnonce(null);
     setRefus(null);
+    setEpreuveSansApi(null);
     try {
       const resultat = await eprouverFournisseurDefaut(demande);
       setVerdict({ empreinte, epreuve: resultat.epreuve, modele: resultat.modele });
     } catch (e) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      if (sansReponse(e)) {
+        // L'épreuve n'a pas eu lieu : elle se dit à la place du verdict, et un
+        // verdict d'avant ne laisse pas « Enregistrer » ouvert sur une API muette.
+        setVerdict(null);
+        setEpreuveSansApi(empreinte);
+      } else {
+        setRefus(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setAction(null);
     }
@@ -265,7 +306,7 @@ export function FournisseurParDefaut({
         setAnnonce(MESSAGE_ENREGISTRE);
       }
     } catch (e) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefus(refusEnMots(e, ENREGISTREMENT_SANS_API));
     } finally {
       setAction(null);
     }
@@ -274,11 +315,12 @@ export function FournisseurParDefaut({
   const oublier = async () => {
     setAction("retrait");
     setRefus(null);
+    setRefusRetrait(null);
     try {
       setEtat(await effacerFournisseurDefaut());
       setAnnonce("Le choix est oublié : Maestro reprend son réglage d'origine.");
     } catch (e) {
-      setRefus(e instanceof Error ? e.message : String(e));
+      setRefusRetrait(refusEnMots(e, RETRAIT_SANS_API));
     } finally {
       setAction(null);
     }
@@ -317,6 +359,7 @@ export function FournisseurParDefaut({
           onAdresse={setAdresse}
           onCle={setCle}
           verdict={verdictCourant}
+          sansApi={sansApiCourante}
           saisieEnregistree={saisieEnregistree}
           enEtape={enEtape}
           action={action}
@@ -385,19 +428,25 @@ export function FournisseurParDefaut({
       </fieldset>
 
       {etat.choix !== null && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Bouton
-            variante="discret"
-            onClick={() => void oublier()}
-            occupe={action === "retrait"}
-            disabled={action !== null && action !== "retrait"}
-          >
-            Oublier le choix enregistré
-          </Bouton>
-          <span className="text-annexe text-texte-secondaire">
-            Maestro reprend alors son réglage d&apos;origine.
-          </span>
-        </div>
+        <>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Bouton
+              variante="discret"
+              onClick={() => void oublier()}
+              occupe={action === "retrait"}
+              disabled={action !== null && action !== "retrait"}
+            >
+              Oublier le choix enregistré
+            </Bouton>
+            <span className="text-annexe text-texte-secondaire">
+              Maestro reprend alors son réglage d&apos;origine.
+            </span>
+          </div>
+          {/* Le refus d'un retrait se dit sous son bouton, pas dans la carte choisie. */}
+          <div aria-live="polite" className="min-w-0 wrap-anywhere">
+            {refusRetrait !== null && <Refus texte={refusRetrait} />}
+          </div>
+        </>
       )}
     </>
   );
@@ -703,6 +752,7 @@ function Saisie({
   onAdresse,
   onCle,
   verdict,
+  sansApi,
   saisieEnregistree,
   action,
   annonce,
@@ -720,6 +770,8 @@ function Saisie({
   onAdresse: (valeur: string) => void;
   onCle: (valeur: string) => void;
   verdict: Verdict | null;
+  /** L'épreuve de cette saisie n'a pas pu partir : l'API n'a pas répondu. */
+  sansApi: boolean;
   saisieEnregistree: boolean;
   action: Action | null;
   annonce: string | null;
@@ -850,6 +902,7 @@ function Saisie({
           <VerdictEpreuve
             enEtape={enEtape}
             verdict={verdict}
+            sansApi={sansApi}
             option={option}
             saisieEnregistree={saisieEnregistree}
             vientDEtreEnregistree={annonce !== null}
@@ -865,11 +918,7 @@ function Saisie({
           </Bouton>
           <div aria-live="polite" className="min-w-0 wrap-anywhere">
             {annonce !== null && <p className="mt-2 text-corps">{annonce}</p>}
-            {refus !== null && (
-              <p role="alert" className="mt-2 text-corps text-alerte-texte">
-                {refus}
-              </p>
-            )}
+            {refus !== null && <Refus texte={refus} />}
           </div>
         </div>
       </div>
@@ -877,18 +926,32 @@ function Saisie({
   );
 }
 
+/** Un geste refusé : l'alerte porte une forme autant qu'une couleur. */
+function Refus({ texte }: { texte: string }) {
+  return (
+    <p role="alert" className="mt-2 flex gap-1.5 text-corps text-alerte-texte">
+      <IconeAlerte aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0">{texte}</span>
+    </p>
+  );
+}
+
 /**
  * Le verdict : l'état porté par la **forme** autant que par la couleur — une
- * coche ou une alerte, et une phrase qui dit le motif et le geste.
+ * coche ou une alerte, et une phrase qui dit le motif et le geste. Une épreuve
+ * que l'API n'a pas reçue se dit dans la même forme qu'un échec, y compris dans
+ * l'étape du modèle, qui tait pourtant un verdict absent.
  */
 function VerdictEpreuve({
   verdict,
+  sansApi,
   option,
   saisieEnregistree,
   vientDEtreEnregistree,
   enEtape,
 }: {
   verdict: Verdict | null;
+  sansApi: boolean;
   option: OptionAcces;
   saisieEnregistree: boolean;
   /** L'annonce sous « Enregistrer » le dit déjà : la carte ne le redit pas. */
@@ -899,6 +962,9 @@ function VerdictEpreuve({
    */
   enEtape: boolean;
 }) {
+  if (sansApi) {
+    return <RenduDuVerdict ok={false} modele="" phrase={EPREUVE_SANS_API} precision="" />;
+  }
   if (verdict === null && enEtape) return null;
   if (verdict === null && saisieEnregistree) {
     if (vientDEtreEnregistree) return null;
@@ -918,9 +984,31 @@ function VerdictEpreuve({
   }
   const { epreuve } = verdict;
   return (
+    <RenduDuVerdict
+      ok={epreuve.ok}
+      modele={verdict.modele}
+      phrase={phraseDuVerdict(epreuve, option.acces)}
+      precision={epreuve.ok ? "" : epreuve.precision}
+    />
+  );
+}
+
+/** Le badge, le modèle interrogé, la phrase, et le relevé d'un échec quand il y en a un. */
+function RenduDuVerdict({
+  ok,
+  modele,
+  phrase,
+  precision,
+}: {
+  ok: boolean;
+  modele: string;
+  phrase: string;
+  precision: string;
+}) {
+  return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-2">
-        {epreuve.ok ? (
+        {ok ? (
           <BadgeEtat ton="positif" icone={IconeCoche}>
             Accès éprouvé
           </BadgeEtat>
@@ -929,16 +1017,16 @@ function VerdictEpreuve({
             Échec de l&apos;épreuve
           </BadgeEtat>
         )}
-        {verdict.modele !== "" && (
-          <span className="font-mono text-annexe text-texte-secondaire">{verdict.modele}</span>
+        {modele !== "" && (
+          <span className="font-mono text-annexe text-texte-secondaire">{modele}</span>
         )}
       </div>
-      <p className="text-corps">{phraseDuVerdict(epreuve, option.acces)}</p>
-      {!epreuve.ok && epreuve.precision !== "" && (
+      <p className="text-corps">{phrase}</p>
+      {precision !== "" && (
         // Un fait court tiré d'un champ typé (statut, code, adresse) : il se lit comme
         // un relevé, en chasse fixe, pas comme une phrase.
         <p className="text-annexe text-texte-secondaire">
-          Relevé de l&apos;épreuve : <span className="font-mono">{epreuve.precision}</span>
+          Relevé de l&apos;épreuve : <span className="font-mono">{precision}</span>
         </p>
       )}
     </div>

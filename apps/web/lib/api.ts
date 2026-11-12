@@ -858,17 +858,23 @@ export type EnregistrementFournisseur =
 /**
  * Enregistre le fournisseur par défaut (`PUT /api/fournisseurs/defaut`) — pris
  * sans redémarrage. Seul un choix éprouvé avec succès s'enregistre : le 409
- * porte le verdict, rendu tel quel plutôt que levé.
+ * porte le verdict, rendu tel quel plutôt que levé. Une API muette lève
+ * `ErreurApi.injoignable`.
  */
 export async function enregistrerFournisseurDefaut(
   demande: DemandeFournisseurDefaut,
 ): Promise<EnregistrementFournisseur> {
   const chemin = "/api/fournisseurs/defaut";
-  const reponse = await appel(`${urlApi()}${chemin}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(demande),
-  });
+  let reponse: Response;
+  try {
+    reponse = await appel(`${urlApi()}${chemin}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(demande),
+    });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (reponse.status === 409) {
     const corps = (await reponse.json()) as { detail?: { epreuve?: Epreuve } };
     if (corps.detail?.epreuve) return { refus: corps.detail.epreuve };
@@ -1690,6 +1696,10 @@ export async function retirerAccord(
  * qui tient tout entier dans son URL (`…/{run_id}/pause`) n'a rien à envoyer, et
  * annoncer un `Content-Type: application/json` sans rien derrière décrirait un
  * corps qui n'existe pas.
+ *
+ * Une API qui ne répond pas lève `ErreurApi.injoignable`, comme `ecrireProjet` :
+ * l'écran nomme la panne par sa classe, et le « Failed to fetch » du navigateur
+ * n'arrive jamais jusqu'à lui (#1636).
  */
 async function envoyerJsonEtLire<T>(
   chemin: string,
@@ -1697,13 +1707,18 @@ async function envoyerJsonEtLire<T>(
   refusParDefaut: string,
   methode: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<T> {
-  const reponse = await appel(`${urlApi()}${chemin}`, {
-    method: methode,
-    ...(corps !== undefined && {
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(corps),
-    }),
-  });
+  let reponse: Response;
+  try {
+    reponse = await appel(`${urlApi()}${chemin}`, {
+      method: methode,
+      ...(corps !== undefined && {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corps),
+      }),
+    });
+  } catch {
+    throw ErreurApi.injoignable(chemin);
+  }
   if (!reponse.ok) {
     let detail = `${refusParDefaut} (${reponse.status})`;
     try {
