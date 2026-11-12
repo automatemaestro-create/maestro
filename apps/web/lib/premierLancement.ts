@@ -114,7 +114,9 @@ export function etapesDuParcours(
 /** Une lecture revenue en panne, que l'écran de l'étape dira en s'ouvrant. */
 export const ILLISIBLE = "illisible";
 
-const PHRASE_ILLISIBLE = "Réglage illisible pour l'instant : l'étape dit pourquoi.";
+// Les phrases des étapes portent une espace insécable avant leurs deux-points : un
+// résumé replié sur deux lignes ne doit pas commencer la seconde par « : ».
+const PHRASE_ILLISIBLE = "Réglage illisible pour l'instant : l'étape dit pourquoi.";
 const PHRASE_LECTURE = "Lecture du réglage…";
 
 /**
@@ -129,7 +131,7 @@ export function resumeDuModele(
   if (etat === ILLISIBLE) return PHRASE_ILLISIBLE;
   if (etat === null) return PHRASE_LECTURE;
   if (etat.choix === null) {
-    return "Maestro confie chaque conversation et chaque tâche à un fournisseur de modèle. Choisissez celui de ce poste : il est éprouvé avant d'être retenu.";
+    return "Maestro confie chaque conversation et chaque tâche à un fournisseur de modèle. Choisissez celui de ce poste : il est éprouvé avant d'être retenu.";
   }
   const effective = cleEffective(etat);
   const option =
@@ -158,7 +160,7 @@ export function resumeDuDossier(repertoire: RepertoireProjets | null | typeof IL
   if (repertoire === ILLISIBLE) return PHRASE_ILLISIBLE;
   if (repertoire === null) return PHRASE_LECTURE;
   if (repertoire.refus !== null) {
-    return `${repertoire.chemin} ne peut pas les recevoir (${libelleMotif(repertoire.refus.motif)}) : choisissez-en un autre.`;
+    return `${repertoire.chemin} ne peut pas les recevoir (${libelleMotif(repertoire.refus.motif)}) : choisissez-en un autre.`;
   }
   if (!repertoire.existe) return `${repertoire.chemin} n'existe pas encore.`;
   return repertoire.cree
@@ -178,8 +180,8 @@ export function resumeDuProjet(projetsDeclares: number, modeleEstFait: boolean):
     const pluriel = projetsDeclares > 1 ? "s" : "";
     return `${projetsDeclares} projet${pluriel} déclaré${pluriel} sur ce poste.`;
   }
-  if (!modeleEstFait) return "Après le modèle : c'est lui qui vous répondra.";
-  return "Il naît d'une conversation : dites ce que vous voulez construire.";
+  if (!modeleEstFait) return "Après le modèle : c'est lui qui vous répondra.";
+  return "Il naît d'une conversation : dites ce que vous voulez construire.";
 }
 
 /** Une date ISO en clair, au jour près : « 11 novembre 2026 ». */

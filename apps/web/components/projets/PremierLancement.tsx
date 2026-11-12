@@ -298,7 +298,10 @@ export function PremierLancement({
           // Nommé par le titre de l'étape seul : son état et son résumé sont dans
           // la ligne, au-dessus, et ne se relisent pas à l'entrée de l'écran.
           aria-labelledby={`${idLigne(courante)}-titre`}
-          className={classesCarte({ densite: "aeree" })}
+          // La conversation de l'étape 3 se pose sur le fond de la page, comme hors du
+          // parcours : son composeur a un fond opaque (celui de la page), qui tracerait
+          // une bande dans une carte en thème sombre.
+          className={courante === 3 ? undefined : classesCarte({ densite: "aeree" })}
         >
           {courante === 1 && <FournisseurParDefaut enEtape onEtat={recevoirModele} />}
           {courante === 2 && <ParametresProjets onRepertoire={recevoirRepertoire} />}
