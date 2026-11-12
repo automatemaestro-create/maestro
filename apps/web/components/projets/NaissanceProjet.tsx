@@ -36,6 +36,12 @@
  * Rien n'est déclaré depuis ce composant : il **observe** le fil. Ce qui ouvre le
  * projet est le fait que la réponse d'un accord porte (`projet_cree`), relu du fil
  * — qu'on ait accepté d'un clic sur la carte ou d'un « oui » tapé.
+ *
+ * ## La dernière étape du premier lancement
+ *
+ * Le parcours d'un poste neuf (#642) finit ici, sur le premier projet tel qu'il se
+ * crée (d'après GitHub Desktop) : `enEtape` range la question sous le titre de
+ * l'étape, et `onNe` dit au parcours qu'un projet vient de naître — sa fin.
  */
 
 import { useEffect, useState } from "react";
@@ -71,6 +77,8 @@ export function NaissanceProjet({
   retour,
   panne = null,
   parUnGeste = false,
+  enEtape = false,
+  onNe,
 }: {
   /** Revenir à la liste des projets — `undefined` quand il n'y en a aucun. */
   retour?: () => void;
@@ -86,6 +94,10 @@ export function NaissanceProjet({
    * d'office, elle ne le vole pas — la règle de `Conversation.focusAuMontage`.
    */
   parUnGeste?: boolean;
+  /** Montée dans l'étape du premier lancement : la question sous le titre de l'étape. */
+  enEtape?: boolean;
+  /** Un projet vient de naître dans cette conversation — appelé une fois par projet. */
+  onNe?: () => void;
 }) {
   // Le fil de l'orchestration **sans projet** : le backend l'accepte, et c'est le
   // projet que cette conversation fait naître qui lui en donnera un.
@@ -129,6 +141,10 @@ export function NaissanceProjet({
   // né l'est sous nos yeux, sans référence à prendre.
   const ne = ouverte && !fil.chargement ? projetNeDuFil(fil.messages) : null;
   const refus = useEntreeDansLeProjetNe(ne, { relais: true });
+  const idNe = ne?.id ?? null;
+  useEffect(() => {
+    if (idNe !== null) onNe?.();
+  }, [idNe, onNe]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -148,9 +164,15 @@ export function NaissanceProjet({
         </div>
       )}
       <div className="flex flex-col gap-2">
-        <h1 className="text-page font-semibold tracking-tight text-texte">
-          Que voulez-vous construire ?
-        </h1>
+        {enEtape ? (
+          <h3 className="text-titre font-semibold text-texte">
+            Que voulez-vous construire ?
+          </h3>
+        ) : (
+          <h1 className="text-page font-semibold tracking-tight text-texte">
+            Que voulez-vous construire ?
+          </h1>
+        )}
         <p className="text-corps text-texte-secondaire">
           Dites-le avec vos mots. Je vous pose les questions qui manquent, puis je
           vous propose un nom, un dossier et le versionnement — rien n&apos;est

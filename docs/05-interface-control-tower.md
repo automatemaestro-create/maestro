@@ -389,7 +389,7 @@ avant d'avoir compris le projet.
 **« Nouveau projet » ouvre la conversation.** Sur la porte d'entrée (§2.0.1), la porte passe en
 **mode création** : « Que voulez-vous construire ? » en titre, et dessous le fil de
 l'orchestration, **sans projet**, sur une conversation neuve. Un poste sans aucun projet s'ouvre
-directement dans ce mode. L'écran Projets (`/projets`) y renvoie aussi : son « Nouveau projet »
+directement dans ce mode, une fois son premier lancement fait (§2.0.3). L'écran Projets (`/projets`) y renvoie aussi : son « Nouveau projet »
 quitte le projet ouvert, car un projet naît hors du cadre d'un autre.
 
 La forme a été tranchée sur pièces (veille et « Variante retenue » de #1294), d'après v0, Lovable
@@ -453,6 +453,77 @@ Implémentation : `components/projets/NaissanceProjet.tsx`, `components/chat/Dem
 `projets.test.tsx`,
 [`tests/test_naissance_projet.py`](../tests/test_naissance_projet.py), et le scénario de référence
 S7 ([docs/40 §5](./40-decision-rythme-et-scenarios-de-reference.md)).
+
+#### 2.0.3 Le premier lancement : Maestro se met en route avec vous (#642) — **livré**
+
+*Qu'est-ce qui me reste à régler avant que Maestro marche, et est-ce fait ?* Sur un poste neuf, la
+porte d'entrée répond à cette question avant d'ouvrir la création. La création parle au modèle : la
+première phrase tapée partirait vers un fournisseur que personne n'a choisi ni éprouvé.
+
+**Trois étapes, toutes visibles.** Sous le titre « Mettre Maestro en route » :
+
+1. **Le modèle qui fait le travail** : le fournisseur par défaut (§6.4quater, #1609). L'étape dit à
+   quoi sert le choix : « Maestro confie chaque conversation et chaque tâche à un fournisseur de
+   modèle ».
+2. **Le dossier où naissent vos projets** : le répertoire des projets (#1022), avec les dossiers
+   autorisés depuis l'explorateur (#1610).
+3. **Votre premier projet** : la conversation de §2.0.2, « Que voulez-vous construire ? ». Elle
+   attend le modèle, puisque c'est lui qui répondra.
+
+Chaque étape porte son état par une **forme** et par une **phrase** :
+
+- un cercle coché quand elle est faite ;
+- un cercle au point plein pour l'étape ouverte ;
+- un cercle vide quand elle reste à faire ;
+- un cercle en pointillé quand elle attend une étape d'avant.
+
+Seule l'étape ouverte montre son écran, sous la liste, si bien que les trois restent à l'écran.
+Une ligne s'ouvre d'un clic, faite ou non, pour changer son réglage. Seule une étape qui attend ne
+s'ouvre pas.
+
+**Une étape se coche sur un fait, jamais sur un clic.** Il n'y a pas de « suivant » :
+
+- le modèle est fait quand un choix est **enregistré**, ce qui n'arrive qu'après une épreuve réussie ;
+- le dossier est fait quand le répertoire existe et peut recevoir un projet ;
+- le premier projet est fait quand un projet est déclaré.
+
+Quand l'étape ouverte se coche, l'écran passe à celle qui reste à faire, et le focus va à sa ligne.
+
+**L'étape réutilise l'écran du produit, elle ne le recopie pas.** L'étape du modèle est la carte
+« Par défaut » des Paramètres, avec son épreuve et ses motifs. Elle s'y monte sans son cadre, son
+titre ni sa tête « Utilisé maintenant », parce que le résumé de l'étape dit l'état une fois.
+L'étape du dossier est la section *Paramètres › Projets*, avec ses dossiers autorisés. Une épreuve
+qui échoue, une clé refusée ou un répertoire indéclarable disent donc leur motif **par les épreuves
+déjà livrées**. Il n'y en a pas de seconde, et rien ne s'enregistre à l'aveugle.
+
+**La fin est le premier projet.** Quand le projet naît dans la conversation, la porte l'ouvre comme
+au §2.0.2, et le parcours est noté terminé (`POST /api/accueil/terminer`, §6.4quinquies). Il ne se
+rejoue pas au démarrage suivant. Un poste qui retire plus tard tous ses projets retrouve la
+création, pas le parcours.
+
+**Quand il se montre.** La porte ne pose la question qu'à une liste **vide**. Un poste qui a des
+projets n'y entre jamais, ce qui tient à l'écart les installations antérieures. Une API qui ne
+répond pas laisse la porte telle qu'elle était, et la lecture n'en bloque jamais l'entrée.
+**Revoir le premier lancement**, dans *Paramètres › Général*, quitte le projet ouvert pour la
+porte et rouvre le parcours sans rien écrire. Chaque étape y montre son réglage tel qu'il est, et
+« Revenir à mes projets » ramène à la liste. La demande vit dans la session de la fenêtre : un
+rechargement ne la rejoue pas.
+
+La forme a été tranchée sur pièces : veille et « Variante retenue » de #642, d'après les
+walkthroughs de VS Code, l'écran « LLM Preference » d'AnythingLLM et « Let's get started! » de
+GitHub Desktop. La liste d'étapes (B) l'a emporté sur un assistant pas à pas (A), dont le
+« Continuer » faisait passer une étape sans la faire, et sur des préalables posés au-dessus de la
+conversation (C).
+
+**Ce qui n'est pas fermé.** Les gabarits de projet, le mode conception (#1417) et « Maestro
+simple » (#1409) se brancheront sur la dernière étape. Celle-ci est le projet tel qu'il se crée
+aujourd'hui.
+
+Implémentation : `components/projets/PremierLancement.tsx`, `lib/premierLancement.ts`, la garde
+de `components/projets/ChoixProjet.tsx`, le mode `enEtape` de
+`components/parametres/FournisseurParDefaut.tsx` et de `components/projets/NaissanceProjet.tsx`,
+le geste de `components/parametres/ParametresGeneral.tsx`. Couverture :
+`apps/web/tests/premier-lancement.test.tsx`, [`tests/test_accueil.py`](../tests/test_accueil.py).
 
 ### 2.1 🏠 Tableau de bord (vue d'accueil)
 
@@ -5536,6 +5607,25 @@ dans son texte. Pour Claude, c'est l'erreur du SDK (`AssistantMessage.error`), l
 d'un résultat en erreur, ou la classe d'exception (`CLINotFoundError`). Pour le dialecte
 OpenAI, c'est le statut HTTP, ou l'absence de toute réponse à l'adresse. `precision` est un
 fait court (« HTTP 401 », « code de sortie 1 »), jamais un texte de réponse recopié.
+
+### 6.4quinquies Le premier lancement du poste (#642) — **livré**
+
+*Le parcours d'accueil reste-t-il à faire sur ce poste ?* La porte d'entrée pose la question à une
+liste de projets vide (§2.0.3). Le service est `maestro/controltower/accueil.py`.
+
+- `GET /api/accueil` → `{ a_faire, termine_le }`. `a_faire` est vrai tant qu'**aucun projet n'est
+  déclaré** et que le parcours n'a **jamais été terminé**. `termine_le` date sa fin (`null` :
+  jamais).
+- `POST /api/accueil/terminer` → le même état. Il note la fin du parcours. Il est idempotent : la
+  première date reste. L'écran l'appelle quand le projet né dans le parcours s'ouvre. Il répond
+  `503` si le dépôt des réglages du poste refuse l'écriture, et rien n'est alors noté.
+
+La date vit dans `accueil.json`, dans le dépôt des réglages du poste (`MAESTRO_REGLAGES_DIR`, à
+défaut `core/reglages/`), à côté de `fournisseur.json` et de `projets.json`. **Les étapes ne sont
+pas ici.** Chacune se lit sur la route du réglage qu'elle pose : `GET /api/fournisseurs/defaut`
+(§6.4quater), `GET /api/projets/repertoire` et les projets déclarés (§6.7). Les recopier en ferait
+une seconde vérité. Revoir le parcours depuis les Paramètres n'appelle aucune route : c'est une
+demande de la session de l'écran.
 
 ### 6.5 Flux SSE d'un fil de chat — et le **fil global** (#268) — **livré**
 

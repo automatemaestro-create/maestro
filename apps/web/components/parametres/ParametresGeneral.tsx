@@ -11,12 +11,21 @@
  * Le bouton, lui, est bien un contrôle : il sonde `GET /api/sante`, ce que le
  * badge temps réel ne dit pas (le WebSocket peut être coupé alors que le REST
  * répond, et réciproquement).
+ *
+ * « Revoir le premier lancement » (#642) rouvre le parcours d'un poste neuf — le
+ * modèle, le dossier des projets, le premier projet — d'après les walkthroughs de
+ * VS Code, qui se rouvrent depuis l'aide. Il quitte le projet ouvert pour la porte
+ * d'entrée, où le parcours vit, et n'écrit rien : chaque étape y montre son
+ * réglage tel qu'il est, et il ne se rejoue pas au démarrage suivant.
  */
 
 import { useState } from "react";
 
+import { Bouton } from "@/components/Primitives";
 import { chargerSante, urlApi, urlEvenements } from "@/lib/api";
 import { useEtatGlobal } from "@/lib/etatGlobal";
+import { useProjetActifFacultatif } from "@/lib/etatProjetActif";
+import { demanderPremierLancement } from "@/lib/premierLancement";
 
 import { LigneReglage } from "./SectionParametres";
 
@@ -24,6 +33,9 @@ type Verdict = { ok: boolean; message: string };
 
 export function ParametresGeneral() {
   const { connecte, portee } = useEtatGlobal();
+  // Hors du shell (un test qui monte la section seule), personne à quitter : le
+  // geste ne se montre pas plutôt que de ne rien faire.
+  const projetActif = useProjetActifFacultatif();
   const [enCours, setEnCours] = useState(false);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
 
@@ -105,6 +117,24 @@ export function ParametresGeneral() {
           {enCours ? "Test…" : "Tester la connexion"}
         </button>
       </LigneReglage>
+
+      {projetActif !== null && (
+        <LigneReglage
+          libelle="Premier lancement"
+          aide="Le parcours du premier démarrage : le modèle, le dossier des projets, puis un premier projet. Le revoir ne change rien : chaque réglage s'y montre tel qu'il est."
+        >
+          <Bouton
+            variante="contour"
+            ton="neutre"
+            onClick={() => {
+              demanderPremierLancement();
+              projetActif.quitter();
+            }}
+          >
+            Revoir le premier lancement
+          </Bouton>
+        </LigneReglage>
+      )}
     </div>
   );
 }

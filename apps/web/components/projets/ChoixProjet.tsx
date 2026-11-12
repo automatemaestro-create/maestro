@@ -37,6 +37,12 @@
  * §2.2, qui renverse docs/37 §4 point 6) : le projet né dans la conversation est
  * ouvert tout de suite, et son outillage se construit dans la même conversation
  * (#1161), pièce par pièce, au lieu d'une étape de formulaire.
+ *
+ * Depuis #642, un poste **neuf** ne tombe plus sur cette création d'office. La
+ * porte ouvre d'abord le **premier lancement** (`PremierLancement`) : le modèle,
+ * le dossier des projets, puis le premier projet. La question n'est posée qu'à
+ * une liste vide (`GET /api/accueil`) : un poste qui a des projets n'y entre
+ * jamais, sauf à le revoir depuis les Paramètres.
  */
 
 import { usePathname } from "next/navigation";
@@ -50,11 +56,13 @@ import type { PanneApi } from "@/lib/api";
 import { useProjetActif } from "@/lib/etatProjetActif";
 import { naissanceDemandee } from "@/lib/naissance";
 import { entreeCourante } from "@/lib/navigation";
+import { premierLancementDemande } from "@/lib/premierLancement";
 import { libelleOrigine } from "@/lib/projets";
 import type { Projet } from "@/lib/types";
 
 import { RefusMotive } from "./ExplorateurDossiers";
 import { NaissanceProjet } from "./NaissanceProjet";
+import { PremierLancement, usePremierLancement } from "./PremierLancement";
 
 const CLASSE_CADRE =
   "mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10 sm:py-16";
@@ -260,14 +268,40 @@ export function ChoixProjet() {
   );
   const chemin = usePathname();
 
+  // « Revoir le premier lancement », demandé depuis les Paramètres (#642) : lu une
+  // fois au montage, comme la création demandée depuis un projet.
+  const [revoir, setRevoir] = useState(premierLancementDemande);
+
   // Rien à lister et rien qui l'explique : la création s'ouvre d'elle-même.
   const listeVide = !chargement && erreur === null && projets.length === 0;
   const creation = creationDemandee ?? listeVide;
+  // Sauf au premier lancement d'un poste (#642) : la liste vide demande d'abord
+  // si le parcours reste à faire. Un « Nouveau projet » demandé d'un geste passe
+  // devant, et l'attente de la réponse ne montre pas la création, dont la
+  // conversation s'ouvrirait pour rien.
+  const premierLancement = usePremierLancement(
+    listeVide && !revoir && creationDemandee === null,
+  );
 
   // La garde ne redirige pas : la page demandée est toujours celle de l'URL, on
   // se contente de la nommer. `undefined` sur une page hors menu — on ne promet
   // alors rien qu'on ne sache dire.
   const destination = entreeCourante(chemin);
+
+  if (revoir || premierLancement === "a-faire") {
+    return (
+      <CadrePorte etiquette="Premier lancement">
+        <EnTetePorte />
+        <PremierLancement
+          projetsDeclares={projets.length}
+          // Revenir n'a de sens que vers une liste : sur un poste sans projet, la
+          // dernière étape *est* la création.
+          onRevenir={revoir && projets.length > 0 ? () => setRevoir(false) : undefined}
+        />
+      </CadrePorte>
+    );
+  }
+  if (premierLancement === "lecture") return <EcranOuverture />;
 
   // Le mode création (#1294) : la porte ne liste plus, elle pose la question —
   // « Que voulez-vous construire ? » — et la conversation dessous. Le projet qui

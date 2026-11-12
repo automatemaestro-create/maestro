@@ -49,8 +49,10 @@ import {
 import type { DemandeProjet, Projet, ProjetCree } from "@/lib/types";
 
 import {
+  accueilDuPoste,
   canalCourant,
   cheminCourant,
+  finDuPremierLancementFactice,
   messageFactice,
   navigations,
   poserChemin,
@@ -71,6 +73,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...reel,
     chargerProjets: () => chargerProjets(),
     creerProjet: (declaration: unknown) => creerProjet(declaration),
+    // La porte d'une liste vide demande si le premier lancement reste à faire
+    // (#642) : sans lui, la lecture partirait sur le réseau. Le poste est réglé
+    // par `poserAccueil` (`setup.ts`), terminé par défaut.
+    chargerAccueil: () => Promise.resolve().then(accueilDuPoste),
+    terminerAccueil: () => Promise.resolve().then(finDuPremierLancementFactice),
   };
 });
 

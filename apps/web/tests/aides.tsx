@@ -46,7 +46,9 @@ import type {
   ConstatPoste,
   DemandeFournisseurDefaut,
   Epreuve,
+  EtatAccueil,
   EtatFournisseurDefaut,
+  RepertoireProjets,
   ResultatEpreuve,
   CoutExecution,
   CoutTache,
@@ -727,6 +729,86 @@ export function poserFournisseurs(catalogue: CatalogueFournisseurs): void {
 
 export function fournisseursDuPoste(): CatalogueFournisseurs {
   return cataloguePoste;
+}
+
+// --- Premier lancement et répertoire des projets (#642, #1022) -------------
+
+/**
+ * Un poste dont le premier lancement est **terminé** : le défaut, pour que tout
+ * test écrit avant #642 dise encore vrai — une liste vide ouvre la création.
+ */
+export const ACCUEIL_TERMINE: EtatAccueil = {
+  a_faire: false,
+  termine_le: "2026-11-01T09:00:00+00:00",
+};
+
+let accueilPose: EtatAccueil = ACCUEIL_TERMINE;
+let panneAccueil: string | null = null;
+
+/** Combien de fois l'écran a noté la fin du parcours (`POST /api/accueil/terminer`). */
+export const finsDuPremierLancement = { nombre: 0 };
+
+/** Ce que `chargerAccueil` rendra — le mock vit dans `setup.ts`. */
+export function poserAccueil(partiel: Partial<EtatAccueil> = {}): void {
+  accueilPose = { ...ACCUEIL_TERMINE, ...partiel };
+  panneAccueil = null;
+  finsDuPremierLancement.nombre = 0;
+}
+
+/** L'API ne répond plus : la lecture du premier lancement lève ce message. */
+export function poserPanneAccueil(message: string): void {
+  panneAccueil = message;
+}
+
+export function accueilDuPoste(): EtatAccueil {
+  if (panneAccueil !== null) throw new Error(panneAccueil);
+  return accueilPose;
+}
+
+/** La double de `POST /api/accueil/terminer` : le parcours est fini, une fois noté. */
+export function finDuPremierLancementFactice(): EtatAccueil {
+  finsDuPremierLancement.nombre += 1;
+  accueilPose = { a_faire: false, termine_le: accueilPose.termine_le ?? "2026-11-11T09:00:00+00:00" };
+  return accueilPose;
+}
+
+/** Le répertoire que Maestro propose, déjà créé : l'étape du dossier est faite. */
+export const REPERTOIRE_PROPOSE: RepertoireProjets = {
+  chemin: "C:/Users/essai/Maestro",
+  par_defaut: true,
+  existe: true,
+  cree: false,
+  refus: null,
+};
+
+let repertoirePose: RepertoireProjets = REPERTOIRE_PROPOSE;
+let repertoireRetenu: Promise<void> | null = null;
+
+/** Ce que `chargerRepertoireProjets` rendra — le mock vit dans `setup.ts`. */
+export function poserRepertoire(partiel: Partial<RepertoireProjets> = {}): void {
+  repertoirePose = { ...REPERTOIRE_PROPOSE, ...partiel };
+  repertoireRetenu = null;
+}
+
+/**
+ * Retient les lectures du répertoire jusqu'à ce que la fonction rendue les
+ * relâche : sur la vraie stack, les réglages reviennent chacun à son heure, et
+ * un écran qui en lit plusieurs doit tenir quel que soit l'ordre.
+ */
+export function retenirRepertoire(): () => void {
+  let relacher = () => {};
+  repertoireRetenu = new Promise<void>((resoudre) => {
+    relacher = resoudre;
+  });
+  return () => {
+    repertoireRetenu = null;
+    relacher();
+  };
+}
+
+export function repertoireDuPoste(): RepertoireProjets | Promise<RepertoireProjets> {
+  if (repertoireRetenu === null) return repertoirePose;
+  return repertoireRetenu.then(() => repertoirePose);
 }
 
 // --- Catalogue des agents (rôles connus, vocabulaire — #255, #256) ----------

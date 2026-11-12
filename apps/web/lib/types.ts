@@ -3606,6 +3606,17 @@ export type OrigineDossier =
   | "autorise";
 
 /**
+ * Le **premier lancement** du poste (`GET /api/accueil`, #642) : `a_faire` tant
+ * qu'aucun projet n'est déclaré et que le parcours n'a jamais été terminé,
+ * `termine_le` la date de sa fin (`null` : jamais). Les étapes ne sont pas ici :
+ * chacune se lit sur le réglage qu'elle pose.
+ */
+export type EtatAccueil = {
+  a_faire: boolean;
+  termine_le: string | null;
+};
+
+/**
  * Le **répertoire des projets** (`GET`/`PUT /api/projets/repertoire`, #1022) :
  * où naît un projet neuf. `par_defaut` dit qu'aucun réglage n'a été posé —
  * c'est alors `Maestro` sous le dossier personnel. `cree` dit que **la lecture**
