@@ -30,8 +30,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from maestro.emplacements import installation
 from maestro.lanceur import session as etat_session
 from maestro.lanceur.emplacement import Emplacement
+from maestro.lanceur.reprise import Bilan, reprendre_du_poste
 from maestro.lanceur.session import Service, Session
 from maestro.lanceur.systeme import Processus, Sortie, Systeme
 
@@ -91,6 +93,10 @@ def preflight_api() -> int:
     return verifier_redis()
 
 
+#: La reprise d'une installation antérieure (#1620), injectable pour la suite.
+Reprise = Callable[[dict[str, str]], Bilan]
+
+
 def demarrer(
     options: Options,
     *,
@@ -99,8 +105,14 @@ def demarrer(
     sortie: Sortie,
     environ: dict[str, str],
     preflight: Preflight = preflight_api,
+    reprise: Reprise = reprendre_du_poste,
 ) -> int:
-    """Monte la stack : API, front, puis le navigateur si on le demande."""
+    """Monte la stack : API, front, puis le navigateur si on le demande.
+
+    Installé, ce que la version précédente avait écrit sous son dossier est d'abord
+    rangé sous l'état du poste (`maestro.lanceur.reprise`) : l'API qui démarre ensuite
+    le trouve là où elle le cherche.
+    """
     front = emplacement.front
     if not front.servable or front.cible is None:
         sortie.alerter(f"Front introuvable ou non construit — {front.manque}")
@@ -109,6 +121,9 @@ def demarrer(
     if node is None:
         sortie.alerter(emplacement.manque_node)
         return 1
+
+    if installation(environ):
+        _reprendre(reprise, environ, sortie)
 
     if preflight() != 0:
         sortie.alerter("")
@@ -403,6 +418,39 @@ def cause(
     if len(extrait) > longueur:
         extrait = f"…{extrait[-longueur:]}"
     return f"{extrait} (journal : {dit})"
+
+
+# ------------------------------------------------------------------ la reprise
+
+
+def _reprendre(reprise: Reprise, environ: dict[str, str], sortie: Sortie) -> None:
+    """Joue la reprise et en dit le bilan — sans jamais empêcher le démarrage.
+
+    Une reprise qui échoue ne pose pas son témoin et se rejoue au démarrage suivant :
+    on le dit avec sa cause, et on démarre. Retenir le produit pour une copie qu'on n'a
+    pas su ranger priverait la personne de tout, pour une partie.
+    """
+    try:
+        bilan = reprise(environ)
+    except OSError as panne:
+        sortie.alerter(
+            f"[reprise] incomplète ({panne}) — elle se rejouera au prochain démarrage."
+        )
+        return
+    if bilan.rien:
+        return
+    sortie.dire(
+        f"[reprise] installation précédente : {len(bilan.reprises)} fichier(s) repris "
+        f"sous {bilan.cible}"
+    )
+    if bilan.conservees:
+        sortie.dire(
+            f"[reprise] {len(bilan.conservees)} déjà présent(s) sous l'état du poste, gardé(s) "
+            f"— l'ancien reste dans {bilan.source} : {', '.join(bilan.conservees)}"
+        )
+    if bilan.reglages:
+        reglages = ", ".join(bilan.reglages)
+        sortie.dire(f"[reprise] réglages repris dans le .env du poste : {reglages}")
 
 
 # ------------------------------------------------------------------ les ports

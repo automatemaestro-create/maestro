@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration
 from maestro.projets.modele import (
     ID_PROJET,
     ORIGINES,
@@ -67,11 +68,16 @@ class ProjetStore:
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> ProjetStore:
-        """Le dépôt configuré : `MAESTRO_PROJETS_DIR`, sinon `core/projets/` du dépôt."""
+        """Le dépôt configuré : `MAESTRO_PROJETS_DIR`, sinon `projets/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620) : une réinstallation ne
+        fait perdre aucun projet déclaré.
+        """
         settings = settings or load_settings()
         if settings.projets_dir:
             return cls(Path(settings.projets_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "projets")
+        return cls(depot_configuration("projets"))
 
     def ids(self) -> tuple[str, ...]:
         """Les identifiants stockés, triés — l'ordre de listing, déterministe."""

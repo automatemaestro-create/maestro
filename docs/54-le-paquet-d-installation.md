@@ -31,9 +31,22 @@ Ce qu'elle écrit en marchant :
 - l'**état du poste** sous `%USERPROFILE%\.maestro\` — le jeton de l'API (`jeton-api`), propre à
   ce poste et créé au premier démarrage, le journal durable des runs en SQLite (le **mode local**,
   #639 : aucun service à installer) ;
-- les **journaux du lanceur** sous le dossier d'installation (`resources\produit\.maestro\lanceur\`),
-  avec la cause d'un service qui serait mort au démarrage ;
+- **ce que la personne y met**, sous `%USERPROFILE%\.maestro\configuration\` : les projets
+  déclarés, les réglages, les secrets, les surcharges, les conversations, les playbooks, les
+  permissions, les serveurs MCP ajoutés, et ses propres réglages d'environnement
+  (`configuration\.env`) ;
+- les **journaux du lanceur** sous `%USERPROFILE%\.maestro\lanceur\`, avec la cause d'un service
+  qui serait mort au démarrage ;
 - les **projets** sous `%USERPROFILE%\Maestro\` (docs/24 §2.7).
+
+Le **dossier d'installation ne porte que le paquet**. Les politiques et les serveurs livrés avec
+les agents s'y lisent toujours (`resources\produit\core\`) ; ce que la personne y change s'écrit
+sous `configuration\` et les recouvre, sans les toucher. Réinstaller, mettre à jour ou désinstaller
+remplace ou retire ce dossier sans rien perdre de ce qui précède (§3.3.3). Seul le cache de
+compilation de Python (`__pycache__`) y naît en marchant : l'interpréteur le rebâtit à la demande.
+
+L'installation se sait installée par son réglage `MAESTRO_INSTALLATION=1`, que le paquet pose dans
+`resources\produit\.env`. Sans lui — un clone du dépôt —, tout reste où il était, sous `core\`.
 
 Les ports par défaut sont `8000` (l'API) et `3000` (l'interface). L'un ou l'autre pris, le lanceur
 prend le premier libre au-dessus et le dit dans son journal ; l'interface reçoit l'adresse de
@@ -54,11 +67,19 @@ Nommé ici plutôt que découvert à l'usage :
   défaut d'une distribution bureau est le mode **non isolé** — sous le confinement de l'arbre des
   processus, qui est livré (`maestro-confinement`, #1279). L'isolation native par défaut est
   décidée (docs/48 §2.1) et vient avec #1515, qui la pose par les réglages de l'installation
-  (`resources\produit\.env`) : ce paquet ne la change pas.
+  (`resources\produit\.env`) : ce paquet ne la change pas. Ces réglages-là sont **ceux du
+  paquet** : chaque installation les remplace, et ils portent les défauts de sa version. Ce que la
+  personne règle elle-même va dans `%USERPROFILE%\.maestro\configuration\.env`, qui est lu
+  d'abord, l'emporte sur eux, et qu'aucune installation ne touche.
 - **Les mises à jour.** Une nouvelle version s'installe par-dessus l'ancienne ; la mise à jour sans
-  chaîne de développement est #644. ⚠ La configuration que Maestro écrit sous son dossier
-  d'installation (`resources\produit\core\`) appartient à cette installation : c'est la question
-  que #644 doit trancher avant qu'une mise à jour ne la remplace.
+  chaîne de développement est #644. Ce que Maestro a écrit ne vit plus sous le dossier
+  d'installation et survit au remplacement (§3.3.3). Une installation 0.1.0, qui écrivait sous
+  `resources\produit\core\`, voit ces données **reprises** au premier démarrage de la version
+  suivante : l'installeur recopie l'ancien `core\` et l'ancien `.env` sous
+  `%USERPROFILE%\.maestro\reprise\` avant d'effacer l'ancien dossier, puis le lanceur les range
+  sous `configuration\`. Il le fait une seule fois, sans doublon, et sans écraser ce qui s'y trouve
+  déjà : un fichier déjà présent est conservé et nommé dans son journal, une clé du `.env` déjà
+  réglée n'est pas reprise.
 - **Une signature de code.** L'installeur n'est pas signé : Windows SmartScreen le signale comme
   une application d'éditeur inconnu au premier lancement.
 
@@ -155,6 +176,13 @@ Il relève ensuite **qui sert** : chaque processus né de l'installation avec le
 exécutable. Un seul pris au poste ou au clone, et la vérification échoue. Et il **compte** les
 fichiers installés contre ceux du paquet, parce que l'installeur ne le fait pas (§3.3.1).
 
+Puis il éprouve **ce qui survit** (§3.3.3) : il déclare un projet et règle le répertoire des
+projets par l'API, réinstalle par-dessus, désinstalle, réinstalle, et les cherche chaque fois.
+`--ancien <installeur>` installe d'abord une version antérieure, qui écrit sous son dossier : la
+version vérifiée s'installe par-dessus, et doit reprendre ce que l'autre avait écrit.
+`--tenir-ouvert <secondes>` laisse Maestro ouvert après la dernière réinstallation, le temps de le
+regarder de ses yeux.
+
 #### 3.3.1 Ce que la première vérification a trouvé : l'installeur perd des fichiers en silence
 
 La première passe, jouée sans la lettre de lecteur, a installé **3 665 fichiers de moins** que le
@@ -190,12 +218,38 @@ Passe du **2026-11-04**, sur le paquet de §3.1, **tous les constats ✓** :
 
 Ce qui **reste** après la désinstallation est l'état du poste, sous `%USERPROFILE%\.maestro\` : le
 jeton de l'API et le journal SQLite des runs. Il appartient à la personne, pas à l'installation —
-réinstaller le retrouve.
+réinstaller le retrouve (§3.3.3).
 
 Deux défauts de la vérification elle-même ont été trouvés en route, et corrigés avant cette passe :
 elle fermait le relais de son propre environnement au lieu de la fenêtre de Maestro (qu'elle
 cherche maintenant parmi les processus de l'installation), et elle n'attendait pas la fin du
 désinstalleur, qui se recopie sous `TEMP` et rend la main aussitôt.
+
+#### 3.3.3 Ce qui survit à une réinstallation
+
+Passes du **2026-11-12**, sur le paquet de cette version (9 683 fichiers, 921 Mo), le poste vierge
+rangé dans le dossier de travail de la session, hors du clone. L'une part d'un poste neuf ;
+l'autre (`--ancien`) d'une installation 0.1.0, l'installeur construit depuis `main` avant que la
+configuration ne quitte le dossier d'installation. **Tous les constats ✓** :
+
+| Geste | Constat |
+|---|---|
+| Installer la 0.1.0, déclarer le projet « Verification 1620 », régler le répertoire des projets | elle les écrit **sous son dossier** : `resources\produit\core\projets\prj-….json` et `resources\produit\core\reglages\projets.json` |
+| Installer la version suivante par-dessus, l'ouvrir | au premier démarrage, sans rien redéclarer, le projet est listé et le répertoire relu ; le lanceur dit « 2 fichier(s) repris » — ces deux-là seulement : les politiques et serveurs livrés de l'ancienne version, identiques à ceux du paquet, restent dans le paquet. Le témoin `reprise.json` est posé |
+| Sur un poste neuf, déclarer le projet et régler le répertoire | ils s'écrivent sous `%USERPROFILE%\.maestro\configuration\`, et rien sous le dossier d'installation |
+| Ouvrir puis fermer Maestro | le dossier d'installation ne porte que les fichiers du paquet, plus **216** fichiers du cache de compilation de Python (`__pycache__`) |
+| Réinstaller par-dessus | **l'installeur efface le dossier d'installation** : un témoin qu'on y avait posé a disparu. Le projet et le réglage sont retrouvés |
+| Désinstaller | Maestro, ses raccourcis et sa clé partent ; `configuration\` reste, fichier pour fichier |
+| Réinstaller | le projet et le réglage sont encore retrouvés |
+
+L'effacement est le geste de l'installeur d'electron-builder, qui joue le désinstalleur de la
+version en place avant de poser la nouvelle : c'est lui qui emportait, jusqu'à 0.1.0, ce que
+Maestro écrivait sous `resources\produit\core\`. La copie que l'installeur sauve avant lui reste
+sous `%USERPROFILE%\.maestro\reprise\`, telle que l'ancienne installation l'avait laissée.
+
+La première passe a trouvé un défaut de la vérification elle-même : elle comptait le `README.md`
+et le `.gitignore` que le paquet livre sous `core\projets\` et `core\reglages\` comme des fichiers
+écrits par Maestro. Elle les confronte maintenant au paquet.
 
 ### 3.4 Ce qui n'a pas été vérifié
 
@@ -207,6 +261,12 @@ désinstalleur, qui se recopie sous `TEMP` et rend la main aussitôt.
   SDK ; sa conversation avec le modèle n'a pas été jouée.
 - **Un poste sans Git du tout** : la vérification retire Git du `PATH`, pas du disque. Le CLI
   `claude` a démarré ainsi, mais Git restait installé à son emplacement habituel.
+- **Une 0.1.0 réellement distribuée** : aucune version ne l'a encore été. L'installation reprise
+  par §3.3.3 est l'installeur construit depuis `main` avant ce changement, sur le même poste.
+- **La reprise de chaque dépôt sur le paquet réel** : la passe déclare un projet et règle le
+  répertoire des projets. Les autres dépôts (secrets et leur clé, conversations, playbooks,
+  permissions, serveurs MCP, surcharges, `.env`) suivent le même chemin, et c'est
+  `tests/test_reinstallation.py` qui les éprouve, pas une installation.
 - **macOS et Linux** : non construits.
 - **Un dossier de profil de plus de 20 caractères** (un profil de domaine `prenom.nom.DOMAINE`, un
   `%TEMP%` redirigé ailleurs) : il entame la marge de §3.3.1. Rien ne le détecte à l'installation ;

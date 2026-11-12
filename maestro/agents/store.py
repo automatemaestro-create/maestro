@@ -68,6 +68,7 @@ from maestro.agents.catalog import (
 )
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration
 
 #: Nom d'agent admissible comme fichier de stockage : slug sûr, sans séparateur ni
 #: point — verrouille toute traversée de chemin depuis un nom venu de l'API.
@@ -297,11 +298,15 @@ class SurchargeStore(RangeParProjet):
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> SurchargeStore:
-        """Le dépôt configuré : `MAESTRO_SURCHARGES_DIR`, sinon `core/surcharges/`."""
+        """Le dépôt configuré : `MAESTRO_SURCHARGES_DIR`, sinon `surcharges/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         settings = settings or load_settings()
         if settings.surcharges_dir:
             return cls(Path(settings.surcharges_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "surcharges")
+        return cls(depot_configuration("surcharges"))
 
     def lire(self, nom: str) -> SurchargeAgent:
         """La surcharge de l'agent `nom` — celle du gabarit, ou vide, à défaut."""
@@ -403,11 +408,15 @@ class AgentStore(RangeParProjet):
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> AgentStore:
-        """Le dépôt configuré : `MAESTRO_AGENTS_DIR`, sinon `core/agents/` du dépôt."""
+        """Le dépôt configuré : `MAESTRO_AGENTS_DIR`, sinon `agents/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         settings = settings or load_settings()
         if settings.agents_dir:
             return cls(Path(settings.agents_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "agents")
+        return cls(depot_configuration("agents"))
 
     def noms(self) -> tuple[str, ...]:
         """Les noms des agents personnalisés stockés, triés (vide si aucun)."""

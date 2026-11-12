@@ -611,8 +611,11 @@ def test_copies_du_depot_rend_le_clone_et_ses_worktrees(tmp_path: Path) -> None:
 #: Un chemin composé sous le dossier personnel : `$HOME/x`, `${HOME}/x`, `${HOME//…}/x`, `~/x`.
 _CHEMIN_DU_PROFIL = re.compile(r"(?:\$HOME|\$\{HOME[^}]*\}|(?<![\w~/.\\])~)/([A-Za-z0-9._-]+)")
 
-#: Le dossier personnel lu par du code, sans chemin écrit en clair.
-_APPEL_DU_PROFIL = re.compile(r"\bPath\.home\(\)|\bos\.homedir\(\)")
+#: Le dossier personnel lu par du code, et le premier segment qu'on y joint s'il est écrit en
+#: clair juste après (`path.join(os.homedir(), '.maestro', …)`, `Path.home() / ".maestro"`).
+_APPEL_DU_PROFIL = re.compile(
+    r"\b(?:Path\.home\(\)|os\.homedir\(\))(?:\s*[,/]\s*['\"]([A-Za-z0-9._-]+)['\"])?"
+)
 
 #: Ce qu'un script ou un prompt a le droit de nommer sous le dossier personnel : les deux
 #: racines du profil, et les deux anciens ateliers que leur propriétaire reprend et vide.
@@ -662,8 +665,11 @@ def sites_du_profil(texte: str, suffixe: str) -> list[tuple[int, str]]:
         for segment in _CHEMIN_DU_PROFIL.findall(ligne):
             if segment not in SEGMENTS_ADMIS:
                 sites.append((numero, segment))
-        if _APPEL_DU_PROFIL.search(ligne):
-            sites.append((numero, "(dossier personnel lu par le code)"))
+        for joint in _APPEL_DU_PROFIL.findall(ligne):
+            # Joint d'une racine, l'appel compose le même chemin que `~/.maestro/…` écrit en
+            # clair (la coque installée relit ainsi la session du lanceur, #1620).
+            if joint not in SEGMENTS_ADMIS:
+                sites.append((numero, joint or "(dossier personnel lu par le code)"))
     return sites
 
 
@@ -676,6 +682,9 @@ racine="${HOME//\\\\//}/maestro-mesure"
 cd ~/maestro-verif && ls
 echo "$HOME/.maestro/ateliers et ~/Maestro/projet sont admis"
 node -e "const os = require('os'); console.log(os.homedir())"
+node -e "path.join(os.homedir(), '.maestro', 'lanceur')"
+node -e "path.join(os.homedir(), '.cache-maestro', 'x')"
+python -c "Path.home() / 'maestro-essais'"
 """
 
 
@@ -688,6 +697,8 @@ def test_le_motif_reconnait_chaque_chemin_du_profil_hors_des_racines() -> None:
         (5, "maestro-mesure"),
         (6, "maestro-verif"),
         (8, "(dossier personnel lu par le code)"),
+        (10, ".cache-maestro"),
+        (11, "maestro-essais"),
     ]
     assert sites_du_profil("Écrire dans `~/maestro-essais`.\n", ".md") == [(1, "maestro-essais")]
 

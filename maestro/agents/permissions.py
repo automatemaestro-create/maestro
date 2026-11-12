@@ -115,6 +115,7 @@ from maestro.agents.accords import DOSSIER_ACCORDS, AccordStore
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
 from maestro.decideur import DECIDEUR_DEFAUT, Decideur, decideur_depuis
+from maestro.emplacements import depot_configuration, depot_livre
 from maestro.lecture import OUTIL_SHELL
 from maestro.portee import PORTEE_PROJET, PORTEES
 
@@ -520,11 +521,17 @@ class PermissionStore(RangeParProjet):
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> PermissionStore:
-        """Le dépôt configuré : `MAESTRO_PERMISSIONS_DIR`, sinon `core/permissions/`."""
+        """Le dépôt configuré : `MAESTRO_PERMISSIONS_DIR`, sinon `permissions/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620). Installé, les
+        politiques que le dépôt suit se relisent dans l'installation tant que le
+        poste n'en a pas écrit d'autre (`livres`).
+        """
         settings = settings or load_settings()
         if settings.permissions_dir:
             return cls(Path(settings.permissions_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "permissions")
+        return cls(depot_configuration("permissions"), livres=depot_livre("permissions"))
 
     def lire(self, agent: str) -> PolitiqueOutils | None:
         """La politique de `agent`, validée — celle du gabarit à défaut, sinon None.
@@ -544,7 +551,7 @@ class PermissionStore(RangeParProjet):
         corrigée, si bien qu'un enregistrement depuis l'écran la fixe sur le
         disque. Les gabarits (`core/permissions/`) ne sont jamais touchés.
         """
-        chemin = self._chemin(agent)
+        chemin = self._lisible(self._chemin(agent))
         if not chemin.is_file():
             if self._gabarits is not None:
                 return self._gabarits.lire(agent)
@@ -620,16 +627,14 @@ class PermissionStore(RangeParProjet):
         return tuple(sorted(noms))
 
     def _agents_stockes(self) -> tuple[str, ...]:
-        """Les agents dont **ce dépôt-ci** porte la politique, sans rien hériter."""
-        if not self._racine.is_dir():
-            return ()
-        return tuple(
-            sorted(
-                chemin.stem
-                for chemin in self._racine.glob("*.json")
-                if _NOM_AGENT.match(chemin.stem)
-            )
-        )
+        """Les agents dont **ce dépôt-ci** porte la politique, sans rien hériter.
+
+        Défauts livrés compris (#1620) : une installation relit ceux du paquet.
+        """
+        stems = self._stems_livres()
+        if self._racine.is_dir():
+            stems.update(chemin.stem for chemin in self._racine.glob("*.json"))
+        return tuple(sorted(stem for stem in stems if _NOM_AGENT.match(stem)))
 
     def _chemin(self, agent: str) -> Path:
         """Le fichier de politique de `agent`, nom validé (jamais un chemin arbitraire)."""

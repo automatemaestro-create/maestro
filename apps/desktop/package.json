@@ -47,6 +47,7 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
+      "include": "installer.nsh",
       "artifactName": "Maestro-${version}-installation-${arch}.${ext}"
     }
   }

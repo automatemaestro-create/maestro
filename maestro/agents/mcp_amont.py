@@ -92,6 +92,7 @@ from typing import Any
 import httpx2
 
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration
 
 _LOG = logging.getLogger(__name__)
 
@@ -542,12 +543,16 @@ class MiroirAmont:
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> MiroirAmont:
-        """Le miroir configuré : `MAESTRO_MCP_AMONT_*`, sinon `core/mcp-amont/`."""
+        """Le miroir configuré : `MAESTRO_MCP_AMONT_*`, sinon `mcp-amont/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         settings = settings or load_settings()
         racine = (
             Path(settings.mcp_amont_dir)
             if settings.mcp_amont_dir
-            else Path(__file__).resolve().parents[2] / "core" / "mcp-amont"
+            else depot_configuration("mcp-amont")
         )
         return cls(
             racine,

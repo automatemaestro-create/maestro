@@ -46,8 +46,9 @@ standard : toute autre réponse, ou aucune, ne retire rien (code `3`). Seuls par
 éléments `à retirer` — tous, ou ceux qu'on nomme après `--purger`. Le sort de chacun est
 **rejugé au moment de le retirer** : un dossier devenu vivant entre la liste et la réponse
 reste. Jamais `~/Maestro/`, jamais un projet déclaré — dans **aucune** copie du dépôt : les
-déclarations vivent dans `core/projets/` et dans le jeu du banc de chaque copie
-(`depots_de_declarations`), et un projet déclaré depuis un worktree n'en est pas moins un
+déclarations vivent dans `core/projets/` et dans le jeu du banc de chaque copie, et dans la
+configuration d'une installation (`~/.maestro/configuration/projets/`, #1620 —
+`depots_de_declarations`) ; un projet déclaré depuis un worktree n'en est pas moins un
 projet. Quand une de ces déclarations ne se lit pas, rien n'est retiré à l'aveugle : tout est
 `conservé`, et la raison le dit.
 
@@ -94,9 +95,13 @@ from maestro.controltower.hote_detache import PREFIXE_ATELIER
 from maestro.controltower.persistence import SUFFIXE_SAUVEGARDE, SUFFIXE_SQLITE
 from maestro.emplacements import (
     NOM_ATELIERS,
+    NOM_CONFIGURATION,
     NOM_ETAT,
     NOM_JETABLE,
+    NOM_LANCEUR,
     NOM_PROJETS,
+    NOM_REPRISE,
+    configuration_du_poste,
     maison,
     occupant,
     racine_etat,
@@ -291,8 +296,9 @@ def depots_de_declarations(
 
     Dans **chaque** copie du dépôt : son `core/projets/` et celui de son jeu du banc
     (`donnees_du_banc`, #1164) — un passage sur la stack de la copie déclare dans le
-    premier, un exercice qui sauve son état dans le second —, plus `MAESTRO_PROJETS_DIR`
-    s'il est réglé. La rétention de l'atelier y oublie les projets de ses passages partis
+    premier, un exercice qui sauve son état dans le second —, celui de la configuration
+    d'une installation sur ce poste (#1620), plus `MAESTRO_PROJETS_DIR` s'il est réglé.
+    La rétention de l'atelier y oublie les projets de ses passages partis
     (#1477), ce module y lit ce qu'il protège.
     """
     settings = settings or load_settings()
@@ -303,6 +309,7 @@ def depots_de_declarations(
     for copie in copies:
         depots.append(copie / DECLARATIONS_DANS_UNE_COPIE)
         depots.append(donnees_du_banc(racine=copie).racines["projets"])
+    depots.append(configuration_du_poste() / DECLARATIONS_DANS_UNE_COPIE.name)
     if settings.projets_dir:
         depots.append(Path(settings.projets_dir))
     return tuple(depots), manque
@@ -340,6 +347,7 @@ def protections(
             illisible.append(manque)
     depots, _ = depots_de_declarations(settings, copies)
     reglages = [copie / REGLAGES_DANS_UNE_COPIE for copie in copies]
+    reglages.append(configuration_du_poste() / REGLAGES_DANS_UNE_COPIE.name)
     if settings.reglages_dir:
         reglages.append(Path(settings.reglages_dir))
 
@@ -506,6 +514,11 @@ def _etat_du_poste(gardes: Protections) -> list[Entree]:
         FICHIER_JETON: "jeton de l'API (maestro.controltower.acces)",
         NOM_ATELIERS: "ateliers des passages et de la relecture, gardés par rétention",
         NOM_PROFIL_NAVIGATEUR: "profil de navigateur du clone principal (scripts/setup.sh)",
+        NOM_CONFIGURATION: (
+            "configuration d'une installation (maestro.emplacements.configuration_du_poste)"
+        ),
+        NOM_LANCEUR: "journaux et session du lanceur installé (maestro.lanceur.emplacement)",
+        NOM_REPRISE: "copie d'une installation antérieure (maestro.lanceur.reprise)",
     }
     entrees = []
     for chemin in _enfants(racine):

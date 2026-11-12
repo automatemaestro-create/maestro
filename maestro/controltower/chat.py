@@ -272,6 +272,7 @@ from maestro.controltower.reglements import (
     ReglementPropose,
     attentes_visees_depuis,
 )
+from maestro.emplacements import depot_configuration
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.equipe import RoleValide
 from maestro.messaging import (
@@ -2635,11 +2636,15 @@ class ChatStore:
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> ChatStore:
-        """Le dépôt configuré : `MAESTRO_CHAT_DIR`, sinon `core/chat/` du dépôt."""
+        """Le dépôt configuré : `MAESTRO_CHAT_DIR`, sinon `chat/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         settings = settings or load_settings()
         if settings.chat_dir:
             return cls(Path(settings.chat_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "chat")
+        return cls(depot_configuration("chat"))
 
     def ajouter(self, message: MessageChat) -> MessageChat:
         """Ajoute `message` en fin de sa conversation et le renvoie tel quel."""

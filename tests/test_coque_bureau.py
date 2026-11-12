@@ -399,14 +399,15 @@ def test_le_lanceur_du_produit_comprend_les_deux_arguments_de_la_coque():
 def test_la_coque_installee_relit_la_session_ou_le_lanceur_l_inscrit(main_js):
     """Le lanceur du produit déplace un port pris plutôt que d'échouer : la fenêtre
     ouvre l'URL qu'il a **inscrite**, et ce chemin est une frontière avec
-    `maestro/lanceur/emplacement.py` — réécrit d'un seul côté, la coque ouvrirait
-    l'adresse demandée pendant que le produit sert ailleurs."""
-    from maestro.lanceur.emplacement import DOSSIER_LANCEUR
+    `maestro.emplacements.journaux_du_lanceur` — réécrit d'un seul côté, la coque
+    ouvrirait l'adresse demandée pendant que le produit sert ailleurs. Installé, il est
+    sous l'état du poste : une mise à jour efface le dossier d'installation (#1620)."""
+    from maestro.emplacements import journaux_du_lanceur
 
-    assert DOSSIER_LANCEUR.as_posix() == ".maestro/lanceur"
+    sous_la_maison = journaux_du_lanceur().relative_to(Path.home()).parts
+    segments = ", ".join(f"'{segment}'" for segment in (*sous_la_maison, "session.json"))
     assert (
-        "const SESSION_DU_LANCEUR = path.join(RACINE, '.maestro', 'lanceur', 'session.json');"
-        in main_js
+        f"const SESSION_DU_LANCEUR = path.join(os.homedir(), {segments});" in main_js
     )
     assert "fenetre.loadURL(urlServie())" in main_js
     assert "fenetre.loadURL(URL_UI)" not in main_js

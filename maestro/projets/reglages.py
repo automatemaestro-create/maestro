@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from maestro.config import Settings, load_settings
-from maestro.emplacements import NOM_PROJETS, racine_projets
+from maestro.emplacements import NOM_PROJETS, depot_configuration, racine_projets
 from maestro.projets.racine import RacineRefusee, valider_racine
 
 #: Le nom du dossier proposé sous le dossier personnel — nommé, jamais nu.
@@ -151,11 +151,15 @@ class ReglagesProjetsStore:
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> ReglagesProjetsStore:
-        """Le dépôt configuré : `MAESTRO_REGLAGES_DIR`, sinon `core/reglages/`."""
+        """Le dépôt configuré : `MAESTRO_REGLAGES_DIR`, sinon `reglages/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         settings = settings or load_settings()
         if settings.reglages_dir:
             return cls(Path(settings.reglages_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "reglages")
+        return cls(depot_configuration("reglages"))
 
     def lire(self) -> ReglagesProjets:
         """Les réglages stockés, ou ceux par défaut — ne lève jamais."""

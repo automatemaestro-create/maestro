@@ -55,6 +55,7 @@ from weakref import WeakKeyDictionary
 
 from maestro.agents.rangement import RangeParProjet
 from maestro.config import Settings, load_settings
+from maestro.emplacements import depot_configuration
 
 #: Plafond d'instances par défaut : un agent = une exécution à la fois (docs/09 :
 #: on *augmente* les instances pour absorber la charge). Depuis #1299, c'est le
@@ -235,11 +236,15 @@ class CapacityStore(RangeParProjet):
 
     @classmethod
     def default(cls, settings: Settings | None = None) -> CapacityStore:
-        """Le dépôt configuré : `MAESTRO_CAPACITE_DIR`, sinon `core/capacite/` du dépôt."""
+        """Le dépôt configuré : `MAESTRO_CAPACITE_DIR`, sinon `capacite/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         settings = settings or load_settings()
         if settings.capacite_dir:
             return cls(Path(settings.capacite_dir))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "capacite")
+        return cls(depot_configuration("capacite"))
 
     def lire(self, nom: str) -> CapaciteAgent:
         """La capacité de `nom` — celle du gabarit, sinon celle par défaut, à défaut."""

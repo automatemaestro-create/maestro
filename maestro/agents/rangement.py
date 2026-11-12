@@ -44,6 +44,16 @@ catalogue est vide tant que son équipe n'a pas été validée. La **reprise**
 (`maestro.agents.reprise`) est ce qui rattache au projet ceux qui y travaillaient
 déjà, sans rien supprimer.
 
+## Sous le gabarit, les défauts livrés d'une installation (#1620)
+
+Installé, le produit écrit sous l'état du poste (`maestro.emplacements`), et le
+`core/` qu'il embarque ne sert plus qu'à **lire** ce que le dépôt y suit : les
+politiques d'autorisations et les déclarations MCP des agents du code. Le dépôt
+du gabarit les porte en `livres`, et un fichier que sa racine n'a pas se lit là.
+Ce n'est pas un troisième niveau de rangement : rien ne s'y écrit, et `gabarits`
+garde son sens (« ce dépôt est-il cadré sur un projet ? »). Dans un clone,
+`livres` vaut None — on écrit à côté des fichiers suivis.
+
 ## Ce que ce module ne décide pas
 
 - **Qui** est le projet actif : c'est le paramètre `?projet=` de l'API
@@ -105,14 +115,40 @@ class RangeParProjet:
     #: faux pour ce qui décide de l'**existence** d'un agent (`AgentStore`).
     herite_du_gabarit: ClassVar[bool] = True
 
-    def __init__(self, racine: Path, gabarits: Self | None = None) -> None:
+    def __init__(
+        self, racine: Path, gabarits: Self | None = None, livres: Path | None = None
+    ) -> None:
         self._racine = racine
         self._gabarits = gabarits
+        self._livres = livres
 
     @property
     def racine(self) -> Path:
         """La racine du dépôt — celle des gabarits, ou celle d'un projet."""
         return self._racine
+
+    @property
+    def livres(self) -> Path | None:
+        """Les défauts livrés relus sous cette racine (#1620), ou None (clone, projet)."""
+        return self._livres
+
+    def _lisible(self, chemin: Path) -> Path:
+        """`chemin`, ou son pendant livré quand cette racine n'en a pas (#1620).
+
+        Ce qu'on écrit se pose toujours sous la racine : seule la lecture descend
+        chercher le fichier que l'installation embarque.
+        """
+        if self._livres is not None and not chemin.is_file():
+            livre = self._livres / chemin.name
+            if livre.is_file():
+                return livre
+        return chemin
+
+    def _stems_livres(self) -> set[str]:
+        """Les noms des fichiers JSON livrés (`<stem>.json`), vide sans défauts livrés."""
+        if self._livres is None or not self._livres.is_dir():
+            return set()
+        return {chemin.stem for chemin in self._livres.glob("*.json")}
 
     @property
     def gabarits(self) -> Self | None:

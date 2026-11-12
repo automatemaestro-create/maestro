@@ -15,6 +15,8 @@ import os
 import sys
 from collections.abc import Sequence
 
+from maestro.config import charger_les_env
+from maestro.emplacements import InstallationIllisible
 from maestro.lanceur.emplacement import emplacement as resoudre_emplacement
 from maestro.lanceur.lanceur import (
     HOTE_DEFAUT,
@@ -100,6 +102,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if any(argument in {"-h", "--help", "--aide"} for argument in arguments):
         sortie.dire(USAGE)
         return 0
+    # Les réglages du paquet d'abord (`<produit>/.env`, puis celui de la personne sous
+    # l'état du poste) : c'est là qu'une installation se dit installée, et le lanceur
+    # en a besoin avant de savoir où écrire ses journaux (#1620).
+    charger_les_env()
     environ = dict(os.environ)
     try:
         options = analyser(arguments, environ)
@@ -110,7 +116,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     systeme = Systeme()
-    emplacement = resoudre_emplacement(environ)
+    try:
+        emplacement = resoudre_emplacement(environ)
+    except InstallationIllisible as refus:
+        sortie.alerter(str(refus))
+        return 1
     if options.action == "arreter":
         return arreter(
             options, emplacement=emplacement, systeme=systeme, sortie=sortie, environ=environ

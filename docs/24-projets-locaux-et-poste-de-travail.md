@@ -546,7 +546,7 @@ racines**, que [`maestro/emplacements.py`](../maestro/emplacements.py) est seul 
 | Racine | Ce qu'elle porte | Qui la vide |
 |---|---|---|
 | `~/Maestro/` | les projets de l'utilisateur, proposés par défaut (#1022) | personne — c'est son travail |
-| `~/.maestro/` | l'état du poste : jeton de l'API, journal SQLite, profil de navigateur ; sous `ateliers/`, les ateliers des exercices, du banc comparatif et de la relecture visuelle | personne pour l'état ; les ateliers, par **rétention** |
+| `~/.maestro/` | l'état du poste : jeton de l'API, journal SQLite, profil de navigateur ; sous `ateliers/`, les ateliers des exercices, du banc comparatif et de la relecture visuelle ; dans une **installation**, la configuration de la personne (`configuration/`), les journaux du lanceur (`lanceur/`) et ce qu'une installation précédente a laissé à reprendre (`reprise/`) — [docs/54 §1](./54-le-paquet-d-installation.md) | personne pour l'état ; les ateliers, par **rétention** |
 | `<temp>/maestro/` (`%TEMP%\maestro\` sous Windows, `/tmp/maestro/` dans le Bash d'un agent) | le jetable : atelier de chaque hôte détaché, espaces des tâches, copies de vérification, aperçus de sources, état de la stack de chaque copie de travail | le **ramassage**, sans geste humain |
 
 **Pourquoi.** Le 2026-10-08, le poste de référence portait **1 286** dossiers `maestro-*` sous

@@ -30,15 +30,18 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from maestro.emplacements import installation, journaux_du_lanceur
 from maestro.espace import racine_de_la_copie
 
 #: Les noms de dossier où un front se trouve, dans l'ordre : l'installation d'abord
 #: (c'est elle que le lot prépare), le clone ensuite.
 DOSSIERS_FRONT = ("web", "apps/web")
 
-#: Où vont les journaux et l'état du lanceur, sous la racine du produit. `.maestro/`
-#: est gitignoré dans un clone, et c'est la règle du dépôt pour ce qu'on invite à lire
-#: (docs/10 §8.5) : un chemin **relatif**, lisible par une session autonome.
+#: Où vont les journaux et l'état du lanceur d'un clone, sous la racine du produit.
+#: `.maestro/` est gitignoré dans un clone, et c'est la règle du dépôt pour ce qu'on
+#: invite à lire (docs/10 §8.5) : un chemin **relatif**, lisible par une session
+#: autonome. Installé, le dossier d'installation ne porte que le paquet : ils vont sous
+#: l'état du poste (`maestro.emplacements.journaux_du_lanceur`, #1620).
 DOSSIER_LANCEUR = Path(".maestro") / "lanceur"
 
 #: Le runtime Node d'une installation, relativement à la racine du produit.
@@ -72,9 +75,14 @@ class Emplacement:
     node: str | None
     #: Ce qui manque côté Node, dit avec son geste. Vide quand `node` est résolu.
     manque_node: str = ""
+    #: Le dossier des journaux et de la session, quand il n'est pas sous la racine :
+    #: celui d'une installation (#1620). None : `DOSSIER_LANCEUR` sous la racine.
+    dossier_journaux: Path | None = None
 
     @property
     def journaux(self) -> Path:
+        if self.dossier_journaux is not None:
+            return self.dossier_journaux
         return self.racine / DOSSIER_LANCEUR
 
     @property
@@ -191,7 +199,11 @@ def resoudre_node(racine: Path, environ: dict[str, str]) -> tuple[str | None, st
 
 
 def emplacement(environ: dict[str, str], depart: Path | None = None) -> Emplacement:
-    """Les trois résolutions en une, pour l'appelant qui n'en veut qu'une."""
+    """Les trois résolutions en une, pour l'appelant qui n'en veut qu'une.
+
+    Installé (`MAESTRO_INSTALLATION`, posé par le paquet), les journaux et la session
+    vont sous l'état du poste : une mise à jour efface le dossier d'installation.
+    """
     racine = racine_produit(environ, depart)
     node, manque_node = resoudre_node(racine, environ)
     return Emplacement(
@@ -199,6 +211,7 @@ def emplacement(environ: dict[str, str], depart: Path | None = None) -> Emplacem
         front=resoudre_front(racine, environ),
         node=node,
         manque_node=manque_node,
+        dossier_journaux=journaux_du_lanceur() if installation(environ) else None,
     )
 
 

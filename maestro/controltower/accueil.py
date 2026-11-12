@@ -43,6 +43,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from maestro.emplacements import depot_configuration
+
 #: Le fichier du premier lancement, dans le dépôt des réglages du poste.
 FICHIER = "accueil.json"
 
@@ -58,12 +60,16 @@ class DepotAccueil:
 
     @classmethod
     def default(cls, environ: Mapping[str, str] | None = None) -> DepotAccueil:
-        """Le dépôt des réglages du poste : `MAESTRO_REGLAGES_DIR`, sinon `core/reglages/`."""
+        """Le dépôt des réglages : `MAESTRO_REGLAGES_DIR`, sinon `reglages/` de la configuration.
+
+        La configuration est le `core/` d'un clone, l'état du poste d'une installation
+        (`maestro.emplacements.racine_configuration`, #1620).
+        """
         source = os.environ if environ is None else environ
         racine = (source.get(_VARIABLE_DEPOT) or "").strip()
         if racine:
             return cls(Path(racine))
-        return cls(Path(__file__).resolve().parents[2] / "core" / "reglages")
+        return cls(depot_configuration("reglages", source))
 
     @property
     def chemin(self) -> Path:
