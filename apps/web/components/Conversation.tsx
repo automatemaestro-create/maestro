@@ -957,8 +957,14 @@ export function Conversation({
         {chargement && (
           <li className="text-corps text-texte-secondaire">Chargement du fil…</li>
         )}
+        {/* Le mot d'accueil tient sa forme de son **bord** (#1630) : son fond en
+            retrait coïncide avec celui où il est posé — la colonne du shell est
+            elle-même `surface-creuse`, et la porte est `background`, de même
+            valeur en sombre. C'est l'encart d'exemple du socle (`Carte
+            ton="creuse"`), et non un fond `surface`, qui le ferait lire comme un
+            second champ au-dessus du composeur. */}
         {filVide && accueil !== undefined && (
-          <li className="rounded-lg bg-surface-creuse px-3 py-2 text-corps text-texte">
+          <li className="rounded-lg border border-bord bg-surface-creuse px-3 py-2 text-corps text-texte">
             {accueil}
           </li>
         )}
