@@ -7,6 +7,9 @@
 //   2. elle AFFICHE ce que cette stack sert, à l'origine locale et à elle seule ;
 //   3. elle l'ARRÊTE quand sa fenêtre se ferme — le même lanceur, avec `--stop`.
 //
+// Installée, elle se met aussi à jour (#644) : elle télécharge la version suivante et ne la pose
+// qu'après ce même arrêt (§ « la mise à jour »).
+//
 // Le lanceur est `scripts/controltower/start.sh` dans un clone, et le lanceur du produit
 // (`python -m maestro.lanceur`, #640) dans une installation (#641) — § « deux lanceurs » plus bas.
 //
@@ -259,6 +262,184 @@ function signalerEcart(ecart) {
     .catch(() => {});
 }
 
+// LA MISE À JOUR (#644, docs/54 §6). Une installation se met à jour seule : elle demande à son
+// canal s'il y a plus récent, le télécharge en arrière-plan, et le POSE quand la personne le
+// décide — « Redémarrer maintenant », ou la prochaine fermeture de la fenêtre. Jamais pendant que
+// Maestro sert : l'installeur efface le dossier d'installation (#1620), donc la stack doit être
+// arrêtée — ses runs soldés — avant qu'il ne parte. Cet arrêt est celui de la fermeture, joué par
+// le même lanceur (`--stop`, § `armerArret`) : la mise à jour ne connaît aucun autre chemin pour
+// éteindre Maestro.
+//
+// Le mécanisme est `electron-updater`, un adaptateur : il lit le canal, vérifie l'empreinte
+// (sha512 de `latest.yml`) et lance l'installeur. Ce qui est installé, quand, et ce qui s'arrête
+// avant, se décide ici.
+//
+// Le canal est celui du paquet (`build.publish` de `package.json`, que l'empaquetage écrit dans
+// `resources/app-update.yml`) : les publications du dépôt sur GitHub. `MAESTRO_MISES_A_JOUR_FLUX`
+// le remplace par une adresse, ou l'éteint (`0`) — la vérification du paquet sert ainsi son propre
+// canal, sur le poste (`scripts/distribution/verifier.sh --mise-a-jour`). Dans un clone, rien :
+// un clone se met à jour par git.
+const VARIABLE_FLUX = 'MAESTRO_MISES_A_JOUR_FLUX';
+// Au lancement, puis toutes les six heures : une fenêtre qui reste ouverte des jours apprend
+// quand même qu'une version est sortie.
+const INTERVALLE_DES_VERIFICATIONS_MS = 6 * 60 * 60 * 1000;
+// `http:` n'est admis que vers le poste lui-même : ce qu'on télécharge là s'exécute, et seul le
+// chiffrement de bout en bout garde un canal distant de la substitution.
+const HOTES_LOCAUX = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Le canal que la variable désigne : `{ actif, url }` — `url` à `null` pour celui du paquet —,
+ * ou `{ actif: false, raison }`. Une valeur qu'on ne sait pas lire ÉTEINT la mise à jour en le
+ * disant, plutôt que de retomber en silence sur le canal du paquet : qui a posé la variable
+ * voulait autre chose que lui.
+ */
+function fluxDesMisesAJour(valeur) {
+  const brut = (valeur ?? '').trim();
+  if (brut === '') return { actif: true, url: null };
+  if (brut === '0') return { actif: false, raison: `${VARIABLE_FLUX}=0` };
+  let adresse = null;
+  try {
+    adresse = new URL(brut);
+  } catch {
+    /* illisible : refusée ci-dessous. */
+  }
+  const admise =
+    adresse !== null &&
+    (adresse.protocol === 'https:' ||
+      (adresse.protocol === 'http:' && HOTES_LOCAUX.has(adresse.hostname)));
+  if (admise) return { actif: true, url: adresse.href };
+  return {
+    actif: false,
+    raison: `${VARIABLE_FLUX} refusée (ni https, ni http vers le poste) : ${brut}`,
+  };
+}
+
+// Le module de mise à jour une fois armé, la version téléchargée et prête à poser, la dernière
+// proposée (une vérification qui retrouve la même ne la repropose pas), et ce que la personne a
+// demandé : un redémarrage, ou rien — l'installation attend alors la fermeture.
+let miseAJour = null;
+let versionPrete = null;
+let versionProposee = null;
+let redemarrageDemande = false;
+
+function direDeLaMiseAJour(flux, texte) {
+  retenir(flux, `[mise à jour] ${texte}\n`);
+}
+
+/**
+ * Arme la mise à jour d'une installation. Appelée dès que la fenêtre est ouverte, AVANT le
+ * démarrage de la stack et sans l'attendre : une version qui ne démarre plus doit encore pouvoir
+ * recevoir celle qui la corrige — le dialogue s'ouvre alors par-dessus l'écran d'échec.
+ *
+ * Une vérification qui échoue (poste hors ligne, canal muet) se dit au journal et rien de plus :
+ * c'est un cas ordinaire, et la suivante repassera.
+ */
+function armerMisesAJour() {
+  if (!INSTALLEE) return;
+  const flux = fluxDesMisesAJour(process.env[VARIABLE_FLUX]);
+  if (!flux.actif) {
+    direDeLaMiseAJour('stdout', `éteinte — ${flux.raison}`);
+    return;
+  }
+  const { autoUpdater } = require('electron-updater');
+  autoUpdater.logger = {
+    info: (m) => direDeLaMiseAJour('stdout', m),
+    warn: (m) => direDeLaMiseAJour('stdout', m),
+    error: (m) => direDeLaMiseAJour('stderr', m),
+    debug: () => {},
+  };
+  autoUpdater.autoDownload = true;
+  // L'installation à la sortie est la nôtre (§ `installerLaMiseAJour`) : celle du module partirait
+  // sur l'événement `quit`, sans attendre que la stack soit arrêtée.
+  autoUpdater.autoInstallOnAppQuit = false;
+  // Toujours vers la plus récente, jamais en arrière : les migrations du journal (#1621) savent
+  // rattraper des versions sautées, et un fichier qu'une version plus récente a mis à niveau est
+  // refusé par une plus ancienne.
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.allowPrerelease = false;
+  // Le téléchargement différentiel cherche la carte de blocs de l'installeur EN PLACE à l'adresse
+  // du canal ; `releases/latest/download` ne sert que la dernière. On télécharge donc l'installeur
+  // entier — et l'empreinte de `latest.yml` le vérifie de toute façon.
+  autoUpdater.disableDifferentialDownload = true;
+  if (flux.url !== null) autoUpdater.setFeedURL({ provider: 'generic', url: flux.url });
+  autoUpdater.on('error', (err) => direDeLaMiseAJour('stderr', `impossible : ${err.message}`));
+  autoUpdater.on('update-downloaded', (info) => {
+    versionPrete = info.version;
+    direDeLaMiseAJour('stdout', `prête : ${info.version}`);
+    proposerLeRedemarrage(info.version);
+  });
+  miseAJour = autoUpdater;
+  // L'échec est déjà dit par l'événement `error` ; la promesse ne doit pas le redire en rejet.
+  const verifier = () => autoUpdater.checkForUpdates().catch(() => {});
+  verifier();
+  setInterval(verifier, INTERVALLE_DES_VERIFICATIONS_MS);
+}
+
+/**
+ * Proposer de redémarrer sur la version téléchargée — par un dialogue natif, pour la raison qui
+ * vaut à `signalerEcart` : le front n'en sait rien (ENF-12).
+ *
+ * « Plus tard » est le défaut, et fermer le dialogue y revient : rien ne s'interrompt sans un
+ * geste. Le texte dit ce que coûte le redémarrage, parce qu'il coûte ce que coûte la fermeture.
+ */
+function proposerLeRedemarrage(version) {
+  if (arretEnCours || version === versionProposee) return;
+  if (!fenetre || fenetre.isDestroyed()) return;
+  versionProposee = version;
+  dialog
+    .showMessageBox(fenetre, {
+      type: 'info',
+      title: 'Maestro',
+      message: `Maestro ${version} est prête à s'installer.`,
+      detail:
+        "Redémarrer maintenant arrête Maestro comme la fermeture de sa fenêtre : un run en cours " +
+        "s'arrête avec lui, et se reprend après le redémarrage (« Reprendre »). Vos projets, " +
+        'vos réglages et votre historique sont conservés.\n\n' +
+        "Plus tard : la mise à jour s'installera quand vous fermerez Maestro.",
+      buttons: ['Redémarrer maintenant', 'Plus tard'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    })
+    .then(({ response }) => {
+      if (response !== 0 || arretEnCours) return;
+      redemarrageDemande = true;
+      direDeLaMiseAJour('stdout', `redémarrage demandé sur ${version} — arrêt de Maestro d'abord`);
+      // Le chemin de la fermeture, et lui seul : `before-quit` arrête la stack, puis installe.
+      app.quit();
+    })
+    .catch(() => {});
+}
+
+/**
+ * Après l'arrêt de la stack : poser la version prête, s'il y en a une. Rend `true` quand
+ * l'installeur est parti — la coque n'a plus alors qu'à sortir —, `false` quand il n'y a rien à
+ * poser ou qu'on ne le pose pas.
+ *
+ * Rien ne se pose sur un arrêt qui n'a pas abouti : une stack à demi arrêtée tient encore des
+ * fichiers du dossier que l'installeur effacerait. La version reste téléchargée, et le prochain
+ * lancement la repropose.
+ *
+ * Sur un redémarrage, l'installeur montre sa progression et relance Maestro ; à la fermeture, il
+ * pose la version en silence et ne relance rien — la personne a fermé Maestro.
+ */
+function installerLaMiseAJour(codeArret) {
+  if (miseAJour === null || versionPrete === null) return false;
+  if (codeArret !== 0) {
+    direDeLaMiseAJour('stderr', `${versionPrete} non installée : l'arrêt a rendu ${codeArret}`);
+    return false;
+  }
+  const relancer = redemarrageDemande;
+  direDeLaMiseAJour(
+    'stdout',
+    `installation de ${versionPrete}${relancer ? ', puis redémarrage' : ', en silence'}`,
+  );
+  if (!miseAJour.install(!relancer, relancer)) return false;
+  // L'installeur est détaché : il survit à la coque, et attend qu'elle soit sortie pour poser.
+  setImmediate(() => app.exit(0));
+  return true;
+}
+
 /**
  * Navigation : la fenêtre ne quitte JAMAIS l'origine locale (docs/19 — le modèle de menace
  * s'applique, ces réglages ne sont pas du confort).
@@ -491,6 +672,7 @@ async function demarrer() {
   // stack démarre derrière lui (§ `signalerEcart`).
   const ecart = ecartDeVersions();
   if (ecart !== null) signalerEcart(ecart);
+  armerMisesAJour();
 
   demarrageStack = jouerLanceur(['--no-browser']);
   const code = await demarrageStack;
@@ -512,6 +694,9 @@ async function demarrer() {
  * avoir lieu AVANT que le processus ne meure, et `before-quit` est le seul moment où l'on peut
  * encore retenir la sortie. On le fait une fois, puis on sort par `app.exit` — repasser par
  * `app.quit` rejouerait cet événement.
+ *
+ * C'est aussi le seul chemin d'une mise à jour (#644) : « Redémarrer maintenant » passe par
+ * `app.quit`, donc par ici, et la version prête ne se pose qu'une fois la stack arrêtée.
  */
 let arretEnCours = false;
 function armerArret() {
@@ -522,7 +707,10 @@ function armerArret() {
     evenement.preventDefault();
     demarrageStack
       .then(() => jouerLanceur(['--stop']))
-      .then((code) => app.exit(code === 0 ? 0 : 1));
+      .then((code) => {
+        if (installerLaMiseAJour(code)) return;
+        app.exit(code === 0 ? 0 : 1);
+      });
   });
 }
 

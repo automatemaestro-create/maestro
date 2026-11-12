@@ -37,7 +37,10 @@ Ce qu'elle écrit en marchant :
   (`configuration\.env`) ;
 - les **journaux du lanceur** sous `%USERPROFILE%\.maestro\lanceur\`, avec la cause d'un service
   qui serait mort au démarrage ;
-- les **projets** sous `%USERPROFILE%\Maestro\` (docs/24 §2.7).
+- les **projets** sous `%USERPROFILE%\Maestro\` (docs/24 §2.7) ;
+- l'**installeur de la version suivante**, que la mise à jour télécharge, sous
+  `%LOCALAPPDATA%\maestro-updater\` : il y attend d'être posé, et part avec la désinstallation
+  (§6).
 
 Le **dossier d'installation ne porte que le paquet**. Les politiques et les serveurs livrés avec
 les agents s'y lisent toujours (`resources\produit\core\`) ; ce que la personne y change s'écrit
@@ -77,24 +80,16 @@ Nommé ici plutôt que découvert à l'usage :
   paquet** : chaque installation les remplace, et ils portent les défauts de sa version. Ce que la
   personne règle elle-même va dans `%USERPROFILE%\.maestro\configuration\.env`, qui est lu
   d'abord, l'emporte sur eux, et qu'aucune installation ne touche.
-- **Les mises à jour.** Une nouvelle version s'installe par-dessus l'ancienne ; la mise à jour sans
-  chaîne de développement est #644. Ce que Maestro a écrit ne vit plus sous le dossier
-  d'installation et survit au remplacement (§3.3.3). Une installation 0.1.0, qui écrivait sous
-  `resources\produit\core\`, voit ces données **reprises** au premier démarrage de la version
-  suivante : l'installeur recopie l'ancien `core\` et l'ancien `.env` sous
-  `%USERPROFILE%\.maestro\reprise\` avant d'effacer l'ancien dossier, puis le lanceur les range
-  sous `configuration\`. Il le fait une seule fois, sans doublon, et sans écraser ce qui s'y trouve
-  déjà : un fichier déjà présent est conservé et nommé dans son journal, une clé du `.env` déjà
-  réglée n'est pas reprise.
 - **Une signature de code.** L'installeur n'est pas signé : Windows SmartScreen le signale comme
-  une application d'éditeur inconnu au premier lancement.
+  une application d'éditeur inconnu au premier lancement. La mise à jour, elle, vérifie l'empreinte
+  de ce qu'elle télécharge (§6.2) : elle sait que c'est l'installeur publié, pas qui l'a signé.
 
 ## 2bis. Les quatre composants : ce qui suit le paquet, et comment lire sa version
 
 Une installation porte quatre composants dont les versions pourraient diverger (docs/24 §4.4,
 §4.6). Le paquet les pose **tous les quatre ensemble**, à une seule version : celle que porte le
-nom de l'installeur. Aucun n'a de mise à jour à lui aujourd'hui (la mise à jour automatique est
-#644). Un composant peut pourtant ne pas suivre : une fenêtre de Maestro réinstallée seule devant
+nom de l'installeur. Aucun n'a de mise à jour à lui : ils se mettent à jour **ensemble**, avec le
+paquet (§6). Un composant peut pourtant ne pas suivre : une fenêtre de Maestro réinstallée seule devant
 un produit resté à l'ancienne version, ou un CLI `claude` trouvé ailleurs que dans le paquet.
 Maestro le **signale**, il ne le suppose pas (#1622).
 
@@ -273,6 +268,19 @@ et le `.gitignore` que le paquet livre sous `core\projets\` et `core\reglages\` 
   répertoire des projets. Les autres dépôts (secrets et leur clé, conversations, playbooks,
   permissions, serveurs MCP, surcharges, `.env`) suivent le même chemin, et c'est
   `tests/test_reinstallation.py` qui les éprouve, pas une installation.
+- **Une mise à jour depuis le vrai canal** (§6) : aucune version n'a encore été publiée, et
+  `publier.sh` ne s'est joué que contre un `gh` factice. La passe de §6.4 sert le canal en HTTP
+  sur le poste. La redirection de `releases/latest/download` et le transport HTTPS de GitHub n'ont
+  pas été traversés.
+- **« Redémarrer maintenant » sur le poste simulé** : la relance passe par l'Explorateur, donc
+  par l'environnement de la session réelle (§6.4). Elle a été vue une fois, et elle s'est ouverte
+  sur le profil réel du poste. Ce que la version relancée retrouve n'a été constaté que par
+  l'installation à la fermeture, qui pose la même version au même endroit (§6.5).
+- **Un run en cours pendant la mise à jour** : sans compte connecté au modèle, le run lancé
+  échoue avant la fermeture. Son arrêt par la mise à jour suit le chemin de la fermeture
+  (« arrêté avec Maestro », puis « Reprendre »), et ce chemin n'est éprouvé ici que sans run en vol.
+- **Un installeur téléchargé corrompu** : le refus d'un installeur dont l'empreinte ne correspond
+  pas à `latest.yml` appartient à `electron-updater`, et n'a pas été provoqué.
 - **macOS et Linux** : non construits.
 - **Un dossier de profil de plus de 20 caractères** (un profil de domaine `prenom.nom.DOMAINE`, un
   `%TEMP%` redirigé ailleurs) : il entame la marge de §3.3.1. Rien ne le détecte à l'installation ;
@@ -349,3 +357,161 @@ transaction compte comme un échec. Le fichier a deux écrivains, le journal et 
 celui qui ouvre le premier. `BEGIN IMMEDIATE` prend le verrou d'écriture avant de relire le
 numéro : à deux écrivains, la mise à niveau ne passe qu'une fois. Les tests jouent sur de vrais
 fichiers, avec des migrations qui échouent pour de vrai : `tests/test_schema_journal_local.py`.
+
+## 6. La mise à jour
+
+Une installation **se met à jour seule** (#644). Il n'y a rien à télécharger à la main, ni clone,
+ni environnement à gérer.
+
+1. **Elle cherche.** À chaque ouverture de Maestro, puis toutes les six heures tant que la fenêtre
+   reste ouverte, la fenêtre demande au canal des mises à jour s'il y a plus récent que sa version.
+2. **Elle télécharge**, en arrière-plan, pendant que Maestro sert. Rien ne s'arrête.
+3. **Elle propose.** Un dialogue de la fenêtre annonce « Maestro *x.y.z* est prête à s'installer »,
+   avec deux boutons :
+   - **Redémarrer maintenant** arrête Maestro comme la fermeture de sa fenêtre, pose la nouvelle
+     version (l'installeur montre sa progression), puis rouvre Maestro dessus ;
+   - **Plus tard**, le défaut, ne change rien. La version s'installera, en silence, la prochaine
+     fois qu'on fermera Maestro, et la fois suivante il s'ouvrira dessus. Une version déjà proposée
+     ne revient pas pendant la même session.
+
+Rien ne s'installe sans l'un de ces deux gestes : ni pendant que Maestro sert, ni pendant qu'un run
+travaille.
+
+### 6.1 Ce qui est conservé, et ce qui s'interrompt
+
+La mise à jour remplace le **dossier d'installation**, et lui seul. Tout ce que Maestro a écrit vit
+ailleurs (§1), et la nouvelle version le retrouve :
+
+- **les projets, les réglages et le reste de la configuration**, sous
+  `%USERPROFILE%\.maestro\configuration\` (§3.3.3) ;
+- **le journal des runs**, dont le schéma est mis à niveau par ses migrations à l'ouverture (§5).
+  Une version qui en a sauté d'autres les rattrape toutes, dans l'ordre ;
+- **les données d'une 0.1.0**, qui écrivait sous `resources\produit\core\`. L'installeur recopie
+  l'ancien `core\` et l'ancien `.env` sous `%USERPROFILE%\.maestro\reprise\` avant d'effacer
+  l'ancien dossier, puis le lanceur les range sous `configuration\` au premier démarrage. Il le fait
+  une seule fois, sans doublon, et sans écraser ce qui s'y trouve déjà : un fichier déjà présent
+  est conservé et nommé dans son journal, et une clé du `.env` déjà réglée n'est pas reprise.
+
+**Un run en cours s'arrête avec Maestro**, exactement comme à la fermeture de la fenêtre. Il est
+consigné « arrêté avec Maestro », ses tâches avec lui, et il se reprend après le redémarrage par
+son bouton **Reprendre**. C'est pour cela que la mise à jour attend un geste. Le dialogue dit ce
+coût avant qu'on choisisse.
+
+### 6.2 Ce que la mise à jour décide
+
+| Question | Réponse |
+|---|---|
+| **Le canal** | Les publications du dépôt sur GitHub. La fenêtre lit `releases/latest/download/latest.yml` : la version, le nom de l'installeur et son empreinte. Le canal est écrit dans le paquet (`resources\app-update.yml`) |
+| **La cadence** | Une vérification à l'ouverture, puis toutes les six heures. Un poste hors ligne n'est pas une panne : la vérification suivante repasse |
+| **L'intégrité** | L'installeur téléchargé doit porter l'empreinte **sha512** que `latest.yml` annonce, sinon il n'est pas posé. Le canal est en HTTPS. L'installeur n'est pas signé (§2) |
+| **Les versions sautées** | On va toujours à la plus récente, sans passer par les intermédiaires : les migrations du journal (§5) rattrapent l'écart |
+| **Le retour en arrière** | Jamais de lui-même : la mise à jour ne propose pas une version plus ancienne, ni une préversion. Pour revenir à une version précédente, on réinstalle son installeur. Un journal qu'une version plus récente a mis à niveau est alors **refusé** (§5) : sa sauvegarde, `commun.sqlite3-sauvegarde`, porte le fichier d'avant |
+| **Un clone du dépôt** | Il ne se met pas à jour par ce chemin. Un clone se met à jour par git |
+| **Une mise à jour qui échoue** | Si l'arrêt n'aboutit pas, la version n'est pas posée : une stack à moitié arrêtée tient encore des fichiers du dossier que l'installeur efface. La version reste téléchargée, et le prochain lancement la repropose. Tout se lit au journal de la fenêtre, sur les lignes `[mise à jour]` |
+
+La variable `MAESTRO_MISES_A_JOUR_FLUX` remplace le canal par une autre adresse (HTTPS, ou HTTP
+vers le poste lui-même) ou l'éteint (`0`). Une valeur qui ne se lit pas **éteint** la mise à jour
+en le disant, plutôt que de retomber en silence sur le canal du paquet.
+
+### 6.3 Publier une version
+
+<!-- documentation: développement -->
+
+Publier est un **geste humain**, jamais celui de la CI ni d'un run : ce qui part s'installe chez
+chacun. La version se décide dans une Pull Request, qui change `version` dans
+`apps/desktop/package.json`. Une fois cette PR mergée, on publie depuis le clone principal, sur
+`main` à jour :
+
+```bash
+bash scripts/distribution/publier.sh --essai
+```
+
+```bash
+bash scripts/distribution/publier.sh
+```
+
+Le script refuse (code `4`) une branche autre que `main`, un arbre sale, un HEAD qui n'est pas
+`origin/main`, et une version déjà publiée : une publication ne se remplace pas. Il construit le
+paquet, vérifie que `latest.yml` annonce cette version, nomme cet installeur et porte son empreinte,
+puis crée la publication `v<version>` avec ces deux fichiers (`gh release create --latest`).
+`--essai` joue tout sauf l'envoi. Ses refus et son envoi sont éprouvés contre un `gh` factice par
+`tests/test_distribution.py`.
+
+Le mécanisme est `electron-updater`, à version exacte dans les dépendances de la coque. C'est un
+adaptateur : il lit le canal, vérifie l'empreinte et lance l'installeur. Ce qui est posé, quand,
+et ce qui s'arrête avant, se décide dans `apps/desktop/main.js` :
+
+- l'installation à la sortie du module est éteinte (`autoInstallOnAppQuit = false`), parce
+  qu'elle partirait sans attendre l'arrêt de la stack ;
+- « Redémarrer maintenant » passe par `app.quit()`, donc par l'arrêt de la fermeture (`--stop`),
+  et la version n'est posée qu'après lui, sur un code `0` ;
+- le téléchargement différentiel est éteint, parce que `releases/latest/download` ne sert pas la
+  carte de blocs de la version en place.
+
+Le cache de l'installeur porte le nom du paquet empaqueté suivi de `-updater` : electron-builder
+ne le laisse pas régler autrement. Le paquet empaqueté s'appelle donc `maestro`
+(`build.extraMetadata.name`), et le désinstalleur retire `%LOCALAPPDATA%\maestro-updater\`, sauf
+pendant une mise à jour : l'installeur qui joue l'ancien désinstalleur vit dans ce dossier.
+Ces accords sont gardés par `tests/test_coque_bureau.py` (§ « La mise à jour »).
+
+### 6.4 Vérifier une mise à jour
+
+<!-- documentation: développement -->
+
+Deux paquets du même code, sous deux versions, puis la vérification du paquet sur le plus ancien :
+
+```bash
+bash scripts/distribution/construire.sh --version 0.1.1 --flux .maestro/distribution/flux
+```
+
+```bash
+bash scripts/distribution/construire.sh
+```
+
+```bash
+bash scripts/distribution/verifier.sh --mise-a-jour .maestro/distribution/flux
+```
+
+`--version` donne la version au produit (`version.json`) et à la coque ensemble. `--flux` recopie
+`latest.yml` et l'installeur dans le dossier du canal. La phase de mise à jour de `verifier.sh`
+sert ce dossier sur le poste, puis ouvre la version installée dessus. Elle lance un run, pour que le
+journal porte quelque chose, et attend que la fenêtre annonce la version suivante prête. Elle lit
+alors le dialogue et presse **Plus tard** d'un clic de souris. Les boutons d'un dialogue de tâches
+Windows n'exposent aucun motif UI Automation : on ne peut pas les invoquer, seulement cliquer
+dessus. Elle ferme ensuite Maestro et attend que la version suivante se pose, après l'arrêt et
+sans relance. Enfin elle rouvre Maestro, comme la personne le ferait, et constate ce qui tourne et
+ce qui a survécu. Dans les autres phases, la mise à jour est éteinte (`MAESTRO_MISES_A_JOUR_FLUX=0`).
+
+**Redémarrer maintenant** n'y est pas joué. L'installeur relance Maestro par l'Explorateur
+(`ExecShellAsUser` d'electron-builder), donc dans l'environnement de la session Windows. Chez
+quelqu'un, c'est celui d'où Maestro avait été ouvert, et rien ne change. Sur le poste simulé, c'est
+celui du développeur : la version relancée s'ouvrirait sur son vrai profil, hors de la vérification.
+La passe du 2026-11-12 l'a montré une fois (§6.5).
+
+### 6.5 Ce que la vérification a relevé
+
+<!-- documentation: développement -->
+
+Passe du **2026-11-12**, sur deux paquets du même code : 0.1.0 installé, 0.1.1 servi par le canal
+local. Le poste vierge était rangé dans le dossier de travail de la session, hors du clone.
+**59 constats, tous ✓**, dont ceux de §3.3 :
+
+| Geste | Constat |
+|---|---|
+| Ouvrir la 0.1.0 sur le canal | elle trouve la 0.1.1, la télécharge et l'annonce prête en moins d'une minute, sans geste |
+| Le dialogue | il porte « Maestro 0.1.1 est prête à s'installer. », dit qu'« un run en cours s'arrête avec lui » et propose les deux boutons |
+| Presser « Plus tard » | Maestro sert toujours, en 0.1.0 : rien ne s'installe pendant qu'il sert |
+| Fermer la fenêtre | la stack s'arrête, **puis** la coque pose la 0.1.1 en silence. Le journal de la coque le dit dans cet ordre, et l'installeur a fini en **167 s**. Rien ne se relance |
+| Rouvrir Maestro | la 0.1.1 répond. La coque (`Maestro.exe` 0.1.1.0), le produit (`/api/installation` : `0.1.1`) et le CLI `claude` (celui du paquet) sont ceux de la nouvelle version, et chaque processus joue un exécutable de l'installation |
+| Ce que la personne avait | le projet et le répertoire des projets sont relus. Les 4 événements du journal ont la même empreinte avant et après, et le run d'avant est retrouvé |
+| Désinstaller | le cache `maestro-updater` part avec Maestro |
+
+Une première passe, le même jour, a joué **Redémarrer maintenant**. Le clic a été donné à la main :
+le script cherchait des boutons UI Automation, que ce dialogue n'expose pas. La coque a arrêté la
+stack, puis lancé l'installeur avec `--updated --force-run`. La 0.1.1 s'est posée, et `Maestro.exe`
+0.1.1 s'est relancé de lui-même un peu plus d'une minute après le clic, avec son API et son front
+de l'installation.
+Il l'a fait par l'Explorateur, sur le profil réel du poste, et non sur le poste simulé (§6.4).
+
+Le run lancé avant la mise à jour avait déjà échoué quand Maestro s'est fermé : le profil vierge
+n'a aucun compte. L'arrêt d'un run **en cours** par la mise à jour n'a donc pas été vu (§3.4).

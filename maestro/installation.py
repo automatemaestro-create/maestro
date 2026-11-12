@@ -89,14 +89,22 @@ def version_du_depot(depot: Path) -> str:
     return version.strip()
 
 
-def ecrire_version(depot: Path, produit: Path) -> str:
+def ecrire_version(depot: Path, produit: Path, version: str | None = None) -> str:
     """Écrit la version du paquet à la racine du produit assemblé, et la rend.
 
     Appelé par l'assembleur : c'est ce fichier que l'API installée et la coque relisent. Une
     version illisible arrête l'assemblage (`VersionIllisible`) plutôt que de poser un produit
     qui ne saurait pas dire ce qu'il est.
+
+    `version` remplace celle de la source quand le paquet est construit sous une autre
+    (`construire.sh --version`, qui la donne aussi à la coque) : deux paquets du même code, pour
+    vérifier qu'une installation passe de l'un à l'autre (#644).
     """
-    version = version_du_depot(depot)
+    if version is None:
+        version = version_du_depot(depot)
+    elif not version.strip():
+        raise VersionIllisible("la version demandée est vide")
+    version = version.strip()
     (produit / FICHIER_VERSION).write_text(
         json.dumps({"version": version}, ensure_ascii=False) + "\n", encoding="utf-8"
     )

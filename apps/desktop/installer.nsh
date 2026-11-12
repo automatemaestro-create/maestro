@@ -32,3 +32,15 @@
   maestro_reprise_fin:
   Pop $0
 !macroend
+
+; Le cache des mises a jour (#644) : electron-updater y range l'installeur qu'il a telecharge,
+; sous %LOCALAPPDATA%\<nom>-updater, ou <nom> est le nom du paquet empaquete
+; (build.extraMetadata.name de package.json, "maestro"). Il part avec une desinstallation, et
+; jamais pendant une mise a jour : l'installeur qui joue l'ancien desinstalleur (--updated) est
+; celui-la meme qui vit dans ce dossier.
+
+!macro customUnInstall
+  ${ifNot} ${isUpdated}
+    RMDir /r "$LOCALAPPDATA\maestro-updater"
+  ${endIf}
+!macroend
