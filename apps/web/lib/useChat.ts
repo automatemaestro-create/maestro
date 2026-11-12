@@ -115,6 +115,7 @@ import {
   chargerFilChat,
   diffuserMessageChat,
   ErreurReponse,
+  lectureEnMots,
   ouvrirConversationChat,
   declarerProjetDuFil,
   trancherGesteDuFil,
@@ -417,7 +418,7 @@ export function useChat(agent: string, projetId: string | null = null): Chat {
       }
       setErreur(null);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(lectureEnMots(e));
     } finally {
       setChargement(false);
     }

@@ -262,3 +262,18 @@ describe("useChat consomme le flux", () => {
     );
   });
 });
+
+describe("useChat dit un fil que l'API n'a pas servi (#1640)", () => {
+  it("nomme la panne en mots, jamais la route qui n'a pas répondu", async () => {
+    vi.stubGlobal("WebSocket", SocketFactice);
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+
+    const { result } = renderHook(() => useChat("qa"));
+    await waitFor(() => expect(result.current.chargement).toBe(false));
+
+    // « Fil illisible : … » le précède à l'écran (`Conversation`).
+    expect(result.current.erreur).toBe(
+      "L'API n'a pas répondu. Vérifiez que maestro-api tourne, puis réessayez.",
+    );
+  });
+});

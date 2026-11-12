@@ -78,6 +78,7 @@ import {
   LienRenvoi,
 } from "@/components/Primitives";
 import { ATTENTES } from "@/components/runs/EtatRun";
+import { refusEnMots } from "@/lib/api";
 import {
   causeDAttente,
   estEteint,
@@ -86,6 +87,7 @@ import {
   runsReprenables,
 } from "@/lib/execution";
 import { formatHeureRelative } from "@/lib/format";
+import { REPRISE_SANS_API } from "@/lib/gestesRun";
 import { useHorloge } from "@/lib/horloge";
 import { hrefRun } from "@/lib/navigation";
 import type { ResumeExecution } from "@/lib/types";
@@ -301,7 +303,7 @@ function CarteRunPerdu({
       // s'est passé, et un état « repris ✓ » sur un composant qu'on démonte
       // aussitôt ne serait jamais lu.
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, REPRISE_SANS_API));
       setEnCours(false);
     }
   };

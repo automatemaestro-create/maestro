@@ -64,6 +64,8 @@ import {
   ajouterIntegrationPoolMcp,
   chargerProvenanceRegistreMcp,
   chargerRegistreMcp,
+  lectureEnMots,
+  refusEnMots,
 } from "@/lib/api";
 import {
   MCP_MODE_APPAIRAGE,
@@ -82,6 +84,15 @@ import { libelleMode } from "./modes";
 
 /** Combien de pistes proposer quand une recherche ne rend rien (#271). */
 const PISTES_MAX = 10;
+
+/**
+ * Ce qu'un geste de la bibliothèque dit quand l'API ne l'a pas reçu (#1640) : ce
+ * qui n'a pas eu lieu, puis le geste qui y répond.
+ */
+const ADMISSION_SANS_API =
+  "L'API n'a pas répondu : le serveur n'a pas été admis. Vérifiez que maestro-api tourne, puis réessayez.";
+const AJOUT_SANS_API =
+  "L'API n'a pas répondu : l'intégration n'a pas été ajoutée au pool. Vérifiez que maestro-api tourne, puis réessayez.";
 
 /**
  * Une date **pure** (`AAAA-MM-JJ`) rendue en français, sans passer par `Date` :
@@ -235,7 +246,7 @@ export function BibliothequeMcp({
           );
           setErreur(null);
         } catch (e) {
-          setErreur(e instanceof Error ? e.message : String(e));
+          setErreur(lectureEnMots(e));
         } finally {
           setCharge(true);
         }
@@ -640,7 +651,7 @@ function PanneauDecouverte({
       await admettreEntreeMcp({ registre_id: entree.id });
       onAdmission();
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, ADMISSION_SANS_API));
       setEnCours(false);
     }
   };
@@ -840,7 +851,7 @@ function FormulaireConfiguration({
         .filter((s) => s.valeur !== "");
       onAjout(await ajouterIntegrationPoolMcp({ registre_id: entree.id, secrets }));
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : String(e));
+      setErreur(refusEnMots(e, AJOUT_SANS_API));
       setEnCours(false);
     }
   };

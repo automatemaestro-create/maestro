@@ -2191,6 +2191,18 @@ reconnaît à sa classe (`sansReponse`), jamais à son texte. Les écritures de
 `envoyerJson` sont gardées côté client et à l'écran par
 `tests/ecriture-sans-reponse.test.tsx`.
 
+**Une lecture qui n'aboutit pas ne montre pas sa route non plus** (#1640). Une
+lecture qu'un écran dit lui-même sous son titre (« Registre illisible : … »,
+« Fil illisible : … », « Playbook illisible : … », « Fiche illisible : … »)
+passe par `lectureEnMots(e)`. Sur une API qui n'a pas répondu, elle dit
+`LECTURE_SANS_API` (« L'API n'a pas répondu. Vérifiez que maestro-api tourne,
+puis réessayez. »), le titre disant déjà ce qui n'a pas pu être lu. Sur une API
+qui a refusé, elle dit son motif, ou son code faute de motif. Les gestes sur un
+run (pause, reprise, interruption, carte du fil, plafond) prennent leurs phrases
+dans `lib/gestesRun` et `lib/plafond`. Les écritures d'`envoyerJsonEtLire` et
+ces lectures sont gardées à l'écran par
+`tests/geste-et-lecture-sans-reponse.test.tsx`.
+
 Les pannes se regardent sur la vraie stack
 ([docs/41 §4](../../docs/41-decision-maestro-juge-il-ne-bride-pas.md)). **API
 injoignable** : `bash scripts/controltower/start.sh --couper-api` coupe l'API
