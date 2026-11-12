@@ -7218,6 +7218,45 @@ gh_graphql_read() {
   done
 }
 
+# gh_graphql_pages <requête> -> toutes les pages d'une connexion GraphQL, une réponse par ligne.
+# La requête porte `after: __APRES__` sur la connexion paginée et `pageInfo { hasNextPage endCursor }`
+# en tête de sa sélection : le verbe y écrit `null`, puis le curseur rendu par la page précédente, EN
+# CLAIR dans le texte — le double de forge des tests matche sur le texte et ne substitue aucune
+# variable (`tests/harnais_forge.py`, `requete_graphql`).
+#
+# UNE SEULE CONNEXION PAGINÉE PAR REQUÊTE : le premier `hasNextPage`/`endCursor` de la réponse est le
+# seul lu. Une connexion imbriquée se borne elle-même (`labels(first: 30)`), sans `pageInfo`.
+#
+# Le compte d'appels est ⌈N/100⌉, la borne de docs/10 §9.8. RIEN N'EST RENDU À MOITIÉ : une page
+# illisible fait échouer le tout, parce qu'une table tronquée a l'air complète — c'est le défaut de
+# #1618, où 100 tickets d'un jalon de 155 passaient pour le jalon entier. Une suite annoncée sans
+# curseur, ou avec celui qu'on vient de passer, est une réponse incohérente de la forge : le verbe
+# s'arrête et le dit, au lieu de relire sans fin.
+gh_graphql_pages() {
+  local modele="$1" apres='null' raw curseur pages=''
+  if [ -z "$modele" ]; then echo "gh_graphql_pages : requête manquante" >&2; return 2; fi
+  case "$modele" in
+    *__APRES__*) ;;
+    *) echo "gh_graphql_pages : la requête ne porte pas le marqueur __APRES__" >&2; return 2 ;;
+  esac
+  while :; do
+    raw="$(gh_graphql_read "${modele//__APRES__/"$apres"}")" || return 1
+    pages="$pages$raw"$'\n'
+    case "$raw" in *'"hasNextPage":true'*) ;; *) break ;; esac
+    curseur="$(printf '%s' "$raw" | grep -o '"endCursor":"[^"]*"' | head -1 | sed 's/^"endCursor":"//; s/"$//')"
+    if [ -z "$curseur" ]; then
+      echo "gh_graphql_pages : la forge annonce une page suivante sans curseur" >&2
+      return 1
+    fi
+    if [ "\"$curseur\"" = "$apres" ]; then
+      echo "gh_graphql_pages : la forge rend le curseur qu'on vient de lui passer (« $curseur »)" >&2
+      return 1
+    fi
+    apres="\"$curseur\""
+  done
+  printf '%s' "$pages"
+}
+
 # gh_bloc <clé> (stdin = JSON) -> le contenu du tableau « "<clé>":{"nodes":[ … ] ». Sert à isoler
 # les `login` des assignés de celui de l'auteur, et les labels du ticket de ceux du dépôt : deux
 # objets qui portent la MÊME clé dans une seule réponse, qu'un grep global confondrait.
@@ -7543,8 +7582,9 @@ st_liberer_ticket() {
 # Les trois tables l'ont rejoint à #1490 — elles CONNAISSENT leurs iid, puisqu'elles viennent de les
 # lister : mesuré le 2026-10-13, **1,8 s pour 60 tickets ouverts et 2,3 s pour 100 fermés**, sortie
 # identique à la carte ligne pour ligne, là où la carte coûtait ~20 s à ~1 000 items. Cent alias font
-# une requête de ~16 Ko, sous le plafond d'une ligne de commande Windows (32 Ko) que `gh` reçoit ;
-# aucune table n'en demande davantage, toutes étant bornées à `first: 100`.
+# une requête de ~16 Ko, sous le plafond d'une ligne de commande Windows (32 Ko) que `gh` reçoit :
+# ce verbe ne borne pas lui-même le nombre d'iid qu'on lui passe, c'est `st_recouvre` qui le
+# découpe en paquets de `ST_ALIAS_PAR_ALLER` pour une table plus longue (un jalon paginé, #1618).
 #
 # ⚠ IL CORRIGE AUSSI UN FAUX SILENCE, et c'est la moitié qui ne se voit pas au chronomètre. La carte
 # se lisait à travers `gl_backlog_table`, bornée à `first: 100` : tout lot plus ancien que cette
@@ -7633,20 +7673,32 @@ st_overlay_statut() {
   '
 }
 
+# ST_ALIAS_PAR_ALLER : le plus d'iid qu'une lecture `st_statuts` porte. Cent alias font une requête
+# de ~16 Ko, sous le plafond de 32 Ko d'une ligne de commande Windows que `gh` reçoit ; une table
+# plus longue — un jalon paginé (#1618) — se recouvre en plusieurs allers de cette taille.
+ST_ALIAS_PAR_ALLER=100
+
 # st_recouvre <table> -> la table, colonne `statut` relue par `st_statuts` sur SES PROPRES iid
-# (#1490) : un aller, quel que soit l'historique du projet. Une table sans ticket ne demande rien —
-# il n'y a aucun état à lire, et une lecture pour l'apprendre serait une lecture de trop.
+# (#1490) : ⌈N/100⌉ allers quel que soit l'historique du projet — un seul jusqu'à 100 tickets. Une
+# table sans ticket ne demande rien : il n'y a aucun état à lire, et une lecture pour l'apprendre
+# serait une lecture de trop.
 #
 # UNE LECTURE D'ÉTAT EN ÉCHEC FAIT ÉCHOUER LA TABLE, comme le faisait la carte : une table rendue
 # avec des « - » partout dirait « aucun ticket n'a d'état », et `queue.sh` y verrait un backlog où
-# rien n'est « À faire » — un plan vide au lieu d'une erreur.
+# rien n'est « À faire » — un plan vide au lieu d'une erreur. Un paquet en échec fait échouer la
+# table entière, pour la même raison.
 st_recouvre() {
-  local rows="$1" iids statuts=''
-  iids="$(printf '%s\n' "$rows" | awk -F'\t' '$1 ~ /^[0-9]+$/ { printf "%s ", $1 }')"
-  if [ -n "${iids// /}" ]; then
+  local rows="$1" paquets paquet morceau statuts=''
+  paquets="$(printf '%s\n' "$rows" | awk -F'\t' -v max="$ST_ALIAS_PAR_ALLER" '
+    $1 ~ /^[0-9]+$/ { printf "%s%s", (n == 0 ? "" : (n % max == 0 ? "\n" : " ")), $1; n++ }
+    END { if (n) print "" }
+  ')"
+  while IFS= read -r paquet; do
+    [ -n "$paquet" ] || continue
     # shellcheck disable=SC2086  # découpage en mots VOULU : st_statuts prend N iid en arguments.
-    statuts="$(st_statuts $iids)" || return 1
-  fi
+    morceau="$(st_statuts $paquet </dev/null)" || return 1
+    statuts="$statuts$morceau"$'\n'
+  done <<< "$paquets"
   printf '%s\n' "$rows" | st_overlay_statut "$statuts"
 }
 
@@ -8447,13 +8499,20 @@ gh_milestones() {
 #
 # ⚠ Comme gh_backlog_table, ce verbe répond à « qui existe ? » et rend la colonne `statut` VIDE :
 # c'est `st_milestone_issues` qui la recouvre par `st_statuts` sur ses propres iid (#1490).
+#
+# LE JALON ENTIER, PAR PAGES DE 100 (`gh_graphql_pages`, #1618) : un jalon n'a pas de taille bornée
+# — « Outillage de la forge » comptait 155 tickets le 2026-11-12 — et les quatre commandes qui lisent
+# ce verbe (`/etat-des-lieux`, `/idee`, `/milestone-bilan`, `/milestone-presentation`) le prennent
+# pour le jalon complet. Le plus récent d'abord, page après page.
 # gh_milestone_number <titre-exact> -> le NUMÉRO du jalon, la seule prise que l'API REST accepte.
 # Extrait de gh_milestone_issues, qui le résolvait déjà : gh_create_issue en a besoin pour la même
 # raison, et deux résolutions à tenir d'accord seraient le premier moyen d'en voir une se périmer.
+# Tous les jalons du dépôt, ouverts comme fermés, par pages de 100 (`gh_graphql_pages`) : un jalon
+# hors de la première page serait « introuvable » alors qu'il existe (#1618).
 gh_milestone_number() {
   local title="$1" raw numero
   if [ -z "$title" ]; then echo "usage: gh_milestone_number <titre-exact-du-milestone>" >&2; return 2; fi
-  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestones(first: 50) { nodes { number title } } } }')" || return 1
+  raw="$(gh_graphql_pages '{ '"$(gh_depot_gql)"' { milestones(first: 100, after: __APRES__) { pageInfo { hasNextPage endCursor } nodes { number title } } } }')" || return 1
   numero="$(printf '%s' "$raw" | awk -v cible="$title" '
     {
       n = split($0, parts, /\{"number":/)
@@ -8482,7 +8541,7 @@ gh_milestone_issues() {
     return 1
   }
 
-  raw="$(gh_graphql_read '{ '"$(gh_depot_gql)"' { milestone(number: '"$numero"') { issues(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number title labels(first: 30) { nodes { name } } } } } } }')" || return 1
+  raw="$(gh_graphql_pages '{ '"$(gh_depot_gql)"' { milestone(number: '"$numero"') { issues(first: 100, after: __APRES__, orderBy: {field: CREATED_AT, direction: DESC}) { pageInfo { hasNextPage endCursor } nodes { number title labels(first: 30) { nodes { name } } } } } } }')" || return 1
   rows="$(printf '%s\n' "$raw" | awk '
     {
       n = split($0, parts, /\{"number":/)
@@ -9459,8 +9518,9 @@ st_erreur_graphql() {
 # celle par laquelle l'ÉCRITURE juge un ticket hors projet — diagnostiquer avec la source qui décide
 # plutôt qu'avec une autre. (Les tables ont depuis pris le même chemin : `st_statuts`, #1490.)
 #
-# ⚠ LA BORNE EST ASSUMÉE, ET ELLE SE DIT. `first: 100` est la borne de tout ce fichier (`gh_backlog`,
-# `gh_issues_sans_milestone`…) et non un choix propre à ce verbe ; mais ici l'appelant est le fichier
+# ⚠ LA BORNE EST ASSUMÉE, ET ELLE SE DIT. `first: 100` borne toutes les lectures des tickets ouverts
+# de ce fichier (`gh_backlog`, `gh_issues_sans_milestone`…), et non ce seul verbe. Seul un jalon se
+# lit par pages (`gh_graphql_pages`, #1618). Mais ici l'appelant est le fichier
 # dont le métier est de détecter les dérives, et une borne franchie en silence y produirait
 # exactement le défaut qu'a corrigé #341 — un ✓ sur une question posée à moitié. D'où `totalCount`
 # dans la MÊME requête et la ligne d'en-tête « #examines » ci-dessous : la borne voyage avec le

@@ -1043,7 +1043,8 @@ Mesuré sur la vraie forge, ancien `lib.sh` contre nouveau, même heure :
 survivrait à ce qui le périme. Le remède structurel le rend sans objet — il n'y a plus rien à
 mémoriser —, et la carte, sa mémoire (`GL_ST_CARTE_MEMO`, `MAESTRO_CYCLE_MEMO`) et ses trois tests
 sont partis avec leur dernier lecteur. Cent alias font une requête d'environ 16 Ko, sous le plafond
-d'une ligne de commande Windows (32 Ko) que `gh` reçoit ; aucune table n'en demande davantage.
+d'une ligne de commande Windows (32 Ko) que `gh` reçoit : une table plus longue se recouvre par
+paquets de cent (`ST_ALIAS_PAR_ALLER`, #1618, ci-dessous).
 
 Les deux autres postes de la mesure ne lisaient pas la carte, et se sont réglés à leur source :
 
@@ -1062,6 +1063,39 @@ commande — **lues dans son fichier**, jamais listées — et compte : aucune p
 d'état par table ; et `doctor.sh` sur N branches, une lecture de PR. `status.sh --list` se compte dans
 [`tests/test_orchestrate.py`](../tests/test_orchestrate.py) : autant de `stat`/`date` à 3 fichiers de
 journal qu'à 60.
+
+#### Un jalon se lit en entier (#1618)
+
+`milestone-issues` rend **tous** les tickets d'un jalon. Constaté le 2026-11-12 : « Outillage de la
+forge » en comptait 155 et le verbe en rendait 100, les plus récents. Les 55 plus anciens manquaient,
+dont trois ouverts, et rien ne signalait la troncature. Les quatre commandes qui lisent ce verbe
+(`/etat-des-lieux`, `/idee`, `/milestone-bilan`, `/milestone-presentation`) prennent sa table pour
+le jalon complet. La mesure de #1490 ci-dessus portait déjà sur cette table tronquée.
+
+- **Ses deux lectures se paginent** par `gh_graphql_pages` : la résolution du titre en numéro (tous
+  les jalons du dépôt) et la liste des tickets. Le compte d'appels reste borné (§9.8) : ⌈N/100⌉
+  pages, une seule jusqu'à cent.
+- **L'état se lit par paquets de cent alias** (`st_recouvre`), donc ⌈N/100⌉ lectures d'état : une
+  seule jusqu'à cent, comme avant.
+- **Rien n'est rendu à moitié.** Une page illisible fait échouer la table. Une page suivante annoncée
+  sans curseur, ou avec celui qu'on vient de passer, est une panne nommée, pas une boucle.
+
+Ce qui reste borné, et pourquoi :
+
+- **`backlog-table closed|all`** garde les **100 derniers** tickets fermés. C'est le périmètre que
+  partagent `reconcile-workflow` et le diagnostic §4b de `doctor.sh`.
+- Les lectures des tickets **ouverts** (`backlog-table opened`, `gh_issues_jalons`, les dérives de
+  `doctor.sh`, ces dernières bornées en le disant par `totalCount`), les commentaires d'un ticket,
+  les labels, les PR ouvertes et la liste des jalons (`milestones`, `current-milestone`) sont bornés
+  bien au-dessus de ce que porte le dépôt (55 tickets ouverts, 10 commentaires au plus, 32 jalons le
+  2026-11-12).
+- `subIssues(first: 100)` épouse le plafond de GitHub, qui ne rattache pas plus de cent lots à un
+  parent.
+
+Gardé dans [`tests/test_cycle_de_vie.py`](../tests/test_cycle_de_vie.py), section #1618. Un jalon de
+155 tickets est rendu en entier, avec l'état de chaque ligne. Un jalon de 250 tickets coûte trois
+pages et trois lectures d'état, chaque iid étant demandé une fois. Le test couvre aussi un jalon
+rangé sur la seconde page des jalons, la page illisible, et le curseur absent ou répété.
 
 ### 3.7 Peuplement du projet — tout ticket est un item
 
