@@ -104,7 +104,7 @@ class Orchestrator:
         gardent ainsi exactement le prompt d'avant.
 
         `contexte_sources` (#1172) : les sources d'un run **sans brief**, déjà
-        encadrées par `contexte_markdown` (cf. `build_user_prompt`).
+        encadrées par `markdown_context` (cf. `build_user_prompt`).
 
         `outillage` (#1507) : les instructions de l'outillage du projet — ce qu'il
         prévoit se confie à une tâche (cf. `build_user_prompt`). Vide hors projet.
@@ -144,7 +144,7 @@ class Orchestrator:
         (EF-40, docs/24 §3.3). C'est le lot 6 (#320) qui arrête le run dessus.
 
         `contexte_sources` est le contenu des sources **déjà encadré** par
-        `maestro.sources.extraction.contexte_markdown` (#316) — le seul chemin qui
+        `maestro.sources.extraction.markdown_context` (#316) — le seul chemin qui
         l'encadre comme donnée et non comme consigne (ENF-13). Il arrive encadré et
         non en rapport de lecture depuis #1172 : un run part chez un hôte, et
         `Lecture.to_dict` n'emporte pas le contenu (à dessein), si bien qu'un rapport

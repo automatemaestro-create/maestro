@@ -66,7 +66,7 @@ from maestro.projets import Projet, ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import verification as execution
 from maestro.sandbox.en_place import ATELIERS_RESERVES, chemin_atelier
-from maestro.telemetry import ETAPE_RECETTE, RunJournal, StepUsage
+from maestro.telemetry import STEP_ACCEPTANCE, RunJournal, StepUsage
 from maestro.telemetry.costs import RunCost
 from maestro.telemetry.usage import report_usage
 
@@ -551,15 +551,15 @@ def test_a_la_fin_du_run_chaque_critere_du_brief_est_verifie_sur_le_livrable_int
     assert "- [ ] **C2** — Les tests du projet passent — **non tenu**" in texte
     assert texte.count("- [x]") == 2
     # Au journal : l'étape du run, son verdict structuré, sa durée et son coût.
-    etape = next(r for r in journal.records if r.etape == ETAPE_RECETTE)
+    etape = next(r for r in journal.records if r.etape == STEP_ACCEPTANCE)
     assert etape.statut == STATUT_RECETTE_NON_TENUE
     assert etape.sortie == recette.resume()
     assert etape.verification == recette.to_dict()
     assert etape.usage.duree_ms is not None
-    grand_livre = RunCost.depuis_journal(journal)
-    assert grand_livre.recette.cout_usd == pytest.approx(0.30)
-    assert grand_livre.recette.appels == 2
-    assert all(t.tache_id != ETAPE_RECETTE for t in grand_livre.taches)
+    grand_livre = RunCost.from_journal(journal)
+    assert grand_livre.acceptance.cout_usd == pytest.approx(0.30)
+    assert grand_livre.acceptance.appels == 2
+    assert all(t.task_id != STEP_ACCEPTANCE for t in grand_livre.tasks)
     # Et le rapport la dit avant les tâches.
     assert "Recette : 2/4 critère(s) du brief tenu(s)" in rapport.synthese()
 
@@ -576,7 +576,7 @@ def test_un_run_sans_brief_n_a_pas_de_recette(tmp_path: Path) -> None:
 
     assert rapport.recette is None
     assert verificateur.recettes == []
-    assert all(r.etape != ETAPE_RECETTE for r in journal.records)
+    assert all(r.etape != STEP_ACCEPTANCE for r in journal.records)
     assert not (Path(projet.racine) / ".maestro" / "recette").exists()
 
 
@@ -595,7 +595,7 @@ def test_un_run_dont_aucune_tache_n_aboutit_ne_paie_pas_sa_recette(tmp_path: Pat
     assert verificateur.recettes == []
     assert rapport.recette.statut == STATUT_RECETTE_IMPOSSIBLE
     assert "aucune tâche du run n'a abouti" in rapport.recette.empechement
-    assert RunCost.depuis_journal(journal).recette.cout_usd is None
+    assert RunCost.from_journal(journal).acceptance.cout_usd is None
 
 
 # --------------------------------------------------------------------------- #
@@ -619,7 +619,7 @@ def _recette_consignee() -> tuple[RunJournal, RecetteDuRun]:
     )
     journal = RunJournal(run_id="run-1530")
     journal.consigne(
-        etape=ETAPE_RECETTE,
+        etape=STEP_ACCEPTANCE,
         nom="Recette du run — les critères du brief",
         agent="orchestrateur",
         role="Orchestrateur",
@@ -643,10 +643,10 @@ def test_la_projection_garde_la_recette_au_run_et_son_cout_sur_sa_ligne() -> Non
     assert execution_ is not None
     assert execution_.recette == recette.to_dict()
     assert execution_.to_dict()["recette"] == recette.to_dict()
-    assert execution_.cout.recette.cout_usd == pytest.approx(0.3)
-    assert execution_.cout.planification.cout_usd is None
+    assert execution_.cout.acceptance.cout_usd == pytest.approx(0.3)
+    assert execution_.cout.planning.cout_usd is None
     # Une étape du run, jamais une carte : aucune tâche fantôme « recette ».
-    assert execution_.cout.taches == ()
+    assert execution_.cout.tasks == ()
     assert state.taches() == []
 
 

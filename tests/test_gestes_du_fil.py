@@ -991,7 +991,7 @@ def _run_arrete_sur_sa_borne(state: ControlTowerState) -> None:
             type=EVENEMENT_EXECUTION_STATUT,
             run_id=RUN,
             statut=EXECUTION_ECHEC,
-            detail="PlafondDepenseDepasse : 10.02 $ > 10 $",
+            detail="SpendingCapExceeded : 10.02 $ > 10 $",
             cause=CAUSE_PLAFOND_COUT,
         )
     )

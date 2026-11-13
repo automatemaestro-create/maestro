@@ -394,7 +394,7 @@ class ImageJointe:
     ce qui laisse le fournisseur l'envoyer à un endpoint distant comme à un CLI
     local, sans que l'un ou l'autre ait à savoir où l'image était rangée.
     `type_media` est le type MIME reconnu à la signature du fichier
-    (`maestro.sources.images.type_image`), jamais déduit du nom ; `nom` sert au
+    (`maestro.sources.images.image_type`), jamais déduit du nom ; `nom` sert au
     modèle à situer ce qu'il regarde.
     """
 

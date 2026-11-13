@@ -11,7 +11,7 @@ Langfuse, ni ouvrir de connexion vers `LANGFUSE_HOST`, quel que soit le `.env`
 du poste qui la joue — au même titre que le réseau débranché d'office côté UI
 (`apps/web/tests/setup.ts`). Sans ce garde-fou, un poste dont l'intégration
 Langfuse est *opérationnelle* joue la même suite pour le même verdict en
-**17 min 51 s** au lieu de 7 min 08 s (#195) : `activer_export_langfuse()` est
+**17 min 51 s** au lieu de 7 min 08 s (#195) : `enable_langfuse_export()` est
 appelée par chaque point d'entrée (`engine_cli.main`), le
 handler posé sur le logger **global** `maestro.trace` survit au test qui l'a
 déclenché, et chaque ligne journalisée ensuite part en POST synchrone vers le
@@ -21,7 +21,7 @@ Langfuse.
 Deux garde-fous, ici parce qu'ils valent pour la suite entière :
 
 - **les clés Langfuse sont neutralisées dans l'environnement du processus**, ce
-  qui rend `activer_export_langfuse()` no-op (sa bascule est purement
+  qui rend `enable_langfuse_export()` no-op (sa bascule est purement
   configurative) : aucun handler, donc aucun envoi ;
 - **aucun `LangfuseExportHandler` ne survit à un test** : le contrôle échoue le
   test fautif plutôt que de laisser la facture aux suivants.
@@ -179,7 +179,7 @@ if TYPE_CHECKING:
 
     from maestro.config import Settings
 
-#: Les deux clés dont la présence suffit à poser l'exporteur (`activer_export_langfuse`).
+#: Les deux clés dont la présence suffit à poser l'exporteur (`enable_langfuse_export`).
 _CLES_LANGFUSE = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
 
 #: Hôte imposé aux tests : port *discard* sur la boucle locale, où rien n'écoute.

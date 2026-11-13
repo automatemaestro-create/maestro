@@ -13,7 +13,7 @@ démarrage le trou qu'on comble), la **séquence** n'est pas dédupliquée (c'es
 l'information), et l'observateur **ne casse jamais l'observé**.
 
 **② Pourquoi il s'est arrêté** — le moteur connaissait ses causes
-(`TurnLimitReached`, `PlafondDepenseDepasse`, `DemarrageHoteRate`, l'annulation)
+(`TurnLimitReached`, `SpendingCapExceeded`, `DemarrageHoteRate`, l'annulation)
 mais trois appelants recopiaient `f"{type} : {exc}"`, si bien que la liste disait
 « Échec » à des pannes qui ne se réparent pas de la même façon. `causes.py` les
 classe, et **par leur seul type** depuis #1543 : ce que le moteur *sait*
@@ -72,7 +72,7 @@ from maestro.providers.activite import (
     resume_salve,
 )
 from maestro.providers.base import LimiteUsageAtteinte, TurnLimitReached
-from maestro.telemetry import PlafondDepenseDepasse, RunJournal, StepUsage
+from maestro.telemetry import RunJournal, SpendingCapExceeded, StepUsage
 
 RUN = "run-bavard"
 
@@ -409,7 +409,7 @@ def test_une_activite_ne_change_le_statut_d_aucune_tache():
 @pytest.mark.parametrize(
     ("erreur", "attendue"),
     [
-        (PlafondDepenseDepasse("plafond de coût crevé : 5.02 $ / 5.00 $"), CAUSE_PLAFOND_COUT),
+        (SpendingCapExceeded("plafond de coût crevé : 5.02 $ / 5.00 $"), CAUSE_PLAFOND_COUT),
         (DemarrageHoteRate("le process n'est pas parti (code 1)"), CAUSE_HOTE),
         (asyncio.CancelledError(), CAUSE_ANNULATION),
         (LimiteUsageAtteinte("le fournisseur a opposé sa limite d'usage"), CAUSE_LIMITE_USAGE),
@@ -480,7 +480,7 @@ def test_le_detail_garde_la_forme_que_les_trois_soldeurs_recopiaient():
 
 
 def test_la_cause_vient_en_plus_du_detail_jamais_a_sa_place():
-    detail, cause = detail_avec_cause(PlafondDepenseDepasse("5.02 $ / 5.00 $"))
+    detail, cause = detail_avec_cause(SpendingCapExceeded("5.02 $ / 5.00 $"))
 
     assert "5.02 $" in detail
     assert cause == CAUSE_PLAFOND_COUT

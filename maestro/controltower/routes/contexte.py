@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from maestro.installation import LecteurInstallation
     from maestro.messaging import Mailbox
     from maestro.poste import SondePoste
-    from maestro.sources import DepotTeleversements
+    from maestro.sources import UploadStore
 
 
 class Contexte:
@@ -96,7 +96,7 @@ class Contexte:
     secrets: SecretStore
     sonde_poste: SondePoste
     state: ControlTowerState
-    televersements: DepotTeleversements
+    televersements: UploadStore
 
 
 async def contexte_de(connexion: HTTPConnection) -> Contexte:

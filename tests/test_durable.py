@@ -61,7 +61,7 @@ from maestro.orchestrator.errors import OrchestratorError
 from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal
-from maestro.telemetry.costs import ETAPE_REPRISE
+from maestro.telemetry.costs import STEP_RESUME
 
 #: Demonstration goal shared by the scenarios (sensitive words avoided, #9).
 _GOAL = "Créer une API de gestion de tâches"
@@ -330,7 +330,7 @@ def test_a_durable_run_executes_the_plan_through_workflow_and_activities(env):
     # Ledger rebuilt from the aggregate: one entry per task + planning.
     ledger = report.grand_livre
     assert ledger.run_id == "run-durable-ok"
-    assert {t.tache_id for t in ledger.taches} == {"schema-bdd", "api-taches"}
+    assert {t.task_id for t in ledger.tasks} == {"schema-bdd", "api-taches"}
     assert provider.plans == 1  # planned once, through the `plan` activity
     # The blackboard travelled: the 2nd task saw the 1st one's deliverable in its prompt.
     assert any("LIVRABLE (1)" in p for p in provider.executions_of("AVAL"))
@@ -395,7 +395,7 @@ def test_resuming_a_finished_run_returns_the_report_without_rerunning_anything(e
     assert provider.executions == executions_before
     assert [r.task_id for r in resumed.resultats] == [r.task_id for r in report.resultats]
     # The resume is recorded (visible break), and does not enter the ledger (zero usage).
-    resumes = [rec for rec in resume_journal.records if rec.etape == ETAPE_REPRISE]
+    resumes = [rec for rec in resume_journal.records if rec.etape == STEP_RESUME]
     assert len(resumes) == 1
     assert "achevé" in resumes[0].sortie or "achevé" in resumes[0].entree
 

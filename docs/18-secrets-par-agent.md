@@ -33,7 +33,7 @@ Deux garanties, alignées sur les critères du ticket :
 2. **Masquage automatique en sortie** : toute valeur servie (lue dans un
    coffre, ou résolue depuis une référence `${VAR}` quel que soit
    l'environnement de résolution) est enregistrée au **registre de rédaction**
-   (`maestro.telemetry.redact.enregistre_secret`). `redact_secrets` — déjà sur
+   (`maestro.telemetry.redact.register_secret`). `redact_secrets` — déjà sur
    le chemin de toute consignation (`RunJournal.consigne`) — la remplace par
    `[secret masqué]` où qu'elle réapparaisse. Le journal alimentant l'export
    Langfuse (#81), le pont Control Tower (#98) et les livrables consignés, le
@@ -49,7 +49,7 @@ core/mcp/<agent>.json           core/secrets/<agent>.json      (jamais versionn�
         ▼                                 ▼
 LocalExecutor._produce ── environ = SecretStore.environ(agent) ──▶ AgentRuntime.execute
                                                                         │
-                                              resolus(serveurs, environ)│ + enregistre_secret
+                                              resolus(serveurs, environ)│ + register_secret
                                                                         ▼
                                                     fournisseur (montage SDK, en mémoire)
 ```

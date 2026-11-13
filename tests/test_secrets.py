@@ -40,7 +40,7 @@ from maestro.orchestrator import Orchestrator
 from maestro.providers.base import McpServerUnavailable, ModelProvider
 from maestro.telemetry import (
     LOGGER_NAME,
-    MARQUEUR_SECRET,
+    SECRET_MARKER,
     RunJournal,
     StepUsage,
     redact_secrets,
@@ -54,7 +54,7 @@ SECRET = "glpat-tok-qa-1234567890"
 @pytest.fixture(autouse=True)
 def registre_vierge(monkeypatch):
     """Isole le registre des secrets servis : il vit sinon pour tout le process."""
-    monkeypatch.setattr(redact_mod, "_SECRETS_SERVIS", set())
+    monkeypatch.setattr(redact_mod, "_SERVED_SECRETS", set())
 
 
 @pytest.fixture()
@@ -198,7 +198,7 @@ def test_une_valeur_lue_au_coffre_est_masquee_partout(store):
     # La valeur servie est au registre de rédaction : masquée où qu'elle
     # réapparaisse — même hors des motifs connus (`sk-…`, `glpat-…`).
     assert redact_secrets("voici tok-secret-du-coffre en clair") == (
-        f"voici {MARQUEUR_SECRET} en clair"
+        f"voici {SECRET_MARKER} en clair"
     )
 
 
@@ -233,7 +233,7 @@ def test_le_journal_expurge_un_secret_servi(store, caplog):
     # et les rapports : le masquage à la consignation suit partout.
     assert "tok-journal-9876" not in record.sortie
     assert "tok-journal-9876" not in caplog.text
-    assert MARQUEUR_SECRET in record.sortie
+    assert SECRET_MARKER in record.sortie
 
 
 # --- ⑤ De bout en bout : le moteur sert le coffre scopé et le journal reste propre ------
@@ -340,6 +340,6 @@ def test_le_moteur_sert_le_coffre_scope_et_le_journal_reste_propre(tmp_path, cap
     # …mais le compte-rendu qui la citait est expurgé à la consignation :
     # aucun secret dans le journal (donc ni traces exportées, ni rapports).
     assert SECRET not in caplog.text
-    assert MARQUEUR_SECRET in caplog.text
+    assert SECRET_MARKER in caplog.text
     etape = [r for r in journal.records if r.etape == "tache-unique"]
     assert SECRET not in etape[0].sortie

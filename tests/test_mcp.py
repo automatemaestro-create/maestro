@@ -851,7 +851,7 @@ def test_le_token_officiel_fourni_par_l_humain_monte_le_serveur_et_reste_masque(
     # #125 : le token OAuth est une ACTION HUMAINE (env aujourd'hui, coffre ou
     # Control Tower demain) — fourni, il monte la voie officielle ; et il est
     # enregistré au registre de rédaction à la résolution (#109).
-    from maestro.telemetry.redact import MARQUEUR_SECRET, redact_secrets
+    from maestro.telemetry.redact import SECRET_MARKER, redact_secrets
 
     token = "figd-oauth-mcp-connect-4b7e91"
 
@@ -861,7 +861,7 @@ def test_le_token_officiel_fourni_par_l_humain_monte_le_serveur_et_reste_masque(
     assert monte.headers == {"Authorization": f"Bearer {token}"}
     journal = f"Session ouverte avec le token {token}."
     assert token not in redact_secrets(journal)
-    assert MARQUEUR_SECRET in redact_secrets(journal)
+    assert SECRET_MARKER in redact_secrets(journal)
 
 
 def test_sans_token_le_serveur_figma_est_omis_pas_d_echec():

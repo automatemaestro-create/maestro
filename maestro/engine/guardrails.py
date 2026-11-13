@@ -9,7 +9,7 @@ d'orchestration, en trois protections appliquées à chaque tâche :
   deux seuils sont indépendants et cumulables ; le seuil en tokens reste opérant
   sur un fournisseur qui ne rapporte pas de coût (#113), quand le seuil en USD n'a
   aucune prise. Les garde-fous ne comptent rien eux-mêmes (#56) : ce module ne
-  porte que les seuils, le contrôle (`maestro.telemetry.PlafondDepense`) relit la
+  porte que les seuils, le contrôle (`maestro.telemetry.SpendingCap`) relit la
   comptabilité par tâche de l'exécution (#55) à chaque mesure d'usage —
   `maestro/telemetry` est la source unique du coût comme des tokens ;
 - **time-out** (`timeout_s`) : la tâche est annulée si sa réalisation excède le
@@ -228,7 +228,7 @@ class GardeFousIngestion:
     réglage qu'on pose sciemment, jamais celui qu'on obtient en oubliant.
 
     Un dépassement n'est jamais accepté en silence : la résolution lève une
-    `SourceRefusee` **motivée** (`source-trop-volumineuse`,
+    `SourceRejected` **motivée** (`source-trop-volumineuse`,
     `ingestion-trop-volumineuse`, `trop-de-sources`), que la route rend en 422.
     """
 

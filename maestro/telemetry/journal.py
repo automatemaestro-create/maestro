@@ -51,7 +51,7 @@ LOGGER_NAME = "maestro.trace"
 #: une étape porte une **part** (« ce que cette étape a coûté ») — les additionner
 #: compterait chaque tour autant de fois qu'il y a eu de relevés après lui. C'est
 #: pourquoi `RunJournal.releve` l'émet sans le conserver : `records`,
-#: `usage_totale`, le grand livre (`RunCost.depuis_journal`) et le plafond de
+#: `usage_totale`, le grand livre (`RunCost.from_journal`) et le plafond de
 #: dépense qui le relit ne le voient jamais, par construction et non par filtre.
 #: Les deux lecteurs du **logger** qui ne veulent pas de lui le reconnaissent à
 #: ce suffixe (`est_releve_usage`).
@@ -278,7 +278,7 @@ class RunJournal:
 
         Le journal d'un run repris sur son plan naît vide dans un process neuf, alors
         que le run a déjà payé ses tâches acquises. Ce qui lit le journal pour savoir
-        ce que le run a dépensé — le plafond de dépense (`PlafondDepense`, qui relit le
+        ce que le run a dépensé — le plafond de dépense (`SpendingCap`, qui relit le
         grand livre à chaque mesure), le rapport de fin — doit les compter, sans quoi
         un plafond de 5 $ en accorderait 5 de plus à chaque reprise.
 
@@ -312,7 +312,7 @@ class RunJournal:
         finale de la tâche remplacera. Le garder ferait compter chaque tour
         autant de fois qu'il aura été relevé — dans `usage_totale`, dans le grand
         livre, donc dans le **plafond de dépense** qui le relit à chaque mesure
-        (`PlafondDepense`, #56), et dans la reprise d'un run (#96). Tenu dehors,
+        (`SpendingCap`, #56), et dans la reprise d'un run (#96). Tenu dehors,
         aucun de ces lecteurs n'a de règle à connaître ; seuls ceux du logger en
         ont une (`est_releve_usage`).
 

@@ -132,7 +132,7 @@ if TYPE_CHECKING:  # imports de typage seuls — pas de dépendance d'exécution
     from maestro.projets.modele import Projet
 from maestro.providers.registry import register
 from maestro.telemetry import (
-    ETAPE_SONDE,
+    STEP_PROBE,
     StepUsage,
     collect_usage,
     report_usage,
@@ -1151,7 +1151,7 @@ class ClaudeProvider(ModelProvider):
                 pass
             except Exception as exc:  # noqa: BLE001 — jugé sur le témoin juste en dessous
                 erreur = exc
-        report_usage_du_run(ETAPE_SONDE, NOM_ETAPE_SONDE, depense.total)
+        report_usage_du_run(STEP_PROBE, NOM_ETAPE_SONDE, depense.total)
         if erreur is not None and not temoin.vus and not temoin.executions:
             raise erreur
         try:

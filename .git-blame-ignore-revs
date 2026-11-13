@@ -6,3 +6,6 @@
 # Un lot est mergé en squash, et son sha n'existe qu'après le merge : c'est le lot SUIVANT qui inscrit
 # celui du précédent (docs/55 §11). Une ligne de commentaire nomme le ticket, la suivante porte le sha
 # complet du commit mergé sur main.
+
+# #1650 — pilote : messaging, queue, router, durable
+57e4d15d8a7f4da8221faf93527559e50ef89893

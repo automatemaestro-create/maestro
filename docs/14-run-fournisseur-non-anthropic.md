@@ -122,7 +122,7 @@ appel après démarrage paie le chargement du modèle en mémoire (~37 s observ�
 
 - **#113 — résolu** : le plafond de dépense est désormais opérant sur les
   fournisseurs sans coût rapporté via un **plafond en tokens** (`--plafond-tokens`),
-  contrôlé par le même `PlafondDepense` que le plafond en USD ; la synthèse du run
+  contrôlé par le même `SpendingCap` que le plafond en USD ; la synthèse du run
   indique lequel des deux a réellement tenu (au lieu d'un plafond silencieusement
   sans prise). Le barème de prix par modèle n'a pas été retenu — la comptabilité
   n'évalue aucun prix par principe (#55).

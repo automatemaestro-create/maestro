@@ -85,7 +85,7 @@ from maestro.providers.arbitrage import BornesArbitrage
 from maestro.providers.base import ModelProvider
 from maestro.sandbox import ProducedFile
 from maestro.sandbox.verification import Execution
-from maestro.telemetry import PlafondDepenseDepasse, RunJournal, StepUsage, report_usage
+from maestro.telemetry import RunJournal, SpendingCapExceeded, StepUsage, report_usage
 
 #: Un interpréteur quelconque : le joueur factice ne le lance pas. Passé au
 #: vérificateur pour que la garde de `tests/conftest.py` (qui retire l'interpréteur
@@ -735,11 +735,11 @@ def test_le_budget_du_run_n_est_pas_une_panne_du_verificateur(tmp_path):
 
     class Plafonne(_Reponses):
         async def generate(self, prompt, *, model, system_prompt=None):
-            raise PlafondDepenseDepasse("plafond de tokens dépassé")
+            raise SpendingCapExceeded("plafond de tokens dépassé")
 
     verificateur = VerificateurTaches(Plafonne(), joueur=joueur_grep, interprete=_INTERPRETE)
 
-    with pytest.raises(PlafondDepenseDepasse):
+    with pytest.raises(SpendingCapExceeded):
         asyncio.run(
             verificateur.verifier(_TACHE, Livraison(sortie="fait", espace=tmp_path), modele="m")
         )
@@ -1314,7 +1314,7 @@ def test_les_controles_etablis_se_rejouent_sans_rappeler_le_modele(tmp_path):
 
 
 def test_les_preuves_consignees_sont_expurgees_des_secrets():
-    from maestro.telemetry import MARQUEUR_SECRET
+    from maestro.telemetry import SECRET_MARKER
 
     journal = RunJournal()
     secret = "sk-ant-api03-" + "x" * 40
@@ -1332,7 +1332,7 @@ def test_les_preuves_consignees_sont_expurgees_des_secrets():
 
     preuve = record.verification["constats"][0]["preuve"]
     assert secret not in preuve
-    assert MARQUEUR_SECRET in preuve
+    assert SECRET_MARKER in preuve
 
 
 # --------------------------------------------------------------------------- #

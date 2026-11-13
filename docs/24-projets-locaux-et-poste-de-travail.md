@@ -674,7 +674,7 @@ déclare.
 > accordéon replié, parce qu'ils y étaient un à-côté du geste. Rien de l'ingestion n'a été réécrit :
 > le modèle et la résolution (#315), l'extraction et son rapport (#316), le lancement porteur de
 > sources (#317) et l'aperçu (#319) sont **rebranchés tels quels** sur le fil, par la même chaîne
-> (`maestro.sources.composer_sources`) — une seconde chaîne aurait fini par ne plus appliquer les
+> (`maestro.sources.compose_sources`) — une seconde chaîne aurait fini par ne plus appliquer les
 > mêmes plafonds, et c'est celle des deux qui en oublie un qui aurait fait la faille.
 >
 > Ce que le §3.4 appelait « deux précautions » vaut donc **inchangé dans le fil** : les plafonds

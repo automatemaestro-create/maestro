@@ -133,7 +133,7 @@ ArbitreRenfortAppelable = Callable[[DemandeRenfort], Awaitable[DecisionRenfort]]
 
 
 #: Les trois issues d'une proposition de renfort, telles que le journal du run les
-#: porte (étape `equipe`, cf. `maestro.telemetry.costs.ETAPE_EQUIPE`). Trois mots
+#: porte (étape `equipe`, cf. `maestro.telemetry.costs.STEP_TEAM`). Trois mots
 #: et pas un seul « refusé » : ce qu'on relit d'un run, c'est *qui a décidé* —
 #: quelqu'un a jugé l'équipe suffisante, ou personne n'a regardé passer la
 #: demande, et les deux n'appellent pas la même suite.

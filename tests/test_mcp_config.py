@@ -28,14 +28,14 @@ from maestro.agents.mcp import IntegrationMcp, McpStore, ServeurMcp, resolus
 from maestro.agents.mcp_registry import RegistreMcp
 from maestro.agents.secrets import SecretStore
 from maestro.providers.base import McpServerUnavailable
-from maestro.telemetry import MARQUEUR_SECRET, redact_secrets
+from maestro.telemetry import SECRET_MARKER, redact_secrets
 from maestro.telemetry import redact as redact_mod
 
 
 @pytest.fixture(autouse=True)
 def registre_vierge(monkeypatch):
     """Isole le registre de rédaction : `resolus` y enregistre tout secret servi (process-wide)."""
-    monkeypatch.setattr(redact_mod, "_SECRETS_SERVIS", set())
+    monkeypatch.setattr(redact_mod, "_SERVED_SECRETS", set())
 
 
 @pytest.fixture()
@@ -154,7 +154,7 @@ def test_le_secret_monte_est_masque_en_sortie(registre, mcp_store, secret_store)
     secret_store.enregistrer("qa", "GITLAB_TOKEN", "glpat-a-masquer-42", mode_auth="token_statique")
 
     resolus(mcp_store.lire("qa"), secret_store.environ("qa"))
-    assert redact_secrets("fuite glpat-a-masquer-42 !") == f"fuite {MARQUEUR_SECRET} !"
+    assert redact_secrets("fuite glpat-a-masquer-42 !") == f"fuite {SECRET_MARKER} !"
 
 
 # --- ③ Les trois modes d'auth, montés depuis le pool ------------------------------------

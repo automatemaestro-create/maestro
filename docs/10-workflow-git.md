@@ -462,7 +462,7 @@ surcharges, capacités, permissions, secrets, MCP. Quatre choses à ne pas défa
 
 - **Les clés et les dossiers viennent des constantes Python** — `CLE_JOURNAL_EVENEMENTS`,
   `CLE_BATTEMENTS`, `TASKS_QUEUE`, `MAILBOX_CHANNEL_PREFIX`/`BROADCAST_CHANNEL`, `ChatStore.default`,
-  `racine_ingestion`, `ProjetStore.default` —, importées, jamais recopiées dans un
+  `ingestion_root`, `ProjetStore.default` —, importées, jamais recopiées dans un
   shell ni dans le module : une constante recopiée des deux côtés d'une frontière est ce que #830 a
   vu casser (un mois de captures muettes sur un texte que l'UI ne rendait plus). Le test l'interdit
   par l'AST — aucun littéral `maestro.` hors docstring dans `purge.py`.
@@ -2355,7 +2355,7 @@ renversements — vit dans la doc, à la section que l'index ci-dessous nomme, e
 doc où lire la sienne.
 
 **Mesuré** le 2026-09-24, `origin/main` (`eff32e3`) contre la branche de #1245, en octets et au
-compteur du dépôt (`estimer_tokens`, celui du budget de `CLAUDE.md`) :
+compteur du dépôt (`estimate_tokens`, celui du budget de `CLAUDE.md`) :
 
 | texte | avant | après |
 |---|---|---|
@@ -3087,12 +3087,12 @@ tourne donc en CI sans démon Docker ni accès réseau.
 de l'environnement du processus de test et fait **échouer le test** qui laisse un
 `LangfuseExportHandler` sur le logger global `maestro.trace`. Les deux moitiés comptent : sans la
 première, un poste dont l'intégration Langfuse est opérationnelle joue la même suite pour le même
-verdict en **17 min 51 s au lieu de 7 min 08 s** (`activer_export_langfuse()` est appelée par
+verdict en **17 min 51 s au lieu de 7 min 08 s** (`enable_langfuse_export()` est appelée par
 chaque point d'entrée, le handler survit au test qui l'a déclenché, et chaque ligne journalisée
 ensuite part en POST **synchrone** de 10 s de plafond — vers le vrai projet Langfuse, qu'elle
 pollue au passage) ; sans la seconde, la prochaine fuite du même genre repasserait inaperçue,
 puisqu'elle ne se manifeste que par de la lenteur. Motif à connaître avant d'ajouter un handler à
-un logger de `maestro.` : `activer_export_langfuse()` est appelée par **chaque** point d'entrée
+un logger de `maestro.` : `enable_langfuse_export()` est appelée par **chaque** point d'entrée
 (`engine_cli.main`, `maestro.controltower.hote_detache.main`) et rien ne la retire, donc elle est **idempotente** — sans
 quoi N invocations dans un même processus accrochaient N handlers, et chaque ligne journalisée
 partait N fois : traces et coûts **dupliqués en production**, pas seulement en test. C'est aussi ce qui rend le filet CI local

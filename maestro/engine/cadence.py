@@ -28,7 +28,7 @@ là où le moteur le sait, jamais par une prédiction :
 
 ## Où le fait voyage
 
-Une étape de **run** (`ETAPE_CADENCE`), comme la confrontation de l'équipe au plan
+Une étape de **run** (`STEP_CADENCE`), comme la confrontation de l'équipe au plan
 (#1227) : elle ne porte sur aucune tâche, à usage nul, et son champ structuré
 `cadence` (`Cadence.to_dict`) est ce que le pont publie en `run.cadence`. La
 projection le range sur le run, la vue du pipeline en montre la **mention** à côté de
@@ -53,7 +53,7 @@ from maestro.orchestrator.schema import Task
 from maestro.plan_run import largeur_du_plan as largeur_des_noeuds
 from maestro.plan_run import noeuds_du_plan
 from maestro.telemetry import RunJournal, StepUsage
-from maestro.telemetry.costs import ETAPE_CADENCE
+from maestro.telemetry.costs import STEP_CADENCE
 
 #: Le plan est une chaîne : chaque tâche attend celle qui la précède.
 CAUSE_CHAINE = "chaine"
@@ -325,7 +325,7 @@ def consigne_cadence(
     cause telle qu'elle est **après** cette ligne — c'est lui que la projection range.
     """
     journal.consigne(
-        etape=ETAPE_CADENCE,
+        etape=STEP_CADENCE,
         nom=_nom_de_l_etape(cadence, statut),
         agent=agent,
         role=role,

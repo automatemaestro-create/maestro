@@ -114,7 +114,7 @@ from maestro.controltower import (
 from maestro.controltower.chat import AUTEUR_AGENT, AUTEUR_UTILISATEUR
 from maestro.controltower.validation import evenement_demande
 from maestro.engine.guardrails import DemandeValidation
-from maestro.sources import DepotTeleversements
+from maestro.sources import UploadStore
 from maestro.telemetry import LOGGER_NAME, RunCost, RunJournal, StepUsage
 
 
@@ -546,7 +546,7 @@ def test_grand_livre_sans_mesure_rapportee(client, state):
 
 def test_le_grand_livre_api_retombe_sur_la_comptabilite_du_journal(client, state):
     """Même convention des deux côtés (#55/#57) : le journal projeté en événements
-    donne, via l'API, exactement le grand livre de `RunCost.depuis_journal`."""
+    donne, via l'API, exactement le grand livre de `RunCost.from_journal`."""
     journal = RunJournal(run_id="run-9")
     journal.consigne(etape="planification", nom="Planification de l'objectif",
                      agent="orchestrateur", role="Orchestrateur", statut="terminee",
@@ -566,7 +566,7 @@ def test_le_grand_livre_api_retombe_sur_la_comptabilite_du_journal(client, state
 
     cout = client.get("/api/executions/run-9/cout").json()
 
-    assert cout == RunCost.depuis_journal(journal).to_dict()
+    assert cout == RunCost.from_journal(journal).to_dict()
 
 
 # ----------------------------------------- ①ter Vue coûts & analytics (#87)
@@ -1925,7 +1925,7 @@ def client_chat_sources(bus, depot_chat, tmp_path, monkeypatch):
         bus=bus,
         chat_store=depot_chat,
         chat_repondeur=RepondeurScripte(),
-        televersements=DepotTeleversements(tmp_path / "depot"),
+        televersements=UploadStore(tmp_path / "depot"),
     )
     with TestClient(app) as client:
         yield client

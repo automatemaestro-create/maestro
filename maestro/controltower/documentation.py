@@ -18,7 +18,7 @@ Trois chiffres, repris et re-mesurés ici avec l'estimateur du dépôt :
   **11 869 tokens** estimés, quarante-sept fois moins que le corpus. C'est ce qui rend
   le dispositif possible : le modèle choisit ses sections sur la carte, puis répond à
   partir d'elles seules ;
-- **la plomberie existe** — `maestro.sources.extraction.estimer_tokens` chiffre le
+- **la plomberie existe** — `maestro.sources.extraction.estimate_tokens` chiffre le
   coût, et il est **jamais optimiste** (part ASCII à 3 caractères par token, chaque
   caractère accentué pour un token entier). Un corpus français y est compté large,
   ce qui est exactement le sens qu'on veut à un budget.
@@ -36,8 +36,8 @@ dans un index — un test d'appartenance à une clé, au même titre qu'un parse
 format connu. Elle ne juge aucune intention humaine (docs/10, règle du 2026-08-28).
 
 ⚠ **Et ce n'est pas non plus l'assemblage du prompt.** De `maestro.sources.extraction`
-on reprend `estimer_tokens` — le budget, c'est-à-dire ce que la note du ticket
-demandait — mais **pas `contexte_markdown`**, et c'est une décision et non un oubli :
+on reprend `estimate_tokens` — le budget, c'est-à-dire ce que la note du ticket
+demandait — mais **pas `markdown_context`**, et c'est une décision et non un oubli :
 son préambule déclare le contenu « fourni par l'utilisateur », « pas fiable », à
 signaler plutôt qu'à suivre (ENF-13). C'est juste d'un document téléversé et **faux**
 de la documentation du produit, qui est dans le dépôt et relue au merge — dire au
@@ -220,7 +220,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from maestro.sources.extraction import estimer_tokens
+from maestro.sources.extraction import estimate_tokens
 
 #: Où la documentation du dépôt **vit**, relatif à sa racine, dans l'ordre où la carte
 #: la présente. `docs/*.md` ne descend pas : c'est ce qui laisse dehors
@@ -770,7 +770,7 @@ def construire_carte(
             sections.append(section)
             textes[section.identifiant] = corps
     markdown = _rendre_carte(fichiers, par_fichier, len(sections), _ouvertures(sections))
-    tokens = estimer_tokens(markdown)
+    tokens = estimate_tokens(markdown)
     if budget_tokens is not None and tokens > budget_tokens:
         raise CarteTropGrande(
             f"Le sommaire de la carte du corpus de documentation pèse {tokens} tokens "

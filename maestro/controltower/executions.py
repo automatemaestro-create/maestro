@@ -284,12 +284,12 @@ from maestro.sandbox.projet import (
     sauver_le_travail_en_vol,
 )
 from maestro.sources import (
-    DepotTeleversements,
-    RapportLecture,
+    ReadingReport,
     Source,
-    composer_sources,
-    contexte_markdown,
-    lecteur_par_defaut,
+    UploadStore,
+    compose_sources,
+    default_reader,
+    markdown_context,
 )
 from maestro.telemetry import LOGGER_NAME, RunJournal, redact_secrets
 
@@ -306,9 +306,9 @@ FabriqueMoteur = Callable[..., "OrchestrationEngine"]
 #: source `url` part sur le réseau, et `tests/conftest.py` (#195) exige qu'aucun
 #: test n'en ait besoin. Un seul point d'injection plutôt que trois réglages :
 #: desserrer les plafonds d'extraction se fait par un
-#: `partial(extraire_sources, garde_fous=…)`. Le défaut est `lecteur_par_defaut()`,
+#: `partial(extract_sources, garde_fous=…)`. Le défaut est `default_reader()`,
 #: qui montre les images au modèle du poste (#1163).
-LecteurSources = Callable[[Sequence[Source]], RapportLecture]
+LecteurSources = Callable[[Sequence[Source]], ReadingReport]
 
 #: Délai laissé à un run annulé pour s'éteindre avant que la requête d'annulation
 #: rende la main. Au-delà, l'issue est déjà consignée et la tâche est abandonnée
@@ -415,7 +415,7 @@ class _Veille:
 class RelanceRefusee(GesteRefuse):
     """Une relance refusée, **avec son motif** — jamais un rejet muet (#349).
 
-    Même contrat que `SourceRefusee` (#315) et même raison d'hériter de
+    Même contrat que `SourceRejected` (#315) et même raison d'hériter de
     `ValueError` : un refus de relance est une requête invalide, pas une panne, et
     `_detail_refus` sait déjà en tirer le corps `{motif, message}` que servent les
     routes. `motif` est l'un des `MOTIF_RELANCE_*` ; le message reste la phrase
@@ -513,7 +513,7 @@ class ServiceExecutions:
         *,
         fabrique_moteur: FabriqueMoteur | None = None,
         garde_fous_ingestion: GardeFousIngestion | None = None,
-        televersements: DepotTeleversements | None = None,
+        televersements: UploadStore | None = None,
         lecteur_sources: LecteurSources | None = None,
         battements: RegistreBattements | None = None,
         seuil_orphelin_s: float = SEUIL_ORPHELIN_S,
@@ -540,9 +540,9 @@ class ServiceExecutions:
         self._televersements = (
             televersements
             if televersements is not None
-            else DepotTeleversements.default(garde_fous=self._ingestion)
+            else UploadStore.default(guardrails=self._ingestion)
         )
-        self._lecteur = lecteur_sources if lecteur_sources is not None else lecteur_par_defaut()
+        self._lecteur = lecteur_sources if lecteur_sources is not None else default_reader()
         self._battements = (
             battements if battements is not None else RegistreBattementsMemoire()
         )
@@ -811,7 +811,7 @@ class ServiceExecutions:
         brief (#320).
 
         Ce qui a été lu **part avec le run** depuis #1172 : l'hôte reçoit le
-        contenu, encadré par `contexte_markdown`, et le brief le lit. Avant, la
+        contenu, encadré par `markdown_context`, et le brief le lit. Avant, la
         lecture n'alimentait que le rapport rendu ici, et le brief s'écrivait sans
         les sources que l'écran venait de dire « lues ».
 
@@ -844,7 +844,7 @@ class ServiceExecutions:
 
         Lève `ValueError` sur un objectif vide, un garde-fou hors bornes (les
         plafonds sont des maximums : ils doivent être > 0), un mode de brief
-        inconnu ou une source refusée (`SourceRefusee`, qui en hérite et porte son
+        inconnu ou une source refusée (`SourceRejected`, qui en hérite et porte son
         motif) — la route en fait un 422. Le run, lui, ne peut plus échouer de
         façon synchrone : ce qui lui arrive ensuite se lit dans son statut.
 
@@ -900,7 +900,7 @@ class ServiceExecutions:
         # page (#316), ce que la boucle de l'API ne doit pas porter. Aucune
         # source, aucun fil — un lancement sans matière garde son coût d'avant.
         rapport = (
-            await asyncio.to_thread(self._lecteur, matiere) if matiere else RapportLecture()
+            await asyncio.to_thread(self._lecteur, matiere) if matiere else ReadingReport()
         )
 
         self._demarrer()
@@ -956,7 +956,7 @@ class ServiceExecutions:
                     # joint, tel quel, ce qu'une conversation avait déjà lu.
                     contexte_sources="\n\n".join(
                         morceau
-                        for morceau in (contexte_markdown(rapport), contexte_sources.strip())
+                        for morceau in (markdown_context(rapport), contexte_sources.strip())
                         if morceau.strip()
                     ),
                     brief=brief,
@@ -1917,7 +1917,7 @@ class ServiceExecutions:
         """La matière du run : sources résolues, octets téléversés rattachés (#317).
 
         Les trois temps — compléter depuis le dépôt, résoudre, rattacher — vivent
-        depuis #482 dans `maestro.sources.composer_sources`, parce qu'un
+        depuis #482 dans `maestro.sources.compose_sources`, parce qu'un
         lancement n'est plus le seul geste capable de porter des sources : un
         message du fil en porte aussi (#482), et deux chaînes qui se ressemblent
         finiraient par ne plus appliquer les mêmes plafonds.
@@ -1926,8 +1926,8 @@ class ServiceExecutions:
         d'ingestion est le sien (`run_id`), et les garde-fous sont ceux du
         service.
         """
-        return composer_sources(
-            sources, cle=run_id, depot=self._televersements, garde_fous=self._ingestion
+        return compose_sources(
+            sources, key=run_id, store=self._televersements, guardrails=self._ingestion
         )
 
     def _demarrer(self) -> None:

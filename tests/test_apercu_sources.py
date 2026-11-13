@@ -1,16 +1,15 @@
-"""L'aperçu d'ingestion (#319) : ce que des sources donneraient, sans rien engager.
+"""The ingestion preview (#319): what sources would give, without committing anything.
 
-Deux niveaux, et le second est celui qui compte pour l'écran : le module
-`maestro.sources.apercu` (ce qu'un aperçu lit, refuse et **efface**) et la route
-`POST /api/sources/apercu` (la forme du contrat, docs/05 §6.9).
+Two levels, and the second is the one that counts for the screen: the module
+`maestro.sources.preview` (what a preview reads, rejects and **erases**) and the
+route `POST /api/sources/apercu` (the shape of the contract, docs/05 §6.9).
 
-Le reste de la couverture de la Phase 8 est différé au lot final #323 (checklist
-de #314) ; ce fichier ne garde que ce qu'un écran ne peut pas rattraper — un
-aperçu qui laisserait de la matière derrière lui, ou qui refuserait ce qu'il
-devrait seulement signaler.
+The rest of Phase 8's coverage is deferred to the final lot #323 (checklist of
+#314); this file keeps only what a screen cannot catch up on -- a preview that
+would leave material behind, or that would reject what it should merely signal.
 
-Aucun réseau : les sources `url` passent par l'injection `recuperer_url` de #316,
-comme l'exige `tests/conftest.py` (#195).
+No network: `url` sources go through the `fetch_url` injection of #316, as
+`tests/conftest.py` requires (#195).
 """
 
 from __future__ import annotations
@@ -25,179 +24,179 @@ from fastapi.testclient import TestClient
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.emplacements import NOM_JETABLE, VARIABLES_TEMP, racine_jetable
 from maestro.engine.guardrails import GardeFousIngestion
-from maestro.sources import SourceRefusee, racine_ingestion
-from maestro.sources.apercu import apercu_sources
+from maestro.sources import SourceRejected, ingestion_root
+from maestro.sources.preview import preview_sources
 
 
 @pytest.fixture(autouse=True)
-def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Un dossier utilisateur factice — même raison qu'en #221/#223.
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fake user home -- same reason as in #221/#223.
 
-    Sous Windows, le `tmp_path` de pytest vit dans `AppData/Local/Temp`, que
-    `valider_racine` refuse à raison : sans cette isolation, un dossier de
-    références déclaré dans `tmp_path` serait refusé pour une bonne raison, mais
-    pas celle que ces tests mesurent.
+    On Windows, pytest's `tmp_path` lives in `AppData/Local/Temp`, which
+    `valider_racine` rejects for good reason: without this isolation, a
+    references directory declared in `tmp_path` would be rejected for a good
+    reason, but not the one these tests measure.
     """
-    maison = tmp_path / "maison"
-    maison.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
-    return maison
+    home = tmp_path / "maison"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
 
 
 @pytest.fixture()
 def client() -> TestClient:
-    """TestClient de l'app — l'aperçu ne dépend d'aucun service injecté."""
+    """The app's TestClient -- the preview depends on no injected service."""
     app = create_app(bus=InMemoryEventBus(), state=ControlTowerState())
     with TestClient(app) as client:
         yield client
 
 
-def _declarer(nom: str, contenu: bytes) -> dict[str, object]:
-    """La déclaration d'un fichier déposé, telle que l'écran l'envoie."""
-    return {"type": "fichier", "nom": nom, "taille": len(contenu)}
+def _declare(name: str, content: bytes) -> dict[str, object]:
+    """The declaration of a deposited file, as the screen sends it."""
+    return {"type": "fichier", "nom": name, "taille": len(content)}
 
 
-# --- Le module : lire, refuser, effacer ------------------------------------
+# --- The module: read, reject, erase ----------------------------------------
 
 
-def test_un_fichier_depose_est_lu_et_chiffre() -> None:
-    """Le cas nominal : le contenu entre, et son coût est annoncé."""
-    contenu = "Cahier des charges\n\nRefondre l'écran de lancement.".encode()
-    rapport = apercu_sources(
-        [_declarer("cdc.md", contenu)],
-        fichiers=[("cdc.md", io.BytesIO(contenu))],
+def test_a_deposited_file_is_read_and_costed() -> None:
+    """The nominal case: the content enters, and its cost is announced."""
+    content = "Cahier des charges\n\nRefondre l'écran de lancement.".encode()
+    report = preview_sources(
+        [_declare("cdc.md", content)],
+        files=[("cdc.md", io.BytesIO(content))],
     )
-    (lecture,) = rapport.lectures
-    assert lecture.nom == "cdc.md"
-    assert lecture.etat == "lu"
-    assert lecture.tokens > 0
-    assert rapport.tokens == lecture.tokens
+    (reading,) = report.readings
+    assert reading.name == "cdc.md"
+    assert reading.state == "lu"
+    assert reading.tokens > 0
+    assert report.tokens == reading.tokens
 
 
-def test_un_apercu_ne_laisse_rien_derriere_lui(tmp_path: Path) -> None:
-    """La promesse du module : les octets lus s'en vont avec le dossier jetable.
+def test_a_preview_leaves_nothing_behind(tmp_path: Path) -> None:
+    """The module's promise: the bytes read go away with the disposable directory.
 
-    Mesuré sur le disque et non sur une intention : ni dans l'emplacement
-    d'ingestion des runs, ni ailleurs — regarder deux fois ne doit pas remplir
-    un disque pour un geste réputé gratuit.
+    Measured on disk and not on an intention: neither in the runs' ingestion
+    location, nor elsewhere -- looking twice must not fill a disk for a gesture
+    reputed free.
     """
-    contenu = b"une matiere quelconque"
-    avant = sorted(racine_ingestion().glob("*")) if racine_ingestion().exists() else []
-    rapport = apercu_sources(
-        [_declarer("note.txt", contenu)], fichiers=[("note.txt", io.BytesIO(contenu))]
+    content = b"une matiere quelconque"
+    before = sorted(ingestion_root().glob("*")) if ingestion_root().exists() else []
+    report = preview_sources(
+        [_declare("note.txt", content)], files=[("note.txt", io.BytesIO(content))]
     )
-    assert rapport.lectures[0].etat == "lu"
-    apres = sorted(racine_ingestion().glob("*")) if racine_ingestion().exists() else []
-    assert apres == avant
+    assert report.readings[0].state == "lu"
+    after = sorted(ingestion_root().glob("*")) if ingestion_root().exists() else []
+    assert after == before
 
 
-def test_une_image_est_annoncee_pour_le_lancement_jamais_refusee() -> None:
-    """« Rien à lire ici » n'est pas « je refuse de lire ça » (critère 3).
+def test_an_image_is_announced_for_the_launch_never_rejected() -> None:
+    """Having nothing to read is not refusing to read (criterion 3).
 
-    Un `.png` déposé ne doit faire échouer aucun aperçu : il ressort **ligne du
-    rapport**, avec son motif. Depuis #1163 ce motif dit que le lancement le
-    montrera au modèle — l'aperçu, gratuit, ne paie pas ce regard d'avance.
+    A deposited `.png` must make no preview fail: it comes out as a **line of the
+    report**, with its reason. Since #1163 this reason says the launch will show
+    it to the model -- the free preview does not pay for that look in advance.
     """
-    contenu = b"\x89PNG\r\n\x1a\n binaire"
-    rapport = apercu_sources(
-        [_declarer("maquette.png", contenu)],
-        fichiers=[("maquette.png", io.BytesIO(contenu))],
+    content = b"\x89PNG\r\n\x1a\n binaire"
+    report = preview_sources(
+        [_declare("maquette.png", content)],
+        files=[("maquette.png", io.BytesIO(content))],
     )
-    (lecture,) = rapport.lectures
-    assert lecture.etat == "ignore"
-    assert lecture.motif == "vue-au-lancement"
-    assert lecture.tokens == 0
+    (reading,) = report.readings
+    assert reading.state == "ignore"
+    assert reading.reason == "vue-au-lancement"
+    assert reading.tokens == 0
 
 
-def test_une_source_hors_bornes_est_refusee_avec_son_index() -> None:
-    """Le régime de la résolution : refuser, en disant **laquelle** corriger."""
-    petit = b"ok"
-    trop = b"x" * 4096
-    with pytest.raises(SourceRefusee) as refus:
-        apercu_sources(
-            [_declarer("a.txt", petit), _declarer("b.txt", trop)],
-            fichiers=[("a.txt", io.BytesIO(petit)), ("b.txt", io.BytesIO(trop))],
-            garde_fous=GardeFousIngestion(taille_max_source_octets=1024),
+def test_an_out_of_bounds_source_is_rejected_with_its_index() -> None:
+    """The resolution's regime: reject, saying **which one** to fix."""
+    small = b"ok"
+    too_big = b"x" * 4096
+    with pytest.raises(SourceRejected) as rejection:
+        preview_sources(
+            [_declare("a.txt", small), _declare("b.txt", too_big)],
+            files=[("a.txt", io.BytesIO(small)), ("b.txt", io.BytesIO(too_big))],
+            guardrails=GardeFousIngestion(taille_max_source_octets=1024),
         )
-    assert refus.value.motif == "source-trop-volumineuse"
-    assert refus.value.index == 1
+    assert rejection.value.reason == "source-trop-volumineuse"
+    assert rejection.value.index == 1
 
 
-def test_les_octets_recus_sont_plafonnes_et_pas_la_taille_annoncee() -> None:
-    """La taille vient du navigateur : c'est ce qui **arrive** qui est plafonné.
+def test_the_received_bytes_are_capped_and_not_the_announced_size() -> None:
+    """The size comes from the browser: it is what **arrives** that is capped.
 
-    Une déclaration honnête accompagnée d'un flux plus gros ne doit pas passer :
-    le refus a lieu pendant l'écriture, tranche par tranche, comme à la réception
-    d'un téléversement (#317).
+    An honest declaration accompanied by a bigger stream must not pass: the
+    rejection happens during the write, chunk by chunk, as at the reception of
+    an upload (#317).
     """
-    with pytest.raises(SourceRefusee) as refus:
-        apercu_sources(
+    with pytest.raises(SourceRejected) as rejection:
+        preview_sources(
             [{"type": "fichier", "nom": "menteur.txt", "taille": 10}],
-            fichiers=[("menteur.txt", io.BytesIO(b"y" * 4096))],
-            garde_fous=GardeFousIngestion(taille_max_source_octets=1024),
+            files=[("menteur.txt", io.BytesIO(b"y" * 4096))],
+            guardrails=GardeFousIngestion(taille_max_source_octets=1024),
         )
-    assert refus.value.motif == "source-trop-volumineuse"
+    assert rejection.value.reason == "source-trop-volumineuse"
 
 
-def test_un_decompte_de_fichiers_faux_est_refuse() -> None:
-    """Deux listes ordonnées et pas de correspondance : mal apparier serait pire.
+def test_a_wrong_file_count_is_rejected() -> None:
+    """Two ordered lists and no correspondence: mispairing would be worse.
 
-    Associer le mauvais document au mauvais nom produirait un rapport crédible
-    et faux — le refus est donc préféré au rapprochement au hasard.
+    Associating the wrong document with the wrong name would produce a credible
+    and false report -- the rejection is therefore preferred to a random pairing.
     """
-    with pytest.raises(SourceRefusee) as refus:
-        apercu_sources([_declarer("a.txt", b"ok")], fichiers=[])
-    assert refus.value.motif == "apercu-sans-octets"
+    with pytest.raises(SourceRejected) as rejection:
+        preview_sources([_declare("a.txt", b"ok")], files=[])
+    assert rejection.value.reason == "apercu-sans-octets"
 
 
-def test_un_dossier_de_references_rend_une_ligne_par_fichier(maison: Path) -> None:
-    """Le dossier est une source, ses fichiers sont ses `entrees` (#316)."""
-    references = maison / "references"
+def test_a_references_directory_returns_one_line_per_file(home: Path) -> None:
+    """The directory is a source, its files are its `entries` (#316)."""
+    references = home / "references"
     references.mkdir()
     (references / "specification.md").write_text("# Spec\n\nDeux phrases.", encoding="utf-8")
     (references / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 
-    rapport = apercu_sources([{"type": "dossier", "chemin": str(references)}])
+    report = preview_sources([{"type": "dossier", "chemin": str(references)}])
 
-    (lecture,) = rapport.lectures
-    assert lecture.type == "dossier"
-    assert {entree.nom for entree in lecture.entrees} == {"specification.md", "logo.png"}
-    assert {entree.etat for entree in lecture.entrees} == {"lu", "ignore"}
+    (reading,) = report.readings
+    assert reading.type == "dossier"
+    assert {entry.name for entry in reading.entries} == {"specification.md", "logo.png"}
+    assert {entry.state for entry in reading.entries} == {"lu", "ignore"}
 
 
 @pytest.fixture()
-def maison(_maison_isolee: Path) -> Path:
-    """Le dossier utilisateur factice, sous un nom lisible en argument de test."""
-    return _maison_isolee
+def home(_isolated_home: Path) -> Path:
+    """The fake user home, under a readable name as a test argument."""
+    return _isolated_home
 
 
-# --- La route : la forme du contrat (docs/05 §6.9) --------------------------
+# --- The route: the shape of the contract (docs/05 §6.9) --------------------
 
 
-def test_la_route_rend_le_rapport_du_fichier_depose(client: TestClient) -> None:
-    """`POST /api/sources/apercu` : multipart en entrée, `RapportLecture` en sortie."""
-    reponse = client.post(
+def test_the_route_returns_the_report_of_the_deposited_file(client: TestClient) -> None:
+    """`POST /api/sources/apercu`: multipart in, `ReadingReport` out."""
+    response = client.post(
         "/api/sources/apercu",
-        data={"sources": json.dumps([_declarer("cdc.md", b"# Objectif\n\nRefondre.")])},
+        data={"sources": json.dumps([_declare("cdc.md", b"# Objectif\n\nRefondre.")])},
         files=[("fichier", ("cdc.md", b"# Objectif\n\nRefondre.", "text/markdown"))],
     )
-    assert reponse.status_code == 200
-    corps = reponse.json()
-    assert corps["tokens"] > 0
-    assert [lecture["nom"] for lecture in corps["lectures"]] == ["cdc.md"]
-    assert corps["lectures"][0]["etat"] == "lu"
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tokens"] > 0
+    assert [reading["nom"] for reading in body["lectures"]] == ["cdc.md"]
+    assert body["lectures"][0]["etat"] == "lu"
 
 
-def test_la_route_rend_un_rapport_vide_sans_source(client: TestClient) -> None:
-    """Aucune source : un rapport vide, pas une erreur — l'écran s'ouvre là-dessus."""
-    reponse = client.post("/api/sources/apercu", data={"sources": "[]"})
-    assert reponse.status_code == 200
-    assert reponse.json() == {"tokens": 0, "lectures": []}
+def test_the_route_returns_an_empty_report_without_a_source(client: TestClient) -> None:
+    """No source: an empty report, not an error -- the screen opens on it."""
+    response = client.post("/api/sources/apercu", data={"sources": "[]"})
+    assert response.status_code == 200
+    assert response.json() == {"tokens": 0, "lectures": []}
 
 
-def test_la_route_refuse_une_url_non_suivable_avec_son_motif(client: TestClient) -> None:
-    """Un refus est motivé et situé : `{motif, message, index}`, jamais une phrase nue."""
-    reponse = client.post(
+def test_the_route_rejects_an_unfollowable_url_with_its_reason(client: TestClient) -> None:
+    """A rejection is reasoned and located: `{motif, message, index}`, never a bare sentence."""
+    response = client.post(
         "/api/sources/apercu",
         data={
             "sources": json.dumps(
@@ -208,167 +207,167 @@ def test_la_route_refuse_une_url_non_suivable_avec_son_motif(client: TestClient)
             )
         },
     )
-    assert reponse.status_code == 422
-    detail = reponse.json()["detail"]
+    assert response.status_code == 422
+    detail = response.json()["detail"]
     assert detail["motif"] == "url-non-suivable"
     assert detail["index"] == 1
 
 
-def test_la_route_refuse_un_type_inconnu(client: TestClient) -> None:
-    """Un type hors `fichier`/`dossier`/`url` est refusé, jamais ignoré (#315)."""
-    reponse = client.post(
+def test_the_route_rejects_an_unknown_type(client: TestClient) -> None:
+    """A type outside `fichier`/`dossier`/`url` is rejected, never ignored (#315)."""
+    response = client.post(
         "/api/sources/apercu",
         data={"sources": json.dumps([{"type": "presse-papier", "valeur": "…"}])},
     )
-    assert reponse.status_code == 422
-    assert reponse.json()["detail"]["motif"] == "type-inconnu"
+    assert response.status_code == 422
+    assert response.json()["detail"]["motif"] == "type-inconnu"
 
 
-def test_la_route_refuse_un_json_illisible(client: TestClient) -> None:
-    """Le corps est une saisie comme une autre : il refuse avec un motif."""
-    reponse = client.post("/api/sources/apercu", data={"sources": "{pas du json"})
-    assert reponse.status_code == 422
-    assert reponse.json()["detail"]["motif"] == "sources-illisibles"
+def test_the_route_rejects_unreadable_json(client: TestClient) -> None:
+    """The body is an input like any other: it rejects with a reason."""
+    response = client.post("/api/sources/apercu", data={"sources": "{pas du json"})
+    assert response.status_code == 422
+    assert response.json()["detail"]["motif"] == "sources-illisibles"
 
 
-# --- Le reste, différé au lot final (#323) ----------------------------------
+# --- The rest, deferred to the final lot (#323) -----------------------------
 
 
-def test_une_url_s_apercoit_sans_jamais_sortir_sur_le_reseau() -> None:
-    """Le troisième type de source n'était exercé nulle part côté aperçu.
+def test_a_url_is_previewed_without_ever_going_out_on_the_network() -> None:
+    """The third source type was exercised nowhere on the preview side.
 
-    L'injection `recuperer_url=` est le seul chemin par lequel une URL entre
-    dans un aperçu : sans test, rien ne garantissait que le paramètre soit
-    transmis jusqu'à l'extraction.
+    The `fetch_url=` injection is the only path through which a URL enters a
+    preview: without a test, nothing guaranteed that the parameter is passed on
+    down to the extraction.
     """
-    appelees: list[str] = []
+    called: list[str] = []
 
-    def _recuperer(url: str) -> str:
-        appelees.append(url)
+    def _fetch(url: str) -> str:
+        called.append(url)
         return "# Spécification\n\nLe contenu de la page."
 
-    rapport = apercu_sources(
+    report = preview_sources(
         [{"type": "url", "valeur": "https://exemple.test/spec"}],
-        recuperer_url=_recuperer,
+        fetch_url=_fetch,
     )
-    (lecture,) = rapport.lectures
-    assert appelees == ["https://exemple.test/spec"]
-    assert lecture.etat == "lu"
-    assert "Spécification" in lecture.markdown
+    (reading,) = report.readings
+    assert called == ["https://exemple.test/spec"]
+    assert reading.state == "lu"
+    assert "Spécification" in reading.markdown
 
 
-def test_le_cumul_des_octets_recus_est_plafonne_lui_aussi() -> None:
-    """Deux fichiers licites l'un après l'autre peuvent être illicites ensemble.
+def test_the_total_of_the_received_bytes_is_capped_too() -> None:
+    """Two lawful files one after the other can be unlawful together.
 
-    Le plafond **par source** était couvert, le plafond **total** ne l'était pas
-    — c'est pourtant celui qui borne le coût d'un aperçu.
+    The **per-source** cap was covered, the **total** cap was not -- yet it is
+    the one that bounds the cost of a preview.
     """
-    moitie = b"z" * 700
-    with pytest.raises(SourceRefusee) as refus:
-        apercu_sources(
-            [_declarer("a.txt", moitie), _declarer("b.txt", moitie)],
-            fichiers=[("a.txt", io.BytesIO(moitie)), ("b.txt", io.BytesIO(moitie))],
-            garde_fous=GardeFousIngestion(
+    half = b"z" * 700
+    with pytest.raises(SourceRejected) as rejection:
+        preview_sources(
+            [_declare("a.txt", half), _declare("b.txt", half)],
+            files=[("a.txt", io.BytesIO(half)), ("b.txt", io.BytesIO(half))],
+            guardrails=GardeFousIngestion(
                 taille_max_source_octets=1024, taille_max_totale_octets=1024
             ),
         )
-    assert refus.value.motif == "ingestion-trop-volumineuse"
-    assert refus.value.index == 1
+    assert rejection.value.reason == "ingestion-trop-volumineuse"
+    assert rejection.value.index == 1
 
 
-def test_le_cumul_se_compte_sur_les_octets_recus_et_non_sur_ceux_annonces() -> None:
-    """Le pendant du test précédent, sur le seul chemin qui compte vraiment.
+def test_the_total_is_counted_on_the_received_bytes_and_not_the_announced_ones() -> None:
+    """The counterpart of the previous test, on the only path that really counts.
 
-    Là, les tailles **déclarées** dépassaient déjà : le refus tombait avant que
-    le moindre octet ne soit lu. Ici elles sont minuscules et les octets, eux,
-    débordent — c'est le cas d'un client qui annonce douze octets pour douze
-    mégaoctets, et le seul où le plafond cumulé doit se défendre **pendant**
-    l'écriture. La taille annoncée vient du navigateur : elle ne peut pas être
-    ce sur quoi le budget d'ingestion s'appuie.
+    There, the **declared** sizes already exceeded: the rejection fell before a
+    single byte was read. Here they are tiny and the bytes overflow -- the case
+    of a client announcing twelve bytes for twelve megabytes, and the only one
+    where the total cap must defend itself **during** the write. The announced
+    size comes from the browser: it cannot be what the ingestion budget relies
+    on.
     """
-    moitie = b"z" * 700
-    with pytest.raises(SourceRefusee) as refus:
-        apercu_sources(
+    half = b"z" * 700
+    with pytest.raises(SourceRejected) as rejection:
+        preview_sources(
             [
                 {"type": "fichier", "nom": "a.txt", "taille": 10},
                 {"type": "fichier", "nom": "b.txt", "taille": 10},
             ],
-            fichiers=[("a.txt", io.BytesIO(moitie)), ("b.txt", io.BytesIO(moitie))],
-            garde_fous=GardeFousIngestion(
+            files=[("a.txt", io.BytesIO(half)), ("b.txt", io.BytesIO(half))],
+            guardrails=GardeFousIngestion(
                 taille_max_source_octets=1024, taille_max_totale_octets=1024
             ),
         )
-    assert refus.value.motif == "ingestion-trop-volumineuse"
-    assert refus.value.index == 1
+    assert rejection.value.reason == "ingestion-trop-volumineuse"
+    assert rejection.value.index == 1
 
 
-def test_un_apercu_refuse_ne_laisse_pas_ses_octets_derriere_lui(
+def test_a_rejected_preview_does_not_leave_its_bytes_behind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Le ménage est dans un `finally` : il doit valoir aussi sur le chemin d'échec.
+    """The cleanup is in a `finally`: it must hold on the failure path too.
 
-    C'est le cas qui compte le plus — un refus écrit un fichier **partiel**, et
-    c'est précisément ce qu'il ne faut pas conserver.
+    It is the case that counts most -- a rejection writes a **partial** file, and
+    that is precisely what must not be kept.
 
-    Le répertoire temporaire se déplace par l'environnement, pas par
-    `tempfile.tempdir`, que la racine jetable ignore à dessein (#992, #1455).
+    The temporary directory is moved through the environment, not through
+    `tempfile.tempdir`, which the disposable root ignores on purpose (#992, #1455).
     """
-    temporaire = tmp_path / "temporaire"
-    temporaire.mkdir()
+    temporary = tmp_path / "temporaire"
+    temporary.mkdir()
     for variable in VARIABLES_TEMP:
-        monkeypatch.setenv(variable, str(temporaire))
+        monkeypatch.setenv(variable, str(temporary))
 
-    trop = b"x" * 4096
-    with pytest.raises(SourceRefusee):
-        apercu_sources(
-            [_declarer("gros.txt", trop)],
-            fichiers=[("gros.txt", io.BytesIO(trop))],
-            garde_fous=GardeFousIngestion(taille_max_source_octets=1024),
+    too_big = b"x" * 4096
+    with pytest.raises(SourceRejected):
+        preview_sources(
+            [_declare("gros.txt", too_big)],
+            files=[("gros.txt", io.BytesIO(too_big))],
+            guardrails=GardeFousIngestion(taille_max_source_octets=1024),
         )
 
-    assert racine_jetable() == temporaire / NOM_JETABLE
+    assert racine_jetable() == temporary / NOM_JETABLE
     assert list(racine_jetable().iterdir()) == [], "le dossier de l'aperçu est parti"
 
 
-def test_la_route_apercoit_plusieurs_fichiers_dans_l_ordre_declare(
+def test_the_route_previews_several_files_in_the_declared_order(
     client: TestClient,
 ) -> None:
-    """Un multipart transporte deux listes ordonnées, pas une correspondance.
+    """A multipart carries two ordered lists, not a correspondence.
 
-    L'ordre est ce qui décide de ce qui entre quand le budget s'épuise : un
-    aperçu qui l'inverserait annoncerait un lancement qui n'aura pas lieu.
+    The order is what decides what enters when the budget runs out: a preview
+    that reversed it would announce a launch that will not happen.
     """
-    premier = b"# Premier\n\nUn contenu."
+    first = b"# Premier\n\nUn contenu."
     second = b"# Second\n\nUn autre contenu."
-    reponse = client.post(
+    response = client.post(
         "/api/sources/apercu",
         data={
             "sources": json.dumps(
-                [_declarer("un.md", premier), _declarer("deux.md", second)]
+                [_declare("un.md", first), _declare("deux.md", second)]
             )
         },
         files=[
-            ("fichier", ("un.md", premier, "text/markdown")),
+            ("fichier", ("un.md", first, "text/markdown")),
             ("fichier", ("deux.md", second, "text/markdown")),
         ],
     )
-    assert reponse.status_code == 200
-    corps = reponse.json()
-    assert [lecture["nom"] for lecture in corps["lectures"]] == ["un.md", "deux.md"]
-    assert corps["tokens"] == sum(lecture["tokens"] for lecture in corps["lectures"])
+    assert response.status_code == 200
+    body = response.json()
+    assert [reading["nom"] for reading in body["lectures"]] == ["un.md", "deux.md"]
+    assert body["tokens"] == sum(reading["tokens"] for reading in body["lectures"])
 
 
-def test_la_route_refuse_un_decompte_de_fichiers_faux(client: TestClient) -> None:
-    """Deux déclarations pour un seul flux : rapprocher au hasard serait crédible et faux."""
-    contenu = b"# Un\n"
-    reponse = client.post(
+def test_the_route_rejects_a_wrong_file_count(client: TestClient) -> None:
+    """Two declarations for a single stream: pairing at random would be credible and false."""
+    content = b"# Un\n"
+    response = client.post(
         "/api/sources/apercu",
         data={
             "sources": json.dumps(
-                [_declarer("un.md", contenu), _declarer("deux.md", contenu)]
+                [_declare("un.md", content), _declare("deux.md", content)]
             )
         },
-        files=[("fichier", ("un.md", contenu, "text/markdown"))],
+        files=[("fichier", ("un.md", content, "text/markdown"))],
     )
-    assert reponse.status_code == 422
-    assert reponse.json()["detail"]["motif"] == "apercu-sans-octets"
+    assert response.status_code == 422
+    assert response.json()["detail"]["motif"] == "apercu-sans-octets"

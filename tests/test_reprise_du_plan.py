@@ -103,7 +103,7 @@ from maestro.plan_run import NoeudPlan
 from maestro.providers.base import ModelProvider
 from maestro.references import ReferenceTicket
 from maestro.telemetry import RunJournal, StepUsage
-from maestro.telemetry.costs import ETAPE_REPRISE, RunCost
+from maestro.telemetry.costs import STEP_RESUME, RunCost
 
 #: Plafond d'attente d'un fait **asynchrone** (pompe, tâche de fond de l'app). Jamais
 #: atteint quand tout va bien : c'est un ordonnancement qu'on attend, pas un travail.
@@ -538,12 +538,12 @@ def test_la_reprise_se_dit_au_fil_du_run_et_compte_ce_qui_est_paye() -> None:
         )
     )
 
-    (cesure,) = [e for e in emises if e["etape"] == ETAPE_REPRISE]
+    (cesure,) = [e for e in emises if e["etape"] == STEP_RESUME]
     assert "1 tâche(s) déjà faite(s)" in cesure["sortie"]
     assert "2 à faire" in cesure["sortie"]
     assert SOCLE not in {e["etape"] for e in emises}
     # 0,40 $ acquis + 2 × 0,25 $ refaits ou neufs.
-    assert RunCost.depuis_journal(journal).total.cout_usd == pytest.approx(0.90)
+    assert RunCost.from_journal(journal).total.cout_usd == pytest.approx(0.90)
 
 
 def test_une_ecriture_refusee_ne_fait_jamais_echouer_le_run() -> None:

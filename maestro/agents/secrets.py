@@ -41,7 +41,7 @@ son `mode_auth` (`maestro.agents.mcp_registry.MODES_AUTH`) :
   ré-importation (`renouveler`).
 
 Toute valeur **secrète** servie est enregistrée au registre de rédaction
-(`maestro.telemetry.redact.enregistre_secret`) : si elle réapparaît dans une
+(`maestro.telemetry.redact.register_secret`) : si elle réapparaît dans une
 sortie (journal, trace Langfuse, rapport, ticket GitLab), elle est masquée.
 
 Au POC le dépôt est sur fichiers (`core/secrets/`, couvert par `.gitignore` —
@@ -64,7 +64,7 @@ from maestro.agents.chiffrement import Chiffreur
 from maestro.agents.mcp_registry import MODES_AUTH
 from maestro.config import Settings, load_settings
 from maestro.emplacements import depot_configuration
-from maestro.telemetry.redact import enregistre_secret
+from maestro.telemetry.redact import register_secret
 
 #: Nom d'agent admissible comme fichier de stockage — même verrou que les
 #: dépôts voisins (`maestro.agents.mcp`, `store`) : slug sûr, jamais un chemin.
@@ -295,7 +295,7 @@ class SecretStore:
                 valeur = entree.clair or ""
             secrets[entree.cle] = valeur
             if entree.secret:
-                enregistre_secret(valeur)
+                register_secret(valeur)
         return secrets
 
     def etat(self, agent: str) -> tuple[EtatSecret, ...]:

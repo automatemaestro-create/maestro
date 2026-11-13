@@ -1,4 +1,4 @@
-"""The names that travel or are stored keep their value when the code is renamed (#1650).
+"""The names that travel or are stored keep their value when the code is renamed (#1650, #1651).
 
 Translating the code into English renames constants, functions and fields, never
 what goes over a wire or into a store: a Redis key, a Celery task name, a Temporal
@@ -12,6 +12,9 @@ would prove nothing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from temporalio import activity, workflow
 
 from maestro.durable import DURABLE_QUEUE, WORKFLOW_ID_PREFIX, MaestroRunWorkflow, workflow_id
@@ -41,6 +44,37 @@ from maestro.router import (
     METHOD_FALLBACK,
 )
 from maestro.router.classifier import _parse_classification
+from maestro.sources import (
+    PREVIEW_RUN,
+    REASON_SEEN_AT_LAUNCH,
+    REASON_VISION_UNAVAILABLE,
+    STATES,
+    TYPE_DIRECTORY,
+    TYPE_FILE,
+    TYPE_URL,
+    UPLOADS_DIRECTORY,
+    Reading,
+    ReadingReport,
+    Source,
+    SourceRejected,
+    resolve_sources,
+)
+from maestro.sources.upload import Upload
+from maestro.telemetry.costs import (
+    STEP_ACCEPTANCE,
+    STEP_ASSESSMENT,
+    STEP_BRIEF,
+    STEP_CADENCE,
+    STEP_PLANNING,
+    STEP_PROBE,
+    STEP_RESUME,
+    STEP_SPENDING_CAP,
+    STEP_TEAM,
+    RunCost,
+    TaskCost,
+)
+from maestro.telemetry.langfuse import SCORE_RUN_SUCCEEDED, SCORE_SUCCESS_RATE
+from maestro.telemetry.redact import SECRET_MARKER
 
 
 def test_mailbox_channels_keep_their_redis_names() -> None:
@@ -133,3 +167,107 @@ def test_routing_methods_keep_their_values() -> None:
 def test_the_classifier_still_reads_the_confiance_key() -> None:
     verdict = _parse_classification('{"agent": "qa", "confiance": 0.7}', frozenset({"qa"}))
     assert (verdict.agent, verdict.confidence) == ("qa", 0.7)
+
+
+def test_source_types_reading_states_and_reasons_keep_their_values() -> None:
+    assert (TYPE_FILE, TYPE_DIRECTORY, TYPE_URL) == ("fichier", "dossier", "url")
+    assert STATES == ("lu", "tronque", "ignore")
+    assert (REASON_VISION_UNAVAILABLE, REASON_SEEN_AT_LAUNCH) == (
+        "vision-indisponible",
+        "vue-au-lancement",
+    )
+    assert (UPLOADS_DIRECTORY, PREVIEW_RUN) == ("_televersements", "apercu")
+
+
+def test_a_rejected_source_keeps_its_reason_code() -> None:
+    with pytest.raises(SourceRejected) as rejected:
+        resolve_sources([{"type": "inconnu", "nom": "x"}], run_id="r1")
+    assert rejected.value.reason == "type-inconnu"
+
+
+def test_a_source_keeps_its_json_keys() -> None:
+    source = Source(type="fichier", name="a.md", path="/x/a.md", size=3)
+    assert source.to_dict() == {
+        "type": "fichier",
+        "nom": "a.md",
+        "chemin": "/x/a.md",
+        "valeur": "",
+        "taille": 3,
+        "lecture_seule": True,
+    }
+    # A source written by an older version reads back field for field.
+    assert Source.from_dict(source.to_dict()) == source
+
+
+def test_a_reading_report_keeps_its_json_keys() -> None:
+    entry = Reading(name="b.md", type="fichier", state="lu", markdown="b", tokens=1)
+    reading = Reading(
+        name="d",
+        type="dossier",
+        state="tronque",
+        tokens=2,
+        reason="r",
+        message="m",
+        limit="l",
+        entries=(entry,),
+    )
+    entry_keys = {"nom": "b.md", "type": "fichier", "etat": "lu", "tokens": 1, "motif": ""}
+    assert ReadingReport(readings=(reading,)).to_dict() == {
+        "tokens": 2,
+        "lectures": [
+            {
+                "nom": "d",
+                "type": "dossier",
+                "etat": "tronque",
+                "tokens": 2,
+                "motif": "r",
+                "message": "m",
+                "limite": "l",
+                "entrees": [{**entry_keys, "message": "", "limite": "", "entrees": []}],
+            }
+        ],
+    }
+
+
+def test_an_upload_keeps_its_json_keys() -> None:
+    upload = Upload(id="abc123", name="a.md", size=3, path=Path("/x/a.md"))
+    assert upload.to_dict() == {"id": "abc123", "type": "fichier", "nom": "a.md", "taille": 3}
+    assert upload.declaration() == {"type": "fichier", "nom": "a.md", "taille": 3}
+
+
+def test_the_cost_ledger_keeps_its_json_keys_and_the_steps_it_reads() -> None:
+    task = TaskCost(
+        task_id="t1", name="n", agent="dev", role="r", status="terminee", project_id="p"
+    )
+    task_keys = {"tache_id", "nom", "agent", "role", "statut", "usage", "ticket", "projet_id"}
+    assert set(task.to_dict()) == task_keys
+    ledger = RunCost(run_id="r1", tasks=(task,)).to_dict()
+    run_keys = {"run_id", "planification", "brief", "taches", "bilan", "sonde", "recette", "total"}
+    assert set(ledger) == run_keys
+    steps = (
+        STEP_PLANNING,
+        STEP_BRIEF,
+        STEP_RESUME,
+        STEP_TEAM,
+        STEP_CADENCE,
+        STEP_SPENDING_CAP,
+        STEP_ASSESSMENT,
+        STEP_PROBE,
+        STEP_ACCEPTANCE,
+    )
+    assert steps == (
+        "planification",
+        "brief",
+        "reprise",
+        "equipe",
+        "cadence",
+        "plafond",
+        "bilan",
+        "sonde",
+        "recette",
+    )
+
+
+def test_langfuse_scores_and_the_secret_marker_keep_their_values() -> None:
+    assert (SCORE_RUN_SUCCEEDED, SCORE_SUCCESS_RATE) == ("run-reussi", "taux-reussite")
+    assert SECRET_MARKER == "[secret masqué]"

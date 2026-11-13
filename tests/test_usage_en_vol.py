@@ -55,7 +55,7 @@ from maestro.telemetry import (
     est_releve_usage,
     usage_en_cours,
 )
-from maestro.telemetry.langfuse import evenements_depuis_step as langfuse_depuis_step
+from maestro.telemetry.langfuse import events_from_step as langfuse_depuis_step
 
 RUN = "run-835"
 
@@ -277,8 +277,8 @@ def test_un_releve_est_emis_mais_ne_compte_dans_aucun_agregat_du_journal():
     # (donc ni le plafond de dépense, qui le relit) ne l'ont vu.
     assert [r.etape for r in journal.records] == ["t0"]
     assert journal.usage_totale == StepUsage(appels=1, tokens_entree=10, cout_usd=0.2)
-    grand_livre = RunCost.depuis_journal(journal)
-    assert [t.tache_id for t in grand_livre.taches] == ["t0"]
+    grand_livre = RunCost.from_journal(journal)
+    assert [t.task_id for t in grand_livre.tasks] == ["t0"]
     assert grand_livre.total.tokens_entree == 10
 
 

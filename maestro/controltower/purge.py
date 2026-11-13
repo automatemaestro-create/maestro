@@ -43,7 +43,7 @@ casser : `captures.mjs` a attendu un mois un texte que l'UI ne rendait plus.
 Ici la purge **importe** `CLE_JOURNAL_EVENEMENTS`, `CLE_BATTEMENTS`, `CLE_HOTES`,
 `PREFIXE_ACQUIS`, `TASKS_QUEUE`, `MAILBOX_CHANNEL_PREFIX`, `BROADCAST_CHANNEL`, et
 résout les dossiers
-par les mêmes `default()` / `racine_ingestion()` que l'API — le jour où l'un
+par les mêmes `default()` / `ingestion_root()` que l'API — le jour où l'un
 d'eux bouge, la purge suit sans qu'on y pense. `tests/test_retex_utilisateur.py`
 le garde : aucun littéral `maestro.` en dur dans ce module hors docstring.
 
@@ -98,7 +98,7 @@ from maestro.espace import Espace, espace_courant
 from maestro.messaging.mailbox import BROADCAST_CHANNEL, MAILBOX_CHANNEL_PREFIX
 from maestro.projets.store import ProjetStore
 from maestro.queue.celery_app import TASKS_QUEUE
-from maestro.sources.resolution import racine_ingestion
+from maestro.sources.resolution import ingestion_root
 
 #: Le nom sous lequel ce module s'invoque (`python -m …`) — dérivé, jamais écrit.
 MODULE = __spec__.name if __spec__ is not None else __name__
@@ -200,7 +200,7 @@ def perimetre(settings: Settings | None = None) -> Perimetre:
         prefixe_boites=espace.nommer(MAILBOX_CHANNEL_PREFIX),
         diffusion=espace.nommer(BROADCAST_CHANNEL),
         conversations=ChatStore.default(settings).racine,
-        ingestion=racine_ingestion(settings),
+        ingestion=ingestion_root(settings),
         projets=ProjetStore.default(settings).racine,
     )
 

@@ -114,7 +114,7 @@ from maestro.controltower.documentation import (
     carte_documentation,
 )
 from maestro.providers.base import ModelProvider
-from maestro.sources.extraction import estimer_tokens
+from maestro.sources.extraction import estimate_tokens
 
 #: Le nombre de sections que le second appel peut recevoir. C'est une **décision** et
 #: non une mesure : le budget ci-dessous borne déjà le coût, ce plafond borne la
@@ -395,7 +395,7 @@ def selection_sections(
             continue
         vues.add(section.identifiant)
         texte = carte.textes.get(section.identifiant, "")
-        cout = estimer_tokens(texte)
+        cout = estimate_tokens(texte)
         if len(retenues) >= maximum or cout > reste:
             ecartees.append(section)
             continue

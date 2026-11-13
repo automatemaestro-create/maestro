@@ -57,7 +57,7 @@ from maestro.controltower.persistence import (
 )
 from maestro.espace import VARIABLE_ESPACE, Espace, espace_courant, racine_de_la_copie
 from maestro.projets.store import ProjetStore
-from maestro.sources.resolution import racine_ingestion
+from maestro.sources.resolution import ingestion_root
 
 #: Le suffixe de l'espace du banc — celui d'une copie, suivi de `.banc`.
 SUFFIXE_BANC = ".banc"
@@ -99,7 +99,7 @@ DEPOTS: tuple[Depot, ...] = (
     Depot(
         "projets", "projets", "MAESTRO_PROJETS_DIR", True, lambda s: ProjetStore.default(s).racine
     ),
-    Depot("ingestion", "téléversements", "MAESTRO_INGESTION_DIR", True, racine_ingestion),
+    Depot("ingestion", "téléversements", "MAESTRO_INGESTION_DIR", True, ingestion_root),
     Depot("agents", "agents", "MAESTRO_AGENTS_DIR", False, lambda s: AgentStore.default(s).racine),
     Depot(
         "surcharges",

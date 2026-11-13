@@ -92,7 +92,7 @@ from maestro.equipe.proposition import OUTIL_EXECUTION
 from maestro.portee import PORTEE_PROJET
 from maestro.projets import ProjetStore
 from maestro.providers.base import ModelProvider
-from maestro.telemetry import PlafondDepenseDepasse
+from maestro.telemetry import SpendingCapExceeded
 
 CHAT = "/api/chat/orchestrateur"
 
@@ -106,7 +106,7 @@ OBJECTIF_S4 = (
     "que contient le projet."
 )
 
-#: Ce que le moteur de S4 a levé, au mot près (`PlafondDepense.verifie`).
+#: Ce que le moteur de S4 a levé, au mot près (`SpendingCap.verifie`).
 ARRET_SUR_LA_BORNE = (
     "plafond de tokens dépassé : 38053 tokens consommés sur l'exécution pour un "
     "plafond de 1 — tâche stoppée."
@@ -206,7 +206,7 @@ class _RunDuMoteur:
 
     async def run(self, objectif: str, **reste: Any) -> RunReport:
         if self._plafond is not None:
-            raise PlafondDepenseDepasse(ARRET_SUR_LA_BORNE)
+            raise SpendingCapExceeded(ARRET_SUR_LA_BORNE)
         return RunReport(objectif=objectif, resultats=())
 
 

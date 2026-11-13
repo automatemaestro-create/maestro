@@ -74,7 +74,7 @@ from maestro.engine.loop import RunReport
 from maestro.engine.retry import RELANCE_DEFAUT, PolitiqueRelance
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.telemetry import RunJournal, StepUsage
-from maestro.telemetry.costs import ETAPE_REPRISE
+from maestro.telemetry.costs import STEP_RESUME
 
 #: Prefix of a run's workflow id. Derived from the `run_id`, hence **findable**:
 #: that is what lets an interrupted run be resumed from the only identifier that
@@ -253,7 +253,7 @@ def _record_resume(journal: RunJournal, *, reason: str, acquired: dict[str, Any]
     which saw nothing of what came before the failure.
 
     Zero usage: resuming calls on no model. The ledger therefore ignores this step
-    (`ETAPE_REPRISE`) and the run's total stays that of the real work.
+    (`STEP_RESUME`) and the run's total stays that of the real work.
     """
     recovered = StepUsage()
     steps = 0
@@ -266,7 +266,7 @@ def _record_resume(journal: RunJournal, *, reason: str, acquired: dict[str, Any]
         recovered = recovered.fusion(TaskResult.from_dict(raw).usage)
         steps += 1
     journal.consigne(
-        etape=ETAPE_REPRISE,
+        etape=STEP_RESUME,
         nom="Reprise du run interrompu",
         agent="orchestrateur",
         role="Orchestrateur",

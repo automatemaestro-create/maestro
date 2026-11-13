@@ -1,41 +1,41 @@
-"""Exporteur Langfuse du journal d'exécution — traces et coûts (ticket #81).
+"""Langfuse exporter of the run journal — traces and costs (ticket #81).
 
-Le journal (#8) consigne chaque étape d'une exécution en JSON Lines sur le
-logger `maestro.trace`, dans un format pensé pour se mapper sur les traces et
-observations de Langfuse : cet exporteur est ce branchement. Posé en
-`logging.Handler` (même motif que le pont Control Tower,
-`maestro.controltower.bridge`), il convertit chaque ligne consignée en
-événements de l'API d'ingestion Langfuse (`POST /api/public/ingestion`) :
+The journal (#8) records each step of a run as JSON Lines on the
+`maestro.trace` logger, in a format designed to map onto Langfuse traces and
+observations: this exporter is that link. Installed as a `logging.Handler`
+(same pattern as the Control Tower bridge, `maestro.controltower.bridge`), it
+converts each recorded line into events of the Langfuse ingestion API
+(`POST /api/public/ingestion`):
 
-- l'exécution devient une **trace** (id = `run_id` : la trace se retrouve
-  depuis le rapport, le journal ou la Control Tower), son entrée est
-  l'objectif porté par l'étape de planification ;
-- chaque étape devient une **observation** : une *génération* si elle a
-  consommé des appels modèle — tokens et coût de la comptabilité par tâche
-  (#55) portés au format natif Langfuse, donc visibles par observation et
-  agrégés par trace —, un *span* sinon (validation humaine, message
-  inter-agents, blocage). Agent, rôle, statut et outils appelés partent en
-  métadonnées ; la durée mesurée (#8) replace l'étape dans la chronologie.
+- the run becomes a **trace** (id = `run_id`: the trace is found from the
+  report, the journal or the Control Tower), its input is the objective carried
+  by the planning step;
+- each step becomes an **observation**: a *generation* if it consumed model
+  calls — tokens and cost from the per-task accounting (#55) in Langfuse's
+  native format, so visible per observation and aggregated per trace —, a
+  *span* otherwise (human validation, inter-agent message, block). Agent, role,
+  status and called tools go out as metadata; the measured duration (#8)
+  places the step in the timeline.
 
-L'intégration est **optionnelle** : sans `LANGFUSE_PUBLIC_KEY` +
-`LANGFUSE_SECRET_KEY` dans la config, `activer_export_langfuse` ne branche
-rien et le système fonctionne à l'identique. L'export parle l'API HTTP
-publique via le client httpx déjà présent — même choix que le fournisseur
-compatible OpenAI (#69) : pas de SDK dédié pour un dialecte stable.
+The integration is **optional**: without `LANGFUSE_PUBLIC_KEY` +
+`LANGFUSE_SECRET_KEY` in the config, `enable_langfuse_export` installs nothing
+and the system behaves identically. The export speaks the public HTTP API
+through the httpx client already present — same choice as the OpenAI-compatible
+provider (#69): no dedicated SDK for a stable dialect.
 
-En mode file (#41), l'export s'active côté **orchestrateur** seulement : le
-résultat de chaque tâche (usage worker compris) y est déjà consigné par
-`CeleryExecutor` — activer aussi les workers compterait chaque tâche deux fois.
+In queue mode (#41), the export is enabled on the **orchestrator** side only:
+the result of each task (worker usage included) is already recorded there by
+`CeleryExecutor` — enabling the workers too would count each task twice.
 
-L'**évaluation** des exécutions (#80) complète l'export : en fin de run,
-`evaluer_run_langfuse` pose sur la trace des **scores** dérivés du journal —
-réussite globale et taux de tâches réussies — via la même API d'ingestion,
-exploitables dans Langfuse pour filtrer, agréger et comparer les exécutions.
-Même bascule configurative, même résilience : sans clés, aucun envoi ; un
-Langfuse injoignable n'affecte jamais l'exécution évaluée.
+The **scoring** of runs (#80) completes the export: at the end of a run,
+`score_run_langfuse` puts **scores** derived from the journal on the trace —
+overall success and rate of successful tasks — through the same ingestion API,
+usable in Langfuse to filter, aggregate and compare runs. Same configuration
+switch, same resilience: without keys, nothing is sent; an unreachable Langfuse
+never affects the run being scored.
 
-Le journal amont expurge déjà les secrets (`redact_secrets`) : ce qui part
-vers Langfuse est ce qui partait déjà dans les logs.
+The upstream journal already redacts secrets (`redact_secrets`): what goes to
+Langfuse is what was already going into the logs.
 """
 
 from __future__ import annotations
@@ -48,176 +48,176 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from maestro.config import Settings, load_settings
-from maestro.telemetry.costs import ETAPE_PLANIFICATION, RunCost
+from maestro.telemetry.costs import STEP_PLANNING, RunCost
 from maestro.telemetry.journal import LOGGER_NAME, RunJournal, est_releve_usage
 
-#: Délai maximal d'une publication (connexion + réponse) : l'export est synchrone
-#: (handler logging), un Langfuse injoignable ralentit l'étape mais ne suspend
-#: jamais l'exécution — l'échec part dans `handleError`.
+#: Maximum delay of a publication (connection + response): the export is
+#: synchronous (logging handler), an unreachable Langfuse slows the step down
+#: but never suspends the run — the failure goes to `handleError`.
 _TIMEOUT_S = 10.0
 
-#: Nom des traces exportées — une trace = une exécution, reliée par `run_id`.
-_NOM_TRACE = "maestro-run"
+#: Name of the exported traces — one trace = one run, linked by `run_id`.
+_TRACE_NAME = "maestro-run"
 
-#: Niveau Langfuse par statut d'étape (défaut : DEFAULT). `echec` est une erreur ;
-#: `bloquee` (#43) et `refuse` (#9) signalent sans être des erreurs de l'étape.
-_NIVEAUX = {"echec": "ERROR", "bloquee": "WARNING", "refuse": "WARNING"}
+#: Langfuse level per step status (default: DEFAULT). `echec` is an error;
+#: `bloquee` (#43) and `refuse` (#9) signal without being errors of the step.
+_LEVELS = {"echec": "ERROR", "bloquee": "WARNING", "refuse": "WARNING"}
 
-#: Seule issue réussie d'une tâche (convention de statut du journal,
-#: cf. `maestro.engine.executor.STATUT_TERMINEE`) — échec, blocage ou refus n'en sont pas.
-_STATUT_REUSSI = "terminee"
+#: The only successful outcome of a task (journal status convention, see
+#: `maestro.engine.executor.STATUT_TERMINEE`) — failure, block or refusal are not.
+_SUCCESS_STATUS = "terminee"
 
-#: Noms des scores d'évaluation d'une exécution (#80), posés sur sa trace :
-#: la réussite globale (booléen) et la part de tâches réussies (0..1).
-SCORE_RUN_REUSSI = "run-reussi"
-SCORE_TAUX_REUSSITE = "taux-reussite"
+#: Names of the run scores (#80), put on its trace: overall success (boolean)
+#: and the share of successful tasks (0..1).
+SCORE_RUN_SUCCEEDED = "run-reussi"
+SCORE_SUCCESS_RATE = "taux-reussite"
 
 
-def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
-    """Convertit une ligne de journal (`StepRecord.to_dict`) en événements d'ingestion.
+def events_from_step(record: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Converts a journal line (`StepRecord.to_dict`) into ingestion events.
 
-    Deux événements par ligne : l'**upsert de la trace** de l'exécution (id =
-    `run_id` — les upserts successifs fusionnent ; seule l'étape de
-    planification pose l'horodatage de la trace et son entrée, l'objectif) et
-    l'**observation** de l'étape — génération si elle a consommé des appels
-    modèle (tokens et coût au format natif, #55), span sinon. Une ligne
-    illisible (pas une étape de journal) ne produit **aucun** événement plutôt
-    qu'un événement faux — l'export est un miroir, pas une source de vérité.
+    Two events per line: the **trace upsert** of the run (id = `run_id` —
+    successive upserts merge; only the planning step sets the trace timestamp
+    and its input, the objective) and the step **observation** — a generation
+    if it consumed model calls (tokens and cost in native format, #55), a span
+    otherwise. An unreadable line (not a journal step) produces **no** event
+    rather than a wrong one — the export is a mirror, not a source of truth.
 
-    Un **relevé d'usage** (#835, `<tache>:usage`) n'en produit aucun non plus,
-    et pour une raison de comptabilité : il porte le **cumul** de la tâche en
-    cours, que son étape finale exportera en entier. En faire une génération
-    compterait chaque tour autant de fois qu'il a été relevé — sur une trace
-    Langfuse, un coût triplé ne ressemble pas à une erreur, il ressemble à un
-    run trois fois plus cher.
+    A **usage reading** (#835, `<task>:usage`) produces none either, for an
+    accounting reason: it carries the running **total** of the current task,
+    which its final step will export in full. Making it a generation would
+    count each turn as many times as it was read — on a Langfuse trace, a tripled
+    cost does not look like an error, it looks like a run three times as
+    expensive.
     """
-    etape = record.get("etape")
+    step = record.get("etape")
     run_id = record.get("run_id")
-    if not isinstance(etape, str) or not etape or not isinstance(run_id, str) or not run_id:
+    if not isinstance(step, str) or not step or not isinstance(run_id, str) or not run_id:
         return ()
-    if est_releve_usage(etape):
+    if est_releve_usage(step):
         return ()
-    brut = record.get("usage")
-    usage: dict[str, Any] = dict(brut) if isinstance(brut, Mapping) else {}
-    fin = str(record.get("horodatage", ""))
-    debut = _debut_depuis(fin, usage.get("duree_ms"))
-    trace: dict[str, Any] = {"id": run_id, "name": _NOM_TRACE}
-    if etape == ETAPE_PLANIFICATION:
-        trace["timestamp"] = debut
+    raw_usage = record.get("usage")
+    usage: dict[str, Any] = dict(raw_usage) if isinstance(raw_usage, Mapping) else {}
+    end = str(record.get("horodatage", ""))
+    start = _start_from(end, usage.get("duree_ms"))
+    trace: dict[str, Any] = {"id": run_id, "name": _TRACE_NAME}
+    if step == STEP_PLANNING:
+        trace["timestamp"] = start
         trace["input"] = record.get("entree", "")
-    statut = str(record.get("statut", ""))
-    erreur = record.get("erreur")
+    status = str(record.get("statut", ""))
+    error = record.get("erreur")
     observation: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "traceId": run_id,
-        "name": str(record.get("nom") or etape),
-        "startTime": debut,
-        "endTime": fin,
+        "name": str(record.get("nom") or step),
+        "startTime": start,
+        "endTime": end,
         "input": record.get("entree", ""),
         "output": record.get("sortie", ""),
-        "level": _NIVEAUX.get(statut, "DEFAULT"),
-        "statusMessage": erreur if isinstance(erreur, str) else None,
+        "level": _LEVELS.get(status, "DEFAULT"),
+        "statusMessage": error if isinstance(error, str) else None,
         "metadata": {
-            "etape": etape,
+            "etape": step,
             "agent": record.get("agent", ""),
             "role": record.get("role", ""),
-            "statut": statut,
+            "statut": status,
             "outils": usage.get("outils", []),
             "usage": usage,
             "playbook_version": record.get("playbook_version"),
         },
     }
-    appels = usage.get("appels")
-    if isinstance(appels, int) and appels > 0:
-        type_observation = "generation-create"
-        observation["usage"] = _usage_langfuse(usage)
+    calls = usage.get("appels")
+    if isinstance(calls, int) and calls > 0:
+        observation_type = "generation-create"
+        observation["usage"] = _langfuse_usage(usage)
     else:
-        type_observation = "span-create"
+        observation_type = "span-create"
     return (
-        _evenement("trace-create", fin, trace),
-        _evenement(type_observation, fin, observation),
+        _event("trace-create", end, trace),
+        _event(observation_type, end, observation),
     )
 
 
-def _evenement(type_evenement: str, horodatage: str, body: Mapping[str, Any]) -> dict[str, Any]:
-    """Enveloppe d'ingestion Langfuse : id d'événement unique (déduplication serveur)."""
+def _event(event_type: str, timestamp: str, body: Mapping[str, Any]) -> dict[str, Any]:
+    """Langfuse ingestion envelope: unique event id (server-side deduplication)."""
     return {
         "id": str(uuid.uuid4()),
-        "type": type_evenement,
-        "timestamp": horodatage,
+        "type": event_type,
+        "timestamp": timestamp,
         "body": dict(body),
     }
 
 
-def _usage_langfuse(usage: Mapping[str, Any]) -> dict[str, Any]:
-    """Le bloc `usage` natif d'une génération Langfuse : tokens, et coût s'il est connu.
+def _langfuse_usage(usage: Mapping[str, Any]) -> dict[str, Any]:
+    """The native `usage` block of a Langfuse generation: tokens, and cost if known.
 
-    Le coût est celui rapporté par le fournisseur via la télémétrie (#55) —
-    absent (None) quand le fournisseur n'en rapporte pas, jamais évalué ici.
+    The cost is the one reported by the provider through the telemetry (#55) —
+    absent (None) when the provider reports none, never estimated here.
     """
-    bloc: dict[str, Any] = {
+    block: dict[str, Any] = {
         "input": int(usage.get("tokens_entree") or 0),
         "output": int(usage.get("tokens_sortie") or 0),
         "unit": "TOKENS",
     }
-    cout = usage.get("cout_usd")
-    if isinstance(cout, int | float):
-        bloc["totalCost"] = float(cout)
-    return bloc
+    cost = usage.get("cout_usd")
+    if isinstance(cost, int | float):
+        block["totalCost"] = float(cost)
+    return block
 
 
-def _debut_depuis(horodatage: str, duree_ms: Any) -> str:
-    """L'horodatage de début d'une étape : sa fin consignée moins sa durée mesurée.
+def _start_from(timestamp: str, duration_ms: Any) -> str:
+    """The start timestamp of a step: its recorded end minus its measured duration.
 
-    Le journal consigne à l'achèvement (`horodatage` = fin d'étape) ; la durée
-    horloge (#8) permet de replacer le début — l'étendue de l'observation dans
-    la chronologie Langfuse. Sans durée (étape annexe à usage nul) ou
-    horodatage illisible, le début retombe sur la fin (observation ponctuelle).
+    The journal records on completion (`horodatage` = end of step); the wall
+    clock duration (#8) places the start back — the extent of the observation in
+    the Langfuse timeline. Without a duration (ancillary step with null usage) or
+    with an unreadable timestamp, the start falls back on the end (point-in-time
+    observation).
     """
-    if not isinstance(duree_ms, int | float) or duree_ms <= 0:
-        return horodatage
+    if not isinstance(duration_ms, int | float) or duration_ms <= 0:
+        return timestamp
     try:
-        fin = datetime.fromisoformat(horodatage)
+        end = datetime.fromisoformat(timestamp)
     except ValueError:
-        return horodatage
-    return (fin - timedelta(milliseconds=duree_ms)).isoformat(timespec="seconds")
+        return timestamp
+    return (end - timedelta(milliseconds=duration_ms)).isoformat(timespec="seconds")
 
 
 class LangfuseExportHandler(logging.Handler):
-    """Handler du logger `maestro.trace` : chaque ligne consignée part vers Langfuse.
+    """Handler of the `maestro.trace` logger: each recorded line goes to Langfuse.
 
-    `publier` est un callable **synchrone** (le journal consigne en synchrone) ;
-    en production c'est le `POST` d'ingestion de `publieur_langfuse`. Une ligne
-    inconvertible ou une publication en échec est signalée via `handleError`
-    (silencieuse par défaut, comme tout handler logging) : l'export ne doit
-    jamais faire échouer l'exécution qu'il observe.
+    `publish` is a **synchronous** callable (the journal records synchronously);
+    in production it is the ingestion `POST` of `langfuse_publisher`. A line that
+    cannot be converted or a failed publication is reported through
+    `handleError` (silent by default, like any logging handler): the export must
+    never make the run it observes fail.
     """
 
-    def __init__(self, publier: Callable[[Sequence[dict[str, Any]]], None]) -> None:
+    def __init__(self, publish: Callable[[Sequence[dict[str, Any]]], None]) -> None:
         super().__init__(level=logging.INFO)
-        self._publier = publier
+        self._publish = publish
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             data = json.loads(record.getMessage())
             if not isinstance(data, dict):
                 return
-            evenements = evenements_depuis_step(data)
-            if evenements:
-                self._publier(evenements)
+            events = events_from_step(data)
+            if events:
+                self._publish(events)
         except Exception:
             self.handleError(record)
 
 
-def publieur_langfuse(settings: Settings) -> Callable[[Sequence[dict[str, Any]]], None]:
-    """Construit le callable de publication HTTP (synchrone) vers Langfuse.
+def langfuse_publisher(settings: Settings) -> Callable[[Sequence[dict[str, Any]]], None]:
+    """Builds the (synchronous) HTTP publishing callable towards Langfuse.
 
-    Client httpx **synchrone** (le handler logging l'est), authentifié en Basic
-    (clé publique / clé secrète) sur l'API d'ingestion par lots de
-    `LANGFUSE_HOST`. La connexion est paresseuse (ouverte au premier envoi) et
-    chaque envoi est borné (`_TIMEOUT_S`).
+    **Synchronous** httpx client (the logging handler is), authenticated with
+    Basic (public key / secret key) on the batch ingestion API of
+    `LANGFUSE_HOST`. The connection is lazy (opened on first send) and each
+    send is bounded (`_TIMEOUT_S`).
     """
-    # Import local : seule la publication dépend du client HTTP (cf. bridge Redis).
+    # Local import: only publishing depends on the HTTP client (see Redis bridge).
     import httpx2
 
     client = httpx2.Client(
@@ -226,116 +226,115 @@ def publieur_langfuse(settings: Settings) -> Callable[[Sequence[dict[str, Any]]]
     )
     url = f"{settings.langfuse_host.rstrip('/')}/api/public/ingestion"
 
-    def publier(evenements: Sequence[dict[str, Any]]) -> None:
-        client.post(url, json={"batch": list(evenements)}).raise_for_status()
+    def publish(events: Sequence[dict[str, Any]]) -> None:
+        client.post(url, json={"batch": list(events)}).raise_for_status()
 
-    return publier
+    return publish
 
 
-def activer_export_langfuse(settings: Settings | None = None) -> logging.Handler | None:
-    """Branche l'export Langfuse si la config le demande ; sinon ne fait rien (None).
+def enable_langfuse_export(settings: Settings | None = None) -> logging.Handler | None:
+    """Installs the Langfuse export if the config asks for it; otherwise does nothing (None).
 
-    La bascule est purement configurative (intégration optionnelle, #81) : sans
-    les deux clés (`LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`), aucun handler
-    n'est posé et le système fonctionne à l'identique. Avec elles, un
-    `LangfuseExportHandler` est posé sur le logger `maestro.trace` : chaque
-    exécution journalisée (#8) produit sa trace Langfuse, coûts compris (#55).
-    S'active côté orchestrateur (cf. docstring du module) ; renvoie le handler
-    posé (à retirer via `logging.getLogger(LOGGER_NAME).removeHandler(...)`).
+    The switch is purely configurative (optional integration, #81): without the
+    two keys (`LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`), no handler is
+    installed and the system behaves identically. With them, a
+    `LangfuseExportHandler` is installed on the `maestro.trace` logger: each
+    journaled run (#8) produces its Langfuse trace, costs included (#55).
+    Enabled on the orchestrator side (see the module docstring); returns the
+    installed handler (to remove via `logging.getLogger(LOGGER_NAME).removeHandler(...)`).
 
-    **Idempotente** (#195) : `maestro.trace` est un logger *global* et les points
-    d'entrée appellent cette fonction à chaque invocation (`engine_cli.main`)
-    sans jamais retirer le handler. Sans garde, N appels
-    dans un même processus accrochent N handlers, et chaque ligne journalisée
-    part alors N fois vers Langfuse : traces et coûts dupliqués, et autant de
-    POST synchrones (`_TIMEOUT_S` chacun) par ligne consignée. Un handler déjà
-    posé est donc renvoyé tel quel, sans en construire un second — changer de
-    `settings` en cours de processus suppose de retirer le handler d'abord.
+    **Idempotent** (#195): `maestro.trace` is a *global* logger and the entry
+    points call this function on every invocation (`engine_cli.main`) without
+    ever removing the handler. Without a guard, N calls in the same process
+    attach N handlers, and each journaled line then goes N times to Langfuse:
+    duplicated traces and costs, and as many synchronous POSTs (`_TIMEOUT_S`
+    each) per recorded line. An already installed handler is therefore returned
+    as is, without building a second one — changing `settings` mid-process
+    means removing the handler first.
     """
     settings = settings or load_settings()
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         return None
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.INFO)
-    for existant in logger.handlers:
-        if isinstance(existant, LangfuseExportHandler):
-            return existant
-    handler = LangfuseExportHandler(publieur_langfuse(settings))
+    for existing in logger.handlers:
+        if isinstance(existing, LangfuseExportHandler):
+            return existing
+    handler = LangfuseExportHandler(langfuse_publisher(settings))
     logger.addHandler(handler)
     return handler
 
 
-def scores_depuis_journal(journal: RunJournal) -> tuple[dict[str, Any], ...]:
-    """Évalue une exécution consignée : les événements `score-create` de sa trace (#80).
+def scores_from_journal(journal: RunJournal) -> tuple[dict[str, Any], ...]:
+    """Scores a recorded run: the `score-create` events of its trace (#80).
 
-    L'évaluation relit la comptabilité par tâche (#55) — la télémétrie est la
-    source unique de l'issue, aucun verdict parallèle — et pose deux scores sur
-    la trace de l'exécution (`run_id`), exploitables dans Langfuse (filtres,
-    agrégats, comparaison entre exécutions) :
+    The scoring rereads the per-task accounting (#55) — the telemetry is the
+    single source of the outcome, no parallel verdict — and puts two scores on
+    the run trace (`run_id`), usable in Langfuse (filters, aggregates, comparison
+    between runs):
 
-    - **`run-reussi`** (booléen) : 1 si toutes les tâches sont terminées avec
-      succès, 0 dès qu'une a échoué ou été bloquée (#43) ;
-    - **`taux-reussite`** (numérique, 0..1) : la part de tâches réussies.
+    - **`run-reussi`** (boolean): 1 if all tasks finished successfully, 0 as soon
+      as one failed or was blocked (#43);
+    - **`taux-reussite`** (numeric, 0..1): the share of successful tasks.
 
-    Le commentaire de chaque score détaille le décompte (réussites, échecs,
-    blocages). Un journal sans aucune tâche (planification seule, ou échouée)
-    n'a rien à évaluer : aucun score plutôt qu'un score faux.
+    The comment of each score details the count (successes, failures, blocks). A
+    journal without any task (planning only, or failed) has nothing to score:
+    no score rather than a wrong one.
     """
-    taches = RunCost.depuis_journal(journal).taches
-    if not taches:
+    tasks = RunCost.from_journal(journal).tasks
+    if not tasks:
         return ()
-    reussies = sum(1 for t in taches if t.statut == _STATUT_REUSSI)
-    echecs = sum(1 for t in taches if t.statut == "echec")
-    bloquees = sum(1 for t in taches if t.statut == "bloquee")
-    commentaire = (
-        f"{reussies}/{len(taches)} tâche(s) réussie(s) — "
-        f"{echecs} échec(s), {bloquees} bloquée(s)."
+    succeeded = sum(1 for t in tasks if t.status == _SUCCESS_STATUS)
+    failures = sum(1 for t in tasks if t.status == "echec")
+    blocked = sum(1 for t in tasks if t.status == "bloquee")
+    comment = (
+        f"{succeeded}/{len(tasks)} tâche(s) réussie(s) — "
+        f"{failures} échec(s), {blocked} bloquée(s)."
     )
-    horodatage = datetime.now(UTC).isoformat(timespec="seconds")
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
     scores = (
-        (SCORE_RUN_REUSSI, "BOOLEAN", 1 if reussies == len(taches) else 0),
-        (SCORE_TAUX_REUSSITE, "NUMERIC", reussies / len(taches)),
+        (SCORE_RUN_SUCCEEDED, "BOOLEAN", 1 if succeeded == len(tasks) else 0),
+        (SCORE_SUCCESS_RATE, "NUMERIC", succeeded / len(tasks)),
     )
     return tuple(
-        _evenement(
+        _event(
             "score-create",
-            horodatage,
+            timestamp,
             {
                 "id": str(uuid.uuid4()),
                 "traceId": journal.run_id,
-                "name": nom,
-                "value": valeur,
-                "dataType": type_score,
-                "comment": commentaire,
+                "name": name,
+                "value": value,
+                "dataType": score_type,
+                "comment": comment,
             },
         )
-        for nom, type_score, valeur in scores
+        for name, score_type, value in scores
     )
 
 
-def evaluer_run_langfuse(
+def score_run_langfuse(
     journal: RunJournal, settings: Settings | None = None
 ) -> tuple[dict[str, Any], ...]:
-    """Publie les scores d'évaluation d'une exécution ; no-op sans clés Langfuse (#80).
+    """Publishes the scores of a run; no-op without Langfuse keys (#80).
 
-    À appeler en **fin d'exécution** (rapport rendu, journal complet) : les
-    scores dérivés du journal partent sur la trace que l'exporteur (#81) a
-    construite au fil des étapes, via la même API d'ingestion. Même politique
-    que l'export : purement configuratif (sans les deux clés, aucun envoi,
-    fonctionnement identique — le mode dégradé) et **résilient** (un Langfuse
-    injoignable est signalé en avertissement sur le logger du module, jamais
-    propagé à l'exécution évaluée). Renvoie les événements publiés — vide si
-    l'intégration est désactivée, s'il n'y a rien à évaluer ou si la
-    publication a échoué.
+    To call at the **end of a run** (report rendered, journal complete): the
+    scores derived from the journal go to the trace the exporter (#81) built
+    along the steps, through the same ingestion API. Same policy as the export:
+    purely configurative (without the two keys, nothing is sent, identical
+    behaviour — the degraded mode) and **resilient** (an unreachable Langfuse is
+    reported as a warning on the module logger, never propagated to the run being
+    scored). Returns the published events — empty if the integration is disabled,
+    if there is nothing to score or if the publication failed.
     """
     settings = settings or load_settings()
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         return ()
-    evenements = scores_depuis_journal(journal)
-    if not evenements:
+    events = scores_from_journal(journal)
+    if not events:
         return ()
     try:
-        publieur_langfuse(settings)(evenements)
+        langfuse_publisher(settings)(events)
     except Exception:
         logging.getLogger(__name__).warning(
             "Scores Langfuse non publiés (run %s) — l'exécution n'est pas affectée.",
@@ -343,4 +342,4 @@ def evaluer_run_langfuse(
             exc_info=True,
         )
         return ()
-    return evenements
+    return events

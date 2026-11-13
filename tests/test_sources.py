@@ -1,17 +1,17 @@
-"""Sources d'un objectif : modèle, résolution et garde-fous d'ingestion (#315, EF-39).
+"""Sources of an objective: model, resolution and ingestion guardrails (#315, EF-39).
 
-Le lot 1 de la Phase 8 diffère ses tests au lot final (#323) **sauf ceux-ci** :
-les **refus**. Racine interdite, évasion par `..`, schéma d'URL, nom de fichier
-qui est un chemin, dépassement de plafond — ce sont des garde-fous de sécurité
-et de coût, ils se testent avec leur code, jamais huit lots plus tard.
+Phase 8's first lot deferred its tests to the final lot (#323) **except these**:
+the **rejections**. Forbidden root, escape through `..`, URL scheme, file name
+that is a path, cap overflow -- these are security and cost guardrails, they are
+tested with their code, never eight lots later.
 
-Trois choses sont vérifiées, dans cet ordre :
+Three things are checked, in this order:
 
-1. la **forme** se relit sans se rejuger — un journal durable rejoué après un
-   durcissement des plafonds doit rester lisible ;
-2. la **résolution** refuse **avec son motif**, type par type ;
-3. les sources **rejoignent le run** — événement, projection, résumé —, et un
-   lancement qui n'en déclare aucune rend exactement la vue d'avant ce lot.
+1. the **shape** is re-read without being re-judged -- a durable journal replayed
+   after the caps were tightened must stay readable;
+2. the **resolution** rejects **with its reason**, type by type;
+3. the sources **join the run** -- event, projection, summary -- and a launch
+   that declares none returns exactly the view from before this lot.
 """
 
 from __future__ import annotations
@@ -24,373 +24,376 @@ from maestro.controltower.events import EVENEMENT_EXECUTION_STATUT, Event
 from maestro.controltower.state import EXECUTION_TERMINEE, ControlTowerState
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.sources import (
-    TYPE_DOSSIER,
-    TYPE_FICHIER,
+    TYPE_DIRECTORY,
+    TYPE_FILE,
     TYPE_URL,
     Source,
-    SourceRefusee,
-    emplacement_ingestion,
-    resoudre_sources,
-    sources_depuis,
-    sources_en_liste,
+    SourceRejected,
+    ingestion_location,
+    resolve_sources,
+    sources_as_list,
+    sources_from,
 )
-from maestro.sources.resolution import LONGUEUR_MAX_ID_RUN, racine_ingestion
+from maestro.sources.resolution import MAX_RUN_ID_LENGTH, ingestion_root
 
 RUN = "a1b2c3d4e5f6"
 
 
 @pytest.fixture(autouse=True)
-def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Un dossier utilisateur factice, hors duquel vivent les dossiers de test.
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fake user home, outside of which the test directories live.
 
-    Reprise de `tests/test_projets.py`, et indispensable pour la même raison :
-    sous Windows le `tmp_path` de pytest vit sous
-    `C:/Users/<moi>/AppData/Local/Temp`, que la validation de racine refuse **à
-    raison** (`chemin-sensible`). Sans cette isolation, les dossiers de
-    référence seraient tous refusés — pour une bonne raison, mais pas celle que
-    le test mesure.
+    Taken from `tests/test_projets.py`, and needed for the same reason: on
+    Windows pytest's `tmp_path` lives under
+    `C:/Users/<me>/AppData/Local/Temp`, which the root validation rejects **for
+    good reason** (`chemin-sensible`). Without this isolation, every reference
+    directory would be rejected -- for a good reason, but not the one the test
+    measures.
     """
-    maison = tmp_path / "maison"
-    maison.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
-    return maison
+    home = tmp_path / "maison"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
 
 
 @pytest.fixture(autouse=True)
-def _ingestion_jetable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """L'emplacement d'ingestion pointé sur un dossier jetable, jamais `core/`."""
-    racine = tmp_path / "ingestion"
-    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(racine))
-    return racine
+def _disposable_ingestion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The ingestion location pointed at a disposable directory, never `core/`."""
+    root = tmp_path / "ingestion"
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(root))
+    return root
 
 
 @pytest.fixture()
-def dossier_refs(tmp_path: Path) -> Path:
-    """Un dossier de références plausible : hors maison, hors zone interdite."""
+def refs_dir(tmp_path: Path) -> Path:
+    """A plausible references directory: outside home, outside any forbidden zone."""
     refs = tmp_path / "refs" / "maquettes"
     refs.mkdir(parents=True)
     return refs
 
 
-def _refus(sources: object, **extra: object) -> SourceRefusee:
-    """Résout `sources` en exigeant un refus, et rend l'exception pour l'inspecter."""
-    with pytest.raises(SourceRefusee) as capture:
-        resoudre_sources(sources, run_id=RUN, **extra)  # type: ignore[arg-type]
+def _rejection(sources: object, **extra: object) -> SourceRejected:
+    """Resolve `sources` expecting a rejection, and return the exception to inspect it."""
+    with pytest.raises(SourceRejected) as capture:
+        resolve_sources(sources, run_id=RUN, **extra)  # type: ignore[arg-type]
     return capture.value
 
 
-# --- ① La forme : sérialisation, et relecture qui ne rejuge rien -------------
+# --- 1. The shape: serialization, and a re-read that re-judges nothing --------
 
 
-def test_aller_retour_json_d_une_source() -> None:
-    """`to_dict`/`from_dict` conservent la source à l'identique."""
+def test_json_round_trip_of_a_source() -> None:
+    """`to_dict`/`from_dict` keep the source identical."""
     source = Source(
-        type=TYPE_FICHIER, nom="CDC-v2.docx", chemin="/ing/run/CDC-v2.docx", taille=184320
+        type=TYPE_FILE, name="CDC-v2.docx", path="/ing/run/CDC-v2.docx", size=184320
     )
     assert Source.from_dict(source.to_dict()) == source
 
 
-def test_la_relecture_ne_rejuge_pas_une_source_deja_acceptee() -> None:
-    """Une source relue est reconstruite telle quelle, même hors bornes du jour.
+def test_re_reading_does_not_re_judge_an_already_accepted_source() -> None:
+    """A re-read source is rebuilt as it was, even outside today's bounds.
 
-    C'est le pendant exact du refus : on refuse **une fois**, à la saisie, là où
-    quelqu'un peut encore corriger. Rejuger au rejeu rendrait illisible un run
-    passé le jour où l'on resserre un plafond — et un run passé ne se réécrit pas.
+    It is the exact counterpart of the rejection: we reject **once**, at input,
+    where someone can still fix it. Re-judging at replay would make a past run
+    unreadable the day a cap is tightened -- and a past run is not rewritten.
     """
-    ancienne = {"type": TYPE_URL, "valeur": "ftp://ancien/spec", "taille": 10**12}
-    relue = Source.from_dict(ancienne)
-    assert relue.valeur == "ftp://ancien/spec"
-    assert relue.taille == 10**12
+    old = {"type": TYPE_URL, "valeur": "ftp://ancien/spec", "taille": 10**12}
+    reread = Source.from_dict(old)
+    assert reread.value == "ftp://ancien/spec"
+    assert reread.size == 10**12
 
 
-def test_les_entrees_illisibles_sont_ecartees_une_a_une() -> None:
-    """`sources_depuis` écarte ce qui n'apprend rien sans perdre le reste."""
-    lues = sources_depuis(
+def test_unreadable_entries_are_dropped_one_by_one() -> None:
+    """`sources_from` drops what tells nothing without losing the rest."""
+    read = sources_from(
         [{"type": TYPE_URL, "valeur": "https://a.test"}, "bruit", {}, {"type": "", "nom": "x"}]
     )
-    assert [s.valeur for s in lues] == ["https://a.test"]
+    assert [s.value for s in read] == ["https://a.test"]
 
 
-def test_une_chaine_n_est_pas_une_liste_de_sources() -> None:
-    """Une chaîne est une `Sequence` : la lire caractère par caractère serait absurde."""
-    assert sources_depuis("https://a.test") == []
-    assert sources_en_liste(None) == []
+def test_a_string_is_not_a_list_of_sources() -> None:
+    """A string is a `Sequence`: reading it character by character would be absurd."""
+    assert sources_from("https://a.test") == []
+    assert sources_as_list(None) == []
 
 
-# --- ② Résolution d'une URL : http(s), et rien d'autre -----------------------
+# --- 2. URL resolution: http(s), and nothing else ----------------------------
 
 
-def test_une_url_http_est_acceptee_telle_quelle() -> None:
-    sources = resoudre_sources(
+def test_an_http_url_is_accepted_as_is() -> None:
+    sources = resolve_sources(
         [{"type": TYPE_URL, "nom": "Spec", "valeur": "https://exemple.test/spec"}], run_id=RUN
     )
     assert sources == (
-        Source(type=TYPE_URL, nom="Spec", valeur="https://exemple.test/spec", lecture_seule=True),
+        Source(type=TYPE_URL, name="Spec", value="https://exemple.test/spec", read_only=True),
     )
 
 
 @pytest.mark.parametrize(
-    "valeur",
+    "value",
     [
-        "file:///etc/passwd",  # lirait le disque par une porte non contrôlée
-        "javascript:alert(1)",  # n'est pas une adresse
-        "../spec.md",  # ni schéma, ni hôte
-        "https://exemple.test/a b",  # espace : jamais une URL telle quelle
+        "file:///etc/passwd",  # would read the disk through an uncontrolled door
+        "javascript:alert(1)",  # is not an address
+        "../spec.md",  # neither scheme nor host
+        "https://exemple.test/a b",  # space: never a URL as is
     ],
 )
-def test_une_url_hors_http_est_refusee(valeur: str) -> None:
-    """Le filtre est celui du contrat #183 (`SCHEMAS_URL`), pas une seconde liste."""
-    refus = _refus([{"type": TYPE_URL, "valeur": valeur}])
-    assert refus.motif == "url-non-suivable"
-    assert refus.index == 0
+def test_a_non_http_url_is_rejected(value: str) -> None:
+    """The filter is the one of contract #183 (`SCHEMAS_URL`), not a second list."""
+    rejection = _rejection([{"type": TYPE_URL, "valeur": value}])
+    assert rejection.reason == "url-non-suivable"
+    assert rejection.index == 0
 
 
-def test_une_url_absente_ou_demesuree_est_refusee() -> None:
-    assert _refus([{"type": TYPE_URL, "valeur": "  "}]).motif == "url-absente"
-    longue = "https://exemple.test/" + "a" * 3000
-    assert _refus([{"type": TYPE_URL, "valeur": longue}]).motif == "url-trop-longue"
+def test_a_missing_or_oversized_url_is_rejected() -> None:
+    assert _rejection([{"type": TYPE_URL, "valeur": "  "}]).reason == "url-absente"
+    long_url = "https://exemple.test/" + "a" * 3000
+    assert _rejection([{"type": TYPE_URL, "valeur": long_url}]).reason == "url-trop-longue"
 
 
-# --- ③ Résolution d'un dossier : la validation de racine, et rien de neuf ----
+# --- 3. Directory resolution: the root validation, and nothing new -----------
 
 
-def test_un_dossier_de_references_est_canonicalise_et_en_lecture_seule(
-    dossier_refs: Path,
+def test_a_references_directory_is_canonicalized_and_read_only(
+    refs_dir: Path,
 ) -> None:
-    """Le chemin stocké est le **résolu**, jamais la saisie — et l'écriture est barrée."""
-    detourne = str(dossier_refs / ".." / dossier_refs.name)
-    sources = resoudre_sources(
-        [{"type": TYPE_DOSSIER, "chemin": detourne, "lecture_seule": False}], run_id=RUN
+    """The stored path is the **resolved** one, never the input -- and writing is barred."""
+    detoured = str(refs_dir / ".." / refs_dir.name)
+    sources = resolve_sources(
+        [{"type": TYPE_DIRECTORY, "chemin": detoured, "lecture_seule": False}], run_id=RUN
     )
-    assert sources[0].chemin == str(dossier_refs.resolve())
-    assert sources[0].nom == dossier_refs.name
-    # Forcée : un dossier de références déclaré en écriture serait un projet
-    # déguisé, qui n'aurait passé aucun des contrôles de la Phase 7.
-    assert sources[0].lecture_seule is True
+    assert sources[0].path == str(refs_dir.resolve())
+    assert sources[0].name == refs_dir.name
+    # Forced: a references directory declared writable would be a disguised
+    # project, which would have passed none of Phase 7's checks.
+    assert sources[0].read_only is True
 
 
-def test_un_dossier_sensible_est_refuse_avec_le_motif_de_la_validation_de_racine(
-    _maison_isolee: Path,
+def test_a_sensitive_directory_is_rejected_with_the_root_validation_reason(
+    _isolated_home: Path,
 ) -> None:
-    """Un dossier de références est un chemin du disque : mêmes interdits qu'une racine."""
-    secrets = _maison_isolee / ".ssh"
+    """A references directory is a disk path: same prohibitions as a root."""
+    secrets = _isolated_home / ".ssh"
     secrets.mkdir()
-    refus = _refus([{"type": TYPE_DOSSIER, "chemin": str(secrets)}])
-    # Le motif de `RacineRefusee` est conservé tel quel : c'est un code que l'UI
-    # sait déjà traduire, le renommer ferait diverger deux vocabulaires.
-    assert refus.motif == "chemin-sensible"
+    rejection = _rejection([{"type": TYPE_DIRECTORY, "chemin": str(secrets)}])
+    # The reason of `RacineRefusee` is kept as is: it is a code the UI already
+    # knows how to translate, renaming it would make two vocabularies diverge.
+    assert rejection.reason == "chemin-sensible"
 
 
-def test_un_detour_par_deux_points_ne_blanchit_pas_un_dossier_interdit(
-    _maison_isolee: Path,
+def test_a_detour_through_dot_dot_does_not_launder_a_forbidden_directory(
+    _isolated_home: Path,
 ) -> None:
-    """La canonicalisation a lieu **avant** la comparaison — sinon tout ceci est décoratif."""
-    secrets = _maison_isolee / ".ssh"
+    """Canonicalization happens **before** the comparison -- otherwise this is decorative."""
+    secrets = _isolated_home / ".ssh"
     secrets.mkdir()
-    evasion = str(_maison_isolee / ".ssh" / ".." / ".ssh" / "refs")
-    assert _refus([{"type": TYPE_DOSSIER, "chemin": evasion}]).motif == "chemin-sensible"
+    evasion = str(_isolated_home / ".ssh" / ".." / ".ssh" / "refs")
+    assert _rejection([{"type": TYPE_DIRECTORY, "chemin": evasion}]).reason == "chemin-sensible"
 
 
-def test_un_dossier_absent_relatif_ou_manquant_est_refuse(tmp_path: Path) -> None:
-    assert _refus([{"type": TYPE_DOSSIER, "chemin": str(tmp_path / "nulle-part")}]).motif == (
-        "dossier-absent"
+def test_a_missing_relative_or_absent_directory_is_rejected(tmp_path: Path) -> None:
+    assert _rejection(
+        [{"type": TYPE_DIRECTORY, "chemin": str(tmp_path / "nulle-part")}]
+    ).reason == ("dossier-absent")
+    assert (
+        _rejection([{"type": TYPE_DIRECTORY, "chemin": "refs/maquettes"}]).reason
+        == "chemin-relatif"
     )
-    assert _refus([{"type": TYPE_DOSSIER, "chemin": "refs/maquettes"}]).motif == "chemin-relatif"
-    assert _refus([{"type": TYPE_DOSSIER, "chemin": ""}]).motif == "chemin-absent"
+    assert _rejection([{"type": TYPE_DIRECTORY, "chemin": ""}]).reason == "chemin-absent"
 
 
-# --- ④ Résolution d'un fichier : hors du projet, et sans traversée -----------
+# --- 4. File resolution: outside the project, and without traversal ----------
 
 
-def test_un_fichier_atterrit_dans_l_emplacement_du_run(_ingestion_jetable: Path) -> None:
-    sources = resoudre_sources(
-        [{"type": TYPE_FICHIER, "nom": "CDC-v2.docx", "taille": 184320}], run_id=RUN
+def test_a_file_lands_in_the_run_location(_disposable_ingestion: Path) -> None:
+    sources = resolve_sources(
+        [{"type": TYPE_FILE, "nom": "CDC-v2.docx", "taille": 184320}], run_id=RUN
     )
-    attendu = (_ingestion_jetable / RUN / "CDC-v2.docx").resolve()
-    assert Path(sources[0].chemin) == attendu
-    assert sources[0].taille == 184320
+    expected = (_disposable_ingestion / RUN / "CDC-v2.docx").resolve()
+    assert Path(sources[0].path) == expected
+    assert sources[0].size == 184320
 
 
-def test_l_emplacement_d_ingestion_est_refuse_s_il_tombe_dans_le_projet(
+def test_the_ingestion_location_is_rejected_if_it_falls_inside_the_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Le défaut est hors projet ; le contrôle, lui, est **actif** — pas décoratif.
+    """The default is outside the project; the check is **active** -- not decorative.
 
-    Un `MAESTRO_INGESTION_DIR` posé à l'intérieur d'un projet est refusé, jamais
-    obéi : une matière téléversée ne se mêle pas aux fichiers de l'utilisateur.
+    A `MAESTRO_INGESTION_DIR` set inside a project is rejected, never obeyed:
+    uploaded material does not mix with the user's files.
     """
-    projet = tmp_path / "projets" / "depensio"
-    projet.mkdir(parents=True)
-    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(projet / "pieces-jointes"))
-    refus = _refus(
-        [{"type": TYPE_FICHIER, "nom": "note.md", "taille": 10}], racine_projet=projet
+    project = tmp_path / "projets" / "depensio"
+    project.mkdir(parents=True)
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(project / "pieces-jointes"))
+    rejection = _rejection(
+        [{"type": TYPE_FILE, "nom": "note.md", "taille": 10}], project_root=project
     )
-    assert refus.motif == "ingestion-dans-le-projet"
+    assert rejection.reason == "ingestion-dans-le-projet"
 
 
-def test_un_emplacement_hors_projet_reste_accepte(
-    tmp_path: Path, _ingestion_jetable: Path
+def test_a_location_outside_the_project_is_still_accepted(
+    tmp_path: Path, _disposable_ingestion: Path
 ) -> None:
-    """Le pendant du test précédent : c'est bien la **position** qui décide."""
-    projet = tmp_path / "projets" / "depensio"
-    projet.mkdir(parents=True)
-    sources = resoudre_sources(
-        [{"type": TYPE_FICHIER, "nom": "note.md", "taille": 10}],
+    """The counterpart of the previous test: it is indeed the **position** that decides."""
+    project = tmp_path / "projets" / "depensio"
+    project.mkdir(parents=True)
+    sources = resolve_sources(
+        [{"type": TYPE_FILE, "nom": "note.md", "taille": 10}],
         run_id=RUN,
-        racine_projet=projet,
+        project_root=project,
     )
-    assert Path(sources[0].chemin) == (_ingestion_jetable / RUN / "note.md").resolve()
+    assert Path(sources[0].path) == (_disposable_ingestion / RUN / "note.md").resolve()
 
 
 @pytest.mark.parametrize(
-    "nom",
+    "name",
     [
-        "../../evasion.md",  # traversée de répertoire, le classique
+        "../../evasion.md",  # directory traversal, the classic
         "..",
         "/etc/passwd",
         "C:\\Windows\\system32\\cle.md",
-        "note.md:cache",  # flux de données alterné NTFS : un contenu invisible
+        "note.md:cache",  # NTFS alternate data stream: invisible content
     ],
 )
-def test_un_nom_de_fichier_qui_est_un_chemin_est_refuse(nom: str) -> None:
-    """Le nom vient du navigateur de l'utilisateur, donc de l'extérieur."""
-    refus = _refus([{"type": TYPE_FICHIER, "nom": nom, "taille": 10}])
-    assert refus.motif == "nom-invalide"
+def test_a_file_name_that_is_a_path_is_rejected(name: str) -> None:
+    """The name comes from the user's browser, hence from the outside."""
+    rejection = _rejection([{"type": TYPE_FILE, "nom": name, "taille": 10}])
+    assert rejection.reason == "nom-invalide"
 
 
-def test_un_fichier_sans_nom_ou_au_nom_demesure_est_refuse() -> None:
-    assert _refus([{"type": TYPE_FICHIER, "nom": "  ", "taille": 10}]).motif == "nom-absent"
-    assert _refus([{"type": TYPE_FICHIER, "nom": "n" * 300, "taille": 10}]).motif == (
+def test_a_file_without_a_name_or_with_an_oversized_name_is_rejected() -> None:
+    assert _rejection([{"type": TYPE_FILE, "nom": "  ", "taille": 10}]).reason == "nom-absent"
+    assert _rejection([{"type": TYPE_FILE, "nom": "n" * 300, "taille": 10}]).reason == (
         "nom-trop-long"
     )
 
 
-def test_un_fichier_sans_taille_est_refuse() -> None:
-    """Une taille inconnue est une taille non plafonnable — donc un plafond contournable."""
-    assert _refus([{"type": TYPE_FICHIER, "nom": "a.md"}]).motif == "taille-absente"
-    assert _refus([{"type": TYPE_FICHIER, "nom": "a.md", "taille": -1}]).motif == (
+def test_a_file_without_a_size_is_rejected() -> None:
+    """An unknown size is a size that cannot be capped -- hence a circumventable cap."""
+    assert _rejection([{"type": TYPE_FILE, "nom": "a.md"}]).reason == "taille-absente"
+    assert _rejection([{"type": TYPE_FILE, "nom": "a.md", "taille": -1}]).reason == (
         "taille-invalide"
     )
-    assert _refus([{"type": TYPE_FICHIER, "nom": "a.md", "taille": "gros"}]).motif == (
+    assert _rejection([{"type": TYPE_FILE, "nom": "a.md", "taille": "gros"}]).reason == (
         "taille-invalide"
     )
 
 
-def test_un_run_id_qui_est_un_chemin_est_refuse() -> None:
-    """Le `run_id` sert de segment de chemin : rien de non conforme ne remonte d'un cran."""
-    with pytest.raises(SourceRefusee) as capture:
-        emplacement_ingestion("../autre-run")
-    assert capture.value.motif == "run-invalide"
+def test_a_run_id_that_is_a_path_is_rejected() -> None:
+    """The `run_id` serves as a path segment: nothing non-conforming climbs a level."""
+    with pytest.raises(SourceRejected) as capture:
+        ingestion_location("../autre-run")
+    assert capture.value.reason == "run-invalide"
 
 
-def test_l_emplacement_n_est_cree_que_si_on_le_demande(_ingestion_jetable: Path) -> None:
-    """Ce lot ne lit ni n'écrit rien : la création revient au téléversement (#317)."""
-    calcule = emplacement_ingestion(RUN)
-    assert not calcule.exists()
-    assert emplacement_ingestion(RUN, creer=True).is_dir()
+def test_the_location_is_created_only_when_asked(_disposable_ingestion: Path) -> None:
+    """This lot neither reads nor writes anything: creation belongs to the upload (#317)."""
+    computed = ingestion_location(RUN)
+    assert not computed.exists()
+    assert ingestion_location(RUN, create=True).is_dir()
 
 
-# --- ⑤ Les plafonds d'ingestion : actifs par défaut, refusés avec leur motif -
+# --- 5. The ingestion caps: active by default, rejected with their reason ----
 
 
-def test_les_plafonds_sont_actifs_par_defaut() -> None:
-    """La divergence assumée avec `Guardrails`, dont les plafonds sont inactifs à None.
+def test_the_caps_are_active_by_default() -> None:
+    """The assumed divergence with `Guardrails`, whose caps are inactive at None.
 
-    Un plafond de dépense absent laisse un run coûter ce qu'il coûte, ce qui se
-    voit ; un plafond d'ingestion absent laisse un document entrer intégralement
-    dans le contexte, et alors la barre de dépense ment (docs/24 §3.4).
+    An absent spending cap lets a run cost what it costs, which shows; an absent
+    ingestion cap lets a document enter the context in full, and then the
+    spending bar lies (docs/24 §3.4).
     """
-    defauts = GardeFousIngestion()
-    assert defauts.taille_max_source_octets
-    assert defauts.taille_max_totale_octets
-    assert defauts.nb_max_sources
+    defaults = GardeFousIngestion()
+    assert defaults.taille_max_source_octets
+    assert defaults.taille_max_totale_octets
+    assert defaults.nb_max_sources
 
 
-def test_une_source_trop_volumineuse_est_refusee() -> None:
-    refus = _refus(
-        [{"type": TYPE_FICHIER, "nom": "enorme.pdf", "taille": 20 * 1024 * 1024}],
-        garde_fous=GardeFousIngestion(taille_max_source_octets=1024),
+def test_an_oversized_source_is_rejected() -> None:
+    rejection = _rejection(
+        [{"type": TYPE_FILE, "nom": "enorme.pdf", "taille": 20 * 1024 * 1024}],
+        guardrails=GardeFousIngestion(taille_max_source_octets=1024),
     )
-    assert refus.motif == "source-trop-volumineuse"
-    assert refus.index == 0
+    assert rejection.reason == "source-trop-volumineuse"
+    assert rejection.index == 0
 
 
-def test_le_cumul_des_sources_est_plafonne() -> None:
-    """Sans plafond total, cinquante fichiers sous le plafond unitaire passeraient tous."""
-    refus = _refus(
+def test_the_total_of_the_sources_is_capped() -> None:
+    """Without a total cap, fifty files under the per-source cap would all pass."""
+    rejection = _rejection(
         [
-            {"type": TYPE_FICHIER, "nom": "a.md", "taille": 600},
-            {"type": TYPE_FICHIER, "nom": "b.md", "taille": 600},
+            {"type": TYPE_FILE, "nom": "a.md", "taille": 600},
+            {"type": TYPE_FILE, "nom": "b.md", "taille": 600},
         ],
-        garde_fous=GardeFousIngestion(taille_max_source_octets=1000, taille_max_totale_octets=1000),
+        guardrails=GardeFousIngestion(taille_max_source_octets=1000, taille_max_totale_octets=1000),
     )
-    assert refus.motif == "ingestion-trop-volumineuse"
-    # L'index situe la source qui fait déborder : « c'est trop » sans dire où
-    # obligerait à tout relire pour savoir quoi retirer.
-    assert refus.index == 1
+    assert rejection.reason == "ingestion-trop-volumineuse"
+    # The index locates the source that makes it overflow: "it is too much"
+    # without saying where would force rereading everything to know what to drop.
+    assert rejection.index == 1
 
 
-def test_le_nombre_de_sources_est_plafonne() -> None:
-    """Vérifié **avant** toute résolution : cinq cents sources ne touchent pas le disque."""
-    refus = _refus(
+def test_the_number_of_sources_is_capped() -> None:
+    """Checked **before** any resolution: five hundred sources do not touch the disk."""
+    rejection = _rejection(
         [{"type": TYPE_URL, "valeur": f"https://a.test/{i}"} for i in range(5)],
-        garde_fous=GardeFousIngestion(nb_max_sources=3),
+        guardrails=GardeFousIngestion(nb_max_sources=3),
     )
-    assert refus.motif == "trop-de-sources"
+    assert rejection.reason == "trop-de-sources"
 
 
-def test_un_plafond_a_none_est_un_choix_et_non_un_oubli() -> None:
-    sources = resoudre_sources(
-        [{"type": TYPE_FICHIER, "nom": "enorme.pdf", "taille": 10**9}],
+def test_a_cap_set_to_none_is_a_choice_not_an_oversight() -> None:
+    sources = resolve_sources(
+        [{"type": TYPE_FILE, "nom": "enorme.pdf", "taille": 10**9}],
         run_id=RUN,
-        garde_fous=GardeFousIngestion(
+        guardrails=GardeFousIngestion(
             taille_max_source_octets=None, taille_max_totale_octets=None
         ),
     )
-    assert sources[0].taille == 10**9
+    assert sources[0].size == 10**9
 
 
-def test_un_plafond_nul_ou_negatif_est_refuse_a_la_construction() -> None:
+def test_a_zero_or_negative_cap_is_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="nb_max_sources"):
         GardeFousIngestion(nb_max_sources=0)
     with pytest.raises(ValueError, match="taille_max_source_octets"):
         GardeFousIngestion(taille_max_source_octets=-1)
 
 
-# --- ⑥ Le contour : rien à ingérer, ou une déclaration illisible -------------
+# --- 6. The edge: nothing to ingest, or an unreadable declaration ------------
 
 
-def test_aucune_source_reste_le_comportement_d_avant_ce_lot() -> None:
-    assert resoudre_sources(None, run_id=RUN) == ()
-    assert resoudre_sources([], run_id=RUN) == ()
+def test_no_source_keeps_the_behavior_from_before_this_lot() -> None:
+    assert resolve_sources(None, run_id=RUN) == ()
+    assert resolve_sources([], run_id=RUN) == ()
 
 
-def test_un_type_inconnu_est_refuse_et_non_ignore() -> None:
-    """Ignorer serait pire : l'utilisateur croirait avoir joint une matière absente."""
-    assert _refus([{"type": "texte", "valeur": "..."}]).motif == "type-inconnu"
-    assert _refus([{"nom": "sans-type.md"}]).motif == "type-inconnu"
+def test_an_unknown_type_is_rejected_not_ignored() -> None:
+    """Ignoring would be worse: the user would believe they attached missing material."""
+    assert _rejection([{"type": "texte", "valeur": "..."}]).reason == "type-inconnu"
+    assert _rejection([{"nom": "sans-type.md"}]).reason == "type-inconnu"
 
 
-def test_une_declaration_illisible_est_refusee() -> None:
-    assert _refus(["https://a.test"]).motif == "source-illisible"
-    assert _refus("https://a.test").motif == "sources-illisibles"
+def test_an_unreadable_declaration_is_rejected() -> None:
+    assert _rejection(["https://a.test"]).reason == "source-illisible"
+    assert _rejection("https://a.test").reason == "sources-illisibles"
 
 
-# --- ⑦ L'attachement au run : événement, projection, résumé ------------------
+# --- 7. Attachment to the run: event, projection, summary --------------------
 
 
-def test_les_sources_survivent_a_l_aller_retour_du_bus() -> None:
-    """Elles voyagent en JSON comme le ticket (#187) et le projet (#222)."""
-    source = Source(type=TYPE_URL, nom="Spec", valeur="https://exemple.test/spec")
-    evenement = Event(type=EVENEMENT_EXECUTION_STATUT, run_id=RUN, sources=[source])
-    assert Event.from_json(evenement.to_json()).sources == [source]
+def test_the_sources_survive_the_bus_round_trip() -> None:
+    """They travel as JSON like the ticket (#187) and the project (#222)."""
+    source = Source(type=TYPE_URL, name="Spec", value="https://exemple.test/spec")
+    event = Event(type=EVENEMENT_EXECUTION_STATUT, run_id=RUN, sources=[source])
+    assert Event.from_json(event.to_json()).sources == [source]
 
 
-def test_un_evenement_sans_sources_n_efface_pas_celles_du_lancement() -> None:
-    """`None` dit « je n'en sais rien », pas « il n'y en a plus » — comme `etapes` (#246)."""
-    etat = ControlTowerState()
-    source = Source(type=TYPE_DOSSIER, nom="maquettes", chemin="/refs/maquettes")
-    etat.appliquer(
+def test_an_event_without_sources_does_not_erase_those_of_the_launch() -> None:
+    """`None` says "I don't know", not "there are none left" -- like `etapes` (#246)."""
+    state = ControlTowerState()
+    source = Source(type=TYPE_DIRECTORY, name="maquettes", path="/refs/maquettes")
+    state.appliquer(
         Event(
             type=EVENEMENT_EXECUTION_STATUT,
             run_id=RUN,
@@ -399,87 +402,87 @@ def test_un_evenement_sans_sources_n_efface_pas_celles_du_lancement() -> None:
             sources=[source],
         )
     )
-    etat.appliquer(
+    state.appliquer(
         Event(type=EVENEMENT_EXECUTION_STATUT, run_id=RUN, statut=EXECUTION_TERMINEE)
     )
-    execution = etat.execution(RUN)
+    execution = state.execution(RUN)
     assert execution is not None
     assert execution.resume()["sources"] == [source.to_dict()]
 
 
-def test_un_run_sans_source_rend_la_vue_d_avant_ce_lot() -> None:
-    etat = ControlTowerState()
-    etat.appliquer(
+def test_a_run_without_a_source_returns_the_view_from_before_this_lot() -> None:
+    state = ControlTowerState()
+    state.appliquer(
         Event(type=EVENEMENT_EXECUTION_STATUT, run_id=RUN, titre="Objectif texte seul")
     )
-    execution = etat.execution(RUN)
+    execution = state.execution(RUN)
     assert execution is not None
     assert execution.resume()["sources"] == []
 
 
-# --- ⑧ Le reste, différé au lot final (#323) ---------------------------------
+# --- 8. The rest, deferred to the final lot (#323) ---------------------------
 #
-# Ce que #315 avait laissé de côté à raison — ce ne sont pas des refus, donc
-# rien qui doive se tester avec son code. Mais ce sont les points par lesquels
-# l'ingestion se déplace d'un poste à l'autre (où les fichiers atterrissent) ou
-# accepte une entrée qu'aucun écran ne produit (un `Source` déjà résolu).
+# What #315 had rightly left aside -- these are not rejections, so nothing that
+# must be tested with its code. But they are the points through which ingestion
+# moves from one machine to another (where the files land) or accepts an input
+# that no screen produces (an already resolved `Source`).
 
 
-def test_la_racine_d_ingestion_est_dans_le_depot_sauf_si_l_environnement_la_deplace(
+def test_the_ingestion_root_is_in_the_repository_unless_the_environment_moves_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Un dossier du dépôt par défaut, déplaçable pour qui range ses données ailleurs."""
+    """A repository directory by default, movable for whoever stores data elsewhere."""
     monkeypatch.delenv("MAESTRO_INGESTION_DIR", raising=False)
-    defaut = racine_ingestion()
-    assert defaut.parts[-2:] == ("core", "ingestion")
+    default = ingestion_root()
+    assert default.parts[-2:] == ("core", "ingestion")
 
-    ailleurs = tmp_path / "hors-depot"
-    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(ailleurs))
-    assert racine_ingestion() == ailleurs
+    elsewhere = tmp_path / "hors-depot"
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(elsewhere))
+    assert ingestion_root() == elsewhere
 
 
-def test_la_racine_n_est_jamais_creee_par_sa_seule_lecture(
+def test_the_root_is_never_created_by_merely_reading_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Rien n'est créé tant qu'aucun fichier n'a été téléversé."""
-    ailleurs = tmp_path / "jamais-creee"
-    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(ailleurs))
-    assert racine_ingestion() == ailleurs
-    assert not ailleurs.exists()
+    """Nothing is created as long as no file has been uploaded."""
+    elsewhere = tmp_path / "jamais-creee"
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(elsewhere))
+    assert ingestion_root() == elsewhere
+    assert not elsewhere.exists()
 
 
 @pytest.mark.parametrize(
-    "identifiant",
-    ["", "a" * (LONGUEUR_MAX_ID_RUN + 1), "run 42", "run/42"],
+    "identifier",
+    ["", "a" * (MAX_RUN_ID_LENGTH + 1), "run 42", "run/42"],
 )
-def test_un_identifiant_de_run_hors_forme_est_refuse(identifiant: str) -> None:
-    """L'identifiant devient un **nom de dossier** : tout ce qui n'est pas un mot est refusé."""
-    with pytest.raises(SourceRefusee) as capture:
-        emplacement_ingestion(identifiant)
-    assert capture.value.motif == "run-invalide"
+def test_a_malformed_run_identifier_is_rejected(identifier: str) -> None:
+    """The identifier becomes a **directory name**: whatever is not a word is rejected."""
+    with pytest.raises(SourceRejected) as capture:
+        ingestion_location(identifier)
+    assert capture.value.reason == "run-invalide"
 
 
-def test_une_source_deja_resolue_se_re_resout_a_l_identique(dossier_refs: Path) -> None:
-    """Rejouer une résolution ne doit pas être un cas particulier — le journal en dépend."""
-    (resolue,) = resoudre_sources(
-        [{"type": TYPE_DOSSIER, "chemin": str(dossier_refs)}], run_id=RUN
+def test_an_already_resolved_source_resolves_identically_again(refs_dir: Path) -> None:
+    """Replaying a resolution must not be a special case -- the journal depends on it."""
+    (resolved,) = resolve_sources(
+        [{"type": TYPE_DIRECTORY, "chemin": str(refs_dir)}], run_id=RUN
     )
-    assert resoudre_sources([resolue], run_id=RUN) == (resolue,)
+    assert resolve_sources([resolved], run_id=RUN) == (resolved,)
 
 
-@pytest.mark.parametrize("brut", [{"type": TYPE_URL}, 42, object()])
-def test_une_liste_de_sources_qui_n_en_est_pas_une_est_refusee(brut: object) -> None:
-    """Un mapping ou un entier ne sont pas des *listes* : le refus nomme le tout."""
-    assert _refus(brut).motif == "sources-illisibles"
+@pytest.mark.parametrize("raw", [{"type": TYPE_URL}, 42, object()])
+def test_a_list_of_sources_that_is_not_one_is_rejected(raw: object) -> None:
+    """A mapping or an integer are not *lists*: the rejection names the whole."""
+    assert _rejection(raw).reason == "sources-illisibles"
 
 
-def test_une_source_vide_se_reconnait_comme_telle() -> None:
-    """« Vide » = sans type, ou sans le moindre repère — un nom seul suffit à situer.
+def test_an_empty_source_recognizes_itself() -> None:
+    """A source is empty without a type, or without any landmark -- a name alone is enough.
 
-    Nuance à connaître avant de s'en servir comme d'un contrôle de saisie : ce
-    n'en est pas un (`resoudre_sources` l'est), c'est le filtre de **relecture**
-    qui écarte une ligne de journal qui n'apprend rien.
+    A nuance to know before using it as an input check: it is not one
+    (`resolve_sources` is), it is the **re-read** filter that drops a journal
+    line that tells nothing.
     """
-    assert Source(type="", nom="Spec", valeur="https://a.test").vide is True
-    assert Source(type=TYPE_URL).vide is True
-    assert Source(type=TYPE_URL, nom="Rien").vide is False
+    assert Source(type="", name="Spec", value="https://a.test").empty is True
+    assert Source(type=TYPE_URL).empty is True
+    assert Source(type=TYPE_URL, name="Rien").empty is False

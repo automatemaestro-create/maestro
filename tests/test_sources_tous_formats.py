@@ -1,26 +1,22 @@
-"""Les sources d'un brief se lisent quel qu'en soit le format (#1163).
+"""The sources of a brief are read whatever their format (#1163).
 
-Avant ce ticket, `maestro.sources.extraction` ne lisait que six extensions (`.md`,
-`.markdown`, `.txt`, `.text`, `.docx`, `.pdf`) : un cahier des charges en `.json`
-ou en `.yaml`, un export `.csv` ou `.xlsx`, une page `.html`, un fichier de code ou
-une maquette en image ressortaient « format non géré », et le brief s'écrivait sur
-moins de matière que la personne n'en avait donné.
+`maestro.sources.extraction` reads any format, not a closed list of extensions.
 
-Deux critères, deux blocs :
+Two criteria, two blocks:
 
-1. **tout ce qui se lit nourrit le brief** — le texte structuré et le code comme du
-   texte, le tableur par son contenu, l'image par un modèle qui la regarde. Chacun
-   ressort *lu* au rapport et son contenu entre dans le contexte, encadré comme
-   donnée (`contexte_markdown`) ;
-2. **ce qui est réellement illisible se nomme avec sa raison** — binaire opaque,
-   image trop grosse, image qu'aucun modèle ne peut regarder —, et les bornes déjà
-   posées tiennent : octets lus, plafonds de tokens, périmètre d'un dossier, et
-   jamais un fichier porteur de secrets dans le contexte d'un modèle.
+1. **everything that can be read feeds the brief** — structured text and code as
+   text, a spreadsheet by its content, an image by a model that looks at it. Each
+   comes out *read* in the report and its content enters the context, framed as
+   data (`markdown_context`);
+2. **what is truly unreadable is named with its reason** — opaque binary, image too
+   large, image no model can look at — and the bounds already set hold: bytes read,
+   token caps, a directory's perimeter, and never a secret-bearing file in a
+   model's context.
 
-Le modèle qui regarde une image est **injecté** (`lire_image=`) : aucun test ne
-résout le fournisseur du poste (`tests/conftest.py`, #782). La moitié fournisseur —
-comment Claude et un endpoint compatible OpenAI reçoivent une image — est éprouvée
-dans `tests/test_providers.py` et `tests/test_openai_provider.py`.
+The model that looks at an image is **injected** (`read_image=`): no test resolves
+the workstation's provider (`tests/conftest.py`, #782). The provider half — how
+Claude and an OpenAI-compatible endpoint receive an image — is exercised in
+`tests/test_providers.py` and `tests/test_openai_provider.py`.
 """
 
 from __future__ import annotations
@@ -34,100 +30,100 @@ import pytest
 
 from maestro.providers.base import ImageJointe, ModelProvider, UnsupportedCapability
 from maestro.sources.extraction import (
-    ETAT_IGNORE,
-    ETAT_LU,
-    ETAT_TRONQUE,
-    GardeFousExtraction,
-    Lecture,
-    RapportLecture,
-    contexte_markdown,
-    extraire_sources,
+    STATE_IGNORED,
+    STATE_READ,
+    STATE_TRUNCATED,
+    ExtractionGuardrails,
+    Reading,
+    ReadingReport,
+    extract_sources,
+    markdown_context,
 )
 from maestro.sources.images import (
-    MOTIF_VISION_INDISPONIBLE,
-    ImageNonVue,
-    LecteurImagesModele,
-    lire_image_en_apercu,
-    type_image,
+    REASON_VISION_UNAVAILABLE,
+    ImageNotSeen,
+    ModelImageReader,
+    image_type,
+    read_image_in_preview,
 )
-from maestro.sources.modele import TYPE_DOSSIER, TYPE_FICHIER, Source
+from maestro.sources.model import TYPE_DIRECTORY, TYPE_FILE, Source
 
 # --------------------------------------------------------------------------- #
-# Fabriques                                                                    #
+# Factories                                                                    #
 # --------------------------------------------------------------------------- #
 
 
-def png_minimal() -> bytes:
-    """Un vrai PNG d'un pixel — assez pour qu'un décodeur l'accepte, écrit à la main.
+def minimal_png() -> bytes:
+    """A real one-pixel PNG — enough for a decoder to accept it, written by hand.
 
-    À la main plutôt que par Pillow : le dépôt n'en dépend pas, et c'est ce qui
-    permet d'affirmer que la reconnaissance d'une image repose sur ses **octets**,
-    pas sur une bibliothèque.
+    By hand rather than through Pillow: the repository does not depend on it, and
+    that is what lets us state that recognizing an image rests on its **bytes**,
+    not on a library.
     """
 
-    def morceau(genre: bytes, donnees: bytes) -> bytes:
-        corps = genre + donnees
-        return struct.pack(">I", len(donnees)) + corps + struct.pack(">I", zlib.crc32(corps))
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
 
-    entete = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
     pixels = zlib.compress(b"\x00\xff\x00\x00")
     return (
         b"\x89PNG\r\n\x1a\n"
-        + morceau(b"IHDR", entete)
-        + morceau(b"IDAT", pixels)
-        + morceau(b"IEND", b"")
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", pixels)
+        + chunk(b"IEND", b"")
     )
 
 
-def poser(base: Path, nom: str, contenu: str | bytes) -> Source:
-    """Une source `fichier` posée sur le disque, texte ou octets."""
-    chemin = base / nom
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(contenu, bytes):
-        chemin.write_bytes(contenu)
+def put(base: Path, name: str, content: str | bytes) -> Source:
+    """A `file` source written to disk, text or bytes."""
+    path = base / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, bytes):
+        path.write_bytes(content)
     else:
-        chemin.write_text(contenu, encoding="utf-8")
-    return Source(type=TYPE_FICHIER, nom=nom, chemin=str(chemin))
+        path.write_text(content, encoding="utf-8")
+    return Source(type=TYPE_FILE, name=name, path=str(path))
 
 
-def classeur(chemin: Path) -> None:
-    """Un `.xlsx` de deux feuilles, écrit par openpyxl — le convertisseur qu'on exerce."""
+def workbook(path: Path) -> None:
+    """A two-sheet `.xlsx` written by openpyxl — the converter being exercised."""
     openpyxl = pytest.importorskip("openpyxl", reason="convertisseur .xlsx non installé")
-    classeur_ = openpyxl.Workbook()
-    planning = classeur_.active
+    book = openpyxl.Workbook()
+    planning = book.active
     planning.title = "Planning"
     planning.append(["Lot", "Délai"])
     planning.append(["Socle", "2 semaines"])
-    budget = classeur_.create_sheet("Budget")
+    budget = book.create_sheet("Budget")
     budget.append(["Poste", "Montant"])
     budget.append(["Hébergement", 1200])
-    classeur_.save(str(chemin))
+    book.save(str(path))
 
 
-class Regard:
-    """Un modèle qui regarde une image — le double de `lire_image`, qui garde ce qu'il a vu."""
+class Gaze:
+    """A model that looks at an image — the `read_image` double, which keeps what it saw."""
 
-    def __init__(self, reponse: str = "Maquette : un bouton « Lancer » en haut à droite.") -> None:
-        self.reponse = reponse
-        self.vus: list[tuple[bytes, str, str]] = []
+    def __init__(self, answer: str = "Maquette : un bouton « Lancer » en haut à droite.") -> None:
+        self.answer = answer
+        self.seen: list[tuple[bytes, str, str]] = []
 
-    def __call__(self, octets: bytes, type_media: str, nom: str) -> str:
-        self.vus.append((octets, type_media, nom))
-        return self.reponse
+    def __call__(self, data: bytes, media_type: str, name: str) -> str:
+        self.seen.append((data, media_type, name))
+        return self.answer
 
 
-def seule(rapport: RapportLecture) -> Lecture:
-    assert len(rapport.lectures) == 1, rapport.synthese()
-    return rapport.lectures[0]
+def single(report: ReadingReport) -> Reading:
+    assert len(report.readings) == 1, report.summary()
+    return report.readings[0]
 
 
 # --------------------------------------------------------------------------- #
-# Critère 1 — tout ce qui se lit nourrit le brief                               #
+# Criterion 1 — everything that can be read feeds the brief                    #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.parametrize(
-    ("nom", "contenu", "attendu"),
+    ("name", "content", "expected"),
     [
         ("cahier.json", '{"objectif": "livrer le socle", "delai": "2 semaines"}', "le socle"),
         ("cahier.yaml", "objectif: livrer le socle\ndelai: 2 semaines\n", "objectif: livrer"),
@@ -136,82 +132,82 @@ def seule(rapport: RapportLecture) -> Lecture:
         ("composant.tsx", "export function Bouton() { return null; }\n", "function Bouton"),
         ("Makefile", "build:\n\tnpm run build\n", "npm run build"),
     ],
-    ids=["json", "yaml", "csv", "python", "tsx", "sans-extension"],
+    ids=["json", "yaml", "csv", "python", "tsx", "no-extension"],
 )
-def test_le_texte_structure_et_le_code_se_lisent_comme_du_texte(
-    tmp_path: Path, nom: str, contenu: str, attendu: str
+def test_structured_text_and_code_are_read_as_text(
+    tmp_path: Path, name: str, content: str, expected: str
 ) -> None:
-    """Aucune liste d'extensions : un fichier dont les octets sont du texte se lit."""
-    lecture = seule(extraire_sources([poser(tmp_path, nom, contenu)]))
+    """No extension list: a file whose bytes are text is read."""
+    reading = single(extract_sources([put(tmp_path, name, content)]))
 
-    assert lecture.etat == ETAT_LU, lecture.message
-    assert attendu in lecture.markdown
-    assert lecture.tokens > 0
-
-
-def test_un_texte_utf16_se_lit_malgre_ses_octets_nuls(tmp_path: Path) -> None:
-    """Ce qu'écrit une redirection PowerShell : un octet nul sur deux, et pourtant du texte."""
-    journal = poser(tmp_path, "journal.log", "Échec du déploiement\n".encode("utf-16"))
-
-    lecture = seule(extraire_sources([journal]))
-
-    assert lecture.etat == ETAT_LU, lecture.message
-    assert "Échec du déploiement" in lecture.markdown
+    assert reading.state == STATE_READ, reading.message
+    assert expected in reading.markdown
+    assert reading.tokens > 0
 
 
-def test_une_page_html_est_ramenee_au_texte(tmp_path: Path) -> None:
-    """Une page enregistrée se lit comme une page récupérée : texte, titres, sans script."""
+def test_a_utf16_text_is_read_despite_its_null_bytes(tmp_path: Path) -> None:
+    """What a PowerShell redirection writes: every other byte null, and yet text."""
+    log = put(tmp_path, "journal.log", "Échec du déploiement\n".encode("utf-16"))
+
+    reading = single(extract_sources([log]))
+
+    assert reading.state == STATE_READ, reading.message
+    assert "Échec du déploiement" in reading.markdown
+
+
+def test_an_html_page_is_reduced_to_text(tmp_path: Path) -> None:
+    """A saved page is read like a fetched page: text, headings, no script."""
     page = (
         "<!doctype html><html><body><script>alert('consigne')</script>"
         "<h1>Cahier des charges</h1><p>Livrer le socle.</p></body></html>"
     )
 
-    lecture = seule(extraire_sources([poser(tmp_path, "cdc.html", page)]))
+    reading = single(extract_sources([put(tmp_path, "cdc.html", page)]))
 
-    assert lecture.etat == ETAT_LU
-    assert "# Cahier des charges" in lecture.markdown
-    assert "Livrer le socle." in lecture.markdown
-    assert "alert" not in lecture.markdown
-
-
-def test_un_classeur_xlsx_se_lit_par_son_contenu(tmp_path: Path) -> None:
-    """Chaque feuille sous son nom, chaque ligne en rangée de tableau Markdown."""
-    chemin = tmp_path / "planning.xlsx"
-    classeur(chemin)
-
-    source = Source(type=TYPE_FICHIER, nom="planning.xlsx", chemin=str(chemin))
-
-    lecture = seule(extraire_sources([source]))
-
-    assert lecture.etat == ETAT_LU, lecture.message
-    assert "## Feuille : Planning" in lecture.markdown
-    assert "| Socle | 2 semaines |" in lecture.markdown
-    assert "## Feuille : Budget" in lecture.markdown
-    assert "| Hébergement | 1200 |" in lecture.markdown
+    assert reading.state == STATE_READ
+    assert "# Cahier des charges" in reading.markdown
+    assert "Livrer le socle." in reading.markdown
+    assert "alert" not in reading.markdown
 
 
-def test_une_image_est_regardee_par_le_modele_et_sa_lecture_entre_au_contexte(
+def test_an_xlsx_workbook_is_read_by_its_content(tmp_path: Path) -> None:
+    """Each sheet under its name, each row as a Markdown table row."""
+    path = tmp_path / "planning.xlsx"
+    workbook(path)
+
+    source = Source(type=TYPE_FILE, name="planning.xlsx", path=str(path))
+
+    reading = single(extract_sources([source]))
+
+    assert reading.state == STATE_READ, reading.message
+    assert "## Feuille : Planning" in reading.markdown
+    assert "| Socle | 2 semaines |" in reading.markdown
+    assert "## Feuille : Budget" in reading.markdown
+    assert "| Hébergement | 1200 |" in reading.markdown
+
+
+def test_an_image_is_looked_at_by_the_model_and_its_reading_enters_the_context(
     tmp_path: Path,
 ) -> None:
-    """L'image part au modèle telle quelle, et ce qu'il y voit entre comme une source lue."""
-    regard = Regard()
-    image = png_minimal()
+    """The image goes to the model as is, and what it sees enters as a read source."""
+    gaze = Gaze()
+    image = minimal_png()
 
-    rapport = extraire_sources([poser(tmp_path, "maquette.png", image)], lire_image=regard)
+    report = extract_sources([put(tmp_path, "maquette.png", image)], read_image=gaze)
 
-    lecture = seule(rapport)
-    assert lecture.etat == ETAT_LU, lecture.message
-    assert regard.vus == [(image, "image/png", "maquette.png")]
-    assert "bouton « Lancer »" in lecture.markdown
-    # Le contexte dit que c'est une **transcription** : le brief ne doit pas croire
-    # avoir lu l'image elle-même.
-    rendu = contexte_markdown(rapport)
-    assert "bouton « Lancer »" in rendu
-    assert "regardée par le modèle" in rendu
+    reading = single(report)
+    assert reading.state == STATE_READ, reading.message
+    assert gaze.seen == [(image, "image/png", "maquette.png")]
+    assert "bouton « Lancer »" in reading.markdown
+    # The context says it is a **transcription**: the brief must not believe it
+    # read the image itself.
+    rendered = markdown_context(report)
+    assert "bouton « Lancer »" in rendered
+    assert "regardée par le modèle" in rendered
 
 
 @pytest.mark.parametrize(
-    ("octets", "type_media"),
+    ("data", "media_type"),
     [
         (b"\x89PNG\r\n\x1a\n" + b"\x00" * 16, "image/png"),
         (b"\xff\xd8\xff\xe0" + b"\x00" * 16, "image/jpeg"),
@@ -220,76 +216,76 @@ def test_une_image_est_regardee_par_le_modele_et_sa_lecture_entre_au_contexte(
     ],
     ids=["png", "jpeg", "gif", "webp"],
 )
-def test_une_image_se_reconnait_a_ses_octets_pas_a_son_nom(
-    tmp_path: Path, octets: bytes, type_media: str
+def test_an_image_is_recognized_by_its_bytes_not_its_name(
+    tmp_path: Path, data: bytes, media_type: str
 ) -> None:
-    """Le nom vient de l'extérieur ; la signature du fichier, non."""
-    assert type_image(octets) == type_media
-    regard = Regard()
+    """The name comes from outside; the file's signature does not."""
+    assert image_type(data) == media_type
+    gaze = Gaze()
 
-    capture = poser(tmp_path, "capture-sans-extension", octets)
+    capture = put(tmp_path, "capture-sans-extension", data)
 
-    lecture = seule(extraire_sources([capture], lire_image=regard))
+    reading = single(extract_sources([capture], read_image=gaze))
 
-    assert lecture.etat == ETAT_LU
-    assert regard.vus[0][1] == type_media
+    assert reading.state == STATE_READ
+    assert gaze.seen[0][1] == media_type
 
 
-def test_tous_les_formats_du_ticket_nourrissent_le_contexte(tmp_path: Path) -> None:
-    """Le critère entier, joint à un même objectif : chacun parmi les sources lues."""
-    chemin_xlsx = tmp_path / "budget.xlsx"
-    classeur(chemin_xlsx)
+def test_all_the_ticket_formats_feed_the_context(tmp_path: Path) -> None:
+    """The whole criterion, attached to a single goal: each among the read sources."""
+    xlsx_path = tmp_path / "budget.xlsx"
+    workbook(xlsx_path)
     sources = [
-        poser(tmp_path, "cahier.json", '{"objectif": "JSON-LU"}'),
-        poser(tmp_path, "cahier.yaml", "objectif: YAML-LU\n"),
-        poser(tmp_path, "export.csv", "colonne\nCSV-LU\n"),
-        Source(type=TYPE_FICHIER, nom="budget.xlsx", chemin=str(chemin_xlsx)),
-        poser(tmp_path, "page.html", "<html><body><p>HTML-LU</p></body></html>"),
-        poser(tmp_path, "main.go", 'package main // GO-LU\n'),
-        poser(tmp_path, "maquette.png", png_minimal()),
+        put(tmp_path, "cahier.json", '{"objectif": "JSON-LU"}'),
+        put(tmp_path, "cahier.yaml", "objectif: YAML-LU\n"),
+        put(tmp_path, "export.csv", "colonne\nCSV-LU\n"),
+        Source(type=TYPE_FILE, name="budget.xlsx", path=str(xlsx_path)),
+        put(tmp_path, "page.html", "<html><body><p>HTML-LU</p></body></html>"),
+        put(tmp_path, "main.go", 'package main // GO-LU\n'),
+        put(tmp_path, "maquette.png", minimal_png()),
     ]
 
-    rapport = extraire_sources(sources, lire_image=Regard("IMAGE-LUE"))
+    report = extract_sources(sources, read_image=Gaze("IMAGE-LUE"))
 
-    assert [lecture.etat for lecture in rapport.lectures] == [ETAT_LU] * len(sources), (
-        rapport.synthese()
+    assert [reading.state for reading in report.readings] == [STATE_READ] * len(sources), (
+        report.summary()
     )
-    assert len(rapport.lues) == len(sources)
-    rendu = contexte_markdown(rapport)
-    for marque in ("JSON-LU", "YAML-LU", "CSV-LU", "Hébergement", "HTML-LU", "GO-LU", "IMAGE-LUE"):
-        assert marque in rendu
+    assert len(report.read) == len(sources)
+    rendered = markdown_context(report)
+    for marker in ("JSON-LU", "YAML-LU", "CSV-LU", "Hébergement", "HTML-LU", "GO-LU", "IMAGE-LUE"):
+        assert marker in rendered
 
 
 # --------------------------------------------------------------------------- #
-# Critère 2 — l'illisible se nomme avec sa raison, et les bornes tiennent       #
+# Criterion 2 — the unreadable is named with its reason, and the bounds hold   #
 # --------------------------------------------------------------------------- #
 
 
-def test_un_binaire_opaque_est_nomme_avec_sa_raison(tmp_path: Path) -> None:
-    """Ni texte, ni image, ni document convertible : la ligne dit pourquoi."""
-    outil = poser(tmp_path, "outil.exe", b"MZ\x90\x00\x03\x00\x00\x00binaire")
+def test_an_opaque_binary_is_named_with_its_reason(tmp_path: Path) -> None:
+    """Neither text, nor image, nor convertible document: the line says why."""
+    tool = put(tmp_path, "outil.exe", b"MZ\x90\x00\x03\x00\x00\x00binaire")
 
-    lecture = seule(extraire_sources([outil]))
+    reading = single(extract_sources([tool]))
 
-    assert lecture.etat == ETAT_IGNORE
-    assert lecture.motif == "binaire-opaque"
-    assert ".exe" in lecture.message
-    assert lecture.markdown == "" and lecture.tokens == 0
-
-
-def test_sans_modele_qui_voit_une_image_est_nommee_jamais_tue(tmp_path: Path) -> None:
-    """Une lecture où aucun modèle n'est branché ne tait pas l'image : elle dit pourquoi."""
-    rapport = extraire_sources([poser(tmp_path, "maquette.png", png_minimal())])
-
-    lecture = seule(rapport)
-    assert (lecture.etat, lecture.motif) == (ETAT_IGNORE, MOTIF_VISION_INDISPONIBLE)
-    assert "maquette.png" in contexte_markdown(rapport)
+    assert reading.state == STATE_IGNORED
+    assert reading.reason == "binaire-opaque"
+    assert ".exe" in reading.message
+    assert reading.markdown == "" and reading.tokens == 0
 
 
-def test_un_fournisseur_qui_ne_voit_pas_les_images_le_dit(tmp_path: Path) -> None:
-    """Agnosticisme (O7) : un fournisseur sans la capacité est nommé, pas contourné."""
+def test_without_a_model_that_sees_an_image_is_named_never_silenced(tmp_path: Path) -> None:
+    """A reading with no model plugged in does not hide the image: it says why."""
+    report = extract_sources([put(tmp_path, "maquette.png", minimal_png())])
 
-    class TexteSeul(ModelProvider):
+    reading = single(report)
+    assert (reading.state, reading.reason) == (STATE_IGNORED, REASON_VISION_UNAVAILABLE)
+    assert "maquette.png" in markdown_context(report)
+
+
+def test_a_provider_that_does_not_see_images_says_so(tmp_path: Path) -> None:
+    """Agnosticism (O7): a provider without the capability is named, not worked around."""
+
+    class TextOnly(ModelProvider):
         name = "texte-seul"
 
         def supports(self, model: str) -> bool:
@@ -298,24 +294,24 @@ def test_un_fournisseur_qui_ne_voit_pas_les_images_le_dit(tmp_path: Path) -> Non
         async def generate(self, prompt, *, model, system_prompt=None, effort=None):
             return "jamais appelé"
 
-    lecteur = LecteurImagesModele(provider=TexteSeul(), modele="m")
+    reader = ModelImageReader(provider=TextOnly(), model="m")
 
-    schema = poser(tmp_path, "schema.png", png_minimal())
+    diagram = put(tmp_path, "schema.png", minimal_png())
 
-    lecture = seule(extraire_sources([schema], lire_image=lecteur))
+    reading = single(extract_sources([diagram], read_image=reader))
 
-    assert (lecture.etat, lecture.motif) == (ETAT_IGNORE, MOTIF_VISION_INDISPONIBLE)
-    assert "texte-seul" in lecture.message
+    assert (reading.state, reading.reason) == (STATE_IGNORED, REASON_VISION_UNAVAILABLE)
+    assert "texte-seul" in reading.message
 
 
-def test_le_lecteur_de_production_montre_l_image_au_fournisseur(tmp_path: Path) -> None:
-    """`LecteurImagesModele` : l'image, sa consigne et le modèle voyagent jusqu'au fournisseur."""
+def test_the_production_reader_shows_the_image_to_the_provider(tmp_path: Path) -> None:
+    """`ModelImageReader`: the image, its instruction and the model travel to the provider."""
 
-    class Voyant(ModelProvider):
+    class Seer(ModelProvider):
         name = "voyant"
 
         def __init__(self) -> None:
-            self.appels: list[dict[str, object]] = []
+            self.calls: list[dict[str, object]] = []
 
         def supports(self, model: str) -> bool:
             return True
@@ -324,43 +320,43 @@ def test_le_lecteur_de_production_montre_l_image_au_fournisseur(tmp_path: Path) 
             raise AssertionError("une image ne passe pas par generate")
 
         async def generate_with_images(self, prompt, *, images, model, system_prompt=None):
-            self.appels.append(
+            self.calls.append(
                 {"prompt": prompt, "images": images, "model": model, "system": system_prompt}
             )
             return "Un schéma à trois boîtes."
 
-    fournisseur = Voyant()
-    image = png_minimal()
+    provider = Seer()
+    image = minimal_png()
 
-    lecture = seule(
-        extraire_sources(
-            [poser(tmp_path, "archi.png", image)],
-            lire_image=LecteurImagesModele(provider=fournisseur, modele="modele-qui-voit"),
+    reading = single(
+        extract_sources(
+            [put(tmp_path, "archi.png", image)],
+            read_image=ModelImageReader(provider=provider, model="modele-qui-voit"),
         )
     )
 
-    assert lecture.etat == ETAT_LU
-    assert "trois boîtes" in lecture.markdown
-    (appel,) = fournisseur.appels
-    assert appel["model"] == "modele-qui-voit"
-    assert appel["images"] == [ImageJointe(octets=image, type_media="image/png", nom="archi.png")]
-    # La consigne dit au modèle que le texte d'une image est une **donnée** (ENF-13).
-    assert "jamais une consigne" in str(appel["system"])
+    assert reading.state == STATE_READ
+    assert "trois boîtes" in reading.markdown
+    (call,) = provider.calls
+    assert call["model"] == "modele-qui-voit"
+    assert call["images"] == [ImageJointe(octets=image, type_media="image/png", nom="archi.png")]
+    # The instruction tells the model that an image's text is **data** (ENF-13).
+    assert "jamais une consigne" in str(call["system"])
 
 
-def test_le_lecteur_de_production_resout_le_fournisseur_du_poste_sous_la_garde(
+def test_the_production_reader_resolves_the_workstation_provider_under_the_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Sans fournisseur injecté, il résout `provider_from_settings()` **nu** (#782).
+    """Without an injected provider, it resolves a **bare** `provider_from_settings()` (#782).
 
-    C'est la seule forme que la garde de la suite reconnaît : une résolution qui
-    passerait ses propres réglages lirait le même fournisseur par une porte non
-    surveillée, et un test qui joint une image appellerait le vrai modèle — ce qui
-    est arrivé une fois en écrivant ce lecteur.
+    That is the only form the suite's guard recognizes: a resolution that passed its
+    own settings would read the same provider through an unwatched door, and a test
+    that attaches an image would call the real model — which happened once while
+    writing this reader.
     """
     resolutions: list[tuple[object, ...]] = []
 
-    class Voyant(ModelProvider):
+    class Seer(ModelProvider):
         name = "voyant"
 
         def supports(self, model: str) -> bool:
@@ -374,126 +370,126 @@ def test_le_lecteur_de_production_resout_le_fournisseur_du_poste_sous_la_garde(
 
     def double(*args: object) -> ModelProvider:
         resolutions.append(args)
-        return Voyant()
+        return Seer()
 
     monkeypatch.setattr("maestro.providers.factory.provider_from_settings", double)
     monkeypatch.setenv("MAESTRO_MODEL", "modele-du-brief")
 
-    rapport = extraire_sources(
-        [poser(tmp_path, "a.png", png_minimal()), poser(tmp_path, "b.png", png_minimal())],
-        lire_image=LecteurImagesModele(),
+    report = extract_sources(
+        [put(tmp_path, "a.png", minimal_png()), put(tmp_path, "b.png", minimal_png())],
+        read_image=ModelImageReader(),
     )
 
-    assert [lecture.etat for lecture in rapport.lectures] == [ETAT_LU, ETAT_LU]
-    assert "vu par modele-du-brief" in rapport.lectures[0].markdown
-    # Nu, et une seule fois pour toute la lecture : la résolution est mémorisée.
+    assert [reading.state for reading in report.readings] == [STATE_READ, STATE_READ]
+    assert "vu par modele-du-brief" in report.readings[0].markdown
+    # Bare, and once for the whole reading: the resolution is memoized.
     assert resolutions == [()]
 
 
-def test_un_echec_du_modele_sur_une_image_est_nomme(tmp_path: Path) -> None:
-    """Un modèle qui échoue n'emporte pas la lecture : la ligne dit ce qui s'est passé."""
+def test_a_model_failure_on_an_image_is_named(tmp_path: Path) -> None:
+    """A failing model does not take the reading down: the line says what happened."""
 
-    def en_panne(_octets: bytes, _type: str, _nom: str) -> str:
+    def broken(_data: bytes, _type: str, _name: str) -> str:
         raise TimeoutError("le modèle n'a pas répondu")
 
-    rapport = extraire_sources(
-        [poser(tmp_path, "maquette.png", png_minimal()), poser(tmp_path, "notes.md", "Suite")],
-        lire_image=en_panne,
+    report = extract_sources(
+        [put(tmp_path, "maquette.png", minimal_png()), put(tmp_path, "notes.md", "Suite")],
+        read_image=broken,
     )
 
-    image, notes = rapport.lectures
-    assert (image.etat, image.motif) == (ETAT_IGNORE, "vision-en-echec")
+    image, notes = report.readings
+    assert (image.state, image.reason) == (STATE_IGNORED, "vision-en-echec")
     assert "TimeoutError" in image.message
-    assert notes.etat == ETAT_LU
+    assert notes.state == STATE_READ
 
 
-def test_une_image_trop_grosse_est_nommee_sans_etre_montree(tmp_path: Path) -> None:
-    """Une image ne se lit pas en partie : au-delà des octets lus, elle n'est pas envoyée."""
-    regard = Regard()
-    image = png_minimal() + b"\x00" * 4096
+def test_an_oversized_image_is_named_without_being_shown(tmp_path: Path) -> None:
+    """An image is not read in part: beyond the bytes read, it is not sent."""
+    gaze = Gaze()
+    image = minimal_png() + b"\x00" * 4096
 
-    lecture = seule(
-        extraire_sources(
-            [poser(tmp_path, "affiche.png", image)],
-            garde_fous=GardeFousExtraction(octets_max_lus=1024),
-            lire_image=regard,
+    reading = single(
+        extract_sources(
+            [put(tmp_path, "affiche.png", image)],
+            guardrails=ExtractionGuardrails(max_bytes_read=1024),
+            read_image=gaze,
         )
     )
 
-    assert (lecture.etat, lecture.motif) == (ETAT_IGNORE, "trop-volumineux")
-    assert "affiche.png" in lecture.message
-    assert regard.vus == []
+    assert (reading.state, reading.reason) == (STATE_IGNORED, "trop-volumineux")
+    assert "affiche.png" in reading.message
+    assert gaze.seen == []
 
 
-def test_le_nombre_d_images_montrees_au_modele_est_plafonne(tmp_path: Path) -> None:
-    """Chaque image est un appel au modèle avant même le run : le plafond le dit par image."""
-    for rang in range(3):
+def test_the_number_of_images_shown_to_the_model_is_capped(tmp_path: Path) -> None:
+    """Each image is a model call before the run even starts: the cap says so per image."""
+    for index in range(3):
         (tmp_path / "maquettes").mkdir(exist_ok=True)
-        (tmp_path / "maquettes" / f"ecran{rang}.png").write_bytes(png_minimal())
-    regard = Regard()
+        (tmp_path / "maquettes" / f"ecran{index}.png").write_bytes(minimal_png())
+    gaze = Gaze()
 
-    lecture = seule(
-        extraire_sources(
-            [Source(type=TYPE_DOSSIER, nom="maquettes", chemin=str(tmp_path / "maquettes"))],
-            garde_fous=GardeFousExtraction(images_max=2),
-            lire_image=regard,
+    reading = single(
+        extract_sources(
+            [Source(type=TYPE_DIRECTORY, name="maquettes", path=str(tmp_path / "maquettes"))],
+            guardrails=ExtractionGuardrails(max_images=2),
+            read_image=gaze,
         )
     )
 
-    assert len(regard.vus) == 2
-    assert [entree.motif for entree in lecture.entrees] == ["", "", "images-plafond"]
-    assert "2 images" in lecture.entrees[2].message
+    assert len(gaze.seen) == 2
+    assert [entry.reason for entry in reading.entries] == ["", "", "images-plafond"]
+    assert "2 images" in reading.entries[2].message
 
 
-def test_un_texte_trop_gros_reste_coupe_aux_octets_lus(tmp_path: Path) -> None:
-    """La borne d'octets s'applique à tout texte, JSON et code compris — jamais chargé entier."""
-    lecture = seule(
-        extraire_sources(
-            [poser(tmp_path, "donnees.json", "[" + "1," * 50_000 + "1]")],
-            garde_fous=GardeFousExtraction(octets_max_lus=1_000, tokens_max_source=None),
+def test_an_oversized_text_stays_cut_at_the_bytes_read(tmp_path: Path) -> None:
+    """The byte bound applies to any text, JSON and code included — never loaded whole."""
+    reading = single(
+        extract_sources(
+            [put(tmp_path, "donnees.json", "[" + "1," * 50_000 + "1]")],
+            guardrails=ExtractionGuardrails(max_bytes_read=1_000, max_tokens_per_source=None),
         )
     )
 
-    assert lecture.etat == ETAT_TRONQUE
-    assert lecture.limite == "octets lus"
+    assert reading.state == STATE_TRUNCATED
+    assert reading.limit == "octets lus"
 
 
-def test_un_classeur_enorme_est_coupe_en_le_disant(tmp_path: Path) -> None:
-    """Un tableur se convertit sous la même borne : au-delà, coupé et annoncé."""
+def test_a_huge_workbook_is_cut_and_says_so(tmp_path: Path) -> None:
+    """A spreadsheet is converted under the same bound: beyond it, cut and announced."""
     openpyxl = pytest.importorskip("openpyxl", reason="convertisseur .xlsx non installé")
-    classeur_ = openpyxl.Workbook()
-    for rang in range(2_000):
-        classeur_.active.append([f"ligne {rang}", "x" * 20])
-    chemin = tmp_path / "gros.xlsx"
-    classeur_.save(str(chemin))
+    book = openpyxl.Workbook()
+    for index in range(2_000):
+        book.active.append([f"ligne {index}", "x" * 20])
+    path = tmp_path / "gros.xlsx"
+    book.save(str(path))
 
-    lecture = seule(
-        extraire_sources(
-            [Source(type=TYPE_FICHIER, nom="gros.xlsx", chemin=str(chemin))],
-            garde_fous=GardeFousExtraction(octets_max_lus=2_000, tokens_max_source=None),
+    reading = single(
+        extract_sources(
+            [Source(type=TYPE_FILE, name="gros.xlsx", path=str(path))],
+            guardrails=ExtractionGuardrails(max_bytes_read=2_000, max_tokens_per_source=None),
         )
     )
 
-    assert lecture.etat == ETAT_TRONQUE
-    assert "octets lus" in lecture.limite
-    assert "ligne 1999" not in lecture.markdown
+    assert reading.state == STATE_TRUNCATED
+    assert "octets lus" in reading.limit
+    assert "ligne 1999" not in reading.markdown
 
 
 @pytest.mark.parametrize(
-    "nom",
+    "name",
     [".env.local", ".npmrc", "cle.pem", "deploiement.key", "credentials"],
 )
-def test_un_fichier_porteur_de_secrets_n_entre_jamais_au_contexte(tmp_path: Path, nom: str) -> None:
-    """Lire tous les formats n'ouvre pas la porte aux secrets : la règle est celle du projet."""
-    rapport = extraire_sources([poser(tmp_path, nom, "JETON=valeur-tres-secrete-1163\n")])
+def test_a_secret_bearing_file_never_enters_the_context(tmp_path: Path, name: str) -> None:
+    """Reading every format does not open the door to secrets: the rule is the project's."""
+    report = extract_sources([put(tmp_path, name, "JETON=valeur-tres-secrete-1163\n")])
 
-    lecture = seule(rapport)
-    assert (lecture.etat, lecture.motif) == (ETAT_IGNORE, "secret")
-    assert "valeur-tres-secrete-1163" not in contexte_markdown(rapport)
+    reading = single(report)
+    assert (reading.state, reading.reason) == (STATE_IGNORED, "secret")
+    assert "valeur-tres-secrete-1163" not in markdown_context(report)
 
 
-def test_dans_un_dossier_perimetre_et_secrets_tiennent(tmp_path: Path) -> None:
-    """Le périmètre écarte sans lister ; un porteur de secrets restant se nomme sans se lire."""
+def test_in_a_directory_perimeter_and_secrets_hold(tmp_path: Path) -> None:
+    """The perimeter discards without listing; a remaining secret bearer is named unread."""
     refs = tmp_path / "refs"
     (refs / "node_modules").mkdir(parents=True)
     (refs / "node_modules" / "paquet.json").write_text('{"x": 1}', encoding="utf-8")
@@ -501,42 +497,45 @@ def test_dans_un_dossier_perimetre_et_secrets_tiennent(tmp_path: Path) -> None:
     (refs / "config.json").write_text('{"port": 8080}', encoding="utf-8")
     (refs / "serveur.pem").write_text("-----BEGIN KEY-----\nsecret-du-pem-1163\n", encoding="utf-8")
 
-    rapport = extraire_sources([Source(type=TYPE_DOSSIER, nom="refs", chemin=str(refs))])
+    report = extract_sources([Source(type=TYPE_DIRECTORY, name="refs", path=str(refs))])
 
-    lecture = seule(rapport)
-    etats = {entree.nom: (entree.etat, entree.motif) for entree in lecture.entrees}
-    assert etats == {"config.json": (ETAT_LU, ""), "serveur.pem": (ETAT_IGNORE, "secret")}
-    rendu = contexte_markdown(rapport)
-    assert "secret-du-pem-1163" not in rendu
-    assert "exclue-par-le-perimetre" not in rendu
+    reading = single(report)
+    states = {entry.name: (entry.state, entry.reason) for entry in reading.entries}
+    assert states == {"config.json": (STATE_READ, ""), "serveur.pem": (STATE_IGNORED, "secret")}
+    rendered = markdown_context(report)
+    assert "secret-du-pem-1163" not in rendered
+    assert "exclue-par-le-perimetre" not in rendered
 
 
 # --------------------------------------------------------------------------- #
-# Le lecteur d'images                                                          #
+# The image reader                                                             #
 # --------------------------------------------------------------------------- #
 
 
-def test_l_apercu_ne_montre_pas_l_image_au_modele_et_le_dit(tmp_path: Path) -> None:
-    """L'aperçu est gratuit (docs/05 §2.7.3) : il annonce la lecture au lancement sans la payer."""
-    maquette = poser(tmp_path, "maquette.png", png_minimal())
+def test_the_preview_does_not_show_the_image_to_the_model_and_says_so(tmp_path: Path) -> None:
+    """The preview is free (docs/05 §2.7.3): it announces the launch-time reading without paying."""
+    mockup = put(tmp_path, "maquette.png", minimal_png())
 
-    lecture = seule(extraire_sources([maquette], lire_image=lire_image_en_apercu))
+    reading = single(extract_sources([mockup], read_image=read_image_in_preview))
 
-    assert (lecture.etat, lecture.motif) == (ETAT_IGNORE, "vue-au-lancement")
-    assert "lancement" in lecture.message
-
-
-def test_une_image_non_vue_porte_son_motif() -> None:
-    """Le contrat de l'exception : un code stable, une phrase lisible."""
-    refus = ImageNonVue("vision-indisponible", "Aucun modèle ne voit ici.")
-
-    assert (refus.motif, str(refus)) == ("vision-indisponible", "Aucun modèle ne voit ici.")
+    assert (reading.state, reading.reason) == (STATE_IGNORED, "vue-au-lancement")
+    assert "lancement" in reading.message
 
 
-def test_la_frontiere_refuse_une_image_par_defaut() -> None:
-    """Capacité optionnelle : un fournisseur qui ne la surcharge pas la refuse, nommément."""
+def test_an_unseen_image_carries_its_reason() -> None:
+    """The exception's contract: a stable code, a readable sentence."""
+    rejection = ImageNotSeen("vision-indisponible", "Aucun modèle ne voit ici.")
 
-    class TexteSeul(ModelProvider):
+    assert (rejection.reason, str(rejection)) == (
+        "vision-indisponible",
+        "Aucun modèle ne voit ici.",
+    )
+
+
+def test_the_boundary_rejects_an_image_by_default() -> None:
+    """Optional capability: a provider that does not override it rejects it, by name."""
+
+    class TextOnly(ModelProvider):
         name = "texte-seul"
 
         def supports(self, model: str) -> bool:
@@ -547,7 +546,7 @@ def test_la_frontiere_refuse_une_image_par_defaut() -> None:
 
     with pytest.raises(UnsupportedCapability, match="texte-seul"):
         asyncio.run(
-            TexteSeul().generate_with_images(
+            TextOnly().generate_with_images(
                 "Décris.", images=[ImageJointe(octets=b"x", type_media="image/png")], model="m"
             )
         )

@@ -69,7 +69,7 @@ from maestro.engine.plafond import (
 from maestro.orchestrator import Orchestrator
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import (
-    ETAPE_PLANIFICATION,
+    STEP_PLANNING,
     SUFFIXE_ETAPE_USAGE,
     StepUsage,
     report_usage,
@@ -255,7 +255,7 @@ def test_la_depense_d_une_tache_mise_de_cote_ne_compte_qu_une_fois():
     issue le ferait, et la carte de la tâche cumule sa reprise par-dessus.
     """
     state = ControlTowerState()
-    _journalise(state, _ligne(ETAPE_PLANIFICATION, STATUT_TERMINEE, 0.05))
+    _journalise(state, _ligne(STEP_PLANNING, STATUT_TERMINEE, 0.05))
     _journalise(state, _ligne(f"api{SUFFIXE_ETAPE_DEBUT}", STATUT_EN_COURS))
     _journalise(state, _ligne(f"api{SUFFIXE_ETAPE_USAGE}", STATUT_USAGE, 0.10))
 

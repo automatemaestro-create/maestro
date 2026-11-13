@@ -77,7 +77,7 @@ from maestro.orchestrator.schema import Task, validate_plan
 from maestro.providers.base import ModelProvider
 from maestro.sandbox.verification import Execution
 from maestro.telemetry import RunJournal, StepUsage
-from maestro.telemetry.costs import ETAPE_BRIEF
+from maestro.telemetry.costs import STEP_BRIEF
 
 #: Le titre de la section que chaque tâche reçoit — ce que l'agent lit en premier.
 SECTION = "Brief approuvé du run"
@@ -548,7 +548,7 @@ def _lancement(mode_brief: str) -> Event:
 def _etape_de_brief() -> tuple[Event, ...]:
     """L'étape `brief` d'un run du fil, par le vrai journal et le vrai pont (#1174)."""
     record = RunJournal(run_id=RUN).consigne(
-        etape=ETAPE_BRIEF,
+        etape=STEP_BRIEF,
         nom="Brief de l'objectif",
         agent="orchestrateur",
         role="Orchestrateur",

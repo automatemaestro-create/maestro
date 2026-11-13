@@ -1540,7 +1540,7 @@ def contexte_du_fil(fil: Sequence[MessageChat]) -> str:
     """Les sources que la conversation a jointes, déjà lues et encadrées (#1172).
 
     Chaque message d'utilisateur qui a porté des sources persiste leur contexte
-    (`MessageChat.contexte`), sorti de `contexte_markdown` et de lui seul : c'est
+    (`MessageChat.contexte`), sorti de `markdown_context` et de lui seul : c'est
     ce qui a été annoncé « lu » dans le fil. On les reprend **tels quels**, dans
     l'ordre de la conversation, sans relire aucune source. Relire enverrait au
     brief une matière qui n'est peut-être plus celle que la personne a vue (une
@@ -2531,7 +2531,7 @@ def _issue_du_run(execution: EtatExecution) -> str:
     """Ce que le dernier événement de cycle de vie a écrit sur l'issue du run.
 
     Souvent un décompte (« 0/3 tâche(s) réussie(s) »), parfois la cause entière
-    (« PlafondDepenseDepasse : … ») : les deux méritent d'être rapportés tels
+    (« SpendingCapExceeded : … ») : les deux méritent d'être rapportés tels
     quels, et c'est précisément parce que le premier n'explique rien que les
     détails des tâches viennent avec.
     """

@@ -153,9 +153,22 @@ class ProjetIllisible(ValueError):
         self.id = id_
 
 
+def motif_du_refus(refus: Exception, defaut: str = "") -> str:
+    """Le code stable d'un refus, quel que soit le paquet qui l'a levé.
+
+    Un refus du paquet `sources` (`SourceRejected`) porte son code dans `reason`, ceux des
+    projets (`RacineRefusee` et ses dérivés) dans `motif`. Les deux se lisent ici, et nulle
+    part ailleurs, jusqu'à la traduction du paquet `projets` (#1652).
+    """
+    for attribut in ("reason", "motif"):
+        if hasattr(refus, attribut):
+            return str(getattr(refus, attribut))
+    return defaut
+
+
 def statut_http(refus: Exception, *, explorateur: bool = False) -> int:
-    """Le code HTTP d'un refus du service, d'après son `motif` (défaut : 422)."""
-    motif = getattr(refus, "motif", "")
+    """Le code HTTP d'un refus du service, d'après son motif (défaut : 422)."""
+    motif = motif_du_refus(refus)
     if explorateur and motif in STATUT_HTTP_EXPLORATEUR:
         return STATUT_HTTP_EXPLORATEUR[motif]
     return STATUT_HTTP_PAR_MOTIF.get(motif, STATUT_HTTP_DEFAUT)
@@ -202,7 +215,7 @@ def detail_refus(refus: Exception) -> dict[str, Any]:
     Un dossier hors de la frontière porte en plus son `autorisation` (#1610).
     """
     corps: dict[str, Any] = {
-        "motif": getattr(refus, "motif", "requete-invalide"),
+        "motif": motif_du_refus(refus, "requete-invalide"),
         "message": str(refus),
     }
     autorisation = getattr(refus, "autorisation", None)

@@ -87,8 +87,8 @@ from maestro.orchestrator.rattrapage import EchecDeTache, Rattrapage, Tentative
 from maestro.orchestrator.schema import Task
 from maestro.prerequis import PrerequisManquant
 from maestro.telemetry import (
-    PlafondDepense,
     RunJournal,
+    SpendingCap,
     StepUsage,
     collect_usage,
 )
@@ -415,7 +415,7 @@ class JugeDesEchecs:
         )
         return verdict, usage
 
-    def _plafond(self, journal: RunJournal) -> PlafondDepense | None:
+    def _plafond(self, journal: RunJournal) -> SpendingCap | None:
         """Le plafond de dépense du run, armé comme celui de chaque tâche (#9, #56, #1182)."""
         return self._plafonds.controle(journal)
 

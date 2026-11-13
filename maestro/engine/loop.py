@@ -260,14 +260,14 @@ from maestro.telemetry import (
     StepRecord,
     StepUsage,
     collect_usage,
-    resume_controle_depense,
+    spending_control_summary,
 )
 from maestro.telemetry.costs import (
-    ETAPE_BRIEF,
-    ETAPE_CADENCE,
-    ETAPE_EQUIPE,
-    ETAPE_PLAFOND,
-    ETAPE_REPRISE,
+    STEP_BRIEF,
+    STEP_CADENCE,
+    STEP_RESUME,
+    STEP_SPENDING_CAP,
+    STEP_TEAM,
     RunCost,
     TaskCost,
 )
@@ -371,7 +371,7 @@ class RunReport:
     def grand_livre(self) -> RunCost:
         """Le grand livre du run (#55/#57) : coût par tâche et agrégat, depuis l'agrégat.
 
-        Pendant de `RunCost.depuis_journal`, mais sourcé du **rapport** plutôt que
+        Pendant de `RunCost.from_journal`, mais sourcé du **rapport** plutôt que
         du journal d'un process. La distinction devient essentielle en mode
         durable repris (#96) : l'agrégat est assemblé depuis l'historique
         Temporal, donc il porte l'avant **et** l'après reprise, là où le journal
@@ -386,15 +386,15 @@ class RunReport:
         """
         return RunCost(
             run_id=self.run_id,
-            planification=self.planification,
+            planning=self.planification,
             brief=self.cadrage,
-            taches=tuple(
+            tasks=tuple(
                 TaskCost(
-                    tache_id=r.task_id,
-                    nom=r.titre,
+                    task_id=r.task_id,
+                    name=r.titre,
                     agent=r.agent,
                     role=r.role,
-                    statut=r.statut,
+                    status=r.statut,
                     usage=r.usage,
                 )
                 for r in self.resultats
@@ -409,7 +409,7 @@ class RunReport:
         seul le plafond en tokens plafonnait — au lieu d'un garde-fou silencieusement
         inopérant sur un fournisseur sans coût rapporté.
         """
-        return resume_controle_depense(
+        return spending_control_summary(
             self.plafond_cout_usd, self.plafond_tokens, self.usage_totale
         )
 
@@ -992,7 +992,7 @@ class OrchestrationEngine:
         Le moteur ne sait ni qui la ferme ni pourquoi — voir `maestro.engine.pause`.
 
         `contexte_sources` (#1172) est ce que la personne a joint à l'objectif, déjà
-        lu et **encadré comme donnée** par `contexte_markdown` (ENF-13). Il nourrit
+        lu et **encadré comme donnée** par `markdown_context` (ENF-13). Il nourrit
         la première étape qui lit l'objectif : le **brief** et chacune de ses
         régénérations, ou le **plan** d'un run sans brief. Vide (le défaut), rien ne
         change.
@@ -1424,7 +1424,7 @@ class OrchestrationEngine:
         Deux gestes, et ils ne se ressemblent pas (#1391). Les issues acquises
         **rejoignent le journal sans être republiées** (`RunJournal.reprend`) : le
         plafond de dépense et le rapport de fin les comptent, la projection les a
-        déjà. Puis l'étape `reprise` (`ETAPE_REPRISE`, celle du mode durable #96)
+        déjà. Puis l'étape `reprise` (`STEP_RESUME`, celle du mode durable #96)
         **part** au fil du run : c'est la réponse à « est-ce bien le même run, et
         qu'est-ce qui reste à faire ? » — combien de tâches sont acquises et ne
         seront pas refaites, combien restent. Usage nul : reprendre ne sollicite
@@ -1453,7 +1453,7 @@ class OrchestrationEngine:
         )
         acquises, restantes = len(reprise.acquises), len(reprise.a_reprendre)
         journal.consigne(
-            etape=ETAPE_REPRISE,
+            etape=STEP_RESUME,
             nom="Reprise du run sur son plan",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
@@ -1651,7 +1651,7 @@ class OrchestrationEngine:
         tranchera, sur l'écran fait pour ça (#322).
 
         Rend l'usage **cumulé** (chaque régénération est un appel modèle de plus, et
-        le grand livre les fusionne déjà sous `ETAPE_BRIEF`, #318), le brief retenu,
+        le grand livre les fusionne déjà sous `STEP_BRIEF`, #318), le brief retenu,
         et le **nombre de tours réellement joués** — celui qu'annonce la synthèse.
 
         Sans arbitre de clarification, ou avec un plafond à zéro, ne fait rien et
@@ -1889,7 +1889,7 @@ class OrchestrationEngine:
         if derivees is None or largeur <= 1:
             return
         journal.consigne(
-            etape=ETAPE_EQUIPE,
+            etape=STEP_TEAM,
             nom="Tâches de front",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
@@ -1919,7 +1919,7 @@ class OrchestrationEngine:
         trois lecteurs à traiter à l'identique deux mots pour une seule chose.
         """
         journal.consigne(
-            etape=ETAPE_EQUIPE,
+            etape=STEP_TEAM,
             nom="L'équipe confrontée au plan",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
@@ -1971,7 +1971,7 @@ class OrchestrationEngine:
             )
         detail = decision.detail.strip()
         journal.consigne(
-            etape=ETAPE_EQUIPE,
+            etape=STEP_TEAM,
             nom=f"Renfort « {manque.manque.role} »",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
@@ -2183,7 +2183,7 @@ class OrchestrationEngine:
         même canal (la carte d'une question, #1023), même borne
         (`BornesArbitrage.attente_s`, le seul réglage du temps humain), mais aucune
         tâche à qui la rattacher — l'identifiant se range sous l'étape du run
-        (`ETAPE_CADENCE`), et l'issue est consignée par l'appelant sur cette étape.
+        (`STEP_CADENCE`), et l'issue est consignée par l'appelant sur cette étape.
 
         Rend la réponse et, quand il n'y en a pas, pourquoi : personne n'a répondu
         à temps, ou la question n'a pas pu partir.
@@ -2194,7 +2194,7 @@ class OrchestrationEngine:
         attente_s = self._bornes_question.attente_s
         cle = cle_acte(verbe, {"run": journal.run_id, "question": texte})
         demande = DemandeQuestion(
-            question_id=identifiant_question(ETAPE_CADENCE, cle),
+            question_id=identifiant_question(STEP_CADENCE, cle),
             question=texte,
             hypothese=hypothese,
             choix=choix,
@@ -2998,7 +2998,7 @@ class OrchestrationEngine:
         échec —, et l'usage rendu à l'appelant. C'est ce qui fait que le brief
         « ne disparaît pas du coût » : sa ligne entre dans `RunJournal.usage_totale`
         comme n'importe quelle autre, et `RunCost` la comptabilise à part des tâches
-        (`ETAPE_BRIEF`) au lieu d'en faire une tâche fantôme.
+        (`STEP_BRIEF`) au lieu d'en faire une tâche fantôme.
 
         `projet_id` (#222) est porté par l'étape pour la même raison qu'en
         planification : le cadrage est une **dépense du projet**, et l'omettre
@@ -3008,7 +3008,7 @@ class OrchestrationEngine:
         déjà joués et le rang de celui-ci : l'étape devient **ré-appelable**, chaque
         appel régénérant le brief entier avec une entrée plus riche. Chaque tour
         consigne **sa propre ligne** de journal, avec son numéro — le grand livre les
-        fusionne ensuite sous `ETAPE_BRIEF` (#318), si bien que le coût du cadrage
+        fusionne ensuite sous `STEP_BRIEF` (#318), si bien que le coût du cadrage
         reste un seul poste tout en gardant, dans la trace, le détail de ce qui a été
         payé pour lever les zones d'ombre.
         """
@@ -3025,7 +3025,7 @@ class OrchestrationEngine:
                 )
             except Exception as exc:
                 journal.consigne(
-                    etape=ETAPE_BRIEF,
+                    etape=STEP_BRIEF,
                     nom=f"Brief de l'objectif{rang}",
                     agent=ACTEUR_ORCHESTRATEUR,
                     role=ROLE_ORCHESTRATEUR,
@@ -3039,7 +3039,7 @@ class OrchestrationEngine:
                 raise
         usage = recolte.total.avec_duree(_ecoule_ms(debut))
         journal.consigne(
-            etape=ETAPE_BRIEF,
+            etape=STEP_BRIEF,
             nom=f"Brief de l'objectif{rang}",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
@@ -3313,7 +3313,7 @@ class _AuPlafond:
 
     def _demande(self, raison: str) -> DemandePlafond:
         """Les faits de la question : dépense, plafonds en vigueur, ce qui reste à faire."""
-        total = RunCost.depuis_journal(self._journal).total
+        total = RunCost.from_journal(self._journal).total
         cout, jetons = self._plafonds.en_vigueur(self._journal.run_id)
         restantes = tuple(
             TacheRestante(
@@ -3375,7 +3375,7 @@ class _AuPlafond:
             ))
         detail = decision.detail.strip() if decision is not None else ""
         self._journal.consigne(
-            etape=ETAPE_PLAFOND,
+            etape=STEP_SPENDING_CAP,
             nom="Décision au plafond de dépense",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,
@@ -3393,7 +3393,7 @@ class _AuPlafond:
             for t in demande.restantes
         )
         self._journal.consigne(
-            etape=ETAPE_PLAFOND,
+            etape=STEP_SPENDING_CAP,
             nom="Plafond de dépense atteint",
             agent=ACTEUR_ORCHESTRATEUR,
             role=ROLE_ORCHESTRATEUR,

@@ -12,13 +12,13 @@ les couches (orchestrateur, runtime outillé) sans paramètre supplémentaire.
 Ce canal **relaie** aussi le plafond de dépense (ticket #9) : c'est entre deux
 appels modèle que la dépense se contrôle. Un collecteur ouvert avec un contrôle
 de dépense (`plafond=`) le consulte à chaque mesure — sans rien compter lui-même :
-le contrôle (`maestro.telemetry.costs.PlafondDepense`, #56) relit la comptabilité
-par tâche de l'exécution, source unique du coût, et lève `PlafondDepenseDepasse`
+le contrôle (`maestro.telemetry.costs.SpendingCap`, #56) relit la comptabilité
+par tâche de l'exécution, source unique du coût, et lève `SpendingCapExceeded`
 depuis `report_usage` dès que le plafond est dépassé — l'appel modèle en cours est
 déjà comptabilisé (le coût reste visible), mais la suite de l'étape est stoppée.
 Un fournisseur qui ne rapporte pas de coût échappe au plafond *en USD* (coût
 « inconnu ») mais reste plafonnable **en tokens** (#113) : le même contrôle
-(`PlafondDepense`) accepte un plafond en tokens, toujours opérant.
+(`SpendingCap`) accepte un plafond en tokens, toujours opérant.
 
 Depuis #835, ce canal se lit aussi **pendant** le travail : un collecteur ouvert
 avec `on_mesure=` rappelle son appelant à chaque mesure signalée, avec le cumul
@@ -386,9 +386,9 @@ class ControleDepense(Protocol):
     """Contrôle de dépense consulté par le collecteur à chaque mesure (#9).
 
     `verifie` reçoit l'usage cumulé de l'étape en cours et lève
-    (`PlafondDepenseDepasse`) si la dépense de l'exécution dépasse son plafond (en
+    (`SpendingCapExceeded`) si la dépense de l'exécution dépasse son plafond (en
     USD **ou en tokens**, #113). L'implémentation du POC est
-    `maestro.telemetry.costs.PlafondDepense`, adossée à la comptabilité par tâche
+    `maestro.telemetry.costs.SpendingCap`, adossée à la comptabilité par tâche
     (#56) — le protocole évite au canal de mesure de dépendre de la comptabilité,
     qui se construit au-dessus de lui.
     """
@@ -460,7 +460,7 @@ def collect_usage(
     à la sortie, le collecteur précédent est restauré. `plafond` arme le garde-fou
     de dépense (#9) sur ce bloc : à chaque mesure, le contrôle confronte la dépense
     de l'exécution à son plafond et le `report_usage` fautif lève
-    `PlafondDepenseDepasse` chez l'appelant du fournisseur. `on_mesure` (#835)
+    `SpendingCapExceeded` chez l'appelant du fournisseur. `on_mesure` (#835)
     reçoit le cumul du bloc à chaque mesure signalée — c'est le relevé en cours
     d'une tâche, celui qui se voit pendant qu'il se dépense.
     """
@@ -491,7 +491,7 @@ def report_usage(usage: StepUsage) -> None:
     C'est le point d'entrée des fournisseurs : appelé après chaque appel modèle,
     sans qu'ils aient à savoir si quelqu'un écoute. Si le collecteur actif est
     plafonné (#9) et que ce signalement fait dépasser le plafond de dépense de
-    l'exécution (#56), l'appel lève `PlafondDepenseDepasse` — c'est ainsi que le
+    l'exécution (#56), l'appel lève `SpendingCapExceeded` — c'est ainsi que le
     garde-fou stoppe l'étape.
     """
     collector = _COLLECTEUR.get()

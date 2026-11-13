@@ -1,138 +1,143 @@
-"""Les sources d'un objectif — matière d'entrée déclarée, résolue, lue et bornée.
+"""The sources of an objective — input material declared, resolved, read and bounded.
 
-Socle de la **Phase 8** ([docs/24 §3](../../docs/24-projets-locaux-et-poste-de-travail.md),
-parent #314) : un lancement ne portait qu'un objectif texte, il porte désormais
-ce que cet objectif embarque — fichiers téléversés, dossier de références, URL
-(EF-39, entité SOURCE de [docs/03](../../docs/03-modele-de-donnees.md)).
+Foundation of **Phase 8** ([docs/24 §3](../../docs/24-projets-locaux-et-poste-de-travail.md),
+parent #314): a launch used to carry only a text objective, it now carries what
+that objective brings along — uploaded files, a reference directory, URLs
+(EF-39, SOURCE entity of [docs/03](../../docs/03-modele-de-donnees.md)).
 
-Sept modules, sept responsabilités qui ne se mélangent pas :
+Seven modules, seven responsibilities that do not mix:
 
-- `modele` — la **forme** (`Source`, `SourceRefusee`), module feuille, relue
-  sans jamais être rejugée : un journal durable rejoué ne se refuse pas ;
-- `resolution` (#315) — ce qu'une déclaration **devient** face au disque, au
-  réseau et aux plafonds du run, et ce qui la fait refuser **avec son motif** ;
-- `extraction` (#316) — ce qu'une source **dit** : tout ramené au Markdown, quel
-  qu'en soit le format (#1163), avec son rapport de lecture et son coût en tokens,
-  et encadré comme **donnée** avant d'entrer dans un contexte ;
-- `images` (#1163) — ce qu'une image **montre** : reconnue à ses octets, regardée
-  par le modèle du poste, et rendue en Markdown à l'extraction — ou nommée avec
-  la raison pour laquelle personne ne l'a regardée ;
-- `televersement` (#317) — où des octets reçus **attendent** leur run, et comment
-  ils lui sont rattachés. Un navigateur ne livre pas de chemin, il livre des
-  octets : c'est le seul moyen qu'une source `fichier` en désigne de vrais ;
-- `apercu` (#319) — ce que des sources **donneraient**, joué à vide : la même
-  lecture, rendue avant le lancement et sans rien conserver, pour que composer un
-  objectif reste réversible tant que c'est gratuit ;
-- `composition` (#482) — l'**enchaînement** des trois précédents (déclarer,
-  résoudre, rattacher), qui vivait en privé dans le lancement tant que celui-ci
-  était le seul geste capable de porter des sources. Le fil de chat en est un
-  second : ils appellent la même chaîne, et c'est le sens littéral du critère
-  « jamais par une seconde ».
+- `model` — the **shape** (`Source`, `SourceRejected`), leaf module, reread
+  without ever being rejudged: a replayed durable journal does not refuse
+  itself;
+- `resolution` (#315) — what a declaration **becomes** against the disk, the
+  network and the caps of the run, and what makes it rejected **with its
+  reason**;
+- `extraction` (#316) — what a source **says**: everything brought back to
+  Markdown, whatever the format (#1163), with its reading report and its cost in
+  tokens, and framed as **data** before entering a context;
+- `images` (#1163) — what an image **shows**: recognized by its bytes, looked at
+  by the workstation's model, and rendered as Markdown at extraction — or named
+  with the reason why nobody looked at it;
+- `upload` (#317) — where received bytes **wait** for their run, and how they are
+  attached to it. A browser delivers no path, it delivers bytes: this is the only
+  way a `fichier` source can designate real ones;
+- `preview` (#319) — what the sources **would give**, played dry: the same
+  reading, rendered before launch and keeping nothing, so that composing an
+  objective stays reversible as long as it is free;
+- `composition` (#482) — the **chaining** of the three previous ones (declare,
+  resolve, attach), which lived privately in the launch as long as it was the
+  only gesture able to carry sources. The chat thread is a second one: they call
+  the same chain, and that is the literal meaning of the "never through a
+  second one" criterion.
 
-Les deux régimes sont opposés à dessein : la résolution **refuse** (une saisie se
-corrige), l'extraction **ignore ou tronque en le disant** (un contenu n'est pas
-encore connu de qui l'a joint). Le téléversement suit celui de la résolution : ce
-qui dépasse un plafond est refusé **pendant** la réception, jamais tronqué.
+The two regimes are opposed on purpose: the resolution **rejects** (an input is
+corrected), the extraction **ignores or truncates while saying so** (a content
+is not yet known to whoever attached it). The upload follows that of the
+resolution: what exceeds a cap is rejected **during** reception, never
+truncated.
 
-Les routes qui les servent — `POST /api/sources` et `POST /api/executions` — sont
-au [§6.8 et au §6.1 de docs/05](../../docs/05-interface-control-tower.md).
+The routes that serve them — `POST /api/sources` and `POST /api/executions` — are
+in [§6.8 and §6.1 of docs/05](../../docs/05-interface-control-tower.md).
 """
 
-from maestro.sources.apercu import RUN_APERCU, apercu_sources
-from maestro.sources.composition import composer_sources
+from maestro.sources.composition import compose_sources
 from maestro.sources.extraction import (
-    ETAT_IGNORE,
-    ETAT_LU,
-    ETAT_TRONQUE,
-    ETATS,
-    EXTENSIONS_CONVERTIES,
-    EXTENSIONS_HTML,
-    GardeFousExtraction,
-    Lecture,
-    RapportLecture,
-    contexte_markdown,
-    estimer_tokens,
-    extraire_sources,
-    lecteur_par_defaut,
+    CONVERTED_EXTENSIONS,
+    HTML_EXTENSIONS,
+    STATE_IGNORED,
+    STATE_READ,
+    STATE_TRUNCATED,
+    STATES,
+    ExtractionGuardrails,
+    Reading,
+    ReadingReport,
+    default_reader,
+    estimate_tokens,
+    extract_sources,
+    markdown_context,
 )
 from maestro.sources.images import (
-    MOTIF_VISION_INDISPONIBLE,
-    MOTIF_VUE_AU_LANCEMENT,
-    ImageNonVue,
-    LecteurImagesModele,
-    LireImage,
-    lire_image_en_apercu,
-    type_image,
+    REASON_SEEN_AT_LAUNCH,
+    REASON_VISION_UNAVAILABLE,
+    ImageNotSeen,
+    ModelImageReader,
+    ReadImage,
+    image_type,
+    read_image_in_preview,
 )
-from maestro.sources.modele import (
-    LONGUEUR_MAX_NOM,
-    TYPE_DOSSIER,
-    TYPE_FICHIER,
+from maestro.sources.model import (
+    MAX_NAME_LENGTH,
+    SOURCE_TYPES,
+    TYPE_DIRECTORY,
+    TYPE_FILE,
     TYPE_URL,
-    TYPES_SOURCE,
     Source,
-    SourceRefusee,
-    sources_depuis,
-    sources_en_liste,
+    SourceRejected,
+    sources_as_list,
+    sources_from,
 )
+from maestro.sources.preview import PREVIEW_RUN, preview_sources
 from maestro.sources.resolution import (
-    ID_RUN,
-    LONGUEUR_MAX_URL,
-    emplacement_ingestion,
-    nom_de_fichier,
-    racine_ingestion,
-    resoudre_sources,
+    MAX_RUN_ID_LENGTH,
+    MAX_URL_LENGTH,
+    RUN_ID_PATTERN,
+    file_name,
+    ingestion_location,
+    ingestion_root,
+    resolve_sources,
 )
-from maestro.sources.televersement import (
-    DOSSIER_TELEVERSEMENTS,
-    ID_TELEVERSEMENT,
-    DepotTeleversements,
-    Televersement,
-    declarer_televersements,
+from maestro.sources.upload import (
+    UPLOAD_ID_PATTERN,
+    UPLOADS_DIRECTORY,
+    Upload,
+    UploadStore,
+    declare_uploads,
 )
 
 __all__ = [
-    "DOSSIER_TELEVERSEMENTS",
-    "ETATS",
-    "ETAT_IGNORE",
-    "ETAT_LU",
-    "ETAT_TRONQUE",
-    "EXTENSIONS_CONVERTIES",
-    "EXTENSIONS_HTML",
-    "ID_RUN",
-    "ID_TELEVERSEMENT",
-    "LONGUEUR_MAX_NOM",
-    "LONGUEUR_MAX_URL",
-    "MOTIF_VISION_INDISPONIBLE",
-    "MOTIF_VUE_AU_LANCEMENT",
-    "RUN_APERCU",
-    "TYPES_SOURCE",
-    "TYPE_DOSSIER",
-    "TYPE_FICHIER",
+    "CONVERTED_EXTENSIONS",
+    "HTML_EXTENSIONS",
+    "MAX_NAME_LENGTH",
+    "MAX_RUN_ID_LENGTH",
+    "MAX_URL_LENGTH",
+    "PREVIEW_RUN",
+    "REASON_SEEN_AT_LAUNCH",
+    "REASON_VISION_UNAVAILABLE",
+    "RUN_ID_PATTERN",
+    "SOURCE_TYPES",
+    "STATES",
+    "STATE_IGNORED",
+    "STATE_READ",
+    "STATE_TRUNCATED",
+    "TYPE_DIRECTORY",
+    "TYPE_FILE",
     "TYPE_URL",
-    "DepotTeleversements",
-    "GardeFousExtraction",
-    "ImageNonVue",
-    "LecteurImagesModele",
-    "Lecture",
-    "LireImage",
-    "RapportLecture",
+    "UPLOADS_DIRECTORY",
+    "UPLOAD_ID_PATTERN",
+    "ExtractionGuardrails",
+    "ImageNotSeen",
+    "ModelImageReader",
+    "ReadImage",
+    "Reading",
+    "ReadingReport",
     "Source",
-    "SourceRefusee",
-    "Televersement",
-    "apercu_sources",
-    "composer_sources",
-    "contexte_markdown",
-    "declarer_televersements",
-    "emplacement_ingestion",
-    "estimer_tokens",
-    "extraire_sources",
-    "lecteur_par_defaut",
-    "lire_image_en_apercu",
-    "nom_de_fichier",
-    "racine_ingestion",
-    "resoudre_sources",
-    "sources_depuis",
-    "sources_en_liste",
-    "type_image",
+    "SourceRejected",
+    "Upload",
+    "UploadStore",
+    "compose_sources",
+    "declare_uploads",
+    "default_reader",
+    "estimate_tokens",
+    "extract_sources",
+    "file_name",
+    "image_type",
+    "ingestion_location",
+    "ingestion_root",
+    "markdown_context",
+    "preview_sources",
+    "read_image_in_preview",
+    "resolve_sources",
+    "sources_as_list",
+    "sources_from",
 ]

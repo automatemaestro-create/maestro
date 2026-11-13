@@ -154,7 +154,7 @@ class OrdreRun:
     refuserait serait un second endroit où le message d'erreur s'écrit.
 
     `contexte_sources` (#1172) est ce que le lancement a **lu** des sources jointes,
-    encadré comme donnée par `contexte_markdown` (ENF-13) : une chaîne, donc une
+    encadré comme donnée par `markdown_context` (ENF-13) : une chaîne, donc une
     donnée. Il voyage **lu** et non en références à relire. L'hôte rédige alors le
     brief sur ce que l'écran a annoncé « lu », jamais sur une relecture qui aurait
     pu changer entre-temps (une page, #316). Avant lui, l'ordre ne portait pas les

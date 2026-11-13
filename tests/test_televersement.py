@@ -1,25 +1,25 @@
-"""Le dépôt des sources téléversées (#317) : recevoir des octets, puis les rattacher à un run.
+"""The store of uploaded sources (#317): receive bytes, then attach them to a run.
 
-Le lot 7 a différé toute sa couverture au lot final (checklist de #314), et c'est
-le module de la Phase 8 qui en avait le plus besoin : il **écrit sur le disque**
-un contenu venu de l'extérieur, à un endroit calculé à partir d'un nom que le
-navigateur propose. Les trois questions qu'il faut donc lui poser :
+Lot 7 deferred all its coverage to the final lot (checklist of #314), and this
+is the Phase 8 module that needed it most: it **writes to disk** content coming
+from the outside, at a place computed from a name the browser proposes. So the
+three questions to ask it:
 
-1. **ce qui entre est-il assaini** — un nom de fichier venu d'un navigateur est
-   le vecteur classique de la traversée de répertoire, et un identifiant renvoyé
-   par un client redevient un segment de chemin à la relecture ;
-2. **un refus laisse-t-il quelque chose derrière lui** — c'est la promesse
-   centrale du module (« rien n'est tronqué à l'entrée ») : un fichier à moitié
-   reçu serait rapporté « lu » par le rapport de lecture, et le brief conclurait
-   sur un document amputé sans que personne ne puisse le voir ;
-3. **le dépôt fait-il foi sur le client** — nom et taille d'une source
-   téléversée viennent des octets reçus, jamais de ce que la requête annonce,
-   sans quoi le plafond par source se contourne en déclarant douze octets.
+1. **is what comes in sanitized** -- a file name coming from a browser is the
+   classic vector of directory traversal, and an identifier sent back by a
+   client becomes a path segment again on re-read;
+2. **does a rejection leave anything behind** -- it is the module's central
+   promise ("nothing is truncated at input"): a half-received file would be
+   reported "read" by the reading report, and the brief would conclude on an
+   amputated document without anyone being able to see it;
+3. **does the store prevail over the client** -- name and size of an uploaded
+   source come from the received bytes, never from what the request announces,
+   otherwise the per-source cap is circumvented by declaring twelve bytes.
 
-Les trois se mesurent **sur le disque** et non sur une intention : chaque test de
-refus relit le dépôt pour vérifier qu'il est vide. Aucun réseau, aucun backend —
-le module reçoit un flux binaire quelconque, ce qui est précisément ce qui le
-rend testable sans requête HTTP.
+All three are measured **on disk** and not on an intention: every rejection test
+re-reads the store to check that it is empty. No network, no backend -- the
+module receives any binary stream, which is precisely what makes it testable
+without an HTTP request.
 """
 
 from __future__ import annotations
@@ -33,583 +33,586 @@ from fastapi.testclient import TestClient
 
 from maestro.controltower import ControlTowerState, InMemoryEventBus, create_app
 from maestro.engine.guardrails import GardeFousIngestion
-from maestro.sources import SourceRefusee, emplacement_ingestion
-from maestro.sources.modele import TYPE_DOSSIER, TYPE_FICHIER, TYPE_URL
-from maestro.sources.televersement import (
-    DOSSIER_TELEVERSEMENTS,
-    ID_TELEVERSEMENT,
-    DepotTeleversements,
-    declarer_televersements,
+from maestro.sources import SourceRejected, ingestion_location
+from maestro.sources.model import TYPE_DIRECTORY, TYPE_FILE, TYPE_URL
+from maestro.sources.upload import (
+    UPLOAD_ID_PATTERN,
+    UPLOADS_DIRECTORY,
+    UploadStore,
+    declare_uploads,
 )
 
-CONTENU = "Cahier des charges\n\nRefondre l'écran de lancement.".encode()
+CONTENT = "Cahier des charges\n\nRefondre l'écran de lancement.".encode()
 
 
 @pytest.fixture(autouse=True)
-def _maison_isolee(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Un dossier utilisateur factice — même raison qu'en #221/#223 et #315.
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fake user home -- same reason as in #221/#223 and #315.
 
-    Sous Windows, le `tmp_path` de pytest vit dans `AppData/Local/Temp`, que la
-    validation de racine refuse à raison : sans cette isolation, les chemins de
-    ces tests seraient refusés pour une bonne raison, mais pas celle qu'ils
-    mesurent.
+    On Windows, pytest's `tmp_path` lives in `AppData/Local/Temp`, which the root
+    validation rejects for good reason: without this isolation, the paths of
+    these tests would be rejected for a good reason, but not the one they
+    measure.
     """
-    maison = tmp_path / "maison"
-    maison.mkdir()
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: maison))
-    return maison
+    home = tmp_path / "maison"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
 
 
 @pytest.fixture(autouse=True)
-def _ingestion_jetable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """L'emplacement d'ingestion pointé sur un dossier jetable, jamais `core/`."""
-    racine = tmp_path / "ingestion"
-    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(racine))
-    return racine
+def _disposable_ingestion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The ingestion location pointed at a disposable directory, never `core/`."""
+    root = tmp_path / "ingestion"
+    monkeypatch.setenv("MAESTRO_INGESTION_DIR", str(root))
+    return root
 
 
 @pytest.fixture()
-def depot(tmp_path: Path) -> DepotTeleversements:
-    """Un dépôt isolé, plafonds par défaut."""
-    return DepotTeleversements(tmp_path / "depot")
+def store(tmp_path: Path) -> UploadStore:
+    """An isolated store, default caps."""
+    return UploadStore(tmp_path / "depot")
 
 
-def _entrees(depot: DepotTeleversements) -> list[Path]:
-    """Ce que le dépôt porte réellement — mesuré sur le disque, jamais déduit."""
-    racine = depot._racine  # noqa: SLF001 - l'état disque est justement le sujet
-    return sorted(racine.iterdir()) if racine.is_dir() else []
+def _entries(store: UploadStore) -> list[Path]:
+    """What the store really holds -- measured on disk, never deduced."""
+    root = store._root  # noqa: SLF001 - the on-disk state is precisely the subject
+    return sorted(root.iterdir()) if root.is_dir() else []
 
 
-class FluxCompte(io.BytesIO):
-    """Un flux qui retient combien d'octets on lui a réellement pris.
+class CountingStream(io.BytesIO):
+    """A stream that remembers how many bytes were actually taken from it.
 
-    C'est ce qui distingue « refusé pendant la réception » de « reçu puis
-    jeté » : sans ce compteur, les deux régimes rendent le même refus et le
-    fichier de 2 Gio est quand même passé par le disque.
+    It is what tells "rejected during reception" from "received then thrown
+    away": without this counter, both regimes return the same rejection and the
+    2 GiB file has gone through the disk anyway.
     """
 
-    def __init__(self, contenu: bytes) -> None:
-        super().__init__(contenu)
-        self.lus = 0
+    def __init__(self, content: bytes) -> None:
+        super().__init__(content)
+        self.consumed = 0
 
-    def read(self, taille: int | None = -1, /) -> bytes:
-        tranche = super().read(taille)
-        self.lus += len(tranche)
-        return tranche
+    def read(self, size: int | None = -1, /) -> bytes:
+        chunk = super().read(size)
+        self.consumed += len(chunk)
+        return chunk
 
 
-class FluxInterrompu(io.RawIOBase):
-    """Un flux qui rend une tranche puis lève une `BaseException`.
+class InterruptedStream(io.RawIOBase):
+    """A stream that returns one chunk then raises a `BaseException`.
 
-    Reproduit ce que le module dit prévoir : l'annulation de la tâche qui portait
-    la copie (client déconnecté, arrêt de l'app). `KeyboardInterrupt` n'hérite pas
-    d'`Exception` — un `except Exception` laisserait donc le fichier tronqué.
+    Reproduces what the module says it anticipates: the cancellation of the task
+    carrying the copy (client disconnected, app shutdown). `KeyboardInterrupt`
+    does not inherit from `Exception` -- an `except Exception` would therefore
+    leave the file truncated.
     """
 
     def __init__(self) -> None:
-        self.tranches = 0
+        self.chunks = 0
 
-    def read(self, taille: int | None = -1, /) -> bytes:
-        self.tranches += 1
-        if self.tranches == 1:
+    def read(self, size: int | None = -1, /) -> bytes:
+        self.chunks += 1
+        if self.chunks == 1:
             return b"debut de document"
         raise KeyboardInterrupt("copie interrompue")
 
 
-# --- ① Accueillir : des octets, un identifiant, un nom assaini ---------------
+# --- 1. Receive: bytes, an identifier, a sanitized name ----------------------
 
 
-def test_des_octets_accueillis_se_relisent_sous_leur_identifiant(
-    depot: DepotTeleversements,
+def test_received_bytes_are_re_read_under_their_identifier(
+    store: UploadStore,
 ) -> None:
-    """Le cas nominal : ce qui est déposé se retrouve, à l'octet près."""
-    televerse = depot.accueillir("cdc.md", io.BytesIO(CONTENU))
-    assert ID_TELEVERSEMENT.match(televerse.id)
-    assert televerse.nom == "cdc.md"
-    assert televerse.taille == len(CONTENU)
-    assert televerse.chemin.read_bytes() == CONTENU
-    relu = depot.lire(televerse.id)
-    assert relu == televerse
+    """The nominal case: what is deposited is found again, byte for byte."""
+    upload = store.receive("cdc.md", io.BytesIO(CONTENT))
+    assert UPLOAD_ID_PATTERN.match(upload.id)
+    assert upload.name == "cdc.md"
+    assert upload.size == len(CONTENT)
+    assert upload.path.read_bytes() == CONTENT
+    reread = store.read(upload.id)
+    assert reread == upload
 
 
-def test_le_dossier_du_depot_est_hors_de_tout_run_et_de_tout_projet(
-    _ingestion_jetable: Path,
+def test_the_store_directory_is_outside_any_run_and_any_project(
+    _disposable_ingestion: Path,
 ) -> None:
-    """Téléverser dépose la matière avant qu'un run existe — donc à côté d'eux."""
-    depot = DepotTeleversements.default()
-    televerse = depot.accueillir("note.md", io.BytesIO(b"un mot"))
-    assert televerse.chemin.parent.parent == _ingestion_jetable / DOSSIER_TELEVERSEMENTS
+    """Uploading deposits the material before a run exists -- hence next to them."""
+    store = UploadStore.default()
+    upload = store.receive("note.md", io.BytesIO(b"un mot"))
+    assert upload.path.parent.parent == _disposable_ingestion / UPLOADS_DIRECTORY
 
 
-def test_le_depot_par_defaut_ne_cree_rien_par_sa_seule_lecture(
-    _ingestion_jetable: Path,
+def test_the_default_store_creates_nothing_by_merely_being_read(
+    _disposable_ingestion: Path,
 ) -> None:
-    """Un déploiement où personne ne téléverse ne pose aucun dossier (patron de #315)."""
-    DepotTeleversements.default()
-    assert not _ingestion_jetable.exists()
+    """A deployment where nobody uploads lays no directory (pattern of #315)."""
+    UploadStore.default()
+    assert not _disposable_ingestion.exists()
 
 
-def test_le_dossier_des_televersements_ne_peut_pas_etre_pris_pour_un_run() -> None:
-    """La collision dépôt ↔ run est impossible **par construction**, pas improbable.
+def test_the_uploads_directory_cannot_be_mistaken_for_a_run() -> None:
+    """The store <-> run collision is impossible **by construction**, not unlikely.
 
-    `DOSSIER_TELEVERSEMENTS` commence par un tiret bas, or `ID_RUN` (#315) exige
-    une alphanumérique en tête : aucun `run_id` ne peut donc jamais désigner ce
-    dossier. C'est ce que le commentaire du module affirme — on le mesure plutôt
-    que de le relire.
+    `UPLOADS_DIRECTORY` starts with an underscore, whereas `RUN_ID_PATTERN` (#315)
+    requires an alphanumeric first character: no `run_id` can therefore ever
+    designate this directory. It is what the module's comment asserts -- we
+    measure it rather than rereading it.
     """
-    with pytest.raises(SourceRefusee) as capture:
-        emplacement_ingestion(DOSSIER_TELEVERSEMENTS)
-    assert capture.value.motif == "run-invalide"
+    with pytest.raises(SourceRejected) as capture:
+        ingestion_location(UPLOADS_DIRECTORY)
+    assert capture.value.reason == "run-invalide"
 
 
 @pytest.mark.parametrize(
-    "nom",
+    "name",
     [
-        "../../evasion.md",  # traversée de répertoire, le classique
+        "../../evasion.md",  # directory traversal, the classic
         "..",
         "/etc/passwd",
         "C:\\Windows\\system32\\cle.md",
-        "note.md:cache",  # flux de données alterné NTFS : un contenu invisible
+        "note.md:cache",  # NTFS alternate data stream: invisible content
     ],
 )
-def test_un_nom_qui_est_un_chemin_est_refuse_avant_toute_ecriture(
-    depot: DepotTeleversements, nom: str
+def test_a_name_that_is_a_path_is_rejected_before_any_write(
+    store: UploadStore, name: str
 ) -> None:
-    """Le nom vient du navigateur, donc de l'extérieur — et il est refusé **avant** le mkdir.
+    """The name comes from the browser, hence from the outside -- rejected **before** the mkdir.
 
-    Le même `nom_de_fichier` que la résolution (#315) : deux assainisseurs
-    écrits séparément divergeraient, et c'est celui des deux qui oublie une
-    classe de caractères qui ferait la faille.
+    The same `file_name` as the resolution (#315): two sanitizers written
+    separately would diverge, and the one forgetting a character class would be
+    the hole.
     """
-    with pytest.raises(SourceRefusee) as capture:
-        depot.accueillir(nom, io.BytesIO(CONTENU))
-    assert capture.value.motif == "nom-invalide"
-    assert _entrees(depot) == []
+    with pytest.raises(SourceRejected) as capture:
+        store.receive(name, io.BytesIO(CONTENT))
+    assert capture.value.reason == "nom-invalide"
+    assert _entries(store) == []
 
 
-def test_un_nom_absent_est_refuse(depot: DepotTeleversements) -> None:
-    """Un champ `filename` vide côté navigateur ne doit pas produire un fichier sans nom."""
-    with pytest.raises(SourceRefusee) as capture:
-        depot.accueillir("   ", io.BytesIO(CONTENU))
-    assert capture.value.motif == "nom-absent"
-    assert _entrees(depot) == []
+def test_a_missing_name_is_rejected(store: UploadStore) -> None:
+    """An empty `filename` field on the browser side must not produce a nameless file."""
+    with pytest.raises(SourceRejected) as capture:
+        store.receive("   ", io.BytesIO(CONTENT))
+    assert capture.value.reason == "nom-absent"
+    assert _entries(store) == []
 
 
-def test_deux_fichiers_de_meme_nom_ne_s_ecrasent_pas(depot: DepotTeleversements) -> None:
-    """Un identifiant par dépôt : deux `cdc.md` cohabitent au lieu de se remplacer."""
-    premier = depot.accueillir("cdc.md", io.BytesIO(b"version 1"))
-    second = depot.accueillir("cdc.md", io.BytesIO(b"version 2"))
-    assert premier.id != second.id
-    assert premier.chemin.read_bytes() == b"version 1"
-    assert second.chemin.read_bytes() == b"version 2"
+def test_two_files_with_the_same_name_do_not_overwrite_each_other(
+    store: UploadStore,
+) -> None:
+    """One identifier per upload: two `cdc.md` coexist instead of replacing each other."""
+    first = store.receive("cdc.md", io.BytesIO(b"version 1"))
+    second = store.receive("cdc.md", io.BytesIO(b"version 2"))
+    assert first.id != second.id
+    assert first.path.read_bytes() == b"version 1"
+    assert second.path.read_bytes() == b"version 2"
 
 
-# --- ② Un refus ne laisse rien derrière lui ----------------------------------
+# --- 2. A rejection leaves nothing behind ------------------------------------
 
 
-def test_un_fichier_trop_gros_est_refuse_et_le_depot_reste_vide(
+def test_a_file_that_is_too_big_is_rejected_and_the_store_stays_empty(
     tmp_path: Path,
 ) -> None:
-    """Le plafond par source (ENF-07), appliqué à la réception."""
-    depot = DepotTeleversements(
-        tmp_path / "depot", garde_fous=GardeFousIngestion(taille_max_source_octets=1_000)
+    """The per-source cap (ENF-07), applied at reception."""
+    store = UploadStore(
+        tmp_path / "depot", guardrails=GardeFousIngestion(taille_max_source_octets=1_000)
     )
-    with pytest.raises(SourceRefusee) as capture:
-        depot.accueillir("gros.bin", io.BytesIO(b"x" * 5_000))
-    assert capture.value.motif == "source-trop-volumineuse"
-    assert _entrees(depot) == []
+    with pytest.raises(SourceRejected) as capture:
+        store.receive("gros.bin", io.BytesIO(b"x" * 5_000))
+    assert capture.value.reason == "source-trop-volumineuse"
+    assert _entries(store) == []
 
 
-def test_le_refus_tombe_pendant_la_reception_et_non_apres(tmp_path: Path) -> None:
-    """La distinction que le module existe pour tenir.
+def test_the_rejection_falls_during_reception_and_not_after(tmp_path: Path) -> None:
+    """The distinction the module exists to hold.
 
-    Un fichier de 2 Gio ne doit pas d'abord être écrit sur le disque pour être
-    ensuite déclaré trop gros. On le mesure sur les octets réellement **pris** au
-    flux : la lecture s'arrête à la première tranche qui dépasse, pas à la fin.
+    A 2 GiB file must not first be written to disk to then be declared too big.
+    It is measured on the bytes actually **taken** from the stream: the reading
+    stops at the first chunk that exceeds, not at the end.
     """
-    depot = DepotTeleversements(
-        tmp_path / "depot", garde_fous=GardeFousIngestion(taille_max_source_octets=1_000)
+    store = UploadStore(
+        tmp_path / "depot", guardrails=GardeFousIngestion(taille_max_source_octets=1_000)
     )
-    flux = FluxCompte(b"x" * (4 * 1024 * 1024))
-    with pytest.raises(SourceRefusee):
-        depot.accueillir("gros.bin", flux)
-    assert flux.lus < len(flux.getvalue())
+    stream = CountingStream(b"x" * (4 * 1024 * 1024))
+    with pytest.raises(SourceRejected):
+        store.receive("gros.bin", stream)
+    assert stream.consumed < len(stream.getvalue())
 
 
-def test_le_cumul_de_l_appel_est_plafonne_lui_aussi(tmp_path: Path) -> None:
-    """Sans `deja_recu`, vingt fichiers sous le plafond unitaire passeraient tous."""
-    depot = DepotTeleversements(
+def test_the_total_of_the_call_is_capped_too(tmp_path: Path) -> None:
+    """Without `already_received`, twenty files under the per-source cap would all pass."""
+    store = UploadStore(
         tmp_path / "depot",
-        garde_fous=GardeFousIngestion(
+        guardrails=GardeFousIngestion(
             taille_max_source_octets=10_000, taille_max_totale_octets=1_000
         ),
     )
-    with pytest.raises(SourceRefusee) as capture:
-        depot.accueillir("suite.bin", io.BytesIO(b"x" * 600), deja_recu=600)
-    assert capture.value.motif == "ingestion-trop-volumineuse"
-    assert _entrees(depot) == []
+    with pytest.raises(SourceRejected) as capture:
+        store.receive("suite.bin", io.BytesIO(b"x" * 600), already_received=600)
+    assert capture.value.reason == "ingestion-trop-volumineuse"
+    assert _entries(store) == []
 
 
-def test_l_index_du_fichier_fautif_voyage_avec_le_refus(tmp_path: Path) -> None:
-    """« Un fichier est trop gros » sans dire lequel obligerait à tout recommencer."""
-    depot = DepotTeleversements(
-        tmp_path / "depot", garde_fous=GardeFousIngestion(taille_max_source_octets=10)
+def test_the_index_of_the_faulty_file_travels_with_the_rejection(tmp_path: Path) -> None:
+    """Saying a file is too big without saying which would force starting over."""
+    store = UploadStore(
+        tmp_path / "depot", guardrails=GardeFousIngestion(taille_max_source_octets=10)
     )
-    with pytest.raises(SourceRefusee) as capture:
-        depot.accueillir("troisieme.bin", io.BytesIO(b"x" * 100), index=2)
+    with pytest.raises(SourceRejected) as capture:
+        store.receive("troisieme.bin", io.BytesIO(b"x" * 100), index=2)
     assert capture.value.index == 2
     assert "Fichier 3" in str(capture.value)
 
 
-def test_une_interruption_n_abandonne_pas_de_fichier_tronque(
-    depot: DepotTeleversements,
+def test_an_interruption_does_not_leave_a_truncated_file(
+    store: UploadStore,
 ) -> None:
-    """`except BaseException` et non `except Exception` : le choix est mesuré ici.
+    """`except BaseException` and not `except Exception`: the choice is measured here.
 
-    Une annulation de la tâche qui porte la copie laisserait sinon dans le dépôt
-    un fichier tronqué **indiscernable** d'un téléversement complet — le rapport
-    de lecture le dirait « lu ».
+    A cancellation of the task carrying the copy would otherwise leave in the
+    store a truncated file **indistinguishable** from a complete upload -- the
+    reading report would say it "read".
     """
     with pytest.raises(KeyboardInterrupt):
-        depot.accueillir("interrompu.md", FluxInterrompu())
-    assert _entrees(depot) == []
+        store.receive("interrompu.md", InterruptedStream())
+    assert _entries(store) == []
 
 
-# --- ③ Relire, rattacher, oublier --------------------------------------------
+# --- 3. Re-read, attach, forget ----------------------------------------------
 
 
-def test_un_identifiant_inconnu_ne_designe_aucun_televersement(
-    depot: DepotTeleversements,
+def test_an_unknown_identifier_designates_no_upload(
+    store: UploadStore,
 ) -> None:
-    """None plutôt qu'une exception : c'est l'appelant qui sait dire de quel refus il s'agit."""
-    assert depot.lire("a1b2c3d4e5f6") is None
+    """None rather than an exception: the caller is the one who knows which rejection it is."""
+    assert store.read("a1b2c3d4e5f6") is None
 
 
 @pytest.mark.parametrize(
-    "identifiant",
+    "identifier",
     [
         "",
-        "court",  # moins de 6 caractères
-        "x" * 65,  # plus de 64
+        "court",  # fewer than 6 characters
+        "x" * 65,  # more than 64
         "avec-tiret",
-        "../voisin",  # la remontée d'un cran, celle qui compte
+        "../voisin",  # the climb of one level, the one that counts
         "sous/dossier",
     ],
 )
-def test_un_identifiant_non_conforme_est_ecarte_sans_toucher_au_disque(
-    depot: DepotTeleversements, identifiant: str
+def test_a_non_conforming_identifier_is_dropped_without_touching_the_disk(
+    store: UploadStore, identifier: str
 ) -> None:
-    """Un identifiant revient d'un client : il n'a pas à devenir un chemin pour être écarté."""
-    assert depot.lire(identifiant) is None
+    """An identifier comes back from a client: it need not become a path to be dropped."""
+    assert store.read(identifier) is None
 
 
-def test_la_relecture_ne_remonte_pas_hors_du_depot(
-    depot: DepotTeleversements, tmp_path: Path
+def test_the_re_read_does_not_climb_out_of_the_store(
+    store: UploadStore, tmp_path: Path
 ) -> None:
-    """Le pendant concret du test précédent : un voisin du dépôt reste inatteignable."""
-    voisin = tmp_path / "depot" / ".." / "voisin"
-    voisin.mkdir(parents=True)
-    (voisin / "secret.md").write_bytes(b"rien a voir ici")
-    assert depot.lire("../voisin") is None
+    """The concrete counterpart of the previous test: a neighbour of the store stays unreachable."""
+    neighbour = tmp_path / "depot" / ".." / "voisin"
+    neighbour.mkdir(parents=True)
+    (neighbour / "secret.md").write_bytes(b"rien a voir ici")
+    assert store.read("../voisin") is None
 
 
-def test_un_dossier_vide_ne_designe_aucun_televersement(
-    depot: DepotTeleversements, tmp_path: Path
+def test_an_empty_directory_designates_no_upload(
+    store: UploadStore, tmp_path: Path
 ) -> None:
-    """Le nom du téléversement est celui du fichier qu'il contient : sans fichier, rien."""
+    """The upload's name is that of the file it contains: without a file, nothing."""
     (tmp_path / "depot" / "a1b2c3d4e5f6").mkdir(parents=True)
-    assert depot.lire("a1b2c3d4e5f6") is None
+    assert store.read("a1b2c3d4e5f6") is None
 
 
-def test_rattacher_copie_les_octets_et_laisse_l_original(
-    depot: DepotTeleversements, tmp_path: Path
+def test_attach_copies_the_bytes_and_leaves_the_original(
+    store: UploadStore, tmp_path: Path
 ) -> None:
-    """Le rattachement **copie** : relancer le même objectif ne doit pas faire re-téléverser."""
-    televerse = depot.accueillir("cdc.md", io.BytesIO(CONTENU))
-    cible = tmp_path / "ingestion" / "a1b2c3d4e5f6" / "cdc.md"
-    rendu = depot.rattacher(televerse.id, cible)
-    assert rendu == cible
-    assert cible.read_bytes() == CONTENU
-    assert televerse.chemin.read_bytes() == CONTENU
+    """Attaching **copies**: relaunching the same objective must not force re-uploading."""
+    upload = store.receive("cdc.md", io.BytesIO(CONTENT))
+    target = tmp_path / "ingestion" / "a1b2c3d4e5f6" / "cdc.md"
+    returned = store.attach(upload.id, target)
+    assert returned == target
+    assert target.read_bytes() == CONTENT
+    assert upload.path.read_bytes() == CONTENT
 
 
-def test_rattacher_cree_le_dossier_du_run(
-    depot: DepotTeleversements, tmp_path: Path
+def test_attach_creates_the_run_directory(
+    store: UploadStore, tmp_path: Path
 ) -> None:
-    """`emplacement_ingestion` (#315) se contente de calculer ; écrire, c'est ici."""
-    televerse = depot.accueillir("cdc.md", io.BytesIO(CONTENU))
-    cible = tmp_path / "jamais" / "cree" / "cdc.md"
-    depot.rattacher(televerse.id, cible)
-    assert cible.is_file()
+    """`ingestion_location` (#315) merely computes; writing happens here."""
+    upload = store.receive("cdc.md", io.BytesIO(CONTENT))
+    target = tmp_path / "jamais" / "cree" / "cdc.md"
+    store.attach(upload.id, target)
+    assert target.is_file()
 
 
-def test_rattacher_un_inconnu_leve_au_lieu_de_sauter_la_copie(
-    depot: DepotTeleversements, tmp_path: Path
+def test_attaching_an_unknown_upload_raises_instead_of_skipping_the_copy(
+    store: UploadStore, tmp_path: Path
 ) -> None:
-    """Une copie silencieusement sautée rendrait un run travaillant sur une matière absente."""
-    with pytest.raises(SourceRefusee) as capture:
-        depot.rattacher("a1b2c3d4e5f6", tmp_path / "cible.md")
-    assert capture.value.motif == "televersement-inconnu"
+    """A silently skipped copy would make a run work on absent material."""
+    with pytest.raises(SourceRejected) as capture:
+        store.attach("a1b2c3d4e5f6", tmp_path / "cible.md")
+    assert capture.value.reason == "televersement-inconnu"
 
 
-def test_oublier_retire_le_televersement_et_reste_muet_sur_un_inconnu(
-    depot: DepotTeleversements,
+def test_forget_removes_the_upload_and_stays_silent_on_an_unknown_one(
+    store: UploadStore,
 ) -> None:
-    """Best-effort : c'est ce qui permet à un appel refusé de ne rien laisser."""
-    televerse = depot.accueillir("cdc.md", io.BytesIO(CONTENU))
-    depot.oublier(televerse.id)
-    assert depot.lire(televerse.id) is None
-    depot.oublier(televerse.id)  # deux fois : aucun effet, aucune erreur
+    """Best-effort: it is what lets a rejected call leave nothing behind."""
+    upload = store.receive("cdc.md", io.BytesIO(CONTENT))
+    store.forget(upload.id)
+    assert store.read(upload.id) is None
+    store.forget(upload.id)  # twice: no effect, no error
 
 
-def test_oublier_ne_supprime_rien_hors_du_depot(
-    depot: DepotTeleversements, tmp_path: Path
+def test_forget_deletes_nothing_outside_the_store(
+    store: UploadStore, tmp_path: Path
 ) -> None:
-    """Le garde-fou qui compte : `oublier` prend un identifiant venu d'un client."""
-    voisin = tmp_path / "depot" / ".." / "voisin"
-    voisin.mkdir(parents=True)
-    (voisin / "secret.md").write_bytes(b"rien a voir ici")
-    depot.oublier("../voisin")
-    assert (voisin / "secret.md").is_file()
+    """The guardrail that counts: `forget` takes an identifier coming from a client."""
+    neighbour = tmp_path / "depot" / ".." / "voisin"
+    neighbour.mkdir(parents=True)
+    (neighbour / "secret.md").write_bytes(b"rien a voir ici")
+    store.forget("../voisin")
+    assert (neighbour / "secret.md").is_file()
 
 
-# --- ④ Déclarer : le dépôt fait foi, jamais le client ------------------------
+# --- 4. Declare: the store prevails, never the client ------------------------
 
 
-def test_un_renvoi_est_complete_par_le_nom_et_la_taille_du_depot(
-    depot: DepotTeleversements,
+def test_a_back_reference_is_completed_by_the_name_and_size_of_the_store(
+    store: UploadStore,
 ) -> None:
-    """Un client qui annoncerait douze octets pour 12 Mio passerait sinon le plafond."""
-    televerse = depot.accueillir("cdc.md", io.BytesIO(CONTENU))
-    declarees, identifiants = declarer_televersements(
-        [{"type": TYPE_FICHIER, "id": televerse.id, "nom": "menteur.md", "taille": 12}],
-        depot=depot,
+    """A client announcing twelve bytes for 12 MiB would otherwise pass the cap."""
+    upload = store.receive("cdc.md", io.BytesIO(CONTENT))
+    declared, identifiers = declare_uploads(
+        [{"type": TYPE_FILE, "id": upload.id, "nom": "menteur.md", "taille": 12}],
+        store=store,
     )
-    assert declarees == [
-        {"type": TYPE_FICHIER, "nom": "cdc.md", "taille": len(CONTENU)}
+    assert declared == [
+        {"type": TYPE_FILE, "nom": "cdc.md", "taille": len(CONTENT)}
     ]
-    assert identifiants == (televerse.id,)
+    assert identifiers == (upload.id,)
 
 
-def test_une_declaration_nue_passe_telle_quelle(depot: DepotTeleversements) -> None:
-    """La seconde forme d'une source `fichier` (docs/24 §3.2) : `nom` + `taille`, sans octets.
+def test_a_bare_declaration_passes_as_is(store: UploadStore) -> None:
+    """The second form of a `fichier` source (docs/24 §3.2): `nom` + `taille`, without bytes.
 
-    Elle ressortira `ignore` / `source-absente` au rapport de lecture — ce que le
-    rapport existe précisément pour dire.
+    It will come out `ignore` / `source-absente` in the reading report -- which
+    is precisely what the report exists to say.
     """
-    nue = {"type": TYPE_FICHIER, "nom": "cdc.md", "taille": 42}
-    declarees, identifiants = declarer_televersements([nue], depot=depot)
-    assert declarees == [nue]
-    assert identifiants == ("",)
+    bare = {"type": TYPE_FILE, "nom": "cdc.md", "taille": 42}
+    declared, identifiers = declare_uploads([bare], store=store)
+    assert declared == [bare]
+    assert identifiers == ("",)
 
 
-def test_les_identifiants_restent_alignes_sur_les_index(
-    depot: DepotTeleversements,
+def test_the_identifiers_stay_aligned_with_the_indexes(
+    store: UploadStore,
 ) -> None:
-    """C'est cet alignement qui permettra de rattacher les octets une fois le run connu."""
-    televerse = depot.accueillir("cdc.md", io.BytesIO(CONTENU))
-    declarees, identifiants = declarer_televersements(
+    """This alignment is what will allow attaching the bytes once the run is known."""
+    upload = store.receive("cdc.md", io.BytesIO(CONTENT))
+    declared, identifiers = declare_uploads(
         [
             {"type": TYPE_URL, "valeur": "https://exemple.test/spec"},
-            {"type": TYPE_FICHIER, "id": televerse.id},
-            {"type": TYPE_DOSSIER, "nom": "maquettes", "chemin": "/refs/maquettes"},
+            {"type": TYPE_FILE, "id": upload.id},
+            {"type": TYPE_DIRECTORY, "nom": "maquettes", "chemin": "/refs/maquettes"},
         ],
-        depot=depot,
+        store=store,
     )
-    assert len(declarees) == 3
-    assert identifiants == ("", televerse.id, "")
+    assert len(declared) == 3
+    assert identifiers == ("", upload.id, "")
 
 
-def test_un_renvoi_inconnu_est_refuse_avec_son_index(
-    depot: DepotTeleversements,
+def test_an_unknown_back_reference_is_rejected_with_its_index(
+    store: UploadStore,
 ) -> None:
-    """Un identifiant déjà retiré ne doit pas produire un run à la matière absente."""
-    with pytest.raises(SourceRefusee) as capture:
-        declarer_televersements(
+    """An already removed identifier must not produce a run with absent material."""
+    with pytest.raises(SourceRejected) as capture:
+        declare_uploads(
             [
                 {"type": TYPE_URL, "valeur": "https://exemple.test/spec"},
-                {"type": TYPE_FICHIER, "id": "a1b2c3d4e5f6"},
+                {"type": TYPE_FILE, "id": "a1b2c3d4e5f6"},
             ],
-            depot=depot,
+            store=store,
         )
-    assert capture.value.motif == "televersement-inconnu"
+    assert capture.value.reason == "televersement-inconnu"
     assert capture.value.index == 1
 
 
-@pytest.mark.parametrize("brut", [None, "pas une liste", 42, {"type": TYPE_FICHIER}])
-def test_ce_qui_n_est_pas_une_liste_ressort_inchange(
-    depot: DepotTeleversements, brut: Any
+@pytest.mark.parametrize("raw", [None, "pas une liste", 42, {"type": TYPE_FILE}])
+def test_what_is_not_a_list_comes_out_unchanged(
+    store: UploadStore, raw: Any
 ) -> None:
-    """Le refus de forme appartient à `resoudre_sources` : le dupliquer ferait deux messages."""
-    declarees, identifiants = declarer_televersements(brut, depot=depot)
-    assert declarees is brut
-    assert identifiants == ()
+    """The shape rejection belongs to `resolve_sources`: duplicating it would make two messages."""
+    declared, identifiers = declare_uploads(raw, store=store)
+    assert declared is raw
+    assert identifiers == ()
 
 
 @pytest.mark.parametrize(
-    "entree",
+    "entry",
     [
         {"type": TYPE_URL, "id": "a1b2c3d4e5f6"},
-        {"type": TYPE_DOSSIER, "id": "a1b2c3d4e5f6"},
-        {"type": TYPE_FICHIER, "id": "   "},
+        {"type": TYPE_DIRECTORY, "id": "a1b2c3d4e5f6"},
+        {"type": TYPE_FILE, "id": "   "},
         "pas un objet",
     ],
 )
-def test_ce_qui_ne_renvoie_pas_a_un_televersement_passe_sans_lecture(
-    depot: DepotTeleversements, entree: Any
+def test_what_does_not_refer_to_an_upload_passes_without_a_read(
+    store: UploadStore, entry: Any
 ) -> None:
-    """Seul un `fichier` porteur d'un `id` est un renvoi — le reste n'interroge pas le dépôt."""
-    declarees, identifiants = declarer_televersements([entree], depot=depot)
-    assert declarees == [entree]
-    assert identifiants == ("",)
+    """Only a `fichier` carrying an `id` is a back-reference; the rest never queries the store."""
+    declared, identifiers = declare_uploads([entry], store=store)
+    assert declared == [entry]
+    assert identifiers == ("",)
 
 
-# --- ⑤ La route `POST /api/sources` ------------------------------------------
+# --- 5. The `POST /api/sources` route ----------------------------------------
 
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
-    """L'app réelle, dépôt de téléversement injecté sur un dossier jetable."""
+    """The real app, upload store injected on a disposable directory."""
     app = create_app(
         bus=InMemoryEventBus(),
         state=ControlTowerState(),
-        televersements=DepotTeleversements(tmp_path / "depot"),
+        televersements=UploadStore(tmp_path / "depot"),
     )
     with TestClient(app) as client:
         yield client
 
 
-def _envoi(nom: str, contenu: bytes) -> tuple[str, tuple[str, IO[bytes], str]]:
-    """Un fichier de formulaire, tel que l'écran de composition l'envoie."""
-    return ("fichier", (nom, io.BytesIO(contenu), "text/markdown"))
+def _upload_part(name: str, content: bytes) -> tuple[str, tuple[str, IO[bytes], str]]:
+    """A form file, as the composition screen sends it."""
+    return ("fichier", (name, io.BytesIO(content), "text/markdown"))
 
 
-def test_la_route_rend_un_identifiant_par_fichier_et_le_cumul(client: TestClient) -> None:
-    """`POST /api/sources` : 201, un `id` par fichier, et le total reçu (docs/05 §6.8)."""
-    reponse = client.post(
+def test_the_route_returns_one_identifier_per_file_and_the_total(client: TestClient) -> None:
+    """`POST /api/sources`: 201, one `id` per file, and the total received (docs/05 §6.8)."""
+    response = client.post(
         "/api/sources",
-        files=[_envoi("cdc.md", CONTENU), _envoi("notes.md", b"trois mots ici")],
+        files=[_upload_part("cdc.md", CONTENT), _upload_part("notes.md", b"trois mots ici")],
     )
-    assert reponse.status_code == 201
-    corps = reponse.json()
-    assert [source["nom"] for source in corps["sources"]] == ["cdc.md", "notes.md"]
-    assert corps["total_octets"] == len(CONTENU) + len(b"trois mots ici")
-    assert {source["type"] for source in corps["sources"]} == {TYPE_FICHIER}
+    assert response.status_code == 201
+    body = response.json()
+    assert [source["nom"] for source in body["sources"]] == ["cdc.md", "notes.md"]
+    assert body["total_octets"] == len(CONTENT) + len(b"trois mots ici")
+    assert {source["type"] for source in body["sources"]} == {TYPE_FILE}
 
 
-def test_la_route_ne_publie_jamais_le_chemin_des_octets(client: TestClient) -> None:
-    """Un détail d'implantation du serveur — le client désigne sa matière par son `id`."""
-    corps = client.post("/api/sources", files=[_envoi("cdc.md", CONTENU)]).json()
-    assert set(corps["sources"][0]) == {"id", "type", "nom", "taille"}
+def test_the_route_never_publishes_the_path_of_the_bytes(client: TestClient) -> None:
+    """A server implementation detail -- the client designates its material by its `id`."""
+    body = client.post("/api/sources", files=[_upload_part("cdc.md", CONTENT)]).json()
+    assert set(body["sources"][0]) == {"id", "type", "nom", "taille"}
 
 
-def test_la_route_borne_le_nombre_de_fichiers_avant_de_toucher_au_disque(
+def test_the_route_bounds_the_number_of_files_before_touching_the_disk(
     tmp_path: Path,
 ) -> None:
-    """Le plafond de **nombre** se juge sur la requête : rien n'est écrit pour être ensuite jeté."""
-    depot = DepotTeleversements(
-        tmp_path / "depot", garde_fous=GardeFousIngestion(nb_max_sources=2)
+    """The **count** cap is judged on the request: nothing is written to be then thrown away."""
+    store = UploadStore(
+        tmp_path / "depot", guardrails=GardeFousIngestion(nb_max_sources=2)
     )
     app = create_app(
-        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=depot
+        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=store
     )
     with TestClient(app) as client:
-        reponse = client.post(
+        response = client.post(
             "/api/sources",
-            files=[_envoi(f"f{i}.md", b"court") for i in range(3)],
+            files=[_upload_part(f"f{i}.md", b"court") for i in range(3)],
         )
-    assert reponse.status_code == 422
-    assert reponse.json()["detail"]["motif"] == "trop-de-sources"
-    assert _entrees(depot) == []
+    assert response.status_code == 422
+    assert response.json()["detail"]["motif"] == "trop-de-sources"
+    assert _entries(store) == []
 
 
-def test_un_refus_retire_les_fichiers_deja_acceptes_du_meme_appel(
+def test_a_rejection_removes_the_files_already_accepted_in_the_same_call(
     tmp_path: Path,
 ) -> None:
-    """L'atomicité de l'appel — la raison d'être d'`oublier`.
+    """The atomicity of the call -- the reason for being of `forget`.
 
-    Si le second fichier déborde, le premier n'a pas à rester dans le dépôt sous
-    un identifiant que personne n'a reçu : il y serait pour toujours, aucun run
-    ne le réclamant jamais.
+    If the second file overflows, the first need not stay in the store under an
+    identifier nobody received: it would be there forever, no run ever claiming
+    it.
     """
-    depot = DepotTeleversements(
-        tmp_path / "depot", garde_fous=GardeFousIngestion(taille_max_source_octets=100)
+    store = UploadStore(
+        tmp_path / "depot", guardrails=GardeFousIngestion(taille_max_source_octets=100)
     )
     app = create_app(
-        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=depot
+        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=store
     )
     with TestClient(app) as client:
-        reponse = client.post(
+        response = client.post(
             "/api/sources",
-            files=[_envoi("petit.md", b"court"), _envoi("gros.bin", b"x" * 500)],
+            files=[_upload_part("petit.md", b"court"), _upload_part("gros.bin", b"x" * 500)],
         )
-    assert reponse.status_code == 422
-    detail = reponse.json()["detail"]
+    assert response.status_code == 422
+    detail = response.json()["detail"]
     assert detail["motif"] == "source-trop-volumineuse"
     assert detail["index"] == 1
-    assert _entrees(depot) == []
+    assert _entries(store) == []
 
 
-def test_la_route_refuse_un_fichier_au_nom_qui_est_un_chemin(client: TestClient) -> None:
-    """Le refus du lot 1 traverse la route avec son motif, pas en 500."""
-    reponse = client.post("/api/sources", files=[_envoi("../../evasion.md", CONTENU)])
-    assert reponse.status_code == 422
-    assert reponse.json()["detail"]["motif"] == "nom-invalide"
+def test_the_route_rejects_a_file_whose_name_is_a_path(client: TestClient) -> None:
+    """Lot 1's rejection goes through the route with its reason, not as a 500."""
+    response = client.post("/api/sources", files=[_upload_part("../../evasion.md", CONTENT)])
+    assert response.status_code == 422
+    assert response.json()["detail"]["motif"] == "nom-invalide"
 
 
-# --- ⑥ Du dépôt au run : les octets rejoignent l'emplacement d'ingestion ------
+# --- 6. From the store to the run: the bytes join the ingestion location -----
 
 
-def test_les_octets_televerses_rejoignent_l_emplacement_du_run(
-    tmp_path: Path, _ingestion_jetable: Path
+def test_the_uploaded_bytes_join_the_run_location(
+    tmp_path: Path, _disposable_ingestion: Path
 ) -> None:
-    """Le bout en bout de #317 : téléverser, puis lancer en renvoyant à l'identifiant.
+    """The end to end of #317: upload, then launch by referring to the identifier.
 
-    C'est l'ordre obligé du service (`_composer`) qu'on vérifie ici : compléter
-    la déclaration depuis le dépôt, résoudre pour savoir **où** la matière doit
-    être, puis y copier les octets — l'emplacement dépend du `run_id`, qui
-    n'existe pas au moment du téléversement.
+    It is the service's mandatory order (`_composer`) that is checked here:
+    complete the declaration from the store, resolve to know **where** the
+    material must be, then copy the bytes there -- the location depends on the
+    `run_id`, which does not exist at upload time.
     """
-    depot = DepotTeleversements(tmp_path / "depot")
+    store = UploadStore(tmp_path / "depot")
     app = create_app(
-        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=depot
+        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=store
     )
     with TestClient(app) as client:
-        depose = client.post("/api/sources", files=[_envoi("cdc.md", CONTENU)]).json()
-        identifiant = depose["sources"][0]["id"]
-        lancement = client.post(
+        deposited = client.post("/api/sources", files=[_upload_part("cdc.md", CONTENT)]).json()
+        identifier = deposited["sources"][0]["id"]
+        launch = client.post(
             "/api/executions",
             json={
                 "objectif": "Reprendre le cahier des charges",
-                "sources": [{"type": TYPE_FICHIER, "id": identifiant}],
+                "sources": [{"type": TYPE_FILE, "id": identifier}],
             },
         )
-        assert lancement.status_code == 202
-        resume = lancement.json()
+        assert launch.status_code == 202
+        summary = launch.json()
 
-    (source,) = resume["sources"]
-    depose_dans_le_run = Path(source["chemin"])
-    assert depose_dans_le_run == (_ingestion_jetable / resume["run_id"] / "cdc.md").resolve()
-    assert depose_dans_le_run.read_bytes() == CONTENU
-    # Le dépôt garde les siens : relancer après un échec ne re-téléverse pas.
-    assert depot.lire(identifiant) is not None
+    (source,) = summary["sources"]
+    in_the_run = Path(source["chemin"])
+    assert in_the_run == (_disposable_ingestion / summary["run_id"] / "cdc.md").resolve()
+    assert in_the_run.read_bytes() == CONTENT
+    # The store keeps its own: relaunching after a failure does not re-upload.
+    assert store.read(identifier) is not None
 
 
-def test_un_renvoi_inconnu_refuse_le_lancement_avec_son_motif(tmp_path: Path) -> None:
-    """Un identifiant périmé coûte un 422 motivé, jamais un run à la matière absente."""
-    depot = DepotTeleversements(tmp_path / "depot")
+def test_an_unknown_back_reference_rejects_the_launch_with_its_reason(tmp_path: Path) -> None:
+    """A stale identifier costs a reasoned 422, never a run with absent material."""
+    store = UploadStore(tmp_path / "depot")
     app = create_app(
-        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=depot
+        bus=InMemoryEventBus(), state=ControlTowerState(), televersements=store
     )
     with TestClient(app) as client:
-        reponse = client.post(
+        response = client.post(
             "/api/executions",
             json={
                 "objectif": "Reprendre le cahier des charges",
-                "sources": [{"type": TYPE_FICHIER, "id": "a1b2c3d4e5f6"}],
+                "sources": [{"type": TYPE_FILE, "id": "a1b2c3d4e5f6"}],
             },
         )
-    assert reponse.status_code == 422
-    detail = reponse.json()["detail"]
+    assert response.status_code == 422
+    detail = response.json()["detail"]
     assert detail["motif"] == "televersement-inconnu"
     assert detail["index"] == 0

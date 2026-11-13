@@ -60,7 +60,7 @@ from maestro.detail_tache import SUFFIXE_ETAPE_DETAIL, etapes_depuis, liens_depu
 from maestro.espace import nom_redis
 from maestro.plan_run import NoeudPlan, noeuds_depuis
 from maestro.references import SUFFIXE_ETAPE_TICKET, ReferenceTicket
-from maestro.telemetry import ETAPE_RECETTE, ETAPE_SONDE, LOGGER_NAME, redact_secrets
+from maestro.telemetry import LOGGER_NAME, STEP_ACCEPTANCE, STEP_PROBE, redact_secrets
 from maestro.telemetry.journal import SUFFIXE_ETAPE_USAGE
 from maestro.telemetry.usage import StepUsage
 
@@ -70,18 +70,18 @@ _LOGGER = logging.getLogger("maestro.controltower")
 _ETAPE_PLANIFICATION = "planification"
 
 #: Étape du journal qui n'est pas une tâche : la reprise d'un run interrompu
-#: (#96 — cf. `maestro.telemetry.costs.ETAPE_REPRISE`).
+#: (#96 — cf. `maestro.telemetry.costs.STEP_RESUME`).
 _ETAPE_REPRISE = "reprise"
 
 #: Étape du journal qui n'est pas une tâche : le brief structuré rédigé avant
-#: décomposition (#318 — cf. `maestro.telemetry.costs.ETAPE_BRIEF`). Même raison
+#: décomposition (#318 — cf. `maestro.telemetry.costs.STEP_BRIEF`). Même raison
 #: d'être déclarée ici que là-bas : sans elle, la règle par défaut (« toute autre
 #: étape est l'issue d'une tâche ») ferait apparaître une carte de tâche fantôme
 #: nommée « brief » sur le Kanban, alors que l'étape porte sur le run entier.
 _ETAPE_BRIEF = "brief"
 
 #: Étape du journal qui n'est pas une tâche : la **confrontation de l'équipe au
-#: plan** (#1227 — cf. `maestro.telemetry.costs.ETAPE_EQUIPE`). Trois lignes au
+#: plan** (#1227 — cf. `maestro.telemetry.costs.STEP_TEAM`). Trois lignes au
 #: plus par run, et elles portent sur le plan entier : le rôle qui manque, ce que
 #: la proposition de renfort a donné, et combien de tâches chaque rôle prendra de
 #: front (#1299). Même raison d'être déclarée ici que
@@ -90,7 +90,7 @@ _ETAPE_BRIEF = "brief"
 _ETAPE_EQUIPE = "equipe"
 
 #: Étape du journal qui n'est pas une tâche : la **cadence** du run (#1298 — cf.
-#: `maestro.telemetry.costs.ETAPE_CADENCE`) — pourquoi ses tâches passent une à
+#: `maestro.telemetry.costs.STEP_CADENCE`) — pourquoi ses tâches passent une à
 #: une, et ce qu'est devenue la proposition de versionner le projet. Même raison
 #: d'être déclarée ici que `equipe` : sans elle, une carte fantôme « cadence ».
 #: Elle porte en plus son fait structuré (`cadence`), que l'activité transporte
@@ -98,7 +98,7 @@ _ETAPE_EQUIPE = "equipe"
 _ETAPE_CADENCE = "cadence"
 
 #: Étape du journal qui n'est pas une tâche : la **décision au plafond de
-#: dépense** (#1182 — cf. `maestro.telemetry.costs.ETAPE_PLAFOND`). Deux lignes par
+#: dépense** (#1182 — cf. `maestro.telemetry.costs.STEP_SPENDING_CAP`). Deux lignes par
 #: franchissement — la question, puis ce qui a été décidé —, sur le run entier.
 #: Même raison d'être déclarée ici qu'`equipe` : sans elle, une carte de tâche
 #: fantôme nommée « plafond » naîtrait au Kanban.
@@ -120,8 +120,8 @@ _ETAPES_RUN = (
     _ETAPE_EQUIPE,
     _ETAPE_CADENCE,
     _ETAPE_PLAFOND,
-    ETAPE_SONDE,
-    ETAPE_RECETTE,
+    STEP_PROBE,
+    STEP_ACCEPTANCE,
 )
 
 #: Suffixe des étapes de validation humaine (cf. `LocalExecutor._valide_si_sensible`).
@@ -470,7 +470,7 @@ def evenements_depuis_step(record: Mapping[str, Any]) -> tuple[Event, ...]:  # n
     # `recette` : ailleurs, rien — donc None, et la projection ne touche à rien de
     # ce que la tâche ou le run montrait déjà.
     verification = record.get("verification")
-    porte_un_verdict = etape.endswith(_SUFFIXE_VERIFICATION) or etape == ETAPE_RECETTE
+    porte_un_verdict = etape.endswith(_SUFFIXE_VERIFICATION) or etape == STEP_ACCEPTANCE
     # La cadence du run (#1298), portée par la seule étape `cadence`.
     cadence = record.get("cadence") if etape == _ETAPE_CADENCE else None
     return (

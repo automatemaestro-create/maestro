@@ -953,7 +953,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
     from maestro.engine.cli import activer_publication_evenements, console_tolerante
     from maestro.engine.runner import run_borne
     from maestro.orchestrator.errors import OrchestratorError
-    from maestro.telemetry import activer_export_langfuse, redact_secrets
+    from maestro.telemetry import enable_langfuse_export, redact_secrets
 
     console_tolerante()
     args = list(sys.argv[1:] if argv is None else argv)
@@ -985,7 +985,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
 
     # Export Langfuse (#81) : purement configuratif, no-op sans clés — même bascule
     # que pour un run CLI, pour qu'un run détaché ne perde pas sa trace.
-    activer_export_langfuse()
+    enable_langfuse_export()
     activer_publication_evenements()
     coeur = CoeurRun(ordre.run_id, batteur_redis(load_settings().redis_url))
     coeur.demarrer()

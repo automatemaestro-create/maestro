@@ -45,7 +45,7 @@ from maestro.controltower.routes.requetes import (
     ReponseOutillageRequete,
 )
 from maestro.controltower.state import RENFORT_ACCORDE, RENFORT_DECLINE
-from maestro.sources import SourceRefusee
+from maestro.sources import SourceRejected
 
 router = APIRouter()
 
@@ -266,7 +266,7 @@ async def envoyer_chat(
             projet_id=projet_id_valide(requete.projet_id),
             conversation=fil,
         )
-    except SourceRefusee as exc:
+    except SourceRejected as exc:
         # Avant le `ValueError` nu dont elle hérite : une source refusée porte
         # un motif et un index, et les aplatir en chaîne perdrait l'endroit où
         # l'écran doit afficher le refus.
@@ -726,7 +726,7 @@ async def _flux_reponse(
         # ouvert sur une erreur — `diffuser` lève avant sa première trame.
         trames = flux()
         premiere = await anext(trames)
-    except SourceRefusee as exc:
+    except SourceRejected as exc:
         # Avant le `ValueError` nu dont elle hérite, pour la raison qui vaut
         # sur `POST …/messages` : aplatir le refus en chaîne perdrait l'index
         # de la source fautive, donc l'endroit où l'écran doit l'afficher.

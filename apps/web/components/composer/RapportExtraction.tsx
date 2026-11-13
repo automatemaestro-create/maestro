@@ -21,7 +21,7 @@
  *   de lire ça » ne s'affichent jamais pareil ;
  * - **le contenu ne s'affiche pas.** Le rapport dit ce qu'une source coûte, pas
  *   ce qu'elle raconte : le Markdown extrait a son propre chemin, encadré comme
- *   donnée et jamais comme consigne (`contexte_markdown`, ENF-13).
+ *   donnée et jamais comme consigne (`markdown_context`, ENF-13).
  */
 
 import { BadgeEtat, type TonBadge } from "@/components/Primitives";

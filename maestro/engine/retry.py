@@ -11,7 +11,7 @@ indépendante du fournisseur :
 - `est_transitoire` : la classification. Par **exclusion** : tout échec de
   réalisation est présumé transitoire (c'est lui que la relance vise), *sauf*
   les causes déterministes qui reproduiraient le même échec — plafond de coût
-  (`PlafondDepenseDepasse`), plafond de tours (`TurnLimitReached`, mué par chaque
+  (`SpendingCapExceeded`), plafond de tours (`TurnLimitReached`, mué par chaque
   fournisseur depuis son signal natif), capacité non supportée
   (`UnsupportedCapability`), serveur MCP indisponible (`McpServerUnavailable`,
   #104 — déclaration, secret ou serveur à corriger : relancer coûterait sans
@@ -49,7 +49,7 @@ from maestro.providers.base import (
     TurnLimitReached,
     UnsupportedCapability,
 )
-from maestro.telemetry import PlafondDepenseDepasse
+from maestro.telemetry import SpendingCapExceeded
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,7 @@ def est_transitoire(erreur: BaseException) -> bool:
     """
     return not isinstance(
         erreur,
-        PlafondDepenseDepasse
+        SpendingCapExceeded
         | TurnLimitReached
         | PlafondFluxDepasse
         | UnsupportedCapability
