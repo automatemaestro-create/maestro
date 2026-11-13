@@ -27,6 +27,11 @@ merge), arrête-toi et demande si un point n'est pas clair.
    dans `.maestro/session/`, puis `git commit -F .maestro/session/<fichier>` en chemin relatif — ni
    le scratchpad de session ni `/tmp`, jamais `-m` multi-ligne ni `$(…)`.
 
+   **Le code neuf est-il en anglais ?** (docs/55 §0.5) Les fichiers que le diff ajoute :
+   `git diff -M --diff-filter=A --name-only origin/main...HEAD -- maestro tests apps/web`. Juge
+   leur langue toi-même, jamais par une liste de mots ; un fichier en français se réécrit en
+   anglais et se committe ici. Aucun fichier ajouté : n'en dis rien.
+
 4bis. **Le rendu a-t-il été regardé ?**
    ```
    bash scripts/design/relecture-visuelle.sh --plan <iid>
@@ -120,7 +125,7 @@ merge), arrête-toi et demande si un point n'est pas clair.
    substitution `$(…)`. Jamais `--force` : un push rejeté, arrête-toi et explique pourquoi. Bloqué
    sur des identifiants (Windows) : `GIT_TERMINAL_PROMPT=0 git -c credential.helper='' -c
    credential.helper='!gh auth git-credential' push -u origin <nom-de-la-branche>` ; ce repli
-   refusé (préfixe de variable, #235), signale-le, sans variante inventée.
+   refusé (#235), signale-le, sans variante inventée.
 
 8. **La description de la PR s'écrit dans un fichier**, jamais sur la ligne de commande.
    1. PR déjà ouverte ? `bash scripts/gitlab/lib.sh mr-iid` (code 1 si aucune).
@@ -138,7 +143,7 @@ merge), arrête-toi et demande si un point n'est pas clair.
       bash scripts/gitlab/lib.sh create-mr <iid> <fichier>
       ```
    2. **Lève le brouillon, sans demander** — lancer `/ticket-finish`, c'est déclarer le travail
-      fini ; sans effet sur une PR prête, et pas une promesse : `merge-mr` juge.
+      fini.
       ```
       gh pr ready <numéro>
       ```
@@ -164,27 +169,24 @@ merge), arrête-toi et demande si un point n'est pas clair.
    ```
    bash scripts/gitlab/lib.sh log-time-mesure <iid>
    ```
-   Il compte les tours des sessions du ticket et logge ce qui ne l'est pas, sa source au libellé.
    Code `3` : rien de loggé, c'est la bonne issue — aucune durée à la main. Recopie ses lignes.
 
-13. **Attends le pipeline, merge, débloque ce qui est réparable** (#418, #460). Placée après « En
-   revue » : une session qui meurt pendant l'attente laisse un ticket lisible.
+13. **Attends le pipeline, merge, débloque ce qui est réparable** (#418, #460).
 
    1. **Annonce l'attente** (« 2-4 min, 15 s'il tourne, 30 s'il n'est pas né »), puis :
       ```
       bash scripts/gitlab/lib.sh pipeline-wait <branche> || verdict=$?
       ```
       Ses codes formulent, ils ne décident pas : enchaîne sur `merge-mr` **dans tous les cas**. Un
-      `6` (pas encore né) : note la durée ; le `gh workflow run` qu'il imprime vérifierait la
-      branche, pas sa ref de merge — nomme-le au résumé, ne le joue pas (#595).
+      `6` (pas encore né) : note la durée, et nomme au résumé le `gh workflow run` qu'il imprime,
+      sans le jouer (#595).
    2. **Merge** — jamais `gh pr merge`, en `deny` et dans `guard.sh` (#417) :
       ```
       bash scripts/gitlab/lib.sh merge-mr <iid> || verdict=$?
       ```
       - `0` → **mergé**. Le ticket se ferme par son `Closes`, « Terminé » vient du workflow `issues:
         closed` : ne pose rien. Worktree et branche partent à l'**étape 14**.
-      - `3` → verdict pas encore rendu (run en cours, absent, périmé).
-        **Repasse une fois, pas plus** : `pipeline-wait` puis `merge-mr`. Toujours `3` : PR
+      - `3` → verdict pas encore rendu. **Repasse une fois, pas plus** : `pipeline-wait` puis `merge-mr`. Toujours `3` : PR
         ouverte, « En revue », dis-le — quelqu'un repassera, ou le drain d'un run (#419). Si
         `merge-mr` dit le pipeline « pas encore né », nomme-le ainsi, avec sa durée et le geste
         `gh workflow run` disponible, non posé. **N'enchaîne jamais sur `/mr-fix` ici** : un
@@ -233,7 +235,8 @@ merge), arrête-toi et demande si un point n'est pas clair.
    puis le **verdict du merge**, l'**issue du déblocage** sur sa propre ligne, le **ramassage**, le
    lien de la PR, le filet CI s'il n'était pas vert (quel job, pourquoi tu as poussé quand même),
    les signalements (`1` d'un verbe), le retard sur `origin/main`, le **temps** loggé
-   (ou pourquoi rien), le **ticket de reprise** de 9.3, la planche, et la **confrontation des
+   (ou pourquoi rien), le **ticket de reprise** de 9.3, la planche, le **code neuf** s'il y en a,
+   et la **confrontation des
    critères** sur sa ligne (`n ✓ · n ✗ · n hors diff`, chaque critère ✗ nommé, l'exercice s'il
    était dû, ou « aucun critère — signalé sur le ticket »).
 

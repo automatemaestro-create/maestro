@@ -2505,7 +2505,9 @@ Tu traites intégralement le ticket GitHub #$1 de ce dépôt, seul et sans super
 
 1. Lance la commande /ticket-start $1.
 2. Implémente avec une méthode. LIS avant d'écrire : le code que le ticket touche et les tests qui
-   le gardent. Un bug commence par son test : écris D'ABORD le test qui reproduit le défaut et
+   le gardent. Le code NEUF s'écrit en anglais (docs/55 §0.5) : fichier neuf, nom neuf qui voyage
+   ou s'enregistre, nom du métier pris au glossaire de docs/08 ; un fichier existant garde sa
+   langue. Un bug commence par son test : écris D'ABORD le test qui reproduit le défaut et
    vois-le échouer, puis corrige jusqu'à le voir passer. Implémente ainsi tous les critères
    d'acceptation du ticket, puis EXERCE chacun : un critère se clôt sur une preuve exercée — un
    test nommé que tu as joué et vu passer, ou une observation sur la vraie stack (le run,

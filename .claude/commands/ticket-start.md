@@ -98,6 +98,10 @@ de chaque étape : `docs/10-workflow-git.md` §5 et §6.1, à n'ouvrir qu'en cas
    **L'implémentation suit une méthode** (#1241), la même en run et en interactif :
    - **Lis avant d'écrire** : le code que le ticket touche et les tests qui le gardent. Ils disent
      ce qui ne doit pas bouger, et où le test du ticket s'écrit.
+   - **Le code neuf s'écrit en anglais** (docs/55 §0.5) : un fichier neuf sous `maestro/`, `tests/`
+     ou `apps/web/`, et un nom neuf qui voyage ou s'enregistre. Un nom du métier vient du glossaire
+     de docs/08, où il entre d'abord s'il manque. Un fichier existant garde sa langue jusqu'au lot
+     de son paquet. `/ticket-finish` le vérifie sur les fichiers que ton diff ajoute.
    - **Un bug commence par son test** : écris d'abord le test qui reproduit le défaut et vois-le
      échouer, puis corrige jusqu'à le voir passer. Un test qu'on n'a jamais vu échouer ne prouve
      pas qu'il attrape le défaut.

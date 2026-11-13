@@ -211,6 +211,16 @@ entrée avant eux (notes sur les deux tickets).
 - **Un renvoi ⚠** dans docs/53 §0.4 et §7.
 - **[`CLAUDE.md`](../CLAUDE.md)** : la règle, en une ligne qui pointe ce document. La ligne « Le code
   dit le présent » y nomme l'exception du lot de traduction.
+- **Les deux moments où une session la joue** (#1668) :
+  - **À l'écriture**, la règle est rappelée dans la méthode de
+    [`/ticket-start`](../.claude/commands/ticket-start.md) (étape 6), et dans l'étape 2 du prompt
+    d'une session de run (`scripts/orchestrate/run.sh`).
+  - **À la clôture**, l'étape 4 de [`/ticket-finish`](../.claude/commands/ticket-finish.md) fait
+    juger par la session les fichiers que le diff ajoute sous les trois racines du code, avant
+    le filet CI. Un fichier déplacé n'en est pas un. C'est git qui désigne les fichiers à juger,
+    et la session qui juge leur langue, jamais une liste de mots (§8).
+  - `tests/test_audit_commandes.py` garde le renvoi de ces trois textes à ce document. Il joue
+    aussi la commande sur un dépôt jetable.
 
 ## 11. La recette mesurée
 

@@ -64,6 +64,9 @@ tête ; celui-ci prouve que la garde aurait arrêté celle qui a eu lieu.
 from __future__ import annotations
 
 import re
+import shlex
+import shutil
+import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -1191,3 +1194,147 @@ class TestBudgetDesTextesDeCloture:
         fautive = etapes(lire(TICKET_FINISH) + "\n16. Une étape de plus.\n")
         assert fautive != index_de_ticket_finish(), "une étape sans ligne d'index se verrait"
         assert index_de_ticket_finish() == commande
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# 9. Le code neuf s'écrit en anglais (#1668, docs/55 §0.5)
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+#: Le renvoi que portent les trois textes : la règle et sa démonstration vivent dans docs/55.
+RENVOI_DOCS_55 = "docs/55 §0.5"
+
+#: Le déclencheur de la clôture : une commande git entre accents graves, qui liste les fichiers que
+#: le diff **ajoute**. C'est un acte que git constate, jamais un lexique qui jugerait le texte
+#: (docs/55 §8, #746) : la langue, c'est la session qui la juge.
+_DECLENCHEUR = re.compile(r"`(git diff [^`]*--diff-filter=A[^`]*)`")
+
+#: Les trois racines du code, celles que docs/55 §0.1 traduit.
+_RACINES_DU_CODE = ("maestro", "tests", "apps/web")
+
+#: L'étape 4 de `/ticket-finish` telle qu'elle était avant #1668 (`git show 65ecdd5e:<fichier>`) :
+#: elle committait le reste sans rien demander de la langue des fichiers ajoutés.
+_ETAPE_4_AVANT_1668 = (
+    "4. **Le reste à committer.** Arbre sale : montre `git diff --stat`, propose un message "
+    "Conventional Commits (pied `Refs #<iid>`, docs/10 §2) et **demande confirmation**. Message "
+    "écrit avec `Write` dans `.maestro/session/`, puis `git commit -F .maestro/session/<fichier>` "
+    "en chemin relatif — ni le scratchpad de session ni `/tmp`, jamais `-m` multi-ligne ni `$(…)`."
+)
+
+
+def etape_4_de_ticket_finish() -> str:
+    """L'étape 4 de `/ticket-finish`, aplatie : celle qui se joue avant la relecture, les critères
+    et le filet CI."""
+    plat = aplatir(lire(TICKET_FINISH))
+    debut = plat.index("4. **Le reste à committer.**")
+    return plat[debut : plat.index("4bis. **Le rendu", debut)]
+
+
+def declencheur_du_code_neuf(texte: str) -> list[str] | None:
+    """La commande git que le texte donne pour lister les fichiers ajoutés, en arguments."""
+    trouve = _DECLENCHEUR.search(texte)
+    return shlex.split(trouve.group(1)) if trouve else None
+
+
+def manques_de_la_cloture(texte: str) -> list[str]:
+    """Ce que l'étape de clôture ne dit pas de la règle : le renvoi, le déclencheur, le jugement."""
+    manques: list[str] = []
+    if RENVOI_DOCS_55 not in texte:
+        manques.append("renvoi à docs/55")
+    commande = declencheur_du_code_neuf(texte)
+    if commande is None or not all(racine in commande for racine in _RACINES_DU_CODE):
+        manques.append("fichiers ajoutés sous les trois racines du code")
+    if "jamais par une liste de mots" not in texte:
+        manques.append("jugement sans lexique")
+    return manques
+
+
+def manques_de_la_methode(texte: str) -> list[str]:
+    """Ce que la méthode d'implémentation ne dit pas de la règle : son renvoi et le glossaire."""
+    attendus = (("renvoi à docs/55", RENVOI_DOCS_55), ("glossaire", "glossaire de docs/08"))
+    return [nom for nom, extrait in attendus if extrait not in texte]
+
+
+class TestCodeNeufEnAnglais:
+    """La règle du code neuf se rappelle à l'écriture et se juge à la clôture (#1668)."""
+
+    def test_le_lecteur_arrete_les_textes_d_avant_1668(self) -> None:
+        """Les échantillons fautifs sont les vrais : l'étape 4 et les deux méthodes d'avant."""
+        assert manques_de_la_cloture(aplatir(_ETAPE_4_AVANT_1668)) == [
+            "renvoi à docs/55",
+            "fichiers ajoutés sous les trois racines du code",
+            "jugement sans lexique",
+        ]
+        for relatif, texte in _METHODE_FAUTIVES.items():
+            assert manques_de_la_methode(aplatir(texte)) == ["renvoi à docs/55", "glossaire"], (
+                relatif
+            )
+
+    def test_la_methode_de_ticket_start_porte_la_regle(self) -> None:
+        manques = manques_de_la_methode(etape_6_de_ticket_start())
+        assert not manques, f"étape 6 de /ticket-start : {manques}"
+
+    def test_le_prompt_de_run_porte_la_regle_a_l_etape_qui_demande_l_implementation(self) -> None:
+        manques = manques_de_la_methode(etape_2_du_prompt_de_run())
+        assert not manques, f"étape 2 du prompt de run : {manques}"
+
+    def test_la_cloture_juge_les_fichiers_ajoutes_avant_le_filet(self) -> None:
+        """L'étape 4 porte la règle : elle précède la relecture, les critères et le filet CI."""
+        manques = manques_de_la_cloture(etape_4_de_ticket_finish())
+        assert not manques, f"étape 4 de /ticket-finish : {manques}"
+
+    def test_le_resume_de_cloture_nomme_le_code_neuf(self) -> None:
+        plat = aplatir(lire(TICKET_FINISH))
+        resume = plat[plat.index("15. Termine par un résumé") :]
+        assert "le **code neuf** s'il y en a" in resume
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git introuvable")
+def test_le_declencheur_ne_liste_que_les_fichiers_que_la_branche_ajoute(tmp_path: Path) -> None:
+    """La commande de l'étape 4, jouée telle quelle sur un dépôt jetable.
+
+    La branche ajoute un fichier sous chacune des trois racines. Elle ajoute aussi un document,
+    déplace un fichier sans le changer et en modifie un autre. Pendant ce temps, `origin/main`
+    reçoit un fichier que la branche n'a pas. Seuls les trois ajouts de la branche sont listés : un
+    fichier déplacé garde sa langue jusqu'au lot de son paquet (docs/55 §4, règle 2), et une
+    branche en retard ne se voit pas reprocher ce que `main` a ajouté.
+    """
+    commande = declencheur_du_code_neuf(etape_4_de_ticket_finish())
+    assert commande is not None and commande[:2] == ["git", "diff"]
+
+    def git(*arguments: str) -> str:
+        return subprocess.run(
+            ["git", *arguments], cwd=tmp_path, check=True, capture_output=True, text=True
+        ).stdout
+
+    def ecrire(relatif: str, texte: str) -> None:
+        chemin = tmp_path / relatif
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_text(texte, encoding="utf-8")
+
+    git("init", "-q", "-b", "travail")
+    git("config", "user.name", "essai")
+    git("config", "user.email", "essai@maestro.invalid")
+    ecrire("maestro/ancien.py", '"""Le module existant, encore en français."""\n')
+    ecrire("maestro/garde.py", '"""Un module que la branche déplace sans le changer."""\n')
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("branch", "principale")
+
+    git("switch", "-q", "principale")
+    ecrire("maestro/sur_main.py", '"""Added on main after the branch started."""\n')
+    git("add", "-A")
+    git("commit", "-q", "-m", "main avance")
+    git("update-ref", "refs/remotes/origin/main", "principale")
+
+    git("switch", "-q", "travail")
+    ecrire("maestro/neuf.py", '"""A new module."""\n')
+    ecrire("tests/test_neuf.py", '"""Tests of the new module."""\n')
+    ecrire("apps/web/composant.tsx", "export const Component = () => null;\n")
+    ecrire("docs/note.md", "Une note hors du code.\n")
+    ecrire("maestro/ancien.py", '"""Le module existant, encore en français, retouché."""\n')
+    git("mv", "maestro/garde.py", "maestro/deplace.py")
+    git("add", "-A")
+    git("commit", "-q", "-m", "le ticket")
+
+    listes = sorted(git(*commande[1:]).split())
+    assert listes == ["apps/web/composant.tsx", "maestro/neuf.py", "tests/test_neuf.py"]

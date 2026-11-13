@@ -2067,7 +2067,8 @@ Cohérent avec le principe « autonomie sous supervision » du projet (voir [REA
     avec lui : ces commandes ne rendent plus la main dans la seconde. L'ancienne règle disait qu'une
     attente de pipeline en fin de ticket était du temps perdu — elle avait raison tant que le merge
     venait plus tard et de quelqu'un d'autre. Elle est **fausse depuis #418**, et on l'écrit plutôt
-    que de laisser croire à un oubli.
+    que de laisser croire à un oubli. L'attente vient **après** la pose de « En revue » : une
+    session qui meurt pendant l'attente laisse un ticket lisible.
 
   Restent **interdits, nommément** : merger **hors de ce chemin**, **fermer une PR**
   (`gh pr close`), **force-pusher**, et **rebaser** une branche poussée — un rebase appellerait un
@@ -2398,7 +2399,7 @@ démonstration, et que l'index de `/ticket-finish` ci-dessous en range chaque é
 | 1 | l'IID, de l'argument ou de la branche | §1 (nommage des branches) |
 | 2 | forge authentifiée | §7 |
 | 3 | `close-guard` avant toute écriture | §6 (garde-fou de clôture) |
-| 4 | commit montré, confirmé, message par fichier | §2 ; §11.7 (#233, #962) |
+| 4 | commit montré, confirmé, message par fichier ; code neuf en anglais | §2 ; §11.7 (#233, #962) ; docs/55 §0.5 et §8 (#1668) |
 | 4bis | relecture visuelle, consignée sur le ticket | docs/30 §5.5 (#935), §5.6, §5.8 (#1151, #1243) |
 | 4ter | critères exercés, exercice dû, constat consigné | §6 (#968, #1240, #1570) ; docs/52 |
 | 5 | filet CI local, jamais bloquant | §8.4 (#214, #1242) |
