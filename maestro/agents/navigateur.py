@@ -20,17 +20,23 @@ celle de `maestro.controltower.equipe`.
 Le serveur est l'entrée `playwright` de l'**allowlist** (`maestro.agents.mcp_registry`) :
 c'est elle qu'on instancie, jamais un gabarit écrit ici — le garde-fou supply-chain
 reste celui du registre. Sa version y est **figée**, il y tourne sans fenêtre et sous
-un profil tenu en mémoire (`--headless`, `--isolated`). Deux choses s'y ajoutent au
-moment d'équiper, parce qu'elles ne se savent que sur le poste :
+un profil tenu en mémoire (`--headless`, `--isolated`). Deux choses s'y ajoutent quand
+on le pose au pool d'un projet, parce qu'elles ne se savent que sur le poste :
 
-- **le navigateur qu'il pilote** (`canal_du_poste`) : Chrome s'il est installé, sinon
-  Edge — tous deux des « canaux » que Playwright sait piloter sans rien télécharger.
-  Aucun : le serveur garde son défaut, et c'est sa propre erreur, lisible, que
-  l'agent lira à son premier geste ;
+- **le navigateur qu'il pilote** (`navigateur_du_poste`) : Chrome s'il est installé,
+  sinon Edge, sinon Chromium. Chrome et Edge sont des « canaux » que Playwright trouve
+  et pilote sans rien télécharger ; Chromium n'en est pas un, il se désigne par son
+  exécutable. Aucun : le serveur garde son défaut, et c'est sa propre erreur, lisible,
+  que l'agent lira à son premier geste ;
 - **où vont ses captures** (`dossier_des_sorties`) : sous le jetable du poste, jamais
   dans le dossier de la tâche. Son défaut est `.playwright-mcp/` dans le répertoire
   courant — l'espace de la tâche, dont tout fichier ressort en livrable et part dans
   le projet de la personne à la fusion.
+
+**Une seule fabrique** (`integration_navigateur`) pour les deux chemins qui le posent :
+l'équipe qui le reçoit à sa composition (`maestro.controltower.equipe`) et la personne
+qui l'ajoute depuis la bibliothèque des intégrations (`POST /api/mcp/pool`). Les deux
+reçoivent le même serveur, complété par le poste et sous le même nom (#1313).
 
 L'intégration garde l'id du registre (`ID_INTEGRATION`) : l'écran des intégrations
 la reconnaît comme l'entrée curée qu'elle est. Le **serveur**, lui, s'appelle
@@ -52,7 +58,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
 
 from maestro.agents.mcp import IntegrationMcp, ServeurMcp
@@ -119,10 +125,17 @@ CONSIGNE_DE_L_AGENT = (
 #: Le sous-dossier du jetable où tombent ses captures (voir l'en-tête).
 NOM_SORTIES = "navigateur"
 
-#: Les canaux que Playwright pilote sans rien télécharger, dans l'ordre de
-#: préférence, avec les exécutables qui trahissent leur présence. Chrome d'abord :
-#: c'est le canal par défaut du serveur, donc celui que ses exemples supposent.
-_CANAUX: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+#: Les canaux de l'adaptateur : les navigateurs que Playwright cherche lui-même, aux
+#: emplacements que lit la sonde, et que leur nom suffit à désigner (`--browser=`).
+CANAUX_PLAYWRIGHT: frozenset[str] = frozenset({"chrome", "msedge"})
+
+#: Les navigateurs que le serveur sait piloter sur le poste, dans l'ordre de
+#: préférence, avec les exécutables qui trahissent leur présence sous Windows.
+#: Chrome d'abord : c'est le canal par défaut du serveur, donc celui que ses exemples
+#: supposent. Chromium en dernier : l'adaptateur ne le connaît pas pour canal — son
+#: `--browser=chromium` vise un Chromium qu'il télécharge —, il le reçoit par son
+#: exécutable.
+_NAVIGATEURS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "chrome",
         (
@@ -139,6 +152,14 @@ _CANAUX: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("LOCALAPPDATA", r"Microsoft\Edge\Application\msedge.exe"),
         ),
     ),
+    (
+        "chromium",
+        (
+            ("LOCALAPPDATA", r"Chromium\Application\chrome.exe"),
+            ("PROGRAMFILES", r"Chromium\Application\chrome.exe"),
+            ("PROGRAMFILES(X86)", r"Chromium\Application\chrome.exe"),
+        ),
+    ),
 )
 
 #: Hors de Windows, les chemins d'installation sont fixes.
@@ -146,21 +167,42 @@ _CHEMINS_FIXES: dict[str, dict[str, tuple[str, ...]]] = {
     "darwin": {
         "chrome": ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",),
         "msedge": ("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",),
+        "chromium": ("/Applications/Chromium.app/Contents/MacOS/Chromium",),
     },
     "linux": {
         "chrome": ("/opt/google/chrome/chrome",),
         "msedge": ("/opt/microsoft/msedge/msedge",),
+        "chromium": ("/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium"),
     },
 }
 
 
-def canal_du_poste(
+@dataclass(frozen=True)
+class NavigateurDuPoste:
+    """Un navigateur trouvé sur le poste : son nom et l'exécutable qui l'a trahi."""
+
+    nom: str
+    chemin: Path
+
+    def arguments(self) -> tuple[str, ...]:
+        """Ce que le serveur reçoit pour piloter ce navigateur-là plutôt que son défaut.
+
+        Un canal se désigne par son nom, et Playwright le retrouve aux mêmes
+        emplacements que la sonde. Un navigateur qui n'en est pas un se désigne par
+        son exécutable.
+        """
+        if self.nom in CANAUX_PLAYWRIGHT:
+            return (f"--browser={self.nom}",)
+        return (f"--executable-path={self.chemin}",)
+
+
+def navigateur_du_poste(
     *,
     environ: Mapping[str, str] | None = None,
     plateforme: str | None = None,
     existe: Callable[[Path], bool] | None = None,
-) -> str | None:
-    """Le navigateur que le serveur pilotera sur ce poste — `chrome`, `msedge`, ou None.
+) -> NavigateurDuPoste | None:
+    """Le navigateur que le serveur pilotera sur ce poste — Chrome, Edge, Chromium, ou None.
 
     Une **lecture** : on regarde si l'exécutable est là, on ne le lance pas (la règle
     de la sonde du poste, `maestro.poste`). None veut dire « rien trouvé aux endroits
@@ -173,15 +215,15 @@ def canal_du_poste(
     env = os.environ if environ is None else environ
     systeme = sys.platform if plateforme is None else plateforme
     present = existe if existe is not None else _est_un_fichier
-    for canal, emplacements in _CANAUX:
-        for chemin in _chemins(canal, emplacements, env, systeme):
+    for nom, emplacements in _NAVIGATEURS:
+        for chemin in _chemins(nom, emplacements, env, systeme):
             if present(chemin):
-                return canal
+                return NavigateurDuPoste(nom=nom, chemin=chemin)
     return None
 
 
 def _chemins(
-    canal: str,
+    nom: str,
     emplacements: tuple[tuple[str, str], ...],
     env: Mapping[str, str],
     systeme: str,
@@ -196,7 +238,7 @@ def _chemins(
             if env.get(variable)
         )
     famille = "darwin" if systeme == "darwin" else "linux"
-    return tuple(Path(chemin) for chemin in _CHEMINS_FIXES[famille].get(canal, ()))
+    return tuple(Path(chemin) for chemin in _CHEMINS_FIXES[famille].get(nom, ()))
 
 
 def _est_un_fichier(chemin: Path) -> bool:
@@ -211,10 +253,15 @@ def dossier_des_sorties(environ: Mapping[str, str] | None = None) -> Path:
     return racine_jetable(environ) / NOM_SORTIES
 
 
+#: Ce qui trouve le navigateur du poste — `navigateur_du_poste`, ou ce qu'on injecte.
+Sonde = Callable[[], NavigateurDuPoste | None]
+
+
 def serveur_navigateur(
     registre: RegistreMcp | None = None,
     *,
-    canal: str | None = None,
+    nom: str | None = None,
+    sonde: Sonde | None = None,
     sorties: Path | None = None,
 ) -> ServeurMcp:
     """Le serveur navigateur à monter : l'entrée de l'allowlist, et ce que le poste dit.
@@ -222,24 +269,37 @@ def serveur_navigateur(
     Instancié par le registre (`RegistreMcp.instancier`) — c'est le garde-fou :
     une entrée retirée de l'allowlist lève ici, et rien n'est équipé. Les arguments
     du poste s'ajoutent **après** ceux de l'entrée, jamais à leur place.
+
+    `nom` nomme la liaison, `navigateur` sauf choix contraire. `sonde` trouve le
+    navigateur du poste : `navigateur_du_poste` par défaut, cherché à l'appel, donc
+    remplaçable par une suite qui ne doit pas dépendre du poste qui la joue.
     """
-    serveur = (registre or RegistreMcp.curee()).instancier(ID_INTEGRATION, nom=NOM_SERVEUR)
-    poste = [f"--output-dir={sorties if sorties is not None else dossier_des_sorties()}"]
-    if canal:
-        poste.insert(0, f"--browser={canal}")
+    serveur = (registre or RegistreMcp.curee()).instancier(
+        ID_INTEGRATION, nom=nom or NOM_SERVEUR
+    )
+    trouve = (sonde or navigateur_du_poste)()
+    poste = (
+        *(trouve.arguments() if trouve is not None else ()),
+        f"--output-dir={sorties if sorties is not None else dossier_des_sorties()}",
+    )
     return replace(serveur, args=(*serveur.args, *poste))
 
 
 def integration_navigateur(
     registre: RegistreMcp | None = None,
     *,
-    canal: str | None = None,
+    nom: str | None = None,
+    sonde: Sonde | None = None,
     sorties: Path | None = None,
 ) -> IntegrationMcp:
-    """L'intégration du pool d'un projet qui porte le navigateur de Maestro."""
+    """L'intégration du pool d'un projet qui porte le navigateur de Maestro.
+
+    La seule fabrique : une équipe la pose à sa composition, la bibliothèque des
+    intégrations quand la personne l'ajoute.
+    """
     return IntegrationMcp(
         id=ID_INTEGRATION,
-        serveur=serveur_navigateur(registre, canal=canal, sorties=sorties),
+        serveur=serveur_navigateur(registre, nom=nom, sonde=sonde, sorties=sorties),
     )
 
 

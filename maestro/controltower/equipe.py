@@ -67,7 +67,7 @@ from maestro.agents.catalog import MODELE_EXECUTANT_DEFAUT
 from maestro.agents.configuration import ConfigurationAgents
 from maestro.agents.mcp import IntegrationMcp
 from maestro.agents.navigateur import ID_INTEGRATION as ID_NAVIGATEUR
-from maestro.agents.navigateur import canal_du_poste, integration_navigateur
+from maestro.agents.navigateur import integration_navigateur
 from maestro.agents.store import NOMS_RESERVES
 from maestro.controltower.generation_agent import (
     INTENTION_MAX,
@@ -565,7 +565,7 @@ class ServiceEquipe:
         """L'intégration du navigateur — celle qu'on a injectée, ou celle de ce poste."""
         if self._navigateur is not None:
             return self._navigateur()
-        return integration_navigateur(canal=canal_du_poste())
+        return integration_navigateur()
 
     @staticmethod
     def _ecrire_role(cfg: ConfigurationAgents, role: RoleValide) -> AgentCree:

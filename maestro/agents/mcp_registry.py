@@ -1787,16 +1787,18 @@ SEED: tuple[EntreeRegistre, ...] = (
     # version est **figée** — `@latest` ferait tourner sous chaque tâche un code que
     # personne n'a vu —, il tourne sans fenêtre et sous un profil tenu en mémoire,
     # et sa procédure renvoie à l'éditeur, jamais à un fichier du dépôt de
-    # développement (#1313). Le navigateur qu'il pilote se résout sur le poste au
-    # moment d'équiper (`canal_du_poste`).
+    # développement (#1313). Le navigateur qu'il pilote (Chrome, Edge ou Chromium)
+    # se résout sur le poste chaque fois qu'on le pose au pool d'un projet, par une
+    # équipe comme depuis la bibliothèque (`integration_navigateur`).
     EntreeRegistre(
         id="playwright",
         nom="Playwright",
         description=(
             "Piloter un vrai navigateur : naviguer, remplir, cliquer, capturer à une "
             "largeur donnée, lire les erreurs de la console — sur l'arbre "
-            "d'accessibilité plutôt que sur des pixels. Sans fenêtre, sous un profil "
-            "tenu en mémoire. C'est le navigateur de Maestro."
+            "d'accessibilité plutôt que sur des pixels. Il pilote le navigateur du "
+            "poste (Chrome, Edge ou Chromium), sans fenêtre, sous un profil tenu en "
+            "mémoire. C'est le navigateur de Maestro."
         ),
         mode_auth="sans_secret",
         transport="stdio",
