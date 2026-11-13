@@ -1,24 +1,23 @@
-"""Côté orchestrateur de la file de tâches : mise en file et remontée (ticket #41).
+"""The orchestrator side of the task queue: queuing and result return (#41).
 
-`CeleryExecutor` est l'exécuteur **distribué** de la boucle d'orchestration : là
-où `LocalExecutor` exécute dans le process, il **pousse** chaque tâche dans la
-file Celery + Redis (`send_task`, par nom — le code worker n'est jamais importé
-ici : mise en file et consommation sont découplées) puis attend le résultat
-renvoyé par un worker. La boucle (`maestro.engine.loop`) ne change pas : elle
-continue de résoudre les dépendances et de lancer les tâches indépendantes en
-parallèle — chacune devient un message en file, consommable par n'importe quel
-worker disponible ; deux workers = deux agents réellement en parallèle, hors du
-process de l'orchestrateur.
+`CeleryExecutor` is the **distributed** executor of the orchestration loop. Where
+`LocalExecutor` runs in process, it **pushes** each task to the Celery + Redis
+queue (`send_task`, by name: the worker code is never imported here, so queuing
+and consumption stay decoupled) and waits for the result a worker sends back. The
+loop (`maestro.engine.loop`) does not change: it still resolves dependencies and
+starts independent tasks in parallel, each becoming a queued message that any
+available worker can consume. Two workers are two agents truly in parallel,
+outside the orchestrator's process.
 
-Même contrat que tout `TaskExecutor` : `execute` ne lève jamais. Un échec de
-**transport** (file injoignable, worker perdu, délai dépassé, exception worker)
-devient un `TaskResult` en échec, consigné au journal comme les autres — la
-boucle reste résiliente. Les échecs *métier* voyagent, eux, en données : le
-worker renvoie un `TaskResult` au statut `echec`, remonté tel quel.
+Same contract as every `TaskExecutor`: `execute` never raises. A **transport**
+failure (unreachable queue, lost worker, timeout, worker exception) becomes a
+failed `TaskResult`, recorded in the journal like any other, so the loop stays
+resilient. *Business* failures travel as data: the worker returns a `TaskResult`
+with status `echec`, passed on as is.
 
-L'attente du résultat est **bloquante côté Celery** (`AsyncResult.get`) : elle
-est déportée dans un thread (`asyncio.to_thread`) pour que la boucle asyncio
-continue de dispatcher les autres tâches pendant ce temps.
+Waiting for the result **blocks on the Celery side** (`AsyncResult.get`): it runs
+in a thread (`asyncio.to_thread`) so that the asyncio loop keeps dispatching the
+other tasks meanwhile.
 """
 
 from __future__ import annotations
@@ -43,66 +42,65 @@ from maestro.engine.loop import OrchestrationEngine
 from maestro.messaging.mailbox import Mailbox
 from maestro.orchestrator.orchestrator import Orchestrator
 from maestro.orchestrator.schema import Brief, Task
-from maestro.queue.celery_app import NOM_TACHE_EXECUTER
+from maestro.queue.celery_app import EXECUTE_TASK_NAME
 from maestro.telemetry import RunJournal, StepUsage
 
-#: Délai d'attente par défaut du résultat d'une tâche (secondes). Évite qu'un
-#: worker perdu ou une file vide de consommateurs suspende la boucle pour
-#: toujours ; une tâche d'agent (appels modèle compris) tient largement dedans.
-TIMEOUT_RESULTAT_S = 600.0
+#: Default wait for a task's result (seconds). It keeps a lost worker, or a queue
+#: without consumers, from suspending the loop forever; an agent task, model calls
+#: included, fits well within it.
+RESULT_TIMEOUT_S = 600.0
 
 
 class CeleryExecutor(TaskExecutor):
-    """Exécuteur distribué : chaque tâche part dans la file, son résultat en revient.
+    """Distributed executor: each task goes to the queue, and its result comes back.
 
-    S'injecte dans la boucle (`OrchestrationEngine(..., executor=...)`) à la
-    place de l'exécution locale. `app` est l'application Celery à utiliser —
-    celle du dépôt par défaut (`maestro.queue.celery_app.app`, configurée sur
-    `REDIS_URL`) ; les tests y substituent une app sur transport mémoire.
-    `timeout_s` borne l'attente du résultat de **chaque** tâche (None : attente
-    illimitée — déconseillé hors débogage).
+    It is injected into the loop (`OrchestrationEngine(..., executor=...)`) in place
+    of local execution. `app` is the Celery application to use, the repository's
+    by default (`maestro.queue.celery_app.app`, configured on `REDIS_URL`); tests
+    substitute an app on the in-memory transport. `timeout_s` bounds the wait for
+    the result of **each** task (None: unbounded, not advised outside debugging).
     """
 
     def __init__(
-        self, app: Celery | None = None, *, timeout_s: float | None = TIMEOUT_RESULTAT_S
+        self, app: Celery | None = None, *, timeout_s: float | None = RESULT_TIMEOUT_S
     ) -> None:
         if timeout_s is not None and timeout_s <= 0:
             raise ValueError(f"timeout_s doit être > 0 (reçu : {timeout_s}).")
         if app is None:
-            from maestro.queue.celery_app import app as app_defaut
+            from maestro.queue.celery_app import app as default_app
 
-            app = app_defaut
+            app = default_app
         self._app = app
         self._timeout_s = timeout_s
-        # Le brief approuvé de chaque run (#1402), par `run_id` : il voyage avec
-        # chaque message de ce run, comme le tableau noir — un worker ne partage
-        # rien avec l'orchestrateur, il ne le connaîtrait pas autrement.
+        # The approved brief of each run (#1402), by `run_id`: it travels with each
+        # message of that run, like the blackboard. A worker shares nothing with the
+        # orchestrator, so it would not know it otherwise.
         self._briefs: dict[str, Brief] = {}
 
     def retient_le_brief(self, run_id: str, brief: Brief) -> None:
-        """Cf. `TaskExecutor.retient_le_brief` — porté par chaque message de ce run (#1402)."""
+        """See `TaskExecutor.retient_le_brief`: carried by every message of this run (#1402)."""
         self._briefs[run_id] = brief
 
     async def execute(
         self, task: Task, dependances: Sequence[TaskResult], journal: RunJournal
     ) -> TaskResult:
-        """Pousse `task` dans la file, attend son résultat et le consigne au journal.
+        """Push `task` to the queue, wait for its result and record it in the journal.
 
-        Le tableau noir (résultats des dépendances) voyage **avec** le message :
-        les workers ne partagent aucun état avec l'orchestrateur ni entre eux.
-        Le brief approuvé du run aussi (#1402), quand il y en a un. L'usage porté
-        par le résultat est celui mesuré par le worker (le vrai coût de la tâche) ;
-        seul un échec de transport est chronométré ici.
+        The blackboard (the dependencies' results) travels **with** the message:
+        workers share no state with the orchestrator nor with each other. So does
+        the run's approved brief (#1402), when there is one. The usage carried by
+        the result is the one the worker measured (the task's real cost); only a
+        transport failure is timed here.
         """
         brief = self._briefs.get(journal.run_id)
-        entree = _build_task_description(task, dependances, brief)
-        debut = perf_counter()
+        task_input = _build_task_description(task, dependances, brief)
+        start = perf_counter()
         try:
             result = await asyncio.to_thread(
-                self._envoie_et_attend, task, dependances, journal.run_id, brief
+                self._send_and_wait, task, dependances, journal.run_id, brief
             )
-        # celery.exceptions.TimeoutError ne descend pas du TimeoutError natif :
-        # on attrape les deux pour couvrir tous les transports.
+        # celery.exceptions.TimeoutError does not derive from the built-in
+        # TimeoutError: catching both covers every transport.
         except (TimeoutError, CeleryTimeoutError):
             result = replace(
                 _echec(
@@ -115,9 +113,9 @@ class CeleryExecutor(TaskExecutor):
                         "— worker indisponible ou tâche toujours en file."
                     ),
                 ),
-                usage=StepUsage().avec_duree(_ecoule_ms(debut)),
+                usage=StepUsage().avec_duree(_ecoule_ms(start)),
             )
-        except Exception as exc:  # transport ou worker en erreur : échec consigné, jamais levé
+        except Exception as exc:  # transport or worker error: recorded as a failure, never raised
             result = replace(
                 _echec(
                     task,
@@ -126,7 +124,7 @@ class CeleryExecutor(TaskExecutor):
                     score=0,
                     erreur=f"file de tâches : {exc}",
                 ),
-                usage=StepUsage().avec_duree(_ecoule_ms(debut)),
+                usage=StepUsage().avec_duree(_ecoule_ms(start)),
             )
         journal.consigne(
             etape=task.id,
@@ -134,58 +132,57 @@ class CeleryExecutor(TaskExecutor):
             agent=result.agent,
             role=result.role,
             statut=result.statut,
-            entree=entree,
+            entree=task_input,
             sortie=result.sortie,
             erreur=result.erreur,
             usage=result.usage,
-            # La version de playbook utilisée (#78) voyage avec le résultat : le
-            # worker l'a résolue et estampillée, l'orchestrateur la trace aussi.
+            # The playbook version used (#78) travels with the result: the worker
+            # resolved and stamped it, and the orchestrator traces it too.
             playbook_version=result.playbook_version,
         )
         return result
 
-    def _envoie_et_attend(
+    def _send_and_wait(
         self,
         task: Task,
-        dependances: Sequence[TaskResult],
+        dependencies: Sequence[TaskResult],
         run_id: str,
         brief: Brief | None = None,
     ) -> TaskResult:
-        """Bloquant (déporté dans un thread) : `send_task` puis attente du résultat.
+        """Blocking (run in a thread): `send_task`, then wait for the result.
 
-        L'envoi se fait **par nom** (`NOM_TACHE_EXECUTER`) : l'orchestrateur ne
-        dépend que du contrat JSON de la file, pas du code des workers. Le brief
-        (#1402) est un quatrième argument, **omis** sans brief : le message d'un
-        run sans brief reste celui d'avant, lisible par un worker d'avant.
+        Sending is **by name** (`EXECUTE_TASK_NAME`): the orchestrator depends only
+        on the queue's JSON contract, not on the workers' code. The brief (#1402)
+        is a fourth argument, **left out** when there is none, so the message of a
+        run without a brief stays readable by a worker that does not know briefs.
         """
-        args: list[object] = [task.to_dict(), [d.to_dict() for d in dependances], run_id]
+        args: list[object] = [task.to_dict(), [d.to_dict() for d in dependencies], run_id]
         if brief is not None:
             args.append(brief.to_dict())
-        async_result = self._app.send_task(NOM_TACHE_EXECUTER, args=args)
-        brut = async_result.get(timeout=self._timeout_s)
-        return TaskResult.from_dict(brut)
+        async_result = self._app.send_task(EXECUTE_TASK_NAME, args=args)
+        raw = async_result.get(timeout=self._timeout_s)
+        return TaskResult.from_dict(raw)
 
 
 def create_distributed_engine(
     settings: Settings | None = None,
     *,
     app: Celery | None = None,
-    timeout_s: float | None = TIMEOUT_RESULTAT_S,
+    timeout_s: float | None = RESULT_TIMEOUT_S,
     mailbox: Mailbox | None = None,
-    max_parallele: int | None = None,
+    max_parallel: int | None = None,
 ) -> OrchestrationEngine:
-    """Boucle d'orchestration branchée sur la file : le pendant distribué de `default`.
+    """The orchestration loop plugged into the queue: the distributed counterpart of `default`.
 
-    La **planification** reste dans le process de l'orchestrateur (fournisseur
-    désigné par la config, comme `OrchestrationEngine.default`, #69) ;
-    l'**exécution** des tâches part dans la file, vers les workers démarrés par
-    ailleurs (`celery -A maestro.queue worker`). Les garde-fous d'exécution (#9)
-    s'appliquent côté worker — voir `maestro.queue.worker.configurer_worker`.
-    `mailbox` (#44) branche la messagerie inter-agents (handoff observable) sur
-    la boucle, comme en local. `max_parallele` (#100) borne le nombre de tâches
-    **mises en file simultanément** — le plafond global transverse, côté
-    orchestrateur ; la capacité par agent (#86), elle, se joue dans chaque
-    worker (par process, cf. maestro.agents.capacity).
+    **Planning** stays in the orchestrator's process (provider named by the
+    configuration, like `OrchestrationEngine.default`, #69); task **execution**
+    goes to the queue, towards workers started elsewhere
+    (`celery -A maestro.queue worker`). Execution guardrails (#9) apply on the
+    worker side: see `maestro.queue.worker.configure_worker`. `mailbox` (#44)
+    plugs inter-agent messaging (observable handoff) into the loop, as in local
+    runs. `max_parallel` (#100) bounds how many tasks are **queued at the same
+    time**, the global cap on the orchestrator side; per-agent capacity (#86)
+    plays out in each worker (per process, see maestro.agents.capacity).
     """
     from maestro.providers.factory import default_model, provider_from_settings
 
@@ -197,5 +194,5 @@ def create_distributed_engine(
         orchestrator,
         executor=CeleryExecutor(app, timeout_s=timeout_s),
         mailbox=mailbox,
-        max_parallele=max_parallele,
+        max_parallele=max_parallel,
     )

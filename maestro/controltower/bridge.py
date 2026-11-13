@@ -202,7 +202,7 @@ _SUFFIXE_RATTRAPAGE = ":rattrapage"
 _SUFFIXE_PLAFOND = ":plafond"
 
 #: Suffixe des étapes de messagerie inter-agents (#44 — cf.
-#: `maestro.messaging.mailbox.consigne_message`, `SUFFIXE_ETAPE_MESSAGE`).
+#: `maestro.messaging.mailbox.record_message`, `MESSAGE_STEP_SUFFIX`).
 _SUFFIXE_MESSAGE = ":message"
 
 #: Suffixe des étapes qui posent un ticket externe sur une tâche (#187 — cf.

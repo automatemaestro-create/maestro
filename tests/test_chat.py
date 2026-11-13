@@ -71,7 +71,7 @@ from maestro.controltower.chat import (
 )
 from maestro.controltower.events import EVENEMENT_CHAT_MESSAGE, InMemoryEventBus
 from maestro.engine.guardrails import GardeFousIngestion
-from maestro.messaging import MESSAGE_REPONSE, MESSAGE_REQUETE, InMemoryMailbox
+from maestro.messaging import MESSAGE_REQUEST, MESSAGE_RESPONSE, InMemoryMailbox
 from maestro.providers.base import ModelProvider
 from maestro.sources import (
     DepotTeleversements,
@@ -330,12 +330,12 @@ def test_envoyer_persiste_achemine_et_diffuse(tmp_path):
         # Messagerie : la requête part vers la boîte de l'agent, la réponse
         # revient vers celle de l'utilisateur — un agent-processus abonné la verrait.
         requete = await anext(boite_agent)
-        assert requete.type == MESSAGE_REQUETE
-        assert requete.de_agent == UTILISATEUR and requete.a_agent == "qa"
+        assert requete.type == MESSAGE_REQUEST
+        assert requete.from_agent == UTILISATEUR and requete.to_agent == "qa"
         assert requete.payload == {"contenu": message.contenu}
         retour = await anext(boite_utilisateur)
-        assert retour.type == MESSAGE_REPONSE
-        assert retour.de_agent == "qa" and retour.a_agent == UTILISATEUR
+        assert retour.type == MESSAGE_RESPONSE
+        assert retour.from_agent == "qa" and retour.to_agent == UTILISATEUR
         assert retour.payload == {"contenu": reponse.contenu}
 
         # Diffusion temps réel : un `chat.message` par message, réponse comprise.
@@ -360,7 +360,7 @@ def test_l_objet_du_message_inter_agents_est_un_extrait(tmp_path):
         await service.envoyer(_agent(), contenu)
 
         requete = await anext(boite)
-        assert requete.objet == contenu[:80]
+        assert requete.subject == contenu[:80]
         assert requete.payload == {"contenu": contenu}
 
     asyncio.run(scenario())
@@ -601,7 +601,7 @@ def test_un_message_de_sources_seules_est_accepte_et_se_resume_par_elles(tmp_pat
         (persiste, _) = store.fil("qa")
         assert persiste.contenu == "" and persiste.resume == message.resume
         # Ce que le résumé sert : l'objet de la lettre et le détail de l'événement.
-        assert (await anext(boite)).objet == message.resume
+        assert (await anext(boite)).subject == message.resume
         assert bus.publies[0].detail == message.resume
 
     asyncio.run(scenario())
@@ -635,7 +635,7 @@ def test_une_source_hors_bornes_ne_laisse_ni_message_ni_lettre_ni_evenement(tmp_
         assert refus.value.index == 0
         assert store.fil("qa") == ()
         assert bus.publies == []
-        assert boite.file.empty()  # aucune lettre n'est partie non plus
+        assert boite.queue.empty()  # aucune lettre n'est partie non plus
 
     asyncio.run(scenario())
 

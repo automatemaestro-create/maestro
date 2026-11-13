@@ -297,7 +297,7 @@ EVENEMENT_RUN_PLAN = "run.plan"
 CANAL_EVENEMENTS = "maestro.evenements"
 
 #: URL Redis par défaut : l'instance locale du docker-compose (infra/README.md).
-#: Doublonne volontairement `maestro.queue.celery_app.REDIS_URL_DEFAUT` pour ne
+#: Doublonne volontairement `maestro.queue.celery_app.DEFAULT_REDIS_URL` pour ne
 #: pas faire dépendre la Control Tower de Celery.
 REDIS_URL_DEFAUT = "redis://localhost:6379/0"
 

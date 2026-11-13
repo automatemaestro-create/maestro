@@ -1,27 +1,27 @@
-"""Côté worker de la file de tâches : consommation et exécution (ticket #41).
+"""The worker side of the task queue: consumption and execution (#41).
 
-Déclare la tâche Celery `maestro.executer_tache`, consommée par les workers
-(`celery -A maestro.queue worker`). Chaque worker exécute la tâche **hors du
-process de l'orchestrateur**, via le même chemin que l'exécution locale
-(`maestro.engine.LocalExecutor`) : routage vers l'agent compétent, garde-fous
-(#9), runtime outillé ou appel texte, mesure d'usage (#8). Le résultat complet
-(statut, livrable, erreur, fichiers produits, usage) repart par le backend de
-résultats sous la forme `TaskResult.to_dict()` — c'est la **remontée** que le
-côté orchestrateur (`maestro.queue.dispatch`) reconstruit.
+Declares the Celery task `maestro.executer_tache`, consumed by the workers
+(`celery -A maestro.queue worker`). Each worker runs the task **outside the
+orchestrator's process**, through the same path as local execution
+(`maestro.engine.LocalExecutor`): routing to the competent agent, guardrails (#9),
+tooled runtime or text call, usage measurement (#8). The full result (status,
+deliverable, error, produced files, usage) goes back through the result backend
+as `TaskResult.to_dict()`: that is the **return** the orchestrator side
+(`maestro.queue.dispatch`) rebuilds.
 
-Deux familles d'échec, deux canaux :
+Two kinds of failure, two channels:
 
-- un échec **métier** (routage impossible, garde-fou déclenché, agent en erreur)
-  est une *donnée* : la tâche Celery réussit et renvoie un `TaskResult` au
-  statut `echec` — même résilience que la boucle locale ;
-- un échec de **payload ou d'environnement** (tâche non conforme au schéma
-  partagé, fournisseur inconstructible) lève : Celery marque la tâche FAILURE
-  et l'exception remonte à l'orchestrateur, qui la mue en échec de tâche.
+- a **business** failure (no agent to route to, guardrail triggered, agent error)
+  is *data*: the Celery task succeeds and returns a `TaskResult` with status
+  `echec`, the same resilience as the local loop;
+- a **payload or environment** failure (a task that breaks the shared schema, a
+  provider that cannot be built) raises: Celery marks the task FAILURE and the
+  exception reaches the orchestrator, which turns it into a task failure.
 
-Le fournisseur du worker est construit **paresseusement** (au premier message),
-via une fabrique remplaçable par `configurer_worker` — celui que désigne la
-config par défaut (`MAESTRO_PROVIDER`, #69), un fournisseur factice dans les
-tests d'intégration. La configuration est propre au process du worker.
+The worker's provider is built **lazily** (on the first message), through a
+factory that `configure_worker` replaces: the one the default configuration names
+(`MAESTRO_PROVIDER`, #69), a fake provider in integration tests. The
+configuration belongs to the worker's process.
 """
 
 from __future__ import annotations
@@ -49,149 +49,144 @@ from maestro.engine.verification import VerificateurTaches
 from maestro.orchestrator.schema import Brief, Task, validate_brief, validate_task
 from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
-from maestro.queue.celery_app import NOM_TACHE_EXECUTER
+from maestro.queue.celery_app import EXECUTE_TASK_NAME
 from maestro.telemetry import RunJournal
 
-#: Fabrique du fournisseur d'un worker : appelée une fois par process, au premier
-#: message consommé.
+#: A worker's provider factory: called once per process, on the first message
+#: consumed.
 ProviderFactory = Callable[[], ModelProvider]
 
 
-def _fabrique_configuree() -> ModelProvider:
-    """Fournisseur par défaut des workers : celui que désigne la config (#69).
+def _configured_factory() -> ModelProvider:
+    """The workers' default provider: the one the configuration names (#69).
 
-    Importé ici (et non en tête de module) pour garder le worker agnostique du
-    fournisseur — le choix vit dans la config (`MAESTRO_PROVIDER`), comme pour
-    `OrchestrationEngine.default`.
+    Imported here rather than at the top of the module, so that the worker stays
+    agnostic of the provider: the choice lives in the configuration
+    (`MAESTRO_PROVIDER`), as for `OrchestrationEngine.default`.
     """
     from maestro.providers.factory import provider_from_settings
 
     return provider_from_settings(load_settings())
 
 
-_provider_factory: ProviderFactory = _fabrique_configuree
+_provider_factory: ProviderFactory = _configured_factory
 _guardrails: Guardrails | None = None
-#: Relance automatique des échecs transitoires (#91, ENF-06) — armée par défaut
-#: sur les workers (les vrais runs), comme sur `OrchestrationEngine.default()`.
-#: `configurer_worker(relance=PolitiqueRelance(max_tentatives=1))` la neutralise.
-_relance: PolitiqueRelance = RELANCE_DEFAUT
-#: La vérification des livraisons (#1177) — armée par défaut sur les workers,
-#: comme sur `OrchestrationEngine.default()` : une tâche consommée par la file
-#: n'est « Terminée » qu'une fois ses critères vérifiés en l'exécutant, dans
-#: l'espace de travail que le worker a ouvert. `configurer_worker(verification=False)`
-#: l'éteint.
+#: Automatic retry of transient failures (#91, ENF-06), on by default on the
+#: workers (the real runs), as on `OrchestrationEngine.default()`.
+#: `configure_worker(retry=PolitiqueRelance(max_tentatives=1))` turns it off.
+_retry: PolitiqueRelance = RELANCE_DEFAUT
+#: Delivery verification (#1177), on by default on the workers as on
+#: `OrchestrationEngine.default()`: a task consumed from the queue is "Terminée"
+#: only once its criteria have been verified by running them, in the workspace the
+#: worker opened. `configure_worker(verification=False)` turns it off.
 _verification: bool = True
 _executor: LocalExecutor | None = None
 
-#: Identité du worker, rapportée sur chaque résultat (`TaskResult.worker`).
-#: Le contexte Celery (`request.hostname`) ne porte que le nom de la machine
-#: (le nodename y est écrasé par `gethostname()` dans `trace_task_ret`) : le
-#: nodename exact est donc retenu à part — au niveau du process pour un vrai
-#: worker CLI (`celeryd_after_setup`), au niveau du thread pour les workers
-#: embarqués des tests (`nommer_worker`, un worker de test = un thread).
-_nom_worker_process: str | None = None
-_nom_worker_thread = threading.local()
+#: The worker's identity, reported on each result (`TaskResult.worker`). The
+#: Celery context (`request.hostname`) only carries the machine name (the nodename
+#: is overwritten by `gethostname()` in `trace_task_ret`), so the exact nodename is
+#: kept apart: per process for a real CLI worker (`celeryd_after_setup`), per
+#: thread for the embedded workers of tests (`name_worker`, one test worker is one
+#: thread).
+_process_worker_name: str | None = None
+_thread_worker_name = threading.local()
 
 
 @celeryd_after_setup.connect
-def _retenir_nodename(sender: str, instance: Any, **kwargs: Any) -> None:
-    """Retient le nodename du worker CLI (`celery worker -n agent1@%h`) au démarrage."""
-    global _nom_worker_process
-    _nom_worker_process = sender
+def _remember_nodename(sender: str, instance: Any, **kwargs: Any) -> None:
+    """Remember the CLI worker's nodename (`celery worker -n agent1@%h`) at startup."""
+    global _process_worker_name
+    _process_worker_name = sender
 
 
-def nommer_worker(nom: str) -> None:
-    """Fixe le nom de worker rapporté par les résultats, pour le **thread courant**.
+def name_worker(name: str) -> None:
+    """Set the worker name that results report, for the **current thread**.
 
-    Point d'injection des workers embarqués (tests d'intégration) : plusieurs
-    workers y cohabitent dans un même process — un par thread — et
-    `celeryd_after_setup` n'y est pas émis.
+    The injection point of embedded workers (integration tests): several workers
+    live in one process there, one per thread, and `celeryd_after_setup` is not
+    emitted.
     """
-    _nom_worker_thread.nom = nom
+    _thread_worker_name.name = name
 
 
-def _nom_du_worker(request: Any) -> str:
-    """Le nom du worker courant : thread, sinon process, sinon la machine (contexte)."""
-    nom_thread: str | None = getattr(_nom_worker_thread, "nom", None)
-    return nom_thread or _nom_worker_process or request.hostname or ""
+def _worker_name(request: Any) -> str:
+    """The current worker's name: the thread's, else the process's, else the machine's."""
+    thread_name: str | None = getattr(_thread_worker_name, "name", None)
+    return thread_name or _process_worker_name or request.hostname or ""
 
 
-def configurer_worker(
+def configure_worker(
     *,
     provider_factory: ProviderFactory | None = None,
     guardrails: Guardrails | None = None,
-    relance: PolitiqueRelance | None = None,
+    retry: PolitiqueRelance | None = None,
     verification: bool | None = None,
 ) -> None:
-    """Configure l'exécution de CE process worker (fournisseur, garde-fous, relance).
+    """Configure execution in THIS worker process (provider, guardrails, retry).
 
-    À appeler avant la consommation (démarrage du worker, ou fixture de test).
-    Ne touche que le process courant : chaque worker se configure lui-même.
-    L'exécuteur courant est invalidé — il sera reconstruit au prochain message.
-    `relance` (#91) remplace la politique armée par défaut — la neutraliser se
-    fait par `PolitiqueRelance(max_tentatives=1)` (None : inchangée).
-    `verification` (#1177) arme ou éteint la vérification des livraisons
-    (None : inchangée).
+    Call it before consumption (worker startup, or a test fixture). It only touches
+    the current process: each worker configures itself. The current executor is
+    invalidated and rebuilt on the next message. `retry` (#91) replaces the default
+    policy, turned off by `PolitiqueRelance(max_tentatives=1)` (None: unchanged).
+    `verification` (#1177) turns delivery verification on or off (None: unchanged).
     """
-    global _provider_factory, _guardrails, _relance, _verification, _executor
+    global _provider_factory, _guardrails, _retry, _verification, _executor
     if provider_factory is not None:
         _provider_factory = provider_factory
     if guardrails is not None:
         _guardrails = guardrails
-    if relance is not None:
-        _relance = relance
+    if retry is not None:
+        _retry = retry
     if verification is not None:
         _verification = verification
     _executor = None
 
 
-def reinitialiser_worker() -> None:
-    """Rétablit la configuration par défaut du worker (fabrique configurée, garde-fous défaut)."""
-    global _provider_factory, _guardrails, _relance, _verification, _executor
-    _provider_factory = _fabrique_configuree
+def reset_worker() -> None:
+    """Restore the worker's default configuration (configured factory, default guardrails)."""
+    global _provider_factory, _guardrails, _retry, _verification, _executor
+    _provider_factory = _configured_factory
     _guardrails = None
-    _relance = RELANCE_DEFAUT
+    _retry = RELANCE_DEFAUT
     _verification = True
     _executor = None
 
 
-def _executeur() -> LocalExecutor:
-    """L'exécuteur du process worker, construit paresseusement au premier message.
+def _get_executor() -> LocalExecutor:
+    """The worker process's executor, built lazily on the first message.
 
-    Le modèle des exécutants suit la config du process (`MAESTRO_MODEL`, #69),
-    que la fabrique de fournisseur soit celle par défaut ou une injectée : la
-    config porte le modèle, la fabrique porte le fournisseur. Les prompts système
-    viennent du stockage versionné des playbooks (#76), appliqué **à chaud**
-    (#78) : l'exécuteur — bien que construit une seule fois par process — relit
-    la version courante à chaque tâche consommée, donc une édition publiée vaut
-    pour le message suivant sans redémarrer le worker. Le dépôt est celui de la
-    config (`MAESTRO_PLAYBOOKS_DIR`) : au POC sur fichiers, workers et API
-    Control Tower doivent voir le même stockage. Le catalogue d'exécutants est
-    le catalogue **effectif** (#72) — agents par défaut plus personnalisés
-    (`MAESTRO_AGENTS_DIR`, même exigence de stockage partagé) — chargé ici, à la
-    construction : un agent créé ensuite attend le redémarrage du worker. Son
-    **runtime outillé** n'est en revanche pas câblé ici (#1037) : l'exécuteur le
-    dérive de la fiche de l'agent routé, à chaque tâche, de sorte qu'un agent
-    personnalisé travaille outillé côté workers comme en local.
-    Le **contrôle de capacité** (#86) est relu à chaque tâche dans le dépôt
-    partagé (`MAESTRO_CAPACITE_DIR`) : un agent désactivé depuis la Control
-    Tower n'est plus routé par les workers dès le message suivant. Le plafond
-    d'instances, lui, borne les exécutions simultanées **par process** au POC
-    (pas encore de coordination inter-workers — cf. maestro.agents.capacity).
-    Les **serveurs MCP par agent** (#104) sont relus de la même façon
-    (`MAESTRO_MCP_DIR`) et montés sur les exécutions outillées de l'agent ;
-    leurs références `${VAR}` se résolvent dans le **coffre de secrets par
-    agent** (#109, `MAESTRO_SECRETS_DIR` — stockage partagé, même exigence que
-    les autres dépôts) dès qu'il est provisionné : un agent ne voit que les
-    siens, côté workers comme en local.
+    The executors' model follows the process configuration (`MAESTRO_MODEL`, #69),
+    whether the provider factory is the default one or an injected one: the
+    configuration carries the model, the factory carries the provider.
 
-    Le **miroir** où se vérifie une tâche d'un projet non versionné (#1496) n'y est
-    pas gardé d'une tâche à l'autre du run, à la différence du moteur en process
-    (#1497) : aucune boucle ne tient le run ici (`TaskExecutor.tient_le_run`), et la
-    fin d'un run ne voyage pas jusqu'au worker. Chaque tâche a donc le sien, copié à
-    sa première vérification et retiré avec son espace — sans quoi un worker qui vit
-    des jours accumulerait un miroir par run. Le ramassage l'emporte si le worker
-    meurt avant.
+    Built once per process, the executor still reads at each consumed task what
+    the Control Tower may have changed, in the stores of the configuration, which
+    workers and API must share:
+    - the system prompts, from the versioned playbook store (#76, #78,
+      `MAESTRO_PLAYBOOKS_DIR`): a published edit holds for the next message,
+      without restarting the worker;
+    - capacity (#86, `MAESTRO_CAPACITE_DIR`): an agent disabled from the Control
+      Tower is no longer routed from the next message on. The instance cap bounds
+      simultaneous runs **per process** (no coordination between workers, see
+      maestro.agents.capacity);
+    - the per-agent MCP servers (#104, `MAESTRO_MCP_DIR`), mounted on the agent's
+      tooled runs, whose `${VAR}` references resolve in the **per-agent secret
+      vault** (#109, `MAESTRO_SECRETS_DIR`) once provisioned: an agent sees only
+      its own, on workers as locally.
+
+    The executors' catalog is the **effective** one (#72), default agents plus
+    custom ones (`MAESTRO_AGENTS_DIR`), loaded at construction: an agent created
+    later waits for the worker's restart. Its **tooled runtime** is not wired here
+    (#1037): the executor derives it from the routed agent's definition at each
+    task, so a custom agent works tooled on workers as locally.
+
+    The **mirror** in which a task of an unversioned project is verified (#1496)
+    is not kept from one task of the run to the next, unlike the in-process engine
+    (#1497): no loop holds the run here (`TaskExecutor.tient_le_run`), and the end
+    of a run does not travel to the worker. Each task therefore has its own,
+    copied on its first verification and removed with its workspace; otherwise a
+    worker that lives for days would pile up one mirror per run. The sweep wins if
+    the worker dies first.
     """
     global _executor
     if _executor is None:
@@ -208,57 +203,55 @@ def _executeur() -> LocalExecutor:
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
             projets=ProjetStore.default(settings),
-            # Les agents du projet de la tâche (#1038) : un worker distribué
-            # route comme le moteur en process, donc il a besoin des mêmes dépôts.
+            # The agents of the task's project (#1038): a distributed worker routes
+            # like the in-process engine, so it needs the same stores.
             agents_store=agents_store,
             modele=settings.model,
-            relance=_relance,
+            relance=_retry,
             verificateur=(
-                VerificateurTaches(provider, modele=settings.model)
-                if _verification
-                else None
+                VerificateurTaches(provider, modele=settings.model) if _verification else None
             ),
         )
     return _executor
 
 
-@shared_task(bind=True, name=NOM_TACHE_EXECUTER)
-def executer_tache(
+@shared_task(bind=True, name=EXECUTE_TASK_NAME)
+def execute_task(
     self: Any,
     task_data: dict[str, Any],
-    dependances_data: Sequence[dict[str, Any]] = (),
+    dependencies_data: Sequence[dict[str, Any]] = (),
     run_id: str | None = None,
     brief_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Consomme une tâche de la file : exécute et renvoie `TaskResult.to_dict()`.
+    """Consume a task from the queue: run it and return `TaskResult.to_dict()`.
 
-    `task_data` est validé contre le schéma partagé avant toute exécution (une
-    tâche malformée est refusée en FAILURE, jamais exécutée) ; `dependances_data`
-    porte les résultats des tâches prérequises (le tableau noir), résolus côté
-    orchestrateur — les workers ne partagent aucun état. `run_id` relie les
-    traces du worker (journal JSON local à son process) à l'exécution globale.
-    Ce journal reconstruit à chaque message ne voit que la tâche courante : un
-    plafond de dépense configuré côté worker (#56) s'applique donc à la tâche
-    seule, pas à l'exécution entière.
+    `task_data` is validated against the shared schema before anything runs (a
+    malformed task is refused as FAILURE, never run); `dependencies_data` carries
+    the results of the prerequisite tasks (the blackboard), resolved on the
+    orchestrator side, since workers share no state. `run_id` ties the worker's
+    traces (a JSON journal local to its process) to the overall run. That journal,
+    rebuilt for each message, sees only the current task: a spending cap configured
+    on the worker side (#56) therefore applies to the task alone, not to the run.
 
-    `brief_data` (#1402) est le brief approuvé du run, quand il en a un : validé
-    comme la tâche — un brief malformé refuse le message —, il est retenu pour ce
-    run, et la tâche le reçoit à côté de sa description, son vérificateur aussi.
-    Absent (un run sans brief, ou un orchestrateur d'avant) : rien ne change.
+    `brief_data` (#1402) is the run's approved brief, when it has one. Validated
+    like the task (a malformed brief refuses the message), it is kept for this run,
+    and the task receives it next to its description, as does its verifier. When
+    absent (a run without a brief, or an orchestrator that does not send it),
+    nothing changes.
 
-    Le résultat porte le nom du worker (`worker`) : c'est ce qui rend visible la
-    répartition des tâches entre workers distincts (critère MVP n°2).
+    The result carries the worker's name (`worker`): that is what makes the
+    distribution of tasks across distinct workers visible (MVP criterion 2).
     """
     validate_task(task_data)
     if brief_data is not None:
         validate_brief(brief_data)
     task = Task.from_dict(task_data)
-    dependances = [TaskResult.from_dict(d) for d in dependances_data]
+    dependencies = [TaskResult.from_dict(d) for d in dependencies_data]
     journal = RunJournal(run_id=run_id)
     if brief_data is not None:
-        _executeur().retient_le_brief(journal.run_id, Brief.from_dict(brief_data))
-    # Arrêt borné (#64) : les garde-fous s'appliquant côté worker, une réalisation
-    # détachée par le time-out ne peut pas suspendre la remontée du résultat.
-    result = run_borne(_executeur().execute(task, dependances, journal))
-    result = replace(result, worker=_nom_du_worker(self.request))
+        _get_executor().retient_le_brief(journal.run_id, Brief.from_dict(brief_data))
+    # Bounded stop (#64): since the guardrails apply on the worker side, a run
+    # detached by the timeout cannot suspend the return of the result.
+    result = run_borne(_get_executor().execute(task, dependencies, journal))
+    result = replace(result, worker=_worker_name(self.request))
     return result.to_dict()

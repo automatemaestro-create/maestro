@@ -1,46 +1,44 @@
-"""Tests du mode durable — workflows Temporal (ticket #93, lot final du parent #92).
+"""Tests of the durable mode: Temporal workflows (#93, final lot of #92).
 
-Rejoue les critères des lots #94–#97 sur l'**environnement de test Temporal**
-(`temporalio.testing.WorkflowEnvironment`, serveur de test *time-skipping*) et des
-**fournisseurs factices** : aucun serveur Temporal réel, aucun conteneur, aucun
-appel modèle. C'est ce qui rend testable ce que les lots amont avaient laissé de
-côté (« exige un serveur Temporal vivant et un vrai fournisseur » — d'où l'exclusion
-de couverture levée avec ce lot).
+Exercises the criteria of #94–#97 on the **Temporal test environment**
+(`temporalio.testing.WorkflowEnvironment`, *time-skipping* test server) with
+**fake providers**: no real Temporal server, no container, no model call. That is
+what makes the durable mode testable without a live server or a real provider.
 
-Couverture :
+Coverage:
 
-① **un run = un workflow, une tâche = une activité** (#95) — un run durable
-   s'exécute via `MaestroRunWorkflow` + ses activités, `DurableEngine.run`
-   reconstruit rapport et **grand livre** depuis l'agrégat sérialisé ;
-② **blocage aval** (#43) — une dépendance en échec bloque la tâche aval, qui
-   n'atteint jamais l'activité d'exécution (aucun appel modèle gaspillé) ;
-③ **reprise sur panne** (#96) — l'état acquis (`resultats_acquis`) expose ce qui
-   est déjà payé ; un process qui reprend en cours de route (`reprendre`) ne
-   **repaie pas l'amont** (les tâches abouties ne sont pas ré-exécutées) ; un run
-   déjà achevé se reprend en rendant simplement son rapport ; un run_id inconnu
-   lève une erreur d'orchestration lisible ;
-④ **planification invalide** — le workflow échoue et l'échec est retraduit en
-   `OrchestratorError` (sans plan, rien à orchestrer).
+① **one run = one workflow, one task = one activity** (#95): a durable run
+   executes through `MaestroRunWorkflow` and its activities, and `DurableEngine.run`
+   rebuilds the report and the **ledger** from the serialized aggregate;
+② **downstream blocking** (#43): a failed dependency blocks the downstream task,
+   which never reaches the execution activity (no model call wasted);
+③ **failure recovery** (#96): the checkpoint (`checkpoint`) exposes what is already
+   paid for; a process that resumes midway (`resume`) does **not pay upstream
+   again** (tasks that succeeded are not run again); a run that already finished is
+   resumed by simply returning its report; an unknown run_id raises a readable
+   orchestration error;
+④ **invalid planning**: the workflow fails and the failure is translated back into
+   `OrchestratorError` (without a plan, nothing to orchestrate).
 
-La persistance de l'état Control Tower au redémarrage de l'API (#97) est couverte
-côté projection dans `tests/test_controltower.py` (journal des événements rejoué).
+The persistence of the Control Tower state across an API restart (#97) is covered on
+the projection side in `tests/test_controltower.py` (event journal replayed).
 
-**Boucle & environnement partagés.** Le dépôt n'utilise pas `pytest-asyncio` : chaque
-scénario est une coroutine pilotée sur **une** boucle asyncio dédiée (le client
-Temporal est lié à la boucle qui l'a créé). Le serveur de test — binaire téléchargé
-une fois puis mis en cache — est démarré **une fois pour tout le module**. Sans accès
-réseau pour ce téléchargement, le module est ignoré avec un message explicite ; la
-CI, elle, y a accès (elle installe déjà ses dépendances depuis PyPI).
+**Shared loop and environment.** The repository does not use `pytest-asyncio`: each
+scenario is a coroutine driven on **one** dedicated asyncio loop (the Temporal client
+is bound to the loop that created it). The test server, a binary downloaded once then
+cached, is started **once for the whole module**. Without network access for that
+download, the module is skipped with an explicit message; the CI has that access (it
+already installs its dependencies from PyPI).
 
-⚠ **Horloge verrouillée et requêtes (#457).** Le serveur *time-skipping* tient son
-horloge **arrêtée** hors de `WorkflowHandle.result()` : aucun timer du serveur n'y
-expire jamais. C'est sans effet tant qu'une requête (`query`) est servie par le
-worker qui a exécuté le workflow — le cas de tous les scénarios sauf un. Mais une
-**reprise** interroge un workflow dont le worker est mort : sa requête part alors
-vers une file « sticky » que plus personne ne relève, et le repli qui devrait la
-rattraper est justement l'un de ces timers. `_EnvTest.horloge_libre` (voir sa
-docstring) rend l'horloge au seul appel concerné ; sans lui, le test était rouge par
-intermittence, sur le délai de la requête et non sur ce qu'il vérifie.
+⚠ **Locked clock and queries (#457).** The *time-skipping* server keeps its clock
+**stopped** outside `WorkflowHandle.result()`: no server timer ever fires there. That
+has no effect as long as a query is served by the worker that executed the workflow,
+which is the case of every scenario but one. A **resume**, however, queries a
+workflow whose worker is gone: its query then goes to a "sticky" queue that nobody
+polls any more, and the fallback that should catch it is precisely one of those
+timers. `_TestEnv.with_unlocked_clock` (see its docstring) gives the clock back to
+that single call; without it, the test would fail on the query deadline whenever the
+first dispatch loses the race, and not on what it checks.
 """
 
 from __future__ import annotations
@@ -54,10 +52,10 @@ from temporalio.testing import WorkflowEnvironment
 from maestro.durable import (
     DurableEngine,
     MaestroRunWorkflow,
-    construire_worker,
-    identifiant_workflow,
+    build_worker,
+    workflow_id,
 )
-from maestro.durable.activities import configurer_worker, reinitialiser_worker
+from maestro.durable.activities import configure_worker, reset_worker
 from maestro.durable.engine import create_durable_engine
 from maestro.orchestrator.errors import OrchestratorError
 from maestro.orchestrator.prompt import ORCHESTRATOR_SYSTEM_PROMPT
@@ -65,40 +63,40 @@ from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal
 from maestro.telemetry.costs import ETAPE_REPRISE
 
-#: Objectif de démonstration partagé par les scénarios (mots sensibles évités, #9).
-_OBJECTIF = "Créer une API de gestion de tâches"
+#: Demonstration goal shared by the scenarios (sensitive words avoided, #9).
+_GOAL = "Créer une API de gestion de tâches"
 
 
-# --- Fournisseur factice : planifie puis exécute, sans jamais appeler de modèle -------
+# --- Fake provider: plans then executes, without ever calling a model -------------------
 
 
 class FakeDurableProvider(ModelProvider):
-    """Exécutant factice couvrant les **deux** rôles du worker durable.
+    """Fake executor covering **both** roles of the durable worker.
 
-    En mode durable, planification (activité `planifier`) et exécution (activité
-    `executer_tache`) tournent sur le **même** fournisseur du worker (celui posé
-    par `configurer_worker`). Ce double rôle est distingué de façon fiable par le
-    `system_prompt` : l'orchestrateur (#3) appelle avec `ORCHESTRATOR_SYSTEM_PROMPT`
-    et attend un plan JSON ; toute autre génération est une exécution de tâche.
+    In durable mode, planning (activity `plan`) and execution (activity
+    `execute_task`) run on the **same** worker provider (the one set by
+    `configure_worker`). The `system_prompt` tells the two roles apart reliably:
+    the orchestrator (#3) calls with `ORCHESTRATOR_SYSTEM_PROMPT` and expects a JSON
+    plan; any other generation is a task execution.
 
-    - `bloquer` : jeton qui, présent dans le prompt d'une tâche, la fait **attendre**
-      `debloquer` (simule une tâche encore en vol au moment d'une reprise) ;
-    - `echouer` : jeton qui fait **échouer** l'exécution (aléa fournisseur) — le
-      `LocalExecutor` en fait un `TaskResult` au statut `echec`, sans lever.
+    - `block`: token which, present in a task's prompt, makes it **wait** for
+      `unblock` (simulates a task still in flight at the time of a resume);
+    - `fail`: token which makes the execution **fail** (provider outage); the
+      `LocalExecutor` turns it into a `TaskResult` with status `echec`, without raising.
 
-    `executions` garde le prompt de chaque exécution **tentée**, dans l'ordre : la
-    matière des assertions « telle tâche a (n'a pas) été exécutée / ré-exécutée ».
+    `executions` keeps the prompt of every **attempted** execution, in order: the
+    material of the assertions "this task was (was not) executed / executed again".
     """
 
     name = "fake-durable"
 
     def __init__(
-        self, plan_json: str, *, bloquer: str | None = None, echouer: str | None = None
+        self, plan_json: str, *, block: str | None = None, fail: str | None = None
     ) -> None:
         self._plan = plan_json
-        self._bloquer = bloquer
-        self._echouer = echouer
-        self.debloquer = asyncio.Event()
+        self._block = block
+        self._fail = fail
+        self.unblock = asyncio.Event()
         self.executions: list[str] = []
         self.plans = 0
 
@@ -110,158 +108,157 @@ class FakeDurableProvider(ModelProvider):
             self.plans += 1
             return self._plan
         self.executions.append(prompt)
-        if self._echouer and self._echouer in prompt:
-            raise RuntimeError(f"panne fournisseur simulée ({self._echouer})")
-        if self._bloquer and self._bloquer in prompt:
-            await self.debloquer.wait()
+        if self._fail and self._fail in prompt:
+            raise RuntimeError(f"simulated provider outage ({self._fail})")
+        if self._block and self._block in prompt:
+            await self.unblock.wait()
         return f"LIVRABLE ({len(self.executions)})"
 
-    def executions_de(self, jeton: str) -> list[str]:
-        """Les prompts d'exécution d'une tâche identifiée par `jeton`.
+    def executions_of(self, token: str) -> list[str]:
+        """The execution prompts of a task identified by `token`.
 
-        Le jeton est cherché sur la **première ligne** du prompt (« Tâche : <titre> »),
-        l'identité de la tâche exécutée — pas ailleurs, où le titre/livrable d'une
-        dépendance (tableau noir) le ferait ressurgir et gonflerait le comptage.
+        The token is looked for on the **first line** of the prompt ("Tâche : <titre>"),
+        the identity of the executed task, and nowhere else: the title or deliverable of
+        a dependency (blackboard) would bring it back and inflate the count.
         """
-        return [p for p in self.executions if jeton in p.splitlines()[0]]
+        return [p for p in self.executions if token in p.splitlines()[0]]
 
 
-# --- Plans factices (mots sensibles évités, #9) : jetons uniques par tâche -------------
+# --- Fake plans (sensitive words avoided, #9): one unique token per task ----------------
 
 
-def _tache(id, *, titre, description, competences, dependances=()):
-    """Dict de tâche conforme au schéma partagé de l'orchestrateur."""
+def _task(task_id, *, title, description, competencies, dependencies=()):
+    """Task dict that follows the orchestrator's shared schema."""
     return {
-        "id": id,
-        "titre": titre,
+        "id": task_id,
+        "titre": title,
         "description": description,
-        "competences_requises": list(competences),
+        "competences_requises": list(competencies),
         "format_sortie": "Texte",
-        "dependances": list(dependances),
+        "dependances": list(dependencies),
     }
 
 
-def _plan(*taches) -> str:
-    """Sérialise un plan (la sortie qu'un orchestrateur factice rendrait)."""
-    return json.dumps(list(taches), ensure_ascii=False)
+def _plan(*tasks) -> str:
+    """Serialize a plan (the output a fake orchestrator would return)."""
+    return json.dumps(list(tasks), ensure_ascii=False)
 
 
-def _plan_chaine() -> str:
-    """Plan en chaîne bdd → developpeur.
+def _chain_plan() -> str:
+    """Chain plan bdd → developpeur.
 
-    Le jeton en majuscules (AMONT/AVAL) identifie chaque tâche dans son prompt
-    d'exécution — le `LocalExecutor` y injecte titre et description : la sonde des
-    assertions « telle tâche a (n'a pas) tourné ».
+    The upper-case token (AMONT/AVAL) identifies each task in its execution prompt,
+    where the `LocalExecutor` injects title and description: it is the probe of the
+    assertions "this task did (did not) run".
     """
     return _plan(
-        _tache(
+        _task(
             "schema-bdd",
-            titre="Schéma BDD [AMONT]",
+            title="Schéma BDD [AMONT]",
             description="Définir le schéma des tâches (jeton AMONT).",
-            competences=("sql", "schema"),
+            competencies=("sql", "schema"),
         ),
-        _tache(
+        _task(
             "api-taches",
-            titre="API des tâches [AVAL]",
+            title="API des tâches [AVAL]",
             description="Exposer les tâches en lecture/écriture (jeton AVAL).",
-            competences=("backend", "api"),
-            dependances=("schema-bdd",),
+            competencies=("backend", "api"),
+            dependencies=("schema-bdd",),
         ),
     )
 
 
-# --- Environnement de test partagé : une boucle, un serveur time-skipping --------------
+# --- Shared test environment: one loop, one time-skipping server -------------------------
 
 
-class _EnvTest:
-    """Boucle dédiée + `WorkflowEnvironment` : pilote un scénario async de bout en bout."""
+class _TestEnv:
+    """Dedicated loop + `WorkflowEnvironment`: drives an async scenario end to end."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop, environnement: WorkflowEnvironment) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop, environment: WorkflowEnvironment) -> None:
         self.loop = loop
-        self.environnement = environnement
-        self.client = environnement.client
+        self.environment = environment
+        self.client = environment.client
 
     def run(self, coro):
-        """Déroule une coroutine sur la boucle du serveur de test (client lié à elle)."""
+        """Run a coroutine on the test server's loop (the client is bound to it)."""
         return self.loop.run_until_complete(coro)
 
-    def horloge_libre(self, coro):
-        """`coro` déroulée pendant que l'horloge du serveur de test **avance** (#457).
+    def with_unlocked_clock(self, coro):
+        """`coro` run while the test server's clock **moves forward** (#457).
 
-        À réserver au code qui **interroge** (`query`) un workflow que le worker
-        du process courant n'a pas exécuté lui-même — en pratique : une reprise
-        (`DurableEngine.reprendre`), dont c'est tout le propos.
+        Reserved for code that **queries** a workflow the current process's worker
+        did not execute itself: in practice, a resume (`DurableEngine.resume`),
+        which is its whole point.
 
-        Le serveur adresse une requête au worker qu'il croit détenir le workflow
-        en cache (file « sticky »). Si ce worker n'est plus là, un
-        **`sticky_queue_schedule_to_start_timeout`** (10 s par défaut, cf. SDK)
-        la fait retomber sur la file normale, où n'importe quel worker la sert.
-        Ce repli est un **timer du serveur**, donc porté par son horloge — or
-        `WorkflowEnvironment.start_time_skipping()` la tient **verrouillée** hors
-        de `WorkflowHandle.result()`. Une requête que le premier dispatch ne sert
-        pas ne peut alors plus jamais l'être : le repli qui devrait la rattraper
-        n'expire pas, et elle épuise le délai de sa requête RPC (30 s) — c'est le
-        `RPCError: Query deadline of 29999 milliseconds exceeded` de #457, rouge
-        une fois sur le pipeline puis vert au simple rejeu.
+        The server sends a query to the worker it believes holds the workflow in
+        cache ("sticky" queue). If that worker is gone, a
+        **`sticky_queue_schedule_to_start_timeout`** (10 s by default, see the SDK)
+        drops it back onto the normal queue, where any worker serves it. That
+        fallback is a **server timer**, so it runs on the server's clock, and
+        `WorkflowEnvironment.start_time_skipping()` keeps that clock **locked**
+        outside `WorkflowHandle.result()`. A query the first dispatch does not serve
+        can then never be served: the fallback that should catch it never fires, and
+        it runs out its RPC deadline (30 s). That is the
+        `RPCError: Query deadline of 29999 milliseconds exceeded` of #457.
 
-        Déverrouiller l'horloge le temps de l'appel rend au test le mécanisme qui
-        existe en production : les 10 s du repli passent en temps **virtuel**
-        (mesuré : requête servie en 0,02 s), donc le verdict cesse de dépendre de
-        qui, du dispatch ou du démarrage des pollers, gagne la course. Ce n'est
-        pas un plafond relevé : sans le repli, aucune attente ne suffirait.
+        Unlocking the clock for the duration of the call gives the test the
+        mechanism that exists in production: the 10 s of the fallback pass in
+        **virtual** time (the query is served in 0.02 s), so the verdict no longer
+        depends on which of the dispatch or the pollers' startup wins the race. It
+        is not a raised ceiling: without the fallback, no wait would be enough.
         """
 
-        async def _deroule():
-            async with self.environnement.time_skipping_unlocked():
+        async def _run_unlocked():
+            async with self.environment.time_skipping_unlocked():
                 return await coro
 
-        return _deroule()
+        return _run_unlocked()
 
 
 @pytest.fixture(scope="module")
 def env():
-    """Serveur de test Temporal (time-skipping) démarré une fois pour le module.
+    """Temporal test server (time-skipping) started once for the module.
 
-    Le binaire est téléchargé au premier usage puis mis en cache. En l'absence de
-    réseau pour ce téléchargement, le module est ignoré plutôt que d'échouer (la CI,
-    qui installe ses dépendances depuis PyPI, y a accès).
+    The binary is downloaded on first use then cached. Without network access for
+    that download, the module is skipped rather than failing (the CI, which installs
+    its dependencies from PyPI, has that access).
     """
     loop = asyncio.new_event_loop()
     try:
-        environnement = loop.run_until_complete(WorkflowEnvironment.start_time_skipping())
-    except Exception as exc:  # pragma: no cover - dépend de la disponibilité réseau/binaire
+        environment = loop.run_until_complete(WorkflowEnvironment.start_time_skipping())
+    except Exception as exc:  # pragma: no cover - depends on network/binary availability
         loop.close()
-        pytest.skip(f"environnement de test Temporal indisponible ({exc})")
+        pytest.skip(f"Temporal test environment unavailable ({exc})")
     try:
-        yield _EnvTest(loop, environnement)
+        yield _TestEnv(loop, environment)
     finally:
-        loop.run_until_complete(environnement.shutdown())
+        loop.run_until_complete(environment.shutdown())
         loop.close()
 
 
 @pytest.fixture(autouse=True)
-def _worker_reinitialise():
-    """Rend au worker sa configuration par défaut après chaque test (fournisseur, relance).
+def _worker_reset():
+    """Give the worker back its default configuration after each test (provider, retry).
 
-    La vérification des livraisons (#1177), armée par défaut sur les workers, est
-    éteinte pendant le test : ses doubles ne jouent pas le vérificateur, et elle
-    est couverte par `test_verification_taches.py`.
+    Delivery verification (#1177), on by default on workers, is turned off during
+    the test: its doubles do not play the verifier, and it is covered by
+    `test_verification_taches.py`.
     """
-    configurer_worker(verification=False)
+    configure_worker(verification=False)
     yield
-    reinitialiser_worker()
+    reset_worker()
 
 
 @pytest.fixture(autouse=True)
-def _depots_isoles(tmp_path, monkeypatch):
-    """Isole l'exécuteur du worker des dépôts versionnés du dépôt (`core/…`).
+def _isolated_stores(tmp_path, monkeypatch):
+    """Isolate the worker's executor from the repository's versioned stores (`core/…`).
 
-    L'activité `executer_tache` passe par le **même** `LocalExecutor` que la boucle
-    locale : il relit à chaud MCP, agents, playbooks, capacité, secrets et
-    permissions. Sans isolation, une déclaration réelle (ex. `core/mcp/qa.json`, dont
-    le token n'existe pas en test) ferait échouer les tâches — comme en CI. On pointe
-    chaque dépôt vers un répertoire temporaire vide : l'exécution retombe sur les
-    agents par défaut du code, sans dépendance externe.
+    The `execute_task` activity goes through the **same** `LocalExecutor` as the
+    in-process loop: it rereads MCP, agents, playbooks, capacity, secrets and
+    permissions on the fly. Without isolation, a real declaration (e.g.
+    `core/mcp/qa.json`, whose token does not exist in tests) would make the tasks fail,
+    as in CI. Each store points to an empty temporary directory: execution falls back
+    on the code's default agents, with no external dependency.
     """
     for var in (
         "MAESTRO_MCP_DIR",
@@ -275,12 +272,12 @@ def _depots_isoles(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _client_sur_env(env, monkeypatch):
-    """Branche `DurableEngine` sur le client du serveur de test.
+def _client_on_test_env(env, monkeypatch):
+    """Plug `DurableEngine` into the test server's client.
 
-    L'engine se connecte par `Client.connect(adresse)` ; on le fait rendre le client
-    *time-skipping* du serveur de test, pour que démarrage, requêtes et reprise
-    tournent contre l'environnement de test (et non un vrai serveur).
+    The engine connects through `Client.connect(address)`; it is made to return the
+    test server's *time-skipping* client, so that start, queries and resume run
+    against the test environment (and not a real server).
     """
 
     async def _connect(*_args, **_kwargs):
@@ -290,177 +287,177 @@ def _client_sur_env(env, monkeypatch):
 
 
 def _engine() -> DurableEngine:
-    """Un moteur durable en **une seule tentative** (relance applicative neutralisée).
+    """A durable engine in **a single attempt** (application retry turned off).
 
-    Les tests comptent les exécutions et simulent des pannes : la relance masquerait
-    l'un et rejouerait l'autre. La relance elle-même est couverte par `test_retry.py`.
+    The tests count executions and simulate failures: the retry would hide the one
+    and replay the other. The retry itself is covered by `test_retry.py`.
     """
-    return DurableEngine(relance=None)
+    return DurableEngine(retry=None)
 
 
-async def _entree(objectif: str, run_id: str) -> dict:
-    """L'entrée du workflow, telle que `DurableEngine.run` la compose (plafonds nuls)."""
+async def _workflow_input(goal: str, run_id: str) -> dict:
+    """The workflow input, as `DurableEngine.run` builds it (no caps)."""
     return {
-        "objectif": objectif,
+        "objectif": goal,
         "run_id": run_id,
         "plafond_cout_usd": None,
         "plafond_tokens": None,
     }
 
 
-# --- ① Un run = un workflow, une tâche = une activité (#95) -----------------------------
+# --- ① One run = one workflow, one task = one activity (#95) -----------------------------
 
 
-def test_un_run_durable_execute_le_plan_via_workflow_et_activites(env):
-    """Le run se déroule comme workflow + activités ; rapport et grand livre agrégés.
+def test_a_durable_run_executes_the_plan_through_workflow_and_activities(env):
+    """The run unfolds as workflow + activities; report and ledger are aggregated.
 
-    Deux tâches en chaîne (bdd → developpeur) : chacune est routée et exécutée par
-    une activité, le résultat porte l'empreinte du worker Temporal, et le rapport —
-    reconstruit de l'agrégat sérialisé par le workflow — restitue l'ordre du plan et
-    le grand livre (une ligne par tâche + planification).
+    Two chained tasks (bdd → developpeur): each is routed and executed by an
+    activity, the result carries the Temporal worker's mark, and the report, rebuilt
+    from the aggregate the workflow serializes, gives back the plan order and the
+    ledger (one line per task + planning).
     """
-    provider = FakeDurableProvider(_plan_chaine())
-    configurer_worker(provider_factory=lambda: provider)
+    provider = FakeDurableProvider(_chain_plan())
+    configure_worker(provider_factory=lambda: provider)
     journal = RunJournal(run_id="run-durable-ok")
 
-    report = env.run(_engine().run(_OBJECTIF, journal=journal))
+    report = env.run(_engine().run(_GOAL, journal=journal))
 
     assert [r.agent for r in report.resultats] == ["bdd", "developpeur"]
     assert all(r.ok for r in report.resultats)
     assert all(r.worker.startswith("temporal/") for r in report.resultats)
     assert report.run_id == "run-durable-ok"
 
-    # Grand livre reconstruit depuis l'agrégat : une entrée par tâche + planification.
-    livre = report.grand_livre
-    assert livre.run_id == "run-durable-ok"
-    assert {t.tache_id for t in livre.taches} == {"schema-bdd", "api-taches"}
-    assert provider.plans == 1  # planifié une fois, via l'activité `planifier`
-    # Le tableau noir a voyagé : la 2ᵉ tâche a vu le livrable de la 1ʳᵉ dans son prompt.
-    assert any("LIVRABLE (1)" in p for p in provider.executions_de("AVAL"))
+    # Ledger rebuilt from the aggregate: one entry per task + planning.
+    ledger = report.grand_livre
+    assert ledger.run_id == "run-durable-ok"
+    assert {t.tache_id for t in ledger.taches} == {"schema-bdd", "api-taches"}
+    assert provider.plans == 1  # planned once, through the `plan` activity
+    # The blackboard travelled: the 2nd task saw the 1st one's deliverable in its prompt.
+    assert any("LIVRABLE (1)" in p for p in provider.executions_of("AVAL"))
 
 
-def test_create_durable_engine_lit_l_adresse_de_la_config(env):
-    """La fabrique `create_durable_engine` (pendant de `OrchestrationEngine.default`) tourne."""
-    provider = FakeDurableProvider(_plan_chaine())
-    configurer_worker(provider_factory=lambda: provider)
-    engine = create_durable_engine(relance=None)
+def test_create_durable_engine_reads_the_address_from_the_settings(env):
+    """The `create_durable_engine` factory (counterpart of `OrchestrationEngine.default`) runs."""
+    provider = FakeDurableProvider(_chain_plan())
+    configure_worker(provider_factory=lambda: provider)
+    engine = create_durable_engine(retry=None)
 
-    report = env.run(engine.run(_OBJECTIF, journal=RunJournal(run_id="run-fab")))
+    report = env.run(engine.run(_GOAL, journal=RunJournal(run_id="run-fab")))
 
     assert len(report.resultats) == 2 and all(r.ok for r in report.resultats)
 
 
-# --- ② Blocage aval : une dépendance en échec n'exécute jamais l'aval (#43) -------------
+# --- ② Downstream blocking: a failed dependency never executes downstream (#43) ----------
 
 
-def test_une_dependance_en_echec_bloque_l_aval_sans_l_executer(env):
-    """La racine échoue : l'aval est bloqué (activité `consigner_blocage`), jamais exécuté."""
-    provider = FakeDurableProvider(_plan_chaine(), echouer="AMONT")
-    configurer_worker(provider_factory=lambda: provider)
+def test_a_failed_dependency_blocks_downstream_without_executing_it(env):
+    """The root fails: downstream is blocked (activity `record_blocker`), never executed."""
+    provider = FakeDurableProvider(_chain_plan(), fail="AMONT")
+    configure_worker(provider_factory=lambda: provider)
 
-    report = env.run(_engine().run(_OBJECTIF, journal=RunJournal(run_id="run-bloc")))
+    report = env.run(_engine().run(_GOAL, journal=RunJournal(run_id="run-bloc")))
 
-    amont, aval = report.resultats
-    assert amont.statut == "echec"
-    assert aval.statut == "bloquee"
-    assert "schema-bdd" in (aval.erreur or "")  # le blocage cite la dépendance non satisfaite
-    # L'amont a été tenté (puis a échoué) ; l'aval n'a jamais atteint le fournisseur.
-    assert provider.executions_de("AMONT")  # tentée
-    assert provider.executions_de("AVAL") == []  # jamais exécutée
-
-
-# --- ③ Reprise sur panne : sans repayer l'amont (#96) ----------------------------------
+    upstream, downstream = report.resultats
+    assert upstream.statut == "echec"
+    assert downstream.statut == "bloquee"
+    assert "schema-bdd" in (downstream.erreur or "")  # the blocker names the unmet dependency
+    # Upstream was attempted (then failed); downstream never reached the provider.
+    assert provider.executions_of("AMONT")  # attempted
+    assert provider.executions_of("AVAL") == []  # never executed
 
 
-def test_reprendre_un_run_acheve_rend_le_rapport_sans_rien_reexecuter(env):
-    """Un run déjà achevé se reprend : rapport rendu, amont **non repayé**.
+# --- ③ Failure recovery: without paying upstream again (#96) -----------------------------
 
-    Modélise le process tué après la dernière tâche, avant l'affichage : le workflow
-    est `COMPLETED` côté Temporal. `reprendre` rattache un process neuf, consigne la
-    reprise (raison « déjà achevé ») et rend le rapport — sans un seul appel modèle
-    de plus (le compteur d'exécutions ne bouge pas).
+
+def test_resuming_a_finished_run_returns_the_report_without_rerunning_anything(env):
+    """A run that already finished can be resumed: report returned, upstream **not paid again**.
+
+    Models the process killed after the last task, before the display: the workflow
+    is `COMPLETED` on the Temporal side. `resume` attaches a fresh process, records
+    the resume (reason "already finished") and returns the report, without a single
+    extra model call (the execution counter does not move).
     """
-    provider = FakeDurableProvider(_plan_chaine())
-    configurer_worker(provider_factory=lambda: provider)
+    provider = FakeDurableProvider(_chain_plan())
+    configure_worker(provider_factory=lambda: provider)
     engine = _engine()
 
-    report = env.run(engine.run(_OBJECTIF, journal=RunJournal(run_id="run-fini")))
-    executions_avant = list(provider.executions)
+    report = env.run(engine.run(_GOAL, journal=RunJournal(run_id="run-fini")))
+    executions_before = list(provider.executions)
     assert len(report.reussies) == 2
 
-    journal_reprise = RunJournal(run_id="run-fini")
-    # `horloge_libre` : le worker du run vient de s'éteindre, et la requête de la
-    # reprise a besoin du repli « sticky → file normale » — un timer du serveur,
-    # que l'horloge verrouillée du serveur de test fige (#457).
-    repris = env.run(
-        env.horloge_libre(engine.reprendre("run-fini", journal=journal_reprise))
-    )
+    resume_journal = RunJournal(run_id="run-fini")
+    # `with_unlocked_clock`: the run's worker has just shut down, and the resume's
+    # query needs the "sticky → normal queue" fallback, a server timer that the test
+    # server's locked clock freezes (#457).
+    resumed = env.run(env.with_unlocked_clock(engine.resume("run-fini", journal=resume_journal)))
 
-    # Aucune ré-exécution : l'amont vient de l'historique, pas d'un nouvel appel.
-    assert provider.executions == executions_avant
-    assert [r.task_id for r in repris.resultats] == [r.task_id for r in report.resultats]
-    # La reprise est consignée (césure visible), et n'entre pas au grand livre (usage nul).
-    reprises = [rec for rec in journal_reprise.records if rec.etape == ETAPE_REPRISE]
-    assert len(reprises) == 1
-    assert "achevé" in reprises[0].sortie or "achevé" in reprises[0].entree
+    # Nothing executed again: upstream comes from the history, not from a new call.
+    assert provider.executions == executions_before
+    assert [r.task_id for r in resumed.resultats] == [r.task_id for r in report.resultats]
+    # The resume is recorded (visible break), and does not enter the ledger (zero usage).
+    resumes = [rec for rec in resume_journal.records if rec.etape == ETAPE_REPRISE]
+    assert len(resumes) == 1
+    assert "achevé" in resumes[0].sortie or "achevé" in resumes[0].entree
 
 
-def test_l_etat_acquis_expose_l_amont_pendant_que_l_aval_est_en_vol(env):
-    """`resultats_acquis` (#96) : l'amont payé est visible dès qu'il aboutit, l'aval en vol non.
+def test_the_checkpoint_exposes_upstream_while_downstream_is_in_flight(env):
+    """`checkpoint` (#96): paid upstream shows as soon as it succeeds, in-flight downstream not.
 
-    C'est le socle de la reprise sans repayer l'amont — un process qui reprend lit cet
-    état pour savoir ce qui est déjà acquis. L'aval (`AVAL`) est tenu en vol par le
-    fournisseur : l'état acquis expose alors le plan et l'amont, **pas** l'aval (rien
-    produit). Une fois l'aval débloqué, le run s'achève — et l'amont n'a jamais été
-    ré-exécuté (un seul passage `AMONT`), sa valeur venant de l'historique du workflow.
+    It is the base of resuming without paying upstream again: a resuming process reads
+    this state to know what is already acquired. Downstream (`AVAL`) is held in flight
+    by the provider: the checkpoint then exposes the plan and upstream, **not**
+    downstream (nothing produced). Once downstream is unblocked, the run finishes, and
+    upstream was never executed again (a single `AMONT` pass), its value coming from
+    the workflow history.
     """
-    provider = FakeDurableProvider(_plan_chaine(), bloquer="AVAL")
-    configurer_worker(provider_factory=lambda: provider)
+    provider = FakeDurableProvider(_chain_plan(), block="AVAL")
+    configure_worker(provider_factory=lambda: provider)
 
     async def scenario():
-        async with construire_worker(env.client):
+        async with build_worker(env.client):
             handle = await env.client.start_workflow(
                 MaestroRunWorkflow.run,
-                await _entree(_OBJECTIF, "run-vol"),
-                id=identifiant_workflow("run-vol"),
+                await _workflow_input(_GOAL, "run-vol"),
+                id=workflow_id("run-vol"),
                 task_queue="maestro-durable",
             )
-            # Attendre que l'amont soit acquis (l'aval, bloqué, ne l'est jamais avant déblocage).
+            # Wait for upstream to be acquired (blocked downstream never is before unblocking).
             for _ in range(4000):
-                etat = await handle.query(MaestroRunWorkflow.resultats_acquis)
-                if any(r["task_id"] == "schema-bdd" for r in etat["resultats"]):
+                checkpoint = await handle.query(MaestroRunWorkflow.checkpoint)
+                if any(r["task_id"] == "schema-bdd" for r in checkpoint["resultats"]):
                     break
                 await asyncio.sleep(0.005)
-            etat = await handle.query(MaestroRunWorkflow.resultats_acquis)
-            assert {r["task_id"] for r in etat["resultats"]} == {"schema-bdd"}  # amont acquis…
-            assert etat["planification"] is not None  # …plan acquis, aval encore en vol
-            provider.debloquer.set()  # l'aval peut enfin aboutir
+            checkpoint = await handle.query(MaestroRunWorkflow.checkpoint)
+            # upstream acquired…
+            assert {r["task_id"] for r in checkpoint["resultats"]} == {"schema-bdd"}
+            assert checkpoint["planification"] is not None  # …plan acquired, downstream in flight
+            provider.unblock.set()  # downstream can finally succeed
             return await handle.result()
 
-    agregat = env.run(scenario())
+    aggregate = env.run(scenario())
 
-    resultats = agregat["resultats"]
-    assert {r["task_id"] for r in resultats} == {"schema-bdd", "api-taches"}
-    assert all(r["statut"] == "terminee" for r in resultats)
-    assert len(provider.executions_de("AMONT")) == 1  # amont jamais repayé
+    results = aggregate["resultats"]
+    assert {r["task_id"] for r in results} == {"schema-bdd", "api-taches"}
+    assert all(r["statut"] == "terminee" for r in results)
+    assert len(provider.executions_of("AMONT")) == 1  # upstream never paid again
 
 
-def test_reprendre_un_run_inconnu_leve_une_erreur_lisible(env):
-    """Reprendre un run_id qu'aucun workflow ne porte : `OrchestratorError` explicite."""
-    configurer_worker(provider_factory=lambda: FakeDurableProvider(_plan_chaine()))
+def test_resuming_an_unknown_run_raises_a_readable_error(env):
+    """Resuming a run_id that no workflow carries: explicit `OrchestratorError`."""
+    configure_worker(provider_factory=lambda: FakeDurableProvider(_chain_plan()))
 
     with pytest.raises(OrchestratorError, match="aucun run durable"):
-        env.run(_engine().reprendre("run-fantome"))
+        env.run(_engine().resume("run-fantome"))
 
 
-# --- ④ Planification invalide : le workflow échoue, retraduit en OrchestratorError ------
+# --- ④ Invalid planning: the workflow fails, translated back into OrchestratorError ------
 
 
-def test_une_planification_invalide_fait_echouer_le_run(env):
-    """Un plan indécodable fait échouer le workflow ; l'échec devient `OrchestratorError`."""
+def test_an_invalid_planning_fails_the_run(env):
+    """An undecodable plan fails the workflow; the failure becomes `OrchestratorError`."""
     provider = FakeDurableProvider("ceci n'est pas un plan JSON")
-    configurer_worker(provider_factory=lambda: provider)
+    configure_worker(provider_factory=lambda: provider)
 
     with pytest.raises(OrchestratorError):
         env.run(_engine().run("Objectif hors sujet", journal=RunJournal(run_id="run-ko")))
-    assert provider.executions == []  # aucune tâche exécutée : il n'y a jamais eu de plan
+    assert provider.executions == []  # no task executed: there never was a plan

@@ -461,7 +461,7 @@ dossier de projet sur le disque. Il ne touche **jamais** à la configuration : a
 surcharges, capacités, permissions, secrets, MCP. Quatre choses à ne pas défaire :
 
 - **Les clés et les dossiers viennent des constantes Python** — `CLE_JOURNAL_EVENEMENTS`,
-  `CLE_BATTEMENTS`, `FILE_TACHES`, `CANAL_BOITE_PREFIXE`/`CANAL_DIFFUSION`, `ChatStore.default`,
+  `CLE_BATTEMENTS`, `TASKS_QUEUE`, `MAILBOX_CHANNEL_PREFIX`/`BROADCAST_CHANNEL`, `ChatStore.default`,
   `racine_ingestion`, `ProjetStore.default` —, importées, jamais recopiées dans un
   shell ni dans le module : une constante recopiée des deux côtés d'une frontière est ce que #830 a
   vu casser (un mois de captures muettes sur un texte que l'UI ne rendait plus). Le test l'interdit

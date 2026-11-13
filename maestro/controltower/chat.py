@@ -276,8 +276,8 @@ from maestro.emplacements import depot_configuration
 from maestro.engine.guardrails import GardeFousIngestion
 from maestro.equipe import RoleValide
 from maestro.messaging import (
-    MESSAGE_REPONSE,
-    MESSAGE_REQUETE,
+    MESSAGE_REQUEST,
+    MESSAGE_RESPONSE,
     AgentMessage,
     Mailbox,
 )
@@ -4371,7 +4371,7 @@ class ServiceChat:
         message = MessageChat(
             agent=agent.nom, conversation=conversation, auteur=agent.nom, contenu=texte
         )
-        await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
+        await self._acheminer(message, agent, type_message=MESSAGE_RESPONSE)
         return message
 
     def _resoudre(self, agent: Agent, conversation: str | None) -> str:
@@ -4456,7 +4456,7 @@ class ServiceChat:
             rapport=rapport,
             contexte=contexte_markdown(rapport) if rapport is not None else "",
         )
-        await self._acheminer(message, agent, type_message=MESSAGE_REQUETE)
+        await self._acheminer(message, agent, type_message=MESSAGE_REQUEST)
         return message
 
     async def _repondre(
@@ -4567,7 +4567,7 @@ class ServiceChat:
             attentes_candidates=reponse.attentes_candidates,
             empechement=reponse.empechement,
         )
-        await self._acheminer(message, agent, type_message=MESSAGE_REPONSE)
+        await self._acheminer(message, agent, type_message=MESSAGE_RESPONSE)
         return message
 
     async def _lire(
@@ -4614,9 +4614,9 @@ class ServiceChat:
         await self._mailbox.publish(
             AgentMessage(
                 type=type_message,
-                de_agent=UTILISATEUR if utilisateur_emet else agent.nom,
-                a_agent=agent.nom if utilisateur_emet else UTILISATEUR,
-                objet=message.resume[:_LONGUEUR_OBJET],
+                from_agent=UTILISATEUR if utilisateur_emet else agent.nom,
+                to_agent=agent.nom if utilisateur_emet else UTILISATEUR,
+                subject=message.resume[:_LONGUEUR_OBJET],
                 # Les sources voyagent **déclarées** et non lues : la lettre dit ce
                 # que le message embarque, le contenu extrait a son seul chemin
                 # (`contexte_markdown`, ENF-13) et n'a rien à faire dans une

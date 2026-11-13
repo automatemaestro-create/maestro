@@ -199,7 +199,7 @@ maestro-run --queue "Créer une API de gestion de tâches"
 Le statut et le résultat de chaque tâche (livrable, erreur, fichiers produits, usage)
 remontent à l'orchestrateur via le backend de résultats ; la synthèse indique le worker
 qui a exécuté chaque tâche. Les garde-fous (#9) s'appliquent **côté worker**
-(`maestro.queue.worker.configurer_worker`) — une tâche sensible y est refusée par défaut,
+(`maestro.queue.worker.configure_worker`) — une tâche sensible y est refusée par défaut,
 et un plafond de dépense configuré là ne voit que la tâche courante (le journal du worker
 est reconstruit à chaque message), pas l'exécution entière (#56).
 Détails : [`maestro/queue/`](../maestro/queue/) et [`core/queue/README.md`](../core/queue/README.md).

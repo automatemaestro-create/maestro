@@ -116,7 +116,7 @@ from maestro.plan_run import NoeudPlan, dependants_directs, niveaux_topologiques
 #: - `rompue` — l'amont n'a pas abouti (échec, ou blocage hérité) : l'aval ne
 #:   démarrera pas et se bloquera à son tour (#43).
 #:
-#: Ce sont, aux mots près, les deux annonces de `HandoffRelais.annonce` (#44) —
+#: Ce sont, aux mots près, les deux annonces de `HandoffRelay.announce` (#44) —
 #: `handoff` quand la tâche a réussi, `notification` sinon —, lues là où elles
 #: existent **toujours** : dans le statut de l'amont. Se brancher sur le message
 #: lui-même aurait laissé toutes les arêtes éteintes dans la configuration

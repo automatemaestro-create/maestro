@@ -312,7 +312,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         print(
             "--plafond-cout/--plafond-tokens/--timeout/--relances ne sont pas "
             "combinables avec --queue : garde-fous et relance s'appliquent côté worker "
-            "(maestro.queue.worker.configurer_worker).",
+            "(maestro.queue.worker.configure_worker).",
             file=sys.stderr,
         )
         return 2
@@ -477,7 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         if reprendre is not None:
             # `--reprendre` a imposé le mode durable : le moteur est le durable.
             durable = cast("DurableEngine", engine)
-            report = run_borne(durable.reprendre(reprendre, journal=journal))
+            report = run_borne(durable.resume(reprendre, journal=journal))
         elif via_durable:
             # Le moteur durable ne connaît pas le régime du brief (#320) — et il n'a
             # pas à le connaître : `--brief` y est refusé plus haut, l'étape de
@@ -606,7 +606,7 @@ def _build_engine(
     if via_durable:
         from maestro.durable import DurableEngine
 
-        return DurableEngine(guardrails=guardrails, relance=relance)
+        return DurableEngine(guardrails=guardrails, retry=relance)
     mailbox = None
     if messagerie:
         from maestro.config import load_settings
@@ -616,7 +616,7 @@ def _build_engine(
     if via_queue:
         from maestro.queue import create_distributed_engine
 
-        return create_distributed_engine(mailbox=mailbox, max_parallele=max_parallele)
+        return create_distributed_engine(mailbox=mailbox, max_parallel=max_parallele)
     return OrchestrationEngine.default(
         guardrails=guardrails,
         mailbox=mailbox,

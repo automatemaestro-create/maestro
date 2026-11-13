@@ -41,7 +41,7 @@ pas un poste désinstallé : ce qu'un utilisateur a réglé reste réglé.
 Une constante recopiée des deux côtés d'une frontière est ce que #830 a vu
 casser : `captures.mjs` a attendu un mois un texte que l'UI ne rendait plus.
 Ici la purge **importe** `CLE_JOURNAL_EVENEMENTS`, `CLE_BATTEMENTS`, `CLE_HOTES`,
-`PREFIXE_ACQUIS`, `FILE_TACHES`, `CANAL_BOITE_PREFIXE`, `CANAL_DIFFUSION`, et
+`PREFIXE_ACQUIS`, `TASKS_QUEUE`, `MAILBOX_CHANNEL_PREFIX`, `BROADCAST_CHANNEL`, et
 résout les dossiers
 par les mêmes `default()` / `racine_ingestion()` que l'API — le jour où l'un
 d'eux bouge, la purge suit sans qu'on y pense. `tests/test_retex_utilisateur.py`
@@ -95,9 +95,9 @@ from maestro.controltower.events import REDIS_URL_DEFAUT
 from maestro.controltower.persistence import CLE_JOURNAL_EVENEMENTS
 from maestro.controltower.state import EXECUTION_EN_COURS
 from maestro.espace import Espace, espace_courant
-from maestro.messaging.mailbox import CANAL_BOITE_PREFIXE, CANAL_DIFFUSION
+from maestro.messaging.mailbox import BROADCAST_CHANNEL, MAILBOX_CHANNEL_PREFIX
 from maestro.projets.store import ProjetStore
-from maestro.queue.celery_app import FILE_TACHES
+from maestro.queue.celery_app import TASKS_QUEUE
 from maestro.sources.resolution import racine_ingestion
 
 #: Le nom sous lequel ce module s'invoque (`python -m …`) — dérivé, jamais écrit.
@@ -196,9 +196,9 @@ def perimetre(settings: Settings | None = None) -> Perimetre:
         battements=espace.nommer(CLE_BATTEMENTS),
         hotes=espace.nommer(CLE_HOTES),
         prefixe_acquis=espace.nommer(PREFIXE_ACQUIS),
-        file_taches=espace.nommer(FILE_TACHES),
-        prefixe_boites=espace.nommer(CANAL_BOITE_PREFIXE),
-        diffusion=espace.nommer(CANAL_DIFFUSION),
+        file_taches=espace.nommer(TASKS_QUEUE),
+        prefixe_boites=espace.nommer(MAILBOX_CHANNEL_PREFIX),
+        diffusion=espace.nommer(BROADCAST_CHANNEL),
         conversations=ChatStore.default(settings).racine,
         ingestion=racine_ingestion(settings),
         projets=ProjetStore.default(settings).racine,

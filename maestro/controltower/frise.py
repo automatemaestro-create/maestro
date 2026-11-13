@@ -14,7 +14,7 @@ déjà persistés ; ce qui manquait était leur **jointure** :
 - `tache.statut` — le moteur consigne le démarrage (`<tâche>:debut`, #98) puis
   l'issue de chaque tâche, blocages compris (`_consigne_blocage`, #43) ;
 - `message.inter_agents` — la messagerie journalise chaque passage de relais
-  (`consigne_message`, #44) ;
+  (`record_message`, #44) ;
 - `validation.demande` / `validation.decision` — le garde-fou humain publie sa
   question puis la réponse (#48).
 

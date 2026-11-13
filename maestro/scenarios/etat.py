@@ -107,7 +107,7 @@ from maestro.controltower.purge import ClientRedis as ClientRedisPurge
 from maestro.controltower.purge import hotes_vivants, port_api
 from maestro.fichiers import retirer_arbre
 from maestro.projets.modele import ID_PROJET
-from maestro.queue.celery_app import FILE_TACHES
+from maestro.queue.celery_app import TASKS_QUEUE
 from maestro.scenarios.modele import Rapport
 from maestro.scenarios.projets import racine_atelier, racines_des_passages
 
@@ -211,7 +211,7 @@ def cles_du_banc(donnees: Donnees) -> tuple[str, str, str]:
     return (
         espace.nommer(CLE_JOURNAL_EVENEMENTS),
         espace.nommer(CLE_BATTEMENTS),
-        espace.nommer(FILE_TACHES),
+        espace.nommer(TASKS_QUEUE),
     )
 
 

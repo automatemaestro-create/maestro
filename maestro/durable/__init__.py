@@ -1,60 +1,63 @@
-"""Mode durable — le moteur d'exécution sur Temporal (ticket #95).
+"""Durable mode: the execution engine on Temporal (#95).
 
-Fait basculer un run du process courant vers un **workflow Temporal** durable, en
-mode **opt-in** : un run = un workflow, une tâche = une activité. Le moteur en
-process (`maestro.engine`) reste le défaut et ne change pas ; ce module en est le
-pendant durable, calqué sur `maestro.queue` (l'exécution distribuée par file).
+Moves a run from the current process to a durable **Temporal workflow**, as an
+**opt-in** mode: one run is one workflow, one task is one activity. The in-process
+engine (`maestro.engine`) stays the default and does not change; this module is its
+durable counterpart, modelled on `maestro.queue` (distributed execution through a
+queue).
 
-Quatre pièces :
+Four parts:
 
-- `workflow` — `MaestroRunWorkflow`, le run **déterministe** (planification,
-  dépendances, ordonnancement) qui délègue tout l'I/O à des activités ;
-- `activities` — `planifier` / `executer_tache` / `consigner_blocage`, l'I/O du
-  run (appels modèle, garde-fous #9, journal #8) ; `configurer_worker` pose la
-  config du process worker ;
-- `worker` — le `Worker` Temporal (`construire_worker`) et son mode autonome ;
-- `engine` — `DurableEngine`, côté orchestrateur, même interface que
-  `OrchestrationEngine` (`await engine.run(objectif)`), plus la **reprise sur
-  panne** (`await engine.reprendre(run_id)`, #96), et `create_durable_engine`.
+- `workflow`: `MaestroRunWorkflow`, the **deterministic** run (planning,
+  dependencies, scheduling) that delegates all I/O to activities;
+- `activities`: `plan` / `execute_task` / `record_blocker`, the run's I/O (model
+  calls, guardrails #9, journal #8); `configure_worker` sets the worker process's
+  configuration;
+- `worker`: the Temporal `Worker` (`build_worker`) and its standalone mode;
+- `engine`: `DurableEngine`, on the orchestrator side, the same interface as
+  `OrchestrationEngine` (`await engine.run(goal)`), plus **failure recovery**
+  (`await engine.resume(run_id)`, #96), and `create_durable_engine`.
 
-Usage — en démo CLI (Temporal lancé, cf. infra/docker-compose.yml) :
+Usage from the CLI (Temporal running, see infra/docker-compose.yml):
 
     maestro-run --durable "<objectif>"
 
-ou par le code :
+or from code:
 
     from maestro.durable import create_durable_engine
 
     engine = create_durable_engine()
     report = await engine.run("Créer une API de gestion de tâches")
 
-**Reprise sur panne** (#96) — le run survit au process qui le suit. Si celui-ci
-disparaît en cours de route, on le rattache par son `run_id` (celui du journal,
-de la trace et de la Control Tower) :
+**Failure recovery** (#96): the run survives the process that follows it. If that
+process vanishes midway, the run is reattached by its `run_id` (the one of the
+journal, the trace and the Control Tower):
 
     maestro-run --reprendre <run_id>
 
-Les tâches déjà réussies ne sont pas ré-exécutées — leur résultat vient de
-l'historique Temporal : l'amont n'est pas repayé. Si c'est le **worker** qui
-tombe, il n'y a rien à faire : le run reprend de lui-même dès qu'un worker
-revient sur la file (`python -m maestro.durable.worker`).
+Tasks that already succeeded are not run again: their result comes from the
+Temporal history, so upstream work is not paid twice. If the **worker** goes down,
+there is nothing to do: the run resumes by itself as soon as a worker is back on
+the queue (`python -m maestro.durable.worker`).
 """
 
 from __future__ import annotations
 
 from maestro.durable.engine import (
+    WORKFLOW_ID_PREFIX,
     DurableEngine,
     create_durable_engine,
-    identifiant_workflow,
+    workflow_id,
 )
-from maestro.durable.worker import FILE_DURABLE, construire_worker
+from maestro.durable.worker import DURABLE_QUEUE, build_worker
 from maestro.durable.workflow import MaestroRunWorkflow
 
 __all__ = [
-    "FILE_DURABLE",
+    "DURABLE_QUEUE",
+    "WORKFLOW_ID_PREFIX",
     "DurableEngine",
     "MaestroRunWorkflow",
-    "construire_worker",
+    "build_worker",
     "create_durable_engine",
-    "identifiant_workflow",
+    "workflow_id",
 ]

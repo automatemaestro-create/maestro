@@ -1,15 +1,16 @@
-"""Classifieur léger d'assignation : le modèle rapide qui tranche les cas ambigus (ticket #42).
+"""Lightweight assignment classifier: the fast model that settles ambiguous cases (#42).
 
-Second signal du routage (docs/01 §3.2) : quand les règles de compétences ne
-départagent pas (ex æquo, ou aucun recouvrement), un appel à un **modèle léger**
-lit la tâche (titre, description, compétences requises) et choisit parmi les
-**candidats** proposés — ou s'abstient s'il hésite.
+The second routing signal (docs/01 §3.2): when the competency rules do not separate
+the candidates (a tie, or no overlap), a call to a **lightweight model** reads the
+task (title, description, required competencies) and picks among the proposed
+**candidates**, or abstains when it hesitates.
 
-L'appel passe par la couche fournisseur (`ModelProvider`, #32) : aucun fournisseur
-n'est câblé en dur, seul le nom du modèle par défaut (Haiku, docs/01 §3.2) vit ici
-et reste remplaçable à la construction. La réponse attendue est un petit objet
-JSON `{"agent": <nom ou null>, "confiance": 0..1}` ; toute réponse illisible ou
-hors des candidats vaut abstention (confiance nulle) — jamais un mauvais routage.
+The call goes through the provider layer (`ModelProvider`, #32): no provider is
+hard-wired, only the name of the default model (Haiku, docs/01 §3.2) lives here and
+stays replaceable at construction. The expected answer is a small JSON object
+`{"agent": <name or null>, "confiance": 0..1}`; any unreadable answer, or one
+outside the candidates, counts as an abstention (zero confidence), never as a
+wrong routing.
 """
 
 from __future__ import annotations
@@ -25,11 +26,11 @@ from maestro.familles_claude import derniere_version
 from maestro.orchestrator.schema import Task
 from maestro.providers.base import ModelProvider
 
-#: Modèle léger par défaut du classifieur (docs/01 §3.2 : « un modèle rapide,
-#: ex. Haiku ») — la dernière version de la famille, lue dans `familles-claude.tsv`
-#: comme celle des agents (#1270). Le classifieur reste léger : il route, il ne fait
-#: pas le travail. Indépendant du rôle : remplaçable sans toucher au routage.
-MODELE_CLASSIFIEUR = derniere_version("haiku")
+#: The classifier's default lightweight model (docs/01 §3.2: "a fast model, e.g.
+#: Haiku"): the latest version of the family, read from `familles-claude.tsv` like
+#: the agents' (#1270). The classifier stays light: it routes, it does not do the
+#: work. Independent of the role: replaceable without touching routing.
+CLASSIFIER_MODEL = derniere_version("haiku")
 
 CLASSIFIER_SYSTEM_PROMPT = """\
 Tu es le routeur de Maestro : on te soumet UNE tâche et une liste d'agents \
@@ -47,14 +48,13 @@ vaut laisser la tâche à assigner qu'un mauvais routage.
 
 Aucun texte hors de l'objet JSON."""
 
-#: La **seconde** question du classifieur (#1260) : non plus *qui est compétent ?*
-#: mais *qui s'en approche le plus ?* Elle n'est posée qu'une fois la décision
-#: prise de faire ce travail avec l'équipe telle qu'elle est — le plan appelait un
-#: métier qu'aucun candidat n'a, et la personne n'a pas recruté (décliné, pas
-#: répondu, ou personne à qui le proposer). S'abstenir y serait répondre à côté :
-#: l'abstention est ce qui faisait partir la tâche « à assigner » et échouer le run
-#: que la personne avait laissé continuer.
-CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT = """\
+#: The classifier's **second** question (#1260): no longer *who is competent?* but
+#: *who comes closest?* It is only asked once the decision has been taken to do
+#: this work with the team as it is: the plan called for a trade no candidate has,
+#: and the person did not recruit (declined, did not answer, or no one to ask).
+#: Abstaining there would miss the question: abstention is what sent the task "to
+#: assign" and failed the run the person had let continue.
+CLASSIFIER_CLOSEST_SYSTEM_PROMPT = """\
 Tu es le routeur de Maestro. La tâche qu'on te soumet demande un métier \
 qu'aucun des agents candidats n'a : l'équipe a été confrontée au plan, et la \
 décision a été prise de faire ce travail avec l'équipe telle qu'elle est.
@@ -71,52 +71,53 @@ réponse admise ici, la tâche sera faite par l'un d'eux.
 
 Aucun texte hors de l'objet JSON."""
 
-# Bloc de code Markdown éventuel autour du JSON (même tolérance que l'orchestrateur).
+# An optional Markdown code block around the JSON (the same tolerance as the
+# orchestrator).
 _FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class Classification:
-    """Verdict du classifieur : le candidat retenu (ou None) et sa confiance [0, 1]."""
+    """The classifier's verdict: the chosen candidate (or None) and its confidence [0, 1]."""
 
     agent: str | None
-    confiance: float
+    confidence: float
 
 
 class TaskClassifier:
-    """Interroge un modèle léger, via `ModelProvider`, pour départager des candidats."""
+    """Ask a lightweight model, through `ModelProvider`, to break a tie between candidates."""
 
-    def __init__(self, provider: ModelProvider, *, model: str = MODELE_CLASSIFIEUR) -> None:
+    def __init__(self, provider: ModelProvider, *, model: str = CLASSIFIER_MODEL) -> None:
         self._provider = provider
         self._model = model
 
     async def classify(
-        self, task: Task, candidats: Sequence[Agent], *, plus_proche: bool = False
+        self, task: Task, candidates: Sequence[Agent], *, closest: bool = False
     ) -> Classification:
-        """Classe `task` parmi `candidats` et renvoie le verdict du modèle.
+        """Classify `task` among `candidates` and return the model's verdict.
 
-        Une réponse illisible, ou désignant un agent hors des candidats, vaut
-        abstention (`agent=None`, confiance nulle). Les erreurs du fournisseur
-        remontent telles quelles : c'est au routeur de décider du repli.
+        An unreadable answer, or one naming an agent outside the candidates, counts
+        as an abstention (`agent=None`, zero confidence). Provider errors pass
+        through as is: the router decides on the fallback.
 
-        `plus_proche` (#1260) pose la seconde question — *qui s'en approche le
-        plus ?* — sur une tâche dont personne n'a le métier et que la décision de
-        continuer avec l'équipe actuelle confie à l'un d'eux. Même contrat de
-        réponse, même lecture : un nom hors des candidats reste une abstention.
+        `closest` (#1260) asks the second question (*who comes closest?*) about a
+        task whose trade no one has, and that the decision to continue with the
+        current team hands to one of them. Same answer contract, same reading: a
+        name outside the candidates stays an abstention.
         """
-        reponse = await self._provider.generate(
-            build_classifier_prompt(task, candidats),
+        answer = await self._provider.generate(
+            build_classifier_prompt(task, candidates),
             model=self._model,
             system_prompt=(
-                CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT if plus_proche else CLASSIFIER_SYSTEM_PROMPT
+                CLASSIFIER_CLOSEST_SYSTEM_PROMPT if closest else CLASSIFIER_SYSTEM_PROMPT
             ),
         )
-        return _parse_classification(reponse, frozenset(a.nom for a in candidats))
+        return _parse_classification(answer, frozenset(a.nom for a in candidates))
 
 
-def build_classifier_prompt(task: Task, candidats: Sequence[Agent]) -> str:
-    """Compose le message du classifieur : la tâche, puis les candidats et leurs compétences."""
-    lignes = [
+def build_classifier_prompt(task: Task, candidates: Sequence[Agent]) -> str:
+    """Compose the classifier's message: the task, then the candidates and their competencies."""
+    lines = [
         "Tâche à assigner :",
         f"- Titre : {task.titre}",
         f"- Description : {task.description}",
@@ -124,42 +125,42 @@ def build_classifier_prompt(task: Task, candidats: Sequence[Agent]) -> str:
         "",
         "Agents candidats :",
     ]
-    lignes += [
+    lines += [
         f"- {agent.nom} ({agent.role}) — compétences : {', '.join(sorted(agent.competences))}"
-        for agent in candidats
+        for agent in candidates
     ]
-    return "\n".join(lignes)
+    return "\n".join(lines)
 
 
-def _parse_classification(text: str, noms_valides: frozenset[str]) -> Classification:
-    """Décode la réponse du modèle en `Classification`, avec abstention par défaut.
+def _parse_classification(text: str, valid_names: frozenset[str]) -> Classification:
+    """Decode the model's answer into a `Classification`, abstaining by default.
 
-    Tolère les enrobages courants (JSON pur, bloc de code, prose autour de
-    l'objet). La confiance est bornée à [0, 1]. Un agent hors des candidats est
-    traité comme une réponse invalide (abstention, confiance nulle).
+    Tolerates the usual wrappings (plain JSON, code block, prose around the
+    object). The confidence is clamped to [0, 1]. An agent outside the candidates
+    is treated as an invalid answer (abstention, zero confidence).
     """
-    payload = _premier_objet_json(text or "")
+    payload = _first_json_object(text or "")
     if not isinstance(payload, dict):
-        return Classification(agent=None, confiance=0.0)
+        return Classification(agent=None, confidence=0.0)
 
-    brut = payload.get("confiance", 0.0)
-    confiance = float(brut) if isinstance(brut, (int, float)) else 0.0
-    confiance = min(max(confiance, 0.0), 1.0)
+    raw = payload.get("confiance", 0.0)
+    confidence = float(raw) if isinstance(raw, (int, float)) else 0.0
+    confidence = min(max(confidence, 0.0), 1.0)
 
     agent = payload.get("agent")
-    if isinstance(agent, str) and agent in noms_valides:
-        return Classification(agent=agent, confiance=confiance)
-    # null explicite : abstention assumée (la confiance porte sur ce choix) ;
-    # tout autre contenu : réponse invalide, confiance forcée à zéro.
-    return Classification(agent=None, confiance=confiance if agent is None else 0.0)
+    if isinstance(agent, str) and agent in valid_names:
+        return Classification(agent=agent, confidence=confidence)
+    # An explicit null is a deliberate abstention (the confidence bears on that
+    # choice); any other content is an invalid answer, confidence forced to zero.
+    return Classification(agent=None, confidence=confidence if agent is None else 0.0)
 
 
-def _premier_objet_json(text: str) -> Any:
-    """Décode le premier objet JSON trouvé dans `text` (direct, fence, ou sous-chaîne).
+def _first_json_object(text: str) -> Any:
+    """Decode the first JSON object found in `text` (direct, fence, or substring).
 
-    Version resserrée de l'extraction de l'orchestrateur : la réponse attendue est
-    un petit objet plat, sans accolade imbriquée dans ses chaînes. Renvoie None si
-    rien d'exploitable.
+    A tighter version of the orchestrator's extraction: the expected answer is a
+    small flat object, with no brace nested in its strings. Returns None when
+    nothing is usable.
     """
     candidates = [text.strip()]
     fence = _FENCE_RE.search(text)

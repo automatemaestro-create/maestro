@@ -154,7 +154,7 @@ from maestro.messaging.mailbox import (
     MESSAGE_NOTIFICATION,
     AgentMessage,
     Mailbox,
-    consigne_message,
+    record_message,
 )
 from maestro.orchestrator.schema import Brief, Task
 from maestro.outillage.contexte import outillage_du_projet
@@ -819,7 +819,7 @@ class TaskExecutor(ABC):
         un manque, quelle qu'en soit l'issue (refus, silence, personne à qui le
         proposer, ou un second métier qu'on n'a pas proposé) : une tâche dont
         personne n'a le métier va alors au rôle le plus proche au lieu de partir
-        « à assigner » (`Router.route`, `au_plus_proche`).
+        « à assigner » (`Router.route`, `closest`).
 
         Sans effet par défaut, et c'est une limite **dite** : un exécuteur distribué
         (`maestro.queue.CeleryExecutor`) route côté worker, où cette décision ne
@@ -832,7 +832,7 @@ class TaskExecutor(ABC):
         """Le run `run_id` a recruté un rôle pour ces `competences` (#1260).
 
         L'autre issue de la confrontation : une tâche qui demande l'une d'elles va
-        à un rôle qui la couvre (`Router.route`, `recrutees`) — la promesse que le
+        à un rôle qui la couvre (`Router.route`, `recruited`) — la promesse que le
         fil fait en recrutant. Même limite dite que `continuer_avec_l_equipe`.
         """
 
@@ -1353,14 +1353,14 @@ class LocalExecutor(TaskExecutor):
             else:
                 decision = await self._router.route(
                     task,
-                    exclus=self._desactives(task.projet_id),
+                    excluded=self._desactives(task.projet_id),
                     agents=self._equipe(task.projet_id),
                     # Le métier manque et personne ne l'a recruté (#1260) : la
                     # tâche va au rôle le plus proche plutôt qu'« à assigner ».
-                    au_plus_proche=journal.run_id in self._equipe_actuelle,
+                    closest=journal.run_id in self._equipe_actuelle,
                     # Un rôle recruté pour ce plan prend les tâches qui
                     # demandaient son métier — ce que le fil a promis (#1260).
-                    recrutees=self._recrutees.get(journal.run_id, frozenset()),
+                    recruited=self._recrutees.get(journal.run_id, frozenset()),
                 )
                 if decision.agent is None:
                     # Repli explicite (#42) : tâche marquée « à assigner » plutôt que
@@ -1372,15 +1372,15 @@ class LocalExecutor(TaskExecutor):
                     # la prendre. Depuis #1181 il voyage aussi sur le résultat, en
                     # prérequis : la boucle propose de recruter ce rôle dans le
                     # fil, et la tâche reprend sur l'équipe complétée.
-                    manque = role_manquant(decision.non_couvertes)
+                    manque = role_manquant(decision.uncovered)
                     if manque is not None:
                         self._consigne_role_manquant(task, manque, journal)
                     result = _echec(
                         task, agent="—", role=ROLE_A_ASSIGNER, score=decision.score,
                         erreur=(
-                            f"{decision.raison} {manque.phrase()}"
+                            f"{decision.reason} {manque.phrase()}"
                             if manque is not None
-                            else decision.raison
+                            else decision.reason
                         ),
                     )
                     if manque is not None:
@@ -3122,13 +3122,13 @@ class LocalExecutor(TaskExecutor):
         Rend au fournisseur un `Courrier` — un destinataire, un message, rien en
         retour — qui fait **les deux gestes**, dans cet ordre :
 
-        1. `consigne_message` : une étape `<task.id>:message` au journal du run,
+        1. `record_message` : une étape `<task.id>:message` au journal du run,
            que le pont (#46) mue en `message.inter_agents` et que la frise (#355)
            reçoit sans travail de son côté ;
         2. `mailbox.publish` : la notification en direct, **best-effort**.
 
         ⚠ **L'ordre est inversé par rapport au handoff, et c'est le contenu de la
-        décision.** `HandoffRelais.annonce` publie *puis* consigne, et abandonne
+        décision.** `HandoffRelay.announce` publie *puis* consigne, et abandonne
         tout — trace comprise — si la publication échoue : la trace y est
         conditionnée à la notification. Ici c'est l'inverse, parce que la réserve
         de docs/31 §3.2 le renverse : *le journal est la livraison, le pub/sub
@@ -3156,7 +3156,7 @@ class LocalExecutor(TaskExecutor):
         réponse** — un canal « question » dont la réponse serait du texte est le
         sujet de #647, pas celui-ci —, et une `requete` promettrait une paire que
         rien ici ne referme. `payload` reste vide : il n'y a aucune charge utile
-        structurée à porter, et `consigne_message` ne le lit pas.
+        structurée à porter, et `record_message` ne le lit pas.
 
         Rien de tout ceci ne touche au graphe du plan (docs/31 §5) : une étape de
         journal s'ajoute, aucune tâche n'est créée, aucun statut posé, personne
@@ -3166,16 +3166,16 @@ class LocalExecutor(TaskExecutor):
         async def courrier(destinataire: str, message: str) -> None:
             mot = AgentMessage(
                 type=MESSAGE_NOTIFICATION,
-                de_agent=agent.nom,
-                a_agent=destinataire,
-                tache_id=task.id,
+                from_agent=agent.nom,
+                to_agent=destinataire,
+                task_id=task.id,
                 run_id=journal.run_id,
-                objet=message,
+                subject=message,
             )
             # La livraison d'abord — si celle-ci lève, l'agent doit l'apprendre
             # (le fournisseur lui sert `courrier.CANAL_EN_ERREUR`) : c'est la seule
             # promesse de ce verbe, et la seule dont l'échec change quelque chose.
-            consigne_message(journal, mot, role=agent.role, projet_id=task.projet_id)
+            record_message(journal, mot, role=agent.role, project_id=task.projet_id)
             if self._mailbox is None:
                 return
             try:

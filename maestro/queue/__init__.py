@@ -1,57 +1,57 @@
-"""File de tâches et workers parallèles — Celery + Redis (ticket #41).
+"""Task queue and parallel workers: Celery + Redis (#41).
 
-Matérialise `core/queue` pour le MVP : les tâches produites par l'orchestrateur
-sont **poussées dans une file** (Celery, broker Redis) et **consommées par des
-workers** séparés — plusieurs agents s'exécutent réellement en parallèle, hors
-du process de l'orchestrateur, et le résultat de chaque tâche (statut, livrable,
-erreur, fichiers produits, usage) **remonte** par le backend de résultats.
+The tasks the orchestrator produces are **pushed to a queue** (Celery, Redis
+broker) and **consumed by separate workers**: several agents truly run in
+parallel, outside the orchestrator's process, and each task's result (status,
+deliverable, error, produced files, usage) **comes back** through the result
+backend.
 
-Trois pièces, un contrat JSON :
+Three parts, one JSON contract:
 
-- `celery_app` — l'application Celery commune (broker/backend = `REDIS_URL`,
-  file dédiée `FILE_TACHES`, tout en JSON) ;
-- `worker` — la tâche Celery `maestro.executer_tache`, consommée par les
-  workers ; exécute via le même chemin que la boucle locale (`LocalExecutor`)
-  et renvoie `TaskResult.to_dict()` ;
-- `dispatch` — `CeleryExecutor`, l'exécuteur **distribué** injectable dans la
-  boucle d'orchestration, et `create_distributed_engine`, la boucle complète
-  branchée sur la file.
+- `celery_app`: the shared Celery application (broker and backend on
+  `REDIS_URL`, dedicated queue `TASKS_QUEUE`, everything in JSON);
+- `worker`: the Celery task `maestro.executer_tache`, consumed by the workers.
+  It runs through the same path as the local loop (`LocalExecutor`) and returns
+  `TaskResult.to_dict()`;
+- `dispatch`: `CeleryExecutor`, the **distributed** executor that the
+  orchestration loop accepts, and `create_distributed_engine`, the whole loop
+  plugged into the queue.
 
-Usage — côté workers (un terminal par worker ; sous Windows, `--pool=solo`) :
+On the workers' side (one terminal per worker; on Windows, `--pool=solo`):
 
     celery -A maestro.queue worker --pool=solo -n agent1@%h
     celery -A maestro.queue worker --pool=solo -n agent2@%h
 
-Côté orchestrateur (Redis lancé, cf. infra/docker-compose.yml) :
+On the orchestrator's side (Redis running, see infra/docker-compose.yml):
 
     from maestro.queue import create_distributed_engine
 
     engine = create_distributed_engine()
     report = await engine.run("Créer une API de gestion de tâches")
 
-ou, en démo CLI : `maestro-run --queue "<objectif>"`.
+or, from the CLI: `maestro-run --queue "<objectif>"`.
 """
 
 from __future__ import annotations
 
 from maestro.queue.celery_app import (
-    FILE_TACHES,
-    NOM_TACHE_EXECUTER,
-    REDIS_URL_DEFAUT,
+    DEFAULT_REDIS_URL,
+    EXECUTE_TASK_NAME,
+    TASKS_QUEUE,
     app,
     create_app,
 )
 from maestro.queue.dispatch import (
-    TIMEOUT_RESULTAT_S,
+    RESULT_TIMEOUT_S,
     CeleryExecutor,
     create_distributed_engine,
 )
 
 __all__ = [
-    "FILE_TACHES",
-    "NOM_TACHE_EXECUTER",
-    "REDIS_URL_DEFAUT",
-    "TIMEOUT_RESULTAT_S",
+    "DEFAULT_REDIS_URL",
+    "EXECUTE_TASK_NAME",
+    "RESULT_TIMEOUT_S",
+    "TASKS_QUEUE",
     "CeleryExecutor",
     "app",
     "create_app",

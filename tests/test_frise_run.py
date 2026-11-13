@@ -163,7 +163,7 @@ def tache(
 
 
 def message(de: str, phrase: str, *, tache_id: str = "t1", run_id: str = RUN) -> Event:
-    """Le message inter-agents tel que `consigne_message` le fait remonter (#44)."""
+    """Le message inter-agents tel que `record_message` le fait remonter (#44)."""
     return Event(
         type=EVENEMENT_MESSAGE_INTER_AGENTS,
         run_id=run_id,

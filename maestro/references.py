@@ -132,7 +132,7 @@ def consigne_ticket(
 ) -> None:
     """Pose un ticket sur une tâche **en cours d'exécution**, par le journal (#8).
 
-    Le pendant de `consigne_message` (#44) pour le ticketing : l'agent qui
+    Le pendant de `record_message` (#44) pour le ticketing : l'agent qui
     découvre le ticket dont relève sa tâche — typiquement via le serveur MCP de
     son outil (#104) — consigne une étape `<tache>:ticket`. La ligne part dans
     les traces comme les autres, le pont Control Tower (#46) la convertit en

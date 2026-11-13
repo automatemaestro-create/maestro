@@ -212,5 +212,105 @@ entrée avant eux (notes sur les deux tickets).
 
 ## 11. La recette mesurée
 
-*À écrire par le pilote #1650* : temps mesuré, lignes touchées, outil de renommage retenu, pièges
-rencontrés, et la taille de lot recommandée pour les zones qui restent à découper.
+Mesurée par le pilote #1650 le 2026-11-13, sur `messaging`, `queue`, `router` et `durable` :
+3 037 lignes de `maestro/` et 2 067 lignes de tests.
+
+### 11.1 Ce que le lot a coûté
+
+- **35 minutes de session** entre le démarrage du ticket et l'écriture de cette recette,
+  clôture et pipeline non compris (`lib.sh log-time-mesure 1650`). Quatre sous-agents ont traduit
+  en parallèle les quatre suites du paquet.
+- **La limite est le contexte, pas l'horloge.** Le contexte de la session a été compacté deux fois
+  pendant le lot. C'est elle qui avait réécrit les modules, et un module réécrit coûte autant de
+  sortie que ses lignes.
+- **57 fichiers, environ 2 700 lignes de chaque côté du diff** :
+
+| Partie | Fichiers | Lignes (+ / −) |
+|---|---|---|
+| les quatre paquets, réécrits en entier | 16 | 1 628 / 1 649 |
+| leurs suites, réécrites, et la garde des noms voyageurs | 5 | 912 / 778 |
+| les appelants dans d'autres paquets | 15 | 56 / 56 |
+| les autres suites, noms seulement | 12 | 68 / 68 |
+| les documents qui citaient les noms, glossaire compris | 9 | 30 / 25 |
+
+- **Le comportement est constant** :
+  - les 24 suites qui nomment ces paquets passent, sans assertion modifiée hors des noms ;
+  - mypy strict et ruff sont verts sur `maestro/` ;
+  - le pipeline de la PR rend la couverture.
+
+### 11.2 La recette
+
+Aucun outil de renommage automatique : un tel outil renomme les symboles, mais ne traduit pas la
+prose, qui fait environ 42 % des lignes. La recette tient en huit gestes :
+
+1. **Relever les noms voyageurs sur le ticket, avant tout renommage** (règle 3) : canaux et clés
+   Redis, tâches Celery, types Temporal, clés JSON, valeurs énumérées.
+2. **Écrire la table ancien → nouveau dans l'atelier de la session**, et faire entrer au
+   glossaire (docs/08) les termes neufs. C'est cette table que suivent les appelants, les tests et
+   les documents.
+3. **Réécrire chaque module en entier, prose comprise**, la table en main. Pour un lot plus gros
+   que le pilote, la réécriture se confie à des sous-agents, un par module.
+4. **Suivre les appelants par des remplacements exacts et comptés.** Un script de l'atelier porte
+   chaque remplacement avec son nombre d'occurrences attendu, et refuse le fichier si un compte ne
+   tombe pas juste. Un `sed` global sur un nom court (`raison`, `file`, `statut`) toucherait les
+   attributs d'autres classes.
+5. **Traduire les suites du paquet par des sous-agents en parallèle**, un par suite. Chacun reçoit
+   la table et la consigne de ne changer aucune assertion hors des noms. Il rend en retour la table
+   des noms de tests qu'il a changés.
+6. **Garder les noms voyageurs par une suite qui écrit leurs valeurs en toutes lettres**
+   ([`tests/test_wire_names.py`](../tests/test_wire_names.py)). Chaque lot la complète. Une garde
+   se prouve en la sabotant : retirer un `name=` doit la faire rougir.
+7. **Jouer toutes les suites qui nomment le paquet**, pas seulement les siennes. On les trouve en
+   cherchant les imports **et** les classes du paquet. Puis mypy, ruff et `scripts/ci/local.sh`.
+8. **Inscrire dans `.git-blame-ignore-revs` le sha du lot précédent** (§11.4).
+
+### 11.3 Les pièges
+
+- **Temporal identifie une activité par le nom de sa fonction**, tant que `@activity.defn` n'a pas
+  de `name=`. Une requête, de même, sans `@workflow.query(name=…)`. Renommer la fonction sans
+  `name=` rendrait introuvables les activités des workflows en vol.
+- **Celery nomme ses tâches à part.** Le nom d'une tâche est explicite (`EXECUTE_TASK_NAME`), mais
+  le module listé dans `include=` est un chemin : renommer ce module coupe le worker.
+- **Une clé JSON peut naître d'un nom de champ.** `AgentMessage.to_dict` écrivait ses clés d'après
+  ses champs. Les champs renommés, les clés s'écrivent désormais en toutes lettres, et un aller-retour
+  les garde.
+- **Un lot ne renomme que ce qu'il possède.** Les noms des paquets encore en français restent :
+  `Task.titre`, `TaskResult.statut`, les arguments nommés du journal. Un paramètre de méthode
+  surchargée garde le nom de la classe mère.
+- **mypy ne voit pas les lectures d'attribut sur un double non typé.** Huit tests hors des quatre
+  suites lisaient des attributs renommés : `decision.raison`, `message.objet`, `boite.file`,
+  `mailbox._abonnes`. Seul le passage de toutes les suites qui nomment le paquet les a trouvés.
+- **Les numéros de ligne cités dans `docs/` bougent avec la réécriture.** Ils se suivent comme les
+  noms.
+- **Le sha d'un lot n'existe qu'après son merge**, puisque le merge se fait en squash. Le pilote a
+  donc créé `.git-blame-ignore-revs` vide de tout sha.
+- **La mesure du temps a besoin de l'instant du démarrage.** Le suivi de #1650 ne portait pas
+  `demarre`. `log-time-mesure` comptait alors une nuit entière dans un tour resté ouvert, soit
+  10 h 32 au lieu de 35 minutes. Avant de logger son temps, un lot vérifie que son suivi porte cet
+  instant ; s'il manque, `lib.sh set-dates <iid> <début> <échéance> <instant>` le repose.
+
+### 11.4 Le fichier de `git blame`
+
+Chaque lot inscrit dans `.git-blame-ignore-revs` le sha mergé du lot qui le précède : une ligne qui
+nomme le ticket, puis le sha complet. Le sha du dernier lot du chantier s'inscrit à la clôture du
+parent #1649.
+
+### 11.5 La taille de lot recommandée
+
+Un lot tient en une session jusqu'à **environ 6 000 lignes de `maestro/`**, tests en plus, soit
+deux fois le pilote. Il faut pour cela que la réécriture des modules soit confiée à des sous-agents
+(geste 3). Ce chiffre est un jugement, posé sur une seule mesure : le lot suivant le confirme ou le
+corrige. Au-delà, le lot se découpe par sous-paquet au démarrage, comme `/ticket-start` le fait de
+tout ticket trop gros.
+
+Pour les zones qui restent à découper :
+
+| Zone | Lignes | Découpage recommandé |
+|---|---|---|
+| `engine` | 15 463 | trois lots, sur les modules que crée #1469 |
+| `controltower` | 51 245 | une dizaine de lots, un par domaine, sur les routeurs de #1468 |
+| le contrat de l'API | 92 routes | un lot par domaine de routes, Python et TypeScript dans la même PR |
+| `apps/web/` | 115 663 | une vingtaine de lots, par dossier de route |
+
+Sur ce seuil, sept lots du tableau du §6 dépassent la taille d'une session : #1652 à #1658,
+de 6 864 à 12 382 lignes. Chacun se rejuge à son démarrage.

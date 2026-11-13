@@ -1,43 +1,46 @@
-"""Activités Temporal du mode durable — tout l'I/O du run (ticket #95).
+"""Temporal activities of the durable mode: all of a run's I/O (#95).
 
-Le mode durable fait d'un run un **workflow** Temporal (`maestro.durable.workflow`)
-et de chaque tâche une **activité**. Le workflow doit rester **déterministe** :
-appels modèle, horloge et journalisation vivent donc ici, dans les activités,
-jamais dans le code du workflow. Trois activités, toutes consignant au
-`RunJournal` (#8) à l'identique de la boucle en process — c'est ce qui garde la
-Control Tower alimentée sans changement (événements temps réel #46, grand livre
-#55) : là où l'exécution locale ou un worker de file consigne déjà, l'activité
-consigne pareil.
+The durable mode makes a run a Temporal **workflow** (`maestro.durable.workflow`)
+and each task an **activity**. The workflow must stay **deterministic**, so model
+calls, clock and journaling live here, in the activities, never in the workflow
+code. Three activities, all recording to the `RunJournal` (#8) exactly as the
+in-process loop does: that is what keeps the Control Tower fed without any change
+(real-time events #46, ledger #55). Wherever local execution or a queue worker
+already records, the activity records the same way.
 
-- `planifier` — déroule l'orchestrateur (#3) et consigne l'étape `planification` ;
-- `executer_tache` — exécute une tâche via le **même chemin que la boucle locale**
-  (`maestro.engine.LocalExecutor`) : routage, garde-fous (#9 — plafond, time-out,
-  validation humaine), runtime outillé ou appel texte, mesure d'usage (#8). Les
-  garde-fous passent donc bien « par les activités » du workflow ;
-- `consigner_blocage` — mue en `TaskResult` bloqué (#43) une tâche à l'aval d'un
-  échec, décision prise dans le workflow mais **consignée ici** (le journal est
-  de l'I/O).
+- `plan` runs the orchestrator (#3) and records the `planification` step;
+- `execute_task` runs a task through the **same path as the local loop**
+  (`maestro.engine.LocalExecutor`): routing, guardrails (#9: cap, timeout, human
+  validation), tooled runtime or text call, usage measurement (#8). The guardrails
+  therefore do go "through the activities" of the workflow;
+- `record_blocker` turns a task downstream of a failure into a blocked
+  `TaskResult` (#43). The workflow takes the decision, but it is **recorded here**
+  (the journal is I/O).
 
-Configuration **propre au process** du worker (fournisseur, garde-fous, relance),
-posée par `configurer_worker` avant la consommation — même modèle que
-`maestro.queue.worker` : le validateur humain (#9) n'étant pas sérialisable, il ne
-peut voyager en argument d'activité ; il vit dans le process du worker (embarqué
-dans celui du CLI pour la démo, cf. `maestro.durable.engine`).
+The Temporal activity types are the registered names `planifier`,
+`executer_tache` and `consigner_blocage` (`name=`): a workflow in flight on the
+server addresses them by those names, so they never change.
 
-Relance : la relance applicative (#91, ENF-06) reste la seule couche qui rattrape
-l'**aléa fournisseur** — elle vit dans l'activité, au plus près de l'appel modèle.
-Temporal ne double jamais cette relance ; il ne rattrape que ce qu'elle ne peut
-pas rattraper, parce qu'elle meurt avec le process : la **perte du worker**
-(#96). Les deux couches composent donc par partage du domaine, pas par
-neutralisation de l'une (exigence du parent #92) :
+The configuration **belongs to the worker's process** (provider, guardrails,
+retry), set by `configure_worker` before consumption, the same model as
+`maestro.queue.worker`. The human validator (#9) cannot be serialized, so it
+cannot travel as an activity argument: it lives in the worker's process
+(embedded in the CLI's, see `maestro.durable.engine`).
 
-- chaque activité tient un **battement de cœur** pendant son travail
-  (`_avec_battement`) : un worker tué cesse de battre, le serveur s'en aperçoit en
-  quelques secondes et redonne l'activité au worker suivant, au lieu d'attendre le
-  « start-to-close » (jusqu'à une heure pour une tâche) ;
-- les échecs **applicatifs déterministes** (plan invalide, tâche non conforme au
-  schéma) sont levés `non_retryable` : les rejouer ne donnerait jamais un autre
-  résultat, aucune des deux couches ne s'y essaie.
+Retry: the application retry (#91, ENF-06) remains the only layer that catches
+**provider hazards**. It lives in the activity, as close as possible to the model
+call. Temporal never doubles that retry; it only catches what the application
+retry cannot, because it dies with the process: the **loss of the worker** (#96).
+The two layers therefore compose by sharing the domain, not by turning one of them
+off (requirement of the parent #92):
+
+- each activity keeps a **heartbeat** during its work (`_with_heartbeat`): a
+  killed worker stops beating, the server notices within seconds and hands the
+  activity to the next worker, instead of waiting for the "start-to-close" (up to
+  an hour for a task);
+- **deterministic application** failures (invalid plan, task that breaks the
+  schema) are raised `non_retryable`: replaying them would never give another
+  result, so neither layer tries.
 """
 
 from __future__ import annotations
@@ -76,105 +79,105 @@ from maestro.projets.store import ProjetStore
 from maestro.providers.base import ModelProvider
 from maestro.telemetry import RunJournal, collect_usage
 
-#: Fabrique du fournisseur du worker : appelée une fois par process, à la
-#: construction paresseuse de l'exécuteur (comme `maestro.queue.worker`).
+#: The worker's provider factory: called once per process, when the executor is
+#: built lazily (as in `maestro.queue.worker`).
 ProviderFactory = Callable[[], ModelProvider]
 
-#: Période du battement de cœur des activités (#96) — nettement sous le
-#: `heartbeat_timeout` posé côté workflow (`BATTEMENT_ACTIVITE`), pour qu'un
-#: worker vivant mais occupé ne soit jamais pris pour un worker mort.
-PERIODE_BATTEMENT_S = 10.0
+#: Heartbeat period of the activities (#96), well under the `heartbeat_timeout`
+#: set on the workflow side (`ACTIVITY_HEARTBEAT`), so that a live but busy worker
+#: is never taken for a dead one.
+HEARTBEAT_PERIOD_S = 10.0
 
 T = TypeVar("T")
 
 
-def _fabrique_configuree() -> ModelProvider:
-    """Fournisseur par défaut du worker : celui que désigne la config (#69).
+def _configured_factory() -> ModelProvider:
+    """The worker's default provider: the one the configuration names (#69).
 
-    Importé ici (et non en tête de module) pour garder le worker agnostique du
-    fournisseur — le choix vit dans la config (`MAESTRO_PROVIDER`), comme pour
-    `OrchestrationEngine.default`.
+    Imported here rather than at the top of the module, so that the worker stays
+    agnostic of the provider: the choice lives in the configuration
+    (`MAESTRO_PROVIDER`), as for `OrchestrationEngine.default`.
     """
     from maestro.providers.factory import provider_from_settings
 
     return provider_from_settings(load_settings())
 
 
-_provider_factory: ProviderFactory = _fabrique_configuree
+_provider_factory: ProviderFactory = _configured_factory
 _guardrails: Guardrails | None = None
-#: Relance automatique des échecs transitoires (#91, ENF-06) — armée par défaut,
-#: comme sur `OrchestrationEngine.default()`. C'est la **seule** couche de relance
-#: (le retry Temporal des activités est neutralisé, cf. workflow).
-_relance: PolitiqueRelance = RELANCE_DEFAUT
-#: La vérification des livraisons (#1177) — armée par défaut, comme la relance :
-#: une activité d'agent n'est « Terminée » qu'une fois ses critères vérifiés en
-#: l'exécutant. Le **renvoi par la QA**, lui, vit dans la boucle en process
-#: (`maestro.engine.loop`) et pas dans le workflow durable, qui ordonnance ses
-#: activités lui-même : limite dite dans docs/45 §4.
+#: Automatic retry of transient failures (#91, ENF-06), on by default, as on
+#: `OrchestrationEngine.default()`. It is the **only** retry layer for provider
+#: hazards (Temporal's activity retry only covers the loss of the worker, see
+#: workflow).
+_retry: PolitiqueRelance = RELANCE_DEFAUT
+#: Delivery verification (#1177), on by default like the retry: an agent activity
+#: is "Terminée" only once its criteria have been verified by running them. The
+#: **QA send-back** lives in the in-process loop (`maestro.engine.loop`), not in
+#: the durable workflow, which schedules its activities itself: a limit stated in
+#: docs/45 §4.
 _verification: bool = True
 _executor: LocalExecutor | None = None
 
 
-def configurer_worker(
+def configure_worker(
     *,
     provider_factory: ProviderFactory | None = None,
     guardrails: Guardrails | None = None,
-    relance: PolitiqueRelance | None = None,
+    retry: PolitiqueRelance | None = None,
     verification: bool | None = None,
 ) -> None:
-    """Configure l'exécution de CE process worker (fournisseur, garde-fous, relance).
+    """Configure execution in THIS worker process (provider, guardrails, retry).
 
-    À appeler avant la consommation (démarrage du worker, fixture de test, ou
-    `maestro.durable.engine.DurableEngine.run` pour le worker embarqué). Ne touche
-    que le process courant. L'exécuteur courant est invalidé — reconstruit au
-    prochain message. `relance` (#91) remplace la politique par défaut ; la
-    neutraliser se fait via `PolitiqueRelance(max_tentatives=1)` (None : inchangée).
-    `verification` (#1177) arme ou éteint la vérification des livraisons
-    (None : inchangée).
+    Call it before consumption (worker startup, test fixture, or
+    `maestro.durable.engine.DurableEngine.run` for the embedded worker). It only
+    touches the current process. The current executor is invalidated and rebuilt
+    on the next message. `retry` (#91) replaces the default policy, turned off by
+    `PolitiqueRelance(max_tentatives=1)` (None: unchanged). `verification` (#1177)
+    turns delivery verification on or off (None: unchanged).
     """
-    global _provider_factory, _guardrails, _relance, _verification, _executor
+    global _provider_factory, _guardrails, _retry, _verification, _executor
     if provider_factory is not None:
         _provider_factory = provider_factory
     if guardrails is not None:
         _guardrails = guardrails
-    if relance is not None:
-        _relance = relance
+    if retry is not None:
+        _retry = retry
     if verification is not None:
         _verification = verification
     _executor = None
 
 
-def reinitialiser_worker() -> None:
-    """Rétablit la configuration par défaut du worker (fabrique configurée, garde-fous défaut)."""
-    global _provider_factory, _guardrails, _relance, _verification, _executor
-    _provider_factory = _fabrique_configuree
+def reset_worker() -> None:
+    """Restore the worker's default configuration (configured factory, default guardrails)."""
+    global _provider_factory, _guardrails, _retry, _verification, _executor
+    _provider_factory = _configured_factory
     _guardrails = None
-    _relance = RELANCE_DEFAUT
+    _retry = RELANCE_DEFAUT
     _verification = True
     _executor = None
 
 
-def _executeur() -> LocalExecutor:
-    """L'exécuteur du process worker, construit paresseusement au premier message.
+def _get_executor() -> LocalExecutor:
+    """The worker process's executor, built lazily on the first message.
 
-    Câblé comme celui de la boucle locale et des workers de file (#41) : catalogue
-    effectif (#72), playbooks (#78), capacité (#86), MCP (#104),
-    secrets (#109), permissions (#110) et projets (#224) relus **à chaud** dans les dépôts de la
-    config à chaque tâche — une édition publiée depuis la Control Tower vaut pour
-    le message suivant, sans redémarrer le worker. Les garde-fous (#9) et la
-    relance (#91) sont ceux posés par `configurer_worker`.
+    Wired like the local loop's and the queue workers' (#41): effective catalog
+    (#72), playbooks (#78), capacity (#86), MCP (#104), secrets (#109),
+    permissions (#110) and projects (#224) are reread **live** from the
+    configuration's stores at each task, so an edit published from the Control
+    Tower holds for the next message without restarting the worker. The guardrails
+    (#9) and the retry (#91) are the ones `configure_worker` set.
 
-    Le **runtime outillé** n'est pas câblé ici (#1037) : l'exécuteur le dérive de la
-    fiche de l'agent routé, à chaque tâche — un agent personnalisé travaille donc
-    outillé dans une activité durable comme ailleurs. Lui passer `default_runtimes(...)`
-    le restreindrait aux cinq rôles du code.
+    The **tooled runtime** is not wired here (#1037): the executor derives it from
+    the routed agent's definition at each task, so a custom agent works tooled in a
+    durable activity as elsewhere. Passing it `default_runtimes(...)` would restrict
+    it to the five roles of the code.
 
-    Le **miroir** de vérification d'un projet non versionné (#1496, #1497) n'y est pas
-    gardé pour le run : le workflow ordonnance ses activités, aucune boucle ne tient
-    le run auprès de l'exécuteur (`TaskExecutor.tient_le_run`), et une activité de
-    clôture tomberait sur n'importe quel worker de la file. Une tâche de projet y
-    aurait le sien, retiré avec son espace ; en pratique un run durable ne porte pas
-    de projet (`DurableEngine.run` n'en reçoit aucun).
+    The verification **mirror** of an unversioned project (#1496, #1497) is not kept
+    for the run there: the workflow schedules its activities, no loop holds the run
+    with the executor (`TaskExecutor.tient_le_run`), and a closing activity could
+    land on any worker of the queue. A project task would have its own, removed
+    with its workspace; in practice a durable run carries no project
+    (`DurableEngine.run` receives none).
     """
     global _executor
     if _executor is None:
@@ -191,11 +194,11 @@ def _executeur() -> LocalExecutor:
             secrets=SecretStore.default(settings),
             permissions=PermissionStore.default(settings),
             projets=ProjetStore.default(settings),
-            # Les agents du projet de la tâche (#1038), comme en process et comme
-            # côté Celery : trois câblages, un seul contrat de routage.
+            # The agents of the task's project (#1038), as in process and on the
+            # Celery side: three wirings, one routing contract.
             agents_store=agents_store,
             modele=settings.model,
-            relance=_relance,
+            relance=_retry,
             verificateur=(
                 VerificateurTaches(provider, modele=settings.model)
                 if _verification
@@ -205,55 +208,56 @@ def _executeur() -> LocalExecutor:
     return _executor
 
 
-async def _avec_battement(travail: Awaitable[T]) -> T:
-    """Attend `travail` en signalant périodiquement que ce worker est vivant (#96).
+async def _with_heartbeat(work: Awaitable[T]) -> T:
+    """Await `work` while periodically signalling that this worker is alive (#96).
 
-    Le battement de cœur est ce qui rend la reprise sur panne **rapide** : une
-    activité d'agent peut tourner une heure, et sans signe de vie le serveur ne
-    saurait distinguer un worker occupé d'un worker mort avant l'expiration du
-    « start-to-close ». Battre toutes les `PERIODE_BATTEMENT_S` ramène la
-    détection à quelques secondes — au-delà, le serveur redonne l'activité au
-    worker suivant, qui la reprend là où le workflow l'attend.
+    The heartbeat is what makes failure recovery **fast**: an agent activity can
+    run for an hour, and without a sign of life the server could not tell a busy
+    worker from a dead one before the "start-to-close" expires. Beating every
+    `HEARTBEAT_PERIOD_S` brings detection down to a few seconds; past that, the
+    server hands the activity to the next worker, which picks it up where the
+    workflow awaits it.
 
-    Hors contexte d'activité (appel direct, test), c'est une simple attente : le
-    battement n'a alors personne à qui parler.
+    Outside an activity context (direct call, test), it is a plain await: the
+    heartbeat then has no one to talk to.
     """
     if not activity.in_activity():
-        return await travail
-    batteur = asyncio.ensure_future(_bat_le_coeur())
+        return await work
+    beater = asyncio.ensure_future(_beat())
     try:
-        return await travail
+        return await work
     finally:
-        batteur.cancel()
+        beater.cancel()
         with suppress(asyncio.CancelledError):
-            await batteur
+            await beater
 
 
-async def _bat_le_coeur() -> None:
-    """Signale l'activité vivante jusqu'à annulation (compagnon de `_avec_battement`)."""
+async def _beat() -> None:
+    """Signal the activity as alive until cancelled (companion of `_with_heartbeat`)."""
     while True:
-        await asyncio.sleep(PERIODE_BATTEMENT_S)
+        await asyncio.sleep(HEARTBEAT_PERIOD_S)
         activity.heartbeat()
 
 
-@activity.defn
-async def planifier(payload: dict[str, Any]) -> dict[str, Any]:
-    """Active la planification : découpe l'objectif en tâches et consigne l'étape.
+@activity.defn(name="planifier")
+async def plan(payload: dict[str, Any]) -> dict[str, Any]:
+    """Planning activity: split the goal into tasks and record the step.
 
-    Miroir de `OrchestrationEngine._plan` côté activité : l'orchestrateur (#3)
-    tourne sur le fournisseur configuré du worker, l'usage est mesuré (#8) et
-    l'étape `planification` consignée au journal (donc au fil temps réel de la
-    Control Tower, #46). Une erreur de planification est consignée puis **levée** —
-    sans plan, il n'y a rien à orchestrer : l'activité échoue et le workflow avec
-    (l'orchestrateur côté client la remonte, cf. `maestro.durable.engine`).
+    The activity-side mirror of `OrchestrationEngine._plan`: the orchestrator (#3)
+    runs on the worker's configured provider, usage is measured (#8) and the
+    `planification` step is recorded in the journal (hence in the Control Tower's
+    real-time feed, #46). A planning error is recorded then **raised**: without a
+    plan there is nothing to orchestrate, so the activity fails and the workflow
+    with it (the client-side orchestrator passes it on, see
+    `maestro.durable.engine`).
     """
-    objectif: str = payload["objectif"]
+    goal: str = payload["objectif"]
     journal = RunJournal(run_id=payload.get("run_id"))
-    debut = perf_counter()
-    orchestrator = _orchestrateur()
-    with collect_usage() as recolte:
+    start = perf_counter()
+    orchestrator = _orchestrator()
+    with collect_usage() as collected:
         try:
-            tasks = await _avec_battement(orchestrator.plan(objectif))
+            tasks = await _with_heartbeat(orchestrator.plan(goal))
         except Exception as exc:
             journal.consigne(
                 etape="planification",
@@ -261,86 +265,86 @@ async def planifier(payload: dict[str, Any]) -> dict[str, Any]:
                 agent="orchestrateur",
                 role="Orchestrateur",
                 statut=STATUT_ECHEC,
-                entree=objectif,
+                entree=goal,
                 sortie="",
                 erreur=str(exc),
-                usage=recolte.total.avec_duree(_ecoule_ms(debut)),
+                usage=collected.total.avec_duree(_ecoule_ms(start)),
             )
-            # Non rejouable : un plan refusé (réponse indécodable, schéma
-            # enfreint) le sera identiquement au coup suivant. La CLI le
-            # présente comme en local — sans plan, rien à orchestrer.
+            # Not retryable: a rejected plan (undecodable answer, broken schema)
+            # will be rejected the same way next time. The CLI presents it as in
+            # local mode: without a plan, nothing to orchestrate.
             raise ApplicationError(
                 str(exc), type=type(exc).__name__, non_retryable=True
             ) from exc
-    usage = recolte.total.avec_duree(_ecoule_ms(debut))
+    usage = collected.total.avec_duree(_ecoule_ms(start))
     journal.consigne(
         etape="planification",
         nom="Planification de l'objectif",
         agent="orchestrateur",
         role="Orchestrateur",
         statut=STATUT_TERMINEE,
-        entree=objectif,
+        entree=goal,
         sortie=f"{len(tasks)} tâche(s) planifiée(s)",
         usage=usage,
     )
     return {"tasks": [t.to_dict() for t in tasks], "usage": usage.to_dict()}
 
 
-@activity.defn
-async def executer_tache(payload: dict[str, Any]) -> dict[str, Any]:
-    """Active l'exécution d'une tâche : routage, garde-fous, livrable, journal.
+@activity.defn(name="executer_tache")
+async def execute_task(payload: dict[str, Any]) -> dict[str, Any]:
+    """Task execution activity: routing, guardrails, deliverable, journal.
 
-    Le contrat est celui de tout `TaskExecutor` : ne lève jamais pour un échec
-    métier (routage, garde-fou, agent en erreur) — l'échec est un `TaskResult` au
-    statut `echec`, consigné. Seul un payload non conforme au schéma partagé lève
-    (tâche refusée avant toute exécution). Le tableau noir (résultats des
-    dépendances) voyage **avec** le message : aucune mémoire partagée entre
-    activités. L'usage porté par le résultat est le vrai coût mesuré par
-    `LocalExecutor` (#8), consigné au même journal que tout le reste (#46/#55).
+    The contract is that of every `TaskExecutor`: it never raises for a business
+    failure (routing, guardrail, agent error). The failure is a `TaskResult` with
+    status `echec`, recorded. Only a payload that breaks the shared schema raises
+    (task refused before anything runs). The blackboard (the dependencies' results)
+    travels **with** the message: activities share no memory. The usage carried by
+    the result is the real cost measured by `LocalExecutor` (#8), recorded in the
+    same journal as everything else (#46/#55).
     """
     try:
         validate_task(payload["task"])
     except Exception as exc:
-        # Non rejouable : une tâche non conforme au schéma le restera. La tâche
-        # est refusée avant toute exécution — rien n'a été dépensé.
+        # Not retryable: a task that breaks the schema will keep breaking it. The
+        # task is refused before anything runs, so nothing was spent.
         raise ApplicationError(
             str(exc), type=type(exc).__name__, non_retryable=True
         ) from exc
     task = Task.from_dict(payload["task"])
-    dependances = [TaskResult.from_dict(d) for d in payload.get("dependances", ())]
+    dependencies = [TaskResult.from_dict(d) for d in payload.get("dependances", ())]
     journal = RunJournal(run_id=payload.get("run_id"))
-    result = await _avec_battement(_executeur().execute(task, dependances, journal))
-    # Identité de l'exécutant, rapportée sur le résultat (`TaskResult.worker`) —
-    # ici la file d'activités Temporal qui a porté la tâche (critère MVP n°2).
+    result = await _with_heartbeat(_get_executor().execute(task, dependencies, journal))
+    # The executor's identity, reported on the result (`TaskResult.worker`): here
+    # the Temporal activity queue that carried the task (MVP criterion 2).
     result = replace(result, worker=f"temporal/{activity.info().task_queue}")
     return result.to_dict()
 
 
-@activity.defn
-async def consigner_blocage(payload: dict[str, Any]) -> dict[str, Any]:
-    """Active la consignation d'un blocage aval (#43) : décidé au workflow, tracé ici.
+@activity.defn(name="consigner_blocage")
+async def record_blocker(payload: dict[str, Any]) -> dict[str, Any]:
+    """Downstream blocker activity (#43): decided in the workflow, recorded here.
 
-    Le workflow constate qu'une dépendance a échoué (ou est elle-même bloquée) et
-    délègue à cette activité la construction **et** la consignation du `TaskResult`
-    bloqué — car consigner au journal est de l'I/O, interdit au workflow
-    déterministe. Réutilise `maestro.engine.loop._consigne_blocage` : même message
-    d'erreur, mêmes champs de journal que la boucle en process, donc même
-    événement côté Control Tower. Aucun agent n'est sollicité : usage nul.
+    The workflow sees that a dependency failed (or is itself blocked) and delegates
+    to this activity the construction **and** the recording of the blocked
+    `TaskResult`, because recording in the journal is I/O, forbidden to the
+    deterministic workflow. It reuses `maestro.engine.loop._consigne_blocage`: same
+    error message, same journal fields as the in-process loop, hence the same event
+    on the Control Tower side. No agent is called on: zero usage.
     """
     task = Task.from_dict(payload["task"])
-    insatisfaites = [TaskResult.from_dict(d) for d in payload.get("dependances", ())]
+    unmet = [TaskResult.from_dict(d) for d in payload.get("dependances", ())]
     journal = RunJournal(run_id=payload.get("run_id"))
-    result = _consigne_blocage(task, insatisfaites, journal)
+    result = _consigne_blocage(task, unmet, journal)
     return result.to_dict()
 
 
-def _orchestrateur() -> Orchestrator:
-    """Construit l'orchestrateur de la planification sur le fournisseur du worker.
+def _orchestrator() -> Orchestrator:
+    """Build the planning orchestrator on the worker's provider.
 
-    Reconstruit à chaque run (la planification est unique par run — pas de
-    surcoût à le garder en cache) : le fournisseur vient de la fabrique du process
-    (`configurer_worker`), le modèle de la config (`MAESTRO_MODEL`, #69) — même
-    couplage config↔fabrique que l'exécuteur.
+    Rebuilt for each run (planning happens once per run, so caching it saves
+    nothing): the provider comes from the process factory (`configure_worker`),
+    the model from the configuration (`MAESTRO_MODEL`, #69), the same
+    configuration/factory coupling as the executor.
     """
     from maestro.providers.factory import default_model
 
@@ -348,10 +352,11 @@ def _orchestrateur() -> Orchestrator:
 
 
 __all__ = [
+    "HEARTBEAT_PERIOD_S",
     "ProviderFactory",
-    "configurer_worker",
-    "consigner_blocage",
-    "executer_tache",
-    "planifier",
-    "reinitialiser_worker",
+    "configure_worker",
+    "execute_task",
+    "plan",
+    "record_blocker",
+    "reset_worker",
 ]

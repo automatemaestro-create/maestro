@@ -1,62 +1,61 @@
-"""Messagerie inter-agents de Maestro — boîtes aux lettres Pub/Sub (ticket #44).
+"""Maestro's inter-agent messaging: Pub/Sub mailboxes (#44).
 
-Deux briques :
+Two parts:
 
-- `maestro.messaging.mailbox` : le message (`AgentMessage`, miroir de l'entité
-  AGENT_MESSAGE de docs/03) et son transport (`Mailbox`) — boîtes aux lettres
-  par agent, en mémoire (`InMemoryMailbox`) ou sur Redis Pub/Sub
-  (`RedisMailbox`), avec journalisation des échanges dans la télémétrie (#8,
-  `consigne_message`) ;
-- `maestro.messaging.handoff` : le **handoff observable** (`HandoffRelais`,
-  critère MVP n°7) — un agent termine, annonce l'issue par message, et la
-  boucle d'orchestration (`OrchestrationEngine(..., mailbox=...)`) ne débloque
-  l'aval qu'à réception.
+- `maestro.messaging.mailbox`: the message (`AgentMessage`, the mirror of the
+  AGENT_MESSAGE entity of docs/03) and its transport (`Mailbox`), one mailbox per
+  agent, in memory (`InMemoryMailbox`) or on Redis Pub/Sub (`RedisMailbox`), each
+  exchange recorded in telemetry (#8, `record_message`);
+- `maestro.messaging.handoff`: the **observable handoff** (`HandoffRelay`, MVP
+  criterion 7). An agent finishes and announces the outcome by message, and the
+  orchestration loop (`OrchestrationEngine(..., mailbox=...)`) unblocks the
+  downstream tasks only once it has received it.
 """
 
 from __future__ import annotations
 
-from maestro.messaging.handoff import AGENT_RELAIS, TIMEOUT_HANDOFF_S, HandoffRelais
+from maestro.messaging.handoff import HANDOFF_TIMEOUT_S, RELAY_AGENT, HandoffRelay
 from maestro.messaging.mailbox import (
-    CANAL_BOITE_PREFIXE,
-    CANAL_DIFFUSION,
-    DIFFUSION,
+    BROADCAST,
+    BROADCAST_CHANNEL,
+    MAILBOX_CHANNEL_PREFIX,
     MESSAGE_HANDOFF,
     MESSAGE_NOTIFICATION,
-    MESSAGE_REPONSE,
-    MESSAGE_REQUETE,
-    STATUT_ENVOYE,
-    STATUT_LU,
-    STATUT_TRAITE,
-    SUFFIXE_ETAPE_MESSAGE,
+    MESSAGE_REQUEST,
+    MESSAGE_RESPONSE,
+    MESSAGE_STEP_SUFFIX,
+    STATUS_PROCESSED,
+    STATUS_READ,
+    STATUS_SENT,
     AgentMessage,
     InMemoryMailbox,
     Mailbox,
     MailboxSubscription,
     RedisMailbox,
-    canal_boite,
-    consigne_message,
+    mailbox_channel,
+    record_message,
 )
 
 __all__ = [
-    "AGENT_RELAIS",
-    "CANAL_BOITE_PREFIXE",
-    "CANAL_DIFFUSION",
-    "DIFFUSION",
+    "BROADCAST",
+    "BROADCAST_CHANNEL",
+    "HANDOFF_TIMEOUT_S",
+    "MAILBOX_CHANNEL_PREFIX",
     "MESSAGE_HANDOFF",
     "MESSAGE_NOTIFICATION",
-    "MESSAGE_REPONSE",
-    "MESSAGE_REQUETE",
-    "STATUT_ENVOYE",
-    "STATUT_LU",
-    "STATUT_TRAITE",
-    "SUFFIXE_ETAPE_MESSAGE",
-    "TIMEOUT_HANDOFF_S",
+    "MESSAGE_REQUEST",
+    "MESSAGE_RESPONSE",
+    "MESSAGE_STEP_SUFFIX",
+    "RELAY_AGENT",
+    "STATUS_PROCESSED",
+    "STATUS_READ",
+    "STATUS_SENT",
     "AgentMessage",
-    "HandoffRelais",
+    "HandoffRelay",
     "InMemoryMailbox",
     "Mailbox",
     "MailboxSubscription",
     "RedisMailbox",
-    "canal_boite",
-    "consigne_message",
+    "mailbox_channel",
+    "record_message",
 ]

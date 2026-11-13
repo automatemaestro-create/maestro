@@ -49,10 +49,10 @@ import pytest
 
 from maestro.engine import OrchestrationEngine
 from maestro.engine.executor import STATUT_BLOCAGE_SIGNALE, SUFFIXE_ETAPE_BLOCAGE
-from maestro.messaging.handoff import AGENT_RELAIS
+from maestro.messaging.handoff import RELAY_AGENT
 from maestro.messaging.mailbox import (
     MESSAGE_NOTIFICATION,
-    SUFFIXE_ETAPE_MESSAGE,
+    MESSAGE_STEP_SUFFIX,
     AgentMessage,
     InMemoryMailbox,
 )
@@ -263,7 +263,7 @@ def _mots_adresses(journal: RunJournal):
     Le journal range sous le même suffixe `<tache>:message` deux écritures qui
     n'ont pas le même auteur : le **handoff** (#44), qui annonce en diffusion la
     fin d'une tâche à son aval, et le **mot adressé** qu'un agent écrit (#720).
-    Les deux passent par `consigne_message` — c'est même le partage que docs/31
+    Les deux passent par `record_message` — c'est même le partage que docs/31
     §3.2 reconduit exprès —, et ce qui les sépare est le **type** du message :
     `handoff` pour la machinerie, `notification` pour l'agent.
 
@@ -272,7 +272,7 @@ def _mots_adresses(journal: RunJournal):
     d'un transport : un test qui l'ignore passe sans messagerie et rougit avec.
     """
     prefixe = f"{MESSAGE_NOTIFICATION} "
-    return [r for r in _etapes(journal, SUFFIXE_ETAPE_MESSAGE) if r.sortie.startswith(prefixe)]
+    return [r for r in _etapes(journal, MESSAGE_STEP_SUFFIX) if r.sortie.startswith(prefixe)]
 
 
 def _appelle_outil(outil, **arguments) -> str:
@@ -316,12 +316,12 @@ def test_un_mot_a_un_pair_absent_est_consigne_malgre_tout():
     # aucun abonné à ce nom. C'est ce qui range l'échec du côté du canal.
     adresses = [m for m in mailbox.publies if m.type == MESSAGE_NOTIFICATION]
     assert len(adresses) == 1
-    assert adresses[0].a_agent == EcritAuPair.DESTINATAIRE
-    assert not [a for a in mailbox._abonnes if a.agent == EcritAuPair.DESTINATAIRE]
+    assert adresses[0].to_agent == EcritAuPair.DESTINATAIRE
+    assert not [a for a in mailbox._subscribers if a.agent == EcritAuPair.DESTINATAIRE]
 
     # Et pourtant la trace est là — c'est tout le ticket.
     (etape,) = _mots_adresses(journal)
-    assert etape.etape == f"collecte{SUFFIXE_ETAPE_MESSAGE}"
+    assert etape.etape == f"collecte{MESSAGE_STEP_SUFFIX}"
     assert EcritAuPair.MESSAGE in etape.sortie
     assert EcritAuPair.DESTINATAIRE in etape.sortie
 
@@ -353,7 +353,7 @@ def test_sans_transport_du_tout_le_mot_est_consigne_aussi():
 def test_un_transport_en_panne_ne_retire_pas_la_trace():
     """L'ordre des deux gestes, éprouvé par le seul moyen qui le distingue.
 
-    `HandoffRelais.annonce` publie *puis* consigne, et abandonne tout — trace
+    `HandoffRelay.announce` publie *puis* consigne, et abandonne tout — trace
     comprise — si la publication échoue. Le courrier fait l'**inverse** : il
     consigne d'abord, précisément pour que « consigné malgré tout » reste vrai
     quand le canal casse. Les deux ordres sont indiscernables tant que le
@@ -488,7 +488,7 @@ def test_l_outil_de_blocage_ne_consigne_rien_sans_raison():
 def test_l_outil_de_courrier_refuse_ce_qui_n_est_pas_un_pair():
     """Le destinataire doit être **un pair**, et les deux refus ferment la même porte.
 
-    Vide, c'est la **diffusion** côté transport (`mailbox.DIFFUSION`) : le mot
+    Vide, c'est la **diffusion** côté transport (`mailbox.BROADCAST`) : le mot
     partirait dans toutes les boîtes, dont celle du relais de handoff, qui écoute
     justement la diffusion. Le nom du relais la ferme par l'autre bout — un mot
     posté là porterait le `tache_id` de l'expéditeur et résoudrait l'attente de
@@ -509,7 +509,7 @@ def test_l_outil_de_courrier_refuse_ce_qui_n_est_pas_un_pair():
 
     # L'identité de la boucle, et la même en majuscules : la garde ne se
     # contourne pas par une capitale (elle reçoit ce qu'un modèle a écrit).
-    for nom in (AGENT_RELAIS, AGENT_RELAIS.upper()):
+    for nom in (RELAY_AGENT, RELAY_AGENT.upper()):
         texte = _appelle_outil(outil, destinataire=nom, message="x")
         assert texte == courrier.DESTINATAIRE_RESERVE.format(relais=nom)
     assert recus == []

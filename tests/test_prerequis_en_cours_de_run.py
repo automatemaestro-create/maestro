@@ -72,7 +72,7 @@ from maestro.providers.base import (
     ModelProvider,
     ServeurInjoignable,
 )
-from maestro.router.classifier import CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT
+from maestro.router.classifier import CLASSIFIER_CLOSEST_SYSTEM_PROMPT
 from maestro.telemetry import RunJournal
 
 #: La première ligne du playbook de rattrapage : c'est ainsi que le fournisseur
@@ -134,7 +134,7 @@ class Fournisseur(ModelProvider):
         if system_prompt and "Chef de projet" in system_prompt:
             return self._plan
         if "Agents candidats" in prompt:
-            if system_prompt == CLASSIFIER_PLUS_PROCHE_SYSTEM_PROMPT:
+            if system_prompt == CLASSIFIER_CLOSEST_SYSTEM_PROMPT:
                 return json.dumps({"agent": self._plus_proche, "confiance": 0.3})
             return json.dumps({"agent": None, "confiance": 0.1})
         raise AssertionError(f"appel texte inattendu :\n{prompt[:300]}")

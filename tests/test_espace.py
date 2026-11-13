@@ -259,7 +259,9 @@ def test_les_boites_aux_lettres_d_une_stack_ne_s_ouvrent_pas_sur_l_autre(
         await boites_a.subscribe("dev")
         await boites_b.subscribe("dev")
         await boites_a.publish(
-            AgentMessage(type=MESSAGE_NOTIFICATION, de_agent="qa", a_agent="dev", objet="salut")
+            AgentMessage(
+                type=MESSAGE_NOTIFICATION, from_agent="qa", to_agent="dev", subject="salut"
+            )
         )
         par_canal: dict[str, int] = {}
         for abonnement in serveur.abonnements:
@@ -276,9 +278,9 @@ def test_les_boites_aux_lettres_d_une_stack_ne_s_ouvrent_pas_sur_l_autre(
 def test_la_file_de_taches_est_celle_de_l_espace(monkeypatch: pytest.MonkeyPatch) -> None:
     """Un worker lancé depuis une copie ne prend que les tâches de cette copie."""
     dans(monkeypatch, "copie-a")
-    assert celery_app.create_app().conf.task_default_queue == f"copie-a:{celery_app.FILE_TACHES}"
+    assert celery_app.create_app().conf.task_default_queue == f"copie-a:{celery_app.TASKS_QUEUE}"
     dans(monkeypatch, COMMUN)
-    assert celery_app.create_app().conf.task_default_queue == celery_app.FILE_TACHES
+    assert celery_app.create_app().conf.task_default_queue == celery_app.TASKS_QUEUE
 
 
 def test_la_purge_d_une_copie_ne_vide_que_ses_donnees(
